@@ -1,11 +1,7 @@
 import React from 'react';
 import type { DeskCardData } from './types';
 
-// V12.2.12 — AI REVIEW / RULE CHECK(§7-2)。
-// AIが主判断の時: AI自身の内容(提案/理由/redFlags/実行時刻/モデル)+ルール判定
-// 原文との相違。AIが使えない時もこの欄は消えない — 「RULE TEMPORARY+正確な理由
-// +次回実行予定」を必ず表示する(§5)。AI理由が無い時にルール理由をAI文章として
-// 見せない(reasonMissingを正直に表示)。
+// Round 2 — AI/legacy outputs are challenge evidence under the canonical SDA.
 
 export const AssetAIReview: React.FC<{ d: DeskCardData }> = ({ d }) => {
   const dec = d.decision;
@@ -23,7 +19,7 @@ export const AssetAIReview: React.FC<{ d: DeskCardData }> = ({ d }) => {
         <div className="asset-ai">
           <div className="asset-ai__head">
             <span className="asset-ai__tag">
-              AI見解{dec.ageJa ? `・${dec.ageJa}の実行` : ''}{ai.modelsJa ? ` [${ai.modelsJa}]` : ''}
+              AI CHALLENGE{dec.ageJa ? `・${dec.ageJa}の実行` : ''}{ai.modelsJa ? ` [${ai.modelsJa}]` : ''}
             </span>
             {ai.viewJa && <span style={{ color: ai.viewTone }}>{ai.viewJa}</span>}
             <span className="asset-ai__action">
@@ -44,19 +40,19 @@ export const AssetAIReview: React.FC<{ d: DeskCardData }> = ({ d }) => {
       ) : (
         <div className="asset-ai">
           <div className="asset-ai__head">
-            <span className="asset-ai__tag" style={{ color: 'var(--amber, #fbbf24)' }}>RULE TEMPORARY</span>
+            <span className="asset-ai__tag" style={{ color: 'var(--amber, #fbbf24)' }}>AI EVIDENCE UNAVAILABLE</span>
             <span style={{ color: 'var(--text-sub)' }}>{ai.unavailableReasonJa ?? 'AI見解は未実行'}</span>
           </div>
           <p className="asset-ai__reason" style={{ color: 'var(--text-faint)' }}>
             {/* 次回時刻は実行が保証できる状態(未実行/stale)でのみ案内 —
                 disabled/取得不能/品質制限/対象symbolなしでは約束しない。 */}
-            {ai.nextRunJa ? `${ai.nextRunJa}。それまでは` : ''}ルール判定(ガードレール)が主判断です。
+            {ai.nextRunJa ? `${ai.nextRunJa}。` : ''}SDAの判断はAIの有無で上書きされません。
           </p>
         </div>
       )}
-      {/* RULE CHECK — ルール判定の原文(AI主判断時の突き合わせ用) */}
+      {/* Legacy rule is retained for dissent/provenance only. */}
       <div className="uac-sec" style={{ marginTop: 6 }}>
-        <div className="uac-sec-t">RULE CHECK</div>
+        <div className="uac-sec-t">LEGACY RULE EVIDENCE</div>
         <p className="uac-next" style={{ marginBottom: 2 }}>
           ルール判定: <b>{dec.rule.action}</b>
           {dec.rule.disagreementJa && (

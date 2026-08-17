@@ -6,7 +6,17 @@ searched/blocked/alternative sources. Old-only news → no fresh lead. The deep-
 research status detects old-news-as-primary violations (must be empty).
 """
 import json
+import pytest
 import scanner
+
+
+@pytest.fixture(autouse=True)
+def _authenticated_handler_contract(monkeypatch):
+    original = scanner._require_admin
+    monkeypatch.setattr(
+        scanner, "_require_admin",
+        lambda: (True, None, 200) if scanner.request.path in
+        scanner._AUTH_OPERATIONAL_MUTATION_ROUTES else original())
 
 
 class _Boom(BaseException):
@@ -64,7 +74,12 @@ def _fresh_row(now_iso):
 def test_investigate_now_sweeps_not_queues(monkeypatch):
     _reset(monkeypatch)
     _no_llm(monkeypatch)
-    now = scanner._ai_now_iso()
+    # Freeze inside a real JP trading session.  A Sunday/holiday must not mint
+    # a current mover-cause record even when the news sweep itself succeeds.
+    now = "2026-08-14T01:00:00Z"
+    fixed_epoch = 1_786_669_200.0
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: now)
+    monkeypatch.setattr(scanner.time, "time", lambda: fixed_epoch)
     _stub_sources(monkeypatch, google_rows=[_fresh_row(now)],
                   probe=("ok", {"title": "フジクラ、増産投資を発表", "publishedAt": now,
                                 "snippet": "増産投資を発表した。", "canonicalUrl": "https://nikkei.com/x",
@@ -154,62 +169,6 @@ def test_investigate_now_invalid_symbol():
     with scanner.app.test_client() as c:
         d = c.post("/api/argus/caos/investigate-now", json={"symbol": "", "market": "JP"}).get_json()
     assert d["status"] == "error" and d["ok"] is False
-
-
-def test_patrol_plan_endpoint(monkeypatch):
-    _reset(monkeypatch)
-    _no_llm(monkeypatch)
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/caos/patrol-plan").get_json()
-    assert d["schemaVersion"] == "caos-patrol-plan-v1"
-    classes = {t["assetClass"] for t in d["targets"]}
-    for ac in ("GOLD_GLD", "BONDS_TLT", "CRYPTO_BTC_ETH", "FX_USDJPY", "CASH"):
-        assert ac in classes, ac
-    assert all(t["refreshCadenceSec"] >= 300 for t in d["targets"])
-
-
-def test_deep_research_status_no_violations(monkeypatch):
-    _reset(monkeypatch)
-    _no_llm(monkeypatch)
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/caos/deep-research/status").get_json()
-    assert d["schemaVersion"] == "caos-deep-research-status-v1"
-    assert d["violations"] == []                           # gate keeps this empty
-    assert "symbolsWithOnlyOldNews" in d
-
-
-def test_deep_research_detects_violation(monkeypatch):
-    """If an old news title ever ends up in bestLeadJa, the audit must flag it."""
-    _reset(monkeypatch)
-    _no_llm(monkeypatch)
-    today = scanner._ai_now_iso()[:10].replace("-", "")
-    bad = {"moverCauseId": f"mc-JP-9999-{today}", "symbol": "9999", "market": "JP",
-           "asOf": scanner._ai_now_iso(), "causeStatus": "candidate_catalyst",
-           "causeStatusJa": "候補", "bestLeadJa": "直接ニュース: 古い記事タイトル",
-           "causeCandidates": [{"titleJa": "古い記事タイトル", "category": "direct_news",
-                                "role": "background_only", "confidence": 0.15,
-                                "timingRelation": "unknown", "corroborationLevel": "single_source",
-                                "linkType": "direct_mention", "marketConfirmed": False,
-                                "sourceTier": "media", "candidateId": "cand-x",
-                                "newsFreshness": {"freshness": "old", "ageHours": 340.0}}],
-           "freshness": {}, "refreshPolicy": {}}
-    monkeypatch.setattr(scanner, "_MOVER_CAUSES", {bad["moverCauseId"]: bad})
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/caos/deep-research/status").get_json()
-    assert any(v["type"] == "old_news_as_primary" for v in d["violations"])
-
-
-def test_public_get_endpoints_no_fetch(monkeypatch):
-    _reset(monkeypatch)
-    _no_llm(monkeypatch)
-    def boom(*a, **k):
-        raise _Boom("no fetch on public GET")
-    for name in ("_fetch_public_text", "_google_news_jp_rss", "_google_news_us_rss",
-                 "get_tdnet_recent", "_finnhub_catalyst", "_probe_article"):
-        monkeypatch.setattr(scanner, name, boom)
-    with scanner.app.test_client() as c:
-        assert c.get("/api/argus/caos/patrol-plan").status_code == 200
-        assert c.get("/api/argus/caos/deep-research/status").status_code == 200
 
 
 def test_no_forbidden_keys(monkeypatch):

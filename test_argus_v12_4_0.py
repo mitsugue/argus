@@ -33,7 +33,12 @@ def history(count=260, start=100.0, step=0.2):
 
 @contextmanager
 def price_cache(fake):
-    fresh = {"data": fake, "expires": 9_999_999_999.0}
+    # A synthetic provider revision needs an explicit acquisition instant.
+    # Deriving knowledge from the intentionally-far-future expiry would place
+    # these bars in 2286 and the strict PIT boundary must reject them.
+    acquired_at = f"{max(fake['dates'])}T23:59:59Z"
+    fresh = {"data": fake, "expires": 9_999_999_999.0,
+             "acquiredAt": acquired_at}
     jp = {code: dict(fresh) for code in ("7203", "1321", "1306", "2644", "2516")}
     us = {symbol: dict(fresh) for symbol in ("SPY", "QQQ", "USD/JPY")}
     with mock.patch.dict(scanner._JQ_HISTORY_CACHE, jp, clear=True), \
@@ -164,7 +169,10 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
             mock.patch.object(scanner, "get_events_snapshot",
                               return_value={"events": []}),
         )
-        with patches[0], patches[1], patches[2], patches[3]:
+        # Pin the provider revision identity just as a real successful fetch
+        # does.  The test mocks the fetch functions themselves, so without the
+        # cache metadata it would inherit unrelated suite-global cache state.
+        with price_cache(fake), patches[0], patches[1], patches[2], patches[3]:
             first = scanner._chart_public_report(
                 "1321", "JP", market_scope=True, cached_only=False,
                 precompute_replay=True)

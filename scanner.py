@@ -14,7 +14,7 @@ try:
 except ImportError:
     MOOMOO_AVAILABLE = False
 import pytz
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from argus_rules import (  # pure scoring layer extracted v10.37 (#9)
     _scout_score_bucket, _margin_signal, _margin_assess_lines,
     _jsf_assess_lines, _short_disclosed_assess, _detect_gap,
@@ -37,6 +37,7 @@ import argus_remote_recovery  # bounded cold-restore delta for compact journal p
 import argus_remote_nonce_anchor  # bounded private nonce-authority epochs
 import argus_calibration  # Calibration Ledger v4 foundation: cohorts/epochs/scoring (pure, v10.68)
 import argus_market_clock  # Calibration Ledger v4 Phase 2: market-specific forecast clocks (pure, v10.69)
+import argus_market_data_truth  # v13 Round 2A: canonical provider-neutral market truth
 import argus_posture  # Calibration Ledger v4: multidimensional posture scoring (pure, v10.74)
 import argus_decision_value  # Decision Value Ledger v1: net expectancy / risk (pure, research-only, v10.75)
 import argus_watchlist_sync  # Calibration Ledger v4 Layer 2B: owner watchlist sync validation (pure, v10.74)
@@ -80,7 +81,6 @@ import argus_data_quality  # Data Quality Console (pure, v11.22.0 — 鮮度捏�
 import argus_mover_cause  # Mover Cause Engine: confirmed/probable/candidate/no_lead ladder (pure, v11.3.3)
 import argus_osint_attribution  # OSINT/catalyst帰属レビュー — 直接/テーマ/マクロ分離+確度 (pure, v12.0.8)
 import argus_osint_engine  # マルチエージェントOSINTエンジン(計画/検証/採点/ベンチ) (pure, v12.1.0)
-import argus_primary_stance  # 銘柄ごとの単一の構え(カード間矛盾の根治・TS版と同期) (pure, v12.0.8)
 import argus_mover_cause_store  # durable mover-cause merge/serialize (pure, v11.3.3)
 import argus_mover_cause_refresh  # refresh queue + quality/SLA diagnostics (pure, v11.3.4)
 import argus_market_confirmation  # Market Confirmation v1.5 from existing data (pure, v11.3.4)
@@ -119,11 +119,22 @@ import argus_memory_attribution     # bounded parent-process phase telemetry
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
 import argus_foundation_job_checkpoint  # small job-state sidecar; avoids full-checkpoint OOM
 import argus_asset_chart_cache      # bounded durable Asset Desk chart reports
+import argus_diagnostics_contract  # closed public/operational DTO boundary
+import argus_recovery_registry     # accepted shadow registry metadata only
+import argus_recovery_phase_a_adapter  # optional shadow measurement/null proof
 from flask import Flask, jsonify, request, make_response, g
 from collections import deque
 import hashlib
 import hmac
 import argus_ledger  # Local — A.R.G.U.S. prediction ledger
+
+# Round 2 macro convergence: the legacy scanner classifiers remain available as
+# bounded evidence generators only.  They cannot issue the canonical five-action
+# decision, consume owner holdings for a server-side action, notify an action, or
+# append a prediction as final authority.  The device-local Single Decision
+# Authority is the sole owner-aware action reducer.
+LEGACY_DECISION_AUTHORITY_ROLE = "EVIDENCE_ONLY"
+LEGACY_DECISION_AUTHORITY_ACTIVE = False
 try:
     from flask_cors import CORS  # optional; only needed for /api/argus/* cross-origin
 except Exception:
@@ -522,7 +533,7 @@ app        = Flask(__name__)
 # and localhost dev) call the ledger / rates endpoints. Other routes
 # stay same-origin.
 if CORS is not None:
-    CORS(app, resources={r"/api/argus/*": {"origins": [
+    _PUBLIC_BROWSER_ORIGINS = [
         re.compile(r"^http://localhost(:\d+)?$"),
         re.compile(r"^http://127\.0\.0\.1(:\d+)?$"),
         # Pin Vercel to this project's deploys (argus*.vercel.app) rather than
@@ -531,7 +542,14 @@ if CORS is not None:
         # Vercel project is ever renamed.
         re.compile(r"^https://argus[a-z0-9-]*\.vercel\.app$"),
         re.compile(r"^https://mitsugue\.github\.io$"),
-    ]}})
+    ]
+    CORS(app, resources={
+        # Operational diagnostics are server-to-server only.  The more
+        # specific expression wins Flask-CORS resource ordering and prevents
+        # any browser origin from receiving an allow-origin header.
+        r"/api/argus/admin/diagnostics/operational": {"origins": []},
+        r"/api/argus/*": {"origins": _PUBLIC_BROWSER_ORIGINS},
+    })
 
 @app.after_request
 def add_no_cache(response):
@@ -550,8 +568,7 @@ def add_no_cache(response):
 
 _MEMORY_HTTP_KNOWN_ROUTES = {
     "/healthz", "/readyz", "/api/state",
-    "/api/argus/system-health", "/api/argus/ledger-health",
-    "/api/argus/research-missions",
+    "/api/argus/data-quality/status",
     "/api/argus/admin/memory-attribution",
     "/api/argus/admin/missions/tick",
 }
@@ -733,6 +750,150 @@ def finnhub_get(endpoint, params=None):
     except Exception: pass
     return None
 
+
+def _legacy_provider_number(value):
+    """Finite numeric provider scalar, without bool/string coercion."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+_DECISION_NEWS_MAX_AGE_SEC = 24 * 3600
+_DECISION_OFFICIAL_FACT_MAX_AGE_SEC = 72 * 3600
+
+
+def _decision_event_time(value, *, now_epoch=None, max_age_seconds,
+                         naive_utc_offset_hours=None):
+    """Strict provider/event timestamp proof for current decision evidence."""
+    source_epoch = None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        source_epoch = float(value)
+    elif isinstance(value, str):
+        raw = value.strip()
+        if not raw or re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+            return None  # a calendar date cannot prove intraday causal order
+        parsed = None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            try:
+                from email.utils import parsedate_to_datetime
+                parsed = parsedate_to_datetime(raw)
+            except (TypeError, ValueError, OverflowError):
+                parsed = None
+        if parsed is None:
+            return None
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            if naive_utc_offset_hours is None:
+                return None
+            parsed = parsed.replace(
+                tzinfo=timezone(timedelta(hours=float(
+                    naive_utc_offset_hours))))
+        source_epoch = parsed.timestamp()
+    if source_epoch is None or not math.isfinite(source_epoch) \
+            or source_epoch <= 0:
+        return None
+    try:
+        now = time.time() if now_epoch is None else float(now_epoch)
+        budget = float(max_age_seconds)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if (not math.isfinite(now) or not math.isfinite(budget)
+            or budget < 0):
+        return None
+    age = now - source_epoch
+    if age < 0 or age > budget:
+        return None
+    return {
+        "sourceEpoch": source_epoch,
+        "sourceTimestamp": datetime.fromtimestamp(
+            source_epoch, pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "sourceAgeSec": int(age),
+        "sourceTimeStatus": "CURRENT_EXACT",
+    }
+
+
+def _decision_news_row(row, *, now_epoch=None, timestamp_keys=(
+        "publishedAt", "datetime", "time")):
+    """Copy one bounded current news row, or return None."""
+    if not isinstance(row, dict):
+        return None
+    raw_timestamp = next((row.get(key) for key in timestamp_keys
+                          if row.get(key) is not None), None)
+    truth = _decision_event_time(
+        raw_timestamp, now_epoch=now_epoch,
+        max_age_seconds=_DECISION_NEWS_MAX_AGE_SEC)
+    if truth is None:
+        return None
+    return {
+        **row, **truth,
+        "publishedAt": truth["sourceTimestamp"],
+        "datetime": int(truth["sourceEpoch"]),
+        "decisionUsable": True,
+        "freshness": "FRESH" if truth["sourceAgeSec"] <= 6 * 3600
+                     else "DELAYED",
+    }
+
+
+def _decision_official_disclosure(row, market, *, now_epoch=None):
+    """Current official fact with a real bounded publication timestamp."""
+    if not isinstance(row, dict):
+        return None
+    truth = _decision_event_time(
+        row.get("disclosedAt") or row.get("time"),
+        now_epoch=now_epoch,
+        max_age_seconds=_DECISION_OFFICIAL_FACT_MAX_AGE_SEC,
+        naive_utc_offset_hours=(9 if str(market).upper() == "JP" else None))
+    if truth is None:
+        return None
+    return {**row, **truth, "decisionUsable": True}
+
+
+def _finnhub_quote_for_decision(data, *, required_fields=("c",),
+                                 now_epoch=None):
+    """Validate one Finnhub quote before any legacy decision consumer.
+
+    Finnhub transport success is not market-time truth.  The quote's provider
+    timestamp is mandatory, cannot be in the future, and must satisfy the same
+    bounded source-age contract as every other decision-relevant quote.
+    """
+    if not isinstance(data, dict):
+        return None
+    timestamp = data.get("t")
+    if _legacy_provider_number(timestamp) is None:
+        return None
+    truth = _canonical_quote_source_age(timestamp, now_epoch=now_epoch)
+    if truth.get("realtimeEvidence") is not True:
+        return None
+    for field in required_fields:
+        if _legacy_provider_number(data.get(field)) is None:
+            return None
+    return data
+
+
+def _finnhub_latest_daily_source_date(timestamp, *, now_epoch=None):
+    """Return the exact latest completed US session for a Finnhub daily row."""
+    source_epoch = _legacy_provider_number(timestamp)
+    if source_epoch is None or source_epoch <= 0:
+        return None
+    try:
+        source_date = datetime.fromtimestamp(source_epoch, pytz.utc).date()
+        decision_epoch = time.time() if now_epoch is None else float(now_epoch)
+        if not math.isfinite(decision_epoch):
+            return None
+        latest_completed = argus_market_clock.latest_completed_session_date(
+            argus_market_clock.US_EQUITY,
+            datetime.fromtimestamp(decision_epoch, pytz.utc))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+    if source_date != latest_completed or not argus_market_clock.is_trading_day(
+            argus_market_clock.US_EQUITY, source_date):
+        return None
+    return source_date.isoformat()
+
 def get_us_symbols():
     global SYMBOL_CACHE, SYMBOL_CACHE_TIME
     now = time.time()
@@ -748,11 +909,24 @@ def get_us_symbols():
 
 def get_quote(symbol):
     data = finnhub_get("quote", {"symbol": symbol})
-    if data and data.get("c"):
-        return {"current": data["c"], "open": data["o"], "high": data["h"], "low": data["l"],
-                "prev_close": data["pc"],
-                "change_pct": round((data["c"] - data["pc"]) / data["pc"] * 100, 2) if data["pc"] else 0,
-                "volume": data.get("t", 0)}
+    data = _finnhub_quote_for_decision(
+        data, required_fields=("c", "o", "h", "l", "pc"))
+    if data:
+        current = _legacy_provider_number(data["c"])
+        opened = _legacy_provider_number(data["o"])
+        high = _legacy_provider_number(data["h"])
+        low = _legacy_provider_number(data["l"])
+        previous = _legacy_provider_number(data["pc"])
+        if current is None or current <= 0 or previous is None or previous <= 0 \
+                or any(value is None or value < 0
+                       for value in (opened, high, low)):
+            return None
+        return {"current": current, "open": opened, "high": high, "low": low,
+                "prev_close": previous,
+                "change_pct": round((current - previous) / previous * 100, 2),
+                # Finnhub /quote exposes no volume.  Its ``t`` field is the
+                # source timestamp and must never be relabelled as volume.
+                "volume": 0}
     return None
 
 def get_quotes_batch(symbols):
@@ -822,23 +996,82 @@ def get_stock_candles(symbol, resolution="D", days=30):
     now = int(time.time())
     data = finnhub_get("stock/candle", {"symbol": symbol, "resolution": resolution,
                                          "from": now - days * 86400, "to": now})
-    if data and data.get("s") == "ok":
-        return [{"timestamp": data["t"][i], "open": data["o"][i], "high": data["h"][i],
-                 "low": data["l"][i], "close": data["c"][i], "volume": data["v"][i]}
-                for i in range(len(data.get("c", [])))]
-    return []
+    # Every current consumer requests daily bars.  An unsupported resolution
+    # has no settled source-time contract here and therefore fails closed.
+    if str(resolution).upper() != "D" or not isinstance(data, dict) \
+            or data.get("s") != "ok":
+        return []
+    keys = ("t", "o", "h", "l", "c", "v")
+    if any(not isinstance(data.get(key), list) for key in keys):
+        return []
+    lengths = {len(data[key]) for key in keys}
+    if len(lengths) != 1 or not lengths or next(iter(lengths)) <= 0 \
+            or next(iter(lengths)) > 512:
+        return []
+    rows = []
+    seen_timestamps = set()
+    for values in zip(*(data[key] for key in keys)):
+        timestamp, opened, high, low, close, volume = values
+        source_epoch = _legacy_provider_number(timestamp)
+        numeric = [_legacy_provider_number(value)
+                   for value in (opened, high, low, close, volume)]
+        if source_epoch is None or source_epoch <= 0 or any(
+                value is None for value in numeric):
+            return []
+        opened_n, high_n, low_n, close_n, volume_n = numeric
+        if min(opened_n, high_n, low_n, close_n) <= 0 or volume_n < 0 \
+                or high_n < max(opened_n, close_n, low_n) \
+                or low_n > min(opened_n, close_n, high_n) \
+                or source_epoch in seen_timestamps:
+            return []
+        try:
+            source_date = datetime.fromtimestamp(source_epoch, pytz.utc).date()
+        except (TypeError, ValueError, OverflowError, OSError):
+            return []
+        if not argus_market_clock.is_trading_day(
+                argus_market_clock.US_EQUITY, source_date):
+            return []
+        seen_timestamps.add(source_epoch)
+        rows.append({"timestamp": source_epoch, "open": opened_n,
+                     "high": high_n, "low": low_n, "close": close_n,
+                     "volume": volume_n})
+    rows.sort(key=lambda row: row["timestamp"])
+    if _finnhub_latest_daily_source_date(
+            rows[-1]["timestamp"], now_epoch=now) is None:
+        return []
+    return rows
 
 def get_upgrade_downgrade(symbol):
     data = finnhub_get("stock/upgrade-downgrade", {"symbol": symbol})
-    if not data: return []
-    cutoff = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
-    return [d for d in data if d.get("gradeDate", "") >= cutoff][:10]
+    if not isinstance(data, list):
+        return []
+    now_epoch = time.time()
+    out = []
+    for row in data[:80]:
+        if not isinstance(row, dict):
+            continue
+        parsed, _reason = _bounded_market_session_date(
+            row.get("gradeDate"), "US", 30,
+            accepted_formats=("%Y-%m-%d",), now_epoch=now_epoch)
+        if parsed is None:
+            continue
+        out.append({**row, "gradeDate": parsed.isoformat(),
+                    "status": "delayed", "decisionUsable": True,
+                    "sourceTimeStatus": "BOUNDED_DAILY_FACT"})
+        if len(out) >= 10:
+            break
+    return out
 
 def get_company_news(symbol, days=3):
     today = datetime.now().strftime("%Y-%m-%d")
     from_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     data = finnhub_get("company-news", {"symbol": symbol, "from": from_date, "to": today})
-    return (data or [])[:10]
+    now_epoch = time.time()
+    return [row for row in (
+        _decision_news_row(item, now_epoch=now_epoch,
+                           timestamp_keys=("datetime",))
+        for item in ((data or [])[:40] if isinstance(data, list) else []))
+        if row is not None][:10]
 
 def get_insider_transactions(symbol):
     data = finnhub_get("stock/insider-transactions", {"symbol": symbol})
@@ -848,29 +1081,45 @@ def get_insider_transactions(symbol):
 def get_finnhub_macro():
     result = {"vix": None, "vix_20d_avg": None, "vix_spike_pct": 0,
               "fear_level": "NORMAL", "sp500_change": None, "alerts": []}
+    decision_now = time.time()
     for vix_sym in ["^VIX", "VIX", "VIXY"]:
         try:
             finnhub_rate_limit()
             r = requests.get("https://finnhub.io/api/v1/quote",
                 params={"symbol": vix_sym, "token": FINNHUB_API_KEY}, timeout=6)
             if r.status_code == 200:
-                d = r.json()
-                if d.get("c") and d["c"] > 0:
-                    result["vix"] = round(d["c"], 2); break
+                d = _finnhub_quote_for_decision(
+                    r.json(), required_fields=("c",), now_epoch=decision_now)
+                current = (_legacy_provider_number(d.get("c"))
+                           if d else None)
+                if current is not None and current > 0:
+                    result["vix"] = round(current, 2); break
         except Exception: continue
     if result["vix"]:
         try:
             finnhub_rate_limit()
-            now_ts = int(time.time())
+            now_ts = int(decision_now)
             r = requests.get("https://finnhub.io/api/v1/indicator",
                 params={"symbol": "^VIX", "resolution": "D", "from": now_ts - 30*86400,
                         "to": now_ts, "indicator": "sma", "timeperiod": 20,
                         "token": FINNHUB_API_KEY}, timeout=8)
             if r.status_code == 200:
                 d = r.json()
-                sma_vals = [v for v in (d.get("sma") or []) if v]
-                if sma_vals:
-                    result["vix_20d_avg"] = round(sma_vals[-1], 2)
+                sma_rows = d.get("sma") if isinstance(d, dict) else None
+                timestamps = d.get("t") if isinstance(d, dict) else None
+                pairs = []
+                if isinstance(sma_rows, list) and isinstance(timestamps, list) \
+                        and len(sma_rows) == len(timestamps) \
+                        and 0 < len(sma_rows) <= 512:
+                    for source_timestamp, raw_sma in zip(timestamps, sma_rows):
+                        sma = _legacy_provider_number(raw_sma)
+                        source_epoch = _legacy_provider_number(source_timestamp)
+                        if sma is not None and sma > 0 and source_epoch is not None:
+                            pairs.append((source_epoch, sma))
+                pairs.sort(key=lambda pair: pair[0])
+                if pairs and _finnhub_latest_daily_source_date(
+                        pairs[-1][0], now_epoch=decision_now) is not None:
+                    result["vix_20d_avg"] = round(pairs[-1][1], 2)
                     spike = (result["vix"] - result["vix_20d_avg"]) / result["vix_20d_avg"] * 100
                     result["vix_spike_pct"] = round(spike, 1)
                     if spike >= 30:
@@ -887,9 +1136,14 @@ def get_finnhub_macro():
         r = requests.get("https://finnhub.io/api/v1/quote",
             params={"symbol": "SPY", "token": FINNHUB_API_KEY}, timeout=6)
         if r.status_code == 200:
-            d = r.json()
-            if d.get("c") and d.get("pc"):
-                chg = round((d["c"] - d["pc"]) / d["pc"] * 100, 2)
+            d = _finnhub_quote_for_decision(
+                r.json(), required_fields=("c", "pc"),
+                now_epoch=decision_now)
+            current = (_legacy_provider_number(d.get("c")) if d else None)
+            previous = (_legacy_provider_number(d.get("pc")) if d else None)
+            if current is not None and current > 0 \
+                    and previous is not None and previous > 0:
+                chg = round((current - previous) / previous * 100, 2)
                 result["sp500_change"] = chg
                 if chg <= -2.0:
                     result["alerts"].append(f"🚨 S&P500 Risk-off: {chg}%")
@@ -955,7 +1209,17 @@ def get_order_book(symbol, num=10):
         if ret == RET_OK:
             bids = [(row["Bid"], row["BidVol"]) for _, row in data.iterrows() if row.get("Bid")]
             asks = [(row["Ask"], row["AskVol"]) for _, row in data.iterrows() if row.get("Ask")]
-            return {"bids": bids, "asks": asks}
+            # The current OpenD response seam has no validated provider/venue
+            # timestamp, entitlement, or session identity.  Preserve the book
+            # for diagnostics, but never let a synchronous transport receipt
+            # masquerade as current decision evidence.
+            return {
+                "bids": bids, "asks": asks,
+                "authority": "diagnostic_only",
+                "decisionUsable": False,
+                "sourceTimestamp": None,
+                "sourceTimeStatus": "UNVALIDATED_CAPABILITY",
+            }
     except Exception as e:
         add_log(f"[WARN] Order book failed {symbol}: {e}")
     return None
@@ -997,13 +1261,20 @@ def calc_whale_threshold_ewma(order_sizes, span=20):
 def analyze_order_book(symbol):
     ob = get_order_book(symbol)
     if not ob:
-        return {"available": False, "absorption_ratio": 1.0, "downside_efficiency": 0.0,
-                "whale_threshold": 1000, "bids": [], "asks": [], "whale_detected": False}
+        return {"available": False, "decisionUsable": False,
+                "authority": "diagnostic_only",
+                "sourceTimeStatus": "UNAVAILABLE",
+                "absorption_ratio": 1.0, "downside_efficiency": 0.0,
+                "whale_threshold": 1000, "bids": [], "asks": [],
+                "whale_detected": False}
     de = calc_downside_efficiency(ob)
     all_sizes = [b[1] for b in ob.get("bids", [])] + [a[1] for a in ob.get("asks", [])]
     whale_th = calc_whale_threshold_ewma(all_sizes)
     whale_bids = [b for b in ob.get("bids", []) if b[1] >= whale_th]
-    return {"available": True, "absorption_ratio": 1.0, "downside_efficiency": de,
+    return {"available": True, "decisionUsable": False,
+            "authority": "diagnostic_only",
+            "sourceTimeStatus": "UNVALIDATED_CAPABILITY",
+            "absorption_ratio": 1.0, "downside_efficiency": de,
             "whale_threshold": whale_th, "bids": ob["bids"][:5], "asks": ob["asks"][:5],
             "whale_detected": len(whale_bids) > len([a for a in ob.get("asks", []) if a[1] >= whale_th]),
             "whale_bid_vol": sum(b[1] for b in whale_bids)}
@@ -1062,6 +1333,7 @@ def _calc_margin_deadzone(account_info, positions, current_prices):
 # ━━━ News & OSINT ━━━
 def get_news():
     articles = []
+    now = time.time()
     if NEWS_API_KEY:
         try:
             r = requests.get("https://newsapi.org/v2/everything",
@@ -1070,16 +1342,30 @@ def get_news():
                         "apiKey": NEWS_API_KEY}, timeout=10)
             if r.status_code == 200:
                 for a in r.json().get("articles", []):
-                    articles.append({"title": a.get("title", ""), "source": a.get("source", {}).get("name", "")})
+                    projected = _decision_news_row({
+                        "title": a.get("title", ""),
+                        "source": a.get("source", {}).get("name", ""),
+                        "publishedAt": a.get("publishedAt"),
+                    }, now_epoch=now, timestamp_keys=("publishedAt",))
+                    if projected is not None and projected.get("title"):
+                        articles.append(projected)
         except Exception: pass
     for feed_url in ["https://rsshub.app/telegram/channel/warmonitor3",
                      "https://rsshub.app/telegram/channel/intelslava"]:
         try:
             r = requests.get(feed_url, timeout=8)
             if r.status_code == 200:
-                titles = re.findall(r"<title>(.*?)</title>", r.text)
-                for t in titles[1:6]:
-                    articles.append({"title": t, "source": "OSINT"})
+                # Transport receipt is not publication truth.  An RSS item needs
+                # an exact bounded provider timestamp before it may enter prompts
+                # or the emergency sentinel.
+                for raw in _parse_rss(
+                        r.text, "osint_public", _ai_now_iso())[:5]:
+                    projected = _decision_news_row({
+                        "title": raw.get("title"), "source": "OSINT",
+                        "publishedAt": raw.get("publishedAt"),
+                    }, now_epoch=now, timestamp_keys=("publishedAt",))
+                    if projected is not None:
+                        articles.append(projected)
         except Exception: pass
     return articles
 
@@ -1088,7 +1374,12 @@ LEAK_KEYWORDS = ["sources say","according to sources","is considering","emergenc
 
 def detect_leaks(articles):
     leaks = []
-    for a in articles:
+    for raw in articles:
+        a = _decision_news_row(
+            raw, timestamp_keys=("publishedAt", "sourceTimestamp",
+                                 "datetime", "time"))
+        if a is None:
+            continue
         tl = a.get("title", "").lower()
         if any(kw in tl for kw in LEAK_KEYWORDS):
             leaks.append(a)
@@ -1098,11 +1389,22 @@ def sentinel_check(news, extra=""):
     if not news: return {"action": "HOLD", "risk": 0, "reason": ""}
     crisis = ["nuclear","invasion","war declared","financial crisis","bank collapse",
               "emergency fed","market crash","circuit breaker triggered","debt default"]
-    risk, reasons = 0, []
-    for a in news:
+    reasons, seen = [], set()
+    for raw in news:
+        a = _decision_news_row(
+            raw, timestamp_keys=("publishedAt", "sourceTimestamp",
+                                 "datetime", "time"))
+        if a is None:
+            continue
         tl = a.get("title", "").lower()
-        for kw in crisis:
-            if kw in tl: risk += 2; reasons.append(a["title"][:60])
+        fingerprint = re.sub(r"[^a-z0-9]+", " ", tl).strip()
+        if fingerprint and fingerprint not in seen and any(
+                kw in tl for kw in crisis):
+            # One headline is one item of evidence even if several crisis
+            # keywords occur in it. SELL_ALL requires two distinct current rows.
+            seen.add(fingerprint)
+            reasons.append(a["title"][:60])
+    risk = len(reasons) * 2
     if risk >= 4:
         return {"action": "SELL_ALL", "risk": min(risk, 5), "reason": " | ".join(reasons[:3])}
     return {"action": "HOLD", "risk": min(risk, 5), "reason": " | ".join(reasons[:3]) if reasons else ""}
@@ -1111,6 +1413,8 @@ def process_whale_ratings(upgrades, quote):
     if not upgrades: return 0, ""
     score_adj, signals = 0, []
     for u in upgrades:
+        if not isinstance(u, dict) or u.get("decisionUsable") is not True:
+            continue
         company = u.get("company", "")
         is_whale = any(f.lower() in company.lower() for f in WHALE_FIRMS)
         if not is_whale: continue
@@ -1241,6 +1545,56 @@ def evaluate_vwap_reclaim(symbol, open_price, current_price, history):
     vwap = total_pv / total_v if total_v > 0 else open_price
     return current_price >= vwap, round(vwap, 2)
 
+
+def _moomoo_opend_source_timestamp(value, market, *, now_epoch=None):
+    """Normalize one OpenD ``update_time`` and prove current source time.
+
+    OpenD documents the snapshot timestamp as market-local wall time.  The
+    direct legacy path therefore must apply the market timezone explicitly;
+    treating that wall clock as UTC or substituting receipt time would invent
+    freshness.  Missing, malformed, ambiguous, future, and stale values fail
+    closed.
+    """
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if not raw or raw.lower() in ("nan", "nat", "none", "n/a"):
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        if parsed.strftime("%Y-%m-%d %H:%M:%S") != raw:
+            return None
+        market_name = str(market).upper()
+        if market_name == "US":
+            zone = TZ_ET
+        elif market_name == "JP":
+            zone = TZ_JST
+        else:
+            return None
+        try:
+            parsed = zone.localize(parsed, is_dst=None)
+        except (pytz.AmbiguousTimeError, pytz.NonExistentTimeError):
+            return None
+    source_iso = parsed.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    truth = _canonical_moomoo_quote_truth(
+        source_iso, "unknown", now_epoch=now_epoch)
+    return source_iso if truth.get("realtimeEvidence") is True else None
+
+
+def _moomoo_opend_number(value):
+    """Finite OpenD dataframe scalar without accepting bool/string payloads."""
+    if isinstance(value, bool) or isinstance(value, (str, bytes)):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def get_realtime_prices(symbols):
     prices = {}
     ctx = moomoo_connect_quote()
@@ -1250,17 +1604,46 @@ def get_realtime_prices(symbols):
             ret, data = ctx.get_market_snapshot(moomoo_syms)
             if ret == RET_OK:
                 for _, row in data.iterrows():
-                    sym = row.get("code", "").replace("US.", "")
-                    if sym:
-                        prices[sym] = {"current": row.get("last_price", 0), "open": row.get("open_price", 0),
-                                       "high": row.get("high_price", 0), "low": row.get("low_price", 0),
-                                       "volume": row.get("volume", 0),
-                                       "change_pct": round(row.get("price_change_rate", 0) or 0, 2)}
-                        now_str = datetime.now(TZ_ET).strftime("%H:%M")
-                        if sym not in PRICE_HISTORY: PRICE_HISTORY[sym] = []
-                        PRICE_HISTORY[sym].append({"time": now_str, "price": row.get("last_price", 0),
-                                                    "volume": row.get("volume", 0)})
-                        if len(PRICE_HISTORY[sym]) > 200: PRICE_HISTORY[sym] = PRICE_HISTORY[sym][-200:]
+                    code = row.get("code")
+                    if not isinstance(code, str) or not code.startswith("US."):
+                        continue
+                    sym = code[3:].strip().upper()
+                    if not sym or sym not in {str(item).upper() for item in symbols}:
+                        continue
+                    source_timestamp = _moomoo_opend_source_timestamp(
+                        row.get("update_time"), "US")
+                    if source_timestamp is None:
+                        continue
+                    current = _moomoo_opend_number(row.get("last_price"))
+                    opened = _moomoo_opend_number(row.get("open_price"))
+                    high = _moomoo_opend_number(row.get("high_price"))
+                    low = _moomoo_opend_number(row.get("low_price"))
+                    volume = _moomoo_opend_number(row.get("volume"))
+                    change = _moomoo_opend_number(row.get("price_change_rate"))
+                    if current is None or current <= 0 or any(
+                            value is None or value < 0
+                            for value in (opened, high, low, volume)) \
+                            or change is None \
+                            or high < max(opened, current, low) \
+                            or low > min(opened, current, high):
+                        continue
+                    prices[sym] = {
+                        "current": current, "open": opened,
+                        "high": high, "low": low, "volume": int(volume),
+                        "change_pct": round(change, 2),
+                    }
+                    source_epoch = _coerce_epoch(source_timestamp)
+                    source_time = datetime.fromtimestamp(
+                        source_epoch, TZ_ET).strftime("%H:%M")
+                    if sym not in PRICE_HISTORY:
+                        PRICE_HISTORY[sym] = []
+                    PRICE_HISTORY[sym].append({
+                        "time": source_time, "price": current,
+                        "volume": int(volume),
+                        "sourceTimestamp": source_timestamp,
+                    })
+                    if len(PRICE_HISTORY[sym]) > 200:
+                        PRICE_HISTORY[sym] = PRICE_HISTORY[sym][-200:]
                 return prices
         except Exception as e:
             add_log(f"[WARN] moomoo snapshot failed: {e}")
@@ -1279,11 +1662,13 @@ def phase1_broad_scan():
     for alert in finnhub.get("alerts", []): add_log(f"  {alert}")
     news = get_news(); sentinel = sentinel_check(news)
     state["sentinel"] = sentinel; state["news"] = [{"title": n.get("title","")} for n in news[:15]]
-    if sentinel.get("action") == "SELL_ALL" and not DRY_RUN_MODE:
-        add_log("🚨 SENTINEL: SELL_ALL"); push_notify(
-            "🚨 SELL ALL", sentinel.get("reason", ""), priority="urgent",
-            notification_scope="portfolio")
-        state["phase"] = 1; save_state(state); return
+    if sentinel.get("action") == "SELL_ALL":
+        # Legacy emergency keywords remain risk evidence.  They no longer emit
+        # a portfolio action, halt the evidence scan, or notify SELL_ALL; only
+        # the canonical SDA may turn verified risk into REDUCE/EXIT for a
+        # device-local HELD position.
+        add_log("⚠️ SENTINEL risk evidence detected (EVIDENCE_ONLY)")
+        state["legacyAuthorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE
     leaks = detect_leaks(news)
     if leaks: add_log(f"  🔍 {len(leaks)} leak signals")
     movers_text = "\n".join([f"{m['symbol']}: {m.get('change_pct',0):+.2f}% (${m.get('current',0):.2f})" for m in movers[:50]])
@@ -1443,19 +1828,16 @@ def phase4_final_top3():
         if sym:
             add_log(f"  📊 Order book: {sym}")
             ob = analyze_order_book(sym); ob_results[sym] = ob
-            if ob.get("available"):
+            if ob.get("decisionUsable") is True:
                 add_log(f"    AR:{ob.get('absorption_ratio','-')} Vacuum:{ob.get('downside_efficiency','-')} {'🐳WHALE' if ob.get('whale_detected') else ''}")
+    # Owner account/position state is deliberately excluded.  The legacy rank
+    # is public evidence only; owner exposure joins later on the device.
     margin_info = None
-    account = get_account_info(); positions = get_positions()
-    if account and positions:
-        syms = [s.get("symbol","") for s in top5]; cp = get_quotes_batch(syms)
-        margin_info = _calc_margin_deadzone(account, positions, cp)
-        if margin_info: add_log(f"  💰 Margin:{margin_info['margin_pct']:.1f}% Drop:{margin_info['allowed_drop_pct']:.1f}% {margin_info['alert_level']}")
     scored = []
     for s in top5:
         sym = s.get("symbol", ""); ob = ob_results.get(sym, {})
         combined = s.get("combined_score", s.get("score", 50))
-        if ob.get("available"):
+        if ob.get("decisionUsable") is True:
             if ob.get("whale_detected"): combined += 10
             if ob.get("downside_efficiency", 0) > 0.3: combined -= 15
         s["final_score"] = min(100, max(0, combined)); s["order_book"] = ob
@@ -1466,48 +1848,43 @@ def phase4_final_top3():
     top3 = scored[:3]
     if not top3:
         add_log("⏭️ All killed. Skip today.")
-        push_notify("⏭️ Skip", "No candidates passed.", priority="default",
-                    notification_scope="system")
-        state["phase"] = 4; state["top3_final"] = []; save_state(state); return
+        state["phase"] = 4; state["top3_final"] = []
+        state["legacyAuthorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE
+        save_state(state); return
     medal = ["🥇","🥈","🥉"]
     for i, s in enumerate(top3):
         sym = s.get("symbol",""); grade = s.get("grade", classify_catalyst_grade(s.get("reason",""))); s["grade"] = grade
         margin_str = f"\n⚠️ Margin 20%: -${s.get('margin_drop_pct',0):.1f}% (${s.get('margin_deadline','')})" if s.get("margin_deadline") else ""
         msg = f"{medal[i]} {sym}\nScore:{s.get('final_score',0)} Grade:{grade}\n{s.get('reason','')}\nStop: {s.get('sell_trigger','')}{margin_str}"
         add_log(f"  {medal[i]} {sym} Score:{s.get('final_score',0)} Grade:{grade}")
-        push_notify(f"{medal[i]} TOP3 #{i+1}: {sym}", msg,
-                    priority="high" if i==0 else "default",
-                    subject_symbol=sym, notification_scope="individual_security")
-    if margin_info and margin_info.get("alert_level") in ("URGENT","HIGH"):
-        push_notify("⚠️ MARGIN ALERT", f"Margin:{margin_info['margin_pct']:.1f}% Drop:{margin_info['allowed_drop_pct']:.1f}%",
-            priority="urgent" if margin_info["alert_level"]=="URGENT" else "high",
-            notification_scope="portfolio")
+        s["authorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE
+        s["finalDecisionAuthorityActive"] = False
     state["phase"] = 4; state["top3_final"] = top3; state["dry_run"] = DRY_RUN_MODE
+    state["legacyAuthorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE
     state["order_book"] = {s.get("symbol",""): ob_results.get(s.get("symbol",""),{}) for s in top3}
     if margin_info: state["margin_alert"] = f"Margin:{margin_info['margin_pct']:.1f}% Drop:{margin_info['allowed_drop_pct']:.1f}% {margin_info['alert_level']}"
     if DRY_RUN_MODE: state["market_condition"] = "🔬 DRY RUN (Closed Market) — Simulation complete"
-    # A.R.G.U.S. ledger — best-effort log of each pick so calibration
-    # endpoints accumulate real history. Never break the scan flow.
-    if not DRY_RUN_MODE:
-        try:
-            for s in top3:
-                argus_ledger.log_prediction(
-                    code=str(s.get("symbol", "")),
-                    name=s.get("name") or s.get("company_name"),
-                    direction="up",
-                    probability=argus_ledger.score_to_probability(s.get("final_score")),
-                    horizon="1d",
-                    price_at_prediction=float(s.get("price") or s.get("last_price") or 0),
-                    reason_code=str(s.get("grade") or s.get("reason") or "TOP3")[:32],
-                )
-        except Exception as _e:
-            add_log("⚠️ ledger.log_prediction failed: " + str(_e)[:120])
-    save_state(state); add_log(f"✅ Ph.4 complete: TOP3 confirmed{' [DRY RUN]' if DRY_RUN_MODE else ''}")
+    # Legacy ranks never enter forward-live calibration as predictions.
+    save_state(state); add_log(f"✅ Ph.4 evidence ranking complete{' [DRY RUN]' if DRY_RUN_MODE else ''} (EVIDENCE_ONLY)")
 # ━━━ Phase 5: Dynamic Exit Engine ━━━
 def phase5_post_open():
     add_log("📈 Ph.5: Dynamic Exit Engine...")
     state = load_state(); top3 = state.get("top3_final", [])
     if not top3: add_log("[WARN] No TOP3"); return
+    # The old dynamic exit state machine is retained below as bounded research
+    # evidence, but it is no longer an action/notification authority and never
+    # reads owner positions.  Round 2's canonical owner-aware SDA replaces it.
+    state["phase"] = 5
+    state["post_open_result"] = {
+        "status": "evidence_only",
+        "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+        "finalDecisionAuthorityActive": False,
+        "evaluations": [],
+        "overall": "Legacy dynamic-exit action authority is retired.",
+    }
+    save_state(state)
+    add_log("⏭️ Ph.5 action authority retired; canonical SDA required")
+    return
     finnhub = state.get("finnhub_macro", {}); codes = [s.get("symbol","") for s in top3 if s.get("symbol")]
     contexts, ob_history = {}, {}
     for s in top3:
@@ -1567,7 +1944,7 @@ def phase5_post_open():
             if p.get("change_pct",0) >= 0: ctx["recovered_to_positive"] = True
             ctx["prev_volume"] = vol_now
             ob = get_order_book(sym)
-            if ob:
+            if ob and ob.get("decisionUsable") is True:
                 ob_history[sym].append(ob); ctx["downside_efficiency"] = calc_downside_efficiency(ob)
                 if len(ob_history[sym]) >= 2: ctx["absorption_ratio"] = calc_absorption_ratio(ob_history[sym])
                 all_sz = [b[1] for b in ob.get("bids",[])] + [a[1] for a in ob.get("asks",[])]
@@ -1577,7 +1954,7 @@ def phase5_post_open():
             st_em = {"S0":"⏳","S1":"🔍","S2":"✅","S3":"⚠️","S4":"🚨","S5":"💰"}.get(new_state,"?")
             add_log(f"  {sym} {elapsed}min {sign}{p.get('change_pct',0)}% | {st_em}{new_state} H:{hold_sc} E:{exit_sc}")
             state["realtime_prices"] = prices_now
-            if ob:
+            if ob and ob.get("decisionUsable") is True:
                 if "order_book" not in state: state["order_book"] = {}
                 state["order_book"][sym] = {"bids": ob.get("bids",[])[:5], "asks": ob.get("asks",[])[:5],
                     "absorption_ratio": ctx["absorption_ratio"], "downside_efficiency": ctx["downside_efficiency"],
@@ -1645,21 +2022,24 @@ def index(): return HTML
 
 @app.route("/healthz")
 def healthz():
-    """Liveness + build metadata (v10.38). Public, secret-free. buildSha lets
-    the smoke-test workflow confirm WHICH commit is live before asserting, and
-    gives the backend the build identity GPT's version-sync review asked for."""
+    """Minimal public liveness/build identity; never a recovery proof."""
     if not _RUNTIME.get("firstHealthAt"):     # v12.2.9: 初回health実測(捏造なし)
         _RUNTIME["firstHealthAt"] = _ai_now_iso()
-    return jsonify({
-        "status": "ok",
-        "engineVersion": "argus-backend-v1",
-        "backendVersion": _semantic_app_version() or None,
-        # The production release manifest is allowed to advance only after an
-        # exact comparison with the deployed Render commit.  A short prefix is
-        # useful for display, but is not an unambiguous release identity.
-        "buildSha": _backend_exact_sha(),
-        "asOf": _ai_now_iso(),
-    })
+    now_iso = _ai_now_iso()
+    try:
+        payload = argus_diagnostics_contract.build_public_liveness(
+            generated_at=now_iso,
+            backend_version=_semantic_app_version(),
+            build_sha=_backend_exact_sha())
+    except Exception:
+        payload = {
+            "schemaVersion": "argus-public-liveness-v1",
+            "generatedAt": now_iso,
+            "status": "ok",
+            "backendVersion": "unknown",
+            "buildSha": None,
+        }
+    return jsonify(payload)
 
 @app.route("/api/state")
 def api_state():
@@ -1744,146 +2124,6 @@ def api_margin():
     return jsonify(_calc_margin_deadzone(account, positions, cp) or {"error": "No data"})
 
 # ━━━ A.R.G.U.S. — calibration ledger API (React frontend) ━━━
-@app.route("/api/argus/calibration")
-def api_argus_calibration():
-    """DEPRECATED (v10.35): this used to read a Render-EPHEMERAL local jsonl
-    (argus_ledger.aggregate_stats) that is always empty in production, so it
-    reported all-zero hit rates — a footgun for any external caller. It now
-    returns the REAL scored calibration from the `ledger` branch summary (the
-    same source the Today screen uses). Read the ledger branch directly going
-    forward; this shim stays only so old links don't silently lie."""
-    real = _ledger_summary() or {}
-    return jsonify({
-        "deprecated": True,
-        "noteJa": "旧実装はRender揮発ファイルを読み常時ゼロでした。現在は台帳ブランチの実集計"
-                  "(_ledger_summary)に接続。今後はledgerブランチを直接参照してください。",
-        "source": "ledger-branch-summary",
-        "updated": real.get("updated"),
-        "overall": real.get("overall"),
-        "byPosture": real.get("byPosture"),
-        "layers": real.get("layers"),
-        "aiDirectional": real.get("aiDirectional"),
-    })
-
-
-@app.route("/api/argus/calibration/cohorts")
-def api_argus_calibration_cohorts():
-    """Calibration Ledger v4 (Phase 1) — the cohort MODEL (read-only).
-
-    Exposes only the fixed server-side structure (regime sensors / tactical
-    benchmark / experimental flags / factor groups). The owner's dynamic
-    watchlist (Layer 2B) is NOT here — it lives in a private store and is never
-    served to anonymous callers. Also applies the new factor-group-weighted
-    aggregation to the LIVE Layer-1 byMember stats, non-destructively, so you can
-    see how equal-group-weighting differs from the flat 16-symbol average."""
-    C = argus_calibration
-    # Demonstrate the section-14 fix on real data (horizon 1d byMember hitRates).
-    fg_demo = None
-    try:
-        summ = _ledger_summary() or {}
-        bm = (((summ.get("layers") or {}).get("layer1") or {}).get("byHorizon") or {}) \
-            .get("1", {}).get("byMember") or {}
-        per_sym = {s: float(v.get("hitRate")) for s, v in bm.items()
-                   if isinstance(v, dict) and v.get("hitRate") is not None}
-        if per_sym:
-            flat = round(sum(per_sym.values()) / len(per_sym), 4)
-            agg = C.factor_group_aggregate(per_sym)
-            fg_demo = {
-                "flatEqualSymbolWeighted": flat,
-                "equalGroupWeighted": agg["overallEqualGroupWeighted"],
-                "factorGroupScores": agg["factorGroupScores"],
-                "noteJa": "従来の16銘柄フラット平均と、相関を抑えたファクターグループ等加重の比較"
-                          "(米株3銘柄が過大に効かないようにする・section 14)",
-            }
-    except Exception:
-        fg_demo = None
-    def _named(syms):
-        return [{"symbol": s, "name": C.display_name(s) or s,
-                 "factorGroup": C.factor_group_of(s)} for s in syms]
-    return jsonify({
-        "schemaVersion": C.SCHEMA_VERSION,
-        "regimeSensorUniverseVersion": C.UNIVERSE_VERSION,
-        "tacticalBenchmarkVersion": C.TACTICAL_BENCHMARK_VERSION,
-        "factorGroupVersion": C.FACTOR_GROUP_VERSION,
-        "cohortVersion": C.COHORT_VERSION,
-        "phase": "v4-universe-v2 (regime_sensor_v2 / tactical_benchmark_v2)",
-        "cohorts": {
-            C.COHORT_REGIME_SENSOR: {
-                "labelJa": "固定レジームセンサー(校正の背骨・16銘柄・不変)",
-                "count": len(C.REGIME_SENSORS),
-                "members": _named(C.REGIME_SENSORS),
-            },
-            C.COHORT_TACTICAL_FIXED: {
-                "labelJa": "固定タクティカルベンチ(縦断比較用・14銘柄・分散)",
-                "count": len(C.TACTICAL_BENCHMARK),
-                "jp": _named([s for s in C.TACTICAL_BENCHMARK if s[0].isdigit()]),
-                "us": _named([s for s in C.TACTICAL_BENCHMARK if not s[0].isdigit()]),
-                "noteJa": "5803 フジクラは意図的に固定ベンチに保持。5801/METAは所有者ウォッチリストで利用可。",
-            },
-            C.COHORT_OWNER_WATCHLIST: {
-                "labelJa": "所有者ウォッチリスト(動的・private保存・採点はPhase4で有効化)",
-                "symbols": [], "status": "pending_private_store",
-                "noteJa": "5801/META/285A/9501/6584/ETH 等が想定。2Aと重複しても予測は1件・コホートは別集計。",
-            },
-            C.COHORT_EXPERIMENTAL: {
-                "labelJa": "実験コホート(旧「Layer3=6584固定」を廃止しフラグ制に置換)",
-                "examples": list(C._MANUAL_EXPERIMENTAL.keys()),
-                "flags": list(C.EXPERIMENTAL_FLAGS),
-            },
-        },
-        "contextVariables": {
-            "noteJa": "回帰・地合い説明用の文脈変数。等加重のリターン採点センサーには混ぜない"
-                      "(VIXは逆相関リスク、USDJPYは文脈依存、金利/HY OASは水準でリターンでない)。",
-            "variables": C.context_variables(),
-        },
-        "factorGroups": {g: list(s) for g, s in C.FACTOR_GROUPS.items()},
-        "tacticalFactorRoles": C.TACTICAL_FACTOR_GROUPS,
-        "layer1FactorGroupDemo": fg_demo,
-    })
-
-
-@app.route("/api/argus/decision-value/summary")
-def api_argus_decision_value_summary():
-    """Decision Value Ledger v1 (Phase 1: engine ready, no shadow records yet).
-
-    RESEARCH SIMULATION ONLY — no order routes, no broker, no execution. Measures
-    "would a defined policy have positive value AFTER costs/risk?" — SEPARATE from
-    the calibration (Brier/RPS) question. Shadow recording + per-policy expectancy
-    arrive in Phase 2; this exposes engine readiness + versions only."""
-    DV = argus_decision_value
-    # v10.195: report the REAL phase. Public payload carries per-policy n + sample
-    # stage ONLY — never netR (real outcomes stay owner-gated in the private store).
-    pub = _dv_shadow_public_summary()
-    return jsonify({
-        "schemaVersion": DV.DECISION_VALUE_SCHEMA,
-        "costModelVersion": DV.COST_MODEL_VERSION,
-        "riskModelVersion": DV.RISK_MODEL_VERSION,
-        "phase": pub["phase"],
-        "status": pub["status"],
-        "shadow": pub["shadow"],
-        "blockersJa": pub.get("blockersJa"),
-        "noteJa": "「校正(Brier/RPS)が良い ≠ 儲かる」を測る別台帳。明示的な不変ポリシーで shadow "
-                  "(仮想)シミュレーションし、現実的コスト後の純期待値・リスクオブルインを評価。"
-                  "Phase1は純エンジン+テスト(21件)のみ。shadow記録/ポリシー別集計はPhase2。",
-        "engine": {
-            "metrics": ["netExpectancyR", "payoffRatio", "profitFactor",
-                        "riskOfRuin(blockBootstrapMonteCarlo)", "noTradeValue",
-                        "kelly(disabled_by_default)"],
-            "sampleStages": ["burn_in(<30)", "exploratory(30-59)",
-                             "provisional(60-119)", "validation(120+) — never 'proven'"],
-        },
-        "safety": DV.DISCLAIMER + " No broker, no order routes, no auto-trading.",
-    })
-
-
-@app.route("/api/argus/decision-value/policies")
-def api_argus_decision_value_policies():
-    """Decision Value — the immutable Policy Registry + comparison baselines
-    (read-only). Policies define eligibility/entry/exit so shadow results are
-    reproducible + hindsight-free. RESEARCH ONLY — no order routes."""
-    return jsonify(argus_decision_value.list_policies())
-
-
 # ── Decision Value shadow operations (Phase 1 START, v10.195) ────────────────
 # Records eligible decisions as IMMUTABLE shadow candidates in the OWNER-PRIVATE
 # store, and scores due horizons. RESEARCH SIMULATION ONLY — no order/broker/execute
@@ -2080,8 +2320,36 @@ def api_argus_decision_value_shadow_summary():
         return jsonify({"status": "parse_error"})
 
 
-def _dv_status_public_dict():
+_DV_STATUS_CACHE = {"data": None, "expires": 0.0}
+
+
+def _dv_status_public_dict(*, allow_private_fetch=True):
     """PUBLIC-SAFE Decision Value status dict (route + Evidence Pack both read this)."""
+    now = time.time()
+    cached = _DV_STATUS_CACHE.get("data")
+    if (isinstance(cached, dict) and
+            now < _DV_STATUS_CACHE["expires"]):
+        return cached
+    if not allow_private_fetch:
+        configured = _layer2b_store_configured()
+        return {
+            "schemaVersion": argus_decision_value.DECISION_VALUE_SCHEMA,
+            "phase": ("engine_ready_no_records_yet" if configured else
+                      "not_configured"),
+            "cacheFreshness": ("stale" if cached else "missing"),
+            "privateStoreConfigured": configured,
+            "lastShadowRunAt": None,
+            "totalRecords": 0,
+            "scoredCount": 0,
+            "pendingOutcomeCount": 0,
+            "policyCounts": {},
+            "noTradeCounts": {},
+            "sampleStage": "none",
+            "reasonJa": ("キャッシュ期限切れ。管理側の定期実行後に更新します。"
+                         if cached else
+                         "キャッシュ未取得。管理側の定期実行後に更新します。"),
+            "disclaimer": "Research simulation only. No order was or will be submitted.",
+        }
     pub = _dv_shadow_public_summary()
     shadow = pub.get("shadow") or {}
     pol = shadow.get("policies") or {}
@@ -2101,9 +2369,10 @@ def _dv_status_public_dict():
     stages = [v.get("sampleStage") for v in list(pol.values()) + list(nt.values()) if v.get("sampleStage")]
     sample_stage = "usable" if any(s in ("validation", "provisional") for s in stages) else (
         "early_signal" if any(s == "exploratory" for s in stages) else ("burn_in" if stages else "none"))
-    return {
+    result = {
         "schemaVersion": argus_decision_value.DECISION_VALUE_SCHEMA,
         "phase": phase,
+        "cacheFreshness": "fresh",
         "privateStoreConfigured": configured,
         "lastShadowRunAt": shadow.get("asOf"),
         "totalRecords": total,
@@ -2115,25 +2384,27 @@ def _dv_status_public_dict():
         "reasonJa": pub.get("blockersJa") or "",
         "disclaimer": "Research simulation only. No order was or will be submitted.",
     }
-
-
-@app.route("/api/argus/decision-value/status")
-def api_argus_decision_value_status():
-    """PUBLIC-SAFE Decision Value status (ARGUS Pro v11). Auditable phase + per-policy
-    counts + sampleStage ONLY — never netR / prices / holdings (those stay owner-private).
-    phase can never claim recording/scoring unless records/scores actually exist."""
-    return jsonify(_dv_status_public_dict())
+    _DV_STATUS_CACHE["data"] = result
+    _DV_STATUS_CACHE["expires"] = now + 300
+    return result
 
 
 # ── Calibration Operations (v10.195) — is v4 capture actually happening? ─────
 _CALIB_V4_CACHE = {"data": None, "expires": 0.0}
 
-def _calibration_v4_summary():
-    """Read the parallel v4 dry-run summary (calibration_v1/summary.json) off the
-    ledger branch. None until the GitHub Action has written it (fresh env → 404)."""
+def _calibration_v4_summary(*, allow_ledger_fetch=True):
+    """Read the historical-compatibility/shadow-derived calibration_v1 summary.
+
+    This legacy branch artifact is not canonical live-calibration authority;
+    the sealed v2 forward_live ledger is separately evidence-only. None until
+    the GitHub Action has written the compatibility artifact (fresh env → 404).
+    """
     now = time.time()
-    if _CALIB_V4_CACHE["data"] is not None and now < _CALIB_V4_CACHE["expires"]:
+    if (_CALIB_V4_CACHE["data"] is not None and
+            now < _CALIB_V4_CACHE["expires"]):
         return _CALIB_V4_CACHE["data"]
+    if not allow_ledger_fetch:
+        return None
     out = None
     try:
         import json as _json
@@ -2165,156 +2436,6 @@ def _calibration_coverage():
             "contextVarsPresent": len(snap.get("contextVariables") or []),
             "rollingPerSensorCoverage": None}   # needs day-history (Phase later)
 
-@app.route("/api/argus/calibration/ops")
-def api_argus_calibration_ops():
-    """Calibration Operations — is usable v4 capture happening, and can the clean
-    epoch be activated? Read-only; NO owner/Layer-2B data. Honest inputs to
-    readiness_check (no fabricated coverage)."""
-    C = argus_calibration
-    led = _ledger_summary() or {}
-    overall = led.get("overall") or {}
-    v3days = int(overall.get("days") or 0)
-    v4 = _calibration_v4_summary()
-    cov = _calibration_coverage()
-    l1 = cov.get("layer1SessionCoverage") or 0.0
-    rolling = cov.get("rollingPerSensorCoverage")
-    readiness = C.readiness_check(
-        required_sensor_coverage=l1,
-        layer1_session_coverage=l1,
-        rolling_per_sensor_coverage=(rolling if isinstance(rolling, (int, float)) else 0.0),
-        unresolved_write_failures=0,
-        stale_price_forecasts=len(cov.get("missing") or []),
-        cohorts_finalized=True,
-        scoring_tests_pass=True,
-    )
-    try:
-        health = _ledger_health()
-    except Exception:
-        health = {}
-    return jsonify({
-        "asOf": _ai_now_iso(), "schemaVersion": C.SCHEMA_VERSION,
-        "currentEpoch": {"active": C.ACTIVE_EPOCH,
-                         "reliabilityStage": C.reliability_stage(v3days)},
-        "v3Headline": overall,
-        "v4DryRun": v4 or {"status": "no_v4_summary_yet",
-                           "noteJa": "v4ドライランのsummaryは平日のワークフロー実行後に生成されます。"},
-        "activeUniverse": {"regimeSensors": len(C.REGIME_SENSORS), "tactical": len(C.TACTICAL_BENCHMARK),
-                           "versions": {"universe": C.UNIVERSE_VERSION, "tactical": C.TACTICAL_BENCHMARK_VERSION,
-                                        "factorGroup": C.FACTOR_GROUP_VERSION, "cohort": C.COHORT_VERSION,
-                                        "schema": C.SCHEMA_VERSION}},
-        "coverage": cov,
-        "marketClocks": {"clockVersion": argus_market_clock.CLOCK_VERSION,
-                         "calendarVersion": argus_market_clock.CALENDAR_VERSION,
-                         "jp": argus_market_clock.forecast_clock("7203"),
-                         "us": argus_market_clock.forecast_clock("SPY")},
-        "expectedVsActual": {"v3Days": v3days, "lastScoringRun": led.get("updated"),
-                             "predictionLedgerHealth": health.get("predictionLedger") if isinstance(health, dict) else None},
-        "readiness": readiness,
-        "activationAllowed": readiness["ready"],
-        "pendingJa": ("baseline/skillスコアの永続化はまだ(v4はBrier/RPSのみ保存) / "
-                      "per-sensorのローリング被覆率は履歴が必要 / 較正はburn-in中=精度は未証明。"),
-        "noteJa": "校正は「ただ待てば良くなる」ものではありません。市場別クロックで正しい日付に、"
-                  "被覆率と欠測を記録し、不変の予測を追記できている時だけ改善します。上記が現状の記録健全性です。",
-    })
-
-
-@app.route("/api/argus/calibration/v4/status")
-def api_argus_calibration_v4_status():
-    """PUBLIC-SAFE Calibration v4 status (ARGUS Pro v11) — auditable and HONESTLY
-    INACTIVE. isActive is true ONLY when the v4 artifact exists AND has records; it
-    never claims "proven". Reads the public ledger-branch v4 dry-run summary (no
-    owner data). reliabilityStage comes from the real trading-day count."""
-    C = argus_calibration
-    v4 = _calibration_v4_summary()   # ledger-branch calibration_v1/summary.json, or None
-    led = _ledger_summary() or {}
-    overall = led.get("overall") or {}
-    days = int(overall.get("days") or 0)
-    artifact = isinstance(v4, dict) and bool(v4)
-    # v4 summary field names vary; read defensively and never fabricate.
-    def _num(*keys):
-        for k in keys:
-            v = (v4 or {}).get(k)
-            if isinstance(v, (int, float)):
-                return int(v)
-        return 0
-    n_pred = _num("nPredictions", "n", "count", "records")
-    n_scored = _num("nScored", "scored", "scoredCount")
-    stage = C.reliability_stage(days)
-    is_active = bool(artifact and (n_pred > 0 or n_scored > 0))
-    if not artifact:
-        reason = ("v4ドライランのsummaryはまだ生成されていません（平日のワークフロー実行後に台帳ブランチへ書き込まれます）。"
-                  "現時点でクリーンなv4採点はinactiveです。")
-    elif n_pred <= 0:
-        reason = "v4アーティファクトはありますが記録がまだ0件です。inactive（精度は未実証）。"
-    elif stage == "burn_in":
-        reason = "記録は開始していますがburn-in段階です（精度は未実証・『実証済み』とは表示しません）。"
-    else:
-        reason = "v4記録が蓄積中です（それでも分類であり利益保証ではありません）。"
-    return jsonify({
-        "schemaVersion": C.SCHEMA_VERSION,          # "calibration-v4"
-        "engineVersion": C.SCHEMA_VERSION,
-        "asOf": _ai_now_iso(),
-        "artifactFound": artifact,
-        "lastRecordAt": (v4 or {}).get("updated") or (v4 or {}).get("asOf"),
-        "lastScoreAt": (v4 or {}).get("lastScoreAt") or (v4 or {}).get("updated"),
-        "nPredictions": n_pred,
-        "nScored": n_scored,
-        "cohortCounts": (v4 or {}).get("cohortCounts") or {},
-        "epoch": C.ACTIVE_EPOCH,
-        "reliabilityStage": stage,       # burn_in | early_signal | provisional | regime_level
-        "isActive": is_active,
-        "v3HeadlineDays": days,          # legacy v3 remains as burn-in history, not v4
-        "reasonJa": reason,
-        "noteJa": "v4はv3ヘッドラインと分離したクリーンepoch。『実証済み』表記はしません。",
-    })
-
-
-@app.route("/api/argus/calibration/posture")
-def api_argus_calibration_posture():
-    """Calibration Ledger v4 — multidimensional posture (read-only).
-
-    Replaces SPY-only posture grading: computes today's risk-appetite across
-    equity/growth/small-cap/credit/duration/volatility/safe-haven/Japan/FX/
-    liquidity dimensions from live data. Marked PARTIAL (never SPY-only) when too
-    few dimensions are available."""
-    P = argus_posture
-    rets = {}
-    try:
-        _alert_etf_momentum()
-        _ensure_sensor_etfs()
-        for sym in ("SPY", "QQQ", "IWM", "SMH", "XLU", "GLD", "TLT", "HYG", "LQD"):
-            st = _ETF_LAST_PRICE.get(sym)
-            if st and st.get("m1d") is not None:
-                rets[sym] = st["m1d"]
-        cw = get_crypto_watchlist_snapshot(["bitcoin"])
-        for q in (cw.get("quotes") or []):
-            if q.get("id") == "bitcoin" and q.get("changePct") is not None:
-                rets["BTC"] = q["changePct"]
-        jp = get_japan_watchlist_snapshot(["1306", "1321"])
-        for s in (jp.get("stocks") or []):
-            if s.get("status") == "live" and s.get("changePct") is not None:
-                rets[s["symbol"]] = s["changePct"]
-        rates = get_rates_snapshot()
-        for key, sym in (("usdJpy", "USDJPY"), ("vix", "VIX")):
-            s = rates.get(key) if isinstance(rates, dict) else None
-            if s and s.get("status") == "live":
-                ch = s.get("change")
-                lvl = s.get("latestValue")
-                if isinstance(ch, (int, float)) and lvl and (lvl - ch):
-                    rets[sym] = round(ch / (lvl - ch) * 100, 2)
-    except Exception:
-        pass
-    outcome = P.posture_outcome(rets)
-    return jsonify({
-        "postureVersion": P.POSTURE_VERSION,
-        "noteJa": "地合いをSPY単独でなく多次元(株式/グロース/小型/クレジット/デュレーション/"
-                  "ボラ/安全資産/日本/FX/流動性)で評価。次元が足りなければpartial(SPY単独に落とさない)。",
-        "inputsUsed": sorted(rets.keys()),
-        "outcome": outcome,
-        "dimensionDefinitions": {d: [s for s, _ in b] for d, b in P.DIMENSIONS.items()},
-    })
-
-
 _LAYER2B_STATE = {"lastSyncAt": None, "lastStatus": "never_synced",
                   "lastHash": None, "symbolCount": 0}
 
@@ -2328,8 +2449,10 @@ def _layer2b_store_configured():
 def _require_owner_sync(body_token=None):
     """(authorized, error, code) — accepts the dedicated OWNER-SYNC token OR the
     admin token, from a header OR the request body (body lets a non-ASCII
-    passphrase work — header values must be ASCII). Scoped ONLY to watchlist-sync
-    (membership metadata; no portfolio, no other admin action). Never logs it."""
+    passphrase work — header values must be ASCII). The dedicated token is
+    limited to OWNER_SYNC catalog operations (membership, Layer-2B calibration,
+    and owner profile actions); it has no general admin or deploy authority.
+    Never logs it."""
     owner = os.environ.get("ARGUS_OWNER_SYNC_TOKEN", "")
     admin = _ARGUS_ADMIN_TOKEN
     if not owner and not admin:
@@ -2443,8 +2566,6 @@ def _layer2b_live_prices(members):
     a 'delayed' US quote is the PRIOR close — a wrong anchor for a prediction stamped
     'today' (and US scoring is held for invalid-clock anyway). Crypto is 24/7, so it
     is genuinely 'live' at this hour. Relaxing them would only record stale anchors."""
-    def _real_jp(st):
-        return str(st or "") not in ("", "mock", "unavailable")
     out = {}
     jp = [m["symbol"] for m in members if m.get("market") == "JP"]
     us = [m["symbol"] for m in members if m.get("market") == "US"]
@@ -2452,19 +2573,27 @@ def _layer2b_live_prices(members):
     try:
         if jp:
             for s in (get_japan_watchlist_snapshot(jp).get("stocks") or []):
-                if _real_jp(s.get("status")) and s.get("price"):
-                    out[s["symbol"]] = (s["price"], s.get("changePct"), "JP")
+                q = _decision_usable_watch_quote_row(
+                    s, "JP", require_latest_completed=True)
+                if q is not None:
+                    out[q["symbol"]] = (
+                        q["price"], q.get("changePct"), "JP")
         if us:
             for s in (get_us_watchlist_snapshot(us).get("stocks") or []):
-                if s.get("status") == "live" and s.get("price"):
-                    out[s["symbol"]] = (s["price"], s.get("changePct"), "US")
+                q = _decision_usable_watch_quote_row(
+                    s, "US", allow_delayed=False)
+                if q is not None:
+                    out[q["symbol"]] = (
+                        q["price"], q.get("changePct"), "US")
         if cr:
             ids = [_L2B_CRYPTO_IDS[s] for s in cr if s in _L2B_CRYPTO_IDS]
             idmap = {v: k for k, v in _L2B_CRYPTO_IDS.items()}
             if ids:
                 for q in (get_crypto_watchlist_snapshot(ids).get("quotes") or []):
-                    if q.get("status") == "live" and q.get("priceUsd"):
-                        out[idmap.get(q["id"], q["id"])] = (q["priceUsd"], q.get("changePct"), "CRYPTO")
+                    price = _decision_usable_crypto_price(q)
+                    if price is not None:
+                        out[idmap.get(q["id"], q["id"])] = (
+                            price, q.get("changePct"), "CRYPTO")
     except Exception:
         pass
     return out
@@ -2662,14 +2791,6 @@ def api_argus_watchlist_sync():
         return jsonify({"ok": False,
                         "error": f"server_error: {type(e).__name__}: {str(e)[:160]}"}), 500
 
-@app.route("/api/argus/calibration/watchlist-sync-status")
-def api_argus_watchlist_sync_status():
-    """Non-sensitive sync status (count/hash/status only — no symbols)."""
-    return jsonify({**_LAYER2B_STATE,
-                    "privateStoreConfigured": _layer2b_store_configured(),
-                    "noteJa": "所有者ウォッチリスト(Layer 2B)同期状態。保有情報は一切送受信しない。"
-                              "公開リポ対策でprivateストア設定前は採点無効(銘柄は保存しない)。"})
-
 @app.route("/api/argus/calibration/watchlist-membership", methods=["GET", "POST"])
 def api_argus_watchlist_membership():
     """Owner-gated read of the latest synced membership from the PRIVATE store
@@ -2736,87 +2857,6 @@ def api_argus_layer2b_summary():
         return jsonify({"status": "parse_error"})
 
 
-@app.route("/api/argus/calibration/epochs")
-def api_argus_calibration_epochs():
-    """Calibration epochs — the legacy n≈133 is PRESERVED as an archived burn-in
-    epoch (excluded from headline metrics); the clean epoch is pending an
-    admin-gated readiness/activation step (Phase 2). Read-only, no owner data."""
-    C = argus_calibration
-    summ = _ledger_summary() or {}
-    ov = summ.get("overall") or {}
-    n = ov.get("n")
-    updated = summ.get("updated")
-    burn_in = C.burn_in_epoch_record((None, updated), n if isinstance(n, int) else 0)
-    return jsonify({
-        "schemaVersion": C.SCHEMA_VERSION,
-        "epochs": [
-            burn_in,
-            {
-                "epochId": C.ACTIVE_EPOCH,
-                "status": "pending_readiness",
-                "includeInHeadlineMetrics": False,
-                "noteJa": "コホート定義の確定+センサー完全記録+採点スキーマ確定の後に、"
-                          "管理者が明示的に有効化(自動では始めない)。",
-            },
-        ],
-        "legacyPreserved": True,
-        "noteJa": "現n≈133は削除せず burn_in_legacy_v3 として保存。不安定期データなので"
-                  "ヘッドライン指標からは除外。",
-    })
-
-
-@app.route("/api/argus/calibration/clock")
-def api_argus_calibration_clock():
-    """Calibration Ledger v4 (Phase 2) — market-specific forecast clock preview.
-
-    Read-only. Shows, for a symbol (or a representative set across markets), the
-    correct origin session + 1D/3D/5D targets on THAT market's calendar (JP/US
-    trading-session closes, crypto 24/72/120h, FX NY-close). Demonstrates that
-    the legacy 'everything at 16:05 JST' assumption is gone. Wiring into the
-    recording workflow is Phase 3 (this endpoint does not record anything)."""
-    MC = argus_market_clock
-    sym = request.args.get("symbol")
-    if sym:
-        return jsonify(MC.forecast_clock(sym))
-    sample = ["7203", "NVDA", "BTC", "USDJPY", "VIX"]
-    return jsonify({
-        "clockVersion": MC.CLOCK_VERSION,
-        "calendarVersion": MC.CALENDAR_VERSION,
-        "noteJa": "各銘柄を「その市場の正しい引け/セッション」で採点する。"
-                  "全部16:05 JST固定をやめた(JP=TSE引け / US=NYSE引け[EDT/EST自動] / "
-                  "crypto=24/72/120h / FX=NY引け)。記録への接続はPhase 3。",
-        "samples": [MC.forecast_clock(s) for s in sample],
-    })
-
-
-@app.route("/api/argus/picks/today")
-def api_argus_picks_today():
-    """Today's top-3 picks pulled from the current scan state."""
-    state = load_state() or {}
-    top3 = state.get("top3_final") or []
-    picks = []
-    for s in top3:
-        score = s.get("final_score")
-        picks.append({
-            "code": s.get("symbol", ""),
-            "name": s.get("name") or s.get("company_name"),
-            "price": s.get("price") or s.get("last_price"),
-            "combinedScore": score,
-            "probability": argus_ledger.score_to_probability(score),
-            "direction": "up",
-            "horizon": "1d",
-            "reason": s.get("reason"),
-            "grade": s.get("grade"),
-            "tags": s.get("tags") or [],
-        })
-    return jsonify({
-        "phase": state.get("phase", 0),
-        "dryRun": bool(state.get("dry_run")),
-        "asOf": state.get("updated_at") or int(time.time() * 1000),
-        "picks": picks,
-    })
-
-
 @app.route("/api/argus/ledger/recent")
 def api_argus_ledger_recent():
     """Debug — most recent N entries from the raw ledger."""
@@ -2857,6 +2897,293 @@ _FRED_MOCK = {
     "DEXJPUS": (157.2, 156.8),     # USD/JPY mock
 }
 
+_RATE_TRUTH_KEYS = (
+    "us10y", "us2y", "usReal10y", "vix", "usdJpy", "hyOas")
+_RATE_TRUTH_INSTRUMENTS = {
+    "us10y": ("FX:US10Y:RATE", "US10Y"),
+    "us2y": ("FX:US2Y:RATE", "US2Y"),
+    "usReal10y": ("FX:USREAL10Y:RATE", "USREAL10Y"),
+    "vix": ("FX:VIX:RATE", "VIX"),
+    "usdJpy": ("FX:USDJPY:RATE", "USDJPY"),
+    "hyOas": ("FX:HYOAS:RATE", "HYOAS"),
+}
+_RATE_EXACT_FRESH_SEC = 20 * 60
+_RATE_DELAYED_MAX_SEC = 7 * 24 * 3600
+
+
+def _rate_timestamp(value, *, allow_date_only=False):
+    """Return (UTC ISO, precision) without replacing source time by receipt."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None, "missing"
+    try:
+        if allow_date_only and len(raw) == 10:
+            parsed = pytz.utc.localize(datetime.strptime(raw, "%Y-%m-%d"))
+            return parsed.strftime("%Y-%m-%dT%H:%M:%SZ"), "date_only"
+        epoch = _coerce_epoch(value)
+        if epoch is None or not math.isfinite(float(epoch)):
+            return None, "malformed"
+        return (datetime.fromtimestamp(float(epoch), pytz.utc)
+                .strftime("%Y-%m-%dT%H:%M:%SZ"), "exact")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None, "malformed"
+
+
+def _rate_observation(key, row, decision_at):
+    """Strict legacy-rate adapter into one canonical MarketObservation."""
+    if key not in _RATE_TRUTH_INSTRUMENTS or not isinstance(row, dict):
+        return None
+    if row.get("latestValue") is None or str(row.get("status") or "").lower() \
+            in ("", "mock", "unavailable", "error"):
+        return None
+    try:
+        value = float(row["latestValue"])
+        if not math.isfinite(value):
+            return None
+        provider = argus_market_data_truth.provider_key(row.get("source"))
+        if provider not in {"yahoo", "fred"}:
+            return None
+        received, _ = _rate_timestamp(row.get("receivedAt"))
+        known, _ = _rate_timestamp(row.get("knownAt") or row.get("receivedAt"))
+        observed, precision = _rate_timestamp(
+            row.get("sourceTimestamp"), allow_date_only=(provider == "fred"))
+        decision, _ = _rate_timestamp(decision_at)
+        if not received or not known or not observed or not decision:
+            return None
+        observed_dt = datetime.fromisoformat(observed.replace("Z", "+00:00"))
+        received_dt = datetime.fromisoformat(received.replace("Z", "+00:00"))
+        known_dt = datetime.fromisoformat(known.replace("Z", "+00:00"))
+        decision_dt = datetime.fromisoformat(decision.replace("Z", "+00:00"))
+        if observed_dt > received_dt or received_dt > known_dt or known_dt > decision_dt:
+            return None
+        age = (decision_dt - observed_dt).total_seconds()
+        if age < 0:
+            return None
+        raw_status = str(row.get("status") or "").lower()
+        if precision == "exact" and raw_status == "live" and \
+                age <= _RATE_EXACT_FRESH_SEC:
+            freshness = argus_market_data_truth.FRESH
+            fresh_until_dt = observed_dt + timedelta(seconds=_RATE_EXACT_FRESH_SEC)
+        elif age <= _RATE_DELAYED_MAX_SEC:
+            freshness = argus_market_data_truth.DELAYED
+            fresh_until_dt = observed_dt + timedelta(seconds=_RATE_DELAYED_MAX_SEC)
+        else:
+            freshness = argus_market_data_truth.STALE
+            fresh_until_dt = None
+        if fresh_until_dt is not None and fresh_until_dt < known_dt:
+            freshness = argus_market_data_truth.STALE
+            fresh_until_dt = None
+        values = {"rate": value}
+        for out_key, source_key in (
+                ("previousRate", "previousValue"), ("change", "change"),
+                ("changeBp", "changeBp")):
+            candidate = row.get(source_key)
+            if isinstance(candidate, (int, float)) and not isinstance(candidate, bool) \
+                    and math.isfinite(float(candidate)):
+                values[out_key] = candidate
+        instrument_id, symbol = _RATE_TRUTH_INSTRUMENTS[key]
+        return argus_market_data_truth.build_observation(
+            instrument_id=instrument_id, symbol=symbol, market="FX",
+            asset_type="RATE", fact_type="RATE", values=values,
+            provider=provider, adapter=f"scanner_{provider}_rate_adapter_v1",
+            source_ref=f"{provider}:{key}:{row.get('sourceTimestamp') or 'unknown'}"[:256],
+            observed_at=observed, received_at=received, known_at=known,
+            freshness=freshness,
+            completeness=argus_market_data_truth.COMPLETE,
+            fresh_until=(fresh_until_dt.isoformat().replace("+00:00", "Z")
+                         if fresh_until_dt is not None else None),
+            period_end=observed,
+            revision=max(0, int(known_dt.timestamp() * 1000)),
+            provenance={
+                "timestampPrecision": precision,
+                "sourceTimeSemantics": "separate_from_receipt",
+                "legacyKey": key,
+            })
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _rate_candidate_reason(entry, selected_entry):
+    """Explain a bounded Market Truth candidate's selection disposition."""
+    if not isinstance(entry, dict):
+        return "invalid_candidate"
+    observation = entry.get("observation") or {}
+    selected_observation = (selected_entry or {}).get("observation") or {}
+    if observation.get("observationId") == selected_observation.get(
+            "observationId"):
+        return "selected_effective_quality_then_repository_priority"
+    rejection = entry.get("rejectionReason")
+    if rejection:
+        return str(rejection)
+    quality = (entry.get("qualityAtAsOf") or {}).get("freshness")
+    selected_quality = ((selected_entry or {}).get("qualityAtAsOf") or {}).get(
+        "freshness")
+    quality_rank = {
+        argus_market_data_truth.FRESH: 0,
+        argus_market_data_truth.DELAYED: 1,
+        argus_market_data_truth.STALE: 2,
+        argus_market_data_truth.UNAVAILABLE: 3,
+    }
+    if quality_rank.get(quality, 99) > quality_rank.get(
+            selected_quality, 99):
+        return "lower_effective_freshness"
+    return "lower_repository_provider_priority"
+
+
+def _select_rate_truth(key, rows, decision_at):
+    """Select one rate through Market Truth while retaining bounded dissent."""
+    observations = []
+    raw_by_id = {}
+    for row in rows:
+        observation = _rate_observation(key, row, decision_at)
+        if observation is None:
+            continue
+        observations.append(observation)
+        raw_by_id[observation["observationId"]] = dict(row)
+    instrument_id, _ = _RATE_TRUTH_INSTRUMENTS[key]
+    selection = argus_market_data_truth.select_truth(
+        observations, instrument_id=instrument_id, market="FX",
+        fact_type="RATE", as_of=decision_at, max_alternates=2,
+        relative_tolerance=0.001)
+    selected_entry = selection.get("selected")
+    selected_observation = (selected_entry or {}).get("observation") or {}
+    selected_id = selected_observation.get("observationId")
+
+    candidates = []
+    for entry in selection.get("candidates") or []:
+        observation = entry.get("observation") or {}
+        observation_id = observation.get("observationId")
+        source = observation.get("source") or {}
+        quality = entry.get("qualityAtAsOf") or {}
+        raw = raw_by_id.get(observation_id) or {}
+        candidates.append({
+            "observationId": observation_id,
+            "provider": source.get("providerKey"),
+            "value": (observation.get("values") or {}).get("rate"),
+            "sourceTimestamp": raw.get("sourceTimestamp"),
+            "observedAt": observation.get("observedAt"),
+            "receivedAt": observation.get("receivedAt"),
+            "knownAt": observation.get("knownAt"),
+            "freshness": quality.get("freshness"),
+            "completeness": quality.get("completeness"),
+            "authorityRank": entry.get("authorityRank"),
+            "selected": observation_id == selected_id,
+            "reason": _rate_candidate_reason(entry, selected_entry),
+        })
+
+    if selected_entry is None:
+        return {
+            "label": key,
+            "latestValue": None,
+            "previousValue": None,
+            "change": None,
+            "changeBp": None,
+            "latestDate": None,
+            "sourceTimestamp": None,
+            "observedAt": None,
+            "receivedAt": None,
+            "knownAt": decision_at,
+            "source": None,
+            "selectedProvider": None,
+            "selectedObservationId": None,
+            "status": "unavailable",
+            "freshness": argus_market_data_truth.UNAVAILABLE,
+            "completeness": argus_market_data_truth.MISSING,
+            "selectionReason": "no_valid_timestamped_authoritative_candidate",
+            "providerSelectionPolicyId": selection.get("policyId"),
+            "providerCandidates": candidates,
+            "providerAlternates": [],
+            "providerDisagreement": copy.deepcopy(
+                selection.get("disagreement") or {}),
+        }
+
+    selected_raw = dict(raw_by_id.get(selected_id) or {})
+    selected_values = selected_observation.get("values") or {}
+    selected_source = selected_observation.get("source") or {}
+    selected_quality = selected_entry.get("qualityAtAsOf") or {}
+    freshness = selected_quality.get("freshness")
+    completeness = selected_quality.get("completeness")
+    decision_usable = freshness in {
+        argus_market_data_truth.FRESH,
+        argus_market_data_truth.DELAYED,
+    } and completeness == argus_market_data_truth.COMPLETE
+    selected_raw.update({
+        "latestValue": (selected_values.get("rate")
+                        if decision_usable else None),
+        "previousValue": (selected_values.get("previousRate")
+                           if decision_usable else None),
+        "change": (selected_values.get("change")
+                   if decision_usable else None),
+        "changeBp": (selected_values.get("changeBp")
+                     if decision_usable else None),
+        "selectedValue": selected_values.get("rate"),
+        "observedAt": selected_observation.get("observedAt"),
+        "receivedAt": selected_observation.get("receivedAt"),
+        "knownAt": selected_observation.get("knownAt"),
+        "sourceTimestamp": (raw_by_id.get(selected_id) or {}).get(
+            "sourceTimestamp"),
+        "source": selected_source.get("provider"),
+        "selectedProvider": selected_source.get("providerKey"),
+        "selectedObservationId": selected_id,
+        "status": ("live" if freshness == argus_market_data_truth.FRESH
+                   and decision_usable else
+                   "delayed" if freshness == argus_market_data_truth.DELAYED
+                   and decision_usable else "stale"),
+        "freshness": freshness,
+        "completeness": completeness,
+        "selectionReason":
+            "selected_effective_quality_then_repository_priority",
+        "providerSelectionPolicyId": selection.get("policyId"),
+        "providerCandidates": candidates,
+        "providerAlternates": [
+            copy.deepcopy(candidate) for candidate in candidates
+            if not candidate["selected"]
+        ],
+        "providerDisagreement": copy.deepcopy(
+            selection.get("disagreement") or {}),
+    })
+    return selected_raw
+
+
+def _canonical_rates_snapshot(base, overlay=None, *, decision_at=None):
+    """Converge FRED/Yahoo rows without overwriting dissenting evidence."""
+    decision_at = decision_at or _ai_now_iso()
+    base = dict(base) if isinstance(base, dict) else {}
+    overlay = dict(overlay) if isinstance(overlay, dict) else {}
+    snapshot = {
+        key: value for key, value in base.items()
+        if key not in _RATE_TRUTH_KEYS
+    }
+    for key in _RATE_TRUTH_KEYS:
+        snapshot[key] = _select_rate_truth(
+            key, [overlay.get(key), base.get(key)], decision_at)
+
+    us10y = snapshot["us10y"]
+    vix = snapshot["vix"]
+    us10y_change = us10y.get("change")
+    vix_value = vix.get("latestValue")
+    snapshot["ratesPressure"] = (
+        _classify_rates_pressure(float(us10y_change))
+        if isinstance(us10y_change, (int, float))
+        and not isinstance(us10y_change, bool)
+        and math.isfinite(float(us10y_change)) else None)
+    snapshot["riskVolatility"] = (
+        _classify_risk_volatility(float(vix_value))
+        if isinstance(vix_value, (int, float))
+        and not isinstance(vix_value, bool)
+        and math.isfinite(float(vix_value)) else None)
+    if us10y.get("latestValue") is not None and \
+            vix.get("latestValue") is not None:
+        snapshot["summary"] = (
+            f"10Y {us10y['latestValue']:.2f}% "
+            f"({float(us10y.get('changeBp') or 0):+.0f}bp), "
+            f"VIX {vix['latestValue']:.1f}. "
+            f"Pressure: {snapshot['ratesPressure']}, "
+            f"Vol: {snapshot['riskVolatility']}.")
+    else:
+        snapshot["summary"] = "Canonical rate truth is unavailable or incomplete."
+    return _rates_truth_axes(snapshot)
+
 def _fred_normalize(series_id, latest, prev, latest_date, status):
     change = float(latest) - float(prev)
     return {
@@ -2871,8 +3198,38 @@ def _fred_normalize(series_id, latest, prev, latest_date, status):
         # VIX changeBp as informational only.
         "changeBp":      round(change * 100, 1),
         "latestDate":    latest_date,
+        "sourceTimestamp": latest_date,
+        "receivedAt": _ai_now_iso(),
+        "source": "fred" if status != "mock" else "mock",
         "status":        status,
     }
+
+
+def _rates_truth_axes(snapshot):
+    """Independent freshness/completeness axes for all decision-rate inputs."""
+    rows = [snapshot.get(key) or {} for key in _RATE_TRUTH_KEYS]
+    usable = [row for row in rows if row.get("latestValue") is not None
+              and row.get("freshness") in {
+                  argus_market_data_truth.FRESH,
+                  argus_market_data_truth.DELAYED,
+              }
+              and row.get("completeness") ==
+              argus_market_data_truth.COMPLETE]
+    missing = [key for key, row in zip(_RATE_TRUTH_KEYS, rows)
+               if row not in usable]
+    completeness = ("complete" if not missing else
+                    "partial" if usable else "missing")
+    freshness = (
+        "fresh" if usable and all(
+            row.get("freshness") == argus_market_data_truth.FRESH
+            for row in usable)
+        else "delayed" if usable else "unavailable")
+    # Legacy status remains a projection of BOTH axes. A live primary pair with
+    # mock secondary components is partial, never a top-level LIVE/COMPLETE claim.
+    status = ("live" if completeness == "complete" and freshness == "fresh"
+              else "partial" if usable else "mock")
+    return {**snapshot, "status": status, "freshness": freshness,
+            "completeness": completeness, "missingSeries": missing}
 
 def _fred_mock_series(series_id):
     latest, prev = _FRED_MOCK[series_id]
@@ -2934,9 +3291,9 @@ def _classify_risk_volatility(vix_level):
 
 # Server-side cache for the rates snapshot. FRED rates update at most daily,
 # yet each call fans out to 4 FRED requests; without a cache every hit paid
-# that cost and slowed the cold-start path. Only a genuinely-live snapshot is
-# cached — a mock result is never pinned, so a transient FRED failure is
-# retried on the next request instead of being served for the whole TTL.
+# that cost and slowed the cold-start path. Only a real canonical snapshot with
+# at least one usable component is cached. Mock/missing results are never pinned,
+# so a transient FRED failure is retried instead of persisting for the full TTL.
 _RATES_CACHE     = {"data": None, "expires": 0.0}
 _RATES_CACHE_TTL = 600  # seconds (10 min)
 
@@ -2954,13 +3311,8 @@ def _rates_snapshot_base():
     vix    = series["VIXCLS"]
     rates_pressure  = _classify_rates_pressure(us10y["change"])
     risk_volatility = _classify_risk_volatility(vix["latestValue"])
-    # Top-level status reflects the data behind the *displayed signals*:
-    # ratesPressure derives from DGS10 and riskVolatility from VIXCLS, and the
-    # summary is built from both. The secondary cells (2Y, real 10Y) don't
-    # drive any signal, so a flaky DFII10/DGS2 must NOT flip the whole snapshot
-    # to "mock" while 10Y + VIX are genuinely live. Each series still carries
-    # its own per-series `status` for cell-level accuracy.
-    overall_status  = "live" if us10y["status"] == "live" and vix["status"] == "live" else "mock"
+    # Each component carries its own truth; the top-level axes below remain
+    # partial/delayed if even a secondary decision input is mock or date-only.
     summary = (
         f"10Y {us10y['latestValue']:.2f}% ({us10y['changeBp']:+.0f}bp), "
         f"VIX {vix['latestValue']:.1f}. "
@@ -2972,12 +3324,15 @@ def _rates_snapshot_base():
         "usReal10y":      series["DFII10"],
         "vix":            series["VIXCLS"],
         "usdJpy":         series["DEXJPUS"],  # additive (v10.0 — JPY conversion)
+        "hyOas":          series["BAMLH0A0HYM2"],
         "ratesPressure":  rates_pressure,
         "riskVolatility": risk_volatility,
         "summary":        summary,
-        "status":         overall_status,
+        "status":         "mock",
     }
-    if overall_status == "live":
+    snapshot = _canonical_rates_snapshot(
+        snapshot, decision_at=_ai_now_iso())
+    if snapshot["status"] in ("live", "partial"):
         _RATES_CACHE["data"]    = snapshot
         _RATES_CACHE["expires"] = now + _RATES_CACHE_TTL
     return snapshot
@@ -2992,7 +3347,7 @@ _YF_RT_MAP = {"usdJpy": ("JPY=X", "USD/JPY"),
 
 
 def _yf_quote(sym):
-    """One realtime quote from Yahoo Finance chart API (keyless). None on failure."""
+    """One quote plus provider timestamp from Yahoo's chart metadata."""
     try:
         r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=2d",
                          headers={"User-Agent": "Mozilla/5.0 (compatible; argus-research/1.0)"}, timeout=8)
@@ -3004,7 +3359,9 @@ def _yf_quote(sym):
         prev = m.get("chartPreviousClose") or m.get("previousClose")
         if px is None:
             return None
-        return (float(px), float(prev) if prev is not None else float(px))
+        source_ts = m.get("regularMarketTime")
+        return (float(px), float(prev) if prev is not None else float(px),
+                source_ts)
     except Exception:
         return None
 
@@ -3016,7 +3373,6 @@ def _yahoo_rates_rt():
     now = time.time()
     if _YF_RT_CACHE["data"] is not None and now < _YF_RT_CACHE["expires"]:
         return _YF_RT_CACHE["data"]
-    today = _ai_now_iso()[:10]
     out = {}
     for key, (sym, label) in _YF_RT_MAP.items():
         q = _yf_quote(sym)
@@ -3024,9 +3380,24 @@ def _yahoo_rates_rt():
             continue
         px, prev = round(q[0], 2), round(q[1], 2)
         chg = round(px - prev, 2)
+        source_ts = q[2]
+        source_iso, _ = _rate_timestamp(source_ts)
+        received_at = _ai_now_iso()
+        source_truth = _canonical_quote_source_age(
+            source_ts, now_epoch=now)
         out[key] = {"label": label, "latestValue": px, "previousValue": prev,
                     "change": chg, "changeBp": round(chg * 100, 1),
-                    "latestDate": today, "source": "yahoo-rt", "status": "live"}
+                    "latestDate": source_iso[:10] if source_iso else None,
+                    "sourceTimestamp": source_iso,
+                    "receivedAt": received_at, "knownAt": received_at,
+                    "source": "yahoo-rt",
+                    "sourceTimeStatus": source_truth["sourceTimeStatus"],
+                    "sourceAgeSec": source_truth["ageSec"],
+                    "timestampInversion":
+                        source_truth["timestampInversion"],
+                    "status": ("live" if
+                               source_truth["realtimeEvidence"]
+                               else "delayed")}
     if out:
         _YF_RT_CACHE["data"] = out
         _YF_RT_CACHE["expires"] = now + _YF_RT_TTL
@@ -3034,20 +3405,46 @@ def _yahoo_rates_rt():
 
 
 def get_rates_snapshot():
-    """Rates snapshot with a REALTIME overlay (Yahoo Finance: USD/JPY, US10Y, VIX) on
-    top of the FRED-daily base. Applied on every call (not frozen into the rates cache)
-    so the figures track live quotes; any metric Yahoo misses stays FRED-daily and is
-    labelled with its real as-of date in the UI."""
-    snap = _rates_snapshot_base()
-    rt = _yahoo_rates_rt()
-    if rt:
-        snap = {**snap, **rt}
-        u10, vx = snap.get("us10y") or {}, snap.get("vix") or {}
-        if u10 and vx:
-            snap["summary"] = (f"10Y {u10['latestValue']:.2f}% ({u10['changeBp']:+.0f}bp), "
-                               f"VIX {vx['latestValue']:.1f}. Pressure: {snap.get('ratesPressure')}, "
-                               f"Vol: {snap.get('riskVolatility')}.")
-    return snap
+    """Canonical FRED/Yahoo selection with bounded dissent evidence."""
+    base = _rates_snapshot_base()
+    realtime = _yahoo_rates_rt()
+    # The decision cutoff is captured only after both receipts exist; capturing
+    # it before transport would incorrectly place legitimate knownAt in future.
+    return _canonical_rates_snapshot(
+        base, realtime, decision_at=_ai_now_iso())
+
+
+def _rates_snapshot_cached_only():
+    """Public read projection for rates; never calls FRED/Yahoo or writes caches."""
+    now = time.time()
+    cached = (_RATES_CACHE.get("data")
+              if now < _RATES_CACHE.get("expires", 0.0) else None)
+    if isinstance(cached, dict):
+        snap = dict(cached)
+        cache_state = "fresh"
+    else:
+        series = {sid: _fred_mock_series(sid) for sid in _FRED_SERIES}
+        us10y, vix = series["DGS10"], series["VIXCLS"]
+        rates_pressure = _classify_rates_pressure(us10y["change"])
+        risk_volatility = _classify_risk_volatility(vix["latestValue"])
+        snap = {
+            "us10y": series["DGS10"], "us2y": series["DGS2"],
+            "usReal10y": series["DFII10"], "vix": series["VIXCLS"],
+            "usdJpy": series["DEXJPUS"],
+            "hyOas": series["BAMLH0A0HYM2"],
+            "ratesPressure": rates_pressure,
+            "riskVolatility": risk_volatility,
+            "summary": (f"10Y {us10y['latestValue']:.2f}% "
+                        f"({us10y['changeBp']:+.0f}bp), VIX {vix['latestValue']:.1f}. "
+                        f"Pressure: {rates_pressure}, Vol: {risk_volatility}."),
+            "status": "mock",
+        }
+        cache_state = "unavailable"
+    realtime = (_YF_RT_CACHE.get("data")
+                if now < _YF_RT_CACHE.get("expires", 0.0) else None)
+    canonical = _canonical_rates_snapshot(
+        snap, realtime, decision_at=_ai_now_iso())
+    return {**canonical, "cacheState": cache_state}
 
 
 @app.route("/api/argus/rates")
@@ -3111,11 +3508,63 @@ def _yahoo_jp_row(code, name):
         px, prev = round(q[0], 2), round(q[1], 2)
         chg = round(px - prev, 2)
         pct = round((chg / prev) * 100, 2) if prev else 0.0
+        source_ts = q[2]
+        source_iso = (datetime.fromtimestamp(source_ts, pytz.utc)
+                      .strftime("%Y-%m-%dT%H:%M:%SZ")
+                      if isinstance(source_ts, (int, float)) else None)
         row = {"symbol": code, "name": name, "nameJa": name, "price": px,
-               "changeAbs": chg, "changePct": pct, "volume": 0, "date": None,
+               "changeAbs": chg, "changePct": pct, "volume": 0,
+               "date": (source_iso or "")[:10] or None,
+               "sourceTimestamp": source_iso, "receivedAt": _ai_now_iso(),
                "source": "yahoo-delayed", "status": "delayed"}
     _YF_JP_CACHE[code] = {"row": row, "ts": now}
     return row
+
+
+def _decision_usable_jp_sector_row(row, *, now_epoch=None):
+    """Validate one Yahoo JP sector proxy against the canonical JP clock.
+
+    Yahoo remains a delayed sector-discovery adapter, not formal quote
+    authority.  Its one-day move may enter the regime board only when the
+    provider supplied an exact timestamp for the exact latest completed TSE
+    session.  Receipt time and a numeric move never fill a missing timestamp.
+    """
+    if not isinstance(row, dict) or row.get("source") != "yahoo-delayed":
+        return None
+    price, change = row.get("price"), row.get("changePct")
+    if (isinstance(price, bool) or not isinstance(price, (int, float))
+            or not math.isfinite(float(price)) or float(price) <= 0
+            or isinstance(change, bool)
+            or not isinstance(change, (int, float))
+            or not math.isfinite(float(change))):
+        return None
+    try:
+        now = time.time() if now_epoch is None else float(now_epoch)
+        now_utc = datetime.fromtimestamp(now, pytz.utc)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+    source_epoch = _coerce_epoch(row.get("sourceTimestamp"))
+    if source_epoch is None or source_epoch > now:
+        return None
+    parsed, _reason = _bounded_market_session_date(
+        row.get("date"), "JP", _ENTRY_HISTORY_MAX_CALENDAR_DAYS,
+        now_epoch=now)
+    latest = argus_market_clock.latest_completed_session_date(
+        argus_market_clock.JP_EQUITY, now_utc)
+    if parsed is None or parsed != latest or \
+            datetime.fromtimestamp(source_epoch, TZ_JST).date() != parsed:
+        return None
+    next_session = argus_market_clock.add_trading_days(
+        argus_market_clock.JP_EQUITY, parsed, 1)
+    valid_until = argus_market_clock._local_close(
+        argus_market_clock.JP_EQUITY, next_session, now_utc).timestamp()
+    return {
+        **row,
+        "decisionUsable": True,
+        "freshness": "delayed",
+        "validUntil": datetime.fromtimestamp(
+            valid_until, pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
 
 # JP sector rotation (v10.189): TOPIX-17 NEXT FUNDS sector ETFs, fetched keyless via Yahoo
 # (10-min per-code cache), shaped like the US rotationGroups so the UI renders the SAME
@@ -3138,20 +3587,25 @@ def _jp_sector_rotation():
     groups = []
     for code, label, role in _JP_SECTORS:
         try:
-            row = _yahoo_jp_row(code, label)
+            row = _decision_usable_jp_sector_row(
+                _yahoo_jp_row(code, label))
         except Exception:
             row = None
         pct = row.get("changePct") if isinstance(row, dict) else None
         if not isinstance(pct, (int, float)):
             groups.append({"id": f"jp-{code}", "label": label, "role": role, "assets": [f"{code}.T"],
                            "score": 0.0, "status": "neutral", "momentum1d": None, "momentum5d": None,
-                           "momentum20d": None, "available": False, "rationaleJa": f"{label}: データ取得待ち。"})
+                           "momentum20d": None, "available": False,
+                           "sourceTimestamp": None, "validUntil": None,
+                           "rationaleJa": f"{label}: データ取得待ち。"})
             continue
         score = max(-1.0, min(1.0, pct / 3.0))   # ±3% ≈ full deflection (matches the US meter scale)
         status = "inflow" if score >= 0.2 else ("outflow" if score <= -0.2 else "neutral")
         groups.append({"id": f"jp-{code}", "label": label, "role": role, "assets": [f"{code}.T"],
                        "score": round(score, 3), "status": status, "momentum1d": round(pct, 2),
                        "momentum5d": None, "momentum20d": None, "available": True,
+                       "sourceTimestamp": row.get("sourceTimestamp"),
+                       "validUntil": row.get("validUntil"),
                        "rationaleJa": f"{label}: 本日{pct:+.2f}%（{flow_ja[status]}）。"})
     return groups
 
@@ -3225,6 +3679,19 @@ def _jq_fetch_bar_row(code, name, headers):
         return {
             "symbol": code, "name": name, "nameJa": name,
             "price": close,
+            "open": (float(latest.get("AdjO") if latest.get("AdjO") is not None
+                           else latest.get("O"))
+                     if (latest.get("AdjO") is not None or
+                         latest.get("O") is not None) else None),
+            "high": (float(latest.get("AdjH") if latest.get("AdjH") is not None
+                           else latest.get("H"))
+                     if (latest.get("AdjH") is not None or
+                         latest.get("H") is not None) else None),
+            "low": (float(latest.get("AdjL") if latest.get("AdjL") is not None
+                          else latest.get("L"))
+                    if (latest.get("AdjL") is not None or
+                        latest.get("L") is not None) else None),
+            "close": close,
             "changeAbs": change,
             "changePct": round((change / pclose) * 100, 2) if pclose else 0.0,
             "volume": int(vol) if vol is not None else 0,
@@ -3232,7 +3699,13 @@ def _jq_fetch_bar_row(code, name, headers):
             # Honesty (v10.156): J-Quants free is lagged. Only call it "live" when
             # the bar is actually today's; otherwise it is delayed (T-1+), so the UI
             # shows 遅延 instead of pretending a yesterday close is a live quote.
-            "status": "live" if latest.get("Date") == datetime.now(TZ_JST).strftime("%Y-%m-%d") else "delayed",
+            # A daily date proves an EOD period, never an intraday/live source
+            # instant, even when that period happens to be today's date.
+            "status": "delayed",
+            "sourceTimestamp": latest.get("Date"),
+            "receivedAt": _ai_now_iso(),
+            "delayClass": "EOD",
+            "realtimeEvidence": False,
             "source": "jquants",
         }
     except Exception:
@@ -3283,9 +3756,12 @@ def _sanitize_symbols(raw, pattern, cap):
             out.append(s)
     return out[:cap]
 
-def _jq_name_for(code4):
-    """Japanese company name from the cached J-Quants master ('' if unknown)."""
-    for r in _jq_master():
+def _jq_name_for(code4, *, allow_provider_fetch=True):
+    """Japanese company name, optionally restricted to the existing master cache."""
+    rows = (_jq_master() if allow_provider_fetch
+            else ((_JQ_MASTER_CACHE.get("data") or [])
+                  if "_JQ_MASTER_CACHE" in globals() else []))
+    for r in rows:
         if r["code4"] == code4:
             return r["ja"] or r["en"] or ""
     return ""
@@ -3305,6 +3781,29 @@ def _cached_quote_snapshot(data):
             stocks.append(row)
     return {**data, "status": "delayed" if stocks else "mock",
             "stocks": stocks, "cacheState": "stale_read_only"}
+
+
+def _fresh_cached_quote_snapshot(data):
+    """Read-only projection for an unexpired provider cache.
+
+    Cache-only describes acquisition authority, not evidence quality: retain
+    live/partial truth and coverage instead of routing fresh data through the
+    expired-cache downgrade above.
+    """
+    if not isinstance(data, dict):
+        return {"status": "mock", "stocks": [], "cacheState": "unavailable"}
+    return {**data,
+            "stocks": [dict(row) for row in data.get("stocks", [])],
+            "cacheState": "fresh_read_only"}
+
+
+def _quote_cache_projection(cache):
+    data = cache.get("data")
+    if not isinstance(data, dict):
+        return {"status": "mock", "stocks": [], "cacheState": "unavailable"}
+    if time.time() < cache.get("expires", 0.0):
+        return _fresh_cached_quote_snapshot(data)
+    return _cached_quote_snapshot(data)
 
 
 def _get_japan_watchlist_core(symbols=None, allow_provider_fetch=True):
@@ -3363,6 +3862,8 @@ def _get_japan_watchlist_core(symbols=None, allow_provider_fetch=True):
             if len(_JP_DYN_CACHE) >= _DYN_CACHE_MAX:
                 _JP_DYN_CACHE.clear()
             _JP_DYN_CACHE[syms] = {"data": snapshot, "expires": now + _JP_CACHE_TTL}
+            if "_JP_FALLBACK_LAST" in globals():
+                _JP_FALLBACK_LAST["ts"] = now
         return snapshot
 
     if _JP_CACHE["data"] is not None and now < _JP_CACHE["expires"]:
@@ -3391,9 +3892,12 @@ def _get_japan_watchlist_core(symbols=None, allow_provider_fetch=True):
     if overall != "mock":
         _JP_CACHE["data"]    = snapshot
         _JP_CACHE["expires"] = now + _JP_CACHE_TTL
+        if "_JP_FALLBACK_LAST" in globals():
+            _JP_FALLBACK_LAST["ts"] = now
     return snapshot
 
-def get_japan_watchlist_snapshot(symbols=None, allow_provider_fetch=True):
+def get_japan_watchlist_snapshot(
+        symbols=None, allow_provider_fetch=True, *, record_requested_symbols=True):
     """Core snapshot + real-time overlay: quotes pushed from the local moomoo
     bridge (fresh ≤ 10 min) override the J-Quants T-1 rows (v9.11)."""
     # Preserve the legacy one-argument call shape for internal callers/tests.
@@ -3403,12 +3907,15 @@ def get_japan_watchlist_snapshot(symbols=None, allow_provider_fetch=True):
             else _get_japan_watchlist_core(symbols, allow_provider_fetch=False))
     requested = (_sanitize_symbols(symbols, _JP_SYM_RE, _JP_DYN_MAX) if symbols
                  else [s["symbol"] for s in _JP_WATCHLIST])
-    # Remember the requested symbols HERE (not just in the HTTP route) so BOTH the
-    # watchlist page AND the Today page (which reaches this via get_action_labels)
-    # teach the bridge the owner's watchlist → /jp-watchlist-codes → realtime push.
-    if symbols and requested:
+    # Internal/background callers may teach the bridge a bounded interest hint.
+    # Public GET callers explicitly disable this; authenticated owner membership
+    # reaches /jp-watchlist-codes through private Layer-2B authority instead.
+    if record_requested_symbols and symbols and requested:
         _remember_jp_symbols(requested)
-    return _overlay_pushed(snap, "JP", requested)
+    return (_overlay_pushed(snap, "JP", requested)
+            if allow_provider_fetch else
+            _overlay_pushed(
+                snap, "JP", requested, allow_provider_fetch=False))
 
 _JP_FALLBACK_LAST = {"ts": None}   # v12.0.1 実測: JP代替価格を最後に実データで返せた時刻
 
@@ -3418,20 +3925,16 @@ def api_argus_japan_watchlist():
     raw = (request.args.get("symbols") or "")
     symbols = [s for s in raw.split(",") if s.strip()] or None
     # Public GET is cache/bridge-only. Provider refresh belongs to scheduled or
-    # admin-controlled work, so page refreshes cannot multiply provider calls.
-    snap = get_japan_watchlist_snapshot(symbols, allow_provider_fetch=False)
-    try:
-        if any((st.get("status") or "") not in ("", "mock") and st.get("price") is not None
-               for st in (snap.get("stocks") or [])):
-            _JP_FALLBACK_LAST["ts"] = time.time()
-    except Exception:
-        pass
-    return jsonify(snap)
+    # admin-controlled work. It also must not change the EC2 push target set;
+    # dynamic realtime membership comes from authenticated Layer-2B owner sync.
+    return jsonify(get_japan_watchlist_snapshot(
+        symbols, allow_provider_fetch=False,
+        record_requested_symbols=False))
 
 
-# Watchlist symbols the frontend has actually requested — so the moomoo bridge can
-# push REALTIME for them (not just the hardcoded CODES). The frontend's watchlist is
-# client-side; this is how the server-side bridge learns about a newly-added name.
+# Bounded interest hints from trusted internal/background callers. Public browser
+# reads no longer populate this set. Authenticated Layer-2B membership remains the
+# canonical dynamic owner-watchlist input to /jp-watchlist-codes.
 _JP_SEEN_SYMBOLS = {}      # symbol(upper) -> last_seen_epoch
 _JP_SEEN_MAX = 200
 _JP_SEEN_TTL = 7 * 24 * 3600   # forget a symbol unseen for a week
@@ -3487,6 +3990,279 @@ def _us_mock_snapshot():
     return {"status": "mock", "asOf": None, "provider": "twelvedata",
             "stocks": [_us_mock_quote(s) for s in _US_WATCHLIST]}
 
+
+_DECISION_QUOTE_LIVE_MAX_AGE_SEC = 20 * 60
+
+
+def _canonical_quote_source_age(source_timestamp, *, now_epoch=None):
+    """One source-age contract for decision-relevant legacy quote rows.
+
+    A provider label or successful transport is never sufficient for LIVE.
+    Exact source time must be present, must not be in the future, and must be
+    within the bounded quote age.  A real value with missing/old source time is
+    retained as delayed evidence; it is never upgraded to realtime truth.
+    """
+    now = time.time() if now_epoch is None else float(now_epoch)
+    source_epoch = _coerce_epoch(source_timestamp)
+    supplied = source_timestamp is not None and str(source_timestamp).strip() != ""
+    malformed = supplied and source_epoch is None
+    future = source_epoch is not None and source_epoch > now
+    # Never clamp a negative source age to zero.  A future timestamp is invalid
+    # evidence and remains an explicit inversion for the life of this receipt.
+    age = ((now - source_epoch)
+           if source_epoch is not None and not future else None)
+    live = age is not None and age <= _DECISION_QUOTE_LIVE_MAX_AGE_SEC
+    return {
+        "ageSec": int(age) if age is not None else None,
+        "timestampInversion": bool(future),
+        "sourceTimeStatus": (
+            "FUTURE" if future else "MALFORMED" if malformed else
+            "MISSING" if not supplied else "PRESENT"),
+        "delayClass": "LIVE" if live else "UNKNOWN",
+        "realtimeEvidence": bool(live),
+        "freshness": "fresh" if live else "delayed",
+        "status": "live" if live else "delayed",
+    }
+
+
+def _canonical_moomoo_quote_truth(
+        source_timestamp, entitlement, *, now_epoch=None):
+    """Source-time truth for one pushed Moomoo row, never transport-derived."""
+    truth = _canonical_quote_source_age(
+        source_timestamp, now_epoch=now_epoch)
+    if str(entitlement or "unknown").lower() == "delayed":
+        truth.update({
+            "status": "delayed", "freshness": "delayed",
+            "delayClass": "15m", "realtimeEvidence": False,
+        })
+    return truth
+
+
+def _decision_usable_quote_row(row, *, now_epoch=None):
+    """Re-verify one normalized quote before any numeric decision consumer.
+
+    ``status``/``realtimeEvidence`` are asserted adapter claims.  They remain
+    necessary, but are never sufficient: the provider/venue timestamp is
+    independently re-aged here and must itself satisfy the canonical horizon.
+    Display callers may retain the original delayed row; decision callers get
+    either a verified copy or ``None``.
+    """
+    if not isinstance(row, dict):
+        return None
+    source_timestamp = row.get("sourceTimestamp") or row.get("exchangeTs")
+    truth = _canonical_moomoo_quote_truth(
+        source_timestamp, row.get("entitlement"), now_epoch=now_epoch)
+    if row.get("realtimeEvidence") is not True or \
+            str(row.get("status") or "").lower() != "live" or \
+            truth.get("realtimeEvidence") is not True:
+        return None
+    return {**row, **truth, "sourceTimestamp": source_timestamp,
+            "decisionUsable": True}
+
+
+_DECISION_DAILY_QUOTE_SOURCES = frozenset({
+    "jquants", "twelvedata", "finnhub",
+})
+
+
+def _decision_usable_watch_quote_row(
+        row, market, *, now_epoch=None, allow_delayed=True,
+        require_latest_completed=False):
+    """Authorize one watch quote for a numeric decision consumer.
+
+    Intraday authority always requires the exact source-time contract enforced
+    by :func:`_decision_usable_quote_row`.  A delayed row may be used only as an
+    explicitly identified daily close from one of the repository's bounded
+    EOD providers, on a real market session, never as a source-invalid bridge
+    quote whose fresh receipt happens to carry a number.
+
+    ``require_latest_completed`` is for current-move/issuance consumers.  A
+    display-oriented assessment may use a bounded prior daily close and label
+    it DELAYED, but a current mover or prediction anchor must bind the exact
+    latest completed exchange session.
+    """
+    if not isinstance(row, dict):
+        return None
+    price = row.get("price")
+    if (isinstance(price, bool) or not isinstance(price, (int, float))
+            or not math.isfinite(float(price)) or float(price) <= 0):
+        return None
+    change = row.get("changePct")
+    if (change is not None and (isinstance(change, bool)
+            or not isinstance(change, (int, float))
+            or not math.isfinite(float(change)))):
+        return None
+
+    live = _decision_usable_quote_row(row, now_epoch=now_epoch)
+    if live is not None:
+        return live
+    if not allow_delayed or str(row.get("status") or "").lower() != "delayed":
+        return None
+
+    provider = str(row.get("source") or "").strip().lower()
+    if provider not in _DECISION_DAILY_QUOTE_SOURCES:
+        return None
+    source_date = row.get("date")
+    parsed, _reason = _bounded_market_session_date(
+        source_date, market, _ENTRY_HISTORY_MAX_CALENDAR_DAYS,
+        now_epoch=now_epoch)
+    if parsed is None:
+        return None
+    if require_latest_completed:
+        try:
+            now = time.time() if now_epoch is None else float(now_epoch)
+            market_id = (argus_market_clock.JP_EQUITY
+                         if str(market).upper() in (
+                             "JP", argus_market_clock.JP_EQUITY)
+                         else argus_market_clock.US_EQUITY
+                         if str(market).upper() in (
+                             "US", argus_market_clock.US_EQUITY)
+                         else None)
+            if market_id is None or parsed != \
+                    argus_market_clock.latest_completed_session_date(
+                        market_id, datetime.fromtimestamp(now, pytz.utc)):
+                return None
+        except (TypeError, ValueError, OverflowError, OSError):
+            return None
+    return {
+        **row,
+        "status": "delayed",
+        "freshness": "delayed",
+        "realtimeEvidence": False,
+        "decisionUsable": True,
+        "decisionSourceKind": "bounded_daily_close",
+        "sourceTimestamp": row.get("sourceTimestamp") or source_date,
+    }
+
+
+def _decision_usable_watch_snapshot(snapshot, market, *, now_epoch=None,
+                                    allow_delayed=True,
+                                    require_latest_completed=False):
+    """Closed, bounded projection for a downstream decision/handoff surface."""
+    rows = []
+    for raw in (snapshot.get("stocks") or []) \
+            if isinstance(snapshot, dict) else []:
+        usable = _decision_usable_watch_quote_row(
+            raw, market, now_epoch=now_epoch, allow_delayed=allow_delayed,
+            require_latest_completed=require_latest_completed)
+        if usable is None:
+            continue
+        rows.append({key: usable.get(key) for key in (
+            "symbol", "name", "nameJa", "price", "changePct", "volume",
+            "date", "status", "source", "sourceTimestamp",
+            "decisionUsable")})
+    rows = rows[:_JP_DYN_MAX]
+    statuses = {row.get("status") for row in rows}
+    status = ("live" if statuses == {"live"} else
+              "delayed" if statuses == {"delayed"} else
+              "partial" if rows else "unavailable")
+    epochs = [_coerce_epoch(row.get("sourceTimestamp")) for row in rows]
+    epochs = [value for value in epochs if value is not None]
+    return {
+        "status": status,
+        "asOf": (datetime.fromtimestamp(max(epochs), pytz.utc)
+                 .strftime("%Y-%m-%dT%H:%M:%SZ") if epochs else None),
+        "provider": (snapshot.get("provider")
+                     if isinstance(snapshot, dict) else None),
+        "stocks": rows,
+    }
+
+
+def _pushed_quote_decision_row(pushed, *, now_epoch=None):
+    """Current source-time-authoritative price row from one bridge cache entry."""
+    now = time.time() if now_epoch is None else float(now_epoch)
+    if not isinstance(pushed, dict) or not isinstance(pushed.get("row"), dict):
+        return None
+    received_epoch = pushed.get("ts")
+    if not isinstance(received_epoch, (int, float)) or \
+            isinstance(received_epoch, bool):
+        return None
+    transport_age = now - float(received_epoch)
+    if not 0 <= transport_age <= _PUSH_TTL:
+        return None
+    row = pushed["row"]
+    usable = _decision_usable_quote_row(row, now_epoch=now)
+    if usable is None:
+        return None
+    return {**usable, "transportAgeSec": int(transport_age)}
+
+
+def _bounded_source_epoch(value, *, allow_date_only=False):
+    """Parse an exact timestamp, optionally accepting UTC date-only evidence."""
+    if allow_date_only and isinstance(value, str) and len(value) == 10:
+        try:
+            return pytz.utc.localize(datetime.strptime(
+                value, "%Y-%m-%d")).timestamp()
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return _coerce_epoch(value)
+
+
+def _source_time_within(value, max_age_sec, *, now_epoch=None,
+                        allow_date_only=False):
+    now = time.time() if now_epoch is None else float(now_epoch)
+    source_epoch = _bounded_source_epoch(
+        value, allow_date_only=allow_date_only)
+    return bool(source_epoch is not None and
+                0 <= now - source_epoch <= float(max_age_sec))
+
+
+def _canonical_quote_snapshot_age(snapshot, rows_key):
+    """Re-evaluate cached provider rows without renewing their source time."""
+    if not isinstance(snapshot, dict):
+        return snapshot
+    rows = []
+    for raw in snapshot.get(rows_key) or []:
+        row = dict(raw) if isinstance(raw, dict) else raw
+        if isinstance(row, dict) and str(row.get("status") or "").lower() \
+                not in ("mock", "unavailable", "offline", "error"):
+            row.update(_canonical_quote_source_age(
+                row.get("sourceTimestamp")))
+        rows.append(row)
+    result = {**snapshot, rows_key: rows}
+    statuses = [str(row.get("status") or "").lower()
+                for row in rows if isinstance(row, dict)]
+    # Preserve known partial coverage and mock/unavailable failure states; a
+    # cache read may only downgrade individual source age, never upgrade scope.
+    if snapshot.get("status") not in ("partial", "mock", "unavailable"):
+        result["status"] = (
+            "live" if statuses and all(item == "live" for item in statuses)
+            else "delayed" if statuses and all(
+                item == "delayed" for item in statuses)
+            else "partial" if statuses else snapshot.get("status"))
+    return result
+
+
+def _canonical_cached_quote_row_age(row, *, now_epoch=None):
+    """Return a source-time re-aged copy of one cached provider quote.
+
+    Dynamic and curated cache TTLs describe transport/storage lifetime only;
+    they cannot renew the venue/provider timestamp carried by the row.  The
+    transformation is deliberately downgrade-only so an explicitly delayed
+    provider row cannot become LIVE merely because its timestamp is recent.
+    """
+    if not isinstance(row, dict):
+        return row
+    result = dict(row)
+    original_status = str(row.get("status") or "").lower()
+    if original_status in ("mock", "unavailable", "offline", "error"):
+        result["decisionUsable"] = False
+        return result
+    result.update(_canonical_quote_source_age(
+        row.get("sourceTimestamp"), now_epoch=now_epoch))
+    if original_status and original_status != "live" \
+            and result.get("status") == "live":
+        result.update({
+            "status": original_status,
+            "freshness": row.get("freshness") or "delayed",
+            "delayClass": row.get("delayClass") or "UNKNOWN",
+            "realtimeEvidence": False,
+        })
+    result["decisionUsable"] = _decision_usable_quote_row(
+        result, now_epoch=now_epoch) is not None
+    return result
+
+
 def _td_parse_row(s, q):
     """Normalize one Twelve Data quote object → live row, or None if invalid.
 
@@ -3505,14 +4281,25 @@ def _td_parse_row(s, q):
             return None
         vol = q.get("volume")
         dt  = q.get("datetime")
+        source_truth = _canonical_quote_source_age(dt)
         return {
             "symbol": s["symbol"], "name": s["name"],
             "price": round(float(close), 2),
+            "open": (round(float(q["open"]), 4)
+                     if q.get("open") not in (None, "") else None),
+            "high": (round(float(q["high"]), 4)
+                     if q.get("high") not in (None, "") else None),
+            "low": (round(float(q["low"]), 4)
+                    if q.get("low") not in (None, "") else None),
+            "close": round(float(close), 4),
             "changeAbs": round(float(chg), 2),
             "changePct": round(float(pct), 2),
             "volume": int(float(vol)) if vol not in (None, "") else 0,
             "date": (str(dt)[:10] if dt else None),
-            "status": "live",
+            "sourceTimestamp": str(dt) if dt else None,
+            "receivedAt": _ai_now_iso(),
+            "source": "twelvedata",
+            **source_truth,
         }
     except Exception:
         return None
@@ -3532,7 +4319,7 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
             return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
         hit = _US_DYN_CACHE.get(syms)
         if hit and now < hit["expires"]:
-            return hit["data"]
+            return _canonical_quote_snapshot_age(hit["data"], "stocks")
         if not allow_provider_fetch:
             return (_cached_quote_snapshot(hit["data"]) if hit
                     else {"status": "mock", "asOf": None,
@@ -3555,7 +4342,11 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
                 row = _td_parse_row(meta, q)
                 if row is not None:
                     rows.append(row)
-            overall = "live" if len(rows) == len(syms) else ("partial" if rows else "mock")
+            overall = ("live" if len(rows) == len(syms) and all(
+                row.get("status") == "live" for row in rows)
+                else "delayed" if len(rows) == len(syms) and rows and all(
+                    row.get("status") == "delayed" for row in rows)
+                else "partial" if rows else "mock")
             as_of = max((row["date"] for row in rows if row.get("date")), default=None)
             snapshot = {"status": overall, "asOf": as_of, "provider": "twelvedata", "stocks": rows}
             if rows:
@@ -3567,7 +4358,7 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
             return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
 
     if _US_CACHE["data"] is not None and now < _US_CACHE["expires"]:
-        return _US_CACHE["data"]
+        return _canonical_quote_snapshot_age(_US_CACHE["data"], "stocks")
     if not allow_provider_fetch:
         return (_cached_quote_snapshot(_US_CACHE["data"]) if _US_CACHE["data"]
                 else _us_mock_snapshot())
@@ -3592,7 +4383,12 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
                 return _us_mock_snapshot()  # any miss → full mock, never partial fake-live
             rows.append(row)
         as_of = max((row["date"] for row in rows if row.get("date")), default=None)
-        snapshot = {"status": "live", "asOf": as_of, "provider": "twelvedata", "stocks": rows}
+        overall = ("live" if all(row.get("status") == "live" for row in rows)
+                   else "delayed" if all(
+                       row.get("status") == "delayed" for row in rows)
+                   else "partial")
+        snapshot = {"status": overall, "asOf": as_of,
+                    "provider": "twelvedata", "stocks": rows}
         _US_CACHE["data"]    = snapshot
         _US_CACHE["expires"] = now + _US_CACHE_TTL
         return snapshot
@@ -3611,7 +4407,11 @@ def _finnhub_quote_row(sym):
     now = time.time()
     c = _FINNHUB_QUOTE_CACHE.get(sym)
     if c and now - c["ts"] <= _FINNHUB_QUOTE_TTL:
-        return c["row"]
+        row = dict(c["row"]) if isinstance(c.get("row"), dict) else c.get("row")
+        if row is not None:
+            row.update(_canonical_quote_source_age(
+                row.get("sourceTimestamp"), now_epoch=now))
+        return row
     row = None
     try:
         r = requests.get("https://finnhub.io/api/v1/quote",
@@ -3620,11 +4420,24 @@ def _finnhub_quote_row(sym):
         price = d.get("c")
         if isinstance(price, (int, float)) and price > 0:
             ts = d.get("t") or 0
+            source_timestamp = (datetime.fromtimestamp(ts, pytz.utc)
+                                .strftime("%Y-%m-%dT%H:%M:%SZ")
+                                if ts else None)
+            source_truth = _canonical_quote_source_age(source_timestamp)
             row = {"symbol": sym, "name": sym, "price": float(price),
+                   "open": (float(d["o"]) if isinstance(d.get("o"), (int, float))
+                            and d.get("o") > 0 else None),
+                   "high": (float(d["h"]) if isinstance(d.get("h"), (int, float))
+                            and d.get("h") > 0 else None),
+                   "low": (float(d["l"]) if isinstance(d.get("l"), (int, float))
+                           and d.get("l") > 0 else None),
+                   "close": float(price),
                    "changeAbs": float(d.get("d") or 0), "changePct": float(d.get("dp") or 0),
                    "volume": 0,
                    "date": datetime.fromtimestamp(ts, pytz.utc).strftime("%Y-%m-%d") if ts else None,
-                   "status": "live", "source": "finnhub"}
+                   "sourceTimestamp": source_timestamp,
+                   "receivedAt": _ai_now_iso(),
+                   "source": "finnhub", **source_truth}
     except Exception:
         row = None
     _FINNHUB_QUOTE_CACHE[sym] = {"row": row, "ts": now}
@@ -3645,16 +4458,22 @@ def get_us_watchlist_snapshot(symbols=None, allow_provider_fetch=True):
               if now - p.get("ts", 0) <= _PUSH_TTL}
     if requested and all(s in bridge for s in requested):
         base = {"status": "live", "asOf": _ai_now_iso(), "provider": "moomoo-bridge", "stocks": []}
-        return _overlay_pushed(base, "US", requested)
+        return (_overlay_pushed(base, "US", requested)
+                if allow_provider_fetch else
+                _overlay_pushed(
+                    base, "US", requested, allow_provider_fetch=False))
     # Preserve the legacy one-argument call shape for internal callers/tests.
     snap = (_get_us_watchlist_core(symbols)
             if allow_provider_fetch
             else _get_us_watchlist_core(symbols, allow_provider_fetch=False))
-    snap = _overlay_pushed(snap, "US", requested)
+    snap = (_overlay_pushed(snap, "US", requested)
+            if allow_provider_fetch else
+            _overlay_pushed(
+                snap, "US", requested, allow_provider_fetch=False))
     try:
         have = {s.get("symbol") for s in (snap.get("stocks") or [])}
         missing = [s for s in requested if s not in have]
-        if missing and FINNHUB_API_KEY:
+        if allow_provider_fetch and missing and FINNHUB_API_KEY:
             filled = [r for r in (_finnhub_quote_row(s) for s in missing) if r]
             if filled:
                 snap = {**snap, "stocks": list(snap.get("stocks") or []) + filled}
@@ -3753,7 +4572,8 @@ def _jp_market_open(now_jst=None):
         argus_market_clock.JP_EQUITY, n.astimezone(pytz.utc))
     return state["session"] in ("MORNING_SESSION", "AFTERNOON_SESSION")
 
-def _overlay_pushed(snapshot, market, requested):
+def _overlay_pushed(
+        snapshot, market, requested, *, allow_provider_fetch=True):
     """Copy of a watchlist snapshot with fresh pushed quotes overlaid (and
     holes filled for requested symbols the provider missed). Cache-safe —
     never mutates the cached object. No fresh pushes → snapshot unchanged."""
@@ -3762,7 +4582,13 @@ def _overlay_pushed(snapshot, market, requested):
             return snapshot
         now = time.time()
         fresh = {sym: p for sym, p in (_PUSHED_QUOTES.get(market) or {}).items()
-                 if now - p["ts"] <= _PUSH_TTL}
+                 if 0 <= now - p["ts"] <= _PUSH_TTL}
+        overlay_symbols = {
+            str(row.get("symbol") or "")
+            for row in (snapshot.get("stocks") or []) if isinstance(row, dict)
+        } | {str(symbol) for symbol in (requested or [])}
+        fresh = {sym: pushed for sym, pushed in fresh.items()
+                 if sym in overlay_symbols}
         if not fresh:
             return snapshot
         calendar = argus_market_clock.market_session(
@@ -3779,10 +4605,16 @@ def _overlay_pushed(snapshot, market, requested):
         active_session = session in ("PRE", "REGULAR", "AFTER")
 
         source_ages = []
-        for p in fresh.values():
-            ex_epoch = _coerce_epoch((p.get("row") or {}).get("exchangeTs"))
-            if ex_epoch is not None:
-                source_ages.append(max(0.0, now - ex_epoch))
+        source_truth_by_symbol = {}
+        future_source_timestamps = 0
+        for symbol, p in fresh.items():
+            source_truth = _canonical_quote_source_age(
+                (p.get("row") or {}).get("exchangeTs"), now_epoch=now)
+            source_truth_by_symbol[symbol] = source_truth
+            if source_truth["timestampInversion"]:
+                future_source_timestamps += 1
+            elif source_truth["ageSec"] is not None:
+                source_ages.append(float(source_truth["ageSec"]))
         source_ages.sort()
         coverage = len(source_ages) / len(fresh) if fresh else 0.0
         median_age = None
@@ -3803,47 +4635,114 @@ def _overlay_pushed(snapshot, market, requested):
             delay_class = "15m"
         elif median_age is not None and median_age >= 600:
             delay_class = "15m"
-        elif coverage == 1.0 and p95_age is not None and p95_age <= 60:
+        elif coverage == 1.0 and p95_age is not None and p95_age <= 60 \
+                and all(item["realtimeEvidence"]
+                        for item in source_truth_by_symbol.values()):
             delay_class = "LIVE"
         else:
             delay_class = "UNKNOWN"
 
-        def _stamp(p):
+        def _stamp(symbol, p):
             row = p["row"]
-            transport_age = max(0, int(now - p["ts"]))
-            source_epoch = _coerce_epoch(row.get("exchangeTs"))
-            source_age = max(0, int(now - source_epoch)) if source_epoch is not None else None
+            transport_delta = now - p["ts"]
+            transport_age = int(transport_delta) if transport_delta >= 0 else None
+            source_truth = source_truth_by_symbol[symbol]
+            row_entitlement = str(
+                row.get("entitlement") or "unknown").lower()
+            row_live = bool(source_truth["realtimeEvidence"]) \
+                and delay_class == "LIVE" \
+                and "delay" not in row_entitlement
             return {
                 **row,
-                "status": "live" if delay_class == "LIVE" else "delayed",
+                "status": "live" if row_live else "delayed",
+                "freshness": "fresh" if row_live else "delayed",
                 "sourceTimestamp": row.get("exchangeTs"),
                 "receivedAt": datetime.fromtimestamp(
                     p["ts"], pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "ageSec": source_age,
+                "ageSec": source_truth["ageSec"],
                 "transportAgeSec": transport_age,
-                "delayClass": delay_class,
+                "timestampInversion": source_truth["timestampInversion"],
+                "sourceTimeStatus": source_truth["sourceTimeStatus"],
+                "delayClass": "LIVE" if row_live else delay_class,
                 "session": session,
                 "quoteRight": row.get("quoteRight") or row.get("entitlement", "unknown"),
                 "entitlement": row.get("entitlement", "unknown"),
-                "realtimeEvidence": delay_class == "LIVE",
+                "realtimeEvidence": row_live,
             }
-        stocks, seen, overlaid = [], set(), 0
+
+        def _candidate(row, selected):
+            price = row.get("price")
+            if not isinstance(price, (int, float)) or not math.isfinite(price):
+                return None
+            source = str(row.get("source") or snapshot.get("provider")
+                         or "unknown")[:40]
+            try:
+                source_key = argus_market_data_truth.provider_key(source)
+            except (TypeError, ValueError):
+                source_key = "unknown"
+            # A bridge row's display date is receipt/session decoration, not a
+            # venue timestamp.  Never let it stand in for missing exchangeTs.
+            source_timestamp = (row.get("sourceTimestamp") or
+                                row.get("exchangeTs"))
+            if source_timestamp is None and source_key != "moomoo":
+                source_timestamp = row.get("date")
+            return {
+                "value": round(float(price), 6),
+                "source": source,
+                "sourceTimestamp": source_timestamp,
+                "receivedAt": row.get("receivedAt"),
+                "status": row.get("status") or "unknown",
+                "selected": bool(selected),
+            }
+
+        def _with_candidates(selected_row, alternate_row=None):
+            selected = _candidate(selected_row, True)
+            alternate = _candidate(alternate_row or {}, False)
+            candidates = [item for item in (selected, alternate) if item]
+            conflict = False
+            difference_pct = None
+            if selected and alternate and selected["value"]:
+                difference_pct = round(
+                    abs(alternate["value"] - selected["value"])
+                    / abs(selected["value"]) * 100.0, 6)
+                conflict = difference_pct > 0.25
+            return {
+                **selected_row,
+                "selectedSource": selected["source"] if selected else "unknown",
+                "providerCandidates": candidates[:2],
+                "sourceDisagreement": {
+                    "conflict": conflict,
+                    "differencePct": difference_pct,
+                },
+                "selectionPolicyId": (
+                    "jp-moomoo-jquants-v1" if market == "JP"
+                    else "us-moomoo-twelvedata-finnhub-v1"),
+            }
+        stocks, seen, overlaid, live_overlaid = [], set(), 0, 0
         for q in snapshot.get("stocks", []):
             sym = q.get("symbol")
             seen.add(sym)
             if sym in fresh:
-                stocks.append({**q, **_stamp(fresh[sym])})
+                selected_row = {**q, **_stamp(sym, fresh[sym])}
+                stocks.append(_with_candidates(selected_row, q))
                 overlaid += 1
+                live_overlaid += int(selected_row["realtimeEvidence"])
             else:
                 stocks.append(q)
         for sym in requested or []:
             if sym in fresh and sym not in seen:
-                name = (_jq_name_for(sym) or sym) if market == "JP" else sym
-                stocks.append({**_stamp(fresh[sym]), "name": name, "nameJa": name})
+                name = ((_jq_name_for(
+                    sym, allow_provider_fetch=allow_provider_fetch) or sym)
+                    if market == "JP" else sym)
+                selected_row = {**_stamp(sym, fresh[sym]), "name": name,
+                                "nameJa": name}
+                stocks.append(_with_candidates(selected_row))
                 overlaid += 1
+                live_overlaid += int(selected_row["realtimeEvidence"])
         if overlaid == 0:
             return snapshot
-        transport_ages = [max(0, now - p["ts"]) for p in fresh.values()]
+        transport_ages = [now - p["ts"] for p in fresh.values()
+                          if now - p["ts"] >= 0]
         ent = (next(iter(entitlements)) if len(entitlements) == 1 else "mixed")
         note = (
             "LIVEはexchange timestamp被覆100%かつquote-set p95≤60秒の時だけ。"
@@ -3857,13 +4756,14 @@ def _overlay_pushed(snapshot, market, requested):
                    "sourceAgeMedianSec": round(median_age, 1) if median_age is not None else None,
                    "sourceAgeP95Sec": round(p95_age, 1) if p95_age is not None else None,
                    "sourceTimestampCoverage": round(coverage, 3),
+                   "futureSourceTimestampCount": future_source_timestamps,
                    "newestTransportAgeSec": int(min(transport_ages)) if transport_ages else None,
                    "oldestTransportAgeSec": int(max(transport_ages)) if transport_ages else None,
                    "entitlement": ent,
                    "noteJa": note}}
         requested_count = len(requested or [])
         full_coverage = requested_count > 0 and overlaid == requested_count
-        if delay_class == "LIVE" and full_coverage:
+        if full_coverage and live_overlaid == overlaid:
             out["status"] = "live"
         elif delay_class in ("15m", "EOD") and full_coverage:
             out["status"] = "delayed"
@@ -3913,14 +4813,18 @@ def api_argus_quote_push():
             ent = str(s.get("entitlement") or "unknown").lower()
             if ent not in ("realtime", "delayed", "unknown"):
                 ent = "unknown"
+            source_truth = _canonical_moomoo_quote_truth(
+                s.get("exchangeTs"), ent, now_epoch=now)
             row = {"symbol": sym,
                    "price": round(price, 4),
                    "changeAbs": round(float(s.get("changeAbs") or 0.0), 4),
                    "changePct": round(float(s.get("changePct") or 0.0), 4),
                    "volume": int(float(s.get("volume") or 0)),
                    "date": datetime.now(TZ_JST).strftime("%Y-%m-%d"),
-                   "status": "live", "source": "moomoo-rt",
-                   "entitlement": ent, "exchangeTs": s.get("exchangeTs")}
+                   "source": "moomoo-rt", "entitlement": ent,
+                   "exchangeTs": s.get("exchangeTs"),
+                   "sourceTimestamp": s.get("exchangeTs"),
+                   **source_truth}
             # Optional big-money flow (v10.2): today's cumulative in/out split
             # by order size from the bridge. Normalized here so the ratio
             # formula stays transparent and server-side.
@@ -3935,17 +4839,28 @@ def api_argus_quote_push():
                         row["flow"] = {
                             "bigNetRatio": round((big_in - big_out) / denom, 4),
                             "bigIn": round(big_in, 2), "bigOut": round(big_out, 2),
+                            "authority": "diagnostic_only",
+                            "decisionUsable": False,
+                            "sourceTimestamp": None,
+                            "reason": "flow_specific_timestamp_not_available",
                         }
                 except (KeyError, TypeError, ValueError):
                     pass
             _PUSHED_QUOTES[market][sym] = {"row": row, "ts": now}
-            hist = _PUSH_HISTORY[market].get(sym)
-            if hist is None:
-                hist = _PUSH_HISTORY[market][sym] = deque(maxlen=_PUSH_HIST_MAX)
-            hist.append({"ts": now, "price": row["price"],
-                         "volume": row.get("volume"),   # cumulative — VWAP needs Δvolume (v11.3.4)
-                         "flowRatio": (row.get("flow") or {}).get("bigNetRatio")})
-            _pushed_now.setdefault(market, []).append(row)
+            # Display/diagnostic cache retains delayed rows, but only canonical
+            # source-time LIVE evidence may enter acceleration history or the
+            # event-authority path.  Receipt time and a large changePct alone
+            # can never manufacture a current anomaly.
+            if row.get("realtimeEvidence") is True:
+                hist = _PUSH_HISTORY[market].get(sym)
+                if hist is None:
+                    hist = _PUSH_HISTORY[market][sym] = deque(
+                        maxlen=_PUSH_HIST_MAX)
+                hist.append({"ts": now, "price": row["price"],
+                             "volume": row.get("volume"),   # cumulative — VWAP needs Δvolume (v11.3.4)
+                             "sourceTimestamp": row.get("sourceTimestamp"),
+                             "flowRatio": None})
+                _pushed_now.setdefault(market, []).append(row)
             accepted += 1
         except Exception:
             continue
@@ -4151,7 +5066,7 @@ _DOWNSIDE_EVENT_TYPES = {"PRICE_CRASH", "LIMIT_DOWN_PROXIMITY", "MOMENTUM_ACCELE
 
 def _record_event(market, symbol, trig, now, session, bucket_minutes=30,
                   source="moomoo-bridge", session_override=None, quote=None,
-                  suppress_notify=False):
+                  suppress_notify=False, observed_at=None):
     """Dedup + lifecycle + notify for one deterministic trigger. Lean: Gear 0/1
     only, so severity decides the state directly (no AI queue unless enabled).
     bucket_minutes widens the dedup window (crypto uses 360 so a sustained 24h
@@ -4166,7 +5081,18 @@ def _record_event(market, symbol, trig, now, session, bucket_minutes=30,
         env = argus_events.make_envelope(
             event_type=trig["type"], symbol=symbol, market=market,
             source=source, trigger=trig, now=now,
-            recommended_posture=_EVENT_POSTURE.get(trig["type"], "WATCH"), gear=1)
+            recommended_posture=_EVENT_POSTURE.get(trig["type"], "WATCH"), gear=1,
+            observed_at=observed_at)
+        # Explicit producer stamp: restored/legacy envelopes without this exact
+        # source-time proof remain displayable but cannot become market
+        # confirmation merely because they carry a price-like event type.
+        source_time_validated = (
+            isinstance(observed_at, datetime) and
+            observed_at.tzinfo is not None and
+            observed_at.utcoffset() is not None and
+            env.get("observedAt") is not None)
+        env["sourceTimestamp"] = env.get("observedAt")
+        env["sourceTimeValidated"] = source_time_validated
         if session_override:
             env["session"] = session_override
         # Always carry the JP company name (never a guessed mapping — resolved from
@@ -4216,7 +5142,7 @@ def _record_event(market, symbol, trig, now, session, bucket_minutes=30,
         # (API/ledger still get it) but suppress the push outside the market session.
         if notify and env.get("eventType") == "MARKET_MOVER" and not _mover_push_allowed(env.get("market")):
             notify = False
-        if suppress_notify:
+        if suppress_notify or env.get("observedAt") is None:
             notify = False                       # caller knows the data is stale/non-actionable
         out = env
     if notify:
@@ -4244,12 +5170,22 @@ def _process_events_from_push(market, rows):
     _EVENT_STATE["detections"] += 1
     for r in rows:
         try:
+            source_truth = _canonical_moomoo_quote_truth(
+                r.get("exchangeTs") or r.get("sourceTimestamp"),
+                r.get("entitlement"), now_epoch=time.time())
+            if r.get("realtimeEvidence") is not True or \
+                    source_truth.get("realtimeEvidence") is not True:
+                continue
+            source_epoch = _coerce_epoch(
+                r.get("exchangeTs") or r.get("sourceTimestamp"))
+            if source_epoch is None:
+                continue
+            observed_at = datetime.fromtimestamp(source_epoch, pytz.utc)
             price = r.get("price")
             chg_abs = r.get("changeAbs")
             prev_close = (price - chg_abs) if (price and isinstance(chg_abs, (int, float))) else None
-            flow = (r.get("flow") or {}).get("bigNetRatio")
             quote = {"market": market, "symbol": r.get("symbol"), "price": price,
-                     "changePct": r.get("changePct"), "flowRatio": flow}
+                     "changePct": r.get("changePct"), "flowRatio": None}
             triggers = list(argus_events.detect_anomalies(quote, session, prev_close=prev_close))
             # Rolling short-window EARLY-warning layer (v10.49): momentum/flow
             # acceleration from the per-symbol history. Tighter dedup bucket so a
@@ -4259,7 +5195,9 @@ def _process_events_from_push(market, rows):
             accel = argus_events.detect_acceleration(
                 list(_PUSH_HISTORY[market].get(r["symbol"]) or []), session, now=now)
             for trig in triggers:
-                env = _record_event(market, r["symbol"], trig, now, session, quote=quote)
+                env = _record_event(
+                    market, r["symbol"], trig, now, session, quote=quote,
+                    observed_at=observed_at)
                 # Build the EVENT-TIME dossier snapshot for significant events, off
                 # the hot path / outside the lock — so the public GET only reads it.
                 if env and env.get("severity", 0) >= 4 and "dossier" not in env:
@@ -4269,7 +5207,10 @@ def _process_events_from_push(market, rows):
                         pass
             if not triggers:
                 for trig in accel:
-                    env = _record_event(market, r["symbol"], trig, now, session, bucket_minutes=15, quote=quote)
+                    env = _record_event(
+                        market, r["symbol"], trig, now, session,
+                        bucket_minutes=15, quote=quote,
+                        observed_at=observed_at)
                     if env and env.get("severity", 0) >= 4 and "dossier" not in env:
                         try:
                             env["dossier"] = _build_event_dossier(env, r)
@@ -4283,12 +5224,9 @@ def _events_active_list():
     with _EVENT_LOCK:
         out = []
         for e in _EVENTS_ACTIVE.values():
-            exp = e.get("expiresAt")
-            try:
-                if exp and datetime.strptime(exp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc).timestamp() < now:
-                    continue
-            except Exception:
-                pass
+            exp_epoch = _parse_iso_epoch(e.get("expiresAt"))
+            if exp_epoch is None or exp_epoch <= now:
+                continue
             out.append(e)
     return sorted(out, key=lambda e: (-(e.get("severity") or 0), -argus_events.priority_score(e)))
 
@@ -4308,14 +5246,23 @@ def _events_restore_once():
         r = requests.get(f"{_LEDGER_RAW_BASE}/events/snapshot.json?cb={int(time.time())}", timeout=6)
         if r.status_code != 200:
             return
+        snapshot = r.json()
         active, log = argus_event_store.restore_state(
-            r.json(), time.time(), _parse_iso_epoch, lambda e: e.get("deduplicationKey"))
+            snapshot, time.time(), _parse_iso_epoch,
+            lambda e: e.get("deduplicationKey"))
         with _EVENT_LOCK:
             for k, v in active.items():
                 if k and k not in _EVENTS_ACTIVE:
                     _EVENTS_ACTIVE[k] = v
             for e in reversed(log):
                 _EVENTS_LOG.appendleft(e)
+        snapshot_meta = globals().get("_EVENT_SNAP_META")
+        if isinstance(snapshot_meta, dict):
+            snapshot_meta["data"] = {
+                "snapshotAt": snapshot.get("snapshotAt"),
+                "activeCount": snapshot.get("activeCount"),
+            }
+            snapshot_meta["expires"] = time.time() + 600
         if active:
             add_log(f"[event] restored {len(active)} active events from ledger branch")
     except Exception:
@@ -4323,12 +5270,23 @@ def _events_restore_once():
 
 @app.route("/api/argus/events-active")
 def api_argus_events_active():
-    """Public read: current active 24/7 events for the frontend. Secret-free."""
-    _events_restore_once()
+    """Public read: active events plus the product-facing backbone status."""
     active = _events_active_list()
-    return jsonify({"enabled": _EVENT_BACKBONE_ENABLED, "asOf": _ai_now_iso(),
-                    "schemaVersion": argus_events.SCHEMA_VERSION,
-                    "count": len(active), "events": active[:30]})
+    with _EVENT_LOCK:
+        active_count = len(_EVENTS_ACTIVE)
+    return jsonify({
+        "enabled": _EVENT_BACKBONE_ENABLED,
+        "asOf": _ai_now_iso(),
+        "schemaVersion": argus_events.SCHEMA_VERSION,
+        "count": len(active),
+        "events": active[:30],
+        "activeCount": active_count,
+        "ntfyConfigured": bool(os.environ.get("NTFY_TOPIC")),
+        "sessionJp": _jp_market_open(),
+        "sessionUs": _us_market_open(),
+        "lastDetectionAt": _EVENT_STATE["lastDetectionAt"],
+        "lastEventAt": _EVENT_STATE["lastEventAt"],
+    })
 
 _CTX_FETCH = object()   # sentinel: fetch-allowed default for _event_card_context
 
@@ -4343,139 +5301,194 @@ def _event_card_context(active, tdnet_snapshot=_CTX_FETCH):
     event's symbol. Two syndicated copies of one wire stay ONE family (mesh handles it).
     `tdnet_snapshot`: pass a cached snapshot (or None) to forbid fetching (v11.2.1)."""
     ctx = {}
-    intel = list(_INTEL_STORE)
+    decision_now = time.time()
+    intel = [row for row in (
+        _decision_news_row(
+            it, now_epoch=decision_now,
+            timestamp_keys=("publishedAt", "datetime", "time"))
+        for it in list(_INTEL_STORE)) if row is not None]
     _PRICE_TYPES = {"PRICE_MOVE", "PRICE_SPIKE", "PRICE_CRASH", "LIMIT_UP", "LIMIT_DOWN",
                     "GAP", "VOLUME_ANOMALY", "FLOW_ANOMALY"}
+    _PRICE_CONFIRMING_SOURCES = {
+        "moomoo-bridge", "moomoo-rt", "alphavantage", "coingecko",
+    }
     # Official TDnet disclosures by symbol (v11.1) → an OFFICIAL confirmation on the
     # EventCard. Prefers the official J-Quants Add-on; yanoshin fallback is non-official
     # so it does NOT set has_official.
     try:
         _td = get_tdnet_recent(150) if tdnet_snapshot is _CTX_FETCH else (tdnet_snapshot or {})
-        _td_official = bool(_td.get("official"))
+        _td_official = (
+            _td.get("official") is True and
+            _td.get("provider") == "jquants-tdnet" and
+            _td.get("status") == "official_tdnet_live"
+        )
         _td_by_sym = _td.get("bySymbol") or {}
     except Exception:
         _td_official, _td_by_sym = False, {}
     for e in active:
         sym = e.get("symbol")
-        src_ids = [e.get("source")] if e.get("source") else []
+        raw_event_source = e.get("source")
+        event_source = (raw_event_source.strip()
+                        if type(raw_event_source) is str and
+                        raw_event_source.strip() else None)
+        src_ids = [event_source] if event_source else []
+        grounding_source_ids = []
         tiers = []
+        etype = str(e.get("eventType") or "").upper()
+        event_epochs = []
+        for event_time in (e.get("observedAt"),):
+            event_truth = _decision_event_time(
+                event_time, now_epoch=decision_now,
+                max_age_seconds=_DECISION_OFFICIAL_FACT_MAX_AGE_SEC)
+            if event_truth is not None:
+                event_epochs.append(event_truth["sourceEpoch"])
+        # The earliest exact event observation is the conservative causal
+        # boundary.  A later receipt/detection time cannot move that boundary
+        # forward and turn a post-move disclosure into the trigger.
+        event_epoch = min(event_epochs) if event_epochs else None
+
+        # The envelope's source is display/provenance only. A restored envelope
+        # is not itself a provider-authentication record, so even an exact
+        # registry-looking source id cannot mint an official/news family. Current
+        # normalized IntelligenceItems and the independently validated TDnet
+        # snapshot below are the only corroboration authorities.
         for it in intel:
             if sym and sym in (it.get("linkedAssets") or []):
-                if it.get("sourceId"):
-                    src_ids.append(it["sourceId"])
-                if it.get("sourceTier"):
-                    tiers.append(it["sourceTier"])
+                source_id = it.get("sourceId")
+                if (type(source_id) is not str or not source_id.strip() or
+                        source_id not in argus_research_mesh.SOURCE_RIGHTS):
+                    continue
+                source_id = source_id.strip()
+                source_tier = argus_research_mesh.source_tier(source_id)
+                grounding = argus_research_mesh.tier_grounding(source_tier)
+                rights = argus_research_mesh.source_rights(source_id)
+                # Only a fully normalized exact-registry item participates.
+                # Caller-provided tier/grounding claims cannot upgrade an
+                # unknown, aggregator, or malformed provider identity.
+                if (it.get("sourceTier") != source_tier or
+                        it.get("accessClass") != rights.get("accessClass") or
+                        rights.get("accessClass") == "UNAVAILABLE" or
+                        rights.get("canRetain") is not True or
+                        it.get("canGroundJudgment") is not True or
+                        it.get("weakSignal") is not False or
+                        grounding.get("canGroundJudgment") is not True or
+                        event_epoch is None or
+                        it.get("sourceEpoch") > event_epoch):
+                    continue
+                src_ids.append(source_id)
+                grounding_source_ids.append(source_id)
+                tiers.append(source_tier)
         src_ids = [s for s in src_ids if s]
-        try:
-            corr = argus_research_mesh.corroboration_level(src_ids) if src_ids else "single"
-        except Exception:
-            corr = "single"
-        etype = str(e.get("eventType") or "").upper()
         # Official TDnet disclosure for this symbol → official confirmation. A MATERIAL
         # disclosure adds an official source id (so corroboration can reach 'official').
-        td_rows = _td_by_sym.get(str(sym)) if sym else None
-        td_material = bool(td_rows and any(r.get("material") for r in td_rows))
-        has_official = (corr == "official") or (_td_official and bool(td_rows))
-        if _td_official and td_rows:
+        td_rows = [row for row in (
+            _decision_official_disclosure(
+                raw, "JP", now_epoch=decision_now)
+            for raw in ((_td_by_sym.get(str(sym)) or []) if sym else []))
+            if row is not None]
+        causal_td_rows = [
+            row for row in td_rows
+            if row.get("official") is True and
+            row.get("provider") == "jquants-tdnet" and
+            row.get("material") is True and event_epoch is not None and
+            row.get("sourceEpoch") <= event_epoch
+        ]
+        td_material = bool(causal_td_rows)
+        if _td_official and td_material:
             src_ids = list(src_ids) + ["official:tdnet"]
+            grounding_source_ids.append("official:tdnet")
             tiers.append("exchange_or_listing_venue")
+        grounding_families = {
+            argus_research_mesh.source_family(source_id)
+            for source_id in grounding_source_ids if source_id
+        }
+        has_official = any(
+            argus_research_mesh.is_official_source(source_id)
+            for source_id in grounding_source_ids
+        )
         ctx[e.get("eventId")] = {
             "source_ids": src_ids or None,
-            "independent_family_count": (2 if corr == "corroborated" else (1 if src_ids else 0)),
+            "independent_family_count": len(grounding_families),
             "has_official": has_official,
             "theme_only": etype in ("THEME", "CAOS_CANDIDATE", "INSTITUTIONAL_VIEW") and not td_material,
-            "market_confirmed": etype in _PRICE_TYPES,   # the observed move confirms itself
+            # A price event confirms the market move only with its own bounded
+            # source observation time; a fresh detection receipt is not a
+            # substitute for venue/source time.
+            "market_confirmed": (
+                etype in _PRICE_TYPES and event_epoch is not None and
+                e.get("sourceTimeValidated") is True and
+                event_source in _PRICE_CONFIRMING_SOURCES),
             "source_tiers": sorted(set(tiers)),
         }
     return ctx
 
 
-@app.route("/api/argus/events/cards")
-@app.route("/api/argus/events/cards/<card_id>")
-def api_argus_event_cards(card_id=None):
-    """EventCard v2 — the canonical research object (ARGUS Pro v11). Folds active
-    events + corroboration context + the Visibility Guard into disciplined cards:
-    a single-source association is never a confirmed_cause, a theme-only link cannot
-    move the Today call, confidenceFinal = min(raw, cap), and every card states what
-    is missing. Public, secret-free."""
-    _events_restore_once()
-    try:
-        guard = _visibility_guard()
-    except Exception:
-        guard = {}
-    active = _events_active_list()
-    cards = argus_event_card.build_cards(active, guard=guard,
-                                         context_by_event=_event_card_context(active),
-                                         now_iso=_ai_now_iso())
-    if card_id:
-        card = next((c for c in cards if c.get("cardId") == card_id), None)
-        return (jsonify(card), 200) if card else (jsonify({"error": "not_found", "cardId": card_id}), 404)
-    symbol = (request.args.get("symbol") or "").strip().upper()
-    etype = (request.args.get("type") or "").strip()
-    if symbol:
-        cards = [c for c in cards if symbol in (c.get("directAssets") or [])
-                 or symbol in (c.get("associatedAssets") or [])]
-    if etype:
-        cards = [c for c in cards if c.get("eventType") == etype]
-    try:
-        limit = max(1, min(60, int(request.args.get("limit", "30"))))
-    except Exception:
-        limit = 30
-    return jsonify({"asOf": _ai_now_iso(), "schemaVersion": argus_event_card.SCHEMA_VERSION,
-                    "count": len(cards), "items": cards[:limit]})
-
-
-@app.route("/api/argus/caos/audit")
-def api_argus_caos_audit():
-    """C.A.O.S. association audit trail (ARGUS Pro v11) — WHY each symbol↔event link
-    exists (matched terms, source family/tier, corroboration) with a permanent
-    non-causality caveat. Metadata only; never full text. Public, secret-free."""
-    symbol = (request.args.get("symbol") or "").strip().upper() or None
-    try:
-        limit = max(1, min(200, int(request.args.get("limit", "100"))))
-    except Exception:
-        limit = 100
-    return jsonify({"asOf": _ai_now_iso(), **argus_caos_audit.snapshot(symbol=symbol, limit=limit)})
-
-
 # ── Evidence Pack — the decision spine's canonical input (v11.2) ─────────────
 # CACHED-ONLY accessors (v11.2.1): the PUBLIC evidence-pack GET must never trigger a
 # paid provider fetch, an LLM call, or a public-text fetch — not even on a cold cache.
-# These read the in-process caches AS-IS (stale is fine, honest) and return None/{} on
-# a miss; the scheduled/cron/other endpoints keep refreshing those caches.
+# These read only fresh in-process evidence and return None/{} on a miss or expiry;
+# the scheduled/cron/other endpoints keep refreshing those caches.
 def _tdnet_recent_cached_only():
-    d = _TDNET_OFFICIAL_CACHE.get("data")
+    now = time.time()
+    d = (_TDNET_OFFICIAL_CACHE.get("data")
+         if now < _TDNET_OFFICIAL_CACHE.get("expires", 0.0) else None)
     if d and d.get("items"):
         return d
-    return _TDNET_FEED_CACHE.get("data")            # yanoshin cache, may be None
+    return (_TDNET_FEED_CACHE.get("data")
+            if now < _TDNET_FEED_CACHE.get("expires", 0.0) else None)
 
 def _quote_cached_only(sym, market):
     """Cached quote for one symbol: bridge push → dynamic snapshot caches → curated
     cache. NEVER fetches."""
+    now = time.time()
     q = (_PUSHED_QUOTES.get(market) or {}).get(sym)
-    if q and isinstance(q.get("row"), dict):
-        return dict(q["row"], status="live")
+    transport_age = (now - float(q.get("ts") or 0)) if q else None
+    if (q and transport_age is not None and 0 <= transport_age <= _PUSH_TTL and
+            isinstance(q.get("row"), dict)):
+        row = q["row"]
+        source_timestamp = row.get("exchangeTs")
+        source_truth = _canonical_moomoo_quote_truth(
+            source_timestamp, row.get("entitlement"), now_epoch=now)
+        result = {
+            **row, **source_truth,
+            "sourceTimestamp": source_timestamp,
+            "receivedAt": datetime.fromtimestamp(
+                q["ts"], pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "transportAgeSec": int(transport_age),
+        }
+        result["decisionUsable"] = _decision_usable_quote_row(
+            result, now_epoch=now) is not None
+        return result
     dyn = _JP_DYN_CACHE if market == "JP" else _US_DYN_CACHE
     try:
         for ent in list(dyn.values()):
+            if now >= float(ent.get("expires") or 0):
+                continue
             for s in ((ent.get("data") or {}).get("stocks") or []):
                 if str(s.get("symbol")).upper() == sym:
-                    return s
+                    return _canonical_cached_quote_row_age(
+                        s, now_epoch=now)
     except Exception:
         pass
-    cur = (_JP_CACHE if market == "JP" else _US_CACHE).get("data") or {}
+    curated = _JP_CACHE if market == "JP" else _US_CACHE
+    cur = (curated.get("data") or {}
+           if now < curated.get("expires", 0.0) else {})
     for s in (cur.get("stocks") or []):
         if str(s.get("symbol")).upper() == sym:
-            return s
+            return _canonical_cached_quote_row_age(s, now_epoch=now)
     return None
 
 def _visibility_guard_cached_only():
+    if time.time() >= _VISIBILITY_CACHE.get("expires", 0.0):
+        return {}
     return _VISIBILITY_CACHE.get("data") or {}
 
 def _market_depth_proof_cached_only():
     """Depth-proof summary from the CACHED depth report only (a cold _market_depth_report
     can reach the paid TDnet probe via _source_registry — so never trigger it here)."""
-    rep = _MARKET_DEPTH_CACHE.get("data")
+    rep = (_MARKET_DEPTH_CACHE.get("data")
+           if time.time() < _MARKET_DEPTH_CACHE.get("expires", 0.0)
+           else None)
     if not rep:
         return None
     items = _market_depth_proof_items(rep.get("capabilities") or {})
@@ -4509,7 +5522,8 @@ def _build_evidence_pack(symbol, market=None):
     as_of = _ai_now_iso()
     mkt = argus_evidence_pack.infer_market(sym, market)
     cache_missing = set()
-    quote = _quote_cached_only(sym, mkt) if mkt in ("JP", "US") else None
+    quote = (_decision_usable_quote_row(_quote_cached_only(sym, mkt) or {})
+             if mkt in ("JP", "US") else None)
     if mkt in ("JP", "US") and quote is None:
         cache_missing.add("cache:quote")
     guard = _visibility_guard_cached_only()
@@ -4526,14 +5540,24 @@ def _build_evidence_pack(symbol, market=None):
     if td is None:
         discs = []
         cache_missing.add("cache:tdnet")
+    elif td.get("official") is not True:
+        discs = []
+        cache_missing.add("cache:tdnet:not_official")
     else:
-        discs = (td.get("bySymbol") or {}).get(sym[:4], [])
+        raw_discs = (td.get("bySymbol") or {}).get(sym[:4], [])
+        discs = [row for row in (
+            _decision_official_disclosure(
+                raw, mkt, now_epoch=time.time())
+            for raw in raw_discs) if row is not None]
+        if raw_discs and not discs:
+            cache_missing.add("cache:tdnet:source_time_unusable")
     try:
         caos = argus_caos_audit.snapshot(symbol=sym, limit=6).get("items") or []
     except Exception:
         caos = []
     try:
-        views = [it for it in list(_INTEL_STORE) if sym in (it.get("linkedAssets") or [])][:6]
+        views = [signal for signal in _institutional_signals(
+            symbol=sym, cap=6) if signal.get("decisionUsable") is True]
     except Exception:
         views = []
     cov = _source_coverage_cached_only()
@@ -4546,23 +5570,35 @@ def _build_evidence_pack(symbol, market=None):
     # public artifact — no paid provider, no LLM, no article text). Cold cache → honest
     # cache marker instead of a fetch.
     try:
-        _v4 = _CALIB_V4_CACHE.get("data")
-        _days = int((((_ledger_summary() or {}).get("overall")) or {}).get("days") or 0)
+        now_epoch = time.time()
+        _v4_fresh = now_epoch < _CALIB_V4_CACHE.get("expires", 0.0)
+        _ledger_fresh = now_epoch < _LEDGER_SUMMARY_CACHE.get("expires", 0.0)
+        _v4 = _CALIB_V4_CACHE.get("data") if _v4_fresh else None
+        _ledger = (_LEDGER_SUMMARY_CACHE.get("data") or {}
+                   if _ledger_fresh else {})
+        if not _v4_fresh:
+            cache_missing.add("cache:calibration:stale")
+        if not _ledger_fresh:
+            cache_missing.add("cache:calibration-ledger:stale")
+        _days = int(((_ledger.get("overall") or {}).get("days")) or 0)
         cal = {"isActive": bool(_v4) and any(isinstance((_v4 or {}).get(k), (int, float)) and (_v4 or {}).get(k) > 0
                                              for k in ("nPredictions", "n", "count", "records")),
                "reliabilityStage": argus_calibration.reliability_stage(_days)}
     except Exception:
         cal = None
     try:
-        _dv = _dv_status_public_dict()
+        _dv = _dv_status_public_dict(allow_private_fetch=False)
         dvd = {"phase": _dv.get("phase"), "sampleStage": _dv.get("sampleStage")}
+        if _dv.get("cacheFreshness") == "stale":
+            cache_missing.add("cache:decision-value:stale")
     except Exception:
         dvd = None
     # v11.3: lifecycle-tracked official events for this symbol (in-memory store =
     # cached-only compliant).
     try:
         oe_refs = [argus_official_event_lifecycle.evidence_ref(r)
-                   for r in _official_events_by_symbol(sym)[:5]]
+                   for r in _official_events_by_symbol(
+                       sym, allow_restore=False)[:5]]
     except Exception:
         oe_refs = []
     pack = argus_evidence_pack.build_pack(
@@ -4592,86 +5628,6 @@ def _build_evidence_pack(symbol, market=None):
     return pack
 
 
-@app.route("/api/argus/evidence-pack")
-def api_argus_evidence_pack():
-    """The canonical Evidence Pack for one symbol (ARGUS Pro v11.2) — what every judge
-    (rules / GPT / Gemini / TodayCall) reads. Public GET: cached data only, no LLM calls,
-    no public-text fetches, no private holdings/P&L. Empty arrays when nothing collected."""
-    sym = (request.args.get("symbol") or "").strip()
-    if not sym:
-        return jsonify({"error": "symbol_required",
-                        "messageJa": "銘柄コードを指定してください（例 ?symbol=8058&market=JP）。"}), 400
-    market = (request.args.get("market") or "").strip().upper() or None
-    return jsonify(_build_evidence_pack(sym, market))
-
-
-@app.route("/api/argus/decision-spine/status")
-def api_argus_decision_spine_status():
-    """Decision Spine status (v11.2.1) — is the spine actually wired end-to-end?
-    Public-safe: no keys/headers/provider URLs, no private holdings/P&L; the last-built
-    symbol is public-watchlist scope by construction."""
-    limitations = []
-    # action labels: same cached composition the public /action-labels endpoint serves
-    try:
-        al = get_action_labels()
-        labs = al.get("labels") or []
-        with_refs = sum(1 for l in labs
-                        if str(((l.get("decisionRefs") or {}).get("evidencePackId")) or "").startswith("ep-"))
-        al_stats = {"decisionRefsAttached": bool(labs) and with_refs == sum(
-                        1 for l in labs if l.get("status") != "mock"),
-                    "labelsWithEvidenceRefs": with_refs, "totalLabels": len(labs)}
-    except Exception:
-        al_stats = {"decisionRefsAttached": False, "labelsWithEvidenceRefs": 0, "totalLabels": 0}
-        limitations.append("action-labelsの取得に失敗（一時的）。")
-    # AI judgment: cached payload only (never triggers a run)
-    ai_payload = _AI_RESULT_CACHE.get("data")
-    if not ai_payload:
-        try:
-            with open(_AI_LATEST_FILE, "r") as f:
-                ai_payload = json.load(f)
-        except Exception:
-            ai_payload = None
-    gem_included = bool((ai_payload or {}).get("geminiChallenge"))
-    ai_refs = any((l.get("decisionRefs") or {}).get("evidencePackId")
-                  for l in ((ai_payload or {}).get("labels") or []))
-    if ai_payload and not gem_included:
-        limitations.append("AI判定キャッシュがv11.2以前の実行分のため、geminiChallenge/evidence refsは次回実行から付きます。")
-    if not ai_payload:
-        limitations.append("AI判定はまだ実行されていません（キャッシュなし）。")
-    return jsonify({
-        "schemaVersion": "decision-spine-v1",
-        "asOf": _ai_now_iso(),
-        "evidencePack": {
-            "endpointAvailable": True,
-            "publicReadCachedOnly": True,          # enforced by cached-only accessors + tests
-            "lastBuildAt": _EVIDENCE_PACK_STATE.get("lastBuildAt"),
-            "lastSymbol": _EVIDENCE_PACK_STATE.get("lastSymbol"),
-            "cacheMissCountToday": _EVIDENCE_PACK_STATE.get("cacheMissCountToday", 0),
-        },
-        "actionLabels": al_stats,
-        "aiJudgment": {
-            "evidenceContextIncluded": True,       # _build_ai_snapshot attaches evidenceContext (v11.2)
-            "geminiChallengeIncluded": gem_included,
-            "aiLabelsCarryEvidenceRefs": ai_refs,
-            "lastRunAt": (ai_payload or {}).get("asOf"),
-        },
-        "safety": {
-            "publicFetchBlocked": True,
-            "llmOnPublicGetBlocked": True,
-            "paidFetchOnPublicGetBlocked": True,
-        },
-        "limitationsJa": limitations,
-    })
-
-
-@app.route("/api/argus/event-log")
-def api_argus_event_log():
-    """Public read: recent event history (for the durable-snapshot workflow)."""
-    _events_restore_once()
-    with _EVENT_LOCK:
-        log = list(_EVENTS_LOG)[:60]
-    return jsonify({"asOf": _ai_now_iso(), "count": len(log), "events": log})
-
 @app.route("/api/argus/event-snapshot")
 def api_argus_event_snapshot():
     """Public read: the full durable snapshot (active + log) the event-ledger
@@ -4699,12 +5655,17 @@ def api_argus_crypto_scan():
     for q in (snap.get("quotes") if isinstance(snap, dict) else None) or []:
         if q.get("status") != "live":
             continue
+        source_epoch = _coerce_epoch(q.get("sourceTimestamp"))
+        if source_epoch is None:
+            continue
+        observed_at = datetime.fromtimestamp(source_epoch, pytz.utc)
         scanned += 1
         sym = str(q.get("id") or "").upper()[:12] or "CRYPTO"
         for trig in argus_events.detect_crypto_anomaly(sym, q.get("changePct")):
             env = _record_event("CRYPTO", sym, trig, now, "CRYPTO_24H",
                                 bucket_minutes=360, source="coingecko",
-                                session_override="CRYPTO_24H")
+                                session_override="CRYPTO_24H",
+                                observed_at=observed_at)
             if env:
                 recorded += 1
     return jsonify({"scanned": scanned, "recorded": recorded, "asOf": _ai_now_iso()})
@@ -4831,22 +5792,33 @@ def _build_event_dossier(env, push_row=None):
     scout_asof = (scout or {}).get("asOf")
     # symbol move at EVENT TIME (the triggering push), else the held quote
     pq = (_PUSHED_QUOTES.get(mkt) or {}).get(sym)
-    row = push_row or (pq or {}).get("row") or {}
+    now_epoch = time.time()
+    if isinstance(push_row, dict):
+        push_truth = _canonical_moomoo_quote_truth(
+            push_row.get("exchangeTs") or push_row.get("sourceTimestamp"),
+            push_row.get("entitlement"), now_epoch=now_epoch)
+        row = ({**push_row, **push_truth}
+               if push_truth.get("realtimeEvidence") is True else {})
+    else:
+        row = _pushed_quote_decision_row(pq, now_epoch=now_epoch) or {}
     sym_chg = row.get("changePct")
     obs_at = env.get("observedAt") or env.get("detectedAt")
     # broad-market baseline: US from the Market-Regime SPY stash (SPY is NOT a
     # bridge symbol); JP from a pushed 1306 (TOPIX ETF) if present, else None.
-    index_chg, index_fresh = None, True
+    index_chg, index_fresh = None, False
     if mkt == "US":
-        spy = _ETF_LAST_PRICE.get("SPY")
+        spy = _etf_last_price_decision_row(
+            "SPY", max_transport_age_sec=24 * 3600,
+            now_epoch=now_epoch)
         if spy:
+            index_fresh = True
             index_chg = spy.get("m1d")
-            index_fresh = (time.time() - (spy.get("ts") or 0)) < 6 * 3600
     else:
         iq = (_PUSHED_QUOTES.get("JP") or {}).get("1306")
-        if iq:
-            index_chg = (iq.get("row") or {}).get("changePct")
-            index_fresh = (time.time() - (iq.get("ts") or 0)) < 1800
+        iq_row = _pushed_quote_decision_row(iq, now_epoch=now_epoch)
+        if iq_row:
+            index_chg = iq_row.get("changePct")
+            index_fresh = True
     cat = (scout or {}).get("catalystContext") or {}
     news_items = [it.get("headline") or it.get("labelJa") for it in (cat.get("items") or [])
                   if it.get("kind") == "news" and (it.get("headline") or it.get("labelJa"))][:3]
@@ -4862,11 +5834,12 @@ def _build_event_dossier(env, push_row=None):
     # only a MATERIALLY-RELEVANT filing (臨時報告/大量保有) whose submission
     # plausibly coincides with the move becomes an official_CATALYST. Periodic/
     # amendment filings are recorded as fact but DON'T attribute the move to them.
-    event_date = (str(obs_at)[:10] if obs_at else datetime.now(TZ_JST).strftime("%Y-%m-%d"))
     for f in edinet:
         f["docClass"] = argus_research.classify_edinet_doc(f.get("docTypeCode"), f.get("docDescription"))
-        f["eventRelationship"] = argus_research.edinet_event_relationship(f.get("submitDateTime"), event_date)
-    edinet_is_catalyst, _edinet_cat = argus_research.edinet_catalyst_decision(edinet, event_date)
+        f["eventRelationship"] = argus_research.edinet_event_relationship(
+            f.get("submitDateTime"), obs_at)
+    edinet_is_catalyst, _edinet_cat = argus_research.edinet_catalyst_decision(
+        edinet, obs_at)
     catalyst_tier = ("official_filing" if edinet_is_catalyst
                      else _NEWS_SOURCE_TIER if news_items else "unknown")
     # TDnet decision metric (item G): record whether the official catalyst was
@@ -4879,7 +5852,8 @@ def _build_event_dossier(env, push_row=None):
     for f in edinet[:2]:
         desc = f.get("docDescription") or f.get("docTypeCode") or "EDINET開示"
         dcl, rel = f.get("docClass") or "other", f.get("eventRelationship") or "unknown"
-        is_cause = (dcl in argus_research.EDINET_CATALYST_CLASSES and rel == "precedes_or_same_day")
+        is_cause = (dcl in argus_research.EDINET_CATALYST_CLASSES
+                    and rel == "precedes_or_coincident")
         # official_fact ALWAYS; the claim notes whether it qualifies as the cause.
         evidence.append(_ev_item(n, eid, "EDINET", "official_filing", "official_fact",
                                   f"{f.get('filerName') or sym}: {desc} [{dcl}/{rel}"
@@ -4909,31 +5883,6 @@ def _build_event_dossier(env, push_row=None):
         event=env, flow_inf=flow_inf, rsi=rsi, sym_chg=sym_chg, index_chg=index_chg,
         index_fresh=index_fresh, catalyst_tier=catalyst_tier, evidence=evidence,
         times=times, evidence_hash=ev_hash, asset_name=name)
-
-@app.route("/api/argus/event-dossier")
-def api_argus_event_dossier():
-    """Public read of the deterministic Research Dossier. Reads the stored
-    event-time snapshot; rebuilds only if the event revision changed. No model
-    call. Proper HTTP semantics (400/404/500/503)."""
-    eid = (request.args.get("eventId") or "").strip()
-    if not eid:
-        return jsonify({"error": "missing_eventId"}), 400
-    env = _event_by_id(eid)
-    if not env:
-        return jsonify({"error": "event_not_found"}), 404
-    stored = env.get("dossier")
-    ver = env.get("eventVersion", 1)
-    if stored and stored.get("eventVersion") == ver:
-        return jsonify(stored)                    # event-time snapshot, no rebuild
-    ck = (eid, ver, env.get("dossier", {}).get("evidenceHash") if stored else None)
-    if ck not in _DOSSIER_CACHE:
-        try:
-            _DOSSIER_CACHE[ck] = _build_event_dossier(env)
-            _DOSSIER_CACHE[ck]["dossierMode"] = "latest_revision"   # built post-hoc, disclosed
-        except Exception as e:
-            add_log(f"[dossier] build failed {eid}: {type(e).__name__}")
-            return jsonify({"error": "dossier_build_failed", "detail": type(e).__name__}), 500
-    return jsonify(_DOSSIER_CACHE[ck])
 
 _EVENT_TEST_STATE = {"lastTs": 0.0, "day": "", "count": 0}
 _EVENT_TEST_DAILY_CAP = 6   # bound abuse: at most 6 owner-phone test pushes/day
@@ -4989,35 +5938,6 @@ def _event_snapshot_meta():
     _EVENT_SNAP_META["expires"] = now + (600 if data else 300)
     return data
 
-@app.route("/api/argus/event-backbone-status")
-def api_argus_event_backbone_status():
-    """Public ops summary (no secrets) — for the Ledger Health / Ops view."""
-    _events_restore_once()
-    with _EVENT_LOCK:
-        active = len(_EVENTS_ACTIVE)
-    snap = _event_snapshot_meta()
-    return jsonify({
-        "enabled": _EVENT_BACKBONE_ENABLED, "gear2Enabled": _EVENT_GEAR2_ENABLED,
-        "activeCount": active, "schemaVersion": argus_events.SCHEMA_VERSION,
-        "lastDetectionAt": _EVENT_STATE["lastDetectionAt"], "lastEventAt": _EVENT_STATE["lastEventAt"],
-        "detectionsThisProcess": _EVENT_STATE["detections"],
-        "ntfyConfigured": bool(os.environ.get("NTFY_TOPIC")), "ntfyMinSeverity": _EVENT_NTFY_MIN_SEV,
-        "pushEligibility": {
-            "allowedCount": _PUSH_GATE_STATS["allowed"],
-            "blockedCount": _PUSH_GATE_STATS["blocked"],
-            "reasonCounts": dict(_PUSH_GATE_STATS["byReason"]),
-            "membershipStatus": _OWNER_SYMS_CACHE.get("status") or "unknown",
-            "membershipCount": len(_OWNER_SYMS_CACHE.get("syms") or {}),
-            "privateUniverseExposed": False,
-        },
-        "sessionJp": _jp_market_open(), "sessionUs": _us_market_open(),
-        # v10.42 durable store status
-        "persistenceEnabled": _EVENT_PERSISTENCE_ENABLED, "restoredOnBoot": _EVENTS_RESTORED["done"],
-        "lastSnapshotAt": (snap or {}).get("snapshotAt"), "storeMode": "ledger-branch (Lean)",
-        "noteJa": "決定論的Gear0/1のみ稼働(LLMなし)。ブリッジの既存pushを解析しS高/急変/フロー異常を検知。"
-                  "イベントはledgerブランチにスナップショット永続(再起動時に復元)。PTS/L2/VWAPは未対応(capability-gated)。",
-    })
-
 # ━━━ CoinGecko crypto watchlist (keyless, free) ━━━
 # Live USD quotes for the crypto assets the user watches. CoinGecko's
 # /simple/price needs NO API key; we stay polite with a 10-min cache per
@@ -5055,9 +5975,10 @@ _COINBASE_STATS = "https://api.exchange.coinbase.com/products/{}-USD/stats"
 
 def _crypto_coinbase_fallback(ids):
     """Keyless Coinbase stats (datacenter-friendly) for the major coins — used
-    ONLY when CoinGecko is unavailable. 24h change = (last-open)/open. status is a
-    real-time last-trade price, so 'live' is honest. Coins outside the map are
-    skipped (no fabricated numbers)."""
+    ONLY when CoinGecko is unavailable. 24h change = (last-open)/open. Coinbase's
+    stats response has no source observation timestamp, so the row is explicitly
+    delayed/unknown-age rather than being promoted to LIVE. Coins outside the map
+    are skipped (no fabricated numbers)."""
     rows = []
     for i in ids:
         sym = _CG_TO_COINBASE.get(i)
@@ -5071,10 +5992,13 @@ def _crypto_coinbase_fallback(ids):
             last = float(s.get("last"))
             openp = float(s.get("open") or last)
             chg = ((last - openp) / openp * 100.0) if openp else 0.0
+            source_truth = _canonical_quote_source_age(None)
             rows.append({"id": i, "priceUsd": round(last, 2),
                          "changePct": round(chg, 2),
                          "volume": int(float(s.get("volume") or 0)),  # base-ccy 24h vol
-                         "date": None, "status": "live"})
+                         "date": None, "sourceTimestamp": None,
+                         "receivedAt": _ai_now_iso(),
+                         "source": "coinbase", **source_truth})
         except Exception:
             continue
     return rows
@@ -5085,7 +6009,7 @@ def get_crypto_watchlist_snapshot(ids):
     now = time.time()
     hit = _CRYPTO_CACHE.get(ids)
     if hit and now < hit["expires"]:
-        return hit["data"]
+        return _canonical_quote_snapshot_age(hit["data"], "quotes")
 
     def _mock_rows():
         return [{"id": i, "priceUsd": m["price"], "changePct": m["changePct"],
@@ -5096,7 +6020,7 @@ def get_crypto_watchlist_snapshot(ids):
         """CoinGecko unavailable → try keyless Coinbase (real), else mock."""
         fb = _crypto_coinbase_fallback(ids)
         if fb:
-            snap = {"status": ("live" if len(fb) == len(ids) else "partial"),
+            snap = {"status": ("delayed" if len(fb) == len(ids) else "partial"),
                     "asOf": None, "provider": "coinbase", "quotes": fb}
             if len(_CRYPTO_CACHE) >= _CRYPTO_CACHE_MAX:
                 _CRYPTO_CACHE.clear()
@@ -5121,17 +6045,27 @@ def get_crypto_watchlist_snapshot(ids):
             if not isinstance(q, dict) or q.get("usd") is None:
                 continue
             ts = q.get("last_updated_at")
+            source_iso = (datetime.fromtimestamp(ts, pytz.utc)
+                          .strftime("%Y-%m-%dT%H:%M:%SZ") if ts else None)
+            source_truth = _canonical_quote_source_age(source_iso)
             rows.append({
                 "id": i,
                 "priceUsd": round(float(q["usd"]), 2),
                 "changePct": round(float(q.get("usd_24h_change") or 0.0), 2),
                 "volume": int(float(q.get("usd_24h_vol") or 0)),
-                "date": (datetime.fromtimestamp(ts, pytz.utc).strftime("%Y-%m-%d") if ts else None),
-                "status": "live",
+                "date": (source_iso or "")[:10] or None,
+                "sourceTimestamp": source_iso,
+                "receivedAt": _ai_now_iso(),
+                "source": "coingecko",
+                **source_truth,
             })
         if not rows:
             return _fallback_or_mock()
-        status = "live" if len(rows) == len(ids) else "partial"
+        status = ("live" if len(rows) == len(ids) and all(
+            row.get("status") == "live" for row in rows)
+            else "delayed" if len(rows) == len(ids) and all(
+                row.get("status") == "delayed" for row in rows)
+            else "partial" if rows else "mock")
         as_of  = max((x["date"] for x in rows if x["date"]), default=None)
         snapshot = {"status": status, "asOf": as_of, "provider": "coingecko", "quotes": rows}
         if len(_CRYPTO_CACHE) >= _CRYPTO_CACHE_MAX:
@@ -5168,6 +6102,53 @@ _FUND_NAV_CATALOG = {
 _FUND_NAV_BASE  = "https://toushin-lib.fwg.ne.jp/FdsWeb/FDST030000/csv-file-download"
 _FUND_NAV_CACHE = {}          # code -> {"data": dict|None, "expires": epoch}
 _FUND_NAV_TTL   = 6 * 3600    # NAV is daily — 6h cache is plenty (and source-friendly)
+_FUND_NAV_MAX_CALENDAR_DAYS = 7
+
+
+def _fund_nav_decision_row(row, *, now_epoch=None):
+    """Re-age one date-only NAV observation at every authority boundary.
+
+    The provider publishes a daily valuation date, not a realtime venue
+    timestamp.  A fresh HTTP receipt therefore cannot make the row LIVE.  A
+    bounded, completed JP market-session date may remain usable as explicitly
+    DELAYED daily evidence; malformed, future, uncompleted, weekend/holiday, or
+    over-age rows fail closed.
+    """
+    if not isinstance(row, dict):
+        return None
+    code = row.get("code")
+    if not isinstance(code, str) or code not in _FUND_NAV_CATALOG:
+        return None
+    nav = row.get("navYen")
+    change = row.get("changePct")
+    if (isinstance(nav, bool) or not isinstance(nav, (int, float))
+            or not math.isfinite(float(nav)) or float(nav) <= 0):
+        return None
+    if change is not None and (isinstance(change, bool)
+                               or not isinstance(change, (int, float))
+                               or not math.isfinite(float(change))):
+        return None
+    parsed, _reason = _bounded_market_session_date(
+        row.get("date"), "JP", _FUND_NAV_MAX_CALENDAR_DAYS,
+        accepted_formats=("%Y-%m-%d",), now_epoch=now_epoch)
+    if parsed is None:
+        return None
+    decision_epoch = time.time() if now_epoch is None else float(now_epoch)
+    decision_date = datetime.fromtimestamp(decision_epoch, TZ_JST).date()
+    return {
+        "code": code,
+        "name": _FUND_NAV_CATALOG[code]["name"],
+        "navYen": round(float(nav), 0),
+        "changePct": (round(float(change), 2) if change is not None else None),
+        "date": parsed.isoformat(),
+        "status": "delayed",
+        "freshness": "DELAYED",
+        "completeness": "COMPLETE",
+        "sourceTimestamp": parsed.isoformat(),
+        "sourceTimeStatus": "DATE_ONLY_DAILY",
+        "sourceAgeDays": (decision_date - parsed).days,
+        "decisionUsable": True,
+    }
 
 def _toushin_nav(code):
     """Latest 基準価額(NAV) + 前日比 for a JP 投信 by 協会コード, parsed from the
@@ -5178,7 +6159,8 @@ def _toushin_nav(code):
     now = time.time()
     c = _FUND_NAV_CACHE.get(code)
     if c and now < c["expires"]:
-        return c["data"]
+        # Transport TTL never renews the provider's valuation date.
+        return _fund_nav_decision_row(c.get("data"), now_epoch=now)
     out = None
     try:
         r = requests.get(_FUND_NAV_BASE,
@@ -5192,11 +6174,22 @@ def _toushin_nav(code):
                 prev = data_rows[-2] if len(data_rows) >= 2 else None
                 nav = float(last[1])
                 prev_nav = float(prev[1]) if prev and prev[1] else None
+                if not math.isfinite(nav) or nav <= 0 \
+                        or (prev_nav is not None
+                            and (not math.isfinite(prev_nav) or prev_nav <= 0)):
+                    raise ValueError("invalid NAV value")
                 chg = round((nav / prev_nav - 1) * 100, 2) if prev_nav else None
-                m = re.match(r"(\d{4})年(\d{1,2})月(\d{1,2})日", last[0])
-                date = f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}" if m else last[0]
-                out = {"code": code, "name": meta["name"], "navYen": round(nav, 0),
-                       "changePct": chg, "date": date, "status": "live"}
+                m = re.fullmatch(
+                    r"(\d{4})年(\d{1,2})月(\d{1,2})日", last[0].strip())
+                if not m:
+                    raise ValueError("invalid NAV date")
+                # Constructing datetime rejects impossible calendar dates.
+                parsed = datetime(
+                    int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
+                raw = {"code": code, "name": meta["name"],
+                       "navYen": round(nav, 0), "changePct": chg,
+                       "date": parsed.isoformat()}
+                out = _fund_nav_decision_row(raw, now_epoch=now)
     except Exception:
         out = None
     _FUND_NAV_CACHE[code] = {"data": out, "expires": now + (_FUND_NAV_TTL if out else 1800)}
@@ -5208,8 +6201,10 @@ def api_argus_fund_nav():
     raw = (request.args.get("codes") or "").strip()
     codes = [c.strip() for c in raw.split(",") if c.strip()] or list(_FUND_NAV_CATALOG.keys())
     funds = [x for x in (_toushin_nav(c) for c in codes[:10]) if x]
-    return jsonify({"status": "live" if funds else "unavailable",
-                    "asOf": _ai_now_iso(), "provider": "投信総合ライブラリー", "funds": funds})
+    return jsonify({"status": "delayed" if funds else "unavailable",
+                    "asOf": max((row["date"] for row in funds), default=None),
+                    "receivedAt": _ai_now_iso(),
+                    "provider": "投信総合ライブラリー", "funds": funds})
 
 
 # ━━━ US whole-market mover scanner (v10.62) ━━━
@@ -5242,6 +6237,18 @@ def _av_lastupdated_epoch(s):
         return pytz.timezone("America/New_York").localize(dt).timestamp()
     except Exception:
         return None
+
+
+def _bounded_recent_source_epoch(value, max_age_seconds, *, now_epoch=None):
+    """Finite provider epoch whose age is inside ``[0, max_age_seconds]``."""
+    epoch = _legacy_provider_number(value)
+    max_age = _legacy_provider_number(max_age_seconds)
+    now = _legacy_provider_number(
+        time.time() if now_epoch is None else now_epoch)
+    if epoch is None or max_age is None or max_age < 0 or now is None:
+        return None
+    age = now - epoch
+    return epoch if 0 <= age <= max_age else None
 
 def _av_market_movers(force=False):
     """US top gainers/losers from Alpha Vantage (price-filtered). status: live |
@@ -5291,7 +6298,11 @@ def _av_market_movers(force=False):
             return rows
         if isinstance(j, dict) and (j.get("top_gainers") or j.get("top_losers")):
             _lu = j.get("last_updated")
-            out = {"status": "live", "asOf": _lu, "asOfEpoch": _av_lastupdated_epoch(_lu),
+            source_epoch = _av_lastupdated_epoch(_lu)
+            source_current = _bounded_recent_source_epoch(
+                source_epoch, _MOVER_FRESH_SEC, now_epoch=now)
+            out = {"status": "live" if source_current is not None else "partial",
+                   "asOf": _lu, "asOfEpoch": source_epoch,
                    "gainers": _rows("top_gainers"), "losers": _rows("top_losers")}
     except Exception:
         pass
@@ -5299,33 +6310,6 @@ def _av_market_movers(force=False):
     # On failure/rate-limit, back off ~30 min (don't retry-burn the 25/day quota).
     _AV_MOVERS_CACHE["expires"] = now + (_AV_MOVERS_TTL if out["status"] == "live" else 1800)
     return out
-
-@app.route("/api/argus/market-movers")
-def api_argus_market_movers():
-    """Public: US top gainers/losers (cache only). Prefer the CURATED liquid moomoo feed
-    (real 1-day quotes from the large-cap universe) when the bridge has pushed it; else fall
-    back to the (now MAX_PCT-filtered) Alpha Vantage feed. Both drop pump/halt artifacts."""
-    try:
-        rows = [r for r in (_moomoo_us_movers() or [])
-                if isinstance(r.get("changePct"), (int, float))
-                and abs(r["changePct"]) <= _MARKET_MOVER_MAX_PCT
-                and (r.get("price") or 0) >= _MARKET_MOVER_MIN_PRICE]
-    except Exception:
-        rows = []
-    if rows:
-        rows.sort(key=lambda r: r["changePct"], reverse=True)
-        gainers = [r for r in rows if r["changePct"] > 0][:8]
-        losers = sorted([r for r in rows if r["changePct"] < 0], key=lambda r: r["changePct"])[:8]
-        _decorate_mover_rows(gainers + losers, "US")
-        return jsonify({"status": "live", "source": "moomoo", "asOf": _MOOMOO_US_MOVERS.get("asOf"),
-                        "gainers": gainers, "losers": losers})
-    out = _av_market_movers(force=False)
-    try:
-        _decorate_mover_rows((out.get("gainers") or []) + (out.get("losers") or []), "US")
-    except Exception:
-        pass
-    return jsonify(out)
-
 
 def _decorate_mover_rows(rows, market):
     """Attach the mover-cause ladder chip to public mover rows — STORE LOOKUP
@@ -5382,6 +6366,7 @@ def api_argus_us_movers_push():
         send_security_alert({"type": "bridge_signature_rejected", "reason": sig_reason, "meta": _client_meta()})
         return jsonify({"error": "signature_invalid", "reason": sig_reason}), 401
     body = request.get_json(silent=True) or {}
+    now = time.time()
     rows = []
     for m in (body.get("movers") or [])[:200]:
         try:
@@ -5391,18 +6376,39 @@ def api_argus_us_movers_push():
             price, chg = float(m.get("price") or 0), float(m.get("changePct") or 0)
             if not (price > 0 and math.isfinite(price) and math.isfinite(chg)):
                 continue
+            source_timestamp = (m.get("exchangeTs")
+                                if "exchangeTs" in m
+                                else m.get("sourceTimestamp"))
+            entitlement = str(m.get("entitlement") or "unknown").lower()
+            source_truth = _canonical_moomoo_quote_truth(
+                source_timestamp, entitlement, now_epoch=now)
             rows.append({"symbol": sym, "price": price, "changePct": round(chg, 4),
-                         "volume": int(m.get("volume") or 0), "name": m.get("name")})
+                         "volume": int(m.get("volume") or 0), "name": m.get("name"),
+                         "exchangeTs": source_timestamp,
+                         "sourceTimestamp": source_timestamp,
+                         "entitlement": entitlement, **source_truth})
         except (TypeError, ValueError):
             continue
-    _MOOMOO_US_MOVERS.update({"rows": rows, "ts": time.time(), "asOf": body.get("asOf")})
+    _MOOMOO_US_MOVERS.update({"rows": rows, "ts": now, "asOf": body.get("asOf")})
     return jsonify({"ok": True, "accepted": len(rows)})
 
 def _moomoo_us_movers():
-    """Fresh moomoo-swept US movers (realtime, curated ∪ watchlist) or []."""
-    if time.time() - (_MOOMOO_US_MOVERS["ts"] or 0) > _MOOMOO_MOVERS_TTL:
+    """Source-time-live moomoo US movers (curated ∪ watchlist) or []."""
+    now = time.time()
+    transport_age = now - (_MOOMOO_US_MOVERS["ts"] or 0)
+    if not 0 <= transport_age <= _MOOMOO_MOVERS_TTL:
         return []
-    return list(_MOOMOO_US_MOVERS["rows"])
+    out = []
+    for raw in _MOOMOO_US_MOVERS["rows"]:
+        if not isinstance(raw, dict):
+            continue
+        truth = _canonical_moomoo_quote_truth(
+            raw.get("sourceTimestamp") or raw.get("exchangeTs"),
+            raw.get("entitlement"), now_epoch=now)
+        row = {**raw, **truth}
+        if row.get("realtimeEvidence") is True:
+            out.append(row)
+    return out
 
 def _scan_market_movers():
     """Whole-market US movers, moomoo-first (v10.146): moomoo realtime sweep of the
@@ -5418,10 +6424,16 @@ def _scan_market_movers():
         rows.sort(key=lambda r: abs(r.get("changePct") or 0), reverse=True)
         n = 0
         for row in rows[:_MARKET_MOVER_NOTIFY_MAX]:
+            source_epoch = _coerce_epoch(
+                row.get("sourceTimestamp") or row.get("exchangeTs"))
+            if source_epoch is None:
+                continue
+            observed_at = datetime.fromtimestamp(source_epoch, pytz.utc)
             for trig in argus_events.detect_market_mover(row["symbol"], row["changePct"], row["price"],
                                                          min_price=_MARKET_MOVER_MIN_PRICE, gainer_pct=_MARKET_MOVER_PCT):
                 env = _record_event("US", row["symbol"], trig, now_real, "US_REGULAR",
-                                    bucket_minutes=180, source="moomoo-rt")
+                                    bucket_minutes=180, source="moomoo-rt",
+                                    observed_at=observed_at)
                 if env:
                     env["nameJa"] = row.get("name") or row["symbol"]
                     n += 1
@@ -5430,9 +6442,13 @@ def _scan_market_movers():
     mv = _av_market_movers(force=True)
     if mv.get("status") != "live":
         return 0
-    av_epoch = mv.get("asOfEpoch")
-    ev_time = datetime.fromtimestamp(av_epoch, pytz.utc) if av_epoch else now_real
-    stale = av_epoch is None or (time.time() - av_epoch) > _MOVER_FRESH_SEC
+    av_epoch = _bounded_recent_source_epoch(
+        mv.get("asOfEpoch"), _MOVER_FRESH_SEC)
+    if av_epoch is None:
+        # Keep invalid/stale provider rows diagnostic-only in their provider
+        # snapshot.  They cannot create an event or notification authority.
+        return 0
+    ev_time = datetime.fromtimestamp(av_epoch, pytz.utc)
     rows = [r for r in ((mv.get("gainers") or []) + (mv.get("losers") or []))
             if abs(r.get("changePct") or 0) <= _MARKET_MOVER_MAX_PCT]
     rows.sort(key=lambda r: abs(r.get("changePct") or 0), reverse=True)
@@ -5441,12 +6457,13 @@ def _scan_market_movers():
         for trig in argus_events.detect_market_mover(
                 row["symbol"], row["changePct"], row["price"],
                 min_price=_MARKET_MOVER_MIN_PRICE, gainer_pct=_MARKET_MOVER_PCT):
-            env = _record_event("US", row["symbol"], trig, ev_time, "US_REGULAR",
-                                bucket_minutes=180, source="alphavantage", suppress_notify=stale)
+            env = _record_event("US", row["symbol"], trig, now_real, "US_REGULAR",
+                                bucket_minutes=180, source="alphavantage",
+                                observed_at=ev_time)
             if env:
                 env["nameJa"] = row["symbol"]
                 env["dataAsOf"] = mv.get("asOf")
-                env["dataStale"] = stale
+                env["dataStale"] = False
                 n += 1
     return n
 
@@ -5484,6 +6501,9 @@ def _jq_all_for_date(date_str, headers, max_pages=40):
                 break
             body = r.json()
             for row in body.get("data", []):
+                if not isinstance(row, dict) or str(
+                        row.get("Date") or row.get("date") or "") != date_str:
+                    continue
                 c = row.get("Code") or row.get("code")
                 if c:
                     out[c] = row
@@ -5500,26 +6520,38 @@ def _jq_market_movers():
     if not _JQUANTS_API_KEY:
         return {"status": "missing_key", "gainers": [], "losers": [], "asOf": None}
     now = time.time()
-    if _JP_MOVERS_CACHE["data"] is not None and now < _JP_MOVERS_CACHE["expires"]:
-        return _JP_MOVERS_CACHE["data"]
+    now_utc = datetime.fromtimestamp(now, pytz.utc)
+    expected_date = argus_market_clock.latest_completed_session_date(
+        argus_market_clock.JP_EQUITY, now_utc).isoformat()
+    cached = _JP_MOVERS_CACHE["data"]
+    if (cached is not None and now < _JP_MOVERS_CACHE["expires"] and
+            cached.get("status") == "delayed" and
+            cached.get("asOf") == expected_date):
+        return cached
     headers = {"x-api-key": _JQUANTS_API_KEY}
     out = {"status": "unavailable", "gainers": [], "losers": [], "asOf": None}
     try:
-        base = datetime.now(TZ_JST)
-        latest, latest_date = {}, None
-        for back in range(0, 8):
-            d = (base - timedelta(days=back)).strftime("%Y-%m-%d")
-            latest = _jq_all_for_date(d, headers)
-            if latest:
-                latest_date = d
-                break
+        latest_date = expected_date
+        latest = _jq_all_for_date(latest_date, headers)
+        latest = {
+            code: row for code, row in latest.items()
+            if isinstance(row, dict) and str(
+                row.get("Date") or row.get("date") or "") == latest_date}
         prev = {}
-        if latest_date:
-            ld = datetime.strptime(latest_date, "%Y-%m-%d")
-            for back in range(1, 8):
-                prev = _jq_all_for_date((ld - timedelta(days=back)).strftime("%Y-%m-%d"), headers)
-                if prev:
-                    break
+        ld = datetime.strptime(latest_date, "%Y-%m-%d").date()
+        for back in range(1, 12):
+            prior_date = ld - timedelta(days=back)
+            if not argus_market_clock.is_trading_day(
+                    argus_market_clock.JP_EQUITY, prior_date):
+                continue
+            prior_iso = prior_date.isoformat()
+            prev = {
+                code: row for code, row in _jq_all_for_date(
+                    prior_iso, headers).items()
+                if isinstance(row, dict) and str(
+                    row.get("Date") or row.get("date") or "") == prior_iso}
+            if prev:
+                break
         rows = []
         for code, row in latest.items():
             c, pr = _q_close(row), _q_close(prev.get(code, {})) if prev.get(code) else None
@@ -5534,9 +6566,19 @@ def _jq_market_movers():
                 continue
             s4 = str(code)[:4]
             rows.append({"symbol": s4, "name": _jq_name_for(s4) or s4,
-                         "price": round(c, 1), "changePct": chg})
+                         "price": round(c, 1), "changePct": chg,
+                         "sourceTimestamp": latest_date,
+                         "sourceTimeStatus": "DATE_ONLY_EOD",
+                         "freshness": "DELAYED",
+                         "completeness": "COMPLETE",
+                         "decisionUsable": True})
         if rows:
-            out = {"status": "live", "asOf": latest_date, "universe": len(rows),
+            out = {"status": "delayed", "asOf": latest_date,
+                   "expectedCompletedSession": expected_date,
+                   "sourceTimestamp": latest_date,
+                   "sourceTimeStatus": "DATE_ONLY_EOD",
+                   "freshness": "DELAYED", "completeness": "COMPLETE",
+                   "universe": len(rows),
                    "gainers": sorted([r for r in rows if r["changePct"] > 0],
                                      key=lambda r: -r["changePct"])[:15],
                    "losers": sorted([r for r in rows if r["changePct"] < 0],
@@ -5544,7 +6586,8 @@ def _jq_market_movers():
     except Exception:
         pass
     _JP_MOVERS_CACHE["data"] = out
-    _JP_MOVERS_CACHE["expires"] = now + (_JP_MOVERS_TTL if out["status"] == "live" else 1800)
+    _JP_MOVERS_CACHE["expires"] = now + (
+        _JP_MOVERS_TTL if out["status"] == "delayed" else 1800)
     return out
 
 # ── Yahoo!ファイナンス all-market intraday ranking (v10.66, ~20min delayed) ──
@@ -5585,38 +6628,25 @@ def _yahoo_jp_movers():
     if _YAHOO_MOVERS_CACHE["data"] is not None and now < _YAHOO_MOVERS_CACHE["expires"]:
         return _YAHOO_MOVERS_CACHE["data"]
     g, l = _yahoo_rank("up"), _yahoo_rank("down")
-    # Yahoo's all-market ranking is ~20min delayed. Stamp the effective DATA time
-    # (fetch − delay), not just the fetch time, so the UI can't imply realtime
-    # (v10.190 honesty fix — the change% itself is a correct 1-day move vs prev
-    # close; only the freshness label was misleading).
-    delay_min = 20
-    data_iso = datetime.fromtimestamp(now - delay_min * 60, pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    out = {"status": "live" if (g or l) else "unavailable",
+    # The ranking page exposes no row/provider observation timestamp.  Its
+    # advertised delay is descriptive, not source-time evidence: never invent
+    # `fetch - 20m`, and never promote these rows into the event backbone.
+    def diagnostic(row):
+        return {**row, "sourceTimestamp": None,
+                "sourceTimeStatus": "MISSING", "freshness": "UNKNOWN",
+                "completeness": "PARTIAL", "decisionUsable": False}
+    out = {"status": "partial" if (g or l) else "unavailable",
            "provider": "Yahoo!ファイナンス(約20分遅延・全市場)", "asOf": _ai_now_iso(),
-           "dataAsOf": data_iso, "delayMin": delay_min,
-           "gainers": g[:15], "losers": l[:15]}
+           "receivedAt": _ai_now_iso(), "dataAsOf": None, "delayMin": None,
+           "sourceTimeStatus": "MISSING", "freshness": "UNKNOWN",
+           "completeness": "PARTIAL" if (g or l) else "MISSING",
+           "decisionUsable": False,
+           "gainers": [diagnostic(row) for row in g[:15]],
+           "losers": [diagnostic(row) for row in l[:15]]}
     _YAHOO_MOVERS_CACHE["data"] = out
-    _YAHOO_MOVERS_CACHE["expires"] = now + (_YAHOO_MOVERS_TTL if out["status"] == "live" else 600)
+    _YAHOO_MOVERS_CACHE["expires"] = now + (
+        _YAHOO_MOVERS_TTL if out["status"] == "partial" else 600)
     return out
-
-@app.route("/api/argus/jp-market-movers")
-def api_argus_jp_market_movers():
-    """Public: JP whole-market movers. Intraday → Yahoo (~20min, all market);
-    after close → J-Quants EOD (authoritative, vs prev close)."""
-    if _jp_market_open():
-        y = _yahoo_jp_movers()
-        if y.get("status") == "live":
-            try:
-                _decorate_mover_rows((y.get("gainers") or []) + (y.get("losers") or []), "JP")
-            except Exception:
-                pass
-            return jsonify(y)
-    out = _jq_market_movers()
-    try:
-        _decorate_mover_rows((out.get("gainers") or []) + (out.get("losers") or []), "JP")
-    except Exception:
-        pass
-    return jsonify(out)
 
 # ━━━ moomoo realtime JP movers (v10.135) ━━━
 # The local bridge sweeps (500-sample ∪ your watchlist) via get_market_snapshot and
@@ -5643,6 +6673,7 @@ def api_argus_jp_movers_push():
     movers = body.get("movers")
     if not isinstance(movers, list):
         return jsonify({"error": "bad_payload", "message": "expected {movers: [...]}"}), 400
+    now = time.time()
     rows = []
     for m in movers[:200]:
         try:
@@ -5653,43 +6684,73 @@ def api_argus_jp_movers_push():
             chg = float(m.get("changePct") or 0)
             if not (price > 0 and math.isfinite(price) and math.isfinite(chg)):
                 continue
+            source_timestamp = (m.get("exchangeTs")
+                                if "exchangeTs" in m
+                                else m.get("sourceTimestamp"))
+            entitlement = str(m.get("entitlement") or "unknown").lower()
+            source_truth = _canonical_moomoo_quote_truth(
+                source_timestamp, entitlement, now_epoch=now)
             rows.append({"symbol": sym, "price": price, "changePct": round(chg, 4),
-                         "volume": int(m.get("volume") or 0), "name": m.get("name")})
+                         "volume": int(m.get("volume") or 0), "name": m.get("name"),
+                         "exchangeTs": source_timestamp,
+                         "sourceTimestamp": source_timestamp,
+                         "entitlement": entitlement, **source_truth})
         except (TypeError, ValueError):
             continue
-    _MOOMOO_JP_MOVERS.update({"rows": rows, "ts": time.time(), "asOf": body.get("asOf")})
+    _MOOMOO_JP_MOVERS.update({"rows": rows, "ts": now, "asOf": body.get("asOf")})
     return jsonify({"ok": True, "accepted": len(rows)})
 
 def _moomoo_jp_movers():
-    """Fresh moomoo-swept JP movers (realtime; 500-sample ∪ watchlist) or []."""
-    if time.time() - (_MOOMOO_JP_MOVERS["ts"] or 0) > _MOOMOO_MOVERS_TTL:
+    """Source-time-live moomoo JP movers (500-sample ∪ watchlist) or []."""
+    now = time.time()
+    transport_age = now - (_MOOMOO_JP_MOVERS["ts"] or 0)
+    if not 0 <= transport_age <= _MOOMOO_MOVERS_TTL:
         return []
-    return list(_MOOMOO_JP_MOVERS["rows"])
+    out = []
+    for raw in _MOOMOO_JP_MOVERS["rows"]:
+        if not isinstance(raw, dict):
+            continue
+        truth = _canonical_moomoo_quote_truth(
+            raw.get("sourceTimestamp") or raw.get("exchangeTs"),
+            raw.get("entitlement"), now_epoch=now)
+        row = {**raw, **truth}
+        if row.get("realtimeEvidence") is True:
+            out.append(row)
+    return out
 
 def _scan_jp_market_movers():
-    """Whole-market JP movers via a 3-tier waterfall (v10.135): moomoo realtime
-    (500-sample ∪ watchlist) → Yahoo (~20min, broader market) → J-Quants EOD
-    (post-close backstop). Dedup by symbol (higher tier wins), rank by |move|,
-    record + (session-gated) push. Daily dedup per symbol."""
+    """Whole-market JP movers from source-time-proven provider rows only.
+
+    Moomoo provides venue-timestamped intraday rows. J-Quants provides the exact
+    latest completed EOD session after close. Yahoo rankings remain visible as
+    diagnostic coverage but have no source timestamp and cannot create events.
+    """
     if not _EVENT_BACKBONE_ENABLED:
         return 0
+    scan_now_epoch = time.time()
+    scan_now = datetime.fromtimestamp(scan_now_epoch, pytz.utc)
+    expected_jp_session = argus_market_clock.latest_completed_session_date(
+        argus_market_clock.JP_EQUITY, scan_now).isoformat()
     _open = _jp_market_open()
     tiers = []   # (source, session, rows) — priority order
     mm = _moomoo_jp_movers()
     if mm:
         tiers.append(("moomoo-rt", "JP_RT", mm))             # realtime, swept universe
     if _open:
-        y = _yahoo_jp_movers()
-        if y.get("status") == "live":
-            tiers.append(("yahoo-jp", "JP_INTRADAY",
-                          (y.get("gainers") or []) + (y.get("losers") or [])))
+        _yahoo_jp_movers()  # diagnostic cache only; never event authority
     else:
         # J-Quants EOD is yesterday's data intraday — only meaningful after close,
         # where it's the day's final tape (push is suppressed post-close anyway).
         jq = _jq_market_movers()
-        if jq.get("status") == "live":
+        if (jq.get("status") == "delayed" and
+                jq.get("asOf") == expected_jp_session):
+            jq_rows = [row for row in (
+                (jq.get("gainers") or []) + (jq.get("losers") or []))
+                       if isinstance(row, dict) and
+                       row.get("decisionUsable") is True and
+                       row.get("sourceTimestamp") == jq.get("asOf")]
             tiers.append(("jquants-eod", "JP_EOD",
-                          (jq.get("gainers") or []) + (jq.get("losers") or [])))
+                          jq_rows))
     if not tiers:
         return 0
     seen, merged = set(), []
@@ -5701,15 +6762,23 @@ def _scan_jp_market_movers():
             seen.add(sym)
             merged.append((source, session, r))
     merged.sort(key=lambda t: abs(t[2].get("changePct") or 0), reverse=True)
-    now, n = datetime.now(pytz.utc), 0
+    now, n = scan_now, 0
     for source, session, row in merged[:_MARKET_MOVER_NOTIFY_MAX]:
+        source_epoch = (_coerce_epoch(row.get("sourceTimestamp"))
+                        if source == "moomoo-rt" else None)
+        observed_at = (datetime.fromtimestamp(source_epoch, pytz.utc)
+                       if source_epoch is not None else None)
         for trig in argus_events.detect_market_mover(
                 row["symbol"], row["changePct"], row["price"],
                 min_price=_JP_MOVER_MIN_PRICE, gainer_pct=max(_JP_MOVER_PCT, 10.0)):
             env = _record_event("JP", row["symbol"], trig, now, session,
-                                bucket_minutes=1440, source=source)
+                                bucket_minutes=1440, source=source,
+                                observed_at=observed_at,
+                                suppress_notify=observed_at is None)
             if env:
                 env["nameJa"] = row.get("name")
+                env["dataAsOf"] = row.get("sourceTimestamp")
+                env["sourceTimeStatus"] = row.get("sourceTimeStatus")
                 n += 1
     return n
 
@@ -5764,7 +6833,7 @@ _EVENT_SPECS = [
 _EVENT_SOURCE_NAMES = ["Federal Reserve", "Bureau of Labor Statistics",
                        "Bureau of Economic Analysis", "Bank of Japan"]
 
-_TD_CACHE = {"data": None, "status": None, "expires": 0.0}
+_TD_CACHE = {"data": None, "status": None, "expires": 0.0, "asOf": None}
 
 def _event_timing(date_str, et_time, today_jst):
     """Return (eventTimeUtc, localTimeJst, daysUntil) computed from Tokyo time.
@@ -5851,12 +6920,19 @@ def _treasury_auctions_cached():
         return _TD_CACHE["data"], _TD_CACHE["status"]
     rows, status = _fetch_treasury_raw()
     _TD_CACHE["data"], _TD_CACHE["status"] = rows, status
+    _TD_CACHE["asOf"] = datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     # Cache a good fetch for 6h; back off only briefly on error so it recovers.
     _TD_CACHE["expires"] = now + (6 * 3600 if status == "live" else 300)
     return rows, status
 
-def _build_auction_events(today_jst):
-    rows, status = _treasury_auctions_cached()
+def _build_auction_events(today_jst, *, allow_provider_fetch=True):
+    if allow_provider_fetch:
+        rows, status = _treasury_auctions_cached()
+    elif (_TD_CACHE.get("data") is not None and
+          time.time() < _TD_CACHE.get("expires", 0.0)):
+        rows, status = _TD_CACHE["data"], _TD_CACHE.get("status")
+    else:
+        rows, status = [], "stale"
     out = []
     for a in rows:
         days = (datetime.strptime(a["date"], "%Y-%m-%d").date() - today_jst).days
@@ -5875,7 +6951,7 @@ def _build_auction_events(today_jst):
         })
     return out, status
 
-def get_events_snapshot():
+def get_events_snapshot(*, allow_provider_fetch=True):
     """Aggregated official event calendar for ARGUS Event Radar (Phase 1).
 
     Curated sources (Fed/BLS/BEA/BOJ) are always available; TreasuryDirect is
@@ -5886,14 +6962,15 @@ def get_events_snapshot():
     try:
         today_jst = datetime.now(TZ_JST).date()
         events = _build_curated_events(today_jst)
-        auctions, td_status = _build_auction_events(today_jst)
+        auctions, td_status = _build_auction_events(
+            today_jst, allow_provider_fetch=allow_provider_fetch)
         events += auctions
         td_src_status = "live" if td_status == "live" else "error"
         sources = [{"name": n, "status": "live", "lastUpdated": f"{_EVENTS_CURATED_ASOF}T00:00:00Z"}
                    for n in _EVENT_SOURCE_NAMES]
         sources.append({
             "name": "TreasuryDirect", "status": td_src_status,
-            "lastUpdated": (datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if td_status == "live" else None),
+            "lastUpdated": (_TD_CACHE.get("asOf") if td_status == "live" else None),
         })
         status = "live" if td_status == "live" else "partial"
         return {
@@ -6312,7 +7389,13 @@ def _caos_catalyst_for(sym, news_items, intel_items):
     sym = str(sym).upper()
     rank = {"official": 0, "corroborated": 1, "single": 2}
     best = None
-    for n in list(news_items) + list(intel_items):
+    now_epoch = time.time()
+    for raw in list(news_items) + list(intel_items):
+        n = _decision_news_row(
+            raw, now_epoch=now_epoch,
+            timestamp_keys=("publishedAt", "datetime", "time"))
+        if n is None:
+            continue
         blob = (n.get("headline") or n.get("title") or "") + " " + (n.get("headlineJa") or n.get("titleJa") or "")
         link = next((m for m in _entity_link(blob) if m["symbol"] == sym), None)
         # v10.190: a JP per-symbol headline (fetched by company name) carries a
@@ -6327,7 +7410,7 @@ def _caos_catalyst_for(sym, news_items, intel_items):
                 "relationJa": link.get("relationJa"), "corroboration": corr,
                 # V11.5.3: carry the timestamp so the freshness gate can demote an
                 # association lead built on an OLD story (past ≠ today's lead).
-                "publishedAt": n.get("publishedAt") or n.get("datetime") or n.get("firstDetectedAt"),
+                "publishedAt": n.get("publishedAt"),
                 "_sid": n.get("sourceId") or n.get("source")}   # kept for the audit trail
         if (best is None or rank.get(corr, 2) < rank.get(best["corroboration"], 2)
                 or (rank.get(corr, 2) == rank.get(best["corroboration"], 2)
@@ -6500,25 +7583,24 @@ def _entity_profile_restore():
         pass
 
 
-# ── §y Buy candidates (v10.177) — "本日の注目候補" ───────────────────────────
-# Elevate the raw surge feed into a HIGH-BAR, AI-screened watch list of non-watchlist
-# names with a genuine constructive setup (catalyst/theme-driven via the association
-# engine, not pure momentum). Decision-support only — never advice, never auto-trade;
-# most days few or zero qualify.
-_BUY_CANDIDATES = {"items": [], "asOf": None}
-_BUY_CANDIDATES_FILE = "/tmp/argus_buy_candidates.json"
+# ── §y Legacy buy-candidates route: scheduled AI research evidence ────────────
+# The route name remains compatible, but its output is a non-persistent research
+# shortlist. It cannot issue/push/persist an action or enter the Prediction Ledger.
+_BUY_CANDIDATES = {
+    "items": [], "asOf": None,
+    "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+    "finalDecisionAuthorityActive": False,
+}
 
 _BUY_CANDIDATE_SYSTEM = (
-    "You screen TODAY's market movers for an individual investor and flag ONLY names where NOW looks "
-    "like a genuinely GOOD ENTRY to BUY — a constructive, still-actionable setup (not a pure momentum / "
-    "blow-off / already-extended spike you'd be chasing). This is DECISION-SUPPORT, NOT investment "
-    "advice and NOT a guarantee. Be STRICT: most days only a few or ZERO qualify; omit weak ones "
-    "entirely. Prefer names with an identifiable catalyst/theme driver (given as driverJa) and where "
-    "the risk/reward of entering today is favorable. conviction = how strong a BUY-NOW this is (0..1). "
+    "You screen TODAY's market movers only for follow-up research evidence. Flag names whose observed "
+    "move has a concrete catalyst/theme driver worth verifying; omit weak or pure-momentum names. "
+    "Never recommend or classify BUY/SELL/HOLD/WAIT, never give an entry instruction, and never imply "
+    "final-action authority. evidenceStrength (0..1) measures only the quality of the research lead. "
     "Return STRICT JSON: {\"candidates\": "
-    "[{\"symbol\": str, \"market\": str, \"thesisJa\": str (why constructive — read the driver), "
-    "\"entryJa\": str (what to CONFIRM before buying: 押し目/出来高/地合い等), \"riskJa\": str (what "
-    "kills the thesis), \"conviction\": number 0..1}]}. Use ONLY the given symbols; never invent one."
+    "[{\"symbol\": str, \"market\": str, \"thesisJa\": str (why the lead merits research), "
+    "\"confirmationJa\": str (what evidence should be verified), \"riskJa\": str (what invalidates "
+    "the research thesis), \"evidenceStrength\": number 0..1}]}. Use ONLY the given symbols; never invent one."
 )
 
 
@@ -6527,9 +7609,18 @@ def _mover_universe(cap=14):
     wl = {s["symbol"].upper() for s in (_JP_WATCHLIST + _US_WATCHLIST)}
     out = []
     try:
-        for m in (_jq_market_movers().get("gainers") or [])[:10]:
+        jq = _jq_market_movers()
+        expected = argus_market_clock.latest_completed_session_date(
+            argus_market_clock.JP_EQUITY,
+            datetime.fromtimestamp(time.time(), pytz.utc)).isoformat()
+        rows = ((jq.get("gainers") or [])
+                if jq.get("status") == "delayed" and
+                jq.get("asOf") == expected else [])
+        for m in rows[:10]:
             sym = str(m.get("symbol") or "").upper()
-            if sym and sym not in wl and (m.get("changePct") or 0) > 0:
+            if (sym and sym not in wl and (m.get("changePct") or 0) > 0
+                    and m.get("decisionUsable") is True
+                    and m.get("sourceTimestamp") == jq.get("asOf")):
                 out.append({"symbol": sym, "name": m.get("name") or sym, "market": "JP",
                             "changePct": m.get("changePct")})
     except Exception:
@@ -6548,12 +7639,18 @@ def _mover_universe(cap=14):
 
 
 def _buy_candidates_generate(limit=4):
-    """Admin/cron — screen today's movers into high-conviction buy candidates (>=0.6)."""
+    """Admin/cron compatibility path: non-persistent AI research evidence."""
     uni = _mover_universe()
     if not uni:
-        return {"generated": 0, "total": len(_BUY_CANDIDATES["items"])}
+        return {
+            "generated": 0, "total": len(_BUY_CANDIDATES["items"]),
+            "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+            "finalDecisionAuthorityActive": False,
+            "persisted": False,
+        }
     try:
-        news_rel = [n for n in (get_market_news().get("items") or []) if n.get("relevant")]
+        news_rel = [n for n in (get_market_news().get("items") or [])
+                    if n.get("relevant") and n.get("decisionUsable") is True]
     except Exception:
         news_rel = []
     intel = list(_INTEL_STORE)[:60]
@@ -6567,9 +7664,10 @@ def _buy_candidates_generate(limit=4):
         posture = (get_action_labels().get("marketPosture") or {}).get("label")
     except Exception:
         posture = None
-    pr = _openai_prose(f"地合い: {posture}\n本日の上昇銘柄(候補母集団):\n"
+    pr = _openai_prose(f"地合い: {posture}\n本日の上昇銘柄(調査母集団):\n"
                        + json.dumps(rows, ensure_ascii=False)
-                       + "\nこの中から、買い候補として注目に値するものだけを厳選して返せ(無理に出さない)。",
+                       + "\nこの中から、追加調査に値する証拠候補だけを厳選して返せ。"
+                       + "売買アクションは返すな(無理に候補を出さない)。",
                        max_out=900, system=_BUY_CANDIDATE_SYSTEM)
     by = {r["symbol"]: r for r in rows}
     out = []
@@ -6577,41 +7675,29 @@ def _buy_candidates_generate(limit=4):
         sym = str(c.get("symbol") or "").upper()
         if sym not in by:                                   # never accept an invented symbol
             continue
-        conv = c.get("conviction")
-        if not isinstance(conv, (int, float)) or conv < 0.6:
+        strength = c.get("evidenceStrength")
+        if not isinstance(strength, (int, float)) or strength < 0.6:
             continue
         src = by[sym]
         out.append({"symbol": sym, "name": src.get("name") or sym,
                     "market": c.get("market") or src.get("market"), "changePct": src.get("changePct"),
-                    "thesisJa": str(c.get("thesisJa") or "")[:240], "entryJa": str(c.get("entryJa") or "")[:160],
-                    "riskJa": str(c.get("riskJa") or "")[:160], "conviction": round(float(conv), 2),
-                    "driverJa": src.get("driverJa")})
-    out.sort(key=lambda x: -x["conviction"])
+                    "thesisJa": str(c.get("thesisJa") or "")[:240],
+                    "confirmationJa": str(c.get("confirmationJa") or "")[:160],
+                    "riskJa": str(c.get("riskJa") or "")[:160],
+                    "evidenceStrength": round(float(strength), 2),
+                    "driverJa": src.get("driverJa"),
+                    "classification": "RESEARCH_CANDIDATE",
+                    "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+                    "finalDecisionAuthorityActive": False})
+    out.sort(key=lambda x: -x["evidenceStrength"])
     _BUY_CANDIDATES["items"] = out[:limit]
     _BUY_CANDIDATES["asOf"] = _ai_now_iso()
-    _buy_candidates_persist()
-    return {"generated": len(out[:limit]), "total": len(out)}
-
-
-def _buy_candidates_persist():
-    try:
-        tmp = f"{_BUY_CANDIDATES_FILE}.{os.getpid()}.tmp"
-        with open(tmp, "w") as f:
-            json.dump(_BUY_CANDIDATES, f, ensure_ascii=False, default=str)
-        os.replace(tmp, _BUY_CANDIDATES_FILE)
-    except Exception:
-        pass
-
-
-def _buy_candidates_restore():
-    try:
-        with open(_BUY_CANDIDATES_FILE) as f:
-            blob = json.load(f)
-        if isinstance(blob, dict) and isinstance(blob.get("items"), list):
-            _BUY_CANDIDATES["items"] = blob["items"]
-            _BUY_CANDIDATES["asOf"] = blob.get("asOf")
-    except Exception:
-        pass
+    return {
+        "generated": len(out[:limit]), "total": len(out),
+        "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+        "finalDecisionAuthorityActive": False,
+        "persisted": False,
+    }
 
 
 def _intel_link_assets(title):
@@ -6740,55 +7826,6 @@ def _institutional_signals(symbol=None, cap=40):
     return sigs
 
 
-@app.route("/api/argus/institutional-intel/signals")
-def api_argus_institutional_intel_signals():
-    """Public cached-only: ranked institutional signals (+regime themes). No fetch,
-    no LLM. ?symbol= narrows to one asset. Context, never trade instructions."""
-    try:
-        limit = max(1, min(int(request.args.get("limit") or 20), 40))
-    except Exception:
-        limit = 20
-    sigs = _institutional_signals(symbol=request.args.get("symbol"), cap=40)
-    return jsonify({
-        "schemaVersion": "institutional-intel-signals-v1", "asOf": _ai_now_iso(),
-        "count": len(sigs[:limit]), "signals": sigs[:limit],
-        "regimeThemes": argus_institutional_intel.regime_themes(sigs),
-        "handoffSummary": argus_institutional_intel.handoff_summary(sigs[:20]),
-        "disclaimerJa": argus_institutional_intel.DISCLAIMER_JA,
-        "disclaimerEn": argus_institutional_intel.DISCLAIMER_EN})
-
-
-@app.route("/api/argus/institutional-intel/status")
-def api_argus_institutional_intel_status():
-    """Public observability: registry (enabled/disabled with reasons), fetch stats
-    from the existing 24/7 collector, today's signal counts. Not a red alert unless
-    ingestion is actually dead."""
-    now_iso = _ai_now_iso()
-    sigs = _institutional_signals(cap=40)
-    today = now_iso[:10]
-    per_feed = _INTEL_LAST.get("perFeed") or []
-    failed = [f["feed"] for f in per_feed if not f.get("ok")]
-    reg = argus_institutional_intel.build_source_registry()
-    disabled = [{"sourceName": s["sourceName"], "reasonJa": s["noteJa"]}
-                for s in (reg["media"] + reg["official"])
-                if s["status"] in ("disabled", "metadata_only")]
-    ts = _INTEL_LAST.get("ts") or 0
-    return jsonify({
-        "schemaVersion": "institutional-intel-status-v1", "asOf": now_iso,
-        "sourcesChecked": len(per_feed), "sourcesFailed": failed,
-        "latestFetchAt": (datetime.fromtimestamp(ts, pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                          if ts else None),
-        "signalsNow": len(sigs),
-        "signalsToday": sum(1 for s in sigs if str(s.get("publishedAt") or "")[:10] == today
-                            or str(s.get("fetchedAt") or "")[:10] == today),
-        "mappedToOwnerAssets": sum(1 for s in sigs if s.get("ownerAssetHit")),
-        "headlineOnlyCount": sum(1 for s in sigs if s.get("headlineOnly")),
-        "registry": reg, "disabledSources": disabled,
-        "ingestionAlive": bool(ts and (time.time() - ts) < 3600),
-        "noteJa": "取込は既存のC.A.O.S. 24/7巡回(rate-limit/dedupe/失敗バックオフ実装済み)を共用。"
-                  "公開GETは取得を起動しない。"})
-
-
 # ── V11.7.0 Big Money / Flow Attribution ─────────────────────────────────────
 # Answers 「大口の新規買いか、買い戻しか、個人の追随か」 as EVIDENCE, never as a
 # trade signal. Evidence collection is CACHED-ONLY (public-path safe): bridge
@@ -6801,20 +7838,34 @@ def _flow_evidence_for(symbol, market):
     symu, mkt = str(symbol).upper(), str(market).upper()
     ev, sources = {}, {}
     q = _quote_cached_only(symu, mkt) or {}
+    quote_source = q.get("sourceTimestamp") or q.get("exchangeTs")
+    # A cache/receipt lifetime is not market evidence.  Recheck the actual
+    # provider timestamp at this consumer boundary so a forged/stale LIVE label
+    # cannot authorize a positive FlowAttribution classification.
+    q = _decision_usable_quote_row(q)
+    quote_usable = q is not None
+    if q is None:
+        q = {}
     if isinstance(q.get("changePct"), (int, float)):
         ev["changePct"] = float(q["changePct"])
     if isinstance(q.get("price"), (int, float)):
         ev["price"] = float(q["price"])
     if isinstance(q.get("volume"), (int, float)) and q["volume"] > 0:
         ev["volume"] = q["volume"]
-    bnr = (q.get("flow") or {}).get("bigNetRatio")
-    if isinstance(bnr, (int, float)):
-        ev["flowBigNetRatio"] = float(bnr)
-        sources["flow"] = True
-    ev["sourceUpdatedAt"] = q.get("exchangeTs") or q.get("date")
+    # Flow-specific source time is absent; quote time authorizes only the
+    # price/volume shape and can never authorize bridge `flow` itself.
+    ev["sourceUpdatedAt"] = quote_source if quote_usable else None
+    if quote_usable:
+        sources["priceVolume"] = True
     if mkt == "JP":
         code4 = symu[:4]
-        h = (_JQ_HISTORY_CACHE.get(code4) or {}).get("data") or {}
+        now_epoch = time.time()
+        history_cache = _JQ_HISTORY_CACHE.get(code4) or {}
+        h = history_cache.get("data") or {}
+        if not _cache_expiry_usable(history_cache, now_epoch=now_epoch) or \
+                not _entry_history_source_usable(
+                    h, "JP", now_epoch=now_epoch)[0]:
+            h = {}
         closes, vols = h.get("closes") or [], h.get("volumes") or []
         try:
             if len(closes) >= 7 and closes[6]:
@@ -6828,7 +7879,12 @@ def _flow_evidence_for(symbol, market):
         except Exception:
             pass
         try:
-            hist = (_JQ_MARGIN_CACHE.get(code4) or {}).get("data") or []
+            margin_cache = _JQ_MARGIN_CACHE.get(code4) or {}
+            hist = (margin_cache.get("data") or []
+                    if _cache_expiry_usable(
+                        margin_cache, now_epoch=now_epoch) else [])
+            hist, _margin_reason = _entry_weekly_margin_evidence(
+                hist, now_epoch=now_epoch)
             if hist:
                 latest = hist[0]                    # newest-first
                 ev["marginShortHeavy"] = bool((latest.get("shortVol") or 0) >
@@ -6836,8 +7892,8 @@ def _flow_evidence_for(symbol, market):
                 sources["margin"] = True
                 # v11.10.0 supply/demand structure hints (RAW shape, not the SD
                 # narrative — keeps flow←structure one-directional):
-                base = [v for v in ((_JQ_HISTORY_CACHE.get(code4) or {}).get("data") or {})
-                        .get("volumes", [])[1:21] if isinstance(v, (int, float)) and v > 0]
+                base = [v for v in (h.get("volumes") or [])[1:21]
+                        if isinstance(v, (int, float)) and v > 0]
                 avg_v = (sum(base) / len(base)) if len(base) >= 5 else None
                 mb, msell = latest.get("longVol"), latest.get("shortVol")
                 if avg_v and isinstance(mb, (int, float)):
@@ -6847,7 +7903,15 @@ def _flow_evidence_for(symbol, market):
         except Exception:
             pass
         try:
-            table, _dt = _JSF_CACHE.get("table"), None
+            table = (_JSF_CACHE.get("table")
+                     if _cache_expiry_usable(
+                         _JSF_CACHE, now_epoch=now_epoch) and
+                     _bounded_market_session_date(
+                         _JSF_CACHE.get("date"), "JP",
+                         _ENTRY_JSF_MAX_CALENDAR_DAYS,
+                         accepted_formats=("%Y/%m/%d",),
+                         now_epoch=now_epoch)[0] is not None
+                     else None)
             rec = (table or {}).get(code4)
             if rec and isinstance(rec.get("short"), int) and isinstance(rec.get("loan"), int):
                 # 貸借残: short > loan は売り長 — margin evidence が無い時の補完
@@ -6893,6 +7957,9 @@ def _flow_evidence_for(symbol, market):
                     if m == symu:
                         continue
                     pq = _quote_cached_only(m, "JP" if m[:1].isdigit() else "US") or {}
+                    pq = _decision_usable_quote_row(pq)
+                    if pq is None:
+                        continue
                     pc = pq.get("changePct")
                     if isinstance(pc, (int, float)):
                         total += 1
@@ -6978,14 +8045,6 @@ def _watchlist_theme_items():
 _PORTFOLIO_SERVER_SYNC_ENABLED = False
 
 
-@app.route("/api/argus/portfolio-sync/status")
-def api_argus_portfolio_sync_status():
-    """Public: storage-layer architecture + enabled/disabled state ONLY.
-    Structurally leak-free (argus_portfolio_sync.contains_sensitive == [])."""
-    return jsonify(argus_portfolio_sync.public_sync_status(
-        server_sync_enabled=_PORTFOLIO_SERVER_SYNC_ENABLED, now_iso=_ai_now_iso()))
-
-
 @app.route("/api/argus/portfolio-sync/pull", methods=["GET"])
 @app.route("/api/argus/portfolio-sync/push", methods=["POST"])
 @app.route("/api/argus/portfolio-sync/snapshots", methods=["GET", "POST"])
@@ -7001,22 +8060,6 @@ def api_argus_portfolio_sync_disabled():
                                 "整うまで無効です。端末間同期は既存のパスフレーズ暗号化"
                                 "バックアップ(vault)をご利用ください。",
                     "syncSchemaVersion": argus_portfolio_sync.SYNC_SCHEMA_VERSION}), 403
-
-
-@app.route("/api/argus/position-exposure/status")
-def api_argus_position_exposure_status():
-    """Public: watchlist theme exposure (counts only) + where real position
-    data lives. NO quantities/costs/values by construction."""
-    wl = argus_position_exposure.watchlist_theme_exposure(_watchlist_theme_items())
-    return jsonify({
-        "schemaVersion": "position-exposure-status-v1", "asOf": _ai_now_iso(),
-        "positionData": "device_local_only",
-        "positionDataNoteJa": "保有数量・取得単価は端末内(localStorage)のみで管理され、"
-                              "サーバーには送信・保存されません。保有リスク判定は"
-                              "アプリ内でローカル計算されます。",
-        "watchlistExposure": wl,
-        "engineVersion": argus_position_exposure.SCHEMA_VERSION,
-        "disclaimerJa": "リスク点検であり売買指示ではない。"})
 
 
 # ── V11.11.0 US daily-bars cache (Finnhub candles; warmed by the collect cron
@@ -7060,6 +8103,7 @@ def _supply_demand_signal_for(symu, market="JP"):
     symu = str(symu).upper()
     mkt = str(market).upper()
     code4 = symu[:4]
+    now_epoch = time.time()
     fev = _flow_evidence_for(symu, mkt)
     ev = {"changePct": fev.get("changePct"), "volumeRatio": fev.get("volumeRatio"),
           "priorRunupPct": fev.get("priorRunupPct"), "instStance": fev.get("instStance"),
@@ -7069,12 +8113,19 @@ def _supply_demand_signal_for(symu, market="JP"):
     if mkt == "US":
         ev["measuredFlowNetRatio"] = fev.get("flowBigNetRatio")
         try:
-            h = (_US_HISTORY_CACHE.get(symu) or {}).get("data") or {}
+            history_cache = _US_HISTORY_CACHE.get(symu) or {}
+            h = history_cache.get("data") or {}
+            if (not _cache_expiry_usable(
+                    history_cache, now_epoch=now_epoch)
+                    or not _entry_history_source_usable(
+                        h, "US", now_epoch=now_epoch)[0]):
+                h = {}
             vols = [v for v in (h.get("volumes") or [])[1:21]
                     if isinstance(v, (int, float)) and v > 0]
             if len(vols) >= 5:
                 ev["avgDailyVolume"] = sum(vols) / len(vols)
-                q = _quote_cached_only(symu, "US") or {}
+                q = _decision_usable_quote_row(
+                    _quote_cached_only(symu, "US") or {}) or {}
                 if isinstance(q.get("volume"), (int, float)) and q["volume"] > 0 \
                         and ev.get("volumeRatio") is None:
                     ev["volumeRatio"] = round(q["volume"] / ev["avgDailyVolume"], 2)
@@ -7090,7 +8141,12 @@ def _supply_demand_signal_for(symu, market="JP"):
             pass
         return argus_supply_demand.classify(symu, "US", ev, _ai_now_iso())
     try:
-        hist = (_JQ_MARGIN_CACHE.get(code4) or {}).get("data") or []
+        margin_cache = _JQ_MARGIN_CACHE.get(code4) or {}
+        raw_margin = (margin_cache.get("data") or []
+                      if _cache_expiry_usable(
+                          margin_cache, now_epoch=now_epoch) else [])
+        hist, _margin_reason = _entry_weekly_margin_evidence(
+            raw_margin, now_epoch=now_epoch)
         if hist:
             ev["marginBuying"] = hist[0].get("longVol")
             ev["marginSelling"] = hist[0].get("shortVol")
@@ -7101,14 +8157,26 @@ def _supply_demand_signal_for(symu, market="JP"):
     except Exception:
         pass
     try:
-        rec = (_JSF_CACHE.get("table") or {}).get(code4)
+        jsf_date, _jsf_reason = _bounded_market_session_date(
+            _JSF_CACHE.get("date"), "JP", _ENTRY_JSF_MAX_CALENDAR_DAYS,
+            accepted_formats=("%Y/%m/%d",), now_epoch=now_epoch)
+        rec = ((_JSF_CACHE.get("table") or {}).get(code4)
+               if _cache_expiry_usable(
+                   _JSF_CACHE, now_epoch=now_epoch) and
+               jsf_date is not None else None)
         if rec:
             ev["jsfLoan"], ev["jsfLending"] = rec.get("loan"), rec.get("short")
             ev["jsfDate"] = _JSF_CACHE.get("date")
     except Exception:
         pass
     try:
-        h = (_JQ_HISTORY_CACHE.get(code4) or {}).get("data") or {}
+        history_cache = _JQ_HISTORY_CACHE.get(code4) or {}
+        h = history_cache.get("data") or {}
+        if (not _cache_expiry_usable(
+                history_cache, now_epoch=now_epoch)
+                or not _entry_history_source_usable(
+                    h, "JP", now_epoch=now_epoch)[0]):
+            h = {}
         vols = [v for v in (h.get("volumes") or [])[1:21]
                 if isinstance(v, (int, float)) and v > 0]
         if len(vols) >= 5:
@@ -7139,15 +8207,35 @@ def _supply_demand_list(cap=16):
 
 
 def _supply_demand_sources():
-    return {"enabled": [s for s, ok in (("jquants-margin-weekly", bool(_JQ_MARGIN_CACHE)),
-                                        ("jsf-daily-balance", bool(_JSF_CACHE.get("table"))),
-                                        ("jquants-daily-bars", bool(_JQ_HISTORY_CACHE))) if ok],
+    now_epoch = time.time()
+    margin_usable = any(
+        _cache_expiry_usable(row, now_epoch=now_epoch) and
+        _entry_weekly_margin_evidence(
+            (row or {}).get("data") or [], now_epoch=now_epoch)[0] is not None
+        for row in _JQ_MARGIN_CACHE.values() if isinstance(row, dict))
+    jsf_usable = (
+        bool(_JSF_CACHE.get("table")) and
+        _cache_expiry_usable(_JSF_CACHE, now_epoch=now_epoch) and
+        _bounded_market_session_date(
+            _JSF_CACHE.get("date"), "JP", _ENTRY_JSF_MAX_CALENDAR_DAYS,
+            accepted_formats=("%Y/%m/%d",),
+            now_epoch=now_epoch)[0] is not None)
+    history_usable = any(
+        _cache_expiry_usable(row, now_epoch=now_epoch) and
+        _entry_history_source_usable(
+            (row or {}).get("data") or {}, "JP",
+            now_epoch=now_epoch)[0]
+        for row in _JQ_HISTORY_CACHE.values() if isinstance(row, dict))
+    return {"enabled": [s for s, ok in (
+                ("jquants-margin-weekly", margin_usable),
+                ("jsf-daily-balance", jsf_usable),
+                ("jquants-daily-bars", history_usable)) if ok],
             "disabled": [
                 {"source": "逆日歩(品貸料)", "reasonJa": "未取込(日証金の品貸料CSVは別系統。捏造せず未取得と表示)"},
                 {"source": "銘柄別空売り比率", "reasonJa": "J-Quants Standardは業種別のみ(銘柄別は未提供)"},
                 {"source": "moomoo JPリアルタイム", "reasonJa": "moomoo側メンテナンス(サポート確認済み)のため意図的に無効(エラーではない)"}],
-            "jsf": bool(_JSF_CACHE.get("table")),
-            "jqMargin": bool(_JQ_MARGIN_CACHE),
+            "jsf": jsf_usable,
+            "jqMargin": margin_usable,
             "shortRatio": False}
 
 
@@ -7189,44 +8277,19 @@ def _action_priority_items(cap=12):
     return argus_action_priority.rank_items(items, cap=cap)
 
 
-@app.route("/api/argus/action-priority")
-def api_argus_action_priority():
-    """Public cached-only: watchlist-level attention priorities (no holdings —
-    the app re-ranks locally with held context). Never a trade instruction."""
-    items = _action_priority_items(cap=12)
-    return jsonify({"schemaVersion": "action-priority-response-v1",
-                    "asOf": _ai_now_iso(), "count": len(items), "items": items,
-                    "summary": argus_action_priority.summary(items, _ai_now_iso()),
-                    "disclaimerJa": argus_action_priority.COMPLIANCE})
-
-
-@app.route("/api/argus/action-priority/status")
-def api_argus_action_priority_status():
-    items = _action_priority_items(cap=30)
-    return jsonify(argus_action_priority.status_doc(
-        items, now_iso=_ai_now_iso(),
-        sources={"positionExposure": False,   # device-local by design
-                 "eventRadar": bool(_MACRO_ANALYSIS), "flowAttribution": True,
-                 "supplyDemand": True,
-                 "institutionalIntelligence": bool(_INTEL_STORE),
-                 "marketRegime": bool(_REGIME_CACHE.get("data")),
-                 "decisionQuality": False}))  # records device-local by design
-
-
 # ── V11.13.0 Session Brief (server side = WATCHLIST-LEVEL redacted brief) ────
 
-def _session_brief_public():
-    now = datetime.now(TZ_JST)
-    jp_open = False
-    us_open = False
+def _session_brief_public(now_utc=None):
+    current_utc = now_utc or datetime.now(pytz.utc)
+    if current_utc.tzinfo is None:
+        current_utc = pytz.utc.localize(current_utc)
     try:
-        jp_open = now.weekday() < 5 and (9 <= now.hour < 15 or (now.hour == 15 and now.minute <= 30))
-        us_h = now.hour
-        us_open = now.weekday() < 5 and (us_h >= 22 or us_h < 5) \
-            or (now.weekday() == 5 and now.hour < 5)
+        states = _market_calendar_states(current_utc)
+        sess = argus_session_brief.resolve_canonical_session(
+            states.get("JP"), states.get("US"))
     except Exception:
-        pass
-    sess = argus_session_brief.resolve_session(now.hour, now.weekday(), jp_open, us_open)
+        sess = {"sessionType": "unknown", "marketStatus": "unknown",
+                "canonicalSessions": None}
     items = _action_priority_items(cap=20)
     events = []
     try:
@@ -7255,6 +8318,7 @@ def _session_brief_public():
         pass
     return argus_session_brief.build_brief({
         "sessionType": sess["sessionType"], "marketStatus": sess["marketStatus"],
+        "canonicalSessions": sess.get("canonicalSessions"),
         "priorityItems": items, "eventNames": [e for e in events if e][:4],
         "regimeLabel": regime, "regimeRiskOff": risk_off,
         "sdHighlights": sd_hi, "isPrivate": False,
@@ -7315,41 +8379,6 @@ def _scenario_list(cap=16):
     return out[:cap]
 
 
-@app.route("/api/argus/scenarios")
-def api_argus_scenarios():
-    """Public cached-only: conditional scenario sets at WATCHLIST level (no
-    holdings — the app re-composes with held context on device). Probability
-    BANDS only; never a prediction or trade instruction."""
-    sym = str(request.args.get("symbol") or "").upper().strip()
-    now_iso = _ai_now_iso()
-    if sym:
-        all_wl = [(x, "JP") for x in _JP_WATCHLIST] + [(x, "US") for x in _US_WATCHLIST]
-        hit = next(((s, m) for s, m in all_wl
-                    if str(s.get("symbol") or "").upper() == sym), None)
-        if not hit:
-            return jsonify({"schemaVersion": "scenario-response-v1", "asOf": now_iso,
-                            "error": "symbol not in watchlist", "symbol": sym}), 404
-        s, mkt = hit
-        sd_by = {x["symbol"]: x for x in _supply_demand_list(cap=30)}
-        flow_by = {r["symbol"]: r for r in _flow_attribution_list(cap=30)}
-        risk_off = False
-        try:
-            lbl = ((_REGIME_CACHE.get("data") or {}).get("regime") or {}).get("label")
-            risk_off = lbl in ("RISK_OFF", "EVENT_WAIT")
-        except Exception:
-            pass
-        return jsonify({"schemaVersion": "scenario-response-v1", "asOf": now_iso,
-                        "scenarioSet": _scenario_set_for(sym, mkt, s.get("name") or sym,
-                                                         sd_by.get(sym) or {},
-                                                         flow_by.get(sym) or {}, risk_off),
-                        "disclaimerJa": argus_scenario.COMPLIANCE})
-    sets = _scenario_list(cap=16)
-    return jsonify({"schemaVersion": "scenario-response-v1", "asOf": now_iso,
-                    "count": len(sets), "scenarioSets": sets,
-                    "marketScenario": _market_scenario_public(),
-                    "disclaimerJa": argus_scenario.COMPLIANCE})
-
-
 def _market_scenario_public():
     regime = None
     risk_off = False
@@ -7378,12 +8407,17 @@ def _market_scenario_public():
 
 def _market_open_now(mkt):
     try:
-        now = datetime.now(TZ_JST)
-        if now.weekday() >= 5:
-            return False
-        if mkt == "JP":
-            return 9 <= now.hour < 15 or (now.hour == 15 and now.minute <= 30)
-        return now.hour >= 22 or now.hour < 5
+        market = (argus_market_clock.JP_EQUITY if mkt == "JP"
+                  else argus_market_clock.US_EQUITY if mkt == "US"
+                  else argus_market_clock.CRYPTO if mkt == "CRYPTO"
+                  else None)
+        if market is None:
+            return None
+        state = argus_market_clock.market_session(
+            market, datetime.now(pytz.utc))
+        return state["session"] in (
+            "MORNING_SESSION", "AFTERNOON_SESSION", "REGULAR",
+            "CONTINUOUS")
     except Exception:
         return None
 
@@ -7434,54 +8468,6 @@ def _trade_plan_list(cap=16):
     return plans[:cap]
 
 
-@app.route("/api/argus/position-plans")
-def api_argus_position_plans():
-    """Public cached-only: WATCHLIST-LEVEL planning views (no holdings — the app
-    re-composes with held context on device). Plans, never orders."""
-    sym = str(request.args.get("symbol") or "").upper().strip()
-    now_iso = _ai_now_iso()
-    plans = _trade_plan_list(cap=30 if sym else 16)
-    if sym:
-        hit = next((p for p in plans if p["symbol"] == sym), None)
-        if not hit:
-            return jsonify({"schemaVersion": "trade-plan-response-v1", "asOf": now_iso,
-                            "error": "symbol not in watchlist", "symbol": sym}), 404
-        return jsonify({"schemaVersion": "trade-plan-response-v1", "asOf": now_iso,
-                        "plan": hit, "disclaimerJa": argus_trade_plan.COMPLIANCE})
-    return jsonify({"schemaVersion": "trade-plan-response-v1", "asOf": now_iso,
-                    "count": len(plans), "plans": plans,
-                    "portfolioSummary": argus_trade_plan.portfolio_summary(plans),
-                    "disclaimerJa": argus_trade_plan.COMPLIANCE})
-
-
-@app.route("/api/argus/position-plans/status")
-def api_argus_position_plans_status():
-    plans = _trade_plan_list(cap=30)
-    return jsonify(argus_trade_plan.status_doc(
-        plans, now_iso=_ai_now_iso(),
-        sources={"scenarioEngine": True, "actionPriority": True,
-                 "supplyDemand": True, "flowAttribution": True,
-                 "positionExposure": False,   # device-local by design
-                 "marketRegime": bool(_REGIME_CACHE.get("data")),
-                 "institutionalIntelligence": bool(_INTEL_STORE),
-                 "eventRadar": bool(_MACRO_ANALYSIS),
-                 "decisionQuality": False,    # records device-local by design
-                 "learningDashboard": False,  # records device-local by design
-                 "notifications": False}))    # stored device-local by design
-
-
-@app.route("/api/argus/scenarios/status")
-def api_argus_scenarios_status():
-    sets = _scenario_list(cap=30)
-    return jsonify(argus_scenario.status_doc(
-        sets, now_iso=_ai_now_iso(),
-        sources={"supplyDemand": True, "flowAttribution": True,
-                 "eventRadar": bool(_MACRO_ANALYSIS),
-                 "marketRegime": bool(_REGIME_CACHE.get("data")),
-                 "positionExposure": False,   # device-local by design
-                 "decisionQuality": False}))  # records device-local by design
-
-
 # ── V11.22.0 Data Quality Console (server-side collection — honest only) ────
 # 鮮度はサーバーが実測できたタイムスタンプのみから判定。測れないものはunknown。
 # 私的レイヤー(保有/投信/記録)は「端末内で判定」として数値を持たない。
@@ -7491,6 +8477,207 @@ def _dq_iso(epoch):
         return datetime.utcfromtimestamp(epoch).strftime("%Y-%m-%dT%H:%M:%SZ") if epoch else None
     except Exception:
         return None
+
+
+def _diagnostic_readiness_truth():
+    state = str(_STARTUP.get("state") or "unknown")
+    ready = state in ("ready", "ready_degraded")
+    reason = {
+        "ready": "READY",
+        "ready_degraded": "READY_DEGRADED",
+        "bootstrapping": "BOOTSTRAPPING",
+        "failed_safe": "FAILED_SAFE",
+    }.get(state, "NOT_READY")
+    return ready, reason
+
+
+def _diagnostic_freshness_snapshot():
+    """Cheap, scalar-only public freshness aggregation.
+
+    The old rich console walks missions, OSINT investigations and journal
+    internals.  Public diagnostics deliberately do none of that work.
+    """
+    now = time.time()
+
+    def from_age(age, fresh_seconds, aging_seconds):
+        if isinstance(age, bool) or not isinstance(age, (int, float)) or \
+                not math.isfinite(float(age)) or age < 0:
+            return "unknown"
+        if age <= fresh_seconds:
+            return "fresh"
+        if age <= aging_seconds:
+            return "aging"
+        return "stale"
+
+    observations = []
+    try:
+        bridge = _bridge_status_doc()
+        observations.append(from_age(
+            bridge.get("lastUsPushAgeSec"), 180, 900))
+    except Exception:
+        observations.append("unknown")
+    for epoch, fresh_seconds, aging_seconds in (
+            (_JP_FALLBACK_LAST.get("ts"), 1800, 7200),
+            (_EVENTS_BUILD_LAST.get("ts"), 6 * 3600, 36 * 3600),
+            (_INTEL_LAST.get("ts"), 2 * 3600, 12 * 3600)):
+        age = now - float(epoch) if isinstance(epoch, (int, float)) and \
+            not isinstance(epoch, bool) and epoch > 0 else None
+        observations.append(from_age(age, fresh_seconds, aging_seconds))
+    counts = {name: observations.count(name)
+              for name in ("fresh", "aging", "stale", "unknown")}
+    if counts["stale"]:
+        overall = "stale"
+    elif counts["aging"] and counts["fresh"]:
+        overall = "mixed"
+    elif counts["aging"]:
+        overall = "aging"
+    elif counts["unknown"]:
+        overall = "unknown" if not counts["fresh"] else "mixed"
+    else:
+        overall = "fresh"
+    return {"overall": overall, "sourceCounts": counts,
+            "expectedDisabledCount": 3}
+
+
+def _public_diagnostics_snapshot():
+    now_iso = _ai_now_iso()
+    try:
+        ready, _ = _diagnostic_readiness_truth()
+        freshness = _diagnostic_freshness_snapshot()
+        overall = "ok" if ready and freshness["overall"] not in \
+            ("stale", "unknown") else "degraded"
+        return _recovery_phase_a_bind_null_proof(
+            argus_diagnostics_contract.build_public_diagnostics(
+            generated_at=now_iso,
+            backend_version=_semantic_app_version(),
+            build_sha=_backend_exact_sha(),
+            liveness="ok",
+            readiness="ready" if ready else "not_ready",
+            overall=overall,
+            freshness_overall=freshness["overall"],
+            source_counts=freshness["sourceCounts"],
+            expected_disabled_count=freshness["expectedDisabledCount"],
+            system_health=_system_health(allow_provider_fetch=False)))
+    except Exception:
+        return _recovery_phase_a_bind_null_proof(
+            argus_diagnostics_contract.public_diagnostics_fallback(now_iso))
+
+
+def _operational_diagnostics_snapshot():
+    """Admin-only, fixed-schema scalar diagnostics; no raw dict is returned."""
+    now_iso = _ai_now_iso()
+    ready, readiness_code = _diagnostic_readiness_truth()
+    freshness = _diagnostic_freshness_snapshot()
+    checkpoint = _DURABLE_STATE.get("lastCheckpoint")
+    checkpoint = checkpoint if isinstance(checkpoint, dict) else {}
+    try:
+        remote_summary = argus_remote_journal.remote_durability_summary(
+            local_events=_OPS_JOURNAL,
+            acked_keys=_REMOTE_ACK.get("ackedKeys"),
+            last_verified_ack_at=_REMOTE_ACK.get(
+                "lastVerifiedRemoteAckAt"),
+            now_iso=now_iso,
+            legacy_remote=bool(_REMOTE_ACK.get("legacyRemote")),
+            failed_count=int(_REMOTE_ACK.get("readbackFailures") or 0))
+    except Exception:
+        remote_summary = {
+            "localCommittedCount": 0, "remotePendingCount": 0,
+            "remoteCommittedCount": 0, "remoteFailedCount": 0,
+        }
+    registry = argus_recovery_registry.registry_summary()
+    jobs = (_FOUNDATION_JOBS.get("jobs")
+            if isinstance(_FOUNDATION_JOBS, dict) else None)
+    return _recovery_phase_a_bind_null_proof(
+        argus_diagnostics_contract.build_operational_diagnostics(
+        generated_at=now_iso,
+        backend_version=_semantic_app_version(),
+        build_sha=_backend_exact_sha(),
+        ready=ready, readiness_code=readiness_code,
+        startup_state=_STARTUP.get("state"),
+        process_booted_at=_RUNTIME.get("processBootedAt"),
+        freshness=freshness,
+        storage={
+            "productionMode": _DURABILITY_PRODUCTION,
+            "valid": _DURABLE_STORAGE_STATUS.get("valid"),
+            "runtimeVerified": _DURABLE_STORAGE_STATUS.get(
+                "runtimeVerified"),
+            "statusCode": ("OK" if _DURABLE_STORAGE_STATUS.get("valid")
+                           else "INVALID"),
+            "checkpointBytes": int(
+                _DURABLE_STORAGE_STATUS.get("checkpointBytes") or 0),
+            "walBytes": int(_DURABLE_STORAGE_STATUS.get("walBytes") or 0),
+        },
+        durability={
+            "integrityStatus": _DURABLE_STATE.get("integrityStatus"),
+            "journalCorruptCount": int(
+                _DURABLE_STATE.get("journalCorrupt") or 0),
+            "missionWalCorruptCount": int(
+                _DURABLE_STATE.get("missionWalCorrupt") or 0),
+            "writeCount": int(_DURABLE_STATE.get("writeCount") or 0),
+            "successCount": int(_DURABLE_STATE.get("successCount") or 0),
+            "failureCount": int(_DURABLE_STATE.get("failureCount") or 0),
+            "checkpoint": {
+                "verified": checkpoint.get("verified") is True,
+                "readBackVerified": checkpoint.get(
+                    "readBackVerified") is True,
+                "includedWalSequence": int(
+                    checkpoint.get("includedWalSequence") or 0),
+                "verifiedAt": checkpoint.get("verifiedAt"),
+            },
+        },
+        remote_journal={
+            "localCommittedCount": int(
+                remote_summary.get("localCommittedCount") or 0),
+            "pendingCount": int(remote_summary.get("remotePendingCount") or 0),
+            "committedCount": int(
+                remote_summary.get("remoteCommittedCount") or 0),
+            "failedCount": int(remote_summary.get("remoteFailedCount") or 0),
+            "readBackVerified": _REMOTE_CYCLE.get("readBackVerified") is True,
+            "walReadBackVerified": _REMOTE_CYCLE.get(
+                "walReadBackVerified") is True,
+            "state": _REMOTE_CYCLE.get("remoteDurabilityState"),
+            "remoteWalAppliedSequence": int(
+                _REMOTE_CYCLE.get("remoteWalAppliedSequence") or 0),
+            "verifiedWalSequence": int(
+                _REMOTE_CYCLE.get("verifiedWalSequence") or 0),
+            "errorPresent": any(_REMOTE_CYCLE.get(name) not in (None, "")
+                                for name in ("errorClass", "walErrorClass",
+                                             "receiptErrorClass")),
+            "lastVerifiedAckAt": _REMOTE_ACK.get(
+                "lastVerifiedRemoteAckAt"),
+        },
+        features={
+            "checkpointMode": "legacy_only",
+            "checkpointV2State": _CHECKPOINT_V2_STATUS.get("state"),
+            "stage1Enabled": _CHECKPOINT_V2_STAGE1_ENABLED,
+            "soakArmed": _SOAK_CONTROL.get("armed") is True,
+            "soakState": _SOAK.get("state") or "not_started",
+        },
+        scheduler={
+            "missionCount": len(_MISSIONS),
+            "missionWindowCount": len(_MISSION_WINDOWS),
+            "foundationJobCount": len(jobs) if isinstance(jobs, list) else 0,
+            "agentQueueDepth": len(_OSINT_AGENT_QUEUE),
+        },
+        registry={
+            "stateCount": int(registry.get("stateCount") or 0),
+            "mutationCount": int(registry.get("mutationClassCount") or 0),
+            "validationErrorCount": len(registry.get(
+                "validationErrors") or []),
+        },
+        osint={
+            "investigationCount": len(_OSINT_STORE),
+            "memoryRecordCount": len(_OSINT_MEMORY),
+            "urlCacheCount": len(_OSINT_URL_CACHE),
+            "canaryState": ("degraded" if (
+                _OSINT_CANARY_LAST.get("data") or {}).get("degraded") else
+                "ok" if _OSINT_CANARY_LAST.get("data") else "not_run"),
+        },
+        cost_policy={
+            "mode": _COST_POLICY.get("mode") or "DETERMINISTIC",
+            "daySpentUsd": _AI_COST_STATE.get("daySpentUsd") or 0.0,
+            "monthSpentUsd": _AI_COST_STATE.get("monthSpentUsd") or 0.0,
+        }))
 
 
 # v12.0.4/12.0.5: JP APIメンテナンス — オーナー/サポート確認済みの事実のみ(捏造なし)。
@@ -8110,8 +9297,9 @@ def _data_quality_console():
             "missedJobs": argus_decision_ledger.detect_missed_jobs(
                 _DL_JOBS, _ai_now_iso()),
             "rubricVersion": argus_decision_ledger.RUBRIC_VERSION,
-            "noteJa": ("不変予測台帳(v2基盤・shadow) — 既存Calibration Ledger v4が"
-                       "本番採点として継続。"),
+            "noteJa": ("calibration_v1は履歴互換・shadow由来のみ。"
+                       "canonical sealed v2 forward_live台帳もEVIDENCE_ONLYで、"
+                       "最終判断権限や本番採点の証明ではない。"),
         }
         console["providerCost"] = {
             "activeModels": {k: v for k, v in _OPENAI_MODEL_ROLES.items()},
@@ -8168,99 +9356,30 @@ def _data_quality_console():
     return console
 
 
-@app.route("/api/argus/data-quality")
-def api_argus_data_quality():
-    """Public REDACTED console — statuses/buckets/timestamps only. No holdings,
-    no fund data, no secrets. Honest: unmeasurable freshness stays unknown."""
-    return jsonify(_data_quality_console())
-
-
 @app.route("/api/argus/data-quality/status")
 def api_argus_data_quality_status():
-    return jsonify(argus_data_quality.public_status(
-        _data_quality_console(), now_iso=_ai_now_iso()))
+    return jsonify(_public_diagnostics_snapshot())
 
 
-@app.route("/api/argus/review-pack/status")
-def api_argus_review_pack_status():
-    """Public REDACTED — flags only. Review packs are generated and copied ON
-    DEVICE; the server never sees, stores, or forwards them."""
-    return jsonify(argus_review_pack.public_status(now_iso=_ai_now_iso()))
-
-
-@app.route("/api/argus/fire-core/status")
-def api_argus_fire_core_status():
-    """Public REDACTED — flags only. Fund data (names/units/NAV/values/
-    contributions/accounts) lives on device; the server holds none of it."""
-    return jsonify(argus_fire_core.public_status(now_iso=_ai_now_iso()))
-
-
-@app.route("/api/argus/portfolio-strategy/status")
-def api_argus_portfolio_strategy_status():
-    """Public REDACTED — feature flags only. Strategy/FIRE/role details are
-    composed ON DEVICE from local holdings; the server knows none of it."""
-    return jsonify(argus_portfolio_strategy.public_status(
-        now_iso=_ai_now_iso(),
-        sources={"positionExposure": False,      # device-local by design
-                 "entryExitPlanning": True, "scenarioEngine": True,
-                 "marketRegime": bool(_REGIME_CACHE.get("data")),
-                 "decisionQuality": False, "learningDashboard": False,
-                 "portfolioSync": False, "backupSafety": False}))
-
-
-@app.route("/api/argus/backup-safety/status")
-def api_argus_backup_safety_status():
-    """Public REDACTED — architecture facts only. Protection state, passphrase
-    presence, and payloads live on device; the server cannot and must not know."""
-    return jsonify(argus_backup_safety.public_status(now_iso=_ai_now_iso()))
-
-
-@app.route("/api/argus/learning-review/status")
-def api_argus_learning_review_status():
-    """Public REDACTED — the learning dashboard aggregates DEVICE-LOCAL records
-    on device; the server holds no records and computes nothing over them."""
-    return jsonify(argus_learning_review.public_status(
-        now_iso=_ai_now_iso(),
-        sources={"decisionQuality": False, "snapshots": False, "notifications": False,
-                 "supplyDemand": True, "flowAttribution": True,
-                 "actionPriority": True, "sessionBrief": True,
-                 "ownerAnnotations": False}))
-
-
-@app.route("/api/argus/notifications/status")
-def api_argus_notifications_status():
-    """Public REDACTED — feature/architecture flags only. Notifications are
-    generated and stored ON DEVICE; the server holds none by construction."""
-    return jsonify(argus_notifications.public_status(
-        now_iso=_ai_now_iso(),
-        sources={"sessionBrief": True, "actionPriority": True,
-                 "eventRadar": bool(_MACRO_ANALYSIS),
-                 "positionExposure": False, "flowAttribution": True,
-                 "supplyDemand": True,
-                 "institutionalIntelligence": bool(_INTEL_STORE),
-                 "decisionQuality": False, "portfolioSync": False}))
-
-
-@app.route("/api/argus/session-brief")
-def api_argus_session_brief():
-    """Public cached-only: watchlist-level 今日の作戦 (no holdings — the app
-    composes the held-aware version locally). Never a trade instruction."""
-    brief = _session_brief_public()
-    return jsonify({"schemaVersion": "session-brief-response-v1",
-                    "asOf": _ai_now_iso(), "brief": brief,
-                    "disclaimerJa": argus_session_brief.COMPLIANCE})
-
-
-@app.route("/api/argus/session-brief/status")
-def api_argus_session_brief_status():
-    brief = _session_brief_public()
-    return jsonify(argus_session_brief.status_doc(
-        brief, now_iso=_ai_now_iso(),
-        sources={"actionPriority": True, "eventRadar": bool(_MACRO_ANALYSIS),
-                 "marketRegime": bool(_REGIME_CACHE.get("data")),
-                 "institutionalIntelligence": bool(_INTEL_STORE),
-                 "flowAttribution": True, "supplyDemand": True,
-                 "positionExposure": False, "decisionQuality": False}))
+@app.route("/api/argus/admin/diagnostics/operational")
+def api_argus_admin_diagnostics_operational():
+    """Server-to-server operational metadata under existing admin auth."""
+    ok, err, code = _require_admin()
+    if not ok:
+        safe, safe_code = _operational_auth_failure(code)
+        return jsonify(safe), safe_code
+    now_iso = _ai_now_iso()
+    try:
+        payload = _operational_diagnostics_snapshot()
+        response = jsonify(payload)
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
+    except Exception:
+        response = jsonify(
+            argus_diagnostics_contract.operational_diagnostics_fallback(
+                now_iso))
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response, 503
 
 
 # ── V11.11.0 Decision Quality foundation (server side = status + price history
@@ -8288,14 +9407,6 @@ def api_argus_price_history():
                     "closes": (h or {}).get("closes") or [],
                     "noteJa": (None if h else
                                "日足キャッシュ未取得(平日の巡回で自動取得されます)。")})
-
-
-@app.route("/api/argus/decision-quality/status")
-def api_argus_decision_quality_status():
-    """Public REDACTED status — architecture facts only. Records/outcomes are
-    device-local (+encrypted vault); the server holds none by construction."""
-    return jsonify(argus_decision_quality.public_status(
-        enabled=True, storage_mode="local_only+encrypted_vault", now_iso=_ai_now_iso()))
 
 
 # v12.0.6 (owner: 保有銘柄の需給ランクが全く出ない): デバイスのウォッチリスト銘柄が
@@ -8365,15 +9476,6 @@ def api_argus_supply_demand():
                     "disclaimerJa": "需給の状態評価であり売買指示ではない。"})
 
 
-@app.route("/api/argus/supply-demand/status")
-def api_argus_supply_demand_status():
-    """Public observability: sources enabled/disabled with reasons, rank
-    distribution, direct vs inferred counts. Missing JP realtime is intentional."""
-    signals = _supply_demand_list(cap=20)
-    return jsonify(argus_supply_demand.status_doc(
-        signals, now_iso=_ai_now_iso(), sources=_supply_demand_sources()))
-
-
 @app.route("/api/argus/flow-attribution")
 def api_argus_flow_attribution():
     """Public cached-only: flow attribution for ?symbol= (single) or today's
@@ -8392,75 +9494,6 @@ def api_argus_flow_attribution():
                     "asOf": now_iso, "count": len(records), "records": records,
                     "disclaimerJa": "推定であり売買指示ではない。大口の実在は"
                                     "direct evidenceが無い限り断定しない。"})
-
-
-@app.route("/api/argus/flow-attribution/status")
-def api_argus_flow_attribution_status():
-    """Public observability: how many assets scanned, evidence availability
-    (JP moomoo flow is intentionally off — never a red alert), missing-evidence
-    tally. Cached-only."""
-    records = _flow_attribution_list(cap=40)
-    us_flow = any(isinstance(((_PUSHED_QUOTES.get("US") or {}).get(s, {}).get("row") or {})
-                             .get("flow", {}).get("bigNetRatio"), (int, float))
-                  for s in list(_PUSHED_QUOTES.get("US") or {})[:20])
-    avail = {"flow_us_bridge": us_flow,
-             "flow_jp_bridge": False,      # intentionally disabled (Jul-3 incident)
-             "jq_margin_weekly": bool(_JQ_MARGIN_CACHE),
-             "jsf_daily_balance": bool(_JSF_CACHE.get("table")),
-             "jq_daily_bars": bool(_JQ_HISTORY_CACHE),
-             "institutional_signals": bool(_INTEL_STORE)}
-    doc = argus_flow_attribution.status_doc(records, now_iso=_ai_now_iso(),
-                                            source_availability=avail)
-    return jsonify(doc)
-
-
-@app.route("/api/argus/institutional-intelligence")
-def api_argus_institutional_intelligence():
-    """Public (cheap, cache-only): recent institutional intelligence + clusters.
-    Only items with a RESOLVED named institution are surfaced as institutional."""
-    inst = [i for i in _INTEL_STORE if i.get("institutionId")]
-    return jsonify({"asOf": _ai_now_iso(), "schema": argus_research_mesh.SCHEMA,
-                    "system": argus_research_mesh.SYSTEM_NAME,
-                    "systemFull": argus_research_mesh.SYSTEM_NAME_FULL,
-                    "taglineJa": argus_research_mesh.SYSTEM_TAGLINE_JA,
-                    "institutionalCount": len(inst), "totalCollected": len(_INTEL_STORE),
-                    "lastCollectedAt": _INTEL_LAST.get("ts"),
-                    "items": inst[:30], "clusters": _intel_clusters()[:20]})
-
-
-@app.route("/api/argus/institutional-intelligence/institutions")
-def api_argus_intel_institutions():
-    return jsonify({"count": len(argus_research_mesh.INSTITUTIONS),
-                    "institutions": list(argus_research_mesh.INSTITUTIONS.values())})
-
-
-@app.route("/api/argus/institutional-intelligence/source-health")
-def api_argus_intel_source_health():
-    """Honest source coverage (§24) — access class + last success per source."""
-    per_feed = {f["feed"]: f for f in _INTEL_LAST.get("perFeed", [])}
-    sources = []
-    for sid in argus_research_mesh.SOURCE_RIGHTS:
-        r = argus_research_mesh.source_rights(sid)
-        r["lastDetected"] = _INTEL_LAST.get("perSource", {}).get(sid)
-        sources.append(r)
-    # active RSS feeds (validated allow-list) with their last-collection counts
-    feeds = [{"feed": label, "source": sid,
-              "fetched": per_feed.get(label, {}).get("fetched"),
-              "ok": per_feed.get(label, {}).get("ok")}
-             for sid, label, _url, _kind in _INTEL_FEEDS]
-    rss_live = sum(1 for f in feeds if f.get("ok"))
-    return jsonify({"asOf": _ai_now_iso(), "lastCollectedAt": _INTEL_LAST.get("ts"),
-                    "coverage": {
-                        "LICENSED_FEED": "NOT_CONFIGURED",
-                        "PUBLIC_WEB": ("LIVE" if rss_live and rss_live == len(feeds)
-                                       else "PARTIAL" if rss_live else "WARMING"),
-                        "OFFICIAL_SOURCES": "LIVE",
-                        "SUBSCRIBER_CAPTURE": "ENABLED",
-                        "INSTITUTION_WATCHLIST": "ACTIVE",
-                    },
-                    "activeFeeds": feeds, "activeFeedCount": len(feeds), "feedsLive": rss_live,
-                    "sources": sources,
-                    "licensedFeeds": argus_licensed_feeds.all_health()})
 
 
 @app.route("/api/argus/events/<symbol>/institutional-intelligence")
@@ -8483,14 +9516,13 @@ def api_argus_event_intel(symbol):
     for it in _INTEL_STORE:
         if symu not in (it.get("linkedAssets") or []):
             continue
-        # v12.0.7 (P2-D): publishedAt欠落/未パース時はfirstDetectedAt→fetchedAtへ
-        # フォールバック。それでも年齢不明なら「現在の動き」欄には出さない
-        # (日付不明の古い記事のすり抜け防止 — 新しい再報道はfresh時刻で通過)。
-        age_h = argus_news_freshness.age_hours(
-            it.get("publishedAt") or it.get("firstDetectedAt") or it.get("fetchedAt"), move)
-        if age_h is None or age_h > 14 * 24:
+        signal = argus_institutional_intel.build_signal(
+            it, owner_assets={symu}, now_iso=move)
+        if signal.get("decisionUsable") is not True:
             omitted_old += 1
             continue
+        age_h = argus_news_freshness.age_hours(
+            signal.get("publishedAt"), move)
         link = argus_research_mesh.link_to_event(it, {"eventId": symu, "linkedAssets": [symu], "moveStartedAt": move})
         deco = argus_news_i18n.decorate(it["title"], _NEWS_JA_CACHE,
                                         source=str(it.get("institutionId") or ""))
@@ -8502,7 +9534,9 @@ def api_argus_event_intel(symbol):
                     "ageHours": round(age_h, 1) if age_h is not None else None,
                     "institutionId": it.get("institutionId"),
                     "category": it.get("category"), "contentType": it.get("contentType"),
-                    "publishedAt": it.get("publishedAt"), "accessClass": it["accessClass"],
+                    "publishedAt": signal.get("publishedAt"),
+                    "decisionUsable": True,
+                    "accessClass": it["accessClass"],
                     "canonicalUrl": it.get("canonicalUrl"), "stance": it.get("stance"),
                     "relation": link["causalRole"], "relationLabelJa": link["relationLabelJa"],
                     "isNamedView": link["isNamedView"], "notConfirmed": link["notConfirmed"]})
@@ -8572,25 +9606,6 @@ def api_argus_intel_missed():
     del _MISSED_INTEL[200:]
     _intel_persist()
     return jsonify({"ok": True, "recorded": rec})
-
-@app.route("/api/argus/institutional-intelligence/missed", methods=["GET"])
-def api_argus_intel_missed_list():
-    """Missed-intelligence metrics. v12.0.7 (監査P1): 公開は集計のみ —
-    オーナー自筆の自由記述(whyJa)・title/url/symbol等のフィードバック詳細は
-    オーナーノート級のため、adminトークンがある場合だけitemsを返す。"""
-    by_cause = {}
-    for m in _MISSED_INTEL:
-        c = ((m.get("diagnosis") or {}).get("likelyCause")) or "unknown"
-        by_cause[c] = by_cause.get(c, 0) + 1
-    out = {"schemaVersion": "missed-intel-status-v2",
-           "count": len(_MISSED_INTEL), "byCause": by_cause,
-           "aliasOverlaySize": len(_INST_ALIAS_OVERLAY),
-           "itemsAccess": "admin_only",
-           "noteJa": "見逃しフィードバックの本文(自由記述を含む)は公開しません。集計のみ。"}
-    if _admin_token_ok():
-        out["items"] = _MISSED_INTEL[:30]
-        out["itemsAccess"] = "admin"
-    return jsonify(out)
 
 @app.route("/api/argus/institutional-intelligence/missed/apply", methods=["POST"])
 def api_argus_intel_missed_apply():
@@ -8769,21 +9784,6 @@ def _watchtower_plan_build(now_iso, src_uni=None):
         watchlist_jp=list(_JP_WATCHLIST), watchlist_us=list(_US_WATCHLIST),
         movers=_mover_causes_today(), macro_events=events,
         universe_sources=src_uni["sources"], now_iso=now_iso)
-
-
-@app.route("/api/argus/investment-universe")
-def api_argus_investment_universe():
-    """Public-safe: Core Portfolio asset-class universe. Static — no fetch/LLM,
-    no holdings/amounts."""
-    return jsonify(argus_investment_universe.build_universe(_ai_now_iso()))
-
-
-@app.route("/api/argus/caos/source-universe")
-def api_argus_caos_source_universe():
-    """Public-safe: per-asset-class source registry (tier/rights/status). Env
-    presence is reported as booleans via status only — never values."""
-    return jsonify(argus_caos_source_universe.build_universe(
-        _watchtower_configured(), _ai_now_iso()))
 
 
 @app.route("/api/argus/caos/watchtower-plan")
@@ -9162,13 +10162,23 @@ def _caos_run_sweep(symbol, market, name=None, budget_sec=12, probe_articles=3,
     tdnet_live_pending = False
 
     def _tdnet_scan(snap):
+        if not isinstance(snap, dict) or snap.get("official") is not True:
+            return 0
         n = 0
         for it in ((snap or {}).get("items") or [])[:150]:
+            admitted = (_decision_official_disclosure(
+                it, "JP", now_epoch=time.time())
+                        if it.get("official") is True else None)
+            if admitted is None:
+                continue
             code = str(it.get("code") or it.get("symbol") or "")
             if symu in code:
                 found.append({"title": f"適時開示: {it.get('title') or it.get('subject') or ''}",
-                              "publishedAt": it.get("time") or it.get("datetime"),
-                              "url": str(it.get("url") or "")[:300], "source": "tdnet"})
+                              "publishedAt": admitted.get("sourceTimestamp"),
+                              "url": str(it.get("url") or "")[:300],
+                              "source": "jquants_tdnet",
+                              "official": True,
+                              "provider": "jquants-tdnet"})
                 n += 1
         return n
 
@@ -9182,10 +10192,17 @@ def _caos_run_sweep(symbol, market, name=None, budget_sec=12, probe_articles=3,
                 tdnet_live_pending = True          # fetch after discovery if budget left
             searched.append("official_events_store")
             for oe in list(_OFFICIAL_EVENTS.values())[:200] if isinstance(_OFFICIAL_EVENTS, dict) else []:
-                if str(oe.get("symbol") or "").upper() == symu:
+                official_time = _decision_event_time(
+                    oe.get("disclosedAt"), now_epoch=time.time(),
+                    max_age_seconds=_DECISION_OFFICIAL_FACT_MAX_AGE_SEC)
+                if (str(oe.get("symbol") or "").upper() == symu
+                        and oe.get("official") is True
+                        and official_time is not None):
                     found.append({"title": f"公式イベント: {oe.get('titleJa') or oe.get('title') or ''}",
-                                  "publishedAt": oe.get("disclosedAt") or oe.get("asOf"),
-                                  "url": "", "source": "tdnet"})
+                                  "publishedAt": official_time["sourceTimestamp"],
+                                  "url": "", "source": "jquants_tdnet",
+                                  "official": True,
+                                  "provider": "jquants-tdnet"})
         else:
             searched.append("sec_edgar")
             try:
@@ -9208,7 +10225,7 @@ def _caos_run_sweep(symbol, market, name=None, budget_sec=12, probe_articles=3,
             hint = str(it.get("symbolHint") or "").upper()
             title = str(it.get("title") or "")
             if symu in la or hint == symu or (len(nml) >= 3 and nml in title):
-                found.append({"title": title, "publishedAt": it.get("publishedAt") or it.get("firstDetectedAt"),
+                found.append({"title": title, "publishedAt": it.get("publishedAt"),
                               "url": str(it.get("canonicalUrl") or "")[:300],
                               "source": it.get("sourceId") or ""})
     except Exception:
@@ -9232,7 +10249,7 @@ def _caos_run_sweep(symbol, market, name=None, budget_sec=12, probe_articles=3,
             for it in list(_INTEL_STORE):
                 if str(it.get("symbolHint") or "").upper() == symu:
                     found.append({"title": it.get("title") or "",
-                                  "publishedAt": it.get("publishedAt") or it.get("firstDetectedAt"),
+                                  "publishedAt": it.get("publishedAt"),
                                   "url": str(it.get("canonicalUrl") or "")[:300],
                                   "source": "google_news_jp" if mkt == "JP" else "google_news_us"})
             # Google News ranks by RELEVANCE, so old high-relevance stories can crowd
@@ -9378,9 +10395,10 @@ def _caos_run_sweep(symbol, market, name=None, budget_sec=12, probe_articles=3,
     # rebuild the mover cause from the (now richer) cached evidence — no LLM
     try:
         _mover_causes_restore_once()
-        q = _quote_cached_only(symu, mkt) or {}
+        raw_q = _quote_cached_only(symu, mkt) or {}
+        q = _decision_usable_quote_row(raw_q) or {}
         rec = _mover_cause_for(symu, mkt, q.get("changePct"),
-                               name=q.get("nameJa") or q.get("name") or nm,
+                               name=raw_q.get("nameJa") or raw_q.get("name") or nm,
                                cached_only=True)
         mid = rec.get("moverCauseId")
         if mid:
@@ -9411,17 +10429,6 @@ def _caos_run_sweep(symbol, market, name=None, budget_sec=12, probe_articles=3,
         for k in sorted(bysym, key=lambda k: str(bysym[k].get("lastSweepAt")))[:len(bysym) - 120]:
             bysym.pop(k, None)
     return result
-
-
-@app.route("/api/argus/caos/patrol-plan")
-def api_argus_caos_patrol_plan():
-    """Public cache-only: the always-on patrol schedule (what C.A.O.S. sweeps
-    without any click, at what cadence, and when each target is next due)."""
-    _sweep_state_restore_once()
-    now_iso = _ai_now_iso()
-    plan = _watchtower_plan_build(now_iso)
-    return jsonify(argus_caos_patrol.build_patrol_plan(
-        plan["targets"], _SWEEP_STATE.get("bySymbol") or {}, now_iso))
 
 
 @app.route("/api/argus/caos/investigate-now", methods=["POST"])
@@ -9526,40 +10533,6 @@ def _old_primary_violations(now_iso):
                               in ("old", "stale") for c in news_cands):
             only_old.append(str(served.get("symbol") or ""))
     return violations, only_old
-
-
-@app.route("/api/argus/caos/deep-research/status")
-def api_argus_caos_deep_research_status():
-    """Public cache-only audit: what the last investigate-now / patrol sweep did,
-    which symbols have only old news, and any old-news-as-primary VIOLATIONS
-    (must stay empty — smoke fails otherwise)."""
-    _sweep_state_restore_once()
-    _mover_causes_restore_once()
-    _patrol_ledger_restore_once()
-    now_iso = _ai_now_iso()
-    violations, only_old = _old_primary_violations(now_iso)
-    summary = argus_caos_patrol_store.summarize(_PATROL_LEDGER["doc"], now_iso,
-                                                old_primary_violations=len(violations))
-    return jsonify({
-        "schemaVersion": "caos-deep-research-status-v1", "asOf": now_iso,
-        "lastInvestigateNow": _SWEEP_STATE.get("lastInvestigateNow"),
-        "lastPatrolSweep": _SWEEP_STATE.get("lastPatrolSweep"),
-        "sweepsBySymbol": {k: v for k, v in
-                           list((_SWEEP_STATE.get("bySymbol") or {}).items())[:40]},
-        "coverageByAssetClass": {},   # full coverage lives in /caos-watchtower/status
-        "sourcesStale": [s["sourceId"] for s in
-                         argus_caos_patrol_store.source_health(_PATROL_LEDGER["doc"], now_iso)
-                         if s["status"] == "stale"][:20],
-        "symbolsWithOnlyOldNews": only_old[:20],
-        "violations": violations[:20],
-        # v11.5.5 patrol references (full detail: /api/argus/caos/patrol-health)
-        "patrolHealth": {"lastPatrolAt": _PATROL_LEDGER["doc"].get("asOf"),
-                         "baselineSweeps24h": summary["baselineSweeps24h"],
-                         "deepSweeps24h": summary["deepSweeps24h"],
-                         "emptyDeepSweepRuns24h": summary["emptyDeepSweepRuns24h"],
-                         "oldPrimaryViolations": summary["oldPrimaryViolations"]},
-        "noteJa": "violationsが空=古いニュースがcurrent leadに出ていない。"
-                  "公開GETは取得を起動しない。"})
 
 
 # ── V11.5.5 patrol ledger: durable 24h soak proof ────────────────────────────
@@ -9723,49 +10696,6 @@ def _intel_watchlist_symbols():
     return sorted({x["symbol"].upper() for x in _JP_WATCHLIST} | {x["symbol"].upper() for x in _US_WATCHLIST})
 
 
-@app.route("/api/argus/institutional-intelligence/brief")
-def api_argus_intel_brief():
-    """§21 daily institutional brief — compact, relevance-first, from the cache.
-    Public GET: folds already-collected metadata, no fetch / no model call."""
-    brief = argus_daily_brief.build_daily_brief(
-        list(_INTEL_STORE), _intel_watchlist_symbols(),
-        active_events=None, now_iso=_ai_now_iso(),
-        rss_item_counts=_INTEL_LAST.get("perSource") or {})
-    return jsonify(brief)
-
-
-@app.route("/api/argus/institutional-intelligence/relationship-graph")
-def api_argus_relationship_graph():
-    """§15 cross-market relationship graph. ?symbol= returns that node's themes /
-    related assets / propagation candidates (each carries the non-causality caveat)."""
-    out = {"meta": argus_relationship_graph.graph_meta()}
-    sym = request.args.get("symbol")
-    if sym:
-        out.update({
-            "symbol": sym.upper(),
-            "themes": argus_relationship_graph.themes_of(sym),
-            "relatedAssets": argus_relationship_graph.related_assets(sym),
-            "propagationCandidates": argus_relationship_graph.propagation_candidates(sym),
-        })
-    return jsonify(out)
-
-
-@app.route("/api/argus/events/<symbol>/research-mission")
-def api_argus_research_mission(symbol):
-    """§12 deterministic research mission for an asset — runs the analyst-role swarm
-    over the collected evidence. NO LLM (cost.llmCalls=0), so it is safe as a public
-    GET. Returns rolesRun + evidence + adversarialFlags + the gated ARGUS view."""
-    symu = str(symbol).strip().upper()
-    if not symu:
-        return jsonify({"error": "symbol_required",
-                        "messageJa": "銘柄コードを指定してください。"}), 400
-    held = symu in _intel_watchlist_symbols()
-    event = _real_event_for(symu, held)
-    mission = argus_research_swarm.run_mission(
-        event, list(_INTEL_STORE), context={"ownerRelevant": held})
-    return jsonify({"symbol": symu, **mission})
-
-
 def _real_event_for(symu, held):
     """Build a REAL event dict for a mission (v10.198 — fixes the latent bug where
     every held symbol got moveStartedAt=now + severity=high, which made link_to_event
@@ -9783,26 +10713,6 @@ def _real_event_for(symu, held):
     return {"eventId": symu, "linkedAssets": [symu], "moveStartedAt": move_ts, "severity": severity}
 
 
-@app.route("/api/argus/institutional-intelligence/positioning/<symbol>")
-def api_argus_positioning(symbol):
-    """§14 institutional positioning read for an asset (uncalibrated). Uses the
-    best-available FAST signal (realtime pushed quote); slow-positioning feeds
-    (13F/FINRA/EDINET) are honestly absent until wired. Never names a trader."""
-    symu = str(symbol).strip().upper()
-    if not symu:
-        return jsonify({"error": "symbol_required",
-                        "messageJa": "銘柄コードを指定してください。"}), 400
-    sig = None
-    for mkt in ("US", "JP"):
-        q = (_PUSHED_QUOTES.get(mkt) or {}).get(symu)
-        if q and time.time() - q.get("ts", 0) <= _PUSH_TTL:
-            row = q.get("row") or {}
-            sig = {"changePct": row.get("changePct"), "volRatio": row.get("volRatio")}
-            break
-    return jsonify({"symbol": symu, "fastSignalAvailable": sig is not None,
-                    **argus_positioning.aggregate_positioning(sig)})
-
-
 # ━━━ Market Regime + Capital Rotation Engine v1 (rule-based, NO LLM) ━━━
 # Classifies the CURRENT cross-asset environment from FRED macro (rates / VIX /
 # HY OAS) + a small Twelve Data ETF proxy universe + JP watchlist breadth.
@@ -9815,6 +10725,7 @@ _TWELVEDATA_TS = "https://api.twelvedata.com/time_series"
 # 8-credit/min cap). Deliberately small; XLF/XLE/SMH/LQD/DIA/EWJ are future
 # additions once a higher-credit plan or per-minute pacing is in place.
 _REGIME_ETFS = ["SPY", "QQQ", "IWM", "XLK", "XLU", "GLD", "TLT", "HYG"]
+_REGIME_ETF_REQUIRED_BARS = 21  # current + 20 prior closes for the full predicate
 
 def _etf_series_with_moomoo(symbols):
     """Daily ETF closes (Twelve Data, cached) with the CURRENT point overlaid from
@@ -9833,18 +10744,89 @@ def _etf_series_with_moomoo(symbols):
         price = row.get("price")
         if not (isinstance(price, (int, float)) and price > 0):
             continue
+        source_truth = _canonical_quote_source_age(
+            row.get("exchangeTs"), now_epoch=now)
+        if not source_truth["realtimeEvidence"]:
+            # Transport freshness is not venue-time truth.  With no trustworthy
+            # source timestamp it cannot replace a daily close, and with no
+            # provider history it cannot create one.
+            continue
         if series.get(sym):
             series[sym] = [float(price)] + series[sym][1:]   # realtime current + TD history
-        else:
-            # Twelve Data is down for this ETF — build a minimal series from moomoo
-            # alone (current price + prev close reconstructed from changePct) so the
-            # ETF still COUNTS toward etf_full (cures PARTIAL). Real 1d momentum; 5d/
-            # 20d stay None (the regime honestly lacks the longer trend until TD
-            # returns). This is the cold-start / TD-quota case (v10.146.2).
-            chg = row.get("changePct")
-            prev = price / (1 + chg / 100.0) if isinstance(chg, (int, float)) and chg > -100 else price
-            series[sym] = [float(price), float(prev)]
     return series
+
+
+def _regime_etf_coverage(series, symbols, *, now_epoch=None):
+    """Independent history-completeness and source-freshness proof.
+
+    A quote can improve the current point only when its exchange timestamp is
+    trustworthy; it can never satisfy the 21-bar history requirement.  Twelve
+    Data daily dates are delayed/EOD evidence, never intraday LIVE evidence.
+    """
+    now = time.time() if now_epoch is None else float(now_epoch)
+    rows = []
+    for raw_symbol in symbols:
+        symbol = str(raw_symbol).upper()
+        closes = list((series or {}).get(symbol) or [])
+        stashed = _ETF_LAST_PRICE.get(symbol) or {}
+        source_raw = stashed.get("sourceTimestamp")
+        source_epoch = None
+        source_precision = "missing"
+        if isinstance(source_raw, str) and len(source_raw) == 10:
+            try:
+                source_epoch = pytz.utc.localize(datetime.strptime(
+                    source_raw, "%Y-%m-%d")).timestamp()
+                source_precision = "date_only_eod"
+            except (TypeError, ValueError, OverflowError):
+                source_epoch = None
+                source_precision = "malformed"
+        elif source_raw is not None:
+            source_epoch = _coerce_epoch(source_raw)
+            source_precision = "exact" if source_epoch is not None else "malformed"
+        future = source_epoch is not None and source_epoch > now
+        source_age = (now - source_epoch
+                      if source_epoch is not None and not future else None)
+        history_complete = len(closes) >= _REGIME_ETF_REQUIRED_BARS
+        freshness = (
+            "delayed" if source_age is not None and source_age <= 7 * 86400
+            else "stale" if source_age is not None else "unavailable")
+        rows.append({
+            "symbol": symbol,
+            "barCount": len(closes),
+            "requiredBarCount": _REGIME_ETF_REQUIRED_BARS,
+            "historyComplete": history_complete,
+            "sourceTimestamp": source_raw,
+            "sourceTimestampPrecision": source_precision,
+            "sourceAgeSec": int(source_age) if source_age is not None else None,
+            "timestampInversion": bool(future),
+            "freshness": freshness,
+            "decisionUsable": (
+                history_complete and freshness in {"fresh", "delayed"}),
+        })
+    complete = bool(rows) and all(row["historyComplete"] for row in rows)
+    full_predicate = bool(rows) and all(
+        row["decisionUsable"] for row in rows)
+    available = sum(1 for row in rows if row["barCount"] >= 2)
+    if not rows or available == 0:
+        aggregate_freshness = "unavailable"
+    elif any(row["freshness"] in {"stale", "unavailable"} for row in rows):
+        aggregate_freshness = "stale"
+    else:
+        aggregate_freshness = "delayed"
+    return {
+        "requiredSymbolCount": len(rows),
+        "availableSymbolCount": available,
+        "completeSymbolCount": sum(
+            1 for row in rows if row["historyComplete"]),
+        "decisionUsableSymbolCount": sum(
+            1 for row in rows if row["decisionUsable"]),
+        "historyCompleteness": (
+            "complete" if complete else "partial" if available else "missing"),
+        "freshness": aggregate_freshness,
+        "fullPredicateSatisfied": full_predicate,
+        "sourceTimeRequired": True,
+        "rows": rows,
+    }
 
 _ROTATION_GROUPS = [
     {"id": "us-growth",  "label": "US Growth",        "assets": ["QQQ", "XLK"], "role": "Risk"},
@@ -9871,13 +10853,82 @@ _REGIME_CACHE     = {"data": None, "expires": 0.0}
 _REGIME_CACHE_TTL = 6 * 3600  # 6h — non-intraday regime scoring, credit-safe
 _REGIME_PARTIAL_TTL = 45 * 60  # partial reading retry — long enough to stay under
                                # Twelve Data's 800/day free credit cap (see below)
-# Stability (v10.34): the last FULL+live regime. A PARTIAL ETF load (Twelve Data
-# free-tier rate caps) scores from a subset and tilts the axes differently each
-# cold computation, so the headline label wobbled across restarts/cache-expiry.
-# We hold the last good reading and prefer it over a fresh partial (up to 24h)
-# so the call only changes when we actually have full data — not from noise.
+# Stability reference (v10.34): retain the last full-predicate label for at most
+# 24h as non-authoritative diagnostics.  Current coverage, evidence, scoring and
+# status are never restored from this object after a degraded refresh.
 _REGIME_LAST_GOOD = {"data": None, "ts": 0.0}
 _REGIME_LAST_GOOD_TTL = 24 * 3600
+
+
+def _regime_cache_evidence_expiry(payload, *, now_epoch=None):
+    """Earliest instant at which a cached regime truth claim can change.
+
+    Aggregate response TTLs limit provider traffic; they are not evidence
+    freshness grants.  Cap cache validity at the weakest currently usable ETF
+    source timestamp and every canonical rate observation whose FRESH/DELAYED
+    classification has a bounded horizon.
+    """
+    now = time.time() if now_epoch is None else float(now_epoch)
+    deadlines = []
+
+    coverage = ((payload or {}).get("etfCoverage") or {}) \
+        if isinstance(payload, dict) else {}
+    for row in coverage.get("rows") or []:
+        if not isinstance(row, dict) or row.get("decisionUsable") is not True:
+            continue
+        raw = row.get("sourceTimestamp")
+        source_epoch = None
+        if row.get("sourceTimestampPrecision") == "date_only_eod" \
+                and isinstance(raw, str) and len(raw) == 10:
+            try:
+                source_epoch = pytz.utc.localize(datetime.strptime(
+                    raw, "%Y-%m-%d")).timestamp()
+            except (TypeError, ValueError, OverflowError):
+                source_epoch = None
+        else:
+            source_epoch = _coerce_epoch(raw)
+        # A row claiming decision usability without a coherent non-future
+        # source time must never be held in the aggregate cache.
+        deadlines.append(
+            now if source_epoch is None or source_epoch > now
+            else source_epoch + 7 * 86400)
+
+    rate_evidence = ((((payload or {}).get("ratesBackdrop") or {}).get(
+        "rateTruthEvidence") or {}) if isinstance(payload, dict) else {})
+    for row in (rate_evidence.get("series") or {}).values():
+        if not isinstance(row, dict):
+            continue
+        freshness = row.get("freshness")
+        if freshness == argus_market_data_truth.FRESH:
+            horizon = _RATE_EXACT_FRESH_SEC
+        elif freshness == argus_market_data_truth.DELAYED:
+            horizon = _RATE_DELAYED_MAX_SEC
+        else:
+            continue
+        observed_epoch = _coerce_epoch(row.get("observedAt"))
+        deadlines.append(
+            now if observed_epoch is None or observed_epoch > now
+            else observed_epoch + horizon)
+
+    jp_evidence = ((payload or {}).get("jpWatchEvidence") or {}) \
+        if isinstance(payload, dict) else {}
+    for row in jp_evidence.get("rows") or []:
+        if not isinstance(row, dict) or row.get("decisionUsable") is not True:
+            continue
+        source_epoch = _coerce_epoch(row.get("sourceTimestamp"))
+        deadlines.append(
+            now if source_epoch is None or source_epoch > now
+            else source_epoch + _DECISION_QUOTE_LIVE_MAX_AGE_SEC)
+
+    for row in ((payload or {}).get("jpRotationGroups") or []) \
+            if isinstance(payload, dict) else []:
+        if not isinstance(row, dict) or row.get("available") is not True:
+            continue
+        valid_until = _coerce_epoch(row.get("validUntil"))
+        deadlines.append(
+            now if valid_until is None or valid_until <= now
+            else valid_until)
+    return min(deadlines) if deadlines else None
 
 def _clip(v, lo, hi):
     return lo if v < lo else hi if v > hi else v
@@ -9890,31 +10941,107 @@ def _scale_ret(r):
 # ledger's class predictions and the /class-quotes scoring endpoint (v10.5).
 _ETF_LAST_PRICE = {}   # sym -> {"price": float, "m1d": float, "ts": epoch}
 
-# ETF daily-close cache (v10.134): these are DAILY bars — they don't change
-# intraday — but the regime engine used to refetch them on every refresh, so a
-# Twelve Data free-tier rate-limit/miss dropped coverage and flipped the whole
-# regime to "partial" (capping confidence). Cache for hours, and on a flaky/partial
-# fetch MERGE with the last-good values so coverage never silently degrades.
-_TD_TS_CACHE = {}   # ",".join(symbols) -> {"data": {sym: closes}, "expires": epoch}
+# ETF daily-close cache. Freshness is tracked per symbol: a partial provider
+# refresh may retain still-fresh symbols, but it cannot renew the age of symbols
+# absent from that response or make the whole cache look complete.
+_TD_TS_CACHE = {}   # key -> {data, symbolUpdatedAt, expires}
 _TD_TS_TTL = float(os.environ.get("TD_TS_TTL", "7200"))   # 2h
+_TD_TS_RETRY_TTL = min(_TD_TS_TTL, 600.0)
+_ETF_DAILY_MAX_CALENDAR_DAYS = 7
+
+
+def _etf_last_price_decision_row(symbol, *, max_transport_age_sec,
+                                 now_epoch=None):
+    """Return one ETF stash row only when both receipt and bar date are usable.
+
+    `_ETF_LAST_PRICE.ts` is transport/cache time.  It can bound how long a
+    fetched row is retained, but it can never substitute for Twelve Data's
+    market-session date.  Every decision consumer uses this helper so an old,
+    future, malformed, missing, weekend or holiday bar cannot re-enter through
+    a legacy sensor/class endpoint after the canonical projection rejected it.
+    """
+    row = _ETF_LAST_PRICE.get(str(symbol).upper())
+    if not isinstance(row, dict):
+        return None
+    if (isinstance(max_transport_age_sec, bool)
+            or not isinstance(max_transport_age_sec, (int, float))
+            or not math.isfinite(float(max_transport_age_sec))
+            or float(max_transport_age_sec) < 0):
+        return None
+    fetched_at = row.get("ts")
+    if (isinstance(fetched_at, bool)
+            or not isinstance(fetched_at, (int, float))
+            or not math.isfinite(float(fetched_at))):
+        return None
+    try:
+        now = time.time() if now_epoch is None else float(now_epoch)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    age = now - float(fetched_at)
+    if not math.isfinite(now) or age < 0 or age > float(max_transport_age_sec):
+        return None
+    if _bounded_market_session_date(
+            row.get("sourceTimestamp"), "US",
+            _ETF_DAILY_MAX_CALENDAR_DAYS,
+            accepted_formats=("%Y-%m-%d",),
+            now_epoch=now)[0] is None:
+        return None
+    price, move = row.get("price"), row.get("m1d")
+    if (isinstance(price, bool) or not isinstance(price, (int, float))
+            or not math.isfinite(float(price)) or float(price) <= 0
+            or isinstance(move, bool) or not isinstance(move, (int, float))
+            or not math.isfinite(float(move))):
+        return None
+    return dict(row)
 
 def _td_timeseries(symbols):
     """Batched daily closes for the ETF universe.
 
-    Returns {symbol: [latest_close, ..., older]} (newest-first). Cached ~2h and
-    merged with the last-good set, so a transient rate-limit/partial fetch keeps
-    full coverage instead of downgrading the regime to partial. Never raises.
+    Returns {symbol: [latest_close, ..., older]} (newest-first). A transient
+    partial refresh can reuse still-fresh per-symbol rows; rows older than their
+    own TTL disappear and downstream coverage becomes explicitly partial.
+    Never raises.
     ONE request, len(symbols) credits — keep len(symbols) <= 8 for the free cap.
     """
     key = ",".join(symbols)
     now = time.time()
     cached = _TD_TS_CACHE.get(key)
     prev = (cached or {}).get("data") or {}
-    # Fresh + full cache → reuse without spending quota (daily data is stable).
-    if cached and now < cached["expires"] and len(prev) == len(symbols):
-        return dict(prev)
+    updated_at = dict((cached or {}).get("symbolUpdatedAt") or {})
+    source_times = dict((cached or {}).get("symbolSourceTimestamp") or {})
+    usable_prev = {
+        sym: closes for sym, closes in prev.items()
+        if now - float(updated_at.get(sym) or 0.0) <= _TD_TS_TTL and
+        _bounded_market_session_date(
+            source_times.get(sym), "US", _ETF_DAILY_MAX_CALENDAR_DAYS,
+            accepted_formats=("%Y-%m-%d",), now_epoch=now)[0] is not None}
+
+    def _cap_retry_expiry():
+        if cached is None:
+            return
+        next_expiry = now + _TD_TS_RETRY_TTL
+        member_expiries = [
+            float(updated_at[sym]) + _TD_TS_TTL
+            for sym in usable_prev if sym in updated_at]
+        if member_expiries:
+            next_expiry = min(next_expiry, min(member_expiries))
+        cached["expires"] = next_expiry
+    # The side stash is also decision-relevant.  A member that has aged out of
+    # this provider cache must not survive there merely because older consumers
+    # historically allowed a wider window.  Do not remove a copy refreshed by a
+    # different cache key in the meantime.
+    for sym in set(prev) - set(usable_prev):
+        stashed = _ETF_LAST_PRICE.get(sym)
+        if stashed and _etf_last_price_decision_row(
+                sym, max_transport_age_sec=_TD_TS_TTL,
+                now_epoch=now) is None:
+            _ETF_LAST_PRICE.pop(sym, None)
+    # A fresh cache may be full or explicitly partial; respect its bounded retry
+    # time without upgrading the missing members.
+    if cached and now < float(cached.get("expires") or 0.0):
+        return dict(usable_prev)
     if not _TWELVEDATA_API_KEY:
-        return dict(prev)
+        return dict(usable_prev)
     try:
         r = requests.get(_TWELVEDATA_TS, params={
             "symbol": ",".join(symbols), "interval": "1day",
@@ -9924,7 +11051,8 @@ def _td_timeseries(symbols):
         body = r.json()
         # Top-level error (bad key / quota / rate limit) → flat dict status=error.
         if isinstance(body, dict) and str(body.get("status", "")).lower() == "error":
-            return dict(prev)   # serve last-good instead of dropping to partial
+            _cap_retry_expiry()
+            return dict(usable_prev)
         out = {}
         for sym in symbols:
             # Multi-symbol responses are keyed by symbol; single is flat.
@@ -9937,31 +11065,72 @@ def _td_timeseries(symbols):
             if not isinstance(node, dict) or str(node.get("status", "ok")).lower() == "error":
                 continue
             closes = []
+            latest_source_time = None
+            first_close_seen = False
             for v in (node.get("values") or []):
+                if not isinstance(v, dict):
+                    continue
                 c = v.get("close")
                 if c not in (None, ""):
                     try:
                         closes.append(float(c))
+                        if not first_close_seen:
+                            first_close_seen = True
+                            latest_source_time = str(v.get("datetime"))
                     except (TypeError, ValueError):
                         pass
-            if len(closes) >= 2:
+            source_usable = _bounded_market_session_date(
+                latest_source_time, "US", _ETF_DAILY_MAX_CALENDAR_DAYS,
+                accepted_formats=("%Y-%m-%d",), now_epoch=now)[0] is not None
+            if len(closes) >= 2 and source_usable:
                 out[sym] = closes  # Twelve Data returns newest-first
                 # Side stash for the prediction ledger (v10.5): latest close +
                 # 1d move per ETF, refreshed whenever ANY caller fetches.
                 _ETF_LAST_PRICE[sym] = {
                     "price": closes[0],
                     "m1d": round((closes[0] / closes[1] - 1) * 100, 2),
-                    "ts": time.time(),
+                    "ts": now,
+                    "source": "twelvedata",
+                    "sourceTimestamp": latest_source_time,
+                    "receivedAt": _ai_now_iso(),
+                    "status": "delayed",
                 }
-        # Merge: fresh symbols overwrite; any missing this refresh keep last-good,
-        # so a partial response doesn't collapse coverage (→ no spurious partial).
+        # Merge only with independently fresh members. Missing provider rows keep
+        # their old timestamp and therefore cannot be renewed by this refresh.
         if out:
-            merged = {**prev, **out}
-            _TD_TS_CACHE[key] = {"data": merged, "expires": now + _TD_TS_TTL}
+            merged = {**usable_prev, **out}
+            merged_updated_at = {
+                sym: updated_at[sym] for sym in usable_prev if sym in updated_at}
+            merged_updated_at.update({sym: now for sym in out})
+            merged_source_times = {
+                sym: source_times[sym] for sym in usable_prev
+                if sym in source_times}
+            merged_source_times.update({
+                sym: _ETF_LAST_PRICE[sym]["sourceTimestamp"] for sym in out})
+            provider_complete = all(sym in out for sym in symbols)
+            # A partial response may temporarily remain coverage-complete by
+            # carrying independently-fresh members, but it must not renew the
+            # whole cache for a full TTL.  Retry by the earlier of the partial
+            # backoff or the first carried member's own expiry.
+            next_expiry = now + (_TD_TS_TTL if provider_complete
+                                 else _TD_TS_RETRY_TTL)
+            member_expiries = [
+                float(merged_updated_at[sym]) + _TD_TS_TTL
+                for sym in merged if sym in merged_updated_at]
+            if member_expiries:
+                next_expiry = min(next_expiry, min(member_expiries))
+            _TD_TS_CACHE[key] = {
+                "data": merged,
+                "symbolUpdatedAt": merged_updated_at,
+                "symbolSourceTimestamp": merged_source_times,
+                "expires": next_expiry,
+            }
             return merged
-        return dict(prev)   # empty fetch → last-good
+        _cap_retry_expiry()
+        return dict(usable_prev)
     except Exception:
-        return dict(prev)   # network error → last-good, never {}
+        _cap_retry_expiry()
+        return dict(usable_prev)
 
 # US entry-scout history (us-scout-v1, v10.27): ~130d daily OHLCV for one US
 # symbol from Twelve Data, newest-first. 6h cache; never raises. 1 credit/call.
@@ -10001,7 +11170,11 @@ def _td_price_history(sym):
             add_log(f"[scout] US history fetch failed {sym}: {type(e).__name__}")
     # Short failure cache (150s) so a transient TD rate-limit (8/min free) on
     # one symbol self-heals fast instead of locking it out for 10 min.
-    _TD_HISTORY_CACHE[sym] = {"data": data, "expires": now + (_TD_HISTORY_TTL if data else 150)}
+    _TD_HISTORY_CACHE[sym] = {
+        "data": data, "expires": now + (_TD_HISTORY_TTL if data else 150),
+        "acquiredAt": (datetime.fromtimestamp(now, pytz.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S.%fZ") if data else None),
+    }
     return data
 
 def _etf_momentum(closes):
@@ -10035,6 +11208,134 @@ def _group_rationale_ja(label, score, status, available):
         return f"{label} から資金流出の傾向（スコア {score:+.2f}）。"
     return f"{label} は中立（スコア {score:+.2f}）。"
 
+
+def _bounded_rate_candidate(candidate):
+    """Closed downstream projection of one already-bounded provider candidate."""
+    if not isinstance(candidate, dict):
+        return None
+    return {key: candidate.get(key) for key in (
+        "observationId", "provider", "value", "sourceTimestamp",
+        "observedAt", "receivedAt", "knownAt", "freshness",
+        "completeness", "authorityRank", "selected", "reason")}
+
+
+def _bounded_rate_disagreement(disagreement):
+    if not isinstance(disagreement, dict):
+        disagreement = {}
+    comparisons = []
+    for comparison in (disagreement.get("comparisons") or [])[:2]:
+        if not isinstance(comparison, dict):
+            continue
+        fields = []
+        for field in (comparison.get("fields") or [])[:8]:
+            if isinstance(field, dict):
+                fields.append({key: field.get(key) for key in (
+                    "field", "selectedValue", "alternateValue",
+                    "absoluteDelta", "relativeDeltaPct", "material")})
+        comparisons.append({
+            "alternateObservationId": comparison.get(
+                "alternateObservationId"),
+            "alternateProvider": comparison.get("alternateProvider"),
+            "status": comparison.get("status"),
+            "observedAtDeltaSec": comparison.get("observedAtDeltaSec"),
+            "selectedCurrency": comparison.get("selectedCurrency"),
+            "alternateCurrency": comparison.get("alternateCurrency"),
+            "fields": fields,
+        })
+    return {
+        "policyId": disagreement.get("policyId"),
+        "status": disagreement.get("status"),
+        "material": disagreement.get("material") is True,
+        "comparisons": comparisons,
+    }
+
+
+def _bounded_rate_truth_evidence(row):
+    """Retain provider choice and dissent without forwarding arbitrary payloads."""
+    row = row if isinstance(row, dict) else {}
+    candidates = [projected for projected in (
+        _bounded_rate_candidate(candidate)
+        for candidate in (row.get("providerCandidates") or [])[:3])
+                  if projected is not None]
+    alternates = [projected for projected in (
+        _bounded_rate_candidate(candidate)
+        for candidate in (row.get("providerAlternates") or [])[:2])
+                  if projected is not None]
+    return {
+        "selectedValue": row.get("selectedValue", row.get("latestValue")),
+        "selectedProvider": row.get("selectedProvider"),
+        "selectedObservationId": row.get("selectedObservationId"),
+        "providerSelectionPolicyId": row.get("providerSelectionPolicyId"),
+        "selectionReason": row.get("selectionReason"),
+        "observedAt": row.get("observedAt"),
+        "receivedAt": row.get("receivedAt"),
+        "knownAt": row.get("knownAt"),
+        "freshness": row.get("freshness"),
+        "completeness": row.get("completeness"),
+        "candidates": candidates,
+        "alternates": alternates,
+        "disagreement": _bounded_rate_disagreement(
+            row.get("providerDisagreement")),
+    }
+
+
+def _bounded_rates_truth_envelope(rates):
+    rates = rates if isinstance(rates, dict) else {}
+    return {
+        "schemaVersion": "canonical-rate-evidence-v1",
+        "status": rates.get("status"),
+        "freshness": rates.get("freshness"),
+        "completeness": rates.get("completeness"),
+        "missingSeries": list((rates.get("missingSeries") or [])[:5]),
+        "series": {key: _bounded_rate_truth_evidence(rates.get(key))
+                   for key in _RATE_TRUTH_KEYS},
+    }
+
+
+def _rate_truth_prompt_lines(rates):
+    """Small text projection of canonical provider choice plus bounded dissent."""
+    envelope = _bounded_rates_truth_envelope(rates)
+    lines = []
+    for key in _RATE_TRUTH_KEYS:
+        row = (envelope.get("series") or {}).get(key) or {}
+        alternates = ",".join(
+            f"{str(item.get('provider') or 'unknown')[:40]}:"
+            f"{str(item.get('value'))[:32]}"
+            for item in (row.get("alternates") or [])[:2]) or "none"
+        disagreement = row.get("disagreement") or {}
+        deltas = []
+        for comparison in (disagreement.get("comparisons") or [])[:2]:
+            provider = str(comparison.get("alternateProvider") or "unknown")[:40]
+            for field in (comparison.get("fields") or [])[:3]:
+                deltas.append(
+                    f"{provider}.{str(field.get('field') or 'value')[:32]}="
+                    f"{str(field.get('absoluteDelta'))[:32]}")
+        lines.append(
+            f"- {key}: selectedProvider={str(row.get('selectedProvider'))[:40]} | "
+            f"policy={str(row.get('providerSelectionPolicyId'))[:80]} | "
+            f"reason={str(row.get('selectionReason'))[:160]} | "
+            f"freshness={str(row.get('freshness'))[:24]} | "
+            f"completeness={str(row.get('completeness'))[:24]} | "
+            f"alternates=[{alternates}] | disagreement="
+            f"{str(disagreement.get('status'))[:24]} "
+            f"material={disagreement.get('material') is True} | "
+            f"delta=[{','.join(deltas) or 'none'}]")
+    return lines
+
+
+def _bounded_rates_backdrop_projection(backdrop):
+    """Public downstream projection that keeps the already-closed truth envelope."""
+    if not isinstance(backdrop, dict):
+        return {}
+    projected = {key: backdrop.get(key) for key in (
+        "us10y", "vix", "hyOas", "posture")}
+    evidence = backdrop.get("rateTruthEvidence")
+    if isinstance(evidence, dict) and evidence.get(
+            "schemaVersion") == "canonical-rate-evidence-v1":
+        projected["rateTruthEvidence"] = copy.deepcopy(evidence)
+    return projected
+
+
 def _regime_rates_backdrop(rates, hy):
     us10y = (rates.get("us10y") if isinstance(rates, dict) else None) or {}
     us2y  = (rates.get("us2y") if isinstance(rates, dict) else None) or {}
@@ -10062,7 +11363,45 @@ def _regime_rates_backdrop(rates, hy):
         "hyOas":   round(hy_lvl, 2),
         "posture": posture,
         "rationaleJa": ja,
+        "rateTruthEvidence": _bounded_rates_truth_envelope(rates),
     }
+
+
+def _prediction_rate_context_variables(rates):
+    """Bounded, non-scored context retaining canonical provider dissent."""
+    out = []
+    for context_id, key, symbol, name in (
+            ("fx_usdjpy", "usdJpy", "USDJPY", "USD/JPY"),
+            ("volatility_vix", "vix", "VIX", "VIX")):
+        row = rates.get(key) if isinstance(rates, dict) else None
+        if not isinstance(row, dict) or row.get("status") not in (
+                "live", "delayed") or row.get("latestValue") is None:
+            continue
+        try:
+            level = float(row["latestValue"])
+            if not math.isfinite(level):
+                continue
+            change = row.get("change")
+            change_pct = (round(float(change) / (level - float(change)) * 100, 2)
+                          if isinstance(change, (int, float))
+                          and not isinstance(change, bool)
+                          and math.isfinite(float(change))
+                          and level != float(change) else None)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        out.append({
+            "contextId": context_id, "symbol": symbol, "name": name,
+            "value": level, "changePct": change_pct,
+            "asOf": row.get("observedAt"),
+            "observedAt": row.get("observedAt"),
+            "receivedAt": row.get("receivedAt"),
+            "knownAt": row.get("knownAt"),
+            "freshness": row.get("freshness"),
+            "completeness": row.get("completeness"),
+            "providerEvidence": _bounded_rate_truth_evidence(row),
+            "role": "context_variable",
+        })
+    return out
 
 def get_market_regime_snapshot():
     """Live/partial rule-based market-regime + capital-rotation scoring."""
@@ -10073,11 +11412,47 @@ def get_market_regime_snapshot():
     rates = get_rates_snapshot()
     ev    = get_events_snapshot()
     jp    = get_japan_watchlist_snapshot()
-    hy    = fetch_fred_series("BAMLH0A0HYM2")  # live or per-series mock
+    jp_decision_rows = []
+    jp_watch_evidence_rows = []
+    for raw in (jp.get("stocks") or []) if isinstance(jp, dict) else []:
+        usable = _decision_usable_watch_quote_row(
+            raw, "JP", now_epoch=now, allow_delayed=False)
+        if usable is None:
+            continue
+        source_timestamp = usable.get("sourceTimestamp")
+        source_epoch = _coerce_epoch(source_timestamp)
+        if source_epoch is None:
+            continue
+        jp_decision_rows.append(usable)
+        jp_watch_evidence_rows.append({
+            "symbol": usable.get("symbol"),
+            "sourceTimestamp": source_timestamp,
+            "validUntil": datetime.fromtimestamp(
+                source_epoch + _DECISION_QUOTE_LIVE_MAX_AGE_SEC,
+                pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "decisionUsable": True,
+        })
+    # HY OAS is part of the canonical rate snapshot.  Never refetch/use the raw
+    # FRED row here: source-time-invalid or >7-day evidence must resolve to an
+    # unavailable value before it can affect posture or confidence.
+    hy    = ((rates or {}).get("hyOas") or {}) \
+        if isinstance(rates, dict) else {}
 
-    etf = {sym: _etf_momentum(cl) for sym, cl in _etf_series_with_moomoo(_REGIME_ETFS).items()}
-    etf_full = len(etf) == len(_REGIME_ETFS)
-    etf_live = len(etf) >= max(1, len(_REGIME_ETFS) // 2)
+    etf_series = _etf_series_with_moomoo(_REGIME_ETFS)
+    etf_coverage = _regime_etf_coverage(etf_series, _REGIME_ETFS,
+                                        now_epoch=now)
+    decision_usable_symbols = {
+        row["symbol"] for row in etf_coverage["rows"]
+        if row["decisionUsable"]
+    }
+    # Stale/unavailable members remain visible in coverage diagnostics but are
+    # not allowed to influence regime momentum, confidence, or last-good
+    # replacement.  History completeness and decision usability stay separate.
+    etf = {sym: _etf_momentum(cl) for sym, cl in etf_series.items()
+           if sym in decision_usable_symbols}
+    etf_full = etf_coverage["fullPredicateSatisfied"]
+    etf_live = etf_coverage["decisionUsableSymbolCount"] >= max(
+        1, len(_REGIME_ETFS) // 2)
 
     def sym_score(sym):
         return etf.get(sym, {}).get("score")
@@ -10148,15 +11523,15 @@ def get_market_regime_snapshot():
     conf += 0.20 if etf_full else 0.10 if etf_live else 0.0
     if isinstance(rates, dict) and rates.get("status") == "live": conf += 0.10
     if hy and hy.get("status") == "live": conf += 0.07
-    if isinstance(jp, dict) and jp.get("status") == "live": conf += 0.05
+    if jp_decision_rows: conf += 0.05
     conf += 0.15 * agree
     if label == "MIXED": conf = min(conf, 0.5)
     confidence = round(_clip(conf, 0.1, 0.9), 2)
 
     # ── Status / sources ──
     rates_live = isinstance(rates, dict) and rates.get("status") == "live"
-    jp_has     = isinstance(jp, dict) and any(s.get("status") == "live" for s in jp.get("stocks", []))
-    if etf_full and rates_live:
+    jp_has     = bool(jp_decision_rows)
+    if etf_full and rates_live and etf_coverage["freshness"] == "fresh":
         status = "live"
     elif etf_live or rates_live:
         status = "partial"
@@ -10164,7 +11539,8 @@ def get_market_regime_snapshot():
         status = "mock"
     source_statuses = {
         "fred":           "live" if rates_live else "mock",
-        "twelveData":     "live" if etf_full else "partial" if etf_live else "unavailable",
+        "twelveData":     (etf_coverage["freshness"] if etf_full else
+                            "partial" if etf_live else "unavailable"),
         "jquants":        "partial" if jp_has else "unavailable",  # breadth proxy, not sector rotation
         "manualFallback": "unused" if etf_live else "mock",
     }
@@ -10213,9 +11589,11 @@ def get_market_regime_snapshot():
     if gmap["us-broad"]["available"] or gmap["small-caps"]["available"]:
         evidence.append(f"米国広範リスク(SPY) {gsc('us-broad'):+.2f}、小型株(IWM) {gsc('small-caps'):+.2f}、グロース {gsc('us-growth'):+.2f}。")
     if gmap["credit"]["available"]:
-        evidence.append(f"ハイイールド(HYG) {credit_lead:+.2f}、HY OAS {backdrop['hyOas']}%（{'live' if hy and hy.get('status') == 'live' else 'mock'}）。")
+        hy_status = (hy.get("status") if isinstance(hy, dict) else None) \
+            or "unavailable"
+        evidence.append(f"ハイイールド(HYG) {credit_lead:+.2f}、HY OAS {backdrop['hyOas']}%（{hy_status}）。")
     evidence.append(f"VIX {backdrop['vix']}、金利地合いは {backdrop['posture']}。")
-    jp_live_stocks = [s for s in (jp.get("stocks", []) if isinstance(jp, dict) else []) if s.get("status") == "live"]
+    jp_live_stocks = jp_decision_rows
     if jp_live_stocks:
         jp_breadth = round(sum(float(s.get("changePct", 0)) for s in jp_live_stocks) / len(jp_live_stocks), 2)
         evidence.append(f"日本株ウォッチリストの騰落率平均 {jp_breadth:+.2f}%（暫定プロキシ）。")
@@ -10230,7 +11608,9 @@ def get_market_regime_snapshot():
         "Japan regime uses watchlist breadth as a temporary proxy, not index/sector rotation.",
     ]
     if not etf_full:
-        limitations.append("Some ETF history was unavailable this refresh — scoring is partial.")
+        limitations.append(
+            "Some required ETF history or independently timestamped freshness "
+            "was unavailable this refresh — scoring is partial.")
     limitations.append("Crypto risk appetite (BTC/ETH) not yet folded into regime scoring.")
 
     matrix_ja = (f"横軸グロース対ディフェンシブ {growth_value_axis:+.2f}、縦軸リスク対デュレーション "
@@ -10283,28 +11663,48 @@ def get_market_regime_snapshot():
         },
         "supportingEvidence": evidence,
         "sourceStatuses": source_statuses,
+        "jpWatchEvidence": {
+            "schemaVersion": "jp-watch-regime-evidence-v1",
+            "decisionUsableCount": len(jp_watch_evidence_rows),
+            "rows": jp_watch_evidence_rows[:20],
+        },
+        "etfCoverage": etf_coverage,
         "dataLimitations": limitations,
         "jpIntradayOverlay": jp_overlay,
     }
-    # Last-known-good hold by ETF COVERAGE (v10.34): the label only wobbles when
-    # a recompute scores from a different ETF subset. So we replace the displayed
-    # reading ONLY when the new one is at least as complete (>= ETFs loaded) — or
-    # when the held one is stale (>24h). A thinner refresh is held over, marked.
+    # Last-known-good is a bounded LABEL reference only.  It must never replace
+    # current ETF evidence: once even the weakest required member becomes stale
+    # or unavailable, current coverage/source status/groups remain fail-closed.
+    # Keeping the old label in a separately marked non-authoritative diagnostic
+    # preserves a stability reference without relabelling old coverage as now.
     new_cov = len(etf)
     lg = _REGIME_LAST_GOOD
     held_fresh = lg["data"] is not None and now - lg["ts"] < _REGIME_LAST_GOOD_TTL
-    # Adopt the fresh reading when: nothing held yet / it's stale, OR this refresh
-    # is FULL (always take fresh full data), OR it strictly improves coverage.
-    # An equal-or-thinner partial is held over so the label can't flip on noise.
-    if new_cov > 0 and (not held_fresh or etf_full or new_cov > lg.get("cov", 0)):
-        lg["data"], lg["ts"], lg["cov"] = payload, now, new_cov
-    elif held_fresh:
-        held = dict(lg["data"])
-        held["heldOverMin"] = int((now - lg["ts"]) / 60)
-        held["dataLimitations"] = (lg["data"].get("dataLimitations") or []) + [
-            f"ETFデータが一時的に不足したため、直近のより完全な評価({held['heldOverMin']}分前)を保持表示中"
-            "（地合い判定がノイズで揺れないための安定化。より完全なデータが揃うと自動更新）。"]
-        payload = held
+    held_full = held_fresh and bool(
+        ((lg.get("data") or {}).get("etfCoverage") or {}).get(
+            "fullPredicateSatisfied"))
+    payload["labelStability"] = {
+        "state": "CURRENT",
+        "authoritativeLabelSource": "current_refresh",
+        "lastGoodLabel": None,
+        "lastGoodAsOf": None,
+        "lastGoodAgeMin": None,
+    }
+    if etf_full:
+        lg["data"], lg["ts"], lg["cov"] = copy.deepcopy(payload), now, new_cov
+    elif held_full:
+        held_regime = (lg["data"].get("regime") or {})
+        age_min = int((now - lg["ts"]) / 60)
+        payload["labelStability"] = {
+            "state": "LAST_GOOD_REFERENCE_AVAILABLE",
+            "authoritativeLabelSource": "current_refresh",
+            "lastGoodLabel": held_regime.get("label"),
+            "lastGoodAsOf": lg["data"].get("asOf"),
+            "lastGoodAgeMin": age_min,
+        }
+        payload["dataLimitations"] = (payload.get("dataLimitations") or []) + [
+            f"ETFデータ不足のため、{age_min}分前の完全評価ラベルは参考値としてのみ保持。"
+            "現在のcoverage・status・根拠・地合い判定は今回refreshの縮退データを使用。"]
     if payload.get("status") != "mock":
         _REGIME_CACHE["data"]    = payload
         # A full (all-ETF) reading can sit the 6h TTL; a thinner reading retries
@@ -10312,9 +11712,51 @@ def get_market_regime_snapshot():
         # ~2304/day, blowing Twelve Data's 800/day free limit so the quota burned
         # out and ETF data failed ALL day (empty Capital Rotation Board). 45 min
         # → ~32 retries/day × 8 = ~256 credits, leaving room for the watchlist.
-        full = (payload.get("status") == "live") and not payload.get("heldOverMin")
-        _REGIME_CACHE["expires"] = now + (_REGIME_CACHE_TTL if full else _REGIME_PARTIAL_TTL)
+        full = (payload.get("status") == "live") and bool(
+            (payload.get("etfCoverage") or {}).get("fullPredicateSatisfied"))
+        ttl_expiry = now + (
+            _REGIME_CACHE_TTL if full else _REGIME_PARTIAL_TTL)
+        evidence_expiry = _regime_cache_evidence_expiry(
+            payload, now_epoch=now)
+        _REGIME_CACHE["expires"] = (
+            min(ttl_expiry, evidence_expiry)
+            if evidence_expiry is not None else ttl_expiry)
     return payload
+
+
+def _market_regime_cached_only():
+    """Public projection of the last fresh regime; never refreshes providers."""
+    now = time.time()
+    cached = (_REGIME_CACHE.get("data")
+              if now < _REGIME_CACHE.get("expires", 0.0) else None)
+    if isinstance(cached, dict):
+        return {**cached, "cacheState": "fresh"}
+    return {
+        "status": "mock", "asOf": None, "engineVersion": "regime-v1",
+        "cacheState": "unavailable",
+        "regime": {
+            "label": "MIXED", "growthValueAxis": 0.0,
+            "riskDurationAxis": 0.0,
+            "summaryJa": "保存済みの地合い評価がないため、方向感は未判定です。",
+            "confidence": 0.1,
+        },
+        "ratesBackdrop": {}, "rotationGroups": [], "jpRotationGroups": [],
+        "jpMatrix": {}, "topRotations": [],
+        "matrix": {
+            "x": 0.0, "y": 0.0, "xLabel": "Growth vs Defensive",
+            "yLabel": "Risk vs Duration", "points": [],
+            "rationaleJa": "cache unavailable",
+        },
+        "supportingEvidence": [],
+        "sourceStatuses": {
+            "fred": "unavailable", "twelveData": "unavailable",
+            "jquants": "unavailable", "manualFallback": "unused",
+        },
+        "dataLimitations": [
+            "公開GETは提供元を更新しません。次のbackground refreshを待っています。"
+        ],
+        "jpIntradayOverlay": None,
+    }
 
 @app.route("/api/argus/market-regime")
 def api_argus_market_regime():
@@ -10485,6 +11927,7 @@ def _flow_adjust(action, conf, reason, nxt, chg, ratio, esc, posture, reg_label)
 # 蓄積中. The bands are deliberately wide — argmax hit rate on ±2% buckets is
 # noisy, so only a clear pattern (≥60% / <40%) earns an adjustment.
 _CAL_MIN_N = 33
+_CAL_MIN_TRADING_DAYS = 20
 _CAL_TRUST_HIT = 0.60
 _CAL_DOUBT_HIT = 0.40
 _CAL_UP, _CAL_DOWN = 1.05, 0.85
@@ -10507,13 +11950,30 @@ def _ledger_summary():
     return _LEDGER_SUMMARY_CACHE["data"]
 
 def _calibration_for(summary, posture):
-    """Pure (unit-tested): ledger summary + today's posture →
-    {factor, basisJa, n, hitRate}. Malformed input → neutral factor."""
+    """Mode- and maturity-scoped calibration projection.
+
+    Legacy/mixed summaries are deliberately neutral. Only the canonical v2
+    aggregate for forward_live, backed by independent trading-session evidence,
+    may change live confidence.
+    """
     try:
+        canonical = (isinstance(summary, dict)
+                     and summary.get("schemaVersion") ==
+                     "argus-prediction-ledger-summary-v2"
+                     and summary.get("mode") == "forward_live")
+        if not canonical:
+            return {"factor": 1.0, "n": 0, "hitRate": None,
+                    "independentTradingDays": 0,
+                    "basisJa": ("校正データ蓄積中(legacy/mixed modeは本番校正に"
+                                "不使用) — 確信度は未調整")}
         b = ((summary or {}).get("byPosture") or {}).get(posture) or {}
         n = int(b.get("n") or 0)
+        independent_days = int(b.get("independentTradingDays") or 0)
         hr = b.get("hitRate")
-        if n >= _CAL_MIN_N and isinstance(hr, (int, float)):
+        mature = (n >= _CAL_MIN_N
+                  and independent_days >= _CAL_MIN_TRADING_DAYS
+                  and b.get("maturityStatus") == "mature")
+        if mature and isinstance(hr, (int, float)):
             if hr >= _CAL_TRUST_HIT:
                 f, verdict = _CAL_UP, "確信度を僅かに引き上げ"
             elif hr < _CAL_DOUBT_HIT:
@@ -10521,13 +11981,19 @@ def _calibration_for(summary, posture):
             else:
                 f, verdict = 1.0, "調整なし(ノイズ域)"
             return {"factor": f, "n": n, "hitRate": hr,
-                    "basisJa": f"姿勢{posture}での過去的中率{hr:.0%}(n={n}) → {verdict}"}
+                    "independentTradingDays": independent_days,
+                    "basisJa": (f"姿勢{posture}のforward-live的中率{hr:.0%}"
+                                f"(n={n}/独立営業日{independent_days}) → {verdict}")}
         total = int(((summary or {}).get("overall") or {}).get("n") or 0)
         return {"factor": 1.0, "n": n,
+                "independentTradingDays": independent_days,
                 "hitRate": hr if isinstance(hr, (int, float)) else None,
-                "basisJa": f"校正データ蓄積中(この姿勢n={n}/必要{_CAL_MIN_N}・全体n={total}) — 確信度は未調整"}
+                "basisJa": (f"校正データ蓄積中(この姿勢n={n}/"
+                            f"独立営業日{independent_days}/必要"
+                            f"{_CAL_MIN_TRADING_DAYS}日・全体n={total}) — 確信度は未調整")}
     except Exception:
         return {"factor": 1.0, "n": 0, "hitRate": None,
+                "independentTradingDays": 0,
                 "basisJa": "校正不可(summary形式不明) — 確信度は未調整"}
 
 def _apply_visibility_guard(action, conf, reason, nxt, dq, vg_cap, vg_blocked, vg_reason):
@@ -10555,14 +12021,27 @@ def _apply_visibility_guard(action, conf, reason, nxt, dq, vg_cap, vg_blocked, v
     return action, conf, reason, nxt, sig, downgraded
 
 
-def get_action_labels(jp_symbols=None, us_symbols=None):
+def get_action_labels(jp_symbols=None, us_symbols=None, *, allow_provider_fetch=True):
     """Rule-based action labels, aggregated server-side. Accepts the user's
     actual watchlist symbols (dynamic) — default is the curated list."""
-    rates = get_rates_snapshot()
-    jp    = get_japan_watchlist_snapshot(jp_symbols)
-    us    = get_us_watchlist_snapshot(us_symbols)
-    ev    = get_events_snapshot()
-    reg   = get_market_regime_snapshot()  # 6h-cached; no extra cost when warm
+    if allow_provider_fetch:
+        rates = get_rates_snapshot()
+        jp = get_japan_watchlist_snapshot(jp_symbols)
+        us = get_us_watchlist_snapshot(us_symbols)
+        ev = get_events_snapshot()
+        reg = get_market_regime_snapshot()
+        ledger_summary = _ledger_summary()
+    else:
+        rates = _rates_snapshot_cached_only()
+        jp = get_japan_watchlist_snapshot(
+            jp_symbols, allow_provider_fetch=False,
+            record_requested_symbols=False)
+        us = get_us_watchlist_snapshot(us_symbols, allow_provider_fetch=False)
+        ev = get_events_snapshot(allow_provider_fetch=False)
+        reg = _market_regime_cached_only()
+        ledger_summary = (_LEDGER_SUMMARY_CACHE.get("data")
+                          if time.time() < _LEDGER_SUMMARY_CACHE.get("expires", 0.0)
+                          else None)
     reg_status = reg.get("status") if isinstance(reg, dict) else "mock"
     reg_block  = reg.get("regime", {}) if isinstance(reg, dict) else {}
     reg_label  = reg_block.get("label")
@@ -10573,7 +12052,7 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
                      "JP": _region_event_escalation(events, "JP")}
     # calibration-v1: the ledger's scored track record for today's posture
     # adjusts label confidence (neutral 1.0 until enough evidence accumulates).
-    cal = _calibration_for(_ledger_summary(), posture)
+    cal = _calibration_for(ledger_summary, posture)
 
     # ── Visibility Guard wiring (ARGUS Pro v11) ──────────────────────────────
     # The guard was previously only a warning surface. It now ACTUALLY constrains
@@ -10586,7 +12065,12 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
     # no cap/block) with no redeploy — the gate is the only change that alters what
     # the user is told to DO, so it must be instantly reversible.
     try:
-        _vg = _visibility_guard() if os.environ.get("ARGUS_VISIBILITY_GATE", "1") != "0" else {}
+        if os.environ.get("ARGUS_VISIBILITY_GATE", "1") == "0":
+            _vg = {}
+        elif allow_provider_fetch:
+            _vg = _visibility_guard()
+        else:
+            _vg = _visibility_guard(allow_provider_fetch=False)
     except Exception:
         _vg = {}
     _vg_cap = _vg.get("confidenceCap")
@@ -10609,9 +12093,12 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
         pass
 
     quotes = {}
-    for snap in (jp, us):
+    for snap, market in ((jp, "JP"), (us, "US")):
         for s in (snap.get("stocks", []) if isinstance(snap, dict) else []):
-            quotes[s["symbol"]] = s
+            if isinstance(s, dict) and s.get("symbol"):
+                quotes[s["symbol"]] = _decision_usable_watch_quote_row(
+                    s, market, allow_delayed=True,
+                    require_latest_completed=False)
 
     labels, changes = [], []
     for meta in _action_metas(jp, us, jp_symbols, us_symbols):
@@ -10627,9 +12114,17 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
             labels.append({
                 "symbol": meta["symbol"], "market": meta["market"], "name": meta["name"],
                 "action": "HOLD", "confidence": 0.2, "risk": "low",
+                "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+                "legacyShadow": True,
                 "reasonJa": "価格データが未取得のため中立で保留。",
-                "supportingData": {"price": price, "changePct": (q or {}).get("changePct", 0), "volume": (q or {}).get("volume", 0),
-                                   "eventEscalation": esc or "normal", "ratesPosture": posture},
+                "supportingData": {
+                    "price": None, "changePct": None, "volume": None,
+                    "eventEscalation": esc or "normal",
+                    "ratesPosture": posture,
+                    "marketRegime": reg_label or "n/a",
+                    "quoteDate": None, "quoteLagDays": None,
+                    "bigFlowRatio": None,
+                },
                 "nextConditionJa": "価格データの取得後に再評価する。",
                 "status": "mock",
                 "signal": argus_signal.resolve_signal("HOLD", data_quality="MOCK"),
@@ -10648,15 +12143,9 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
             action = "WAIT"
             conf = round(min(0.6, conf + 0.05), 2)
             reason += f" 市場レジームが{reg_label}のため、高ベータは様子見に引き上げ。"
-        # Big-money flow confirmation (v10.2) — only present while the moomoo
-        # bridge is pushing fresh quotes with capital-distribution data.
+        # Bridge flow has no flow-specific acquisition timestamp. exchangeTs
+        # timestamps price only, so flow cannot alter action or confidence.
         flow_ratio = None
-        fl = q.get("flow")
-        if isinstance(fl, dict) and isinstance(fl.get("bigNetRatio"), (int, float)):
-            flow_ratio = float(fl["bigNetRatio"])
-            action, conf, reason, nxt = _flow_adjust(
-                action, conf, reason, nxt, chg, flow_ratio, esc, posture,
-                reg_label if reg_ready else None)
         # Data-freshness honesty: J-Quants free plan lags ~12 weeks. A label
         # computed from an old price must say so and carry LESS confidence —
         # never present a stale-data judgment as a fresh one.
@@ -10690,6 +12179,8 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
         labels.append({
             "symbol": meta["symbol"], "market": meta["market"], "name": meta["name"],
             "action": action, "confidence": conf, "risk": risk, "reasonJa": reason,
+            "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+            "legacyShadow": True,
             "supportingData": {"price": q.get("price"), "changePct": chg, "volume": q.get("volume", 0),
                                "eventEscalation": esc or "normal", "ratesPosture": posture,
                                "marketRegime": reg_label or "n/a",
@@ -10765,6 +12256,8 @@ def get_action_labels(jp_symbols=None, us_symbols=None):
         "status": status,
         "asOf": datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "engineVersion": "action-v0",
+        "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+        "finalDecisionAuthorityActive": False,
         "signalSchemaVersion": argus_signal.SIGNAL_SCHEMA_VERSION,
         "marketPosture": {"label": mp, "rationaleJa": mp_ja},
         "visibility": {
@@ -10794,7 +12287,8 @@ def api_argus_action_labels():
         vals = [s for s in raw.split(",") if s.strip()]
         return vals or None
     jp_syms, us_syms = _parse("jp"), _parse("us")
-    return jsonify(get_action_labels(jp_syms, us_syms))
+    return jsonify(get_action_labels(
+        jp_syms, us_syms, allow_provider_fetch=False))
 
 
 # ━━━ AI Judgment Layer (OpenAI primary + Gemini double-check) — LIVE ━━━
@@ -11227,10 +12721,19 @@ def _build_ai_snapshot():
     }
     caos = []
     try:
-        for it in [x for x in _INTEL_STORE if x.get("institutionId")][:6]:
-            caos.append({"institution": it.get("institutionId"), "stance": it.get("stance"),
-                         "type": it.get("contentType"), "assets": it.get("linkedAssets") or [],
-                         "title": (it.get("titleJa") or it.get("title") or "")[:120]})
+        for signal in _institutional_signals(cap=6):
+            if signal.get("decisionUsable") is not True:
+                continue
+            caos.append({
+                "institution": signal.get("sourceName"),
+                "stance": signal.get("stance"),
+                "type": signal.get("claimType"),
+                "assets": signal.get("affectedAssets") or [],
+                "title": (signal.get("displayTitleJa")
+                          or signal.get("headline") or "")[:120],
+                "publishedAt": signal.get("publishedAt"),
+                "decisionUsable": True,
+            })
     except Exception:
         caos = []
     # (c) general market news — AWARENESS only (uncorroborated). Major-flagged first. The AI
@@ -11280,8 +12783,19 @@ def _build_ai_snapshot():
         _dv_phase = None
     try:
         _td2 = get_tdnet_recent(150)
-        _td_by2 = _td2.get("bySymbol") or {}
-        _td_official2 = bool(_td2.get("official"))
+        _td_official2 = (_td2.get("official") is True
+                         and _td2.get("status") in (
+                             "live", "partial", "delayed"))
+        _td_by2 = {}
+        if _td_official2:
+            _td_now2 = time.time()
+            for _symbol2, _rows2 in (_td2.get("bySymbol") or {}).items():
+                _admitted2 = [row for row in (
+                    _decision_official_disclosure(
+                        raw, "JP", now_epoch=_td_now2)
+                    for raw in (_rows2 or [])) if row is not None]
+                if _admitted2:
+                    _td_by2[str(_symbol2)] = _admitted2
     except Exception:
         _td_by2, _td_official2 = {}, False
     for x in labels:
@@ -11328,7 +12842,10 @@ def _build_ai_snapshot():
     }
     snap = {
         "marketPosture": al.get("marketPosture"),
-        "rates": {k: rates.get(k) for k in ("ratesPressure", "riskVolatility", "summary")} if isinstance(rates, dict) else {},
+        "rates": ({**{k: rates.get(k) for k in (
+            "ratesPressure", "riskVolatility", "summary")},
+                   "truthEvidence": _bounded_rates_truth_envelope(rates)}
+                  if isinstance(rates, dict) else {}),
         "urgentEvents": urgent,
         "labels": labels,
         "selfScoring": self_scoring,            # the learning "textbook" (close-the-loop)
@@ -11707,7 +13224,7 @@ def _ai_session_freshness(as_of_iso, age_min):
     except Exception:
         return "persisted" if age_min < 24 * 60 else "stale"
 
-def _ai_judgment_truth():
+def _ai_judgment_truth(*, allow_restore=True):
     """Single source of truth for the automated-AI-judgment status.
 
     Truthful, key-aware status (NEVER 'live' merely because AI_JUDGE_ENABLED is
@@ -11724,7 +13241,9 @@ def _ai_judgment_truth():
     admin = bool(_ARGUS_ADMIN_TOKEN)
     # In-memory cache, falling back to the run persisted on the ledger branch
     # (survives dyno restarts and the 30-min TTL — ai-persist-v1).
-    cached = _ai_cached_result() if (enabled and (oai or gem)) else _AI_RESULT_CACHE["data"]
+    cached = (_ai_cached_result()
+              if allow_restore and enabled and (oai or gem)
+              else _AI_RESULT_CACHE["data"])
     has_cache = bool(cached) and time.time() < _AI_RESULT_CACHE["expires"]
     cached_status = (cached.get("status") if has_cache else ("expired" if cached else "none"))
     last_run_at = (cached.get("asOf") if cached else None) or _AI_LAST_RUN.get("at")
@@ -11911,15 +13430,27 @@ def _caos_event_inputs(ev):
     phase = "post" if (isinstance(days, (int, float)) and days <= 0) else "pre"
     assets = {str(a).upper() for a in (ev.get("linkedAssets") or [])}
     caos = []
-    for it in _INTEL_STORE:
-        if it.get("institutionId") and (assets & {str(a).upper() for a in (it.get("linkedAssets") or [])}):
-            caos.append({"inst": it.get("institutionId"), "stance": it.get("stance"),
-                         "title": (it.get("titleJa") or it.get("title") or "")[:120]})
+    for signal in _institutional_signals(cap=40):
+        affected = {str(a).upper() for a in (
+            signal.get("affectedAssets") or [])}
+        if signal.get("decisionUsable") is True and assets & affected:
+            caos.append({
+                "inst": signal.get("sourceName"),
+                "stance": signal.get("stance"),
+                "title": (signal.get("displayTitleJa")
+                          or signal.get("headline") or "")[:120],
+                "publishedAt": signal.get("publishedAt"),
+                "decisionUsable": True,
+            })
         if len(caos) >= 5:
             break
     rates = get_rates_snapshot()
     reaction = {k: (rates.get(k) or {}).get("latestValue") for k in ("usdJpy", "us10y", "vix")} if isinstance(rates, dict) else {}
-    reg = (_REGIME_CACHE.get("data") or {}).get("regime") if isinstance(_REGIME_CACHE.get("data"), dict) else None
+    reg_data = (_REGIME_CACHE.get("data")
+                if time.time() < float(_REGIME_CACHE.get("expires") or 0)
+                else None)
+    reg = ((reg_data or {}).get("regime")
+           if isinstance(reg_data, dict) else None)
     payload = {"event": {k: ev.get(k) for k in ("eventCode", "displayImpact", "daysUntil", "countdown",
                                                  "whyItMattersJa", "linkedAssets")},
                "phase": phase, "institutionalViews": caos,
@@ -12282,21 +13813,58 @@ def _refresh_macro_results():
     return {"checked": checked, "resultsFetched": updated, "asOf": now_iso}
 
 
+def _decision_usable_rate_value(row, *, now_epoch=None):
+    """Re-age one canonical rate row before a numeric decision consumer."""
+    if not isinstance(row, dict) or row.get("completeness") != \
+            argus_market_data_truth.COMPLETE:
+        return None
+    freshness = row.get("freshness")
+    horizon = (_RATE_EXACT_FRESH_SEC
+               if freshness == argus_market_data_truth.FRESH else
+               _RATE_DELAYED_MAX_SEC
+               if freshness == argus_market_data_truth.DELAYED else None)
+    value = row.get("latestValue")
+    if (horizon is None or isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or not _source_time_within(
+                row.get("observedAt") or row.get("sourceTimestamp"), horizon,
+                now_epoch=now_epoch, allow_date_only=True)):
+        return None
+    return float(value)
+
+
+def _decision_usable_crypto_price(row, *, now_epoch=None):
+    """Only an exact source-time-current crypto row can confirm a reaction."""
+    if _decision_usable_quote_row(row, now_epoch=now_epoch) is None:
+        return None
+    value = row.get("priceUsd")
+    if (isinstance(value, bool) or not isinstance(value, (int, float))
+            or not math.isfinite(float(value)) or float(value) <= 0):
+        return None
+    return float(value)
+
+
 def _market_snapshot_values(cached_only=True):
     """Current market LEVELS for the reaction diff (rates yields, USDJPY, VIX, ETF
     prices, BTC). cached_only=True (public) reads caches; admin refresh may fetch."""
     vals = {}
+    now_epoch = time.time()
     try:
-        rs = (_RATES_CACHE.get("data") if cached_only else get_rates_snapshot()) or {}
+        rs = ((_RATES_CACHE.get("data")
+               if now_epoch < float(_RATES_CACHE.get("expires") or 0.0)
+               else None) if cached_only else get_rates_snapshot()) or {}
         for k in ("us10y", "usdJpy", "vix"):
-            v = ((rs.get(k) or {}).get("latestValue"))
-            if isinstance(v, (int, float)):
+            v = _decision_usable_rate_value(
+                rs.get(k), now_epoch=now_epoch)
+            if v is not None:
                 vals[k] = v
     except Exception:
         pass
     for k, sym in (("spy", "SPY"), ("qqq", "QQQ"), ("iwm", "IWM"), ("gold", "GLD")):
         try:
-            q = _quote_cached_only(sym, "US") or {}
+            q = _decision_usable_quote_row(
+                _quote_cached_only(sym, "US") or {}) or {}
             p = q.get("price")
             if isinstance(p, (int, float)):
                 vals[k] = p
@@ -12304,10 +13872,15 @@ def _market_snapshot_values(cached_only=True):
             pass
     try:
         cs = get_crypto_watchlist_snapshot(("bitcoin",)) if not cached_only else \
-            (_CRYPTO_CACHE.get(("bitcoin",)) or {}).get("data")
+            (((_CRYPTO_CACHE.get(("bitcoin",)) or {}).get("data"))
+             if now_epoch < float((
+                 _CRYPTO_CACHE.get(("bitcoin",)) or {}).get("expires") or 0.0)
+             else None)
         for q in ((cs or {}).get("quotes") or []):
-            if q.get("id") == "bitcoin" and isinstance(q.get("priceUsd"), (int, float)):
-                vals["btc"] = q["priceUsd"]
+            price = _decision_usable_crypto_price(
+                q, now_epoch=now_epoch) if q.get("id") == "bitcoin" else None
+            if price is not None:
+                vals["btc"] = price
     except Exception:
         pass
     return vals
@@ -12467,53 +14040,6 @@ def api_argus_macro_event_analysis():
                     "count": len(rows), "items": rows[:limit]})
 
 
-@app.route("/api/argus/macro-event-analysis/status")
-def api_argus_macro_event_analysis_status():
-    _macro_analysis_restore_once()
-    rows = list(_MACRO_ANALYSIS.values())
-    by_phase = {}
-    for r in rows:
-        by_phase[r.get("phase")] = by_phase.get(r.get("phase"), 0) + 1
-    return jsonify({"asOf": _ai_now_iso(), "schemaVersion": argus_macro_event_store.SCHEMA_VERSION,
-                    "total": len(rows), "byPhase": by_phase,
-                    "withPre": sum(1 for r in rows if (r.get("pre") or {}).get("argusScenarioJa")),
-                    "withActual": sum(1 for r in rows if (r.get("actual") or {}).get("available")),
-                    "lastGenerateAt": _MACRO_ANALYSIS_STATE.get("lastGenerateAt"),
-                    "lastResultsAt": _MACRO_ANALYSIS_STATE.get("lastResultsAt"),
-                    "pathType": _MACRO_ANALYSIS_STATE.get("pathType"),
-                    "noteJa": "発表前の予想を保存し、発表後に公式結果と照合して答え合わせ。結果もコンセンサスも捏造しない。"})
-
-
-@app.route("/api/argus/macro-event-analysis/<eid>")
-def api_argus_macro_event_analysis_one(eid):
-    _macro_analysis_restore_once()
-    r = _MACRO_ANALYSIS.get(str(eid))
-    if not r:
-        return jsonify({"error": "not_found", "eventId": eid}), 404
-    return jsonify(r)
-
-
-@app.route("/api/argus/macro-events/result-status")
-def api_argus_macro_result_status():
-    """Public cache-only: one row per event code with its adapter status. Reports
-    cached/probed status only — never fetches a provider on this GET."""
-    srcs = []
-    for code, st in _MACRO_RESULT_STATE.items():
-        srcs.append({"eventCode": code, "provider": st.get("provider"),
-                     "status": st.get("status"), "lastSuccessAt": st.get("lastSuccessAt"),
-                     "sampleEventId": st.get("sampleEventId"),
-                     "metricsAvailable": list(st.get("metricsAvailable") or []),
-                     "limitationsJa": []})
-    srcs += [{"eventCode": c, "provider": argus_macro_results.PROVIDER.get(c),
-              "status": ("partial" if c == "BOJ" else "not_implemented"),
-              "lastSuccessAt": None, "sampleEventId": None, "metricsAvailable": [],
-              "limitationsJa": ["公式結果アダプタ未実装/部分実装（結果は捏造しない）"]}
-             for c in _MACRO_NOT_IMPLEMENTED]
-    srcs.sort(key=lambda s: s["eventCode"])
-    return jsonify({"schemaVersion": "macro-result-status-v1", "asOf": _ai_now_iso(),
-                    "sources": srcs})
-
-
 @app.route("/api/argus/admin/macro-event-analysis/generate", methods=["POST"])
 def api_argus_admin_macro_generate():
     ok, err, code = _require_admin()
@@ -12645,56 +14171,6 @@ def api_argus_news_ja_cache_snapshot():
                     "count": len(items)})
 
 
-@app.route("/api/argus/news/translation-status")
-def api_argus_news_translation_status():
-    """Public cache-only: translation coverage for the VISIBLE news + overall. Reads
-    caches only — never triggers a translation, never calls an LLM/provider."""
-    _news_ja_restore_once()
-    now_iso = _ai_now_iso()
-    try:
-        visible = _news_visible_pool()
-    except Exception:
-        visible = []
-    vis_titles = [str(t) for t in visible if t]
-    vis_translatable = [t for t in vis_titles if argus_news_i18n.looks_translatable(t)]
-    vis_pending = [t for t in vis_translatable if not argus_news_i18n.is_translated(t, _NEWS_JA_CACHE)]
-    vis_pct = round(1.0 - (len(vis_pending) / len(vis_translatable)), 3) if vis_translatable else 1.0
-    # how many of the still-pending visible titles are already in the explicit queue
-    vis_queued = [t for t in vis_pending
-                  if argus_news_i18n.text_hash(t) in _NEWS_JA_VQUEUE]
-    vis_queued_pct = round(len(vis_queued) / len(vis_translatable), 3) if vis_translatable else 0.0
-    all_translatable = len(vis_translatable) or 0
-    translated_today = int(_NEWS_JA_STATE.get("translatedToday") or 0) \
-        if _NEWS_JA_STATE.get("translatedDay") == now_iso[:10] else 0
-    qstat = argus_news_i18n.translation_queue_status(_NEWS_JA_VQUEUE)
-    # translatedRecent samples: most-recent cache entries (JA is a public headline; no body)
-    recent = sorted(_NEWS_JA_CACHE.values(), key=lambda e: str(e.get("at")), reverse=True)[:5]
-    return jsonify({
-        "schemaVersion": "news-translation-status-v1", "asOf": now_iso,
-        "cachedCount": len(_NEWS_JA_CACHE),
-        "pendingQueue": len(_NEWS_JA_SEEN),
-        "visiblePendingCount": len(vis_pending),
-        "translatedToday": translated_today,
-        "lastTranslateAt": _NEWS_JA_STATE.get("lastTranslateAt"),
-        "nextTranslateHintJa": "重要度の高い値動きから約15分ごとに翻訳します。",
-        "visibleQueue": {
-            "queuedCount": qstat["queuedCount"],
-            "oldestQueuedAt": qstat["oldestQueuedAt"],
-            "lastQueuedAt": qstat["lastQueuedAt"],
-            "lastDrainAt": _NEWS_JA_VQUEUE_STATE.get("lastDrainAt"),
-            "lastDrainCount": _NEWS_JA_VQUEUE_STATE.get("lastDrainCount"),
-            "durable": _NEWS_JA_QUEUE_DURABLE},
-        "coverage": {"visibleTranslatedPct": vis_pct,
-                     "visibleQueuedPct": vis_queued_pct,
-                     "allTranslatedPct": round(1.0 - (len(vis_pending) / all_translatable), 3)
-                     if all_translatable else 1.0},
-        "samples": {
-            "pendingVisible": argus_news_i18n.queue_samples(_NEWS_JA_VQUEUE, cap=5),
-            "translatedRecent": [{"titlePreview": str(e.get("ja") or "")[:60],
-                                  "at": e.get("at")} for e in recent]},
-        "noteJa": "英語ニュースは管理側で翻訳してキャッシュ表示。公開GETは翻訳を起動しません。"})
-
-
 # ── V11.4.1 Unified dashboard event summary ──────────────────────────────────
 def _build_dashboard_events(limit=8, importance=None):
     """Merge cached important events + macro analysis records into the unified
@@ -12806,23 +14282,6 @@ def api_argus_admin_macro_repair_post_release():
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:160]}"}), 500
 
 
-@app.route("/api/argus/event-analysis")
-def api_argus_event_analysis():
-    """Public GET — backward-compatible projection of the NEW durable macro analysis
-    (v11.3.2). Falls back to the legacy /tmp store until the first generation runs."""
-    _macro_analysis_restore_once()
-    if _MACRO_ANALYSIS:
-        its = [_macro_compat_item(r) for r in _MACRO_ANALYSIS.values()]
-        its.sort(key=lambda x: (0 if x.get("phase") == "post" else 1,
-                                x.get("daysUntil") if x.get("daysUntil") is not None else 99))
-        return jsonify({"asOf": _MACRO_ANALYSIS_STATE.get("lastGenerateAt") or _ai_now_iso(),
-                        "system": argus_research_mesh.SYSTEM_NAME, "items": its})
-    its = sorted(_EVENT_ANALYSIS["items"].values(),
-                 key=lambda x: (0 if x.get("phase") == "post" else 1, x.get("daysUntil") if x.get("daysUntil") is not None else 99))
-    return jsonify({"asOf": _EVENT_ANALYSIS.get("asOf"), "system": argus_research_mesh.SYSTEM_NAME,
-                    "items": its})
-
-
 @app.route("/api/argus/event-analysis/generate", methods=["POST"])
 def api_argus_event_analysis_generate():
     """Admin/cron — repointed to the NEW macro analysis (v11.3.2): refresh official
@@ -12903,27 +14362,23 @@ def api_argus_entity_profiles_edit():
     return jsonify({"ok": True, "symbol": sym, "profile": prof})
 
 
-@app.route("/api/argus/buy-candidates")
-def api_argus_buy_candidates():
-    """Public (cache-only): high-bar screened buy candidates (本日の注目候補)."""
-    return jsonify({"asOf": _BUY_CANDIDATES.get("asOf"), "items": _BUY_CANDIDATES.get("items", [])})
-
-
 @app.route("/api/argus/buy-candidates/generate", methods=["POST"])
 def api_argus_buy_candidates_generate():
-    """Admin/cron — screen today's movers into high-conviction buy candidates."""
+    """Admin/cron compatibility route — generate research evidence only."""
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
     skipped = _scheduled_ai_skip("openai", "buy_candidates")
     if skipped:
+        skipped["authorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE
+        skipped["finalDecisionAuthorityActive"] = False
+        skipped["persisted"] = False
         return jsonify(skipped)
     return jsonify(_buy_candidates_generate())
 
 
 _caos_event_restore()       # reload persisted analyses at startup
 _entity_profile_restore()   # load entity profiles (seed + persisted) at startup
-_buy_candidates_restore()   # load persisted buy candidates at startup
 
 
 # ━━━ Security Gate v1 (protects future expensive AI runs) ━━━
@@ -12980,6 +14435,25 @@ _LEGACY_API_PREFIXES = ("/api/run", "/api/reset", "/api/logs", "/api/chart",
                         "/api/price_history", "/api/price_now", "/api/order_book",
                         "/api/margin")
 
+# Recovery Phase A PR B: these routes mutate owner/operational state and are no
+# longer callable from an unauthenticated browser.  Reuse the existing admin
+# credential only; no browser credential or new token is introduced.
+_AUTH_OPERATIONAL_MUTATION_ROUTES = frozenset({
+    "/api/argus/caos/investigate-now",
+    "/api/argus/news/translation-request",
+    "/api/argus/osint/deep-dive",
+    "/api/argus/osint/terms",
+    "/api/argus/osint/verify-gaps",
+    "/api/argus/osint/url-verify",
+    "/api/argus/mover-causes/explain-request",
+    "/api/argus/vault-push",
+})
+
+
+def _operational_auth_failure(code):
+    return ({"error": "admin_unavailable"}, 503) if code == 503 else \
+        ({"error": "unauthorized"}, 401)
+
 @app.before_request
 def _gate_legacy_api():
     if request.method == "OPTIONS":
@@ -12988,7 +14462,21 @@ def _gate_legacy_api():
     if any(p.startswith(x) for x in _LEGACY_API_PREFIXES):
         ok, err, code = _require_admin()
         if not ok:
-            return jsonify(err), code
+            safe, safe_code = _operational_auth_failure(code)
+            return jsonify(safe), safe_code
+    return None
+
+
+@app.before_request
+def _gate_operational_mutations():
+    if request.method == "OPTIONS":
+        return None
+    if request.method == "POST" and request.path in \
+            _AUTH_OPERATIONAL_MUTATION_ROUTES:
+        ok, err, code = _require_admin()
+        if not ok:
+            safe, safe_code = _operational_auth_failure(code)
+            return jsonify(safe), safe_code
     return None
 
 def _ai_run_gate(force=False):
@@ -13065,7 +14553,7 @@ def api_argus_ai_judgment():
     # to exist — show it as persisted/stale with its age, not "no result".
     now = time.time()
     cache_valid = bool(_AI_RESULT_CACHE["data"]) and now < _AI_RESULT_CACHE["expires"]
-    cached = _ai_cached_result()
+    cached = _AI_RESULT_CACHE.get("data")
     if cached:
         as_of = cached.get("asOf")
         age_min = _age_min_iso(as_of)
@@ -13118,7 +14606,7 @@ def api_argus_ai_cost():
         return jsonify(err), code
     return jsonify(_ai_cost_snapshot())
 
-def _system_health():
+def _system_health(*, allow_provider_fetch=True):
     """PUBLIC-safe at-a-glance health lamps for the metered/important systems
     (green=ok, amber=warning, red=stopped). Colors + coarse JA only — NO dollar
     amounts or secrets (those stay in the admin-only Operations endpoints). The
@@ -13130,7 +14618,8 @@ def _system_health():
 
     # ── AI budget (the 'overheat' lamp) — color only, never the $ amount. ──
     with _AI_LOCK:
-        _ai_cost_roll(datetime.now(TZ_JST))
+        if allow_provider_fetch:
+            _ai_cost_roll(datetime.now(TZ_JST))
         day_s, mon_s = _AI_COST_STATE["daySpentUsd"], _AI_COST_STATE["monthSpentUsd"]
     def _frac(s, b): return (s / b) if (isinstance(b, (int, float)) and b > 0) else 0.0
     worst = max(_frac(day_s, _AI_DAILY_BUDGET_USD), _frac(mon_s, _AI_MONTHLY_BUDGET_USD))
@@ -13141,7 +14630,8 @@ def _system_health():
     else:
         L("ai_budget", "AI予算", "ok", "余裕あり")
 
-    integ = get_integrations_snapshot()
+    integ = get_integrations_snapshot(
+        allow_provider_fetch=allow_provider_fetch)
     prov = {p["id"]: p for p in integ.get("providers", [])}
     def conf(pid): return bool((prov.get(pid) or {}).get("configured"))
 
@@ -13244,11 +14734,6 @@ def _system_health():
     return {"asOf": _ai_now_iso(), "overall": overall, "lamps": lamps,
             "noteJa": "課金/重要システムの健全性ランプ。緑=正常・橙=注意・赤=停止。"
                       "金額など詳細は管理者画面のみ。"}
-
-@app.route("/api/argus/system-health")
-def api_argus_system_health():
-    return jsonify(_system_health())
-
 
 # ── V11.5.7 bridge heartbeat + segmented status (Jul-3 OpenD incident) ────────
 # "All green" must never imply JP realtime works when the moomoo account has no
@@ -13417,8 +14902,8 @@ def api_argus_jp_universe():
                 priority.append("JP." + str(m["symbol"]))
     except Exception:
         pass
-    # Also include symbols the frontend recently requested (covers watchlist adds
-    # that aren't in the synced Layer-2B set yet, e.g. a just-added 6965).
+    # Also include bounded hints from trusted internal/background acquisition.
+    # Public quote reads cannot modify this set.
     priority += _recent_jp_watchlist_codes()
     for s in list(argus_calibration.TACTICAL_BENCHMARK) + list(argus_calibration.REGIME_SENSORS):
         if s and s[0].isdigit():          # JP listing code (e.g. 7203 / 285A)
@@ -13436,9 +14921,9 @@ def api_argus_jp_universe():
 @app.route("/api/argus/jp-watchlist-codes")
 def api_argus_jp_watchlist_codes():
     """Lightweight list of JP names the bridge should PUSH REALTIME (not just sweep
-    for movers): Layer-2B synced watchlist ∪ recently-requested frontend symbols, as
-    moomoo codes. Admin-gated. The bridge merges these into its 15s quote push so any
-    watchlist add (e.g. 6965) goes realtime without editing the bridge's CODES env."""
+    for movers): authenticated Layer-2B owner membership plus bounded trusted
+    internal/background hints, as moomoo codes. Admin-gated. Public quote reads
+    cannot change this set."""
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
@@ -13744,10 +15229,20 @@ def _annotate_news_corroboration(news_items):
                  "linkedAssets": _intel_link_assets(n.get("headline") or ""),
                  "contentType": None, "institutionId": None, "_n": n}
             norm.append(d)
-        mesh = [{"sourceId": it.get("sourceId"), "title": it.get("title") or "",
-                 "linkedAssets": it.get("linkedAssets") or [],
-                 "contentType": it.get("contentType"), "institutionId": it.get("institutionId")}
-                for it in list(_INTEL_STORE)[:200]]
+        now = time.time()
+        mesh = []
+        for it in list(_INTEL_STORE)[:200]:
+            admitted = _decision_news_row(
+                it, now_epoch=now, timestamp_keys=("publishedAt",))
+            if admitted is None:
+                continue
+            mesh.append({
+                "sourceId": admitted.get("sourceId"),
+                "title": admitted.get("title") or "",
+                "linkedAssets": admitted.get("linkedAssets") or [],
+                "contentType": admitted.get("contentType"),
+                "institutionId": admitted.get("institutionId"),
+            })
         clusters = {c["storyClusterId"]: c for c in argus_research_mesh.cluster_items(norm + mesh)}
         for d in norm:
             c = clusters.get(d.get("storyClusterId")) or {}
@@ -13959,6 +15454,25 @@ def _translate_pending_headlines(cap=60, queue_first=False):
             "queueRemaining": len(_NEWS_JA_VQUEUE), "asOf": now_iso}
 
 
+def _market_news_snapshot_reaged(snapshot, *, now_epoch=None):
+    now = time.time() if now_epoch is None else float(now_epoch)
+    if not isinstance(snapshot, dict):
+        return None
+    items = [row for row in (
+        _decision_news_row(item, now_epoch=now)
+        for item in (snapshot.get("items") or [])[:40]) if row is not None]
+    return {
+        **snapshot,
+        "status": "live" if items else "unavailable",
+        "items": items[:16],
+        "fetchedCount": len(items[:16]),
+        "stale": not bool(items),
+        "sourceValidUntil": (min(
+            row["sourceEpoch"] + _DECISION_NEWS_MAX_AGE_SEC
+            for row in items) if items else None),
+    }
+
+
 def get_market_news():
     if not FINNHUB_API_KEY:
         return {"status": "missing_key", "asOf": _ai_now_iso(), "items": [],
@@ -13967,26 +15481,33 @@ def get_market_news():
                 "noteJa": "市場速報のProvider設定をこの実行環境で確認できません。"}
     now = time.time()
     if _MARKET_NEWS_CACHE["data"] and now < _MARKET_NEWS_CACHE["expires"]:
-        return _MARKET_NEWS_CACHE["data"]
+        return (_market_news_snapshot_reaged(
+            _MARKET_NEWS_CACHE["data"], now_epoch=now)
+                or {"status": "unavailable", "asOf": _ai_now_iso(),
+                    "items": [], "fetchedCount": 0, "stale": True})
     try:
         _MARKET_NEWS_CACHE["lastPollAt"] = _ai_now_iso()
         r = requests.get("https://finnhub.io/api/v1/news",
                          params={"category": "general", "token": FINNHUB_API_KEY}, timeout=8)
         r.raise_for_status()
+        payload = r.json()
         items = []
-        for n in (r.json() or [])[:40]:
+        for n in ((payload or [])[:40] if isinstance(payload, list) else []):
             h = str(n.get("headline") or "")[:200]
             if not h:
                 continue
             src = str(n.get("source") or "")[:40]
-            items.append({
+            projected = _decision_news_row({
                 "headline": h,
                 "source": src,
                 "url": str(n.get("url") or "")[:300],
                 "datetime": n.get("datetime"),   # unix seconds
                 "major": bool(_NEWS_MAJOR_RE.search(h)),
                 "tier": _news_source_tier(src),   # wire | aggregator (source-trust)
-            })
+            }, now_epoch=now, timestamp_keys=("datetime",))
+            if projected is None:
+                continue
+            items.append(projected)
             if len(items) >= 14:
                 break
         # Japanese headlines (news-v2.1): one flash call per 10-min refill.
@@ -14020,19 +15541,22 @@ def get_market_news():
                 # v11.5.6: carry a real epoch so the newest-first sort below works —
                 # datetime:None made every JP item unsortable (and stuck at the top
                 # regardless of age, violating 最新が上 on the hub).
-                _ep = argus_news_freshness._epoch(
-                    it.get("publishedAt") or it.get("firstDetectedAt"))
-                jp_items.append({
+                projected = _decision_news_row({
                     "headline": h, "headlineJa": h,
                     "source": str(sid or "JP")[:40],
                     "url": str(it.get("canonicalUrl") or it.get("url") or "")[:300],
-                    "datetime": int(_ep) if _ep else None,
+                    # Discovery/receipt time remains metadata only; it cannot
+                    # manufacture publication freshness for current news.
+                    "publishedAt": it.get("publishedAt"),
                     "major": bool(_NEWS_MAJOR_RE.search(h)),
                     "tier": "wire" if sid in ("reuters_jp", "boj_official", "meti_official") else "aggregator",
                     "relevant": _news_relevant(h, h),
                     "corroboration": it.get("corroboration") or "single",
                     "linkedSymbols": _intel_link_assets(h),
-                })
+                }, now_epoch=now)
+                if projected is None:
+                    continue
+                jp_items.append(projected)
                 if len(jp_items) >= 6:
                     break
             if jp_items:
@@ -14049,10 +15573,12 @@ def get_market_news():
                 _it.get("headline"), _it.get("headlineJa"), _it.get("source") or ""))
         _MARKET_NEWS_CACHE["lastSuccessfulPollAt"] = _ai_now_iso()
         _MARKET_NEWS_CACHE["lastErrorClass"] = None
-        out = {"status": "live", "asOf": _ai_now_iso(), "items": items,
+        out = {"status": "live" if items else "unavailable",
+               "asOf": _ai_now_iso(), "items": items,
                "fetchedCount": len(items), "stale": False, "failureClass": None,
                "lastSuccessfulPollAt": _MARKET_NEWS_CACHE["lastSuccessfulPollAt"],
                "noteJa": "Finnhub市場ニュース(見出しは自動翻訳・参考情報)。⚡=重要キーワード。AIには「未検証の見出し(本文と異なりうる)」として、相場関連のみ・裏取り(公式>複数系統>単一)で重み付けして参考投入。単一ソースは判断を動かさない。"}
+        out = _market_news_snapshot_reaged(out, now_epoch=now) or out
         _MARKET_NEWS_CACHE["data"] = out
         _MARKET_NEWS_CACHE["expires"] = now + _MARKET_NEWS_TTL
         return out
@@ -14062,7 +15588,10 @@ def get_market_news():
         add_log(f"[news] finnhub market news failed: {_error_class}")
         _MARKET_NEWS_CACHE["expires"] = now + _MARKET_NEWS_FAIL_TTL
         if _MARKET_NEWS_CACHE["data"]:
-            return {**_MARKET_NEWS_CACHE["data"], "status": "unavailable",
+            aged = (_market_news_snapshot_reaged(
+                _MARKET_NEWS_CACHE["data"], now_epoch=now) or
+                {**_MARKET_NEWS_CACHE["data"], "items": []})
+            return {**aged, "status": "unavailable",
                     "asOf": _ai_now_iso(), "stale": True,
                     "failureClass": _error_class,
                     "lastSuccessfulPollAt": _MARKET_NEWS_CACHE.get("lastSuccessfulPollAt")}
@@ -14084,6 +15613,7 @@ def get_news_radar():
     all_phrases = [p for t in _NEWS_THEMES for p in t["phrases"]]
     q = "(" + " OR ".join(f'"{p}"' if " " in p else p for p in all_phrases) + ") sourcelang:eng"
     themes_out, status = [], "live"
+    source_deadlines = []
     try:
         r = requests.get(_GDELT_DOC, params={
             "query": q, "mode": "artlist", "maxrecords": 150,
@@ -14091,7 +15621,26 @@ def get_news_radar():
         }, headers={"User-Agent": "argus-news-radar/1.0"}, timeout=25)
         r.raise_for_status()
         body = r.json() if r.text.strip().startswith("{") else {}
-        articles = body.get("articles", []) or []
+        articles = []
+        for raw in (body.get("articles", []) or []):
+            if not isinstance(raw, dict):
+                continue
+            seen_raw = raw.get("seendate")
+            seen_iso = None
+            if isinstance(seen_raw, str):
+                try:
+                    seen_iso = datetime.strptime(
+                        seen_raw, "%Y%m%dT%H%M%SZ").replace(
+                            tzinfo=pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                except (TypeError, ValueError):
+                    seen_iso = seen_raw
+            truth = _decision_event_time(
+                seen_iso, now_epoch=now, max_age_seconds=6 * 3600)
+            if truth is not None:
+                articles.append({**raw, **truth,
+                                 "seen": truth["sourceTimestamp"]})
+                source_deadlines.append(
+                    truth["sourceEpoch"] + 6 * 3600)
         for t in _NEWS_THEMES:
             hits, seen_domains = [], set()
             for a in articles:
@@ -14103,7 +15652,7 @@ def get_news_radar():
                         continue          # one headline per outlet per theme
                     seen_domains.add(dom)
                     hits.append({"title": title[:140], "url": a.get("url", ""),
-                                 "source": dom, "seen": a.get("seendate", "")})
+                                 "source": dom, "seen": a.get("seen", "")})
             themes_out.append({
                 "key": t["key"], "labelJa": t["labelJa"],
                 "count": len(hits), "level": _news_theme_level(len(hits)),
@@ -14119,9 +15668,16 @@ def get_news_radar():
     # C.A.O.S. hub) still works when GDELT is down. Phrase-match EN + JA titles.
     if status != "live" or not any(t.get("count") for t in themes_out):
         try:
-            titles = [str(it.get("title") or it.get("headline") or "").lower()
-                      for it in _INTEL_STORE]
-            titles = [x for x in titles if x]
+            titles = []
+            for it in _INTEL_STORE:
+                truth = _decision_event_time(
+                    it.get("publishedAt"), now_epoch=now,
+                    max_age_seconds=6 * 3600)
+                title = str(it.get("title") or it.get("headline") or "").lower()
+                if truth is not None and title:
+                    titles.append(title)
+                    source_deadlines.append(
+                        truth["sourceEpoch"] + 6 * 3600)
             fb = []
             for t in _NEWS_THEMES:
                 pats = [p.lower() for p in (t["phrases"] + t.get("phrasesJa", []))]
@@ -14154,13 +15710,11 @@ def get_news_radar():
         ],
     }
     _NEWS_CACHE["data"] = payload
-    _NEWS_CACHE["expires"] = now + (_NEWS_TTL if status == "live" else _NEWS_FAIL_TTL)
+    expiry = now + (_NEWS_TTL if status == "live" else _NEWS_FAIL_TTL)
+    if source_deadlines:
+        expiry = min(expiry, min(source_deadlines))
+    _NEWS_CACHE["expires"] = expiry
     return payload
-
-@app.route("/api/argus/news-radar")
-def api_argus_news_radar():
-    return jsonify(get_news_radar())
-
 
 # ━━━ Action Alerts (alerts-v1, v10.4) — one judgment per asset class ━━━
 # The user's priority-② layer: gold / REIT / bonds / crypto / FX / cash beside
@@ -14175,8 +15729,29 @@ _ALERTS_TTL      = 600
 def _alert_etf_momentum():
     now = time.time()
     if _ALERT_ETF_CACHE["data"] is not None and now < _ALERT_ETF_CACHE["expires"]:
-        return _ALERT_ETF_CACHE["data"]
-    out = {sym: _etf_momentum(cl) for sym, cl in _td_timeseries(_ALERT_ETF_SYMS).items()}
+        return {
+            sym: row for sym, row in _ALERT_ETF_CACHE["data"].items()
+            if isinstance(row, dict) and
+            _bounded_market_session_date(
+                row.get("sourceTimestamp"), "US",
+                _ETF_DAILY_MAX_CALENDAR_DAYS,
+                accepted_formats=("%Y-%m-%d",),
+                now_epoch=now)[0] is not None and
+            isinstance(row.get("receivedAtEpoch"), (int, float)) and
+            not isinstance(row.get("receivedAtEpoch"), bool) and
+            0 <= now - float(row["receivedAtEpoch"]) <= _ALERT_ETF_TTL}
+    out = {}
+    for sym, closes in _td_timeseries(_ALERT_ETF_SYMS).items():
+        evidence = _etf_last_price_decision_row(
+            sym, max_transport_age_sec=_TD_TS_TTL, now_epoch=now)
+        if evidence is None:
+            continue
+        out[sym] = {
+            **_etf_momentum(closes),
+            "sourceTimestamp": evidence["sourceTimestamp"],
+            "receivedAtEpoch": evidence["ts"],
+            "freshness": "delayed",
+        }
     # Cache EITHER way (v10.63): caching only on success meant every GOLD/BOND/REIT
     # poll re-hit Twelve Data while the quota was exhausted, re-burning credits and
     # never recovering. On empty, back off 45 min (stay in budget); on success, 6h.
@@ -14239,6 +15814,8 @@ def get_action_alerts():
 
     def add(asset_class, name, action, conf, risk, reason, points, nxt, status):
         cards.append({"assetClass": asset_class, "displayName": name, "action": action,
+                      "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+                      "legacyShadow": True,
                       "confidence": conf, "risk": risk, "reasonJa": reason,
                       "dataPoints": points, "nextConditionJa": nxt, "status": status})
 
@@ -14247,20 +15824,24 @@ def get_action_alerts():
         ls = [l for l in al.get("labels", []) if l["market"] == mkt
               and l.get("status") in ("live", "delayed", "partial")]
         if ls:
-            from collections import Counter
             sstatus = "live" if all(l.get("status") == "live" for l in ls) else "partial"
-            dominant, votes = Counter(l["action"] for l in ls).most_common(1)[0]
             chgs = [l["supportingData"]["changePct"] for l in ls]
             avg = sum(chgs) / len(chgs)
             flows = [l["supportingData"].get("bigFlowRatio") for l in ls
                      if l["supportingData"].get("bigFlowRatio") is not None]
-            conf = "high" if votes / len(ls) >= 0.7 else "med"
+            distribution = {}
+            for label in ls:
+                key = str(label.get("action") or "UNKNOWN")
+                distribution[key] = distribution.get(key, 0) + 1
             risk = "high" if avg <= -2 or cautious else ("low" if abs(avg) < 1 else "med")
-            pts = [f"監視{len(ls)}銘柄 平均{avg:+.2f}%", f"多数派ラベル: {dominant} ({votes}/{len(ls)})"]
+            dist_text = " / ".join(
+                f"{key}:{distribution[key]}" for key in sorted(distribution))
+            pts = [f"監視{len(ls)}銘柄 平均{avg:+.2f}%",
+                   f"旧ラベル分布(監査用): {dist_text}"]
             if flows:
                 pts.append(f"大口フロー平均 {sum(flows)/len(flows):+.1%} ({len(flows)}銘柄)")
-            add(f"{mkt}_STOCK", name, dominant, conf, risk,
-                f"ウォッチ銘柄の多数派は{dominant}。姿勢は{posture}。",
+            add(f"{mkt}_STOCK", name, "WAIT", "low", risk,
+                f"ウォッチ銘柄の分布と地合い({posture})を証拠として表示。",
                 pts, "個別はAsset Deskの銘柄カードで確認。", sstatus)
         else:
             add(f"{mkt}_STOCK", name, "WAIT", "low", "med",
@@ -14282,7 +15863,7 @@ def get_action_alerts():
                 reason += " リスク回避局面ではヘッジ需要が支え。"
             pts = [f"5d {m['momentum5d']}% / 20d {m['momentum20d']}%" if m.get("momentum20d") is not None
                    else f"1d {m['momentum1d']}%"]
-            add(cls, name, action, conf, risk, reason, pts, nxt, "live")
+            add(cls, name, action, conf, risk, reason, pts, nxt, "partial")
         else:
             g = rot_by_asset.get(sym.upper())
             st = g.get("status") if g else None
@@ -14354,6 +15935,8 @@ def get_action_alerts():
         "status": "live" if live_n == len(cards) else ("partial" if live_n else "mock"),
         "asOf": _ai_now_iso(),
         "engineVersion": "alerts-v1",
+        "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+        "finalDecisionAuthorityActive": False,
         "posture": posture,
         "cards": cards,
     }
@@ -14361,11 +15944,6 @@ def get_action_alerts():
         _ALERTS_CACHE["data"] = payload
         _ALERTS_CACHE["expires"] = now + _ALERTS_TTL
     return payload
-
-@app.route("/api/argus/action-alerts")
-def api_argus_action_alerts():
-    return jsonify(get_action_alerts())
-
 
 # ━━━ Downside Incident Response + cause attribution (v10.98) ━━━
 # When a held/watched name drops materially (or the JP tape deteriorates), turn
@@ -14474,7 +16052,7 @@ def _theme_peers_down(sym, by_sym):
     return False
 
 
-_JP_INDEX_CACHE = {"val": None, "ts": 0.0}
+_JP_INDEX_CACHE = {"val": None, "ts": 0.0, "expires": 0.0}
 _JP_INDEX_TTL = 300
 
 _TDNET_FEED_CACHE = {"data": None, "expires": 0.0}
@@ -14749,21 +16327,35 @@ def _official_events_restore_once():
         _OFFICIAL_EVENTS_STATE["restoreStatus"] = "restore_failed_or_empty"
 
 
-def _official_lifecycle_ingest(td_snapshot):
+def _official_lifecycle_ingest(td_snapshot, *, now_epoch=None):
     """Upsert OFFICIAL disclosures into the lifecycle store (dedup by id; append-only —
     existing records keep their reaction/lifecycle progress)."""
     try:
         _official_events_restore_once()
-        now_iso = _ai_now_iso()
+        if not isinstance(td_snapshot, dict) or td_snapshot.get("official") is not True:
+            return
+        decision_now = time.time() if now_epoch is None else float(now_epoch)
+        now_iso = datetime.fromtimestamp(
+            decision_now, pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         added = 0
         for it in (td_snapshot.get("items") or []):
             if not it.get("official"):
                 continue
+            admitted = _decision_official_disclosure(
+                it, "JP", now_epoch=decision_now)
+            if admitted is None:
+                continue
+            canonical_item = {
+                **admitted,
+                "time": admitted["sourceTimestamp"],
+                "disclosedAt": admitted["sourceTimestamp"],
+            }
             rec = argus_official_event_lifecycle.from_disclosure(
-                it, source="tdnet", provider="jquants-tdnet", market="JP",
+                canonical_item, source="tdnet",
+                provider="jquants-tdnet", market="JP",
                 first_seen_at=now_iso,
                 evidence_pack_id=argus_evidence_pack.pack_id(
-                    it.get("code") or "", now_iso))
+                    canonical_item.get("code") or "", now_iso))
             oid = rec["officialEventId"]
             if oid not in _OFFICIAL_EVENTS:
                 _OFFICIAL_EVENTS[oid] = rec
@@ -14781,8 +16373,9 @@ def _official_lifecycle_ingest(td_snapshot):
         pass                                        # ingest is best-effort, never breaks the feed
 
 
-def _official_events_by_symbol(sym, material_only=False):
-    _official_events_restore_once()
+def _official_events_by_symbol(sym, material_only=False, *, allow_restore=True):
+    if allow_restore:
+        _official_events_restore_once()
     sym = str(sym or "").upper()
     out = [r for r in _OFFICIAL_EVENTS.values()
            if r.get("symbol") == sym and (r.get("material") or not material_only)]
@@ -14838,6 +16431,13 @@ def _official_events_track():
                     return None
             offsets = {"same_day": (i0, i0 + 1), "next_session": (i0 - 1, i0),
                        "day3": (i0 - 3, i0), "day5": (i0 - 5, i0)}
+            try:
+                reaction_session = datetime.strptime(d0, "%Y-%m-%d").date()
+                move_started_at = argus_market_clock.market_session_bounds(
+                    argus_market_clock.JP_EQUITY,
+                    reaction_session).get("regularOpenUtc")
+            except (TypeError, ValueError):
+                move_started_at = None
             new_rec = rec
             for w in pending:
                 i_new, i_old = offsets[w]
@@ -14846,7 +16446,9 @@ def _official_events_track():
                 reaction = argus_official_event_lifecycle.build_market_reaction(
                     window=w, observed_at=now_iso, price_move_pct=_pct(i_new, i_old),
                     volume_ratio=(_volr() if w == "same_day" else None))
-                new_rec = argus_official_event_lifecycle.apply_market_reaction(new_rec, reaction)
+                new_rec = argus_official_event_lifecycle.apply_market_reaction(
+                    new_rec, reaction,
+                    move_started_at=move_started_at)
             if new_rec is not rec:
                 _OFFICIAL_EVENTS[oid] = new_rec
                 updated += 1
@@ -15045,40 +16647,42 @@ def api_argus_admin_official_events_restore():
                     "ledgerDate": snap.get("dateJst")})
 
 
-@app.route("/api/argus/tdnet-recent")
-def api_argus_tdnet_recent():
-    d = get_tdnet_recent()
-    # public, read-only: trim the heavy bySymbol map for the wire. EXPLICITLY expose whether
-    # this is the OFFICIAL J-Quants Add-on or the yanoshin fallback (v11.1 merge condition),
-    # and — when it's the fallback — WHY official didn't win (officialStatus).
-    return jsonify({"status": d["status"], "asOf": d["asOf"], "provider": d.get("provider"),
-                    "official": bool(d.get("official")), "entitlement": d.get("entitlement"),
-                    "officialStatus": d.get("officialStatus"),
-                    "count": len(d.get("items") or []), "items": (d.get("items") or [])[:80]})
-
-
 def _jp_index_proxy():
     """Real JP index move (TOPIX ETF 1306 + Nikkei ETF 1321 average), cached 5m.
     A direct index read beats watchlist-average breadth for market-wide detection.
     Returns None if unavailable (caller falls back to watchlist breadth)."""
     now = time.time()
-    if _JP_INDEX_CACHE["val"] is not None and now - _JP_INDEX_CACHE["ts"] < _JP_INDEX_TTL:
+    if (_JP_INDEX_CACHE["val"] is not None
+            and now < _JP_INDEX_CACHE.get("expires", 0.0)):
         return _JP_INDEX_CACHE["val"]
     val = None
+    deadlines = []
     try:
         snap = get_japan_watchlist_snapshot(["1306", "1321"])
-        chs = [float(s["changePct"]) for s in (snap.get("stocks") or [])
-               if s.get("status") == "live" and isinstance(s.get("changePct"), (int, float))]
+        usable = [q for q in (
+            _decision_usable_watch_quote_row(
+                s, "JP", now_epoch=now, allow_delayed=False)
+            for s in (snap.get("stocks") or [])) if q is not None]
+        chs = [float(s["changePct"]) for s in usable
+               if isinstance(s.get("changePct"), (int, float))]
+        for row in usable:
+            source_epoch = _coerce_epoch(row.get("sourceTimestamp"))
+            if source_epoch is not None:
+                deadlines.append(
+                    source_epoch + _DECISION_QUOTE_LIVE_MAX_AGE_SEC)
         if chs:
             val = round(sum(chs) / len(chs), 2)
     except Exception:
-        val = _JP_INDEX_CACHE["val"]
+        val = None
     _JP_INDEX_CACHE["val"] = val
     _JP_INDEX_CACHE["ts"] = now
+    _JP_INDEX_CACHE["expires"] = (
+        min([now + _JP_INDEX_TTL] + deadlines)
+        if val is not None else now)
     return val
 
 
-def _downside_catalyst_for(item):
+def _downside_catalyst_for(item, *, now_epoch=None):
     """From a catalysts-snapshot item, return a catalyst dict iff there is a
     RECENT, concrete catalyst (fresh filing/disclosure, earnings just passed, or
     recent news) that could explain a same-day drop. We do NOT assert it is 'bad'
@@ -15086,28 +16690,35 @@ def _downside_catalyst_for(item):
     if not isinstance(item, dict):
         return None
     signals = []
-
-    def _recent(date_str, days):
-        try:
-            d = datetime.strptime(str(date_str)[:10], "%Y-%m-%d").date()
-            return (datetime.now(pytz.utc).date() - d).days <= days
-        except Exception:
-            return False
+    now_value = time.time() if now_epoch is None else now_epoch
 
     earn = item.get("earnings") or {}
     du = earn.get("daysUntil")
-    if isinstance(du, (int, float)) and -2 <= du <= 0:
+    earnings_time = _decision_event_time(
+        earn.get("publishedAt") or earn.get("announcedAt"),
+        now_epoch=now_value,
+        max_age_seconds=_DECISION_OFFICIAL_FACT_MAX_AGE_SEC)
+    if (earn.get("decisionUsable") is True and earnings_time is not None
+            and isinstance(du, (int, float)) and not isinstance(du, bool)
+            and -2 <= du <= 0):
         signals.append("決算発表直後")
     for f in (item.get("filings") or []):
-        if _recent(f.get("filingDate"), 3):
+        filing_time = _decision_event_time(
+            f.get("submitDateTime") or f.get("acceptedAt"),
+            now_epoch=now_value,
+            max_age_seconds=_DECISION_OFFICIAL_FACT_MAX_AGE_SEC)
+        if f.get("decisionUsable") is True and filing_time is not None:
             signals.append(f"開示({f.get('form', 'filing')})")
             break
     for d in (item.get("disclosures") or []):
-        if d.get("status") == "live" and _recent(d.get("date"), 3):
+        admitted = (_decision_official_disclosure(
+            d, item.get("market") or "JP", now_epoch=now_value)
+                    if d.get("official") is True else None)
+        if admitted is not None:
             signals.append(f"開示({d.get('type', '')})")
             break
     for n in (item.get("news") or []):
-        if _recent(n.get("publishedAt") or n.get("datetime"), 2):
+        if _decision_news_row(n, now_epoch=now_value) is not None:
             signals.append("関連ニュース")
             break
     if not signals:
@@ -15124,9 +16735,15 @@ def get_downside_incidents():
     jp = get_japan_watchlist_snapshot()
     us = get_us_watchlist_snapshot()
     owner = _owner_symbols_cached()
-    jp_stocks = [s for s in (jp.get("stocks") or []) if isinstance(s, dict)]
-    us_stocks = [s for s in (us.get("stocks") or []) if isinstance(s, dict)]
-    live_jp = [s for s in jp_stocks if s.get("status") == "live"]
+    jp_stocks = [q for q in (
+        _decision_usable_watch_quote_row(
+            s, "JP", now_epoch=now, allow_delayed=False)
+        for s in (jp.get("stocks") or [])) if q is not None]
+    us_stocks = [q for q in (
+        _decision_usable_watch_quote_row(
+            s, "US", now_epoch=now, allow_delayed=False)
+        for s in (us.get("stocks") or [])) if q is not None]
+    live_jp = jp_stocks
 
     jp_breadth = (round(sum(float(s.get("changePct", 0) or 0) for s in live_jp) / len(live_jp), 2)
                   if live_jp else None)
@@ -15144,7 +16761,7 @@ def get_downside_incidents():
         "jpDecliners": jp_dec, "jpTotal": len(live_jp),
         "highBetaDown": high_beta_down,
         "themeUnwind": high_beta_down,
-        "dataPartial": (jp.get("status") != "live") and (us.get("status") != "live"),
+        "dataPartial": not bool(jp_stocks or us_stocks),
     }
 
     by_sym = {str(s.get("symbol", "")).upper(): s for s in (jp_stocks + us_stocks)}
@@ -15160,15 +16777,24 @@ def get_downside_incidents():
         if cat_snap.get("status") in ("live", "partial"):
             for it in (cat_snap.get("items") or []):
                 sym_c = str(it.get("symbol", "")).upper()
-                c = _downside_catalyst_for(it)
+                c = _downside_catalyst_for(it, now_epoch=now)
                 if sym_c and c:
                     cat_map[sym_c] = c
     except Exception:
         cat_map = {}
     # TDnet (適時開示) feed — the authoritative JP disclosure source (v10.101).
     tdnet = get_tdnet_recent()
-    tdnet_ok = tdnet.get("status") == "live"
-    tdnet_by_sym = tdnet.get("bySymbol") or {}
+    tdnet_ok = (tdnet.get("official") is True
+                and tdnet.get("status") in ("live", "partial", "delayed"))
+    tdnet_by_sym = {}
+    if tdnet_ok:
+        for td_symbol, rows in (tdnet.get("bySymbol") or {}).items():
+            admitted_rows = [admitted for admitted in (
+                _decision_official_disclosure(
+                    row, "JP", now_epoch=now) for row in (rows or []))
+                if admitted is not None]
+            if admitted_rows:
+                tdnet_by_sym[str(td_symbol)] = admitted_rows
 
     assets = []
     for s, market in ([(x, "JP") for x in jp_stocks] + [(x, "US") for x in us_stocks]):
@@ -15176,7 +16802,9 @@ def get_downside_incidents():
         if not sym:
             continue
         chg = s.get("changePct")
-        flow = (s.get("flow") or {}).get("bigNetRatio")
+        # Price source time cannot authorize last-known capital distribution;
+        # no downside override consumes flow until it has its own timestamp.
+        flow = None
         name = s.get("nameJa") or s.get("name") or sym
         ref_index = nikkei_proxy if market == "JP" else None
         vs_index = (round(float(chg) - ref_index, 2)
@@ -15272,7 +16900,7 @@ def get_downside_incidents():
         jpSevereIncidents=jp_severe, jpCriticalIncidents=jp_critical))
 
     payload = {
-        "status": "live" if (jp.get("status") == "live" or us.get("status") == "live") else "partial",
+        "status": "live" if (jp_stocks or us_stocks) else "partial",
         "asOf": now_iso,
         "engineVersion": "downside-v1",
         "signalSchemaVersion": argus_signal.SIGNAL_SCHEMA_VERSION,
@@ -15295,7 +16923,16 @@ def get_downside_incidents():
         "noteJa": "急落を分類し原因を推定、保有向けにアクションを上書き提示(決定支援のみ・自動売買なし)。",
     }
     _DOWNSIDE_CACHE["data"] = payload
-    _DOWNSIDE_CACHE["expires"] = now + _DOWNSIDE_TTL
+    quote_deadlines = [
+        source_epoch + _DECISION_QUOTE_LIVE_MAX_AGE_SEC
+        for source_epoch in (
+            _coerce_epoch(row.get("sourceTimestamp"))
+            for row in jp_stocks + us_stocks)
+        if source_epoch is not None
+    ]
+    _DOWNSIDE_CACHE["expires"] = (
+        min([now + _DOWNSIDE_TTL] + quote_deadlines)
+        if quote_deadlines else now + _DOWNSIDE_TTL)
     return payload
 
 
@@ -15486,18 +17123,46 @@ def _cause_explain(sym, name, market, chg):
 
 def get_cause_attribution(symbol, market="JP", explain=False):
     symu = str(symbol).upper()
+    market_key = str(market or "").upper()
     jp = get_japan_watchlist_snapshot()
     us = get_us_watchlist_snapshot()
-    by = {str(s.get("symbol", "")).upper(): s for s in
-          ((jp.get("stocks") or []) + (us.get("stocks") or [])) if isinstance(s, dict)}
+    by = {}
+    for snap, row_market in ((jp, "JP"), (us, "US")):
+        for raw in (snap.get("stocks") or []):
+            usable = _decision_usable_watch_quote_row(
+                raw, row_market, require_latest_completed=True)
+            if usable is not None:
+                by[str(usable.get("symbol", "")).upper()] = usable
     row = by.get(symu) or {}
     name = row.get("nameJa") or row.get("name") or symu
     chg = row.get("changePct")
-    flow = (row.get("flow") or {}).get("bigNetRatio")
+    # Capital distribution is diagnostic-only until the bridge supplies an
+    # independently bounded flow acquisition timestamp.
+    flow = None
 
-    # move reference: the JP session open today (so yesterday's filings read stale)
+    # Move reference comes from the canonical exchange calendar.  On a holiday or
+    # before the regular open there is no proven current-session move start, so no
+    # disclosure can be promoted to an intraday trigger.
     now_utc = datetime.now(pytz.utc)
-    move_started = now_utc.replace(hour=0, minute=5, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+    decision_at = now_utc.replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+    clock_market = (argus_market_clock.JP_EQUITY
+                    if market_key == "JP"
+                    else argus_market_clock.US_EQUITY)
+    clock_state = argus_market_clock.market_session(clock_market, now_utc)
+    move_started = None
+    try:
+        session_date = datetime.strptime(
+            str(clock_state.get("marketDate")), "%Y-%m-%d").date()
+        bounds = argus_market_clock.market_session_bounds(
+            clock_market, session_date)
+        open_at = bounds.get("regularOpenUtc")
+        open_truth = _decision_event_time(
+            open_at, now_epoch=now_utc.timestamp(),
+            max_age_seconds=24 * 3600)
+        if clock_state.get("isTradingDay") is True and open_truth is not None:
+            move_started = str(open_at)
+    except (TypeError, ValueError):
+        move_started = None
 
     # evidence from catalysts (earnings + filings) and TDnet (JP disclosures)
     evidence = []
@@ -15515,28 +17180,54 @@ def get_cause_attribution(symbol, market="JP", explain=False):
                     evidence.append({"id": f"earn:{symu}", "kind": "earnings",
                                      "isFutureEvent": True, "sourceReliability": 0.7, "supports": []})
             for f in (it.get("filings") or [])[:3]:
+                filing_time = (f.get("submitDateTime")
+                               if f.get("decisionUsable") is True else None)
                 evidence.append({"id": f"filing:{f.get('form')}", "kind": "filing",
-                                 "publishedAt": f.get("filingDate"), "sourceReliability": 0.6,
+                                 "publishedAt": filing_time, "sourceReliability": 0.6,
                                  "supports": ["COMPANY_SPECIFIC_CATALYST"]})
-                news.append({"time": f.get("filingDate"), "titleJa": f"開示: {f.get('form')}",
+                news.append({"time": filing_time or f.get("filingDate"),
+                             "titleJa": f"開示: {f.get('form')}",
                              "source": "SEC/EDGAR",
                              "cls": argus_attribution.classify_news(
-                                 {"publishedAt": f.get("filingDate"), "sourceReliability": 0.6, "official": True}, move_started)})
+                                 {"publishedAt": filing_time,
+                                  "sourceReliability": 0.6, "official": True},
+                                 move_started, decision_at)})
     except Exception:
         pass
-    if market == "JP":
+    if market_key == "JP":
         try:
-            for d in (get_tdnet_recent().get("bySymbol") or {}).get(symu[:4], [])[:3]:
+            tdnet_snapshot = get_tdnet_recent()
+            snapshot_official = tdnet_snapshot.get("official") is True
+            for d in (tdnet_snapshot.get("bySymbol") or {}).get(symu[:4], [])[:3]:
+                official = snapshot_official and d.get("official") is not False
+                admitted = (_decision_official_disclosure(
+                    d, "JP", now_epoch=now_utc.timestamp()) if official else None)
+                provider = str(
+                    d.get("provider") or tdnet_snapshot.get("provider") or
+                    ("jquants-tdnet" if official else "yanoshin-tdnet"))
                 neg = d.get("sentiment") == "negative"
-                evidence.append({"id": f"tdnet:{d.get('category')}", "kind": "report",
-                                 "publishedAt": d.get("time"), "sourceReliability": 0.7,
-                                 "sameDayRecirculation": True,
-                                 "supports": ["COMPANY_SPECIFIC_CATALYST"] if neg else []})
+                if admitted is not None:
+                    evidence.append({
+                        "id": f"tdnet:{d.get('category')}", "kind": "report",
+                        "publishedAt": admitted.get("sourceTimestamp"),
+                        "sourceReliability": 0.7,
+                        "sameDayRecirculation": True,
+                        "supports": (["COMPANY_SPECIFIC_CATALYST"] if neg else []),
+                    })
                 news.append({"time": d.get("time"), "titleJa": d.get("title") or d.get("category") or "適時開示",
-                             "source": "TDnet", "sentiment": d.get("sentiment"),
+                             "source": ("TDnet" if admitted is not None else provider),
+                             "provider": provider,
+                             "official": admitted is not None,
+                             "sourceClass": ("official" if admitted is not None
+                                             else "unknown"),
+                             "decisionUsable": admitted is not None,
+                             "sentiment": d.get("sentiment"),
                              "cls": argus_attribution.classify_news(
-                                 {"publishedAt": d.get("time"), "sourceReliability": 0.7,
-                                  "sameDayRecirculation": True, "official": True}, move_started)})
+                                 {"publishedAt": (admitted or {}).get("sourceTimestamp"),
+                                  "sourceReliability": 0.7,
+                                  "sameDayRecirculation": True,
+                                  "official": admitted is not None},
+                                 move_started, decision_at)})
         except Exception:
             pass
     else:
@@ -15556,7 +17247,9 @@ def get_cause_attribution(symbol, market="JP", explain=False):
                 _d = _news_decorate(hl[:120], cn.get("source") or "Finnhub")
                 news.append({"time": iso, **_d, "titleEn": hl[:120],
                              "source": cn.get("source") or "Finnhub",
-                             "cls": argus_attribution.classify_news({"publishedAt": iso, "official": False}, move_started)})
+                             "cls": argus_attribution.classify_news(
+                                 {"publishedAt": iso, "official": False},
+                                 move_started, decision_at)})
         except Exception:
             pass
 
@@ -15585,7 +17278,7 @@ def get_cause_attribution(symbol, market="JP", explain=False):
         "aiCapexConcern": symu in {"NVDA", "SMH", "285A", "5801", "5803", "MU"},
         "isHeld": False,
     }
-    stack = argus_attribution.attribute_cause(ctx, evidence, now_iso=move_started)
+    stack = argus_attribution.attribute_cause(ctx, evidence, now_iso=decision_at)
     stack["symbol"] = symu
     stack["market"] = market
     stack["changePct"] = chg
@@ -15598,19 +17291,35 @@ def get_cause_attribution(symbol, market="JP", explain=False):
         _mn = get_market_news()
         if isinstance(_mn, dict) and _mn.get("status") == "live":
             for n in _mn.get("items", []):
-                if n.get("relevant"):
-                    pool.append((n.get("headline"), n.get("headlineJa"), n.get("source"), n.get("corroboration")))
+                projected = _decision_news_row(n, now_epoch=now_utc.timestamp())
+                if n.get("relevant") and projected is not None:
+                    pool.append((projected.get("headline"),
+                                 projected.get("headlineJa"),
+                                 projected.get("source"),
+                                 projected.get("corroboration"),
+                                 projected.get("publishedAt")))
         for it in list(_INTEL_STORE)[:80]:
-            pool.append((it.get("title"), it.get("titleJa"), it.get("sourceId"), None))
+            projected = _decision_news_row(
+                it, now_epoch=now_utc.timestamp(),
+                timestamp_keys=("publishedAt",))
+            if projected is not None:
+                pool.append((projected.get("title"), projected.get("titleJa"),
+                             projected.get("sourceId"), None,
+                             projected.get("publishedAt")))
         seen_a = set()
-        for hl, hlja, src, corr in pool:
+        for hl, hlja, src, corr, published_at in pool:
             m = next((x for x in _entity_link((hl or "") + " " + (hlja or ""))
                       if x["symbol"] == symu and x["via"] in ("entity", "theme")), None)
             title = (hlja or _headline_ja(hl or "") or "")[:120]     # prefer JP; translate English
             if not m or not title or title in seen_a:
                 continue
             seen_a.add(title)
-            news.append({"time": None, "titleJa": title, "source": src or "C.A.O.S.", "cls": "LIKELY_RELATED",
+            news.append({"time": published_at, "titleJa": title,
+                         "source": src or "C.A.O.S.",
+                         "cls": argus_attribution.classify_news(
+                             {"publishedAt": published_at, "official": False},
+                             move_started, decision_at),
+                         "decisionUsable": True,
                          "assoc": {"via": m["via"], "term": m.get("term"),
                                    "relationJa": m.get("relationJa") or f"関連: {m.get('term')}",
                                    "corroboration": corr or "single"}})
@@ -15688,6 +17397,10 @@ def get_cause_attribution(symbol, market="JP", explain=False):
         cands = [{"titleJa": n.get("displayTitleJa") or n.get("titleJa"),
                   "titleOriginal": n.get("titleOriginal"),
                   "source": n.get("source"),
+                  "provider": n.get("provider"),
+                  "official": n.get("official") is True,
+                  "sourceClass": n.get("sourceClass"),
+                  "decisionUsable": n.get("decisionUsable"),
                   "publishedAt": n.get("time") or n.get("publishedAt")}
                  for n in news if (n.get("displayTitleJa") or n.get("titleJa"))]
         _dfrac = (contagion or {}).get("downFraction") or 0
@@ -16000,6 +17713,11 @@ _DURABLE_CHECKPOINT_LOCK = threading.RLock()
 _REMOTE_RECEIPT_FLUSH_LOCK = threading.Lock()
 _REMOTE_RECEIPT_QUEUE_LOCK = threading.RLock()
 _REMOTE_RECEIPT_QUEUE = argus_remote_receipt_queue.empty_store()
+_RECOVERY_PHASE_A_INIT_LOCK = threading.RLock()
+_RECOVERY_PHASE_A_ADAPTER = None
+_RECOVERY_PHASE_A_UNAVAILABLE = object()
+_RECOVERY_PHASE_A_CHECKPOINT_LOCAL = threading.local()
+_RECOVERY_PHASE_A_STARTUP_RECORDED = False
 _MISSION_TICK_CONTEXT = {
     "active": False,
     "jobId": None,
@@ -16013,6 +17731,11 @@ _MISSION_TICK_CONTEXT = {
     "memoryAttributionRecordId": None,
     "memoryAttributionT0": None,
     "memoryAttributionPrelude": None,
+    "recoveryMeasurementJPPostSession": False,
+    "recoveryMeasurementUSPostSession": False,
+    "recoveryMeasurementOwnerAuthorized": False,
+    "recoveryMeasurementWalBytes": None,
+    "recoveryMeasurementWalSequence": None,
 }
 
 _MEMORY_ATTRIBUTION = argus_memory_attribution.MemoryAttributionRecorder(
@@ -18312,6 +20035,7 @@ def _persist_remote_recovery_sidecar(
 
 
 def _osint_persist():
+    _recovery_phase_a_abandon_checkpoint()
     token = _memory_operation_begin(
         "internal", "checkpoint_persist", known=True)
     try:
@@ -18320,12 +20044,17 @@ def _osint_persist():
                 "M21", "checkpoint_lock_acquired")
             result = _osint_persist_locked()
     except Exception as exc:
+        _recovery_phase_a_abandon_checkpoint()
         _memory_operation_complete(
             token, {"result": "error", "errorClass": type(exc).__name__})
         raise
     _memory_operation_complete(
         token, {"result": "verified" if result.get("verified") else "error",
                 "errorClass": result.get("errorClass")})
+    # Mission ticks hold an outer recursive authority lock. Their scalar
+    # handoff is finalized only after that outer level releases.
+    if not _mission_tick_context_active():
+        _recovery_phase_a_finalize_checkpoint(result)
     return result
 
 
@@ -18643,7 +20372,15 @@ def _osint_persist_locked():
             _MEMORY_ATTRIBUTION.update_metadata(
                 record_id, {"legacyCheckpointAttempted": True})
         _memory_attribution_capture("T2")
+        seal_started_ns = time.monotonic_ns()
         sealed_blob = argus_persistent_storage.seal_checkpoint(blob)
+        _recovery_phase_a_prepare_checkpoint(
+            sealed_blob,
+            seal_duration_micros=_recovery_phase_a_elapsed_micros(
+                seal_started_ns),
+            wal_bytes=wal_state.get("bytes"),
+            wal_records=len(wal_state.get("records") or []),
+            wal_high_water=included_wal_sequence)
         verified_wal_sequence = _verified_persistent_wal_sequence()
         allow_wal_compaction = bool(
             _REMOTE_CYCLE.get("readBackVerified") is True and
@@ -20683,21 +22420,36 @@ def _osint_live_upgrade(vs, claim, now_iso, sym="GLOBAL"):
     overlap = (len(g1 & g2) / max(1, len(g1))) if g1 else 0.0
     vs = dict(vs)
     vs["fetchedTitle"] = fetched[:160] or None
-    vs["publishedAt"] = vs.get("publishedAt") or meta.get("publishedAt")
     if fetched and overlap >= 0.35:
-        age_h = argus_news_freshness.age_hours(vs.get("publishedAt"), now_iso) \
-            if vs.get("publishedAt") else None
-        vs["verificationStatus"] = "verified"
-        vs["verifiedAt"] = now_iso
-        vs["labelJa"] = "検証済み(ライブ取得)"
-        vs["primaryEligible"] = age_h is not None and age_h <= 96
+        domain = str(meta.get("domain") or "")[:60] or None
+        source_type = argus_osint_engine.industry_source_type(
+            domain or "", fetched) or "unknown"
+        trusted_index = argus_osint_engine.build_known_index([{
+            "titleJa": fetched,
+            "canonicalUrl": url,
+            # Only publication metadata actually extracted from the fetched
+            # page may supply time authority.  The scout claim and the earlier
+            # unverified projection cannot fill this field.
+            "publishedAt": meta.get("publishedAt"),
+            "sourceName": domain,
+            "provider": domain,
+            "sourceType": source_type,
+            # A matching page title proves identity, not company directness.
+            "directness": "unsupported",
+        }])
+        verified = argus_osint_engine.verify_source(
+            claim, trusted_index, now_iso)
+        verified["fetchedTitle"] = fetched[:160]
+        if verified.get("verificationStatus") == "verified":
+            verified["labelJa"] = "検証済み(ライブ取得)"
         # 恒久メモリ+今後のindexに載せる(公開安全メタのみ) — v12.1.3: useCase付きv2
-        rec = argus_osint_engine.memory_record_v2(
-            symbol=sym, use_case="source_discovery", source_url=url,
-            source_title=fetched, learned_from="gemini", verified=True,
-            now_iso=now_iso)
-        if rec:
-            _OSINT_MEMORY.append(rec)
+            rec = argus_osint_engine.memory_record_v2(
+                symbol=sym, use_case="source_discovery", source_url=url,
+                source_title=fetched, learned_from="gemini", verified=True,
+                now_iso=now_iso)
+            if rec:
+                _OSINT_MEMORY.append(rec)
+        return verified
     else:
         vs["verificationStatus"] = "metadata_only"
         vs["labelJa"] = "未検証(ライブtitle不一致)" if fetched else vs["labelJa"]
@@ -20926,7 +22678,9 @@ def _osint_build(symu, market, mode, privacy_mode, trigger, agent_runs, now_iso)
     chg = None
     for st in (q.get("stocks") or []):
         if str(st.get("symbol", "")).upper() == symu:
-            chg = st.get("changePct")
+            usable = _decision_usable_watch_quote_row(
+                st, market, require_latest_completed=True)
+            chg = (usable or {}).get("changePct")
             break
     plan = argus_osint_engine.build_query_plan(prof, move_pct=chg, extra_terms=extra)
     cands, counts, flow_hint = _osint_retrieve(symu, market, plan)
@@ -21261,6 +23015,217 @@ def api_argus_osint_deep_dive():
                                    "公開画面から外部AIは起動しません)。"})
 
 
+def _public_scalar_fields(source, names):
+    """Copy only named JSON scalars for a public product DTO."""
+    row = source if isinstance(source, dict) else {}
+    return {
+        name: row.get(name) if isinstance(
+            row.get(name), (str, int, float, bool, type(None))) else None
+        for name in names
+    }
+
+
+def _public_string_list(value, limit=24):
+    return [item[:500] for item in (value if isinstance(value, list) else [])
+            if isinstance(item, str)][:limit]
+
+
+def _public_osint_source(row):
+    if not isinstance(row, dict):
+        return None
+    return _public_scalar_fields(row, (
+        "titleJa", "url", "sourceName", "publishedAt", "ageHours",
+        "freshness", "directness", "verificationStatus", "labelJa",
+        "primaryEligible", "supportStrength", "sourceType",
+        "causalRelevance",
+    ))
+
+
+def _public_osint_investigation(investigation):
+    """Fixed public product projection; private/future fields fail closed.
+
+    The internal investigation may contain owner terms, raw agent claims,
+    private-mode markers, and future model metadata.  This route preserves the
+    verified public market-research product while constructing every nested
+    response family from an explicit key list.
+    """
+    if not isinstance(investigation, dict):
+        return None
+    inv = investigation
+    out = _public_scalar_fields(inv, (
+        "schemaVersion", "id", "symbol", "assetName", "asOf", "mode",
+        "modeJa", "investigationQuestionJa", "ownerReadableSummaryJa",
+        "freshCandidateCount", "freshCandidateAlertJa", "costLabelJa",
+        "complianceNote",
+    ))
+
+    query = inv.get("queryPlan") if isinstance(inv.get("queryPlan"), dict) else {}
+    out["queryPlan"] = {
+        "queryCount": query.get("queryCount") if isinstance(
+            query.get("queryCount"), int) and not isinstance(
+                query.get("queryCount"), bool) else 0,
+        **{key: _public_string_list(query.get(key), 32)
+           for key in ("direct", "sector", "valueChain", "globalCatalyst",
+                       "negative")},
+    }
+
+    # Agent status is public product health; raw claims/model output are not.
+    out["agentRuns"] = [
+        _public_scalar_fields(row, ("provider", "status"))
+        for row in (inv.get("agentRuns") or [])[:4] if isinstance(row, dict)
+    ]
+    out["verifiedSources"] = [projected for projected in (
+        _public_osint_source(row) for row in (inv.get("verifiedSources") or [])[:10]
+    ) if projected is not None]
+    # Unverified agent claims are deliberately not a public product payload.
+    out["rejectedSources"] = []
+
+    verdict = inv.get("catalystVerdict")
+    out["catalystVerdict"] = _public_scalar_fields(verdict, (
+        "verdict", "verdictJa", "primaryCauseJa", "confidence",
+        "sourceDiversity", "directEvidencePresent", "ownerReadableJa",
+        "whyThisMightBeWrongJa",
+    ))
+    verdict = verdict if isinstance(verdict, dict) else {}
+    for key in ("secondaryCausesJa", "rejectedCausesJa", "missingEvidenceJa"):
+        out["catalystVerdict"][key] = _public_string_list(verdict.get(key), 8)
+
+    out["contradictionReport"] = _public_string_list(
+        inv.get("contradictionReport"), 12)
+    out["missingAreasJa"] = _public_string_list(inv.get("missingAreasJa"), 12)
+    # Expansion terms can originate in raw model/owner input; keep them private.
+    out["nextResearchJa"] = []
+
+    out["coverageScore"] = _public_scalar_fields(inv.get("coverageScore"), (
+        "directCompanyCoverage", "officialDisclosureCoverage",
+        "sectorCoverage", "valueChainCoverage", "globalNewsCoverage",
+        "japaneseNewsCoverage", "agentCoverage", "totalCoverage",
+        "totalCoverageJa",
+    ))
+    out["reliabilityScore"] = _public_scalar_fields(
+        inv.get("reliabilityScore"), (
+            "sourceFreshness", "sourceDiversity", "verificationRate",
+            "directEvidence", "contradictionPenalty", "dataQualityPenalty",
+            "overall", "overallJa",
+        ))
+    benchmark = inv.get("benchmark")
+    out["benchmark"] = _public_scalar_fields(benchmark, (
+        "argusCount", "geminiCount", "gptCount", "overlapCount",
+        "geminiOnlyCount", "gptOnlyCount", "argusOnlyCount",
+        "missedByArgusCount",
+    ))
+    benchmark = benchmark if isinstance(benchmark, dict) else {}
+    out["benchmark"]["notesJa"] = _public_string_list(
+        benchmark.get("notesJa"), 12)
+
+    superiority = inv.get("superiority")
+    out["superiority"] = _public_scalar_fields(superiority, (
+        "superiorityStatus", "superiorityJa", "ownerReadableVerdictJa",
+        "unresolvedImportant", "argusOnlyVerifiedCount",
+        "verifiedOverlapCount", "sourceVerificationRate", "contextEdgeJa",
+    )) if isinstance(superiority, dict) else None
+    if isinstance(out["superiority"], dict):
+        out["superiority"]["gapProgressLinesJa"] = _public_string_list(
+            superiority.get("gapProgressLinesJa"), 12)
+
+    power = inv.get("researchPower")
+    out["researchPower"] = _public_scalar_fields(power, (
+        "geminiBaselineScore", "gptBaselineScore",
+        "bestExternalBaselineScore", "argusScore", "argusVsGeminiRatio",
+        "argusVsBestExternalRatio", "status", "statusJa", "displayJa",
+        "ownerReadableVerdictJa", "baselineType", "baselineLabelJa",
+        "baselineConfidence", "baselineRunCount", "ratioConfidence",
+        "ratioLabelJa", "publicResearchRatio",
+    )) if isinstance(power, dict) else None
+    if isinstance(out["researchPower"], dict):
+        out["researchPower"]["blockersJa"] = _public_string_list(
+            power.get("blockersJa"), 8)
+        out["researchPower"]["strengthsJa"] = _public_string_list(
+            power.get("strengthsJa"), 8)
+
+    out["gapLedger"] = []
+    for gap in (inv.get("gapLedger") or [])[:24]:
+        if not isinstance(gap, dict):
+            continue
+        projected = _public_scalar_fields(gap, (
+            "id", "claimType", "resolutionStatus", "resolutionStatusJa",
+            "providedBy", "verificationAttempts", "confidenceImpact",
+        ))
+        # Do not expose raw agent title, URL, claim, or owner-readable reason.
+        projected.update({"sourceTitle": "非公開候補", "sourceUrl": None,
+                          "resolutionReasonJa": "詳細は運用診断で確認"})
+        out["gapLedger"].append(projected)
+
+    out["sourceCoverage"] = [
+        _public_scalar_fields(row, (
+            "key", "labelJa", "state", "resultCount", "coverageImpact"))
+        for row in (inv.get("sourceCoverage") or [])[:32]
+        if isinstance(row, dict)
+    ]
+    out["coverageGuardsJa"] = _public_string_list(
+        inv.get("coverageGuardsJa"), 12)
+    graph = inv.get("valueChainGraph")
+    out["valueChainGraph"] = _public_scalar_fields(graph, (
+        "symbol", "company", "sector", "incomplete", "incompleteNoteJa",
+    )) if isinstance(graph, dict) else None
+    if isinstance(out["valueChainGraph"], dict):
+        for key in ("products", "technologies", "competitors",
+                    "adjacentThemes", "globalRelatedCompanies",
+                    "macroSensitivities", "queryExpansions"):
+            out["valueChainGraph"][key] = _public_string_list(graph.get(key), 24)
+    context = inv.get("valueChainContext")
+    out["valueChainContext"] = _public_scalar_fields(context, (
+        "theme", "labelJa", "cautionJa",
+    )) if isinstance(context, dict) else None
+    if isinstance(out["valueChainContext"], dict):
+        out["valueChainContext"]["queryExpansions"] = _public_string_list(
+            context.get("queryExpansions"), 20)
+    report = inv.get("contradictionReportV2")
+    out["contradictionReportV2"] = _public_scalar_fields(report, (
+        "directEvidenceAbsent", "themeInferenceOnly", "priceOnlyNarrativeRisk",
+        "agentDisagreement", "staleEvidencePresent", "unsupportedClaims",
+    )) if isinstance(report, dict) else None
+    if isinstance(out["contradictionReportV2"], dict):
+        out["contradictionReportV2"]["ownerReadableWarningsJa"] = \
+            _public_string_list(report.get("ownerReadableWarningsJa"), 12)
+    out["sourceUniverse"] = [
+        _public_scalar_fields(row, ("key", "labelJa", "availability", "noteJa"))
+        for row in (inv.get("sourceUniverse") or [])[:32]
+        if isinstance(row, dict)
+    ]
+    out["primarySourceChecks"] = [
+        _public_scalar_fields(row, (
+            "sourceCategory", "sourceCategoryJa", "status", "resultCount",
+            "verifiedResultCount", "ownerReadableJa"))
+        for row in (inv.get("primarySourceChecks") or [])[:32]
+        if isinstance(row, dict)
+    ]
+    out["primaryAbsenceGuardsJa"] = _public_string_list(
+        inv.get("primaryAbsenceGuardsJa"), 12)
+    causal = inv.get("causalRelevanceSummary")
+    out["causalRelevanceSummary"] = _public_scalar_fields(causal, (
+        "hasHighRelevance", "weakCausalOnly", "ownerReadableJa",
+    )) if isinstance(causal, dict) else None
+    # OwnerConclusion and private-mode/source-acquisition detail remain internal.
+    out["ownerConclusion"] = None
+    out["budget"] = _public_scalar_fields(inv.get("budget"), (
+        "maxUrls", "maxLoops", "maxSeconds", "maxCostLabel",
+    )) if isinstance(inv.get("budget"), dict) else None
+    return out
+
+
+def _public_osint_progress(progress):
+    if not isinstance(progress, dict):
+        return None
+    out = _public_scalar_fields(progress, ("stage", "loop", "maxLoops", "at"))
+    out["notesJa"] = []
+    autopilot = progress.get("autopilot")
+    out["autopilot"] = _public_scalar_fields(autopilot, (
+        "doneCount", "totalStages", "status",
+    )) if isinstance(autopilot, dict) else None
+    return out
+
+
 @app.route("/api/argus/osint/investigation")
 def api_argus_osint_investigation():
     """公開GET: 最新のOSINT調査(cached-only・redacted設計)。無ければ正直にnone。"""
@@ -21268,8 +23233,8 @@ def api_argus_osint_investigation():
     _osint_restore_once()
     inv = _OSINT_STORE.get(sym)
     return jsonify({"status": "live" if inv else "none", "symbol": sym or None,
-                    "investigation": inv,
-                    "progress": _OSINT_PROGRESS.get(sym),
+                    "investigation": _public_osint_investigation(inv),
+                    "progress": _public_osint_progress(_OSINT_PROGRESS.get(sym)),
                     "queuePosition": (list(_OSINT_AGENT_QUEUE.keys()).index(sym) + 1
                                       if sym in _OSINT_AGENT_QUEUE else None),
                     "nextCronEtaMin": _osint_next_cron_eta_min() if sym in _OSINT_AGENT_QUEUE else None,
@@ -21633,6 +23598,7 @@ def _append_tick_wal(kind, payload):
     if not _mission_tick_context_active():
         return None
     sequence = int(_MISSION_TICK_CONTEXT.get("walSequence") or 0) + 1
+    measurement = _recovery_phase_a_begin_wal_observation(kind)
     started = time.monotonic()
     record = argus_tick_durability.append_wal(
         _MISSION_WAL_FILE, sequence=sequence, kind=kind,
@@ -21640,15 +23606,21 @@ def _append_tick_wal(kind, payload):
                                     "mission-tick"),
         mission_window_id=_MISSION_TICK_CONTEXT.get("missionWindowId"),
         build_sha=os.environ.get("RENDER_GIT_COMMIT") or _backend_sha())
-    _MISSION_TICK_CONTEXT["walSequence"] = sequence
-    _MISSION_TICK_CONTEXT["walEventCount"] = int(
-        _MISSION_TICK_CONTEXT.get("walEventCount") or 0) + 1
-    _MISSION_TICK_CONTEXT["walAppendMs"] = round(
-        float(_MISSION_TICK_CONTEXT.get("walAppendMs") or 0) +
-        (time.monotonic() - started) * 1000, 3)
-    lease = _MISSION_TICK_CONTEXT.get("lease")
-    if lease is not None:
-        lease.heartbeat()
+    append_elapsed_ms = (time.monotonic() - started) * 1000
+    measurement = _recovery_phase_a_complete_wal_observation(
+        measurement, sequence)
+    try:
+        _MISSION_TICK_CONTEXT["walSequence"] = sequence
+        _MISSION_TICK_CONTEXT["walEventCount"] = int(
+            _MISSION_TICK_CONTEXT.get("walEventCount") or 0) + 1
+        _MISSION_TICK_CONTEXT["walAppendMs"] = round(
+            float(_MISSION_TICK_CONTEXT.get("walAppendMs") or 0) +
+            append_elapsed_ms, 3)
+        lease = _MISSION_TICK_CONTEXT.get("lease")
+        if lease is not None:
+            lease.heartbeat()
+    finally:
+        _recovery_phase_a_finish_wal_observation(measurement, sequence)
     return record
 
 
@@ -21705,6 +23677,9 @@ def _next_ops_sequence(aggregate_key):
 def _journal(event_type, agg_type, agg_id, payload, origin="scheduler"):
     """クリティカル遷移の即時ジャーナル(ローカル即時+30分ledger flush)。
     遷移コードからのみ呼ぶ — Data Quality等の公開GETからは呼ばない。"""
+    measurement = _recovery_phase_a_begin_journal_observation()
+    authority_completed = False
+    sequence = None
     try:
         key = f"{agg_type}:{agg_id}"
         sequence = _next_ops_sequence(key)
@@ -21719,11 +23694,18 @@ def _journal(event_type, agg_type, agg_id, payload, origin="scheduler"):
                     "journalEvent": copy.deepcopy(ev),
                     "aggregatePatch": _journal_aggregate_patch(
                         agg_type, agg_id, payload)})
+                authority_completed = True
             else:
-                _osint_persist()
+                checkpoint = _osint_persist()
+                authority_completed = bool(
+                    isinstance(checkpoint, dict) and
+                    checkpoint.get("verified") is True)
     except Exception:
         if _mission_tick_context_active():
             raise
+    if authority_completed:
+        _recovery_phase_a_finish_journal_observation(
+            measurement, sequence)
 
 
 # ── v12.2.9 Runtime Truth: 起動アイデンティティ/即時復元/readyz ────────────────
@@ -21735,6 +23717,449 @@ def _backend_sha():
 def _backend_exact_sha():
     value = os.environ.get("RENDER_GIT_COMMIT", "").strip().lower()
     return value if re.fullmatch(r"[0-9a-f]{40}", value) else None
+
+
+def _recovery_phase_a_instance():
+    """Initialize the optional adapter once; never affect runtime authority."""
+    global _RECOVERY_PHASE_A_ADAPTER
+    current = _RECOVERY_PHASE_A_ADAPTER
+    if current is _RECOVERY_PHASE_A_UNAVAILABLE:
+        return None
+    if current is not None:
+        return current
+    with _RECOVERY_PHASE_A_INIT_LOCK:
+        current = _RECOVERY_PHASE_A_ADAPTER
+        if current is _RECOVERY_PHASE_A_UNAVAILABLE:
+            return None
+        if current is not None:
+            return current
+        try:
+            current = argus_recovery_phase_a_adapter.RecoveryPhaseAAdapter(
+                producer_build_sha=_backend_exact_sha(),
+                started_at=datetime.now(pytz.utc),
+                feature_flag_value=os.environ.get(
+                    argus_recovery_phase_a_adapter.FEATURE_FLAG_NAME))
+        except Exception:
+            _RECOVERY_PHASE_A_ADAPTER = _RECOVERY_PHASE_A_UNAVAILABLE
+            return None
+        _RECOVERY_PHASE_A_ADAPTER = current
+        return current
+
+
+def _recovery_phase_a_null_proof():
+    """Obtain only the adapter's no-input, fail-closed proof document."""
+    fallback = {"status": "NOT_PROVEN", "hardRpoClaimPermitted": False}
+    try:
+        result = argus_recovery_phase_a_adapter.null_recovery_proof_document()
+        if type(result) is dict and set(result) == set(fallback) and \
+                result.get("status") == "NOT_PROVEN" and \
+                result.get("hardRpoClaimPermitted") is False:
+            return dict(result)
+    except Exception:
+        pass
+    return fallback
+
+
+def _recovery_phase_a_bind_null_proof(payload):
+    """Reapply null truth to an existing fixed-shape diagnostics DTO."""
+    try:
+        if type(payload) is not dict:
+            return payload
+        result = None
+        for container_name in ("recovery", "features"):
+            target = payload.get(container_name)
+            if type(target) is not dict:
+                continue
+            if "exactColdRecovery" in target:
+                result = result or _recovery_phase_a_null_proof()
+                target["exactColdRecovery"] = result["status"]
+            if "hardRpoClaimPermitted" in target:
+                result = result or _recovery_phase_a_null_proof()
+                target["hardRpoClaimPermitted"] = \
+                    result["hardRpoClaimPermitted"]
+    except Exception:
+        pass
+    return payload
+
+
+def _recovery_phase_a_scalar(value):
+    return value if type(value) is int and 0 <= value <= (1 << 53) - 1 \
+        else None
+
+
+def _recovery_phase_a_peak_rss_bytes():
+    """Return ru_maxrss in bytes (Darwin reports bytes; Linux reports KiB)."""
+    try:
+        raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        if type(raw) not in (int, float) or isinstance(raw, bool) or raw < 0:
+            return None
+        value = int(raw) if sys.platform == "darwin" else int(raw * 1024)
+        return _recovery_phase_a_scalar(value)
+    except Exception:
+        return None
+
+
+def _recovery_phase_a_datetime(value):
+    if type(value) is datetime and value.tzinfo is not None:
+        return value
+    if type(value) is not str or len(value) > 40:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def _recovery_phase_a_elapsed_micros(started_ns):
+    if type(started_ns) is not int:
+        return 0
+    return min((1 << 53) - 1,
+               max(0, (time.monotonic_ns() - started_ns) // 1000))
+
+
+def _recovery_phase_a_file_size(path):
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return None
+    return _recovery_phase_a_scalar(size)
+
+
+def _recovery_phase_a_pre_authority_observer_enabled():
+    """Pure gate: never acquire an optional diagnostics lock before authority."""
+    try:
+        adapter = _RECOVERY_PHASE_A_ADAPTER
+        return bool(
+            adapter is not None and
+            adapter is not _RECOVERY_PHASE_A_UNAVAILABLE and
+            os.environ.get(
+                argus_recovery_phase_a_adapter.FEATURE_FLAG_NAME) ==
+            argus_recovery_phase_a_adapter.FEATURE_FLAG_ENABLED_VALUE and
+            _backend_exact_sha() is not None)
+    except Exception:
+        return False
+
+
+def _recovery_phase_a_begin_wal_observation(kind):
+    """Prepare an optional scalar observation without touching WAL authority."""
+    try:
+        mutation_class_id = {
+            "mission_transition": "core.mission_transition",
+            "batch_cursor": "core.batch_cursor",
+        }.get(kind)
+        if mutation_class_id is None or not \
+                _recovery_phase_a_pre_authority_observer_enabled():
+            return None
+        cursor_sequence = _recovery_phase_a_scalar(
+            _MISSION_TICK_CONTEXT.get("recoveryMeasurementWalSequence"))
+        current_sequence = _recovery_phase_a_scalar(
+            _MISSION_TICK_CONTEXT.get("walSequence"))
+        before_bytes = _recovery_phase_a_scalar(
+            _MISSION_TICK_CONTEXT.get("recoveryMeasurementWalBytes")) \
+            if cursor_sequence == current_sequence else None
+        return (mutation_class_id,
+                before_bytes,
+                time.monotonic_ns())
+    except Exception:
+        return None
+
+
+def _recovery_phase_a_complete_wal_observation(observation, sequence):
+    """Freeze append-only scalars immediately after WAL authority returns."""
+    try:
+        if type(observation) is not tuple or len(observation) != 3:
+            return None
+        mutation_class_id, before_bytes, started_ns = observation
+        completed_ns = time.monotonic_ns()
+        after_bytes = _recovery_phase_a_file_size(_MISSION_WAL_FILE)
+        if after_bytes is not None:
+            _MISSION_TICK_CONTEXT["recoveryMeasurementWalBytes"] = after_bytes
+            _MISSION_TICK_CONTEXT["recoveryMeasurementWalSequence"] = sequence
+        estimated_bytes = max(0, after_bytes - before_bytes) if \
+            before_bytes is not None and after_bytes is not None else 0
+        latency_micros = min(
+            (1 << 53) - 1, max(0, (completed_ns - started_ns) // 1000))
+        return mutation_class_id, estimated_bytes, latency_micros
+    except Exception:
+        return None
+
+
+def _recovery_phase_a_finish_wal_observation(observation, sequence):
+    """Record only after the existing WAL path has completed successfully."""
+    try:
+        if type(observation) is not tuple or len(observation) != 3:
+            return
+        mutation_class_id, estimated_bytes, latency_micros = observation
+        if mutation_class_id not in (
+                "core.mission_transition", "core.batch_cursor"):
+            return
+        _recovery_phase_a_record(
+            mutation_class_id,
+            estimated_plaintext_bytes=estimated_bytes,
+            record_count=1,
+            latency_micros=latency_micros,
+            observed_at=datetime.now(pytz.utc),
+            local_sequence=sequence)
+    except Exception:
+        pass
+
+
+def _recovery_phase_a_begin_journal_observation():
+    try:
+        if not _recovery_phase_a_pre_authority_observer_enabled():
+            return None
+        return time.monotonic_ns()
+    except Exception:
+        return None
+
+
+def _recovery_phase_a_finish_journal_observation(started_ns, sequence=None):
+    try:
+        if type(started_ns) is not int:
+            return
+        _recovery_phase_a_record(
+            "core.ops_journal_transition",
+            estimated_plaintext_bytes=0, record_count=1,
+            latency_micros=_recovery_phase_a_elapsed_micros(started_ns),
+            observed_at=datetime.now(pytz.utc),
+            local_sequence=_recovery_phase_a_scalar(sequence))
+    except Exception:
+        pass
+
+
+def _recovery_phase_a_record(
+        mutation_class_id, *, estimated_plaintext_bytes=0, record_count=1,
+        latency_micros=0, observed_at=None, local_sequence=None):
+    """Send bounded scalars after authority; swallow every adapter failure."""
+    try:
+        adapter = _recovery_phase_a_instance()
+        if adapter is None:
+            return
+        observed = observed_at or datetime.now(pytz.utc)
+        if _recovery_phase_a_datetime(observed) is None:
+            return
+        adapter.record_mutation_after_authority(
+            mutation_class_id,
+            estimated_plaintext_bytes=estimated_plaintext_bytes,
+            record_count=record_count, latency_micros=latency_micros,
+            observed_at=observed, local_sequence=local_sequence)
+    except Exception:
+        pass
+
+
+def _recovery_phase_a_take_checkpoint():
+    try:
+        return _RECOVERY_PHASE_A_CHECKPOINT_LOCAL.__dict__.pop(
+            "pending", None)
+    except Exception:
+        return None
+
+
+def _recovery_phase_a_abandon_checkpoint():
+    pending = _recovery_phase_a_take_checkpoint()
+    if type(pending) is not tuple or not pending:
+        return
+    try:
+        adapter = _recovery_phase_a_instance()
+        if adapter is not None:
+            adapter.abandon_checkpoint(pending[0])
+    except Exception:
+        pass
+
+
+def _recovery_phase_a_prepare_checkpoint(
+        sealed_checkpoint, *, seal_duration_micros,
+        wal_bytes, wal_records, wal_high_water):
+    """Account the exact live sealed mapping and retain scalar results only."""
+    _recovery_phase_a_abandon_checkpoint()
+    adapter = None
+    sampling = None
+    try:
+        jp_boundary = _MISSION_TICK_CONTEXT.get(
+            "recoveryMeasurementJPPostSession") is True
+        us_boundary = _MISSION_TICK_CONTEXT.get(
+            "recoveryMeasurementUSPostSession") is True
+        owner_authorized = _MISSION_TICK_CONTEXT.get(
+            "recoveryMeasurementOwnerAuthorized") is True
+        _MISSION_TICK_CONTEXT["recoveryMeasurementJPPostSession"] = False
+        _MISSION_TICK_CONTEXT["recoveryMeasurementUSPostSession"] = False
+        _MISSION_TICK_CONTEXT["recoveryMeasurementOwnerAuthorized"] = False
+        adapter = _recovery_phase_a_instance()
+        if adapter is None:
+            return
+        observed = datetime.now(pytz.utc)
+        sampling = adapter.checkpoint_sampling_decision(
+            observed_at=observed,
+            jp_session_boundary=jp_boundary,
+            us_session_boundary=us_boundary,
+            owner_authorized=owner_authorized)
+        if sampling.generation_id is None:
+            return
+        accounting = adapter.account_checkpoint(
+            sealed_checkpoint, sampling) if sampling.requested else None
+        bounded = tuple(
+            value if _recovery_phase_a_scalar(value) is not None else 0
+            for value in (
+                seal_duration_micros, wal_bytes,
+                wal_records, wal_high_water))
+        _RECOVERY_PHASE_A_CHECKPOINT_LOCAL.pending = (
+            sampling, accounting, *bounded)
+    except Exception:
+        _recovery_phase_a_take_checkpoint()
+        try:
+            if adapter is not None and sampling is not None:
+                adapter.abandon_checkpoint(sampling)
+        except Exception:
+            pass
+
+
+def _recovery_phase_a_finalize_checkpoint(checkpoint):
+    """Persist diagnostics only after existing checkpoint authority unlocks."""
+    pending = _recovery_phase_a_take_checkpoint()
+    if type(pending) is not tuple or len(pending) != 6:
+        return
+    sampling, accounting, seal_micros, pre_wal_bytes, \
+        pre_wal_records, pre_wal_high_water = pending
+    adapter = None
+    try:
+        adapter = _recovery_phase_a_instance()
+        if adapter is None or type(checkpoint) is not dict or \
+                checkpoint.get("verified") is not True:
+            return
+        snapshot_bytes = _recovery_phase_a_scalar(
+            checkpoint.get("snapshotBytes"))
+        if snapshot_bytes is None:
+            return
+        wal = checkpoint.get("walCompaction")
+        if type(wal) is dict:
+            local_wal_bytes = _recovery_phase_a_scalar(wal.get("bytes"))
+            local_wal_records = _recovery_phase_a_scalar(
+                wal.get("remainingRecords"))
+            local_wal_high_water = _recovery_phase_a_scalar(
+                wal.get("receiptSequence"))
+        else:
+            local_wal_bytes = local_wal_records = local_wal_high_water = None
+        local_wal_bytes = pre_wal_bytes if local_wal_bytes is None \
+            else local_wal_bytes
+        local_wal_records = pre_wal_records if local_wal_records is None \
+            else local_wal_records
+        local_wal_high_water = pre_wal_high_water \
+            if local_wal_high_water is None else local_wal_high_water
+        observed = datetime.now(pytz.utc)
+        ack_sequence = _recovery_phase_a_scalar(
+            _REMOTE_CYCLE.get("verifiedWalSequence"))
+        ack_at = _recovery_phase_a_datetime(
+            _REMOTE_ACK.get("lastVerifiedRemoteAckAt"))
+        if _REMOTE_CYCLE.get("readBackVerified") is not True or \
+                ack_sequence is None or ack_at is None or \
+                ack_sequence > local_wal_high_water or ack_at > observed:
+            ack_sequence = None
+            ack_at = None
+        peak_rss = _recovery_phase_a_peak_rss_bytes()
+        adapter.record_checkpoint_after_authority(
+            observed_at=observed, sampling=sampling,
+            accounting=accounting,
+            checkpoint_serialized_bytes=snapshot_bytes,
+            serialization_duration_micros=(
+                argus_recovery_phase_a_adapter.UNOBSERVED_DURATION_MICROS),
+            write_seal_duration_micros=seal_micros,
+            fsync_readback_duration_micros=(
+                argus_recovery_phase_a_adapter
+                .UNOBSERVED_FSYNC_READBACK_DURATION_MICROS),
+            peak_rss_bytes=peak_rss,
+            local_wal_bytes=local_wal_bytes,
+            local_wal_records=local_wal_records,
+            local_wal_high_water=local_wal_high_water,
+            legacy_remote_ack_sequence=ack_sequence,
+            legacy_remote_ack_at=ack_at)
+    except Exception:
+        pass
+    finally:
+        # Success consumes the token in the adapter; every other return or
+        # exception is explicitly released. Abandon-after-consume is a
+        # bounded no-op.
+        try:
+            if adapter is not None:
+                adapter.abandon_checkpoint(sampling)
+        except Exception:
+            pass
+
+
+def _recovery_phase_a_mark_post_session(mission):
+    """Mark only an already-persisted JP/US post-session mission."""
+    try:
+        if type(mission) is not dict or \
+                mission.get("missionType") != "post_session_snapshot":
+            return
+        market = mission.get("market")
+        if market == "JP":
+            _MISSION_TICK_CONTEXT["recoveryMeasurementJPPostSession"] = True
+        elif market == "US":
+            _MISSION_TICK_CONTEXT["recoveryMeasurementUSPostSession"] = True
+    except Exception:
+        pass
+
+
+def _recovery_phase_a_record_verified_receipt(result, observed_at):
+    """Observe only the already-completed verified receipt-drain boundary."""
+    try:
+        if type(result) is not dict or result.get("status") != "verified":
+            return
+        record_count = _recovery_phase_a_scalar(
+            result.get("coalescedReceiptCount"))
+        duration_ms = result.get("flushDurationMs")
+        latency_micros = 0
+        if type(duration_ms) in (int, float) and \
+                not isinstance(duration_ms, bool) and \
+                math.isfinite(duration_ms) and duration_ms >= 0:
+            latency_micros = min(
+                (1 << 53) - 1, int(round(duration_ms * 1000)))
+        _recovery_phase_a_record(
+            "durability.receipt_ack", estimated_plaintext_bytes=0,
+            record_count=record_count if record_count is not None else 0,
+            latency_micros=latency_micros,
+            observed_at=_recovery_phase_a_datetime(observed_at) or
+                datetime.now(pytz.utc),
+            local_sequence=_recovery_phase_a_scalar(
+                result.get("verifiedWalSequence")))
+    except Exception:
+        pass
+
+
+def _recovery_phase_a_owner_sampling_authorized(body, admin_authorized):
+    """Require the existing server-side admin gate and exact build pin."""
+    try:
+        if admin_authorized is not True or type(body) is not dict or \
+                body.get("diagnostic") is not True:
+            return False
+        expected = str(body.get("expectedBuildSha") or "").lower()
+        return bool(re.fullmatch(r"[0-9a-f]{40}", expected) and
+                    expected == str(_backend_exact_sha() or "").lower())
+    except Exception:
+        return False
+
+
+def _recovery_phase_a_record_startup_if_ready():
+    global _RECOVERY_PHASE_A_STARTUP_RECORDED
+    if _STARTUP.get("state") not in ("ready", "ready_degraded"):
+        return
+    with _RECOVERY_PHASE_A_INIT_LOCK:
+        if _RECOVERY_PHASE_A_STARTUP_RECORDED:
+            return
+        _RECOVERY_PHASE_A_STARTUP_RECORDED = True
+    duration_ms = _recovery_phase_a_scalar(
+        _STARTUP.get("restoreDurationMs"))
+    duration_micros = min(
+        (1 << 53) - 1, (duration_ms or 0) * 1000)
+    observed = _recovery_phase_a_datetime(
+        _STARTUP.get("restoreCompletedAt")) or datetime.now(pytz.utc)
+    sequence = _recovery_phase_a_scalar(
+        _MISSION_BATCH_STATE.get("walAppliedSequence"))
+    _recovery_phase_a_record(
+        "startup.restore_transition", estimated_plaintext_bytes=0,
+        record_count=1, latency_micros=duration_micros,
+        observed_at=observed, local_sequence=sequence)
 
 
 _RUNTIME = {"processBootedAt": datetime.now(TZ_JST).isoformat(),
@@ -21798,6 +24223,7 @@ def _startup_bootstrap():
     last-known-goodを破壊しない。"""
     if _STARTUP["state"] != "bootstrapping":
         return
+    _recovery_phase_a_instance()
     _STARTUP["state"] = "loading_local"
     _STARTUP["restoreStartedAt"] = _ai_now_iso()
     if not _RUNTIME["buildFirstObservedAt"]:
@@ -21814,6 +24240,11 @@ def _startup_bootstrap():
     try:
         _STARTUP["state"] = "loading_remote"
         _osint_restore_once()
+        # Event state is part of process bootstrap, never an incidental public
+        # status-read side effect. The restore also warms _EVENT_SNAP_META.
+        _events_restore_once()
+        if _AI_JUDGE_ENABLED and (_OPENAI_API_KEY or GEMINI_API_KEY):
+            _ai_cached_result()
         _STARTUP["state"] = "reconciling"      # 冪等キー照合は復元内で実施済み
     except Exception:
         pass
@@ -21857,6 +24288,7 @@ def _startup_bootstrap():
                   "buildSha": _SOAK.get("buildSha") or
                   (_SOAK.get("previousSoak") or {}).get("buildSha") or
                   "unknown"})
+    _recovery_phase_a_record_startup_if_ready()
 
 
 @app.before_request
@@ -21932,39 +24364,27 @@ def _formal_soak_public_projection():
 
 @app.route("/readyz")
 def readyz():
-    """運用readiness(/healthz=livenessと分離)。ready=200・復元中/破損=503。
-    秘密なし・redacted理由のみ。Renderのhealth check設定変更はしない(準備のみ)。"""
-    payload, code = argus_runtime.readyz_view(
-        startup_state=_STARTUP["state"],
-        app_version=_semantic_app_version(),
-        build_sha=_backend_exact_sha(),
-        restore_outcome=_STARTUP.get("restoreOutcome"),
-        blocker_ja=_STARTUP.get("blockerJa"), now_iso=_ai_now_iso())
-    payload["persistentStorage"] = argus_persistent_storage.public_diagnostics(
-        _DURABLE_STORAGE_STATUS, _DURABILITY_PATHS,
-        production=_DURABILITY_PRODUCTION)
-    payload["checkpointV2"] = dict(_CHECKPOINT_V2_STATUS)
-    formal_soak = _formal_soak_public_projection()
-    payload["checkpointV2Stage1"] = {
-        "checkpointMode": formal_soak["checkpointMode"],
-        "formalSoakArmed": formal_soak["armed"],
-        "formalSoakArmState": formal_soak["armState"],
-        "formalSoakState": formal_soak["activeRuntime"]["state"],
-        "formalSoak": formal_soak,
-        "validationWindowCount": int(
-            _CHECKPOINT_V2_STAGE1_CONTROL.get("validationWindowCount") or 0),
-        "generationCount": int(
-            _CHECKPOINT_V2_STAGE1_CONTROL.get("generationCount") or 0),
-        "naturalGenerationCount": len(
-            _CHECKPOINT_V2_STAGE1_CONTROL.get("naturalGenerations") or []),
-        "resourceAcceptance": argus_checkpoint_v2_stage1.resource_acceptance(
-            _CHECKPOINT_V2_STAGE1_CONTROL),
-        "legacyRestoreAuthority": True,
-        "v2RestoreAuthority": False,
-        "authorityPromotionBlocked": bool(
-            _CHECKPOINT_V2_STAGE1_CONTROL.get(
-                "authorityPromotionBlocked")),
-    }
+    """Minimal public readiness/build identity with unchanged 200/503 truth."""
+    now_iso = _ai_now_iso()
+    ready, reason_code = _diagnostic_readiness_truth()
+    code = 200 if ready else 503
+    try:
+        payload = argus_diagnostics_contract.build_public_readiness(
+            generated_at=now_iso,
+            backend_version=_semantic_app_version(),
+            build_sha=_backend_exact_sha(), ready=ready,
+            reason_code=reason_code)
+    except Exception:
+        payload = {
+            "schemaVersion": "argus-public-readiness-v1",
+            "generatedAt": now_iso,
+            "ready": False,
+            "status": "not_ready",
+            "reasonCode": "NOT_READY",
+            "backendVersion": "unknown",
+            "buildSha": None,
+        }
+        code = 503
     return jsonify(payload), code
 
 
@@ -22643,6 +25063,8 @@ def _persist_with_remote_receipt_drain(now_iso=None):
             _REMOTE_RECEIPT_FLUSH_LOCK.release()
             plan["lockHeld"] = False
         raise
+    _recovery_phase_a_record_verified_receipt(
+        result, datetime.now(pytz.utc))
     checkpoint["remoteReceiptFlush"] = result
     return checkpoint
 
@@ -23244,6 +25666,13 @@ def api_argus_admin_missions_tick():
             "memoryAttributionRecordId": None,
             "walAppendMs": 0,
             "ownerThread": threading.get_ident(),
+            "recoveryMeasurementJPPostSession": False,
+            "recoveryMeasurementUSPostSession": False,
+            "recoveryMeasurementOwnerAuthorized": False,
+            "recoveryMeasurementWalBytes": _recovery_phase_a_scalar(
+                wal.get("bytes")),
+            "recoveryMeasurementWalSequence": _recovery_phase_a_scalar(
+                wal.get("maximumSequence")),
         })
         try:
             result = _api_argus_admin_missions_tick_impl()
@@ -23257,6 +25686,7 @@ def api_argus_admin_missions_tick():
         _memory_attribution_finish_mission(mission_complete=True)
         return result
     finally:
+        measurement_checkpoint = _MISSION_TICK_CONTEXT.get("checkpoint")
         record_id = _memory_attribution_record_id()
         _MISSION_TICK_CONTEXT["active"] = False
         _MISSION_TICK_CONTEXT["lease"] = None
@@ -23271,8 +25701,14 @@ def api_argus_admin_missions_tick():
         _MISSION_TICK_CONTEXT["memoryAttributionRecordId"] = None
         _MISSION_TICK_CONTEXT["memoryAttributionT0"] = None
         _MISSION_TICK_CONTEXT["memoryAttributionPrelude"] = None
+        _MISSION_TICK_CONTEXT["recoveryMeasurementJPPostSession"] = False
+        _MISSION_TICK_CONTEXT["recoveryMeasurementUSPostSession"] = False
+        _MISSION_TICK_CONTEXT["recoveryMeasurementOwnerAuthorized"] = False
+        _MISSION_TICK_CONTEXT["recoveryMeasurementWalBytes"] = None
+        _MISSION_TICK_CONTEXT["recoveryMeasurementWalSequence"] = None
         lease.release()
         _DURABLE_CHECKPOINT_LOCK.release()
+        _recovery_phase_a_finalize_checkpoint(measurement_checkpoint)
 
 
 def _api_argus_admin_missions_tick_impl():
@@ -23284,6 +25720,8 @@ def _api_argus_admin_missions_tick_impl():
     body = request.get_json(silent=True) or {}
     if not isinstance(body, dict):
         body = {}
+    _MISSION_TICK_CONTEXT["recoveryMeasurementOwnerAuthorized"] = \
+        _recovery_phase_a_owner_sampling_authorized(body, ok)
     batch_started = time.monotonic()
     cursor_before = int(_MISSION_BATCH_STATE.get("cursor") or 0)
     max_missions = min(50, _outcome_policy_seconds(
@@ -23760,6 +26198,7 @@ def _api_argus_admin_missions_tick_impl():
                 argus_scheduler.complete(m, now_iso)
             _persist_mission_transition(
                 m, cursor=int(_MISSION_BATCH_STATE.get("cursor") or 0) + 1)
+            _recovery_phase_a_mark_post_session(m)
             executed.append(m["missionId"])
             processed_missions += 1
             _memory_operation_complete(
@@ -25145,12 +27584,6 @@ def _research_benchmark_v2_job_worker(job_id):
         _osint_persist()
 
 
-@app.route("/api/argus/research-benchmark/v2")
-def api_argus_research_benchmark_v2_status():
-    return jsonify(argus_research_benchmark_v2.public_status(
-        _FORMAL_BENCHMARK_V2))
-
-
 @app.route("/api/argus/research-benchmark")
 def api_argus_research_benchmark_status():
     """Public-safe result summary. GET never starts or resumes a benchmark."""
@@ -26216,10 +28649,11 @@ def api_argus_admin_cost_policy():
 
 @app.route("/api/argus/market-ledger")
 def api_argus_market_ledger_view():
-    now_iso = _ai_now_iso()
+    session_now = datetime.now(pytz.utc).replace(microsecond=0)
+    now_iso = session_now.strftime("%Y-%m-%dT%H:%M:%SZ")
     view = argus_market_ledger.public_view(_MARKET_LEDGER, now_iso)
     view["remoteReadBack"] = dict(_MARKET_LEDGER_REMOTE)
-    calendar = {label: argus_market_clock.market_session(market, datetime.now(pytz.utc))
+    calendar = {label: argus_market_clock.market_session(market, session_now)
                 for label, market in (("JP", argus_market_clock.JP_EQUITY),
                                       ("US", argus_market_clock.US_EQUITY),
                                       ("FX", argus_market_clock.FX),
@@ -26233,8 +28667,37 @@ def api_argus_market_ledger_view():
     return jsonify(argus_market_intelligence.normalize_public_names(view))
 
 
-def _chart_rows_from_history(history):
-    """Convert an existing newest-first provider cache to public-safe OHLCV."""
+def _history_cache_known_at(cache, ttl):
+    """Exact/conservative acquisition time for one provider-cache revision."""
+    if not isinstance(cache, dict):
+        return None
+    exact = str(cache.get("acquiredAt") or "").strip()
+    if exact:
+        try:
+            parsed = datetime.fromisoformat(exact.replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                return parsed.astimezone(pytz.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%S.%fZ")
+        except (TypeError, ValueError):
+            pass
+    try:
+        acquired = float(cache.get("expires")) - float(ttl)
+        if acquired > 0:
+            return datetime.fromtimestamp(acquired, pytz.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S.%fZ")
+    except (TypeError, ValueError, OverflowError, OSError):
+        pass
+    return None
+
+
+def _chart_rows_from_history(history, *, market, provider, known_at,
+                             dataset_id):
+    """Convert a provider-cache revision without backdating its knowledge.
+
+    Historical bars imported in one response are first knowable to ARGUS when
+    that response/cache revision was acquired.  Their market dates are not
+    silently reused as publication timestamps.
+    """
     if not isinstance(history, dict):
         return []
     dates = history.get("dates") or []
@@ -26244,16 +28707,27 @@ def _chart_rows_from_history(history):
     closes = history.get("closes") or []
     volumes = history.get("volumes") or []
     adjusted = history.get("adjusted") or []
+    revision = _canonical_truth_revision(known_at) if known_at else 0
     out = []
     for i, date in enumerate(dates):
         if i >= len(closes):
             break
+        observed_at = _canonical_truth_iso(
+            date, market, date_means_close=True)
         out.append({"date": date, "open": opens[i] if i < len(opens) else None,
                     "high": highs[i] if i < len(highs) else None,
                     "low": lows[i] if i < len(lows) else None,
                     "close": closes[i], "volume": volumes[i] if i < len(volumes) else None,
                     "adjusted": adjusted[i] if i < len(adjusted) else False,
-                    "sourceId": f"price:{date}", "availableFrom": str(date)[:10]})
+                    "source": provider,
+                    "sourceId": f"price:{provider}:{date}",
+                    "datasetId": dataset_id,
+                    "observedAt": observed_at,
+                    "knownAt": known_at,
+                    "revision": revision,
+                    # Retained for legacy display only; PIT admission uses the
+                    # exact knownAt above, never this date-only label.
+                    "availableFrom": str(date)[:10]})
     return out
 
 
@@ -26278,13 +28752,28 @@ def _chart_weekly_rows(rows):
             item["close"] = row.get("close")
             item["volume"] = (item.get("volume") or 0) + (row.get("volume") or 0)
             item["availableFrom"] = row.get("availableFrom") or row.get("date")
+            item["knownAt"] = max(str(item.get("knownAt") or ""),
+                                  str(row.get("knownAt") or "")) or None
+            item["observedAt"] = row.get("observedAt")
+            item["revision"] = max(int(item.get("revision") or 0),
+                                   int(row.get("revision") or 0))
     return list(weekly.values())
 
 
 def _chart_history(symbol, market):
     if market == "JP":
-        return _chart_rows_from_history(_jq_price_history(symbol[:4]))
-    return _chart_rows_from_history(_td_price_history(symbol))
+        history = _jq_price_history(symbol[:4])
+        cache = _JQ_HISTORY_CACHE.get(symbol[:4])
+        known_at = _history_cache_known_at(cache, _JQ_HISTORY_TTL)
+        return _chart_rows_from_history(
+            history, market="JP", provider="jquants", known_at=known_at,
+            dataset_id=f"jquants:{symbol}:{known_at or 'unknown'}")
+    history = _td_price_history(symbol)
+    cache = _TD_HISTORY_CACHE.get(symbol)
+    known_at = _history_cache_known_at(cache, _TD_HISTORY_TTL)
+    return _chart_rows_from_history(
+        history, market="US", provider="twelvedata", known_at=known_at,
+        dataset_id=f"twelvedata:{symbol}:{known_at or 'unknown'}")
 
 
 def _chart_history_cached(symbol, market):
@@ -26294,7 +28783,13 @@ def _chart_history_cached(symbol, market):
              else _TD_HISTORY_CACHE.get(symbol))
     if not isinstance(cache, dict) or now >= float(cache.get("expires") or 0):
         return []
-    return _chart_rows_from_history(cache.get("data"))
+    ttl = _JQ_HISTORY_TTL if market == "JP" else _TD_HISTORY_TTL
+    provider = "jquants" if market == "JP" else "twelvedata"
+    known_at = _history_cache_known_at(cache, ttl)
+    return _chart_rows_from_history(
+        cache.get("data"), market=market, provider=provider,
+        known_at=known_at,
+        dataset_id=f"{provider}:{symbol}:{known_at or 'unknown'}")
 
 
 _JP_DAILY_SHORT_CACHE = {"rows": None, "expires": 0.0,
@@ -26529,6 +29024,20 @@ def _asset_chart_provider_history(symbol, market):
                     "adjusted": False,
                     "sourceId": f"price:{market}:{symbol}:{date}",
                 })
+        acquired_at = _ai_now_iso()
+        provider = "jquants" if market == "JP" else "twelvedata"
+        revision = _canonical_truth_revision(acquired_at)
+        dataset_id = f"{provider}:{symbol}:{acquired_at}"
+        for row in rows:
+            row.update({
+                "source": provider,
+                "sourceId": f"price:{provider}:{symbol}:{row.get('date')}",
+                "datasetId": dataset_id,
+                "observedAt": _canonical_truth_iso(
+                    row.get("date"), market, date_means_close=True),
+                "knownAt": acquired_at,
+                "revision": revision,
+            })
         rows.sort(key=lambda row: str(row.get("date") or ""))
         if len(rows) < 20:
             raise RuntimeError("asset_chart_history_insufficient")
@@ -26732,7 +29241,14 @@ def _jp_daily_short_history(cached_only=False):
         rows = argus_today_intelligence.normalize_short_history([
             {**item, "source": "J-Quants /markets/short-ratio S33=0050",
              "availableFrom": str(item.get("Date") or "")[:10],
-             "observedAt": observed, "revision": 0}
+             "observedAt": _canonical_truth_iso(
+                 str(item.get("Date") or "")[:10], "JP",
+                 date_means_close=True),
+             "knownAt": observed,
+             "sourceId": (f"jquants:short-ratio:"
+                          f"{str(item.get('Date') or '')[:10]}"),
+             "datasetId": f"jquants:short-ratio:{observed}",
+             "revision": _canonical_truth_revision(observed)}
             for item in raw if isinstance(item, dict)
         ])
         if rows:
@@ -26824,6 +29340,7 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                 _classification = "earnings"
             events.append({"id": f"earnings:{symbol}:{_earnings_date}",
                            "date": _earnings_date, "availableFrom": _earnings_date,
+                           "knownAt": now_iso,
                            "titleJa": f"{symbol} 決算", "kind": "earnings",
                            "classification": _classification})
         for _kind, _items in (("filing", _catalyst_item.get("filings") or []),
@@ -26833,6 +29350,7 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                 if _date:
                     events.append({"id": f"{_kind}:{symbol}:{_date}", "date": _date,
                                    "availableFrom": _date,
+                                   "knownAt": now_iso,
                                    "titleJa": str(_item.get("title") or _item.get("form") or
                                                   f"{symbol} 公式開示")[:100],
                                    "kind": _kind, "classification": "unconfirmed"})
@@ -26865,7 +29383,7 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
     _today_intel = argus_today_intelligence.analyze(
         daily_rows, symbol=symbol, market=market,
         short_history=_short_rows, comparison_rows=_comparison_rows,
-        as_of=report.get("periodEnd"))
+        as_of=now_iso)
     report["todayIntelligence"] = _today_intel
     # Every Replay instrument keeps an isolated relative-price series.  The JP
     # primary view later adds the full cross-market matrix.
@@ -26898,6 +29416,9 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                 "history": [{
                     "periodEnd": row.get("date"),
                     "availableFrom": row.get("availableFrom") or row.get("date"),
+                    "knownAt": row.get("knownAt") or now_iso,
+                    "observedAt": row.get("observedAt") or row.get("date"),
+                    "revision": int(row.get("revision") or 0),
                     "value": row.get("totalShortRatio"), "unit": "percent",
                 } for row in _short_rows],
             })
@@ -26909,14 +29430,32 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                 "history": [{
                     "periodEnd": point.get("date"),
                     "availableFrom": point.get("date"),
+                    # Relative history is assembled from the current provider
+                    # revision. It is first known now, not on each old bar date.
+                    "knownAt": now_iso,
+                    "observedAt": point.get("date"),
+                    "revision": 0,
                     "value": point.get("value"), "unit": "ratio",
                 } for point in (_relative_row.get("history") or [])],
             })
+        try:
+            _replay_chart_input = argus_market_replay.seal_auxiliary_input(
+                report, kind="chart_report", known_at=now_iso)
+        except (TypeError, ValueError, OverflowError):
+            _replay_chart_input = {}
+        try:
+            _replay_calibration_input = \
+                argus_market_replay.seal_auxiliary_input(
+                    _today_intel.get("calibration") or {},
+                    kind="calibration", known_at=now_iso)
+        except (TypeError, ValueError, OverflowError):
+            _replay_calibration_input = {}
         for _replay_horizon in argus_market_replay.HORIZONS:
             _replay_context = argus_market_replay.build_context(
                 daily_rows, symbol=symbol, market=market,
-                horizon=_replay_horizon, chart_report=report, ledger=_replay_ledger,
-                calibration=_today_intel.get("calibration") or {},
+                horizon=_replay_horizon, chart_report=_replay_chart_input,
+                ledger=_replay_ledger,
+                calibration=_replay_calibration_input,
                 now_iso=now_iso)
             _replay_merged = argus_market_replay.merge_context(
                 _MARKET_REPLAY, _replay_context, now_iso)
@@ -28962,15 +31501,6 @@ def api_argus_admin_market_ledger_jquants_backfill():
                         "errorClass": error_class[:80]}), 502
 
 
-@app.route("/api/argus/osint/canary")
-def api_argus_osint_canary():
-    """公開GET: 最新canary結果(cached-only・未実行は正直にunknown)。"""
-    d = _OSINT_CANARY_LAST.get("data")
-    return jsonify({"status": "live" if d else "not_run", "at": _OSINT_CANARY_LAST.get("at"),
-                    "result": d,
-                    "noteJa": None if d else "canary未実行(管理側の定期実行で更新)。"})
-
-
 @app.route("/api/argus/cause-attribution")
 def api_argus_cause_attribution():
     sym = (request.args.get("symbol") or "").strip()
@@ -29149,18 +31679,43 @@ def _mover_causes_restore_once():
         pass
 
 
-def _mover_move_started_iso(market):
-    """Per-market session-open proxy for timing checks (JP 09:05 JST / US 09:35 ET,
-    DST-aware). Before the open, TODAY's open still stands — the move hasn't
-    started yet, so all overnight/pre-market news honestly reads before_move."""
-    now_utc = datetime.now(pytz.utc)
-    if str(market).upper() == "JP":
-        open_utc = now_utc.replace(hour=0, minute=5, second=0, microsecond=0)
-    else:
-        et = now_utc.astimezone(pytz.timezone("US/Eastern"))
-        open_et = et.replace(hour=9, minute=35, second=0, microsecond=0)
-        open_utc = open_et.astimezone(pytz.utc)
-    return open_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+def _mover_move_started_iso(market, now_utc=None):
+    """Canonical current-session open, or ``None`` when no move is proven.
+
+    A weekday/hour proxy must never manufacture an intraday cause relationship on
+    a holiday or before the exchange's regular open.  DST, holidays, and early
+    closes belong exclusively to :mod:`argus_market_clock`.
+    """
+    market_key = str(market).upper()
+    clock_market = (argus_market_clock.JP_EQUITY if market_key == "JP"
+                    else argus_market_clock.US_EQUITY if market_key == "US"
+                    else None)
+    if clock_market is None:
+        return None
+    current = now_utc
+    if current is None:
+        try:
+            current = datetime.fromisoformat(
+                _ai_now_iso().replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+    if current.tzinfo is None or current.utcoffset() is None:
+        return None
+    current = current.astimezone(timezone.utc)
+    state = argus_market_clock.market_session(clock_market, current)
+    if state.get("isTradingDay") is not True:
+        return None
+    try:
+        session_date = datetime.strptime(
+            str(state.get("marketDate")), "%Y-%m-%d").date()
+        opened = argus_market_clock.market_session_bounds(
+            clock_market, session_date).get("regularOpenUtc")
+        open_dt = datetime.fromisoformat(str(opened).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if open_dt.tzinfo is None or current < open_dt.astimezone(timezone.utc):
+        return None
+    return open_dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _build_mover_cause_inputs(symbol, market, change_pct=None, name=None,
@@ -29228,6 +31783,7 @@ def _build_mover_cause_inputs(symbol, market, change_pct=None, name=None,
             else:
                 res = _finnhub_catalyst(symu)      # returns (data, status)
                 fin = res[0] if isinstance(res, tuple) else res
+            fin = _finnhub_catalyst_reaged(fin, now_epoch=time.time())
             if isinstance(fin, dict):
                 cover["companyNewsChecked"] = True
                 # v11.5.5: candidates are built from the ORIGINAL headline — the ladder's
@@ -29257,16 +31813,23 @@ def _build_mover_cause_inputs(symbol, market, change_pct=None, name=None,
             _now_iso7 = _ai_now_iso()
             # v11.5.4: per-symbol discovery items carry symbolHint (not linkedAssets) —
             # match BOTH so investigate-now's fresh finds actually reach the ladder.
-            jp_news = [{"titleJa": it.get("titleJa") or it.get("title"),
-                        "publishedAt": it.get("publishedAt") or it.get("firstDetectedAt"),
-                        "publisher": it.get("author") or "GoogleNewsJP", "source": "google_news_jp",
-                        "sentiment": None}
-                       for it in list(_INTEL_STORE)
-                       if it.get("sourceId") in ("google_news_jp", "public_article")
-                       and (symu in {str(a).upper() for a in (it.get("linkedAssets") or [])}
-                            or str(it.get("symbolHint") or "").upper() == symu)
-                       and (argus_news_freshness.age_hours(
-                           it.get("publishedAt") or it.get("firstDetectedAt"), _now_iso7) or 0) <= 168]
+            jp_news = []
+            for it in list(_INTEL_STORE):
+                if it.get("sourceId") not in (
+                        "google_news_jp", "public_article"):
+                    continue
+                if (symu not in {str(a).upper() for a in
+                                 (it.get("linkedAssets") or [])}
+                        and str(it.get("symbolHint") or "").upper() != symu):
+                    continue
+                projected = _decision_news_row({
+                    "titleJa": it.get("titleJa") or it.get("title"),
+                    "publishedAt": it.get("publishedAt"),
+                    "publisher": it.get("author") or "GoogleNewsJP",
+                    "source": "google_news_jp", "sentiment": None,
+                }, now_epoch=time.time(), timestamp_keys=("publishedAt",))
+                if projected is not None:
+                    jp_news.append(projected)
             cover["jpNewsChecked"] = True
             # newest first — the cap must never crowd fresh items out with old ones
             jp_news.sort(key=lambda n: argus_news_freshness._epoch(n.get("publishedAt")) or 0.0,
@@ -29296,7 +31859,8 @@ def _build_mover_cause_inputs(symbol, market, change_pct=None, name=None,
             for m in members:
                 if m == symu:
                     continue
-                q = _quote_cached_only(m, "JP" if m[:1].isdigit() else "US") or {}
+                q = _decision_usable_quote_row(_quote_cached_only(
+                    m, "JP" if m[:1].isdigit() else "US") or {}) or {}
                 pc = q.get("changePct")
                 if isinstance(pc, (int, float)):
                     total += 1
@@ -29311,7 +31875,10 @@ def _build_mover_cause_inputs(symbol, market, change_pct=None, name=None,
     # macro events released/imminent today (in-memory macro store + regime cache)
     try:
         _macro_analysis_restore_once()
-        regime = ((_REGIME_CACHE.get("data") or {}).get("regime") or {}).get("label") or ""
+        regime_data = (_REGIME_CACHE.get("data")
+                       if time.time() < float(
+                           _REGIME_CACHE.get("expires") or 0.0) else None)
+        regime = ((regime_data or {}).get("regime") or {}).get("label") or ""
         consistent = (regime == "RISK_OFF" and direction == "down") or \
                      (regime == "RISK_ON" and direction == "up")
         today = _ai_now_iso()[:10]
@@ -29327,26 +31894,31 @@ def _build_mover_cause_inputs(symbol, market, change_pct=None, name=None,
     except Exception:
         pass
 
-    # flow / technical (cached quote + cached daily bars)
-    try:
-        q = _quote_cached_only(symu, mkt) or {}
-        bnr = ((q.get("flow") or {}).get("bigNetRatio"))
-        if isinstance(bnr, (int, float)):
-            cover["flowChecked"] = True
-            ev["flow"] = {"bigNetRatio": bnr}
-    except Exception:
-        pass
+    # No independent flow timestamp exists in the cached quote contract.
+    cover["flowChecked"] = False
     if mkt == "JP":
+        now_epoch = time.time()
         try:
-            hist = (_JQ_MARGIN_CACHE.get(code4) or {}).get("data") or []
-            if hist and isinstance(hist, list):
+            margin_cache = _JQ_MARGIN_CACHE.get(code4) or {}
+            raw_margin = (margin_cache.get("data") or []
+                          if _cache_expiry_usable(
+                              margin_cache, now_epoch=now_epoch) else [])
+            hist, _margin_reason = _entry_weekly_margin_evidence(
+                raw_margin, now_epoch=now_epoch)
+            if hist:
                 latest = hist[0]                    # _jq_weekly_margin rows are newest-first
                 ev["margin"] = {"shortHeavy": bool((latest.get("shortVol") or 0) >
                                                    (latest.get("longVol") or 0))}
         except Exception:
             pass
         try:
-            h = (_JQ_HISTORY_CACHE.get(code4) or {}).get("data") or {}
+            history_cache = _JQ_HISTORY_CACHE.get(code4) or {}
+            h = history_cache.get("data") or {}
+            if (not _cache_expiry_usable(
+                    history_cache, now_epoch=now_epoch)
+                    or not _entry_history_source_usable(
+                        h, "JP", now_epoch=now_epoch)[0]):
+                h = {}
             closes = h.get("closes") or []
             if len(closes) >= 7 and closes[6]:
                 runup = round((float(closes[1]) / float(closes[6]) - 1) * 100, 1)
@@ -29368,7 +31940,8 @@ def _market_confirmation_inputs(symbol, market, change_pct):
     inputs = {"changePct": change_pct}
     try:                                        # index proxy (relative move)
         idx_sym, idx_name = ("1306", "TOPIX ETF(1306)") if mkt == "JP" else ("SPY", "SPY")
-        q = _quote_cached_only(idx_sym, mkt) or {}
+        q = _decision_usable_quote_row(
+            _quote_cached_only(idx_sym, mkt) or {}) or {}
         if isinstance(q.get("changePct"), (int, float)):
             inputs["indexMovePct"] = q["changePct"]
             inputs["indexName"] = idx_name
@@ -29382,7 +31955,8 @@ def _market_confirmation_inputs(symbol, market, change_pct):
             for m in members:
                 if m == symu:
                     continue
-                pq = _quote_cached_only(m, "JP" if m[:1].isdigit() else "US") or {}
+                pq = _decision_usable_quote_row(_quote_cached_only(
+                    m, "JP" if m[:1].isdigit() else "US") or {}) or {}
                 if isinstance(pq.get("changePct"), (int, float)):
                     moves.append(pq["changePct"])
             inputs["peerMoves"] = moves
@@ -29390,12 +31964,20 @@ def _market_confirmation_inputs(symbol, market, change_pct):
     except Exception:
         pass
     try:                                        # volume ratio (JP daily bars)
-        q = _quote_cached_only(symu, mkt) or {}
+        q = _decision_usable_quote_row(
+            _quote_cached_only(symu, mkt) or {}) or {}
         tv = q.get("volume")
         if isinstance(tv, (int, float)) and tv > 0:
             inputs["todayVolume"] = tv
         if mkt == "JP":
-            h = (_JQ_HISTORY_CACHE.get(symu[:4]) or {}).get("data") or {}
+            now_epoch = time.time()
+            history_cache = _JQ_HISTORY_CACHE.get(symu[:4]) or {}
+            h = history_cache.get("data") or {}
+            if (not _cache_expiry_usable(
+                    history_cache, now_epoch=now_epoch)
+                    or not _entry_history_source_usable(
+                        h, "JP", now_epoch=now_epoch)[0]):
+                h = {}
             vols = [v for v in (h.get("volumes") or [])[1:21] if isinstance(v, (int, float)) and v > 0]
             if len(vols) >= 5:
                 inputs["avgVolume"] = sum(vols) / len(vols)
@@ -29404,8 +31986,15 @@ def _market_confirmation_inputs(symbol, market, change_pct):
     try:                                        # intraday push points (15m/1h moves)
         hist = (_PUSH_HISTORY.get(mkt) or {}).get(symu)
         if hist:
-            inputs["pushPoints"] = [{"ts": p.get("ts"), "price": p.get("price"),
-                                     "volume": p.get("volume")} for p in list(hist)]
+            points = [
+                {"ts": p.get("ts"), "price": p.get("price"),
+                 "volume": p.get("volume")}
+                for p in list(hist) if isinstance(p, dict) and
+                _source_time_within(
+                    p.get("sourceTimestamp"),
+                    _DECISION_QUOTE_LIVE_MAX_AGE_SEC)]
+            if points:
+                inputs["pushPoints"] = points
     except Exception:
         pass
     return inputs
@@ -29417,6 +32006,13 @@ def _mover_cause_for(symbol, market, change_pct, name=None, direction=None,
                                    cached_only=cached_only, caos_lead=caos_lead)
     now_iso = _ai_now_iso()
     try:
+        decision_at = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        raise ValueError("invalid_mover_decision_time")
+    move_started_at = _mover_move_started_iso(market, decision_at)
+    if move_started_at is None:
+        raise ValueError("current_trading_session_unavailable")
+    try:
         ev["marketConfirmation"] = argus_market_confirmation.compute(
             {"symbol": symbol, "market": market, "changePct": change_pct},
             _market_confirmation_inputs(symbol, market, change_pct), now_iso)
@@ -29426,7 +32022,7 @@ def _mover_cause_for(symbol, market, change_pct, name=None, direction=None,
     # and the public ledger. Owner priority boost is transient (admin queue only).
     mover = {"symbol": symbol, "market": market, "changePct": change_pct,
              "direction": direction, "name": name, "asOf": now_iso,
-             "moveStartedAt": _mover_move_started_iso(market)}
+             "moveStartedAt": move_started_at}
     return argus_mover_cause.resolve(mover, ev, now_iso,
                                      ai_min_abs_move=_MC_AI_MIN_ABS_MOVE)
 
@@ -29454,9 +32050,12 @@ def _collect_active_movers():
         for snap, mkt in ((get_japan_watchlist_snapshot(), "JP"),
                           (get_us_watchlist_snapshot(), "US")):
             for s in (snap.get("stocks") or []):
-                chg = s.get("changePct")
+                usable = _decision_usable_watch_quote_row(
+                    s, mkt, require_latest_completed=True)
+                chg = (usable or {}).get("changePct")
                 if isinstance(chg, (int, float)) and chg >= 3.0:
-                    _add(s.get("symbol"), mkt, chg, s.get("nameJa") or s.get("name"))
+                    _add(usable.get("symbol"), mkt, chg,
+                         usable.get("nameJa") or usable.get("name"))
     except Exception:
         pass
     try:
@@ -29467,7 +32066,8 @@ def _collect_active_movers():
     try:
         y = _YAHOO_MOVERS_CACHE.get("data") or {}
         for r in (y.get("gainers") or [])[:8] + (y.get("losers") or [])[:8]:
-            _add(r.get("symbol"), "JP", r.get("changePct"), r.get("name"))
+            if r.get("decisionUsable") is True:
+                _add(r.get("symbol"), "JP", r.get("changePct"), r.get("name"))
     except Exception:
         pass
     movers.sort(key=lambda m: -abs(m["changePct"]))
@@ -29568,93 +32168,6 @@ def _mover_causes_today():
             if str(r.get("moverCauseId", "")).endswith(today)]
 
 
-@app.route("/api/argus/mover-causes")
-def api_argus_mover_causes():
-    """Public cache-only: the mover-cause ladder for recent sharp movers (both
-    directions). Never calls LLM or providers; empty store = not_ready."""
-    direction = (request.args.get("direction") or "both").lower()
-    market = (request.args.get("market") or "ALL").upper()
-    try:
-        limit = int(request.args.get("limit") or 30)
-    except Exception:
-        limit = 30
-    items = _mover_cause_items(direction, market, limit)
-    return jsonify({"schemaVersion": argus_mover_cause.SCHEMA_VERSION,
-                    "status": "live" if items else "not_ready",
-                    "asOf": _ai_now_iso(), "count": len(items), "items": items,
-                    "noteJa": "原因確定と有力候補を分離。連想・単一ソースは候補どまり。"
-                              "急騰の追随買い推奨はしない。"})
-
-
-@app.route("/api/argus/mover-causes/status")
-def api_argus_mover_causes_status():
-    _mover_causes_restore_once()
-    todays = _mover_causes_today()
-    counts = {"totalMovers": len(todays), "confirmedCause": 0, "probableCatalyst": 0,
-              "candidateCatalyst": 0, "noLeadYet": 0}
-    keymap = {"confirmed_cause": "confirmedCause", "probable_catalyst": "probableCatalyst",
-              "candidate_catalyst": "candidateCatalyst", "no_lead_yet": "noLeadYet"}
-    for r in todays:
-        k = keymap.get(str(r.get("causeStatus")))
-        if k:
-            counts[k] += 1
-
-    def _cov(ok, empty_ok=False):
-        return "live" if ok else ("empty" if empty_ok else "missing")
-    tdnet_ok = bool((_TDNET_OFFICIAL_CACHE.get("data") or _TDNET_FEED_CACHE.get("data")))
-    jp_news_ok = any(it.get("sourceId") == "google_news_jp" for it in list(_INTEL_STORE)[:200])
-    coverage = {
-        "tdnet": _cov(tdnet_ok),
-        "officialEvents": _cov(bool(_OFFICIAL_EVENTS), empty_ok=True),
-        "jpNews": _cov(jp_news_ok),
-        "companyNews": _cov(bool(_FINN_CACHE)),
-        "caos": _cov(bool(_INTEL_STORE), empty_ok=True),
-        "flow": _cov(any((_PUSHED_QUOTES.get(m) or {}) for m in ("JP", "US"))),
-        "sectorPeer": "live",
-    }
-    all_unknown = counts["totalMovers"] > 0 and counts["noLeadYet"] == counts["totalMovers"]
-    degraded = all_unknown and (tdnet_ok or jp_news_ok or bool(_FINN_CACHE))
-    # v11.3.4 stricter diagnostics: staleness / market-confirmation gaps / SLA
-    now_iso = _ai_now_iso()
-    qs = argus_mover_cause_refresh.quality_and_sla(todays, now_iso)
-    sla_breached = any(b.get("priority") == "urgent" for b in qs["sla"]["breaches"])
-    diag = None
-    if degraded:
-        diag = ("cause attribution coverage failure suspected — "
-                "情報源はliveなのに全件no_lead。取得/照合の不具合を疑う。")
-    elif sla_breached:
-        diag = "urgent moverの証拠が15分SLAを超過。refreshワークフローの稼働を確認。"
-    elif counts["totalMovers"] > 0 and qs["quality"]["missingMarketConfirmationCount"] == counts["totalMovers"]:
-        diag = "全moverで市場確認が未計算(致命的ではないが確定判定は保守化)。"
-    return jsonify({"schemaVersion": "mover-cause-status-v1", "asOf": now_iso,
-                    "counts": counts, "coverage": coverage,
-                    "quality": qs["quality"], "sla": qs["sla"],
-                    "degradedIfAllUnknown": bool(degraded),
-                    "degraded": bool(degraded or sla_breached),
-                    "diagnosticJa": diag,
-                    "storeTotal": len(_MOVER_CAUSES),
-                    "lastRefreshAt": _MOVER_CAUSES_STATE.get("lastRefreshAt"),
-                    "pathType": _MOVER_CAUSES_STATE.get("pathType"),
-                    "noteJa": "原因確定と有力候補を分離します。全件no_leadなら取得/接続不良として扱います。"})
-
-
-@app.route("/api/argus/mover-causes/refresh-queue")
-def api_argus_mover_causes_refresh_queue():
-    """Public cache-only: which movers ARGUS will re-check next, in what order,
-    within what budget. Built purely from stored records — never fetches."""
-    now = time.time()
-    if _MOVER_REFRESH_QUEUE["data"] is not None and now < _MOVER_REFRESH_QUEUE["expires"]:
-        return jsonify(_MOVER_REFRESH_QUEUE["data"])
-    _mover_causes_restore_once()
-    out = argus_mover_cause_refresh.build_queue(
-        _mover_causes_today(), _ai_now_iso(),
-        max_ai_explain=_MC_AI_MAX_PER_RUN, ai_cooldown_min=_MC_AI_COOLDOWN_MIN,
-        ai_min_abs_move=_MC_AI_MIN_ABS_MOVE, ai_enabled=_MC_AI_ENABLED)
-    _MOVER_REFRESH_QUEUE["data"] = out
-    _MOVER_REFRESH_QUEUE["expires"] = now + 300
-    return jsonify(out)
-
-
 @app.route("/api/argus/admin/mover-causes/refresh-queue/run", methods=["POST"])
 def api_argus_admin_mover_causes_queue_run():
     """Admin/cron: execute the queue — evidence refresh for queued movers
@@ -29689,10 +32202,11 @@ def api_argus_admin_mover_causes_queue_run():
         if requeued >= queue["budget"]["maxProviderRefreshPerRun"]:
             break
         try:
-            quote = _quote_cached_only(q["symbol"], q["market"]) or {}
+            raw_quote = _quote_cached_only(q["symbol"], q["market"]) or {}
+            quote = _decision_usable_quote_row(raw_quote) or {}
             chg = quote.get("changePct", q.get("changePct"))
             rec = _mover_cause_for(q["symbol"], q["market"], chg,
-                                   name=quote.get("nameJa") or quote.get("name"),
+                                   name=raw_quote.get("nameJa") or raw_quote.get("name"),
                                    direction=q.get("direction"), cached_only=False)
             merged = argus_mover_cause_store.merge_record(
                 _MOVER_CAUSES.get(rec["moverCauseId"]), rec, now_iso=now_iso)
@@ -29716,26 +32230,6 @@ def api_argus_admin_mover_causes_queue_run():
                     "requeuedRefreshed": requeued,
                     "aiExplained": explained, "aiSkipped": skipped,
                     "budget": queue["budget"], "asOf": now_iso})
-
-
-@app.route("/api/argus/market-confirmation")
-def api_argus_market_confirmation():
-    """Public cache-only: Market Confirmation v1.5 for one symbol — computed
-    purely from in-memory caches (quotes/push history/daily bars/peers)."""
-    sym = (request.args.get("symbol") or "").strip().upper()
-    if not sym:
-        return jsonify({"error": "symbol required"}), 400
-    mkt = (request.args.get("market") or "JP").upper()
-    q = _quote_cached_only(sym, mkt) or {}
-    chg = q.get("changePct")
-    now_iso = _ai_now_iso()
-    mc = argus_market_confirmation.compute(
-        {"symbol": sym, "market": mkt, "changePct": chg},
-        _market_confirmation_inputs(sym, mkt, chg), now_iso)
-    mc.update({"symbol": sym, "market": mkt, "asOf": now_iso,
-               "noteJa": "既存データによる市場確認v1.5。板/歩み値/borrowではない。"
-                         "市場確認単独では原因を確定しない。"})
-    return jsonify(mc)
 
 
 @app.route("/api/argus/admin/market-confirmation/refresh", methods=["POST"])
@@ -29766,22 +32260,6 @@ def api_argus_mover_causes_snapshot():
         list(_MOVER_CAUSES.values()), as_of=_ai_now_iso()))
 
 
-@app.route("/api/argus/mover-causes/<market>/<symbol>")
-def api_argus_mover_cause_detail(market, symbol):
-    """Public cache-only detail. Store hit → stored record; miss → an in-memory
-    cached-evidence build (still no provider fetch / no LLM)."""
-    _mover_causes_restore_once()
-    symu, mkt = str(symbol).upper(), str(market).upper()
-    now_iso = _ai_now_iso()
-    rec = _MOVER_CAUSES.get(f"mc-{mkt}-{symu}-{now_iso[:10].replace('-', '')}")
-    if rec is None:
-        q = _quote_cached_only(symu, mkt) or {}
-        rec = _mover_cause_for(symu, mkt, q.get("changePct"),
-                               name=q.get("nameJa") or q.get("name"), cached_only=True)
-        rec["computed"] = "cached_evidence_live"
-    return jsonify(_mover_cause_serve(rec, now_iso))
-
-
 @app.route("/api/argus/admin/mover-causes/refresh", methods=["POST"])
 def api_argus_admin_mover_causes_refresh():
     ok, err, code = _require_admin()
@@ -29807,9 +32285,10 @@ def _mover_ai_explain(symbol, market, now_iso, force=False):
     mid = f"mc-{mkt}-{symu}-{today}"
     rec = _MOVER_CAUSES.get(mid)
     if rec is None:
-        q = _quote_cached_only(symu, mkt) or {}
+        raw_q = _quote_cached_only(symu, mkt) or {}
+        q = _decision_usable_quote_row(raw_q) or {}
         rec = _mover_cause_for(symu, mkt, q.get("changePct"),
-                               name=q.get("nameJa") or q.get("name"), cached_only=False)
+                               name=raw_q.get("nameJa") or raw_q.get("name"), cached_only=False)
     if not force and argus_mover_cause_refresh._cooldown_active(rec, now_iso, _MC_AI_COOLDOWN_MIN):
         return False
     cands = "\n".join(
@@ -30228,11 +32707,23 @@ def _learning_memory_doc():
     return _LEARNING_MEMORY["doc"] or argus_learning_memory.build_memory([], now_iso=_ai_now_iso())
 
 
+def _learning_memory_status_doc_cached_only():
+    """Return only the already materialized document for public read models.
+
+    A public GET must not turn a cold process into a ledger read. Admin build and
+    restore remain the acquisition authority.
+    """
+    return (_LEARNING_MEMORY["doc"] or
+            argus_learning_memory.build_memory([], now_iso=_ai_now_iso()))
+
+
 def _learning_memory_compact_for_symbol(symbol, market):
     """Compact, symbol/context-relevant memory slice for the Evidence Pack. Pure
     read of the in-memory doc — cached-only, never triggers a build."""
     try:
-        doc = _learning_memory_doc()
+        doc = _LEARNING_MEMORY.get("doc")
+        if not isinstance(doc, dict):
+            return None
         cause_cats, src_families = set(), set()
         today = _ai_now_iso()[:10].replace("-", "")
         rec = _MOVER_CAUSES.get(f"mc-{str(market).upper()}-{str(symbol).upper()}-{today}")
@@ -30251,89 +32742,11 @@ def _learning_memory_compact_for_symbol(symbol, market):
         return None
 
 
-@app.route("/api/argus/learning-memory")
-def api_argus_learning_memory():
-    """Public cache-only: ARGUS's auditable Learning Memory. Never calls LLM,
-    never fetches a provider — reads the in-memory / ledger-restored doc only."""
-    doc = _learning_memory_doc()
-    cohort_type = (request.args.get("cohortType") or "").strip()
-    market = (request.args.get("market") or "").strip().upper()
-    symbol = (request.args.get("symbol") or "").strip().upper()
-    try:
-        limit = int(request.args.get("limit") or 60)
-    except Exception:
-        limit = 60
-    lessons = list(doc.get("lessons") or [])
-    if cohort_type:
-        lessons = [L for L in lessons if L.get("cohortType") == cohort_type]
-    if market:
-        lessons = [L for L in lessons if not (L.get("cohortType") == "market")
-                   or L.get("cohortKey") == market]
-    if symbol:
-        lessons = [L for L in lessons if not (L.get("cohortType") == "symbol")
-                   or str(L.get("cohortKey")).upper() == symbol]
-    out = dict(doc)
-    out["lessons"] = lessons[:max(1, min(limit, 120))]
-    out["status"] = _LEARNING_MEMORY_STATE.get("status", "ready" if doc.get("lessons") else "not_ready")
-    return jsonify(out)
-
-
-@app.route("/api/argus/learning-memory/status")
-def api_argus_learning_memory_status():
-    doc = _learning_memory_doc()
-    counts = doc.get("counts") or {}
-    stage = doc.get("sampleStage") or "none"
-    status = _LEARNING_MEMORY_STATE.get("status")
-    if not status or status == "not_ready":
-        status = "ready" if doc.get("lessons") else "not_ready"
-    # ledger meta (restore availability) — cached-only read of ARGUS's own artifact
-    ledger = {"restoreAvailable": False, "latestDate": None, "latestCount": 0}
-    try:
-        r = requests.get(f"{_LEDGER_RAW_BASE}/learning-memory/latest.json?cb={int(time.time())}",
-                         timeout=6)
-        if r.status_code == 200 and r.text.strip().startswith("{"):
-            snap = json.loads(r.text)
-            ledger = {"restoreAvailable": True, "latestDate": str(snap.get("asOf") or "")[:10],
-                      "latestCount": int((snap.get("summary") or {}).get("lessons", 0))}
-    except Exception:
-        pass
-    return jsonify({
-        "schemaVersion": "learning-memory-status-v1",
-        "asOf": _ai_now_iso(),
-        "status": status,
-        "sampleStage": stage,
-        "counts": {
-            "lessons": int(counts.get("lessons", 0)),
-            "usableLessons": int(counts.get("usableLessons", 0)),
-            "burnInLessons": int(counts.get("burnInLessons", 0)),
-            "officialEventSamples": int(counts.get("officialEventSamples", 0)),
-            "macroEventSamples": int(counts.get("macroEventSamples", 0)),
-            "moverCauseSamples": int(counts.get("moverCauseSamples", 0)),
-            "decisionValueSamples": int(counts.get("decisionValueSamples", 0)),
-            "calibrationSamples": int(counts.get("calibrationSamples", 0)),
-        },
-        "lastBuildAt": _LEARNING_MEMORY_STATE.get("lastBuildAt"),
-        "lastRestoreAt": _LEARNING_MEMORY_STATE.get("lastRestoreAt"),
-        "ledger": ledger,
-        "pathType": _LEARNING_MEMORY_STATE.get("pathType"),
-        "limitationsJa": doc.get("limitationsJa") or [],
-    })
-
-
-@app.route("/api/argus/learning-memory/lesson/<lesson_id>")
-def api_argus_learning_memory_lesson(lesson_id):
-    doc = _learning_memory_doc()
-    for L in (doc.get("lessons") or []):
-        if str(L.get("lessonId")) == str(lesson_id):
-            return jsonify(L)
-    return jsonify({"error": "not_found", "lessonId": lesson_id}), 404
-
-
 @app.route("/api/argus/learning-memory/snapshot")
 def api_argus_learning_memory_snapshot():
     """Public-safe snapshot for the ledger workflow (metadata only, no secrets)."""
     return jsonify(argus_learning_memory_store.serialize_snapshot(
-        _learning_memory_doc(), as_of=_ai_now_iso()))
+        _learning_memory_status_doc_cached_only(), as_of=_ai_now_iso()))
 
 
 @app.route("/api/argus/admin/learning-memory/build", methods=["POST"])
@@ -30364,7 +32777,8 @@ def api_argus_admin_learning_memory_restore():
         if restored:
             _LEARNING_MEMORY["doc"] = argus_learning_memory_store.merge_memory(
                 _LEARNING_MEMORY["doc"], restored, now_iso=_ai_now_iso())
-            _LEARNING_MEMORY_STATE.update(lastRestoreAt=_ai_now_iso(), status="ready")
+            _LEARNING_MEMORY_STATE.update(lastRestoreAt=_ai_now_iso(), status="ready",
+                                          pathType="ledger_restored")
             _learning_memory_persist()
             return jsonify({"ok": True, "restored": True,
                             "sampleStage": _LEARNING_MEMORY["doc"].get("sampleStage")})
@@ -30376,66 +32790,9 @@ def api_argus_admin_learning_memory_restore():
 _ATTRIB_HIST_CACHE = {"data": None, "expires": 0.0}
 
 
-@app.route("/api/argus/attribution-history")
-def api_argus_attribution_history():
-    now = time.time()
-    if _ATTRIB_HIST_CACHE["data"] and now < _ATTRIB_HIST_CACHE["expires"]:
-        return jsonify(_ATTRIB_HIST_CACHE["data"])
-    out = {"status": "empty", "asOf": _ai_now_iso(), "days": [], "count": 0,
-           "noteJa": "原因アトリビューションの記録(毎営業日16:05・後日結果と照合)。"}
-    try:
-        r = requests.get("https://api.github.com/repos/mitsugue/argus/contents/ledger/attribution?ref=ledger",
-                         timeout=12, headers={"User-Agent": "argus/1.0", "Accept": "application/vnd.github+json"})
-        if r.ok:
-            files = [f for f in r.json() if isinstance(f, dict)
-                     and str(f.get("name", "")).endswith(".json") and f.get("name") != "latest.json"]
-            days = sorted((f["name"][:-5] for f in files), reverse=True)[:30]
-            out["days"] = days
-            out["count"] = len(days)
-            out["status"] = "live" if days else "empty"
-        latest = _gh_ledger_json("attribution/latest.json")
-        if latest:
-            out["latest"] = latest
-    except Exception:
-        pass
-    if out["status"] == "live":
-        _ATTRIB_HIST_CACHE["data"] = out
-        _ATTRIB_HIST_CACHE["expires"] = now + 1800
-    return jsonify(out)
-
-
 # Incident Replay (v10.108): list the dates with a recorded downside snapshot
 # (written daily to the public ledger branch) + the latest. Public, read-only.
 _DOWNSIDE_HIST_CACHE = {"data": None, "expires": 0.0}
-
-
-@app.route("/api/argus/downside-history")
-def api_argus_downside_history():
-    now = time.time()
-    if _DOWNSIDE_HIST_CACHE["data"] and now < _DOWNSIDE_HIST_CACHE["expires"]:
-        return jsonify(_DOWNSIDE_HIST_CACHE["data"])
-    out = {"status": "empty", "asOf": _ai_now_iso(), "days": [], "count": 0,
-           "noteJa": "急落インシデントの記録(replay用・毎営業日16:05にledgerへ追記)。"}
-    try:
-        r = requests.get("https://api.github.com/repos/mitsugue/argus/contents/ledger/downside?ref=ledger",
-                         timeout=12, headers={"User-Agent": "argus/1.0", "Accept": "application/vnd.github+json"})
-        if r.ok:
-            files = [f for f in r.json() if isinstance(f, dict)
-                     and str(f.get("name", "")).endswith(".json") and f.get("name") != "latest.json"]
-            days = sorted((f["name"][:-5] for f in files), reverse=True)[:30]
-            out["days"] = days
-            out["count"] = len(days)
-            out["status"] = "live" if days else "empty"
-        latest = requests.get("https://raw.githubusercontent.com/mitsugue/argus/ledger/ledger/downside/latest.json",
-                              timeout=10, headers={"User-Agent": "argus/1.0"})
-        if latest.ok:
-            out["latest"] = latest.json()
-    except Exception:
-        pass
-    if out["status"] == "live":
-        _DOWNSIDE_HIST_CACHE["data"] = out
-        _DOWNSIDE_HIST_CACHE["expires"] = now + 1800
-    return jsonify(out)
 
 
 # Capital-rotation history + Δ (v10.109): recorded daily readings let us answer
@@ -30447,47 +32804,6 @@ def _gh_ledger_json(path):
     r = requests.get(f"https://raw.githubusercontent.com/mitsugue/argus/ledger/ledger/{path}",
                      timeout=10, headers={"User-Agent": "argus/1.0"})
     return r.json() if r.ok else None
-
-
-@app.route("/api/argus/rotation-history")
-def api_argus_rotation_history():
-    now = time.time()
-    if _ROTATION_HIST_CACHE["data"] and now < _ROTATION_HIST_CACHE["expires"]:
-        return jsonify(_ROTATION_HIST_CACHE["data"])
-    out = {"status": "empty", "asOf": _ai_now_iso(), "days": [], "count": 0, "delta": [],
-           "noteJa": "資金ローテーションの記録(毎営業日16:05にledgerへ追記)。Δ=前回記録比のスコア変化。"}
-    try:
-        r = requests.get("https://api.github.com/repos/mitsugue/argus/contents/ledger/rotations?ref=ledger",
-                         timeout=12, headers={"User-Agent": "argus/1.0", "Accept": "application/vnd.github+json"})
-        if r.ok:
-            files = [f for f in r.json() if isinstance(f, dict)
-                     and str(f.get("name", "")).endswith(".json") and f.get("name") != "latest.json"]
-            days = sorted((f["name"][:-5] for f in files), reverse=True)[:30]
-            out["days"] = days
-            out["count"] = len(days)
-            out["status"] = "live" if days else "empty"
-            # Δ between the two most recent recorded readings (where money left).
-            if len(days) >= 2:
-                cur = _gh_ledger_json(f"rotations/{days[0]}.json") or {}
-                prev = _gh_ledger_json(f"rotations/{days[1]}.json") or {}
-                prev_scores = {g.get("id"): g.get("score") for g in (prev.get("groups") or [])}
-                delta = []
-                for g in (cur.get("groups") or []):
-                    ps = prev_scores.get(g.get("id"))
-                    if isinstance(g.get("score"), (int, float)) and isinstance(ps, (int, float)):
-                        delta.append({"id": g.get("id"), "label": g.get("label"),
-                                      "score": round(g["score"], 3), "delta": round(g["score"] - ps, 3),
-                                      "status": g.get("status")})
-                delta.sort(key=lambda x: x["delta"])   # most outflow first
-                out["delta"] = delta
-                out["deltaFrom"] = days[1]
-                out["latest"] = {"date": days[0], "regime": cur.get("regime")}
-    except Exception:
-        pass
-    if out["status"] == "live":
-        _ROTATION_HIST_CACHE["data"] = out
-        _ROTATION_HIST_CACHE["expires"] = now + 1800
-    return jsonify(out)
 
 
 # ━━━ Backup vault relay (v10.3.4) ━━━
@@ -30588,23 +32904,55 @@ _NEXT_RECOMMENDED_APIS = [
     "what-if-simulator",
 ]
 
-def get_integrations_snapshot():
+def get_integrations_snapshot(*, allow_provider_fetch=True):
     now = time.time()
-    if _INTEGRATIONS_CACHE["data"] is not None and now < _INTEGRATIONS_CACHE["expires"]:
+    if (_INTEGRATIONS_CACHE["data"] is not None and
+            now < _INTEGRATIONS_CACHE["expires"]):
         return _INTEGRATIONS_CACHE["data"]
 
     # Market-data runtime status comes from the same cached getters the pages use
     # (cheap when warm). AI status comes from the key-aware truth helper (no call).
-    rates = get_rates_snapshot()
-    jp    = get_japan_watchlist_snapshot()
-    us    = get_us_watchlist_snapshot()
+    if allow_provider_fetch:
+        rates = get_rates_snapshot()
+        jp = get_japan_watchlist_snapshot()
+        us = get_us_watchlist_snapshot()
+    else:
+        rates = (_RATES_CACHE.get("data") or {}
+                 if now < _RATES_CACHE.get("expires", 0.0) else {})
+        jp = _quote_cache_projection(_JP_CACHE)
+        us = _quote_cache_projection(_US_CACHE)
     def _st(x):
         return x.get("status", "unknown") if isinstance(x, dict) else "unknown"
     fred_rt = _st(rates)
     jq_rt   = _st(jp)
     td_rt   = _st(us)
 
-    ai = _ai_judgment_truth()
+    # A configured Finnhub key is not runtime evidence.  Public/cache-only
+    # readers may call this before any quote/news acquisition has succeeded,
+    # so derive the status only from fresh provider-owned caches.
+    fresh_finnhub_quote = any(
+        isinstance(hit, dict) and hit.get("row") is not None and
+        isinstance(hit.get("ts"), (int, float)) and
+        not isinstance(hit.get("ts"), bool) and
+        -5 <= now - hit["ts"] <= _FINNHUB_QUOTE_TTL
+        for hit in _FINNHUB_QUOTE_CACHE.values())
+    fresh_finnhub_news = bool(
+        isinstance(_MARKET_NEWS_CACHE.get("data"), dict) and
+        _MARKET_NEWS_CACHE["data"].get("status") == "live" and
+        _MARKET_NEWS_CACHE["data"].get("stale") is not True and
+        _MARKET_NEWS_CACHE.get("lastErrorClass") is None and
+        now < float(_MARKET_NEWS_CACHE.get("expires") or 0.0))
+    if not FINNHUB_API_KEY:
+        finnhub_rt = "missing"
+    elif fresh_finnhub_quote or fresh_finnhub_news:
+        finnhub_rt = "live"
+    elif (_FINNHUB_QUOTE_CACHE or
+          _MARKET_NEWS_CACHE.get("lastSuccessfulPollAt")):
+        finnhub_rt = "stale"
+    else:
+        finnhub_rt = "requires_test"
+
+    ai = _ai_judgment_truth(allow_restore=allow_provider_fetch)
     # OpenAI / Gemini runtime status, key-aware and honest.
     if not ai["enabled"]:
         oai_rt = "disabled" if bool(_OPENAI_API_KEY) else "missing"
@@ -30624,15 +32972,17 @@ def get_integrations_snapshot():
          "notesJa": "金利・VIX・HY OASに使用。"},
         {"id": "jquants", "label": "J-Quants", "category": "market_data",
          "configured": bool(_JQUANTS_API_KEY), "runtimeStatus": jq_rt if _JQUANTS_API_KEY else "missing",
+         "cacheState": jp.get("cacheState", "unknown"),
          "usedFor": ["japan-watchlist", "catalysts", "market-regime"], "lastKnownStatus": jq_rt,
          "notesJa": "日本株価格・決算/開示メタデータ・日本レジームproxyに使用。"},
         {"id": "twelvedata", "label": "Twelve Data", "category": "market_data",
          "configured": bool(_TWELVEDATA_API_KEY), "runtimeStatus": td_rt if _TWELVEDATA_API_KEY else "missing",
+         "cacheState": us.get("cacheState", "unknown"),
          "usedFor": ["us-watchlist", "market-regime"], "lastKnownStatus": td_rt,
          "notesJa": "米国株価格・ETFレジームproxyに使用。"},
         {"id": "finnhub", "label": "Finnhub", "category": "news_catalyst",
-         "configured": bool(FINNHUB_API_KEY), "runtimeStatus": ("live" if FINNHUB_API_KEY else "missing"),
-         "usedFor": ["corporate-catalysts"], "lastKnownStatus": ("live" if FINNHUB_API_KEY else "missing"),
+         "configured": bool(FINNHUB_API_KEY), "runtimeStatus": finnhub_rt,
+         "usedFor": ["corporate-catalysts"], "lastKnownStatus": finnhub_rt,
          "notesJa": "未設定なら米国ニュース/決算カレンダーはpartial。"},
         {"id": "openai", "label": "OpenAI GPT-5.5", "category": "ai",
          "configured": bool(_OPENAI_API_KEY), "runtimeStatus": oai_rt,
@@ -30682,13 +33032,10 @@ def get_integrations_snapshot():
         },
         "nextRecommendedApis": list(_NEXT_RECOMMENDED_APIS),
     }
-    _INTEGRATIONS_CACHE["data"] = payload
-    _INTEGRATIONS_CACHE["expires"] = now + _INTEGRATIONS_TTL
+    if allow_provider_fetch:
+        _INTEGRATIONS_CACHE["data"] = payload
+        _INTEGRATIONS_CACHE["expires"] = now + _INTEGRATIONS_TTL
     return payload
-
-@app.route("/api/argus/integrations")
-def api_argus_integrations():
-    return jsonify(get_integrations_snapshot())
 
 # ── Source Capability Registry (source-registry-v1, v10.47) ──────────────────
 # One honest, capability-LEVEL view of every data source: a provider being
@@ -30745,17 +33092,17 @@ def _moomoo_capability_report():
             row = rec.get("row") or {}
             recv = rec.get("ts")
             source_raw = row.get("exchangeTs")
-            ex_epoch = _coerce_epoch(source_raw)
+            source_truth = _canonical_quote_source_age(
+                source_raw, now_epoch=now)
             errors = []
-            if source_raw in (None, ""):
+            if source_truth["sourceTimeStatus"] == "MISSING":
                 errors.append("source_timestamp_missing")
-            elif ex_epoch is None:
+            elif source_truth["sourceTimeStatus"] == "MALFORMED":
                 errors.append("source_timestamp_malformed")
-            elif ex_epoch > now + 5:
+            elif source_truth["sourceTimeStatus"] == "FUTURE":
                 errors.append("source_timestamp_future")
-                ex_epoch = None
             received_age = round(max(0.0, now - recv), 1) if recv else None
-            source_age = round(max(0.0, now - ex_epoch), 1) if ex_epoch is not None else None
+            source_age = source_truth["ageSec"]
             received_timestamp = (
                 datetime.fromtimestamp(recv, pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 if recv else None)
@@ -30764,9 +33111,10 @@ def _moomoo_capability_report():
             stale = source_age is not None and source_age >= 600
             if stale:
                 stale_count += 1
-            if ex_epoch is None:
+            entitlement = str(row.get("entitlement") or "unknown").lower()
+            if source_age is None:
                 verdict = "unknown"
-            elif sess_open and source_age is not None and source_age <= 60:
+            elif sess_open and source_age <= 60 and "delay" not in entitlement:
                 verdict = "realtime_evidence"
             elif sess_open and source_age is not None and source_age >= 600:
                 verdict = "delayed_evidence"
@@ -30796,7 +33144,11 @@ def _moomoo_capability_report():
         p50 = percentile(source_ages, 50)
         p95 = percentile(source_ages, 95)
         rights = {str(r["quoteRight"]).lower() for r in rows}
-        if rows and sess_open and coverage == 1.0 and p95 is not None and p95 <= 60:
+        all_realtime = bool(rows) and all(
+            row["entitlementVerdict"] == "realtime_evidence" and
+            not row["errors"] and row["stale"] is False
+            for row in rows)
+        if rows and sess_open and coverage == 1.0 and all_realtime:
             market_verdict = "realtime_proven"
         elif (p50 is not None and p50 >= 600) or any("delay" in r for r in rights):
             market_verdict = "delayed_evidence"
@@ -30837,25 +33189,66 @@ def _moomoo_capability_report():
         "rows": all_rows,
         "noteJa": (
             "JP/USは別集計。『15秒push』は配信頻度でありデータ鮮度ではない。"
-            "source timestamp被覆100%かつmarket別p95≤60秒まではLIVEを証明しない。"
+            "source timestamp被覆100%かつmarket内の全行が≤60秒で妥当な時だけLIVE。"
         ),
     }
 
-def _source_registry():
-    # Self-verify EDINET once when a key is configured (cached) so the registry
-    # flips missing→confirmed_live/requires_test without waiting for a JP event.
-    if _EDINET_API_KEY and not _EDINET_STATE["lastFetchOk"]:
+def _source_registry(*, allow_provider_fetch=True):
+    """Build the capability registry, optionally allowing live provider work.
+
+    Public consumers pass ``allow_provider_fetch=False``.  They may use a stale
+    registry/cache snapshot, but never turn an unauthenticated GET into an
+    EDINET, J-Quants, or market-data request.
+    """
+    now_epoch = time.time()
+
+    def _edinet_success_is_recent():
+        last_epoch = _parse_iso_epoch(_EDINET_STATE.get("lastAt"))
+        return bool(
+            _EDINET_STATE.get("lastFetchOk") and
+            last_epoch is not None and
+            -5 <= time.time() - last_epoch <= 6 * 3600)
+
+    # Self-verify EDINET when configured and the prior success evidence is no
+    # longer fresh, so internal/background refresh remains authoritative while
+    # public readers stay cache-only.
+    if (allow_provider_fetch and _EDINET_API_KEY and
+            not _edinet_success_is_recent()):
         try:
             _edinet_filings(datetime.now(TZ_JST).strftime("%Y-%m-%d"))
         except Exception:
             pass
-    integ = get_integrations_snapshot()
+    integ = get_integrations_snapshot(
+        allow_provider_fetch=allow_provider_fetch)
     prov = {p["id"]: p for p in integ.get("providers", [])}
     def rt(pid):
         return (prov.get(pid) or {}).get("runtimeStatus", "missing")
     bridge_live = rt("moomoo") == "live"
     jq, td, fred, cg = rt("jquants"), rt("twelvedata"), rt("fred"), rt("coingecko")
     moomoo_cap = _moomoo_capability_report()
+
+    # Quote transport alone cannot prove that the optional capital-distribution
+    # fields are fresh.  The bridge currently carries its last known flow value
+    # on later quotes without a flow-specific acquisition timestamp, so even an
+    # observed numeric value remains requires_test rather than LIVE.
+    flow_observed = False
+    for market_rows in _PUSHED_QUOTES.values():
+        for rec in market_rows.values():
+            row = rec.get("row") or {}
+            flow = row.get("flow")
+            received_epoch = rec.get("ts")
+            if (isinstance(received_epoch, (int, float)) and
+                    not isinstance(received_epoch, bool) and
+                    -5 <= now_epoch - received_epoch <= 900 and
+                    isinstance(flow, dict) and
+                    isinstance(flow.get("bigNetRatio"), (int, float)) and
+                    not isinstance(flow.get("bigNetRatio"), bool)):
+                flow_observed = True
+                break
+        if flow_observed:
+            break
+
+    edinet_recent_success = _edinet_success_is_recent()
     def _moomoo_market_status(market):
         summary = (moomoo_cap.get("markets") or {}).get(market) or {}
         if summary.get("verdict") == "realtime_proven":
@@ -30874,10 +33267,20 @@ def _source_registry():
     moomoo_us_status = _moomoo_market_status("US")
     # Official J-Quants TDnet Add-on status (v11.1) — the registry must reflect the REAL
     # probe, never stay 'paid_not_enabled' once contracted. Cheap (cached in the fetch).
-    try:
-        _td_off, _td_usable = _jquants_tdnet_fetch(20)
-    except Exception:
-        _td_off, _td_usable = {"status": "unavailable", "entitlement": "unknown"}, False
+    if allow_provider_fetch:
+        try:
+            _td_off, _td_usable = _jquants_tdnet_fetch(20)
+        except Exception:
+            _td_off, _td_usable = {"status": "unavailable", "entitlement": "unknown"}, False
+    else:
+        _td_off = ((_TDNET_OFFICIAL_CACHE.get("data")
+                    if time.time() < _TDNET_OFFICIAL_CACHE.get("expires", 0.0)
+                    else None) or {
+            "status": ("not_configured" if not _JQUANTS_API_KEY else "unavailable"),
+            "entitlement": ("missing" if not _JQUANTS_API_KEY else "unknown"),
+        })
+        _td_usable = bool(_td_off.get("status") == "official_tdnet_live" and
+                          _td_off.get("items"))
     _td_off_status = _td_off.get("status")
     if not _JQUANTS_API_KEY:
         _td_reg_status, _td_ent, _td_note = "missing", "APIキー未設定", "JQUANTS_API_KEY未設定。"
@@ -30896,7 +33299,9 @@ def _source_registry():
         _td_reg_status, _td_ent, _td_note = "requires_test", "未実証", "キーはあるが公式TDnetの成功プローブがまだ無い。"
     # J-Quants STANDARD datasets summary (v11.1.1) — reads the diagnostics CACHE only
     # (a public GET must never fire provider probes). Unknown until an admin diag ran.
-    _dc = _PROVIDER_DIAG_CACHE.get("data") if time.time() < _PROVIDER_DIAG_CACHE.get("expires", 0.0) else None
+    _dc = (_PROVIDER_DIAG_CACHE.get("data")
+           if time.time() < _PROVIDER_DIAG_CACHE.get("expires", 0.0)
+           else None)
     def _dc_rt(pid):
         for i in ((_dc or {}).get("items") or []):
             if i.get("provider") == pid:
@@ -30924,9 +33329,10 @@ def _source_registry():
           "moomooはexchange timestampのquote-set p95≤60秒でのみLIVE。"
           "Twelve Dataは契約・市場権限・source timestampの実測が揃うまでrequires_test。"),
         S("大口フロー(資金分布)", "moomoo", "JP/US",
-          "confirmed_live" if bridge_live else "requires_test",
+          "requires_test" if (bridge_live or flow_observed) else "missing",
           "口座のデータ権限依存", "free", "entitlement-dependent",
-          "新規買い/買い戻し/分配の推定に使用。"),
+          "資金分布値は受信できるがflow専用の取得時刻が無いためLIVE未実証。"
+          "新規買い/買い戻し/分配の推定には参考値として使用。"),
         S("暗号資産 価格/ショック", "CoinGecko", "CRYPTO",
           "confirmed_live" if cg == "live" else "partial", "数分遅延", "free", "ok",
           "24時間ショック検知に使用(キー不要)。"),
@@ -30948,7 +33354,7 @@ def _source_registry():
           + ("" if _jq_known else "admin診断が未実行のため requires_test 表示。")),
         S("企業開示(EDINET)", "EDINET API v2", "JP",
           ("missing" if not _EDINET_API_KEY else
-           "confirmed_live" if _EDINET_STATE["lastFetchOk"] else "requires_test"),
+           "confirmed_live" if edinet_recent_success else "requires_test"),
           ("APIキー未設定" if not _EDINET_API_KEY else "Subscription-Key設定済"),
           "free", "ok",
           "公式開示=official_fact。official_catalystは臨時報告/大量保有など材料性のある開示が"
@@ -30968,52 +33374,11 @@ def _source_registry():
         S("AIチェック(Gemini)", "Gemini", "—", {"live": "confirmed_live", "partial": "partial"}.get(rt("gemini"), "missing"),
           "管理者実行のみ", "paid/free", "ok", "OpenAI判断の二重チェック。"),
     ]
-    return {"asOf": _ai_now_iso(), "engineVersion": "source-registry-v1",
-            "confirmedLive": sum(1 for s in sources if s["status"] == "confirmed_live"),
-            "total": len(sources), "sources": sources,
-            "noteJa": "『設定済み』≠『その機能がライブ』。各capabilityの真の状態を表示。"}
-
-@app.route("/api/argus/source-registry")
-def api_argus_source_registry():
-    return jsonify(_source_registry())
-
-
-@app.route("/api/argus/source-coverage")
-def api_argus_source_coverage():
-    """Source coverage by QUALITY TIER (ARGUS Pro v11). Honest: a source being listed
-    is not enough — zero items / no successful fetch ≠ live. Weak tiers (aggregator/
-    unknown/social) cannot ground judgment or confirm cause. Reuses the source registry
-    (configured≠live) + a tally of the live IntelligenceItem store by tier."""
-    reg = _source_registry() or {}
-    # Tally the actual collected items by tier (what's really flowing in).
-    tier_counts = {}
-    fam_seen = set()
-    for it in list(_INTEL_STORE):
-        tier = it.get("sourceTier") or argus_research_mesh.source_tier(it.get("sourceId"))
-        b = tier_counts.setdefault(tier, {"tier": tier, "itemCount": 0,
-                                          **argus_research_mesh.tier_grounding(tier)})
-        b["itemCount"] += 1
-        fam_seen.add(argus_research_mesh.source_family(it.get("sourceId")))
-    tiers = sorted(tier_counts.values(), key=lambda x: -x["itemCount"])
-    grounding_items = sum(b["itemCount"] for b in tiers if b["canGroundJudgment"])
-    weak_items = sum(b["itemCount"] for b in tiers if b["weakSignal"])
-    return jsonify({
-        "asOf": _ai_now_iso(),
-        "schemaVersion": "source-coverage-v1",
-        "tiers": tiers,
-        "independentFamiliesSeen": sorted(f for f in fam_seen if f and f != "unknown"),
-        "registry": {"confirmedLive": reg.get("confirmedLive"), "total": reg.get("total"),
-                     "note": "configured ≠ live: 実データが流れて初めてliveと数える。"},
-        "summary": {
-            "totalItems": sum(b["itemCount"] for b in tiers),
-            "canGroundJudgmentItems": grounding_items,
-            "weakSignalItems": weak_items,
-            "distinctTiers": len(tiers),
-        },
-        "noteJa": "弱いソース(アグリゲータ/不明/SNS)は単独で判断根拠にも原因確定にもできません。"
-                  "同一ワイヤの転載は1ファミリー=1確認です。",
-    })
-
+    out = {"asOf": _ai_now_iso(), "engineVersion": "source-registry-v1",
+           "confirmedLive": sum(1 for s in sources if s["status"] == "confirmed_live"),
+           "total": len(sources), "sources": sources,
+           "noteJa": "『設定済み』≠『その機能がライブ』。各capabilityの真の状態を表示。"}
+    return out
 
 # ── Provider diagnostics (v11.1) ─────────────────────────────────────────────
 # Safe, cached probes proving which CONTRACTED providers are actually returning data.
@@ -31228,22 +33593,57 @@ def api_argus_admin_provider_diagnostics():
         return jsonify(err), code
     return jsonify(_provider_diagnostics())
 
-@app.route("/api/argus/provider-diagnostics/public")
-def api_argus_provider_diagnostics_public():
-    """PUBLIC-safe provider status: configured booleans + live/partial/missing ONLY.
-    No admin detail, no httpStatus, no sample counts, no messages."""
-    full = _provider_diagnostics()
-    pub = [{"provider": i["provider"], "configured": i["configured"],
-            "status": ("live" if i["runtimeStatus"] == "live" else
-                       "partial" if i["runtimeStatus"] == "partial" else
-                       "configured" if i["runtimeStatus"] == "configured" else
-                       ("missing" if not i["configured"] else "not_live"))}
-           for i in full["items"]]
-    return jsonify({"asOf": full["asOf"], "schemaVersion": "provider-diagnostics-public-v1",
-                    "providers": pub,
-                    "summary": {"live": sum(1 for p in pub if p["status"] == "live"),
-                                "configured": sum(1 for p in pub if p["configured"]), "total": len(pub)},
-                    "noteJa": "設定済み≠ライブ。詳細はadmin専用エンドポイントで。"})
+
+def _provider_diagnostics_cached_only():
+    """Return the last probe result, or a configuration-only cold snapshot.
+
+    This deliberately ignores expiry: stale evidence is safer than spending
+    provider quota from a public status request.  The authenticated diagnostics
+    route remains the refresh authority.
+    """
+    cached = _PROVIDER_DIAG_CACHE.get("data")
+    if isinstance(cached, dict):
+        if time.time() < _PROVIDER_DIAG_CACHE.get("expires", 0.0):
+            return cached
+        stale = copy.deepcopy(cached)
+        for item in stale.get("items") or []:
+            if item.get("runtimeStatus") in ("live", "partial"):
+                item["runtimeStatus"] = "stale"
+        return stale
+    configured = (
+        ("jquants-core", bool(_JQUANTS_API_KEY)),
+        ("jquants-tdnet", bool(_JQUANTS_API_KEY)),
+        ("jquants-trading-calendar", bool(_JQUANTS_API_KEY)),
+        ("jquants-earnings-calendar", bool(_JQUANTS_API_KEY)),
+        ("jquants-margin-interest", bool(_JQUANTS_API_KEY)),
+        ("jquants-short-ratio", bool(_JQUANTS_API_KEY)),
+        ("jquants-investor-types", bool(_JQUANTS_API_KEY)),
+        ("edinet", bool(_EDINET_API_KEY)),
+        ("twelvedata-quote", bool(_TWELVEDATA_API_KEY)),
+        ("twelvedata-timeseries", bool(_TWELVEDATA_API_KEY)),
+        ("fred", bool(_FRED_API_KEY)),
+        ("finnhub", bool(FINNHUB_API_KEY)),
+        ("alphavantage", bool(_ALPHAVANTAGE_KEY)),
+        ("coingecko", True),
+        ("openai", bool(_OPENAI_API_KEY)),
+        ("gemini", bool(GEMINI_API_KEY)),
+        ("layer2b-private-store", _layer2b_store_configured()),
+    )
+    items = [{
+        "provider": provider,
+        "configured": is_configured,
+        "runtimeStatus": ("configured" if is_configured else "missing"),
+    } for provider, is_configured in configured]
+    return {
+        "asOf": _ai_now_iso(),
+        "schemaVersion": "provider-diagnostics-v1",
+        "items": items,
+        "summary": {
+            "live": 0,
+            "configured": sum(1 for item in items if item["configured"]),
+            "total": len(items),
+        },
+    }
 
 
 # ── Market Depth capability report (v10.196) ─────────────────────────────────
@@ -31294,17 +33694,36 @@ def _vwap_probe():
     _VWAP_CACHE["expires"] = now + (1800 if probe["computed"] else 900)
     return probe
 
-def _market_depth_report():
+
+def _vwap_cached_only():
+    cached = _VWAP_CACHE.get("data")
+    if isinstance(cached, dict):
+        return cached
+    return {
+        "computed": False,
+        "values": {},
+        "probed": False,
+        "asOf": _ai_now_iso(),
+        "note": "cached VWAP proof unavailable; authenticated/background refresh pending",
+    }
+
+
+def _market_depth_report(*, allow_provider_fetch=True):
     now = time.time()
-    if _MARKET_DEPTH_CACHE["data"] is not None and now < _MARKET_DEPTH_CACHE["expires"]:
+    if (_MARKET_DEPTH_CACHE["data"] is not None and
+            now < _MARKET_DEPTH_CACHE["expires"]):
         return _MARKET_DEPTH_CACHE["data"]
+    if not allow_provider_fetch:
+        return None
     try: mc = _moomoo_capability_report()
     except Exception: mc = {}
     try: rp = _MOOMOO_ALLMARKET_REPORT.get("realtimeProof") or {}
     except Exception: rp = {}
-    try: reg = _source_registry()
+    try: reg = _source_registry(allow_provider_fetch=allow_provider_fetch)
     except Exception: reg = {}
-    try: vwap = _vwap_probe()
+    try:
+        vwap = (_vwap_probe() if allow_provider_fetch else
+                _vwap_cached_only())
     except Exception: vwap = None
     try:
         rep = argus_market_depth.build_market_depth_report(
@@ -31314,16 +33733,10 @@ def _market_depth_report():
             vwap_probe=vwap)
     except Exception:
         rep = None
-    _MARKET_DEPTH_CACHE["data"] = rep
-    _MARKET_DEPTH_CACHE["expires"] = now + 60
+    if allow_provider_fetch:
+        _MARKET_DEPTH_CACHE["data"] = rep
+        _MARKET_DEPTH_CACHE["expires"] = now + 60
     return rep
-
-@app.route("/api/argus/market-depth")
-def api_argus_market_depth():
-    rep = _market_depth_report()
-    return jsonify(rep or {"status": "unavailable", "engineVersion": "market-depth-v1",
-                           "capabilities": {}, "note": "depth report temporarily unavailable"})
-
 
 # Pure projection so the "proof" contract is unit-testable without Flask/network.
 def _market_depth_proof_items(capabilities):
@@ -31361,31 +33774,6 @@ def _market_depth_proof_items(capabilities):
     return items
 
 
-@app.route("/api/argus/market-depth/proof")
-def api_argus_market_depth_proof():
-    """PROOF-level Market Depth (ARGUS Pro v11): 'live' only where a real measurement
-    (probed=true) backs it; otherwise 'unverified_live'. L2/TAPE/OPTIONS_IV/BORROW_FEE
-    remain unavailable/requires_contract until a real feed exists — cadence ≠ proof."""
-    rep = _market_depth_report() or {}
-    items = _market_depth_proof_items(rep.get("capabilities") or {})
-    true_live = sum(1 for i in items if i["status"] == "live" and i["isTrueDepth"])
-    computed_live = sum(1 for i in items if i["status"] == "live" and not i["isTrueDepth"])
-    return jsonify({
-        "asOf": rep.get("asOf") or _ai_now_iso(),
-        "schemaVersion": "market-depth-proof-v1",
-        "items": items,
-        "summary": {
-            "trueDepthLiveCount": true_live,
-            "computedIndicatorsLiveCount": computed_live,
-            "unverifiedLiveCount": sum(1 for i in items if i["status"] == "unverified_live"),
-            "requiresContractCount": sum(1 for i in items if i["status"] == "requires_contract"),
-            "unavailableCount": sum(1 for i in items if i["status"] == "unavailable"),
-        },
-        "proofNoteJa": "「LIVE」は取引所/提供元タイムスタンプ等の実測(probed=true)がある能力のみ。"
-                       "配信頻度は鮮度の証明ではありません。板/歩み値/オプションIV/貸株料は実データが無い限りunavailable/要契約。",
-    })
-
-
 # ── Visibility Risk Guard (v10.195) ──────────────────────────────────────────
 # Aggregates every data-visibility signal ARGUS already exposes into one honest
 # verdict: what it can't see, whether to cap confidence / block ENTER, and a calm
@@ -31395,25 +33783,36 @@ def api_argus_market_depth_proof():
 # v10.196: capabilities now come from the live Market Depth report (data-driven).
 _VISIBILITY_CACHE = {"data": None, "expires": 0.0}
 
-def _visibility_guard():
+def _visibility_guard(*, allow_provider_fetch=True):
     now = time.time()
-    if _VISIBILITY_CACHE["data"] is not None and now < _VISIBILITY_CACHE["expires"]:
+    if (_VISIBILITY_CACHE["data"] is not None and
+            now < _VISIBILITY_CACHE["expires"]):
         return _VISIBILITY_CACHE["data"]
-    try: sh = _system_health()
+    try: sh = _system_health(allow_provider_fetch=allow_provider_fetch)
     except Exception: sh = None
     try: moomoo_ent = (_moomoo_capability_report() or {}).get("overallEntitlement")
     except Exception: moomoo_ent = None
     try:
-        _reg = get_market_regime_snapshot()
+        _reg = (get_market_regime_snapshot() if allow_provider_fetch else
+                ((_REGIME_CACHE.get("data") or {})
+                 if now < _REGIME_CACHE.get("expires", 0.0) else {}))
         held = _reg.get("heldOverMin") if isinstance(_reg, dict) else None
     except Exception: held = None
     try:
-        _n = int(((_ledger_summary() or {}).get("overall") or {}).get("n") or 0)
+        _ledger = (_ledger_summary() if allow_provider_fetch else
+                   (_LEDGER_SUMMARY_CACHE.get("data")
+                    if now < _LEDGER_SUMMARY_CACHE.get("expires", 0.0)
+                    else None))
+        _n = int(((_ledger or {}).get("overall") or {}).get("n") or 0)
         cal_stage = argus_calibration.reliability_stage(_n)
     except Exception: cal_stage = None
-    try: dv_phase = _dv_shadow_phase()
+    try:
+        dv_phase = (_dv_shadow_phase() if allow_provider_fetch else
+                    "v1-phase1-engine-only")
     except Exception: dv_phase = "v1-phase1-engine-only"
-    try: caps = (_market_depth_report() or {}).get("capabilitiesForGuard")
+    try:
+        caps = (_market_depth_report(
+            allow_provider_fetch=allow_provider_fetch) or {}).get("capabilitiesForGuard")
     except Exception: caps = None
     g = argus_visibility.build_visibility_guard(
         now_iso=_ai_now_iso(),
@@ -31427,13 +33826,14 @@ def _visibility_guard():
         calibration_stage=cal_stage,
         decision_value_phase=dv_phase,
     )
-    _VISIBILITY_CACHE["data"] = g
-    _VISIBILITY_CACHE["expires"] = now + 60
+    if allow_provider_fetch:
+        _VISIBILITY_CACHE["data"] = g
+        _VISIBILITY_CACHE["expires"] = now + 60
     return g
 
 @app.route("/api/argus/visibility-guard")
 def api_argus_visibility_guard():
-    return jsonify(_visibility_guard())
+    return jsonify(_visibility_guard(allow_provider_fetch=False))
 
 
 # ── Runtime manifest (v10.107) ───────────────────────────────────────────────
@@ -31441,18 +33841,18 @@ def api_argus_visibility_guard():
 # so GPT/Claude never reason from a STALE static doc. Public, secret-free — only
 # booleans for config presence, never any key/value.
 def get_runtime_manifest():
-    reg = _source_registry()
+    """Public cache-only runtime summary; live refresh stays operational."""
+    now = time.time()
+    reg = _source_registry(allow_provider_fetch=False)
+    ds = (_DOWNSIDE_CACHE.get("data") or {}
+          if now < _DOWNSIDE_CACHE.get("expires", 0.0) else {})
+    td = ((_TDNET_OFFICIAL_CACHE.get("data")
+           if now < _TDNET_OFFICIAL_CACHE.get("expires", 0.0) else None) or
+          (_TDNET_FEED_CACHE.get("data")
+           if now < _TDNET_FEED_CACHE.get("expires", 0.0) else None) or {})
+    aij = _ai_judgment_truth(allow_restore=False)
     try:
-        ds = get_downside_incidents()
-    except Exception:
-        ds = {}
-    try:
-        td = get_tdnet_recent()
-    except Exception:
-        td = {}
-    aij = _ai_judgment_truth()
-    try:
-        vg = _visibility_guard()
+        vg = _visibility_guard(allow_provider_fetch=False)
     except Exception:
         vg = {}
     layer2b_configured = bool(os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO")
@@ -31462,13 +33862,14 @@ def get_runtime_manifest():
     return {
         "asOf": _ai_now_iso(), "engineVersion": "runtime-manifest-v1",
         "buildSha": (os.environ.get("RENDER_GIT_COMMIT", "")[:7] or None),
-        "activeRoutes": ["Today", "Watchlist", "Market Context", "Core Portfolio", "Glossary / Guide"],
+        "activeRoutes": ["Today", "Holdings / Watchlist", "Notifications", "Settings"],
         "providers": {"confirmedLive": reg.get("confirmedLive"), "total": reg.get("total"),
                       "degraded": degraded[:14]},
         "calibration": {
             "schema": argus_calibration.SCHEMA_VERSION, "universe": argus_calibration.UNIVERSE_VERSION,
             "tacticalBenchmark": argus_calibration.TACTICAL_BENCHMARK_VERSION, "cohort": argus_calibration.COHORT_VERSION,
-            "phase": "v4 dry-run (parallel epoch calibration_v1) alongside v3 headline; burn-in — accuracy NOT proven",
+            "phase": ("calibration_v1 is historical compatibility/shadow-derived only; "
+                      "canonical sealed v2 forward_live is EVIDENCE_ONLY; accuracy NOT proven"),
         },
         "downside": {
             "engine": "downside-v1", "activeIncidents": ds.get("activeCount", 0),
@@ -31479,7 +33880,8 @@ def get_runtime_manifest():
                   "count": len(td.get("items") or [])},
         "ownerWatchlist": {"layer2bConfigured": layer2b_configured,
                            "note": "non-monetary flags only (ownerState/strictness/priority); amounts NEVER sent"},
-        "decisionValue": {"phase": (_dv_shadow_public_summary().get("status") or "v1-phase1-engine-only"),
+        "decisionValue": {"phase": ("configured_unverified" if layer2b_configured
+                                      else "blocked_pending_private_store"),
                            "note": "shadow simulation only; NO order/broker/execute routes — ever; real netR owner-private"},
         "visibility": {"visibilityLevel": vg.get("visibilityLevel"), "confidenceCap": vg.get("confidenceCap"),
                        "reasonCodes": vg.get("reasonCodes", []), "coverageLineJa": vg.get("coverageLineJa"),
@@ -31508,24 +33910,22 @@ def get_runtime_manifest():
     }
 
 
-@app.route("/api/argus/runtime-manifest")
-def api_argus_runtime_manifest():
-    return jsonify(get_runtime_manifest())
-
-
 # ━━━ Context-aware VIX signal (v9.12) ━━━
 # A fixed "VIX crossed N" alert is a magic number. The essential read is:
 #   velocity (how fast fear is rising) × position vs ITS OWN recent regime
 #   (60-day percentile) × broad absolute sanity bands.
 # Alerts fire on ZONE TRANSITIONS and SPIKES, never on one hardcoded level.
-_VIX_HIST_CACHE = {"data": None, "expires": 0.0}
+_VIX_HIST_CACHE = {"data": None, "sourceTimestamp": None, "expires": 0.0}
 _VIX_HIST_TTL   = 3600  # 1h — daily series, no need to hammer FRED
 
 def _fred_vix_history(n=70):
     """Newest-first VIX closes (~n obs) from FRED. [] on no key / failure."""
     now = time.time()
     if _VIX_HIST_CACHE["data"] is not None and now < _VIX_HIST_CACHE["expires"]:
-        return _VIX_HIST_CACHE["data"]
+        return (_VIX_HIST_CACHE["data"] if _source_time_within(
+            _VIX_HIST_CACHE.get("sourceTimestamp"),
+            _RATE_DELAYED_MAX_SEC, now_epoch=now, allow_date_only=True)
+                else [])
     if not _FRED_API_KEY:
         return []
     try:
@@ -31534,14 +33934,28 @@ def _fred_vix_history(n=70):
             "sort_order": "desc", "limit": n + 10,
         }, timeout=8)
         r.raise_for_status()
-        closes = [float(o["value"]) for o in r.json().get("observations", [])
-                  if o.get("value") not in (None, ".", "")][:n]
-        if len(closes) >= 10:
+        observations = [o for o in r.json().get("observations", [])
+                        if o.get("value") not in (None, ".", "")]
+        closes = [float(o["value"]) for o in observations][:n]
+        source_timestamp = ((observations[0] or {}).get("date")
+                            if observations else None)
+        source_usable = _source_time_within(
+            source_timestamp, _RATE_DELAYED_MAX_SEC,
+            now_epoch=now, allow_date_only=True)
+        if len(closes) >= 10 and source_usable:
             _VIX_HIST_CACHE["data"] = closes
-            _VIX_HIST_CACHE["expires"] = now + _VIX_HIST_TTL
-        return closes
+            _VIX_HIST_CACHE["sourceTimestamp"] = source_timestamp
+            source_epoch = _bounded_source_epoch(
+                source_timestamp, allow_date_only=True)
+            _VIX_HIST_CACHE["expires"] = min(
+                now + _VIX_HIST_TTL,
+                source_epoch + _RATE_DELAYED_MAX_SEC)
+        return closes if source_usable else []
     except Exception:
-        return _VIX_HIST_CACHE["data"] or []
+        return (_VIX_HIST_CACHE["data"] or [] if _source_time_within(
+            _VIX_HIST_CACHE.get("sourceTimestamp"),
+            _RATE_DELAYED_MAX_SEC, now_epoch=now, allow_date_only=True)
+                else [])
 
 def _vix_assess(closes):
     """Context-aware VIX read from a newest-first close list (pure, testable).
@@ -31583,6 +33997,34 @@ def _vix_assess(closes):
         "rationaleJa": (f"VIX {round(level, 1)} — {note}。"
                         f"前日比{chg:+.1f}({chg_pct:+.1f}%)・直近{len(window)}日分布の{rank}パーセンタイル(中央値{med})。"),
     }
+
+
+def _canonical_vix_assess(history, vix_row, *, now_epoch=None):
+    """Bind current VIX level/velocity to canonical, source-time-usable truth."""
+    if not isinstance(vix_row, dict):
+        return None
+    freshness = vix_row.get("freshness")
+    horizon = (_RATE_EXACT_FRESH_SEC
+               if freshness == argus_market_data_truth.FRESH else
+               _RATE_DELAYED_MAX_SEC
+               if freshness == argus_market_data_truth.DELAYED else None)
+    value = vix_row.get("latestValue")
+    if horizon is None or vix_row.get("completeness") != \
+            argus_market_data_truth.COMPLETE or not isinstance(
+                value, (int, float)) or isinstance(value, bool) or not math.isfinite(
+                    float(value)) or not _source_time_within(
+                        vix_row.get("observedAt") or
+                        vix_row.get("sourceTimestamp"), horizon,
+                        now_epoch=now_epoch, allow_date_only=True):
+        return None
+    closes = [float(value)]
+    if isinstance(history, list):
+        tail = [item for item in history if isinstance(item, (int, float))
+                and not isinstance(item, bool) and math.isfinite(float(item))]
+        if vix_row.get("selectedProvider") == "fred" and tail:
+            tail = tail[1:]
+        closes.extend(tail[:69])
+    return _vix_assess(closes)
 
 
 # ━━━ Prediction Ledger snapshot (ledger-v1) — the self-scoring loop ━━━
@@ -31647,10 +34089,17 @@ _SENSOR_ETF_CACHE = {"expires": 0.0}
 
 def _ensure_sensor_etfs():
     now = time.time()
-    if now < _SENSOR_ETF_CACHE["expires"]:
+    all_current = all(
+        _etf_last_price_decision_row(
+            symbol, max_transport_age_sec=6 * 3600,
+            now_epoch=now) is not None
+        for symbol in _SENSOR_ETF_EXTRA)
+    if now < _SENSOR_ETF_CACHE["expires"] and all_current:
         return
     missing = [s for s in _SENSOR_ETF_EXTRA
-               if not (_ETF_LAST_PRICE.get(s) and now - _ETF_LAST_PRICE[s]["ts"] <= 6 * 3600)]
+               if _etf_last_price_decision_row(
+                   s, max_transport_age_sec=6 * 3600,
+                   now_epoch=now) is None]
     if missing:
         _td_timeseries(missing)  # stashes into _ETF_LAST_PRICE as a side effect
     _SENSOR_ETF_CACHE["expires"] = now + 6 * 3600
@@ -31740,7 +34189,11 @@ def _jq_price_history(code):
                         "adjusted": [q.get("AdjC") is not None for q in rows]}
         except Exception as e:
             add_log(f"[scout] history fetch failed {code}: {type(e).__name__}")
-    _JQ_HISTORY_CACHE[code] = {"data": data, "expires": now + (_JQ_HISTORY_TTL if data else 600)}
+    _JQ_HISTORY_CACHE[code] = {
+        "data": data, "expires": now + (_JQ_HISTORY_TTL if data else 600),
+        "acquiredAt": (datetime.fromtimestamp(now, pytz.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S.%fZ") if data else None),
+    }
     return data
 
 def _jq_weekly_margin(code):
@@ -31936,6 +34389,176 @@ def _catalyst_context(news, regime_label, esc, earnings_days, high_beta):
             "noteJa": "材料は参考情報(点数化しない)。最終的なニュース解釈はGPT-5.5 Pro相談ボタンやご自身で。"}
 
 
+_ENTRY_HISTORY_MAX_CALENDAR_DAYS = 7
+_ENTRY_WEEKLY_MARGIN_MAX_CALENDAR_DAYS = 14
+_ENTRY_JSF_MAX_CALENDAR_DAYS = 7
+_ENTRY_JPX_SHORT_MAX_CALENDAR_DAYS = 7
+
+
+def _bounded_market_session_date(value, market, max_calendar_days, *,
+                                 accepted_formats=("%Y-%m-%d",),
+                                 now_epoch=None):
+    """Parse an exact provider date and prove it is a bounded market session.
+
+    ``strptime`` accepts non-zero-padded input for directives such as ``%m``;
+    the round-trip check intentionally closes that ambiguity.  Callers must
+    declare the exact format(s) their provider contract supports.
+    """
+    if (not isinstance(value, str)
+            or isinstance(max_calendar_days, bool)
+            or not isinstance(max_calendar_days, int)
+            or max_calendar_days < 0):
+        return None, "malformed_source_date"
+    formats = tuple(accepted_formats) if isinstance(
+        accepted_formats, (tuple, list)) else ()
+    parsed = None
+    for fmt in formats:
+        if not isinstance(fmt, str) or not fmt:
+            continue
+        try:
+            candidate = datetime.strptime(value, fmt).date()
+        except (TypeError, ValueError):
+            continue
+        if candidate.strftime(fmt) == value:
+            parsed = candidate
+            break
+    if parsed is None:
+        return None, "malformed_source_date"
+
+    market_name = str(market).upper()
+    if market_name in ("JP", argus_market_clock.JP_EQUITY):
+        market_id, zone = argus_market_clock.JP_EQUITY, TZ_JST
+    elif market_name in ("US", argus_market_clock.US_EQUITY):
+        market_id, zone = (argus_market_clock.US_EQUITY,
+                           pytz.timezone("America/New_York"))
+    else:
+        return None, "unsupported_source_market"
+    if not argus_market_clock.is_trading_day(market_id, parsed):
+        return None, "non_trading_source_date"
+
+    try:
+        now = time.time() if now_epoch is None else float(now_epoch)
+        if not math.isfinite(now):
+            raise ValueError("non-finite epoch")
+        current = datetime.fromtimestamp(now, zone).date()
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None, "invalid_decision_time"
+    age_days = (current - parsed).days
+    if age_days < 0:
+        return None, "future_source_date"
+    try:
+        latest_completed = argus_market_clock.latest_completed_session_date(
+            market_id, datetime.fromtimestamp(now, pytz.utc))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None, "invalid_decision_time"
+    if parsed > latest_completed:
+        return None, "uncompleted_source_session"
+    if age_days > max_calendar_days:
+        return None, "stale_source_date"
+    return parsed, "current_source_date"
+
+
+def _entry_weekly_margin_evidence(rows, *, now_epoch=None):
+    """Return two newest distinct bounded J-Quants weekly observations."""
+    if not isinstance(rows, list):
+        return None, "source_unavailable"
+    valid, failures, seen = [], [], set()
+    for row in rows:
+        if not isinstance(row, dict):
+            failures.append("malformed_source_row")
+            continue
+        parsed, reason = _bounded_market_session_date(
+            row.get("date"), "JP", _ENTRY_WEEKLY_MARGIN_MAX_CALENDAR_DAYS,
+            accepted_formats=("%Y-%m-%d",), now_epoch=now_epoch)
+        if parsed is None:
+            failures.append(reason)
+            continue
+        if parsed in seen:
+            continue
+        seen.add(parsed)
+        valid.append((parsed, row))
+    valid.sort(key=lambda item: item[0], reverse=True)
+    if len(valid) < 2:
+        return None, (failures[0] if failures
+                      else "insufficient_recent_source_rows")
+    return [dict(item[1]) for item in valid[:2]], "current_source_dates"
+
+
+def _cache_expiry_usable(cache_row, *, now_epoch=None):
+    """A cached payload is admissible only while its explicit TTL is live."""
+    if not isinstance(cache_row, dict):
+        return False
+    expires = cache_row.get("expires")
+    if (isinstance(expires, bool)
+            or not isinstance(expires, (int, float))
+            or not math.isfinite(float(expires))):
+        return False
+    try:
+        now = time.time() if now_epoch is None else float(now_epoch)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return math.isfinite(now) and now < float(expires)
+
+
+def _entry_cached_credit_dates_usable(cache_row, market, *, now_epoch=None):
+    """Re-age every credit date supporting a cached Entry Scout decision."""
+    if not _cache_expiry_usable(cache_row, now_epoch=now_epoch):
+        return False
+    if str(market).upper() == "US":
+        return True
+    proof = (cache_row or {}).get("creditDates")
+    if not isinstance(proof, dict):
+        return False
+    specs = (
+        ("weeklyMargin", _ENTRY_WEEKLY_MARGIN_MAX_CALENDAR_DAYS,
+         ("%Y-%m-%d",)),
+        ("jsf", _ENTRY_JSF_MAX_CALENDAR_DAYS, ("%Y/%m/%d",)),
+        ("jpxShort", _ENTRY_JPX_SHORT_MAX_CALENDAR_DAYS, ("%Y/%m/%d",)),
+    )
+    for key, max_days, formats in specs:
+        values = proof.get(key)
+        if values is None:
+            continue
+        values = values if isinstance(values, list) else [values]
+        if not values:
+            return False
+        for value in values:
+            if _bounded_market_session_date(
+                    value, "JP", max_days, accepted_formats=formats,
+                    now_epoch=now_epoch)[0] is None:
+                return False
+    return True
+
+
+def _entry_history_source_usable(history, market, *, now_epoch=None):
+    """Latest daily bar must be a recent, non-future market-session date."""
+    dates = (history or {}).get("dates") if isinstance(history, dict) else None
+    if not isinstance(dates, list) or not dates:
+        return False, "missing_latest_session_date"
+    raw = dates[0]
+    if not isinstance(raw, str) or len(raw) != 10:
+        return False, "malformed_latest_session_date"
+    try:
+        latest = datetime.strptime(raw, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return False, "malformed_latest_session_date"
+    now = time.time() if now_epoch is None else float(now_epoch)
+    zone = TZ_JST if str(market).upper() == "JP" else pytz.timezone(
+        "America/New_York")
+    current = datetime.fromtimestamp(now, zone).date()
+    market_id = (argus_market_clock.JP_EQUITY
+                 if str(market).upper() == "JP"
+                 else argus_market_clock.US_EQUITY)
+    if not argus_market_clock.is_trading_day(market_id, latest):
+        return False, "non_trading_latest_session_date"
+    age_days = (current - latest).days
+    if age_days < 0:
+        return False, "future_latest_session_date"
+    if age_days > _ENTRY_HISTORY_MAX_CALENDAR_DAYS:
+        return False, "stale_latest_session_date"
+    return True, "current_session_date"
+
+
 
 
 
@@ -31947,36 +34570,62 @@ def _catalyst_context(news, regime_label, esc, earnings_days, high_beta):
 # in-house. Not a buy/sell order: a framing of the decision.
 
 
+def _entry_scout_evidence_only(payload):
+    """Seal the legacy weighted scout as diagnostic evidence, never an action."""
+    if not isinstance(payload, dict):
+        return payload
+    out = dict(payload)
+    out["authorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE
+    out["finalDecisionAuthorityActive"] = False
+    return out
+
+
 def get_entry_scout(sym, market="JP"):
     now = time.time()
     ck = f"{market}:{sym}"
     c = _SCOUT_CACHE.get(ck)
-    if c and now < c["expires"]:
-        return c["data"]
+    cached_history_ok = _entry_history_source_usable(
+        {"dates": [((c or {}).get("data") or {}).get("lastDate")]},
+        market, now_epoch=now)[0]
+    cached_credit_ok = _entry_cached_credit_dates_usable(
+        c, market, now_epoch=now)
+    if c and cached_history_ok and cached_credit_ok:
+        return _entry_scout_evidence_only(c["data"])
     is_us = (market == "US")
     hist = _td_price_history(sym) if is_us else _jq_price_history(sym)
     if not hist:
-        return {"engineVersion": "entry-scout-v1", "symbol": sym, "market": market,
+        return _entry_scout_evidence_only({"engineVersion": "entry-scout-v1", "symbol": sym, "market": market,
                 "status": "unavailable",
-                "noteJa": "価格履歴を取得できませんでした(コード違いか一時的な障害)。"}
+                "noteJa": "価格履歴を取得できませんでした(コード違いか一時的な障害)。"})
+    history_usable, history_reason = _entry_history_source_usable(
+        hist, market, now_epoch=now)
+    if not history_usable:
+        return _entry_scout_evidence_only({
+            "engineVersion": "entry-scout-v1", "symbol": sym,
+            "market": market, "status": "unavailable",
+            "freshness": "stale", "latestDate": (
+                (hist.get("dates") or [None])[0]
+                if isinstance(hist.get("dates"), list) else None),
+            "sourceTimeReason": history_reason,
+            "noteJa": "最新日足の取引日が現在の市場セッションと整合しないため、診断を停止しました。",
+        })
     m = _entry_metrics(hist["closes"], hist["volumes"], hist.get("highs"), hist.get("lows"))
     if not m:
-        return {"engineVersion": "entry-scout-v1", "symbol": sym, "market": market,
+        return _entry_scout_evidence_only({"engineVersion": "entry-scout-v1", "symbol": sym, "market": market,
                 "status": "unavailable",
-                "noteJa": "履歴が20営業日未満のため診断できません(上場直後など)。"}
-    # Realtime flow from the bridge (last push regardless of freshness — the
-    # asOf below tells the user how stale it is, e.g. on a weekend).
+                "noteJa": "履歴が20営業日未満のため診断できません(上場直後など)。"})
+    # Flow remains non-authoritative until it carries an independent source
+    # timestamp; receipt/price exchangeTs cannot be borrowed for it.
     pushed = (_PUSHED_QUOTES.get(market) or {}).get(sym)
+    pushed_decision = _pushed_quote_decision_row(pushed, now_epoch=now)
     flow_ratio, flow_age_min = None, None
-    if pushed:
-        fl = (pushed.get("row") or {}).get("flow") or {}
-        if isinstance(fl.get("bigNetRatio"), (int, float)):
-            flow_ratio = float(fl["bigNetRatio"])
-            flow_age_min = int((now - pushed["ts"]) / 60)
     ev = get_events_snapshot()
     esc = _region_event_escalation(ev.get("events", []) if isinstance(ev, dict) else [], market)
-    posture = _rates_posture(get_rates_snapshot())
-    vol = _vix_assess(_fred_vix_history())
+    current_rates = get_rates_snapshot()
+    posture = _rates_posture(current_rates)
+    vol = _canonical_vix_assess(
+        _fred_vix_history(), (current_rates or {}).get("vix"),
+        now_epoch=now)
     vix_zone = vol.get("zone") if isinstance(vol, dict) else None
     vix_spike = bool(vol.get("spike")) if isinstance(vol, dict) else False
     weekday = datetime.now(TZ_JST).weekday()
@@ -31988,9 +34637,10 @@ def get_entry_scout(sym, market="JP"):
     # the bridge so the comparison is same-timestamp realtime.
     rel_strength = None
     idx_pushed = (_PUSHED_QUOTES.get(market) or {}).get("1306" if not is_us else "SPY")
-    if pushed and idx_pushed:
-        s_chg = (pushed.get("row") or {}).get("changePct")
-        i_chg = (idx_pushed.get("row") or {}).get("changePct")
+    idx_decision = _pushed_quote_decision_row(idx_pushed, now_epoch=now)
+    if pushed_decision and idx_decision:
+        s_chg = pushed_decision.get("changePct")
+        i_chg = idx_decision.get("changePct")
         if isinstance(s_chg, (int, float)) and isinstance(i_chg, (int, float)):
             rel_strength = round(s_chg - i_chg, 2)
     # v2: earnings proximity from the catalysts metadata (best effort — the
@@ -32017,19 +34667,35 @@ def get_entry_scout(sym, market="JP"):
     # v2.2-2.4: JP-only credit/short data (日証金・JPX空売り are Japan-only).
     # For US these are absent — honestly None; US short-interest is a future add.
     margin_sig = jsf_sig = short_disclosed = None
+    margin_dates = None
     jsf_status = jpx_short_date = jsf_date = None
     short_status = "us_market" if is_us else None
     if not is_us:
-        margin_sig = _margin_signal(_jq_weekly_margin(sym))
+        margin_rows, _margin_time_reason = _entry_weekly_margin_evidence(
+            _jq_weekly_margin(sym), now_epoch=now)
+        margin_sig = _margin_signal(margin_rows)
+        margin_dates = ([row.get("date") for row in margin_rows]
+                        if margin_sig is not None else None)
         jsf_table, jsf_date = _jsf_balance_table()
         if jsf_table is None:
             jsf_sig, jsf_status = None, "source_unavailable"
+        elif _bounded_market_session_date(
+                jsf_date, "JP", _ENTRY_JSF_MAX_CALENDAR_DAYS,
+                accepted_formats=("%Y/%m/%d",),
+                now_epoch=now)[0] is None:
+            jsf_sig, jsf_status = None, "source_unavailable"
         elif sym in jsf_table and jsf_table[sym].get("loan") is not None and jsf_table[sym].get("short") is not None:
-            jsf_sig, jsf_status = _jsf_for(sym), "ok"
+            jsf_sig = _jsf_for(sym)
+            jsf_status = "ok" if jsf_sig is not None else "source_unavailable"
         else:
             jsf_sig, jsf_status = None, "not_loanable"
         jpx_short_table, jpx_short_date = _jpx_short_table()
         if jpx_short_table is None:
+            short_disclosed, short_status = None, "source_unavailable"
+        elif _bounded_market_session_date(
+                jpx_short_date, "JP", _ENTRY_JPX_SHORT_MAX_CALENDAR_DAYS,
+                accepted_formats=("%Y/%m/%d",),
+                now_epoch=now)[0] is None:
             short_disclosed, short_status = None, "source_unavailable"
         elif sym in jpx_short_table:
             short_disclosed, short_status = jpx_short_table[sym], "ok"
@@ -32045,11 +34711,15 @@ def get_entry_scout(sym, market="JP"):
                                  short_disclosed=short_disclosed)
     out = {
         "engineVersion": "entry-scout-v1", "symbol": sym, "market": market,
+        "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+        "finalDecisionAuthorityActive": False,
         "name": (sym if is_us else (_jq_name_for(sym) or sym)),
         "asOf": _ai_now_iso(), "status": "live",
         "lastClose": hist["closes"][0], "lastDate": hist["dates"][0],
         "metrics": m,
-        "flow": {"bigNetRatio": flow_ratio, "ageMin": flow_age_min},
+        "flow": {"bigNetRatio": flow_ratio, "ageMin": flow_age_min,
+                 "authority": "diagnostic_only", "decisionUsable": False,
+                 "reason": "flow_specific_timestamp_not_available"},
         "margin": margin_sig,    # None when the J-Quants plan omits weekly margin
         "nisshokin": jsf_sig,    # 日証金(JSF) daily 貸借残; None if not a 貸借銘柄
         "nisshokinStatus": jsf_status,   # ok / not_loanable / source_unavailable
@@ -32098,22 +34768,27 @@ def get_entry_scout(sym, market="JP"):
     out["callJa"], out["narrativeJa"] = _scout_narrative(
         assess, out["flowInference"], out["context"], jsf_sig, short_disclosed,
         m, out["scoreTrackRecord"], out["engineCalibration"], out["postureCalibration"], is_us)
+    out["legacyCallJa"] = out.pop("callJa")
     # If a credit/short source was momentarily down, cache only briefly so the
     # next diagnosis self-heals instead of showing a 30-min gap (検証で確認).
     src_down = jsf_status == "source_unavailable" or short_status == "source_unavailable"
-    _SCOUT_CACHE[ck] = {"data": out, "expires": now + (180 if src_down else _SCOUT_TTL)}
-    return out
-
-@app.route("/api/argus/entry-scout")
-def api_argus_entry_scout():
-    sym = (request.args.get("symbol") or "").strip().upper()
-    mkt = (request.args.get("market") or "").strip().upper()
-    if _JP_SYM_RE.match(sym) and mkt != "US":
-        return jsonify(get_entry_scout(sym, "JP"))
-    if _US_SYM_RE.match(sym) and (mkt == "US" or not _JP_SYM_RE.match(sym)):
-        return jsonify(get_entry_scout(sym, "US"))
-    return jsonify({"error": "bad_symbol",
-                    "noteJa": "日本株4桁コード、または米国ティッカー(?market=US)に対応。"}), 400
+    _SCOUT_CACHE[ck] = {
+        "data": out,
+        "expires": now + (180 if src_down else _SCOUT_TTL),
+        "creditDates": {
+            "weeklyMargin": margin_dates,
+            # A current complete JSF table is also the authority for the
+            # not_loanable absence inference.
+            "jsf": (jsf_date if jsf_status in ("ok", "not_loanable")
+                    else None),
+            # A current JPX file is also the authority for the bounded
+            # none_disclosed inference; retain its date in the private cache
+            # record even when no public per-symbol row exists.
+            "jpxShort": (jpx_short_date if short_status in
+                         ("ok", "none_disclosed") else None),
+        } if not is_us else {},
+    }
+    return _entry_scout_evidence_only(out)
 
 # ── Scout calibration (scout-ledger-v1, v10.24) — Phase 3 ────────────────────
 # The learning loop's final piece: record each day's entry-scout score +
@@ -32247,10 +34922,6 @@ def _ledger_health():
         "noteJa": "ルールベースが主、AIは時刻付き第二意見。失効してもルール判定は不変。"})
     return {"asOf": _ai_now_iso(), "engineVersion": "ledger-health-v1", "ledgers": out}
 
-@app.route("/api/argus/ledger-health")
-def api_argus_ledger_health():
-    return jsonify(_ledger_health())
-
 _SCOUT_BATCH_CACHE = {"data": None, "expires": 0.0}
 
 def get_scout_batch():
@@ -32335,14 +35006,22 @@ def get_closepin_snapshot():
     syms = sensor_syms + [s for s in _CLOSEPIN_ACTIVES_JP if s not in sensor_syms]
     jp = get_japan_watchlist_snapshot(syms)
     rows = []
+    evidence_deadlines = []
     for q in (jp.get("stocks", []) if isinstance(jp, dict) else []):
         # Realtime pins only — see module comment above.
-        if q.get("status") != "live" or q.get("source") != "moomoo-rt":
+        q = _decision_usable_watch_quote_row(
+            q, "JP", allow_delayed=False)
+        if q is None or q.get("source") != "moomoo-rt":
             continue
         chg = q.get("changePct")
-        fl = q.get("flow") or {}
-        flow_ratio = fl.get("bigNetRatio") if isinstance(fl, dict) else None
+        # Price can be a current pin; the untimestamped flow sample cannot tilt
+        # scenarios or enter the calibration ledger.
+        flow_ratio = None
         sym = q["symbol"]
+        source_epoch = _coerce_epoch(q.get("sourceTimestamp"))
+        if source_epoch is not None:
+            evidence_deadlines.append(
+                source_epoch + _DECISION_QUOTE_LIVE_MAX_AGE_SEC)
         rows.append({
             "symbol": sym, "name": q.get("name"),
             "layer": 1 if sym in sensor_syms else _layer_of(sym),
@@ -32372,6 +35051,10 @@ def get_closepin_snapshot():
         "asOf": datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "dateJst": _jn.strftime("%Y-%m-%d"),
         "status": "live" if rows else "no_realtime",
+        "evidenceValidUntil": (
+            datetime.fromtimestamp(min(evidence_deadlines), pytz.utc)
+            .strftime("%Y-%m-%dT%H:%M:%SZ")
+            if evidence_deadlines else None),
         "marketPosture": posture,
         "intradayPhase": phase,
         "rows": rows,
@@ -32395,7 +35078,11 @@ def api_argus_closepin_snapshot():
         return jsonify(_CLOSEPIN_CACHE["data"])
     snap = get_closepin_snapshot()
     _CLOSEPIN_CACHE["data"] = snap
-    _CLOSEPIN_CACHE["expires"] = now + 120
+    evidence_expiry = _coerce_epoch(snap.get("evidenceValidUntil"))
+    _CLOSEPIN_CACHE["expires"] = (
+        min(now + 120, evidence_expiry)
+        if evidence_expiry is not None and evidence_expiry > now
+        else now)
     return jsonify(snap)
 
 
@@ -32429,20 +35116,667 @@ def _v4_record_meta(symbol):
         return {"calibrationSchema": argus_calibration.SCHEMA_VERSION}
 
 
+_CANONICAL_OUTCOME_BARS_PER_SYMBOL = 8
+_CANONICAL_TRUTH_MAX_OUTCOME_OBSERVATIONS = 320
+
+
+def _canonical_truth_iso(value, market, *, date_means_close=False):
+    """Normalize an existing provider timestamp without inventing precision.
+
+    Date-only daily bars may be placed at the official regular-session close,
+    with that limitation retained in provenance.  Unknown timestamps stay
+    unknown; callers must omit the observation rather than use receipt time as
+    a fake source time.
+    """
+    try:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            parsed = datetime.fromtimestamp(float(value), pytz.utc)
+        else:
+            raw = str(value or "").strip()
+            if not raw:
+                return None
+            if len(raw) == 10:
+                if not date_means_close:
+                    return None
+                day = datetime.strptime(raw, "%Y-%m-%d")
+                if market == "JP":
+                    parsed = TZ_JST.localize(day.replace(hour=15, minute=30))
+                elif market == "US":
+                    parsed = TZ_ET.localize(day.replace(hour=16))
+                else:
+                    parsed = pytz.utc.localize(day.replace(hour=23, minute=59,
+                                                            second=59))
+            else:
+                parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    local_tz = TZ_JST if market == "JP" else \
+                        TZ_ET if market == "US" else pytz.utc
+                    parsed = local_tz.localize(parsed)
+        return parsed.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _canonical_truth_revision(received_at):
+    try:
+        parsed = datetime.fromisoformat(
+            str(received_at).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return 0
+        return max(0, int(parsed.timestamp() * 1000))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _canonical_truth_asset_type(symbol, market):
+    if str(symbol).lower() in _CRYPTO_DEFAULT_IDS or str(symbol).upper() in {
+            "BTC", "ETH", "SOL"}:
+        return "CRYPTO"
+    if str(symbol).upper() in set(_L1_SENSORS_US) | {
+            code for code, _ in _L1_SENSORS_JP} | {
+            "XLK", "XLU", "XLRE", "GLD", "HYG"}:
+        return "ETF"
+    return "EQUITY" if market in ("JP", "US") else "ETF_PROXY"
+
+
+def _canonical_quote_candidates(row, snapshot_provider):
+    candidates = list(row.get("providerCandidates") or []) \
+        if isinstance(row, dict) else []
+    if candidates:
+        # The legacy overlay keeps the selected provider's derived quote fields
+        # on the parent row.  Bind those fields only to the explicitly selected
+        # candidate; copying them to alternates would fabricate agreement.
+        out = []
+        for item in candidates:
+            if not isinstance(item, dict):
+                continue
+            candidate = dict(item)
+            if candidate.get("selected") is True:
+                for field in ("changePct", "volume"):
+                    if field not in candidate and field in row:
+                        candidate[field] = row.get(field)
+            out.append(candidate)
+        return out
+    return [dict(row, source=(row.get("source") or snapshot_provider or
+                             "unknown"))]
+
+
+def _canonical_quote_observations(rows, decision_at):
+    observations = []
+    seen = set()
+    try:
+        decision_dt = datetime.fromisoformat(
+            str(decision_at).replace("Z", "+00:00"))
+        if decision_dt.tzinfo is None:
+            return observations
+        decision_dt = decision_dt.astimezone(pytz.utc)
+    except (TypeError, ValueError, OverflowError):
+        return observations
+    for market, snapshot_provider, row in rows:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or row.get("id") or "").strip().upper()
+        if not symbol:
+            continue
+        instrument_id = f"{market}:{symbol}"
+        explicit_candidates = bool(row.get("providerCandidates"))
+        for candidate in _canonical_quote_candidates(row, snapshot_provider):
+            # An explicit provider candidate must carry its own status.  The
+            # parent row describes the selected display projection and cannot
+            # make an unclassified alternate look available/realtime.
+            candidate_status = (
+                candidate.get("status") if explicit_candidates else
+                candidate.get("status") or row.get("status") or "stale")
+            status = str(candidate_status or "unavailable").lower()
+            if status not in ("live", "delayed", "partial", "stale"):
+                # Mock/unavailable values are display fallbacks, never provider
+                # observations or disagreement evidence.
+                continue
+            price = candidate.get("value", candidate.get("price"))
+            if not isinstance(price, (int, float)) or isinstance(price, bool) \
+                    or not math.isfinite(float(price)) or float(price) <= 0:
+                continue
+            received_raw = candidate.get("receivedAt")
+            if not received_raw and not explicit_candidates:
+                received_raw = row.get("receivedAt") or decision_at
+            received = _canonical_truth_iso(received_raw, market)
+            source_raw = (candidate.get("sourceTimestamp") or
+                          candidate.get("exchangeTs") or
+                          candidate.get("date"))
+            if not source_raw and not explicit_candidates:
+                source_raw = (row.get("sourceTimestamp") or
+                              row.get("exchangeTs") or row.get("date"))
+            observed = _canonical_truth_iso(
+                source_raw, market, date_means_close=True)
+            if not received or not observed or observed > received:
+                continue                    # future/unknown source time is not truth
+            provider_raw = (candidate.get("source") if explicit_candidates else
+                            candidate.get("source") or row.get("source") or
+                            snapshot_provider)
+            if not provider_raw:
+                continue
+            provider = str(provider_raw)
+            received_dt = datetime.fromisoformat(received.replace("Z", "+00:00"))
+            observed_dt = datetime.fromisoformat(observed.replace("Z", "+00:00"))
+            if received_dt > decision_dt or observed_dt > decision_dt:
+                continue
+            # Quality is evaluated at the decision cutoff, not frozen at the
+            # earlier transport instant of a cache entry.  Otherwise a quote
+            # received at age 1m would jump from FRESH directly to STALE after
+            # 20m instead of truthfully becoming DELAYED through 36h.
+            source_age = decision_dt - observed_dt
+            if status == "live" and source_age <= timedelta(minutes=20):
+                base_freshness = argus_market_data_truth.FRESH
+                fresh_until_dt = observed_dt + timedelta(minutes=20)
+                fresh_until = fresh_until_dt.isoformat().replace("+00:00", "Z")
+            elif status in ("live", "delayed", "partial") and \
+                    source_age <= timedelta(hours=36):
+                # An exact official close is still valid delayed evidence at the
+                # scheduled 16:05 run; it is not realtime and not stale.
+                base_freshness = argus_market_data_truth.DELAYED
+                fresh_until_dt = observed_dt + timedelta(hours=36)
+                fresh_until = fresh_until_dt.isoformat().replace("+00:00", "Z")
+            else:
+                base_freshness = argus_market_data_truth.STALE
+                fresh_until = None
+            values = {"price": float(price)}
+            for field in ("changePct", "volume"):
+                raw_value = candidate.get(field)
+                if isinstance(raw_value, (int, float)) and not isinstance(
+                        raw_value, bool) and math.isfinite(float(raw_value)):
+                    values[field] = raw_value
+            try:
+                observation = argus_market_data_truth.build_observation(
+                    instrument_id=instrument_id, symbol=symbol, market=market,
+                    asset_type=_canonical_truth_asset_type(symbol, market),
+                    fact_type="QUOTE", values=values, provider=provider,
+                    adapter="scanner_quote_adapter_v1",
+                    source_ref=(f"{provider}:{symbol}:{source_raw}"[:256]),
+                    observed_at=observed, received_at=received,
+                    known_at=received, freshness=base_freshness,
+                    completeness=argus_market_data_truth.COMPLETE,
+                    fresh_until=fresh_until,
+                    currency="JPY" if market == "JP" else "USD",
+                    revision=_canonical_truth_revision(received),
+                    provenance={
+                        "timestampPrecision": (
+                            "date_only_official_close" if isinstance(source_raw, str)
+                            and len(source_raw) == 10 else "provider_exact"),
+                        "selectionPolicyId": str(
+                            row.get("selectionPolicyId") or
+                            argus_market_data_truth.AUTHORITY_POLICY_ID)[:128],
+                    })
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if observation["observationId"] not in seen:
+                observations.append(observation)
+                seen.add(observation["observationId"])
+    return observations
+
+
+def _canonical_current_outcome_observations(rows, decision_at):
+    """Exact full daily bars already returned by formal provider adapters.
+
+    Today only J-Quants' daily-bar adapter has an unambiguous date-only close
+    contract here. Intraday quote high/low fields are not silently relabeled as
+    an end-of-session outcome.
+    """
+    observations = []
+    for market, snapshot_provider, row in rows:
+        if market != "JP" or not isinstance(row, dict):
+            continue
+        try:
+            provider = argus_market_data_truth.provider_key(
+                row.get("source") or snapshot_provider or "unknown")
+        except (TypeError, ValueError):
+            continue
+        if provider != "jquants":
+            continue
+        symbol = str(row.get("symbol") or "").upper()
+        day = row.get("date")
+        received = _canonical_truth_iso(
+            row.get("receivedAt") or decision_at, market)
+        observed = _canonical_truth_iso(day, market, date_means_close=True)
+        values = {field: row.get(field) for field in (
+            "open", "high", "low", "close", "volume")}
+        if not symbol or not received or not observed or observed > received or \
+                received > decision_at or \
+                any(not isinstance(values[field], (int, float)) or
+                    isinstance(values[field], bool) or
+                    not math.isfinite(float(values[field]))
+                    for field in ("open", "high", "low", "close")):
+            continue
+        try:
+            observations.append(argus_market_data_truth.build_observation(
+                instrument_id=f"JP:{symbol}", symbol=symbol, market="JP",
+                asset_type=_canonical_truth_asset_type(symbol, "JP"),
+                fact_type="OHLCV_BAR", values=values, provider="jquants",
+                adapter="scanner_jquants_daily_adapter_v1",
+                source_ref=f"jquants:{symbol}:daily:{day}",
+                observed_at=observed, received_at=received, known_at=received,
+                freshness=argus_market_data_truth.STALE,
+                completeness=argus_market_data_truth.COMPLETE,
+                currency="JPY", period_end=observed,
+                revision=_canonical_truth_revision(received),
+                provenance={
+                    "timestampPrecision": "date_only_official_close",
+                    "knowledgeTime": "provider_response_received_at",
+                    "adjustmentStatus": "provider_reported",
+                }))
+        except (TypeError, ValueError, OverflowError):
+            continue
+    return observations
+
+
+def _canonical_history_observations(symbols, decision_at):
+    """Bounded cached OHLC revisions for exact-session outcome resolution.
+
+    Cache acquisition time is the conservative first-known time.  Missing OHLC
+    members stay partial and therefore cannot satisfy ledger MFE/MAE scoring.
+    """
+    observations = []
+    for market, symbol in sorted(set(symbols)):
+        if market not in ("JP", "US"):
+            continue
+        cache = (_JQ_HISTORY_CACHE.get(symbol[:4]) if market == "JP"
+                 else _TD_HISTORY_CACHE.get(symbol))
+        if not isinstance(cache, dict) or not isinstance(cache.get("data"), dict):
+            continue
+        ttl = _JQ_HISTORY_TTL if market == "JP" else _TD_HISTORY_TTL
+        acquired_epoch = max(0.0, float(cache.get("expires") or 0.0) - ttl)
+        received = _canonical_truth_iso(acquired_epoch, market)
+        if not received or received > decision_at:
+            continue
+        history = cache["data"]
+        dates = list(history.get("dates") or [])[:_CANONICAL_OUTCOME_BARS_PER_SYMBOL]
+        provider = "jquants" if market == "JP" else "twelvedata"
+        for index, day in enumerate(dates):
+            observed = _canonical_truth_iso(day, market, date_means_close=True)
+            if not observed or observed > received:
+                continue
+            values = {}
+            missing = []
+            for field, source_key in (("open", "opens"), ("high", "highs"),
+                                      ("low", "lows"), ("close", "closes"),
+                                      ("volume", "volumes")):
+                series = history.get(source_key) or []
+                value = series[index] if index < len(series) else None
+                if isinstance(value, (int, float)) and not isinstance(value, bool) \
+                        and math.isfinite(float(value)):
+                    values[field] = value
+                else:
+                    missing.append(field)
+            if "close" in missing:
+                continue
+            completeness = (argus_market_data_truth.COMPLETE if not missing
+                            else argus_market_data_truth.PARTIAL)
+            try:
+                observations.append(argus_market_data_truth.build_observation(
+                    instrument_id=f"{market}:{symbol}", symbol=symbol,
+                    market=market,
+                    asset_type=_canonical_truth_asset_type(symbol, market),
+                    fact_type="OHLCV_BAR", values=values, provider=provider,
+                    adapter="scanner_history_cache_adapter_v1",
+                    source_ref=f"{provider}:{symbol}:daily:{day}",
+                    observed_at=observed, received_at=received,
+                    known_at=received, freshness=argus_market_data_truth.STALE,
+                    completeness=completeness,
+                    currency="JPY" if market == "JP" else "USD",
+                    missing_fields=missing, period_end=observed,
+                    revision=_canonical_truth_revision(received),
+                    provenance={
+                        "timestampPrecision": "date_only_official_close",
+                        "knowledgeTime": "provider_cache_acquired_at",
+                        "adjustmentStatus": "provider_reported",
+                    }))
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if len(observations) >= _CANONICAL_TRUTH_MAX_OUTCOME_OBSERVATIONS:
+                return observations
+    return observations
+
+
+def _canonical_target_contract(symbol, issued_at, horizon):
+    try:
+        issued = datetime.fromisoformat(str(issued_at).replace("Z", "+00:00"))
+        if issued.tzinfo is None:
+            return None
+        clock_symbol = ({"BITCOIN": "BTC", "ETHEREUM": "ETH"}.get(
+            str(symbol).upper(), symbol))
+        clock = argus_market_clock.forecast_clock(
+            clock_symbol, issued.astimezone(pytz.utc))
+        target = next((row for row in clock.get("targets") or []
+                       if row.get("horizon") == horizon), None)
+        target_at = (target or {}).get("targetClose") or \
+            (target or {}).get("targetTimestamp")
+        target_iso = _canonical_truth_iso(
+            target_at, "JP" if clock.get("market") ==
+            argus_market_clock.JP_EQUITY else "US"
+            if clock.get("market") == argus_market_clock.US_EQUITY else
+            "CRYPTO")
+        if not target_iso:
+            return None
+        target_dt = datetime.fromisoformat(target_iso.replace("Z", "+00:00"))
+        target_date = (target or {}).get("targetTradingDate") or \
+            target_dt.date().isoformat()
+        calendar_id = (f"{clock.get('marketCalendar')}:"
+                       f"{clock.get('calendarVersion')}")
+        session_kind = ("continuous" if clock.get("market") ==
+                        argus_market_clock.CRYPTO else "regular")
+        target_session_id = f"{calendar_id}:{target_date}:{session_kind}"
+        maturity_at = (target_dt + timedelta(minutes=15)).isoformat().replace(
+            "+00:00", "Z")
+        return argus_decision_ledger.session_maturity_contract(
+            calendar_id=calendar_id,
+            target_session_id=target_session_id,
+            target_at=target_iso, maturity_at=maturity_at,
+            horizon=horizon, session_kind=session_kind)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+_CANONICAL_PREDICTION_HORIZONS = ("1d", "3d", "5d")
+_CANONICAL_OMITTED_ID_LIMIT = 64
+_CANONICAL_SOURCE_CANDIDATE_LIMIT = 64
+
+
+def _canonical_scenario_policy(*, band_pct, horizon):
+    material = {
+        "bandPct": float(band_pct),
+        "bandVersion": argus_calibration.BAND_VERSION,
+        "classOrder": list(argus_calibration.CLASSES),
+        "classOrderVersion": (
+            f"{argus_calibration.SCHEMA_VERSION}:"
+            f"{argus_calibration.BAND_VERSION}"),
+        "downsideComparator": "<",
+        "horizon": horizon,
+        "reboundComparator": ">",
+        "scorerVersion": argus_calibration.SCORER_VERSION,
+    }
+    digest = hashlib.sha256(json.dumps(
+        material, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
+    return material, {
+        "policyId": "argus-calibration-three-class-v1",
+        "policyVersion": argus_calibration.SCORER_VERSION,
+        "parametersHash": digest,
+    }
+
+
+def _canonical_prediction_candidate_id(family, market, symbol, ordinal):
+    return f"{family}:{market}:{symbol}:{ordinal}"
+
+
+def _canonical_prediction_ledger_projection(
+        *, legacy_rows, quote_rows, decision_at, engine_version,
+        generated_at=None):
+    generated_at = generated_at or _ai_now_iso()
+    quote_observations = _canonical_quote_observations(quote_rows, decision_at)
+    prediction_rows = []
+    for ordinal, (family, row) in enumerate(legacy_rows):
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or row.get("sensor") or "").upper()
+        market = str(row.get("market") or
+                     ("JP" if symbol[:1].isdigit() else
+                      "CRYPTO" if symbol in ("BTC", "BITCOIN", "ETH",
+                                              "ETHEREUM") else "US")).upper()
+        if not symbol or market not in ("JP", "US", "CRYPTO"):
+            continue
+        instrument_id = f"{market}:{symbol}"
+        prediction_rows.append({
+            "candidateId": _canonical_prediction_candidate_id(
+                family, market, symbol, ordinal),
+            "family": str(family), "row": row, "symbol": symbol,
+            "market": market, "instrumentId": instrument_id,
+        })
+    prediction_rows.sort(key=lambda item: (
+        item["market"], item["symbol"], item["family"], item["candidateId"]))
+    if not prediction_rows:
+        return {
+            "schemaVersion": argus_decision_ledger.PREDICTION_LEDGER_V2_SCHEMA,
+            "mode": "forward_live", "marketTruthSnapshot": None,
+            "issuedDecisions": [], "outcomeTruthObservations": [],
+            "status": "INCOMPLETE", "reason": "no_prediction_candidates",
+            "decisionAt": decision_at, "generatedAt": generated_at,
+        }
+
+    bounded_prediction_rows = prediction_rows[
+        :_CANONICAL_SOURCE_CANDIDATE_LIMIT]
+    overflow_rows = prediction_rows[_CANONICAL_SOURCE_CANDIDATE_LIMIT:]
+    request_keys = sorted({
+        (item["instrumentId"], item["market"])
+        for item in bounded_prediction_rows
+    })
+    admitted_keys = set(request_keys[:argus_market_data_truth.MAX_SNAPSHOT_REQUESTS])
+    admitted_rows = [item for item in bounded_prediction_rows
+                     if (item["instrumentId"], item["market"]) in admitted_keys]
+    omitted_rows = overflow_rows + [
+        item for item in bounded_prediction_rows
+        if (item["instrumentId"], item["market"]) not in admitted_keys]
+    omitted_ids = [item["candidateId"] for item in omitted_rows]
+    requests = [
+        {"instrumentId": instrument_id, "market": market,
+         "factType": "QUOTE",
+         "currency": "JPY" if market == "JP" else "USD",
+         "required": True}
+        for instrument_id, market in sorted(admitted_keys)
+    ]
+    build_identity = _backend_exact_sha()
+    if not build_identity:
+        return {
+            "schemaVersion": argus_decision_ledger.PREDICTION_LEDGER_V2_SCHEMA,
+            "mode": "forward_live", "authority": "PREDICTION_EVIDENCE_ONLY",
+            "finalDecisionAuthorityActive": False,
+            "marketTruthSchemaVersion": argus_market_data_truth.SCHEMA_VERSION,
+            "marketTruthSnapshot": None, "issuedDecisions": [],
+            "outcomeTruthObservations": [], "status": "INCOMPLETE",
+            "reason": "build_identity_unavailable",
+            "decisionAt": decision_at, "generatedAt": generated_at,
+            "producerBuildSha": None,
+            "sourceCandidateCount": len(prediction_rows),
+            "candidateCount": len(prediction_rows) * len(
+                _CANONICAL_PREDICTION_HORIZONS),
+            "issuedCount": 0,
+            "omittedCandidateCount": len(omitted_ids),
+            "omittedCandidateIds": omitted_ids[:_CANONICAL_OMITTED_ID_LIMIT],
+            "omittedCandidateIdsTruncated": (
+                len(omitted_ids) > _CANONICAL_OMITTED_ID_LIMIT),
+            "authorityPolicy": argus_market_data_truth.repository_authority_policy(),
+        }
+    try:
+        market_snapshot = argus_market_data_truth.build_decision_snapshot(
+            quote_observations, requests=requests, decision_at=decision_at,
+            generated_at=generated_at, build_identity=build_identity)
+    except (TypeError, ValueError, OverflowError):
+        market_snapshot = None
+    snapshot_verified = bool(
+        market_snapshot and
+        argus_market_data_truth.verify_decision_snapshot(market_snapshot)[0])
+    selections = {
+        row.get("instrumentId"): row
+        for row in ((market_snapshot or {}).get("selections") or [])}
+    issued = []
+    complete_input_ids = set()
+    for candidate in admitted_rows:
+        family = candidate["family"]
+        row = candidate["row"]
+        symbol = candidate["symbol"]
+        market = candidate["market"]
+        instrument_id = candidate["instrumentId"]
+        selection = selections.get(instrument_id) or {}
+        selected = (selection.get("selected") or {}).get("observation") or {}
+        values = selected.get("values") or {}
+        selected_freshness = selection.get("freshness")
+        selected_completeness = selection.get("completeness")
+        selected_price = values.get("price")
+        selected_change = values.get("changePct")
+        if not snapshot_verified or not selected or not isinstance(
+                selected_price, (int, float)) or isinstance(selected_price, bool) \
+                or not math.isfinite(float(selected_price)) or \
+                not isinstance(selected_change, (int, float)) or isinstance(
+                    selected_change, bool) or not math.isfinite(
+                        float(selected_change)) or selected_freshness not in (
+                            argus_market_data_truth.FRESH,
+                            argus_market_data_truth.DELAYED) or \
+                selected_completeness != argus_market_data_truth.COMPLETE:
+            continue
+        truth_ref = argus_decision_ledger.point_in_time_truth_ref(
+            snapshot_id=market_snapshot["snapshotId"],
+            source_id=selected.get("observationId"),
+            as_of=selected.get("observedAt"), known_at=selected.get("knownAt"),
+            content_hash=selected.get("observationId"),
+            observation_kind="decision_quote",
+            observed_fields=sorted((selected.get("values") or {}).keys()),
+            provider=(selected.get("source") or {}).get("providerKey") or "",
+            revision=str(selected.get("revision") or ""))
+        if not truth_ref:
+            continue
+        raw_band = row.get("bandPct", 2.0)
+        if not isinstance(raw_band, (int, float)) or isinstance(raw_band, bool) \
+                or not math.isfinite(float(raw_band)) or float(raw_band) <= 0:
+            continue
+        band_pct = float(raw_band)
+        scenario_pairs = _scenarios_scaled(float(selected_change), band_pct)
+        scenario_map = {label: float(probability) / 100.0
+                        for label, probability in scenario_pairs}
+        if set(scenario_map) != set(argus_calibration.CLASSES):
+            continue
+        probabilities = [scenario_map[label]
+                         for label in argus_calibration.CLASSES]
+        distribution = argus_decision_ledger.forecast_distribution(
+            class_labels=list(argus_calibration.CLASSES),
+            probabilities=probabilities,
+            class_order_version=(
+                f"{argus_calibration.SCHEMA_VERSION}:"
+                f"{argus_calibration.BAND_VERSION}"))
+        if distribution is None:
+            continue
+        winner_index = max(range(len(probabilities)),
+                           key=lambda index: probabilities[index])
+        winner_label = argus_calibration.CLASSES[winner_index]
+        # FRESH and DELAYED are both explicitly admissible canonical quality
+        # states.  DELAYED remains visible in the sealed selection; it is not
+        # mislabeled as missing evidence (which the runner correctly rejects).
+        missing = []
+        disagreement = selection.get("disagreement") or {}
+        dissent = ([f"provider_disagreement:{disagreement.get('status')}"]
+                   if disagreement.get("status") == "PRESENT" else [])
+        complete_input_ids.add(candidate["candidateId"])
+        for horizon in _CANONICAL_PREDICTION_HORIZONS:
+            maturity = _canonical_target_contract(symbol, generated_at, horizon)
+            if not maturity:
+                continue
+            _, evaluation_policy = _canonical_scenario_policy(
+                band_pct=band_pct, horizon=horizon)
+            target_ladder = [
+                argus_decision_ledger.target_ladder_entry(
+                    target_id="scenario.downside_boundary", value=-band_pct,
+                    unit="%", comparator="<",
+                    target_at=maturity["targetAt"]),
+                argus_decision_ledger.target_ladder_entry(
+                    target_id="scenario.rebound_boundary", value=band_pct,
+                    unit="%", comparator=">",
+                    target_at=maturity["targetAt"]),
+            ]
+            if any(target is None for target in target_ladder):
+                continue
+            rec = argus_decision_ledger.prediction_record_v2(
+                mode="forward_live", symbol=symbol, market=market,
+                issued_at=generated_at, horizon=horizon,
+                target_type="scenario", forecast_value=winner_label,
+                forecast_distribution=distribution,
+                truth_ref=truth_ref, maturity=maturity,
+                engine_id=f"argus-{family}-candidate",
+                engine_version=engine_version, build_sha=build_identity,
+                evaluation_policy=evaluation_policy,
+                now_iso=generated_at,
+                confidence=float(probabilities[winner_index]),
+                # Legacy action emitters depend on flow/regime/other inputs that
+                # are not sealed in this quote-only projection.  Keep the
+                # canonical forecast identity independent of that unbound label.
+                candidate_action="",
+                target_ladder=target_ladder,
+                evidence_refs=[selected["observationId"]],
+                missing_evidence=missing, dissent=dissent)
+            if rec:
+                issued.append(rec)
+    symbols = [(item["market"], item["symbol"])
+               for item in admitted_rows]
+    outcome_observations = _canonical_current_outcome_observations(
+        quote_rows, decision_at)
+    known_outcome_ids = {row["observationId"] for row in outcome_observations}
+    for observation in _canonical_history_observations(symbols, decision_at):
+        if observation["observationId"] not in known_outcome_ids:
+            outcome_observations.append(observation)
+            known_outcome_ids.add(observation["observationId"])
+        if len(outcome_observations) >= \
+                _CANONICAL_TRUTH_MAX_OUTCOME_OBSERVATIONS:
+            break
+    expected_issued = len(admitted_rows) * len(_CANONICAL_PREDICTION_HORIZONS)
+    quality_complete = (
+        len(complete_input_ids) == len(admitted_rows) and
+        bool(admitted_rows))
+    status = ("COMPLETE" if snapshot_verified and not omitted_rows and
+              quality_complete and len(issued) == expected_issued
+              else "INCOMPLETE")
+    return {
+        "schemaVersion": argus_decision_ledger.PREDICTION_LEDGER_V2_SCHEMA,
+        "mode": "forward_live", "authority": "PREDICTION_EVIDENCE_ONLY",
+        "finalDecisionAuthorityActive": False,
+        "decisionAt": decision_at, "generatedAt": generated_at,
+        "producerBuildSha": build_identity,
+        "marketTruthSchemaVersion": argus_market_data_truth.SCHEMA_VERSION,
+        "marketTruthSnapshot": market_snapshot,
+        "issuedDecisions": issued,
+        "outcomeTruthObservations": outcome_observations,
+        "status": status,
+        "reason": (None if status == "COMPLETE" else
+                   "canonical_evidence_incomplete"),
+        "sourceCandidateCount": len(prediction_rows),
+        "candidateCount": len(prediction_rows) * len(
+            _CANONICAL_PREDICTION_HORIZONS),
+        "issuedCount": len(issued),
+        "omittedCandidateCount": len(omitted_ids),
+        "omittedCandidateIds": omitted_ids[:_CANONICAL_OMITTED_ID_LIMIT],
+        "omittedCandidateIdsTruncated": (
+            len(omitted_ids) > _CANONICAL_OMITTED_ID_LIMIT),
+        "marketTruthSnapshotVerified": snapshot_verified,
+        "truthQualityComplete": quality_complete,
+        "authorityPolicy": argus_market_data_truth.repository_authority_policy(),
+    }
+
+
 def get_prediction_snapshot():
     al  = get_action_labels()
     jp  = get_japan_watchlist_snapshot()
     us  = get_us_watchlist_snapshot()
     reg = get_market_regime_snapshot()
-    vol = _vix_assess(_fred_vix_history())
+    rates = get_rates_snapshot()
+    vol = _canonical_vix_assess(
+        _fred_vix_history(), (rates or {}).get("vix"))
     rg  = reg.get("regime", {}) if isinstance(reg, dict) else {}
     rb  = reg.get("ratesBackdrop", {}) if isinstance(reg, dict) else {}
 
+    truth_quote_rows = []
+
+    def remember_quote_rows(snapshot, market):
+        if not isinstance(snapshot, dict):
+            return
+        provider = snapshot.get("provider")
+        for row in snapshot.get("stocks") or []:
+            truth_quote_rows.append((market, provider, row))
+
+    remember_quote_rows(jp, "JP")
+    remember_quote_rows(us, "US")
+
     prices = {}
-    for snap in (jp, us):
+    for snap, market in ((jp, "JP"), (us, "US")):
         for s in (snap.get("stocks", []) if isinstance(snap, dict) else []):
-            if s.get("status") == "live":
-                prices[s["symbol"]] = s
+            q = _decision_usable_watch_quote_row(
+                s, market, allow_delayed=False)
+            if q is not None:
+                prices[q["symbol"]] = q
 
     # Cached AI views (if an admin/cron run happened recently) — recorded so the
     # ledger can grade RULE vs AI over time.
@@ -32486,13 +35820,21 @@ def get_prediction_snapshot():
         bus = [s for s in bench if not s[0].isdigit()]
         bprice = {}
         if bjp:
-            for s in (get_japan_watchlist_snapshot(bjp).get("stocks") or []):
-                if s.get("status") == "live":
-                    bprice[s["symbol"]] = s
+            benchmark_jp = get_japan_watchlist_snapshot(bjp)
+            remember_quote_rows(benchmark_jp, "JP")
+            for s in (benchmark_jp.get("stocks") or []):
+                q = _decision_usable_watch_quote_row(
+                    s, "JP", allow_delayed=False)
+                if q is not None:
+                    bprice[q["symbol"]] = q
         if bus:
-            for s in (get_us_watchlist_snapshot(bus).get("stocks") or []):
-                if s.get("status") == "live":
-                    bprice[s["symbol"]] = s
+            benchmark_us = get_us_watchlist_snapshot(bus)
+            remember_quote_rows(benchmark_us, "US")
+            for s in (benchmark_us.get("stocks") or []):
+                q = _decision_usable_watch_quote_row(
+                    s, "US", allow_delayed=False)
+                if q is not None:
+                    bprice[q["symbol"]] = q
         for sym in bench:
             q = bprice.get(sym)
             if not q:
@@ -32524,17 +35866,27 @@ def get_prediction_snapshot():
     class_predictions = []
     now_ts = time.time()
     for cls, sym in CLASS_PROXIES:
-        st = _ETF_LAST_PRICE.get(sym)
-        if not st or now_ts - st["ts"] > 12 * 3600:
+        st = _etf_last_price_decision_row(
+            sym, max_transport_age_sec=12 * 3600,
+            now_epoch=now_ts)
+        if st is None:
             continue
         class_predictions.append({
             "assetClass": cls, "symbol": sym, "price": st["price"],
             "changePct": st["m1d"],
             "scenarios": [{"label": s, "p": p} for s, p in _scenarios_for(st["m1d"])],
         })
+        truth_quote_rows.append(("US", st.get("source"), {
+            "symbol": sym, "price": st["price"], "changePct": st["m1d"],
+            "source": st.get("source"),
+            "sourceTimestamp": st.get("sourceTimestamp"),
+            "receivedAt": st.get("receivedAt"), "status": st.get("status"),
+        }))
     cw = get_crypto_watchlist_snapshot(list(_CRYPTO_DEFAULT_IDS))
     for q in (cw.get("quotes") or []):
-        if q.get("status") == "live":
+        truth_quote_rows.append(("CRYPTO", cw.get("provider"), {
+            **q, "symbol": q.get("id"), "price": q.get("priceUsd")}))
+        if _decision_usable_crypto_price(q) is not None:
             ccls = ("CRYPTO_BTC" if q["id"] == "bitcoin" else
                     "CRYPTO_ETH" if q["id"] == "ethereum" else None)
             if ccls:
@@ -32547,8 +35899,11 @@ def get_prediction_snapshot():
     # ── Layer-1 sensors (ledger-v3): the FIXED 16-asset regime universe ──
     sensors = []
     jp_sens = get_japan_watchlist_snapshot([s for s, _ in _L1_SENSORS_JP])
-    jp_sens_live = {s["symbol"]: s for s in (jp_sens.get("stocks") or [])
-                    if s.get("status") == "live"}
+    remember_quote_rows(jp_sens, "JP")
+    jp_sens_live = {q["symbol"]: q for q in (
+        _decision_usable_watch_quote_row(
+            s, "JP", allow_delayed=False)
+        for s in (jp_sens.get("stocks") or [])) if q is not None}
     for sym, name in _L1_SENSORS_JP:
         q = jp_sens_live.get(sym)
         if q:
@@ -32557,34 +35912,32 @@ def get_prediction_snapshot():
             sensors.append(_sr)
     _ensure_sensor_etfs()
     for sym in _L1_SENSORS_US:
-        st = _ETF_LAST_PRICE.get(sym)
-        if st and now_ts - st["ts"] <= 12 * 3600:
+        st = _etf_last_price_decision_row(
+            sym, max_transport_age_sec=12 * 3600,
+            now_epoch=now_ts)
+        if st:
             _sr = _sensor_row(sym, sym, "etf_us", st["price"], st["m1d"])
             _sr.update(_v4_record_meta(sym))
             sensors.append(_sr)
+            truth_quote_rows.append(("US", st.get("source"), {
+                "symbol": sym, "price": st["price"],
+                "changePct": st["m1d"], "source": st.get("source"),
+                "sourceTimestamp": st.get("sourceTimestamp"),
+                "receivedAt": st.get("receivedAt"),
+                "status": st.get("status"),
+            }))
     for q in (cw.get("quotes") or []):
-        if q.get("id") == "bitcoin" and q.get("status") == "live":
+        if q.get("id") == "bitcoin" and \
+                _decision_usable_crypto_price(q) is not None:
             _sr = _sensor_row("BTC", "Bitcoin", "crypto", q["priceUsd"], q.get("changePct"))
             _sr.update(_v4_record_meta("BTC"))
             sensors.append(_sr)
+            truth_quote_rows.append(("CRYPTO", cw.get("provider"), {
+                **q, "symbol": "BTC", "price": q.get("priceUsd")}))
     # Context Variables (v2): USDJPY/VIX (+ yields/HY OAS when available) are
     # RECORDED for regime context but NOT scored as equal return-sensors — VIX is
     # inverse-risk, USDJPY is context-dependent, yields/OAS are levels not returns.
-    rates = get_rates_snapshot()
-    context_vars = []
-    for ctxId, key, sid, sname in (("fx_usdjpy", "usdJpy", "USDJPY", "USD/JPY"),
-                                   ("volatility_vix", "vix", "VIX", "VIX")):
-        s = rates.get(key) if isinstance(rates, dict) else None
-        if s and s.get("status") == "live" and s.get("latestValue") is not None:
-            lvl = float(s["latestValue"])
-            ch = s.get("change")
-            chg_pct = (round(ch / (lvl - ch) * 100, 2)
-                       if isinstance(ch, (int, float)) and (lvl - ch) else None)
-            context_vars.append({
-                "contextId": ctxId, "symbol": sid, "name": sname,
-                "value": lvl, "changePct": chg_pct, "asOf": s.get("asOf"),
-                "role": "context_variable",  # explanatory, not return-scored
-            })
+    context_vars = _prediction_rate_context_variables(rates)
 
     # ── Posture prediction (the call that everything depends on) ──
     # Self-describing scoring rule so the scorer never hardcodes thresholds:
@@ -32592,9 +35945,11 @@ def get_prediction_snapshot():
     #   EVENT_WAIT → |SPY move| >= 1.0% (the elevated-risk claim validated by
     #   an actual move). CAUTIOUS/MIXED make no strong claim → recorded, not scored.
     posture_label = (al.get("marketPosture", {}) or {}).get("label")
-    spy = _ETF_LAST_PRICE.get("SPY")
+    spy = _etf_last_price_decision_row(
+        "SPY", max_transport_age_sec=12 * 3600,
+        now_epoch=now_ts)
     posture_prediction = None
-    if posture_label and spy and now_ts - spy["ts"] <= 12 * 3600:
+    if posture_label and spy:
         rule = ({"type": "direction", "sign": 1} if posture_label == "RISK_ON" else
                 {"type": "direction", "sign": -1} if posture_label == "RISK_OFF" else
                 {"type": "absmove", "minPct": 1.0} if posture_label == "EVENT_WAIT" else
@@ -32602,10 +35957,39 @@ def get_prediction_snapshot():
         posture_prediction = {"posture": posture_label, "proxy": "SPY",
                               "price": spy["price"], "rule": rule}
 
+    as_of = _ai_now_iso()
+    canonical_issued_at = _ai_now_iso()
+    canonical_legacy_rows = ([
+        ("tactical_rule", row) for row in predictions] + [
+        ("regime_sensor", row) for row in sensors] + [
+        ("asset_class", row) for row in class_predictions])
+    try:
+        canonical_ledger = _canonical_prediction_ledger_projection(
+            legacy_rows=canonical_legacy_rows, quote_rows=truth_quote_rows,
+            decision_at=as_of, generated_at=canonical_issued_at,
+            engine_version="ledger-v3-compat-projection")
+    except Exception:
+        # Canonical recording is fail-closed but cannot turn an optional public
+        # diagnostics projection into a provider/readiness failure.
+        canonical_ledger = {
+            "schemaVersion": argus_decision_ledger.PREDICTION_LEDGER_V2_SCHEMA,
+            "mode": "forward_live", "authority": "PREDICTION_EVIDENCE_ONLY",
+            "finalDecisionAuthorityActive": False,
+            "marketTruthSchemaVersion": argus_market_data_truth.SCHEMA_VERSION,
+            "marketTruthSnapshot": None, "issuedDecisions": [],
+            "outcomeTruthObservations": [], "status": "INCOMPLETE",
+            "reason": "canonical_projection_failed", "decisionAt": as_of,
+            "generatedAt": canonical_issued_at,
+        }
+
+    snapshot_generated_at = _ai_now_iso()
+
     return {
         "dateJst": datetime.now(TZ_JST).strftime("%Y-%m-%d"),
-        "asOf": _ai_now_iso(),
+        "asOf": as_of,
+        "generatedAt": snapshot_generated_at,
         "engineVersion": "ledger-v3",
+        "canonicalPredictionLedger": canonical_ledger,
         "universeVersion": argus_calibration.UNIVERSE_VERSION,
         "tacticalBenchmarkVersion": argus_calibration.TACTICAL_BENCHMARK_VERSION,
         "factorGroupVersion": argus_calibration.FACTOR_GROUP_VERSION,
@@ -32652,25 +36036,32 @@ def api_argus_sensor_quotes():
     out = {}
     jp = get_japan_watchlist_snapshot([s for s, _ in _L1_SENSORS_JP])
     for s in (jp.get("stocks") or []):
-        if s.get("status") == "live":
-            out[s["symbol"]] = float(s["price"])
+        q = _decision_usable_watch_quote_row(
+            s, "JP", allow_delayed=False)
+        if q is not None:
+            out[q["symbol"]] = float(q["price"])
     get_market_regime_snapshot()
     _alert_etf_momentum()
     _ensure_sensor_etfs()
     now_ts = time.time()
     for sym in _L1_SENSORS_US:
-        st = _ETF_LAST_PRICE.get(sym)
-        if st and now_ts - st["ts"] <= 24 * 3600:
+        st = _etf_last_price_decision_row(
+            sym, max_transport_age_sec=24 * 3600,
+            now_epoch=now_ts)
+        if st:
             out[sym] = st["price"]
     cw = get_crypto_watchlist_snapshot(["bitcoin"])
     for q in (cw.get("quotes") or []):
-        if q.get("id") == "bitcoin" and q.get("status") == "live":
-            out["BTC"] = float(q["priceUsd"])
+        price = (_decision_usable_crypto_price(q)
+                 if q.get("id") == "bitcoin" else None)
+        if price is not None:
+            out["BTC"] = price
     rates = get_rates_snapshot()
     for key, sid in (("usdJpy", "USDJPY"), ("vix", "VIX")):
         s = rates.get(key) if isinstance(rates, dict) else None
-        if s and s.get("status") == "live" and s.get("latestValue") is not None:
-            out[sid] = float(s["latestValue"])
+        value = _decision_usable_rate_value(s)
+        if value is not None:
+            out[sid] = value
     return jsonify({"asOf": _ai_now_iso(), "engineVersion": "ledger-v3", "quotes": out})
 
 @app.route("/api/argus/class-quotes")
@@ -32681,8 +36072,14 @@ def api_argus_class_quotes():
     get_market_regime_snapshot()
     _alert_etf_momentum()
     now_ts = time.time()
-    out = {sym: {"price": st["price"], "ageSec": int(now_ts - st["ts"])}
-           for sym, st in _ETF_LAST_PRICE.items() if now_ts - st["ts"] <= 24 * 3600}
+    out = {}
+    for sym in list(_ETF_LAST_PRICE):
+        st = _etf_last_price_decision_row(
+            sym, max_transport_age_sec=24 * 3600,
+            now_epoch=now_ts)
+        if st:
+            out[sym] = {"price": st["price"],
+                        "ageSec": int(now_ts - st["ts"])}
     return jsonify({"asOf": _ai_now_iso(), "quotes": out})
 
 
@@ -32713,13 +36110,15 @@ def get_daily_digest():
     al    = get_action_labels()
     reg   = get_market_regime_snapshot()
     ev    = get_events_snapshot()
-    vol   = _vix_assess(_fred_vix_history())  # context-aware VIX (None if no data)
+    current_rates = get_rates_snapshot()
+    vol   = _canonical_vix_assess(
+        _fred_vix_history(), (current_rates or {}).get("vix"))
     news  = get_news_radar()                   # cause-side radar (30-min cached)
     posture = (al.get("marketPosture", {}) or {}).get("label") or "CAUTIOUS"
     posture_ja = (al.get("marketPosture", {}) or {}).get("rationaleJa", "")
     rg = reg.get("regime", {}) if isinstance(reg, dict) else {}
     rb = reg.get("ratesBackdrop", {}) if isinstance(reg, dict) else {}
-    call, call_ja = _POSTURE_CALL_JA.get(posture, ("WAIT", "中立"))
+    legacy_call, call_ja = _POSTURE_CALL_JA.get(posture, ("WAIT", "中立"))
     date_jst = datetime.now(TZ_JST).strftime("%Y-%m-%d")
     dow = "月火水木金土日"[datetime.now(TZ_JST).weekday()]
 
@@ -32732,7 +36131,9 @@ def get_daily_digest():
                   for e in events]
 
     # Notable labels: anything that is not a plain HOLD, or carries high risk.
-    highlights = [{"symbol": l["symbol"], "name": l["name"], "action": l["action"],
+    highlights = [{"symbol": l["symbol"], "name": l["name"],
+                   "legacyLabel": l["action"],
+                   "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
                    "changePct": (l.get("supportingData", {}) or {}).get("changePct"),
                    "reasonJa": l.get("reasonJa", "")[:80]}
                   for l in al.get("labels", [])
@@ -32751,7 +36152,8 @@ def get_daily_digest():
     # Short lines, emoji section markers, blank lines between blocks — designed
     # for the ntfy notification view (no markdown dependence).
     conf_pct = int(round((rg.get("confidence") or 0) * 100))
-    L = [f"今日の姿勢: {call}", f"{posture}・{call_ja}・確信度{conf_pct}%"]
+    L = [f"今日の市場状況: {posture}",
+         f"証拠分類(EVIDENCE ONLY)・{call_ja}・確信度{conf_pct}%"]
     if posture_ja:
         L += ["", posture_ja[:100]]
     # AI second opinion (when a fresh admin/cron run is cached — never run here).
@@ -32773,8 +36175,9 @@ def get_daily_digest():
             when = "本日" if e["daysUntil"] == 0 else f"あと{e['daysUntil']}日"
             L.append(f"・{e['title']} — {when}")
     if highlights:
-        L += ["", "👀 注目銘柄"]
-        L.append(" ／ ".join(f"{h['symbol']} {h['action']}" for h in highlights[:4]))
+        L += ["", "👀 注目銘柄(旧ラベルは証拠のみ)"]
+        L.append(" ／ ".join(
+            f"{h['symbol']} {h['legacyLabel']}" for h in highlights[:4]))
     if rotations:
         L += ["", "🔄 資金の流れ", " ／ ".join(r.get("label", "") for r in rotations)]
     if news.get("status") == "live" and news.get("level") in ("elevated", "high"):
@@ -32797,9 +36200,14 @@ def get_daily_digest():
         "asOf": _ai_now_iso(),
         "dateJst": date_jst,
         "engineVersion": "digest-v1",
-        "posture": {"label": posture, "call": call, "rationaleJa": posture_ja,
+        "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+        "finalDecisionAuthorityActive": False,
+        "posture": {"label": posture, "call": None,
+                    "legacyCall": legacy_call,
+                    "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
+                    "rationaleJa": posture_ja,
                     "confidence": rg.get("confidence")},
-        "ratesBackdrop": {k: rb.get(k) for k in ("us10y", "vix", "hyOas", "posture")} if rb else {},
+        "ratesBackdrop": _bounded_rates_backdrop_projection(rb),
         "volatility": vol,
         "topEvents": top_events,
         "topRotations": rotations,
@@ -32815,6 +36223,7 @@ def get_daily_digest():
         "dataLimitations": [
             "ルールベース合成(LLM不使用)。day-over-dayの厳密な差分は端末側ログが担当。",
             "サーバ側の前日比較はin-memoryのベストエフォート(再起動で消える)。",
+            "市場姿勢と旧callは証拠分類のみ。Primary ActionはSingle Decision Authorityのみが発行する。",
         ],
     }
     _DIGEST_PREV["dateJst"] = date_jst
@@ -32881,6 +36290,8 @@ def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled", 
         L.append("### Rates / VIX")
         L.append(f"- US10Y {_rv('us10y')} | US2Y {_rv('us2y')} | Real10Y {_rv('usReal10y')} | VIX {_rv('vix')}")
         L.append(f"- ratesPressure={rates.get('ratesPressure')} | riskVolatility={rates.get('riskVolatility')} | status={rates.get('status')}")
+        L.append("### Canonical Rate Provider Evidence (bounded)")
+        L.extend(_rate_truth_prompt_lines(rates))
     if isinstance(ev, dict):
         L.append("### Event Radar (urgent first)")
         order = {"D": 0, "D-1": 1, "D-3": 2, "D-7": 3, "D+1": 4, "normal": 5}
@@ -32950,7 +36361,8 @@ def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled", 
     L.append("")
 
     # ── Institutional Intelligence (research mesh — public metadata only) ──
-    inst_items = [i for i in _INTEL_STORE if i.get("institutionId")]
+    inst_items = [signal for signal in _institutional_signals(cap=8)
+                  if signal.get("decisionUsable") is True]
     rss_n = sum(1 for s in argus_research_mesh.SOURCE_RIGHTS.values() if s.get("collection") == "rss")
     L.append("## Institutional Intelligence (research mesh — public metadata)")
     L.append(f"- Public sources monitored: {rss_n} RSS/sitemap feeds "
@@ -32960,12 +36372,11 @@ def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled", 
         L.append(f"- Named institutional VIEWS detected: {len(inst_items)} "
                  "(a NAMED VIEW is reported context — NOT a trading position; confirmed vs reported vs inferred kept separate).")
         for it in inst_items[:8]:
-            nm = (argus_research_mesh.INSTITUTIONS.get(it.get("institutionId"), {}).get("canonicalName")
-                  or it.get("institutionId"))
-            assets = ",".join(it.get("linkedAssets") or []) or "—"
-            L.append(f"  - {nm} [{it.get('contentType')}] {it.get('publishedAt') or ''} "
-                     f"assets={assets} stance={it.get('stance')} :: {(it.get('title') or '')[:100]} "
-                     f"({it.get('sourceId')}, accessClass={it.get('accessClass')})")
+            nm = it.get("sourceName") or "unknown"
+            assets = ",".join(it.get("affectedAssets") or []) or "—"
+            L.append(f"  - {nm} [{it.get('claimType')}] {it.get('publishedAt') or ''} "
+                     f"assets={assets} stance={it.get('stance')} :: {(it.get('headline') or '')[:100]} "
+                     f"(sourceTier={it.get('sourceTier')}, decisionUsable=true)")
     else:
         L.append("- No named institutional views in the current window (store warming or no material institutional news).")
     L.append("- CHALLENGE THESE (please push back): (a) any DIRECT-CAUSE claim — is an institutional comment really the "
@@ -33115,6 +36526,8 @@ def _pro_downside_section():
 def _build_pro_handoff():
     rates = get_rates_snapshot(); jp = get_japan_watchlist_snapshot()
     us = get_us_watchlist_snapshot(); ev = get_events_snapshot(); al = get_action_labels()
+    jp = _decision_usable_watch_snapshot(jp, "JP", allow_delayed=True)
+    us = _decision_usable_watch_snapshot(us, "US", allow_delayed=True)
     cat = get_catalysts_snapshot(); reg = get_market_regime_snapshot()
     def _st(x): return x.get("status", "mock") if isinstance(x, dict) else "mock"
     # Truthful automated-AI-judgment status (key-aware): disabled / missing_keys /
@@ -33280,6 +36693,7 @@ def _build_pro_handoff():
     source_statuses = {**src, "proHandoff": "live", "aiJudgment": aij_status}
     return {"status": status, "asOf": _ai_now_iso(), "engineVersion": "pro-handoff-v1",
             "title": "ARGUS GPT-5.5 Pro Handoff", "promptText": prompt, "charCount": len(prompt),
+            "rateTruthEvidence": _bounded_rates_truth_envelope(rates),
             "sourceStatuses": source_statuses, "warnings": warnings}
 
 @app.route("/api/argus/pro-handoff")
@@ -33317,13 +36731,53 @@ _FINN_CACHE = {}                                   # symbol -> {data, expires}
 _JQ_CAT_CACHE = {"data": None, "expires": 0.0}
 _CAT_CACHE  = {"data": None, "expires": 0.0}       # assembled snapshot, 30 min
 
+
+def _sec_filing_authority(row, *, now_epoch=None):
+    if not isinstance(row, dict):
+        return None
+    raw = row.get("filingDate")
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = datetime.strptime(raw, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+    if parsed.isoformat() != raw:
+        return None
+    usable, _reason = _bounded_market_session_date(
+        raw, "US", 3, accepted_formats=("%Y-%m-%d",),
+        now_epoch=now_epoch)
+    return {
+        **row,
+        "filingDate": raw,
+        "status": "delayed" if usable is not None else "historical",
+        "decisionUsable": usable is not None,
+        "sourceTimeStatus": ("BOUNDED_DAILY_FACT" if usable is not None
+                             else "HISTORICAL_OR_INVALID_FOR_CURRENT_CAUSE"),
+    }
+
+
+def _finnhub_catalyst_reaged(data, *, now_epoch=None):
+    if not isinstance(data, dict):
+        return {"earnings": None, "news": []}
+    news = [row for row in (
+        _decision_news_row(item, now_epoch=now_epoch,
+                           timestamp_keys=("publishedAt", "datetime"))
+        for item in (data.get("news") or [])[:12]) if row is not None]
+    return {"earnings": data.get("earnings"), "news": news[:6]}
+
 def _sec_filings(symbol):
     cik = _SEC_CIK.get(symbol)
     if not cik:
         return [], "unavailable"
     c = _SEC_CACHE.get(symbol)
     if c and time.time() < c["expires"]:
-        return c["data"], "live"
+        rows = [projected for projected in (
+            _sec_filing_authority(row, now_epoch=time.time())
+            for row in (c.get("data") or [])) if projected is not None]
+        return rows, ("delayed" if any(
+            row.get("decisionUsable") is True for row in rows)
+            else "historical" if rows else "unavailable")
     try:
         r = requests.get(f"https://data.sec.gov/submissions/CIK{cik}.json",
                          headers={"User-Agent": _SEC_USER_AGENT, "Accept-Encoding": "gzip"}, timeout=12)
@@ -33339,12 +36793,19 @@ def _sec_filings(symbol):
             doc = docs[i] if i < len(docs) else ""
             url = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc.replace('-', '')}/{doc}"
                    if acc and doc else f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}")
-            out.append({"source": "SEC EDGAR", "form": forms[i], "filingDate": dates[i] if i < len(dates) else None,
-                        "accessionNumber": acc, "url": url, "status": "live"})
+            projected = _sec_filing_authority({
+                "source": "SEC EDGAR", "form": forms[i],
+                "filingDate": dates[i] if i < len(dates) else None,
+                "accessionNumber": acc, "url": url,
+            }, now_epoch=time.time())
+            if projected is not None:
+                out.append(projected)
             if len(out) >= 5:
                 break
         _SEC_CACHE[symbol] = {"data": out, "expires": time.time() + 6 * 3600}
-        return out, "live"
+        return out, ("delayed" if any(
+            row.get("decisionUsable") is True for row in out)
+            else "historical" if out else "unavailable")
     except Exception:
         return [], "error"
 
@@ -33353,7 +36814,9 @@ def _finnhub_catalyst(symbol):
         return {"earnings": None, "news": []}, "unavailable"
     c = _FINN_CACHE.get(symbol)
     if c and time.time() < c["expires"]:
-        return c["data"], "live"
+        data = _finnhub_catalyst_reaged(c.get("data"), now_epoch=time.time())
+        return data, ("delayed" if data.get("earnings") or data.get("news")
+                      else "unavailable")
     earnings, news = None, []
     got = False
     try:
@@ -33375,24 +36838,59 @@ def _finnhub_catalyst(symbol):
         u = datetime.now(pytz.utc).date()
         nws = finnhub_get("company-news", {"symbol": symbol,
                           "from": (u - timedelta(days=7)).isoformat(), "to": u.isoformat()})
-        for a in (nws or [])[:6]:
-            ts = a.get("datetime")
-            iso = datetime.fromtimestamp(ts, pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if ts else None
-            news.append({"source": "Finnhub", "headline": (a.get("headline", "") or "")[:200],
-                         "publisher": a.get("source", ""), "publishedAt": iso, "url": a.get("url", ""),
-                         "status": "live"})
+        for a in ((nws or [])[:18] if isinstance(nws, list) else []):
+            projected = _decision_news_row({
+                "source": "Finnhub",
+                "headline": (a.get("headline", "") or "")[:200],
+                "publisher": a.get("source", ""),
+                "datetime": a.get("datetime"),
+                "url": a.get("url", ""),
+                "status": "live",
+            }, now_epoch=time.time(), timestamp_keys=("datetime",))
+            if projected is not None:
+                news.append(projected)
+            if len(news) >= 6:
+                break
         got = True
     except Exception:
         pass
     if not got:
         return {"earnings": None, "news": []}, "error"
-    data = {"earnings": earnings, "news": news}
+    data = _finnhub_catalyst_reaged(
+        {"earnings": earnings, "news": news}, now_epoch=time.time())
     _FINN_CACHE[symbol] = {"data": data, "expires": time.time() + 2700}  # 45 min
-    return data, "live"
+    return data, ("delayed" if data.get("earnings") or data.get("news")
+                  else "unavailable")
+
+def _jquants_catalysts_reaged(data, *, now_epoch=None):
+    """Keep bounded completed-session J-Quants financial facts only."""
+    if not isinstance(data, dict):
+        return {"nextEarn": {}, "details": {}}
+    now = time.time() if now_epoch is None else float(now_epoch)
+    details = {}
+    for symbol, raw in (data.get("details") or {}).items():
+        if not isinstance(raw, dict):
+            continue
+        parsed, _reason = _bounded_market_session_date(
+            raw.get("date"), "JP", 7,
+            accepted_formats=("%Y-%m-%d",), now_epoch=now)
+        if parsed is None:
+            continue
+        details[str(symbol)] = {
+            **raw, "date": parsed.isoformat(), "status": "delayed",
+            "decisionUsable": True,
+            "sourceTimeStatus": "BOUNDED_DAILY_FACT",
+        }
+    return {"nextEarn": dict(data.get("nextEarn") or {}),
+            "details": details}
+
 
 def _jquants_catalysts():
     if _JQ_CAT_CACHE["data"] is not None and time.time() < _JQ_CAT_CACHE["expires"]:
-        return _JQ_CAT_CACHE["data"], "live"
+        data = _jquants_catalysts_reaged(
+            _JQ_CAT_CACHE["data"], now_epoch=time.time())
+        return data, ("delayed" if data.get("nextEarn") or data.get("details")
+                      else "unavailable")
     if not _JQUANTS_API_KEY:
         return {"nextEarn": {}, "details": {}}, "unavailable"
     headers = {"x-api-key": _JQUANTS_API_KEY}
@@ -33422,10 +36920,12 @@ def _jquants_catalysts():
                     any_ok = True
         except Exception:
             pass
-    data = {"nextEarn": next_earn, "details": details}
+    data = _jquants_catalysts_reaged(
+        {"nextEarn": next_earn, "details": details}, now_epoch=time.time())
     _JQ_CAT_CACHE["data"] = data
     _JQ_CAT_CACHE["expires"] = time.time() + 6 * 3600
-    return data, ("live" if any_ok else "unavailable")
+    return data, ("delayed" if any_ok and (
+        data.get("nextEarn") or data.get("details")) else "unavailable")
 
 def _days_until(date_str, today):
     try:
@@ -33463,7 +36963,9 @@ def get_catalysts_snapshot():
         e_days = _days_until(earnings["date"], today) if earnings and earnings.get("date") else None
         recent_filing_days = None
         for f in filings:
-            if f.get("form") in ("8-K", "10-Q", "10-K") and f.get("filingDate"):
+            if (f.get("decisionUsable") is True
+                    and f.get("form") in ("8-K", "10-Q", "10-K")
+                    and f.get("filingDate")):
                 d = (today - datetime.strptime(f["filingDate"], "%Y-%m-%d").date()).days
                 if d >= 0 and (recent_filing_days is None or d < recent_filing_days):
                     recent_filing_days = d
@@ -33491,10 +36993,11 @@ def get_catalysts_snapshot():
             "post_event_review": "直近の開示後のため、織り込みと反応を確認してから判断する。",
             "none": "銘柄固有の触媒は乏しく、相場全体の地合いに従う。",
         }[impact]
-        item_status = "live" if (sec_st == "live" or finn_st == "live") else "partial"
+        item_status = ("delayed" if sec_st == "delayed" or finn_st == "delayed"
+                       else "partial")
         items.append({
             "symbol": sym, "market": "US", "name": name, "catalystRisk": risk, "summaryJa": summary,
-            "earnings": {"status": "live" if earnings else ("unavailable" if finn_st != "live" else "live"),
+            "earnings": {"status": "delayed" if earnings else "unavailable",
                          "date": (earnings or {}).get("date"), "daysUntil": e_days if e_days is not None else 0,
                          "epsEstimate": (earnings or {}).get("epsEstimate"),
                          "revenueEstimate": (earnings or {}).get("revenueEstimate"),
@@ -33510,12 +37013,22 @@ def get_catalysts_snapshot():
         e_date = jq.get("nextEarn", {}).get(sym)
         e_days = _days_until(e_date, today) if e_date else None
         disc = jq.get("details", {}).get(sym)
-        disc_days = _days_until(disc["date"], today) if disc and disc.get("date") else None
+        disc_days = None
+        if disc and disc.get("decisionUsable") is True and disc.get("date"):
+            try:
+                disc_days = (today - datetime.strptime(
+                    disc["date"], "%Y-%m-%d").date()).days
+                if disc_days < 0:
+                    disc_days = None
+            except (TypeError, ValueError):
+                disc_days = None
         disclosures = []
         if disc:
             disclosures.append({"source": "J-Quants", "type": "financial_summary",
                                 "date": disc.get("date"), "title": disc.get("type", "financial summary"),
-                                "status": "live"})
+                                "status": "delayed", "official": True,
+                                "decisionUsable": True,
+                                "sourceTimeStatus": "BOUNDED_DAILY_FACT"})
         if _JQUANTS_TDNET_ENABLED is False:
             disclosures.append({"source": "J-Quants", "type": "tdnet_pending", "date": None,
                                 "title": "TDnet add-on pending", "status": "pending_addon"})
@@ -33534,18 +37047,19 @@ def get_catalysts_snapshot():
         }[impact]
         items.append({
             "symbol": sym, "market": "JP", "name": name, "catalystRisk": risk, "summaryJa": summary,
-            "earnings": {"status": "live" if e_date else "unavailable", "date": e_date,
+            "earnings": {"status": "delayed" if e_date else "unavailable", "date": e_date,
                          "daysUntil": e_days if e_days is not None else 0,
                          "epsEstimate": None, "revenueEstimate": None},
             "filings": [], "news": [], "disclosures": disclosures,
             "rationaleJa": rationale, "actionImpact": impact,
-            "status": "live" if jq_st == "live" else "partial",
+            "status": "delayed" if jq_st == "delayed" else "partial",
         })
 
     sec_overall = "live" if "live" in sec_statuses else ("error" if "error" in sec_statuses else "unavailable")
     finn_overall = ("live" if "live" in finn_statuses else
                     ("error" if "error" in finn_statuses else "unavailable"))
-    live_sources = sum(1 for s in (sec_overall, finn_overall, jq_st) if s == "live")
+    live_sources = sum(1 for s in (sec_overall, finn_overall, jq_st)
+                       if s in ("live", "delayed"))
     status = "live" if live_sources == 3 else ("partial" if live_sources >= 1 else "mock")
     now_iso = _ai_now_iso()
     snapshot = {
@@ -33713,12 +37227,19 @@ def api_argus_symbol_search():
 
 
 # ━━━ Scheduler ━━━
-def is_us_trading_day():
-    return datetime.now(TZ_ET).weekday() < 5
+def is_us_trading_day(now_utc=None):
+    """Canonical NYSE calendar gate for the legacy scheduled pipeline."""
+    current = now_utc or datetime.now(pytz.utc)
+    if not isinstance(current, datetime) or current.tzinfo is None or \
+            current.utcoffset() is None:
+        return False
+    local_date = current.astimezone(TZ_ET).date()
+    return argus_market_clock.is_trading_day(
+        argus_market_clock.US_EQUITY, local_date)
 
 def scheduled_run_all():
     global SCHEDULED_RUN
-    if not is_us_trading_day(): add_log("⏭️ Weekend"); return
+    if not is_us_trading_day(): add_log("⏭️ US market calendar closed"); return
     SCHEDULED_RUN = True
     try: phase1_broad_scan(); phase2_rescore(); phase3_crosscheck(); phase4_final_top3()
     finally: SCHEDULED_RUN = False
@@ -33773,19 +37294,15 @@ def _dispatch_research_missions(nowt):
         for k in sorted(_MISSION_STORE, key=lambda x: _MISSION_STORE[x].get("at") or "")[:len(_MISSION_STORE) - 40]:
             _MISSION_STORE.pop(k, None)
 
-@app.route("/api/argus/research-missions")
-def api_argus_research_missions():
-    """Recent deterministic research missions (auto-dispatched on triggers). Read-only."""
-    items = sorted(_MISSION_STORE.values(), key=lambda x: x.get("at") or "", reverse=True)[:20]
-    return jsonify({"count": len(_MISSION_STORE), "missions": items})
-
 def _residency_ai_tick():
     """Resident replacement for the flaky GitHub */15 cron (v10.191). Keeps the
     public-feed intel mesh warm and, during market hours, re-runs the AI judgment +
     RECOMMEND — self-gated by the SAME budget / 14-min interval / daily cap as the
     /ai-judgment/run route, so it's idempotent with any cron still firing (double
     fire → the gate blocks the second). Never raises (that would kill the scheduler
-    thread). Decision-support only — no order/broker path is created here."""
+    thread). The legacy buy-candidates call below produces non-persistent
+    EVIDENCE_ONLY research leads; no order, notification, prediction, or final
+    decision path is created here."""
     try:
         nowt = time.time()
         if nowt - _LAST_INTEL_REFRESH[0] > 600:      # free public RSS; ≤ every 10 min
@@ -33805,6 +37322,8 @@ def _residency_ai_tick():
             return
         _execute_ai_judgment(run_mode="scheduled", checker="flash")
         try:
+            # Route-name compatibility only: this is EVIDENCE_ONLY and does not
+            # persist, push, notify, or append a final-action prediction.
             _buy_candidates_generate()
         except Exception:
             pass

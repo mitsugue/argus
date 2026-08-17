@@ -15,10 +15,12 @@ import statistics
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+import argus_market_data_truth
+
 
 SCHEMA_VERSION = "argus-chart-intelligence-v1"
 STATE_SCHEMA_VERSION = "argus-chart-intelligence-ledger-v1"
-METHOD_VERSION = "chart-intelligence-phase2-v1"
+METHOD_VERSION = "chart-intelligence-phase2-v2-pit-bound"
 MA_WINDOWS = (5, 25, 75, 100, 200)
 STATE_LIMITS = {
     "snapshots": 512, "zones": 4000, "turningPoints": 20000,
@@ -76,6 +78,10 @@ def normalize_bars(rows: Iterable[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
             "adjusted": bool(raw.get("adjusted", False)),
             "sourceId": str(raw.get("id") or raw.get("sourceId") or date),
             "availableFrom": str(raw.get("availableFrom") or date),
+            "knownAt": raw.get("knownAt"),
+            "observedAt": raw.get("observedAt"),
+            "datasetId": raw.get("datasetId"),
+            "revision": int(raw.get("revision") or 0),
         }
         if date in by_date:
             reasons.append("duplicate_date_latest_kept")
@@ -592,8 +598,14 @@ def reaction_anomalies(events: Iterable[Dict[str, Any]], bars_input: Iterable[Di
             continue
         if sector_return is None:
             facts.append("セクター比較は未確認")
+        derived_available = max(str(event.get("knownAt") or
+                                    event.get("availableFrom") or date),
+                                str(after.get("knownAt") or
+                                    after.get("availableFrom") or
+                                    after["date"]))
         body = {"ruleId": rule, "ruleVersion": "v1", "eventId": event.get("id"),
-                "effectiveFrom": after["date"], "availableFrom": date,
+                "effectiveFrom": after["date"],
+                "availableFrom": derived_available,
                 "inputIds": [before["sourceId"], day["sourceId"], after["sourceId"]],
                 "facts": facts, "causeStatus": "原因未確認",
                 "priceReactionStatus": "価格反応のみ確認",
@@ -728,10 +740,45 @@ def analyze(symbol: str, market: str, rows: Iterable[Dict[str, Any]], *,
             now_iso: str, market_ledger: Optional[Dict[str, Any]] = None,
             events: Optional[Iterable[Dict[str, Any]]] = None,
             sector_rows: Optional[Iterable[Dict[str, Any]]] = None) -> Dict[str, Any]:
-    indicators = calculate_indicators(rows)
+    pit_rows, pit_proof = argus_market_data_truth.point_in_time_rows(
+        list(rows or []), now_iso)
+    pit_ok, pit_reason = argus_market_data_truth.verify_point_in_time_proof(
+        pit_proof)
+    sector_pit_rows, sector_pit_proof = \
+        argus_market_data_truth.point_in_time_rows(
+            list(sector_rows or []), now_iso)
+    sector_pit_ok, sector_pit_reason = \
+        argus_market_data_truth.verify_point_in_time_proof(sector_pit_proof)
+
+    cutoff = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+    if cutoff.tzinfo is None:
+        raise ValueError("now_iso_timezone_required")
+
+    def event_known(row: Dict[str, Any]) -> bool:
+        raw = row.get("knownAt") or row.get("availableFrom")
+        if not raw:
+            return False
+        text = str(raw)
+        try:
+            if len(text) == 10:
+                parsed = datetime.fromisoformat(
+                    text + "T23:59:59.999999+00:00")
+            else:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    return False
+            return parsed.astimezone(timezone.utc) <= cutoff.astimezone(
+                timezone.utc)
+        except (TypeError, ValueError, OverflowError):
+            return False
+
+    event_rows = list(events or [])
+    pit_events = [row for row in event_rows
+                  if isinstance(row, dict) and event_known(row)]
+    indicators = calculate_indicators(pit_rows)
     zones = support_resistance_zones(indicators)
     turns = technical_turning_points(indicators, zones, detected_at=now_iso)
-    reactions = reaction_anomalies(events or [], rows, sector_rows)
+    reactions = reaction_anomalies(pit_events, pit_rows, sector_pit_rows)
     report: Dict[str, Any] = {
         "schemaVersion": SCHEMA_VERSION, "methodVersion": METHOD_VERSION,
         "asOf": now_iso, "symbol": symbol, "market": market,
@@ -745,6 +792,18 @@ def analyze(symbol: str, market: str, rows: Iterable[Dict[str, Any]], *,
         "reactionAnomalies": reactions,
         "valuationLevels": valuation_levels(market_ledger, now_iso),
         "relationshipBreaks": [],
+        "pointInTime": {
+            "policyId": argus_market_data_truth.PIT_POLICY_ID,
+            "rows": pit_proof,
+            "rowsVerified": pit_ok,
+            "rowsVerificationReason": pit_reason,
+            "sectorRows": sector_pit_proof,
+            "sectorRowsVerified": sector_pit_ok,
+            "sectorRowsVerificationReason": sector_pit_reason,
+            "eventInputCount": len(event_rows),
+            "eventAdmittedCount": len(pit_events),
+            "verified": pit_ok and sector_pit_ok,
+        },
         "noteJa": "決定論的な判断支援であり、未来予測・売買指示・自動売買ではありません。",
     }
     # A stale last bar may still be displayed, but it cannot produce a

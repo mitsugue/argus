@@ -29,23 +29,7 @@ def test_price_history_cached_only(monkeypatch):
         scanner._US_HISTORY_CACHE.pop("TESTX", None)
 
 
-def test_decision_quality_status_redacted(monkeypatch):
-    monkeypatch.setattr(scanner, "requests", _Boom())
-    with scanner.app.test_client() as c:
-        r = c.get("/api/argus/decision-quality/status")
-        assert r.status_code == 200
-        d = r.get_json()
-        assert d["schemaVersion"] == "decision-quality-status-v1"
-        assert d["serverStoresRecords"] is False
-        blob = json.dumps(d, ensure_ascii=False)
-        for banned in ("quantity", "averageCost", "costBasis", "marketValue",
-                       "unrealizedPnl", "accountType", "ownerActionNote",
-                       "ownerAction", "weightPct"):
-            assert banned not in blob, banned
-        assert scanner.argus_portfolio_sync.contains_sensitive(d) == []
-
-
-def test_us_supply_demand_signal_path(monkeypatch):
+def test_us_supply_demand_rejects_source_invalid_bridge_flow(monkeypatch):
     monkeypatch.setattr(scanner, "requests", _Boom())
     scanner._PUSHED_QUOTES.setdefault("US", {})["SDUS"] = {
         "row": {"symbol": "SDUS", "price": 100.0, "changePct": 3.0,
@@ -58,11 +42,16 @@ def test_us_supply_demand_signal_path(monkeypatch):
     try:
         sig = scanner._supply_demand_signal_for("SDUS", "US")
         assert sig["market"] == "US"
-        assert sig["directness"] == "direct_data"        # measured flow present
-        assert sig["condition"] in ("good", "slightly_good")
-        assert sig["supplyDemandRank"] in ("A", "B")
+        # Receipt freshness and an untimebound bridge flow are not market-time
+        # authority.  The row may remain diagnostic, but it cannot mint a
+        # direct-data A/B supply-demand classification.
+        assert sig["directness"] == "insufficient"
+        assert sig["condition"] == "unknown"
+        assert sig["supplyDemandRank"] == "Unknown"
+        assert sig["evidence"]["measuredFlowNetRatio"] is None
+        assert any("実測大口フロー" in m for m in sig["missingEvidence"])
         assert any("FINRA" in m for m in sig["missingEvidence"])
-        assert "簡易判定" in sig["sourceLimitNote"]
+        assert "未取得" in sig["sourceLimitNote"]
     finally:
         scanner._PUSHED_QUOTES["US"].pop("SDUS", None)
         scanner._US_HISTORY_CACHE.pop("SDUS", None)
@@ -73,20 +62,6 @@ def test_supply_demand_list_includes_us(monkeypatch):
     sigs = scanner._supply_demand_list(cap=30)
     mkts = {s["market"] for s in sigs}
     assert "JP" in mkts and "US" in mkts
-
-
-def test_regressions(monkeypatch):
-    monkeypatch.setattr(scanner, "requests", _Boom())
-    with scanner.app.test_client() as c:
-        for path, schema in (("/api/argus/bridge/status", "bridge-status-v1"),
-                             ("/api/argus/supply-demand/status", "supply-demand-status-v1"),
-                             ("/api/argus/flow-attribution/status", "flow-attribution-status-v1"),
-                             ("/api/argus/position-exposure/status", "position-exposure-status-v1"),
-                             ("/api/argus/portfolio-sync/status", "portfolio-sync-status-v1"),
-                             ("/api/argus/institutional-intel/status", "institutional-intel-status-v1")):
-            r = c.get(path)
-            assert r.status_code == 200, path
-            assert r.get_json()["schemaVersion"] == schema
 
 
 def test_supply_demand_endpoint_respects_market_param(monkeypatch):

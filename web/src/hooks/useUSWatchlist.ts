@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
+import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
 import type { USWatchlistSnapshot, USStockQuote } from '../types/watch';
 import {
   normalizeUSWatchSnapshot,
   type USTruthSnapshot,
 } from '../domain/watchQuoteTruth';
+import { quoteDecisionExpiresAt } from '../domain/liveQuote';
 
 // connecting | live | partial | mock — same model as useJapanWatchlist.
 export type ConnPhase = 'connecting' | 'live' | 'delayed' | 'unknown' | 'partial' | 'mixed' | 'mock';
@@ -57,19 +59,20 @@ function sleep(ms: number): Promise<void> {
  * MOCK_SNAPSHOT (`phase === "mock"`) when the backend is unset or every attempt
  * fails. Mirrors useJapanWatchlist's connecting/live/mock model.
  */
-export function useUSWatchlist(symbols?: string[]): State {
-  // Dynamic mode: pass the user's actual US assets (capped at 8 server-side to
-  // stay within Twelve Data's free 8-credits/min). Empty/absent → curated.
-  const symKey = symbols && symbols.length ? symbols.slice().sort().join(',') : '';
-  const [state, setState] = useState<State>({
-    data: null,
-    error: null,
-    loading: true,
-    phase: 'connecting',
-    attempt: 0,
-  });
+const INITIAL_STATE: State = {
+  data: null,
+  error: null,
+  loading: true,
+  phase: 'connecting',
+  attempt: 0,
+};
+const usWatchlistStores = new Map<string, SharedPollingStore<State>>();
 
-  useEffect(() => {
+function usWatchlistStore(symKey: string): SharedPollingStore<State> {
+  const existing = usWatchlistStores.get(symKey);
+  if (existing) return existing;
+
+  const store = createSharedPollingStore<State>(INITIAL_STATE, (setState, getState) => {
     const dynamic = symKey.length > 0;
     const fallback: USWatchlistSnapshot = dynamic
       ? { status: 'mock', asOf: null, provider: 'twelvedata', stocks: [] }
@@ -78,29 +81,88 @@ export function useUSWatchlist(symbols?: string[]): State {
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
     if (!backend) {
       setState({ data: normalizedFallback, error: null, loading: false, phase: 'mock', attempt: 0 });
-      return;
+      return () => {};
     }
     const url = backend.replace(/\/$/, '') + '/api/argus/us-watchlist'
       + (dynamic ? `?symbols=${encodeURIComponent(symKey)}` : '');
     let cancelled = false;
+    let acquisition: Promise<void> | null = null;
+    let cancelExpiry = () => {};
+    const controllers = new Set<AbortController>();
+
+    function armExpiry(data: USTruthSnapshot) {
+      cancelExpiry();
+      const now = Date.now();
+      const deadlines = data.stocks.map((row) => row.quoteTruth
+        ? quoteDecisionExpiresAt(row.quoteTruth) : null)
+        .filter((value): value is number => value != null);
+      if (!deadlines.length) return;
+      const delay = Math.min(...deadlines) - now;
+      if (delay < 0) {
+        const aged = normalizeUSWatchSnapshot(data as unknown as USWatchlistSnapshot);
+        setState((state) => ({ ...state, data: aged, phase: aged.status }));
+        armExpiry(aged);
+        return;
+      }
+      const handle = window.setTimeout(() => {
+        const current = getState();
+        if (!current.data) return;
+        const aged = normalizeUSWatchSnapshot(
+          current.data as unknown as USWatchlistSnapshot);
+        setState({ ...current, data: aged, phase: aged.status });
+        armExpiry(aged);
+      }, Math.max(1, Math.min(delay + 1, 2_147_000_000)));
+      cancelExpiry = () => window.clearTimeout(handle);
+    }
+
+    function accept(data: USTruthSnapshot, attempt: number) {
+      setState({ data, error: null, loading: false, phase: data.status, attempt });
+      armExpiry(data);
+    }
+
+    function revalidateCurrent() {
+      const current = getState();
+      if (!current.data) return;
+      const aged = normalizeUSWatchSnapshot(
+        current.data as unknown as USWatchlistSnapshot);
+      setState({ ...current, data: aged, phase: aged.status, loading: false });
+      armExpiry(aged);
+    }
+
+    async function fetchSnapshot(): Promise<USTruthSnapshot> {
+      const ctrl = new AbortController();
+      controllers.add(ctrl);
+      const timer = window.setTimeout(() => ctrl.abort(), ATTEMPT_TIMEOUT_MS);
+      try {
+        const response = await fetch(url, { signal: ctrl.signal });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return normalizeUSWatchSnapshot((await response.json()) as USWatchlistSnapshot);
+      } finally {
+        window.clearTimeout(timer);
+        controllers.delete(ctrl);
+      }
+    }
+
+    function acquire(task: () => Promise<void>): Promise<void> {
+      if (acquisition) return acquisition;
+      const current = task().finally(() => {
+        if (acquisition === current) acquisition = null;
+      });
+      acquisition = current;
+      return current;
+    }
 
     async function run() {
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         if (cancelled) return;
         setState((s) => ({ ...s, phase: 'connecting', loading: true, attempt, error: null }));
 
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), ATTEMPT_TIMEOUT_MS);
         try {
-          const r = await fetch(url, { signal: ctrl.signal });
-          clearTimeout(timer);
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          const data = normalizeUSWatchSnapshot((await r.json()) as USWatchlistSnapshot);
+          const data = await fetchSnapshot();
           if (cancelled) return;
-          setState({ data, error: null, loading: false, phase: data.status, attempt });
+          accept(data, attempt);
           return;
         } catch (err: unknown) {
-          clearTimeout(timer);
           if (cancelled) return;
           const msg = err instanceof Error ? err.message : String(err);
           if (attempt < MAX_ATTEMPTS) {
@@ -114,38 +176,57 @@ export function useUSWatchlist(symbols?: string[]): State {
       }
     }
 
-    // Silent background refresh — only swaps in fresh data, never degrades the
-    // visible state on failure.
+    // Retain last observed values on transport failure, but re-run timestamp
+    // classification so an old LIVE proof cannot survive indefinitely.
     async function refresh() {
       if (cancelled || document.hidden) return;
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), ATTEMPT_TIMEOUT_MS);
       try {
-        const r = await fetch(url, { signal: ctrl.signal });
-        clearTimeout(timer);
-        if (!r.ok || cancelled) return;
-        const data = normalizeUSWatchSnapshot((await r.json()) as USWatchlistSnapshot);
+        const data = await fetchSnapshot();
         if (cancelled) return;
         setState((s) => ({ ...s, data, error: null, phase: data.status }));
-      } catch {
-        clearTimeout(timer);
+        armExpiry(data);
+      } catch (err: unknown) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        setState((s) => {
+          if (!s.data) return { ...s, error: msg };
+          const aged = normalizeUSWatchSnapshot(
+            s.data as unknown as USWatchlistSnapshot,
+          );
+          return { ...s, data: aged, error: msg, phase: aged.status };
+        });
       }
     }
-    const refreshTimer = setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
+    const refreshTimer = window.setInterval(() => void acquire(refresh), REFRESH_INTERVAL_MS);
     // Returning to the tab after a while → refresh immediately, don't wait out
     // the remainder of the interval.
     const onVisible = () => {
-      if (!document.hidden) void refresh();
+      if (!document.hidden) {
+        revalidateCurrent();
+        void acquire(refresh);
+      }
     };
     document.addEventListener('visibilitychange', onVisible);
 
-    void run();
+    if (getState().data) revalidateCurrent();
+    void acquire(run);
     return () => {
       cancelled = true;
-      clearInterval(refreshTimer);
+      cancelExpiry();
+      for (const controller of controllers) controller.abort();
+      controllers.clear();
+      window.clearInterval(refreshTimer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [symKey]);
+  });
+  usWatchlistStores.set(symKey, store);
+  return store;
+}
 
-  return state;
+export function useUSWatchlist(symbols?: string[]): State {
+  // Dynamic mode: pass the user's actual US assets (capped at 8 server-side to
+  // stay within Twelve Data's free 8-credits/min). Empty/absent → curated.
+  const symKey = symbols && symbols.length ? symbols.slice().sort().join(',') : '';
+  const store = usWatchlistStore(symKey);
+  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
 }

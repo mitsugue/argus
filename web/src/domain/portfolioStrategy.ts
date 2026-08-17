@@ -181,7 +181,7 @@ export function buildStrategy(pe: PortfolioExposure, roles: LocalAssetRole[],
     totalRiskLevel: totalRisk, themeRisk, singleNameRisk: singleRisk,
     drawdownSensitivity: ddSens,
     summaryJa: noHold
-      ? '保有数量が未入力のため、戦略判定は保留です(Asset Deskで入力すると端末内で判定します)。'
+      ? '保有数量が未入力のため、戦略判定は保留です(Holdings / Watchlistの銘柄詳細で入力すると端末内で判定します)。'
       : `現在の構成は${MODE_JA[mode]}(コア+ヘッジ約${Math.round(coreLike)}% / サテライト約${Math.round(sat)}% / 戦術枠約${Math.round(tac)}%)。FIRE整合は「${FIRE_JA[fire]}」、短期勝負枠は${BUDGET_JA[tacBudget]}です。`,
     riskJa,
     warningsJa,
@@ -210,7 +210,7 @@ export function buildStrategy(pe: PortfolioExposure, roles: LocalAssetRole[],
       'テーマ集中と1銘柄集中の週次確認',
     ].slice(0, 3),
     missingDataJa: [
-      ...(ctx.fireCore?.known === false ? ['投資信託(FIRE Core)の評価額が未入力 — Positions & Riskで入力可'] : []),
+      ...(ctx.fireCore?.known === false ? ['投資信託(FIRE Core)の評価額が未入力 — Holdings / WatchlistのAdvanced portfolioで入力可'] : []),
       '現金比率(証券口座外の現金は未入力)',
       ...(!ctx.recurringAccumulationKnown ? ['毎月の積立額・入金力(未入力)'] : []),
       '住宅ローン・生活キャッシュフロー(未入力)',

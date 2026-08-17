@@ -3,8 +3,8 @@ import type { SystemHealth, LampStatus } from '../../hooks/useSystemHealth';
 import './SystemHealthLamps.css';
 
 // Health popover opened by tapping the A.R.G.U.S. brand. Tap the dimmed overlay
-// (or Esc) to close. Presentational — the parent owns the useSystemHealth hook so
-// the always-visible brand beacon and this list share one poll.
+// (or Esc) to close. Presentational — the parent owns the canonical public
+// diagnostics snapshot shared by the always-visible beacon and this list.
 const DOT: Record<LampStatus, string> = {
   ok: 'shl-dot--ok', warning: 'shl-dot--warn', stopped: 'shl-dot--stop', off: 'shl-dot--off',
 };

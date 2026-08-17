@@ -12,8 +12,12 @@ heartbeat、AI処理を重複実行しません。
 
 ## EC2への配置
 
-EC2上のrepository rootで実行します。既存`/etc/argus-bridge.env`の
-`ARGUS_ADMIN_TOKEN`を再利用し、値を引数やjournalへ出しません。
+EC2上のrepository rootで実行します。mission tickは既存
+`/etc/argus-bridge.env`の`ARGUS_ADMIN_TOKEN`を再利用し、値を引数や
+journalへ出しません。Remote Journal re-armのEC2 processはadmin tokenを
+持たず、公開liveness/readinessを確認してworkflowをdispatchするだけです。
+認証済みOperational Diagnosticsの検証は、既存GitHub Actions secretを持つ
+Watchtower workflow側で実行します。
 
 ```bash
 bash scripts/install_argus_mission_timer.sh --dry-run

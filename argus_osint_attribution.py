@@ -8,9 +8,11 @@
 
 HARD RULES:
   - 14日超の記事は絶対に主要因(primary)にしない。
-  - 主要因候補は原則3営業日(近似96h)以内。当日再報道(fetchedAtが当日)は例外で許可。
-  - publishedAt欠落は firstDetectedAt→fetchedAt でフォールバック。全て欠落なら
-    primary不可(カテゴリはstale_background/unknown側)。
+  - 主要因候補は原則3営業日(近似96h)以内で、publishedAtが
+    時刻精度を持ち、非未来である場合だけ。
+  - firstDetectedAt/fetchedAtは受信・検出の診断時刻であり、publishedAtの
+    代用にしない。当日の再取得も古い/日付のみ/未来/欠落記事を
+    current causal authorityに格上げしない。
   - 弱いテーマ連想を事実として書かない — 必ず「〜の候補」「テーマ連想」と明示。
   - ソース・日付を捏造しない(与えられた候補のメタデータのみ使用)。
 """
@@ -80,10 +82,13 @@ def _source_type(cat, src_cls):
         return "price_only"
     return "unknown"
 
-_OFFICIAL_SOURCES = ("tdnet", "official", "edinet", "sec_edgar", "bls", "bea")
-_CREDIBLE_SOURCES = ("nikkei", "reuters", "nhk", "bloomberg", "cnbc", "wsj",
-                     "coindesk", "cointelegraph", "kabutan", "finnhub")
-_AGGREGATOR_SOURCES = ("google_news", "googlenews", "rss", "yahoo")
+_OFFICIAL_PROVIDERS = frozenset(
+    ("tdnet", "official", "edinet", "sec_edgar", "bls", "bea"))
+_CREDIBLE_PROVIDERS = frozenset(
+    ("nikkei", "reuters", "nhk", "bloomberg", "cnbc", "wsj",
+     "coindesk", "cointelegraph", "kabutan", "finnhub"))
+_AGGREGATOR_PROVIDERS = frozenset(
+    ("google_news", "google_news_jp", "google_news_us", "googlenews", "rss", "yahoo"))
 
 _MACRO_WORDS = ("CPI", "FOMC", "雇用統計", "NFP", "金利", "国債入札", "日銀", "PCE",
                 "GDP", "利下げ", "利上げ", "為替介入")
@@ -92,20 +97,73 @@ PRIMARY_MAX_AGE_H = 96.0          # ≈3営業日の近似(週末を跨ぐ場合
 STALE_AGE_H = 14 * 24.0           # これ超えは絶対にprimary不可
 
 
-def _source_class(source: str) -> str:
-    s = (source or "").lower()
-    if any(k in s for k in _OFFICIAL_SOURCES):
-        return "official"
-    if any(k in s for k in _CREDIBLE_SOURCES):
-        return "credible_news"
-    if any(k in s for k in _AGGREGATOR_SOURCES):
-        return "aggregator"
-    return "unknown"
+def _normalized_provider(value: Any) -> str:
+    """Normalize an explicit provider id without substring-based promotion."""
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _source_metadata(c: Dict[str, Any]) -> tuple[str, str, str]:
+    """Return (display source, provider id, source class).
+
+    A caller may carry an explicit, typed sourceClass.  Otherwise only an exact
+    provider-id registry match classifies authority.  In particular a discovery
+    source such as ``yanoshin_tdnet`` must not become official merely because its
+    label contains the name of an official venue.
+    """
+    display = str(c.get("sourceName") or c.get("source") or
+                  c.get("sourceId") or c.get("provider") or "")[:40]
+    provider = _normalized_provider(
+        c.get("provider") or c.get("sourceId") or c.get("source") or
+        c.get("sourceName"))
+    explicit = c.get("sourceClass")
+    official = c.get("official")
+    if explicit in SOURCE_CLASSES and not (
+            explicit == "official" and official is False):
+        return display, provider, str(explicit)
+    if official is True and explicit in (None, "official"):
+        return display, provider, "official"
+    if provider in _OFFICIAL_PROVIDERS and official is not False:
+        return display, provider, "official"
+    if provider in _CREDIBLE_PROVIDERS:
+        return display, provider, "credible_news"
+    if provider in _AGGREGATOR_PROVIDERS:
+        return display, provider, "aggregator"
+    return display, provider, "unknown"
 
 
 def _age_hours(c: Dict[str, Any], now_iso: str) -> Optional[float]:
-    return argus_news_freshness.age_hours(
-        c.get("publishedAt") or c.get("firstDetectedAt") or c.get("fetchedAt"), now_iso)
+    published = c.get("publishedAt")
+    if not argus_news_freshness.has_exact_time(published):
+        return None
+    return argus_news_freshness.age_hours(published, now_iso)
+
+
+def _published_time_authority(c: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
+    """Classify publication time without consulting receipt/detection clocks."""
+    published = c.get("publishedAt")
+    classified = argus_news_freshness.classify(published, now_iso)
+    age_h = _age_hours(c, now_iso)
+    current = age_h is not None and age_h <= PRIMARY_MAX_AGE_H
+    if current:
+        status = "exact_current"
+        reason = None
+    elif classified.get("freshness") == "future_time":
+        status = "future"
+        reason = classified.get("staleReasonJa")
+    elif classified.get("freshness") == "date_only":
+        status = "date_only"
+        reason = classified.get("staleReasonJa")
+    elif published in (None, ""):
+        status = "missing"
+        reason = "publishedAtが欠落しているため現在の因果根拠に使用しない。"
+    elif age_h is None:
+        status = "invalid"
+        reason = "publishedAtが時刻精度のある非未来時刻でないため使用しない。"
+    else:
+        status = "stale"
+        reason = f"publishedAtが現在から約{int(age_h)}時間前で、{int(PRIMARY_MAX_AGE_H)}時間の上限外。"
+    return {"status": status, "ageHours": age_h,
+            "currentCausalAuthority": current, "reasonJa": reason}
 
 
 def _refetched_today(c: Dict[str, Any], now_iso: str) -> bool:
@@ -114,9 +172,16 @@ def _refetched_today(c: Dict[str, Any], now_iso: str) -> bool:
 
 
 def _category(c: Dict[str, Any], company_names: List[str], theme_words: List[str],
-              age_h: Optional[float]) -> str:
+              age_h: Optional[float], current_time_authority: bool,
+              src_cls: str) -> str:
     title = str(c.get("titleJa") or c.get("titleOriginal") or c.get("title") or "")
-    src_cls = _source_class(str(c.get("source") or c.get("sourceId") or ""))
+    if not current_time_authority:
+        # Exact but out-of-window records remain historical diagnostics.  A
+        # missing/date-only/future/malformed publication clock cannot even
+        # establish causal ordering, so it stays unknown/background.
+        if age_h is not None:
+            return "stale_background"
+        return "unknown"
     if age_h is not None and age_h > STALE_AGE_H:
         return "stale_background"
     named = any(n and n in title for n in company_names)
@@ -146,16 +211,14 @@ def _why_wrong_ja(cat: str, symbol_names: List[str]) -> str:
     }[cat]
 
 
-def _primary_eligible(cat: str, age_h: Optional[float], refetched: bool) -> bool:
+def _primary_eligible(cat: str, current_time_authority: bool,
+                      source_class: str,
+                      decision_usable: Optional[bool]) -> bool:
     if cat in ("stale_background", "unknown"):
         return False
-    if age_h is None:
-        return False                          # 日付不明はprimary不可
-    if age_h > STALE_AGE_H:
+    if decision_usable is False or source_class == "unknown":
         return False
-    if age_h > PRIMARY_MAX_AGE_H and not refetched:
-        return False
-    return True
+    return current_time_authority
 
 
 def _confidence(fresh_count: int, has_official_or_credible: bool,
@@ -186,25 +249,40 @@ def review(symbol: str, market: str, change_pct: Optional[float],
                   "sector_theme": 3, "macro": 4, "unknown": 5, "stale_background": 6}
     rows = []
     for c in (candidates or [])[:12]:
-        age_h = _age_hours(c, now_iso)
-        cat = _category(c, names, themes, age_h)
+        time_authority = _published_time_authority(c, now_iso)
+        age_h = time_authority["ageHours"]
+        source, provider, src_cls = _source_metadata(c)
+        cat = _category(c, names, themes, age_h,
+                        time_authority["currentCausalAuthority"], src_cls)
         refetched = _refetched_today(c, now_iso)
-        eligible = _primary_eligible(cat, age_h, refetched)
-        src_cls = _source_class(str(c.get("source") or c.get("sourceId") or ""))
+        explicit_decision_usable = c.get("decisionUsable")
+        if not isinstance(explicit_decision_usable, bool):
+            explicit_decision_usable = None
+        eligible = _primary_eligible(
+            cat, time_authority["currentCausalAuthority"], src_cls,
+            explicit_decision_usable)
         fresh = _freshness(age_h)
         why = _why_wrong_ja(cat, names)
         rows.append({
             "titleJa": str(c.get("titleJa") or c.get("titleOriginal") or c.get("title") or "")[:160],
-            "source": str(c.get("source") or c.get("sourceId") or "")[:40],
+            "source": source,
+            "provider": provider or None,
+            "official": (c.get("official") if isinstance(c.get("official"), bool)
+                         else src_cls == "official"),
             "sourceClass": src_cls,
             "publishedAt": c.get("publishedAt"),
             "ageHours": round(age_h, 1) if age_h is not None else None,
+            "publishedTimeAuthority": time_authority["status"],
+            "currentCausalTime": time_authority["currentCausalAuthority"],
+            "timeAuthorityReasonJa": time_authority["reasonJa"],
             "category": cat, "categoryJa": CATEGORY_JA[cat],
             # v12.0.8追補: プロビナンス(出典タイプ/直接度/鮮度)を候補ごとに必須化
             "sourceType": _source_type(cat, src_cls),
             "directness": _CAT_TO_DIRECTNESS[cat],
             "freshness": fresh, "freshnessJa": FRESHNESS_JA[fresh],
             "primaryEligible": eligible,
+            "decisionUsable": explicit_decision_usable,
+            # Diagnostic only.  It never changes primaryEligible.
             "refetchedToday": refetched,
             "whyWrongJa": why,
             "whyThisMightBeWrongJa": why,
@@ -215,7 +293,8 @@ def review(symbol: str, market: str, change_pct: Optional[float],
         r["rank"] = i
 
     eligible_rows = [r for r in rows if r["primaryEligible"]]
-    fresh_count = len({(r["sourceClass"], r["source"]) for r in eligible_rows})
+    fresh_count = len({(r["sourceClass"], r["provider"], r["source"])
+                       for r in eligible_rows})
     has_strong = any(r["sourceClass"] in ("official", "credible_news") for r in eligible_rows)
     primary = eligible_rows[0] if eligible_rows else None
     conf = _confidence(fresh_count, has_strong, bool(sector_confirm),
