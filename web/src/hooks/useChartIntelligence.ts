@@ -185,6 +185,22 @@ function performanceMark(name: string) {
   try { performance.mark(`argus-snapshot:${name}`); } catch { /* diagnostics only */ }
 }
 
+function emitVerifiedSnapshotReceipt(
+  url: string, snapshot: VerifiedSnapshot<ChartIntelligencePayload>,
+) {
+  if (snapshot.instrument !== '1321' || snapshot.horizon !== '5D') return;
+  window.dispatchEvent(new CustomEvent('argus:canonical-snapshot-received', {
+    detail: Object.freeze({
+      automaticAiCalls: snapshot.payload.automaticAiCalls,
+      horizon: snapshot.horizon,
+      instrument: snapshot.instrument,
+      snapshotId: snapshot.snapshotId,
+      url,
+      verificationStatus: snapshot.verificationStatus,
+    }),
+  }));
+}
+
 function fetchVerifiedSnapshot(
   url: string, expectation: SnapshotExpectation,
   current: VerifiedSnapshot<ChartIntelligencePayload> | null,
@@ -211,6 +227,7 @@ function fetchVerifiedSnapshot(
       const validation = await verifySnapshot(candidate, expectation);
       performanceMark('snapshot-validation-complete');
       if (!validation.ok) throw new Error(`snapshot_${validation.reason}`);
+      emitVerifiedSnapshotReceipt(url, validation.snapshot);
       return { snapshot: validation.snapshot, notModified: false };
     } catch (error: unknown) {
       failedUntil.set(url, Date.now() + 30_000);

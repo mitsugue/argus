@@ -31,24 +31,17 @@ const CANONICAL_RESPONSE_CAPTURE = '__ARGUS_ACCEPTANCE_CANONICAL_RESPONSE__';
 
 async function armCanonicalResponseCapture(page) {
   await page.addInitScript(({ captureKey }) => {
-    const originalFetch = globalThis.fetch.bind(globalThis);
-    globalThis.fetch = async (...args) => {
-      const response = await originalFetch(...args);
-      try {
-        const url = new URL(response.url);
-        if (response.status === 200
-            && url.pathname === '/api/argus/chart-intelligence'
-            && url.searchParams.get('scope') === 'market'
-            && url.searchParams.get('symbol') === '1321'
-            && url.searchParams.get('horizon') === '5D'
-            && url.searchParams.get('snapshot') === 'verified') {
-          void response.clone().json().then((body) => {
-            globalThis[captureKey] = { body, status: response.status, url: response.url };
-          }).catch(() => {});
-        }
-      } catch { /* validation below remains fail closed */ }
-      return response;
-    };
+    globalThis[captureKey] = null;
+    globalThis.addEventListener('argus:canonical-snapshot-received', (event) => {
+      const detail = event?.detail;
+      if (detail?.instrument === '1321'
+          && detail?.horizon === '5D'
+          && detail?.verificationStatus === 'verified'
+          && typeof detail?.snapshotId === 'string'
+          && typeof detail?.url === 'string') {
+        globalThis[captureKey] = Object.freeze({ ...detail });
+      }
+    });
   }, { captureKey: CANONICAL_RESPONSE_CAPTURE });
 }
 
@@ -57,20 +50,28 @@ async function readCanonicalResponseBody(page, response, timeout) {
     return { body: await response.json(), source: 'playwright_response' };
   } catch {
     // Chromium can evict a service-worker response body before Playwright asks
-    // CDP for it. The init-script clone above captures the bytes from the same
-    // product-triggered fetch; it never supplies or modifies response data.
+    // CDP for it. The product emits this bounded receipt only after its own
+    // strict snapshot verifier accepts the same UI-triggered response.
     await page.waitForFunction(({ captureKey, responseUrl }) => {
       const captured = globalThis[captureKey];
-      return captured?.status === 200 && captured?.url === responseUrl;
+      return captured?.verificationStatus === 'verified'
+        && captured?.url === responseUrl;
     }, { captureKey: CANONICAL_RESPONSE_CAPTURE, responseUrl: response.url() },
     { timeout: Math.min(timeout, 5_000) });
-    const body = await page.evaluate(({ captureKey, responseUrl }) => {
+    const receipt = await page.evaluate(({ captureKey, responseUrl }) => {
       const captured = globalThis[captureKey];
-      return captured?.status === 200 && captured?.url === responseUrl
-        ? captured.body : null;
+      return captured?.verificationStatus === 'verified'
+          && captured?.url === responseUrl ? captured : null;
     }, { captureKey: CANONICAL_RESPONSE_CAPTURE, responseUrl: response.url() });
-    if (!body) throw new Error('canonical_1321_5d_response_body_missing');
-    return { body, source: 'same_fetch_clone' };
+    if (!receipt) throw new Error('canonical_1321_5d_response_body_missing');
+    return {
+      body: {
+        payload: { automaticAiCalls: receipt.automaticAiCalls },
+        snapshotId: receipt.snapshotId,
+        verificationStatus: receipt.verificationStatus,
+      },
+      source: 'product_verified_response_event',
+    };
   }
 }
 

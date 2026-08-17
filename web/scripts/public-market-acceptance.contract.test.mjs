@@ -23,6 +23,8 @@ const mobileAcceptance = fs.readFileSync(
   new URL('./mobile-today-acceptance.mjs', import.meta.url), 'utf8');
 const canonicalSelection = fs.readFileSync(
   new URL('./canonical-snapshot-selection.mjs', import.meta.url), 'utf8');
+const chartHook = fs.readFileSync(
+  new URL('../src/hooks/useChartIntelligence.ts', import.meta.url), 'utf8');
 const today = fs.readFileSync(
   new URL('../src/components/today/ArgusTodayPanel.tsx', import.meta.url), 'utf8');
 
@@ -72,8 +74,15 @@ for (const source of [script, mobileAcceptance, canonicalSelection]) {
 assert.match(canonicalSelection, /waitForRequest/);
 assert.match(canonicalSelection, /waitForResponse/);
 assert.match(canonicalSelection, /addInitScript/);
-assert.match(canonicalSelection, /same_fetch_clone/,
-  'service-worker body eviction must fall back to a clone of the same UI-triggered fetch');
+assert.match(canonicalSelection, /argus:canonical-snapshot-received/,
+  'service-worker body eviction must fall back to the product verifier receipt');
+assert.match(canonicalSelection, /product_verified_response_event/);
+assert.match(chartHook, /argus:canonical-snapshot-received/);
+assert.ok(chartHook.indexOf('if (!validation.ok)')
+  < chartHook.lastIndexOf('emitVerifiedSnapshotReceipt(url, validation.snapshot)'),
+  'the scalar response receipt must be emitted only by the verified product path');
+assert.doesNotMatch(canonicalSelection, /globalThis\.fetch\s*=/,
+  'acceptance must not replace the production fetch implementation');
 assert.doesNotMatch(canonicalSelection, /page\.request\.(?:get|fetch)/,
   'response recovery must not replace the observed UI request with a test-only request');
 assert.match(canonicalSelection, /R11_1321_SELECTED/);
