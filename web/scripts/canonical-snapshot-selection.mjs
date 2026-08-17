@@ -41,7 +41,7 @@ async function readCanonicalResponseBody(page, timeout) {
     const contract = document.querySelector(selector);
     return /^vs-[0-9a-f]{32}$/.test(
       contract?.getAttribute('data-canonical-response-snapshot-id') ?? '');
-  }, { selector: CANONICAL_RESPONSE_SELECTOR }, { timeout: Math.min(timeout, 5_000) });
+  }, { selector: CANONICAL_RESPONSE_SELECTOR }, { timeout });
   const snapshotId = await page.locator(CANONICAL_RESPONSE_SELECTOR)
     .getAttribute('data-canonical-response-snapshot-id');
   if (!snapshotId) throw new Error('canonical_1321_5d_response_body_missing');

@@ -80,6 +80,11 @@ assert.match(canonicalSelection, /waitForResponse/);
 assert.match(canonicalSelection, /product_verified_response_contract/);
 assert.match(canonicalSelection, /data-canonical-response-snapshot-id/,
   'service-worker body eviction must fall back to the verified product response contract');
+assert.match(canonicalSelection,
+  /selector: CANONICAL_RESPONSE_SELECTOR \}, \{ timeout \}/,
+  'the verified response result must retain the shared bounded request/result budget');
+assert.doesNotMatch(canonicalSelection, /Math\.min\(timeout, 5_000\)/,
+  'the response-header event must not impose a shorter body-verification deadline');
 assert.doesNotMatch(canonicalSelection, /response\.json\(\)/,
   'all environments must consume the same product-verified scalar response contract');
 assert.match(chartHook, /setVerifiedResponseSnapshotId\(network\.snapshot\.snapshotId\)/);
