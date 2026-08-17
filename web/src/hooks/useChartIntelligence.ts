@@ -23,6 +23,12 @@ const inflight = new Map<string, Promise<SnapshotNetworkResult>>();
 const failedUntil = new Map<string, number>();
 const assetFailureCount = new Map<string, number>();
 const REQUEST_TIMEOUT_MS = 15_000;
+// Verified market snapshots are multi-megabyte, content-addressed payloads.
+// Their timeout covers headers, body streaming, JSON parsing, and canonical
+// verification. Keep this producer deadline below the release consumer's
+// CANONICAL_RESULT_TIMEOUT_MS so acceptance never stops before the product can
+// publish its verified response ID on a constrained runner/network.
+const VERIFIED_REQUEST_TIMEOUT_MS = 75_000;
 
 export interface ChartIntelligenceOptions {
   scope: 'market' | 'asset'; symbol?: string; market?: string;
@@ -199,7 +205,8 @@ function fetchVerifiedSnapshot(
   if (current) headers['If-None-Match'] = `"${current.snapshotId}"`;
   const request = verifiedChartRequestGate.enqueue(async () => {
     const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort('timeout'), REQUEST_TIMEOUT_MS);
+    const timer = window.setTimeout(
+      () => controller.abort('timeout'), VERIFIED_REQUEST_TIMEOUT_MS);
     try {
       const response = await fetch(url, {
         method: 'GET', cache: 'no-store', headers, signal: controller.signal,

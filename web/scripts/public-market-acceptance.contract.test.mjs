@@ -88,6 +88,11 @@ assert.doesNotMatch(canonicalSelection, /Math\.min\(timeout, 5_000\)/,
 assert.doesNotMatch(canonicalSelection, /response\.json\(\)/,
   'all environments must consume the same product-verified scalar response contract');
 assert.match(chartHook, /setVerifiedResponseSnapshotId\(network\.snapshot\.snapshotId\)/);
+assert.match(chartHook, /VERIFIED_REQUEST_TIMEOUT_MS = 75_000/,
+  'the verified body producer must retain a bounded multi-megabyte verification budget');
+assert.match(canonicalSelection, /CANONICAL_RESULT_TIMEOUT_MS = 90_000/,
+  'the result consumer must outlive the product verified-response producer');
+assert.match(canonicalSelection, /timeout = CANONICAL_RESULT_TIMEOUT_MS/);
 assert.ok(chartHook.indexOf('if (!validation.ok)')
   < chartHook.lastIndexOf('setVerifiedResponseSnapshotId(network.snapshot.snapshotId)'),
   'the scalar response ID must be exposed only by the verified product path');

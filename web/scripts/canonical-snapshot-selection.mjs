@@ -5,6 +5,12 @@ export const CANONICAL_SNAPSHOT_SELECTOR =
   + '[data-canonical-verification="verified"]'
   + '[data-canonical-snapshot-id]';
 
+// This consumer deadline is intentionally longer than the product's 75s
+// verified-response producer deadline. A constrained CI/browser may receive
+// HTTP 200 headers before the multi-megabyte body has streamed and passed the
+// canonical verifier; the UI contract is the result, not the header event.
+export const CANONICAL_RESULT_TIMEOUT_MS = 90_000;
+
 const chartRequestMatches = (request) => {
   const url = new URL(request.url());
   return url.pathname === '/api/argus/chart-intelligence'
@@ -76,7 +82,7 @@ export async function openCanonicalEvidence(page, timeout = 30_000) {
 
 export async function selectCanonical1321FiveDay(page, {
   expectedSnapshotId = null,
-  timeout = 30_000,
+  timeout = CANONICAL_RESULT_TIMEOUT_MS,
   onTransition = () => {},
 } = {}) {
   const machine = seedStateMachine(onTransition);
