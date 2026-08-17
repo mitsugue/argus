@@ -36,7 +36,7 @@ export function buildRestoreReadiness(safety: BackupSafety): RestoreReadinessVie
   const sources: string[] = [];
   const durableSources: string[] = [];
   if (safety.vaultConfigured && safety.vaultSyncAgeDays != null) {
-    sources.push(`暗号化vault · 保存済み復旧点 ${age(safety.vaultSyncAgeDays)}`);
+    sources.push(`暗号化vault · 最終同期 ${age(safety.vaultSyncAgeDays)}`);
     durableSources.push('vault');
   }
   if (safety.snapshotAgeDays != null) {
@@ -48,7 +48,7 @@ export function buildRestoreReadiness(safety: BackupSafety): RestoreReadinessVie
   }
 
   // A localStorage snapshot disappears with the same site-data wipe as the
-  // portfolio. Only an already-saved encrypted recovery point or exported file is durable.
+  // portfolio. Only a completed vault sync or an exported file is durable.
   const hasRecoveryPoint = durableSources.length > 0;
   const ready = safety.protectionLevel === 'protected'
     && safety.restoreVerified && hasRecoveryPoint;
@@ -65,7 +65,7 @@ export function buildRestoreReadiness(safety: BackupSafety): RestoreReadinessVie
     summary: ready
       ? '復元元があり、非破壊read-back drillでschemaと件数の一致を確認済みです。'
       : state === 'recovery_point_required'
-        ? '復元に使える保存済み暗号文またはJSON exportが確認できません。端末内snapshotだけではサイトデータ消去に耐えません。'
+        ? '復元に使える暗号化同期・snapshot・JSON exportが確認できません。'
         : state === 'drill_required'
           ? '復元元はありますが、実際に読み戻せることをまだ検証していません。'
           : safety.statusJa,

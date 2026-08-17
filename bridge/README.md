@@ -43,8 +43,8 @@ journalctl -u argus-bridge -f         # ログ確認
 ## 動作確認(どこからでも)
 
 ```bash
-curl -s https://argus-backend-3j2m.onrender.com/api/argus/bridge/status | python3 -m json.tool
-# → bridge/market別の公開可能な状態と最終push時刻を確認
+curl -s https://argus-backend-3j2m.onrender.com/api/argus/integrations | python3 -m json.tool | grep -A3 moomoo
+# → "runtimeStatus": "live" + "last push Xs ago" なら成功
 ```
 
 アプリの Watchlist の価格がザラ場中に分単位で動けば完成です。

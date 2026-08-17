@@ -2,8 +2,8 @@ import { markLocalEdit } from './vault';
 // My Trade Journal (trade-journal-v1, v10.23) — the user's OWN decisions,
 // recorded WITH their rationale, so ARGUS can eventually score "your intuition
 // vs the tool" (born from the 9984 @6450 trade, 2026-06-13). Device-local
-// like holdings; never uploaded by the browser. A local JSON export is required
-// to protect newer records. This is the human half of the learning loop.
+// like holdings; synced via the encrypted vault (added to BACKUP_KEYS), never
+// sent in plaintext. This is the human half of the learning loop.
 
 const KEY = 'argus.trades.v1';
 const MAX = 300;

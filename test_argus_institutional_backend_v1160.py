@@ -37,6 +37,43 @@ def _seed(monkeypatch):
     ])
 
 
+def test_signals_endpoint_public_no_fetch(monkeypatch):
+    _no_fetch(monkeypatch)
+    _seed(monkeypatch)
+    with scanner.app.test_client() as c:
+        d = c.get("/api/argus/institutional-intel/signals").get_json()
+    assert d["schemaVersion"] == "institutional-intel-signals-v1"
+    assert d["count"] >= 2
+    s = d["signals"][0]
+    for k in ("sourceName", "stance", "directness", "ownerReadableWhy", "checkNextJa",
+              "actionImplication", "headlineOnly", "complianceNote"):
+        assert k in s, k
+    assert "自動売買の指示ではありません" in d["disclaimerJa"]
+    assert "regimeThemes" in d and "handoffSummary" in d
+
+
+def test_signals_symbol_filter(monkeypatch):
+    _no_fetch(monkeypatch)
+    _seed(monkeypatch)
+    with scanner.app.test_client() as c:
+        d = c.get("/api/argus/institutional-intel/signals?symbol=NVDA").get_json()
+    assert d["count"] == 1
+    assert d["signals"][0]["affectedAssets"][0] == "NVDA"
+
+
+def test_status_endpoint_observability(monkeypatch):
+    _no_fetch(monkeypatch)
+    _seed(monkeypatch)
+    with scanner.app.test_client() as c:
+        d = c.get("/api/argus/institutional-intel/status").get_json()
+    assert d["schemaVersion"] == "institutional-intel-status-v1"
+    for k in ("sourcesChecked", "sourcesFailed", "signalsNow", "mappedToOwnerAssets",
+              "headlineOnlyCount", "disabledSources", "registry", "ingestionAlive"):
+        assert k in d, k
+    names = {b["sourceName"] for b in d["registry"]["banks"]}
+    assert "Goldman Sachs" in names and "Nomura Securities" in names
+
+
 def test_cause_attribution_carries_institutional_notes(monkeypatch):
     _no_fetch(monkeypatch)
     _seed(monkeypatch)
@@ -60,6 +97,19 @@ def test_pro_handoff_includes_summary(monkeypatch):
         d = c.get("/api/argus/pro-handoff").get_json()
     assert "Institutional Intelligence Summary" in d["promptText"]
     assert "自動売買の指示ではありません" in d["promptText"]
+
+
+def test_no_secrets_and_no_trading_fields(monkeypatch):
+    _no_fetch(monkeypatch)
+    _seed(monkeypatch)
+    with scanner.app.test_client() as c:
+        blob = json.dumps(c.get("/api/argus/institutional-intel/signals").get_json(),
+                          ensure_ascii=False).lower()
+        blob += json.dumps(c.get("/api/argus/institutional-intel/status").get_json(),
+                           ensure_ascii=False).lower()
+    for bad in ('"prompt":', '"apikey":', '"api_key":', '"token":', '"secret":',
+                '"order"', '"buy":', '"sell":', '"holdings":', '"pnl":'):
+        assert bad not in blob, bad
 
 
 def test_bridge_status_unaffected(monkeypatch):

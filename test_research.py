@@ -129,28 +129,18 @@ def test_classify_edinet_doc():
 
 
 def test_edinet_event_relationship():
-    event = "2026-06-22T10:00:00+09:00"
-    assert rs.edinet_event_relationship(
-        "2026-06-22 09:30", event) == "precedes_or_coincident"
-    assert rs.edinet_event_relationship(
-        "2026-06-22 15:00", event) == "after_event"
-    assert rs.edinet_event_relationship("", event) == "unknown"
-    assert rs.edinet_event_relationship(
-        "2026-06-22 09:30", "2026-06-22") == "unknown"
-    assert rs.edinet_event_relationship(
-        "2026-02-30 09:30", event) == "unknown"
+    assert rs.edinet_event_relationship("2026-06-22 09:30", "2026-06-22") == "precedes_or_same_day"
+    assert rs.edinet_event_relationship("2026-06-23 09:30", "2026-06-22") == "after_event_day"
+    assert rs.edinet_event_relationship("", "2026-06-22") == "unknown"
 
 
 def test_edinet_catalyst_decision():
-    event = "2026-06-22T14:05:00+09:00"
     same_day_extra = [{"docClass": "extraordinary", "submitDateTime": "2026-06-22 14:00"}]
-    ok, q = rs.edinet_catalyst_decision(same_day_extra, event)
+    ok, q = rs.edinet_catalyst_decision(same_day_extra, "2026-06-22")
     assert ok and len(q) == 1
     # periodic same-day is NOT a catalyst
     assert rs.edinet_catalyst_decision(
-        [{"docClass": "periodic", "submitDateTime": "2026-06-22 09:00"}], event)[0] is False
-    # extraordinary but filed later cannot have caused the earlier move
+        [{"docClass": "periodic", "submitDateTime": "2026-06-22 09:00"}], "2026-06-22")[0] is False
+    # extraordinary but filed the NEXT day cannot have caused today's move
     assert rs.edinet_catalyst_decision(
-        [{"docClass": "extraordinary", "submitDateTime": "2026-06-22 15:00"}], event)[0] is False
-    # Date-only event authority cannot establish intraday ordering.
-    assert rs.edinet_catalyst_decision(same_day_extra, "2026-06-22")[0] is False
+        [{"docClass": "extraordinary", "submitDateTime": "2026-06-23 09:00"}], "2026-06-22")[0] is False

@@ -1,0 +1,8 @@
+/* Small inline 7-light signal gauge (v10.153) — per-stock cards. */
+.sg { display: inline-flex; gap: 2px; align-items: center; vertical-align: middle; }
+.sg-seg {
+  width: 7px; height: 4px; border-radius: 1px;
+  background: var(--seg, var(--text-muted));
+  opacity: 0.26;
+}
+.sg-seg--on { opacity: 1; box-shadow: 0 0 4px var(--seg); }

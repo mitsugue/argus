@@ -1,26 +1,24 @@
-"""Legacy local prediction projection, preserved for its three real consumers.
+"""A.R.G.U.S. prediction ledger.
 
-This is no longer a Prediction Ledger authority.  New rows are append-only
-issued/outcome *projection events*, are always ``unknown_legacy`` mode, and are
-never eligible for live calibration.  Historical mutable rows remain readable;
-they are not rewritten or silently upgraded.  The canonical sealed contract is
-``argus_decision_ledger`` v2.
+Append-only JSON Lines store. Each line is a single PredictionEntry whose
+shape matches the TS PredictionEntry on the React frontend, so the
+/api/argus/calibration endpoint can return the aggregate directly with
+no shape conversion in between.
+
+Storage path is controlled by the ARGUS_LEDGER_PATH env var so a
+persistent disk (e.g. Render Disk mounted at /data) can be plugged in
+without touching code.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 LEDGER_PATH = Path(os.environ.get("ARGUS_LEDGER_PATH", "data/predictions.jsonl"))
-LEGACY_SCHEMA_VERSION = "argus-legacy-prediction-projection-v2"
-LEGACY_MODE = "unknown_legacy"
-_APPEND_LOCK = threading.Lock()
 
 
 def _ensure_path() -> Path:
@@ -34,23 +32,6 @@ def _now_ms() -> int:
 
 def _new_id() -> str:
     return "pred-" + uuid.uuid4().hex[:12]
-
-
-def _canonical_hash(value: Dict[str, Any]) -> str:
-    raw = json.dumps(value, ensure_ascii=False, allow_nan=False,
-                     sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()
-
-
-def _append_event(event: Dict[str, Any]) -> None:
-    path = _ensure_path()
-    line = json.dumps(event, ensure_ascii=False, allow_nan=False,
-                      sort_keys=True, separators=(",", ":")) + "\n"
-    with _APPEND_LOCK:
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(line)
-            handle.flush()
-            os.fsync(handle.fileno())
 
 
 HORIZON_MS = {
@@ -77,11 +58,7 @@ def log_prediction(
     if horizon not in HORIZON_MS:
         raise ValueError(f"unknown horizon {horizon!r}")
     now = _now_ms()
-    body = {
-        "schemaVersion": LEGACY_SCHEMA_VERSION,
-        "recordType": "issued_projection",
-        "authorityClass": "LEGACY_DUPLICATE",
-        "mode": LEGACY_MODE,
+    entry = {
         "id": _new_id(),
         "predictedAt": now,
         "resolvesAt": now + HORIZON_MS[horizon],
@@ -97,8 +74,9 @@ def log_prediction(
         "outcome": "pending",
         "reasonCode": reason_code,
     }
-    entry = {**body, "integrityHash": _canonical_hash(body)}
-    _append_event(entry)
+    path = _ensure_path()
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     return entry
 
 
@@ -119,108 +97,58 @@ def _read_all() -> List[Dict[str, Any]]:
     return out
 
 
-PriceLookup = Callable[[str, int], Any]
+def _write_all(entries: List[Dict[str, Any]]) -> None:
+    path = _ensure_path()
+    tmp = path.with_suffix(".jsonl.tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        for e in entries:
+            f.write(json.dumps(e, ensure_ascii=False) + "\n")
+    tmp.replace(path)
 
 
-def _issued_events(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return [entry for entry in entries
-            if entry.get("recordType") in (None, "issued_projection")
-            and entry.get("code")]
-
-
-def _outcome_by_prediction(entries: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    out = {}
-    for entry in entries:
-        if entry.get("recordType") == "outcome_projection" and entry.get("predictionId"):
-            out[str(entry["predictionId"])] = entry
-    return out
-
-
-def _exact_target_truth(value: Any, resolves_at: int) -> Optional[Dict[str, Any]]:
-    """Accept only an explicitly target-bound lookup result, never a bare latest price."""
-    if not isinstance(value, dict):
-        return None
-    try:
-        price = float(value.get("price"))
-        as_of_ms = int(value.get("asOfMs"))
-        known_at_ms = int(value.get("knownAtMs"))
-    except (TypeError, ValueError):
-        return None
-    target_session_id = str(value.get("targetSessionId") or "")
-    truth_id = str(value.get("truthObservationId") or "")
-    if not (price > 0 and as_of_ms == int(resolves_at)
-            and known_at_ms >= as_of_ms and target_session_id and truth_id):
-        return None
-    return {"price": price, "asOfMs": as_of_ms, "knownAtMs": known_at_ms,
-            "targetSessionId": target_session_id,
-            "truthObservationId": truth_id}
+PriceLookup = Callable[[str, int], Optional[float]]
 
 
 def resolve_outcomes(price_lookup: PriceLookup) -> int:
-    """Append one outcome projection for each matured issued projection.
+    """For every pending entry whose resolvesAt is in the past, resolve it.
 
-    A bare number/current price is explicitly unscorable.  Exact resolution
-    requires a mapping containing price, exact ``asOfMs == resolvesAt``,
-    ``knownAtMs``, targetSessionId, and truthObservationId.  Missing proof is
-    appended as UNSCORABLE rather than synthesized as a zero return.
+    `price_lookup(code, ts_ms)` should return the close-enough price for
+    that ticker around that timestamp, or None if unavailable (in which
+    case the entry stays pending and will be retried later).
+
+    Returns the number of newly-resolved entries.
     """
-    events = _read_all()
-    entries = _issued_events(events)
+    entries = _read_all()
     if not entries:
         return 0
     now = _now_ms()
     resolved_count = 0
-    existing_outcomes = _outcome_by_prediction(events)
+    changed = False
     for e in entries:
-        # Historical in-place rows remain historical evidence. Never append a
-        # second interpretation or call them canonical.
         if e.get("outcome") != "pending":
             continue
         if e.get("resolvesAt", 0) > now:
             continue
-        if str(e.get("id")) in existing_outcomes:
-            continue
         try:
-            candidate = price_lookup(e["code"], e["resolvesAt"])
+            actual = price_lookup(e["code"], e["resolvesAt"])
         except Exception:
-            candidate = None
-        truth = _exact_target_truth(candidate, int(e.get("resolvesAt") or 0))
-        body: Dict[str, Any] = {
-            "schemaVersion": LEGACY_SCHEMA_VERSION,
-            "recordType": "outcome_projection",
-            "authorityClass": "LEGACY_DUPLICATE",
-            "mode": LEGACY_MODE,
-            "predictionId": e.get("id"),
-            "recordedAt": now,
-            "status": "unscorable",
-            "missingReason": "target_session_truth_unbound",
-            "targetTruthBound": False,
-            "priceAtResolution": None,
-            "movePct": None,
-            "outcome": "unscorable",
-        }
-        if truth is not None:
-            base = float(e.get("priceAtPrediction") or 0)
-            if base > 0:
-                move_pct = (truth["price"] - base) / base * 100.0
-                is_hit = ((e.get("direction") == "up" and move_pct > 0)
-                          or (e.get("direction") == "down" and move_pct < 0))
-                body.update({
-                    "status": "resolved",
-                    "missingReason": None,
-                    "targetTruthBound": True,
-                    "truthObservationId": truth["truthObservationId"],
-                    "targetSessionId": truth["targetSessionId"],
-                    "outcomeAsOfMs": truth["asOfMs"],
-                    "knownAtMs": truth["knownAtMs"],
-                    "priceAtResolution": round(truth["price"], 4),
-                    "movePct": round(move_pct, 4),
-                    "outcome": "hit" if is_hit else "miss",
-                })
-                resolved_count += 1
-        body["id"] = "legacy-outcome-" + _canonical_hash(body)[:24]
-        event = {**body, "integrityHash": _canonical_hash(body)}
-        _append_event(event)
+            actual = None
+        if actual is None:
+            continue
+        base = e.get("priceAtPrediction", 0) or 1e-9
+        move_pct = (actual - base) / base * 100
+        is_hit = (
+            (e["direction"] == "up" and move_pct > 0)
+            or (e["direction"] == "down" and move_pct < 0)
+        )
+        e["outcome"] = "hit" if is_hit else "miss"
+        e["resolvedAt"] = now
+        e["priceAtResolution"] = round(float(actual), 4)
+        e["movePct"] = round(move_pct, 4)
+        resolved_count += 1
+        changed = True
+    if changed:
+        _write_all(entries)
     return resolved_count
 
 
@@ -229,29 +157,20 @@ def aggregate_stats(window_days: int = 30) -> Dict[str, Any]:
     DAY_MS = 24 * 60 * 60 * 1000
     now = _now_ms()
     cutoff = now - window_days * DAY_MS
-    events = _read_all()
-    entries = _issued_events(events)
-    outcomes = _outcome_by_prediction(events)
+    entries = _read_all()
     in_window = [e for e in entries if e.get("predictedAt", 0) >= cutoff]
-    resolved = [outcomes[str(e.get("id"))] for e in in_window
-                if str(e.get("id")) in outcomes
-                and outcomes[str(e.get("id"))].get("status") == "resolved"
-                and outcomes[str(e.get("id"))].get("targetTruthBound") is True]
-    pending = [e for e in in_window if str(e.get("id")) not in outcomes]
+    resolved = [e for e in in_window if e.get("outcome") != "pending"]
+    pending = [e for e in in_window if e.get("outcome") == "pending"]
     hits = [e for e in resolved if e.get("outcome") == "hit"]
 
     hit_rate = (len(hits) / len(resolved)) if resolved else 0.0
     expected_rate = (
-        sum(float(next((p.get("probability", 0) for p in in_window
-                       if p.get("id") == e.get("predictionId")), 0))
-            for e in resolved) / len(resolved)
+        sum(float(e.get("probability", 0)) for e in resolved) / len(resolved)
         if resolved else 0.0
     )
     brier = (
         sum(
-            (float(next((p.get("probability", 0) for p in in_window
-                        if p.get("id") == e.get("predictionId")), 0))
-             - (1.0 if e.get("outcome") == "hit" else 0.0)) ** 2
+            (float(e.get("probability", 0)) - (1.0 if e.get("outcome") == "hit" else 0.0)) ** 2
             for e in resolved
         ) / len(resolved)
         if resolved else 0.0
@@ -263,12 +182,10 @@ def aggregate_stats(window_days: int = 30) -> Dict[str, Any]:
         day_start = now - (day + 1) * DAY_MS
         day_end = now - day * DAY_MS
         day_entries = [
-            e for e in in_window
+            e for e in resolved
             if day_start <= e.get("predictedAt", 0) < day_end
-            and (outcomes.get(str(e.get("id"))) or {}).get("status") == "resolved"
         ]
-        day_hits = sum(1 for e in day_entries
-                       if (outcomes.get(str(e.get("id"))) or {}).get("outcome") == "hit")
+        day_hits = sum(1 for e in day_entries if e.get("outcome") == "hit")
         daily.append({
             "day": time.strftime("%m-%d", time.gmtime(day_start / 1000)),
             "rate": (day_hits / len(day_entries)) if day_entries else 0.0,
@@ -283,12 +200,10 @@ def aggregate_stats(window_days: int = 30) -> Dict[str, Any]:
         hi = (b + 1) / num_bins
         hi_inclusive = b == num_bins - 1
         bucket = [
-            e for e in in_window
-            if (outcomes.get(str(e.get("id"))) or {}).get("status") == "resolved"
-            and lo <= float(e.get("probability", 0)) < (hi + (0.001 if hi_inclusive else 0))
+            e for e in resolved
+            if lo <= float(e.get("probability", 0)) < (hi + (0.001 if hi_inclusive else 0))
         ]
-        bucket_hits = sum(1 for e in bucket
-                          if (outcomes.get(str(e.get("id"))) or {}).get("outcome") == "hit")
+        bucket_hits = sum(1 for e in bucket if e.get("outcome") == "hit")
         bins.append({
             "predictedProb": (lo + hi) / 2,
             "count": len(bucket),
@@ -296,9 +211,6 @@ def aggregate_stats(window_days: int = 30) -> Dict[str, Any]:
         })
 
     return {
-        "schemaVersion": LEGACY_SCHEMA_VERSION,
-        "mode": LEGACY_MODE,
-        "calibrationEligible": False,
         "windowDays": window_days,
         "resolvedCount": len(resolved),
         "pendingCount": len(pending),
@@ -312,24 +224,9 @@ def aggregate_stats(window_days: int = 30) -> Dict[str, Any]:
 
 
 def list_recent(limit: int = 50) -> List[Dict[str, Any]]:
-    events = _read_all()
-    entries = _issued_events(events)
-    outcomes = _outcome_by_prediction(events)
-    projected = []
-    for entry in entries:
-        outcome = outcomes.get(str(entry.get("id")))
-        if outcome is None:
-            projected.append(entry)
-            continue
-        projected.append({**entry,
-                          "resolvedAt": outcome.get("recordedAt"),
-                          "priceAtResolution": outcome.get("priceAtResolution"),
-                          "movePct": outcome.get("movePct"),
-                          "outcome": outcome.get("outcome"),
-                          "outcomeEventId": outcome.get("id"),
-                          "targetTruthBound": outcome.get("targetTruthBound")})
+    entries = _read_all()
     return sorted(
-        projected,
+        entries,
         key=lambda e: e.get("predictedAt", 0),
         reverse=True,
     )[:limit]

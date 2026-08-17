@@ -19,7 +19,6 @@ existing dossier (argus_research) and flow inference; this adds the integrity la
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import re
 from typing import Any, Dict, List, Optional, Sequence
 
 # ── Vocabulary ──────────────────────────────────────────────────────────────
@@ -38,27 +37,6 @@ CONTAGION_SCOPES = ["company_specific", "subsector_wide", "sector_wide",
 def _to_epoch(iso: Optional[str]) -> Optional[float]:
     if not iso:
         return None
-
-
-_EXACT_EVENT_TIME = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$")
-_CAUSAL_AFTER_MOVE_WINDOW_SEC = 24 * 3600
-
-
-def _exact_event_epoch(value: Any) -> Optional[float]:
-    """Parse an exact offset-aware event time; date-only facts prove no ordering."""
-    if not isinstance(value, str) or not _EXACT_EVENT_TIME.fullmatch(value.strip()):
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-    except (TypeError, ValueError, OverflowError):
-        return None
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        return None
-    try:
-        return parsed.timestamp()
-    except (OverflowError, OSError, ValueError):
-        return None
     s = str(iso).strip().replace("Z", "+00:00")
     try:
         dt = datetime.fromisoformat(s)
@@ -70,8 +48,7 @@ def _exact_event_epoch(value: Any) -> Optional[float]:
 
 
 # ── 2. Causal role classification (TIMESTAMP integrity) ─────────────────────
-def causal_role(ev: Dict[str, Any], move_started_at: Optional[str],
-                decision_at: Optional[str] = None) -> Dict[str, Any]:
+def causal_role(ev: Dict[str, Any], move_started_at: Optional[str]) -> Dict[str, Any]:
     """Classify one evidence item's causal role relative to when the move began.
 
     Hard rules:
@@ -81,10 +58,8 @@ def causal_role(ev: Dict[str, Any], move_started_at: Optional[str],
       * STALE evidence (published well before the move) is background_only unless
         same-day recirculation is evidenced.
     """
-    move = _exact_event_epoch(move_started_at)
-    pub = _exact_event_epoch(ev.get("publishedAt"))
-    decision = _exact_event_epoch(
-        decision_at or ev.get("decisionAt") or ev.get("knownAt"))
+    move = _to_epoch(move_started_at)
+    pub = _to_epoch(ev.get("publishedAt"))
     reliab = float(ev.get("sourceReliability") or 0.0)
     recirculated = bool(ev.get("sameDayRecirculation"))
 
@@ -92,11 +67,6 @@ def causal_role(ev: Dict[str, Any], move_started_at: Optional[str],
         return _role("background_only", 0.0, "未発生のイベントは過去の引き金になり得ない（リスク要因）。")
     if pub is None or move is None:
         return _role("background_only", _align(pub, move), "時刻情報が不足し引き金と断定できない。")
-    if ((decision is not None and pub > decision)
-            or (decision is None
-                and pub > move + _CAUSAL_AFTER_MOVE_WINDOW_SEC)):
-        return _role("background_only", 0.0,
-                     "判断時点より未来、または動意から離れた後発情報は現在の原因にできない。")
     if pub > move + 600:                      # published >10min after the move began
         return _role("amplifier" if reliab >= 0.4 else "background_only", _align(pub, move),
                      "動意の後に出た情報。元の引き金ではない（増幅/追認の可能性）。")
@@ -114,8 +84,7 @@ def causal_role(ev: Dict[str, Any], move_started_at: Optional[str],
                  "時間整合または信頼度が中程度。引き金とは断定しない。")
 
 
-def classify_news(item: Dict[str, Any], move_started_at: Optional[str],
-                  decision_at: Optional[str] = None) -> str:
+def classify_news(item: Dict[str, Any], move_started_at: Optional[str]) -> str:
     """4-bucket relation of a news/disclosure item to the move (v10.142), for the
     stock card. NEVER asserts the news caused the move — only its relation:
       CONFIRMED      official source AND time-consistent with the move,
@@ -125,7 +94,7 @@ def classify_news(item: Dict[str, Any], move_started_at: Optional[str],
     """
     if not item.get("official"):
         return "UNCONFIRMED"
-    role = causal_role(item, move_started_at, decision_at).get("role")
+    role = causal_role(item, move_started_at).get("role")
     if role == "trigger":
         return "CONFIRMED"
     if role == "amplifier":
@@ -396,7 +365,7 @@ def attribute_cause(ctx: Dict[str, Any], evidence: Sequence[Dict[str, Any]],
     move_start = ctx.get("moveStartedAt")
     roles = []
     for ev in evidence or []:
-        r = causal_role(ev, move_start, now_iso)
+        r = causal_role(ev, move_start)
         roles.append({**r, "evidenceId": ev.get("id"), "kind": ev.get("kind"),
                       "supports": ev.get("supports") or []})
 

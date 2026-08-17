@@ -1,0 +1,53 @@
+/* C.A.O.S. hub (v10.168) — the always-present 2nd card on Today. One header, three tiers
+   (機関シグナル / イベント分析 / ニュース). Matches the top-page card typography. */
+.caoshub { margin: 10px 0; padding: 12px 14px; background: var(--surface-1, rgba(255,255,255,.03));
+  border: 1px solid var(--border-subtle, rgba(255,255,255,.08)); border-radius: 12px; }
+.caoshub-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.caoshub-title { font-size: 12px; font-weight: 800; letter-spacing: .08em; color: var(--text-main); }
+.caoshub-sub { font-size: 10px; color: var(--text-muted); }
+.caoshub-empty { font-size: 12px; color: var(--text-muted); margin: 8px 0 2px; line-height: 1.6; }
+
+.caoshub-tier { margin-top: 10px; padding-top: 8px;
+  border-top: 1px solid var(--border-subtle, rgba(255,255,255,.07)); }
+.caoshub-tierhead { font-size: 10px; font-weight: 800; letter-spacing: .06em; color: var(--text-sub);
+  margin-bottom: 4px; }
+.caoshub-tiernote { font-weight: 400; color: var(--text-muted); letter-spacing: 0; margin-left: 6px; }
+
+/* News tier */
+.caoshub-news { display: block; text-decoration: none; color: inherit; padding: 5px 0; min-width: 0; }
+.caoshub-news + .caoshub-news { border-top: 1px solid var(--border-subtle, rgba(255,255,255,.04)); }
+.caoshub-news-meta { display: flex; gap: 7px; align-items: center; }
+.caoshub-news-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--amber, #fbbf24); }
+.caoshub-news-time, .caoshub-news-src { flex: none; font-size: 10px; color: var(--text-faint); white-space: nowrap; }
+.caoshub-news-src { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+.caoshub-corrob { flex: none; font-size: 8.5px; font-weight: 700; letter-spacing: .04em;
+  border: 1px solid currentColor; border-radius: 4px; padding: 0 3px; opacity: .85; }
+.caoshub-corrob--official { color: var(--cyan, #22d3ee); }
+.caoshub-corrob--ok { color: var(--value-positive, #34d399); }
+.caoshub-corrob--single { color: var(--text-muted); opacity: .65; }
+.caoshub-news-h { font-size: 12.5px; line-height: 1.5; color: var(--text-sub); overflow-wrap: anywhere; margin-top: 1px; }
+.caoshub-news-h--major { color: var(--text-main); font-weight: 600; }
+
+.caoshub-pending { font-size: 10px; color: var(--text-faint); margin-top: 3px; font-style: italic; }
+
+.caoshub-foot { font-size: 10px; color: var(--text-muted); margin: 10px 0 0; line-height: 1.5; }
+
+/* 急落注視 tier (v10.178) — compact active-drop rows; full detail on the Watchlist page. */
+.caoshub-ds { padding: 5px 0; }
+.caoshub-ds + .caoshub-ds { border-top: 1px solid var(--border-subtle, rgba(255,255,255,.05)); }
+.caoshub-ds-l1 { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+.caoshub-ds-held { font-size: 9px; font-weight: 800; color: var(--amber, #fbbf24); border: 1px solid currentColor; border-radius: 4px; padding: 0 3px; }
+.caoshub-ds-sym { font-size: 12.5px; font-weight: 800; color: var(--text-main); }
+.caoshub-ds-name { font-size: 11px; color: var(--text-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 38%; }
+.caoshub-ds-chg { font-size: 11px; color: var(--value-negative, #f87171); font-variant-numeric: tabular-nums; }
+.caoshub-ds-ovr { margin-left: auto; font-size: 9.5px; font-weight: 700; color: var(--red, #f87171); border: 1px solid currentColor; border-radius: 5px; padding: 0 5px; opacity: .9; }
+.caoshub-ds-reason { font-size: 12px; line-height: 1.55; color: var(--text-sub); margin: 2px 0 0; }
+
+/* Crisis-theme radar folded into C.A.O.S. (v10.192) */
+.caoshub-crisis { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 3px 0; }
+.caoshub-crisis-lvl { font-size: 11px; font-weight: 700; min-width: 44px; }
+.caoshub-crisis-label { font-size: 12px; color: var(--text-main); }
+.caoshub-crisis-count { font-size: 11px; color: var(--text-muted); }
+.caoshub-crisis-head { font-size: 11px; color: var(--text-sub); text-decoration: none; opacity: 0.85; }
+.caoshub-crisis-head:hover { text-decoration: underline; }
+.caoshub-crisis-calm { font-size: 12px; color: var(--text-muted); margin: 2px 0 0; line-height: 1.55; }
