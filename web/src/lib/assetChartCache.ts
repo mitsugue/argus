@@ -108,6 +108,7 @@ export class AssetChartRequestGate {
 }
 
 export const assetChartRequestGate = new AssetChartRequestGate();
+export const verifiedChartRequestGate = new AssetChartRequestGate();
 
 function openDatabase(): Promise<IDBDatabase | null> {
   if (databasePromise) return databasePromise;
