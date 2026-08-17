@@ -1,0 +1,20 @@
+/* C.A.O.S. event lifecycle panel (v10.165) — matches the top-page card typography */
+.caose { margin: 10px 0; padding: 12px 14px; background: var(--surface-1, rgba(255,255,255,.03));
+  border: 1px solid var(--border-subtle, rgba(255,255,255,.07)); border-radius: 12px; }
+.caose-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.caose-title { font-size: 11px; font-weight: 800; letter-spacing: .06em; color: var(--text-sub); }
+.caose-sub { font-size: 10px; color: var(--text-muted); }
+.caose-row { padding: 8px 0; border-top: 1px solid var(--border-subtle, rgba(255,255,255,.06)); }
+.caose-row:first-of-type { border-top: none; }
+.caose-l1 { display: flex; align-items: center; gap: 8px; }
+.caose-phase { font-size: 9px; font-weight: 800; letter-spacing: .04em; padding: 0 5px; border-radius: 5px; border: 1px solid currentColor; }
+.caose-code { font-size: 12px; font-weight: 700; color: var(--text-main); }
+.caose-impact { font-size: 10px; color: var(--text-muted); }
+/* Headed one-liners — 概要 / 事前予想 / 事後. Heading chip on the left, one line of text. */
+.caose-line { display: flex; gap: 9px; margin-top: 5px; align-items: baseline; }
+.caose-h { flex: none; min-width: 52px; font-size: 10px; font-weight: 800; letter-spacing: .04em;
+  color: var(--text-muted); padding-top: 1px; }
+.caose-h--pre { color: var(--event-high); }
+.caose-h--post { color: var(--event-medium); }
+.caose-t { font-size: 12.5px; line-height: 1.6; color: var(--text-sub); }
+.caose-foot { font-size: 10px; color: var(--text-muted); margin: 8px 0 0; }

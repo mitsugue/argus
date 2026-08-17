@@ -1,0 +1,783 @@
+import React from 'react';
+import { useLocale, setLocale, t, tEn } from '../i18n';
+import { PageShell } from './PageShell';
+import { IntegrationsPanel } from '../components/guide/IntegrationsPanel';
+import { LedgerHealthCard } from '../components/guide/LedgerHealthCard';
+import { CalibrationCard } from '../components/guide/CalibrationCard';
+import { Layer2BSyncCard } from '../components/guide/Layer2BSyncCard';
+import { SourceRegistryCard } from '../components/guide/SourceRegistryCard';
+import { CalibrationOpsCard } from '../components/guide/CalibrationOpsCard';
+import { MarketDepthCard } from '../components/guide/MarketDepthCard';
+import { DecisionValueOpsCard } from '../components/guide/DecisionValueOpsCard';
+import { ArgusProStatusCard } from '../components/guide/ArgusProStatusCard';
+import { EventCardsPanel } from '../components/guide/EventCardsPanel';
+import { ArgusProAboutCard } from '../components/guide/ArgusProAboutCard';
+import { PaidSourceStatusCard } from '../components/guide/PaidSourceStatusCard';
+import { DecisionSpineCard } from '../components/guide/DecisionSpineCard';
+import { SourceUniverseCard } from '../components/guide/SourceUniverseCard';
+import '../components/dashboard/Dashboard.css';
+import './Guide.css';
+
+// ── できること / 最近のアップデート ──────────────────────────────
+// RULE (v9.10.1+): バージョンアップのたびに、この2つのリストも必ず更新する。
+// アプリ内の説明書は常に「現在の実力」を正確に語ること（HANDOFF.md にも明記）。
+// Page-by-page "how to use" — in the same order as the left nav, so the guide
+// matches how you actually move through the app. Kept in sync with every update.
+interface PageGuideItem { page: string; descJa: string }
+const PAGE_GUIDE: PageGuideItem[] = [
+  { page: '共通ヘッダー / ナビ',
+    descJa: '左上の「A.R.G.U.S. Pro」をタップ → システム状態のポップアップ(AI予算・各データ源・通知などの健全性。緑=正常/橙=注意/赤=停止。外側タップで閉じる)。三角ロゴの目そのものが健康ビーコンで、状態色で美しく光ります(正常=緑・注意=橙・停止=赤)。左の縦ナビでページ移動(各ページは下端で強く引っ張ると次ページへも進める)。' },
+  { page: '① Today(今日の判断)',
+    descJa: 'まずここを開く。v12.2.11で「プロが判断する順序」に再構築: ①Today\'s Stance=今日の基本姿勢(主判断+理由1文+CONFIDENCE/DATA/MARKET/POSITIONチップ+主要因≤3。フルラダー・permissions・PARTIAL理由・触る/避けるは「判断の詳細」の折りたたみ内) ②Overnight Changes=前回から変わったこと最大4件(判断の変化・ドル円・米金利・次の重要イベント — 比較元がある実データだけに矢印) ③Your Exposure=その変化が自分の保有に何を意味するか最大3件(保有×P0/P1・高リスク・集中。保有未登録は静かな空状態+導線1つ) ④Action Queue=Session Brief/Action Priority/Position Planの表示統合・最大3件(NOW/AT OPEN/NEXT/IFのタイミング付き・重複排除・計算は従来どおり) ⑤Next Check=次にいつ何を見るか1件だけ。詳細はDETAILS / DEEP DIVEの5グループ(Market/Position/Research & Signals/Decision Review/Data & System — 従来の全セクションを役割別に収納・開閉は端末内に記憶)。保有×EXIT/DEFENDのOWNER CRITICALは常に最上部。10秒で「姿勢→変化→自分への影響→行動→次の確認」が読める。v12.2.12: 銘柄カードの全リストはAsset Deskへ一本化 — Research & Signalsグループは例外サマリー(保有×撤退/防衛・保有×P0/P1・急落対応・AIとルールの不一致)+当該銘柄カードへのワンタップ遷移のみになった(OWNER CRITICAL/Your Exposure/Action Queueの銘柄もタップでAsset Deskの該当カードが開く)。' },
+  { page: '② Asset Desk(個別銘柄の正本・旧Watchlist)',
+    descJa: 'v12.2.12で「この銘柄について知っていること・判断していること」を全部ここに一本化(TodayとWatchlistの分裂を解消)。銘柄の追加(検索)・削除・並べ替えは従来どおり。閉じたカードだけで 銘柄/市場/保有・価格/前日比/鮮度・主アクション・AI PRIMARY / RULE TEMPORARY(どちらの判断か明示)・理由1行・確度/リスク/優先度・次の確認・警告≤2・イベント≤2 が分かる。開くと固定順の10セクション: DECISION(構え/ARGUS VIEW/計画/優先度)→AI REVIEW・RULE CHECK(AIが使えない時も理由+次回16:05を必ず表示・AI理由欠落時にルール理由で代用しない)→OWNER POSITION(数量/取得単価入力・端末内のみ)→WHY/DOWNSIDE(急落理由・原因分析)→FLOW & SUPPLY(需給ランク/大口/機関ビュー)→EVENTS & CATALYSTS→TECHNICAL & ENTRY(⚡エントリー診断=押した時だけ実行)→SCENARIOS→RESEARCH & NOTES(メモ/AI相談パック/OSINT/判断履歴)→DATA QUALITY。並びはデフォルト「優先順」(保有×撤退/防衛→保有×P0→保有×P1/高リスク→急落→AIとルール不一致→イベント接近→その他保有→監視→投信→暗号資産・決定論)で「手動順」(従来のドラッグ)にも切替可。判断はTodayと同一の正本(domain/assetDecision)から供給されるため、同じ銘柄がページによって違う判断になることは構造的にない。Portfolio ExposureとWhat-ifはPositions & Riskへ移動。' },
+  { page: '③ Positions & Risk(保有と配分・旧Core Portfolio)',
+    descJa: '①あなたの実配分(円換算・含み損益) ②8資産クラスのライブ判断(クラス判断) ③姿勢連動の積立方針 ④投信の基準価額(NAV・前日比)を日次フォロー(eMAXIS Slim等。投信総合ライブラリーから取得)。v12.2.12でPortfolio Exposure(通貨別合計/含み損益/配分バー)とWhat-ifシミュレーションが旧Watchlistからこのページへ移動(計算・端末内保存は不変)。「比率をどう動かすか」の意思決定はこのページで完結。v11.8で「EXPOSURE DASHBOARD」(テーマ別配分・通貨偏り・銘柄集中・リスクフラグ)を追加(端末内計算・売買指示なし)。バックアップ操作(旧PORTFOLIO SYNC & BACKUP)はv11.19.1でBackupページへ集約。v11.11で「DECISION QUALITY」(過去判断の答え合わせ・行動注釈・端末内のみ)を追加。v11.17で「PORTFOLIO SCENARIO」(保有全体の条件付き分岐・端末内合成)を追加。v11.18で「PORTFOLIO PLANNING」(どこで追加可/ブロック/利確検討/イベント待ちかの計画サマリ)を追加。v11.19で「PORTFOLIO STRATEGY / FIRE ALIGNMENT」(コア/サテライト/戦術枠・FIRE整合・リスク予算・端末内合成)を追加。' },
+  { page: '④ Market Context(地合い+予定)',
+    descJa: '今の地合いと、これから来る予定を1画面に。US[Regime Matrix(市場全体の現在地)→資金フロー盤]／JP[Regime Matrix→資金フロー盤]の順(v10.193で日本専用Matrixを新設)+レジーム(RISK_ON〜EVENT_WAIT)+金利/VIX/HY OASの背景、公式カレンダー(FOMC/CPI/日銀/入札のD-7→D+1)・エスカレーション方針・US/JP全市場ムーバー。危機ヘッドライン監視(旧News Radar)はC.A.O.S.カード(Today2枚目)の「危機テーマ」tierに移設(v10.193)。Todayの判断の「なぜ」と「今週の地雷」をまとめて裏取り。' },
+  { page: '⑤ Backup(バックアップ集約)',
+    descJa: 'バックアップ関連の操作を1ページに集約(v11.19.1・オーナー指示)。①パスフレーズ設定=暗号化バックアップ有効化(端末間同期・クラウドには暗号文のみ・忘れると復元不能) ②バックアップJSONの書き出し/読み込み(iCloud Drive等へ保管) ③手動スナップショット ④復元ドリル(非破壊・「戻せること」の確認) ⑤BACKUP SAFETY(保護済み/一部保護/未保護の判定)。' },
+  { page: '⑥ Data Quality(運用点検)',
+    descJa: '「今の判断は最新データに基づいているか」を点検するページ(v11.22)。総合ステータス(正常/一部劣化/警告/重大)・各ソースの鮮度(新鮮〜かなり古い・不明は不明と正直表示)・bridge/OpenDの状態・エンジン健全性・既知の意図的無効(JPリアルタイム/逆日歩/銘柄別空売り=障害ではない)・漏洩ガード・異常時の安全な手順。★古いデータのレイヤーは判断の確度を割り引いて読むこと。ARGUSを今日信じてよいかはここで分かります。' },
+  { page: '⑦ Guide(このページ)',
+    descJa: '使い方・用語・自己採点の成績(Ledger Health)・情報源の真実性(レジストリ)。困ったらここ。アプリ更新のたびに自動で最新化されます。バックアップ設定はBackupページへ移動しました。' },
+];
+
+const guideText = (value: string) => value.toLowerCase()
+  .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, ' ')
+  .replace(/\([^)]*\)/g, ' ')
+  .replace(/[^a-z0-9\u3040-\u30ff\u3400-\u9fff]+/g, ' ')
+  .trim();
+
+export function resolveGuideContext(context: string, pages = PAGE_GUIDE): PageGuideItem | null {
+  const target = guideText(context);
+  if (!target) return null;
+  const exact = pages.find((item) => {
+    const page = guideText(item.page);
+    return page === target || page.includes(target) || target.includes(page);
+  });
+  if (exact) return exact;
+  const tokens = target.split(/\s+/).filter((token) => token.length > 2);
+  return pages.find((item) => {
+    const page = guideText(item.page);
+    return tokens.length > 0 && tokens.every((token) => page.includes(token));
+  }) ?? null;
+}
+
+const contextFromHash = () => {
+  try {
+    return window.location.hash.startsWith('#guide:')
+      ? decodeURIComponent(window.location.hash.slice('#guide:'.length)) : '';
+  } catch { return ''; }
+};
+
+const CAPABILITIES: { area: string; descJa: string }[] = [
+  { area: 'Daily Market Sheet / Source of Truth',
+    descJa: 'A.R.G.U.S. Market IntelligenceがMarket Contextを16項目の確認順に整理し、Daily Changes、Anomaly Desk、判断変更条件、Rule Cardsを決定論で表示。正本: JP日足=J-Quants、JP開示=TDnet/EDINET/公式IR、US価格=moomoo US/Twelve Data、FX=Twelve Data/FRED、crypto=CoinGecko/Coinbase、投資主体別=J-Quants TokyoNagoya。全系列はperiodEndとpublishedAt/availableFromを分離し、公表前利用・欠損の0置換・自動AI・自動売買を禁止。' },
+  { area: 'ARGUS Pro RC ステータス (v12.0)',
+    descJa: '運用ステータス(マーケティングではなく事実)。★稼働中の主要モジュール: 今日の作戦(Session Brief)/見る順番(Action Priority)/重要イベント(事前・事後の一元表示)/ポジション計画(Entry・Exit Planning)/シナリオ(条件付き分岐・帯のみ)/需給(S〜E・改善中だが重いは別枠)/大口・Flow推定/機関インテリジェンス(C.A.O.S.)/Portfolio Strategy・FIRE Core(投資信託=長期コア資産)/判断の答え合わせ(Decision Quality・Learning)/通知(変化のみ)/Backup(保存・復元・復元ドリル)/Data Quality(今日の判断を信じてよいか)/AI Review Pack(GPT Pro等への相談パック・コピーのみ)。★既知の制約: ①JPリアルタイム/フル板APIはmoomoo側メンテナンスのため利用不可=ARGUS側で意図的に無効(**moomooサポート確認済み**: メンテナンスがOpenD APIのsnapshot/ORDER_BOOKに影響。フル板はアプリ内契約済みで追加申込は現時点で不要・復旧時期は未定・復旧後はOpenDの再起動・再ログインが必要。JP snapshot ret=0までUS-only+JP代替データ(J-Quants/Yahoo・夜間delayedが正常)を維持。詳細はData QualityのJP READINESS) ②逆日歩は未取得 ③銘柄別空売り比率は未取込 ④投信の評価額は日次NAVまたは手動(古い場合はstale表示) ⑤学習ダッシュボードは履歴が貯まるまで傾向を断定しない ⑥FIRE整合は帯のみ(達成見込みの精密計算はしない) ⑦証券会社ログイン・自動売買・注文機能は存在しない ⑧外部AIレビューはコピーのみ(自動送信なし) ⑨データが古い日は判断の確度を割り引く(Data Qualityページで確認)。★プライバシー: 保有・投信・記録・戦略の詳細は端末内+暗号化バックアップのみ。公開APIはredacted(3層テスト+本番smokeで漏洩検査)。★確認場所: バックアップ=Backupページ/データ鮮度=Data Qualityページ/AI相談=Todayの「AIに相談」。' },
+  { area: 'アクションレベル(7段階・最重要)',
+    descJa: 'シグナルは7段階で「資本投下の許可/守りの姿勢」を表す(モデルの信頼度や地合いとは別物)。1 EXIT(撤退)/2 DEFEND(防御)/3 REVIEW(再点検)/4 PAUSE(保留)/5 HOLD ONLY(保有のみ)/6 PREPARE(準備)/7 ENTER(エントリー可)。各シグナルには必ず権限を併記する: 新規購入・買い増し・既存ポジション。★HOLD ONLYは「既存ポジションの維持のみ」で、新規購入・買い増しは禁止です(緑にしないのはこのため。HOLDを単独表示しない理由)。ENTER=全力買いではなく、別途定めたリスク予算内での新規可。EXITは注文を出すのではなく撤退の構え(ARGUSは自動売買をしない)。データが不完全(PARTIAL/STALE)だとENTERは出ず信頼度の上限が下がる。急落+不完全データは最低REVIEWに格下げ。「公式材料が無い=安全」ではない。数値の色は 利益/上昇=緑・損失/下落=赤・ゼロ=中立・取得不可=グレー。ただしVIX上昇やHYスプレッド拡大は「プラスでも悪材料=赤」で表示(v10.119+)。★表示されるシグナルは、AI判定が最新の時はAI(GPT+Gemini)の裁定結果(カードに「AI」)、未更新時はルールエンジンの「ルール暫定」(ガードレール)(v10.160+)。' },
+  { area: '今日の判断 (Today)',
+    descJa: 'v12.2.11の固定順序=①Today\'s Stance(主判断・理由1文・確度/データ/市場/保有チップ・主要因≤3 — 詳細は折りたたみ) ②Overnight Changes(前回からの変化≤4件・比較元がある実データのみ) ③Your Exposure(保有への影響≤3件) ④Action Queue(作戦/優先度/計画の表示統合≤3件・NOW/AT OPEN/NEXT/IF) ⑤Next Check(1件)。詳細はDETAILSの5グループ(Market/Position/Research & Signals/Decision Review/Data & System)。各銘柄カードの判断はAIの裁定結果(「AI」バッジ・未更新時は「ルール暫定」)。判定ロジック・計算・publishは従来と同一 — 変わったのは情報設計と表示順序のみ。開いて10秒で今日の構えと自分への影響が分かる。v12.2.12: 銘柄カードの全リストはAsset Deskへ一本化し、TodayのResearch & Signalsは例外サマリー(該当銘柄タップでAsset Deskの当該カードが開く)になった。' },
+  { area: 'Asset Desk(個別銘柄の正本・v12.2.12)',
+    descJa: '個別銘柄情報の唯一の置き場所。銘柄を検索して追加(日本株/米国株/投信/暗号資産)・削除・並べ替え(優先順=決定論ソート/手動順=ドラッグ)。各カードは閉じた状態で主判断+判断のソース(AI PRIMARY / RULE TEMPORARY)+理由+次の確認まで表示し、開くと固定順の10セクション(DECISION→AI REVIEW/RULE CHECK→OWNER POSITION→WHY/DOWNSIDE→FLOW & SUPPLY→EVENTS & CATALYSTS→TECHNICAL & ENTRY→SCENARIOS→RESEARCH & NOTES→DATA QUALITY)。判断はTodayと同一の正本(AI優先マージ)から供給 — AIが古い/未実行の時は理由と次回実行予定(平日16:05)を必ず表示し、AIの理由が無い時にルールの理由をAIの文章として見せない。日米株は「⚡エントリー診断」(押した時だけ実行・自動AI起動なし)。' },
+  { area: 'ダウンサイド対応 (急落の理由と対応)',
+    descJa: '保有/監視銘柄が急落(-3%/-5%等)、または日本市場の地合いが悪化したとき、ARGUSは「急落しています」で終わらせず、原因を9分類で確率推定し、保有向けにアクションを上書き提示する。★v11.3.3 原因ラダー: 単なる「原因未確認」表示は廃止。急落・急騰の両方について、原因確認(公式+時刻整合+市場反応)/有力材料(公式開示・複数ソース)/候補(単一ニュース・連想)/有力候補なし(確認済み範囲と次の確認先を明示)の4段で判定し、TDnet/公式イベント/ニュース/C.A.O.S./同業/マクロ/フロー/テクニカルの証拠を1つのラダーに統合する。確定できない場合も「なぜ確定できないか」「次に何を見るか」を必ず表示。原因未確定の急落は安全とみなさず警戒を上げ、大きな不明下落は通常のHOLDにしない。急騰の材料候補は高値追いの推奨に変換しない。★v11.3.4: 各判定に証拠の鮮度(最終確認/次回自動確認/優先度別SLA)と市場確認v1.5(出来高比・指数相対・同業・VWAP近似 — 既存データのみで板/歩み値ではない)を付与。古い候補は「鮮度低下」を明示。AI解説は予算制の定期生成(公開GETからのAI起動なし)。地合いはグローバルがRISK_ONでも日本のザラ場が弱ければ別オーバーレイ(JP intraday CAUTION)で表示。日本株はTDnet適時開示を自動取得して原因に反映。自動売買は一切しない(決定支援のみ)。' },
+  { area: 'C.A.O.S. — 機関インテリジェンス (Corroborated Analyst & Official Signals)',
+    descJa: 'プロの調査デスクのように、機関(JPMorgan/Goldman/野村/大和ほか・運用会社/ヘッジファンドも)・アナリスト・テーマの公開情報を継続監視する。許可リストの公開金融RSS(メタデータのみ)から見出し/リンク/時刻を収集→機関名を解決→同一ワイヤーの転載を1件に重複排除(複数媒体の同記事=独立確認ではない)→該当銘柄カード内に「INSTITUTIONAL VIEW」として表示。重要な区別を必ず守る: ①機関の「見解」≠その機関の「売買」(JPMorganが懸念=JPMorganが売った、ではない)②空売り「出来高」≠空売り「残高」③動意の後に出た情報は引き金ではない(増幅扱い)。レポートは強気/弱気/条件付きの両論を保持(単一スコアに潰さない)。物語整合ゲートが「完全に原因」「機関が売った」等の断定を公開前に却下。情報源の権利(全文可/メタデータのみ/リンクのみ/ライセンス)をコードで強制し、許可のない全文は保存もLLM送信もしない。公開GETは取得や課金処理を一切起こさない(収集はadmin/cronのみ・SSRF対策済)。Bloomberg/LSEG/Factiva/RavenPackのライセンスフィードは契約まで無効(NOT_CONFIGURED)。★イベント・ライフサイクル(v10.165): 重要な経済イベントについて、発表前は「市場の織り込み・大口の構え(見解であり建玉ではない)・サプライズ時のシナリオ(ホット/クール)」、発表後は「結果(公式データに無ければ無いと明記・捏造しない)・大口の捉え方・市場の捉え方(実際の地合い/価格反応)・金融業界への影響」をAIが文章で生成し、トップとMarket Contextの両方に表示。生成はcron(キャッシュ・6h)で、公開GETは無課金。★v11.4.1: 予定イベントはトップの1つのイベントカードに統合(GET /api/argus/dashboard-events)。C.A.O.S.はトップへ事前シナリオ/公式結果/答え合わせ/影響を供給し、下段では同じイベント文を繰り返さない(重複は「統合済み」に集約)。表示状態(発表前/まもなく/発表済み・結果取得中/結果反映済み/答え合わせ済み)は配信時に実時刻から再判定し、発表後は公式結果と影響を先に、事前シナリオは「当時の見方」として下段に保存。自動売買は一切なし(決定支援)。' },
+  { area: 'Portfolio Sync & Backup (同期/スナップショット基盤・v11.9)',
+    descJa: '保有データと判断履歴を「恒久保存して後から検証できる」形にする土台。3層構成: ①ローカル層=従来どおり端末内localStorage ②私的クラウド同期層=既存のパスフレーズ暗号化バックアップ(vault)が実体で、Mac/iPhone/iPadの保有自動同期は今日この方式で動いている(端末上で暗号化・クラウドには暗号文のみ・サーバーは平文を見ない)。サーバーに平文保有を置く方式は認証基盤が整うまでコードレベルで無効(admin認証があっても403 disabled) ③スナップショット/監査層(新設)=Todayを開くと1日1回、保有サマリ・テーマ/通貨露出・リスク信号・買い増し余地・当時の価格を端末内に自動記録(上限60日分)。判断監査レコード(当時のreadiness+価格+将来リターンplaceholder)も追記され、将来「あの日ARGUSが何を言い、その後どうなったか」の答え合わせに使う。両方とも暗号化バックアップに含まれるため恒久保存+端末間同期される。Positions & Riskの「PORTFOLIO SYNC & BACKUP」からバックアップJSONの書き出し(保有数量・取得単価を含む個人情報 — iCloud Drive等の安全な場所へ)/読み込み(プレビュー→統合or置換を選択・銘柄削除はしない)/手動スナップショット作成が可能。公開APIは層の状態のみを返し、保有数値は構造的に含まれない。' },
+  { area: 'Position / Exposure (保有リスク点検・v11.8)',
+    descJa: '「偏りすぎか」「買い増ししてよいか」「ここで追っていいか」に答える保有リスク層。Asset Deskで入力した保有数量・取得単価(端末内のみ)から、テーマ別配分(AIインフラ/フィジカルAI/半導体・光/防衛重工/商社/金/暗号資産/インデックス)・通貨偏り(円/ドル)・銘柄集中(1銘柄15%でやや高い・25%で高い・40%で危険水準)・テーマ集中(40%超で買い増しは押し目限定)を判定。保有中の銘柄に売り圧力推定(Flow)や重要イベントが重なると「監視銘柄より優先確認」として格上げ。各銘柄の買い増し余地は 小さく買い増し可/押し目限定/見送り/追いかけ買い注意/監視継続/判定保留 の6段(売買指示ではなくリスク目安)。表示場所: TodayのYour Exposure(要約)+DETAILS/Position Details・Asset Desk銘柄カード内「OWNER POSITION」・Positions & Risk「EXPOSURE DASHBOARD」・Market Context「PORTFOLIO SENSITIVITY」(今日の地合い×自分の構成)・AIに相談(Pro Handoff/AIレビュー)へのローカル付加。★プライバシー: 数量・単価・評価額は端末内でのみ計算され、サーバーには送信も保存もされない(公開APIは銘柄数ベースのテーマ偏りのみ)。未入力の間は「暫定」と正直に表示し、数値を捏造しない。' },
+  { area: 'AI Review Pack — AIに相談 (v11.20)',
+    descJa: 'GPT Pro/Gemini/Claudeに貼る「セカンドオピニオン用パック」を、全レイヤーから重複なく合成してコピーする機能(外部AIへの自動送信は絶対にしない・サーバー保存もしない)。★パック5種: デイリー(Todayの「AIに相談」)/銘柄別(カード内「この銘柄をAIに相談」)/ポートフォリオ・FIRE(Core Portfolio)/イベント別(重要イベント内)/緊急(P0発生時のみ)。★プライバシー3択: フル(サーバーのwatchlist文脈込み・個人投資情報を含む可能性 — 共有先に注意)/短縮(上位論点のみ・さっと相談用)/redacted(保有・数量・損益・比率・投信・積立を除外 — ウォッチリスト水準のみで安全に共有可)。★構成は階層固定: オーナーの質問→今日の構え→Top risks→各レイヤー集計→Assets(銘柄別はここに1回だけ)→不足データ→最強の反対view→レビュアーへの指示。同じイベント要約・同じ需給文を複数箇所に繰り返さない。★パックの最後は必ず「ARGUSの結論をそのまま肯定せず、弱点・反対シナリオ・不足データを指摘して」という指示文で締める(パック種別ごとに専用文)。パスフレーズ・暗号文・トークン・バックアップJSONは構造的に含まれない。売買指示ではない。' },
+  { area: 'FIRE Core / 投資信託トラッカー (v11.19.1)',
+    descJa: 'オーナー方針:「投資信託の合計額をFIRE用の本丸資産として扱います。個別株の利益は、将来的にこのFIRE Coreへ移す候補として見ます。」— ARGUSは全資産を同列に扱わず、投信をFIREの土台として明示追跡します。★Positions & Riskの「FIRE CORE / MUTUAL FUNDS」で: 投信合計・既知資産に占める割合・毎月積立合計・戦術枠/FIRE Core比(許容内/やや大きめ/大きい/超過の帯)・評価額の鮮度(7日超でstale表示)。★入力方法: Asset Deskで投信の口数を入れると日次NAV(投信ライブラリー)で自動追跡(リアルタイム不要)。口数が無い場合は現在評価額の手動入力でOK(入力日でstale判定)。口座区分(NISA/iDeCo/特定)・毎月積立額もここで入力。コスト未入力なら損益は表示しない(捏造なし)。★戦略連動: FIRE Core未入力ならFIRE整合は判定保留のまま/戦術枠が本丸に対して大きければ警告/個別株の利益はFIRE Coreへ移す候補として提示。★全データ(ファンド名・口数・評価額・積立額・口座区分)は端末内+暗号化バックアップのみ。証券会社ログイン・口座連携なし。将来見込みの精密計算なし。免許業の助言ではない。' },
+  { area: 'Portfolio Strategy / FIRE整合 (v11.19)',
+    descJa: '「明日この銘柄はどうか」の上に「そのリスクの取り方はFIRE計画に合っているか」を重ねる戦略層。★役割分類: コア(インデックス/投信=長期の土台・積立継続が主役)/ヘッジ(金=リターン源というより値動きを和らげる役割)/サテライト(個別株・暗号資産小=中期)/戦術枠(高ベータ大・暗号資産大=短期勝負)/監視のみ。銘柄カードのPOSITION PLANに役割と追加方針を表示。★リスク予算: 戦術枠の合計比率を 余裕あり/許容内(10-25%)/大きめ(25-40%)/超過(40%超) の帯で判定。「短期の勝ちが続いても、勝負枠が予算を超えると1回の急落で長期計画ごと痛む」— これが集中度を見る理由。★FIRE整合: コア+ヘッジ比率・戦術枠・1銘柄集中・テーマ集中から 整合/概ね整合/やや無理あり/不整合/判定保留 の帯のみ(達成見込みの精密計算・確率は出さない=捏造しない)。★Entry/Exit Planningへの制約供給: 戦術枠が大きい時・テーマ集中が高い時は、銘柄単体の条件が良くても「小さく可」を出さず押し目限定に降格。★不足データは正直に表示: 現金比率・毎月の積立額・住宅ローン等は未入力なら判定に使わない(捏造しない)。★これは概算の整合チェックであり、免許を持つFP・税務・法務の助言ではない。売買指示でも自動売買でもない。戦略の詳細(比率・役割・FIRE状態)は端末内でのみ合成され、サーバー・公開APIには一切出ない。' },
+  { area: 'Entry / Exit Planning 計画アシスタント (v11.18)',
+    descJa: '「今から入っていいか/寄りで買っていいか/PTSで入っていいか/買い増ししていいか/一部利確すべきか/持ち越していいか」に**計画**で答える層。シナリオ・優先度・需給・フロー・イベント・保有リスクを構造化された計画に変換する: 入り方(見送り/押し目限定/小さく試し玉のみ/イベント待ち/確認待ち/監視のみ)・買い増し・利確検討・保有点検。★これは計画であり売買指示ではない: 「今すぐ買え/売れ」「注文を出せ」という執行語は構造的に出ない(テストで全出力を検査)。注文機能・自動売買・証券会社ログインは存在しない。★規律: 小さく買い増し可は多層好条件+注意書き付きのみ/「改善中だが買い残が重い」は押し目限定(青信号にしない)/踏み上げ候補は追いかけ買い注意/イベント前は判断ブロック(発表後の金利・為替・指数・出来高を確認)/比率の高い保有は買い増しよりリスク確認が先/利確は「しろ」ではなく「検討する局面」の提示。★PTS/プレは流動性が薄いため、夜間の値動きだけで判断しない(通常取引時間の出来高と終値位置を確認してから)。★価格の目安が出る場合も注文価格ではなく確認ポイント(正確な価格レベルは捏造しない — 「出来高を伴う押し目」「前日高値を維持できるか」等の定性条件)。表示場所: 銘柄カード「POSITION PLAN」・TodayのAction Queue(統合・上位のみ)+DETAILS/Position Details・Positions & Risk「PORTFOLIO PLANNING」・Pro Handoff/AIレビュー。計画は日次スナップショットに記録され、後日「追いかけ注意は高値掴みを防いだか」を答え合わせできる。保有文脈(数量・比率・損益)は端末内でのみ合成(公開APIはウォッチリスト水準)。' },
+  { area: 'Scenario Engine 条件付きシナリオ (v11.17)',
+    descJa: '「明日どうなる?」に単一の予測で答えない層。既存レイヤー(需給/フロー/イベント/レジーム/保有リスク)の証拠から、条件付きの分岐を決定論で合成する: ベース(現状維持)/強気(成立条件付き)/弱気/踏み上げ→失速(売り長の買い戻しで急伸→一巡後に失速しやすい)/イベント待ち。★確率は帯のみ(優勢/中程度/成立条件付き/判定保留) — 「70%で上がる」のような%断定は実証済みモデルが無い限り絶対にしない。各分岐には必ず 無効化条件(こうなったらそのシナリオは捨てる)・次の確認・何が変われば判断が変わるか が付く。「改善中だが買い残が重い」銘柄は上値吸収を確認するまで強気扱いしない。イベント前は攻めの支配シナリオを出さない(イベント待ちが支配)。保有銘柄は監視銘柄より優先扱いで、保有×弱気転換の時だけ通知(それ以外はノイズなので鳴らさない)。表示場所: 銘柄カード「SCENARIOS」(コンパクト=支配シナリオ一行・展開=全分岐+無効化条件)・ACTION PRIORITYのP0〜P2に一行・Market Contextの地合いシナリオ・Positions & Riskの「PORTFOLIO SCENARIO」・Pro Handoff/AIレビュー。日次スナップショットに当日の支配シナリオを記録し、後日「分岐は正しい側に倒れたか」を答え合わせできる。保有文脈は端末内でのみ合成(公開APIはウォッチリスト水準)。条件付きシナリオであり予測でも売買指示でもない。' },
+  { area: 'Backup Safety 保護状態と復元ドリル (v11.16)',
+    descJa: '保有・判断記録・通知・学習履歴は端末内(+暗号化バックアップ)に貯まる — この層は「本当に守られているか」を見える化する。判定: 保護済み(vault同期最近+スナップショット最新+エクスポート最近or復元確認済)/一部保護/未保護(私的データが端末のみ)/判定保留(データ無し)。★大事な事実: アプリを閉じるだけではデータは消えません。消える可能性があるのは サイトデータ消去・ブラウザ初期化・PWA削除・プライベートブラウズ・端末変更/紛失。だから ①パスフレーズで暗号化バックアップを有効化(端末間同期・クラウドには暗号文のみ) ②バックアップJSONをiCloud Drive/Dropbox等へ保管 ③復元ドリル(非破壊)で「戻せること」を確認 — 書き出したJSONをその場で読み戻して件数照合し、既存データは一切変更しない。成功して初めて「復元確認済」になる。★パスフレーズは忘れると復元不能(クライアント暗号化のため)・チャット等に絶対貼らない。未保護×保有ありの時だけTodayのATTENTIONに1行表示。置換インポートは明示確認ダイアログ必須。公開APIは構成事実のみ(サーバーは保護状態もパスフレーズの有無も知らない)。' },
+  { area: 'Learning Dashboard 判断の学習レビュー (v11.15)',
+    descJa: '蓄積された判断記録から「ARGUSのどのラベルが役に立っているか」を控えめに集計する層(Core Portfolio内)。追いかけ注意は有効だったか/押し目限定は機会損失になっていないか/需給A・Bは続伸しやすいか/D・Eは弱くなりやすいか/「改善中だが買い残が重い」は続伸か戻り売り失速か(需給良好とは別枠で追跡)/踏み上げ候補は急騰後に失速しやすいか/P0・P1通知は妥当だったか(価格が動かなくても誤りとは判定しない)。★サンプル規律が本体: n<5=履歴不足(判定保留)/5-19=初期傾向のみ/20-49=中程度/50+=強め(それでも慎重)。勝率はn≥20まで表示しない。すべての表示に「まだ履歴が少ないため、成績としては扱わないでください」を明記。銘柄カードのDECISION HISTORYにも過去パターン一行。閉じられた通知の回数は将来のノイズ指標として記録。集計は端末内の記録のみから端末内で計算(サーバーは記録を持たない)。これは学習であり証明ではない — ルール改善のための材料。' },
+  { area: '通知 / 需給の方向と水準 (v11.14)',
+    descJa: '①通知(ベル): 本当に注意が必要な「変化」だけを端末内で検知して知らせる — 新しいP0(最優先)/保有銘柄のP1入り/重要イベント前/Flow悪化/需給悪化(D/E入り)/踏み上げ注意/追いかけ注意/今日の作戦更新/バックアップ未設定。ポーリング毎には鳴らない(変化検知+重複排除+種類別クールダウン+1日上限12件+静音時間23-6時はcritical以外沈黙+週末は静か)。通知は端末内生成・保存(サーバー送信なし)で、外部push/メール/webhookは未設定のため無効。ヘッダーのベルで一覧・既読・閉じる。②需給の方向≠水準(v11.14で修正): 「信用買い残が前週比で減った」は改善方向であって需給良好ではない。買い残の水準(信用倍率と出来高日数の悪い方)がまだ重い/かなり重い間はA/S判定を出さない(上限B/C)。該当銘柄は「改善中だが信用買い残はまだ重い」と表示し、買い増しは押し目限定のまま。需給改善の通知も水準が重い間は「改善方向だがまだ重い」と正直に言う。' },
+  { area: 'Session Brief 今日の作戦 (v11.13)',
+    descJa: '役割分担: Brief=今日の作戦 / Action Priority=見る順番 / 各カードのアラート=個別の注意信号。v12.2.11以降、TodayではAction Queueへ統合表示され、全文はDETAILS/Position DetailsのSESSION BRIEFで読む。今日が「攻める日/待つ日/守る日/監視の日/反省・記録の日」かを1行の見出し+3〜5行の要点で示す。規律: P0(最優先)があれば見出しに必ず載せ、無ければ「P0はありません」と明言/重要イベント前は攻める日にしない(イベント待ち)/保有リスクは監視銘柄の機会より必ず先に述べる/シグナル矛盾時は「判断保留・要確認」/休場中(週末)はザラ場風の文を出さずレビュー体裁(保有数量・バックアップ確認が優先)。「やらないこと」(追いかけ買い・イベント前の買い増し・原因未確認のナンピン等)と「次の確認」を必ず提示。引け後は「引け後にやること」(記録・終値位置確認・需給の公表更新待ち)。日次スナップショットに朝ブリーフの当時値を記録し、後日「正しいリスクを指していたか」を検証可能。保有を加味した本文は端末内で合成(公開APIはウォッチリスト水準のみ)。売買指示ではない。' },
+  { area: 'Action Priority 今日これを見る (v11.12)',
+    descJa: '増えた全レイヤー(イベント/レジーム/機関/フロー/需給/保有/判断品質)を束ねて「今日、最優先で見るべきものは何か」に答える注意配分層。P0=最優先確認(保有×複合悪材料のみ・乱発しない・静かな日はゼロが正常)/P1=今日の優先/P2=重要だが急がない/参考/監視/今日は重要度低/判定保留。actionLabelは いま確認/イベント待ち/追いかけ買い注意/買うなら押し目限定/小さく買い増し可/監視継続/要調査/今日は放置可 — すべて注意ラベルで売買指示ではない。各項目に必ず「なぜ」「次に確認」「何が変われば判断が変わるか」が付く。読み方: 「イベント待ち」=発表前は積極判断を止めて結果と初動を見る/「追いかけ買い注意」=急伸直後・買い戻し主導の可能性で高値掴み警戒/「押し目限定」=土台は悪くないが追わない。保有銘柄は監視銘柄より常に優先され、保有データ不足は隠さず「データ確認」項目として浮上。判断品質の履歴は控えめな確度調整のみ(過学習しない)。★プライバシー: 保有を加味した優先度は端末内で計算。公開APIはウォッチリスト水準(保有情報なし・P0は出ない)のみ。表示: TodayのAction Queue(統合・上位のみ)+DETAILS/Position Details「ACTION PRIORITY」・銘柄カード内・AIに相談。日次スナップショットに上位項目を記録し、後日「P0/P1は本当に重要だったか」を検証可能。' },
+  { area: 'Decision Quality 判断の答え合わせ (v11.11)',
+    descJa: 'ARGUSの過去ラベル(追いかけ買い注意/押し目限定/需給A〜E/買い戻し候補など)が「その後どうなったか」を検証する土台。日次スナップショット作成時に判断記録(当時の価格・需給ランク・フロー・レジーム込み)を自動作成し、1日1回、その後の1d/3d/5d/20dリターンと最大押し/最大上げを公開価格履歴から計算。控えめな解釈のみ表示: 「この判断は今のところ支持されています」「外れた可能性があります」「一長一短」「データ不足で判定保留」— 断定や成績自慢はしない(ラベルごとにn≥5未満は傾向も出さない)。あなたの実際の行動(買った/買い増した/持ち続けた/見送った等)も任意で注釈できる(端末内のみ・自動検出なし・売買成績計算ではない)。★プライバシー: 記録・結果・行動注釈は端末内(+暗号化バックアップ)のみでサーバーには一切保存されない。公開APIは構成情報のみ。表示: Positions & Risk「DECISION QUALITY」・銘柄カード展開内「DECISION HISTORY」・AIに相談への履歴チェック行。米国株の需給も同版から簡易対応(実測大口フロー+出来高ベース・信用残に相当するデータが無いことを明示・FINRA空売り残は未取込表示)。' },
+  { area: 'Supply / Demand 需給ランク (日本株・v11.10)',
+    descJa: '「日証金を見ると需給は良いのか悪いのか」に、数値ではなくランクと状態で答える層。週次信用残(J-Quants)+日証金の日次貸借残+日足出来高から、需給ランク S(非常に良い・直接データ必須)/A(良い)/B(やや良い・踏み上げ含み)/C(中立)/D(重い・戻り売り注意)/E(悪い・追いかけ買い回避)/保留(データ不足) を決定論で判定。状態チップ: 踏み上げ注意・買い戻し主導・信用買い残重い・戻り売り注意・需給改善・需給悪化・薄商い注意・判定保留。★語彙の規律: 売り長の上昇は「買い戻し主導の可能性があり、新規の大口買いとは未確定」と必ず区別し、逆日歩は未取込のため表示しない(捏造ゼロ)。生数値(信用残・貸借倍率・買い戻し日数)は「詳細データを見る」の折りたたみの中だけ。Flow Attributionとの分離: Flow=誰が動かしたか / 需給=土台が軽いか重いか — 需給が売り長ならFlowは買い戻し寄りに、信用買い残が重ければ買い集め解釈を減点。保有銘柄が需給D/EならPortfolio Exposureの警戒も引き上げ。表示場所: TodayのDETAILS/Research & Signals「SUPPLY / DEMAND」・銘柄カード内「SUPPLY / DEMAND」・BIG MONEY / FLOWの需給補助線・Pro HandoffのSupply / Demand Summary。データは公表ベース(週次/日次)でリアルタイムではない。売買指示ではない。' },
+  { area: 'Big Money / Flow Attribution (資金フロー推定・v11.7)',
+    descJa: '急騰・急落・出来高急増のとき「誰の売買か」を証拠ベースで推定する層。大口買い集め/買い戻し(踏み上げ)/個人の追随買い/利益確定/売り抜け/狼狽売り/テーマ資金移動/イベント起点/薄商いノイズ/不明 の型に分類し、必ず「〜の可能性」「推定」の語彙で表示(「大口が買っている」と断定するのは実測フローがある場合だけ)。実測(米国=moomooブリッジの大口純流入率)と推定(値動き/出来高/信用残/空売り/JSF貸借残の形)を明確に分離し、確度が高くない時は「足りない証拠」を必ず表示。日本株のmoomooリアルタイムは意図的に無効のため、JPは常に代替データでの推定であることを明記。表示場所: TodayのDETAILS/Research & Signals「BIG MONEY / FLOW」(本日の±2%以上/出来高急増の判定)・銘柄カード「原因の詳細」内のFLOW(推定)・Market ContextのFLOW BIAS(流入型/流出型の偏り)・Pro Handoff。含意は 要調査/確認待ち/追いかけ買い注意/監視/警戒/対応不要 のみで売買指示は絶対に出さない。GET /api/argus/flow-attribution(+/status)は公開cached-only。' },
+  { area: '大口フロー (Big-money)',
+    descJa: 'moomooブリッジ経由で大口注文の純流入率(本日累計)を取得し、戦略カードに表示。ルールエンジンの「確証シグナル」として機能 — 緩やかな下落+大口流入ならBUY DIP候補、大口流出が続けばHOLD→WAITに引き締め。' },
+  { area: '価格データ',
+    descJa: '日本株=J-Quants(前日終値)、米国株=Twelve Data(Basicはレギュラー時間の米国株/ETFがリアルタイム・時間外RTは上位プラン要)、暗号資産=CoinGecko。moomooブリッジ稼働中は日米株がリアルタイムに自動アップグレード(途絶時は自動フォールバック)。画面を開いている間は15秒毎に自動更新(v10.10.1+)。「15秒push」は配信頻度でデータ鮮度ではなく、ブリッジの真のリアルタイム性はexchangeTsで証明できるまでentitlement=unknown(過大主張しない)。古いデータは「delayed」表示+確信度を自動で下げる。' },
+  { area: '資産クラス司令室 (Core Portfolio)',
+    descJa: '①あなたの実配分(円換算・含み損益・ジャンル別バー) ②金/債券/REIT/仮想通貨/USDJPY/現金/日米株の8クラスのライブ判断(クラス判断) ③姿勢連動の積立方針を1ページに統合(v10.13+)。比率調整の意思決定はここで。' },
+  { area: 'Market Context (地合い+予定)',
+    descJa: '資金ローテーション(ETF proxy)+レジーム(RISK_ON〜EVENT_WAIT)+金利/VIX/HY OASの背景に加え、FOMC/CPI/雇用/日銀/国債入札の公式カレンダーをD-7→D+1でエスカレーション表示。US/JPそれぞれに Regime Matrix(2軸: グロース↔ディフェンシブ×リスク↔デュレーション。青=市場全体の現在地・保有ではない)→資金フロー盤を並べる(v10.193でJP専用Matrixを新設)。1画面に統合(v10.57でMarket Regimeとイベント監視を合体)。行動ラベルにも反映。' },
+  { area: '危機テーマ監視 (C.A.O.S.内・旧News Radar)',
+    descJa: '戦争・為替介入・金融破綻・緊急会見・非常事態などの危機級ヘッドライン件数を監視。v10.193でC.A.O.S.カード(Today2枚目)の「危機テーマ」tierに統合(危機検知は本来C.A.O.S.の役割)。主データはGDELT、不通時は許可リストの公開RSS(ロイター日本語/日銀/経産省/Bloomberg/CNBC)から地政学/為替/金融システム/政変/災害をEN+JA語で検知するフォールバックで継続。テーマ増加はスマホ通知+朝ダイジェストにも。参考情報で事実検証はしない。' },
+  { area: 'What-if シミュレーション',
+    descJa: '「¥Xを銘柄Yに追加したら?」— 追加後の配分変化・集中リスク警告・シナリオ別損益帯(仮定幅×ルールエンジンの確率)をPositions & Riskで試算(v12.2.12でWatchlistから移動)。予測ではなくシナリオ整理。端末内計算のみ。' },
+  { area: '保有と評価 (Portfolio)',
+    descJa: '銘柄ごとに保有数量・平均取得単価をAsset Deskの銘柄カード(OWNER POSITION)で入力すると、評価額・含み損益(¥/$別+円換算合計)・ジャンル配分をPositions & RiskのPortfolio Exposureに表示。保有データはこの端末のlocalStorageのみで、どこにも送信されない。' },
+  { area: 'バックアップと同期',
+    descJa: 'パスフレーズを1度設定すれば、1日6回(平日)自動で暗号化バックアップがクラウド(GitHub)に保存される(端末上で暗号化・暗号文しか外に出ない・直近8世代を自動保持)。新端末はパスフレーズだけで復元。同じパスフレーズの端末同士はウォッチリスト・保有が自動同期(v10.10+、編集の約1分後に反映)。週1回のローカルファイル保存と手動エクスポート/復元も併用可。' },
+  { area: '判断ログ (記憶)',
+    descJa: '毎日の判断を端末内に記録し「昨日からの変化」と直近7日の判断を表示(この端末のみ)。' },
+  { area: '予測台帳と自己採点',
+    descJa: '毎営業日16:05に予測を記録し、1/3/5営業日後に実値と照合して自動採点。学習対象は3層構造(v10.9+): Layer1=固定16センサー(日本株6+米ETF7+BTC+USDJPY+VIX、局面校正の背骨)、Layer2=実戦銘柄(入替自由)、Layer3=高ノイズ実験枠(別集計)。姿勢の判断そのものもSPYの実際の動きで採点。蓄積した的中率は戦略ラベルの確信度に自動反映される(校正ループ、v10.8+)。さらに14:30の「引けピン」が同日15:30終値で即日採点される第二の台帳も稼働(v10.11+)。' },
+  { area: 'AI予想',
+    descJa: '既存のAI結果は時刻付きの第二意見として閲覧可能。通常はDETERMINISTICで自動生成AIを実行せず、市場データ・イベント・台帳・ルール判断を継続する。必要時はAsset DeskからChatGPT/Gemini相談パックを手動コピーする(API送信なし)。' },
+  { area: '市場セッション対応 Event Intelligence（暗号資産は24/7）',
+    descJa: '価格系イベント(S高/S安・急騰/急落・大口フロー異常)の検知は市場が開いている時間に対応(セッション対応)——引け後の古い値でS高を誤検知しないため。ニュース/公式開示の収集(C.A.O.S.)は専用cronで24時間・週末も走ります。暗号資産は24/7で常時。moomooブリッジの15秒pushをサーバー側で決定論解析(LLMなし)し、直近1分の変化率で急加速・大口フロー反転の早期警戒も(v10.49+)。重要な変化(sev4+)だけ通知し、各イベントは事実/推論/欠損を区別した調査ドシエ付き。PTS/板(L2)/歩み値/VWAPは未対応(要契約・未接続と正直表示)。' },
+  { area: '通知 (エージェント)',
+    descJa: '日本株の寄り前8:30と米国株の寄り前22:00にダイジェスト、市場時間中(7〜24時)は「姿勢の変化・イベント接近・ボラティリティの圏域上昇/VIX急騰(固定の閾値ではなく、速度と自身の60日分布で文脈判定)・信用ストレス」の時だけアラートをスマホへpush(ntfy設定時)。通知タップでアプリが開く。' },
+  { area: 'Cost Policy / AI第二意見 (v12.3.0)',
+    descJa: '中央Cost Policyの既定はDETERMINISTIC。OpenAI/Gemini/Anthropicの自動実行、定期再判定、二重チェック、AI翻訳/原因文章/OSINT AIをexpected skipとして停止する。イベント時計・市場データ・7段階姿勢・Outcome・Remote Journal・Market Ledgerは継続。EVENT OPT-INは初期OFFで重要イベント前後各1回まで、MANUALは明示確認時だけ。通常のChatGPT/Gemini相談は端末内で相談文を作りクリップボードへコピーするだけでAPIを呼ばない。既存AI結果は履歴として閲覧できる。' },
+  { area: 'OSINT研究エンジン (v12.1系)',
+    descJa: '銘柄カードの「OSINT DEEP DIVE」で多段クエリ計画→内部収集→Gemini/GPTスカウト(管理側定期実行のみ)→URL検証→ギャップ回収→矛盾チェック→Research Power採点を実行。Gemini/GPTは偵察役でありARGUSが検証と統合の指揮者。全ての未回収ソースに理由必須・生の件数ではGemini超過/2xを名乗れない。探索ソースユニバース18カテゴリの稼働状況はData Qualityに常時表示(使えないソースも理由つき)。外部AIへはredacted既定で保有・数量は構造的に載らない。' },
+  { area: 'Learning Memory (判断の教科書・v11.4)',
+    descJa: 'ARGUSは自分の過去の結果(公式イベント・マクロ事前事後・急落急騰の原因候補・可視性降格・校正・Decision Value)をpublic-safeに集計し、コホート別の教訓として次回判断に参考として戻す。モデルの重みは変えない(ファインチューニングではない)。サンプルが少ない間はburn-inとして表示し判断を強制しない。十分な件数が集まった時だけ確信度の上限・注意喚起・AIプロンプトの補助として使う。現在の公式証拠・市場確認は履歴より常に優先し、Learning Memory単独でBUY/SELLは作らない。GET /api/argus/learning-memory(+/status)は公開cached-only(LLM/取得なし)。' },
+  { area: '正直さの原則',
+    descJa: '全データに live/partial/mock/delayed を明示。ARGUSは予測ではなく「現在の分類」。シナリオ確率は予言ではなく状況整理。' },
+];
+
+const RECENT_UPDATES: [string, string][] = [
+  ['v13.3.6', 'Runtime version truthを明確化。曖昧な単一version表示を廃止し、UI版と検証済みproduction backend版を分離表示。正式manifestが欠損・不正・未検証ならAPI UNKNOWNへfail closed。'],
+  ['v13.3.5', 'Todayの方向確率を改善。厳格ゲート通過値は「検証済み」、計算可能だが未通過の値は「参考値・未検証」と分離し、欠損時は引き続き非表示。'],
+  ['v13.3.4', 'Soak遅延会計を修正。過去の欠落windowは運用監視に残しつつ、新buildのheartbeatは当該windowの実測遅延だけで判定。'],
+  ['v13.3.3', '機能完成監査 — Positionsの投信手動評価額を合計・戦略へ即時反映し、Next eventのURL履歴、Market/Asset Deskの選択状態とキーボード操作を修正。'],
+  ['v13.3.3', 'SoakのOOM・Remote Journal公開・scheduled timeoutを修復。Todayは根拠のあるUP/RANGE/DOWN確率を検証済み/参考値に分けて表示し、market-data truthとbridge鮮度計測を追加。'],
+  ['v13.3.2', 'Asset Deskをdecision-first構造へ再編。個別チャートを遅延取得し、IndexedDB復元とRetry-After準拠で更新制限中も前回表示を維持。'],
+  ['v13.3.1', 'Mobile Today integrity — canonical navigation、4銘柄×3期間のverified snapshot、safe-area/sticky配置、cold error retryを修復。'],
+  ['v13.3.0', 'Verified Snapshot SWR — 前回検証済みMarket chartをIndexedDBから即時復元し、既存表示を保ったままETag再検証。30分自然tickがOHLCV・確率・Replay・Ledgerを原子的に事前生成し、静かなTriangle Step Loaderで更新状態を表示。'],
+  ['v13.2.2', 'Market最終freeze — 公開URL受入れをartifact化し、long方向MAE/MFEを標準定義へversioned再計算。frontend／backend版とRender deploy対象を分離し、frontend-only releaseでbackend Soakを維持。'],
+  ['v13.2.1', 'Market Contextのダークテーマ可視性を修復。Replay分布、校正点、出来高、価格chip、軸、端末内描画へ一元chart tokenを適用。分析値とTodayは不変。'],
+  ['v13.2.0', 'Market Context Replay — 一つのToday判断を類似局面、反応遅延、Event Study、極値・反転、Brier Skill、JP／US Ledgerと端末内描画で検証。通常操作のAI呼び出しと自動売買は0。'],
+  ['v13.1.2', 'Today最終受け入れ — 確率適格性をサーバーへ一元化し、価格時点・チャート意味論を明確化。'],
+  ['v13.1.1', 'Today予測意味論を統一 — 終値方向確率、Brier Skill、価格中心チャート、ニュース状態、日経指数の権利監査を明確化。'],
+  ['v13.1.0', 'Today Forecast／Replay完成 — JP・USのETF proxyをinstrument IDごとに分離し、S&P 500／Nasdaq切替、5年類似局面のwalk-forward校正、日次空売り比率、上昇失敗検出、Remote Journal保存を接続。通常操作のAI呼び出しと自動売買は0。'],
+  ['v13.0.2', 'Todayの簡潔さを維持したまま、予測図のinstrument・期間・実績境界を明示し、実績線を白へ変更。指数のas-of／騰落色／sparkline、需給の実数、Market Ledger導線、MACROのVIX、重大ニュースの処理済みフィルター、前回判断の翌1営業日評価を整合。'],
+  ['v13.0.1', 'EC2 schedulerのbuild identityをGitHub mainとbackend healthの独立照合へ変更。deploy移行grace・確認済みSHA復元・明示的失敗分類で静的pinの取り残しを防止。'],
+  ['v13.0.0', 'A.R.G.U.S. Engineへ名称と判断を統一。Todayを市場別の単一BUY／WAIT／SELL、NEXT EVENT、簡潔な需給・保有確認へ削減。自動AIと自動売買は0。'],
+  ['v12.7.24', '本番実測に合わせmission tickの有界HTTP timeoutを180秒へ統一。'],
+  ['v12.7.23', '大容量durable snapshotを一時ファイルへstreamし、cold-boot時のメモリを制限。'],
+  ['v12.7.22', '大容量durable snapshotのcold-boot復元timeoutを修正。'],
+  ['v12.7.21', 'Market Ledgerの構造化backtest summaryをRule Cardへ安全に表示。'],
+  ['v12.7.20', 'Market Ledgerのrestore時にrebuild receiptを維持し、Turning Point再構築の全観測再走査を解消。'],
+  ['v12.7.19', 'Remote Journal read-backを整合性付き小型receiptへ分離し、定期mission tickの巨大snapshot待ちを解消。'],
+  ['v12.7.18', '定期mission tickのChart Intelligenceをfresh cache限定にし、同期provider取得によるtimeoutを防止。'],
+  ['v12.7.17', '独立spawn workerの5年breadth完了証拠をfoundation closeoutで正しく受理。'],
+  ['v12.7.16', 'Breadth spot checkの訂正値を確認時刻付きrevisionとしてappendし、履歴を保ったままeffective値を修復。'],
+  ['v12.7.15', 'Breadth resumeを同一stageのcheckpointへ限定し、canaryから5年本処理への誤resumeを防止。'],
+  ['v12.7.14', 'Breadth workerのsoft limitをStandard枠の70%未満である1280MBへ調整。'],
+  ['v12.7.13', 'Breadth workerをclean spawn processへ分離し、Web heap継承によるMemoryErrorを修正。'],
+  ['v12.7.12', 'Breadth rebuildをproduction 5年へ限定し、archive保持のままworker peak memoryを抑制。'],
+  ['v12.7.11', 'Breadthのderived stateをworkerから同期し、Web process側の二重全履歴rebuildを除去。'],
+  ['v12.7.10', 'Breadth workerのsoft memory limitを復元済み大規模台帳に合わせ、独立processのMemoryErrorを修正。'],
+  ['v12.7.9', 'J-Quants breadthの正式範囲を直近5年へ固定し、段階実行と独立worker processを追加。'],
+  ['v12.7.8', 'Benchmark v2のRemote Journal gateをverified receipt・hash一致・commit SHAの正本へ接続。'],
+  ['v12.7.7', 'Benchmark v2のProvider probeをRESEARCH_BENCHMARK用途へ正しく配線し、preflight失敗をcalibration試行から分離。'],
+  ['v12.7.6', 'Benchmark v2のProvider可用性を非空応答・usage・実model IDで判定し、完全一致は診断情報として分離。'],
+  ['v12.7.5', 'J-Quants adjusted historical barの後日revisionを直近10営業日の公式再計算で検知し、削除せずappend-only訂正して再検証。'],
+  ['v12.7.4', 'Market Ledgerの公表時刻をtimezone offset込みの実時刻で比較し、JST公表値が同時刻のUTC判定で未来扱いされる問題を修正。'],
+  ['v12.7.3', '大規模Market Ledgerの定期tickは、新規観測がある場合だけ派生再計算し、clean時は整合hash確認のみ実行。'],
+  ['v12.7.2', 'J-Quants breadth backfillの中間checkpointではappend-only保存だけを行い、全履歴の派生再計算を完了時の1回へ集約。'],
+  ['v12.7.1', 'J-Quants Standardの10年ローリング境界を実行日とProvider実測から決定し、固定日境界の失効を防止。'],
+  ['v12.7.0', 'J-Quants Standard契約範囲のbreadthを旧東証一部／Prime／全市場に分離してbackfill。Benchmark v1をclosed_invalidとして保存し、validityと品質を分離したProtocol v2を追加。'],
+  ['v12.6.5', 'v12.6.3で既にreadyへ上書き保存されたpre-holdout失敗を、holdoutなし・結果なし・復旧未使用時だけ安全に移行。'],
+  ['v12.6.4', 'pre-holdout recovery用dry-runが既存provider failure状態を上書きしないよう修正し、holdout未消費時だけの復旧判定を維持。'],
+  ['v12.6.3', '正式benchmarkのGPT-5.6生成・refereeをlow reasoning＋十分な出力上限へ固定し、holdoutを消費しないpipeline preflightと安全な失敗段階証拠を追加。'],
+  ['v12.6.2', 'Gemini preflight証拠のstable候補をtext Proモデルに限定し、画像・TTS・custom-toolsモデルを正式baselineのfailover候補から除外。'],
+  ['v12.6.1', 'Foundation Two-Blocker Closure — J-Quants V2の日付を公式YYYYMMDD形式へ正規化し、秘密非表示のrequest matrixと公式client比較を追加。Geminiはraw candidate/finishReason/thinking tokenを検査するbounded preflightへ変更し、正式benchmark前の空応答を原因分類。'],
+  ['v12.6.0', 'Foundation Final Closure — J-Quants騰落breadthの安全な再開可能job、unresolved Outcomeを含むRemote Journal再検証、正式benchmarkのexact model証拠と現行料金を追加。Nikkei PER/PBRは許諾確認まで自動取得・本番表示を停止。'],
+  ['v12.5.0', 'Market Intelligence拡張 — 市場別公式カレンダー、J-Quants投資主体別backfill、16項目Daily Market Sheet、Anomaly Desk、判断変更条件、経験則分類とfuture-leakage禁止walk-forward基盤を追加。'],
+  ['v12.4.0', 'Chart Intelligence拡張 — OHLCVから移動平均・Bollinger・一目・RSI・MACD・ATR、支持抵抗帯、相対強弱、転換点、価格反応異常を決定論的に計算。'],
+  ['v12.3.3', 'Formal Gemini 2X Benchmark Infrastructure — calibration 6件とone-shot holdout 12件、盲検評価、費用上限、確認hash、append-only resultを実装。未実行時はnot_run/provider_blocked、twoXClaimAllowed=falseを維持。'],
+  ['v12.3.2', 'EC2 Primary Scheduler — EC2 systemd timerを30分mission tickの正本、GitHub Actionsをbackup、manualを診断専用へ変更。同一UTC windowはbackend leaseで重複抑止し、Soakは単一scheduler source遅延をwarningとして分離。'],
+  ['v12.3.1', 'Scheduled Mission Tick + Build Soak Reliability — 30分mission windowの冪等実行と遅延分類、build-scoped Soak heartbeat、Remote Journalのcommit→read-back検証を追加。unresolved Outcome retryは同じIDのまま各有効windowで再評価し、自動生成AIはDETERMINISTICで0回を維持。'],
+  ['v12.3.0', 'Deterministic Cost Reset + Market Ledger — 自動生成AIを既定0へ変更し、市場データ・イベント・Outcome・Remote Journalを維持。信用残・投資主体別売買・バリュエーション・騰落レシオのappend-only台帳を追加。'],
+  ['v12.2.13', '安定化修正 — unresolved Outcomeを同じID・履歴のまま定期再解決し、後から価格を取得できた時だけresolvedへ遷移。定期workflowはHTTP status・JSON・業務結果を分離判定し、backend不達や認証・サーバー・異常応答を成功表示しない。'],
+  ['v12.2.12', 'Asset Desk統合 — 個別銘柄情報の一本化（判断ロジック不変） — TodayとWatchlistに分裂していた個別銘柄情報を、Watchlistページを再構築した「Asset Desk」(route keyは不変)へ一本化。①判断の唯一の正本: AI優先マージ(AI status live/partial+freshness fresh/persistedの時だけAIが主判断・それ以外はルール暫定)を新domain層assetDecisionへ移設し、TodayとAsset Deskが同じ関数を通る=同一銘柄がページによって違う判断になることが構造的に不可能に。判断のソースを常に明示(AI PRIMARY / RULE TEMPORARY+正確な理由+次回実行予定16:05)し、AIの理由が無い時にルールの理由をAIの文章として表示しない②データ組み立ての共有: 旧Todayのカード合成パイプライン(Exposure/優先度/シナリオ/計画/戦略/構え)をuseAssetIntelへ移設 — publish副作用(共有ストア書き込み)は従来どおりTodayのみ(Asset Desk閲覧では書き込まない)③Asset Deskカード: 閉=銘柄/保有/価格/鮮度/主アクション/判断ソース/理由1行/確度/リスク/優先度/次の確認/警告≤2/イベント≤2。開=固定順10セクション(DECISION→AI REVIEW・RULE CHECK→OWNER POSITION→WHY/DOWNSIDE→FLOW & SUPPLY→EVENTS & CATALYSTS→TECHNICAL & ENTRY(⚡診断=押した時だけ)→SCENARIOS→RESEARCH & NOTES→DATA QUALITY)。旧Today銘柄カードと旧Watchlist行の全項目を移設(docs/ARGUS_V12_2_12_ASSET_DESK_MATRIXで全項目の移設先を確認してから旧カードを削除)④並び: デフォルト=優先順(保有×撤退/防衛→保有×P0→保有×P1/高リスク→急落対応→AIとルール不一致→イベント接近→その他保有→監視→投信→暗号資産・同順位はコード順=決定論)/手動順=従来のドラッグ並べ替え⑤Today側: Research & Signalsの銘柄カード全リストを例外サマリー+deep-linkに置換。OWNER CRITICAL/Your Exposure/Action Queueの銘柄タップでAsset Deskの当該カードが開いてスクロール(App state経由・nonceで再クリックも反応)⑥Portfolio ExposureとWhat-ifシミュレーションはPositions & Riskへ移動(計算・localStorageキー不変)⑦ナビ順=Today→Asset Desk→Positions & Risk→Market Context(route key不変)。判断ロジック・閾値・publish・通知・スナップショット・バックアップ・localStorageキー・API契約は一切不変。'],
+  ['v12.2.11', 'Today情報設計・UI再構築（判断順序のリデザイン） — 投資判断ロジック・計算式・publish処理・通知・スナップショットは一切変更なし(表示の再構築のみ)。①ファーストビューを5ブロックに固定: Today\'s Stance(主判断+理由1文+CONFIDENCE/DATA/MARKET/POSITIONチップ+主要因≤3・ラダー/permissions/PARTIAL全理由/触る・避けるは「判断の詳細」折りたたみへ)→Overnight Changes(前回からの変化≤4件 — 判断ログの前回比較・ドル円/米金利のFRED実測前日比・次の重要イベント。**比較元がない項目に矢印を出さない**)→Your Exposure(保有への影響≤3件・保有×P0/P1→高リスク→イベント対象→material集中の決定論優先順位・保有未登録は静かな空状態+導線1つ)→Action Queue(Session Brief/Action Priority/Position Planの**表示統合**≤3件・NOW/AT OPEN/NEXT/IF・銘柄×行動意味で重複排除・免責はセクション末尾1回)→Next Check(必ず1件: 保有条件→市場オープン→検証済みイベント日時→Brief→定期レビューの順で決定)②詳細はDETAILS / DEEP DIVE 5グループ(Market/Position/Research & Signals/Decision Review/Data & System)に収納 — 従来の全セクション(SESSION BRIEF/ACTION PRIORITY/POSITION PLAN/C.A.O.S./FLOW/EXPOSURE/需給/銘柄カード/発掘/FX・MACRO/判断ログ)は削除せず役割別グループへ移動(開閉は端末内記憶・高リスク時は自動展開)③ナビ順をToday→Positions & Risk(旧Core Portfolio・route keyは不変)→Watchlist→Market Contextへ変更(NavRail/App/overscroll同期)④新domain層todayOverview=既存出力の選択・優先順位付け・重複排除・表示語彙変換のみ(新しい判断・スコア・確率を生成しない)⑤ADR/米国→東京伝達は検証済みデータ契約(ticker/ratio/価格時刻/為替時刻/流動性/source)が存在しないため推測表示せず未実装。'],
+  ['v12.2.10', 'リモートジャーナル耐久・検証済みread-back ack（V12.2.10是正準備） — v12.2.9本番診断で確定した欠陥の根治。①**argus-durable-v3**: 運用ジャーナル(opsJournal/メタ/soak永続時刻)をリモートsnapshotへ同乗 — 30分毎ledgerコミットに載らずWAL146件が再起動で消失した欠陥の根治(私的フィールド構造拒否・1件の不正が全体を落とさない・v2は「journal未同乗」と正直表示)②**検証済みread-back ack**: remote_committedは「ledgerから読み戻したsnapshotに当該イベントの冪等キー+整合hashが存在」した場合のみ — 復元時刻プロキシ(稼働中は永遠にpending/再起動後は偽commit)を廃止。レシートは再起動を生存③critical(soak_interrupted含む12種)は検証済みack前にcompactしない・mission_recovered等の非criticalは決定論バッチ化(歴代件数はゼロ化しない)④損失窓は**実測SLO**でのみ主張(スケジュール存在≠実行・stale-writerガードで古いsnapshotの逆行上書き防止)⑤FFLゲートへレシート配線 — forecast_issuedのack検証でremotely_proven到達可能に⑥outcomeがforecast originを構造継承 — 解決済みforward-live成果が採点対象に入れる(v12.2.9では恒久0だった)+採点語彙分離「Forward-live予測4件/将来採点適格4件/完了採点サンプル0件」⑦Research文言分離: 「正式倍率認定」廃止→「安定倍率算出可・Gemini優位性の正式認定不可・2x認定不可」を独立表示⑧**smoke⇄Render循環の解消**: smokeのmain pushトリガを撤去(post-deploy監視=6h毎+手動・Render After-CIはbackend-rules/frontend/gateのみ待つ)⑨backend状態=経過時間基準(UTC暦日跨ぎでdegraded化しない)。v12.2.9認定=invalidated_by_remote_journal_loss(docs)・デプロイ後は新規72h soak。'],
+  ['v12.2.9','Runtime Truth・build-scoped soak・起動即時復元（V12.2.9準備） — ①build-scoped soak: **新build SHAは旧buildのsoak時計を継承しない**(v12.2.8で内部startedAtがDeploy liveより早かった欠陥の根治)。soak開始はbuild識別+起動復元完了+整合ok後の最初のtickのみ・startedAtはboot/復元前に遡らない(commit/merge時刻はデプロイ時刻ではない)。同一SHA再起動は中断として記録し隠さない②起動即時復元: プロセスboot毎に1回の決定論的復元(30分cronを待たない)+/readyz新設(復元完了まで503→ready 200・/healthz=livenessと分離)③運用ジャーナル配線: incident開始/解決・soak開始/中断・ミッション回収を遷移コードから即時記録(GETはイベントを作らない)+active WALと歴代合計を分離表示④予測活性化テレメトリ: **校正/ベンチrunは調査ストアを温めない**(currentEpochRuns=6でも予測ゼロは正常)— 本物のResearch Mission完了のみが予測適格。E2E forward-liveフィクスチャでlocally_proven→remotely_provenを検証(FFLゲートのTZ混在backdate誤判定も修正)⑤カレンダー対応鮮度: 週末/公表サイクルで「次回公表未到来」の日次/週次をstaleにしない(本物の遅延は隠さない)・cryptoは収集cadence基準⑥Gunicorn 1 worker本番構成を準備(未適用・Start Command変更はオーナー操作)⑦オーナー設定はowner_attested(期限90日)— runtime検証済みとは主張しない。本番v12.2.8 soak無干渉・未push/未deploy。'],
+  ['v12.2.8','リモート耐久・初証拠ゲート・GPT-5.6シャドウ準備（V12.2.8準備） — ①耐久状態の明示区別: local_committed/remote_pending/remote_committedをレシートで管理 — **ローカル確定を「完全永続」と呼ばない・60秒保証は未実測のため主張しない(実窓≦30分)**②WAL/リモート照合: 冪等キー+整合hashで一致/再送/再生/競合を判定 — タイムスタンプ単独で上書きせず競合は黙殺しない③First Forward-Live証拠ゲート: 予測を**生成しない**検証専用(replay/mock/backdate/重複拒否・ローカル証明とリモート証明を区別)④GPT-5.6プローブ枠: 未設定/価格不明/予算不可をfail-closed・**可用性が証明されても昇格はしない**(Shadow比較は本番不変+オーナー承認必須)⑤Structured Outputs=shadow_validate起動: 本番証拠は既存パーサのまま並走検証し成功率/不一致を計測(95%+20件でcandidate適格)。Data Qualityに耐久レベル/初証拠/GPT-5.6/SO指標/RC阻害要因を常設。本番soak無干渉・未push/未deploy。'],
+  ['v12.2.7', '運用ジャーナル・発行判定・スキーマ検証（V12.2.7準備） — ①write-through運用ジャーナル: クリティカル遷移(予測発行/成果解決/インシデント等)を整合hash+冪等キー+単調sequenceで即時記録。**正直な保証=ローカル即時+リモート30分毎flush(buffered write-through・厳密とは主張しない)**。壊れイベントは検知・除外しlast-known-good再構成②予測発行判定: 曖昧な「未発行」を廃止 — eligible/翌セッション待ち/回収可(ザラ場のみ・backdate禁止)/機会喪失/データ不足/mock遮断/発行済みの7判定+次機会をDQ表示③Structured Outputsスキーマ検証(6種・必須/enum/URL/日付)— 不正なAI出力は証拠に入らない(SDK実測確認まで互換パーサ併用のfeature-flag)④テストの壁時計依存を根治。判断ロジック不変・本番soak無干渉。'],
+  ['v12.2.6', '運用実証（V12.2.6） — 新レイヤー追加なし・既存アーキテクチャの実働証明。①v12.2.5リリース整合をコード検証+GitHub branch protection未設定をAPI実測(オーナー設定待ちを正直表示)②運用状態耐久マップ(docs/ARGUS_OPERATIONAL_STATE.md)— 各ストアの分類と生存経路・私的データはサーバ非保存の構造保証③DQにリリース安全欄(deployed SHA/manifestはCI artifactが真実/オーナー設定pending)④本番サイクルで現行エポック測定runを蓄積(1run=観測・3run+許容分散=安定)・forward-live初発行はウォームアップ後の実judgmentから。判断ロジック不変。'],
+  ['v12.2.5', 'リリースゲート整合ホットフィックス（V12.2.5） — 機能追加なし。①クリーンツリー判定の論理バグ根治(常真条件を排除 — 未コミット変更があるSHAは構造的に不適格)②manifestはgitignore済みartifacts/配下に生成し、CIの正確なSHAに対してartifact公開 — コミットされた古いmanifestを真実にしない(SHA不一致=STALE=不適格)③release-gateをPRでも実行(mainはci/release-gateの必須ステータス化をオーナー設定で)④Render Auto-Deploy="After CI Checks Pass"設定要件をrollback docに明記(コードからRender設定は変更しない)。判断ロジック・OSINT・予測・スコアには一切触れていない。'],
+  ['v12.2.4', '運用状態の耐久化・リリース安全ゲート・測定反復性（V12.2.4） — 「一度measured」から「deployをまたいで再現可能」へ。①測定のdeploy生存: Research Power測定はRPS履歴(現行エポック・ledger30分毎コミット)から自動復元 — 再デプロイ直後でも「復元された現行エポック測定」を表示し、不要なnot_measuredを解消②測定反復性: 1runは「観測run」であり安定した現行比ではない — 安定判定には現行エポックで3run以上+許容分散が必要(中央値/分散/min-max/信頼度をDQに常設・不足時はmeasurement_in_progress)③リリース安全ゲート: scripts/release_gate.sh(完全pytest+tsc+build→SHA紐付きrelease_manifest.json・**緑になるまでpushしない**)+release-gateワークフロー(main push毎に正確なSHAの適格性を監査記録・失敗SHAはworkflow失敗)④耐久状態ステータス: schemaVersion/最終書込/復元元/整合性をDQ表示 — 壊れた状態はcorrupt_ignoredとして信頼しない(last known good維持)⑤osint耐久状態(soak/ミッション/予測/成果/インシデント)を30分毎にledgerコミット(従来の毎時を補完)。判断ロジック・プライバシー保証は不変。'],
+  ['v12.2.3', '運用証拠ゲート（V12.2.3） — 「実装済み」から「本番で証明済み」へ。①現行エポック初測定が本番で成立(Gemini基準72に対する現行ARGUS比を実測 — 旧0.92xはlegacyのまま)②forward-live初発行の回収経路: コールド時に消費された当日予測ミッションを、実調査がストアに揃った時点で回収発行(冪等・当日1回・実judgment由来のみ・ダミー禁止)③soak永続化: 再デプロイで72時間soakをリセットしない(ledger同乗)④週次/月次の検証実行: 定期境界前でも検証できるが必ず「validation_run — 定期実行ではない」ラベル⑤見逃しミッション=インシデントopen→回収でclose(検知/回収時刻を記録)⑥replay E2E証明: 凍結as-ofケースで発行→成熟→ベンチ相対→Brier→帰属→提案までをhistorical_replayラベルで実証(live集計に構造的に混入不可)。Data Qualityに現行測定(measured/not_measured+blocker)+インシデント。判断ロジック・プライバシー保証は不変。'],
+  ['v12.2.2', '現行エポック再認定・forward-live起動・週次月次サイクル・運用soak（V12.2.2） — 「接続済み」から「運用実証」へ。①エポック再認定: 旧v12.1.7の0.92xは**legacy履歴として隔離**され現行比として表示されない(基準runを現行エポックのみでフィルタ — 校正完了まで正直にnot_requalified表示・cronベンチが自動で再蓄積)②予測発行プリフライト: コールドストアから予測を強制発行しない — 決定論ウォームアップ(deep-diveキュー・外部AIなし)を自動投入し、次のcronで実データから発行。発行できない時は正確なblocker表示③週次(月曜)/月次(1日)ミッション: 学習レビュー/モデル・エポック点検/ベンチ再校正を冪等生成。解決サンプル不足時は学習主張なし④初のchallenger影走行: 低リスク提案(探索語)のshadow評価を記録 — **本番判断は不変・昇格はオーナー承認待ちのまま**⑤履歴影響shadow: 確証例と反証例を必ず両方数え、履歴不足なら影響なし⑥運用soak: 24-72時間の実測完了まで「運用実証済み」を主張しない(architecture_ready→active_unproven→soak進行中→実証済み/degraded)。Data Qualityに現行エポック/発行レディネス/soak/週次月次/challengerを常設。判断ロジック・プライバシー保証は不変。'],
+  ['v12.2.1', '二面エージェント・セッション対応スケジューラ・本番予測発行（V12.2.1） — 第2の柱の本番化。①二面アーキテクチャ: リサーチ面(サーバ/cron・24時間)と私的判断面(端末)を明示分離。**private worker未検証の間は「保有判断も24時間稼働」と絶対に言わない**(「市場・ニュース調査は24時間稼働しています。保有情報を含む個人判断は、端末でARGUSを開いた時に更新されます。」)②セッション対応スケジューラ: 市場カレンダー基準の16ミッション型(寄り前予測/引け後スナップショット/成果解決/日次ポストモーテム/夜間OSINT等)を冪等生成・lease方式(二重実行不可)・**見逃しミッションは検知され回収され沈黙消失しない**・祝日はskipped明示③本番予測発行: cron tickが成果を知る前に不変予測を発行(forward_live刻印・重複ゼロ・mock除外)④成果解決: 成熟前解決なし・価格欠損=unresolved(0%扱い禁止)⑤日次ポストモーテム: 解決サンプルゼロの日は「学習主張はしません」と正直表示。Data Qualityにエージェント運用(完遂率/見逃し/回収)+二面ステータス。判断ロジック・プライバシー保証は不変。'],
+  ['v12.2.0', 'AI Integrity Gate・意思決定台帳・一次ソース支配（V12.2.0） — アーキテクチャ強化。①AI Integrity: 全OpenAI Responses呼び出しにstore=False強制・使用量は同一応答から取得・web検索なし(model_only)の出力は「モデル記憶ベース」と明示されLIVE調査に偽装不可/主因証拠不可/ベンチ不適格・検索失敗も同様・未承認の直接プロバイダ呼び出しはテストで構造的に失敗②価格fail-closed: 価格不明モデルは$0でなくcost_unknownとして外部呼び出しをブロック・呼び出し前予算予約(超過時は決定論収集を継続しbudget_limited表示)③モデル移行基盤: role別モデル設定(extract/standard/war_room/referee/rollback)+GPT-5.6能力プローブ(admin実測のみ・仮定昇格禁止)+シャドウA/B(既定OFF・オーナー判断に不使用)+ModelEpoch(モデル/プロンプト/ツールが変われば別エポック — 異条件の校正比較を構造禁止)④2xゲート強化: cold-store/budget_limited/degraded経路からの2x主張を構造禁止・ホールドアウト3ケース(チューニング不使用)・rubric-v2版管理⑤一次ソース支配: 公式PDF/統計ページresolver(存在確認=部分点・内容の断定なし)+SEAJ公式resolver v3(公式+記事ペアリング)+開示チェック(未チェックで不在主張禁止)+ストア温度(コールド測定はprovisional)⑥不変予測台帳(基盤・shadow): 判断を成果を知る前に発行・発行後編集不可(整合hash)・成果は別レコード・価格欠損は0%扱いにしない・適正スコア族分離(Brier/区間/方向/ランキング/棄権)・校正は縮約つきで1件で激変しない・学習提案は1観測で本番変更不可+重要変更はオーナー承認必須。Data QualityにAI Integrity/コスト/台帳健全性。判断ロジック・プライバシー保証は不変。'],
+  ['v12.1.7', 'ベンチマークランナー・校正加速・2x準備レポート（V12.1.7） — 「校正の仕組みがある」から「校正を能動的に進める」へ。①Benchmark Runner: 固定10ケースをadmin/cron専用で実行(公開画面から起動不可・Gemini呼び出し最大2回/実行の予算明示・重複実行は既存job再利用・Gemini未設定はskipped=偽passなし)②校正加速: caos-scan(30分毎)がrun数最少のケースから自動でベンチ実行 — 受動的に待たず約1〜2時間で校正済み(5run+2ケース)へ到達見込み。Data Qualityに校正進捗バー(run数/ケース数/残り/分散/信頼度/2x判定可否)③ケース別採点: ケースごとにGemini採点とARGUS採点(公開比/文脈強化比を分離)を比較し、argus_below/matches/exceeds/2x/判定材料不足+**どの柱が弱いか**(カバレッジ/精度/推論/完遂/一次ソース強度)を特定④2x準備レポート: 総合状態(未校正/校正済み未満/超過だが2x未達/2x達成)+弱いケース+弱い柱+blocker+**最短経路**(例: SEAJ公式PDF resolver/PR TIMES代替取得/公式開示canary強化)+推奨エンジニアリングタスクをData Qualityに常設⑤ベンチケースに完全メタデータ(目的/既知の注意/pass条件/禁止行動)。2x主張のハード条件(校正済み+安定+比2.0+具体未回収ゼロ+一次強度)は不変 — 校正を偽装しない。判断ロジック・プライバシー保証は不変。'],
+  ['v12.1.6', 'Gemini基準の校正（V12.1.6） — 「1.27x」等の比率は分母(Gemini=1.0)が安定して初めて意味を持つ。①基準タイプ5種: 単発run/複数run中央値/固定ベンチ/ローリング平均/校正済み。**単発runは「単発Gemini基準のため参考値」と暫定表示され、単発基準からは2x達成を主張できない**(比が2.0を超えても「Gemini基準が未校正」とblocker表示)②固定ベンチマークスイート10ケース(浜松/SEAJ・Samsung-Anthropic・CPI/NFP/FOMC公式日程・直接開示・古い記事却下・PRブロック回収・連想のみ・材料なし日の正直さ — 各ケースに質問/期待ソース/禁止行動/採点基準を定義)③反復run統計: スカウト実行ごとにGemini採点を記録し、中央値/分散/信頼度(high/medium/low/unstable)を算出。**分散が大きい基準は不安定と表示し正確な比を主張しない**・校正済み=5run以上+2ケース以上+安定④同一ルーブリック採点: Geminiの未検証claimは満点にならず、仮説はARGUSと同じく仮説として僅少加点(生件数はどちら側も支配しない)⑤公開リサーチ比と文脈強化比を分離表示(需給/Flow/イベント文脈の上乗せを区別)⑥2x達成のハード条件: 校正済み基準+信頼度medium以上+比2.0以上+具体未回収ゼロ+一次ソース強度。Data QualityにGemini基準(タイプ/run回数/中央値/分散/信頼度/2x判定可否/最終校正時刻)を常設。プロンプト版・文脈版・実行時刻も記録(public-safe)。判断ロジック・プライバシー保証は不変。'],
+  ['v12.1.5', '一次ソース取得エンジン・業界証拠・因果関連度（V12.1.5） — 2xへの品質push。①一次ソース取得チェック: 調査ごとに12カテゴリ(企業IR/ニュースルーム/製品ニュース/TDnet/取引所開示/業界団体/業界予測/工業会/公開予測メタ/官公庁統計/公式日程/製品ページ)のchecked/verified/metadata_only/未チェックを台帳化。**未チェックのカテゴリについて「材料なし」と主張しない**構造ガード②SEAJ/業界予測resolver: SEAJ型主張に特化クエリ11種を自動学習し、公式ドメイン=industry_forecast・報道メタ言及=public_forecast_metadata・URL/日付なしは「捏造しない」と明示。6965には常に「直接材料ではなくテーマ材料」注記③企業ニュースルームresolver: 製品発表claim(Emmi-X等)から製品語を抽出し、企業公式経路(日英ニュースルーム/製品ニュース)の裏取りクエリを自動生成 — bot遮断PRソースの合法回収④Research Quality 5柱: カバレッジ/精度/推論/エージェント完遂/一次ソース強度。**2x達成には一次ソース強度または例外的な多重検証カバレッジが必須**(仮説分類だけでは2x不可)⑤因果関連度: 検証済みソースでも株価因果を別採点(直接材料+重要性+タイミング=高・製品発表単独=低「主因にしない」・業界予測=テーマ関連・無関係=検証済みでも因果に使えない)。弱い因果は「ソースはあるが株価因果の直接性が弱い」とblocker化⑥ソース取得レポート: 公式/業界/報道/海外の何を見て何が未チェックかをカードで開示⑦オーナー結論を新設: 「直接材料は未確認。ただし、業界/テーマ材料としては〇〇が確認されています。」形式で直接/業界/VC/文脈/未検証/比率/次アクションを1ブロック表示 — 曖昧な原因未特定を出さない。判断ロジック・プライバシー保証は不変。'],
+  ['v12.1.4', '仮説クレーム規律・ブロックソース回収・新鮮ニュース加速（V12.1.4） — 2xへの前進。①エージェント主張の型分類: Gemini/GPTの「〜の可能性」「〜連想」「sympathy」型は具体ソース欠落ではなく未検証仮説/探索方向/推論として分離(URL+日付つきは言い回しに関係なく具体主張)。優位性をブロックするのは具体ソース未回収のみ — 仮説は確度を下げるが未回収扱いしない②ギャップ台帳v3: 解決状態13種(未検証仮説/探索方向/推論のみを追加)。探索方向は追撃クエリとして自動学習③参照不能ソースの代替回収: PR TIMES等がbot遮断でも、同一ニュースを企業ニュースルーム/プレスリリース/タイトル再検索の合法的な公開経路で回収を試みる(ペイウォール迂回はしない・回収実績はData Qualityに表示)④新鮮ニュース加速: 検証前の当日候補は「新鮮な候補ニュースを検出。検証中。」と予備状態(fresh_candidate)で明示 — 検証されるまで決定的原因にしない・スコアも膨らませない⑤公式/業界クエリ強化: 社名+ニュース/製品発表/newsroomを直接クエリに標準搭載⑥Research Power v2: 19成分(仮説規律/回収試行/代替回収/新鮮度を追加)・blockerを正確化(具体ソース未回収/公式一次情報不足/新鮮候補が未検証)・裏付けなし主張の却下は幻覚耐性を上げる⑦銘柄カードに内訳表示「未回収の具体ソースN件・未検証仮説N件・探索方向N件」。判断ロジック・プライバシー保証は不変。'],
+  ['v12.1.3', '2x Research Power Engine（V12.1.3） — 目標は「Gemini以上」ではなく「Geminiの2倍のリサーチ能力」。①Research Power Score: 14成分(検証済み有用ソース/公式・業界一次/直接材料/セクター・バリューチェーン網羅/矛盾検出/検証率/ギャップ回収/保有・需給・Flow・イベント文脈/学習更新/古ソース却下/幻覚耐性)でARGUSとGemini基準を採点し「Gemini 100 / ARGUS N / X.XXx」を表示。生の件数では絶対に2xにならない — 未回収の重要ソースが1件でもあれば即「Gemini未満」②SEAJ/業界統計ギャップ閉鎖: 業界団体(SEAJ/JEITA等)・業界予測をソース種別として一次情報扱いし、6965の探索語にSEAJ販売高予測を標準搭載。URL/日付のないテーマ一般論は「低価値背景(探索語として学習)」に自動分類し曖昧な「未回収2件」を作らない③探索ソースユニバース: 全18カテゴリ(公式開示/官公庁/業界団体/日米メディア/取引所統計/価格Flow/マクロ日程/スカウト2種/アナリストレポート/有料端末/SNS/板情報等)の稼働状況をData Qualityに常時表示 — 使えないソースも理由つきで可視化(沈黙省略の禁止)④価値連鎖ナレッジグラフv1: 半導体製造装置サイクル/AIデータセンター/防衛予算の再利用可能テーマ規則(装置・材料・部品・製造・需要の役割map)。テーマ一般論を個社の直接材料に昇格させない構造ガード⑤War Room Autopilot: 14段階(プロファイル→クエリ計画→内部収集→Gemini/GPTスカウト→解析→クラスタ→URL検証→ギャップ回収→再探索→矛盾チェック→文脈統合→採点→レポート)の進行を表示。失敗時はfailed_safe(途中結果保持・嘘の完了を返さない)⑥矛盾・因果規律の構造化: 直接材料なし/テーマ連想のみ/値動きだけで物語を作らない/Gemini・GPT不一致/古ソース却下/裏付けなし件数を警告として明示⑦学習v2: 全学習レコードにuseCase(探索語拡張/ソース発見/テーマ規則/見逃し学習/canary)を必須化。判断ロジック・プライバシー保証・コスト方針は不変。'],
+  ['v12.1.2','Gemini Gap Closure / OSINT War Room完成（V12.1.2） — 「未回収11件」のような曖昧表示を廃止し、ギャップを能動的に潰す段階へ。①ギャップ解決台帳: Gemini/GPT-onlyの全ソースに必ず理由つきの解決状態(検証済みで統合/既存ソースと同一ニュース/古い背景として却下/裏付けなし却下/参照不能/URLなし/日付なし/無関係/低価値背景/重要だが未回収)。「重要だが未回収」だけが超過判定をブロックし、重複・却下はブロックしない②同一記事クラスタリング: URL正規化(トラッキングパラメータ除去・ドメイン別名統一)+タイトル類似+エンティティ照合で、Reuters/Yahoo等のシンジケーション再掲を「Gemini提示記事はARGUS既存ソースと同一ニュースでした」として重複解決③War Room予算: モード別にURL検証上限を明示(標準4/深掘り8/War Room 20・ループ3周)。上限到達は「検証上限到達: 残りN件」と正直表示④スカウト契約強化: URL/日付(不明ならunknown)/関連理由/短い引用または要約/確度/反証材料を必須化・捏造URL禁止。markdown表・prose混在・日英混在の出力も頑健に抽出⑤ギャップ毎の標的再探索: 正確なタイトル/エンティティ/ドメインから追撃クエリを自動生成し学習語へ⑥「未回収を再探索」ボタン: 重複/古い/無関係は即時再判定(外部AI・URL取得なし)。「このURLを検証」はキュー式(次のスカウト実行で取得)。「重要でないとして除外」は端末内のオーナー判断(サーバー判定は不変)⑦優位性判定v2: 生の件数では絶対に超過にならない — 超過=重要未回収ゼロ+公式/需給/Flow/独自検証ソースの優位が必要⑧Data Qualityに判定文(「OSINTはGemini基準に未達です/上回りました」)+検証上限到達の累計。判断ロジック・プライバシー保証は不変。'],
+  ['v12.1.1', 'OSINT優位性ハードニング（V12.1.1） — 「Geminiに聞けるだけ」で満足しない仕上げ。①優位性メトリクスを新設: Gemini超過/同等/未満/判定保留を数値で判定し、Gemini-onlyの重要ソースが未回収のうちは絶対に「超過」を名乗らない(「Gemini単発に対して未回収のOSINTギャップがあります」と正直表示)。超過の条件=外部AIのソースを検証済みで回収+ARGUS独自の検証済みソースか保有/需給/Flow/イベント文脈の統合②恒久メモリ: 学習した探索語・検証済み公開URL・canary結果を再デプロイ後も保持(ledgerブランチへ毎時コミット/復元。オーナー貼り戻し本文は今までどおり端末内のみ)③URLライブ検証: Gemini/GPTが出した未知URLの公開メタデータ(タイトル/日付)を管理側で実取得し、claimと一致すれば「検証済み(ライブ取得)」へ昇格。不一致/参照不能は昇格しない(捏造ゼロ)。ペイウォール本文は取得しない④反復再探索: 未回収のGemini-onlyに追撃クエリ+ライブ検証で回収を試みるループ(標準1回/深掘り2回/War Room3回)。「再探索1/2: Gemini-onlyニュースを回収中」「検証済みに昇格: N件」を進捗表示⑤手動実行UX: 実行後すぐ進捗(計画中→スカウト→検証→再探索→統合)とキュー位置・次回実行まで約N分を表示。連打しても二重実行しない⑥スカウト強化: Geminiは英語海外テック/日本語コメンタリー/公式開示/顧客・供給網を必ず探索、GPTは反証と古い記事の再掲警告に特化。出力パーサはfence/前置きprose耐性で全損しない⑦ベンチマークを8種に拡張(Samsung/Anthropic・浜松型光半導体・公式日程3種・直接開示・海外AI capex等)— Samsung/Anthropic未達時はData Qualityに「Gemini級OSINTベンチマーク未達」⑧Data Qualityに優位性(最新)/未回収合計/恒久メモリ/パーサ警告、AIレビューパックに優位性と未回収caveat。プライバシー/コスト方針は不変(redacted既定・公開画面から外部AI起動なし)。'],
+  ['v12.1.0', 'マルチエージェントOSINTエンジン（V12.1.0） — 「Gemini単体に聞けば見つかるのにARGUSが見つけられない」への根治。銘柄カードに「OSINT DEEP DIVE」を新設: ①計画=多段クエリ(社名日英/コード/IR・決算・格付け等の直接系/セクター・テーマ/バリューチェーン(顧客・供給網・競合)/海外カタリスト/下落理由系 — 浜松ホトニクス型ならSamsung Anthropic AIチップ・custom silicon・hyperscaler capex等まで自動展開・再利用規則で全銘柄対応)②決定論収集(手元の全ニュース/機関/開示ストアを横断)③Gemini/GPTスカウト(設定時のみ・管理側の定期実行でキュー消化 — 公開画面から外部AIは絶対に起動しない)④検証(LLMの回答は手元ストアで裏取りできるまで「未検証」であり証拠にしない・14日超/日付不明は主因構造不可)⑤矛盾判定と統合(直接材料/テーマ連想/バリューチェーン推論/マクロ/フロー主導/不明を確度つきで)⑥ベンチマーク: GeminiだけがARGUS未検出のソースを出したら「GeminiがARGUS未検出のニュースを提示しました」と正直に表示し、探索語に自動追加して学習(逆はARGUS独自検出と表示)⑦探索カバレッジ(広い/標準/弱い/不足)と信頼度 — 「ニュースなし」はカバレッジが十分な時だけ言い、弱ければ「ARGUSの探索範囲では未確認」⑧貼り戻し学習: GeminiやGPTの回答を貼ると本文は端末内保存・サーバーへは探索語(≤8語)のみ送信。「このニュースが抜けている」も同様⑨canary(Samsung/Anthropic・CPI・NFP・FOMC・日本半導体テーマ)で見落としを常時監視し、見落とし時は原因確度に上限+Data Qualityに警告⑩Data Qualityに「OSINT AGENTS」(プロバイダ設定/キュー/canary)。プライバシー: 外部AIへの送信はredacted既定(保有・数量・口座情報は構造的に載らない)・フル文脈選択時は警告表示。コスト: 深掘りは手動/保有P0-P1向けで全銘柄常時実行はしない。'],
+  ['v12.0.9', 'v12.0.8追補 — スクショ起因のtrust修正10件（V12.0.9） — ①リスクの分離チップ: MARKET RISK(市場)とPOSITION RISK(保有)とDATAを別表示にし、保有×P0/P1がある日に裸のLOW RISKを出さない。買い増し禁止の日は理由を一行明示(「新規・買い増しは保留。保有銘柄のリスク確認が先。」)②「JP MARKET OPEN」表記に変更し、JP開場中でもリアルタイム未稼働なら「JPリアルタイムAPIはメンテ中・代替データで判定」を自動表示(復旧で自然に消える)③単一のイベント時計: 右上Nextチップ/下部バー/イベントカードが同じ選定(日時がパースできる未来のみ・発表済/日付不明は「次」に出ない・表示は日付+D-count必須)④Session Briefの箇条書きを先頭4件+「詳細を見る」に(モバイルの内部スクロール禁止)⑤候補原因に出典プロビナンス必須化: 出典タイプ(公式開示/主要報道/コメンタリー等)・直接度(直接/テーマ連想/バリューチェーン推論等)・鮮度(本日/3営業日内/14日超/日付不明)+新鮮な直接材料が無い時は「原因未特定。候補はテーマ連想であり、直接材料ではありません。」を必ず表示⑥総合コマンドが買い増し禁止の日は「小さく買い増し可/押し目限定」を主表示にせず「候補だが今日は保留」に変換(条件は注記に保存)⑦P0/P1は「対応不要」を構造的に禁止⑧C.A.O.S.遅延を数値化(最終成功/目標15分以内/現在N分 — 目標内なら「巡回正常」と表示し、遅延時は「ニュース原因の確度を下げています」)⑨JP Regime Matrixはザラ場データ待ち中「Risk Off 暫定」表示⑩スクショ状態を再現する決定論fixtureテスト(確度cap超えなし/P1対応不要なし/時刻のみCPIなし/裸LOW RISKなし等)。判断ロジックの安全側修正のみ。'],
+  ['v12.0.8', 'OSINT帰属・イベント日付真実・スタンス統一（V12.0.8） — 実運用初日のオーナー報告5件への対応。①銘柄カードの原因分析に「下落/上昇の候補原因」を新設: 候補を直接材料(公式/報道)・セクター/テーマ連想・マクロ・古い背景・不明に分離し、OSINT確度(高/中/低/不明)と「外れの可能性」を必ず添える。3営業日超の記事は主因候補外・14日超/日付不明は構造的に主因不可。浜松ホトニクスのようなケースは直接材料が無い限り「AI半導体バリューチェーン懸念の候補(テーマ連想)」として表示し、事実として断定しない(6965をAI半導体テーマに追加)②重要イベントは必ず「日付+時刻+あと何日」を表示(「21:30 JST 発表前」だけで今日に見える問題の根治 — CPIは公式BLS日程の7/14 21:30 JSTで正しく、表示だけが誤解を生んでいた)。日時不明イベントはData Qualityにフラグ③「単一の構え」チップを新設: Session Brief/優先度/計画/カードが同じ構えを表示(保有×P1リスクが「対応不要」になる矛盾を構造的に排除。イベント待ち中は買い増し系を強制保留・部分データ時は強気を判定保留へ)④PARTIAL DATAに理由(上位4件)と解消条件を明示⑤Regime Matrix(現在地)に軸の意味・入力・各点座標の内訳を追加し、データ欠損は中立(中央)に写像・部分データ時は「暫定」表示⑥「外部AIでOSINT診断」コピーを新設(候補原因・欠けているソース・直接vs連想を整理した検証依頼パック・自動送信なし・redacted対応)。売買指示なし・プライバシー保証不変。'],
+  ['v12.0.7', 'RC安定化パッチ — 最終監査P1六件のクローズアウト（V12.0.7・EC2/OpenD無操作） — 外部監査(敵対的レビュー)で見つかった6件を修正: ①見逃しフィードバックの公開GETを集計のみに施錠(自由記述・記事タイトル・URL等の本文はadmin限定 — 実データは0件で漏洩はありませんでした)②レガシー /api/state を公開redacted化(ログ本文・内部sentinel・執行系enumを公開面から除去。adminは従来どおり)③runtime-manifestの旧文言「bridgeが生きていればJPリアルタイム」を撤去し、メンテナンス確認済み+復帰4条件(メンテ完了→OpenD再起動・再ログイン→snapshot ret=0→必要ならORDER_BOOK ret=0)に更新④RC恒久ガードの対象に公開データ本体ルート8本を追加(需給?symbols=・銘柄別機関ビュー・フロー・セッションブリーフ・価格履歴・manifest・missed等)し「全数」の過大表記を「代表・高リスク」に修正⑤「高リスク保有時は畳んでいても自動展開」を実挙動に(リスク判定の非同期到着後にも開くよう修正。ユーザーの畳み設定自体は書き換えず、リスクが去れば元どおり)⑥JSF貸借残の鮮度が日付形式の問題で常に「不明」だった計測バグを修正(実測でfresh/recent表示に)。おまけ(P2): ファンド系フィールド名を漏洩検知網に追加/日付不明の古い機関記事もカードから除外/詳細データ内の二重「理由を詳しく調べる」を解消/投信のstale判定を7日→10日(「週1程度でOK」と整合)/旧HANDOFF文書に非推奨マーク。判断ロジック不変・プライバシー保証強化のみ。'],
+  ['v12.0.6', '安定化ハウスキーピング+オーナー報告3件の根治（V12.0.6） — ①銘柄カードの機関ニュース(INSTITUTIONAL VIEW)を日本語優先に修正: 英語見出しはそのまま出さず「翻訳待ち」+原文折りたたみで表示し、自動で翻訳キューに載せて巡回が日本語化。さらに14日より古い記事は「現在の動き」の説明から構造的に除外(2024年の格下げ記事が増幅要因として並んだ問題の根治)②保有銘柄の需給ランクが出ない問題を修正: デバイスのウォッチリスト銘柄(6965/7011等)をサーバー固定リスト外でも需給判定に含める(初回はJSF貸借残ベース・30分毎のcronが信用残/日足も自動ウォーム)③「理由を詳しく調べる」即時調査ボタンをカードの「詳細データ」折りたたみの外に常時表示(v11.21の圧縮で埋まっていた — 値動きタイムライン/原因分析は消えておらず「詳細データ」内にあります)④Todayの折りたたみ状態を端末内に記憶(再訪しても保持・「セクションの開閉状態をリセット」で既定へ・高リスク時の自動展開は記憶より優先)⑤機関シグナルの鮮度を実測化(収集cronの最終成功時刻 — 未収集はunknownのまま捏造なし)⑥FIRE Coreに「投資信託はリアルタイムでなくてOK・週1程度の評価額更新で判定に使えます」を明示し、古い評価額には最終更新日と次の一歩を表示⑦JPメンテナンス文言を全画面で「サポート確認済み」に統一・AI Review PackのJP注意書きを簡潔な1行に統合。判断ロジック・プライバシー保証は不変。'],
+  ['v12.0.5', 'JP APIメンテナンス「確認済み」へ昇格+復旧ランブック（V12.0.5・EC2/OpenDは無操作） — moomooサポートの正式回答を反映: ①日本株API相場情報サービスのメンテナンスがOpenD APIのJP snapshot / ORDER_BOOKに影響していることが確認されました(「疑い」から「サポート確認済み」に表示を更新)②Data QualityのJP READINESSが「復旧待ち」を表示: フル板契約は済んでおり追加申込は現時点で不要・復旧時期は未定・復旧後はOpenDの再起動・再ログイン後にret=0確認が必要③復帰条件を4点に明確化(メンテナンス完了→OpenD再起動・再ログイン→JP.5803/8058/9984 snapshot ret=0→板情報を使う場合はJP.5803 ORDER_BOOKもret=0)。US-only解除手順はret=0実測まで引き続き非表示④bridge/README.mdにメンテナンス復旧ランブック(v12.0.5): 完了待ち→市場時間外に作業→OpenD再起動・再ログイン(SMS/図形認証の可能性・認証コードやパスワードはチャットに貼らない)→再テスト→ret=0のときだけ解除→失敗時はUS-onlyへ戻して再試行しない⑤AI Review Packの鮮度注意も確認済み文言へ更新。今回もEC2再起動・OpenD操作は一切していません。復旧までの運用は変わらず「USリアルタイム+日本株代替データ」です。'],
+  ['v12.0.4', '見やすさ2件+JP APIメンテナンス認知（V12.0.4） — ①需給ランクの色を全ランク明色に変更(C/不明が暗すぎて読めない問題の修正。S/A=緑系・B=シアン・C=明グレー・D=琥珀・E=赤・不明=グレー。ランクの意味は不変・色だけ)②トップページの重要イベント各行に「これは何」の一言概要を追加(NFP/CPI/FOMC/日銀会合/国債入札など主要12種。予測や方向は書かない平易な説明のみ)③JP APIメンテナンス認知: moomooサポートの回答(日本株/SG/MY株APIの相場情報サービスはコンプライアンス対応でメンテナンス中)と、アプリ内で日本株フル板契約済みでもOpenD API側ではJP snapshot / ORDER_BOOKがまだ利用できない実測(2026-07-06確認)を、Data Qualityの「JP REALTIME READINESS」に反映。現在の安全運用=USリアルタイム+日本株代替データ(J-Quants/Yahoo)。復帰条件は変わらずJP.5803/8058/9984のsnapshotテスト成功で、それまでUS-onlyを維持(アプリ側のコード変更では直りません)。AI Review Packの鮮度注意も同じ事実に更新。EC2/OpenDには一切触れていません。'],
+  ['v12.0.3', 'OpenD再起動安全化（V12.0.3・EC2は無操作） — ①EC2ブリッジのheartbeatに自動復旧の自己申告を追加(opend.service/argus-bridgeのenabled状態+OS再起動要求の有無 — enabledフラグのみで秘密ゼロ)。EC2側でgit pull+bridge再起動すると、Data Qualityの「REBOOT SAFETY」が推測ではなく実測表示になります②新スクリプト bridge/scripts/check_reboot_readiness.sh: 再起動準備を秘密ゼロで判定(bridge/opend enabled・OpenDポート・reboot-required・次の一歩。ポート確認はssでありps/pgrepは不使用)③opend.service例はv11.5.9の安全設計を維持(資格情報はunit本文に一切書かない・OpenD.xml前提の検証手順つき) — 今回もデプロイはしていません(このセッションからEC2に接続できず、OpenDの自動ログイン検証はEC2上でしか行えないため。盲目的デプロイは稼働中のUSリアルタイムを壊すリスク)④再起動前チェックリストにバックアップ確認・US-only維持・readiness判定を追加⑤テスト: bridge enabledだけではrebootSafe=trueにならない/restart required表示があっても自動復旧未確認なら非推奨/unit・スクリプト・ランブックの秘密ゼロ検査。'],
+  ['v12.0.2','JPリアルタイム復帰準備+EC2再起動安全（V12.0.2） — ①Data Qualityに「JP REALTIME READINESS」: 現状=moomooのJPN Stocksクォート権限がないため日本株リアルタイムは利用できません(アプリ側のコードでは直せない事実を明示)。US-only modeで運用中・日本株は代替データで判定。復帰条件=JP.5803/8058/9984のsnapshotテストがret=0。**US-only解除手順は「復帰準備OK」が実測できた時だけ表示**(それまでは「まだUS-onlyを外さないでください」)。No permission失敗時のロールバック手順は常設②「REBOOT SAFETY」: OpenDの自動復旧が未検証のためEC2再起動はまだ非推奨と明示(System restart required表示だけで再起動しない)。bridge/README.mdに再起動前後チェックリスト+JP復帰/ロールバックのランブック(秘密値なし・生のps/pgrep禁止)③権限状態はheartbeat実測からのみ導出(未テストは「権限テスト未実施」— 捏造なし)。EC2/OpenDには今回も一切触れていません。'],
+  ['v12.0.1','RC検証パッチ（V12.0.1） — 公開URL監査とJP表示の最終確認。①JPリアルタイムは意図的に無効のまま(日本株は代替データ=J-Quants/Yahooで判定・夜間/引け後delayedが正常) — この事実をAI Review Packの鮮度セクションに常設②Data Qualityの鮮度を実測化: JP代替価格の最終取得時刻とイベントカレンダーの最終生成時刻に計測点を追加(これまで「不明」だった2行が実測に)。同時に「データが存在すれば常に新鮮」と表示していた2行(イベント/機関)の偽装freshを廃止 — 実測できるまで正直にunknown③backendのルートURL(Render)に「これはbackend health画面・アプリ本体はPages側」の明示バナー(バージョン表記はbackendシェルの版でアプリとは別)④Data QualityにbridgeVersion注記(ブリッジスクリプトの版はアプリと別管理)⑤公開エンドポイント全数の漏洩・JP稼働主張ゼロを本番実測で再確認。'],
+  ['v12.0.0','ARGUS Pro Release Candidate（V12.0.0） — 新機能の追加ではなく、全レイヤーの統合・一貫性・信頼性の最終仕上げ。①情報アーキテクチャ監査: Backupページ移設前の古い導線文言(通知・Today警告内)を全て更新②禁止語彙の全域監査: 執行語(今すぐ買え/売れ・成行・全力買い)・確率断定(%の確率・到達年・達成確率)・JPリアルタイム稼働主張・broker連携主張がゼロであることを確認し、公開全エンドポイント横断のRCテストとFEソース検査で恒久ガード化③用語統一の検査: 押し目限定/追いかけ注意/イベント待ち/改善中だが重い/意図的に無効/判定保留 がPython・TypeScript両エンジンで一致することをテストで固定④GuideにPro RC運用ステータス(稼働モジュール一覧+既知の制約9項目+確認場所)⑤モバイルRC総点検(横スクロールなし・全ページ到達・スティッキーバー・コピー操作)⑥プライバシー: 公開エンドポイント全数の漏洩監査green。判断ロジックは不変。'],
+  ['v11.22.0','Admin / Data Quality Console（V11.22.0） — 「今の判断は最新データに基づいているか」に答える運用点検ページを新設(左ナビ下段・BackupとGuideの間)。①総合ステータス: 正常/一部劣化/警告/重大を決定論スコア(重要ソースstale=警告・bridge停止/漏洩ガード異常=重大)②ソース鮮度: USリアルタイム/JPフォールバック/JSF貸借残/J-Quants信用残/投信NAV/暗号資産/FRED金利/イベント/機関 — サーバーが実測できたタイムスタンプのみで判定し、測れないものは「不明」(捏造なし)③意図的な無効(JPリアルタイム=moomoo権限なし・逆日歩・銘柄別空売り比率)は「仕様」と明示し絶対に障害扱いしない④bridge/OpenDセグメント状態+heartbeat⑤エンジン健全性(サーバー側+端末側)⑥漏洩ガード自己検査(自分の出力に機微フィールドが乗れば即critical化)⑦異常時の安全な手順(bridge/scriptsの4スクリプト参照・秘密値なし)⑧Todayにはwarning/critical時のみ一行警告(静かな日は出ない)⑨AI Review Packに「データ鮮度の注意」セクション(レビュアーが古いデータ由来の判断を割引ける)⑩日次スナップショットに当日のデータ品質を記録⑪公開 /data-quality(+/status)はredacted(保有・秘密ゼロ・3層テスト+smoke検査)。'],
+  ['v11.21.0','モバイルUX / 情報圧縮（V11.21.0） — iPhoneで開いて10秒で「今日の作戦/P0の有無/危ない保有/どのカードを開くか」が分かる構成に。①Todayの低優先セクション(BIG MONEY/FLOW・PORTFOLIO EXPOSURE・SUPPLY/DEMAND・RECOMMEND・FX/MACRO・HISTORY)を「件数+最重要度+一行結論」の折りたたみに変更(開くまで描画しない=モバイル高速化。保有リスクhigh以上のEXPOSUREだけ自動展開)②銘柄カードの並びを 構え(計画)→優先度→シナリオ→需給 に再編し、TIMELINE/CAUSE/原因スタックは最下部「詳細データ」に常時折りたたみ③長い日本語段落は一文目+「続きを見る」(計画サマリ・需給why)④免責はカード内1回だけに集約(各セクションで繰り返さない)⑤モバイル(720px以下)に下部要約バー: 今日のモード/P0件数/次イベント/未読通知(コンテンツを隠さないspacer付き・desktop非表示)。判断ロジック・レート制限・プライバシー挙動は不変。'],
+  ['v11.20.0','Pro Handoff 2.0 / AI Review Pack（V11.20.0） — 「AIに相談」を構造化パックに刷新+Backupボタン位置修正(オーナー指示: ナビ最下部・Guideの直上へ)。①パック5種: デイリー/銘柄別/ポートフォリオ・FIRE/イベント別/緊急(P0時のみ)②プライバシー3択: フル(サーバー文脈込み)/短縮(上位論点のみ)/redacted(個人投資情報を除外)③階層固定: 質問→構え→Top risks→レイヤー集計→Assets(銘柄別は1回だけ)→不足データ→反対view→レビュアー指示文 — 同じイベント要約・需給文を繰り返さない④コピー場所: Todayの「AIに相談」メニュー/銘柄カード/Core Portfolio/重要イベント各行/P0発生時の緊急ボタン⑤旧handoff(レイヤー別文の鎖状連結)はパックに統合⑥秘密(パスフレーズ/暗号文/トークン/バックアップJSON)と執行語は構造的に排除(テスト検査)⑦外部AIへの自動送信なし・サーバー保存なし(公開 /review-pack/status はフラグのみ)。'],
+  ['v11.19.1','Backupページ新設 + FIRE Core/投資信託トラッカー（V11.19.1） — ①【オーナー指示】バックアップ操作の集約: ④Core Portfolioと⑤Guideに散在していたバックアップ関連(パスフレーズ設定・JSON書き出し/読み込み・スナップショット・復元ドリル・BACKUP SAFETY)を、新設の「Backup」ページ(左ナビ下側・Guideの上)に集約。保存仕様・暗号化仕様は変更なし②FIRE Core: 投資信託をFIREの本丸資産として明示追跡 — Core Portfolioに「FIRE CORE / MUTUAL FUNDS」(投信合計・毎月積立・戦術枠/Core比の帯・評価額鮮度)。口数×日次NAVで自動、無ければ現在評価額の手動入力(リアルタイム不要・捏造なし)。口座区分・毎月積立額の入力に対応③戦略連動: FIRE Core未入力→整合判定は保留のまま/戦術枠が本丸比で大きい→警告/個別株の利益は本丸へ移す候補として提示④カードの役割チップが投信は「FIRE Core」表示(積立/鮮度付き)⑤Todayに評価額未更新/未入力/比率悪化時だけ一行注意⑥通知は悪化転換のみ(週1上限)⑦日次スナップショットにFIRE Core状態を記録⑧公開 /fire-core/status はredactedフラグのみ(サーバーはファンド名・口数・評価額・積立額を一切知らない)。'],
+  ['v11.19.0','Portfolio Strategy / FIRE Alignment（V11.19.0） — 短期の計画とFIRE目的を接続する戦略層。①Core Portfolioに「PORTFOLIO STRATEGY / FIRE ALIGNMENT」: 戦略モード(FIRE成長型/バランス型/戦術寄り)・コア/サテライト/戦術枠の比率・FIRE整合(整合〜不整合の帯のみ)・リスク予算(戦術枠 余裕あり〜超過)・最大の戦略リスクと機会・ストレスシナリオ・不足データ②銘柄カードPOSITION PLANに役割チップ(コア/サテライト/戦術枠/ヘッジ/監視のみ)+追加方針③Todayに戦略の一行注意(戦術枠超過/1銘柄集中危険/テーマ集中/FIRE整合悪化の時だけ)④Entry/Exit Planningへ制約供給: 勝負枠超過・テーマ集中時は好条件でも押し目限定に降格⑤通知は戦略リスクのmaterialな悪化転換のみ(超過入り/危険水準入り/FIRE整合悪化)⑥日次スナップショットに戦略状態を記録(後日「超過警告はドローダウンを防いだか」検証用)⑦Pro Handoff/AIレビューに戦略セクション(反対view付き)⑧現金・積立額・ローン等の未入力は「不足データ」と正直表示(捏造なし)⑨公開APIはredactedステータスのみ(サーバーは保有・比率・FIRE状態を知らない)。概算であり免許業の助言ではない。'],
+  ['v11.18.0','Entry / Exit Planning 計画アシスタント（V11.18.0） — 「今から入っていいか/買い増ししていいか/一部利確すべきか/持ち越していいか」に計画で答える層。①銘柄カードに「POSITION PLAN」: 現在の構え(待ち/押し目限定/小さく可(注意付き)/追いかけ注意/リスク確認が先/一部利確を検討する局面/保有点検)+入る条件・保有の監視条件・利確検討条件・やらないこと・無効化条件・シナリオ連動②Todayに計画上位のみ(保有リスク→イベント待ち→追いかけ注意→追加候補・溢れさせない)③Core Portfolioに「PORTFOLIO PLANNING」(どこで追加可/ブロック/利確検討/イベント待ちか)④執行語(今すぐ買え/売れ・注文)は構造的に禁止(テスト検査)・注文機能なし⑤イベント前は判断ブロック/比率の高い保有は追加より先にリスク確認/「改善中だが重い」は押し目限定/踏み上げは追いかけ注意/PTS・プレの薄商いで判断しない警告⑥価格レベルは捏造せず定性条件のみ(出る場合も注文価格ではなく確認ポイント)⑦通知はmaterialな計画転換のみ(保有×リスク確認入り・追加候補→追いかけ注意)⑧日次スナップショットに計画を記録(後日の答え合わせ用)⑨Pro Handoff/AIレビューに計画セクション⑩公開APIはウォッチリスト水準のみ。計画であり売買指示ではない。'],
+  ['v11.17.0','Scenario Engine 条件付きシナリオ（V11.17.0） — 「明日どうなる?」に単一予測ではなく条件付きの分岐で答える層。①各銘柄カードに「SCENARIOS」: ベース/強気(成立条件付き)/弱気/踏み上げ→失速(買い戻し主導なら一巡後に失速しやすい)/イベント待ち を既存レイヤー(需給・フロー・イベント・レジーム・保有リスク)から決定論合成。確率は帯のみ(優勢/中程度/成立条件付き/判定保留)で%断定なし②各分岐に無効化条件・次の確認・何が変われば判断が変わるかを必ず併記③「改善中だが買い残が重い」は上値吸収の確認まで強気扱いしない/イベント前は攻めの支配シナリオを出さない④ACTION PRIORITYのP0〜P2に支配シナリオ一行⑤Market Contextに地合いシナリオ一文⑥Core Portfolioに「PORTFOLIO SCENARIO」(保有全体の分岐・端末内合成)⑦通知は保有×弱気転換のみ(重複排除+クールダウン)⑧日次スナップショットに当日の支配シナリオを記録(後日の答え合わせ用)⑨Pro Handoff/AIレビューに反対シナリオ付きで連携⑩公開APIはウォッチリスト水準のみ(保有文脈は端末内)。条件付きシナリオであり予測でも売買指示でもない。'],
+  ['v11.16.0','Backup Safety / Vault Guard + 復元ドリル（V11.16.0） — 貯まった端末内データ(保有/スナップショット/判断記録/通知/学習)の保護状態を見える化。①判定(端末内): 保護済み/一部保護/未保護/判定保留 — vault同期の新しさ・スナップショット・エクスポート・復元確認・競合から決定論分類(不明はunknownと正直に・穏当な語彙のみ)②復元ドリル(非破壊): エクスポート→スキーマ検証→プレビュー読み戻し→保有/スナップショット/判断記録の件数照合。既存データは一切変更せず、成功時のみ「復元確認済」に③Core PortfolioのBACKUP SAFETYバナー(保護チップ+リスク+次の一歩+何が消える可能性があるか)+復元ドリルボタン④Todayに未保護×保有あり時のみ一行警告(保護済みなら出さない)⑤通知に「復元未確認」(週1回上限)追加⑥インポート強化: 置換モードは明示確認ダイアログ必須(黙って消さない)⑦公開 /backup-safety/status はアーキテクチャ事実のみ(サーバーは保護状態・パスフレーズの有無・ペイロードを知らない)。パスフレーズ/暗号文/トークンの出力ゼロをテストで担保。'],
+  ['v11.15.0', 'Learning Dashboard / Decision Review（V11.15.0） — 判断記録を「学び」に変える層。①純モジュール(argus_learning_review+TS版): ラベル別メトリクス(判断文脈/需給ランク・状態/フロー/優先度/通知種別/セッションモード/オーナー行動)を端末内記録から集計 — 支持/反証数・1d/3d/5d/20d平均リターン・平均最大押し/上げ・(n≥20のみ)5d勝率②サンプル規律を厳格化: n<5=履歴不足で判定保留・5-19=初期傾向(low)・20-49=中程度・50+=強め(慎重)。少数サンプルを成績として扱わない旨を全出力に明記③控えめ解釈: 「追いかけ注意は有効に見えます/保守的すぎる可能性(要履歴確認)」「押し目限定は機能/機会を逃している可能性」「改善中だが買い残が重い→続伸か戻り売り失速かを別枠追跡(需給良好に合流させない)」「P0/P1は価格不動でも誤り判定しない」④UI: Core Portfolio「LEARNING DASHBOARD」(サマリ+ラベルカード+例+caveat)・銘柄カードに過去パターン一行・通知パネルに「有用性は学習中」注記・AIに相談へ学習サマリ⑤公開 /learning-review/status はredacted(サーバーは記録を持たず計算もしない)。捏造ゼロ・過大主張ゼロ・売買指示なし。'],
+  ['v11.14.0', '通知エンジン+需給の過剰A修正+イベント表示の完全集約（V11.14.0） — ①【オーナー指摘】CAOS内の「イベント評価」コーナーを完全撤去し、概要/事前予想/答え合わせに加えて「この先の重要イベント」一覧もトップの統合イベントカードへ全移行(接近すると自動で上段に昇格して事前予想が付く)。「カレンダーを見る」はMarket Contextのイベントカレンダー先頭へ確実に着地(遅延マウントによるズレも再スクロールで固定)②【GPT指摘・需給修正】フジクラがA判定になった問題の根治: 「買い残が前週比で減った=改善方向」と「需給良好」を分離。買い残水準(信用倍率と出来高日数の悪い方)がheavy/very_heavyの間はA/S禁止(上限B/C・rankCapReason表示)。新状態「改善中だが信用買い残はまだ重い」(方向=改善・水準=重い を別表示・買い増しは押し目限定・Flowの買い集め解釈も引き続き減点・通知も「まだ重い」と正直に)③通知エンジン: 変化検知のみ(新P0=最優先/保有P1入り=重要/イベント前/Flow悪化/需給D-E入り/踏み上げ/追いかけ注意/作戦更新/バックアップ警告)。重複排除+クールダウン+1日12件上限+静音23-6時+週末カーム。ヘッダーのベル+Today上部にcritical/high帯+AIに相談へ変化サマリ。端末内生成・保存で外部送信なし(push/メールはdisabledアダプタのみ)④公開 /notifications/status はredacted(サーバーは通知を保持しない)。売買指示・自動売買なし。'],
+  ['v11.13.0', 'Morning / Session Brief Engine（V11.13.0）+ v11.12.2修正同梱 — ①【修正】CAOSのイベント評価がトップカードに集約されず残存+同文AUCTION二重表示を根治(トップカード項目に日付が無いとdedupeキーがTITLE:形式に劣化して照合が永遠に失敗→eventCode一致も「統合済み」扱いに。AI文はeventCodeキーのため10年債/30年債入札が同一文を2連発→コード毎1行に)②Session Brief: Action Priorityを「今日の作戦」1枚に要約。攻める日/待つ日/守る日/監視の日/反省・記録の日 のownerMode+見出し+要点+「やらないこと」+「次の確認」+「引け後にやること」。P0があれば見出し必須・イベント前は攻めない・保有リスク先出し・矛盾は判断保留・週末はレビュー体裁③セッション自動判定(寄り前/ザラ場(東京/米国)/引け後/週末)④配線: Todayの最上部「SESSION BRIEF」・Market Contextに今日のセッション一文・Pro Handoff/AIレビューにSession Brief(サーバー=watchlist水準+アプリがローカル保有加味版を付加)・日次スナップショットに朝ブリーフ当時値(後日の答え合わせ用)⑤公開 /session-brief(+/status)はウォッチリスト水準redacted(非漏洩テスト)。売買指示・自動売買なし。'],
+  ['v11.12.0', 'Action Priority Engine（V11.12.0） — 全レイヤーを「今日これを見る」に統合する注意配分層。①純モジュール(argus_action_priority+TS版・決定論): 保有(+30)・大口ポジション・集中度・需給D/E・フロー売り圧・急落・レジーム逆風・追いかけリスク・イベント待ち・データ欠落を加点合成し、P0〜Ignoreへ決定論ランク。P0は保有×複合悪材料(2レイヤー以上)のみで乱発しない②イベントゲート: 重要イベント(D-1/当日)は買い増し系ラベルを「イベント待ち」に強制変換し、何を確認してから動くかを明示③踏み上げ候補は絶対に買いラベルにならない(追いかけ買い注意へ)・需給保留はポジティブ扱いしない・見出しのみ機関シグナルは低確度④判断品質の履歴は確度±0.05の控えめ調整のみ(ランクは変えない=過学習防止)⑤保有×データ不足は「データ確認」として必ず浮上(隠さない・偽装しない)⑥UI: Todayの上部に「ACTION PRIORITY」(P0/P1/P2チップ・保有バッジ・なぜ/次に確認/変化条件・重要度低は折りたたみ)・銘柄カード内ノート・Pro Handoff/AIレビューにサマリ(サーバー側=watchlist水準・実保有加味はアプリがローカル付加)⑦日次スナップショットに上位7件(rank/actionLabel/blockingReason)を記録 — 後日「P0/P1は本当に重要だったか」「イベント待ちは早まった判断を防いだか」を検証可能⑧公開 /action-priority(+/status)はウォッチリスト水準のみ(isHeld=unknown・保有情報は構造的に含まれない・非漏洩テスト)。売買指示・自動売買なし。'],
+  ['v11.11.0', 'Decision Quality / Backtest Foundation（V11.11.0）+ 米国株需給の簡易対応 — ①【オーナー質問対応】「アメリカ株の需給は?」: 米国には信用残・日証金に相当する公開日次データが無いため、実測大口フロー(ブリッジ・米国のみの強み)+出来高+価格構造で需給ランクを簡易判定(良好/やや良好/戻り売り注意/悪化)。FINRA空売り残(隔週)・貸株フィーは未取込と明示し、踏み上げ/信用過多系の判定はできないと正直表示。確度は0.6上限・Sランクは日本株専用のまま②判断の答え合わせ基盤: 日次スナップショット時に判断記録を自動作成(当時の価格・需給ランク・フロー・レジームを不変で保存・銘柄+文脈+日付で重複排除)。1日1回、公開価格履歴(日足キャッシュ)からその後の1d/3d/5d/20dリターン・最大押し/上げを端末内で計算し、控えめに解釈(支持/反証/中間/保留 — 材料変化時は「単純比較はできません」)。欠損価格はinsufficient扱いで捏造ゼロ③オーナー行動注釈(任意・端末内のみ): 買った/買い増した/持ち続けた/見送った等をワンタップ記録 — 自動検出・ブローカー連携なし④履歴が浅いうちは「成績としては扱わないでください」を常時表示、ラベル別傾向はn≥5から⑤UI: Core Portfolio「DECISION QUALITY」・銘柄カード「DECISION HISTORY」・AIに相談/AIレビューに履歴チェック行⑥公開API: /decision-quality/status(構成情報のみ・記録はサーバーに存在しない)・/price-history(日足キャッシュ・端末内更新器用)。自動売買・成績断定なし。'],
+  ['v11.10.0', 'Supply / Demand Intelligence（V11.10.0） — 日本株の需給を「状態」として読む層を新設。①純モジュール(argus_supply_demand・決定論): 週次信用残(買い残/売り残・前週比)+日証金貸借残(融資残/貸株残→貸借倍率)+平均出来高から、買い戻し何日分(days to cover)・信用買い残の重さ(平均出来高何日分)を計算し、需給ランクS〜E/保留と状態(踏み上げ注意/信用買い残重い/戻り売り注意/需給改善/需給悪化/薄商い/催促相場)に分類②正直さ: 逆日歩は未取込と明示(捏造しない)・銘柄別空売り比率はJ-Quants Standard未提供と明示・データ欠落はランク保留+「暫定」表示・Sランクは両データ(信用+貸借)が揃った時のみ③Flow統合: 売り長→買い戻し解釈を支持(SD_SQUEEZE_SUPPORT)・信用買い残重い→買い集め解釈を減点(SD_CREDIT_OVERHANG)。Flowカードに「需給は買い戻し解釈を支持」等の補助線④保有連動: 保有銘柄が需給D/Eなら保有リスク警戒を引き上げ・買い増し余地もD=押し目限定/E=見送りに⑤スナップショット統合: 需給ランク当時値を日次スナップショットに記録し、後日「A/Bは続伸したか」「D/E警告は正しかったか」を検証可能に⑥UI: Today「SUPPLY / DEMAND」(JP上位・ランク+チップ+なぜ+次確認)・銘柄カード内ノート・生数値は「詳細データを見る」折りたたみのみ⑦GET /api/argus/supply-demand(+/status: 有効/無効ソースと理由)。売買指示・自動売買なし。'],
+  ['v11.9.0', 'Portfolio Sync / Snapshot Foundation（V11.9.0）+ v11.8.1修正同梱 — ①【修正】銘柄検索の「混雑しています」頻発を根治: 検索はアプリ自身の15秒ポーリングとレート予算(同一IP)を共有していたため、Mac/iPhone/iPad同時利用でポーリングが予算を食い尽くすと検索が429になっていた→検索専用の独立バケツに分離+ポーリング予算を90→140/分に増枠②【修正】XRP/SOLの金額が出ない件: 追加時に検索候補をクリックしないとCoinGecko IDメモが付かず、価格取得対象から永久に外れていた→主要21通貨はシンボルから自動解決(既存銘柄も次回表示から価格が出る)③同期3層アーキテクチャを正式化(docs/portfolio-sync-architecture.md): ローカル/私的クラウド(=既存パスフレーズvault・暗号文のみ)/スナップショット監査。サーバー平文同期はコードレベルで無効④日次自動スナップショット: Todayを開くと1日1回、保有サマリ・露出・リスク・買い増し余地・当時価格を端末内に記録(60日分)。判断監査レコード(将来リターンplaceholder付き)で後日の答え合わせに備える。どちらも暗号化バックアップに同乗し恒久保存+端末間同期⑤Core Portfolioに「PORTFOLIO SYNC & BACKUP」: 保存モード表示・バックアップJSON書き出し/読み込み(プレビュー→統合/置換選択・検証失敗は拒否・ファイル内容は実行しない)・手動スナップショット⑥公開 /portfolio-sync/status は層の状態のみ(機微フィールドのトリップワイヤ検査をpytest+smoke両方に追加)。ブローカーログイン・自動売買なし。'],
+  ['v11.8.0', 'Position / Exposure Engine（V11.8.0） — ARGUSが「あなたの実際の保有」を理解してリスク点検する層を新設。①純モジュール(argus_position_exposure+TS版・決定論): Position(数量/取得単価/通貨/口座区分/データ出所/鮮度)とExposure(テーマ別・通貨別・市場別配分、Top1/3/5集中度、AIテーマ合計、金・暗号資産比率、不明シェア)を計算。閾値は明示(1銘柄15/25/40%・テーマ25/40%)②保有リスク信号: 集中/テーマ過密/含み損(−15%でナンピン前に原因確認)/保有銘柄への売り圧力推定(Flow連動 — 監視なら様子見・保有中なら優先確認)/イベント接近/データ古い を日本語で「なぜ・次に何を確認」付きで表示③買い増し余地: 急騰直後=追いかけ買い注意、イベント直前=見送り、1銘柄25%超=分散が先、テーマ40%超=押し目限定、リスクオフ×高ベータ=押し目限定、ブロック無し=小さく買い増し可(売買指示ではない)④配線: Today「PORTFOLIO EXPOSURE」・銘柄カード「POSITION / EXPOSURE」(保有中/監視のみ・含み損益・全体比・買い増し余地)・Core Portfolio「EXPOSURE DASHBOARD」・Market Context「PORTFOLIO SENSITIVITY」(例: AI比率が高いので金利上昇局面は向かい風/金が下支え)・「全体をAIに相談」とAIレビューシートに実保有サマリをコピー時にローカル付加⑤★プライバシー設計: 保有数量・単価・評価額は従来どおり端末localStorage内でのみ計算。サーバーへ送信・保存されず、公開API(/position-exposure/status)は銘柄数ベースのテーマ偏りだけを返す(構造的に漏洩不可・テストで担保)⑥未入力は「暫定」と正直表示・数値捏造なし・自動売買/発注なし。'],
+  ['v11.7.0', 'Big Money / Flow Attribution Engine（V11.7.0） — 「これは大口の新規買いか、買い戻しか、個人の追随か」に証拠ベースで答える層を新設。①純モジュール(argus_flow_attribution・決定論): 値動き/出来高比/直近助走/終値位置/ギャップ/実測大口フロー(米国ブリッジ)/信用残(J-Quants週次)/JSF貸借残/機関シグナル(v11.6.0)/レジーム/本日イベント/テーマ同時変動 を統合し、大口買い集めの可能性/買い戻し(踏み上げ)の可能性/個人の追随買い/利益確定売り/大口の売り抜け/狼狽売り/テーマ資金流入・流出/イベント起点/薄商いノイズ/混在/不明 の型に分類②語彙の規律をコードで強制: 断定表現(「大口が買っている」)は禁止、direct evidence(実測フロー)がある時だけ「実測データあり」と表示し、推定は常に推定と明示。確度が高くない時は「足りない証拠」(実測フロー/空売り比率/信用残/終値位置)を必ず列挙。データ2時間超は鮮度低下で確度上限③実測と推定の分離: directness=実測データあり/値動きからの推定/弱い状況証拠/証拠不足 の4段。JPのmoomooリアルタイムは意図的に無効(7/3事変)のため、JPは常に代替データ推定でエラー扱いにしない④含意は 要調査/確認待ち/追いかけ買い注意/監視/警戒/対応不要 のみ(売買指示ゼロ・自動売買なし)⑤配線: Today「BIG MONEY / FLOW」セクション・銘柄カード(原因の詳細)にFLOW(推定)・Market ContextにFLOW BIAS(流入型/流出型の偏り)・Pro HandoffにBig Money セクション(最強の反対解釈付き)⑥GET /api/argus/flow-attribution(?symbol=単体/無指定=本日の材料株)・/status(証拠の可用性・欠損集計。JP flow=falseは意図的)。全recordにreasonCodes+時刻を保存し将来のバックテスト(1d/3d/5d/20dリターン照合)に備える⑦英文ニュース表示の根治: 機関シグナル見出し・即時調査(sweep)結果・レジームテーマ例文をdisplayTitleJa(日本語優先+翻訳キュー)化 — 「ニュースは必ず日本語で」ルールを機関レイヤーにも適用。'],
+  ['v11.6.0', 'Institutional Intelligence Layer（V11.6.0） — C.A.O.S.の機関検出を正式なシグナル層に昇格。①シグナルモデル(argus_institutional_intel・純・決定論): 発信元(投資銀行/証券/メディア/中銀/政府/取引所)・ティア(primary/high/medium/low)・スタンス(Bullish/Bearish/Mixed/Conditional — 「〜なら」は条件付き優先)・主張種別(格上げ/格下げ/新規カバレッジ/マクロ/業績/セクター/政策/需給/リスク警告/イベント前後)・直接材料/関連シグナル/背景情報/弱い文脈・「なぜ重要か」(日本語・経路を説明)・次に確認・含意(監視/確認待ち/警戒/要調査/追いかけ買い注意 — 売買指示は絶対に出さない)②本文が取れない見出しはheadline-only表示+確度上限0.4(捏造しない)。過去材料はcurrentに出さない③ソース登録簿: 仕様の全銀行(JPM/GS/MS/BofA/Citi/UBS/野村/みずほ/大和/SMBC日興/三菱UFJMS)は見出し内検出、FT/WSJ=metadata_only・Barrons/Investing.com=disabled等paywallを正直表示④配線: TodayのC.A.O.S.内にINSTITUTIONAL INTELLIGENCE(上位5件+なぜ重要か+免責)・銘柄カード(原因の詳細)にINSTITUTIONAL SIGNAL 2件・Market ContextにINSTITUTIONAL REGIME SIGNALS(リスクオン/オフ・利下げ/利上げ・AI設備投資・ローテーション・日本株フローの論調集計)・Pro HandoffにInstitutional Intelligence Summary(賛成/反対/条件付き/不足証拠/直接vs背景)⑤公開GET /institutional-intel/signals・/status(観測性: ソース成功/失敗・headline-only件数・無効ソースと理由)。取込は既存24/7巡回を共用(新規スクレイピングなし)。自動売買なし。'],
+  ['v11.5.9', 'OpenD 10.8.6818の運用ハードニング（V11.5.9 — P0.5） — 7/3-4障害復旧の運用化。①bridge/scripts/に安全スクリプト9本: OpenD/ブリッジ状態確認・プロセス表示・公開ステータス・図形認証(画像要求→scp→サイレント入力)・SMS認証(サイレント入力)・ブリッジ再起動。全出力からlogin_account/login_pwd/token/secret/hmac/auth/passwordを自動マスク(redactionは実行テストで担保)②bridge/READMEにOpenD 10.8ランブック: アップグレードチェックリスト・図形/SMS認証手順・US LV3/JP権限なし=US-onlyモードは意図的の明記・秘密をチャットに貼らない警告③opend.service.example(提案・未デプロイ): 引数なし起動案+OpenD.xml対応の事前検証手順+「-login_pwd引数はローカルprocess閲覧者に見える」残存リスクを正直に明記④テスト10本: redaction実効性・docs/scriptsに生秘密なし・旧10.7パスhardcodeなし・us_only=正常/JP disabled=グレー(故障扱いしない)。アプリ動作の変更なし。'],
+  ['v11.5.8', 'トップとWatchlistの銘柄数を一致（V11.5.8） — オーナー指摘。Todayページの各セクション(JAPAN/US/CRYPTO)が銘柄を10件で切り捨てており、バッジの数字も切り捨て後を表示していたため、登録が10件を超えるとWatchlistページと数が合わなかった。上限を撤廃し、Todayは常にWatchlistと同じ全銘柄を表示(初期表示5件+「SHOW N MORE」で全展開は従来どおり)。'],
+  ['v11.5.7', 'moomooブリッジの権限分離＋状態の透明化（V11.5.7 — 7/3 OpenD障害対応） — 7/3にEC2ディスク満杯→OpenD SMS再認証→日本株クォート権限喪失が重なりブリッジが49時間停止した教訓。①ブリッジがUS/JPを分離取得: JPの「No permission」はUSのpushを止めず、JPだけ30分バックオフ(ログも30分に1回・スパムしない)②ARGUS_DISABLE_JP_QUOTES=1でUS-onlyモード(JP push/watchlist取得/mover sweep/cap testを全停止)③60秒毎heartbeat(閉場中も送信): OpenD状態/最終push(US/JP別)/権限状態/ディスク使用率/モード④アプリの「システム状態」が分割表示に: moomooブリッジ(プロセス)/US realtime/JP realtime/EC2ディスクを独立評価。「全部緑=JPもリアルタイム」という誤読を排除 — JP権限なしは黄色「moomoo日本株クォート権限なし・代替データで判定」、US-onlyモードはグレー「無効化中」、OpenD SMS認証待ちは赤⑤公開GET /api/argus/bridge/status(セグメント状態・秘密なし)+admin診断(推奨アクション付き)⑥bridge/README.mdに運用ランブック(ディスク拡張/OpenD SMS/US-only化/full復帰/秘密の取扱い警告)。EC2側はgit pull+restartで反映。自動売買なし。'],
+  ['v11.5.6', 'ニュースは全画面で必ず最新が上（V11.5.6） — オーナー指示。C.A.O.S.ハブの市場ニュース・銘柄カードの関連ニュース(現在/過去両リスト)・「理由を詳しく調べる」の調査結果まで、表示される全ニュースリストを時刻降順(最新が上・下ほど古い)に統一。時刻不明のアイテムは必ず末尾に沈める(日付付きの新しい記事より上に出ない)。C.A.O.S.の日本語ニュース(NHK/日銀/ロイター等)は従来「JP優先で先頭固定」だったが、実時刻を持たせて時系列に正しく織り込むよう修正。backend(market-news/cause-attribution/source sweep)とfrontendの両方でソートし、smokeにも並び順チェックを追加。'],
+  ['v11.5.5', 'C.A.O.S.巡回の信頼性・24時間稼働証明（V11.5.5） — 「本当に動き続けているのか」を可視化・証明するフェーズ。①24時間巡回台帳(argus_caos_patrol_store・純): 巡回run・deep sweep・ソース別成功/失敗・最新記事時刻をローリング24時間窓で記録。dyno再起動後は/tmp→ledgerブランチのスナップショットからマージ復元(上書きではなく統合・古いスナップショットが新しい実行時状態を消さない)②baseline巡回の保証: active moverが空/未復元でもCore Portfolio 9クラスの基準巡回は必ず実行・記録され、「active mover sweepなし。Core Portfolio baselineのみ確認。」と正直に表示(無言の成功にしない)③GET /caos/patrol-health(公開): healthy/degraded/stale/error/not_readyを決定論的に判定 — 平日30分(週末90分)巡回なし=stale、baseline確認ゼロ=degraded、急変銘柄がいたのにdeep sweepゼロ=degraded、古いニュースがcurrent lead=error。24hのrun数/成功率/deep sweep数/ソース別health/対象別due状態/アラートを返す④POST /admin/caos/patrol-self-check: 軽量自己診断(基線ターゲット存在/台帳記録/最終巡回時刻/ソース生存/違反ゼロ)+修復アクション提案⑤watchtower-status/deep-research-statusにpatrolHealth参照を統合⑥workflowがpatrol-healthをledger/caos-patrol/latest.json+日付.jsonに保存(=再起動時の復元源)⑦UI: C.A.O.S.カードに「巡回稼働中/遅延/要確認」+「急変銘柄を優先巡回中/現在は基準監視のみ」、Guideのソース表に巡回状態行。near-real-time巡回でありtrue realtime端末ではない。自動売買なし。'],
+  ['v11.5.4', 'C.A.O.S. Always-On Deep Patrol＋「理由を詳しく調べる」の即時化（V11.5.4） — ①「理由を詳しく調べる」が単なる予約でなくなった: 押すとその場で即時ソーススイープ(POST /caos/investigate-now・公開・LLMなし・12秒予算・IP+銘柄レート制限)を実行し、確認ソース一覧/新材料/取得できなかったソース/代替確認を即表示。「次回自動生成で反映」はAI解説の補足のみ②Maximum Available Source Sweep(argus_caos_source_sweep・純): 公式(TDnet/SEC/公式イベント)→プロメタデータ(既存24hフィード)→discovery(Google News JP/US即時再取得+Finnhub)→公開本文プローブ(og:title/schema.org NewsArticle/canonical/AMP/published_time/snippet≤240字・本文は保存しない)→blocked代替追跡(見出しキーワードで他媒体/公式再検索)。403/ログイン/有料壁はblockedとして記録し突破しない③Always-On Patrol(argus_caos_patrol・純): 急変銘柄5分/ウォッチリスト15分/基線30分のクリック不要巡回。watchtower refreshがcritical/urgent対象を毎回深掘り。GET /caos/patrol-plan④No Stale News Gate強化: currentニュース=fresh/recentのみ・古い記事はcollapsed「過去ニュース」に隔離・7日超はデフォルト非表示・無ければ「最新ニュース未取得」⑤深掘り監査(GET /caos/deep-research/status): 最後の調査/巡回・過去材料しかない銘柄・old-news-as-primary違反検知(smoke監視)⑥Renderワーカー(scripts/caos_watchtower_worker.py・デフォルト無効・~5分間隔オプション)。自動売買なし・paywall/ログイン突破なし。'],
+  ['v11.5.3', 'C.A.O.S. Watchtower — 監視ソース体系の再設計＋古いニュースの完全降格（V11.5.3） — オーナー指摘「6/19のフジクラ記事が現在材料として出る」を根治。①News Freshness Gate(argus_news_freshness・純): fresh≤6h/recent≤24h/stale≤72h/old>72h。old/staleのニュースはbestLead/候補ステータスを獲得できず「過去材料(N日前)」として背景に降格。過去材料しか無い場合は「最新材料は未確認」+「最新ニュース/公式開示/出来高反応を再確認」を表示②Investment Universe(9資産クラス+eMAXIS積立3本=Core Portfolio準拠、GET /investment-universe)③Source Universe(資産クラス別の監視ソース登録簿: 公式/取引所/中銀・政府/プロメディア/専門メディア/市場データ/発見手段/弱シグナル/要契約、GET /caos/source-universe)。Google Newsは発見手段であり情報源ではない(見出しを真の発行元に解決して評価・集約単独では原因確定不可)。不明なSEOサイト/動画/SNSはweak_signal=判断根拠にしない。日経/Bloomberg/WSJ/FT本文は権利がない限り取得しない④Watchtower Plan(急変銘柄urgent>ウォッチリストhigh>マクロ連動>Core Portfolio基線、GET /caos/watchtower-plan)⑤admin巡回(POST /admin/caos-watchtower/refresh): 公開フィード+銘柄別発見(JP/US Google News discovery)+Finnhub。メタデータのみ・LLMなし⑥ソース鮮度status(GET /caos-watchtower/status): ソース別最終確認/最新アイテム経過/本日件数/資産クラス別カバレッジ/アラート⑦新フィード: NHK経済・CoinDesk・Cointelegraph(暗号資産に初のニュースソース)+Google News US⑧caos-watchtower.yml: 平日15分毎+週末毎時のnear-real-time巡回(24/365。完全リアルタイムではない)⑨UI: C.A.O.S.に確認時刻ライン+過去材料チップ(古いニュースは減光表示)、Guideにソース一覧表。自動売買なし。'],
+  ['v11.5.2', '「理由を詳しく調べる」導線の復活＋画面上の英語ニュースを確実に翻訳キューへ（V11.5.2） — ①AI解説が未生成でも押せる安全なボタン「理由を詳しく調べる」を復活。ただし公開クリックでAIは起動せず、調査キュー(POST /api/argus/mover-causes/explain-request・enqueue専用)へ追加するだけ。押すと「調査リクエスト済み」→次回の管理側定期生成で反映。生成後は同じ場所で「AI解説を開く」。重複排除・IP/銘柄スロットル・キャッシュ済みなら即cached_available②画面に出た英語ニュースは確実に翻訳キューへ(POST /api/argus/news/translation-request・enqueue専用): カード描画時にpending見出しをデバウンス登録し「翻訳取得中」→登録後「翻訳リクエスト済み」表示。翻訳前は英語を主表示せず日本語fallback、原文は「原文を見る」内。次回処理で実際の日本語へ置換③admin翻訳ワークフローは翻訳キューを最優先で消化(translate-visible→translate)④値動き候補のタイトルも英語なら日本語fallback＋原文退避(米国株の候補が英語のままだった問題)⑤GET /api/argus/news/translation-status に visibleQueue(件数/最古/最終処理)・可視翻訳率/キュー率・サンプルを追加。公開GET/POSTはLLMもproviderも呼ばない・秘密や本文は保存しない・自動売買なし。'],
+  ['v11.5.0', 'マクロ公式結果の拡張・市場反応の定量化・英語ニュースの日本語翻訳（V11.5） — ①公式結果アダプタをNFP以外に拡張(argus_macro_results・純): CPI/PPI/JOLTS(BLS)・PCE/GDP/FOMC(FRED)を実装。CPIは前月比/前年比・コア、FOMCは目標レンジ差分から利上げ/利下げ/据え置きを判定(ドットプロットは捏造しない)。日銀は信頼できる無料数値APIが無く公式声明URLのみのpartial・入札はnot_implemented。欠損指標は捏造せず未算出と明示②市場反応の定量化(argus_macro_market_reaction・純): 発表後の初回観測を基準に米10年金利/ドル円/SPY/QQQ/VIX/金/BTCの変化(bp/％)とriskToneを算出。データが無ければ「市場反応データ未取得」と表示し偽の数値は出さない。反応単独で原因確定しない③イベント種別ごとの決定論的な影響コメント(CPI/FOMC/日銀/GDP/入札)。公式結果がある時のみ生成④GET /api/argus/macro-events/result-status を全イベントコード対応に拡張・GET /api/argus/dashboard-events に市場反応数値を追加⑤admin refresh-market-reaction追加・マクロワークフローに市場反応ステップと発表後フォロー(14:30/20:30 UTC)追加。★オーナー対応: 英語ニュースは必ず日本語に翻訳してから表示(米国株カードのニュースが英語だった問題)。管理側でGeminiが翻訳してハッシュキャッシュ、公開GETはキャッシュ読取のみ(LLMを起動しない)。トップイベントカードは発表後、紛らわしい「答え合わせ済み」の代わりに囲み文字の「発表済」スタンプを表示。自動売買なし。'],
+  ['v11.4.1', '予定イベント表示をトップカードに統合＋NFP発表後モードのバグ修正（V11.4.1） — トップのイベントカードとC.A.O.S.下段で同じイベント文が重複し階層が不明瞭だった問題を解消。①新しい統一表示モデル(argus_dashboard_event_summary・純): ImportantEvents+マクロ分析(事前/公式結果/答え合わせ/市場反応/影響)を1つの表示モデルにマージ。GET /api/argus/dashboard-events(公開cached-only・LLM/取得なし)②表示状態を配信時に実時刻から再判定 — 発表前に生成された記録でも、発表後に読むと自動でpost/取得中モードへ切替(NFPが発表済みなのにpre表示のままになるバグを根治)。発表後は公式結果・影響を先に、事前シナリオは「事前シナリオ（当時）」として下段に③公式結果が無ければ「公式結果取得中」、答え合わせ未生成は「答え合わせ生成待ち」、事前未保存はnot_scoreable — いずれも捏造しない。事前シナリオをコンセンサスと呼ばない④影響コメントが空でも公式結果があれば指標に応じた決定論フォールバックを表示(雇用者数の伸びで金利/成長株の方向感・市場反応確認待ち)⑤C.A.O.S.下段のイベント評価は重複を排除し「トップカードに統合済み」に集約(機関シグナル/急落注視/ニュース等の未統合シグナルは従来どおり表示・トップ取得失敗時は従来表示にフォールバック)⑥admin repair-post-releaseで発表直後の停滞表示を一括修復・マクロワークフローに発表後ホット更新(12:35/12:45/13:30 UTC)追加。自動売買なし。'],
+  ['v11.4.0', 'Learning Memory基盤 — ARGUSが自分の履歴を「判断の教科書」に（V11.4.0） — モデルの重みは変えず、公式イベント・C.A.O.S.マクロ・急落急騰の原因候補・Visibility Guard・Calibration・Decision Valueの結果をpublic-safeに集計して次回判断へ参考として戻す、決定論的で監査可能なメモリ層。①純モジュールargus_learning_memory: コホート別(イベント種別/情報源/市場/銘柄/原因カテゴリ/マクロコード/可視性理由/ポリシー)に採点済み履歴を集計。n<10=burn-in(強くしない)/10-30=early/30-100=usable/100+=mature。pending・未採点は絶対にhit/missに数えない。少サンプルで強い確信度上限を作らない②現在の公式証拠・市場確認は履歴パターンより常に優先(Learning Memoryは注意喚起・確信度上限のみ、単独でBUY/SELLを作らない)③Evidence PackにコンパクトなlearningMemory(該当銘柄の教訓+上限+制限)を接続・AIプロンプトにも参考として渡す(burn-in時は過大評価しない指示)④Action Labelのconfidenceに履歴由来の上限を反映しdecisionRefs.learningMemoryUsedを付与⑤GET /api/argus/learning-memory(+/status・/lesson/<id>・/snapshot、全て公開cached-only・LLM/取得なし)、admin build/restore(token必須・LLMなし)⑥毎営業日21:30 JSTのワークフローでledgerへ恒久化(counts後退なしのマージ)⑦Guideに「ARGUSはどう成長するのか」＋実測ステータス。禁止事項を構造的に除去(秘密/保有/損益/プロンプト/本文)。自動売買なし。'],
+  ['v11.3.4', 'Mover Cause仕上げ — 鮮度SLA・refreshキュー・市場確認v1.5(V11.3.4) — ①全moverCauseに鮮度(最終確認/証拠年齢/次回自動確認)と優先度別SLA(urgent15分/high30分/normal2時間)を付与。古い候補は「鮮度低下」を明示し、黙って古い候補を使わない②refreshキュー(純モジュール): どのmoverを・なぜ・いつ再確認するかを優先度順に公開(GET /mover-causes/refresh-queue)。AI解説は予算制(既定5件/回・30分クールダウン・±3%未満は対象外・env調整可)で未解決moverに自動配分③市場確認v1.5(既存データのみ): 出来高比・指数相対(1306/SPY)・同業バスケット・VWAP近似・15分/1時間の動きを計算(GET /market-confirmation)。板/歩み値/borrowではない・市場確認単独では原因を確定しない・古い確認は確定に使わない④statusに品質診断(stale数/市場確認欠落数/AI待ち数/カバレッジ)とSLA違反を追加⑤AI解説を構造化(未検証の仮定/何が揃えば確定/何が出れば否定)・新規情報がなければ正直に「新規情報なし」⑥同期の移行ガード: プロトコルv2表示・旧アプリ/タブ検知で「再読み込みしてください」警告・送信/取込時刻の診断表示。'],
+  ['v11.3.3','Mover Cause Engine — 「原因未確認」だけの表示を全廃(V11.3.3) — オーナー指摘「急騰急落の原因が全て原因未定で使えない」への根本対応。①統一原因ラダー(argus_mover_cause・純): 急落と急騰の両方向について、原因確認(公式開示or複数ソース+時刻整合+市場反応)/有力材料/候補/有力候補なし の4段で判定。値動きより後の記事は引き金にしない・連想/単一ソースは候補どまり・確定できない理由と次の確認先を必ず出す②証拠統合: TDnet公式・公式イベント・EDINET/SEC・Finnhub・日本語ニュース・C.A.O.S.連想・同業連動・マクロ・大口フロー・信用残・テクニカルをキャッシュから1つのラダーに統合③下落インシデントにmoverCause(ラダー+上位候補3+次の確認)を常時付与・急騰はmover-causes?direction=up④「なぜ動いた?」のAI起動を公開GETから廃止(誰でも課金検索を起こせた穴を封鎖)→admin定期生成+キャッシュ表示に変更⑤GET /api/argus/mover-causes(+/status・/snapshot・銘柄別)・adminのrefresh/explain⑥ledgerブランチへ恒久化(mover-causes/)・15分毎の証拠refresh⑦Market Moversカードにも原因チップ表示。さらにウォッチリスト同期をsync-v2化: 端末間で銘柄ごとにマージ(どちらで追加しても両方に残る・削除も伝播・丸ごと上書きを廃止・初回復元も不要)・約5〜20秒で反映。'],
+  ['v11.3.2','C.A.O.S.マクロイベントの事前予想/事後答え合わせを本物に（V11.3.2） — ①発表日バグ修正: 従来は「daysUntil<=0=事後」だったため、NFP発表日の朝（8:30 ET発表前）から事後扱いになっていた→eventTimeUtcで正規のフェーズ解決（pre_early→pre_watch→pre_final→imminent→released_pending_result→post_result）。時刻不明の日付のみイベントは、その日が終わるまで絶対に事後にしない②事前分析（AIシナリオ・市場の織り込み・サプライズ時の確認項目）を発表前に保存し、発表後は凍結（発表後の再生成が事前の見方を書き換えられない）③公式結果は捏造せず実取得: NFPはBLS公式API（雇用者数/失業率・対象月一致の時だけavailable）。CPI/FOMC/日銀等は未実装と正直表示④事後の答え合わせ: 保存済み事前予想×公式結果×実市場反応で 当たり/部分的/外れ/採点不可 を判定。事前なし→採点不可・結果なし→公式結果待ち（採点しない）⑤ledgerブランチへ毎2時間保存（macro-events/analysis）で再起動後も事前予想が残る⑥GET /api/argus/macro-event-analysis（＋/status・result-status・公開GETはLLM/結果取得を絶対に呼ばない）・旧/event-analysisは互換維持⑦トップの重要イベントカードに AIシナリオ/事前予想(当時)/公式結果/答え合わせ/市場反応 を表示・Guideに「C.A.O.S.イベント分析とは」追記。'],
+  ['v11.3.1','公式イベント履歴の恒久化（Official Event Durability） — 調査履歴は将来の採点と学習の土台なので、再起動/再デプロイで消えない形に。①純モジュールargus_official_event_store: 決定論シリアライズ・officialEventIdでマージ（古いスナップショットが新しい市場反応を消せない・段階は後退しない）・禁止フィールド（PDF本文/保有/損益/キー）を構造的に除去②毎営業日16:05のワークフローがledgerブランチへ保存（official-events/日付.json=追記のみ＋latest.json）③起動時復元を3段化: /tmp→ledger latest→空（短timeout・失敗してもアプリは動く・providerは叩かない）④GET /official-events/durability（実行中ストア/恒久保存/復元可否/安全フラグ）⑤admin専用 snapshot/restore（token必須・restoreはマージで新しい記録を保護）⑥Guideに「公式イベント履歴は消えないのか」＋実測の耐久ステータス表示。さらにスマホ左ナビの丸を正確にセンタリング（非表示ラベルとのgapが中心計算に含まれ約5px左に寄っていたのを修正）。'],
+  ['v11.3.0', 'Official Event Lifecycle — 公式開示を「一度きりの見出し」から追跡対象の調査イベントへ（V11.3） — ①argus_official_event_lifecycle（純・決定論）: 公式TDnet開示を 開示→EventCard→Evidence Pack→AI判断→市場反応(当日/翌営業/3日/5日)→採点 のライフサイクルで追跡。materialな開示は「引き金候補(probable_catalyst)」、非materialは「事実(fact_only)」。原因確定(confirmed_cause)は時刻整合＋市場確認(±2%または指数相対±1.5%)がそろった時だけ。値動きより後の開示は引き金にしない。市場データ欠落は市場反応pendingのまま（捏造しない）②GET /api/argus/official-events（symbol/source/category/material絞込・store専用でfetchなし）＋/status＋/<id>/lifecycle③市場反応は15分毎cronがキャッシュ済み日足から補完（板/歩み値不要・不足は不足と明示）④Evidence PackにofficialEventRefs（段階・原因状態・followupDue）を接続⑤Decision Value記録に「判断時点で開示ライフサイクルの何を知っていたか」を保存⑥Guideに「公式イベントはどう追跡されるのか」を追記。さらにスマホ表示で左ナビを64→44pxに圧縮しメイン画面へ配分（オーナー要望）。自動売買なし。'],
+  ['v11.2.1', 'Evidence Pack品質ゲート＋オーナー修正2点 — ①Evidence Packの公開GETを完全cached-only化（キャッシュ切れでも有料プロバイダ/LLM/記事本文を絶対に叩かない。全fetch関数を差し替えても200を返すことをテストで担保。不足は cache:tdnet 等のマーカーで正直表示）②GET /api/argus/decision-spine/status 新設（背骨の配線状態: evidence pack稼働・decisionRefs付与率・geminiChallenge有無・安全フラグ）③Guideに専用カード「判断は何を読んでいるのか」（フロー図＋重要な制限5項目）④Todayの「時刻はすべてJST」表記を削除（オーナー要望）⑤C.A.O.S.イベント評価: 事前予想(AI)と事後の答え合わせ(AI)の欄を常時表示（生成待ちでも枠が見える）。さらに発表前の予想を発表後も保存し、事後分析は「事前予想との答え合わせ（当たり/部分的/外れ＋理由）」を明示的に行うように。smokeにdecision-spine/status＋geminiChallenge形状チェック追加。'],
+  ['v11.2.0', 'Decision Spine — 全ての判断が同じ「証拠パック」を読む一本の背骨に（V11.2） — ①argus_evidence_pack（純・決定論）: EventCard・公式開示・C.A.O.S.連想・機関見解・情報源カバレッジ・市場深さの実証・可視性・校正・Decision Value状態を1銘柄1パックに正規化。単一ソース連想は原因確定にできない/公式開示は事実確認≠価格原因/不足データを必ず明示、をパック自体が強制。GET /api/argus/evidence-pack?symbol=◯（公開・LLM/有料フェッチなし・秘密なし）②Action Labelに decisionRefs（evidencePackId・関連イベントID・確信度の前後・可視性降格・欠損データ）を付与=判断の出所が後から監査可能に③GPT主判断のシステムプロンプトに証拠規律6箇条を明記（可視性がENTERブロック中はADD/BUY DIP提案禁止・深さ実証ゼロならintraday主張の確信度を下げる・burn-in中は過大確信禁止 等）④Geminiチャレンジを構造化（agreement=confirm/caution/disagree・主な弱点・何が変われば判断が変わるか・未検証の仮定）してai-judgmentに保存⑤Guideに「判断は何を読んでいるのか」を追加。自動売買・注文ルートなし。'],
+  ['v11.1.2', '🎉公式TDnet Add-on接続成功＋隠れたv1パス切れを発見・修正 — ①v11.1.1のプローブ修正により公式TDnetがLIVEに（provider=jquants-tdnet・実開示96件取得。「権限なし」は誤診で、権限は最初から有効だった）。source-registryもconfirmed_liveに自動反映、EventCardへofficial confirmation接続。②プロバイダ診断が本物のバグを発見: J-Quants v2移行で4エンドポイントが改名されており（trading_calendar→calendar / weekly_margin_interest→margin-interest / short_selling→short-ratio / trades_spec→equities/investor-types）、entry-scoutの信用残取得が死んだv1パスで静かに壊れていた→v2パス＋新フィールド名(ShrtVol/LongVol)に修正。診断プローブも全て正式v2パスに更新。③AlphaVantage=無料枠回復でlive確認（partialの正体は25回/日の上限と確定）。'],
+  ['v11.1.1', '有料ソース有効化の総点検（公式ドキュメント照合） — ①TDnetプローブを公式仕様(jpx-jquants.com/spec/td-list)に修正: 正式パスは /v2/td/list で date/codeパラメータ必須（従来のプローブは無効なlimitパラメータを送っていた）。J-Quantsの403は「プラン外・誤キー・誤パス」全てで返る仕様のため、ボディのメッセージで判別するように（"Missing Authentication Token"=パス未解決≠権限なし）。パラメータ無し400=権限あり証明。②TDnet Add-onはStandardとは別の追加購入（月額）— 権限なし時はダッシュボードの[ご利用中]バッジ確認を案内。③AlphaVantageの"partial"の正体=無料枠25回/日の上限（HTTP200+Informationボディ）と判明→rate_limitedとして正直表示。④J-Quants Standardの5データセット（取引カレンダー/決算予定/信用残/空売り比率/投資部門別）の実測プローブをadmin診断に追加し、source-registryにも状態行を追加（公開GETはキャッシュのみ読む=課金プローブを起こさない）。⑤TDnet→EventCardの統合テスト追加（公式開示のみofficial confirmation・yanoshinでは付与しない）。OpenAI/Gemini/Layer2Bの「configured」表示は課金回避の設計どおり（AI判定はlive稼働を別途確認済み）。'],
+  ['v11.1.0', '有料ソースをEvent Intelligenceへ正式接続（Paid Source Activation Phase 1・追加契約なし） — ①公式J-Quants TDnet Document Add-onアダプタ(argus_jquants_tdnet)。get_tdnet_recentは公式(provider=jquants-tdnet, official=true)を優先し、失敗時のみyanoshin非公式フォールバック。materialな開示のみofficial_catalyst候補・曖昧な題目はofficial_fact・値動きより後の開示は引き金にしない②プロバイダ診断: GET /provider-diagnostics/public(公開safe=設定/live/未設定のみ) と /admin/provider-diagnostics(admin token必須・実プローブ・キー値/URL/ヘッダ/生bodyは絶対に出さない)③source-registryのTDnetをpaid_not_enabled固定から実プローブ連動へ(公式liveでconfirmed_live)④EventCard v2に公式TDnet開示をofficial confirmationとして接続⑤Twelve Data Grow対応(TWELVEDATA_PLAN=growでdynamic 8→24・VWAP 6→12等。unknownは従来維持。quota拡張でありL2/tape/options/borrowの代替ではない)⑥Guideに「有料データ接続状況」＝『設定済み≠ライブ取得成功』を明示。自動売買/注文ルートは追加なし。※本番の各プローブ結果はデプロイ後にprovider diagnostics+smokeで確認します。'],
+  ['v11.0.5', '銘柄検索の不具合＋端末間同期の改善 — ①検索: 暗号資産の検索がCoinGeckoのデータセンターIPブロックで断続的に失敗していたのを修正(価格取得と同じUser-Agent/keyヘッダを付与)。日本株検索の関連度を改善(「8058」→三菱商事、「三菱」→三菱系が先頭に。以前はMAXIS ETF等が先に出ていた)。米国株の重複(同一銘柄の複数取引所)を排除。混雑(429)時は「候補なし」ではなく「混雑しています」と表示。②端末間同期: アプリ⇄ウェブの同期を高速化(編集から約7秒でクラウド送信・30秒間隔ポーリング＋タブ復帰で即時取得＝10〜40秒で反映。以前は最大2分)。Guideに「両端末で同じパスフレーズを有効化しないと同期しない」ことと現在の同期状態を明示。※同期はクラウド自動バックアップ(暗号化・パスフレーズ)が土台。'],
+  ['v11.0.4', 'Free Phase Closure / Pro Quality Gate（有料連携の前に土台を締める） — ①銘柄ルートの締め: research-mission / event institutional-intelligence / positioning は全て `<symbol>` 形で正常、空白銘柄は400で弾く(公開GETはLLM・fetchを一切呼ばない)。回帰テスト追加(llmCalls=0・positioning確率合計=1・公開GETは_fetch_public_text非呼び出しを検証)②本番スモークにv11の9エンドポイント(events/cards・research-mission・event-intel・positioning・calibration v4 status・decision-value status・market-depth proof・source-coverage・caos audit)の形状チェックを追加(市場オープンや非空を要求しない)③Guide冒頭に「ARGUS Proとは何か」+フロー図(C.A.O.S.→ティア/権利→EventCard v2→可視性/深さ→GPT判断→Gemini反証→ARGUS View→台帳/Decision Value→採点→次回の教科書)+「やらないこと」を明記④Decision Value Opsをstatusエンドポイントに整合(記録が実在する時だけ「記録中」表示)⑤Calibrationのドライラン表記を「非本番の成果物」と明確化しv4/statusを正式表示に⑥「24/7イベント検知」を「市場セッション対応 Event Intelligence（暗号は24/7）」に正直化。有料フィード・自動売買・注文ルートは追加なし。'],
+  ['v11.0.3', 'ヘッダーの「Pro」を白に統一（発光アクセントを削除）。光るのは三角ロゴの目だけ（状態色でグロー＋呼吸）に限定。'],
+  ['v11.0.2', 'アプリ上部の名称を「A.R.G.U.S. Pro」に変更（"Pro"はシアンのアクセント）。左上の三角ロゴの目を美しく発光化 — 虹彩がシステム状態の色で多層グロー＋ゆっくり呼吸するように明滅（正常=緑・注意=橙・停止=赤・不明=控えめ）。警告で色が変わる時も同じ発光の仕方で色だけが変わります。動きを抑える設定(prefers-reduced-motion)では静かな発光に切替。'],
+  ['v11.0.1', 'ARGUS Pro 仕上げ（配線を「本物」に） — 箱だけでなく実際に動く形へ。①C.A.O.S.監査を実データで記録開始（銘柄と出来事をなぜ紐付けたか＝一致語・情報源ファミリー/ティア・裏取り度を、重複を30分で抑えつつ記録。単一ソースは「引き金候補」止まりで原因確定にしない・非因果の但し書き付き）②Decision Valueのシャドー記録に可視性/姿勢の文脈を追加（降格前後の姿勢・確信度・ブロック内容を後から検証可能に。実P&Lは非公開のまま）③公式ソース（METI/EDINET/TDnet等）を正しい公式ティアに分類（Fed/SEC/BOJ/METI/ロイター日本語は既に取込済）④GuideにEventCard v2パネルを新設（各イベントの裏取り度・引き金の役割・不足を明示）⑤CaosHubの「ニュースは常にlive」という過大表現を修正、Decision Valueの見出しに「仮想・発注なし」を明示。単体テストはCI（ci.yml）で毎push自動実行済み。テスト573。'],
+  ['v11.0.0', 'ARGUS Pro（Free-First Research Desk Build）の土台を投入 — メジャーアップデート。無料・非自動売買の範囲で「調査デスク化」を前進。①可視性ガードが警告だけでなく実際に判断を制約(確信度を上限化・劣化時は新規ENTERをWAITへ降格。理由をTodayに表示。killスイッチ有)②EventCard v2=イベントを正典オブジェクト化(単一ソースを原因確定にしない/テーマだけでは判断を動かさない/確信度=raw∧上限/不足を必ず明示)③Calibration v4状態・Decision Value状態を監査可能に(記録が実在する時だけ「稼働」表示・provenとは言わない・実P&Lは非公開)④市場の深さ「proof」化(exchangeTs等の実測=probedがある時だけLIVE・板/歩み値/オプションIV/貸株料は要契約のまま)⑤情報源に品質ティア(公式/主要メディア/アグリゲータ/不明)—弱いソースは単独で根拠にも原因確定にもできない⑥C.A.O.S.監査証跡(なぜ紐付けたか+非因果の但し書き)。GuideにARGUS Proパネルを新設。注文/ブローカー/自動売買ルートはゼロのまま。テスト+40。'],
+  ['v10.209.0', 'Watchlist(2ページ目)で日本株が「MOCK・価格—」になり、仮想通貨が「PARTIAL」になる件を修正 — 原因は表示側のロジック: 各行の判定が「statusがちょうど"live"以外は全部mock」になっていた。日本株はmoomooブリッジが停止中(夜間/引け後)だとJ-Quantsの確定終値=status "delayed" になるが、これを"mock"扱いにして実価格まで隠していた(「—」表示)。修正後は delayed/partial/mixed など「リアルタイムではないが実データ」は price を表示し、鮮度は「delayed」等でamber表示(mockにしない)。仮想通貨はライブ価格があるのにルールラベルが無いため"partial"扱いだったのを、暗号資産はラベル体系が無いだけ(価格は実ライブ)なので"live"表示に。Todayページ(1枚目)は元から正しく処理できていた(今回はWatchlist側を同じ正しい挙動に合わせた)。※ブリッジ稼働中の日中は日本株は"live"に戻ります。'],
+  ['v10.208.0', '暗号資産が本番でmock表示になっていた件を修正(実データに復帰) — 原因: CoinGeckoの無料APIはデータセンターIP(Renderサーバー)からのアクセスを遮断/強制レート制限するため、本番だけ取得に失敗し常にmock(BTC $68,200等の偽値)へフォールバックしていた(手元の一般回線では成功するので気づきにくい)。対策2段構え: ①CoinGeckoの無料Demoキー(環境変数 COINGECKO_API_KEY)に対応=キーを入れればクラウドからも安定取得。②キーが無くても/失敗しても、Coinbaseのキー不要・データセンター可のエンドポイントへ自動フォールバックし主要通貨(BTC/ETH/SOL等)は実価格を表示(24h変化は当日始値比)。地図に無いマイナー通貨のみ最終手段でmock。※日本株の「mock」表示は右側プレビュー特有(バックエンド未接続)で、実アプリ/ウェブでは「delayed」=J-Quantsの確定終値(実データ)です。'],
+  ['v10.207.0', 'トップの黄色い大バナー「監視に穴があります」を撤去(オーナー要望) — 一時的な可視性の劣化を大きな警告カードで出すのをやめ、従来どおりヒーローのステータス行に「PARTIAL DATA」の一語だけで表す形に戻した。情報は失っていない: 劣化(ブリッジ場中停滞/AI予算停止など)は "PARTIAL DATA" に集約表示し、可視性ガードの確信度キャップ(0.60〜)とENTER抑制はそのまま有効。構造的な穴(板/歩み値/PTS/VWAP等)の詳細はヒーロー下のミュート行とGuideのMarket Depth Statusに引き続き表示。'],
+  ['v10.206.0', 'Watchlist/Todayで銘柄名が4桁コードだけになる件を「表示時に自己修復」する形で根治 — プレビューでは名前が出るのに本番アプリ/ウェブでは数字だけ、の原因を特定。端末に保存された銘柄が「復元」で会社名を持たずコードのみ(displayName=コード)でも、行の表示名がライブ価格スナップショット(バックエンドは 8058→三菱商事 を返している)の名前へフォールバックしていなかった。名前の解決を「保存名→ライブ名→コード」の順にする共通ロジックを追加し、Watchlistの各行・What-if選択・AI相談プロンプト、Todayの各銘柄カードに適用。localStorageは書き換えず表示時に解決するので、既存の数字だけウォッチリストが再追加なしで次回読み込みから会社名表示に自己修復します(名前が取れない暗号/取得失敗時のみコードにフォールバック=偽名は出さない)。'],
+  ['v10.205.1', '日本株の自己採点が「採点待ち」で止まる根本原因を修正 — 深掘り検証で判明: 日次ランは16:05 JST(東証引け後)に走るが、その時刻の日本株終値は「delayed」扱い。価格取得が「liveのみ」だったため日本株が毎回除外され、記録も採点もされていなかった(=永遠に採点待ち)。引け後の確定終値は日次台帳の正しいアンカーなので、日本株はmock以外の実価格(live/delayed/確定終値)を受け入れるよう修正。US/暗号はあえてlive限定のまま(16:05は米国休場=前日終値になり不正確、かつ市場別クロック未実装で採点保留中)。次の日次ランから日本株が記録され始め、各ホライズン(1d/3d/5d)の対象営業日が到来した分から順に成績が入ります。'],
+  ['v10.204.0', 'Layer 2B復元で会社名を表示(4桁コードのみだった件) — 「銘柄を復元」で日本株が4桁コードだけで会社名が出なかったのを修正。復元データ(membership)にウォッチリスト名簿から会社名を補完して返すように(例 8058→三菱商事)。長い名前はカードで省略表示(…)し、レイアウトは崩さない方針を維持。復元をやり直すと会社名付きで戻ります。'],
+  ['v10.203.0', 'Calibration Operationsの被覆率カウント修正(ダブルチェックで発見) — Layer1センサーの被覆率が実際は取得できているのに「0/16」と誤表示されていた不具合を修正(スナップショットのセンサー行キーが sensor なのに symbol で読んでいた)。reliabilityStage/活性化可否の判定は元から正しく、表示カウントのみの問題。'],
+  ['v10.202.0', 'クラウドバックアップの耐久化(復元不能バグの根治) — 「有効化したのにクラウドから復元できない」原因を修正。従来はpush時にサーバのメモリへ一旦置き、毎営業日16:05のワークフローでgitへ保存する設計だったが、デプロイ/再起動でメモリが消えるとドレイン前に失われ、gitへ一度も書かれないことがあった。今後は**push時に即座に暗号化バックアップをprivateリポへ永続保存**し、復元も同所からフォールバック取得。端末が退避されても確実に戻せる。暗号文のみ・パスフレーズ由来の推測不能IDは従来通り。※過去にgitへ書かれなかった分は復元不可(既存の週次ファイルバックアップからのインポートを推奨)。'],
+  ['v10.201.0', '5ページ目の横揺れ修正＋収集を保有/急落銘柄に寄せる — ①スクロール中に画面が左右に揺れる件を根治: スクロール容器を縦専用(overflow-x:hidden)にし、追加パネル(校正/DV/深さ)のグリッドが狭幅で溢れないようmin()化。上下だけに動きます。②機関情報の収集を保有/急落/監視銘柄に寄せる配線を有効化(generate_queries): 保有・急落銘柄に紐づくニュース/機関コメントの重要度を引き上げ、デイリーブリーフや一覧で先に出るように。バックエンド完結・注文なし。'],
+  ['v10.200.0', '市場の深さ「実測化」 — VWAPを実際に算出＋実測フラグ — 深さの能力を「決め打ち」から「実測プローブ」へ。①VWAPをTwelve Dataの5分足から**実際に算出**する能力を追加(米レギュラー時間・キー有効時のみ)。算出できた時だけVWAPを「LIVE」にし、値も保持(算出値であり板約定VWAPではない、と明記)。算出不可なら正直に「未接続(実測)」。②各能力に「実測」バッジ: ブリッジ遅延(p95)・日本株現物・VWAPは実際の測定に基づく(assumedではない)ことをMarket Depth Statusで区別表示。純関数compute_vwap＋テスト。注文/自動売買は一切なし。'],
+  ['v10.199.0', 'Research Desk Mode v1 — Phase C(イベント中心のToday・仕上げ) — トップのイベント中心構成の総点検と仕上げ。重要イベントは既にヒーロー直下(PRIMARY COMMANDの直後)に表示・1銘柄1カード(UnifiedAssetCard)・日本を米国より上、は達成済みであることを確認。今回の追加: ①タイムラインに生の内部enum(VOLUME_ANOMALY等)が漏れていたのを日本語表記(出来高異常/急落 等)に修正②トップに「時刻はすべてJST」の凡例を1箇所だけ表示(各行の重複タイムゾーン表記は不要に)。これでRIsk Desk Mode v1のPhase A〜Eが揃いました(A=可視性ガード/B=機関II/C=イベント中心Today/D=市場の深さ/E=調査ミッション+見逃し)。'],
+  ['v10.198.0', 'Research Desk Mode v1 — Phase E(調査ミッションの自動起動＋見逃しフィードバック) — ①保有×高severityの急落・原因未確認の下落・接近する重要イベント・監視銘柄への機関アクション/開示で、決定的な調査ミッション(LLM呼び出し0=無料)を自動起動(イベント毎にデバウンス・同時数上限)。潜在バグも修正: これまで全保有銘柄に「moveStartedAt=今・severity=high」を捏造していたのを、実際の急落インシデントから本物の時刻/深刻度を組み立てるように(link_to_eventが意味を持つ)。②「見逃した重要情報」フィードバックを本格化: URL/機関/銘柄/理由を投稿すると、検出ルールを再現して**なぜ見逃したか**(機関エイリアス未登録/銘柄名が見出しに無い等)を診断し、直近の根本イベントに紐付け。修正案(エイリアス追加)は所有者承認のうえ手動反映するオーバーレイ方式(シード改変なし・自動再学習なし)。/api/argus/research-missions・…/missed(GET一覧+原因別メトリクス)・…/missed/apply。注文/自動売買は一切なし。'],
+  ['v10.197.0', 'Research Desk Mode v1 — Phase B(機関インテリジェンスv1) — 機関の見解を種類で厳格に分離: 「見解(INSTITUTIONAL_RESEARCH_VIEW)」「アナリスト・アクション(格上げ/格下げ/目標株価/予想修正)」「開示ポジション(大量保有等)」を別カテゴリに。★見解≠建玉・格下げ≠その機関の売り を崩さない。因果ロールも厳格化: 時刻整合＋資産一致＋ハードニュース(公式/格付/開示)のみ「即時の引き金」に昇格し、名指しの見解は完璧な時刻でも絶対に引き金にしない。公式の追認(CONFIRMATION)・値動きと逆の見解(CONTRADICTION)も判定可能に。監視機関を拡充(RBC/TD Cowen/Piper/HSBC/BNP/SocGen、東海東京/楽天/マネックス/いちよし、Millennium/Two Sigma/RenTech/DE Shaw/Pershing/Third Point/Lone Pine 等・エイリアスは誤マッチ回避で厳密)。銘柄カードのINSTITUTIONAL VIEWにカテゴリ/種別/情報源クラスのバッジを表示。'],
+  ['v10.196.0', 'Research Desk Mode v1 — Phase D(市場の深さの能力テスト) — 「見えている深さ」を能力ごとに正直に判定する `argus_market_depth`(純)を追加し、Visibility Guardを**実測ドリブン**化。ブリッジ(心拍/遅延)・日本株現物・米レギュラー・PTS(夜間)・米時間外・VWAP・歩み値・板・オプションIV・貸株料・為替先物・TDnetを、live/遅延/検証中/要契約/未接続で表示(GuideのMarket Depth Status)。★「LIVE」は取引所タイムスタンプ等で実証できたものだけ——配信頻度では絶対にliveにしない。未接続の深さは「検知≠安全」として可視性ガードへ供給。/api/argus/market-depth(公開・GETのみ・秘密なし)。注文/自動売買は一切なし。'],
+  ['v10.195.0', 'Research Desk Mode v1 — Phase A(可視性ガード＋校正/価値の運用状態) — プロの調査デスク化の第一歩。①Visibility Risk Guard: ARGUSが「見えていないもの」を集約し正直に表示。PTS・板・歩み値・VWAP・米時間外などの構造的な穴は常時ミュート表示(検知≠安全)、moomooブリッジの場中停滞・地合いの保持表示・AI予算停止などの一時的劣化のときだけ確信度を上限0.60〜0.55にクランプ＋ENTER抑制＋トップに警告バナー。校正がまだregime_level未満(=精度未証明)の間も確信度をキャップ。②Calibration Operations: v4記録が本当に取れているか(センサー被覆16、市場クロック、readinessチェック、活性化可否)をGuideに表示。「待てば良くなる」ではなく記録できている時だけ改善する、を明示。③Decision Value Shadow Operations: 「校正が良い≠儲かる」を測るシャドー台帳を開始(発注は一切なし・実価格/純Rはオーナー限定のprivate store・公開は件数とサンプル段階のみ)。毎営業日16:05に記録＋採点。自動売買/注文ルートは追加していません(決定支援のみ)。次段はPhase B(機関インテリジェンスv1)・C(イベント中心のトップ再編)。'],
+  ['v10.194.2', 'アプリアイコン(favicon/PWA)も新ロゴに差し替え — ヘッダーのロゴだけ新「三角の眼」に変えていて、ブラウザのタブ・ホーム画面のインストールアイコン(favicon.svg / icon-192 / icon-512)が旧デザイン(同心円の眼)のままだったのを修正。3サイズすべて新モノグラムに統一。※インストール済みPWAのアイコンは端末が強くキャッシュするため、反映には一度アプリを削除→再追加(またはタブのハードリロード)が必要な場合があります。'],
+  ['v10.194.0', 'ロゴの「眼」がシステム状態ランプに(緑丸を統合) — ヘッダーのロゴ(三角の眼)の瞳が、システム状態の色で光るように: 正常=緑/注意=琥珀/異常=赤/オフ=グレー。瞳はふわっとパルス発光して状態を知らせ、これまで横に別置きだった緑の丸は廃止(眼に一本化)。ロゴ(ブランド)全体は引き続きタップで「システム状態」ポップオーバーを開くボタン。'],
+  ['v10.193.0', 'ロゴ刷新＋JP専用Matrix新設＋News RadarをC.A.O.S.に統合 — ①ロゴを新モノグラム「三角の眼」に刷新(ARGUS=百目の巨人アルゴス由来。Aの三角＋眼＋シアンの瞳・極シンプル・ヘッダー左上)。②Market Context(3ページ目)を再編: 「US Regime Matrix→US資金フロー盤」「JP Regime Matrix→JP資金フロー盤」の順に。日本専用のRegime MatrixをTOPIXセクターの資金フローから2軸(グロース↔ディフェンシブ×リスク↔デュレーション)で新設。③News Radar(危機テーマ検知)を独立セクションから撤去し、C.A.O.S.カード(Today2枚目)に「危機テーマ」tierとして統合(オーナー指摘: 危機検知は本来C.A.O.S.の役割)。GDELT不通時は追加した日銀/ロイター等のRSS(intelメッシュ)から地政学/為替/金融システム/政変/災害を検知するフォールバックも実装。'],
+  ['v10.192.0', 'Brierを「確率スキル%」に置き換え(分かりやすさ) — 自己採点の表示を、①方向の的中率%(上/横/下のどれになるか当てた割合)と②確率スキル%(あてずっぽう=0%／完璧=100%。確率の当たり具合＝校正の質)の2本立てに。生のBrier数値(0〜2で分かりにくい)は括弧内に小さく残すだけに。的中率は「方向」、スキルは「確率の確からしさ」で別物——同じ73.5%付近に見えるのは偶然で、測っているものが違う点を明確化。'],
+  ['v10.191.0', 'PARTIAL根治＋常駐化＋日本語ニュース源拡充(第2弾) — ①JPウォッチの状態を「全か無か」から卒業: 一部の銘柄が遅延(6146/6758等)でも全体をPARTIALに落とさず、live/mixed(大半ライブ)/delayed(全部実データだが引け後)/partial(mock混在のみ)を区別。これで確信度が2銘柄の遅延だけで60%に抑えられる誤挙動が解消。②AI再走とRECOMMEND生成を不安定なGitHub cronから常駐バックエンドの場中ループへ移行(15分刻み・予算/最小間隔で自己ゲート・注文ルートなし)——AI Reviewが古いまま/RECOMMENDが空のままになる根因を根治。③日本語ニュース源を追加(日銀BOJ・経済産業省METI・ロイター日本語の公開RSS)＋市場速報カードにJP個別ニュースをマージ(これまで米/グローバル配信ばかりだった)。TDnet/株探/みんかぶ/FISCOは無料公開RSSが無く見送り、EDINET(大量保有)は統合済み。④ページ4の語彙を明確化: 「WAIT=新規は見送り(保有は継続でOK)」の凡例を追加し、CASHの「買い増し」(現金を買い増す?の誤解)を「現金比率を上げる」に修正。'],
+  ['v10.190.0', '総点検の回答＋8件修正(質問13項目を実機で裏取り) — ①「なぜ動いた?」ボタンを全銘柄で表示(急変銘柄だけだったゲートを撤廃・カード展開で常時押せる)②Regime Matrixの文字重なりを解消(ラベル衝突回避＋縁取り＋リーダー線)＋青の意味を凡例で明示(青=市場全体の現在地・保有ポジションではない)③Brier表示を自己説明化(3クラスraw・0〜2目盛り・0.67=あてずっぽう基準を併記/現0.51は「情報あり」で正常)④JP Market Moversに実データ時刻を表示(約20分遅延を鮮度に反映・数値自体は前日終値比で元から正しい)⑤AI Reviewに鮮度バナー(古い所見の「自己採点は実績なし」は当時の状態・最新はHISTORY参照)⑥Core Portfolio(4ページ目)の中立帯をイベント前でも「HOLD(保有継続)＋新規は様子見」に分離(一律WAIT降格をやめ「機能してない」感を解消)⑦Downside Watchに日本語個別ニュースを供給(Google News日本語RSSを銘柄名で取得→連想発火・見つからない時は「未取得・要手動確認」と正直表示)⑧起動時に前回値を即表示(Service Workerで/api/argus/*をStale-While-Revalidateキャッシュ・コールドスタート中も画面が埋まる)。※起動が遅い根因はRender無料プランのスリープ(要ダッシュボード確認)'],
+  ['v10.189.0', '日本版ローテーション盤を新設(USと同じ横スライダー盤) — これまで日本は地合いの「文字」だけだったのを、Market Contextに「Japan Sector Rotation」をUSと同一の横スライダー資金フロー盤で追加。TOPIX-17セクターETF(自動車・電機精密・銀行・商社・情報通信・医薬品・電力ガス・不動産)をYahoo経由(キーレス)で取得し、当日の資金フロー(流入=緑/流出=赤/中立=グレー)をメーターで表示。実データで取得確認済み(8セクター全取得)。盤の上にザラ場の地合いオーバーレイも常時表示。USと同じ見た目・操作感に統一'],
+  ['v10.188.0', '①Core Portfolio(4ページ目)のクラス別判断を差別化 ②Market Contextに日本指標を常時表示 — ①資産クラスの構えがETFモメンタム未取得時に一律「WAIT(データ未取得)」へ潰れていたのを、常時計算されている資金ローテーション信号(流入/流出/中立)でフォールバック判定するように。引け後やデータ薄でも各クラスが差別化された構え(選好/様子見/中立)で出る。②Capital Rotation Boardに「日本(ザラ場の地合い)」インジケータを常時表示(平常=緑/警戒=琥珀/リスクオフ警戒=赤、未取得時は取得待ち)。ローテーション盤の流入/流出色分けは元から最小限(緑/赤/グレー)でクール'],
+  ['v10.187.0', '銘柄判断が引け後でも機能(「ライブデータ復帰後に…」プレースホルダを撤去) — トップ画面で銘柄を開くと、市場が閉じている間は判断が「ライブ価格未取得・ライブデータ復帰後に再評価」の中立プレースホルダに落ちていた。引け値(delayed)があれば実判定するように変更し、プレースホルダは本当に価格が無い(mock)時だけに限定。ステータスもlive/delayed/partialを正しく保持。JP/US個別株の集計サマリーも同様にdelayedを含めて算出。これで引け後でも各銘柄が実際の構え(HOLD/WAIT等)で表示される'],
+  ['v10.186.0', '保有評価の通貨表示を修正(円・ドルを常に表示) — 2ページ目の保有評価が「ライブ価格の銘柄だけ」を集計していたため、日本市場が閉じている間はJP保有が無価格扱いになり、JPY合計が消えて「ドルしか出ない」状態だった。直近価格(ライブ または 引け値=delayed)で評価するよう変更し、mock価格のみ除外。これで引け後でも円(JP)とドル(US)の通貨別合計が常に出る。4ページ目(Core Portfolio)の配分も同じ修正で常時表示に'],
+  ['v10.185.0', '履歴/台帳パネル新設＋Market Movers修正 — ①Market Context(3ページ目)に「履歴/台帳」パネルを追加。毎営業日16:05に蓄積していたのに見る導線が無かった台帳を可視化: 資金ローテーションの前回比Δ・急落インシデント・原因アトリビューションを最新分まとめて表示(色は最小限=流入/流出のみ)。②US/JP Market Moversの数字を修正: ストップ高/ポンプ株の異常値(例 +247%)を除外する上限(±60%)が表示側に効いていなかったのを修正し、USは流動性の高いキュレーション銘柄(moomoo)を優先表示に。これで1日の値動きが正しい範囲で出る'],
+  ['v10.184.0', '総点検: 配線の不備を修正 — 多角監査(FE↔BE/cron/AI入力/死蔵)で「データは渡しているのにAIに使えと言っていない/表記と実装の食い違い/不要計算/死蔵コード」を洗い出して修正。①AIスナップショットのurgentEvents(差し迫った重要イベントD/D-1/D-3)・marketPosture・eventEscalationをプロンプトで明示=直前はEVENT_WAIT寄りに判断するよう指示②Geminiの通常チェッカー既定をPro(2.5-pro)に修正し説明書と一致(従来は既定Flash)③v10.180で廃止した急浮上カードの毎回計算を撤去④死蔵コンポーネント11個＋未使用importを削除(ビルドで未使用を確認)⑤AI判定経路の古い「DORMANT」コメントを実態(稼働中)に修正。なお接続側のfetchは全て健全・全ストアにcron・自動売買ルートは404封鎖を確認'],
+  ['v10.183.0', '「なぜ動いた?」ライブ調査ボタンを新設(6330実演を機能化) — 値動きした銘柄のカードを展開→原因スタックに「🔎 なぜ動いた? ライブで調べる」ボタンを追加。押すとGPTが最新ニュースをWeb検索し、銘柄の関係性プロフィール(連想)で「社名が直接出ないニュース→この銘柄」を推定して理由を日本語3-4文で返す(例: OpenAI遅延→SBG、南鳥島レアアース→6330)。新APIキー不要(既存のOpenAI Responses API web_searchツールを使用・未対応環境では知識ベースに自動フォールバック)。さらに原因スタックに連想リンク済みニュース(関連: ◯◯)も表示。要確認・投資助言ではない。連想が「発火していない」のはニュース未収集が原因だったが、このボタンで能動的に調べられる'],
+  ['v10.182.0', 'プロフィールの編集・追加生成を再デプロイでも永続化 — owner編集＋AI生成(非seed)のプロフィールを、Layer-2Bと同じ非公開GitHubリポにも保存(/tmpは高速キャッシュ、非公開リポが恒久ストア)。起動時に seed→非公開リポ→/tmp の順で復元し、owner編集は常に最優先。これで端末追加銘柄のプロフィールや手動編集が、サーバー再起動だけでなく再デプロイ(コンテナ入替)でも消えなくなった。非公開リポ(ARGUS_LAYER2B_PRIVATE_REPO/TOKEN)未設定時は従来どおり/tmpのみ(エラーにはしない)'],
+  ['v10.181.0', 'プロフィールの手動・強制生成に対応 — 自動生成のcronは「元から登録済みの銘柄」だけが対象で、端末で後から追加した銘柄(投信・暗号資産など)は未生成のままだった。2ページ目「C.A.O.S. プロフィール」に、銘柄ごとの「生成/再生成」ボタンと「未生成をまとめて生成(N件)」ボタンを追加。任意の銘柄を名前・市場付きでオンデマンドにAI生成(source=ai・以後保持)。オーナー合言葉で起動。新たに POST /api/argus/entity-profiles/generate が単一銘柄生成に対応'],
+  ['v10.180.0', '発掘コーナーを「急浮上探し」→「RECOMMEND(今が買い時)」に転換 — ストップ高/急騰探しが目的ではない、というオーナーの指摘に対応。生の急浮上(参考)セクションを廃止し、ARGUSが「今がエントリーに良い=買いシグナルが右」と判断した銘柄だけを出す RECOMMEND コーナーに一本化。screenは「今のエントリーが良いか(リスク/リワード)」基準に変更、確信度=BUY-NOWの強さ。高確信のみ・該当なしなら正直に0件。売買助言ではなく決定支援'],
+  ['v10.179.0', '連想メタデータを2ページ目で手動カスタム可能に — C.A.O.S.プロフィール(事業内容/関連語/関連先/テーマ/同業)は自動生成しつつ、2ページ目の「C.A.O.S. プロフィール」セクションでオーナーが編集できるように。編集はサーバー側に source=owner で保存=AIリンクに即反映し、初期値やAI自動生成では上書きされない・再起動でも保持。認証はLayer-2Bと同じオーナー合言葉(この端末のlocalStorageのみ)。新エンドポイント POST /api/argus/entity-profiles/edit。これで「お任せ自動＋自分で微調整」が両立'],
+  ['v10.178.0', 'Downside WatchをトップC.A.O.S.に統合(急落注視tier) — トップ2枚目のC.A.O.S.ハブに「急落注視」層を追加し、機関シグナル/イベント/ニュースと並べて、進行中の重大な下落(critical/high・保有)を要約表示(銘柄・下落率・アクション上書き・理由)。これでC.A.O.S.=統合インテリジェンスの形が完成。詳細な対応(原因バケット/やってはいけない/次の確認条件)は従来どおり2ページ目のDownside Watchに残置。理由は既にC.A.O.S./連想ベース(v10.174)'],
+  ['v10.177.0', '「本日の注目候補」コーナーを新設(EMERGINGを昇華) — 単なる急騰通知だったwatchlist外の上昇銘柄を、AIが高いバーで選別する“買い候補”に格上げ。当日の上昇銘柄を母集団に、C.A.O.S.の連想で触媒/テーマを特定し、根拠(thesis)・エントリー確認・リスク・確信度を付けて提示(確信60%以上のみ・無理に出さず0件もあり得る)。決定支援であり売買助言・利益保証ではない/自動売買なしを厳守。従来のEMERGINGは「急浮上(参考)」に降格し生の上昇feedとして残置。生成はcron。新エンドポイント /api/argus/buy-candidates'],
+  ['v10.176.0', '2ページ目AI Reviewを市場全体コメントに集約 — 冒頭のAI Reviewが個別銘柄コメント(トップページの各カードと重複)を並べていたのを廃止し、①市場全体の見立て(summary)②リスク③レッドフラグ だけに整理。個別銘柄のAI根拠は各カード側に表示(適所へ移動)。さらにシステムプロンプトを強化し、市場コメントは「その日の裏取り済みニュース＋機関シグナルを読んで、当日の最重要ドライバー/テーマを具体的に名指しする(薄い時は正直にそう書く)」よう指示=ニュースを読み解く目線'],
+  ['v10.175.0', '連想エンジン精度UP(多語キーワードのAND照合＋テーマ連想) — 実例「6330東洋エンジニアリングが南鳥島レアアース開発指示で急騰(社名はニュースに出ない)」で検証。日本語は単語間にスペースが無いため「南鳥島 レアアース」のような複合キーワードが「南鳥島沖のレアアース」に当たらず取りこぼしていた→各語が全て含まれればヒット(AND)に修正。さらに、社名でも登録済み関係先でもない“テーマ語”一致を via=theme として分類し、関係先(entity)と並んでAIの候補・downsideリードに昇格。これで「政策ニュース→技術を持つ銘柄」の連想(レアアース→6330)が機能'],
+  ['v10.174.0', 'Downside Watch(2ページ目)の理由をC.A.O.S.＋連想で導出 — 従来は下落の原因がルールのみで、開示が無い銘柄は全部「原因未確認」と同じ文章が並んで機能していなかった。下落銘柄ごとに、ニュースを銘柄名だけでなく関係性(連想エンジン)でも照合し、紐づいた記事を裏取りレベル付きの“候補リード”として理由に表示(例: 9984の下落→「OpenAI、IPO延期」(最大級の投資先・IPO遅延は急落要因)・複数系統で確認)。断定はせず「候補・要確認」の枠を守る(原因の取り違え防止)。C.A.O.S.バッジ(公式/裏取り/連想)で出所を明示。各行が固有の理由になり重複が解消'],
+  ['v10.173.0', '連想エンジン(銘柄プロフィール＋関係性ベースのニュース紐付け) — 「株は連想ゲーム」の指摘に対応。従来ニュースは銘柄名がピンポイントで出た時しか紐づかず、「OpenAIのIPO遅延→ソフトバンク(9984)」のような連想ができなかった。①銘柄ごとに事業内容＋関係する外部固有名(投資先/保有/子会社/供給先/顧客/同業/コモディティ)をプロフィール化(Web調査＋敵対的検証で生成、過剰マッチする汎用語は除去=精度優先)。例: 9984→OpenAI/Arm/Vision Fund、8058→バフェット/ローソン/原料炭、6330→Petronet LNG/日揮 等。②ニュースを銘柄名だけでなく関連固有名でも照合し、関係を明示してAIに“候補”として渡す。③AIが重要度を判断して根拠に説明(「OpenAI遅延→保有評価に影響」)。単独では売買を出さない(裏取りと同じ精度ガード)。新規登録銘柄はcronが自動プロフィール化。土台が入ったので、買い推奨やコメントのニュース解釈もここに乗る'],
+  ['v10.172.0', '裏取りを「同一エンティティ＋イベント種別＋時間窓」に進化(異なる文言の独立報道を検出) — 従来は同一見出し(同じワイヤーの転載)しか束ねられず、「Fed利下げ示唆」と「パウエル緩和示唆」のような"同じ事象を別の言い回しで報じた独立記事"を取りこぼし→各々「単一ソース」になっていた。第2パスを追加: 同じ主要ティッカー＋同じイベント種別(極性込み=据置/利下げ、上振れ/下振れ等を別物扱い)＋36時間以内＋独立2系統以上(各々が新しい系統を足す)の全条件を満たす時だけ束ねる。不明点(銘柄アンカー無し/種別不明/時刻欠落/同一系統)は全て"併合しない"側に倒す精度優先設計。これで本物の独立報道は「裏取り」に昇格し、別事象(決算 vs 訴訟など)の誤併合はしない。設計は複数案＋敵対的テストで検証(22ケース: 併合7/非併合9/境界6、全pass)'],
+  ['v10.171.0', 'C.A.O.S.のイベント評価が消えない様に(常設＋AI評価を重ねる) — 統合後にイベント評価が見えなくなっていた原因は、その層が「AI生成の文章だけ」を表示する作りで、AI生成cronが未実行だと0件→層ごと非表示になっていたため(ニュースと違い常時ライブではない)。修正: 重要イベント(PCE/GDP/NFP/FOMC/日銀等)を必ずベースライン表示(影響度＋なぜ重要)し、AI評価(概要/事前予想/事後)が生成済みのイベントにはそれを重ねて表示。未生成のイベントには「AI評価は生成中…」と明示。これでイベント評価がC.A.O.S.から消えることはなくなった'],
+  ['v10.170.0', 'C.A.O.S.の裏取り(corroboration)をAIニュース入力の土台に — 「裏取りこそC.A.O.S.の防御機構なら、見出し1本で取り乱さないはず」という指摘に対応。①ソースを「系統(family)」に正規化(同じ通信社の転載は1系統=独立確認に数えない)②各見出しに裏取りレベルを付与: 公式(Fed/SEC等)>裏取り(独立2系統以上)>単一ソース③AIには裏取りレベル付きで投入し、システムプロンプトで「単一ソースは気づき用・重みほぼゼロ・判断を動かさない/公式・裏取りも価格/金利が裏付けたときだけ反映」と明示④表示も裏取りバッジ(公式/裏取り/単一ソース)に。正直な限界: 本文を取得しない(スクレイピングなし)ため厳密な独立検証ではなく、公式優先＋複数系統＋単一抑制で「見出しに踊らされない」堅牢性を担保する設計'],
+  ['v10.169.0', 'ニュースの精度対策 — 見出しは本文と食い違う/無関係なものが混じるため、AIに入れる前に質を上げた: ①相場関連フィルタ(株/金利/決算/原油/為替/半導体/関税など、和訳も含めて判定)で、スポーツや投資無関係の地政学などのノイズ見出しをAI入力から除外②ソース信頼度(通信社=Reuters/Bloomberg/日経/CNBC等 > その他)で重み付け、通信社を優先③システムプロンプトを強化=「見出しは未検証のClaim(本文と異なりうる)・見出し以上の推測をしない・通信社を優先・価格/金利が裏付けたときだけ判断に反映・ニュース単独でADD/EXIT等を出さない」。C.A.O.S.の表示も相場関連の見出しのみ＋通信社バッジに。これで誤判断リスクを抑えつつ気づける'],
+  ['v10.168.0', 'C.A.O.S.をトップの常設2枚目カードに統合(ニュースも取り込み・AIにも投入) — ①トップページのC.A.O.S.を「機関シグナル＋イベント分析＋ニュース」を1枚にまとめた常設カードにし、必ずヒーローカードの次(2枚目)に表示。従来は機関データもイベント分析も空のとき両方null→C.A.O.S.が画面から消える不具合があったが、ニュースは常時ライブなので二度と消えない。②一般市場ニュースをAIスナップショットにも投入(marketNews)。ただし「未検証・参考のみ・単独で判断を動かさない・機関シグナルや価格と突き合わせる」とシステムプロンプトで明示=ノイズで判断が歪まないようにした上で気づける。③独立していた下部のNEWSカードはC.A.O.S.に取り込んで重複を解消'],
+  ['v10.167.0', 'C.A.O.S.のイベント分析を「見出し＋一言」に再構成(ニュース欄はそのまま) — 長文だったイベント分析を、イベントごとに見出し付きの短い一言に整理: ①概要(常に表示)②事前予想(発表前のみ・無ければ出さない)③事後(発表後のみ・発表前段階では出さない)。事前/事後はフェーズに応じて自動で出し分け。元々のニュース(トップのNEWS・Market ContextのNews Radar・機関インテリジェンス)は一切崩していない=C.A.O.S.の枠に「ニュース＋イベントの一言」が並ぶ構成に充実。生成は引き続きGPT-5.5(OpenAIのフラッグシップ・Responses API)'],
+  ['v10.166.0', '画面サイズの追従を元に戻す(横幅リサイズに常に追従) — v10.163で外したビューポートの倍率ロック(maximum-scale=1.0 / user-scalable=no)を復活。倍率を1.0に固定することで、ページは常にウィンドウ/端末の横幅にぴったり収まり、リサイズに追従して再レイアウトする。v10.163では倍率ロックを外したことで、ピンチで拡大した「アプリサイズ」状態に固定され、横幅の伸び縮みに追従しなくなる不具合があった。これを元の挙動に戻した'],
+  ['v10.165.0', 'C.A.O.S.にイベント・ライフサイクルを実装(事前シナリオ+事後分析) — 重要イベントごとに、①発表前: 市場の織り込み・大口の構え(見解≠建玉)・サプライズ時のシナリオ(ホット/クールと非対称リスク)②発表後: 結果(公式に無ければ無いと明記・数値は捏造しない)・大口の捉え方・市場の捉え方(実際の地合い/価格反応)・金融業界への影響、をAI(C.A.O.S.)が短い文章で生成。トップとMarket Contextの両方に表示。生成はcron(イベント単位6hキャッシュ・公開GETは無課金)。これでイベントの全ライフサイクル(事前の構え→当日の反応→事後の総括)がC.A.O.S.の枠で一貫'],
+  ['v10.164.0', 'AI見解を再起動でも維持(永続化)+ 説明の更新 — ①15分毎のai-rejudge含む全AI実行を毎回 /tmp に永続化し、サーバー再起動後は直近のAI見解を即復元(従来は日次の台帳分のみ復元=再起動でカードが「ルール暫定」に戻りがちだった)。デプロイ(コンテナ入替)時は引き続き台帳の日次分から復元②Guideの能力説明を最新化(AI=画面判断の主役・AIバッジ/ルール暫定の意味・参照する自己採点/C.A.O.S./チャート/日証金・Pro/Flash使い分け・永続化を明記)'],
+  ['v10.163.0', '画面を自由に拡大縮小できるように — viewportの user-scalable=no(ピンチズーム禁止)を解除。一度小さく表示されると指で戻せない状態だったのを是正し、幅・文字を自由に変形可能に。レイアウト自体はレスポンシブで正常(全ページ375px幅で横はみ出し無しを確認)'],
+  ['v10.162.0', 'Market Context(3ページ目)をトップ基準に統一(案B) — ①イベントの「D-7/D-3/D-1」符丁を平易な日本語に(「1週間内/数日内/明日/本日」、エスカレーション方針表も「1週間前/数日前/前日/当日/翌日」)。接近で新規を絞る規律のフレームは維持し、読みにくい符丁だけ解消②影響表記をトップと完全統一(◆▲●· + 影響:重大/大/中/小 + 紫/橙/青/灰の影響色。価格の赤緑とは別)③カウントダウン・カテゴリ・ニュースレーダーの水準(平穏/やや増加/高水準)も日本語に。共有の語彙ライブラリ(eventLabels)でトップと同一語を使用。フォント/サイズもトップのカードに整合'],
+  ['v10.161.0', '表記の統一(トップ基準)+ 用語の日本語化 — ①左ナビ(丸ボタン)を常に英語に(Today/Watchlist/Market Context/Core Portfolio/Guide)=扉のタイトルは英語の方針に統一②銘柄カードの関連イベントタグを日本語に(「BOJ · normal · HIGH」→「日銀 · 影響:大」。遠い予定の"normal"は省略、影響は重大/大/中/小)③リスクオーバーレイの生enumを日本語に(「JP intraday: RISK_OFF_WATCH」→「日本ザラ場: リスクオフ警戒」、Global/Japanの値も日本語)。方針: 長文・状況情報・伝わるべき値は日本語、シグナル名や扉タイトルなど要所のみ英語。3ページ目のD-7表記の統一は別途相談'],
+  ['v10.160.0', '判断の主役をルール→AIに(設計思想に一致)+ チャート/日証金をAIへ供給 — ①画面の銘柄判断(HOLD/EXIT/ARGUS VIEW)を、AI(GPT+Gemini)が裁定した結果(aiFinalAction+AIの理由)に切替。AIが最新の時はカードに「AI」バッジ、AIが古い/未実行/予算停止の時だけルールエンジンが「ルール暫定」(ガードレール)として表示=画面が空にならない。AIは既に自己採点(教科書)とC.A.O.S.を見て判断しているので、これで「情報→AI判断→自己採点反映→表示」が一周つながる②AIへの入力にチャート(RSI14/トレンド)と日証金/信用残(JP・J-Quants週次)を追加。30分キャッシュで15分毎の実行でも負荷を抑制。注: AI判定がフレッシュでない間は全カード「ルール暫定」表示(AIが回り出すと自動でAI判断に切替)'],
+  ['v10.159.0', 'AI検算をコスト最適な2段構えに(Pro/Flash使い分け) — 判断の主役は常にGPT-5.5。第二意見(Geminiチェッカー)を実行ごとに選べるようにした。①市場時間中15分毎+場外の定期更新=Flash(安価・平常時の検算はProと同等)②日次16:05の本判定(台帳に採点され「教科書」になる回)=Pro(深い検証)。実測でPro併用は約$0.11/回=15分毎だと予算($5/日)を超えるため、頻繁な回はFlash(約$0.05/回)に、効く回(採点される本判定)だけProに集中。これで終日カバーしつつ約$2.6/日で予算内。品質はほぼ落とさず、難しい局面でのみProが優位'],
+  ['v10.158.0', '銘柄カードのレイアウト固定 — 長い銘柄名は…で省略し、価格・%・表記が変に改行されないよう1行固定(価格と%は右揃え・等幅数字)。flex-wrapが原因で長名時に行が折り返していたのを是正'],
+  ['v10.157.0', 'JP取得順をオーナー仕様に整列(moomoo→Yahoo→J-Quants) — フォールバック順をmoomooリアルタイム→Yahoo(当日/約20分遅延)→J-Quants(T-1昨日)→mockに修正。従来はJ-Quantsが先で古い値が出ていた。Yahooの方が常に新しいため鮮度向上。※moomooの「500」はmovers検出用の市場スキャン枠であり、あなたのwatchlist銘柄は(ブリッジ再デプロイ後)すべてmoomooリアルタイム。500社全部を常時リアルタイムにするかは別途選択可'],
+  ['v10.156.0', 'watchlist追加銘柄もリアルタイム化(浜松ホトニクス等が固まる問題)+ 正直な遅延表示 — 根因: moomooブリッジが固定12銘柄しかリアルタイムpushしておらず、あなたが追加した銘柄(例6965)はJ-Quantsの前日(T-1)値で固定されていた(なのに"live"表示=誤り)。修正: ①J-Quantsの前日データは`delayed`(遅延)と正直表示(当日のmoomoo-rtだけがlive)②backendが「フロントが要求した銘柄」を記憶し`/jp-watchlist-codes`で公開③ブリッジがそれを3分毎に取得して15秒pushに自動合流 → watchlistに足した銘柄が自動でリアルタイムになる(ブリッジのCODES env編集不要)。※ブリッジ側(EC2)は再デプロイで有効化。AIはOption Cのcron(15分毎)+ 採点台帳の保存修正で、市場時間中に自動で第二意見を生成'],
+  ['v10.155.0', 'トップ銘柄カードにライブ価格表示 + AI 15分毎再判定(Option C) — ①トップ画面の銘柄カードに「現在値」を表示(これまで%だけで小さな変化が見えにくかった)。価格はaction-labels(15秒更新)+暗号はcoingecko(30秒)で常時更新。検証: バックエンドは秒単位で価格更新中(7203が2705→2706など)を3回サンプリングで確認済=裏は動いていた。表示側に価格を出して動きが一目で分かるように②Option C採用: 市場時間中(JP/US)15分毎にGPT+Geminiが再判定する専用cron(ai-rejudge)を新設。AI実行の回数上限(従来3回/日・30分間隔)を64回/日・14分間隔に緩和。真の安全弁はAI予算ハードストップ($5/日・$80/月)で、超過時はAIを自動停止。15分毎は約$2.6/日・$57/月の見込みで予算内。※有効化にはRender環境のOPENAI/GEMINIキーが必要'],
+  ['v10.154.0', '画面を常時ライブ更新に(止まっていた問題の修正) — ①暗号資産とFX/MACROのフックが「起動時に1回だけ取得」で固まっていた → 暗号資産30秒・FX/MACRO60秒で自動更新するよう修正②トップ画面の%とシグナルを60秒→15秒更新に(個別ページは元々15秒)③バックエンドの暗号資産キャッシュ10分→90秒・FX上書き5分→90秒で実勢に追従。これで市場が開いている間は%もニュースも裏で動き続け、画面が常にライブになる(日本株は夜間は取引所が閉まっているため値は動かない=セッションランプで開閉を表示)。裏側(moomooブリッジは開場中15秒毎にpush、収集cronは常時稼働)は元々動き続けており、表示側の更新が追いついていなかったのを是正'],
+  ['v10.153.0', 'AIに自己採点とC.A.O.S.を接続(ループを繋ぐ第一歩)+ 残UI4件 — ①【設計思想の核】GPT/Geminiの判定スナップショットに「自己採点(過去成績)」と「C.A.O.S.機関シグナル」を注入。AIは過去hitRateが低い局面では確信度を下げ、機関の見解(=売買ではない)も加味するよう指示。これまでAIはルールのラベルだけ見ていた②JP銘柄のMOCK解消: J-Quants/moomoo圏外の銘柄もYahoo前日終値(キーレス・delayed表示)で実値を出す(MOCKを出さない)③トップのJAPAN等の「ACTION 4/7」を7灯シグナルゲージ(小)に置換④ページ送り: 上下引っ張りを約30%軽く・新ページが画面下から1画面分スライドして繋がる連続感に・トップ画面で上引っ張り=再読み込み。※PTS(夜間取引)はEC2ブリッジ側対応が必要で次段階'],
+  ['v10.152.0', '自己採点の復旧 + FXリアルタイム化 + C.A.O.S.日本語見出し + 表示の正直化 — ①【ARGUSの肝】自己採点が「データなし」だった根因を修正: event-ledgerワークフローが `git rm --cached .` 後に events だけ再追加していたため、prediction-ledgerが書いた採点(days/scores/summary.json)を毎回消していた。安全パターン(全ファイル保持)に修正。これで採点が蓄積され、1〜2営業日で「自己採点」に数字が出始める②FX/MACRO: USD/JPYがFRED日次で1週間遅延(SBIと乖離)→ Twelve Dataのリアルタイム値に上書き。金利/VIXはFRED日次のまま「as of 日付・遅延N日」を明記して正直化③C.A.O.S.: 機関ニュースの英語見出しを日本語訳して表示(収集時に翻訳しキャッシュ・公開GETは無課金)。タイトルの日本語副題を除去④暗号資産: トップ画面の銘柄カードに変化率が出るよう配線(以前は"—")⑤NEWS: 取得中は「Loading…」表示(「ニュースなし」を読み込み中に出さない)。AI見解は平日16:05に自動実行(スケジュール)'],
+  ['v10.151.0', 'C.A.O.S. と命名 + 日経追加 + 24時間スキャン — ①機関インテリジェンス機能を「C.A.O.S.(= Corroborated Analyst & Official Signals)」と命名(情報のカオスを裏取り済みの機関・公式シグナルへ整える、の意)。トップ画面の市場横断セクションに表示②日経(日本語 web見出し)を調査源に追加(markets/business・公開メタデータのみ・nikkei.comへリンク。日経は公式公開RSSが無いため公開の第三者RSSアグリゲータ経由・見出し+リンクのみで全文保存なし)。1収集441件に③スキャン頻度: 従来は市場時間中のみ(US15分/JP30分・平日)だったのを、ニュースは24時間という理由で専用cron(caos-scan)を新設し30分毎・24/7・週末も収集。※公開GETは収集を起こさず収集はcron限定。注: 「日本株がMOCK」等の夜間表示は、JP市場が閉場(深夜)+デプロイ直後のキャッシュ温め中の正直表示で、データ自体はmoomooリアルタイム。市場が開けば通常表示に戻る'],
+  ['v10.150.0', '機関インテリジェンスの残フェーズ(調査スウォーム/ポジショニング/関係グラフ/デイリーブリーフ/永続化)を完走 — ①§12 マルチエージェント調査ミッション(決定的・LLM呼び出し0): 1銘柄に対しアナリスト・ロール群(情報源ハンター/公式検証/ニュース裏取り/市場反応/強気・弱気/敵対的レビュア/統合エディタ)を動的編成して走らせ、動意後の情報を「引き金」と誤認しない・物語整合ゲートで断定を却下し、ひとつのARGUSビュー+確信度を返す。/api/argus/events/<sym>/research-mission②§14 機関ポジショニング: 遅い建玉(FINRA/13F/EDINET)と速いフロー(moomoo)を分離、空売り出来高≠残高、確率は合計1で未較正、機関を売買主体として名指ししない③§15 クロスマーケット関係グラフ(versioned): テーマ/競合/サプライ/ETF/感応で波及候補を提示(各候補に「関連は因果でも予測でもない」caveat必須)④§21 オーナー向けデイリー機関ブリーフ⑤§18 トップ画面に市場横断「INSTITUTIONAL INTELLIGENCE」セクション(最大3・重要時のみ)⑥§27 intel storeをディスク永続化(再起動でWARMINGにならない)⑦§29 Pro Handoffに機関見解+反証要請を追加。テスト+60(計449)。全て決定支援のみ・自動売買なし'],
+  ['v10.149.0', 'Bloomberg 英語版+日本語版を調査対象に追加 — ①Bloomberg英語版: 公式公開RSS(markets/economics/technology)を実測検証して採用(例「Micron Earnings to Be a Gut Check Moment for Markets」等の機関ニュースを取得)②Bloomberg日本語版: 公式RSSが無いため、robots.txtが宣言する公式ニュースサイトマップ(bloomberg.co.jp/feeds/cojp/sitemap_news.xml)を採用。これは公開メタデータ(タイトル/URL/掲載日時)でスクレイピングではない。日本語タイトルをlanguage=jaで収集。サイトマップparserを新設。1収集でEN81件+JP41件を実証。全14フィードで385件。Bloombergは権利クラスPUBLIC_METADATA(全文保存なし・見出し+リンクのみ)。有料端末/契約フィードは不使用'],
+  ['v10.148.0', '機関インテリジェンスの公開ニュース源を実測で再整備 — 死んでいたReuters公開RSS(0件)を本番から完全除去し、稼働中のCNBCは維持。全候補を本番UAで実際にcurl検証し、HTTP200+取得可能なものだけを採用: CNBC(markets/finance/economy/earnings)・MarketWatch(marketpulse/topstories)・Nasdaq markets・Yahoo Finance・Federal Reserve(マクロ/中銀)・SEC(公式)の計10フィード。1回の収集で263件取得を実証。収集ログに「どのfeedから何件・新規何件・失敗feed」を出力(market-watchのログで確認可)。死にURLは本番に残さない方針。情報源は権利クラス+収集方式(rss/owner_capture/official/licensed)で正直表示。有料・契約フィードは不使用・スクレイピングなし(公開RSSのみ)'],
+  ['v10.147.0', '機関インテリジェンス + マルチソース調査メッシュ v1 — プロの調査デスク能力の土台を構築。①Source Rights Registry: 各情報源の権利(全文可/メタデータのみ/リンクのみ/ライセンス)をコードで強制(許可なき全文は保存もLLM送信もしない)②機関ウォッチリスト(米欧+日本の証券+運用会社/HF)+ 機関/アナリストのエンティティ解決(身元を捏造しない・不明はunknown)③LAYER2 公開Web収集: 許可リストRSS(メタデータのみ・SSRF対策・サイズ/タイムアウト制限・スクリプト除去)→ IntelligenceItem正規化 → 物語クラスタで同一ワイヤー転載を重複排除④レポート解析は強気/弱気/条件付きの両論を保持⑤因果ロール: 動意後の情報は引き金にしない・機関の見解≠売買・空売り出来高≠残高⑥物語整合ゲートが断定表現を公開前に却下⑦銘柄カード内に「INSTITUTIONAL VIEW」表示(見解であり建玉ではない、と明記)⑧owner capture/missed feedback/source-health エンドポイント⑨LAYER1 ライセンスフィード(Bloomberg/LSEG/Factiva/RavenPack)は契約まで無効のinterfaceのみ+ベンダー評価文書。公開GETは取得/課金を起こさず収集はadmin/cron限定。テスト+18(計385)。自動売買なし'],
+  ['v10.146.0', 'データ源を全面監査し最大効率に再配線(moomoo優先) — 全6ドメイン48件の監査で「良いmoomooがあるのに悪い源を使っている」箇所を特定。①地合い8本ETFをmoomooリアルタイムに(現値=moomoo、履歴=Twelve Data)→Twelve Dataのレート制限由来のPARTIALを軽減。ブリッジは8本ETFを常時push②US全市場ムーバーをmoomoo 3段化: moomoo(キュレートS&P500∪あなたのwatchlist∪ETF・watchlist変更に自動追従)→ Alpha Vantage(フォールバック・遅延時は通知抑止)。Alpha Vantageの遅延・ペニーノイズを実質置換③/api/argus/us-universe + /us-movers-push 追加。テスト+3。※ブリッジ(EC2)の再デプロイで有効化。地合いETF履歴の長期分は引き続きTwelve Data(moomooは現値のみ)'],
+  ['v10.145.0', '小出しだった「残り」を一括完走 — ①ペニー株ノイズ除去: US全市場moverの価格下限を$1→$10、さらに+60%超(ほぼpump/値幅artifact)を除外②OWNER CRITICAL: 保有銘柄がEXIT/DEFENDの時だけ最上部に小バナー(保有の緊急が埋もれない)③FX/MACROセクションを追加(USDJPY/US10Y/VIX・VIX上昇は逆相関で赤)④テキスト削減: 原因スタックの見出しを「原因の詳細」に簡素化(英語重複を排除)。※US個別ニュース見出し(Finnhub)は前版v10.144で実装済み。残るのは構造的にデータ取得不可のもの(予想/結果/市場反応の有料フィード・蓄積待ちの結果スコアリング)のみ'],
+  ['v10.144.0', 'Pagesデプロイ失敗の修正 + イベント行レイアウト + US個別ニュース拡張 — ①GitHub Pagesのdeployがたまに10分タイムアウトで失敗していた(連続pushがキューに滞留)→ concurrencyを「最新で上書き(cancel-in-progress)」+ タイムアウト短縮で解消②重要イベント行の「影響: 重大」が狭幅で改行ずれ→2段グリッド(上=日付、下=銘柄コード左+影響右揃え)で整列③銘柄カードの関連ニュースに US の Finnhub company-news 見出しを追加(媒体ニュース=因果未確認UNCONFIRMEDとして正直表示・原文言語+出所付き)。JPはTDnet/開示が引き続き源泉'],
+  ['v10.143.0', 'US全市場moverの鮮度バグを修正(深夜に古い暴騰が届く問題) — 出所はAlpha Vantage無料枠のTOP_GAINERS_LOSERSで、①これまでイベント時刻を記録した瞬間(now)にしていてデータの実時刻を捨てていた→AVの last_updated を時刻に採用②AVのデータ自体が古い(前セッションのスナップショット)場合は記録のみで通知抑止(古い動きを「今」のアラートとして出さない・既定2hより古ければstale)③通知本文に「データ時刻」を明記。これで「昨日の急騰が深夜1時に届く」現象を止める。テスト+2。※AV無料枠はintradayリアルタイム保証が無く前日終値ベースのことがある(構造的制約)'],
+  ['v10.142.0', '関連ニュースを銘柄カード内に分類表示 + 下部ニュースを「NEWS」に改名 — ①cause-attribution(原因スタック)に分類済みニュースを追加: 公式かつ時刻整合=CONFIRMED / 関連の可能性=LIKELY_RELATED / 背景=BACKGROUND / 因果不明=UNCONFIRMED(価格の赤緑とは別表示・原因の断定はしない・argus_attribution.classify_newsで時刻整合判定)。TDnet(JP適時開示)・開示filingを源泉に、銘柄の展開カード内(原因スタック)へ表示②それ以外の一般ニュースは下部に集約し、タイトルを「UNLINKED NEWS」→「NEWS」に。テスト+1'],
+  ['v10.141.0', '銘柄カード展開時に旧Downside+原因スタックの情報量を復元(オーバーオール全文+深い帰属を再掲・削がない)'],
+  ['v10.140.0', 'トップを「一銘柄=一枚」+「重要イベントはコマンドカード内」に再設計 — ①トップのコマンドカードを上下2ブロックに(区切り線のみ・入れ子カードにしない): 上段=現在の命令、下段=IMPORTANT EVENTS(PCE等を初心者向けに・日付/JST/カウントダウン/影響色violet〜gray・発表まで禁止・次の確認)②その後を個別銘柄カードに: JAPAN(WATCHLIST→EMERGING)→ US(WATCHLIST→EMERGING)→ CRYPTO。各カテゴリ最大10・初期5・SHOW 5 MORE・自動展開は最大1③一銘柄=一枚に統合(Downside/原因/24-7/フローを分散させない): 閉=銘柄・騰落・主コマンド・権限・原因一行・最終更新、展=ARGUS VIEW(RULE+GPT+GEMINIの鮮度付き)・CAUSE・NEXT・(連動イベントはLINKED EVENTタグ)④並びは保有/防御/原因未確認/更新時刻/変動の順⑤UNLINKED NEWS・HISTORYを下部に。自動売買なし'],
+  ['v10.139.0', 'Downside Watch と 24/7 Event Intelligence を1つの「Live Watch」に統合 — トップをリアルタイムのメインハブに。①下落インシデント(原因+保有向けアクション)と②24/7の時刻付きイベント(S高/急騰/急落/出来高/大口フロー/全市場ムーバー)を1つのフィードに時刻・重大度順で統合(銘柄で重複排除・機能は一切削っていない=既存のリッチ行を再利用)。トップ順は 全体(コマンド)→ 重要イベント → Live Watch(銘柄リアルタイム)→ 一般ニュース → 判断ログ。2ページ目(Watchlist)はポジション入力+銘柄ごとの売却/保持/買い増し情報をそのまま維持。自動売買なし'],
+  ['v10.138.0', 'Today に「重要イベント(初心者向け解説)」をコマンド直下へ追加 — PCEの重要性が伝わらなかった反省から、個別銘柄カードの前にマクロ/イベントのリスクを学べるように。①各イベントに初心者向け解説(PCE/CPI/FOMC/BOJ/雇用/GDP/入札 等のen/jaテンプレ)・日時・JST・カウントダウン(D-7〜本日/発表済み)・「影響」の段階を表示②イベント影響色は価格の緑赤とは別トークン(重大=violet/大=amber/中=blue/小=gray)で「影響=動きうる強さ・方向ではない」と明記③owner関連度で表示影響を昇格(保有/watchlist銘柄に紐づくと格上げ)④発表までブロックされる操作・発表後の確認先を提示⑤予想/前回/結果は捏造せず取得不可は明示⑥ヘッダーのNext◯◯チップはタップで同じイベント行へスクロール(二重説明なし)⑦表示順をコマンド→重要イベント→保有インシデント→…→一般ニュースに。自動売買なし。テスト8'],
+  ['v10.137.0', 'シグナル7灯ゲージの点灯を強発光に — 現在地のセグメントを多層グロー(最大24px)+明度/彩度アップ+横幅拡大で一目で分かるよう強調、消灯部はより暗く(opacity 0.16)してコントラスト確保。緩やかなパルス(1.8秒・prefers-reduced-motionで自動停止)も追加'],
+  ['v10.136.0', '監査で挙げた未着手分をまとめて実装(A1〜A5+closepin) — ①closepin: EC2 cron不発火でも落ちるよう、GitHub fallbackを窓内(14:25/14:35/14:45/15:00 JST)に複数化+重複ガードで1日1pin維持②action-labels: 各銘柄ラベルに構造化signal{code,level,permissions}+応答にsignalSchemaVersion(台帳の一貫性)③数値色SignedValue/--value-*を残り画面へ: Market Contextの米/日ムーバー(±%)・What-ifの中央値・保有損益の色をトークン統一④Pro Handoffのプロンプトに「Action Level(7段階・資本投下許可)」の説明と各ラベルのsignalを明記⑤アクセシビリティ監査: ボタン名/alt/svgラベル/入力ラベル/h1=すべて適合(保有入力は<label>暗黙ラベルで適合)。テスト350'],
+  ['v10.135.0', '全市場moverをmoomooリアルタイム3段に — ①ブリッジが場中(平日)に「500銘柄サンプル + あなたのwatchlist」を定期スイープ(get_market_snapshot・秒単位)し、騰落率の大きい銘柄をbackendへPOST②backendのmover検知を3段ウォーターフォールに: moomooリアルタイム → 残りはYahoo(約20分遅延・広い市場) → 閉場後はJ-Quants EOD。銘柄単位で重複排除(上位ソース優先)し|変動|で順位付け。これでwatchlist銘柄が動けばYahoo遅延ではなくmoomoo秒速で検知。pushは引き続き場中のみ(v10.133ゲート)。テスト2追加。※ブリッジはEC2の再デプロイが必要'],
+  ['v10.134.0', 'PARTIAL多発の根本原因を修正 + ステータスのカタカナを英語に — ①原因: 地合いの8本ETF(SPY/QQQ/IWM/XLK/XLU/GLD/TLT/HYG)の日次終値を毎更新でTwelve Dataに取りに行き、無料枠のレート制限で一部欠落→全体partial→信頼度低下、になっていた。日次データなのに取り直し過ぎ。修正: ETF終値を約2hキャッシュ+部分失敗時は前回good値で補完(欠落しても全体partialに落とさない)。テスト3追加。②ステータス行の「リスク/データ」を英語に(HIGH RISK · PARTIAL DATA)。信頼度の説明文など長文は日本語のまま'],
+  ['v10.133.0', '全市場mover通知を「開場中だけ」に修正 — これまでJP全市場の急騰急落アラートが大引け後(例19:30)に来ていて、しかもザラ場の値動きを今頃通知=見ても動けない状態だった。①バックエンドにゲートを追加し、MARKET_MOVERのpushは該当市場が開いている時のみ(閉場後はAPI/台帳に記録だけ・push無し)②market-watchにJPザラ場の実行枠(平日09:00–15:00 JST/30分毎・Yahoo約20分遅延の全市場)を追加。これで急騰急落は開場中=動ける時間に届く。原因はEOD専用データを閉場後に処理していたため(JPは無料の全市場リアルタイム配信が無い)。テスト4追加'],
+  ['v10.132.0', '上部の市場ステータス行を整理 — 冗長な「市場ステータス」見出しを削除し、状態表記を英語に戻した(JP CLOSED / US OPEN / Crypto 24H)。短いステータス語は英語の方針に統一'],
+  ['v10.131.0', 'シグナルを7灯ゲージに(「ACTION 4/7」を廃止)+ 古い左上ピルを削除 — ①Today主コマンド下のシグナル名の右に、赤(注意=撤退)→緑(良好=エントリー可)の7セグメントを配置。現在地が点灯(明るく+グロー)、消灯部も淡く色が見えるので段階が一目で分かる。各セグにツールチップ(1.撤退〜7.エントリー可)②左サイドバー上部の古い「待機」ピル(旧レガシーaction・アイコン含む)を撤去。ナビの「今日」ボタンは残置'],
+  ['v10.130.0', '各ページの扉タイトルを英語固定に — Daily Command Center / Watchlist / Market Context / Core Portfolio / Glossary・Guide を日本語モードでも英語表示(扉タイトルも「要所」扱い)。ナビのサイドバーは日本語のまま。英語固定用の tEn() を追加して5ページに適用'],
+  ['v10.129.0', '表示言語の方針を「日本語ベース+要所だけ英語」に確定 — ①既定を日本語に変更(長い説明文は全て日本語で読める)②要所のアクション語(Todayの主コマンド NO NEW ENTRY / EXIT POSITION 等 + シグナル名 PAUSE·ACTION 4/7)は日本語モードでも英語で固定③ダウンサイドの上書き表示が「EXIT WATCH(撤退検討)」と英日二重だったのを日本語のみ(撤退検討/縮小検討/要点検…)に統一(actionLevelに単一の日本語ラベルを集約)④権限行の既存ポジションコード(MONITOR等)も日本語(監視/維持/再点検/リスク削減/撤退)に。英語フル切替はGuideの言語セレクターで引き続き選択可'],
+  ['v10.128.0', 'i18n裾野(その2)=Core Portfolio を全面en/ja化 — 見出し(あなたの配分/クラス判断/積立方針+投信基準価額)・合計/保有なし・配分の空状態の案内文・価格未取得の注記・NAV取得中の文言を辞書化。これで日常の判断3面(Today / Watchlist / Core Portfolio)はchrome+主要プロ-ズが言語切替対応。残り(Today自己採点の統計文・AIReviewページ・Guide本文=日本語ドキュメント・診断カード)は順次/任意'],
+  ['v10.127.0', 'i18n裾野=フロント再構成(その1) — バックエンドのプロ-ズに英訳を足すのではなく、構造化キー+辞書から両言語を生成する方針(切替はAI課金ゼロ)。①holderPosture(保有判断: 損切り/一部縮小/我慢/ナンピン/買い増し/保持)をキー+P/L等のパラメータからen/ja生成に作り替え。Watchlistの「保有」バッジ・詳細の保有判断もen/ja②Core Portfolioの積立コメント(積立継続/一括見送り+理由)を辞書化③Watchlist行のシグナル名もen/ja。実機(en)で確認'],
+  ['v10.126.0', 'Render Standard(2GB)契約に伴い鮮度を復元 — 2026-06-24にRenderを2GBへアップグレード(毎日のメモリ超過メールの根本解決)。これに伴い v10.110 でメモリ節約のため鈍らせていたダウンサイド(急落検知)の鮮度を元に戻した:サーバー再計算 180→60秒・フロントのポーリング 120→60秒。急落の検知が3倍速くなる(safety層の本来の価値)。メモリ逼迫の正体はランタイムfootprintで蓄積データ(gitのledger保存)とは無関係だったため、今後データが増えてもRAMには影響しない'],
+  ['v10.125.0', '残り画面の数値色+i18nを拡張 — Core Portfolioの含み損益・投信NAVの前日比を SignedValue/--value-* 色トークンに統一(旧 --green/--red から脱却・「Day change −3.55%」のように符号+色+読み上げを一元化)。ページ見出し(地合い/資産配分)も言語切替対応。動的な解説文(積立コメント等のバックエンド由来)は引き続き順次i18n対応'],
+  ['v10.124.0', 'A(構造化シグナル+数値色)+C(i18n裾野)を実施 —①バックエンドに argus_signal(Action Levelリゾルバ)を追加し、ダウンサイドAPIに structured signal{code,level,permissions,legacyAction,schemaVersion} を付与(消費側が文言から権限を推測しなくて済む・台帳のスキーマ版管理に対応)。テスト7②共通の SignedValue コンポーネント(符号+色トークン+矢印/読み上げ)を新設し、Watchlistの騰落率に適用(色は --value-* トークンで一元化)。VIX等の逆相関metricは getMetricTone で「プラスでも赤」に③i18nをWatchlistへ拡張(フィルターchip 全部/危険のみ/保有のみ・ツールバー・空状態)+ナビ/見出しと合わせて選択言語で表示。テスト341'],
+  ['v10.123.0', 'i18n(英語/日本語 切替)を導入(既定=English) — web/src/i18n に辞書(型付きキー)+useLocale/t()+pick()を新設し、Guideに言語セレクター(English / 日本語・端末に保存)を追加。ナビ・ページ見出し・MARKET STATUS・コマンド要約(主コマンド/権限/WHY NOW/NEXT/ラベル付き梯子)を選択言語で一貫表示(切替でAI課金は発生しない)。コマンド要約の主コマンド・理由・次の条件・ドライバーは既存のen/jaフィールドから選択。実機で en↔ja 双方向の切替を確認。動的な詳細解説(バックエンド由来)は順次i18n対応(長い裾野は段階移行)'],
+  ['v10.122.0', 'Todayを単一コマンド要約に集約(10秒ルール達成) — 並列に出ていた状態(PAUSE/EVENT WAIT/CAUTION/HIGH/PARTIAL…)をユーザーが頭で統合する必要をなくし、ARGUSが1つの指令に合成。①最大文字は人間向けの命令(例: 新規購入禁止 NO NEW ENTRY)、シグナル(PAUSE · 4/7)は副次表示②匿名の7分割ゲージをヒーローから撤去(ラベル付きの梯子は「説明」内のみ・CAPITAL DEPLOYMENT PERMISSIONと明示)③ドライバーは最大3つに正規化(重要イベント接近/日本株警戒/部分データ 等・Event Wait+Event Risk+Highの重複表現を解消)④理由・次の条件は1回だけ⑤Market Contextは下に折りたたみ(VIEW MARKET CONTEXT)⑥MARKET STATUSは控えめに。決定論的なcommandSummaryリゾルバ1本に集約し、各コンポーネントが個別に再解釈しない。自動売買なし'],
+  ['v10.121.0', '通知をAction Level形式に + GuideにAction Levels解説を追加 — ①急落通知が「アクション X/7 — シグナル / 新規購入:禁止 · 買い増し:禁止 / 原因 / 次」形式に(英語ロケール ACTION X/7 — REVIEW / NEW ENTRY: BLOCKED にも対応)。汎用「急落」表現を撤廃②Guide能力一覧の先頭に「アクションレベル(7段階)」解説を追加(HOLD ONLY=新規・買い増し禁止/ENTER≠全力/EXIT≠自動注文/データ不完全でENTER不可/無材料=安全ではない/数値色も明記)'],
+  ['v10.120.0', 'Today画面を指揮優先(Command-First)に再構成 + 曖昧な CLEAR を撤去 — ①最上段にアクション指令(シグナル+権限)を配置し、地合い(Global/Japan)は下へ。「今何をしてよいか」が一目で分かる(NEW ENTRY BLOCKED · ADD BLOCKED を大きく表示)②Owner Riskの「CLEAR」を撤去(=安全/買いOKと誤解されるため)。意味のあるオーナー状態(REVIEW/DEFEND/NOT SYNCED等)がある時だけ表示③PARTIAL DATAを指令カード内に統合(独立した大きな段落を廃止・信頼度上限を併記)④EVENT_WAIT等の生enumを「EVENT WAIT」と整形⑤指令カードは英語で統一(「PAUSE 保留」等の言語混在を解消)⑥市場行に「MARKET STATUS」見出し+OPEN/CLOSED/24Hを付けタブ誤認を防止⑦重複していた理由/次の条件を整理。動的な理由文の完全な言語切替は次のi18nフェーズ'],
+  ['v10.119.0', 'Action Level システム導入(HOLD曖昧さの根治・Phase1)+ 数値カラー標準化 — 「HOLD」が「保有=安全・新規買いOK」と誤解された問題に対し、7段階のAction Level(1 EXIT/2 DEFEND/3 REVIEW/4 PAUSE/5 HOLD ONLY/6 PREPARE/7 ENTER)を唯一の真実源(domain/actionLevel.ts)として導入。シグナル語は単独表示せず、必ず権限(NEW ENTRY/ADD/EXISTING)を併記。HOLDは「HOLD ONLY(新規・買い増しBLOCKED)」になり緑色にしない(スレート色)。Todayヒーロー+Watchlist各行に適用。レガシー値は保持(legacyAction)。数値色トークン(--value-positive/negative/neutral/unavailable)+getNumericTone/getMetricTone(VIX上昇は緑でなく赤=higher_is_worse)も追加。次フェーズ: 全画面の数値色適用・en/ja言語切替・Guide詳細・通知・API構造化'],
+  ['v10.118.0', 'レポート知能(⑥)+ close-pin全日加重・正直化(⑩)で残タスク完走 — ⑥ analyze_report: バンク/戦略レポートから強気・弱気・条件付きリスクの文節を両方保持して抽出(単一キーワードで弱気と断定しない)+古いレポートは即時引き金でなく背景に分類。⑩ close-pin: intradayPhase(寄り前/ピン前/14:30-15:25=最終判断窓/15:25-15:30=クロージング・オークション/引け後)を明示し、データ制約に「15:25-15:30は連続売買でない・板/L2/VWAP未取得のためブロック取引や新規ロングは断定しない」を追加。テスト334。これでGemini誤分析対策の①〜⑪を全て実装'],
+  ['v10.117.0', '原因スタックのUI化(⑨) + 原因アトリビューション台帳(⑧) — ①Todayに「原因スタック」カードを追加: 急落インシデントの最重要銘柄について、確定した即時引き金(多くは「確認できず」)/推定原因の分布(UNKNOWN非ゼロ)/波及範囲/需給(投資家特定なし)/未確認割合/「何が変われば結論が変わるか」を表示②毎営業日16:05に各インシデントの原因スタックを ledger/attribution/<date>.json に追記(後日1/3/5D結果と照合する土台)。読み出しAPI /api/argus/cause-attribution-batch・/attribution-history。自動売買なし'],
+  ['v10.116.0', '原因アトリビューションの厳格化(Micron誤分析の教訓) — 急落の原因を「即時引き金/背景脆弱性/増幅/波及/不明」に厳密分離する純モジュール argus_attribution を追加。時刻整合ルール(動意後に出た情報は引き金にしない・未発表決算を結果ショックにしない・古いレポートは即時引き金にしない)、pre-event de-risking検知(決算前の手仕舞い・結果未確定はbadResult=false)、クロスマーケット波及グラフ(MU/285A/SMH/NVDA…)、機関ポジショニングの出所別意味論(空売り出来高≠残高・遅延・個人特定不可)、ナラティブ整合ゲート(「完全に原因」「クジラが数学的」機関名の無根拠名指し等を却下)。確率は合計1で不明は常に非ゼロ。/api/argus/cause-attribution。自動売買なし。テスト332'],
+  ['v10.115.0', 'cap-testのタイミング欠陥を修正(誤delayed判定の根治) — 昼休み明け直後+ブリッジ再起動16秒後に走った2回目が tradedP95=8730秒→delayed と誤判定した(売買が止まっていた+OpenD再接続直後で古いタイムスタンプを拾っただけ・実際の遅延ではない)。①ブリッジ: cap-testを「連続売買中のみ(前場9:15-11:25/後場12:45-15:25)」かつ「起動150秒のウォームアップ後」に限定 ②バックエンド: 当日realtime実証は「ベスト・オブ・デイ」で保持し、後続のエッジ起因のdelayed読みで上書きされない。要ブリッジ再取得'],
+  ['v10.114.0', 'moomoo日本株リアルタイムを実証→entitlement格上げ — 全市場cap-testで「売買銘柄(volume>0)の鮮度 p95=5.7秒・traded=455・verdict=realtime_evidence」を実測。これを受けて、cap-test証明が新しい(<20時間=当日分)間はJP watchlistのentitlementを unknown→realtime に格上げ表示(ブリッジが個別にdelayedと報告した場合は上書きしない)。「配信は速いが元データの鮮度は未証明」だった注記も実証済みに更新。日次でcap-testが再証明(再起動時は次の9:00 JST実行まで一旦unknown)'],
+  ['v10.113.0', '重要な指示を日本語化 + 保有ポジションへの判断を追加 — ①Top/Watchlistのアクション表示(WAIT等)を日本語に(待機/保持/押し目買い/買い増し/一部利確/撤退…英語は内部キーとして保持)②数量を入力した保有銘柄に「保有判断」を表示: 含み損益(端末内計算・非送信)+シグナル+急落インシデントを合成して 損切り検討/一部縮小/要点検/一部利確/買い増し候補/ナンピン(慎重)/我慢(様子見)/保持(継続) を提示。決定支援のみ(〜検討/〜候補/慎重に)で命令や自動売買はしない'],
+  ['v10.112.0', 'Hero「Global Regime」のUNKNOWN表示バグ修正 — ダウンサイド側が一瞬コールドキャッシュの時に globalRegime="UNKNOWN" が残り、Market Regimeは「Mixed」なのにGlobalだけ「UNKNOWN」と食い違っていた。UNKNOWN/空はレジームendpointのラベルにフォールバックするよう修正(Mixed等を表示)。PARTIAL自体はデータ源(Twelve Data/J-Quants)が一時取得不可な時の正直な表示で、日次リセット等で自動回復する'],
+  ['v10.111.0', 'Watchlistにも投信の基準価額(NAV)を表示 — これまで投信の基準価額はCore Portfolioだけに出ており、Watchlistの投信行は金額が「—」だった。useFundNav(投信総合ライブラリー)をWatchlistの価格マップに接続し、各投信を銘柄名/シンボルでカタログ3本(国内株式/米国S&P500/全世界オルカン)のNAVに照合して ¥基準価額+前日比 を表示。投信はCORE/FUMD扱いで円表示に修正。実データで EMAXIS-ACWI ¥38,306 / EMAXIS-SP500 ¥44,536 表示を確認。NAVは前営業日基準・日次'],
+  ['v10.110.0', 'メモリ最適化(Render 512MB上限超過の再発防止) — ダウンサイド系の再計算頻度を削減(サーバーキャッシュ60→180秒・フロントのポーリング60→120秒)。downside再計算はwatchlist+catalysts+TDnetを引くため、単一プロセス512MBではピークが上限に触れやすかった。3分の1の頻度に下げてピークを抑制。データ(台帳/予測/vault)はledgerブランチ保存で再起動の影響なし。再発する場合はRender Standard(2GB)へのアップグレードが必要(無料/Starterは共に512MB)'],
+  ['v10.109.0', 'Top Rotations 履歴の記録 + Δ(GPT#8・#9と同型) — 毎営業日16:05に資金ローテーション(グループ別スコア+トップ・ローテーション)を ledger/rotations/<date>.json に追記(append-only・held/mock読みはスキップ)。読み出しAPI /api/argus/rotation-history は記録日一覧+最新+「Δ=前回記録比のスコア変化(流出が大きい順)」を返す。明日から2点目が貯まればΔが出て『どこから資金が抜けたか』が分かる。Δ表示UIは次の層。テスト312'],
+  ['v10.108.0', 'Incident Replay 台帳の基盤(GPT「Decision Valueより先に」) — 毎営業日16:05に、その日の急落インシデント(銘柄/下落率/原因/severity/上書きアクション/保有フラグ)を ledger/downside/<date>.json に追記(append-only・急落のない日はスキップ)。読み出しAPI /api/argus/downside-history も追加(記録日一覧+最新)。これで「今日の失敗を後から検証する」土台が蓄積開始。事後の結果スコアリング(何を見落としたか)とUIは次の層。テスト312'],
+  ['v10.107.0', 'AI Review Sheetをruntime自動生成に(GPT最重要・古い土台の解消) — バックエンドに /api/argus/runtime-manifest を追加し、版/buildSha/ルート(5)/プロバイダのライブ確認数/校正フェーズ/ダウンサイド状態/TDnet状態/Layer2B設定有無/Decision Valueフェーズ/安全境界/現在の限界を実行時から生成。AI Review Sheetの先頭に「RUNTIME(live)」ブロックを表示し、コピー出力にも先頭挿入。外部AI(GPT/Claude)が古い静的記述ではなく現状から判断できるように(秘密は出さず設定有無はboolのみ)。テスト312'],
+  ['v10.106.0', 'Watchlistに「危険のみ」フィルター(P0-3) — 急落日に「今、危ないものだけ見せろ」を実現。チップで[全部 / ⚠危険のみ(件数) / 保有のみ]を切替。⚠危険=急落インシデント該当・保有=数量入力済み。フィルター中は並べ替え無効。実データで15件→危険3件(9984/5801/285A)に絞り込み確認'],
+  ['v10.105.0', 'Market Contextに「なぜ今のラベルが維持されているか」を明示 — レジームが前回のフル評価の保持表示(v10.34の安定化)の場合「⚠ 前回のフル評価を保持表示中(約N分前)。今のRISK_ON/MIXEDは最新の確定ではない」と表示。ライブ(フル)/部分データ(ソース欠損)も明示。JP intradayオーバーレイのタグも併記。古いRISK_ONが今のRISK_ONに見える問題を解消'],
+  ['v10.104.0', 'Watchlistの各銘柄に防御レイヤーを表示(P0-2) — 急落インシデント該当銘柄の行に「⚠ 上書きアクション(EXIT_WATCH/REVIEW_REQUIRED等)」バッジとownerState(held/protected等)を表示。展開すると「WHY DOWN?」ブロック(下落率/Rule→Override/原因確率/理由/やってはいけない/確認条件/欠損データ)が出る。HOLDの上に防御レイヤーを被せ、保有銘柄を放置させない。実データで9984/5801/285A=EXIT_WATCH表示を確認'],
+  ['v10.103.0', '危険日の防御レイヤーを前面化(P0) — ①Today Heroを3層表示に: Global Regime / Japan Intraday(NORMAL/CAUTION/RISK_OFF_WATCH) / Owner Risk(CLEAR/REVIEW_REQUIRED等)。グローバルがRISK_ONでも日本のザラ場や保有リスクが別に見える②保有/重点監視銘柄が急落インシデントに該当する日は「Downside Watch」をHeroの上に表示③partial(情報欠損)時はHeroに「PARTIAL DATA」を出し、HOLDの信頼度を上限60%に制限+「/ PARTIAL」表記(欠損データで高信頼HOLDを出さない)。HOLDを信用させすぎない方向への布石'],
+  ['v10.102.0', 'US/暗号資産の市場別クロック整合(v4台帳) — これまでUS/暗号資産は「16:05 JSTでは正しい時刻で価格できない」ため採点保留(experimental_invalid_clock)だったが、各予測のtargetClose(実際の市場クローズ時刻)を使い「そのクローズが過ぎたら採点」する方式に変更。USは米国引け後、暗号資産は24/72/120hの窓が過ぎた分から自動採点され、JP専用の保留が不要に(実スナップショットのdry-runでheld 15→0)。日付だけの古い記録は従来どおりJP専用ガードにフォールバック。テスト312'],
+  ['v10.101.0', 'TDnet(適時開示)を接続 — 日本株の適時開示をyanoshin TDnet API経由で取得し、タイトルを分類(下方修正/減配/増資/特別損失/上場廃止=ネガ、上方修正/増配/自社株買=ポジ、決算短信=中立)。急落銘柄に直近のTDnet開示があれば原因に反映し、明確なネガ開示はSTOCK_SPECIFIC(個別悪材料)として扱う(ただし内容の最終確認は要・断定はしない)。これで「TDnet未接続」の限界を解消(取得不可時は従来どおり未接続表示)。公開エンドポイント /api/argus/tdnet-recent も追加。テスト309'],
+  ['v10.100.1', 'Guide画面のクラッシュ修正(堅牢化) — 情報源レジストリ(SourceRegistryCard)が、バックエンドのコールドスタート/デプロイ中に想定外の応答を返すとsources.mapで例外を投げ、Guideページ全体(Layer 2B同期カード等を含む)が真っ白になっていた不具合を修正。配列でない場合はフォールバック表示にして全体クラッシュを防止'],
+  ['v10.100.0', '保有フラグ同期 + 保有銘柄のダウンサイド厳格化(金額は一切送らない) — owner watchlist同期に「非金額フラグ」だけを追加(ownerState=watch/active/held/protected・downsideStrictness=normal/strict・priority=low/normal/high)。保有数量・取得単価・損益・売買履歴・メモは従来どおりハード拒否(深層スキャン)。アプリ側は保有(数量>0)を検知して「held」フラグだけ送る(金額は送らない)。①held/protected銘柄はダウンサイド判定でseverityを一段(protectedはさらに一段)引き上げ②held/protected/strictが下落したらplain HOLD禁止(HOLD_CAUTION/REVIEW_REQUIRED/DO_NOT_ADD/TRIM_WATCHのいずれか)③Guideに「同期状態を確認」を追加し、保有銘柄がサーバー側で保有/重点監視として扱われていない場合に警告。TDnet未接続は明示・無材料の急落は安全扱いしない(CAUSE_UNKNOWN)。自動売買なし。テスト300'],
+  ['v10.99.0', 'ダウンサイドの原因推定を強化(材料の自動検知+指数直結breadth) — ①SEC/Finnhub/J-Quantsから直近の開示・決算直後・関連ニュースを自動検知し、急落と整合すれば「個別の材料(要確認)」として原因に反映(=原因未確認一辺倒を脱却)。ただし内容を悪材料と自動断定はしない(無材料=安全ではない)②地合いの指数プロキシをwatchlist平均からTOPIX/日経ETF(1306/1321)の前日比に変更(取得不可時は平均にフォールバック)。個別の指数比アンダーパフォームも実指数基準に。テスト294'],
+  ['v10.98.1', 'ダウンサイドのJP地合いオーバーレイを改善 — 数銘柄が急落しても「平均breadthが浅い」ために地合いが見かけ上NORMALになる取りこぼしを修正。重大インシデント(high/critical)が複数あれば、平均に関わらず JP intraday を CAUTION/RISK_OFF_WATCH に引き上げる(急落を平均で隠さない)'],
+  ['v10.98.0', 'ダウンサイド・インシデント対応 + 原因アトリビューション(急落時の防御) — 急落を「急落しています」で終わらせず、原因を推定して保有向けに対応を提示。①保有/監視銘柄が-3%/-5%等で下落、または日本市場のbreadth悪化で発火②原因を9分類(市場全体/セクター/テーマ利確/個別悪材料/大口売り/踏み上げ一巡/急騰後利確/テクニカル崩れ/原因未確認)で確率推定(合計100%)③「原因未確認の急落」は安全と見なさず警戒を引き上げ、大きな不明下落は通常のHOLDにしない(REVIEW REQUIRED等に上書き)④保有銘柄は判定を一段厳しめに⑤地合いはグローバルRISK_ONでも日本のザラ場が弱ければ「JP intraday: CAUTION」を別表示(混同しない)⑥通知は銘柄/下落率/原因クラス/上書きアクション/次の確認条件入りに⑦TDnet未接続などの欠損データを明示(無材料=安全ではない)。Today/Watchlistに「Downside Watch」カード、Market ContextにJPオーバーレイ、Pro HandoffにHOLD妥当性の批判検証依頼を追加。自動売買は一切なし(決定支援のみ)。テスト290'],
+  ['v10.97.0', 'クラウド同期の取りこぼし窓を大幅短縮 — 暗号化バックアップの恒久保存(GitHub台帳ブランチ)が従来「平日16:05の1回だけ」だったのを、専用の軽量ワークフロー(vault-sync.yml)で「1日6回(平日 9/12/16/19/22時・深夜2時)」に増加。リレー(サーバーメモリ)はRenderのスリープで消えるため、片方の端末で増減してからもう片方が開くまで時間が空くと最大24時間反映されない弱点があった。これを最大数時間に短縮。台帳本体(予測/採点)とは独立で ledger/vault/ のみ更新・同時押し防止のconcurrency共有。両端末で同じパスフレーズを有効化すれば、開いている間は数分・閉じていても次の恒久保存で確実に一致'],
+  ['v10.96.0', 'v4 runner移行 Step 2(dry-run並走・v3に無干渉) — prediction-ledgerワークフローに、その日のスナップショットをv4採点エンジンで「市場別ターゲット日・コホート別・append-only」採点し ledger/calibration_v1/ に並行蓄積するステップを追加。書き込みは calibration_v1/ のみで、本番v3(ledger/days等)には一切触れない。US/cryptoは正しい時刻のジョブ実装まで採点保留。実スナップショットでドライラン検証済み(記録19・保留15・JP採点は翌営業日から)。テスト271。次は5〜10営業日の検証→readiness→activate'],
+  ['v10.95.0', 'Top画面の余白を詰めて全体を上へ — ページ上部padding(28→16px・モバイル18→10)、セクション間gap(28→20px)、市場ランプ(.msl)の上下余白(4/12px)を撤去。HOLD等のカードが上に来てファーストビューが締まる(詰めすぎない範囲)'],
+  ['v10.94.0', '能力テストのユニバースを柔軟スケーリング — /jp-universe が「優先銘柄(あなたのwatchlist[Layer 2B]+固定ベンチ+センサー)」を先頭に並べるように。ブリッジは先頭からCAP_UNIVERSE_MAX件を取るので、サンプル上限(例500)に関わらず、あなたのwatchlist銘柄は必ずスイープ対象に入る。残りは全市場サンプルで補完。watchlist変更後はLayer 2B同期で優先リストが更新される'],
+  ['v10.93.0', 'Guideのバージョン履歴をアコーディオン化 — 既定では直近5件のみ表示し、「全○件を表示」で展開/折りたたみ(長すぎる問題を解消)'],
+  ['v10.92.0', '画面幅を完全に伸縮(elastic)へ — ページの最大幅キャップ(v7以来の1200px、前回の1600px)を撤廃し、利用可能な幅いっぱいに伸び縮みするように。ウィンドウ/ペインを広げれば横に伸びる(実測で .page がコンテナ幅を充填)。モバイルは元から全幅'],
+  ['v10.91.0', 'v4 runner移行 着手(①採点エンジン・テスト付き・ライブ台帳に未接続=無リスク) — argus_ledger_v4: 記録済み予測を「市場別ターゲット日(marketClock)・コホート別・append-only(force上書きなし)」でBrier/RPS/argmax採点する純エンジン。US/cryptoは正しい時刻で価格できるまで採点保留。テスト8件。次段でワークフローからdry-run並走(v3を壊さず新エポックに並行蓄積)→検証→activateの順で本番移行'],
+  ['v10.90.0', 'Layer 2B 非JP採点を一時停止(GPT P0#4・誤った時刻での採点を防止) — US/暗号資産は16:05 JST実行では正しい引け時刻で採点できないため、市場別クロック実装まで experimental_invalid_clock として採点保留(記録は継続)。当面はJP銘柄のみ採点。サマリーに heldInvalidClock を表示。市場別ジョブ(US post-close/crypto UTC/FX NY)導入後に有効化'],
+  ['v10.89.0', '24/7デザイン刷新+ウォッチリスト復元 — ①24/7イベントを3行構成に(1行目=時刻/2行目=銘柄/3行目=状態)。状態の二重表示(急騰+急騰+10%)を1つに統合。新しい順(時刻降順)で表示。長い銘柄名でも崩れない②ウォッチリストがlocalStorage消去で初期化された場合に、Layer 2Bの同期済み銘柄から復元する「銘柄を復元」ボタンを追加(membership APIをbodyトークンでPOST可能に)。投信・保有数量はバックアップから復元'],
+  ['v10.88.0', 'GPT再レビュー反映(P0着手)+ニュース復活+地合いの根拠表示+CI修正+横幅 — ①セキュリティ: 旧 /api/run・/api/reset・/api/logs 等(無認証だった)を管理者限定に施錠②Todayに「Market News」復活(材料の見える化)③地合いの根拠を正直化: RISK_ONは米ETF主導と明記し、ウォッチリストが乖離(例:日本株が軟調)なら警告+「校正はburn-inで精度未証明」を併記④東証引けを15:00→15:30に修正⑤新ETF(1615/1343/XLF/XLE/XLU/LQD)が単一株扱いだったボラバンド分類を是正⑥Brierの範囲表記訂正+NaN/Inf拒否⑦CI失敗(非hermeticテスト)を修正⑧Web表示の横幅を拡大(1200→最大1600px)。テスト259'],
+  ['v10.87.0', '24/7イベント+全市場ムーバーのUI改善 — ①24/7: 急騰=緑/急落=赤(アプリ共通の上下カラー・▲▼付き)、アドバイス(高値追い回避等)を目立つチップ表示、各イベントに時刻(JST)を表示、起動中は15秒毎にライブ更新②全市場ムーバーのタイトルを英語(US/JP Market Movers)に統一し、長い銘柄名で画面が左右に動く問題を根治(行を確実にカード幅内で省略表示・実測で横はみ出し0)'],
+  ['v10.86.0', 'moomoo JP全市場 能力テスト(自動・ザラ場で起動) — EC2ブリッジが毎JP営業日に1回、全上場ユニバースを get_market_snapshot(400銘柄/バッチ)でスイープし、カバレッジ・鮮度(update_timeで実測)・entitlement・スイープ時間を計測してサーバーへ送信。サーバーに JP universe配信API + 能力レポート受信API(HMAC+admin)+表示(/moomoo-capability)。リアルタイムと証明できるまで主張しない(p95<=60sでrealtime_evidence)。要EC2ブリッジ更新+JP_ALL_MARKET_CAP_TEST=1。watchlist pushとは別動作で16銘柄ブリッジに影響なし'],
+  ['v10.85.0', 'Layer 2B 日次採点を実装(あなたの銘柄の自己採点) — 毎営業日、同期済みウォッチリストの各銘柄の予測(シナリオ確率)をprivateストアに記録し、1/3/5営業日後にBrier/RPS/的中で自動採点。★入替OK設計: 各日のメンバーシップは不変スナップショットで凍結、過去の予測・採点は書き換えない=watchlistを入れ替えても過去は保全・データは追記で蓄積。固定ベンチとは別集計。Guideの「Layer 2B 同期」に『採点成績を見る』を追加(営業日別の的中/Brier・サンプル段階)。注文・自動売買なし。日次実行はprediction-ledgerワークフローに追加'],
+  ['v10.84.0', 'Guide整理 — 設定系の「バックアップ」と「Layer 2B 同期」をまとめて最下部(バージョン履歴の直前)に移動。Layer 2B同期が稼働開始(あなたのwatchlist 13銘柄をprivateストアへ保存)'],
+  ['v10.83.1', 'Layer 2B同期の500を根治 — ハンドラが argus_watchlist_sync を import せずに使っていた(認証通過後にのみ発火するNameError)。importを追加。認証後の経路を実行する回帰テストも追加(no-tokenスモークでは届かなかった死角を塞ぐ)'],
+  ['v10.83.0', 'Layer 2B同期のHTTP 500を診断可能に — 認証後の処理をtry/eで包み、原因を所有者にそのまま表示(空の500をなくす)。private保存の失敗時はGitHub APIのHTTPステータス+理由(404=リポ名違い/403=トークン権限不足等)をアプリに表示。同期結果に persistDetail を出すように'],
+  ['v10.82.0', '横スクロール(左右のガタつき)を本当に修正+Layer2B同期のコールドスタート対応 — ①「最近のアップデート」等の長い英識別子(regime_sensor_v2等)が折返さずに内側ボックスを画面幅超に広げていた根本原因をCSSで是正(overflow-wrap/word-break/min-width:0、モバイル単一列をminmax(0,1fr)に)。プレビュー実測で横はみ出し0・横スクローラ0を確認②同期はバックエンドを先に起こし最大3回リトライ+安全なJSON解析(Renderコールドスタートの非JSON応答でpattern エラーにならない)'],
+  ['v10.81.0', 'API稼働状況が「MOCK/UNKNOWN」になる誤表示を修正 — 接続状況パネルが9秒で諦めてモック(全UNKNOWN/MISSING)を出していた(Renderのコールドスタートは20〜40秒かかる)。タイムアウトを30秒に延長+最大4回リトライ(初回でバックエンドを起こす)。リトライ中は「connecting」表示にし、全失敗時のみ正直に未接続を表示。実体はFRED/Twelve Data/Finnhub=live・J-Quants=partialで正常稼働'],
+  ['v10.80.0', 'Guideの横スクロール(隙間でガタつく)を修正 — Layer 2B同期のトークン入力が box-sizing 未指定でカード幅を超えていたのを是正(上下スクロールのみに)。同期エラー表示を詳細化(エラー名+接続先URLを表示し原因を特定しやすく)+結果文を折返し表示'],
+  ['v10.79.0', 'PWAの「indexは新しいがJSチャンクが古いまま」固着をより速く自己回復 — 強制更新が1回効かなければ即座にSW登録解除+キャッシュ全消去+再読込(これでLayer 2B同期の旧コード残留=pattern エラーが解消)'],
+  ['v10.78.0', 'Layer 2B同期エラー修正 — オーナー同期トークンをHTTPヘッダーでなくJSONボディで送るよう変更(日本語/空白/記号を含むパスフレーズでも「The string did not match the expected pattern」が出ない)。サーバーはヘッダー/ボディ両対応、トークンは検証・保存前に除去'],
+  ['v10.77.0', 'コホート重複の安全化 + DV Phase2(検証不要な部分)を搭載 — ①Layer 2Bが1/2Aと重複しても安全(1銘柄=1予測・複数コホート所属・symbolでde-dup。cohort_membershipsで明示+テスト)②Decision Value のポリシーレジストリ(daily_next_session_long/close_pin_long/event_next_open_long/no_trade_control・不変)+ベースライン群+「後出し禁止」タイミング検査+shadow決定スケルトン構築(注文は一切作らない・research only)。API /decision-value/policies。テスト計257。shadow記録の蓄積/ポリシー別期待値/専用UIは検証フェーズで'],
+  ['v10.76.0', 'Layer 2B(あなたのwatchlist採点)を実稼働化 — ①専用オーナー同期トークン(管理者権限とは別・membership同期のみ)②サーバーがprivate GitHubリポへ membership を直接コミット(GitHub API・公開リポには一切出さない・不変日次スナップショット+latest)③Guideに「Layer 2B 同期」UI(トークン入力+今すぐ同期。銘柄だけ送信し保有数量・取得単価は送らない。CORE投信は対象外)④オーナー限定の membership 読み戻しAPI。要セットアップ: privateリポ作成+fine-grained PAT+Renderに3環境変数。同期後の日次採点はPhase次段。注文・自動売買は一切なし'],
+  ['v10.75.0', 'Decision Value Ledger v1 着手(Phase 1・純エンジン・research only) — 「校正(Brier/RPS)が良い≠儲かる」を測る別台帳の数理基盤を実装。現実的コストモデル(spread/slippage/手数料/FX・観測値か保守的推定かを明示)/R正規化(1R=想定最大損失・後付けストップ禁止)/純期待値・payoff比・profit factor/no-trade価値(回避損は別集計・逸失益は機会費用)/リスクオブルイン(損失クラスタを保つブロック・ブートストラップMonte Carlo・決定論シード)/Kelly(既定無効・full Kelly提示しない)。★絶対安全境界: 注文/ブローカー/execute系ルートは一切作らない(shadowシミュレーションのみ)。テスト21件(計250)+ スモークに「注文ルート不存在」安全検査を追加。shadow記録/ポリシー別集計/UIはPhase2'],
+  ['v10.74.0', '校正v4 仕上げ — ①多次元ポスチャー採点(SPY単独をやめ、株式/グロース/小型/クレジット/デュレーション/ボラ/安全資産/日本/FX/流動性の10次元をボラ正規化で評価、次元不足はpartial表示でSPY単独に落とさない)②Layer 2B(あなたのwatchlistを採点)同期APIを実装 — 銘柄メタのみ受領し保有情報は全フィールド拒否、公開リポ対策でprivateストア設定前は採点無効(銘柄は一切保存しない)、毎日の不変メンバーシップ・スナップショット③Guideに「校正ユニバース」ビューを追加(コホート/文脈変数/ファクター加重/ポスチャー/エポック/2B状態を可視化)。テスト計229'],
+  ['v10.73.0', 'prediction-snapshot を90秒キャッシュ — v2でJ-Quants取得銘柄が増えたため、公開エンドポイントの連打でJ-Quantsが429になるのを防止(entry-scout等の一時的レート制限を解消)'],
+  ['v10.72.0', '校正ユニバースの再選定+バージョン管理(regime_sensor_v2 / tactical_benchmark_v2) — Layer1=16センサーを再構成(JP4: TOPIX/日経225/東証銀行業/東証REIT、US11: SPY/QQQ/IWM/SMH/XLF/XLE/XLU/TLT/LQD/HYG/GLD、BTC)。USDJPY/VIX/金利/HY OASは「文脈変数」に分離(等加重リターン採点に混ぜない)。Layer2A=14銘柄に分散(JP: 三菱UFJ/トヨタ/三菱商事/NTT/SBG/三菱重工/フジクラ、US: NVDA/AAPL/TSLA/JPM/XOM/PG/CAT)。5803フジクラを固定ベンチに意図的に保持、5801とMETAは所有者ウォッチリストで利用可。「Layer3=6584固定」を廃止し実験フラグ制へ。ファクターグループv2で相関銘柄の過大評価を回避。全新規銘柄のプロバイダ稼働を本番確認済み。Brierの読み方を説明書に追加。履歴(burn-in)は保全。テスト計208'],
+  ['v10.71.0', '校正台帳v4 Phase 3(記録への接続・非破壊) — 毎日の予測記録の各行に、v4のコホート(固定センサー/タクティカル/実験)・ファクターグループ・実験フラグ・市場別フォーキャストクロック(その銘柄の正しい引け基準の1/3/5営業日対象日)を付与。既存の layer/scenarios 等はそのまま残すので現行の採点は無変更で動作し、ワークフローは今後この市場別対象日を採用可能に。記録は追記のみ=現n≈133は無傷'],
+  ['v10.70.0', 'バージョンが端末で古いまま固まる問題(PWAのSWが更新されず10.59のまま)を根治 — アプリが「実行中の版」と「配信中の版(キャッシュ回避で取得)」を常時照合し、ズレたら強制更新+リロード。それでも直らない固着SWは自動回復(SW登録解除+キャッシュ全消去+再読込・ループ防止付き)。今後はバージョンが自動で最新化されます'],
+  ['v10.69.0', '校正台帳v4 Phase 2(市場別タイミング・純ロジック・既存記録は無傷) — 「全部16:05 JST固定で採点」をやめ、各銘柄をその市場の正しいクロックで採点する基盤を実装。日本株=TSE引け/米国株=NYSE引け(EDT/EST自動切替)/暗号資産=24/72/120h(営業日でなく経過時間)/FX=NY引け。土日+祝日カレンダー対応(2026年JPX/NYSE・要公式照合でバージョン管理)。各予測に originセッション/対象営業日/カレンダー/鮮度/entitlement のメタデータを付与し、価格が古い/無効なら「不適格」として記録せず欠損理由を残す。記録ワークフローへの接続はPhase 3。テスト19件追加(計199)'],
+  ['v10.68.0', '校正台帳v4 着手(Phase 1・土台のみ・既存記録は無傷) — 自己採点を再設計する基盤を純ロジックで実装。①コホート概念を明確化(固定レジームセンサー/固定タクティカルベンチ/所有者ウォッチリスト動的[Phase4で有効化]/実験コホート)。「Layer3=6584固定」は廃止し、実験フラグ制(小型株/高ボラ等・証拠付き)へ置換②採点を厳密化(多クラスBrier・順序を考慮したRPS・スキルスコア・ベースライン・前方視なしのボラティリティバンド)③現n≈133は削除せず burn_in_legacy_v3 として保存しヘッドライン指標から除外、綺麗なエポックは準備完了+管理者有効化の後に開始④Layer1を相関を抑えたファクターグループ等加重で集計(米株3銘柄の過大評価を回避)。記録ワークフローは未変更(無リスク)。テスト27件追加(計180)'],
+  ['v10.67.0', 'スモークテスト修正(US全市場のwarming状態を許容)+Guide整理(「最近のアップデート」を一番下に移動し、用語一覧/英語の役をその上に)'],
+  ['v10.66.0', '市場全体カバーの二段構え+US計測を上限まで活用 — ①US全市場スキャンを「市場が開いている間 約15分毎(無料枠25回/日をほぼ使い切る)」に変更。公開画面はキャッシュ表示のみで枠を消費しない②日本株の全市場ムーバーをザラ場は Yahoo!ファイナンス全市場ランキング(約20分遅延・全銘柄)、引け後は J-Quants(前日比・全銘柄)で二段カバー。moomooブリッジ未収載の銘柄も遅延ありで網羅'],
+  ['v10.65.0', 'US全市場スキャナーの是正 — ①Alpha Vantageが診断ノートにAPIキーを含めて返すため、公開エンドポイントに漏れないようキーを伏字化(セキュリティ)②AV無料枠は25回/日と判明。30分毎の取得で枠超過していたので、キャッシュ60分+取得を1時間毎(米国時間)に抑えて枠内に。日本株の全市場ムーバー(引け後・全3800銘柄)は稼働開始'],
+  ['v10.64.0', '日本株の全市場ムーバー(引け後)を追加 — J-Quants Standardの全上場銘柄日次から、その日いちばん動いた銘柄(前日比)を引け後に集計しMarket Contextに表示+24/7イベント化(全市場をカバー)。米国はAlpha Vantageでリアルタイム寄り、日本は引け後(無料のリアルタイム全市場源が無いため)。閾値: 全市場ムーバーは米国±12%/日本±10%以上(severeは±20%・ペニー/低位株は価格フィルタ除外)、ウォッチ銘柄の急騰/急落はセッション別(寄り後場±5%等)。'],
+  ['v10.63.0', 'Core Portfolioの投信を1セクションに統合+クラス判断の自己修復 — ①「積立方針」と「投信 基準価額」が重複していたので統合(各投信に NAV・前日比 と 積立コメント を同じ行で表示)②クラス判断のGOLD/BOND/REITが「ETFデータ未取得」で再取得を繰り返しTwelve Data枠を焼いていたのを修正(空でも45分キャッシュ)。枠回復後は自動で埋まる'],
+  ['v10.62.0', '米国の全市場スキャナーを追加(ARGUS本来の全方位監視へ) — ウォッチリスト外も含む米国全市場の急騰/急落をAlpha Vantage(無料)で検出し、24/7イベント+通知に乗せる(ペニー株のノイズは価格フィルタで除外・通知は最大5件)。Market Contextに「US全市場ムーバー」を表示。要・無料のALPHAVANTAGE_API_KEY(Renderに設定)。日本株の全市場はJ-Quants Standardの全銘柄日次で引け後ムーバーを別途対応予定'],
+  ['v10.61.0', '引けピンの説明を明確化+Twelve Data無駄打ち修正 — ①引けピン(同日終値あての自己採点)が「売買シグナル/翌日上昇予測」と誤解されないよう注記を追加(銘柄横断の校正値であって個別売買の合図ではない)②US株がmoomooブリッジにあるのに毎回Twelve Dataも叩いて無料枠を28倍超過していたのを修正(ブリッジ優先で枠内に)'],
+  ['v10.60.0', '投資信託(基準価額)を実データでフォロー — 国内投信のNAVを無料で取得できる「投信総合ライブラリー(資産運用業協会)」を接続。Core Portfolioに「投信 基準価額(NAV・日次)」を追加し、eMAXIS Slim 国内株式/米国S&P500/全世界(オルカン)の基準価額+前日比を毎日表示(Twelve Data等では取れない国内投信のNAVを直接取得)。あわせてWatchlistのAI Reviewの文字が薄すぎた問題を修正(可読性UP)'],
+  ['v10.59.0', '台帳の復旧と正直化 — ①予測台帳(自己採点)の履歴(133件)が06-22のワークフロー不具合で消えていたのを復元し、ワークフローを修正(既存ブランチを誤って初期化しない安全策)。これで自己採点(的中率58.6%等)が再表示②投信の「積立継続」表記を正直に: これは"地合い連動の積立方針"であって基準価額のチャート判断ではない旨を明記(価格データを持たないのに判断しているように見える誤解を解消)'],
+  ['v10.58.0', '不具合修正 — ①Market Contextの資金ローテーションが空になる問題を修正(ETFデータが不完全な時に5分毎に再取得し、Twelve Dataの無料枠 800/日を使い切って終日失敗していた。再取得を45分間隔にして枠内に収める)。取得待ち時は「データ取得待ち(無料枠上限)」と正直表示し「接続中」のまま固まらないように②「Add Asset」が画面のずっと下に出る問題を修正(オーバースクロール用のtransform内にあったためで、bodyへポータル化+画面上部に表示)③深夜の変な時刻に通知が来る問題を修正(GitHub cron遅延対策・前掲)'],
+  ['v10.57.0', 'ページ統合でさらにシンプルに — ①「Market Regime」と「Event Radar」を1つの「Market Context」に統合(今の地合い+資金回転+金利、これから来る予定イベント+News Radarを1画面に。ナビ6→5ページ)②ページ内の重複も削除: 同じ金利を二度出していた「FRED Rates Snapshot」を撤去(「Rates backdrop」に一本化)、「Regime用語集」をGuideの用語一覧に集約。Todayの「Next ◯◯」ピルはMarket Contextへ遷移。使い方ガイド・用語集も自動で追従更新'],
+  ['v10.56.0', '使い方ガイドをページ別に刷新 — Guideの先頭に「使い方 — ページ別ガイド」を追加(共通ヘッダー→Today→Watchlist→Market Regime→Event Radar→Core Portfolio→Guideの順で、各ページの目的と操作を説明)。削除済みのAction Alerts/旧Today要素への古い記述も訂正。以後アプリ更新のたびにこの使い方ページも自動で最新化します'],
+  ['v10.55.0', '重複の整理(続き) — ①Topの「Priority watchlist」を削除(Watchlistページの上位抜粋で重複)。Todayは市場ランプ+総合判断+24/7イベント+判断ログに集約 ②「Action Alerts」ページをナビごと廃止(中身のSatellites=Core Portfolioの「クラス判断」、Index Funds=「積立方針」と完全重複。Core Portfolioは「あなたの配分」も持つ上位互換)。不要な価格取得もカット。ナビは Today/Watchlist/Market Regime/Event Radar/Core Portfolio/Guide に簡素化'],
+  ['v10.54.0', 'Topの「partial」表記を「市場セッションのランプ」に置換 — 分かりにくい partial を廃止し、JP market / US market / Crypto の名前+緑ランプで「今どの市場が開いているか」を直接表示(開場中=緑・引け後=消灯)。金利/イベント等の"API/データ源が動いているか"はTopの鮮度ではなく左上ARGUSロゴのシステム状態ポップアップで判断する、と役割を明確に分離'],
+  ['v10.53.0', 'システム状態を左上のA.R.G.U.S.ロゴに統合 — ロゴをタップするとポップアップで全システムの健全性(AI予算・各データ源・通知など9項目)を表示、外側をタップ(またはEsc)で閉じる。ロゴ横に常時表示の状態ドット(緑=正常/橙=注意/赤=停止)が付き、どのページからでも一目で異常に気づけます。Todayの帯は廃止し、グローバルなヘッダー表示に一本化'],
+  ['v10.52.0', '日本株は必ず会社名を表示+Today画面の重複を整理 — ①イベントカード/スマホ通知/Pro相談/材料一覧で日本株がバレ4桁だった箇所を「会社名(コード)」表示に(会社名はJ-Quantsマスターから解決・推測しない)②Today(トップ)を統合ビューに専念させ、専用ページと重複していた4セクション(Event Radarカレンダー・Market News・Top Rotations・Core Portfolio抜粋)を削除。イベントカードもTodayに一本化(Action Alertsの重複を解消)。情報は各専用ページに残るので消えません。不要なニュース取得もカット'],
+  ['v10.51.0', 'システム状態ランプ(緑→赤)をTodayに追加 — 課金/重要システム(AI予算・AI判断・moomooブリッジ・日米株/暗号資産/金利の各データ源・EDINET・通知)の健全性を小さなランプで一目表示。AI予算が上限到達で新規AI実行が止まると赤く点滅、80%超で橙。タップで各項目の状態を展開。公開画面なので色と短い日本語のみ(金額など詳細は管理者画面)。サイレントな予算停止やブリッジ途絶に気づけます'],
+  ['v10.50.0', 'コスト管理・プロバイダ正直性・EDINET材料判定の強化パッチ — ①AIに「ARGUS側のハード予算上限」(日次$5/月次$80・既定、env調整可)を追加。上限到達で新規AI実行を拒否し、OpenAIの前払い残高に依存しない。トークン使用量×単価で推定コストを記録、月次合計は台帳ブランチに永続(再起動でもリセットされない)②Geminiは2.5 Proが通常検証役・Flashは429時のみのフォールバックと明記し、実際に動いたモデルを記録(校正でPro/Flashを混同しない)③Twelve Data表記を訂正(Basicはレギュラー時間の米国株RT・無料枠の鮮度は未計測なので「遅延」と断定しない・アップグレード不要)④EDINETは「公式事実」だが、当日の「公式材料(official_catalyst)」になるのは臨時報告/大量保有など材料性のある開示が当日提出された場合のみ(定期/訂正は原因扱いしない)。書類種別を分類しdocID/提出時刻/発行体/関係性を保存⑤moomooの能力検証レポートを追加(管理者)⑥TDnet購入判断の客観指標(週次・TDnetデータ不使用)を追加。自動売買は追加しない'],
+  ['v10.49.0', '早期警戒層(ローリング短期特徴量)を追加 — 24/7監視に「動きの始まり」を掴む層を追加。日中の累積変化が本格閾値(急騰±5%等)に達する前に、直近1分の変化率で①急加速(MOMENTUM_ACCELERATION)②大口フロー反転(FLOW_REVERSAL)を検知。サーバー側で既存の15秒pushから計算するため、EC2もあなたの操作も追加不要。セッション対応で薄商いの誤検知を抑制し、本格イベントが既に出た銘柄では二重通知しない。決定論・LLMなし'],
+  ['v10.48.0', 'EDINET(金融庁の公式開示)連携を追加 — 日本株のイベント時に直近のEDINET開示(有報・大量保有報告等)を照合し、あれば調査ドシエの「確認済み事実」に本物の一次情報として掲載。推定原因も「公式材料(official_catalyst)」が到達可能に。要・無料APIキー(EDINET登録→RenderにEDINET_API_KEY設定)。未設定時は情報源レジストリに「未設定」と正直表示'],
+  ['v10.47.0', 'Source Capability Registry を追加 — 情報源の「真実性」をcapability単位で1画面に(Guide)。「設定済み≠ライブ」を明確化し、各機能をライブ確認/遅延/要検証/有料未契約/未対応で正直表示。PTS・板(L2)・テープ・VWAP・TDnet/EDINET・FX/先物/商品は未対応と明記(過大主張を防止)。moomooの板/VWAPの過大記載も修正'],
+  ['v10.46.0', '「全体をAIに相談」(Pro Handoff)に検知中イベントの調査ドシエを自動添付 — S高/急変/暗号資産ショックがある時、その「何が起きた/推定原因/次シナリオ/罠/反証/無効化条件/欠損データ」をLLM相談プロンプトに同梱。事実と推論を区別・確率は未較正・売買指示なしを明記。AIに渡す現状情報が一段濃くなります'],
+  ['v10.45.0', 'Action Alertsページに24/7イベント+調査ドシエを統合表示 — Todayだけでなく専用ページでも、検知中のS高/急変/暗号資産ショックとその決定論ドシエ(原因/シナリオ/罠/反証)を展開して読めるように'],
+  ['v10.44.0', 'ブリッジ→サーバーの通信にHMAC署名+リプレイ防止を追加(セキュリティ強化) — 価格push に時刻+nonce+HMAC-SHA256署名を要求でき、管理トークンが漏れても偽造・再送をブロック。後方互換(秘密鍵を設定するまで現状動作のまま壊れない)。EC2側に署名コードを足し、両側に共有鍵を設定すると有効化'],
+  ['v10.43.0', '暗号資産の24時間ショック検知を追加 — 「24時間監視」を本物に。CoinGeckoの24h変動から±5%でショック・±10%で重大を検知し、深夜・週末も約30分間隔でスマホへ通知(株式は市場時間中のみだが暗号資産は常時)。決定論・LLMなし・新しい秘密設定不要。BTC/ETHの急変を寝ていても掴めます'],
+  ['v10.42.0', '24/7イベントの耐久化(Lean) — 検知したイベント/改訂/ドシエをledgerブランチにスナップショット永続。Render再起動・デプロイでも復元(起動時にブランチから読み戻し)。DynamoDB等の新規AWSは使わず既存パターンを再利用・あなたの追加設定は不要。イベント履歴はブランチ上で監査可能。最良努力の粒度(スナップショット間で消えた分は次pushで再検知)'],
+  ['v10.41.1', '調査ドシエの誠実性ハードニング(GPT Proレビュー反映) — ①事実/観測/報道/派生指標/推論/未確認を別バケットに分離(フロー推定やニュース見出しを「確認済み事実」に混ぜない)②原因の重みを情報源の格付けで判定(一般ニュースは公式材料にしない)③確信度バグ修正(UNCONFIRMEDを信号と誤カウントしていた)を「証拠カバレッジ(未較正)」に④全確率を検証・正規化(NaN/不正→unknown=1)⑤証拠に真の時刻/ハッシュを保持⑥イベント時点スナップショット+版/ハッシュでキャッシュ無効化⑦GETのHTTPコード正常化(失敗=500)⑧市場範囲の基準をMarket Regime SPYに⑨通知テストを管理者認証必須に(公開ボタン廃止)⑩説明書の誤り訂正(Action Alertsはmockでなくlive/partial・Geminiモデル名のハードコード除去)'],
+  ['v10.41.0', 'Evidence-First 調査ドシエ(決定論・AIなし)を搭載 — 24/7監視がイベントを検知すると、既存システム(フロー推定・日証金/空売り・ニュース・地合い)だけで「何が起きた/推定原因/フロー/市場全体か個別か/罠リスク/次セッションのシナリオ/無効化条件/欠損データ/反証」を組み立て、Todayのイベントをタップで展開表示。全確率は合計100%・証拠ID付き・売買指示は一切出さない。AIによる深掘り(Gear2/3)は将来オプション'],
+  ['v10.40.0', 'GPT Proレビューの正直性/安全修正を反映 — ①「特別気配」表記を廃止し「S高/S安 接近(値幅上限/下限)」に(取引所の特別気配フィールドは持っていないため正確な呼称に)②東京の後場判定を15:25まで(引け前は15:25-15:30)に修正③通知テストに1日上限(6回)を追加し悪用を遮断④市場時間外の文言を正直化(深夜/週末の常時監視は今後)。巨大なResearch Intelligence本体は段階導入を提案中'],
+  ['v10.39.0', '24時間監視の心臓部(Phase 2)を搭載 — ブリッジの既存15秒pushをサーバー側で常時解析し、S高/S安(TSE制限値幅テーブルで正確に)・急騰/急落・大口フロー異常を検知。重要な変化(sev4+)だけスマホへ通知。セッション対応で薄商いの誤検知を防止。LLMなしの決定論Gear0/1のみ稼働(PTS/L2/VWAPは未対応・capability-gated)。Renderに NTFY_TOPIC を設定すれば通知が飛びます'],
+  ['v10.38.0', '安全網: 本番スモークテストを自動化 — デプロイ毎に全主要エンドポイントを「200だけでなくフィールド単位」で自動検証し、壊れたら数分でスマホ通知。/healthzでビルドSHAを公開しデプロイ済みコミットを確認。今後のリファクタ(scanner分割の続き等)を安全に進めるための土台'],
+  ['v10.37.0', 'AI判定の「遅延」表示を正直化(土日や祝日で前営業日のままなのは正常 — 予定された実行を取りこぼした時だけ「遅延」、それ以外は最新営業日として扱う)。内部整理: entry-scoutの純粋スコアリング層をargus_rules.pyへ分離(scanner.py 6757→6270行・挙動不変・92テスト緑)。Dynamic Workflows前の段階的リファクタ第1歩'],
+  ['v10.36.0', 'Operational Truth 3点 — ①moomoo価格に鮮度/権限を明示(配信は約15秒毎だが元データがrealtimeか15分遅延か未確認の間は「未確認」と正直表示、realtimeと断定しない)②AI判定をfresh/保持中/古いで区別表示(モデル名・次回実行・「ルールが主・AIは第二意見」を明記。30分TTL失効=判定消滅ではない)③Guideに「Ledger Health」追加 — 予測台帳/Scout/引けピン/AIの稼働状況(稼働中/遅延/蓄積前・最終記録・次回実行・トリガー)を一画面で確認'],
+  ['v10.35.0', '運用の正直さ強化(GPT Proレビュー反映) — ①自己採点に「n件は相関銘柄を含み独立試行ではない/実効サンプルは小さめ」の注記を追加 ②説明書(AI Review)の古い記述を修正(「成績追跡なし」→台帳で稼働中、「AI判定はpending」の矛盾を解消) ③常時ゼロを返していた/calibrationエンドポイントを本物の台帳集計に接続。地合い安定化(v10.34)も反映'],
+  ['v10.33.0', 'バージョン表記が10.30で止まっていた不具合を修正 — package.jsonのバージョン更新が無言で失敗しており、v10.31〜v10.32.1の機能(スクロールのヌルヌル化・PWA自動更新・バックアップDLボタン・物語化診断など)は全て稼働していたのに表記だけ10.30のままでした。今後はバージョンが正しく上がります'],
+];
+
+// 用語一覧 — English chrome term → Japanese meaning.
+const GLOSSARY: [string, string][] = [
+  ['Today', '今日の判断'],
+  ['Market Context', '市場コンテキスト — 地合い(レジーム/資金回転/金利)+予定イベント/危機ニュースを1画面に'],
+  ['Watchlist', '監視リスト'],
+  ['Core Portfolio', '資産クラス司令室 — 配分の現在地とクラス別の構え'],
+  ['Capital Rotation', '資金回転'],
+  ['Regime Matrix', 'レジーム行列'],
+  ['Top Rotations', '注目資金移動'],
+  ['Action Label', '行動ラベル'],
+  // Regime tags (moved from the Market Regime page glossary, v10.57):
+  ['Risk On', '株式・ハイベータが牽引、ディフェンシブは遅れる'],
+  ['Risk Off', 'ディフェンシブが先導、株式・クレジットが弱含み'],
+  ['Event Wait', 'ウィンドウ内に主要触媒。新規エントリーを抑制'],
+  ['Cautious', '方向感は限定的、金利・VIX・イベントのリスクがくすぶる'],
+  ['Mixed', '明確な主導役がなく、資金の方向感は限定的'],
+  ['Rates Pressure', '金利上昇 — デュレーション資産とグロース倍率が圧縮'],
+  ['Credit Stress', 'ハイイールド・スプレッド拡大、リスク回避の兆候'],
+  ['Gold Hedge', 'マクロ不安または実質利回り反転で金が先行'],
+  ['Risk', 'リスク'],
+  ['Confidence', '確信度'],
+  ['Catalyst', '材料・きっかけ'],
+  ['Scenario Probabilities', 'シナリオ確率'],
+  ['Rescan', '再スキャン'],
+  ['Pro Handoff', 'Pro確認用コピー'],
+  ['AI Review', 'AIレビュー'],
+  ['WAIT', '待機'],
+  ['HOLD', '保有継続'],
+  ['WAIT FOR PULLBACK', '押し目待ち'],
+  ['BUY DIP', '下落時の買い候補'],
+  ['ADD', '追加'],
+  ['TRIM', '一部利確 / 縮小'],
+  ['EXIT', '撤退'],
+  ['CONTINUE', '継続'],
+  ['GRADUAL ADD', '段階的追加'],
+  ['DEFER LUMP SUM', '一括投入見送り'],
+  ['NO SELL ACTION', '売却不要'],
+  ['Prediction Ledger', '予測台帳 — 毎日の予測をGitHubに記録し翌日採点する仕組み'],
+  ['的中率 (Hit rate)', 'シナリオ分布で最有力とした結果が実際に起きた割合'],
+  ['Brier score', '確率予測の校正度(0〜2、低いほど良い。0.6前後=あてずっぽう同等、それ未満なら情報がある)'],
+];
+
+const HOWTO: string[] = [
+  'まず Today で今日の姿勢(市場全体のスタンス)を確認します。',
+  'Watchlist で個別銘柄の行動ラベルを見ます。行をタップすると戦略・理由・次に待つ条件が開きます。',
+  'Event Radar で重要イベント(FOMC・CPI・決算・国債入札など)の接近を確認します。',
+  'Action label は売買の指示ではなく、判断の整理です。迷うときは WAIT / HOLD 寄りに考えます。',
+  'Pro Handoff は GPT-5.5 Pro に手動で深く相談したいときにプロンプトをコピーします(自動課金なし)。',
+  'Scenario probabilities は予言ではなく、現在のデータに基づく短期のリスク配分です。',
+  'データが partial / mock のときは、その銘柄の判断は弱めに受け取ってください。',
+  '自己採点(的中率・Brier)は最低30営業日貯まるまで参考程度に。AI見解は毎日16:05の実行スナップショットで、常時最新ではありません(カードに実行時刻を表示)。',
+  '長期コア資産(Core)は短期の値動きで売買せず、積立方針の維持が基本です。',
+];
+
+export const Guide: React.FC = () => {
+  const [showAllUpdates, setShowAllUpdates] = React.useState(false);
+  const [context, setContext] = React.useState(contextFromHash);
+  const [query, setQuery] = React.useState('');
+  React.useEffect(() => {
+    const onHashChange = () => setContext(contextFromHash());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+  const RECENT_SHOWN = 5;
+  const loc = useLocale();
+  const normalizedQuery = query.trim().toLowerCase();
+  const contextualGuide = resolveGuideContext(context);
+  const filteredPages = PAGE_GUIDE.filter((item) =>
+    !normalizedQuery || `${item.page} ${item.descJa}`.toLowerCase().includes(normalizedQuery));
+  const filteredCapabilities = CAPABILITIES.filter((item) =>
+    !normalizedQuery || `${item.area} ${item.descJa}`.toLowerCase().includes(normalizedQuery));
+  const filteredGlossary = normalizedQuery ? GLOSSARY.filter(([term, description]) =>
+    `${term} ${description}`.toLowerCase().includes(normalizedQuery)) : [];
+  return (
+    <PageShell title={tEn('nav.guide')} subtitle="使い方(ページ別)・できること・用語一覧(日本語ガイド)。">
+      {context && (
+        <section className="card guide-context" aria-live="polite">
+          <span>CONTEXT · {context}</span>
+          {contextualGuide ? <>
+            <h2>{contextualGuide.page}</h2>
+            <p>{contextualGuide.descJa}</p>
+          </> : <>
+            <h2>この画面の個別ガイドは未登録です</h2>
+            <p>下の検索から関連する機能名または用語を確認してください。</p>
+          </>}
+          <a href="#guide">すべてのGuideを見る</a>
+        </section>
+      )}
+      <section className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-sub)' }}>{t('common.language')}</span>
+        {(['en', 'ja'] as const).map((l) => (
+          <button key={l} onClick={() => setLocale(l)} aria-pressed={loc === l}
+            style={{ padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13,
+                     background: loc === l ? 'var(--surface-soft)' : 'transparent',
+                     color: loc === l ? 'var(--text-main)' : 'var(--text-sub)',
+                     border: `1px solid ${loc === l ? 'var(--line-strong)' : 'var(--line)'}` }}>
+            {l === 'en' ? 'English' : '日本語'}
+          </button>
+        ))}
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          {loc === 'ja' ? 'UIの言語(既定=日本語)。説明文は日本語、要所のアクション語(NO NEW ENTRY等)は英語固定。「English」で全面英語に切替。' : 'UI language (default Japanese). English here makes everything English; otherwise prose is Japanese with English action keywords.'}
+        </span>
+      </section>
+
+      <section className="card guide-search" aria-label="Guide search">
+        <label htmlFor="guide-query">今見ている機能・用語を検索</label>
+        <input id="guide-query" type="search" value={query}
+          placeholder="例: Asset Desk / Backup / Market"
+          onChange={(event) => setQuery(event.target.value)} />
+        {normalizedQuery && (
+          <span className="guide-search__count" aria-live="polite">
+            {filteredPages.length + filteredCapabilities.length + filteredGlossary.length} results
+          </span>
+        )}
+      </section>
+
+      {!!filteredGlossary.length && (
+        <section>
+          <div className="section-head">
+            <span className="section-head__title">用語の検索結果</span>
+            <span className="section-head__count">{filteredGlossary.length} terms</span>
+          </div>
+          <div className="card guide-results">
+            {filteredGlossary.map(([term, description]) => (
+              <details className="guide-result" key={term}>
+                <summary>{term}</summary><p>{description}</p>
+              </details>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">使い方 — ページ別ガイド</span>
+          <span className="section-head__count">ナビ順</span>
+        </div>
+        <div className="card guide-card">
+          <div className="guide-results">
+            {filteredPages.map((p) => (
+              <details className="guide-result" key={p.page}>
+                <summary>{p.page}</summary><p>{p.descJa}</p>
+              </details>
+            ))}
+            {!filteredPages.length && <p className="guide-note">該当するページガイドはありません。</p>}
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">ARGUS でできること(機能一覧)</span>
+          <span className="section-head__count">UI v{__APP_VERSION__} 時点</span>
+        </div>
+        <div className="card guide-card">
+          <div className="guide-results">
+            {filteredCapabilities.map((c) => (
+              <details className="guide-result" key={c.area}>
+                <summary>{c.area}</summary><p>{c.descJa}</p>
+              </details>
+            ))}
+            {!filteredCapabilities.length && <p className="guide-note">該当する機能説明はありません。</p>}
+          </div>
+        </div>
+      </section>
+
+      <details className="guide-reference">
+        <summary>Advanced systems / methodology / release history</summary>
+        <div className="guide-reference__body">
+      <ArgusProAboutCard />
+
+      <DecisionSpineCard />
+
+      <SourceUniverseCard />
+
+      <section>
+        <div className="section-head"><span className="section-head__title">用語一覧</span></div>
+        <div className="card guide-card">
+          <div className="guide-glossary">
+            {GLOSSARY.map(([en, ja]) => (
+              <div className="guide-term" key={en}>
+                <span className="guide-term__en">{en}</span>
+                <span className="guide-term__ja">{ja}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">自己採点の読み方(Brier・RPS・スキルスコアの基準)</span>
+          <span className="section-head__count">数字の意味</span>
+        </div>
+        <div className="card guide-card">
+          <div className="guide-glossary">
+            <div className="guide-term"><span className="guide-term__en">Brierスコアとは</span><span className="guide-term__ja">確率予測の「二乗誤差」。0=完璧、大きいほど悪い。例:「上昇70%」と予想し実際に上昇したら誤差(1−0.7)²=0.09、外れたら(0−0.7)²=0.49。これを全予測で平均した値。</span></div>
+            <div className="guide-term"><span className="guide-term__en">2択Brierの目安</span><span className="guide-term__ja">0.0=完璧 / 0.10〜0.20=良好 / <b>0.25=「毎回50%」と言うだけの無情報ライン(これを下回って初めて意味がある)</b> / 0.25〜0.33=スキルほぼ無し / 0.33超=naive以下で悪い / 1.0=自信満々で全部外す最悪。</span></div>
+            <div className="guide-term"><span className="guide-term__en">★最重要</span><span className="guide-term__ja">Brierは単独では良し悪しを判断できない。<b>ベースライン(無情報予測)と比べたスキルスコア = 1 −(自分のBrier ÷ ベースラインBrier)が&gt;0で初めて「ベースラインに勝っている」</b>。v4でスキルスコアとベースライン比較を導入済み。</span></div>
+            <div className="guide-term"><span className="guide-term__en">RPS</span><span className="guide-term__ja">順序付き3分類(下落/横ばい/反発)用のBrier拡張。「外し方の遠さ」も罰する(反発を当てるべき時、横ばい予想より下落予想を大きく減点)。3クラス正規化の無情報ライン≈0.22。</span></div>
+            <div className="guide-term"><span className="guide-term__en">ARGUSの現状(正直)</span><span className="guide-term__ja">今はburn-in期(n≈133・データ不安定期に収集)で<b>現数値は参考外・ヘッドラインから除外</b>。意味のある比較は新エポックで約120営業日(クラスタ別)蓄積後。サンプルが相関するため「proven(証明済み)」とは決して表示しない。</span></div>
+          </div>
+        </div>
+      </section>
+
+      <ArgusProStatusCard />
+
+      <PaidSourceStatusCard />
+
+      <EventCardsPanel />
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">校正ユニバース (Calibration v4)</span>
+          <span className="section-head__count">コホート/エポック/ポスチャー</span>
+        </div>
+        <CalibrationCard />
+      </section>
+
+      <CalibrationOpsCard />
+
+      <DecisionValueOpsCard />
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">Ledger Health (自己採点ループ)</span>
+          <span className="section-head__count">稼働状況</span>
+        </div>
+        <LedgerHealthCard />
+      </section>
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">情報源レジストリ (真実性)</span>
+          <span className="section-head__count">capability別</span>
+        </div>
+        <SourceRegistryCard />
+      </section>
+
+      <MarketDepthCard />
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">API / Integration status</span>
+          <span className="section-head__count">設定・稼働状況</span>
+        </div>
+        <IntegrationsPanel />
+      </section>
+
+      <section>
+        <div className="section-head"><span className="section-head__title">ARGUS の使い方</span></div>
+        <div className="card guide-card">
+          <ol className="guide-howto">
+            {HOWTO.map((s, i) => <li key={i}>{s}</li>)}
+          </ol>
+          <p className="guide-note">
+            ARGUS は予測エンジンではありません。現在の市場・銘柄の状況を「行動カテゴリ」に整理して、
+            今日の判断・リスク・理由・触るもの・避けるもの・待つものを示す投資コマンドセンターです。
+          </p>
+        </div>
+      </section>
+
+      {/* v11.19.1: バックアップ操作は専用のBackupページへ集約(ユーザー指示)。
+          Guideには誘導のみ残す。 */}
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">バックアップ (端末データ)</span>
+          <span className="section-head__count">→ Backupページへ集約</span>
+        </div>
+        <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-sub)' }}>
+          パスフレーズ設定(暗号化バックアップ/端末間同期)・JSON書き出し/読み込み・スナップショット・
+          復元ドリルは、左ナビの「Backup」ページにまとまっています。
+        </p>
+      </section>
+
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">Layer 2B 同期(あなたのwatchlist採点)</span>
+          <span className="section-head__count">private/owner限定</span>
+        </div>
+        <Layer2BSyncCard />
+      </section>
+
+      {/* バージョン履歴は最下部(ユーザー指示・用語/英語の役より下) */}
+      <section>
+        <div className="section-head">
+          <span className="section-head__title">最近のアップデート</span>
+          <span className="section-head__count">{RECENT_UPDATES.length} releases</span>
+        </div>
+        <div className="card guide-card">
+          <div className="guide-caps">
+            {(showAllUpdates ? RECENT_UPDATES : RECENT_UPDATES.slice(0, RECENT_SHOWN)).map(([v, d]) => (
+              <div className="guide-cap" key={v}>
+                <span className="guide-cap__area guide-cap__area--mono">{v}</span>
+                <span className="guide-cap__desc">{d}</span>
+              </div>
+            ))}
+          </div>
+          {RECENT_UPDATES.length > RECENT_SHOWN && (
+            <button
+              onClick={() => setShowAllUpdates((s) => !s)}
+              style={{ marginTop: 10, padding: '6px 14px', borderRadius: 8, cursor: 'pointer',
+                       background: 'transparent', color: 'var(--text-sub, #8b98a7)',
+                       border: '1px solid var(--line, rgba(255,255,255,0.18))', fontSize: 12 }}>
+              {showAllUpdates ? '▲ 直近のみ表示' : `▼ 全${RECENT_UPDATES.length}件を表示`}
+            </button>
+          )}
+        </div>
+      </section>
+        </div>
+      </details>
+    </PageShell>
+  );
+};

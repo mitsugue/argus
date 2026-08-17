@@ -12,8 +12,6 @@ Pure + deterministic + serializable. No fetching, no LLM. Discipline baked in:
   * missing market data keeps market_reaction_pending — never fabricated.
 """
 import hashlib
-import re
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 SCHEMA_VERSION = "official-event-lifecycle-v1"
@@ -107,21 +105,6 @@ def build_market_reaction(*, window: str, observed_at: str,
 _WINDOW_KEY = {"same_day": "sameDay", "next_session": "nextSession",
                "day3": "day3", "day5": "day5"}
 
-_EXACT_OFFSET_TIME = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$")
-
-
-def _exact_epoch(value: Any) -> Optional[float]:
-    if not isinstance(value, str) or not _EXACT_OFFSET_TIME.fullmatch(value.strip()):
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-        if parsed.tzinfo is None or parsed.utcoffset() is None:
-            return None
-        return parsed.timestamp()
-    except (TypeError, ValueError, OverflowError, OSError):
-        return None
-
 
 def apply_market_reaction(record: Dict[str, Any], reaction: Dict[str, Any],
                           *, move_started_at: Optional[str] = None) -> Dict[str, Any]:
@@ -138,12 +121,8 @@ def apply_market_reaction(record: Dict[str, Any], reaction: Dict[str, Any],
     missing = set(r.get("missingConfirmations") or [])
     missing.discard(f"market_reaction:{reaction.get('window')}")
     # timing gate
-    disclosed = _exact_epoch(r.get("disclosedAt"))
-    move_started = _exact_epoch(move_started_at)
-    timing_known = disclosed is not None and move_started is not None
-    after_move = bool(timing_known and disclosed > move_started)
-    if not timing_known:
-        missing.add("timing:unverified")
+    disclosed = str(r.get("disclosedAt") or "")
+    after_move = bool(move_started_at and disclosed and disclosed > str(move_started_at))
     if after_move:
         missing.add("timing:disclosure_after_move")
     r["missingConfirmations"] = sorted(missing)
@@ -158,7 +137,7 @@ def apply_market_reaction(record: Dict[str, Any], reaction: Dict[str, Any],
     else:
         r["lifecycleStage"] = "market_reaction_observed"
     # cause status (conservative)
-    if r.get("material") and timing_known and not after_move and any(
+    if r.get("material") and not after_move and any(
             (r["marketReaction"].get(k) or {}).get("marketConfirmed") for k in ("sameDay", "nextSession")):
         r["causeStatus"] = "confirmed_cause"
     elif after_move:

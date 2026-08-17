@@ -18,26 +18,56 @@ function check(name, condition) {
   else { failed += 1; console.error(`FAIL  ${name}`); }
 }
 const src = (...parts) => fs.readFileSync(path.join(__dirname, '..', ...parts), 'utf8');
+const market = require(path.join(__dirname, '..', 'src', 'domain', 'marketContextView.ts'));
+const dq = require(path.join(__dirname, '..', 'src', 'domain', 'dataQualityIncidents.ts'));
 const restore = require(path.join(__dirname, '..', 'src', 'domain', 'restoreReadiness.ts'));
 const notifications = require(path.join(__dirname, '..', 'src', 'lib', 'notifications.ts'));
 
-const todaySource = src('src', 'routes', 'CommandCenter.tsx');
-const todayPanelSource = src('src', 'components', 'today', 'ArgusTodayPanel.tsx');
-const chartSource = src('src', 'hooks', 'useChartIntelligence.ts');
-const verifiedSnapshotSource = src('src', 'lib', 'verifiedSnapshot.ts');
-const ledgerSource = src('src', 'hooks', 'useMarketLedger.ts');
-check('M1 Today owns verified market chart evidence',
-  todaySource.includes('useChartIntelligence') && todayPanelSource.includes('ProjectionChart'));
-check('M2 Today retains market ledger context',
-  todaySource.includes('useMarketLedger') && todaySource.includes('marketLedger.ledger'));
-check('M3 Today retains decision-relevant market news',
-  todaySource.includes('useMarketNews') && todayPanelSource.includes('重大ニュース'));
-check('M4 background chart/replay intelligence remains cached GET only',
-  chartSource.includes('readVerifiedSnapshot') && chartSource.includes('writeVerifiedSnapshot')
-  && chartSource.includes("method: 'GET'") && !chartSource.includes("method: 'POST'")
-  && verifiedSnapshotSource.includes('value.marketReplay?.contexts'));
-check('M5 market ledger background lifecycle remains shared',
-  ledgerSource.includes('createSharedPollingStore'));
+const view = market.buildMarketContextView({
+  market: 'JP', periodEnd: '2026-07-24',
+  indicators: { bars: [{ close: 100 }, { close: 102 }] },
+  eventMarkers: [
+    { id: 'old', date: '2026-07-20', labelJa: '過去', kind: 'macro' },
+    { id: 'next', date: '2026-07-27', labelJa: '日銀', kind: 'macro' },
+  ],
+}, {
+  currentRegime: { trend: 'UP', volatility: 'HIGH' },
+  probabilityQuality: { brierSkill: null },
+  changeConditions: [{ price: 99, event: null }],
+});
+check('M1 market summary uses observed price change', view.changed.includes('+2.0%'));
+check('M2 market summary preserves independent market treatment',
+  view.jpImplication.includes('trend UP') && view.usImplication.includes('独立市場'));
+check('M3 next event excludes past events', view.nextEvent.includes('日銀') && !view.nextEvent.includes('過去'));
+check('M4 risk does not fabricate direction skill', view.primaryRisk.includes('方向Skill未確認'));
+check('M5 change condition uses verified close level', view.changeCondition.includes('99'));
+
+const incidents = dq.buildDataQualityIncidents({
+  sourceHealth: [
+    { sourceName: 'ok', status: 'ok', lastSuccessAt: 'now', ownerReadableImpactJa: '',
+      nextStepJa: '', isExpectedDisabled: false },
+    { sourceName: 'expected', status: 'disabled', lastSuccessAt: null, ownerReadableImpactJa: '',
+      nextStepJa: '', isExpectedDisabled: true },
+    { sourceName: 'prices', status: 'failed', lastSuccessAt: null,
+      ownerReadableImpactJa: 'chart unavailable', nextStepJa: 'retry', isExpectedDisabled: false },
+    { sourceName: 'stale-but-ok', status: 'ok', freshnessBucket: 'very_stale',
+      lastSuccessAt: 'yesterday', ownerReadableImpactJa: 'decision confidence reduced',
+      nextStepJa: 'wait for refresh', isExpectedDisabled: false },
+  ],
+  remoteJournalVerification: {
+    readBackVerified: false, committedAt: null, readBackAt: null, pendingCount: 2, errorClass: null,
+  },
+  publicLeakSafe: true,
+});
+check('D1 expected disabled and healthy sources stay out of incidents',
+  !incidents.some((row) => ['ok', 'expected'].includes(row.feature)));
+check('D2 critical incident is first and actionable',
+  incidents[0].feature === 'prices' && incidents[0].severity === 'critical'
+  && incidents[0].ownerAction === 'retry');
+check('D3 Remote Journal pending is explicit', incidents.some((row) =>
+  row.feature === 'Remote Journal' && row.impact.includes('pending 2')));
+check('D4 stale freshness cannot hide behind status ok', incidents.some((row) =>
+  row.feature === 'stale-but-ok' && row.currentState.includes('very_stale')));
 
 const safety = (overrides = {}) => ({
   protectionLevel: 'protected', protectionLevelJa: '保護済み',
@@ -82,41 +112,41 @@ const compact = notifications.compactNotificationFeed([
 check('N1 notification feed renders one semantic incident', compact.length === 1
   && compact[0].occurrenceCount === 2 && compact[0].notificationIds.length === 2);
 
+const marketSource = src('src', 'components', 'marketReplay', 'MarketContextReplay.tsx');
 const dqSource = src('src', 'routes', 'DataQualityPage.tsx');
-const healthSource = src('src', 'hooks', 'useSystemHealth.ts');
+const dqTableSource = src('src', 'components', 'system', 'DataQualityIncidents.tsx');
 const backupSource = src('src', 'routes', 'BackupPage.tsx');
 const backupOverviewSource = src('src', 'components', 'system', 'BackupStatusOverview.tsx');
-const settingsSource = src('src', 'routes', 'Settings.tsx');
+const guideSource = src('src', 'routes', 'Guide.tsx');
 const pageShellSource = src('src', 'routes', 'PageShell.tsx');
 const appSource = src('src', 'App.tsx');
-check('U1 Today exposes chart, positioning, news and evidence details',
-  ['at-projection', 'at-positioning', '重大ニュース', '根拠・市場データ・システム情報']
-    .every((label) => todayPanelSource.includes(label)));
-check('U2 independent Market/Replay/Ledger surface is absent',
-  !appSource.includes('MarketRegime') && !appSource.includes("'#market'"));
-check('U3 Today market evidence remains read-only',
-  !todaySource.includes("method: 'POST'") && !todayPanelSource.includes("method: 'POST'"));
-check('U4 Data Quality is a fixed public-safe lamp surface',
-  healthSource.includes("schemaVersion: 'argus-public-diagnostics-v1'")
-  && healthSource.includes('systemHealth: SystemHealth')
-  && ['PUBLIC SERVICE STATUS', 'FRESHNESS SUMMARY', 'RECOVERY CLAIM']
-    .every((label) => dqSource.includes(label))
-  && !dqSource.includes('<DataQualityIncidents')
-  && !dqSource.includes('ARGUS_ADMIN_TOKEN'));
+check('U1 first market viewport exposes seven decision contracts',
+  ['CURRENT REGIME', 'WHAT CHANGED', 'PRIMARY RISK', 'JP IMPLICATION', 'US IMPLICATION',
+    'NEXT EVENT', 'WHAT CHANGES IT'].every((label) => marketSource.includes(label)));
+check('U2 Replay and Ledger remain secondary navigation',
+  marketSource.includes("type Tab = 'OVERVIEW' | 'REPLAY' | 'LEDGER'"));
+check('U3 FROZEN market path remains cached GET with AI POST 0',
+  marketSource.includes('useChartIntelligence') && marketSource.includes('AI POST 0')
+  && !marketSource.includes("method: 'POST'"));
+check('U4 Data Quality defaults to actionable incidents',
+  dqSource.indexOf('<DataQualityIncidents') < dqSource.indexOf('<details className=\"dq-diagnostics\"')
+  && dqTableSource.includes('<table className="dq-incidents__table"')
+  && ['IMPACT', 'LAST SUCCESS', 'STATE', 'NEXT RETRY', 'OWNER ACTION']
+    .every((label) => dqTableSource.includes(label)));
 check('U5 Backup defaults to restore readiness, not configured-state optimism',
   backupSource.indexOf('<BackupStatusOverview') < backupSource.indexOf('<details className=\"backup-actions\"')
   && backupOverviewSource.includes('RESTORE READINESS')
   && backupOverviewSource.includes('LATEST RECOVERY POINT')
   && backupOverviewSource.includes('LAST RESTORE DRILL'));
-check('U6 Settings owns language, status, recovery and minimal help',
-  settingsSource.includes('<PublicDiagnosticsPanel />')
-  && settingsSource.includes('<BackupSettingsPanel')
-  && settingsSource.includes('aria-pressed={locale === value}')
-  && settingsSource.includes('id="settings-help"'));
-check('U7 contextual help resolves into Settings without mounting legacy Guide',
-  pageShellSource.includes('href="#settings/help"')
-  && appSource.includes('parseLocationHash')
-  && !appSource.includes("from './routes/Guide'"));
+check('U6 Guide is contextual, searchable and collapsed',
+  guideSource.includes('type=\"search\"') && guideSource.includes('guide-result')
+  && guideSource.includes('guide-reference')
+  && guideSource.includes('resolveGuideContext(context)')
+  && guideSource.includes("window.addEventListener('hashchange'")
+  && guideSource.includes('filteredGlossary'));
+check('U7 every non-Guide page has a contextual Guide route',
+  pageShellSource.includes('#guide:') && pageShellSource.includes('この画面のGuide')
+  && appSource.includes("hash.startsWith('#guide:')"));
 
 if (failed) {
   console.error(`\nmarket-system integrity tests: ${failed} FAILED`);

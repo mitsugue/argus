@@ -17,7 +17,7 @@ def _fill(ip, n):
 def test_polling_exhaustion_does_not_block_search():
     with scanner.app.test_client() as c:
         # exhaust the ordinary heavy bucket for the test client's IP
-        r0 = c.get("/api/argus/data-quality/status")   # learn the bucket ip
+        r0 = c.get("/api/argus/position-exposure/status")   # learn the bucket ip
         assert r0.status_code == 200
         ip = [k for k in scanner._RL_BUCKETS if not k.endswith(":search")][0]
         _fill(ip, scanner._RL_MAX_HEAVY + 50)
@@ -31,12 +31,12 @@ def test_polling_exhaustion_does_not_block_search():
 
 def test_search_bucket_has_own_limit():
     with scanner.app.test_client() as c:
-        c.get("/api/argus/data-quality/status")
+        c.get("/api/argus/position-exposure/status")
         ip = [k for k in scanner._RL_BUCKETS if not k.endswith(":search")][0]
         _fill(ip + ":search", scanner._RL_MAX_SEARCH + 5)
         r = c.get("/api/argus/symbol-search?q=trend&market=US")
         assert r.status_code == 429                     # search abuse still bounded
-        r2 = c.get("/api/argus/data-quality/status")
+        r2 = c.get("/api/argus/position-exposure/status")
         assert r2.status_code == 200                    # normal traffic unaffected
 
 

@@ -5,8 +5,7 @@ import {
   type SnapshotExpectation, type SnapshotViewState, type VerifiedSnapshot,
   VERIFIED_VIEW_METHOD_VERSION, verifySnapshot, writeVerifiedSnapshot,
 } from '../lib/verifiedSnapshot';
-import { formatSnapshotStatus, snapshotDecisionExpiresAt,
-  snapshotFreshness } from '../lib/snapshotFreshness';
+import { formatSnapshotStatus, snapshotFreshness } from '../lib/snapshotFreshness';
 import {
   DEFAULT_MARKET_INSTRUMENT, isVerifiedMarketInstrument,
 } from '../domain/marketInstruments';
@@ -260,7 +259,6 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
   const visibilityBlocked = useRef(false);
   const [loaderVisible, setLoaderVisible] = useState(false);
   const [slowInitial, setSlowInitial] = useState(false);
-  const [, setAuthorityRevision] = useState(0);
 
   useEffect(() => {
     const loading = expectation
@@ -440,19 +438,6 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
     return () => document.removeEventListener('visibilitychange', visible);
   }, [expectation]);
 
-  const authoritySnapshot = view.key === expectedKey ? view.snapshot : null;
-  const authorityDeadline = snapshotDecisionExpiresAt(authoritySnapshot);
-  useEffect(() => {
-    if (authorityDeadline == null) return;
-    const nowMs = Date.now();
-    if (authorityDeadline < nowMs) return;
-    const timer = window.setTimeout(
-      () => setAuthorityRevision((value) => value + 1),
-      Math.min(Math.max(1, authorityDeadline - nowMs + 1), 2_147_000_000),
-    );
-    return () => window.clearTimeout(timer);
-  }, [authorityDeadline]);
-
   if (!expectation) {
     const data = legacyKey === legacyUrl ? legacyData : null;
     const effectiveLegacyState: AssetChartViewState = legacyKey === legacyUrl
@@ -482,9 +467,6 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
       : '初回データを準備中';
     return {
       data,
-      // Legacy asset charts remain display-only. They do not carry the verified
-      // snapshot authority required by Today forecasting.
-      decisionData: null,
       loading: effectiveLegacyState === 'NO_CACHE_LOADING'
         || effectiveLegacyState === 'CACHE_READY_REVALIDATING',
       error: legacyKey === legacyUrl ? legacyError?.message ?? null : null,
@@ -502,13 +484,8 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
     : 'NO_CACHE_LOADING';
   const loading = effectiveState === 'NO_CACHE_LOADING' ||
     effectiveState === 'CACHE_READY_REVALIDATING';
-  const decisionUsable = effectiveState === 'CURRENT_READY'
-    && snapshotFreshness(matching, Date.now(), false) === 'fresh';
   return {
     data: matching?.payload ?? null,
-    decisionData: decisionUsable ? matching?.payload ?? null : null,
-    decisionUsable,
-    authorityAsOf: matching?.asOf ?? null,
     loading,
     error: view.key === expectedKey ? view.error : null,
     snapshotState: effectiveState,

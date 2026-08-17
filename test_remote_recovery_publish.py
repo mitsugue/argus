@@ -882,7 +882,7 @@ def test_exact_4gib_encrypted_producer_probe_is_ci_wired_and_scalar_only():
 
     job = workflow.split(
         "\n  linux-4gib-encrypted-recovery-producer:\n", 1)[1].split(
-        "\n  linux-4gib-recovery-measurement:\n", 1)[0]
+        "\n  linux-4gib-normalized-hash:\n", 1)[0]
     assert "--memory 4g --memory-swap 4g" in job
     assert "--require-cgroup-max-bytes 4294967296" in job
     assert "--cycles 8" in job
@@ -916,50 +916,5 @@ def test_exact_4gib_encrypted_producer_probe_is_ci_wired_and_scalar_only():
         privacy_step.split("        run: |\n", 1)[1])
     checked = subprocess.run(
         ["bash", "-n"], input=privacy_script, text=True,
-        capture_output=True, check=False)
-    assert checked.returncode == 0, checked.stderr
-
-
-def test_exact_4gib_measurement_gate_is_ci_wired_no_swap_and_attributable():
-    workflow = Path(".github/workflows/memory-attribution.yml").read_text(
-        encoding="utf-8")
-    job = workflow.split(
-        "\n  linux-4gib-recovery-measurement:\n", 1)[1].split(
-        "\n  linux-4gib-normalized-hash:\n", 1)[0]
-
-    assert "--memory 4g --memory-swap 4g" in job
-    assert 'memory.max)" = "4294967296"' in job
-    assert 'memory.swap.max)" = "0"' in job
-    assert "test_argus_recovery_phase_a_adapter.py" in job
-    assert "scripts/recovery_measurement_benchmark.py" in job
-    assert "scripts/recovery_measurement_retention_benchmark.py" in job
-    assert "round1-workload-exit-code.txt" in job
-    assert 'report["memoryMaxBytes"] == 4 * 1024 ** 3' in job
-    assert 'report["swapMaxBytes"] == 0' in job
-    assert 'report["workloadExitCode"] == 0' in job
-    assert 'report["oomDelta"] == 0' in job
-    assert 'report["oomKillDelta"] == 0' in job
-    assert 'accounting.get("passed") is True' in job
-    assert 'retention.get("passed") is True' in job
-    assert "round1-recovery-measurement-proof-${{ github.sha }}" in job
-    assert job.count("if: always()") == 2
-
-    container_step = job.split(
-        "- name: Measurement accounting and retention in exact 4 GiB cgroup",
-        1)[1].split("- name: Exact-cgroup and benchmark terminal gates", 1)[0]
-    container_script = textwrap.dedent(
-        container_step.split("        run: |\n", 1)[1])
-    checked = subprocess.run(
-        ["bash", "-n"], input=container_script, text=True,
-        capture_output=True, check=False)
-    assert checked.returncode == 0, checked.stderr
-
-    terminal_step = job.split(
-        "- name: Exact-cgroup and benchmark terminal gates", 1)[1].split(
-        "- name: Publish Round 1 measurement resource proof", 1)[0]
-    terminal_script = textwrap.dedent(
-        terminal_step.split("        run: |\n", 1)[1])
-    checked = subprocess.run(
-        ["bash", "-n"], input=terminal_script, text=True,
         capture_output=True, check=False)
     assert checked.returncode == 0, checked.stderr

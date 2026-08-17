@@ -22,20 +22,15 @@ RENDER_BACKEND_PATHS: Tuple[str, ...] = (
     "Procfile",
     "gunicorn.conf.py",
     "backend-version.json",
-    "product-version.json",
     "entity_profiles_seed.json",
     "web/src/types/**",
 )
 BACKEND_EXCEPTIONS = ("render.yaml",)
 FRONTEND_PATHS: Tuple[str, ...] = (
     "web/**",
-    "product-version.json",
     ".github/workflows/deploy-pages.yml",
     ".github/workflows/market-public-acceptance.yml",
-    ".github/actions/warm-profile-seed/**",
-    ".github/actions/warm-profile-consumer/**",
     "scripts/verified_snapshot_release_gate.py",
-    "scripts/verify_public_candidate_release.py",
 )
 
 # Stage 1 is a deliberately narrow backend release: it deploys the immutable
