@@ -2,7 +2,7 @@
 """Run the existing breadth incremental worker on a bounded natural schedule.
 
 This control-plane runner intentionally does not import backend application
-code. It uses public GETs for before/after evidence and invokes only the
+code. It uses public health plus authenticated operational evidence and invokes only the
 existing JQUANTS_BREADTH_INCREMENTAL foundation job. It never calls a mission
 tick, heartbeat, restart, deploy, or Soak mutation endpoint.
 """
@@ -202,24 +202,21 @@ def _identity(body: Dict[str, Any]) -> Dict[str, Any]:
 def _data_quality_identity(body: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not isinstance(body, dict):
         return {"version": None, "sha": None, "bootTime": None}
-    build = body.get("buildIdentity") if isinstance(body.get("buildIdentity"), dict) else {}
-    runtime = body.get("runtimeIdentity") if isinstance(body.get("runtimeIdentity"), dict) else {}
+    service = body.get("service") if isinstance(body.get("service"), dict) else {}
     return {
-        "version": build.get("backendVersion") or body.get("appVersion"),
-        "sha": build.get("backendBuildSha") or runtime.get("buildSha"),
-        "bootTime": runtime.get("processBootedAt"),
+        "version": service.get("backendVersion"),
+        "sha": service.get("buildSha"),
+        "bootTime": service.get("processBootedAt"),
     }
 
 
 def _soak_identity(body: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not isinstance(body, dict):
-        return {"soakId": None, "startedAt": None, "restartCount": None}
-    soak = body.get("buildSoak") if isinstance(body.get("buildSoak"), dict) else {}
-    continuity = body.get("soakContinuity") if isinstance(body.get("soakContinuity"), dict) else {}
+        return {"state": None, "armed": None}
+    features = body.get("features") if isinstance(body.get("features"), dict) else {}
     return {
-        "soakId": soak.get("soakId"),
-        "startedAt": soak.get("startedAt"),
-        "restartCount": continuity.get("restartCount"),
+        "state": features.get("soakState"),
+        "armed": features.get("soakArmed"),
     }
 
 
@@ -282,10 +279,11 @@ def classify_terminal(
 def _read_optional(
     base: str,
     path: str,
+    token: Optional[str] = None,
     request: Callable[..., Dict[str, Any]] = _request,
 ) -> Optional[Dict[str, Any]]:
     try:
-        return request(f"{base}{path}", timeout=180)
+        return request(f"{base}{path}", token=token, timeout=180)
     except RequestFailure:
         return None
 
@@ -329,7 +327,8 @@ def run(
         health_before = request(f"{base}/healthz", timeout=180)
         ready_before = request(f"{base}/readyz", timeout=180)
         ledger_before = request(f"{base}/api/argus/market-ledger", timeout=240)
-        quality_before = _read_optional(base, "/api/argus/data-quality", request)
+        quality_before = _read_optional(
+            base, "/api/argus/admin/diagnostics/operational", token, request)
         before = ledger_summary(ledger_before)
         expected_date, expected_source = _expected_date(ledger_before, observed_at)
         if before.get("lagTradingDays") is None:
@@ -423,7 +422,8 @@ def run(
             )
         health_after = request(f"{base}/healthz", timeout=180)
         ready_after = request(f"{base}/readyz", timeout=180)
-        quality_after = _read_optional(base, "/api/argus/data-quality", request)
+        quality_after = _read_optional(
+            base, "/api/argus/admin/diagnostics/operational", token, request)
         backend_after = _data_quality_identity(quality_after)
         after_health_identity = _identity(health_after)
         backend_after["version"] = backend_after["version"] or after_health_identity["version"]
@@ -437,19 +437,16 @@ def run(
             and report["backendBefore"] == report["backendAfter"]
         )
         report["soakIdentityStable"] = (
-            bool(report["soakBefore"].get("soakId"))
-            and bool(report["soakBefore"].get("startedAt"))
-            and report["soakBefore"] == report["soakAfter"]
+            report["soakBefore"] == report["soakAfter"]
         )
         if quality_after is not None:
-            remote = quality_after.get("remoteJournalVerification")
+            remote = quality_after.get("remoteJournal")
             if not isinstance(remote, dict):
                 remote = quality_after
             report["remoteJournalReadBack"] = {
                 key: remote.get(key) for key in (
                     "readBackVerified", "walReadBackVerified", "pendingCount",
-                    "remotePendingCount", "errorClass", "walErrorClass",
-                    "remoteCommitSha", "verifiedWalSequence",
+                    "committedCount", "errorPresent", "verifiedWalSequence",
                 )
             }
         if (report["classification"] == "failure"

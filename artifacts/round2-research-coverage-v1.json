@@ -1,0 +1,176 @@
+{
+  "auditIdentity": {
+    "buildSha": "773e8b6472941c920b7389abe929d794c2025ca4",
+    "treeSha": "ef47193fc84fc76209ca797c78185343a9a59a10"
+  },
+  "auditOnlyArtifacts": [
+    {
+      "path": "artifacts/breadth-probability-truth-2026-07-27.json",
+      "reason": "Compact production audit summary, not a rerunnable raw dataset. It reports exact probabilities disallowed, 10 forecast/outcome records, zero resolved outcomes, null Brier/RPS, and SECOND_OPINION_ONLY.",
+      "researchCalibrationEligible": false
+    }
+  ],
+  "committedData": [
+    {
+      "availableSeries": [
+        {
+          "firstPeriod": "2002-08-02",
+          "lastPeriod": "2026-07-10",
+          "observationCount": 1217,
+          "seriesId": "credit.long_balance"
+        },
+        {
+          "firstPeriod": "2002-08-02",
+          "lastPeriod": "2026-07-10",
+          "observationCount": 1217,
+          "seriesId": "credit.short_balance"
+        }
+      ],
+      "availabilityPolicy": "Historical rows use conservative plus-seven-days 15:00 JST; recent weekly-final rows use exact Wednesday publication timestamps.",
+      "firstPeriod": "2002-08-02",
+      "lastPeriod": "2026-07-10",
+      "lawfulUse": "D01 point-in-time proposition-state and threshold research only; production expectancy still requires paired lawful outcome OHLC.",
+      "path": "ops/imports/jpx_two_market_credit_20020802_20260710.csv",
+      "rightsStatus": "PUBLIC_OFFICIAL_JPX",
+      "rowCount": 2434,
+      "sha256": "50c57ae35762d90f5123f4fc40614c85954c7dee417ff249fc688b9130ee37cb"
+    }
+  ],
+  "coverageAsOfDate": "2026-08-16",
+  "coverageDigest": "b82c3107db73cf4436784db85e6138f16fb3bf722c3eec9ef58f0ccf3f748bb1",
+  "dataGates": [
+    {
+      "area": "D01_OUTCOMES_AND_GOLDEN",
+      "missing": [
+        "Point-in-time direct Nikkei 225 OHLC",
+        "Point-in-time direct TOPIX OHLC",
+        "Late-July/August 2026 Golden-case raw direct-index, VIX, and SHO inputs"
+      ],
+      "status": "DATA_GATED"
+    },
+    {
+      "area": "D02_1570_MARGIN",
+      "missing": [
+        "1570 point-in-time margin ratio history",
+        "reverse-fee history"
+      ],
+      "status": "DATA_GATED"
+    },
+    {
+      "area": "D04_NIKKEI_VALUATION",
+      "missing": [
+        "Redistribution-cleared Nikkei 225 close/PER/PBR history"
+      ],
+      "status": "LICENSE_BLOCKED"
+    },
+    {
+      "area": "D05_FOREIGN_FLOW",
+      "missing": [
+        "Committed point-in-time foreign-flow observations"
+      ],
+      "status": "DATA_GATED"
+    },
+    {
+      "area": "D06_VIX_REVERSAL",
+      "missing": [
+        "Durable point-in-time VIX history",
+        "Source-confirmed original MACD parameter contract"
+      ],
+      "status": "DATA_GATED_AND_PARAMETERS_UNVALIDATED"
+    },
+    {
+      "area": "D07_EARNINGS_QUALITY",
+      "missing": [
+        "Comprehensive point-in-time actual/estimate and earnings-quality history"
+      ],
+      "status": "DATA_GATED"
+    },
+    {
+      "area": "ROTATION_AND_BREADTH",
+      "missing": [
+        "Committed rerunnable raw sector/style history",
+        "Committed rerunnable breadth history"
+      ],
+      "status": "DATA_GATED"
+    }
+  ],
+  "emptyTemplates": [
+    {
+      "path": "ops/imports/nikkei_market_ledger_import_template.csv",
+      "rowCount": 0,
+      "status": "TEMPLATE_ONLY"
+    },
+    {
+      "path": "ops/imports/nikkei_per_pbr_licensed_template.csv",
+      "rowCount": 0,
+      "status": "LICENSE_BLOCKED_TEMPLATE_ONLY"
+    }
+  ],
+  "overallStatus": "DATA_GATED",
+  "productionExpectancyValidated": false,
+  "prohibitedClaims": [
+    "Synthetic fixtures do not establish market expectancy.",
+    "ETF INDEX_PROXY data must not be represented as direct Nikkei 225 or TOPIX index truth.",
+    "Runtime provider caches are not reproducible offline research inputs.",
+    "Audit summaries are not raw datasets and cannot be replayed as such.",
+    "Missing or license-blocked inputs must not be inferred or manufactured."
+  ],
+  "rawDataPolicy": {
+    "backendConsumption": "Compact verified artifacts only",
+    "largeOrLicensedData": "Outside Git, supplied through explicit hash-bound local manifests",
+    "repositoryArtifactContainsRawHistory": false
+  },
+  "researchPlane": {
+    "counterfactualStrategies": [
+      "BUY_NOW",
+      "BUY_ON_SHO_REVERSAL",
+      "BUY_ON_VIX_DC",
+      "BUY_ON_SAR_FLIP",
+      "BUY_ON_MACD_GC",
+      "BUY_ON_25MA_RECLAIM",
+      "BUY_ON_TURTLE_CONFIRMATION",
+      "WAIT"
+    ],
+    "defaultHorizons": [
+      1,
+      5,
+      10,
+      20
+    ],
+    "goldenCase": "jp-late-july-august-2026-reversal-v1",
+    "goldenStatus": "SEALED_DATA_GATED",
+    "optionalHorizon": {
+      "horizon": 40,
+      "requiresPreregistration": true
+    },
+    "partitions": [
+      "DEVELOPMENT",
+      "HOLDOUT",
+      "GOLDEN",
+      "EMBARGO"
+    ],
+    "turtle": {
+      "atrNPeriod": 20,
+      "entryLookbacks": [
+        20,
+        55
+      ],
+      "exitLookbacks": [
+        10,
+        20
+      ],
+      "hardVeto": false,
+      "status": "SHADOW_UNVALIDATED"
+    }
+  },
+  "schemaVersion": "argus-round2-research-coverage-v1",
+  "syntheticFixturesAreProductionEvidence": false,
+  "syntheticMachineryScope": [
+    "Canonical-byte determinism",
+    "Point-in-time filtering and revision selection",
+    "Partition, embargo, holdout, freeze, retune, and Golden isolation contracts",
+    "1/5/10/20-day metrics and preregistered 40-day gate",
+    "Counterfactual and Turtle shadow mechanics",
+    "Resource bounds and raw-history exclusion"
+  ]
+}

@@ -31,10 +31,12 @@
   端末間同期される(クラウドは暗号文のみ)。
 
 ## 公開面の保証
-- 公開エンドポイントが返すのは `/api/argus/portfolio-sync/status`(層の状態のみ)。
+- 専用の公開 `/api/argus/portfolio-sync/status` は V13 Compression Round 1
+  で廃止。同期の権限経路や暗号化vaultは変更していない。
+- canonical `/api/argus/data-quality/status` に保有・同期の生データは含めない。
   機微キー(quantity/averageCost/costBasis/marketValue/unrealizedPnl/accountType/
   portfolioTotal/positions/ownerNote…)は `argus_portfolio_sync.contains_sensitive`
-  のトリップワイヤでpytest+smokeの両方が監視。
+  のトリップワイヤでpytestが監視する。
 
 ## 真の「サーバー側」自動同期に足りないもの(意図的に未実装)
 1. オーナー認証/オーナーロック(現状adminトークンのみ・ユーザー概念なし)

@@ -177,13 +177,13 @@ The static route audit identified these read paths as material candidates:
   natural collection window.
 - `/api/argus/chart-intelligence`: can deep-copy the selected public chart
   projection but remains bounded by the chart store contract.
-- `/api/state`, `/api/argus/system-health`, `/healthz`, and `/readyz`: local
+- `/api/state`, `/api/argus/data-quality/status`, `/healthz`, and `/readyz`: local
   state/health projections; representative GETs in the probe verify them.
 - public quote/news/action endpoints: may call provider/cache helpers. The
   route recorder observes only the route boundary and never provider content.
-- learning/attribution history GETs: perform bounded remote ledger reads; they
-  are distinguishable from in-process source construction by route name and
-  mission-active flag.
+- The former public learning/attribution history GETs are retired. The retained
+  Learning Memory snapshot is cache-only and cannot initiate remote restore;
+  authenticated/background paths retain acquisition authority.
 
 ## Local and CI proof
 

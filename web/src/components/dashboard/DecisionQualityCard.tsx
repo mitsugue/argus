@@ -8,7 +8,7 @@ import { jpDisplay } from '../../lib/displayName';
 
 // V11.11.0 — DECISION QUALITY (Core Portfolio). ARGUSの過去判断を後で検証する
 // ための記録。履歴が浅いうちは成績として扱わない(断定しない)。記録・結果・
-// オーナー行動注釈は端末内(+暗号化バックアップ)のみ — サーバーには無い。
+// オーナー行動注釈は端末内のみ — サーバーには無い。
 
 const INTERP_TONE: Record<string, string> = {
   supported: 'var(--value-positive)', contradicted: 'var(--value-negative)',
@@ -93,7 +93,7 @@ export const DecisionQualityCard: React.FC = () => {
           </div>
         ))}
         <p className="cmd-alloc__note" style={{ fontSize: 10 }}>
-          記録・結果・あなたの行動注釈は端末内(+暗号化バックアップ)にのみ保存されます。
+          記録・結果・あなたの行動注釈はこの端末内だけに保存されます。新しい変更を守るにはSettings / Recoveryで完全バックアップJSONを書き出してください。
           売買の成績計算ではなく「ARGUSのラベルの後に何が起きたか」の記録です。
         </p>
       </div>

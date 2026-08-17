@@ -18,7 +18,7 @@ SOURCE_OF_TRUTH = [
     ("jp_intraday_tick", "J-Quants minute/tick add-on", "none", "intraday", "provider", "not_contracted", "source_unavailable"),
     ("jp_current_price", "moomoo", "J-Quants previous official close", "session", "realtime", "entitlement", "entitlement_unavailable"),
     ("us_price", "moomoo US", "Twelve Data", "intraday", "provider", "contracted", "live"),
-    ("fx", "Twelve Data/FRED", "provider cache", "intraday/daily", "provider", "contracted", "live"),
+    ("fx", "Yahoo overlay", "FRED daily base", "intraday/daily", "source-specific timestamp", "mixed/free", "partial"),
     ("crypto", "CoinGecko", "Coinbase", "intraday", "provider", "free", "live"),
     ("credit_two_market", "JPX 二市場合計", "admin CSV", "weekly", "publication schedule", "official/free", "manual_csv"),
     ("investor_types", "J-Quants investor-types: TokyoNagoya", "admin CSV", "weekly", "published date", "contracted", "backfill_available"),
@@ -31,8 +31,12 @@ SOURCE_OF_TRUTH = [
 
 
 HEURISTICS = [
-    ("credit_short_800b", "二市場信用売り残8,000億円", "argus_heuristic", "CREDIT_THRESHOLD_CROSS"),
-    ("nikkei_leverage_ratio_below_1", "1570信用倍率1倍未満", "insufficient_data", None),
+    # Legacy inventory only.  Canonical SHO D01/D02 live in argus_sho and keep
+    # their exact propositions; these rows cannot become decision authority.
+    ("sho_d01_two_market_short_below_800bn", "二市場合計信用売り残が8,000億円未満",
+     "insufficient_data", None),
+    ("sho_d02_1570_margin_ratio_ge_1", "1570信用倍率が1倍以上",
+     "insufficient_data", None),
     ("ns_ratio", "NS倍率", "insufficient_data", None),
     ("per_21x", "PER21倍", "argus_heuristic", "VALUATION_CEILING_ROLLOVER"),
     ("breadth_120_80", "騰落レシオ120／80", "argus_heuristic", "BREADTH_TURN"),
@@ -202,6 +206,9 @@ def heuristic_inventory(turning_points: Iterable[Dict[str, Any]],
                          else "experimental" if sample_size >= 30 and matched
                          else "insufficient_data")
         out.append({"ruleId": rule_id, "ruleName": name,
+                    "authorityRole": "EVIDENCE_ONLY",
+                    "finalDecisionAuthorityActive": False,
+                    "declaredClassification": classification,
                     "classification": allowed_class,
                     "sampleSize": sample_size,
                     "historicalTendency": (latest_test.get("classification")
