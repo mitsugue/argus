@@ -36,6 +36,7 @@ export interface TodayChartLoadState {
   error: string | null;
   snapshotState: string;
   snapshotId: string | null;
+  responseSnapshotId: string | null;
   retry: () => void;
 }
 
@@ -244,6 +245,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   return <div className="argus-today"
     data-argus-contract="canonical-market-snapshot-v1"
     data-canonical-snapshot-id={chartLoad.snapshotId ?? undefined}
+    data-canonical-response-snapshot-id={chartLoad.responseSnapshotId ?? undefined}
+    data-canonical-response-verification={chartLoad.responseSnapshotId ? 'verified' : 'unverified'}
     data-canonical-snapshot-state={chartLoad.snapshotState}
     data-canonical-verification={chartLoad.snapshotId ? 'verified' : 'unverified'}
     data-canonical-instrument={projection?.symbol ?? selectedSymbol}

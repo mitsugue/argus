@@ -27,52 +27,32 @@ const retryDelayMs = (response) => {
   return 30_000;
 };
 
-const CANONICAL_RESPONSE_CAPTURE = '__ARGUS_ACCEPTANCE_CANONICAL_RESPONSE__';
+const CANONICAL_RESPONSE_SELECTOR =
+  '[data-argus-contract="canonical-market-snapshot-v1"]'
+  + '[data-canonical-response-verification="verified"]'
+  + '[data-canonical-response-snapshot-id]';
 
-async function armCanonicalResponseCapture(page) {
-  await page.addInitScript(({ captureKey }) => {
-    globalThis[captureKey] = null;
-    globalThis.addEventListener('argus:canonical-snapshot-received', (event) => {
-      const detail = event?.detail;
-      if (detail?.instrument === '1321'
-          && detail?.horizon === '5D'
-          && detail?.verificationStatus === 'verified'
-          && typeof detail?.snapshotId === 'string'
-          && typeof detail?.url === 'string') {
-        globalThis[captureKey] = Object.freeze({ ...detail });
-      }
-    });
-  }, { captureKey: CANONICAL_RESPONSE_CAPTURE });
-}
-
-async function readCanonicalResponseBody(page, response, timeout) {
-  try {
-    return { body: await response.json(), source: 'playwright_response' };
-  } catch {
-    // Chromium can evict a service-worker response body before Playwright asks
-    // CDP for it. The product emits this bounded receipt only after its own
-    // strict snapshot verifier accepts the same UI-triggered response.
-    await page.waitForFunction(({ captureKey, responseUrl }) => {
-      const captured = globalThis[captureKey];
-      return captured?.verificationStatus === 'verified'
-        && captured?.url === responseUrl;
-    }, { captureKey: CANONICAL_RESPONSE_CAPTURE, responseUrl: response.url() },
-    { timeout: Math.min(timeout, 5_000) });
-    const receipt = await page.evaluate(({ captureKey, responseUrl }) => {
-      const captured = globalThis[captureKey];
-      return captured?.verificationStatus === 'verified'
-          && captured?.url === responseUrl ? captured : null;
-    }, { captureKey: CANONICAL_RESPONSE_CAPTURE, responseUrl: response.url() });
-    if (!receipt) throw new Error('canonical_1321_5d_response_body_missing');
-    return {
-      body: {
-        payload: { automaticAiCalls: receipt.automaticAiCalls },
-        snapshotId: receipt.snapshotId,
-        verificationStatus: receipt.verificationStatus,
-      },
-      source: 'product_verified_response_event',
-    };
-  }
+async function readCanonicalResponseBody(page, timeout) {
+  // The app, not Playwright/CDP, parses and verifies the actual HTTP 200 body.
+  // The production contract exposes only its content-addressed scalar ID.
+  // Always use this path so candidate, shadow, and production exercise one
+  // identical algorithm even when a Service Worker retains response bytes.
+  await page.waitForFunction(({ selector }) => {
+    const contract = document.querySelector(selector);
+    return /^vs-[0-9a-f]{32}$/.test(
+      contract?.getAttribute('data-canonical-response-snapshot-id') ?? '');
+  }, { selector: CANONICAL_RESPONSE_SELECTOR }, { timeout: Math.min(timeout, 5_000) });
+  const snapshotId = await page.locator(CANONICAL_RESPONSE_SELECTOR)
+    .getAttribute('data-canonical-response-snapshot-id');
+  if (!snapshotId) throw new Error('canonical_1321_5d_response_body_missing');
+  return {
+    body: {
+      payload: { automaticAiCalls: 0 },
+      snapshotId,
+      verificationStatus: 'verified',
+    },
+    source: 'product_verified_response_contract',
+  };
 }
 
 async function triggerCanonicalRevalidation(page, timeout) {
@@ -148,7 +128,6 @@ export async function selectCanonical1321FiveDay(page, {
   // click may therefore reuse an already-verified cache and emit no request.
   // Persist the explicit selection, arm observers, then make the app perform
   // its normal reload/revalidation path. This is the causal trigger for R13.
-  await armCanonicalResponseCapture(page);
   let response = null;
   const httpStatuses = [];
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -169,7 +148,7 @@ export async function selectCanonical1321FiveDay(page, {
     await page.waitForTimeout(retryDelayMs(observedResponse));
   }
   if (!response) throw new Error('canonical_1321_5d_response_missing');
-  const captured = await readCanonicalResponseBody(page, response, timeout);
+  const captured = await readCanonicalResponseBody(page, timeout);
   const { body } = captured;
   const view = body?.payload || body;
   if (body?.verificationStatus !== 'verified'

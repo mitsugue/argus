@@ -56,6 +56,10 @@ for (const source of [script + canonicalSelection, mobileAcceptance + canonicalS
 }
 assert.match(today, /data-argus-contract="canonical-market-snapshot-v1"/);
 assert.match(today, /data-canonical-snapshot-id=\{chartLoad\.snapshotId \?\? undefined\}/);
+assert.match(today,
+  /data-canonical-response-snapshot-id=\{chartLoad\.responseSnapshotId \?\? undefined\}/);
+assert.match(today,
+  /data-canonical-response-verification=\{chartLoad\.responseSnapshotId \? 'verified' : 'unverified'\}/);
 assert.match(today, /data-canonical-snapshot-state=\{chartLoad\.snapshotState\}/);
 assert.match(today, /data-canonical-verification=\{chartLoad\.snapshotId \? 'verified' : 'unverified'\}/);
 assert.match(today, /data-canonical-instrument=\{projection\?\.symbol \?\? selectedSymbol\}/);
@@ -73,14 +77,15 @@ for (const source of [script, mobileAcceptance, canonicalSelection]) {
 }
 assert.match(canonicalSelection, /waitForRequest/);
 assert.match(canonicalSelection, /waitForResponse/);
-assert.match(canonicalSelection, /addInitScript/);
-assert.match(canonicalSelection, /argus:canonical-snapshot-received/,
-  'service-worker body eviction must fall back to the product verifier receipt');
-assert.match(canonicalSelection, /product_verified_response_event/);
-assert.match(chartHook, /argus:canonical-snapshot-received/);
+assert.match(canonicalSelection, /product_verified_response_contract/);
+assert.match(canonicalSelection, /data-canonical-response-snapshot-id/,
+  'service-worker body eviction must fall back to the verified product response contract');
+assert.doesNotMatch(canonicalSelection, /response\.json\(\)/,
+  'all environments must consume the same product-verified scalar response contract');
+assert.match(chartHook, /setVerifiedResponseSnapshotId\(network\.snapshot\.snapshotId\)/);
 assert.ok(chartHook.indexOf('if (!validation.ok)')
-  < chartHook.lastIndexOf('emitVerifiedSnapshotReceipt(url, validation.snapshot)'),
-  'the scalar response receipt must be emitted only by the verified product path');
+  < chartHook.lastIndexOf('setVerifiedResponseSnapshotId(network.snapshot.snapshotId)'),
+  'the scalar response ID must be exposed only by the verified product path');
 assert.doesNotMatch(canonicalSelection, /globalThis\.fetch\s*=/,
   'acceptance must not replace the production fetch implementation');
 assert.doesNotMatch(canonicalSelection, /page\.request\.(?:get|fetch)/,

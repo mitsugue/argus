@@ -185,22 +185,6 @@ function performanceMark(name: string) {
   try { performance.mark(`argus-snapshot:${name}`); } catch { /* diagnostics only */ }
 }
 
-function emitVerifiedSnapshotReceipt(
-  url: string, snapshot: VerifiedSnapshot<ChartIntelligencePayload>,
-) {
-  if (snapshot.instrument !== '1321' || snapshot.horizon !== '5D') return;
-  window.dispatchEvent(new CustomEvent('argus:canonical-snapshot-received', {
-    detail: Object.freeze({
-      automaticAiCalls: snapshot.payload.automaticAiCalls,
-      horizon: snapshot.horizon,
-      instrument: snapshot.instrument,
-      snapshotId: snapshot.snapshotId,
-      url,
-      verificationStatus: snapshot.verificationStatus,
-    }),
-  }));
-}
-
 function fetchVerifiedSnapshot(
   url: string, expectation: SnapshotExpectation,
   current: VerifiedSnapshot<ChartIntelligencePayload> | null,
@@ -227,7 +211,6 @@ function fetchVerifiedSnapshot(
       const validation = await verifySnapshot(candidate, expectation);
       performanceMark('snapshot-validation-complete');
       if (!validation.ok) throw new Error(`snapshot_${validation.reason}`);
-      emitVerifiedSnapshotReceipt(url, validation.snapshot);
       return { snapshot: validation.snapshot, notModified: false };
     } catch (error: unknown) {
       failedUntil.set(url, Date.now() + 30_000);
@@ -281,6 +264,8 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
   const visibilityBlocked = useRef(false);
   const [loaderVisible, setLoaderVisible] = useState(false);
   const [slowInitial, setSlowInitial] = useState(false);
+  const [verifiedResponseSnapshotId, setVerifiedResponseSnapshotId] =
+    useState<string | null>(null);
   const [, setAuthorityRevision] = useState(0);
 
   useEffect(() => {
@@ -303,6 +288,7 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
     const controller = new AbortController();
     const key = snapshotKey(expectation);
     const memoryCached = memorySnapshot(expectation);
+    setVerifiedResponseSnapshotId(null);
     setView({
       key: memoryCached ? key : null, snapshot: memoryCached,
       state: memoryCached ? 'CACHE_READY_REVALIDATING' : 'NO_CACHE_LOADING',
@@ -347,6 +333,10 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
           return;
         }
         if (!network.snapshot) throw new Error('snapshot_missing');
+        // This ID is written only after the real HTTP 200 body passes the
+        // product's strict snapshot verifier. Keep it separate from the cache
+        // or UI projection so release acceptance can prove exact equality.
+        setVerifiedResponseSnapshotId(network.snapshot.snapshotId);
         if (cached && !shouldReplaceSnapshot(cached, network.snapshot)) {
           setView({ key, snapshot: cached, state: 'CURRENT_READY', error: null });
           return;
@@ -514,6 +504,7 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
       snapshotState: effectiveLegacyState,
       statusText,
       loaderVisible, slowInitial, snapshotId: null,
+      responseSnapshotId: null,
       retry,
     };
   }
@@ -538,6 +529,7 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
     errorClass: null,
     retryAt: null,
     snapshotId: matching?.snapshotId ?? null,
+    responseSnapshotId: verifiedResponseSnapshotId,
     retry: () => {
       if (verifiedUrl) failedUntil.delete(verifiedUrl);
       setRefreshToken((value) => value + 1);
