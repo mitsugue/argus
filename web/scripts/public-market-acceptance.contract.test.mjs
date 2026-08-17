@@ -47,6 +47,10 @@ assert.match(script, /const view = body\.payload \|\| body/);
 assert.match(script, /marketReplay\?\.contexts/);
 assert.match(script, /snapshot: 'verified'/);
 assert.match(script, /scope: 'market'/);
+assert.match(script, /horizon: HORIZONS\[1\]/,
+  'warm-profile acceptance must use the canonical 5D horizon');
+assert.doesNotMatch(script, /horizon:\s*['"]5['"]/,
+  'canonical verified-snapshot acceptance must never request legacy horizon=5');
 assert.match(script, /todayProductStatus/);
 assert.match(script, /page\.screenshot\(\{/);
 assert.match(script, /fullPage: false/);

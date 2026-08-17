@@ -77,7 +77,7 @@ async function waitForBackendIdentity(request) {
 async function waitForMarketCache(request) {
   const query = new URLSearchParams({
     scope: 'market', symbol: '1321', market: 'JP', timeframe: 'daily',
-    horizon: '5', snapshot: 'verified',
+    horizon: HORIZONS[1], snapshot: 'verified',
   });
   return retryUntil(request,
     `${BACKEND_ORIGIN}/api/argus/chart-intelligence?${query}`,
