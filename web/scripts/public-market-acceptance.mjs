@@ -251,10 +251,24 @@ async function visualAudit(page, viewport) {
   return page.evaluate((size) => {
     const chart = document.querySelector('.at-projection');
     const background = chart ? getComputedStyle(chart).backgroundColor : null;
+    const fillPaintTags = new Set([
+      'circle', 'ellipse', 'path', 'polygon', 'polyline', 'rect', 'text', 'tspan', 'use',
+    ]);
+    const strokePaintTags = new Set([
+      'circle', 'ellipse', 'line', 'path', 'polygon', 'polyline', 'rect', 'text', 'use',
+    ]);
     const blackFallbackCount = [...document.querySelectorAll('.at-projection svg *')]
       .filter((element) => {
         const style = getComputedStyle(element);
-        return style.fill === 'rgb(0, 0, 0)' || style.stroke === 'rgb(0, 0, 0)';
+        const tag = element.tagName.toLowerCase();
+        const visible = style.display !== 'none' && style.visibility !== 'hidden'
+          && Number.parseFloat(style.opacity || '1') > 0;
+        return visible && (
+          (fillPaintTags.has(tag) && style.fill === 'rgb(0, 0, 0)'
+            && Number.parseFloat(style.fillOpacity || '1') > 0)
+          || (strokePaintTags.has(tag) && style.stroke === 'rgb(0, 0, 0)'
+            && Number.parseFloat(style.strokeOpacity || '1') > 0)
+        );
       }).length;
     return {
       viewport: size,
