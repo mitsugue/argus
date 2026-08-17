@@ -97,9 +97,9 @@ class DeployScopeTests(unittest.TestCase):
         self.assertTrue(result["frontendDeploy"])
         self.assertFalse(result["backendDeploy"])
 
-    def test_snapshot_release_gate_is_frontend_deploy_plane_only(self):
+    def test_snapshot_release_contract_is_frontend_deploy_plane_only(self):
         result = deploy_scope.classify(
-            ["scripts/verified_snapshot_release_gate.py"])
+            ["release/v13-snapshot-readiness-contract.json"])
         self.assertTrue(result["frontendDeploy"])
         self.assertFalse(result["backendDeploy"])
 
@@ -111,28 +111,30 @@ class DeployScopeTests(unittest.TestCase):
 
     def test_pages_deploys_candidate_before_seed_and_acceptance(self):
         workflow = (ROOT / ".github/workflows/deploy-pages.yml").read_text()
-        self.assertIn("backend-readiness:", workflow)
+        self.assertIn("backend-infrastructure-readiness:", workflow)
         self.assertIn("candidate-identity:", workflow)
-        self.assertIn("needs: [build, backend-readiness]", workflow)
+        self.assertIn("needs: [build, backend-infrastructure-readiness]", workflow)
         self.assertIn(
-            "needs: [scope, deploy, backend-readiness]", workflow)
+            "needs: [scope, deploy, backend-infrastructure-readiness]", workflow)
         self.assertIn(
-            "needs: [scope, candidate-identity]", workflow)
+            "needs: [scope, candidate-identity, business-snapshot-trigger]", workflow)
         self.assertIn(
             "needs: [scope, deploy, candidate-identity, "
-            "seed-warm-profile, backend-readiness]", workflow)
+            "seed-warm-profile, business-snapshot-acceptance, "
+            "backend-infrastructure-readiness]", workflow)
         self.assertIn(
-            "scripts/verified_snapshot_release_gate.py", workflow)
+            "web/scripts/release-state-machine.mjs", workflow)
         self.assertIn(
             "scripts/verify_public_candidate_release.py", workflow)
         self.assertIn(
-            "backend-snapshot-readiness-${{ github.sha }}", workflow)
+            "backend-infrastructure-readiness-${{ github.sha }}", workflow)
         self.assertIn(
             "public-candidate-identity-${{ github.sha }}", workflow)
         self.assertIn(
             "enforce-public-candidate-identity: 'true'", workflow)
         self.assertNotIn(
-            "needs: [build, seed-warm-profile, backend-readiness]", workflow)
+            "needs: [build, seed-warm-profile, "
+            "backend-infrastructure-readiness]", workflow)
 
     def test_render_blueprint_allowlist_matches_classifier(self):
         blueprint = (ROOT / "render.yaml").read_text()

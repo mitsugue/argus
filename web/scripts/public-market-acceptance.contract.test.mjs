@@ -100,8 +100,8 @@ assert.doesNotMatch(canonicalSelection, /globalThis\.fetch\s*=/,
   'acceptance must not replace the production fetch implementation');
 assert.doesNotMatch(canonicalSelection, /page\.request\.(?:get|fetch)/,
   'response recovery must not replace the observed UI request with a test-only request');
-assert.match(canonicalSelection, /R11_1321_SELECTED/);
-assert.match(canonicalSelection, /R12_5D_SELECTED/);
+assert.match(canonicalSelection, /R12_1321_SELECTED/);
+assert.match(canonicalSelection, /R13_5D_SELECTED/);
 assert.match(script, /fillPaintTags\.has\(tag\)/,
   'visual acceptance must ignore default fill values on non-fillable SVG containers');
 assert.match(script, /strokePaintTags\.has\(tag\)/,
@@ -138,10 +138,11 @@ assert.doesNotMatch(script, /localStorage\./,
 
 assert.match(workflow, /uses: \.\/\.github\/actions\/warm-profile-seed/);
 assert.match(workflow, /uses: \.\/\.github\/actions\/warm-profile-consumer/);
-assert.match(manualWorkflow, /uses: \.\/\.github\/actions\/warm-profile-seed/);
 assert.match(manualWorkflow, /uses: \.\/\.github\/actions\/warm-profile-consumer/);
-assert.match(manualWorkflow, /uses: \.\/\.github\/actions\/candidate-pages-preview/);
-assert.match(manualWorkflow, /public-url: http:\/\/127\.0\.0\.1:4173\/argus\//);
+assert.match(manualWorkflow, /name: full-release-simulation-1/);
+assert.match(manualWorkflow, /name: full-release-simulation-2/);
+assert.match(manualWorkflow, /node scripts\/full-release-simulation\.mjs --run 1/);
+assert.match(manualWorkflow, /node scripts\/full-release-simulation\.mjs --run 2/);
 assert.match(candidatePreviewAction, /VITE_ARGUS_BUILD_SHA: \$\{\{ inputs\.candidate-sha \}\}/);
 assert.match(candidatePreviewAction,
   /Serve exact candidate without production mutation[\s\S]*DEPLOY_BASE: \/argus\/[\s\S]*npm run preview/,
@@ -152,7 +153,9 @@ assert.match(seedRunner, /node scripts\/public-market-acceptance\.mjs/);
 assert.match(consumerAction, /node scripts\/public-market-acceptance\.mjs/);
 assert.match(workflow, /node scripts\/mobile-today-acceptance\.mjs/);
 assert.match(workflow, /market-public-acceptance-/);
-assert.match(workflow, /verified_snapshot_release_gate\.py/);
+assert.match(workflow, /release-state-machine\.mjs infrastructure/);
+assert.match(workflow, /release-state-machine\.mjs trigger-business/);
+assert.match(workflow, /release-state-machine\.mjs verify-business/);
 assert.match(workflow,
   /--expected-backend-sha '\$\{\{ needs\.scope\.outputs\.backend_sha \}\}'/);
 assert.doesNotMatch(workflow,
@@ -164,23 +167,20 @@ assert.match(manualWorkflow, /expected-backend-sha: \$\{\{ inputs\.backend_sha \
 assert.match(seedRunner, /warm-profile-contract\.mjs sanitize-validate/);
 assert.match(consumerAction, /warm-profile-contract\.mjs validate/);
 assert.match(workflow, /candidate-sha: \$\{\{ github\.sha \}\}/);
-assert.match(manualWorkflow, /warm-profile-seed:/);
-assert.match(manualWorkflow, /warm-profile-handoff:/);
-assert.match(manualWorkflow, /warm-profile-seed-2:/);
-assert.match(manualWorkflow, /warm-profile-handoff-2:/);
-assert.match(manualWorkflow, /mode: profile/);
-assert.match(workflow, /needs: \[build, backend-readiness\]/);
+assert.doesNotMatch(manualWorkflow, /warm-profile-handoff:/);
+assert.doesNotMatch(manualWorkflow, /warm-profile-seed-2:/);
+assert.match(workflow, /needs: \[build, backend-infrastructure-readiness\]/);
 assert.match(workflow, /candidate-identity:/);
 assert.match(workflow, /verify_public_candidate_release\.py/);
-assert.match(workflow, /needs: \[scope, deploy, backend-readiness\]/);
-assert.match(workflow, /needs: \[scope, candidate-identity\]/);
+assert.match(workflow, /needs: \[scope, deploy, backend-infrastructure-readiness\]/);
+assert.match(workflow, /needs: \[scope, candidate-identity, business-snapshot-trigger\]/);
 assert.match(workflow,
-  /needs: \[scope, deploy, candidate-identity, seed-warm-profile, backend-readiness\]/);
+  /needs: \[scope, deploy, candidate-identity, seed-warm-profile, business-snapshot-acceptance, backend-infrastructure-readiness\]/);
 assert.match(workflow, /enforce-public-candidate-identity: 'true'/);
 assert.match(workflow,
   /expected-backend-sha: \$\{\{ needs\.candidate-identity\.outputs\.backend_sha \}\}/);
 assert.doesNotMatch(workflow,
-  /needs: \[build, seed-warm-profile, backend-readiness\]/);
+  /needs: \[build, seed-warm-profile, backend-infrastructure-readiness\]/);
 assert.match(script, /candidate_frontend_not_live/);
 assert.match(script, /candidate_backend_not_live/);
 assert.match(script, /ARGUS_REQUIRE_LIVE_CANDIDATE/);
