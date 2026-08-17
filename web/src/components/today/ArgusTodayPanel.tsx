@@ -241,7 +241,13 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     } catch { /* navigation mirror is best effort and contains no owner data */ }
   }, [projection, view.actionScore, view.canonicalDecision, view.finalAction, view.selectedInstrument,
     view.selectedMarket, view.selectionMode]);
-  return <div className="argus-today">
+  return <div className="argus-today"
+    data-argus-contract="canonical-market-snapshot-v1"
+    data-canonical-snapshot-id={chartLoad.snapshotId ?? undefined}
+    data-canonical-snapshot-state={chartLoad.snapshotState}
+    data-canonical-verification={chartLoad.snapshotId ? 'verified' : 'unverified'}
+    data-canonical-instrument={projection?.symbol ?? selectedSymbol}
+    data-canonical-horizon={`${projection?.horizonDays ?? horizon}D`}>
     <article className={`at-decision at-primary-hero card is-${view.finalAction.toLowerCase()}`}
       aria-label="A.R.G.U.S. Primary Action">
       <div className="at-call">

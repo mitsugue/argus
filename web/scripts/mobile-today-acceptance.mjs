@@ -11,6 +11,10 @@ const OUT_DIR = path.resolve(process.env.ARGUS_MOBILE_ACCEPTANCE_OUT
 const TODAY_URL = `${PUBLIC_URL.replace(/\/?$/, '/')}#today`;
 const SYMBOLS = ['1321', '1306', 'SPY', 'QQQ'];
 const HORIZONS = ['1D', '5D', '20D'];
+const CANONICAL_SNAPSHOT_SELECTOR =
+  '[data-argus-contract="canonical-market-snapshot-v1"]'
+  + '[data-canonical-verification="verified"]'
+  + '[data-canonical-snapshot-id]';
 const LOADER_THRESHOLD_MS = 225;
 const LOADER_TIMING_TOLERANCE_MS = 1;
 const WARM_LOADER_DEADLINE_MS = 2_000;
@@ -173,7 +177,7 @@ async function waitForShell(page) {
 }
 
 async function waitForTodayChart(page, timeout = 30_000) {
-  await page.locator('.at-chart-status[data-snapshot-id]')
+  await page.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .waitFor({ state: 'visible', timeout });
   await page.locator('.at-projection').waitFor({ state: 'visible', timeout });
 }
@@ -310,12 +314,23 @@ async function run() {
       const record = await page.evaluate(({ expectedSymbol, expectedHorizon }) => ({
         symbol: document.querySelector('.at-proj-heading b')?.textContent ?? '',
         horizon: document.querySelector('.at-horizon button[aria-pressed="true"]')?.textContent ?? '',
-        snapshotId: document.querySelector('.at-chart-status')?.getAttribute('data-snapshot-id'),
-        snapshotState: document.querySelector('.at-chart-status')?.getAttribute('data-snapshot-state'),
+        snapshotId: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
+          ?.getAttribute('data-canonical-snapshot-id'),
+        snapshotState: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
+          ?.getAttribute('data-canonical-snapshot-state'),
+        verification: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
+          ?.getAttribute('data-canonical-verification'),
+        canonicalInstrument: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
+          ?.getAttribute('data-canonical-instrument'),
+        canonicalHorizon: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
+          ?.getAttribute('data-canonical-horizon'),
         expectedSymbol, expectedHorizon,
       }), { expectedSymbol: symbol, expectedHorizon: horizon });
       evidence.combinations.push(record);
-      if (!record.symbol.includes(symbol) || record.horizon !== horizon || !record.snapshotId) {
+      if (!record.symbol.includes(symbol) || record.horizon !== horizon || !record.snapshotId
+          || record.verification !== 'verified'
+          || record.canonicalInstrument !== symbol
+          || record.canonicalHorizon !== horizon) {
         evidence.failures.push(`today-combination:${symbol}:${horizon}`);
       }
       // The UI is intentionally exercised as a single human interaction
@@ -452,7 +467,8 @@ async function run() {
   await page.setViewportSize({ width: 430, height: 932 });
   await page.locator('.nav__mobile').getByRole('button', { name: 'Today', exact: true }).click();
   await waitForTodayChart(page);
-  const onlineSnapshotId = await page.locator('.at-chart-status').getAttribute('data-snapshot-id');
+  const onlineSnapshotId = await page.locator(CANONICAL_SNAPSHOT_SELECTOR)
+    .getAttribute('data-canonical-snapshot-id');
   const warm = await browser.newContext({
     viewport: { width: 430, height: 932 }, serviceWorkers: 'block',
   });
@@ -464,8 +480,8 @@ async function run() {
   await warmPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(warmPage);
   await waitForTodayChart(warmPage);
-  const warmSeedSnapshotId = await warmPage.locator(
-    '.at-chart-status').getAttribute('data-snapshot-id');
+  const warmSeedSnapshotId = await warmPage.locator(CANONICAL_SNAPSHOT_SELECTOR)
+    .getAttribute('data-canonical-snapshot-id');
   await warm.unroute('**/api/argus/chart-intelligence?*');
   let resolveWarmRequestStart;
   const warmRequestStart = new Promise((resolve) => {
@@ -504,14 +520,14 @@ async function run() {
     evidence.failures.push('warm-loader-contract');
   }
 
-  const before304 = await warmPage.locator(
-    '.at-chart-status').getAttribute('data-snapshot-id');
+  const before304 = await warmPage.locator(CANONICAL_SNAPSHOT_SELECTOR)
+    .getAttribute('data-canonical-snapshot-id');
   await warm.route('**/api/argus/chart-intelligence?*',
     (route) => route.fulfill({ status: 304, body: '' }));
   await warmPage.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(warmPage); await waitForTodayChart(warmPage);
-  const after304 = await warmPage.locator(
-    '.at-chart-status').getAttribute('data-snapshot-id');
+  const after304 = await warmPage.locator(CANONICAL_SNAPSHOT_SELECTOR)
+    .getAttribute('data-canonical-snapshot-id');
   await warm.unroute('**/api/argus/chart-intelligence?*');
   if (!warmSeedSnapshotId || before304 !== warmSeedSnapshotId
       || after304 !== before304) {
@@ -534,8 +550,8 @@ async function run() {
     waitUntil: 'domcontentloaded', timeout: 30_000,
   });
   await waitForShell(rateLimitPage); await waitForTodayChart(rateLimitPage);
-  const rateLimitSeedSnapshotId = await rateLimitPage.locator(
-    '.at-chart-status').getAttribute('data-snapshot-id');
+  const rateLimitSeedSnapshotId = await rateLimitPage.locator(CANONICAL_SNAPSHOT_SELECTOR)
+    .getAttribute('data-canonical-snapshot-id');
   await rateLimitContext.unroute('**/api/argus/chart-intelligence?*');
   let controlled429Calls = 0;
   await rateLimitContext.route('**/api/argus/chart-intelligence?*', (route) => {
@@ -548,8 +564,8 @@ async function run() {
   });
   await rateLimitPage.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(rateLimitPage); await waitForTodayChart(rateLimitPage);
-  const rateLimitedSnapshotId = await rateLimitPage.locator(
-    '.at-chart-status').getAttribute('data-snapshot-id');
+  const rateLimitedSnapshotId = await rateLimitPage.locator(CANONICAL_SNAPSHOT_SELECTOR)
+    .getAttribute('data-canonical-snapshot-id');
   await rateLimitPage.waitForTimeout(1_000);
   await rateLimitContext.unroute('**/api/argus/chart-intelligence?*');
   const controlledRateLimit = {
@@ -575,7 +591,8 @@ async function run() {
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(page);
   await waitForTodayChart(page);
-  const offlineSnapshotId = await page.locator('.at-chart-status').getAttribute('data-snapshot-id');
+  const offlineSnapshotId = await page.locator(CANONICAL_SNAPSHOT_SELECTOR)
+    .getAttribute('data-canonical-snapshot-id');
   await screenshot(page, 'today-offline-cached.png');
   await context.setOffline(false);
   if (!onlineSnapshotId || offlineSnapshotId !== onlineSnapshotId) {

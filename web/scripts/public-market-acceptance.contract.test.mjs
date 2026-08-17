@@ -19,6 +19,8 @@ const navigation = fs.readFileSync(
   new URL('../src/navigation.ts', import.meta.url), 'utf8');
 const mobileAcceptance = fs.readFileSync(
   new URL('./mobile-today-acceptance.mjs', import.meta.url), 'utf8');
+const today = fs.readFileSync(
+  new URL('../src/components/today/ArgusTodayPanel.tsx', import.meta.url), 'utf8');
 
 for (const viewport of ['1440', '1280', '1024', '430', '390']) {
   assert.match(script, new RegExp(`width: ${viewport}`));
@@ -39,7 +41,19 @@ for (const field of ['frontendVersion', 'frontendSha', 'backendVersion', 'backen
 assert.match(script, /#today/);
 assert.doesNotMatch(script, /#market|Market Context|\.market-replay|\.mr-/);
 assert.match(script, /TODAY_URL/);
-assert.match(script, /\.at-chart-status\[data-snapshot-id\]/);
+for (const source of [script, mobileAcceptance]) {
+  assert.match(source, /canonical-market-snapshot-v1/);
+  assert.match(source, /data-canonical-verification=\"verified\"/);
+  assert.match(source, /data-canonical-snapshot-id/);
+  assert.doesNotMatch(source, /\.at-chart-status\[data-snapshot-id\]/,
+    'acceptance must not wait on the collapsed diagnostic panel');
+}
+assert.match(today, /data-argus-contract="canonical-market-snapshot-v1"/);
+assert.match(today, /data-canonical-snapshot-id=\{chartLoad\.snapshotId \?\? undefined\}/);
+assert.match(today, /data-canonical-snapshot-state=\{chartLoad\.snapshotState\}/);
+assert.match(today, /data-canonical-verification=\{chartLoad\.snapshotId \? 'verified' : 'unverified'\}/);
+assert.match(today, /data-canonical-instrument=\{projection\?\.symbol \?\? selectedSymbol\}/);
+assert.match(today, /data-canonical-horizon=\{`\$\{projection\?\.horizonDays \?\? horizon\}D`\}/);
 assert.match(script, /\.at-projection/);
 assert.match(script, /\.at-index-strip button/);
 assert.match(script, /getByRole\('group', \{ name: '予測期間' \}\)/);

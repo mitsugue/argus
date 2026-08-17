@@ -31,6 +31,10 @@ const RUNTIME_PROBE_TIMEOUT_MS = 10_000;
 const COMBINATION_PACE_MS = 1_000;
 const SYMBOLS = ['1321', '1306', 'SPY', 'QQQ'];
 const HORIZONS = ['1D', '5D', '20D'];
+const CANONICAL_SNAPSHOT_SELECTOR =
+  '[data-argus-contract="canonical-market-snapshot-v1"]'
+  + '[data-canonical-verification="verified"]'
+  + '[data-canonical-snapshot-id]';
 const VIEWPORTS = [
   { width: 1440, height: 900 },
   { width: 1280, height: 800 },
@@ -190,7 +194,7 @@ async function drainResponses(evidence) {
 }
 
 async function waitForToday(page, timeout = 30_000) {
-  await page.locator('.at-chart-status[data-snapshot-id]')
+  await page.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .waitFor({ state: 'visible', timeout });
   await page.locator('.at-projection').waitFor({ state: 'visible', timeout });
 }
@@ -206,17 +210,29 @@ async function selectCombination(page, symbol, horizon) {
     const heading = document.querySelector('.at-proj-heading b')?.textContent || '';
     const active = document.querySelector('.at-horizon button[aria-pressed="true"]')
       ?.textContent || '';
-    return heading.includes(expectedSymbol) && active === expectedHorizon;
+    const contract = document.querySelector(
+      '[data-argus-contract="canonical-market-snapshot-v1"]');
+    return heading.includes(expectedSymbol) && active === expectedHorizon
+      && contract?.getAttribute('data-canonical-verification') === 'verified'
+      && contract?.getAttribute('data-canonical-instrument') === expectedSymbol
+      && contract?.getAttribute('data-canonical-horizon') === expectedHorizon
+      && Boolean(contract?.getAttribute('data-canonical-snapshot-id'));
   }, { expectedSymbol: symbol, expectedHorizon: horizon },
   { timeout: DATA_TIMEOUT_MS });
   return page.evaluate(() => ({
     heading: document.querySelector('.at-proj-heading b')?.textContent || '',
     horizon: document.querySelector('.at-horizon button[aria-pressed="true"]')
       ?.textContent || '',
-    snapshotId: document.querySelector('.at-chart-status')
-      ?.getAttribute('data-snapshot-id') || null,
-    snapshotState: document.querySelector('.at-chart-status')
-      ?.getAttribute('data-snapshot-state') || null,
+    snapshotId: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
+      ?.getAttribute('data-canonical-snapshot-id') || null,
+    snapshotState: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
+      ?.getAttribute('data-canonical-snapshot-state') || null,
+    verification: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
+      ?.getAttribute('data-canonical-verification') || null,
+    instrument: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
+      ?.getAttribute('data-canonical-instrument') || null,
+    canonicalHorizon: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
+      ?.getAttribute('data-canonical-horizon') || null,
   }));
 }
 
@@ -396,7 +412,10 @@ async function run() {
           markPhase('runtime-probe', 'RUNNING', { attempt });
           await waitForToday(page);
           const record = await selectCombination(page, '1321', HORIZONS[1]);
-          if (!record.snapshotId || record.horizon !== HORIZONS[1]) {
+          if (!record.snapshotId || record.snapshotId !== seeded.snapshotId
+              || record.verification !== 'verified'
+              || record.instrument !== '1321'
+              || record.canonicalHorizon !== HORIZONS[1]) {
             throw new Error('seeded_canonical_5D_snapshot_unavailable');
           }
           return probeProfileRuntime(page);
@@ -461,7 +480,10 @@ async function run() {
     if (MODE === 'profile') {
       const record = await selectCombination(page, '1321', HORIZONS[1]);
       const result = {
-        verdict: record.snapshotId && record.horizon === HORIZONS[1] ? 'PASS' : 'FAIL',
+        verdict: record.snapshotId === warmProfile.source.seededSnapshotId
+          && record.verification === 'verified'
+          && record.instrument === '1321'
+          && record.canonicalHorizon === HORIZONS[1] ? 'PASS' : 'FAIL',
         candidateSha: EXPECTED_SHA,
         canonicalHorizon: record.horizon,
         seededSnapshotId: record.snapshotId,
@@ -485,7 +507,8 @@ async function run() {
       for (const horizon of HORIZONS) {
         const record = await selectCombination(page, symbol, horizon);
         evidence.combinations.push({ symbol, horizon, ...record });
-        if (!record.snapshotId) {
+        if (!record.snapshotId || record.verification !== 'verified'
+            || record.instrument !== symbol || record.canonicalHorizon !== horizon) {
           evidence.failures.push(`missing-snapshot:${symbol}:${horizon}`);
         }
         await page.waitForTimeout(COMBINATION_PACE_MS);
