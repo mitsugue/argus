@@ -41,7 +41,7 @@ def test_dq_marks_not_requalified_and_legacy():
     scanner._OSINT_BASELINE_RUNS.clear()
     scanner._OSINT_BASELINE_RUNS.append({"score": 72, "case": "x", "at": NOW})
     with scanner.app.test_client() as c:
-        d = scanner._data_quality_console()
+        d = c.get("/api/argus/data-quality").get_json() or {}
         ce = d.get("currentResearchEpoch") or {}
         assert ce.get("requalified") is False
         assert "not_requalified" in ce.get("statusJa", "")
@@ -103,7 +103,7 @@ def test_cold_store_queues_warmup_not_forecast(monkeypatch):
 def test_dq_forecast_readiness_blocker():
     scanner._OSINT_STORE.clear()
     with scanner.app.test_client() as c:
-        d = scanner._data_quality_console()
+        d = c.get("/api/argus/data-quality").get_json() or {}
         fr = d.get("forecastReadiness") or {}
         assert fr.get("readiness") == "insufficient_data"
         assert "ウォームアップ" in (fr.get("blockerJa") or "")
@@ -187,7 +187,7 @@ def test_shadow_context_sparse_history_no_influence():
 
 def test_dq_no_leak_v12_2_2():
     with scanner.app.test_client() as c:
-        d = scanner._data_quality_console()
+        d = c.get("/api/argus/data-quality").get_json() or {}
         assert "currentResearchEpoch" in d and "forecastReadiness" in d
         body = str(d)
         for banned in ("passphrase", "hmac", "OPENAI_API_KEY", "quantity",

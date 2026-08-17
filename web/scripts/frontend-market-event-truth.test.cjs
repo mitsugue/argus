@@ -16,7 +16,6 @@ require.extensions['.ts'] = (mod, filename) => {
 const root = path.join(__dirname, '..');
 const command = fs.readFileSync(path.join(root, 'src/routes/CommandCenter.tsx'), 'utf8');
 const today = fs.readFileSync(path.join(root, 'src/components/today/ArgusTodayPanel.tsx'), 'utf8');
-const notifications = fs.readFileSync(path.join(root, 'src/routes/NotificationsPage.tsx'), 'utf8');
 const events = fs.readFileSync(
   path.join(root, 'src/components/dashboard/ImportantEventsCard.tsx'), 'utf8');
 const eventCss = fs.readFileSync(
@@ -35,12 +34,10 @@ check('market score excludes device-local held-card reduction',
 check('market score excludes holder risk overlay',
   !command.includes('ownerRisk: overlay.holderRiskOverlay')
   && !command.includes('ownerPolicyLimit:'));
-check('canonical event review lives once on Notifications',
-  !command.includes('<ImportantEventsCard')
-  && notifications.includes('<ImportantEventsCard />')
-  && today.includes("onNavigate('notifications')")
-  && events.includes('setShowAll') && events.includes('is-expanded')
-  && eventCss.includes('.ie-card:not(.is-expanded)'));
+check('Today mounts the canonical event review without leaving the page',
+  command.includes('<ImportantEventsCard onNavigate={onNavigate} />')
+  && today.includes("document.getElementById('important-events')")
+  && !today.includes("onClick={() => onNavigate('regime')"));
 check('Today market view does not render portfolio-wide commands',
   !today.includes('保有確認') && !today.includes('新規 <b>')
   && !today.includes('買増 <b>') && !today.includes('保有 <b>'));

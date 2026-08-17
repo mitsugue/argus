@@ -10,7 +10,6 @@ on:
       - main
     paths:
       - 'web/**'
-      - 'product-version.json'
       - '.github/workflows/deploy-pages.yml'
       - 'scripts/verified_snapshot_release_gate.py'
   workflow_dispatch:

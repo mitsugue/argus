@@ -23,26 +23,6 @@ def test_evidence_after_move_is_not_trigger():
     assert r["role"] != "trigger"
 
 
-def test_future_or_date_only_evidence_never_becomes_related():
-    move = "2026-06-23T00:30:00Z"
-    decision = "2026-06-23T04:00:00Z"
-    for published in (None, "2026-06-23", "not-a-time",
-                      "2026-06-24T04:00:00Z", "9999-12-31T00:00:00Z"):
-        ev = {"official": True, "publishedAt": published,
-              "sourceReliability": 0.9}
-        assert A.causal_role(ev, move, decision)["role"] == "background_only"
-        assert A.classify_news(ev, move, decision) == "BACKGROUND"
-
-
-def test_exact_post_move_predecision_evidence_may_only_amplify():
-    move = "2026-06-23T00:30:00Z"
-    decision = "2026-06-23T04:00:00Z"
-    ev = {"official": True, "publishedAt": "2026-06-23T02:00:00Z",
-          "sourceReliability": 0.9}
-    assert A.causal_role(ev, move, decision)["role"] == "amplifier"
-    assert A.classify_news(ev, move, decision) == "LIKELY_RELATED"
-
-
 # stale report cannot become immediate trigger
 def test_stale_report_not_immediate_trigger():
     ev = _ev(kind="report", publishedAt="2026-06-19T00:00:00Z")  # 4 days stale

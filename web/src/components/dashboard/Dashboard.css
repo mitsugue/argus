@@ -244,6 +244,96 @@
   text-transform: capitalize;
 }
 
+/* ── Action Alert grid + card ───────────────────────────────────────── */
+
+.alert-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+/* Action-vocabulary legend for the class calls (v10.191) — clarifies WAIT. */
+.alert-legend { margin: 0 0 10px; font-size: 11px; line-height: 1.7; color: var(--text-muted); }
+.alert-legend b { color: var(--text-sub); font-weight: 700; }
+
+.alert-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+
+.alert-card:hover {
+  background: var(--surface-soft);
+  border-color: var(--line-strong);
+}
+
+.alert-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.alert-card__class {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.alert-card__reason {
+  font-size: 12px;
+  color: var(--text-sub);
+  line-height: 1.55;
+}
+
+.alert-card__meta {
+  display: flex;
+  gap: 12px;
+  font-size: 10px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.alert-card__meta-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.alert-card__meta-value {
+  color: var(--text-sub);
+  text-transform: none;
+  letter-spacing: 0.01em;
+  font-weight: 500;
+}
+
+.alert-card__data {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+.alert-card__next {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.alert-card__next strong {
+  color: var(--text-sub);
+  font-weight: 500;
+}
 
 /* ── Event Row ──────────────────────────────────────────────────────── */
 
@@ -765,6 +855,27 @@
 /* calibration-v1: ledger track record → confidence, one quiet line. */
 .asset-calibration { padding: 4px 2px 10px; font-size: 11px; color: var(--text-faint); }
 
+/* entry-scout-v1: 瞬間エントリー診断 block inside the strategy card. */
+.scout { margin: 10px 14px; padding: 10px 12px; border: 1px solid rgba(91,141,239,0.35); border-radius: 8px; background: rgba(91,141,239,0.06); }
+.scout--note { border-color: rgba(255,255,255,0.12); background: rgba(255,255,255,0.03); font-size: 12px; color: var(--text-faint); }
+/* v10.30: the one-line CALL + moat-grounded STORY headline the scout panel. */
+.scout__call { font-size: 15px; font-weight: 800; line-height: 1.35; color: var(--accent, #5b8def); margin-bottom: 4px; }
+.scout__story { font-size: 12px; line-height: 1.55; color: var(--text-sub, #c7d0e0); margin-bottom: 8px; }
+.scout__stance { font-size: 12px; font-weight: 700; color: var(--text-faint); }
+.scout__score { font-weight: 400; font-size: 11px; color: var(--text-faint); margin-left: 6px; }
+.scout__reasons { margin: 6px 0 4px; padding-left: 18px; font-size: 12px; color: var(--text-sub); }
+.scout__reasons li { margin: 2px 0; }
+.scout__metrics { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.scout__flow { margin: 8px 0; padding: 8px 10px; border-radius: 6px; background: rgba(91,141,239,0.08); border: 1px solid rgba(91,141,239,0.25); }
+.scout__flow-head { font-size: 12.5px; }
+.scout__flow-conf { font-size: 11px; color: var(--text-faint); }
+.scout__flow-bars { display: flex; flex-wrap: wrap; gap: 8px; margin: 5px 0; font-size: 11px; color: var(--text-sub); }
+.scout__flow-prob { font-variant-numeric: tabular-nums; }
+.scout__flow-next { font-size: 10.5px; color: var(--text-faint); }
+.scout__cat { margin: 8px 0; padding: 8px 10px; border-radius: 6px; background: rgba(232,176,75,0.07); border: 1px solid rgba(232,176,75,0.22); }
+.scout__cat-head { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+.scout__gaps { margin-top: 6px; font-size: 10.5px; color: var(--text-faint); }
+.scout__note { margin-top: 2px; font-size: 10.5px; color: var(--text-faint); }
 
 /* command-center-v1: 資産クラス司令室 — allocation bars on Core Portfolio. */
 .cmd-alloc { padding: 10px 14px; }

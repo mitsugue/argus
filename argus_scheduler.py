@@ -8,8 +8,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-import argus_market_clock
-
 
 UTC = timezone.utc
 MISSION_WINDOW_INTERVAL_SECONDS = 30 * 60
@@ -294,84 +292,19 @@ MISSION_STATUSES = ("scheduled", "claimed", "running", "checkpointed",
                     "complete", "retry_wait", "failed_safe", "missed",
                     "recovered", "skipped")
 
-# Mission kind and market only.  Exchange instants are derived from the
-# canonical market clock below; this module owns no duplicate US DST/holiday/
-# early-close wall clock.
+# セッション定義(JST基準の時刻・市場ごと)。祝日/半日は呼び出し側がis_holiday等で渡す。
 _DAILY_PLAN = (
-    ("pre_session_forecast", "JP"),
-    ("session_open_check", "JP"),
-    ("post_session_snapshot", "JP"),
-    ("pre_session_forecast", "US"),
-    ("post_session_snapshot", "US"),
-    ("forecast_outcome_resolution", "ALL"),
-    ("daily_postmortem", "ALL"),
-    ("daily_learning", "ALL"),
-    ("overnight_osint", "ALL"),
+    # (missionType, market, jst_hhmm)
+    ("pre_session_forecast", "JP", "08:30"),
+    ("session_open_check", "JP", "09:05"),
+    ("post_session_snapshot", "JP", "15:40"),
+    ("pre_session_forecast", "US", "22:00"),
+    ("post_session_snapshot", "US", "05:10"),   # 翌暦日側
+    ("forecast_outcome_resolution", "ALL", "16:00"),
+    ("daily_postmortem", "ALL", "16:10"),
+    ("daily_learning", "ALL", "16:20"),
+    ("overnight_osint", "ALL", "02:00"),
 )
-
-_ALL_MARKET_FIXED_JST = {
-    "forecast_outcome_resolution": "16:00",
-    "daily_postmortem": "16:10",
-    "daily_learning": "16:20",
-    "overnight_osint": "02:00",
-}
-
-
-def _exact_service_date(value: str):
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = datetime.strptime(value, "%Y-%m-%d").date()
-    except (TypeError, ValueError):
-        return None
-    return parsed if parsed.isoformat() == value else None
-
-
-def _daily_mission_instant(mission_type: str, market: str,
-                           service_date: str):
-    """Return (scheduledFor, exchangeTradingDay) for one JST service day.
-
-    A US post-session mission on a JST service day refers to the prior US
-    calendar date (whose close falls on that JST morning).  The pre-session
-    mission refers to the same calendar date.  Non-trading targets remain
-    explicitly skipped rather than being backfilled from an older session.
-    """
-    parsed = _exact_service_date(service_date)
-    if parsed is None:
-        return None, False
-    if market == "ALL":
-        hhmm = _ALL_MARKET_FIXED_JST.get(mission_type)
-        return ((f"{service_date}T{hhmm}:00+09:00", True)
-                if hhmm else (None, False))
-    if market == "JP":
-        market_id = argus_market_clock.JP_EQUITY
-        exchange_date = parsed
-    elif market == "US":
-        market_id = argus_market_clock.US_EQUITY
-        exchange_date = (parsed - timedelta(days=1)
-                         if mission_type == "post_session_snapshot"
-                         else parsed)
-    else:
-        return None, False
-    bounds = argus_market_clock.market_session_bounds(
-        market_id, exchange_date)
-    if not bounds.get("isTradingDay"):
-        # Use a deterministic placeholder only for the skipped record.  It is
-        # never claimable and does not pretend a prior close was current.
-        return f"{service_date}T00:00:00+09:00", False
-    opened = _aware(bounds["regularOpenUtc"])
-    closed = _aware(bounds["regularCloseUtc"])
-    if opened is None or closed is None:
-        return None, False
-    scheduled = {
-        "pre_session_forecast": opened - timedelta(minutes=30),
-        "session_open_check": opened + timedelta(minutes=5),
-        "post_session_snapshot": closed + timedelta(minutes=10),
-    }.get(mission_type)
-    if scheduled is None:
-        return None, False
-    jst = timezone(timedelta(hours=9))
-    return scheduled.astimezone(jst).isoformat(timespec="seconds"), True
 
 
 def mission(*, mission_type: str, market: str, session_date: str,
@@ -401,18 +334,10 @@ def generate_daily_missions(*, session_date: str, now_iso: str,
     """当日ミッションの冪等生成。既存キーはスキップ(重複ゼロ)。祝日はskipped発行。"""
     have = {m.get("idempotencyKey") for m in (existing or [])}
     out = []
-    for mtype, market in _DAILY_PLAN:
-        scheduled_for, canonical_trading_day = _daily_mission_instant(
-            mtype, market, session_date)
-        # The legacy booleans describe the caller's *current* local market
-        # date, which is not necessarily this mission's target exchange date
-        # (notably early Monday JST versus Sunday ET).  Retain the parameters
-        # for API compatibility, but canonical per-mission bounds are the only
-        # scheduling authority.
-        holiday = (market in ("JP", "US")
-                   and not canonical_trading_day)
+    for mtype, market, hhmm in _DAILY_PLAN:
+        holiday = (market == "JP" and jp_holiday) or (market == "US" and us_holiday)
         m = mission(mission_type=mtype, market=market, session_date=session_date,
-                    scheduled_for=scheduled_for or now_iso,
+                    scheduled_for=f"{session_date}T{hhmm}:00+09:00",
                     model_epoch=model_epoch, rubric_version=rubric_version)
         if m is None or m["idempotencyKey"] in have:
             continue

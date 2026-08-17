@@ -25,7 +25,7 @@ GENERATION_RE = re.compile(r"rrg-[0-9a-f]{32}")
 KEY_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{2,63}")
 NATURAL_EVENT = "schedule"
 MANUAL_EVENT = "workflow_dispatch"
-OPERATIONAL_DIAGNOSTICS_SCHEMA = "argus-operational-diagnostics-v1"
+DATA_QUALITY_SCHEMA = "data-quality-v1"
 
 
 class PublishPolicyError(ValueError):
@@ -155,35 +155,35 @@ def _runtime_remote_truth(
     if data_quality is None:
         return None
     if not isinstance(data_quality, Mapping) or \
-            data_quality.get("schemaVersion") != OPERATIONAL_DIAGNOSTICS_SCHEMA:
+            data_quality.get("schemaVersion") != DATA_QUALITY_SCHEMA:
         raise PublishPolicyError("runtime_data_quality_invalid")
-    truth = data_quality.get("remoteJournal")
+    truth = data_quality.get("remoteJournalTruth")
     if not isinstance(truth, Mapping):
         raise PublishPolicyError("runtime_remote_journal_truth_missing")
 
     values = {}
     for key in (
-            "localCommittedCount", "pendingCount",
-            "committedCount", "failedCount"):
+            "localCommittedCount", "remotePendingCount",
+            "remoteCommittedCount", "remoteFailedCount"):
         value = truth.get(key)
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise PublishPolicyError("runtime_remote_journal_truth_invalid")
         values[key] = value
     if values["localCommittedCount"] != (
-            values["pendingCount"] +
-            values["committedCount"]):
+            values["remotePendingCount"] +
+            values["remoteCommittedCount"]):
         raise PublishPolicyError("runtime_remote_journal_truth_inconsistent")
-    durable = data_quality.get("durability")
+    durable = data_quality.get("durableState")
     if not isinstance(durable, Mapping) or \
             durable.get("integrityStatus") != "ok":
         raise PublishPolicyError("runtime_durable_integrity_invalid")
-    for key in ("journalCorruptCount", "missionWalCorruptCount"):
+    for key in ("journalCorrupt", "missionWalCorrupt"):
         value = durable.get(key)
         if isinstance(value, bool) or not isinstance(value, int) or value != 0:
             raise PublishPolicyError("runtime_durable_integrity_invalid")
     return {
-        "pendingCount": values["pendingCount"],
-        "failureCount": values["failedCount"],
+        "pendingCount": values["remotePendingCount"],
+        "failureCount": values["remoteFailedCount"],
     }
 
 
@@ -194,19 +194,19 @@ def _runtime_wal_truth(data_quality: Optional[Mapping[str, Any]]) \
         raise PublishPolicyError("runtime_data_quality_required_for_rearm")
     # Reuse schema, event counts, cumulative failure and corruption validation.
     _runtime_remote_truth(data_quality)
-    durable = data_quality.get("durability")
+    durable = data_quality.get("durableState")
     if not isinstance(durable, Mapping):
         raise PublishPolicyError("runtime_durable_integrity_invalid")
-    checkpoint = durable.get("checkpoint")
+    checkpoint = durable.get("lastCheckpoint")
     if not isinstance(checkpoint, Mapping) or \
             checkpoint.get("verified") is not True or \
             checkpoint.get("readBackVerified") is not True:
         raise PublishPolicyError("runtime_checkpoint_unverified")
-    remote = data_quality.get("remoteJournal")
+    remote = data_quality.get("remoteJournalVerification")
     if not isinstance(remote, Mapping) or \
             remote.get("readBackVerified") is not True or \
             remote.get("walReadBackVerified") is not True or \
-            remote.get("state") != "verified":
+            remote.get("remoteDurabilityState") != "verified":
         raise PublishPolicyError("runtime_remote_readback_unverified")
     wal_values = (
         checkpoint.get("includedWalSequence"),
@@ -220,7 +220,8 @@ def _runtime_wal_truth(data_quality: Optional[Mapping[str, Any]]) \
     if local_wal <= 0 or remote_verified <= 0 or \
             remote_applied != remote_verified or local_wal < remote_verified:
         raise PublishPolicyError("runtime_wal_sequence_invalid")
-    if remote.get("errorPresent") is not False:
+    if any(remote.get(key) not in (None, "") for key in (
+            "errorClass", "walErrorClass", "receiptErrorClass")):
         raise PublishPolicyError("runtime_remote_readback_unverified")
     return {
         "localIncludedWalSequence": local_wal,

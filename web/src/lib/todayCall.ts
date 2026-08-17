@@ -8,7 +8,6 @@ import type { DailyJudgment, MarketEvent, RegimeTag, EventKind } from '../types/
 import type { ActionLabelsSnapshot } from '../types/actionLabels';
 import type { MarketRegimeSnapshot } from '../types/marketRegime';
 import type { EventsSnapshot, CalendarEvent } from '../types/events';
-import { liveAuthorityState } from '../domain/liveAuthority';
 
 // Backend rule-action strings (spaces) → frontend ActionKey (underscores).
 const RULE_TO_KEY: Record<string, ActionKey> = {
@@ -49,15 +48,9 @@ export function combinePhase(...phases: TodayPhase[]): TodayPhase {
 
 const ESC_ORDER: Record<string, number> = { D: 0, 'D-1': 1, 'D-3': 2, 'D-7': 3, 'D+1': 4, normal: 5 };
 
-function eventSnapshotUsable(ev: EventsSnapshot | null, nowMs: number): ev is EventsSnapshot {
-  return !!ev && (ev.status === 'live' || ev.status === 'partial')
-    && liveAuthorityState(ev.asOf, 'eventRadar', nowMs) === 'fresh';
-}
-
-function upcomingHighImpact(ev: EventsSnapshot | null, nowMs: number): CalendarEvent[] {
-  if (!eventSnapshotUsable(ev, nowMs)) return [];
+function upcomingHighImpact(ev: EventsSnapshot | null): CalendarEvent[] {
   return (ev?.events ?? [])
-    .filter((e) => e.status === 'live' && e.impact === 'high' && e.daysUntil >= 0)
+    .filter((e) => e.impact === 'high' && e.daysUntil >= 0)
     .slice()
     .sort((a, b) => (a.daysUntil - b.daysUntil) || ((ESC_ORDER[a.escalation] ?? 9) - (ESC_ORDER[b.escalation] ?? 9)));
 }
@@ -97,9 +90,8 @@ function eventAtMs(e: CalendarEvent, nowMs: number): number {
 
 /** Live events → the Today preview's MarketEvent rows (urgent first). */
 export function toMarketEvents(ev: EventsSnapshot | null, nowMs: number): MarketEvent[] {
-  if (!eventSnapshotUsable(ev, nowMs)) return [];
   return (ev?.events ?? [])
-    .filter((e) => e.status === 'live' && e.daysUntil >= 0)
+    .filter((e) => e.daysUntil >= 0)
     .slice()
     .sort((a, b) => ((ESC_ORDER[a.escalation] ?? 9) - (ESC_ORDER[b.escalation] ?? 9)) || (a.daysUntil - b.daysUntil))
     .map((e) => ({
@@ -148,7 +140,7 @@ export function deriveTodayJudgment(
   };
   push(al?.marketPosture?.rationaleJa);
   push(backdrop?.rationaleJa);
-  const nextEv = upcomingHighImpact(ev, nowMs)[0];
+  const nextEv = upcomingHighImpact(ev)[0];
   if (nextEv) {
     push(`${nextEv.title} が接近（${nextEv.escalation === 'normal' ? `あと${nextEv.daysUntil}日` : nextEv.escalation}）。通過後の反応を確認する。`);
   }

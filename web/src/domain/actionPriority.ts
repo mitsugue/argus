@@ -108,15 +108,9 @@ export function buildItem(i: APInputs): APItem {
       category = 'event_wait'; label = 'WAIT_EVENT';
     }
   }
-  if (missing.length) {
-    score += i.isHeld ? 15 : 4;
-    // Missing price/session/FX is absence of entry/add authority for held and
-    // unheld assets alike. Defensive CHECK/WAIT/AVOID labels remain visible.
-    if (category === 'no_action'
-        || label === 'SMALL_ADD_ALLOWED' || label === 'ADD_ONLY_ON_PULLBACK') {
-      category = 'data_missing';
-      label = i.isHeld ? 'INVESTIGATE' : 'UNKNOWN';
-    }
+  if (i.isHeld && missing.length) {
+    score += 15;
+    if (category === 'no_action') { category = 'data_missing'; label = 'INVESTIGATE'; }
     if (blocking === 'none') blocking = missing.join(' ').includes('保有数量') ? 'missing_position_data' : 'data_stale';
   }
   let dqAdj = 0;
@@ -184,7 +178,7 @@ function texts(rank: PriorityRank, category: string, i: APInputs,
     };
     case 'data_missing': return {
       title: `データ確認：${heldJa}${name}`,
-      why: `判定に必要なデータが不足しています(${missing.slice(0, 2).join(' / ')})。`,
+      why: `保有銘柄ですが判定に必要なデータが不足しています(${missing.slice(0, 2).join(' / ')})。`,
       check: 'データ更新後(平日の巡回)に再確認',
       change: 'データ取得後に通常の優先度判定に戻ります',
     };

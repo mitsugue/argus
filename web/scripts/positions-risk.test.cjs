@@ -68,7 +68,6 @@ check('P9 stress conditions are explicit, deduplicated and bounded',
   populated.stressConditions.join('|') === 'AI調整局面|円高局面');
 
 const routeSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'CorePortfolio.tsx'), 'utf8');
-const holdingsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'Watchlist.tsx'), 'utf8');
 const overviewSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
   'dashboard', 'PortfolioDecisionOverview.tsx'), 'utf8');
 const fireCoreCardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
@@ -82,14 +81,13 @@ check('P10 first viewport starts with the portfolio overview',
 check('P11 detailed features remain secondary',
   routeSource.includes('Allocation / Risk / Plan / History')
   && routeSource.includes('PortfolioExposureCard')
+  && routeSource.includes('WhatIfPanel')
   && routeSource.includes('DecisionQualityCard'));
 check('P12 overview exposes the required contracts',
   ['PORTFOLIO COMMAND', 'TOTAL EXPOSURE', 'TOP RISKS', 'ACTION QUEUE',
     'STRESS', 'NEXT PORTFOLIO CHECK'].every((label) => overviewSource.includes(label)));
 check('P13 no Today-open dependency remains',
-  holdingsSource.includes('useAssetIntel({ publish: true, assets })')
-  && routeSource.includes('portfolioIntel: AssetIntel')
-  && !routeSource.includes('useAssetIntel(')
+  routeSource.includes('useAssetIntel({ publish: true, assets })')
   && !routeSource.includes('latestScenarios')
   && !routeSource.includes('latestPlans')
   && !routeSource.includes('latestStrategy')
@@ -108,9 +106,6 @@ check('P17 FIRE Core edits invalidate same-tab and cross-tab derived totals',
   && fireCoreSource.includes("window.addEventListener('storage'")
   && assetIntelSource.includes('useSyncExternalStore')
   && assetIntelSource.includes('fireCoreMetaRevision'));
-check('P18 Fund NAV is part of the canonical price map',
-  assetIntelSource.includes('fundNavForAsset')
-  && assetIntelSource.includes('prices.set(asset.symbol.toUpperCase(), fund.navYen)'));
 
 if (failed) {
   console.error(`\npositions-risk tests: ${failed} FAILED`);

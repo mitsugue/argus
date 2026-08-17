@@ -1,7 +1,14 @@
 // V12.2.12 Asset Desk — 表示語彙ヘルパー(旧UnifiedAssetCard/AssetStrategySectionから移設)。
+import type { SignalCode } from '../../domain/actionLevel';
 import type { AssetStrategy } from '../../lib/assetStrategy';
 import type { QuoteLite } from '../../lib/assetStrategy';
 import type { DeskEventTag } from './types';
+
+// Primary human command per signal (the punchy English keyword).
+export const PRIMARY_EN: Record<SignalCode, string> = {
+  EXIT: 'EXIT POSITION', DEFEND: 'PROTECT CAPITAL', REVIEW: 'REASSESS NOW', PAUSE: 'NO NEW ENTRY',
+  HOLD_ONLY: 'HOLD EXISTING ONLY', PREPARE: 'WAIT FOR SETUP', ENTER: 'ENTRY ALLOWED',
+};
 
 // LINKED EVENT tag — Japanese (event code + proximity + impact, 読める日本語).
 const EVENT_CODE_JA: Record<string, string> = {
