@@ -27,6 +27,53 @@ const retryDelayMs = (response) => {
   return 30_000;
 };
 
+const CANONICAL_RESPONSE_CAPTURE = '__ARGUS_ACCEPTANCE_CANONICAL_RESPONSE__';
+
+async function armCanonicalResponseCapture(page) {
+  await page.addInitScript(({ captureKey }) => {
+    const originalFetch = globalThis.fetch.bind(globalThis);
+    globalThis.fetch = async (...args) => {
+      const response = await originalFetch(...args);
+      try {
+        const url = new URL(response.url);
+        if (response.status === 200
+            && url.pathname === '/api/argus/chart-intelligence'
+            && url.searchParams.get('scope') === 'market'
+            && url.searchParams.get('symbol') === '1321'
+            && url.searchParams.get('horizon') === '5D'
+            && url.searchParams.get('snapshot') === 'verified') {
+          void response.clone().json().then((body) => {
+            globalThis[captureKey] = { body, status: response.status, url: response.url };
+          }).catch(() => {});
+        }
+      } catch { /* validation below remains fail closed */ }
+      return response;
+    };
+  }, { captureKey: CANONICAL_RESPONSE_CAPTURE });
+}
+
+async function readCanonicalResponseBody(page, response, timeout) {
+  try {
+    return { body: await response.json(), source: 'playwright_response' };
+  } catch {
+    // Chromium can evict a service-worker response body before Playwright asks
+    // CDP for it. The init-script clone above captures the bytes from the same
+    // product-triggered fetch; it never supplies or modifies response data.
+    await page.waitForFunction(({ captureKey, responseUrl }) => {
+      const captured = globalThis[captureKey];
+      return captured?.status === 200 && captured?.url === responseUrl;
+    }, { captureKey: CANONICAL_RESPONSE_CAPTURE, responseUrl: response.url() },
+    { timeout: Math.min(timeout, 5_000) });
+    const body = await page.evaluate(({ captureKey, responseUrl }) => {
+      const captured = globalThis[captureKey];
+      return captured?.status === 200 && captured?.url === responseUrl
+        ? captured.body : null;
+    }, { captureKey: CANONICAL_RESPONSE_CAPTURE, responseUrl: response.url() });
+    if (!body) throw new Error('canonical_1321_5d_response_body_missing');
+    return { body, source: 'same_fetch_clone' };
+  }
+}
+
 async function triggerCanonicalRevalidation(page, timeout) {
   const requestPromise = page.waitForRequest(chartRequestMatches, { timeout });
   const responsePromise = page.waitForResponse((response) =>
@@ -100,6 +147,7 @@ export async function selectCanonical1321FiveDay(page, {
   // click may therefore reuse an already-verified cache and emit no request.
   // Persist the explicit selection, arm observers, then make the app perform
   // its normal reload/revalidation path. This is the causal trigger for R13.
+  await armCanonicalResponseCapture(page);
   let response = null;
   const httpStatuses = [];
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -120,7 +168,8 @@ export async function selectCanonical1321FiveDay(page, {
     await page.waitForTimeout(retryDelayMs(observedResponse));
   }
   if (!response) throw new Error('canonical_1321_5d_response_missing');
-  const body = await response.json();
+  const captured = await readCanonicalResponseBody(page, response, timeout);
+  const { body } = captured;
   const view = body?.payload || body;
   if (body?.verificationStatus !== 'verified'
       || !body?.snapshotId
@@ -131,7 +180,8 @@ export async function selectCanonical1321FiveDay(page, {
     throw new Error('canonical_1321_5d_response_snapshot_mismatch');
   }
   machine.transition('R14_VERIFIED_SNAPSHOT_RECEIVED', {
-    httpStatus: response.status(), httpStatuses, snapshotId: body.snapshotId,
+    httpStatus: response.status(), httpStatuses, responseBodySource: captured.source,
+    snapshotId: body.snapshotId,
   });
 
   await openCanonicalEvidence(page, timeout);

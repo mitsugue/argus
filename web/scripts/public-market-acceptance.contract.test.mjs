@@ -71,6 +71,11 @@ for (const source of [script, mobileAcceptance, canonicalSelection]) {
 }
 assert.match(canonicalSelection, /waitForRequest/);
 assert.match(canonicalSelection, /waitForResponse/);
+assert.match(canonicalSelection, /addInitScript/);
+assert.match(canonicalSelection, /same_fetch_clone/,
+  'service-worker body eviction must fall back to a clone of the same UI-triggered fetch');
+assert.doesNotMatch(canonicalSelection, /page\.request\.(?:get|fetch)/,
+  'response recovery must not replace the observed UI request with a test-only request');
 assert.match(canonicalSelection, /R11_1321_SELECTED/);
 assert.match(canonicalSelection, /R12_5D_SELECTED/);
 assert.match(script, /fillPaintTags\.has\(tag\)/,
