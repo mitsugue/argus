@@ -3,6 +3,21 @@ name: memory-attribution
 on:
   pull_request:
     paths:
+      - ".github/workflows/memory-attribution.yml"
+      - ".github/workflows/market-public-acceptance.yml"
+      - ".github/actions/candidate-pages-preview/action.yml"
+      - "web/scripts/release-state-machine.mjs"
+      - "web/scripts/release-state-machine.test.mjs"
+      - "web/scripts/canonical-snapshot-selection.mjs"
+      - "web/scripts/public-market-acceptance.mjs"
+      - "web/scripts/mobile-today-acceptance.mjs"
+      - "web/index.html"
+      - "web/src/components/today/ArgusTodayPanel.tsx"
+      - "web/src/lib/verifiedSnapshot.ts"
+      - "web/src/lib/assetChartCache.ts"
+      - "web/src/hooks/useChartIntelligence.ts"
+      - "web/src/lib/snapshotFreshness.ts"
+      - "docs/ops/v13-final-release-state-machine.md"
       - "argus_memory_attribution.py"
       - "argus_asset_chart_cache.py"
       - "argus_verified_snapshot.py"
