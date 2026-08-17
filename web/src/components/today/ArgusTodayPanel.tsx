@@ -1,8 +1,8 @@
 import React from 'react';
 import type { ArgusTodayView, MarketSelectionMode, TodayProjection } from '../../domain/argusTodayView';
 import { formatEventTime, quoteDisplayLabel } from '../../domain/argusTodayView';
+import { SIGNAL_ORDER, SIGNALS } from '../../domain/actionLevel';
 import type { RouteKey } from '../NavRail';
-import type { SettingsSection } from '../../navigation';
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import type {
   MarketHorizon, MarketInstrumentMarket, MarketInstrumentSymbol,
@@ -49,22 +49,11 @@ interface Props {
   onInstrument: (market: 'JP' | 'US', symbol: string) => void;
   onHorizon: (horizon: MarketHorizon) => void;
   onNavigate: (key: RouteKey) => void;
-  onNavigateToAsset?: (symbol: string, section?: string) => void;
-  onNavigateToSettings?: (section: SettingsSection) => void;
   aiButton: React.ReactNode;
 }
 
-const ACTION_TONE = {
-  BUY: 'var(--value-positive)', HOLD: 'var(--accent)', WAIT: 'var(--amber, #fbbf24)',
-  REDUCE: 'var(--event-high)', EXIT: 'var(--value-negative)',
-};
-const MARKET_STANCE = {
-  BUY: 'BUY', HOLD: 'HOLD', WAIT: 'WAIT', REDUCE: 'REDUCE', EXIT: 'EXIT',
-};
-const SEVEN_SIGN_MEANING: Record<number, string> = {
-  1: '強いRisk Off', 2: 'REDUCE寄り', 3: '新規回避', 4: 'WAIT',
-  5: '条件付きBUY寄り', 6: 'BUY寄り', 7: '最高クラスBUY期待値',
-};
+const ACTION_TONE = { BUY: 'var(--value-positive)', WAIT: 'var(--amber, #fbbf24)', SELL: 'var(--value-negative)' };
+const MARKET_STANCE = { BUY: '強気', WAIT: '中立・待機', SELL: '弱気・警戒' };
 const fmt = (v: number) => v >= 1000 ? v.toLocaleString('ja-JP', { maximumFractionDigits: 1 }) : v.toFixed(2);
 const fmtMove = (v: number, suffix = '') => `${fmt(v)}${suffix}`;
 const shortDate = (value?: string | null) => value ? value.slice(5).replace('-', '/') : '';
@@ -104,7 +93,7 @@ export function formatInstrumentPrice(value: number, instrumentId: string): stri
   });
 }
 
-const ProjectionChart: React.FC<{ projection: TodayProjection; onActivate?: () => void }> = ({ projection, onActivate }) => {
+const ProjectionChart: React.FC<{ projection: TodayProjection; onActivate: () => void }> = ({ projection, onActivate }) => {
   const all = projection.history.map((point) => point.value).concat([
     projection.baseLow, projection.baseHigh, projection.upside, projection.downside, projection.invalidation,
     ...(projection.support ? [projection.support.low, projection.support.high] : []),
@@ -140,11 +129,8 @@ const ProjectionChart: React.FC<{ projection: TodayProjection; onActivate?: () =
   const strongest = displayProbabilities
     ? (Object.entries(displayProbabilities)
       .sort((a, b) => b[1] - a[1])[0]?.[0] ?? '') : '';
-  return <div className="at-projection" role={onActivate ? 'link' : undefined}
-    tabIndex={onActivate ? 0 : undefined} onClick={onActivate}
-    onKeyDown={onActivate ? (event) => {
-      if (event.key === 'Enter' || event.key === ' ') onActivate();
-    } : undefined}>
+  return <div className="at-projection" role="link" tabIndex={0} onClick={onActivate}
+    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onActivate(); }}>
     <div className="at-proj-heading"><b>{projection.label}｜{projection.horizon}見通し</b>
       <span>{projection.proxyFor ? 'ETF PROXY · ' : ''}{shortDate(projection.asOf)} {quoteDisplayLabel(projection.quoteState)}・{projection.timeframeLabel} · 過去{projection.history.length}日｜予測{projection.horizonDays}日</span></div>
     <svg viewBox="0 0 720 330" role="img" aria-label={`${projection.label} 実績と${projection.horizonDays}営業日シナリオ`}>
@@ -203,73 +189,43 @@ const ProjectionChart: React.FC<{ projection: TodayProjection; onActivate?: () =
         <span>{projection.probabilityTruth.directionalLeanJa} · 根拠{projection.probabilityTruth.evidenceStrength}
           · 実効n={projection.probabilityTruth.effectiveN ?? projection.effectiveSampleCount}
           · {projection.probabilityTruth.uncertaintyJa} · {projection.probabilityTruth.label}</span></div>}
-    <div className="at-proj-meta"><b>{projection.directionLabel}</b><span>{projection.horizon} · 反応{projection.reactionDelay == null ? '—' : `${projection.reactionDelay.toFixed(1)}日`}</span><small>実測と校正済み根拠</small></div>
+    <div className="at-proj-meta"><b>{projection.directionLabel}</b><span>{projection.horizon} · 反応{projection.reactionDelay == null ? '—' : `${projection.reactionDelay.toFixed(1)}日`}</span><small>タップでMarket Context</small></div>
   </div>;
 };
 
 export const ArgusTodayPanel: React.FC<Props> = ({
   view, instruments, selectedSymbol, horizon, chartLoad,
-  onMode, onInstrument, onHorizon, onNavigate, onNavigateToAsset, onNavigateToSettings, aiButton,
+  onMode, onInstrument, onHorizon, onNavigate, aiButton,
 }) => {
+  const [detail, setDetail] = React.useState(false);
   const projection = view.projectionsByHorizon[`${horizon}D`] ?? view.projection;
-  const sevenSignLabel = view.actionScore == null
-    ? 'Calibration pending' : (SEVEN_SIGN_MEANING[view.actionScore] ?? 'Calibration pending');
-  const actionCopy = {
-    BUY: '条件内で新規または追加を検討',
-    HOLD: '保有を維持し、判断更新条件を待つ',
-    WAIT: '今は動かず、必要な正本証拠の更新を待つ',
-    REDUCE: '保有リスクを減らす',
-    EXIT: '保有の解消を優先する',
-  }[view.finalAction];
-  const target = view.canonicalDecision.targets[0];
-  const invalidation = view.canonicalDecision.invalidation;
-  const openEventDetails = () => onNavigate('notifications');
+  const currentSignal = SIGNAL_ORDER.find((code) => SIGNALS[code].level === view.actionScore);
+  const openEventDetails = () => {
+    const events = document.getElementById('important-events');
+    if (!events) return;
+    events.querySelector('details')?.setAttribute('open', '');
+    events.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  };
   React.useEffect(() => {
     try {
       sessionStorage.setItem('argus.todayDecisionMirror', JSON.stringify({
         schemaVersion: 'argus-today-decision-mirror-v1',
         market: view.selectedMarket, selectionMode: view.selectionMode,
         finalAction: view.finalAction, actionScore: view.actionScore,
-        decisionId: view.canonicalDecision.decisionId,
-        authorityPolicyId: view.canonicalDecision.identities.authorityPolicyId,
-        sevenSign: view.canonicalDecision.sevenSign,
         symbol: view.selectedInstrument?.symbol ?? projection?.symbol ?? null,
         instrumentId: projection?.instrumentId ?? null,
         horizon: projection?.horizonDays ?? 5,
         updatedAt: new Date().toISOString(),
       }));
     } catch { /* navigation mirror is best effort and contains no owner data */ }
-  }, [projection, view.actionScore, view.canonicalDecision, view.finalAction, view.selectedInstrument,
+  }, [projection, view.actionScore, view.finalAction, view.selectedInstrument,
     view.selectedMarket, view.selectionMode]);
   return <div className="argus-today">
-    <article className={`at-decision at-primary-hero card is-${view.finalAction.toLowerCase()}`}
-      aria-label="A.R.G.U.S. Primary Action">
-      <div className="at-call">
-        <small>PRIMARY ACTION · {view.selectedMarket} {view.selectedInstrument?.symbol ?? ''}</small>
-        <strong style={{ color: ACTION_TONE[view.finalAction] }}>{MARKET_STANCE[view.finalAction]}</strong>
-        <span className={`at-authority is-${view.canonicalDecision.status.toLowerCase()}`}>
-          {view.canonicalDecision.status === 'EVALUATED' ? '確認済み' : '判断データ確認中'}</span>
-      </div>
-      <p className="at-impact-copy">{actionCopy}</p>
-      <div className="at-seven-sign" data-status={view.canonicalDecision.sevenSign.status}>
-        <b>{view.actionScore == null ? '— / 7' : `${view.actionScore} / 7`}</b>
-        <span>{sevenSignLabel} · {view.canonicalDecision.sevenSign.status}</span>
-      </div>
-      {view.actionScore != null && <div className="at-meter"
-        aria-label={`Seven Sign ${view.actionScore} ${view.canonicalDecision.sevenSign.status}`}>
-        {[1, 2, 3, 4, 5, 6, 7].map((level) => <i key={level}
-          className={level === view.actionScore ? 'active' : ''}><span>{level}</span></i>)}
-      </div>}
-      <div className="at-action-plan" aria-label="行動条件">
-        <div><b>今すること</b><span>{actionCopy}</span></div>
-        <div><b>目標</b><span>{target ? `${target.value} ${target.unit}` : '検証済み目標なし'}</span></div>
-        <div><b>無効化</b><span>{invalidation ? `${invalidation.value} ${invalidation.unit}` : '検証済み無効化条件なし'}</span></div>
-        <div><b>次の確認</b><span>{view.canonicalDecision.nextReviewConditionCodes[0]
-          ?? (view.nextEvent ? `${view.nextEvent.code} ${formatEventTime(view.nextEvent.at)}` : '正本証拠の更新')}</span></div>
-      </div>
-      <div className="at-kpis"><span>確度 <b>{Math.round(view.canonicalDecision.confidence.valueBps / 100)}%</b></span>
-        <span>DATA <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></span></div>
-    </article>
+    <section className="at-lamps" aria-label="市場セッション">
+      {view.sessionLamps.map((lamp) => <span key={lamp.key} className={`is-${lamp.tone}`}>
+        <i aria-hidden />{lamp.label}
+      </span>)}
+    </section>
 
     <section className="at-event card" aria-label="NEXT EVENT">
       <div className="at-head"><b>NEXT EVENT</b>{view.nextEvent && <span>{view.nextEvent.impact.toUpperCase()}</span>}</div>
@@ -282,13 +238,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       </div>
     </section>
 
-    <details className="at-evidence card">
-      <summary>根拠・市場データ・システム情報</summary>
-      <section className="at-lamps" aria-label="市場セッション">
-        {view.sessionLamps.map((lamp) => <span key={lamp.key} className={`is-${lamp.tone}`}>
-          <i aria-hidden />{lamp.label}
-        </span>)}
-      </section>
+    <article className={`at-decision card is-${view.finalAction.toLowerCase()}`} aria-label="A.R.G.U.S. Engine 最終判断">
       <div className="at-mode" role="group" aria-label="表示市場">
         {(['AUTO', 'JP', 'US'] as MarketSelectionMode[]).map((mode) => <button type="button" key={mode}
           aria-pressed={view.selectionMode === mode} className={view.selectionMode === mode ? 'active' : ''}
@@ -327,6 +277,14 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           </button>;
         })}
       </div>
+      <div className="at-call">
+        <small>市場評価 · {view.selectedMarket}</small>
+        <strong style={{ color: ACTION_TONE[view.finalAction] }}>{MARKET_STANCE[view.finalAction]}</strong>
+        <b>{view.actionScore} / 7</b><span>{currentSignal ? SIGNALS[currentSignal].labelJa : ''}</span>
+      </div>
+      <div className="at-meter" aria-label={`7段階 ${view.actionScore}`}>
+        {SIGNAL_ORDER.map((code) => <i key={code} className={SIGNALS[code].level === view.actionScore ? 'active' : ''}><span>{SIGNALS[code].level}</span></i>)}
+      </div>
       <div className="at-chart-controls">
         <div className="at-chart-status" data-snapshot-state={chartLoad.snapshotState}
           data-snapshot-id={chartLoad.snapshotId ?? undefined}>
@@ -339,8 +297,25 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           <button type="button" key={value} aria-pressed={horizon === value}
             onClick={() => onHorizon(value)}>{value}D</button>)}</div>
       </div>
-      {projection ? <ProjectionChart projection={projection} />
-        : <div className="at-projection-missing" aria-busy={chartLoad.loading}>
+      {projection ? <ProjectionChart projection={projection} onActivate={() => {
+        try { sessionStorage.setItem('argus.replayContext', JSON.stringify({ route: 'market-context',
+          schemaVersion: 'argus-replay-deeplink-v1',
+          selectedTab: 'OVERVIEW', market: view.selectedMarket,
+          instrumentId: projection.instrumentId, symbol: projection.symbol,
+          horizon: projection.horizonDays, forecastId: projection.forecastId,
+          finalAction: view.finalAction, actionScore: view.actionScore,
+          forecastAsOf: projection.asOf,
+          directionProbabilities: projection.directionProbabilities,
+          priceLevels: { current: projection.current, upper: projection.upside,
+            baseLow: projection.baseLow, baseHigh: projection.baseHigh,
+            lower: projection.downside, invalidation: projection.invalidation },
+          brierSkill: projection.brierSkill,
+          effectiveSample: projection.effectiveSampleCount,
+          signalEpisodeIds: projection.signalEpisodeIds,
+          supportResistanceIds: projection.supportResistanceIds,
+          eventIds: projection.eventIds })); } catch { /* best effort */ }
+        onNavigate('regime');
+      }} /> : <div className="at-projection-missing" aria-busy={chartLoad.loading}>
         {chartLoad.loaderVisible
           ? <TriangleStepLoader label={chartLoad.slowInitial
             ? '初回データを準備中' : 'データ確認中'} />
@@ -348,6 +323,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         {!chartLoad.loading && <span>{chartLoad.error ? '取得できません' : '実測OHLCV確認待ち'}</span>}
         {chartLoad.error && <button type="button" onClick={chartLoad.retry}>再試行</button>}
       </div>}
+      <div className="at-kpis"><span>確度 <b>{view.projection?.confidenceLabel ?? (view.confidence == null ? '未算出' : Math.round(view.confidence * 100))}</b></span>
+        <span>DATA <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></span></div>
       {view.factors.length > 0 && <div className="at-factors">{view.factors.map((factor) =>
         <span key={factor.key} className={factor.state === '↑' || factor.state === 'LOW' ? 'is-positive'
           : factor.state === '↓' || factor.state === 'HIGH' ? 'is-negative' : 'is-neutral'}>{factor.key} <b>{factor.state}</b></span>)}</div>}
@@ -355,9 +332,12 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         <b>上昇失速パターン　{view.failedRallyState.state === 'CONFIRMED' ? '観測済み' : '候補'}</b>
         <span>将来リターンのSkill未検証</span>
       </div>}
-      <div className="at-details">
-        <div><b>AUTHORITY</b><span>{view.canonicalDecision.identities.authorityPolicyId ?? 'unavailable'}</span></div>
-        <div><b>DECISION ID</b><span>{view.canonicalDecision.decisionId}</span></div>
+      <button className="at-detail-toggle" type="button" aria-expanded={detail} onClick={() => setDetail((v) => !v)}>
+        {detail ? '詳細を閉じる' : '判断の根拠・システム詳細'}
+      </button>
+      {detail && <div className="at-details">
+        <div><b>METHOD</b><span>{view.decisions[view.selectedMarket].methodVersion}</span></div>
+        <div><b>CALCULATED</b><span>{view.decisions[view.selectedMarket].calculatedAt}</span></div>
         <div><b>DATA QUALITY</b><span>{view.dataStatus.label}</span></div>
         <div><b>BACKUP</b><span>{view.systemStatus.backup}</span></div>
         <div><b>RULE</b><span>{view.systemStatus.rule}</span></div>
@@ -373,39 +353,35 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         {projection && <div><b>HISTORY</b><span>{projection.sourceHistoryCount.toLocaleString('ja-JP')}営業日
           {projection.historyStart ? ` · ${projection.historyStart}–${projection.historyEnd ?? '現在'}` : ''}
           {projection.sourceHistoryCount < 2_000 ? ' · 10年未達' : ' · 約10年'}</span></div>}
-        {view.canonicalDecision.missingReasonCodes.map((line) => <p key={`missing:${line}`}>MISSING: {line}</p>)}
-        {view.canonicalDecision.dissentReasonCodes.map((line) => <p key={`dissent:${line}`}>DISSENT: {line}</p>)}
-        <div className="at-detail-actions">{aiButton}<button type="button"
-          onClick={() => onNavigateToSettings
-            ? onNavigateToSettings('recovery') : onNavigate('settings')}>Settings / Recovery</button></div>
-      </div>
-    </details>
-
-    {view.holdingsReview.length > 0 && <section className="at-priorities card" aria-label="OWNER PRIORITIES">
-      <div className="at-head"><b>OWNER PRIORITIES</b><span>MAX 3</span></div>
-      {view.holdingsReview.map((item) => {
-        const content = <>
-          <span className="at-priority-title">
-            <b>{item.symbol}</b><em>{item.isHeld ? '保有' : 'WATCH'}</em>
-            <mark className={`is-${(item.impact ?? 'Neutral').toLowerCase()}`}>{item.impact ?? 'Neutral'}</mark>
-            <strong>{item.actionJa ?? item.statusJa}</strong>
-          </span>
-          <span className="at-priority-impact">{item.reasonJa}</span>
-          <small>次に確認: {item.checkNextJa || '証拠更新待ち'}
-            {item.whatWouldChangeJa ? ` · 判断更新: ${item.whatWouldChangeJa}` : ''}</small>
-        </>;
-        return onNavigateToAsset ? <button type="button" key={item.symbol}
-          onClick={() => onNavigateToAsset(item.symbol)}>{content}</button>
-          : <div key={item.symbol}>{content}</div>;
-      })}
-    </section>}
+        {view.decisions[view.selectedMarket].evidence.map((line, index) => <p key={`${index}:${line}`}>{line}</p>)}
+        <div className="at-detail-actions">{aiButton}<button type="button" onClick={() => onNavigate('quality')}>Data Quality</button><button type="button" onClick={() => onNavigate('backup')}>Backup</button></div>
+      </div>}
+    </article>
 
     {view.macroMoves.length > 0 && <Compact title="MACRO"><div className="at-rows">
       {view.macroMoves.map((move) => <div key={move.id}><b>{move.label}</b><span>{fmtMove(move.value, move.suffix)}</span><em>{move.directionLabel ?? '→'} · {shortDate(move.asOf)}</em></div>)}
     </div></Compact>}
 
-    {view.positioning.length > 0 && <Compact title={`${view.selectedMarket} 需給`}
-      className="at-positioning"><div className="at-position-rows">
+    {view.positioning.length > 0 && <Compact title={`${view.selectedMarket} 需給`} className="at-positioning"
+      onActivate={() => {
+        try { sessionStorage.setItem('argus.replayContext', JSON.stringify({
+          schemaVersion: 'argus-replay-deeplink-v1', route: 'market-context',
+          selectedTab: 'LEDGER', market: view.selectedMarket,
+          instrumentId: projection?.instrumentId,
+          symbol: projection?.symbol, horizon: projection?.horizonDays ?? 5,
+          forecastId: projection?.forecastId,
+          finalAction: view.finalAction, actionScore: view.actionScore,
+          forecastAsOf: projection?.asOf,
+          directionProbabilities: projection?.directionProbabilities,
+          priceLevels: projection ? { current: projection.current, upper: projection.upside,
+            baseLow: projection.baseLow, baseHigh: projection.baseHigh,
+            lower: projection.downside, invalidation: projection.invalidation } : undefined,
+          brierSkill: projection?.brierSkill,
+          effectiveSample: projection?.effectiveSampleCount,
+        })); } catch { /* best effort */ }
+        try { sessionStorage.setItem('argus.scrollTo', 'market-ledger'); } catch { /* legacy deep-link compatibility */ }
+        onNavigate('regime');
+      }}><div className="at-position-rows">
       {view.positioning.map((row) => <div key={row.key} className={`is-${row.tone ?? 'neutral'}`}>
         <b>{row.label}</b><span>{row.value}</span>{row.detail && <em>{row.detail}</em>}</div>)}
     </div></Compact>}
@@ -417,6 +393,13 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         <span>最終確認 {view.newsCardState.lastChecked ? new Date(view.newsCardState.lastChecked).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '—'}</span></div>}
     </Compact>
 
+    {view.reviewSummary && <section className="at-review card">
+      <div><b>前回 {view.reviewSummary.action}</b><span>{view.reviewSummary.marketLabel} · {view.reviewSummary.horizon}</span></div>
+      {view.reviewSummary.status === 'matured' && view.reviewSummary.returnPct != null
+        ? <strong>実績 {view.reviewSummary.returnPct > 0 ? '+' : ''}{view.reviewSummary.returnPct.toFixed(2)}% · 評価：{view.reviewSummary.evaluationJa}</strong>
+        : view.reviewSummary.status === 'missing_price' ? <strong>価格取得待ち</strong>
+          : <strong>{view.reviewSummary.horizon}・答え合わせ待ち</strong>}
+    </section>}
   </div>;
 };
 

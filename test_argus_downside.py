@@ -201,30 +201,17 @@ def test_no_order_surface():
 # ── scanner integration: catalyst detector + index proxy (v10.99) ──
 def test_scanner_catalyst_detector_recent_vs_stale():
     import scanner
-    now = 1_800_000_000.0
-    fresh = "2027-01-15T06:00:00Z"
-    # Exact, explicitly admitted filing → catalyst present, never asserted negative.
-    c = scanner._downside_catalyst_for({
-        "symbol": "X", "filings": [{
-            "form": "8-K", "submitDateTime": fresh, "decisionUsable": True,
-        }]}, now_epoch=now)
+    from datetime import datetime, timezone, timedelta
+    today = datetime.now(timezone.utc).date()
+    fresh = (today - timedelta(days=1)).isoformat()
+    stale = (today - timedelta(days=30)).isoformat()
+    # recent filing → catalyst present, but never asserted negative
+    c = scanner._downside_catalyst_for({"symbol": "X", "filings": [{"form": "8-K", "filingDate": fresh}]})
     assert c and c["recent"] is True and c["confirmedNegative"] is False
-    # Date-only, future, stale, or not explicitly admitted facts are background.
-    for filing in (
-        {"form": "8-K", "filingDate": "2027-01-15", "decisionUsable": True},
-        {"form": "8-K", "submitDateTime": "2099-01-01T00:00:00Z", "decisionUsable": True},
-        {"form": "8-K", "submitDateTime": "2020-01-01T00:00:00Z", "decisionUsable": True},
-        {"form": "8-K", "submitDateTime": fresh, "decisionUsable": False},
-    ):
-        assert scanner._downside_catalyst_for(
-            {"symbol": "X", "filings": [filing]}, now_epoch=now) is None
-    # Earnings also require exact bounded release time and explicit admission.
-    assert scanner._downside_catalyst_for({"symbol": "X", "earnings": {
-        "daysUntil": 0, "publishedAt": fresh, "decisionUsable": True,
-    }}, now_epoch=now) is not None
-    assert scanner._downside_catalyst_for(
-        {"symbol": "X", "earnings": {"daysUntil": 0}},
-        now_epoch=now) is None
+    # stale filing only → no catalyst
+    assert scanner._downside_catalyst_for({"symbol": "X", "filings": [{"form": "8-K", "filingDate": stale}]}) is None
+    # earnings just passed → catalyst
+    assert scanner._downside_catalyst_for({"symbol": "X", "earnings": {"daysUntil": 0}}) is not None
     # nothing → None
     assert scanner._downside_catalyst_for({"symbol": "X"}) is None
 

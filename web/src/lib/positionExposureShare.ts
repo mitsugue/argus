@@ -5,121 +5,51 @@
 
 import type { PortfolioExposure } from '../domain/positionExposure';
 
-const DERIVED_SHARE_MAX_AGE_MS = 2 * 60_000;
-interface TimedShare<T> {
-  value: T;
-  publishedAtMs: number;
-  /** Earliest upstream evidence deadline. Re-publishing the same evidence does
-   * not extend this timestamp. */
-  authorityValidUntilMs: number;
-}
-function currentShare<T>(share: TimedShare<T> | null, nowMs: number): T | null {
-  return share && Number.isFinite(nowMs) && nowMs >= share.publishedAtMs
-    && nowMs - share.publishedAtMs <= DERIVED_SHARE_MAX_AGE_MS
-    && Number.isFinite(share.authorityValidUntilMs)
-    && nowMs <= share.authorityValidUntilMs
-    ? share.value : null;
+let latest: PortfolioExposure | null = null;
+
+export function publishExposure(pe: PortfolioExposure): void {
+  latest = pe;
 }
 
-function timed<T>(value: T, authorityValidUntilMs: number): TimedShare<T> {
-  return { value, publishedAtMs: Date.now(), authorityValidUntilMs };
-}
-
-let latest: TimedShare<PortfolioExposure> | null = null;
-
-export function publishExposure(pe: PortfolioExposure, authorityValidUntilMs: number): void {
-  latest = timed(pe, authorityValidUntilMs);
-}
-
-export function latestExposure(nowMs = Date.now()): PortfolioExposure | null {
-  return currentShare(latest, nowMs);
+export function latestExposure(): PortfolioExposure | null {
+  return latest;
 }
 
 // v11.12.0: latest device-local Action Priority items (same lifecycle contract).
 import type { APItem } from '../domain/actionPriority';
-let latestAP: TimedShare<APItem[]> | null = null;
-export function publishActionPriorities(items: APItem[], authorityValidUntilMs: number): void {
-  latestAP = timed(items, authorityValidUntilMs);
-}
-export function latestActionPriorities(nowMs = Date.now()): APItem[] {
-  return currentShare(latestAP, nowMs) ?? [];
-}
+let latestAP: APItem[] = [];
+export function publishActionPriorities(items: APItem[]): void { latestAP = items; }
+export function latestActionPriorities(): APItem[] { return latestAP; }
 
 // v11.13.0: latest device-local Session Brief (same lifecycle contract).
 import type { LocalBrief } from '../domain/sessionBrief';
-let latestSB: TimedShare<LocalBrief> | null = null;
-export function publishSessionBrief(b: LocalBrief, authorityValidUntilMs: number): void {
-  latestSB = timed(b, authorityValidUntilMs);
-}
-export function latestSessionBrief(nowMs = Date.now()): LocalBrief | null {
-  return currentShare(latestSB, nowMs);
-}
+let latestSB: LocalBrief | null = null;
+export function publishSessionBrief(b: LocalBrief): void { latestSB = b; }
+export function latestSessionBrief(): LocalBrief | null { return latestSB; }
 
 // v11.17.0: latest device-local Scenario Sets (same lifecycle contract).
 import type { LocalScenarioSet } from '../domain/scenario';
-let latestSC: TimedShare<LocalScenarioSet[]> | null = null;
-export function publishScenarios(sets: LocalScenarioSet[], authorityValidUntilMs: number): void {
-  latestSC = timed(sets, authorityValidUntilMs);
-}
-export function latestScenarios(nowMs = Date.now()): LocalScenarioSet[] {
-  return currentShare(latestSC, nowMs) ?? [];
-}
+let latestSC: LocalScenarioSet[] = [];
+export function publishScenarios(sets: LocalScenarioSet[]): void { latestSC = sets; }
+export function latestScenarios(): LocalScenarioSet[] { return latestSC; }
 
 // v11.18.0: latest device-local Position Plans (same lifecycle contract).
 import type { LocalPlan } from '../domain/positionPlan';
-let latestPP: TimedShare<LocalPlan[]> | null = null;
-export function publishPlans(plans: LocalPlan[], authorityValidUntilMs: number): void {
-  latestPP = timed(plans, authorityValidUntilMs);
-}
-export function latestPlans(nowMs = Date.now()): LocalPlan[] {
-  return currentShare(latestPP, nowMs) ?? [];
-}
+let latestPP: LocalPlan[] = [];
+export function publishPlans(plans: LocalPlan[]): void { latestPP = plans; }
+export function latestPlans(): LocalPlan[] { return latestPP; }
 
 // v11.19.0: latest device-local Portfolio Strategy (same lifecycle contract).
 import type { LocalStrategy } from '../domain/portfolioStrategy';
-let latestPS: TimedShare<LocalStrategy> | null = null;
-export function publishStrategy(s: LocalStrategy, authorityValidUntilMs: number): void {
-  latestPS = timed(s, authorityValidUntilMs);
-}
-export function latestStrategy(nowMs = Date.now()): LocalStrategy | null {
-  return currentShare(latestPS, nowMs);
-}
+let latestPS: LocalStrategy | null = null;
+export function publishStrategy(s: LocalStrategy): void { latestPS = s; }
+export function latestStrategy(): LocalStrategy | null { return latestPS; }
 
 // v11.19.1: latest device-local FIRE Core summary (same lifecycle contract).
 import type { LocalFireCore } from './fireCore';
-let latestFC: TimedShare<LocalFireCore> | null = null;
-export function publishFireCore(f: LocalFireCore, authorityValidUntilMs: number): void {
-  latestFC = timed(f, authorityValidUntilMs);
-}
-export function latestFireCore(nowMs = Date.now()): LocalFireCore | null {
-  return currentShare(latestFC, nowMs);
-}
-
-function clearDerivedDecisionShares() {
-  latest = null;
-  latestAP = null;
-  latestSB = null;
-  latestSC = null;
-  latestPP = null;
-  latestPS = null;
-  latestFC = null;
-}
-
-let activePublishers = 0;
-
-/** A route publishing derived decisions owns a lifecycle lease. The last
- * publisher leaving clears every authority-bearing singleton immediately, so
- * Notifications/Backup cannot re-stamp a former route's plan as current. */
-export function retainDerivedSharePublisher(): () => void {
-  activePublishers += 1;
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    activePublishers = Math.max(0, activePublishers - 1);
-    if (activePublishers === 0) clearDerivedDecisionShares();
-  };
-}
+let latestFC: LocalFireCore | null = null;
+export function publishFireCore(f: LocalFireCore): void { latestFC = f; }
+export function latestFireCore(): LocalFireCore | null { return latestFC; }
 
 // v11.22.0: latest Data Quality summary (Today fetch → pack/snapshot readers).
 export interface DataQualityShare {

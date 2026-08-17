@@ -1,5 +1,5 @@
 import React from 'react';
-import type { AssetItem } from '../../types/assetItem';
+import { useAssets } from '../../hooks/useAssets';
 import './EntityProfileEditor.css';
 
 // C.A.O.S. プロフィール editor (v10.179) — the association metadata is auto-generated, but
@@ -27,8 +27,9 @@ const textToRel = (s: string): RelatedEntity[] => s.split(/\n/).map((l) => {
   return name ? { name, relationJa: relationJa || '', type: type || '' } : null;
 }).filter(Boolean) as RelatedEntity[];
 
-export const EntityProfileEditor: React.FC<{ assets: AssetItem[] }> = ({ assets }) => {
+export const EntityProfileEditor: React.FC = () => {
   const backend = import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined;
+  const { assets } = useAssets();
   const [profiles, setProfiles] = React.useState<Record<string, Profile>>({});
   const [openSym, setOpenSym] = React.useState<string | null>(null);
   const [draft, setDraft] = React.useState<Draft | null>(null);

@@ -31,10 +31,10 @@ def serialize_state(active_events, log_events, *, now_iso):
 
 def _expired(env, now_epoch, parse_iso):
     exp = env.get("expiresAt")
-    if type(exp) is not str or not exp:
-        return True
+    if not exp:
+        return False
     ts = parse_iso(exp)
-    return ts is None or ts <= now_epoch
+    return ts is not None and ts < now_epoch
 
 
 def restore_state(snapshot, now_epoch, parse_iso, dedup_key_of):
@@ -50,19 +50,8 @@ def restore_state(snapshot, now_epoch, parse_iso, dedup_key_of):
         if _expired(env, now_epoch, parse_iso):
             continue
         try:
-            restored = dict(env)
-            # The snapshot is durable display/history, not a live provider
-            # attestation.  A fresh provider observation must re-establish this
-            # stamp after restart before EventCard can treat a price event as
-            # market confirmation.
-            restored["sourceTimeValidated"] = False
-            restored["restoredFromSnapshot"] = True
-            active[dedup_key_of(restored)] = restored
+            active[dedup_key_of(env)] = env
         except Exception:
             continue
-    log = [
-        {**e, "sourceTimeValidated": False,
-         "restoredFromSnapshot": True}
-        for e in (snapshot.get("log") or []) if isinstance(e, dict)
-    ][:200]
+    log = [e for e in (snapshot.get("log") or []) if isinstance(e, dict)][:200]
     return active, log

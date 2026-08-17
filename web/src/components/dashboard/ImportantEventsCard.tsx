@@ -4,6 +4,7 @@ import { useMacroEventAnalysis, type MacroAnalysis } from '../../hooks/useMacroE
 import { useDashboardEvents } from '../../hooks/useDashboardEvents';
 import { deriveDashboardEventDisplayState, type DashboardEvent, type DashboardEventReaction } from '../../lib/dashboardEventState';
 import { useLocale, t, pick } from '../../i18n';
+import type { RouteKey } from '../NavRail';
 import { buildReviewPackMarkdown, copyPack } from '../../lib/reviewPack';
 import { EVENT_DESC_JA } from '../../lib/eventLabels';
 import './ImportantEventsCard.css';
@@ -274,32 +275,47 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
   );
 };
 
-interface Props { embedded?: boolean; }
+interface Props { onNavigate?: (key: RouteKey) => void; embedded?: boolean; }
 
 // `embedded` = the lower block of the top command card (divider only, no card
 // chrome) per spec §2. Standalone = its own card (used elsewhere).
 
-export const ImportantEventsCard: React.FC<Props> = ({ embedded }) => {
+// v11.14.0 (owner): 「カレンダーを見る」はMarket Contextのイベントカレンダー
+// セクション先頭へ確実に着地させる(従来はページ遷移だけでスクロール位置が
+// 中途半端に残った)。ページは非同期マウントなので短いリトライで探す。
+function gotoCalendar(onNavigate?: (k: string) => void): void {
+  onNavigate?.('regime');
+  let tries = 0;
+  let settles = 0;
+  const tick = () => {
+    const el = document.getElementById('event-calendar');
+    if (el) {
+      el.scrollIntoView({ block: 'start', behavior: 'auto' });
+      // 上のセクション(Matrix等)が遅延マウントしてレイアウトが動くので、
+      // 数回スクロールを当て直して着地を固定する。
+      if (++settles < 5) setTimeout(tick, 350);
+      return;
+    }
+    if (++tries < 12) setTimeout(tick, 180);
+  };
+  setTimeout(tick, 120);
+}
+
+export const ImportantEventsCard: React.FC<Props> = ({ onNavigate, embedded }) => {
   useLocale();
-  const [showAll, setShowAll] = React.useState(false);
   const dash = useDashboardEvents();             // v11.4.1: unified event feed (preferred)
   const { data } = useImportantEvents();
   const analysis = useMacroEventAnalysis();      // v11.3.2: C.A.O.S. pre/post overlay (fallback)
 
   // Preferred path: the unified dashboard-events surface (single source of truth).
   if (dash && dash.items.length > 0) {
-    const shown = showAll ? dash.items : dash.items.slice(0, 5);
+    const shown = dash.items.slice(0, 5);
     const lastRefresh = (dash.status?.lastHotRefreshAt as string) || undefined;
     return (
-      <section id="important-events"
-        className={`${embedded ? 'ie-embed' : 'ie-card'}${showAll ? ' is-expanded' : ''}`}
-        aria-label="Important events">
+      <section id="important-events" className={embedded ? 'ie-embed' : 'ie-card'} aria-label="Important events">
         <div className="ie-head">
           <span className="ie-title">{t('ie.title')}</span>
-          {dash.items.length > 5 && <button className="ie-viewall"
-            onClick={() => setShowAll((value) => !value)}>
-            {showAll ? '折りたたむ' : t('ie.viewAll')} {showAll ? '↑' : '↓'}
-          </button>}
+          <button className="ie-viewall" onClick={() => gotoCalendar(onNavigate as never)}>{t('ie.viewAll')} →</button>
         </div>
         <div className="ie-rows">
           {shown.map((ev, i) => <UnifiedEventRow key={ev.displayEventId} ev={ev} open={i === 0} lastRefresh={lastRefresh} />)}
@@ -339,18 +355,13 @@ export const ImportantEventsCard: React.FC<Props> = ({ embedded }) => {
   // Fallback: legacy important-events + macro overlay (if /dashboard-events is unavailable).
   const events = data?.events ?? [];
   if (events.length === 0) return null;          // calm: nothing shown when no high/critical events
-  const shown = showAll ? events : events.slice(0, 5);
+  const shown = events.slice(0, 5);              // desktop ≤5; CSS hides beyond 3 on mobile
 
   return (
-    <section id="important-events"
-      className={`${embedded ? 'ie-embed' : 'ie-card'}${showAll ? ' is-expanded' : ''}`}
-      aria-label="Important events">
+    <section id="important-events" className={embedded ? 'ie-embed' : 'ie-card'} aria-label="Important events">
       <div className="ie-head">
         <span className="ie-title">{t('ie.title')}</span>
-        {events.length > 5 && <button className="ie-viewall"
-          onClick={() => setShowAll((value) => !value)}>
-          {showAll ? '折りたたむ' : t('ie.viewAll')} {showAll ? '↑' : '↓'}
-        </button>}
+        <button className="ie-viewall" onClick={() => gotoCalendar(onNavigate as never)}>{t('ie.viewAll')} →</button>
       </div>
       <div className="ie-rows">
         {shown.map((e, i) => (

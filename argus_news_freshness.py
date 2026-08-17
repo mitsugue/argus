@@ -9,9 +9,7 @@ item may play:
     recent  <= 24h   → may be a candidate lead
     stale   <= 72h   → background only (過去材料寄り) — not a primary lead
     old     >  72h   → historical (過去材料) — never a current lead
-    unknown_time     → background only (no time = no timing integrity)
-    date_only        → background only (a date cannot establish causal order)
-    future_time      → background only (future-dated evidence is not current truth)
+    unknown_time     → cannot be a primary lead (no time = no timing integrity)
 
 The mover-cause engine applies this to demote/exclude, and the UI shows old items
 as 過去材料. Pure: caller passes now_iso; no clocks, no I/O.
@@ -28,8 +26,6 @@ STALE_H = 72
 FRESHNESS_JA = {
     "fresh": "6時間以内", "recent": "24時間以内", "stale": "24〜72時間前",
     "old": "72時間超前(過去材料)", "unknown_time": "発表時刻不明",
-    "date_only": "発表日のみ(時刻不明)",
-    "future_time": "未来時刻(時刻整合未確認)",
 }
 
 
@@ -38,11 +34,8 @@ def _epoch(v: Any, naive_utc_offset_hours: float = 0.0) -> Optional[float]:
     UTC+offset — JP feeds pass 9)."""
     if v is None:
         return None
-    if isinstance(v, bool):
-        return None
     if isinstance(v, (int, float)):
-        import math
-        return float(v) if v > 0 and math.isfinite(float(v)) else None
+        return float(v) if v > 0 else None
     s = str(v).strip()
     if not s:
         return None
@@ -61,7 +54,7 @@ def _epoch(v: Any, naive_utc_offset_hours: float = 0.0) -> Optional[float]:
     if dt is None:
         for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y-%m-%d"):
             try:
-                dt = datetime.strptime(s, fmt)
+                dt = datetime.strptime(s[:len(fmt) + 2], fmt)
                 break
             except Exception:
                 continue
@@ -77,42 +70,19 @@ def age_hours(published_at: Any, now_iso: str,
               naive_utc_offset_hours: float = 0.0) -> Optional[float]:
     pub = _epoch(published_at, naive_utc_offset_hours)
     now = _epoch(now_iso)
-    if pub is None or now is None or not has_exact_time(now_iso):
+    if pub is None or now is None:
         return None
-    age = (now - pub) / 3600.0
-    # Never clamp a future timestamp to age zero.  None is the conservative
-    # public API result; classify() distinguishes the future-time reason.
-    return age if age >= 0 else None
-
-
-def has_exact_time(value: Any) -> bool:
-    """Whether a supported timestamp carries clock precision for causal order."""
-    if isinstance(value, bool) or value is None:
-        return False
-    if isinstance(value, (int, float)):
-        return _epoch(value) is not None
-    import re
-    return bool(re.search(r"\d{1,2}:\d{2}", str(value).strip()))
+    return max(0.0, (now - pub) / 3600.0)
 
 
 def classify(published_at: Any, now_iso: str,
              naive_utc_offset_hours: float = 0.0) -> Dict[str, Any]:
     """Age → freshness class + role + primary-lead eligibility. Deterministic."""
-    pub = _epoch(published_at, naive_utc_offset_hours)
-    now = _epoch(now_iso)
-    if pub is None or now is None or not has_exact_time(now_iso):
+    age = age_hours(published_at, now_iso, naive_utc_offset_hours)
+    if age is None:
         return {"ageHours": None, "freshness": "unknown_time",
-                "eligibleAsPrimaryLead": False, "role": "background",
+                "eligibleAsPrimaryLead": False, "role": "candidate",
                 "staleReasonJa": "発表時刻が不明のため現在材料と断定できない。"}
-    if not has_exact_time(published_at):
-        return {"ageHours": None, "freshness": "date_only",
-                "eligibleAsPrimaryLead": False, "role": "background",
-                "staleReasonJa": "発表日のみで時刻がないため値動きとの因果順序を確認できない。"}
-    if pub > now:
-        return {"ageHours": None, "freshness": "future_time",
-                "eligibleAsPrimaryLead": False, "role": "background",
-                "staleReasonJa": "発表時刻が現在より後のため現在材料として使用しない。"}
-    age = (now - pub) / 3600.0
     if age <= FRESH_H:
         return {"ageHours": round(age, 1), "freshness": "fresh",
                 "eligibleAsPrimaryLead": True, "role": "primary_lead", "staleReasonJa": ""}
@@ -155,10 +125,6 @@ def label_ja(freshness: str, age_h: Optional[float] = None) -> str:
         return f"過去材料寄り({int(age_h)}時間前)" if isinstance(age_h, (int, float)) else "過去材料寄り"
     if freshness == "unknown_time":
         return "時刻不明"
-    if freshness == "date_only":
-        return "日付のみ"
-    if freshness == "future_time":
-        return "未来時刻"
     if isinstance(age_h, (int, float)):
         return f"{int(age_h)}時間前" if age_h >= 1 else "1時間以内"
     return ""

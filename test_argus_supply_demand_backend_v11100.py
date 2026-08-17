@@ -32,6 +32,21 @@ def test_supply_demand_single_and_list(monkeypatch):
         assert "signals" in d2
 
 
+def test_supply_demand_status_honest_sources(monkeypatch):
+    _no_fetch(monkeypatch)
+    with scanner.app.test_client() as c:
+        r = c.get("/api/argus/supply-demand/status")
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d["schemaVersion"] == "supply-demand-status-v1"
+        disabled = {x["source"] for x in d["sourcesDisabledWithReason"]}
+        assert "逆日歩(品貸料)" in disabled            # never pretended available
+        assert any("moomoo" in x for x in disabled)   # JP realtime = intentional
+        assert "意図的" in d["noteJa"]
+        # public payload carries no private-position fields
+        assert scanner.argus_portfolio_sync.contains_sensitive(d) == []
+
+
 def test_cold_cache_yields_unknown_not_fabricated(monkeypatch):
     _no_fetch(monkeypatch)
     sig = scanner._supply_demand_signal_for("9999")   # no caches for this code
@@ -79,3 +94,16 @@ def test_handoff_prompt_gains_sd_section(monkeypatch):
         [scanner._supply_demand_signal_for("6146")])
     assert sh["title"].startswith("Supply / Demand")
     assert "断定しない" in sh["sourceLimitJa"]
+
+
+def test_regressions_all_layers(monkeypatch):
+    _no_fetch(monkeypatch)
+    with scanner.app.test_client() as c:
+        for path, schema in (("/api/argus/bridge/status", "bridge-status-v1"),
+                             ("/api/argus/institutional-intel/status", "institutional-intel-status-v1"),
+                             ("/api/argus/flow-attribution/status", "flow-attribution-status-v1"),
+                             ("/api/argus/position-exposure/status", "position-exposure-status-v1"),
+                             ("/api/argus/portfolio-sync/status", "portfolio-sync-status-v1")):
+            r = c.get(path)
+            assert r.status_code == 200, path
+            assert r.get_json()["schemaVersion"] == schema
