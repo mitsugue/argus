@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const repo = path.resolve(root, '..');
 const source = fs.readFileSync(path.join(root, 'src/domain/runtimeVersionTruth.ts'), 'utf8');
+const viteSource = fs.readFileSync(path.join(root, 'vite.config.ts'), 'utf8');
 const hookSource = fs.readFileSync(
   path.join(root, 'src/hooks/useProductionBackendIdentity.ts'), 'utf8');
 const output = ts.transpileModule(source, {
@@ -32,7 +34,37 @@ assert.deepEqual(identity, {
   deploymentId: 'dep-d9rrkmgae00c73a9acl0',
   deployedAt: '2026-08-08T23:52:52Z',
 });
-assert.equal(truth.runtimeVersionLabel('13.3.6', identity), 'UI v13.3.6 · API v13.4.5');
+const productManifest = JSON.parse(fs.readFileSync(path.join(repo, 'product-version.json'), 'utf8'));
+assert.deepEqual(productManifest, {
+  schemaVersion: 'argus-product-version-v1', productVersion: 'v13',
+});
+
+const baseTruth = {
+  productVersion: productManifest.productVersion,
+  frontendVersion: '13.3.6',
+  frontendBuildSha: '183b940c08505f1373a3b34b0c7fc2bc37bbae90',
+  backendVersion: identity.backendVersion,
+  backendBuildSha: identity.backendSha,
+};
+assert.equal(truth.runtimeVersionLabel(baseTruth.productVersion), 'v13');
+assert.deepEqual(truth.runtimeVersionTruth(baseTruth), {
+  productVersion: 'v13',
+  frontendVersion: '13.3.6',
+  frontendBuildSha: '183b940c08505f1373a3b34b0c7fc2bc37bbae90',
+  backendVersion: '13.4.5',
+  backendBuildSha: '183b940c08505f1373a3b34b0c7fc2bc37bbae90',
+});
+assert.equal(truth.runtimeVersionTruth({
+  ...baseTruth, frontendVersion: '14.8.1',
+}).productVersion, 'v13');
+assert.equal(truth.runtimeVersionTruth({
+  ...baseTruth, backendVersion: '15.0.0',
+}).productVersion, 'v13');
+assert.deepEqual(
+  [truth.runtimeVersionTruth(baseTruth).frontendVersion,
+    truth.runtimeVersionTruth(baseTruth).backendVersion],
+  ['13.3.6', '13.4.5'],
+);
 
 for (const malformed of [
   null,
@@ -46,8 +78,13 @@ for (const malformed of [
 ]) {
   assert.equal(truth.parseProductionBackendIdentity(malformed), null);
 }
-assert.equal(truth.runtimeVersionLabel('13.3.6', null), 'UI v13.3.6 · API UNKNOWN');
-assert.equal(truth.runtimeVersionLabel('malformed', identity), 'UI UNKNOWN · API v13.4.5');
+assert.equal(truth.runtimeVersionLabel('malformed'), 'product version unavailable');
+assert.equal(truth.runtimeVersionTruth({
+  ...baseTruth, productVersion: '13.3.6',
+}).productVersion, null);
+assert.match(viteSource, /new URL\('\.\.\/product-version\.json'/);
+assert.match(viteSource, /throw new Error\('invalid canonical product-version\.json'\)/);
+assert.doesNotMatch(viteSource, /productVersion[^\n]*readVersion\(\)/);
 
 assert.match(hookSource, /if \(!navigator\.onLine\)[\s\S]*return;/);
 assert.ok(hookSource.indexOf('if (!navigator.onLine)') < hookSource.indexOf('await fetch('));

@@ -22,6 +22,13 @@ class RenderDeployGuardTests(unittest.TestCase):
             "[render skip] fix: acceptance")
         self.assertTrue(accepted)
 
+    def test_shared_warm_profile_action_is_frontend_only(self):
+        accepted, reason = render_deploy_guard.validate(
+            [".github/actions/warm-profile-seed/action.yml"],
+            "[skip render] fix: acceptance")
+        self.assertTrue(accepted)
+        self.assertEqual("frontend_only_render_skip_confirmed", reason)
+
     def test_backend_change_rejects_skip_phrase(self):
         accepted, reason = render_deploy_guard.validate(
             ["scanner.py"], "[skip render] fix: backend")

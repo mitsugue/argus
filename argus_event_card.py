@@ -55,16 +55,19 @@ def corroboration_level(*, independent_family_count: int, has_official: bool,
     """Fold independent-source-family count + official + market confirmation into the
     6-level vocabulary. Two syndicated copies of ONE wire are ONE family, so the caller
     must pass the INDEPENDENT family count (not the article count)."""
-    off, mkt = bool(has_official), bool(market_confirmed)
+    family_count = (independent_family_count
+                    if type(independent_family_count) is int and
+                    independent_family_count >= 0 else 0)
+    off, mkt = has_official is True, market_confirmed is True
     if off and mkt:
         return "official_and_market_confirmed"
     if mkt:
         return "market_confirmed"
     if off:
         return "official"
-    if independent_family_count >= 2:
+    if family_count >= 2:
         return "multi_source"
-    if independent_family_count >= 1:
+    if family_count >= 1:
         return "single_source"
     return "none"
 
@@ -73,13 +76,18 @@ def resolve_trigger_role(*, corroboration: str, theme_only: bool, event_after_mo
                          has_official: bool, independent_family_count: int) -> str:
     """The discipline gate. Association is never silently promoted to cause."""
     # An event that post-dates the price move cannot be the immediate trigger.
-    if event_after_move:
-        return "background_theme" if theme_only else "vulnerability_context"
+    family_count = (independent_family_count
+                    if type(independent_family_count) is int and
+                    independent_family_count >= 0 else 0)
+    official = has_official is True
+    is_theme = theme_only is True
+    if event_after_move is True:
+        return "background_theme" if is_theme else "vulnerability_context"
     # A theme-only association needs corroboration before it can be a catalyst.
-    if theme_only and corroboration in ("none", "single_source"):
+    if is_theme and corroboration in ("none", "single_source"):
         return "background_theme"
     # Fewer than two independent families AND no official source → candidate at most.
-    if independent_family_count < 2 and not has_official:
+    if family_count < 2 and not official:
         return "candidate_catalyst"
     # confirmed_cause requires BOTH an official source AND market confirmation.
     if corroboration == "official_and_market_confirmed":
@@ -123,11 +131,20 @@ def build_card(envelope: Dict[str, Any], *,
     caller via research_mesh) OR an explicit `independent_family_count`/`has_official`."""
     env = envelope or {}
     guard = guard or {}
-    src = list(source_ids or ([env.get("source")] if env.get("source") else []))
+    src = (list(source_ids) if type(source_ids) is list and
+           all(type(item) is str and item for item in source_ids)
+           else ([env.get("source")] if type(env.get("source")) is str and
+                 env.get("source") else []))
     fams = {s for s in src if s}
-    fam_count = independent_family_count if independent_family_count is not None else len(fams)
-    official = bool(has_official) if has_official is not None else any(
-        str(s).lower().startswith(("official", "edinet", "tdnet", "sec", "boj", "fed")) for s in src)
+    # Authority is explicit and exact-typed. Display source names and envelope
+    # provenance never infer corroboration or official status on their own.
+    fam_count = (independent_family_count
+                 if type(independent_family_count) is int and
+                 independent_family_count >= 0 else 0)
+    official = has_official is True
+    market_confirmed = market_confirmed is True
+    theme_only = theme_only is True
+    event_after_move = event_after_move is True
 
     corr = corroboration_level(independent_family_count=fam_count,
                                has_official=official, market_confirmed=market_confirmed)

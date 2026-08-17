@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
-// ARGUS V12.1.0 — Multi-Agent OSINT Engine のFE接続。
-// 公開GET=cached-only / 公開POST(deep-dive)=決定論部分のみ+スカウトはキュー
-// (外部AIは公開画面から絶対に起動しない — 管理側の定期実行で反映)。
+// Recovery Phase A: cached public GET remains available. Mutation helpers are
+// absent because the static bundle must never carry admin auth.
 
 export interface OsintVerifiedSource {
   titleJa: string; url?: string | null; sourceName?: string | null;
@@ -127,11 +126,11 @@ export interface OsintProgress {
   };
 }
 
-interface State { inv: OsintInvestigation | null; loading: boolean; running: boolean;
+interface State { inv: OsintInvestigation | null; loading: boolean;
   progress: OsintProgress | null; queuePosition: number | null; etaMin: number | null; }
 
-export function useOsintInvestigation(symbol: string, market: string) {
-  const [state, setState] = useState<State>({ inv: null, loading: true, running: false,
+export function useOsintInvestigation(symbol: string) {
+  const [state, setState] = useState<State>({ inv: null, loading: true,
     progress: null, queuePosition: null, etaMin: null });
   const backend = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '');
 
@@ -147,58 +146,5 @@ export function useOsintInvestigation(symbol: string, market: string) {
 
   useEffect(() => { load(); }, [load]);
 
-  const runDeepDive = useCallback(async (privacyMode: 'redacted' | 'owner_context' | 'full_private') => {
-    if (!backend) return null;
-    setState((s) => ({ ...s, running: true }));
-    try {
-      const r = await fetch(`${backend}/api/argus/osint/deep-dive`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol, market, mode: 'deep', privacyMode }),
-      });
-      const d = await r.json();
-      setState((s) => ({ ...s, inv: d.investigation ?? s.inv, running: false,
-        progress: d.progress ?? s.progress, queuePosition: d.queuePosition ?? s.queuePosition,
-        etaMin: d.nextCronEtaMin ?? s.etaMin }));
-      return d;
-    } catch {
-      setState((s) => ({ ...s, running: false }));
-      return null;
-    }
-  }, [backend, symbol, market]);
-
-  const verifyGaps = useCallback(async () => {
-    if (!backend) return null;
-    try {
-      const r = await fetch(`${backend}/api/argus/osint/verify-gaps`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol }),
-      });
-      const d = await r.json();
-      if (d.investigation) setState((s) => ({ ...s, inv: d.investigation }));
-      return d;
-    } catch { return null; }
-  }, [backend, symbol]);
-
-  const verifyUrl = useCallback(async (url: string) => {
-    if (!backend || !url) return null;
-    try {
-      const r = await fetch(`${backend}/api/argus/osint/url-verify`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
-      });
-      return await r.json();
-    } catch { return null; }
-  }, [backend]);
-
-  const postTerms = useCallback(async (terms: string[]) => {
-    if (!backend || !terms.length) return;
-    try {
-      await fetch(`${backend}/api/argus/osint/terms`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol, terms: terms.slice(0, 8) }),
-      });
-    } catch { /* enqueue-only — 失敗しても静かに */ }
-  }, [backend, symbol]);
-
-  return { ...state, reload: load, runDeepDive, postTerms, verifyGaps, verifyUrl };
+  return { ...state, reload: load };
 }

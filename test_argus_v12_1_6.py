@@ -155,13 +155,11 @@ def test_ui_shows_provisional_label():
 
 
 def test_dq_shows_baseline_and_2x_allowance():
-    with scanner.app.test_client() as c:
-        r = c.get("/api/argus/data-quality")
-        oh = (r.get_json() or {}).get("osintHealth") or {}
-        gb = oh.get("geminiBaseline") or {}
-        assert "baselineType" in gb
-        assert "twoXClaimAllowed" in gb
-        assert gb["twoXClaimAllowed"] in (True, False)
+    oh = (scanner._data_quality_console() or {}).get("osintHealth") or {}
+    gb = oh.get("geminiBaseline") or {}
+    assert "baselineType" in gb
+    assert "twoXClaimAllowed" in gb
+    assert gb["twoXClaimAllowed"] in (True, False)
 
 
 def test_pack_includes_baseline_method():

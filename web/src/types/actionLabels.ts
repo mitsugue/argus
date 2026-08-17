@@ -24,6 +24,9 @@ export interface ActionLabel {
   };
   nextConditionJa: string;
   status: 'live' | 'mock';
+  /** Round 2: legacy classifier output is evidence, never Primary Action. */
+  authorityRole?: 'EVIDENCE_ONLY';
+  legacyShadow?: boolean;
 }
 
 export interface MarketPosture {
@@ -54,6 +57,8 @@ export interface ActionLabelsSnapshot {
   status: SnapshotStatus;
   asOf: string;
   engineVersion: string;
+  authorityRole?: 'EVIDENCE_ONLY';
+  finalDecisionAuthorityActive?: false;
   marketPosture: MarketPosture;
   calibration?: Calibration;
   visibility?: ActionVisibility;   // v11 — the guard's live effect on judgment

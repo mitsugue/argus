@@ -18,10 +18,10 @@ from typing import Any, Dict, List, Optional
 
 SCHEMA_VERSION = "session-brief-v1"
 
-SESSION_TYPES = ("morning", "pre_market", "intraday", "close", "after_close",
-                 "weekend", "unknown")
+SESSION_TYPES = ("morning", "pre_market", "intraday", "lunch_break",
+                 "close", "after_close", "holiday", "weekend", "unknown")
 MARKET_STATUSES = ("jp_open", "us_open", "both_closed", "pre_market", "after_hours",
-                   "weekend", "holiday", "unknown")
+                   "jp_lunch_break", "weekend", "holiday", "unknown")
 OWNER_MODES = ("attack", "wait", "protect", "monitor", "review", "no_action", "unknown")
 MODE_JA = {"attack": "攻める日", "wait": "待つ日", "protect": "守る日",
            "monitor": "監視の日", "review": "反省/記録の日",
@@ -29,22 +29,60 @@ MODE_JA = {"attack": "攻める日", "wait": "待つ日", "protect": "守る日"
 COMPLIANCE = "今日の作戦メモであり売買指示ではない。"
 
 
-def resolve_session(now_jst_hour: int, weekday: int,
-                    jp_open: bool, us_open: bool) -> Dict[str, str]:
-    """Deterministic session/market status from clock inputs (caller supplies
-    real values — this module never reads the clock itself)."""
-    if weekday >= 5:
-        return {"sessionType": "weekend", "marketStatus": "weekend"}
-    if jp_open or us_open:
-        return {"sessionType": "intraday",
-                "marketStatus": "jp_open" if jp_open else "us_open"}
-    if 5 <= now_jst_hour < 9:
-        return {"sessionType": "morning", "marketStatus": "pre_market"}
-    if 15 <= now_jst_hour < 22:
-        return {"sessionType": "after_close", "marketStatus": "after_hours"}
-    if 22 <= now_jst_hour or now_jst_hour < 5:
-        return {"sessionType": "pre_market", "marketStatus": "pre_market"}
-    return {"sessionType": "close", "marketStatus": "both_closed"}
+def resolve_canonical_session(jp_state: Dict[str, Any],
+                              us_state: Dict[str, Any]) -> Dict[str, Any]:
+    """Project server market-clock states without owning another clock.
+
+    Malformed/unavailable authority is UNKNOWN.  JP lunch and exchange closure
+    identities remain explicit; they are never reclassified from a JST hour.
+    """
+    allowed_jp = {
+        "PRE_MARKET", "MORNING_SESSION", "LUNCH_BREAK",
+        "AFTERNOON_SESSION", "POST_MARKET", "WEEKEND_CLOSED",
+        "HOLIDAY_CLOSED", "EMERGENCY_CLOSED",
+    }
+    allowed_us = {
+        "OVERNIGHT_CLOSED", "PRE_MARKET", "REGULAR", "AFTER_HOURS",
+        "WEEKEND_CLOSED", "HOLIDAY_CLOSED", "EMERGENCY_CLOSED",
+    }
+    if not isinstance(jp_state, dict) or not isinstance(us_state, dict):
+        return {"sessionType": "unknown", "marketStatus": "unknown",
+                "canonicalSessions": None}
+    jp = jp_state.get("session")
+    us = us_state.get("session")
+    if (not isinstance(jp, str) or jp not in allowed_jp
+            or not isinstance(us, str) or us not in allowed_us
+            or not isinstance(jp_state.get("isTradingDay"), bool)
+            or not isinstance(us_state.get("isTradingDay"), bool)):
+        return {"sessionType": "unknown", "marketStatus": "unknown",
+                "canonicalSessions": None}
+    sessions = {"JP": jp, "US": us}
+    if jp in ("MORNING_SESSION", "AFTERNOON_SESSION"):
+        return {"sessionType": "intraday", "marketStatus": "jp_open",
+                "canonicalSessions": sessions}
+    if us == "REGULAR":
+        return {"sessionType": "intraday", "marketStatus": "us_open",
+                "canonicalSessions": sessions}
+    if jp == "LUNCH_BREAK":
+        return {"sessionType": "lunch_break",
+                "marketStatus": "jp_lunch_break",
+                "canonicalSessions": sessions}
+    closed = {"WEEKEND_CLOSED", "HOLIDAY_CLOSED", "EMERGENCY_CLOSED"}
+    if jp in closed or us in closed:
+        if jp == "WEEKEND_CLOSED" and us == "WEEKEND_CLOSED":
+            kind, status = "weekend", "weekend"
+        else:
+            kind, status = "holiday", "holiday"
+        return {"sessionType": kind, "marketStatus": status,
+                "canonicalSessions": sessions}
+    if jp == "PRE_MARKET" or us == "PRE_MARKET":
+        return {"sessionType": "pre_market", "marketStatus": "pre_market",
+                "canonicalSessions": sessions}
+    if jp == "POST_MARKET" or us == "AFTER_HOURS":
+        return {"sessionType": "after_close", "marketStatus": "after_hours",
+                "canonicalSessions": sessions}
+    return {"sessionType": "close", "marketStatus": "both_closed",
+            "canonicalSessions": sessions}
 
 
 def build_brief(inputs: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
@@ -68,15 +106,23 @@ def build_brief(inputs: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
                   if i.get("category") in ("held_risk", "flow_watch", "supply_demand_watch")
                   and i.get("isHeld") is True]
     avoid = [i for i in items if i.get("category") == "avoid_chase"]
-    adds = [i for i in items if i.get("category") in ("add_candidate", "add_only_on_pullback")]
+    raw_adds = [i for i in items if i.get("category") in
+                ("add_candidate", "add_only_on_pullback")]
+    session_blocks_opportunity = st in (
+        "lunch_break", "close", "after_close", "holiday", "weekend", "unknown")
+    adds = [] if session_blocks_opportunity else raw_adds
     event_wait = [i for i in items if i.get("blockingReason") == "event_pending"]
     data_missing = [i for i in items if i.get("category") == "data_missing"]
 
     # ── ownerMode ladder (worst wins; attack requires a genuinely clear day) ──
-    if st == "weekend":
-        mode = "review"
-    elif p0:
+    if p0:
         mode = "protect"
+    elif st in ("weekend", "holiday"):
+        mode = "review"
+    elif st == "unknown":
+        mode = "protect" if held_risks else "unknown"
+    elif st in ("lunch_break", "close", "after_close"):
+        mode = "protect" if held_risks else "monitor"
     elif conflicting:
         mode = "monitor"
     elif events or event_wait:
@@ -103,6 +149,12 @@ def build_brief(inputs: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
     # ── headline ─────────────────────────────────────────────────────────────
     if st == "weekend":
         headline = "週末レビュー：市場は休場です。新規判断より記録と確認の日。"
+    elif st == "holiday":
+        headline = "休場レビュー：取引所カレンダーは休場です。新規判断は行いません。"
+    elif st == "lunch_break":
+        headline = "昼休み：後場の公式セッション確認まで新規判断は保留です。"
+    elif st == "unknown":
+        headline = "セッション判定不能：公式カレンダー確認まで新規判断は保留です。"
     elif p0:
         headline = f"最優先確認あり：{name_of(p0[0])} — {p0[0].get('ownerReadableWhyJa', '')[:40]}"
     elif events:
@@ -112,10 +164,14 @@ def build_brief(inputs: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
 
     # ── summary(3-5文) — 保有リスク→イベント→機会 の順を強制 ────────────────
     parts: List[str] = []
-    if st == "weekend":
+    if st in ("weekend", "holiday"):
         parts.append("市場は休場です。今日は新規判断より、保有数量・取得単価・スナップショット同期の確認が優先です。")
         if data_missing:
             parts.append(f"データ未入力の保有銘柄が{len(data_missing)}件あります。")
+    elif st in ("lunch_break", "close", "after_close", "unknown"):
+        parts.append("公式セッションが新規判断可能な状態ではないため、機会シグナルは保留し保有リスクの確認を優先します。")
+        for i in held_risks[:2]:
+            parts.append(f"{name_of(i)}は{i.get('ownerReadableWhyJa', '')[:44]}")
     else:
         parts.append("P0はありません。" if not p0 else
                      f"P0が{len(p0)}件 — まず{name_of(p0[0])}の確認から。")
@@ -142,8 +198,10 @@ def build_brief(inputs: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
         what_not.append("イベント結果を見る前に買い増ししない")
     if p0 or held_risks:
         what_not.append("原因未確認のまま保有銘柄をナンピンしない")
-    if st == "weekend":
+    if st in ("weekend", "holiday"):
         what_not.append("休場中の値動き予想で新規判断をしない")
+    elif session_blocks_opportunity:
+        what_not.append("公式セッション確認前に新規・買い増し判断をしない")
     if not what_not:
         what_not.append("一度に大きく買わない(分割が基本)")
 
@@ -153,7 +211,7 @@ def build_brief(inputs: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
             checks.append(f"{name_of(i)}: {i['checkNextJa'][:44]}")
     if events and not checks:
         checks.append(f"{events[0]}の結果と直後の金利・指数反応")
-    if st == "weekend":
+    if st in ("weekend", "holiday"):
         checks = ["保有数量・取得単価の入力状態", "バックアップ/スナップショットの最終日時",
                   "答え合わせ待ちの判断記録"] if not checks else checks
     if not checks:
@@ -184,6 +242,7 @@ def build_brief(inputs: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
         "id": "sb-" + hashlib.md5(f"{now_iso[:13]}:{st}".encode()).hexdigest()[:10],
         "asOf": now_iso,
         "sessionType": st, "marketStatus": ms,
+        "canonicalSessions": inputs.get("canonicalSessions"),
         "ownerMode": mode, "ownerModeJa": MODE_JA[mode],
         "headlineJa": headline[:120],
         "summaryJa": summary[:400],

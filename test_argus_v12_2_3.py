@@ -132,7 +132,7 @@ def test_incident_open_close(monkeypatch):
 
 def test_dq_research_measurement_honest():
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json() or {}
+        d = scanner._data_quality_console()
         rm = d.get("researchMeasurement") or {}
         assert rm.get("status") in ("measured", "not_measured")
         assert "legacy" in rm.get("legacyNoteJa", "") or             "0.92" in rm.get("legacyNoteJa", "")

@@ -1,17 +1,20 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
-const formatter = readFileSync(new URL('../src/lib/marketLedgerFormat.ts', import.meta.url), 'utf8');
-const panel = readFileSync(new URL('../src/components/regime/MarketLedgerPanel.tsx', import.meta.url), 'utf8');
+const hook = readFileSync(new URL('../src/hooks/useMarketLedger.ts', import.meta.url), 'utf8');
+const command = readFileSync(new URL('../src/routes/CommandCenter.tsx', import.meta.url), 'utf8');
+const today = readFileSync(new URL('../src/components/today/ArgusTodayPanel.tsx', import.meta.url), 'utf8');
+const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 
-assert.match(formatter, /typeof summary === 'string'/, 'legacy string summaries stay supported');
-assert.match(formatter, /typeof summary\.hitRate5d === 'number'/, 'structured hit rate is formatted');
-assert.match(formatter, /summary\.noFutureLeakage === true/, 'leakage result is formatted');
-assert.match(formatter, /return parts\.length \? parts\.join\(' · '\) : 'insufficient_data'/,
-  'empty structured summaries fail closed');
-assert.match(panel, /formatOutcomeSummary\(rule\.outcomeSummary\)/,
-  'Rule Card must never render the structured object directly');
-assert.doesNotMatch(panel, /<small>\{rule\.outcomeSummary\}/,
-  'the regression-causing React child is absent');
+assert.match(hook, /createSharedPollingStore/, 'market ledger keeps one background lifecycle');
+assert.match(hook, /\/api\/argus\/market-ledger/);
+assert.doesNotMatch(hook, /method:\s*['"]POST/);
+assert.match(command, /useMarketLedger/);
+assert.match(command, /marketLedger\.ledger\?\.phase3\?\.calendar/);
+assert.match(command, /positioning/);
+assert.match(today, /className="at-positioning"/,
+  'minimum ledger-derived positioning evidence remains in Today');
+assert.doesNotMatch(app, /MarketRegime|#market/);
+assert.equal(existsSync(new URL('../src/components/regime/MarketLedgerPanel.tsx', import.meta.url)), false);
 
-console.log('market-ledger.test: ok');
+console.log('market-ledger.test: ok (background ledger preserved, evidence moved to Today)');
