@@ -297,11 +297,9 @@ def test_osint_build_v12_1_5_integration():
 
 
 def test_dq_exposes_primary_strength_and_causal():
-    with scanner.app.test_client() as c:
-        r = c.get("/api/argus/data-quality")
-        oh = (r.get_json() or {}).get("osintHealth") or {}
-        assert "primarySourceStrengthLatest" in oh
-        assert "causalRelevanceLatestJa" in oh
+    oh = (scanner._data_quality_console() or {}).get("osintHealth") or {}
+    assert "primarySourceStrengthLatest" in oh
+    assert "causalRelevanceLatestJa" in oh
 
 
 def test_fe_shows_conclusion_and_causal():
