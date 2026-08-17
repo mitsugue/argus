@@ -114,6 +114,31 @@ def test_old_news_excluded_from_current():
     assert sigs == []                                   # 過去材料はcurrentに出ない
 
 
+def test_source_time_is_required_and_discovery_time_never_renews_authority():
+    for published in (None, "", "bad-time", "2026-07-04",
+                      "2026-07-04T06:00:01Z", "2026-06-20T00:00:00Z"):
+        item = _item("Goldman upgrades NVDA", inst="goldman_sachs",
+                     assets=["NVDA"], published=published)
+        item["firstDetectedAt"] = NOW
+        signal = II.build_signal(item, owner_assets=OWNER, now_iso=NOW)
+        assert signal["decisionUsable"] is False
+        assert signal["directness"] != "direct_cause"
+        assert signal["actionImplication"] == "no_action"
+        assert signal["importance"] <= 0.2
+        assert II.build_signals(
+            [item], owner_assets=OWNER, now_iso=NOW) == []
+
+
+def test_exact_current_publication_preserves_bounded_signal():
+    signal = II.build_signal(
+        _item("Goldman upgrades NVDA", inst="goldman_sachs",
+              assets=["NVDA"], published="2026-07-04T05:59:59Z"),
+        owner_assets=OWNER, now_iso=NOW)
+    assert signal["decisionUsable"] is True
+    assert signal["directness"] == "direct_cause"
+    assert signal["actionImplication"] == "investigate"
+
+
 def test_action_implication_never_a_trade():
     for title, inst, assets, snippet in [
         ("Goldman upgrades NVDA", "goldman_sachs", ["NVDA"], ""),

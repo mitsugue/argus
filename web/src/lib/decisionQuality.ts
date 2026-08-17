@@ -2,12 +2,14 @@
 // ARGUSの過去ラベルが「その後どうなったか」を端末内で検証する。
 // TS port of argus_decision_quality.py (the schema/rules source of truth).
 //
-// HARD RULES: records/outcomes never leave the device (encrypted vault only);
+// HARD RULES: records/outcomes never leave the device; newer records require
+// a local JSON export for protection. Existing envelopes are restore-only.
 // prices come from the public cached price-history endpoint; missing history →
 // insufficient_price_data (never fabricated); early results are never presented
 // as proven performance; owner actions are optional annotations, never inferred.
 
 import { AUDIT_KEY, listAudit, type DecisionAuditRecord } from './portfolioSync';
+import { markLocalEdit } from './vault';
 
 export interface DecisionOutcome {
   outcomeReturn1d: number | null; outcomeReturn3d: number | null;
@@ -40,7 +42,7 @@ function writeMeta(m: { lastOutcomeUpdateAt?: string }): void {
   try { localStorage.setItem(DQ_META_KEY, JSON.stringify(m)); } catch { /* quota */ }
 }
 function saveAll(recs: DQRecord[]): void {
-  try { localStorage.setItem(AUDIT_KEY, JSON.stringify(recs)); } catch { /* quota */ }
+  try { localStorage.setItem(AUDIT_KEY, JSON.stringify(recs)); markLocalEdit(); } catch { /* quota */ }
 }
 export function listDQ(): DQRecord[] { return listAudit() as DQRecord[]; }
 export function lastOutcomeUpdateAt(): string | null { return readMeta().lastOutcomeUpdateAt ?? null; }

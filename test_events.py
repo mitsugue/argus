@@ -152,6 +152,7 @@ def test_make_envelope_separates_times_and_dedups():
     assert e["schemaVersion"] == "event-v1"
     assert e["lifecycleState"] == "DETECTED" and e["currentGear"] == 0
     assert e["detectedAt"] != e["publishedAt"]          # times kept separate
+    assert e["observedAt"] is None                       # receipt never fabricates source time
     assert e["ingestAt"] is None                        # stamped later by the store
     assert e["session"] == "JP_MORNING" and e["severity"] == 4
     assert e["deduplicationKey"].startswith("JP:7203:PRICE_SPIKE:")

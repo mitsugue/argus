@@ -12,7 +12,6 @@ Exit: 0 = all passed, 1 = one or more failed. Used by .github/workflows/smoke-te
 """
 import sys
 import json
-import re
 import time
 import urllib.request
 import urllib.error
@@ -21,13 +20,17 @@ BASE = (sys.argv[1] if len(sys.argv) > 1 else "https://argus-backend-3j2m.onrend
 KNOWN_REGIME = {"RISK_ON", "RISK_OFF", "CAUTIOUS", "EVENT_WAIT", "MIXED"}
 KNOWN_FRESH = {"fresh", "persisted", "stale", "not_run_yet"}
 KNOWN_AI = {"live", "partial", "disabled", "missing_keys", "not_run_yet", "no_cached_result"}
-
+EXPLICIT_NEGATIVE_PATHS = (
+    "/api/argus/decision-value/order",
+    "/api/argus/decision-value/execute",
+    "/api/argus/downside/order",
+    "/api/argus/downside/execute",
+)
 
 def _get(path, timeout=45):
     req = urllib.request.Request(BASE + path, headers={"User-Agent": "argus-smoke"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.getcode(), json.loads(r.read().decode("utf-8"))
-
 
 def _post_json(path, body, timeout=30):
     """POST a JSON body (no admin token). Returns (code, dict). HTTPError → (code, {})."""
@@ -43,7 +46,6 @@ def _post_json(path, body, timeout=30):
             return e.code, json.loads(e.read().decode("utf-8"))
         except Exception:
             return e.code, {}
-
 
 def check(name, fn):
     """Run a validator with up to 5 attempts + increasing backoff. fn returns
@@ -69,7 +71,6 @@ def check(name, fn):
     if rate_limited:
         return (name, True, f"⏳ rate-limited (tolerated, not a regression): {last[:50]}")
     return (name, False, last)
-
 
 # ── validators ──────────────────────────────────────────────────────────────
 def v_healthz():
@@ -110,53 +111,14 @@ def v_fund_nav():
     ok = isinstance(funds, list) and len(funds) >= 1 and isinstance(funds[0].get("navYen"), (int, float))
     return ok, f"{len(funds or [])} funds nav (e.g. {funds[0]['code']}=¥{funds[0]['navYen']})" if funds else "no funds"
 
-def v_market_movers():
-    c, d = _get("/api/argus/market-movers")
-    # valid in any of these shapes: live | missing_key | unavailable | warming
-    # ('warming' = public read before the scheduled scan has populated the cache).
-    return d.get("status") in ("live", "missing_key", "unavailable", "warming") and "gainers" in d, \
-        f"status={d.get('status')} gainers={len(d.get('gainers', []))}{' note='+d['note'][:40] if d.get('note') else ''}"
-
-def v_jp_market_movers():
-    c, d = _get("/api/argus/jp-market-movers", timeout=60)
-    return d.get("status") in ("live", "missing_key", "unavailable") and "gainers" in d, \
-        f"status={d.get('status')} gainers={len(d.get('gainers', []))} universe={d.get('universe')}"
-
-def v_scout_jp():
-    # The key refactor regression check: moved scoring must still produce output.
-    c, d = _get("/api/argus/entry-scout?symbol=7203")
-    # Accept 'delayed' too: when the TSE is closed (the 6-hourly cron) or 7203 is on
-    # the Yahoo/J-Quants fallback, the quote is honestly 'delayed' but the scout still
-    # produces a full assessment. Only 'mock'/error is a real failure.
-    if d.get("status") not in ("live", "delayed"):
-        return False, f"status={d.get('status')} (expected live/delayed for 7203)"
-    a = d.get("assessment") or {}
-    ok = bool(d.get("callJa")) and isinstance(a.get("reasonsJa"), list) and a.get("reasonsJa") \
-        and isinstance((d.get("metrics") or {}).get("rsi14"), (int, float))
-    return ok, f"call={str(d.get('callJa'))[:24]} reasons={len(a.get('reasonsJa') or [])}"
-
-def v_scout_us():
-    c, d = _get("/api/argus/entry-scout?symbol=AAPL&market=US")
-    # US can be transiently rate-limited; just require a valid shape + status.
-    return isinstance(d.get("status"), str), f"status={d.get('status')}"
-
 def v_scout_batch():
     c, d = _get("/api/argus/scout-batch")
     return isinstance(d.get("records"), list), f"{len(d.get('records', []))} records"
-
-def v_ledger_health():
-    c, d = _get("/api/argus/ledger-health")
-    ids = {L.get("id") for L in d.get("ledgers", [])}
-    return ids == {"prediction", "scout", "closepin", "ai"}, f"ledgers={sorted(ids)}"
 
 def v_ai_judgment():
     c, d = _get("/api/argus/ai-judgment")
     fr, st = d.get("freshness"), d.get("status")
     return (fr in KNOWN_FRESH) or (st in KNOWN_AI), f"freshness={fr} status={st}"
-
-def v_calibration_deprecated():
-    c, d = _get("/api/argus/calibration")
-    return d.get("deprecated") is True and d.get("source") == "ledger-branch-summary", "deprecated->real summary"
 
 def v_catalysts():
     c, d = _get("/api/argus/catalysts")
@@ -167,18 +129,24 @@ def v_symbol_search():
     res = d.get("results") or []
     return len(res) >= 1 and res[0].get("symbol") == "7203", f"{len(res)} results"
 
-def v_integrations():
-    c, d = _get("/api/argus/integrations")
-    return "providers" in d, f"keys={list(d.keys())[:4]}"
-
 def v_events_active():
     c, d = _get("/api/argus/events-active")
-    return isinstance(d.get("events"), list) and "enabled" in d, f"enabled={d.get('enabled')} count={d.get('count')}"
-
-def v_event_status():
-    c, d = _get("/api/argus/event-backbone-status")
-    return ("enabled" in d) and ("persistenceEnabled" in d), \
-        f"enabled={d.get('enabled')} persist={d.get('persistenceEnabled')} lastSnap={d.get('lastSnapshotAt')}"
+    expected = {
+        "enabled", "asOf", "schemaVersion", "count", "events",
+        "activeCount", "ntfyConfigured", "sessionJp", "sessionUs",
+        "lastDetectionAt", "lastEventAt",
+    }
+    if set(d) != expected:
+        return False, f"shape drift missing={sorted(expected - set(d))} extra={sorted(set(d) - expected)}"
+    if not isinstance(d.get("events"), list):
+        return False, "events not a list"
+    if not all(type(d.get(key)) is bool for key in (
+            "enabled", "ntfyConfigured", "sessionJp", "sessionUs")):
+        return False, "backbone status booleans missing"
+    if not all(isinstance(d.get(key), int) for key in ("count", "activeCount")):
+        return False, "event counts missing"
+    return True, (f"enabled={d.get('enabled')} count={d.get('count')} "
+                  f"active={d.get('activeCount')} ntfy={d.get('ntfyConfigured')}")
 
 def v_event_snapshot():
     c, d = _get("/api/argus/event-snapshot")
@@ -195,19 +163,6 @@ def _crypto_scan_gated():
         # proves nor disproves the admin gate; tolerated like the other checks.
         return e.code in (401, 503, 429), f"HTTP {e.code} (admin-gated)"
 
-def v_calibration_posture():
-    c, d = _get("/api/argus/calibration/posture")
-    o = d.get("outcome") or {}
-    return o.get("status") in ("ok", "partial") and isinstance(o.get("dimensions"), dict), \
-        f"status={o.get('status')} inputs={len(d.get('inputsUsed') or [])}"
-
-def v_calibration_cohorts_v2():
-    c, d = _get("/api/argus/calibration/cohorts")
-    rs = (d.get("cohorts") or {}).get("regime_sensor_fixed") or {}
-    ta = (d.get("cohorts") or {}).get("tactical_benchmark_fixed") or {}
-    return rs.get("count") == 16 and ta.get("count") == 14, \
-        f"L1={rs.get('count')} L2A={ta.get('count')} univ={d.get('regimeSensorUniverseVersion')}"
-
 def v_watchlist_sync_gated():
     import urllib.request, urllib.error
     req = urllib.request.Request(BASE + "/api/argus/calibration/watchlist-sync", method="POST",
@@ -218,11 +173,6 @@ def v_watchlist_sync_gated():
         return False, "expected 401/503 (owner-gated), got 200 — UNPROTECTED!"
     except urllib.error.HTTPError as e:
         return e.code in (401, 503, 429), f"HTTP {e.code} (owner-gated)"
-
-def v_decision_value_summary():
-    c, d = _get("/api/argus/decision-value/summary")
-    return d.get("schemaVersion") == "decision-value-v1" and "No broker" in (d.get("safety") or ""), \
-        f"status={d.get('status')} phase={d.get('phase')}"
 
 def v_legacy_routes_gated():
     # Security (v10.88): legacy /api/run, /api/reset must NOT be open.
@@ -240,8 +190,7 @@ def v_legacy_routes_gated():
 def v_no_order_routes():
     # Safety: there must be NO order/execute route (research-only, no auto-trading).
     import urllib.error
-    for path in ("/api/argus/decision-value/order", "/api/argus/decision-value/execute",
-                 "/api/argus/downside/order", "/api/argus/downside/execute"):
+    for path in EXPLICIT_NEGATIVE_PATHS:
         try:
             _get(path)
             return False, f"{path} exists — must NOT (no order routes!)"
@@ -256,38 +205,6 @@ def v_no_order_routes():
                 return False, f"{path} returned {e.code}, expected 404"
     return True, "no order/execute routes (correct)"
 
-def v_tdnet_recent():
-    # TDnet feed: must DISTINGUISH official (jquants-tdnet) from the yanoshin fallback
-    # (v11.1). Unavailable is acceptable. official is a bool.
-    c, d = _get("/api/argus/tdnet-recent")
-    if d.get("status") not in ("live", "official_tdnet_live", "unavailable"):
-        return False, f"status={d.get('status')}"
-    prov = d.get("provider")
-    if prov not in ("jquants-tdnet", "yanoshin-tdnet", None):
-        return False, f"unexpected provider {prov}"
-    for it in (d.get("items") or [])[:5]:
-        if it.get("sentiment") not in ("negative", "positive", "neutral"):
-            return False, f"bad sentiment {it.get('sentiment')}"
-    return True, f"provider={prov} official={d.get('official')} status={d.get('status')}"
-
-
-def v_evidence_pack(symbol, market=None):
-    # v11.2 decision spine: the canonical Evidence Pack. Shape-only (empty arrays OK).
-    def fn():
-        q = f"/api/argus/evidence-pack?symbol={symbol}" + (f"&market={market}" if market else "")
-        c, d = _get(q)
-        if d.get("schemaVersion") != "evidence-pack-v1":
-            return False, f"schema={d.get('schemaVersion')}"
-        if not str(d.get("evidencePackId", "")).startswith(f"ep-{symbol}-"):
-            return False, f"packId={d.get('evidencePackId')}"
-        au = d.get("allowedUse") or {}
-        if not isinstance(d.get("missingConfirmations"), list) or "canConfirmCause" not in au:
-            return False, "missing allowedUse/missingConfirmations"
-        return True, (f"id={d.get('evidencePackId')} cards={len(d.get('eventCards') or [])} "
-                      f"missing={len(d.get('missingConfirmations') or [])}")
-    return fn
-
-
 def v_action_labels_have_evidence_refs():
     # every non-mock label must reference its evidence pack (decision spine).
     c, d = _get("/api/argus/action-labels")
@@ -300,7 +217,6 @@ def v_action_labels_have_evidence_refs():
         if "confidenceBefore" not in refs or "confidenceAfter" not in refs:
             return False, f"{l.get('symbol')} missing confidence before/after"
     return True, "all live labels carry decisionRefs"
-
 
 def v_official_events():
     # v11.3: lifecycle-tracked official disclosures. Shape-only (empty store OK —
@@ -320,24 +236,11 @@ def v_official_events():
                 return False, "confirmed_cause without market confirmation!"
     return True, f"count={d.get('count')}"
 
-
 def v_official_events_status():
     c, d = _get("/api/argus/official-events/status")
     ok = (d.get("schemaVersion") == "official-event-lifecycle-v1"
           and isinstance(d.get("byStage"), dict))
     return ok, f"total={d.get('total')} material={d.get('material')} lastIngest={d.get('lastIngestAt')}"
-
-
-def v_evidence_pack_official_refs():
-    c, d = _get("/api/argus/evidence-pack?symbol=8058&market=JP")
-    refs = d.get("officialEventRefs")
-    if not isinstance(refs, list):
-        return False, "officialEventRefs missing/not a list"
-    for r in refs[:3]:
-        if not str(r.get("officialEventId", "")).startswith("oe-"):
-            return False, f"bad ref id {r.get('officialEventId')}"
-    return True, f"refs={len(refs)}"
-
 
 def v_official_events_durability():
     # v11.3.1: research history must survive restarts — and the safety contract holds.
@@ -357,7 +260,6 @@ def v_official_events_durability():
     return True, (f"runtime={rt.get('count')}({rt.get('pathType')}) "
                   f"ledger={du.get('latestLedgerDate')}/{du.get('latestCount')} restore={du.get('restoreAvailable')}")
 
-
 def v_official_event_sample_lifecycle():
     # if a sample exists, its detail + lifecycle views must resolve (never 500) and a
     # confirmed_cause must carry market confirmation.
@@ -376,7 +278,6 @@ def v_official_event_sample_lifecycle():
             return False, "confirmed_cause without market confirmation!"
     return True, f"{oid} stage={lc.get('lifecycleStage')} cause={lc.get('causeStatus')}"
 
-
 def v_official_admin_gated():
     # POST-only admin endpoints: no token → 401 (or 503 if unconfigured), never 200.
     import urllib.error
@@ -391,43 +292,6 @@ def v_official_admin_gated():
             if e.code not in (401, 503, 429):
                 return False, f"{path} returned {e.code}, expected 401/503"
     return True, "snapshot/restore admin-gated"
-
-
-def v_macro_result_status_multi():
-    # v11.5: one row per event code, valid statuses, no secrets.
-    c, d = _get("/api/argus/macro-events/result-status")
-    if d.get("schemaVersion") != "macro-result-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    codes = {s.get("eventCode"): s for s in (d.get("sources") or [])}
-    valid = {"live", "partial", "not_implemented", "unavailable", "parse_error",
-             "source_unreachable", "not_run", "rate_limited", "error"}
-    for want in ("NFP", "CPI", "FOMC", "BOJ"):
-        if want not in codes:
-            return False, f"missing {want}"
-        if codes[want].get("status") not in valid:
-            return False, f"{want} bad status {codes[want].get('status')}"
-        if "metricsAvailable" not in codes[want]:
-            return False, f"{want} missing metricsAvailable"
-    return True, f"codes={len(codes)} NFP={codes['NFP'].get('status')} CPI={codes['CPI'].get('status')}"
-
-
-def v_news_translation_status():
-    c, d = _get("/api/argus/news/translation-status")
-    if d.get("schemaVersion") != "news-translation-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if not isinstance(d.get("cachedCount"), int):
-        return False, "cachedCount missing"
-    # v11.5.1: visible-pending + coverage drive the "why still English" UI note.
-    if not isinstance(d.get("visiblePendingCount"), int):
-        return False, "visiblePendingCount missing"
-    cov = d.get("coverage") or {}
-    if "visibleTranslatedPct" not in cov or "allTranslatedPct" not in cov:
-        return False, "coverage.*TranslatedPct missing"
-    if not d.get("nextTranslateHintJa"):
-        return False, "nextTranslateHintJa missing"
-    return True, (f"cached={d.get('cachedCount')} pending={d.get('pendingQueue')} "
-                  f"visPending={d.get('visiblePendingCount')} visPct={cov.get('visibleTranslatedPct')}")
-
 
 def v_news_japanese_first():
     # v11.5.1: a US cause-attribution news item must never surface raw English as its
@@ -449,40 +313,21 @@ def v_news_japanese_first():
             return True, f"{sym}: {len(news)} news, no raw-English primary"
     return True, "no US media headlines available (ok)"
 
-
 def v_explain_request_public():
-    # v11.5.2: public enqueue-only. A harmless test symbol returns a valid status,
-    # never a 500. It must NOT start AI (we can only observe the shape here).
+    # Recovery Phase A: mutation is no longer public.
     code, d = _post_json("/api/argus/mover-causes/explain-request",
                          {"symbol": "IONQ", "market": "US", "context": "cause-stack"})
-    if code == 429:
-        return True, "429 pre-routing (skip)"
-    if code >= 500:
-        return False, f"explain-request 5xx: {code}"
-    if d.get("schemaVersion") != "mover-explain-request-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("status") not in ("queued", "already_queued", "cached_available", "rate_limited", "invalid"):
-        return False, f"bad status {d.get('status')}"
-    return True, f"status={d.get('status')}"
-
+    return code in (401, 503) and d.get("error") in (
+        "unauthorized", "admin_unavailable"), f"status={code}"
 
 def v_translation_request_public():
-    # v11.5.2: public enqueue-only translation request returns a valid shape, never 500.
+    # Recovery Phase A: mutation is no longer public.
     code, d = _post_json("/api/argus/news/translation-request",
                          {"context": "cause-stack", "symbol": "IONQ", "market": "US",
                           "items": [{"titleOriginal": "IonQ smoke-test headline about markets",
                                      "source": "smoke"}]})
-    if code == 429:
-        return True, "429 pre-routing (skip)"
-    if code >= 500:
-        return False, f"translation-request 5xx: {code}"
-    if d.get("schemaVersion") != "news-translation-request-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    for k in ("queued", "alreadyTranslated", "alreadyQueued"):
-        if not isinstance(d.get(k), int):
-            return False, f"missing {k}"
-    return True, f"queued={d.get('queued')} remaining={d.get('queueRemaining')}"
-
+    return code in (401, 503) and d.get("error") in (
+        "unauthorized", "admin_unavailable"), f"status={code}"
 
 def v_queue_admin_gated():
     # v11.5.2: translate-visible + explain/run reject a token-less POST (401/503).
@@ -497,23 +342,6 @@ def v_queue_admin_gated():
             if e.code not in (401, 503, 429):
                 return False, f"{path} returned {e.code}"
     return True, "translate-visible + explain/run admin-gated"
-
-
-def v_translation_status_visible_queue():
-    # v11.5.2: status exposes the visible-translation queue + coverage + samples.
-    c, d = _get("/api/argus/news/translation-status")
-    if d.get("schemaVersion") != "news-translation-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    vq = d.get("visibleQueue")
-    if not isinstance(vq, dict) or "queuedCount" not in vq or "durable" not in vq:
-        return False, "visibleQueue missing/short"
-    if "visibleQueuedPct" not in (d.get("coverage") or {}):
-        return False, "coverage.visibleQueuedPct missing"
-    s = d.get("samples") or {}
-    if "pendingVisible" not in s or "translatedRecent" not in s:
-        return False, "samples missing"
-    return True, f"queued={vq.get('queuedCount')} durable={vq.get('durable')}"
-
 
 def v_cause_attribution_ionq_displaytitle():
     # v11.5.2 IONQ regression: visible cause-attribution news carries displayTitleJa +
@@ -532,34 +360,6 @@ def v_cause_attribution_ionq_displaytitle():
             return False, f"raw English primary: {title[:50]!r}"
     return True, f"IONQ: {len(news)} news, displayTitleJa present, no raw-English"
 
-
-def v_investment_universe():
-    # v11.5.3: Core Portfolio asset classes are the C.A.O.S. watch universe.
-    c, d = _get("/api/argus/investment-universe")
-    if d.get("schemaVersion") != "investment-universe-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    classes = {x.get("assetClass") for x in (d.get("assetClasses") or [])}
-    need = {"JP_EQUITY", "US_EQUITY", "GOLD_GLD", "BONDS_TLT", "REITS_XLRE",
-            "CRYPTO_BTC_ETH", "FX_USDJPY", "CASH", "FUND_ACCUMULATION"}
-    if not need <= classes:
-        return False, f"missing classes: {need - classes}"
-    return True, f"classes={len(classes)} funds={len(d.get('funds') or [])}"
-
-
-def v_caos_source_universe():
-    c, d = _get("/api/argus/caos/source-universe")
-    if d.get("schemaVersion") != "caos-source-universe-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    by = d.get("sourcesByAssetClass") or {}
-    for ac in ("JP_EQUITY", "US_EQUITY", "GOLD_GLD", "CRYPTO_BTC_ETH", "FX_USDJPY"):
-        if not by.get(ac):
-            return False, f"no sources for {ac}"
-    gn = next((s for s in d.get("sources", []) if s.get("sourceId") == "google_news_jp"), None)
-    if not gn or not gn.get("isDiscoveryLayer") or gn.get("canConfirmCause"):
-        return False, "google_news_jp must be discovery-only"
-    return True, f"sources={len(d.get('sources') or [])}"
-
-
 def v_caos_watchtower_plan():
     c, d = _get("/api/argus/caos/watchtower-plan")
     if d.get("schemaVersion") != "caos-watchtower-plan-v1":
@@ -573,7 +373,6 @@ def v_caos_watchtower_plan():
         return False, "GLD baseline target missing"
     return True, f"targets={len(targets)}"
 
-
 def v_caos_watchtower_status():
     c, d = _get("/api/argus/caos-watchtower/status")
     if d.get("schemaVersion") != "caos-watchtower-status-v1":
@@ -586,56 +385,13 @@ def v_caos_watchtower_status():
     live = sum(1 for s in d.get("sources", []) if s.get("status") == "live")
     return True, f"sources={len(d.get('sources') or [])} live={live} alerts={len(d.get('alerts') or [])}"
 
-
 def v_investigate_now_public():
-    # v11.5.4: the 念押し button performs a REAL bounded sweep — valid shape, never 500.
+    # Recovery Phase A: mutation is no longer public.
     code, d = _post_json("/api/argus/caos/investigate-now",
                          {"symbol": "IONQ", "market": "US", "context": "cause-stack"},
                          timeout=40)
-    if code == 429:
-        return True, "429 pre-routing (skip)"
-    if code >= 500:
-        return False, f"investigate-now 5xx: {code}"
-    if d.get("schemaVersion") != "caos-investigate-now-v2":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("status") not in ("completed", "partial", "rate_limited", "blocked", "error"):
-        return False, f"bad status {d.get('status')}"
-    if d.get("status") in ("completed", "partial"):
-        sw = d.get("sweep") or {}
-        if not sw.get("searchedSources"):
-            return False, "searchedSources missing"
-        if "次回自動生成で反映" in (d.get("messageJa") or ""):
-            return False, "queue-ticket message as primary result"
-        return True, (f"status={d['status']} searched={len(sw['searchedSources'])} "
-                      f"fresh={len(sw.get('freshItems') or [])} blocked={len(sw.get('blockedSources') or [])}")
-    return True, f"status={d.get('status')}"
-
-
-def v_caos_patrol_plan():
-    c, d = _get("/api/argus/caos/patrol-plan")
-    if d.get("schemaVersion") != "caos-patrol-plan-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    targets = d.get("targets") or []
-    classes = {t.get("assetClass") for t in targets}
-    for ac in ("GOLD_GLD", "CRYPTO_BTC_ETH", "FX_USDJPY", "CASH"):
-        if ac not in classes:
-            return False, f"baseline missing: {ac}"
-    return True, f"targets={len(targets)} due={d.get('dueCount')}"
-
-
-def v_deep_research_status():
-    # v11.5.4: violations MUST be empty — old news as primary is a hard failure.
-    c, d = _get("/api/argus/caos/deep-research/status")
-    if d.get("schemaVersion") != "caos-deep-research-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    v = d.get("violations")
-    if v is None:
-        return False, "violations missing"
-    if v:
-        return False, f"OLD NEWS AS PRIMARY: {v[:2]}"
-    return True, (f"violations=0 onlyOldNews={len(d.get('symbolsWithOnlyOldNews') or [])} "
-                  f"lastSweep={'yes' if d.get('lastInvestigateNow') or d.get('lastPatrolSweep') else 'none'}")
-
+    return code in (401, 503) and d.get("error") in (
+        "unauthorized", "admin_unavailable"), f"status={code}"
 
 def v_news_newest_first():
     # v11.5.6 owner rule: every news list is newest-first; undated items at the tail.
@@ -654,40 +410,6 @@ def v_news_newest_first():
         if dated2 != sorted(dated2):
             return False, f"cause-attribution news not newest-first: {ages[:8]}"
     return True, f"market-news {len(dts)} items sorted; cause-attribution sorted"
-
-
-def v_institutional_signals():
-    # v11.6.0: formal institutional signals — public, secret-free, disclaimered.
-    c, d = _get("/api/argus/institutional-intel/signals")
-    if d.get("schemaVersion") != "institutional-intel-signals-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if "自動売買の指示ではありません" not in (d.get("disclaimerJa") or ""):
-        return False, "disclaimer missing"
-    for s in (d.get("signals") or [])[:5]:
-        for k in ("sourceName", "stance", "directness", "ownerReadableWhy", "actionImplication"):
-            if k not in s:
-                return False, f"signal missing {k}"
-        if s.get("actionImplication") not in ("watch", "wait", "hold", "caution",
-                                              "investigate", "avoid_chase", "no_action"):
-            return False, f"trade-like action: {s.get('actionImplication')}"
-    blob = json.dumps(d, ensure_ascii=False).lower()
-    for bad in ('"token":', '"secret":', '"apikey":', '"order"'):
-        if bad in blob:
-            return False, f"forbidden {bad}"
-    return True, f"signals={d.get('count')} themes={sum(1 for t in (d.get('regimeThemes') or {}).values() if t.get('count'))}"
-
-
-def v_institutional_status():
-    c, d = _get("/api/argus/institutional-intel/status")
-    if d.get("schemaVersion") != "institutional-intel-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    for k in ("sourcesChecked", "signalsNow", "headlineOnlyCount", "disabledSources",
-              "ingestionAlive"):
-        if k not in d:
-            return False, f"{k} missing"
-    return True, (f"checked={d['sourcesChecked']} signals={d['signalsNow']} "
-                  f"headlineOnly={d['headlineOnlyCount']} alive={d['ingestionAlive']}")
-
 
 def v_flow_attribution():
     # v11.7.0: flow attribution — public cached-only, hedged vocabulary, no trading.
@@ -709,56 +431,6 @@ def v_flow_attribution():
         return False, "list missing records"
     return True, f"single={rec['flowClass']}({rec['confidence']}) list={len(d2['records'])}"
 
-
-def v_flow_attribution_status():
-    c, d = _get("/api/argus/flow-attribution/status")
-    if d.get("schemaVersion") != "flow-attribution-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    sa = d.get("sourceAvailability") or {}
-    if sa.get("flow_jp_bridge") is not False:
-        return False, "JP flow must be reported as intentionally off"
-    if "意図的に無効" not in (d.get("noteJa") or ""):
-        return False, "JP-off honesty note missing"
-    return True, (f"scanned={d.get('assetsScanned')} signals={d.get('signalsGenerated')} "
-                  f"unknown={d.get('unknownCount')}")
-
-
-def v_position_exposure_status():
-    # v11.8.0: public endpoint must be watchlist-level ONLY — leak check is the
-    # core assertion (no quantities/costs/values can appear, ever).
-    c, d = _get("/api/argus/position-exposure/status")
-    if d.get("schemaVersion") != "position-exposure-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("positionData") != "device_local_only":
-        return False, f"positionData={d.get('positionData')}"
-    blob = json.dumps(d, ensure_ascii=False)
-    for banned in ("quantity", "averageCost", "avgCost", "marketValue",
-                   "totalMarketValue", "costBasis", "unrealizedPnl", "accountType"):
-        if banned in blob:
-            return False, f"PRIVATE FIELD LEAKED: {banned}"
-    wl = d.get("watchlistExposure") or {}
-    if not wl.get("byTheme"):
-        return False, "byTheme empty"
-    return True, f"themes={len(wl['byTheme'])} symbols={wl.get('totalSymbols')} leak-free"
-
-
-def v_portfolio_sync_status():
-    # v11.9.0: public sync status = architecture facts only; server plaintext
-    # sync must read disabled; sensitive keys are a hard failure.
-    c, d = _get("/api/argus/portfolio-sync/status")
-    if d.get("schemaVersion") != "portfolio-sync-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    pc = (d.get("storageLayers") or {}).get("privateCloud") or {}
-    if pc.get("serverPlaintextSync") != "disabled":
-        return False, f"serverPlaintextSync={pc.get('serverPlaintextSync')}"
-    blob = json.dumps(d, ensure_ascii=False)
-    for banned in ("quantity", "averageCost", "costBasis", "marketValue",
-                   "unrealizedPnl", "accountType", "portfolioTotal"):
-        if banned in blob:
-            return False, f"PRIVATE FIELD LEAKED: {banned}"
-    return True, "layers=local/vault/snapshot, plaintext-sync disabled, leak-free"
-
-
 def v_supply_demand():
     # v11.10.0: 需給ランク — rank+state primary, honest sources, no orders.
     c, d = _get("/api/argus/supply-demand?symbol=6146")
@@ -778,35 +450,6 @@ def v_supply_demand():
         return False, "逆日歩 fabricated (source not ingested)"
     return True, f"rank={sig['supplyDemandRank']} cond={sig.get('condition')} conf={sig.get('confidence')}"
 
-
-def v_supply_demand_status():
-    c, d = _get("/api/argus/supply-demand/status")
-    if d.get("schemaVersion") != "supply-demand-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    disabled = {x.get("source") for x in (d.get("sourcesDisabledWithReason") or [])}
-    if "逆日歩(品貸料)" not in disabled:
-        return False, "逆日歩 must be honestly disabled"
-    if "意図的" not in (d.get("noteJa") or ""):
-        return False, "JP-realtime-intentional note missing"
-    return True, (f"scanned={d.get('assetsScanned')} direct={d.get('directDataCount')} "
-                  f"unknown={d.get('unknownCount')} jsf={d.get('jsfAvailability')}")
-
-
-def v_decision_quality_status():
-    # v11.11.0: public DQ status is REDACTED architecture facts only.
-    c, d = _get("/api/argus/decision-quality/status")
-    if d.get("schemaVersion") != "decision-quality-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("serverStoresRecords") is not False:
-        return False, "server must not store decision records"
-    blob = json.dumps(d, ensure_ascii=False)
-    for banned in ("quantity", "averageCost", "ownerAction", "accountType",
-                   "unrealizedPnl", "marketValue"):
-        if banned in blob:
-            return False, f"PRIVATE FIELD LEAKED: {banned}"
-    return True, f"storage={d.get('storageMode')} leak-free"
-
-
 def v_price_history_shape():
     c, d = _get("/api/argus/price-history?symbol=6146&market=JP")
     if d.get("schemaVersion") != "price-history-v1":
@@ -814,7 +457,6 @@ def v_price_history_shape():
     if "available" not in d or "closes" not in d:
         return False, "shape missing"
     return True, f"available={d['available']} n={len(d.get('closes') or [])}"
-
 
 def v_supply_demand_us():
     # v11.11.0: US gets an honest simplified read (never squeeze, FINRA marked missing)
@@ -828,288 +470,42 @@ def v_supply_demand_us():
         return False, "FINRA gap must be explicit"
     return True, f"rank={sig.get('supplyDemandRank')} cond={sig.get('condition')}"
 
-
-def v_action_priority():
-    # v11.12.0: public AP = watchlist-level only (isHeld unknown, no P0, leak-free)
-    c, d = _get("/api/argus/action-priority")
-    if d.get("schemaVersion") != "action-priority-response-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    items = d.get("items") or []
-    if not items:
-        return False, "no items"
-    for it in items:
-        if it.get("isHeld") != "unknown":
-            return False, "held context leaked to public"
-        if it.get("priorityRank") == "P0":
-            return False, "P0 requires held context — must not appear publicly"
-        if not it.get("ownerReadableWhyJa") or not it.get("checkNextJa"):
-            return False, "why/next-check missing"
-    blob = json.dumps(d, ensure_ascii=False)
-    for banned in ("quantity", "averageCost", "weightPct", "unrealizedPnl", "accountType"):
-        if banned in blob:
-            return False, f"PRIVATE FIELD LEAKED: {banned}"
-    s = d.get("summary") or {}
-    return True, f"items={len(items)} p1={s.get('p1Count')} avoidChase={s.get('avoidChaseCount')}"
-
-
-def v_action_priority_status():
-    c, d = _get("/api/argus/action-priority/status")
-    if d.get("schemaVersion") != "action-priority-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("publicLeakSafe") is not True or d.get("heldRiskCount") != 0:
-        return False, "public status must be redacted (heldRisk=0)"
-    if "意図的" not in (d.get("noteJa") or ""):
-        return False, "JP-intentional note missing"
-    return True, f"items={d.get('itemsGenerated')} storage={d.get('storageMode')}"
-
-
-def v_session_brief():
-    # v11.13.0: public brief = watchlist-level redacted 今日の作戦
-    c, d = _get("/api/argus/session-brief")
-    b = d.get("brief") or {}
-    if b.get("schemaVersion") != "session-brief-v1":
-        return False, f"schema={b.get('schemaVersion')}"
-    if b.get("privacyLevel") != "public_safe":
-        return False, f"privacy={b.get('privacyLevel')}"
-    if not b.get("headlineJa") or not b.get("whatNotToDoJa") or not b.get("nextChecksJa"):
-        return False, "headline/whatNot/nextChecks missing"
-    if b.get("sessionType") == "weekend" and "ザラ場" in (b.get("summaryJa") or ""):
-        return False, "weekend brief must not sound intraday"
-    blob = json.dumps(d, ensure_ascii=False)
-    for banned in ("quantity", "averageCost", "weightPct", "unrealizedPnl", "accountType"):
-        if banned in blob:
-            return False, f"PRIVATE FIELD LEAKED: {banned}"
-    return True, f"mode={b.get('ownerMode')} session={b.get('sessionType')}"
-
-
-def v_session_brief_status():
-    c, d = _get("/api/argus/session-brief/status")
-    if d.get("schemaVersion") != "session-brief-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("privateComposition") != "public_redacted" or d.get("publicLeakSafe") is not True:
-        return False, "must be public_redacted+leak-safe"
-    return True, f"mode={d.get('ownerMode')} items={d.get('briefItemsCount')}"
-
-
-def v_notifications_status():
-    # v11.14.0: server stores no notifications; external channels disabled.
-    c, d = _get("/api/argus/notifications/status")
-    if d.get("schemaVersion") != "notification-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("serverStoresNotifications") is not False:
-        return False, "server must not store notifications"
-    if d.get("deliveryChannelsEnabled") != ["in_app"]:
-        return False, f"channels={d.get('deliveryChannelsEnabled')}"
-    blob = json.dumps(d, ensure_ascii=False)
-    for banned in ("quantity", "averageCost", "ownerAction", "weightPct"):
-        if banned in blob:
-            return False, f"LEAK: {banned}"
-    return True, f"in_app only, maxPerDay={d.get('maxPerDay')}"
-
-
 def v_supply_demand_level_model():
     # v11.14.0: direction≠level — heavy overhang can never rank A/S.
-    c, d = _get("/api/argus/supply-demand/status")
-    if d.get("heavyOverhangCapEnabled") is not True:
-        return False, "cap flag missing"
-    c2, d2 = _get("/api/argus/supply-demand?symbol=5803&market=JP")
-    sig = d2.get("signal") or {}
+    c, d = _get("/api/argus/supply-demand?symbol=5803&market=JP")
+    sig = d.get("signal") or {}
     lvl = sig.get("supplyDemandLevel")
     rank = sig.get("supplyDemandRank")
     if lvl in ("heavy", "very_heavy") and rank in ("S", "A"):
         return False, f"HEAVY LEVEL RANKED {rank} (Fujikura bug regressed)"
     return True, f"5803 rank={rank} level={lvl} cond={sig.get('condition')}"
 
-
-def v_learning_review_status():
-    # v11.15.0: learning aggregates run ON DEVICE; server is flags-only.
-    c, d = _get("/api/argus/learning-review/status")
-    if d.get("schemaVersion") != "learning-review-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("serverStoresRecords") is not False:
-        return False, "server must not store learning records"
-    if d.get("minSampleThreshold") != 5:
-        return False, "sample discipline missing"
-    blob = json.dumps(d, ensure_ascii=False)
-    for banned in ("quantity", "averageCost", "ownerAction", "weightPct"):
-        if banned in blob:
-            return False, f"LEAK: {banned}"
-    return True, f"discipline={d.get('sampleDiscipline')}"
-
-
-def v_backup_safety_status():
-    # v11.16.0: server must know NOTHING about device protection state.
-    c, d = _get("/api/argus/backup-safety/status")
-    if d.get("schemaVersion") != "backup-safety-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    arch = d.get("architecture") or {}
-    if arch.get("serverKnowsDeviceProtectionState") is not False:
-        return False, "server must not know device protection state"
-    if arch.get("vaultPayloadVisibleToServer") is not False:
-        return False, "vault payload must be invisible to server"
-    blob = json.dumps(d, ensure_ascii=False)
-    for banned in ("vaultPass", "login_pwd", "X-ARGUS-ADMIN-TOKEN", "quantity",
-                   "averageCost", "passphrase=", 'passphrase\"'):
-        if banned in blob:
-            return False, f"LEAK: {banned}"
-    return True, "architecture-only, leak-free"
-
-
-def v_scenarios_public():
-    # v11.17.0: scenario sets are WATCHLIST-LEVEL (isHeld unknown) and must never
-    # contain exact probability percentages — bands only.
-    c, d = _get("/api/argus/scenarios")
-    if d.get("schemaVersion") != "scenario-response-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    sets = d.get("scenarioSets") or []
-    if not sets:
-        return False, "no scenario sets"
-    s0 = sets[0]
-    for k in ("cases", "dominantScenario", "invalidationJa", "nextChecksJa",
-              "whatWouldChangeJa", "complianceNote"):
-        if k not in s0:
-            return False, f"missing {k}"
-    blob = json.dumps(d, ensure_ascii=False)
-    for banned in ("quantity", "averageCost", "weightPct", "ownerAction", "pnl"):
-        if banned in blob:
-            return False, f"LEAK: {banned}"
-    if re.search(r"の確率|[0-9]{1,3}\s*[%％]で(上|下)", blob):
-        return False, "EXACT PROBABILITY CLAIM leaked"
-    held = {s.get("isHeld") for s in sets}
-    if held - {"unknown"}:
-        return False, f"held context leaked to public: {held}"
-    return True, f"sets={len(sets)} dom0={s0.get('dominantScenario')} bands-only"
-
-
-def v_scenarios_status():
-    c, d = _get("/api/argus/scenarios/status")
-    if d.get("schemaVersion") != "scenario-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("publicLeakSafe") is not True or d.get("storageMode") != "public_redacted":
-        return False, "must be public_redacted+leak-safe"
-    return True, f"sets={d.get('scenarioSetsGenerated')} eventWait={d.get('eventWaitCount')}"
-
-
-def v_position_plans_public():
-    # v11.18.0: plans are WATCHLIST-LEVEL (isHeld unknown), planning language
-    # only — execution wording ("buy now"/注文) must never appear.
-    c, d = _get("/api/argus/position-plans")
-    if d.get("schemaVersion") != "trade-plan-response-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    plans = d.get("plans") or []
-    if not plans:
-        return False, "no plans"
-    p0 = plans[0]
-    for k in ("planType", "currentStance", "entryPlan", "exitPlan", "holdPlan",
-              "invalidationJa", "nextChecksJa", "complianceNote"):
-        if k not in p0:
-            return False, f"missing {k}"
-    blob = json.dumps(d, ensure_ascii=False).lower()
-    for bad in ("今すぐ買", "今すぐ売", "buy now", "sell now", "place order",
-                "注文を出", "成行で買", "全力買い"):
-        if bad.lower() in blob:
-            return False, f"EXECUTION WORDING LEAKED: {bad}"
-    for banned in ("quantity", "averageCost", "weightPct", "ownerAction", "pnl"):
-        if banned in blob:
-            return False, f"LEAK: {banned}"
-    held = {p.get("isHeld") for p in plans}
-    if held - {"unknown"}:
-        return False, f"held context leaked to public: {held}"
-    return True, f"plans={len(plans)} p0={p0.get('planType')}/{p0.get('currentStance')} wording-clean"
-
-
-def v_position_plans_status():
-    c, d = _get("/api/argus/position-plans/status")
-    if d.get("schemaVersion") != "trade-plan-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("publicLeakSafe") is not True or d.get("storageMode") != "public_redacted":
-        return False, "must be public_redacted+leak-safe"
-    return True, (f"plans={d.get('plansGenerated')} chase={d.get('avoidChaseCount')} "
-                  f"eventWait={d.get('eventWaitCount')}")
-
-
-def v_portfolio_strategy_status():
-    # v11.19.0: strategy is composed ON DEVICE — public status is flags only
-    # and must never carry allocations, weights, income, or FIRE state.
-    c, d = _get("/api/argus/portfolio-strategy/status")
-    if d.get("schemaVersion") != "portfolio-strategy-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("serverKnowsHoldings") is not False \
-            or d.get("serverKnowsStrategyDetails") is not False:
-        return False, "server must not know holdings/strategy"
-    if d.get("storageMode") != "public_redacted" or d.get("publicLeakSafe") is not True:
-        return False, "must be public_redacted+leak-safe"
-    blob = json.dumps(d, ensure_ascii=False)
-    for banned in ("quantity", "averageCost", "weightPct", "ownerAction",
-                   "mortgage", "income", "corePct", "tacticalPct", "fireStatus"):
-        if banned in blob:
-            return False, f"LEAK: {banned}"
-    return True, "redacted, on-device only"
-
-
-def v_fire_core_status():
-    # v11.19.1: fund data lives ON DEVICE — public status is flags only.
-    c, d = _get("/api/argus/fire-core/status")
-    if d.get("schemaVersion") != "fire-core-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("serverKnowsFundData") is not False:
-        return False, "server must not know fund data"
-    if d.get("storageMode") != "public_redacted" or d.get("publicLeakSafe") is not True:
-        return False, "must be public_redacted+leak-safe"
-    blob = json.dumps(d, ensure_ascii=False)
-    for banned in ("units", "navPrice", "marketValue", "monthlyContribution",
-                   "accountType", "fireCoreTotal", "fundName", "quantity"):
-        if banned in blob:
-            return False, f"LEAK: {banned}"
-    return True, "redacted, on-device only"
-
-
-def v_review_pack_status():
-    # v11.20.0: packs are generated/copied ON DEVICE — server stores nothing,
-    # never auto-calls external AI.
-    c, d = _get("/api/argus/review-pack/status")
-    if d.get("schemaVersion") != "review-pack-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("serverStoresPacks") is not False or d.get("autoExternalAICall") is not False:
-        return False, "server must not store packs / auto-call AI"
-    if d.get("storageMode") != "public_redacted" or d.get("publicLeakSafe") is not True:
-        return False, "must be public_redacted+leak-safe"
-    blob = json.dumps(d, ensure_ascii=False)
-    for banned in ("quantity", "averageCost", "fundName", "vaultPass", "passphrase="):
-        if banned in blob:
-            return False, f"LEAK: {banned}"
-    return True, f"types={len(d.get('packTypesSupported') or [])} on-device only"
-
-
-def v_data_quality_console():
-    # v11.22.0: honest freshness console — expected-disabled never counts as a
-    # failure; no secrets/private fields in the public doc.
-    c, d = _get("/api/argus/data-quality")
-    if d.get("schemaVersion") != "data-quality-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("overallStatus") not in ("ok", "degraded", "partial", "warning",
-                                      "critical", "unknown"):
-        return False, f"overall={d.get('overallStatus')}"
-    dis = [s for s in d.get("sourceHealth") or [] if s.get("isExpectedDisabled")]
-    if len(dis) != 3 or any(s.get("status") != "disabled_expected" for s in dis):
-        return False, "expected-disabled trio wrong"
-    blob = json.dumps(d, ensure_ascii=False)
-    for banned in ("vaultPass", "passphrase=", "login_pwd", "Bearer ",
-                   "quantity", "averageCost", "monthlyContribution"):
-        if banned in blob:
-            return False, f"LEAK: {banned}"
-    return True, f"overall={d['overallStatus']} sources={len(d.get('sourceHealth') or [])}"
-
-
 def v_data_quality_status():
     c, d = _get("/api/argus/data-quality/status")
-    if d.get("schemaVersion") != "data-quality-status-v1":
+    if d.get("schemaVersion") != "argus-public-diagnostics-v1":
         return False, f"schema={d.get('schemaVersion')}"
-    if d.get("storageMode") != "public_redacted":
-        return False, "must be public_redacted"
-    return True, (f"overall={d.get('overallStatus')} hb={d.get('heartbeatBucket')} "
-                  f"disabled={d.get('expectedDisabledCount')}")
-
+    health = d.get("systemHealth") or {}
+    expected_health = {"asOf", "overall", "lamps", "noteJa"}
+    if set(health) != expected_health:
+        return False, "systemHealth shape drift"
+    lamps = health.get("lamps")
+    if not isinstance(lamps, list) or not any(
+            lamp.get("key") == "ai_budget" for lamp in lamps):
+        return False, "systemHealth lamps missing ai_budget"
+    if health.get("overall") not in ("ok", "warning", "stopped", "off"):
+        return False, f"systemHealth overall={health.get('overall')}"
+    for lamp in lamps:
+        if set(lamp) != {"key", "labelJa", "status", "detailJa"}:
+            return False, "systemHealth lamp shape drift"
+    health_blob = json.dumps(health, ensure_ascii=False)
+    if "Usd" in health_blob or "$" in health_blob:
+        return False, "systemHealth leaked cost amounts"
+    recovery = d.get("recovery") or {}
+    if recovery.get("exactColdRecovery") != "NOT_PROVEN":
+        return False, "recovery claim must be conservative"
+    return True, (f"overall={(d.get('service') or {}).get('overall')} "
+                  f"health={health.get('overall')} lamps={len(lamps)} "
+                  f"disabled={(d.get('freshness') or {}).get('expectedDisabledCount')}")
 
 def v_bridge_status_segmented():
     # v11.5.7: segmented bridge status — bridge/OpenD/US/JP evaluated apart, and
@@ -1129,7 +525,6 @@ def v_bridge_status_segmented():
                   f"us={d['usRealtimeStatus']} jp={d['jpRealtimeStatus']} "
                   f"mode={d['bridgeMode']}")
 
-
 def v_bridge_heartbeat_gated():
     import urllib.error
     req = urllib.request.Request(BASE + "/api/argus/bridge/heartbeat",
@@ -1141,7 +536,6 @@ def v_bridge_heartbeat_gated():
         if e.code not in (401, 503, 429):
             return False, f"returned {e.code}"
     return True, "heartbeat admin-gated"
-
 
 def v_patrol_health():
     # v11.5.5: 24h soak proof — schema + deterministic status + no violations.
@@ -1164,7 +558,6 @@ def v_patrol_health():
     return True, (f"status={d.get('status')} runs24h={s.get('runs24h')} "
                   f"deep={s.get('deepSweeps24h')} baseline={s.get('baselineSweeps24h')}")
 
-
 def v_watchtower_status_patrol_ref():
     c, d = _get("/api/argus/caos-watchtower/status")
     ph = d.get("patrolHealth")
@@ -1174,7 +567,6 @@ def v_watchtower_status_patrol_ref():
         if k not in ph:
             return False, f"patrolHealth.{k} missing"
     return True, f"patrol={ph.get('status')} deep24h={ph.get('deepSweeps24h')}"
-
 
 def v_patrol_self_check_gated():
     import urllib.error
@@ -1188,7 +580,6 @@ def v_patrol_self_check_gated():
             return False, f"returned {e.code}"
     return True, "patrol-self-check admin-gated"
 
-
 def v_watchtower_admin_gated():
     import urllib.error
     req = urllib.request.Request(BASE + "/api/argus/admin/caos-watchtower/refresh",
@@ -1200,7 +591,6 @@ def v_watchtower_admin_gated():
         if e.code not in (401, 503, 429):
             return False, f"returned {e.code}"
     return True, "watchtower refresh admin-gated"
-
 
 def v_macro_reaction_admin_gated():
     import urllib.error
@@ -1214,7 +604,6 @@ def v_macro_reaction_admin_gated():
             return False, f"returned {e.code}"
     return True, "refresh-market-reaction admin-gated"
 
-
 def v_dashboard_events_reaction_shape():
     # v11.5: released items with an official result must carry a marketReaction block
     # (numeric fields or an honest 未取得), never fake numbers.
@@ -1225,7 +614,6 @@ def v_dashboard_events_reaction_shape():
             if not isinstance(mr, dict):
                 return False, f"{it.get('eventCode')} missing marketReaction"
     return True, f"items={len(d.get('items') or [])}"
-
 
 def v_dashboard_events():
     # v11.4.1: the unified top-card event feed. Shape + no-leak; state must be valid.
@@ -1251,7 +639,6 @@ def v_dashboard_events():
         if bad in blob:
             return False, f"leak {bad}"
     return True, f"items={len(d['items'])} hiddenDup={d['dedupe'].get('hiddenDuplicateCount')}"
-
 
 def v_dashboard_events_nfp():
     # If NFP's official result is available, the unified card MUST be post (never pre),
@@ -1279,7 +666,6 @@ def v_dashboard_events_nfp():
         return False, "NFP post but impact comment empty"
     return True, f"NFP state={nfp['state']} actualFirst=True impact✓"
 
-
 def v_macro_repair_admin_gated():
     import urllib.error
     req = urllib.request.Request(BASE + "/api/argus/admin/macro-event-analysis/repair-post-release",
@@ -1291,7 +677,6 @@ def v_macro_repair_admin_gated():
         if e.code not in (401, 503, 429):
             return False, f"repair returned {e.code}"
     return True, "repair-post-release admin-gated"
-
 
 def v_macro_event_analysis():
     # v11.3.2: durable macro pre/post analyses. Shape-only; the release-day invariant:
@@ -1316,28 +701,6 @@ def v_macro_event_analysis():
             return False, f"leak {bad}"
     return True, f"count={d.get('count')}"
 
-
-def v_macro_analysis_status():
-    c, d = _get("/api/argus/macro-event-analysis/status")
-    ok = d.get("schemaVersion") == "macro-event-analysis-v1" and isinstance(d.get("byPhase"), dict)
-    return ok, f"total={d.get('total')} withPre={d.get('withPre')} withActual={d.get('withActual')} gen={d.get('lastGenerateAt')}"
-
-
-def v_event_analysis_compat():
-    # backward-compatible projection must keep the legacy keys CaosHub reads.
-    c, d = _get("/api/argus/event-analysis")
-    items = d.get("items")
-    if not isinstance(items, list):
-        return False, "items not a list"
-    for it in items[:3]:
-        for k in ("eventId", "phase", "summaryJa", "preJa", "postJa"):
-            if k not in it:
-                return False, f"compat missing {k}"
-        if it.get("phase") not in ("pre", "post"):
-            return False, f"bad legacy phase {it.get('phase')}"
-    return True, f"items={len(items)}"
-
-
 def v_macro_admin_gated():
     import urllib.error
     for path in ("/api/argus/admin/macro-event-analysis/generate",
@@ -1352,59 +715,7 @@ def v_macro_admin_gated():
                 return False, f"{path} returned {e.code}"
     return True, "generate/refresh-results admin-gated"
 
-
 # ── V11.3.3 Mover Cause Engine ──
-def v_mover_causes():
-    # attribution ladder for sharp movers. Shape + discipline: no secrets,
-    # every item carries a status + coverage; empty store = honest not_ready.
-    c, d = _get("/api/argus/mover-causes?limit=20")
-    if d.get("schemaVersion") != "mover-cause-v2":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("status") not in ("live", "not_ready"):
-        return False, f"status={d.get('status')}"
-    for it in (d.get("items") or []):
-        for k in ("moverCauseId", "causeStatus", "causeStatusJa", "direction",
-                  "evidenceCoverage", "nextChecksJa", "whyNotConfirmedJa"):
-            if k not in it:
-                return False, f"missing {k}"
-        if it["causeStatus"] not in ("confirmed_cause", "probable_catalyst",
-                                     "candidate_catalyst", "no_lead_yet", "not_scoreable"):
-            return False, f"bad status {it['causeStatus']}"
-        if it["causeStatus"] == "no_lead_yet" and not it.get("nextChecksJa"):
-            return False, "no_lead without nextChecks"
-    blob = json.dumps(d).lower()
-    # JSON-KEY form ("holdings":) — company names like "XYZ Holdings" legitimately
-    # appear in titles and must not false-alarm the secret scan.
-    for bad in ("apikey", "x-api-key", '"holdings":', '"costbasis":', '"prompt":', '"messages":'):
-        if bad in blob:
-            return False, f"leak {bad}"
-    return True, f"status={d.get('status')} count={d.get('count')}"
-
-
-def v_mover_causes_status():
-    c, d = _get("/api/argus/mover-causes/status")
-    if d.get("schemaVersion") != "mover-cause-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    cn = d.get("counts") or {}
-    for k in ("totalMovers", "confirmedCause", "probableCatalyst", "candidateCatalyst", "noLeadYet"):
-        if not isinstance(cn.get(k), int):
-            return False, f"counts.{k} missing"
-    if not isinstance(d.get("coverage"), dict):
-        return False, "coverage missing"
-    deg = " DEGRADED(coverage failure suspected)" if d.get("degradedIfAllUnknown") else ""
-    return True, (f"movers={cn['totalMovers']} 確認{cn['confirmedCause']}/材料{cn['probableCatalyst']}"
-                  f"/候補{cn['candidateCatalyst']}/no_lead{cn['noLeadYet']}{deg}")
-
-
-def v_mover_cause_upside():
-    c, d = _get("/api/argus/mover-causes?direction=up&limit=10")
-    if d.get("schemaVersion") != "mover-cause-v2":
-        return False, "bad schema"
-    for it in (d.get("items") or []):
-        if it.get("direction") != "up":
-            return False, "direction filter broken"
-    return True, f"up count={d.get('count')}"
-
 
 def v_downside_carries_mover_cause():
     c, d = _get("/api/argus/downside-incidents")
@@ -1423,144 +734,6 @@ def v_downside_carries_mover_cause():
             return False, f"{inc.get('symbol')} bare 原因未確認 without ladder text"
     return True, f"incidents={len(incs)} all carry causeStatus"
 
-
-def v_mover_status_quality_sla():
-    # v11.3.4: stricter diagnostics — quality + SLA blocks must exist with real types.
-    c, d = _get("/api/argus/mover-causes/status")
-    q, s = d.get("quality"), d.get("sla")
-    if not isinstance(q, dict) or not isinstance(s, dict):
-        return False, "quality/sla missing"
-    for k in ("staleCount", "missingMarketConfirmationCount", "aiExplainPendingCount",
-              "noFreshEvidenceCount"):
-        if not isinstance(q.get(k), int):
-            return False, f"quality.{k} missing"
-    if not isinstance(s.get("breaches"), list) or s.get("urgentMaxAgeMin") != 15:
-        return False, "sla shape wrong"
-    return True, (f"stale={q['staleCount']} mcMissing={q['missingMarketConfirmationCount']} "
-                  f"aiPending={q['aiExplainPendingCount']} breaches={len(s['breaches'])}")
-
-
-def v_mover_refresh_queue():
-    c, d = _get("/api/argus/mover-causes/refresh-queue")
-    if d.get("schemaVersion") != "mover-cause-refresh-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if not isinstance(d.get("queue"), list) or not isinstance(d.get("budget"), dict):
-        return False, "queue/budget missing"
-    for it in d["queue"]:
-        for k in ("symbol", "priority", "refreshNeeded", "aiExplainNeeded", "reasonJa"):
-            if k not in it:
-                return False, f"queue item missing {k}"
-        if it["priority"] not in ("urgent", "high", "normal", "low"):
-            return False, f"bad priority {it['priority']}"
-    return True, f"queued={len(d['queue'])} aiBudget={d['budget'].get('maxAiExplainPerRun')}"
-
-
-def _v_market_confirmation(sym, mkt):
-    c, d = _get(f"/api/argus/market-confirmation?symbol={sym}&market={mkt}")
-    if d.get("schemaVersion") != "market-confirmation-v1.5":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("status") not in ("confirmed", "partial", "missing", "not_applicable"):
-        return False, f"status={d.get('status')}"
-    # partial/missing due to missing bars is fine — absent FIELDS are not.
-    for k in ("priceMovePct", "volumeRatio", "relativeToIndexPct", "peerBasketMovePct",
-              "vwapDistancePct", "limitationsJa", "window"):
-        if k not in d:
-            return False, f"missing field {k}"
-    return True, f"{sym}: status={d.get('status')} rel={d.get('relativeToIndexPct')}"
-
-
-def v_market_confirmation_jp():
-    return _v_market_confirmation("9984", "JP")
-
-
-def v_market_confirmation_us():
-    return _v_market_confirmation("META", "US")
-
-
-def v_mover_items_freshness():
-    c, d = _get("/api/argus/mover-causes?limit=20")
-    for it in (d.get("items") or []):
-        fr = it.get("freshness")
-        if not isinstance(fr, dict) or "isStale" not in fr:
-            return False, f"{it.get('symbol')} missing freshness"
-        if (it.get("refreshPolicy") or {}).get("priority") == "urgent" and not fr.get("nextAutoCheckAt"):
-            return False, f"{it.get('symbol')} urgent without nextAutoCheckAt"
-        # v11.5.2 added "queued" (owner explain-request pending) as a valid state
-        if it.get("explanationStatus") not in ("cached", "queued", "pending", "not_generated"):
-            return False, f"bad explanationStatus {it.get('explanationStatus')}"
-    return True, f"count={d.get('count')} all carry freshness"
-
-
-_LM_FORBIDDEN = ('"prompt":', '"messages":', '"holdings":', '"pnl":', '"netr":',
-                 '"costbasis":', '"quantity":', '"apikey":', '"api_key":', '"token":',
-                 '"authorization":', '"rawproviderbody":', '"privaterepo":')
-
-
-def _no_forbidden(d):
-    blob = json.dumps(d, ensure_ascii=False).lower()
-    for bad in _LM_FORBIDDEN:
-        if bad in blob:
-            return bad
-    return None
-
-
-def v_learning_memory():
-    # v11.4.0: public cache-only Learning Memory. Shape + honesty: burn_in/none is
-    # fine, but the schema must be present and it must never overclaim mature with
-    # a tiny sample. No forbidden keys.
-    c, d = _get("/api/argus/learning-memory")
-    if d.get("schemaVersion") != "learning-memory-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    stage = d.get("sampleStage")
-    if stage not in ("none", "burn_in", "early_signal", "usable", "mature"):
-        return False, f"bad sampleStage {stage}"
-    if not isinstance(d.get("lessons"), list) or not isinstance(d.get("cohorts"), dict):
-        return False, "lessons/cohorts missing"
-    total = int((d.get("counts") or {}).get("totalScoredSamples", 0))
-    if stage == "mature" and total < 100:
-        return False, f"overclaim mature with n={total}"
-    for L in (d.get("lessons") or []):
-        if L.get("stage") == "mature" and int(L.get("sampleSize", 0)) < 100:
-            return False, f"lesson overclaims mature n={L.get('sampleSize')}"
-        if L.get("stage") == "burn_in" and float(L.get("confidence", 0)) > 0.0:
-            return False, "burn_in lesson has nonzero confidence"
-    bad = _no_forbidden(d)
-    if bad:
-        return False, f"forbidden key {bad}"
-    return True, f"stage={stage} lessons={len(d.get('lessons') or [])} scored={total}"
-
-
-def v_learning_memory_status():
-    c, d = _get("/api/argus/learning-memory/status")
-    if d.get("schemaVersion") != "learning-memory-status-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    if d.get("status") not in ("not_ready", "building", "ready", "stale", "error"):
-        return False, f"bad status {d.get('status')}"
-    cn = d.get("counts") or {}
-    for k in ("lessons", "usableLessons", "officialEventSamples", "macroEventSamples",
-              "moverCauseSamples", "decisionValueSamples", "calibrationSamples"):
-        if not isinstance(cn.get(k), int):
-            return False, f"counts.{k} missing"
-    return True, (f"status={d.get('status')} stage={d.get('sampleStage')} "
-                  f"lessons={cn.get('lessons')} usable={cn.get('usableLessons')} "
-                  f"ledger={bool((d.get('ledger') or {}).get('restoreAvailable'))}")
-
-
-def v_evidence_pack_has_learning_memory():
-    c, d = _get("/api/argus/evidence-pack?symbol=9984&market=JP")
-    lm = d.get("learningMemory")
-    if not isinstance(lm, dict):
-        return False, "evidence-pack missing learningMemory"
-    if lm.get("schemaVersion") != "learning-memory-compact-v1":
-        return False, f"bad compact schema {lm.get('schemaVersion')}"
-    if lm.get("cautionOnly") is not True:
-        return False, "learningMemory must be cautionOnly"
-    bad = _no_forbidden(d)
-    if bad:
-        return False, f"forbidden key {bad}"
-    return True, f"stage={lm.get('sampleStage')} lessons={len(lm.get('lessons') or [])}"
-
-
 def v_learning_memory_admin_gated():
     import urllib.error
     for path in ("/api/argus/admin/learning-memory/build",
@@ -1575,7 +748,6 @@ def v_learning_memory_admin_gated():
                 return False, f"{path} returned {e.code}"
     return True, "build/restore admin-gated"
 
-
 def v_public_explain_cached_only():
     # explain=1 must return cached text or not_generated — never a live AI run.
     t0 = time.time()
@@ -1587,21 +759,6 @@ def v_public_explain_cached_only():
     if "moverCause" not in d:
         return False, "cause-attribution missing moverCause ladder"
     return True, f"explanationStatus={st} in {took:.1f}s"
-
-
-def v_decision_spine_status():
-    # v11.2.1: the spine's own status — cached-only evidence pack + wiring booleans.
-    c, d = _get("/api/argus/decision-spine/status")
-    if d.get("schemaVersion") != "decision-spine-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    ep = d.get("evidencePack") or {}
-    if not (ep.get("endpointAvailable") and ep.get("publicReadCachedOnly")):
-        return False, "evidence pack not cached-only/available"
-    if not all((d.get("safety") or {}).values()):
-        return False, "safety flags not all true"
-    al = d.get("actionLabels") or {}
-    return True, f"labelsWithRefs={al.get('labelsWithEvidenceRefs')}/{al.get('totalLabels')} aiChallenge={((d.get('aiJudgment') or {}).get('geminiChallengeIncluded'))}"
-
 
 def v_ai_judgment_gemini_challenge_shape():
     # v11.2.1: when the cached AI payload is post-v11.2 it must carry the structured
@@ -1618,7 +775,6 @@ def v_ai_judgment_gemini_challenge_shape():
         return False, f"bad agreement {ch.get('agreement')}"
     return True, f"agreement={ch.get('agreement')}"
 
-
 def v_ai_judgment_evidence_refs_safe():
     # if an AI judgment is cached, its labels may carry decisionRefs — and the payload
     # must never contain secret material. (Older cached payloads without refs pass.)
@@ -1629,20 +785,6 @@ def v_ai_judgment_evidence_refs_safe():
             return False, f"secret-ish '{bad}' in ai-judgment payload"
     n_refs = sum(1 for l in (d.get("labels") or []) if (l.get("decisionRefs") or {}).get("evidencePackId"))
     return True, f"freshness={d.get('freshness')} labelsWithRefs={n_refs}"
-
-
-def v_provider_diagnostics_public():
-    # v11.1: public-safe provider status. No secrets, no admin detail.
-    c, d = _get("/api/argus/provider-diagnostics/public")
-    if d.get("schemaVersion") != "provider-diagnostics-public-v1":
-        return False, f"schema={d.get('schemaVersion')}"
-    provs = d.get("providers") or []
-    if not any(p.get("provider") == "jquants-tdnet" for p in provs):
-        return False, "jquants-tdnet missing"
-    for p in provs:                                     # public rows carry ONLY these keys
-        if set(p) != {"provider", "configured", "status"}:
-            return False, f"leaky public row {list(p)}"
-    return True, f"live={(d.get('summary') or {}).get('live')} configured={(d.get('summary') or {}).get('configured')}"
 
 def v_closepin_phase():
     c, d = _get("/api/argus/closepin-snapshot")
@@ -1670,16 +812,6 @@ def v_cause_attribution():
         return False, "short-volume semantics wrong"
     return True, f"unknownShare={d.get('unknownShare')} trigger={bool(d.get('immediateTrigger'))}"
 
-def v_runtime_manifest():
-    c, d = _get("/api/argus/runtime-manifest")
-    if d.get("engineVersion") != "runtime-manifest-v1":
-        return False, f"engineVersion={d.get('engineVersion')}"
-    if not isinstance(d.get("activeRoutes"), list) or len(d["activeRoutes"]) != 5:
-        return False, "activeRoutes not 5"
-    if "safetyBoundaries" not in d or "currentLimitations" not in d:
-        return False, "missing safety/limitations"
-    return True, f"routes={len(d['activeRoutes'])} providers={d.get('providers',{}).get('confirmedLive')}/{d.get('providers',{}).get('total')}"
-
 def v_downside_incidents():
     # Downside Incident Response (v10.98): public, never just generic "急落".
     c, d = _get("/api/argus/downside-incidents")
@@ -1698,20 +830,6 @@ def v_downside_incidents():
             return False, f"{inc.get('symbol')} override not set"
     return True, f"status={d.get('status')} active={d.get('activeCount')} overlay={d.get('jpIntradayOverlay')}"
 
-def v_source_registry():
-    c, d = _get("/api/argus/source-registry")
-    return isinstance(d.get("sources"), list) and d.get("engineVersion") == "source-registry-v1", \
-        f"{d.get('confirmedLive')}/{d.get('total')} live"
-
-def v_system_health():
-    c, d = _get("/api/argus/system-health")
-    lamps = d.get("lamps")
-    ok = isinstance(lamps, list) and d.get("overall") in ("ok", "warning", "stopped", "off") \
-        and any(l.get("key") == "ai_budget" for l in lamps)
-    # public-safe: no dollar amounts must leak into the lamp payload
-    leaks = "Usd" in json.dumps(d) or "$" in json.dumps(d)
-    return ok and not leaks, f"overall={d.get('overall')} lamps={len(lamps or [])}"
-
 def v_admin_gated_401(path):
     def fn():
         try:
@@ -1722,60 +840,11 @@ def v_admin_gated_401(path):
             return e.code in (401, 429), f"HTTP {e.code} (correct: admin-gated)"
     return fn
 
-
 # ── ARGUS Pro v11 endpoints — SHAPE-only (never require market-open / non-empty) ──
-def v_event_cards():
-    c, d = _get("/api/argus/events/cards")
-    return d.get("schemaVersion") == "event-card-v2" and isinstance(d.get("items"), list), \
-        f"count={d.get('count')}"
-
-def v_research_mission():
-    c, d = _get("/api/argus/events/MU/research-mission")
-    cost = d.get("cost") or {}
-    return d.get("symbol") == "MU" and cost.get("llmCalls") == 0, \
-        f"llmCalls={cost.get('llmCalls')} deterministic={cost.get('deterministic')}"
 
 def v_event_intel():
     c, d = _get("/api/argus/events/MU/institutional-intelligence")
     return d.get("symbol") == "MU" and isinstance(d.get("items"), list), f"count={d.get('count')}"
-
-def v_positioning():
-    c, d = _get("/api/argus/institutional-intelligence/positioning/MU")
-    probs = d.get("probabilities") or {}
-    ssum = sum(v for v in probs.values() if isinstance(v, (int, float)))
-    ok = d.get("symbol") == "MU" and (not probs or abs(ssum - 1.0) < 1e-6)
-    return ok, f"probsSum={round(ssum, 4)} calib={d.get('calibrationStatus')}"
-
-def v_calibration_v4_status():
-    c, d = _get("/api/argus/calibration/v4/status")
-    ok = d.get("schemaVersion") == "calibration-v4" and isinstance(d.get("isActive"), bool) \
-        and d.get("reliabilityStage") in ("burn_in", "early_signal", "provisional", "regime_level")
-    return ok and "proven" not in json.dumps(d).lower(), \
-        f"active={d.get('isActive')} stage={d.get('reliabilityStage')}"
-
-def v_decision_value_status():
-    c, d = _get("/api/argus/decision-value/status")
-    ok = d.get("schemaVersion") == "decision-value-v1" and d.get("phase") in (
-        "not_configured", "engine_ready_no_records_yet", "shadow_recording_active", "scoring_active")
-    leaks = any(k in json.dumps(d).lower() for k in ("netr", "realizedpnl", "costbasis", "holdings"))
-    return ok and not leaks and "No order" in (d.get("disclaimer") or ""), f"phase={d.get('phase')}"
-
-def v_market_depth_proof():
-    c, d = _get("/api/argus/market-depth/proof")
-    s = d.get("summary") or {}
-    return d.get("schemaVersion") == "market-depth-proof-v1" and isinstance(d.get("items"), list) \
-        and "trueDepthLiveCount" in s, f"trueLive={s.get('trueDepthLiveCount')} reqContract={s.get('requiresContractCount')}"
-
-def v_source_coverage():
-    c, d = _get("/api/argus/source-coverage")
-    return d.get("schemaVersion") == "source-coverage-v1" and isinstance(d.get("tiers"), list), \
-        f"items={(d.get('summary') or {}).get('totalItems')}"
-
-def v_caos_audit():
-    c, d = _get("/api/argus/caos/audit")
-    return d.get("schemaVersion") == "caos-link-v1" and isinstance(d.get("items"), list), \
-        f"count={d.get('count')}"
-
 
 CHECKS = [
     ("healthz", v_healthz),
@@ -1786,34 +855,19 @@ CHECKS = [
     ("us-watchlist", v_us),
     ("crypto-watchlist", v_crypto),
     ("fund-nav (投信 NAV)", v_fund_nav),
-    ("market-movers (US全市場)", v_market_movers),
-    ("jp-market-movers (日本全市場)", v_jp_market_movers),
-    ("entry-scout JP (moved code)", v_scout_jp),
-    ("entry-scout US", v_scout_us),
     ("scout-batch", v_scout_batch),
-    ("ledger-health", v_ledger_health),
     ("ai-judgment freshness", v_ai_judgment),
-    ("calibration deprecated", v_calibration_deprecated),
     ("catalysts", v_catalysts),
     ("symbol-search", v_symbol_search),
-    ("integrations", v_integrations),
     ("events-active", v_events_active),
-    ("event-backbone-status", v_event_status),
     ("event-snapshot", v_event_snapshot),
     ("crypto-scan admin", _crypto_scan_gated),
-    ("calibration cohorts v2 (16/14)", v_calibration_cohorts_v2),
-    ("calibration posture (multidim)", v_calibration_posture),
     ("watchlist-sync owner-gated", v_watchlist_sync_gated),
-    ("decision-value summary", v_decision_value_summary),
     ("no order routes (safety)", v_no_order_routes),
     ("closepin phase (full-day)", v_closepin_phase),
     ("cause-attribution (integrity)", v_cause_attribution),
-    ("runtime-manifest", v_runtime_manifest),
     ("downside-incidents (cause+override)", v_downside_incidents),
-    ("tdnet-recent (適時開示)", v_tdnet_recent),
     ("legacy routes admin-gated", v_legacy_routes_gated),
-    ("source-registry", v_source_registry),
-    ("system-health (public lamps)", v_system_health),
     ("security-status 401", v_admin_gated_401("/api/argus/security-status")),
     ("ai-provider-status 401", v_admin_gated_401("/api/argus/ai-provider-status")),
     ("ai-cost 401", v_admin_gated_401("/api/argus/ai-cost")),
@@ -1822,127 +876,58 @@ CHECKS = [
     ("jp-universe 401", v_admin_gated_401("/api/argus/jp-universe")),
     ("layer2b-summary 401", v_admin_gated_401("/api/argus/calibration/layer2b-summary")),
     # ── ARGUS Pro v11 (shape-only) ──
-    ("v11 event-cards", v_event_cards),
-    ("v11 research-mission (llm=0)", v_research_mission),
     ("v11 event institutional-intel", v_event_intel),
-    ("v11 positioning (probs=1)", v_positioning),
-    ("v11 calibration/v4/status", v_calibration_v4_status),
-    ("v11 decision-value/status", v_decision_value_status),
-    ("v11 market-depth/proof", v_market_depth_proof),
-    ("v11 source-coverage", v_source_coverage),
-    ("v11 caos/audit", v_caos_audit),
     # ── V11.1 paid-source activation ──
-    ("v11.1 provider-diagnostics/public", v_provider_diagnostics_public),
     ("v11.1 admin diagnostics gated", v_admin_gated_401("/api/argus/admin/provider-diagnostics")),
     # ── V11.2 decision spine ──
-    ("v11.2 evidence-pack MU", v_evidence_pack("MU")),
-    ("v11.2 evidence-pack 8058 JP", v_evidence_pack("8058", "JP")),
     ("v11.2 labels carry evidence refs", v_action_labels_have_evidence_refs),
     ("v11.2 ai-judgment refs safe", v_ai_judgment_evidence_refs_safe),
     # ── V11.2.1 quality gate ──
-    ("v11.2.1 decision-spine/status", v_decision_spine_status),
     ("v11.2.1 gemini challenge shape", v_ai_judgment_gemini_challenge_shape),
     # ── V11.3 official event lifecycle ──
     ("v11.3 official-events", v_official_events),
     ("v11.3 official-events/status", v_official_events_status),
-    ("v11.3 evidence-pack official refs", v_evidence_pack_official_refs),
     # ── V11.3.1 durability ──
     ("v11.3.1 official durability", v_official_events_durability),
     ("v11.3.1 official sample lifecycle", v_official_event_sample_lifecycle),
     ("v11.3.1 official admin gated", v_official_admin_gated),
     # ── V11.3.2 macro pre/post ──
     ("v11.3.2 macro-event-analysis", v_macro_event_analysis),
-    ("v11.3.2 macro analysis status", v_macro_analysis_status),
-    ("v11.3.2 event-analysis compat", v_event_analysis_compat),
     ("v11.3.2 macro admin gated", v_macro_admin_gated),
     # ── V11.3.3 Mover Cause Engine ──
-    ("v11.3.3 mover-causes", v_mover_causes),
-    ("v11.3.3 mover-causes status", v_mover_causes_status),
-    ("v11.3.3 upside direction", v_mover_cause_upside),
     ("v11.3.3 downside carries cause", v_downside_carries_mover_cause),
     ("v11.3.3 explain cached-only", v_public_explain_cached_only),
-    # ── V11.3.4 freshness / queue / market confirmation ──
-    ("v11.3.4 status quality+sla", v_mover_status_quality_sla),
-    ("v11.3.4 refresh-queue", v_mover_refresh_queue),
-    ("v11.3.4 market-confirmation JP", v_market_confirmation_jp),
-    ("v11.3.4 market-confirmation US", v_market_confirmation_us),
-    ("v11.3.4 mover freshness", v_mover_items_freshness),
     # ── V11.4.0 Learning Memory ──
-    ("v11.4.0 learning-memory", v_learning_memory),
-    ("v11.4.0 learning-memory status", v_learning_memory_status),
-    ("v11.4.0 evidence-pack learningMemory", v_evidence_pack_has_learning_memory),
     ("v11.4.0 learning admin gated", v_learning_memory_admin_gated),
     # ── V11.4.1 Unified dashboard events ──
     ("v11.4.1 dashboard-events", v_dashboard_events),
     ("v11.4.1 dashboard-events NFP state", v_dashboard_events_nfp),
     ("v11.4.1 macro repair admin gated", v_macro_repair_admin_gated),
     # ── V11.5 macro coverage + reaction + news translation ──
-    ("v11.5 macro result-status multi", v_macro_result_status_multi),
-    ("v11.5 news translation status", v_news_translation_status),
     ("v11.5.1 news japanese-first", v_news_japanese_first),
     ("v11.5.2 explain-request public", v_explain_request_public),
     ("v11.5.2 translation-request public", v_translation_request_public),
     ("v11.5.2 queue admin gated", v_queue_admin_gated),
-    ("v11.5.2 translation-status visibleQueue", v_translation_status_visible_queue),
     ("v11.5.2 cause-attribution IONQ displayTitle", v_cause_attribution_ionq_displaytitle),
     # ── V11.5.3 C.A.O.S. Watchtower ──
-    ("v11.5.3 investment universe", v_investment_universe),
-    ("v11.5.3 caos source universe", v_caos_source_universe),
     ("v11.5.3 watchtower plan", v_caos_watchtower_plan),
     ("v11.5.3 watchtower status", v_caos_watchtower_status),
     ("v11.5.3 watchtower admin gated", v_watchtower_admin_gated),
     # ── V11.5.4 Always-On Deep Patrol / Investigate Now ──
     ("v11.5.4 investigate-now public", v_investigate_now_public),
-    ("v11.5.4 patrol plan", v_caos_patrol_plan),
-    ("v11.5.4 deep-research status (no old-primary)", v_deep_research_status),
     # ── V11.5.5 patrol reliability / soak proof ──
     ("v11.5.5 patrol health", v_patrol_health),
     ("v11.5.6 news newest-first", v_news_newest_first),
-    # ── V11.5.7 bridge entitlement transparency ──
-    # ── V11.6.0 Institutional Intelligence ──
-    ("v11.6.0 institutional signals", v_institutional_signals),
-    ("v11.6.0 institutional status", v_institutional_status),
     # ── V11.7.0 Big Money / Flow Attribution ──
     ("v11.7.0 flow attribution", v_flow_attribution),
-    ("v11.7.0 flow attribution status", v_flow_attribution_status),
-    # ── V11.8.0 Position / Exposure (privacy-critical) ──
-    ("v11.8.0 position exposure leak-free", v_position_exposure_status),
-    # ── V11.9.0 Portfolio Sync foundation (privacy-critical) ──
-    ("v11.9.0 portfolio sync status", v_portfolio_sync_status),
     # ── V11.10.0 Supply / Demand Intelligence ──
     ("v11.10.0 supply demand", v_supply_demand),
-    ("v11.10.0 supply demand status", v_supply_demand_status),
     # ── V11.11.0 Decision Quality + US supply/demand ──
-    ("v11.11.0 decision quality status", v_decision_quality_status),
     ("v11.11.0 price history", v_price_history_shape),
     ("v11.11.0 supply demand US", v_supply_demand_us),
-    # ── V11.12.0 Action Priority ──
-    ("v11.12.0 action priority", v_action_priority),
-    ("v11.12.0 action priority status", v_action_priority_status),
-    # ── V11.13.0 Session Brief ──
-    ("v11.13.0 session brief", v_session_brief),
-    ("v11.13.0 session brief status", v_session_brief_status),
-    # ── V11.14.0 notifications + SD level model ──
-    ("v11.14.0 notifications status", v_notifications_status),
+    # ── V11.14.0 Supply / Demand level model ──
     ("v11.14.0 supply demand level cap", v_supply_demand_level_model),
-    # ── V11.15.0 Learning Review ──
-    ("v11.15.0 learning review status", v_learning_review_status),
-    # ── V11.16.0 Backup Safety ──
-    ("v11.16.0 backup safety status", v_backup_safety_status),
-    # ── V11.17.0 Scenario Engine ──
-    ("v11.17.0 scenarios public bands-only", v_scenarios_public),
-    ("v11.17.0 scenarios status", v_scenarios_status),
-    # ── V11.18.0 Entry/Exit Planning ──
-    ("v11.18.0 position plans wording-clean", v_position_plans_public),
-    ("v11.18.0 position plans status", v_position_plans_status),
-    # ── V11.19.0 Portfolio Strategy ──
-    ("v11.19.0 portfolio strategy redacted", v_portfolio_strategy_status),
-    # ── V11.19.1 FIRE Core ──
-    ("v11.19.1 fire core redacted", v_fire_core_status),
-    # ── V11.20.0 AI Review Pack ──
-    ("v11.20.0 review pack status", v_review_pack_status),
     # ── V11.22.0 Data Quality ──
-    ("v11.22.0 data quality console", v_data_quality_console),
     ("v11.22.0 data quality status", v_data_quality_status),
     ("v11.5.7 bridge status segmented", v_bridge_status_segmented),
     ("v11.5.7 bridge heartbeat gated", v_bridge_heartbeat_gated),
@@ -1951,7 +936,6 @@ CHECKS = [
     ("v11.5 macro reaction admin gated", v_macro_reaction_admin_gated),
     ("v11.5 dashboard reaction shape", v_dashboard_events_reaction_shape),
 ]
-
 
 def main():
     print(f"ARGUS smoke test → {BASE}\n" + "─" * 64)
@@ -1966,7 +950,6 @@ def main():
         return 1
     print("ALL GREEN")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

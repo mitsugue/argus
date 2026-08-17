@@ -6,9 +6,19 @@
 """
 import json
 import os
+import pytest
 
 import argus_osint_engine as oe
 import scanner
+
+
+@pytest.fixture(autouse=True)
+def _authenticated_handler_contract(monkeypatch):
+    original = scanner._require_admin
+    monkeypatch.setattr(
+        scanner, "_require_admin",
+        lambda: (True, None, 200) if scanner.request.path in
+        scanner._AUTH_OPERATIONAL_MUTATION_ROUTES else original())
 
 WEB = os.path.join(os.path.dirname(__file__), "web", "src")
 NOW = "2026-07-07T10:00:00Z"
@@ -106,7 +116,8 @@ def test_verdict_theme_not_stated_as_fact():
     idx = oe.build_known_index([
         {"titleJa": "AI半導体バリューチェーンに懸念",
          "canonicalUrl": "https://n.example.com/theme",
-         "publishedAt": "2026-07-07T01:00:00Z"},
+         "publishedAt": "2026-07-07T01:00:00Z",
+         "directness": "sector_theme"},
     ])
     v = oe.verify_source({"titleJa": "AI半導体バリューチェーンに懸念",
                           "url": "https://n.example.com/theme",
@@ -170,7 +181,8 @@ def test_canary_missed_lowers_trust():
 def test_canary_degraded_caps_verdict_confidence():
     idx = oe.build_known_index([
         {"titleJa": "浜松ホトニクスの開示", "canonicalUrl": "https://n.example.com/d",
-         "publishedAt": "2026-07-07T01:00:00Z"}])
+         "publishedAt": "2026-07-07T01:00:00Z",
+         "directness": "direct_company"}])
     v = oe.verify_source({"titleJa": "浜松ホトニクスの開示",
                           "url": "https://n.example.com/d",
                           "publishedAt": "2026-07-07T01:00:00Z",
@@ -204,9 +216,11 @@ def test_redacted_scout_prompt_has_no_private_data():
 
 def test_full_private_prompt_requires_warning_in_ui():
     src = _read("components", "dashboard", "OsintDeepDive.tsx")
-    assert "full_private" in src
-    assert "外部AIに送信する内容を確認してください" in src   # 警告必須
-    assert "redacted(既定" in src                            # 既定はredacted
+    # B2a public UI is read-only: it carries neither a private prompt mode nor
+    # an external-AI execution affordance.
+    assert "full_private" not in src
+    assert "公開画面から起動しません" in src
+    assert "検証されるまで証拠として扱いません" in src
 
 
 # ── 公開経路: 外部AI不発火・非漏洩 ──────────────────────────────────────────
@@ -272,7 +286,7 @@ def test_admin_agents_run_requires_admin():
 def test_dq_shows_osint_health(monkeypatch):
     monkeypatch.setitem(scanner._NEWS_JA_STATE, "restored", True)
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json()
+        d = scanner._data_quality_console()
     oh = d.get("osintHealth")
     assert oh is not None
     assert "geminiProviderConfigured" in oh and "gptProviderConfigured" in oh
@@ -282,31 +296,35 @@ def test_dq_shows_osint_health(monkeypatch):
 
 def test_fe_osint_deep_dive_ui():
     src = _read("components", "dashboard", "OsintDeepDive.tsx")
-    for needle in ("OSINT DEEP DIVE", "深掘りOSINTを実行", "Gemini/GPT結果を貼り戻す",
-                   "このニュースが抜けている", "Gemini/GPT比較・証拠台帳を見る",
-                   "ニュース探索が不十分です。深掘りOSINTまたはGemini/GPT比較を推奨。",
-                   "argus.osintPaste.v1", "検証されるまで証拠として扱いません"):
+    for needle in ("OSINT DEEP DIVE", "キャッシュ済み調査のカバレッジが不十分です",
+                   "ギャップ台帳を見る", "argus.osintGapDismiss.v1",
+                   "公開画面から起動しません", "検証されるまで証拠として扱いません"):
         assert needle in src, needle
+    for removed in ("深掘りOSINTを実行", "Gemini/GPT結果を貼り戻す",
+                    "このニュースが抜けている", "このURLを検証"):
+        assert removed not in src, removed
     # v12.2.12: 銘柄カードはAsset Desk(AssetResearchPanel)へ移設 — ガード意図は不変。
     card = _read("components", "assetDesk", "AssetResearchPanel.tsx")
     assert "OsintDeepDive" in card
 
 
-def test_fe_paste_back_stays_local():
+def test_fe_public_osint_is_cached_and_local_only():
     src = _read("components", "dashboard", "OsintDeepDive.tsx")
-    # 本文はlocalStorageのみ・サーバーへは探索語だけ(POST bodyにtextが無い)
+    # The only browser-side write is the local gap-dismiss preference. Server
+    # mutation helpers and admin credentials are absent from the static hook.
     assert "localStorage" in src
-    assert "postTerms" in src
+    assert "postTerms" not in src
     hook = _read("hooks", "useOsintInvestigation.ts")
-    assert "'terms'" not in hook or True
-    assert "text" not in hook.split("postTerms")[1].split("body: JSON.stringify")[1].split(")")[0]
+    assert "method: 'POST'" not in hook and 'method: "POST"' not in hook
+    assert "X-ARGUS-ADMIN-TOKEN" not in hook
 
 
 def test_fe_dq_page_osint_section():
     src = _read("routes", "DataQualityPage.tsx")
-    assert "OSINT AGENTS" in src
-    assert "外部AIベンチマーク未実行" in src
-    assert "OSINT監視に見落としの可能性" in src
+    assert "PUBLIC SERVICE STATUS" in src
+    assert "FRESHNESS SUMMARY" in src
+    assert "RECOVERY CLAIM" in src
+    assert "OSINT AGENTS" not in src
 
 
 def test_pack_includes_osint_deep():

@@ -47,6 +47,9 @@ VERDICT_JA = {
 }
 COVERAGE_LEVELS = ("strong", "medium", "weak", "insufficient", "failed")
 RELIABILITY_LEVELS = ("high", "medium", "low", "unknown")
+TRUSTED_DIRECTNESS = ("direct_company", "sector_theme", "value_chain",
+                      "value_chain_inference", "macro", "background",
+                      "unsupported")
 
 MODE_JA = {"fast": "高速(通常巡回)", "balanced": "標準(有意な変動)",
            "deep": "深掘り(保有/P0-P1/手動)", "war_room": "War Room(緊急)"}
@@ -186,30 +189,87 @@ def verify_source(claim: Dict[str, Any], known_index: Dict[str, Dict[str, Any]],
     """claim: {titleJa/title, url?, sourceName?, publishedAt?, directness?, summaryJa?}
     known_index: 既知メタデータ(intel store/ニュースキャッシュ等) — キーは
     正規化URL と タイトルハッシュ の両方。LLMの主張は一致して初めてverified。"""
-    title = str(claim.get("titleJa") or claim.get("title") or "").strip()
-    url = str(claim.get("url") or "").strip()
-    pub = claim.get("publishedAt")
-    age_h = argus_news_freshness.age_hours(pub, now_iso) if pub else None
+    claimed_title = str(claim.get("titleJa") or claim.get("title") or "").strip()
+    claimed_url = str(claim.get("url") or "").strip()
+    claimed_pub = claim.get("publishedAt")
 
     hit = None
-    if url:
-        hit = known_index.get(_norm_url(url))
-    if hit is None and title:
-        hit = known_index.get("t:" + _title_hash(title))
+    match_kind = None
+    if claimed_url:
+        hit = known_index.get(_norm_url(claimed_url))
+        if hit is not None:
+            match_kind = "canonical_url"
+    if hit is None and claimed_title:
+        hit = known_index.get("t:" + _title_hash(claimed_title))
+        if hit is not None:
+            match_kind = "title"
 
+    # All causal metadata below comes exclusively from the matched trusted
+    # index row.  Scout/LLM fields are retained only under claimed* diagnostics.
     if hit is not None:
-        status = "verified"
-        pub = pub or hit.get("publishedAt")
-        age_h = argus_news_freshness.age_hours(pub, now_iso) if pub else age_h
-    elif url and re.match(r"^https?://[\w.\-]+/", url) and pub:
+        trusted_titles = [str(t) for t in (hit.get("titles") or []) if t]
+        trusted_title = str(hit.get("title") or
+                            (trusted_titles[0] if trusted_titles else "")).strip()
+        supports_claim = bool(claimed_title) and any(
+            _title_hash(claimed_title) == _title_hash(t) or
+            min(title_similarity(claimed_title, t),
+                title_similarity(t, claimed_title)) >= 0.35
+            for t in trusted_titles)
+        pub = hit.get("publishedAt")
+        exact_pub = argus_news_freshness.has_exact_time(pub)
+        classified = argus_news_freshness.classify(pub, now_iso)
+        age_h = (argus_news_freshness.age_hours(pub, now_iso)
+                 if exact_pub else None)
+        if not supports_claim or classified.get("freshness") == "future_time":
+            status = "contradicted"
+        elif age_h is not None and age_h > 96:
+            status = "stale"
+        elif age_h is None:
+            # The source identity/title may be known, but date-only, missing or
+            # malformed publication metadata cannot verify a current cause.
+            status = "metadata_only"
+        else:
+            status = "verified"
+        url = str(hit.get("canonicalUrl") or "").strip()
+        title = trusted_title or claimed_title
+        source_name = str(hit.get("sourceName") or "")[:40] or None
+        provider = str(hit.get("provider") or "")[:60] or None
+        source_type = (hit.get("sourceType")
+                       if hit.get("sourceType") in SOURCE_TYPES else "unknown")
+        directness = (hit.get("directness")
+                      if hit.get("directness") in TRUSTED_DIRECTNESS
+                      else "unsupported")
+        if status == "verified":
+            time_authority = "exact_current"
+        elif classified.get("freshness") == "future_time":
+            time_authority = "future"
+        elif classified.get("freshness") == "date_only":
+            time_authority = "date_only"
+        elif pub in (None, ""):
+            time_authority = "missing"
+        elif age_h is not None:
+            time_authority = "stale"
+        else:
+            time_authority = "invalid"
+    elif (claimed_url and re.match(r"^https?://[\w.\-]+/", claimed_url)
+          and claimed_pub):
         status = "metadata_only"       # 形式は妥当だが手元ストアで裏取りできず=未検証
-    elif url or pub:
+        title, url, pub, age_h = claimed_title, None, None, None
+        source_name = provider = None
+        source_type, directness = "unknown", "unsupported"
+        supports_claim, time_authority = False, "untrusted_claim"
+    elif claimed_url or claimed_pub:
         status = "unknown"
+        title, url, pub, age_h = claimed_title, None, None, None
+        source_name = provider = None
+        source_type, directness = "unknown", "unsupported"
+        supports_claim, time_authority = False, "untrusted_claim"
     else:
         status = "inaccessible"        # URLも日付もない主張は検証不能
-
-    if age_h is not None and age_h > 14 * 24:
-        status = "stale" if status in ("verified", "metadata_only") else status
+        title, url, pub, age_h = claimed_title, None, None, None
+        source_name = provider = None
+        source_type, directness = "unknown", "unsupported"
+        supports_claim, time_authority = False, "untrusted_claim"
 
     fresh = ("today" if age_h is not None and age_h <= 24
              else "within_3_trading_days" if age_h is not None and age_h <= 96
@@ -219,18 +279,29 @@ def verify_source(claim: Dict[str, Any], known_index: Dict[str, Dict[str, Any]],
                 else "medium" if status == "verified"
                 else "weak")
     return {
-        "titleJa": title[:160], "originalTitle": str(claim.get("title") or "")[:160] or None,
-        "url": url or None, "sourceName": str(claim.get("sourceName") or "")[:40] or None,
-        "sourceType": claim.get("sourceType")
-        or industry_source_type(claim.get("sourceName") or "", title) or "unknown",
+        "titleJa": title[:160],
+        "originalTitle": (str(hit.get("titleOriginal") or "")[:160] or None
+                          if hit is not None else None),
+        "url": url or None, "sourceName": source_name, "provider": provider,
+        "sourceType": source_type,
         "publishedAt": pub, "detectedAt": now_iso, "verifiedAt": now_iso if hit else None,
         "ageHours": round(age_h, 1) if age_h is not None else None,
+        "sourceTimeAuthority": time_authority,
         "freshness": fresh,
-        "supportsClaim": bool(title),
+        "supportsClaim": supports_claim,
         "supportStrength": strength,
-        "directness": claim.get("directness") or "unsupported",
+        "directness": directness,
         "verificationStatus": status,
-        "primaryEligible": status == "verified" and fresh in ("today", "within_3_trading_days"),
+        "primaryEligible": (status == "verified" and supports_claim and
+                            time_authority == "exact_current"),
+        "matchKind": match_kind,
+        "claimedTitleJa": claimed_title[:160] or None,
+        "claimedOriginalTitle": str(claim.get("title") or "")[:160] or None,
+        "claimedUrl": claimed_url[:600] or None,
+        "claimedSourceName": str(claim.get("sourceName") or "")[:40] or None,
+        "claimedSourceType": str(claim.get("sourceType") or "")[:40] or None,
+        "claimedPublishedAt": claimed_pub,
+        "claimedDirectness": str(claim.get("directness") or "")[:40] or None,
         "labelJa": {"verified": "検証済み", "metadata_only": "未検証(メタデータのみ)",
                     "inaccessible": "未検証(参照不能)", "contradicted": "矛盾",
                     "stale": "古い(主因不可)", "unknown": "未検証"}[status],
@@ -251,17 +322,36 @@ def build_known_index(items: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """ストア(intel/ニュース/TDnet)から検証用インデックスを作る。"""
     idx: Dict[str, Dict[str, Any]] = {}
     for it in items or []:
-        meta = {"publishedAt": it.get("publishedAt") or it.get("time"),
-                "title": it.get("titleJa") or it.get("title")}
+        title = it.get("titleJa") or it.get("title")
+        title_original = it.get("titleOriginal")
+        titles = [str(t) for t in (title, title_original) if t]
+        source_name = (it.get("sourceName") or it.get("source") or
+                       it.get("sourceId") or it.get("provider"))
+        provider = it.get("provider") or it.get("sourceId")
+        source_type = it.get("sourceType")
+        if source_type not in SOURCE_TYPES:
+            source_type = industry_source_type(str(source_name or ""), str(title or "")) or "unknown"
+        directness = it.get("directness")
+        if directness not in TRUSTED_DIRECTNESS:
+            directness = "unsupported"
         url = it.get("canonicalUrl") or it.get("url")
+        meta = {
+            # publishedAt is the sole causal source clock.  A transport/feed
+            # ``time`` field is deliberately not a fallback.
+            "publishedAt": it.get("publishedAt"),
+            "title": title or title_original,
+            "titleOriginal": str(title_original or "")[:160] or None,
+            "titles": titles,
+            "canonicalUrl": str(url or "")[:600] or None,
+            "sourceName": str(source_name or "")[:40] or None,
+            "provider": str(provider or "")[:60] or None,
+            "sourceType": source_type,
+            "directness": directness,
+        }
         if url:
             idx[_norm_url(str(url))] = meta
-        t = it.get("titleJa") or it.get("title")
-        if t:
-            idx["t:" + _title_hash(str(t))] = meta
-        t2 = it.get("titleOriginal")
-        if t2:
-            idx["t:" + _title_hash(str(t2))] = meta
+        for known_title in titles:
+            idx["t:" + _title_hash(known_title)] = meta
     return idx
 
 
