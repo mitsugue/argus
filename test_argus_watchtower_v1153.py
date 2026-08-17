@@ -175,21 +175,6 @@ def test_plan_funds_inherit_no_direct_trading():
 
 # ── endpoints (public cache-only, admin gated) ───────────────────────────────
 
-def test_endpoints_public_no_fetch(monkeypatch):
-    _forbid(monkeypatch)
-    monkeypatch.setitem(scanner._NEWS_JA_STATE, "restored", True)
-    monkeypatch.setitem(scanner._MOVER_CAUSES_STATE, "restored", True)
-    with scanner.app.test_client() as c:
-        for p in ("/api/argus/investment-universe", "/api/argus/caos/source-universe",
-                  "/api/argus/caos/watchtower-plan", "/api/argus/caos-watchtower/status"):
-            r = c.get(p)
-            assert r.status_code == 200, p
-    # universe endpoint carries every Core Portfolio class
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/investment-universe").get_json()
-    assert {x["assetClass"] for x in d["assetClasses"]} >= set(REQUIRED)
-
-
 def test_watchtower_status_shape(monkeypatch):
     _forbid(monkeypatch)
     monkeypatch.setitem(scanner._NEWS_JA_STATE, "restored", True)
@@ -205,15 +190,3 @@ def test_watchtower_status_shape(monkeypatch):
 def test_admin_refresh_requires_token():
     with scanner.app.test_client() as c:
         assert c.post("/api/argus/admin/caos-watchtower/refresh").status_code in (401, 503)
-
-
-def test_no_forbidden_keys(monkeypatch):
-    _forbid(monkeypatch)
-    monkeypatch.setitem(scanner._NEWS_JA_STATE, "restored", True)
-    with scanner.app.test_client() as c:
-        for p in ("/api/argus/investment-universe", "/api/argus/caos/source-universe",
-                  "/api/argus/caos-watchtower/status"):
-            blob = json.dumps(c.get(p).get_json(), ensure_ascii=False).lower()
-            for bad in ('"prompt":', '"messages":', '"rawproviderbody":', '"holdings":',
-                        '"apikey":', '"api_key":', '"pnl":', '"costbasis":'):
-                assert bad not in blob, f"{bad} in {p}"

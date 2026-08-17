@@ -22,14 +22,33 @@ def _item(rank="P2", cat="add_only_on_pullback", sym="5803", name="フジクラ"
     return d
 
 
-# ── session resolution ──────────────────────────────────────────────────────
-def test_resolve_session_types():
-    assert sb.resolve_session(7, 0, False, False)["sessionType"] == "morning"
-    assert sb.resolve_session(10, 1, True, False)["sessionType"] == "intraday"
-    assert sb.resolve_session(17, 2, False, False)["sessionType"] == "after_close"
-    assert sb.resolve_session(23, 3, False, True)["sessionType"] == "intraday"
-    assert sb.resolve_session(10, 5, False, False) == {"sessionType": "weekend",
-                                                       "marketStatus": "weekend"}
+def _canonical(jp, us, *, jp_trading=True, us_trading=True):
+    return sb.resolve_canonical_session(
+        {"session": jp, "isTradingDay": jp_trading},
+        {"session": us, "isTradingDay": us_trading})
+
+
+def test_canonical_session_preserves_holiday_lunch_and_open_identity():
+    assert _canonical("MORNING_SESSION", "OVERNIGHT_CLOSED") == {
+        "sessionType": "intraday", "marketStatus": "jp_open",
+        "canonicalSessions": {"JP": "MORNING_SESSION",
+                              "US": "OVERNIGHT_CLOSED"}}
+    assert _canonical("LUNCH_BREAK", "OVERNIGHT_CLOSED")["sessionType"] \
+        == "lunch_break"
+    holiday = _canonical(
+        "HOLIDAY_CLOSED", "AFTER_HOURS", jp_trading=False)
+    assert holiday["sessionType"] == "holiday"
+    assert holiday["marketStatus"] == "holiday"
+
+
+def test_canonical_session_missing_or_malformed_fails_unknown():
+    assert sb.resolve_canonical_session(None, {}) == {
+        "sessionType": "unknown", "marketStatus": "unknown",
+        "canonicalSessions": None}
+    assert sb.resolve_canonical_session(
+        {"session": "MORNING_SESSION", "isTradingDay": 1},
+        {"session": "OVERNIGHT_CLOSED", "isTradingDay": True},
+    )["sessionType"] == "unknown"
 
 
 # ── P0 in headline / quiet day ──────────────────────────────────────────────
@@ -88,6 +107,22 @@ def test_weekend_is_review_mode_no_intraday_wording():
     assert "ザラ場" not in b["summaryJa"]
     assert any("休場中の値動き予想" in w for w in b["whatNotToDoJa"])
     assert any("スナップショット" in c or "保有数量" in c for c in b["nextChecksJa"])
+
+
+def test_holiday_and_lunch_never_publish_attack_or_add_candidates():
+    opportunity = _item(rank="P1", cat="add_candidate", held=False)
+    for session_type, market_status in (
+            ("holiday", "holiday"),
+            ("lunch_break", "jp_lunch_break"),
+            ("unknown", "unknown")):
+        brief = sb.build_brief({
+            "sessionType": session_type,
+            "marketStatus": market_status,
+            "priorityItems": [opportunity],
+        }, NOW)
+        assert brief["ownerMode"] != "attack"
+        assert brief["addCandidates"] == []
+        assert any("新規" in line for line in brief["whatNotToDoJa"])
 
 
 def test_conflicting_signals_say_hold():

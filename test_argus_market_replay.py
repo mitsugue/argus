@@ -51,17 +51,38 @@ def chart():
     }
 
 
+def sealed_chart():
+    visible = chart()
+    visible["indicators"]["bars"] = [
+        row for row in visible["indicators"]["bars"]
+        # A date-only receipt is conservatively known at end-of-day, so the
+        # cutoff at 00:00Z cannot include the 2025-02-20 bar itself.
+        if row["availableFrom"] < "2025-02-20"
+    ]
+    cutoff_close = visible["indicators"]["bars"][-1]["close"]
+    visible["zones"][0].update({
+        "lower": cutoff_close - 6, "center": cutoff_close - 5,
+        "upper": cutoff_close - 4,
+    })
+    visible["zones"][1].update({
+        "lower": cutoff_close + 4, "center": cutoff_close + 5,
+        "upper": cutoff_close + 6,
+    })
+    return replay.seal_auxiliary_input(
+        visible, kind="chart_report", known_at="2025-02-20T00:00:00Z")
+
+
 class MarketReplayTests(unittest.TestCase):
     def setUp(self):
         self.rows = bars()
         self.context = replay.build_context(
             self.rows, symbol="1321", market="JP", horizon=5,
-            chart_report=chart(), ledger=ledger(), now_iso="2025-02-20T00:00:00Z")
+            chart_report=sealed_chart(), ledger=ledger(), now_iso="2025-02-20T00:00:00Z")
 
     def test_similar_episode_search_is_deterministic_and_grouped(self):
         second = replay.build_context(
             self.rows, symbol="1321", market="JP", horizon=5,
-            chart_report=chart(), ledger=ledger(), now_iso="2025-02-20T00:00:00Z")
+            chart_report=sealed_chart(), ledger=ledger(), now_iso="2025-02-20T00:00:00Z")
         self.assertEqual(self.context["contextId"], second["contextId"])
         index = self.context["similarEpisodes"]
         self.assertGreater(index["rawOccurrenceCount"], index["effectiveSampleCount"])

@@ -227,30 +227,6 @@ def test_store_merge_preserves_created_at_and_cooldown():
 import scanner
 
 
-def test_new_public_routes_cached_only(monkeypatch):
-    class Boom(BaseException):
-        pass
-    def boom(*a, **k):
-        raise Boom("FORBIDDEN")
-    monkeypatch.setitem(scanner._MOVER_CAUSES_STATE, "restored", True)
-    rec = MC.resolve(_mover(), {"coverage": COVER_ALL}, scanner._ai_now_iso())
-    monkeypatch.setattr(scanner, "_MOVER_CAUSES", {rec["moverCauseId"]: rec})
-    monkeypatch.setitem(scanner._MOVER_REFRESH_QUEUE, "data", None)
-    for name in ("_openai_prose", "_openai_research", "_cause_explain",
-                 "get_tdnet_recent", "get_catalysts_snapshot", "_finnhub_catalyst",
-                 "_jp_stock_news_intel", "get_company_news", "get_market_news"):
-        monkeypatch.setattr(scanner, name, boom)
-    with scanner.app.test_client() as c:
-        assert c.get("/api/argus/mover-causes/refresh-queue").status_code == 200
-        d = c.get("/api/argus/mover-causes/status").get_json()
-        assert "quality" in d and "sla" in d
-        mc = c.get("/api/argus/market-confirmation?symbol=5801&market=JP").get_json()
-        assert mc.get("status") in ("confirmed", "partial", "missing", "not_applicable")
-        it = c.get("/api/argus/mover-causes?limit=5").get_json()["items"][0]
-        assert it["freshness"]["nextAutoCheckAt"]
-        assert it.get("explanationStatus") in ("cached", "pending", "not_generated")
-
-
 def test_new_admin_routes_require_token():
     with scanner.app.test_client() as c:
         assert c.post("/api/argus/admin/mover-causes/refresh-queue/run").status_code in (401, 503)

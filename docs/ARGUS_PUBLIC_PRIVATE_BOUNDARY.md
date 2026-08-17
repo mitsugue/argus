@@ -1,25 +1,106 @@
-# ARGUS Public/Private Boundary — Route Audit (v12.2.0 Phase 9)
+# ARGUS Public / Operational Boundary
 
-Baseline: 218 routes (22 admin-gated `_require_admin`). 分類:
+Recovery Phase A PR B replaces the historical, convention-based public-route
+list with the machine-readable catalog in `argus_route_catalog.py`. The catalog
+is compared exactly with Flask `app.url_map`; adding, deleting, or changing a
+rule is therefore a trust-boundary change that must update the catalog.
 
-## 公開(無認証)— redacted設計・オーナー固有ペイロードなし
-- health/status系: `/healthz`, `/api/argus/system-health`, `/api/argus/data-quality`(redacted console), `/api/argus/bridge/status`(redact済み), runtime-manifest
-- 市場データ(watchlist水準・保有/数量/口座情報は構造的に不在): japan/us-watchlist, supply-demand, dashboard-events, price-history(cached-only), cause-attribution, osint/investigation(redacted設計), osint/canary, osint/memory-snapshot(public-safe), learning-memory
-- 公開POST(enqueue/決定論のみ・外部AI/任意URL fetch不可): osint/deep-dive(決定論+キュー), osint/terms(語のみ・本文不受理), osint/verify-gaps(決定論のみ), osint/url-verify(enqueueのみ・SSRF防御), 調査/翻訳キュー(enqueueのみ)
-- 恒久ガード: `test_argus_v12_rc.py` PUBLIC_GETS横断(contains_sensitive+秘密語+執行語+確率断定+JP稼働主張) + 自己漏洩検査(contains_sensitiveでcritical化)
+The current catalog contains four trust domains:
 
-## cron/機械経路(トークン/署名前提)
-- quote-push(bridge HMAC), market-scan/crypto-scan/movers-push系(GitHub Actions), institutional-intelligence/collect(admin token)
+- `PUBLIC`: unauthenticated product data, static assets, and the fixed
+  liveness/readiness/PublicDiagnostics DTOs.
+- `AUTH_OPERATIONAL`: existing `X-ARGUS-ADMIN-TOKEN` server/operator routes.
+  Responses are still allowlisted and may not include credentials, prompts,
+  model output, unrestricted owner content, or raw exceptions.
+- `OWNER_SYNC`: the existing owner-sync/admin capability; PR B adds no browser
+  authentication and no new credential.
+- `RECOVERY_PROOF`: legacy proof transport recorded explicitly for later PR D.
+  PR B does not promote or redesign recovery authority.
 
-## admin限定(`_require_admin` 22本)
-- osint/agents-run, osint/canary-run, osint/benchmark-run(v12.1.7), provider診断, missed詳細, api-state full, 復元系
+After V13 Compression Round 1 the catalog is exactly 158 contracts:
+`PUBLIC=62`, `AUTH_OPERATIONAL=87`, `OWNER_SYNC=6`, and
+`RECOVERY_PROOF=3`. Round 1 removed 84 approved obsolete public GET contracts
+and the two public aliases absorbed by the status merges below. No
+authenticated operator, owner-sync, or recovery-proof contract was removed.
 
-## オーナー領域(サーバー非保持=端末ローカル)
-- 保有数量/取得単価/投信/FIRE/判断監査/通知本文はlocalStorage+暗号化vaultのみ。サーバーAPIに存在しない(構造的漏洩不可)。
+## Public diagnostics
 
-## v12.2.0判断
-- フルオーナー認証(全公開GETのトークン化)は**今スプリントでは見送り**(PWA/homescreen起動の互換リスク)。
-  - 根拠: 公開面はwatchlist水準+redacted設計+横断テスト固定で、オーナー固有ペイロードが構造的に不在。
-  - 実施済みの追加防御: 最高リスク経路(スカウト起動/ベンチ/復元/full state)はadmin施錠済み。
-  - 将来フラグ: `ARGUS_OWNER_AUTH=1` でオーナー認証ミドルウェアを有効化できる素地(未実装機能はフラグOFFのまま)。
-- 残る公開ルートは本書と PUBLIC_GETS が正典。新規ルートはどちらかに分類しテストに追加すること。
+`GET /api/argus/data-quality/status` is the canonical route returning the
+closed `argus-public-diagnostics-v1` DTO. The former byte-identical
+`GET /api/argus/data-quality` compatibility alias is retired. `/healthz` and
+`/readyz` return separate minimal fixed DTOs. The public contract contains
+service identity, coarse freshness counts, the closed `systemHealth` lamp
+allowlist formerly served by `/api/argus/system-health`, and conservative
+recovery claims only:
+
+- `mode=LEGACY_ONLY`
+- `measurement=SHADOW_INCOMPLETE`
+- `exactColdRecovery=NOT_PROVEN`
+- `hardRpoClaimPermitted=false`
+
+No runtime dictionary is copied into these DTOs. Unknown future fields are
+dropped by construction. Public builder failure returns a fixed content-free
+fallback. Public responses are capped at 8 KiB.
+
+The cached OSINT investigation API remains a public product route, but does
+not copy its internal record. It exposes an explicit verified-source/research
+status projection and suppresses owner terms, unverified agent claims, raw
+model payloads, and private-mode detail. A bounded hostile test requests every
+catalogued public GET and rejects private-domain sentinel classes.
+
+## Operational diagnostics
+
+`GET /api/argus/admin/diagnostics/operational` requires the existing admin
+token and is intended only for server-side/operator consumers. Its
+`argus-operational-diagnostics-v1` response is reconstructed from reviewed
+scalars, capped at 512 KiB, served with `no-store`, and is not CORS-enabled for
+browser origins. Builder failure returns a fixed authenticated 503 code without
+an exception string.
+
+## State-changing routes
+
+The following eight formerly unauthenticated POSTs now require the existing
+admin token:
+
+- `/api/argus/caos/investigate-now`
+- `/api/argus/news/translation-request`
+- `/api/argus/osint/deep-dive`
+- `/api/argus/osint/terms`
+- `/api/argus/osint/verify-gaps`
+- `/api/argus/osint/url-verify`
+- `/api/argus/mover-causes/explain-request`
+- `/api/argus/vault-push`
+
+The static frontend does not receive or embed that token. The affected browser
+actions intentionally degrade to local no-ops until the later Security Gate
+provides an owner-authenticated UX. Existing server-side Watchtower and
+breadth-freshness consumers use the authenticated operational route. The EC2
+Remote Journal re-arm keeps only its existing least-privilege workflow PAT:
+it checks public liveness/readiness, dispatches Watchtower, and Watchtower uses
+its existing admin secret to verify operational truth before acting.
+
+Historical Guide entries describe the behavior of their named releases; this
+document and the route catalog are authoritative for the current boundary.
+
+The route catalog pins the remaining browser cache-only consumers for Action
+Labels, AI judgment, canonical Data Quality, active events, JP/US quotes, and
+visibility. The workflow-facing Learning Memory snapshot is also cache-only
+and has a dedicated no-restore contract test. These public GETs read only
+existing process state, including on cold-cache fallback. Live probes,
+private/remote-ledger restoration, and provider-cache refresh remain
+authenticated or background responsibilities. `/events-active` now includes
+only the product-facing event-backbone fields needed by its browser hook;
+`/event-backbone-status` is retired. JP quote queries remain state-free and
+dynamic JP realtime membership remains the authenticated OWNER_SYNC → private
+Layer-2B → admin-gated bridge-code path.
+
+The exact obsolete GET set is pinned by
+`test_round1_retired_public_get_contracts_are_exactly_absent`. The similarly
+named authenticated POST at `/institutional-intelligence/missed` is retained;
+only its GET sibling was removed.
+
+## Non-authority guarantee
+
+This boundary changes serializers, consumers, and authentication only. It does
+not change WAL, checkpoint persistence, compaction, recovery keys/encryption,
+Remote Journal authority, Stage1/V2 authority, Soak, or investment decisions.

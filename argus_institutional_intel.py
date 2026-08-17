@@ -334,7 +334,7 @@ def build_signal(item: Dict[str, Any], *, owner_assets: Set[str], now_iso: str) 
     headline_only = not (item.get("publicSnippet") or "").strip()
     claim = classify_claim_type(text)
     stance = classify_stance(text)
-    directness = classify_directness(item, claim, owner_assets)
+    classified_directness = classify_directness(item, claim, owner_assets)
     stype = _source_type(item)
     tier = _source_tier_label(item, stype)
     iid = item.get("institutionId")
@@ -342,18 +342,28 @@ def build_signal(item: Dict[str, Any], *, owner_assets: Set[str], now_iso: str) 
                    else str(item.get("sourceId") or "unknown"))
     assets = [str(a).upper() for a in (item.get("linkedAssets") or [])]
     owner_hits = [a for a in assets if a in owner_assets]
-    fr = argus_news_freshness.classify(item.get("publishedAt") or item.get("firstDetectedAt"),
-                                       now_iso)
+    # Receipt/discovery time is not publication truth.  Missing, date-only,
+    # malformed, future, and over-age source time may remain diagnostic context
+    # but can never create a current institutional cause or action implication.
+    fr = argus_news_freshness.classify(item.get("publishedAt"), now_iso)
+    decision_usable = fr.get("eligibleAsPrimaryLead") is True
+    directness = (classified_directness if decision_usable else
+                  "background" if classified_directness != "weak_context"
+                  else "weak_context")
     conf = {"primary": 0.8, "high": 0.65, "medium": 0.5, "low": 0.3}[tier]
     if headline_only:
         conf = min(conf, 0.4)
     if fr["freshness"] in ("stale", "old"):
         conf = min(conf, 0.35)
+    if not decision_usable:
+        conf = min(conf, 0.2)
     importance = round(min(1.0, conf
                            + (0.2 if directness == "direct_cause" else
                               0.1 if directness == "related_signal" else 0.0)
-                           + (0.1 if owner_hits else 0.0)
+                           + (0.1 if owner_hits and decision_usable else 0.0)
                            - (0.3 if fr["freshness"] in ("stale", "old") else 0.0)), 2)
+    action = (_action(claim, stance, directness)
+              if decision_usable else "no_action")
     return {
         "schemaVersion": SCHEMA_VERSION,
         "id": item.get("intelligenceId"),
@@ -375,11 +385,15 @@ def build_signal(item: Dict[str, Any], *, owner_assets: Set[str], now_iso: str) 
         "directness": directness, "directnessJa": DIRECTNESS_JA[directness],
         "headlineOnly": headline_only,
         "freshness": fr["freshness"],
+        "decisionUsable": decision_usable,
+        "sourceTimeStatus": ("CURRENT_EXACT" if decision_usable
+                             else str(fr.get("freshness") or "unknown_time")),
+        "firstDetectedAt": item.get("firstDetectedAt"),
         "ownerReadableWhy": _why_ja(source_name, claim, stance, directness,
                                     owner_hits or assets, headline_only),
         "checkNextJa": _check_next_ja(claim, directness),
-        "actionImplication": _action(claim, stance, directness),
-        "actionImplicationJa": ACTION_JA[_action(claim, stance, directness)],
+        "actionImplication": action,
+        "actionImplicationJa": ACTION_JA[action],
         "complianceNote": ("headline-only / limited confidence — 本文非取得のため見出しのみで分類"
                            if headline_only else
                            "public metadata/headline classification(本文の保存なし)"),
@@ -396,12 +410,12 @@ def build_signals(items: Iterable[Dict[str, Any]], *, owner_assets: Set[str],
         if not isinstance(it, dict) or not it.get("title"):
             continue
         sig = build_signal(it, owner_assets=owner_assets, now_iso=now_iso)
+        if sig.get("decisionUsable") is not True:
+            continue
         if not (it.get("institutionId") or sig["sourceType"] in
                 ("central_bank", "government", "official_institution", "exchange")
                 or sig["claimType"] != "other"):
             continue
-        if sig["freshness"] in ("old",):
-            continue                       # 過去材料はcurrentに出さない(v11.5.3規律)
         key = f"{sig['sourceName']}|{MESH._title_fingerprint(sig['headline'])}"
         if key in seen:
             continue

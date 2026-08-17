@@ -5,9 +5,19 @@ URLライブ検証(捏造なし)/反復再探索/頑健パーサ/進捗・二重
 """
 import json
 import os
+import pytest
 
 import argus_osint_engine as oe
 import scanner
+
+
+@pytest.fixture(autouse=True)
+def _authenticated_handler_contract(monkeypatch):
+    original = scanner._require_admin
+    monkeypatch.setattr(
+        scanner, "_require_admin",
+        lambda: (True, None, 200) if scanner.request.path in
+        scanner._AUTH_OPERATIONAL_MUTATION_ROUTES else original())
 
 WEB = os.path.join(os.path.dirname(__file__), "web", "src")
 NOW = "2026-07-08T01:00:00Z"
@@ -232,7 +242,7 @@ def test_dq_benchmark_warn_when_samsung_missed(monkeypatch):
         "noteJa": "OSINT監視に見落としの可能性",
         "rows": [{"topic": "samsung_anthropic_ai_chip", "status": "missed_by_argus"}]})
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json()
+        d = scanner._data_quality_console()
     assert d["osintHealth"]["benchmarkWarnJa"] == "Gemini級OSINTベンチマーク未達"
 
 
@@ -240,19 +250,24 @@ def test_dq_benchmark_warn_when_samsung_missed(monkeypatch):
 
 def test_fe_superiority_and_progress_ui():
     src = _read("components", "dashboard", "OsintDeepDive.tsx")
-    for needle in ("再探索する", "このニュースをARGUSに学習させる", "進捗:",
-                   "キュー", "次回実行まで約", "二重実行しません",
+    for needle in ("進捗:",
+                   "キュー", "次回実行まで約",
                    "検証率", "未回収", "ARGUS独自検証済み"):
         assert needle in src, needle
+    for removed in ("再探索する", "このニュースをARGUSに学習させる"):
+        assert removed not in src, removed
     hook = _read("hooks", "useOsintInvestigation.ts")
     assert "superiority" in hook and "OsintProgress" in hook
 
 
 def test_fe_dq_superiority_fields():
     src = _read("routes", "DataQualityPage.tsx")
-    for needle in ("Gemini超過", "Gemini未満", "未回収Gemini-only合計",
-                   "恒久メモリ", "パーサ警告", "benchmarkWarnJa"):
-        assert needle in src, needle
+    hook = _read("hooks", "useSystemHealth.ts")
+    assert "usePublicDiagnostics" in src
+    assert "argus-public-diagnostics-v1" in hook
+    for needle in ("Gemini超過", "未回収Gemini-only合計",
+                   "benchmarkWarnJa"):
+        assert needle not in src, needle
 
 
 def test_pack_superiority_lines():

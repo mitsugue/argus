@@ -3,7 +3,9 @@
 > 目的: ARGUS の現状(思想・リサーチ対象・機能・API・自己採点)を余すところなく開示し、
 > GPT Pro に「より良くなっているか / 機能は動いているか / API は適正か / 投資エージェントとして
 > どうか」を厳しくチェックしてもらう。末尾に Claude(実装担当)からの質問を付す。
-> 本書時点の本番バージョン: **v10.73.0**(2026-06-23)。スモーク 30/30 ALL GREEN。
+> 本書の測定・校正本文は **v10.73.0**(2026-06-23)時点の歴史的レビュー入力。
+> 現行の画面/API境界はV13 Compression Round 1に合わせて更新し、正本は
+> `argus_route_catalog.py` と `docs/ARGUS_PUBLIC_PRIVATE_BOUNDARY.md` とする。
 
 ---
 
@@ -23,11 +25,11 @@ ARGUS は**予測エンジンでも自動売買でもない**。「いま市場�
 
 ## 1. アーキテクチャ
 
-- **バックエンド**: 単一ファイル Flask `scanner.py`(約7,200行)。Render Starter。`https://argus-backend-3j2m.onrender.com`。`main` から autoDeploy。`/healthz` の buildSha でデプロイ検証。約66ルート。
+- **バックエンド**: Flask `scanner.py`。Render Starter。`https://argus-backend-3j2m.onrender.com`。`main` から autoDeploy。`/healthz` の buildSha でデプロイ検証。Round 1のroute catalogは158 contracts。
 - **純ロジック・モジュール**(stdlib・ユニットテスト付き): `argus_rules`(行動分類), `argus_events`(24/7イベント検知), `argus_research`(EDINET等の決定論ドシエ), `argus_event_store`(イベント永続), `argus_ai_cost`(AI予算ハード上限), `argus_calibration`(校正v4: コホート/エポック/採点math), `argus_market_clock`(市場別フォーキャストクロック)。テスト計 **208**。
-- **フロントエンド**: React18 + TS + Vite。GitHub Pages `/argus/`。PWA(自己回復アップデータ v10.70)。現 v10.73.0。
+- **フロントエンド**: React18 + TS + Vite。GitHub Pages `/argus/`。現行primary surfaceはToday / Holdings / Notifications / Settingsの4つ。
 - **EC2 ブリッジ**: moomoo OpenD の 15秒スナップショットを HMAC+admin で `/quote-push` に送る。OpenD ポート11111はローカルのみ(非公開)。
-- **台帳の保存**: 予測台帳(ledger-v3)は GitHub の `ledger` ブランチ。所有者ウォッチリスト(2B)は公開リポ対策で **private ストア**予定。
+- **台帳の保存**: 予測台帳(ledger-v3)は GitHub の `ledger` ブランチ。所有者ウォッチリストはOWNER_SYNC/private Layer-2B経路で扱う。
 
 ---
 
@@ -38,7 +40,7 @@ ARGUS は**予測エンジンでも自動売買でもない**。「いま市場�
 | **J-Quants Standard**(¥3,300/月) | JP 全銘柄日次・信用・財務 | **T-1終値**(リアルタイムでない)。全市場ムーバー(引け後)。レート制限あり |
 | **moomoo ブリッジ**(EC2 OpenD) | JP/US ウォッチのリアルタイム push | **entitlement 未証明** → exchangeTs で証明できるまで `unknown`(realtimeと主張しない) |
 | **Twelve Data Basic**(無料) | US ウォッチ + レジームETF | 無料枠(過去に枠焼け→キャッシュ45分で是正) |
-| **Alpha Vantage**(無料) | US 全市場ムーバー | **25回/日** → 市場時間中 約15分毎で枠を使い切る。公開画面はキャッシュのみ |
+| **Alpha Vantage**(無料) | US 全市場ムーバーの背景取得 | **25回/日** → 市場時間中 約15分毎で枠を使い切る。独立公開面は持たない |
 | **CoinGecko** | 暗号資産 | 24/7 |
 | **FRED** | 金利・VIX | 日次/EOD(イントラデイVIXなし) |
 | **EDINET** | 法定開示(大量保有・臨時) | official_fact と official_catalyst を区別 |
@@ -50,13 +52,16 @@ JP全市場の三重カバー方針: **① moomoo(リアルタイム・能力テ
 
 ---
 
-## 3. ページ別説明(左ナビ順)
+## 3. 現行product surface
 
 1. **Today(今日の判断)**: 市場セッションランプ(JP/US/Crypto)→総合判断(WAIT/HOLD等+リスク+理由+触る/避ける/次の条件)→24/7イベント(S高/急変・タップで「何が起きた/原因/シナリオ/罠」のドシエ)→判断ログ(自己採点成績)。10秒で全体把握。
-2. **Watchlist(個別銘柄)**: JP株/米株/投信/暗号資産を検索追加・並べ替え。各行に行動ラベル+戦略カード(理由/次の条件/シナリオ確率)。日米株は「⚡エントリー診断」。保有数量・取得単価で評価額/含み損益(端末内のみ)。What-if試算。
-3. **Market Context(地合い+予定)**: 資金ローテーション+レジーム(RISK_ON〜EVENT_WAIT)+金利/VIX/HY OAS、公式カレンダー(FOMC/CPI/日銀/入札 D-7→D+1)、News Radar、US/JP 全市場ムーバー。
-4. **Core Portfolio(資産配分)**: 実配分(円換算・含み損益)+8資産クラスのライブ判断+姿勢連動の積立方針+投信NAV(前日比)。
-5. **Guide**: 使い方・用語・**自己採点の読み方(Brier/RPS/スキルスコアの基準)**・Ledger Health・情報源レジストリ・暗号化バックアップ。更新ごとに自動刷新。
+2. **Holdings / Watchlist**: JP株/米株/投信/暗号資産、保有配分とowner toolsを一つの取得境界で扱う。保有数量・取得単価は端末内のみ。
+3. **Notifications**: 重要なイベント/判断変化を一つの通知面で扱う。
+4. **Settings**: Help / Status / Recoveryとowner設定を扱う。公開状態はcanonical Data Quality DTOを共有する。
+
+Asset DetailはHoldingsから開くcontextual surface。Market / Replay / AI Review /
+Prediction / Calibration / FIRE / Trade Journal / Diagnostics / Research / WhatIfは
+独立pageを持たず、必要な背景engineとevidenceだけを上記surfaceへ供給する。
 
 ---
 
@@ -93,9 +98,12 @@ JP=TSE引け / US=NYSE引け(EDT/EST自動) / crypto=24/72/120h / FX=NY引け / 
 
 ---
 
-## 6. 主要 API(抜粋・約66ルート)
+## 6. 主要 API(158-contract catalogから抜粋)
 
-公開(read): `/healthz` `/api/argus/action-labels` `/market-regime` `/japan-watchlist` `/us-watchlist` `/crypto-watchlist` `/fund-nav` `/market-movers`(US全市場・cache) `/jp-market-movers` `/entry-scout` `/events` `/event-snapshot` `/prediction-snapshot`(90sキャッシュ) `/calibration`(deprecated→branch summary) **`/calibration/cohorts` `/calibration/epochs` `/calibration/clock`** `/source-registry` `/system-health`(公開・$非表示) `/integrations`。
+公開(read)の代表面: `/healthz` `/readyz` `/api/argus/data-quality/status`
+`/api/argus/action-labels` `/market-regime` `/japan-watchlist` `/us-watchlist`
+`/crypto-watchlist` `/fund-nav` `/events` `/events-active` `/event-snapshot`
+`/prediction-snapshot`。詳細プロバイダ診断はadmin運用面で確認する。
 
 admin限定(401ゲート + 失敗回数でソフトロック): `/ai-cost` `/ai-provider-status` `/security-status` `/tdnet-metrics` `/moomoo-capability` `/market-scan` `/crypto-scan` など。AI実行は ARGUS側ハード予算(日$5/月$80)で停止。
 
@@ -105,7 +113,7 @@ admin限定(401ゲート + 失敗回数でソフトロック): `/ai-cost` `/ai-p
 
 - **JP はリアルタイムでない**(J-Quants T-1)。moomoo リアルタイム全市場は能力テスト未実施(明日のJPザラ場で実測予定・entitlement 未証明)。
 - **校正は burn-in 段階**。意味のある数値は新エポックで約120営業日(相関クラスタ補正後)蓄積が必要。サンプルは独立試行でない。
-- **2B(あなたの実ウォッチリスト採点)は未稼働**(private ストア待ち)。現在の固定ベンチ 2A は「あなたの銘柄」ではない。
+- **2Bは統合済み**。owner sync/private Layer-2Bが権限境界であり、固定ベンチ2Aとは別系統として扱う。
 - 無料枠依存(AV 25/日・Twelve Data)。
 - 2026 祝日テーブルは best-effort(要公式照合)。
 
