@@ -86,30 +86,23 @@ def test_already_published_run_is_get_only_and_verifies_identity():
         calls.append((url, kwargs.get("payload")))
         if url.endswith("/healthz"):
             return {
-                "buildIdentity": {"appVersion": "13.3.2", "buildSha": "e66680d"},
-                "bootTime": "2026-07-27T00:00:00Z",
+                "backendVersion": "13.3.2", "buildSha": "e" * 40,
             }
         if url.endswith("/readyz"):
             return {"ready": True}
         if url.endswith("/api/argus/market-ledger"):
             return {**_ledger("2026-07-27"), "latestConfirmedTradingDate": "2026-07-27"}
-        if url.endswith("/api/argus/data-quality"):
+        if url.endswith("/api/argus/admin/diagnostics/operational"):
             return {
-                "appVersion": "13.3.2",
-                "buildIdentity": {
-                    "backendVersion": "13.3.2",
-                    "backendBuildSha": "e66680d",
-                },
-                "runtimeIdentity": {
-                    "buildSha": "e66680d",
+                "schemaVersion": "argus-operational-diagnostics-v1",
+                "service": {
+                    "backendVersion": "13.3.2", "buildSha": "e" * 40,
                     "processBootedAt": "2026-07-27T09:05:36+09:00",
                 },
-                "buildSoak": {
-                    "soakId": "soak-e66680d-test",
-                    "startedAt": "2026-07-27T00:07:25Z",
+                "features": {
+                    "soakState": "running", "soakArmed": True,
                 },
-                "soakContinuity": {"restartCount": 0},
-                "remoteJournalVerification": {
+                "remoteJournal": {
                     "readBackVerified": True,
                     "walReadBackVerified": True,
                     "pendingCount": 0,

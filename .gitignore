@@ -6,6 +6,8 @@
 
 # Node / Vite
 node_modules/
+# Worktree-local dependency symlinks are files to Git, not directories.
+web/node_modules
 dist/
 *.tsbuildinfo
 .vite/

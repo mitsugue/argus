@@ -19,7 +19,7 @@ class DeployScopeTests(unittest.TestCase):
 
     def test_react_only_deploys_pages_and_preserves_soak(self):
         result = deploy_scope.classify(
-            ["web/src/components/marketReplay/MarketContextReplay.tsx"])
+            ["web/src/components/today/ArgusTodayPanel.tsx"])
         self.assertTrue(result["frontendDeploy"])
         self.assertFalse(result["backendDeploy"])
         self.assertTrue(result["preserveBackendSoak"])
@@ -73,10 +73,15 @@ class DeployScopeTests(unittest.TestCase):
         self.assertFalse(result["preserveBackendSoak"])
         self.assertFalse(result["checkpointStage1"])
 
-    def test_guide_only_does_not_restart_backend(self):
-        result = deploy_scope.classify(["web/src/routes/Guide.tsx"])
+    def test_settings_only_does_not_restart_backend(self):
+        result = deploy_scope.classify(["web/src/routes/Settings.tsx"])
         self.assertTrue(result["frontendDeploy"])
         self.assertFalse(result["backendDeploy"])
+
+    def test_canonical_product_version_deploys_both_consumers(self):
+        result = deploy_scope.classify(["product-version.json"])
+        self.assertTrue(result["frontendDeploy"])
+        self.assertTrue(result["backendDeploy"])
 
     def test_public_acceptance_workflow_is_frontend_plane(self):
         result = deploy_scope.classify(
@@ -114,10 +119,19 @@ class DeployScopeTests(unittest.TestCase):
         self.assertIn("ignoredPaths: []", blueprint)
 
     def test_release_versions_are_independent(self):
+        product = json.loads((ROOT / "product-version.json").read_text())
         frontend = json.loads((ROOT / "web/package.json").read_text())["version"]
         backend = json.loads((ROOT / "backend-version.json").read_text())["version"]
+        self.assertEqual("v13", product["productVersion"])
         self.assertEqual("13.3.6", frontend)
         self.assertEqual("13.4.13", backend)
+
+    def test_release_gate_names_product_and_component_coordinates(self):
+        source = (ROOT / "scripts/release_gate.sh").read_text()
+        self.assertIn('"productVersion": "$PRODUCT_VERSION"', source)
+        self.assertIn('"frontendVersion": "$FRONTEND_VERSION"', source)
+        self.assertIn('"backendVersion": "$BACKEND_VERSION"', source)
+        self.assertNotIn('{"version": "$FRONTEND_VERSION"', source)
 
     def test_release_gate_enforces_render_skip_contract(self):
         workflow = (ROOT / ".github/workflows/release-gate.yml").read_text()

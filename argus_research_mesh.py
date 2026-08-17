@@ -282,6 +282,7 @@ def map_category(content_type: Optional[str], institution_id: Optional[str] = No
 def normalize_item(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Raw collected record → IntelligenceItem (§8), rights-enforced."""
     source_id = raw.get("sourceId") or "unknown"
+    rights = source_rights(source_id)
     title = (raw.get("title") or "").strip()
     snippet = (raw.get("publicSnippet") or "").strip()
     iid = resolve_institution(f"{title} {snippet} {raw.get('author', '')}")
@@ -291,7 +292,7 @@ def normalize_item(raw: Dict[str, Any]) -> Dict[str, Any]:
     item = {
         "intelligenceId": _hash(source_id, raw.get("canonicalUrl", ""), title),
         "sourceId": source_id, "sourceType": SOURCE_RIGHTS.get(source_id, {}).get("kind", "news"),
-        "accessClass": source_rights(source_id)["accessClass"],
+        "accessClass": rights["accessClass"],
         "canonicalUrl": raw.get("canonicalUrl"), "title": title, "publicSnippet": snippet,
         "language": raw.get("language", "en"), "author": raw.get("author"),
         "institutionId": iid, "analystId": analyst["analystId"],
@@ -311,7 +312,17 @@ def normalize_item(raw: Dict[str, Any]) -> Dict[str, Any]:
     # every downstream consumer (EventCard, coverage, judgment gating) agrees.
     _tier = source_tier(source_id)
     item["sourceTier"] = _tier
-    item.update(tier_grounding(_tier))
+    grounding = tier_grounding(_tier)
+    # Provider-name quality never overrides the Source Rights Registry. Disabled,
+    # unavailable, or non-retainable sources remain diagnostic even when their
+    # brand would otherwise map to a reputable-media tier.
+    if rights["accessClass"] == "UNAVAILABLE" or rights["canRetain"] is not True:
+        grounding = {
+            "canGroundJudgment": False,
+            "canConfirmCause": False,
+            "weakSignal": True,
+        }
+    item.update(grounding)
     return enforce_storage(source_id, item)
 
 

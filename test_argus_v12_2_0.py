@@ -341,7 +341,7 @@ def test_job_idempotency_and_missed_detection():
 
 def test_dq_exposes_integrity_cost_ledger():
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json() or {}
+        d = scanner._data_quality_console()
         assert "aiIntegrity" in d and "providerCost" in d
         assert "decisionLedger" in d
         assert d["aiIntegrity"]["storeDisabledEnforced"] is True

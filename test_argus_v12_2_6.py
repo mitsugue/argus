@@ -16,7 +16,7 @@ def test_operational_state_doc_exists():
 
 def test_dq_release_safety_honest():
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json() or {}
+        d = scanner._data_quality_console()
         rs = d.get("releaseSafety") or {}
         assert "owner-pending" in str(rs.get("ownerSettingsPending"))
         assert "CI artifact" in rs.get("manifestSource", "")

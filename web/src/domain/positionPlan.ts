@@ -4,6 +4,8 @@
 // 執行語(今すぐ買え/売れ・注文)は絶対に出さない。計画であり売買指示ではない。
 
 import { jpDisplay } from '../lib/displayName';
+import { exactAuthorityEpoch } from './liveAuthority';
+import type { MarketCalendarState } from '../types/marketLedger';
 
 export type PlanType = 'entry' | 'add' | 'trim_review' | 'exit_review' | 'hold'
   | 'wait' | 'avoid_chase' | 'event_wait' | 'no_action' | 'unknown';
@@ -26,6 +28,191 @@ export const STANCE_TONE: Record<Stance, string> = {
 };
 export const PLAN_COMPLIANCE_JA = 'これは計画であり売買指示ではない。注文機能はなく、判断はオーナーが行う。';
 export const PTS_WARNING_JA = 'PTS/プレは流動性が薄く、判断は通常取引時間の出来高と終値位置を確認してからです。夜間の値動きだけで追いかけないでください。';
+export const SESSION_UNKNOWN_WARNING_JA = '市場セッションの正本を確認できません。通常取引時間を推測せず、確認できるまで新規・追加を待ってください。';
+
+export type PlanningSessionState = 'open' | 'closed' | 'unknown' | 'not_applicable';
+export interface PlanningSessionProjection {
+  schemaVersion: 'planning-session-projection-v1';
+  market: string;
+  state: PlanningSessionState;
+  canonicalSession: string | null;
+  calendarVersion: string | null;
+  observedAt: string | null;
+  validUntil: string | null;
+  reason: 'regular_session' | 'outside_regular_session' | 'market_closed'
+    | 'contract_absent' | 'contract_invalid' | 'contract_stale'
+    | 'refresh_failed' | 'not_applicable';
+}
+
+export interface PlanningSessionAuthority {
+  calendar: Record<string, MarketCalendarState> | null;
+  serverAsOf: string | null;
+  receivedAtMs: number | null;
+  availability: 'available' | 'loading' | 'refresh_failed' | 'expired';
+}
+
+// This is a projection of the server's official-calendar-first session contract,
+// not another exchange clock. Browser code deliberately contains no hours, DST
+// rules, holiday dates, or client-clock fallback.
+const PLANNING_SESSION_CONTRACT = {
+  JP: {
+    market: 'JP_EQUITY', timezone: 'Asia/Tokyo', officialCalendar: 'JPX_TSE',
+    open: new Set(['MORNING_SESSION', 'AFTERNOON_SESSION']),
+    outsideRegular: new Set(['PRE_MARKET', 'LUNCH_BREAK', 'POST_MARKET']),
+  },
+  US: {
+    market: 'US_EQUITY', timezone: 'America/New_York', officialCalendar: 'NYSE_NASDAQ',
+    open: new Set(['REGULAR']),
+    outsideRegular: new Set(['OVERNIGHT_CLOSED', 'PRE_MARKET', 'AFTER_HOURS']),
+  },
+} as const;
+const FULL_MARKET_CLOSE_SESSIONS = new Set([
+  'HOLIDAY_CLOSED', 'WEEKEND_CLOSED', 'EMERGENCY_CLOSED',
+]);
+const SESSION_NOT_APPLICABLE_MARKETS = new Set([
+  'CRYPTO', 'FUND', 'CORE', 'MANUAL',
+]);
+const SESSION_SNAPSHOT_MAX_AGE_MS = 20 * 60 * 1000;
+const SESSION_TRANSPORT_MAX_AGE_MS = 60 * 1000;
+const PLANNING_SESSION_FIELDS = new Set([
+  'schemaVersion', 'market', 'state', 'canonicalSession', 'calendarVersion',
+  'observedAt', 'validUntil', 'reason',
+]);
+const UNKNOWN_SESSION_REASONS = new Set([
+  'contract_absent', 'contract_invalid', 'contract_stale', 'refresh_failed',
+]);
+function unavailablePlanningSession(
+  market: string,
+  reason: 'contract_absent' | 'contract_invalid' | 'contract_stale'
+    | 'refresh_failed' | 'not_applicable',
+): PlanningSessionProjection {
+  return {
+    schemaVersion: 'planning-session-projection-v1', market,
+    state: reason === 'not_applicable' ? 'not_applicable' : 'unknown',
+    canonicalSession: null, calendarVersion: null,
+    observedAt: null, validUntil: null, reason,
+  };
+}
+
+/** Validate an already-projected planning session as an authority boundary.
+ *
+ * `PlanningSessionProjection` is a TypeScript type, not runtime proof.  This
+ * guard therefore rejects extra/missing keys, incoherent state/reason pairs,
+ * cross-market evidence, expired evidence, and an `open` claim without the
+ * canonical session/calendar/timestamp members produced by the projector.
+ */
+function isCoherentPlanningSessionProjection(
+  market: string,
+  value: unknown,
+  evaluatedAtMs: number,
+): value is PlanningSessionProjection {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || !Number.isFinite(evaluatedAtMs)) return false;
+  const row = value as Record<string, unknown>;
+  const keys = Object.keys(row);
+  if (keys.length !== PLANNING_SESSION_FIELDS.size
+      || keys.some((key) => !PLANNING_SESSION_FIELDS.has(key))) return false;
+  if (row.schemaVersion !== 'planning-session-projection-v1'
+      || row.market !== market) return false;
+
+  const nullEvidence = row.canonicalSession === null
+    && row.calendarVersion === null && row.observedAt === null
+    && row.validUntil === null;
+  if (row.state === 'unknown') {
+    return typeof row.reason === 'string'
+      && UNKNOWN_SESSION_REASONS.has(row.reason) && nullEvidence;
+  }
+  if (row.state === 'not_applicable') {
+    return row.reason === 'not_applicable' && nullEvidence
+      && SESSION_NOT_APPLICABLE_MARKETS.has(market);
+  }
+  if (row.state !== 'open' && row.state !== 'closed') return false;
+
+  const contract = PLANNING_SESSION_CONTRACT[market as 'JP' | 'US'];
+  if (!contract || typeof row.canonicalSession !== 'string'
+      || typeof row.calendarVersion !== 'string'
+      || !row.calendarVersion.trim()
+      || row.calendarVersion.trim() !== row.calendarVersion
+      || typeof row.observedAt !== 'string'
+      || typeof row.validUntil !== 'string') return false;
+  const observedAtMs = exactAuthorityEpoch(row.observedAt);
+  const validUntilMs = exactAuthorityEpoch(row.validUntil);
+  if (observedAtMs == null || validUntilMs == null
+      || observedAtMs > evaluatedAtMs || evaluatedAtMs >= validUntilMs
+      || evaluatedAtMs - observedAtMs > SESSION_SNAPSHOT_MAX_AGE_MS
+      || observedAtMs >= validUntilMs) return false;
+
+  if (row.state === 'open') {
+    return row.reason === 'regular_session'
+      && contract.open.has(row.canonicalSession as never);
+  }
+  return (row.reason === 'outside_regular_session'
+      && contract.outsideRegular.has(row.canonicalSession as never))
+    || (row.reason === 'market_closed'
+      && FULL_MARKET_CLOSE_SESSIONS.has(row.canonicalSession));
+}
+
+/** Reduce the canonical server calendar to the only session fact planning needs. */
+export function projectPlanningSession(
+  market: string,
+  authority?: PlanningSessionAuthority | null,
+  evaluatedAtMs = Date.now(),
+): PlanningSessionProjection {
+  const key = String(market || '').toUpperCase();
+  const contract = PLANNING_SESSION_CONTRACT[key as 'JP' | 'US'];
+  if (!contract) return unavailablePlanningSession(
+    key, SESSION_NOT_APPLICABLE_MARKETS.has(key)
+      ? 'not_applicable' : 'contract_invalid');
+  if (!authority) return unavailablePlanningSession(key, 'contract_absent');
+  if (authority.availability === 'refresh_failed') {
+    return unavailablePlanningSession(key, 'refresh_failed');
+  }
+  if (authority.availability !== 'available') {
+    return unavailablePlanningSession(key, 'contract_stale');
+  }
+  const serverMs = exactAuthorityEpoch(authority.serverAsOf);
+  const receivedAtMs = authority.receivedAtMs;
+  const timingValid = Number.isFinite(evaluatedAtMs)
+    && serverMs != null && Number.isFinite(receivedAtMs)
+    && receivedAtMs != null
+    && serverMs <= receivedAtMs && receivedAtMs <= evaluatedAtMs
+    && evaluatedAtMs - serverMs <= SESSION_SNAPSHOT_MAX_AGE_MS
+    && evaluatedAtMs - receivedAtMs <= SESSION_SNAPSHOT_MAX_AGE_MS
+    && receivedAtMs - serverMs <= SESSION_TRANSPORT_MAX_AGE_MS;
+  if (!timingValid) return unavailablePlanningSession(key, 'contract_stale');
+  const state = authority.calendar?.[key];
+  if (!state) return unavailablePlanningSession(key, 'contract_absent');
+  const session = typeof state.session === 'string' ? state.session : '';
+  const calendarVersion = typeof state.calendarVersion === 'string'
+    && state.calendarVersion.trim() ? state.calendarVersion : null;
+  const validUntilMs = exactAuthorityEpoch(state.sessionValidUntil);
+  const structurallyValid = state.market === contract.market
+    && state.timezone === contract.timezone
+    && state.officialCalendar === contract.officialCalendar
+    && typeof state.isTradingDay === 'boolean'
+    && state.sessionObservedAt === authority.serverAsOf
+    && !!calendarVersion
+    && !!session
+    && validUntilMs != null;
+  if (!structurallyValid) return unavailablePlanningSession(key, 'contract_invalid');
+  if (validUntilMs <= evaluatedAtMs || validUntilMs <= serverMs) {
+    return unavailablePlanningSession(key, 'contract_stale');
+  }
+  if (state.isTradingDay && contract.open.has(session)) {
+    return { schemaVersion: 'planning-session-projection-v1', market: key,
+      state: 'open', canonicalSession: session, calendarVersion,
+      observedAt: state.sessionObservedAt, validUntil: state.sessionValidUntil,
+      reason: 'regular_session' };
+  }
+  if ((state.isTradingDay && contract.outsideRegular.has(session))
+      || (!state.isTradingDay && FULL_MARKET_CLOSE_SESSIONS.has(session))) {
+    return { schemaVersion: 'planning-session-projection-v1', market: key,
+      state: 'closed', canonicalSession: session, calendarVersion,
+      observedAt: state.sessionObservedAt, validUntil: state.sessionValidUntil,
+      reason: state.isTradingDay ? 'outside_regular_session' : 'market_closed' };
+  }
+  return unavailablePlanningSession(key, 'contract_invalid');
+}
 
 export interface PlanInputs {
   symbol: string; market: string; assetName: string;
@@ -37,7 +224,8 @@ export interface PlanInputs {
   regimeRiskOff?: boolean;
   weightPct?: number | null; concentrationRisk?: string | null;
   positionRiskLevel?: string | null; pnlPct?: number | null;
-  priorRunupPct?: number | null; marketOpen?: boolean | null;
+  priorRunupPct?: number | null;
+  marketSession?: PlanningSessionProjection | null;
   missing?: string[];
   /** v11.19.0: 戦略層からの制約(Portfolio Strategyが供給・端末内)。 */
   portfolioTacticalStretched?: boolean;
@@ -57,18 +245,7 @@ export interface LocalPlan {
   blockingReasons: string[];
   holdModeJa: string;
   evidenceQuality: 'strong' | 'medium' | 'weak' | 'insufficient';
-}
-
-/** クライアント時計から市場が開いているか(JST)。判定不能はnull。 */
-export function marketOpenNow(market: string, now = new Date()): boolean | null {
-  try {
-    const jst = new Date(now.getTime() + (9 * 60 + now.getTimezoneOffset()) * 60_000);
-    const wd = jst.getDay(), h = jst.getHours(), m = jst.getMinutes();
-    if (wd === 0 || wd === 6) return false;
-    if (market === 'JP') return h >= 9 && (h < 15 || (h === 15 && m <= 30));
-    if (market === 'US') return h >= 22 || h < 5;
-    return null;       // crypto等は24/7 — 閉場警告の対象外
-  } catch { return null; }
+  marketSession: PlanningSessionProjection;
 }
 
 export function buildPlan(i: PlanInputs): LocalPlan {
@@ -94,9 +271,27 @@ export function buildPlan(i: PlanInputs): LocalPlan {
   const hasFlow = !!flow && flow !== 'unknown';
   const eq = hasSd && hasFlow && scen && !(i.missing ?? []).length ? 'strong'
     : hasSd || hasFlow ? 'medium' : scen ? 'weak' : 'insufficient';
+  const marketKey = String(i.market || '').toUpperCase();
+  const suppliedSession = i.marketSession;
+  const planningEvaluatedAtMs = Date.now();
+  const unavailableReason = suppliedSession != null
+    ? 'contract_invalid'
+    : marketKey === 'JP' || marketKey === 'US'
+      ? 'contract_absent'
+      : SESSION_NOT_APPLICABLE_MARKETS.has(marketKey)
+        ? 'not_applicable' : 'contract_invalid';
+  const marketSession = isCoherentPlanningSessionProjection(
+    marketKey, suppliedSession, planningEvaluatedAtMs)
+    ? suppliedSession
+    : unavailablePlanningSession(marketKey, unavailableReason);
+  const sessionUnknown = marketSession.state === 'unknown';
+  const sessionClosed = marketSession.state === 'closed';
+  const decisionEvidenceMissing = (i.missing ?? []).length > 0;
 
   const blocking: string[] = [];
   const whatNot: string[] = [];
+  if (sessionUnknown) { blocking.push('market_session_unknown'); whatNot.push(SESSION_UNKNOWN_WARNING_JA); }
+  if (decisionEvidenceMissing) blocking.push('decision_evidence_missing');
   if (event) { blocking.push('event_pending'); whatNot.push(`${evName}の発表前に方向を決め打ちして仕込まない`); }
   if (squeeze) whatNot.push('急騰局面を追いかけない(買い戻し主導なら一巡後に失速しやすい)');
   if (improvingHeavy || heavy) whatNot.push('「改善方向」を「需給良好」と読み替えて追加しない');
@@ -104,7 +299,7 @@ export function buildPlan(i: PlanInputs): LocalPlan {
   if (flowBad) blocking.push('flow_deterioration');
   if (overext) whatNot.push('高値追いしない(急伸直後の新規・追加は不利になりやすい)');
   if (highConc && i.isHeld) { blocking.push('concentration_high'); whatNot.push('比率の高い銘柄をさらに厚くしない(全体の振れが大きくなる)'); }
-  if (i.marketOpen === false) whatNot.push(PTS_WARNING_JA);
+  if (marketSession.state === 'closed') whatNot.push(PTS_WARNING_JA);
   if (i.portfolioTacticalStretched) {
     blocking.push('portfolio_tactical_stretched');
     whatNot.push('銘柄単体の条件が良くても、ポートフォリオの短期勝負枠が大きいため新規追加より整理が先');
@@ -139,8 +334,10 @@ export function buildPlan(i: PlanInputs): LocalPlan {
   else if (i.isHeld && exitMode === 'trim_review') { planType = 'trim_review'; stance = 'trim_consideration'; }
   else if (i.isHeld && (exitMode === 'risk_reduction_review' || exitMode === 'event_risk_review')) { planType = 'exit_review'; stance = 'risk_review'; }
   else if (squeeze || overext || i.apCategory === 'avoid_chase') { planType = 'avoid_chase'; stance = 'avoid_chase'; }
+  else if (decisionEvidenceMissing) { planType = 'unknown'; stance = 'unknown'; }
   else if (improvingHeavy || (i.isHeld && highConc)) { planType = i.isHeld ? 'add' : 'entry'; stance = 'add_only_on_pullback'; }
-  else if (favorable >= 2 && adverse === 0 && (eq === 'strong' || eq === 'medium') && !(i.isHeld && highConc)) {
+  else if (favorable >= 2 && adverse === 0 && (eq === 'strong' || eq === 'medium')
+      && !(i.missing ?? []).length && !(i.isHeld && highConc)) {
     // 戦略制約: 短期勝負枠超過/テーマ集中高では好条件でも押し目限定に降格
     if (i.portfolioTacticalStretched || i.themeConcentrationHigh) {
       planType = i.isHeld ? 'add' : 'entry'; stance = 'add_only_on_pullback';
@@ -149,10 +346,26 @@ export function buildPlan(i: PlanInputs): LocalPlan {
   else if (i.isHeld) { planType = 'hold'; stance = holdMode === 'hold_ok' ? 'no_action' : adverse ? 'hold_review' : 'monitor'; }
   else { planType = 'wait'; stance = 'monitor'; }
 
+  // Missing/malformed canonical session truth may not authorize a positive
+  // entry/add plan. Defensive held-position reviews remain visible.
+  const positivePlanSuppressedByUnknownSession = sessionUnknown
+    && (planType === 'entry' || planType === 'add');
+  if (positivePlanSuppressedByUnknownSession) { planType = 'unknown'; stance = 'unknown'; }
+  const positivePlanSuppressedByClosedSession = sessionClosed
+    && (planType === 'entry' || planType === 'add');
+  if (positivePlanSuppressedByClosedSession) {
+    planType = 'wait'; stance = 'wait'; blocking.push('market_session_closed');
+  }
+
   let summary: string; let why: string;
   if (planType === 'unknown') {
-    summary = `計画：判定保留。${disp}は判断材料(需給/フロー)が不足しており、計画を出せる状態ではありません。`;
-    why = '証拠不足のまま計画を出すと捏造になるため、データ取得を待ちます。';
+    if (positivePlanSuppressedByUnknownSession) {
+      summary = `計画：判定保留。${disp}は市場セッションの正本を確認できないため、新規・追加計画を出せません。`;
+      why = 'サーバーの公式カレンダー準拠セッションが欠落または不正なため、通常取引時間をブラウザで推測せず確認を待ちます。';
+    } else {
+      summary = `計画：判定保留。${disp}は判断材料(需給/フロー)が不足しており、計画を出せる状態ではありません。`;
+      why = '証拠不足のまま計画を出すと捏造になるため、データ取得を待ちます。';
+    }
   } else if (event) {
     summary = `計画：イベント待ち。${evName}前のため、${disp}の${i.isHeld ? '買い増し' : '新規'}判断は発表後の金利反応と指数の方向を確認してからです。`;
     why = `${evName}の結果次第で前提が変わるため、事前の決め打ちは計画になりません。`;
@@ -188,7 +401,10 @@ export function buildPlan(i: PlanInputs): LocalPlan {
     summary = `計画：待ち。${disp}は現時点で入る条件が揃っておらず、条件の成立を待つ局面です。`;
     why = '悪化信号があるか、支持材料が不足しているため。';
   }
-  if (i.marketOpen === false && ['entry', 'add', 'avoid_chase'].includes(planType)) summary += ' ' + PTS_WARNING_JA;
+  if (marketSession.state === 'closed'
+      && (positivePlanSuppressedByClosedSession || planType === 'avoid_chase')) {
+    summary += ' ' + PTS_WARNING_JA;
+  }
 
   return {
     symbol: i.symbol.toUpperCase(), assetName: i.assetName, isHeld: i.isHeld,
@@ -226,6 +442,7 @@ export function buildPlan(i: PlanInputs): LocalPlan {
     blockingReasons: blocking.slice(0, 4),
     holdModeJa: HOLD_JA[holdMode],
     evidenceQuality: eq,
+    marketSession,
   };
 }
 

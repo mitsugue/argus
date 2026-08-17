@@ -7,12 +7,11 @@ import {
   SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, arrayMove, useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { useAssetIntel } from '../../hooks/useAssetIntel';
+import type { AssetIntel } from '../../hooks/useAssetIntel';
 import { useCatalysts } from '../../hooks/useCatalysts';
-import { useFundNav } from '../../hooks/useFundNav';
+import { fundNavForAsset } from '../../hooks/useFundNav';
 import { coingeckoIdOf } from '../../lib/cryptoIds';
 import { deriveStrategy, type QuoteLite } from '../../lib/assetStrategy';
-import { holderPosture } from '../../lib/holderPosture';
 import { GENRES, genreOf, type AssetItem } from '../../types/assetItem';
 import type { ActionLabel } from '../../types/actionLabels';
 import type { CatalystItem } from '../../types/catalysts';
@@ -21,7 +20,6 @@ import {
   buildDecisionFirstView, buildPortfolioCommand, deskRank, DESK_RANK_JA,
   type DeskRankInput, type DeskGenre,
 } from '../../domain/assetDesk';
-import { resolveSignal, type OwnerState } from '../../domain/actionLevel';
 import type { DeskCardData, DeskEventTag, DeskSection } from './types';
 import { sectionAnchorId, DESK_SECTIONS } from './types';
 import { AssetDecisionCard } from './AssetDecisionCard';
@@ -34,19 +32,24 @@ import { normalizeLiveQuote } from '../../domain/liveQuote';
 import './AssetDesk.css';
 
 // V12.2.12 — Asset Deskリスト(旧AssetStrategySectionの後継)。
-// データ組み立てはuseAssetIntel(publish:false — 閲覧でpublish副作用なし)+
-// 判断はdomain/assetDecision経由 — Todayと構造的に同一の判断を表示する。
+// データ組み立てはHoldings所有の共有Asset Intelをpropsで受け取り、
+// domain/assetDecision経由でTodayと構造的に同一の判断を表示する。
 // 並び: デフォルト=優先順(domain/assetDesk決定論ソート)/手動順=従来のDnD。
 
 export interface AssetFocusIntent { symbol: string; section?: string; nonce: number }
 
 interface Props {
   assets: AssetItem[];
+  intel: AssetIntel;
   onReorder: (orderedIds: string[]) => void;
   onRemove: (id: string) => void;
   onUpdateHolding: (id: string, h: { quantity?: number | null; avgCost?: number | null }) => void;
   focus?: AssetFocusIntent | null;
   toolbar?: React.ReactNode;
+  /** Lean v13 contextual detail: render only this asset, fully expanded. */
+  detailSymbol?: string;
+  /** List rows open the contextual Asset Detail route instead of duplicating it inline. */
+  onOpenAsset?: (symbol: string, section?: string) => void;
 }
 
 // 手動順モードの行(DnDハンドル+カード)
@@ -65,11 +68,10 @@ const SortableCardRow: React.FC<{
 };
 
 export const AssetDeskList: React.FC<Props> = ({
-  assets, onReorder, onRemove, onUpdateHolding, focus, toolbar,
+  assets, intel, onReorder, onRemove, onUpdateHolding, focus, toolbar, detailSymbol, onOpenAsset,
 }) => {
-  const intel = useAssetIntel({ publish: false });
   const cat = useCatalysts();
-  const { funds: navFunds } = useFundNav();
+  const navFunds = intel.fundNav.funds;
   const mountTs = useMemo(() => Date.now(), []);
   const [nowMs] = useState(() => Date.now());
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -114,21 +116,9 @@ export const AssetDeskList: React.FC<Props> = ({
     const downsideBySym = new Map<string, DownsideIncident>();
     for (const inc of intel.downside?.incidents ?? []) downsideBySym.set(inc.symbol, inc);
     // 投信(基準価額): fund資産をカタログNAVへ名寄せ(旧実装のまま)
-    const navByName = (a: AssetItem) => {
-      const sym = (a.symbol || '').toUpperCase();
-      const nm = `${a.displayName || ''} ${a.displayNameJa || ''}`.toLowerCase();
-      const want = (kw: string) => sym.includes(kw) || nm.includes(kw.toLowerCase());
-      for (const f of navFunds) {
-        const fn = (f.name || '').toLowerCase();
-        if (fn.includes('全世界') && (want('ACWI') || nm.includes('全世界') || nm.includes('オルカン') || nm.includes('オール'))) return f;
-        if (fn.includes('s&p500') && (want('SP500') || want('S&P') || nm.includes('米国'))) return f;
-        if (fn.includes('国内') && (want('N225') || want('NIKKEI') || nm.includes('国内') || nm.includes('日経'))) return f;
-      }
-      return null;
-    };
     for (const a of assets) {
       if (genreOf(a) === 'funds') {
-        const f = navByName(a);
+        const f = fundNavForAsset(a, navFunds);
         if (f) quotes.set(a.symbol, {
           price: f.navYen, changePct: f.changePct ?? 0, volume: 0,
           date: f.date, status: 'delayed',
@@ -175,7 +165,8 @@ export const AssetDeskList: React.FC<Props> = ({
       const strat = deriveStrategy(a, maps.labels.get(a.symbol), quote, maps.cats.get(a.symbol), mountTs);
       const incident = maps.downsideBySym.get(a.symbol);
       const card = intel.cardBySym.get(sym);
-      const decision = (genre === 'jp' || genre === 'us') ? intel.decisionBySym.get(sym) : undefined;
+      const decision = intel.decisionBySym.get(sym);
+      const sda = intel.sdaBySymbol.get(sym);
       const apx = apBySym.get(sym);
       const pn = intel.positionExposure.notes[sym];
       const themeConcentrationPct = pn
@@ -193,21 +184,20 @@ export const AssetDeskList: React.FC<Props> = ({
         eventSoon: eventTags.some((e) => e.countdown === 'D' || e.countdown === 'D-1'),
       };
       const rank = deskRank(rankInput);
-      const signalCode = card?.signalCode ?? resolveSignal(strat.action, {
-        downsideOverride: incident?.actionOverride,
-        dataQuality: strat.status === 'live' ? 'LIVE'
-          : strat.status === 'mock' ? 'MOCK' : 'PARTIAL',
-        materialDownside: !!incident,
-        ownerState: (incident?.ownerState as OwnerState) || undefined,
-      }).code;
       const name = bestAssetName(a, quote?.name ?? card?.name);
       const priceShown = strat.status === 'mock' ? null : (strat.price ?? card?.price);
       const changePct = strat.status === 'mock' ? null : (strat.changePct ?? card?.changePct);
       const decisionFirst = buildDecisionFirstView({
-        symbol: sym, name, market: a.market, held, signalCode,
-        actionOverride: incident?.actionOverride,
-        ownerLabel: pn?.readinessJa ?? intel.stanceBySymbol.get(sym)?.stanceJa
-          ?? plBySym.get(sym)?.currentStanceJa,
+        symbol: sym, name, market: a.market, held,
+        canonicalPrimaryAction: sda?.primaryAction ?? 'WAIT',
+        canonicalDecisionId: sda?.decisionId ?? null,
+        canonicalDecisionStatus: sda?.status ?? 'DATA_GATED',
+        canonicalConfidenceBps: sda?.confidence.valueBps ?? 0,
+        sevenSignStatus: sda?.sevenSign.status ?? 'DATA_GATED',
+        sevenSignLevel: sda?.sevenSign.candidateLevel ?? null,
+        targets: sda?.targets ?? [],
+        invalidation: sda?.invalidation ?? null,
+        freshness: sda?.freshness ?? 'UNKNOWN',
         priceText: fmtPrice(a.market, priceShown),
         changePct, pnlPct: pn?.pnlPct ?? null,
         priority: apx?.priorityRank && apx.priorityRank !== 'Ignore'
@@ -218,10 +208,11 @@ export const AssetDeskList: React.FC<Props> = ({
         quoteTruth: quote?.quoteTruth ?? null,
         rank,
         whyCandidates: [
-          incident?.moverCause?.bestLeadJa, incident?.reasonJa,
-          decision?.reasonJa, card?.causeOneLineJa, strat.reasonJa,
+          decision?.reasonJa, incident?.moverCause?.bestLeadJa, incident?.reasonJa,
+          card?.causeOneLineJa, strat.reasonJa,
         ],
         nextCandidates: [
+          sda?.nextReviewConditionCodes?.[0],
           incident?.moverCause?.nextChecksJa?.[0], incident?.nextConditionJa,
           card?.nextJa, plBySym.get(sym)?.nextChecksJa?.[0],
           decision?.rule.nextConditionJa, strat.nextConditionJa,
@@ -236,13 +227,11 @@ export const AssetDeskList: React.FC<Props> = ({
         card, decision, strat, quote,
         liveName: quote?.name ?? null,
         incident,
-        hp: holderPosture(a, strat, incident),
         pn,
         sdg: sdBySym.get(sym),
         apx,
         scn: scBySym.get(sym),
         ppl: plBySym.get(sym),
-        pst: intel.stanceBySymbol.get(sym),
         aiLabel: aiBySym.get(sym),
         aiAgeMin: intel.aiMeta.ageMin,
         aiMeta: intel.aiMeta,
@@ -252,9 +241,9 @@ export const AssetDeskList: React.FC<Props> = ({
       };
       return { d, rankInput };
     });
-  }, [assets, maps, intel.cardBySym, intel.decisionBySym, intel.aiJ.data, intel.sdSignals,
+  }, [assets, maps, intel.cardBySym, intel.decisionBySym, intel.sdaBySymbol, intel.aiJ.data, intel.sdSignals,
       intel.apItems, intel.scenarioSets, intel.positionPlans, intel.positionExposure,
-      intel.stanceBySymbol, intel.aiMeta, eventTagsBySym, mountTs]);
+      intel.aiMeta, eventTagsBySym, mountTs]);
 
   const riskCount = useMemo(() => rows.filter((r) => !!r.d.incident).length, [rows]);
   const keep = (r: { d: DeskCardData }) => filter === 'all' ? true
@@ -329,8 +318,15 @@ export const AssetDeskList: React.FC<Props> = ({
     <AssetDecisionCard
       key={r.d.asset.id}
       d={r.d}
-      open={expandedId === r.d.asset.id}
+      open={detailSymbol
+        ? r.d.asset.symbol.toUpperCase() === detailSymbol.toUpperCase()
+        : expandedId === r.d.asset.id}
       onToggle={() => {
+        if (detailSymbol) return;
+        if (onOpenAsset && expandedId !== r.d.asset.id) {
+          onOpenAsset(r.d.asset.symbol);
+          return;
+        }
         setLocalFocus(null);
         setExpandedId((cur) => (cur === r.d.asset.id ? null : r.d.asset.id));
       }}
@@ -340,8 +336,23 @@ export const AssetDeskList: React.FC<Props> = ({
       dragHandle={handle}
       focusSection={activeFocus?.symbol.toUpperCase() === r.d.asset.symbol.toUpperCase()
         ? activeFocus.section : undefined}
+      collapsible={!detailSymbol}
     />
   );
+
+  if (detailSymbol) {
+    const detail = prioritized.find((row) =>
+      row.d.asset.symbol.toUpperCase() === detailSymbol.toUpperCase());
+    return detail ? (
+      <div className="asset-groups asset-groups--detail">
+        <div className="card asset-list ad-list">{renderCard(detail)}</div>
+      </div>
+    ) : (
+      <div className="card asset-list">
+        <div className="asset-empty">{detailSymbol} はHoldings / Watchlistに登録されていません。</div>
+      </div>
+    );
+  }
 
   return (
     <div className="asset-groups">
@@ -354,6 +365,7 @@ export const AssetDeskList: React.FC<Props> = ({
         data={intel.downside}
         maxItems={4}
         onFocus={(symbol) => {
+          if (onOpenAsset) { onOpenAsset(symbol, 'why-downside'); return; }
           const row = rows.find((item) =>
             item.d.asset.symbol.toUpperCase() === symbol.toUpperCase());
           if (!row) return;

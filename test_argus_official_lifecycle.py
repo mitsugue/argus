@@ -5,16 +5,18 @@ confirmed_cause requires timing + market confirmation; post-move disclosure is n
 the immediate trigger; missing market data stays pending. Deterministic/serializable.
 """
 import json
+from datetime import datetime, timezone
 import argus_official_event_lifecycle as OL
 import scanner
 
 MATERIAL_ITEM = {"code": "8058", "name": "三菱商事", "title": "業績予想の修正（下方修正）に関するお知らせ",
-                 "time": "2026-07-02T08:00", "category": "guidance_down", "categoryJa": "業績下方修正",
+                 "time": "2026-07-01T23:30:00Z", "category": "guidance_down", "categoryJa": "業績下方修正",
                  "sentiment": "negative", "material": True, "official": True, "provider": "jquants-tdnet"}
-NON_MATERIAL = {"code": "7203", "name": "トヨタ", "title": "月次生産状況のお知らせ", "time": "2026-07-02T09:00",
+NON_MATERIAL = {"code": "7203", "name": "トヨタ", "title": "月次生産状況のお知らせ", "time": "2026-07-01T23:45:00Z",
                 "category": "monthly", "categoryJa": "月次開示", "sentiment": "neutral",
                 "material": False, "official": True, "provider": "jquants-tdnet"}
-NOW = "2026-07-02T10:00:00Z"
+NOW = "2026-07-02T01:00:00Z"
+MOVE_STARTED = "2026-07-02T00:00:00Z"
 
 
 def rec(item=MATERIAL_ITEM):
@@ -56,7 +58,8 @@ def _confirmed_reaction(window="same_day"):
 
 def test_confirmed_cause_requires_market_confirmation():
     r = rec()
-    r2 = OL.apply_market_reaction(r, _confirmed_reaction())
+    r2 = OL.apply_market_reaction(
+        r, _confirmed_reaction(), move_started_at=MOVE_STARTED)
     assert r2["causeStatus"] == "confirmed_cause"
     assert r2["marketReaction"]["sameDay"]["marketConfirmed"] is True
 
@@ -65,16 +68,28 @@ def test_small_move_both_windows_is_not_cause():
     r = rec()
     weak_same = OL.build_market_reaction(window="same_day", observed_at=NOW, price_move_pct=0.3)
     weak_next = OL.build_market_reaction(window="next_session", observed_at=NOW, price_move_pct=-0.2)
-    r2 = OL.apply_market_reaction(OL.apply_market_reaction(r, weak_same), weak_next)
+    r2 = OL.apply_market_reaction(
+        OL.apply_market_reaction(
+            r, weak_same, move_started_at=MOVE_STARTED),
+        weak_next, move_started_at=MOVE_STARTED)
     assert r2["causeStatus"] == "not_cause"
 
 
 def test_disclosure_after_move_never_immediate_trigger():
     r = rec()
+    r["disclosedAt"] = "2026-07-02T02:00:00Z"
     r2 = OL.apply_market_reaction(r, _confirmed_reaction(),
-                                  move_started_at="2026-07-02T01:00")   # move BEFORE disclosure
+                                  move_started_at=MOVE_STARTED)
     assert r2["causeStatus"] != "confirmed_cause"
     assert "timing:disclosure_after_move" in r2["missingConfirmations"]
+
+
+def test_missing_or_malformed_move_time_never_confirms_cause():
+    for move in (None, "", "2026-07-02", "not-a-time"):
+        r2 = OL.apply_market_reaction(
+            rec(), _confirmed_reaction(), move_started_at=move)
+        assert r2["causeStatus"] != "confirmed_cause"
+        assert "timing:unverified" in r2["missingConfirmations"]
 
 
 def test_reaction_with_missing_inputs_states_limitations():
@@ -94,7 +109,10 @@ def test_apply_never_mutates_original():
 def _ingest(monkeypatch=None):
     scanner._OFFICIAL_EVENTS.clear()
     scanner._OFFICIAL_EVENTS_STATE["restored"] = True
-    scanner._official_lifecycle_ingest({"items": [MATERIAL_ITEM, NON_MATERIAL]})
+    scanner._official_lifecycle_ingest(
+        {"official": True, "items": [MATERIAL_ITEM, NON_MATERIAL]},
+        now_epoch=datetime.fromisoformat(
+            NOW.replace("Z", "+00:00")).timestamp())
 
 
 def test_ingest_and_endpoints_are_store_only(monkeypatch):
@@ -118,8 +136,7 @@ def test_ingest_and_endpoints_are_store_only(monkeypatch):
 
 def test_evidence_pack_includes_official_event_refs():
     _ingest()
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/evidence-pack?symbol=8058&market=JP").get_json()
+    d = scanner._build_evidence_pack("8058", "JP")
     refs = d.get("officialEventRefs") or []
     assert refs and refs[0]["officialEventId"].startswith("oe-8058-")
     assert refs[0]["causeStatus"] == "probable_catalyst"
