@@ -1,0 +1,39 @@
+.top-rotations {
+  display: flex;
+  flex-direction: column;
+}
+
+.top-rotations__row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--text-main);
+}
+.top-rotations__row:last-child {
+  border-bottom: 0;
+}
+
+.top-rotations__from {
+  color: var(--text-sub);
+  min-width: 92px;
+  flex-shrink: 0;
+}
+
+.top-rotations__arrow {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+.top-rotations__to {
+  color: var(--text-main);
+}
+
+@media (max-width: 720px) {
+  .top-rotations__from {
+    min-width: 80px;
+  }
+}

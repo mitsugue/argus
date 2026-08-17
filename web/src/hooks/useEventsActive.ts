@@ -38,12 +38,13 @@ export function useEventsActive() {
     async function load() {
       if (!base) { setLoading(false); return; }
       try {
-        const payload = await fetch(`${base}/api/argus/events-active`)
-          .then((response) => response.json());
+        const [ea, st] = await Promise.all([
+          fetch(`${base}/api/argus/events-active`).then((r) => r.json()),
+          fetch(`${base}/api/argus/event-backbone-status`).then((r) => r.json()),
+        ]);
         if (!alive) return;
-        setEvents(Array.isArray(payload.events) ? payload.events : []);
-        // Backend merges the event-backbone status DTO at this same top level.
-        setStatus(payload as EventBackboneStatus);
+        setEvents(Array.isArray(ea.events) ? ea.events : []);
+        setStatus(st as EventBackboneStatus);
       } catch { /* keep last */ }
       finally { if (alive) setLoading(false); }
     }

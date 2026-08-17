@@ -145,7 +145,7 @@ const ja: Record<DictKey, string> = {
   'cp.accumPlan': '積立方針 + 投信 基準価額',
   'cp.total': '合計',
   'cp.noLivePos': 'live価格の保有なし',
-  'cp.emptyAlloc': 'Holdings / Watchlistで銘柄詳細を開き(OWNER POSITION)「保有数量・平均取得単価」を入力すると、ここに配分の現在地が表示されます(データは端末内のみ)。',
+  'cp.emptyAlloc': 'Asset Deskで銘柄カードを開き(OWNER POSITION)「保有数量・平均取得単価」を入力すると、ここに配分の現在地が表示されます(データは端末内のみ)。',
   'cp.unpriced': '価格未取得のため除外:',
   'cp.navLoading': '基準価額を取得中…(投信総合ライブラリー)',
   'hp.held': '保有',

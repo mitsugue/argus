@@ -1,0 +1,68 @@
+.tab-rail {
+  position: fixed;
+  right: max(10px, env(safe-area-inset-right, 10px));
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px;
+  background: rgba(20, 32, 50, 0.6);
+  border: 1px solid rgba(106, 138, 160, 0.28);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.tab-rail__btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 38px;
+  height: 44px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: rgba(214, 222, 230, 0.5);
+  font-family: var(--hud-font-display);
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: background 0.15s var(--hud-ease), border-color 0.15s var(--hud-ease);
+}
+
+.tab-rail__btn:hover {
+  background: rgba(106, 138, 160, 0.1);
+  border-color: rgba(106, 138, 160, 0.4);
+  color: rgba(214, 222, 230, 0.92);
+}
+
+.tab-rail__btn.is-active {
+  background: rgba(106, 138, 160, 0.16);
+  border-color: var(--shell-accent);
+  color: rgba(214, 222, 230, 0.95);
+}
+
+.tab-rail__glyph {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.tab-rail__label {
+  font-size: 7px;
+  letter-spacing: 1.5px;
+  line-height: 1;
+}
+
+@media (max-width: 900px) {
+  .tab-rail {
+    right: 6px;
+  }
+  .tab-rail__btn {
+    width: 34px;
+    height: 38px;
+  }
+  .tab-rail__glyph { font-size: 12px; }
+  .tab-rail__label { font-size: 6px; }
+}

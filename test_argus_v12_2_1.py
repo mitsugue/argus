@@ -193,7 +193,7 @@ def test_forward_live_origin_stamped(monkeypatch):
 
 def test_dq_exposes_agent_ops_dual_plane_no_leak():
     with scanner.app.test_client() as c:
-        d = scanner._data_quality_console()
+        d = c.get("/api/argus/data-quality").get_json() or {}
         assert "agentOps" in d and "dualPlane" in d
         assert d["dualPlane"]["privateDecisionPlane"]["active24x365"] is False
         body = str(d)

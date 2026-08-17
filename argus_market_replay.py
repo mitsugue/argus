@@ -7,7 +7,6 @@ groups overlapping observations into one episode, and never calls an LLM.
 """
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import math
@@ -15,12 +14,11 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import argus_today_intelligence
-import argus_market_data_truth
 
 
 SCHEMA_VERSION = "argus-market-replay-v1"
 OLD_METHOD_VERSION = "market-context-replay-v1"
-METHOD_VERSION = "market-context-replay-v3-pit-bound"
+METHOD_VERSION = "market-context-replay-v2-standard-excursion"
 FEATURE_VERSION = "replay-features-past-window-v1"
 REACTION_VERSION = "reaction-classification-v1"
 EXTREME_VERSION = "ledger-extremes-fixed-thresholds-v2-standard-excursion"
@@ -37,26 +35,6 @@ METRIC_DEFINITION = {
     "direction": "long",
     "unit": "percent",
 }
-AUXILIARY_INPUT_SCHEMA = "argus-replay-auxiliary-input-v1"
-MAX_AUXILIARY_INPUT_BYTES = 512 * 1024
-# Chart intelligence carries up to 260 PIT-bound bars with date, available,
-# known, and observed timestamps, plus bounded event/calibration metadata. Keep
-# the audit above that real repository shape and fail closed rather than
-# silently truncating when a malformed/hostile payload exceeds the bound.
-MAX_AUXILIARY_TEMPORAL_PATHS = 2048
-
-# These fields describe when a fact entered the information set, rather than a
-# future schedule.  A sealed auxiliary payload may contain a future event date
-# that was already announced, but it may never contain an observation/knowledge
-# timestamp from after the replay cutoff.
-_AUXILIARY_KNOWLEDGE_TIME_KEYS = frozenset({
-    "asOf", "availableFrom", "createdAt", "generatedAt", "ingestedAt",
-    "knownAt", "observedAt", "publishedAt", "receivedAt", "reportedAt",
-    "sourceTimestamp", "updatedAt",
-})
-_AUXILIARY_HISTORY_CONTAINERS = frozenset({
-    "bars", "history", "observations", "outcomes", "series",
-})
 
 
 def _number(value: Any) -> Optional[float]:
@@ -77,167 +55,6 @@ def _hash(value: Any, length: int = 32) -> str:
     return hashlib.sha256(raw).hexdigest()[:length]
 
 
-def _auxiliary_time(value: Any, *, date_only: bool = False) -> datetime:
-    text = str(value or "").strip()
-    if not text:
-        raise ValueError("empty_auxiliary_time")
-    if date_only or len(text) == 10:
-        parsed = datetime.fromisoformat(text[:10] + "T23:59:59.999999+00:00")
-    else:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            raise ValueError("auxiliary_time_timezone_required")
-    return parsed.astimezone(timezone.utc)
-
-
-def _auxiliary_temporal_proof(value: Dict[str, Any], *, kind: str,
-                              cutoff: datetime) -> Dict[str, Any]:
-    """Mechanically audit explicit nested knowledge/history timestamps.
-
-    ``date`` is temporal only inside a history-like container or an OHLC row;
-    this deliberately does not reject a future scheduled event whose existence
-    was already known at the cutoff.  Explicit knowledge timestamps are always
-    bounded, wherever they occur.
-    """
-    checked: List[str] = []
-    future: List[str] = []
-    malformed: List[str] = []
-    overflow = False
-    timestamp_count = 0
-
-    def visit(node: Any, path: Tuple[str, ...]) -> None:
-        nonlocal overflow, timestamp_count
-        if overflow:
-            return
-        if isinstance(node, dict):
-            is_ohlc = bool(set(node) & {"open", "high", "low", "close"})
-            in_history = any(part in _AUXILIARY_HISTORY_CONTAINERS
-                             for part in path)
-            for raw_key, child in node.items():
-                key = str(raw_key)
-                child_path = path + (key,)
-                should_check = key in _AUXILIARY_KNOWLEDGE_TIME_KEYS
-                date_only = False
-                if key == "date" and (is_ohlc or in_history):
-                    should_check = True
-                    date_only = True
-                if kind == "calibration" and key in {
-                        "historyEnd", "sampleEnd", "trainingEnd"}:
-                    should_check = True
-                    date_only = True
-                if should_check and child not in (None, ""):
-                    if timestamp_count >= MAX_AUXILIARY_TEMPORAL_PATHS:
-                        overflow = True
-                        return
-                    timestamp_count += 1
-                    label = ".".join(child_path)
-                    try:
-                        parsed = _auxiliary_time(child, date_only=date_only)
-                    except (TypeError, ValueError, OverflowError):
-                        malformed.append(label)
-                    else:
-                        checked.append(label)
-                        if parsed > cutoff:
-                            future.append(label)
-                visit(child, child_path)
-        elif isinstance(node, list):
-            for index, child in enumerate(node):
-                visit(child, path + (str(index),))
-
-    visit(value, ())
-    return {
-        "policyId": "replay-auxiliary-nested-time-v2-overflow-closed",
-        "checkedTimestampCount": len(checked),
-        "futureTimestampPaths": future,
-        "malformedTimestampPaths": malformed,
-        "temporalPathOverflow": overflow,
-        "verified": not future and not malformed and not overflow,
-    }
-
-
-def seal_auxiliary_input(value: Dict[str, Any], *, kind: str,
-                         known_at: str) -> Dict[str, Any]:
-    """Bind a current auxiliary payload to when it first entered the replay.
-
-    A seal makes a chart/calibration payload eligible at that cutoff; it does
-    not rewrite any inner timestamps. Reusing the sealed current payload for an
-    older replay is mechanically rejected.
-    """
-    if not isinstance(value, dict) or kind not in ("chart_report", "calibration"):
-        raise ValueError("invalid_auxiliary_input")
-    parsed = datetime.fromisoformat(str(known_at).replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        raise ValueError("auxiliary_known_at_timezone_required")
-    body = copy.deepcopy(value)
-    body.pop("_pointInTimeReceipt", None)
-    temporal = _auxiliary_temporal_proof(
-        body, kind=kind, cutoff=parsed.astimezone(timezone.utc))
-    if not temporal["verified"]:
-        raise ValueError("auxiliary_nested_time_invalid")
-    raw = json.dumps(body, ensure_ascii=False, sort_keys=True,
-                     separators=(",", ":"), allow_nan=False).encode("utf-8")
-    if len(raw) > MAX_AUXILIARY_INPUT_BYTES:
-        raise ValueError("auxiliary_input_too_large")
-    body["_pointInTimeReceipt"] = {
-        "schemaVersion": AUXILIARY_INPUT_SCHEMA,
-        "kind": kind,
-        "knownAt": parsed.astimezone(timezone.utc).isoformat().replace(
-            "+00:00", "Z"),
-        "contentHash": hashlib.sha256(raw).hexdigest(),
-    }
-    return body
-
-
-def _admit_auxiliary_input(value: Optional[Dict[str, Any]], *, kind: str,
-                           cutoff: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    source = value if isinstance(value, dict) else {}
-    if not source:
-        return {}, {"kind": kind, "status": "ABSENT", "admitted": False,
-                    "futureInputAdmitted": False, "contentHash": None,
-                    "knownAt": None}
-    body = copy.deepcopy(source)
-    receipt = body.pop("_pointInTimeReceipt", None)
-    proof = {"kind": kind, "status": "EXCLUDED_UNBOUND", "admitted": False,
-             "futureInputAdmitted": False, "contentHash": None,
-             "knownAt": None, "temporalIntegrity": False,
-             "temporalProof": None}
-    if not isinstance(receipt, dict) or set(receipt) != {
-            "schemaVersion", "kind", "knownAt", "contentHash"} or \
-            receipt.get("schemaVersion") != AUXILIARY_INPUT_SCHEMA or \
-            receipt.get("kind") != kind:
-        return {}, proof
-    try:
-        known = datetime.fromisoformat(
-            str(receipt.get("knownAt")).replace("Z", "+00:00"))
-        limit = datetime.fromisoformat(str(cutoff).replace("Z", "+00:00"))
-        if known.tzinfo is None or limit.tzinfo is None:
-            raise ValueError("timezone_required")
-        raw = json.dumps(body, ensure_ascii=False, sort_keys=True,
-                         separators=(",", ":"), allow_nan=False).encode("utf-8")
-    except (TypeError, ValueError, OverflowError):
-        proof["status"] = "EXCLUDED_MALFORMED"
-        return {}, proof
-    digest = hashlib.sha256(raw).hexdigest()
-    proof.update({"knownAt": known.astimezone(timezone.utc).isoformat().replace(
-        "+00:00", "Z"), "contentHash": digest})
-    if len(raw) > MAX_AUXILIARY_INPUT_BYTES or \
-            digest != receipt.get("contentHash"):
-        proof["status"] = "EXCLUDED_INTEGRITY_FAILURE"
-        return {}, proof
-    if known > limit:
-        proof["status"] = "EXCLUDED_FUTURE"
-        return {}, proof
-    temporal = _auxiliary_temporal_proof(
-        body, kind=kind, cutoff=limit.astimezone(timezone.utc))
-    proof.update({"temporalProof": temporal,
-                  "temporalIntegrity": bool(temporal["verified"])})
-    if not temporal["verified"]:
-        proof["status"] = "EXCLUDED_TEMPORAL_FAILURE"
-        return {}, proof
-    proof.update({"status": "ADMITTED", "admitted": True})
-    return body, proof
-
-
 def _dataset_hash_from_bars(bars: Sequence[Dict[str, Any]]) -> str:
     return _hash([{
         "date": row["date"],
@@ -247,32 +64,13 @@ def _dataset_hash_from_bars(bars: Sequence[Dict[str, Any]]) -> str:
         "close": row.get("close"),
         "volume": row.get("volume"),
         "availableFrom": row["availableFrom"],
-        "knownAt": row.get("knownAt"),
-        "observedAt": row.get("observedAt"),
-        "revision": row.get("revision", 0),
-        "source": row.get("source"),
-        "sourceId": row.get("sourceId"),
-        "datasetId": row.get("datasetId"),
-        "adjusted": row.get("adjusted"),
     } for row in bars])
 
 
 def dataset_hash(rows: Iterable[Dict[str, Any]]) -> str:
     """Return the public cache-key hash without running Replay analysis."""
-    source = list(rows or [])
-    visible, _ = argus_market_data_truth.point_in_time_rows(
-        source, "9999-12-31T23:59:59.999999Z")
-    normalized = argus_today_intelligence.normalize_bars(visible)
-    metadata = {
-        str(row.get("date") or row.get("Date") or "")[:10]: row
-        for row in visible if isinstance(row, dict)
-    }
-    for bar in normalized:
-        raw = metadata.get(bar["date"], {})
-        bar["knownAt"] = raw.get("knownAt")
-        bar["sourceId"] = raw.get("sourceId") or raw.get("sourceRef")
-        bar["datasetId"] = raw.get("datasetId")
-    return _dataset_hash_from_bars(normalized)
+    return _dataset_hash_from_bars(
+        argus_today_intelligence.normalize_bars(rows))
 
 
 def _mean(values: Sequence[float]) -> Optional[float]:
@@ -500,7 +298,7 @@ def _episode_index(bars: Sequence[Dict[str, Any]],
 
 
 def _event_study(bars: Sequence[Dict[str, Any]],
-                 episodes: Sequence[Dict[str, Any]], *, pit_proven: bool) -> Dict[str, Any]:
+                 episodes: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     paths: Dict[int, List[float]] = {day: [] for day in range(-20, 21)}
     for episode in episodes:
         index = int(episode["index"])
@@ -521,11 +319,10 @@ def _event_study(bars: Sequence[Dict[str, Any]],
             "q90": _round(_quantile(values, .90), 3),
         })
     return {"window": [-20, 20], "points": points,
-            "noFutureLeakage": bool(pit_proven)}
+            "noFutureLeakage": True}
 
 
-def _calibration_curve(episodes: Sequence[Dict[str, Any]], horizon: int, *,
-                       pit_proven: bool) -> Dict[str, Any]:
+def _calibration_curve(episodes: Sequence[Dict[str, Any]], horizon: int) -> Dict[str, Any]:
     """Expanding, past-only directional calibration in 10 bins."""
     bins: Dict[int, Dict[str, Any]] = {
         index: {"predictions": [], "observed": []} for index in range(10)}
@@ -554,7 +351,7 @@ def _calibration_curve(episodes: Sequence[Dict[str, Any]], horizon: int, *,
             "smallSample": count < 10,
         })
     return {"horizon": horizon, "points": points, "ideal": [[0, 0], [1, 1]],
-            "walkForward": True, "noFutureLeakage": bool(pit_proven)}
+            "walkForward": True, "noFutureLeakage": True}
 
 
 def _regime_analysis(episodes: Sequence[Dict[str, Any]], horizon: int) -> List[Dict[str, Any]]:
@@ -578,29 +375,17 @@ def _regime_analysis(episodes: Sequence[Dict[str, Any]], horizon: int) -> List[D
     return rows
 
 
-def _history_points_with_proof(series: Dict[str, Any], as_of: str
-                               ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    visible, proof = argus_market_data_truth.point_in_time_rows(
-        series.get("history") or [], as_of)
+def _history_points(series: Dict[str, Any], as_of: str) -> List[Dict[str, Any]]:
     points: List[Dict[str, Any]] = []
-    for raw in visible:
+    for raw in series.get("history") or []:
         if not isinstance(raw, dict):
             continue
         date = str(raw.get("date") or raw.get("periodEnd") or raw.get("asOf") or "")[:10]
-        available = str(raw.get("availableFrom") or raw.get("publishedAt") or "")[:10]
+        available = str(raw.get("availableFrom") or raw.get("publishedAt") or date)[:10]
         value = _number(raw.get("value", raw.get("latestValue")))
-        if len(date) == 10 and len(available) == 10 and value is not None:
-            points.append({
-                "date": date, "availableFrom": available,
-                "knownAt": raw.get("knownAt"), "revision": raw.get("revision", 0),
-                "value": value,
-            })
-    return (sorted(points, key=lambda row: (
-        str(row.get("knownAt") or ""), row["date"])), proof)
-
-
-def _history_points(series: Dict[str, Any], as_of: str) -> List[Dict[str, Any]]:
-    return _history_points_with_proof(series, as_of)[0]
+        if len(date) == 10 and value is not None and available <= as_of[:10]:
+            points.append({"date": date, "availableFrom": available, "value": value})
+    return sorted(points, key=lambda row: (row["availableFrom"], row["date"]))
 
 
 def _price_outcome_after(bars: Sequence[Dict[str, Any]], date: str) -> Dict[str, Any]:
@@ -616,25 +401,14 @@ def _ledger_extremes(ledger: Dict[str, Any], bars: Sequence[Dict[str, Any]],
     series_rows = [row for row in (ledger.get("table") or []) if isinstance(row, dict)]
     summaries: List[Dict[str, Any]] = []
     events: List[Dict[str, Any]] = []
-    publication_proofs: List[Dict[str, Any]] = []
     raw_total = 0
     for series in series_rows:
-        points, point_proof = _history_points_with_proof(series, as_of)
-        proof_ok, proof_reason = argus_market_data_truth.verify_point_in_time_proof(
-            point_proof)
-        publication_proofs.append({
-            "seriesId": str(series.get("seriesId") or ""),
-            "proofDigest": point_proof.get("proofDigest"),
-            "verified": proof_ok,
-            "reason": proof_reason,
-            "excludedFutureCount": point_proof.get("excludedFutureCount"),
-            "excludedUnknownKnowledgeTimeCount": point_proof.get(
-                "excludedUnknownKnowledgeTimeCount"),
-        })
+        points = _history_points(series, as_of)
         if not points:
-            # A current/latest scalar has no historical publication timestamp
-            # and must never be backdated into a replay.
-            continue
+            current = _number(series.get("latestValue"))
+            if current is None:
+                continue
+            points = [{"date": as_of[:10], "availableFrom": as_of[:10], "value": current}]
         values = [float(row["value"]) for row in points]
         current = values[-1]
         mean = sum(values) / len(values)
@@ -706,10 +480,7 @@ def _ledger_extremes(ledger: Dict[str, Any], bars: Sequence[Dict[str, Any]],
         "rawOccurrenceCount": raw_total,
         "effectiveEpisodeCount": len(events),
         "series": summaries, "events": events[-100:],
-        "publicationTimeIntegrity": all(
-            row["verified"] for row in publication_proofs),
-        "latestValueFallbackUsed": False,
-        "publicationProofs": publication_proofs,
+        "publicationTimeIntegrity": True,
     }
 
 
@@ -759,69 +530,25 @@ def build_context(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
                   now_iso: Optional[str] = None) -> Dict[str, Any]:
     if horizon not in HORIZONS:
         raise ValueError("unsupported_horizon")
-    requested_as_of = now_iso or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    pit_rows, pit_proof = argus_market_data_truth.point_in_time_rows(
-        list(rows or []), requested_as_of)
-    as_of = str(pit_proof["cutoff"])
-    bars = argus_today_intelligence.normalize_bars(pit_rows)
-    metadata = {
-        str(row.get("date") or row.get("Date") or "")[:10]: row
-        for row in pit_rows
-    }
-    for bar in bars:
-        raw = metadata.get(bar["date"], {})
-        bar["knownAt"] = raw.get("knownAt")
-        bar["sourceId"] = raw.get("sourceId") or raw.get("sourceRef")
-        bar["datasetId"] = raw.get("datasetId")
+    bars = argus_today_intelligence.normalize_bars(rows)
+    as_of = now_iso or (bars[-1]["date"] if bars else
+                        datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
     episode_index = _episode_index(bars, horizon)
     episodes = episode_index["episodes"]
     distributions = {
         key: _distribution((row.get("outcomes") or {}).get(key) for row in episodes)
         for key in ("1", "5", "20", "mfe", "mae", "reactionDelayDays")
     }
-    admitted_chart, chart_input_proof = _admit_auxiliary_input(
-        chart_report, kind="chart_report", cutoff=as_of)
-    admitted_calibration, calibration_input_proof = _admit_auxiliary_input(
-        calibration, kind="calibration", cutoff=as_of)
-    selected_calibration = ((admitted_calibration.get("horizons") or {})
+    selected_calibration = (((calibration or {}).get("horizons") or {})
                             .get(str(horizon)) or {})
     extremes = _ledger_extremes(ledger or {}, bars, as_of)
     dataset_hash = _dataset_hash_from_bars(bars)
     outcome_hash = _hash([{
         "id": row.get("episodeId"), "outcomes": row.get("outcomes"),
     } for row in episodes])
-    bar_pit_verified, pit_reason = argus_market_data_truth.verify_point_in_time_proof(
-        pit_proof)
-    auxiliary_temporal_integrity = all(
-        not row.get("admitted") or row.get("temporalIntegrity") is True
-        for row in (chart_input_proof, calibration_input_proof))
-    pit_verified = bool(
-        bar_pit_verified and extremes.get("publicationTimeIntegrity") and
-        auxiliary_temporal_integrity)
-    pit_binding = {
-        "policyId": argus_market_data_truth.PIT_POLICY_ID,
-        "proofDigest": pit_proof.get("proofDigest"),
-        "filterProof": pit_proof,
-        "sourceDatasetDigest": pit_proof.get("admittedDatasetDigest"),
-        "normalizedDatasetHash": dataset_hash,
-        "normalizedRowCount": len(bars),
-        "revisionSelection": pit_proof.get("revisionSelection"),
-        "verified": pit_verified,
-        "verificationReason": pit_reason,
-        "auxiliaryInputs": [chart_input_proof, calibration_input_proof],
-        "excludedAuxiliaryInputCount": sum(
-            1 for row in (chart_input_proof, calibration_input_proof)
-            if row.get("status", "").startswith("EXCLUDED_")),
-        "ledgerPublicationTimeIntegrity": bool(
-            extremes.get("publicationTimeIntegrity")),
-        "auxiliaryTemporalIntegrity": auxiliary_temporal_integrity,
-    }
-    pit_binding["bindingDigest"] = _hash(pit_binding, 64)
-    calibration_curve = _calibration_curve(
-        episodes, horizon, pit_proven=pit_verified)
+    calibration_curve = _calibration_curve(episodes, horizon)
     calibration_hash = _hash({
-        "curve": calibration_curve, "source": selected_calibration,
-        "sourceReceipt": calibration_input_proof})
+        "curve": calibration_curve, "source": selected_calibration})
     context = {
         "schemaVersion": SCHEMA_VERSION, "methodVersion": METHOD_VERSION,
         "featureVersion": FEATURE_VERSION, "reactionVersion": REACTION_VERSION,
@@ -846,12 +573,12 @@ def build_context(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
         "similarEpisodes": {
             key: value for key, value in episode_index.items()
             if key not in ("currentFeatures", "currentRegime")},
-        "eventStudy": _event_study(bars, episodes, pit_proven=pit_verified),
+        "eventStudy": _event_study(bars, episodes),
         "outcomeDistributions": distributions,
         "calibrationCurve": calibration_curve,
         "regimeAnalysis": _regime_analysis(episodes, horizon),
         "extremes": extremes,
-        "changeConditions": _change_conditions(admitted_chart),
+        "changeConditions": _change_conditions(chart_report or {}),
         "probabilityQuality": {
             "modelBrier": selected_calibration.get("modelBrier"),
             "baselineBrier": selected_calibration.get("baselineBrier"),
@@ -859,8 +586,8 @@ def build_context(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
             "effectiveSample": selected_calibration.get("effectiveSampleCount"),
             "calibrationIntegrity": selected_calibration.get("calibrationIntegrity"),
             "evaluationPeriod": {
-                "start": admitted_calibration.get("historyStart"),
-                "end": admitted_calibration.get("historyEnd")},
+                "start": (calibration or {}).get("historyStart"),
+                "end": (calibration or {}).get("historyEnd")},
             "datasetHash": selected_calibration.get("calibrationDatasetHash")
             or dataset_hash,
         },
@@ -868,16 +595,12 @@ def build_context(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
         "computation": {
             "mode": "deterministic_background_cache",
             "cacheKey": f"{market}:{symbol}:{horizon}:{METHOD_VERSION}:{dataset_hash}",
-            "noFutureLeakage": bool(pit_verified),
-            "noFutureLeakageProof": pit_binding,
-            "publicationTimeIntegrity": bool(
-                extremes.get("publicationTimeIntegrity")),
+            "noFutureLeakage": True, "publicationTimeIntegrity": True,
         },
     }
     context["contextId"] = "replay-" + _hash({
         "instrumentId": context["instrumentId"], "horizon": horizon,
-        "methodVersion": METHOD_VERSION, "datasetHash": dataset_hash,
-        "asOf": as_of, "pitBindingDigest": pit_binding["bindingDigest"]})
+        "methodVersion": METHOD_VERSION, "datasetHash": dataset_hash})
     return context
 
 

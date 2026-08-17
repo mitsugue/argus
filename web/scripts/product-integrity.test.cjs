@@ -104,19 +104,19 @@ const counters = desk.buildPortfolioCommand(views).counters;
 check('S9 portfolio counters are mutually exclusive',
   counters.reduce((sum, counter) => sum + counter.count, 0) === views.length);
 check('S10 DecisionView contract is populated once',
-  views.every((view) => view.primaryAction === view.canonicalPrimaryAction
+  views.every((view) => view.primaryAction === view.currentActionJa
     && view.reason === view.whyJa && view.nextCheck === view.nextJa));
 check('S10b canonical views have zero duplicate primary decision keys',
   views.every((view) => semantics.duplicateDecisionViewKeys(view).length === 0));
 check('S10c canonical views have zero contradictory states',
   views.every((view) => semantics.contradictoryDecisionStates(view).length === 0));
-check('S10d legacy incident override cannot govern owner and entry actions',
+check('S10d incident override governs owner and entry actions',
   (() => {
     const view = desk.buildDecisionFirstView({
-      ...base, symbol: 'E', held: true, canonicalPrimaryAction: 'EXIT', signalCode: 'ENTER',
+      ...base, symbol: 'E', held: true, signalCode: 'ENTER',
       actionOverride: 'EXIT_WATCH', ownerLabel: '保有継続・追加可', rank: 0,
     });
-    return view.ownerAction === 'EXIT（撤退）' && view.entryAction === '新規停止'
+    return view.ownerAction === '撤退検討' && view.entryAction === '新規停止'
       && semantics.contradictoryDecisionStates(view).length === 0;
   })());
 
@@ -128,6 +128,9 @@ check('S11 scenario percent is gated by provenance',
 const aiReviewSource = fs.readFileSync(path.join(
   __dirname, '..', 'src', 'components', 'assetDesk', 'AssetAIReview.tsx',
 ), 'utf8');
+const scoutSource = fs.readFileSync(path.join(
+  __dirname, '..', 'src', 'components', 'assetDesk', 'AssetEntryScout.tsx',
+), 'utf8');
 const incidentSource = fs.readFileSync(path.join(
   __dirname, '..', 'src', 'components', 'dashboard', 'DownsideIncidentCard.tsx',
 ), 'utf8');
@@ -138,28 +141,22 @@ const appSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'App.tsx'), 
 const notificationSource = fs.readFileSync(path.join(
   __dirname, '..', 'src', 'components', 'NotificationPanel.tsx',
 ), 'utf8');
-const settingsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'Settings.tsx'), 'utf8');
+const guideSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'Guide.tsx'), 'utf8');
 check('S12 uncalibrated AI and cause confidence never renders percent',
   aiReviewSource.includes('confidenceJa') && !aiReviewSource.includes('confidencePct')
+  && scoutSource.includes('probabilityDisplay(v * 100).qualitative')
+  && !scoutSource.includes('Math.round(v * 100)')
   && incidentSource.includes('probabilityDisplay(b.probability * 100).qualitative')
   && !incidentSource.includes('Math.round(b.probability * 100)')
+  && researchSource.includes('probabilityDisplay(value * 100).qualitative')
   && !researchSource.includes('Math.round(p.newLongAccumulation * 100)'));
-check('S12b legacy alert surface is retired and downside stays evidence-only',
-  !fs.existsSync(path.join(__dirname, '..', 'src', 'components', 'dashboard', 'AlertCard.tsx'))
-  && incidentSource.includes('<b>RISK EVIDENCE:</b>')
-  && incidentSource.includes('SDAのPrimary Actionを上書きしません')
-  && !incidentSource.includes('<b>判断:</b>')
-  && !incidentSource.includes('OVERRIDE_LABEL_JA'));
-check('S13 navigation commits route state and canonical primary or asset hashes',
-  appSource.includes('const commitLocation =')
-  && appSource.includes('routeRef.current = target.route')
+check('S13 shared header event navigation keeps route state and URL hash canonical',
+  appSource.includes("const commandHash = routeHash('command')")
   && appSource.includes('history.pushState')
-  && appSource.includes('routeHash(route)')
-  && appSource.includes('assetDetailHash(symbol, section)'));
+  && appSource.includes("routeRef.current = 'command'"));
 check('S14 shared controls expose their selected and close semantics',
-  settingsSource.includes('aria-pressed={locale === value}')
-  && notificationSource.includes('aria-label="通知"')
-  && notificationSource.includes('DEVICE LOCAL'));
+  guideSource.includes('aria-pressed={loc === l}')
+  && notificationSource.includes('aria-label="通知を閉じる"'));
 
 if (failed) {
   console.error(`\nproduct-integrity tests: ${failed} FAILED`);

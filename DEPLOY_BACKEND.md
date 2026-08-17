@@ -50,8 +50,8 @@ whatever has run since the last deploy.
    - **Environment**: Production + Preview
 2. Trigger a redeploy (Deployments → ... → Redeploy).
 
-The frontend calls `${VITE_ARGUS_BACKEND_URL}/api/argus/data-quality/status`
-for the canonical public diagnostics snapshot. CORS is already configured for
+The frontend will call `${VITE_ARGUS_BACKEND_URL}/api/argus/calibration`
+once Phase 5 lands. CORS is already configured on the backend for
 `*.vercel.app` and `localhost`.
 
 ## 3. Smoke test
@@ -59,15 +59,15 @@ for the canonical public diagnostics snapshot. CORS is already configured for
 After Render finishes deploying, hit these from your browser:
 
 ```
-https://argus-backend-3j2m.onrender.com/api/argus/data-quality/status
-https://argus-backend-3j2m.onrender.com/api/argus/events-active
+https://argus-backend-3j2m.onrender.com/api/argus/calibration
+https://argus-backend-3j2m.onrender.com/api/argus/picks/today
 https://argus-backend-3j2m.onrender.com/api/argus/ledger/recent
 ```
 
 Expected:
-- `data-quality/status` returns `argus-public-diagnostics-v1`, including the
-  closed `systemHealth` field and conservative recovery claims.
-- `events-active` returns an event list plus product-facing backbone status.
+- `calibration` returns `{ windowDays: 30, resolvedCount: 0, ... }` until
+  the scanner has actually run a few times.
+- `picks/today` returns `{ phase: 0, picks: [] }` before the first scan.
 - `ledger/recent` returns `{ entries: [] }`.
 
 ## 4. Trigger the first scan
@@ -79,10 +79,10 @@ on weekdays. To kick a one-off:
 curl -X POST https://argus-backend-3j2m.onrender.com/api/run
 ```
 
-Wait ~5–10 minutes for phases to complete. Use the canonical diagnostics and
-retained ledger routes above to verify readiness and resulting state; the
-legacy public calibration and daily-picks read models were retired in V13
-Compression Round 1.
+Wait ~5–10 minutes for phases to complete. After phase 4 finishes,
+`/api/argus/calibration` will show `pendingCount: 3` (today's picks
+waiting on resolution). After phase 5 (next morning's open), they
+resolve and `hitRate` starts populating.
 
 ## 5. Local dev
 

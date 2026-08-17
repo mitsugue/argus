@@ -1,0 +1,81 @@
+.event-ticker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  border: var(--hud-border);
+  background: rgba(0, 0, 0, 0.5);
+  overflow: visible;
+  flex-shrink: 0;
+  height: 26px;
+}
+
+/* Brand label — top-left, inside the strip, transparent */
+.event-ticker__brand {
+  position: absolute;
+  left: 10px;
+  top: 1px;
+  z-index: 4;
+  padding: 0 4px;
+  background: transparent;
+  font-family: var(--hud-font-display);
+  color: var(--hud-amber);
+  font-size: 8px;
+  letter-spacing: 2.5px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.event-ticker__rail {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  /* Fade out the left edge so the text doesn't collide with the
+     top-left EVENTS tab. */
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 12px,
+    #000 80px,
+    #000 100%
+  );
+          mask-image: linear-gradient(
+    to right,
+    transparent 12px,
+    #000 80px,
+    #000 100%
+  );
+}
+
+.event-ticker__track {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  height: 100%;
+  width: max-content;
+  /* Margin-right on items (not flex gap) so the duplicated set lines up
+     exactly at translateX(-50%) — no half-gap seam at the loop point.
+     Duration tuned slow enough to actually read each line. */
+  animation: event-scroll 280s linear infinite;
+}
+
+@keyframes event-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+.event-ticker__line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--hud-text-dim);
+  letter-spacing: 1px;
+  font-weight: 300;
+  margin-right: 28px;
+}
+
+.event-ticker__dot {
+  color: var(--hud-cyan);
+}
