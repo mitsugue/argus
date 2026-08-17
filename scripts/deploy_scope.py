@@ -32,6 +32,8 @@ FRONTEND_PATHS: Tuple[str, ...] = (
     "product-version.json",
     ".github/workflows/deploy-pages.yml",
     ".github/workflows/market-public-acceptance.yml",
+    ".github/actions/warm-profile-seed/**",
+    ".github/actions/warm-profile-consumer/**",
     "scripts/verified_snapshot_release_gate.py",
 )
 

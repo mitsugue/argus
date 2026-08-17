@@ -5,6 +5,7 @@ import {
   validateWarmProfile,
   writeWarmProfileManifest,
 } from './warm-profile-contract.mjs';
+import { stabilizeWarmProfileRuntime } from './warm-profile-runtime.mjs';
 
 const PUBLIC_URL = process.env.ARGUS_PUBLIC_URL || 'https://mitsugue.github.io/argus/';
 const EXPECTED_VERSION = process.env.ARGUS_EXPECTED_VERSION || '';
@@ -23,6 +24,7 @@ const DATA_TIMEOUT_MS = 5_000;
 const PAGE_TIMEOUT_MS = 25_000;
 const BACKEND_READY_TIMEOUT_MS = 8 * 60_000;
 const MARKET_CACHE_READY_TIMEOUT_MS = 30 * 60_000;
+const RUNTIME_PROBE_TIMEOUT_MS = 10_000;
 const COMBINATION_PACE_MS = 1_000;
 const SYMBOLS = ['1321', '1306', 'SPY', 'QQQ'];
 const HORIZONS = ['1D', '5D', '20D'];
@@ -53,6 +55,27 @@ async function screenshot(page, name) {
     animations: 'disabled',
     timeout: 10_000,
   });
+}
+
+async function profileInventory(profileDir) {
+  const root = await fs.stat(profileDir).catch(() => null);
+  if (!root?.isDirectory()) return { exists: false, fileCount: 0, totalBytes: 0 };
+  const pending = [profileDir];
+  let fileCount = 0;
+  let totalBytes = 0;
+  while (pending.length) {
+    const current = pending.pop();
+    for (const entry of await fs.readdir(current, { withFileTypes: true })) {
+      const target = path.join(current, entry.name);
+      if (entry.isDirectory()) pending.push(target);
+      if (entry.isFile()) {
+        const stat = await fs.stat(target);
+        fileCount += 1;
+        totalBytes += stat.size;
+      }
+    }
+  }
+  return { exists: true, fileCount, totalBytes };
 }
 
 async function retryUntil(request, url, timeoutMs, validate, label) {
@@ -132,6 +155,13 @@ function observe(page, evidence) {
   page.on('response', (response) => {
     const task = (async () => {
       const url = new URL(response.url());
+      if (url.origin === new URL(PUBLIC_URL).origin || url.origin === BACKEND_ORIGIN) {
+        evidence.responses.push({
+          origin: url.origin,
+          pathname: url.pathname,
+          status: response.status(),
+        });
+      }
       if (url.pathname !== '/api/argus/chart-intelligence'
         || response.status() !== 200) return;
       const body = await response.json().catch(() => null);
@@ -206,13 +236,20 @@ async function visualAudit(page, viewport) {
   }, viewport);
 }
 
-async function profileRuntimeProof(page) {
-  return page.evaluate(async () => {
-    const registration = await Promise.race([
+async function probeProfileRuntime(page) {
+  return page.evaluate(async (timeoutMs) => {
+    let registration = null;
+    let readyError = null;
+    try {
+      registration = await Promise.race([
       navigator.serviceWorker.ready,
       new Promise((_, reject) => setTimeout(
-        () => reject(new Error('service_worker_ready_timeout')), 30_000)),
-    ]);
+          () => reject(new Error('service_worker_ready_timeout')), timeoutMs)),
+      ]);
+    } catch (error) {
+      readyError = String(error?.message || error || 'unknown').slice(0, 200);
+    }
+    const registrations = await navigator.serviceWorker.getRegistrations();
     const databaseNames = (await indexedDB.databases())
       .map((row) => row.name).filter(Boolean).sort();
     const verifiedSnapshotRecordCount = await new Promise((resolve, reject) => {
@@ -238,8 +275,17 @@ async function profileRuntimeProof(page) {
       databaseNames,
       serviceWorkerReady: Boolean(registration?.active),
       verifiedSnapshotRecordCount,
+      serviceWorker: {
+        controller: Boolean(navigator.serviceWorker.controller),
+        readyError,
+        registrations: registrations.map((row) => ({
+          scope: row.scope,
+          scriptURL: row.active?.scriptURL || null,
+          state: row.active?.state || null,
+        })),
+      },
     };
-  });
+  }, RUNTIME_PROBE_TIMEOUT_MS);
 }
 
 async function run() {
@@ -247,51 +293,99 @@ async function run() {
     throw new Error(`invalid acceptance mode: ${MODE}`);
   }
   await fs.rm(OUT_DIR, { recursive: true, force: true });
-  let warmProfile = null;
-  if (MODE === 'seed') {
-    await fs.rm(PROFILE_DIR, { recursive: true, force: true });
-  } else {
-    warmProfile = await validateWarmProfile({
-      profileDir: PROFILE_DIR, expectedCandidateSha: EXPECTED_SHA,
-    });
-  }
   const evidence = {
-    failures: [], console: [], network: [], combinations: [], computedStyles: [],
+    failures: [], console: [], network: [], responses: [], phases: [],
+    runtimeAttempts: [], combinations: [], computedStyles: [],
     aiPostCount: 0, datasetHashes: new Set(), responseSnapshotIds: new Set(),
     responseTasks: new Set(),
   };
-  const context = await chromium.launchPersistentContext(PROFILE_DIR, {
-    headless: true,
-    viewport: { width: 1280, height: 800 }, serviceWorkers: 'allow',
+  const environment = {
+    acceptanceMode: MODE,
+    backendOrigin: BACKEND_ORIGIN,
+    expectedCandidateSha: EXPECTED_SHA || null,
+    nodeVersion: process.version,
+    publicOrigin: new URL(PUBLIC_URL).origin,
+    todayUrl: TODAY_URL,
+  };
+  const markPhase = (phase, status = 'PASS', detail = null) => {
+    evidence.phases.push({
+      at: new Date().toISOString(), detail, phase, status,
+    });
+  };
+  const diagnostics = async (verdict) => ({
+    schemaVersion: 'argus-warm-profile-seed-diagnostics-v1',
+    verdict,
+    environment,
+    phases: evidence.phases,
+    runtimeAttempts: evidence.runtimeAttempts,
+    console: evidence.console.slice(-64),
+    network: evidence.network.slice(-256),
+    responses: evidence.responses.slice(-256),
+    profile: await profileInventory(PROFILE_DIR),
   });
+  let warmProfile = null;
+  let context = null;
+  let page = null;
   let contextClosed = false;
-  const page = context.pages()[0] || await context.newPage();
-  observe(page, evidence);
   try {
+    markPhase('prepare-profile');
+    if (MODE === 'seed') {
+      await fs.rm(PROFILE_DIR, { recursive: true, force: true });
+    } else {
+      warmProfile = await validateWarmProfile({
+        profileDir: PROFILE_DIR, expectedCandidateSha: EXPECTED_SHA,
+      });
+    }
+    markPhase('launch-browser');
+    context = await chromium.launchPersistentContext(PROFILE_DIR, {
+      headless: true,
+      viewport: { width: 1280, height: 800 }, serviceWorkers: 'allow',
+    });
+    environment.browserVersion = context.browser()?.version() || 'unknown';
+    page = context.pages()[0] || await context.newPage();
+    observe(page, evidence);
+    markPhase('backend-identity');
     const identity = await waitForBackendIdentity(page.request);
+    markPhase('market-cache-5D');
     const seeded = await waitForMarketCache(page.request);
     if (MODE === 'seed') {
       if (!EXPECTED_SHA) throw new Error('seed candidate SHA is required');
+      markPhase('navigate-today');
       await page.goto(TODAY_URL, {
         waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS,
       });
-      await waitForToday(page);
-      const record = await selectCombination(page, '1321', HORIZONS[1]);
-      if (!record.snapshotId || record.horizon !== HORIZONS[1]) {
-        throw new Error('seeded canonical 5D snapshot unavailable');
-      }
-      const runtimeProof = await profileRuntimeProof(page);
+      markPhase('stabilize-today-1321-5D-service-worker-indexeddb');
+      const stabilized = await stabilizeWarmProfileRuntime({
+        probe: async (attempt) => {
+          markPhase('runtime-probe', 'RUNNING', { attempt });
+          await waitForToday(page);
+          const record = await selectCombination(page, '1321', HORIZONS[1]);
+          if (!record.snapshotId || record.horizon !== HORIZONS[1]) {
+            throw new Error('seeded_canonical_5D_snapshot_unavailable');
+          }
+          return probeProfileRuntime(page);
+        },
+        reload: async (attempt) => {
+          markPhase('runtime-reload', 'RETRY', { attempt });
+          await page.reload({
+            waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS,
+          });
+        },
+      });
+      evidence.runtimeAttempts = stabilized.diagnostics;
       const frontendVersion = await page.evaluate(() =>
         globalThis.__ARGUS_VERSION__ ?? null);
       const frontendSha = await page.evaluate(() =>
         globalThis.__ARGUS_BUILD_SHA__ ?? null);
       await drainResponses(evidence);
+      markPhase('close-browser');
       await context.close();
       contextClosed = true;
+      markPhase('seal-profile');
       const manifest = await writeWarmProfileManifest({
         profileDir: PROFILE_DIR,
         candidateSha: EXPECTED_SHA,
-        runtimeProof,
+        runtimeProof: stabilized.runtimeProof,
         source: {
           backendVersion: identity.service.backendVersion,
           backendSha: identity.service.buildSha,
@@ -309,6 +403,8 @@ async function run() {
         seededSnapshotId: seeded.snapshotId,
         warmProfileArtifactId: manifest.artifactId,
       });
+      markPhase('complete');
+      await writeJson('diagnostics.json', await diagnostics('PASS'));
       return;
     }
 
@@ -337,6 +433,8 @@ async function run() {
         warmProfileArtifactId: warmProfile.artifactId,
       };
       await writeJson('acceptance.json', result);
+      markPhase('complete');
+      await writeJson('diagnostics.json', await diagnostics(result.verdict));
       if (result.verdict !== 'PASS') process.exitCode = 1;
       return;
     }
@@ -409,8 +507,11 @@ async function run() {
     await writeJson('version.json', {
       frontendVersion, frontendSha, backendVersion, backendSha,
     });
+    markPhase('complete', result.verdict);
+    await writeJson('diagnostics.json', await diagnostics(result.verdict));
     if (evidence.failures.length) process.exitCode = 1;
   } catch (error) {
+    markPhase('failure', 'FAIL', sanitize(error?.message || error));
     const failure = {
       verdict: 'FAIL', todayProductStatus: 'NOT_FROZEN',
       testedAt: new Date().toISOString(), publicUrl: TODAY_URL,
@@ -419,10 +520,13 @@ async function run() {
     await writeJson('acceptance.json', failure);
     await writeJson('console.json', evidence.console);
     await writeJson('network.json', evidence.network);
+    if (page) await screenshot(page, 'failure.png').catch(() => {});
+    await writeJson('diagnostics.json', await diagnostics('FAIL'));
+    console.error(`[argus-warm-profile] ${failure.failures[0]}`);
     process.exitCode = 1;
   } finally {
     await drainResponses(evidence);
-    if (!contextClosed) await context.close().catch(() => {});
+    if (!contextClosed && context) await context.close().catch(() => {});
   }
 }
 
