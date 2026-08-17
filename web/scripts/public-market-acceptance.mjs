@@ -193,14 +193,20 @@ async function drainResponses(evidence) {
   }
 }
 
+async function openEvidenceDisclosure(page, timeout = 30_000) {
+  const disclosure = page.locator('details.at-evidence');
+  if (!await disclosure.evaluate((element) => element.open)) {
+    await page.getByText('根拠・市場データ・システム情報', { exact: true }).click();
+  }
+  await page.waitForFunction(() =>
+    document.querySelector('details.at-evidence')?.open === true,
+  null, { timeout });
+}
+
 async function waitForToday(page, timeout = 30_000) {
   await page.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .waitFor({ state: 'visible', timeout });
-  const projection = page.locator('.at-projection');
-  if (!await projection.isVisible()) {
-    await page.getByText('根拠・市場データ・システム情報', { exact: true }).click();
-  }
-  await projection.waitFor({ state: 'visible', timeout });
+  await openEvidenceDisclosure(page, timeout);
 }
 
 async function selectCombination(page, symbol, horizon) {

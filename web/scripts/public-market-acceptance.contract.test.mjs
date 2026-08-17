@@ -58,6 +58,9 @@ assert.match(script, /\.at-projection/);
 for (const source of [script, mobileAcceptance]) {
   assert.match(source, /getByText\('根拠・市場データ・システム情報', \{ exact: true \}\)\.click\(\)/,
     'acceptance must deliberately open the collapsed evidence disclosure before chart interaction');
+  assert.match(source, /details\.at-evidence/);
+  assert.match(source, /\.open === true/,
+    'acceptance must verify that the disclosure is actually open before chart interaction');
 }
 assert.match(script, /\.at-index-strip button/);
 assert.match(script, /getByRole\('group', \{ name: '予測期間' \}\)/);
