@@ -139,12 +139,13 @@ def test_stance_partial_data_caps_confidence_and_demotes_bullish():
 
 
 def test_stance_py_ts_parity():
-    # Round 3: duplicate browser stance authority is physically retired. The
-    # Python reducer remains evidence-only for backend compatibility.
-    assert not os.path.exists(os.path.join(WEB, "domain", "primaryStance.ts"))
-    hook = _read("hooks", "useAssetIntel.ts")
-    assert "resolvePrimaryStance" not in hook
-    assert "stanceBySymbol" not in hook
+    ts = _read("domain", "primaryStance.ts")
+    for ja in ps.STANCE_JA.values():
+        assert ja in ts, ja
+    # ハードルールの構造がTS側にも存在
+    for marker in ("risk_review", "wait_event", "improving_but_heavy",
+                   "squeeze_prone", "PARTIAL_CONF_CAP"):
+        assert marker in ts, marker
 
 
 # ── Part B: イベント日付真実 ─────────────────────────────────────────────────
@@ -171,30 +172,26 @@ def test_event_date_issues_flagged_in_dq():
 # ── Part D/E/F: FE検査 ──────────────────────────────────────────────────────
 
 def test_fe_partial_data_reasons():
+    hero = _read("components", "dashboard", "HeroCard.tsx")
+    assert "PARTIAL DATAの理由" in hero
+    assert "解消条件" in hero
     vm = _read("domain", "argusTodayView.ts")
     assert "dataStatus" in vm
     assert "要確認" in vm
     panel = _read("components", "today", "ArgusTodayPanel.tsx")
-    assert "DATA QUALITY" in panel
+    assert "Data Quality" in panel
     assert "view.dataStatus" in panel
-    settings = _read("routes", "Settings.tsx")
-    assert "PublicDiagnosticsPanel" in settings
-    assert not os.path.exists(os.path.join(
-        WEB, "components", "dashboard", "HeroCard.tsx"))
 
 
 def test_fe_matrix_axes_and_provisional():
-    # Round 1: 行列/Replayは独立ページを持たず、背景エンジンだけをTodayへ供給する。
-    for parts in (
-        ("components", "regime", "RegimeMatrix.tsx"),
-        ("routes", "MarketRegime.tsx"),
-        ("components", "marketReplay", "MarketContextReplay.tsx"),
-    ):
-        assert not os.path.exists(os.path.join(WEB, *parts))
-    intel = _read("hooks", "useAssetIntel.ts")
-    assert "useMarketRegime" in intel
-    replay_types = _read("types", "chartIntelligence.ts")
-    assert "marketReplay?:" in replay_types and "currentRegime" in replay_types
+    m = _read("components", "regime", "RegimeMatrix.tsx")
+    assert "provisional" in m and "暫定" in m
+    assert "中立" in m                                       # 欠損→中立の説明
+    assert "入力の内訳" in m
+    mr = _read("routes", "MarketRegime.tsx")
+    replay = _read("components", "marketReplay", "MarketContextReplay.tsx")
+    assert "MarketContextReplay" in mr
+    assert "currentRegime" in replay and "サンプル不足" in replay
 
 
 def test_jp_matrix_missing_data_maps_neutral():
@@ -209,31 +206,29 @@ def test_fe_osint_pack_and_ui():
     assert "'osint'" in rp or "| 'osint'" in rp
     assert "公式開示・主要ニュース・セクター連想を分けて検証してください" in rp
     assert "候補であり断定ではない" in rp
-    research = _read("components", "assetDesk", "AssetResearchPanel.tsx")
-    assert "OsintDeepDive" in research
-    deep = _read("components", "dashboard", "OsintDeepDive.tsx")
-    assert "publishOsintDeep" in deep
-    assert not os.path.exists(os.path.join(
-        WEB, "components", "dashboard", "CauseStackCard.tsx"))
+    csc = _read("components", "dashboard", "CauseStackCard.tsx")
+    assert "候補原因" in csc
+    assert "OSINT確度" in csc
+    assert "外れの可能性" in csc
+    assert "publishOsint" in csc
 
 
 def test_fe_unified_stance_chip_everywhere():
-    # Round 2: Asset DeskはSDA v2正本をdecision-first viewへ正規化して表示する。
-    # 旧Primary Stanceは選択権を持たず、互換表示もSDA結果からのみ派生する。
+    # v13.3.2: Asset Deskは共有正本をdecision-first viewへ正規化して表示する。
+    # ガード意図(単一の構えが全カード+APで同一ソース)は不変。
     details = _read("components", "assetDesk", "AssetDecisionDetails.tsx")
     assert "d.decisionFirst" in details and "view.ownerActionJa" in details
+    ap = _read("components", "dashboard", "ActionPrioritySection.tsx")
+    assert "stances" in ap and "統一スタンス" in ap
     intel = _read("hooks", "useAssetIntel.ts")
-    assert "evaluateSingleDecisionAuthority" in intel and "sdaBySymbol" in intel
-    assert "resolvePrimaryStance" not in intel
+    assert "resolvePrimaryStance" in intel and "stanceBySymbol" in intel
     vm = _read("domain", "argusTodayView.ts")
-    assert "canonicalDecision" in vm and "finalAction" in vm  # Todayの単一最終判断
+    assert "decisions" in vm and "finalAction" in vm          # Todayの単一最終判断
     panel = _read("components", "today", "ArgusTodayPanel.tsx")
     assert "view.finalAction" in panel
     desk = _read("components", "assetDesk", "AssetDeskList.tsx")
-    assert "intel.sdaBySymbol.get(sym)" in desk               # Asset Desk正規化入力
+    assert "stanceBySymbol.get(sym)" in desk                  # Asset Desk正規化入力
     assert "buildDecisionFirstView" in desk
-    assert not os.path.exists(os.path.join(
-        WEB, "components", "dashboard", "ActionPrioritySection.tsx"))
 
 
 # ── 非漏洩/文言(新規面) ─────────────────────────────────────────────────────
@@ -254,54 +249,45 @@ def test_osint_block_leak_and_wording_safe(monkeypatch):
 # ── 追補1: リスクチップ分離(裸のLOW RISK禁止) ───────────────────────────────
 
 def test_addendum_risk_chips_split_in_fe():
-    # Round 1: global command cardは削除。市場判断と保有リスクは各正本へ分離する。
-    assert not os.path.exists(os.path.join(
-        WEB, "components", "action", "CommandSummaryCard.tsx"))
+    src = _read("components", "action", "CommandSummaryCard.tsx")
+    assert "MARKET RISK:" in src
+    assert "POSITION RISK:" in src
+    assert "保有銘柄のリスク確認が先" in src          # HOLD理由の一行
+    # v12.2.12: 保有リスクチップの算出はuseAssetIntel(Today/Asset Desk共有)へ移設。
     intel = _read("hooks", "useAssetIntel.ts")
     assert "保有銘柄に要確認あり" in intel
     assert "保有数量未入力" in intel
     cc = _read("routes", "CommandCenter.tsx")
-    # Todayへ渡す保有文脈は端末内で粗い区分へ落とし、数量・平均単価・P/Lを
-    # 市場証拠やバックエンドへ混ぜない。未計算のリスク帯はUNKNOWNで閉じる。
-    assert "privacyClass: 'DEVICE_LOCAL'" in cc
-    assert "positionRiskBand: 'UNKNOWN'" in cc
-    for private_field in ("avgCost", "profitLoss", "pnlPct"):
-        assert private_field not in cc
-    portfolio = _read("domain", "portfolioDecisionView.ts")
-    assert "input.risks" in portfolio and "actionQueue" in portfolio
+    # Market Today は端末ローカルの保有状態から独立する。保有リスクは
+    # Positions & Risk / Asset Desk に残し、市場スコアへ混ぜない。
+    assert "positionRisk" not in cc
 
 
 # ── 追補2: JP OPEN ≠ JPリアルタイム ─────────────────────────────────────────
 
 def test_addendum_jp_open_does_not_imply_realtime():
-    # Todayはセッション状態と価格鮮度を別関数で表示し、OPENをRTへ昇格しない。
-    src = _read("domain", "argusTodayView.ts")
-    assert "function sessionLabel" in src
-    assert "export function quoteDisplayLabel" in src
-    assert "JP OPEN" in src and "現在 RT" in src and "遅延値" in src
+    src = _read("components", "dashboard", "MarketSessionLamps.tsx")
+    assert "MARKET ${m.state" in src                 # 「JP OPEN」単独でなくJP MARKET OPEN表示
+    assert "JPリアルタイムAPIはメンテ中・代替データで判定" in src
+    assert "jpRealtimeStatus" in src                 # bridge/statusから自動判定(復旧で消える)
     for banned in ("JP LIVE", "JP REALTIME OK"):
         assert banned not in src, banned
-    assert not os.path.exists(os.path.join(
-        WEB, "components", "dashboard", "MarketSessionLamps.tsx"))
 
 
 # ── 追補3: 単一のイベント時計 ───────────────────────────────────────────────
 
 def test_addendum_single_event_clock():
+    clock = _read("lib", "eventClock.ts")
+    assert "D+1" in clock                            # 発表済(過去)は次に出さない
+    assert "日時がパースできる未来のイベントだけ" in clock or "パースできる" in clock
+    assert "あと${days}日" in clock or "あと" in clock
     app = _read("App.tsx")
-    # B2a: the duplicate shell event chip is gone. Today owns the compact next
-    # event and Notifications owns the full canonical event review.
-    assert "nextUpcomingEvent" not in app
-    assert "useImportantEvents" not in app
+    assert "nextUpcomingEvent" in app                # Today以外の右上Nextチップ
+    assert "route === 'command' ? undefined : nextEvent" in app
     vm = _read("domain", "argusTodayView.ts")
     assert "['RELEASED', 'RESOLVED']" in vm
-    assert "x.at >= nowMs" in vm
     assert "future.slice(1)" in vm and "slice(0, 3)" in vm
     cc = _read("routes", "CommandCenter.tsx")
-    assert "argusToday.nextEvent" in cc
-    notifications = _read("routes", "NotificationsPage.tsx")
-    assert "ImportantEventsCard" in notifications
-    assert not os.path.exists(os.path.join(WEB, "lib", "eventClock.ts"))
     # 旧「countdown === 'D'先頭拾い」ロジックが残っていない
     assert "find((e) => e.countdown === 'D' || e.countdown === 'D-1')" not in cc
 
@@ -309,11 +295,11 @@ def test_addendum_single_event_clock():
 # ── 追補4: Session Briefの入れ子スクロール禁止 ──────────────────────────────
 
 def test_addendum_brief_no_nested_scroll():
-    # 独立Session Brief surfaceは削除。背景briefはTodayのreview pack入力だけに残す。
-    assert not os.path.exists(os.path.join(
-        WEB, "components", "dashboard", "SessionBriefSection.tsx"))
-    command = _read("routes", "CommandCenter.tsx")
-    assert "briefSession: sessionBrief.sessionType" in command
+    src = _read("components", "dashboard", "SessionBriefSection.tsx")
+    assert "overflow" not in src                     # 内部スクロールを作らない
+    assert "maxHeight" not in src
+    assert "詳細を見る" in src                        # 要約+展開型
+    assert "slice(0, 4)" in src
 
 
 # ── 追補5: 出典プロビナンス ─────────────────────────────────────────────────
@@ -389,19 +375,20 @@ def test_addendum_p1_never_no_action_even_unheld():
 # ── 追補8: CAOS遅延の数値化 ─────────────────────────────────────────────────
 
 def test_addendum_caos_delay_numeric():
-    # 旧グローバルCAOS surfaceは削除し、イベント確認はNotificationsへ一本化。
-    assert not os.path.exists(os.path.join(
-        WEB, "components", "dashboard", "CaosHub.tsx"))
-    notifications = _read("routes", "NotificationsPage.tsx")
-    assert "ImportantEventsCard" in notifications
+    src = _read("components", "dashboard", "CaosHub.tsx")
+    assert "TARGET_MIN = 15" in src
+    assert "目標${TARGET_MIN}分以内" in src
+    assert "巡回正常" in src                          # 目標内は遅延と言わない
+    assert "ニュース原因の確度を下げています" in src   # 遅延時の影響明示
+    assert "TARGET_MIN * 3" in src                    # 3倍超で遅延判定
 
 
 # ── 追補9: JP行列の暫定 ─────────────────────────────────────────────────────
 
 def test_addendum_jp_matrix_provisional_label():
-    assert not os.path.exists(os.path.join(
-        WEB, "components", "marketReplay", "MarketContextReplay.tsx"))
-    src = _read("types", "chartIntelligence.ts")
+    src = _read("components", "marketReplay", "MarketContextReplay.tsx")
+    assert "data.status !== 'live'" in src
+    assert "暫定" in src
     assert "currentRegime" in src
     assert "regimeAnalysis" in src
 
@@ -432,7 +419,7 @@ def test_addendum_screenshot_fixture_no_small_add_visible_on_prohibited_day():
 
 
 def test_addendum_stance_ts_parity_new_rules():
-    assert not os.path.exists(os.path.join(WEB, "domain", "primaryStance.ts"))
-    hook = _read("hooks", "useAssetIntel.ts")
-    assert "globalAddProhibited" not in hook
-    assert "evaluateSingleDecisionAuthority" in hook
+    ts = _read("domain", "primaryStance.ts")
+    assert "deferred_today" in ts and "候補だが今日は保留" in ts
+    assert "globalAddProhibited" in ts
+    assert "対応不要にはしない" in ts

@@ -25,19 +25,18 @@ ROOT = pathlib.Path(__file__).parent
 
 
 class MissionWindowTests(unittest.TestCase):
-    def test_version_contract_is_consistent_after_round1_surface_cut(self):
+    def test_version_contract_is_consistent_and_retains_12_3_1_history(self):
         package = json.loads((ROOT / "web/package.json").read_text())
         backend = json.loads((ROOT / "backend-version.json").read_text())
         lock = json.loads((ROOT / "web/package-lock.json").read_text())
+        guide = (ROOT / "web/src/routes/Guide.tsx").read_text()
         self.assertGreaterEqual(tuple(int(x) for x in package["version"].split(".")),
                                 (12, 3, 1))
         self.assertEqual(scanner._semantic_app_version(), backend["version"])
         self.assertEqual(scanner._frontend_semantic_version(), package["version"])
         self.assertEqual(lock["version"], package["version"])
         self.assertEqual(lock["packages"][""]["version"], package["version"])
-        self.assertFalse((ROOT / "web/src/routes/Guide.tsx").exists())
-        manifest = (ROOT / "docs/ARGUS_B2A_DEFERRED_UI_MANIFEST.md").read_text()
-        self.assertIn("Round 1 deletion completed", manifest)
+        self.assertIn("['v12.3.1'", guide)
 
     def test_30_minute_window_boundaries_and_timezone_independence(self):
         before = scheduler.mission_window(observed_at="2026-07-20T00:06:59Z")

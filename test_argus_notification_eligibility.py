@@ -184,7 +184,7 @@ def test_owner_cache_reads_snapshot_members_and_expires_failed_fallback(monkeypa
     assert scanner._owner_symbols_cached() == {}
 
 
-def test_events_active_does_not_expose_owner_universe_diagnostics(monkeypatch):
+def test_public_gate_diagnostics_are_count_only(monkeypatch):
     monkeypatch.setattr(scanner, "_PUSH_GATE_STATS", {
         "allowed": 2, "blocked": 3,
         "byReason": {"symbol_not_in_owner_universe": 3},
@@ -192,11 +192,10 @@ def test_events_active_does_not_expose_owner_universe_diagnostics(monkeypatch):
     monkeypatch.setattr(scanner, "_OWNER_SYMS_CACHE", {
         "syms": _membership(SECRET="held"), "ts": 1.0, "status": "fresh",
     })
-    response = scanner.app.test_client().get("/api/argus/events-active")
-    assert response.status_code == 200
-    public = response.get_json()
-    assert "pushEligibility" not in public
-    assert "membershipCount" not in public
+    payload = scanner.app.test_client().get("/api/argus/event-backbone-status").get_json()
+    public = payload["pushEligibility"]
+    assert public["membershipCount"] == 1
+    assert public["privateUniverseExposed"] is False
     assert "SECRET" not in json.dumps(public)
 
 
@@ -250,6 +249,7 @@ def test_direct_workflow_ntfy_inventory_is_non_security_only():
     assert set(direct) == {
         "closepin-pin.yml",
         "market-alerts.yml",
+        "morning-digest.yml",
         "prediction-ledger.yml",
         "smoke-test.yml",
     }
@@ -258,43 +258,5 @@ def test_direct_workflow_ntfy_inventory_is_non_security_only():
     assert "Notify on failure" in direct["smoke-test.yml"]
     assert "posture flip" in direct["market-alerts.yml"]
     assert "high-impact event" in direct["market-alerts.yml"]
-    assert "push-digest" in direct["market-alerts.yml"]
-    assert "ARGUS Digest" in direct["market-alerts.yml"]
-
-
-def test_notification_workflow_consolidation_preserves_schedule_semantics():
-    workflows = Path(".github/workflows")
-    files = sorted(workflows.glob("*.yml"))
-    assert len(files) == 24
-    assert not (workflows / "morning-digest.yml").exists()
-    assert (workflows / "osint-check.yml").exists()
-
-    market = (workflows / "market-alerts.yml").read_text(encoding="utf-8")
-    assert market.count("- cron:") == 5
-    for cron in (
-            "0 22,23 * * 0-4", "0 0-15 * * 1-5",
-            "0 16-21 * * 1-5", "0 18 * * 0-4", "0 7 * * 1-5"):
-        assert f"- cron: '{cron}'" in market
-        assert f"github.event.schedule == '{cron}'" in market
-    assert "default: alerts" in market
-    assert "inputs.mode == 'alerts'" in market
-    assert "inputs.mode == 'digest'" in market
-    assert "  detect-and-push:" in market
-    assert "  push-digest:" in market
-    assert "permissions: {}" in market
-    assert "GH_SCHEDULE: ${{ github.event.schedule }}" in market
-    assert "GRACE = 90 * 60" in market
-    assert "argus-alert-state-${{ github.run_id }}" in market
-
-    detect_job, digest_job = market.split("\n  push-digest:\n", 1)
-    assert "Restore previous state" in detect_job
-    assert "Fetch digest and diff" in detect_job
-    assert "Push alert (only on change" in detect_job
-    assert "Save state" in detect_job
-    assert "restore-keys: argus-alert-state-" in detect_job
-    assert "Fetch digest (retry through Render cold start)" not in detect_job
-    assert "Fetch digest (retry through Render cold start)" in digest_job
-    assert "Push to ntfy (skipped when NTFY_TOPIC" in digest_job
-    assert "Restore previous state" not in digest_job
-    assert "Fetch digest and diff" not in digest_job
-    assert "Save state" not in digest_job
+    assert "Digest" in direct["morning-digest.yml"]
+    assert "no holdings, no personal data" in direct["morning-digest.yml"]

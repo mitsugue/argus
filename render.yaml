@@ -32,7 +32,6 @@ services:
         - Procfile
         - gunicorn.conf.py
         - backend-version.json
-        - product-version.json
         - entity_profiles_seed.json
         - web/src/types/**
       ignoredPaths: []

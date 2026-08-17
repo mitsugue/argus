@@ -1,7 +1,4 @@
-import { useSyncExternalStore } from 'react';
-import { deauthorizeActionSnapshot, liveAuthorityState,
-  scheduleLiveAuthorityExpiry, type LiveAuthorityState } from '../domain/liveAuthority';
-import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
+import { useEffect, useState } from 'react';
 import type { ActionLabelsSnapshot } from '../types/actionLabels';
 
 // connecting | live | partial | mock — same model as the other live hooks.
@@ -13,7 +10,6 @@ interface State {
   loading: boolean;
   phase: ConnPhase;
   attempt: number;
-  authority: LiveAuthorityState | 'unavailable' | 'refresh_failed';
 }
 
 // Mock fallback — used only when VITE_ARGUS_BACKEND_URL is unset or every
@@ -50,27 +46,22 @@ function sleep(ms: number): Promise<void> {
  * unknown symbols are classified conservatively (high-beta) server-side.
  * Without params (or with both lists empty) the curated default is used.
  */
-const INITIAL_STATE: State = {
-  data: null,
-  error: null,
-  loading: true,
-  phase: 'connecting',
-  attempt: 0,
-  authority: 'unavailable',
-};
-const actionLabelStores = new Map<string, SharedPollingStore<State>>();
+export function useActionLabels(params?: { jp?: string[]; us?: string[] }): State {
+  const jpKey = params?.jp?.length ? params.jp.slice().sort().join(',') : '';
+  const usKey = params?.us?.length ? params.us.slice().sort().join(',') : '';
+  const [state, setState] = useState<State>({
+    data: null,
+    error: null,
+    loading: true,
+    phase: 'connecting',
+    attempt: 0,
+  });
 
-function actionLabelStore(jpKey: string, usKey: string): SharedPollingStore<State> {
-  const queryKey = JSON.stringify([jpKey, usKey]);
-  const existing = actionLabelStores.get(queryKey);
-  if (existing) return existing;
-
-  const store = createSharedPollingStore<State>(INITIAL_STATE, (setState, getState) => {
+  useEffect(() => {
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
     if (!backend) {
-      setState({ data: MOCK_SNAPSHOT, error: null, loading: false, phase: 'mock',
-        attempt: 0, authority: 'unavailable' });
-      return () => {};
+      setState({ data: MOCK_SNAPSHOT, error: null, loading: false, phase: 'mock', attempt: 0 });
+      return;
     }
     const qs: string[] = [];
     if (jpKey) qs.push(`jp=${encodeURIComponent(jpKey)}`);
@@ -78,78 +69,24 @@ function actionLabelStore(jpKey: string, usKey: string): SharedPollingStore<Stat
     const url = backend.replace(/\/$/, '') + '/api/argus/action-labels'
       + (qs.length ? `?${qs.join('&')}` : '');
     let cancelled = false;
-    let acquisition: Promise<void> | null = null;
-    let cancelExpiry = () => {};
-    const controllers = new Set<AbortController>();
-
-    async function fetchSnapshot(): Promise<ActionLabelsSnapshot> {
-      const ctrl = new AbortController();
-      controllers.add(ctrl);
-      const timer = window.setTimeout(() => ctrl.abort(), ATTEMPT_TIMEOUT_MS);
-      try {
-        const response = await fetch(url, { signal: ctrl.signal });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return await response.json() as ActionLabelsSnapshot;
-      } finally {
-        window.clearTimeout(timer);
-        controllers.delete(ctrl);
-      }
-    }
-
-    function acquire(task: () => Promise<void>): Promise<void> {
-      if (acquisition) return acquisition;
-      const current = task().finally(() => {
-        if (acquisition === current) acquisition = null;
-      });
-      acquisition = current;
-      return current;
-    }
-
-    function accept(data: ActionLabelsSnapshot, attempt: number) {
-      cancelExpiry();
-      if (data.status === 'mock') {
-        setState({ data, error: null, loading: false, phase: 'mock', attempt,
-          authority: 'unavailable' });
-        return;
-      }
-      const authority = liveAuthorityState(data.asOf, 'actionLabels');
-      if (authority !== 'fresh') {
-        const reason = authority === 'expired' ? 'snapshot_expired' : 'invalid_as_of';
-        setState({ data: deauthorizeActionSnapshot(data, reason), error: null,
-          loading: false, phase: 'partial', attempt, authority });
-        return;
-      }
-      setState({ data, error: null, loading: false, phase: data.status, attempt,
-        authority: 'fresh' });
-      cancelExpiry = scheduleLiveAuthorityExpiry(data.asOf, 'actionLabels', () => {
-        const current = getState();
-        if (!current.data || current.authority !== 'fresh') return;
-        setState({ ...current,
-          data: deauthorizeActionSnapshot(current.data, 'snapshot_expired'),
-          phase: 'partial', authority: 'expired' });
-      });
-    }
-
-    function failRefresh(message: string) {
-      const current = getState();
-      cancelExpiry();
-      if (!current.data || current.phase === 'mock') return;
-      setState({ ...current,
-        data: deauthorizeActionSnapshot(current.data, 'refresh_failed'),
-        error: message, loading: false, phase: 'partial', authority: 'refresh_failed' });
-    }
 
     async function run() {
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         if (cancelled) return;
         setState((s) => ({ ...s, phase: 'connecting', loading: true, attempt, error: null }));
 
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), ATTEMPT_TIMEOUT_MS);
         try {
-          const data = await fetchSnapshot();
+          const r = await fetch(url, { signal: ctrl.signal });
+          clearTimeout(timer);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const data = (await r.json()) as ActionLabelsSnapshot;
           if (cancelled) return;
-          accept(data, attempt);
+          setState({ data, error: null, loading: false, phase: data.status, attempt });
           return;
         } catch (err: unknown) {
+          clearTimeout(timer);
           if (cancelled) return;
           const msg = err instanceof Error ? err.message : String(err);
           if (attempt < MAX_ATTEMPTS) {
@@ -157,8 +94,7 @@ function actionLabelStore(jpKey: string, usKey: string): SharedPollingStore<Stat
             await sleep(RETRY_DELAYS_MS[attempt - 1] ?? 6_000);
             continue;
           }
-          setState({ data: MOCK_SNAPSHOT, error: msg, loading: false, phase: 'mock',
-            attempt, authority: 'unavailable' });
+          setState({ data: MOCK_SNAPSHOT, error: msg, loading: false, phase: 'mock', attempt });
           return;
         }
       }
@@ -169,43 +105,34 @@ function actionLabelStore(jpKey: string, usKey: string): SharedPollingStore<Stat
     // backend has warmed up.
     async function refresh() {
       if (cancelled || document.hidden) return;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), ATTEMPT_TIMEOUT_MS);
       try {
-        const data = await fetchSnapshot();
+        const r = await fetch(url, { signal: ctrl.signal });
+        clearTimeout(timer);
+        if (!r.ok || cancelled) return;
+        const data = (await r.json()) as ActionLabelsSnapshot;
         if (cancelled) return;
-        accept(data, getState().attempt);
-      } catch (err: unknown) {
-        if (!cancelled) failRefresh(err instanceof Error ? err.message : String(err));
+        setState((s) => ({ ...s, data, error: null, phase: data.status }));
+      } catch {
+        clearTimeout(timer);
       }
     }
-    const retained = getState();
-    if (retained.data && retained.authority === 'fresh') {
-      accept(retained.data, retained.attempt);
-    }
-    const refreshTimer = window.setInterval(() => void acquire(refresh), REFRESH_INTERVAL_MS);
+    const refreshTimer = setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
     // Returning to the tab after a while → refresh immediately, don't wait out
     // the remainder of the interval.
     const onVisible = () => {
-      if (!document.hidden) void acquire(refresh);
+      if (!document.hidden) void refresh();
     };
     document.addEventListener('visibilitychange', onVisible);
 
-    void acquire(run);
+    void run();
     return () => {
       cancelled = true;
-      cancelExpiry();
-      for (const controller of controllers) controller.abort();
-      controllers.clear();
-      window.clearInterval(refreshTimer);
+      clearInterval(refreshTimer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  });
-  actionLabelStores.set(queryKey, store);
-  return store;
-}
+  }, [jpKey, usKey]);
 
-export function useActionLabels(params?: { jp?: string[]; us?: string[] }): State {
-  const jpKey = params?.jp?.length ? params.jp.slice().sort().join(',') : '';
-  const usKey = params?.us?.length ? params.us.slice().sort().join(',') : '';
-  const store = actionLabelStore(jpKey, usKey);
-  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  return state;
 }

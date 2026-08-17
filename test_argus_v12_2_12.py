@@ -2,7 +2,7 @@
 
 個別銘柄情報の一本化(Today/Watchlist分裂の解消)を構造的に守る:
 ①判断の唯一の正本(domain/assetDecision)をTodayとAsset Deskの両方が通る
-②各primary routeは単一pipelineを所有し、子surfaceは共有snapshotだけを読む
+②publish副作用はTodayのみ(Asset Desk閲覧で共有ストアを書かない)
 ③deep-link(App state経由・4ソース) ④ナビ順(route key不変)
 ⑤移行完全性(旧カードの主要素がAsset Deskに存在してから旧カード削除)
 挙動そのもの(AI主判定12ケース等)は web/scripts/asset-desk.test.cjs(lint連結)。
@@ -21,34 +21,25 @@ def _read(*parts):
 
 def test_single_source_of_judgment():
     dec = _read("domain", "assetDecision.ts")
-    # AI/旧ルールは異議・証拠として残るが、表示する主判断はSDA v2だけ。
-    assert "projectCanonicalAssetDecision" in dec
-    assert "SDA PRIMARY" in dec
+    # AI主条件(live/partial + fresh/persisted)は正本にのみ存在
+    assert "'live'" in dec and "'partial'" in dec
+    assert "'fresh'" in dec and "'persisted'" in dec
     intel = _read("hooks", "useAssetIntel.ts")
-    assert "evaluateSingleDecisionAuthority" in intel
-    assert "sdaBySymbol" in intel
-    assert "mergeAiPrimary" not in intel
-    assert "resolvePrimaryStance" not in intel
+    assert "mergeAiPrimary" in intel
     # 旧CommandCenterのインラインAI優先マージが復活していない
     cc = _read("routes", "CommandCenter.tsx")
     assert "aiFinalAction" not in cc
     assert "const aiPrimary" not in cc
-    # TodayとHoldingsは同じ組み立てフックを使い、Asset Deskはpropだけを読む。
-    assert "useAssetIntel({ publish: true, assets: assetsApi.assets })" in cc
+    # TodayとAsset Deskは同じ組み立てフックを使う
+    assert "useAssetIntel({ publish: true })" in cc
     desk = _read("components", "assetDesk", "AssetDeskList.tsx")
-    assert "useAssetIntel(" not in desk
-    holdings = _read("routes", "Watchlist.tsx")
-    assert holdings.count("useAssetIntel(") == 1
-    assert "useAssetIntel({ publish: true, assets })" in holdings
+    assert "useAssetIntel({ publish: false })" in desk
 
 
 def test_ai_honesty_vocabulary():
     dec = _read("domain", "assetDecision.ts")
-    # AI/旧ルールは証拠のみ。退役したRULE TEMPORARYを主判断として復活させない。
-    assert "RULE TEMPORARY" not in dec
-    assert "EVIDENCE_ONLY" in dec
-    assert "finalDecisionAuthorityActive: false" in dec
-    assert "SDA PRIMARY" in dec
+    # RULE TEMPORARYの正確な理由+次回実行予定は構造的に必ず埋まる
+    assert "RULE TEMPORARY" in dec
     assert "16:05" in dec
     # v12.2.12是正: 16:05の案内は実行を保証できる状態のみ(状態別の正確な文言)
     assert "無効化中" in dec                       # disabled=約束しない
@@ -63,18 +54,15 @@ def test_ai_honesty_vocabulary():
     assert "unavailableReasonJa" in review and "nextRunJa" in review
 
 
-def test_publish_side_effects_gated_to_active_pipeline():
+def test_publish_side_effects_gated_to_today():
     intel = _read("hooks", "useAssetIntel.ts")
     for fn in ("publishExposure", "publishActionPriorities", "publishSessionBrief",
                "publishScenarios", "publishPlans", "publishStrategy", "publishFireCore"):
         assert f"if (publish) {fn}(" in intel, fn
-    # routeから直接publishせず、共有hook内だけで制御する。
+    # 旧CommandCenterからpublish呼び出しが消えている(移設済み・二重publishなし)
     cc = _read("routes", "CommandCenter.tsx")
     for fn in ("publishExposure(", "publishScenarios(", "publishPlans(", "publishStrategy("):
         assert fn not in cc, fn
-    for parts in (("components", "assetDesk", "AssetDeskList.tsx"),
-                  ("routes", "CorePortfolio.tsx")):
-        assert "useAssetIntel(" not in _read(*parts)
 
 
 # ── ② ナビ順(route key不変) ────────────────────────────────────────────────
@@ -84,21 +72,15 @@ def test_nav_order_and_route_keys():
     navigation = _read("navigation.ts")
     i_today = navigation.index("route: 'command'")
     i_desk = navigation.index("route: 'watchlist'")
-    i_notifications = navigation.index("route: 'notifications'")
-    i_settings = navigation.index("route: 'settings'")
-    assert i_today < i_desk < i_notifications < i_settings
+    i_core = navigation.index("route: 'core'")
+    i_regime = navigation.index("route: 'regime'")
+    assert i_today < i_desk < i_core < i_regime
     app = _read("App.tsx")
     assert "PRIMARY_NAVIGATION" in app     # overscroll順同期
     assert "routeLabel" in app
-    # Lean v13 has exactly four primary owner routes; market remains contextual.
-    for key in ("'command'", "'watchlist'", "'notifications'", "'settings'"):
+    # route keyは不変(localStorage/既存挙動の互換)
+    for key in ("'command'", "'watchlist'", "'core'", "'regime'"):
         assert key in navigation
-    assert "'regime'" not in navigation
-    assert "desktopLabel: 'Holdings / Watchlist'" in navigation
-    assert "'#positions'" not in navigation
-    assert "'#market'" not in navigation
-    primary_block = navigation.split("export const NAVIGATION", 1)[1].split("] as const", 1)[0]
-    assert primary_block.count("route: '") == 4
     assert "PRIMARY_NAVIGATION" in nav
 
 
@@ -156,8 +138,9 @@ def test_desk_sections_fixed_order():
 
 def test_migrated_features_present():
     # 旧Watchlist行の機能
-    assert not os.path.exists(os.path.join(WEB, "components", "assetDesk", "AssetEntryScout.tsx"))
-    assert "AssetEntryScout" not in _read("components", "assetDesk", "AssetDecisionCard.tsx")
+    scout = _read("components", "assetDesk", "AssetEntryScout.tsx")
+    assert "/api/argus/entry-scout" in scout
+    assert "押した時だけ" in scout                    # オンデマンドのみ(自動AIなし)
     research = _read("components", "assetDesk", "AssetResearchPanel.tsx")
     assert "saveNote" in research and "buildReviewPackMarkdown" in research
     assert "OsintDeepDive" in research and "decisionHistoryFor" in research
@@ -173,23 +156,16 @@ def test_migrated_features_present():
     card = _read("components", "assetDesk", "AssetDecisionCard.tsx")
     downside = _read("components", "dashboard", "DownsideIncidentCard.tsx")
     assert "判断支援のみ" not in card
-    assert downside.count(
-        "EVIDENCE ONLY · SDAのPrimary Actionを上書きしません。自動売買なし。"
-    ) == 1
+    assert downside.count("決定支援のみ・自動売買は行いません。") == 1
 
 
 def test_portfolio_wide_features_moved_to_core():
     wl = _read("routes", "Watchlist.tsx")
     assert "WhatIfPanel" not in wl and "ExposureCard" not in wl
-    assert "HOLDINGS / WATCHLIST" in wl
-    assert "保有と監視銘柄を、今日確認する順にまとめます。" in wl
-    assert "portfolioOpen && <CorePortfolio assetsApi={assetsApi}" in wl
+    assert "ASSET DESK" in wl
+    assert "今日どれを先に確認し、どう扱い、何を待つか。" in wl
     cp = _read("routes", "CorePortfolio.tsx")
-    assert "PortfolioExposureCard" in cp and "WhatIfPanel" not in cp
-    # Owner editing remains contextual; no replacement global framework is added.
-    assert "FireCoreCard" in cp
-    for capability in ("TradeJournalCard", "EntityProfileEditor", "Layer2BSyncCard"):
-        assert capability in wl
+    assert "PortfolioExposureCard" in cp and "WhatIfPanel" in cp
 
 
 def test_today_exception_summary_replaces_card_list():
@@ -219,8 +195,5 @@ def test_version_consistency_v12_2_12():
     pkg = json.load(open(os.path.join(os.path.dirname(__file__), "web", "package.json")))
     lock = json.load(open(os.path.join(os.path.dirname(__file__), "web", "package-lock.json")))
     assert pkg["version"] == lock["version"] == lock["packages"][""]["version"]
-    assert not os.path.exists(os.path.join(WEB, "routes", "Guide.tsx"))
-    manifest = open(os.path.join(os.path.dirname(__file__), "docs",
-                                 "ARGUS_B2A_DEFERRED_UI_MANIFEST.md"),
-                    encoding="utf-8").read()
-    assert "Round 1 deletion completed" in manifest
+    guide = _read("routes", "Guide.tsx")
+    assert f"['v{pkg['version']}'" in guide           # RECENT_UPDATES先頭に当該版

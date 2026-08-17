@@ -1,19 +1,15 @@
 import React, { useState } from 'react';
-import type { AssetItem } from '../../types/assetItem';
+import { useAssets } from '../../hooks/useAssets';
 
 // Layer 2B — sync the owner's watchlist MEMBERSHIP (symbols only, no holdings) so
 // ARGUS can score the assets you actually care about. The owner-sync token is
-// entered once and kept in localStorage on THIS device. It is a dedicated,
-// owner-scoped token for membership/Layer-2B operations, never general admin or
-// deployment authority.
+// entered once and kept in localStorage on THIS device (it's a dedicated,
+// low-scope token — only authorizes membership sync, never portfolio/admin).
 const TOKEN_KEY = 'argus.ownerSyncToken.v1';
 const SYNC_MARKETS = new Set(['JP', 'US', 'CRYPTO']); // funds (CORE) excluded — no return-scoring
 
-interface Props {
-  assets: AssetItem[];
-}
-
-export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
+export const Layer2BSyncCard: React.FC = () => {
+  const { assets } = useAssets();
   const [token, setToken] = useState<string>(() => {
     try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; }
   });
@@ -172,8 +168,7 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
                        color: 'inherit', fontFamily: 'monospace' }}
             />
             <span style={{ opacity: 0.6, fontSize: '0.85em' }}>
-              この端末にのみ保存。銘柄同期・Layer 2B採点/復元などのオーナー操作用です。
-              管理者・デプロイ権限はありません。
+              この端末にのみ保存。membership同期だけに使う専用トークン(管理者権限ではありません)。
             </span>
           </span>
         </div>
