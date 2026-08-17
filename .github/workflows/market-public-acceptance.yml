@@ -10,6 +10,9 @@ on:
       - 'web/scripts/canonical-snapshot-selection.mjs'
       - 'web/scripts/release-state-machine.mjs'
       - 'web/scripts/release-state-machine.test.mjs'
+      - 'web/scripts/full-release-simulation.mjs'
+      - 'release/v13-snapshot-readiness-contract.json'
+      - 'release/v13-accepted-fix-manifest.json'
       - 'web/scripts/mobile-today-acceptance.mjs'
       - 'web/index.html'
       - 'web/src/components/today/ArgusTodayPanel.tsx'
@@ -27,6 +30,7 @@ on:
       - 'docs/ops/v13-final-release-state-machine.md'
       - 'scripts/verify_public_candidate_release.py'
       - 'test_verify_public_candidate_release.py'
+      - 'scripts/v13_release_certificate.py'
   workflow_dispatch:
     inputs:
       pages_run_id:
@@ -47,82 +51,123 @@ permissions:
   actions: read
 
 jobs:
-  warm-profile-seed:
+  full_release_simulation_1:
+    name: full-release-simulation-1
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: ./.github/actions/candidate-pages-preview
+      - uses: actions/setup-node@v5
         with:
-          candidate-sha: ${{ github.event.pull_request.head.sha }}
-      - uses: ./.github/actions/warm-profile-seed
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: web
+      - name: Install pinned simulation browser
+        run: npx playwright install --with-deps chromium
+        working-directory: web
+      - name: Build exact candidate artifact
+        env:
+          DEPLOY_BASE: /argus/
+          VITE_ARGUS_BACKEND_URL: http://127.0.0.1:4199
+          VITE_ARGUS_BUILD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: npm run build
+        working-directory: web
+      - name: Full cold-start release simulation 1
+        env:
+          ARGUS_SIM_EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/full-release-simulation.mjs --run 1 --out ../artifacts/full-release-simulation-1.json
+        working-directory: web
+      - name: Publish simulation 1 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          candidate-sha: ${{ github.event.pull_request.head.sha }}
-          public-url: http://127.0.0.1:4173/argus/
-          profile-artifact-name: market-warm-profile-shadow-1-${{ github.event.pull_request.head.sha }}
-          evidence-artifact-name: warm-profile-shadow-1-producer-${{ github.event.pull_request.head.sha }}
+          name: full-release-simulation-1-${{ github.event.pull_request.head.sha }}
+          path: artifacts/full-release-simulation-1.json
+          if-no-files-found: error
+          retention-days: 30
 
-  warm-profile-handoff:
+  full_release_simulation_2:
+    name: full-release-simulation-2
     if: github.event_name == 'pull_request'
-    needs: warm-profile-seed
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: ./.github/actions/candidate-pages-preview
+      - uses: actions/setup-node@v5
         with:
-          candidate-sha: ${{ github.event.pull_request.head.sha }}
-      - uses: ./.github/actions/warm-profile-consumer
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: web
+      - name: Install pinned simulation browser
+        run: npx playwright install --with-deps chromium
+        working-directory: web
+      - name: Build exact candidate artifact
+        env:
+          DEPLOY_BASE: /argus/
+          VITE_ARGUS_BACKEND_URL: http://127.0.0.1:4199
+          VITE_ARGUS_BUILD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: npm run build
+        working-directory: web
+      - name: Full cold-start release simulation 2
+        env:
+          ARGUS_SIM_EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/full-release-simulation.mjs --run 2 --out ../artifacts/full-release-simulation-2.json
+        working-directory: web
+      - name: Publish simulation 2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          profile-artifact-name: market-warm-profile-shadow-1-${{ github.event.pull_request.head.sha }}
-          evidence-artifact-name: warm-profile-shadow-1-consumer-${{ github.event.pull_request.head.sha }}
-          candidate-sha: ${{ github.event.pull_request.head.sha }}
-          public-url: http://127.0.0.1:4173/argus/
-          mode: profile
+          name: full-release-simulation-2-${{ github.event.pull_request.head.sha }}
+          path: artifacts/full-release-simulation-2.json
+          if-no-files-found: error
+          retention-days: 30
 
-  warm-profile-seed-2:
+  proof_certificate:
+    name: proof-certificate
     if: github.event_name == 'pull_request'
-    needs: warm-profile-handoff
+    needs: [full_release_simulation_1, full_release_simulation_2]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: ./.github/actions/candidate-pages-preview
+          fetch-depth: 0
+      - uses: actions/download-artifact@v5
         with:
-          candidate-sha: ${{ github.event.pull_request.head.sha }}
-      - uses: ./.github/actions/warm-profile-seed
+          name: full-release-simulation-1-${{ github.event.pull_request.head.sha }}
+          path: artifacts/simulation-1
+      - uses: actions/download-artifact@v5
         with:
-          candidate-sha: ${{ github.event.pull_request.head.sha }}
-          public-url: http://127.0.0.1:4173/argus/
-          profile-artifact-name: market-warm-profile-shadow-2-${{ github.event.pull_request.head.sha }}
-          evidence-artifact-name: warm-profile-shadow-2-producer-${{ github.event.pull_request.head.sha }}
-
-  warm-profile-handoff-2:
-    if: github.event_name == 'pull_request'
-    needs: warm-profile-seed-2
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v5
+          name: full-release-simulation-2-${{ github.event.pull_request.head.sha }}
+          path: artifacts/simulation-2
+      - name: Generate content-addressed proof for the exact candidate
+        run: |
+          python3 -B scripts/v13_release_certificate.py generate \
+            --simulation-one artifacts/simulation-1/full-release-simulation-1.json \
+            --simulation-two artifacts/simulation-2/full-release-simulation-2.json \
+            --ci-status 'full-release-simulation-1=${{ needs.full_release_simulation_1.result }}' \
+            --ci-status 'full-release-simulation-2=${{ needs.full_release_simulation_2.result }}' \
+            --out artifacts/v13-release-proof/certificate.json
+          python3 -B scripts/v13_release_certificate.py verify \
+            --certificate artifacts/v13-release-proof/certificate.json
+      - name: Publish exact candidate proof certificate
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-      - uses: ./.github/actions/candidate-pages-preview
-        with:
-          candidate-sha: ${{ github.event.pull_request.head.sha }}
-      - uses: ./.github/actions/warm-profile-consumer
-        with:
-          profile-artifact-name: market-warm-profile-shadow-2-${{ github.event.pull_request.head.sha }}
-          evidence-artifact-name: warm-profile-shadow-2-consumer-${{ github.event.pull_request.head.sha }}
-          candidate-sha: ${{ github.event.pull_request.head.sha }}
-          public-url: http://127.0.0.1:4173/argus/
-          mode: profile
+          name: v13-release-proof-${{ github.event.pull_request.head.sha }}
+          path: artifacts/v13-release-proof/certificate.json
+          if-no-files-found: error
+          retention-days: 90
 
   public-acceptance:
     if: github.event_name == 'workflow_dispatch'

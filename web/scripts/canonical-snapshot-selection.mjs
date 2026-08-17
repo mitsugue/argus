@@ -80,6 +80,13 @@ export async function openCanonicalEvidence(page, timeout = 30_000) {
   null, { timeout });
 }
 
+async function activate(locator) {
+  // State changes, not layout animation stability, are the release evidence.
+  // Dispatch the real DOM click synchronously and verify aria-pressed below.
+  await locator.waitFor({ state: 'attached' });
+  await locator.evaluate((element) => element.click());
+}
+
 export async function selectCanonical1321FiveDay(page, {
   expectedSnapshotId = null,
   timeout = CANONICAL_RESULT_TIMEOUT_MS,
@@ -87,7 +94,7 @@ export async function selectCanonical1321FiveDay(page, {
 } = {}) {
   const machine = seedStateMachine(onTransition);
   await openCanonicalEvidence(page, timeout);
-  machine.transition('R10_PRODUCT_SELECTION_READY');
+  machine.transition('R11_PRODUCT_SELECTION_READY');
 
   // Make both canonical controls real state transitions. A reopened profile
   // can already contain 1321/5D; merely clicking an already-selected button
@@ -102,7 +109,7 @@ export async function selectCanonical1321FiveDay(page, {
     const stagingInstrument = page.locator(
       '[data-argus-control="market-instrument"][data-instrument="1306"]',
     );
-    await stagingInstrument.click();
+    await activate(stagingInstrument);
     await page.waitForFunction(() => document.querySelector(
       '[data-argus-control="market-instrument"][data-instrument="1306"]',
     )?.getAttribute('aria-pressed') === 'true', null, { timeout });
@@ -111,24 +118,25 @@ export async function selectCanonical1321FiveDay(page, {
     const stagingHorizon = page.locator(
       '[data-argus-control="canonical-horizon"][data-horizon="1D"]',
     );
-    await stagingHorizon.click();
+    await activate(stagingHorizon);
     await page.waitForFunction(() => document.querySelector(
       '[data-argus-control="canonical-horizon"][data-horizon="1D"]',
     )?.getAttribute('aria-pressed') === 'true', null, { timeout });
   }
 
   const marketGroup = page.getByRole('group', { name: '表示市場' });
-  await marketGroup.getByRole('button', { name: 'JP', exact: true }).click();
-  await canonicalInstrument.click();
+  const jpMarket = marketGroup.getByRole('button', { name: 'JP', exact: true });
+  if (await jpMarket.getAttribute('aria-pressed') !== 'true') await activate(jpMarket);
+  await activate(canonicalInstrument);
   await page.waitForFunction(() => document.querySelector(
     '[data-argus-control="market-instrument"][data-instrument="1321"]',
   )?.getAttribute('aria-pressed') === 'true', null, { timeout });
-  machine.transition('R11_1321_SELECTED');
-  await canonicalHorizon.click();
+  machine.transition('R12_1321_SELECTED');
+  await activate(canonicalHorizon);
   await page.waitForFunction(() => document.querySelector(
     '[data-argus-control="canonical-horizon"][data-horizon="5D"]',
   )?.getAttribute('aria-pressed') === 'true', null, { timeout });
-  machine.transition('R12_5D_SELECTED');
+  machine.transition('R13_5D_SELECTED');
 
   // The four selector summaries intentionally prefetch 5D. A direct 1321/5D
   // click may therefore reuse an already-verified cache and emit no request.
@@ -140,7 +148,7 @@ export async function selectCanonical1321FiveDay(page, {
     const [request, observedResponse] = await triggerCanonicalRevalidation(page, timeout);
     httpStatuses.push(observedResponse.status());
     if (attempt === 1) {
-      machine.transition('R13_CANONICAL_REQUEST_OBSERVED', {
+      machine.transition('R14_CANONICAL_REQUEST_OBSERVED', {
         url: request.url(), httpStatus: observedResponse.status(),
       });
     }
@@ -165,7 +173,7 @@ export async function selectCanonical1321FiveDay(page, {
   if (expectedSnapshotId && body.snapshotId !== expectedSnapshotId) {
     throw new Error('canonical_1321_5d_response_snapshot_mismatch');
   }
-  machine.transition('R14_VERIFIED_SNAPSHOT_RECEIVED', {
+  machine.transition('R15_VERIFIED_SNAPSHOT_RECEIVED', {
     httpStatus: response.status(), httpStatuses, responseBodySource: captured.source,
     snapshotId: body.snapshotId,
   });
@@ -180,7 +188,7 @@ export async function selectCanonical1321FiveDay(page, {
   { timeout });
   const contract = page.locator(CANONICAL_SNAPSHOT_SELECTOR);
   const uiSnapshotId = await contract.getAttribute('data-canonical-snapshot-id');
-  machine.transition('R15_SAME_SNAPSHOT_PROJECTED_TO_UI', {
+  machine.transition('R16_UI_SNAPSHOT_ID_MATCHED', {
     responseSnapshotId: body.snapshotId, uiSnapshotId,
   });
   return {
