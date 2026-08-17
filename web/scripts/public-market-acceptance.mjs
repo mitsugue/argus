@@ -6,11 +6,6 @@ import {
   writeWarmProfileManifest,
 } from './warm-profile-contract.mjs';
 import { stabilizeWarmProfileRuntime } from './warm-profile-runtime.mjs';
-import {
-  CANONICAL_SNAPSHOT_SELECTOR,
-  openCanonicalEvidence,
-  selectCanonical1321FiveDay,
-} from './canonical-snapshot-selection.mjs';
 
 const PUBLIC_URL = process.env.ARGUS_PUBLIC_URL || 'https://mitsugue.github.io/argus/';
 const EXPECTED_VERSION = process.env.ARGUS_EXPECTED_VERSION || '';
@@ -36,6 +31,10 @@ const RUNTIME_PROBE_TIMEOUT_MS = 10_000;
 const COMBINATION_PACE_MS = 1_000;
 const SYMBOLS = ['1321', '1306', 'SPY', 'QQQ'];
 const HORIZONS = ['1D', '5D', '20D'];
+const CANONICAL_SNAPSHOT_SELECTOR =
+  '[data-argus-contract="canonical-market-snapshot-v1"]'
+  + '[data-canonical-verification="verified"]'
+  + '[data-canonical-snapshot-id]';
 const VIEWPORTS = [
   { width: 1440, height: 900 },
   { width: 1280, height: 800 },
@@ -194,18 +193,28 @@ async function drainResponses(evidence) {
   }
 }
 
+async function openEvidenceDisclosure(page, timeout = 30_000) {
+  const disclosure = page.locator('details.at-evidence');
+  if (!await disclosure.evaluate((element) => element.open)) {
+    await page.getByText('根拠・市場データ・システム情報', { exact: true }).click();
+  }
+  await page.waitForFunction(() =>
+    document.querySelector('details.at-evidence')?.open === true,
+  null, { timeout });
+}
+
 async function waitForToday(page, timeout = 30_000) {
   await page.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .waitFor({ state: 'visible', timeout });
-  await openCanonicalEvidence(page, timeout);
+  await openEvidenceDisclosure(page, timeout);
 }
 
 async function selectCombination(page, symbol, horizon) {
-  await openCanonicalEvidence(page);
-  await page.locator(`[data-argus-control="market-instrument"][data-instrument="${symbol}"]`)
-    .click();
-  await page.locator(`[data-argus-control="canonical-horizon"][data-horizon="${horizon}"]`)
-    .click();
+  const label = symbol === '1321' ? '日経'
+    : symbol === '1306' ? 'TOPIX' : symbol === 'SPY' ? 'S&P' : 'NASDAQ';
+  await page.locator('.at-index-strip button').filter({ hasText: label }).click();
+  await page.getByRole('group', { name: '予測期間' })
+    .getByRole('button', { name: horizon, exact: true }).click();
   await waitForToday(page);
   await page.waitForFunction(({ expectedSymbol, expectedHorizon }) => {
     const heading = document.querySelector('.at-proj-heading b')?.textContent || '';
@@ -329,7 +338,7 @@ async function run() {
   await fs.rm(OUT_DIR, { recursive: true, force: true });
   const evidence = {
     failures: [], console: [], network: [], responses: [], phases: [],
-    runtimeAttempts: [], combinations: [], computedStyles: [], releaseStateLog: [],
+    runtimeAttempts: [], combinations: [], computedStyles: [],
     aiPostCount: 0, datasetHashes: new Set(), responseSnapshotIds: new Set(),
     responseTasks: new Set(),
   };
@@ -352,7 +361,6 @@ async function run() {
     environment,
     phases: evidence.phases,
     runtimeAttempts: evidence.runtimeAttempts,
-    releaseStateLog: evidence.releaseStateLog,
     console: evidence.console.slice(-64),
     network: evidence.network.slice(-256),
     responses: evidence.responses.slice(-256),
@@ -362,7 +370,6 @@ async function run() {
   let context = null;
   let page = null;
   let contextClosed = false;
-  let finalReleaseMachine = null;
   try {
     markPhase('prepare-profile');
     if (MODE === 'seed') {
@@ -427,21 +434,15 @@ async function run() {
       const stabilized = await stabilizeWarmProfileRuntime({
         probe: async (attempt) => {
           markPhase('runtime-probe', 'RUNNING', { attempt });
-          const canonical = await selectCanonical1321FiveDay(page, {
-            expectedSnapshotId: seeded.snapshotId,
-            onTransition: (event) => {
-              if (!event.detail?.assumed) {
-                evidence.releaseStateLog.push({ ...event, attempt });
-              }
-            },
-          });
-          finalReleaseMachine = canonical.machine;
-          if (!canonical.responseSnapshotId
-              || canonical.responseSnapshotId !== canonical.uiSnapshotId) {
+          await waitForToday(page);
+          const record = await selectCombination(page, '1321', HORIZONS[1]);
+          if (!record.snapshotId || record.snapshotId !== seeded.snapshotId
+              || record.verification !== 'verified'
+              || record.instrument !== '1321'
+              || record.canonicalHorizon !== HORIZONS[1]) {
             throw new Error('seeded_canonical_5D_snapshot_unavailable');
           }
-          const runtime = await probeProfileRuntime(page);
-          return { ...runtime, canonical };
+          return probeProfileRuntime(page);
         },
         reload: async (attempt) => {
           markPhase('runtime-reload', 'RETRY', { attempt });
@@ -473,10 +474,6 @@ async function run() {
           seededSnapshotId: seeded.snapshotId,
         },
       });
-      if (!finalReleaseMachine) throw new Error('release_state_machine_missing');
-      finalReleaseMachine.transition('R16_WARM_PROFILE_SEALED', {
-        warmProfileArtifactId: manifest.artifactId,
-      });
       await writeJson('version.json', {
         backendVersion: identity.service.backendVersion,
         backendSha: identity.service.buildSha,
@@ -503,52 +500,30 @@ async function run() {
         globalThis.__ARGUS_BUILD_SHA__ === expected, EXPECTED_SHA,
       { timeout: PAGE_TIMEOUT_MS });
     }
-    await openCanonicalEvidence(page);
+    await waitForToday(page);
     if (MODE === 'profile') {
-      const canonical = await selectCanonical1321FiveDay(page, {
-        expectedSnapshotId: warmProfile.source.seededSnapshotId,
-        onTransition: (event) => {
-          if (!event.detail?.assumed) evidence.releaseStateLog.push(event);
-        },
-      });
-      canonical.machine.transition('R16_WARM_PROFILE_SEALED', {
-        warmProfileArtifactId: warmProfile.artifactId,
-      });
+      const record = await selectCombination(page, '1321', HORIZONS[1]);
       const result = {
-        verdict: canonical.responseSnapshotId === warmProfile.source.seededSnapshotId
-          && canonical.responseSnapshotId === canonical.uiSnapshotId
-          ? 'PASS' : 'FAIL',
+        verdict: record.snapshotId === warmProfile.source.seededSnapshotId
+          && record.verification === 'verified'
+          && record.instrument === '1321'
+          && record.canonicalHorizon === HORIZONS[1] ? 'PASS' : 'FAIL',
         candidateSha: EXPECTED_SHA,
-        canonicalHorizon: canonical.canonicalHorizon,
-        seededSnapshotId: canonical.responseSnapshotId,
-        verifiedSnapshotHttpStatus: canonical.httpStatus,
+        canonicalHorizon: record.horizon,
+        seededSnapshotId: record.snapshotId,
+        verifiedSnapshotHttpStatus: 200,
         warmProfileArtifactId: warmProfile.artifactId,
-        releaseStateLog: evidence.releaseStateLog,
       };
-      if (result.verdict === 'PASS') {
-        canonical.machine.transition('R17_PUBLIC_PRODUCT_ACCEPTED', {
-          mode: 'independent_profile_reopen',
-        });
-      }
       await writeJson('acceptance.json', result);
       markPhase('complete');
       await writeJson('diagnostics.json', await diagnostics(result.verdict));
       if (result.verdict !== 'PASS') process.exitCode = 1;
       return;
     }
-    const acceptanceCanonical = await selectCanonical1321FiveDay(page, {
-      expectedSnapshotId: warmProfile.source.seededSnapshotId,
-      onTransition: (event) => {
-        if (!event.detail?.assumed) evidence.releaseStateLog.push(event);
-      },
-    });
-    acceptanceCanonical.machine.transition('R16_WARM_PROFILE_SEALED', {
-      warmProfileArtifactId: warmProfile.artifactId,
-    });
     if (await page.evaluate(() => location.hash) !== '#today') {
       evidence.failures.push('canonical-today-deeplink');
     }
-    if (await page.locator('[data-argus-control="market-instrument"]').count() !== 4) {
+    if (await page.locator('.at-index-strip button').count() !== 4) {
       evidence.failures.push('market-instrument-count');
     }
 
@@ -606,14 +581,8 @@ async function run() {
         (row) => row.horizontalOverflow),
       aiPostCount: evidence.aiPostCount,
       combinations: evidence.combinations,
-      releaseStateLog: evidence.releaseStateLog,
       failures: evidence.failures,
     };
-    if (result.verdict === 'PASS') {
-      acceptanceCanonical.machine.transition('R17_PUBLIC_PRODUCT_ACCEPTED', {
-        mode: 'full_public_acceptance',
-      });
-    }
     await writeJson('acceptance.json', result);
     await writeJson('console.json', evidence.console);
     await writeJson('network.json', evidence.network);

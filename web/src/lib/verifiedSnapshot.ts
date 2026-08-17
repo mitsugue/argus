@@ -2,7 +2,7 @@ import type { ChartIntelligencePayload } from '../types/chartIntelligence';
 
 export const VERIFIED_SNAPSHOT_SCHEMA = 'argus-verified-view-snapshot-v1';
 export const VERIFIED_VIEW_METHOD_VERSION =
-  'verified-chart-view-v1:chart-intelligence-phase2-v2-pit-bound:market-context-replay-v3-pit-bound';
+  'verified-chart-view-v1:chart-intelligence-phase2-v1:market-context-replay-v2-standard-excursion';
 const DB_NAME = 'argus-verified-snapshots';
 const DB_VERSION = 1;
 const SNAPSHOT_STORE = 'snapshots';
