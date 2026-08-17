@@ -3,6 +3,7 @@
 // アップに同乗)、サーバーには一切送られない。売買指示ではない。
 
 import type { APItem } from '../domain/actionPriority';
+import type { PrimaryAction } from '../domain/singleDecisionAuthority';
 import { jpDisplay } from './displayName';
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
@@ -25,9 +26,14 @@ export interface AppNotification {
 }
 
 const STORE_KEY = 'argus.notifications.v1';
+const PREFS_KEY = 'argus.notificationPreferences.v1';
 const CAP = 100;
 const GLOBAL_MAX_PER_DAY = 12;
 const RULES: Record<string, { severity: Severity; cooldownMin: number; maxPerDay: number }> = {
+  primary_action_changed: { severity: 'high', cooldownMin: 60, maxPerDay: 8 },
+  authority_lost: { severity: 'high', cooldownMin: 180, maxPerDay: 4 },
+  target_reached: { severity: 'high', cooldownMin: 1440, maxPerDay: 4 },
+  invalidation_reached: { severity: 'critical', cooldownMin: 60, maxPerDay: 6 },
   p0_priority: { severity: 'critical', cooldownMin: 60, maxPerDay: 5 },
   p1_held_priority: { severity: 'high', cooldownMin: 1440, maxPerDay: 5 },
   event_before: { severity: 'medium', cooldownMin: 720, maxPerDay: 4 },
@@ -60,12 +66,66 @@ export interface PrevState {
   strategy?: { tactical?: string; single?: string; theme?: string; fire?: string };
   fireCore?: { valuation?: string; contribution?: string; ratio?: string };
   briefSession?: string;
+  canonical?: Record<string, { action: PrimaryAction; status: 'EVALUATED' | 'DATA_GATED' }>;
+}
+
+export interface NotificationPreferences {
+  action: boolean; catalyst: boolean; risk: boolean; authority: boolean; recovery: boolean;
+}
+export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = Object.freeze({
+  action: true, catalyst: true, risk: true, authority: true, recovery: true,
+});
+
+export function notificationPreferences(): NotificationPreferences {
+  try {
+    const value = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') as Partial<NotificationPreferences>;
+    return { ...DEFAULT_NOTIFICATION_PREFERENCES,
+      ...Object.fromEntries(Object.entries(value).filter(([, enabled]) => typeof enabled === 'boolean')) };
+  } catch { return { ...DEFAULT_NOTIFICATION_PREFERENCES }; }
+}
+
+export function saveNotificationPreferences(value: NotificationPreferences): void {
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(value)); } catch { /* device-local best effort */ }
+}
+
+function migrateLegacyNotification(item: AppNotification): AppNotification {
+  if (item.checkNextJa.includes('Positions & Risk')) {
+    return { ...item, checkNextJa: item.eventType === 'strategy_risk'
+      ? 'Holdings / Watchlist → Advanced portfolio → PORTFOLIO STRATEGYで詳細確認(助言ではない)'
+      : 'Holdings / Watchlist → Advanced portfolio → FIRE COREで確認' };
+  }
+  if (item.eventType === 'sync_backup_warning'
+    && (item.dedupeKey === 'vault'
+      || item.checkNextJa.includes('Backup')
+      || item.bodyJa.includes('暗号化バックアップ'))) {
+    return { ...item,
+      titleJa: 'JSONバックアップを更新',
+      bodyJa: '最近のローカルJSONエクスポートを確認し、端末故障やサイトデータ消去に備えて保存してください。',
+      whyJa: '公開ブラウザから新しいクラウド復旧点は送信できません。',
+      checkNextJa: 'Settings / Recovery → 完全バックアップJSONを書き出す',
+      dedupeKey: 'local-export' };
+  }
+  if (item.eventType === 'restore_not_verified'
+    && (item.checkNextJa.includes('Backup') || item.checkNextJa.includes('パスフレーズ'))) {
+    return { ...item, checkNextJa: 'Settings / Recovery → 復元ドリルを実行' };
+  }
+  return item;
 }
 
 function load(): Store {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return JSON.parse(raw) as Store;
+    if (raw) {
+      const parsed = JSON.parse(raw) as Store;
+      const items = Array.isArray(parsed.items)
+        ? parsed.items.map(migrateLegacyNotification) : [];
+      const lastByDedupe = { ...(parsed.lastByDedupe ?? {}) };
+      if (lastByDedupe.vault && !lastByDedupe['local-export']) {
+        lastByDedupe['local-export'] = lastByDedupe.vault;
+      }
+      delete lastByDedupe.vault;
+      return { ...parsed, items, lastByDedupe };
+    }
   } catch { /* fresh */ }
   return { items: [], lastByDedupe: {}, sentToday: { day: '', total: 0, byType: {} }, prev: {} };
 }
@@ -97,7 +157,26 @@ export interface NotifInputs {
   hasHoldings: boolean;
   snapshotAgeDays: number | null;
   vaultConfigured: boolean;
+  localExportAgeDays?: number | null;
   restoreVerified?: boolean;
+  canonicalDecisions?: Record<string, {
+    action: PrimaryAction; status: 'EVALUATED' | 'DATA_GATED'; name?: string;
+    isHeld?: boolean; targetReached?: boolean; invalidationReached?: boolean;
+  }>;
+}
+
+const MATERIAL_NOTIFICATION_TYPES = new Set([
+  'primary_action_changed', 'authority_lost', 'target_reached', 'invalidation_reached',
+  'p0_priority', 'p1_held_priority', 'event_before', 'scenario_change', 'plan_change',
+  'strategy_risk', 'sync_backup_warning', 'restore_not_verified',
+]);
+
+function preferenceFor(eventType: string): keyof NotificationPreferences {
+  if (eventType === 'primary_action_changed' || eventType === 'target_reached') return 'action';
+  if (eventType === 'event_before') return 'catalyst';
+  if (eventType === 'authority_lost') return 'authority';
+  if (eventType === 'sync_backup_warning' || eventType === 'restore_not_verified') return 'recovery';
+  return 'risk';
 }
 
 /** Run once per Today mount (throttled by dedupe/cooldowns internally). */
@@ -114,6 +193,38 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
   const p0Now = inp.apItems.filter((i) => i.priorityRank === 'P0').map((i) => i.symbol);
   const p1HeldNow = inp.apItems.filter((i) => i.priorityRank === 'P1' && i.isHeld).map((i) => i.symbol);
   const chaseNow = inp.apItems.filter((i) => i.category === 'avoid_chase').map((i) => i.symbol);
+
+  for (const [symbol, decision] of Object.entries(inp.canonicalDecisions ?? {})) {
+    const previous = st.prev.canonical?.[symbol];
+    const privateItem = !!decision.isHeld;
+    if (previous && previous.action !== decision.action) {
+      cands.push({ eventType: 'primary_action_changed', severity: 'high', symbol,
+        assetName: decision.name ?? null, titleJa: `Primary Action変更：${nm(symbol, decision.name)}`,
+        bodyJa: `${previous.action} → ${decision.action}。同じSDA正本の更新です。`,
+        whyJa: '必要な正本証拠とリスク制約が更新されました。',
+        checkNextJa: 'Todayまたは銘柄Decisionで目標・無効化・次の確認を確認',
+        dedupeKey: `sda-action|${symbol}|${previous.action}|${decision.action}`,
+        isPrivate: privateItem });
+    }
+    if (previous?.status === 'EVALUATED' && decision.status === 'DATA_GATED') {
+      cands.push({ eventType: 'authority_lost', severity: 'high', symbol,
+        assetName: decision.name ?? null, titleJa: `判断権限が一時停止：${nm(symbol, decision.name)}`,
+        bodyJa: '必要な正本証拠が欠けたため、Primary ActionはWAITにフェイルクローズしました。',
+        whyJa: '判断の正当性を証明できない状態です。',
+        checkNextJa: 'Settings の公開ステータスと鮮度を確認',
+        dedupeKey: `sda-authority|${symbol}|lost`, isPrivate: privateItem });
+    }
+    if (decision.targetReached) cands.push({ eventType: 'target_reached', severity: 'high', symbol,
+      assetName: decision.name ?? null, titleJa: `目標到達：${nm(symbol, decision.name)}`,
+      bodyJa: '検証済み目標に到達しました。', whyJa: '次の行動条件です。',
+      checkNextJa: '銘柄Decisionの次の確認を参照', dedupeKey: `sda-target|${symbol}`,
+      isPrivate: privateItem });
+    if (decision.invalidationReached) cands.push({ eventType: 'invalidation_reached', severity: 'critical', symbol,
+      assetName: decision.name ?? null, titleJa: `無効化条件：${nm(symbol, decision.name)}`,
+      bodyJa: '検証済みの無効化条件に到達しました。', whyJa: '前提が崩れた可能性があります。',
+      checkNextJa: 'Primary Actionとリスク制約をすぐに確認', dedupeKey: `sda-invalid|${symbol}`,
+      isPrivate: privateItem });
+  }
 
   for (const it of inp.apItems) {
     if (it.priorityRank === 'Ignore') continue;
@@ -216,7 +327,7 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
       cands.push({ eventType: 'strategy_risk', severity: 'high', symbol: null,
         assetName: null, titleJa: `戦略注意：${title}`,
         bodyJa: inp.strategyState.summaryJa?.slice(0, 80) || body,
-        whyJa: body, checkNextJa: 'Positions & Risk → PORTFOLIO STRATEGYで詳細確認(助言ではない)',
+        whyJa: body, checkNextJa: 'Holdings / Watchlist → Advanced portfolio → PORTFOLIO STRATEGYで詳細確認(助言ではない)',
         dedupeKey: `strat|${key}`, isPrivate: true });
     }
   }
@@ -228,20 +339,20 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
       cands.push({ eventType: 'fire_core', severity: 'low', symbol: null, assetName: null,
         titleJa: 'FIRE Core: 投信の評価額が未更新です',
         bodyJa: '投資信託の現在価値を更新すると、戦術枠の取りすぎを正確に判定できます。',
-        whyJa: '評価額の更新が7日を超えました。', checkNextJa: 'Positions & Risk → FIRE COREで更新',
+        whyJa: '評価額の更新が7日を超えました。', checkNextJa: 'Holdings / Watchlist → Advanced portfolio → FIRE COREで更新',
         dedupeKey: 'fc|stale', isPrivate: true });
     } else if (['stretched', 'exceeded'].includes(cur.ratio ?? '')
       && !['stretched', 'exceeded'].includes(was.ratio ?? '')) {
       cands.push({ eventType: 'fire_core', severity: 'low', symbol: null, assetName: null,
         titleJa: 'FIRE Core: 戦術枠が本丸資産に対して大きくなっています',
         bodyJa: '個別株の追加より、FIRE Core(投信)とのバランス確認が先です。',
-        whyJa: '戦術枠/FIRE Core比が悪化しました。', checkNextJa: 'Positions & Risk → FIRE COREで確認',
+        whyJa: '戦術枠/FIRE Core比が悪化しました。', checkNextJa: 'Holdings / Watchlist → Advanced portfolio → FIRE COREで確認',
         dedupeKey: 'fc|ratio', isPrivate: true });
     } else if (cur.contribution === 'missing' && was.contribution !== 'missing') {
       cands.push({ eventType: 'fire_core', severity: 'low', symbol: null, assetName: null,
         titleJa: 'FIRE Core: 毎月積立額が未入力です',
         bodyJa: '積立額を入力すると長期入金整合の判定精度が上がります(捏造はしません)。',
-        whyJa: '積立データが欠落しています。', checkNextJa: 'Positions & Risk → FIRE COREで入力',
+        whyJa: '積立データが欠落しています。', checkNextJa: 'Holdings / Watchlist → Advanced portfolio → FIRE COREで入力',
         dedupeKey: 'fc|contrib', isPrivate: true });
     }
   }
@@ -300,18 +411,19 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
         whyJa: '履歴が残らないと後日の答え合わせができません。',
         checkNextJa: 'Todayを開けば自動作成されます', dedupeKey: `snap|${day}`, isPrivate: true });
     }
-    if (inp.restoreVerified === false && inp.vaultConfigured) {
+    if (inp.restoreVerified === false
+      && (inp.vaultConfigured || inp.localExportAgeDays != null)) {
       cands.push({ eventType: 'restore_not_verified', severity: 'low', symbol: null, assetName: null,
         titleJa: '復元未確認', bodyJa: 'バックアップから戻せることを一度も確認していません。復元ドリル(非破壊)を実行してください。',
-        whyJa: '復元できないバックアップは保護になりません。', checkNextJa: 'Backupページ → 復元ドリルを実行',
+        whyJa: '復元できないバックアップは保護になりません。', checkNextJa: 'Settings / Recovery → 復元ドリルを実行',
         dedupeKey: 'drill', isPrivate: true });
     }
-    if (!inp.vaultConfigured) {
+    if (inp.localExportAgeDays == null || inp.localExportAgeDays > 30) {
       cands.push({ eventType: 'sync_backup_warning', severity: 'low', symbol: null, assetName: null,
-        titleJa: 'バックアップ未設定',
-        bodyJa: '暗号化バックアップ(パスフレーズ)が未設定です。端末故障で保有データが失われます。',
-        whyJa: '保有・判断履歴は端末内のみ。', checkNextJa: 'Backupページでパスフレーズを設定',
-        dedupeKey: 'vault', isPrivate: true });
+        titleJa: 'JSONバックアップを更新',
+        bodyJa: '最近30日以内のローカルJSONエクスポートが確認できません。端末故障やサイトデータ消去に備えて保存してください。',
+        whyJa: '公開ブラウザから新しいクラウド復旧点は送信できません。', checkNextJa: 'Settings / Recovery → 完全バックアップJSONを書き出す',
+        dedupeKey: 'local-export', isPrivate: true });
     }
   }
 
@@ -321,8 +433,11 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
   const quiet = hour >= 23 || hour < 6;
   const weekend = wd === 0 || wd === 6;
   if (st.sentToday.day !== day) st.sentToday = { day, total: 0, byType: {} };
+  const preferences = notificationPreferences();
   let delivered = 0;
   for (const c of cands.sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity])) {
+    if (!MATERIAL_NOTIFICATION_TYPES.has(c.eventType)) continue;
+    if (!preferences[preferenceFor(c.eventType)]) continue;
     const rule = RULES[c.eventType] ?? { severity: 'info' as Severity, cooldownMin: 1440, maxPerDay: 2 };
     if (quiet && c.severity !== 'critical') continue;
     if (weekend && SEV_ORDER[c.severity] > SEV_ORDER.high
@@ -349,6 +464,8 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
       fire: inp.strategyState.fire } : st.prev.strategy,
     fireCore: inp.fireCoreState ?? st.prev.fireCore,
     briefSession: inp.briefSession,
+    canonical: Object.fromEntries(Object.entries(inp.canonicalDecisions ?? {})
+      .map(([symbol, decision]) => [symbol, { action: decision.action, status: decision.status }])),
   };
   save(st);
   return { delivered };

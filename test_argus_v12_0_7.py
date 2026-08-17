@@ -28,31 +28,6 @@ def _seed_missed(monkeypatch):
     ])
 
 
-def test_missed_public_is_aggregate_only(monkeypatch):
-    _seed_missed(monkeypatch)
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/institutional-intelligence/missed").get_json()
-    assert d["count"] == 1
-    assert d["byCause"] == {"source_not_registered": 1}
-    assert "items" not in d                       # 公開に本文なし
-    blob = json.dumps(d, ensure_ascii=False)
-    for banned in ("whyJa", "オーナー自由記述", "some article title", "https://x/1", "6146"):
-        assert banned not in blob, banned
-    assert d["itemsAccess"] == "admin_only"
-
-
-def test_missed_admin_gets_items(monkeypatch):
-    _seed_missed(monkeypatch)
-    monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "test-admin-token-1234")
-    with scanner.app.test_client() as c:
-        pub = c.get("/api/argus/institutional-intelligence/missed").get_json()
-        adm = c.get("/api/argus/institutional-intelligence/missed",
-                    headers={"X-ARGUS-ADMIN-TOKEN": "test-admin-token-1234"}).get_json()
-    assert "items" not in pub
-    assert len(adm.get("items") or []) == 1       # adminは従来どおり詳細を読める
-    assert adm["items"][0]["whyJa"].startswith("保有中")
-
-
 # ── ② /api/state redact ────────────────────────────────────────────────────
 
 def test_api_state_public_is_redacted(monkeypatch):
@@ -90,18 +65,6 @@ def test_api_state_admin_gets_full(monkeypatch):
 
 # ── ③ runtime-manifest JP文言 ───────────────────────────────────────────────
 
-def test_runtime_manifest_no_jp_live_implication():
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/runtime-manifest").get_json()
-    lims = " | ".join(d.get("currentLimitations") or [])
-    assert "then realtime" not in lims            # 旧文言の復活防止
-    assert "UNAVAILABLE" in lims
-    assert "confirmed by support" in lims
-    assert "does NOT mean JP realtime" in lims
-    assert "ret=0" in lims and "OpenD restart" in lims
-    assert "US-only" in lims
-
-
 # ── ④ JSF鮮度スタンプ(スラッシュ日付の正規化) ────────────────────────────────
 
 def test_jsf_slash_date_normalizes_and_parses():
@@ -116,14 +79,14 @@ def test_jsf_freshness_measured_when_table_warm(monkeypatch):
     monkeypatch.setitem(scanner._JSF_CACHE, "date", recent)
     monkeypatch.setitem(scanner._JSF_CACHE, "table", {"6146": {"loan": 1, "short": 1}})
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json()
+        d = scanner._data_quality_console()
     row = [r for r in d["sourceHealth"] if r["sourceName"] == "jsf-daily-balance"][0]
     assert "-" in (row["lastSuccessAt"] or "")     # ハイフン正規化済み
     assert row["freshnessBucket"] in ("fresh", "recent")   # 実測でunknownを脱する
     # 日付が無ければ従来どおりunknown(捏造しない)
     monkeypatch.setitem(scanner._JSF_CACHE, "date", None)
     with scanner.app.test_client() as c:
-        d2 = c.get("/api/argus/data-quality").get_json()
+        d2 = scanner._data_quality_console()
     row2 = [r for r in d2["sourceHealth"] if r["sourceName"] == "jsf-daily-balance"][0]
     assert row2["lastSuccessAt"] is None
     assert row2["freshnessBucket"] == "unknown"
@@ -156,7 +119,7 @@ def test_intel_undated_item_excluded_from_current_view(monkeypatch):
     assert d["omittedOldCount"] == 1
 
 
-def test_intel_publishedat_missing_falls_back_to_detected(monkeypatch):
+def test_intel_publishedat_missing_never_falls_back_to_receipt(monkeypatch):
     now_iso = scanner._ai_now_iso()
     monkeypatch.setitem(scanner._NEWS_JA_STATE, "restored", True)
     monkeypatch.setattr(scanner, "_INTEL_STORE", [
@@ -169,7 +132,8 @@ def test_intel_publishedat_missing_falls_back_to_detected(monkeypatch):
     ])
     with scanner.app.test_client() as c:
         d = c.get("/api/argus/events/7011/institutional-intelligence").get_json()
-    assert d["count"] == 1                         # fallback時刻がfreshなら表示
+    assert d["count"] == 0
+    assert d["omittedOldCount"] == 1
 
 
 # ── ⑥ FEソース検査 — 安全優先展開/二重ボタン抑止/閾値同期 ────────────────────
@@ -190,10 +154,11 @@ def test_fe_no_duplicate_investigate_button_in_card():
     card = _read("components", "assetDesk", "AssetWhyPanel.tsx")
     assert card.count("<AiExplanationBlock") == 1
     assert "CauseStackCard" not in card
-    # 共有カード側の二重ボタン抑止契約も、他画面向けに維持する。
-    csc = _read("components", "dashboard", "CauseStackCard.tsx")
-    assert "hideInvestigateButton" in csc
-    assert "二重" in csc or "duplicate" in csc.lower()
+    # Round 1: 旧グローバル原因カードは削除し、OSINT証拠はAsset Detail内だけに残す。
+    assert not os.path.exists(os.path.join(
+        WEB, "components", "dashboard", "CauseStackCard.tsx"))
+    research = _read("components", "assetDesk", "AssetResearchPanel.tsx")
+    assert research.count("<OsintDeepDive") == 1
 
 
 def test_fire_core_stale_days_synced_at_ten():

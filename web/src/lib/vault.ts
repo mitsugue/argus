@@ -1,23 +1,19 @@
-// Cloud backup vault (v10.3.4) — fully automatic, zero new accounts.
-//
-// Flow: the device ENCRYPTS the backup (AES-GCM, key derived from the user's
-// passphrase via PBKDF2) → POSTs the ciphertext envelope to the backend relay
-// → the daily prediction-ledger workflow commits it to the public `ledger`
-// branch (vault/<id>/latest.json). Restore on ANY device = passphrase only:
-// the vault id is itself derived from the passphrase, the ciphertext is
-// fetched from GitHub and decrypted locally. Plaintext never leaves the
-// device; the server and the public repo only ever see ciphertext.
+// Read-only encrypted recovery for envelopes produced by the former cloud
+// backup path. The public browser can fetch an existing ciphertext envelope
+// from the relay or durable ledger copy and decrypt it locally. It cannot
+// upload a new envelope, retry a failed upload, or provide live device sync.
+// New recovery points are created with the local JSON export instead.
 //
 // Honest limits: a WEAK passphrase can be brute-forced offline because the
 // ciphertext is public — use a long one. Losing the passphrase = no restore.
 
-import { buildBackupPayload, restoreBackup, BACKUP_KEYS, type BackupFile } from './backup';
+import { restoreBackup, BACKUP_KEYS, type BackupFile } from './backup';
 import { mergeAssets, loadTombstones, saveTombstones, type Tombstones } from './assetMerge';
 import type { AssetItem } from '../types/assetItem';
+import { buildRecoveryDurability, type RecoveryDurability } from '../domain/recoveryDurability';
 
 const PASS_KEY = 'argus.vaultPass.v1';
 const LAST_KEY = 'argus.lastCloudBackup.v1';
-const INTERVAL_MS = 20 * 3600 * 1000; // ~daily on first open
 const PBKDF2_ITERS = 200_000;
 const RAW_BASE = 'https://raw.githubusercontent.com/mitsugue/argus/ledger/ledger/vault';
 
@@ -76,49 +72,18 @@ export function lastCloudBackupAt(): number {
   try { return Number(localStorage.getItem(LAST_KEY) || 0); } catch { return 0; }
 }
 
-/** Push one encrypted envelope to the relay. Returns the backend note. */
-export async function cloudBackupNow(pass: string): Promise<string> {
-  const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
-  if (!backend) throw new Error('backend not configured');
-  const payload = buildBackupPayload(true);
-  if (Object.keys(payload.data).length === 0) return '保存するデータがまだありません。';
-  const blob = await encryptBackup(pass, payload);
-  const vaultId = await vaultIdFrom(pass);
-  const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/vault-push', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ vaultId, blob }),
-  });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  try { localStorage.setItem(LAST_KEY, String(Date.now())); } catch { /* ignore */ }
-  // Own push = already applied locally — the sync loop must not re-apply it.
-  setSyncState({ appliedExportedAt: payload.exportedAt });
-  const d = await r.json();
-  return d.noteJa || 'OK';
+function recordExistingEnvelope(exportedAt: string): void {
+  const timestamp = Date.parse(exportedAt || '') || 0;
+  if (!timestamp) return;
+  try { localStorage.setItem(LAST_KEY, String(timestamp)); } catch { /* ignore */ }
 }
 
-/** Daily-ish automatic cloud backup on app open (no-op until enabled). */
-export async function maybeCloudBackup(): Promise<void> {
-  const pass = getVaultPass();
-  if (!pass) return;
-  if (Date.now() - lastCloudBackupAt() < INTERVAL_MS) return;
-  try { await cloudBackupNow(pass); } catch { /* retried next open */ }
-}
-
-// ── Cross-device sync (sync-v1, v10.10) ─────────────────────────────────────
-// Both devices encrypt with the same passphrase → same vault id. Edits are
-// debounce-pushed to the backend relay; other devices poll the relay (with a
-// one-time GitHub-raw fallback per session) and apply when the remote payload
-// is NEWER than their own last local edit. Whole-payload last-writer-wins —
-// simultaneous edits on two devices keep the most recent push (v1 limitation,
-// per-item merge is a later refinement). Ciphertext-only on the wire, as ever.
+// ── Read-only encrypted recovery ─────────────────────────────────────────────
+// The static browser has no authenticated cloud-push channel. It can read an
+// existing encrypted envelope on startup/tab return and can restore it, but it
+// never uploads, retries an upload, or advertises live cross-device sync.
 const SYNC_KEY = 'argus.vaultSync.v1';        // {appliedExportedAt, pushedEditAt}
 const EDIT_KEY = 'argus.lastLocalEditAt.v1';
-// v11.3.3 (sync-v2): an edit pushes ~3s after the last change; the other device
-// polls every 15s and ALSO pulls immediately on visibilitychange, so switching
-// from the app to the web tab surfaces the change right away (~5-20s worst case).
-const PUSH_DEBOUNCE_MS = 3_000;
-const SYNC_POLL_MS = 15_000;
-let pushTimer: number | null = null;
 let suppressEditsUntil = 0;
 let syncLoopStarted = false;
 
@@ -137,21 +102,20 @@ export function lastLocalEditAt(): number {
   try { return Number(localStorage.getItem(EDIT_KEY) || 0); } catch { return 0; }
 }
 
-/** Called by data hooks whenever device data actually changes: stamps the
-    edit time and debounce-pushes the encrypted backup so other devices can
-    pick it up within ~1 minute. No-op until cloud backup is enabled. */
+export function recoveryDurability(hasLocalData: boolean, lastLocalExportAt?: number | null): RecoveryDurability {
+  return buildRecoveryDurability({
+    hasLocalData,
+    existingEnvelopeAt: lastCloudBackupAt() || null,
+    lastLocalEditAt: lastLocalEditAt() || null,
+    lastLocalExportAt,
+  });
+}
+
+/** Called by data hooks whenever device data changes. This only records the
+    local LWW timestamp; unavailable browser-side cloud push is never retried. */
 export function markLocalEdit(): void {
   if (Date.now() < suppressEditsUntil) return;  // change came FROM a sync apply
   try { localStorage.setItem(EDIT_KEY, String(Date.now())); } catch { /* ignore */ }
-  const pass = getVaultPass();
-  if (!pass) return;
-  if (pushTimer != null) window.clearTimeout(pushTimer);
-  pushTimer = window.setTimeout(() => {
-    pushTimer = null;
-    void cloudBackupNow(pass)
-      .then(() => setSyncState({ pushedEditAt: lastLocalEditAt() }))
-      .catch(() => { /* re-pushed by the next sync tick */ });
-  }, PUSH_DEBOUNCE_MS);
 }
 
 async function fetchRemoteEnvelope(vaultId: string, rawFallback: boolean): Promise<string | null> {
@@ -189,7 +153,7 @@ export function lastSyncInfo(): SyncInfo | null {
   catch { return null; }
 }
 
-/** One sync cycle (sync-v2, v11.3.3).
+/** One read/apply cycle for an existing sync-v2 envelope.
     WATCHLIST (`argus.assets.v1`) is merged PER-ITEM: union by id, newer
     updatedAt wins, deletions propagate via tombstones. Both devices converge
     to the same list — an add on either side survives, no join gate needed,
@@ -203,7 +167,6 @@ export async function cloudSyncNow(opts: { rawFallback?: boolean } = {}): Promis
   const st = syncState();
   const localEdit = lastLocalEditAt();
   let outcome: 'applied' | 'pushed' | 'noop' = 'noop';
-  let needPush = false;
   let mergedTick = false;
   let remoteProto: number | undefined;
   let legacy = false;
@@ -211,6 +174,7 @@ export async function cloudSyncNow(opts: { rawFallback?: boolean } = {}): Promis
     let payload: BackupFile | null = null;
     try { payload = await decryptBackup(pass, env); } catch { payload = null; }
     if (payload?.data) {
+      recordExistingEnvelope(payload.exportedAt);
       // v11.3.4 migration guard: a RECENT envelope without syncProtocolVersion
       // means another device still runs pre-sync-v2 code (whole-payload LWW,
       // no tombstones). The merge below stays safe on THIS device; the UI
@@ -237,7 +201,7 @@ export async function cloudSyncNow(opts: { rawFallback?: boolean } = {}): Promis
           window.dispatchEvent(new CustomEvent('argus:data-synced'));
           outcome = 'applied';
         }
-        if (m.remoteChanged) needPush = true;  // we hold items/deletions the cloud lacks
+        // m.remoteChanged is intentionally not uploaded: public browser push is unavailable.
       }
       // 2) other keys: v1 whole-key LWW + safety gate (assets excluded — merged above).
       if (payload.exportedAt && payload.exportedAt !== st.appliedExportedAt) {
@@ -264,40 +228,27 @@ export async function cloudSyncNow(opts: { rawFallback?: boolean } = {}): Promis
       }
     }
   }
-  let pushedNow = false;
-  if (needPush || localEdit > st.pushedEditAt) {
-    try {
-      await cloudBackupNow(pass);
-      setSyncState({ pushedEditAt: lastLocalEditAt() });
-      pushedNow = true;
-      if (outcome === 'noop') outcome = 'pushed';
-    } catch { /* next tick */ }
-  }
   recordSyncTick({
     outcome, merged: mergedTick,
     ...(outcome === 'applied' ? { lastPullAppliedAt: Date.now() } : {}),
-    ...(pushedNow ? { lastPushAt: Date.now() } : {}),
     ...(remoteProto !== undefined ? { remoteProtocol: remoteProto, legacyClientDetected: legacy } : {}),
   });
   return outcome;
 }
 
-/** App-start hook: initial sync (with one GitHub-raw fallback), then a gentle
-    poll while the tab is visible + an immediate check on tab return. */
+/** App-start hook: one raw-fallback pull and a pull when the tab returns.
+    Deliberately no 15-second polling loop and no cloud-push retry. */
 export function startCloudSync(): void {
   if (syncLoopStarted) return;
   syncLoopStarted = true;
-  void maybeCloudBackup();   // legacy ~20h heartbeat (also covers judgment log)
   void cloudSyncNow({ rawFallback: true });
-  window.setInterval(() => { if (!document.hidden) void cloudSyncNow(); }, SYNC_POLL_MS);
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) void cloudSyncNow();
   });
 }
 
-/** Restore from the cloud vault using only the passphrase. Tries the live
-    relay first (sync-v1: works minutes after the other device pushed, no
-    need to wait for the 16:05 ledger commit), then the durable GitHub copy. */
+/** Restore from an existing encrypted envelope using only the passphrase.
+    Tries the read-only relay first, then the durable GitHub copy. */
 export async function cloudRestore(pass: string): Promise<number> {
   const vaultId = await vaultIdFrom(pass);
   const envelopeStr = await fetchRemoteEnvelope(vaultId, true);
@@ -305,9 +256,10 @@ export async function cloudRestore(pass: string): Promise<number> {
     throw new Error('クラウド上にバックアップが見つかりません(パスフレーズ違い、または他端末がまだ一度も送信していません)。');
   }
   const payload = await decryptBackup(pass, envelopeStr);
+  recordExistingEnvelope(payload.exportedAt);
   const n = restoreBackup(payload);
-  // Joining the sync group: record what we applied so the loop doesn't
-  // re-apply it, and let mounted hooks reload without a manual refresh.
+  // Record what was applied so a later visibility pull does not re-apply it,
+  // and let mounted hooks reload without a manual refresh.
   setSyncState({ appliedExportedAt: payload.exportedAt });
   suppressEditsUntil = Date.now() + 3_000;
   window.dispatchEvent(new CustomEvent('argus:data-synced'));

@@ -2,14 +2,18 @@
 
 ## Independent identities
 
-| Plane | Version source | Build SHA source | Deploy authority |
+`product-version.json` is the sole product-generation authority. It identifies
+the user-facing product as `v13`; it is not derived from either component.
+
+| Coordinate | Version source | Build SHA source | Deploy authority |
 |---|---|---|---|
+| Product | `product-version.json` | n/a | Both component consumers |
 | Frontend | `web/package.json` | GitHub Pages workflow `github.sha` | `.github/workflows/deploy-pages.yml` |
 | Backend | `backend-version.json` | Render `RENDER_GIT_COMMIT` | `render.yaml` build filter |
 
 The public-URL acceptance artifact combines these independently observed
-coordinates. The backend must not infer the live Pages SHA from its own
-checkout.
+component coordinates. Product identity never hides component drift, and the
+backend must not infer the live Pages SHA from its own checkout.
 
 ## Backend-sensitive paths
 

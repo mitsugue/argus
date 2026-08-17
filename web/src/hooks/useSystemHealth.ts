@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 // System health lamps (v10.51) — at-a-glance green/amber/red for the metered &
 // important systems so a SILENT budget stop / bridge outage becomes visible.
@@ -17,24 +17,89 @@ export interface SystemHealth {
   noteJa?: string;
 }
 
-export function useSystemHealth() {
-  const [health, setHealth] = useState<SystemHealth | null>(null);
-  const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
+export interface PublicDiagnostics {
+  schemaVersion: 'argus-public-diagnostics-v1';
+  generatedAt: string;
+  service: {
+    liveness: 'ok' | 'unavailable';
+    readiness: 'ready' | 'not_ready';
+    overall: 'ok' | 'degraded' | 'unavailable';
+    backendVersion: string;
+    buildSha: string | null;
+  };
+  freshness: {
+    overall: 'fresh' | 'aging' | 'stale' | 'unknown' | 'mixed';
+    sourceCounts: { fresh: number; aging: number; stale: number; unknown: number };
+    expectedDisabledCount: number;
+  };
+  recovery: {
+    mode: 'LEGACY_ONLY';
+    measurement: 'SHADOW_INCOMPLETE';
+    exactColdRecovery: 'NOT_PROVEN';
+    hardRpoClaimPermitted: false;
+  };
+  systemHealth: SystemHealth;
+}
 
+interface DiagnosticsState {
+  diagnostics: PublicDiagnostics | null;
+  loading: boolean;
+  failed: boolean;
+}
+
+let state: DiagnosticsState = { diagnostics: null, loading: false, failed: false };
+let inFlight: Promise<void> | null = null;
+const listeners = new Set<(next: DiagnosticsState) => void>();
+
+function publish(next: DiagnosticsState) {
+  state = next;
+  for (const listener of listeners) listener(state);
+}
+
+function loadDiagnostics(backend: string | undefined, force = false): Promise<void> {
+  if (inFlight) return inFlight;
+  if (state.diagnostics && !force) return Promise.resolve();
+  const base = backend?.replace(/\/$/, '');
+  if (!base) {
+    publish({ ...state, loading: false, failed: true });
+    return Promise.resolve();
+  }
+  publish({ ...state, loading: true, failed: false });
+  inFlight = fetch(`${base}/api/argus/data-quality/status`)
+    .then((response) => {
+      if (!response.ok) throw new Error('public_diagnostics_unavailable');
+      return response.json() as Promise<PublicDiagnostics>;
+    })
+    .then((value) => {
+      if (value.schemaVersion !== 'argus-public-diagnostics-v1'
+        || !Array.isArray(value.systemHealth?.lamps)) {
+        throw new Error('public_diagnostics_schema_invalid');
+      }
+      publish({ diagnostics: value, loading: false, failed: false });
+    })
+    .catch(() => publish({ ...state, loading: false, failed: true }))
+    .finally(() => { inFlight = null; });
+  return inFlight;
+}
+
+/**
+ * One request-backed public diagnostics store. It deliberately has no timer:
+ * AppShell health consumes the canonical diagnostics snapshot without restoring
+ * the retired persistent /system-health polling loop.
+ */
+export function usePublicDiagnostics() {
+  const backend = import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined;
+  const [snapshot, setSnapshot] = useState(state);
   useEffect(() => {
-    let alive = true;
-    const base = backend?.replace(/\/$/, '');
-    async function load() {
-      if (!base) return;
-      try {
-        const d = await fetch(`${base}/api/argus/system-health`).then((r) => r.json());
-        if (alive && Array.isArray(d?.lamps)) setHealth(d as SystemHealth);
-      } catch { /* keep last */ }
-    }
-    load();
-    const t = window.setInterval(load, 30_000);
-    return () => { alive = false; window.clearInterval(t); };
+    const listener = (next: DiagnosticsState) => setSnapshot(next);
+    listeners.add(listener);
+    void loadDiagnostics(backend);
+    return () => { listeners.delete(listener); };
   }, [backend]);
+  const refresh = useCallback(() => loadDiagnostics(backend, true), [backend]);
+  return { ...snapshot, refresh };
+}
 
-  return health;
+export function useSystemHealth() {
+  return usePublicDiagnostics().diagnostics?.systemHealth ?? null;
 }

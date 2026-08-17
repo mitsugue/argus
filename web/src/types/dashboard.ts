@@ -42,6 +42,9 @@ export interface AssetActionCard {
   reason: string;          // one-line reason
   dataPoints: string[];    // 2–4 short supporting points
   nextCondition: string;   // what to watch
+  /** Legacy class posture is display evidence, not a canonical action. */
+  authorityRole?: 'EVIDENCE_ONLY';
+  finalDecisionAuthorityActive?: false;
 }
 
 export type EventKind =
