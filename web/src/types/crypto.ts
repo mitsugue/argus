@@ -2,7 +2,8 @@
 // Quotes are keyed by CoinGecko id (e.g. "bitcoin") — the asset's memo stores
 // the mapping as "coingecko:<id>". changePct is the 24h change.
 
-export type CryptoQuoteStatus = 'live' | 'mock';
+export type CryptoQuoteStatus = 'live' | 'delayed' | 'partial'
+  | 'unavailable' | 'mock';
 
 export interface CryptoQuote {
   id: string;            // coingecko id
@@ -11,11 +12,18 @@ export interface CryptoQuote {
   volume: number;        // 24h USD volume
   date: string | null;   // YYYY-MM-DD (last update)
   status: CryptoQuoteStatus;
+  source?: 'coingecko' | 'coinbase' | string;
+  sourceTimestamp?: string | null;
+  receivedAt?: string | null;
+  realtimeEvidence?: boolean;
+  sourceTimeStatus?: 'PRESENT' | 'MISSING' | 'FUTURE' | 'MALFORMED' | string;
+  freshness?: 'fresh' | 'delayed' | string;
+  decisionUsable?: boolean;
 }
 
 export interface CryptoWatchlistSnapshot {
-  status: 'live' | 'partial' | 'mock';
+  status: 'live' | 'delayed' | 'partial' | 'mock';
   asOf: string | null;
-  provider: 'coingecko';
+  provider: 'coingecko' | 'coinbase' | string;
   quotes: CryptoQuote[];
 }

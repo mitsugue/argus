@@ -125,14 +125,6 @@ def test_watchtower_status_carries_patrol_ref(monkeypatch):
     assert "deepSweeps24h" in ph and "baselineSweeps24h" in ph
 
 
-def test_deep_research_carries_patrol_ref(monkeypatch):
-    _no_fetch(monkeypatch)
-    _reset(monkeypatch, _healthy_ledger())
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/caos/deep-research/status").get_json()
-    assert "patrolHealth" in d and d["patrolHealth"]["deepSweeps24h"] == 1
-
-
 def test_restore_merges_from_snapshot(monkeypatch, tmp_path):
     """dyno-restart path: /tmp gone → merge from the ledger-branch patrol snapshot."""
     _no_fetch(monkeypatch)

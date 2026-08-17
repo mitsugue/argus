@@ -19,7 +19,7 @@ class DeployScopeTests(unittest.TestCase):
 
     def test_react_only_deploys_pages_and_preserves_soak(self):
         result = deploy_scope.classify(
-            ["web/src/components/marketReplay/MarketContextReplay.tsx"])
+            ["web/src/components/today/ArgusTodayPanel.tsx"])
         self.assertTrue(result["frontendDeploy"])
         self.assertFalse(result["backendDeploy"])
         self.assertTrue(result["preserveBackendSoak"])
@@ -73,14 +73,27 @@ class DeployScopeTests(unittest.TestCase):
         self.assertFalse(result["preserveBackendSoak"])
         self.assertFalse(result["checkpointStage1"])
 
-    def test_guide_only_does_not_restart_backend(self):
-        result = deploy_scope.classify(["web/src/routes/Guide.tsx"])
+    def test_settings_only_does_not_restart_backend(self):
+        result = deploy_scope.classify(["web/src/routes/Settings.tsx"])
         self.assertTrue(result["frontendDeploy"])
         self.assertFalse(result["backendDeploy"])
+
+    def test_canonical_product_version_deploys_both_consumers(self):
+        result = deploy_scope.classify(["product-version.json"])
+        self.assertTrue(result["frontendDeploy"])
+        self.assertTrue(result["backendDeploy"])
 
     def test_public_acceptance_workflow_is_frontend_plane(self):
         result = deploy_scope.classify(
             [".github/workflows/market-public-acceptance.yml"])
+        self.assertTrue(result["frontendDeploy"])
+        self.assertFalse(result["backendDeploy"])
+
+    def test_shared_warm_profile_actions_are_frontend_plane(self):
+        result = deploy_scope.classify([
+            ".github/actions/warm-profile-seed/action.yml",
+            ".github/actions/warm-profile-consumer/action.yml",
+        ])
         self.assertTrue(result["frontendDeploy"])
         self.assertFalse(result["backendDeploy"])
 
@@ -90,15 +103,36 @@ class DeployScopeTests(unittest.TestCase):
         self.assertTrue(result["frontendDeploy"])
         self.assertFalse(result["backendDeploy"])
 
-    def test_pages_waits_for_verified_snapshot_readiness(self):
+    def test_public_candidate_identity_gate_is_frontend_plane_only(self):
+        result = deploy_scope.classify(
+            ["scripts/verify_public_candidate_release.py"])
+        self.assertTrue(result["frontendDeploy"])
+        self.assertFalse(result["backendDeploy"])
+
+    def test_pages_deploys_candidate_before_seed_and_acceptance(self):
         workflow = (ROOT / ".github/workflows/deploy-pages.yml").read_text()
         self.assertIn("backend-readiness:", workflow)
+        self.assertIn("candidate-identity:", workflow)
+        self.assertIn("needs: [build, backend-readiness]", workflow)
         self.assertIn(
-            "needs: [build, seed-warm-profile, backend-readiness]", workflow)
+            "needs: [scope, deploy, backend-readiness]", workflow)
+        self.assertIn(
+            "needs: [scope, candidate-identity]", workflow)
+        self.assertIn(
+            "needs: [scope, deploy, candidate-identity, "
+            "seed-warm-profile, backend-readiness]", workflow)
         self.assertIn(
             "scripts/verified_snapshot_release_gate.py", workflow)
         self.assertIn(
+            "scripts/verify_public_candidate_release.py", workflow)
+        self.assertIn(
             "backend-snapshot-readiness-${{ github.sha }}", workflow)
+        self.assertIn(
+            "public-candidate-identity-${{ github.sha }}", workflow)
+        self.assertIn(
+            "enforce-public-candidate-identity: 'true'", workflow)
+        self.assertNotIn(
+            "needs: [build, seed-warm-profile, backend-readiness]", workflow)
 
     def test_render_blueprint_allowlist_matches_classifier(self):
         blueprint = (ROOT / "render.yaml").read_text()
@@ -114,10 +148,19 @@ class DeployScopeTests(unittest.TestCase):
         self.assertIn("ignoredPaths: []", blueprint)
 
     def test_release_versions_are_independent(self):
+        product = json.loads((ROOT / "product-version.json").read_text())
         frontend = json.loads((ROOT / "web/package.json").read_text())["version"]
         backend = json.loads((ROOT / "backend-version.json").read_text())["version"]
+        self.assertEqual("v13", product["productVersion"])
         self.assertEqual("13.3.6", frontend)
         self.assertEqual("13.4.13", backend)
+
+    def test_release_gate_names_product_and_component_coordinates(self):
+        source = (ROOT / "scripts/release_gate.sh").read_text()
+        self.assertIn('"productVersion": "$PRODUCT_VERSION"', source)
+        self.assertIn('"frontendVersion": "$FRONTEND_VERSION"', source)
+        self.assertIn('"backendVersion": "$BACKEND_VERSION"', source)
+        self.assertNotIn('{"version": "$FRONTEND_VERSION"', source)
 
     def test_release_gate_enforces_render_skip_contract(self):
         workflow = (ROOT / ".github/workflows/release-gate.yml").read_text()

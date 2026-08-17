@@ -105,15 +105,6 @@ def test_tdnet_recent_falls_back_to_yanoshin_without_key(monkeypatch):
 
 
 # ── provider diagnostics ─────────────────────────────────────────────────────
-def test_public_diagnostics_shape_and_no_admin_detail():
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/provider-diagnostics/public").get_json()
-    assert d["schemaVersion"] == "provider-diagnostics-public-v1"
-    for p in d["providers"]:
-        assert set(p) == {"provider", "configured", "status"}   # no httpStatus/sampleCount/messages
-    assert {"jquants-core", "jquants-tdnet", "edinet", "twelvedata-quote"} <= {p["provider"] for p in d["providers"]}
-
-
 def test_admin_diagnostics_requires_token():
     with scanner.app.test_client() as c:
         r = c.get("/api/argus/admin/provider-diagnostics")

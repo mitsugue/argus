@@ -694,8 +694,9 @@ def test_keyed_boot_remote_tag_or_ancestry_ambiguity_precedes_local_authority():
         generation_digit="2")
     remote_readback, remote_envelope, _remote_targets = _artifacts()
     tampered = recovery.build_sidecar(remote_readback, remote_envelope)
-    tampered["recovery"]["ciphertext"] = (
-        "A" + tampered["recovery"]["ciphertext"][1:])
+    ciphertext = tampered["recovery"]["ciphertext"]
+    replacement = "A" if ciphertext[0] != "A" else "B"
+    tampered["recovery"]["ciphertext"] = replacement + ciphertext[1:]
     cases = [
         (_keyed_local_probe_responses(remote_readback, tampered, ancestry=[]),
          "recovery_ciphertext_hash_mismatch"),
@@ -1016,8 +1017,9 @@ def test_local_keyed_checkpoint_validates_sidecar_before_authority():
             "maximumSequence"] == RECOVERY_WAL
 
     tampered = copy.deepcopy(sidecar)
-    tampered["recovery"]["ciphertext"] = (
-        "A" + tampered["recovery"]["ciphertext"][1:])
+    ciphertext = tampered["recovery"]["ciphertext"]
+    replacement = "A" if ciphertext[0] != "A" else "B"
+    tampered["recovery"]["ciphertext"] = replacement + ciphertext[1:]
     with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
             mock.patch.dict(os.environ, _key_env(), clear=False), \
             _local_keyed_boot_probe(), \

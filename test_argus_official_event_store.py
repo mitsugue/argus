@@ -11,7 +11,7 @@ import scanner
 
 NOW = "2026-07-02T12:00:00Z"
 ITEM = {"code": "8058", "name": "三菱商事", "title": "業績予想の修正（下方修正）に関するお知らせ",
-        "time": "2026-07-02T08:00", "category": "guidance_down", "categoryJa": "業績下方修正",
+        "time": "2026-07-02T08:00:00+09:00", "category": "guidance_down", "categoryJa": "業績下方修正",
         "sentiment": "negative", "material": True, "official": True, "provider": "jquants-tdnet"}
 
 
@@ -43,7 +43,9 @@ def test_snapshot_contains_no_forbidden_fields():
 def test_merge_updates_reaction_without_duplicating():
     r = base_record()
     reacted = OL.apply_market_reaction(
-        r, OL.build_market_reaction(window="same_day", observed_at=NOW, price_move_pct=-4.0))
+        r, OL.build_market_reaction(
+            window="same_day", observed_at=NOW, price_move_pct=-4.0),
+        move_started_at="2026-07-02T00:00:00Z")
     reacted["updatedAt"] = "2026-07-02T13:00:00Z"
     store = ST.merge_records({}, [r], now_iso=NOW)
     store = ST.merge_records(store, [reacted], now_iso="2026-07-02T13:00:00Z")

@@ -37,10 +37,15 @@ def test_industry_association_source_type_supported():
 
 
 def test_verify_source_tags_industry_source():
-    v = oe.verify_source({"titleJa": "SEAJ 半導体製造装置 販売高予測 2026",
-                          "sourceName": "SEAJ", "publishedAt": NOW},
-                         {}, NOW)
+    title = "SEAJ 半導体製造装置 販売高予測 2026"
+    idx = oe.build_known_index([
+        {"titleJa": title, "sourceName": "SEAJ", "publishedAt": NOW,
+         "directness": "sector_theme"},
+    ])
+    v = oe.verify_source({"titleJa": title, "sourceName": "偽SEAJ",
+                          "publishedAt": "2099-01-01T00:00:00Z"}, idx, NOW)
     assert v["sourceType"] == "industry_forecast"
+    assert v["sourceName"] == "SEAJ"
 
 
 def test_theme_only_no_pointer_is_low_value_background():
@@ -82,9 +87,14 @@ def test_broad_equipment_theme_cannot_become_direct_company():
     v = oe.verify_source({"titleJa": "半導体製造装置の需要は2026年も拡大へ 業界予測",
                           "sourceName": "SEAJ", "publishedAt": NOW}, {}, NOW)
     assert v["directness"] != "direct_company"
-    # sector_theme主張はsector_themeのまま(勝手に格上げしない)
-    v2 = oe.verify_source({"titleJa": "半導体製造装置サイクル拡大", "sourceName": "SEAJ",
-                           "publishedAt": NOW, "directness": "sector_theme"}, {}, NOW)
+    # directnessはclaimでなくマッチした既知メタデータ由来。
+    title = "半導体製造装置サイクル拡大"
+    idx = oe.build_known_index([
+        {"titleJa": title, "sourceName": "SEAJ", "publishedAt": NOW,
+         "directness": "sector_theme"},
+    ])
+    v2 = oe.verify_source({"titleJa": title, "sourceName": "TDnet",
+                           "publishedAt": NOW, "directness": "direct_company"}, idx, NOW)
     assert v2["directness"] == "sector_theme"
 
 
@@ -246,14 +256,11 @@ def test_investigation_get_exposes_research_power_without_leak():
 
 
 def test_dq_osint_health_has_universe_and_rps():
-    with scanner.app.test_client() as c:
-        r = c.get("/api/argus/data-quality")
-        assert r.status_code == 200
-        oh = (r.get_json() or {}).get("osintHealth") or {}
-        su = oh.get("sourceUniverse") or {}
-        assert su.get("total") == 18
-        assert su.get("unavailable", 0) >= 1
-        assert "researchPowerLatest" in oh
+    oh = (scanner._data_quality_console() or {}).get("osintHealth") or {}
+    su = oh.get("sourceUniverse") or {}
+    assert su.get("total") == 18
+    assert su.get("unavailable", 0) >= 1
+    assert "researchPowerLatest" in oh
 
 
 def test_autopilot_wired_in_worker_progress():
@@ -276,7 +283,10 @@ def test_fe_shows_research_power_ratio():
 
 def test_fe_dq_shows_source_universe():
     src = _read("routes", "DataQualityPage.tsx")
-    assert "sourceUniverse" in src
+    hook = _read("hooks", "useSystemHealth.ts")
+    assert "usePublicDiagnostics" in src
+    assert "argus-public-diagnostics-v1" in hook
+    assert "sourceUniverse" not in src
 
 
 def test_review_pack_includes_research_power():
