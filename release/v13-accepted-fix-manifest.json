@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "argus-v13-accepted-fix-manifest-v1",
+  "canonicalSource": {
+    "branch": "codex/v13-final-release-state-machine",
+    "head": "ef32122b190bf94bebb9e1bd1c04224fd81cbca6",
+    "tree": "ce1c9c35b3664bc24865c95cb842fd3248089b3e"
+  },
+  "requirements": [
+    {"requirement": "four-surface product", "implementation": ["web/src/navigation.ts", "web/src/routes/CommandCenter.tsx", "web/src/routes/Watchlist.tsx", "web/src/routes/NotificationsPage.tsx", "web/src/routes/Settings.tsx"], "test": ["web/scripts/round3-product-final.test.mjs", "web/scripts/product-integrity.test.cjs"], "status": "PRESENT"},
+    {"requirement": "productVersion = v13", "implementation": ["product-version.json", "argus_release_identity.py"], "test": ["web/scripts/runtime-version-truth.test.mjs", "test_argus_release_identity.py"], "status": "PRESENT"},
+    {"requirement": "frontend/backend component-version separation", "implementation": ["web/package.json", "backend-version.json", "argus_release_identity.py"], "test": ["test_argus_release_identity.py", "web/scripts/runtime-version-truth.test.mjs"], "status": "PRESENT"},
+    {"requirement": "MarketTruth / PIT", "implementation": ["argus_market_data_truth.py", "argus_market_replay.py", "scanner.py"], "test": ["test_argus_market_data_truth.py", "test_argus_market_replay.py"], "status": "PRESENT"},
+    {"requirement": "Prediction Ledger complete-history integrity", "implementation": ["argus_decision_ledger.py", "scripts/run_prediction_ledger.py", ".github/workflows/prediction-ledger.yml"], "test": ["test_argus_prediction_ledger_v2.py", "test_run_prediction_ledger.py", "test_prediction_ledger_workflow.py"], "status": "PRESENT"},
+    {"requirement": "SHO / Reversal / Target Ladder", "implementation": ["argus_sho.py"], "test": ["test_argus_sho.py"], "status": "PRESENT"},
+    {"requirement": "Turtle / Risk", "implementation": ["argus_risk_discipline.py", "argus_sho.py"], "test": ["test_argus_risk_discipline.py", "test_argus_sho.py"], "status": "PRESENT"},
+    {"requirement": "single-decision-authority-v2 artifact admission", "implementation": ["argus_single_decision.py"], "test": ["test_argus_single_decision.py", "web/scripts/single-decision-authority.test.cjs"], "status": "PRESENT"},
+    {"requirement": "Seven Sign DATA_GATED behavior", "implementation": ["argus_single_decision.py", "web/src/domain/argusTodayView.ts"], "test": ["test_argus_single_decision.py", "web/scripts/argus-engine.test.cjs"], "status": "PRESENT"},
+    {"requirement": "release-gate self-dirty correction", "implementation": ["scripts/release_gate.sh", ".github/workflows/release-gate.yml"], "test": ["test_release_gate_cleanliness.py"], "status": "PRESENT"},
+    {"requirement": "horizon = 5D correction", "implementation": ["web/scripts/canonical-snapshot-selection.mjs", "web/src/hooks/useChartIntelligence.ts"], "test": ["web/scripts/public-market-acceptance.contract.test.mjs", "web/scripts/release-state-machine.test.mjs"], "status": "PRESENT"},
+    {"requirement": "real warm-profile artifact handoff", "implementation": [".github/actions/warm-profile-seed/action.yml", ".github/actions/warm-profile-consumer/action.yml", "web/scripts/warm-profile-contract.mjs"], "test": ["web/scripts/warm-profile-contract.test.mjs", "web/scripts/warm-profile-runtime.test.mjs"], "status": "PRESENT"},
+    {"requirement": "deploy-before-seed order", "implementation": [".github/workflows/deploy-pages.yml"], "test": ["web/scripts/public-market-acceptance.contract.test.mjs", "web/scripts/release-state-machine.test.mjs"], "status": "PRESENT"},
+    {"requirement": "frontend/backend identity barriers", "implementation": ["scripts/verify_public_candidate_release.py", ".github/workflows/deploy-pages.yml"], "test": ["test_verify_public_candidate_release.py", "web/scripts/release-state-machine.test.mjs"], "status": "PRESENT"},
+    {"requirement": "canonical-market-snapshot-v1 contract", "implementation": ["web/src/components/today/ArgusTodayPanel.tsx", "web/src/hooks/useChartIntelligence.ts"], "test": ["web/scripts/market-replay.test.mjs", "web/scripts/public-market-acceptance.contract.test.mjs"], "status": "PRESENT"},
+    {"requirement": "select 1321 before select 5D", "implementation": ["web/scripts/canonical-snapshot-selection.mjs"], "test": ["web/scripts/release-state-machine.test.mjs"], "status": "PRESENT"},
+    {"requirement": "select 5D before waiting for verified result", "implementation": ["web/scripts/canonical-snapshot-selection.mjs"], "test": ["web/scripts/release-state-machine.test.mjs"], "status": "PRESENT"},
+    {"requirement": "HTTP snapshot ID equals frontend semantic snapshot ID", "implementation": ["web/scripts/canonical-snapshot-selection.mjs", "web/src/components/today/ArgusTodayPanel.tsx"], "test": ["web/scripts/public-market-acceptance.contract.test.mjs", "web/scripts/release-state-machine.test.mjs"], "status": "PRESENT"},
+    {"requirement": "release-state-machine causal tests", "implementation": ["web/scripts/release-state-machine.mjs", "release/v13-snapshot-readiness-contract.json"], "test": ["web/scripts/release-state-machine.test.mjs", "web/scripts/full-release-simulation.mjs"], "status": "PRESENT"}
+  ]
+}
