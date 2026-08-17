@@ -1,9 +1,9 @@
 import React, { useRef, useState } from 'react';
 import { downloadBackup, restoreBackup, type BackupFile } from '../../lib/backup';
-import { cloudRestore, getVaultPass, setVaultPass, lastCloudBackupAt, lastSyncInfo } from '../../lib/vault';
+import { cloudBackupNow, cloudRestore, getVaultPass, setVaultPass, lastCloudBackupAt, lastSyncInfo } from '../../lib/vault';
 
-// Complete device-data backup UI. Only this full export advances global
-// backup-protection state; portfolio-only tools remain separately labelled.
+// Device-data backup UI (v10.3.2; auto-weekly added in v10.3.3 — see
+// lib/backup.ts). Export/restore the only two device-local keys.
 
 export const BackupCard: React.FC = () => {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -12,6 +12,20 @@ export const BackupCard: React.FC = () => {
   const [cloudMsg, setCloudMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const enabled = !!getVaultPass();
+
+  async function enableCloud() {
+    const p = pass.trim();
+    if (p.length < 8) { setCloudMsg('パスフレーズは8文字以上にしてください(長いほど安全)。'); return; }
+    setBusy(true);
+    try {
+      setVaultPass(p);
+      const note = await cloudBackupNow(p);
+      setCloudMsg(`✅ 有効化し、初回バックアップを送信しました。${note} ※このパスフレーズを忘れると復元できません。`);
+      setPass('');
+    } catch (e) {
+      setCloudMsg(`送信に失敗しました(${e instanceof Error ? e.message : e})。後で自動再試行されます。`);
+    } finally { setBusy(false); }
+  }
 
   async function restoreCloud() {
     const p = pass.trim();
@@ -34,8 +48,8 @@ export const BackupCard: React.FC = () => {
   function doExport() {
     const n = downloadBackup(false);
     setMsg(n > 0
-      ? `完全バックアップをエクスポートしました(${n}項目)。iCloud Drive等の安全な場所に保存してください。`
-      : '完全バックアップを作成できませんでした。保存データの形式を確認してください。');
+      ? `エクスポートしました(${n}項目)。iCloud Drive等の安全な場所に保存してください。`
+      : 'まだ保存するデータがありません。');
   }
 
   function doImport(file: File) {
@@ -57,12 +71,13 @@ export const BackupCard: React.FC = () => {
   return (
     <div className="card guide-card">
       <p className="backup__lead">
-        保有、判断記録、通知、学習履歴はこの端末に保存されます。
-        「完全バックアップJSONを書き出す」で全対象データを安全な場所へ保存し、新しい端末では「インポート」で復元できます。
+        この端末に保存されているのは「ウォッチリスト+保有数量・取得単価」と「判断ログ」の2つだけです
+        (それ以外は全てクラウド側)。<b>週に1回、アプリを開いた時に自動でバックアップファイルが
+        ダウンロードフォルダに保存されます</b>。端末を替える時はそのファイルを「インポート」するだけです。
       </p>
       <div className="backup__actions">
         <button className="asset-btn asset-btn--primary" onClick={doExport}>
-          完全バックアップJSONを書き出す
+          今すぐエクスポート
         </button>
         <button className="asset-btn" onClick={() => fileRef.current?.click()}>
           インポート(バックアップから復元)
@@ -72,32 +87,53 @@ export const BackupCard: React.FC = () => {
       </div>
       {msg && <p className="backup__msg">{msg}</p>}
       <p className="backup__note">
-        ※復元はこの端末の現在のデータを上書きします。自動ダウンロードは行いません。
+        ※復元はこの端末の現在のデータを上書きします。ファイル自動バックアップは週1回
+        (argus-backup-日付-auto.json)。
       </p>
 
       <div className="backup__cloud">
         <p className="backup__lead">
-          <b>☁️ 既存の暗号化バックアップから復元(読み取り専用)</b>
+          <b>☁️ クラウド自動バックアップ＋端末間同期</b> — パスフレーズを決めて有効化すると、
+          以後は<b>自動で暗号化バックアップがクラウド(GitHub)に保存</b>され、さらに
+          <b>同じパスフレーズを設定した端末どうしが自動で同期</b>します。
         </p>
         <p className="backup__note" style={{ borderLeft: '3px solid var(--amber,#fbbf24)', paddingLeft: 8 }}>
-          <b>現在、公開ブラウザからのクラウド送信と端末間ライブ同期は利用できません。</b>
-          15秒ポーリングや失敗する送信再試行は行いません。既に保存済みの暗号文は読み取り・復元できます。
-          新しい復旧点は上のJSONエクスポートで作成してください。
+          <b>⚠ アプリとウェブを常に同期させるには、両方で同じパスフレーズを「有効化」してください。</b>
+          片方だけだと同期しません。両方で有効化すれば、<b>ウォッチリストは銘柄ごとにマージ同期</b>されます:
+          どちらで追加しても両方に現れ、削除も両方に反映され、丸ごと上書きで消えることはありません
+          (約5〜20秒・タブ/アプリに戻ると即時取得。ウォッチリストは初回の「クラウドから復元」不要)。
+          判断ログ・取引記録・リサーチノートは「新しい方を丸ごと採用」のため、
+          <b>それらのデータが既にある端末では初回のみ「クラウドから復元」を推奨</b>します。
         </p>
         <div className="backup__actions">
           <input className="modal__input backup__pass" type="password" value={pass}
-                 placeholder="既存バックアップのパスフレーズ"
+                 placeholder={enabled ? '復元 / パスフレーズ変更用に入力' : 'パスフレーズ(8文字以上・忘れない物)'}
                  onChange={(e) => setPass(e.target.value)} autoComplete="off" />
+          <button className="asset-btn asset-btn--primary" disabled={busy} onClick={enableCloud}>
+            {enabled ? '今すぐ送信 / 変更' : '有効化して初回送信'}
+          </button>
           <button className="asset-btn" disabled={busy} onClick={restoreCloud}>クラウドから復元</button>
         </div>
+        {(() => { const s = lastSyncInfo(); return enabled && s?.legacyClientDetected ? (
+          <p className="backup__note" style={{ borderLeft: '3px solid var(--value-negative,#f87171)', paddingLeft: 8 }}>
+            <b>⚠ 古いアプリ/タブが残っています。</b>ウォッチリスト同期を安定させるため、
+            もう片方の端末・タブを再読み込みして最新バージョンにしてください
+            (旧バージョンの同期は丸ごと上書き方式のため)。
+          </p>
+        ) : null; })()}
         <p className="backup__note">
-          状態: クラウド読取のみ。保存済みパスフレーズ: {enabled ? 'あり' : 'なし'}。
-          既存復旧点: {lastCloudBackupAt() ? new Date(lastCloudBackupAt()).toLocaleString('ja-JP') : '未確認'}。
-          最終取込: {lastSyncInfo()?.lastPullAppliedAt
-            ? new Date(lastSyncInfo()!.lastPullAppliedAt!).toLocaleString('ja-JP') : '未記録'}。
-          既存復旧点は端末上で復号され、サーバーとGitHubにあるのは保存済みの<b>暗号文だけ</b>です。
-          その復旧点より新しい変更はこの端末内だけです。上のJSONエクスポートで保護してください。
-          パスフレーズを忘れると誰にも復元できません(本人含む)。
+          状態: {enabled
+            ? (() => {
+                const s = lastSyncInfo();
+                const t = (ms?: number) => (ms ? new Date(ms).toLocaleTimeString('ja-JP') : '—');
+                return `✅ この端末は同期 有効(sync-v2/銘柄マージ・最終チェック ${s ? t(s.at) : '—'}` +
+                  `・最終送信 ${t(s?.lastPushAt || lastCloudBackupAt())}・最終取込 ${t(s?.lastPullAppliedAt)}` +
+                  `${s?.remoteProtocol ? `・相手プロトコルv${s.remoteProtocol}` : ''})。` +
+                  '両端末で有効化していれば約5〜20秒で同期。恒久保存は1日6回。';
+              })()
+            : '⚠ この端末は同期 未設定(上でパスフレーズを決めて有効化。もう片方の端末でも同じパスフレーズで有効化が必要)。'}
+          データは端末上で暗号化され、サーバーとGitHubには<b>暗号文しか</b>渡りません。
+          パスフレーズを忘れると誰にも復元できません(本人含む)。古い世代は自動削除(直近8世代保持)。
         </p>
         {cloudMsg && <p className="backup__msg">{cloudMsg}</p>}
       </div>

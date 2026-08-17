@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import type { DeskCardData, DeskTab } from './types';
 import { sectionAnchorId, tabForDeskSection } from './types';
-import { AssetDecisionSummary } from './AssetDecisionSummary';
+import { SIGNALS } from '../../domain/actionLevel';
+import { AssetDecisionSummary, deskSignalCode } from './AssetDecisionSummary';
 import { AssetDecisionDetails } from './AssetDecisionDetails';
 import { AssetAIReview } from './AssetAIReview';
 import { AssetPositionPanel } from './AssetPositionPanel';
 import { AssetWhyPanel } from './AssetWhyPanel';
 import { AssetFlowPanel } from './AssetFlowPanel';
 import { AssetEventsPanel } from './AssetEventsPanel';
+import { AssetEntryScout, fetchScout, type ScoutState } from './AssetEntryScout';
 import { AssetScenarioPanel } from './AssetScenarioPanel';
 import { AssetResearchPanel } from './AssetResearchPanel';
 import { AssetDataQuality } from './AssetDataQuality';
@@ -26,7 +28,6 @@ interface Props {
   nowMs: number;
   dragHandle?: React.ReactNode;
   focusSection?: string;
-  collapsible?: boolean;
 }
 
 const TABS: Array<{ id: DeskTab; label: string }> = [
@@ -47,14 +48,16 @@ const Section: React.FC<{
 
 export const AssetDecisionCard: React.FC<Props> = ({
   d, open, onToggle, onRemove, onUpdateHolding, nowMs, dragHandle, focusSection,
-  collapsible = true,
 }) => {
+  const [scout, setScout] = useState<ScoutState>(null);
   const [tab, setTab] = useState<DeskTab>('decision');
   const [supportOpen, setSupportOpen] = useState(false);
+  const runScout = () => {
+    setScout('loading');
+    void fetchScout(d.asset.symbol, d.asset.market).then(setScout);
+  };
   const sym = d.asset.symbol;
-  const actionTone = { BUY: 'var(--value-positive)', HOLD: 'var(--accent)',
-    WAIT: 'var(--amber, #fbbf24)', REDUCE: 'var(--event-high)', EXIT: 'var(--value-negative)' } as const;
-  const sigColor = actionTone[d.decisionFirst.canonicalPrimaryAction ?? 'WAIT'];
+  const sigColor = `var(${SIGNALS[deskSignalCode(d)].token})`;
 
   useEffect(() => {
     if (!open) { setTab('decision'); setSupportOpen(false); return; }
@@ -82,7 +85,7 @@ export const AssetDecisionCard: React.FC<Props> = ({
     <article className={`uac ad-card uac--${open ? 'open' : 'compact'}${d.decisionFirst.held ? ' uac--held' : ''}`}
          id={sectionAnchorId(sym)} style={{ ['--uac-sig' as string]: sigColor }}>
       {dragHandle}
-      <AssetDecisionSummary d={d} open={open} onToggle={onToggle} interactive={collapsible} />
+      <AssetDecisionSummary d={d} open={open} onToggle={onToggle} />
       {open && (
         <div className="uac-body ad-expanded">
           <div className="ad-tabs" role="tablist" aria-label={`${sym} 詳細`}>
@@ -116,6 +119,7 @@ export const AssetDecisionCard: React.FC<Props> = ({
               <Section symbol={sym} id="technical">
                 <ChartIntelligencePanel scope="asset" symbol={sym}
                   market={d.asset.market} enabled />
+                <AssetEntryScout market={d.asset.market} scout={scout} onRun={runScout} />
               </Section>
             )}
             {tab === 'evidence' && (
@@ -147,17 +151,17 @@ export const AssetDecisionCard: React.FC<Props> = ({
             data-secondary-utility="research-data"
             onToggle={(event) => setSupportOpen(event.currentTarget.open)}>
             <summary>Utility · Research &amp; Data</summary>
-            {supportOpen && <div className="ad-research-drawer__body">
+            <div className="ad-research-drawer__body">
               <Section symbol={sym} id="ai-review" title="AI REVIEW / RULE CHECK">
                 <AssetAIReview d={d} />
               </Section>
               <Section symbol={sym} id="research" title="RESEARCH / NOTES">
-                <AssetResearchPanel d={d} onRemove={onRemove} />
+                <AssetResearchPanel d={d} scout={scout} onRemove={onRemove} />
               </Section>
               <Section symbol={sym} id="data-quality" title="DATA QUALITY">
                 <AssetDataQuality d={d} nowMs={nowMs} />
               </Section>
-            </div>}
+            </div>
           </details>
         </div>
       )}

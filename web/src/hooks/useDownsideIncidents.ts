@@ -1,7 +1,4 @@
-import { useSyncExternalStore } from 'react';
-import { deauthorizeDownsideSnapshot, liveAuthorityState,
-  scheduleLiveAuthorityExpiry } from '../domain/liveAuthority';
-import { createSharedPollingStore } from '../lib/sharedPollingStore';
+import { useEffect, useState } from 'react';
 
 // Downside Incident Response (downside-v1, v10.98) — when a held/watched name
 // drops materially, the backend classifies the incident (cause buckets, action
@@ -101,101 +98,46 @@ const REFRESH_INTERVAL_MS = 60_000;    // restored 120→60s (v10.126): Render i
 interface State {
   data: DownsideSnapshot | null;
   loading: boolean;
-  error: string | null;
-  authority: string;
 }
 
-const downsideStore = createSharedPollingStore<State>(
-  { data: null, loading: true, error: null, authority: 'unavailable' },
-  (setState, getState) => {
+export function useDownsideIncidents(): State {
+  const [state, setState] = useState<State>({ data: null, loading: true });
+
+  useEffect(() => {
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
     if (!backend) {
-      setState({ data: null, loading: false, error: null, authority: 'unavailable' });
-      return () => {};
+      setState({ data: null, loading: false });
+      return;
     }
     const url = backend.replace(/\/$/, '') + '/api/argus/downside-incidents';
     let cancelled = false;
-    let acquisition: Promise<void> | null = null;
-    let cancelExpiry = () => {};
-    const controllers = new Set<AbortController>();
-
-    function acquire(task: () => Promise<void>) {
-      if (acquisition) return acquisition;
-      const current = task().finally(() => {
-        if (acquisition === current) acquisition = null;
-      });
-      acquisition = current;
-      return current;
-    }
-
-    function accept(data: DownsideSnapshot) {
-      cancelExpiry();
-      const authority = liveAuthorityState(data.asOf, 'downsideIncidents');
-      if (authority !== 'fresh') {
-        setState({ data: deauthorizeDownsideSnapshot(data,
-          authority === 'expired' ? 'snapshot_expired' : 'invalid_as_of'),
-        loading: false, error: null, authority });
-        return;
-      }
-      setState({ data, loading: false, error: null, authority: 'fresh' });
-      cancelExpiry = scheduleLiveAuthorityExpiry(data.asOf, 'downsideIncidents', () => {
-        const current = getState();
-        if (!current.data || current.authority !== 'fresh') return;
-        setState({ ...current,
-          data: deauthorizeDownsideSnapshot(current.data, 'snapshot_expired'),
-          authority: 'expired' });
-      });
-    }
-
-    function fail(message: string) {
-      const current = getState();
-      cancelExpiry();
-      if (current.data) {
-        setState({ ...current,
-          data: deauthorizeDownsideSnapshot(current.data, 'refresh_failed'),
-          loading: false, error: message, authority: 'refresh_failed' });
-      } else {
-        setState({ data: null, loading: false, error: message, authority: 'unavailable' });
-      }
-    }
 
     async function fetchOnce() {
       if (cancelled || document.hidden) return;
-      const controller = new AbortController();
-      controllers.add(controller);
-      const timer = window.setTimeout(() => controller.abort(), 12_000);
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 12_000);
       try {
-        const response = await fetch(url, { signal: controller.signal });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = await response.json() as DownsideSnapshot;
-        if (!cancelled) accept(data);
-      } catch (err: unknown) {
-        if (!cancelled) fail(err instanceof Error ? err.message : String(err));
-      } finally {
-        window.clearTimeout(timer);
-        controllers.delete(controller);
+        const r = await fetch(url, { signal: ctrl.signal });
+        clearTimeout(timer);
+        if (!r.ok || cancelled) return;
+        const data = (await r.json()) as DownsideSnapshot;
+        if (!cancelled) setState({ data, loading: false });
+      } catch {
+        clearTimeout(timer);
+        if (!cancelled) setState((s) => ({ ...s, loading: false }));
       }
     }
 
-    const retained = getState();
-    if (retained.data && retained.authority === 'fresh') accept(retained.data);
-    const interval = window.setInterval(
-      () => void acquire(fetchOnce), REFRESH_INTERVAL_MS);
-    const onVisible = () => { if (!document.hidden) void acquire(fetchOnce); };
+    void fetchOnce();
+    const t = setInterval(() => void fetchOnce(), REFRESH_INTERVAL_MS);
+    const onVisible = () => { if (!document.hidden) void fetchOnce(); };
     document.addEventListener('visibilitychange', onVisible);
-    void acquire(fetchOnce);
     return () => {
       cancelled = true;
-      cancelExpiry();
-      for (const controller of controllers) controller.abort();
-      controllers.clear();
-      window.clearInterval(interval);
+      clearInterval(t);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  },
-);
+  }, []);
 
-export function useDownsideIncidents(): State {
-  return useSyncExternalStore(
-    downsideStore.subscribe, downsideStore.getSnapshot, downsideStore.getSnapshot);
+  return state;
 }

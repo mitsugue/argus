@@ -95,7 +95,7 @@ def test_structured_outputs_flagged_off_and_malformed_rejected():
 
 def test_dq_journal_and_decision_no_leak():
     with scanner.app.test_client() as c:
-        d = scanner._data_quality_console()
+        d = c.get("/api/argus/data-quality").get_json() or {}
         oj = d.get("operationalJournal") or {}
         assert "buffered write-through" in oj.get("durabilityJa", "")
         assert "≦30分" in oj.get("durabilityJa", "")

@@ -11,13 +11,12 @@ import hashlib
 import json
 import math
 import random
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
-
-import argus_market_data_truth
 
 
 SCHEMA_VERSION = "argus-today-intelligence-v1"
-METHOD_VERSION = "today-replay-calibration-v2-pit-bound"
+METHOD_VERSION = "today-replay-calibration-v1"
 CALIBRATION_VERSION = "beta-dirichlet-walk-forward-v2"
 PROBABILITY_ELIGIBILITY_VERSION = "probability-eligibility-v1"
 MIN_EFFECTIVE_SAMPLES = 30
@@ -79,10 +78,7 @@ def normalize_bars(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "close": close, "volume": volume,
             "source": raw.get("source") or "existing_market_data_cache",
             "availableFrom": str(raw.get("availableFrom") or date),
-            "knownAt": raw.get("knownAt"),
             "observedAt": raw.get("observedAt"),
-            "sourceId": raw.get("sourceId"),
-            "datasetId": raw.get("datasetId"),
             "revision": int(raw.get("revision") or 0),
             "adjusted": bool(raw.get("adjusted", True)),
         }
@@ -124,10 +120,7 @@ def normalize_short_history(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, An
             "source": raw.get("source") or "J-Quants /markets/short-ratio S33=0050",
             "publishedAt": raw.get("publishedAt") or date,
             "availableFrom": raw.get("availableFrom") or date,
-            "knownAt": raw.get("knownAt"),
             "observedAt": raw.get("observedAt"),
-            "sourceId": raw.get("sourceId"),
-            "datasetId": raw.get("datasetId"),
             "revision": int(raw.get("revision") or 0),
             "unit": "JPY",
         }
@@ -721,27 +714,10 @@ def analyze(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
             short_history: Iterable[Dict[str, Any]] = (),
             comparison_rows: Iterable[Dict[str, Any]] = (),
             as_of: Optional[str] = None) -> Dict[str, Any]:
-    source_rows = list(rows or [])
-    source_short = list(short_history or [])
-    source_comparison = list(comparison_rows or [])
-    pit_proofs: Dict[str, Any] = {}
-    if as_of:
-        source_rows, pit_proofs["bars"] = \
-            argus_market_data_truth.point_in_time_rows(source_rows, as_of)
-        source_short, pit_proofs["shortSelling"] = \
-            argus_market_data_truth.point_in_time_rows(source_short, as_of)
-        source_comparison, pit_proofs["comparison"] = \
-            argus_market_data_truth.point_in_time_rows(
-                source_comparison, as_of)
-        for proof in pit_proofs.values():
-            valid, reason = \
-                argus_market_data_truth.verify_point_in_time_proof(proof)
-            if not valid:
-                raise ValueError(f"point_in_time_proof_invalid:{reason}")
-    bars = normalize_bars(source_rows)
-    short_rows = normalize_short_history(source_short)
+    bars = normalize_bars(rows)
+    short_rows = normalize_short_history(short_history)
     short_summary = short_selling_summary(short_rows, as_of)
-    comparison = normalize_bars(source_comparison)
+    comparison = normalize_bars(comparison_rows)
     current_failed = {"state": "NONE", "facts": [], "metrics": {}}
     if len(bars) >= 2:
         current = dict(bars[-1])
@@ -761,12 +737,6 @@ def analyze(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
         "schemaVersion": SCHEMA_VERSION, "methodVersion": METHOD_VERSION,
         "symbol": symbol, "market": market,
         "asOf": as_of or (bars[-1]["date"] if bars else None),
-        "pointInTime": {
-            "policyId": argus_market_data_truth.PIT_POLICY_ID,
-            "requested": bool(as_of),
-            "verified": bool(as_of) and len(pit_proofs) == 3,
-            "proofs": pit_proofs,
-        },
         "historyCoverage": {"start": bars[0]["date"] if bars else None,
                             "end": bars[-1]["date"] if bars else None,
                             "count": len(bars)},

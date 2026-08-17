@@ -15,13 +15,6 @@ on:
 permissions:
   contents: write
 
-# Share the repository-wide ledger branch writer queue.  The 07:00/07:15 UTC
-# event snapshots can overlap the 07:05 canonical Prediction Ledger run; plain
-# pushes must never race and discard either branch head.
-concurrency:
-  group: ledger-branch-writer
-  cancel-in-progress: false
-
 jobs:
   snapshot:
     runs-on: ubuntu-latest

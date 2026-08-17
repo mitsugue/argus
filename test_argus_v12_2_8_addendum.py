@@ -95,7 +95,7 @@ def test_recovery_requires_entity_and_date():
 
 def test_dq_addendum_blocks_no_leak():
     with scanner.app.test_client() as c:
-        d = scanner._data_quality_console()
+        d = c.get("/api/argus/data-quality").get_json() or {}
         for k in ("researchMeasurementSummary", "decisionLedgerOrigins",
                   "agentReliability", "buildIdentity"):
             assert k in d, k
