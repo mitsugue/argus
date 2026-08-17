@@ -608,8 +608,9 @@ def test_remote_probe_ambiguity_fails_before_nonce_authority(
     sidecar = recovery.build_sidecar(compact, envelope)
     if failure == "wrong_tag":
         sidecar = copy.deepcopy(sidecar)
-        sidecar["recovery"]["ciphertext"] = (
-            "A" + sidecar["recovery"]["ciphertext"][1:])
+        ciphertext = sidecar["recovery"]["ciphertext"]
+        replacement = "A" if ciphertext[0] != "A" else "B"
+        sidecar["recovery"]["ciphertext"] = replacement + ciphertext[1:]
     results = (
         [{"status": "transport_error", "value": None},
          {"status": "transport_error", "value": None}]

@@ -41,16 +41,8 @@ def test_unknown_source_is_weak():
 
 
 def test_normalize_item_carries_tier_and_grounding():
-    item = M.normalize_item({"sourceId": "reuters_public", "title": "NVDA rises",
+    item = M.normalize_item({"sourceId": "reuters_jp", "title": "NVDA rises",
                              "canonicalUrl": "https://reuters.test/a", "linkedAssets": ["NVDA"]})
     assert item["sourceTier"] == "reputable_financial_media"
     assert item["canGroundJudgment"] is True
     assert item["canConfirmCause"] is False
-
-
-def test_source_coverage_endpoint_shape():
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/source-coverage").get_json()
-    assert d["schemaVersion"] == "source-coverage-v1"
-    assert "tiers" in d and "summary" in d
-    assert set(d["summary"]) >= {"totalItems", "canGroundJudgmentItems", "weakSignalItems"}

@@ -38,6 +38,23 @@ def test_restore_drops_expired():
     assert list(rest.keys()) == ["JP:8888:LIMIT_UP"]          # expired dropped on restore
 
 
+def test_restore_requires_expiry_and_deauthorizes_live_source_stamp():
+    valid = {**_env("8888"), "sourceTimeValidated": True,
+             "sourceTimestamp": "2026-06-22T01:00:00Z"}
+    missing_expiry = {**_env("7777"), "expiresAt": None}
+    malformed_expiry = {**_env("6666"), "expiresAt": "not-a-time"}
+    snap = st.serialize_state(
+        [valid, missing_expiry, malformed_expiry], [],
+        now_iso="2026-06-22T01:00:00Z")
+    rest, _ = st.restore_state(
+        snap, _parse("2026-06-22T02:00:00Z"), _parse, _key)
+    assert list(rest) == ["JP:8888:LIMIT_UP"]
+    assert rest["JP:8888:LIMIT_UP"]["sourceTimestamp"] \
+        == "2026-06-22T01:00:00Z"
+    assert rest["JP:8888:LIMIT_UP"]["sourceTimeValidated"] is False
+    assert rest["JP:8888:LIMIT_UP"]["restoredFromSnapshot"] is True
+
+
 def test_restore_rejects_malformed():
     assert st.restore_state(None, 0, _parse, _key) == ({}, [])
     assert st.restore_state({"schemaVersion": "wrong"}, 0, _parse, _key) == ({}, [])

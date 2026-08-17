@@ -399,7 +399,10 @@ def make_envelope(*, event_type, symbol, market, source, trigger, now,
         "eventVersion": 1, "rootEventId": None,
         "symbol": symbol, "market": market, "linkedAssets": linked_assets or [],
         "source": source,
-        "detectedAt": ts(now), "observedAt": ts(observed_at or now),
+        # Detection/receipt time is never a substitute for provider/event time.
+        # Callers that cannot prove the source observation keep this null so the
+        # downstream EventCard authority gate can fail closed.
+        "detectedAt": ts(now), "observedAt": ts(observed_at),
         "publishedAt": ts(published_at), "fetchedAt": ts(fetched_at or now),
         "ingestAt": None,                       # stamped by the store on persist
         "session": sess, "severity": sev, "triggerScore": float(trigger.get("triggerScore", 0.0)),

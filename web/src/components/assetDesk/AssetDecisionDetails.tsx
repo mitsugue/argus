@@ -1,18 +1,18 @@
 import React from 'react';
 import type { DeskCardData } from './types';
-import { SIGNALS } from '../../domain/actionLevel';
-import { deskSignalCode } from './AssetDecisionSummary';
+
+const ACTION_TONE = { BUY: 'var(--value-positive)', HOLD: 'var(--accent)',
+  WAIT: 'var(--amber, #fbbf24)', REDUCE: 'var(--event-high)', EXIT: 'var(--value-negative)' };
 
 /** First viewport only: one command, one reason, one next check and one change condition. */
 export const AssetDecisionDetails: React.FC<{ d: DeskCardData }> = ({ d }) => {
   const view = d.decisionFirst;
-  const code = deskSignalCode(d);
-  const signal = SIGNALS[code];
+  const tone = ACTION_TONE[view.canonicalPrimaryAction ?? 'WAIT'];
   return (
     <div className="ad-overview" data-decision-overview={view.symbol}>
       <div className="ad-overview__action">
         <span>CURRENT ACTION</span>
-        <strong style={{ color: `var(${signal.token})` }}>{view.currentActionJa}</strong>
+        <strong style={{ color: tone }}>{view.currentActionJa}</strong>
         <div>
           <small>保有</small><b>{view.ownerActionJa}</b>
           <small>新規</small><b>{view.entryActionJa}</b>
@@ -23,6 +23,10 @@ export const AssetDecisionDetails: React.FC<{ d: DeskCardData }> = ({ d }) => {
         <div><dt>WHY NOW</dt><dd>{view.whyJa}</dd></div>
         <div><dt>NEXT CHECK</dt><dd>{view.nextJa}</dd></div>
         <div><dt>WHAT CHANGES IT</dt><dd>{view.whatChangesJa}</dd></div>
+        <div><dt>TARGET</dt><dd>{view.targets[0]
+          ? `${view.targets[0].value} ${view.targets[0].unit}` : '検証済み目標なし'}</dd></div>
+        <div><dt>INVALIDATION</dt><dd>{view.invalidation
+          ? `${view.invalidation.value} ${view.invalidation.unit}` : '検証済み無効化条件なし'}</dd></div>
       </dl>
 
       {view.dataStatus !== 'LIVE' && view.dataStatus !== 'live' && (

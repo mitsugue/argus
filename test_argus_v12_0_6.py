@@ -139,13 +139,13 @@ def test_sd_unknown_extra_symbol_stays_honest_unknown():
 def test_dq_institutional_freshness_measured_or_unknown(monkeypatch):
     monkeypatch.setitem(scanner._INTEL_LAST, "ts", 0.0)
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/data-quality").get_json()
+        d = scanner._data_quality_console()
     row = [r for r in d["sourceHealth"] if r["sourceName"] == "institutional-intel"][0]
     assert row["lastSuccessAt"] is None              # 未収集はunknownのまま(捏造なし)
     assert row["freshnessBucket"] == "unknown"
     monkeypatch.setitem(scanner._INTEL_LAST, "ts", time.time())
     with scanner.app.test_client() as c:
-        d2 = c.get("/api/argus/data-quality").get_json()
+        d2 = scanner._data_quality_console()
     row2 = [r for r in d2["sourceHealth"] if r["sourceName"] == "institutional-intel"][0]
     assert row2["lastSuccessAt"] is not None         # 収集済みは実測時刻
     assert row2["freshnessBucket"] in ("fresh", "recent")
@@ -160,13 +160,14 @@ def test_fe_collapse_persistence_local_only():
     assert "fetch(" not in src                       # 端末内のみ(サーバー送信なし)
     assert "resetTodayLayout" in src
     # v13: Todayは単一view modelと単一decision cardへ縮約。
-    # 市場選択は端末内だけに保存し、判断詳細は同カード内で開閉する。
+    # 市場選択は端末内だけに保存し、判断詳細はnative detailsで閉じる。
     cc = _read("routes", "CommandCenter.tsx")
     assert "argus.today.marketSelection.v1" in cc
     assert "localStorage" in cc
     panel = _read("components", "today", "ArgusTodayPanel.tsx")
-    assert "useState(false)" in panel
-    assert "aria-expanded={detail}" in panel
+    assert '<details className="at-evidence card">' in panel
+    assert "useState(false)" not in panel
+    assert "setDetail" not in panel
 
 
 def test_fe_fire_core_manual_update_wording():
@@ -188,8 +189,10 @@ def test_fe_investigate_button_outside_details():
 def test_fe_institutional_view_japanese_first():
     src = _read("components", "dashboard", "InstitutionalView.tsx")
     assert "displayTitleJa" in src
-    assert "autoQueueTranslations" in src
     assert "原文を見る" in src
+    # Recovery Phase A: public browser keeps the cached/read-only view and no
+    # longer advertises the now-authenticated translation mutation.
+    assert "autoQueueTranslations" not in src
 
 
 def test_review_pack_single_concise_jp_caveat():

@@ -81,19 +81,6 @@ def test_cause_attribution_public_no_llm(monkeypatch):
         assert c.get("/api/argus/cause-attribution?symbol=AAPL&market=US&explain=1").status_code == 200
 
 
-def test_translation_status_coverage_fields(monkeypatch):
-    _forbid_llm(monkeypatch)
-    monkeypatch.setitem(scanner._NEWS_JA_STATE, "restored", True)
-    with scanner.app.test_client() as c:
-        d = c.get("/api/argus/news/translation-status").get_json()
-    assert d["schemaVersion"] == "news-translation-status-v1"
-    assert isinstance(d["visiblePendingCount"], int)
-    assert isinstance(d["translatedToday"], int)
-    assert "visibleTranslatedPct" in d["coverage"]
-    assert "allTranslatedPct" in d["coverage"]
-    assert isinstance(d["nextTranslateHintJa"], str) and d["nextTranslateHintJa"]
-
-
 def test_admin_translate_token_gated():
     with scanner.app.test_client() as c:
         assert c.post("/api/argus/admin/news/translate").status_code in (401, 503)

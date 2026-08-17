@@ -14,8 +14,8 @@ export const PageShell: React.FC<Props> = ({ crumb, title, subtitle, children })
       {crumb && <span className="page__crumb">{crumb}</span>}
       <h1 className="page__title">{title}</h1>
       {subtitle && <span className="page__subtitle">{subtitle}</span>}
-      {!title.includes('Guide') && <a className="page__guide-link"
-        href={`#guide:${encodeURIComponent(title)}`}>この画面のGuide</a>}
+      {title !== 'Settings' && <a className="page__guide-link"
+        href="#settings/help">Help / Settings</a>}
     </header>
     {children}
   </section>

@@ -236,8 +236,8 @@ async function geometry(page, viewport) {
 
 async function navigationAudit(page, evidence) {
   const sequence = [
-    ['Today', '#today'], ['Assets', '#assets'],
-    ['Review', '#positions'], ['Market', '#market'],
+    ['Today', '#today'], ['Holdings', '#holdings'],
+    ['Alerts', '#notifications'], ['Settings', '#settings'],
   ];
   const records = [];
   for (const [index, [name, hash]] of sequence.entries()) {
@@ -253,25 +253,23 @@ async function navigationAudit(page, evidence) {
       direction: index === 0 ? null : 'next',
     });
   }
-  await page.goBack(); await page.waitForFunction(() => location.hash === '#positions');
+  await page.goBack(); await page.waitForFunction(() => location.hash === '#notifications');
   await page.waitForFunction(() =>
     document.querySelector('.shell__page')?.classList.contains('shell__page--prev'));
   const back = await page.locator('.nav__mobile-btn.is-active').innerText();
-  await page.goForward(); await page.waitForFunction(() => location.hash === '#market');
+  await page.goForward(); await page.waitForFunction(() => location.hash === '#settings');
   await page.waitForFunction(() =>
     document.querySelector('.shell__page')?.classList.contains('shell__page--next'));
   const forward = await page.locator('.nav__mobile-btn.is-active').innerText();
-  await page.locator('.nav__mobile-system > summary').click();
-  const systemVisible = await page.locator('.nav__mobile-system-menu').isVisible();
-  await screenshot(page, 'system-menu.png');
+  await screenshot(page, 'settings-navigation.png');
   if (records.some((record, index) =>
     record.hash !== sequence[index][1] || record.active !== sequence[index][0])) {
     evidence.failures.push('navigation-order-or-active-state');
   }
-  if (back !== 'Review' || forward !== 'Market') {
+  if (back !== 'Alerts' || forward !== 'Settings') {
     evidence.failures.push('history-navigation-active-state');
   }
-  return { records, back, forward, systemVisible };
+  return { records, back, forward, systemVisible: false };
 }
 
 async function run() {

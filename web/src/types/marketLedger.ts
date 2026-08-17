@@ -26,6 +26,7 @@ export interface MarketCalendarState {
   holidayName: string | null; nextTradingDay: string | null; timezone: string;
   regularOpenJst?: string; regularCloseJst?: string; earlyClose?: boolean;
   calendarVersion?: string; officialCalendar?: string;
+  sessionObservedAt: string; sessionValidUntil: string;
 }
 export interface MarketLedgerPayload {
   schemaVersion: string; asOf: string;
