@@ -11,6 +11,8 @@ const seedAction = fs.readFileSync(
   new URL('../../.github/actions/warm-profile-seed/action.yml', import.meta.url), 'utf8');
 const consumerAction = fs.readFileSync(
   new URL('../../.github/actions/warm-profile-consumer/action.yml', import.meta.url), 'utf8');
+const candidatePreviewAction = fs.readFileSync(
+  new URL('../../.github/actions/candidate-pages-preview/action.yml', import.meta.url), 'utf8');
 const seedRunner = fs.readFileSync(
   new URL('./run-warm-profile-seed.sh', import.meta.url), 'utf8');
 const vite = fs.readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8');
@@ -19,6 +21,8 @@ const navigation = fs.readFileSync(
   new URL('../src/navigation.ts', import.meta.url), 'utf8');
 const mobileAcceptance = fs.readFileSync(
   new URL('./mobile-today-acceptance.mjs', import.meta.url), 'utf8');
+const canonicalSelection = fs.readFileSync(
+  new URL('./canonical-snapshot-selection.mjs', import.meta.url), 'utf8');
 const today = fs.readFileSync(
   new URL('../src/components/today/ArgusTodayPanel.tsx', import.meta.url), 'utf8');
 
@@ -41,7 +45,7 @@ for (const field of ['frontendVersion', 'frontendSha', 'backendVersion', 'backen
 assert.match(script, /#today/);
 assert.doesNotMatch(script, /#market|Market Context|\.market-replay|\.mr-/);
 assert.match(script, /TODAY_URL/);
-for (const source of [script, mobileAcceptance]) {
+for (const source of [script + canonicalSelection, mobileAcceptance + canonicalSelection]) {
   assert.match(source, /canonical-market-snapshot-v1/);
   assert.match(source, /data-canonical-verification=\"verified\"/);
   assert.match(source, /data-canonical-snapshot-id/);
@@ -55,15 +59,20 @@ assert.match(today, /data-canonical-verification=\{chartLoad\.snapshotId \? 'ver
 assert.match(today, /data-canonical-instrument=\{projection\?\.symbol \?\? selectedSymbol\}/);
 assert.match(today, /data-canonical-horizon=\{`\$\{projection\?\.horizonDays \?\? horizon\}D`\}/);
 assert.match(script, /\.at-projection/);
-for (const source of [script, mobileAcceptance]) {
+for (const source of [script + canonicalSelection, mobileAcceptance + canonicalSelection]) {
   assert.match(source, /getByText\('根拠・市場データ・システム情報', \{ exact: true \}\)\.click\(\)/,
     'acceptance must deliberately open the collapsed evidence disclosure before chart interaction');
   assert.match(source, /details\.at-evidence/);
   assert.match(source, /\.open === true/,
     'acceptance must verify that the disclosure is actually open before chart interaction');
 }
-assert.match(script, /\.at-index-strip button/);
-assert.match(script, /getByRole\('group', \{ name: '予測期間' \}\)/);
+for (const source of [script, mobileAcceptance, canonicalSelection]) {
+  assert.match(source, /data-argus-control/);
+}
+assert.match(canonicalSelection, /waitForRequest/);
+assert.match(canonicalSelection, /waitForResponse/);
+assert.match(canonicalSelection, /R11_1321_SELECTED/);
+assert.match(canonicalSelection, /R12_5D_SELECTED/);
 assert.match(script, /fillPaintTags\.has\(tag\)/,
   'visual acceptance must ignore default fill values on non-fillable SVG containers');
 assert.match(script, /strokePaintTags\.has\(tag\)/,
@@ -102,6 +111,13 @@ assert.match(workflow, /uses: \.\/\.github\/actions\/warm-profile-seed/);
 assert.match(workflow, /uses: \.\/\.github\/actions\/warm-profile-consumer/);
 assert.match(manualWorkflow, /uses: \.\/\.github\/actions\/warm-profile-seed/);
 assert.match(manualWorkflow, /uses: \.\/\.github\/actions\/warm-profile-consumer/);
+assert.match(manualWorkflow, /uses: \.\/\.github\/actions\/candidate-pages-preview/);
+assert.match(manualWorkflow, /public-url: http:\/\/127\.0\.0\.1:4173\/argus\//);
+assert.match(candidatePreviewAction, /VITE_ARGUS_BUILD_SHA: \$\{\{ inputs\.candidate-sha \}\}/);
+assert.match(candidatePreviewAction,
+  /Serve exact candidate without production mutation[\s\S]*DEPLOY_BASE: \/argus\/[\s\S]*npm run preview/,
+  'the candidate preview must serve assets under the same base used at build time');
+assert.match(candidatePreviewAction, /npm run preview -- --host 127\.0\.0\.1/);
 assert.match(seedAction, /bash scripts\/run-warm-profile-seed\.sh/);
 assert.match(seedRunner, /node scripts\/public-market-acceptance\.mjs/);
 assert.match(consumerAction, /node scripts\/public-market-acceptance\.mjs/);

@@ -12,7 +12,8 @@ import {
 } from '../domain/marketInstruments';
 import {
   ASSET_CHART_METHOD_VERSION, assetChartRequestGate, boundedRetryAt,
-  assetChartUiTransition, parseRetryAfter, readAssetChart, writeAssetChart,
+  assetChartUiTransition, parseRetryAfter, readAssetChart, verifiedChartRequestGate,
+  writeAssetChart,
   type AssetChartIdentity, type AssetChartViewState,
 } from '../lib/assetChartCache';
 
@@ -193,28 +194,31 @@ function fetchVerifiedSnapshot(
   if ((failedUntil.get(url) ?? 0) > Date.now()) {
     return Promise.reject(new Error('再試行待機中'));
   }
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort('timeout'), REQUEST_TIMEOUT_MS);
   performanceMark('network-revalidation-start');
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (current) headers['If-None-Match'] = `"${current.snapshotId}"`;
-  const request = fetch(url, {
-    method: 'GET', cache: 'no-store', headers, signal: controller.signal,
-  }).then(async (response): Promise<SnapshotNetworkResult> => {
-    performanceMark('network-response');
-    if (response.status === 304) return { snapshot: null, notModified: true };
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const candidate: unknown = await response.json();
-    const validation = await verifySnapshot(candidate, expectation);
-    performanceMark('snapshot-validation-complete');
-    if (!validation.ok) throw new Error(`snapshot_${validation.reason}`);
-    return { snapshot: validation.snapshot, notModified: false };
-  }).catch((error: unknown) => {
-    failedUntil.set(url, Date.now() + 30_000);
-    throw error;
-  }).finally(() => {
-    window.clearTimeout(timer); inflight.delete(url);
-  });
+  const request = verifiedChartRequestGate.enqueue(async () => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort('timeout'), REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, {
+        method: 'GET', cache: 'no-store', headers, signal: controller.signal,
+      });
+      performanceMark('network-response');
+      if (response.status === 304) return { snapshot: null, notModified: true };
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const candidate: unknown = await response.json();
+      const validation = await verifySnapshot(candidate, expectation);
+      performanceMark('snapshot-validation-complete');
+      if (!validation.ok) throw new Error(`snapshot_${validation.reason}`);
+      return { snapshot: validation.snapshot, notModified: false };
+    } catch (error: unknown) {
+      failedUntil.set(url, Date.now() + 30_000);
+      throw error;
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }).finally(() => inflight.delete(url));
   inflight.set(url, request);
   return request;
 }
