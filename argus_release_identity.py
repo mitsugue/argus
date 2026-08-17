@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 """Independent release identity for the Render backend and Pages frontend."""
+# V13 final release control intentionally touches this backend-sensitive module
+# so Render and Pages converge on one main SHA before the production seed.  The
+# touchpoint changes no product, provider, decision, privacy, or recovery logic.
 from __future__ import annotations
 
 import json
