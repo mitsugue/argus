@@ -36,6 +36,7 @@ export interface TodayChartLoadState {
   error: string | null;
   snapshotState: string;
   snapshotId: string | null;
+  responseSnapshotId: string | null;
   retry: () => void;
 }
 
@@ -244,6 +245,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   return <div className="argus-today"
     data-argus-contract="canonical-market-snapshot-v1"
     data-canonical-snapshot-id={chartLoad.snapshotId ?? undefined}
+    data-canonical-response-snapshot-id={chartLoad.responseSnapshotId ?? undefined}
+    data-canonical-response-verification={chartLoad.responseSnapshotId ? 'verified' : 'unverified'}
     data-canonical-snapshot-state={chartLoad.snapshotState}
     data-canonical-verification={chartLoad.snapshotId ? 'verified' : 'unverified'}
     data-canonical-instrument={projection?.symbol ?? selectedSymbol}
@@ -307,6 +310,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           const quote = instrument.quote;
           const quoteLabel = quote?.delayClass === 'LIVE' ? 'LIVE QUOTE' : 'QUOTE';
           return <button type="button" key={instrument.symbol}
+            data-argus-control="market-instrument"
+            data-instrument={instrument.symbol}
             aria-pressed={instrument.symbol === selectedSymbol}
             onClick={() => onInstrument(instrument.market, instrument.symbol)}
             className={`${move ? `is-${moveTone(move.value, move.previous)}` : 'is-pending'} ${instrument.symbol === selectedSymbol ? 'is-selected' : ''}`}>
@@ -343,6 +348,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         </div>
         <div className="at-horizon" role="group" aria-label="予測期間">{([1, 5, 20] as const).map((value) =>
           <button type="button" key={value} aria-pressed={horizon === value}
+            data-argus-control="canonical-horizon" data-horizon={`${value}D`}
             onClick={() => onHorizon(value)}>{value}D</button>)}</div>
       </div>
       {projection ? <ProjectionChart projection={projection} />
