@@ -474,7 +474,7 @@ async function run() {
         },
       });
       if (!finalReleaseMachine) throw new Error('release_state_machine_missing');
-      finalReleaseMachine.transition('R16_WARM_PROFILE_SEALED', {
+      finalReleaseMachine.transition('R17_WARM_PROFILE_SEALED', {
         warmProfileArtifactId: manifest.artifactId,
       });
       await writeJson('version.json', {
@@ -511,7 +511,7 @@ async function run() {
           if (!event.detail?.assumed) evidence.releaseStateLog.push(event);
         },
       });
-      canonical.machine.transition('R16_WARM_PROFILE_SEALED', {
+      canonical.machine.transition('R17_WARM_PROFILE_SEALED', {
         warmProfileArtifactId: warmProfile.artifactId,
       });
       const result = {
@@ -525,11 +525,6 @@ async function run() {
         warmProfileArtifactId: warmProfile.artifactId,
         releaseStateLog: evidence.releaseStateLog,
       };
-      if (result.verdict === 'PASS') {
-        canonical.machine.transition('R17_PUBLIC_PRODUCT_ACCEPTED', {
-          mode: 'independent_profile_reopen',
-        });
-      }
       await writeJson('acceptance.json', result);
       markPhase('complete');
       await writeJson('diagnostics.json', await diagnostics(result.verdict));
@@ -542,7 +537,7 @@ async function run() {
         if (!event.detail?.assumed) evidence.releaseStateLog.push(event);
       },
     });
-    acceptanceCanonical.machine.transition('R16_WARM_PROFILE_SEALED', {
+    acceptanceCanonical.machine.transition('R17_WARM_PROFILE_SEALED', {
       warmProfileArtifactId: warmProfile.artifactId,
     });
     if (await page.evaluate(() => location.hash) !== '#today') {
@@ -609,11 +604,6 @@ async function run() {
       releaseStateLog: evidence.releaseStateLog,
       failures: evidence.failures,
     };
-    if (result.verdict === 'PASS') {
-      acceptanceCanonical.machine.transition('R17_PUBLIC_PRODUCT_ACCEPTED', {
-        mode: 'full_public_acceptance',
-      });
-    }
     await writeJson('acceptance.json', result);
     await writeJson('console.json', evidence.console);
     await writeJson('network.json', evidence.network);
