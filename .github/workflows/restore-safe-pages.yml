@@ -1,0 +1,180 @@
+name: Restore exact safe Pages release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact previously accepted frontend commit to restore
+        required: true
+        default: d0005fbeb57e3a9ff45e30642619db4b082320d5
+        type: string
+      frontend_version:
+        description: Exact expected frontend version
+        required: true
+        default: 13.3.6
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-safe-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 1
+
+      - name: Verify exact rollback source
+        env:
+          EXPECTED_SHA: ${{ inputs.release_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(node -p 'require("./web/package.json").version')" = "${{ inputs.frontend_version }}"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+        working-directory: web
+
+      - name: Build exact safe Pages artifact
+        working-directory: web
+        env:
+          DEPLOY_BASE: /argus/
+          VITE_ARGUS_BUILD_SHA: ${{ inputs.release_sha }}
+          VITE_ARGUS_BACKEND_URL: https://argus-backend-3j2m.onrender.com
+        run: npm run build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy-safe-release:
+    needs: build-safe-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+        with:
+          timeout: 300000
+
+  verify-safe-release:
+    needs: deploy-safe-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Poll exact public safe identity
+        env:
+          EXPECTED_SHA: ${{ inputs.release_sha }}
+          EXPECTED_VERSION: ${{ inputs.frontend_version }}
+          PUBLIC_URL: https://mitsugue.github.io/argus/
+        run: |
+          mkdir -p artifacts/safe-pages-restore
+          python3 -B - <<'PY'
+          import json
+          import os
+          import re
+          import time
+          import urllib.request
+          from pathlib import Path
+
+          expected_sha = os.environ["EXPECTED_SHA"]
+          expected_version = os.environ["EXPECTED_VERSION"]
+          public_url = os.environ["PUBLIC_URL"]
+          observations = []
+          for attempt in range(1, 31):
+              url = f"{public_url}?safe_restore={expected_sha}&attempt={attempt}"
+              request = urllib.request.Request(
+                  url,
+                  headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=20) as response:
+                      html = response.read().decode("utf-8")
+                      observed_sha = re.search(
+                          r'__ARGUS_BUILD_SHA__\s*=\s*"([0-9a-f]{40})"', html
+                      )
+                      observed_version = re.search(
+                          r'__ARGUS_VERSION__\s*=\s*"([^"]+)"', html
+                      )
+                      assets = sorted(set(re.findall(
+                          r'(?:src|href)="([^"]*assets/[^"]+)"', html
+                      )))
+                      observation = {
+                          "attempt": attempt,
+                          "assetPaths": assets,
+                          "etag": response.headers.get("ETag"),
+                          "lastModified": response.headers.get("Last-Modified"),
+                          "observedSha": (
+                              observed_sha.group(1) if observed_sha else None
+                          ),
+                          "observedVersion": (
+                              observed_version.group(1) if observed_version else None
+                          ),
+                          "status": response.status,
+                      }
+              except Exception as exc:
+                  observation = {
+                      "attempt": attempt,
+                      "error": type(exc).__name__,
+                      "status": None,
+                  }
+              observations.append(observation)
+              if (
+                  observation["status"] == 200
+                  and observation["observedSha"] == expected_sha
+                  and observation["observedVersion"] == expected_version
+                  and observation["assetPaths"]
+              ):
+                  evidence = {
+                      "schemaVersion": "argus-safe-pages-restore-v1",
+                      "status": "verified",
+                      "expectedSha": expected_sha,
+                      "expectedVersion": expected_version,
+                      "publicUrl": public_url,
+                      "convergenceAttempt": attempt,
+                      "observation": observation,
+                  }
+                  Path("artifacts/safe-pages-restore/evidence.json").write_text(
+                      json.dumps(evidence, indent=2, sort_keys=True) + "\n"
+                  )
+                  print(json.dumps(evidence, sort_keys=True))
+                  raise SystemExit(0)
+              time.sleep(10)
+          Path("artifacts/safe-pages-restore/failure.json").write_text(
+              json.dumps({
+                  "schemaVersion": "argus-safe-pages-restore-v1",
+                  "status": "failed_closed",
+                  "expectedSha": expected_sha,
+                  "expectedVersion": expected_version,
+                  "observations": observations,
+              }, indent=2, sort_keys=True) + "\n"
+          )
+          raise SystemExit("safe_pages_identity_did_not_converge")
+          PY
+
+      - name: Publish safe Pages restore evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: safe-pages-restore-${{ inputs.release_sha }}
+          path: artifacts/safe-pages-restore
+          if-no-files-found: error
+          retention-days: 30
