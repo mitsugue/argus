@@ -35,6 +35,7 @@ FRONTEND_PATHS: Tuple[str, ...] = (
     ".github/actions/warm-profile-seed/**",
     ".github/actions/warm-profile-consumer/**",
     "scripts/verified_snapshot_release_gate.py",
+    "scripts/verify_public_candidate_release.py",
 )
 
 # Stage 1 is a deliberately narrow backend release: it deploys the immutable

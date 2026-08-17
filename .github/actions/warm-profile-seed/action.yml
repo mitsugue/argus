@@ -9,6 +9,21 @@ inputs:
     required: true
   evidence-artifact-name:
     required: true
+  enforce-public-candidate-identity:
+    required: false
+    default: 'false'
+  expected-product-version:
+    required: false
+    default: ''
+  expected-frontend-version:
+    required: false
+    default: ''
+  expected-backend-version:
+    required: false
+    default: ''
+  expected-backend-sha:
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
@@ -33,6 +48,11 @@ runs:
       working-directory: web
       env:
         ARGUS_EXPECTED_SHA: ${{ inputs.candidate-sha }}
+        ARGUS_EXPECTED_VERSION: ${{ inputs.expected-frontend-version }}
+        ARGUS_EXPECTED_PRODUCT_VERSION: ${{ inputs.expected-product-version }}
+        ARGUS_EXPECTED_BACKEND_VERSION: ${{ inputs.expected-backend-version }}
+        ARGUS_EXPECTED_BACKEND_SHA: ${{ inputs.expected-backend-sha }}
+        ARGUS_REQUIRE_LIVE_CANDIDATE: ${{ inputs.enforce-public-candidate-identity }}
         ARGUS_PUBLIC_URL: ${{ inputs.public-url }}
         ARGUS_WARM_PROFILE_DIR: ../artifacts/market-warm-profile
         ARGUS_ACCEPTANCE_OUT: ../artifacts/warm-profile-seed-evidence

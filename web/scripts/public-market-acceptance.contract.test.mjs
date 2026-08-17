@@ -84,7 +84,7 @@ assert.match(workflow, /node scripts\/mobile-today-acceptance\.mjs/);
 assert.match(workflow, /market-public-acceptance-/);
 assert.match(workflow, /verified_snapshot_release_gate\.py/);
 assert.match(workflow,
-  /expected-backend-sha: \$\{\{ needs\.scope\.outputs\.backend_sha \}\}/);
+  /--expected-backend-sha '\$\{\{ needs\.scope\.outputs\.backend_sha \}\}'/);
 assert.doesNotMatch(workflow,
   /ARGUS_EXPECTED_BACKEND_SHA: \$\{\{ github\.sha \}\}/);
 for (const input of ['pages_run_id', 'frontend_sha', 'backend_sha']) {
@@ -100,6 +100,20 @@ assert.match(manualWorkflow, /warm-profile-seed-2:/);
 assert.match(manualWorkflow, /warm-profile-handoff-2:/);
 assert.match(manualWorkflow, /mode: profile/);
 assert.match(workflow, /needs: \[build, backend-readiness\]/);
+assert.match(workflow, /candidate-identity:/);
+assert.match(workflow, /verify_public_candidate_release\.py/);
+assert.match(workflow, /needs: \[scope, deploy, backend-readiness\]/);
+assert.match(workflow, /needs: \[scope, candidate-identity\]/);
+assert.match(workflow,
+  /needs: \[scope, deploy, candidate-identity, seed-warm-profile, backend-readiness\]/);
+assert.match(workflow, /enforce-public-candidate-identity: 'true'/);
+assert.match(workflow,
+  /expected-backend-sha: \$\{\{ needs\.candidate-identity\.outputs\.backend_sha \}\}/);
+assert.doesNotMatch(workflow,
+  /needs: \[build, seed-warm-profile, backend-readiness\]/);
+assert.match(script, /candidate_frontend_not_live/);
+assert.match(script, /candidate_backend_not_live/);
+assert.match(script, /ARGUS_REQUIRE_LIVE_CANDIDATE/);
 assert.match(seedAction, /continue-on-error: true/);
 assert.match(seedAction, /Publish bounded seed evidence/);
 

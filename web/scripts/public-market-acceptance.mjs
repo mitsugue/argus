@@ -12,6 +12,9 @@ const EXPECTED_VERSION = process.env.ARGUS_EXPECTED_VERSION || '';
 const EXPECTED_SHA = process.env.ARGUS_EXPECTED_SHA || '';
 const EXPECTED_BACKEND_VERSION = process.env.ARGUS_EXPECTED_BACKEND_VERSION || '';
 const EXPECTED_BACKEND_SHA = process.env.ARGUS_EXPECTED_BACKEND_SHA || '';
+const EXPECTED_PRODUCT_VERSION = process.env.ARGUS_EXPECTED_PRODUCT_VERSION || '';
+const REQUIRE_LIVE_CANDIDATE =
+  process.env.ARGUS_REQUIRE_LIVE_CANDIDATE === 'true';
 const MODE = process.env.ARGUS_ACCEPTANCE_MODE || 'accept';
 const OUT_DIR = path.resolve(process.env.ARGUS_ACCEPTANCE_OUT
   || '../artifacts/market-public-acceptance');
@@ -346,6 +349,17 @@ async function run() {
     observe(page, evidence);
     markPhase('backend-identity');
     const identity = await waitForBackendIdentity(page.request);
+    if (MODE === 'seed' && REQUIRE_LIVE_CANDIDATE) {
+      if (identity.service.backendVersion !== EXPECTED_BACKEND_VERSION
+          || identity.service.buildSha !== EXPECTED_BACKEND_SHA) {
+        throw new Error(`candidate_backend_not_live:${JSON.stringify({
+          expectedVersion: EXPECTED_BACKEND_VERSION,
+          expectedSha: EXPECTED_BACKEND_SHA,
+          observedVersion: identity.service.backendVersion,
+          observedSha: identity.service.buildSha,
+        })}`);
+      }
+    }
     markPhase('market-cache-5D');
     const seeded = await waitForMarketCache(page.request);
     if (MODE === 'seed') {
@@ -354,6 +368,28 @@ async function run() {
       await page.goto(TODAY_URL, {
         waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS,
       });
+      if (REQUIRE_LIVE_CANDIDATE) {
+        const observedFrontend = await page.evaluate(() => ({
+          productVersion: globalThis.__ARGUS_PRODUCT_VERSION__ ?? null,
+          frontendVersion: globalThis.__ARGUS_VERSION__ ?? null,
+          frontendSha: globalThis.__ARGUS_BUILD_SHA__ ?? null,
+        }));
+        if (observedFrontend.productVersion !== EXPECTED_PRODUCT_VERSION
+            || observedFrontend.frontendVersion !== EXPECTED_VERSION
+            || observedFrontend.frontendSha !== EXPECTED_SHA) {
+          throw new Error(`candidate_frontend_not_live:${JSON.stringify({
+            expectedProductVersion: EXPECTED_PRODUCT_VERSION,
+            expectedVersion: EXPECTED_VERSION,
+            expectedSha: EXPECTED_SHA,
+            observed: observedFrontend,
+          })}`);
+        }
+        markPhase('candidate-release-identity-exact', 'PASS', {
+          ...observedFrontend,
+          backendVersion: identity.service.backendVersion,
+          backendSha: identity.service.buildSha,
+        });
+      }
       markPhase('stabilize-today-1321-5D-service-worker-indexeddb');
       const stabilized = await stabilizeWarmProfileRuntime({
         probe: async (attempt) => {

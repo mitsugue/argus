@@ -14,6 +14,7 @@ on:
       - '.github/workflows/deploy-pages.yml'
       - '.github/actions/warm-profile-*/**'
       - 'scripts/verified_snapshot_release_gate.py'
+      - 'scripts/verify_public_candidate_release.py'
   workflow_dispatch:
 
 permissions:
@@ -94,21 +95,6 @@ jobs:
         with:
           path: web/dist
 
-  seed-warm-profile:
-    # Production attempt #481 proved that the pre-deploy browser seed must not
-    # race the Render rollout. The same seed action is used by PR shadow below.
-    needs: [build, backend-readiness]
-    runs-on: ubuntu-latest
-    timeout-minutes: 12
-    steps:
-      - uses: actions/checkout@v5
-      - uses: ./.github/actions/warm-profile-seed
-        with:
-          candidate-sha: ${{ github.sha }}
-          public-url: https://mitsugue.github.io/argus/
-          profile-artifact-name: market-warm-profile-${{ github.sha }}
-          evidence-artifact-name: warm-profile-seed-evidence-${{ github.sha }}
-
   backend-readiness:
     needs: [scope, build]
     runs-on: ubuntu-latest
@@ -129,7 +115,7 @@ jobs:
                   "reason": "frontend_only_release",
               }, indent=2) + "\n")
           PY
-      - name: Wait for Render, seed once, and verify 12 snapshots
+      - name: Wait for Render and verify 12 snapshots
         if: needs.scope.outputs.backend_deploy == 'true'
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
@@ -154,7 +140,9 @@ jobs:
           retention-days: 30
 
   deploy:
-    needs: [build, seed-warm-profile, backend-readiness]
+    # Deploy only after the candidate backend is exact.  The public candidate
+    # remains unaccepted until the identity barrier and warm-profile jobs pass.
+    needs: [build, backend-readiness]
     runs-on: ubuntu-latest
     # Pages publish flakes with an instant "Deployment cancelled" (or a 5-min hang)
     # when GitHub's backend races deployments for the same commit. Observed fix
@@ -193,11 +181,81 @@ jobs:
         with:
           timeout: 300000
 
+  candidate-identity:
+    # Deployment API success is not CDN convergence. Poll the actual public
+    # index plus healthz/readyz and authorize seeding only for one exact release.
+    needs: [scope, deploy, backend-readiness]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      product_version: ${{ steps.release.outputs.product_version }}
+      frontend_version: ${{ steps.release.outputs.frontend_version }}
+      backend_version: ${{ steps.release.outputs.backend_version }}
+      backend_sha: ${{ steps.observed.outputs.backend_sha }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Resolve exact release coordinates
+        id: release
+        run: |
+          python3 -c 'import json; print("product_version=" + json.load(open("product-version.json"))["productVersion"])' >> "$GITHUB_OUTPUT"
+          node -p '"frontend_version=" + require("./web/package.json").version' >> "$GITHUB_OUTPUT"
+          python3 -c 'import json; print("backend_version=" + json.load(open("backend-version.json"))["version"])' >> "$GITHUB_OUTPUT"
+      - name: Wait for exact public frontend and backend candidate identities
+        id: gate
+        run: |
+          python3 -B scripts/verify_public_candidate_release.py \
+            --public-url https://mitsugue.github.io/argus/ \
+            --backend-url https://argus-backend-3j2m.onrender.com \
+            --expected-product-version '${{ steps.release.outputs.product_version }}' \
+            --expected-frontend-version '${{ steps.release.outputs.frontend_version }}' \
+            --expected-frontend-sha '${{ github.sha }}' \
+            --expected-backend-version '${{ steps.release.outputs.backend_version }}' \
+            --expected-backend-sha '${{ needs.scope.outputs.backend_sha }}' \
+            --timeout-seconds 600 \
+            --poll-seconds 10 \
+            --output artifacts/public-candidate-identity/gate.json
+      - name: Export the exact observed backend identity
+        id: observed
+        run: |
+          python3 -B - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          gate = json.load(open("artifacts/public-candidate-identity/gate.json"))
+          health = gate["observed"]["backend"]["health"]
+          print("backend_sha=" + health["buildSha"])
+          PY
+      - name: Publish public candidate identity evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-candidate-identity-${{ github.sha }}
+          path: artifacts/public-candidate-identity
+          if-no-files-found: error
+          retention-days: 30
+
+  seed-warm-profile:
+    # Production-only guard: this job is unreachable until the deployed Pages
+    # and Render identities both equal the approved main release.
+    needs: [scope, candidate-identity]
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/warm-profile-seed
+        with:
+          candidate-sha: ${{ github.sha }}
+          public-url: https://mitsugue.github.io/argus/
+          profile-artifact-name: market-warm-profile-${{ github.sha }}
+          evidence-artifact-name: warm-profile-seed-evidence-${{ github.sha }}
+          enforce-public-candidate-identity: 'true'
+          expected-product-version: ${{ needs.candidate-identity.outputs.product_version }}
+          expected-frontend-version: ${{ needs.candidate-identity.outputs.frontend_version }}
+          expected-backend-version: ${{ needs.candidate-identity.outputs.backend_version }}
+          expected-backend-sha: ${{ needs.candidate-identity.outputs.backend_sha }}
+
   public-acceptance:
-    needs: [scope, deploy, seed-warm-profile, backend-readiness]
-    # backend-readiness has already waited for the exact Render SHA and seeded
-    # every verified snapshot. This job can therefore run for both combined
-    # backend/frontend releases and frontend-only releases without a cycle.
+    needs: [scope, deploy, candidate-identity, seed-warm-profile, backend-readiness]
+    # Candidate Pages, exact frontend/backend identity, and warm profile are all
+    # independently complete before final product acceptance can begin.
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -218,7 +276,7 @@ jobs:
           mode: accept
           expected-version: ${{ steps.release.outputs.frontend_version }}
           expected-backend-version: ${{ steps.release.outputs.backend_version }}
-          expected-backend-sha: ${{ needs.scope.outputs.backend_sha }}
+          expected-backend-sha: ${{ needs.candidate-identity.outputs.backend_sha }}
       - name: Verify mobile Today navigation, geometry, loaders, and 12 snapshots
         id: mobile_acceptance
         working-directory: web

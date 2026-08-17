@@ -13,6 +13,8 @@ on:
       - 'web/scripts/warm-profile-contract.mjs'
       - 'web/scripts/warm-profile-contract.test.mjs'
       - '.github/actions/warm-profile-*/**'
+      - 'scripts/verify_public_candidate_release.py'
+      - 'test_verify_public_candidate_release.py'
   workflow_dispatch:
     inputs:
       pages_run_id:
