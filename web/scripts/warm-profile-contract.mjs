@@ -7,10 +7,7 @@ export const WARM_PROFILE_SCHEMA = 'argus-market-warm-profile-v1';
 export const WARM_PROFILE_MANIFEST = 'argus-warm-profile.json';
 
 const SHA_RE = /^[0-9a-f]{40}$/;
-const REQUIRED_FILES = [
-  'Default/IndexedDB/https_mitsugue.github.io_0.indexeddb.leveldb/CURRENT',
-  'Default/Service Worker/Database/CURRENT',
-];
+const SERVICE_WORKER_CURRENT = 'Default/Service Worker/Database/CURRENT';
 const INDEXED_DB_DIR = 'Default/IndexedDB';
 const SERVICE_WORKER_DIR = 'Default/Service Worker';
 const PRIVATE_DIRECTORIES = new Set(['Local Storage', 'Session Storage']);
@@ -46,6 +43,19 @@ function requireSha(value, label) {
     throw new Error(`invalid_${label}`);
   }
   return value;
+}
+
+function indexedDbCurrentPath(publicUrl) {
+  let url;
+  try { url = new URL(publicUrl); } catch { throw new Error('warm_profile_public_url_invalid'); }
+  if (!['http:', 'https:'].includes(url.protocol)
+      || !/^[a-zA-Z0-9.-]+$/.test(url.hostname)
+      || (url.port && !/^\d{1,5}$/.test(url.port))) {
+    throw new Error('warm_profile_public_url_invalid');
+  }
+  const scheme = url.protocol.slice(0, -1);
+  const port = url.port || '0';
+  return `Default/IndexedDB/${scheme}_${url.hostname}_${port}.indexeddb.leveldb/CURRENT`;
 }
 
 async function fileProof(profileDir, relativePath) {
@@ -90,11 +100,11 @@ async function directoryProof(profileDir, relativePath) {
   return { path: relativePath, fileCount, totalBytes };
 }
 
-async function profileProof(profileDir) {
+async function profileProof(profileDir, publicUrl) {
   const root = await fs.stat(profileDir).catch(() => null);
   if (!root?.isDirectory()) throw new Error('warm_profile_directory_missing');
   const requiredFiles = [];
-  for (const relativePath of REQUIRED_FILES) {
+  for (const relativePath of [indexedDbCurrentPath(publicUrl), SERVICE_WORKER_CURRENT]) {
     requiredFiles.push(await fileProof(profileDir, relativePath));
   }
   return {
@@ -117,6 +127,7 @@ function validateSource(source) {
       throw new Error(`warm_profile_source_${key}_invalid`);
     }
   }
+  indexedDbCurrentPath(source.publicUrl);
 }
 
 function validateRuntimeProof(runtimeProof) {
@@ -140,7 +151,7 @@ export async function writeWarmProfileManifest({
   validateRuntimeProof(runtimeProof);
   const body = {
     candidateSha,
-    profile: await profileProof(profileDir),
+    profile: await profileProof(profileDir, source.publicUrl),
     runtimeProof,
     schemaVersion: WARM_PROFILE_SCHEMA,
     source,
@@ -168,7 +179,7 @@ export async function validateWarmProfile({ profileDir, expectedCandidateSha }) 
   }
   validateSource(manifest.source);
   validateRuntimeProof(manifest.runtimeProof);
-  const expectedProfile = await profileProof(profileDir);
+  const expectedProfile = await profileProof(profileDir, manifest.source.publicUrl);
   if (JSON.stringify(canonical(manifest.profile))
       !== JSON.stringify(canonical(expectedProfile))) {
     throw new Error('warm_profile_content_mismatch');

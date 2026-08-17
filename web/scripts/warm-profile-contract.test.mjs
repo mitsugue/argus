@@ -52,6 +52,35 @@ async function fixture(root) {
   });
 }
 
+async function localhostFixture(root) {
+  await fs.mkdir(path.join(root, 'Default', 'IndexedDB',
+    'http_127.0.0.1_4173.indexeddb.leveldb'), { recursive: true });
+  await fs.mkdir(path.join(root, 'Default', 'Service Worker', 'Database'), {
+    recursive: true,
+  });
+  await fs.writeFile(path.join(root, 'Default', 'IndexedDB',
+    'http_127.0.0.1_4173.indexeddb.leveldb', 'CURRENT'), 'MANIFEST-000001\n');
+  await fs.writeFile(path.join(root, 'Default', 'Service Worker', 'Database',
+    'CURRENT'), 'MANIFEST-000001\n');
+  return writeWarmProfileManifest({
+    profileDir: root,
+    candidateSha: CANDIDATE_SHA,
+    runtimeProof: {
+      databaseNames: ['argus-verified-snapshots'],
+      serviceWorkerReady: true,
+      verifiedSnapshotRecordCount: 1,
+    },
+    source: {
+      backendSha: 'b'.repeat(40),
+      backendVersion: '13.4.13',
+      frontendSha: 'c'.repeat(40),
+      frontendVersion: '13.3.6',
+      publicUrl: 'http://127.0.0.1:4173/argus/#today',
+      seededSnapshotId: 'snapshot-local-fixture',
+    },
+  });
+}
+
 const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'argus-warm-profile-'));
 try {
   const validDir = path.join(temporary, 'valid');
@@ -60,6 +89,13 @@ try {
   assert.equal((await validateWarmProfile({
     profileDir: validDir, expectedCandidateSha: CANDIDATE_SHA,
   })).artifactId, produced.artifactId);
+
+  const localhostDir = path.join(temporary, 'localhost');
+  const localhost = await localhostFixture(localhostDir);
+  assert.equal((await validateWarmProfile({
+    profileDir: localhostDir, expectedCandidateSha: CANDIDATE_SHA,
+  })).artifactId, localhost.artifactId,
+  'the exact local candidate profile must bind its own Chromium origin directory');
 
   await sanitizeWarmProfile(validDir);
   assert.equal(await fs.stat(path.join(validDir, 'Default', 'Local Storage'))
