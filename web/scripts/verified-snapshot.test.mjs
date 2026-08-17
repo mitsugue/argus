@@ -101,6 +101,21 @@ assert.equal(valid.snapshotId, 'vs-f6893880a35b6aec1b84b48bd20b53f1',
 assert.equal((await verifySnapshot(valid, expectation,
   Date.parse('2026-07-23T06:02:00Z'))).ok, true);
 
+const releaseBound = await candidate({ releaseBinding: {
+  expectedBuildSha: 'a'.repeat(40),
+  producerTriggerId: 'v13-release-browser-0001',
+  triggeredAt: '2026-07-23T06:00:30Z',
+} });
+releaseBound.snapshotId = await calculateSnapshotId(releaseBound);
+assert.notEqual(releaseBound.snapshotId, valid.snapshotId);
+assert.equal((await verifySnapshot(releaseBound, expectation,
+  Date.parse('2026-07-23T06:02:00Z'))).ok, true);
+const releaseBoundExtra = structuredClone(releaseBound);
+releaseBoundExtra.releaseBinding.unexpected = true;
+releaseBoundExtra.snapshotId = await calculateSnapshotId(releaseBoundExtra);
+assert.equal((await verifySnapshot(releaseBoundExtra, expectation,
+  Date.parse('2026-07-23T06:02:00Z'))).reason, 'release_binding_invalid');
+
 const invalidSchema = await candidate({ schemaVersion: 'old-v0' });
 assert.equal((await verifySnapshot(invalidSchema, expectation)).ok, false);
 assert.equal((await verifySnapshot(valid, { ...expectation, instrument: 'SPY' })).ok, false);

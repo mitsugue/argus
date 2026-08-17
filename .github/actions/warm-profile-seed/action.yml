@@ -38,9 +38,7 @@ runs:
     - name: Install pinned public-acceptance browser
       shell: bash
       working-directory: web
-      run: |
-        npm install --no-save --no-package-lock playwright@1.55.0
-        npx playwright install --with-deps chromium
+      run: npx playwright install --with-deps chromium
     - id: seed
       name: Execute shared production-equivalent warm-profile seed
       continue-on-error: true

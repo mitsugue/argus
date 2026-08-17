@@ -25617,6 +25617,12 @@ def api_argus_admin_missions_tick():
             "ready": False,
         }), 503
     body = request.get_json(silent=True) or {}
+    if isinstance(body, dict) and body.get("releaseSnapshotSeed") is True:
+        # Release seeding is a narrow, causally acknowledged producer path.
+        # It serializes on the existing durability lock but does not open a
+        # scheduler window, advance Recovery, or accept a busy/duplicate tick
+        # as evidence that any business snapshot was produced.
+        return _release_seed_verified_market_views(body)
     source = (str(body.get("triggerSource") or "manual")
               if isinstance(body, dict) else "manual")
     lease = argus_tick_durability.TickLease(
@@ -28814,7 +28820,8 @@ def _verified_market_snapshot(symbol, horizon):
     return copy.deepcopy(snapshot) if ok else None
 
 
-def _publish_verified_market_views(report, symbol, now_iso):
+def _publish_verified_market_views(
+        report, symbol, now_iso, *, release_binding=None):
     """Publish all horizon pointers only after each complete report validates."""
     normalized = argus_market_intelligence.normalize_public_names(report)
     replay = normalized.get("marketReplay") or {}
@@ -28845,7 +28852,7 @@ def _publish_verified_market_views(report, symbol, now_iso):
                 "durableReadBack": str(
                     _VERIFIED_VIEW_SNAPSHOT_REMOTE.get(
                         "verificationStatus") or "not_verified"),
-            })
+            }, release_binding=release_binding)
         next_store, publication = argus_verified_snapshot.publish_atomic(
             _VERIFIED_VIEW_SNAPSHOTS, candidate, now_iso=now_iso)
         if publication not in {"published", "unchanged"}:
@@ -28861,13 +28868,14 @@ def _publish_verified_market_views(report, symbol, now_iso):
     return published
 
 
-def _precompute_verified_market_view(symbol, market, *, market_scope=False):
+def _precompute_verified_market_view(
+        symbol, market, *, market_scope=False, release_binding=None):
     """Natural-tick producer; unchanged verified datasets never re-run analysis."""
     daily_rows = _chart_history(symbol, market)
     dataset_hash = argus_market_replay.dataset_hash(daily_rows)
     if not daily_rows or not dataset_hash:
         raise ValueError("price_history_unavailable")
-    needs = [
+    needs = list(argus_market_replay.HORIZONS) if release_binding else [
         horizon for horizon in argus_market_replay.HORIZONS
         if argus_verified_snapshot.needs_generation(
             _VERIFIED_VIEW_SNAPSHOTS, kind="market-chart",
@@ -28890,6 +28898,11 @@ def _precompute_verified_market_view(symbol, market, *, market_scope=False):
         f"market-chart:{symbol}:{dataset_hash}:"
         f"{_VERIFIED_VIEW_METHOD_VERSION}"
     )
+    if release_binding:
+        flight_key += (
+            f":release:{release_binding.get('expectedBuildSha')}:"
+            f"{release_binding.get('producerTriggerId')}"
+        )
 
     def _produce():
         report = _chart_public_report(
@@ -28897,7 +28910,7 @@ def _precompute_verified_market_view(symbol, market, *, market_scope=False):
             cached_only=False, precompute_replay=True,
             daily_rows_override=daily_rows)
         published = _publish_verified_market_views(
-            report, symbol, _ai_now_iso())
+            report, symbol, _ai_now_iso(), release_binding=release_binding)
         return report, published
 
     report, published = _VERIFIED_VIEW_SINGLEFLIGHT.run(flight_key, _produce)
@@ -28905,6 +28918,114 @@ def _precompute_verified_market_view(symbol, market, *, market_scope=False):
         "status": "published", "generated": True,
         "datasetHash": dataset_hash, "horizons": published,
     }
+
+
+def _release_seed_verified_market_views(body):
+    """Produce and durably bind the exact release-required 4x3 matrix."""
+    expected_sha = str(body.get("expectedBuildSha") or "").strip().lower()
+    current_sha = str(_backend_exact_sha() or "").strip().lower()
+    trigger_id = str(body.get("runId") or "").strip()[:120]
+    if not re.fullmatch(r"[0-9a-f]{40}", expected_sha):
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "release_snapshot_expected_sha_invalid"}), 400
+    if expected_sha != current_sha:
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "release_snapshot_build_mismatch",
+                        "expectedBuildSha": expected_sha,
+                        "actualBuildSha": current_sha}), 409
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{8,120}", trigger_id):
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "release_snapshot_trigger_id_invalid"}), 400
+    triggered_at = _ai_now_iso()
+    release_binding = {
+        "expectedBuildSha": expected_sha,
+        "producerTriggerId": trigger_id,
+        "triggeredAt": triggered_at,
+    }
+    phase_specs = (
+        ("1321", "JP", True),
+        ("1306", "JP", False),
+        ("SPY", "US", False),
+        ("QQQ", "US", False),
+    )
+    observations = []
+    try:
+        with _DURABLE_CHECKPOINT_LOCK:
+            duplicate_count = sum(
+                1
+                for symbol, _, _ in phase_specs
+                for horizon in argus_market_replay.HORIZONS
+                if ((_verified_market_snapshot(symbol, horizon) or {}).get(
+                    "releaseBinding") or {}).get(
+                        "producerTriggerId") == trigger_id
+            )
+            if duplicate_count:
+                return jsonify({
+                    "ok": False,
+                    "status": "duplicate",
+                    "error": "release_snapshot_trigger_duplicate",
+                    "producerTriggerId": trigger_id,
+                    "snapshotExpected": 12,
+                    "snapshotReady": duplicate_count,
+                }), 409
+            for symbol, market, market_scope in phase_specs:
+                _, publication = _precompute_verified_market_view(
+                    symbol, market, market_scope=market_scope,
+                    release_binding=release_binding)
+                published = publication.get("horizons") or []
+                if len(published) != len(argus_market_replay.HORIZONS):
+                    raise ValueError(
+                        f"release_snapshot_publication_incomplete_{symbol}")
+                for horizon in argus_market_replay.HORIZONS:
+                    snapshot = _verified_market_snapshot(symbol, horizon)
+                    if not snapshot or snapshot.get("releaseBinding") != \
+                            release_binding:
+                        raise ValueError(
+                            f"release_snapshot_readback_invalid_{symbol}_{horizon}D")
+                    observations.append({
+                        "identity": argus_verified_snapshot.snapshot_key(
+                            "market-chart", symbol, f"{horizon}D"),
+                        "market": market,
+                        "instrument": symbol,
+                        "horizon": f"{horizon}D",
+                        "snapshotId": snapshot.get("snapshotId"),
+                        "generatedAt": snapshot.get("generatedAt"),
+                        "verificationStatus": snapshot.get(
+                            "verificationStatus"),
+                        "releaseBinding": snapshot.get("releaseBinding"),
+                    })
+            checkpoint = _osint_persist()
+            if checkpoint.get("verified") is not True or \
+                    checkpoint.get("readBackVerified") is not True:
+                raise ValueError("release_snapshot_persistence_unverified")
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "status": "failed",
+            "error": "release_snapshot_seed_failed",
+            "errorClass": type(exc).__name__,
+            "producerTriggerId": trigger_id,
+            "snapshotExpected": 12,
+            "snapshotReady": len(observations),
+        }), 503
+    return jsonify({
+        "ok": True,
+        "status": "completed",
+        "schemaVersion": "argus-release-snapshot-seed-v1",
+        "producer": "scanner._precompute_verified_market_view",
+        "producerTriggerId": trigger_id,
+        "expectedBuildSha": expected_sha,
+        "triggeredAt": triggered_at,
+        "completedAt": _ai_now_iso(),
+        "snapshotExpected": 12,
+        "snapshotReady": len(observations),
+        "snapshots": observations,
+        "persistence": {
+            "verified": checkpoint.get("verified") is True,
+            "readBackVerified": checkpoint.get("readBackVerified") is True,
+        },
+        "recoveryAuthorityChanged": False,
+    })
 
 
 _ASSET_CHART_METHOD_VERSION = (
