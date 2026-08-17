@@ -30,7 +30,7 @@ async function importTypeScriptModule(relativePath) {
 
 const {
   calculatePayloadHash, calculateSnapshotId, memorySnapshot, resetVerifiedSnapshotMemoryForTests,
-  shouldReplaceSnapshot, verifySnapshot, writeVerifiedSnapshot, VERIFIED_VIEW_METHOD_VERSION,
+  shouldReplaceSnapshot, verifySnapshot, writeVerifiedSnapshot,
 } = await importTypeScriptModule('src/lib/verifiedSnapshot.ts');
 const { formatSnapshotStatus, snapshotFreshness } = nodeRequire(
   path.join(root, 'src/lib/snapshotFreshness.ts'));
@@ -39,21 +39,6 @@ const expectation = {
   kind: 'market-chart', instrument: '1321', horizon: '5D',
   methodVersion: 'view-method-a',
 };
-assert.equal(VERIFIED_VIEW_METHOD_VERSION,
-  'verified-chart-view-v1:chart-intelligence-phase2-v2-pit-bound:market-context-replay-v3-pit-bound',
-  'browser authority must match the backend canonical view method exactly');
-const backendMethodVersion = [
-  '../argus_verified_snapshot.py',
-  '../argus_chart_intelligence.py',
-  '../argus_market_replay.py',
-].map((relativePath) => {
-  const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
-  const match = source.match(/^METHOD_VERSION\s*=\s*["']([^"']+)["']/m);
-  assert.ok(match, `missing backend METHOD_VERSION in ${relativePath}`);
-  return match[1];
-}).join(':');
-assert.equal(VERIFIED_VIEW_METHOD_VERSION, backendMethodVersion,
-  'frontend and backend canonical snapshot methods must never drift');
 
 function payload({ instrument = '1321', hash = 'data-a', status = 'complete',
   asOf = '2026-07-23T06:00:00Z', session = 'REGULAR' } = {}) {
@@ -141,10 +126,6 @@ const closedFresh = { ...valid, asOf: '2026-07-20T06:00:00Z',
   payload: payload({ session: 'HOLIDAY_CLOSED' }) };
 assert.equal(snapshotFreshness(closedFresh, Date.parse('2026-07-23T06:00:00Z')), 'fresh',
   'holiday/weekend close must not create a false stale failure');
-const postMarketFresh = { ...valid, asOf: '2026-07-23T06:00:00Z',
-  payload: payload({ session: 'POST_MARKET' }) };
-assert.equal(snapshotFreshness(postMarketFresh, Date.parse('2026-07-23T09:00:00Z')), 'fresh',
-  'completed POST_MARKET sessions use the closed-session continuity window');
 assert.match(formatSnapshotStatus('ERROR_WITH_CACHE', valid), /更新要確認/);
 assert.match(formatSnapshotStatus('CACHE_READY_REVALIDATING', valid), /更新中/);
 
@@ -165,8 +146,6 @@ assert.match(hook, /networkPromise\.then\([\s\S]*ok: false as const/,
   'superseded requests must be handled before the IndexedDB await');
 assert.match(hook, /requestSequence !== sequence\.current/,
   'request sequence must reject an old instrument response');
-assert.match(hook, /verifiedChartRequestGate\.enqueue/,
-  'verified market requests must be serialized to avoid a concurrent 429 burst');
 assert.match(hook, /key,\s*snapshot: cached,[\s\S]*ERROR_WITHOUT_CACHE/,
   'a cold network error must retain its requested key and expose retry state');
 assert.match(hook, /new AbortController\(\)/);

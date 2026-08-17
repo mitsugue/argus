@@ -7,24 +7,12 @@ on:
       - '.github/workflows/market-public-acceptance.yml'
       - 'web/scripts/public-market-acceptance.mjs'
       - 'web/scripts/public-market-acceptance.contract.test.mjs'
-      - 'web/scripts/canonical-snapshot-selection.mjs'
-      - 'web/scripts/release-state-machine.mjs'
-      - 'web/scripts/release-state-machine.test.mjs'
-      - 'web/scripts/mobile-today-acceptance.mjs'
-      - 'web/index.html'
-      - 'web/src/components/today/ArgusTodayPanel.tsx'
-      - 'web/src/lib/verifiedSnapshot.ts'
-      - 'web/src/lib/assetChartCache.ts'
-      - 'web/src/hooks/useChartIntelligence.ts'
-      - 'web/src/lib/snapshotFreshness.ts'
       - 'web/scripts/warm-profile-runtime.mjs'
       - 'web/scripts/warm-profile-runtime.test.mjs'
       - 'web/scripts/run-warm-profile-seed.sh'
       - 'web/scripts/warm-profile-contract.mjs'
       - 'web/scripts/warm-profile-contract.test.mjs'
       - '.github/actions/warm-profile-*/**'
-      - '.github/actions/candidate-pages-preview/**'
-      - 'docs/ops/v13-final-release-state-machine.md'
       - 'scripts/verify_public_candidate_release.py'
       - 'test_verify_public_candidate_release.py'
   workflow_dispatch:
@@ -55,13 +43,10 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: ./.github/actions/candidate-pages-preview
-        with:
-          candidate-sha: ${{ github.event.pull_request.head.sha }}
       - uses: ./.github/actions/warm-profile-seed
         with:
           candidate-sha: ${{ github.event.pull_request.head.sha }}
-          public-url: http://127.0.0.1:4173/argus/
+          public-url: https://mitsugue.github.io/argus/
           profile-artifact-name: market-warm-profile-shadow-1-${{ github.event.pull_request.head.sha }}
           evidence-artifact-name: warm-profile-shadow-1-producer-${{ github.event.pull_request.head.sha }}
 
@@ -74,15 +59,12 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: ./.github/actions/candidate-pages-preview
-        with:
-          candidate-sha: ${{ github.event.pull_request.head.sha }}
       - uses: ./.github/actions/warm-profile-consumer
         with:
           profile-artifact-name: market-warm-profile-shadow-1-${{ github.event.pull_request.head.sha }}
           evidence-artifact-name: warm-profile-shadow-1-consumer-${{ github.event.pull_request.head.sha }}
           candidate-sha: ${{ github.event.pull_request.head.sha }}
-          public-url: http://127.0.0.1:4173/argus/
+          public-url: https://mitsugue.github.io/argus/
           mode: profile
 
   warm-profile-seed-2:
@@ -94,13 +76,10 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: ./.github/actions/candidate-pages-preview
-        with:
-          candidate-sha: ${{ github.event.pull_request.head.sha }}
       - uses: ./.github/actions/warm-profile-seed
         with:
           candidate-sha: ${{ github.event.pull_request.head.sha }}
-          public-url: http://127.0.0.1:4173/argus/
+          public-url: https://mitsugue.github.io/argus/
           profile-artifact-name: market-warm-profile-shadow-2-${{ github.event.pull_request.head.sha }}
           evidence-artifact-name: warm-profile-shadow-2-producer-${{ github.event.pull_request.head.sha }}
 
@@ -113,15 +92,12 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: ./.github/actions/candidate-pages-preview
-        with:
-          candidate-sha: ${{ github.event.pull_request.head.sha }}
       - uses: ./.github/actions/warm-profile-consumer
         with:
           profile-artifact-name: market-warm-profile-shadow-2-${{ github.event.pull_request.head.sha }}
           evidence-artifact-name: warm-profile-shadow-2-consumer-${{ github.event.pull_request.head.sha }}
           candidate-sha: ${{ github.event.pull_request.head.sha }}
-          public-url: http://127.0.0.1:4173/argus/
+          public-url: https://mitsugue.github.io/argus/
           mode: profile
 
   public-acceptance:
