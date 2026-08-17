@@ -1,6 +1,10 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import {
+  validateWarmProfile,
+  writeWarmProfileManifest,
+} from './warm-profile-contract.mjs';
 
 const PUBLIC_URL = process.env.ARGUS_PUBLIC_URL || 'https://mitsugue.github.io/argus/';
 const EXPECTED_VERSION = process.env.ARGUS_EXPECTED_VERSION || '';
@@ -10,6 +14,8 @@ const EXPECTED_BACKEND_SHA = process.env.ARGUS_EXPECTED_BACKEND_SHA || '';
 const MODE = process.env.ARGUS_ACCEPTANCE_MODE || 'accept';
 const OUT_DIR = path.resolve(process.env.ARGUS_ACCEPTANCE_OUT
   || '../artifacts/market-public-acceptance');
+const PROFILE_DIR = path.resolve(process.env.ARGUS_WARM_PROFILE_DIR
+  || '../artifacts/market-warm-profile');
 const BACKEND_ORIGIN = (process.env.ARGUS_BACKEND_URL
   || 'https://argus-backend-3j2m.onrender.com').replace(/\/$/, '');
 const TODAY_URL = `${PUBLIC_URL.replace(/\/?$/, '/')}#today`;
@@ -56,7 +62,7 @@ async function retryUntil(request, url, timeoutMs, validate, label) {
     try {
       const response = await request.get(url, { timeout: 30_000 });
       const body = await response.json().catch(() => null);
-      if (response.ok() && validate(body)) return body;
+      if (response.ok() && validate(body, response.status())) return body;
       last = `${response.status()}:${JSON.stringify(body)?.slice(0, 200)}`;
     } catch (error) {
       last = sanitize(error?.message);
@@ -67,11 +73,18 @@ async function retryUntil(request, url, timeoutMs, validate, label) {
 }
 
 async function waitForBackendIdentity(request) {
-  return retryUntil(request, `${BACKEND_ORIGIN}/api/argus/data-quality/status`,
+  const health = await retryUntil(request, `${BACKEND_ORIGIN}/healthz`,
     BACKEND_READY_TIMEOUT_MS,
-    (body) => body?.schemaVersion === 'argus-public-diagnostics-v1'
-      && body?.service?.liveness === 'ok',
+    (body, status) => status === 200
+      && body?.status === 'ok'
+      && typeof body?.backendVersion === 'string'
+      && /^[0-9a-f]{40}$/.test(body?.buildSha || ''),
     'backend identity did not become ready');
+  return { service: {
+    backendVersion: health.backendVersion,
+    buildSha: health.buildSha,
+    liveness: health.status,
+  } };
 }
 
 async function waitForMarketCache(request) {
@@ -82,9 +95,9 @@ async function waitForMarketCache(request) {
   return retryUntil(request,
     `${BACKEND_ORIGIN}/api/argus/chart-intelligence?${query}`,
     MARKET_CACHE_READY_TIMEOUT_MS,
-    (body) => {
+    (body, status) => {
       const view = body?.payload || body;
-      return body?.verificationStatus === 'verified'
+      return status === 200 && body?.verificationStatus === 'verified'
         && (view?.automaticAiCalls ?? 0) === 0
         && Array.isArray(view?.indicators?.bars)
         && view.indicators.bars.length > 1;
@@ -193,27 +206,108 @@ async function visualAudit(page, viewport) {
   }, viewport);
 }
 
+async function profileRuntimeProof(page) {
+  return page.evaluate(async () => {
+    const registration = await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise((_, reject) => setTimeout(
+        () => reject(new Error('service_worker_ready_timeout')), 30_000)),
+    ]);
+    const databaseNames = (await indexedDB.databases())
+      .map((row) => row.name).filter(Boolean).sort();
+    const verifiedSnapshotRecordCount = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('argus-verified-snapshots');
+      request.onerror = () => reject(request.error || new Error('indexeddb_open_failed'));
+      request.onsuccess = () => {
+        const database = request.result;
+        if (!database.objectStoreNames.contains('snapshots')) {
+          database.close();
+          resolve(0);
+          return;
+        }
+        const count = database.transaction('snapshots', 'readonly')
+          .objectStore('snapshots').count();
+        count.onerror = () => reject(count.error || new Error('indexeddb_count_failed'));
+        count.onsuccess = () => {
+          database.close();
+          resolve(count.result);
+        };
+      };
+    });
+    return {
+      databaseNames,
+      serviceWorkerReady: Boolean(registration?.active),
+      verifiedSnapshotRecordCount,
+    };
+  });
+}
+
 async function run() {
+  if (!['accept', 'profile', 'seed'].includes(MODE)) {
+    throw new Error(`invalid acceptance mode: ${MODE}`);
+  }
   await fs.rm(OUT_DIR, { recursive: true, force: true });
+  let warmProfile = null;
+  if (MODE === 'seed') {
+    await fs.rm(PROFILE_DIR, { recursive: true, force: true });
+  } else {
+    warmProfile = await validateWarmProfile({
+      profileDir: PROFILE_DIR, expectedCandidateSha: EXPECTED_SHA,
+    });
+  }
   const evidence = {
     failures: [], console: [], network: [], combinations: [], computedStyles: [],
     aiPostCount: 0, datasetHashes: new Set(), responseSnapshotIds: new Set(),
     responseTasks: new Set(),
   };
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({
+  const context = await chromium.launchPersistentContext(PROFILE_DIR, {
+    headless: true,
     viewport: { width: 1280, height: 800 }, serviceWorkers: 'allow',
   });
-  const page = await context.newPage();
+  let contextClosed = false;
+  const page = context.pages()[0] || await context.newPage();
   observe(page, evidence);
   try {
     const identity = await waitForBackendIdentity(page.request);
     const seeded = await waitForMarketCache(page.request);
     if (MODE === 'seed') {
+      if (!EXPECTED_SHA) throw new Error('seed candidate SHA is required');
+      await page.goto(TODAY_URL, {
+        waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS,
+      });
+      await waitForToday(page);
+      const record = await selectCombination(page, '1321', HORIZONS[1]);
+      if (!record.snapshotId || record.horizon !== HORIZONS[1]) {
+        throw new Error('seeded canonical 5D snapshot unavailable');
+      }
+      const runtimeProof = await profileRuntimeProof(page);
+      const frontendVersion = await page.evaluate(() =>
+        globalThis.__ARGUS_VERSION__ ?? null);
+      const frontendSha = await page.evaluate(() =>
+        globalThis.__ARGUS_BUILD_SHA__ ?? null);
+      await drainResponses(evidence);
+      await context.close();
+      contextClosed = true;
+      const manifest = await writeWarmProfileManifest({
+        profileDir: PROFILE_DIR,
+        candidateSha: EXPECTED_SHA,
+        runtimeProof,
+        source: {
+          backendVersion: identity.service.backendVersion,
+          backendSha: identity.service.buildSha,
+          frontendVersion,
+          frontendSha,
+          publicUrl: TODAY_URL,
+          seededSnapshotId: seeded.snapshotId,
+        },
+      });
       await writeJson('version.json', {
         backendVersion: identity.service.backendVersion,
         backendSha: identity.service.buildSha,
-        seededSnapshotId: seeded.snapshotId ?? null,
+        frontendVersion,
+        frontendSha,
+        seededSnapshotId: seeded.snapshotId,
+        warmProfileArtifactId: manifest.artifactId,
       });
       return;
     }
@@ -221,17 +315,31 @@ async function run() {
     await page.goto(TODAY_URL, {
       waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS,
     });
-    if (EXPECTED_VERSION) {
+    if (MODE === 'accept' && EXPECTED_VERSION) {
       await page.waitForFunction((expected) =>
         globalThis.__ARGUS_VERSION__ === expected, EXPECTED_VERSION,
       { timeout: PAGE_TIMEOUT_MS });
     }
-    if (EXPECTED_SHA) {
+    if (MODE === 'accept' && EXPECTED_SHA) {
       await page.waitForFunction((expected) =>
         globalThis.__ARGUS_BUILD_SHA__ === expected, EXPECTED_SHA,
       { timeout: PAGE_TIMEOUT_MS });
     }
     await waitForToday(page);
+    if (MODE === 'profile') {
+      const record = await selectCombination(page, '1321', HORIZONS[1]);
+      const result = {
+        verdict: record.snapshotId && record.horizon === HORIZONS[1] ? 'PASS' : 'FAIL',
+        candidateSha: EXPECTED_SHA,
+        canonicalHorizon: record.horizon,
+        seededSnapshotId: record.snapshotId,
+        verifiedSnapshotHttpStatus: 200,
+        warmProfileArtifactId: warmProfile.artifactId,
+      };
+      await writeJson('acceptance.json', result);
+      if (result.verdict !== 'PASS') process.exitCode = 1;
+      return;
+    }
     if (await page.evaluate(() => location.hash) !== '#today') {
       evidence.failures.push('canonical-today-deeplink');
     }
@@ -314,8 +422,7 @@ async function run() {
     process.exitCode = 1;
   } finally {
     await drainResponses(evidence);
-    await context.close().catch(() => {});
-    await browser.close().catch(() => {});
+    if (!contextClosed) await context.close().catch(() => {});
   }
 }
 

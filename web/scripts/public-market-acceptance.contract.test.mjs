@@ -51,6 +51,10 @@ assert.match(script, /horizon: HORIZONS\[1\]/,
   'warm-profile acceptance must use the canonical 5D horizon');
 assert.doesNotMatch(script, /horizon:\s*['"]5['"]/,
   'canonical verified-snapshot acceptance must never request legacy horizon=5');
+assert.match(script, /launchPersistentContext\(PROFILE_DIR/,
+  'the producer and consumer must use the transferred persistent profile');
+assert.match(script, /writeWarmProfileManifest/);
+assert.match(script, /validateWarmProfile/);
 assert.match(script, /todayProductStatus/);
 assert.match(script, /page\.screenshot\(\{/);
 assert.match(script, /fullPage: false/);
@@ -73,6 +77,12 @@ for (const input of ['pages_run_id', 'frontend_sha', 'backend_sha']) {
   assert.match(manualWorkflow, new RegExp(`${input}:`));
 }
 assert.match(manualWorkflow, /ARGUS_EXPECTED_BACKEND_SHA: \$\{\{ inputs\.backend_sha \}\}/);
+assert.match(workflow, /warm-profile-contract\.mjs sanitize-validate/);
+assert.match(workflow, /warm-profile-contract\.mjs validate/);
+assert.match(workflow, /ARGUS_EXPECTED_SHA: \$\{\{ github\.sha \}\}/);
+assert.match(manualWorkflow, /warm-profile-seed:/);
+assert.match(manualWorkflow, /warm-profile-handoff:/);
+assert.match(manualWorkflow, /ARGUS_ACCEPTANCE_MODE: profile/);
 
 assert.match(vite, /cleanupOutdatedCaches: true/);
 assert.match(vite, /clientsClaim: true/);
