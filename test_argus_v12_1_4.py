@@ -168,7 +168,8 @@ def test_fresh_candidate_is_preliminary_not_verified():
 def test_preliminary_cannot_create_direct_cause():
     v = oe.verify_source({"titleJa": "本日発売の新製品", "url": "https://x.co/a",
                           "publishedAt": NOW}, {}, NOW)
-    assert oe.preliminary_status(v) == "fresh_candidate"
+    # claim自身の日付はsource-time authorityではない。
+    assert oe.preliminary_status(v) == "metadata_only"
     assert v["primaryEligible"] is False   # 検証されるまで主因不可
 
 
@@ -278,13 +279,11 @@ def test_fe_shows_hypothesis_separation():
 
 
 def test_dq_exposes_recovery_and_hypothesis_counts():
-    with scanner.app.test_client() as c:
-        r = c.get("/api/argus/data-quality")
-        oh = (r.get_json() or {}).get("osintHealth") or {}
-        for k in ("blockedRecoveryAttempted", "blockedRecoveryRecovered",
-                  "hypothesisNotSourceCount", "metadataOnlyCount",
-                  "freshCandidateCount"):
-            assert k in oh, k
+    oh = (scanner._data_quality_console() or {}).get("osintHealth") or {}
+    for k in ("blockedRecoveryAttempted", "blockedRecoveryRecovered",
+              "hypothesisNotSourceCount", "metadataOnlyCount",
+              "freshCandidateCount"):
+        assert k in oh, k
 
 
 def test_pack_includes_gap_groups():

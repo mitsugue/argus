@@ -10,6 +10,7 @@ on:
       - main
     paths:
       - 'web/**'
+      - 'product-version.json'
       - '.github/workflows/deploy-pages.yml'
       - 'scripts/verified_snapshot_release_gate.py'
   workflow_dispatch:
@@ -114,28 +115,23 @@ jobs:
         working-directory: web
         env:
           ARGUS_ACCEPTANCE_MODE: seed
+          ARGUS_EXPECTED_SHA: ${{ github.sha }}
           ARGUS_PUBLIC_URL: https://mitsugue.github.io/argus/
           ARGUS_WARM_PROFILE_DIR: ../artifacts/market-warm-profile
         run: node scripts/public-market-acceptance.mjs
-      - name: Remove credentials and private local stores before transfer
-        run: |
-          find artifacts/market-warm-profile -type d \
-            \( -name 'Local Storage' -o -name 'Session Storage' \
-            \) \
-            -prune -exec rm -rf '{}' +
-          find artifacts/market-warm-profile -type f \
-            \( -name 'Cookies' -o -name 'Cookies-journal' \
-               -o -name 'History' -o -name 'History-journal' \) \
-            -delete
-          # Keep IndexedDB: this profile only visits the public Market screen,
-          # so it contains no holdings/watchlist data. Its verified market
-          # snapshot is the evidence that a frontend-only upgrade does not
-          # erase the previous release's durable browser cache.
+      - name: Sanitize and validate the produced warm profile
+        working-directory: web
+        env:
+          ARGUS_EXPECTED_SHA: ${{ github.sha }}
+        run: >-
+          node scripts/warm-profile-contract.mjs sanitize-validate
+          ../artifacts/market-warm-profile "$ARGUS_EXPECTED_SHA"
       - uses: actions/upload-artifact@v4
         with:
           name: market-warm-profile-${{ github.sha }}
           path: artifacts/market-warm-profile
           include-hidden-files: true
+          if-no-files-found: error
           retention-days: 1
 
   backend-readiness:
@@ -247,6 +243,13 @@ jobs:
         with:
           name: market-warm-profile-${{ github.sha }}
           path: artifacts/warm-seed
+      - name: Validate downloaded warm-profile identity and content
+        working-directory: web
+        env:
+          ARGUS_EXPECTED_SHA: ${{ github.sha }}
+        run: >-
+          node scripts/warm-profile-contract.mjs validate
+          ../artifacts/warm-seed "$ARGUS_EXPECTED_SHA"
       - name: Resolve independent release versions
         id: release
         run: |

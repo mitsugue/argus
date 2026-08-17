@@ -31,23 +31,31 @@ mix is by design, not a transition state.
 ```
 web/                  React + TypeScript + Vite frontend (deployed to GitHub Pages)
   src/
-    routes/           Today / Action Alerts / Market Regime / Event Radar / Watchlist / Core Portfolio + AI Review (#review)
-    components/        AppShell, NavRail, action/, dashboard/, regime/
-    domain/actions.ts Single source of truth for action labels (color / tone)
-    hooks/            useRatesSnapshot / useJapanWatchlist — live backend endpoints, mock fallback
-    mock/             Seed data (mock until each signal is wired to a real source)
-    types/            action / dashboard / regime / watch
+    routes/           Today / Holdings / Notifications / Settings (four canonical routes)
+    components/       AppShell, NavRail, Today and contextual Asset Detail/owner tools
+    domain/           Deterministic decision, portfolio, event, and market view models
+    hooks/            Shared acquisition stores plus one provider-owned asset lifecycle
+    types/            Public DTO and retained background-engine contracts
   .env.production     VITE_ARGUS_BACKEND_URL → live backend (not a secret)
 
-scanner.py            Flask backend (Render). Serves /api/argus/* — FRED rates, J-Quants Japan watchlist, ledger, picks.
-argus_ledger.py       Prediction-calibration ledger (JSONL).
+scanner.py            Flask backend (Render). Serves /api/argus/* cached/public and authenticated operational contracts.
+argus_market_data_truth.py  Provider-neutral Market Data Truth, PIT selection, and bounded decision snapshots.
+argus_decision_ledger.py    Canonical immutable Prediction Ledger v2 record contracts.
+scripts/run_prediction_ledger.py  Offline append-only ledger runner (no provider/network access).
+argus_ledger.py       Legacy JSONL compatibility facade; never forward-live calibration authority.
 render.yaml           Render Blueprint (deploys from main, autoDeploy).
 DEPLOY_BACKEND.md     Backend deploy + env-var guide.
 ```
 
+Round 2A convergence is documented in
+[`docs/ops/round2a-market-truth-prediction-ledger.md`](docs/ops/round2a-market-truth-prediction-ledger.md).
+Its future five-action Single Decision Authority interface is deliberately
+inactive; SHO, production action authority, and new UI are not part of this
+branch.
+
 ## Verified chart startup (v13.3.0)
 
-Market Context restores the last schema/hash-verified view from a bounded
+Today's market evidence restores the last schema/hash-verified view from a bounded
 IndexedDB store before network completion, then revalidates it with ETag while
 keeping the chart mounted. The existing authoritative 30-minute mission tick
 precomputes changed 1321/1306/SPY/QQQ chart, probability, Replay, and Ledger
@@ -108,7 +116,7 @@ list and Render deploy steps.
 | Action labels (watchlist stance / reason / risk / confidence / next condition) | Action Label Engine v0 (rule-based, internal) | **live** |
 | Market Regime / Capital Rotation v1 (regime label / axes / rotation board / top rotations) | FRED macro + Twelve Data ETF proxies + JP breadth (rule-based, `regime-v1`) | **live / partial** |
 | GPT-5.5 Pro Handoff (manual high-stakes second opinion) | manual copy-paste (no API call, no cost) | **live (manual)** |
-| Integration health (provider configured/live/partial/missing) | `/api/argus/integrations` (`integrations-v1`, secret-free) | **live** |
+| Public service/freshness/system health | `/api/argus/data-quality/status` (`argus-public-diagnostics-v1`, closed allowlist) | **live** |
 | Corporate Catalyst Layer (earnings / filings / news / disclosures) | SEC EDGAR + Finnhub + J-Quants (TDnet pending) | **live / partial** |
 | AI Judgment Layer v1 (automated second opinion) | GPT-5.5 primary + Gemini 2.5 Pro checker (Flash only on 429 fallback); ARGUS-side hard USD budget (daily/monthly, env-tunable) — OpenAI prepaid balance is **not** the stop; estimated cost + actual model recorded (`/api/argus/ai-cost`, admin) | **live (admin-run, budget-gated)** |
 | EDINET official filings (JP) | EDINET API v2 — always an official **fact**; becomes the same-day `official_catalyst` only for a materially-relevant filing (臨時報告/大量保有) whose submission coincides. **Not** equivalent to TDnet | **live** |
@@ -198,7 +206,7 @@ bridge (`bridge/moomoo_push.py`, systemd-ready) runs NEXT TO the user's OpenD
 (≤10 min) overlay J-Quants(T-1)/Twelve Data across ALL watchlist paths
 (cache-safe `_overlay_pushed`; automatic fallback when the bridge stops; OpenD
 port stays closed to the internet — the bridge talks to 127.0.0.1).
-`/integrations` shows the bridge as live/stale by push freshness. Notifications:
+The retained `/bridge/status` read model shows public bridge freshness. Notifications:
 digest text redesigned for the phone (emoji sections, short lines); morning
 digest now runs twice (08:30 JST JP pre-open + 22:00 JST US pre-open); market
 alerts add a stress-spike detector (backdrop→stress transition, VIX crossing
@@ -229,8 +237,8 @@ yesterday" plus a 7-day call strip — the foundation for future outcome trackin
 **Morning digest:** new `GET /api/argus/daily-digest` (`digest-v1`) composes a
 notification-ready Japanese brief (posture/call/confidence, rates backdrop,
 today's high-impact events, label highlights, top rotations — rule-based, no
-LLM), and a GitHub Actions cron (`morning-digest.yml`, 07:15 JST Mon–Fri,
-manual-run capable) pushes it via **ntfy.sh** (zero-signup push relay) when the
+LLM), and the guarded digest job in `market-alerts.yml` pushes it via
+**ntfy.sh** (zero-signup push relay) when the
 `NTFY_TOPIC` repo secret is set; without the secret it no-ops gracefully. The
 digest contains market commentary only — no holdings, no personal data.
 
@@ -260,10 +268,11 @@ itself never stops on market mood). New keyless **`GET
 /api/argus/crypto-watchlist?ids=…`** (CoinGecko `simple/price`, sanitized ids,
 10-min per-ids cache) gives BTC/ETH and any added coin live USD prices + 24h
 change in the Watchlist strategy cards; quote-less crypto stays an honest manual
-placeholder. `/integrations` now reports CoinGecko configured/live.
+placeholder. At that release the now-retired `/integrations` read model also
+reported CoinGecko configured/live.
 
-**v9.6.0 — Integration Health + AI provider truth status.** Adds a secret-free
-public **`GET /api/argus/integrations`** (`integrations-v1`) summarizing every
+**v9.6.0 — Integration Health + AI provider truth status (historical).** This
+release added the later-retired public `GET /api/argus/integrations` read model summarizing every
 provider's `configured` / `runtimeStatus` (live / partial / missing / disabled /
 pending) for FRED, J-Quants, Twelve Data, Finnhub, OpenAI, Gemini, CoinGecko, and
 moomoo — plus an admin-only **`GET /api/argus/ai-provider-status`**
@@ -274,7 +283,9 @@ longer marked `live` from `AI_JUDGE_ENABLED` alone — a single source of truth
 `no_cached_result` / `live` from real key + cache state, and the Pro Handoff, the
 public `/api/argus/ai-judgment` GET, the AI Review sheet, and the new **Guide →
 API / Integration status** panel all use it. No OpenAI/Gemini call is made on any
-public page load.
+public page load. V13 Compression Round 1 retired that public aggregate; the
+canonical public status is now `/api/argus/data-quality/status`, while detailed
+provider probes remain authenticated operational diagnostics.
 
 **Next API roadmap:** (1) v9.7.0 CoinGecko crypto live (BTC/ETH); (2) v9.8.0
 Alerts Scanner live (events + regime + catalysts + action labels); (3) v9.9.0

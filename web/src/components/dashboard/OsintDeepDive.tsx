@@ -13,30 +13,10 @@ const COVERAGE_TONE: Record<string, string> = {
   failed: 'var(--value-negative)',
 };
 
-const PASTE_KEY = 'argus.osintPaste.v1';
-const MISSED_KEY = 'argus.osintMissed.v1';
-
-function pushLocal(key: string, rec: Record<string, unknown>): void {
-  try {
-    const cur = JSON.parse(localStorage.getItem(key) ?? '[]') as unknown[];
-    cur.unshift({ ...rec, at: new Date().toISOString() });
-    localStorage.setItem(key, JSON.stringify(cur.slice(0, 30)));
-  } catch { /* storage不可でも壊れない */ }
-}
-
-/** 貼り戻しテキストから探索語候補を抽出(固有名詞/カタカナ語のみ・本文は送らない)。 */
-function extractTerms(text: string): string[] {
-  const out: string[] = [];
-  for (const m of text.matchAll(/[A-Z][A-Za-z0-9\-]{2,24}|[ァ-ヶー]{3,14}/g)) {
-    if (!out.includes(m[0])) out.push(m[0]);
-  }
-  return out.slice(0, 8);
-}
-
 export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: boolean }>
   = ({ symbol, market, held }) => {
-  const { inv, running, runDeepDive, postTerms, progress, queuePosition, etaMin, reload,
-          verifyGaps, verifyUrl } = useOsintInvestigation(symbol, market);
+  void market;
+  const { inv, progress, queuePosition, etaMin, reload } = useOsintInvestigation(symbol);
   const [dismissed, setDismissed] = React.useState<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem('argus.osintGapDismiss.v1') ?? '[]') as string[]); }
     catch { return new Set(); }
@@ -46,13 +26,6 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
     setDismissed(next);
     try { localStorage.setItem('argus.osintGapDismiss.v1', JSON.stringify([...next].slice(-60))); } catch { /* noop */ }
   };
-  const [privacy, setPrivacy] = React.useState<'redacted' | 'owner_context' | 'full_private'>('redacted');
-  const [msg, setMsg] = React.useState<string | null>(null);
-  const [pasteOpen, setPasteOpen] = React.useState(false);
-  const [pasteText, setPasteText] = React.useState('');
-  const [missedOpen, setMissedOpen] = React.useState(false);
-  const [missedTitle, setMissedTitle] = React.useState('');
-
   React.useEffect(() => {
     if (!inv) return;
     publishOsintDeep({
@@ -88,8 +61,6 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
     });
   }, [inv]);
 
-  const flash = (m: string) => { setMsg(m); window.setTimeout(() => setMsg(null), 3000); };
-
   const weak = inv && ['weak', 'insufficient', 'failed'].includes(inv.coverageScore.totalCoverage);
   const btn: React.CSSProperties = { fontSize: 10.5, cursor: 'pointer', marginRight: 5,
     background: 'transparent', color: 'var(--accent)', border: '1px solid var(--line)',
@@ -103,7 +74,7 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
       {(!inv || weak) && (
         <p style={{ margin: '2px 0 4px', fontSize: 11.5,
                     color: held ? 'var(--amber, #fbbf24)' : 'var(--text-sub)' }}>
-          ニュース探索が不十分です。深掘りOSINTまたはGemini/GPT比較を推奨。
+          キャッシュ済み調査のカバレッジが不十分です。証拠の手動確認を推奨します。
         </p>
       )}
 
@@ -357,15 +328,8 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
                     </span>
                     {g.resolutionStatus === 'still_unresolved_important' && (
                       <span style={{ display: 'block' }}>
-                        {g.sourceUrl && (
-                          <button type="button" style={btn} onClick={async () => {
-                            const r = await verifyUrl(g.sourceUrl!);
-                            flash(r?.ok ? '✓ URL検証キューに追加' : '追加失敗');
-                          }}>このURLを検証</button>
-                        )}
                         <button type="button" style={btn} onClick={() => {
                           dismissGap(g.id);
-                          flash('✓ 重要でないとして除外(端末内の判断・サーバー判定は不変)');
                         }}>重要でないとして除外</button>
                       </span>
                     )}
@@ -377,10 +341,6 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
                   </p>
                 )}
               </details>
-              <button type="button" style={btn} onClick={async () => {
-                const r = await verifyGaps();
-                flash(r?.ok ? '✓ 未回収を再判定しました(重複/古い/無関係は即時解決)' : '再判定失敗');
-              }}>未回収を再探索</button>
             </div>
           )}
 
@@ -407,70 +367,6 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
             </div>
           </details>
         </>
-      )}
-
-      {/* 実行コントロール — redacted既定・full時は警告必須 */}
-      <p style={{ margin: '4px 0 0', fontSize: 10.5 }}>
-        <select value={privacy} onChange={(e) => setPrivacy(e.target.value as typeof privacy)}
-          style={{ fontSize: 10, background: 'var(--surface-soft)', color: 'var(--text-sub)',
-                   border: '1px solid var(--line)', borderRadius: 4, marginRight: 5 }}>
-          <option value="redacted">redacted(既定・私的情報なし)</option>
-          <option value="owner_context">短い文脈のみ</option>
-          <option value="full_private">フル文脈(注意)</option>
-        </select>
-        <button type="button" style={btn} disabled={running}
-          onClick={async () => {
-            const r = await runDeepDive(privacy);
-            flash(r ? '✓ 決定論調査を実行・Gemini/GPTスカウトをキューしました' : '実行失敗');
-          }}>{running ? '調査中…' : '深掘りOSINTを実行'}</button>
-        <button type="button" style={btn} disabled={running}
-          onClick={async () => {
-            const r = await runDeepDive(privacy);
-            flash(r?.duplicate ? 'ジョブ進行中(二重実行しません)' : '✓ 再探索をキューしました');
-          }}>再探索する</button>
-        <button type="button" style={btn} onClick={() => setPasteOpen((v) => !v)}>Gemini/GPT結果を貼り戻す</button>
-        <button type="button" style={btn} onClick={() => setMissedOpen((v) => !v)}>このニュースが抜けている</button>
-        {msg && <span style={{ marginLeft: 4, color: 'var(--value-positive)' }}>{msg}</span>}
-      </p>
-      {privacy === 'full_private' && (
-        <p style={{ margin: '2px 0 0', fontSize: 10, color: 'var(--amber, #fbbf24)' }}>
-          ⚠ Gemini/GPTを使った深掘りOSINT — 外部AIに送信する内容を確認してください(保有・数量・口座情報は送らないでください)。
-        </p>
-      )}
-
-      {/* 貼り戻し: 本文は端末内のみ・サーバーには探索語(≤8)だけ */}
-      {pasteOpen && (
-        <div style={{ marginTop: 4 }}>
-          <textarea value={pasteText} onChange={(e) => setPasteText(e.target.value)}
-            placeholder="GeminiやGPTのOSINT回答を貼り付け(本文は端末内に保存・サーバーへは探索語のみ)"
-            style={{ width: '100%', minHeight: 60, fontSize: 11, background: 'var(--surface-soft)',
-                     color: 'var(--text-main)', border: '1px solid var(--line)', borderRadius: 6 }} />
-          <button type="button" style={btn} onClick={async () => {
-            if (!pasteText.trim()) return;
-            pushLocal(PASTE_KEY, { symbol, text: pasteText.slice(0, 4000) });
-            const terms = extractTerms(pasteText);
-            await postTerms(terms);
-            setPasteText(''); setPasteOpen(false);
-            flash(`✓ 端末内に保存・探索語${terms.length}件を追加(自動では信用しません — 次回調査で検証)`);
-          }}>保存して探索語に反映</button>
-        </div>
-      )}
-
-      {/* 見逃しニュース申告: ローカル台帳+探索語learning */}
-      {missedOpen && (
-        <div style={{ marginTop: 4 }}>
-          <input value={missedTitle} onChange={(e) => setMissedTitle(e.target.value)}
-            placeholder="抜けているニュースのタイトル/URL"
-            style={{ width: '100%', fontSize: 11, background: 'var(--surface-soft)',
-                     color: 'var(--text-main)', border: '1px solid var(--line)', borderRadius: 6, padding: '3px 6px' }} />
-          <button type="button" style={btn} onClick={async () => {
-            if (!missedTitle.trim()) return;
-            pushLocal(MISSED_KEY, { symbol, title: missedTitle.slice(0, 200) });
-            await postTerms(extractTerms(missedTitle));
-            setMissedTitle(''); setMissedOpen(false);
-            flash('✓ 見逃しとして記録(端末内)・探索語に追加しました');
-          }}>このニュースをARGUSに学習させる</button>
-        </div>
       )}
 
       <p style={{ margin: '3px 0 0', fontSize: 9.5, color: 'var(--text-faint)' }}>

@@ -2,6 +2,17 @@
 import argus_research_mesh as M
 
 
+def test_unavailable_licensed_source_never_grounds_judgment():
+    item = M.normalize_item({
+        "sourceId": "bloomberg_feed", "title": "Licensed headline",
+        "publishedAt": "2026-08-14T00:59:00Z", "linkedAssets": ["NVDA"],
+    })
+    assert item["accessClass"] == "UNAVAILABLE"
+    assert item["canGroundJudgment"] is False
+    assert item["canConfirmCause"] is False
+    assert item["weakSignal"] is True
+
+
 # ── source rights enforcement (§4/§30) ──
 def test_rights_metadata_only_strips_fulltext():
     rec = M.enforce_storage("marketwatch_public", {"title": "x", "fullText": "BODY", "publicSnippet": "snip"})

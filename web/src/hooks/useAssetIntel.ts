@@ -1,5 +1,4 @@
-import { useMemo, useSyncExternalStore } from 'react';
-import { useAssets } from './useAssets';
+import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { useAIJudgment } from './useAIJudgment';
 import { useActionLabels } from './useActionLabels';
 import { useCryptoWatchlist } from './useCryptoWatchlist';
@@ -12,30 +11,75 @@ import { useImportantEvents } from './useImportantEvents';
 import { useRatesSnapshot } from './useRatesSnapshot';
 import { useJapanWatchlist } from './useJapanWatchlist';
 import { useUSWatchlist } from './useUSWatchlist';
+import { fundNavForAsset, useFundNav } from './useFundNav';
 import { useFlowAttributionList } from './useFlowAttribution';
 import { useSupplyDemandList } from './useSupplyDemand';
 import { useMarketLedger } from './useMarketLedger';
 import { coingeckoIdOf } from '../lib/cryptoIds';
+import { calendarDateExpiresAt, quoteDecisionExpiresAt,
+  quoteDecisionUsable } from '../domain/liveQuote';
+import { exactAuthorityEpoch, liveAuthorityExpiresAt } from '../domain/liveAuthority';
+import { ratePointDecisionExpiresAt, ratePointDecisionUsable } from '../domain/rateAuthority';
 import { groupAssetCards, type LinkedEventTag, type AssetCardModel } from '../domain/assetCard';
-import { mergeAiPrimary, resolveAssetDecision, type AssetDecisionView, type AiMeta } from '../domain/assetDecision';
+import {
+  assessAi, projectCanonicalAssetDecision,
+  type AssetDecisionView, type AiMeta,
+} from '../domain/assetDecision';
 import { buildPositionExposure, themeOf } from '../domain/positionExposure';
+import { appendDeviceLocalSdaLedger, deriveLocalOwnerRiskBands } from '../lib/sdaDeviceLocal';
+import { currencyOf } from '../lib/portfolio';
 import {
   publishExposure, publishActionPriorities, publishSessionBrief,
   publishScenarios, publishPlans, publishStrategy, publishFireCore,
+  retainDerivedSharePublisher,
 } from '../lib/positionExposureShare';
 import { listDQ } from '../lib/decisionQuality';
 import { buildItem as buildAPItem, rankItems as rankAPItems, type APItem } from '../domain/actionPriority';
 import { buildLocalBrief } from '../domain/sessionBrief';
 import { buildScenarioSet, type LocalScenarioSet } from '../domain/scenario';
-import { buildPlan, marketOpenNow, type LocalPlan } from '../domain/positionPlan';
-import { resolvePrimaryStance, type ResolvedStance } from '../domain/primaryStance';
-import { resolveCommandSummary, SIGNALS as CS_SIGNALS } from '../domain/commandSummary';
+import {
+  buildPlan, projectPlanningSession, type LocalPlan,
+  type PlanningSessionAuthority,
+} from '../domain/positionPlan';
+import {
+  buildDataGatedInputV2, buildPredictionLedgerV2Adapter, buildRiskKernel,
+  evaluateSingleDecisionAuthority, verifyDecisionEvidence,
+  SINGLE_DECISION_AUTHORITY_V2_POLICY,
+  type PrimaryAction, type RiskContributionV1, type SingleDecisionAuthorityResultV2,
+  type PredictionLedgerSdaAdapterV2,
+} from '../domain/singleDecisionAuthority';
 import { classifyRole, buildStrategy, type LocalStrategy } from '../domain/portfolioStrategy';
 import {
   buildLocalFireCore, fireCoreMetaSnapshot, subscribeFireCoreMeta,
   type LocalFireCore,
 } from '../lib/fireCore';
 import { deriveTodayJudgment, combinePhase, type TodayPhase } from '../lib/todayCall';
+import type { AssetItem } from '../types/assetItem';
+
+const RISK_DISCIPLINE_POLICY = Object.freeze({
+  policyId: 'argus-risk-discipline-v1',
+  policySha256: '6f6d1562d53e8f978ea8e558770cb6e71f3f84e6b28fe91b85797cfd3f2333b4',
+});
+
+const exactSecondUtc = (epochMs: number) =>
+  new Date(Math.floor(epochMs / 1000) * 1000).toISOString().replace('.000Z', 'Z');
+
+const legacyFiveAction = (value: unknown): PrimaryAction | null => {
+  const normalized = String(value ?? '').trim().toUpperCase().replace(/[_-]+/g, ' ');
+  if (['BUY', 'BUY DIP', 'ADD', 'ENTER', 'GRADUAL ADD'].includes(normalized)) return 'BUY';
+  if (['HOLD'].includes(normalized)) return 'HOLD';
+  if (['WAIT', 'PREPARE', 'PAUSE'].includes(normalized)) return 'WAIT';
+  if (['REDUCE', 'TRIM', 'DEFEND'].includes(normalized)) return 'REDUCE';
+  if (['EXIT', 'SELL', 'SELL ALL'].includes(normalized)) return 'EXIT';
+  return null;
+};
+
+const riskBand = (value: string | null | undefined):
+  'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | 'UNKNOWN' => {
+  const upper = String(value ?? 'UNKNOWN').toUpperCase();
+  return ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(upper)
+    ? upper as 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' : 'UNKNOWN';
+};
 
 // ── V12.2.12: Asset Intelligence(TodayとAsset Deskの共有データ組み立て) ──────
 //
@@ -50,7 +94,7 @@ import { deriveTodayJudgment, combinePhase, type TodayPhase } from '../lib/today
 // この層は新しい投資判断を生成しない — 既存レイヤーの出力の組み立てのみ。
 
 export interface AssetIntel {
-  assets: ReturnType<typeof useAssets>['assets'];
+  assets: AssetItem[];
   aiJ: ReturnType<typeof useAIJudgment>;
   al: ReturnType<typeof useActionLabels>;
   guard: ReturnType<typeof useVisibilityGuard>;
@@ -63,6 +107,9 @@ export interface AssetIntel {
   jpQuotes: ReturnType<typeof useJapanWatchlist>;
   usQuotes: ReturnType<typeof useUSWatchlist>;
   cryptoWatch: ReturnType<typeof useCryptoWatchlist>;
+  fundNav: ReturnType<typeof useFundNav>;
+  /** Canonical live/EOD price map shared with contextual owner tools. */
+  priceBySymbol: ReadonlyMap<string, number>;
   flowRecords: ReturnType<typeof useFlowAttributionList>['records'];
   sdSignals: ReturnType<typeof useSupplyDemandList>['signals'];
   cardGroups: ReturnType<typeof groupAssetCards>;
@@ -81,22 +128,23 @@ export interface AssetIntel {
   isPartial: boolean;
   visLimited: boolean;
   cappedConf: number | null;
-  commandSummary: ReturnType<typeof resolveCommandSummary>;
-  globalAddProhibited: boolean;
   positionRisk: { alert: boolean; ja: string };
-  stanceBySymbol: Map<string, ResolvedStance>;
   aiMeta: AiMeta;
   decisionBySym: Map<string, AssetDecisionView>;
+  /** Sole device-local five-action result. */
+  sdaBySymbol: Map<string, SingleDecisionAuthorityResultV2>;
+  /** Append-only local binding; no quantity, cost basis, return or P/L. */
+  sdaLedgerBindingBySymbol: Map<string, PredictionLedgerSdaAdapterV2>;
 }
 
 export function useAssetIntel(opts: {
   publish: boolean;
-  /** A page that owns holding edits can supply its live device-local asset state. */
-  assets?: ReturnType<typeof useAssets>['assets'];
+  /** The single AssetsProvider supplies the live protected asset state. */
+  assets: AssetItem[];
 }): AssetIntel {
   const publish = opts.publish;
-  const localAssets = useAssets();
-  const assets = opts.assets ?? localAssets.assets;
+  const assets = opts.assets;
+  useEffect(() => publish ? retainDerivedSharePublisher() : undefined, [publish]);
   const fireCoreMetaRevision = useSyncExternalStore(
     subscribeFireCoreMeta,
     fireCoreMetaSnapshot,
@@ -125,17 +173,46 @@ export function useAssetIntel(opts: {
   }, [cryptoAssets, cw.byId]);
   const regime = useMarketRegime();
   const marketLedger = useMarketLedger();
+  const canonicalSessionAuthority = useMemo<PlanningSessionAuthority>(() => ({
+    calendar: marketLedger.ledger?.phase3?.calendar ?? null,
+    serverAsOf: marketLedger.ledger?.phase3?.asOf
+      ?? marketLedger.ledger?.asOf ?? null,
+    receivedAtMs: marketLedger.fetchedAtMs,
+    availability: marketLedger.error ? 'refresh_failed'
+      : marketLedger.loading ? 'loading'
+        : marketLedger.sessionExpired ? 'expired' : 'available',
+  }), [marketLedger.ledger, marketLedger.fetchedAtMs, marketLedger.error,
+    marketLedger.loading, marketLedger.sessionExpired]);
   const ev = useEventRadar();
-  const { data: downside } = useDownsideIncidents();
+  const downsideState = useDownsideIncidents();
+  const { data: downside } = downsideState;
   const guard = useVisibilityGuard();   // Visibility Risk Guard (v10.195)
   const { events: events247 } = useEventsActive();
-  const { data: impEvents } = useImportantEvents();
+  const importantEventsState = useImportantEvents();
+  const { data: impEvents } = importantEventsState;
+  const importantEventsUnknown = importantEventsState.authority !== 'fresh';
+  const downsideUnknown = downsideState.authority !== 'fresh';
 
-  // AI-AS-PRIMARY merge (v10.160→v12.2.12): the single source of truth lives in
-  // domain/assetDecision.ts — Today and Asset Desk both consume THIS result.
-  const merged = useMemo(
-    () => mergeAiPrimary(aiJ.data, al.data?.labels ?? [], Date.now()),
-    [aiJ.data, al.data]);
+  // AI is challenge/dissent evidence only. It never replaces the canonical
+  // five-action SDA result.
+  const aiMeta = useMemo(() => assessAi(aiJ.data, Date.now()), [aiJ.data]);
+  const cardLabels = useMemo(() => {
+    const legacy = (al.data?.labels ?? []).map((label) => ({
+      ...label, judgmentSource: 'rule' as const, aiReasonJa: null,
+    }));
+    if (!downsideUnknown && !importantEventsUnknown) return legacy;
+    const positive = new Set(['BUY', 'BUY DIP', 'ADD', 'ENTER', 'PREPARE', 'GRADUAL ADD']);
+    return legacy.map((label) => ({
+      ...label,
+      action: positive.has(label.action.trim().toUpperCase()) ? 'WAIT' : label.action,
+      confidence: Math.min(label.confidence ?? 0, 0.25),
+      status: 'mock' as const,
+      supportingData: label.supportingData
+        ? { ...label.supportingData, bigFlowRatio: null, price: null,
+          changePct: undefined, volume: undefined, quoteDate: null }
+        : label.supportingData,
+    }));
+  }, [al.data, downsideUnknown, importantEventsUnknown]);
 
   // Unified per-stock cards (v10.140): merge action-labels + downside + 24/7 events
   // + linked macro-event tags into ONE card per stock, grouped + sorted per market.
@@ -148,10 +225,10 @@ export function useAssetIntel(opts: {
       }
     }
     return groupAssetCards({
-      assets, labels: merged.labels, incidents: downside?.incidents ?? [],
-      events: events247 ?? [], linked, aiFreshness: merged.meta.freshness, cryptoQuotes,
+      assets, labels: cardLabels, incidents: downside?.incidents ?? [],
+      events: events247 ?? [], linked, aiFreshness: aiMeta.freshness, cryptoQuotes,
     });
-  }, [assets, merged, downside, events247, impEvents, cryptoQuotes]);
+  }, [assets, aiMeta.freshness, cardLabels, downside, events247, impEvents, cryptoQuotes]);
   const cardBySym = useMemo(() => new Map(
     [...cardGroups.jpWatch, ...cardGroups.usWatch, ...cardGroups.crypto]
       .map((c) => [c.symbol.toUpperCase(), c])), [cardGroups]);
@@ -166,7 +243,8 @@ export function useAssetIntel(opts: {
   // ── V11.8.0 Position / Exposure — device-local. Prices come from the cards
   // already built for Today; quantities/costs never leave localStorage.
   const rates = useRatesSnapshot();
-  const { records: flowRecords } = useFlowAttributionList();
+  const flowState = useFlowAttributionList();
+  const { records: flowRecords } = flowState;
   // v12.0.6 (owner: 保有銘柄の需給が全く出ない): デバイスのウォッチリスト銘柄を
   // サーバーへ渡し、固定リスト外(6965/7011等)にも需給ランクを出す。ソート済み
   // カンマ結合で参照安定化(不要な再fetchを防ぐ)。
@@ -174,19 +252,111 @@ export function useAssetIntel(opts: {
     assets.filter((a) => a.market === 'JP' || a.market === 'US')
       .map((a) => a.symbol.toUpperCase()).sort().join(','),
     [assets]);
-  const { signals: sdSignals } = useSupplyDemandList(sdExtraSymbols);   // v11.10.0 需給ランク
+  const supplyState = useSupplyDemandList(sdExtraSymbols);   // v11.10.0 需給ランク
+  const { signals: sdSignals } = supplyState;
   // Card prices vanish outside sessions (labels carry no price) — fall back to
   // the same real quote hooks Core Portfolio uses (delayed close = real data).
   const peJp = useJapanWatchlist(jpSyms);
   const peUs = useUSWatchlist(usSyms);
-  const positionExposure = useMemo(() => {
-    const priceMap = new Map<string, number>();
-    const okSt = (st?: string) => st != null && st !== 'mock';
-    for (const s of peJp.data?.stocks ?? []) if (okSt(s.status) && Number.isFinite(s.price)) priceMap.set(s.symbol.toUpperCase(), s.price);
-    for (const s of peUs.data?.stocks ?? []) if (okSt(s.status) && Number.isFinite(s.price)) priceMap.set(s.symbol.toUpperCase(), s.price);
-    for (const c of [...cardGroups.jpWatch, ...cardGroups.usWatch, ...cardGroups.crypto]) {
-      if (c.price != null && Number.isFinite(c.price)) priceMap.set(c.symbol.toUpperCase(), c.price);
+  const fundNav = useFundNav();
+  const priceBySymbol = useMemo(() => {
+    const prices = new Map<string, number>();
+    const usable = (quote: { status?: string; quoteTruth?: Parameters<typeof quoteDecisionUsable>[0] }) =>
+      (quote.status === 'live' || quote.status === 'delayed')
+      && !!quote.quoteTruth && quoteDecisionUsable(quote.quoteTruth);
+    for (const quote of peJp.data?.stocks ?? []) {
+      if (usable(quote) && Number.isFinite(quote.price)) {
+        prices.set(quote.symbol.toUpperCase(), quote.price);
+      }
     }
+    for (const quote of peUs.data?.stocks ?? []) {
+      if (usable(quote) && Number.isFinite(quote.price)) {
+        prices.set(quote.symbol.toUpperCase(), quote.price);
+      }
+    }
+    for (const card of [...cardGroups.jpWatch, ...cardGroups.usWatch, ...cardGroups.crypto]) {
+      // JP/US valuation authority is the source-timestamped watch quote. Action
+      // labels are decisions, not an alternate price feed. Crypto cards receive
+      // price only from the already-authorized CoinGecko projection above.
+      if (card.market === 'CRYPTO' && card.price != null && Number.isFinite(card.price)) {
+        prices.set(card.symbol.toUpperCase(), card.price);
+      }
+    }
+    for (const asset of assets) {
+      const fund = fundNavForAsset(asset, fundNav.funds);
+      if (fund && Number.isFinite(fund.navYen)) {
+        prices.set(asset.symbol.toUpperCase(), fund.navYen);
+      }
+    }
+    return prices;
+  }, [assets, cardGroups, fundNav.funds, peJp.data, peUs.data]);
+
+  const mixedCurrencyHeld = useMemo(() => {
+    const heldCurrencies = new Set(assets.filter((asset) => (asset.quantity ?? 0) > 0)
+      .map((asset) => currencyOf(asset.market)));
+    return heldCurrencies.has('USD') && heldCurrencies.has('JPY');
+  }, [assets]);
+  const fxAuthorityMissing = mixedCurrencyHeld
+    && (rates.authority !== 'fresh'
+      || !ratePointDecisionUsable(rates.data?.usdJpy));
+  const sessionAuthorityMissing = canonicalSessionAuthority.availability !== 'available';
+  const quoteAuthorityMissing = assets.some((asset) =>
+    (asset.market === 'JP' || asset.market === 'US')
+    && !priceBySymbol.has(asset.symbol.toUpperCase()));
+
+  // Device-local handoffs preserve the earliest upstream evidence deadline.
+  // Re-publishing cannot renew a source timestamp; the local two-minute cap is
+  // only an additional upper bound.
+  const derivedAuthorityValidUntilMs = useMemo(() => {
+    const nowMs = Date.now();
+    const deadlines: number[] = [nowMs + 2 * 60_000];
+    const addSnapshot = (authority: string, asOf: unknown,
+      kind: Parameters<typeof liveAuthorityExpiresAt>[1]) => {
+      if (authority !== 'fresh') return;
+      const deadline = liveAuthorityExpiresAt(asOf, kind);
+      if (deadline != null) deadlines.push(deadline);
+    };
+    addSnapshot(al.authority, al.data?.asOf, 'actionLabels');
+    addSnapshot(regime.authority, regime.data?.asOf, 'marketRegime');
+    addSnapshot(ev.authority, ev.data?.asOf, 'eventRadar');
+    addSnapshot(downsideState.authority, downside?.asOf, 'downsideIncidents');
+    addSnapshot(importantEventsState.authority, impEvents?.asOf, 'importantEvents');
+    addSnapshot(flowState.authority, flowState.asOf, 'flowAttribution');
+    addSnapshot(supplyState.authority, supplyState.asOf, 'supplyDemand');
+    if (guard && guard.visibilityLevel !== 'minimal') {
+      const deadline = liveAuthorityExpiresAt(guard.asOf, 'visibilityGuard');
+      if (deadline != null) deadlines.push(deadline);
+    }
+    if (rates.authority === 'fresh' && rates.data?.usdJpy) {
+      const deadline = ratePointDecisionExpiresAt(rates.data.usdJpy);
+      if (deadline != null) deadlines.push(deadline);
+    }
+    if (canonicalSessionAuthority.availability === 'available') {
+      for (const row of Object.values(canonicalSessionAuthority.calendar ?? {})) {
+        const deadline = exactAuthorityEpoch(row.sessionValidUntil);
+        if (deadline != null) deadlines.push(deadline);
+      }
+    }
+    for (const quote of [...(peJp.data?.stocks ?? []), ...(peUs.data?.stocks ?? [])]) {
+      if (!quote.quoteTruth || !quoteDecisionUsable(quote.quoteTruth, nowMs)) continue;
+      const deadline = quoteDecisionExpiresAt(quote.quoteTruth);
+      if (deadline != null) deadlines.push(deadline);
+    }
+    for (const fund of fundNav.funds) {
+      const deadline = calendarDateExpiresAt(fund.date, 7);
+      if (deadline != null) deadlines.push(deadline);
+    }
+    for (const quote of Object.values(cw.byId ?? {})) {
+      const deadline = liveAuthorityExpiresAt(quote.sourceTimestamp, 'cryptoQuote');
+      if (deadline != null) deadlines.push(deadline);
+    }
+    return Math.min(...deadlines);
+  }, [al.authority, al.data, regime.authority, regime.data, ev.authority, ev.data,
+    downsideState.authority, downside, importantEventsState.authority, impEvents,
+    flowState.authority, flowState.asOf, supplyState.authority, supplyState.asOf,
+    guard, rates.authority, rates.data, canonicalSessionAuthority,
+    peJp.data, peUs.data, fundNav.funds, cw.byId]);
+  const positionExposure = useMemo(() => {
     const flowBySymbol: Record<string, string> = {};
     for (const r of flowRecords) flowBySymbol[r.symbol.toUpperCase()] = r.flowClass;
     const eventSymbols = new Set<string>();
@@ -195,19 +365,24 @@ export function useAssetIntel(opts: {
         for (const a of ie.linkedAssets ?? []) eventSymbols.add(String(a).toUpperCase());
       }
     }
+    if (importantEventsUnknown) {
+      for (const asset of assets) eventSymbols.add(asset.symbol.toUpperCase());
+    }
     const regLabel = regime.data?.regime?.label ?? null;
     const sdRankBySymbol: Record<string, string> = {};
     for (const s of sdSignals) sdRankBySymbol[s.symbol.toUpperCase()] = s.supplyDemandRank;
     const pe = buildPositionExposure(
       assets,
-      (a) => priceMap.get(a.symbol.toUpperCase()),
-      rates.data?.usdJpy?.latestValue ?? null,
+      (a) => priceBySymbol.get(a.symbol.toUpperCase()),
+      ratePointDecisionUsable(rates.data?.usdJpy)
+        ? rates.data?.usdJpy?.latestValue ?? null : null,
       { regimeLabel: regLabel, riskOff: regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT',
         flowBySymbol, eventSymbols, sdRankBySymbol },
     );
-    if (publish) publishExposure(pe);   // Pro Handoff / AI Review read this at copy time (device-local)
+    if (publish) publishExposure(pe, derivedAuthorityValidUntilMs);
     return pe;
-  }, [assets, cardGroups, rates.data, flowRecords, sdSignals, impEvents, regime.data, peJp.data, peUs.data, publish]);
+  }, [assets, rates.data, flowRecords, sdSignals, impEvents, regime.data, priceBySymbol,
+    publish, importantEventsUnknown, derivedAuthorityValidUntilMs]);
 
   // v11.12.0: ACTION PRIORITY — 全レイヤーを「今日これを見る」に統合(端末内・保有加味)。
   const apItems: APItem[] = useMemo(() => {
@@ -237,6 +412,13 @@ export function useAssetIntel(opts: {
       const fl = flowBySym.get(sym);
       const missing: string[] = [];
       if (note?.held && note.pnlPct == null) missing.push(a.avgCost == null ? '取得単価' : '価格');
+      if (!fl) missing.push('フロー未取得');
+      if (a.market === 'JP' && !sd) missing.push('需給未取得');
+      if ((a.market === 'JP' || a.market === 'US') && !priceBySymbol.has(sym)) {
+        missing.push('現在価格未確認');
+      }
+      if (a.market === 'US' && fxAuthorityMissing) missing.push('USDJPY未確認');
+      if (sessionAuthorityMissing) missing.push('市場セッション未確認');
       return buildAPItem({
         symbol: sym, market: a.market, assetName: a.displayNameJa || a.displayName,
         isHeld: !!note?.held, weightPct: note?.weightPct ?? null,
@@ -245,16 +427,19 @@ export function useAssetIntel(opts: {
         readiness: note?.readiness ?? null,
         sdRank: sd?.supplyDemandRank ?? null, sdCondition: sd?.condition ?? null,
         flowClass: fl?.flowClass ?? null,
-        eventPending: eventSyms.has(sym), eventName: eventSyms.get(sym) ?? null,
+        eventPending: importantEventsUnknown || eventSyms.has(sym),
+        eventName: importantEventsUnknown ? '重要イベント情報未確認' : eventSyms.get(sym) ?? null,
         regimeRiskOff: riskOff, changePct: fl?.changePct ?? null,
         dataMissing: missing,
         dqContradictedAvoidChase: dqContra.has(sym), dqSupported: dqSupp.has(sym),
       });
     });
     const ranked = rankAPItems(items, 20);
-    if (publish) publishActionPriorities(ranked);   // Handoff/AIReview read at copy time
+    if (publish) publishActionPriorities(ranked, derivedAuthorityValidUntilMs);
     return ranked;
-  }, [assets, positionExposure, sdSignals, flowRecords, impEvents, regime.data, publish]);
+  }, [assets, positionExposure, sdSignals, flowRecords, impEvents, regime.data, publish,
+    importantEventsUnknown, priceBySymbol, fxAuthorityMissing, sessionAuthorityMissing,
+    derivedAuthorityValidUntilMs]);
 
   // v11.13.0: SESSION BRIEF — 今日の作戦(端末内合成・保有加味)。
   const sessionBrief = useMemo(() => {
@@ -262,6 +447,7 @@ export function useAssetIntel(opts: {
     for (const ie of impEvents?.events ?? []) {
       if (ie.countdown === 'D' || ie.countdown === 'D-1') eventNames.push(ie.eventCode);
     }
+    if (importantEventsUnknown) eventNames.push('重要イベント情報未確認');
     const regLabel = regime.data?.regime?.label ?? null;
     const missing: string[] = [];
     if (!positionExposure.noHoldings && positionExposure.unpriced.length) {
@@ -271,11 +457,12 @@ export function useAssetIntel(opts: {
       eventNames: [...new Set(eventNames)].slice(0, 3),
       riskOff: regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT',
       missingDataJa: missing,
-      marketCalendar: marketLedger.ledger?.phase3?.calendar,
+      sessionAuthority: canonicalSessionAuthority,
     });
-    if (publish) publishSessionBrief(b);
+    if (publish) publishSessionBrief(b, derivedAuthorityValidUntilMs);
     return b;
-  }, [apItems, impEvents, regime.data, positionExposure, marketLedger.ledger, publish]);
+  }, [apItems, impEvents, regime.data, positionExposure, importantEventsUnknown,
+    canonicalSessionAuthority, publish, derivedAuthorityValidUntilMs]);
 
   // v11.17.0: SCENARIOS — 条件付きの分岐(端末内合成・保有加味)。単一予測ではなく
   // ベース/強気/弱気/踏み上げ失速/イベント待ちを全レイヤーから決定論合成。帯のみ。
@@ -302,15 +489,25 @@ export function useAssetIntel(opts: {
         sdLevel: (sd as { supplyDemandLevel?: string } | undefined)?.supplyDemandLevel ?? null,
         sdDirection: (sd as { direction?: string } | undefined)?.direction ?? null,
         flowClass: fl?.flowClass ?? null,
-        eventPending: eventSyms.has(sym), eventName: eventSyms.get(sym) ?? null,
+        eventPending: importantEventsUnknown || eventSyms.has(sym),
+        eventName: importantEventsUnknown ? '重要イベント情報未確認' : eventSyms.get(sym) ?? null,
         regimeRiskOff: riskOff, changePct: fl?.changePct ?? null,
         positionRiskLevel: riskBySym.get(sym) ?? null,
-        missing: sd || fl ? [] : ['需給/フロー未取得'],
+        missing: [
+          ...(!fl ? ['フロー未取得'] : []),
+          ...(a.market === 'JP' && !sd ? ['需給未取得'] : []),
+          ...((a.market === 'JP' || a.market === 'US') && !priceBySymbol.has(sym)
+            ? ['現在価格未確認'] : []),
+          ...(a.market === 'US' && fxAuthorityMissing ? ['USDJPY未確認'] : []),
+          ...(sessionAuthorityMissing ? ['市場セッション未確認'] : []),
+        ],
       });
     });
-    if (publish) publishScenarios(sets);   // Handoff/AIReview/Regime/CorePortfolio read at render/copy time
+    if (publish) publishScenarios(sets, derivedAuthorityValidUntilMs);
     return sets;
-  }, [assets, positionExposure, sdSignals, flowRecords, impEvents, regime.data, publish]);
+  }, [assets, positionExposure, sdSignals, flowRecords, impEvents, regime.data, publish,
+    importantEventsUnknown, priceBySymbol, fxAuthorityMissing, sessionAuthorityMissing,
+    derivedAuthorityValidUntilMs]);
 
   // v11.19.0: PORTFOLIO STRATEGY — 役割分類(コア/サテライト/戦術枠/ヘッジ)と
   // FIRE整合・リスク予算を端末内で合成。計画層(下)へ制約を供給する。
@@ -331,22 +528,23 @@ export function useAssetIntel(opts: {
         theme: themeOf(a), assetType: a.assetType,
         isHeld: !!note?.held, weightPct: note?.weightPct ?? null,
         concentrationRisk: positionExposure.top1Symbol === sym ? positionExposure.singleNameRisk : null,
-        eventPending: eventSyms.has(sym),
+        eventPending: importantEventsUnknown || eventSyms.has(sym),
       });
     });
     // v11.19.1: FIRE Core(投信=本丸資産)を先に合成し、戦略へ文脈供給
     const fc = buildLocalFireCore(assets, positionExposure, roles);
-    if (publish) publishFireCore(fc);
+    if (publish) publishFireCore(fc, derivedAuthorityValidUntilMs);
     const s = buildStrategy(positionExposure, roles, {
-      eventPending: eventSyms.size > 0,
+      eventPending: importantEventsUnknown || eventSyms.size > 0,
       recurringAccumulationKnown: fc.contributionDataStatus === 'complete',
       fireCore: { known: fc.fireCoreTotal != null,
         tacticalToCoreBand: fc.tacticalToCoreBand,
         contributionKnown: fc.contributionDataStatus === 'complete' },
     });
-    if (publish) publishStrategy(s);   // CorePortfolio/Handoff/AIReview read at render/copy time
+    if (publish) publishStrategy(s, derivedAuthorityValidUntilMs);
     return { strategy: s, fireCore: fc };
-  }, [assets, positionExposure, impEvents, publish, fireCoreMetaRevision]);
+  }, [assets, positionExposure, impEvents, publish, fireCoreMetaRevision,
+    importantEventsUnknown, derivedAuthorityValidUntilMs]);
   const portfolioStrategy = strategyAndFire.strategy;
   const fireCore = strategyAndFire.fireCore;
 
@@ -383,15 +581,23 @@ export function useAssetIntel(opts: {
         flowClass: fl?.flowClass ?? null,
         scenarioDominant: scBySym.get(sym)?.dominant ?? null,
         apCategory: apBySym.get(sym)?.category ?? null,
-        eventPending: eventSyms.has(sym), eventName: eventSyms.get(sym) ?? null,
+        eventPending: importantEventsUnknown || eventSyms.has(sym),
+        eventName: importantEventsUnknown ? '重要イベント情報未確認' : eventSyms.get(sym) ?? null,
         regimeRiskOff: regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT',
         weightPct: note?.weightPct ?? null,
         concentrationRisk: positionExposure.top1Symbol === sym ? positionExposure.singleNameRisk : null,
         positionRiskLevel: riskBySym.get(sym) ?? null,
         pnlPct: note?.pnlPct ?? null,
         priorRunupPct: null,
-        marketOpen: marketOpenNow(a.market),
-        missing: sd || fl ? [] : ['需給/フロー未取得'],
+        marketSession: projectPlanningSession(a.market, canonicalSessionAuthority),
+        missing: [
+          ...(!fl ? ['フロー未取得'] : []),
+          ...(a.market === 'JP' && !sd ? ['需給未取得'] : []),
+          ...((a.market === 'JP' || a.market === 'US') && !priceBySymbol.has(sym)
+            ? ['現在価格未確認'] : []),
+          ...(a.market === 'US' && fxAuthorityMissing ? ['USDJPY未確認'] : []),
+          ...(sessionAuthorityMissing ? ['市場セッション未確認'] : []),
+        ],
         portfolioTacticalStretched: tacticalStretched,
         themeConcentrationHigh: themeHigh && aiTheme,
       });
@@ -412,11 +618,15 @@ export function useAssetIntel(opts: {
           addPolicyJa: r.addPolicyJa, strategyFit: r.strategyFit };
       }
     }
-    if (publish) publishPlans(plans);   // Handoff/AIReview/CorePortfolio read at render/copy time
+    if (publish) publishPlans(plans, derivedAuthorityValidUntilMs);
     return plans;
-  }, [assets, positionExposure, sdSignals, flowRecords, scenarioSets, apItems, impEvents, regime.data, portfolioStrategy, fireCore, publish]);
+  }, [assets, positionExposure, sdSignals, flowRecords, scenarioSets, apItems,
+    impEvents, regime.data, portfolioStrategy, fireCore, importantEventsUnknown,
+    canonicalSessionAuthority, publish, priceBySymbol, fxAuthorityMissing,
+    sessionAuthorityMissing, derivedAuthorityValidUntilMs]);
 
-  const phase = combinePhase(al.phase as TodayPhase, regime.phase as TodayPhase);
+  const phase = combinePhase(al.phase as TodayPhase, regime.phase as TodayPhase,
+    ev.phase as TodayPhase);
   const judgment = useMemo(
     () => deriveTodayJudgment(al.data, regime.data, ev.data, Date.now()),
     [al.data, regime.data, ev.data],
@@ -432,13 +642,16 @@ export function useAssetIntel(opts: {
     const global = (ds && ds !== 'UNKNOWN') ? ds : (regime.data?.regime?.label || ds || 'UNKNOWN');
     return {
       globalRegime: global,
-      jpIntradayOverlay: downside?.jpIntradayOverlay || 'NORMAL',
-      holderRiskOverlay: downside?.holderRiskOverlay || 'NONE',
+      jpIntradayOverlay: downsideUnknown ? 'CAUTION' : downside?.jpIntradayOverlay || 'NORMAL',
+      holderRiskOverlay: downsideUnknown
+        ? 'REVIEW_REQUIRED' : downside?.holderRiskOverlay || 'NONE',
     };
-  }, [downside, regime.data]);
+  }, [downside, regime.data, downsideUnknown]);
   // Partial-data discipline: when data is incomplete, cap confidence at 0.60 and
   // flag PARTIAL so a HOLD never looks high-confidence on thin data.
-  const isPartial = phase === 'partial';
+  const isPartial = phase === 'partial' || importantEventsUnknown || downsideUnknown
+    || flowState.authority !== 'fresh' || supplyState.authority !== 'fresh'
+    || fxAuthorityMissing || sessionAuthorityMissing || quoteAuthorityMissing;
   const baseConf = regime.data?.regime?.confidence ?? null;
   // v10.195: fold the Visibility Risk Guard cap into the SAME confidence the hero +
   // judgment log use. Intersect base, the partial-0.60, and the guard cap — ignoring
@@ -447,20 +660,6 @@ export function useAssetIntel(opts: {
     .filter((v): v is number => typeof v === 'number');
   const cappedConf = capCandidates.length ? Math.min(...capCandidates) : baseConf;
   const visLimited = !!guard && guard.visibilityLevel !== 'full';
-
-  // v12.0.8追補: ヒーローと同じ解決器で総合コマンドを一度だけ解決 —
-  // Today's Stanceカードとadd可否判定が同一のsummaryを共有する。
-  const commandSummary = useMemo(() => resolveCommandSummary({
-    legacyAction: judgment.overall, globalRegime: overlay?.globalRegime,
-    jpOverlay: overlay?.jpIntradayOverlay, ownerRisk: overlay?.holderRiskOverlay,
-    risk: judgment.risk, isPartial: isPartial || visLimited,
-    confidence: cappedConf, nextConditionJa: judgment.nextCondition,
-  }), [judgment, overlay, isPartial, visLimited, cappedConf]);
-  const globalAddProhibited = useMemo(() => {
-    try {
-      return CS_SIGNALS[commandSummary.signalCode].permissions.add === 'BLOCKED';
-    } catch { return false; }
-  }, [commandSummary]);
 
   // v12.0.8追補: 保有リスクチップ(市場リスクと分離) — 保有×P0/P1件数から。
   const positionRisk = useMemo(() => {
@@ -471,71 +670,158 @@ export function useAssetIntel(opts: {
                  : { alert: false, ja: '明確な警報なし' };
   }, [positionExposure, apItems]);
 
-  // v12.0.8 Part C: 銘柄ごとの「単一の構え」(全カード共通チップ) — Session Brief /
-  // AP / Plan / カードの矛盾(P1なのに対応不要 等)を構造的に排除。売買指示ではない。
-  const stanceBySymbol = useMemo(() => {
-    const m = new Map<string, ResolvedStance>();
-    const apBySym = new Map(apItems.map((it) => [it.symbol, it]));
-    const planBySym = new Map(positionPlans.map((pl) => [pl.symbol, pl]));
-    const scBySym = new Map(scenarioSets.map((sc) => [sc.symbol, sc]));
-    const sdBySym = new Map(sdSignals.map((sg) => [sg.symbol.toUpperCase(), sg]));
-    const flowBySym = new Map(flowRecords.map((r) => [r.symbol.toUpperCase(), r.flowClass]));
-    const riskBySym = new Map(positionExposure.risks.map((r) => [r.symbol, r.riskLevel]));
-    const heldSyms = new Set(positionExposure.notes ? Object.keys(positionExposure.notes) : []);
+  // Round 2: owner-private context joins public evidence exactly here. Existing
+  // AP/plan/scenario/rule/AI values remain evidence, never action selectors.
+  const canonicalDecision = useMemo(() => {
+    const sda = new Map<string, SingleDecisionAuthorityResultV2>();
+    const bindings = new Map<string, PredictionLedgerSdaAdapterV2>();
+    const views = new Map<string, AssetDecisionView>();
+    const ruleBySym = new Map((al.data?.labels ?? []).map((row) => [row.symbol.toUpperCase(), row]));
+    const aiBySym = new Map((aiJ.data?.labels ?? []).map((row) => [row.symbol.toUpperCase(), row]));
+    const riskBySym = new Map(positionExposure.risks.map((row) => [row.symbol, row.riskLevel]));
     const eventSyms = new Set<string>();
-    for (const ie of impEvents?.events ?? []) {
-      if (ie.countdown === 'D' || ie.countdown === 'D-1') {
-        for (const a of ie.linkedAssets ?? []) eventSyms.add(String(a).toUpperCase());
+    for (const event of impEvents?.events ?? []) {
+      if (event.countdown === 'D' || event.countdown === 'D-1') {
+        for (const linked of event.linkedAssets ?? []) eventSyms.add(String(linked).toUpperCase());
       }
     }
-    for (const a of assets) {
-      const sym = a.symbol.toUpperCase();
-      const ap = apBySym.get(sym);
-      const pl = planBySym.get(sym);
-      m.set(sym, resolvePrimaryStance({
-        isHeld: heldSyms.has(sym) || !!ap?.isHeld,
-        apRank: ap?.priorityRank, apLabel: ap?.actionLabel,
-        planStance: pl?.currentStance, scenarioDominant: scBySym.get(sym)?.dominant,
-        sdCondition: sdBySym.get(sym)?.condition, sdLevel: sdBySym.get(sym)?.supplyDemandLevel,
-        flowClass: flowBySym.get(sym), eventWait: eventSyms.has(sym),
-        riskLevel: riskBySym.get(sym), dataPartial: isPartial || visLimited,
-        baseConfidence: ap?.confidence,
-        globalAddProhibited,
-      }));
-    }
-    return m;
-  }, [assets, apItems, positionPlans, scenarioSets, sdSignals, flowRecords,
-      positionExposure, impEvents, isPartial, visLimited, globalAddProhibited]);
+    const decisionMs = Date.now();
+    const decisionAt = exactSecondUtc(decisionMs);
+    const validChallengeTime = (value: unknown) => {
+      const epoch = exactAuthorityEpoch(value);
+      return epoch != null && epoch <= decisionMs ? exactSecondUtc(epoch) : null;
+    };
+    const aiAsOf = validChallengeTime(aiJ.data?.asOf);
+    const ruleAsOf = validChallengeTime(al.data?.asOf);
 
-  // ── V12.2.12: 銘柄別の判断ビュー(AI PRIMARY / RULE TEMPORARY・source追跡) ──
-  const decisionBySym = useMemo(() => {
-    const m = new Map<string, AssetDecisionView>();
-    const mergedBySym = new Map(merged.labels.map((l) => [l.symbol.toUpperCase(), l]));
-    const ruleBySym = new Map((al.data?.labels ?? []).map((l) => [l.symbol.toUpperCase(), l]));
-    const aiBySym = new Map((aiJ.data?.labels ?? []).map((l) => [l.symbol.toUpperCase(), l]));
-    for (const a of assets) {
-      const sym = a.symbol.toUpperCase();
-      m.set(sym, resolveAssetDecision({
-        symbol: sym,
-        merged: mergedBySym.get(sym),
-        ruleLabel: ruleBySym.get(sym),
-        aiLabel: aiBySym.get(sym),
-        meta: merged.meta,
-        symbolHasAi: aiBySym.has(sym),
+    for (const asset of assets) {
+      const sym = asset.symbol.toUpperCase();
+      const market = ['JP', 'US', 'CRYPTO', 'FUND'].includes(asset.market)
+        ? asset.market as 'JP' | 'US' | 'CRYPTO' | 'FUND' : 'FUND';
+      const positionState: 'UNKNOWN' | 'HELD' | 'NOT_HELD' = asset.quantity == null
+        || !Number.isFinite(asset.quantity) || asset.quantity < 0 ? 'UNKNOWN'
+        : asset.quantity > 0 ? 'HELD' : 'NOT_HELD';
+      const ownerNote = positionExposure.notes[sym];
+      const { positionRiskBand: positionBand, concentrationBand } = deriveLocalOwnerRiskBands({
+        positionState,
+        flaggedPositionRisk: riskBySym.get(sym) ?? null,
+        positionRiskKnown: ownerNote?.held === true && ownerNote.pnlPct != null,
+        concentrationWeightPct: ownerNote?.weightPct,
+      });
+      const missingQuote = (market === 'JP' || market === 'US') && !priceBySymbol.has(sym);
+      const addPermission: 'UNKNOWN' | 'BLOCKED' | 'ALLOWED' = positionState === 'UNKNOWN' ? 'UNKNOWN'
+        : missingQuote || sessionAuthorityMissing
+          || positionBand === 'HIGH' || positionBand === 'CRITICAL'
+          ? 'BLOCKED' : 'ALLOWED';
+      const ownerContext = {
+        schemaVersion: 'owner-decision-context-v1' as const,
+        privacyClass: 'DEVICE_LOCAL' as const,
+        asOf: decisionAt,
+        positionState,
+        positionRiskBand: positionBand,
+        concentrationBand,
+        addPermission,
+      };
+      const input = buildDataGatedInputV2({
+        subject: { kind: 'ASSET', instrumentId: sym, market, horizon: 'FIVE_DAY' },
+        decisionAt,
+        informationCutoffAt: decisionAt,
+        authorityPolicy: SINGLE_DECISION_AUTHORITY_V2_POLICY,
+        ownerContext,
+      });
+
+      const contributions: RiskContributionV1[] = [];
+      const row = riskBySym.get(sym);
+      if (row) contributions.push({
+        evidenceRef: `portfolio:risk-${sym.toLowerCase()}`,
+        primitiveFactorId: 'portfolio.position_risk',
+        sourceKind: 'PORTFOLIO',
+        constraint: row === 'critical' ? 'EXIT_RISK'
+          : row === 'high' ? 'REDUCE_RISK' : row === 'medium' ? 'BLOCK_BUY' : 'NONE',
+        status: 'ACTIVE', severity: riskBand(row),
+        confidenceCapBps: row === 'critical' ? 4000 : row === 'high' ? 5500 : 8000,
+        observedAt: decisionAt,
+      });
+      if (positionExposure.top1Symbol === sym && positionExposure.singleNameRisk) {
+        contributions.push({
+          evidenceRef: `concentration:single-${sym.toLowerCase()}`,
+          primitiveFactorId: 'portfolio.single_name_concentration',
+          sourceKind: 'CONCENTRATION',
+          constraint: ['high', 'critical'].includes(positionExposure.singleNameRisk)
+            ? 'BLOCK_BUY' : 'NONE',
+          status: 'ACTIVE', severity: riskBand(positionExposure.singleNameRisk),
+          confidenceCapBps: 7500, observedAt: decisionAt,
+        });
+      }
+      if (eventSyms.has(sym) || importantEventsUnknown) contributions.push({
+        evidenceRef: `event:calendar-${sym.toLowerCase()}`,
+        primitiveFactorId: 'event.calendar_uncertainty', sourceKind: 'EVENT',
+        constraint: importantEventsUnknown ? 'NONE' : 'WAIT_REQUIRED',
+        status: importantEventsUnknown ? 'MISSING' : 'ACTIVE',
+        severity: importantEventsUnknown ? 'UNKNOWN' : 'MEDIUM',
+        confidenceCapBps: 5000, observedAt: decisionAt,
+      });
+      if (missingQuote || sessionAuthorityMissing || isPartial || visLimited) contributions.push({
+        evidenceRef: `discipline:authority-${sym.toLowerCase()}`,
+        primitiveFactorId: 'discipline.required_authority', sourceKind: 'DISCIPLINE',
+        constraint: 'NONE', status: 'MISSING', severity: 'UNKNOWN',
+        confidenceCapBps: 2500, observedAt: decisionAt,
+      });
+      input.riskKernel = buildRiskKernel({
+        schemaVersion: 'argus-risk-discipline-input-v1',
+        subject: { kind: 'ASSET', instrumentId: sym, market },
+        asOf: decisionAt, informationCutoffAt: decisionAt,
+        policy: RISK_DISCIPLINE_POLICY,
+        contributions,
+      });
+
+      const challenges = [] as typeof input.challengeEvidence;
+      const ai = aiBySym.get(sym);
+      if (ai && aiAsOf) challenges.push({
+        challengeId: `ai.${sym.toLowerCase()}`, sourceKind: 'AI', status: 'AVAILABLE',
+        asOf: aiAsOf, proposedAction: legacyFiveAction(ai.aiFinalAction),
+        dissentReasonCodes: [], evidenceRefs: [`ai:judgment-${sym.toLowerCase()}`],
+      });
+      const rule = ruleBySym.get(sym);
+      if (rule && ruleAsOf) challenges.push({
+        challengeId: `legacy.${sym.toLowerCase()}`, sourceKind: 'LEGACY', status: 'AVAILABLE',
+        asOf: ruleAsOf, proposedAction: legacyFiveAction(rule.action),
+        dissentReasonCodes: [], evidenceRefs: [`legacy:action-label-${sym.toLowerCase()}`],
+      });
+      input.challengeEvidence = challenges.sort((left, right) =>
+        left.challengeId.localeCompare(right.challengeId));
+
+      const result = evaluateSingleDecisionAuthority(verifyDecisionEvidence(input));
+      const adapter = buildPredictionLedgerV2Adapter(result);
+      sda.set(sym, result);
+      bindings.set(sym, adapter);
+      views.set(sym, projectCanonicalAssetDecision({
+        symbol: sym, result, ruleLabel: rule, aiLabel: ai, meta: aiMeta,
       }));
     }
-    return m;
-  }, [assets, merged, al.data, aiJ.data]);
+    return { sda, bindings, views };
+  }, [assets, al.data, aiJ.data, aiMeta, positionExposure, impEvents,
+    importantEventsUnknown, priceBySymbol,
+    sessionAuthorityMissing, isPartial, visLimited]);
+  useEffect(() => {
+    for (const [symbol, result] of canonicalDecision.sda) {
+      const adapter = canonicalDecision.bindings.get(symbol);
+      if (adapter) appendDeviceLocalSdaLedger(result, adapter);
+    }
+  }, [canonicalDecision]);
+  const sdaBySymbol = canonicalDecision.sda;
+  const sdaLedgerBindingBySymbol = canonicalDecision.bindings;
+  const decisionBySym = canonicalDecision.views;
 
   return {
     assets, aiJ, al, guard, regime, downside, events247, impEvents, rates,
-    jpQuotes: peJp, usQuotes: peUs, cryptoWatch: cw,
+    jpQuotes: peJp, usQuotes: peUs, cryptoWatch: cw, fundNav, priceBySymbol,
     flowRecords, sdSignals,
     cardGroups, cardBySym, ownerCritical,
     positionExposure, apItems, sessionBrief, scenarioSets,
     portfolioStrategy, fireCore, positionPlans,
     phase, judgment, overlay, isPartial, visLimited, cappedConf,
-    commandSummary, globalAddProhibited, positionRisk, stanceBySymbol,
-    aiMeta: merged.meta, decisionBySym,
+    positionRisk,
+    aiMeta, decisionBySym, sdaBySymbol, sdaLedgerBindingBySymbol,
   };
 }

@@ -1,5 +1,4 @@
 import React from 'react';
-import { autoQueueTranslations } from '../../lib/queueRequests';
 
 // INSTITUTIONAL VIEW inside the asset card (v10.147). A NAMED institutional VIEW is
 // reported context — never a named trading position. Public metadata only; the full
@@ -53,13 +52,6 @@ export const InstitutionalView: React.FC<{ symbol: string }> = ({ symbol }) => {
         if (!alive) return;
         const its: IntelItem[] = j.items || [];
         setItems(its);
-        // 未翻訳の英語見出しを可視翻訳キューへ(dedupe済み・24/365 cronが排出)
-        const pend = its
-          .filter((it) => it.translationStatus === 'pending' && it.titleOriginal)
-          .map((it) => ({ titleOriginal: String(it.titleOriginal),
-                          source: it.institutionId ?? undefined,
-                          publishedAt: it.publishedAt ?? undefined }));
-        if (pend.length) autoQueueTranslations(`inst-view|${symbol}`, 'institutional-view', symbol, '', pend);
       }).catch(() => {});
     return () => { alive = false; };
   }, [symbol]);

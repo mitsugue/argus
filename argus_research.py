@@ -14,6 +14,8 @@ from signals ARGUS ALREADY has — with NO LLM. Hardened for epistemic honesty:
 Posture is from a research-only set — NEVER a trade instruction.
 """
 import math
+import re
+from datetime import datetime, timedelta, timezone
 
 SCHEMA = "dossier-v2"
 CALIB = "uncalibrated_heuristic_v1"        # no outcome calibration yet (honest)
@@ -100,17 +102,44 @@ def classify_edinet_doc(doc_type_code, description):
     return by_code.get(str(doc_type_code or ""), "other")
 
 
-def edinet_event_relationship(submit_dt_str, event_date_str):
-    """Pure: a filing's submission vs the event DATE (both JST). EDINET
-    submitDateTime is 'YYYY-MM-DD HH:MM'. Returns precedes_or_same_day |
-    after_event_day | unknown. We never claim a filing caused a move it postdates."""
-    s = str(submit_dt_str or "")[:10]
-    if not s or not event_date_str:
+_EDINET_SUBMIT_TIME = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
+_EVENT_OBSERVED_TIME = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$")
+
+
+def edinet_event_relationship(submit_dt_str, event_observed_at):
+    """Compare exact EDINET JST submission time with exact event observation.
+
+    A calendar date cannot establish intraday causal ordering.  A qualifying
+    filing must be no later than the observed move and within the bounded
+    24-hour causal window; later, malformed, date-only, and older facts remain
+    displayable official background only.
+    """
+    if (not isinstance(submit_dt_str, str)
+            or not _EDINET_SUBMIT_TIME.fullmatch(submit_dt_str.strip())
+            or not isinstance(event_observed_at, str)
+            or not _EVENT_OBSERVED_TIME.fullmatch(event_observed_at.strip())):
         return "unknown"
-    return "precedes_or_same_day" if s <= str(event_date_str) else "after_event_day"
+    try:
+        submit = datetime.strptime(
+            submit_dt_str.strip(), "%Y-%m-%d %H:%M").replace(
+                tzinfo=timezone(timedelta(hours=9)))
+        observed = datetime.fromisoformat(
+            event_observed_at.strip().replace("Z", "+00:00"))
+    except (TypeError, ValueError, OverflowError):
+        return "unknown"
+    if observed.tzinfo is None or observed.utcoffset() is None:
+        return "unknown"
+    delta = (observed.astimezone(timezone.utc)
+             - submit.astimezone(timezone.utc)).total_seconds()
+    if delta < 0:
+        return "after_event"
+    if delta > 24 * 3600:
+        return "background_old"
+    return "precedes_or_coincident"
 
 
-def edinet_catalyst_decision(filings, event_date_str):
+def edinet_catalyst_decision(filings, event_observed_at):
     """Pure: do ANY of the (already symbol-matched, classified) EDINET filings
     qualify as a same-day official_catalyst? Requires a price-relevant doc class
     AND timing that plausibly coincides. Returns (is_catalyst, qualifying_list)."""
@@ -119,8 +148,9 @@ def edinet_catalyst_decision(filings, event_date_str):
         if not isinstance(f, dict):
             continue
         cls = f.get("docClass")
-        rel = edinet_event_relationship(f.get("submitDateTime"), event_date_str)
-        if cls in EDINET_CATALYST_CLASSES and rel == "precedes_or_same_day":
+        rel = edinet_event_relationship(
+            f.get("submitDateTime"), event_observed_at)
+        if cls in EDINET_CATALYST_CLASSES and rel == "precedes_or_coincident":
             q.append(f)
     return (len(q) > 0), q
 

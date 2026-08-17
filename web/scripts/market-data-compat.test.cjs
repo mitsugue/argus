@@ -62,6 +62,17 @@ assert.equal(proven.ageSec, 30);
 assert.equal(proven.session, 'UNKNOWN');
 assert.equal(proven.entitlement, 'unknown');
 
+const futureTimestamp = live.normalizeLiveQuote({
+  price: 700,
+  status: 'live',
+  delayClass: 'LIVE',
+  realtimeEvidence: true,
+  exchangeTs: new Date(nowMs + 1_000).toISOString(),
+  provider: 'moomoo-rt',
+}, options);
+assert.equal(futureTimestamp.ageSec, null);
+assert.equal(futureTimestamp.delayClass, 'UNKNOWN');
+
 const stale = live.normalizeLiveQuote({
   price: 700,
   status: 'live',
@@ -101,6 +112,60 @@ const malformed = live.normalizeLiveQuote({
 assert.equal(malformed.sourceTimestamp, null);
 assert.equal(malformed.ageSec, null);
 assert.equal(malformed.delayClass, 'UNKNOWN');
+
+const impossibleInstant = live.normalizeLiveQuote({
+  price: 700,
+  status: 'live',
+  delayClass: 'LIVE',
+  realtimeEvidence: true,
+  exchangeTs: '2026-02-30T03:00:00Z',
+  provider: 'moomoo-rt',
+}, options);
+assert.equal(impossibleInstant.sourceTimestamp, null);
+assert.equal(impossibleInstant.delayClass, 'UNKNOWN');
+
+const impossibleEod = live.normalizeLiveQuote({
+  price: 700,
+  status: 'live',
+  date: '2026-04-31',
+  provider: 'jquants',
+}, options);
+assert.equal(impossibleEod.sourceTimestamp, null);
+assert.equal(impossibleEod.delayClass, 'UNKNOWN');
+
+const ancientEod = live.normalizeLiveQuote({
+  price: 700,
+  status: 'delayed',
+  delayClass: 'T-1',
+  date: '2020-01-02',
+  provider: 'jquants',
+}, options);
+assert.equal(ancientEod.delayClass, 'UNKNOWN');
+assert.equal(live.quoteDecisionUsable(ancientEod, nowMs), false);
+assert.equal(live.quoteDecisionUsable(proven, nowMs), true);
+assert.equal(live.quoteDecisionUsable(proven, nowMs + 31_000), false);
+assert.equal(live.quoteDecisionUsable(proven,
+  Date.parse(proven.sourceTimestamp) + 60_001), false);
+const crossedLiveDeadline = live.normalizeLiveQuote({
+  price: 700, status: 'live', delayClass: 'LIVE', realtimeEvidence: true,
+  exchangeTs: proven.sourceTimestamp, provider: 'moomoo-rt',
+}, { ...options, nowMs: Date.parse(proven.sourceTimestamp) + 60_001 });
+assert.equal(crossedLiveDeadline.delayClass, 'UNKNOWN');
+const instantEod = { ...proven, delayClass: 'EOD' };
+assert.equal(live.quoteDecisionExpiresAt(instantEod),
+  Date.parse(instantEod.sourceTimestamp) + 7 * 86_400_000);
+assert.equal(live.quoteDecisionUsable(instantEod,
+  Date.parse(instantEod.sourceTimestamp) + 7 * 86_400_000 + 1), false);
+assert.equal(live.quoteDecisionExpiresAt(proven), Date.parse(proven.sourceTimestamp) + 60_000);
+
+const navNow = Date.parse('2026-07-28T03:00:00Z');
+const delayedNav = { status: 'delayed', date: '2026-07-27', navYen: 25_000 };
+assert.equal(live.dailyFundNavDecisionUsable(delayedNav, navNow), true);
+assert.equal(live.dailyFundNavDecisionUsable({ ...delayedNav, status: 'live' }, navNow), false);
+assert.equal(live.dailyFundNavDecisionUsable({ ...delayedNav, date: '2026-02-30' }, navNow), false);
+assert.equal(live.dailyFundNavDecisionUsable({ ...delayedNav, date: '2026-07-29' }, navNow), false);
+assert.equal(live.dailyFundNavDecisionUsable({ ...delayedNav, date: '2020-01-01' }, navNow), false);
+assert.equal(live.dailyFundNavDecisionUsable({ ...delayedNav, navYen: '25000' }, navNow), false);
 
 const normalizedSnapshot = watch.normalizeWatchSnapshot({
   status: 'live',

@@ -1,8 +1,8 @@
 import { markLocalEdit } from './vault';
 // Per-symbol research notes (research-notes-v1, v10.25) — the place to paste
 // back Gemini Pro / GPT Pro OSINT answers so the qualitative research lives
-// alongside the stock and survives. Device-local, synced via the encrypted
-// vault (added to BACKUP_KEYS), never sent in plaintext.
+// alongside the stock and survives local JSON export. Existing encrypted
+// recovery envelopes remain readable, but the public browser does not push.
 
 const KEY = 'argus.research.v1';
 
@@ -28,6 +28,6 @@ export function saveNote(symbol: string, text: string): void {
     if (text.trim()) all[symbol] = { text: text.trim(), savedAt: Date.now() };
     else delete all[symbol];
     localStorage.setItem(KEY, JSON.stringify(all));
-    markLocalEdit();   // device-data edit → cloud-sync push (v11.3.3)
+    markLocalEdit();   // record local freshness; public cloud push is unavailable
   } catch { /* ignore */ }
 }
