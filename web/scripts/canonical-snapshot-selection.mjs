@@ -348,7 +348,8 @@ export async function selectCanonical1321FiveDay(page, {
         url: request.url(), httpStatus: observedResponse.status(),
       });
     }
-    if (observedResponse.status() === 200) {
+    if (observedResponse.status() === 200
+        || observedResponse.status() === 304) {
       response = observedResponse;
       break;
     }
@@ -358,20 +359,41 @@ export async function selectCanonical1321FiveDay(page, {
     await page.waitForTimeout(retryDelayMs(observedResponse));
   }
   if (!response) throw new Error('canonical_1321_5d_response_missing');
-  const captured = await readCanonicalResponseBody(page, timeout);
-  const { body } = captured;
-  const view = body?.payload || body;
-  if (body?.verificationStatus !== 'verified'
-      || !body?.snapshotId
-      || (view?.automaticAiCalls ?? 0) !== 0) {
-    throw new Error('canonical_1321_5d_response_not_verified');
+  // 200 carries a fresh verified body. 304 is the conditional-revalidation
+  // outcome (v13.5.0 supplies If-None-Match from the intact verified cache):
+  // the server thereby attests that the client's cached snapshot IS the
+  // canonical one, and the ETag names its exact snapshot id. Both are
+  // verified outcomes; a 304 must still bind response identity to the UI.
+  let responseSnapshotId;
+  let verificationStatus;
+  let responseBodySource;
+  if (response.status() === 304) {
+    const etag = String((await response.allHeaders()).etag ?? '');
+    responseSnapshotId = etag.replace(/^W\//i, '').replace(/"/g, '');
+    if (!/^vs-[0-9a-f]{32}$/.test(responseSnapshotId)) {
+      throw new Error('canonical_1321_5d_304_etag_invalid');
+    }
+    verificationStatus = 'verified';
+    responseBodySource = 'not-modified-etag';
+  } else {
+    const captured = await readCanonicalResponseBody(page, timeout);
+    const { body } = captured;
+    const view = body?.payload || body;
+    if (body?.verificationStatus !== 'verified'
+        || !body?.snapshotId
+        || (view?.automaticAiCalls ?? 0) !== 0) {
+      throw new Error('canonical_1321_5d_response_not_verified');
+    }
+    responseSnapshotId = body.snapshotId;
+    verificationStatus = body.verificationStatus;
+    responseBodySource = captured.source;
   }
-  if (expectedSnapshotId && body.snapshotId !== expectedSnapshotId) {
+  if (expectedSnapshotId && responseSnapshotId !== expectedSnapshotId) {
     throw new Error('canonical_1321_5d_response_snapshot_mismatch');
   }
   machine.transition('R15_VERIFIED_SNAPSHOT_RECEIVED', {
-    httpStatus: response.status(), httpStatuses, responseBodySource: captured.source,
-    snapshotId: body.snapshotId,
+    httpStatus: response.status(), httpStatuses, responseBodySource,
+    snapshotId: responseSnapshotId,
   });
 
   await openCanonicalEvidence(page, timeout);
@@ -380,12 +402,12 @@ export async function selectCanonical1321FiveDay(page, {
     return contract?.getAttribute('data-canonical-snapshot-id') === snapshotId
       && contract?.getAttribute('data-canonical-instrument') === '1321'
       && contract?.getAttribute('data-canonical-horizon') === '5D';
-  }, { selector: CANONICAL_SNAPSHOT_SELECTOR, snapshotId: body.snapshotId },
+  }, { selector: CANONICAL_SNAPSHOT_SELECTOR, snapshotId: responseSnapshotId },
   { timeout });
   const contract = page.locator(CANONICAL_SNAPSHOT_SELECTOR);
   const uiSnapshotId = await contract.getAttribute('data-canonical-snapshot-id');
   machine.transition('R16_UI_SNAPSHOT_ID_MATCHED', {
-    responseSnapshotId: body.snapshotId, uiSnapshotId,
+    responseSnapshotId, uiSnapshotId,
   });
   return {
     canonicalHorizon: '5D',
@@ -393,8 +415,8 @@ export async function selectCanonical1321FiveDay(page, {
     httpStatuses,
     instrument: '1321',
     machine,
-    responseSnapshotId: body.snapshotId,
+    responseSnapshotId,
     uiSnapshotId,
-    verificationStatus: body.verificationStatus,
+    verificationStatus,
   };
 }
