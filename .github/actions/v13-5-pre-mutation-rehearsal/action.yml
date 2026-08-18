@@ -1,0 +1,116 @@
+name: Rehearse exact V13.5 release before production mutation
+description: Shared accepted-source, certificate, runtime, build, and Pages-input gate
+inputs:
+  candidate-sha:
+    required: true
+  candidate-tree:
+    required: true
+  build-sha:
+    required: true
+  certificate-path:
+    required: true
+  retrieval-receipt-path:
+    required: true
+  runtime-proof-path:
+    required: true
+  evidence-dir:
+    required: true
+  release-merge-sha:
+    required: false
+    default: ''
+  release-merge-tree:
+    required: false
+    default: ''
+outputs:
+  source_provenance_digest:
+    value: ${{ steps.receipts.outputs.source_provenance_digest }}
+  rehearsal_digest:
+    value: ${{ steps.receipts.outputs.rehearsal_digest }}
+runs:
+  using: composite
+  steps:
+    - id: source
+      name: Acquire and verify the exact accepted V13 source
+      shell: bash
+      run: |
+        args=(
+          --repo-root "$GITHUB_WORKSPACE"
+          --remote origin
+          --accepted-source c946afd07869dbe739026afad11ef5e15418dbbf
+          --accepted-tree dee0b33a9b4eb82671f13dc1d9a06d71a71cb124
+          --candidate-sha '${{ inputs.candidate-sha }}'
+          --candidate-tree '${{ inputs.candidate-tree }}'
+          --certificate '${{ inputs.certificate-path }}'
+          --out '${{ inputs.evidence-dir }}/source-provenance.json'
+        )
+        if test -n '${{ inputs.release-merge-sha }}'; then
+          args+=(
+            --release-merge-sha '${{ inputs.release-merge-sha }}'
+            --release-merge-tree '${{ inputs.release-merge-tree }}'
+          )
+        fi
+        python3 -B scripts/v13_5_source_provenance.py "${args[@]}"
+    - name: Verify detached certificate against the admitted source and runtime
+      shell: bash
+      run: |
+        python3 -B scripts/v13_5_release_certificate.py verify-admission \
+          --certificate '${{ inputs.certificate-path }}' \
+          --candidate-ref '${{ inputs.candidate-sha }}' \
+          --runtime-proof '${{ inputs.runtime-proof-path }}' \
+          --retrieval-receipt '${{ inputs.retrieval-receipt-path }}' \
+          --source-provenance '${{ inputs.evidence-dir }}/source-provenance.json' \
+          --release-merge-sha '${{ inputs.release-merge-sha }}' \
+          --release-merge-tree '${{ inputs.release-merge-tree }}'
+    - uses: actions/setup-node@v5
+      with:
+        node-version: 20
+        cache: npm
+        cache-dependency-path: web/package-lock.json
+    - name: Install repository JavaScript only
+      shell: bash
+      working-directory: web
+      env:
+        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      run: npm ci --no-audit --no-fund
+    - name: Build exact Pages deploy input
+      shell: bash
+      working-directory: web
+      env:
+        DEPLOY_BASE: /argus/
+        VITE_ARGUS_BACKEND_URL: https://argus-backend-3j2m.onrender.com
+        VITE_ARGUS_BUILD_SHA: ${{ inputs.build-sha }}
+        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      run: npm run build
+    - id: receipts
+      name: Seal the mutation-free production rehearsal
+      shell: bash
+      run: |
+        args=(
+          seal
+          --repo-root "$GITHUB_WORKSPACE"
+          --dist web/dist
+          --source-receipt '${{ inputs.evidence-dir }}/source-provenance.json'
+          --certificate '${{ inputs.certificate-path }}'
+          --runtime-proof '${{ inputs.runtime-proof-path }}'
+          --retrieval-receipt '${{ inputs.retrieval-receipt-path }}'
+          --candidate-sha '${{ inputs.candidate-sha }}'
+          --candidate-tree '${{ inputs.candidate-tree }}'
+          --build-sha '${{ inputs.build-sha }}'
+          --out '${{ inputs.evidence-dir }}/rehearsal.json'
+        )
+        if test -n '${{ inputs.release-merge-sha }}'; then
+          args+=(
+            --release-merge-sha '${{ inputs.release-merge-sha }}'
+            --release-merge-tree '${{ inputs.release-merge-tree }}'
+          )
+        fi
+        python3 -B scripts/v13_5_pre_mutation_rehearsal.py "${args[@]}"
+        python3 -B - <<'PY' >> "$GITHUB_OUTPUT"
+        import json
+        from pathlib import Path
+        root = Path('${{ inputs.evidence-dir }}')
+        source = json.loads((root / 'source-provenance.json').read_text())
+        rehearsal = json.loads((root / 'rehearsal.json').read_text())
+        print('source_provenance_digest=' + source['provenanceDigest'])
+        print('rehearsal_digest=' + rehearsal['rehearsalDigest'])
+        PY

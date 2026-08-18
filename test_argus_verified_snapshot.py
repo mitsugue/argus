@@ -42,7 +42,7 @@ def payload(symbol="1321", dataset_hash="data-a", *, status="complete"):
 
 def candidate(symbol="1321", horizon="5D", dataset_hash="data-a",
               method="view-method-a", quality="live", generated_at=None,
-              body=None):
+              body=None, release_binding=None):
     generated_at = generated_at or "2026-07-23T06:01:00Z"
     return snapshots.build_snapshot(
         payload=body or payload(symbol, dataset_hash),
@@ -51,6 +51,7 @@ def candidate(symbol="1321", horizon="5D", dataset_hash="data-a",
         as_of="2026-07-23T06:00:00Z", generated_at=generated_at,
         quality=quality,
         source_status={"chart": "complete", "replay": "updated"},
+        release_binding=release_binding,
     )
 
 
@@ -123,6 +124,32 @@ def test_readback_and_snapshot_id_are_integrity_boundaries():
     unverified["verificationStatus"] = "temporary"
     unverified["snapshotId"] = snapshots.snapshot_id(unverified)
     assert snapshots.verify_snapshot(unverified)[1] == "readback_unverified"
+
+
+def test_release_binding_is_additive_and_integrity_bound():
+    historical = candidate()
+    binding = {
+        "expectedBuildSha": "a" * 40,
+        "producerTriggerId": "v13-release-test-0001",
+        "triggeredAt": "2026-07-23T06:00:30Z",
+    }
+    release = candidate(release_binding=binding)
+    assert "releaseBinding" not in historical
+    assert release["snapshotId"] != historical["snapshotId"]
+    assert snapshots.verify_snapshot(
+        release, now_iso="2026-07-23T06:02:00Z") == (True, "verified")
+
+    wrong_build = copy.deepcopy(release)
+    wrong_build["releaseBinding"]["expectedBuildSha"] = "not-a-sha"
+    wrong_build["snapshotId"] = snapshots.snapshot_id(wrong_build)
+    assert snapshots.verify_snapshot(wrong_build)[1] == \
+        "release_binding_build"
+
+    extra_field = copy.deepcopy(release)
+    extra_field["releaseBinding"]["unexpected"] = True
+    extra_field["snapshotId"] = snapshots.snapshot_id(extra_field)
+    assert snapshots.verify_snapshot(extra_field)[1] == \
+        "release_binding_schema"
 
 
 def test_wrong_instrument_horizon_mock_empty_and_future_are_rejected():

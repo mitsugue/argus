@@ -36,6 +36,7 @@ export interface TodayChartLoadState {
   error: string | null;
   snapshotState: string;
   snapshotId: string | null;
+  responseSnapshotId: string | null;
   retry: () => void;
 }
 
@@ -104,7 +105,15 @@ export function formatInstrumentPrice(value: number, instrumentId: string): stri
   });
 }
 
-const ProjectionChart: React.FC<{ projection: TodayProjection; onActivate?: () => void }> = ({ projection, onActivate }) => {
+const ProjectionChart: React.FC<{
+  projection: TodayProjection;
+  snapshotId: string | null;
+  responseSnapshotId: string | null;
+  snapshotState: string;
+  revalidationState: string;
+  onActivate?: () => void;
+}> = ({ projection, snapshotId, responseSnapshotId, snapshotState,
+  revalidationState, onActivate }) => {
   const all = projection.history.map((point) => point.value).concat([
     projection.baseLow, projection.baseHigh, projection.upside, projection.downside, projection.invalidation,
     ...(projection.support ? [projection.support.low, projection.support.high] : []),
@@ -141,6 +150,12 @@ const ProjectionChart: React.FC<{ projection: TodayProjection; onActivate?: () =
     ? (Object.entries(displayProbabilities)
       .sort((a, b) => b[1] - a[1])[0]?.[0] ?? '') : '';
   return <div className="at-projection" role={onActivate ? 'link' : undefined}
+    data-argus-contract="today-projection-state-v1"
+    data-projection-state="available"
+    data-projection-snapshot-id={snapshotId ?? undefined}
+    data-projection-response-snapshot-id={responseSnapshotId ?? undefined}
+    data-projection-snapshot-state={snapshotState}
+    data-projection-revalidation-state={revalidationState}
     tabIndex={onActivate ? 0 : undefined} onClick={onActivate}
     onKeyDown={onActivate ? (event) => {
       if (event.key === 'Enter' || event.key === ' ') onActivate();
@@ -241,9 +256,22 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     } catch { /* navigation mirror is best effort and contains no owner data */ }
   }, [projection, view.actionScore, view.canonicalDecision, view.finalAction, view.selectedInstrument,
     view.selectedMarket, view.selectionMode]);
+  // The verified warm cache remains the visible authority during background
+  // revalidation. Publish an accepted response ID only when the rendered
+  // snapshot has atomically moved to that exact identity.
+  const coherentResponseSnapshotId = chartLoad.responseSnapshotId === chartLoad.snapshotId
+    ? chartLoad.responseSnapshotId : null;
+  const revalidationState = chartLoad.snapshotState === 'CACHE_READY_REVALIDATING'
+    ? chartLoad.snapshotId ? 'background' : 'invalid'
+    : chartLoad.snapshotState === 'NO_CACHE_LOADING' ? 'cold-loading'
+    : chartLoad.snapshotState === 'CURRENT_READY' ? 'settled'
+    : ['ERROR_WITH_CACHE', 'STALE_FALLBACK'].includes(chartLoad.snapshotState)
+      ? 'cached-safe' : 'unavailable';
   return <div className="argus-today"
     data-argus-contract="canonical-market-snapshot-v1"
     data-canonical-snapshot-id={chartLoad.snapshotId ?? undefined}
+    data-canonical-response-snapshot-id={coherentResponseSnapshotId ?? undefined}
+    data-canonical-response-verification={coherentResponseSnapshotId ? 'verified' : 'unverified'}
     data-canonical-snapshot-state={chartLoad.snapshotState}
     data-canonical-verification={chartLoad.snapshotId ? 'verified' : 'unverified'}
     data-canonical-instrument={projection?.symbol ?? selectedSymbol}
@@ -307,6 +335,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           const quote = instrument.quote;
           const quoteLabel = quote?.delayClass === 'LIVE' ? 'LIVE QUOTE' : 'QUOTE';
           return <button type="button" key={instrument.symbol}
+            data-argus-control="market-instrument"
+            data-instrument={instrument.symbol}
             aria-pressed={instrument.symbol === selectedSymbol}
             onClick={() => onInstrument(instrument.market, instrument.symbol)}
             className={`${move ? `is-${moveTone(move.value, move.previous)}` : 'is-pending'} ${instrument.symbol === selectedSymbol ? 'is-selected' : ''}`}>
@@ -343,10 +373,21 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         </div>
         <div className="at-horizon" role="group" aria-label="予測期間">{([1, 5, 20] as const).map((value) =>
           <button type="button" key={value} aria-pressed={horizon === value}
+            data-argus-control="canonical-horizon" data-horizon={`${value}D`}
             onClick={() => onHorizon(value)}>{value}D</button>)}</div>
       </div>
-      {projection ? <ProjectionChart projection={projection} />
-        : <div className="at-projection-missing" aria-busy={chartLoad.loading}>
+      {projection ? <ProjectionChart projection={projection}
+        snapshotId={chartLoad.snapshotId}
+        responseSnapshotId={coherentResponseSnapshotId}
+        snapshotState={chartLoad.snapshotState}
+        revalidationState={revalidationState} />
+        : <div className="at-projection-missing" aria-busy={chartLoad.loading}
+          data-argus-contract="today-projection-state-v1"
+          data-projection-state="missing"
+          data-projection-snapshot-id={chartLoad.snapshotId ?? undefined}
+          data-projection-response-snapshot-id={coherentResponseSnapshotId ?? undefined}
+          data-projection-snapshot-state={chartLoad.snapshotState}
+          data-projection-revalidation-state={revalidationState}>
         {chartLoad.loaderVisible
           ? <TriangleStepLoader label={chartLoad.slowInitial
             ? '初回データを準備中' : 'データ確認中'} />
