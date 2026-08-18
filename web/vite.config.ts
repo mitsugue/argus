@@ -17,7 +17,7 @@ const readProductVersion = (): string => {
   if (Object.keys(value).sort().join(',') !== 'productVersion,schemaVersion'
       || value.schemaVersion !== 'argus-product-version-v1'
       || typeof value.productVersion !== 'string'
-      || !/^v[1-9]\d*$/.test(value.productVersion)) {
+      || !/^v[1-9]\d*(?:\.\d+)*$/.test(value.productVersion)) {
     throw new Error('invalid canonical product-version.json');
   }
   return value.productVersion;

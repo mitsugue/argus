@@ -29,18 +29,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-node@v5
-      with:
-        node-version: 20
-        cache: npm
-        cache-dependency-path: web/package-lock.json
-    - run: npm ci
-      shell: bash
-      working-directory: web
-    - name: Install pinned public-acceptance browser
-      shell: bash
-      working-directory: web
-      run: npx playwright install --with-deps chromium
     - name: Download profile from the current workflow run
       if: inputs.source-run-id == ''
       uses: actions/download-artifact@v5
