@@ -40,7 +40,9 @@ runs:
     - name: Install pinned public-acceptance browser
       shell: bash
       working-directory: web
-      run: npx playwright install --with-deps chromium
+      run: |
+        npm install --no-save --no-package-lock playwright@1.55.0
+        npx playwright install --with-deps chromium
     - name: Download profile from the current workflow run
       if: inputs.source-run-id == ''
       uses: actions/download-artifact@v5

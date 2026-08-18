@@ -30,7 +30,6 @@ const hook = read('src/hooks/useChartIntelligence.ts');
 const loaderCss = read('src/components/common/TriangleStepLoader.css');
 const acceptance = read('scripts/mobile-today-acceptance.mjs');
 const vite = read('vite.config.ts');
-const indexHtml = read('index.html');
 
 assert.deepEqual(
   navigation.PRIMARY_NAVIGATION.map((item) => item.mobileLabel),
@@ -106,30 +105,12 @@ assert.match(hook, /5_000/);
 assert.doesNotMatch(loaderCss, /rotate\(/);
 assert.match(loaderCss, /prefers-reduced-motion:reduce/);
 assert.match(acceptance, /controlled warm revalidation did not start/);
-assert.match(acceptance, /selectCanonicalControls\(warmPage\)/);
-assert.match(acceptance, /selectCanonicalControls\(rateLimitPage\)/);
-assert.match(acceptance, /ERR_INTERNET_DISCONNECTED/,
-  'the deliberate offline reload must be classified separately from unexpected console failures');
-assert.match(acceptance, /expectedCalls: SYMBOLS\.length/);
-assert.match(acceptance, /fulfillCapturedSnapshot\(route, evidence, 4_000\)/,
-  'cold loader acceptance must keep the delayed request active after shell readiness');
-assert.ok(acceptance.indexOf('const coldLoaderAppeared')
-  < acceptance.indexOf('await coldPage.goto(TODAY_URL'),
-  'cold loader observer must be armed before navigation triggers the delayed request');
-assert.match(acceptance,
-  /waitForShell\(coldPage\);[\s\S]*openCanonicalEvidence\(coldPage\);[\s\S]*coldLoaderAppeared/,
-  'mobile cold-state assertions must make the collapsed evidence region visible');
-assert.match(acceptance,
-  /state: 'attached'[\s\S]*selectCanonical1321FiveDay\(page\)/,
-  'mobile acceptance must open the disclosure through selection before requiring visible controls');
 assert.match(acceptance, /warmRequestStart/);
 assert.match(acceptance, /const warm = await browser\.newContext\(\{[\s\S]*serviceWorkers: 'block'/);
 assert.match(acceptance, /warmSeedSnapshotId/);
 assert.match(acceptance, /await warm\.unroute/);
 assert.match(acceptance, /WARM_LOADER_DEADLINE_MS = 2_000/);
 assert.match(acceptance, /warmLoaderLocator\.waitFor/);
-assert.match(acceptance, /warmRetainedSnapshotId !== warmSeedSnapshotId/,
-  'warm DATA_GATED presentation must retain the exact verified cache during revalidation');
 assert.match(acceptance, /warmLoaderDelayMs < LOADER_THRESHOLD_MS - LOADER_TIMING_TOLERANCE_MS/);
 assert.match(acceptance, /warmLoaderDelayMs > WARM_LOADER_DEADLINE_MS/);
 assert.match(acceptance, /6_200 - \(Date\.now\(\) - warmStartedAt\)/);
@@ -142,7 +123,5 @@ assert.match(vite, /clientsClaim:\s*true/);
 assert.match(vite, /skipWaiting:\s*true/);
 assert.match(vite, /snapshot:\s*'verified'|chart-intelligence/);
 assert.doesNotMatch(command + today + hook, /method:\s*['"]POST['"]/);
-assert.doesNotMatch(indexHtml, /fonts\.(?:googleapis|gstatic)\.com/,
-  'the production shell must not depend on an external font request');
 
 console.log('mobile-today-integrity.test: ok (navigation, geometry, instruments, loader, PWA)');

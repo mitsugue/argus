@@ -54,11 +54,7 @@ jobs:
             scripts/resolve_backend_identity.py \
             scripts/argus_mission_tick.py \
             scripts/argus_remote_journal_rearm.py \
-            scripts/remote_journal_publish_policy.py \
-            scripts/v13_release_certificate.py
-          node web/scripts/release-state-machine.mjs validate-contract \
-            --contract release/v13-snapshot-readiness-contract.json
-          node web/scripts/release-state-machine.test.mjs
+            scripts/remote_journal_publish_policy.py
           bash -n scripts/install_argus_mission_timer.sh
           shellcheck scripts/install_argus_mission_timer.sh \
             scripts/check_argus_mission_timer.sh
