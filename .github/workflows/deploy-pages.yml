@@ -13,12 +13,23 @@ on:
       - 'product-version.json'
       - '.github/workflows/deploy-pages.yml'
       - '.github/actions/warm-profile-*/**'
-      - 'scripts/verified_snapshot_release_gate.py'
+      - '.github/actions/acceptance-runtime-preflight/**'
+      - '.github/actions/v13-5-pre-mutation-rehearsal/**'
+      - 'release/v13-acceptance-runtime.json'
+      - 'release/v13-accepted-fix-manifest.json'
+      - 'release/v13-snapshot-readiness-contract.json'
+      - 'web/scripts/release-state-machine.mjs'
+      - 'web/scripts/acceptance-runtime.mjs'
+      - 'scripts/v13_release_certificate.py'
+      - 'scripts/v13_5_release_certificate.py'
+      - 'scripts/v13_5_source_provenance.py'
+      - 'scripts/v13_5_pre_mutation_rehearsal.py'
       - 'scripts/verify_public_candidate_release.py'
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
@@ -26,8 +37,8 @@ permissions:
 # cancelling actions/deploy-pages mid-flight leaves the github-pages environment
 # with a PENDING deployment that blocks/hangs the next run (the v10.144 cancel:true
 # experiment made the timeouts worse). false = let each deploy complete; the build
-# job's own concurrency + the 5-min deploy timeout below handle a genuine infra hang
-# (it fails fast and the next push recovers; the live site stays current).
+# job's own concurrency + the 5-min deploy timeout fail closed on a genuine
+# infrastructure hang while the last accepted live site remains current.
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -58,133 +69,193 @@ jobs:
           print("backend_sha=" + (os.environ["CURRENT_SHA"] if backend else ""))
           PY
 
-  build:
-    needs: scope
+  acceptance-runtime-admission:
+    # This is the production P1-P6 gate. The exact certificate and browser
+    # runtime are admitted before backend readiness or Pages deployment.
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+      options: --ipc=host
+    timeout-minutes: 15
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    outputs:
+      candidate_sha: ${{ steps.candidate.outputs.sha }}
+      candidate_tree: ${{ steps.candidate.outputs.tree }}
+      runtime_identity_digest: ${{ steps.runtime.outputs.runtime_identity_digest }}
+      certificate_digest: ${{ steps.certificate.outputs.digest }}
+      source_provenance_digest: ${{ steps.rehearsal.outputs.source_provenance_digest }}
+      rehearsal_digest: ${{ steps.rehearsal.outputs.rehearsal_digest }}
     steps:
       - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
         with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - run: npm ci
-
-      - name: Build
+          fetch-depth: 2
+      - id: candidate
+        name: Bind the merge to its exact accepted candidate tree
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          read -r merge parent_one parent_two extra < <(git rev-list --parents -n 1 HEAD)
+          test -n "$parent_one" && test -n "$parent_two" && test -z "$extra"
+          candidate_tree=$(git rev-parse "$parent_two^{tree}")
+          test "$(git rev-parse HEAD^{tree})" = "$candidate_tree"
+          echo "sha=$parent_two" >> "$GITHUB_OUTPUT"
+          echo "tree=$candidate_tree" >> "$GITHUB_OUTPUT"
+      - name: Fetch the detached pre-merge admission certificate
         env:
-          DEPLOY_BASE: /argus/
-          VITE_ARGUS_BUILD_SHA: ${{ github.sha }}
-          # Wire the ARGUS UI to the live Render backend so the Rates
-          # Snapshot / status pill render `live` instead of `mock`. This
-          # is also set in web/.env.production (auto-loaded by Vite); the
-          # explicit value here makes the wiring visible in CI logs and
-          # keeps it working even if that file is absent. Not a secret —
-          # it's a public endpoint the client calls directly, and VITE_-
-          # prefixed vars are client-exposed by design.
-          VITE_ARGUS_BACKEND_URL: https://argus-backend-3j2m.onrender.com
-        run: npm run build
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B scripts/v13_5_release_certificate.py fetch-admission \
+            --repo '${{ github.repository }}' \
+            --candidate-sha '${{ steps.candidate.outputs.sha }}' \
+            --candidate-tree '${{ steps.candidate.outputs.tree }}' \
+            --consumer-run-id '${{ github.run_id }}' \
+            --out artifacts/v13-release-proof/certificate.json \
+            --receipt-out artifacts/v13-release-proof/retrieval-receipt.json \
+            --timeout-seconds 60
+      - name: Reconfirm every CURRENT_REQUIRED check for the candidate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B scripts/v13_5_release_certificate.py collect-checks \
+            --repo '${{ github.repository }}' \
+            --candidate-sha '${{ steps.candidate.outputs.sha }}' \
+            --out artifacts/v13-release-proof/current-required.json \
+            --timeout-seconds 60
+      - id: runtime
+        uses: ./.github/actions/acceptance-runtime-preflight
+        with:
+          candidate-sha: ${{ steps.candidate.outputs.sha }}
+          candidate-tree: ${{ steps.candidate.outputs.tree }}
+          evidence-path: artifacts/production-runtime-admission/proof.json
+      - id: rehearsal
+        name: Execute the exact production read-only path before deployment
+        uses: ./.github/actions/v13-5-pre-mutation-rehearsal
+        with:
+          candidate-sha: ${{ steps.candidate.outputs.sha }}
+          candidate-tree: ${{ steps.candidate.outputs.tree }}
+          release-merge-sha: ${{ github.sha }}
+          release-merge-tree: ${{ steps.candidate.outputs.tree }}
+          build-sha: ${{ github.sha }}
+          certificate-path: artifacts/v13-release-proof/certificate.json
+          retrieval-receipt-path: artifacts/v13-release-proof/retrieval-receipt.json
+          runtime-proof-path: artifacts/production-runtime-admission/proof.json
+          evidence-dir: artifacts/pre-mutation-rehearsal
+      - id: certificate
+        name: Export the admitted detached certificate digest
+        run: |
+          digest=$(python3 -c 'import json; print(json.load(open("artifacts/v13-release-proof/certificate.json"))["certificateDigest"])')
+          test "${#digest}" = 64
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Publish production runtime admission evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-runtime-admission-${{ github.sha }}
+          path: |
+            artifacts/v13-release-proof/certificate.json
+            artifacts/v13-release-proof/retrieval-receipt.json
+            artifacts/v13-release-proof/current-required.json
+            artifacts/production-runtime-admission/proof.json
+            artifacts/pre-mutation-rehearsal
+          if-no-files-found: error
+          retention-days: 90
+      - name: Publish the exact predeployment Pages input
+        uses: actions/upload-artifact@v4
+        with:
+          name: v13-5-predeployment-pages-${{ github.sha }}
+          path: |
+            web/dist
+            artifacts/pre-mutation-rehearsal/rehearsal.json
+          if-no-files-found: error
+          retention-days: 7
 
+  build:
+    needs: [scope, acceptance-runtime-admission]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          name: v13-5-predeployment-pages-${{ github.sha }}
+          path: .
+      - name: Re-verify the exact rehearsed Pages deploy input
+        run: |
+          python3 -B scripts/v13_5_pre_mutation_rehearsal.py verify \
+            --receipt artifacts/pre-mutation-rehearsal/rehearsal.json \
+            --dist web/dist \
+            --expected-build-sha '${{ github.sha }}'
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web/dist
 
-  backend-readiness:
-    needs: [scope, build]
+  backend-infrastructure-readiness:
+    needs: [scope, build, acceptance-runtime-admission]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
-      - name: Record frontend-only release
+      - name: Record frontend-only infrastructure disposition
         if: needs.scope.outputs.backend_deploy != 'true'
         run: |
-          mkdir -p artifacts/backend-snapshot-readiness
+          mkdir -p artifacts/backend-infrastructure-readiness
           python3 -B - <<'PY'
           import json
           from pathlib import Path
-          Path("artifacts/backend-snapshot-readiness/gate.json").write_text(
+          Path("artifacts/backend-infrastructure-readiness/gate.json").write_text(
               json.dumps({
-                  "schemaVersion": "verified-snapshot-release-gate-v1",
+                  "schemaVersion": "argus-v13-infrastructure-readiness-v1",
                   "status": "not_required",
                   "reason": "frontend_only_release",
               }, indent=2) + "\n")
           PY
-      - name: Wait for Render and verify 12 snapshots
+      - uses: actions/setup-node@v5
         if: needs.scope.outputs.backend_deploy == 'true'
-        env:
-          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
-          EXPECTED_SHA: ${{ needs.scope.outputs.backend_sha }}
+        with:
+          node-version: 20
+      - name: Wait for exact Render infrastructure (business state may be 0/12)
+        if: needs.scope.outputs.backend_deploy == 'true'
         run: |
-          BACKEND_VERSION=$(python3 -c \
-            'import json; print(json.load(open("backend-version.json"))["version"])')
-          python3 -B scripts/verified_snapshot_release_gate.py \
+          node web/scripts/release-state-machine.mjs infrastructure \
+            --contract release/v13-snapshot-readiness-contract.json \
             --base-url https://argus-backend-3j2m.onrender.com \
-            --expected-version "$BACKEND_VERSION" \
-            --expected-sha "$EXPECTED_SHA" \
+            --expected-sha '${{ needs.scope.outputs.backend_sha }}' \
             --timeout-seconds 900 \
-            --poll-seconds 15 \
-            --artifact artifacts/backend-snapshot-readiness/gate.json
-      - name: Publish backend snapshot readiness evidence
+            --poll-seconds 10 \
+            --out artifacts/backend-infrastructure-readiness/gate.json
+      - name: Publish backend infrastructure readiness evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: backend-snapshot-readiness-${{ github.sha }}
-          path: artifacts/backend-snapshot-readiness
+          name: backend-infrastructure-readiness-${{ github.sha }}
+          path: artifacts/backend-infrastructure-readiness
           if-no-files-found: error
           retention-days: 30
 
   deploy:
     # Deploy only after the candidate backend is exact.  The public candidate
     # remains unaccepted until the identity barrier and warm-profile jobs pass.
-    needs: [build, backend-readiness]
+    needs: [build, backend-infrastructure-readiness, acceptance-runtime-admission]
     runs-on: ubuntu-latest
-    # Pages publish flakes with an instant "Deployment cancelled" (or a 5-min hang)
-    # when GitHub's backend races deployments for the same commit. Observed fix
-    # (2026-07-02): let the environment settle ~4 minutes, then retry ONCE, alone.
-    # 3 attempts x 5-min timeout + 2 x 4-min settles ≈ 23 min worst case.
-    # Retrying inside one run means a transient flake never emails a failure.
-    timeout-minutes: 25
+    # One release cycle has one production publication attempt. A failure
+    # enters rollback/stop; this workflow never retries the candidate.
+    timeout-minutes: 10
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url || steps.deployment2.outputs.page_url || steps.deployment3.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
-        continue-on-error: true
-        with:
-          timeout: 300000        # 5 min (default 10) — fail fast on a stuck Pages env
-
-      - name: Settle before retry 1 (Pages backend races cancel same-commit deploys)
-        if: steps.deployment.outcome == 'failure'
-        run: sleep 240
-
-      - id: deployment2
-        if: steps.deployment.outcome == 'failure'
-        uses: actions/deploy-pages@v4
-        continue-on-error: true
-        with:
-          timeout: 300000
-
-      - name: Settle before retry 2
-        if: steps.deployment.outcome == 'failure' && steps.deployment2.outcome == 'failure'
-        run: sleep 240
-
-      - id: deployment3
-        if: steps.deployment.outcome == 'failure' && steps.deployment2.outcome == 'failure'
-        uses: actions/deploy-pages@v4    # final attempt — a real failure should fail the job
         with:
           timeout: 300000
 
   candidate-identity:
     # Deployment API success is not CDN convergence. Poll the actual public
     # index plus healthz/readyz and authorize seeding only for one exact release.
-    needs: [scope, deploy, backend-readiness]
+    needs: [scope, deploy, backend-infrastructure-readiness]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -232,14 +303,56 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  seed-warm-profile:
-    # Production-only guard: this job is unreachable until the deployed Pages
-    # and Render identities both equal the approved main release.
-    needs: [scope, candidate-identity]
+  business-snapshot-trigger:
+    # The only release producer trigger. It is unreachable until both deployed
+    # identities converge, and a busy/duplicate response is never success.
+    needs: [candidate-identity]
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Trigger and durably acknowledge the exact 12 business snapshots
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          node web/scripts/release-state-machine.mjs trigger-business \
+            --contract release/v13-snapshot-readiness-contract.json \
+            --base-url https://argus-backend-3j2m.onrender.com \
+            --expected-sha '${{ needs.candidate-identity.outputs.backend_sha }}' \
+            --trigger-id 'v13-production-${{ github.sha }}-${{ github.run_id }}' \
+            --out artifacts/business-snapshot-trigger/trigger.json
+      - name: Publish producer trigger evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: business-snapshot-trigger-${{ github.sha }}
+          path: artifacts/business-snapshot-trigger
+          if-no-files-found: error
+          retention-days: 30
+
+  seed-warm-profile:
+    # Production-only guard: this job is unreachable until the deployed Pages
+    # and Render identities both equal the approved main release.
+    needs: [scope, candidate-identity, business-snapshot-trigger, acceptance-runtime-admission]
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+      options: --ipc=host
+    timeout-minutes: 12
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/acceptance-runtime-preflight
+        with:
+          candidate-sha: ${{ needs.acceptance-runtime-admission.outputs.candidate_sha }}
+          candidate-tree: ${{ needs.acceptance-runtime-admission.outputs.candidate_tree }}
+          evidence-path: artifacts/production-seed-runtime/proof.json
+          expected-runtime-identity: ${{ needs.acceptance-runtime-admission.outputs.runtime_identity_digest }}
       - uses: ./.github/actions/warm-profile-seed
         with:
           candidate-sha: ${{ github.sha }}
@@ -252,14 +365,62 @@ jobs:
           expected-backend-version: ${{ needs.candidate-identity.outputs.backend_version }}
           expected-backend-sha: ${{ needs.candidate-identity.outputs.backend_sha }}
 
+  business-snapshot-acceptance:
+    # R18 is evaluated only after the canonical 1321 / 5D request and warm
+    # profile seal, using the same engine and exact producer-trigger binding.
+    needs: [candidate-identity, business-snapshot-trigger, seed-warm-profile]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - uses: actions/download-artifact@v5
+        with:
+          name: business-snapshot-trigger-${{ github.sha }}
+          path: artifacts/business-snapshot-trigger
+      - name: Accept exactly 12 fresh trigger-bound snapshots
+        run: |
+          node web/scripts/release-state-machine.mjs verify-business \
+            --contract release/v13-snapshot-readiness-contract.json \
+            --base-url https://argus-backend-3j2m.onrender.com \
+            --expected-sha '${{ needs.candidate-identity.outputs.backend_sha }}' \
+            --trigger-artifact artifacts/business-snapshot-trigger/trigger.json \
+            --out artifacts/business-snapshot-acceptance/gate.json
+      - name: Publish exact-set acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: business-snapshot-acceptance-${{ github.sha }}
+          path: artifacts/business-snapshot-acceptance
+          if-no-files-found: error
+          retention-days: 30
+
   public-acceptance:
-    needs: [scope, deploy, candidate-identity, seed-warm-profile, backend-readiness]
+    needs: [scope, deploy, candidate-identity, seed-warm-profile, business-snapshot-acceptance, backend-infrastructure-readiness, acceptance-runtime-admission]
     # Candidate Pages, exact frontend/backend identity, and warm profile are all
     # independently complete before final product acceptance can begin.
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+      options: --ipc=host
     timeout-minutes: 45
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
     steps:
       - uses: actions/checkout@v5
+      - uses: ./.github/actions/acceptance-runtime-preflight
+        with:
+          candidate-sha: ${{ needs.acceptance-runtime-admission.outputs.candidate_sha }}
+          candidate-tree: ${{ needs.acceptance-runtime-admission.outputs.candidate_tree }}
+          evidence-path: artifacts/production-public-acceptance-runtime/proof.json
+          expected-runtime-identity: ${{ needs.acceptance-runtime-admission.outputs.runtime_identity_digest }}
+      - uses: actions/download-artifact@v5
+        with:
+          name: business-snapshot-acceptance-${{ github.sha }}
+          path: artifacts/business-snapshot-acceptance
       - name: Resolve independent release versions
         id: release
         run: |
@@ -286,6 +447,15 @@ jobs:
           ARGUS_EXPECTED_SHA: ${{ github.sha }}
           ARGUS_MOBILE_ACCEPTANCE_OUT: ../artifacts/market-public-acceptance/mobile-today
         run: node scripts/mobile-today-acceptance.mjs
+      - name: Advance the shared engine through public acceptance and V13 live
+        run: |
+          node web/scripts/release-state-machine.mjs finalize-public \
+            --contract release/v13-snapshot-readiness-contract.json \
+            --business-artifact artifacts/business-snapshot-acceptance/gate.json \
+            --public-artifact artifacts/warm-profile-consumer-evidence/acceptance.json \
+            --mobile-artifact artifacts/market-public-acceptance/mobile-today/acceptance.json \
+            --expected-sha '${{ github.sha }}' \
+            --out artifacts/v13-public-finalization/gate.json
       - name: Report deployment and acceptance outcomes separately
         if: always()
         env:
@@ -310,3 +480,11 @@ jobs:
           path: artifacts/market-public-acceptance/mobile-today
           if-no-files-found: error
           retention-days: 30
+      - name: Publish R19/R20 shared-engine evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v13-public-finalization-${{ github.sha }}
+          path: artifacts/v13-public-finalization
+          if-no-files-found: error
+          retention-days: 90
