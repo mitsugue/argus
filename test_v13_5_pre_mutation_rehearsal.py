@@ -103,8 +103,17 @@ def test_workflows_share_rehearsal_and_never_install_browser_or_os_packages():
     assert "fetch-depth: 2" in release_gate
     assert "uses: ./.github/actions/v13-5-pre-mutation-rehearsal" in release_gate
     assert "uses: ./.github/actions/v13-5-pre-mutation-rehearsal" in production
+    assert "release-merge-sha: ${{ github.sha }}" in production
+    assert "release-merge-tree: ${{ steps.candidate.outputs.tree }}" in production
     assert "v13-5-predeployment-pages-${{ github.sha }}" in production
     assert "v13_5_pre_mutation_rehearsal.py verify" in production
+    verify_block = action.split(
+        "Verify detached certificate against the admitted source and runtime",
+        1)[1].split("- uses: actions/setup-node@v5", 1)[0]
+    assert verify_block.count("--release-merge-sha") == 1
+    assert verify_block.count("--release-merge-tree") == 1
+    assert "${{ inputs.release-merge-sha }}" in verify_block
+    assert "${{ inputs.release-merge-tree }}" in verify_block
     combined = "\n".join((release_gate, production, action)).lower()
     for forbidden in (
             "npx playwright install", "playwright install --with-deps",

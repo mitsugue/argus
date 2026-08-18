@@ -58,7 +58,9 @@ runs:
           --candidate-ref '${{ inputs.candidate-sha }}' \
           --runtime-proof '${{ inputs.runtime-proof-path }}' \
           --retrieval-receipt '${{ inputs.retrieval-receipt-path }}' \
-          --source-provenance '${{ inputs.evidence-dir }}/source-provenance.json'
+          --source-provenance '${{ inputs.evidence-dir }}/source-provenance.json' \
+          --release-merge-sha '${{ inputs.release-merge-sha }}' \
+          --release-merge-tree '${{ inputs.release-merge-tree }}'
     - uses: actions/setup-node@v5
       with:
         node-version: 20
