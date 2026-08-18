@@ -16,7 +16,7 @@ function marketIsClosed(payload: ChartIntelligencePayload) {
   const calendar = payload.marketCalendar;
   if (!calendar) return false;
   if (calendar.isTradingDay === false) return true;
-  return /CLOSED|HOLIDAY|WEEKEND|AFTER|POST|PRE|LUNCH/i.test(calendar.session ?? '');
+  return /CLOSED|HOLIDAY|WEEKEND|AFTER|PRE|LUNCH/i.test(calendar.session ?? '');
 }
 
 export function snapshotFreshness(

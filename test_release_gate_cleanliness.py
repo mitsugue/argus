@@ -38,7 +38,7 @@ def _fixture(tmp_path):
                   mkdir -p __pycache__
                   : > __pycache__/argus_release_identity.pyc
                 fi
-                echo v13.5 ;;
+                echo v13 ;;
               "-m pytest -q -p no:cacheprovider") echo "4 passed" ;;
               *) exit 2 ;;
             esac
