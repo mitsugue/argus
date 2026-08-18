@@ -258,12 +258,14 @@ def test_github_artifact_transport_uses_supported_json_media_type(monkeypatch):
         def read(self, _limit):
             return b"artifact-zip"
 
-    def fake_urlopen(request, timeout):
-        observed["accept"] = request.get_header("Accept")
-        observed["timeout"] = timeout
-        return Response()
+    class Opener:
+        def open(self, request, timeout):
+            observed["accept"] = request.get_header("Accept")
+            observed["timeout"] = timeout
+            return Response()
 
-    monkeypatch.setattr(release.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        release.urllib.request, "build_opener", lambda _handler: Opener())
     assert release._api("https://api.github.com/example", "token") == b"artifact-zip"
     assert observed == {
         "accept": "application/vnd.github+json",
@@ -274,16 +276,57 @@ def test_github_artifact_transport_uses_supported_json_media_type(monkeypatch):
 
 @pytest.mark.parametrize("status", [404, 415, 500, 503])
 def test_github_http_failures_are_precise_and_fail_closed(monkeypatch, status):
-    def fail(*_args, **_kwargs):
-        raise urllib.error.HTTPError(
-            "https://api.github.com/example", status, "failure", {},
-            io.BytesIO(json.dumps({"message": "transport rejected"}).encode()))
+    class Opener:
+        def open(self, *_args, **_kwargs):
+            raise urllib.error.HTTPError(
+                "https://api.github.com/example", status, "failure", {},
+                io.BytesIO(json.dumps({
+                    "message": "transport rejected"}).encode()))
 
-    monkeypatch.setattr(release.urllib.request, "urlopen", fail)
+    monkeypatch.setattr(
+        release.urllib.request, "build_opener", lambda _handler: Opener())
     with pytest.raises(
             ValueError,
             match=rf"github_http_error:{status}:transport rejected"):
         release._api("https://api.github.com/example", "token")
+
+
+def test_cross_origin_artifact_redirect_strips_bearer_and_keeps_media_type():
+    handler = release._StripCrossOriginAuthorization()
+    request = release.urllib.request.Request(
+        "https://api.github.com/repos/mitsugue/argus/actions/artifacts/1/zip",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": "Bearer secret",
+        })
+    redirected = handler.redirect_request(
+        request, None, 302, "Found", {},
+        "https://productionresultssa.blob.core.windows.net/result.zip?sig=x")
+    assert redirected is not None
+    assert redirected.get_header("Accept") == "application/vnd.github+json"
+    assert redirected.get_header("Authorization") is None
+
+
+def test_same_origin_redirect_retains_bearer():
+    handler = release._StripCrossOriginAuthorization()
+    request = release.urllib.request.Request(
+        "https://api.github.com/repos/mitsugue/argus/actions/artifacts/1/zip",
+        headers={"Authorization": "Bearer secret"})
+    redirected = handler.redirect_request(
+        request, None, 302, "Found", {},
+        "https://api.github.com/repos/mitsugue/argus/actions/artifacts/1/archive")
+    assert redirected is not None
+    assert redirected.get_header("Authorization") == "Bearer secret"
+
+
+def test_https_artifact_redirect_cannot_downgrade_transport():
+    handler = release._StripCrossOriginAuthorization()
+    request = release.urllib.request.Request(
+        "https://api.github.com/repos/mitsugue/argus/actions/artifacts/1/zip",
+        headers={"Authorization": "Bearer secret"})
+    with pytest.raises(ValueError, match="github_redirect_insecure"):
+        handler.redirect_request(
+            request, None, 302, "Found", {}, "http://example.invalid/file")
 
 
 def test_detached_fetch_times_out_when_exact_artifact_is_missing(monkeypatch,
@@ -450,6 +493,6 @@ def test_manifest_and_product_semantic_allowlist_are_closed():
     names = {row["requirement"] for row in manifest["requirements"]}
     assert "productVersion = v13.5" in names
     assert "pre-merge detached runtime admission" in names
-    assert "GitHub artifact JSON media transport" in names
+    assert "GitHub artifact JSON media and safe redirect transport" in names
     assert "rollback restore has no browser dependency" in names
     assert "scanner.py" not in release.AUTHORIZED_EXTENSION_PATHS

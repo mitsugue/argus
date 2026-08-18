@@ -35,7 +35,11 @@ repeats immutable runtime admission before backend readiness or Pages
 deployment may begin. Artifact archive requests use GitHub's supported JSON
 media type (`application/vnd.github+json`); any HTTP, producer identity,
 archive, certificate, receipt, candidate, tree, or runtime mismatch fails
-closed. Seed and final public acceptance repeat the same runtime admission.
+closed. GitHub's authenticated API redirect leads to a signed artifact-blob
+URL; the transport preserves the media type but strips the GitHub bearer token
+at that cross-origin boundary so the signed URL—not a leaked or conflicting
+authorization header—remains authoritative. Seed and final public acceptance
+repeat the same runtime admission.
 
 The manual `restore-safe-pages.yml` path remains deliberately browser-free: it
 builds and restores a previously accepted frontend artifact and polls its exact
