@@ -33,6 +33,8 @@ jobs:
           pip install --quiet anthropic flask flask-cors requests pytz
           python-dotenv json-repair pytest cryptography==49.0.0
       - name: Install web deps
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
         run: cd web && npm ci --no-audit --no-fund
       - name: Validate control-plane scripts and workflows
         env:
@@ -40,8 +42,7 @@ jobs:
           # exact clean-tree release gate measures source changes only.
           PYTHONPYCACHEPREFIX: ${{ runner.temp }}/argus-pycache
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq shellcheck
+          shellcheck --version
           python3 -c 'import importlib.metadata as m; assert m.version("cryptography") == "49.0.0"'
           python3 -m py_compile \
             argus_remote_nonce_anchor.py \
@@ -54,7 +55,13 @@ jobs:
             scripts/resolve_backend_identity.py \
             scripts/argus_mission_tick.py \
             scripts/argus_remote_journal_rearm.py \
-            scripts/remote_journal_publish_policy.py
+            scripts/remote_journal_publish_policy.py \
+            scripts/v13_release_certificate.py \
+            scripts/v13_5_release_certificate.py
+          node web/scripts/acceptance-runtime.test.mjs
+          node web/scripts/release-state-machine.mjs validate-contract \
+            --contract release/v13-snapshot-readiness-contract.json
+          node web/scripts/release-state-machine.test.mjs
           bash -n scripts/install_argus_mission_timer.sh
           shellcheck scripts/install_argus_mission_timer.sh \
             scripts/check_argus_mission_timer.sh

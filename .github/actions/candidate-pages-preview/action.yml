@@ -1,0 +1,33 @@
+name: Serve exact ARGUS Pages candidate
+description: Build and serve the checked-out candidate without touching production Pages
+inputs:
+  candidate-sha:
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Build exact candidate
+      shell: bash
+      working-directory: web
+      env:
+        DEPLOY_BASE: /argus/
+        VITE_ARGUS_BUILD_SHA: ${{ inputs.candidate-sha }}
+        VITE_ARGUS_BACKEND_URL: https://argus-backend-3j2m.onrender.com
+      run: |
+        npm run build
+    - name: Serve exact candidate without production mutation
+      shell: bash
+      working-directory: web
+      env:
+        DEPLOY_BASE: /argus/
+      run: |
+        nohup npm run preview -- --host 127.0.0.1 \
+          > "$RUNNER_TEMP/argus-candidate-preview.log" 2>&1 &
+        for attempt in $(seq 1 60); do
+          if curl --fail --silent http://127.0.0.1:4173/argus/ > /dev/null; then
+            exit 0
+          fi
+          sleep 1
+        done
+        cat "$RUNNER_TEMP/argus-candidate-preview.log"
+        exit 1

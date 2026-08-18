@@ -1,0 +1,46 @@
+name: Admit immutable ARGUS acceptance runtime
+description: Zero-install browser, profile, and seed preflight bound to one candidate
+inputs:
+  candidate-sha:
+    required: true
+  candidate-tree:
+    required: true
+  evidence-path:
+    required: true
+  expected-runtime-identity:
+    required: false
+    default: ''
+outputs:
+  runtime_identity_digest:
+    value: ${{ steps.runtime.outputs.runtime_identity_digest }}
+runs:
+  using: composite
+  steps:
+    - name: Install repository JavaScript only; use pre-provisioned browser
+      shell: bash
+      working-directory: web
+      env:
+        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      run: npm ci --no-audit --no-fund
+    - id: runtime
+      name: Launch pre-provisioned browser and admit exact runtime
+      shell: bash
+      env:
+        ARGUS_ACCEPTANCE_CONTAINER_REF: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+        PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      run: |
+        args=(
+          probe
+          --candidate-sha '${{ inputs.candidate-sha }}'
+          --candidate-tree '${{ inputs.candidate-tree }}'
+          --out '${{ inputs.evidence-path }}'
+        )
+        if test -n '${{ inputs.expected-runtime-identity }}'; then
+          args+=(--expected-runtime-identity '${{ inputs.expected-runtime-identity }}')
+        fi
+        node web/scripts/acceptance-runtime.mjs "${args[@]}" | tee "$RUNNER_TEMP/argus-runtime-preflight.log"
+        digest=$(sed -n 's/^ARGUS_ACCEPTANCE_RUNTIME_IDENTITY=//p' "$RUNNER_TEMP/argus-runtime-preflight.log")
+        test "${#digest}" = 64
+        echo "runtime_identity_digest=$digest" >> "$GITHUB_OUTPUT"
