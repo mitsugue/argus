@@ -122,10 +122,20 @@ also frozen.
 ## Two full simulations and proof
 
 The PR workflow runs `web/scripts/full-release-simulation.mjs` twice on separate
-fresh runners. Each run starts a new empty backend fixture, proves R7 at 0/12,
-serves an exact candidate dist, executes the dedicated 12-snapshot producer,
-uses the real canonical browser selector, seals and reopens a fresh profile,
-and accepts the exact 12 set and four public surfaces.
+fresh runners. Each run starts a new empty backend fixture
+(`web/scripts/release-fixture-target.mjs`, serving production-shaped verified
+snapshots), proves R7 at 0/12, serves an exact candidate dist, executes the
+dedicated 12-snapshot producer, uses the real canonical browser selector, seals
+and reopens a fresh profile, and accepts the exact 12 set and four public
+surfaces. It then executes the exact production acceptance engine —
+`web/scripts/mobile-today-acceptance.mjs`, the same script the post-deploy
+public-acceptance job runs against the live site — against the candidate
+target. The engine carries one static gate inventory (M01–M14) that is
+identical in both invocations by construction; only the target URL and
+expected identity inputs differ between candidate and production. The
+admission certificate refuses to generate unless that engine reached terminal
+PASS with all 12 combinations against the exact candidate, so no release gate
+can exist that production exercises first.
 
 After both jobs pass, `scripts/v13_5_release_certificate.py` generates a
 detached, content-addressed pre-merge admission certificate bound to the exact

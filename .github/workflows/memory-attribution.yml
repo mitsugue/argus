@@ -5,7 +5,6 @@ on:
     paths:
       - ".github/workflows/memory-attribution.yml"
       - ".github/workflows/market-public-acceptance.yml"
-      - ".github/actions/candidate-pages-preview/action.yml"
       - "web/scripts/release-state-machine.mjs"
       - "web/scripts/release-state-machine.test.mjs"
       - "web/scripts/canonical-snapshot-selection.mjs"

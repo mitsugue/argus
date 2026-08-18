@@ -26,12 +26,16 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
     ".github/actions/acceptance-runtime-preflight/action.yml",
+    # Deletions are diffs against the accepted source too: these two paths are
+    # removed dead release authority (orphaned preview action, vestigial V13
+    # certificate) and stay authorized so their removal can ship.
     ".github/actions/candidate-pages-preview/action.yml",
     ".github/actions/v13-5-pre-mutation-rehearsal/action.yml",
     ".github/actions/warm-profile-consumer/action.yml",
     ".github/actions/warm-profile-seed/action.yml",
     ".github/workflows/deploy-pages.yml",
     ".github/workflows/market-public-acceptance.yml",
+    ".github/workflows/memory-attribution.yml",
     ".github/workflows/release-gate.yml",
     ".github/workflows/restore-safe-pages.yml",
     "argus_release_identity.py",
@@ -63,11 +67,13 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/scripts/mobile-today-projection-state.test.mjs",
     "web/scripts/mobile-today-warm-revalidation.test.mjs",
     "web/scripts/public-market-acceptance.contract.test.mjs",
+    "web/scripts/release-fixture-target.mjs",
     "web/scripts/round3-product-final.test.mjs",
     "web/scripts/runtime-version-truth.test.mjs",
     "web/scripts/warm-profile-contract.test.mjs",
     "web/src/domain/runtimeVersionTruth.ts",
     "web/src/components/today/ArgusTodayPanel.tsx",
+    "web/src/routes/CommandCenter.tsx",
     "web/vite.config.ts",
 })
 

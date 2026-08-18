@@ -49,6 +49,9 @@ POLICY_INPUTS = (
     "web/scripts/acceptance-runtime.mjs",
     "web/scripts/release-state-machine.mjs",
     "web/scripts/full-release-simulation.mjs",
+    "web/scripts/release-fixture-target.mjs",
+    "web/scripts/mobile-today-acceptance.mjs",
+    "web/scripts/canonical-snapshot-selection.mjs",
 )
 AUTHORIZED_EXTENSION_PATHS = source_provenance.AUTHORIZED_EXTENSION_PATHS
 
@@ -194,6 +197,18 @@ def _validate_simulation(path: pathlib.Path, ordinal: int,
         value.get("warmProfileSeal", {}).get("productVersion") == PRODUCT_VERSION,
         value.get("independentProfileReopen", {}).get("status") == "pass",
         value.get("publicProductAcceptance", {}).get("status") == "pass",
+        # The exact production acceptance engine must have reached terminal
+        # PASS against this candidate before any certificate can exist. A
+        # certificate without this proof would readmit the class of defect
+        # that production alone kept discovering.
+        value.get("mobileAcceptance", {}).get("status") == "pass",
+        value.get("mobileAcceptance", {}).get("verdict") == "PASS",
+        value.get("mobileAcceptance", {}).get("exitCode") == 0,
+        value.get("mobileAcceptance", {}).get("frontendSha")
+        == candidate["commitSha"],
+        value.get("mobileAcceptance", {}).get("combinationCount") == 12,
+        value.get("mobileAcceptance", {}).get("failures") == [],
+        len(value.get("mobileAcceptance", {}).get("gateInventory") or []) >= 14,
     )
     if not all(checks):
         raise ValueError(f"full_release_simulation_{ordinal}_invalid")

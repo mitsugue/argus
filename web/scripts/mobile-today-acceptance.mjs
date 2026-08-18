@@ -29,6 +29,25 @@ const VIEWPORTS = [
   { width: 414, height: 896 }, { width: 430, height: 932 },
   { width: 932, height: 430 },
 ];
+// The complete, ordered gate inventory of this engine. Every gate runs in
+// every invocation — candidate target and production target execute the same
+// list by construction, so no gate can exist that production discovers first.
+const GATE_INVENTORY = [
+  { id: 'M01', name: 'shell-identity-version-sha' },
+  { id: 'M02', name: 'canonical-1321-5d-selection' },
+  { id: 'M03', name: 'today-selector-four-instruments' },
+  { id: 'M04', name: 'twelve-combination-verified-projection' },
+  { id: 'M05', name: 'responsive-geometry-matrix' },
+  { id: 'M06', name: 'navigation-history-active-state' },
+  { id: 'M07', name: 'cold-loader-semantics' },
+  { id: 'M08', name: 'slow-initial-label' },
+  { id: 'M09', name: 'failure-retry-contract' },
+  { id: 'M10', name: 'warm-revalidation-contract' },
+  { id: 'M11', name: 'not-modified-continuity' },
+  { id: 'M12', name: 'rate-limit-cache-backoff' },
+  { id: 'M13', name: 'offline-snapshot-continuity' },
+  { id: 'M14', name: 'request-hygiene-console-ai' },
+];
 const sanitize = (value) => String(value ?? '')
   .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
   .replace(/([?&](?:token|key|authorization|auth)=[^&\s]+)/gi, '?redacted')
@@ -69,6 +88,31 @@ async function writeJson(name, value) {
   await fs.writeFile(path.join(OUT_DIR, name), `${JSON.stringify(value, null, 2)}\n`);
 }
 
+// Every semantic wait publishes the actually observed contract state when it
+// times out, so a failed gate always leaves machine-readable DOM evidence —
+// never a bare stack trace.
+const timeoutDiagnostics = [];
+async function waitForContractState(page, gate, predicate, argument, timeout = 30_000) {
+  try {
+    await page.waitForFunction(predicate, argument, { timeout });
+  } catch (error) {
+    const observed = await page.evaluate(() => {
+      const read = (selector) => [...document.querySelectorAll(selector)]
+        .map((node) => Object.fromEntries([...node.attributes]
+          .filter((attribute) => attribute.name.startsWith('data-'))
+          .map((attribute) => [attribute.name, attribute.value])));
+      return {
+        projection: read('[data-argus-contract="today-projection-state-v1"]'),
+        canonical: read('[data-argus-contract="canonical-market-snapshot-v1"]'),
+      };
+    }).catch(() => null);
+    timeoutDiagnostics.push({ gate, observed, at: new Date().toISOString() });
+    await writeJson('timeout-diagnostics.json', timeoutDiagnostics).catch(() => {});
+    error.message = `${gate}: ${error.message} observed=${JSON.stringify(observed)}`;
+    throw error;
+  }
+}
+
 async function screenshot(page, name, fullPage = false) {
   await fs.mkdir(path.join(OUT_DIR, 'screenshots'), { recursive: true });
   await page.screenshot({
@@ -105,7 +149,7 @@ function observe(page, evidence) {
       snapshot: url.searchParams.get('snapshot'),
       scope: url.searchParams.get('scope'),
     });
-    if (request.method() === 'POST' && /argus-backend-.*\.onrender\.com$/.test(url.hostname)) {
+    if (request.method() === 'POST' && url.pathname.startsWith('/api/argus/')) {
       evidence.aiPostCount += 1;
     }
   });
@@ -605,17 +649,17 @@ async function run() {
       () => reject(new Error('controlled warm revalidation did not start')),
       5_000)),
   ]);
-  await warmPage.waitForFunction(({ selector, snapshotId }) => {
-    const nodes = [...document.querySelectorAll(selector)];
-    if (nodes.length !== 1) return false;
-    const node = nodes[0];
-    return node.getAttribute('data-projection-state') === 'available'
-      && node.getAttribute('data-projection-revalidation-state') === 'background'
-      && node.getAttribute('data-projection-snapshot-state') === 'CACHE_READY_REVALIDATING'
-      && node.getAttribute('data-projection-snapshot-id') === snapshotId
-      && !node.getAttribute('data-projection-response-snapshot-id');
-  }, { selector: CANONICAL_PROJECTION_STATE_SELECTOR, snapshotId: warmSeedSnapshotId },
-  { timeout: 30_000 });
+  await waitForContractState(warmPage, 'warm-revalidation-background',
+    ({ selector, snapshotId }) => {
+      const nodes = [...document.querySelectorAll(selector)];
+      if (nodes.length !== 1) return false;
+      const node = nodes[0];
+      return node.getAttribute('data-projection-state') === 'available'
+        && node.getAttribute('data-projection-revalidation-state') === 'background'
+        && node.getAttribute('data-projection-snapshot-state') === 'CACHE_READY_REVALIDATING'
+        && node.getAttribute('data-projection-snapshot-id') === snapshotId
+        && !node.getAttribute('data-projection-response-snapshot-id');
+    }, { selector: CANONICAL_PROJECTION_STATE_SELECTOR, snapshotId: warmSeedSnapshotId });
   const warmRevalidating = await readCanonicalWarmRevalidationState(warmPage, {
     expectedRevalidationState: 'background',
     cachedSnapshotId: warmSeedSnapshotId,
@@ -623,17 +667,17 @@ async function run() {
   });
   await screenshot(warmPage, 'today-warm-revalidation-cached.png');
   releaseWarmResponse();
-  await warmPage.waitForFunction(({ selector, snapshotId }) => {
-    const nodes = [...document.querySelectorAll(selector)];
-    if (nodes.length !== 1) return false;
-    const node = nodes[0];
-    return node.getAttribute('data-projection-state') === 'available'
-      && node.getAttribute('data-projection-revalidation-state') === 'settled'
-      && node.getAttribute('data-projection-snapshot-state') === 'CURRENT_READY'
-      && node.getAttribute('data-projection-snapshot-id') === snapshotId
-      && node.getAttribute('data-projection-response-snapshot-id') === snapshotId;
-  }, { selector: CANONICAL_PROJECTION_STATE_SELECTOR, snapshotId: warmSeedSnapshotId },
-  { timeout: 30_000 });
+  await waitForContractState(warmPage, 'warm-revalidation-settled',
+    ({ selector, snapshotId }) => {
+      const nodes = [...document.querySelectorAll(selector)];
+      if (nodes.length !== 1) return false;
+      const node = nodes[0];
+      return node.getAttribute('data-projection-state') === 'available'
+        && node.getAttribute('data-projection-revalidation-state') === 'settled'
+        && node.getAttribute('data-projection-snapshot-state') === 'CURRENT_READY'
+        && node.getAttribute('data-projection-snapshot-id') === snapshotId
+        && node.getAttribute('data-projection-response-snapshot-id') === snapshotId;
+    }, { selector: CANONICAL_PROJECTION_STATE_SELECTOR, snapshotId: warmSeedSnapshotId });
   const warmSettled = await readCanonicalWarmRevalidationState(warmPage, {
     expectedRevalidationState: 'settled',
     cachedSnapshotId: warmSeedSnapshotId,
@@ -707,13 +751,14 @@ async function run() {
   await waitForShell(rateLimitPage); await waitForTodayChart(rateLimitPage);
   const rateLimitedSnapshotId = await rateLimitPage.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .getAttribute('data-canonical-snapshot-id');
-  await rateLimitPage.waitForFunction(({ selector, snapshotId }) => {
-    const nodes = [...document.querySelectorAll(selector)];
-    return nodes.length === 1
-      && nodes[0].getAttribute('data-projection-revalidation-state') === 'cached-safe'
-      && nodes[0].getAttribute('data-projection-snapshot-id') === snapshotId;
-  }, { selector: CANONICAL_PROJECTION_STATE_SELECTOR,
-    snapshotId: rateLimitSeedSnapshotId }, { timeout: 30_000 });
+  await waitForContractState(rateLimitPage, 'rate-limit-cached-safe',
+    ({ selector, snapshotId }) => {
+      const nodes = [...document.querySelectorAll(selector)];
+      return nodes.length === 1
+        && nodes[0].getAttribute('data-projection-revalidation-state') === 'cached-safe'
+        && nodes[0].getAttribute('data-projection-snapshot-id') === snapshotId;
+    }, { selector: CANONICAL_PROJECTION_STATE_SELECTOR,
+      snapshotId: rateLimitSeedSnapshotId });
   const rateLimitedSemanticState = await readCanonicalWarmRevalidationState(
     rateLimitPage, {
       expectedRevalidationState: 'cached-safe',
@@ -775,6 +820,7 @@ async function run() {
   const result = {
     verdict: evidence.failures.length ? 'FAIL' : 'PASS',
     testedAt: new Date().toISOString(),
+    gateInventory: GATE_INVENTORY,
     publicUrl: TODAY_URL,
     frontendVersion: await page.evaluate(() => globalThis.__ARGUS_VERSION__ ?? null),
     frontendSha: await page.evaluate(() => globalThis.__ARGUS_BUILD_SHA__ ?? null),

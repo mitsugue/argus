@@ -11,8 +11,10 @@ const seedAction = fs.readFileSync(
   new URL('../../.github/actions/warm-profile-seed/action.yml', import.meta.url), 'utf8');
 const consumerAction = fs.readFileSync(
   new URL('../../.github/actions/warm-profile-consumer/action.yml', import.meta.url), 'utf8');
-const candidatePreviewAction = fs.readFileSync(
-  new URL('../../.github/actions/candidate-pages-preview/action.yml', import.meta.url), 'utf8');
+const fullReleaseSimulation = fs.readFileSync(
+  new URL('./full-release-simulation.mjs', import.meta.url), 'utf8');
+const releaseCertificate = fs.readFileSync(
+  new URL('../../scripts/v13_5_release_certificate.py', import.meta.url), 'utf8');
 const seedRunner = fs.readFileSync(
   new URL('./run-warm-profile-seed.sh', import.meta.url), 'utf8');
 const vite = fs.readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8');
@@ -146,11 +148,17 @@ assert.match(manualWorkflow, /name: zero-install-runtime-proof-1/);
 assert.match(manualWorkflow, /name: zero-install-runtime-proof-2/);
 assert.match(manualWorkflow, /node scripts\/full-release-simulation\.mjs --run 1/);
 assert.match(manualWorkflow, /node scripts\/full-release-simulation\.mjs --run 2/);
-assert.match(candidatePreviewAction, /VITE_ARGUS_BUILD_SHA: \$\{\{ inputs\.candidate-sha \}\}/);
-assert.match(candidatePreviewAction,
-  /Serve exact candidate without production mutation[\s\S]*DEPLOY_BASE: \/argus\/[\s\S]*npm run preview/,
-  'the candidate preview must serve assets under the same base used at build time');
-assert.match(candidatePreviewAction, /npm run preview -- --host 127\.0\.0\.1/);
+// One acceptance authority: the pre-merge simulation must execute the exact
+// production acceptance engine against the candidate target, and no admission
+// certificate may exist without that engine's terminal PASS.
+assert.match(fullReleaseSimulation,
+  /spawn\(process\.execPath, \['scripts\/mobile-today-acceptance\.mjs'\]/);
+assert.match(fullReleaseSimulation, /from '\.\/release-fixture-target\.mjs'/);
+assert.match(fullReleaseSimulation, /ARGUS_PUBLIC_URL: publicUrl/);
+assert.match(releaseCertificate,
+  /"mobileAcceptance", \{\}\)\.get\("status"\) == "pass"/);
+assert.match(releaseCertificate,
+  /"mobileAcceptance", \{\}\)\.get\("verdict"\) == "PASS"/);
 assert.match(seedAction, /bash scripts\/run-warm-profile-seed\.sh/);
 assert.match(seedRunner, /node scripts\/public-market-acceptance\.mjs/);
 assert.match(consumerAction, /node scripts\/public-market-acceptance\.mjs/);

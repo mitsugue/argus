@@ -20,7 +20,6 @@ on:
       - 'release/v13-snapshot-readiness-contract.json'
       - 'web/scripts/release-state-machine.mjs'
       - 'web/scripts/acceptance-runtime.mjs'
-      - 'scripts/v13_release_certificate.py'
       - 'scripts/v13_5_release_certificate.py'
       - 'scripts/v13_5_source_provenance.py'
       - 'scripts/v13_5_pre_mutation_rehearsal.py'

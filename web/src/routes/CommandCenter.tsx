@@ -348,6 +348,16 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     const selectedUsChart = effectiveMarket === 'US'
       ? selectedChart.decisionData
       : selectedInstrument.US === 'QQQ' ? nasdaqChart.decisionData : sp500Chart.decisionData;
+    // The chart projection is presentation of the verified snapshot the hook
+    // currently holds (cached or settled), so the warm cache stays the visible
+    // authority during background revalidation. Decision consumers keep the
+    // stricter decisionData (CURRENT_READY + fresh only).
+    const selectedJpProjection = effectiveMarket === 'JP'
+      ? selectedChart.data
+      : selectedInstrument.JP === '1306' ? topixChart.data : jpChart.data;
+    const selectedUsProjection = effectiveMarket === 'US'
+      ? selectedChart.data
+      : selectedInstrument.US === 'QQQ' ? nasdaqChart.data : sp500Chart.data;
     const shortState = selectedJpChart?.todayIntelligence?.shortSelling;
     const jpFactors = [
       { key: 'TREND' as const, state: regime.data?.regime?.label === 'RISK_ON' ? '↑' as const : regime.data?.regime?.label === 'RISK_OFF' ? '↓' as const : '△' as const, source: 'market-regime' },
@@ -499,8 +509,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
         failureClass: marketNews.failureClass,
       },
       projection: {
-        JP: projectionInput(selectedJpChart),
-        US: projectionInput(selectedUsChart),
+        JP: projectionInput(selectedJpProjection),
+        US: projectionInput(selectedUsProjection),
       },
       selectedInstrument,
       systemStatus: { data: dataQuality, backup: backup.protectionLevelJa,
@@ -512,6 +522,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     assets, apItems, marketMode,
     jpChart.decisionData, topixChart.decisionData,
     sp500Chart.decisionData, nasdaqChart.decisionData, marketNews.data,
+    jpChart.data, topixChart.data, sp500Chart.data, nasdaqChart.data,
+    selectedChart.data,
     marketNews.lastChecked, marketNews.failureClass,
     selectedInstrument, effectiveMarket, selectedChart.decisionData, decisionCalendar,
     sdaBySymbol]);

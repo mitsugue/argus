@@ -665,3 +665,56 @@ def test_manifest_and_product_semantic_allowlist_are_closed():
     assert "warm cached projection semantic revalidation" in names
     assert "rollback restore has no browser dependency" in names
     assert "scanner.py" not in release.AUTHORIZED_EXTENSION_PATHS
+
+
+def _simulation_payload(ordinal):
+    return {
+        "schemaVersion": "argus-v13-full-release-simulation-v1",
+        "runNumber": ordinal,
+        "status": "pass",
+        "candidateSha": CANDIDATE["commitSha"],
+        "initial": {"snapshotReady": 0, "snapshotExpected": 12},
+        "infrastructure": {"pass": True},
+        "trigger": {"status": "completed", "plan": [{}] * 12},
+        "businessSnapshots": {"pass": True,
+                              "expectedSet": [f"s{i}" for i in range(12)],
+                              "observedSet": [f"s{i}" for i in range(12)]},
+        "canonical": {"instrument": "1321", "horizon": "5D",
+                      "responseSnapshotId": "vs-x", "uiSnapshotId": "vs-x"},
+        "warmProfileSeal": {"status": "pass",
+                            "productVersion": release.PRODUCT_VERSION},
+        "independentProfileReopen": {"status": "pass"},
+        "publicProductAcceptance": {"status": "pass"},
+        "mobileAcceptance": {
+            "status": "pass", "verdict": "PASS", "exitCode": 0,
+            "frontendSha": CANDIDATE["commitSha"], "combinationCount": 12,
+            "failures": [],
+            "gateInventory": [{"id": f"M{i:02d}"} for i in range(1, 15)],
+        },
+    }
+
+
+def test_simulation_requires_candidate_bound_mobile_acceptance(tmp_path):
+    path = tmp_path / "simulation.json"
+    write_json(path, _simulation_payload(1))
+    assert release._validate_simulation(path, 1, CANDIDATE)["status"] == "pass"
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda value: value.pop("mobileAcceptance"),
+    lambda value: value["mobileAcceptance"].update(status="failure"),
+    lambda value: value["mobileAcceptance"].update(verdict="FAIL"),
+    lambda value: value["mobileAcceptance"].update(exitCode=1),
+    lambda value: value["mobileAcceptance"].update(frontendSha="c" * 40),
+    lambda value: value["mobileAcceptance"].update(combinationCount=11),
+    lambda value: value["mobileAcceptance"].update(failures=["warm"]),
+    lambda value: value["mobileAcceptance"].update(gateInventory=[]),
+])
+def test_simulation_without_full_mobile_acceptance_fails_closed(
+        tmp_path, mutate):
+    payload = _simulation_payload(1)
+    mutate(payload)
+    path = tmp_path / "simulation.json"
+    write_json(path, payload)
+    with pytest.raises(ValueError, match="full_release_simulation_1_invalid"):
+        release._validate_simulation(path, 1, CANDIDATE)

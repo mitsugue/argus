@@ -38,7 +38,10 @@
     ".github/workflows/market-public-acceptance.yml",
     ".github/actions/acceptance-runtime-preflight/action.yml",
     ".github/actions/warm-profile-seed/action.yml",
-    ".github/actions/warm-profile-consumer/action.yml"
+    ".github/actions/warm-profile-consumer/action.yml",
+    "web/scripts/mobile-today-acceptance.mjs",
+    "web/scripts/full-release-simulation.mjs",
+    "web/scripts/release-fixture-target.mjs"
   ],
   "forbiddenDynamicProvisioningPatterns": [
     "npx\\s+playwright\\s+install",
