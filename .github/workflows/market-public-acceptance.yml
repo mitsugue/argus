@@ -31,6 +31,11 @@ on:
       - 'scripts/verify_public_candidate_release.py'
       - 'test_verify_public_candidate_release.py'
       - 'scripts/v13_release_certificate.py'
+      - 'scripts/v13_5_release_certificate.py'
+      - 'release/v13-acceptance-runtime.json'
+      - 'web/scripts/acceptance-runtime.mjs'
+      - 'web/scripts/acceptance-runtime.test.mjs'
+      - '.github/actions/acceptance-runtime-preflight/**'
   workflow_dispatch:
     inputs:
       pages_run_id:
@@ -49,27 +54,34 @@ on:
 permissions:
   contents: read
   actions: read
+  checks: read
 
 jobs:
   full_release_simulation_1:
-    name: full-release-simulation-1
+    name: zero-install-runtime-proof-1
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+      options: --ipc=host
     timeout-minutes: 25
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: actions/setup-node@v5
+          fetch-depth: 0
+      - id: candidate
+        name: Pin candidate tree
+        run: echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+      - id: runtime
+        uses: ./.github/actions/acceptance-runtime-preflight
         with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: npm ci --no-audit --no-fund
-        working-directory: web
-      - name: Install pinned simulation browser
-        run: npx playwright install --with-deps chromium
-        working-directory: web
+          candidate-sha: ${{ github.event.pull_request.head.sha }}
+          candidate-tree: ${{ steps.candidate.outputs.tree }}
+          evidence-path: artifacts/zero-install-runtime-proof-1.json
       - name: Build exact candidate artifact
         env:
           DEPLOY_BASE: /argus/
@@ -86,30 +98,38 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: full-release-simulation-1-${{ github.event.pull_request.head.sha }}
-          path: artifacts/full-release-simulation-1.json
+          name: zero-install-runtime-proof-1-${{ github.event.pull_request.head.sha }}
+          path: |
+            artifacts/zero-install-runtime-proof-1.json
+            artifacts/full-release-simulation-1.json
           if-no-files-found: error
           retention-days: 30
 
   full_release_simulation_2:
-    name: full-release-simulation-2
+    name: zero-install-runtime-proof-2
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+      options: --ipc=host
     timeout-minutes: 25
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: actions/setup-node@v5
+          fetch-depth: 0
+      - id: candidate
+        name: Pin candidate tree
+        run: echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+      - id: runtime
+        uses: ./.github/actions/acceptance-runtime-preflight
         with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: npm ci --no-audit --no-fund
-        working-directory: web
-      - name: Install pinned simulation browser
-        run: npx playwright install --with-deps chromium
-        working-directory: web
+          candidate-sha: ${{ github.event.pull_request.head.sha }}
+          candidate-tree: ${{ steps.candidate.outputs.tree }}
+          evidence-path: artifacts/zero-install-runtime-proof-2.json
       - name: Build exact candidate artifact
         env:
           DEPLOY_BASE: /argus/
@@ -126,8 +146,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: full-release-simulation-2-${{ github.event.pull_request.head.sha }}
-          path: artifacts/full-release-simulation-2.json
+          name: zero-install-runtime-proof-2-${{ github.event.pull_request.head.sha }}
+          path: |
+            artifacts/zero-install-runtime-proof-2.json
+            artifacts/full-release-simulation-2.json
           if-no-files-found: error
           retention-days: 30
 
@@ -144,39 +166,64 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v5
         with:
-          name: full-release-simulation-1-${{ github.event.pull_request.head.sha }}
+          name: zero-install-runtime-proof-1-${{ github.event.pull_request.head.sha }}
           path: artifacts/simulation-1
       - uses: actions/download-artifact@v5
         with:
-          name: full-release-simulation-2-${{ github.event.pull_request.head.sha }}
+          name: zero-install-runtime-proof-2-${{ github.event.pull_request.head.sha }}
           path: artifacts/simulation-2
+      - name: Collect CURRENT_REQUIRED results from the main ruleset
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B scripts/v13_5_release_certificate.py collect-checks \
+            --repo '${{ github.repository }}' \
+            --candidate-sha '${{ github.event.pull_request.head.sha }}' \
+            --out artifacts/v13-release-proof/current-required.json \
+            --timeout-seconds 1500
       - name: Generate content-addressed proof for the exact candidate
         run: |
-          python3 -B scripts/v13_release_certificate.py generate \
+          python3 -B scripts/v13_5_release_certificate.py generate \
             --simulation-one artifacts/simulation-1/full-release-simulation-1.json \
             --simulation-two artifacts/simulation-2/full-release-simulation-2.json \
-            --ci-status 'full-release-simulation-1=${{ needs.full_release_simulation_1.result }}' \
-            --ci-status 'full-release-simulation-2=${{ needs.full_release_simulation_2.result }}' \
+            --runtime-proof-one artifacts/simulation-1/zero-install-runtime-proof-1.json \
+            --runtime-proof-two artifacts/simulation-2/zero-install-runtime-proof-2.json \
+            --required-checks artifacts/v13-release-proof/current-required.json \
             --out artifacts/v13-release-proof/certificate.json
-          python3 -B scripts/v13_release_certificate.py verify \
-            --certificate artifacts/v13-release-proof/certificate.json
+          python3 -B scripts/v13_5_release_certificate.py verify \
+            --certificate artifacts/v13-release-proof/certificate.json \
+            --runtime-proof artifacts/simulation-1/zero-install-runtime-proof-1.json
       - name: Publish exact candidate proof certificate
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: v13-release-proof-${{ github.event.pull_request.head.sha }}
-          path: artifacts/v13-release-proof/certificate.json
+          name: v13-5-release-proof-${{ github.event.pull_request.head.sha }}
+          path: artifacts/v13-release-proof
           if-no-files-found: error
           retention-days: 90
 
   public-acceptance:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+      options: --ipc=host
     timeout-minutes: 45
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.frontend_sha }}
+          fetch-depth: 0
+      - id: candidate
+        run: echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/acceptance-runtime-preflight
+        with:
+          candidate-sha: ${{ inputs.frontend_sha }}
+          candidate-tree: ${{ steps.candidate.outputs.tree }}
+          evidence-path: artifacts/manual-public-acceptance-runtime.json
       - name: Resolve independent release versions
         id: release
         run: |
