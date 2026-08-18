@@ -9,8 +9,15 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+
 jobs:
-  gate:
+  release_checks:
+    name: release-checks
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -87,3 +94,77 @@ jobs:
         with:
           name: release-manifest-${{ github.sha }}
           path: artifacts/release_manifest.json
+
+  premerge_admission:
+    name: premerge-admission
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+      options: --ipc=host
+    timeout-minutes: 35
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - id: candidate
+        name: Pin exact pre-merge candidate
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+      - name: Fetch certificate from the completed detached producer workflow
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B scripts/v13_5_release_certificate.py fetch-admission \
+            --repo '${{ github.repository }}' \
+            --candidate-sha '${{ github.event.pull_request.head.sha }}' \
+            --candidate-tree '${{ steps.candidate.outputs.tree }}' \
+            --consumer-run-id '${{ github.run_id }}' \
+            --out artifacts/premerge-admission/certificate.json \
+            --receipt-out artifacts/premerge-admission/retrieval-receipt.json \
+            --timeout-seconds 1500
+      - id: runtime
+        uses: ./.github/actions/acceptance-runtime-preflight
+        with:
+          candidate-sha: ${{ github.event.pull_request.head.sha }}
+          candidate-tree: ${{ steps.candidate.outputs.tree }}
+          evidence-path: artifacts/premerge-admission/runtime-proof.json
+      - name: Admit detached certificate and immutable runtime before merge
+        run: |
+          python3 -B scripts/v13_5_release_certificate.py verify-admission \
+            --certificate artifacts/premerge-admission/certificate.json \
+            --candidate-ref '${{ github.event.pull_request.head.sha }}' \
+            --runtime-proof artifacts/premerge-admission/runtime-proof.json \
+            --retrieval-receipt artifacts/premerge-admission/retrieval-receipt.json
+      - name: Publish pre-merge admission evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v13-5-premerge-admission-consumer-${{ github.event.pull_request.head.sha }}
+          path: artifacts/premerge-admission
+          if-no-files-found: error
+          retention-days: 90
+
+  gate:
+    name: gate
+    if: always()
+    needs: [release_checks, premerge_admission]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require clean release checks and pre-merge admission
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_CHECKS_RESULT: ${{ needs.release_checks.result }}
+          PREMERGE_ADMISSION_RESULT: ${{ needs.premerge_admission.result }}
+        run: |
+          test "$RELEASE_CHECKS_RESULT" = success
+          if test "$EVENT_NAME" = pull_request; then
+            test "$PREMERGE_ADMISSION_RESULT" = success
+          else
+            test "$PREMERGE_ADMISSION_RESULT" = skipped
+          fi

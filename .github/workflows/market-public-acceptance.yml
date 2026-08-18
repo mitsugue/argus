@@ -176,32 +176,22 @@ jobs:
         with:
           name: zero-install-runtime-proof-2-${{ github.event.pull_request.head.sha }}
           path: artifacts/simulation-2
-      - name: Collect CURRENT_REQUIRED results from the main ruleset
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+      - name: Generate pre-merge admission certificate for the exact candidate
         run: |
-          python3 -B scripts/v13_5_release_certificate.py collect-checks \
-            --repo '${{ github.repository }}' \
-            --candidate-sha '${{ github.event.pull_request.head.sha }}' \
-            --out artifacts/v13-release-proof/current-required.json \
-            --timeout-seconds 1500
-      - name: Generate content-addressed proof for the exact candidate
-        run: |
-          python3 -B scripts/v13_5_release_certificate.py generate \
+          python3 -B scripts/v13_5_release_certificate.py generate-admission \
             --simulation-one artifacts/simulation-1/full-release-simulation-1.json \
             --simulation-two artifacts/simulation-2/full-release-simulation-2.json \
             --runtime-proof-one artifacts/simulation-1/zero-install-runtime-proof-1.json \
             --runtime-proof-two artifacts/simulation-2/zero-install-runtime-proof-2.json \
-            --required-checks artifacts/v13-release-proof/current-required.json \
             --out artifacts/v13-release-proof/certificate.json
-          python3 -B scripts/v13_5_release_certificate.py verify \
+          python3 -B scripts/v13_5_release_certificate.py verify-admission \
             --certificate artifacts/v13-release-proof/certificate.json \
             --runtime-proof artifacts/simulation-1/zero-install-runtime-proof-1.json
-      - name: Publish exact candidate proof certificate
+      - name: Publish detached pre-merge admission certificate
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: v13-5-release-proof-${{ github.event.pull_request.head.sha }}
+          name: v13-5-premerge-admission-${{ github.event.pull_request.head.sha }}
           path: artifacts/v13-release-proof
           if-no-files-found: error
           retention-days: 90
