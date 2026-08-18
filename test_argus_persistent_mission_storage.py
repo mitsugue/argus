@@ -1426,108 +1426,6 @@ class LegacyCheckpointConcurrentCanaryTests(unittest.TestCase):
 
 
 class ContractRegressionTests(unittest.TestCase):
-    def test_release_snapshot_seed_acknowledges_exact_durable_matrix(self):
-        expected_sha = "a" * 40
-        trigger_id = "v13-release-unit-0001"
-        binding = {
-            "expectedBuildSha": expected_sha,
-            "producerTriggerId": trigger_id,
-            "triggeredAt": "2026-08-18T00:00:00Z",
-        }
-        producer_calls = []
-
-        def produce(symbol, market, *, market_scope=False,
-                    release_binding=None):
-            self.assertEqual(binding, release_binding)
-            producer_calls.append((symbol, market, market_scope))
-            return {}, {"horizons": [
-                {"horizon": horizon, "snapshotId": f"vs-{horizon}"}
-                for horizon in (1, 5, 20)
-            ]}
-
-        def readback(symbol, horizon):
-            if not any(call[0] == symbol for call in producer_calls):
-                return None
-            return {
-                "snapshotId": f"vs-{symbol}-{horizon}",
-                "generatedAt": "2026-08-18T00:00:01Z",
-                "verificationStatus": "verified",
-                "releaseBinding": binding,
-            }
-
-        with mock.patch.object(scanner, "_backend_exact_sha",
-                               return_value=expected_sha), \
-                mock.patch.object(scanner, "_ai_now_iso", side_effect=[
-                    "2026-08-18T00:00:00Z",
-                    "2026-08-18T00:00:02Z",
-                ]), \
-                mock.patch.object(scanner,
-                                  "_precompute_verified_market_view",
-                                  side_effect=produce), \
-                mock.patch.object(scanner, "_verified_market_snapshot",
-                                  side_effect=readback), \
-                mock.patch.object(scanner, "_osint_persist", return_value={
-                    "verified": True, "readBackVerified": True,
-                }):
-            with scanner.app.app_context():
-                response = scanner._release_seed_verified_market_views({
-                    "expectedBuildSha": expected_sha,
-                    "runId": trigger_id,
-                })
-        payload = response.get_json()
-        self.assertEqual("completed", payload["status"])
-        self.assertEqual(12, payload["snapshotExpected"])
-        self.assertEqual(12, payload["snapshotReady"])
-        self.assertEqual(12, len(payload["snapshots"]))
-        self.assertTrue(payload["persistence"]["readBackVerified"])
-        self.assertFalse(payload["recoveryAuthorityChanged"])
-        self.assertEqual([
-            ("1321", "JP", True), ("1306", "JP", False),
-            ("SPY", "US", False), ("QQQ", "US", False),
-        ], producer_calls)
-
-    def test_release_snapshot_seed_rejects_wrong_build_before_producer(self):
-        with mock.patch.object(scanner, "_backend_exact_sha",
-                               return_value="b" * 40), \
-                mock.patch.object(
-                    scanner, "_precompute_verified_market_view") as producer:
-            with scanner.app.app_context():
-                response, status = scanner._release_seed_verified_market_views({
-                    "expectedBuildSha": "a" * 40,
-                    "runId": "v13-release-unit-0002",
-                })
-        self.assertEqual(409, status)
-        self.assertEqual("release_snapshot_build_mismatch",
-                         response.get_json()["error"])
-        producer.assert_not_called()
-
-    def test_release_snapshot_seed_duplicate_is_not_success(self):
-        expected_sha = "a" * 40
-        trigger_id = "v13-release-unit-0003"
-        existing = {
-            "releaseBinding": {
-                "expectedBuildSha": expected_sha,
-                "producerTriggerId": trigger_id,
-                "triggeredAt": "2026-08-18T00:00:00Z",
-            },
-        }
-        with mock.patch.object(scanner, "_backend_exact_sha",
-                               return_value=expected_sha), \
-                mock.patch.object(scanner, "_verified_market_snapshot",
-                                  return_value=existing), \
-                mock.patch.object(
-                    scanner, "_precompute_verified_market_view") as producer:
-            with scanner.app.app_context():
-                response, status = scanner._release_seed_verified_market_views({
-                    "expectedBuildSha": expected_sha,
-                    "runId": trigger_id,
-                })
-        payload = response.get_json()
-        self.assertEqual(409, status)
-        self.assertEqual("duplicate", payload["status"])
-        self.assertEqual(12, payload["snapshotReady"])
-        producer.assert_not_called()
-
     def test_wal_record_has_dedup_and_chain_identity(self):
         with tempfile.TemporaryDirectory() as root:
             wal = os.path.join(root, "tick.wal")
@@ -1557,15 +1455,10 @@ class ContractRegressionTests(unittest.TestCase):
         source = pathlib.Path("test_argus_mission_tick_durability.py").read_text()
         self.assertIn("test_five_contenders_allow_exactly_one_owner", source)
 
-    def test_exact_twelve_snapshot_shared_gate_remains(self):
-        contract = json.loads(pathlib.Path(
-            "release/v13-snapshot-readiness-contract.json").read_text())
-        engine = pathlib.Path(
-            "web/scripts/release-state-machine.mjs").read_text()
-        self.assertEqual(12, contract["snapshotExpected"])
-        self.assertEqual(12, len(contract["snapshots"]))
-        self.assertIn("evaluateBusinessSnapshotSet", engine)
-        self.assertIn("releaseSnapshotSeed: true", engine)
+    def test_twelve_snapshots_and_ai_zero_gates_remain(self):
+        gate = pathlib.Path("test_verified_snapshot_release_gate.py").read_text()
+        self.assertIn("test_matrix_requires_all_12_snapshots_and_304", gate)
+        self.assertIn('"automaticAiExecutions": 0', gate)
 
     def test_memory_snapshot_exports_remote_wal_cursor_for_compact_receipt(self):
         saved_batch = dict(scanner._MISSION_BATCH_STATE)

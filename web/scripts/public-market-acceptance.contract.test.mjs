@@ -11,8 +11,6 @@ const seedAction = fs.readFileSync(
   new URL('../../.github/actions/warm-profile-seed/action.yml', import.meta.url), 'utf8');
 const consumerAction = fs.readFileSync(
   new URL('../../.github/actions/warm-profile-consumer/action.yml', import.meta.url), 'utf8');
-const candidatePreviewAction = fs.readFileSync(
-  new URL('../../.github/actions/candidate-pages-preview/action.yml', import.meta.url), 'utf8');
 const seedRunner = fs.readFileSync(
   new URL('./run-warm-profile-seed.sh', import.meta.url), 'utf8');
 const vite = fs.readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8');
@@ -21,10 +19,6 @@ const navigation = fs.readFileSync(
   new URL('../src/navigation.ts', import.meta.url), 'utf8');
 const mobileAcceptance = fs.readFileSync(
   new URL('./mobile-today-acceptance.mjs', import.meta.url), 'utf8');
-const canonicalSelection = fs.readFileSync(
-  new URL('./canonical-snapshot-selection.mjs', import.meta.url), 'utf8');
-const chartHook = fs.readFileSync(
-  new URL('../src/hooks/useChartIntelligence.ts', import.meta.url), 'utf8');
 const today = fs.readFileSync(
   new URL('../src/components/today/ArgusTodayPanel.tsx', import.meta.url), 'utf8');
 
@@ -47,7 +41,7 @@ for (const field of ['frontendVersion', 'frontendSha', 'backendVersion', 'backen
 assert.match(script, /#today/);
 assert.doesNotMatch(script, /#market|Market Context|\.market-replay|\.mr-/);
 assert.match(script, /TODAY_URL/);
-for (const source of [script + canonicalSelection, mobileAcceptance + canonicalSelection]) {
+for (const source of [script, mobileAcceptance]) {
   assert.match(source, /canonical-market-snapshot-v1/);
   assert.match(source, /data-canonical-verification=\"verified\"/);
   assert.match(source, /data-canonical-snapshot-id/);
@@ -56,52 +50,20 @@ for (const source of [script + canonicalSelection, mobileAcceptance + canonicalS
 }
 assert.match(today, /data-argus-contract="canonical-market-snapshot-v1"/);
 assert.match(today, /data-canonical-snapshot-id=\{chartLoad\.snapshotId \?\? undefined\}/);
-assert.match(today,
-  /data-canonical-response-snapshot-id=\{chartLoad\.responseSnapshotId \?\? undefined\}/);
-assert.match(today,
-  /data-canonical-response-verification=\{chartLoad\.responseSnapshotId \? 'verified' : 'unverified'\}/);
 assert.match(today, /data-canonical-snapshot-state=\{chartLoad\.snapshotState\}/);
 assert.match(today, /data-canonical-verification=\{chartLoad\.snapshotId \? 'verified' : 'unverified'\}/);
 assert.match(today, /data-canonical-instrument=\{projection\?\.symbol \?\? selectedSymbol\}/);
 assert.match(today, /data-canonical-horizon=\{`\$\{projection\?\.horizonDays \?\? horizon\}D`\}/);
 assert.match(script, /\.at-projection/);
-for (const source of [script + canonicalSelection, mobileAcceptance + canonicalSelection]) {
+for (const source of [script, mobileAcceptance]) {
   assert.match(source, /getByText\('根拠・市場データ・システム情報', \{ exact: true \}\)\.click\(\)/,
     'acceptance must deliberately open the collapsed evidence disclosure before chart interaction');
   assert.match(source, /details\.at-evidence/);
   assert.match(source, /\.open === true/,
     'acceptance must verify that the disclosure is actually open before chart interaction');
 }
-for (const source of [script, mobileAcceptance, canonicalSelection]) {
-  assert.match(source, /data-argus-control/);
-}
-assert.match(canonicalSelection, /waitForRequest/);
-assert.match(canonicalSelection, /waitForResponse/);
-assert.match(canonicalSelection, /product_verified_response_contract/);
-assert.match(canonicalSelection, /data-canonical-response-snapshot-id/,
-  'service-worker body eviction must fall back to the verified product response contract');
-assert.match(canonicalSelection,
-  /selector: CANONICAL_RESPONSE_SELECTOR \}, \{ timeout \}/,
-  'the verified response result must retain the shared bounded request/result budget');
-assert.doesNotMatch(canonicalSelection, /Math\.min\(timeout, 5_000\)/,
-  'the response-header event must not impose a shorter body-verification deadline');
-assert.doesNotMatch(canonicalSelection, /response\.json\(\)/,
-  'all environments must consume the same product-verified scalar response contract');
-assert.match(chartHook, /setVerifiedResponseSnapshotId\(network\.snapshot\.snapshotId\)/);
-assert.match(chartHook, /VERIFIED_REQUEST_TIMEOUT_MS = 75_000/,
-  'the verified body producer must retain a bounded multi-megabyte verification budget');
-assert.match(canonicalSelection, /CANONICAL_RESULT_TIMEOUT_MS = 90_000/,
-  'the result consumer must outlive the product verified-response producer');
-assert.match(canonicalSelection, /timeout = CANONICAL_RESULT_TIMEOUT_MS/);
-assert.ok(chartHook.indexOf('if (!validation.ok)')
-  < chartHook.lastIndexOf('setVerifiedResponseSnapshotId(network.snapshot.snapshotId)'),
-  'the scalar response ID must be exposed only by the verified product path');
-assert.doesNotMatch(canonicalSelection, /globalThis\.fetch\s*=/,
-  'acceptance must not replace the production fetch implementation');
-assert.doesNotMatch(canonicalSelection, /page\.request\.(?:get|fetch)/,
-  'response recovery must not replace the observed UI request with a test-only request');
-assert.match(canonicalSelection, /R12_1321_SELECTED/);
-assert.match(canonicalSelection, /R13_5D_SELECTED/);
+assert.match(script, /\.at-index-strip button/);
+assert.match(script, /getByRole\('group', \{ name: '予測期間' \}\)/);
 assert.match(script, /fillPaintTags\.has\(tag\)/,
   'visual acceptance must ignore default fill values on non-fillable SVG containers');
 assert.match(script, /strokePaintTags\.has\(tag\)/,
@@ -138,24 +100,14 @@ assert.doesNotMatch(script, /localStorage\./,
 
 assert.match(workflow, /uses: \.\/\.github\/actions\/warm-profile-seed/);
 assert.match(workflow, /uses: \.\/\.github\/actions\/warm-profile-consumer/);
+assert.match(manualWorkflow, /uses: \.\/\.github\/actions\/warm-profile-seed/);
 assert.match(manualWorkflow, /uses: \.\/\.github\/actions\/warm-profile-consumer/);
-assert.match(manualWorkflow, /name: zero-install-runtime-proof-1/);
-assert.match(manualWorkflow, /name: zero-install-runtime-proof-2/);
-assert.match(manualWorkflow, /node scripts\/full-release-simulation\.mjs --run 1/);
-assert.match(manualWorkflow, /node scripts\/full-release-simulation\.mjs --run 2/);
-assert.match(candidatePreviewAction, /VITE_ARGUS_BUILD_SHA: \$\{\{ inputs\.candidate-sha \}\}/);
-assert.match(candidatePreviewAction,
-  /Serve exact candidate without production mutation[\s\S]*DEPLOY_BASE: \/argus\/[\s\S]*npm run preview/,
-  'the candidate preview must serve assets under the same base used at build time');
-assert.match(candidatePreviewAction, /npm run preview -- --host 127\.0\.0\.1/);
 assert.match(seedAction, /bash scripts\/run-warm-profile-seed\.sh/);
 assert.match(seedRunner, /node scripts\/public-market-acceptance\.mjs/);
 assert.match(consumerAction, /node scripts\/public-market-acceptance\.mjs/);
 assert.match(workflow, /node scripts\/mobile-today-acceptance\.mjs/);
 assert.match(workflow, /market-public-acceptance-/);
-assert.match(workflow, /release-state-machine\.mjs infrastructure/);
-assert.match(workflow, /release-state-machine\.mjs trigger-business/);
-assert.match(workflow, /release-state-machine\.mjs verify-business/);
+assert.match(workflow, /verified_snapshot_release_gate\.py/);
 assert.match(workflow,
   /--expected-backend-sha '\$\{\{ needs\.scope\.outputs\.backend_sha \}\}'/);
 assert.doesNotMatch(workflow,
@@ -167,20 +119,23 @@ assert.match(manualWorkflow, /expected-backend-sha: \$\{\{ inputs\.backend_sha \
 assert.match(seedRunner, /warm-profile-contract\.mjs sanitize-validate/);
 assert.match(consumerAction, /warm-profile-contract\.mjs validate/);
 assert.match(workflow, /candidate-sha: \$\{\{ github\.sha \}\}/);
-assert.doesNotMatch(manualWorkflow, /warm-profile-handoff:/);
-assert.doesNotMatch(manualWorkflow, /warm-profile-seed-2:/);
-assert.match(workflow, /needs: \[build, backend-infrastructure-readiness, acceptance-runtime-admission\]/);
+assert.match(manualWorkflow, /warm-profile-seed:/);
+assert.match(manualWorkflow, /warm-profile-handoff:/);
+assert.match(manualWorkflow, /warm-profile-seed-2:/);
+assert.match(manualWorkflow, /warm-profile-handoff-2:/);
+assert.match(manualWorkflow, /mode: profile/);
+assert.match(workflow, /needs: \[build, backend-readiness\]/);
 assert.match(workflow, /candidate-identity:/);
 assert.match(workflow, /verify_public_candidate_release\.py/);
-assert.match(workflow, /needs: \[scope, deploy, backend-infrastructure-readiness\]/);
-assert.match(workflow, /needs: \[scope, candidate-identity, business-snapshot-trigger, acceptance-runtime-admission\]/);
+assert.match(workflow, /needs: \[scope, deploy, backend-readiness\]/);
+assert.match(workflow, /needs: \[scope, candidate-identity\]/);
 assert.match(workflow,
-  /needs: \[scope, deploy, candidate-identity, seed-warm-profile, business-snapshot-acceptance, backend-infrastructure-readiness, acceptance-runtime-admission\]/);
+  /needs: \[scope, deploy, candidate-identity, seed-warm-profile, backend-readiness\]/);
 assert.match(workflow, /enforce-public-candidate-identity: 'true'/);
 assert.match(workflow,
   /expected-backend-sha: \$\{\{ needs\.candidate-identity\.outputs\.backend_sha \}\}/);
 assert.doesNotMatch(workflow,
-  /needs: \[build, seed-warm-profile, backend-infrastructure-readiness\]/);
+  /needs: \[build, seed-warm-profile, backend-readiness\]/);
 assert.match(script, /candidate_frontend_not_live/);
 assert.match(script, /candidate_backend_not_live/);
 assert.match(script, /ARGUS_REQUIRE_LIVE_CANDIDATE/);
