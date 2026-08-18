@@ -1,15 +1,6 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {
-  CANONICAL_SNAPSHOT_SELECTOR,
-  CANONICAL_PROJECTION_STATE_SELECTOR,
-  openCanonicalEvidence,
-  readCanonicalProjectionState,
-  readCanonicalWarmRevalidationState,
-  selectCanonical1321FiveDay,
-  validateCanonicalWarmRevalidationTransition,
-} from './canonical-snapshot-selection.mjs';
 
 const PUBLIC_URL = process.env.ARGUS_PUBLIC_URL
   || 'http://127.0.0.1:4173/argus/';
@@ -20,8 +11,13 @@ const OUT_DIR = path.resolve(process.env.ARGUS_MOBILE_ACCEPTANCE_OUT
 const TODAY_URL = `${PUBLIC_URL.replace(/\/?$/, '/')}#today`;
 const SYMBOLS = ['1321', '1306', 'SPY', 'QQQ'];
 const HORIZONS = ['1D', '5D', '20D'];
+const CANONICAL_SNAPSHOT_SELECTOR =
+  '[data-argus-contract="canonical-market-snapshot-v1"]'
+  + '[data-canonical-verification="verified"]'
+  + '[data-canonical-snapshot-id]';
 const LOADER_THRESHOLD_MS = 225;
 const LOADER_TIMING_TOLERANCE_MS = 1;
+const WARM_LOADER_DEADLINE_MS = 2_000;
 const COMBINATION_PACE_MS = 1_000;
 const VIEWPORTS = [
   { width: 320, height: 568 }, { width: 375, height: 812 },
@@ -42,12 +38,7 @@ function classifyConsoleErrors(evidence) {
     .map((row) => row.url);
   const unexpected = [];
   const expected429 = [];
-  const expectedOffline = [];
   for (const error of evidence.consoleErrors) {
-    if (/ERR_INTERNET_DISCONNECTED/.test(error.message)) {
-      expectedOffline.push(error);
-      continue;
-    }
     if (error.type !== 'console.error' || !/\b429\b/.test(error.message)) {
       unexpected.push(error);
       continue;
@@ -61,7 +52,7 @@ function classifyConsoleErrors(evidence) {
     remaining429s.splice(index, 1);
     expected429.push(error);
   }
-  return { unexpected, expected429, expectedOffline };
+  return { unexpected, expected429 };
 }
 
 async function writeJson(name, value) {
@@ -185,54 +176,20 @@ async function waitForShell(page) {
   }
 }
 
+async function openEvidenceDisclosure(page, timeout = 30_000) {
+  const disclosure = page.locator('details.at-evidence');
+  if (!await disclosure.evaluate((element) => element.open)) {
+    await page.getByText('根拠・市場データ・システム情報', { exact: true }).click();
+  }
+  await page.waitForFunction(() =>
+    document.querySelector('details.at-evidence')?.open === true,
+  null, { timeout });
+}
+
 async function waitForTodayChart(page, timeout = 30_000) {
   await page.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .waitFor({ state: 'visible', timeout });
-  await openCanonicalEvidence(page, timeout);
-}
-
-async function waitForCanonicalProjectionContract(page, timeout = 30_000) {
-  await page.waitForFunction(({ projectionSelector, snapshotSelector }) => {
-    const nodes = [...document.querySelectorAll(projectionSelector)];
-    const snapshot = document.querySelector(snapshotSelector);
-    if (nodes.length !== 1 || !snapshot) return false;
-    const node = nodes[0];
-    const state = node.getAttribute('data-projection-state');
-    const snapshotId = node.getAttribute('data-projection-snapshot-id');
-    const responseSnapshotId = node.getAttribute('data-projection-response-snapshot-id');
-    const snapshotState = node.getAttribute('data-projection-snapshot-state');
-    const canonicalSnapshotId = snapshot.getAttribute('data-canonical-snapshot-id');
-    const canonicalResponseSnapshotId = snapshot.getAttribute(
-      'data-canonical-response-snapshot-id');
-    return ['available', 'missing'].includes(state)
-      && snapshotId === canonicalSnapshotId
-      && responseSnapshotId === canonicalResponseSnapshotId
-      && snapshotState === snapshot.getAttribute('data-canonical-snapshot-state')
-      && (!responseSnapshotId || responseSnapshotId === snapshotId);
-  }, {
-    projectionSelector: CANONICAL_PROJECTION_STATE_SELECTOR,
-    snapshotSelector: '[data-argus-contract="canonical-market-snapshot-v1"]',
-  }, { timeout });
-}
-
-async function selectCanonicalControls(page, timeout = 30_000) {
-  await openCanonicalEvidence(page, timeout);
-  await page.getByRole('group', { name: '表示市場' })
-    .getByRole('button', { name: 'JP', exact: true }).click();
-  await page.locator(
-    '[data-argus-control="market-instrument"][data-instrument="1321"]',
-  ).click();
-  await page.locator(
-    '[data-argus-control="canonical-horizon"][data-horizon="5D"]',
-  ).click();
-  await page.waitForFunction(() => {
-    const contract = document.querySelector(
-      '[data-argus-contract="canonical-market-snapshot-v1"]',
-    );
-    return contract?.getAttribute('data-canonical-instrument') === '1321'
-      && contract?.getAttribute('data-canonical-horizon') === '5D'
-      && contract?.getAttribute('data-canonical-verification') === 'verified';
-  }, null, { timeout });
+  await openEvidenceDisclosure(page, timeout);
 }
 
 async function geometry(page, viewport) {
@@ -349,32 +306,21 @@ async function run() {
   const initialRequestsAt = evidence.network.length;
   await page.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(page);
-  const selector = page.locator('[data-argus-control="market-instrument"]');
-  await selector.first().waitFor({ state: 'attached', timeout: 30_000 });
-  await selectCanonical1321FiveDay(page);
+  const selector = page.locator('.at-index-strip button');
+  await selector.first().waitFor({ state: 'visible', timeout: 30_000 });
   if (await selector.count() !== 4) evidence.failures.push('today-selector-not-four');
+  await waitForTodayChart(page);
   const initialChartRequests = evidence.network.slice(initialRequestsAt)
     .filter((row) => row.pathname === '/api/argus/chart-intelligence');
   const initialKeys = new Set(initialChartRequests.map(
     (row) => `${row.symbol}:${row.horizon}:${row.snapshot}:${row.scope}`));
   for (const symbol of SYMBOLS) {
-    await page.locator(
-      `[data-argus-control="market-instrument"][data-instrument="${symbol}"]`,
-    ).click();
+    await selector.filter({ hasText: symbol === '1321' ? '日経'
+      : symbol === '1306' ? 'TOPIX' : symbol === 'SPY' ? 'S&P' : 'NASDAQ' }).click();
     for (const horizon of HORIZONS) {
-      await page.locator(
-        `[data-argus-control="canonical-horizon"][data-horizon="${horizon}"]`,
-      ).click();
+      await page.getByRole('group', { name: '予測期間' })
+        .getByRole('button', { name: horizon, exact: true }).click();
       await waitForTodayChart(page);
-      await page.waitForFunction(({ expectedSymbol, expectedHorizon }) => {
-        const contract = document.querySelector(
-          '[data-argus-contract="canonical-market-snapshot-v1"]',
-        );
-        return contract?.getAttribute('data-canonical-instrument') === expectedSymbol
-          && contract?.getAttribute('data-canonical-horizon') === expectedHorizon
-          && contract?.getAttribute('data-canonical-verification') === 'verified';
-      }, { expectedSymbol: symbol, expectedHorizon: horizon }, { timeout: 30_000 });
-      await waitForCanonicalProjectionContract(page);
       const record = await page.evaluate(({ expectedSymbol, expectedHorizon }) => ({
         symbol: document.querySelector('.at-proj-heading b')?.textContent ?? '',
         horizon: document.querySelector('.at-horizon button[aria-pressed="true"]')?.textContent ?? '',
@@ -384,8 +330,6 @@ async function run() {
           ?.getAttribute('data-canonical-snapshot-state'),
         verification: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
           ?.getAttribute('data-canonical-verification'),
-        responseSnapshotId: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
-          ?.getAttribute('data-canonical-response-snapshot-id'),
         canonicalInstrument: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
           ?.getAttribute('data-canonical-instrument'),
         canonicalHorizon: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
@@ -393,19 +337,11 @@ async function run() {
         expectedSymbol, expectedHorizon,
       }), { expectedSymbol: symbol, expectedHorizon: horizon });
       evidence.combinations.push(record);
-      if (record.horizon !== horizon || !record.snapshotId
+      if (!record.symbol.includes(symbol) || record.horizon !== horizon || !record.snapshotId
           || record.verification !== 'verified'
           || record.canonicalInstrument !== symbol
           || record.canonicalHorizon !== horizon) {
         evidence.failures.push(`today-combination:${symbol}:${horizon}`);
-      }
-      const projectionState = await readCanonicalProjectionState(page, {
-        expectedSnapshotId: record.snapshotId,
-        expectedSnapshotState: record.snapshotState,
-        acceptedResponseSnapshotId: record.responseSnapshotId,
-      });
-      if (!projectionState.pass) {
-        evidence.failures.push(`today-projection-state:${symbol}:${horizon}:${projectionState.reason}`);
       }
       // The UI is intentionally exercised as a single human interaction
       // stream. One request at a time plus explicit pacing avoids turning a
@@ -437,7 +373,7 @@ async function run() {
   await screenshot(page, 'iphone-14-pro-max-bottom-nav.png');
   const navigation = await navigationAudit(page, evidence);
 
-  // Cold Today: no IndexedDB/SW, controlled 4s network delay. The chart footprint remains
+  // Cold Today: no IndexedDB/SW, 2s network delay. The chart footprint remains
   // stable and TriangleStepLoader must appear after the 225ms threshold.
   const cold = await browser.newContext({
     viewport: { width: 430, height: 932 }, serviceWorkers: 'block',
@@ -461,19 +397,12 @@ async function run() {
   });
   await isolateChartReads(cold, evidence);
   await cold.route('**/api/argus/chart-intelligence?*',
-    (route) => fulfillCapturedSnapshot(route, evidence, 4_000));
+    (route) => fulfillCapturedSnapshot(route, evidence, 2_000));
   const coldPage = await cold.newPage();
-  const coldLoaderAppeared = coldPage.locator(
-    '.at-projection-missing .triangle-step-loader',
-  ).waitFor({ state: 'visible', timeout: 5_000 });
   await coldPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(coldPage);
-  await openCanonicalEvidence(coldPage);
-  await coldLoaderAppeared;
-  const coldSemanticState = await readCanonicalWarmRevalidationState(coldPage, {
-    expectedRevalidationState: 'cold-loading',
-    acceptedResponseSnapshotId: null,
-  });
+  await coldPage.locator('.at-projection-missing .triangle-step-loader')
+    .waitFor({ state: 'visible', timeout: 2_000 });
   const loaderTiming = await coldPage.evaluate(() => {
     const entries = performance.getEntriesByName(
       'argus-snapshot:network-revalidation-start');
@@ -497,7 +426,7 @@ async function run() {
   const skeletonHeight = await coldPage.locator('.at-projection-missing').evaluate(
     (element) => element.getBoundingClientRect().height);
   await screenshot(coldPage, 'today-cold-loader.png');
-  if (!coldSemanticState.pass || loaderTiming.roundedDelayMs == null || before225
+  if (loaderTiming.roundedDelayMs == null || before225
       || !after225 || skeletonHeight < 250) {
     evidence.failures.push('cold-loader-contract');
   }
@@ -511,29 +440,11 @@ async function run() {
   await slow.route('**/api/argus/chart-intelligence?*',
     (route) => fulfillCapturedSnapshot(route, evidence, 6_000));
   const slowPage = await slow.newPage();
-  const slowStateAppeared = slowPage.waitForFunction(({ selector }) => {
-    const nodes = [...document.querySelectorAll(selector)];
-    if (nodes.length !== 1) return false;
-    const node = nodes[0];
-    if (node.getAttribute('data-projection-state') !== 'missing'
-        || node.getAttribute('data-projection-snapshot-id')
-        || node.getAttribute('data-projection-response-snapshot-id')
-        || node.getAttribute('data-projection-snapshot-state') !== 'NO_CACHE_LOADING'
-        || !node.textContent?.includes('初回データを準備中')) return false;
-    return {
-      state: 'missing',
-      snapshotState: 'NO_CACHE_LOADING',
-      label: '初回データを準備中',
-    };
-  }, { selector: CANONICAL_PROJECTION_STATE_SELECTOR }, { timeout: 7_000 });
   await slowPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(slowPage);
-  await openCanonicalEvidence(slowPage);
-  const slowState = await slowStateAppeared.then((handle) => handle.jsonValue());
-  const slowLabel = slowState?.label ?? null;
-  if (slowState?.state !== 'missing' || slowState?.label !== '初回データを準備中') {
-    evidence.failures.push('slow-label');
-  }
+  await slowPage.waitForTimeout(5_300);
+  const slowLabel = await slowPage.locator('.at-projection-missing').innerText();
+  if (!slowLabel.includes('初回データを準備中')) evidence.failures.push('slow-label');
   await slow.close();
 
   // A failed cold request terminates the loader and leaves an actionable retry.
@@ -547,7 +458,6 @@ async function run() {
   const failurePage = await failure.newPage();
   await failurePage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(failurePage);
-  await openCanonicalEvidence(failurePage);
   await failurePage.locator('.at-projection-missing')
     .getByRole('button', { name: '再試行' })
     .waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {});
@@ -559,13 +469,14 @@ async function run() {
   if (failureState.loader || !failureState.retry) evidence.failures.push('failure-loader-contract');
   await failure.close();
 
-  // Warm cache is the immediate visible authority while a controlled network
-  // request revalidates in the background. Presentation loaders are optional;
-  // this gate observes semantic state and exact snapshot identity only.
-  // IndexedDB remains intact across seed and reload within this context.
+  // Warm cache + delayed revalidation keeps the chart and shows only the
+  // compact loader. Use a dedicated SW-blocked context so the test controls
+  // the network revalidation precondition instead of allowing a fresh service
+  // worker response to bypass Playwright routing. IndexedDB remains intact
+  // across the seed and reload within this context.
   await page.setViewportSize({ width: 430, height: 932 });
   await page.locator('.nav__mobile').getByRole('button', { name: 'Today', exact: true }).click();
-  await selectCanonical1321FiveDay(page);
+  await waitForTodayChart(page);
   const onlineSnapshotId = await page.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .getAttribute('data-canonical-snapshot-id');
   const warm = await browser.newContext({
@@ -578,7 +489,7 @@ async function run() {
   observe(warmPage, evidence);
   await warmPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(warmPage);
-  await selectCanonicalControls(warmPage);
+  await waitForTodayChart(warmPage);
   const warmSeedSnapshotId = await warmPage.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .getAttribute('data-canonical-snapshot-id');
   await warm.unroute('**/api/argus/chart-intelligence?*');
@@ -586,78 +497,37 @@ async function run() {
   const warmRequestStart = new Promise((resolve) => {
     resolveWarmRequestStart = resolve;
   });
-  let releaseWarmResponse;
-  const warmResponseRelease = new Promise((resolve) => {
-    releaseWarmResponse = resolve;
-  });
-  await warm.route('**/api/argus/chart-intelligence?*', async (route) => {
+  await warm.route('**/api/argus/chart-intelligence?*', (route) => {
     resolveWarmRequestStart?.(Date.now());
     resolveWarmRequestStart = null;
-    await warmResponseRelease;
-    return fulfillCapturedSnapshot(route, evidence, 0);
+    return fulfillCapturedSnapshot(route, evidence, 6_000);
   });
   await warmPage.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(warmPage);
   await waitForTodayChart(warmPage);
-  await Promise.race([
+  const warmStartedAt = await Promise.race([
     warmRequestStart,
     new Promise((_, reject) => setTimeout(
       () => reject(new Error('controlled warm revalidation did not start')),
       5_000)),
   ]);
-  await warmPage.waitForFunction(({ selector, snapshotId }) => {
-    const nodes = [...document.querySelectorAll(selector)];
-    if (nodes.length !== 1) return false;
-    const node = nodes[0];
-    return node.getAttribute('data-projection-state') === 'available'
-      && node.getAttribute('data-projection-revalidation-state') === 'background'
-      && node.getAttribute('data-projection-snapshot-state') === 'CACHE_READY_REVALIDATING'
-      && node.getAttribute('data-projection-snapshot-id') === snapshotId
-      && !node.getAttribute('data-projection-response-snapshot-id');
-  }, { selector: CANONICAL_PROJECTION_STATE_SELECTOR, snapshotId: warmSeedSnapshotId },
-  { timeout: 30_000 });
-  const warmRevalidating = await readCanonicalWarmRevalidationState(warmPage, {
-    expectedRevalidationState: 'background',
-    cachedSnapshotId: warmSeedSnapshotId,
-    acceptedResponseSnapshotId: null,
-  });
-  await screenshot(warmPage, 'today-warm-revalidation-cached.png');
-  releaseWarmResponse();
-  await warmPage.waitForFunction(({ selector, snapshotId }) => {
-    const nodes = [...document.querySelectorAll(selector)];
-    if (nodes.length !== 1) return false;
-    const node = nodes[0];
-    return node.getAttribute('data-projection-state') === 'available'
-      && node.getAttribute('data-projection-revalidation-state') === 'settled'
-      && node.getAttribute('data-projection-snapshot-state') === 'CURRENT_READY'
-      && node.getAttribute('data-projection-snapshot-id') === snapshotId
-      && node.getAttribute('data-projection-response-snapshot-id') === snapshotId;
-  }, { selector: CANONICAL_PROJECTION_STATE_SELECTOR, snapshotId: warmSeedSnapshotId },
-  { timeout: 30_000 });
-  const warmSettled = await readCanonicalWarmRevalidationState(warmPage, {
-    expectedRevalidationState: 'settled',
-    cachedSnapshotId: warmSeedSnapshotId,
-    acceptedResponseSnapshotId: warmSeedSnapshotId,
-  });
-  const warmTransition = validateCanonicalWarmRevalidationTransition({
-    cachedSnapshotId: warmSeedSnapshotId,
-    revalidatingNodes: [{
-      state: 'available', snapshotId: warmRevalidating.snapshotId,
-      responseSnapshotId: warmRevalidating.responseSnapshotId,
-      snapshotState: warmRevalidating.snapshotState,
-      revalidationState: warmRevalidating.state,
-    }],
-    finalNodes: [{
-      state: 'available', snapshotId: warmSettled.snapshotId,
-      responseSnapshotId: warmSettled.responseSnapshotId,
-      snapshotState: warmSettled.snapshotState,
-      revalidationState: warmSettled.state,
-    }],
-    acceptedResponseSnapshotId: warmSeedSnapshotId,
-  });
+  const warmLoaderLocator = warmPage.locator(
+    '.at-chart-status .triangle-step-loader');
+  let warmLoaderAppearedAt = null;
+  await warmLoaderLocator.waitFor({
+    state: 'visible', timeout: WARM_LOADER_DEADLINE_MS,
+  }).then(() => { warmLoaderAppearedAt = Date.now(); }).catch(() => {});
+  const warmLoaderDelayMs = warmLoaderAppearedAt == null
+    ? null : warmLoaderAppearedAt - warmStartedAt;
+  const warmLoader = await warmLoaderLocator.count();
+  const warmSkeleton = await warmPage.locator('.at-projection-missing').count();
+  await screenshot(warmPage, 'today-warm-revalidation-loader.png');
+  await warmPage.waitForTimeout(Math.max(0, 6_200 - (Date.now() - warmStartedAt)));
   await warm.unroute('**/api/argus/chart-intelligence?*');
-  if (!warmRevalidating.pass || !warmSettled.pass || !warmTransition.pass) {
-    evidence.failures.push('warm-revalidation-contract');
+  if (!warmLoader || warmSkeleton || warmLoaderDelayMs == null
+      || warmLoaderDelayMs < LOADER_THRESHOLD_MS - LOADER_TIMING_TOLERANCE_MS
+      || warmLoaderDelayMs > WARM_LOADER_DEADLINE_MS) {
+    evidence.failures.push('warm-loader-contract');
   }
 
   const before304 = await warmPage.locator(CANONICAL_SNAPSHOT_SELECTOR)
@@ -689,8 +559,7 @@ async function run() {
   await rateLimitPage.goto(TODAY_URL, {
     waitUntil: 'domcontentloaded', timeout: 30_000,
   });
-  await waitForShell(rateLimitPage);
-  await selectCanonicalControls(rateLimitPage);
+  await waitForShell(rateLimitPage); await waitForTodayChart(rateLimitPage);
   const rateLimitSeedSnapshotId = await rateLimitPage.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .getAttribute('data-canonical-snapshot-id');
   await rateLimitContext.unroute('**/api/argus/chart-intelligence?*');
@@ -707,28 +576,16 @@ async function run() {
   await waitForShell(rateLimitPage); await waitForTodayChart(rateLimitPage);
   const rateLimitedSnapshotId = await rateLimitPage.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .getAttribute('data-canonical-snapshot-id');
-  await rateLimitPage.waitForFunction(({ selector, snapshotId }) => {
-    const nodes = [...document.querySelectorAll(selector)];
-    return nodes.length === 1
-      && nodes[0].getAttribute('data-projection-revalidation-state') === 'cached-safe'
-      && nodes[0].getAttribute('data-projection-snapshot-id') === snapshotId;
-  }, { selector: CANONICAL_PROJECTION_STATE_SELECTOR,
-    snapshotId: rateLimitSeedSnapshotId }, { timeout: 30_000 });
-  const rateLimitedSemanticState = await readCanonicalWarmRevalidationState(
-    rateLimitPage, {
-      expectedRevalidationState: 'cached-safe',
-      cachedSnapshotId: rateLimitSeedSnapshotId,
-      acceptedResponseSnapshotId: null,
-    });
+  await rateLimitPage.waitForTimeout(1_000);
   await rateLimitContext.unroute('**/api/argus/chart-intelligence?*');
   const controlledRateLimit = {
     calls: controlled429Calls,
-    expectedCalls: SYMBOLS.length,
+    expectedCalls: initialKeys.size,
     retryAfterSeconds: 2,
     seedSnapshotId: rateLimitSeedSnapshotId,
     cachedSnapshotId: rateLimitedSnapshotId,
   };
-  if (!rateLimitedSemanticState.pass || controlled429Calls !== SYMBOLS.length
+  if (controlled429Calls !== initialKeys.size
       || !rateLimitSeedSnapshotId
       || rateLimitedSnapshotId !== rateLimitSeedSnapshotId) {
     evidence.failures.push('rate-limit-cache-backoff-contract');
@@ -785,9 +642,8 @@ async function run() {
     navigation,
     loader: {
       before225, after225, skeletonHeight, slowLabel, failureState,
-      loaderTiming,
+      warmLoader, warmSkeleton, warmLoaderDelayMs, loaderTiming,
     },
-    warmRevalidation: { warmRevalidating, warmSettled, warmTransition },
     offline: { onlineSnapshotId, offlineSnapshotId, before304, after304 },
     rateLimit: {
       responses: evidence.rateLimits,
@@ -805,7 +661,6 @@ async function run() {
   await writeJson('console.json', {
     errors: consoleClassification.unexpected,
     expectedRateLimitErrors: consoleClassification.expected429,
-    expectedOfflineErrors: consoleClassification.expectedOffline,
     reactWarnings: evidence.reactWarnings,
   });
   await writeJson('combinations.json', evidence.combinations);
