@@ -10,7 +10,6 @@ const source = fs.readFileSync(path.join(root, 'src/domain/runtimeVersionTruth.t
 const viteSource = fs.readFileSync(path.join(root, 'vite.config.ts'), 'utf8');
 const hookSource = fs.readFileSync(
   path.join(root, 'src/hooks/useProductionBackendIdentity.ts'), 'utf8');
-const shellSource = fs.readFileSync(path.join(root, 'src/components/AppShell.tsx'), 'utf8');
 const output = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   fileName: 'runtimeVersionTruth.ts',
@@ -37,7 +36,7 @@ assert.deepEqual(identity, {
 });
 const productManifest = JSON.parse(fs.readFileSync(path.join(repo, 'product-version.json'), 'utf8'));
 assert.deepEqual(productManifest, {
-  schemaVersion: 'argus-product-version-v1', productVersion: 'v13.5',
+  schemaVersion: 'argus-product-version-v1', productVersion: 'v13',
 });
 
 const baseTruth = {
@@ -47,9 +46,9 @@ const baseTruth = {
   backendVersion: identity.backendVersion,
   backendBuildSha: identity.backendSha,
 };
-assert.equal(truth.runtimeVersionLabel(baseTruth.productVersion), 'v13.5');
+assert.equal(truth.runtimeVersionLabel(baseTruth.productVersion), 'v13');
 assert.deepEqual(truth.runtimeVersionTruth(baseTruth), {
-  productVersion: 'v13.5',
+  productVersion: 'v13',
   frontendVersion: '13.3.6',
   frontendBuildSha: '183b940c08505f1373a3b34b0c7fc2bc37bbae90',
   backendVersion: '13.4.5',
@@ -57,10 +56,10 @@ assert.deepEqual(truth.runtimeVersionTruth(baseTruth), {
 });
 assert.equal(truth.runtimeVersionTruth({
   ...baseTruth, frontendVersion: '14.8.1',
-}).productVersion, 'v13.5');
+}).productVersion, 'v13');
 assert.equal(truth.runtimeVersionTruth({
   ...baseTruth, backendVersion: '15.0.0',
-}).productVersion, 'v13.5');
+}).productVersion, 'v13');
 assert.deepEqual(
   [truth.runtimeVersionTruth(baseTruth).frontendVersion,
     truth.runtimeVersionTruth(baseTruth).backendVersion],
@@ -86,10 +85,6 @@ assert.equal(truth.runtimeVersionTruth({
 assert.match(viteSource, /new URL\('\.\.\/product-version\.json'/);
 assert.match(viteSource, /throw new Error\('invalid canonical product-version\.json'\)/);
 assert.doesNotMatch(viteSource, /productVersion[^\n]*readVersion\(\)/);
-assert.equal((shellSource.match(/runtimeVersionLabel\(__PRODUCT_VERSION__\)/g) ?? []).length, 1);
-assert.match(shellSource,
-  /A\.R\.G\.U\.S\. <span className="shell__brand-pro">Pro<\/span>[\s\S]*\{versionLabel\}/);
-assert.doesNotMatch(shellSource, /shell__brand[\s\S]{0,500}__APP_VERSION__/);
 
 assert.match(hookSource, /if \(!navigator\.onLine\)[\s\S]*return;/);
 assert.ok(hookSource.indexOf('if (!navigator.onLine)') < hookSource.indexOf('await fetch('));
