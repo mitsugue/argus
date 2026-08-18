@@ -34,9 +34,13 @@ FRONTEND_PATHS: Tuple[str, ...] = (
     ".github/workflows/market-public-acceptance.yml",
     ".github/actions/warm-profile-seed/**",
     ".github/actions/warm-profile-consumer/**",
+    ".github/actions/acceptance-runtime-preflight/**",
+    "release/v13-acceptance-runtime.json",
     "release/v13-snapshot-readiness-contract.json",
     "release/v13-accepted-fix-manifest.json",
     "scripts/verify_public_candidate_release.py",
+    "scripts/v13_5_release_certificate.py",
+    "web/scripts/acceptance-runtime.mjs",
 )
 
 # Stage 1 is a deliberately narrow backend release: it deploys the immutable

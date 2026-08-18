@@ -6,7 +6,7 @@ export interface BackendRuntimeIdentity {
 }
 
 const RELEASE_VERSION = /^\d+\.\d+\.\d+$/;
-const PRODUCT_VERSION = /^v[1-9]\d*$/;
+const PRODUCT_VERSION = /^v[1-9]\d*(?:\.\d+)*$/;
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/i;
 const RENDER_DEPLOYMENT_ID = /^dep-[0-9a-z]+$/;
 const ISO_UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;

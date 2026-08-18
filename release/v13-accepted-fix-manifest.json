@@ -1,13 +1,13 @@
 {
   "schemaVersion": "argus-v13-accepted-fix-manifest-v1",
   "canonicalSource": {
-    "branch": "codex/v13-final-release-state-machine",
-    "head": "ef32122b190bf94bebb9e1bd1c04224fd81cbca6",
-    "tree": "ce1c9c35b3664bc24865c95cb842fd3248089b3e"
+    "branch": "codex/v13-production-release-causality",
+    "head": "c946afd07869dbe739026afad11ef5e15418dbbf",
+    "tree": "dee0b33a9b4eb82671f13dc1d9a06d71a71cb124"
   },
   "requirements": [
     {"requirement": "four-surface product", "implementation": ["web/src/navigation.ts", "web/src/routes/CommandCenter.tsx", "web/src/routes/Watchlist.tsx", "web/src/routes/NotificationsPage.tsx", "web/src/routes/Settings.tsx"], "test": ["web/scripts/round3-product-final.test.mjs", "web/scripts/product-integrity.test.cjs"], "status": "PRESENT"},
-    {"requirement": "productVersion = v13", "implementation": ["product-version.json", "argus_release_identity.py"], "test": ["web/scripts/runtime-version-truth.test.mjs", "test_argus_release_identity.py"], "status": "PRESENT"},
+    {"requirement": "productVersion = v13.5", "implementation": ["product-version.json", "argus_release_identity.py", "web/vite.config.ts", "web/src/domain/runtimeVersionTruth.ts"], "test": ["web/scripts/runtime-version-truth.test.mjs", "web/scripts/round3-product-final.test.mjs", "test_argus_release_identity.py"], "status": "PRESENT"},
     {"requirement": "frontend/backend component-version separation", "implementation": ["web/package.json", "backend-version.json", "argus_release_identity.py"], "test": ["test_argus_release_identity.py", "web/scripts/runtime-version-truth.test.mjs"], "status": "PRESENT"},
     {"requirement": "MarketTruth / PIT", "implementation": ["argus_market_data_truth.py", "argus_market_replay.py", "scanner.py"], "test": ["test_argus_market_data_truth.py", "test_argus_market_replay.py"], "status": "PRESENT"},
     {"requirement": "Prediction Ledger complete-history integrity", "implementation": ["argus_decision_ledger.py", "scripts/run_prediction_ledger.py", ".github/workflows/prediction-ledger.yml"], "test": ["test_argus_prediction_ledger_v2.py", "test_run_prediction_ledger.py", "test_prediction_ledger_workflow.py"], "status": "PRESENT"},
@@ -24,6 +24,14 @@
     {"requirement": "select 1321 before select 5D", "implementation": ["web/scripts/canonical-snapshot-selection.mjs"], "test": ["web/scripts/release-state-machine.test.mjs"], "status": "PRESENT"},
     {"requirement": "select 5D before waiting for verified result", "implementation": ["web/scripts/canonical-snapshot-selection.mjs"], "test": ["web/scripts/release-state-machine.test.mjs"], "status": "PRESENT"},
     {"requirement": "HTTP snapshot ID equals frontend semantic snapshot ID", "implementation": ["web/scripts/canonical-snapshot-selection.mjs", "web/src/components/today/ArgusTodayPanel.tsx"], "test": ["web/scripts/public-market-acceptance.contract.test.mjs", "web/scripts/release-state-machine.test.mjs"], "status": "PRESENT"},
-    {"requirement": "release-state-machine causal tests", "implementation": ["web/scripts/release-state-machine.mjs", "release/v13-snapshot-readiness-contract.json"], "test": ["web/scripts/release-state-machine.test.mjs", "web/scripts/full-release-simulation.mjs"], "status": "PRESENT"}
+    {"requirement": "release-state-machine causal tests", "implementation": ["web/scripts/release-state-machine.mjs", "release/v13-snapshot-readiness-contract.json"], "test": ["web/scripts/release-state-machine.test.mjs", "web/scripts/full-release-simulation.mjs"], "status": "PRESENT"},
+    {"requirement": "immutable zero-install acceptance runtime", "implementation": ["release/v13-acceptance-runtime.json", "web/scripts/acceptance-runtime.mjs", ".github/actions/acceptance-runtime-preflight/action.yml"], "test": ["web/scripts/acceptance-runtime.test.mjs"], "status": "PRESENT"},
+    {"requirement": "two fresh-runner zero-install proofs", "implementation": [".github/workflows/market-public-acceptance.yml", "web/scripts/full-release-simulation.mjs"], "test": ["web/scripts/acceptance-runtime.test.mjs", "web/scripts/public-market-acceptance.contract.test.mjs"], "status": "PRESENT"},
+    {"requirement": "pre-deploy runtime admission", "implementation": [".github/workflows/deploy-pages.yml", "scripts/v13_5_release_certificate.py"], "test": ["web/scripts/acceptance-runtime.test.mjs", "test_v13_5_release_certificate.py"], "status": "PRESENT"},
+    {"requirement": "production seed and acceptance use admitted runtime", "implementation": [".github/workflows/deploy-pages.yml", ".github/actions/warm-profile-seed/action.yml", ".github/actions/warm-profile-consumer/action.yml"], "test": ["web/scripts/acceptance-runtime.test.mjs", "web/scripts/warm-profile-contract.test.mjs"], "status": "PRESENT"},
+    {"requirement": "no post-deploy browser or OS installation", "implementation": [".github/workflows/deploy-pages.yml", ".github/actions/warm-profile-seed/action.yml", ".github/actions/warm-profile-consumer/action.yml"], "test": ["web/scripts/acceptance-runtime.test.mjs"], "status": "PRESENT"},
+    {"requirement": "rollback restore has no browser dependency", "implementation": [".github/workflows/restore-safe-pages.yml"], "test": ["web/scripts/acceptance-runtime.test.mjs"], "status": "PRESENT"},
+    {"requirement": "detached exact-candidate release certificate", "implementation": ["scripts/v13_5_release_certificate.py", ".github/workflows/market-public-acceptance.yml", ".github/workflows/deploy-pages.yml"], "test": ["test_v13_5_release_certificate.py"], "status": "PRESENT"},
+    {"requirement": "CURRENT_REQUIRED ruleset evidence", "implementation": ["scripts/v13_5_release_certificate.py"], "test": ["test_v13_5_release_certificate.py"], "status": "PRESENT"}
   ]
 }

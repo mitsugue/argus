@@ -303,7 +303,7 @@ try {
   await page.goto(publicUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForFunction((sha) => globalThis.__ARGUS_BUILD_SHA__ === sha,
     candidateSha, { timeout: 30_000 });
-  assert.equal(await page.evaluate(() => globalThis.__ARGUS_PRODUCT_VERSION__), 'v13');
+  assert.equal(await page.evaluate(() => globalThis.__ARGUS_PRODUCT_VERSION__), 'v13.5');
   evidence.identitiesConverged = true;
 
   const producerTriggerId = `full-release-simulation-${runNumber}-${candidateSha.slice(0, 12)}`;
@@ -371,7 +371,7 @@ try {
 
   const brand = await page.locator('.shell__brand').innerText();
   assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro/);
-  assert.match(brand, /v13/);
+  assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro\s+v13\.5/);
   for (const label of ['Today', 'Holdings / Watchlist', 'Notifications', 'Settings']) {
     assert.ok(await page.getByText(label, { exact: true }).count() > 0, label);
   }
