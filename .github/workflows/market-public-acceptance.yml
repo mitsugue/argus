@@ -75,7 +75,9 @@ jobs:
           fetch-depth: 0
       - id: candidate
         name: Pin candidate tree
-        run: echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
       - id: runtime
         uses: ./.github/actions/acceptance-runtime-preflight
         with:
@@ -123,7 +125,9 @@ jobs:
           fetch-depth: 0
       - id: candidate
         name: Pin candidate tree
-        run: echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
       - id: runtime
         uses: ./.github/actions/acceptance-runtime-preflight
         with:
@@ -218,7 +222,9 @@ jobs:
           ref: ${{ inputs.frontend_sha }}
           fetch-depth: 0
       - id: candidate
-        run: echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/acceptance-runtime-preflight
         with:
           candidate-sha: ${{ inputs.frontend_sha }}
