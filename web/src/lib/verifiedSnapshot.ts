@@ -2,7 +2,7 @@ import type { ChartIntelligencePayload } from '../types/chartIntelligence';
 
 export const VERIFIED_SNAPSHOT_SCHEMA = 'argus-verified-view-snapshot-v1';
 export const VERIFIED_VIEW_METHOD_VERSION =
-  'verified-chart-view-v1:chart-intelligence-phase2-v1:market-context-replay-v2-standard-excursion';
+  'verified-chart-view-v1:chart-intelligence-phase2-v2-pit-bound:market-context-replay-v3-pit-bound';
 const DB_NAME = 'argus-verified-snapshots';
 const DB_VERSION = 1;
 const SNAPSHOT_STORE = 'snapshots';
@@ -32,6 +32,11 @@ export interface VerifiedSnapshot<T> {
   verifiedAt: string;
   quality: SnapshotQuality;
   sourceStatus: Record<string, string>;
+  releaseBinding?: {
+    expectedBuildSha: string;
+    producerTriggerId: string;
+    triggeredAt: string;
+  };
   verificationStatus: 'verified';
   payload: T;
 }
@@ -99,6 +104,7 @@ export async function calculateSnapshotId(snapshot: Omit<
     verifiedAt: value.verifiedAt, quality: value.quality,
     sourceStatus: value.sourceStatus,
     verificationStatus: value.verificationStatus,
+    ...(value.releaseBinding ? { releaseBinding: value.releaseBinding } : {}),
   };
   return `vs-${(await sha256(canonical(identity))).slice(0, 32)}`;
 }
@@ -182,6 +188,17 @@ export async function verifySnapshot(
   }
   if (Object.values(value.sourceStatus).some((status) => /mock/i.test(status))) {
     return { ok: false, reason: 'mock_source' };
+  }
+  if (value.releaseBinding) {
+    const binding = value.releaseBinding;
+    if (JSON.stringify(Object.keys(binding).sort()) !== JSON.stringify([
+      'expectedBuildSha', 'producerTriggerId', 'triggeredAt',
+    ])
+        || !/^[0-9a-f]{40}$/.test(binding.expectedBuildSha ?? '')
+        || !binding.producerTriggerId
+        || !Number.isFinite(Date.parse(binding.triggeredAt ?? ''))) {
+      return { ok: false, reason: 'release_binding_invalid' };
+    }
   }
   const times = [value.asOf, value.generatedAt, value.verifiedAt]
     .map((item) => Date.parse(String(item)));
