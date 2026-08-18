@@ -109,6 +109,7 @@ import argus_today_intelligence     # v13.1.1: replay calibration/daily short/fa
 import argus_market_replay          # v13.2.0: deterministic Market Context replay/extremes
 import argus_market_intelligence    # deterministic Daily Market Sheet/backfill mapping
 import argus_verified_snapshot      # v13.3.0: atomic precomputed public view snapshots
+import argus_today_headline         # v13.5.0: compact Today bootstrap from verified snapshots
 import argus_tick_durability        # v13.3.1: bounded tick WAL/checkpoint/single-flight
 import argus_persistent_storage     # v13.3.1: fail-closed Render Disk contract
 import argus_remote_receipt_queue   # v13.4.2: fsynced async Remote Journal intents
@@ -553,6 +554,12 @@ if CORS is not None:
 
 @app.after_request
 def add_no_cache(response):
+    if request.path == "/api/argus/today-headline":
+        # Same explicit ETag/revalidate contract as the verified snapshot
+        # route; the global no-store fallback must not erase it.
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
     if request.path == "/api/argus/chart-intelligence" and \
             request.args.get("snapshot") == "verified":
         # This endpoint sets a private must-revalidate policy plus ETag.  Do not
@@ -29837,6 +29844,45 @@ def api_argus_chart_intelligence():
     return jsonify(argus_market_intelligence.normalize_public_names(
         _chart_public_report(
             symbol, market, timeframe, market_scope=False, cached_only=True)))
+
+
+@app.route("/api/argus/today-headline")
+def api_argus_today_headline():
+    """Compact Today bootstrap derived from the verified market snapshots.
+
+    Read-only GET: every value is copied from the already-published canonical
+    verified snapshots, so this cannot become a second decision authority.
+    The heavy per-instrument snapshot route stays authoritative for full
+    history and evidence; this response exists so Today can show prices, four
+    compact charts, and canonical probabilities without transporting ~13 MB.
+    """
+    snapshots = {
+        symbol: _verified_market_snapshot(symbol, 5)
+        for symbol in argus_today_headline.HEADLINE_INSTRUMENTS
+    }
+    document = argus_today_headline.build_today_headline(
+        snapshots, now_iso=datetime.now(pytz.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"))
+    etag = f'"{document["headlineSetId"]}"'
+    supplied_tags = []
+    for part in request.headers.get("If-None-Match", "").split(","):
+        candidate = part.strip()
+        if candidate[:2].lower() == "w/":
+            candidate = candidate[2:].strip()
+        supplied_tags.append(candidate)
+    if "*" in supplied_tags or etag in supplied_tags:
+        response = make_response("", 304)
+    else:
+        # An all-unavailable document is itself the truthful state (every
+        # instrument entry carries an explicit unavailable reason), so this
+        # public read stays HTTP 200 like the other cached product GETs.
+        response = jsonify(document)
+    response.headers["ETag"] = etag
+    response.headers["Cache-Control"] = "private, max-age=0, must-revalidate"
+    response.headers["Vary"] = "If-None-Match"
+    response.headers["X-ARGUS-Compute-Mode"] = "read-only"
+    response.headers["X-ARGUS-Headline-Set-Id"] = document["headlineSetId"]
+    return response
 
 
 @app.route("/api/argus/admin/market-ledger/import", methods=["POST"])

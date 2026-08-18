@@ -176,8 +176,13 @@ const cacheSource = fs.readFileSync(path.join(root,
 assert.ok(hook.indexOf('readVerifiedSnapshot(expectation)') <
   hook.indexOf('await networkOutcomePromise'),
   'cache lookup must precede network publication');
-assert.match(hook, /networkPromise\.then\([\s\S]*ok: false as const/,
-  'superseded requests must be handled before the IndexedDB await');
+assert.ok(hook.indexOf('await cachePromise') <
+  hook.indexOf('fetchVerifiedSnapshot(verifiedUrl'),
+  'revalidation must start after the cache read so If-None-Match is supplied');
+assert.match(hook, /memoryCached \?\? cached/,
+  'the cached snapshot must supply the revalidation validator (ETag/304)');
+assert.match(hook, /\.then\(\s*\(value\) => \(\{ ok: true as const, value \}\),[\s\S]*ok: false as const/,
+  'superseded requests must resolve to an outcome, never an unhandled rejection');
 assert.match(hook, /requestSequence !== sequence\.current/,
   'request sequence must reject an old instrument response');
 assert.match(hook, /verifiedChartRequestGate\.enqueue/,

@@ -1,9 +1,9 @@
 {
   "schemaVersion": "argus-v13-accepted-fix-manifest-v1",
   "canonicalSource": {
-    "branch": "codex/v13-production-release-causality",
-    "head": "c946afd07869dbe739026afad11ef5e15418dbbf",
-    "tree": "dee0b33a9b4eb82671f13dc1d9a06d71a71cb124"
+    "branch": "main",
+    "head": "52e71a6379d4954b124cb05bc309ba3bf1553222",
+    "tree": "de1c504a9ee191ff51f8d0b410df72eadc7b3cfc"
   },
   "requirements": [
     {"requirement": "four-surface product", "implementation": ["web/src/navigation.ts", "web/src/routes/CommandCenter.tsx", "web/src/routes/Watchlist.tsx", "web/src/routes/NotificationsPage.tsx", "web/src/routes/Settings.tsx"], "test": ["web/scripts/round3-product-final.test.mjs", "web/scripts/product-integrity.test.cjs"], "status": "PRESENT"},

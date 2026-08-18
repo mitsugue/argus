@@ -47,6 +47,7 @@ const GATE_INVENTORY = [
   { id: 'M12', name: 'rate-limit-cache-backoff' },
   { id: 'M13', name: 'offline-snapshot-continuity' },
   { id: 'M14', name: 'request-hygiene-console-ai' },
+  { id: 'M15', name: 'headline-first-decision-visibility' },
 ];
 const sanitize = (value) => String(value ?? '')
   .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
@@ -519,15 +520,19 @@ async function run() {
     acceptedResponseSnapshotId: null,
   });
   const loaderTiming = await coldPage.evaluate(() => {
+    // The 225ms no-flash threshold is about PERCEIVED waiting, which begins
+    // when the view starts loading (navigation-start), not when the network
+    // request is dispatched — since v13.5.0 revalidation deliberately starts
+    // after the cache lookup so If-None-Match can be supplied.
     const entries = performance.getEntriesByName(
-      'argus-snapshot:network-revalidation-start');
-    const networkStart = entries.length ? entries[entries.length - 1].startTime : null;
+      'argus-snapshot:navigation-start');
+    const loadingStart = entries.length ? entries[entries.length - 1].startTime : null;
     const firstLoaderAt = globalThis.__ARGUS_LOADER_FIRST_AT__;
     return {
-      networkStart,
+      loadingStart,
       firstLoaderAt,
-      rawDelayMs: networkStart != null && firstLoaderAt != null
-        ? firstLoaderAt - networkStart : null,
+      rawDelayMs: loadingStart != null && firstLoaderAt != null
+        ? firstLoaderAt - loadingStart : null,
     };
   });
   loaderTiming.roundedDelayMs = roundTimingMs(loaderTiming.rawDelayMs);
@@ -766,14 +771,17 @@ async function run() {
       acceptedResponseSnapshotId: null,
     });
   await rateLimitContext.unroute('**/api/argus/chart-intelligence?*');
+  // v13.5.0: only the SELECTED instrument loads its heavy verified snapshot;
+  // the other three come from the compact headline bootstrap. A reload with a
+  // controlled 429 therefore produces exactly one bounded verified request.
   const controlledRateLimit = {
     calls: controlled429Calls,
-    expectedCalls: SYMBOLS.length,
+    expectedCalls: 1,
     retryAfterSeconds: 2,
     seedSnapshotId: rateLimitSeedSnapshotId,
     cachedSnapshotId: rateLimitedSnapshotId,
   };
-  if (!rateLimitedSemanticState.pass || controlled429Calls !== SYMBOLS.length
+  if (!rateLimitedSemanticState.pass || controlled429Calls !== 1
       || !rateLimitSeedSnapshotId
       || rateLimitedSnapshotId !== rateLimitSeedSnapshotId) {
     evidence.failures.push('rate-limit-cache-backoff-contract');
@@ -796,6 +804,55 @@ async function run() {
   if (!onlineSnapshotId || offlineSnapshotId !== onlineSnapshotId) {
     evidence.failures.push('offline-snapshot-continuity');
   }
+
+  // M15 — headline-first decision visibility: with every heavy verified
+  // chart request held open, the four headline charts and their canonical
+  // probabilities must still appear from the compact bootstrap. This is the
+  // structural regression gate for "decision info hidden behind heavy
+  // visualization payloads".
+  let releaseHeavyHold;
+  const heavyHold = new Promise((resolve) => { releaseHeavyHold = resolve; });
+  const headlineContext = await browser.newContext({
+    viewport: { width: 430, height: 932 }, serviceWorkers: 'block',
+  });
+  let heldHeavyRequests = 0;
+  await headlineContext.route('**/api/argus/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/api/argus/today-headline') return route.continue();
+    if (url.pathname === '/api/argus/chart-intelligence') {
+      heldHeavyRequests += 1;
+      await heavyHold;
+      return fulfillCapturedSnapshot(route, evidence, 0);
+    }
+    evidence.suppressedNonChartGets += 1;
+    return route.abort('blockedbyclient');
+  });
+  const headlinePage = await headlineContext.newPage();
+  observe(headlinePage, evidence);
+  await headlinePage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  await waitForShell(headlinePage);
+  try {
+    await waitForContractState(headlinePage, 'headline-first-decision-visibility',
+      () => {
+        const tiles = [...document.querySelectorAll(
+          '.at-headline-chart[data-headline-state="data"]')];
+        const probabilityRows = document.querySelectorAll('.at-headline-probs');
+        const primary = document.querySelector('.at-call strong');
+        return tiles.length === 4 && probabilityRows.length >= 4
+          && !!primary && (primary.textContent ?? '').trim().length > 0;
+      }, null);
+    evidence.headlineFirst = {
+      pass: true, heldHeavyRequests,
+      headlineVisibleWhileHeavyHeld: true,
+    };
+  } catch (error) {
+    evidence.headlineFirst = { pass: false, heldHeavyRequests,
+      error: sanitize(error instanceof Error ? error.message : error) };
+    evidence.failures.push('headline-first-decision-visibility');
+  }
+  releaseHeavyHold();
+  await drainResponseTasks(evidence);
+  await headlineContext.close();
 
   const verifiedRequests = evidence.network.filter(
     (row) => row.pathname === '/api/argus/chart-intelligence');
@@ -834,6 +891,7 @@ async function run() {
       loaderTiming,
     },
     warmRevalidation: { warmRevalidating, warmSettled, warmTransition },
+    headlineFirst: evidence.headlineFirst,
     offline: { onlineSnapshotId, offlineSnapshotId, before304, after304 },
     rateLimit: {
       responses: evidence.rateLimits,

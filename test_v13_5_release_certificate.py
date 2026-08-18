@@ -664,7 +664,7 @@ def test_manifest_and_product_semantic_allowlist_are_closed():
     assert "mobile Today canonical projection-state acceptance" in names
     assert "warm cached projection semantic revalidation" in names
     assert "rollback restore has no browser dependency" in names
-    assert "scanner.py" not in release.AUTHORIZED_EXTENSION_PATHS
+    assert "argus_market_data_truth.py" not in release.AUTHORIZED_EXTENSION_PATHS
 
 
 def _simulation_payload(ordinal):

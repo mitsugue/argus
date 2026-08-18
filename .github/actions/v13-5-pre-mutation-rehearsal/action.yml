@@ -36,8 +36,8 @@ runs:
         args=(
           --repo-root "$GITHUB_WORKSPACE"
           --remote origin
-          --accepted-source c946afd07869dbe739026afad11ef5e15418dbbf
-          --accepted-tree dee0b33a9b4eb82671f13dc1d9a06d71a71cb124
+          --accepted-source 52e71a6379d4954b124cb05bc309ba3bf1553222
+          --accepted-tree de1c504a9ee191ff51f8d0b410df72eadc7b3cfc
           --candidate-sha '${{ inputs.candidate-sha }}'
           --candidate-tree '${{ inputs.candidate-tree }}'
           --certificate '${{ inputs.certificate-path }}'

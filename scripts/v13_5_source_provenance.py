@@ -19,62 +19,49 @@ from typing import Any, Dict, Mapping, Optional
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
 PRODUCT_VERSION = "v13.5"
-ACCEPTED_V13_SOURCE = "c946afd07869dbe739026afad11ef5e15418dbbf"
-ACCEPTED_V13_TREE = "dee0b33a9b4eb82671f13dc1d9a06d71a71cb124"
+ACCEPTED_V13_SOURCE = "52e71a6379d4954b124cb05bc309ba3bf1553222"
+ACCEPTED_V13_TREE = "de1c504a9ee191ff51f8d0b410df72eadc7b3cfc"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
-    ".github/actions/acceptance-runtime-preflight/action.yml",
-    # Deletions are diffs against the accepted source too: these two paths are
-    # removed dead release authority (orphaned preview action, vestigial V13
-    # certificate) and stay authorized so their removal can ship.
-    ".github/actions/candidate-pages-preview/action.yml",
+    # v13.5.0 product restoration: the bounded owner-authorized path set for
+    # the Today headline bootstrap, four-chart restoration, and data-delivery
+    # performance fix. The accepted baseline is the LIVE v13.5 release
+    # (52e71a63…); anything outside this list fails the release closed.
     ".github/actions/v13-5-pre-mutation-rehearsal/action.yml",
-    ".github/actions/warm-profile-consumer/action.yml",
-    ".github/actions/warm-profile-seed/action.yml",
-    ".github/workflows/deploy-pages.yml",
     ".github/workflows/market-public-acceptance.yml",
-    ".github/workflows/memory-attribution.yml",
-    ".github/workflows/release-gate.yml",
-    ".github/workflows/restore-safe-pages.yml",
-    "argus_release_identity.py",
+    "argus_route_catalog.py",
+    "argus_today_headline.py",
+    "backend-version.json",
     "docs/ops/v13-final-release-state-machine.md",
-    "product-version.json",
-    "release/v13-acceptance-runtime.json",
     "release/v13-accepted-fix-manifest.json",
-    "scripts/deploy_scope.py",
+    "scanner.py",
     "scripts/v13_5_pre_mutation_rehearsal.py",
-    "scripts/v13_5_release_certificate.py",
     "scripts/v13_5_source_provenance.py",
-    "scripts/v13_release_certificate.py",
     "test_argus_deploy_scope.py",
+    "test_argus_public_operational_boundary.py",
     "test_argus_release_identity.py",
+    "test_argus_v12_4_0.py",
     "test_argus_v13_1_0.py",
-    "test_release_gate_cleanliness.py",
+    "test_argus_today_headline.py",
     "test_v13_5_pre_mutation_rehearsal.py",
     "test_v13_5_release_certificate.py",
+    "test_remote_journal_rearm.py",
     "test_v13_5_source_provenance.py",
-    "test_verify_public_candidate_release.py",
+    "web/package-lock.json",
     "web/package.json",
-    "web/scripts/acceptance-runtime.mjs",
-    "web/scripts/acceptance-runtime.test.mjs",
-    "web/scripts/full-release-simulation.mjs",
-    "web/scripts/canonical-snapshot-selection.mjs",
-    "web/scripts/market-replay.test.mjs",
     "web/scripts/mobile-today-acceptance.mjs",
     "web/scripts/mobile-today-integrity.test.mjs",
-    "web/scripts/mobile-today-projection-state.test.mjs",
-    "web/scripts/mobile-today-warm-revalidation.test.mjs",
-    "web/scripts/public-market-acceptance.contract.test.mjs",
     "web/scripts/release-fixture-target.mjs",
-    "web/scripts/round3-product-final.test.mjs",
-    "web/scripts/runtime-version-truth.test.mjs",
-    "web/scripts/warm-profile-contract.test.mjs",
-    "web/src/domain/runtimeVersionTruth.ts",
+    "web/scripts/today-benchmark.mjs",
+    "web/scripts/verified-snapshot.test.mjs",
+    "web/src/components/today/ArgusToday.css",
     "web/src/components/today/ArgusTodayPanel.tsx",
+    "web/src/hooks/useChartIntelligence.ts",
+    "web/src/hooks/useTodayHeadline.ts",
+    "web/src/lib/todayHeadline.ts",
     "web/src/routes/CommandCenter.tsx",
-    "web/vite.config.ts",
 })
 
 

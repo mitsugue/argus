@@ -8,19 +8,23 @@ import pytest
 from scripts import v13_5_source_provenance as source
 
 
-def test_mobile_today_closeout_allowlist_is_exact_and_backend_stays_closed():
+def test_restoration_allowlist_is_exact_and_core_semantics_stay_closed():
     expected = {
-        "test_argus_v13_1_0.py",
-        "web/scripts/canonical-snapshot-selection.mjs",
-        "web/scripts/market-replay.test.mjs",
+        "argus_today_headline.py",
+        "scanner.py",
         "web/scripts/mobile-today-acceptance.mjs",
-        "web/scripts/mobile-today-integrity.test.mjs",
-        "web/scripts/mobile-today-projection-state.test.mjs",
-        "web/scripts/mobile-today-warm-revalidation.test.mjs",
+        "web/scripts/release-fixture-target.mjs",
         "web/src/components/today/ArgusTodayPanel.tsx",
+        "web/src/hooks/useTodayHeadline.ts",
+        "web/src/lib/todayHeadline.ts",
+        "web/src/routes/CommandCenter.tsx",
     }
     assert expected.issubset(source.AUTHORIZED_EXTENSION_PATHS)
-    assert "scanner.py" not in source.AUTHORIZED_EXTENSION_PATHS
+    # Core investment semantics stay outside any release authorization.
+    for closed in ("argus_market_data_truth.py", "argus_calibration.py",
+                   "argus_market_replay.py", "argus_rules.py",
+                   "web/src/domain/singleDecisionAuthority.ts"):
+        assert closed not in source.AUTHORIZED_EXTENSION_PATHS
 
 
 def git(repo: Path, *args: str) -> str:
