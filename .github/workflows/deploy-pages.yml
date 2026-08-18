@@ -90,6 +90,7 @@ jobs:
         name: Bind the merge to its exact accepted candidate tree
         shell: bash
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           read -r merge parent_one parent_two extra < <(git rev-list --parents -n 1 HEAD)
           test -n "$parent_one" && test -n "$parent_two" && test -z "$extra"
           candidate_tree=$(git rev-parse "$parent_two^{tree}")
