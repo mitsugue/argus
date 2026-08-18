@@ -77,6 +77,25 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
 })
 
 
+class _StripCrossOriginAuthorization(urllib.request.HTTPRedirectHandler):
+    """Keep GitHub auth on GitHub, never forward it to signed blob URLs."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        redirected = super().redirect_request(
+            req, fp, code, msg, headers, newurl)
+        if redirected is None:
+            return None
+        old, new = urllib.parse.urlsplit(req.full_url), urllib.parse.urlsplit(newurl)
+        if old.scheme == "https" and new.scheme != "https":
+            raise ValueError("github_redirect_insecure")
+        if old.netloc != new.netloc:
+            for values in (redirected.headers, redirected.unredirected_hdrs):
+                for name in list(values):
+                    if name.lower() == "authorization":
+                        del values[name]
+        return redirected
+
+
 def _canonical(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True,
                       separators=(",", ":"), allow_nan=False).encode()
@@ -149,7 +168,7 @@ def _validate_manifest() -> Dict[str, Any]:
         "immutable zero-install acceptance runtime",
         "two fresh-runner zero-install proofs",
         "pre-merge detached runtime admission",
-        "GitHub artifact JSON media transport",
+        "GitHub artifact JSON media and safe redirect transport",
         "rollback restore has no browser dependency",
     }.issubset(names):
         raise ValueError("accepted_fix_manifest_release_rows_missing")
@@ -585,8 +604,9 @@ def _api(url: str, token: str, *, accept: str = "application/vnd.github+json") -
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=headers),
-                                    timeout=60) as response:
+        opener = urllib.request.build_opener(_StripCrossOriginAuthorization())
+        with opener.open(urllib.request.Request(url, headers=headers),
+                         timeout=60) as response:
             body = response.read(64 * 1024 * 1024 + 1)
             if len(body) > 64 * 1024 * 1024:
                 raise ValueError("github_api_response_too_large")
