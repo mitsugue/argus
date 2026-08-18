@@ -16,6 +16,11 @@ import urllib.request
 import zipfile
 from typing import Any, Dict, Mapping
 
+try:
+    from scripts import v13_5_source_provenance as source_provenance
+except ModuleNotFoundError:  # Direct execution from scripts/.
+    import v13_5_source_provenance as source_provenance  # type: ignore
+
 
 SCHEMA = "argus-v13-5-release-proof-certificate-v1"
 CHECKS_SCHEMA = "argus-current-required-checks-v1"
@@ -23,8 +28,8 @@ RUNTIME_PROOF_SCHEMA = "argus-zero-install-runtime-proof-v1"
 ADMISSION_SCHEMA = "argus-v13-5-premerge-admission-certificate-v1"
 RETRIEVAL_SCHEMA = "argus-v13-5-detached-certificate-retrieval-v1"
 PRODUCT_VERSION = "v13.5"
-ACCEPTED_V13_SOURCE = "c946afd07869dbe739026afad11ef5e15418dbbf"
-ACCEPTED_V13_TREE = "dee0b33a9b4eb82671f13dc1d9a06d71a71cb124"
+ACCEPTED_V13_SOURCE = source_provenance.ACCEPTED_V13_SOURCE
+ACCEPTED_V13_TREE = source_provenance.ACCEPTED_V13_TREE
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 POLICY_INPUTS = (
     "product-version.json",
@@ -32,49 +37,20 @@ POLICY_INPUTS = (
     "release/v13-snapshot-readiness-contract.json",
     "release/v13-accepted-fix-manifest.json",
     ".github/actions/acceptance-runtime-preflight/action.yml",
+    ".github/actions/v13-5-pre-mutation-rehearsal/action.yml",
     ".github/actions/warm-profile-seed/action.yml",
     ".github/actions/warm-profile-consumer/action.yml",
     ".github/workflows/deploy-pages.yml",
     ".github/workflows/market-public-acceptance.yml",
     ".github/workflows/release-gate.yml",
     "scripts/v13_5_release_certificate.py",
+    "scripts/v13_5_source_provenance.py",
+    "scripts/v13_5_pre_mutation_rehearsal.py",
     "web/scripts/acceptance-runtime.mjs",
     "web/scripts/release-state-machine.mjs",
     "web/scripts/full-release-simulation.mjs",
 )
-AUTHORIZED_EXTENSION_PATHS = frozenset({
-    ".github/actions/acceptance-runtime-preflight/action.yml",
-    ".github/actions/candidate-pages-preview/action.yml",
-    ".github/actions/warm-profile-consumer/action.yml",
-    ".github/actions/warm-profile-seed/action.yml",
-    ".github/workflows/deploy-pages.yml",
-    ".github/workflows/market-public-acceptance.yml",
-    ".github/workflows/release-gate.yml",
-    ".github/workflows/restore-safe-pages.yml",
-    "argus_release_identity.py",
-    "docs/ops/v13-final-release-state-machine.md",
-    "product-version.json",
-    "release/v13-acceptance-runtime.json",
-    "release/v13-accepted-fix-manifest.json",
-    "scripts/deploy_scope.py",
-    "scripts/v13_5_release_certificate.py",
-    "scripts/v13_release_certificate.py",
-    "test_argus_deploy_scope.py",
-    "test_argus_release_identity.py",
-    "test_release_gate_cleanliness.py",
-    "test_v13_5_release_certificate.py",
-    "test_verify_public_candidate_release.py",
-    "web/scripts/acceptance-runtime.mjs",
-    "web/scripts/acceptance-runtime.test.mjs",
-    "web/scripts/full-release-simulation.mjs",
-    "web/scripts/public-market-acceptance.contract.test.mjs",
-    "web/scripts/round3-product-final.test.mjs",
-    "web/scripts/runtime-version-truth.test.mjs",
-    "web/scripts/warm-profile-contract.test.mjs",
-    "web/package.json",
-    "web/src/domain/runtimeVersionTruth.ts",
-    "web/vite.config.ts",
-})
+AUTHORIZED_EXTENSION_PATHS = source_provenance.AUTHORIZED_EXTENSION_PATHS
 
 
 class _StripCrossOriginAuthorization(urllib.request.HTTPRedirectHandler):
@@ -169,6 +145,8 @@ def _validate_manifest() -> Dict[str, Any]:
         "two fresh-runner zero-install proofs",
         "pre-merge detached runtime admission",
         "GitHub artifact JSON media and safe redirect transport",
+        "exact accepted-source reachability and tree admission",
+        "shared pre-mutation production rehearsal",
         "rollback restore has no browser dependency",
     }.issubset(names):
         raise ValueError("accepted_fix_manifest_release_rows_missing")
@@ -187,17 +165,8 @@ def _validate_contract() -> Dict[str, Any]:
 
 
 def _validate_product_semantic_diff(candidate_ref: str) -> Dict[str, Any]:
-    if _git(f"{ACCEPTED_V13_SOURCE}^{{tree}}") != ACCEPTED_V13_TREE:
-        raise ValueError("accepted_v13_source_tree_mismatch")
-    changed = subprocess.check_output([
-        "git", "diff", "--name-only", ACCEPTED_V13_SOURCE,
-        f"{candidate_ref}^{{commit}}"], cwd=ROOT, text=True).splitlines()
-    unauthorized = sorted(set(changed) - AUTHORIZED_EXTENSION_PATHS)
-    if unauthorized:
-        raise ValueError("product_semantic_change_required:" + ",".join(unauthorized))
-    return {"status": "PASS", "acceptedSource": ACCEPTED_V13_SOURCE,
-            "acceptedTree": ACCEPTED_V13_TREE,
-            "changedPaths": sorted(changed), "productSemanticChange": False}
+    return source_provenance.validate_product_semantic_diff(
+        candidate_ref, repo=ROOT)
 
 
 def _validate_simulation(path: pathlib.Path, ordinal: int,
@@ -529,7 +498,18 @@ def verify_admission(args: argparse.Namespace) -> Dict[str, Any]:
         _load(pathlib.Path(args.certificate)), candidate)
     manifest = _validate_manifest()
     _validate_contract()
-    semantic = _validate_product_semantic_diff(args.candidate_ref)
+    source_path = getattr(args, "source_provenance", "")
+    if not source_path:
+        raise ValueError("source_provenance_receipt_required")
+    source = source_provenance.validate_receipt(
+        _load(pathlib.Path(source_path)),
+        candidate_sha=candidate["commitSha"],
+        candidate_tree=candidate["treeSha"],
+        certificate_digest=certificate["certificateDigest"],
+        release_merge_sha=getattr(args, "release_merge_sha", "") or None,
+        release_merge_tree=getattr(args, "release_merge_tree", "") or None,
+        repo=ROOT)
+    semantic = source["semanticDiff"]
     if certificate.get("acceptedFixManifestDigest") != _digest_bytes(
             _canonical(manifest)):
         raise ValueError("admission_certificate_manifest_digest_mismatch")
@@ -828,6 +808,9 @@ def main() -> int:
     admit.add_argument("--candidate-ref", default="HEAD")
     admit.add_argument("--runtime-proof", required=True)
     admit.add_argument("--retrieval-receipt", default="")
+    admit.add_argument("--source-provenance", required=True)
+    admit.add_argument("--release-merge-sha", default="")
+    admit.add_argument("--release-merge-tree", default="")
     collect = sub.add_parser("collect-checks")
     collect.add_argument("--repo", required=True)
     collect.add_argument("--candidate-sha", required=True)

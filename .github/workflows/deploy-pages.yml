@@ -14,6 +14,7 @@ on:
       - '.github/workflows/deploy-pages.yml'
       - '.github/actions/warm-profile-*/**'
       - '.github/actions/acceptance-runtime-preflight/**'
+      - '.github/actions/v13-5-pre-mutation-rehearsal/**'
       - 'release/v13-acceptance-runtime.json'
       - 'release/v13-accepted-fix-manifest.json'
       - 'release/v13-snapshot-readiness-contract.json'
@@ -21,6 +22,8 @@ on:
       - 'web/scripts/acceptance-runtime.mjs'
       - 'scripts/v13_release_certificate.py'
       - 'scripts/v13_5_release_certificate.py'
+      - 'scripts/v13_5_source_provenance.py'
+      - 'scripts/v13_5_pre_mutation_rehearsal.py'
       - 'scripts/verify_public_candidate_release.py'
   workflow_dispatch:
 
@@ -82,6 +85,8 @@ jobs:
       candidate_tree: ${{ steps.candidate.outputs.tree }}
       runtime_identity_digest: ${{ steps.runtime.outputs.runtime_identity_digest }}
       certificate_digest: ${{ steps.certificate.outputs.digest }}
+      source_provenance_digest: ${{ steps.rehearsal.outputs.source_provenance_digest }}
+      rehearsal_digest: ${{ steps.rehearsal.outputs.rehearsal_digest }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -124,15 +129,24 @@ jobs:
           candidate-sha: ${{ steps.candidate.outputs.sha }}
           candidate-tree: ${{ steps.candidate.outputs.tree }}
           evidence-path: artifacts/production-runtime-admission/proof.json
+      - id: rehearsal
+        name: Execute the exact production read-only path before deployment
+        uses: ./.github/actions/v13-5-pre-mutation-rehearsal
+        with:
+          candidate-sha: ${{ steps.candidate.outputs.sha }}
+          candidate-tree: ${{ steps.candidate.outputs.tree }}
+          release-merge-sha: ${{ github.sha }}
+          release-merge-tree: ${{ steps.candidate.outputs.tree }}
+          build-sha: ${{ github.sha }}
+          certificate-path: artifacts/v13-release-proof/certificate.json
+          retrieval-receipt-path: artifacts/v13-release-proof/retrieval-receipt.json
+          runtime-proof-path: artifacts/production-runtime-admission/proof.json
+          evidence-dir: artifacts/pre-mutation-rehearsal
       - id: certificate
-        name: Verify exact certificate and runtime identity before deployment
+        name: Export the admitted detached certificate digest
         run: |
-          python3 -B scripts/v13_5_release_certificate.py verify-admission \
-            --certificate artifacts/v13-release-proof/certificate.json \
-            --candidate-ref '${{ steps.candidate.outputs.sha }}' \
-            --runtime-proof artifacts/production-runtime-admission/proof.json \
-            --retrieval-receipt artifacts/v13-release-proof/retrieval-receipt.json
           digest=$(python3 -c 'import json; print(json.load(open("artifacts/v13-release-proof/certificate.json"))["certificateDigest"])')
+          test "${#digest}" = 64
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Publish production runtime admission evidence
         if: always()
@@ -144,42 +158,34 @@ jobs:
             artifacts/v13-release-proof/retrieval-receipt.json
             artifacts/v13-release-proof/current-required.json
             artifacts/production-runtime-admission/proof.json
+            artifacts/pre-mutation-rehearsal
           if-no-files-found: error
           retention-days: 90
+      - name: Publish the exact predeployment Pages input
+        uses: actions/upload-artifact@v4
+        with:
+          name: v13-5-predeployment-pages-${{ github.sha }}
+          path: |
+            web/dist
+            artifacts/pre-mutation-rehearsal/rehearsal.json
+          if-no-files-found: error
+          retention-days: 7
 
   build:
     needs: [scope, acceptance-runtime-admission]
     runs-on: ubuntu-latest
-    env:
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
-    defaults:
-      run:
-        working-directory: web
     steps:
       - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
+      - uses: actions/download-artifact@v5
         with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - run: npm ci
-
-      - name: Build
-        env:
-          DEPLOY_BASE: /argus/
-          VITE_ARGUS_BUILD_SHA: ${{ github.sha }}
-          # Wire the ARGUS UI to the live Render backend so the Rates
-          # Snapshot / status pill render `live` instead of `mock`. This
-          # is also set in web/.env.production (auto-loaded by Vite); the
-          # explicit value here makes the wiring visible in CI logs and
-          # keeps it working even if that file is absent. Not a secret —
-          # it's a public endpoint the client calls directly, and VITE_-
-          # prefixed vars are client-exposed by design.
-          VITE_ARGUS_BACKEND_URL: https://argus-backend-3j2m.onrender.com
-        run: npm run build
-
+          name: v13-5-predeployment-pages-${{ github.sha }}
+          path: .
+      - name: Re-verify the exact rehearsed Pages deploy input
+        run: |
+          python3 -B scripts/v13_5_pre_mutation_rehearsal.py verify \
+            --receipt artifacts/pre-mutation-rehearsal/rehearsal.json \
+            --dist web/dist \
+            --expected-build-sha '${{ github.sha }}'
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
