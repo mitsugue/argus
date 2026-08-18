@@ -32,6 +32,9 @@ on:
       - 'test_verify_public_candidate_release.py'
       - 'scripts/v13_release_certificate.py'
       - 'scripts/v13_5_release_certificate.py'
+      - 'scripts/v13_5_source_provenance.py'
+      - 'scripts/v13_5_pre_mutation_rehearsal.py'
+      - '.github/actions/v13-5-pre-mutation-rehearsal/**'
       - 'release/v13-acceptance-runtime.json'
       - 'web/scripts/acceptance-runtime.mjs'
       - 'web/scripts/acceptance-runtime.test.mjs'
@@ -168,6 +171,11 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+      - id: candidate
+        name: Pin exact certificate candidate tree
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v5
         with:
           name: zero-install-runtime-proof-1-${{ github.event.pull_request.head.sha }}
@@ -184,9 +192,17 @@ jobs:
             --runtime-proof-one artifacts/simulation-1/zero-install-runtime-proof-1.json \
             --runtime-proof-two artifacts/simulation-2/zero-install-runtime-proof-2.json \
             --out artifacts/v13-release-proof/certificate.json
+          python3 -B scripts/v13_5_source_provenance.py \
+            --accepted-source c946afd07869dbe739026afad11ef5e15418dbbf \
+            --accepted-tree dee0b33a9b4eb82671f13dc1d9a06d71a71cb124 \
+            --candidate-sha '${{ github.event.pull_request.head.sha }}' \
+            --candidate-tree '${{ steps.candidate.outputs.tree }}' \
+            --certificate artifacts/v13-release-proof/certificate.json \
+            --out artifacts/v13-release-proof/source-provenance.json
           python3 -B scripts/v13_5_release_certificate.py verify-admission \
             --certificate artifacts/v13-release-proof/certificate.json \
-            --runtime-proof artifacts/simulation-1/zero-install-runtime-proof-1.json
+            --runtime-proof artifacts/simulation-1/zero-install-runtime-proof-1.json \
+            --source-provenance artifacts/v13-release-proof/source-provenance.json
       - name: Publish detached pre-merge admission certificate
         if: always()
         uses: actions/upload-artifact@v4

@@ -437,6 +437,9 @@ def configure_verification_mocks(monkeypatch):
     monkeypatch.setattr(release, "_validate_contract", lambda: {})
     monkeypatch.setattr(
         release, "_validate_product_semantic_diff", lambda _ref: SEMANTIC)
+    monkeypatch.setattr(
+        release.source_provenance, "validate_receipt",
+        lambda *_args, **_kwargs: {"semanticDiff": SEMANTIC})
     monkeypatch.setattr(release, "_digest_file", lambda _path: "f" * 64)
 
 
@@ -451,15 +454,20 @@ def test_exact_detached_producer_to_consumer_admission_passes(
     )]
     certificate_path, receipt_path = tmp_path / "certificate.json", tmp_path / "receipt.json"
     runtime_path = tmp_path / "runtime.json"
+    source_path = tmp_path / "source.json"
     write_json(certificate_path, certificate)
     write_json(receipt_path, receipt)
     write_json(runtime_path, runtime_proof())
+    write_json(source_path, {})
     configure_verification_mocks(monkeypatch)
     admitted = release.verify_admission(argparse.Namespace(
         candidate_ref="HEAD",
         certificate=str(certificate_path),
         runtime_proof=str(runtime_path),
         retrieval_receipt=str(receipt_path),
+        source_provenance=str(source_path),
+        release_merge_sha="",
+        release_merge_tree="",
     ))
     assert admitted["candidate"] == CANDIDATE
     assert admitted["certificateDigest"] == certificate["certificateDigest"]
@@ -477,6 +485,8 @@ def test_wrong_runtime_identity_fails_after_detached_fetch(monkeypatch, tmp_path
     hostile["proofDigest"] = hashlib.sha256(
         release._canonical(hostile)).hexdigest()
     write_json(runtime_path, hostile)
+    source_path = tmp_path / "source.json"
+    write_json(source_path, {})
     configure_verification_mocks(monkeypatch)
     with pytest.raises(
             ValueError, match="admission_certificate_runtime_identity_mismatch"):
@@ -485,6 +495,28 @@ def test_wrong_runtime_identity_fails_after_detached_fetch(monkeypatch, tmp_path
             certificate=str(certificate_path),
             runtime_proof=str(runtime_path),
             retrieval_receipt="",
+            source_provenance=str(source_path),
+            release_merge_sha="",
+            release_merge_tree="",
+        ))
+
+
+def test_admission_without_source_provenance_fails_closed(
+        monkeypatch, tmp_path):
+    certificate_path = tmp_path / "certificate.json"
+    runtime_path = tmp_path / "runtime.json"
+    write_json(certificate_path, admission_certificate())
+    write_json(runtime_path, runtime_proof())
+    configure_verification_mocks(monkeypatch)
+    with pytest.raises(ValueError, match="source_provenance_receipt_required"):
+        release.verify_admission(argparse.Namespace(
+            candidate_ref="HEAD",
+            certificate=str(certificate_path),
+            runtime_proof=str(runtime_path),
+            retrieval_receipt="",
+            source_provenance="",
+            release_merge_sha="",
+            release_merge_tree="",
         ))
 
 
