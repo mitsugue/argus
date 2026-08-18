@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -15,6 +16,7 @@ PRODUCT_VERSION_FILE = ROOT / "product-version.json"
 BACKEND_VERSION_FILE = ROOT / "backend-version.json"
 FRONTEND_VERSION_FILE = ROOT / "web" / "package.json"
 PRODUCT_VERSION_SCHEMA = "argus-product-version-v1"
+PRODUCT_VERSION_RE = re.compile(r"^v[1-9]\d*(?:\.\d+)*$")
 
 
 def _read_version(path: Path) -> str:
@@ -37,9 +39,7 @@ def product_version() -> str:
     version = value.get("productVersion")
     if (value.get("schemaVersion") != PRODUCT_VERSION_SCHEMA
             or not isinstance(version, str)
-            or not version.startswith("v")
-            or not version[1:].isdigit()
-            or version[1:].startswith("0")):
+            or PRODUCT_VERSION_RE.fullmatch(version) is None):
         return ""
     return version
 
