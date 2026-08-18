@@ -33,6 +33,8 @@
     {"requirement": "rollback restore has no browser dependency", "implementation": [".github/workflows/restore-safe-pages.yml"], "test": ["web/scripts/acceptance-runtime.test.mjs"], "status": "PRESENT"},
     {"requirement": "detached exact-candidate release certificate", "implementation": ["scripts/v13_5_release_certificate.py", ".github/workflows/market-public-acceptance.yml", ".github/workflows/deploy-pages.yml"], "test": ["test_v13_5_release_certificate.py"], "status": "PRESENT"},
     {"requirement": "GitHub artifact JSON media and safe redirect transport", "implementation": ["scripts/v13_5_release_certificate.py"], "test": ["test_v13_5_release_certificate.py"], "status": "PRESENT"},
-    {"requirement": "CURRENT_REQUIRED ruleset evidence", "implementation": ["scripts/v13_5_release_certificate.py"], "test": ["test_v13_5_release_certificate.py"], "status": "PRESENT"}
+    {"requirement": "CURRENT_REQUIRED ruleset evidence", "implementation": ["scripts/v13_5_release_certificate.py"], "test": ["test_v13_5_release_certificate.py"], "status": "PRESENT"},
+    {"requirement": "exact accepted-source reachability and tree admission", "implementation": ["scripts/v13_5_source_provenance.py"], "test": ["test_v13_5_source_provenance.py"], "status": "PRESENT"},
+    {"requirement": "shared pre-mutation production rehearsal", "implementation": [".github/actions/v13-5-pre-mutation-rehearsal/action.yml", "scripts/v13_5_pre_mutation_rehearsal.py", ".github/workflows/release-gate.yml", ".github/workflows/deploy-pages.yml"], "test": ["test_v13_5_pre_mutation_rehearsal.py", "test_v13_5_source_provenance.py"], "status": "PRESENT"}
   ]
 }
