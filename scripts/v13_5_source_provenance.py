@@ -51,6 +51,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "test_v13_5_source_provenance.py",
     "web/package-lock.json",
     "web/package.json",
+    "web/scripts/canonical-snapshot-selection.mjs",
     "web/scripts/mobile-today-acceptance.mjs",
     "web/scripts/mobile-today-integrity.test.mjs",
     "web/scripts/release-fixture-target.mjs",
