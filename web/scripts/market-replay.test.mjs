@@ -36,7 +36,7 @@ assert.match(today, /data-canonical-snapshot-id=\{chartLoad\.snapshotId/);
 assert.match(today, /data-canonical-instrument=\{projection\?\.symbol \?\? selectedSymbol\}/);
 assert.match(today, /data-canonical-horizon=\{`\$\{projection\?\.horizonDays \?\? horizon\}D`\}/);
 assert.match(today, /effectiveSampleCount/);
-assert.match(today, /<ProjectionChart projection=\{projection\}/);
+assert.match(today, /<ProjectionChart projection=\{projection\} \/>/);
 assert.doesNotMatch(today, /onActivate=\{\(\) => (?:setDetail\(true\)|undefined)\}/);
 assert.doesNotMatch(today, /argus\.replayContext|onNavigate\('regime'\)/);
 assert.doesNotMatch(app + navigation, /MarketRegime|#market|'regime'/);

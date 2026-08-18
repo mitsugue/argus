@@ -10,7 +10,6 @@ import copy
 import hashlib
 import json
 import math
-import re
 import threading
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional, Tuple
@@ -175,13 +174,7 @@ def _identity_material(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         "payloadHash", "methodVersion", "asOf", "generatedAt", "verifiedAt", "quality",
         "sourceStatus", "verificationStatus",
     )
-    material = {key: snapshot.get(key) for key in fields}
-    # Release binding is additive so historical snapshots retain their exact
-    # identifiers while release-seeded snapshots are content-addressed to the
-    # producer trigger and candidate backend build that created them.
-    if "releaseBinding" in snapshot:
-        material["releaseBinding"] = snapshot.get("releaseBinding")
-    return material
+    return {key: snapshot.get(key) for key in fields}
 
 
 def snapshot_id(snapshot: Dict[str, Any]) -> str:
@@ -287,21 +280,6 @@ def verify_snapshot(
     if any("mock" in str(value).lower()
            for value in snapshot["sourceStatus"].values()):
         return False, "mock_source"
-    release_binding = snapshot.get("releaseBinding")
-    if release_binding is not None:
-        if not isinstance(release_binding, dict):
-            return False, "release_binding_invalid"
-        if set(release_binding) != {
-                "expectedBuildSha", "producerTriggerId", "triggeredAt"}:
-            return False, "release_binding_schema"
-        if not re.fullmatch(
-                r"[0-9a-f]{40}",
-                str(release_binding.get("expectedBuildSha") or "").lower()):
-            return False, "release_binding_build"
-        if not str(release_binding.get("producerTriggerId") or "").strip():
-            return False, "release_binding_trigger"
-        if _parse_time(release_binding.get("triggeredAt")) is None:
-            return False, "release_binding_time"
     payload = snapshot.get("payload")
     if not isinstance(payload, dict) or not payload:
         return False, "empty_payload"
@@ -343,8 +321,7 @@ def verify_snapshot(
 def build_snapshot(
         *, payload: Dict[str, Any], kind: str, instrument: str, horizon: str,
         dataset_hash: str, method_version: str, as_of: str, generated_at: str,
-        quality: str, source_status: Dict[str, str],
-        release_binding: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        quality: str, source_status: Dict[str, str]) -> Dict[str, Any]:
     candidate = {
         "schemaVersion": SCHEMA_VERSION,
         "snapshotId": "",
@@ -362,8 +339,6 @@ def build_snapshot(
         "verificationStatus": "verified",
         "payload": copy.deepcopy(payload),
     }
-    if release_binding is not None:
-        candidate["releaseBinding"] = copy.deepcopy(release_binding)
     candidate["snapshotId"] = snapshot_id(candidate)
     return candidate
 
