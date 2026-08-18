@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import io
 import json
+import subprocess
 import urllib.error
 import zipfile
 from pathlib import Path
@@ -430,17 +431,88 @@ def test_retrieval_receipt_tamper_fails_closed(monkeypatch, tmp_path):
         release._validate_retrieval_receipt(path, certificate, CANDIDATE)
 
 
-def configure_verification_mocks(monkeypatch):
+def configure_verification_mocks(monkeypatch, *, mock_source=True):
     monkeypatch.setattr(release, "_ensure_clean_candidate", lambda: None)
     monkeypatch.setattr(release, "_candidate", lambda _ref: CANDIDATE)
     monkeypatch.setattr(release, "_validate_manifest", lambda: {})
     monkeypatch.setattr(release, "_validate_contract", lambda: {})
     monkeypatch.setattr(
         release, "_validate_product_semantic_diff", lambda _ref: SEMANTIC)
-    monkeypatch.setattr(
-        release.source_provenance, "validate_receipt",
-        lambda *_args, **_kwargs: {"semanticDiff": SEMANTIC})
+    if mock_source:
+        monkeypatch.setattr(
+            release.source_provenance, "validate_receipt",
+            lambda *_args, **_kwargs: {"semanticDiff": SEMANTIC})
     monkeypatch.setattr(release, "_digest_file", lambda _path: "f" * 64)
+
+
+def merge_bound_source_receipt(*, certificate_digest, merge_sha="d" * 40,
+                               merge_tree=CANDIDATE["treeSha"]):
+    value = {
+        "schemaVersion": release.source_provenance.SCHEMA,
+        "status": "PASS",
+        "remote": {"name": "origin", "url": "https://github.com/mitsugue/argus"},
+        "fetch": {
+            "requestedCommitSha": release.ACCEPTED_V13_SOURCE,
+            "fetchHeadCommitSha": release.ACCEPTED_V13_SOURCE,
+            "depth": 1,
+            "noTags": True,
+            "sourcePresentBeforeFetch": False,
+            "initialCheckoutShallow": True,
+            "postFetchShallow": True,
+        },
+        "acceptedSource": {
+            "commitSha": release.ACCEPTED_V13_SOURCE,
+            "treeSha": release.ACCEPTED_V13_TREE,
+        },
+        "candidate": CANDIDATE,
+        "releaseMerge": {
+            "commitSha": merge_sha,
+            "treeSha": merge_tree,
+            "candidateParentSha": CANDIDATE["commitSha"],
+        },
+        "productVersion": release.PRODUCT_VERSION,
+        "certificateDigest": certificate_digest,
+        "acceptedFixManifestDigest": hashlib.sha256(
+            release._canonical({})).hexdigest(),
+        "semanticDiff": SEMANTIC,
+    }
+    value["provenanceDigest"] = hashlib.sha256(
+        release._canonical(value)).hexdigest()
+    return value
+
+
+def run_shared_action_verify_block(tmp_path, *, merge_sha, merge_tree):
+    root = Path(__file__).resolve().parent
+    action = (root / ".github/actions/v13-5-pre-mutation-rehearsal/action.yml").read_text()
+    block = action.split(
+        "- name: Verify detached certificate against the admitted source and runtime",
+        1)[1].split("    - uses: actions/setup-node@v5", 1)[0]
+    block = block.split("      run: |", 1)[1]
+    lines = block.splitlines()
+    indent = min(len(line) - len(line.lstrip()) for line in lines if line.strip())
+    command = "\n".join(line[indent:] for line in lines if line.strip())
+    capture = tmp_path / "capture.py"
+    captured = tmp_path / "argv.json"
+    capture.write_text(
+        "import json,sys\n"
+        f"open({str(captured)!r}, 'w').write(json.dumps(sys.argv[1:]))\n",
+        encoding="utf-8")
+    command = command.replace(
+        "python3 -B scripts/v13_5_release_certificate.py",
+        f"python3 -B {capture}")
+    replacements = {
+        "certificate-path": "/proof/certificate.json",
+        "candidate-sha": CANDIDATE["commitSha"],
+        "runtime-proof-path": "/proof/runtime.json",
+        "retrieval-receipt-path": "/proof/retrieval.json",
+        "evidence-dir": "/proof/evidence",
+        "release-merge-sha": merge_sha,
+        "release-merge-tree": merge_tree,
+    }
+    for name, value in replacements.items():
+        command = command.replace(f"${{{{ inputs.{name} }}}}", value)
+    subprocess.run(["bash", "-eu", "-o", "pipefail", "-c", command], check=True)
+    return json.loads(captured.read_text())
 
 
 def test_exact_detached_producer_to_consumer_admission_passes(
@@ -471,6 +543,69 @@ def test_exact_detached_producer_to_consumer_admission_passes(
     ))
     assert admitted["candidate"] == CANDIDATE
     assert admitted["certificateDigest"] == certificate["certificateDigest"]
+
+
+def test_shared_action_forwards_both_release_merge_arguments(tmp_path):
+    merge_sha = "d" * 40
+    merge_tree = CANDIDATE["treeSha"]
+    argv = run_shared_action_verify_block(
+        tmp_path, merge_sha=merge_sha, merge_tree=merge_tree)
+    assert argv[0] == "verify-admission"
+    assert argv[argv.index("--release-merge-sha") + 1] == merge_sha
+    assert argv[argv.index("--release-merge-tree") + 1] == merge_tree
+    assert argv.count("--release-merge-sha") == 1
+    assert argv.count("--release-merge-tree") == 1
+
+
+@pytest.mark.parametrize(("merge_sha", "merge_tree", "receipt_sha",
+                          "receipt_tree", "expected_error"), [
+    ("", "", "d" * 40, CANDIDATE["treeSha"],
+     "source_provenance_release_merge_mismatch"),
+    ("d" * 40, "", "d" * 40, CANDIDATE["treeSha"],
+     "release_merge_identity_incomplete"),
+    ("", CANDIDATE["treeSha"], "d" * 40, CANDIDATE["treeSha"],
+     "release_merge_identity_incomplete"),
+    ("e" * 40, CANDIDATE["treeSha"], "d" * 40,
+     CANDIDATE["treeSha"], "source_provenance_release_merge_mismatch"),
+    ("d" * 40, "e" * 40, "d" * 40, CANDIDATE["treeSha"],
+     "source_provenance_release_merge_mismatch"),
+    ("d" * 40, CANDIDATE["treeSha"], "e" * 40,
+     CANDIDATE["treeSha"], "source_provenance_release_merge_mismatch"),
+    ("d" * 40, CANDIDATE["treeSha"], "d" * 40, "e" * 40,
+     "source_provenance_release_merge_mismatch"),
+    ("d" * 40, CANDIDATE["treeSha"], "d" * 40,
+     CANDIDATE["treeSha"], None),
+])
+def test_merge_bound_admission_matrix(
+        monkeypatch, tmp_path, merge_sha, merge_tree, receipt_sha,
+        receipt_tree, expected_error):
+    certificate = admission_certificate()
+    certificate_path = tmp_path / "certificate.json"
+    runtime_path = tmp_path / "runtime.json"
+    source_path = tmp_path / "source.json"
+    write_json(certificate_path, certificate)
+    write_json(runtime_path, runtime_proof())
+    write_json(source_path, merge_bound_source_receipt(
+        certificate_digest=certificate["certificateDigest"],
+        merge_sha=receipt_sha, merge_tree=receipt_tree))
+    configure_verification_mocks(monkeypatch, mock_source=False)
+    monkeypatch.setattr(
+        release.source_provenance, "validate_product_semantic_diff",
+        lambda *_args, **_kwargs: SEMANTIC)
+    monkeypatch.setattr(
+        release.source_provenance, "_manifest_identity", lambda _repo: {})
+    args = argparse.Namespace(
+        candidate_ref="HEAD", certificate=str(certificate_path),
+        runtime_proof=str(runtime_path), retrieval_receipt="",
+        source_provenance=str(source_path),
+        release_merge_sha=merge_sha, release_merge_tree=merge_tree)
+    if expected_error:
+        with pytest.raises(ValueError, match=expected_error):
+            release.verify_admission(args)
+    else:
+        admitted = release.verify_admission(args)
+        assert admitted["candidate"] == CANDIDATE
+        assert admitted["certificateDigest"] == certificate["certificateDigest"]
 
 
 def test_wrong_runtime_identity_fails_after_detached_fetch(monkeypatch, tmp_path):
