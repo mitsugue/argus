@@ -110,7 +110,12 @@ assert.match(acceptance, /selectCanonicalControls\(warmPage\)/);
 assert.match(acceptance, /selectCanonicalControls\(rateLimitPage\)/);
 assert.match(acceptance, /ERR_INTERNET_DISCONNECTED/,
   'the deliberate offline reload must be classified separately from unexpected console failures');
-assert.match(acceptance, /expectedCalls: SYMBOLS\.length/);
+// v13.5.0: only the selected instrument revalidates its heavy snapshot on
+// reload; the four headline charts come from the compact bootstrap, so the
+// controlled-429 reload budget is exactly one bounded request.
+assert.match(acceptance, /expectedCalls: 1/);
+assert.match(acceptance, /headline-first-decision-visibility/,
+  'the headline-first regression gate must exist in the acceptance engine');
 assert.match(acceptance, /fulfillCapturedSnapshot\(route, evidence, 4_000\)/,
   'cold loader acceptance must keep the delayed request active after shell readiness');
 assert.ok(acceptance.indexOf('const coldLoaderAppeared')

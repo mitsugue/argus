@@ -21,8 +21,8 @@ import scanner
 class ReleaseIdentityTests(unittest.TestCase):
     def test_version_sources_are_independent_and_current(self):
         self.assertEqual("v13.5", identity.product_version())
-        self.assertEqual("13.4.13", identity.backend_version())
-        self.assertEqual("13.3.6", identity.frontend_version())
+        self.assertEqual("13.4.14", identity.backend_version())
+        self.assertEqual("13.3.7", identity.frontend_version())
         self.assertEqual(identity.backend_version(),
                          scanner._semantic_app_version())
         self.assertEqual(identity.frontend_version(),
@@ -33,9 +33,9 @@ class ReleaseIdentityTests(unittest.TestCase):
             backend_sha="backend1", frontend_sha="frontend1")
         self.assertEqual({
             "productVersion": "v13.5",
-            "backendVersion": "13.4.13",
+            "backendVersion": "13.4.14",
             "backendBuildSha": "backend1",
-            "frontendVersion": "13.3.6",
+            "frontendVersion": "13.3.7",
             "frontendBuildSha": "frontend1",
         }, value)
         unknown = identity.release_identity(backend_sha=None)
@@ -61,8 +61,8 @@ class ReleaseIdentityTests(unittest.TestCase):
             "schemaVersion": "argus-product-version-v1",
             "productVersion": "v13.5",
         }, product)
-        self.assertEqual({"version": "13.4.13"}, backend)
-        self.assertEqual("13.3.6", frontend["version"])
+        self.assertEqual({"version": "13.4.14"}, backend)
+        self.assertEqual("13.3.7", frontend["version"])
 
     def test_product_version_never_falls_back_to_component_version(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -72,9 +72,9 @@ class ReleaseIdentityTests(unittest.TestCase):
                 "not-json",
                 '{"schemaVersion":"wrong","productVersion":"v13.5"}',
                 '{"schemaVersion":"argus-product-version-v1",'
-                '"productVersion":"13.3.6"}',
+                '"productVersion":"13.3.7"}',
                 '{"schemaVersion":"argus-product-version-v1",'
-                '"productVersion":"v13.5","frontendVersion":"13.3.6"}',
+                '"productVersion":"v13.5","frontendVersion":"13.3.7"}',
             ):
                 if content is None:
                     source.unlink(missing_ok=True)

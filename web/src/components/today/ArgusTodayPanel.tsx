@@ -14,6 +14,16 @@ import {
 } from '../../domain/liveQuote';
 import './ArgusToday.css';
 
+export interface TodayInstrumentHeadline {
+  state: 'data' | 'loading' | 'unavailable' | 'error';
+  parentSnapshotId: string | null;
+  asOf: string | null;
+  stale: boolean;
+  closes: number[];
+  probabilities: { UP: number; RANGE: number; DOWN: number } | null;
+  probabilityBasis: 'exact' | 'reference' | null;
+}
+
 export interface TodayInstrumentState {
   symbol: MarketInstrumentSymbol;
   market: MarketInstrumentMarket;
@@ -26,6 +36,7 @@ export interface TodayInstrumentState {
   statusText: string;
   loading: boolean;
   error: string | null;
+  headline: TodayInstrumentHeadline;
 }
 
 export interface TodayChartLoadState {
@@ -74,11 +85,36 @@ const moveTone = (value: number, previous?: number | null) => previous == null |
 const zoneLabel = (kind: '支持' | '抵抗', status: string) =>
   `${kind}${status === 'reclaimed' ? '（回復）' : status === 'broken' ? '（突破済み）' : ''}`;
 
-const Sparkline: React.FC<{ values: number[] }> = ({ values }) => {
-  if (values.length < 2) return null;
+// One of the four always-visible headline charts: ~30 verified closes plus
+// the canonical UP/RANGE/DOWN probabilities. Every state is explicit — a tile
+// is data, loading, unavailable, or error, never silent blank space.
+const HeadlineMiniChart: React.FC<{ headline: TodayInstrumentHeadline }> = ({ headline }) => {
+  if (headline.state !== 'data' || headline.closes.length < 2) {
+    return <div className="at-headline-chart" data-headline-state={headline.state}>
+      <span>{headline.state === 'loading' ? 'データ確認中'
+        : headline.state === 'error' ? '取得できません' : 'データ未提供'}</span>
+    </div>;
+  }
+  const values = headline.closes;
   const lo = Math.min(...values), hi = Math.max(...values), span = hi - lo || 1;
-  const points = values.map((value, index) => `${index / (values.length - 1) * 42},${12 - (value - lo) / span * 10}`).join(' ');
-  return <svg className="at-spark" viewBox="0 0 42 14" aria-hidden><polyline points={points} /></svg>;
+  const points = values.map((value, index) =>
+    `${(index / (values.length - 1)) * 140},${40 - (value - lo) / span * 32}`).join(' ');
+  const rising = values.at(-1)! >= values[0];
+  return <div className="at-headline-chart" data-headline-state="data"
+    data-parent-snapshot-id={headline.parentSnapshotId ?? undefined}>
+    <svg viewBox="0 0 140 44" role="img" aria-label="過去30営業日の検証済終値"
+      preserveAspectRatio="none">
+      <polyline points={points} className={rising ? 'is-up' : 'is-down'} />
+    </svg>
+    {headline.probabilities && <span className="at-headline-probs"
+      data-probability-basis={headline.probabilityBasis ?? undefined}>
+      <b className="is-up">↑{headline.probabilities.UP}%</b>
+      <b className="is-range">→{headline.probabilities.RANGE}%</b>
+      <b className="is-down">↓{headline.probabilities.DOWN}%</b>
+      {headline.probabilityBasis === 'reference' && <i>参考</i>}
+    </span>}
+    {headline.stale && <i className="at-headline-stale">再検証中</i>}
+  </div>;
 };
 
 interface PriceLabel { key: string; label: string; value: number; priority: number; tone: string }
@@ -316,8 +352,11 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       </div>
     </section>
 
-    <details className="at-evidence card">
-      <summary>根拠・市場データ・システム情報</summary>
+    {/* v13.5.0 restoration: the market block — session lamps, the four
+        headline charts, and the projection — is the product, so it is always
+        visible. Only system/verification detail stays behind the disclosure
+        below. */}
+    <section className="at-market card" aria-label="市場データ">
       <section className="at-lamps" aria-label="市場セッション">
         {view.sessionLamps.map((lamp) => <span key={lamp.key} className={`is-${lamp.tone}`}>
           <i aria-hidden />{lamp.label}
@@ -356,10 +395,10 @@ export const ArgusTodayPanel: React.FC<Props> = ({
                 <em className="at-index-truth"><mark data-delay="OFFLINE">OFFLINE</mark> provider 未取得 · asOf 未検証</em></>}
             {move ? <><i className="at-index-section">ANALYSIS</i>
               <b className="at-index-analysis">{fmtMove(move.value, move.suffix)}</b>
-              <Sparkline values={(move.history ?? []).map((point) => point.value)} />
               <em>{move.directionLabel ?? ''} · {move.status ?? 'close'} {shortDate(move.asOf)}</em></>
               : <><b className="at-index-pending">準備中</b>
                 <em>{instrument.error ? '要更新' : instrument.statusText}</em></>}
+            <HeadlineMiniChart headline={instrument.headline} />
           </button>;
         })}
       </div>
@@ -402,6 +441,10 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         <b>上昇失速パターン　{view.failedRallyState.state === 'CONFIRMED' ? '観測済み' : '候補'}</b>
         <span>将来リターンのSkill未検証</span>
       </div>}
+    </section>
+
+    <details className="at-evidence card">
+      <summary>根拠・市場データ・システム情報</summary>
       <div className="at-details">
         <div><b>AUTHORITY</b><span>{view.canonicalDecision.identities.authorityPolicyId ?? 'unavailable'}</span></div>
         <div><b>DECISION ID</b><span>{view.canonicalDecision.decisionId}</span></div>

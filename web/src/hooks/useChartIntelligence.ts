@@ -303,18 +303,6 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
     });
     performanceMark('navigation-start');
     const cachePromise = readVerifiedSnapshot(expectation);
-    // Cache restore and revalidation begin in the same effect. The network
-    // result is deliberately held until the cache lookup has had first paint.
-    const networkPromise = withAbort(
-      fetchVerifiedSnapshot(verifiedUrl, expectation, memoryCached),
-      controller.signal);
-    // Attach both handlers immediately. Otherwise a superseded request can
-    // reject while IndexedDB is still being read and briefly surface as an
-    // unhandled AbortError before this task reaches its network await.
-    const networkOutcomePromise = networkPromise.then(
-      (value) => ({ ok: true as const, value }),
-      (reason: unknown) => ({ ok: false as const, reason }),
-    );
     void (async () => {
       let cached = await cachePromise;
       if (controller.signal.aborted || requestSequence !== sequence.current) return;
@@ -324,6 +312,17 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
         });
         performanceMark('first-cached-chart-render');
       }
+      // Revalidation starts after the cache lookup so an intact cached
+      // snapshot supplies its If-None-Match validator: an unchanged snapshot
+      // then costs one 304 round-trip instead of a multi-megabyte re-download
+      // and re-verification on every reload.
+      const networkOutcomePromise = withAbort(
+        fetchVerifiedSnapshot(verifiedUrl, expectation, memoryCached ?? cached),
+        controller.signal,
+      ).then(
+        (value) => ({ ok: true as const, value }),
+        (reason: unknown) => ({ ok: false as const, reason }),
+      );
       try {
         const networkOutcome = await networkOutcomePromise;
         if (!networkOutcome.ok) throw networkOutcome.reason;

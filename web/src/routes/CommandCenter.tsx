@@ -14,9 +14,12 @@ import type { RouteKey } from '../components/NavRail';
 import type { SettingsSection } from '../navigation';
 import '../components/dashboard/Dashboard.css';
 import { ArgusTodayPanel } from '../components/today/ArgusTodayPanel';
-import { buildArgusTodayView, selectTodayNews,
+import { buildArgusTodayView, buildTodayProjection, selectTodayNews,
   selectAutoMarket, type MarketSelectionMode, type TodayMoveInput,
   type TodayPositioningRow } from '../domain/argusTodayView';
+import { useTodayHeadline } from '../hooks/useTodayHeadline';
+import { headlineProjectionInput,
+  type TodayHeadlineEntry } from '../lib/todayHeadline';
 import { useMarketLedger } from '../hooks/useMarketLedger';
 import { useChartIntelligence } from '../hooks/useChartIntelligence';
 import { useMarketNews } from '../hooks/useMarketNews';
@@ -81,6 +84,27 @@ function projectionInput(payload: ChartIntelligencePayload | null): TodayProject
     failedRally: payload.todayIntelligence?.failedRally ?? null,
     historyStart: payload.todayIntelligence?.historyCoverage.start ?? null,
     historyEnd: payload.todayIntelligence?.historyCoverage.end ?? null };
+}
+
+function headlineMove(entry: TodayHeadlineEntry | undefined,
+  id: string): TodayMoveInput | null {
+  if (!entry || entry.status !== 'ready') return null;
+  const bars = (entry.bars ?? []).filter((bar) =>
+    Number.isFinite(bar.close) && bar.close > 0);
+  const latest = bars.at(-1), previous = bars.at(-2);
+  if (!latest) return null;
+  const changePct = previous && previous.close > 0
+    ? (latest.close - previous.close) / previous.close * 100 : null;
+  const label = instrumentLabel({ symbol: entry.instrument,
+    displayNameJa: entry.displayNameJa } as ChartIntelligencePayload);
+  return { id, symbol: entry.instrument,
+    market: entry.market === 'JP' ? 'JP' : 'US', label,
+    value: latest.close, previous: previous?.close ?? null,
+    directionLabel: changePct == null ? undefined
+      : `${changePct >= 0 ? '▲' : '▼'}${Math.abs(changePct).toFixed(1)}%`,
+    asOf: latest.date,
+    status: entry.payloadStatus === 'delayed' ? 'delayed' : 'close',
+    history: bars.slice(-12).map((bar) => ({ date: bar.date, value: bar.close })) };
 }
 
 function marketMove(payload: ChartIntelligencePayload | null, id: string): TodayMoveInput | null {
@@ -189,17 +213,12 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     scope: 'market', symbol: selectedSymbol, market: selectedDefinition.market,
     timeframe: 'daily', horizon: chartHorizon, enabled: true,
   });
-  // Selector summaries use one verified 5D snapshot per instrument. These
-  // hooks follow the selected view so its network/cache effect is scheduled
-  // first; the URL-level inflight map deduplicates the selected 5D request.
-  const jpChart = useChartIntelligence({ scope: 'market', symbol: '1321',
-    market: 'JP', timeframe: 'daily', horizon: 5, enabled: true });
-  const topixChart = useChartIntelligence({ scope: 'market', symbol: '1306',
-    market: 'JP', timeframe: 'daily', horizon: 5, enabled: true });
-  const sp500Chart = useChartIntelligence({ scope: 'market', symbol: 'SPY',
-    market: 'US', timeframe: 'daily', horizon: 5, enabled: true });
-  const nasdaqChart = useChartIntelligence({ scope: 'market', symbol: 'QQQ',
-    market: 'US', timeframe: 'daily', horizon: 5, enabled: true });
+  // v13.5.0 restoration: selector summaries, index moves, and the four
+  // headline mini-charts come from one compact canonical bootstrap response
+  // instead of four multi-megabyte verified snapshots. Only the selected
+  // instrument still loads its heavy verified snapshot (above), so the Today
+  // screen no longer waits on ~13 MB of serial transport and hashing.
+  const headline = useTodayHeadline();
   // v11.9.0/v11.17.0: one automatic LOCAL snapshot per JST day once holdings
   // price — scenarioSummary込みで「あの日ARGUSが何を言っていたか」を残す(送信なし)。
   useEffect(() => {
@@ -343,21 +362,20 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       return value && value !== 'UNKNOWN' ? '△' : '—';
     };
     const selectedJpChart = effectiveMarket === 'JP'
-      ? selectedChart.decisionData
-      : selectedInstrument.JP === '1306' ? topixChart.decisionData : jpChart.decisionData;
+      ? selectedChart.decisionData : null;
     const selectedUsChart = effectiveMarket === 'US'
-      ? selectedChart.decisionData
-      : selectedInstrument.US === 'QQQ' ? nasdaqChart.decisionData : sp500Chart.decisionData;
+      ? selectedChart.decisionData : null;
+    const headlineEntry = (symbol: string) => {
+      const entry = headline.document?.instruments?.[symbol];
+      return entry?.status === 'ready' ? entry : undefined;
+    };
     // The chart projection is presentation of the verified snapshot the hook
     // currently holds (cached or settled), so the warm cache stays the visible
     // authority during background revalidation. Decision consumers keep the
-    // stricter decisionData (CURRENT_READY + fresh only).
-    const selectedJpProjection = effectiveMarket === 'JP'
-      ? selectedChart.data
-      : selectedInstrument.JP === '1306' ? topixChart.data : jpChart.data;
-    const selectedUsProjection = effectiveMarket === 'US'
-      ? selectedChart.data
-      : selectedInstrument.US === 'QQQ' ? nasdaqChart.data : sp500Chart.data;
+    // stricter decisionData (CURRENT_READY + fresh only). Only the selected
+    // market's projection is ever displayed, so only it is supplied.
+    const selectedJpProjection = effectiveMarket === 'JP' ? selectedChart.data : null;
+    const selectedUsProjection = effectiveMarket === 'US' ? selectedChart.data : null;
     const shortState = selectedJpChart?.todayIntelligence?.shortSelling;
     const jpFactors = [
       { key: 'TREND' as const, state: regime.data?.regime?.label === 'RISK_ON' ? '↑' as const : regime.data?.regime?.label === 'RISK_OFF' ? '↓' as const : '△' as const, source: 'market-regime' },
@@ -392,8 +410,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     }));
     const indexMoves: TodayMoveInput[] = [];
     for (const move of [
-      marketMove(jpChart.decisionData, 'nikkei'), marketMove(topixChart.decisionData, 'topix'),
-      marketMove(sp500Chart.decisionData, 'sp500'), marketMove(nasdaqChart.decisionData, 'nasdaq'),
+      headlineMove(headlineEntry('1321'), 'nikkei'),
+      headlineMove(headlineEntry('1306'), 'topix'),
+      headlineMove(headlineEntry('SPY'), 'sp500'),
+      headlineMove(headlineEntry('QQQ'), 'nasdaq'),
     ]) if (move) indexMoves.push(move);
     const macroMoves: TodayMoveInput[] = [];
     const addRate = (id: string, label: string, point: NonNullable<typeof rates.data>['us10y'] | undefined, suffix: string, direction?: string) => {
@@ -438,21 +458,25 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     const ratio25 = metric(['breadth.prime.ratio25', 'breadth.ratio25']);
     if (ratio6 != null || ratio25 != null) jpPositioning.push({ key: 'breadth-ratios', label: '騰落比率',
       value: [ratio6 == null ? null : `6日${ratio6.toFixed(0)}`, ratio25 == null ? null : `25日${ratio25.toFixed(0)}`].filter(Boolean).join(' / ') });
-    const jpRs = jpChart.decisionData?.relativeStrength?.nikkei_sp500?.change20Pct;
+    const jpRs = headlineEntry('1321')?.relativeStrengthSummary?.nikkeiSp500Change20Pct
+      ?? (effectiveMarket === 'JP'
+        ? selectedChart.decisionData?.relativeStrength?.nikkei_sp500?.change20Pct : null);
     if (jpRs != null) jpPositioning.push({ key: 'relative-numeric', label: '日米強弱',
       value: jpRs >= 0 ? 'JP優位' : 'US優位', detail: `${signed(jpRs, 1)}pt`,
       tone: jpRs >= 0 ? 'positive' : 'negative' });
 
     const usPositioning: TodayPositioningRow[] = [];
-    const change20 = (payload: ChartIntelligencePayload | null) => {
-      const bars = payload?.indicators.bars.filter((bar) => bar.close > 0) ?? [];
-      return bars.length >= 21 ? (bars.at(-1)!.close / bars.at(-21)!.close - 1) * 100 : null;
+    const change20 = (bars: Array<{ close: number }> | undefined) => {
+      const rows = (bars ?? []).filter((bar) => bar.close > 0);
+      return rows.length >= 21 ? (rows.at(-1)!.close / rows.at(-21)!.close - 1) * 100 : null;
     };
-    const qqq20 = change20(nasdaqChart.decisionData), spy20 = change20(sp500Chart.decisionData);
+    const qqq20 = change20(headlineEntry('QQQ')?.bars);
+    const spy20 = change20(headlineEntry('SPY')?.bars);
     if (qqq20 != null && spy20 != null) usPositioning.push({ key: 'us-relative-numeric', label: 'NASDAQ対SPY',
       value: `${signed(qqq20 - spy20, 1)}pt`, detail: qqq20 >= spy20 ? 'NASDAQ優位' : 'SPY優位',
       tone: qqq20 >= spy20 ? 'positive' : 'negative' });
-    const usVolume = selectedUsChart?.indicators.bars.at(-1)?.volumeRatio20;
+    const usVolume = headlineEntry(selectedInstrument.US)?.bars?.at(-1)?.volumeRatio20
+      ?? selectedUsChart?.indicators.bars.at(-1)?.volumeRatio20;
     if (usVolume != null) usPositioning.push({ key: 'us-volume-regime', label: '出来高',
       value: `${usVolume.toFixed(2)}×`, detail: usVolume >= 1.2 ? '増加' : usVolume <= .8 ? '低調' : '平常',
       tone: usVolume >= 1.2 ? 'positive' : 'neutral' });
@@ -520,34 +544,60 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
   }, [judgment, overlay, isPartial, visLimited, marketLedger.ledger,
     regime.data, impEvents, rates.data, events247,
     assets, apItems, marketMode,
-    jpChart.decisionData, topixChart.decisionData,
-    sp500Chart.decisionData, nasdaqChart.decisionData, marketNews.data,
-    jpChart.data, topixChart.data, sp500Chart.data, nasdaqChart.data,
+    headline.document, marketNews.data,
     selectedChart.data,
     marketNews.lastChecked, marketNews.failureClass,
     selectedInstrument, effectiveMarket, selectedChart.decisionData, decisionCalendar,
     sdaBySymbol]);
 
   const todayInstruments = useMemo(() => {
-    const charts = {
-      '1321': jpChart, '1306': topixChart, SPY: sp500Chart, QQQ: nasdaqChart,
-    };
     const moves = new Map(argusToday.indexMoves.map((move) => [move.symbol, move]));
     const quotes = new Map([
       ...(headlineJpQuotes.data?.stocks ?? []),
       ...(headlineUsQuotes.data?.stocks ?? []),
     ].map((quote) => [quote.symbol.toUpperCase(), quote.quoteTruth ?? null]));
-    return MARKET_INSTRUMENTS.map((item) => ({
-      symbol: item.symbol, market: item.market, shortLabel: item.shortLabel,
-      fullLabel: item.fullLabel, instrumentType: item.instrumentType,
-      underlying: item.underlying, quote: quotes.get(item.symbol) ?? null,
-      move: moves.get(item.symbol) ?? null,
-      statusText: charts[item.symbol].statusText,
-      loading: charts[item.symbol].loading,
-      error: charts[item.symbol].error,
-    }));
-  }, [argusToday.indexMoves, headlineJpQuotes.data, headlineUsQuotes.data,
-    jpChart, topixChart, sp500Chart, nasdaqChart]);
+    // Each tile carries the compact headline chart plus canonical
+    // probabilities derived through the SAME projection domain logic the big
+    // chart uses (buildTodayProjection) — no duplicated probability rules.
+    return MARKET_INSTRUMENTS.map((item) => {
+      const entry = headline.document?.instruments?.[item.symbol];
+      const ready = entry?.status === 'ready' ? entry : undefined;
+      const projection = ready
+        ? buildTodayProjection(headlineProjectionInput(ready),
+          argusToday.finalAction, 5) : null;
+      const probabilities = projection?.directionProbabilities
+        ?? projection?.referenceDirectionProbabilities ?? null;
+      return {
+        symbol: item.symbol, market: item.market, shortLabel: item.shortLabel,
+        fullLabel: item.fullLabel, instrumentType: item.instrumentType,
+        underlying: item.underlying, quote: quotes.get(item.symbol) ?? null,
+        move: moves.get(item.symbol) ?? null,
+        statusText: ready ? '検証済スナップショット'
+          : headline.status === 'loading' ? '初回データを準備中'
+          : headline.status === 'error' ? '取得できません' : 'データ未提供',
+        loading: !ready && headline.status === 'loading',
+        error: !ready && headline.status === 'error'
+          ? headline.reason ?? 'headline_unavailable' : null,
+        headline: ready ? {
+          state: 'data' as const,
+          parentSnapshotId: ready.parentSnapshotId ?? null,
+          asOf: ready.periodEnd ?? null,
+          stale: headline.stale,
+          closes: (ready.bars ?? []).map((bar) => bar.close),
+          probabilities,
+          probabilityBasis: projection?.directionProbabilities ? 'exact' as const
+            : probabilities ? 'reference' as const : null,
+        } : {
+          state: (headline.status === 'loading' ? 'loading'
+            : headline.status === 'error' ? 'error' : 'unavailable') as
+            'loading' | 'error' | 'unavailable',
+          parentSnapshotId: null, asOf: null, stale: false,
+          closes: [], probabilities: null, probabilityBasis: null,
+        },
+      };
+    });
+  }, [argusToday.indexMoves, argusToday.finalAction, headlineJpQuotes.data,
+    headlineUsQuotes.data, headline]);
 
   return (
     <PageShell

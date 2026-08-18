@@ -6,7 +6,28 @@
 .at-lamps .is-open i { background:#22c55e; color:#22c55e; box-shadow:0 0 7px #22c55e80; }
 .at-lamps .is-standby i { background:#facc15; color:#facc15; }
 .at-lamps .is-closed i { background:#64748b; color:#64748b; }
-.at-event,.at-priorities,.at-decision,.at-evidence { grid-column:span 12; }
+.at-event,.at-priorities,.at-decision,.at-evidence,.at-market { grid-column:span 12; }
+.at-market { padding:6px 12px 11px; }
+/* Four always-visible headline charts: verified 30-day closes + canonical
+   UP/RANGE/DOWN. Every state renders explicitly — no silent blank tiles. */
+.at-headline-chart { grid-column:1/-1; margin-top:4px; }
+.at-headline-chart svg { display:block; width:100%; height:44px; }
+.at-headline-chart polyline { fill:none; stroke-width:1.5; vector-effect:non-scaling-stroke; }
+.at-headline-chart polyline.is-up { stroke:#22c55e; }
+.at-headline-chart polyline.is-down { stroke:#f87171; }
+.at-headline-chart[data-headline-state="loading"] span,
+.at-headline-chart[data-headline-state="unavailable"] span,
+.at-headline-chart[data-headline-state="error"] span {
+  display:flex; align-items:center; justify-content:center; height:44px;
+  border:1px dashed var(--line); border-radius:4px; color:var(--text-muted);
+  font-size:9px; }
+.at-headline-probs { display:flex; gap:6px; align-items:center; margin-top:2px;
+  font-size:10px; font-weight:800; letter-spacing:.02em; }
+.at-headline-probs b.is-up { color:#22c55e; }
+.at-headline-probs b.is-range { color:var(--text-sub); }
+.at-headline-probs b.is-down { color:#f87171; }
+.at-headline-probs i { color:var(--text-muted); font-size:8px; font-style:normal; }
+.at-headline-stale { color:var(--text-muted); font-size:8px; font-style:normal; }
 .at-head { display:flex; align-items:center; gap:8px; color:var(--text-muted); font-size:10px; letter-spacing:.1em; }
 .at-head span { margin-left:auto; color:#f59e0b; font-weight:800; }
 .at-event { padding:9px 12px; }
@@ -48,6 +69,8 @@
 .at-mode button.active { color:var(--accent); border-color:var(--accent); background:color-mix(in srgb,var(--accent) 10%,transparent); }
 .at-mode span { margin-left:5px; color:var(--text-muted); font-weight:800; }.at-mode em { margin-left:auto; color:#f59e0b; font-style:normal; }
 .at-index-strip { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1px; margin:8px -5px 0; background:var(--line); border:1px solid var(--line); border-radius:5px; overflow:hidden; }
+/* Four headline charts stay legible on narrow screens as a 2x2 grid. */
+@media(max-width:720px){ .at-index-strip { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 .at-index-strip button { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 3px; padding:6px; border:0; border-bottom:2px solid transparent; background:color-mix(in srgb,var(--surface) 96%,#0f172a); color:inherit; text-align:left; cursor:pointer; min-width:0; }
 .at-index-strip button.is-selected { border-bottom-color:var(--accent); background:color-mix(in srgb,var(--surface) 88%,var(--accent)); }
 .at-index-strip span { overflow:hidden; color:var(--text-muted); font-size:8px; white-space:nowrap; text-overflow:ellipsis; }

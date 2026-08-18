@@ -137,6 +137,14 @@ admission certificate refuses to generate unless that engine reached terminal
 PASS with all 12 combinations against the exact candidate, so no release gate
 can exist that production exercises first.
 
+v13.5.0 adds gate M15 (headline-first decision visibility): with every heavy
+verified chart request held open, the four Today headline charts and their
+canonical probabilities must still render from the compact
+`/api/argus/today-headline` bootstrap. This is the structural regression gate
+for "decision information hidden behind heavy visualization payloads"; the
+fixture target serves the same endpoint so candidate and production exercise
+identical semantics.
+
 After both jobs pass, `scripts/v13_5_release_certificate.py` generates a
 detached, content-addressed pre-merge admission certificate bound to the exact
 commit SHA and tree, readiness contract, accepted-fix manifest, shared engine,

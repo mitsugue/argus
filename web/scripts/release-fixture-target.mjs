@@ -90,6 +90,34 @@ const payloadFor = (row, datasetHash, generatedAt) => {
       }])),
     },
     relativeStrength: {}, rotationMap: [],
+    todayIntelligence: {
+      schemaVersion: 'today-intelligence-fixture-v1',
+      symbol: row.instrument, market: row.market, asOf: generatedAt,
+      automaticAiCalls: 0,
+      calibration: {
+        schemaVersion: 'calibration-fixture-v1',
+        calibrationVersion: 'fixture-v1', methodVersion: 'fixture',
+        historyStart: bars[0].date, historyEnd: bars[bars.length - 1].date,
+        historyCount: bars.length,
+        horizons: Object.fromEntries(['1', '5', '20'].map((horizon) => [horizon, {
+          horizon: Number(horizon),
+          directionProbabilities: null,
+          referenceDirectionProbabilities: { UP: 40, RANGE: 30, DOWN: 30 },
+          probabilities: null,
+          returnDistribution: { q10: -0.03, q25: -0.015, median: 0.001,
+            q75: 0.018, q90: 0.04 },
+          probabilityEligibility: { eligible: false, reasonCodes: ['fixture'] },
+          effectiveSampleCount: 100, episodeCount: 30, rawOccurrenceCount: 100,
+          modelBrier: 0.66, baselineBrier: 0.65, brierSkill: -0.02,
+          calibrationIntegrity: 'PASS', calibrationStatus: 'calibrated',
+          calibrationDatasetHash: `fixture-${row.instrument}`,
+          calibrationVersion: 'fixture-v1', signalFamily: 'baseline',
+          expectedValue: 0.001,
+        }])),
+      },
+      shortSelling: null, failedRally: null,
+      historyCoverage: { start: bars[0].date, end: bars[bars.length - 1].date },
+    },
     noteJa: 'simulation fixture',
   };
 };
@@ -213,6 +241,61 @@ export async function startFixtureTarget({
         persistence: { verified: true, readBackVerified: true },
         recoveryAuthorityChanged: false,
       });
+      return;
+    }
+    if (url.pathname === '/api/argus/today-headline') {
+      // Mirror of argus_today_headline.build_today_headline over the fixture
+      // snapshots — same shape the production backend serves.
+      const symbols = ['1321', '1306', 'SPY', 'QQQ'];
+      const instruments = Object.fromEntries(symbols.map((symbol) => {
+        const snapshot = fixture.snapshots.get(`market-chart:${symbol}:5D`);
+        if (!snapshot) {
+          return [symbol, { status: 'unavailable', instrument: symbol,
+            reason: 'verified_snapshot_missing' }];
+        }
+        const payload = snapshot.payload;
+        const today = payload.todayIntelligence ?? {};
+        return [symbol, {
+          status: 'ready', instrument: symbol,
+          market: ['1321', '1306'].includes(symbol) ? 'JP' : 'US',
+          parentSnapshotId: snapshot.snapshotId,
+          parentPayloadHash: snapshot.payloadHash,
+          parentDatasetHash: snapshot.datasetHash,
+          verificationStatus: 'verified',
+          methodVersion: snapshot.methodVersion,
+          quality: snapshot.quality,
+          asOf: snapshot.asOf, generatedAt: snapshot.generatedAt,
+          verifiedAt: snapshot.verifiedAt,
+          displayNameJa: payload.displayNameJa,
+          instrumentMetadata: payload.instrumentMetadata,
+          periodEnd: payload.periodEnd, payloadStatus: payload.status,
+          quoteState: payload.quoteState ?? 'CLOSE',
+          marketCalendar: payload.marketCalendar ?? null,
+          bars: (payload.indicators?.bars ?? []).slice(-31),
+          zones: (payload.zones ?? []).filter((zone) =>
+            ['active', 'reclaimed'].includes(zone.status)),
+          turningPoints: (payload.turningPoints ?? []).filter((point) =>
+            ['confirmed', 'candidate'].includes(point.status)).slice(-3),
+          eventMarkers: (payload.eventMarkers ?? []).slice(-8),
+          calibration: today.calibration ?? null,
+          shortSelling: today.shortSelling ?? null,
+          failedRally: today.failedRally ?? null,
+          historyCoverage: today.historyCoverage ?? null,
+          relativeStrengthSummary: null,
+          automaticAiCalls: 0,
+          headlineHash: 'fixture',
+        }];
+      }));
+      const ready = Object.values(instruments)
+        .filter((entry) => entry.status === 'ready');
+      json(response, ready.length ? 200 : 503, {
+        schemaVersion: 'argus-today-headline-v1',
+        generatedAt: new Date().toISOString(),
+        automaticAiCalls: 0,
+        readyCount: ready.length, instrumentCount: symbols.length,
+        headlineSetId: `th-fixture-${ready.length}`,
+        instruments,
+      }, { ETag: `"th-fixture-${ready.length}"` });
       return;
     }
     if (url.pathname === '/api/argus/chart-intelligence') {
