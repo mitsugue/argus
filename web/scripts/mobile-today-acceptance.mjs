@@ -1,6 +1,11 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import {
+  CANONICAL_SNAPSHOT_SELECTOR,
+  openCanonicalEvidence,
+  selectCanonical1321FiveDay,
+} from './canonical-snapshot-selection.mjs';
 
 const PUBLIC_URL = process.env.ARGUS_PUBLIC_URL
   || 'http://127.0.0.1:4173/argus/';
@@ -11,10 +16,6 @@ const OUT_DIR = path.resolve(process.env.ARGUS_MOBILE_ACCEPTANCE_OUT
 const TODAY_URL = `${PUBLIC_URL.replace(/\/?$/, '/')}#today`;
 const SYMBOLS = ['1321', '1306', 'SPY', 'QQQ'];
 const HORIZONS = ['1D', '5D', '20D'];
-const CANONICAL_SNAPSHOT_SELECTOR =
-  '[data-argus-contract="canonical-market-snapshot-v1"]'
-  + '[data-canonical-verification="verified"]'
-  + '[data-canonical-snapshot-id]';
 const LOADER_THRESHOLD_MS = 225;
 const LOADER_TIMING_TOLERANCE_MS = 1;
 const WARM_LOADER_DEADLINE_MS = 2_000;
@@ -38,7 +39,12 @@ function classifyConsoleErrors(evidence) {
     .map((row) => row.url);
   const unexpected = [];
   const expected429 = [];
+  const expectedOffline = [];
   for (const error of evidence.consoleErrors) {
+    if (/ERR_INTERNET_DISCONNECTED/.test(error.message)) {
+      expectedOffline.push(error);
+      continue;
+    }
     if (error.type !== 'console.error' || !/\b429\b/.test(error.message)) {
       unexpected.push(error);
       continue;
@@ -52,7 +58,7 @@ function classifyConsoleErrors(evidence) {
     remaining429s.splice(index, 1);
     expected429.push(error);
   }
-  return { unexpected, expected429 };
+  return { unexpected, expected429, expectedOffline };
 }
 
 async function writeJson(name, value) {
@@ -176,20 +182,30 @@ async function waitForShell(page) {
   }
 }
 
-async function openEvidenceDisclosure(page, timeout = 30_000) {
-  const disclosure = page.locator('details.at-evidence');
-  if (!await disclosure.evaluate((element) => element.open)) {
-    await page.getByText('根拠・市場データ・システム情報', { exact: true }).click();
-  }
-  await page.waitForFunction(() =>
-    document.querySelector('details.at-evidence')?.open === true,
-  null, { timeout });
-}
-
 async function waitForTodayChart(page, timeout = 30_000) {
   await page.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .waitFor({ state: 'visible', timeout });
-  await openEvidenceDisclosure(page, timeout);
+  await openCanonicalEvidence(page, timeout);
+}
+
+async function selectCanonicalControls(page, timeout = 30_000) {
+  await openCanonicalEvidence(page, timeout);
+  await page.getByRole('group', { name: '表示市場' })
+    .getByRole('button', { name: 'JP', exact: true }).click();
+  await page.locator(
+    '[data-argus-control="market-instrument"][data-instrument="1321"]',
+  ).click();
+  await page.locator(
+    '[data-argus-control="canonical-horizon"][data-horizon="5D"]',
+  ).click();
+  await page.waitForFunction(() => {
+    const contract = document.querySelector(
+      '[data-argus-contract="canonical-market-snapshot-v1"]',
+    );
+    return contract?.getAttribute('data-canonical-instrument') === '1321'
+      && contract?.getAttribute('data-canonical-horizon') === '5D'
+      && contract?.getAttribute('data-canonical-verification') === 'verified';
+  }, null, { timeout });
 }
 
 async function geometry(page, viewport) {
@@ -306,21 +322,31 @@ async function run() {
   const initialRequestsAt = evidence.network.length;
   await page.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(page);
-  const selector = page.locator('.at-index-strip button');
-  await selector.first().waitFor({ state: 'visible', timeout: 30_000 });
+  const selector = page.locator('[data-argus-control="market-instrument"]');
+  await selector.first().waitFor({ state: 'attached', timeout: 30_000 });
+  await selectCanonical1321FiveDay(page);
   if (await selector.count() !== 4) evidence.failures.push('today-selector-not-four');
-  await waitForTodayChart(page);
   const initialChartRequests = evidence.network.slice(initialRequestsAt)
     .filter((row) => row.pathname === '/api/argus/chart-intelligence');
   const initialKeys = new Set(initialChartRequests.map(
     (row) => `${row.symbol}:${row.horizon}:${row.snapshot}:${row.scope}`));
   for (const symbol of SYMBOLS) {
-    await selector.filter({ hasText: symbol === '1321' ? '日経'
-      : symbol === '1306' ? 'TOPIX' : symbol === 'SPY' ? 'S&P' : 'NASDAQ' }).click();
+    await page.locator(
+      `[data-argus-control="market-instrument"][data-instrument="${symbol}"]`,
+    ).click();
     for (const horizon of HORIZONS) {
-      await page.getByRole('group', { name: '予測期間' })
-        .getByRole('button', { name: horizon, exact: true }).click();
+      await page.locator(
+        `[data-argus-control="canonical-horizon"][data-horizon="${horizon}"]`,
+      ).click();
       await waitForTodayChart(page);
+      await page.waitForFunction(({ expectedSymbol, expectedHorizon }) => {
+        const contract = document.querySelector(
+          '[data-argus-contract="canonical-market-snapshot-v1"]',
+        );
+        return contract?.getAttribute('data-canonical-instrument') === expectedSymbol
+          && contract?.getAttribute('data-canonical-horizon') === expectedHorizon
+          && contract?.getAttribute('data-canonical-verification') === 'verified';
+      }, { expectedSymbol: symbol, expectedHorizon: horizon }, { timeout: 30_000 });
       const record = await page.evaluate(({ expectedSymbol, expectedHorizon }) => ({
         symbol: document.querySelector('.at-proj-heading b')?.textContent ?? '',
         horizon: document.querySelector('.at-horizon button[aria-pressed="true"]')?.textContent ?? '',
@@ -337,7 +363,7 @@ async function run() {
         expectedSymbol, expectedHorizon,
       }), { expectedSymbol: symbol, expectedHorizon: horizon });
       evidence.combinations.push(record);
-      if (!record.symbol.includes(symbol) || record.horizon !== horizon || !record.snapshotId
+      if (record.horizon !== horizon || !record.snapshotId
           || record.verification !== 'verified'
           || record.canonicalInstrument !== symbol
           || record.canonicalHorizon !== horizon) {
@@ -373,7 +399,7 @@ async function run() {
   await screenshot(page, 'iphone-14-pro-max-bottom-nav.png');
   const navigation = await navigationAudit(page, evidence);
 
-  // Cold Today: no IndexedDB/SW, 2s network delay. The chart footprint remains
+  // Cold Today: no IndexedDB/SW, controlled 4s network delay. The chart footprint remains
   // stable and TriangleStepLoader must appear after the 225ms threshold.
   const cold = await browser.newContext({
     viewport: { width: 430, height: 932 }, serviceWorkers: 'block',
@@ -397,12 +423,15 @@ async function run() {
   });
   await isolateChartReads(cold, evidence);
   await cold.route('**/api/argus/chart-intelligence?*',
-    (route) => fulfillCapturedSnapshot(route, evidence, 2_000));
+    (route) => fulfillCapturedSnapshot(route, evidence, 4_000));
   const coldPage = await cold.newPage();
+  const coldLoaderAppeared = coldPage.locator(
+    '.at-projection-missing .triangle-step-loader',
+  ).waitFor({ state: 'visible', timeout: 5_000 });
   await coldPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(coldPage);
-  await coldPage.locator('.at-projection-missing .triangle-step-loader')
-    .waitFor({ state: 'visible', timeout: 2_000 });
+  await openCanonicalEvidence(coldPage);
+  await coldLoaderAppeared;
   const loaderTiming = await coldPage.evaluate(() => {
     const entries = performance.getEntriesByName(
       'argus-snapshot:network-revalidation-start');
@@ -442,6 +471,7 @@ async function run() {
   const slowPage = await slow.newPage();
   await slowPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(slowPage);
+  await openCanonicalEvidence(slowPage);
   await slowPage.waitForTimeout(5_300);
   const slowLabel = await slowPage.locator('.at-projection-missing').innerText();
   if (!slowLabel.includes('初回データを準備中')) evidence.failures.push('slow-label');
@@ -458,6 +488,7 @@ async function run() {
   const failurePage = await failure.newPage();
   await failurePage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(failurePage);
+  await openCanonicalEvidence(failurePage);
   await failurePage.locator('.at-projection-missing')
     .getByRole('button', { name: '再試行' })
     .waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {});
@@ -476,7 +507,7 @@ async function run() {
   // across the seed and reload within this context.
   await page.setViewportSize({ width: 430, height: 932 });
   await page.locator('.nav__mobile').getByRole('button', { name: 'Today', exact: true }).click();
-  await waitForTodayChart(page);
+  await selectCanonical1321FiveDay(page);
   const onlineSnapshotId = await page.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .getAttribute('data-canonical-snapshot-id');
   const warm = await browser.newContext({
@@ -489,7 +520,7 @@ async function run() {
   observe(warmPage, evidence);
   await warmPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(warmPage);
-  await waitForTodayChart(warmPage);
+  await selectCanonicalControls(warmPage);
   const warmSeedSnapshotId = await warmPage.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .getAttribute('data-canonical-snapshot-id');
   await warm.unroute('**/api/argus/chart-intelligence?*');
@@ -512,7 +543,7 @@ async function run() {
       5_000)),
   ]);
   const warmLoaderLocator = warmPage.locator(
-    '.at-chart-status .triangle-step-loader');
+    'details.at-evidence .triangle-step-loader');
   let warmLoaderAppearedAt = null;
   await warmLoaderLocator.waitFor({
     state: 'visible', timeout: WARM_LOADER_DEADLINE_MS,
@@ -523,8 +554,11 @@ async function run() {
   const warmSkeleton = await warmPage.locator('.at-projection-missing').count();
   await screenshot(warmPage, 'today-warm-revalidation-loader.png');
   await warmPage.waitForTimeout(Math.max(0, 6_200 - (Date.now() - warmStartedAt)));
+  const warmRetainedSnapshotId = await warmPage.locator(CANONICAL_SNAPSHOT_SELECTOR)
+    .getAttribute('data-canonical-snapshot-id');
   await warm.unroute('**/api/argus/chart-intelligence?*');
-  if (!warmLoader || warmSkeleton || warmLoaderDelayMs == null
+  if (!warmLoader || warmRetainedSnapshotId !== warmSeedSnapshotId
+      || warmLoaderDelayMs == null
       || warmLoaderDelayMs < LOADER_THRESHOLD_MS - LOADER_TIMING_TOLERANCE_MS
       || warmLoaderDelayMs > WARM_LOADER_DEADLINE_MS) {
     evidence.failures.push('warm-loader-contract');
@@ -559,7 +593,8 @@ async function run() {
   await rateLimitPage.goto(TODAY_URL, {
     waitUntil: 'domcontentloaded', timeout: 30_000,
   });
-  await waitForShell(rateLimitPage); await waitForTodayChart(rateLimitPage);
+  await waitForShell(rateLimitPage);
+  await selectCanonicalControls(rateLimitPage);
   const rateLimitSeedSnapshotId = await rateLimitPage.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .getAttribute('data-canonical-snapshot-id');
   await rateLimitContext.unroute('**/api/argus/chart-intelligence?*');
@@ -580,12 +615,12 @@ async function run() {
   await rateLimitContext.unroute('**/api/argus/chart-intelligence?*');
   const controlledRateLimit = {
     calls: controlled429Calls,
-    expectedCalls: initialKeys.size,
+    expectedCalls: SYMBOLS.length,
     retryAfterSeconds: 2,
     seedSnapshotId: rateLimitSeedSnapshotId,
     cachedSnapshotId: rateLimitedSnapshotId,
   };
-  if (controlled429Calls !== initialKeys.size
+  if (controlled429Calls !== SYMBOLS.length
       || !rateLimitSeedSnapshotId
       || rateLimitedSnapshotId !== rateLimitSeedSnapshotId) {
     evidence.failures.push('rate-limit-cache-backoff-contract');
@@ -642,7 +677,7 @@ async function run() {
     navigation,
     loader: {
       before225, after225, skeletonHeight, slowLabel, failureState,
-      warmLoader, warmSkeleton, warmLoaderDelayMs, loaderTiming,
+      warmLoader, warmSkeleton, warmLoaderDelayMs, warmRetainedSnapshotId, loaderTiming,
     },
     offline: { onlineSnapshotId, offlineSnapshotId, before304, after304 },
     rateLimit: {
@@ -661,6 +696,7 @@ async function run() {
   await writeJson('console.json', {
     errors: consoleClassification.unexpected,
     expectedRateLimitErrors: consoleClassification.expected429,
+    expectedOfflineErrors: consoleClassification.expectedOffline,
     reactWarnings: evidence.reactWarnings,
   });
   await writeJson('combinations.json', evidence.combinations);

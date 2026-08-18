@@ -7,14 +7,35 @@ on:
       - '.github/workflows/market-public-acceptance.yml'
       - 'web/scripts/public-market-acceptance.mjs'
       - 'web/scripts/public-market-acceptance.contract.test.mjs'
+      - 'web/scripts/canonical-snapshot-selection.mjs'
+      - 'web/scripts/release-state-machine.mjs'
+      - 'web/scripts/release-state-machine.test.mjs'
+      - 'web/scripts/full-release-simulation.mjs'
+      - 'release/v13-snapshot-readiness-contract.json'
+      - 'release/v13-accepted-fix-manifest.json'
+      - 'web/scripts/mobile-today-acceptance.mjs'
+      - 'web/index.html'
+      - 'web/src/components/today/ArgusTodayPanel.tsx'
+      - 'web/src/lib/verifiedSnapshot.ts'
+      - 'web/src/lib/assetChartCache.ts'
+      - 'web/src/hooks/useChartIntelligence.ts'
+      - 'web/src/lib/snapshotFreshness.ts'
       - 'web/scripts/warm-profile-runtime.mjs'
       - 'web/scripts/warm-profile-runtime.test.mjs'
       - 'web/scripts/run-warm-profile-seed.sh'
       - 'web/scripts/warm-profile-contract.mjs'
       - 'web/scripts/warm-profile-contract.test.mjs'
       - '.github/actions/warm-profile-*/**'
+      - '.github/actions/candidate-pages-preview/**'
+      - 'docs/ops/v13-final-release-state-machine.md'
       - 'scripts/verify_public_candidate_release.py'
       - 'test_verify_public_candidate_release.py'
+      - 'scripts/v13_release_certificate.py'
+      - 'scripts/v13_5_release_certificate.py'
+      - 'release/v13-acceptance-runtime.json'
+      - 'web/scripts/acceptance-runtime.mjs'
+      - 'web/scripts/acceptance-runtime.test.mjs'
+      - '.github/actions/acceptance-runtime-preflight/**'
   workflow_dispatch:
     inputs:
       pages_run_id:
@@ -33,81 +54,172 @@ on:
 permissions:
   contents: read
   actions: read
+  checks: read
 
 jobs:
-  warm-profile-seed:
+  full_release_simulation_1:
+    name: zero-install-runtime-proof-1
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+      options: --ipc=host
+    timeout-minutes: 25
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: ./.github/actions/warm-profile-seed
+          fetch-depth: 0
+      - id: candidate
+        name: Pin candidate tree
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+      - id: runtime
+        uses: ./.github/actions/acceptance-runtime-preflight
         with:
           candidate-sha: ${{ github.event.pull_request.head.sha }}
-          public-url: https://mitsugue.github.io/argus/
-          profile-artifact-name: market-warm-profile-shadow-1-${{ github.event.pull_request.head.sha }}
-          evidence-artifact-name: warm-profile-shadow-1-producer-${{ github.event.pull_request.head.sha }}
+          candidate-tree: ${{ steps.candidate.outputs.tree }}
+          evidence-path: artifacts/zero-install-runtime-proof-1.json
+      - name: Build exact candidate artifact
+        env:
+          DEPLOY_BASE: /argus/
+          VITE_ARGUS_BACKEND_URL: http://127.0.0.1:4199
+          VITE_ARGUS_BUILD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: npm run build
+        working-directory: web
+      - name: Full cold-start release simulation 1
+        env:
+          ARGUS_SIM_EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/full-release-simulation.mjs --run 1 --out ../artifacts/full-release-simulation-1.json
+        working-directory: web
+      - name: Publish simulation 1 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zero-install-runtime-proof-1-${{ github.event.pull_request.head.sha }}
+          path: |
+            artifacts/zero-install-runtime-proof-1.json
+            artifacts/full-release-simulation-1.json
+          if-no-files-found: error
+          retention-days: 30
 
-  warm-profile-handoff:
+  full_release_simulation_2:
+    name: zero-install-runtime-proof-2
     if: github.event_name == 'pull_request'
-    needs: warm-profile-seed
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+      options: --ipc=host
+    timeout-minutes: 25
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: ./.github/actions/warm-profile-consumer
+          fetch-depth: 0
+      - id: candidate
+        name: Pin candidate tree
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+      - id: runtime
+        uses: ./.github/actions/acceptance-runtime-preflight
         with:
-          profile-artifact-name: market-warm-profile-shadow-1-${{ github.event.pull_request.head.sha }}
-          evidence-artifact-name: warm-profile-shadow-1-consumer-${{ github.event.pull_request.head.sha }}
           candidate-sha: ${{ github.event.pull_request.head.sha }}
-          public-url: https://mitsugue.github.io/argus/
-          mode: profile
+          candidate-tree: ${{ steps.candidate.outputs.tree }}
+          evidence-path: artifacts/zero-install-runtime-proof-2.json
+      - name: Build exact candidate artifact
+        env:
+          DEPLOY_BASE: /argus/
+          VITE_ARGUS_BACKEND_URL: http://127.0.0.1:4199
+          VITE_ARGUS_BUILD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: npm run build
+        working-directory: web
+      - name: Full cold-start release simulation 2
+        env:
+          ARGUS_SIM_EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/full-release-simulation.mjs --run 2 --out ../artifacts/full-release-simulation-2.json
+        working-directory: web
+      - name: Publish simulation 2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zero-install-runtime-proof-2-${{ github.event.pull_request.head.sha }}
+          path: |
+            artifacts/zero-install-runtime-proof-2.json
+            artifacts/full-release-simulation-2.json
+          if-no-files-found: error
+          retention-days: 30
 
-  warm-profile-seed-2:
+  proof_certificate:
+    name: proof-certificate
     if: github.event_name == 'pull_request'
-    needs: warm-profile-handoff
+    needs: [full_release_simulation_1, full_release_simulation_2]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: ./.github/actions/warm-profile-seed
+          fetch-depth: 0
+      - uses: actions/download-artifact@v5
         with:
-          candidate-sha: ${{ github.event.pull_request.head.sha }}
-          public-url: https://mitsugue.github.io/argus/
-          profile-artifact-name: market-warm-profile-shadow-2-${{ github.event.pull_request.head.sha }}
-          evidence-artifact-name: warm-profile-shadow-2-producer-${{ github.event.pull_request.head.sha }}
-
-  warm-profile-handoff-2:
-    if: github.event_name == 'pull_request'
-    needs: warm-profile-seed-2
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v5
+          name: zero-install-runtime-proof-1-${{ github.event.pull_request.head.sha }}
+          path: artifacts/simulation-1
+      - uses: actions/download-artifact@v5
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-      - uses: ./.github/actions/warm-profile-consumer
+          name: zero-install-runtime-proof-2-${{ github.event.pull_request.head.sha }}
+          path: artifacts/simulation-2
+      - name: Generate pre-merge admission certificate for the exact candidate
+        run: |
+          python3 -B scripts/v13_5_release_certificate.py generate-admission \
+            --simulation-one artifacts/simulation-1/full-release-simulation-1.json \
+            --simulation-two artifacts/simulation-2/full-release-simulation-2.json \
+            --runtime-proof-one artifacts/simulation-1/zero-install-runtime-proof-1.json \
+            --runtime-proof-two artifacts/simulation-2/zero-install-runtime-proof-2.json \
+            --out artifacts/v13-release-proof/certificate.json
+          python3 -B scripts/v13_5_release_certificate.py verify-admission \
+            --certificate artifacts/v13-release-proof/certificate.json \
+            --runtime-proof artifacts/simulation-1/zero-install-runtime-proof-1.json
+      - name: Publish detached pre-merge admission certificate
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          profile-artifact-name: market-warm-profile-shadow-2-${{ github.event.pull_request.head.sha }}
-          evidence-artifact-name: warm-profile-shadow-2-consumer-${{ github.event.pull_request.head.sha }}
-          candidate-sha: ${{ github.event.pull_request.head.sha }}
-          public-url: https://mitsugue.github.io/argus/
-          mode: profile
+          name: v13-5-premerge-admission-${{ github.event.pull_request.head.sha }}
+          path: artifacts/v13-release-proof
+          if-no-files-found: error
+          retention-days: 90
 
   public-acceptance:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+      options: --ipc=host
     timeout-minutes: 45
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.frontend_sha }}
+          fetch-depth: 0
+      - id: candidate
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/acceptance-runtime-preflight
+        with:
+          candidate-sha: ${{ inputs.frontend_sha }}
+          candidate-tree: ${{ steps.candidate.outputs.tree }}
+          evidence-path: artifacts/manual-public-acceptance-runtime.json
       - name: Resolve independent release versions
         id: release
         run: |
