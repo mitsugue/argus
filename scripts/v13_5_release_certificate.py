@@ -10,6 +10,7 @@ import os
 import pathlib
 import subprocess
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -19,6 +20,8 @@ from typing import Any, Dict, Mapping
 SCHEMA = "argus-v13-5-release-proof-certificate-v1"
 CHECKS_SCHEMA = "argus-current-required-checks-v1"
 RUNTIME_PROOF_SCHEMA = "argus-zero-install-runtime-proof-v1"
+ADMISSION_SCHEMA = "argus-v13-5-premerge-admission-certificate-v1"
+RETRIEVAL_SCHEMA = "argus-v13-5-detached-certificate-retrieval-v1"
 PRODUCT_VERSION = "v13.5"
 ACCEPTED_V13_SOURCE = "c946afd07869dbe739026afad11ef5e15418dbbf"
 ACCEPTED_V13_TREE = "dee0b33a9b4eb82671f13dc1d9a06d71a71cb124"
@@ -33,6 +36,8 @@ POLICY_INPUTS = (
     ".github/actions/warm-profile-consumer/action.yml",
     ".github/workflows/deploy-pages.yml",
     ".github/workflows/market-public-acceptance.yml",
+    ".github/workflows/release-gate.yml",
+    "scripts/v13_5_release_certificate.py",
     "web/scripts/acceptance-runtime.mjs",
     "web/scripts/release-state-machine.mjs",
     "web/scripts/full-release-simulation.mjs",
@@ -83,6 +88,11 @@ def _digest_bytes(value: bytes) -> str:
 
 def _digest_file(path: pathlib.Path) -> str:
     return _digest_bytes(path.read_bytes())
+
+
+def _is_lower_hex(value: Any, length: int) -> bool:
+    return type(value) is str and len(value) == length \
+        and all(character in "0123456789abcdef" for character in value)
 
 
 def _git(value: str) -> str:
@@ -138,7 +148,8 @@ def _validate_manifest() -> Dict[str, Any]:
         "productVersion = v13.5",
         "immutable zero-install acceptance runtime",
         "two fresh-runner zero-install proofs",
-        "pre-deploy runtime admission",
+        "pre-merge detached runtime admission",
+        "GitHub artifact JSON media transport",
         "rollback restore has no browser dependency",
     }.issubset(names):
         raise ValueError("accepted_fix_manifest_release_rows_missing")
@@ -301,6 +312,238 @@ def generate(args: argparse.Namespace) -> Dict[str, Any]:
     return body
 
 
+def generate_admission(args: argparse.Namespace) -> Dict[str, Any]:
+    """Build the pre-merge certificate without depending on its consumer gate."""
+    _ensure_clean_candidate()
+    candidate = _candidate(args.candidate_ref)
+    manifest, contract = _validate_manifest(), _validate_contract()
+    semantic = _validate_product_semantic_diff(args.candidate_ref)
+    if _load(ROOT / "product-version.json") != {
+            "schemaVersion": "argus-product-version-v1",
+            "productVersion": PRODUCT_VERSION}:
+        raise ValueError("product_version_not_v13_5")
+    simulation_paths = [pathlib.Path(args.simulation_one),
+                        pathlib.Path(args.simulation_two)]
+    simulations = [_validate_simulation(path, ordinal, candidate)
+                   for ordinal, path in enumerate(simulation_paths, 1)]
+    runtime_paths = [pathlib.Path(args.runtime_proof_one),
+                     pathlib.Path(args.runtime_proof_two)]
+    runtimes = [_validate_runtime_proof(path, candidate) for path in runtime_paths]
+    if runtimes[0]["runtimeIdentityDigest"] != runtimes[1]["runtimeIdentityDigest"]:
+        raise ValueError("fresh_runner_runtime_identity_mismatch")
+    runtime = runtimes[0]["runtimeIdentity"]
+    body: Dict[str, Any] = {
+        "schemaVersion": ADMISSION_SCHEMA,
+        "status": "PASS",
+        "candidate": candidate,
+        "productVersion": PRODUCT_VERSION,
+        "acceptedV13Source": {"commitSha": ACCEPTED_V13_SOURCE,
+                              "treeSha": ACCEPTED_V13_TREE},
+        "acceptedFixManifestDigest": _digest_bytes(_canonical(manifest)),
+        "acceptanceRuntime": {
+            "identityDigest": runtimes[0]["runtimeIdentityDigest"],
+            "specDigest": runtime["specDigest"],
+            "seedImplementationDigest": runtime["seedImplementationDigest"],
+            "container": runtime["container"],
+            "browser": runtime["browser"],
+            "nodeVersion": runtime["nodeVersion"],
+            "playwrightVersion": runtime["playwrightVersion"],
+        },
+        "zeroInstallProofs": [{
+            "runNumber": ordinal,
+            "runtimeProofSha256": _digest_file(runtime_paths[ordinal - 1]),
+            "simulationSha256": _digest_file(simulation_paths[ordinal - 1]),
+            "runtimeIdentityDigest": runtimes[ordinal - 1]["runtimeIdentityDigest"],
+            "initialSnapshotReady": 0,
+            "snapshotReady": len(
+                simulations[ordinal - 1]["businessSnapshots"]["observedSet"]),
+            "responseSnapshotId": simulations[ordinal - 1]["canonical"][
+                "responseSnapshotId"],
+            "uiSnapshotId": simulations[ordinal - 1]["canonical"]["uiSnapshotId"],
+            "status": "PASS",
+        } for ordinal in (1, 2)],
+        "noPostDeployInstall": True,
+        "productSemanticDiff": semantic,
+        "sourceDigests": {relative: _digest_file(ROOT / relative)
+                          for relative in POLICY_INPUTS},
+        "snapshotContractDigest": _digest_file(
+            ROOT / "release/v13-snapshot-readiness-contract.json"),
+        "stateMachineDigest": _digest_file(
+            ROOT / "web/scripts/release-state-machine.mjs"),
+        "tachibana": {"status": "PENDING", "authority": "NON_AUTHORITATIVE",
+                       "dataStatus": "DATA_GATED", "blocking": False},
+        "recovery": {"acceptance": "NOT_STARTED", "authoritative": False,
+                     "acceptanceClockStarted": False},
+        "policy": {
+            "snapshotExpected": contract["snapshotExpected"],
+            "preMergeAdmissionRequired": True,
+            "productionMutationAllowedOnlyAfterAdmission": True,
+            "oneProductionAttempt": True,
+        },
+    }
+    body["certificateDigest"] = _digest_bytes(_canonical(body))
+    return body
+
+
+def _validate_admission_identity(value: Mapping[str, Any],
+                                 candidate: Mapping[str, str]) -> Dict[str, Any]:
+    if type(value) is not dict:
+        raise ValueError("admission_certificate_json_object_required")
+    certificate = dict(value)
+    digest = certificate.pop("certificateDigest", None)
+    runtime = certificate.get("acceptanceRuntime", {})
+    proofs = certificate.get("zeroInstallProofs")
+    expected_keys = {
+        "schemaVersion", "status", "candidate", "productVersion",
+        "acceptedV13Source", "acceptedFixManifestDigest", "acceptanceRuntime",
+        "zeroInstallProofs", "noPostDeployInstall", "productSemanticDiff",
+        "sourceDigests", "snapshotContractDigest", "stateMachineDigest",
+        "tachibana", "recovery", "policy",
+    }
+    runtime_keys = {
+        "identityDigest", "specDigest", "seedImplementationDigest", "container",
+        "browser", "nodeVersion", "playwrightVersion",
+    }
+    proof_keys = {
+        "runNumber", "runtimeProofSha256", "simulationSha256",
+        "runtimeIdentityDigest", "initialSnapshotReady", "snapshotReady",
+        "responseSnapshotId", "uiSnapshotId", "status",
+    }
+    proof_ordinals = [row.get("runNumber") if type(row) is dict else None
+                      for row in proofs] if type(proofs) is list else []
+    runtime_identity_digest = runtime.get("identityDigest") \
+        if type(runtime) is dict else None
+    valid_proofs = type(proofs) is list and len(proofs) == 2 \
+        and proof_ordinals == [1, 2] \
+        and all(
+            type(row) is dict
+            and set(row) == proof_keys
+            and row.get("status") == "PASS"
+            and row.get("initialSnapshotReady") == 0
+            and row.get("snapshotReady") == 12
+            and type(row.get("responseSnapshotId")) is str
+            and bool(row.get("responseSnapshotId"))
+            and row.get("responseSnapshotId") == row.get("uiSnapshotId")
+            and _is_lower_hex(row.get("runtimeProofSha256"), 64)
+            and _is_lower_hex(row.get("simulationSha256"), 64)
+            and row.get("runtimeIdentityDigest") == runtime_identity_digest
+            for row in proofs)
+    if set(certificate) != expected_keys \
+            or not _is_lower_hex(digest, 64) \
+            or digest != _digest_bytes(_canonical(certificate)) \
+            or certificate.get("schemaVersion") != ADMISSION_SCHEMA \
+            or certificate.get("status") != "PASS" \
+            or certificate.get("candidate") != dict(candidate) \
+            or set(certificate.get("candidate", {})) != {"commitSha", "treeSha"} \
+            or certificate.get("productVersion") != PRODUCT_VERSION \
+            or certificate.get("acceptedV13Source") != {
+                "commitSha": ACCEPTED_V13_SOURCE, "treeSha": ACCEPTED_V13_TREE} \
+            or not _is_lower_hex(certificate.get("acceptedFixManifestDigest"), 64) \
+            or type(runtime) is not dict or set(runtime) != runtime_keys \
+            or not _is_lower_hex(runtime.get("identityDigest"), 64) \
+            or not _is_lower_hex(runtime.get("specDigest"), 64) \
+            or not _is_lower_hex(runtime.get("seedImplementationDigest"), 64) \
+            or type(runtime.get("container")) is not dict \
+            or type(runtime.get("browser")) is not dict \
+            or type(runtime.get("nodeVersion")) is not str \
+            or type(runtime.get("playwrightVersion")) is not str \
+            or certificate.get("noPostDeployInstall") is not True \
+            or certificate.get("policy", {}).get("preMergeAdmissionRequired") is not True \
+            or certificate.get("policy", {}).get(
+                "productionMutationAllowedOnlyAfterAdmission") is not True \
+            or certificate.get("policy", {}).get("snapshotExpected") != 12 \
+            or certificate.get("policy", {}).get("oneProductionAttempt") is not True \
+            or not valid_proofs:
+        raise ValueError("admission_certificate_identity_or_status")
+    certificate["certificateDigest"] = digest
+    return certificate
+
+
+def _validate_retrieval_receipt(path: pathlib.Path,
+                                certificate: Mapping[str, Any],
+                                candidate: Mapping[str, str]) -> Dict[str, Any]:
+    receipt = _load(path)
+    digest = receipt.pop("receiptDigest", None)
+    producer, artifact = receipt.get("producer"), receipt.get("artifact")
+    if set(receipt) != {
+            "schemaVersion", "status", "repository", "candidate",
+            "certificateDigest", "transportAccept", "artifact", "producer",
+            "consumerRunId"} \
+            or not _is_lower_hex(digest, 64) \
+            or digest != _digest_bytes(_canonical(receipt)) \
+            or receipt.get("schemaVersion") != RETRIEVAL_SCHEMA \
+            or receipt.get("status") != "PASS" \
+            or type(receipt.get("repository")) is not str \
+            or not receipt.get("repository") \
+            or receipt.get("candidate") != dict(candidate) \
+            or receipt.get("certificateDigest") != certificate.get(
+                "certificateDigest") \
+            or receipt.get("transportAccept") != "application/vnd.github+json" \
+            or type(producer) is not dict or type(artifact) is not dict \
+            or set(producer) != {
+                "workflowRunId", "workflowPath", "event", "headSha", "conclusion"} \
+            or set(artifact) != {"artifactId", "name", "archiveSha256"} \
+            or producer.get("workflowPath") != \
+                ".github/workflows/market-public-acceptance.yml" \
+            or producer.get("event") != "pull_request" \
+            or producer.get("headSha") != candidate["commitSha"] \
+            or producer.get("conclusion") != "success" \
+            or type(producer.get("workflowRunId")) is not int \
+            or producer.get("workflowRunId") <= 0 \
+            or type(receipt.get("consumerRunId")) is not str \
+            or not receipt.get("consumerRunId") \
+            or str(producer.get("workflowRunId")) == receipt.get("consumerRunId") \
+            or type(artifact.get("artifactId")) is not int \
+            or artifact.get("artifactId") <= 0 \
+            or artifact.get("name") != \
+                f"v13-5-premerge-admission-{candidate['commitSha']}" \
+            or not _is_lower_hex(artifact.get("archiveSha256"), 64):
+        raise ValueError("detached_certificate_retrieval_receipt_invalid")
+    receipt["receiptDigest"] = digest
+    return receipt
+
+
+def verify_admission(args: argparse.Namespace) -> Dict[str, Any]:
+    _ensure_clean_candidate()
+    candidate = _candidate(args.candidate_ref)
+    certificate = _validate_admission_identity(
+        _load(pathlib.Path(args.certificate)), candidate)
+    manifest = _validate_manifest()
+    _validate_contract()
+    semantic = _validate_product_semantic_diff(args.candidate_ref)
+    if certificate.get("acceptedFixManifestDigest") != _digest_bytes(
+            _canonical(manifest)):
+        raise ValueError("admission_certificate_manifest_digest_mismatch")
+    if certificate.get("sourceDigests") != {
+            relative: _digest_file(ROOT / relative) for relative in POLICY_INPUTS}:
+        raise ValueError("admission_certificate_policy_digest_mismatch")
+    if certificate.get("snapshotContractDigest") != _digest_file(
+            ROOT / "release/v13-snapshot-readiness-contract.json") \
+            or certificate.get("stateMachineDigest") != _digest_file(
+                ROOT / "web/scripts/release-state-machine.mjs"):
+        raise ValueError("admission_certificate_release_digest_mismatch")
+    if certificate.get("productSemanticDiff") != semantic:
+        raise ValueError("admission_certificate_semantic_diff_mismatch")
+    runtime = _validate_runtime_proof(pathlib.Path(args.runtime_proof), candidate)
+    accepted = certificate.get("acceptanceRuntime", {})
+    observed = runtime.get("runtimeIdentity", {})
+    expected_runtime = {
+        "identityDigest": runtime.get("runtimeIdentityDigest"),
+        "specDigest": observed.get("specDigest"),
+        "seedImplementationDigest": observed.get("seedImplementationDigest"),
+        "container": observed.get("container"),
+        "browser": observed.get("browser"),
+        "nodeVersion": observed.get("nodeVersion"),
+        "playwrightVersion": observed.get("playwrightVersion"),
+    }
+    if accepted != expected_runtime:
+        raise ValueError("admission_certificate_runtime_identity_mismatch")
+    if args.retrieval_receipt:
+        _validate_retrieval_receipt(
+            pathlib.Path(args.retrieval_receipt), certificate, candidate)
+    return certificate
+
+
 def verify(args: argparse.Namespace) -> Dict[str, Any]:
     _ensure_clean_candidate()
     candidate = _candidate(args.candidate_ref)
@@ -341,12 +584,24 @@ def _api(url: str, token: str, *, accept: str = "application/vnd.github+json") -
                "X-GitHub-Api-Version": "2022-11-28"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    with urllib.request.urlopen(urllib.request.Request(url, headers=headers),
-                                timeout=60) as response:
-        body = response.read(64 * 1024 * 1024 + 1)
-        if len(body) > 64 * 1024 * 1024:
-            raise ValueError("github_api_response_too_large")
-        return body
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers),
+                                    timeout=60) as response:
+            body = response.read(64 * 1024 * 1024 + 1)
+            if len(body) > 64 * 1024 * 1024:
+                raise ValueError("github_api_response_too_large")
+            return body
+    except urllib.error.HTTPError as exc:
+        detail = exc.read(4097)
+        if len(detail) > 4096:
+            detail = detail[:4096]
+        try:
+            message = json.loads(detail).get("message", "")
+        except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+            message = detail.decode("utf-8", "replace")
+        raise ValueError(f"github_http_error:{exc.code}:{str(message)[:240]}") from exc
+    except urllib.error.URLError as exc:
+        raise ValueError(f"github_transport_error:{str(exc.reason)[:240]}") from exc
 
 
 def _api_json(url: str, token: str) -> Any:
@@ -416,8 +671,7 @@ def fetch(args: argparse.Namespace) -> Dict[str, Any]:
             and row.get("workflow_run", {}).get("head_sha") == args.candidate_sha]
     if len(rows) != 1:
         raise ValueError(f"exact_release_certificate_artifact_count:{len(rows)}")
-    archive = _api(rows[0]["archive_download_url"], token,
-                   accept="application/octet-stream")
+    archive = _api(rows[0]["archive_download_url"], token)
     with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
         matches = [entry for entry in bundle.namelist()
                    if pathlib.PurePosixPath(entry).name == "certificate.json"]
@@ -430,6 +684,108 @@ def fetch(args: argparse.Namespace) -> Dict[str, Any]:
     return value
 
 
+def fetch_admission(args: argparse.Namespace) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Fetch a certificate from a completed, separate producer workflow."""
+    token = _token()
+    candidate = {"commitSha": args.candidate_sha, "treeSha": args.candidate_tree}
+    if not _is_lower_hex(args.candidate_sha, 40) \
+            or not _is_lower_hex(args.candidate_tree, 40) \
+            or not args.consumer_run_id:
+        raise ValueError("detached_certificate_candidate_identity_invalid")
+    name = f"v13-5-premerge-admission-{args.candidate_sha}"
+    deadline = time.monotonic() + args.timeout_seconds
+    row = producer = None
+    while True:
+        query = urllib.parse.urlencode({"name": name, "per_page": 100})
+        payload = _api_json(
+            f"https://api.github.com/repos/{args.repo}/actions/artifacts?{query}",
+            token)
+        if type(payload) is not dict or type(payload.get("artifacts")) is not list:
+            raise ValueError("detached_certificate_artifact_response_invalid")
+        exact = [item for item in payload.get("artifacts", [])
+                 if type(item) is dict
+                 if item.get("name") == name and item.get("expired") is False
+                 and item.get("workflow_run", {}).get("head_sha")
+                 == args.candidate_sha]
+        if len(exact) > 1:
+            raise ValueError(f"detached_certificate_artifact_ambiguous:{len(exact)}")
+        if exact:
+            row = exact[0]
+            run_id = row.get("workflow_run", {}).get("id")
+            if type(run_id) is not int:
+                raise ValueError("detached_certificate_producer_run_missing")
+            producer = _api_json(
+                f"https://api.github.com/repos/{args.repo}/actions/runs/{run_id}",
+                token)
+            if type(producer) is not dict:
+                raise ValueError("detached_certificate_producer_response_invalid")
+            if producer.get("status") == "completed":
+                break
+        if time.monotonic() >= deadline:
+            raise ValueError("detached_certificate_artifact_not_ready")
+        time.sleep(args.poll_seconds)
+    if producer.get("conclusion") != "success" \
+            or producer.get("event") != "pull_request" \
+            or producer.get("head_sha") != args.candidate_sha \
+            or producer.get("path") != args.expected_producer_workflow:
+        raise ValueError("detached_certificate_producer_run_invalid")
+    if str(producer.get("id")) == args.consumer_run_id:
+        raise ValueError("detached_certificate_not_detached")
+    artifact_id, archive_url = row.get("id"), row.get("archive_download_url")
+    expected_url = f"https://api.github.com/repos/{args.repo}/actions/artifacts/" \
+        f"{artifact_id}/zip"
+    if type(artifact_id) is not int or type(archive_url) is not str \
+            or archive_url != expected_url:
+        raise ValueError("detached_certificate_artifact_identity_invalid")
+    archive = _api(archive_url, token)
+    if not archive:
+        raise ValueError("detached_certificate_archive_empty")
+    try:
+        with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+            matches = [entry for entry in bundle.infolist()
+                       if not entry.is_dir()
+                       and pathlib.PurePosixPath(entry.filename).name
+                       == "certificate.json"]
+            if len(matches) != 1:
+                raise ValueError(
+                    f"detached_certificate_archive_shape:{len(matches)}")
+            if matches[0].file_size > 1024 * 1024:
+                raise ValueError("detached_certificate_payload_too_large")
+            raw_certificate = bundle.read(matches[0])
+    except zipfile.BadZipFile as exc:
+        raise ValueError("detached_certificate_archive_invalid") from exc
+    if not raw_certificate:
+        raise ValueError("detached_certificate_payload_empty")
+    try:
+        value = json.loads(raw_certificate)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("detached_certificate_payload_malformed") from exc
+    certificate = _validate_admission_identity(value, candidate)
+    receipt: Dict[str, Any] = {
+        "schemaVersion": RETRIEVAL_SCHEMA,
+        "status": "PASS",
+        "repository": args.repo,
+        "candidate": candidate,
+        "certificateDigest": certificate["certificateDigest"],
+        "transportAccept": "application/vnd.github+json",
+        "artifact": {
+            "artifactId": artifact_id,
+            "name": name,
+            "archiveSha256": _digest_bytes(archive),
+        },
+        "producer": {
+            "workflowRunId": producer["id"],
+            "workflowPath": producer["path"],
+            "event": producer["event"],
+            "headSha": producer["head_sha"],
+            "conclusion": producer["conclusion"],
+        },
+        "consumerRunId": args.consumer_run_id,
+    }
+    receipt["receiptDigest"] = _digest_bytes(_canonical(receipt))
+    return certificate, receipt
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -438,10 +794,20 @@ def main() -> int:
                  "runtime-proof-two", "required-checks", "out"):
         create.add_argument(f"--{name}", required=True)
     create.add_argument("--candidate-ref", default="HEAD")
+    create_admission = sub.add_parser("generate-admission")
+    for name in ("simulation-one", "simulation-two", "runtime-proof-one",
+                 "runtime-proof-two", "out"):
+        create_admission.add_argument(f"--{name}", required=True)
+    create_admission.add_argument("--candidate-ref", default="HEAD")
     check = sub.add_parser("verify")
     check.add_argument("--certificate", required=True)
     check.add_argument("--candidate-ref", default="HEAD")
     check.add_argument("--runtime-proof", default="")
+    admit = sub.add_parser("verify-admission")
+    admit.add_argument("--certificate", required=True)
+    admit.add_argument("--candidate-ref", default="HEAD")
+    admit.add_argument("--runtime-proof", required=True)
+    admit.add_argument("--retrieval-receipt", default="")
     collect = sub.add_parser("collect-checks")
     collect.add_argument("--repo", required=True)
     collect.add_argument("--candidate-sha", required=True)
@@ -451,17 +817,39 @@ def main() -> int:
     get.add_argument("--repo", required=True)
     get.add_argument("--candidate-sha", required=True)
     get.add_argument("--out", required=True)
+    get_admission = sub.add_parser("fetch-admission")
+    get_admission.add_argument("--repo", required=True)
+    get_admission.add_argument("--candidate-sha", required=True)
+    get_admission.add_argument("--candidate-tree", required=True)
+    get_admission.add_argument("--consumer-run-id", required=True)
+    get_admission.add_argument("--expected-producer-workflow", default=
+                               ".github/workflows/market-public-acceptance.yml")
+    get_admission.add_argument("--timeout-seconds", type=int, default=1500)
+    get_admission.add_argument("--poll-seconds", type=int, default=10)
+    get_admission.add_argument("--out", required=True)
+    get_admission.add_argument("--receipt-out", required=True)
     args = parser.parse_args()
     if args.command == "generate":
         _write(pathlib.Path(args.out), generate(args))
+    elif args.command == "generate-admission":
+        _write(pathlib.Path(args.out), generate_admission(args))
     elif args.command == "verify":
         verify(args)
+    elif args.command == "verify-admission":
+        verify_admission(args)
     elif args.command == "collect-checks":
         if not 1 <= args.timeout_seconds <= 3600:
             raise ValueError("invalid_required_checks_timeout")
         _write(pathlib.Path(args.out), collect_checks(args))
-    else:
+    elif args.command == "fetch":
         _write(pathlib.Path(args.out), fetch(args))
+    else:
+        if not 1 <= args.timeout_seconds <= 3600 \
+                or not 1 <= args.poll_seconds <= 60:
+            raise ValueError("invalid_detached_certificate_fetch_timing")
+        certificate, receipt = fetch_admission(args)
+        _write(pathlib.Path(args.out), certificate)
+        _write(pathlib.Path(args.receipt_out), receipt)
     print(f"V13_5_RELEASE_CERTIFICATE_{args.command.upper().replace('-', '_')}=PASS")
     return 0
 

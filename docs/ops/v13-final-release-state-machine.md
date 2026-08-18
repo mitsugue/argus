@@ -18,12 +18,24 @@ operating-system package.
 
 Two independent pull-request jobs launch that exact runtime and each execute a
 genuine 0-of-12 full release simulation. Their runtime identities, shared seed
-digest, exact candidate SHA/tree, CURRENT_REQUIRED results, and canonical
-1321/5D same-snapshot proof are sealed in a detached certificate. On main
-merge, `acceptance-runtime-admission` retrieves the certificate by the exact
-second-parent candidate SHA, proves the merge tree is identical, and launches
-the same runtime before backend readiness or Pages deployment may begin. Seed
-and final public acceptance repeat the same runtime admission.
+digest, exact candidate SHA/tree, and canonical 1321/5D same-snapshot proof are
+sealed in a detached pre-merge admission certificate. The required
+`premerge-admission` check then retrieves that certificate through the GitHub
+artifact REST API from the separately completed producer workflow, emits a
+content-addressed retrieval receipt, and launches the same immutable runtime.
+The protected `gate` context cannot succeed until both ordinary release checks
+and this detached runtime admission pass. Therefore a main merge—which can
+cause production mutation—is not permitted before runtime executability is
+proved.
+
+After the protected merge, `acceptance-runtime-admission` derives the exact
+second-parent candidate SHA, proves the merge tree is identical, retrieves the
+same detached certificate again, reconfirms every CURRENT_REQUIRED check, and
+repeats immutable runtime admission before backend readiness or Pages
+deployment may begin. Artifact archive requests use GitHub's supported JSON
+media type (`application/vnd.github+json`); any HTTP, producer identity,
+archive, certificate, receipt, candidate, tree, or runtime mismatch fails
+closed. Seed and final public acceptance repeat the same runtime admission.
 
 The manual `restore-safe-pages.yml` path remains deliberately browser-free: it
 builds and restores a previously accepted frontend artifact and polls its exact
@@ -111,12 +123,16 @@ serves an exact candidate dist, executes the dedicated 12-snapshot producer,
 uses the real canonical browser selector, seals and reopens a fresh profile,
 and accepts the exact 12 set and four public surfaces.
 
-After both jobs pass, `scripts/v13_release_certificate.py` generates a detached
-content-addressed certificate bound to the exact commit SHA and tree, readiness
-contract, accepted-fix manifest, shared engine, both simulation artifacts, and
-their CI results. A detached artifact avoids the impossible self-reference of a
-commit containing its own final SHA/tree digest. CI immediately verifies the
-certificate before the protected merge can occur.
+After both jobs pass, `scripts/v13_5_release_certificate.py` generates a
+detached, content-addressed pre-merge admission certificate bound to the exact
+commit SHA and tree, readiness contract, accepted-fix manifest, shared engine,
+immutable runtime, and both simulation artifacts. A detached artifact avoids
+the impossible self-reference of a commit containing its own final SHA/tree
+digest. The independently scheduled required release gate fetches it through
+the same API and archive path used by production, verifies the certificate and
+retrieval receipt, and runs the admitted runtime before protected merge. The
+production workflow separately reconfirms CURRENT_REQUIRED after merge rather
+than introducing a circular dependency into the producer certificate.
 
 ## Rollback and stop boundary
 
