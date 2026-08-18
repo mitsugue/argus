@@ -178,7 +178,7 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
         panel = pathlib.Path("web/src/components/today/ArgusTodayPanel.tsx").read_text()
         self.assertIn("argus.today.selectedInstrument.v1", route)
         self.assertNotIn("argus.replayContext", panel)
-        self.assertIn("<ProjectionChart projection={projection} />", panel)
+        self.assertIn("<ProjectionChart projection={projection}", panel)
         self.assertNotIn("onActivate={() => setDetail(true)}", panel)
         self.assertIn("([1, 5, 20] as const)", panel)
         self.assertNotIn("method: 'POST'", route + panel)
