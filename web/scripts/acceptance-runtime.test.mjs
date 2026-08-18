@@ -55,6 +55,11 @@ assert.match(deploy, /deploy:[\s\S]*needs: \[build, backend-infrastructure-readi
 assert.ok(deploy.indexOf('acceptance-runtime-admission:') < deploy.indexOf('  deploy:'));
 assert.match(proof, /full_release_simulation_1:[\s\S]*container:[\s\S]*b27e719e/);
 assert.match(proof, /full_release_simulation_2:[\s\S]*container:[\s\S]*b27e719e/);
+const safeDirectoryAdmission = /git config --global --add safe\.directory "\$GITHUB_WORKSPACE"/g;
+assert.equal(proof.match(safeDirectoryAdmission)?.length, 3,
+  'every containerized preproduction tree pin must admit checkout ownership');
+assert.ok((deploy.match(safeDirectoryAdmission)?.length ?? 0) >= 1,
+  'production runtime admission must admit checkout ownership before binding the merge tree');
 assert.match(rollback, /Build exact safe Pages artifact/);
 assert.doesNotMatch(rollback, /warm-profile|acceptance-runtime|playwright|chromium/i);
 assert.equal(sha256('argus').length, 64);
