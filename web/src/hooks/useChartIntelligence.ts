@@ -12,7 +12,8 @@ import {
 } from '../domain/marketInstruments';
 import {
   ASSET_CHART_METHOD_VERSION, assetChartRequestGate, boundedRetryAt,
-  assetChartUiTransition, parseRetryAfter, readAssetChart, writeAssetChart,
+  assetChartUiTransition, parseRetryAfter, readAssetChart, verifiedChartRequestGate,
+  writeAssetChart,
   type AssetChartIdentity, type AssetChartViewState,
 } from '../lib/assetChartCache';
 
@@ -22,6 +23,12 @@ const inflight = new Map<string, Promise<SnapshotNetworkResult>>();
 const failedUntil = new Map<string, number>();
 const assetFailureCount = new Map<string, number>();
 const REQUEST_TIMEOUT_MS = 15_000;
+// Verified market snapshots are multi-megabyte, content-addressed payloads.
+// Their timeout covers headers, body streaming, JSON parsing, and canonical
+// verification. Keep this producer deadline below the release consumer's
+// CANONICAL_RESULT_TIMEOUT_MS so acceptance never stops before the product can
+// publish its verified response ID on a constrained runner/network.
+const VERIFIED_REQUEST_TIMEOUT_MS = 75_000;
 
 export interface ChartIntelligenceOptions {
   scope: 'market' | 'asset'; symbol?: string; market?: string;
@@ -193,28 +200,32 @@ function fetchVerifiedSnapshot(
   if ((failedUntil.get(url) ?? 0) > Date.now()) {
     return Promise.reject(new Error('再試行待機中'));
   }
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort('timeout'), REQUEST_TIMEOUT_MS);
   performanceMark('network-revalidation-start');
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (current) headers['If-None-Match'] = `"${current.snapshotId}"`;
-  const request = fetch(url, {
-    method: 'GET', cache: 'no-store', headers, signal: controller.signal,
-  }).then(async (response): Promise<SnapshotNetworkResult> => {
-    performanceMark('network-response');
-    if (response.status === 304) return { snapshot: null, notModified: true };
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const candidate: unknown = await response.json();
-    const validation = await verifySnapshot(candidate, expectation);
-    performanceMark('snapshot-validation-complete');
-    if (!validation.ok) throw new Error(`snapshot_${validation.reason}`);
-    return { snapshot: validation.snapshot, notModified: false };
-  }).catch((error: unknown) => {
-    failedUntil.set(url, Date.now() + 30_000);
-    throw error;
-  }).finally(() => {
-    window.clearTimeout(timer); inflight.delete(url);
-  });
+  const request = verifiedChartRequestGate.enqueue(async () => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(
+      () => controller.abort('timeout'), VERIFIED_REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, {
+        method: 'GET', cache: 'no-store', headers, signal: controller.signal,
+      });
+      performanceMark('network-response');
+      if (response.status === 304) return { snapshot: null, notModified: true };
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const candidate: unknown = await response.json();
+      const validation = await verifySnapshot(candidate, expectation);
+      performanceMark('snapshot-validation-complete');
+      if (!validation.ok) throw new Error(`snapshot_${validation.reason}`);
+      return { snapshot: validation.snapshot, notModified: false };
+    } catch (error: unknown) {
+      failedUntil.set(url, Date.now() + 30_000);
+      throw error;
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }).finally(() => inflight.delete(url));
   inflight.set(url, request);
   return request;
 }
@@ -260,6 +271,8 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
   const visibilityBlocked = useRef(false);
   const [loaderVisible, setLoaderVisible] = useState(false);
   const [slowInitial, setSlowInitial] = useState(false);
+  const [verifiedResponseSnapshotId, setVerifiedResponseSnapshotId] =
+    useState<string | null>(null);
   const [, setAuthorityRevision] = useState(0);
 
   useEffect(() => {
@@ -282,6 +295,7 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
     const controller = new AbortController();
     const key = snapshotKey(expectation);
     const memoryCached = memorySnapshot(expectation);
+    setVerifiedResponseSnapshotId(null);
     setView({
       key: memoryCached ? key : null, snapshot: memoryCached,
       state: memoryCached ? 'CACHE_READY_REVALIDATING' : 'NO_CACHE_LOADING',
@@ -326,6 +340,10 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
           return;
         }
         if (!network.snapshot) throw new Error('snapshot_missing');
+        // This ID is written only after the real HTTP 200 body passes the
+        // product's strict snapshot verifier. Keep it separate from the cache
+        // or UI projection so release acceptance can prove exact equality.
+        setVerifiedResponseSnapshotId(network.snapshot.snapshotId);
         if (cached && !shouldReplaceSnapshot(cached, network.snapshot)) {
           setView({ key, snapshot: cached, state: 'CURRENT_READY', error: null });
           return;
@@ -493,6 +511,7 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
       snapshotState: effectiveLegacyState,
       statusText,
       loaderVisible, slowInitial, snapshotId: null,
+      responseSnapshotId: null,
       retry,
     };
   }
@@ -517,6 +536,7 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
     errorClass: null,
     retryAt: null,
     snapshotId: matching?.snapshotId ?? null,
+    responseSnapshotId: verifiedResponseSnapshotId,
     retry: () => {
       if (verifiedUrl) failedUntil.delete(verifiedUrl);
       setRefreshToken((value) => value + 1);
