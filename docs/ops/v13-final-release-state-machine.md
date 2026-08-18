@@ -6,6 +6,30 @@ Recovery acceptance. Tachibana remains `UNKNOWN`, configuration `false`,
 credentials/data `unavailable`, and `DATA_GATED`; that absence is not a V13
 release blocker.
 
+## V13.5 immutable acceptance runtime
+
+V13.5 keeps the accepted product and decision semantics unchanged and replaces
+only the failed browser provisioning boundary. Browser acceptance runs in the
+digest-pinned Playwright 1.55.0 Noble image declared by
+`release/v13-acceptance-runtime.json`. The image already contains Chromium
+140.0.7339.16 and its OS libraries. Release jobs set
+`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`; no acceptance job provisions a browser or
+operating-system package.
+
+Two independent pull-request jobs launch that exact runtime and each execute a
+genuine 0-of-12 full release simulation. Their runtime identities, shared seed
+digest, exact candidate SHA/tree, CURRENT_REQUIRED results, and canonical
+1321/5D same-snapshot proof are sealed in a detached certificate. On main
+merge, `acceptance-runtime-admission` retrieves the certificate by the exact
+second-parent candidate SHA, proves the merge tree is identical, and launches
+the same runtime before backend readiness or Pages deployment may begin. Seed
+and final public acceptance repeat the same runtime admission.
+
+The manual `restore-safe-pages.yml` path remains deliberately browser-free: it
+builds and restores a previously accepted frontend artifact and polls its exact
+public identity. It never seeds, creates business snapshots, or changes
+`/var/data`.
+
 ## Exact causal states
 
 The executable authority is `web/scripts/release-state-machine.mjs`.

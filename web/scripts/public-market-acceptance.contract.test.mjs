@@ -139,8 +139,8 @@ assert.doesNotMatch(script, /localStorage\./,
 assert.match(workflow, /uses: \.\/\.github\/actions\/warm-profile-seed/);
 assert.match(workflow, /uses: \.\/\.github\/actions\/warm-profile-consumer/);
 assert.match(manualWorkflow, /uses: \.\/\.github\/actions\/warm-profile-consumer/);
-assert.match(manualWorkflow, /name: full-release-simulation-1/);
-assert.match(manualWorkflow, /name: full-release-simulation-2/);
+assert.match(manualWorkflow, /name: zero-install-runtime-proof-1/);
+assert.match(manualWorkflow, /name: zero-install-runtime-proof-2/);
 assert.match(manualWorkflow, /node scripts\/full-release-simulation\.mjs --run 1/);
 assert.match(manualWorkflow, /node scripts\/full-release-simulation\.mjs --run 2/);
 assert.match(candidatePreviewAction, /VITE_ARGUS_BUILD_SHA: \$\{\{ inputs\.candidate-sha \}\}/);
@@ -169,13 +169,13 @@ assert.match(consumerAction, /warm-profile-contract\.mjs validate/);
 assert.match(workflow, /candidate-sha: \$\{\{ github\.sha \}\}/);
 assert.doesNotMatch(manualWorkflow, /warm-profile-handoff:/);
 assert.doesNotMatch(manualWorkflow, /warm-profile-seed-2:/);
-assert.match(workflow, /needs: \[build, backend-infrastructure-readiness\]/);
+assert.match(workflow, /needs: \[build, backend-infrastructure-readiness, acceptance-runtime-admission\]/);
 assert.match(workflow, /candidate-identity:/);
 assert.match(workflow, /verify_public_candidate_release\.py/);
 assert.match(workflow, /needs: \[scope, deploy, backend-infrastructure-readiness\]/);
-assert.match(workflow, /needs: \[scope, candidate-identity, business-snapshot-trigger\]/);
+assert.match(workflow, /needs: \[scope, candidate-identity, business-snapshot-trigger, acceptance-runtime-admission\]/);
 assert.match(workflow,
-  /needs: \[scope, deploy, candidate-identity, seed-warm-profile, business-snapshot-acceptance, backend-infrastructure-readiness\]/);
+  /needs: \[scope, deploy, candidate-identity, seed-warm-profile, business-snapshot-acceptance, backend-infrastructure-readiness, acceptance-runtime-admission\]/);
 assert.match(workflow, /enforce-public-candidate-identity: 'true'/);
 assert.match(workflow,
   /expected-backend-sha: \$\{\{ needs\.candidate-identity\.outputs\.backend_sha \}\}/);

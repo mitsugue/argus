@@ -97,6 +97,16 @@ class DeployScopeTests(unittest.TestCase):
         self.assertTrue(result["frontendDeploy"])
         self.assertFalse(result["backendDeploy"])
 
+    def test_zero_install_runtime_contract_is_frontend_plane(self):
+        result = deploy_scope.classify([
+            ".github/actions/acceptance-runtime-preflight/action.yml",
+            "release/v13-acceptance-runtime.json",
+            "scripts/v13_5_release_certificate.py",
+            "web/scripts/acceptance-runtime.mjs",
+        ])
+        self.assertTrue(result["frontendDeploy"])
+        self.assertFalse(result["backendDeploy"])
+
     def test_snapshot_release_contract_is_frontend_deploy_plane_only(self):
         result = deploy_scope.classify(
             ["release/v13-snapshot-readiness-contract.json"])
@@ -113,15 +123,19 @@ class DeployScopeTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/deploy-pages.yml").read_text()
         self.assertIn("backend-infrastructure-readiness:", workflow)
         self.assertIn("candidate-identity:", workflow)
-        self.assertIn("needs: [build, backend-infrastructure-readiness]", workflow)
+        self.assertIn(
+            "needs: [build, backend-infrastructure-readiness, "
+            "acceptance-runtime-admission]", workflow)
         self.assertIn(
             "needs: [scope, deploy, backend-infrastructure-readiness]", workflow)
         self.assertIn(
-            "needs: [scope, candidate-identity, business-snapshot-trigger]", workflow)
+            "needs: [scope, candidate-identity, business-snapshot-trigger, "
+            "acceptance-runtime-admission]", workflow)
         self.assertIn(
             "needs: [scope, deploy, candidate-identity, "
             "seed-warm-profile, business-snapshot-acceptance, "
-            "backend-infrastructure-readiness]", workflow)
+            "backend-infrastructure-readiness, "
+            "acceptance-runtime-admission]", workflow)
         self.assertIn(
             "web/scripts/release-state-machine.mjs", workflow)
         self.assertIn(
@@ -153,7 +167,7 @@ class DeployScopeTests(unittest.TestCase):
         product = json.loads((ROOT / "product-version.json").read_text())
         frontend = json.loads((ROOT / "web/package.json").read_text())["version"]
         backend = json.loads((ROOT / "backend-version.json").read_text())["version"]
-        self.assertEqual("v13", product["productVersion"])
+        self.assertEqual("v13.5", product["productVersion"])
         self.assertEqual("13.3.6", frontend)
         self.assertEqual("13.4.13", backend)
 

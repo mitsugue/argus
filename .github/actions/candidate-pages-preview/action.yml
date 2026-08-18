@@ -6,11 +6,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-node@v5
-      with:
-        node-version: 20
-        cache: npm
-        cache-dependency-path: web/package-lock.json
     - name: Build exact candidate
       shell: bash
       working-directory: web
@@ -19,7 +14,6 @@ runs:
         VITE_ARGUS_BUILD_SHA: ${{ inputs.candidate-sha }}
         VITE_ARGUS_BACKEND_URL: https://argus-backend-3j2m.onrender.com
       run: |
-        npm ci
         npm run build
     - name: Serve exact candidate without production mutation
       shell: bash
