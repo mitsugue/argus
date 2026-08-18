@@ -147,6 +147,7 @@ def _validate_manifest() -> Dict[str, Any]:
         "GitHub artifact JSON media and safe redirect transport",
         "exact accepted-source reachability and tree admission",
         "shared pre-mutation production rehearsal",
+        "mobile Today canonical projection-state acceptance",
         "rollback restore has no browser dependency",
     }.issubset(names):
         raise ValueError("accepted_fix_manifest_release_rows_missing")

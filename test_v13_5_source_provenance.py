@@ -8,6 +8,19 @@ import pytest
 from scripts import v13_5_source_provenance as source
 
 
+def test_mobile_today_closeout_allowlist_is_exact_and_backend_stays_closed():
+    expected = {
+        "test_argus_v13_1_0.py",
+        "web/scripts/canonical-snapshot-selection.mjs",
+        "web/scripts/market-replay.test.mjs",
+        "web/scripts/mobile-today-acceptance.mjs",
+        "web/scripts/mobile-today-projection-state.test.mjs",
+        "web/src/components/today/ArgusTodayPanel.tsx",
+    }
+    assert expected.issubset(source.AUTHORIZED_EXTENSION_PATHS)
+    assert "scanner.py" not in source.AUTHORIZED_EXTENSION_PATHS
+
+
 def git(repo: Path, *args: str) -> str:
     return subprocess.check_output(
         ["git", *args], cwd=repo, text=True).strip()

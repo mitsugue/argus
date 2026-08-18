@@ -3,7 +3,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
   CANONICAL_SNAPSHOT_SELECTOR,
+  CANONICAL_PROJECTION_STATE_SELECTOR,
   openCanonicalEvidence,
+  readCanonicalProjectionState,
   selectCanonical1321FiveDay,
 } from './canonical-snapshot-selection.mjs';
 
@@ -188,6 +190,30 @@ async function waitForTodayChart(page, timeout = 30_000) {
   await openCanonicalEvidence(page, timeout);
 }
 
+async function waitForCanonicalProjectionContract(page, timeout = 30_000) {
+  await page.waitForFunction(({ projectionSelector, snapshotSelector }) => {
+    const nodes = [...document.querySelectorAll(projectionSelector)];
+    const snapshot = document.querySelector(snapshotSelector);
+    if (nodes.length !== 1 || !snapshot) return false;
+    const node = nodes[0];
+    const state = node.getAttribute('data-projection-state');
+    const snapshotId = node.getAttribute('data-projection-snapshot-id');
+    const responseSnapshotId = node.getAttribute('data-projection-response-snapshot-id');
+    const snapshotState = node.getAttribute('data-projection-snapshot-state');
+    const canonicalSnapshotId = snapshot.getAttribute('data-canonical-snapshot-id');
+    const canonicalResponseSnapshotId = snapshot.getAttribute(
+      'data-canonical-response-snapshot-id');
+    return ['available', 'missing'].includes(state)
+      && snapshotId === canonicalSnapshotId
+      && responseSnapshotId === canonicalResponseSnapshotId
+      && snapshotState === snapshot.getAttribute('data-canonical-snapshot-state')
+      && (!responseSnapshotId || responseSnapshotId === snapshotId);
+  }, {
+    projectionSelector: CANONICAL_PROJECTION_STATE_SELECTOR,
+    snapshotSelector: '[data-argus-contract="canonical-market-snapshot-v1"]',
+  }, { timeout });
+}
+
 async function selectCanonicalControls(page, timeout = 30_000) {
   await openCanonicalEvidence(page, timeout);
   await page.getByRole('group', { name: '表示市場' })
@@ -347,6 +373,7 @@ async function run() {
           && contract?.getAttribute('data-canonical-horizon') === expectedHorizon
           && contract?.getAttribute('data-canonical-verification') === 'verified';
       }, { expectedSymbol: symbol, expectedHorizon: horizon }, { timeout: 30_000 });
+      await waitForCanonicalProjectionContract(page);
       const record = await page.evaluate(({ expectedSymbol, expectedHorizon }) => ({
         symbol: document.querySelector('.at-proj-heading b')?.textContent ?? '',
         horizon: document.querySelector('.at-horizon button[aria-pressed="true"]')?.textContent ?? '',
@@ -356,6 +383,8 @@ async function run() {
           ?.getAttribute('data-canonical-snapshot-state'),
         verification: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
           ?.getAttribute('data-canonical-verification'),
+        responseSnapshotId: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
+          ?.getAttribute('data-canonical-response-snapshot-id'),
         canonicalInstrument: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
           ?.getAttribute('data-canonical-instrument'),
         canonicalHorizon: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
@@ -368,6 +397,14 @@ async function run() {
           || record.canonicalInstrument !== symbol
           || record.canonicalHorizon !== horizon) {
         evidence.failures.push(`today-combination:${symbol}:${horizon}`);
+      }
+      const projectionState = await readCanonicalProjectionState(page, {
+        expectedSnapshotId: record.snapshotId,
+        expectedSnapshotState: record.snapshotState,
+        acceptedResponseSnapshotId: record.responseSnapshotId,
+      });
+      if (!projectionState.pass) {
+        evidence.failures.push(`today-projection-state:${symbol}:${horizon}:${projectionState.reason}`);
       }
       // The UI is intentionally exercised as a single human interaction
       // stream. One request at a time plus explicit pacing avoids turning a
@@ -469,12 +506,29 @@ async function run() {
   await slow.route('**/api/argus/chart-intelligence?*',
     (route) => fulfillCapturedSnapshot(route, evidence, 6_000));
   const slowPage = await slow.newPage();
+  const slowStateAppeared = slowPage.waitForFunction(({ selector }) => {
+    const nodes = [...document.querySelectorAll(selector)];
+    if (nodes.length !== 1) return false;
+    const node = nodes[0];
+    if (node.getAttribute('data-projection-state') !== 'missing'
+        || node.getAttribute('data-projection-snapshot-id')
+        || node.getAttribute('data-projection-response-snapshot-id')
+        || node.getAttribute('data-projection-snapshot-state') !== 'NO_CACHE_LOADING'
+        || !node.textContent?.includes('初回データを準備中')) return false;
+    return {
+      state: 'missing',
+      snapshotState: 'NO_CACHE_LOADING',
+      label: '初回データを準備中',
+    };
+  }, { selector: CANONICAL_PROJECTION_STATE_SELECTOR }, { timeout: 7_000 });
   await slowPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(slowPage);
   await openCanonicalEvidence(slowPage);
-  await slowPage.waitForTimeout(5_300);
-  const slowLabel = await slowPage.locator('.at-projection-missing').innerText();
-  if (!slowLabel.includes('初回データを準備中')) evidence.failures.push('slow-label');
+  const slowState = await slowStateAppeared.then((handle) => handle.jsonValue());
+  const slowLabel = slowState?.label ?? null;
+  if (slowState?.state !== 'missing' || slowState?.label !== '初回データを準備中') {
+    evidence.failures.push('slow-label');
+  }
   await slow.close();
 
   // A failed cold request terminates the loader and leaves an actionable retry.

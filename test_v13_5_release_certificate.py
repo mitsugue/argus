@@ -661,5 +661,6 @@ def test_manifest_and_product_semantic_allowlist_are_closed():
     assert "productVersion = v13.5" in names
     assert "pre-merge detached runtime admission" in names
     assert "GitHub artifact JSON media and safe redirect transport" in names
+    assert "mobile Today canonical projection-state acceptance" in names
     assert "rollback restore has no browser dependency" in names
     assert "scanner.py" not in release.AUTHORIZED_EXTENSION_PATHS

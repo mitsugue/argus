@@ -5,6 +5,80 @@ export const CANONICAL_SNAPSHOT_SELECTOR =
   + '[data-canonical-verification="verified"]'
   + '[data-canonical-snapshot-id]';
 
+export const CANONICAL_PROJECTION_STATE_SELECTOR =
+  '[data-argus-contract="today-projection-state-v1"]';
+
+const canonicalSnapshotId = (value) =>
+  typeof value === 'string' && /^vs-[0-9a-f]{32}$/.test(value);
+
+export function validateCanonicalProjectionState({
+  nodes,
+  expectedSnapshotId = null,
+  expectedSnapshotState = null,
+  acceptedResponseSnapshotId = undefined,
+}) {
+  if (!Array.isArray(nodes) || nodes.length !== 1) {
+    return {
+      pass: false,
+      reason: Array.isArray(nodes) && nodes.length > 1
+        ? 'contradictory_projection_states' : 'projection_state_missing',
+    };
+  }
+  const node = nodes[0];
+  if (!node || !['available', 'missing'].includes(node.state)
+      || typeof node.snapshotState !== 'string' || !node.snapshotState) {
+    return { pass: false, reason: 'invalid_projection_state_contract' };
+  }
+  const snapshotId = node.snapshotId || null;
+  const responseSnapshotId = node.responseSnapshotId || null;
+  if (expectedSnapshotId != null) {
+    if (!canonicalSnapshotId(expectedSnapshotId)
+        || snapshotId !== expectedSnapshotId) {
+      return { pass: false, reason: 'projection_snapshot_identity_mismatch' };
+    }
+  } else if (snapshotId != null || responseSnapshotId != null) {
+    return { pass: false, reason: 'projection_snapshot_without_accepted_response' };
+  }
+  if (responseSnapshotId != null && responseSnapshotId !== expectedSnapshotId) {
+    return { pass: false, reason: 'projection_response_identity_mismatch' };
+  }
+  if (acceptedResponseSnapshotId !== undefined
+      && responseSnapshotId !== acceptedResponseSnapshotId) {
+    return { pass: false, reason: 'projection_accepted_response_mismatch' };
+  }
+  if (expectedSnapshotState != null && node.snapshotState !== expectedSnapshotState) {
+    return { pass: false, reason: 'projection_snapshot_state_mismatch' };
+  }
+  if (node.state === 'available' && !canonicalSnapshotId(snapshotId)) {
+    return { pass: false, reason: 'available_projection_without_snapshot' };
+  }
+  return {
+    pass: true,
+    reason: 'ok',
+    state: node.state,
+    snapshotId,
+    responseSnapshotId,
+    snapshotState: node.snapshotState,
+  };
+}
+
+export async function readCanonicalProjectionState(page, {
+  expectedSnapshotId = null,
+  expectedSnapshotState = null,
+  acceptedResponseSnapshotId = undefined,
+} = {}) {
+  const nodes = await page.locator(CANONICAL_PROJECTION_STATE_SELECTOR)
+    .evaluateAll((elements) => elements.map((element) => ({
+      state: element.getAttribute('data-projection-state'),
+      snapshotId: element.getAttribute('data-projection-snapshot-id'),
+      responseSnapshotId: element.getAttribute('data-projection-response-snapshot-id'),
+      snapshotState: element.getAttribute('data-projection-snapshot-state'),
+    })));
+  return validateCanonicalProjectionState({
+    nodes, expectedSnapshotId, expectedSnapshotState, acceptedResponseSnapshotId,
+  });
+}
+
 // This consumer deadline is intentionally longer than the product's 75s
 // verified-response producer deadline. A constrained CI/browser may receive
 // HTTP 200 headers before the multi-megabyte body has streamed and passed the
