@@ -18,21 +18,26 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.1"
+PRODUCT_VERSION = "v13.5.2"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
-    # v13.5.1 real-device correction: the bounded owner-authorized path set for
-    # interaction performance (off-thread verification, idle-sliced device
-    # ledger appends, keep-mounted Today), the name-selector Today UX, the
-    # Seven Sign surface, the market-shock (Major News) pipeline, and the
-    # v13.5.1 identity. The accepted baseline is the LIVE v13.5.0 release
+    # v13.5.1 real-device correction + v13.5.2 operations closeout: the bounded
+    # owner-authorized path set for interaction performance (off-thread
+    # verification, idle-sliced device ledger appends, keep-mounted Today),
+    # the name-selector Today UX, the compact Seven Sign surface, the
+    # market-shock (Major News) pipeline, the Prediction Ledger workflow
+    # correction (canonical steps before private-store extras + precise
+    # diagnostics), the checkpoint-v2 capacity budgets, and the v13.5.x
+    # identity. The accepted baseline is the LIVE v13.5.0 release
     # (f79548bb…); anything outside this list fails the release closed.
     ".github/actions/v13-5-pre-mutation-rehearsal/action.yml",
     ".github/workflows/market-public-acceptance.yml",
+    ".github/workflows/prediction-ledger.yml",
+    "argus_checkpoint_v2.py",
     "argus_market_shock.py",
     "argus_route_catalog.py",
     "argus_today_headline.py",
@@ -40,9 +45,11 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "product-version.json",
     "release/v13-accepted-fix-manifest.json",
     "scanner.py",
+    "scripts/normalized_hash_resource_probe.py",
     "scripts/v13_5_pre_mutation_rehearsal.py",
     "scripts/v13_5_release_certificate.py",
     "scripts/v13_5_source_provenance.py",
+    "scripts/workflow_http.py",
     "test_argus_deploy_scope.py",
     "test_argus_market_shock.py",
     "test_argus_public_operational_boundary.py",

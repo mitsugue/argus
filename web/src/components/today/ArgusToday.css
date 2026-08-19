@@ -4,8 +4,13 @@
 .argus-today { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:8px; margin-bottom:0; }
 @media (min-width: 721px) { .argus-today { margin-bottom:10px; } }
 /* v13.5.1 owner correction: no dead black band under Today on a phone. The
-   summary-bar spacer plus a slim page padding are the whole bottom stack. */
-@media (max-width: 720px) { .page--today { padding-bottom: 8px; } }
+   summary-bar spacer plus a slim page padding are the whole bottom stack;
+   the flex gap before the spacer is cancelled so only the WAIT-bar overlay
+   clearance (the spacer itself) remains below the last card. */
+@media (max-width: 720px) {
+  .page--today { padding-bottom: 8px; }
+  .page--today > .msc-spacer { margin-top: -20px; }
+}
 .argus-today > * { min-width:0; }
 .at-lamps { grid-column:span 12; display:grid; grid-template-columns:repeat(4,auto); justify-content:space-between; gap:6px; padding:4px 2px; font-size:10px; font-weight:800; letter-spacing:.03em; }
 .at-lamps span { display:flex; align-items:center; gap:4px; color:var(--text-sub); white-space:nowrap; }
@@ -23,26 +28,32 @@
   white-space:nowrap; }
 .at-freshness-note { margin:6px 2px 0; color:var(--amber, #fbbf24);
   font-size:10px; font-weight:700; }
-/* v13.5.1: the full Seven Sign ladder — every canonical level visible with
-   its meaning; gated states show their machine reasons instead of blank. */
-.at-seven-ladder { display:grid; grid-template-columns:repeat(7,minmax(0,1fr));
-  gap:3px; margin:6px 0 2px; }
-.at-seven-ladder > div { display:flex; flex-direction:column; gap:1px;
-  padding:5px 3px; border:1px solid var(--line); border-radius:5px;
-  background:color-mix(in srgb,var(--surface) 96%,#0f172a); min-width:0; }
-.at-seven-ladder > div b { font-size:12px; color:var(--text-sub); }
-.at-seven-ladder > div span { font-size:7.5px; color:var(--text-muted);
-  line-height:1.25; }
-.at-seven-ladder > div.is-current { border-color:var(--accent);
+/* v13.5.2: compact Seven Sign — one summary line + seven chips; meanings and
+   machine reason codes expand on tap. Truthful states, minimal height. */
+.at-seven { margin:5px 0 2px; }
+.at-seven summary { display:flex; align-items:center; gap:8px; cursor:pointer;
+  list-style:none; min-height:24px; }
+.at-seven summary::-webkit-details-marker { display:none; }
+.at-seven summary small { font-size:9px; letter-spacing:0.08em;
+  color:var(--text-faint); font-weight:700; }
+.at-seven summary > b { font-size:12px; color:var(--text-sub); }
+.at-seven-status { font-size:9px; color:var(--text-muted); }
+.at-seven-chips { display:flex; gap:3px; margin-left:auto; }
+.at-seven-chips i { width:16px; height:16px; display:flex; align-items:center;
+  justify-content:center; font-size:9px; font-style:normal;
+  color:var(--text-muted); border:1px solid var(--line); border-radius:4px; }
+.at-seven-chips i.is-current { color:var(--accent);
+  border-color:var(--accent);
   background:color-mix(in srgb,var(--surface) 82%,var(--accent)); }
-.at-seven-ladder > div.is-current b { color:var(--accent); }
-.at-seven-ladder > div i { color:var(--accent); font-size:8px;
-  font-style:normal; font-weight:800; }
-.at-seven-gated { grid-column:1/-1; margin:2px 0 0; color:var(--text-muted);
-  font-size:9.5px; }
-@media (max-width: 480px) {
-  .at-seven-ladder { grid-template-columns:repeat(4,minmax(0,1fr)); }
-}
+.at-seven-detail { margin-top:4px; }
+.at-seven-detail ul { margin:0; padding:0; list-style:none; display:grid;
+  gap:1px; }
+.at-seven-detail li { font-size:9.5px; color:var(--text-muted); }
+.at-seven-detail li b { color:var(--text-sub); }
+.at-seven-detail li.is-current, .at-seven-detail li.is-current b {
+  color:var(--accent); }
+.at-seven-detail li i { font-style:normal; font-weight:800; font-size:8px; }
+.at-seven-gated { margin:3px 0 0; color:var(--text-muted); font-size:9.5px; }
 /* v13.5.1 market-shock events on the Major News surface. */
 .at-shock { display:grid; gap:6px; margin-bottom:6px; }
 .at-shock-event { display:grid; gap:2px; padding:7px 8px; border-radius:6px;
@@ -85,9 +96,6 @@
 .at-authority { margin-left:auto; border:1px solid var(--line); border-radius:999px; padding:2px 8px; font-size:10px; }
 .at-authority.is-evaluated { border-color:var(--value-positive); color:var(--value-positive); }
 .at-authority.is-data_gated { border-color:var(--amber,#fbbf24); color:var(--amber,#fbbf24); }
-.at-seven-sign { display:flex; align-items:baseline; gap:8px; color:var(--text-sub); font-size:11px; }
-.at-seven-sign b { color:var(--text-main); font-size:17px; }
-.at-seven-sign[data-status="DATA_GATED"] { opacity:.72; }
 .at-action-plan { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
 .at-action-plan>div { display:grid; gap:2px; min-height:47px; padding:7px 9px; border:1px solid var(--line); border-radius:6px; background:color-mix(in srgb,var(--surface) 94%,transparent); }
 .at-action-plan b { color:var(--text-muted); font-size:9px; letter-spacing:.08em; }

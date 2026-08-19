@@ -48,12 +48,20 @@ MAXIMUM_V2_OWNED_BYTES = (
 ARCHIVE_SECTIONS = frozenset({"verifiedViewSnapshots", "assetChartReports"})
 
 SECTION_LIMITS = {
+    # Capacity budgets sized from the exact production state (measured
+    # 2026-08-19: marketLedger 62.7MB, verifiedViewSnapshots 37.5MB,
+    # assetChartReports 20.2MB, chartIntelligence 18.2MB, marketReplay
+    # 11.5MB, todayIntelligence 11.5MB) plus headroom. v13.x feature growth
+    # pushed todayIntelligence and chartIntelligence past the original
+    # budgets, which failed every checkpoint-v2 probe. The binding resource
+    # assertions (4GiB cgroup, 128MiB plateau, 3GiB logical ceiling,
+    # MAXIMUM_TOTAL_BYTES) are unchanged.
     "marketLedger": 120 * 1024 * 1024,
-    "verifiedViewSnapshots": 40 * 1024 * 1024,
-    "assetChartReports": 24 * 1024 * 1024,
-    "chartIntelligence": 16 * 1024 * 1024,
-    "marketReplay": 12 * 1024 * 1024,
-    "todayIntelligence": 8 * 1024 * 1024,
+    "verifiedViewSnapshots": 48 * 1024 * 1024,
+    "assetChartReports": 28 * 1024 * 1024,
+    "chartIntelligence": 24 * 1024 * 1024,
+    "marketReplay": 16 * 1024 * 1024,
+    "todayIntelligence": 16 * 1024 * 1024,
 }
 DEFAULT_SECTION_LIMIT = 8 * 1024 * 1024
 COUNT_LIMITS = {

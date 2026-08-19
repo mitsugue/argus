@@ -239,8 +239,6 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   onMode, onInstrument, onHorizon, onNavigate, onNavigateToAsset, onNavigateToSettings, aiButton,
 }) => {
   const projection = view.projectionsByHorizon[`${horizon}D`] ?? view.projection;
-  const sevenSignLabel = view.actionScore == null
-    ? 'Calibration pending' : (SEVEN_SIGN_MEANING[view.actionScore] ?? 'Calibration pending');
   const actionCopy = {
     BUY: '条件内で新規または追加を検討',
     HOLD: '保有を維持し、判断更新条件を待つ',
@@ -297,42 +295,52 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           {view.canonicalDecision.status === 'EVALUATED' ? '確認済み' : '判断データ確認中'}</span>
       </div>
       <p className="at-impact-copy">{actionCopy}</p>
-      <div className="at-seven-sign" data-status={view.canonicalDecision.sevenSign.status}>
-        <b>{view.actionScore == null ? '— / 7' : `${view.actionScore} / 7`}</b>
-        <span>{sevenSignLabel} · {view.canonicalDecision.sevenSign.status}</span>
-      </div>
-      {/* v13.5.1: every canonical Seven Sign level resolves visibly. The
-          current level is marked when it exists; when it does not, the exact
-          machine reason codes are shown instead of an empty meter. Nothing
-          here is computed client-side — it renders the SDA projection. */}
-      <div className="at-seven-ladder" data-argus-contract="seven-sign-ladder-v1"
+      {/* v13.5.2: Seven Sign is COMPACT — one summary line + seven chips,
+          with meanings and the exact machine reason codes expanding on tap.
+          All truthful canonical states are preserved; while everything is
+          DATA_GATED the surface stays two short rows instead of a wall.
+          Nothing here is computed client-side — it renders the SDA
+          projection. */}
+      <details className="at-seven" data-argus-contract="seven-sign-ladder-v1"
         data-seven-status={view.canonicalDecision.sevenSign.status}
-        data-seven-level={view.actionScore ?? undefined}
-        aria-label={`Seven Sign ${view.actionScore ?? '未確定'} / 7 · ${view.canonicalDecision.sevenSign.status}`}>
-        {[1, 2, 3, 4, 5, 6, 7].map((level) => <div key={level}
-          className={level === view.actionScore ? 'is-current' : ''}
-          data-seven-sign-level={level}>
-          <b>{level}</b><span>{SEVEN_SIGN_MEANING[level]}</span>
-          {level === view.actionScore && <i>◀ 現在</i>}
-        </div>)}
-        {view.actionScore == null && <p className="at-seven-gated">
-          現在のレベルは未確定（{view.canonicalDecision.sevenSign.status}）：
-          {(view.canonicalDecision.sevenSign.reasonCodes.length
-            ? view.canonicalDecision.sevenSign.reasonCodes
-            : ['reason_unavailable']).map((code) =>
-            SEVEN_SIGN_REASON_JA[code] ?? code).join(' / ')}
-        </p>}
-        {view.actionScore != null
-          && view.canonicalDecision.sevenSign.status !== 'PRODUCTION'
-          && <p className="at-seven-gated">
-          {view.canonicalDecision.sevenSign.status === 'SHADOW'
-            ? '校正はシャドー検証中（本番採用前）'
-            : '校正データ不足のため参考レベル'}
-          {view.canonicalDecision.sevenSign.reasonCodes.length > 0
-            && ` · ${view.canonicalDecision.sevenSign.reasonCodes.map((code) =>
-              SEVEN_SIGN_REASON_JA[code] ?? code).join(' / ')}`}
-        </p>}
-      </div>
+        data-seven-level={view.actionScore ?? undefined}>
+        <summary aria-label={`Seven Sign ${view.actionScore ?? '未確定'} / 7 · ${view.canonicalDecision.sevenSign.status}`}>
+          <small>SEVEN SIGN</small>
+          <b>{view.actionScore == null ? '—' : view.actionScore} / 7</b>
+          <span className="at-seven-status">{view.canonicalDecision.sevenSign.status}</span>
+          <span className="at-seven-chips" aria-hidden="true">
+            {[1, 2, 3, 4, 5, 6, 7].map((level) => <i key={level}
+              className={level === view.actionScore ? 'is-current' : ''}
+              data-seven-sign-level={level}>{level}</i>)}
+          </span>
+        </summary>
+        <div className="at-seven-detail">
+          <ul>
+            {[1, 2, 3, 4, 5, 6, 7].map((level) => <li key={level}
+              className={level === view.actionScore ? 'is-current' : ''}>
+              <b>{level}</b> {SEVEN_SIGN_MEANING[level]}
+              {level === view.actionScore && <i> ◀ 現在</i>}
+            </li>)}
+          </ul>
+          {view.actionScore == null && <p className="at-seven-gated">
+            現在のレベルは未確定（{view.canonicalDecision.sevenSign.status}）：
+            {(view.canonicalDecision.sevenSign.reasonCodes.length
+              ? view.canonicalDecision.sevenSign.reasonCodes
+              : ['reason_unavailable']).map((code) =>
+              SEVEN_SIGN_REASON_JA[code] ?? code).join(' / ')}
+          </p>}
+          {view.actionScore != null
+            && view.canonicalDecision.sevenSign.status !== 'PRODUCTION'
+            && <p className="at-seven-gated">
+            {view.canonicalDecision.sevenSign.status === 'SHADOW'
+              ? '校正はシャドー検証中（本番採用前）'
+              : '校正データ不足のため参考レベル'}
+            {view.canonicalDecision.sevenSign.reasonCodes.length > 0
+              && ` · ${view.canonicalDecision.sevenSign.reasonCodes.map((code) =>
+                SEVEN_SIGN_REASON_JA[code] ?? code).join(' / ')}`}
+          </p>}
+        </div>
+      </details>
       <div className="at-action-plan" aria-label="行動条件">
         <div><b>今すること</b><span>{actionCopy}</span></div>
         <div><b>目標</b><span>{target ? `${target.value} ${target.unit}` : '検証済み目標なし'}</span></div>

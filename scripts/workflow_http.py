@@ -34,7 +34,10 @@ _SAFE_OUTPUT_KEYS += (
     "acceptedAt", "targetWalSequence", "verifiedWalSequence",
     "remoteCommitSha", "verifiedByRemoteCommitSha", "readBackVerified",
     "verifiedAt", "attempts",
-    "lastErrorClass", "ageSeconds", "idempotentReplay")
+    "lastErrorClass", "ageSeconds", "idempotentReplay",
+    # Business-error names and their status-class diagnostics are safe scalars
+    # (never tokens); without them a failing daily run cannot say WHY it failed.
+    "error", "diagnostic")
 
 
 def _redact(value: Any) -> Any:
