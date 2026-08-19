@@ -26,12 +26,12 @@ const MILESTONES = [
   }],
   ['key-numbers', () => [...document.querySelectorAll('.at-index-strip b')]
     .some((node) => /[0-9][\d,.]*/.test(node.textContent ?? ''))],
-  ['first-chart', () => [...document.querySelectorAll(
-    '[data-argus-contract="today-projection-state-v1"][data-projection-state="available"], .at-headline-chart[data-headline-state="data"]',
-  )].length >= 1],
-  ['four-charts', () => document.querySelectorAll('.at-headline-chart[data-headline-state="data"]').length >= 4
-    || (document.querySelectorAll('.at-index svg path, .at-index polyline').length >= 4
-      && !!document.querySelector('[data-projection-state="available"]'))],
+  ['first-chart', () => !!document.querySelector(
+    '[data-argus-contract="today-projection-state-v1"][data-projection-state="available"]')],
+  // v13.5.1 surface = four NAME selectors + the one selected projection chart.
+  ['four-charts', () => document.querySelectorAll(
+    '[data-argus-control="market-instrument"]').length >= 4
+    && !!document.querySelector('[data-projection-state="available"]')],
   ['probability', () => /UP\s*\d+%|RANGE\s*\d+%|DOWN\s*\d+%/.test(document.body.textContent ?? '')],
 ];
 

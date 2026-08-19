@@ -208,6 +208,16 @@ export function verifyDeviceLocalSdaLedgerDocument(
   }
 }
 
+// Bytes already fully verified this session (or produced by this module after
+// verification) are not cryptographically re-verified. Any byte difference —
+// including external writes to storage — misses this cache and takes the full
+// verification path, so nothing is ever trusted without having been verified
+// against those exact bytes.
+const verifiedByStorage = new WeakMap<DeviceLocalStorage, {
+  raw: string;
+  document: DeviceLocalSdaLedgerDocument;
+}>();
+
 const loadDocument = (storage: DeviceLocalStorage): {
   status: DeviceLocalSdaLedgerRead['status'];
   document: DeviceLocalSdaLedgerDocument | null;
@@ -219,14 +229,18 @@ const loadDocument = (storage: DeviceLocalStorage): {
     return { status: 'STORAGE_UNAVAILABLE', document: null };
   }
   if (raw == null) return { status: 'EMPTY', document: emptyDocument() };
+  const verified = verifiedByStorage.get(storage);
+  if (verified && verified.raw === raw) return { status: 'OK', document: verified.document };
   if (byteLength(raw) > MAX_DEVICE_LOCAL_SDA_LEDGER_BYTES) {
     return { status: 'CORRUPT', document: null };
   }
   try {
     const parsed = JSON.parse(raw) as unknown;
-    return verifyDeviceLocalSdaLedgerDocument(parsed)
-      ? { status: 'OK', document: parsed }
-      : { status: 'CORRUPT', document: null };
+    if (!verifyDeviceLocalSdaLedgerDocument(parsed)) {
+      return { status: 'CORRUPT', document: null };
+    }
+    verifiedByStorage.set(storage, { raw, document: parsed });
+    return { status: 'OK', document: parsed };
   } catch {
     return { status: 'CORRUPT', document: null };
   }
@@ -290,5 +304,6 @@ export function appendDeviceLocalSdaLedger(
       evictedCount: 0,
     };
   }
+  verifiedByStorage.set(storage, { raw: encoded, document: next });
   return { status: 'APPENDED', entryCount: entries.length, evictedCount };
 }

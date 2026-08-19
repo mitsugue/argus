@@ -5,11 +5,12 @@ interface Props {
   crumb?: string;
   title: string;
   subtitle?: React.ReactNode;
+  className?: string;
   children: React.ReactNode;
 }
 
-export const PageShell: React.FC<Props> = ({ crumb, title, subtitle, children }) => (
-  <section className="page">
+export const PageShell: React.FC<Props> = ({ crumb, title, subtitle, className, children }) => (
+  <section className={className ? `page ${className}` : 'page'}>
     <header className="page__head">
       {crumb && <span className="page__crumb">{crumb}</span>}
       <h1 className="page__title">{title}</h1>

@@ -3,7 +3,7 @@ import type { ChartIntelligencePayload } from '../types/chartIntelligence';
 import {
   memorySnapshot, readVerifiedSnapshot, shouldReplaceSnapshot, snapshotKey,
   type SnapshotExpectation, type SnapshotViewState, type VerifiedSnapshot,
-  VERIFIED_VIEW_METHOD_VERSION, verifySnapshot, writeVerifiedSnapshot,
+  VERIFIED_VIEW_METHOD_VERSION, verifySnapshotText, writeVerifiedSnapshot,
 } from '../lib/verifiedSnapshot';
 import { formatSnapshotStatus, snapshotDecisionExpiresAt,
   snapshotFreshness } from '../lib/snapshotFreshness';
@@ -214,8 +214,11 @@ function fetchVerifiedSnapshot(
       performanceMark('network-response');
       if (response.status === 304) return { snapshot: null, notModified: true };
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const candidate: unknown = await response.json();
-      const validation = await verifySnapshot(candidate, expectation);
+      // Raw text goes to the verification worker: JSON parsing, canonical
+      // sorting, and hashing of multi-megabyte snapshots must never block
+      // taps, scrolling, or paint on the interaction thread.
+      const rawText = await response.text();
+      const validation = await verifySnapshotText(rawText, expectation);
       performanceMark('snapshot-validation-complete');
       if (!validation.ok) throw new Error(`snapshot_${validation.reason}`);
       return { snapshot: validation.snapshot, notModified: false };

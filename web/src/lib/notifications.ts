@@ -163,12 +163,17 @@ export interface NotifInputs {
     action: PrimaryAction; status: 'EVALUATED' | 'DATA_GATED'; name?: string;
     isHeld?: boolean; targetReached?: boolean; invalidationReached?: boolean;
   }>;
+  /** v13.5.1: server-classified market-shock events (HIGH/CRITICAL alert). */
+  marketShockEvents?: Array<{
+    eventId: string; severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+    headlineJa: string; whyJa: string;
+  }>;
 }
 
 const MATERIAL_NOTIFICATION_TYPES = new Set([
   'primary_action_changed', 'authority_lost', 'target_reached', 'invalidation_reached',
   'p0_priority', 'p1_held_priority', 'event_before', 'scenario_change', 'plan_change',
-  'strategy_risk', 'sync_backup_warning', 'restore_not_verified',
+  'strategy_risk', 'sync_backup_warning', 'restore_not_verified', 'market_shock',
 ]);
 
 function preferenceFor(eventType: string): keyof NotificationPreferences {
@@ -177,6 +182,23 @@ function preferenceFor(eventType: string): keyof NotificationPreferences {
   if (eventType === 'authority_lost') return 'authority';
   if (eventType === 'sync_backup_warning' || eventType === 'restore_not_verified') return 'recovery';
   return 'risk';
+}
+
+/** v13.5.1: HIGH/CRITICAL market-shock events reach the Alerts surface. The
+ * event id doubles as the dedupe key so one shock alerts exactly once. */
+function marketShockCandidates(inputs: NotifInputs) {
+  return (inputs.marketShockEvents ?? [])
+    .filter((event) => event.severity === 'HIGH' || event.severity === 'CRITICAL')
+    .map((event) => ({
+      eventType: 'market_shock', severity: 'high' as const, symbol: null,
+      assetName: null,
+      titleJa: `市場ショック（${event.severity}）: ${event.headlineJa.slice(0, 60)}`,
+      bodyJa: event.headlineJa,
+      whyJa: event.whyJa,
+      checkNextJa: 'Todayの重大ニュースと保有リスクを確認',
+      dedupeKey: `market-shock|${event.eventId}`,
+      isPrivate: false,
+    }));
 }
 
 /** Run once per Today mount (throttled by dedupe/cooldowns internally). */
@@ -189,6 +211,7 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
   const day = jstDay();
   const cands: Omit<AppNotification, 'id' | 'createdAt' | 'deliveryState'>[] = [];
   const nm = (sym: string | null, name?: string | null) => sym ? jpDisplay(sym, name ?? undefined) : '';
+  cands.push(...marketShockCandidates(inp));
 
   const p0Now = inp.apItems.filter((i) => i.priorityRank === 'P0').map((i) => i.symbol);
   const p1HeldNow = inp.apItems.filter((i) => i.priorityRank === 'P1' && i.isHeld).map((i) => i.symbol);

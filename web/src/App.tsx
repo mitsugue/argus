@@ -135,10 +135,30 @@ const App: React.FC = () => {
       ? { label: '再読み込み', go: () => window.location.reload() }
       : undefined;
 
-  const content = route === 'command' ? (
+  // v13.5.1: Today stays mounted once visited. Full unmount/remount of the
+  // command center re-ran every data hook and re-rendered the whole tree,
+  // which measured 6-8 seconds per return navigation on an iPhone-class CPU.
+  // Hidden-but-mounted keeps its state warm so returning to Today is a pure
+  // visibility flip. Other routes stay mount-on-demand (they are cheap).
+  const [todayMounted, setTodayMounted] = React.useState(route === 'command');
+  React.useEffect(() => {
+    if (route === 'command') setTodayMounted(true);
+  }, [route]);
+  // The keep-mounted command center renders its bottom summary bar through a
+  // body portal, which no ancestor can hide. Stamp the active route on <body>
+  // so CSS can keep that bar Today-only.
+  React.useEffect(() => {
+    document.body.dataset.argusRoute = route;
+  }, [route]);
+  const todayContent = (todayMounted || route === 'command') && (
+    <div hidden={route !== 'command'} className="route-keepalive">
       <CommandCenter onNavigate={handleNavSelect} onNavigateToAsset={navigateToAsset}
         onNavigateToSettings={navigateToSettings} />
-    ) : route === 'watchlist' ? (
+    </div>
+  );
+  const content = <>
+    {todayContent}
+    {route === 'watchlist' && (
       <Watchlist
         assetFocus={assetFocus}
         assetDetail={!!location.asset}
@@ -146,9 +166,11 @@ const App: React.FC = () => {
         onNavigateToAsset={navigateToAsset}
         onBackToHoldings={() => handleNavSelect('watchlist')}
       />
-    ) : route === 'notifications' ? (
-      <NotificationsPage />
-    ) : <Settings settingsSection={location.settingsSection} />;
+    )}
+    {route === 'notifications' && <NotificationsPage />}
+    {route === 'settings'
+      && <Settings settingsSection={location.settingsSection} />}
+  </>;
 
   return (
     <AppShell

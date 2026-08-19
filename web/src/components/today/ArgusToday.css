@@ -1,4 +1,11 @@
-.argus-today { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:8px; margin-bottom:54px; }
+/* v13.5.1: bottom clearance is exactly the sticky command bar height plus a
+   small gap — the old 54px margin stacked with the shell's nav padding and
+   safe-area inset into a large dead band on iPhone screens. */
+.argus-today { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:8px; margin-bottom:0; }
+@media (min-width: 721px) { .argus-today { margin-bottom:10px; } }
+/* v13.5.1 owner correction: no dead black band under Today on a phone. The
+   summary-bar spacer plus a slim page padding are the whole bottom stack. */
+@media (max-width: 720px) { .page--today { padding-bottom: 8px; } }
 .argus-today > * { min-width:0; }
 .at-lamps { grid-column:span 12; display:grid; grid-template-columns:repeat(4,auto); justify-content:space-between; gap:6px; padding:4px 2px; font-size:10px; font-weight:800; letter-spacing:.03em; }
 .at-lamps span { display:flex; align-items:center; gap:4px; color:var(--text-sub); white-space:nowrap; }
@@ -8,26 +15,50 @@
 .at-lamps .is-closed i { background:#64748b; color:#64748b; }
 .at-event,.at-priorities,.at-decision,.at-evidence,.at-market { grid-column:span 12; }
 .at-market { padding:6px 12px 11px; }
-/* Four always-visible headline charts: verified 30-day closes + canonical
-   UP/RANGE/DOWN. Every state renders explicitly — no silent blank tiles. */
-.at-headline-chart { grid-column:1/-1; margin-top:4px; }
-.at-headline-chart svg { display:block; width:100%; height:44px; }
-.at-headline-chart polyline { fill:none; stroke-width:1.5; vector-effect:non-scaling-stroke; }
-.at-headline-chart polyline.is-up { stroke:#22c55e; }
-.at-headline-chart polyline.is-down { stroke:#f87171; }
-.at-headline-chart[data-headline-state="loading"] span,
-.at-headline-chart[data-headline-state="unavailable"] span,
-.at-headline-chart[data-headline-state="error"] span {
-  display:flex; align-items:center; justify-content:center; height:44px;
-  border:1px dashed var(--line); border-radius:4px; color:var(--text-muted);
-  font-size:9px; }
-.at-headline-probs { display:flex; gap:6px; align-items:center; margin-top:2px;
-  font-size:10px; font-weight:800; letter-spacing:.02em; }
-.at-headline-probs b.is-up { color:#22c55e; }
-.at-headline-probs b.is-range { color:var(--text-sub); }
-.at-headline-probs b.is-down { color:#f87171; }
-.at-headline-probs i { color:var(--text-muted); font-size:8px; font-style:normal; }
-.at-headline-stale { color:var(--text-muted); font-size:8px; font-style:normal; }
+/* v13.5.1: four lightweight NAME selectors — all data lives in the single
+   selected projection chart below. */
+.at-index-strip--selectors button { display:flex; align-items:center;
+  justify-content:center; gap:5px; min-height:44px; padding:8px 6px; }
+.at-index-strip--selectors .at-index-name { font-size:12px; overflow:visible;
+  white-space:nowrap; }
+.at-freshness-note { margin:6px 2px 0; color:var(--amber, #fbbf24);
+  font-size:10px; font-weight:700; }
+/* v13.5.1: the full Seven Sign ladder — every canonical level visible with
+   its meaning; gated states show their machine reasons instead of blank. */
+.at-seven-ladder { display:grid; grid-template-columns:repeat(7,minmax(0,1fr));
+  gap:3px; margin:6px 0 2px; }
+.at-seven-ladder > div { display:flex; flex-direction:column; gap:1px;
+  padding:5px 3px; border:1px solid var(--line); border-radius:5px;
+  background:color-mix(in srgb,var(--surface) 96%,#0f172a); min-width:0; }
+.at-seven-ladder > div b { font-size:12px; color:var(--text-sub); }
+.at-seven-ladder > div span { font-size:7.5px; color:var(--text-muted);
+  line-height:1.25; }
+.at-seven-ladder > div.is-current { border-color:var(--accent);
+  background:color-mix(in srgb,var(--surface) 82%,var(--accent)); }
+.at-seven-ladder > div.is-current b { color:var(--accent); }
+.at-seven-ladder > div i { color:var(--accent); font-size:8px;
+  font-style:normal; font-weight:800; }
+.at-seven-gated { grid-column:1/-1; margin:2px 0 0; color:var(--text-muted);
+  font-size:9.5px; }
+@media (max-width: 480px) {
+  .at-seven-ladder { grid-template-columns:repeat(4,minmax(0,1fr)); }
+}
+/* v13.5.1 market-shock events on the Major News surface. */
+.at-shock { display:grid; gap:6px; margin-bottom:6px; }
+.at-shock-event { display:grid; gap:2px; padding:7px 8px; border-radius:6px;
+  border:1px solid var(--line); background:color-mix(in srgb,var(--surface) 94%,#7f1d1d); }
+.at-shock-event[data-shock-severity="LOW"],
+.at-shock-event[data-shock-severity="MEDIUM"] {
+  background:color-mix(in srgb,var(--surface) 95%,#78350f); }
+.at-shock-head { display:flex; gap:6px; align-items:baseline; }
+.at-shock-head mark { padding:1px 5px; border-radius:4px; background:#7f1d1d;
+  color:#fecaca; font-size:9px; font-weight:800; }
+.at-shock-head mark[data-severity="MEDIUM"],
+.at-shock-head mark[data-severity="LOW"] { background:#78350f; color:#fde68a; }
+.at-shock-head b { font-size:11.5px; line-height:1.35; }
+.at-shock-event span { color:var(--text-sub); font-size:10px; }
+.at-shock-event em { color:var(--text-muted); font-size:9px; font-style:normal; }
+.at-shock-clear { margin:0 0 6px; color:var(--text-muted); font-size:10px; }
 .at-head { display:flex; align-items:center; gap:8px; color:var(--text-muted); font-size:10px; letter-spacing:.1em; }
 .at-head span { margin-left:auto; color:#f59e0b; font-weight:800; }
 .at-event { padding:9px 12px; }

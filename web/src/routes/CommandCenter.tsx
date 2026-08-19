@@ -14,10 +14,11 @@ import type { RouteKey } from '../components/NavRail';
 import type { SettingsSection } from '../navigation';
 import '../components/dashboard/Dashboard.css';
 import { ArgusTodayPanel } from '../components/today/ArgusTodayPanel';
-import { buildArgusTodayView, buildTodayProjection, selectTodayNews,
+import { buildArgusTodayView, selectTodayNews,
   selectAutoMarket, type MarketSelectionMode, type TodayMoveInput,
   type TodayPositioningRow } from '../domain/argusTodayView';
 import { useTodayHeadline } from '../hooks/useTodayHeadline';
+import { useMarketShock } from '../hooks/useMarketShock';
 import { headlineProjectionInput,
   type TodayHeadlineEntry } from '../lib/todayHeadline';
 import { useMarketLedger } from '../hooks/useMarketLedger';
@@ -29,8 +30,6 @@ import {
   MARKET_INSTRUMENTS, marketInstrument, normalizeMarketInstrument,
   type MarketHorizon, type MarketInstrumentSymbol,
 } from '../domain/marketInstruments';
-import { useJapanWatchlist } from '../hooks/useJapanWatchlist';
-import { useUSWatchlist } from '../hooks/useUSWatchlist';
 import { useAssets } from '../hooks/useAssets';
 import { usePublicDiagnostics } from '../hooks/useSystemHealth';
 import {
@@ -155,8 +154,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
   } = useAssetIntel({ publish: true, assets: assetsApi.assets });
   // Headline ETFs have their own backend-only quote reads. They are not added
   // to the user's watchlist and never cause a browser-side provider request.
-  const headlineJpQuotes = useJapanWatchlist(['1321', '1306']);
-  const headlineUsQuotes = useUSWatchlist(['SPY', 'QQQ']);
+  // v13.5.1: the selector tiles no longer render quotes, so the two
+  // tile-only watchlist requests are gone from the startup path entirely.
   const marketLedger = useMarketLedger();
   const marketNews = useMarketNews();
   const { diagnostics: publicDiagnostics } = usePublicDiagnostics();
@@ -219,6 +218,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
   // instrument still loads its heavy verified snapshot (above), so the Today
   // screen no longer waits on ~13 MB of serial transport and hashing.
   const headline = useTodayHeadline();
+  const marketShock = useMarketShock();
   // v11.9.0/v11.17.0: one automatic LOCAL snapshot per JST day once holdings
   // price — scenarioSummary込みで「あの日ARGUSが何を言っていたか」を残す(送信なし)。
   useEffect(() => {
@@ -296,6 +296,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
           apItems, eventNames: [...new Set((impEvents?.events ?? [])
             .filter((ie) => ie.countdown === 'D' || ie.countdown === 'D-1')
             .map((ie) => ie.eventCode))],
+          marketShockEvents: (marketShock.view?.events ?? []).map((event) => ({
+            eventId: event.eventId, severity: event.severity,
+            headlineJa: event.headlineJa, whyJa: event.whyJa,
+          })),
           sdBySymbol, flowBySymbol, scenarioBySymbol, planBySymbol,
           strategyState: portfolioStrategy.noHoldings ? null : {
             tactical: portfolioStrategy.tacticalBudget, single: portfolioStrategy.singleNameRisk,
@@ -316,7 +320,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     }, 12_000);
     return () => clearTimeout(t);
   }, [apItems, sdSignals, flowRecords, sessionBrief, impEvents, positionExposure,
-    scenarioSets, positionPlans, portfolioStrategy, assets, sdaBySymbol]);
+    scenarioSets, positionPlans, portfolioStrategy, assets, sdaBySymbol,
+    marketShock.view]);
 
   // Recovery Phase A: publish the one shared, fixed public diagnostics
   // snapshot. AppShell and Settings consume this same request-backed store.
@@ -374,8 +379,19 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     // authority during background revalidation. Decision consumers keep the
     // stricter decisionData (CURRENT_READY + fresh only). Only the selected
     // market's projection is ever displayed, so only it is supplied.
-    const selectedJpProjection = effectiveMarket === 'JP' ? selectedChart.data : null;
-    const selectedUsProjection = effectiveMarket === 'US' ? selectedChart.data : null;
+    // v13.5.1: switching the selector must feel immediate. The verified heavy
+    // snapshot remains the preferred source, but until it arrives for the
+    // newly selected instrument/horizon the projection renders from the
+    // already-verified compact headline (same canonical values for the
+    // visible 30-day window) — labeled via data-projection-source.
+    const headlineFallback = (symbol: string) =>
+      headlineProjectionInput(headlineEntry(symbol));
+    const selectedJpProjection = effectiveMarket === 'JP'
+      ? (selectedChart.data ? projectionInput(selectedChart.data)
+        : headlineFallback(selectedInstrument.JP)) : null;
+    const selectedUsProjection = effectiveMarket === 'US'
+      ? (selectedChart.data ? projectionInput(selectedChart.data)
+        : headlineFallback(selectedInstrument.US)) : null;
     const shortState = selectedJpChart?.todayIntelligence?.shortSelling;
     const jpFactors = [
       { key: 'TREND' as const, state: regime.data?.regime?.label === 'RISK_ON' ? '↑' as const : regime.data?.regime?.label === 'RISK_OFF' ? '↓' as const : '△' as const, source: 'market-regime' },
@@ -533,8 +549,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
         failureClass: marketNews.failureClass,
       },
       projection: {
-        JP: projectionInput(selectedJpProjection),
-        US: projectionInput(selectedUsProjection),
+        JP: selectedJpProjection,
+        US: selectedUsProjection,
       },
       selectedInstrument,
       systemStatus: { data: dataQuality, backup: backup.protectionLevelJa,
@@ -550,63 +566,46 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     selectedInstrument, effectiveMarket, selectedChart.decisionData, decisionCalendar,
     sdaBySymbol]);
 
-  const todayInstruments = useMemo(() => {
-    const moves = new Map(argusToday.indexMoves.map((move) => [move.symbol, move]));
-    const quotes = new Map([
-      ...(headlineJpQuotes.data?.stocks ?? []),
-      ...(headlineUsQuotes.data?.stocks ?? []),
-    ].map((quote) => [quote.symbol.toUpperCase(), quote.quoteTruth ?? null]));
-    // Each tile carries the compact headline chart plus canonical
-    // probabilities derived through the SAME projection domain logic the big
-    // chart uses (buildTodayProjection) — no duplicated probability rules.
-    return MARKET_INSTRUMENTS.map((item) => {
-      const entry = headline.document?.instruments?.[item.symbol];
-      const ready = entry?.status === 'ready' ? entry : undefined;
-      const projection = ready
-        ? buildTodayProjection(headlineProjectionInput(ready),
-          argusToday.finalAction, 5) : null;
-      const probabilities = projection?.directionProbabilities
-        ?? projection?.referenceDirectionProbabilities ?? null;
-      return {
-        symbol: item.symbol, market: item.market, shortLabel: item.shortLabel,
-        fullLabel: item.fullLabel, instrumentType: item.instrumentType,
-        underlying: item.underlying, quote: quotes.get(item.symbol) ?? null,
-        move: moves.get(item.symbol) ?? null,
-        statusText: ready ? '検証済スナップショット'
-          : headline.status === 'loading' ? '初回データを準備中'
-          : headline.status === 'error' ? '取得できません' : 'データ未提供',
-        loading: !ready && headline.status === 'loading',
-        error: !ready && headline.status === 'error'
-          ? headline.reason ?? 'headline_unavailable' : null,
-        headline: ready ? {
-          state: 'data' as const,
-          parentSnapshotId: ready.parentSnapshotId ?? null,
-          asOf: ready.periodEnd ?? null,
-          stale: headline.stale,
-          closes: (ready.bars ?? []).map((bar) => bar.close),
-          probabilities,
-          probabilityBasis: projection?.directionProbabilities ? 'exact' as const
-            : probabilities ? 'reference' as const : null,
-        } : {
-          state: (headline.status === 'loading' ? 'loading'
-            : headline.status === 'error' ? 'error' : 'unavailable') as
-            'loading' | 'error' | 'unavailable',
-          parentSnapshotId: null, asOf: null, stale: false,
-          closes: [], probabilities: null, probabilityBasis: null,
-        },
-      };
-    });
-  }, [argusToday.indexMoves, argusToday.finalAction, headlineJpQuotes.data,
-    headlineUsQuotes.data, headline]);
+  // v13.5.1: the four instruments are lightweight NAME selectors only.
+  const todayInstruments = useMemo(() => MARKET_INSTRUMENTS.map((item) => ({
+    symbol: item.symbol, market: item.market, shortLabel: item.shortLabel,
+    fullLabel: item.fullLabel, instrumentType: item.instrumentType,
+    underlying: item.underlying,
+  })), []);
+
+  // Which canonical source feeds the visible projection right now.
+  const projectionSource = selectedChart.data ? 'verified-snapshot' as const
+    : argusToday.projection ? 'headline' as const : null;
+
+  // Truthful freshness: an open session lamp must never imply live pricing
+  // when the canonical data is previous-close EOD.
+  const freshnessNoteJa = useMemo(() => {
+    const entry = headline.document?.instruments?.[selectedSymbol];
+    if (!entry || entry.status !== 'ready') return null;
+    const marketOpen = argusToday.sessionLamps.some((lamp) =>
+      lamp.key === entry.market && lamp.tone === 'open');
+    const quoteState = String(entry.quoteState ?? 'CLOSE').toUpperCase();
+    const eod = quoteState === 'CLOSE' || quoteState === 'STALE';
+    if (marketOpen && eod) {
+      return `表示価格は前日終値（${entry.periodEnd ?? '基準日不明'} EOD）· `
+        + 'ザラ場のリアルタイム価格ではありません';
+    }
+    if (eod) return `データ基準: ${entry.periodEnd ?? '不明'} 終値`;
+    return null;
+  }, [headline.document, selectedSymbol, argusToday.sessionLamps]);
 
   return (
     <PageShell
       title={tEn('page.today')}
       subtitle={<span>{formatDate(judgment.date)}</span>}
+      className="page--today"
     >
       <ArgusTodayPanel view={argusToday} instruments={todayInstruments}
         selectedSymbol={selectedSymbol} horizon={chartHorizon}
         chartLoad={selectedChart} onMode={changeMarketMode}
+        projectionSource={projectionSource} freshnessNoteJa={freshnessNoteJa}
+        shock={{ status: marketShock.status,
+          events: marketShock.view?.events ?? [] }}
         onInstrument={changeInstrument} onHorizon={changeChartHorizon}
         onNavigate={onNavigate} onNavigateToAsset={onNavigateToAsset}
         onNavigateToSettings={onNavigateToSettings}

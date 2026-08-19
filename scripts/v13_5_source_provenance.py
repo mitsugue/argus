@@ -18,51 +18,68 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5"
-ACCEPTED_V13_SOURCE = "52e71a6379d4954b124cb05bc309ba3bf1553222"
-ACCEPTED_V13_TREE = "de1c504a9ee191ff51f8d0b410df72eadc7b3cfc"
+PRODUCT_VERSION = "v13.5.1"
+ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
+ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
-    # v13.5.0 product restoration: the bounded owner-authorized path set for
-    # the Today headline bootstrap, four-chart restoration, and data-delivery
-    # performance fix. The accepted baseline is the LIVE v13.5 release
-    # (52e71a63…); anything outside this list fails the release closed.
+    # v13.5.1 real-device correction: the bounded owner-authorized path set for
+    # interaction performance (off-thread verification, idle-sliced device
+    # ledger appends, keep-mounted Today), the name-selector Today UX, the
+    # Seven Sign surface, the market-shock (Major News) pipeline, and the
+    # v13.5.1 identity. The accepted baseline is the LIVE v13.5.0 release
+    # (f79548bb…); anything outside this list fails the release closed.
     ".github/actions/v13-5-pre-mutation-rehearsal/action.yml",
     ".github/workflows/market-public-acceptance.yml",
+    "argus_market_shock.py",
     "argus_route_catalog.py",
     "argus_today_headline.py",
     "backend-version.json",
-    "docs/ops/v13-final-release-state-machine.md",
+    "product-version.json",
     "release/v13-accepted-fix-manifest.json",
     "scanner.py",
     "scripts/v13_5_pre_mutation_rehearsal.py",
+    "scripts/v13_5_release_certificate.py",
     "scripts/v13_5_source_provenance.py",
     "test_argus_deploy_scope.py",
+    "test_argus_market_shock.py",
     "test_argus_public_operational_boundary.py",
     "test_argus_release_identity.py",
     "test_argus_v12_4_0.py",
     "test_argus_v13_1_0.py",
-    "test_argus_today_headline.py",
-    "test_v13_5_pre_mutation_rehearsal.py",
-    "test_v13_5_release_certificate.py",
     "test_remote_journal_rearm.py",
+    "test_v13_5_pre_mutation_rehearsal.py",
     "test_v13_5_source_provenance.py",
+    "test_verify_public_candidate_release.py",
     "web/package-lock.json",
     "web/package.json",
-    "web/scripts/canonical-snapshot-selection.mjs",
+    "web/scripts/full-release-simulation.mjs",
+    "web/scripts/iphone-profile.mjs",
+    "web/scripts/market-data-truth.test.cjs",
     "web/scripts/mobile-today-acceptance.mjs",
     "web/scripts/mobile-today-integrity.test.mjs",
     "web/scripts/release-fixture-target.mjs",
+    "web/scripts/round3-product-final.test.mjs",
+    "web/scripts/runtime-version-truth.test.mjs",
     "web/scripts/today-benchmark.mjs",
-    "web/scripts/verified-snapshot.test.mjs",
+    "web/src/App.tsx",
+    "web/src/components/dashboard/MobileStickyCommand.css",
     "web/src/components/today/ArgusToday.css",
     "web/src/components/today/ArgusTodayPanel.tsx",
+    "web/src/hooks/useAssetIntel.ts",
     "web/src/hooks/useChartIntelligence.ts",
+    "web/src/hooks/useMarketShock.ts",
     "web/src/hooks/useTodayHeadline.ts",
+    "web/src/lib/notifications.ts",
+    "web/src/lib/sdaDeviceLocal.ts",
     "web/src/lib/todayHeadline.ts",
+    "web/src/lib/verifiedSnapshot.ts",
+    "web/src/lib/verify.worker.ts",
+    "web/src/lib/verifyWorkerClient.ts",
     "web/src/routes/CommandCenter.tsx",
+    "web/src/routes/PageShell.tsx",
 })
 
 
