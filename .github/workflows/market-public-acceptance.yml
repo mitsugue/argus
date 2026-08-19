@@ -9,6 +9,7 @@ on:
       # PR; ops workflows in the release lane must therefore also trigger the
       # producer, or their PRs can never merge.
       - '.github/workflows/prediction-ledger.yml'
+      - 'test_argus_public_operational_boundary.py'
       - 'web/scripts/public-market-acceptance.mjs'
       - 'web/scripts/public-market-acceptance.contract.test.mjs'
       - 'web/scripts/canonical-snapshot-selection.mjs'
