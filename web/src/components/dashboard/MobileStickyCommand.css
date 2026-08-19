@@ -1,6 +1,10 @@
 /* V11.21.0 — mobile-only compact command bar. Hidden on desktop. */
 .msc, .msc-spacer { display: none; }
 
+/* v13.5.1: Today stays mounted on other routes, so its body-portal bar must be
+   gated by the active route stamped on <body> — Today only. */
+body:not([data-argus-route='command']) > .msc { display: none !important; }
+
 @media (max-width: 720px) {
   .msc {
     position: fixed;

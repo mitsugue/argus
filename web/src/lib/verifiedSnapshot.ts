@@ -268,6 +268,92 @@ export function memorySnapshot(expectation: SnapshotExpectation) {
   return memory.get(snapshotKey(expectation)) ?? null;
 }
 
+// v13.5.1: the exact same verifySnapshot runs in a Web Worker so that
+// multi-megabyte parse/canonicalize/hash work never blocks input or paint on
+// the interaction thread. Falls back to in-thread verification wherever
+// workers are unavailable (older engines, some test environments).
+type VerifyOutcome = Awaited<ReturnType<typeof verifySnapshot>>;
+interface PendingVerify {
+  resolve: (value: VerifyOutcome) => void;
+}
+let verifyWorker: Worker | null | undefined;
+let verifyRequestSeq = 0;
+const pendingVerifies = new Map<number, PendingVerify>();
+
+async function workerInstance(): Promise<Worker | null> {
+  if (verifyWorker !== undefined) return verifyWorker;
+  // Worker construction (and its import.meta reference) lives in a separate
+  // module so CommonJS test loaders can consume this file; environments
+  // without a Worker global never load it and verify in-thread instead.
+  if (typeof Worker === 'undefined') {
+    verifyWorker = null;
+    return null;
+  }
+  try {
+    const { createVerifyWorker } = await import('./verifyWorkerClient');
+    verifyWorker = createVerifyWorker();
+    if (!verifyWorker) return null;
+    verifyWorker.onmessage = (event: MessageEvent<{
+      requestId: number; result: VerifyOutcome }>) => {
+      const pending = pendingVerifies.get(event.data.requestId);
+      if (pending) {
+        pendingVerifies.delete(event.data.requestId);
+        pending.resolve(event.data.result);
+      }
+    };
+    verifyWorker.onerror = () => {
+      // A broken worker must never wedge verification: fail every pending
+      // request over to the in-thread path and stop using the worker.
+      const pending = [...pendingVerifies.values()];
+      pendingVerifies.clear();
+      verifyWorker = null;
+      for (const entry of pending) {
+        entry.resolve({ ok: false, reason: 'worker_unavailable' });
+      }
+    };
+  } catch {
+    verifyWorker = null;
+  }
+  return verifyWorker;
+}
+
+async function verifyOffThread(
+  payload: { rawText?: string; candidate?: unknown },
+  expectation: SnapshotExpectation,
+): Promise<VerifyOutcome> {
+  const worker = await workerInstance();
+  if (!worker) {
+    const value = payload.rawText != null
+      ? JSON.parse(payload.rawText) : payload.candidate;
+    return verifySnapshot(value, expectation);
+  }
+  const requestId = ++verifyRequestSeq;
+  const result = await new Promise<VerifyOutcome>((resolve) => {
+    pendingVerifies.set(requestId, { resolve });
+    worker.postMessage({ requestId, expectation, ...payload });
+  });
+  if (!result.ok && result.reason === 'worker_unavailable') {
+    const value = payload.rawText != null
+      ? JSON.parse(payload.rawText) : payload.candidate;
+    return verifySnapshot(value, expectation);
+  }
+  return result;
+}
+
+/** Verify a raw HTTP response body without blocking the main thread. */
+export function verifySnapshotText(
+  rawText: string, expectation: SnapshotExpectation,
+): Promise<VerifyOutcome> {
+  return verifyOffThread({ rawText }, expectation);
+}
+
+/** Verify an already-materialized candidate without blocking the main thread. */
+export function verifySnapshotOffThread(
+  candidate: unknown, expectation: SnapshotExpectation,
+): Promise<VerifyOutcome> {
+  return verifyOffThread({ candidate }, expectation);
+}
+
 export async function readVerifiedSnapshot(expectation: SnapshotExpectation) {
   mark('cache-lookup-start');
   const key = snapshotKey(expectation);
@@ -278,7 +364,7 @@ export async function readVerifiedSnapshot(expectation: SnapshotExpectation) {
   try {
     const record = await requestValue(db.transaction(SNAPSHOT_STORE, 'readonly')
       .objectStore(SNAPSHOT_STORE).get(key)) as SnapshotRecord | null;
-    const verified = await verifySnapshot(record?.snapshot, expectation);
+    const verified = await verifySnapshotOffThread(record?.snapshot, expectation);
     if (!verified.ok) {
       if (record) {
         try { db.transaction(SNAPSHOT_STORE, 'readwrite')
@@ -311,7 +397,7 @@ export async function writeVerifiedSnapshot(
   candidate: unknown, expectation: SnapshotExpectation,
   current: VerifiedSnapshot<ChartIntelligencePayload> | null,
 ) {
-  const verified = await verifySnapshot(candidate, expectation);
+  const verified = await verifySnapshotOffThread(candidate, expectation);
   if (!verified.ok || !shouldReplaceSnapshot(current, verified.snapshot)) {
     return current ?? (verified.ok ? verified.snapshot : null);
   }
@@ -335,7 +421,8 @@ export async function writeVerifiedSnapshot(
     });
     const readBack = await requestValue(db.transaction(SNAPSHOT_STORE, 'readonly')
       .objectStore(SNAPSHOT_STORE).get(key)) as SnapshotRecord | null;
-    const readBackResult = await verifySnapshot(readBack?.snapshot, expectation);
+    const readBackResult = await verifySnapshotOffThread(
+      readBack?.snapshot, expectation);
     if (!readBackResult.ok ||
         readBackResult.snapshot.snapshotId !== verified.snapshot.snapshotId) {
       return current;

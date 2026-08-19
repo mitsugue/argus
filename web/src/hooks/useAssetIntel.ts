@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useAIJudgment } from './useAIJudgment';
 import { useActionLabels } from './useActionLabels';
 import { useCryptoWatchlist } from './useCryptoWatchlist';
@@ -803,11 +803,36 @@ export function useAssetIntel(opts: {
   }, [assets, al.data, aiJ.data, aiMeta, positionExposure, impEvents,
     importantEventsUnknown, priceBySymbol,
     sessionAuthorityMissing, isPartial, visLimited]);
+  // Ledger appends run one symbol per idle slice: the append itself verifies
+  // and re-encodes the stored document, which is far too heavy to run for the
+  // whole watchlist inside one main-thread task on a phone. FIFO order and
+  // every append are preserved — only the scheduling changes.
+  const sdaAppendQueue = useRef<Array<readonly [
+    SingleDecisionAuthorityResultV2, PredictionLedgerSdaAdapterV2]>>([]);
+  const sdaDrainArmed = useRef(false);
   useEffect(() => {
     for (const [symbol, result] of canonicalDecision.sda) {
       const adapter = canonicalDecision.bindings.get(symbol);
-      if (adapter) appendDeviceLocalSdaLedger(result, adapter);
+      if (adapter) sdaAppendQueue.current.push([result, adapter] as const);
     }
+    const scheduleDrain = () => {
+      if (sdaDrainArmed.current || sdaAppendQueue.current.length === 0) return;
+      sdaDrainArmed.current = true;
+      const runSlice = () => {
+        sdaDrainArmed.current = false;
+        const pair = sdaAppendQueue.current.shift();
+        if (!pair) return;
+        const [result, adapter] = pair;
+        appendDeviceLocalSdaLedger(result, adapter);
+        scheduleDrain();
+      };
+      const idle = (globalThis as {
+        requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      }).requestIdleCallback;
+      if (idle) idle(runSlice, { timeout: 4_000 });
+      else setTimeout(runSlice, 50);
+    };
+    scheduleDrain();
   }, [canonicalDecision]);
   const sdaBySymbol = canonicalDecision.sda;
   const sdaLedgerBindingBySymbol = canonicalDecision.bindings;

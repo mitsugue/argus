@@ -167,9 +167,9 @@ class DeployScopeTests(unittest.TestCase):
         product = json.loads((ROOT / "product-version.json").read_text())
         frontend = json.loads((ROOT / "web/package.json").read_text())["version"]
         backend = json.loads((ROOT / "backend-version.json").read_text())["version"]
-        self.assertEqual("v13.5", product["productVersion"])
-        self.assertEqual("13.3.7", frontend)
-        self.assertEqual("13.4.14", backend)
+        self.assertEqual("v13.5.1", product["productVersion"])
+        self.assertEqual("13.3.8", frontend)
+        self.assertEqual("13.4.15", backend)
 
     def test_release_gate_names_product_and_component_coordinates(self):
         source = (ROOT / "scripts/release_gate.sh").read_text()

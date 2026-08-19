@@ -180,6 +180,7 @@ ROUTE_CATALOG = (
     RouteCatalogEntry("/api/argus/macro-event-analysis", ("GET",), "api_argus_macro_event_analysis", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/market-ledger", ("GET",), "api_argus_market_ledger_view", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/market-news", ("GET",), "api_argus_market_news", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
+    RouteCatalogEntry("/api/argus/market-shock", ("GET",), "api_argus_market_shock", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/market-regime", ("GET",), "api_argus_market_regime", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/market-scan", ("POST",), "api_argus_market_scan", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/moomoo-capability", ("GET",), "api_argus_moomoo_capability", "AUTH_OPERATIONAL", "ADMIN_TOKEN", False, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),

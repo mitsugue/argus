@@ -28,10 +28,14 @@ assert.match(truth, /ms > nowMs/);
 assert.match(watchTruth, /snapshotDelay === 'LIVE'/);
 assert.match(jpHook, /normalizeJapanWatchSnapshot\([\s\S]*s\.data/);
 assert.match(usHook, /normalizeUSWatchSnapshot\([\s\S]*s\.data/);
-assert.match(today, /LIVE QUOTE/);
-assert.match(today, /ANALYSIS/);
-assert.match(today, /quoteAsOf\(quote\)/);
-assert.match(today, /quoteAge\(quote\)/);
+// v13.5.1: the four instruments are name-only selectors; quote truth now
+// lives in the explicit freshness note (open session must never imply live
+// pricing over EOD data) and in the projection's quote-state labels.
+assert.match(today, /at-freshness-note/);
+assert.match(today, /quoteDisplayLabel\(projection\.quoteState\)/);
+const commandCenter = read('../src/routes/CommandCenter.tsx');
+assert.match(commandCenter, /表示価格は前日終値/);
+assert.match(commandCenter, /リアルタイム価格ではありません/);
 assert.match(desk, /instrumentType/);
 assert.match(desk, /delayClass/);
 assert.match(desk, /quoteAsOf/);

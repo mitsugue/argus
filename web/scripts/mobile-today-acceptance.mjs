@@ -832,13 +832,21 @@ async function run() {
   await headlinePage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(headlinePage);
   try {
+    // v13.5.1 contract: four NAME selectors + the single selected projection
+    // chart rendered from the compact headline (data-projection-source), with
+    // its canonical probability row, all while heavy requests stay held.
     await waitForContractState(headlinePage, 'headline-first-decision-visibility',
       () => {
-        const tiles = [...document.querySelectorAll(
-          '.at-headline-chart[data-headline-state="data"]')];
-        const probabilityRows = document.querySelectorAll('.at-headline-probs');
+        const selectors = document.querySelectorAll(
+          '[data-argus-control="market-instrument"]');
+        const projection = document.querySelector(
+          '[data-argus-contract="today-projection-state-v1"]');
+        const probabilityRow = document.querySelector('.at-proj-prob');
         const primary = document.querySelector('.at-call strong');
-        return tiles.length === 4 && probabilityRows.length >= 4
+        return selectors.length === 4
+          && projection?.getAttribute('data-projection-state') === 'available'
+          && projection?.getAttribute('data-projection-source') === 'headline'
+          && !!probabilityRow
           && !!primary && (primary.textContent ?? '').trim().length > 0;
       }, null);
     evidence.headlineFirst = {

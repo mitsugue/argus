@@ -110,6 +110,7 @@ import argus_market_replay          # v13.2.0: deterministic Market Context repl
 import argus_market_intelligence    # deterministic Daily Market Sheet/backfill mapping
 import argus_verified_snapshot      # v13.3.0: atomic precomputed public view snapshots
 import argus_today_headline         # v13.5.0: compact Today bootstrap from verified snapshots
+import argus_market_shock           # v13.5.1: market-shock materiality (US30Y + corroborated news)
 import argus_tick_durability        # v13.3.1: bounded tick WAL/checkpoint/single-flight
 import argus_persistent_storage     # v13.3.1: fail-closed Render Disk contract
 import argus_remote_receipt_queue   # v13.4.2: fsynced async Remote Journal intents
@@ -15159,7 +15160,22 @@ _NEWS_THEMES = [
     {"key": "disaster", "labelJa": "災害・非常事態",
      "phrases": ["state of emergency", "major earthquake"],
      "phrasesJa": ["非常事態", "大地震", "大規模停電"]},
+    # v13.5.1 market-shock themes: long-end rate shocks and energy/geopolitics
+    # events that materially affect Japanese equities. These feed the shock
+    # materiality engine (argus_market_shock) in addition to the radar counts.
+    {"key": "rates_shock", "labelJa": "米長期金利ショック",
+     "phrases": ["treasury yield", "30-year yield", "bond selloff",
+                 "bond rout", "yields surge", "long-end yields"],
+     "phrasesJa": ["米長期金利", "30年債", "債券売り", "金利急騰"]},
+    {"key": "energy_geopolitics", "labelJa": "エネルギー・地政学",
+     "phrases": ["strait of hormuz", "hormuz", "oil supply", "oil shock",
+                 "tanker attack", "iran strikes", "ceasefire", "oil embargo"],
+     "phrasesJa": ["ホルムズ海峡", "原油供給", "石油ショック", "タンカー攻撃",
+                   "イラン", "停戦"]},
 ]
+# Raw fresh hits per market-shock theme (title/domain/sourceEpoch), refreshed
+# alongside the radar cache; consumed by the shock materiality engine only.
+_SHOCK_NEWS_HITS = {"rates_shock": [], "energy_geopolitics": []}
 _NEWS_CACHE     = {"data": None, "expires": 0.0}
 _NEWS_TTL       = 1800   # 30 min — GDELT politeness
 _NEWS_FAIL_TTL  = 600    # back off 10 min after a failure (429 etc.)
@@ -15612,6 +15628,75 @@ def get_market_news():
 def api_argus_market_news():
     return jsonify(get_market_news())
 
+
+# ── v13.5.1 Market shock view (Major News correction) ────────────────────────
+# Direct long-end rate sensing (FRED DGS30) + corroborated shock-theme news +
+# cross-market confirmation, classified by the pure materiality engine.
+_DGS30_CACHE = {"data": None, "expires": 0.0}
+_DGS30_TTL = 2 * 3600
+_SHOCK_CACHE = {"data": None, "expires": 0.0}
+_SHOCK_TTL = 900
+
+
+def _dgs30_observations():
+    now = time.time()
+    if _DGS30_CACHE["data"] is not None and now < _DGS30_CACHE["expires"]:
+        return _DGS30_CACHE["data"]
+    raw = _fred_raw("DGS30", limit=400)
+    rows = []
+    for obs in (raw or {}).get("observations", []):
+        value = obs.get("value")
+        if value in (None, ".", ""):
+            continue
+        rows.append({"date": obs.get("date"), "value": value})
+    rows.reverse()  # FRED desc → ascending
+    if rows:
+        _DGS30_CACHE["data"] = rows
+        _DGS30_CACHE["expires"] = now + _DGS30_TTL
+    return rows
+
+
+def get_market_shock():
+    now = time.time()
+    if _SHOCK_CACHE["data"] is not None and now < _SHOCK_CACHE["expires"]:
+        return _SHOCK_CACHE["data"]
+    get_news_radar()  # refresh _SHOCK_NEWS_HITS alongside the radar cache
+    now_iso = datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    observations = _dgs30_observations()
+    if observations:
+        long_end = argus_market_shock.evaluate_long_end_rates(
+            observations, now=datetime.now(pytz.utc))
+    else:
+        long_end = {"status": "DATA_GATED", "reason": "dgs30_unavailable"}
+    themes = [argus_market_shock.evaluate_news_theme(
+        _SHOCK_NEWS_HITS.get(key) or [], theme_key=key, now_epoch=now)
+        for key in ("rates_shock", "energy_geopolitics")]
+    rates = _rates_snapshot_base()
+    us10y_change = (rates.get("us10y") or {}).get("changeBp")
+    view = argus_market_shock.build_market_shock_view(
+        long_end=long_end, themes=themes,
+        cross_market={
+            "vixChange": (rates.get("vix") or {}).get("change"),
+            "usdJpyChange": (rates.get("usdJpy") or {}).get("change"),
+            "us10yChangeBp": us10y_change,
+        }, now_iso=now_iso)
+    _SHOCK_CACHE["data"] = view
+    _SHOCK_CACHE["expires"] = now + _SHOCK_TTL
+    return view
+
+
+@app.route("/api/argus/market-shock")
+def api_argus_market_shock():
+    """Deterministic market-shock materiality view. Read-only; no AI calls."""
+    try:
+        return jsonify(get_market_shock())
+    except Exception:
+        return jsonify({
+            "schemaVersion": argus_market_shock.MARKET_SHOCK_SCHEMA,
+            "status": "unavailable", "eventCount": 0, "events": [],
+            "automaticAiCalls": 0,
+        })
+
 def get_news_radar():
     now = time.time()
     if _NEWS_CACHE["data"] is not None and now < _NEWS_CACHE["expires"]:
@@ -15659,7 +15744,12 @@ def get_news_radar():
                         continue          # one headline per outlet per theme
                     seen_domains.add(dom)
                     hits.append({"title": title[:140], "url": a.get("url", ""),
-                                 "source": dom, "seen": a.get("seen", "")})
+                                 "source": dom, "seen": a.get("seen", ""),
+                                 "sourceEpoch": a.get("sourceEpoch")})
+            if t["key"] in _SHOCK_NEWS_HITS:
+                _SHOCK_NEWS_HITS[t["key"]] = [
+                    {"title": h["title"], "domain": h["source"],
+                     "sourceEpoch": h.get("sourceEpoch")} for h in hits]
             themes_out.append({
                 "key": t["key"], "labelJa": t["labelJa"],
                 "count": len(hits), "level": _news_theme_level(len(hits)),

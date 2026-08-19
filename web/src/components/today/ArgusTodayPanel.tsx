@@ -7,22 +7,7 @@ import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import type {
   MarketHorizon, MarketInstrumentMarket, MarketInstrumentSymbol,
 } from '../../domain/marketInstruments';
-import {
-  quoteAge,
-  quoteAsOf,
-  type LiveQuote,
-} from '../../domain/liveQuote';
 import './ArgusToday.css';
-
-export interface TodayInstrumentHeadline {
-  state: 'data' | 'loading' | 'unavailable' | 'error';
-  parentSnapshotId: string | null;
-  asOf: string | null;
-  stale: boolean;
-  closes: number[];
-  probabilities: { UP: number; RANGE: number; DOWN: number } | null;
-  probabilityBasis: 'exact' | 'reference' | null;
-}
 
 export interface TodayInstrumentState {
   symbol: MarketInstrumentSymbol;
@@ -31,12 +16,6 @@ export interface TodayInstrumentState {
   fullLabel: string;
   instrumentType: 'ETF';
   underlying: string;
-  quote: LiveQuote | null;
-  move: ArgusTodayView['indexMoves'][number] | null;
-  statusText: string;
-  loading: boolean;
-  error: string | null;
-  headline: TodayInstrumentHeadline;
 }
 
 export interface TodayChartLoadState {
@@ -57,6 +36,22 @@ interface Props {
   selectedSymbol: MarketInstrumentSymbol;
   horizon: MarketHorizon;
   chartLoad: TodayChartLoadState;
+  /** Which canonical source currently feeds the visible projection. */
+  projectionSource: 'verified-snapshot' | 'headline' | null;
+  /** Truthful session/data-freshness note (e.g. EOD prices while JP OPEN). */
+  freshnessNoteJa: string | null;
+  /** Market-shock materiality view for the Major News surface. */
+  shock: {
+    status: 'loading' | 'data' | 'error';
+    events: Array<{
+      eventId: string; eventClass: string;
+      severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+      headlineJa: string; whyJa: string;
+      crossMarket: { confirmed: boolean; signals: string[] };
+      sources: Array<{ name: string; kind: string }>;
+      asOf: string | null;
+    }>;
+  };
   onMode: (mode: MarketSelectionMode) => void;
   onInstrument: (market: 'JP' | 'US', symbol: string) => void;
   onHorizon: (horizon: MarketHorizon) => void;
@@ -77,45 +72,23 @@ const SEVEN_SIGN_MEANING: Record<number, string> = {
   1: '強いRisk Off', 2: 'REDUCE寄り', 3: '新規回避', 4: 'WAIT',
   5: '条件付きBUY寄り', 6: 'BUY寄り', 7: '最高クラスBUY期待値',
 };
+const SEVEN_SIGN_REASON_JA: Record<string, string> = {
+  decision_data_gated: '判断データ不足（DATA_GATED）',
+  calibration_shadow: '校正シャドー検証中',
+  calibration_missing: '校正データ未提供',
+  calibration_data_gated: '校正データ不足',
+  calibration_non_monotonic: '校正期待値の単調性未達',
+  calibration_sample_insufficient: '校正サンプル数不足',
+  calibration_not_out_of_sample: 'アウトオブサンプル検証未達',
+  calibration_holdout_mutable: 'ホールドアウト不変性未達',
+  calibration_artifact_not_verified: '校正アーティファクト未検証',
+  reason_unavailable: '理由コード未提供',
+};
 const fmt = (v: number) => v >= 1000 ? v.toLocaleString('ja-JP', { maximumFractionDigits: 1 }) : v.toFixed(2);
 const fmtMove = (v: number, suffix = '') => `${fmt(v)}${suffix}`;
 const shortDate = (value?: string | null) => value ? value.slice(5).replace('-', '/') : '';
-const moveTone = (value: number, previous?: number | null) => previous == null || value === previous
-  ? 'flat' : value > previous ? 'up' : 'down';
 const zoneLabel = (kind: '支持' | '抵抗', status: string) =>
   `${kind}${status === 'reclaimed' ? '（回復）' : status === 'broken' ? '（突破済み）' : ''}`;
-
-// One of the four always-visible headline charts: ~30 verified closes plus
-// the canonical UP/RANGE/DOWN probabilities. Every state is explicit — a tile
-// is data, loading, unavailable, or error, never silent blank space.
-const HeadlineMiniChart: React.FC<{ headline: TodayInstrumentHeadline }> = ({ headline }) => {
-  if (headline.state !== 'data' || headline.closes.length < 2) {
-    return <div className="at-headline-chart" data-headline-state={headline.state}>
-      <span>{headline.state === 'loading' ? 'データ確認中'
-        : headline.state === 'error' ? '取得できません' : 'データ未提供'}</span>
-    </div>;
-  }
-  const values = headline.closes;
-  const lo = Math.min(...values), hi = Math.max(...values), span = hi - lo || 1;
-  const points = values.map((value, index) =>
-    `${(index / (values.length - 1)) * 140},${40 - (value - lo) / span * 32}`).join(' ');
-  const rising = values.at(-1)! >= values[0];
-  return <div className="at-headline-chart" data-headline-state="data"
-    data-parent-snapshot-id={headline.parentSnapshotId ?? undefined}>
-    <svg viewBox="0 0 140 44" role="img" aria-label="過去30営業日の検証済終値"
-      preserveAspectRatio="none">
-      <polyline points={points} className={rising ? 'is-up' : 'is-down'} />
-    </svg>
-    {headline.probabilities && <span className="at-headline-probs"
-      data-probability-basis={headline.probabilityBasis ?? undefined}>
-      <b className="is-up">↑{headline.probabilities.UP}%</b>
-      <b className="is-range">→{headline.probabilities.RANGE}%</b>
-      <b className="is-down">↓{headline.probabilities.DOWN}%</b>
-      {headline.probabilityBasis === 'reference' && <i>参考</i>}
-    </span>}
-    {headline.stale && <i className="at-headline-stale">再検証中</i>}
-  </div>;
-};
 
 interface PriceLabel { key: string; label: string; value: number; priority: number; tone: string }
 
@@ -147,9 +120,10 @@ const ProjectionChart: React.FC<{
   responseSnapshotId: string | null;
   snapshotState: string;
   revalidationState: string;
+  source?: 'verified-snapshot' | 'headline' | null;
   onActivate?: () => void;
 }> = ({ projection, snapshotId, responseSnapshotId, snapshotState,
-  revalidationState, onActivate }) => {
+  revalidationState, source, onActivate }) => {
   const all = projection.history.map((point) => point.value).concat([
     projection.baseLow, projection.baseHigh, projection.upside, projection.downside, projection.invalidation,
     ...(projection.support ? [projection.support.low, projection.support.high] : []),
@@ -188,6 +162,7 @@ const ProjectionChart: React.FC<{
   return <div className="at-projection" role={onActivate ? 'link' : undefined}
     data-argus-contract="today-projection-state-v1"
     data-projection-state="available"
+    data-projection-source={source ?? undefined}
     data-projection-snapshot-id={snapshotId ?? undefined}
     data-projection-response-snapshot-id={responseSnapshotId ?? undefined}
     data-projection-snapshot-state={snapshotState}
@@ -260,6 +235,7 @@ const ProjectionChart: React.FC<{
 
 export const ArgusTodayPanel: React.FC<Props> = ({
   view, instruments, selectedSymbol, horizon, chartLoad,
+  projectionSource, freshnessNoteJa, shock,
   onMode, onInstrument, onHorizon, onNavigate, onNavigateToAsset, onNavigateToSettings, aiButton,
 }) => {
   const projection = view.projectionsByHorizon[`${horizon}D`] ?? view.projection;
@@ -325,11 +301,38 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         <b>{view.actionScore == null ? '— / 7' : `${view.actionScore} / 7`}</b>
         <span>{sevenSignLabel} · {view.canonicalDecision.sevenSign.status}</span>
       </div>
-      {view.actionScore != null && <div className="at-meter"
-        aria-label={`Seven Sign ${view.actionScore} ${view.canonicalDecision.sevenSign.status}`}>
-        {[1, 2, 3, 4, 5, 6, 7].map((level) => <i key={level}
-          className={level === view.actionScore ? 'active' : ''}><span>{level}</span></i>)}
-      </div>}
+      {/* v13.5.1: every canonical Seven Sign level resolves visibly. The
+          current level is marked when it exists; when it does not, the exact
+          machine reason codes are shown instead of an empty meter. Nothing
+          here is computed client-side — it renders the SDA projection. */}
+      <div className="at-seven-ladder" data-argus-contract="seven-sign-ladder-v1"
+        data-seven-status={view.canonicalDecision.sevenSign.status}
+        data-seven-level={view.actionScore ?? undefined}
+        aria-label={`Seven Sign ${view.actionScore ?? '未確定'} / 7 · ${view.canonicalDecision.sevenSign.status}`}>
+        {[1, 2, 3, 4, 5, 6, 7].map((level) => <div key={level}
+          className={level === view.actionScore ? 'is-current' : ''}
+          data-seven-sign-level={level}>
+          <b>{level}</b><span>{SEVEN_SIGN_MEANING[level]}</span>
+          {level === view.actionScore && <i>◀ 現在</i>}
+        </div>)}
+        {view.actionScore == null && <p className="at-seven-gated">
+          現在のレベルは未確定（{view.canonicalDecision.sevenSign.status}）：
+          {(view.canonicalDecision.sevenSign.reasonCodes.length
+            ? view.canonicalDecision.sevenSign.reasonCodes
+            : ['reason_unavailable']).map((code) =>
+            SEVEN_SIGN_REASON_JA[code] ?? code).join(' / ')}
+        </p>}
+        {view.actionScore != null
+          && view.canonicalDecision.sevenSign.status !== 'PRODUCTION'
+          && <p className="at-seven-gated">
+          {view.canonicalDecision.sevenSign.status === 'SHADOW'
+            ? '校正はシャドー検証中（本番採用前）'
+            : '校正データ不足のため参考レベル'}
+          {view.canonicalDecision.sevenSign.reasonCodes.length > 0
+            && ` · ${view.canonicalDecision.sevenSign.reasonCodes.map((code) =>
+              SEVEN_SIGN_REASON_JA[code] ?? code).join(' / ')}`}
+        </p>}
+      </div>
       <div className="at-action-plan" aria-label="行動条件">
         <div><b>今すること</b><span>{actionCopy}</span></div>
         <div><b>目標</b><span>{target ? `${target.value} ${target.unit}` : '検証済み目標なし'}</span></div>
@@ -368,40 +371,24 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           onClick={() => onMode(mode)}>{mode}</button>)}
         <span>SELECTED {view.selectedMarket}</span>{view.globalRisk && <em>GLOBAL {view.globalRisk}</em>}
       </div>
-      <div className="at-index-strip" aria-label="指数連動ETFのクオートと分析">
-        {instruments.map((instrument) => {
-          const move = instrument.move;
-          const quote = instrument.quote;
-          const quoteLabel = quote?.delayClass === 'LIVE' ? 'LIVE QUOTE' : 'QUOTE';
-          return <button type="button" key={instrument.symbol}
-            data-argus-control="market-instrument"
-            data-instrument={instrument.symbol}
-            aria-pressed={instrument.symbol === selectedSymbol}
-            onClick={() => onInstrument(instrument.market, instrument.symbol)}
-            className={`${move ? `is-${moveTone(move.value, move.previous)}` : 'is-pending'} ${instrument.symbol === selectedSymbol ? 'is-selected' : ''}`}>
-            <span className="at-index-name" title={`${instrument.fullLabel} · underlying ${instrument.underlying}`}>
-              {instrument.shortLabel}
-            </span>
-            <small className="at-index-type">{instrument.instrumentType}</small>
-            {quote?.price != null
-              ? <><i className="at-index-section">{quoteLabel}</i>
-                <b>{formatInstrumentPrice(quote.price, `${instrument.market}:${instrument.symbol}`)}</b>
-                <em className="at-index-truth">
-                  <mark data-delay={quote.delayClass}>{quote.delayClass}</mark>
-                  {quote.provider} · {quoteAsOf(quote)} · {quoteAge(quote)}
-                </em></>
-              : <><i className="at-index-section">QUOTE</i>
-                <b className="at-index-pending">未取得</b>
-                <em className="at-index-truth"><mark data-delay="OFFLINE">OFFLINE</mark> provider 未取得 · asOf 未検証</em></>}
-            {move ? <><i className="at-index-section">ANALYSIS</i>
-              <b className="at-index-analysis">{fmtMove(move.value, move.suffix)}</b>
-              <em>{move.directionLabel ?? ''} · {move.status ?? 'close'} {shortDate(move.asOf)}</em></>
-              : <><b className="at-index-pending">準備中</b>
-                <em>{instrument.error ? '要更新' : instrument.statusText}</em></>}
-            <HeadlineMiniChart headline={instrument.headline} />
-          </button>;
-        })}
+      {/* v13.5.1: four lightweight NAME selectors only. All chart, price,
+          and probability information lives in the single selected projection
+          chart below — no duplicated mini-charts or probability chips. */}
+      <div className="at-index-strip at-index-strip--selectors"
+        role="group" aria-label="銘柄選択">
+        {instruments.map((instrument) => <button type="button"
+          key={instrument.symbol}
+          data-argus-control="market-instrument"
+          data-instrument={instrument.symbol}
+          aria-pressed={instrument.symbol === selectedSymbol}
+          onClick={() => onInstrument(instrument.market, instrument.symbol)}
+          className={instrument.symbol === selectedSymbol ? 'is-selected' : ''}
+          title={`${instrument.fullLabel} · underlying ${instrument.underlying}`}>
+          <span className="at-index-name">{instrument.shortLabel}</span>
+          <small className="at-index-type">{instrument.instrumentType}</small>
+        </button>)}
       </div>
+      {freshnessNoteJa && <p className="at-freshness-note">{freshnessNoteJa}</p>}
       <div className="at-chart-controls">
         <div className="at-chart-status" data-snapshot-state={chartLoad.snapshotState}
           data-snapshot-id={chartLoad.snapshotId ?? undefined}>
@@ -419,7 +406,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         snapshotId={chartLoad.snapshotId}
         responseSnapshotId={coherentResponseSnapshotId}
         snapshotState={chartLoad.snapshotState}
-        revalidationState={revalidationState} />
+        revalidationState={revalidationState}
+        source={projectionSource} />
         : <div className="at-projection-missing" aria-busy={chartLoad.loading}
           data-argus-contract="today-projection-state-v1"
           data-projection-state="missing"
@@ -501,9 +489,33 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     </div></Compact>}
 
     <Compact title="重大ニュース" className={`at-news-card ${view.newsCardState.status !== 'live' ? 'is-stale' : ''}`}>
+      {/* v13.5.1: materially market-moving conditions (long-end rate shocks,
+          corroborated geopolitical/energy events) render first with severity,
+          why-it-matters, and sources. Absence is stated explicitly with what
+          is being monitored — never a bare generic empty state. */}
+      {shock.status === 'data' && shock.events.length > 0 && <div className="at-shock">
+        {shock.events.map((event) => <div key={event.eventId}
+          className="at-shock-event" data-shock-severity={event.severity}
+          data-shock-class={event.eventClass}>
+          <div className="at-shock-head">
+            <mark data-severity={event.severity}>{event.severity}</mark>
+            <b>{event.headlineJa}</b>
+          </div>
+          <span>{event.whyJa}</span>
+          <em>{event.sources.map((source) => source.name).join(' · ')}
+            {event.asOf ? ` · ${event.asOf}` : ''}
+            {event.crossMarket.confirmed
+              && ` · 市場横断確認: ${event.crossMarket.signals.join('/')}`}</em>
+        </div>)}
+      </div>}
+      {shock.status === 'data' && shock.events.length === 0
+        && <p className="at-shock-clear">市場影響級イベント: 現在なし
+          （監視中: 米長期金利 · エネルギー地政学 · 市場横断確認）</p>}
+      {shock.status === 'error'
+        && <p className="at-shock-clear">市場ショック監視: 取得できません</p>}
       {view.news.length ? <div className="at-news">
       {view.news.map((row) => <a key={row.id} href={row.url} target="_blank" rel="noreferrer"><b>{row.titleJa}</b><span>{row.source}</span></a>)}
-      </div> : <div className="at-news-zero"><b>{view.newsCardState.status === 'live' ? '現在なし' : 'ニュース確認要'}</b>
+      </div> : <div className="at-news-zero"><b>{view.newsCardState.status === 'live' ? '一般ニュース: 現在なし' : 'ニュース確認要'}</b>
         <span>最終確認 {view.newsCardState.lastChecked ? new Date(view.newsCardState.lastChecked).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '—'}</span></div>}
     </Compact>
 

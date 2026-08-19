@@ -87,7 +87,11 @@ assert.equal(instruments.normalizeMarketInstrument('US', 'bad'), 'SPY');
 assert.match(command, /MARKET_INSTRUMENTS\.map/);
 assert.match(command, /horizon:\s*chartHorizon/);
 assert.match(today, /instruments\.map/);
-assert.match(today, /move \?/);
+// v13.5.1: the four instruments are lightweight NAME selectors; the one
+// selected projection chart below carries all data and probabilities.
+assert.match(today, /at-index-strip--selectors/);
+assert.doesNotMatch(today, /HeadlineMiniChart|at-headline-probs/);
+assert.match(today, /data-projection-source/);
 assert.match(todayCss, /grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
 
 assert.match(hook, /isVerifiedMarketInstrument/);

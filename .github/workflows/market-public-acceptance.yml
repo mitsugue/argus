@@ -192,8 +192,8 @@ jobs:
             --runtime-proof-two artifacts/simulation-2/zero-install-runtime-proof-2.json \
             --out artifacts/v13-release-proof/certificate.json
           python3 -B scripts/v13_5_source_provenance.py \
-            --accepted-source 52e71a6379d4954b124cb05bc309ba3bf1553222 \
-            --accepted-tree de1c504a9ee191ff51f8d0b410df72eadc7b3cfc \
+            --accepted-source f79548bb274c5c5acc4075c181195834c252d54d \
+            --accepted-tree bdba7c970872b92b88bc6e7cc7b0b8afe4785a96 \
             --candidate-sha '${{ github.event.pull_request.head.sha }}' \
             --candidate-tree '${{ steps.candidate.outputs.tree }}' \
             --certificate artifacts/v13-release-proof/certificate.json \
