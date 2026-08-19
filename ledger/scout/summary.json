@@ -1,8 +1,12 @@
 {
- "updated": "2026-07-22",
+ "updated": "2026-08-19",
  "engineVersion": "scout-ledger-v1",
+ "mode": "shadow",
+ "authority": "SHADOW_DERIVED",
+ "canonicalPredictionLedger": false,
+ "calibrationEligible": false,
  "byBucket": {},
  "byFlowClass": {},
  "n": 0,
- "noteJa": "entry-scoutのスコア/フロー分類を実現リターンで採点。scoreが高い局面ほど上がったか、買い戻し主導と推定した時に失速したか等を蓄積(校正)。最低20件貯まるまで参考。"
+ "noteJa": "SHADOW/DERIVED互換診断。正本Prediction Ledger、forward-live校正、最終判断権限には使用しない。"
 }
