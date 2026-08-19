@@ -168,12 +168,22 @@ export interface NotifInputs {
     eventId: string; severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
     headlineJa: string; whyJa: string;
   }>;
+  /** v13.5.3: Nikkei mail intelligence events. Only HIGH/CRITICAL with
+   * alertEligible (fresh create or severity escalation — never a backfill,
+   * never a cosmetic revision) reach Alerts. */
+  newsIntelEvents?: Array<{
+    eventId: string; revision: number;
+    severity: 'INFO' | 'WATCH' | 'HIGH' | 'CRITICAL';
+    headlineJa: string; whyJa: string;
+    confirmationState: string; alertEligible: boolean;
+  }>;
 }
 
 const MATERIAL_NOTIFICATION_TYPES = new Set([
   'primary_action_changed', 'authority_lost', 'target_reached', 'invalidation_reached',
   'p0_priority', 'p1_held_priority', 'event_before', 'scenario_change', 'plan_change',
   'strategy_risk', 'sync_backup_warning', 'restore_not_verified', 'market_shock',
+  'news_intel',
 ]);
 
 function preferenceFor(eventType: string): keyof NotificationPreferences {
@@ -201,6 +211,26 @@ function marketShockCandidates(inputs: NotifInputs) {
     }));
 }
 
+/** v13.5.3: Nikkei mail-intelligence alerts. Dedupe key includes severity so
+ * a WATCH→CRITICAL escalation re-alerts once while repeated CRITICAL
+ * duplicates stay silent. */
+function newsIntelCandidates(inputs: NotifInputs) {
+  return (inputs.newsIntelEvents ?? [])
+    .filter((event) => event.alertEligible
+      && (event.severity === 'HIGH' || event.severity === 'CRITICAL'))
+    .map((event) => ({
+      eventType: 'news_intel', severity: 'high' as const, symbol: null,
+      assetName: null,
+      titleJa: `日経速報（${event.severity}）: ${event.headlineJa.slice(0, 60)}`,
+      bodyJa: event.headlineJa,
+      whyJa: `${event.whyJa}${event.confirmationState === 'MARKET_CONFIRMED'
+        ? ' · 市場確認済み' : ' · 市場確認待ち'}`,
+      checkNextJa: 'Todayの重大ニュースで詳細と市場反応を確認',
+      dedupeKey: `news-intel|${event.eventId}|${event.severity}`,
+      isPrivate: false,
+    }));
+}
+
 /** Run once per Today mount (throttled by dedupe/cooldowns internally). */
 let _lastRunMs = 0;
 export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
@@ -212,6 +242,7 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
   const cands: Omit<AppNotification, 'id' | 'createdAt' | 'deliveryState'>[] = [];
   const nm = (sym: string | null, name?: string | null) => sym ? jpDisplay(sym, name ?? undefined) : '';
   cands.push(...marketShockCandidates(inp));
+  cands.push(...newsIntelCandidates(inp));
 
   const p0Now = inp.apItems.filter((i) => i.priorityRank === 'P0').map((i) => i.symbol);
   const p1HeldNow = inp.apItems.filter((i) => i.priorityRank === 'P1' && i.isHeld).map((i) => i.symbol);

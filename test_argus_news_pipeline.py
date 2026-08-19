@@ -1,0 +1,184 @@
+"""v13.5.3 news pipeline e2e (§32 PRODUCT): mocked Gmail → live endpoints."""
+import base64
+import time
+
+import pytest
+
+import scanner
+import argus_gmail_intake as gi
+
+
+NOW_MS = str(int(time.time() * 1000))
+
+
+class Resp:
+    def __init__(self, status, body=None):
+        self.status_code = status
+        self._body = body or {}
+
+    def json(self):
+        return self._body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"http_{self.status_code}")
+
+
+def b64(text):
+    return base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
+
+
+def mail(mid, subject, *, sender="newsmail@nikkei.com",
+         auth="spf=pass dkim=pass header.d=nikkei.com",
+         body="詳細は本文参照 https://www.nikkei.com/article/a1"):
+    return {
+        "id": mid, "internalDate": NOW_MS,
+        "payload": {
+            "mimeType": "multipart/alternative",
+            "headers": [
+                {"name": "From", "value": f"日経 <{sender}>"},
+                {"name": "Return-Path", "value": "<b@nikkei.com>"},
+                {"name": "Authentication-Results",
+                 "value": f"mx.google.com; {auth}"},
+                {"name": "Subject", "value": subject},
+                {"name": "Message-ID", "value": f"<{mid}@nikkei.com>"},
+            ],
+            "parts": [{"mimeType": "text/plain",
+                       "body": {"data": b64(body)}}],
+        },
+    }
+
+
+@pytest.fixture()
+def news_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARGUS_NEWS_GMAIL_CLIENT_ID", "cid")
+    monkeypatch.setenv("ARGUS_NEWS_GMAIL_CLIENT_SECRET", "sec")
+    monkeypatch.setenv("ARGUS_NEWS_GMAIL_REFRESH_TOKEN", "rt")
+    monkeypatch.setenv("ARGUS_NEWS_ALLOWED_SENDER_DOMAINS", "nikkei.com")
+    monkeypatch.setattr(scanner, "_news_intake_file",
+                        lambda: str(tmp_path / "news_state.json"))
+    monkeypatch.setitem(scanner._NEWS_LOADED, "value", True)
+    fresh = {
+        "intakeState": {}, "events": {}, "order": [], "audit": [],
+        "aiCache": {}, "observedSenders": {},
+        "health": dict(scanner._NEWS_INTEL["health"],
+                       status="MAILBOX_UNCONFIGURED", emailsSeen=0,
+                       quarantined=0, duplicatesSuppressed=0,
+                       parseFailures=0, alertsEligible=0),
+    }
+    monkeypatch.setattr(scanner, "_NEWS_INTEL", fresh)
+    # keep corroboration deterministic and offline
+    monkeypatch.setattr(scanner, "_news_corroboration", lambda family: {
+        "confirmed": True, "signals": ["vix_spike", "rates_move"],
+        "readings": [{"key": "us30y", "labelJa": "米30年債", "value": 5.31,
+                      "change": 22.0, "unit": "%", "asOf": "2026-08-19"}],
+        "missing": []})
+    monkeypatch.setattr(scanner, "_openai_prose",
+                        lambda *a, **k: None)  # AI unavailable path
+    return fresh
+
+
+def gmail_routes(messages):
+    responses = {
+        "oauth2.googleapis.com": Resp(200, {"access_token": "at"}),
+        "/messages?": None,
+    }
+
+    def http(method, url, **kw):
+        if "oauth2.googleapis.com" in url:
+            return Resp(200, {"access_token": "at"})
+        for mid, raw in messages.items():
+            if url.endswith(f"/messages/{mid}"):
+                return Resp(200, raw)
+        if "/messages" in url:
+            return Resp(200, {"messages": [{"id": mid} for mid in messages]})
+        if "/profile" in url:
+            return Resp(200, {"historyId": "42"})
+        if "/history" in url:
+            return Resp(404, {})
+        raise AssertionError(url)
+    return http
+
+
+def run_cycle(monkeypatch, messages, backfill=False):
+    monkeypatch.setattr(scanner.requests, "request", gmail_routes(messages))
+    return scanner._news_intake_cycle(backfill=backfill)
+
+
+def test_material_mail_reaches_major_news_and_alert(monkeypatch, news_env):
+    status = run_cycle(monkeypatch, {
+        "m1": mail("m1", "米30年債利回りが5%を突破 急騰続く"),
+        "m2": mail("m2", "コラム:今週の読まれた記事まとめ"),
+    })
+    assert status == "HEALTHY"
+    client = scanner.app.test_client()
+    body = client.get("/api/argus/news-intelligence").get_json()
+    assert body["intakeStatus"] == "HEALTHY"
+    events = body["events"]
+    assert len(events) == 2
+    top = events[0]
+    assert top["eventType"] == "RATES"
+    assert top["severity"] == "CRITICAL"          # confirmed corroboration
+    assert top["confirmationState"] == "MARKET_CONFIRMED"
+    assert top["alertEligible"] is True
+    assert top["analysisState"] == "AI_ANALYSIS_UNAVAILABLE"
+    assert top["sdaAuthority"] is False
+    low = events[1]
+    assert low["severity"] == "INFO"              # low-value stays quiet
+    assert low["alertEligible"] is False
+    # copyright boundary: no body text in the public payload
+    assert "詳細は本文参照" not in str(body)
+
+    health = client.get("/api/argus/news-intake/health").get_json()
+    assert health["status"] == "HEALTHY"
+    assert health["emailsSeen"] == 2
+    assert health["alertsEligible"] == 1
+    assert health["observedSenderDomains"]["nikkei.com"]["count"] == 2
+
+
+def test_duplicate_email_and_spoof_quarantine(monkeypatch, news_env):
+    subject = "日銀が臨時会合を開催へ"
+    run_cycle(monkeypatch, {"d1": mail("d1", subject)})
+    # same content arrives again under a new gmail id (newsletter re-send)
+    run_cycle(monkeypatch, {"d1": mail("d1", subject),
+                            "d2": mail("d2", subject)})
+    health = scanner._NEWS_INTEL["health"]
+    assert health["duplicatesSuppressed"] >= 1
+
+    run_cycle(monkeypatch, {"s1": mail(
+        "s1", "重要:口座確認のお願い", sender="x@nikkei.com.evil.jp",
+        auth="spf=fail dkim=fail")})
+    assert health["quarantined"] == 1
+    client = scanner.app.test_client()
+    events = client.get("/api/argus/news-intelligence").get_json()["events"]
+    assert all("口座確認" not in e["headlineJa"] for e in events)
+
+
+def test_backfill_is_marked_and_never_alert_eligible(monkeypatch, news_env):
+    run_cycle(monkeypatch, {"r1": mail("r1", "米長期金利が急騰 財政懸念")},
+              backfill=True)
+    client = scanner.app.test_client()
+    events = client.get("/api/argus/news-intelligence").get_json()["events"]
+    assert events and events[0]["backfill"] is True
+    assert events[0]["alertEligible"] is False
+
+
+def test_escalation_realerts_but_cosmetic_duplicate_does_not(
+        monkeypatch, news_env):
+    subject = "イラン情勢が緊迫"
+    monkeypatch.setattr(scanner, "_news_corroboration", lambda family: {
+        "confirmed": False, "signals": [], "readings": [], "missing": []})
+    run_cycle(monkeypatch, {"e1": mail("e1", subject)})
+    first = scanner.app.test_client().get(
+        "/api/argus/news-intelligence").get_json()["events"][0]
+    assert first["severity"] in ("WATCH", "HIGH")
+    # market later confirms → severity increase on the SAME event → re-alert
+    monkeypatch.setattr(scanner, "_news_corroboration", lambda family: {
+        "confirmed": True, "signals": ["vix_spike", "fx_shock"],
+        "readings": [], "missing": []})
+    run_cycle(monkeypatch, {"e2": mail(
+        "e2", subject + " ホルムズ海峡で攻撃と報道")})
+    events = scanner.app.test_client().get(
+        "/api/argus/news-intelligence").get_json()["events"]
+    assert any(e["severity"] in ("HIGH", "CRITICAL") and e["alertEligible"]
+               for e in events)
