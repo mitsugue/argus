@@ -594,16 +594,31 @@ jobs:
           [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip Layer 2B"; exit 0; }
           # Records today's owner predictions + scores due horizons into the
           # PRIVATE repo (no-op if the owner hasn't synced / private store unset).
-          # workflow_http always prints its safe summary (now including the
-          # error name + status-class diagnostic) before exiting non-zero, so
-          # capture it FIRST and echo it even when the call fails.
+          # workflow_http always prints its safe summary (including the error
+          # name + status-class diagnostic) before exiting non-zero, so capture
+          # it FIRST and surface it in the log AND the summary either way.
+          #
+          # Truthful terminal states (owner directive):
+          #   SUCCESS      — recorded/scored (or an explicitly expected skip)
+          #   DATA_GATED   — the non-authoritative private mirror is
+          #                  unavailable (membership unreadable / never
+          #                  synced). Annotated loudly, but it must not turn
+          #                  the CANONICAL daily ledger run red.
+          #   FAILURE      — anything else (transport, auth, write failures).
           RC=0
           RESP=$(python3 "$RUNNER_TEMP/workflow_http.py" --name layer2b-run --method POST --timeout 120 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --expected-status not_configured --expected-status disabled \
             --expected-value private_store_not_configured \
             --url "$BE/api/argus/calibration/layer2b-run") || RC=$?
+          echo "layer2b result: $RESP"
           echo "🗂️ Layer 2B: \`${RESP:0:300}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$RC" -ne 0 ] && echo "$RESP" | grep -q '"error":"no_membership_synced"'; then
+            DIAG=$(echo "$RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('diagnostic') or 'no diagnostic')" 2>/dev/null || echo unparsed)
+            echo "::warning title=Layer 2B DATA_GATED::private membership mirror unavailable — $DIAG (owner: check ARGUS_LAYER2B_PRIVATE_TOKEN / re-sync watchlist)"
+            echo "🗂️ Layer 2B state: **DATA_GATED** — $DIAG" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           exit "$RC"
 
       - name: Decision Value shadow run (Phase 1 — private store, NO orders)
