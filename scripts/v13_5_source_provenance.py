@@ -45,6 +45,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "product-version.json",
     "release/v13-accepted-fix-manifest.json",
     "scanner.py",
+    "scripts/checkpoint_v2_isolated_probe.py",
     "scripts/normalized_hash_resource_probe.py",
     "scripts/v13_5_pre_mutation_rehearsal.py",
     "scripts/v13_5_release_certificate.py",
