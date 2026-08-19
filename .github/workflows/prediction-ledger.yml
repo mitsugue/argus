@@ -53,6 +53,12 @@ jobs:
           test -f scripts/run_prediction_ledger.py
           install -m 0644 scripts/run_prediction_ledger.py \
             "$RUNNER_TEMP/run_prediction_ledger.py"
+          # The Layer 2B / DV shadow steps run after the ledger-branch
+          # checkout, where scripts/ no longer exists in the working tree —
+          # stage the HTTP helper next to the ledger runtime.
+          test -f scripts/workflow_http.py
+          install -m 0644 scripts/workflow_http.py \
+            "$RUNNER_TEMP/workflow_http.py"
           for path in \
             argus_calibration.py \
             argus_decision_ledger.py \
@@ -592,7 +598,7 @@ jobs:
           # error name + status-class diagnostic) before exiting non-zero, so
           # capture it FIRST and echo it even when the call fails.
           RC=0
-          RESP=$(python3 scripts/workflow_http.py --name layer2b-run --method POST --timeout 120 \
+          RESP=$(python3 "$RUNNER_TEMP/workflow_http.py" --name layer2b-run --method POST --timeout 120 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --expected-status not_configured --expected-status disabled \
             --expected-value private_store_not_configured \
@@ -610,7 +616,7 @@ jobs:
           # Records today's shadow candidates + scores due horizons into the PRIVATE
           # repo only (research simulation; no order/broker/execute — ever). No-op
           # until the owner's Layer-2B private store is configured.
-          RESP=$(python3 scripts/workflow_http.py --name decision-value-shadow --method POST --timeout 120 \
+          RESP=$(python3 "$RUNNER_TEMP/workflow_http.py" --name decision-value-shadow --method POST --timeout 120 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --expected-status not_configured --expected-status disabled \
             --expected-value private_store_not_configured \

@@ -5,6 +5,10 @@ on:
     paths:
       - '.github/workflows/deploy-pages.yml'
       - '.github/workflows/market-public-acceptance.yml'
+      # The release gate requires a pre-merge admission certificate on every
+      # PR; ops workflows in the release lane must therefore also trigger the
+      # producer, or their PRs can never merge.
+      - '.github/workflows/prediction-ledger.yml'
       - 'web/scripts/public-market-acceptance.mjs'
       - 'web/scripts/public-market-acceptance.contract.test.mjs'
       - 'web/scripts/canonical-snapshot-selection.mjs'
