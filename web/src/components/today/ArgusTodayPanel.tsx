@@ -306,8 +306,10 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         data-seven-level={view.actionScore ?? undefined}>
         <summary aria-label={`Seven Sign ${view.actionScore ?? '未確定'} / 7 · ${view.canonicalDecision.sevenSign.status}`}>
           <small>SEVEN SIGN</small>
-          <b>{view.actionScore == null ? '—' : view.actionScore} / 7</b>
-          <span className="at-seven-status">{view.canonicalDecision.sevenSign.status}</span>
+          <b>{view.actionScore == null ? '— / 7' : `${view.actionScore} / 7`}</b>
+          <span className="at-seven-status">
+            {view.actionScore == null ? 'Calibration pending · ' : ''}
+            {view.canonicalDecision.sevenSign.status}</span>
           <span className="at-seven-chips" aria-hidden="true">
             {[1, 2, 3, 4, 5, 6, 7].map((level) => <i key={level}
               className={level === view.actionScore ? 'is-current' : ''}
