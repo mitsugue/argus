@@ -2553,6 +2553,26 @@ def _layer2b_read_latest():
         return None
 
 
+def _layer2b_read_diagnostic():
+    """WHY did the private membership read fail? Returns a status-class STRING
+    (membership_read=http_401 msg=Bad credentials …) — never a token or repo
+    content. The daily run failed silently for weeks because every GitHub error
+    collapsed into 'no_membership_synced'."""
+    repo = os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", "")
+    url = f"https://api.github.com/repos/{repo}/contents/membership/latest.json"
+    try:
+        r = requests.get(url, headers=_gh_private_headers(), timeout=15)
+    except Exception as e:
+        return f"membership_read=network_error_{type(e).__name__}"
+    detail = ""
+    try:
+        if r.headers.get("content-type", "").startswith("application/json"):
+            detail = str(r.json().get("message", ""))[:60]
+    except Exception:
+        pass
+    return f"membership_read=http_{r.status_code}" + (f" msg={detail}" if detail else "")
+
+
 # ── Layer 2B daily record + score (v10.85) ──────────────────────────────────
 # Scores the OWNER's watchlist privately, append-only + swap-safe: each day's
 # membership is frozen, predictions/scores are never deleted, and changing the
@@ -2648,7 +2668,8 @@ def _layer2b_run():
         return {"ok": False, "error": "private_store_not_configured"}
     mem = _layer2b_read_latest()
     if not mem or not mem.get("members"):
-        return {"ok": False, "error": "no_membership_synced"}
+        return {"ok": False, "error": "no_membership_synced",
+                "diagnostic": _layer2b_read_diagnostic()}
     members = [{"symbol": m.get("symbol"), "market": m.get("market")} for m in mem["members"]]
     prices = _layer2b_live_prices(members)
     today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
@@ -2725,7 +2746,11 @@ def _layer2b_run():
     summ = _layer2b_compute_summary(rows)
     _gh_private_put("summary.json", _json.dumps(summ, ensure_ascii=False, indent=2),
                     f"layer2b summary {today}", overwrite=True)
-    return {"ok": bool(ok_w), "recorded": new_count, "scored": scored_count,
+    if not ok_w:
+        return {"ok": False, "error": "private_store_write_failed",
+                "diagnostic": _layer2b_read_diagnostic(),
+                "recorded": new_count, "scored": scored_count, "date": today}
+    return {"ok": True, "recorded": new_count, "scored": scored_count,
             "heldInvalidClock": held_count, "totalRows": len(rows),
             "date": today, "summary": summ}
 

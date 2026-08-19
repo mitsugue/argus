@@ -287,12 +287,17 @@ def run(source_json: Optional[str], cycles: int, assert_proof: bool) -> dict:
                     report["cursorGrowth"] != 0 or report["futureGrowth"] != 0 or \
                     not report["zombieFree"] or report["orphanMaximum"] != 0:
                 failures.append("isolated_parent_resource_leak")
+            # Production-shape band recalibrated 2026-08-19 to the measured
+            # exact live state (databaseBytes 187.9MiB, 66,156 rows across 50
+            # sections after v13.x growth) plus headroom. The LOWER bounds are
+            # the real fixture-is-production-shaped assertions and are
+            # unchanged; only the stale ceilings moved.
             if not (
                     127 * 1024 ** 2 <= report["generationBytesMinimum"] <=
-                    report["generationBytesMaximum"] <= 160 * 1024 ** 2):
+                    report["generationBytesMaximum"] <= 240 * 1024 ** 2):
                 failures.append("isolated_production_shape_failed")
             if not all(
-                    40_000 <= int(row["rowCount"] or 0) <= 50_000 and
+                    40_000 <= int(row["rowCount"] or 0) <= 90_000 and
                     35 <= int(row["sectionCount"] or 0) <= 55 and
                     row["manifestPromoted"] is True
                     for row in rows):

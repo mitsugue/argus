@@ -113,39 +113,6 @@ jobs:
             2>/dev/null || echo '{}')
           echo "🔬 provider diag: \`${DIAG}\`" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Layer 2B daily run (owner watchlist — private store)
-        if: github.event.inputs.mode != 'ai-only'
-        env:
-          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
-        run: |
-          BE="https://argus-backend-3j2m.onrender.com"
-          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip Layer 2B"; exit 0; }
-          # Records today's owner predictions + scores due horizons into the
-          # PRIVATE repo (no-op if the owner hasn't synced / private store unset).
-          RESP=$(python3 scripts/workflow_http.py --name layer2b-run --method POST --timeout 120 \
-            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
-            --expected-status not_configured --expected-status disabled \
-            --expected-value private_store_not_configured \
-            --url "$BE/api/argus/calibration/layer2b-run")
-          echo "🗂️ Layer 2B: \`${RESP:0:200}\`" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Decision Value shadow run (Phase 1 — private store, NO orders)
-        if: github.event.inputs.mode != 'ai-only'
-        env:
-          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
-        run: |
-          BE="https://argus-backend-3j2m.onrender.com"
-          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip DV shadow"; exit 0; }
-          # Records today's shadow candidates + scores due horizons into the PRIVATE
-          # repo only (research simulation; no order/broker/execute — ever). No-op
-          # until the owner's Layer-2B private store is configured.
-          RESP=$(python3 scripts/workflow_http.py --name decision-value-shadow --method POST --timeout 120 \
-            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
-            --expected-status not_configured --expected-status disabled \
-            --expected-value private_store_not_configured \
-            --url "$BE/api/argus/decision-value/shadow-run")
-          echo "🎛️ DV shadow: \`${RESP:0:200}\`" >> "$GITHUB_STEP_SUMMARY"
-
       - name: Switch to ledger branch (create if missing)
         if: github.event.inputs.mode != 'ai-only'
         run: |
@@ -605,6 +572,50 @@ jobs:
             git commit -m "ledger: $(date -u +%F) append + evaluate"
             git push origin HEAD:ledger
           fi
+
+      # PRIVATE-store extras run LAST (v13.5.2): from 07-23 to 08-18 a Layer 2B
+      # private-store outage sat as step 4 of this serial job and aborted every
+      # canonical Prediction Ledger append that followed it. The canonical
+      # ledger must never be hostage to the optional private store, so these
+      # steps now run after the canonical commit. They still hard-fail the run
+      # (loud, notified) — only the ordering changed, not the assertions.
+      - name: Layer 2B daily run (owner watchlist — private store)
+        if: github.event.inputs.mode != 'ai-only'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip Layer 2B"; exit 0; }
+          # Records today's owner predictions + scores due horizons into the
+          # PRIVATE repo (no-op if the owner hasn't synced / private store unset).
+          # workflow_http always prints its safe summary (now including the
+          # error name + status-class diagnostic) before exiting non-zero, so
+          # capture it FIRST and echo it even when the call fails.
+          RC=0
+          RESP=$(python3 scripts/workflow_http.py --name layer2b-run --method POST --timeout 120 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --expected-status not_configured --expected-status disabled \
+            --expected-value private_store_not_configured \
+            --url "$BE/api/argus/calibration/layer2b-run") || RC=$?
+          echo "🗂️ Layer 2B: \`${RESP:0:300}\`" >> "$GITHUB_STEP_SUMMARY"
+          exit "$RC"
+
+      - name: Decision Value shadow run (Phase 1 — private store, NO orders)
+        if: github.event.inputs.mode != 'ai-only'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip DV shadow"; exit 0; }
+          # Records today's shadow candidates + scores due horizons into the PRIVATE
+          # repo only (research simulation; no order/broker/execute — ever). No-op
+          # until the owner's Layer-2B private store is configured.
+          RESP=$(python3 scripts/workflow_http.py --name decision-value-shadow --method POST --timeout 120 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --expected-status not_configured --expected-status disabled \
+            --expected-value private_store_not_configured \
+            --url "$BE/api/argus/decision-value/shadow-run")
+          echo "🎛️ DV shadow: \`${RESP:0:200}\`" >> "$GITHUB_STEP_SUMMARY"
 
       # The ledger is ARGUS's memory — a silent failure would quietly stop the
       # learning loop. Push a phone alert if ANY step above failed (v10.3.1).
