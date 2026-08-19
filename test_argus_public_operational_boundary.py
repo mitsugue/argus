@@ -1088,6 +1088,11 @@ def test_every_catalogued_public_route_rejects_private_domain_sentinels(
 
 def test_public_projection_is_unchanged_by_unknown_internal_fields(monkeypatch):
     monkeypatch.setattr(scanner, "_ai_now_iso", lambda: FIXED_NOW)
+    # systemHealth lamp details derive ages from the epoch clock; freeze it so
+    # the before/after projections cannot differ by a minute-boundary tick
+    # between the two requests (observed once in CI on an unchanged tree).
+    frozen_epoch = scanner.time.time()
+    monkeypatch.setattr(scanner.time, "time", lambda: frozen_epoch)
     client = scanner.app.test_client()
     before = client.get("/api/argus/data-quality/status").get_json()
     monkeypatch.setitem(scanner._REMOTE_CYCLE, "futureNested", {
