@@ -31,7 +31,19 @@ interface IntakeHealth {
   eventCount: number;
   observedSenderDomains: Record<string, { count: number; spf: boolean; dkim: boolean }>;
   allowedSenderDomains: string[];
+  perSource?: Record<string, {
+    state: string; observedCount?: number; lastAuthenticatedAt?: string | null;
+    lastProcessedAt?: string | null; parseFailures?: number;
+    quarantined?: number; lastMaterialEventAt?: string | null;
+  }>;
+  recentMessages?: Array<{ messageId: string; status: string;
+    source: string | null; at: string }>;
 }
+
+const SOURCE_LABEL_JA: Record<string, string> = {
+  NIKKEI: '日経', FEDERAL_RESERVE_BOARD: 'FRB', US_TREASURY: '米財務省',
+  BANK_OF_JAPAN: '日銀', BLS: '米労働統計局', EIA: '米EIA',
+};
 
 function baseUrl() {
   return (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)
@@ -121,6 +133,29 @@ export const NewsIntakePanel: React.FC = () => {
           <span style={{ color: 'var(--text-muted)' }}>{label}</span>
           <b>{value}</b>
         </div>)}
+        {health.perSource && <div style={{ marginTop: 6 }}
+          data-argus-contract="news-per-source-health-v1">
+          <span style={{ color: 'var(--text-muted)' }}>ソース別</span>
+          {Object.entries(health.perSource).map(([family, row]) => <div
+            key={family} style={{ display: 'flex',
+              justifyContent: 'space-between', gap: 8 }}>
+            <span>{SOURCE_LABEL_JA[family] ?? family}</span>
+            <b>{row.state === 'OBSERVED'
+              ? `${row.observedCount}通 · 最終 ${fmt(row.lastAuthenticatedAt)}`
+              + `${row.lastMaterialEventAt ? ' · 重要イベントあり' : ''}`
+              : '購読済・受信待ち'}</b>
+          </div>)}
+        </div>}
+        {(health.recentMessages ?? []).length > 0 && <div style={{ marginTop: 6 }}>
+          <span style={{ color: 'var(--text-muted)' }}>直近メール処理状態</span>
+          {(health.recentMessages ?? []).slice(0, 8).map((row) => <div
+            key={row.messageId} style={{ display: 'flex',
+              justifyContent: 'space-between', gap: 8 }}>
+            <span style={{ fontFamily: 'monospace' }}>{row.messageId.slice(0, 10)}…
+              {row.source ? ` ${SOURCE_LABEL_JA[row.source] ?? row.source}` : ''}</span>
+            <b>{row.status}</b>
+          </div>)}
+        </div>}
         {Object.keys(health.observedSenderDomains ?? {}).length > 0
           && <div style={{ marginTop: 4 }}>
             <span style={{ color: 'var(--text-muted)' }}>観測済み送信元ドメイン</span>

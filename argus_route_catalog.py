@@ -184,6 +184,7 @@ ROUTE_CATALOG = (
     RouteCatalogEntry("/api/argus/news-intelligence", ("GET",), "api_argus_news_intelligence", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/news-intake/health", ("GET",), "api_argus_news_intake_health", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/admin/news-intake/reprocess", ("POST",), "api_argus_admin_news_reprocess", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
+    RouteCatalogEntry("/api/argus/admin/news-intake/audit", ("GET",), "api_argus_admin_news_audit", "AUTH_OPERATIONAL", "ADMIN_TOKEN", False, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/market-regime", ("GET",), "api_argus_market_regime", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/market-scan", ("POST",), "api_argus_market_scan", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/moomoo-capability", ("GET",), "api_argus_moomoo_capability", "AUTH_OPERATIONAL", "ADMIN_TOKEN", False, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),

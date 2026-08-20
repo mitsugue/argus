@@ -15741,6 +15741,9 @@ _NEWS_INTEL = {
     "audit": [],                # bounded processing ledger (§25)
     "aiCache": {},              # fingerprint|policy -> validated analysis
     "observedSenders": {},      # domain -> {count, spf, dkim} (profile aid)
+    "sources": {},              # family -> per-source health (§6)
+    "messageStatus": {},        # gmailId -> {status, source, at} (§6)
+    "messageOrder": [],         # bounded recency of message ids
     "health": {
         "status": "MAILBOX_UNCONFIGURED", "lastSyncAt": None,
         "lastMessageAt": None, "lastProcessedAt": None, "lastEventAt": None,
@@ -15757,6 +15760,41 @@ _NEWS_THREAD_STARTED = {"value": False}
 def _news_allowed_sender_domains():
     raw = os.environ.get("ARGUS_NEWS_ALLOWED_SENDER_DOMAINS", "")
     return [d.strip() for d in raw.split(",") if d.strip()]
+
+
+def _news_source_domain_map():
+    """Owner-extensible domain→family map (ARGUS_NEWS_SOURCE_DOMAINS =
+    'domain=FAMILY,domain=FAMILY') layered over the built-in official seeds —
+    real observed mail extends coverage without a release (§9)."""
+    raw = os.environ.get("ARGUS_NEWS_SOURCE_DOMAINS", "")
+    mapping = {}
+    for pair in raw.split(","):
+        domain, _, family = pair.partition("=")
+        if domain.strip() and family.strip():
+            mapping[domain.strip().lower()] = family.strip().upper()
+    return mapping
+
+
+def _news_source_row(family):
+    return _NEWS_INTEL.setdefault("sources", {}).setdefault(family, {
+        "observedCount": 0, "lastAuthenticatedAt": None,
+        "lastProcessedAt": None, "parseFailures": 0, "quarantined": 0,
+        "lastMaterialEventAt": None, "lastSubjectPrefix": None,
+    })
+
+
+def _news_message_status(message_id, status, source=None):
+    if not message_id:
+        return
+    _NEWS_INTEL.setdefault("messageStatus", {})[message_id] = {
+        "status": status, "source": source, "at": _ai_now_iso()}
+    order = _NEWS_INTEL.setdefault("messageOrder", [])
+    if message_id in order:
+        order.remove(message_id)
+    order.append(message_id)
+    while len(order) > 120:
+        dropped = order.pop(0)
+        _NEWS_INTEL["messageStatus"].pop(dropped, None)
 
 
 def _news_intake_file():
@@ -15930,11 +15968,28 @@ def _news_process_message(message, *, backfill=False):
     profile["count"] += 1
     profile["spf"] = profile["spf"] or bool(auth.get("spf"))
     profile["dkim"] = profile["dkim"] or bool(auth.get("dkim"))
-    if not auth["authenticated"]:
+    source = argus_news_intelligence.resolve_source(
+        from_domain=domain, display_name=message.get("fromDisplay") or "",
+        link_domains=message.get("linkDomains") or [],
+        env_map=_news_source_domain_map())
+    if not auth["authenticated"] or source is None:
         health["quarantined"] += 1
-        _news_audit({"stage": "quarantined", "messageId": message.get("messageId"),
-                     "reasons": auth["quarantineReasons"][:4]})
+        reasons = list(auth["quarantineReasons"][:4])
+        if auth["authenticated"] and source is None:
+            reasons.append("source_family_unresolved")
+        if source:
+            _news_source_row(source)["quarantined"] += 1
+        _news_message_status(message.get("messageId"), "QUARANTINED", source)
+        _news_audit({"stage": "quarantined",
+                     "messageId": message.get("messageId"),
+                     "source": source, "fromDomain": domain,
+                     "subjectPrefix": subject[:60],
+                     "reasons": reasons})
         return None
+    source_row = _news_source_row(source)
+    source_row["observedCount"] += 1
+    source_row["lastAuthenticatedAt"] = _ai_now_iso()
+    source_row["lastSubjectPrefix"] = subject[:60]
 
     fingerprint = argus_news_intelligence.source_fingerprint(
         message_id=message.get("rfcMessageId") or message.get("messageId"),
@@ -15947,6 +16002,7 @@ def _news_process_message(message, *, backfill=False):
     existing = _NEWS_INTEL["events"].get(identity)
     if existing and fingerprint == existing.get("sourceFingerprint"):
         health["duplicatesSuppressed"] += 1
+        _news_message_status(message.get("messageId"), "DUPLICATE", source)
         _news_audit({"stage": "duplicate", "eventId": identity,
                      "messageId": message.get("messageId")})
         return None
@@ -15967,7 +16023,8 @@ def _news_process_message(message, *, backfill=False):
                      else {"confirmed": False, "readings": [], "missing": []})
     materiality = argus_news_intelligence.evaluate_materiality(
         taxonomy=taxonomy, staleness=staleness, source_authenticated=True,
-        ai_analysis=analysis, corroboration=corroboration, subject=subject)
+        ai_analysis=analysis, corroboration=corroboration, subject=subject,
+        source=source)
     received_ms = message.get("receivedEpoch")
     envelope_message = {
         "eventIdentity": identity, "fingerprint": fingerprint,
@@ -15981,13 +16038,15 @@ def _news_process_message(message, *, backfill=False):
         "severity": materiality["severity"], "headlineJa": subject})
     if revision_plan["action"] == "duplicate":
         health["duplicatesSuppressed"] += 1
+        _news_message_status(message.get("messageId"), "DUPLICATE", source)
         _news_audit({"stage": "duplicate_revision", "eventId": identity})
         return None
     event = argus_news_intelligence.build_news_event(
         message=envelope_message, taxonomy=taxonomy, staleness=staleness,
         materiality=materiality, ai_analysis=analysis,
         corroboration=corroboration, analysis_state=analysis_state,
-        processed_iso=_ai_now_iso(), revision=revision_plan["revision"])
+        processed_iso=_ai_now_iso(), source=source,
+        revision=revision_plan["revision"])
     event["alertEligible"] = (
         not backfill and event["severity"] in ("HIGH", "CRITICAL")
         and (revision_plan["action"] == "create"
@@ -16000,10 +16059,20 @@ def _news_process_message(message, *, backfill=False):
         dropped = _NEWS_INTEL["order"].pop(0)
         _NEWS_INTEL["events"].pop(dropped, None)
     health["lastEventAt"] = _ai_now_iso()
+    source_row["lastProcessedAt"] = _ai_now_iso()
     if event["alertEligible"]:
         health["alertsEligible"] += 1
+    if event["severity"] in ("HIGH", "CRITICAL"):
+        source_row["lastMaterialEventAt"] = _ai_now_iso()
+    surfaced = event["severity"] != "INFO"
+    _news_message_status(
+        message.get("messageId"),
+        "ALERTED" if event["alertEligible"]
+        else "SURFACED" if surfaced
+        else "LOW_RELEVANCE", source)
     _news_audit({
         "stage": "classified", "eventId": identity,
+        "source": source, "subjectPrefix": subject[:60],
         "action": revision_plan["action"], "severity": event["severity"],
         "eventType": family, "staleness": staleness,
         "confirmation": event["confirmationState"],
@@ -16014,13 +16083,20 @@ def _news_process_message(message, *, backfill=False):
     return event
 
 
-def _news_intake_cycle(*, backfill=False):
+def _news_intake_cycle(*, backfill=False, backfill_days=10):
     started = time.time()
     with _NEWS_INTEL_LOCK:
         state = dict(_NEWS_INTEL["intakeState"])
-    result = argus_gmail_intake.run_intake_cycle(
-        env=os.environ, state=state, http=requests.request,
-        now_epoch=started)
+    if backfill:
+        days = max(1, min(int(backfill_days), 14))     # §5 bounded 7–14d
+        result = argus_gmail_intake.run_intake_cycle(
+            env=os.environ, state=state, http=requests.request,
+            now_epoch=started, reconcile_window=f"newer_than:{days}d",
+            max_messages=150)
+    else:
+        result = argus_gmail_intake.run_intake_cycle(
+            env=os.environ, state=state, http=requests.request,
+            now_epoch=started)
     with _NEWS_INTEL_LOCK:
         health = _NEWS_INTEL["health"]
         health["status"] = result["status"]
@@ -16035,6 +16111,7 @@ def _news_intake_cycle(*, backfill=False):
                 _news_process_message(message, backfill=backfill)
             except Exception as e:
                 health["parseFailures"] += 1
+                _news_message_status(message.get("messageId"), "FAILED")
                 _news_audit({"stage": "parser_failed",
                              "messageId": message.get("messageId"),
                              "errorClass": type(e).__name__})
@@ -16109,8 +16186,25 @@ def api_argus_news_intake_health():
         health["eventCount"] = len(_NEWS_INTEL["events"])
         health["observedSenderDomains"] = {
             domain: dict(profile) for domain, profile in
-            list(_NEWS_INTEL["observedSenders"].items())[:10]}
+            list(_NEWS_INTEL["observedSenders"].items())[:12]}
         health["allowedSenderDomains"] = _news_allowed_sender_domains()
+        # Per-source health (§6): every subscribed family is reported —
+        # a source with zero observed mail is SUBSCRIBED /
+        # NO_MESSAGE_OBSERVED_YET, never silently absent or falsely healthy.
+        per_source = {}
+        for family in argus_news_intelligence.SOURCE_FAMILIES:
+            row = dict(_NEWS_INTEL.setdefault("sources", {}).get(family) or {})
+            row["state"] = ("OBSERVED" if row.get("observedCount")
+                            else "SUBSCRIBED_NO_MESSAGE_OBSERVED_YET")
+            per_source[family] = row
+        health["perSource"] = per_source
+        # Processing-state authority per Gmail message (§6): ARGUS's own
+        # ledger proves whether a mail was seen — Gmail read/unread is never
+        # mutated. Ids + status only; no subjects on the public surface.
+        health["recentMessages"] = [
+            {"messageId": mid, **_NEWS_INTEL["messageStatus"][mid]}
+            for mid in reversed(_NEWS_INTEL.setdefault("messageOrder", [])[-30:])
+            if mid in _NEWS_INTEL.setdefault("messageStatus", {})]
     health["configured"] = argus_gmail_intake.is_configured(os.environ)
     if not health["configured"]:
         health["status"] = "MAILBOX_UNCONFIGURED"
@@ -16123,19 +16217,46 @@ def api_argus_news_intake_health():
 @app.route("/api/argus/admin/news-intake/reprocess", methods=["POST"])
 def api_argus_admin_news_reprocess():
     """Owner-only bounded reprocess/backfill (§26): re-runs a reconciliation
-    window with outputs marked backfill (never fresh alerts)."""
+    window (default 10 days, hard-capped 14d/150 messages) with outputs
+    marked backfill (never fresh alerts)."""
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    try:
+        days = int(body.get("days") or 10)
+    except Exception:
+        days = 10
     try:
         with _NEWS_INTEL_LOCK:
             _NEWS_INTEL["intakeState"]["seenMessageIds"] = []
             _NEWS_INTEL["intakeState"].pop("historyId", None)
-        status = _news_intake_cycle(backfill=True)
-        return jsonify({"ok": True, "status": status, "mode": "BACKFILL"})
+        status = _news_intake_cycle(backfill=True, backfill_days=days)
+        return jsonify({"ok": True, "status": status, "mode": "BACKFILL",
+                        "windowDays": max(1, min(days, 14))})
     except Exception as e:
         return jsonify({"ok": False,
                         "error": f"{type(e).__name__}: {str(e)[:120]}"}), 500
+
+
+@app.route("/api/argus/admin/news-intake/audit")
+def api_argus_admin_news_audit():
+    """Owner-only processing view (§6/§25): the bounded audit ledger with
+    subject prefixes and per-message stages — answers 'did ARGUS read this
+    mail, and why did/didn't it alert?'. Admin-gated because subject lines
+    are licensed content."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    with _NEWS_INTEL_LOCK:
+        return jsonify({
+            "schemaVersion": "argus-news-intake-audit-v1",
+            "audit": _NEWS_INTEL["audit"][-80:],
+            "messageStatus": [
+                {"messageId": mid, **_NEWS_INTEL["messageStatus"][mid]}
+                for mid in reversed(_NEWS_INTEL.setdefault("messageOrder", [])[-60:])
+                if mid in _NEWS_INTEL.setdefault("messageStatus", {})],
+        })
 
 def get_news_radar():
     now = time.time()

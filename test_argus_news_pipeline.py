@@ -182,3 +182,68 @@ def test_escalation_realerts_but_cosmetic_duplicate_does_not(
         "/api/argus/news-intelligence").get_json()["events"]
     assert any(e["severity"] in ("HIGH", "CRITICAL") and e["alertEligible"]
                for e in events)
+
+
+def test_multi_source_families_resolve_and_apply_policy(monkeypatch, news_env):
+    monkeypatch.setenv("ARGUS_NEWS_ALLOWED_SENDER_DOMAINS",
+                       "nikkei.com,treas.gov,govdelivery.com,fdic.gov")
+    messages = {
+        "t1": mail("t1", "Daily Treasury Yield Curve Rates",
+                   sender="treasury@subscriptions.treas.gov",
+                   auth="spf=pass dkim=pass header.d=subscriptions.treas.gov",
+                   body="rates table https://home.treasury.gov/rates"),
+        "b1": mail("b1", "Consumer Price Index - July 2026",
+                   sender="bls@service.govdelivery.com",
+                   auth="spf=pass dkim=pass header.d=service.govdelivery.com",
+                   body="CPI release https://www.bls.gov/cpi/latest.htm"),
+        "f1": mail("f1", "FDIC press release",
+                   sender="fdic@subscriptions.fdic.gov",
+                   auth="spf=pass dkim=pass header.d=subscriptions.fdic.gov",
+                   body="fdic https://www.fdic.gov/news"),
+    }
+    status = run_cycle(monkeypatch, messages)
+    assert status == "HEALTHY"
+    client = scanner.app.test_client()
+    body = client.get("/api/argus/news-intelligence").get_json()
+    by_family = {e["sourceFamily"]: e for e in body["events"]}
+    # Treasury daily rates: data input, never an alert (§14A)
+    treasury = by_family["US_TREASURY"]
+    assert treasury["severity"] == "INFO"
+    assert treasury["dataInput"] is True
+    assert treasury["alertEligible"] is False
+    # GovDelivery-delivered BLS release keeps agency identity (§9) and stays
+    # WATCH without invented surprise (§14A)
+    bls = by_family["BLS"]
+    assert bls["source"] == "米労働統計局"
+    assert bls["severity"] == "WATCH"
+    # FDIC is out of the six-family scope → quarantined, never Major News
+    assert "FDIC" not in str(body)
+
+    health = client.get("/api/argus/news-intake/health").get_json()
+    per_source = health["perSource"]
+    assert per_source["US_TREASURY"]["state"] == "OBSERVED"
+    assert per_source["BLS"]["state"] == "OBSERVED"
+    assert per_source["BANK_OF_JAPAN"]["state"] \
+        == "SUBSCRIBED_NO_MESSAGE_OBSERVED_YET"
+    assert health["quarantined"] >= 1
+    statuses = {row["messageId"]: row["status"]
+                for row in health["recentMessages"]}
+    assert statuses["t1"] == "LOW_RELEVANCE"
+    assert statuses["b1"] == "SURFACED"
+    assert statuses["f1"] == "QUARANTINED"
+
+
+def test_admin_audit_view_is_gated_and_answers_why(monkeypatch, news_env):
+    run_cycle(monkeypatch, {"m9": mail("m9", "FOMC statement: policy action",
+                                       sender="frb@announcements.federalreserve.gov",
+                                       auth="spf=pass dkim=pass")})
+    client = scanner.app.test_client()
+    denied = client.get("/api/argus/admin/news-intake/audit")
+    assert denied.status_code in (401, 403, 503)
+    monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "audit-test-token")
+    allowed = client.get("/api/argus/admin/news-intake/audit",
+                         headers={"X-ARGUS-ADMIN-TOKEN": "audit-test-token"})
+    assert allowed.status_code == 200
+    rows = allowed.get_json()["audit"]
+    assert any(r.get("stage") == "quarantined" or r.get("stage") == "classified"
+               for r in rows)

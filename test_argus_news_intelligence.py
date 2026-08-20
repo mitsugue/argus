@@ -217,3 +217,105 @@ def test_envelope_carries_no_raw_body():
     blob = str(event)
     assert "本文本文" not in blob
     assert "excerpt" not in event
+
+
+# ── §9 multi-source resolution ──────────────────────────────────────────────
+
+def test_source_resolution_official_domains_and_platform_delivery():
+    r = ni.resolve_source
+    assert r(from_domain="announcements.federalreserve.gov") \
+        == "FEDERAL_RESERVE_BOARD"
+    assert r(from_domain="alerts.ny.frb.org") == "FEDERAL_RESERVE_BOARD"
+    assert r(from_domain="subscriptions.treas.gov") == "US_TREASURY"
+    assert r(from_domain="boj.or.jp") == "BANK_OF_JAPAN"
+    assert r(from_domain="bls.gov") == "BLS"
+    assert r(from_domain="eia.gov") == "EIA"
+    assert r(from_domain="id.nikkei.com") == "NIKKEI"
+    # GovDelivery/Granicus platform senders resolve via agency identity in
+    # the display name / canonical links — never rejected on From alone (§9)
+    assert r(from_domain="service.govdelivery.com",
+             display_name="U.S. Energy Information Administration") == "EIA"
+    assert r(from_domain="service.govdelivery.com",
+             display_name="News Alert",
+             link_domains=["www.bls.gov"]) == "BLS"
+    # out-of-scope agency (FDIC) and unknown senders resolve to None
+    assert r(from_domain="subscriptions.fdic.gov") is None
+    assert r(from_domain="evil.example") is None
+    # env map extends coverage from REAL observed mail without a release
+    assert r(from_domain="sg-p.jp",
+             env_map={"sg-p.jp": "NIKKEI"}) == "NIKKEI"
+
+
+# ── §14A source-specific materiality ────────────────────────────────────────
+
+def _mat(subject, source, *, confirmed=False, staleness="FRESH_BREAKING"):
+    taxonomy = ni.classify_event(subject)
+    return ni.evaluate_materiality(
+        taxonomy=taxonomy, staleness=staleness, source_authenticated=True,
+        ai_analysis=None, corroboration={"confirmed": confirmed},
+        subject=subject, source=source)
+
+
+def test_treasury_daily_rate_tables_are_data_input_not_alerts():
+    m = _mat("Daily Treasury Yield Curve Rates", "US_TREASURY")
+    assert m["severity"] == "INFO"
+    assert m["dataInput"] is True
+    assert "official_data_input" in m["reasons"]
+    sanction = _mat("Treasury Sanctions Major Iranian Oil Network",
+                    "US_TREASURY", confirmed=True)
+    assert sanction["severity"] in ("HIGH", "CRITICAL")
+
+
+def test_bls_scheduled_release_never_invents_surprise():
+    pending = _mat("Consumer Price Index - July 2026", "BLS")
+    assert pending["severity"] == "WATCH"
+    assert "scheduled_release_unconfirmed" in pending["reasons"]
+    confirmed = _mat("Consumer Price Index - July 2026", "BLS",
+                     confirmed=True)
+    assert confirmed["severity"] in ("HIGH", "CRITICAL")
+    assert confirmed["confirmationState"] == "MARKET_CONFIRMED"
+
+
+def test_fed_routine_vs_policy_action():
+    routine = _mat("Speech by Governor at Economic Club",
+                   "FEDERAL_RESERVE_BOARD")
+    assert routine["severity"] in ("INFO", "WATCH")
+    fomc = _mat("FOMC statement: Federal funds rate target lowered",
+                "FEDERAL_RESERVE_BOARD")
+    assert fomc["severity"] in ("HIGH", "CRITICAL")
+    assert "source_priority_federal_reserve_board" in fomc["reasons"]
+
+
+def test_boj_stats_notice_vs_policy_decision():
+    notice = _mat("時系列データの公表予定について", "BANK_OF_JAPAN")
+    assert notice["severity"] == "INFO"
+    decision = _mat("金融政策決定会合における決定事項について 政策金利の変更",
+                    "BANK_OF_JAPAN")
+    assert decision["severity"] in ("HIGH", "CRITICAL")
+
+
+def test_eia_routine_weekly_vs_energy_shock():
+    weekly = _mat("Weekly Natural Gas Storage Report Supplement", "EIA")
+    assert weekly["severity"] in ("INFO", "WATCH")
+    shock = _mat("OPEC supply disruption: Middle East output emergency",
+                 "EIA", confirmed=True)
+    assert shock["severity"] in ("HIGH", "CRITICAL")
+
+
+def test_envelope_carries_source_family_and_tier():
+    subject = "FOMC statement: policy action"
+    taxonomy = ni.classify_event(subject)
+    materiality = ni.evaluate_materiality(
+        taxonomy=taxonomy, staleness="FRESH_BREAKING",
+        source_authenticated=True, ai_analysis=None,
+        corroboration={"confirmed": False}, subject=subject,
+        source="FEDERAL_RESERVE_BOARD")
+    event = ni.build_news_event(
+        message=_msg(subject), taxonomy=taxonomy, staleness="FRESH_BREAKING",
+        materiality=materiality, ai_analysis=None,
+        corroboration={"confirmed": False, "readings": []},
+        analysis_state="DETERMINISTIC_ONLY",
+        processed_iso="2026-08-20T01:05:00Z", source="FEDERAL_RESERVE_BOARD")
+    assert event["sourceFamily"] == "FEDERAL_RESERVE_BOARD"
+    assert event["sourceTier"] == "official_agency"
+    assert event["source"] == "FRB"
