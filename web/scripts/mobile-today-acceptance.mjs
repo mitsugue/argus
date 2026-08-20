@@ -312,6 +312,10 @@ async function geometry(page, viewport) {
     const visualViewportBottom = (vv?.offsetTop ?? 0) + (vv?.height ?? innerHeight);
     const navRect = rect('.nav');
     const stickyCommandRect = rect('.msc');
+    const navButtons = [...document.querySelectorAll('.nav__mobile > button')];
+    const navButtonRect = navButtons[0]?.getBoundingClientRect() ?? null;
+    const navButtonPaddingBottom = navButtons[0]
+      ? parseFloat(getComputedStyle(navButtons[0]).paddingBottom) || 0 : null;
     return {
       viewport: size,
       innerHeight, outerHeight,
@@ -328,6 +332,10 @@ async function geometry(page, viewport) {
       visualViewportBottom,
       distanceFromViewportBottom: navRect
         ? Math.abs(visualViewportBottom - navRect.bottom) : null,
+      navControlBottomGap: navButtonRect
+        ? visualViewportBottom - navButtonRect.bottom : null,
+      navVisualBottomGap: navButtonRect && navButtonPaddingBottom != null
+        ? visualViewportBottom - navButtonRect.bottom + navButtonPaddingBottom : null,
       stickyNavGap: navRect && stickyCommandRect
         ? navRect.top - stickyCommandRect.bottom : null,
       horizontalOverflow: document.body.scrollWidth
@@ -479,6 +487,11 @@ async function run() {
     }
     if (viewport.width <= 720 && Math.abs(audit.stickyNavGap ?? 99) > 1) {
       evidence.failures.push(`sticky-gap:${viewport.width}`);
+    }
+    if (viewport.width <= 720
+      && ((audit.navVisualBottomGap ?? 99) < 18
+        || (audit.navVisualBottomGap ?? 99) > 24)) {
+      evidence.failures.push(`nav-visual-bottom-gap:${viewport.width}`);
     }
     if (!Number.isFinite(audit.hostileSafeAreaBottom)
       || audit.hostileSafeAreaBottom < 0 || audit.hostileSafeAreaBottom > 34) {

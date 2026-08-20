@@ -69,7 +69,12 @@ assert.match(shell, /setAnimDir\(pageDirection\)/);
 assert.match(navCss, /--argus-safe-bottom:\s*clamp\(0px,\s*env\(safe-area-inset-bottom,\s*0px\),\s*34px\)/);
 assert.match(navCss, /--argus-mobile-nav-height/);
 assert.match(navCss, /height:\s*var\(--argus-mobile-nav-height\)/);
-assert.match(navCss, /padding:\s*0 4px var\(--argus-safe-bottom\)/);
+assert.match(navCss,
+  /--argus-mobile-nav-control-bottom:\s*max\(0px,\s*calc\(var\(--argus-safe-bottom\) - 18px\)\)/);
+assert.match(navCss, /--argus-mobile-nav-label-bottom:\s*7px/);
+assert.match(navCss, /bottom:\s*var\(--argus-mobile-nav-control-bottom\)/);
+assert.match(navCss, /justify-content:\s*flex-end/);
+assert.match(navCss, /padding:\s*6px 2px var\(--argus-mobile-nav-label-bottom\)/);
 assert.match(stickyCss, /bottom:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(shellCss, /padding-bottom:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(stickyCss, /height:\s*var\(--argus-mobile-sticky-height\)/);
@@ -79,8 +84,11 @@ for (const width of [390, 430]) {
   const navHeight = 58 + safeBottom;
   const navRect = { top: viewportBottom - navHeight, bottom: viewportBottom };
   const stickyRect = { bottom: navRect.top, top: navRect.top - 34 };
+  const controlBottom = Math.max(0, safeBottom - 18);
+  const visualBottomGap = controlBottom + 7;
   assert.equal(navRect.bottom, viewportBottom);
   assert.equal(stickyRect.bottom, navRect.top);
+  assert.ok(visualBottomGap >= 18 && visualBottomGap <= 24);
   assert.ok(navHeight - safeBottom >= 44);
 }
 
