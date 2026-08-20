@@ -4,6 +4,14 @@ import { pathToFileURL } from 'node:url';
 
 export const RELEASE_ENGINE_VERSION = 'argus-v13-release-engine-v2';
 export const SNAPSHOT_CONTRACT_SCHEMA = 'argus-v13-snapshot-readiness-contract-v1';
+export const BUSINESS_TRIGGER_TRANSPORT_TIMEOUT_MS = 270_000;
+export const BUSINESS_RECONCILIATION_DEADLINE_MS = 420_000;
+export const BUSINESS_RECONCILIATION_POLL_MS = 5_000;
+export const BUSINESS_READBACK_REQUEST_TIMEOUT_MS = 10_000;
+export const BUSINESS_RECONCILIATION_OUTCOMES = Object.freeze([
+  'COMPLETE', 'INCOMPLETE', 'WRONG_TRIGGER', 'WRONG_BUILD', 'MIXED_IDENTITY',
+  'STALE', 'VERIFICATION_FAILED', 'TIMEOUT', 'UNKNOWN',
+]);
 export const SNAPSHOT_CLASSIFICATIONS = Object.freeze([
   'INFRA_REQUIRED', 'SEED_REQUIRED', 'EXTERNAL_DATA_GATED', 'OPTIONAL',
 ]);
@@ -285,52 +293,321 @@ export function createTriggerPlan(contract, { expectedBuildSha, producerTriggerI
   }));
 }
 
+const sanitizeDiagnosticText = (value, secrets = []) => {
+  let result = String(value ?? '');
+  for (const secret of secrets) {
+    if (secret) result = result.split(String(secret)).join('[REDACTED]');
+  }
+  return result
+    .replace(/(authorization|cookie|x-argus-admin-token)\s*[:=]\s*[^\s,;]+/gi,
+      '$1=[REDACTED]')
+    .replace(/bearer\s+[^\s,;]+/gi, 'Bearer [REDACTED]')
+    .slice(0, 500);
+};
+
+const describeTransportError = (error, {
+  elapsedMs, phase, requestUrl, httpResponseObtained, secrets = [],
+}) => {
+  let hostname = null;
+  let pathName = null;
+  try {
+    const parsed = new URL(requestUrl);
+    hostname = parsed.hostname;
+    pathName = parsed.pathname;
+  } catch {
+    pathName = '/api/argus/admin/missions/tick';
+  }
+  const describe = (value) => value ? {
+    name: sanitizeDiagnosticText(value.name || 'Error', secrets),
+    code: value.code == null ? null : sanitizeDiagnosticText(value.code, secrets),
+    message: sanitizeDiagnosticText(value.message || String(value), secrets),
+  } : null;
+  return {
+    ...describe(error),
+    cause: describe(error?.cause),
+    elapsedMs: Math.max(0, Math.round(Number(elapsedMs) || 0)),
+    phase,
+    hostname,
+    path: pathName,
+    httpResponseObtained: Boolean(httpResponseObtained),
+  };
+};
+
+export class BusinessSnapshotTriggerError extends Error {
+  constructor(reason, artifact) {
+    super(`business_snapshot_trigger_failed:${reason}`);
+    this.name = 'BusinessSnapshotTriggerError';
+    this.reason = reason;
+    this.artifact = artifact;
+  }
+}
+
+const snapshotSummary = (snapshot) => ({
+  identity: snapshotIdentity(snapshot),
+  snapshotId: snapshot?.snapshotId ?? null,
+  generatedAt: snapshot?.generatedAt ?? null,
+  verificationStatus: snapshot?.verificationStatus ?? null,
+  expectedBuildSha: snapshot?.releaseBinding?.expectedBuildSha ?? null,
+  producerTriggerId: snapshot?.releaseBinding?.producerTriggerId ?? null,
+});
+
+export async function fetchBusinessSnapshotObservations({
+  baseUrl, contract, fetchImpl = fetch,
+  requestTimeoutMs = BUSINESS_READBACK_REQUEST_TIMEOUT_MS,
+  deadlineAtMs = Number.POSITIVE_INFINITY, nowMs = () => Date.now(),
+  setTimeoutImpl = setTimeout, clearTimeoutImpl = clearTimeout,
+}) {
+  const base = baseUrl.replace(/\/$/, '');
+  const observations = [];
+  // Verified snapshot reads stay serialized to avoid a concurrent 429 burst.
+  for (const row of requiredSnapshotRows(contract, 'SEED_REQUIRED')) {
+    const query = new URLSearchParams({
+      scope: 'market', timeframe: 'daily', symbol: row.instrument,
+      horizon: row.horizon, snapshot: 'verified',
+    });
+    const controller = new AbortController();
+    const remainingMs = deadlineAtMs - nowMs();
+    const effectiveTimeoutMs = Math.min(
+      Math.max(1, Number(requestTimeoutMs)), Math.max(1, remainingMs),
+    );
+    const timeoutId = setTimeoutImpl(
+      () => controller.abort(), effectiveTimeoutMs,
+    );
+    try {
+      const response = await fetchImpl(
+        `${base}/api/argus/chart-intelligence?${query}`,
+        { headers: { Accept: 'application/json' }, signal: controller.signal },
+      );
+      const body = await response.json().catch(() => null);
+      observations.push({
+        expectedIdentity: row.identity,
+        status: response.status,
+        snapshot: response.status === 200 && body ? body : null,
+        error: null,
+      });
+    } catch (error) {
+      observations.push({
+        expectedIdentity: row.identity,
+        status: null,
+        snapshot: null,
+        error: {
+          name: controller.signal.aborted ? 'AbortError'
+            : sanitizeDiagnosticText(error?.name || 'Error'),
+          code: error?.code == null ? null : sanitizeDiagnosticText(error.code),
+          message: controller.signal.aborted ? 'readback request timeout'
+            : sanitizeDiagnosticText(error?.message || String(error)),
+        },
+      });
+    } finally {
+      clearTimeoutImpl(timeoutId);
+    }
+  }
+  return observations;
+}
+
+export function evaluateBusinessSnapshotObservations({
+  contract, observations, expectedBuildSha, producerTriggerId, now = Date.now(),
+}) {
+  if (!Array.isArray(observations)) {
+    return { outcome: 'UNKNOWN', reason: 'observations_malformed', snapshots: [] };
+  }
+  const snapshots = observations.flatMap((row) => row.snapshot ? [row.snapshot] : []);
+  const missing = observations
+    .filter((row) => !row.snapshot)
+    .map((row) => ({ identity: row.expectedIdentity, status: row.status, error: row.error }));
+  if (missing.length) {
+    return { outcome: 'INCOMPLETE', reason: 'snapshot_readback_incomplete', missing, snapshots };
+  }
+
+  const triggerIds = new Set(snapshots.map((row) => row?.releaseBinding?.producerTriggerId));
+  const buildIds = new Set(snapshots.map((row) => row?.releaseBinding?.expectedBuildSha));
+  if (triggerIds.size > 1 || buildIds.size > 1) {
+    return { outcome: 'MIXED_IDENTITY', reason: 'mixed_release_binding', snapshots };
+  }
+  if (triggerIds.size !== 1 || !triggerIds.has(producerTriggerId)) {
+    return { outcome: 'WRONG_TRIGGER', reason: 'wrong_trigger', snapshots };
+  }
+  if (buildIds.size !== 1 || !buildIds.has(expectedBuildSha)) {
+    return { outcome: 'WRONG_BUILD', reason: 'wrong_build', snapshots };
+  }
+
+  const evaluated = evaluateBusinessSnapshotSet({
+    contract, observed: snapshots, expectedBuildSha, producerTriggerId, now,
+  });
+  if (evaluated.pass) {
+    return { outcome: 'COMPLETE', reason: 'accepted', snapshots, evaluated };
+  }
+  if (evaluated.reason.startsWith('stale_snapshot:')) {
+    return { outcome: 'STALE', reason: evaluated.reason, snapshots, evaluated };
+  }
+  if (evaluated.reason.startsWith('wrong_trigger:')) {
+    return { outcome: 'WRONG_TRIGGER', reason: evaluated.reason, snapshots, evaluated };
+  }
+  if (evaluated.reason.startsWith('wrong_build:')) {
+    return { outcome: 'WRONG_BUILD', reason: evaluated.reason, snapshots, evaluated };
+  }
+  if (evaluated.reason === 'snapshot_set_mismatch') {
+    return { outcome: 'INCOMPLETE', reason: evaluated.reason, snapshots, evaluated };
+  }
+  return { outcome: 'VERIFICATION_FAILED', reason: evaluated.reason, snapshots, evaluated };
+}
+
+export async function reconcileBusinessSnapshots({
+  baseUrl, contract, expectedBuildSha, producerTriggerId,
+  fetchImpl = fetch, nowMs = () => Date.now(),
+  sleepImpl = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  startedAtMs = nowMs(), deadlineMs = BUSINESS_RECONCILIATION_DEADLINE_MS,
+  pollMs = BUSINESS_RECONCILIATION_POLL_MS,
+}) {
+  const deadlineAtMs = startedAtMs + Math.max(0, Number(deadlineMs));
+  let attempts = 0;
+  let last = { outcome: 'UNKNOWN', reason: 'not_observed', snapshots: [] };
+  while (true) {
+    attempts += 1;
+    const observations = await fetchBusinessSnapshotObservations({
+      baseUrl, contract, fetchImpl, deadlineAtMs, nowMs,
+    });
+    last = evaluateBusinessSnapshotObservations({
+      contract, observations, expectedBuildSha, producerTriggerId, now: nowMs(),
+    });
+    if (last.outcome === 'COMPLETE') {
+      return { ...last, attempts, deadlineExceeded: false };
+    }
+    const remainingMs = deadlineAtMs - nowMs();
+    if (remainingMs <= 0) {
+      return {
+        outcome: 'TIMEOUT', reason: 'reconciliation_deadline_exceeded', attempts,
+        deadlineExceeded: true,
+        lastObservation: {
+          outcome: last.outcome,
+          reason: last.reason,
+          missing: last.missing,
+          evaluated: last.evaluated,
+        },
+        snapshots: last.snapshots,
+      };
+    }
+    await sleepImpl(Math.min(Math.max(1, Number(pollMs)), remainingMs));
+  }
+}
+
+const acknowledgementIsExact = (body, expectedBuildSha, producerTriggerId) =>
+  body?.status === 'completed'
+  && body?.schemaVersion === 'argus-release-snapshot-seed-v1'
+  && body?.producerTriggerId === producerTriggerId
+  && body?.expectedBuildSha === expectedBuildSha
+  && body?.snapshotExpected === 12 && body?.snapshotReady === 12
+  && body?.persistence?.verified === true
+  && body?.persistence?.readBackVerified === true;
+
 export async function triggerBusinessSnapshots({
   baseUrl, adminToken, contract, expectedBuildSha, producerTriggerId,
-  fetchImpl = fetch,
+  fetchImpl = fetch, nowMs = () => Date.now(),
+  sleepImpl = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  transportTimeoutMs = BUSINESS_TRIGGER_TRANSPORT_TIMEOUT_MS,
+  reconciliationDeadlineMs = BUSINESS_RECONCILIATION_DEADLINE_MS,
+  reconciliationPollMs = BUSINESS_RECONCILIATION_POLL_MS,
+  setTimeoutImpl = setTimeout, clearTimeoutImpl = clearTimeout,
 }) {
   validateSnapshotContract(contract);
-  const actionTimestamp = new Date().toISOString();
+  const startedAtMs = nowMs();
+  const actionTimestamp = new Date(startedAtMs).toISOString();
   const plan = createTriggerPlan(contract, {
     expectedBuildSha, producerTriggerId, actionTimestamp,
   });
-  const requestTimestamp = new Date().toISOString();
-  const response = await fetchImpl(`${baseUrl.replace(/\/$/, '')}/api/argus/admin/missions/tick`, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      'X-ARGUS-ADMIN-TOKEN': adminToken,
-    },
-    body: JSON.stringify({
-      triggerSource: 'manual',
-      runId: producerTriggerId,
-      expectedBuildSha,
-      releaseSnapshotSeed: true,
-    }),
-  });
-  const body = await response.json().catch(() => null);
-  if (response.status !== 200 || body?.status !== 'completed'
-      || body?.schemaVersion !== 'argus-release-snapshot-seed-v1'
-      || body?.producerTriggerId !== producerTriggerId
-      || body?.expectedBuildSha !== expectedBuildSha
-      || body?.snapshotExpected !== 12 || body?.snapshotReady !== 12
-      || body?.persistence?.verified !== true
-      || body?.persistence?.readBackVerified !== true) {
-    throw new Error(`business_snapshot_trigger_unacknowledged:http_${response.status}:` +
-      `${body?.status ?? 'invalid'}`);
+  const requestTimestamp = new Date(nowMs()).toISOString();
+  const requestUrl = `${baseUrl.replace(/\/$/, '')}/api/argus/admin/missions/tick`;
+  const controller = new AbortController();
+  const timeoutId = setTimeoutImpl(() => controller.abort(), Math.max(1, Number(transportTimeoutMs)));
+  let response = null;
+  let body = null;
+  let transportError = null;
+  try {
+    response = await fetchImpl(requestUrl, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-ARGUS-ADMIN-TOKEN': adminToken,
+      },
+      body: JSON.stringify({
+        triggerSource: 'manual',
+        runId: producerTriggerId,
+        expectedBuildSha,
+        releaseSnapshotSeed: true,
+      }),
+      signal: controller.signal,
+    });
+    body = await response.json().catch(() => null);
+  } catch (error) {
+    transportError = describeTransportError(error, {
+      elapsedMs: nowMs() - startedAtMs,
+      phase: controller.signal.aborted ? 'transport_timeout' : 'transport_request',
+      requestUrl,
+      httpResponseObtained: Boolean(response),
+      secrets: [adminToken],
+    });
+  } finally {
+    clearTimeoutImpl(timeoutId);
   }
-  const availability = new Map((body.snapshots ?? []).map((row) => [row.identity, row]));
+
+  let completionMode = 'HTTP_ACKNOWLEDGED';
+  if (transportError) {
+    completionMode = 'RECOVERED_AFTER_TRANSPORT_FAILURE';
+  } else if (response?.status === 409) {
+    if (body?.producerTriggerId !== producerTriggerId) {
+      const artifact = {
+        schemaVersion: 'argus-v13-snapshot-trigger-plan-v1', status: 'failed',
+        expectedBuildSha, producerTriggerId, actionTimestamp, requestTimestamp,
+        responseStatus: response.status, outcome: 'WRONG_TRIGGER',
+        reason: 'conflicting_duplicate_trigger', plan,
+      };
+      throw new BusinessSnapshotTriggerError(artifact.reason, artifact);
+    }
+    completionMode = 'IDEMPOTENT_EXISTING_RESULT';
+  } else if (response && (response.status !== 200
+      || !acknowledgementIsExact(body, expectedBuildSha, producerTriggerId))) {
+    const artifact = {
+      schemaVersion: 'argus-v13-snapshot-trigger-plan-v1', status: 'failed',
+      expectedBuildSha, producerTriggerId, actionTimestamp, requestTimestamp,
+      responseStatus: response.status, outcome: 'UNKNOWN',
+      reason: `deterministic_http_response:http_${response.status}:` +
+        sanitizeDiagnosticText(body?.status ?? 'invalid', [adminToken]),
+      plan,
+    };
+    throw new BusinessSnapshotTriggerError(artifact.reason, artifact);
+  }
+
+  const reconciliation = await reconcileBusinessSnapshots({
+    baseUrl, contract, expectedBuildSha, producerTriggerId, fetchImpl, nowMs, sleepImpl,
+    startedAtMs, deadlineMs: reconciliationDeadlineMs, pollMs: reconciliationPollMs,
+  });
+  const diagnosticReconciliation = {
+    outcome: reconciliation.outcome,
+    reason: reconciliation.reason,
+    attempts: reconciliation.attempts,
+    deadlineExceeded: reconciliation.deadlineExceeded,
+    lastObservation: reconciliation.lastObservation,
+    snapshots: (reconciliation.snapshots ?? []).map(snapshotSummary),
+  };
+  if (reconciliation.outcome !== 'COMPLETE') {
+    const artifact = {
+      schemaVersion: 'argus-v13-snapshot-trigger-plan-v1', status: 'failed',
+      expectedBuildSha, producerTriggerId, actionTimestamp, requestTimestamp,
+      responseStatus: response?.status ?? null, completionMode, transport: transportError,
+      reconciliation: diagnosticReconciliation, outcome: reconciliation.outcome,
+      reason: reconciliation.reason, plan,
+    };
+    throw new BusinessSnapshotTriggerError(reconciliation.reason, artifact);
+  }
+
+  const availability = new Map(reconciliation.snapshots.map((row) => [snapshotIdentity(row), row]));
   const completedPlan = plan.map((row) => {
     const snapshot = availability.get(row.targetSnapshotIdentity);
-    if (!snapshot || snapshot.releaseBinding?.expectedBuildSha !== expectedBuildSha
-        || snapshot.releaseBinding?.producerTriggerId !== producerTriggerId) {
-      throw new Error(`business_snapshot_trigger_output_missing:${row.targetSnapshotIdentity}`);
-    }
     return {
       ...row,
       requestTimestamp,
-      responseStatus: response.status,
+      responseStatus: response?.status ?? null,
       snapshotAvailabilityTimestamp: snapshot.generatedAt,
       freshness: 'trigger_bound',
       snapshotId: snapshot.snapshotId,
@@ -341,30 +618,23 @@ export async function triggerBusinessSnapshots({
     status: 'completed',
     expectedBuildSha,
     producerTriggerId,
-    triggeredAt: body.triggeredAt,
-    completedAt: body.completedAt,
+    triggeredAt: reconciliation.snapshots[0].releaseBinding.triggeredAt,
+    completedAt: new Date(nowMs()).toISOString(),
+    completionMode,
+    transport: transportError,
+    reconciliation: diagnosticReconciliation,
     plan: completedPlan,
   };
 }
 
 export async function fetchBusinessSnapshots({ baseUrl, contract, fetchImpl = fetch }) {
-  const snapshots = [];
-  for (const row of requiredSnapshotRows(contract, 'SEED_REQUIRED')) {
-    const query = new URLSearchParams({
-      scope: 'market', timeframe: 'daily', symbol: row.instrument,
-      horizon: row.horizon, snapshot: 'verified',
-    });
-    const response = await fetchImpl(
-      `${baseUrl.replace(/\/$/, '')}/api/argus/chart-intelligence?${query}`,
-      { headers: { Accept: 'application/json' } },
-    );
-    const body = await response.json().catch(() => null);
-    if (response.status !== 200 || !body) {
-      throw new Error(`business_snapshot_http:${row.identity}:${response.status}`);
-    }
-    snapshots.push(body);
+  const observations = await fetchBusinessSnapshotObservations({ baseUrl, contract, fetchImpl });
+  const failure = observations.find((row) => !row.snapshot);
+  if (failure) {
+    throw new Error(`business_snapshot_http:${failure.expectedIdentity}:` +
+      `${failure.status ?? failure.error?.name ?? 'unknown'}`);
   }
-  return snapshots;
+  return observations.map((row) => row.snapshot);
 }
 
 export function evaluateFailureScenario(input) {
@@ -467,12 +737,17 @@ async function cli(argv) {
     return;
   }
   if (command === 'trigger-business') {
-    const result = await triggerBusinessSnapshots({
-      baseUrl: args['base-url'], adminToken: process.env.ARGUS_ADMIN_TOKEN ?? '',
-      contract, expectedBuildSha: args['expected-sha'],
-      producerTriggerId: args['trigger-id'],
-    });
-    writeJson(args.out, result);
+    try {
+      const result = await triggerBusinessSnapshots({
+        baseUrl: args['base-url'], adminToken: process.env.ARGUS_ADMIN_TOKEN ?? '',
+        contract, expectedBuildSha: args['expected-sha'],
+        producerTriggerId: args['trigger-id'],
+      });
+      writeJson(args.out, result);
+    } catch (error) {
+      if (args.out && error?.artifact) writeJson(args.out, error.artifact);
+      throw error;
+    }
     return;
   }
   if (command === 'verify-business') {

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
+  BUSINESS_RECONCILIATION_DEADLINE_MS,
+  BUSINESS_TRIGGER_TRANSPORT_TIMEOUT_MS,
   RELEASE_DEPENDENCIES,
   RELEASE_STATES,
   ReleaseStateMachine,
@@ -119,12 +121,200 @@ assert.match(evaluateBusinessSnapshotSet({
   producerTriggerId: triggerId, now: Date.parse(generatedAt) + 1000,
 }).reason, /^wrong_build:/);
 assert.equal(snapshotIdentity(observed[0]), contract.snapshots[0].identity);
-await assert.rejects(triggerBusinessSnapshots({
-  baseUrl: 'https://example.invalid', adminToken: 'redacted', contract,
-  expectedBuildSha: buildSha, producerTriggerId: triggerId,
-  fetchImpl: async () => new Response(JSON.stringify({ status: 'duplicate' }),
-    { status: 409, headers: { 'Content-Type': 'application/json' } }),
-}), /business_snapshot_trigger_unacknowledged:http_409:duplicate/);
+assert.equal(BUSINESS_TRIGGER_TRANSPORT_TIMEOUT_MS, 270_000);
+assert.equal(BUSINESS_RECONCILIATION_DEADLINE_MS, 420_000);
+
+const jsonResponse = (body, status = 200) => new Response(JSON.stringify(body), {
+  status, headers: { 'Content-Type': 'application/json' },
+});
+const exactAcknowledgement = {
+  schemaVersion: 'argus-release-snapshot-seed-v1',
+  status: 'completed', producerTriggerId: triggerId, expectedBuildSha: buildSha,
+  snapshotExpected: 12, snapshotReady: 12,
+  persistence: { verified: true, readBackVerified: true },
+};
+const snapshotFetch = ({
+  post = () => jsonResponse(exactAcknowledgement), snapshots = observed,
+  onRead = null,
+} = {}) => {
+  const byIdentity = new Map(snapshots.map((row) => [snapshotIdentity(row), row]));
+  let readCount = 0;
+  return async (url, options = {}) => {
+    if (options.method === 'POST') return post(url, options);
+    readCount += 1;
+    if (onRead) {
+      const override = await onRead({ url, options, readCount });
+      if (override) return override;
+    }
+    const parsed = new URL(url);
+    const identity = `market-chart:${parsed.searchParams.get('symbol')}:` +
+      parsed.searchParams.get('horizon');
+    const snapshot = byIdentity.get(identity);
+    return snapshot ? jsonResponse(snapshot) : jsonResponse({ error: 'not_found' }, 404);
+  };
+};
+const triggerOptions = (fetchImpl, overrides = {}) => ({
+  baseUrl: 'https://example.invalid', adminToken: 'unit-test-secret', contract,
+  expectedBuildSha: buildSha, producerTriggerId: triggerId, fetchImpl,
+  nowMs: () => Date.parse(generatedAt) + 1000,
+  reconciliationDeadlineMs: 0,
+  ...overrides,
+});
+const captureRejection = async (promise) => {
+  try {
+    await promise;
+  } catch (error) {
+    return error;
+  }
+  assert.fail('expected promise to reject');
+};
+
+// 1. Normal 200 completion is accepted only after exact durable readback.
+const normalTrigger = await triggerBusinessSnapshots(triggerOptions(snapshotFetch()));
+assert.equal(normalTrigger.status, 'completed');
+assert.equal(normalTrigger.completionMode, 'HTTP_ACKNOWLEDGED');
+assert.equal(normalTrigger.reconciliation.outcome, 'COMPLETE');
+assert.equal(normalTrigger.plan.length, 12);
+
+// 2. A slow but acknowledged request remains valid inside the explicit observation boundary.
+let slowClock = Date.parse(generatedAt) + 1000;
+const slowTrigger = await triggerBusinessSnapshots(triggerOptions(snapshotFetch({
+  post: () => {
+    slowClock += 250_000;
+    return jsonResponse(exactAcknowledgement);
+  },
+}), { nowMs: () => slowClock }));
+assert.equal(slowTrigger.reconciliation.outcome, 'COMPLETE');
+
+// 3. A client transport timeout is UNKNOWN until exact 12/12 durable readback recovers it.
+const timedOutFetch = snapshotFetch({
+  post: (_url, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener('abort', () => {
+      const error = new Error('explicit transport observation timeout');
+      error.name = 'AbortError';
+      reject(error);
+    }, { once: true });
+  }),
+});
+const recovered = await triggerBusinessSnapshots(triggerOptions(timedOutFetch, {
+  transportTimeoutMs: 1,
+}));
+assert.equal(recovered.completionMode, 'RECOVERED_AFTER_TRANSPORT_FAILURE');
+assert.equal(recovered.transport.phase, 'transport_timeout');
+assert.equal(recovered.reconciliation.outcome, 'COMPLETE');
+
+// 4. Timeout plus 11/12 cannot be accepted.
+const incompleteError = await captureRejection(triggerBusinessSnapshots(triggerOptions(snapshotFetch({
+  post: () => { throw new TypeError('fetch failed'); },
+  snapshots: observed.slice(0, 11),
+}))));
+assert.equal(incompleteError.artifact.reconciliation.outcome, 'TIMEOUT');
+assert.equal(incompleteError.artifact.reconciliation.lastObservation.outcome, 'INCOMPLETE');
+
+// 5. Complete data for the wrong trigger fails closed.
+const wrongTriggerSnapshots = structuredClone(observed);
+for (const row of wrongTriggerSnapshots) row.releaseBinding.producerTriggerId = 'other-trigger';
+const wrongTriggerError = await captureRejection(triggerBusinessSnapshots(triggerOptions(snapshotFetch({
+  post: () => { throw new TypeError('fetch failed'); },
+  snapshots: wrongTriggerSnapshots,
+}))));
+assert.equal(wrongTriggerError.artifact.reconciliation.lastObservation.outcome, 'WRONG_TRIGGER');
+
+// 6. A mixed trigger/build set fails closed.
+const mixedSnapshots = structuredClone(observed);
+mixedSnapshots[0].releaseBinding.producerTriggerId = 'other-trigger';
+const mixedError = await captureRejection(triggerBusinessSnapshots(triggerOptions(snapshotFetch({
+  post: () => { throw new TypeError('fetch failed'); }, snapshots: mixedSnapshots,
+}))));
+assert.equal(mixedError.artifact.reconciliation.lastObservation.outcome, 'MIXED_IDENTITY');
+
+// 7. Exact duplicate 409 is idempotent only when canonical 12/12 is complete.
+const duplicate = await triggerBusinessSnapshots(triggerOptions(snapshotFetch({
+  post: () => jsonResponse({
+    status: 'duplicate', producerTriggerId: triggerId,
+    snapshotExpected: 12, snapshotReady: 12,
+  }, 409),
+})));
+assert.equal(duplicate.completionMode, 'IDEMPOTENT_EXISTING_RESULT');
+assert.equal(duplicate.reconciliation.outcome, 'COMPLETE');
+const duplicateIncompleteError = await captureRejection(triggerBusinessSnapshots(
+  triggerOptions(snapshotFetch({
+    post: () => jsonResponse({
+      status: 'duplicate', producerTriggerId: triggerId,
+      snapshotExpected: 12, snapshotReady: 11,
+    }, 409),
+    snapshots: observed.slice(0, 11),
+  })),
+));
+assert.equal(duplicateIncompleteError.artifact.completionMode, 'IDEMPOTENT_EXISTING_RESULT');
+assert.equal(duplicateIncompleteError.artifact.reconciliation.lastObservation.outcome,
+  'INCOMPLETE');
+
+// 8. A conflicting duplicate trigger is terminal and is not reconciled as success.
+const conflictError = await captureRejection(triggerBusinessSnapshots(triggerOptions(snapshotFetch({
+  post: () => jsonResponse({ status: 'duplicate', producerTriggerId: 'other-trigger' }, 409),
+}))));
+assert.equal(conflictError.artifact.outcome, 'WRONG_TRIGGER');
+
+// 9. Nested transport causes survive as sanitized structured diagnostics.
+const nested = new TypeError('fetch failed unit-test-secret');
+nested.cause = Object.assign(new Error('headers timeout unit-test-secret'), {
+  name: 'HeadersTimeoutError', code: 'UND_ERR_HEADERS_TIMEOUT',
+});
+const nestedRecovered = await triggerBusinessSnapshots(triggerOptions(snapshotFetch({
+  post: () => { throw nested; },
+})));
+assert.equal(nestedRecovered.transport.cause.code, 'UND_ERR_HEADERS_TIMEOUT');
+assert.equal(nestedRecovered.transport.cause.name, 'HeadersTimeoutError');
+assert.doesNotMatch(JSON.stringify(nestedRecovered), /unit-test-secret/);
+
+// 10. Backend unavailable before the route is reached remains a failed unknown state.
+const unavailable = snapshotFetch({
+  post: () => { throw Object.assign(new TypeError('fetch failed'), { code: 'ECONNREFUSED' }); },
+  onRead: () => { throw Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' }); },
+});
+const unavailableError = await captureRejection(
+  triggerBusinessSnapshots(triggerOptions(unavailable)),
+);
+assert.equal(unavailableError.artifact.reconciliation.lastObservation.outcome, 'INCOMPLETE');
+
+// 11. A deterministic HTTP error is terminal even if old snapshots happen to exist.
+const httpError = await captureRejection(triggerBusinessSnapshots(triggerOptions(snapshotFetch({
+  post: () => jsonResponse({ status: 'error' }, 503),
+}))));
+assert.match(httpError.artifact.reason, /^deterministic_http_response:http_503/);
+
+// 12. Semantic polling can converge before the bounded reconciliation deadline.
+let pollClock = Date.parse(generatedAt) + 1000;
+let pollRound = 0;
+const pollingFetch = snapshotFetch({
+  post: () => { throw new TypeError('fetch failed'); },
+  onRead: ({ readCount }) => {
+    if (readCount % 12 === 1) pollRound += 1;
+    return pollRound < 2 ? jsonResponse({ status: 'pending' }, 404) : null;
+  },
+});
+const polled = await triggerBusinessSnapshots(triggerOptions(pollingFetch, {
+  nowMs: () => pollClock,
+  reconciliationDeadlineMs: 10_000,
+  reconciliationPollMs: 1_000,
+  sleepImpl: async (milliseconds) => { pollClock += milliseconds; },
+}));
+assert.equal(polled.reconciliation.outcome, 'COMPLETE');
+assert.equal(polled.reconciliation.attempts, 2);
+
+// 13. A durable but unverified snapshot cannot satisfy the canonical gate.
+const unverifiedSnapshots = structuredClone(observed);
+unverifiedSnapshots[0].verificationStatus = 'pending';
+const verificationError = await captureRejection(triggerBusinessSnapshots(triggerOptions(snapshotFetch({
+  post: () => { throw new TypeError('fetch failed'); }, snapshots: unverifiedSnapshots,
+}))));
+assert.equal(verificationError.artifact.reconciliation.lastObservation.outcome,
+  'VERIFICATION_FAILED');
+
+// 14. Failure artifacts never contain the admin token or authorization material.
+assert.doesNotMatch(JSON.stringify(incompleteError.artifact),
+  /unit-test-secret|X-ARGUS-ADMIN-TOKEN|Bearer\s/i);
 const finalized = finalizePublicAcceptance({
   businessArtifact: { status: 'pass', expectedSet: exact.expectedSet,
     observedSet: exact.observedSet },
