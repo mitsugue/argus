@@ -1,0 +1,43 @@
+# v13.5.3 — owner-only news-intake operations (manual dispatch).
+# Lets the operator trigger the bounded reprocess/backfill (§26) without ever
+# moving the admin token through chat or local machines.
+name: news-intake-ops
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'reprocess = bounded backfill of the recent mailbox window'
+        required: true
+        default: 'reprocess'
+        type: choice
+        options:
+          - reprocess
+          - health
+
+permissions:
+  contents: read
+
+jobs:
+  ops:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Run intake operation
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          if [ "${{ inputs.action }}" = "health" ]; then
+            curl -sf --max-time 60 "$BE/api/argus/news-intake/health" \
+              | python3 -m json.tool | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token"; exit 1; }
+          RESP=$(python3 scripts/workflow_http.py --name news-reprocess \
+            --method POST --timeout 300 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --url "$BE/api/argus/admin/news-intake/reprocess")
+          echo "reprocess: $RESP"
+          echo "📥 news reprocess: \`${RESP:0:300}\`" >> "$GITHUB_STEP_SUMMARY"

@@ -19,6 +19,7 @@ import { buildArgusTodayView, selectTodayNews,
   type TodayPositioningRow } from '../domain/argusTodayView';
 import { useTodayHeadline } from '../hooks/useTodayHeadline';
 import { useMarketShock } from '../hooks/useMarketShock';
+import { useNewsIntelligence } from '../hooks/useNewsIntelligence';
 import { headlineProjectionInput,
   type TodayHeadlineEntry } from '../lib/todayHeadline';
 import { useMarketLedger } from '../hooks/useMarketLedger';
@@ -219,6 +220,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
   // screen no longer waits on ~13 MB of serial transport and hashing.
   const headline = useTodayHeadline();
   const marketShock = useMarketShock();
+  const newsIntel = useNewsIntelligence();
   // v11.9.0/v11.17.0: one automatic LOCAL snapshot per JST day once holdings
   // price — scenarioSummary込みで「あの日ARGUSが何を言っていたか」を残す(送信なし)。
   useEffect(() => {
@@ -300,6 +302,12 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
             eventId: event.eventId, severity: event.severity,
             headlineJa: event.headlineJa, whyJa: event.whyJa,
           })),
+          newsIntelEvents: (newsIntel.view?.events ?? []).map((event) => ({
+            eventId: event.eventId, revision: event.revision,
+            severity: event.severity, headlineJa: event.headlineJa,
+            whyJa: event.whyJa, confirmationState: event.confirmationState,
+            alertEligible: event.alertEligible,
+          })),
           sdBySymbol, flowBySymbol, scenarioBySymbol, planBySymbol,
           strategyState: portfolioStrategy.noHoldings ? null : {
             tactical: portfolioStrategy.tacticalBudget, single: portfolioStrategy.singleNameRisk,
@@ -321,7 +329,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     return () => clearTimeout(t);
   }, [apItems, sdSignals, flowRecords, sessionBrief, impEvents, positionExposure,
     scenarioSets, positionPlans, portfolioStrategy, assets, sdaBySymbol,
-    marketShock.view]);
+    marketShock.view, newsIntel.view]);
 
   // Recovery Phase A: publish the one shared, fixed public diagnostics
   // snapshot. AppShell and Settings consume this same request-backed store.
@@ -606,6 +614,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
         projectionSource={projectionSource} freshnessNoteJa={freshnessNoteJa}
         shock={{ status: marketShock.status,
           events: marketShock.view?.events ?? [] }}
+        newsIntel={{ status: newsIntel.status,
+          events: newsIntel.view?.events ?? [] }}
         onInstrument={changeInstrument} onHorizon={changeChartHorizon}
         onNavigate={onNavigate} onNavigateToAsset={onNavigateToAsset}
         onNavigateToSettings={onNavigateToSettings}

@@ -52,6 +52,18 @@ interface Props {
       asOf: string | null;
     }>;
   };
+  newsIntel: {
+    status: 'loading' | 'data' | 'error';
+    events: Array<{
+      eventId: string; eventType: string;
+      severity: 'INFO' | 'WATCH' | 'HIGH' | 'CRITICAL';
+      headlineJa: string; whyJa: string; japanImpactJa: string | null;
+      confirmationState: 'MARKET_CONFIRMED' | 'MARKET_CONFIRMATION_PENDING';
+      marketReadings: Array<{ key: string; labelJa: string;
+        value: number | null; change: number | null; unit: string }>;
+      source: string; sourceReceivedAt: string | null; backfill: boolean;
+    }>;
+  };
   onMode: (mode: MarketSelectionMode) => void;
   onInstrument: (market: 'JP' | 'US', symbol: string) => void;
   onHorizon: (horizon: MarketHorizon) => void;
@@ -235,7 +247,7 @@ const ProjectionChart: React.FC<{
 
 export const ArgusTodayPanel: React.FC<Props> = ({
   view, instruments, selectedSymbol, horizon, chartLoad,
-  projectionSource, freshnessNoteJa, shock,
+  projectionSource, freshnessNoteJa, shock, newsIntel,
   onMode, onInstrument, onHorizon, onNavigate, onNavigateToAsset, onNavigateToSettings, aiButton,
 }) => {
   const projection = view.projectionsByHorizon[`${horizon}D`] ?? view.projection;
@@ -499,6 +511,38 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     </div></Compact>}
 
     <Compact title="重大ニュース" className={`at-news-card ${view.newsCardState.status !== 'live' ? 'is-stale' : ''}`}>
+      {/* v13.5.3: Nikkei mail intelligence renders first — ARGUS's own
+          compact interpretation (what/why/market/japan/confirmation), never
+          the article body. Evidence only; SDA authority is untouched. INFO
+          events stay off Today (Decision First). */}
+      {newsIntel.status === 'data' && newsIntel.events.filter((event) =>
+        event.severity !== 'INFO').length > 0
+        && <div className="at-shock at-news-intel">
+        {newsIntel.events.filter((event) => event.severity !== 'INFO')
+          .slice(0, 3).map((event) => <div key={event.eventId}
+            className="at-shock-event" data-shock-severity={event.severity}
+            data-news-event-type={event.eventType}
+            data-news-confirmation={event.confirmationState}>
+            <div className="at-shock-head">
+              <mark data-severity={event.severity}>{event.severity}</mark>
+              <b>{event.headlineJa}</b>
+            </div>
+            <span>{event.whyJa}</span>
+            {event.japanImpactJa && event.japanImpactJa !== event.whyJa
+              && <span className="at-news-japan">{event.japanImpactJa}</span>}
+            {event.marketReadings.length > 0 && <span className="at-news-market">
+              {event.marketReadings.slice(0, 4).map((reading) =>
+                `${reading.labelJa} ${reading.value ?? '—'}${reading.unit}`)
+                .join(' · ')}</span>}
+            <em>{event.source} · {event.sourceReceivedAt
+              ? new Date(event.sourceReceivedAt).toLocaleTimeString('ja-JP',
+                { hour: '2-digit', minute: '2-digit' }) : '—'}
+              {' · '}
+              {event.confirmationState === 'MARKET_CONFIRMED'
+                ? '市場確認済み' : '市場確認待ち'}
+              {event.backfill ? ' · 再処理(過去分)' : ''}</em>
+          </div>)}
+      </div>}
       {/* v13.5.1: materially market-moving conditions (long-end rate shocks,
           corroborated geopolitical/energy events) render first with severity,
           why-it-matters, and sources. Absence is stated explicitly with what
