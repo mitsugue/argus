@@ -20,8 +20,75 @@ import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 NEWS_EVENT_SCHEMA = "argus-news-event-v1"
-NEWS_POLICY_VERSION = "news-policy-v1"
+NEWS_POLICY_VERSION = "news-policy-v2"
 SEVERITIES = ("INFO", "WATCH", "HIGH", "CRITICAL")
+
+# ── Source families (§2/§9) — the six owner-subscribed sources only ────────
+SOURCE_FAMILIES = ("NIKKEI", "FEDERAL_RESERVE_BOARD", "US_TREASURY",
+                   "BANK_OF_JAPAN", "BLS", "EIA")
+SOURCE_LABELS = {
+    "NIKKEI": "Nikkei", "FEDERAL_RESERVE_BOARD": "FRB",
+    "US_TREASURY": "米財務省", "BANK_OF_JAPAN": "日銀",
+    "BLS": "米労働統計局", "EIA": "米EIA",
+}
+SOURCE_TIERS = {
+    "NIKKEI": "trusted_subscription", "FEDERAL_RESERVE_BOARD":
+    "official_agency", "US_TREASURY": "official_agency",
+    "BANK_OF_JAPAN": "official_agency", "BLS": "official_agency",
+    "EIA": "official_agency",
+}
+# Built-in domain → family seeds (verified official domains; the env map
+# ARGUS_NEWS_SOURCE_DOMAINS extends this from REAL observed mail without a
+# release). GovDelivery/Granicus platform domains resolve via display name +
+# canonical agency links (§9) — never a naive From-string equality.
+_SOURCE_DOMAIN_SEEDS = (
+    ("nikkei.com", "NIKKEI"),
+    ("federalreserve.gov", "FEDERAL_RESERVE_BOARD"),
+    ("frb.org", "FEDERAL_RESERVE_BOARD"),
+    ("treasury.gov", "US_TREASURY"),
+    ("treas.gov", "US_TREASURY"),
+    ("boj.or.jp", "BANK_OF_JAPAN"),
+    ("bls.gov", "BLS"),
+    ("eia.gov", "EIA"),
+)
+_PLATFORM_DOMAINS = ("govdelivery.com", "granicus.com")
+_AGENCY_HINTS = (
+    ("FEDERAL_RESERVE_BOARD", ("federal reserve", "frb", "fomc",
+                               "federalreserve.gov")),
+    ("US_TREASURY", ("treasury", "treas.gov", "ofac", "treasury.gov")),
+    ("BANK_OF_JAPAN", ("日本銀行", "bank of japan", "boj.or.jp")),
+    ("BLS", ("bureau of labor statistics", "bls.gov")),
+    ("EIA", ("energy information administration", "eia.gov")),
+    ("NIKKEI", ("日本経済新聞", "nikkei", "nikkei.com")),
+)
+
+
+def resolve_source(*, from_domain: str, display_name: str = "",
+                   link_domains: Sequence[str] = (),
+                   env_map: Optional[Mapping[str, str]] = None
+                   ) -> Optional[str]:
+    """Map an authenticated sender to one of the six families. Platform
+    (GovDelivery/Granicus) senders resolve through the agency identity in the
+    display name and canonical links; unknown senders resolve to None (the
+    caller quarantines — never a generic GOV bucket)."""
+    domain = str(from_domain or "").lower()
+    for candidate, family in (env_map or {}).items():
+        candidate = str(candidate).lower().strip()
+        if candidate and (domain == candidate
+                          or domain.endswith("." + candidate)) \
+                and family in SOURCE_FAMILIES:
+            return family
+    for candidate, family in _SOURCE_DOMAIN_SEEDS:
+        if domain == candidate or domain.endswith("." + candidate):
+            return family
+    if any(domain == p or domain.endswith("." + p)
+           for p in _PLATFORM_DOMAINS):
+        haystack = (_lower(display_name) + " "
+                    + " ".join(_lower(d) for d in link_domains))
+        for family, hints in _AGENCY_HINTS:
+            if any(hint in haystack for hint in hints):
+                return family
+    return None
 
 # ── Event taxonomy (§12) ────────────────────────────────────────────────────
 # Deterministic seed rules: phrase groups per family. The AI analysis may ADD
@@ -52,8 +119,12 @@ _FAMILY_RULES = (
                "treasury", "jgb", "超長期債", "金利上昇", "金利急騰",
                "債券安", "利回り")),
     ("INFLATION", ("cpi", "消費者物価", "インフレ", "物価上昇", "pce",
-                   "デフレ", "コアコア")),
-    ("EMPLOYMENT", ("雇用統計", "失業率", "nonfarm", "非農業部門", "求人")),
+                   "デフレ", "コアコア", "consumer price index",
+                   "producer price index", "import and export price",
+                   "employment cost index", "real earnings")),
+    ("EMPLOYMENT", ("雇用統計", "失業率", "nonfarm", "非農業部門", "求人",
+                    "employment situation", "job openings", "jolts",
+                    "payrolls", "unemployment rate")),
     ("US_FISCAL", ("米財政", "債務上限", "政府閉鎖", "格下げ", "米国債格付",
                    "fiscal", "国債増発")),
     ("FX", ("円安", "円高", "為替介入", "ドル円", "usd/jpy", "外国為替")),
@@ -299,6 +370,52 @@ def validate_ai_analysis(payload: Any) -> Optional[Dict[str, Any]]:
 _HIGH_IMPACT_FAMILIES = {
     "RATES", "US_FISCAL", "BOJ", "FED", "IRAN", "HORMUZ", "WAR_ESCALATION",
     "CEASEFIRE", "SEMICONDUCTORS", "AI_DATACENTER", "CENTRAL_BANK",
+    "INFLATION", "EMPLOYMENT",
+}
+
+# ── Source-specific materiality policy (§14A) ───────────────────────────────
+# Source authority answers "is this trustworthy?", never "is this
+# market-moving?". Routine official publications are capped (data input /
+# scheduled notices must not alert by themselves); genuine policy actions
+# gain one priority component. Patterns are matched on subject text.
+SOURCE_MATERIALITY = {
+    "US_TREASURY": {
+        "dataInput": ("daily treasury yield curve", "daily treasury long-term",
+                      "daily treasury real yield", "daily treasury rates"),
+        "routine": ("auction results", "press releases digest"),
+        "priority": ("sanction", "sdn", "ofac", "emergency", "buyback",
+                     "refunding", "market intervention"),
+    },
+    "FEDERAL_RESERVE_BOARD": {
+        "dataInput": ("industrial production and capacity utilization",),
+        "routine": ("beige book", "senior loan officer", "speech", "testimony",
+                    "minutes of the board", "h.4.1", "h.8", "g.17"),
+        "priority": ("fomc statement", "federal funds rate", "emergency",
+                     "unscheduled", "intermeeting", "policy action",
+                     "monetary policy decision"),
+    },
+    "BANK_OF_JAPAN": {
+        "dataInput": ("統計", "時系列データ", "公表予定"),
+        "routine": ("公表日程", "講演要旨", "議事要旨", "レビュー・シリーズ"),
+        "priority": ("金融政策決定会合", "政策金利", "臨時", "総裁記者会見",
+                     "当面の金融政策運営", "イールドカーブ・コントロール"),
+    },
+    "BLS": {
+        # Receipt of a scheduled release alone must never mint HIGH/CRITICAL
+        # (§14A): no consensus evidence exists in the email, so beat/miss is
+        # never invented. Market confirmation may still escalate.
+        "scheduledRelease": ("consumer price index", "employment situation",
+                             "producer price index", "job openings",
+                             "employment cost index", "productivity and costs",
+                             "real earnings", "import and export price"),
+    },
+    "EIA": {
+        "routine": ("weekly natural gas storage", "petroleum data news",
+                    "natural gas analysis", "petroleum analysis",
+                    "this week in petroleum"),
+        "priority": ("opec", "middle east", "north africa", "disruption",
+                     "supply shock", "emergency", "strategic petroleum"),
+    },
 }
 _EXTREME_PHRASES = (
     "急騰", "急落", "過去最高", "最高値", "最安値", "初めて", "突破", "緊急",
@@ -312,28 +429,37 @@ def evaluate_materiality(*, taxonomy: Mapping[str, Any], staleness: str,
                          ai_analysis: Optional[Mapping[str, Any]],
                          corroboration: Mapping[str, Any],
                          subject: str,
+                         source: str = "NIKKEI",
                          is_revision_escalation: bool = False,
                          ) -> Dict[str, Any]:
     """Explicit severity policy. Components are integers with visible reasons;
     the model contributes at most ONE component (materialityGuess) and can
-    never override source, staleness or market policy."""
+    never override source, staleness, market or source-family policy (§14A)."""
     reasons: List[str] = []
     family = str(taxonomy.get("eventType") or "OTHER_MARKET_RELEVANT")
+    haystack = _lower(subject)
+    market = corroboration or {}
+    confirmed = bool(market.get("confirmed"))
+    policy = SOURCE_MATERIALITY.get(source) or {}
+    data_input = any(p in haystack for p in policy.get("dataInput", ()))
+    routine = any(p in haystack for p in policy.get("routine", ()))
+    scheduled = any(p in haystack for p in policy.get("scheduledRelease", ()))
+    priority = any(p in haystack for p in policy.get("priority", ()))
 
     score = 0
     if family in _HIGH_IMPACT_FAMILIES:
         score += 1
         reasons.append(f"family_{family.lower()}")
-    haystack = _lower(subject)
     if any(phrase in haystack for phrase in _EXTREME_PHRASES):
         score += 1
         reasons.append("extreme_language")
+    if priority:
+        score += 1
+        reasons.append(f"source_priority_{source.lower()}")
     if ai_analysis and isinstance(ai_analysis.get("materialityGuess"), int):
         if ai_analysis["materialityGuess"] >= 2:
             score += 1
             reasons.append("ai_materiality_high")
-    market = corroboration or {}
-    confirmed = bool(market.get("confirmed"))
     if confirmed:
         score += 1
         reasons.append("market_confirmed")
@@ -341,6 +467,19 @@ def evaluate_materiality(*, taxonomy: Mapping[str, Any], staleness: str,
             "LOW_RELEVANCE", "OTHER_MARKET_RELEVANT"):
         score = 0
         reasons.append("low_value_editorial")
+    if data_input:
+        # Routine official data tables are corroboration INPUT, never an
+        # alert by themselves (§14A: Treasury daily rates, IP/CapU …).
+        score = 0
+        reasons.append("official_data_input")
+    elif scheduled and not confirmed:
+        # Scheduled macro release received: real facts without invented
+        # beat/miss stay WATCH until the market itself confirms (§14A BLS).
+        score = min(score, 1)
+        reasons.append("scheduled_release_unconfirmed")
+    elif routine and not confirmed and not priority:
+        score = min(score, 1)
+        reasons.append("routine_official_publication")
     if staleness == "STALE":
         score = min(score, 1)
         reasons.append("stale_capped")
@@ -365,6 +504,7 @@ def evaluate_materiality(*, taxonomy: Mapping[str, Any], staleness: str,
         "severity": severity,
         "score": score,
         "reasons": reasons,
+        "dataInput": data_input,
         "confirmationState": ("MARKET_CONFIRMED" if confirmed
                               else "MARKET_CONFIRMATION_PENDING"),
         "policyVersion": NEWS_POLICY_VERSION,
@@ -380,6 +520,7 @@ def build_news_event(*, message: Mapping[str, Any],
                      ai_analysis: Optional[Mapping[str, Any]],
                      corroboration: Mapping[str, Any],
                      analysis_state: str, processed_iso: str,
+                     source: str = "NIKKEI",
                      revision: int = 1) -> Dict[str, Any]:
     """Normalized NewsEnvelope — Today/Alerts read THIS, never the raw email.
     Body text is not persisted; headline + ARGUS-generated interpretation only.
@@ -395,8 +536,10 @@ def build_news_event(*, message: Mapping[str, Any],
         "schemaVersion": NEWS_EVENT_SCHEMA,
         "eventId": message["eventIdentity"],
         "revision": revision,
-        "source": "Nikkei",
-        "sourceTier": "trusted_subscription",
+        "source": SOURCE_LABELS.get(source, source),
+        "sourceFamily": source,
+        "sourceTier": SOURCE_TIERS.get(source, "trusted_subscription"),
+        "dataInput": bool(materiality.get("dataInput")),
         "sourceFingerprint": message["fingerprint"],
         "sourceReceivedAt": message.get("receivedIso"),
         "sourcePublishedAt": message.get("publishedIso"),

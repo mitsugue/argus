@@ -105,9 +105,13 @@ def authenticate_sender(headers: Sequence[Mapping[str, str]],
     dmarc_pass = "dmarc=pass" in auth_results
     if not (spf_pass or dkim_pass):
         reasons.append("no_spf_or_dkim_pass")
+    # Official subscriptions ride shared mailing platforms
+    # (GovDelivery/Granicus): the bounce Return-Path is the platform's, not
+    # the agency's. A DKIM or DMARC pass on the real header chain is the
+    # authority there — never a naive Return-Path string equality (§9).
     if return_path_domain and domain_ok and not (
             any(return_path_domain.endswith(d) for d in allowed)
-            or dmarc_pass):
+            or dmarc_pass or dkim_pass):
         reasons.append(f"return_path_mismatch:{return_path_domain}")
     return {
         "authenticated": not reasons,
@@ -154,16 +158,25 @@ def normalize_message(raw: Mapping[str, Any]) -> Dict[str, Any]:
     headers = payload.get("headers") or []
     subject = _header(headers, "Subject")
     date_header = _header(headers, "Date")
+    from_line = _header(headers, "From")
     internal_ms = raw.get("internalDate")
     received_epoch = (int(internal_ms) / 1000.0
                       if str(internal_ms or "").isdigit() else None)
     excerpt = _plain_excerpt(payload)
     url_match = _URL_RE.search(excerpt or "")
+    link_domains: List[str] = []
+    for url in _URL_RE.findall(excerpt or "")[:20]:
+        host = re.sub(r"^https?://([^/]+).*$", r"\1", url).lower()
+        if host and host not in link_domains:
+            link_domains.append(host)
     return {
         "messageId": str(raw.get("id") or ""),
         "rfcMessageId": _header(headers, "Message-ID"),
         "subject": subject,
         "dateHeader": date_header,
+        "fromDomain": _domain_of(from_line),
+        "fromDisplay": re.sub(r"<[^>]*>", "", from_line).strip()[:80],
+        "linkDomains": link_domains[:8],
         "receivedEpoch": received_epoch,
         "excerpt": excerpt,
         "url": url_match.group(0) if url_match else None,
@@ -213,12 +226,17 @@ def list_history_message_ids(access_token: str, start_history_id: str,
 
 
 def reconcile_message_ids(access_token: str,
-                          http: Callable[..., Any]) -> Dict[str, Any]:
+                          http: Callable[..., Any],
+                          window: str = RECONCILE_WINDOW,
+                          max_messages: int = MAX_RECONCILE_MESSAGES,
+                          ) -> Dict[str, Any]:
     """Bounded fallback: recent message ids by query — used on first run,
-    history gaps, or repeated errors. Never downloads the whole mailbox."""
+    history gaps, or repeated errors. Never downloads the whole mailbox.
+    A larger window/count is used for owner-triggered BACKFILL (bounded to
+    14 days / 150 messages by the caller contract)."""
     response = http("GET", f"{API}/messages",
-                    params={"q": RECONCILE_WINDOW,
-                            "maxResults": MAX_RECONCILE_MESSAGES},
+                    params={"q": window,
+                            "maxResults": min(int(max_messages), 150)},
                     headers={"Authorization": f"Bearer {access_token}"},
                     timeout=20)
     if response.status_code == 401:
@@ -258,7 +276,10 @@ def prune_seen(seen_ids: List[str]) -> List[str]:
 
 def run_intake_cycle(*, env: Mapping[str, str], state: Mapping[str, Any],
                      http: Callable[..., Any],
-                     now_epoch: float) -> Dict[str, Any]:
+                     now_epoch: float,
+                     reconcile_window: str = RECONCILE_WINDOW,
+                     max_messages: int = MAX_RECONCILE_MESSAGES,
+                     ) -> Dict[str, Any]:
     """One reliable intake cycle. Returns new state + freshly normalized
     messages. Pure orchestration: durability of the returned state is the
     caller's job. Never raises for transport errors — every failure is a
@@ -302,7 +323,8 @@ def run_intake_cycle(*, env: Mapping[str, str], state: Mapping[str, Any],
         mode = "reconcile"
 
     if mode == "reconcile":
-        listing = reconcile_message_ids(token, http)
+        listing = reconcile_message_ids(
+            token, http, window=reconcile_window, max_messages=max_messages)
         if listing["status"] == "auth_error":
             result["status"] = "OAUTH_EXPIRED"
             return result
@@ -325,7 +347,7 @@ def run_intake_cycle(*, env: Mapping[str, str], state: Mapping[str, Any],
             continue
         result["messages"].append(message)
         fetched += 1
-        if fetched >= MAX_RECONCILE_MESSAGES:
+        if fetched >= min(int(max_messages), 150):
             break
     result["state"]["seenMessageIds"] = prune_seen(seen)
     result["state"]["lastSyncEpoch"] = now_epoch
