@@ -8,6 +8,7 @@ on:
       # The release gate requires a pre-merge admission certificate on every
       # PR; ops workflows in the release lane must therefore also trigger the
       # producer, or their PRs can never merge.
+      - '.github/workflows/news-intake-ops.yml'
       - '.github/workflows/prediction-ledger.yml'
       - 'test_argus_public_operational_boundary.py'
       - 'web/scripts/public-market-acceptance.mjs'

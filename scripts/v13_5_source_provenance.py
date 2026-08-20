@@ -36,6 +36,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # (f79548bb…); anything outside this list fails the release closed.
     ".github/actions/v13-5-pre-mutation-rehearsal/action.yml",
     ".github/workflows/market-public-acceptance.yml",
+    ".github/workflows/news-intake-ops.yml",
     ".github/workflows/prediction-ledger.yml",
     "argus_checkpoint_v2.py",
     "argus_gmail_intake.py",
