@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AppShell } from './components/AppShell';
 import { NavRail, type RouteKey } from './components/NavRail';
 import {
@@ -24,6 +24,24 @@ const readHistoryIndex = (): number | null => {
 const currentHistoryState = () => history.state && typeof history.state === 'object'
   ? history.state as Record<string, unknown> : {};
 
+const MAX_MOBILE_SAFE_BOTTOM_PX = 34;
+const applyBoundedMobileSafeBottom = () => {
+  const probe = document.createElement('div');
+  probe.setAttribute('aria-hidden', 'true');
+  probe.style.cssText = [
+    'position:fixed',
+    'visibility:hidden',
+    'pointer-events:none',
+    'padding-bottom:env(safe-area-inset-bottom,0px)',
+  ].join(';');
+  document.documentElement.appendChild(probe);
+  const measured = Number.parseFloat(window.getComputedStyle(probe).paddingBottom);
+  probe.remove();
+  const bounded = Number.isFinite(measured)
+    ? Math.min(MAX_MOBILE_SAFE_BOTTOM_PX, Math.max(0, measured)) : 0;
+  document.documentElement.style.setProperty('--argus-safe-bottom', `${bounded}px`);
+};
+
 const App: React.FC = () => {
   const initial = useMemo(initialLocation, []);
   const [location, setLocation] = useState<ParsedLocation>(initial);
@@ -33,6 +51,24 @@ const App: React.FC = () => {
   const [pageEnterDirection, setPageEnterDirection] = useState<1 | -1>(1);
   const [assetFocus, setAssetFocus] = useState<AssetFocusIntent | null>(() =>
     initial.asset ? { ...initial.asset, nonce: Date.now() } : null);
+  useLayoutEffect(() => {
+    // Some installed iOS web views have reported a duplicated/oversized
+    // safe-area inset. CSS clamp() is retained as the no-JS fallback, while
+    // this measured value is the production authority for the shared nav,
+    // sticky-command, and page-clearance geometry.
+    applyBoundedMobileSafeBottom();
+    const refresh = () => applyBoundedMobileSafeBottom();
+    window.addEventListener('pageshow', refresh);
+    window.addEventListener('orientationchange', refresh);
+    window.addEventListener('resize', refresh);
+    window.visualViewport?.addEventListener('resize', refresh);
+    return () => {
+      window.removeEventListener('pageshow', refresh);
+      window.removeEventListener('orientationchange', refresh);
+      window.removeEventListener('resize', refresh);
+      window.visualViewport?.removeEventListener('resize', refresh);
+    };
+  }, []);
   useEffect(() => {
     if (!(history.state && typeof history.state === 'object'
       && Number.isInteger((history.state as { argusNavigationIndex?: unknown }).argusNavigationIndex))) {

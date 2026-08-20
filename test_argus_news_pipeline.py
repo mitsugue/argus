@@ -6,6 +6,7 @@ import pytest
 
 import scanner
 import argus_gmail_intake as gi
+import argus_causal_event_memory as cem
 
 
 NOW_MS = str(int(time.time() * 1000))
@@ -57,6 +58,13 @@ def news_env(monkeypatch, tmp_path):
     monkeypatch.setenv("ARGUS_NEWS_ALLOWED_SENDER_DOMAINS", "nikkei.com")
     monkeypatch.setattr(scanner, "_news_intake_file",
                         lambda: str(tmp_path / "news_state.json"))
+    monkeypatch.setattr(scanner, "_causal_memory_file",
+                        lambda: str(tmp_path / "causal_events.jsonl"))
+    monkeypatch.setattr(scanner, "_CAUSAL_MEMORY", {
+        "loaded": False, "state": cem.empty_state(), "loadStatus": "NOT_LOADED",
+        "lastAppendAt": None, "lastRefreshAt": None, "lastRefreshEpoch": 0.0,
+        "skippedLowValue": 0, "appendFailures": 0, "lastErrorClass": None,
+    })
     monkeypatch.setitem(scanner._NEWS_LOADED, "value", True)
     fresh = {
         "intakeState": {}, "events": {}, "order": [], "audit": [],
@@ -123,6 +131,9 @@ def test_material_mail_reaches_major_news_and_alert(monkeypatch, news_env):
     assert top["alertEligible"] is True
     assert top["analysisState"] == "AI_ANALYSIS_UNAVAILABLE"
     assert top["sdaAuthority"] is False
+    assert top["eventMemory"]["status"] in (
+        "OPEN", "WATCHING", "PARTIALLY_CONFIRMED")
+    assert top["eventMemory"]["calibrationMode"] == "SHADOW"
     low = events[1]
     assert low["severity"] == "INFO"              # low-value stays quiet
     assert low["alertEligible"] is False
@@ -134,6 +145,9 @@ def test_material_mail_reaches_major_news_and_alert(monkeypatch, news_env):
     assert health["emailsSeen"] == 2
     assert health["alertsEligible"] == 1
     assert health["observedSenderDomains"]["nikkei.com"]["count"] == 2
+    memory = client.get("/api/argus/event-memory").get_json()
+    assert memory["eventCount"] == 1  # INFO editorial mail never pollutes memory
+    assert memory["automaticCalibrationEnabled"] is False
 
 
 def test_duplicate_email_and_spoof_quarantine(monkeypatch, news_env):

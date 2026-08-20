@@ -69,6 +69,16 @@
 .at-shock-head b { font-size:11.5px; line-height:1.35; }
 .at-shock-event span { color:var(--text-sub); font-size:10px; }
 .at-shock-event em { color:var(--text-muted); font-size:9px; font-style:normal; }
+.at-event-memory { display:flex; flex-wrap:wrap; align-items:baseline; gap:3px 7px;
+  margin-top:2px; padding:5px 6px; border-left:2px solid var(--accent);
+  background:color-mix(in srgb,var(--surface) 89%,var(--accent)); }
+.at-event-memory b { color:var(--accent); font-size:9px; letter-spacing:.06em; }
+.at-event-memory span { color:var(--text-main); font-size:9.5px; font-weight:700; }
+.at-event-memory em { color:var(--text-sub); font-size:8.5px; }
+.at-event-memory small { margin-left:auto; color:var(--text-faint); font-size:8px; }
+.at-event-memory[data-flag-recovery="true"] { border-left-color:#22c55e;
+  background:color-mix(in srgb,var(--surface) 88%,#14532d); }
+.at-event-memory[data-flag-recovery="true"] b { color:#4ade80; }
 .at-shock-clear { margin:0 0 6px; color:var(--text-muted); font-size:10px; }
 .at-head { display:flex; align-items:center; gap:8px; color:var(--text-muted); font-size:10px; letter-spacing:.1em; }
 .at-head span { margin-left:auto; color:#f59e0b; font-weight:800; }

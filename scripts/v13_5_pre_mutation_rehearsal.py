@@ -79,7 +79,7 @@ def _identity_files(repo: pathlib.Path) -> Dict[str, str]:
     package = _load(repo / "web/package.json")
     backend = _load(repo / "backend-version.json")
     if product != {"schemaVersion": "argus-product-version-v1",
-                   "productVersion": "v13.5.3"}:
+                   "productVersion": "v13.5.4"}:
         raise ValueError("rehearsal_product_version_invalid")
     if package.get("version") != "13.3.11" \
             or backend.get("version") != "13.4.18":
@@ -115,7 +115,7 @@ def seal(*, repo: pathlib.Path, dist: pathlib.Path,
     index = (dist / "index.html").read_text(encoding="utf-8")
     for marker in (
             f'__ARGUS_BUILD_SHA__="{build_sha}"',
-            '__ARGUS_PRODUCT_VERSION__="v13.5.3"',
+            '__ARGUS_PRODUCT_VERSION__="v13.5.4"',
             '__ARGUS_VERSION__="13.3.11"'):
         if marker not in index:
             raise ValueError(f"rehearsal_index_identity_missing:{marker}")

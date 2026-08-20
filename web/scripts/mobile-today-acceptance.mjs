@@ -282,9 +282,16 @@ async function selectCanonicalControls(page, timeout = 30_000) {
 
 async function geometry(page, viewport) {
   // Chromium does not expose iOS env() values, so record the native value and
-  // separately exercise the exact 34px maximum accepted by the CSS contract.
-  await page.evaluate(() => {
+  // separately prove the runtime guard rejects an oversized installed-web-view
+  // value before exercising the exact 34px maximum accepted by the contract.
+  const hostileSafeAreaBottom = await page.evaluate(async () => {
+    document.documentElement.style.setProperty('--argus-safe-bottom', '92px');
+    window.dispatchEvent(new Event('pageshow'));
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const bounded = parseFloat(getComputedStyle(document.documentElement)
+      .getPropertyValue('--argus-safe-bottom'));
     document.documentElement.style.setProperty('--argus-safe-bottom', '34px');
+    return bounded;
   });
   return page.evaluate((size) => {
     const rect = (selector) => {
@@ -314,6 +321,7 @@ async function geometry(page, viewport) {
       visualViewportWidth: vv?.width ?? null,
       nativeSafeAreaBottom,
       exercisedSafeAreaBottom: 34,
+      hostileSafeAreaBottom: size.hostileSafeAreaBottom,
       navRect, stickyCommandRect,
       shellRect: rect('.shell'), bodyRect: rect('body'),
       mainRect: rect('.shell__main'),
@@ -333,7 +341,7 @@ async function geometry(page, viewport) {
       navTouchTargets: [...document.querySelectorAll('.nav__mobile > button, .nav__mobile > details > summary')]
         .map((element) => element.getBoundingClientRect().height),
     };
-  }, viewport);
+  }, { ...viewport, hostileSafeAreaBottom });
 }
 
 async function navigationAudit(page, evidence) {
@@ -471,6 +479,10 @@ async function run() {
     }
     if (viewport.width <= 720 && Math.abs(audit.stickyNavGap ?? 99) > 1) {
       evidence.failures.push(`sticky-gap:${viewport.width}`);
+    }
+    if (!Number.isFinite(audit.hostileSafeAreaBottom)
+      || audit.hostileSafeAreaBottom < 0 || audit.hostileSafeAreaBottom > 34) {
+      evidence.failures.push(`safe-area-bound:${viewport.width}`);
     }
     if (audit.horizontalOverflow) evidence.failures.push(`horizontal-overflow:${viewport.width}`);
     if (viewport.width <= 720 && audit.navTouchTargets.some((height) => height < 44)) {

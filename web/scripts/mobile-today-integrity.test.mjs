@@ -56,6 +56,14 @@ assert.match(app, /window\.addEventListener\('popstate', onLocation\)/);
 assert.match(app, /history\.pushState/);
 assert.match(app, /PRIMARY_NAVIGATION/);
 assert.match(app, /pageDirection=\{pageEnterDirection\}/);
+assert.match(app, /MAX_MOBILE_SAFE_BOTTOM_PX\s*=\s*34/);
+assert.match(app, /padding-bottom:env\(safe-area-inset-bottom,0px\)/);
+assert.match(app,
+  /Math\.min\(MAX_MOBILE_SAFE_BOTTOM_PX, Math\.max\(0, measured\)\)/);
+assert.match(app,
+  /style\.setProperty\('--argus-safe-bottom', `\$\{bounded\}px`\)/);
+assert.match(app, /window\.addEventListener\('pageshow', refresh\)/);
+assert.match(app, /window\.visualViewport\?\.addEventListener\('resize', refresh\)/);
 assert.match(shell, /setAnimDir\(pageDirection\)/);
 
 assert.match(navCss, /--argus-safe-bottom:\s*clamp\(0px,\s*env\(safe-area-inset-bottom,\s*0px\),\s*34px\)/);
@@ -120,6 +128,8 @@ assert.match(acceptance, /ERR_INTERNET_DISCONNECTED/,
 assert.match(acceptance, /expectedCalls: 1/);
 assert.match(acceptance, /headline-first-decision-visibility/,
   'the headline-first regression gate must exist in the acceptance engine');
+assert.match(acceptance, /hostileSafeAreaBottom/,
+  'mobile geometry must reject an oversized runtime safe-area value');
 assert.match(acceptance, /fulfillCapturedSnapshot\(route, evidence, 4_000\)/,
   'cold loader acceptance must keep the delayed request active after shell readiness');
 assert.ok(acceptance.indexOf('const coldLoaderAppeared')

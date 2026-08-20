@@ -62,6 +62,14 @@ interface Props {
       marketReadings: Array<{ key: string; labelJa: string;
         value: number | null; change: number | null; unit: string }>;
       source: string; sourceReceivedAt: string | null; backfill: boolean;
+      eventMemory: {
+        status: string; firstSeenAt: string; openedDaysAgo: number | null;
+        episodeId: string; flagRecovery: boolean;
+        hypothesisStates: Record<string, string>;
+        analogEvidence: { sampleSize: number; independentEpisodeCount: number;
+          confidence: string; insufficientEvidence: boolean } | null;
+        calibrationMode: 'SHADOW'; sdaAuthority: false;
+      } | null;
     }>;
   };
   onMode: (mode: MarketSelectionMode) => void;
@@ -534,6 +542,22 @@ export const ArgusTodayPanel: React.FC<Props> = ({
               {event.marketReadings.slice(0, 4).map((reading) =>
                 `${reading.labelJa} ${reading.value ?? '—'}${reading.unit}`)
                 .join(' · ')}</span>}
+            {event.eventMemory && <div className="at-event-memory"
+              data-event-memory-status={event.eventMemory.status}
+              data-flag-recovery={event.eventMemory.flagRecovery ? 'true' : 'false'}
+              data-calibration-mode={event.eventMemory.calibrationMode}>
+              <b>{event.eventMemory.flagRecovery ? 'フラグ回収' : 'イベント記憶'}</b>
+              <span>{event.eventMemory.openedDaysAgo != null
+                && event.eventMemory.openedDaysAgo > 0
+                ? `${event.eventMemory.openedDaysAgo}日前から監視 · ` : ''}
+                {event.eventMemory.status}</span>
+              {event.eventMemory.analogEvidence && <em>
+                類似 {event.eventMemory.analogEvidence.independentEpisodeCount} 独立事例
+                {event.eventMemory.analogEvidence.insufficientEvidence
+                  ? ' · 根拠不足' : ` · ${event.eventMemory.analogEvidence.confidence}`}
+              </em>}
+              <small>校正 SHADOW · 判断権限なし</small>
+            </div>}
             <em>{event.source} · {event.sourceReceivedAt
               ? new Date(event.sourceReceivedAt).toLocaleTimeString('ja-JP',
                 { hour: '2-digit', minute: '2-digit' }) : '—'}

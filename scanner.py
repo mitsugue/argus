@@ -113,6 +113,7 @@ import argus_today_headline         # v13.5.0: compact Today bootstrap from veri
 import argus_market_shock           # v13.5.1: market-shock materiality (US30Y + corroborated news)
 import argus_news_intelligence      # v13.5.3: Nikkei mail → news-risk evidence (pure policy)
 import argus_gmail_intake           # v13.5.3: dedicated read-only news mailbox intake
+import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
 import argus_tick_durability        # v13.3.1: bounded tick WAL/checkpoint/single-flight
 import argus_persistent_storage     # v13.3.1: fail-closed Render Disk contract
 import argus_remote_receipt_queue   # v13.4.2: fsynced async Remote Journal intents
@@ -15707,6 +15708,10 @@ def get_market_shock():
             "usdJpyChange": (rates.get("usdJpy") or {}).get("change"),
             "us10yChangeBp": us10y_change,
         }, now_iso=now_iso)
+    try:
+        _causal_memory_process_market_shock(view)
+    except Exception:
+        pass  # Event Memory is evidence-only; Market Shock remains available.
     _SHOCK_CACHE["data"] = view
     _SHOCK_CACHE["expires"] = now + _SHOCK_TTL
     return view
@@ -15755,6 +15760,357 @@ _NEWS_INTEL = {
     },
 }
 _NEWS_THREAD_STARTED = {"value": False}
+
+
+# ── v13.5.4 Causal Event Memory ─────────────────────────────────────────────
+# This is a durable evidence ledger, not an enlargement of the bounded mail
+# audit cache above.  It lives on the already-approved persistent root, stores
+# no raw article/mail body or owner portfolio data, and never mutates SDA/news
+# severity weights.  Recovery authority is intentionally unchanged: this is a
+# local durable, non-authoritative evidence store with an independently
+# verifiable hash chain.
+_CAUSAL_MEMORY_LOCK = threading.RLock()
+_CAUSAL_MEMORY = {
+    "loaded": False,
+    "state": argus_causal_event_memory.empty_state(),
+    "loadStatus": "NOT_LOADED",
+    "lastAppendAt": None,
+    "lastRefreshAt": None,
+    "lastRefreshEpoch": 0.0,
+    "skippedLowValue": 0,
+    "appendFailures": 0,
+    "lastErrorClass": None,
+}
+_CAUSAL_MEMORY_REFRESH_SEC = 15 * 60
+
+
+def _causal_memory_file():
+    # _DURABILITY_PATHS is initialized later during module startup; public
+    # requests and the news thread run only after the complete module loads.
+    return os.path.join(
+        _DURABILITY_PATHS["root"], "argus_causal_event_memory.jsonl")
+
+
+def _causal_memory_load_locked():
+    if _CAUSAL_MEMORY["loaded"]:
+        return
+    _CAUSAL_MEMORY["loaded"] = True
+    loaded = argus_causal_event_memory.read_ledger(_causal_memory_file())
+    state = argus_causal_event_memory.fold_records(
+        loaded.get("records") or [], ledger_status=loaded.get("status") or "UNKNOWN")
+    _CAUSAL_MEMORY["state"] = state
+    _CAUSAL_MEMORY["loadStatus"] = loaded.get("status") or "UNKNOWN"
+    if loaded.get("status") == "CORRUPT":
+        _CAUSAL_MEMORY["lastErrorClass"] = "hash_chain_invalid"
+
+
+def _causal_memory_ensure_loaded():
+    with _CAUSAL_MEMORY_LOCK:
+        _causal_memory_load_locked()
+        return _CAUSAL_MEMORY["state"]
+
+
+def _causal_memory_append(payload):
+    with _CAUSAL_MEMORY_LOCK:
+        _causal_memory_load_locked()
+        if _CAUSAL_MEMORY["loadStatus"] not in ("EMPTY", "VERIFIED"):
+            raise RuntimeError("causal_memory_ledger_not_writable")
+        record = argus_causal_event_memory.append_record(
+            _causal_memory_file(), payload)
+        if not record.get("duplicateAppendSuppressed"):
+            argus_causal_event_memory.apply_record(
+                _CAUSAL_MEMORY["state"], record)
+        _CAUSAL_MEMORY["state"]["ledgerStatus"] = "VERIFIED"
+        _CAUSAL_MEMORY["loadStatus"] = "VERIFIED"
+        _CAUSAL_MEMORY["lastAppendAt"] = _ai_now_iso()
+        return record
+
+
+def _causal_memory_code_identity():
+    try:
+        return _backend_exact_sha()
+    except Exception:
+        return os.environ.get("RENDER_GIT_COMMIT") or "unknown"
+
+
+def _causal_memory_regime(readings):
+    by_key = {str(row.get("key") or "").lower(): row for row in readings or []}
+    us30y = by_key.get("us30y") or {}
+    vix = by_key.get("vix") or {}
+    oil = by_key.get("oil") or {}
+    usd_jpy = by_key.get("usdjpy") or by_key.get("usd_jpy") or {}
+
+    def level(row, high, low):
+        value = row.get("value")
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return "UNKNOWN"
+        return "HIGH" if float(value) >= high else "LOW" if float(value) <= low else "NORMAL"
+
+    return {
+        "ratesRegime": level(us30y, 5.0, 3.5),
+        "equityVolatility": level(vix, 25.0, 15.0),
+        "monetaryPolicyRegime": "UNKNOWN",
+        "growthValueRegime": "UNKNOWN",
+        "liquidityState": "UNKNOWN",
+        "oilCommodityState": level(oil, 90.0, 65.0),
+        "usdJpyRegime": level(usd_jpy, 155.0, 135.0),
+        "japanSessionContext": "UNKNOWN",
+    }
+
+
+def _causal_memory_market_context(event):
+    known_at = event.get("processedAt") or _ai_now_iso()
+    return [{
+        "key": row.get("key"), "value": row.get("value"),
+        "change": row.get("change"), "unit": row.get("unit"),
+        "asOf": row.get("asOf"), "state": row.get("state"),
+        "knownAt": known_at,
+        "sourceRef": f"news-corroboration:{event.get('eventId')}:{row.get('key')}",
+    } for row in (event.get("marketReadings") or [])[:12]]
+
+
+def _causal_memory_internal_event(event_id):
+    state = _causal_memory_ensure_loaded()
+    raw = (state.get("events") or {}).get(event_id)
+    if not raw:
+        return None
+    view = argus_causal_event_memory.event_view(raw)
+    # Assessment builders need append-only assessment history to derive the
+    # previous hypothesis state; this field never leaves the internal call.
+    view["assessments"] = list(raw.get("assessments") or [])
+    view["marketContext"] = list(
+        ((raw.get("revisions") or [{}])[-1].get("marketContext") or []))
+    return view
+
+
+def _causal_memory_assess_episode(new_event_view):
+    """A later related event can support an older open flag.  Market direction
+    alone remains attribution-uncertain; an explicit related escalation is the
+    additional causal evidence.  Identical status assessments are suppressed."""
+    state = _causal_memory_ensure_loaded()
+    observations = argus_causal_event_memory.market_observations(
+        new_event_view.get("marketContext") or [],
+        known_at=new_event_view["lastKnownAt"], source_prefix="event-context")
+    escalation = new_event_view.get("eventType") in (
+        "IRAN", "HORMUZ", "WAR_ESCALATION", "SANCTIONS")
+    candidates = [row for row in argus_causal_event_memory.all_event_views(state)
+                  if row["episodeId"] == new_event_view["episodeId"]
+                  and row["eventId"] != new_event_view["eventId"]
+                  and row["firstSeenAt"] < new_event_view["firstSeenAt"]
+                  and row["currentStatus"] not in (
+                      "CONFIRMED", "INVALIDATED", "RESOLVED", "UNSCORABLE")]
+    for candidate in candidates:
+        internal = _causal_memory_internal_event(candidate["eventId"])
+        if not internal:
+            continue
+        for hypothesis in internal["causalHypotheses"]:
+            evidence = argus_causal_event_memory.evidence_for_hypothesis(
+                hypothesis, observations,
+                event_support_ref=f"causal-event:{new_event_view['eventId']}",
+                event_supporting=escalation)
+            assessment = argus_causal_event_memory.build_assessment(
+                event=internal, hypothesis_id=hypothesis["hypothesisId"],
+                evaluated_at=new_event_view["lastKnownAt"], evidence=evidence,
+                attribution_mode="MULTI_CAUSAL" if len(candidates) > 1
+                else "SINGLE_CAUSAL",
+                competing_event_refs=[f"causal-event:{row['eventId']}"
+                                      for row in candidates if row["eventId"] != candidate["eventId"]],
+                code_identity=_causal_memory_code_identity())
+            previous = internal["hypothesisStates"].get(hypothesis["hypothesisId"])
+            if assessment["status"] != previous:
+                _causal_memory_append(assessment)
+                internal = _causal_memory_internal_event(candidate["eventId"])
+
+
+def _causal_memory_process_normalized_event(event):
+    eligible, reason = argus_causal_event_memory.event_memory_eligible(event)
+    if not eligible:
+        with _CAUSAL_MEMORY_LOCK:
+            _CAUSAL_MEMORY["skippedLowValue"] += 1
+        return None
+    state = _causal_memory_ensure_loaded()
+    existing_views = argus_causal_event_memory.all_event_views(state)
+    prior = (state.get("events") or {}).get(event.get("eventId"))
+    if prior:
+        existing_fingerprints = {
+            ref.get("sourceFingerprint")
+            for revision in prior.get("revisions") or []
+            for ref in revision.get("sourceRefs") or []}
+        if event.get("sourceFingerprint") in existing_fingerprints:
+            return argus_causal_event_memory.event_view(prior)
+    known_at = event.get("processedAt") or _ai_now_iso()
+    requested_origin = "BACKFILL" if event.get("backfill") else "FORWARD_LIVE"
+    if prior:
+        episode = {"episodeId": prior["episodeId"], "linked": False,
+                   "similarity": 1.0, "relatedEventId": None}
+        origin = (prior.get("revisions") or [{}])[0].get("origin") or requested_origin
+    else:
+        origin = requested_origin
+        episode = argus_causal_event_memory.choose_episode(
+            existing_views, event_id=event["eventId"], event_type=event["eventType"],
+            themes=event.get("themeTags") or [], entities=event.get("entities") or [],
+            countries=event.get("countries") or [], known_at=known_at, origin=origin)
+    contexts = _causal_memory_market_context(event)
+    revision = argus_causal_event_memory.build_event_revision(
+        news_event=event, known_at=known_at,
+        origin=origin,
+        code_identity=_causal_memory_code_identity(), episode=episode,
+        market_context=contexts,
+        regime_context=_causal_memory_regime(event.get("marketReadings") or []),
+        market_truth_snapshot_ref=event.get("marketTruthSnapshotRef"),
+        prior_event=prior, countries=event.get("countries") or [],
+        sectors=event.get("themeTags") or [],
+        instruments=[row.get("key") for row in event.get("marketReadings") or []])
+    _causal_memory_append(revision)
+    current = _causal_memory_internal_event(event["eventId"])
+    if episode.get("linked") and episode.get("relatedEventId"):
+        link = argus_causal_event_memory.build_event_link(
+            event_id=event["eventId"], related_event_id=episode["relatedEventId"],
+            episode_id=episode["episodeId"], link_type="EPISODE_CONTINUATION",
+            known_at=known_at,
+            evidence_refs=[f"source-fingerprint:{event.get('sourceFingerprint')}"],
+            code_identity=_causal_memory_code_identity())
+        _causal_memory_append(link)
+    if current:
+        _causal_memory_assess_episode(current)
+    return _causal_memory_internal_event(event["eventId"])
+
+
+def _causal_memory_refresh_open(force=False):
+    """Bounded background evaluation of open flags from current canonical
+    sensors.  Correlation-only refreshes are attribution-uncertain and cannot
+    promote a hypothesis to full confirmation."""
+    now_epoch = time.time()
+    with _CAUSAL_MEMORY_LOCK:
+        if not force and now_epoch - _CAUSAL_MEMORY["lastRefreshEpoch"] < \
+                _CAUSAL_MEMORY_REFRESH_SEC:
+            return 0
+        _CAUSAL_MEMORY["lastRefreshEpoch"] = now_epoch
+    state = _causal_memory_ensure_loaded()
+    views = [row for row in argus_causal_event_memory.all_event_views(state)
+             if row["currentStatus"] not in (
+                 "CONFIRMED", "INVALIDATED", "RESOLVED", "UNSCORABLE")]
+    changed = 0
+    now_iso = _ai_now_iso()
+    competing = [f"causal-event:{row['eventId']}" for row in views[:8]]
+    corroboration_cache = {}
+    for view in views[:50]:
+        try:
+            if view["eventType"] not in corroboration_cache:
+                corroboration_cache[view["eventType"]] = _news_corroboration(
+                    view["eventType"])
+            corroboration = corroboration_cache[view["eventType"]]
+            readings = corroboration.get("readings") or []
+            observations = argus_causal_event_memory.market_observations(
+                readings, known_at=now_iso, source_prefix="current-market")
+            if not observations:
+                continue
+            internal = _causal_memory_internal_event(view["eventId"])
+            for hypothesis in internal["causalHypotheses"]:
+                evidence = argus_causal_event_memory.evidence_for_hypothesis(
+                    hypothesis, observations)
+                if not any(row["relation"] in ("SUPPORTING", "CONTRADICTING")
+                           for row in evidence):
+                    continue
+                assessment = argus_causal_event_memory.build_assessment(
+                    event=internal, hypothesis_id=hypothesis["hypothesisId"],
+                    evaluated_at=now_iso, evidence=evidence,
+                    attribution_mode="ATTRIBUTION_UNCERTAIN",
+                    competing_event_refs=[ref for ref in competing
+                                          if ref != f"causal-event:{view['eventId']}"],
+                    code_identity=_causal_memory_code_identity())
+                previous = internal["hypothesisStates"].get(hypothesis["hypothesisId"])
+                if assessment["status"] != previous:
+                    _causal_memory_append(assessment)
+                    changed += 1
+                    internal = _causal_memory_internal_event(view["eventId"])
+        except Exception as exc:
+            with _CAUSAL_MEMORY_LOCK:
+                _CAUSAL_MEMORY["lastErrorClass"] = type(exc).__name__
+    with _CAUSAL_MEMORY_LOCK:
+        _CAUSAL_MEMORY["lastRefreshAt"] = now_iso
+    return changed
+
+
+def _causal_memory_process_market_shock(view):
+    """Official Market Shock observations are canonical event inputs too.
+    This supplies the real US30Y example without pretending it was an email."""
+    for shock in (view.get("events") or [])[:8]:
+        if shock.get("severity") not in ("HIGH", "CRITICAL"):
+            continue
+        evidence = shock.get("evidence") or {}
+        if shock.get("eventClass") == "LONG_END_RATES":
+            event_type = "RATES"
+            readings = [{
+                "key": "us30y", "labelJa": "米30年債",
+                "value": evidence.get("level"),
+                "change": evidence.get("change5dBp"), "unit": "%",
+                "asOf": evidence.get("latestDate"),
+                "state": shock.get("severity"),
+            }]
+            themes = ["LONG_DURATION_GROWTH", "BANKS"]
+        else:
+            event_type = "WAR_ESCALATION" if "GEOPOLIT" in str(
+                shock.get("eventClass")) else "OTHER_MARKET_RELEVANT"
+            readings, themes = [], ["ENERGY"]
+        normalized = {
+            "schemaVersion": "argus-news-event-v1",
+            "eventId": str(shock.get("eventId")),
+            "source": "Market Shock / FRED",
+            "sourceFamily": "MARKET_SHOCK",
+            "sourceTier": "official_series",
+            "sourceFingerprint": hashlib.sha256(json.dumps(
+                {"eventId": shock.get("eventId"), "evidence": evidence},
+                sort_keys=True, default=str).encode()).hexdigest()[:32],
+            "sourceReceivedAt": view.get("generatedAt"),
+            "sourcePublishedAt": None,
+            "processedAt": view.get("generatedAt") or _ai_now_iso(),
+            "headlineJa": shock.get("headlineJa") or event_type,
+            "eventType": event_type, "themeTags": themes,
+            "facts": [shock.get("headlineJa") or event_type], "entities": [],
+            "sourceUrl": None, "severity": shock.get("severity"),
+            "severityReasons": evidence.get("reasons") or [],
+            "dataInput": False, "marketReadings": readings,
+            "authority": "NEWS_RISK_EVIDENCE", "sdaAuthority": False,
+            "backfill": False,
+        }
+        try:
+            _causal_memory_process_normalized_event(normalized)
+        except Exception as exc:
+            with _CAUSAL_MEMORY_LOCK:
+                _CAUSAL_MEMORY["appendFailures"] += 1
+                _CAUSAL_MEMORY["lastErrorClass"] = type(exc).__name__
+
+
+def _causal_memory_summary(event_id):
+    state = _causal_memory_ensure_loaded()
+    raw = (state.get("events") or {}).get(event_id)
+    if not raw:
+        return None
+    view = argus_causal_event_memory.event_view(raw)
+    try:
+        analog = argus_causal_event_memory.retrieve_analogs(
+            state, event_id=event_id, as_of=view["eventDecisionCutoff"])
+    except Exception:
+        analog = None
+    try:
+        opened_days = max(0, int((time.time() - datetime.fromisoformat(
+            view["firstSeenAt"].replace("Z", "+00:00")).timestamp()) // 86400))
+    except Exception:
+        opened_days = None
+    return {
+        "status": view["currentStatus"], "firstSeenAt": view["firstSeenAt"],
+        "openedDaysAgo": opened_days, "episodeId": view["episodeId"],
+        "flagRecovery": view["flagRecovery"],
+        "hypothesisStates": view["hypothesisStates"],
+        "analogEvidence": ({
+            "sampleSize": analog["sampleSize"],
+            "independentEpisodeCount": analog["independentEpisodeCount"],
+            "confidence": analog["confidence"],
+            "insufficientEvidence": analog["insufficientEvidence"],
+        } if analog else None),
+        "calibrationMode": "SHADOW", "sdaAuthority": False,
+    }
 
 
 def _news_allowed_sender_domains():
@@ -16080,6 +16436,13 @@ def _news_process_message(message, *, backfill=False):
         "alertEligible": event["alertEligible"],
         "reasons": materiality["reasons"][:6], "backfill": backfill,
     })
+    try:
+        _causal_memory_process_normalized_event(event)
+    except Exception as exc:
+        # Mail processing truth must never be rewritten as failed merely because
+        # the non-authoritative longitudinal evidence store is degraded.
+        _CAUSAL_MEMORY["appendFailures"] += 1
+        _CAUSAL_MEMORY["lastErrorClass"] = type(exc).__name__
     return event
 
 
@@ -16119,6 +16482,11 @@ def _news_intake_cycle(*, backfill=False, backfill_days=10):
         health["lastProcessedAt"] = _ai_now_iso()
         health["lastCycleLatencySec"] = round(time.time() - started, 2)
         _news_intel_persist()
+    try:
+        _causal_memory_refresh_open()
+    except Exception as exc:
+        with _CAUSAL_MEMORY_LOCK:
+            _CAUSAL_MEMORY["lastErrorClass"] = type(exc).__name__
     return result["status"]
 
 
@@ -16157,9 +16525,14 @@ def api_argus_news_intelligence():
     _news_intel_ensure_loaded()
     with _NEWS_INTEL_LOCK:
         order = list(reversed(_NEWS_INTEL["order"][-12:]))
-        events = [_NEWS_INTEL["events"][eid] for eid in order
+        events = [dict(_NEWS_INTEL["events"][eid]) for eid in order
                   if eid in _NEWS_INTEL["events"]]
         status = _NEWS_INTEL["health"]["status"]
+    for event in events:
+        try:
+            event["eventMemory"] = _causal_memory_summary(event["eventId"])
+        except Exception:
+            event["eventMemory"] = None
     severity_order = {name: index for index, name in enumerate(
         argus_news_intelligence.SEVERITIES)}
     events.sort(key=lambda ev: -severity_order.get(ev.get("severity"), 0))
@@ -16257,6 +16630,190 @@ def api_argus_admin_news_audit():
                 for mid in reversed(_NEWS_INTEL.setdefault("messageOrder", [])[-60:])
                 if mid in _NEWS_INTEL.setdefault("messageStatus", {})],
         })
+
+
+@app.route("/api/argus/event-memory")
+def api_argus_event_memory():
+    """Compact public evidence view.  Never sends the archive to the browser."""
+    try:
+        state = _causal_memory_ensure_loaded()
+        return jsonify(argus_causal_event_memory.compact_public_view(
+            state, as_of=_ai_now_iso(), event_limit=20))
+    except Exception as exc:
+        return jsonify({
+            "schemaVersion": "argus-causal-event-memory-view-v1",
+            "generatedAt": _ai_now_iso(), "eventCount": 0, "events": [],
+            "openEvents": 0, "flagRecoveryCount": 0,
+            "calibrationMode": "SHADOW", "automaticCalibrationEnabled": False,
+            "status": "DATA_GATED", "reason": type(exc).__name__,
+            "authority": "EVENT_MEMORY_EVIDENCE", "sdaAuthority": False,
+        })
+
+
+@app.route("/api/argus/event-memory/<event_id>")
+def api_argus_event_memory_detail(event_id):
+    """Contextual event timeline; no new navigation/decision authority."""
+    try:
+        state = _causal_memory_ensure_loaded()
+        raw = (state.get("events") or {}).get(str(event_id))
+        if not raw:
+            return jsonify({"error": "event_not_found"}), 404
+        view = argus_causal_event_memory.event_view(raw)
+        analog = argus_causal_event_memory.retrieve_analogs(
+            state, event_id=str(event_id), as_of=view["eventDecisionCutoff"])
+        timeline = []
+        for revision in raw.get("revisions") or []:
+            timeline.append({"kind": "EVENT_REVISION", "at": revision["knownAt"],
+                             "eventVersion": revision["eventVersion"],
+                             "severity": revision["currentSeverity"],
+                             "sourceRefs": revision["sourceRefs"]})
+        for assessment in raw.get("assessments") or []:
+            timeline.append({"kind": "HYPOTHESIS_ASSESSMENT",
+                             "at": assessment["evaluatedAt"],
+                             "hypothesisId": assessment["hypothesisId"],
+                             "status": assessment["status"],
+                             "eventStatus": assessment["eventStatus"],
+                             "flagRecovery": assessment["flagRecovery"],
+                             "attributionMode": assessment["attributionMode"],
+                             "causalLanguage": assessment["causalLanguage"]})
+        for outcome in raw.get("outcomes") or []:
+            timeline.append({"kind": "OUTCOME_WINDOW", "at": outcome["knownAt"],
+                             "horizon": outcome["horizon"],
+                             "status": outcome["status"],
+                             "metrics": outcome["metrics"]})
+        timeline.sort(key=lambda row: (row["at"], row["kind"]))
+        return jsonify({
+            "schemaVersion": "argus-causal-event-detail-v1",
+            "generatedAt": _ai_now_iso(), "event": view,
+            "timeline": timeline, "analogs": analog,
+            "calibrationMode": "SHADOW",
+            "authority": "EVENT_MEMORY_EVIDENCE", "sdaAuthority": False,
+        })
+    except Exception as exc:
+        return jsonify({"error": type(exc).__name__}), 500
+
+
+@app.route("/api/argus/event-memory/health")
+def api_argus_event_memory_health():
+    state = _causal_memory_ensure_loaded()
+    with _CAUSAL_MEMORY_LOCK:
+        return jsonify({
+            "schemaVersion": "argus-causal-event-memory-health-v1",
+            "status": ("HEALTHY" if _CAUSAL_MEMORY["loadStatus"] in
+                       ("EMPTY", "VERIFIED") else "DEGRADED"),
+            "ledgerStatus": _CAUSAL_MEMORY["loadStatus"],
+            "recordCount": state.get("lastSequence") or 0,
+            "eventCount": len(state.get("events") or {}),
+            "episodeCount": len(state.get("episodes") or {}),
+            "lastAppendAt": _CAUSAL_MEMORY["lastAppendAt"],
+            "lastRefreshAt": _CAUSAL_MEMORY["lastRefreshAt"],
+            "skippedLowValue": _CAUSAL_MEMORY["skippedLowValue"],
+            "appendFailures": _CAUSAL_MEMORY["appendFailures"],
+            "lastErrorClass": _CAUSAL_MEMORY["lastErrorClass"],
+            "persistentRootClass": ("approved_persistent_root" if
+                                    str(_DURABILITY_PATHS["root"]).startswith("/var/data")
+                                    else "development_root"),
+            "rawArticleBodiesStored": False,
+            "ownerPortfolioFieldsStored": False,
+            "calibrationMode": "SHADOW",
+            "automaticCalibrationEnabled": False,
+            "analogCache": argus_causal_event_memory.analog_cache_metrics(),
+            "eventIntelligenceMetrics":
+                argus_causal_event_memory.event_intelligence_metrics(state),
+            "sdaAuthority": False,
+        })
+
+
+@app.route("/api/argus/admin/event-memory/assess", methods=["POST"])
+def api_argus_admin_event_memory_assess():
+    """Owner-gated explicit evidence append.  No historical mutation."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    try:
+        event = _causal_memory_internal_event(str(body.get("eventId") or ""))
+        if not event:
+            return jsonify({"ok": False, "error": "event_not_found"}), 404
+        assessment = argus_causal_event_memory.build_assessment(
+            event=event, hypothesis_id=str(body.get("hypothesisId") or ""),
+            # The server clock owns append knowledge time; callers cannot
+            # backdate later confirmation into the original event history.
+            evaluated_at=_ai_now_iso(),
+            evidence=body.get("evidence") or [],
+            attribution_mode=str(body.get("attributionMode") or
+                                 "ATTRIBUTION_UNCERTAIN"),
+            competing_event_refs=body.get("competingEventRefs") or [],
+            code_identity=_causal_memory_code_identity())
+        record = _causal_memory_append(assessment)
+        return jsonify({"ok": True, "recordId": record["recordId"],
+                        "status": assessment["status"],
+                        "eventStatus": assessment["eventStatus"],
+                        "flagRecovery": assessment["flagRecovery"]})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": type(exc).__name__}), 400
+
+
+@app.route("/api/argus/admin/event-memory/review", methods=["POST"])
+def api_argus_admin_event_memory_review():
+    """Append MISSED_MATERIAL_EVENT or FALSE_ALERT_REVIEW evidence."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    try:
+        event = _causal_memory_internal_event(str(body.get("eventId") or ""))
+        if not event:
+            return jsonify({"ok": False, "error": "event_not_found"}), 404
+        review = argus_causal_event_memory.build_review(
+            event=event, review_type=str(body.get("reviewType") or ""),
+            finding_at=_ai_now_iso(),
+            reason_codes=body.get("reasonCodes") or [],
+            policy_change_warranted=bool(body.get("policyChangeWarranted")),
+            regression_fixture_ref=body.get("regressionFixtureRef"),
+            evidence_refs=body.get("evidenceRefs") or [],
+            code_identity=_causal_memory_code_identity())
+        record = _causal_memory_append(review)
+        return jsonify({"ok": True, "recordId": record["recordId"],
+                        "reviewType": review["reviewType"],
+                        "historyMutated": False})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": type(exc).__name__}), 400
+
+
+@app.route("/api/argus/admin/event-memory/outcome", methods=["POST"])
+def api_argus_admin_event_memory_outcome():
+    """Append a point-in-time outcome observation without re-scoring decisions.
+
+    Prediction Ledger remains outcome/scoring authority.  This route only links
+    Market Data Truth observations (or an explicit missing-data result) to the
+    immutable event timeline.
+    """
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    try:
+        event = _causal_memory_internal_event(str(body.get("eventId") or ""))
+        if not event:
+            return jsonify({"ok": False, "error": "event_not_found"}), 404
+        outcome = argus_causal_event_memory.build_outcome_window(
+            event=event, hypothesis_id=str(body.get("hypothesisId") or ""),
+            horizon=str(body.get("horizon") or ""),
+            target_at=str(body.get("targetAt") or ""),
+            observed_at=str(body.get("observedAt") or ""),
+            known_at=_ai_now_iso(),
+            metrics=body.get("metrics"), truth_refs=body.get("truthRefs"),
+            missing_reasons=body.get("missingReasons"),
+            code_identity=_causal_memory_code_identity())
+        record = _causal_memory_append(outcome)
+        return jsonify({"ok": True, "recordId": record["recordId"],
+                        "status": outcome["status"],
+                        "horizon": outcome["horizon"],
+                        "policyInfluence": False,
+                        "predictionLedgerScoringReused": True})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": type(exc).__name__}), 400
 
 def get_news_radar():
     now = time.time()
@@ -33474,7 +34031,19 @@ def _build_learning_memory_inputs(cached_only=True):
     macro = _lm_macro_observations()
     mover = _lm_mover_cause_observations()
     visibility = _lm_visibility_observations()
-    observations = official + macro + mover + visibility
+    try:
+        event_memory_all = argus_causal_event_memory.learning_observations(
+            _causal_memory_ensure_loaded())
+        # Replay/backfill/shadow remain available to Event Memory research but
+        # cannot become Learning Memory's scored forward experience.
+        event_memory = [row for row in event_memory_all
+                        if row.get("origin") == "FORWARD_LIVE"]
+        event_memory_maturity = argus_causal_event_memory.maturity(
+            _causal_memory_ensure_loaded(), as_of=_ai_now_iso())
+    except Exception:
+        event_memory, event_memory_maturity = [], {
+            "maturity": "INSUFFICIENT", "calibration": "SHADOW"}
+    observations = official + macro + mover + visibility + event_memory
 
     def _scored(lst):
         return sum(1 for o in lst if not o.get("pending")
@@ -33495,12 +34064,14 @@ def _build_learning_memory_inputs(cached_only=True):
         "officialEvents": _scored(official),
         "macroEvents": _scored(macro),
         "moverCauses": _scored(mover),
+        "eventMemoryEpisodes": _scored(event_memory),
         "decisionValue": int(dv.get("scoredCount") or 0),
         "calibration": int(cal.get("nScored") or 0),
     }
     context = {"decisionValue": {"phase": dv.get("phase"), "sampleStage": dv.get("sampleStage"),
                                  "totalRecords": dv.get("totalRecords")},
-               "calibration": cal, "sampleCounts": counts}
+               "calibration": cal, "sampleCounts": counts,
+               "eventMemory": event_memory_maturity}
     return observations, context
 
 
@@ -36499,6 +37070,11 @@ def _canonical_prediction_ledger_projection(
             ]
             if any(target is None for target in target_ladder):
                 continue
+            try:
+                causal_refs = argus_causal_event_memory.active_evidence_refs(
+                    _causal_memory_ensure_loaded(), limit=8)
+            except Exception:
+                causal_refs = []
             rec = argus_decision_ledger.prediction_record_v2(
                 mode="forward_live", symbol=symbol, market=market,
                 issued_at=generated_at, horizon=horizon,
@@ -36515,7 +37091,10 @@ def _canonical_prediction_ledger_projection(
                 # canonical forecast identity independent of that unbound label.
                 candidate_action="",
                 target_ladder=target_ladder,
-                evidence_refs=[selected["observationId"]],
+                # Link evidence without changing forecast values/actions.  The
+                # sealed Prediction Ledger remains the only issued-decision
+                # authority and Event Calibration remains SHADOW.
+                evidence_refs=([selected["observationId"]] + causal_refs)[:24],
                 missing_evidence=missing, dissent=dissent)
             if rec:
                 issued.append(rec)

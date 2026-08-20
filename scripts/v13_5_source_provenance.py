@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.3"
+PRODUCT_VERSION = "v13.5.4"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -38,6 +38,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     ".github/workflows/market-public-acceptance.yml",
     ".github/workflows/news-intake-ops.yml",
     ".github/workflows/prediction-ledger.yml",
+    "argus_causal_event_memory.py",
     "argus_checkpoint_v2.py",
     "argus_gmail_intake.py",
     "argus_market_shock.py",
@@ -45,6 +46,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "argus_route_catalog.py",
     "argus_today_headline.py",
     "backend-version.json",
+    "docs/ARGUS_V13_5_4_CAUSAL_EVENT_MEMORY.md",
     "product-version.json",
     "release/v13-accepted-fix-manifest.json",
     "scanner.py",
@@ -56,6 +58,9 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "scripts/v13_5_source_provenance.py",
     "scripts/workflow_http.py",
     "test_argus_deploy_scope.py",
+    "test_argus_causal_event_memory.py",
+    "test_argus_causal_event_memory_backend.py",
+    "test_argus_sho_non_regression.py",
     "test_argus_gmail_intake.py",
     "test_argus_market_shock.py",
     "test_argus_news_intelligence.py",
@@ -72,6 +77,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/package-lock.json",
     "web/package.json",
     "web/scripts/full-release-simulation.mjs",
+    "web/scripts/causal-event-memory.test.mjs",
     "web/scripts/iphone-profile.mjs",
     "web/scripts/market-data-truth.test.cjs",
     "web/scripts/mobile-today-acceptance.mjs",
