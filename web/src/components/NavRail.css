@@ -9,6 +9,13 @@
   --argus-mobile-nav-height:
     calc(var(--argus-mobile-nav-content-height) + var(--argus-safe-bottom));
   --argus-mobile-sticky-height: 34px;
+  /* iOS already reserves the hardware edge while viewport-fit=cover exposes
+     the same inset to CSS. Keep the bar's full safe-area clearance, but place
+     the controls in the lower half of that inset instead of leaving the whole
+     34px below the labels. On devices without a home indicator this is 0px. */
+  --argus-mobile-nav-control-bottom:
+    max(0px, calc(var(--argus-safe-bottom) - 18px));
+  --argus-mobile-nav-label-bottom: 7px;
 }
 
 .nav {
@@ -129,7 +136,7 @@
     bottom: 0;
     width: auto;
     height: var(--argus-mobile-nav-height);
-    padding: 0 4px var(--argus-safe-bottom);
+    padding: 0 4px;
     border-right: 0;
     border-top: 1px solid var(--line);
     background: color-mix(in srgb, var(--bg) 94%, transparent);
@@ -137,9 +144,12 @@
   }
   .nav__desktop { display: none; }
   .nav__mobile {
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    bottom: var(--argus-mobile-nav-control-bottom);
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    width: 100%;
     height: var(--argus-mobile-nav-content-height);
   }
   .nav__mobile-btn {
@@ -147,10 +157,10 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-end;
     gap: 5px;
     min-width: 0;
-    padding: 6px 2px;
+    padding: 6px 2px var(--argus-mobile-nav-label-bottom);
     min-height: 44px;
     color: var(--text-muted);
     background: transparent;
