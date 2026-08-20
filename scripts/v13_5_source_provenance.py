@@ -60,6 +60,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "test_argus_market_shock.py",
     "test_argus_news_intelligence.py",
     "test_argus_news_pipeline.py",
+    "test_argus_notification_eligibility.py",
     "test_argus_public_operational_boundary.py",
     "test_argus_release_identity.py",
     "test_argus_v12_4_0.py",
