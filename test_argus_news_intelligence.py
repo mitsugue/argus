@@ -277,7 +277,7 @@ def test_bls_scheduled_release_never_invents_surprise():
 
 
 def test_fed_routine_vs_policy_action():
-    routine = _mat("Speech by Governor at Economic Club", 
+    routine = _mat("Speech by Governor at Economic Club",
                    "FEDERAL_RESERVE_BOARD")
     assert routine["severity"] in ("INFO", "WATCH")
     fomc = _mat("FOMC statement: Federal funds rate target lowered",
