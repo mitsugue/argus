@@ -167,7 +167,7 @@ class DeployScopeTests(unittest.TestCase):
         product = json.loads((ROOT / "product-version.json").read_text())
         frontend = json.loads((ROOT / "web/package.json").read_text())["version"]
         backend = json.loads((ROOT / "backend-version.json").read_text())["version"]
-        self.assertEqual("v13.5.3", product["productVersion"])
+        self.assertEqual("v13.5.4", product["productVersion"])
         self.assertEqual("13.3.11", frontend)
         self.assertEqual("13.4.18", backend)
 

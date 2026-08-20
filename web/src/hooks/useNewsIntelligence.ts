@@ -28,6 +28,22 @@ export interface NewsIntelEvent {
   alertEligible: boolean;
   backfill: boolean;
   sdaAuthority: false;
+  eventMemory: {
+    status: string;
+    firstSeenAt: string;
+    openedDaysAgo: number | null;
+    episodeId: string;
+    flagRecovery: boolean;
+    hypothesisStates: Record<string, string>;
+    analogEvidence: {
+      sampleSize: number;
+      independentEpisodeCount: number;
+      confidence: string;
+      insufficientEvidence: boolean;
+    } | null;
+    calibrationMode: 'SHADOW';
+    sdaAuthority: false;
+  } | null;
 }
 
 export interface NewsIntelView {
