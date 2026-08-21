@@ -315,6 +315,7 @@ async function geometry(page, viewport) {
     const navRect = rect('.nav');
     const stickyCommandRect = rect('.msc');
     const navButtons = [...document.querySelectorAll('.nav__mobile > button')];
+    const navControlsRect = rect('.nav__mobile');
     const navButtonRect = navButtons[0]?.getBoundingClientRect() ?? null;
     const navButtonPaddingBottom = navButtons[0]
       ? parseFloat(getComputedStyle(navButtons[0]).paddingBottom) || 0 : null;
@@ -329,7 +330,7 @@ async function geometry(page, viewport) {
       exercisedSafeAreaBottom: 34,
       hostileSafeAreaBottom: size.hostileGeometry.boundedSafeAreaBottom,
       hostileNavHeightBeforeRefresh: size.hostileGeometry.navHeightBeforeRefresh,
-      navRect, stickyCommandRect,
+      navRect, navControlsRect, stickyCommandRect,
       shellRect: rect('.shell'), bodyRect: rect('body'),
       mainRect: rect('.shell__main'),
       visualViewportBottom,
@@ -492,8 +493,7 @@ async function run() {
       evidence.failures.push(`sticky-gap:${viewport.width}`);
     }
     if (viewport.width <= 720
-      && ((audit.navVisualBottomGap ?? 99) < 18
-        || (audit.navVisualBottomGap ?? 99) > 24)) {
+      && Math.abs((audit.navVisualBottomGap ?? 99) - 10) > 1) {
       evidence.failures.push(`nav-visual-bottom-gap:${viewport.width}`);
     }
     if (!Number.isFinite(audit.hostileSafeAreaBottom)
@@ -502,9 +502,13 @@ async function run() {
     }
     if (viewport.width <= 720
       && (!Number.isFinite(audit.hostileNavHeightBeforeRefresh)
-        || audit.hostileNavHeightBeforeRefresh < 66
-        || audit.hostileNavHeightBeforeRefresh > 78)) {
+        || Math.abs(audit.hostileNavHeightBeforeRefresh - 72) > 1)) {
       evidence.failures.push(`hostile-nav-height:${viewport.width}`);
+    }
+    if (viewport.width <= 720
+      && (Math.abs((audit.navRect?.height ?? 99) - 72) > 1
+        || Math.abs((audit.navControlsRect?.height ?? 99) - 72) > 1)) {
+      evidence.failures.push(`fixed-nav-height:${viewport.width}`);
     }
     if (audit.horizontalOverflow) evidence.failures.push(`horizontal-overflow:${viewport.width}`);
     if (viewport.width <= 720 && audit.navTouchTargets.some((height) => height < 44)) {
