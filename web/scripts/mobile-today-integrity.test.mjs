@@ -70,7 +70,10 @@ assert.match(navCss, /--argus-safe-bottom:\s*clamp\(0px,\s*env\(safe-area-inset-
 assert.match(navCss, /--argus-mobile-nav-height/);
 assert.match(navCss, /height:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(navCss,
-  /--argus-mobile-nav-control-bottom:\s*max\(0px,\s*calc\(var\(--argus-safe-bottom\) - 18px\)\)/);
+  /--argus-mobile-nav-control-bottom:\s*clamp\(4px,\s*calc\(var\(--argus-safe-bottom\) - 18px\),\s*16px\)/);
+assert.match(navCss, /--argus-mobile-nav-top-gap:\s*4px/);
+assert.match(navCss,
+  /--argus-mobile-nav-height:\s*calc\([^]*var\(--argus-mobile-nav-content-height\)[^]*var\(--argus-mobile-nav-control-bottom\)[^]*var\(--argus-mobile-nav-top-gap\)[^]*\)/);
 assert.match(navCss, /--argus-mobile-nav-label-bottom:\s*7px/);
 assert.match(navCss, /bottom:\s*var\(--argus-mobile-nav-control-bottom\)/);
 assert.match(navCss, /justify-content:\s*flex-end/);
@@ -78,18 +81,26 @@ assert.match(navCss, /padding:\s*6px 2px var\(--argus-mobile-nav-label-bottom\)/
 assert.match(stickyCss, /bottom:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(shellCss, /padding-bottom:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(stickyCss, /height:\s*var\(--argus-mobile-sticky-height\)/);
+assert.match(acceptance, /hostileNavHeightBeforeRefresh/);
+assert.match(acceptance, /hostile-nav-height/);
+assert.match(acceptance, /viewport\.width <= 720[\s\S]*hostileNavHeightBeforeRefresh/);
 for (const width of [390, 430]) {
   const viewportBottom = width === 390 ? 844 : 932;
   const safeBottom = 34;
-  const navHeight = 58 + safeBottom;
+  const controlBottom = Math.min(16, Math.max(4, safeBottom - 18));
+  const navHeight = 58 + controlBottom + 4;
   const navRect = { top: viewportBottom - navHeight, bottom: viewportBottom };
   const stickyRect = { bottom: navRect.top, top: navRect.top - 34 };
-  const controlBottom = Math.max(0, safeBottom - 18);
   const visualBottomGap = controlBottom + 7;
   assert.equal(navRect.bottom, viewportBottom);
   assert.equal(stickyRect.bottom, navRect.top);
   assert.ok(visualBottomGap >= 18 && visualBottomGap <= 24);
-  assert.ok(navHeight - safeBottom >= 44);
+  assert.ok(navHeight >= 66 && navHeight <= 78);
+}
+for (const reportedSafeBottom of [0, 34, 92]) {
+  const controlBottom = Math.min(16, Math.max(4, reportedSafeBottom - 18));
+  const navHeight = 58 + controlBottom + 4;
+  assert.ok(navHeight >= 66 && navHeight <= 78);
 }
 
 assert.deepEqual(instruments.MARKET_INSTRUMENTS.map((item) => item.symbol),
