@@ -6,15 +6,20 @@
      malformed values reported by embedded/standalone web views. */
   --argus-safe-bottom: clamp(0px, env(safe-area-inset-bottom, 0px), 34px);
   --argus-mobile-nav-content-height: 58px;
-  --argus-mobile-nav-height:
-    calc(var(--argus-mobile-nav-content-height) + var(--argus-safe-bottom));
-  --argus-mobile-sticky-height: 34px;
-  /* iOS already reserves the hardware edge while viewport-fit=cover exposes
-     the same inset to CSS. Keep the bar's full safe-area clearance, but place
-     the controls in the lower half of that inset instead of leaving the whole
-     34px below the labels. On devices without a home indicator this is 0px. */
+  /* Derive both the control offset and the bar height from a second bounded
+     value. Some installed iOS web views briefly expose a duplicated 92px
+     inset before the JS sanitizer runs; adding that raw value to the bar made
+     the bottom navigation roughly 150px tall. The CSS path must be safe on
+     its own, including during that first frame. */
   --argus-mobile-nav-control-bottom:
-    max(0px, calc(var(--argus-safe-bottom) - 18px));
+    clamp(4px, calc(var(--argus-safe-bottom) - 18px), 16px);
+  --argus-mobile-nav-top-gap: 4px;
+  --argus-mobile-nav-height: calc(
+    var(--argus-mobile-nav-content-height)
+    + var(--argus-mobile-nav-control-bottom)
+    + var(--argus-mobile-nav-top-gap)
+  );
+  --argus-mobile-sticky-height: 34px;
   --argus-mobile-nav-label-bottom: 7px;
 }
 
