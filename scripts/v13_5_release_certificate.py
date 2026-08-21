@@ -27,6 +27,7 @@ CHECKS_SCHEMA = "argus-current-required-checks-v1"
 RUNTIME_PROOF_SCHEMA = "argus-zero-install-runtime-proof-v1"
 ADMISSION_SCHEMA = "argus-v13-5-premerge-admission-certificate-v1"
 RETRIEVAL_SCHEMA = "argus-v13-5-detached-certificate-retrieval-v1"
+AUTHORITY_SCHEMA = "argus-v13-5-authorized-producer-binding-v1"
 PRODUCT_VERSION = "v13.5.4"
 ACCEPTED_V13_SOURCE = source_provenance.ACCEPTED_V13_SOURCE
 ACCEPTED_V13_TREE = source_provenance.ACCEPTED_V13_TREE
@@ -473,7 +474,7 @@ def _validate_retrieval_receipt(path: pathlib.Path,
     if set(receipt) != {
             "schemaVersion", "status", "repository", "candidate",
             "certificateDigest", "transportAccept", "artifact", "producer",
-            "consumerRunId"} \
+            "consumerRunId", "consumerRunAttempt"} \
             or not _is_lower_hex(digest, 64) \
             or digest != _digest_bytes(_canonical(receipt)) \
             or receipt.get("schemaVersion") != RETRIEVAL_SCHEMA \
@@ -486,8 +487,10 @@ def _validate_retrieval_receipt(path: pathlib.Path,
             or receipt.get("transportAccept") != "application/vnd.github+json" \
             or type(producer) is not dict or type(artifact) is not dict \
             or set(producer) != {
-                "workflowRunId", "workflowPath", "event", "headSha", "conclusion"} \
-            or set(artifact) != {"artifactId", "name", "archiveSha256"} \
+                "workflowRunId", "runAttempt", "workflowPath", "event",
+                "headSha", "conclusion"} \
+            or set(artifact) != {
+                "artifactId", "name", "artifactDigest"} \
             or producer.get("workflowPath") != \
                 ".github/workflows/market-public-acceptance.yml" \
             or producer.get("event") != "pull_request" \
@@ -495,14 +498,19 @@ def _validate_retrieval_receipt(path: pathlib.Path,
             or producer.get("conclusion") != "success" \
             or type(producer.get("workflowRunId")) is not int \
             or producer.get("workflowRunId") <= 0 \
+            or type(producer.get("runAttempt")) is not int \
+            or producer.get("runAttempt") <= 0 \
             or type(receipt.get("consumerRunId")) is not str \
             or not receipt.get("consumerRunId") \
+            or type(receipt.get("consumerRunAttempt")) is not int \
+            or receipt.get("consumerRunAttempt") <= 0 \
             or str(producer.get("workflowRunId")) == receipt.get("consumerRunId") \
             or type(artifact.get("artifactId")) is not int \
             or artifact.get("artifactId") <= 0 \
-            or artifact.get("name") != \
-                f"v13-5-premerge-admission-{candidate['commitSha']}" \
-            or not _is_lower_hex(artifact.get("archiveSha256"), 64):
+            or artifact.get("name") != (
+                f"v13-5-premerge-admission-{candidate['commitSha']}-"
+                f"{producer.get('workflowRunId')}-{producer.get('runAttempt')}") \
+            or not _is_lower_hex(artifact.get("artifactDigest"), 64):
         raise ValueError("detached_certificate_retrieval_receipt_invalid")
     receipt["receiptDigest"] = digest
     return receipt
@@ -632,6 +640,218 @@ def _token() -> str:
     return token
 
 
+def _artifact_digest(row: Mapping[str, Any]) -> str:
+    value = row.get("digest")
+    if type(value) is not str or not value.startswith("sha256:") \
+            or not _is_lower_hex(value[7:], 64):
+        raise ValueError("detached_certificate_artifact_digest_invalid")
+    return value[7:]
+
+
+def _certificate_binding(certificate: Mapping[str, Any]) -> Dict[str, Any]:
+    runtime = certificate.get("acceptanceRuntime", {})
+    proofs = certificate.get("zeroInstallProofs", [])
+    simulations = [{
+        "runNumber": row.get("runNumber"),
+        "runtimeProofSha256": row.get("runtimeProofSha256"),
+        "simulationSha256": row.get("simulationSha256"),
+        "runtimeIdentityDigest": row.get("runtimeIdentityDigest"),
+    } for row in proofs if type(row) is dict]
+    if not _is_lower_hex(certificate.get("certificateDigest"), 64) \
+            or not _is_lower_hex(runtime.get("identityDigest"), 64) \
+            or len(simulations) != 2 \
+            or [row.get("runNumber") for row in simulations] != [1, 2] \
+            or any(not _is_lower_hex(row.get("runtimeProofSha256"), 64)
+                   or not _is_lower_hex(row.get("simulationSha256"), 64)
+                   or row.get("runtimeIdentityDigest") != runtime.get("identityDigest")
+                   for row in simulations):
+        raise ValueError("detached_certificate_binding_invalid")
+    return {
+        "certificateDigest": certificate["certificateDigest"],
+        "runtimeIdentityDigest": runtime["identityDigest"],
+        "simulationBindings": simulations,
+    }
+
+
+def _download_admission_certificate(
+        *, repo: str, token: str, artifact: Mapping[str, Any],
+        candidate: Mapping[str, str]) -> tuple[Dict[str, Any], bytes]:
+    artifact_id, archive_url = artifact.get("id"), artifact.get(
+        "archive_download_url")
+    expected_url = f"https://api.github.com/repos/{repo}/actions/artifacts/" \
+        f"{artifact_id}/zip"
+    if type(artifact_id) is not int or type(archive_url) is not str \
+            or archive_url != expected_url:
+        raise ValueError("detached_certificate_artifact_identity_invalid")
+    expected_digest = _artifact_digest(artifact)
+    archive = _api(archive_url, token)
+    if not archive:
+        raise ValueError("detached_certificate_archive_empty")
+    if _digest_bytes(archive) != expected_digest:
+        raise ValueError("detached_certificate_artifact_digest_mismatch")
+    try:
+        with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+            matches = [entry for entry in bundle.infolist()
+                       if not entry.is_dir()
+                       and pathlib.PurePosixPath(entry.filename).name
+                       == "certificate.json"]
+            if len(matches) != 1:
+                raise ValueError(
+                    f"detached_certificate_archive_shape:{len(matches)}")
+            if matches[0].file_size > 1024 * 1024:
+                raise ValueError("detached_certificate_payload_too_large")
+            raw_certificate = bundle.read(matches[0])
+    except zipfile.BadZipFile as exc:
+        raise ValueError("detached_certificate_archive_invalid") from exc
+    if not raw_certificate:
+        raise ValueError("detached_certificate_payload_empty")
+    try:
+        value = json.loads(raw_certificate)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("detached_certificate_payload_malformed") from exc
+    return _validate_admission_identity(value, candidate), archive
+
+
+def _run_id_from_details_url(details_url: Any, repo: str) -> int:
+    if type(details_url) is not str:
+        raise ValueError("detached_certificate_authority_details_url_invalid")
+    parsed = urllib.parse.urlsplit(details_url)
+    parts = parsed.path.strip("/").split("/")
+    owner_repo = repo.split("/", 1)
+    if parsed.scheme != "https" or parsed.netloc != "github.com" \
+            or len(owner_repo) != 2 or len(parts) != 7 \
+            or parts[:4] != [*owner_repo, "actions", "runs"] \
+            or parts[5] != "job" or not parts[4].isdigit() \
+            or not parts[6].isdigit() or parsed.fragment:
+        raise ValueError("detached_certificate_authority_details_url_invalid")
+    return int(parts[4])
+
+
+def _validate_producer_run(
+        producer: Any, *, run_id: int, candidate_sha: str,
+        expected_workflow: str) -> Dict[str, Any]:
+    if type(producer) is not dict \
+            or producer.get("id") != run_id \
+            or type(producer.get("run_attempt")) is not int \
+            or producer.get("run_attempt") <= 0 \
+            or producer.get("status") != "completed" \
+            or producer.get("conclusion") != "success" \
+            or producer.get("event") != "pull_request" \
+            or producer.get("head_sha") != candidate_sha \
+            or producer.get("path") != expected_workflow:
+        raise ValueError("detached_certificate_producer_run_invalid")
+    return producer
+
+
+def _artifact_for_run(
+        *, repo: str, token: str, producer: Mapping[str, Any],
+        candidate_sha: str) -> Dict[str, Any]:
+    run_id, run_attempt = producer["id"], producer["run_attempt"]
+    name = f"v13-5-premerge-admission-{candidate_sha}-{run_id}-{run_attempt}"
+    query = urllib.parse.urlencode({"name": name, "per_page": 100})
+    payload = _api_json(
+        f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/artifacts?{query}",
+        token)
+    if type(payload) is not dict or type(payload.get("artifacts")) is not list:
+        raise ValueError("detached_certificate_artifact_response_invalid")
+    exact = [row for row in payload["artifacts"] if type(row) is dict
+             and row.get("name") == name and row.get("expired") is False
+             and row.get("workflow_run", {}).get("id") == run_id
+             and row.get("workflow_run", {}).get("head_sha") == candidate_sha]
+    if len(exact) != 1:
+        raise ValueError(f"detached_certificate_bound_artifact_count:{len(exact)}")
+    _artifact_digest(exact[0])
+    return exact[0]
+
+
+def collect_authority(args: argparse.Namespace) -> Dict[str, Any]:
+    """Resolve one check-run authority into a content-addressed producer pointer."""
+    token = _token()
+    candidate = {"commitSha": args.candidate_sha, "treeSha": args.candidate_tree}
+    if not _is_lower_hex(args.candidate_sha, 40) \
+            or not _is_lower_hex(args.candidate_tree, 40):
+        raise ValueError("detached_certificate_candidate_identity_invalid")
+    check = None
+    if args.required_checks:
+        current = _validate_required_checks(
+            pathlib.Path(args.required_checks), args.candidate_sha)
+        matches = [row for row in current["checks"]
+                   if row.get("name") == args.authority_context]
+        if len(matches) != 1:
+            raise ValueError(
+                f"detached_certificate_authority_check_count:{len(matches)}")
+        row = matches[0]
+        check = {
+            "id": row.get("checkRunId"),
+            "status": row.get("status"),
+            "conclusion": row.get("conclusion"),
+            "details_url": row.get("detailsUrl"),
+        }
+    else:
+        deadline = time.monotonic() + args.timeout_seconds
+        while True:
+            query = urllib.parse.urlencode({"per_page": 100, "filter": "latest"})
+            payload = _api_json(
+                f"https://api.github.com/repos/{args.repo}/commits/"
+                f"{args.candidate_sha}/check-runs?{query}", token)
+            rows = [row for row in payload.get("check_runs", [])
+                    if type(row) is dict
+                    and row.get("name") == args.authority_context]
+            rows.sort(key=lambda row: (
+                str(row.get("completed_at") or row.get("started_at") or ""),
+                int(row.get("id") or 0)), reverse=True)
+            if rows and rows[0].get("status") == "completed" \
+                    and rows[0].get("conclusion") == "success":
+                check = rows[0]
+                break
+            if time.monotonic() >= deadline:
+                raise ValueError("detached_certificate_authority_check_not_ready")
+            time.sleep(args.poll_seconds)
+    if type(check) is not dict or type(check.get("id")) is not int \
+            or check.get("status") != "completed" \
+            or check.get("conclusion") != "success":
+        raise ValueError("detached_certificate_authority_check_invalid")
+    details_url = check.get("detailsUrl", check.get("details_url"))
+    run_id = _run_id_from_details_url(details_url, args.repo)
+    producer = _validate_producer_run(_api_json(
+        f"https://api.github.com/repos/{args.repo}/actions/runs/{run_id}", token),
+        run_id=run_id, candidate_sha=args.candidate_sha,
+        expected_workflow=args.expected_producer_workflow)
+    artifact = _artifact_for_run(
+        repo=args.repo, token=token, producer=producer,
+        candidate_sha=args.candidate_sha)
+    certificate, archive = _download_admission_certificate(
+        repo=args.repo, token=token, artifact=artifact, candidate=candidate)
+    value: Dict[str, Any] = {
+        "schemaVersion": AUTHORITY_SCHEMA,
+        "status": "PASS",
+        "repository": args.repo,
+        "candidate": candidate,
+        "check": {
+            "context": args.authority_context,
+            "checkRunId": check["id"],
+            "detailsUrl": details_url,
+            "conclusion": check["conclusion"],
+        },
+        "producer": {
+            "workflowRunId": producer["id"],
+            "runAttempt": producer["run_attempt"],
+            "workflowPath": producer["path"],
+            "event": producer["event"],
+            "headSha": producer["head_sha"],
+            "conclusion": producer["conclusion"],
+        },
+        "artifact": {
+            "artifactId": artifact["id"],
+            "name": artifact["name"],
+            "artifactDigest": _digest_bytes(archive),
+        },
+        "certificate": _certificate_binding(certificate),
+    }
+    value["authorityDigest"] = _digest_bytes(_canonical(value))
+    return value
+
+
 def collect_checks(args: argparse.Namespace) -> Dict[str, Any]:
     token = _token()
     rules = _api_json(f"https://api.github.com/repos/{args.repo}/rules/branches/main", token)
@@ -701,83 +921,117 @@ def fetch(args: argparse.Namespace) -> Dict[str, Any]:
     return value
 
 
+def _validate_authority(path: pathlib.Path,
+                        candidate: Mapping[str, str]) -> Dict[str, Any]:
+    value = _load(path)
+    digest = value.pop("authorityDigest", None)
+    producer, artifact = value.get("producer"), value.get("artifact")
+    check, bound = value.get("check"), value.get("certificate")
+    if set(value) != {
+            "schemaVersion", "status", "repository", "candidate", "check",
+            "producer", "artifact", "certificate"} \
+            or not _is_lower_hex(digest, 64) \
+            or digest != _digest_bytes(_canonical(value)) \
+            or value.get("schemaVersion") != AUTHORITY_SCHEMA \
+            or value.get("status") != "PASS" \
+            or type(value.get("repository")) is not str \
+            or value.get("candidate") != dict(candidate) \
+            or type(check) is not dict or set(check) != {
+                "context", "checkRunId", "detailsUrl", "conclusion"} \
+            or check.get("context") != "proof-certificate" \
+            or type(check.get("checkRunId")) is not int \
+            or check.get("checkRunId") <= 0 \
+            or check.get("conclusion") != "success" \
+            or type(producer) is not dict or set(producer) != {
+                "workflowRunId", "runAttempt", "workflowPath", "event",
+                "headSha", "conclusion"} \
+            or producer.get("workflowPath") != \
+                ".github/workflows/market-public-acceptance.yml" \
+            or producer.get("event") != "pull_request" \
+            or producer.get("headSha") != candidate["commitSha"] \
+            or producer.get("conclusion") != "success" \
+            or type(producer.get("workflowRunId")) is not int \
+            or producer.get("workflowRunId") <= 0 \
+            or type(producer.get("runAttempt")) is not int \
+            or producer.get("runAttempt") <= 0 \
+            or _run_id_from_details_url(check.get("detailsUrl"),
+                                        value["repository"]) != \
+                producer.get("workflowRunId") \
+            or type(artifact) is not dict or set(artifact) != {
+                "artifactId", "name", "artifactDigest"} \
+            or type(artifact.get("artifactId")) is not int \
+            or artifact.get("artifactId") <= 0 \
+            or artifact.get("name") != (
+                f"v13-5-premerge-admission-{candidate['commitSha']}-"
+                f"{producer.get('workflowRunId')}-{producer.get('runAttempt')}") \
+            or not _is_lower_hex(artifact.get("artifactDigest"), 64) \
+            or type(bound) is not dict \
+            or set(bound) != {
+                "certificateDigest", "runtimeIdentityDigest",
+                "simulationBindings"}:
+        raise ValueError("detached_certificate_authority_invalid")
+    simulations = bound.get("simulationBindings")
+    if not _is_lower_hex(bound.get("certificateDigest"), 64) \
+            or not _is_lower_hex(bound.get("runtimeIdentityDigest"), 64) \
+            or type(simulations) is not list or len(simulations) != 2 \
+            or [row.get("runNumber") for row in simulations
+                if type(row) is dict] != [1, 2] \
+            or any(type(row) is not dict or set(row) != {
+                "runNumber", "runtimeProofSha256", "simulationSha256",
+                "runtimeIdentityDigest"}
+                or not _is_lower_hex(row.get("runtimeProofSha256"), 64)
+                or not _is_lower_hex(row.get("simulationSha256"), 64)
+                or row.get("runtimeIdentityDigest") !=
+                bound.get("runtimeIdentityDigest") for row in simulations):
+        raise ValueError("detached_certificate_authority_binding_invalid")
+    value["authorityDigest"] = digest
+    return value
+
+
 def fetch_admission(args: argparse.Namespace) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    """Fetch a certificate from a completed, separate producer workflow."""
+    """Fetch only the artifact named by an explicit producer authority."""
     token = _token()
     candidate = {"commitSha": args.candidate_sha, "treeSha": args.candidate_tree}
     if not _is_lower_hex(args.candidate_sha, 40) \
             or not _is_lower_hex(args.candidate_tree, 40) \
-            or not args.consumer_run_id:
+            or not args.consumer_run_id \
+            or type(args.consumer_run_attempt) is not int \
+            or args.consumer_run_attempt <= 0:
         raise ValueError("detached_certificate_candidate_identity_invalid")
-    name = f"v13-5-premerge-admission-{args.candidate_sha}"
-    deadline = time.monotonic() + args.timeout_seconds
-    row = producer = None
-    while True:
-        query = urllib.parse.urlencode({"name": name, "per_page": 100})
-        payload = _api_json(
-            f"https://api.github.com/repos/{args.repo}/actions/artifacts?{query}",
-            token)
-        if type(payload) is not dict or type(payload.get("artifacts")) is not list:
-            raise ValueError("detached_certificate_artifact_response_invalid")
-        exact = [item for item in payload.get("artifacts", [])
-                 if type(item) is dict
-                 if item.get("name") == name and item.get("expired") is False
-                 and item.get("workflow_run", {}).get("head_sha")
-                 == args.candidate_sha]
-        if len(exact) > 1:
-            raise ValueError(f"detached_certificate_artifact_ambiguous:{len(exact)}")
-        if exact:
-            row = exact[0]
-            run_id = row.get("workflow_run", {}).get("id")
-            if type(run_id) is not int:
-                raise ValueError("detached_certificate_producer_run_missing")
-            producer = _api_json(
-                f"https://api.github.com/repos/{args.repo}/actions/runs/{run_id}",
-                token)
-            if type(producer) is not dict:
-                raise ValueError("detached_certificate_producer_response_invalid")
-            if producer.get("status") == "completed":
-                break
-        if time.monotonic() >= deadline:
-            raise ValueError("detached_certificate_artifact_not_ready")
-        time.sleep(args.poll_seconds)
-    if producer.get("conclusion") != "success" \
-            or producer.get("event") != "pull_request" \
-            or producer.get("head_sha") != args.candidate_sha \
-            or producer.get("path") != args.expected_producer_workflow:
-        raise ValueError("detached_certificate_producer_run_invalid")
-    if str(producer.get("id")) == args.consumer_run_id:
+    if not args.producer_authority:
+        raise ValueError("detached_certificate_explicit_authority_required")
+    authority = _validate_authority(
+        pathlib.Path(args.producer_authority), candidate)
+    producer_pointer, artifact_pointer = (
+        authority["producer"], authority["artifact"])
+    run_id = producer_pointer["workflowRunId"]
+    producer = _validate_producer_run(_api_json(
+        f"https://api.github.com/repos/{args.repo}/actions/runs/{run_id}", token),
+        run_id=run_id, candidate_sha=args.candidate_sha,
+        expected_workflow=args.expected_producer_workflow)
+    if producer["run_attempt"] != producer_pointer["runAttempt"]:
+        raise ValueError("detached_certificate_producer_attempt_mismatch")
+    if str(producer["id"]) == args.consumer_run_id:
         raise ValueError("detached_certificate_not_detached")
-    artifact_id, archive_url = row.get("id"), row.get("archive_download_url")
-    expected_url = f"https://api.github.com/repos/{args.repo}/actions/artifacts/" \
-        f"{artifact_id}/zip"
-    if type(artifact_id) is not int or type(archive_url) is not str \
-            or archive_url != expected_url:
-        raise ValueError("detached_certificate_artifact_identity_invalid")
-    archive = _api(archive_url, token)
-    if not archive:
-        raise ValueError("detached_certificate_archive_empty")
-    try:
-        with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
-            matches = [entry for entry in bundle.infolist()
-                       if not entry.is_dir()
-                       and pathlib.PurePosixPath(entry.filename).name
-                       == "certificate.json"]
-            if len(matches) != 1:
-                raise ValueError(
-                    f"detached_certificate_archive_shape:{len(matches)}")
-            if matches[0].file_size > 1024 * 1024:
-                raise ValueError("detached_certificate_payload_too_large")
-            raw_certificate = bundle.read(matches[0])
-    except zipfile.BadZipFile as exc:
-        raise ValueError("detached_certificate_archive_invalid") from exc
-    if not raw_certificate:
-        raise ValueError("detached_certificate_payload_empty")
-    try:
-        value = json.loads(raw_certificate)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError("detached_certificate_payload_malformed") from exc
-    certificate = _validate_admission_identity(value, candidate)
+    artifact_id = artifact_pointer["artifactId"]
+    row = _api_json(
+        f"https://api.github.com/repos/{args.repo}/actions/artifacts/{artifact_id}",
+        token)
+    if type(row) is not dict \
+            or row.get("id") != artifact_id \
+            or row.get("name") != artifact_pointer["name"] \
+            or row.get("expired") is not False \
+            or row.get("workflow_run", {}).get("id") != run_id \
+            or row.get("workflow_run", {}).get("head_sha") != args.candidate_sha:
+        raise ValueError("detached_certificate_artifact_not_bound_to_producer")
+    if _artifact_digest(row) != artifact_pointer["artifactDigest"]:
+        raise ValueError("detached_certificate_artifact_digest_mismatch")
+    certificate, archive = _download_admission_certificate(
+        repo=args.repo, token=token, artifact=row, candidate=candidate)
+    if _digest_bytes(archive) != artifact_pointer["artifactDigest"]:
+        raise ValueError("detached_certificate_artifact_digest_mismatch")
+    if _certificate_binding(certificate) != authority["certificate"]:
+        raise ValueError("detached_certificate_authorized_binding_mismatch")
     receipt: Dict[str, Any] = {
         "schemaVersion": RETRIEVAL_SCHEMA,
         "status": "PASS",
@@ -787,17 +1041,19 @@ def fetch_admission(args: argparse.Namespace) -> tuple[Dict[str, Any], Dict[str,
         "transportAccept": "application/vnd.github+json",
         "artifact": {
             "artifactId": artifact_id,
-            "name": name,
-            "archiveSha256": _digest_bytes(archive),
+            "name": row["name"],
+            "artifactDigest": _digest_bytes(archive),
         },
         "producer": {
             "workflowRunId": producer["id"],
+            "runAttempt": producer["run_attempt"],
             "workflowPath": producer["path"],
             "event": producer["event"],
             "headSha": producer["head_sha"],
             "conclusion": producer["conclusion"],
         },
         "consumerRunId": args.consumer_run_id,
+        "consumerRunAttempt": args.consumer_run_attempt,
     }
     receipt["receiptDigest"] = _digest_bytes(_canonical(receipt))
     return certificate, receipt
@@ -833,6 +1089,17 @@ def main() -> int:
     collect.add_argument("--candidate-sha", required=True)
     collect.add_argument("--timeout-seconds", type=int, default=1500)
     collect.add_argument("--out", required=True)
+    authority = sub.add_parser("collect-authority")
+    authority.add_argument("--repo", required=True)
+    authority.add_argument("--candidate-sha", required=True)
+    authority.add_argument("--candidate-tree", required=True)
+    authority.add_argument("--authority-context", default="proof-certificate")
+    authority.add_argument("--expected-producer-workflow", default=
+                           ".github/workflows/market-public-acceptance.yml")
+    authority.add_argument("--required-checks", default="")
+    authority.add_argument("--timeout-seconds", type=int, default=1500)
+    authority.add_argument("--poll-seconds", type=int, default=10)
+    authority.add_argument("--out", required=True)
     get = sub.add_parser("fetch")
     get.add_argument("--repo", required=True)
     get.add_argument("--candidate-sha", required=True)
@@ -842,6 +1109,8 @@ def main() -> int:
     get_admission.add_argument("--candidate-sha", required=True)
     get_admission.add_argument("--candidate-tree", required=True)
     get_admission.add_argument("--consumer-run-id", required=True)
+    get_admission.add_argument("--consumer-run-attempt", type=int, required=True)
+    get_admission.add_argument("--producer-authority", required=True)
     get_admission.add_argument("--expected-producer-workflow", default=
                                ".github/workflows/market-public-acceptance.yml")
     get_admission.add_argument("--timeout-seconds", type=int, default=1500)
@@ -861,11 +1130,15 @@ def main() -> int:
         if not 1 <= args.timeout_seconds <= 3600:
             raise ValueError("invalid_required_checks_timeout")
         _write(pathlib.Path(args.out), collect_checks(args))
+    elif args.command == "collect-authority":
+        if not 1 <= args.timeout_seconds <= 3600 \
+                or not 1 <= args.poll_seconds <= 60:
+            raise ValueError("invalid_detached_certificate_authority_timing")
+        _write(pathlib.Path(args.out), collect_authority(args))
     elif args.command == "fetch":
         _write(pathlib.Path(args.out), fetch(args))
     else:
-        if not 1 <= args.timeout_seconds <= 3600 \
-                or not 1 <= args.poll_seconds <= 60:
+        if not 1 <= args.timeout_seconds <= 3600:
             raise ValueError("invalid_detached_certificate_fetch_timing")
         certificate, receipt = fetch_admission(args)
         _write(pathlib.Path(args.out), certificate)

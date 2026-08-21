@@ -119,6 +119,16 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+      - name: Bind the authorized proof-certificate producer
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B scripts/v13_5_release_certificate.py collect-authority \
+            --repo '${{ github.repository }}' \
+            --candidate-sha '${{ github.event.pull_request.head.sha }}' \
+            --candidate-tree '${{ steps.candidate.outputs.tree }}' \
+            --out artifacts/premerge-admission/producer-authority.json \
+            --timeout-seconds 1500
       - name: Fetch certificate from the completed detached producer workflow
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -128,6 +138,8 @@ jobs:
             --candidate-sha '${{ github.event.pull_request.head.sha }}' \
             --candidate-tree '${{ steps.candidate.outputs.tree }}' \
             --consumer-run-id '${{ github.run_id }}' \
+            --consumer-run-attempt '${{ github.run_attempt }}' \
+            --producer-authority artifacts/premerge-admission/producer-authority.json \
             --out artifacts/premerge-admission/certificate.json \
             --receipt-out artifacts/premerge-admission/retrieval-receipt.json \
             --timeout-seconds 1500

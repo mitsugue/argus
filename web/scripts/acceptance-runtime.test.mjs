@@ -58,12 +58,13 @@ assert.ok(deploy.indexOf('acceptance-runtime-admission:') < deploy.indexOf('  de
 assert.match(proof, /full_release_simulation_1:[\s\S]*container:[\s\S]*b27e719e/);
 assert.match(proof, /full_release_simulation_2:[\s\S]*container:[\s\S]*b27e719e/);
 assert.match(proof, /generate-admission[\s\S]*v13_5_source_provenance[\s\S]*verify-admission/);
-assert.match(proof, /v13-5-premerge-admission-\$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
+assert.match(proof, /v13-5-premerge-admission-\$\{\{ github\.event\.pull_request\.head\.sha \}\}-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/);
 assert.match(releaseGate, /premerge_admission:[\s\S]*container:[\s\S]*b27e719e/);
-assert.match(releaseGate, /premerge_admission:[\s\S]*fetch-admission[\s\S]*acceptance-runtime-preflight[\s\S]*v13-5-pre-mutation-rehearsal/);
+assert.match(releaseGate, /premerge_admission:[\s\S]*collect-authority[\s\S]*fetch-admission[\s\S]*acceptance-runtime-preflight[\s\S]*v13-5-pre-mutation-rehearsal/);
 assert.match(rehearsal, /v13_5_source_provenance[\s\S]*verify-admission[\s\S]*npm ci[\s\S]*npm run build[\s\S]*v13_5_pre_mutation_rehearsal/);
 assert.match(releaseGate, /gate:[\s\S]*needs: \[release_checks, premerge_admission\]/);
-assert.match(deploy, /acceptance-runtime-admission:[\s\S]*fetch-admission[\s\S]*collect-checks[\s\S]*acceptance-runtime-preflight[\s\S]*v13-5-pre-mutation-rehearsal/);
+assert.match(deploy, /acceptance-runtime-admission:[\s\S]*collect-checks[\s\S]*collect-authority[\s\S]*fetch-admission[\s\S]*acceptance-runtime-preflight[\s\S]*v13-5-pre-mutation-rehearsal/);
+assert.match(deploy, /--producer-authority artifacts\/v13-release-proof\/producer-authority\.json/);
 assert.match(deploy, /retrieval-receipt\.json/);
 const safeDirectoryAdmission = /git config --global --add safe\.directory "\$GITHUB_WORKSPACE"/g;
 assert.equal(proof.match(safeDirectoryAdmission)?.length, 4,
