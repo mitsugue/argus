@@ -1,31 +1,31 @@
 {
- "asOf": "2026-08-21T06:54:17Z",
+ "asOf": "2026-08-21T07:50:11Z",
  "dateJst": "2026-08-21",
  "engineVersion": "scout-ledger-v1",
  "records": [
   {
    "bucket": "avoid",
    "flowClass": "UNCONFIRMED",
-   "lastClose": 4696.0,
-   "lastDate": "2026-08-20",
-   "score": -2.3,
+   "lastClose": 4794.0,
+   "lastDate": "2026-08-21",
+   "score": -1.7,
    "stance": "見送り",
    "symbol": "8058"
   },
   {
    "bucket": "avoid",
    "flowClass": "UNCONFIRMED",
-   "lastClose": 5387.0,
-   "lastDate": "2026-08-20",
-   "score": -1.6,
+   "lastClose": 5255.0,
+   "lastDate": "2026-08-21",
+   "score": -1.3,
    "stance": "見送り",
    "symbol": "9984"
   },
   {
    "bucket": "avoid",
-   "flowClass": "NEW_LONG_ACCUMULATION",
-   "lastClose": 3864.0,
-   "lastDate": "2026-08-20",
+   "flowClass": "DISTRIBUTION",
+   "lastClose": 3818.0,
+   "lastDate": "2026-08-21",
    "score": -0.8,
    "stance": "中立(急がない)",
    "symbol": "5801"
@@ -33,36 +33,36 @@
   {
    "bucket": "avoid",
    "flowClass": "UNCONFIRMED",
-   "lastClose": 5341.0,
-   "lastDate": "2026-08-20",
-   "score": -2.1,
+   "lastClose": 5280.0,
+   "lastDate": "2026-08-21",
+   "score": -1.1,
    "stance": "見送り",
    "symbol": "5803"
   },
   {
-   "bucket": "lean",
-   "flowClass": "NEW_LONG_ACCUMULATION",
-   "lastClose": 813.0,
-   "lastDate": "2026-08-20",
-   "score": 0.5,
-   "stance": "押し目買い検討圏",
+   "bucket": "neutral",
+   "flowClass": "UNCONFIRMED",
+   "lastClose": 809.0,
+   "lastDate": "2026-08-21",
+   "score": -0.3,
+   "stance": "中立(急がない)",
    "symbol": "6584"
   },
   {
    "bucket": "avoid",
    "flowClass": "UNCONFIRMED",
-   "lastClose": 52950.0,
-   "lastDate": "2026-08-20",
+   "lastClose": 54320.0,
+   "lastDate": "2026-08-21",
    "score": -0.6,
    "stance": "中立(急がない)",
    "symbol": "285A"
   },
   {
    "bucket": "avoid",
-   "flowClass": "NEW_LONG_ACCUMULATION",
-   "lastClose": 524.9,
-   "lastDate": "2026-08-20",
-   "score": -2.0,
+   "flowClass": "RETAIL_NOISE",
+   "lastClose": 549.3,
+   "lastDate": "2026-08-21",
+   "score": -1.2,
    "stance": "見送り",
    "symbol": "9501"
   }
