@@ -10,11 +10,13 @@ from scripts import v13_5_source_provenance as source
 
 def test_restoration_allowlist_is_exact_and_core_semantics_stay_closed():
     expected = {
+        ".github/workflows/caos-scan.yml",
         ".github/workflows/deploy-pages.yml",
         ".github/workflows/release-gate.yml",
         "argus_today_headline.py",
         "scanner.py",
         "test_v13_5_release_certificate.py",
+        "test_caos_workflow_recovery.py",
         "web/scripts/mobile-today-acceptance.mjs",
         "web/scripts/release-fixture-target.mjs",
         "web/scripts/acceptance-runtime.test.mjs",
@@ -57,7 +59,7 @@ def certificate(path: Path, *, candidate_sha: str, candidate_tree: str,
         "candidate": {"commitSha": candidate_sha, "treeSha": candidate_tree},
         "acceptedV13Source": {
             "commitSha": accepted_sha, "treeSha": accepted_tree},
-        "productVersion": "v13.5.8",
+        "productVersion": "v13.5.9",
     }
     value["certificateDigest"] = hashlib.sha256(
         source.canonical_bytes(value)).hexdigest()
@@ -78,7 +80,7 @@ def shallow_case(tmp_path, monkeypatch):
         write(seed / f"history-{ordinal}.txt", str(ordinal))
         commit(seed, f"history-{ordinal}")
     write(seed / "product-version.json", json.dumps({
-        "schemaVersion": "argus-product-version-v1", "productVersion": "v13.5.8"}))
+        "schemaVersion": "argus-product-version-v1", "productVersion": "v13.5.9"}))
     write(seed / "release/v13-accepted-fix-manifest.json", json.dumps({
         "canonicalSource": {"head": accepted_sha, "tree": accepted_tree},
         "requirements": [],
