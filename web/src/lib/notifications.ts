@@ -50,6 +50,8 @@ const RULES: Record<string, { severity: Severity; cooldownMin: number; maxPerDay
   snapshot_missing: { severity: 'low', cooldownMin: 1440, maxPerDay: 1 },
   sync_backup_warning: { severity: 'low', cooldownMin: 4320, maxPerDay: 1 },
   restore_not_verified: { severity: 'low', cooldownMin: 10080, maxPerDay: 1 },
+  market_shock: { severity: 'high', cooldownMin: 4320, maxPerDay: 1 },
+  news_intel: { severity: 'high', cooldownMin: 1440, maxPerDay: 2 },
 };
 
 interface Store {
@@ -171,7 +173,8 @@ export interface NotifInputs {
   }>;
   /** v13.5.1: server-classified market-shock events (HIGH/CRITICAL alert). */
   marketShockEvents?: Array<{
-    eventId: string; severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+    eventId: string; eventClass: string;
+    severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
     headlineJa: string; whyJa: string;
   }>;
   /** v13.5.3: Nikkei mail intelligence events. Only HIGH/CRITICAL with
@@ -209,11 +212,13 @@ function marketShockCandidates(inputs: NotifInputs) {
     .map((event) => ({
       eventType: 'market_shock', severity: 'high' as const, symbol: null,
       assetName: null,
-      titleJa: `市場ショック（${event.severity}）: ${event.headlineJa.slice(0, 60)}`,
+      titleJa: `${event.eventClass === 'LONG_END_RATES' ? '市場リスク' : '市場ショック'}（${event.severity}）: ${event.headlineJa.slice(0, 60)}`,
       bodyJa: event.headlineJa,
       whyJa: event.whyJa,
-      checkNextJa: 'Todayの重大ニュースと保有リスクを確認',
-      dedupeKey: `market-shock|${event.eventId}`,
+      checkNextJa: event.eventClass === 'LONG_END_RATES'
+        ? 'Todayの市場リスクと保有感応度を確認'
+        : 'Todayの重大ニュースと保有リスクを確認',
+      dedupeKey: `market-shock|${event.eventClass}`,
       isPrivate: false,
     }));
 }
@@ -544,7 +549,10 @@ export interface CompactNotification extends AppNotification {
 export function compactNotificationFeed(items: AppNotification[]): CompactNotification[] {
   const byMeaning = new Map<string, CompactNotification>();
   for (const item of items) {
-    const key = `${item.eventType}|${item.symbol ?? 'system'}|${item.titleJa}`;
+    const key = item.eventType === 'market_shock'
+      && /米30年債|long[- ]end/i.test(`${item.titleJa} ${item.bodyJa}`)
+      ? 'market_shock|long-end-rates'
+      : `${item.eventType}|${item.symbol ?? 'system'}|${item.titleJa}`;
     const existing = byMeaning.get(key);
     if (existing) {
       existing.occurrenceCount += 1;

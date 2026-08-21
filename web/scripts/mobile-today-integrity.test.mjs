@@ -68,17 +68,18 @@ assert.match(shell, /setAnimDir\(pageDirection\)/);
 
 assert.match(navCss, /--argus-safe-bottom:\s*clamp\(0px,\s*env\(safe-area-inset-bottom,\s*0px\),\s*34px\)/);
 assert.match(navCss, /--argus-mobile-safe-bottom:\s*clamp\(0px,\s*var\(--argus-safe-bottom\),\s*34px\)/);
-assert.match(navCss, /--argus-mobile-nav-content-height:\s*48px/);
-assert.match(navCss, /--argus-mobile-nav-height:\s*calc\(var\(--argus-mobile-nav-content-height\) \+ var\(--argus-mobile-safe-bottom\)\)/);
+assert.match(navCss, /--argus-mobile-nav-safe-buffer:\s*clamp\(0px,\s*var\(--argus-mobile-safe-bottom\),\s*12px\)/);
+assert.match(navCss, /--argus-mobile-nav-content-height:\s*44px/);
+assert.match(navCss, /--argus-mobile-nav-height:\s*calc\(var\(--argus-mobile-nav-content-height\) \+ var\(--argus-mobile-nav-safe-buffer\)\)/);
 assert.match(navCss, /height:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(navCss, /min-height:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(navCss, /max-height:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(navCss, /block-size:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(navCss, /max-block-size:\s*var\(--argus-mobile-nav-height\)/);
-assert.match(navCss, /--argus-mobile-nav-label-bottom:\s*calc\(6px \+ var\(--argus-mobile-safe-bottom\)\)/);
-assert.match(navCss, /top:\s*0;[^]*bottom:\s*0;/);
+assert.match(navCss, /--argus-mobile-nav-label-bottom:\s*3px/);
+assert.match(navCss, /top:\s*0;[^]*bottom:\s*auto;/);
 assert.match(navCss, /justify-content:\s*center/);
-assert.match(navCss, /padding:\s*4px 2px var\(--argus-mobile-nav-label-bottom\)/);
+assert.match(navCss, /padding:\s*3px 2px var\(--argus-mobile-nav-label-bottom\)/);
 assert.match(stickyCss, /bottom:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(shellCss, /padding-bottom:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(stickyCss, /height:\s*var\(--argus-mobile-sticky-height\)/);
@@ -88,18 +89,20 @@ assert.match(acceptance, /viewport\.width <= 720[\s\S]*hostileNavHeightBeforeRef
 for (const width of [390, 430]) {
   const viewportBottom = width === 390 ? 844 : 932;
   const safeBottom = 34;
-  const navHeight = 48 + safeBottom;
+  const visualSafeBuffer = Math.min(safeBottom, 12);
+  const navHeight = 44 + visualSafeBuffer;
   const navRect = { top: viewportBottom - navHeight, bottom: viewportBottom };
   const stickyRect = { bottom: navRect.top, top: navRect.top - 34 };
-  const visualBottomGap = 6 + safeBottom;
+  const visualBottomGap = 3 + visualSafeBuffer;
   assert.equal(navRect.bottom, viewportBottom);
   assert.equal(stickyRect.bottom, navRect.top);
-  assert.equal(visualBottomGap, 40);
-  assert.equal(navHeight, 82);
+  assert.equal(visualBottomGap, 15);
+  assert.equal(navHeight, 56);
 }
 for (const reportedSafeBottom of [0, 34, 92]) {
-  const navHeight = 48 + Math.min(reportedSafeBottom, 34);
-  assert.ok(navHeight >= 48 && navHeight <= 82,
+  const boundedSafeBottom = Math.min(reportedSafeBottom, 34);
+  const navHeight = 44 + Math.min(boundedSafeBottom, 12);
+  assert.ok(navHeight >= 44 && navHeight <= 56,
     `reported safe-area ${reportedSafeBottom}px must remain bounded`);
 }
 

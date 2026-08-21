@@ -15587,6 +15587,12 @@ def get_market_news():
         for idx, item in enumerate(items):
             if idx in tr:
                 item["headlineJa"] = tr[idx]
+            else:
+                summary_ja = argus_news_i18n.deterministic_market_summary_ja(
+                    item["headline"])
+                if summary_ja:
+                    item["headlineJa"] = summary_ja
+                    item["headlineProjection"] = "deterministic_summary"
         # Market-relevance gate (v10.169): flag headlines that are actually about
         # markets/finance (incl. the JA translation) so the UI + AI can drop noise.
         for item in items:
@@ -15643,6 +15649,8 @@ def get_market_news():
         for _it in items:
             _it.update(argus_news_i18n.decorate_from_ja(
                 _it.get("headline"), _it.get("headlineJa"), _it.get("source") or ""))
+            if _it.get("headlineProjection") == "deterministic_summary":
+                _it["translationStatus"] = "summarized"
         _MARKET_NEWS_CACHE["lastSuccessfulPollAt"] = _ai_now_iso()
         _MARKET_NEWS_CACHE["lastErrorClass"] = None
         out = {"status": "live" if items else "unavailable",
@@ -16401,11 +16409,16 @@ def _news_process_message(message, *, backfill=False):
     materiality = argus_news_intelligence.evaluate_materiality(
         taxonomy=taxonomy, staleness=staleness, source_authenticated=True,
         ai_analysis=analysis, corroboration=corroboration, subject=subject,
+        content_text=message.get("excerpt") or "",
         source=source)
+    summary_headline_ja = argus_news_intelligence.summarize_headline_ja(
+        subject=subject, excerpt=message.get("excerpt") or "",
+        taxonomy=taxonomy, ai_analysis=analysis, source=source)
     received_ms = message.get("receivedEpoch")
     envelope_message = {
         "eventIdentity": identity, "fingerprint": fingerprint,
         "subject": subject, "url": message.get("url"),
+        "headlineJa": summary_headline_ja,
         "receivedIso": (datetime.fromtimestamp(received_ms, pytz.utc)
                         .strftime("%Y-%m-%dT%H:%M:%SZ")
                         if isinstance(received_ms, (int, float)) else None),
@@ -16546,7 +16559,8 @@ def api_argus_news_intelligence():
     _news_intel_ensure_loaded()
     with _NEWS_INTEL_LOCK:
         order = list(reversed(_NEWS_INTEL["order"][-12:]))
-        events = [dict(_NEWS_INTEL["events"][eid]) for eid in order
+        events = [argus_news_intelligence.project_owner_event(
+            _NEWS_INTEL["events"][eid]) for eid in order
                   if eid in _NEWS_INTEL["events"]]
         status = _NEWS_INTEL["health"]["status"]
     visible_events = []
@@ -16555,11 +16569,20 @@ def api_argus_news_intelligence():
         original = event.get("titleOriginal") or event.get("headlineJa") or ""
         decorated = _news_decorate(original, event.get("source") or "")
         event.update(decorated)
-        event["headlineJa"] = decorated["displayTitleJa"]
+        # The bold title is ARGUS's content summary, not the mail subject.
+        # For English events without a deterministic Japanese summary, use the
+        # cached translation of the original and withhold while pending.
+        summary = str(event.get("headlineJa") or "")
+        summary_ready = summary != "翻訳処理中" and bool(
+            re.search(r"[぀-ヿ一-鿿]", summary))
+        if not summary_ready:
+            event["headlineJa"] = decorated["displayTitleJa"]
         # Owner contract: no English headline is rendered while translation is
         # pending.  It stays in the bounded translation queue and is surfaced
         # on a later read after the cached Japanese translation exists.
-        if decorated["translationStatus"] not in ("translated", "not_needed"):
+        translation_ready = decorated["translationStatus"] in (
+            "translated", "not_needed")
+        if not summary_ready and not translation_ready:
             pending_translation_count += 1
             event["alertEligible"] = False
             continue

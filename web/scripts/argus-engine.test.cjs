@@ -92,6 +92,20 @@ check('Today news is relevant, corroborated and capped', selectTodayNews([
   { ...newsBase, id: 'held', titleJa: 'NVDA 重大開示', linkedSymbols: ['NVDA'], scope: 'holding' },
   { ...newsBase, id: 'noise', titleJa: '無関係な開示', scope: 'other' },
 ], ['NVDA']).map((row) => row.id).join(',') === 'held');
+const diverseNews = selectTodayNews([
+  { ...newsBase, id: 'official', titleJa: '日銀が政策金利を据え置き', source: '日銀', scope: 'global' },
+  { ...newsBase, id: 'wire1', titleJa: '米株は国債利回りを受け反発', source: 'Reuters',
+    scope: 'index', tier: 'wire', corroboration: 'single', translationStatus: 'summarized' },
+  { ...newsBase, id: 'wire2', titleJa: 'イラン制裁で原油供給懸念', source: 'Reuters',
+    scope: 'global', tier: 'wire', corroboration: 'single', translationStatus: 'summarized' },
+  { ...newsBase, id: 'wire3', titleJa: '米株市場の別記事', source: 'Reuters',
+    scope: 'index', tier: 'wire', corroboration: 'single', translationStatus: 'summarized' },
+  { ...newsBase, id: 'english', titleJa: 'translation pending', source: 'CNBC',
+    scope: 'index', tier: 'wire', corroboration: 'single', translationStatus: 'pending' },
+], []);
+check('Today admits labeled wire evidence while enforcing translation and source diversity',
+  diverseNews.map((row) => row.id).join(',') === 'official,wire1,wire2'
+  && diverseNews.filter((row) => row.source === 'Reuters').length === 2);
 
 const panel = fs.readFileSync(path.join(root, 'src/components/today/ArgusTodayPanel.tsx'), 'utf8');
 const heroAt = panel.indexOf('at-primary-hero');

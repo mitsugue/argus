@@ -13,7 +13,9 @@ export interface MarketNewsItem {
   /** v11.5.1: Japanese-first display title (never raw English) + status. */
   displayTitleJa?: string;
   titleOriginal?: string;
-  translationStatus?: 'translated' | 'not_needed' | 'pending' | 'failed';
+  translationStatus?: 'translated' | 'summarized' | 'not_needed' | 'pending' | 'failed';
+  /** Japanese rule-based summary derived only from explicit headline terms. */
+  headlineProjection?: 'deterministic_summary';
   source: string;
   url: string;
   datetime: number | null;   // unix seconds

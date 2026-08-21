@@ -6,14 +6,16 @@
      malformed values reported by embedded/standalone web views. */
   --argus-safe-bottom: clamp(0px, env(safe-area-inset-bottom, 0px), 34px);
   --argus-mobile-safe-bottom: clamp(0px, var(--argus-safe-bottom), 34px);
-  /* The interactive row stays 48px and only the bounded hardware inset is
-     added below it. Installed iOS web views can transiently report malformed
-     inset values; the second clamp prevents those values from creating the
-     150px blank rail seen in production. */
-  --argus-mobile-nav-content-height: 48px;
-  --argus-mobile-nav-height: calc(var(--argus-mobile-nav-content-height) + var(--argus-mobile-safe-bottom));
+  /* Owner-visible rail geometry is intentionally more compact than the native
+     iOS 49+34pt tab bar.  The interactive row remains a full 44px target while
+     only a 12px visual buffer is retained at the bottom.  The raw 34px inset
+     remains available to scrolling/content code; it is not paid twice inside
+     the buttons. */
+  --argus-mobile-nav-safe-buffer: clamp(0px, var(--argus-mobile-safe-bottom), 12px);
+  --argus-mobile-nav-content-height: 44px;
+  --argus-mobile-nav-height: calc(var(--argus-mobile-nav-content-height) + var(--argus-mobile-nav-safe-buffer));
   --argus-mobile-sticky-height: 34px;
-  --argus-mobile-nav-label-bottom: calc(6px + var(--argus-mobile-safe-bottom));
+  --argus-mobile-nav-label-bottom: 3px;
 }
 
 .nav {
@@ -154,11 +156,11 @@
     top: 0;
     left: 4px;
     right: 4px;
-    bottom: 0;
+    bottom: auto;
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    height: auto;
-    min-height: 0;
+    height: var(--argus-mobile-nav-content-height);
+    min-height: var(--argus-mobile-nav-content-height);
   }
   .nav__mobile-btn {
     position: relative;
@@ -168,8 +170,9 @@
     justify-content: center;
     gap: 4px;
     min-width: 0;
-    padding: 4px 2px var(--argus-mobile-nav-label-bottom);
-    min-height: 44px;
+    padding: 3px 2px var(--argus-mobile-nav-label-bottom);
+    height: var(--argus-mobile-nav-content-height);
+    min-height: var(--argus-mobile-nav-content-height);
     color: var(--text-muted);
     background: transparent;
     font-size: 10px;

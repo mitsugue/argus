@@ -20,7 +20,7 @@ import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 NEWS_EVENT_SCHEMA = "argus-news-event-v1"
-NEWS_POLICY_VERSION = "news-policy-v2"
+NEWS_POLICY_VERSION = "news-policy-v3"
 SEVERITIES = ("INFO", "WATCH", "HIGH", "CRITICAL")
 
 # ── Source families (§2/§9) — the six owner-subscribed sources only ────────
@@ -153,6 +153,22 @@ _LOW_VALUE_HINTS = (
     "アーカイブ", "editors' picks", "digest",
 )
 
+_MAIL_CONTAINER_HINTS = (
+    "メール配信サービス", "メールマガジン", "メールニュース", "配信のお知らせ",
+    "email alert", "email update", "subscription update", "newsletter",
+    "daily digest", "weekly digest",
+)
+_MAIL_BOILERPLATE_HINTS = (
+    "配信停止", "登録変更", "unsubscribe", "privacy policy", "view in browser",
+    "このメールは", "本メールは", "ウェブサイト", "ホームページ", "copyright",
+)
+_SUMMARY_ACTION_HINTS = (
+    "発表", "決定", "引き上げ", "引き下げ", "利上げ", "利下げ", "変更",
+    "開始", "停止", "制裁", "攻撃", "停戦", "急騰", "急落", "上方修正",
+    "下方修正", "買収", "破綻", "緊急", "statement", "decision", "raises",
+    "cuts", "sanction", "attack", "ceasefire", "surge", "plunge",
+)
+
 _JAPAN_TRANSMISSION_JA = {
     "RATES": "長期金利の上昇は割引率経由でグロース・AI・半導体など高PER株の"
              "バリュエーションを圧迫し、円金利連動でも日本株に波及します。",
@@ -226,6 +242,54 @@ def classify_event(subject: str, excerpt: str = "") -> Dict[str, Any]:
                 tags.append(tag)
     return {"eventType": primary, "families": matched,
             "lowValueHints": low_value, "themeTags": tags}
+
+
+def is_mail_container_title(subject: str) -> bool:
+    """True when the subject names a delivery wrapper, not the event itself."""
+    return any(hint in _lower(subject) for hint in _MAIL_CONTAINER_HINTS)
+
+
+def summarize_headline_ja(*, subject: str, excerpt: str,
+                          taxonomy: Mapping[str, Any],
+                          ai_analysis: Optional[Mapping[str, Any]],
+                          source: str) -> str:
+    """Build the bold owner headline from event content, never a mail wrapper.
+
+    The raw authenticated subject remains ``titleOriginal`` evidence.  This
+    projection uses only a bounded excerpt and validated facts; it persists no
+    mail body and never changes severity or SDA authority.
+    """
+    candidates: List[str] = []
+    for fact in list((ai_analysis or {}).get("facts") or [])[:3]:
+        if isinstance(fact, str):
+            candidates.append(fact)
+    candidates.extend(re.split(r"[\r\n。！？]+", str(excerpt or "")[:2000]))
+    for candidate in candidates:
+        text = re.sub(r"https?://\S+", "", candidate)
+        text = re.sub(r"\s+", " ", text).strip(" ・:：-—")
+        lower = _lower(text)
+        if len(text) < 10 or len(text) > 160:
+            continue
+        if any(hint in lower for hint in _MAIL_BOILERPLATE_HINTS):
+            continue
+        candidate_taxonomy = classify_event(text)
+        if not candidate_taxonomy["families"] and not any(
+                hint in lower for hint in _SUMMARY_ACTION_HINTS):
+            continue
+        if re.search(r"[぀-ヿ一-鿿]", text):
+            return text[:110]
+    cleaned_subject = re.sub(
+        r"^\s*(?:速報|重要|ニュース|alert|breaking)\s*[:：\-]?\s*",
+        "", str(subject or ""), flags=re.IGNORECASE).strip()
+    if cleaned_subject and not is_mail_container_title(cleaned_subject):
+        if re.search(r"[぀-ヿ一-鿿]", cleaned_subject):
+            return cleaned_subject[:110]
+        return "翻訳処理中"
+    source_label = SOURCE_LABELS.get(source, source or "公式機関")
+    family = str(taxonomy.get("eventType") or "")
+    if family in ("LOW_RELEVANCE", "OTHER_MARKET_RELEVANT"):
+        return f"{source_label}の定期配信（市場影響を確認できず）"
+    return f"{source_label}の定期配信（市場を動かす新規発表なし）"
 
 
 # ── Staleness (§19) ─────────────────────────────────────────────────────────
@@ -429,6 +493,7 @@ def evaluate_materiality(*, taxonomy: Mapping[str, Any], staleness: str,
                          ai_analysis: Optional[Mapping[str, Any]],
                          corroboration: Mapping[str, Any],
                          subject: str,
+                         content_text: str = "",
                          source: str = "NIKKEI",
                          is_revision_escalation: bool = False,
                          ) -> Dict[str, Any]:
@@ -437,14 +502,24 @@ def evaluate_materiality(*, taxonomy: Mapping[str, Any], staleness: str,
     never override source, staleness, market or source-family policy (§14A)."""
     reasons: List[str] = []
     family = str(taxonomy.get("eventType") or "OTHER_MARKET_RELEVANT")
-    haystack = _lower(subject)
+    subject_haystack = _lower(subject)
+    haystack = subject_haystack + "\n" + _lower(content_text)[:2000]
     market = corroboration or {}
     confirmed = bool(market.get("confirmed"))
     policy = SOURCE_MATERIALITY.get(source) or {}
+    content_haystack = _lower(content_text)[:2000]
+    content_event_haystack = " ".join(
+        part for part in re.split(r"[\r\n。！？]+", content_haystack)
+        if part and not any(
+            hint in part for hint in _MAIL_BOILERPLATE_HINTS))
     data_input = any(p in haystack for p in policy.get("dataInput", ()))
     routine = any(p in haystack for p in policy.get("routine", ()))
     scheduled = any(p in haystack for p in policy.get("scheduledRelease", ()))
     priority = any(p in haystack for p in policy.get("priority", ()))
+    content_priority = any(
+        p in content_event_haystack for p in policy.get("priority", ()))
+    content_action = any(
+        hint in content_event_haystack for hint in _SUMMARY_ACTION_HINTS)
 
     score = 0
     if family in _HIGH_IMPACT_FAMILIES:
@@ -463,6 +538,7 @@ def evaluate_materiality(*, taxonomy: Mapping[str, Any], staleness: str,
     if confirmed:
         score += 1
         reasons.append("market_confirmed")
+    container_title = is_mail_container_title(subject)
     if taxonomy.get("lowValueHints") and family in (
             "LOW_RELEVANCE", "OTHER_MARKET_RELEVANT"):
         score = 0
@@ -480,6 +556,12 @@ def evaluate_materiality(*, taxonomy: Mapping[str, Any], staleness: str,
     elif routine and not confirmed and not priority:
         score = min(score, 1)
         reasons.append("routine_official_publication")
+    if container_title and not (content_priority or content_action):
+        # A delivery-service subject proves only that an email arrived.  It is
+        # not a market event and must not inherit an unrelated simultaneous
+        # market move merely because the sender is an official agency.
+        score = 0
+        reasons.append("mail_container_no_material_event")
     if staleness == "STALE":
         score = min(score, 1)
         reasons.append("stale_capped")
@@ -548,9 +630,7 @@ def build_news_event(*, message: Mapping[str, Any],
         # never mislabeled as Japanese; the public projection attaches a cached
         # translation and withholds pending English from owner surfaces.
         "titleOriginal": str(message.get("subject") or "")[:160],
-        "headlineJa": (str(message.get("subject") or "")[:160]
-                       if re.search(r"[぀-ヿ一-鿿]", str(message.get("subject") or ""))
-                       else "翻訳処理中"),
+        "headlineJa": str(message.get("headlineJa") or "翻訳処理中")[:160],
         "eventType": family,
         "themeTags": list(taxonomy.get("themeTags") or []),
         "facts": list((ai_analysis or {}).get("facts") or [])[:5],
@@ -571,3 +651,30 @@ def build_news_event(*, message: Mapping[str, Any],
         "sdaAuthority": False,
         "backfill": bool(message.get("backfill")),
     }
+
+
+def project_owner_event(event: Mapping[str, Any]) -> Dict[str, Any]:
+    """Read-time migration for persisted v2 mail-wrapper events.
+
+    Old state can outlive a deploy.  A generic authenticated subject that was
+    persisted as its own headline with no extracted fact is projected as INFO
+    immediately instead of inheriting an unrelated concurrent market move.
+    """
+    projected = dict(event)
+    original = str(projected.get("titleOriginal") or projected.get("headlineJa") or "")
+    current_headline = str(projected.get("headlineJa") or "")
+    if (is_mail_container_title(original)
+            and (is_mail_container_title(current_headline)
+                 or current_headline == "翻訳処理中")
+            and not list(projected.get("facts") or [])):
+        taxonomy = {"eventType": projected.get("eventType") or "OTHER_MARKET_RELEVANT"}
+        projected["headlineJa"] = summarize_headline_ja(
+            subject=original, excerpt="", taxonomy=taxonomy,
+            ai_analysis=None, source=str(projected.get("sourceFamily") or ""))
+        projected["severity"] = "INFO"
+        projected["alertEligible"] = False
+        projected["severityReasons"] = list(projected.get("severityReasons") or [])
+        if "mail_container_no_material_event" not in projected["severityReasons"]:
+            projected["severityReasons"].append("mail_container_no_material_event")
+        projected["policyVersion"] = NEWS_POLICY_VERSION
+    return projected

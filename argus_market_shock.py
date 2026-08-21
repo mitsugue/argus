@@ -238,7 +238,9 @@ def build_market_shock_view(*, long_end: Mapping[str, Any],
             us10y_change_bp=cross_market.get("us10yChangeBp"),
         )
         events.append({
-            "eventId": f"long-end-rates:{long_end['latestDate']}",
+            # Stable condition identity: daily observations revise the same
+            # long-end risk, they are not separate news events.
+            "eventId": "long-end-rates",
             "eventClass": "LONG_END_RATES",
             "severity": confirmation["severity"],
             "baseSeverity": long_end["severity"],

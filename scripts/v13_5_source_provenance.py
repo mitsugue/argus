@@ -18,18 +18,17 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.10"
+PRODUCT_VERSION = "v13.5.12"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
-    # v13.5.10 owner-functional correction: bounded navigation/PWA identity,
-    # Japanese-only news projection, grouped owner-controlled holdings, moomoo
-    # source-time fidelity, probability-gated asset charts, concise detail, and
-    # scheduled mission lock contention. Investment/calibration authority stays
-    # outside this list and therefore remains fail-closed.
+    # v13.5.12 owner-functional correction: compact iPhone navigation, concise
+    # Japanese news projection, source-diverse market evidence, and semantic
+    # de-duplication of recurring long-end-rate conditions.  Investment and
+    # calibration authority stay outside this list and remain fail-closed.
     # owner-authorized path set for interaction performance (off-thread
     # verification, idle-sliced device ledger appends, keep-mounted Today),
     # the name-selector Today UX, the compact Seven Sign surface, the
@@ -49,6 +48,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "argus_checkpoint_v2.py",
     "argus_gmail_intake.py",
     "argus_market_shock.py",
+    "argus_news_i18n.py",
     "argus_news_intelligence.py",
     "argus_route_catalog.py",
     "argus_today_headline.py",
@@ -73,6 +73,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "test_argus_sho_non_regression.py",
     "test_argus_gmail_intake.py",
     "test_argus_market_shock.py",
+    "test_argus_news_i18n.py",
     "test_argus_news_intelligence.py",
     "test_argus_news_pipeline.py",
     "test_argus_notification_eligibility.py",
@@ -90,10 +91,12 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/package-lock.json",
     "web/package.json",
     "web/scripts/full-release-simulation.mjs",
+    "web/scripts/argus-engine.test.cjs",
     "web/scripts/asset-desk.test.cjs",
     "web/scripts/causal-event-memory.test.mjs",
     "web/scripts/iphone-profile.mjs",
     "web/scripts/market-data-truth.test.cjs",
+    "web/scripts/market-system-integrity.test.cjs",
     "web/scripts/mobile-today-acceptance.mjs",
     "web/scripts/mobile-today-integrity.test.mjs",
     "web/scripts/owner-functional-ui.test.mjs",
@@ -120,11 +123,13 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/src/components/today/ArgusTodayPanel.tsx",
     "web/src/hooks/useAssetIntel.ts",
     "web/src/hooks/useChartIntelligence.ts",
+    "web/src/hooks/useMarketNews.ts",
     "web/src/components/settings/NewsIntakePanel.tsx",
     "web/src/hooks/useMarketShock.ts",
     "web/src/hooks/useNewsIntelligence.ts",
     "web/src/hooks/useTodayHeadline.ts",
     "web/src/domain/assetDesk.ts",
+    "web/src/domain/argusTodayView.ts",
     "web/src/lib/notifications.ts",
     "web/src/routes/Settings.tsx",
     "web/src/lib/sdaDeviceLocal.ts",

@@ -299,7 +299,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
             .filter((ie) => ie.countdown === 'D' || ie.countdown === 'D-1')
             .map((ie) => ie.eventCode))],
           marketShockEvents: (marketShock.view?.events ?? []).map((event) => ({
-            eventId: event.eventId, severity: event.severity,
+            eventId: event.eventId, eventClass: event.eventClass,
+            severity: event.severity,
             headlineJa: event.headlineJa, whyJa: event.whyJa,
           })),
           newsIntelEvents: (newsIntel.view?.events ?? []).map((event) => ({

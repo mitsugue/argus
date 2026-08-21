@@ -28,6 +28,14 @@ def test_display_title_ja_never_raw_english():
     assert NI.display_title_ja(JA, c) == JA
 
 
+def test_deterministic_market_summary_is_japanese_and_fail_closed():
+    title = "Wall St rises on the day but falls for the week; bond yields and Iran in focus"
+    summary = NI.deterministic_market_summary_ja(title)
+    assert summary == "米国株は反発、週間では下落、債券利回りとイラン情勢が焦点"
+    assert NI.deterministic_market_summary_ja(
+        "Celebrity shares ten weekend habits") is None
+
+
 def test_decorate_fields():
     c = _cache((EN, "エヌビディアがAI需要で急伸"))
     d = NI.decorate(EN, c, "Finnhub")

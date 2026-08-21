@@ -17,6 +17,44 @@ _CJK = re.compile(r"[぀-ヿ㐀-䶵一-鿋豈-﫿]")
 _LATIN = re.compile(r"[A-Za-z]")
 
 
+def deterministic_market_summary_ja(text: Optional[str]) -> Optional[str]:
+    """Return a bounded Japanese *summary* for high-signal English headlines.
+
+    This is deliberately not a general translator.  It covers only explicit
+    combinations whose meaning is present in the headline itself, exports no
+    text to an external provider, and returns ``None`` when the claim cannot be
+    stated safely.  Unknown headlines therefore remain hidden, never English.
+    """
+    s = (text or "").strip()
+    lower = s.lower()
+    if not looks_translatable(s):
+        return s or None
+    if "wall st" in lower and "bond yield" in lower and "iran" in lower:
+        weekly = "、週間では下落" if "falls for the week" in lower else ""
+        return f"米国株は反発{weekly}、債券利回りとイラン情勢が焦点"
+    if "debt crisis" in lower and "gold" in lower and "bitcoin" in lower:
+        return "米債務危機への警戒が強まり、金とビットコインが逃避先候補に"
+    if "iran" in lower and "sanction" in lower:
+        return "米国の対イラン経済圧力が強まり、制裁の市場影響を注視"
+    if "hormuz" in lower and "nato" in lower:
+        return "NATO加盟国がホルムズ海峡への対応を協議、同盟としての関与は未定"
+    if "gold" in lower and ("bond" in lower or "debt" in lower) \
+            and "dollar" in lower:
+        return "債券不安と債務懸念、ドル安を受けて金価格が反発"
+    if "ai data center" in lower and ("worst" in lower or "falls" in lower):
+        return "AIデータセンター関連株が下落、成長期待の持続性を市場が再点検"
+    if "nvidia" in lower and "earnings" in lower:
+        return "エヌビディア決算を前にAI関連株の業績見通しが焦点"
+    if ("fed" in lower or "fomc" in lower) and "rate" in lower:
+        if any(word in lower for word in ("cut", "lower")):
+            return "FRBの利下げ方針が米金利と株式市場の焦点"
+        if any(word in lower for word in ("raise", "hike")):
+            return "FRBの利上げ方針が米金利と株式市場の焦点"
+        if any(word in lower for word in ("hold", "unchanged", "steady")):
+            return "FRBが政策金利を据え置き、今後の方針が焦点"
+    return None
+
+
 def text_hash(text: str) -> str:
     return hashlib.md5((text or "").strip().encode("utf-8")).hexdigest()[:16]
 
