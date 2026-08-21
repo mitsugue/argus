@@ -44,6 +44,7 @@ export interface TodayMoveInput {
 export interface TodayAttentionInput { id: string; label: string; time?: string | null; severity: number }
 export interface TodayNewsInput {
   id: string; titleJa: string; source: string; url: string; publishedAt?: number | null;
+  corroboration?: string;
 }
 export interface TodayNewsCardState {
   status: 'live' | 'unavailable' | 'missing_key';
@@ -552,17 +553,21 @@ export function todayProjectionDecisionUsable(
   return asOf != null && asOf <= nowMs && nowMs - asOf <= 5 * 24 * 60 * 60_000;
 }
 
-const INDEX_NEWS = /(日経|nikkei|topix|s&p|nasdaq|dow|株式市場|stock market|equity market)/i;
+const INDEX_NEWS = /(日経|nikkei|topix|s&p|nasdaq|dow|wall st|株式市場|stock market|equity market)/i;
 const GLOBAL_NEWS = /(戦争|侵攻|制裁|金融危機|銀行破綻|緊急利上げ|緊急利下げ|緊急決定|war|invasion|sanction|financial crisis|bank failure|emergency rate)/i;
 
 /** Today用ニュースは、処理済みかつ判断変更に関係するものだけを最大3件にする。 */
 export function selectTodayNews(candidates: TodayNewsCandidate[], symbols: string[]): TodayNewsInput[] {
   const universe = symbols.map((value) => value.trim().toUpperCase()).filter(Boolean);
   const seen = new Set<string>();
-  return candidates.filter((item) => {
+  const sourceCounts = new Map<string, number>();
+  const eligible = candidates.filter((item) => {
     if (!item.major || item.relevant === false || !item.titleJa.trim() || !item.source || !item.url) return false;
-    if (!['translated', 'not_needed'].includes(item.translationStatus ?? '')) return false;
-    if (!['official', 'corroborated'].includes(item.corroboration ?? '')) return false;
+    if (!['translated', 'summarized', 'not_needed'].includes(item.translationStatus ?? '')) return false;
+    // A trusted wire headline may be shown as clearly unconfirmed evidence.
+    // It never becomes decision-usable merely by being visible.
+    if (!['official', 'corroborated'].includes(item.corroboration ?? '')
+        && !(item.tier === 'wire' && item.corroboration === 'single')) return false;
     const text = `${item.titleJa} ${item.titleOriginal ?? ''}`;
     const linked = (item.linkedSymbols ?? []).map((value) => value.toUpperCase());
     const universeMatch = linked.some((symbol) => universe.includes(symbol))
@@ -574,8 +579,20 @@ export function selectTodayNews(candidates: TodayNewsCandidate[], symbols: strin
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
-  }).sort((a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0))
-    .slice(0, 3).map(({ id, titleJa, source, url, publishedAt }) => ({ id, titleJa, source, url, publishedAt }));
+  }).sort((a, b) => {
+    const rank = (row: TodayNewsCandidate) => row.corroboration === 'official' ? 3
+      : row.corroboration === 'corroborated' ? 2 : 1;
+    return rank(b) - rank(a) || (b.publishedAt ?? 0) - (a.publishedAt ?? 0);
+  });
+  const selected = eligible.filter((item) => {
+    const count = sourceCounts.get(item.source) ?? 0;
+    if (count >= 2) return false;
+    sourceCounts.set(item.source, count + 1);
+    return true;
+  }).slice(0, 3);
+  return selected.map(({ id, titleJa, source, url, publishedAt, corroboration }) => ({
+    id, titleJa, source, url, publishedAt, corroboration,
+  }));
 }
 
 function dedupeHoldings(rows: TodayHoldingInput[]): TodayHoldingInput[] {

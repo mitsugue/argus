@@ -159,6 +159,20 @@ def test_material_mail_reaches_major_news_and_alert(monkeypatch, news_env):
     assert memory["automaticCalibrationEnabled"] is False
 
 
+def test_generic_boj_mail_subject_is_not_major_news(monkeypatch, news_env):
+    monkeypatch.setenv("ARGUS_NEWS_ALLOWED_SENDER_DOMAINS", "boj.or.jp")
+    message = mail(
+        "boj1", "日本銀行メール配信サービス 2026-08-21",
+        sender="notice@boj.or.jp",
+        auth="spf=pass dkim=pass header.d=boj.or.jp",
+        body="日本銀行ホームページを更新しました。配信停止はこちら。 https://www.boj.or.jp/")
+    run_cycle(monkeypatch, {"boj1": message})
+    event = scanner.app.test_client().get(
+        "/api/argus/news-intelligence").get_json()["events"][0]
+    assert event["severity"] == "INFO"
+    assert "メール配信サービス" not in event["headlineJa"]
+
+
 def test_duplicate_email_and_spoof_quarantine(monkeypatch, news_env):
     subject = "日銀が臨時会合を開催へ"
     run_cycle(monkeypatch, {"d1": mail("d1", subject)})

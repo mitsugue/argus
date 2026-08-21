@@ -81,6 +81,14 @@ const compact = notifications.compactNotificationFeed([
 ]);
 check('N1 notification feed renders one semantic incident', compact.length === 1
   && compact[0].occurrenceCount === 2 && compact[0].notificationIds.length === 2);
+const compactLongEnd = notifications.compactNotificationFeed([
+  { ...baseNotification, id: 'y1', eventType: 'market_shock', symbol: null,
+    titleJa: '市場ショック（HIGH）: 米30年債利回り 5.19%', bodyJa: '米30年債利回り 5.19%' },
+  { ...baseNotification, id: 'y2', eventType: 'market_shock', symbol: null,
+    titleJa: '市場リスク（HIGH）: 米30年債利回り 5.23%', bodyJa: '米30年債利回り 5.23%' },
+]);
+check('N2 recurring long-end readings compact to one market condition',
+  compactLongEnd.length === 1 && compactLongEnd[0].occurrenceCount === 2);
 
 const dqSource = src('src', 'routes', 'DataQualityPage.tsx');
 const healthSource = src('src', 'hooks', 'useSystemHealth.ts');

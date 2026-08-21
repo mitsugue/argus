@@ -288,6 +288,15 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   const target = view.canonicalDecision.targets[0];
   const invalidation = view.canonicalDecision.invalidation;
   const openEventDetails = () => onNavigate('notifications');
+  const marketRiskEvents = shock.events.filter((event) =>
+    event.eventClass === 'LONG_END_RATES');
+  const shockNewsEvents = shock.events.filter((event) =>
+    event.eventClass !== 'LONG_END_RATES');
+  const materialMailEvents = newsIntel.events.filter((event) =>
+    event.severity === 'HIGH' || event.severity === 'CRITICAL')
+    .filter((event, index, rows) => rows.findIndex((candidate) =>
+      candidate.eventType === event.eventType && candidate.source === event.source) === index)
+    .slice(0, 2);
   React.useEffect(() => {
     try {
       sessionStorage.setItem('argus.todayDecisionMirror', JSON.stringify({
@@ -537,16 +546,26 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         <b>{row.label}</b><span>{row.value}</span>{row.detail && <em>{row.detail}</em>}</div>)}
     </div></Compact>}
 
+    {marketRiskEvents.length > 0 && <Compact title="市場リスク" className="at-market-risk-card">
+      <div className="at-shock">{marketRiskEvents.map((event) => <div key={event.eventId}
+        className="at-shock-event" data-shock-severity={event.severity}
+        data-shock-class={event.eventClass}>
+        <div className="at-shock-head"><mark data-severity={event.severity}>{event.severity}</mark>
+          <b>{event.headlineJa}</b></div>
+        <span>{event.whyJa}</span>
+        <em>{event.sources.map((source) => source.name).join(' · ')}
+          {event.asOf ? ` · ${event.asOf}` : ''}</em>
+      </div>)}</div>
+    </Compact>}
+
     <Compact title="重大ニュース" className={`at-news-card ${view.newsCardState.status !== 'live' ? 'is-stale' : ''}`}>
       {/* v13.5.3: Nikkei mail intelligence renders first — ARGUS's own
           compact interpretation (what/why/market/japan/confirmation), never
           the article body. Evidence only; SDA authority is untouched. INFO
           events stay off Today (Decision First). */}
-      {newsIntel.status === 'data' && newsIntel.events.filter((event) =>
-        event.severity !== 'INFO').length > 0
+      {newsIntel.status === 'data' && materialMailEvents.length > 0
         && <div className="at-shock at-news-intel">
-        {newsIntel.events.filter((event) => event.severity !== 'INFO')
-          .slice(0, 3).map((event) => <div key={event.eventId}
+        {materialMailEvents.map((event) => <div key={event.eventId}
             className="at-shock-event" data-shock-severity={event.severity}
             data-news-event-type={event.eventType}
             data-news-confirmation={event.confirmationState}>
@@ -590,8 +609,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           corroborated geopolitical/energy events) render first with severity,
           why-it-matters, and sources. Absence is stated explicitly with what
           is being monitored — never a bare generic empty state. */}
-      {shock.status === 'data' && shock.events.length > 0 && <div className="at-shock">
-        {shock.events.map((event) => <div key={event.eventId}
+      {shock.status === 'data' && shockNewsEvents.length > 0 && <div className="at-shock">
+        {shockNewsEvents.map((event) => <div key={event.eventId}
           className="at-shock-event" data-shock-severity={event.severity}
           data-shock-class={event.eventClass}>
           <div className="at-shock-head">
@@ -605,13 +624,15 @@ export const ArgusTodayPanel: React.FC<Props> = ({
               && ` · 市場横断確認: ${event.crossMarket.signals.join('/')}`}</em>
         </div>)}
       </div>}
-      {shock.status === 'data' && shock.events.length === 0
+      {shock.status === 'data' && shockNewsEvents.length === 0
         && <p className="at-shock-clear">市場影響級イベント: 現在なし
-          （監視中: 米長期金利 · エネルギー地政学 · 市場横断確認）</p>}
+          （監視中: 中央銀行 · 雇用/物価 · 地政学 · 企業イベント）</p>}
       {shock.status === 'error'
         && <p className="at-shock-clear">市場ショック監視: 取得できません</p>}
       {view.news.length ? <div className="at-news">
-      {view.news.map((row) => <a key={row.id} href={row.url} target="_blank" rel="noreferrer"><b>{row.titleJa}</b><span>{row.source}</span></a>)}
+      {view.news.map((row) => <a key={row.id} href={row.url} target="_blank" rel="noreferrer"><b>{row.titleJa}</b><span>{row.source}
+        {row.corroboration === 'single' ? ' · 単独報道（判断未使用）'
+          : row.corroboration === 'corroborated' ? ' · 複数系統確認' : ' · 公式'}</span></a>)}
       </div> : <div className="at-news-zero"><b>{view.newsCardState.status === 'live' ? '一般ニュース: 現在なし' : 'ニュース確認要'}</b>
         <span>最終確認 {view.newsCardState.lastChecked ? new Date(view.newsCardState.lastChecked).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '—'}</span></div>}
     </Compact>

@@ -138,6 +138,7 @@ def test_view_assembly_orders_by_severity_and_stays_truthful():
     assert view["eventCount"] == 2
     assert view["events"][0]["severity"] == "CRITICAL"
     assert view["events"][0]["eventClass"] == "LONG_END_RATES"
+    assert view["events"][0]["eventId"] == "long-end-rates"
     assert view["automaticAiCalls"] == 0
     # no confirmation signals → severities unchanged
     assert view["events"][0]["crossMarket"]["confirmed"] is False

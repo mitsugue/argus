@@ -294,6 +294,44 @@ def test_boj_stats_notice_vs_policy_decision():
     assert decision["severity"] in ("HIGH", "CRITICAL")
 
 
+def test_mail_container_is_not_an_event_but_content_can_surface_policy():
+    subject = "日本銀行メール配信サービス 2026-08-21"
+    taxonomy = ni.classify_event(subject)
+    wrapper = ni.evaluate_materiality(
+        taxonomy=taxonomy, staleness="FRESH_BREAKING",
+        source_authenticated=True, ai_analysis=None,
+        corroboration={"confirmed": False}, subject=subject,
+        content_text="日本銀行ホームページを更新しました。配信停止はこちら。",
+        source="BANK_OF_JAPAN")
+    assert wrapper["severity"] == "INFO"
+    assert "mail_container_no_material_event" in wrapper["reasons"]
+    policy_text = "金融政策決定会合で政策金利の引き上げを決定しました。"
+    taxonomy = ni.classify_event(subject, policy_text)
+    policy = ni.evaluate_materiality(
+        taxonomy=taxonomy, staleness="FRESH_BREAKING",
+        source_authenticated=True, ai_analysis=None,
+        corroboration={"confirmed": False}, subject=subject,
+        content_text=policy_text, source="BANK_OF_JAPAN")
+    assert policy["severity"] in ("HIGH", "CRITICAL")
+    summary = ni.summarize_headline_ja(
+        subject=subject, excerpt=policy_text, taxonomy=taxonomy,
+        ai_analysis=None, source="BANK_OF_JAPAN")
+    assert summary == "金融政策決定会合で政策金利の引き上げを決定しました"
+
+
+def test_persisted_generic_wrapper_is_downgraded_on_owner_projection():
+    projected = ni.project_owner_event({
+        "titleOriginal": "日本銀行メール配信サービス 2026-08-21",
+        "headlineJa": "日本銀行メール配信サービス 2026-08-21",
+        "sourceFamily": "BANK_OF_JAPAN", "eventType": "BOJ",
+        "severity": "WATCH", "severityReasons": ["family_boj"],
+        "facts": [], "confirmationState": "MARKET_CONFIRMED",
+        "alertEligible": False,
+    })
+    assert projected["severity"] == "INFO"
+    assert "メール配信サービス" not in projected["headlineJa"]
+
+
 def test_eia_routine_weekly_vs_energy_shock():
     weekly = _mat("Weekly Natural Gas Storage Report Supplement", "EIA")
     assert weekly["severity"] in ("INFO", "WATCH")
