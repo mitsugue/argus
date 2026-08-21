@@ -111,8 +111,12 @@ jobs:
           LAST_RC=1
           for BATCH in 1 2 3; do
             set +e
+            # Production's verified checkpoint currently needs about 82s by
+            # itself.  Match the bounded 240s natural-tick transport budget so
+            # a successful server-side checkpoint is not reported as a CI
+            # timeout while the seven-minute job ceiling still fails closed.
             MT=$(python3 scripts/workflow_http.py --name missions-tick \
-              --method POST --timeout 90 \
+              --method POST --timeout 240 \
               --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
               --header 'Content-Type: application/json' --data "$TICK_PAYLOAD" \
               --url "$BE/api/argus/admin/missions/tick")

@@ -123,6 +123,16 @@ def test_work_is_bounded():
     assert "while true" not in text
 
 
+def test_mission_backup_transport_budget_covers_verified_checkpoint():
+    text = _text()
+    mission = text.split("  mission-backup:", 1)[1].split(
+        "\n  caos-collection:", 1
+    )[0]
+    assert "--name missions-tick" in mission
+    assert "--method POST --timeout 240" in mission
+    assert "--method POST --timeout 90" not in mission
+
+
 def test_async_receipt_contract_is_fast_idempotent_and_exact():
     text = _text()
     flush = text.split("- name: Commit verified snapshot and post receipt", 1)[1]
