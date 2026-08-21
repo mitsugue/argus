@@ -33,15 +33,12 @@ export const AssetDecisionSummary: React.FC<{
         {view.canonicalDecisionStatus && <span className="ad-data">
           SDA {view.canonicalDecisionStatus} · {Math.round((view.canonicalConfidenceBps ?? 0) / 100)}%
         </span>}
-        <span className="ad-data">Seven {view.sevenSignLevel == null ? '—/7' : `${view.sevenSignLevel}/7`}
-          {' · '}{view.sevenSignStatus === 'PRODUCTION' ? 'PRODUCTION' : 'Calibration pending'}</span>
         <span className="ad-owner-state">
           {view.held
             ? `保有損益 ${view.pnlPct == null ? '未計算'
               : `${view.pnlPct >= 0 ? '+' : ''}${view.pnlPct.toFixed(1)}%`}`
             : '監視のみ'}
         </span>
-        <span className="ad-prio">{view.priority}</span>
         <span className="ad-data">{view.dataStatus}</span>
       </span>
       {view.quoteTruth && <span className="ad-quote-meta">

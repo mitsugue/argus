@@ -3,7 +3,6 @@ import type { DeskCardData, DeskTab } from './types';
 import { sectionAnchorId, tabForDeskSection } from './types';
 import { AssetDecisionSummary } from './AssetDecisionSummary';
 import { AssetDecisionDetails } from './AssetDecisionDetails';
-import { AssetAIReview } from './AssetAIReview';
 import { AssetPositionPanel } from './AssetPositionPanel';
 import { AssetWhyPanel } from './AssetWhyPanel';
 import { AssetFlowPanel } from './AssetFlowPanel';
@@ -30,10 +29,10 @@ interface Props {
 }
 
 const TABS: Array<{ id: DeskTab; label: string }> = [
-  { id: 'decision', label: 'Decision' },
-  { id: 'chart', label: 'Chart' },
-  { id: 'evidence', label: 'Evidence' },
-  { id: 'position', label: 'Position' },
+  { id: 'decision', label: '判断' },
+  { id: 'chart', label: '見通し' },
+  { id: 'evidence', label: '根拠' },
+  { id: 'position', label: '保有' },
 ];
 
 const Section: React.FC<{
@@ -148,9 +147,6 @@ export const AssetDecisionCard: React.FC<Props> = ({
             onToggle={(event) => setSupportOpen(event.currentTarget.open)}>
             <summary>Utility · Research &amp; Data</summary>
             {supportOpen && <div className="ad-research-drawer__body">
-              <Section symbol={sym} id="ai-review" title="AI REVIEW / RULE CHECK">
-                <AssetAIReview d={d} />
-              </Section>
               <Section symbol={sym} id="research" title="RESEARCH / NOTES">
                 <AssetResearchPanel d={d} onRemove={onRemove} />
               </Section>

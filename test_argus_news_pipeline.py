@@ -7,6 +7,7 @@ import pytest
 import scanner
 import argus_gmail_intake as gi
 import argus_causal_event_memory as cem
+import argus_news_i18n as news_i18n
 
 
 NOW_MS = str(int(time.time() * 1000))
@@ -75,6 +76,14 @@ def news_env(monkeypatch, tmp_path):
                        parseFailures=0, alertsEligible=0),
     }
     monkeypatch.setattr(scanner, "_NEWS_INTEL", fresh)
+    # Never let a developer or production translation cache leak into this
+    # deterministic public-surface contract.
+    monkeypatch.setattr(scanner, "_NEWS_JA_CACHE", {})
+    monkeypatch.setattr(scanner, "_NEWS_JA_STATE", {
+        "restored": True, "lastTranslateAt": None,
+        "translatedToday": 0, "translatedDay": None,
+        "lastErrorClass": None, "restoredFrom": ["test"],
+    })
     # keep corroboration deterministic and offline
     monkeypatch.setattr(scanner, "_news_corroboration", lambda family: {
         "confirmed": True, "signals": ["vix_spike", "rates_move"],
@@ -219,7 +228,12 @@ def test_multi_source_families_resolve_and_apply_policy(monkeypatch, news_env):
     assert status == "HEALTHY"
     client = scanner.app.test_client()
     body = client.get("/api/argus/news-intelligence").get_json()
-    by_family = {e["sourceFamily"]: e for e in body["events"]}
+    # English agency titles remain classified evidence but are withheld from
+    # owner surfaces until their Japanese cache entry exists.
+    by_family = {e["sourceFamily"]: e
+                 for e in news_env["events"].values()}
+    assert body["events"] == []
+    assert body["pendingTranslationCount"] == 2
     # Treasury daily rates: data input, never an alert (§14A)
     treasury = by_family["US_TREASURY"]
     assert treasury["severity"] == "INFO"
@@ -245,6 +259,30 @@ def test_multi_source_families_resolve_and_apply_policy(monkeypatch, news_env):
     assert statuses["t1"] == "LOW_RELEVANCE"
     assert statuses["b1"] == "SURFACED"
     assert statuses["f1"] == "QUARANTINED"
+
+
+def test_english_news_is_withheld_until_japanese_translation_exists(
+        monkeypatch, news_env):
+    subject = "Treasury Increases Sanctions on Target Network"
+    run_cycle(monkeypatch, {"en1": mail("en1", subject)})
+    client = scanner.app.test_client()
+
+    pending = client.get("/api/argus/news-intelligence").get_json()
+    assert pending["events"] == []
+    assert pending["pendingTranslationCount"] == 1
+
+    scanner._NEWS_JA_CACHE[news_i18n.text_hash(subject)] = {
+        "ja": "米財務省、対象ネットワークへの制裁を強化",
+        "at": "2026-08-21T00:00:00Z",
+    }
+    translated = client.get("/api/argus/news-intelligence").get_json()
+    assert translated["pendingTranslationCount"] == 0
+    assert translated["eventCount"] == 1
+    event = translated["events"][0]
+    assert event["headlineJa"] == "米財務省、対象ネットワークへの制裁を強化"
+    assert event["translationStatus"] == "translated"
+    assert event["titleOriginal"] == subject
+    assert subject not in event["headlineJa"]
 
 
 def test_admin_audit_view_is_gated_and_answers_why(monkeypatch, news_env):

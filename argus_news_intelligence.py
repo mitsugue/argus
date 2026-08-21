@@ -544,7 +544,13 @@ def build_news_event(*, message: Mapping[str, Any],
         "sourceReceivedAt": message.get("receivedIso"),
         "sourcePublishedAt": message.get("publishedIso"),
         "processedAt": processed_iso,
-        "headlineJa": str(message.get("subject") or "")[:160],
+        # The authenticated subject remains evidence in titleOriginal.  It is
+        # never mislabeled as Japanese; the public projection attaches a cached
+        # translation and withholds pending English from owner surfaces.
+        "titleOriginal": str(message.get("subject") or "")[:160],
+        "headlineJa": (str(message.get("subject") or "")[:160]
+                       if re.search(r"[぀-ヿ一-鿿]", str(message.get("subject") or ""))
+                       else "翻訳処理中"),
         "eventType": family,
         "themeTags": list(taxonomy.get("themeTags") or []),
         "facts": list((ai_analysis or {}).get("facts") or [])[:5],

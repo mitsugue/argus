@@ -60,6 +60,15 @@
 .ci-quality { display: flex; flex-wrap: wrap; gap: 7px 16px; margin-top: 10px; font-size: 11px; }
 .ci-quality small { flex-basis: 100%; color: var(--text-faint); overflow-wrap: anywhere; }
 .ci-note, .ci-empty { color: var(--text-sub); font-size: 11px; line-height: 1.6; }
+.ci-owner-unavailable{display:flex;flex-direction:column;gap:5px;padding:14px}
+.ci-owner-unavailable b{font-size:13px}.ci-owner-unavailable span{font-size:11px;color:var(--text-sub)}
+.ci-owner-prob{display:flex;flex-direction:column;gap:8px;padding:11px 12px;margin-bottom:9px}
+.ci-owner-prob>div{display:flex;align-items:center;gap:8px}
+.ci-owner-prob>div:first-child span{margin-left:auto;color:var(--text-sub);font-size:9px}
+.ci-owner-prob>div:nth-child(2)>span{display:flex;flex:1;justify-content:space-between;
+  border:1px solid var(--line);border-radius:7px;padding:6px 8px;color:var(--text-sub);font-size:10px}
+.ci-owner-prob>div:nth-child(2)>span.is-max{border-color:var(--accent);color:var(--text-main)}
+.ci-owner-prob small{color:var(--text-faint);font-size:9px}
 .ci-today { margin-bottom: 10px; padding: 10px 12px; }
 .ci-today > div { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-sub); }
 .ci-today button { display: flex; gap: 9px; width: 100%; border: 0; border-top: 1px solid var(--line); background: transparent; color: var(--text); text-align: left; padding: 7px 0; cursor: pointer; }

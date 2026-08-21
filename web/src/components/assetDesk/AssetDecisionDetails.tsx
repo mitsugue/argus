@@ -11,22 +11,20 @@ export const AssetDecisionDetails: React.FC<{ d: DeskCardData }> = ({ d }) => {
   return (
     <div className="ad-overview" data-decision-overview={view.symbol}>
       <div className="ad-overview__action">
-        <span>CURRENT ACTION</span>
+        <span>いまの判断</span>
         <strong style={{ color: tone }}>{view.currentActionJa}</strong>
         <div>
-          <small>保有</small><b>{view.ownerActionJa}</b>
+          <small>保有中</small><b>{view.ownerActionJa}</b>
           <small>新規</small><b>{view.entryActionJa}</b>
         </div>
       </div>
 
       <dl className="ad-overview__facts">
-        <div><dt>WHY NOW</dt><dd>{view.whyJa}</dd></div>
-        <div><dt>NEXT CHECK</dt><dd>{view.nextJa}</dd></div>
-        <div><dt>WHAT CHANGES IT</dt><dd>{view.whatChangesJa}</dd></div>
-        <div><dt>TARGET</dt><dd>{view.targets[0]
-          ? `${view.targets[0].value} ${view.targets[0].unit}` : '検証済み目標なし'}</dd></div>
-        <div><dt>INVALIDATION</dt><dd>{view.invalidation
-          ? `${view.invalidation.value} ${view.invalidation.unit}` : '検証済み無効化条件なし'}</dd></div>
+        <div><dt>理由</dt><dd>{view.whyJa}</dd></div>
+        <div><dt>次に確認すること</dt><dd>{view.nextJa}</dd></div>
+        <div><dt>判断が変わる条件</dt><dd>{view.whatChangesJa}</dd></div>
+        {view.targets[0] && <div><dt>目標</dt><dd>{`${view.targets[0].value} ${view.targets[0].unit}`}</dd></div>}
+        {view.invalidation && <div><dt>無効化条件</dt><dd>{`${view.invalidation.value} ${view.invalidation.unit}`}</dd></div>}
       </dl>
 
       {view.dataStatus !== 'LIVE' && view.dataStatus !== 'live' && (

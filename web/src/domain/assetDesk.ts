@@ -111,6 +111,12 @@ function firstDistinct(candidates: Array<string | null | undefined>,
   for (const candidate of candidates) {
     const line = compactDecisionText(candidate);
     if (!line) continue;
+    // Internal resolver codes are audit metadata, not owner instructions.
+    // They remain available in data-quality evidence but never leak into the
+    // one-screen command surface.
+    if (!/[ぁ-んァ-ヶ一-龠]/.test(line)
+        && /[._:]/.test(line)
+        && /^[a-z0-9._:-]+$/i.test(line)) continue;
     const key = decisionSemanticKey(line);
     const seenTokens = new Set([...used].flatMap((item) => item.split(':')));
     const candidateTokens = key.split(':').filter(Boolean);
@@ -130,7 +136,7 @@ export function buildDecisionFirstView(input: DecisionFirstInput): DecisionFirst
   const used = new Set<string>([decisionSemanticKey(currentActionJa)].filter(Boolean));
   const ownerActionJa = input.held ? canonical.held : '監視のみ（保有なし）';
   const entryActionJa = canonical.entry;
-  const whyJa = firstDistinct(input.whyCandidates, used, '検証済みの個別理由なし');
+  const whyJa = firstDistinct(input.whyCandidates, used, '判断に必要な個別データを確認中');
   const nextJa = firstDistinct(
     input.nextCandidates, used, '個別開示・出来高・同業差を確認');
   const whatChangesJa = firstDistinct(

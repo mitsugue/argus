@@ -23,16 +23,17 @@
 
 .ad-card { position: relative; }
 .ad-handle {
-  position: absolute; left: 2px; top: 10px; z-index: 2;
-  background: transparent; border: none; color: var(--text-faint);
-  cursor: grab; font-size: 12px; padding: 2px 4px; touch-action: none;
+  position: absolute; right: 34px; top: 7px; z-index: 2;
+  background: transparent; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--text-faint); cursor: grab; font-size: 8px; padding: 2px 6px;
+  touch-action: none;
 }
 
 .ad-head {
   display: block; width: 100%; text-align: left; background: transparent;
   border: none; cursor: pointer; padding: 9px 10px 8px; color: var(--text-main);
 }
-.ad-card .ad-head { padding-left: 18px; }
+.ad-card .ad-head { padding-left: 10px; }
 
 .ad-l1, .ad-l2 { display: flex; align-items: center; gap: 7px; min-width:0 }
 .ad-l1 { margin-bottom: 5px; }
@@ -80,6 +81,8 @@
   font-size: 9.5px; color: var(--text-faint); letter-spacing: 0.06em;
   padding: 7px 8px 2px; border-bottom: 1px dashed var(--line);
 }
+.asset-group__title{display:flex;align-items:center;gap:7px;font-weight:800}
+.asset-group__hint{margin-left:auto;color:var(--text-faint);font-size:9px;font-weight:400}
 .ad-filter-sep { color: var(--line); margin: 0 2px; }
 .ad-list { padding: 0 0 4px; }
 .ad-sec { scroll-margin-top: 64px; }

@@ -36,16 +36,16 @@ export interface AssetItem {
   updatedAt: number;
 }
 
-// Genre groups (English section titles), displayed in this order with spacing.
+// Owner-facing groups, always displayed in this order.
 export type GenreKey = 'jp' | 'us' | 'funds' | 'crypto';
 
 export interface Genre { key: GenreKey; title: string; }
 
 export const GENRES: Genre[] = [
-  { key: 'jp', title: 'Japanese Stocks' },
-  { key: 'us', title: 'US Stocks' },
-  { key: 'funds', title: 'Investment Trusts' },
-  { key: 'crypto', title: 'Crypto' },
+  { key: 'jp', title: '日本株' },
+  { key: 'us', title: '米国株' },
+  { key: 'funds', title: '投資信託' },
+  { key: 'crypto', title: '仮想通貨' },
 ];
 
 export function genreOf(a: AssetItem): GenreKey {

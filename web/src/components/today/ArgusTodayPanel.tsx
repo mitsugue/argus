@@ -104,6 +104,25 @@ const SEVEN_SIGN_REASON_JA: Record<string, string> = {
   calibration_artifact_not_verified: '校正アーティファクト未検証',
   reason_unavailable: '理由コード未提供',
 };
+const NEXT_REVIEW_REASON_JA: Record<string, string> = {
+  'resolve.freshness_unknown': '正本データの更新時刻を確認',
+  'resolve.market_truth_missing': '市場データの正本を取得',
+  'resolve.prediction_ledger_missing': '予測台帳の更新を確認',
+  'resolve.risk_evidence_missing': 'リスク証拠を更新',
+  'resolve.scenario_event_missing': '重要イベント情報を更新',
+  'resolve.sho_evidence_missing': 'SHO証拠を更新',
+  'resolve.input_invalid': '判断入力を再取得',
+  risk_reassessment: 'リスク条件を再確認',
+  sho_revalidation: 'SHO証拠を再検証',
+  evidence_refresh: '正本証拠を更新',
+};
+const nextReviewLabel = (code: string | undefined): string | undefined => {
+  if (!code) return undefined;
+  if (NEXT_REVIEW_REASON_JA[code]) return NEXT_REVIEW_REASON_JA[code];
+  // Canonical reason codes remain in the signed decision object for audit.
+  // Owner UI must not expose an internal resolver token as an instruction.
+  return code.startsWith('resolve.') ? '不足している正本証拠を更新' : '判断条件を再確認';
+};
 const fmt = (v: number) => v >= 1000 ? v.toLocaleString('ja-JP', { maximumFractionDigits: 1 }) : v.toFixed(2);
 const fmtMove = (v: number, suffix = '') => `${fmt(v)}${suffix}`;
 const shortDate = (value?: string | null) => value ? value.slice(5).replace('-', '/') : '';
@@ -367,7 +386,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         <div><b>今すること</b><span>{actionCopy}</span></div>
         <div><b>目標</b><span>{target ? `${target.value} ${target.unit}` : '検証済み目標なし'}</span></div>
         <div><b>無効化</b><span>{invalidation ? `${invalidation.value} ${invalidation.unit}` : '検証済み無効化条件なし'}</span></div>
-        <div><b>次の確認</b><span>{view.canonicalDecision.nextReviewConditionCodes[0]
+        <div><b>次の確認</b><span>{nextReviewLabel(view.canonicalDecision.nextReviewConditionCodes[0])
           ?? (view.nextEvent ? `${view.nextEvent.code} ${formatEventTime(view.nextEvent.at)}` : '正本証拠の更新')}</span></div>
       </div>
       <div className="at-kpis"><span>確度 <b>{Math.round(view.canonicalDecision.confidence.valueBps / 100)}%</b></span>

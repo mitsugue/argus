@@ -17,13 +17,12 @@ import type { ActionLabel } from '../../types/actionLabels';
 import type { CatalystItem } from '../../types/catalysts';
 import type { DownsideIncident } from '../../hooks/useDownsideIncidents';
 import {
-  buildDecisionFirstView, buildPortfolioCommand, deskRank, DESK_RANK_JA,
+  buildDecisionFirstView, deskRank,
   type DeskRankInput, type DeskGenre,
 } from '../../domain/assetDesk';
 import type { DeskCardData, DeskEventTag, DeskSection } from './types';
 import { sectionAnchorId, DESK_SECTIONS } from './types';
 import { AssetDecisionCard } from './AssetDecisionCard';
-import { AssetPortfolioCommand } from './AssetPortfolioCommand';
 import { fmtPrice, freshnessOf } from './deskFormat';
 import { bestAssetName } from '../../lib/assetStrategy';
 import { DownsideIncidentQueue } from '../dashboard/DownsideIncidentCard';
@@ -34,7 +33,7 @@ import './AssetDesk.css';
 // V12.2.12 — Asset Deskリスト(旧AssetStrategySectionの後継)。
 // データ組み立てはHoldings所有の共有Asset Intelをpropsで受け取り、
 // domain/assetDecision経由でTodayと構造的に同一の判断を表示する。
-// 並び: デフォルト=優先順(domain/assetDesk決定論ソート)/手動順=従来のDnD。
+// 並び: 資産区分を固定し、区分内の端末保存順を長押しで変更する。
 
 export interface AssetFocusIntent { symbol: string; section?: string; nonce: number }
 
@@ -61,7 +60,7 @@ const SortableCardRow: React.FC<{
   return (
     <div ref={setNodeRef} style={style}>
       {children(
-        <button className="ad-handle" aria-label={`Reorder ${id}`} {...attributes} {...listeners}>⋮⋮</button>,
+        <button className="ad-handle" aria-label={`${id}を長押しして並べ替え`} {...attributes} {...listeners}>長押し</button>,
       )}
     </div>
   );
@@ -76,12 +75,11 @@ export const AssetDeskList: React.FC<Props> = ({
   const [nowMs] = useState(() => Date.now());
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [localFocus, setLocalFocus] = useState<AssetFocusIntent | null>(null);
-  const [sortMode, setSortMode] = useState<'priority' | 'manual'>('priority');
   const [filter, setFilter] = useState<
     'all' | 'risk' | 'held' | 'exit-watch' | 'inspect' | 'hold' | 'new-stop'
   >('all');
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(PointerSensor, { activationConstraint: { delay: 450, tolerance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
@@ -256,12 +254,7 @@ export const AssetDeskList: React.FC<Props> = ({
     rows.slice().sort((a, b) => a.d.rank - b.d.rank
       || (a.d.asset.symbol < b.d.asset.symbol ? -1 : a.d.asset.symbol > b.d.asset.symbol ? 1 : 0)),
     [rows]);
-  const command = useMemo(
-    () => buildPortfolioCommand(prioritized.map((row) => row.d.decisionFirst)),
-    [prioritized],
-  );
-
-  // 手動順: 従来のgenreグループ+sortOrder+DnD。
+  // 区分内の順序は端末保存済みsortOrderを唯一の表示順にする。
   const manualGroups = useMemo(() => {
     const bySym = new Map(rows.map((r) => [r.d.asset.id, r]));
     return GENRES.map((g) => ({
@@ -297,7 +290,7 @@ export const AssetDeskList: React.FC<Props> = ({
 
   function onDragEnd(groupIds: string[]) {
     return (e: DragEndEvent) => {
-      if (filter !== 'all' || sortMode !== 'manual') return;
+      if (filter !== 'all') return;
       const { active, over } = e;
       if (!over || active.id === over.id) return;
       const from = groupIds.indexOf(String(active.id));
@@ -311,7 +304,6 @@ export const AssetDeskList: React.FC<Props> = ({
     return <div className="card asset-list"><div className="asset-empty">資産がありません。「+ Add Asset」で追加できます。</div></div>;
   }
 
-  const cal = intel.al.data?.calibration;
   const connecting = intel.jpQuotes.phase === 'connecting' && intel.usQuotes.phase === 'connecting';
 
   const renderCard = (r: { d: DeskCardData }, handle?: React.ReactNode) => (
@@ -356,11 +348,6 @@ export const AssetDeskList: React.FC<Props> = ({
 
   return (
     <div className="asset-groups">
-      <AssetPortfolioCommand command={command} activeKey={filter}
-        onSelect={(key) => {
-          setSortMode('priority');
-          setFilter((current) => current === key ? 'all' : key);
-        }} />
       <DownsideIncidentQueue
         data={intel.downside}
         maxItems={4}
@@ -373,20 +360,8 @@ export const AssetDeskList: React.FC<Props> = ({
         }}
       />
       {toolbar}
-      {cal && (
-        <div className="asset-calibration" title="予測台帳の採点成績が確信度に反映されます(calibration-v1)">
-          🎯 校正: {cal.basisJa}
-        </div>
-      )}
       {connecting && <div className="asset-empty asset-empty--card">connecting… 最新の判断を取得中</div>}
       <div className="asset-filter">
-        <button className={`asset-filter__chip${sortMode === 'priority' ? ' is-active' : ''}`}
-                aria-pressed={sortMode === 'priority'}
-                onClick={() => setSortMode('priority')} title="今日見るべき順(保有×緊急→リスク→イベント→その他)">優先順</button>
-        <button className={`asset-filter__chip${sortMode === 'manual' ? ' is-active' : ''}`}
-                aria-pressed={sortMode === 'manual'}
-                onClick={() => setSortMode('manual')} title="ジャンル別・手動並べ替え(ドラッグ)">手動順</button>
-        <span className="ad-filter-sep" aria-hidden>|</span>
         <button className={`asset-filter__chip${filter === 'all' ? ' is-active' : ''}`}
                 aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>{t('wl.filterAll')}</button>
         <button className={`asset-filter__chip asset-filter__chip--risk${filter === 'risk' ? ' is-active' : ''}`}
@@ -395,35 +370,16 @@ export const AssetDeskList: React.FC<Props> = ({
         </button>
         <button className={`asset-filter__chip${filter === 'held' ? ' is-active' : ''}`}
                 aria-pressed={filter === 'held'} onClick={() => setFilter('held')}>{t('wl.filterHeld')}</button>
-        {sortMode === 'manual' && filter !== 'all' && <span className="asset-filter__note">{t('wl.filterNoReorder')}</span>}
+        {filter !== 'all' && <span className="asset-filter__note">全件表示で並べ替えできます</span>}
       </div>
 
-      {sortMode === 'priority' && (
-        <div className="card asset-list ad-list">
-          {prioritized.filter(keep).map((r, i, arr) => (
-            <React.Fragment key={r.d.asset.id}>
-              {(i === 0 || arr[i - 1].d.rank !== r.d.rank) && (
-                <div className="ad-rank-head">{DESK_RANK_JA[r.d.rank]}</div>
-              )}
-              {renderCard(r)}
-            </React.Fragment>
-          ))}
-          {prioritized.filter(keep).length === 0 && (
-            <div className="asset-empty">
-              {filter === 'risk' ? t('wl.noDanger')
-                : filter === 'held' ? t('wl.noHeld') : '該当する資産はありません。'}
-            </div>
-          )}
-        </div>
-      )}
-
-      {sortMode === 'manual' && manualGroups.map((g) => {
+      {manualGroups.map((g) => {
         const shown = g.items.filter(keep);
         if (shown.length === 0) return null;
         const ids = g.items.map((r) => r.d.asset.id);
         return (
           <section className="asset-group" key={g.key}>
-            <div className="asset-group__title">{g.title}<span className="asset-group__count">{shown.length}</span></div>
+            <div className="asset-group__title">{g.title}<span className="asset-group__count">{shown.length}</span><span className="asset-group__hint">長押しで並べ替え・自動保存</span></div>
             <div className="card asset-list ad-list">
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd(ids)}>
                 <SortableContext items={ids} strategy={verticalListSortingStrategy}>

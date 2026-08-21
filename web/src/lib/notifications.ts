@@ -112,13 +112,19 @@ function migrateLegacyNotification(item: AppNotification): AppNotification {
   return item;
 }
 
+function hasJapaneseText(value: string): boolean {
+  return /[ぁ-んァ-ヶ一-龠]/.test(value);
+}
+
 function load(): Store {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as Store;
       const items = Array.isArray(parsed.items)
-        ? parsed.items.map(migrateLegacyNotification) : [];
+        ? parsed.items.map(migrateLegacyNotification).filter((item) =>
+          item.eventType !== 'news_intel'
+          || (hasJapaneseText(item.titleJa) && hasJapaneseText(item.bodyJa))) : [];
       const lastByDedupe = { ...(parsed.lastByDedupe ?? {}) };
       if (lastByDedupe.vault && !lastByDedupe['local-export']) {
         lastByDedupe['local-export'] = lastByDedupe.vault;
@@ -176,6 +182,7 @@ export interface NotifInputs {
     severity: 'INFO' | 'WATCH' | 'HIGH' | 'CRITICAL';
     headlineJa: string; whyJa: string;
     confirmationState: string; alertEligible: boolean;
+    translationStatus?: 'translated' | 'not_needed' | 'pending';
   }>;
 }
 
@@ -217,6 +224,8 @@ function marketShockCandidates(inputs: NotifInputs) {
 function newsIntelCandidates(inputs: NotifInputs) {
   return (inputs.newsIntelEvents ?? [])
     .filter((event) => event.alertEligible
+      && ['translated', 'not_needed'].includes(event.translationStatus ?? '')
+      && hasJapaneseText(event.headlineJa)
       && (event.severity === 'HIGH' || event.severity === 'CRITICAL'))
     .map((event) => ({
       eventType: 'news_intel', severity: 'high' as const, symbol: null,

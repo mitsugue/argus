@@ -36,7 +36,7 @@ except ImportError:
     OpenQuoteContext = None
     RET_OK = 0
 
-BRIDGE_VERSION = "11.5.7"
+BRIDGE_VERSION = "11.5.8"
 
 BACKEND  = os.environ.get("ARGUS_BACKEND", "https://argus-backend-3j2m.onrender.com").rstrip("/")
 TOKEN    = os.environ.get("ARGUS_ADMIN_TOKEN", "")
@@ -367,6 +367,14 @@ def rows_from_snapshot(df):
             return None
         try:
             import datetime as _dt
+            numeric = float(raw)
+            if numeric > 0:
+                return _dt.datetime.fromtimestamp(
+                    numeric, _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except (TypeError, ValueError, OverflowError):
+            pass
+        try:
+            import datetime as _dt
             from zoneinfo import ZoneInfo
             parsed = _dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
             if parsed.tzinfo is None:
@@ -375,6 +383,13 @@ def rows_from_snapshot(df):
             return parsed.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         except Exception:
             return None
+
+    def first_present(*values):
+        for value in values:
+            raw = str(value).strip()
+            if raw and raw.lower() not in ("nan", "nat", "none", "n/a"):
+                return value
+        return None
 
     stocks = []
     for _, r in df.iterrows():
@@ -387,11 +402,15 @@ def rows_from_snapshot(df):
             continue
         if not sym or last <= 0:
             continue
-        exchange_ts = exchange_timestamp(r.get("update_time"), market.upper())
+        exchange_ts = exchange_timestamp(first_present(
+            r.get("update_timestamp"), r.get("updateTimestamp"),
+            r.get("update_time"), r.get("updateTime")), market.upper())
         right = quote_right(r)
-        stocks.append({
+        raw_name = first_present(r.get("name"))
+        row = {
             "market": market.upper(),
             "symbol": sym.upper(),
+            "name": str(raw_name or "")[:100],
             "price": last,
             "changeAbs": round(last - prev, 4) if prev else 0.0,
             "changePct": round((last - prev) / prev * 100, 4) if prev else 0.0,
@@ -401,7 +420,20 @@ def rows_from_snapshot(df):
             # right. Runtime timestamp distribution proves freshness separately.
             "quoteRight": right,
             "entitlement": right,
-        })
+        }
+        for source_key, target_key in (
+                ("open_price", "open"), ("high_price", "high"),
+                ("low_price", "low"), ("bid_price", "bid"),
+                ("ask_price", "ask"), ("turnover", "turnover"),
+                ("turnover_rate", "turnoverRate"), ("pe_ratio", "peRatio"),
+                ("pb_ratio", "pbRatio")):
+            try:
+                value = float(r.get(source_key))
+                if value == value and abs(value) != float("inf"):
+                    row[target_key] = value
+            except (TypeError, ValueError):
+                pass
+        stocks.append(row)
     return stocks
 
 

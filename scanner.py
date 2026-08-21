@@ -4861,6 +4861,18 @@ def api_argus_quote_push():
                    "exchangeTs": s.get("exchangeTs"),
                    "sourceTimestamp": s.get("exchangeTs"),
                    **source_truth}
+            name = str(s.get("name") or "").strip()
+            if name:
+                row["name"] = name[:100]
+                row["nameJa"] = name[:100]
+            for field in ("open", "high", "low", "bid", "ask", "turnover",
+                          "turnoverRate", "peRatio", "pbRatio"):
+                try:
+                    value = float(s.get(field))
+                    if math.isfinite(value):
+                        row[field] = value
+                except (TypeError, ValueError):
+                    pass
             # Optional big-money flow (v10.2): today's cumulative in/out split
             # by order size from the bridge. Normalized here so the ratio
             # formula stays transparent and server-side.
@@ -15436,6 +15448,15 @@ def _news_visible_pool():
     """Ordered (priority-first) English titles currently visible in the UI, so the
     admin translate run drains what the owner actually sees first. Cached-only."""
     pool = []
+    # Mail-intelligence headlines are part of Today/Alerts too.  Queue their
+    # authenticated originals even before a browser opens the page.
+    try:
+        for event in list(_NEWS_INTEL.get("events", {}).values()):
+            original = event.get("titleOriginal") or event.get("headlineJa")
+            if original:
+                pool.append(str(original))
+    except Exception:
+        pass
     # 1) mover-cause bestLead / top candidates (top card + downside/mover cards)
     try:
         for r in list(_MOVER_CAUSES.values()):
@@ -16528,20 +16549,35 @@ def api_argus_news_intelligence():
         events = [dict(_NEWS_INTEL["events"][eid]) for eid in order
                   if eid in _NEWS_INTEL["events"]]
         status = _NEWS_INTEL["health"]["status"]
+    visible_events = []
+    pending_translation_count = 0
     for event in events:
+        original = event.get("titleOriginal") or event.get("headlineJa") or ""
+        decorated = _news_decorate(original, event.get("source") or "")
+        event.update(decorated)
+        event["headlineJa"] = decorated["displayTitleJa"]
+        # Owner contract: no English headline is rendered while translation is
+        # pending.  It stays in the bounded translation queue and is surfaced
+        # on a later read after the cached Japanese translation exists.
+        if decorated["translationStatus"] not in ("translated", "not_needed"):
+            pending_translation_count += 1
+            event["alertEligible"] = False
+            continue
         try:
             event["eventMemory"] = _causal_memory_summary(event["eventId"])
         except Exception:
             event["eventMemory"] = None
+        visible_events.append(event)
     severity_order = {name: index for index, name in enumerate(
         argus_news_intelligence.SEVERITIES)}
-    events.sort(key=lambda ev: -severity_order.get(ev.get("severity"), 0))
+    visible_events.sort(key=lambda ev: -severity_order.get(ev.get("severity"), 0))
     return jsonify({
         "schemaVersion": "argus-news-intelligence-v1",
         "generatedAt": _ai_now_iso(),
         "intakeStatus": status,
-        "eventCount": len(events),
-        "events": events,
+        "eventCount": len(visible_events),
+        "pendingTranslationCount": pending_translation_count,
+        "events": visible_events,
         "sdaAuthority": False,
     })
 
@@ -26866,7 +26902,17 @@ def api_argus_admin_missions_tick():
             },
         })
     _prelude_samples["P2"] = _memory_attribution_scalar_snapshot()
-    _DURABLE_CHECKPOINT_LOCK.acquire()
+    if not _DURABLE_CHECKPOINT_LOCK.acquire(timeout=5.0):
+        # A durability flush may briefly own the in-process checkpoint lock.
+        # Never let a scheduled HTTP caller wait past its transport deadline;
+        # the mission remains untouched and the next schedule retries it.
+        lease.release()
+        return jsonify({
+            "ok": True,
+            "status": "expected_skip",
+            "result": "busy",
+            "reason": "durable_checkpoint_lock_busy",
+        })
     _prelude_samples["P3"] = _memory_attribution_scalar_snapshot()
     try:
         wal = argus_tick_durability.read_valid_wal(_MISSION_WAL_FILE)

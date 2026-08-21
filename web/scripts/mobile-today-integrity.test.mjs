@@ -67,16 +67,18 @@ assert.match(app, /window\.visualViewport\?\.addEventListener\('resize', refresh
 assert.match(shell, /setAnimDir\(pageDirection\)/);
 
 assert.match(navCss, /--argus-safe-bottom:\s*clamp\(0px,\s*env\(safe-area-inset-bottom,\s*0px\),\s*34px\)/);
-assert.match(navCss, /--argus-mobile-nav-height:\s*72px/);
+assert.match(navCss, /--argus-mobile-safe-bottom:\s*clamp\(0px,\s*var\(--argus-safe-bottom\),\s*34px\)/);
+assert.match(navCss, /--argus-mobile-nav-content-height:\s*48px/);
+assert.match(navCss, /--argus-mobile-nav-height:\s*calc\(var\(--argus-mobile-nav-content-height\) \+ var\(--argus-mobile-safe-bottom\)\)/);
 assert.match(navCss, /height:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(navCss, /min-height:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(navCss, /max-height:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(navCss, /block-size:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(navCss, /max-block-size:\s*var\(--argus-mobile-nav-height\)/);
-assert.match(navCss, /--argus-mobile-nav-label-bottom:\s*10px/);
+assert.match(navCss, /--argus-mobile-nav-label-bottom:\s*calc\(6px \+ var\(--argus-mobile-safe-bottom\)\)/);
 assert.match(navCss, /top:\s*0;[^]*bottom:\s*0;/);
-assert.match(navCss, /justify-content:\s*flex-end/);
-assert.match(navCss, /padding:\s*8px 2px var\(--argus-mobile-nav-label-bottom\)/);
+assert.match(navCss, /justify-content:\s*center/);
+assert.match(navCss, /padding:\s*4px 2px var\(--argus-mobile-nav-label-bottom\)/);
 assert.match(stickyCss, /bottom:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(shellCss, /padding-bottom:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(stickyCss, /height:\s*var\(--argus-mobile-sticky-height\)/);
@@ -85,19 +87,20 @@ assert.match(acceptance, /hostile-nav-height/);
 assert.match(acceptance, /viewport\.width <= 720[\s\S]*hostileNavHeightBeforeRefresh/);
 for (const width of [390, 430]) {
   const viewportBottom = width === 390 ? 844 : 932;
-  const navHeight = 72;
+  const safeBottom = 34;
+  const navHeight = 48 + safeBottom;
   const navRect = { top: viewportBottom - navHeight, bottom: viewportBottom };
   const stickyRect = { bottom: navRect.top, top: navRect.top - 34 };
-  const visualBottomGap = 10;
+  const visualBottomGap = 6 + safeBottom;
   assert.equal(navRect.bottom, viewportBottom);
   assert.equal(stickyRect.bottom, navRect.top);
-  assert.equal(visualBottomGap, 10);
-  assert.equal(navHeight, 72);
+  assert.equal(visualBottomGap, 40);
+  assert.equal(navHeight, 82);
 }
 for (const reportedSafeBottom of [0, 34, 92]) {
-  const navHeight = 72;
-  assert.equal(navHeight, 72,
-    `reported safe-area ${reportedSafeBottom}px must not alter nav height`);
+  const navHeight = 48 + Math.min(reportedSafeBottom, 34);
+  assert.ok(navHeight >= 48 && navHeight <= 82,
+    `reported safe-area ${reportedSafeBottom}px must remain bounded`);
 }
 
 assert.deepEqual(instruments.MARKET_INSTRUMENTS.map((item) => item.symbol),

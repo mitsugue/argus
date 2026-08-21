@@ -12,6 +12,9 @@ export interface NewsIntelEvent {
   sourceReceivedAt: string | null;
   processedAt: string;
   headlineJa: string;
+  titleOriginal: string;
+  displayTitleJa: string;
+  translationStatus: 'translated' | 'not_needed';
   eventType: string;
   themeTags: string[];
   facts: string[];
@@ -51,6 +54,7 @@ export interface NewsIntelView {
   generatedAt: string;
   intakeStatus: string;
   eventCount: number;
+  pendingTranslationCount?: number;
   events: NewsIntelEvent[];
 }
 

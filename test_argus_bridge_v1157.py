@@ -56,6 +56,37 @@ def test_snapshot_rows_transport_market_timestamp(monkeypatch):
     assert rows[0]["entitlement"] == "unknown"
 
 
+def test_snapshot_rows_prefer_official_epoch_and_carry_useful_facts(monkeypatch):
+    m = _load_bridge(monkeypatch)
+    rows = m.rows_from_snapshot(_FakeDF([{
+        "code": "US.AAPL", "name": "Apple", "last_price": 200.0,
+        "prev_close_price": 198.0, "volume": 1234,
+        "update_timestamp": 1784937600, "update_time": None,
+        "open_price": 199.0, "high_price": 202.0, "low_price": 197.0,
+        "pe_ratio": 31.5,
+    }]))
+    row = rows[0]
+    assert row["exchangeTs"] == "2026-07-25T00:00:00Z"
+    assert row["name"] == "Apple"
+    assert row["open"] == 199.0
+    assert row["high"] == 202.0
+    assert row["low"] == 197.0
+    assert row["peRatio"] == 31.5
+
+
+def test_snapshot_rows_fall_back_when_official_epoch_is_nan(monkeypatch):
+    m = _load_bridge(monkeypatch)
+    rows = m.rows_from_snapshot(_FakeDF([{
+        "code": "US.AAPL", "last_price": 200.0,
+        "prev_close_price": 198.0, "volume": 1234,
+        "update_timestamp": float("nan"),
+        "update_time": "2026-07-27 16:00:00",
+        "name": float("nan"),
+    }]))
+    assert rows[0]["exchangeTs"] == "2026-07-27T20:00:00Z"
+    assert rows[0]["name"] == ""
+
+
 def test_snapshot_rows_transport_safe_quote_right(monkeypatch):
     m = _load_bridge(monkeypatch)
     rows = m.rows_from_snapshot(_FakeDF([{

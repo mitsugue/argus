@@ -5,14 +5,15 @@
      clamp preserves the hardware protection while rejecting duplicated or
      malformed values reported by embedded/standalone web views. */
   --argus-safe-bottom: clamp(0px, env(safe-area-inset-bottom, 0px), 34px);
-  /* Mobile navigation geometry is deliberately independent of safe-area.
-     Installed iOS web views can expose the inset in physical pixels during
-     startup, which previously expanded this bar to roughly 150 CSS px. A
-     fixed, border-box rail keeps the four controls at the screen edge on every
-     frame; the 72px surface itself is the compact home-indicator allowance. */
-  --argus-mobile-nav-height: 72px;
+  --argus-mobile-safe-bottom: clamp(0px, var(--argus-safe-bottom), 34px);
+  /* The interactive row stays 48px and only the bounded hardware inset is
+     added below it. Installed iOS web views can transiently report malformed
+     inset values; the second clamp prevents those values from creating the
+     150px blank rail seen in production. */
+  --argus-mobile-nav-content-height: 48px;
+  --argus-mobile-nav-height: calc(var(--argus-mobile-nav-content-height) + var(--argus-mobile-safe-bottom));
   --argus-mobile-sticky-height: 34px;
-  --argus-mobile-nav-label-bottom: 10px;
+  --argus-mobile-nav-label-bottom: calc(6px + var(--argus-mobile-safe-bottom));
 }
 
 .nav {
@@ -164,10 +165,10 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: flex-end;
-    gap: 5px;
+    justify-content: center;
+    gap: 4px;
     min-width: 0;
-    padding: 8px 2px var(--argus-mobile-nav-label-bottom);
+    padding: 4px 2px var(--argus-mobile-nav-label-bottom);
     min-height: 44px;
     color: var(--text-muted);
     background: transparent;

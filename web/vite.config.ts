@@ -23,6 +23,8 @@ const readProductVersion = (): string => {
   return value.productVersion;
 };
 const frontendBuildSha = process.env.VITE_ARGUS_BUILD_SHA ?? 'local';
+const bundleVersion = readVersion();
+const bundleProductVersion = readProductVersion();
 
 // `__APP_VERSION__` resolves to a runtime global that this plugin injects fresh
 // into index.html on EVERY load (dev-serve per reload, and once at build time).
@@ -38,9 +40,10 @@ const argusVersionInjector = {
       tag: 'script',
       injectTo: 'head-prepend' as const,
       children: [
-        `globalThis.__ARGUS_VERSION__=${JSON.stringify(readVersion())};`,
-        `globalThis.__ARGUS_PRODUCT_VERSION__=${JSON.stringify(readProductVersion())};`,
+        `globalThis.__ARGUS_VERSION__=${JSON.stringify(bundleVersion)};`,
+        `globalThis.__ARGUS_PRODUCT_VERSION__=${JSON.stringify(bundleProductVersion)};`,
         `globalThis.__ARGUS_BUILD_SHA__=${JSON.stringify(frontendBuildSha)};`,
+        `(function(){try{var wanted=${JSON.stringify(`${bundleVersion}|${bundleProductVersion}|${frontendBuildSha}`)};var stored=localStorage.getItem('argus.bundle.identity');var guard='argus_identity_purge_'+wanted;if(stored!==wanted&&!sessionStorage.getItem(guard)){sessionStorage.setItem(guard,'1');document.documentElement.style.visibility='hidden';Promise.all([(navigator.serviceWorker&&navigator.serviceWorker.getRegistrations?navigator.serviceWorker.getRegistrations().then(function(rs){return Promise.all(rs.map(function(r){return r.unregister()}))}):Promise.resolve()),(globalThis.caches?caches.keys().then(function(ks){return Promise.all(ks.map(function(k){return caches.delete(k)}))}):Promise.resolve())]).finally(function(){location.reload()});}}catch(_){}})();`,
       ].join(''),
     }];
   },
@@ -49,9 +52,12 @@ const argusVersionInjector = {
 export default defineConfig({
   base,
   define: {
-    __APP_VERSION__: 'globalThis.__ARGUS_VERSION__',
-    __PRODUCT_VERSION__: 'globalThis.__ARGUS_PRODUCT_VERSION__',
-    __FRONTEND_BUILD_SHA__: 'globalThis.__ARGUS_BUILD_SHA__',
+    // These values identify the executing bundle. They must be compiled into
+    // the JavaScript: a stale bundle must never inherit the new index globals
+    // and falsely claim that it is current.
+    __APP_VERSION__: JSON.stringify(bundleVersion),
+    __PRODUCT_VERSION__: JSON.stringify(bundleProductVersion),
+    __FRONTEND_BUILD_SHA__: JSON.stringify(frontendBuildSha),
   },
   plugins: [
     argusVersionInjector,
