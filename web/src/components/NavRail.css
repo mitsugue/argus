@@ -5,22 +5,14 @@
      clamp preserves the hardware protection while rejecting duplicated or
      malformed values reported by embedded/standalone web views. */
   --argus-safe-bottom: clamp(0px, env(safe-area-inset-bottom, 0px), 34px);
-  --argus-mobile-nav-content-height: 58px;
-  /* Derive both the control offset and the bar height from a second bounded
-     value. Some installed iOS web views briefly expose a duplicated 92px
-     inset before the JS sanitizer runs; adding that raw value to the bar made
-     the bottom navigation roughly 150px tall. The CSS path must be safe on
-     its own, including during that first frame. */
-  --argus-mobile-nav-control-bottom:
-    clamp(4px, calc(var(--argus-safe-bottom) - 18px), 16px);
-  --argus-mobile-nav-top-gap: 4px;
-  --argus-mobile-nav-height: calc(
-    var(--argus-mobile-nav-content-height)
-    + var(--argus-mobile-nav-control-bottom)
-    + var(--argus-mobile-nav-top-gap)
-  );
+  /* Mobile navigation geometry is deliberately independent of safe-area.
+     Installed iOS web views can expose the inset in physical pixels during
+     startup, which previously expanded this bar to roughly 150 CSS px. A
+     fixed, border-box rail keeps the four controls at the screen edge on every
+     frame; the 72px surface itself is the compact home-indicator allowance. */
+  --argus-mobile-nav-height: 72px;
   --argus-mobile-sticky-height: 34px;
-  --argus-mobile-nav-label-bottom: 7px;
+  --argus-mobile-nav-label-bottom: 10px;
 }
 
 .nav {
@@ -141,7 +133,15 @@
     bottom: 0;
     width: auto;
     height: var(--argus-mobile-nav-height);
+    min-height: var(--argus-mobile-nav-height);
+    max-height: var(--argus-mobile-nav-height);
+    block-size: var(--argus-mobile-nav-height);
+    min-block-size: var(--argus-mobile-nav-height);
+    max-block-size: var(--argus-mobile-nav-height);
     padding: 0 4px;
+    box-sizing: border-box;
+    overflow: hidden;
+    flex: none;
     border-right: 0;
     border-top: 1px solid var(--line);
     background: color-mix(in srgb, var(--bg) 94%, transparent);
@@ -150,12 +150,14 @@
   .nav__desktop { display: none; }
   .nav__mobile {
     position: absolute;
+    top: 0;
     left: 4px;
     right: 4px;
-    bottom: var(--argus-mobile-nav-control-bottom);
+    bottom: 0;
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    height: var(--argus-mobile-nav-content-height);
+    height: auto;
+    min-height: 0;
   }
   .nav__mobile-btn {
     position: relative;
@@ -165,7 +167,7 @@
     justify-content: flex-end;
     gap: 5px;
     min-width: 0;
-    padding: 6px 2px var(--argus-mobile-nav-label-bottom);
+    padding: 8px 2px var(--argus-mobile-nav-label-bottom);
     min-height: 44px;
     color: var(--text-muted);
     background: transparent;
