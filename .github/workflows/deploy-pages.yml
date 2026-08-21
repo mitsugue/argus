@@ -101,18 +101,6 @@ jobs:
           test "$(git rev-parse HEAD^{tree})" = "$candidate_tree"
           echo "sha=$parent_two" >> "$GITHUB_OUTPUT"
           echo "tree=$candidate_tree" >> "$GITHUB_OUTPUT"
-      - name: Fetch the detached pre-merge admission certificate
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          python3 -B scripts/v13_5_release_certificate.py fetch-admission \
-            --repo '${{ github.repository }}' \
-            --candidate-sha '${{ steps.candidate.outputs.sha }}' \
-            --candidate-tree '${{ steps.candidate.outputs.tree }}' \
-            --consumer-run-id '${{ github.run_id }}' \
-            --out artifacts/v13-release-proof/certificate.json \
-            --receipt-out artifacts/v13-release-proof/retrieval-receipt.json \
-            --timeout-seconds 60
       - name: Reconfirm every CURRENT_REQUIRED check for the candidate
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -121,6 +109,30 @@ jobs:
             --repo '${{ github.repository }}' \
             --candidate-sha '${{ steps.candidate.outputs.sha }}' \
             --out artifacts/v13-release-proof/current-required.json \
+            --timeout-seconds 60
+      - name: Bind the exact proof-certificate producer
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B scripts/v13_5_release_certificate.py collect-authority \
+            --repo '${{ github.repository }}' \
+            --candidate-sha '${{ steps.candidate.outputs.sha }}' \
+            --candidate-tree '${{ steps.candidate.outputs.tree }}' \
+            --out artifacts/v13-release-proof/producer-authority.json \
+            --timeout-seconds 60
+      - name: Fetch only the explicitly bound pre-merge admission certificate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B scripts/v13_5_release_certificate.py fetch-admission \
+            --repo '${{ github.repository }}' \
+            --candidate-sha '${{ steps.candidate.outputs.sha }}' \
+            --candidate-tree '${{ steps.candidate.outputs.tree }}' \
+            --consumer-run-id '${{ github.run_id }}' \
+            --consumer-run-attempt '${{ github.run_attempt }}' \
+            --producer-authority artifacts/v13-release-proof/producer-authority.json \
+            --out artifacts/v13-release-proof/certificate.json \
+            --receipt-out artifacts/v13-release-proof/retrieval-receipt.json \
             --timeout-seconds 60
       - id: runtime
         uses: ./.github/actions/acceptance-runtime-preflight
@@ -154,6 +166,7 @@ jobs:
           name: production-runtime-admission-${{ github.sha }}
           path: |
             artifacts/v13-release-proof/certificate.json
+            artifacts/v13-release-proof/producer-authority.json
             artifacts/v13-release-proof/retrieval-receipt.json
             artifacts/v13-release-proof/current-required.json
             artifacts/production-runtime-admission/proof.json

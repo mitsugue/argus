@@ -10,10 +10,14 @@ from scripts import v13_5_source_provenance as source
 
 def test_restoration_allowlist_is_exact_and_core_semantics_stay_closed():
     expected = {
+        ".github/workflows/deploy-pages.yml",
+        ".github/workflows/release-gate.yml",
         "argus_today_headline.py",
         "scanner.py",
+        "test_v13_5_release_certificate.py",
         "web/scripts/mobile-today-acceptance.mjs",
         "web/scripts/release-fixture-target.mjs",
+        "web/scripts/acceptance-runtime.test.mjs",
         "web/scripts/release-state-machine.mjs",
         "web/scripts/release-state-machine.test.mjs",
         "web/src/components/NavRail.css",

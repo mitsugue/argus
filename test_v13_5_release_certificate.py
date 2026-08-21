@@ -16,7 +16,9 @@ from scripts import v13_5_release_certificate as release
 CANDIDATE = {"commitSha": "a" * 40, "treeSha": "b" * 40}
 REPOSITORY = "mitsugue/argus"
 PRODUCER_RUN_ID = 12345
+PRODUCER_RUN_ATTEMPT = 2
 ARTIFACT_ID = 67890
+CHECK_RUN_ID = 54321
 SEMANTIC = {
     "status": "PASS",
     "acceptedSource": release.ACCEPTED_V13_SOURCE,
@@ -120,16 +122,61 @@ def certificate_archive(value=None, *, entry="certificate.json"):
     raw = payload if type(payload) is bytes else json.dumps(payload).encode()
     archive_io = io.BytesIO()
     with zipfile.ZipFile(archive_io, "w") as bundle:
-        bundle.writestr(entry, raw)
+        info = zipfile.ZipInfo(entry, date_time=(2020, 1, 1, 0, 0, 0))
+        bundle.writestr(info, raw)
     return archive_io.getvalue()
 
 
+def authority_pointer(*, artifact=None, certificate=None):
+    certificate = admission_certificate() if certificate is None else certificate
+    artifact = artifact_row() if artifact is None else artifact
+    value = {
+        "schemaVersion": release.AUTHORITY_SCHEMA,
+        "status": "PASS",
+        "repository": REPOSITORY,
+        "candidate": CANDIDATE,
+        "check": {
+            "context": "proof-certificate",
+            "checkRunId": CHECK_RUN_ID,
+            "detailsUrl": f"https://github.com/{REPOSITORY}/actions/runs/"
+                          f"{PRODUCER_RUN_ID}/job/77777",
+            "conclusion": "success",
+        },
+        "producer": {
+            "workflowRunId": PRODUCER_RUN_ID,
+            "runAttempt": PRODUCER_RUN_ATTEMPT,
+            "workflowPath": ".github/workflows/market-public-acceptance.yml",
+            "event": "pull_request",
+            "headSha": CANDIDATE["commitSha"],
+            "conclusion": "success",
+        },
+        "artifact": {
+            "artifactId": artifact["id"],
+            "name": artifact["name"],
+            "artifactDigest": release._artifact_digest(artifact),
+        },
+        "certificate": release._certificate_binding(certificate),
+    }
+    value["authorityDigest"] = hashlib.sha256(
+        release._canonical(value)).hexdigest()
+    return value
+
+
 def fetch_args(tmp_path, **overrides):
+    authority_archive = overrides.pop("authority_archive", certificate_archive())
+    authority_certificate = overrides.pop(
+        "authority_certificate", admission_certificate())
+    authority_path = tmp_path / "authority.json"
+    write_json(authority_path, authority_pointer(
+        artifact=artifact_row(archive=authority_archive),
+        certificate=authority_certificate))
     values = {
         "repo": REPOSITORY,
         "candidate_sha": CANDIDATE["commitSha"],
         "candidate_tree": CANDIDATE["treeSha"],
         "consumer_run_id": "99999",
+        "consumer_run_attempt": 1,
+        "producer_authority": str(authority_path),
         "expected_producer_workflow":
             ".github/workflows/market-public-acceptance.yml",
         "timeout_seconds": 0,
@@ -142,9 +189,11 @@ def fetch_args(tmp_path, **overrides):
 
 
 def artifact_row(**overrides):
+    archive = overrides.pop("archive", certificate_archive())
     values = {
         "id": ARTIFACT_ID,
-        "name": f"v13-5-premerge-admission-{CANDIDATE['commitSha']}",
+        "name": f"v13-5-premerge-admission-{CANDIDATE['commitSha']}-"
+                f"{PRODUCER_RUN_ID}-{PRODUCER_RUN_ATTEMPT}",
         "expired": False,
         "workflow_run": {
             "id": PRODUCER_RUN_ID,
@@ -153,6 +202,7 @@ def artifact_row(**overrides):
         "archive_download_url":
             f"https://api.github.com/repos/{REPOSITORY}/actions/artifacts/"
             f"{ARTIFACT_ID}/zip",
+        "digest": f"sha256:{hashlib.sha256(archive).hexdigest()}",
     }
     values.update(overrides)
     return values
@@ -161,6 +211,7 @@ def artifact_row(**overrides):
 def producer_run(**overrides):
     values = {
         "id": PRODUCER_RUN_ID,
+        "run_attempt": PRODUCER_RUN_ATTEMPT,
         "status": "completed",
         "conclusion": "success",
         "event": "pull_request",
@@ -173,11 +224,14 @@ def producer_run(**overrides):
 
 def install_fetch_mocks(monkeypatch, *, rows=None, producer=None, archive=None):
     monkeypatch.setenv("GITHUB_TOKEN", "test-token")
-    artifact_rows = [artifact_row()] if rows is None else rows
+    archive_value = certificate_archive() if archive is None else archive
+    artifact_rows = [artifact_row(archive=archive_value)] if rows is None else rows
     producer_value = producer_run() if producer is None else producer
 
     def fake_json(url, _token):
-        if "/actions/artifacts?" in url:
+        if f"/actions/artifacts/{ARTIFACT_ID}" in url:
+            return artifact_rows[0] if artifact_rows else {}
+        if f"/actions/runs/{PRODUCER_RUN_ID}/artifacts?" in url:
             return {"artifacts": artifact_rows}
         if f"/actions/runs/{PRODUCER_RUN_ID}" in url:
             return producer_value
@@ -187,7 +241,7 @@ def install_fetch_mocks(monkeypatch, *, rows=None, producer=None, archive=None):
 
     def fake_api(url, _token, **kwargs):
         calls.append((url, kwargs))
-        return certificate_archive() if archive is None else archive
+        return archive_value
 
     monkeypatch.setattr(release, "_api_json", fake_json)
     monkeypatch.setattr(release, "_api", fake_api)
@@ -333,7 +387,8 @@ def test_https_artifact_redirect_cannot_downgrade_transport():
 def test_detached_fetch_times_out_when_exact_artifact_is_missing(monkeypatch,
                                                                   tmp_path):
     install_fetch_mocks(monkeypatch, rows=[])
-    with pytest.raises(ValueError, match="detached_certificate_artifact_not_ready"):
+    with pytest.raises(
+            ValueError, match="detached_certificate_artifact_not_bound_to_producer"):
         release.fetch_admission(fetch_args(tmp_path))
 
 
@@ -343,14 +398,158 @@ def test_wrong_candidate_artifact_is_never_used_as_fallback(monkeypatch, tmp_pat
         "head_sha": "d" * 40,
     })
     install_fetch_mocks(monkeypatch, rows=[wrong])
-    with pytest.raises(ValueError, match="detached_certificate_artifact_not_ready"):
+    with pytest.raises(
+            ValueError, match="detached_certificate_artifact_not_bound_to_producer"):
         release.fetch_admission(fetch_args(tmp_path))
 
 
-def test_ambiguous_exact_artifacts_fail_closed(monkeypatch, tmp_path):
-    install_fetch_mocks(monkeypatch, rows=[artifact_row(), artifact_row()])
+def test_duplicate_candidate_artifacts_require_and_obey_exact_authority(
+        monkeypatch, tmp_path):
+    intended = artifact_row()
+    substitute = artifact_row(
+        id=ARTIFACT_ID + 1,
+        archive_download_url=f"https://api.github.com/repos/{REPOSITORY}/"
+                             f"actions/artifacts/{ARTIFACT_ID + 1}/zip")
+    legacy_matches = [intended, substitute]
     with pytest.raises(ValueError, match="detached_certificate_artifact_ambiguous:2"):
+        if len(legacy_matches) != 1:
+            raise ValueError(
+                f"detached_certificate_artifact_ambiguous:{len(legacy_matches)}")
+    calls = install_fetch_mocks(monkeypatch, rows=legacy_matches)
+    certificate, receipt = release.fetch_admission(fetch_args(tmp_path))
+    assert certificate["candidate"] == CANDIDATE
+    assert receipt["artifact"]["artifactId"] == ARTIFACT_ID
+    assert calls == [(
+        f"https://api.github.com/repos/{REPOSITORY}/actions/artifacts/"
+        f"{ARTIFACT_ID}/zip", {})]
+    assert all(str(ARTIFACT_ID + 1) not in url for url, _kwargs in calls)
+
+
+def test_duplicate_candidate_artifacts_without_pointer_fail_closed(
+        monkeypatch, tmp_path):
+    install_fetch_mocks(monkeypatch, rows=[artifact_row(), artifact_row()])
+    with pytest.raises(
+            ValueError, match="detached_certificate_explicit_authority_required"):
+        release.fetch_admission(fetch_args(tmp_path, producer_authority=""))
+
+
+def test_collect_authority_binds_check_run_attempt_artifact_and_certificate(
+        monkeypatch):
+    archive = certificate_archive()
+    artifact = artifact_row(archive=archive)
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+
+    def fake_json(url, _token):
+        if "/check-runs?" in url:
+            return {"check_runs": [{
+                "id": CHECK_RUN_ID,
+                "name": "proof-certificate",
+                "status": "completed",
+                "conclusion": "success",
+                "completed_at": "2026-08-21T00:00:00Z",
+                "details_url": f"https://github.com/{REPOSITORY}/actions/"
+                               f"runs/{PRODUCER_RUN_ID}/job/77777",
+            }]}
+        if f"/actions/runs/{PRODUCER_RUN_ID}/artifacts?" in url:
+            return {"artifacts": [artifact]}
+        if f"/actions/runs/{PRODUCER_RUN_ID}" in url:
+            return producer_run()
+        raise AssertionError(f"unexpected URL: {url}")
+
+    monkeypatch.setattr(release, "_api_json", fake_json)
+    monkeypatch.setattr(release, "_api", lambda *_args, **_kwargs: archive)
+    value = release.collect_authority(argparse.Namespace(
+        repo=REPOSITORY,
+        candidate_sha=CANDIDATE["commitSha"],
+        candidate_tree=CANDIDATE["treeSha"],
+        authority_context="proof-certificate",
+        expected_producer_workflow=
+            ".github/workflows/market-public-acceptance.yml",
+        required_checks="",
+        timeout_seconds=0,
+        poll_seconds=1,
+    ))
+    assert value["producer"] == {
+        "workflowRunId": PRODUCER_RUN_ID,
+        "runAttempt": PRODUCER_RUN_ATTEMPT,
+        "workflowPath": ".github/workflows/market-public-acceptance.yml",
+        "event": "pull_request",
+        "headSha": CANDIDATE["commitSha"],
+        "conclusion": "success",
+    }
+    assert value["artifact"]["artifactId"] == ARTIFACT_ID
+    assert value["artifact"]["artifactDigest"] == hashlib.sha256(
+        archive).hexdigest()
+    assert value["certificate"] == release._certificate_binding(
+        admission_certificate())
+
+
+def test_collect_authority_never_falls_back_to_older_successful_check(
+        monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    monkeypatch.setattr(release, "_api_json", lambda _url, _token: {
+        "check_runs": [{
+            "id": CHECK_RUN_ID + 1,
+            "name": "proof-certificate",
+            "status": "in_progress",
+            "conclusion": None,
+            "started_at": "2026-08-21T00:01:00Z",
+            "details_url": f"https://github.com/{REPOSITORY}/actions/runs/"
+                           f"{PRODUCER_RUN_ID + 1}/job/88888",
+        }, {
+            "id": CHECK_RUN_ID,
+            "name": "proof-certificate",
+            "status": "completed",
+            "conclusion": "success",
+            "completed_at": "2026-08-21T00:00:00Z",
+            "details_url": f"https://github.com/{REPOSITORY}/actions/runs/"
+                           f"{PRODUCER_RUN_ID}/job/77777",
+        }],
+    })
+    with pytest.raises(
+            ValueError, match="detached_certificate_authority_check_not_ready"):
+        release.collect_authority(argparse.Namespace(
+            repo=REPOSITORY,
+            candidate_sha=CANDIDATE["commitSha"],
+            candidate_tree=CANDIDATE["treeSha"],
+            authority_context="proof-certificate",
+            expected_producer_workflow=
+                ".github/workflows/market-public-acceptance.yml",
+            required_checks="",
+            timeout_seconds=0,
+            poll_seconds=1,
+        ))
+
+
+def test_bound_artifact_digest_mismatch_fails_closed(monkeypatch, tmp_path):
+    hostile = artifact_row(digest=f"sha256:{'0' * 64}")
+    install_fetch_mocks(monkeypatch, rows=[hostile])
+    with pytest.raises(
+            ValueError, match="detached_certificate_artifact_digest_mismatch"):
         release.fetch_admission(fetch_args(tmp_path))
+
+
+def test_bound_producer_run_attempt_mismatch_fails_closed(monkeypatch, tmp_path):
+    install_fetch_mocks(
+        monkeypatch,
+        producer=producer_run(run_attempt=PRODUCER_RUN_ATTEMPT + 1))
+    with pytest.raises(
+            ValueError, match="detached_certificate_producer_attempt_mismatch"):
+        release.fetch_admission(fetch_args(tmp_path))
+
+
+def test_same_candidate_cannot_substitute_different_certificate_binding(
+        monkeypatch, tmp_path):
+    substitute = admission_certificate()
+    substitute["zeroInstallProofs"][1]["simulationSha256"] = "e" * 64
+    substitute = reseal(substitute)
+    archive = certificate_archive(substitute)
+    install_fetch_mocks(monkeypatch, archive=archive)
+    with pytest.raises(
+            ValueError, match="detached_certificate_authorized_binding_mismatch"):
+        release.fetch_admission(fetch_args(
+            tmp_path, authority_archive=archive,
+            authority_certificate=admission_certificate()))
 
 
 @pytest.mark.parametrize(("archive", "error"), [
@@ -365,7 +564,8 @@ def test_malformed_detached_archive_or_payload_fails_closed(
         monkeypatch, tmp_path, archive, error):
     install_fetch_mocks(monkeypatch, archive=archive)
     with pytest.raises(ValueError, match=error):
-        release.fetch_admission(fetch_args(tmp_path))
+        release.fetch_admission(fetch_args(
+            tmp_path, authority_archive=archive))
 
 
 @pytest.mark.parametrize("attack", ["digest", "candidate", "tree", "simulation"])
@@ -385,7 +585,10 @@ def test_certificate_identity_and_simulation_binding_fail_closed(
         value = reseal(value)
     install_fetch_mocks(monkeypatch, archive=certificate_archive(value))
     with pytest.raises(ValueError, match="admission_certificate_identity_or_status"):
-        release.fetch_admission(fetch_args(tmp_path))
+        release.fetch_admission(fetch_args(
+            tmp_path, authority_archive=certificate_archive(value),
+            authority_certificate=(value if attack == "digest" else
+                                   admission_certificate())))
 
 
 @pytest.mark.parametrize("change", [

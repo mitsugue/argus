@@ -35,9 +35,11 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # identity. The accepted baseline is the LIVE v13.5.0 release
     # (f79548bb…); anything outside this list fails the release closed.
     ".github/actions/v13-5-pre-mutation-rehearsal/action.yml",
+    ".github/workflows/deploy-pages.yml",
     ".github/workflows/market-public-acceptance.yml",
     ".github/workflows/news-intake-ops.yml",
     ".github/workflows/prediction-ledger.yml",
+    ".github/workflows/release-gate.yml",
     "argus_causal_event_memory.py",
     "argus_checkpoint_v2.py",
     "argus_gmail_intake.py",
@@ -71,6 +73,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "test_argus_v12_4_0.py",
     "test_argus_v13_1_0.py",
     "test_remote_journal_rearm.py",
+    "test_v13_5_release_certificate.py",
     "test_v13_5_pre_mutation_rehearsal.py",
     "test_v13_5_source_provenance.py",
     "test_verify_public_candidate_release.py",
@@ -85,6 +88,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/scripts/release-state-machine.mjs",
     "web/scripts/release-state-machine.test.mjs",
     "web/scripts/release-fixture-target.mjs",
+    "web/scripts/acceptance-runtime.test.mjs",
     "web/scripts/round3-product-final.test.mjs",
     "web/scripts/runtime-version-truth.test.mjs",
     "web/scripts/today-benchmark.mjs",
