@@ -18,14 +18,14 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.7"
+PRODUCT_VERSION = "v13.5.8"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
-    # v13.5.7 owner-functional correction: bounded navigation/PWA identity,
+    # v13.5.8 owner-functional correction: bounded navigation/PWA identity,
     # Japanese-only news projection, grouped owner-controlled holdings, moomoo
     # source-time fidelity, probability-gated asset charts, concise detail, and
     # scheduled mission lock contention. Investment/calibration authority stays
