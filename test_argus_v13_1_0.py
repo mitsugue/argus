@@ -187,7 +187,7 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
         package = json.loads(pathlib.Path("web/package.json").read_text())
         lock = json.loads(pathlib.Path("web/package-lock.json").read_text())
         backend = json.loads(pathlib.Path("backend-version.json").read_text())
-        self.assertEqual(package["version"], "13.3.11")
+        self.assertEqual(package["version"], "13.3.12")
         self.assertEqual(backend["version"], "13.4.18")
         self.assertEqual(lock["version"], package["version"])
         self.assertEqual(lock["packages"][""]["version"], package["version"])
