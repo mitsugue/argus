@@ -18,14 +18,18 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.6"
+PRODUCT_VERSION = "v13.5.7"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
-    # v13.5.1 real-device correction + v13.5.3 operations closeout: the bounded
+    # v13.5.7 owner-functional correction: bounded navigation/PWA identity,
+    # Japanese-only news projection, grouped owner-controlled holdings, moomoo
+    # source-time fidelity, probability-gated asset charts, concise detail, and
+    # scheduled mission lock contention. Investment/calibration authority stays
+    # outside this list and therefore remains fail-closed.
     # owner-authorized path set for interaction performance (off-thread
     # verification, idle-sliced device ledger appends, keep-mounted Today),
     # the name-selector Today UX, the compact Seven Sign surface, the
@@ -48,6 +52,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "argus_route_catalog.py",
     "argus_today_headline.py",
     "backend-version.json",
+    "bridge/moomoo_push.py",
     "docs/ARGUS_V13_5_4_CAUSAL_EVENT_MEMORY.md",
     "product-version.json",
     "release/v13-accepted-fix-manifest.json",
@@ -62,6 +67,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "test_argus_deploy_scope.py",
     "test_argus_causal_event_memory.py",
     "test_argus_causal_event_memory_backend.py",
+    "test_argus_bridge_v1157.py",
+    "test_argus_mission_tick_durability.py",
     "test_argus_sho_non_regression.py",
     "test_argus_gmail_intake.py",
     "test_argus_market_shock.py",
@@ -70,6 +77,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "test_argus_notification_eligibility.py",
     "test_argus_public_operational_boundary.py",
     "test_argus_release_identity.py",
+    "test_argus_v12_2_12.py",
     "test_argus_v12_4_0.py",
     "test_argus_v13_1_0.py",
     "test_remote_journal_rearm.py",
@@ -80,11 +88,13 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/package-lock.json",
     "web/package.json",
     "web/scripts/full-release-simulation.mjs",
+    "web/scripts/asset-desk.test.cjs",
     "web/scripts/causal-event-memory.test.mjs",
     "web/scripts/iphone-profile.mjs",
     "web/scripts/market-data-truth.test.cjs",
     "web/scripts/mobile-today-acceptance.mjs",
     "web/scripts/mobile-today-integrity.test.mjs",
+    "web/scripts/owner-functional-ui.test.mjs",
     "web/scripts/release-state-machine.mjs",
     "web/scripts/release-state-machine.test.mjs",
     "web/scripts/release-fixture-target.mjs",
@@ -93,8 +103,17 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/scripts/runtime-version-truth.test.mjs",
     "web/scripts/today-benchmark.mjs",
     "web/src/App.tsx",
+    "web/src/main.tsx",
+    "web/vite.config.ts",
     "web/src/components/dashboard/MobileStickyCommand.css",
     "web/src/components/NavRail.css",
+    "web/src/components/assetDesk/AssetDecisionCard.tsx",
+    "web/src/components/assetDesk/AssetDecisionDetails.tsx",
+    "web/src/components/assetDesk/AssetDecisionSummary.tsx",
+    "web/src/components/assetDesk/AssetDesk.css",
+    "web/src/components/assetDesk/AssetDeskList.tsx",
+    "web/src/components/chart/ChartIntelligencePanel.css",
+    "web/src/components/chart/ChartIntelligencePanel.tsx",
     "web/src/components/today/ArgusToday.css",
     "web/src/components/today/ArgusTodayPanel.tsx",
     "web/src/hooks/useAssetIntel.ts",
@@ -103,6 +122,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/src/hooks/useMarketShock.ts",
     "web/src/hooks/useNewsIntelligence.ts",
     "web/src/hooks/useTodayHeadline.ts",
+    "web/src/domain/assetDesk.ts",
     "web/src/lib/notifications.ts",
     "web/src/routes/Settings.tsx",
     "web/src/lib/sdaDeviceLocal.ts",
@@ -112,6 +132,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/src/lib/verifyWorkerClient.ts",
     "web/src/routes/CommandCenter.tsx",
     "web/src/routes/PageShell.tsx",
+    "web/src/routes/Watchlist.tsx",
+    "web/src/types/assetItem.ts",
 })
 
 

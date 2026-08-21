@@ -147,11 +147,13 @@ def test_desk_sections_fixed_order():
     idx = [card.index(f"id: {tab}") for tab in order]
     assert idx == sorted(idx), "決定優先タブは固定順"
     assert card.count("id: '") == 4
-    # 移行済みの各詳細機能は削除せず、該当タブ配下で遅延表示する。
+    # Owner surfaceには判断に必要な詳細だけを残す。AIレビュー長文は
+    # 正本判断を増やさず視認性を落とすため、カードからは外す。
     for panel in ("AssetDecisionDetails", "ChartIntelligencePanel", "AssetWhyPanel",
                   "AssetFlowPanel", "AssetPositionPanel", "AssetScenarioPanel",
-                  "AssetAIReview", "AssetResearchPanel", "AssetDataQuality"):
+                  "AssetResearchPanel", "AssetDataQuality"):
         assert f"<{panel}" in card
+    assert "<AssetAIReview" not in card
 
 
 def test_migrated_features_present():
@@ -182,7 +184,8 @@ def test_portfolio_wide_features_moved_to_core():
     wl = _read("routes", "Watchlist.tsx")
     assert "WhatIfPanel" not in wl and "ExposureCard" not in wl
     assert "HOLDINGS / WATCHLIST" in wl
-    assert "保有と監視銘柄を、今日確認する順にまとめます。" in wl
+    assert "日本株・米国株・投資信託・仮想通貨ごとに整理します。" in wl
+    assert "区分内は長押しで並べ替えられます。" in wl
     assert "portfolioOpen && <CorePortfolio assetsApi={assetsApi}" in wl
     cp = _read("routes", "CorePortfolio.tsx")
     assert "PortfolioExposureCard" in cp and "WhatIfPanel" not in cp

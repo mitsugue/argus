@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useChartIntelligence } from '../../hooks/useChartIntelligence';
 import type { ChartBar, ChartIntelligencePayload } from '../../types/chartIntelligence';
+import { buildTodayProjection, type TodayProjectionInput } from '../../domain/argusTodayView';
 import { useMarketLedger } from '../../hooks/useMarketLedger';
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import './ChartIntelligencePanel.css';
@@ -25,6 +26,35 @@ const MISSING_JA: Record<string, string> = { stale_price: '価格履歴が古い
 const RS_JA: Record<string, string> = { nikkei_sp500: 'NS倍率（日経÷S&P 500）', nikkei_usdjpy: '日経÷USDJPY',
   topix_nikkei: 'TOPIX÷日経', semiconductor_topix: '半導体÷TOPIX', growth_topix: 'グロース÷TOPIX',
   dollar_nikkei: 'ドル建て日経平均' };
+
+function ownerProjectionInput(payload: ChartIntelligencePayload): TodayProjectionInput {
+  const label = (payload.displayNameJa || payload.symbol).trim();
+  return {
+    symbol: payload.symbol,
+    label: label.includes(payload.symbol) ? label : `${label}（${payload.symbol}）`,
+    asOf: payload.periodEnd,
+    status: payload.status,
+    authorityState: 'current',
+    timeframe: payload.timeframe,
+    quoteState: payload.quoteState ?? 'CLOSE',
+    sourceHistoryCount: payload.indicators.bars.length,
+    instrumentId: payload.instrumentMetadata?.instrumentId,
+    source: payload.instrumentMetadata?.source ?? 'existing_market_data_cache',
+    availableFrom: payload.instrumentMetadata?.availableFrom,
+    assetType: payload.instrumentMetadata?.assetType,
+    proxyFor: payload.instrumentMetadata?.proxyFor,
+    licenseStatus: payload.instrumentMetadata?.licenseStatus ?? 'not_applicable',
+    bars: payload.indicators.bars,
+    zones: payload.zones,
+    eventMarkers: payload.eventMarkers,
+    turningPoints: payload.turningPoints,
+    calibration: payload.todayIntelligence?.calibration,
+    shortSelling: payload.todayIntelligence?.shortSelling ?? null,
+    failedRally: payload.todayIntelligence?.failedRally ?? null,
+    historyStart: payload.todayIntelligence?.historyCoverage.start ?? null,
+    historyEnd: payload.todayIntelligence?.historyCoverage.end ?? null,
+  };
+}
 
 function uniqueTurningPoints(payload: ChartIntelligencePayload, limit: number) {
   const seen = new Set<string>();
@@ -152,6 +182,20 @@ export const ChartIntelligencePanel: React.FC<{
   const failed = snapshotState === 'ERROR_WITH_CACHE'
     || snapshotState === 'ERROR_WITHOUT_CACHE';
   const expectedSkip = errorClass === 'expected_skip';
+  const assetProjection = useMemo(() => {
+    if (scope !== 'asset' || !data) return null;
+    const input = ownerProjectionInput(data);
+    for (const horizon of [5, 1, 20] as const) {
+      const candidate = buildTodayProjection(input, 'WAIT', horizon);
+      if (candidate?.directionProbabilities || candidate?.referenceDirectionProbabilities) return candidate;
+    }
+    return null;
+  }, [scope, data]);
+  const assetProbabilities = assetProjection?.directionProbabilities
+    ?? assetProjection?.referenceDirectionProbabilities ?? null;
+  const strongestAssetDirection = assetProbabilities
+    ? Object.entries(assetProbabilities).sort((left, right) => right[1] - left[1])[0]?.[0]
+    : null;
   return <section id={scope === 'market' ? 'chart-intelligence' : undefined} className="ci-panel">
     <div className="section-head"><span className="section-head__title">CHART INTELLIGENCE</span>
       <span className="section-head__count">{data ? statusText : 'deterministic · AI API 0'}
@@ -176,7 +220,13 @@ export const ChartIntelligencePanel: React.FC<{
         </button>}
       </div>
     )}
-    {data && <>
+    {data && scope === 'asset' && !assetProjection && (
+      <div className="card ci-owner-unavailable" role="status">
+        <b>方向確率を検証できないため、チャートは表示しません</b>
+        <span>価格だけの図を判断材料にはしません。校正済みの方向見通しが利用可能になった時だけ表示します。</span>
+      </div>
+    )}
+    {data && (scope !== 'asset' || assetProjection) && <>
       {(limited || failed) && (
         <div className={`ci-cache-banner ${limited ? 'ci-cache-banner--limited' : ''}`}>
           <span>{expectedSkip ? '次回更新待ち — 前回チャートを表示'
@@ -186,6 +236,20 @@ export const ChartIntelligencePanel: React.FC<{
           {!expectedSkip && <button type="button" onClick={retry} disabled={retrySeconds > 0}>
             {retrySeconds > 0 ? '待機中' : '再試行'}
           </button>}
+        </div>
+      )}
+      {scope === 'asset' && assetProjection && assetProbabilities && (
+        <div className={`card ci-owner-prob ${assetProjection.directionProbabilities ? 'is-verified' : 'is-reference'}`}>
+          <div><b>{assetProjection.horizonDays}営業日の方向見通し</b>
+            <span>{assetProjection.directionProbabilities ? '検証済み' : '参考値・未検証'}</span></div>
+          <div>{(['UP', 'RANGE', 'DOWN'] as const).map((key) => (
+            <span key={key} className={strongestAssetDirection === key ? 'is-max' : ''}>
+              {key === 'UP' ? '上昇' : key === 'RANGE' ? '横ばい' : '下落'}
+              <b>{assetProbabilities[key]}%</b>
+            </span>
+          ))}</div>
+          <small>{assetProjection.probabilityTruth.directionalLeanJa} · 実効n={assetProjection.effectiveSampleCount}
+            {!assetProjection.directionProbabilities && ` · ${assetProjection.probabilityTruth.uncertaintyJa}`}</small>
         </div>
       )}
       <div className="card ci-toolbar"><div>{Object.keys(RANGE_COUNT).map((item) => <button type="button" key={item}

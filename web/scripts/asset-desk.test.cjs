@@ -64,8 +64,12 @@ check('Asset Desk consumes one SDA map and no primary stance map', list.includes
   && !list.includes('stanceBySymbol') && !fs.existsSync(path.join(root, 'src/domain/primaryStance.ts')));
 check('Entry Scout action surface is retired', !fs.existsSync(path.join(root, 'src/components/assetDesk/AssetEntryScout.tsx'))
   && !card.includes('EntryScout'));
-check('compact card exposes action, Seven Sign and calibration truth',
-  summary.includes('canonicalPrimaryAction') && summary.includes('Calibration pending'));
+check('compact card exposes canonical action without priority or seven-vote clutter',
+  summary.includes('canonicalPrimaryAction') && !summary.includes('Calibration pending')
+  && !summary.includes('ad-prio'));
+check('owner list is grouped and long-press ordered instead of priority sorted',
+  list.includes('delay: 450') && !list.includes('sortMode')
+  && !list.includes('AssetPortfolioCommand'));
 
 if (failed) process.exit(1);
 console.log('asset-desk.test: all checks passed');

@@ -67,8 +67,8 @@ export const Watchlist: React.FC<Props> = ({
     <PageShell
       title={assetDetail ? 'ASSET DETAIL' : 'HOLDINGS / WATCHLIST'}
       subtitle={assetDetail
-        ? `${assetFocus?.symbol ?? '銘柄'} · Decision / Chart / Evidence / Position`
-        : '保有と監視銘柄を、今日確認する順にまとめます。'}
+        ? `${assetFocus?.symbol ?? '銘柄'} · 判断 / 見通し / 根拠 / 保有`
+        : '日本株・米国株・投資信託・仮想通貨ごとに整理します。区分内は長押しで並べ替えられます。'}
     >
       {assetDetail && <button type="button" className="asset-btn" onClick={onBackToHoldings}>
         ← Holdings / Watchlist

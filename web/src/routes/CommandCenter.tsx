@@ -307,6 +307,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
             severity: event.severity, headlineJa: event.headlineJa,
             whyJa: event.whyJa, confirmationState: event.confirmationState,
             alertEligible: event.alertEligible,
+            translationStatus: event.translationStatus,
           })),
           sdBySymbol, flowBySymbol, scenarioBySymbol, planBySymbol,
           strategyState: portfolioStrategy.noHoldings ? null : {

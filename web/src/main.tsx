@@ -17,6 +17,9 @@ import './styles/theme.css';
 // unregister SWs, clear caches, hard reload. Everything is best-effort + loop-
 // guarded (sessionStorage counter) so it can never brick or reload-loop the app.
 const RUNNING = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '';
+const RUNNING_PRODUCT = typeof __PRODUCT_VERSION__ === 'string' ? __PRODUCT_VERSION__ : '';
+const RUNNING_SHA = typeof __FRONTEND_BUILD_SHA__ === 'string' ? __FRONTEND_BUILD_SHA__ : '';
+const RUNNING_IDENTITY = `${RUNNING}|${RUNNING_PRODUCT}|${RUNNING_SHA}`;
 const TRIES_KEY = 'argus_update_tries';
 const PWA_STEP_TIMEOUT_MS = 12_000;
 const PWA_RECONCILE_TIMEOUT_MS = 36_000;
@@ -31,14 +34,16 @@ function waitAtMost<T>(promise: Promise<T>, timeoutMs: number): Promise<boolean>
   });
 }
 
-async function fetchDeployedVersion(): Promise<string | null> {
+async function fetchDeployedIdentity(): Promise<string | null> {
   const ctrl = new AbortController();
   const timeout = window.setTimeout(() => ctrl.abort(), PWA_STEP_TIMEOUT_MS);
   try {
     const url = `${import.meta.env.BASE_URL}index.html?cb=${Date.now()}`;
     const html = await fetch(url, { cache: 'no-store', signal: ctrl.signal }).then((r) => r.text());
-    const m = html.match(/__ARGUS_VERSION__\s*=\s*"([^"]+)"/);
-    return m ? m[1] : null;
+    const app = html.match(/__ARGUS_VERSION__\s*=\s*"([^"]+)"/)?.[1];
+    const product = html.match(/__ARGUS_PRODUCT_VERSION__\s*=\s*"([^"]+)"/)?.[1];
+    const sha = html.match(/__ARGUS_BUILD_SHA__\s*=\s*"([^"]+)"/)?.[1];
+    return app && product && sha ? `${app}|${product}|${sha}` : null;
   } catch {
     return null;
   } finally {
@@ -68,8 +73,10 @@ const updateSW = registerSW({
 });
 
 async function reconcileVersion(): Promise<void> {
-  const deployed = await fetchDeployedVersion();
-  if (!deployed || !RUNNING || deployed === RUNNING) {
+  const deployed = await fetchDeployedIdentity();
+  if (!deployed || !RUNNING_IDENTITY || deployed === RUNNING_IDENTITY) {
+    localStorage.setItem('argus.bundle.identity', RUNNING_IDENTITY);
+    document.documentElement.style.visibility = 'visible';
     sessionStorage.removeItem(TRIES_KEY); // up to date (or can't tell) — reset
     return;
   }

@@ -385,6 +385,42 @@ class BatchingAndActionsTests(unittest.TestCase):
 
 
 class RegressionContractTests(unittest.TestCase):
+    def test_busy_durable_lock_returns_expected_skip_without_timeout(self):
+        released = []
+
+        class Lease:
+            job_id = "busy-lock"
+            metadata = {}
+
+            def acquire(self):
+                return True
+
+            def release(self):
+                released.append(True)
+
+        class BusyLock:
+            def acquire(self, *, timeout):
+                self.timeout = timeout
+                return False
+
+        lock = BusyLock()
+        with mock.patch.object(scanner, "_require_admin",
+                               return_value=(True, None, 200)), \
+                mock.patch.object(scanner.argus_tick_durability, "TickLease",
+                                  return_value=Lease()), \
+                mock.patch.object(scanner, "_DURABLE_CHECKPOINT_LOCK", lock), \
+                mock.patch.object(scanner, "_DURABILITY_PRODUCTION", False), \
+                mock.patch.dict(scanner._SHUTDOWN, {"requested": False}):
+            with scanner.app.test_request_context(
+                    "/api/argus/admin/missions/tick", method="POST",
+                    json={"triggerSource": "github_schedule"}):
+                response = scanner.api_argus_admin_missions_tick()
+        self.assertEqual(response.get_json(), {
+            "ok": True, "status": "expected_skip", "result": "busy",
+            "reason": "durable_checkpoint_lock_busy"})
+        self.assertEqual(lock.timeout, 5.0)
+        self.assertEqual(released, [True])
+
     def test_schema_is_additive_and_soak_history_is_not_rewritten(self):
         source = pathlib.Path("scanner.py").read_text()
         self.assertIn('"schemaVersion": "argus-durable-v3"', source)
