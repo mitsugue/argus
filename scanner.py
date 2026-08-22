@@ -7077,12 +7077,25 @@ def api_argus_important_events():
         vix_elevated = isinstance(vix, (int, float)) and vix >= 20
     except Exception:
         pass
-    items = argus_important_events.build_important_events(
+    items_all = argus_important_events.build_important_events(
         events, owner_symbols=owner_symbols, held_symbols=held,
-        ctx={"regime": regime, "vixElevated": vix_elevated}, limit=8)
+        ctx={"regime": regime, "vixElevated": vix_elevated}, limit=64)
+    items = items_all[:8]
+    # v13.5.18 (review item C): the D/D-1 hard-constraint feed must not
+    # depend on the 8-item display cap — the audit showed event #9+ silently
+    # produced no constraint. Compact, uncapped imminent list for the
+    # device-side SDA/AP event gate, tiered by displayImpact.
+    imminent = [{
+        "eventCode": event.get("eventCode"),
+        "countdown": event.get("countdown"),
+        "displayImpact": event.get("displayImpact"),
+        "linkedAssets": list(event.get("linkedAssets") or [])[:12],
+        "title": event.get("title"),
+    } for event in items_all if event.get("countdown") in ("D", "D-1")]
     return jsonify({"status": snap.get("status"), "asOf": snap.get("asOf"),
                     "timezone": "Asia/Tokyo", "engineVersion": "important-events-v1",
-                    "count": len(items), "events": items})
+                    "count": len(items), "events": items,
+                    "imminent": imminent})
 
 
 # ━━━ Institutional Intelligence + Research Mesh v1 (v10.147) ━━━
@@ -9790,6 +9803,14 @@ def api_argus_intel_collect():
         except Exception:
             continue
     out["supplyDemandWarm"] = warmed
+    # v13.5.18: warm the SHO CORE input caches (^N225/^VIX OHLCV, 1570 weekly
+    # margin, FRED VIX). This admin/cron path is the ONLY fetch route; the
+    # public decision-evidence GET reads these caches cached-only.
+    try:
+        out["shoInputWarm"] = dict(
+            _sho_pit_inputs(warm=True).get("sourceStatus") or {})
+    except Exception as exc:
+        out["shoInputWarm"] = {"error": type(exc).__name__}
     return jsonify(out)
 
 
@@ -16109,6 +16130,16 @@ def _causal_memory_refresh_open(force=False):
                 if not any(row["relation"] in ("SUPPORTING", "CONTRADICTING")
                            for row in evidence):
                     continue
+                # v13.5.18 (review item D): symmetric invalidation. A
+                # hypothesis WEAKENED for >= 3 days whose variables STILL all
+                # contradict earns the streak note, which the assessment
+                # policy accepts as an invalidation criterion — INVALIDATED
+                # becomes reachable from production evidence instead of the
+                # memory only ever moving toward confirmation.
+                streak = argus_causal_event_memory.sustained_contradiction_note(
+                    internal, hypothesis["hypothesisId"], evidence, now_iso)
+                if streak is not None:
+                    evidence = list(evidence) + [streak]
                 assessment = argus_causal_event_memory.build_assessment(
                     event=internal, hypothesis_id=hypothesis["hypothesisId"],
                     evaluated_at=now_iso, evidence=evidence,
@@ -31479,19 +31510,296 @@ def _decision_evidence_prediction_artifact(symbol, market, cutoff,
         return None, "prediction_context_failed"
 
 
-def _decision_evidence_sho_artifact(symbol, cutoff):
-    """Per-subject SHO reversal artifact with honest zero-input gating.
+# ━━━ v13.5.18 SHO CORE production inputs (external review item B) ━━━
+# The read-only audit confirmed evaluate_d01_d07 was never called from any
+# production path and the live reversal artifact ran on zero rows. This block
+# wires the feeds the process already holds — JPX credit CSV+ledger, J-Quants
+# 1570 weekly margin, ETF-proxy relative strength from the verified chart
+# caches, Market Ledger foreign flow, and Yahoo ^VIX/^N225 complete OHLCV —
+# into the canonical SHO engines. Every row carries an explicit availableFrom
+# (PIT); the public decision-evidence GET stays strictly cached-only (fetch is
+# passed ONLY by the 30-min collect cron warm). A cold feed leaves its family
+# MISSING/LICENSE_BLOCKED — absence is reported, never impersonated.
+_SHO_INDEX_OHLCV_CACHE = {}
+_SHO_INDEX_OHLCV_TTL_SEC = 1800
+_SHO_PIT_INPUT_MEMO = {"ts": 0.0, "data": None}
+_SHO_MARKET_VIEW_MEMO = {"ts": 0.0, "view": None}
 
-    The canonical builder is pure; with no PIT rows every family reports
-    absence and the reversal axis stays UNVALIDATED — the artifact is real
-    evidence of "nothing validated", never a fabricated proof. The downside
-    background uses MIXED, the least-claiming state, exactly like the
-    canonical fixture, until the downside layer is wired as a PIT input.
+
+def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
+                       available_hour_utc=None, next_day_available=False):
+    """Complete OHLCV rows for one index from the public Yahoo v8 chart API.
+
+    Rows are shaped for argus_sho.normalize_complete_ohlcv with an explicit
+    per-bar availableFrom, which keeps the current in-progress session OUT of
+    evidence until after its close. Volume is passed through exactly as the
+    source reports it (0 for ^VIX) and bars with any null component are
+    dropped, never filled. Cache-only unless fetch=True (cron warm); a stale
+    cache still serves (its rows carry their own PIT stamps)."""
+    now = time.time()
+    cached = _SHO_INDEX_OHLCV_CACHE.get(yahoo_symbol)
+    if cached and (not fetch or now < cached["expires"]):
+        return cached["data"]
+    if not fetch:
+        return []
+    rows = []
+    try:
+        r = requests.get(
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}",
+            params={"interval": "1d", "range": "2y"},
+            headers={"User-Agent": "Mozilla/5.0 (argus)"}, timeout=15)
+        result = ((r.json() or {}).get("chart") or {}).get("result") or []
+        meta = (result[0].get("meta") or {}) if result else {}
+        offset = int(meta.get("gmtoffset") or 0)
+        quote = (((result[0].get("indicators") or {}).get("quote")
+                  or [{}])[0]) if result else {}
+        stamps = (result[0].get("timestamp") or []) if result else []
+        by_date = {}
+        for position, stamp in enumerate(stamps):
+            values = {}
+            for key in ("open", "high", "low", "close", "volume"):
+                series = quote.get(key) or []
+                values[key] = (series[position]
+                               if position < len(series) else None)
+            if any(not isinstance(values[key], (int, float))
+                   or isinstance(values[key], bool) for key in values):
+                continue                   # incomplete source bar — never fill
+            date = datetime.utcfromtimestamp(int(stamp) + offset).date()
+            if next_day_available:
+                available = (date + timedelta(days=1)).isoformat() \
+                    + "T00:00:00Z"
+            else:
+                available = (date.isoformat()
+                             + f"T{int(available_hour_utc):02d}:00:00Z")
+            by_date[date.isoformat()] = {
+                "instrumentId": instrument_id, "date": date.isoformat(),
+                **{key: float(values[key]) for key in
+                   ("open", "high", "low", "close", "volume")},
+                "availableFrom": available, "adjusted": False,
+                "sourceRef": f"yahoo:chart:{yahoo_symbol}",
+            }
+        rows = [by_date[key] for key in sorted(by_date)]
+    except Exception:
+        rows = []
+    _SHO_INDEX_OHLCV_CACHE[yahoo_symbol] = {
+        "data": rows,
+        "expires": now + (_SHO_INDEX_OHLCV_TTL_SEC if rows else 300)}
+    return rows
+
+
+def _sho_margin_1570_rows(*, fetch=False):
+    """1570 weekly margin ratio as PIT rows for SHO D02.
+
+    J-Quants publishes weekly margin interest during the following week, so
+    availableFrom = period + 7 days keeps the join conservative. Cache-only
+    unless the cron warm passes fetch."""
+    if fetch:
+        data = _jq_weekly_margin("1570")
+    else:
+        cached = _JQ_MARGIN_CACHE.get("1570")
+        data = cached.get("data") if isinstance(cached, dict) else None
+    rows = []
+    for row in data or []:
+        try:
+            date = str(row.get("date") or "")[:10]
+            long_volume = float(row.get("longVol"))
+            short_volume = float(row.get("shortVol"))
+        except (TypeError, ValueError):
+            continue
+        if len(date) != 10 or short_volume <= 0:
+            continue
+        try:
+            available = (datetime.strptime(date, "%Y-%m-%d").date()
+                         + timedelta(days=7)).isoformat() + "T00:00:00Z"
+        except ValueError:
+            continue
+        rows.append({"instrumentId": "1570", "field": "margin_ratio",
+                     "date": date,
+                     "value": round(long_volume / short_volume, 6),
+                     "availableFrom": available})
+    return rows
+
+
+def _sho_relative_strength_proxy():
+    """20-session relative strength of 1321 vs SPY (verified chart caches).
+
+    One PIT row for SHO D03's explicit ETF-proxy lane (ARGUS_CANDIDATE
+    lineage is assigned by the evaluator itself). availableFrom is after the
+    15:30 JST close of the row's session; cached-only, None when cold."""
+    try:
+        def twenty_day_return(rows):
+            ordered = sorted((rows or []),
+                             key=lambda row: str(row.get("date") or ""))
+            closes = [float(row["close"]) for row in ordered
+                      if isinstance(row.get("close"), (int, float))
+                      and not isinstance(row.get("close"), bool)]
+            if len(closes) < 21 or closes[-21] <= 0:
+                return None, None
+            date = str(ordered[-1].get("date") or "")[:10]
+            return closes[-1] / closes[-21] - 1, date
+        jp_return, jp_date = twenty_day_return(
+            _chart_history_cached("1321", "JP"))
+        us_return, _us_date = twenty_day_return(
+            _chart_history_cached("SPY", "US"))
+        if jp_return is None or us_return is None or len(jp_date or "") != 10:
+            return None
+        return {"instrumentId": "1321",
+                "seriesId": "relative_strength_20d", "date": jp_date,
+                "value": round(jp_return - us_return, 6),
+                "availableFrom": jp_date + "T07:00:00Z"}
+    except Exception:
+        return None
+
+
+def _sho_foreign_flow_rows():
+    """flow.foreign observations from the Market Ledger for SHO D05."""
+    rows = []
+    try:
+        by_series = argus_market_ledger.latest_by_series(
+            _MARKET_LEDGER, _ai_now_iso())
+        for row in by_series.get("flow.foreign", []) or []:
+            period = str(row.get("periodEnd") or "")[:10]
+            value = row.get("value")
+            available = str(row.get("availableFrom") or "")
+            if (len(period) == 10 and available
+                    and isinstance(value, (int, float))
+                    and not isinstance(value, bool)):
+                rows.append({"seriesId": "flow.foreign", "periodEnd": period,
+                             "availableFrom": available,
+                             "value": float(value)})
+    except Exception:
+        pass
+    return rows
+
+
+def _sho_vix_rows(*, fetch=False):
+    """VIX rows for D06 + the reversal VIX axis, with an explicit source tag.
+
+    Yahoo complete OHLCV is preferred (enables the MACD axis); the FRED
+    close-only series is the fallback (D06 still evaluates; the reversal VIX
+    axis stays honestly data-gated on close-only rows). The FRED-key-missing
+    state is REPORTED, closing the silent-dropout the external review found."""
+    yahoo = _yahoo_index_ohlcv("^VIX", "VIX", fetch=fetch,
+                               next_day_available=True)
+    if yahoo:
+        return yahoo, "yahoo_ohlcv"
+    try:
+        dated = (_fred_vix_history_dated() if fetch
+                 else (_VIX_HIST_DATED_CACHE.get("data") or []))
+    except Exception:
+        dated = []
+    rows = [{"instrumentId": "VIX", "seriesId": "close", "date": row["date"],
+             "value": row["value"], "close": row["value"],
+             "availableFrom": row["availableFrom"]} for row in dated or []]
+    if rows:
+        return rows, "fred_close_only"
+    return [], ("fred_key_missing" if not _FRED_API_KEY else "cold_cache")
+
+
+def _sho_pit_inputs(*, warm=False):
+    """Market-level SHO CORE inputs (D01-D07 + reversal axes).
+
+    Cached-only on the public path; warm=True (collect cron) refreshes the
+    underlying caches. sourceStatus names each feed's live state so a cold or
+    key-less feed is visible instead of silently absent."""
+    now = time.time()
+    memo = _SHO_PIT_INPUT_MEMO
+    if not warm and memo["data"] is not None and now - memo["ts"] < 120:
+        return memo["data"]
+    vix_rows, vix_source = _sho_vix_rows(fetch=warm)
+    nikkei_rows = _yahoo_index_ohlcv(
+        "^N225", "NIKKEI_225_INDEX", fetch=warm, available_hour_utc=7)
+    try:
+        credit_rows = _jpx_credit_rows_effective()
+    except Exception:
+        credit_rows = []
+    margin_rows = _sho_margin_1570_rows(fetch=warm)
+    rs_proxy = _sho_relative_strength_proxy()
+    flow_rows = _sho_foreign_flow_rows()
+    data = {
+        "creditRows": credit_rows, "margin1570Rows": margin_rows,
+        "rsProxy": rs_proxy, "flowRows": flow_rows,
+        "vixRows": vix_rows, "nikkeiRows": nikkei_rows,
+        "sourceStatus": {
+            "credit": "csv_ledger" if credit_rows else "missing",
+            "margin1570": "jquants_weekly" if margin_rows else "cold_cache",
+            "relativeStrength": "etf_proxy_20d" if rs_proxy else "cold_cache",
+            "foreignFlow": "market_ledger" if flow_rows else "missing",
+            "vix": vix_source,
+            "nikkei": "yahoo_ohlcv" if nikkei_rows else "cold_cache",
+        },
+    }
+    memo["ts"], memo["data"] = now, data
+    return data
+
+
+def _sho_market_view():
+    """Document-level SHO MARKET VIEW projection (external review item A).
+
+    The reviewer's central principle: MARKET VIEW belongs to SHO, ACTION
+    belongs to SDA. This read-only consumer projection (D01-D07 family states
+    + the two reversal axes) carries zero action authority by construction
+    (project_today_sda_safe) and rides the decision-evidence document for the
+    Today display. 120s memo keeps the public GET cheap."""
+    now = time.time()
+    memo = _SHO_MARKET_VIEW_MEMO
+    if memo["view"] is not None and now - memo["ts"] < 120:
+        return memo["view"]
+    cutoff = _ai_now_iso()
+    try:
+        inputs = _sho_pit_inputs()
+        evidence = argus_sho.evaluate_d01_d07(
+            cutoff=cutoff, two_market_rows=inputs["creditRows"],
+            margin_1570_rows=inputs["margin1570Rows"],
+            relative_strength_proxy=inputs["rsProxy"],
+            foreign_flow_rows=inputs["flowRows"],
+            vix_rows=inputs["vixRows"])
+        reversal = argus_sho.build_reversal_engine(
+            cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",
+            downside_background="MIXED",
+            nikkei_rows=inputs["nikkeiRows"], vix_rows=inputs["vixRows"])
+        projection = argus_sho.project_today_sda_safe(
+            cutoff=cutoff, evidence=evidence, reversal=reversal)
+        view = {
+            "schemaVersion": "argus-sho-market-view-v1",
+            "informationCutoff": cutoff,
+            "projection": projection,
+            "sourceStatus": dict(inputs["sourceStatus"]),
+            "actionAuthority": False,
+            "automaticAiCalls": 0,
+        }
+    except Exception as exc:
+        view = {
+            "schemaVersion": "argus-sho-market-view-v1",
+            "informationCutoff": cutoff, "projection": None,
+            "sourceStatus": {
+                "error": f"market_view_failed:{type(exc).__name__}"},
+            "actionAuthority": False, "automaticAiCalls": 0,
+        }
+    memo["ts"], memo["view"] = now, view
+    return view
+
+
+def _decision_evidence_sho_artifact(symbol, cutoff):
+    """Per-subject SHO reversal artifact from real PIT inputs (v13.5.18).
+
+    Both reversal axes now evaluate production feeds (^N225/^VIX complete
+    OHLCV); cold feeds leave factors MISSING and the axis DATA_GATED — the
+    artifact reports absence, never fabricates it. Input assembly failure
+    degrades to the zero-input artifact (fail closed), exactly the pre-wiring
+    behavior. The downside background stays MIXED, the least-claiming state,
+    until the downside layer is wired as a PIT input.
     """
+    try:
+        inputs = _sho_pit_inputs()
+    except Exception:
+        inputs = None
     try:
         return argus_sho.build_reversal_engine(
             cutoff=cutoff, analysis_instrument=symbol,
-            downside_background="MIXED"), None
+            downside_background="MIXED",
+            nikkei_rows=(inputs or {}).get("nikkeiRows") or (),
+            vix_rows=(inputs or {}).get("vixRows") or ()), None
     except (TypeError, ValueError) as exc:
         return None, f"sho_artifact_failed:{type(exc).__name__}"
 
@@ -31643,6 +31951,10 @@ def _decision_evidence_document(symbols):
         "authority": "CANONICAL_ARTIFACT_REFERENCES",
         "sdaAuthority": False,
         "actionAuthority": False,
+        # v13.5.18 (review item A): document-level SHO MARKET VIEW — display
+        # projection only, never an SDA input; the per-subject references
+        # above remain the sole decision evidence.
+        "marketView": _sho_market_view(),
         "subjects": subjects,
     }
 
@@ -36225,7 +36537,7 @@ def _jq_price_history(code):
     if _JQUANTS_API_KEY:
         try:
             headers = {"x-api-key": _JQUANTS_API_KEY}
-            # v13.5.17 (owner spec: ten-year corpus): request 3,640 days —
+            # v13.5.18 (owner spec: ten-year corpus): request 3,640 days —
             # safely INSIDE the rolling 10y J-Quants entitlement. 3,660 days
             # overhung the contract window by ~a week and J-Quants rejected
             # the whole request, which blanked the chart (the seed failure

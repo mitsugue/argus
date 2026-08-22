@@ -507,3 +507,78 @@ def test_analog_retrieval_cost_is_bounded(tmp_path):
     elapsed = time.perf_counter() - started
     assert result["sampleSize"] == cem.MAX_ANALOG_RESULTS
     assert elapsed < 0.5
+
+
+# ━━━ v13.5.18 — symmetric INVALIDATED automation (external review item D) ━━━
+
+T3 = "2026-08-22T03:00:00Z"     # 4 days after T2 — beyond the 3-day streak floor
+
+
+def _all_contradicting_evidence(at):
+    return [
+        {"variable": "oil_price", "relation": "CONTRADICTING",
+         "observedDirection": "DOWN", "expectedDirection": "UP",
+         "knownAt": at, "sourceRef": "truth:wti", "noteCode": "MARKET_OBSERVATION"},
+        {"variable": "long_end_yields", "relation": "CONTRADICTING",
+         "observedDirection": "DOWN", "expectedDirection": "UP",
+         "knownAt": at, "sourceRef": "truth:dgs30", "noteCode": "MARKET_OBSERVATION"},
+    ]
+
+
+def _weakened_event(tmp_path):
+    first = build_event()
+    _, state = ledger_state(tmp_path, first)
+    event = cem.event_view(state["events"][first["eventId"]])
+    hypothesis = event["causalHypotheses"][0]
+    weakened = cem.build_assessment(
+        event=event, hypothesis_id=hypothesis["hypothesisId"], evaluated_at=T2,
+        evidence=_all_contradicting_evidence(T2),
+        attribution_mode="ATTRIBUTION_UNCERTAIN", code_identity=SHA)
+    assert weakened["status"] == "WEAKENED"
+    path, state = ledger_state(tmp_path, first, weakened)
+    event = cem.event_view(state["events"][first["eventId"]])
+    return {**event, "assessments":
+            state["events"][first["eventId"]]["assessments"]}, hypothesis
+
+
+def test_sustained_contradiction_reaches_invalidated(tmp_path):
+    """WEAKENED for >= 3 days + still fully contradicted → the streak note is
+    emitted and the assessment lands on INVALIDATED. The negative side of the
+    memory is reachable from production evidence — confirmation bias closed."""
+    event, hypothesis = _weakened_event(tmp_path)
+    evidence = _all_contradicting_evidence(T3)
+    note = cem.sustained_contradiction_note(
+        event, hypothesis["hypothesisId"], evidence, T3)
+    assert note is not None
+    assert note["noteCode"] == cem.CONTRADICTION_STREAK_CRITERION
+    assessment = cem.build_assessment(
+        event=event, hypothesis_id=hypothesis["hypothesisId"], evaluated_at=T3,
+        evidence=evidence + [note],
+        attribution_mode="ATTRIBUTION_UNCERTAIN", code_identity=SHA)
+    assert assessment["status"] == "INVALIDATED"
+    assert assessment["previousStatus"] == "WEAKENED"
+
+
+def test_streak_note_never_fires_on_mixed_young_or_healthy_states(tmp_path):
+    """One adverse read never invalidates: the note refuses mixed evidence,
+    contradiction younger than 3 days, and hypotheses not already WEAKENED."""
+    event, hypothesis = _weakened_event(tmp_path)
+    # Mixed evidence (any support) → None.
+    mixed = _all_contradicting_evidence(T3) + [{
+        "variable": "long_duration_growth", "relation": "SUPPORTING",
+        "observedDirection": "DOWN", "expectedDirection": "DOWN",
+        "knownAt": T3, "sourceRef": "truth:qqq", "noteCode": "MARKET_OBSERVATION"}]
+    assert cem.sustained_contradiction_note(
+        event, hypothesis["hypothesisId"], mixed, T3) is None
+    # Only one contradicting variable → None.
+    assert cem.sustained_contradiction_note(
+        event, hypothesis["hypothesisId"],
+        _all_contradicting_evidence(T3)[:1], T3) is None
+    # Same-day contradiction (streak too young) → None.
+    assert cem.sustained_contradiction_note(
+        event, hypothesis["hypothesisId"],
+        _all_contradicting_evidence(T2), T2) is None
+    # A hypothesis that is not WEAKENED (no standing assessments) → None.
+    assert cem.sustained_contradiction_note(
+        {"assessments": []}, hypothesis["hypothesisId"],
+        _all_contradicting_evidence(T3), T3) is None

@@ -50,6 +50,9 @@ import {
   type PrimaryAction, type RiskContributionV1, type SingleDecisionAuthorityResultV2,
   type PredictionLedgerSdaAdapterV2,
 } from '../domain/singleDecisionAuthority';
+import {
+  eventKernelConstraint, eventKernelSeverity, imminentEventGate,
+} from '../domain/importantEventsTier';
 import { classifyRole, buildStrategy, type LocalStrategy } from '../domain/portfolioStrategy';
 import {
   buildLocalFireCore, fireCoreMetaSnapshot, subscribeFireCoreMeta,
@@ -693,12 +696,9 @@ export function useAssetIntel(opts: {
     const ruleBySym = new Map((al.data?.labels ?? []).map((row) => [row.symbol.toUpperCase(), row]));
     const aiBySym = new Map((aiJ.data?.labels ?? []).map((row) => [row.symbol.toUpperCase(), row]));
     const riskBySym = new Map(positionExposure.risks.map((row) => [row.symbol, row.riskLevel]));
-    const eventSyms = new Set<string>();
-    for (const event of impEvents?.events ?? []) {
-      if (event.countdown === 'D' || event.countdown === 'D-1') {
-        for (const linked of event.linkedAssets ?? []) eventSyms.add(String(linked).toUpperCase());
-      }
-    }
+    // v13.5.18 (review item C): uncapped imminent feed + impact tiering.
+    // critical/high → WAIT_REQUIRED; medium/low → BLOCK_BUY only.
+    const eventGate = imminentEventGate(impEvents);
     const decisionMs = Date.now();
     const decisionAt = exactSecondUtc(decisionMs);
     const validChallengeTime = (value: unknown) => {
@@ -803,20 +803,38 @@ export function useAssetIntel(opts: {
           confidenceCapBps: 7500, observedAt: cutoffAt,
         });
       }
-      if (eventSyms.has(sym) || importantEventsUnknown) contributions.push({
+      const gateEntry = eventGate.get(sym);
+      if (gateEntry || importantEventsUnknown) contributions.push({
         evidenceRef: `event:calendar-${sym.toLowerCase()}`,
         primitiveFactorId: 'event.calendar_uncertainty', sourceKind: 'EVENT',
-        constraint: importantEventsUnknown ? 'NONE' : 'WAIT_REQUIRED',
+        constraint: importantEventsUnknown ? 'NONE'
+          : eventKernelConstraint(gateEntry?.displayImpact),
         status: importantEventsUnknown ? 'MISSING' : 'ACTIVE',
-        severity: importantEventsUnknown ? 'UNKNOWN' : 'MEDIUM',
+        severity: importantEventsUnknown ? 'UNKNOWN'
+          : eventKernelSeverity(gateEntry?.displayImpact),
         confidenceCapBps: 5000, observedAt: cutoffAt,
       });
-      if (missingQuote || sessionAuthorityMissing || isPartial || visLimited) contributions.push({
-        evidenceRef: `discipline:authority-${sym.toLowerCase()}`,
-        primitiveFactorId: 'discipline.required_authority', sourceKind: 'DISCIPLINE',
-        constraint: 'NONE', status: 'MISSING', severity: 'UNKNOWN',
-        confidenceCapBps: 2500, observedAt: cutoffAt,
-      });
+      // v13.5.18 (review item F): the old composite lever data-gated EVERY
+      // symbol when ONE auxiliary feed (flow/supply/FX/labels) went stale.
+      // Split: per-symbol decision authorities (quote, session) still gate;
+      // degraded auxiliary feeds only block new adds and cap confidence —
+      // held-position judgment continues on the evidence that IS verified.
+      const coreAuthorityMissing = missingQuote || sessionAuthorityMissing;
+      if (coreAuthorityMissing) {
+        contributions.push({
+          evidenceRef: `discipline:authority-${sym.toLowerCase()}`,
+          primitiveFactorId: 'discipline.required_authority', sourceKind: 'DISCIPLINE',
+          constraint: 'NONE', status: 'MISSING', severity: 'UNKNOWN',
+          confidenceCapBps: 2500, observedAt: cutoffAt,
+        });
+      } else if (isPartial || visLimited) {
+        contributions.push({
+          evidenceRef: `discipline:degraded-feeds-${sym.toLowerCase()}`,
+          primitiveFactorId: 'discipline.degraded_auxiliary_feeds', sourceKind: 'DISCIPLINE',
+          constraint: 'BLOCK_BUY', status: 'ACTIVE', severity: 'MEDIUM',
+          confidenceCapBps: 4000, observedAt: cutoffAt,
+        });
+      }
       input.riskKernel = buildRiskKernel({
         schemaVersion: 'argus-risk-discipline-input-v1',
         subject: { kind: 'ASSET', instrumentId: sym, market },
