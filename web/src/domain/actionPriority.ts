@@ -30,8 +30,10 @@ export interface APInputs {
   positionRiskLevel?: string | null; readiness?: string | null;
   sdRank?: string | null; sdCondition?: string | null;
   flowClass?: string | null; instStance?: string | null; instDirect?: boolean;
-  eventPending?: boolean; eventName?: string | null;
-  regimeRiskOff?: boolean; changePct?: number | null; priorRunupPct?: number | null;
+  /** true=event known / false=calendar known clear / null=calendar UNKNOWN. */
+  eventPending?: boolean | null; eventName?: string | null;
+  /** true/false=regime known / null=regime UNKNOWN (owner spec §2). */
+  regimeRiskOff?: boolean | null; changePct?: number | null; priorRunupPct?: number | null;
   dataMissing?: string[]; dqContradictedAvoidChase?: boolean; dqSupported?: boolean;
 }
 
@@ -47,6 +49,16 @@ export function buildItem(i: APInputs): APItem {
   let score = 0; let adverse = 0;
   let category = 'no_action'; let label: ActionLabel = 'NO_ACTION'; let blocking = 'none';
   const missing = i.dataMissing ?? [];
+  // Tri-state context (owner spec 2026-08-22 §2): UNKNOWN is never collapsed
+  // to FALSE — absent calendar/regime knowledge stays visible and withholds
+  // add-side labels instead of silently reading as "clear".
+  const eventPending = i.eventPending === true ? true
+    : i.eventPending === false ? false : null;
+  const regimeRiskOff = i.regimeRiskOff === true ? true
+    : i.regimeRiskOff === false ? false : null;
+  const unknownContext: string[] = [];
+  if (eventPending === null) unknownContext.push('イベント情報未確認');
+  if (regimeRiskOff === null) unknownContext.push('レジーム情報未確認');
   const sdRank = i.sdRank ?? '', sdCond = i.sdCondition ?? '', flow = i.flowClass ?? '';
 
   if (i.isHeld) {
@@ -68,7 +80,7 @@ export function buildItem(i: APInputs): APItem {
     score += 20; adverse++; category = 'held_risk';
   }
   if ((i.changePct ?? 0) <= -5 && i.isHeld) { score += 15; adverse++; category = 'held_risk'; }
-  if (i.regimeRiskOff && i.isHeld && adverse) {
+  if (regimeRiskOff === true && i.isHeld && adverse) {
     score += 8;
     if (blocking === 'none') blocking = 'regime_headwind';
   }
@@ -89,7 +101,7 @@ export function buildItem(i: APInputs): APItem {
     score += 10;
     if (category === 'no_action') { category = 'add_only_on_pullback'; label = 'ADD_ONLY_ON_PULLBACK'; }
   }
-  if (i.readiness === 'add_allowed_small' && !adverse && !i.eventPending && category === 'no_action') {
+  if (i.readiness === 'add_allowed_small' && !adverse && eventPending === false && category === 'no_action') {
     score += 6;
     if (sdCond === 'improving_but_heavy') {
       category = 'add_only_on_pullback'; label = 'ADD_ONLY_ON_PULLBACK';   // 重い間は全緑にしない
@@ -101,12 +113,18 @@ export function buildItem(i: APInputs): APItem {
     score += i.instDirect ? 8 : 3;
     if (category === 'no_action') { category = 'institutional_watch'; label = 'MONITOR'; }
   }
-  if (i.eventPending) {
+  if (eventPending) {
     score += i.isHeld ? 15 : 8;
     blocking = 'event_pending';
     if (['SMALL_ADD_ALLOWED', 'ADD_ONLY_ON_PULLBACK', 'NO_ACTION', 'MONITOR'].includes(label)) {
       category = 'event_wait'; label = 'WAIT_EVENT';
     }
+  } else if (eventPending === null
+      && (label === 'SMALL_ADD_ALLOWED' || label === 'ADD_ONLY_ON_PULLBACK')) {
+    // Calendar knowledge is absent — an add-side label needs a KNOWN clear
+    // calendar, so the judgment is withheld instead of silently granted.
+    if (blocking === 'none') blocking = 'unknown';
+    category = 'unknown'; label = 'UNKNOWN';
   }
   if (missing.length) {
     score += i.isHeld ? 15 : 4;
@@ -117,7 +135,11 @@ export function buildItem(i: APInputs): APItem {
       category = 'data_missing';
       label = i.isHeld ? 'INVESTIGATE' : 'UNKNOWN';
     }
-    if (blocking === 'none') blocking = missing.join(' ').includes('保有数量') ? 'missing_position_data' : 'data_stale';
+    // A concrete data-missing reason outranks the generic calendar-unknown
+    // blocker when both apply.
+    if (blocking === 'none' || blocking === 'unknown') {
+      blocking = missing.join(' ').includes('保有数量') ? 'missing_position_data' : 'data_stale';
+    }
   }
   let dqAdj = 0;
   if (i.dqContradictedAvoidChase) dqAdj = -0.05;
@@ -125,7 +147,7 @@ export function buildItem(i: APInputs): APItem {
 
   let rank: PriorityRank;
   if (i.isHeld && adverse >= 2 && score >= 70) rank = 'P0';
-  else if (i.isHeld && i.eventPending && adverse >= 1 && score >= 60) rank = 'P0';
+  else if (i.isHeld && eventPending === true && adverse >= 1 && score >= 60) rank = 'P0';
   else if (score >= 45) rank = 'P1';
   else if (score >= 25) rank = 'P2';
   else if (score >= 12) rank = 'P3';
@@ -134,7 +156,8 @@ export function buildItem(i: APInputs): APItem {
   if (rank === 'P0' && (label === 'MONITOR' || label === 'NO_ACTION')) label = 'CHECK_NOW';
   if (rank === 'Ignore') { category = 'no_action'; label = 'IGNORE_TODAY'; }
 
-  const confidence = Math.min(0.85, Math.max(0.2, 0.35 + score / 200 + dqAdj - (missing.length ? 0.1 : 0)));
+  const confidence = Math.min(0.85, Math.max(0.2, 0.35 + score / 200 + dqAdj
+    - ((missing.length || unknownContext.length) ? 0.1 : 0)));
   const t = texts(rank, category, i, sdRank, sdCond, missing);
   return {
     symbol: i.symbol.toUpperCase(), market: i.market, assetName: i.assetName,
@@ -193,6 +216,12 @@ function texts(rank: PriorityRank, category: string, i: APInputs,
       why: `${sdRank ? `需給ランク${sdRank}` : 'フロー'}に注意信号が出ています。`,
       check: '戻り局面で売りが出るか、翌営業日の継続を確認',
       change: '信号が2営業日続けば優先度を上げ、消えれば下げます',
+    };
+    case 'unknown': return {
+      title: `判定保留：${name}`,
+      why: 'イベントカレンダーの状態が未確認のため、追加系の判定を保留しています(不明はクリア扱いにしません)。',
+      check: 'カレンダー/レジーム情報の回復後に再判定',
+      change: '不明が解消すれば通常の優先度判定に戻ります',
     };
     default: return rank === 'Ignore' ? {
       title: `今日は重要度低：${name}`,

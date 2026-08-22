@@ -80,8 +80,11 @@ function leanJa(value: DirectionalLean): string {
 }
 
 function uncertainty(reasonCodes: string[]): string {
-  if (reasonCodes.includes('breadth_freshness_unverified')) return 'breadth鮮度を証明できていません';
+  // Universal-first ordering (v13.5.14): the holdout/baseline reasons apply to
+  // every instrument; breadth applies to JP conditioning only, so it must not
+  // headline a US instrument's caveat when its lag simply is not measured.
   if (reasonCodes.includes('holdout_skill_unverified')) return '独立holdoutで再現性を証明できていません';
+  if (reasonCodes.includes('breadth_freshness_unverified')) return 'breadth鮮度を証明できていません';
   if (reasonCodes.includes('baseline_dominance_unverified')) return '無条件・momentum基準への優位を証明できていません';
   if (reasonCodes.includes('partition_integrity_unverified')) return 'partition／重複整合性が未解決です';
   if (reasonCodes.includes('sample_below_threshold')) return '有効標本が表示基準未満です';

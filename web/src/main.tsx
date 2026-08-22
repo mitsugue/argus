@@ -59,6 +59,18 @@ async function selfHeal(): Promise<void> {
       const keys = await caches.keys();
       await Promise.all(keys.map((k) => caches.delete(k)));
     }
+    // v13.5.14: the Today headline document also lives in IndexedDB and
+    // survived every previous self-heal — a durable 「古いまま」 path.
+    await new Promise<void>((resolve) => {
+      try {
+        const request = indexedDB.deleteDatabase('argus-verified-snapshots');
+        request.onsuccess = () => resolve();
+        request.onerror = () => resolve();
+        request.onblocked = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
   } catch {
     /* ignore — fall through to reload */
   }

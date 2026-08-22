@@ -199,7 +199,9 @@ def build_item(symbol: str, market: str, inputs: Dict[str, Any],
         reasons.append("DATA_MISSING_HELD")
         if category == "no_action":
             category, label = "data_missing", "INVESTIGATE"
-        if blocking == "none":
+        if blocking in ("none", "unknown"):
+            # A concrete data-missing reason outranks the generic
+            # calendar-unknown blocker when both apply.
             blocking = "missing_position_data" if "保有数量" in " ".join(missing) else "data_stale"
 
     # decision-quality modifier — MODEST, never dominant

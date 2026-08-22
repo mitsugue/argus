@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import bisect
 import math
+from datetime import date as dtdate
 import random
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -17,8 +19,24 @@ import argus_market_data_truth
 
 
 SCHEMA_VERSION = "argus-today-intelligence-v1"
-METHOD_VERSION = "today-replay-calibration-v2-pit-bound"
-CALIBRATION_VERSION = "beta-dirichlet-walk-forward-v2"
+METHOD_VERSION = "today-replay-calibration-v3-sho-conditioned"
+CALIBRATION_VERSION = "sho-conditioned-knn-v1"
+
+# ── SHO conditioning (owner spec 2026-08-22) ────────────────────────────────
+# The chart forecast is driven by SHO's thinking routine: the analog search is
+# conditioned on the point-in-time market state SHO reads — two-market margin
+# credit (D01 axis), VIX regime (D06 axis), and Japan-vs-US relative strength
+# (D03 axis) — on top of the price-action features. Every value is joined
+# with an explicit knowledge lag (a JP session close cannot see that same
+# evening's US prints), and days without the full context are compared only
+# against days with the same feature set — absence is never scored as a value.
+SHO_FEATURE_SCALES = {
+    "creditRatio": 1.2,    # 信用倍率 (long/short margin balance)
+    "creditShortTn": 0.35, # two-market short margin balance, ¥tn (D01)
+    "vixLevel": 8.0,       # VIX regime level (D06)
+    "vixChange10": 4.5,    # VIX 10-session change (D06 momentum)
+    "rs20": 0.05,          # 20-session return vs S&P500 proxy (D03)
+}
 PROBABILITY_ELIGIBILITY_VERSION = "probability-eligibility-v1"
 MIN_EFFECTIVE_SAMPLES = 30
 HORIZONS = (1, 5, 20)
@@ -205,16 +223,127 @@ def _feature(bars: Sequence[Dict[str, Any]], index: int) -> Optional[Dict[str, f
 
 def _signal_family(feature: Dict[str, float]) -> str:
     if feature["trend20"] >= .01 and feature["momentum5"] >= 0:
-        return "trend_up"
-    if feature["trend20"] <= -.01 and feature["momentum5"] <= 0:
-        return "trend_down"
-    return "range"
+        base = "trend_up"
+    elif feature["trend20"] <= -.01 and feature["momentum5"] <= 0:
+        base = "trend_down"
+    else:
+        base = "range"
+    # SHO reads the same price shape differently under heavy vs light credit
+    # (信用倍率) — the analog pool splits on that regime when it is known.
+    ratio = feature.get("creditRatio")
+    if isinstance(ratio, (int, float)):
+        band = ("credit_heavy" if ratio >= 5.0
+                else "credit_light" if ratio <= 2.5 else "credit_mid")
+        return f"{base}|{band}"
+    return base
 
 
 def _distance(left: Dict[str, float], right: Dict[str, float]) -> float:
     scales = {"trend20": .05, "momentum5": .04, "atrPct": .015,
               "closeLocation": .5, "volumeRatio": 1.0}
-    return math.sqrt(sum(((left[key] - right[key]) / scales[key]) ** 2 for key in scales))
+    total = sum(((left[key] - right[key]) / scales[key]) ** 2
+                for key in scales)
+    # SHO dims participate only when BOTH days actually knew the value; the
+    # candidate pool is already restricted to matching feature sets, so this
+    # never silently compares a known value against an absent one.
+    for key, scale in SHO_FEATURE_SCALES.items():
+        if key in left and key in right:
+            total += ((left[key] - right[key]) / scale) ** 2
+    return math.sqrt(total)
+
+
+def _sho_daily_features(bars: Sequence[Dict[str, Any]],
+                        sho_context: Optional[Mapping[str, Any]],
+                        market: Optional[str]) -> List[Optional[Dict[str, float]]]:
+    """Point-in-time SHO state per bar.
+
+    Knowledge lags are explicit: a JP session close (15:30 JST) happens before
+    that calendar day's US session, so JP analogs may only use VIX / S&P
+    values from strictly EARLIER dates; US symbols close together with those
+    prints and may use same-date values. Credit balances use their published
+    availableFrom. A day missing a value simply lacks that key.
+    """
+    if not sho_context or not bars:
+        return [None] * len(bars)
+    us_lag_exclusive = (market == "JP")
+
+    credit: List[Tuple[str, float, float]] = []   # (availableFrom, short, long)
+    by_period: Dict[str, Dict[str, float]] = {}
+    for row in sho_context.get("creditRows") or []:
+        if not isinstance(row, Mapping):
+            continue
+        series = str(row.get("seriesId") or "")
+        value = _number(row.get("value"))
+        available = str(row.get("availableFrom") or "")[:10]
+        period = str(row.get("periodEnd") or "")[:10]
+        if value is None or len(available) != 10 or len(period) != 10:
+            continue
+        bucket = by_period.setdefault(period, {"availableFrom": available})
+        if available > bucket["availableFrom"]:
+            bucket["availableFrom"] = available
+        if series == "credit.short_balance":
+            bucket["short"] = value
+        elif series == "credit.long_balance":
+            bucket["long"] = value
+    for period in sorted(by_period):
+        bucket = by_period[period]
+        if "short" in bucket and "long" in bucket and bucket["short"] > 0:
+            credit.append((str(bucket["availableFrom"]),
+                           float(bucket["short"]), float(bucket["long"])))
+    credit.sort(key=lambda item: item[0])
+
+    vix: List[Tuple[str, float]] = []
+    for row in sho_context.get("vixRows") or []:
+        if not isinstance(row, Mapping):
+            continue
+        date = str(row.get("date") or "")[:10]
+        value = _number(row.get("value"))
+        if len(date) == 10 and value is not None and value > 0:
+            vix.append((date, float(value)))
+    vix.sort(key=lambda item: item[0])
+    vix_dates = [item[0] for item in vix]
+
+    us_closes: List[Tuple[str, float]] = []
+    for row in normalize_bars(list(sho_context.get("usRows") or [])):
+        us_closes.append((str(row["date"])[:10], float(row["close"])))
+    us_dates = [item[0] for item in us_closes]
+
+    def latest_at(dates: List[str], limit: str, *, exclusive: bool) -> int:
+        index = bisect.bisect_left(dates, limit) if exclusive \
+            else bisect.bisect_right(dates, limit)
+        return index - 1
+
+    def _within(newer: str, older: str, max_days: int) -> bool:
+        try:
+            gap = (dtdate.fromisoformat(newer) - dtdate.fromisoformat(older)).days
+        except ValueError:
+            return False
+        return 0 <= gap <= max_days
+
+    out: List[Optional[Dict[str, float]]] = []
+    credit_dates = [item[0] for item in credit]
+    for index, bar in enumerate(bars):
+        date = str(bar["date"])[:10]
+        features: Dict[str, float] = {}
+        credit_pos = bisect.bisect_right(credit_dates, date) - 1
+        # A weekly balance is CURRENT state for ~a publication cycle only —
+        # an old print never silently impersonates today's credit regime.
+        if credit_pos >= 0 and _within(date, credit[credit_pos][0], 45):
+            _, short_balance, long_balance = credit[credit_pos]
+            features["creditRatio"] = long_balance / short_balance
+            features["creditShortTn"] = short_balance / 1e12
+        vix_pos = latest_at(vix_dates, date, exclusive=us_lag_exclusive)
+        if vix_pos >= 10 and _within(date, vix[vix_pos][0], 10):
+            features["vixLevel"] = vix[vix_pos][1]
+            features["vixChange10"] = vix[vix_pos][1] - vix[vix_pos - 10][1]
+        us_pos = latest_at(us_dates, date, exclusive=us_lag_exclusive)
+        if us_pos >= 20 and index >= 20 \
+                and _within(date, us_closes[us_pos][0], 10):
+            own_return = float(bar["close"]) / float(bars[index - 20]["close"]) - 1
+            us_return = us_closes[us_pos][1] / us_closes[us_pos - 20][1] - 1
+            features["rs20"] = own_return - us_return
+        out.append(features or None)
+    return out
 
 
 def _direction(return_pct: float, atr_pct: float, horizon: int) -> str:
@@ -473,18 +602,48 @@ def _insufficient_calibration(horizon: int) -> Dict[str, Any]:
     return row
 
 
-def calibrate_horizon(bars: Sequence[Dict[str, Any]], horizon: int) -> Dict[str, Any]:
+def calibrate_horizon(bars: Sequence[Dict[str, Any]], horizon: int,
+                      sho_daily: Optional[Sequence[Optional[Dict[str, float]]]] = None,
+                      ) -> Dict[str, Any]:
     normalized = normalize_bars(bars)
     if len(normalized) < 80 + horizon:
         return _insufficient_calibration(horizon)
-    current_feature = _feature(normalized, len(normalized) - 1)
-    if current_feature is None:
-        return _insufficient_calibration(horizon)
-    family = _signal_family(current_feature)
-    all_rows: List[Dict[str, Any]] = []
-    for index in range(24, len(normalized) - horizon):
+    daily = list(sho_daily) if sho_daily is not None else [None] * len(normalized)
+    if len(daily) != len(normalized):
+        daily = [None] * len(normalized)
+
+    def merged_feature(index: int) -> Optional[Dict[str, float]]:
         feature = _feature(normalized, index)
         if feature is None:
+            return None
+        extra = daily[index]
+        if isinstance(extra, dict):
+            feature = {**feature, **extra}
+        return feature
+
+    current_feature = merged_feature(len(normalized) - 1)
+    if current_feature is None:
+        return _insufficient_calibration(horizon)
+    # SHO conditioning: a day is comparable only against days that KNEW the
+    # same state dimensions — absence is a different situation, not a zero.
+    current_sho_keys = frozenset(
+        key for key in SHO_FEATURE_SCALES if key in current_feature)
+    family = _signal_family(current_feature)
+    all_rows: List[Dict[str, Any]] = []
+    sho_covered = 0
+    for index in range(24, len(normalized) - horizon):
+        feature = merged_feature(index)
+        if feature is None:
+            continue
+        row_sho_keys = frozenset(
+            key for key in SHO_FEATURE_SCALES if key in feature)
+        if row_sho_keys >= current_sho_keys:
+            if current_sho_keys:
+                sho_covered += 1
+            comparable = {key: value for key, value in feature.items()
+                          if key not in SHO_FEATURE_SCALES
+                          or key in current_sho_keys}
+        else:
             continue
         start = float(normalized[index]["close"])
         end = float(normalized[index + horizon]["close"])
@@ -494,11 +653,13 @@ def calibrate_horizon(bars: Sequence[Dict[str, Any]], horizon: int) -> Dict[str,
         final_return = end / start - 1
         all_rows.append({
             "index": index, "date": normalized[index]["date"],
-            "distance": _distance(feature, current_feature),
+            "distance": _distance(comparable, current_feature),
             "family": _signal_family(feature), "atrPct": feature["atrPct"],
             "return": final_return, "mfe": high_return, "mae": low_return,
             "direction": _direction(final_return, feature["atrPct"], horizon),
         })
+    if len(all_rows) < 80:
+        return _insufficient_calibration(horizon)
     family_rows = [row for row in all_rows if row["family"] == family]
     pool = family_rows if len(family_rows) >= 60 else all_rows
     nearest = sorted(pool, key=lambda row: (row["distance"], row["date"]))[:240]
@@ -635,9 +796,15 @@ def calibrate_horizon(bars: Sequence[Dict[str, Any]], horizon: int) -> Dict[str,
     return result
 
 
-def calibrate_forecast(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+def calibrate_forecast(rows: Iterable[Dict[str, Any]],
+                       sho_context: Optional[Mapping[str, Any]] = None,
+                       market: Optional[str] = None) -> Dict[str, Any]:
     bars = normalize_bars(rows)
-    result = {str(horizon): calibrate_horizon(bars, horizon) for horizon in HORIZONS}
+    sho_daily = _sho_daily_features(bars, sho_context, market)
+    coverage_days = sum(1 for row in sho_daily if row)
+    current_keys = sorted((sho_daily[-1] or {}).keys()) if sho_daily else []
+    result = {str(horizon): calibrate_horizon(bars, horizon, sho_daily)
+              for horizon in HORIZONS}
     return {
         "schemaVersion": "argus-forecast-calibration-v1",
         "methodVersion": METHOD_VERSION,
@@ -645,6 +812,15 @@ def calibrate_forecast(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
         "historyStart": bars[0]["date"] if bars else None,
         "historyEnd": bars[-1]["date"] if bars else None,
         "historyCount": len(bars), "horizons": result,
+        # SHO conditioning transparency: which state dimensions the CURRENT
+        # day actually knows, and how many corpus days carry SHO state. This
+        # is measurement, not a claim of skill — skill stays with the
+        # walk-forward Brier machinery.
+        "shoConditioning": {
+            "requested": bool(sho_context),
+            "currentFeatureKeys": current_keys,
+            "coverageDays": coverage_days,
+        },
         "automaticAiCalls": 0,
     }
 
@@ -780,10 +956,14 @@ def failed_rally_backtest(rows: Iterable[Dict[str, Any]], *,
 def analyze(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
             short_history: Iterable[Dict[str, Any]] = (),
             comparison_rows: Iterable[Dict[str, Any]] = (),
+            sho_context: Optional[Mapping[str, Any]] = None,
             as_of: Optional[str] = None) -> Dict[str, Any]:
     source_rows = list(rows or [])
     source_short = list(short_history or [])
     source_comparison = list(comparison_rows or [])
+    context = {key: list((sho_context or {}).get(key) or [])
+               for key in ("creditRows", "vixRows", "usRows")} \
+        if sho_context else None
     pit_proofs: Dict[str, Any] = {}
     if as_of:
         source_rows, pit_proofs["bars"] = \
@@ -793,6 +973,24 @@ def analyze(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
         source_comparison, pit_proofs["comparison"] = \
             argus_market_data_truth.point_in_time_rows(
                 source_comparison, as_of)
+        if context is not None:
+            # SHO context obeys the PIT cutoff: anything first known after
+            # as_of is dropped here, and the per-day knowledge LAGS (a JP
+            # close cannot see same-evening US prints) plus staleness windows
+            # are enforced inside _sho_daily_features. The generic row-proof
+            # machinery is bar-shaped (one row per date), so multi-series
+            # weekly credit uses this explicit clamp instead.
+            as_of_date = str(as_of)[:10]
+
+            def _known_by_cutoff(row: Mapping[str, Any]) -> bool:
+                known = str(row.get("availableFrom")
+                            or row.get("date") or "")[:10]
+                return len(known) == 10 and known <= as_of_date
+
+            for context_key in ("creditRows", "vixRows", "usRows"):
+                context[context_key] = [row for row in context[context_key]
+                                        if isinstance(row, Mapping)
+                                        and _known_by_cutoff(row)]
         for proof in pit_proofs.values():
             valid, reason = \
                 argus_market_data_truth.verify_point_in_time_proof(proof)
@@ -814,7 +1012,7 @@ def analyze(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
             short_change=_number(((short_summary.get("latest") or {}).get("previousDayDifference"))),
             breadth_divergence=_comparison_divergence(bars, comparison, bars[-1]["date"]),
         )
-    calibration = calibrate_forecast(bars)
+    calibration = calibrate_forecast(bars, sho_context=context, market=market)
     backtest = failed_rally_backtest(bars, short_history=short_rows,
                                      comparison_rows=comparison)
     return {

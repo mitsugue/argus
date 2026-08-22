@@ -224,6 +224,30 @@ def test_escalation_realerts_but_cosmetic_duplicate_does_not(
                for e in events)
 
 
+def test_market_confirmation_transition_realerts_without_severity_change(
+        monkeypatch, news_env):
+    """Owner spec §7 end-to-end: the market CONFIRMING a material headline
+    re-alerts (PENDING→CONFIRMED transition), while the severity axis itself
+    never moves on confirmation."""
+    subject = "米30年債利回りが5%を突破 急騰続く"
+    monkeypatch.setattr(scanner, "_news_corroboration", lambda family: {
+        "confirmed": False, "signals": [], "readings": [], "missing": []})
+    run_cycle(monkeypatch, {"c1": mail("c1", subject)})
+    first = scanner.app.test_client().get(
+        "/api/argus/news-intelligence").get_json()["events"][0]
+    assert first["severity"] in ("HIGH", "CRITICAL")
+    assert first["confirmationState"] == "MARKET_CONFIRMATION_PENDING"
+    monkeypatch.setattr(scanner, "_news_corroboration", lambda family: {
+        "confirmed": True, "signals": ["us10y_shock"],
+        "readings": [], "missing": []})
+    run_cycle(monkeypatch, {"c2": mail("c2", subject + " 続報")})
+    second = scanner.app.test_client().get(
+        "/api/argus/news-intelligence").get_json()["events"][0]
+    assert second["confirmationState"] == "MARKET_CONFIRMED"
+    assert second["severity"] == first["severity"]
+    assert second["alertEligible"] is True
+
+
 def test_multi_source_families_resolve_and_apply_policy(monkeypatch, news_env):
     monkeypatch.setenv("ARGUS_NEWS_ALLOWED_SENDER_DOMAINS",
                        "nikkei.com,treas.gov,govdelivery.com,fdic.gov")
