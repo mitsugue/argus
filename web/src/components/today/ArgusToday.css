@@ -205,3 +205,23 @@
   background:rgba(255,255,255,.06);white-space:nowrap}
 .at-marketview .mv-fams i[data-family-status="AVAILABLE"]{background:rgba(110,220,170,.12)}
 .at-marketview .mv-note{opacity:.55;font-size:10px}
+
+/* v13.5.19 — NEWS/EVENT SIGNAL strip (independent axis beside SHO view) */
+.at-newssignal{display:flex;flex-direction:column;gap:4px;padding:8px 10px;
+  border:1px solid rgba(255,193,120,.18);border-radius:8px;font-size:11px;
+  background:rgba(255,193,120,.05)}
+.at-newssignal.is-quiet{flex-direction:row;gap:8px;align-items:center;
+  opacity:.7;background:transparent;border-color:rgba(255,255,255,.08)}
+.at-newssignal small{opacity:.65;letter-spacing:.06em;font-size:10px}
+.at-newssignal .ns-head{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.at-newssignal .ns-head b{font-size:13px;font-weight:800}
+.at-newssignal.is-bearish .ns-head b{color:#ff8f8f}
+.at-newssignal.is-bullish .ns-head b{color:#7fd8a8}
+.at-newssignal .ns-head i{font-style:normal;padding:1px 6px;border-radius:4px;
+  background:rgba(255,255,255,.08);font-size:9.5px;font-weight:700}
+.at-newssignal .ns-head em{font-style:normal;opacity:.8;font-size:10px}
+.at-newssignal .ns-head span{opacity:.6;font-size:10px}
+.at-newssignal .ns-title{font-weight:600;line-height:1.3}
+.at-newssignal .ns-targets{font-size:10.5px}
+.at-newssignal .ns-chain{opacity:.7;font-size:10px}
+.at-newssignal .ns-note{opacity:.55;font-size:10px}

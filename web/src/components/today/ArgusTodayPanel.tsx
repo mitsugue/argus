@@ -5,6 +5,7 @@ import type { RouteKey } from '../NavRail';
 import type { SettingsSection } from '../../navigation';
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import { useDecisionEvidence } from '../../hooks/useDecisionEvidence';
+import { useNewsIntelligence } from '../../hooks/useNewsIntelligence';
 import type {
   MarketHorizon, MarketInstrumentMarket, MarketInstrumentSymbol,
 } from '../../domain/marketInstruments';
@@ -117,7 +118,7 @@ const NEXT_REVIEW_REASON_JA: Record<string, string> = {
   sho_revalidation: 'SHO証拠を再検証',
   evidence_refresh: '正本証拠を更新',
 };
-// v13.5.18 (external review item A): MARKET VIEW (SHO) / ACTION (SDA)
+// v13.5.19 (external review item A): MARKET VIEW (SHO) / ACTION (SDA)
 // separation. The strip renders the document-level SHO consumer projection —
 // reversal + downside axis states and D01-D07 family states — directly under
 // the SDA action so the owner sees "what the market looks like" and "what we
@@ -159,6 +160,70 @@ const MarketViewStrip: React.FC = () => {
         {SHO_FAMILY_JA[family] ?? family} {familyStateJa(row)}</i>)}
     </div>}
     <span className="mv-note">市場観は行動権限を持たない（未検証の候補は確率を主張しない）</span>
+  </div>;
+};
+
+// v13.5.19 NEWS/EVENT SIGNAL (owner spec 2026-08-23): the independent news
+// direction axis rendered BESIDE the SHO market view and the SDA action —
+// three separate judgments, never one blended score. A chart view and a news
+// view that disagree stay visibly different; cancellation into a vague
+// composite is structurally impossible because nothing here is summed.
+const NEWS_DIRECTION_JA: Record<string, string> = {
+  BULLISH: '強気', BEARISH: '弱気', MIXED: '混在', UNCLEAR: '方向不明',
+};
+const NEWS_TARGET_JA: Record<string, string> = {
+  broadMarket: '市場全体', japanEquities: '日本株', growth: 'グロース',
+  semiconductors: '半導体', banks: '銀行', exporters: '輸出', energy: 'エネルギー',
+};
+const NEWS_CONSTRAINT_JA: Record<string, string> = {
+  NO_CONSTRAINT: '制約なし', CAUTION: '買い急がず市場反応を確認',
+  BLOCK_NEW_BUY: '新規買い停止（確認済み逆風）',
+  RISK_REVIEW_REQUIRED: 'リスク再確認（重大・確認済み）',
+};
+const NewsSignalStrip: React.FC = () => {
+  const news = useNewsIntelligence();
+  const top = (news.view?.events ?? [])
+    .filter((event) => (event.severity === 'HIGH' || event.severity === 'CRITICAL')
+      && event.staleness !== 'stale')
+    .sort((left, right) => (right.severity === 'CRITICAL' ? 1 : 0)
+      - (left.severity === 'CRITICAL' ? 1 : 0)
+      || String(right.processedAt).localeCompare(String(left.processedAt)))[0];
+  if (news.status === 'loading') return null;
+  if (!top) {
+    return <div className="at-newssignal is-quiet" aria-label="ニュース/イベント">
+      <small>ニュース/イベント</small><span>直近の重大ニュースなし</span></div>;
+  }
+  const direction = top.impactDirection;
+  const primary = direction?.primaryDirection ?? 'UNCLEAR';
+  const bearishTargets = Object.entries(direction?.directionByTarget ?? {})
+    .filter(([, value]) => value === 'BEARISH')
+    .map(([target]) => NEWS_TARGET_JA[target] ?? target);
+  const bullishTargets = Object.entries(direction?.directionByTarget ?? {})
+    .filter(([, value]) => value === 'BULLISH')
+    .map(([target]) => NEWS_TARGET_JA[target] ?? target);
+  return <div className={`at-newssignal is-${primary.toLowerCase()}`}
+    data-argus-contract="news-event-signal-v1" aria-label="ニュース/イベント判断">
+    <small>ニュース/イベント — チャート判断（SHO）とは独立</small>
+    <div className="ns-head">
+      <b>{NEWS_DIRECTION_JA[primary] ?? primary}</b>
+      <i>{top.severity}</i>
+      <em>{top.confirmationState === 'MARKET_CONFIRMED'
+        ? '市場確認済み' : '市場確認待ち'}</em>
+      {direction?.timeHorizon && direction.timeHorizon !== 'UNCLEAR'
+        && <span>想定時間軸 {direction.timeHorizon}</span>}
+    </div>
+    <span className="ns-title">{top.headlineJa}</span>
+    {(bearishTargets.length > 0 || bullishTargets.length > 0)
+      && <span className="ns-targets">
+        {bearishTargets.length > 0 && `逆風: ${bearishTargets.join('・')}`}
+        {bearishTargets.length > 0 && bullishTargets.length > 0 && ' ／ '}
+        {bullishTargets.length > 0 && `追い風: ${bullishTargets.join('・')}`}
+      </span>}
+    {direction && direction.transmissionChain.length > 0
+      && <span className="ns-chain">{direction.transmissionChain.join(' → ')}</span>}
+    <span className="ns-note">
+      {NEWS_CONSTRAINT_JA[top.executionConstraint ?? 'NO_CONSTRAINT']
+        ?? '制約なし'} · ニュースは売買権限を持たない（正本判断はSDA）</span>
   </div>;
 };
 
@@ -445,6 +510,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           ?? (view.nextEvent ? `${view.nextEvent.code} ${formatEventTime(view.nextEvent.at)}` : '正本証拠の更新')}</span></div>
       </div>
       <MarketViewStrip />
+      <NewsSignalStrip />
       <div className="at-kpis"><span>確度 <b>{Math.round(view.canonicalDecision.confidence.valueBps / 100)}%</b></span>
         <span>DATA <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></span></div>
     </article>
