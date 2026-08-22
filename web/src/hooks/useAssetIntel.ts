@@ -53,6 +53,7 @@ import {
 import {
   eventKernelConstraint, eventKernelSeverity, imminentEventGate,
 } from '../domain/importantEventsTier';
+import { useNewsIntelligence } from './useNewsIntelligence';
 import { classifyRole, buildStrategy, type LocalStrategy } from '../domain/portfolioStrategy';
 import {
   buildLocalFireCore, fireCoreMetaSnapshot, subscribeFireCoreMeta,
@@ -195,6 +196,7 @@ export function useAssetIntel(opts: {
   const { events: events247 } = useEventsActive();
   const importantEventsState = useImportantEvents();
   const { data: impEvents } = importantEventsState;
+  const newsIntel = useNewsIntelligence().view;   // v13.5.19 news signal
   const importantEventsUnknown = importantEventsState.authority !== 'fresh';
   const downsideUnknown = downsideState.authority !== 'fresh';
   // v13.5.13: canonical artifact references (marketTruth/predictionLedger/sho)
@@ -696,9 +698,20 @@ export function useAssetIntel(opts: {
     const ruleBySym = new Map((al.data?.labels ?? []).map((row) => [row.symbol.toUpperCase(), row]));
     const aiBySym = new Map((aiJ.data?.labels ?? []).map((row) => [row.symbol.toUpperCase(), row]));
     const riskBySym = new Map(positionExposure.risks.map((row) => [row.symbol, row.riskLevel]));
-    // v13.5.18 (review item C): uncapped imminent feed + impact tiering.
+    // v13.5.19 (review item C): uncapped imminent feed + impact tiering.
     // critical/high → WAIT_REQUIRED; medium/low → BLOCK_BUY only.
     const eventGate = imminentEventGate(impEvents);
+    // v13.5.19 NEWS/EVENT SIGNAL → execution constraint. News can never
+    // SELL/EXIT/WAIT the decision; only a MARKET-CONFIRMED HIGH/CRITICAL
+    // broad/Japan BEARISH signal blocks NEW buying (held-position judgment
+    // continues). A PENDING headline advises on the Today strip but never
+    // gates here — the owner's "warn first, let the market confirm" rule.
+    const newsGate = (newsIntel?.events ?? []).find((event) =>
+      (event.severity === 'HIGH' || event.severity === 'CRITICAL')
+      && event.staleness !== 'stale'
+      && event.confirmationState === 'MARKET_CONFIRMED'
+      && (event.impactDirection?.directionByTarget?.broadMarket === 'BEARISH'
+        || event.impactDirection?.directionByTarget?.japanEquities === 'BEARISH')) ?? null;
     const decisionMs = Date.now();
     const decisionAt = exactSecondUtc(decisionMs);
     const validChallengeTime = (value: unknown) => {
@@ -803,6 +816,12 @@ export function useAssetIntel(opts: {
           confidenceCapBps: 7500, observedAt: cutoffAt,
         });
       }
+      if (newsGate && (market === 'JP' || market === 'US')) contributions.push({
+        evidenceRef: `news:impact-${String(newsGate.eventId).slice(0, 40).toLowerCase()}`,
+        primitiveFactorId: 'news.market_impact_confirmed', sourceKind: 'EVENT',
+        constraint: 'BLOCK_BUY', status: 'ACTIVE', severity: 'MEDIUM',
+        confidenceCapBps: 5500, observedAt: cutoffAt,
+      });
       const gateEntry = eventGate.get(sym);
       if (gateEntry || importantEventsUnknown) contributions.push({
         evidenceRef: `event:calendar-${sym.toLowerCase()}`,
@@ -814,7 +833,7 @@ export function useAssetIntel(opts: {
           : eventKernelSeverity(gateEntry?.displayImpact),
         confidenceCapBps: 5000, observedAt: cutoffAt,
       });
-      // v13.5.18 (review item F): the old composite lever data-gated EVERY
+      // v13.5.19 (review item F): the old composite lever data-gated EVERY
       // symbol when ONE auxiliary feed (flow/supply/FX/labels) went stale.
       // Split: per-symbol decision authorities (quote, session) still gate;
       // degraded auxiliary feeds only block new adds and cap confidence —
@@ -872,7 +891,7 @@ export function useAssetIntel(opts: {
       }));
     }
     return { sda, bindings, views };
-  }, [assets, al.data, aiJ.data, aiMeta, positionExposure, impEvents,
+  }, [assets, al.data, aiJ.data, aiMeta, positionExposure, impEvents, newsIntel,
     importantEventsUnknown, priceBySymbol, decisionEvidence,
     sessionAuthorityMissing, isPartial, visLimited]);
   // Ledger appends run one symbol per idle slice: the append itself verifies

@@ -30,7 +30,7 @@ def test_restoration_allowlist_is_exact_and_core_semantics_stay_closed():
     }
     assert expected.issubset(source.AUTHORIZED_EXTENSION_PATHS)
     # Core investment semantics stay outside any release authorization.
-    # v13.5.18 exception (owner-authorized, 2026-08-22 spec conformance):
+    # v13.5.19 exception (owner-authorized, 2026-08-22 spec conformance):
     # web/src/domain/singleDecisionAuthority.ts is authorized ONCE for the
     # canonical-artifact resolver integration its own design comment reserved
     # for "a future, separately reviewed integration" — the AVAILABLE
@@ -67,7 +67,7 @@ def certificate(path: Path, *, candidate_sha: str, candidate_tree: str,
         "candidate": {"commitSha": candidate_sha, "treeSha": candidate_tree},
         "acceptedV13Source": {
             "commitSha": accepted_sha, "treeSha": accepted_tree},
-        "productVersion": "v13.5.18",
+        "productVersion": "v13.5.19",
     }
     value["certificateDigest"] = hashlib.sha256(
         source.canonical_bytes(value)).hexdigest()
@@ -88,7 +88,7 @@ def shallow_case(tmp_path, monkeypatch):
         write(seed / f"history-{ordinal}.txt", str(ordinal))
         commit(seed, f"history-{ordinal}")
     write(seed / "product-version.json", json.dumps({
-        "schemaVersion": "argus-product-version-v1", "productVersion": "v13.5.18"}))
+        "schemaVersion": "argus-product-version-v1", "productVersion": "v13.5.19"}))
     write(seed / "release/v13-accepted-fix-manifest.json", json.dumps({
         "canonicalSource": {"head": accepted_sha, "tree": accepted_tree},
         "requirements": [],
