@@ -517,38 +517,56 @@ export async function triggerBusinessSnapshots({
   });
   const requestTimestamp = new Date(nowMs()).toISOString();
   const requestUrl = `${baseUrl.replace(/\/$/, '')}/api/argus/admin/missions/tick`;
-  const controller = new AbortController();
-  const timeoutId = setTimeoutImpl(() => controller.abort(), Math.max(1, Number(transportTimeoutMs)));
   let response = null;
   let body = null;
   let transportError = null;
-  try {
-    response = await fetchImpl(requestUrl, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        'X-ARGUS-ADMIN-TOKEN': adminToken,
-      },
-      body: JSON.stringify({
-        triggerSource: 'manual',
-        runId: producerTriggerId,
-        expectedBuildSha,
-        releaseSnapshotSeed: true,
-      }),
-      signal: controller.signal,
-    });
-    body = await response.json().catch(() => null);
-  } catch (error) {
-    transportError = describeTransportError(error, {
-      elapsedMs: nowMs() - startedAtMs,
-      phase: controller.signal.aborted ? 'transport_timeout' : 'transport_request',
-      requestUrl,
-      httpResponseObtained: Boolean(response),
-      secrets: [adminToken],
-    });
-  } finally {
-    clearTimeoutImpl(timeoutId);
+  // v13.5.16: Render's router briefly answers 503 while it swaps instances
+  // right after a deploy — a deterministic response that provably did NOT
+  // execute the seed. The trigger id makes the request idempotent (a landed
+  // duplicate resolves through the 409/IDEMPOTENT path), so 5xx statuses are
+  // retried with a fixed backoff instead of failing the whole producer job.
+  const RETRYABLE_STATUS_ATTEMPTS = 6;
+  const RETRYABLE_STATUS_BACKOFF_MS = 20_000;
+  for (let attempt = 1; attempt <= RETRYABLE_STATUS_ATTEMPTS; attempt += 1) {
+    response = null;
+    body = null;
+    transportError = null;
+    const controller = new AbortController();
+    const timeoutId = setTimeoutImpl(() => controller.abort(), Math.max(1, Number(transportTimeoutMs)));
+    try {
+      response = await fetchImpl(requestUrl, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'X-ARGUS-ADMIN-TOKEN': adminToken,
+        },
+        body: JSON.stringify({
+          triggerSource: 'manual',
+          runId: producerTriggerId,
+          expectedBuildSha,
+          releaseSnapshotSeed: true,
+        }),
+        signal: controller.signal,
+      });
+      body = await response.json().catch(() => null);
+    } catch (error) {
+      transportError = describeTransportError(error, {
+        elapsedMs: nowMs() - startedAtMs,
+        phase: controller.signal.aborted ? 'transport_timeout' : 'transport_request',
+        requestUrl,
+        httpResponseObtained: Boolean(response),
+        secrets: [adminToken],
+      });
+    } finally {
+      clearTimeoutImpl(timeoutId);
+    }
+    if (response != null && response.status >= 500
+        && attempt < RETRYABLE_STATUS_ATTEMPTS) {
+      await sleepImpl(RETRYABLE_STATUS_BACKOFF_MS);
+      continue;
+    }
+    break;
   }
 
   let completionMode = 'HTTP_ACKNOWLEDGED';
@@ -572,7 +590,9 @@ export async function triggerBusinessSnapshots({
       expectedBuildSha, producerTriggerId, actionTimestamp, requestTimestamp,
       responseStatus: response.status, outcome: 'UNKNOWN',
       reason: `deterministic_http_response:http_${response.status}:` +
-        sanitizeDiagnosticText(body?.status ?? 'invalid', [adminToken]),
+        sanitizeDiagnosticText(body?.status ?? 'invalid', [adminToken]) +
+        (body?.errorClass ? `:${sanitizeDiagnosticText(body.errorClass, [adminToken])}` : '') +
+        (body?.errorDetail ? `:${sanitizeDiagnosticText(String(body.errorDetail).slice(0, 160), [adminToken])}` : ''),
       plan,
     };
     throw new BusinessSnapshotTriggerError(artifact.reason, artifact);

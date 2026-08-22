@@ -30368,6 +30368,9 @@ def _release_seed_verified_market_views(body):
             "status": "failed",
             "error": "release_snapshot_seed_failed",
             "errorClass": type(exc).__name__,
+            # Bounded detail so a failed seed names itself in the producer
+            # evidence instead of hiding behind the class name alone.
+            "errorDetail": str(exc)[:200],
             "producerTriggerId": trigger_id,
             "snapshotExpected": 12,
             "snapshotReady": len(observations),
@@ -36239,6 +36242,18 @@ def _jq_price_history(code):
                 params["pagination_key"] = pk
             rows = [q for q in rows if _q_close(q) is not None]
             rows.sort(key=lambda q: q.get("Date", ""), reverse=True)   # newest first
+            # v13.5.16: pagination boundaries / in-history adjustment
+            # revisions can repeat a Date with drifted bytes; the PIT gate
+            # rightly refuses conflicting same-identity rows, so the provider
+            # layer guarantees one deterministic row per session (first in
+            # newest-first order wins).
+            unique_rows, seen_dates = [], set()
+            for q in rows:
+                date_key = str(q.get("Date") or "")
+                if date_key and date_key not in seen_dates:
+                    seen_dates.add(date_key)
+                    unique_rows.append(q)
+            rows = unique_rows
             if len(rows) >= 20:
                 # High/Low for gap (窓) detection — defensive: J-Quants v2
                 # abbreviates fields (C=close); try the likely H/L keys and
