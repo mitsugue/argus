@@ -590,7 +590,9 @@ export async function triggerBusinessSnapshots({
       expectedBuildSha, producerTriggerId, actionTimestamp, requestTimestamp,
       responseStatus: response.status, outcome: 'UNKNOWN',
       reason: `deterministic_http_response:http_${response.status}:` +
-        sanitizeDiagnosticText(body?.status ?? 'invalid', [adminToken]),
+        sanitizeDiagnosticText(body?.status ?? 'invalid', [adminToken]) +
+        (body?.errorClass ? `:${sanitizeDiagnosticText(body.errorClass, [adminToken])}` : '') +
+        (body?.errorDetail ? `:${sanitizeDiagnosticText(String(body.errorDetail).slice(0, 160), [adminToken])}` : ''),
       plan,
     };
     throw new BusinessSnapshotTriggerError(artifact.reason, artifact);
