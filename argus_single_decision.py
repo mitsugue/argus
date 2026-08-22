@@ -18,6 +18,7 @@ from types import MappingProxyType
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import argus_decision_ledger as decision_ledger
+import argus_market_clock
 import argus_market_data_truth as market_truth
 import argus_sho as sho_authority
 from argus_risk_discipline import (
@@ -805,6 +806,33 @@ def validate_single_decision_input_v2(value: Any) -> None:
     _canonical_json_bytes(top)
 
 
+def _latest_session_daily_authority(
+    observation: Mapping[str, Any],
+    subject: Mapping[str, Any],
+    cutoff: str,
+) -> bool:
+    """The official close of the LATEST COMPLETED session is the current
+    daily-authority fact for that market (owner spec 2026-08-22: SHO's daily
+    thinking — a close stands until a newer session actually trades), so a
+    DELAYED/STALE freshness label from wall-clock age does not by itself
+    disqualify it. Any older session remains stale evidence.
+    """
+    market = str(subject.get("market") or "")
+    clock_market = {"JP": argus_market_clock.JP_EQUITY,
+                    "US": argus_market_clock.US_EQUITY}.get(market)
+    if clock_market is None:
+        return False
+    try:
+        cutoff_dt = datetime.strptime(
+            cutoff, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        target = argus_market_clock.latest_completed_session_date(
+            clock_market, cutoff_dt)
+    except (TypeError, ValueError):
+        return False
+    observed = str(observation.get("observedAt") or "")[:10]
+    return len(observed) == 10 and observed == target.isoformat()
+
+
 def _market_truth_reference_from_artifact(
     artifact: Any,
     *,
@@ -833,8 +861,10 @@ def _market_truth_reference_from_artifact(
     observation = selected.get("observation") if isinstance(selected, Mapping) else None
     if not isinstance(observation, Mapping) or selected.get("selectionEligible") is not True:
         _fail("artifacts.marketTruthSnapshot", "subject has no authoritative selected observation")
-    if selection.get("completeness") != market_truth.COMPLETE or \
-            selection.get("freshness") != market_truth.FRESH:
+    if selection.get("completeness") != market_truth.COMPLETE:
+        _fail("artifacts.marketTruthSnapshot", "subject selection must be COMPLETE and FRESH")
+    if selection.get("freshness") != market_truth.FRESH and not \
+            _latest_session_daily_authority(observation, subject, cutoff):
         _fail("artifacts.marketTruthSnapshot", "subject selection must be COMPLETE and FRESH")
     return {
         "status": "AVAILABLE",
@@ -985,6 +1015,8 @@ def _degraded_market_truth_reference(artifact: Any, *, subject: Mapping[str, Any
         return None
     if selection.get("completeness") != market_truth.COMPLETE:
         return None
+    if _latest_session_daily_authority(observation, subject, cutoff):
+        return None  # acceptable daily authority — the AVAILABLE path owns it
     return {
         "status": "STALE",
         "schemaVersion": artifact["schemaVersion"],

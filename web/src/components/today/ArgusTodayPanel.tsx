@@ -268,7 +268,7 @@ const ProjectionChart: React.FC<{
         <span>{projection.probabilityTruth.directionalLeanJa} · 根拠{projection.probabilityTruth.evidenceStrength}
           · 実効n={projection.probabilityTruth.effectiveN ?? projection.effectiveSampleCount}
           · {projection.probabilityTruth.uncertaintyJa} · {projection.probabilityTruth.label}</span></div>}
-    <div className="at-proj-meta"><b>{projection.directionLabel}</b><span>{projection.horizon} · 反応{projection.reactionDelay == null ? '—' : `${projection.reactionDelay.toFixed(1)}日`}</span><small>実測と校正済み根拠</small></div>
+    <div className="at-proj-meta"><b>{projection.directionLabel}</b><span>{projection.horizon} · 反応{projection.reactionDelay == null ? '—' : `${projection.reactionDelay.toFixed(1)}日`}</span><small>{projection.shoConditioningJa ? `${projection.shoConditioningJa} · 実測根拠` : '実測と校正済み根拠'}</small></div>
   </div>;
 };
 

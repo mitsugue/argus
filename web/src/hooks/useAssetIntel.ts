@@ -441,9 +441,9 @@ export function useAssetIntel(opts: {
         readiness: note?.readiness ?? null,
         sdRank: sd?.supplyDemandRank ?? null, sdCondition: sd?.condition ?? null,
         flowClass: fl?.flowClass ?? null,
-        eventPending: importantEventsUnknown || eventSyms.has(sym),
+        eventPending: importantEventsUnknown ? null : eventSyms.has(sym),
         eventName: importantEventsUnknown ? '重要イベント情報未確認' : eventSyms.get(sym) ?? null,
-        regimeRiskOff: riskOff, changePct: fl?.changePct ?? null,
+        regimeRiskOff: regLabel ? riskOff : null, changePct: fl?.changePct ?? null,
         dataMissing: missing,
         dqContradictedAvoidChase: dqContra.has(sym), dqSupported: dqSupp.has(sym),
       });

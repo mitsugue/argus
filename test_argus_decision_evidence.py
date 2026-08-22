@@ -1,4 +1,4 @@
-"""V13.6.0 decision-evidence route — canonical artifact references for the
+"""v13.5.14 decision-evidence route — canonical artifact references for the
 device-side SDA.
 
 Contract under test (owner spec 2026-08-22):
@@ -40,8 +40,8 @@ def test_fresh_live_quote_yields_full_available_chain(monkeypatch):
     now = datetime.now(timezone.utc)
     monkeypatch.setenv("RENDER_GIT_COMMIT", "a" * 40)
     monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot",
-                        lambda: {"provider": "jquants",
-                                 "stocks": [_fresh_jp_row(now)]})
+                        lambda **kwargs: {"provider": "jquants",
+                                          "stocks": [_fresh_jp_row(now)]})
     body = _client().get(
         "/api/argus/decision-evidence?symbols=1321").get_json()
     entry = body["subjects"]["1321"]
@@ -64,13 +64,40 @@ def test_fresh_live_quote_yields_full_available_chain(monkeypatch):
     assert body["actionAuthority"] is False
 
 
-def test_delayed_close_degrades_to_stale_reference_not_available(monkeypatch):
+def test_latest_session_close_is_daily_authority_available(monkeypatch):
+    """SHOの日次思考: 最新完了セッションの公式終値は「現在の事実」— 週末や
+    連休の壁時計経過でSTALE扱いにしない(owner spec 2026-08-22)。"""
+    import argus_market_clock
     now = datetime.now(timezone.utc)
+    session = argus_market_clock.latest_completed_session_date(
+        argus_market_clock.JP_EQUITY, now)
     row = dict(_fresh_jp_row(now), status="delayed",
-               sourceTimestamp=_iso(now - timedelta(hours=20)))
+               sourceTimestamp=f"{session.isoformat()}T15:30:00+09:00")
     monkeypatch.setenv("RENDER_GIT_COMMIT", "a" * 40)
     monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot",
-                        lambda: {"provider": "jquants", "stocks": [row]})
+                        lambda **kwargs: {"provider": "jquants", "stocks": [row]})
+    body = _client().get(
+        "/api/argus/decision-evidence?symbols=1321").get_json()
+    entry = body["subjects"]["1321"]
+    assert entry["marketTruth"]["status"] == "AVAILABLE"
+    assert entry["predictionLedger"]["status"] == "AVAILABLE"
+    assert entry["quality"] == {"status": "COMPLETE", "freshness": "FRESH",
+                                "missingReasonCodes": [],
+                                "conflictReasonCodes": []}
+
+
+def test_old_session_close_degrades_to_stale_reference_not_available(monkeypatch):
+    import argus_market_clock
+    now = datetime.now(timezone.utc)
+    session = argus_market_clock.latest_completed_session_date(
+        argus_market_clock.JP_EQUITY, now)
+    old_session = session - timedelta(days=7)
+    row = dict(_fresh_jp_row(now), status="delayed",
+               sourceTimestamp=f"{old_session.isoformat()}T15:30:00+09:00",
+               receivedAt=_iso(now - timedelta(hours=1)))
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "a" * 40)
+    monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot",
+                        lambda **kwargs: {"provider": "jquants", "stocks": [row]})
     body = _client().get(
         "/api/argus/decision-evidence?symbols=1321").get_json()
     entry = body["subjects"]["1321"]
@@ -88,7 +115,7 @@ def test_delayed_close_degrades_to_stale_reference_not_available(monkeypatch):
 def test_absent_inputs_fail_closed_to_missing_http_200(monkeypatch):
     monkeypatch.setenv("RENDER_GIT_COMMIT", "a" * 40)
     monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot",
-                        lambda: {"provider": "jquants", "stocks": []})
+                        lambda **kwargs: {"provider": "jquants", "stocks": []})
     response = _client().get("/api/argus/decision-evidence?symbols=1321")
     assert response.status_code == 200
     entry = response.get_json()["subjects"]["1321"]
@@ -105,8 +132,8 @@ def test_references_match_python_authority_resolver(monkeypatch):
     now = datetime.now(timezone.utc)
     monkeypatch.setenv("RENDER_GIT_COMMIT", "a" * 40)
     monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot",
-                        lambda: {"provider": "jquants",
-                                 "stocks": [_fresh_jp_row(now)]})
+                        lambda **kwargs: {"provider": "jquants",
+                                          "stocks": [_fresh_jp_row(now)]})
     scanner._DECISION_EVIDENCE_CACHE.clear()
     cutoff = scanner._ai_now_iso()
     build_identity = "a" * 40

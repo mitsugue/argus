@@ -68,7 +68,8 @@ export interface TodayProjectionInput {
   assetType?: string; proxyFor?: string | null; licenseStatus?: string;
   eventMarkers?: Array<{ id: string; date: string; labelJa: string; kind: string }>;
   turningPoints?: Array<{ id: string; effectiveFrom: string; status: string; direction: string; facts: string[] }>;
-  calibration?: { historyCount: number; calibrationVersion: string; horizons: Record<string, TodayCalibrationInput> };
+  calibration?: { historyCount: number; calibrationVersion: string; horizons: Record<string, TodayCalibrationInput>;
+    shoConditioning?: { requested?: boolean; currentFeatureKeys?: string[]; coverageDays?: number } | null };
   shortSelling?: TodayShortSellingSummary | null;
   failedRally?: TodayFailedRally | null;
 }
@@ -134,6 +135,8 @@ export interface TodayProjection {
   levelProbabilities: TodayCalibrationInput['levelProbabilities']; reactionDelay: number | null;
   methodLabel: string; timeframeLabel: string; quoteState: string; sourceHistoryCount: number;
   historyStart: string | null; historyEnd: string | null;
+  /** SHO conditioning transparency — which state dimensions conditioned today's analogs. */
+  shoConditioningJa: string | null;
   source: string; availableFrom: string | null;
   assetType: string; proxyFor: string | null; licenseStatus: string;
   forecastId: string; signalEpisodeIds: string[]; supportResistanceIds: string[]; eventIds: string[];
@@ -518,6 +521,17 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
     sourceHistoryCount: input.sourceHistoryCount ?? input.bars.length,
     historyStart: input.historyStart ?? null,
     historyEnd: input.historyEnd ?? input.asOf,
+    shoConditioningJa: (() => {
+      const meta = input.calibration?.shoConditioning;
+      const keys = meta?.currentFeatureKeys ?? [];
+      if (!meta?.requested || keys.length === 0) return null;
+      const names: Record<string, string> = {
+        creditRatio: '信用倍率', creditShortTn: '売り残高',
+        vixLevel: 'VIX', vixChange10: 'VIX変化', rs20: '日米強弱',
+      };
+      const labels = [...new Set(keys.map((key) => names[key] ?? key))];
+      return labels.length ? `SHO条件付き: ${labels.join('・')}` : null;
+    })(),
     source: input.source ?? 'existing_market_data_cache',
     availableFrom: input.availableFrom ?? null,
     assetType: input.assetType ?? 'UNKNOWN',

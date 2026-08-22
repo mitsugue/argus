@@ -80,7 +80,10 @@ export default defineConfig({
         // bottom nav ~80pt above the physical screen edge. Pin the supported
         // mode explicitly so a Home-Screen install is chromeless again.
         display: 'standalone',
-        display_override: ['standalone'],
+        // iOS 26 web-app containers keep a bottom system strip in standalone;
+        // ask for true fullscreen first where the container supports it, with
+        // standalone as the guaranteed fallback.
+        display_override: ['fullscreen', 'standalone'],
         orientation: 'portrait',
         // Manifest icon src is resolved relative to the manifest URL, so
         // bare filenames work under any base path.
@@ -118,6 +121,15 @@ export default defineConfig({
             // IndexedDB repository. Cache Storage must not bypass that
             // validation or manufacture a 200 in front of the ETag boundary.
             urlPattern: /^https:\/\/argus-backend-[a-z0-9]+\.onrender\.com\/api\/argus\/chart-intelligence(?:\?.*)?$/i,
+            handler: 'NetworkOnly',
+          },
+          {
+            // v13.5.14: the Today bootstrap has its own ETag/304 contract and
+            // IndexedDB repository; a Cache-Storage body in front of it made
+            // the phone render yesterday's document (「古いまま」). Same for
+            // decision-evidence, whose resolver rejects cutoffs older than
+            // 10 minutes — a stale cached body is pure wasted work.
+            urlPattern: /^https:\/\/argus-backend-[a-z0-9]+\.onrender\.com\/api\/argus\/(?:today-headline|decision-evidence)(?:\?.*)?$/i,
             handler: 'NetworkOnly',
           },
           {

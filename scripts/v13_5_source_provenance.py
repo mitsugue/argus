@@ -18,14 +18,14 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.13"
+PRODUCT_VERSION = "v13.5.14"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
-    # v13.5.13 owner-functional correction: compact iPhone navigation, concise
+    # v13.5.14 owner-functional correction: compact iPhone navigation, concise
     # Japanese news projection, source-diverse market evidence, and semantic
     # de-duplication of recurring long-end-rate conditions.  Investment and
     # calibration authority stay outside this list and remain fail-closed.
@@ -141,7 +141,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/src/routes/PageShell.tsx",
     "web/src/routes/Watchlist.tsx",
     "web/src/types/assetItem.ts",
-    # v13.5.13 owner spec conformance (2026-08-22): news-risk ⊥ market
+    # v13.5.14 owner spec conformance (2026-08-22): news-risk ⊥ market
     # confirmation, tri-state Action Priority context, honest probability-truth
     # evidence, the canonical artifact resolver boundary (backend
     # decision-evidence route + device resolver + SDA registration seam),
@@ -151,13 +151,17 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "argus_single_decision.py",
     "argus_today_intelligence.py",
     "test_argus_action_priority.py",
+    "test_argus_sho_conditioning.py",
     "test_argus_decision_evidence.py",
     "test_argus_market_truth_scanner.py",
     "test_argus_v12_rc.py",
     "web/scripts/backup-protection-contract.test.cjs",
     "web/scripts/canonical-decision-evidence.test.cjs",
     "web/scripts/device-local-sda-ledger.test.cjs",
+    "web/src/domain/actionPriority.ts",
     "web/src/domain/canonicalDecisionEvidence.ts",
+    "web/src/domain/probabilityTruth.ts",
+    "web/src/main.tsx",
     "web/src/domain/singleDecisionAuthority.ts",
     "web/src/hooks/useDecisionEvidence.ts",
     "web/src/lib/backup.ts",

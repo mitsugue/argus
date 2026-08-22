@@ -8303,8 +8303,17 @@ def _ap_event_pending_map():
     never False (owner spec 2026-08-22 §2: 証拠がない ≠ 条件不成立).
     """
     try:
-        events = (get_events_snapshot(allow_provider_fetch=False)
-                  or {}).get("events") or []
+        snapshot = get_events_snapshot(allow_provider_fetch=False) or {}
+        # get_events_snapshot swallows failures into a MOCK snapshot; mock
+        # calendar entries are display fallbacks, never knowledge — treating
+        # them as real would collapse UNKNOWN back into a boolean.
+        if not isinstance(snapshot, dict) \
+                or str(snapshot.get("status") or "").lower() == "mock":
+            return {}, False
+        events = snapshot.get("events") or []
+        if any(str(ev.get("status") or "").lower() == "mock"
+               for ev in events if isinstance(ev, dict)):
+            return {}, False
         pending = {}
         for ev in events:
             days = ev.get("daysUntil")
@@ -8322,7 +8331,17 @@ def _ap_prior_runup_pct(symbol, market):
     try:
         rows = _chart_history_cached(symbol, market) or []
         closes = [float(r.get("close")) for r in rows[-6:]
-                  if isinstance(r.get("close"), (int, float))]
+                  if isinstance(r, dict)
+                  and isinstance(r.get("close"), (int, float))]
+        if not closes and market == "US":
+            # The US watchlist warm loop fills _US_HISTORY_CACHE ({"closes":
+            # newest-first}), not the chart cache — without this fallback the
+            # US run-up is never measured.
+            cached = ((_US_HISTORY_CACHE.get(str(symbol).upper()) or {})
+                      .get("data") or {})
+            newest_first = [value for value in (cached.get("closes") or [])[:6]
+                            if isinstance(value, (int, float))]
+            closes = [float(value) for value in reversed(newest_first)]
         if len(closes) >= 6 and closes[0] > 0:
             return round((closes[-1] / closes[0] - 1.0) * 100.0, 2)
     except Exception:
@@ -11241,7 +11260,9 @@ def _td_price_history(sym):
     if _TWELVEDATA_API_KEY:
         try:
             r = requests.get(_TWELVEDATA_TS, params={
-                "symbol": sym, "interval": "1day", "outputsize": 1320,
+                # v13.5.14: ten-year corpus (≈252 sessions × 10) for the
+                # SHO-conditioned forecast engine.
+                "symbol": sym, "interval": "1day", "outputsize": 2520,
                 "apikey": _TWELVEDATA_API_KEY}, timeout=15)
             r.raise_for_status()
             body = r.json()
@@ -16472,7 +16493,11 @@ def _news_process_message(message, *, backfill=False):
         "publishedIso": None, "backfill": backfill,
     }
     revision_plan = argus_news_intelligence.merge_revision(existing, {
-        "severity": materiality["severity"], "headlineJa": subject})
+        "severity": materiality["severity"], "headlineJa": subject,
+        # The PENDING→CONFIRMED market-confirmation transition re-alerts
+        # (severity itself never moves on confirmation — the axes are
+        # independent). Without this field the transition can never fire.
+        "confirmationState": materiality["confirmationState"]})
     if revision_plan["action"] == "duplicate":
         health["duplicatesSuppressed"] += 1
         _news_message_status(message.get("messageId"), "DUPLICATE", source)
@@ -30140,7 +30165,11 @@ _ASSET_CHART_SOURCE_CACHE = {}
 _VERIFIED_VIEW_METHOD_VERSION = (
     f"{argus_verified_snapshot.METHOD_VERSION}:"
     f"{argus_chart_intelligence.METHOD_VERSION}:"
-    f"{argus_market_replay.METHOD_VERSION}"
+    f"{argus_market_replay.METHOD_VERSION}:"
+    # v13.5.14: the forecast engine version participates so an engine change
+    # (SHO conditioning) regenerates published snapshots instead of serving
+    # the old calibration until the bars happen to change (「古いまま」根絶).
+    f"{argus_today_intelligence.METHOD_VERSION}"
 )
 
 
@@ -30733,15 +30762,21 @@ def _breadth_lag_trading_days():
     try:
         by_series = argus_market_ledger.latest_by_series(
             _MARKET_LEDGER, _ai_now_iso())
-        newest = None
+        # Only the count series the calibration display actually stands on;
+        # freshness is the OLDEST of them, so one fresh derived proxy (e.g.
+        # breadth.topixProxyClose) can never mask stale advancers/decliners.
+        core_newest = []
         for series_id, rows in (by_series or {}).items():
-            if not str(series_id).startswith("breadth"):
+            name = str(series_id)
+            if not (name.endswith(".advancers") or name.endswith(".decliners")
+                    or name == "breadth.advancers"
+                    or name == "breadth.decliners"):
                 continue
             if rows:
                 period_end = str(rows[-1].get("periodEnd") or "")[:10]
-                if len(period_end) == 10 and (newest is None
-                                              or period_end > newest):
-                    newest = period_end
+                if len(period_end) == 10:
+                    core_newest.append(period_end)
+        newest = min(core_newest) if core_newest else None
         if not newest:
             return None
         target = argus_market_clock.latest_completed_session_date(
@@ -30873,9 +30908,24 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
     # Public chart GETs only consume a verified cache/durable snapshot.  Provider
     # refresh is owned by the natural scheduled tick below, never UI interaction.
     _short_rows = _jp_daily_short_history(cached_only=True) if market == "JP" else []
+    # SHO conditioning context (owner spec 2026-08-22): the ten-year corpus is
+    # joined per-day to the credit / VIX / relative-strength state SHO reads.
+    # Every source is PIT-stamped; assembly failure degrades to the pure
+    # price-action engine rather than blocking the chart.
+    try:
+        _sho_context = {
+            "creditRows": (_jpx_credit_rows_effective()
+                           if market == "JP" else []),
+            "vixRows": _fred_vix_history_dated(),
+            "usRows": (reference_history("SPY", "US")
+                       if str(symbol).upper() != "SPY" else []),
+        }
+    except Exception:
+        _sho_context = None
     _today_intel = argus_today_intelligence.analyze(
         daily_rows, symbol=symbol, market=market,
         short_history=_short_rows, comparison_rows=_comparison_rows,
+        sho_context=_sho_context,
         as_of=now_iso)
     # The pure engine cannot measure breadth freshness (no ledger access), so
     # the serving layer injects the measured JP lag here. None stays None —
@@ -31277,10 +31327,15 @@ _DECISION_EVIDENCE_DEFAULT_SYMBOLS = ("1321", "1306", "SPY", "QQQ")
 
 
 def _decision_evidence_watch_row(symbol, market):
-    getter = (get_japan_watchlist_snapshot if market == "JP"
-              else get_us_watchlist_snapshot)
     try:
-        snapshot = getter()
+        # Public GET contract: cache-only, never a provider fetch — a cold
+        # cache degrades to the EOD history fallback / MISSING references
+        # instead of burning provider budget from unauthenticated polling.
+        if market == "JP":
+            snapshot = get_japan_watchlist_snapshot(
+                allow_provider_fetch=False, record_requested_symbols=False)
+        else:
+            snapshot = get_us_watchlist_snapshot(allow_provider_fetch=False)
     except Exception:
         return None, None
     if not isinstance(snapshot, dict):
@@ -31291,8 +31346,42 @@ def _decision_evidence_watch_row(symbol, market):
     return None, None
 
 
+def _decision_evidence_history_row(symbol, market):
+    """EOD fallback quote row from the cached daily history.
+
+    The four Today headline instruments are not members of the owner watch
+    snapshots, so the watch-row source alone reported quote_row_unavailable in
+    production. The cached daily close is legitimate delayed/stale evidence:
+    the observation freshness classifier downgrades it honestly (DELAYED
+    within 36h, else STALE → STALE reference, never a fabricated AVAILABLE).
+    """
+    try:
+        rows = _chart_history_cached(symbol, market) or []
+    except Exception:
+        return None, None
+    closes = [row for row in rows if isinstance(row, dict)
+              and isinstance(row.get("close"), (int, float))
+              and row.get("date")]
+    if not closes:
+        return None, None
+    last = closes[-1]
+    change_pct = None
+    if len(closes) >= 2:
+        prev = closes[-2].get("close")
+        if isinstance(prev, (int, float)) and prev > 0:
+            change_pct = round((float(last["close"]) / float(prev) - 1.0)
+                               * 100.0, 4)
+    quote = {"symbol": symbol, "status": "delayed",
+             "price": float(last["close"]), "date": str(last["date"])[:10]}
+    if change_pct is not None:
+        quote["changePct"] = change_pct
+    return quote, "history-cache"
+
+
 def _decision_evidence_market_artifact(symbol, market, cutoff, build_identity):
     row, provider = _decision_evidence_watch_row(symbol, market)
+    if not isinstance(row, dict):
+        row, provider = _decision_evidence_history_row(symbol, market)
     if not isinstance(row, dict):
         return None, "quote_row_unavailable"
     observations = _canonical_quote_observations(
@@ -31470,8 +31559,18 @@ def _decision_evidence_document(symbols):
     build_identity = _backend_exact_sha()
     jp_symbols = {str(s.get("symbol") or "").upper() for s in _JP_WATCHLIST}
     us_symbols = {str(s.get("symbol") or "").upper() for s in _US_WATCHLIST}
+    # Public input hygiene: bounded symbol shape and a bounded cache. Expired
+    # entries are pruned on every build so arbitrary query churn cannot grow
+    # the dict without limit.
+    for cached_symbol in list(_DECISION_EVIDENCE_CACHE):
+        if now - _DECISION_EVIDENCE_CACHE[cached_symbol].get("ts", 0) \
+                > _DECISION_EVIDENCE_TTL_SEC:
+            _DECISION_EVIDENCE_CACHE.pop(cached_symbol, None)
     subjects = {}
     for sym in symbols:
+        if not re.fullmatch(r"[A-Z0-9.]{1,12}", sym or ""):
+            subjects[str(sym)[:24]] = {"status": "unsupported_symbol"}
+            continue
         market = ("JP" if (sym in jp_symbols or sym.isdigit())
                   else "US" if (sym in us_symbols or sym.isalpha()) else None)
         if market is None:
@@ -31531,7 +31630,8 @@ def _decision_evidence_document(symbols):
                     "verificationFailures": {
                         "build": f"evidence_build_failed:{type(exc).__name__}"},
                 }
-        _DECISION_EVIDENCE_CACHE[sym] = {"ts": now, "entry": entry}
+        if len(_DECISION_EVIDENCE_CACHE) < 64:
+            _DECISION_EVIDENCE_CACHE[sym] = {"ts": now, "entry": entry}
         subjects[sym] = entry
     return {
         "schemaVersion": "argus-decision-evidence-v1",
@@ -35776,6 +35876,116 @@ def get_runtime_manifest():
 #   (60-day percentile) × broad absolute sanity bands.
 # Alerts fire on ZONE TRANSITIONS and SPIKES, never on one hardcoded level.
 _VIX_HIST_CACHE = {"data": None, "sourceTimestamp": None, "expires": 0.0}
+_VIX_HIST_DATED_CACHE = {"data": None, "expires": 0.0}
+_JPX_CREDIT_ROWS_CACHE = {"data": None}
+_JPX_CREDIT_CSV_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "ops", "imports", "jpx_two_market_credit_20020802_20260710.csv")
+
+
+def _jpx_credit_rows():
+    """Committed JPX two-market margin balances (2002→) as PIT rows.
+
+    The CSV carries explicit availableFrom (publication + conservative lag),
+    so the forecast engine can join each historical session to the credit
+    state actually KNOWN that day. Loaded once per process; [] on failure.
+    """
+    cached = _JPX_CREDIT_ROWS_CACHE.get("data")
+    if cached is not None:
+        return cached
+    rows = []
+    try:
+        import csv as _csv
+        with open(_JPX_CREDIT_CSV_PATH, newline="", encoding="utf-8") as fh:
+            for record in _csv.DictReader(fh):
+                series = str(record.get("seriesId") or "")
+                if series not in ("credit.short_balance",
+                                  "credit.long_balance"):
+                    continue
+                try:
+                    value = float(record.get("value"))
+                except (TypeError, ValueError):
+                    continue
+                rows.append({
+                    "seriesId": series,
+                    "periodEnd": str(record.get("periodEnd") or "")[:10],
+                    "availableFrom": str(record.get("availableFrom") or ""),
+                    "observedAt": str(record.get("observedAt") or ""),
+                    "value": value,
+                })
+    except Exception:
+        rows = []
+    _JPX_CREDIT_ROWS_CACHE["data"] = rows
+    return rows
+
+
+def _jpx_credit_rows_effective():
+    """CSV base + any NEWER Market Ledger credit observations.
+
+    The committed CSV ends 2026-07-10; subsequent weekly imports land in the
+    Market Ledger via /admin/market-ledger/import, so newer periods flow into
+    the SHO conditioning without a code change. Never raises."""
+    base = list(_jpx_credit_rows())
+    last_period = max((str(row.get("periodEnd") or "")[:10] for row in base),
+                      default="")
+    try:
+        by_series = argus_market_ledger.latest_by_series(
+            _MARKET_LEDGER, _ai_now_iso())
+        for series in ("credit.short_balance", "credit.long_balance"):
+            for row in by_series.get(series, []) or []:
+                period = str(row.get("periodEnd") or "")[:10]
+                value = row.get("value")
+                available = str(row.get("availableFrom") or "")
+                if (len(period) == 10 and period > last_period
+                        and isinstance(value, (int, float)) and available):
+                    base.append({"seriesId": series, "periodEnd": period,
+                                 "availableFrom": available,
+                                 "observedAt": str(row.get("observedAt") or ""),
+                                 "value": float(value)})
+    except Exception:
+        pass
+    return base
+
+
+def _fred_vix_history_dated(n=2600):
+    """Dated VIX closes (ascending [{date, value, availableFrom}]) for the
+    ten-year SHO conditioning corpus. availableFrom is the day AFTER the
+    close date (a VIX close is published after that US session), so generic
+    PIT filters stay conservative; [] on no key / failure."""
+    now = time.time()
+    cached = _VIX_HIST_DATED_CACHE
+    if cached["data"] is not None and now < cached["expires"]:
+        return cached["data"]
+    if not _FRED_API_KEY:
+        return []
+    try:
+        r = requests.get(_FRED_BASE, params={
+            "series_id": "VIXCLS", "api_key": _FRED_API_KEY,
+            "file_type": "json", "sort_order": "desc", "limit": n,
+        }, timeout=15)
+        r.raise_for_status()
+        rows = []
+        for obs in r.json().get("observations", []):
+            raw = obs.get("value")
+            date = str(obs.get("date") or "")[:10]
+            if raw in (None, ".", "") or len(date) != 10:
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            available = (datetime.strptime(date, "%Y-%m-%d")
+                         + timedelta(days=1)).strftime("%Y-%m-%d")
+            rows.append({"date": date, "value": value,
+                         "availableFrom": available})
+        rows.sort(key=lambda row: row["date"])
+        if len(rows) >= 100:
+            _VIX_HIST_DATED_CACHE["data"] = rows
+            _VIX_HIST_DATED_CACHE["expires"] = now + 6 * 3600
+            return rows
+        return rows
+    except Exception:
+        return []
 _VIX_HIST_TTL   = 3600  # 1h — daily series, no need to hammer FRED
 
 def _fred_vix_history(n=70):
@@ -36012,9 +36222,12 @@ def _jq_price_history(code):
     if _JQUANTS_API_KEY:
         try:
             headers = {"x-api-key": _JQUANTS_API_KEY}
-            frm = (datetime.now(TZ_JST) - timedelta(days=2000)).strftime("%Y-%m-%d")
+            # v13.5.14 (owner spec): the chart/forecast corpus is TEN years —
+            # the SHO-conditioned engine sweeps the full window (J-Quants
+            # entitlement is rolling 10y; 3660 calendar days ≈ 2,450 sessions).
+            frm = (datetime.now(TZ_JST) - timedelta(days=3660)).strftime("%Y-%m-%d")
             rows, params = [], {"code": code, "from": frm}
-            for _ in range(6):
+            for _ in range(12):
                 r = requests.get(f"{_JQUANTS_BASE}/equities/bars/daily",
                                  headers=headers, params=params, timeout=10)
                 r.raise_for_status()
