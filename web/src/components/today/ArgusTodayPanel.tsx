@@ -4,6 +4,7 @@ import { formatEventTime, quoteDisplayLabel } from '../../domain/argusTodayView'
 import type { RouteKey } from '../NavRail';
 import type { SettingsSection } from '../../navigation';
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
+import { useDecisionEvidence } from '../../hooks/useDecisionEvidence';
 import type {
   MarketHorizon, MarketInstrumentMarket, MarketInstrumentSymbol,
 } from '../../domain/marketInstruments';
@@ -116,6 +117,51 @@ const NEXT_REVIEW_REASON_JA: Record<string, string> = {
   sho_revalidation: 'SHO証拠を再検証',
   evidence_refresh: '正本証拠を更新',
 };
+// v13.5.18 (external review item A): MARKET VIEW (SHO) / ACTION (SDA)
+// separation. The strip renders the document-level SHO consumer projection —
+// reversal + downside axis states and D01-D07 family states — directly under
+// the SDA action so the owner sees "what the market looks like" and "what we
+// do" as two explicitly different authorities. The projection carries
+// actionAuthority:false by construction and is never an SDA input.
+const SHO_STATE_JA: Record<string, string> = {
+  MIXED: '混在', FRAGILE: '脆弱', DOWNSIDE_TRIGGERED: '下方シグナル点灯',
+  SELL_OFF_ACTIVE: '売り圧継続', REVERSAL_EARLY: '反転初動',
+  TECHNICAL_REBOUND: 'テクニカル反発', RECOVERY_TEST: '回復試験',
+  CONFIRMED_ADVANCE: '上昇確認', FALSE_RALLY: 'だまし上げ警戒',
+};
+const SHO_FAMILY_JA: Record<string, string> = {
+  D01: '信用残', D02: '1570倍率', D03: '相対力', D04: 'EPS基準',
+  D05: '海外フロー', D06: 'VIX', D07: '決算反応',
+};
+const familyStateJa = (row: { status?: string; conditionMet?: boolean | null }): string => {
+  if (row.status === 'LICENSE_BLOCKED') return '要ライセンス';
+  if (row.status !== 'AVAILABLE') return '欠測';
+  return row.conditionMet === true ? '成立' : row.conditionMet === false ? '不成立' : '判定不能';
+};
+const MarketViewStrip: React.FC = () => {
+  const evidence = useDecisionEvidence();
+  const projection = evidence.marketView?.projection;
+  if (!projection || projection.actionAuthority !== false) return null;
+  const reversal = projection.reversal;
+  const families = Object.entries(projection.families ?? {});
+  return <div className="at-marketview" data-argus-contract="sho-market-view-v1"
+    aria-label="市場観（SHO・行動権限なし）">
+    <small>市場観（SHO） — 行動判断（SDA）とは分離</small>
+    <div className="mv-states">
+      <span>反転: <b>{reversal?.reversalState
+        ? (SHO_STATE_JA[reversal.reversalState] ?? reversal.reversalState) : 'データ待ち'}</b></span>
+      <span>下方: <b>{reversal?.downsideState
+        ? (SHO_STATE_JA[reversal.downsideState] ?? reversal.downsideState) : 'データ待ち'}</b></span>
+    </div>
+    {families.length > 0 && <div className="mv-fams">
+      {families.map(([family, row]) => <i key={family}
+        data-family={family} data-family-status={row.status ?? 'MISSING'}>
+        {SHO_FAMILY_JA[family] ?? family} {familyStateJa(row)}</i>)}
+    </div>}
+    <span className="mv-note">市場観は行動権限を持たない（未検証の候補は確率を主張しない）</span>
+  </div>;
+};
+
 const nextReviewLabel = (code: string | undefined): string | undefined => {
   if (!code) return undefined;
   if (NEXT_REVIEW_REASON_JA[code]) return NEXT_REVIEW_REASON_JA[code];
@@ -398,6 +444,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         <div><b>次の確認</b><span>{nextReviewLabel(view.canonicalDecision.nextReviewConditionCodes[0])
           ?? (view.nextEvent ? `${view.nextEvent.code} ${formatEventTime(view.nextEvent.at)}` : '正本証拠の更新')}</span></div>
       </div>
+      <MarketViewStrip />
       <div className="at-kpis"><span>確度 <b>{Math.round(view.canonicalDecision.confidence.valueBps / 100)}%</b></span>
         <span>DATA <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></span></div>
     </article>

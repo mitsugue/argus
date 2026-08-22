@@ -11,8 +11,31 @@ const REFRESH_INTERVAL_MS = 120_000;   // matches the backend evidence TTL
 const MAX_SYMBOLS_PER_REQUEST = 8;
 const HEADLINE_SYMBOLS = ['1321', '1306', 'SPY', 'QQQ'] as const;
 
+// v13.5.18 (review item A): document-level SHO MARKET VIEW. Display-only —
+// the resolver never registers it as an SDA input; actionAuthority stays
+// false by construction on the backend projection.
+export interface ShoMarketView {
+  schemaVersion: string;
+  informationCutoff: string;
+  projection: {
+    families?: Record<string, {
+      status?: string; conditionMet?: boolean | null;
+      lineage?: string; validationStatus?: string;
+    }>;
+    reversal?: {
+      downsideState?: string; reversalState?: string;
+      validationStatus?: string;
+    } | null;
+    status?: string;
+    actionAuthority?: boolean;
+  } | null;
+  sourceStatus: Record<string, string>;
+  actionAuthority: boolean;
+}
+
 export interface DecisionEvidenceState {
   subjects: Record<string, unknown> | null;
+  marketView: ShoMarketView | null;
   generatedAt: string | null;
   loading: boolean;
   error: string | null;
@@ -38,11 +61,11 @@ export function requestDecisionEvidenceSymbols(symbols: readonly string[]): void
 }
 
 const decisionEvidenceStore = createSharedPollingStore<DecisionEvidenceState>(
-  { subjects: null, generatedAt: null, loading: true, error: null },
+  { subjects: null, marketView: null, generatedAt: null, loading: true, error: null },
   (setState) => {
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
     if (!backend) {
-      setState({ subjects: null, generatedAt: null, loading: false, error: null });
+      setState({ subjects: null, marketView: null, generatedAt: null, loading: false, error: null });
       return () => {};
     }
     const base = backend.replace(/\/$/, '') + '/api/argus/decision-evidence';
@@ -64,6 +87,7 @@ const decisionEvidenceStore = createSharedPollingStore<DecisionEvidenceState>(
         const data = await response.json() as {
           schemaVersion?: string; generatedAt?: string;
           subjects?: Record<string, unknown>;
+          marketView?: ShoMarketView;
         };
         if (data.schemaVersion !== 'argus-decision-evidence-v1'
             || typeof data.subjects !== 'object' || data.subjects === null) {
@@ -71,7 +95,11 @@ const decisionEvidenceStore = createSharedPollingStore<DecisionEvidenceState>(
         }
         fetchedRevision = revision;
         if (!cancelled) {
-          setState({ subjects: data.subjects,
+          const view = data.marketView;
+          const marketView = view
+            && view.schemaVersion === 'argus-sho-market-view-v1'
+            && view.actionAuthority === false ? view : null;
+          setState({ subjects: data.subjects, marketView,
             generatedAt: typeof data.generatedAt === 'string' ? data.generatedAt : null,
             loading: false, error: null });
         }

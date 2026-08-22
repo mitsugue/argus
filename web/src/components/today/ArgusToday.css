@@ -192,3 +192,16 @@
 .at-review { grid-column:span 12; padding:9px 12px; }.at-review div { display:flex; justify-content:space-between; gap:8px; font-size:11px; }.at-review div span { color:var(--text-sub); }.at-review strong { display:block; margin-top:4px; color:var(--text-main); font-size:11px; }
 @media(max-width:720px){.argus-today{gap:6px}.at-event,.at-priorities,.at-decision,.at-evidence,.at-compact,.at-review{grid-column:span 12}.at-event,.at-priorities,.at-decision,.at-compact{padding:9px 11px}.at-event small{display:none}.at-mode span{margin-left:3px}.at-projection svg{height:250px}.at-proj-levels,.at-action-plan{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:390px){.at-lamps{font-size:8.5px}.at-mode button{padding:2px 5px}.at-index-strip b{font-size:10px}.at-index-strip span{font-size:7.5px}.at-spark{width:27px}.at-call strong{font-size:34px}.at-proj-heading{display:grid;gap:1px}.at-proj-heading span{font-size:7.5px}.at-proj-meta{gap:5px}.at-proj-meta small{display:none}.at-proj-prob{gap:4px 7px;font-size:8px;flex-wrap:wrap}.at-proj-prob em{margin-left:0}.at-kpis,.at-factors,.at-perms{gap:4px 8px}.at-rows>div,.at-rows>button{grid-template-columns:58px minmax(0,1fr) auto}}
+
+/* v13.5.18 — MARKET VIEW (SHO) / ACTION (SDA) separation strip */
+.at-marketview{display:flex;flex-direction:column;gap:4px;padding:8px 10px;
+  border:1px solid rgba(148,178,255,.16);border-radius:8px;font-size:11px;
+  background:rgba(148,178,255,.05)}
+.at-marketview small{opacity:.65;letter-spacing:.06em;font-size:10px}
+.at-marketview .mv-states{display:flex;gap:12px;flex-wrap:wrap}
+.at-marketview .mv-states b{font-weight:700}
+.at-marketview .mv-fams{display:flex;gap:5px;flex-wrap:wrap}
+.at-marketview .mv-fams i{font-style:normal;padding:1px 6px;border-radius:4px;
+  background:rgba(255,255,255,.06);white-space:nowrap}
+.at-marketview .mv-fams i[data-family-status="AVAILABLE"]{background:rgba(110,220,170,.12)}
+.at-marketview .mv-note{opacity:.55;font-size:10px}

@@ -156,3 +156,188 @@ def test_references_match_python_authority_resolver(monkeypatch):
     assert references["predictionLedger"]["contextId"] == prediction["id"]
     assert references["sho"]["artifactId"] == sho_artifact["artifactId"]
     assert references["verificationFailures"] == {}
+
+
+# ━━━ v13.5.18 — SHO CORE production wiring + MARKET VIEW (review items A/B/C) ━━━
+
+def _reset_sho_memos():
+    scanner._SHO_PIT_INPUT_MEMO.update({"ts": 0.0, "data": None})
+    scanner._SHO_MARKET_VIEW_MEMO.update({"ts": 0.0, "view": None})
+    scanner._SHO_INDEX_OHLCV_CACHE.clear()
+
+
+def _fixture_index_bars(instrument_id, days, *, base, step, volume,
+                        next_day_available):
+    now = datetime.now(timezone.utc)
+    rows = []
+    for offset in range(days, 0, -1):
+        date = (now - timedelta(days=offset)).date()
+        value = base + (days - offset) * step
+        if next_day_available:
+            available = (date + timedelta(days=1)).isoformat() + "T00:00:00Z"
+        else:
+            available = date.isoformat() + "T07:00:00Z"
+        rows.append({
+            "instrumentId": instrument_id, "date": date.isoformat(),
+            "open": value, "high": value + 1.0, "low": max(value - 1.0, 0.5),
+            "close": value, "volume": volume,
+            "availableFrom": available, "adjusted": False,
+            "sourceRef": "fixture",
+        })
+    return rows
+
+
+def _seed_sho_inputs():
+    now = datetime.now(timezone.utc)
+    credit = []
+    for week in range(6, 0, -1):
+        period = (now - timedelta(days=7 * week)).date()
+        available = (period + timedelta(days=4)).isoformat() + "T00:00:00Z"
+        credit.append({"seriesId": "credit.short_balance",
+                       "periodEnd": period.isoformat(),
+                       "availableFrom": available, "value": 6.5e11})
+        credit.append({"seriesId": "credit.long_balance",
+                       "periodEnd": period.isoformat(),
+                       "availableFrom": available, "value": 3.4e12})
+    margin_date = (now - timedelta(days=10)).date()
+    rs_date = (now - timedelta(days=2)).date()
+    data = {
+        "creditRows": credit,
+        "margin1570Rows": [{
+            "instrumentId": "1570", "field": "margin_ratio",
+            "date": margin_date.isoformat(), "value": 1.42,
+            "availableFrom": (margin_date + timedelta(days=7)).isoformat()
+            + "T00:00:00Z"}],
+        "rsProxy": {"instrumentId": "1321",
+                    "seriesId": "relative_strength_20d",
+                    "date": rs_date.isoformat(), "value": 0.0123,
+                    "availableFrom": rs_date.isoformat() + "T07:00:00Z"},
+        "flowRows": [],
+        "vixRows": _fixture_index_bars("VIX", 45, base=16.0, step=0.1,
+                                       volume=0.0, next_day_available=True),
+        "nikkeiRows": _fixture_index_bars("NIKKEI_225_INDEX", 45,
+                                          base=64000.0, step=40.0,
+                                          volume=150000000.0,
+                                          next_day_available=False),
+        "sourceStatus": {"credit": "csv_ledger", "margin1570": "jquants_weekly",
+                         "relativeStrength": "etf_proxy_20d",
+                         "foreignFlow": "missing", "vix": "yahoo_ohlcv",
+                         "nikkei": "yahoo_ohlcv"},
+    }
+    scanner._SHO_PIT_INPUT_MEMO.update(
+        {"ts": scanner.time.time(), "data": data})
+
+
+def test_market_view_projects_real_family_states(monkeypatch):
+    """Review item B: D01-D07 evaluate the wired production feeds, and the
+    document-level MARKET VIEW (item A) projects them with zero authority."""
+    _reset_sho_memos()
+    scanner._SHO_MARKET_VIEW_MEMO.update({"ts": 0.0, "view": None})
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "a" * 40)
+    monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot",
+                        lambda **kwargs: {"provider": "jquants", "stocks": []})
+    _seed_sho_inputs()
+    try:
+        body = _client().get(
+            "/api/argus/decision-evidence?symbols=1321").get_json()
+        view = body["marketView"]
+        assert view["schemaVersion"] == "argus-sho-market-view-v1"
+        assert view["actionAuthority"] is False
+        projection = view["projection"]
+        assert projection["actionAuthority"] is False
+        assert projection["action"] is None
+        families = projection["families"]
+        assert families["D01"]["status"] == "AVAILABLE"
+        assert families["D01"]["conditionMet"] is True          # 6.5e11 < 8e11
+        assert families["D02"]["status"] == "AVAILABLE"
+        assert families["D03"]["status"] == "AVAILABLE"
+        assert families["D03"]["lineage"] == "ARGUS_CANDIDATE"  # ETF proxy lane
+        assert families["D05"]["status"] == "MISSING"           # no flow feed
+        assert families["D06"]["status"] == "AVAILABLE"
+        assert families["D07"]["status"] == "MISSING"
+        # Nothing here may claim a validated state or a probability.
+        for family in families.values():
+            assert family["validationStatus"] == "UNVALIDATED"
+        reversal = projection["reversal"]
+        assert reversal is not None
+        assert reversal["reversalState"], "real bars must classify an axis"
+        assert view["sourceStatus"]["vix"] == "yahoo_ohlcv"
+    finally:
+        _reset_sho_memos()
+
+
+def test_market_view_cold_inputs_stay_missing_not_fabricated(monkeypatch):
+    """Cold caches must yield MISSING families — never invented evidence."""
+    _reset_sho_memos()
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "a" * 40)
+    monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot",
+                        lambda **kwargs: {"provider": "jquants", "stocks": []})
+    monkeypatch.setattr(scanner, "_jpx_credit_rows_effective", lambda: [])
+    monkeypatch.setattr(scanner, "_chart_history_cached",
+                        lambda symbol, market: [])
+    try:
+        body = _client().get(
+            "/api/argus/decision-evidence?symbols=1321").get_json()
+        families = body["marketView"]["projection"]["families"]
+        for name in ("D01", "D02", "D03", "D05", "D06", "D07"):
+            assert families[name]["status"] in ("MISSING", "LICENSE_BLOCKED")
+            assert families[name]["conditionMet"] is None
+    finally:
+        _reset_sho_memos()
+
+
+def test_important_events_imminent_feed_is_uncapped(monkeypatch):
+    """Review item C: the D/D-1 constraint feed must not depend on the 8-item
+    display cap (event #9+ silently produced no constraint)."""
+    events = [{
+        "id": f"ev-{index}", "kind": f"macro{index}",
+        "title": f"Macro event {index}", "impact": "high",
+        "escalation": "D-1", "daysUntil": 1,
+        "eventDate": "2026-08-23", "linkedAssets": ["QQQ"],
+        "status": "scheduled",
+    } for index in range(12)]
+    monkeypatch.setattr(scanner, "get_events_snapshot",
+                        lambda: {"status": "ok", "asOf": "now",
+                                 "events": events})
+    body = scanner.app.test_client().get(
+        "/api/argus/important-events").get_json()
+    assert len(body["events"]) <= 8
+    assert len(body["imminent"]) >= 12
+    for row in body["imminent"]:
+        assert row["countdown"] in ("D", "D-1")
+        assert row["displayImpact"]
+        assert isinstance(row["linkedAssets"], list)
+
+
+def test_yahoo_index_mapper_drops_incomplete_bars(monkeypatch):
+    """The OHLCV mapper passes source values through exactly (volume 0 for
+    ^VIX is the reported value) and DROPS bars with any null component —
+    components are never filled."""
+    _reset_sho_memos()
+    canned = {
+        "chart": {"result": [{
+            "meta": {"gmtoffset": -18000},
+            "timestamp": [1787122800, 1787209200, 1787295600],
+            "indicators": {"quote": [{
+                "open": [15.9, 14.9, None], "high": [16.0, 16.1, 15.9],
+                "low": [14.7, 14.9, 15.0], "close": [14.9, 16.0, 15.1],
+                "volume": [0, 0, 0],
+            }]},
+        }]}}
+
+    class _Resp:
+        status_code = 200
+        def json(self):
+            return canned
+    monkeypatch.setattr(scanner.requests, "get",
+                        lambda *args, **kwargs: _Resp())
+    try:
+        rows = scanner._yahoo_index_ohlcv("^VIX", "VIX", fetch=True,
+                                          next_day_available=True)
+        assert len(rows) == 2                     # null-open bar dropped
+        assert all(row["volume"] == 0.0 for row in rows)
+        assert all(row["instrumentId"] == "VIX" for row in rows)
+        for row in rows:
+            assert row["availableFrom"] > row["date"]
+    finally:
+        _reset_sho_memos()

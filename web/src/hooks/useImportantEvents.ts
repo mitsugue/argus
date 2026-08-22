@@ -39,6 +39,17 @@ export interface ImportantEvent {
   releasedAt: string | null;
 }
 
+// v13.5.18 (review item C): uncapped D/D-1 constraint feed. The display list
+// stays capped at 8, but the SDA/AP event gate must see EVERY imminent linked
+// event — the audit showed event #9+ silently produced no constraint.
+export interface ImminentEvent {
+  eventCode: string | null;
+  countdown: string | null;
+  displayImpact: EventImpact | null;
+  linkedAssets: string[];
+  title: string | null;
+}
+
 export interface ImportantEventsSnapshot {
   status: string;
   asOf: string;
@@ -46,6 +57,7 @@ export interface ImportantEventsSnapshot {
   engineVersion: string;
   count: number;
   events: ImportantEvent[];
+  imminent?: ImminentEvent[];
 }
 
 const REFRESH_INTERVAL_MS = 120_000;   // events move slowly; 2-min poll is plenty

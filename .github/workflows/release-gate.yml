@@ -94,7 +94,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-manifest-${{ github.sha }}
-          path: artifacts/release_manifest.json
+          path: |
+            artifacts/release_manifest.json
+            artifacts/pytest-failure.log
+          if-no-files-found: warn
 
   premerge_admission:
     name: premerge-admission

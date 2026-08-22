@@ -26,6 +26,15 @@ DIRTY_BEFORE=$(git status --porcelain | wc -l | tr -d ' ')
 PY=fail; TS=fail; BUILD=fail
 python3 -m pytest -q -p no:cacheprovider >"$PY_LOG" 2>&1 && PY=pass
 TESTCOUNT=$(grep -aoE '[0-9]+ passed' "$PY_LOG" | tail -1)
+# v13.5.18: self-describing failure. A CI-only test failure with no visible
+# pytest output cost a full gate round-trip to even name the failing test —
+# on failure the tail of the log goes to stdout and the whole log is kept in
+# artifacts/ so the workflow can upload it.
+if [ "$PY" != pass ]; then
+  echo "release-gate: pytest FAILED — last 80 lines:"
+  tail -80 "$PY_LOG"
+  cp "$PY_LOG" artifacts/pytest-failure.log 2>/dev/null || true
+fi
 (cd web && npm run lint >"$TS_LOG" 2>&1) && TS=pass
 (cd web && DEPLOY_BASE=/argus/ npm run build >"$BUILD_LOG" 2>&1) && BUILD=pass
 DIRTY_AFTER=$(git status --porcelain | wc -l | tr -d ' ')

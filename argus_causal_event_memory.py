@@ -38,7 +38,15 @@ OUTCOME_SCHEMA_VERSION = "argus-causal-outcome-window-v1"
 REVIEW_SCHEMA_VERSION = "argus-causal-review-v1"
 LINK_SCHEMA_VERSION = "argus-causal-event-link-v1"
 EVENT_POLICY_VERSION = "causal-event-policy-v1"
-CAUSAL_POLICY_VERSION = "causal-assessment-policy-v1"
+# v2 (external review item D): the symmetric contradiction-streak criterion
+# below is a POLICY-LEVEL invalidation code accepted for every hypothesis,
+# including events stored before this policy existed — without it the
+# INVALIDATED state was structurally unreachable from production evidence
+# (confirmation-only automation = confirmation bias).
+CAUSAL_POLICY_VERSION = "causal-assessment-policy-v2"
+CONTRADICTION_STREAK_CRITERION = "SUSTAINED_CONTRADICTION_STREAK"
+CONTRADICTION_STREAK_MIN_SECONDS = 3 * 24 * 60 * 60
+CONTRADICTION_STREAK_MIN_VARIABLES = 2
 ANALOG_POLICY_VERSION = "structured-regime-analog-v1"
 CALIBRATION_GENERATION = "event-calibration-shadow-v1"
 CALIBRATION_MODE = "SHADOW"
@@ -650,6 +658,51 @@ def _aggregate_event_status(states: Sequence[str]) -> str:
     return "WATCHING"
 
 
+def sustained_contradiction_note(event: Mapping[str, Any], hypothesis_id: str,
+                                 evidence: Sequence[Mapping[str, Any]],
+                                 evaluated_at: str) -> Optional[Dict[str, Any]]:
+    """Symmetric negative-evidence automation (external review item D).
+
+    Emits the SUSTAINED_CONTRADICTION_STREAK evidence row when a hypothesis
+    has ALREADY been contradiction-dominated (its newest assessment is
+    WEAKENED) for at least three days AND the current evidence still
+    contradicts on >= 2 tracked variables with zero support. Mixed, absent,
+    or young contradiction returns None — one adverse read never invalidates.
+    This mirrors the flag-recovery guard on the negative side so the memory
+    cannot only ever move toward confirmation.
+    """
+    evaluated = _parse_time(_iso(evaluated_at, "evaluated_at"), "evaluated_at")
+    rows = [row for row in evidence or [] if isinstance(row, Mapping)]
+    contradicting = {str(row.get("variable")) for row in rows
+                     if _slug(row.get("relation")) == "CONTRADICTING"}
+    supporting = {str(row.get("variable")) for row in rows
+                  if _slug(row.get("relation")) == "SUPPORTING"}
+    if len(contradicting) < CONTRADICTION_STREAK_MIN_VARIABLES or supporting:
+        return None
+    weakened_at = None
+    for assessment in reversed(list(event.get("assessments") or [])):
+        if not isinstance(assessment, Mapping) or \
+                assessment.get("hypothesisId") != hypothesis_id:
+            continue
+        if assessment.get("status") == "WEAKENED":
+            weakened_at = assessment.get("evaluatedAt")
+        break          # newest assessment decides the standing state
+    if not weakened_at:
+        return None
+    age = (evaluated - _parse_time(weakened_at, "weakened_at")).total_seconds()
+    if age < CONTRADICTION_STREAK_MIN_SECONDS:
+        return None
+    return {
+        "variable": "sustained_contradiction",
+        "relation": "CONTRADICTING",
+        "observedDirection": "OPPOSED",
+        "expectedDirection": "SUPPORTING",
+        "knownAt": _iso(evaluated_at, "evaluated_at"),
+        "sourceRef": "auto:sustained-contradiction-streak",
+        "noteCode": CONTRADICTION_STREAK_CRITERION,
+    }
+
+
 def build_assessment(*, event: Mapping[str, Any], hypothesis_id: str,
                      evaluated_at: str, evidence: Sequence[Mapping[str, Any]],
                      attribution_mode: str = "SINGLE_CAUSAL",
@@ -694,7 +747,12 @@ def build_assessment(*, event: Mapping[str, Any], hypothesis_id: str,
     contradicting = {row["variable"] for row in normalized
                       if row["relation"] == "CONTRADICTING"}
     codes = {row["noteCode"] for row in normalized}
-    invalidation_codes = set(hypothesis.get("invalidationCriteria") or [])
+    # Policy-level criterion (v2): the sustained-contradiction streak
+    # invalidates ANY hypothesis, including ones stored under v1 whose frozen
+    # criteria predate it. Only sustained_contradiction_note() emits the code
+    # in production, under its own strict guards.
+    invalidation_codes = (set(hypothesis.get("invalidationCriteria") or [])
+                          | {CONTRADICTION_STREAK_CRITERION})
     requirements = set(hypothesis.get("confirmationRequirements") or [])
     covered = requirements & supporting
     if not normalized:
