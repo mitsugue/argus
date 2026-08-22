@@ -31327,10 +31327,15 @@ _DECISION_EVIDENCE_DEFAULT_SYMBOLS = ("1321", "1306", "SPY", "QQQ")
 
 
 def _decision_evidence_watch_row(symbol, market):
-    getter = (get_japan_watchlist_snapshot if market == "JP"
-              else get_us_watchlist_snapshot)
     try:
-        snapshot = getter()
+        # Public GET contract: cache-only, never a provider fetch — a cold
+        # cache degrades to the EOD history fallback / MISSING references
+        # instead of burning provider budget from unauthenticated polling.
+        if market == "JP":
+            snapshot = get_japan_watchlist_snapshot(
+                allow_provider_fetch=False, record_requested_symbols=False)
+        else:
+            snapshot = get_us_watchlist_snapshot(allow_provider_fetch=False)
     except Exception:
         return None, None
     if not isinstance(snapshot, dict):
@@ -31554,8 +31559,18 @@ def _decision_evidence_document(symbols):
     build_identity = _backend_exact_sha()
     jp_symbols = {str(s.get("symbol") or "").upper() for s in _JP_WATCHLIST}
     us_symbols = {str(s.get("symbol") or "").upper() for s in _US_WATCHLIST}
+    # Public input hygiene: bounded symbol shape and a bounded cache. Expired
+    # entries are pruned on every build so arbitrary query churn cannot grow
+    # the dict without limit.
+    for cached_symbol in list(_DECISION_EVIDENCE_CACHE):
+        if now - _DECISION_EVIDENCE_CACHE[cached_symbol].get("ts", 0) \
+                > _DECISION_EVIDENCE_TTL_SEC:
+            _DECISION_EVIDENCE_CACHE.pop(cached_symbol, None)
     subjects = {}
     for sym in symbols:
+        if not re.fullmatch(r"[A-Z0-9.]{1,12}", sym or ""):
+            subjects[str(sym)[:24]] = {"status": "unsupported_symbol"}
+            continue
         market = ("JP" if (sym in jp_symbols or sym.isdigit())
                   else "US" if (sym in us_symbols or sym.isalpha()) else None)
         if market is None:
@@ -31615,7 +31630,8 @@ def _decision_evidence_document(symbols):
                     "verificationFailures": {
                         "build": f"evidence_build_failed:{type(exc).__name__}"},
                 }
-        _DECISION_EVIDENCE_CACHE[sym] = {"ts": now, "entry": entry}
+        if len(_DECISION_EVIDENCE_CACHE) < 64:
+            _DECISION_EVIDENCE_CACHE[sym] = {"ts": now, "entry": entry}
         subjects[sym] = entry
     return {
         "schemaVersion": "argus-decision-evidence-v1",
