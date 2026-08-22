@@ -114,6 +114,8 @@ import argus_market_shock           # v13.5.1: market-shock materiality (US30Y +
 import argus_news_intelligence      # v13.5.3: Nikkei mail → news-risk evidence (pure policy)
 import argus_gmail_intake           # v13.5.3: dedicated read-only news mailbox intake
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
+import argus_sho                    # v13.5.13: SHO evidence engine (pure; evidence, never action)
+import argus_single_decision        # v13.5.13: canonical artifact references for device SDA
 import argus_tick_durability        # v13.3.1: bounded tick WAL/checkpoint/single-flight
 import argus_persistent_storage     # v13.3.1: fail-closed Render Disk contract
 import argus_remote_receipt_queue   # v13.4.2: fsynced async Remote Journal intents
@@ -8292,16 +8294,57 @@ def _supply_demand_sources():
 # isHeld=unknown (privacy-safe by construction). The device-local TS port
 # re-ranks with real held/weight context for the owner's Today list.
 
+def _ap_event_pending_map():
+    """Curated-calendar event proximity per symbol for Action Priority.
+
+    Returns (pending_map, calendar_known). pending_map[symbol] = event title
+    for D / D-1 linked events. calendar_known=False means the calendar itself
+    could not be read — callers must then pass eventPending=None (UNKNOWN),
+    never False (owner spec 2026-08-22 §2: 証拠がない ≠ 条件不成立).
+    """
+    try:
+        events = (get_events_snapshot(allow_provider_fetch=False)
+                  or {}).get("events") or []
+        pending = {}
+        for ev in events:
+            days = ev.get("daysUntil")
+            if isinstance(days, int) and 0 <= days <= 1:
+                for sym in (ev.get("linkedAssets") or []):
+                    pending.setdefault(str(sym).upper(),
+                                       str(ev.get("title") or ""))
+        return pending, True
+    except Exception:
+        return {}, False
+
+
+def _ap_prior_runup_pct(symbol, market):
+    """5-day run-up% from the cached daily history; None when unprovable."""
+    try:
+        rows = _chart_history_cached(symbol, market) or []
+        closes = [float(r.get("close")) for r in rows[-6:]
+                  if isinstance(r.get("close"), (int, float))]
+        if len(closes) >= 6 and closes[0] > 0:
+            return round((closes[-1] / closes[0] - 1.0) * 100.0, 2)
+    except Exception:
+        return None
+    return None
+
+
 def _action_priority_items(cap=12):
     now_iso = _ai_now_iso()
     sd_by = {s["symbol"]: s for s in _supply_demand_list(cap=30)}
     flow_by = {r["symbol"]: r for r in _flow_attribution_list(cap=30)}
-    risk_off = False
+    # Tri-state regime: True/False only when the cached regime label is
+    # actually readable; a cache miss or error stays None (UNKNOWN), so a
+    # regime outage can never silently score as "not risk-off".
+    risk_off = None
     try:
         lbl = ((_REGIME_CACHE.get("data") or {}).get("regime") or {}).get("label")
-        risk_off = lbl in ("RISK_OFF", "EVENT_WAIT")
+        if lbl:
+            risk_off = lbl in ("RISK_OFF", "EVENT_WAIT")
     except Exception:
-        pass
+        risk_off = None
+    event_pending_by, calendar_known = _ap_event_pending_map()
     items = []
     for s, mkt in ([(x, "JP") for x in _JP_WATCHLIST] + [(x, "US") for x in _US_WATCHLIST]):
         sym = str(s.get("symbol") or "").upper()
@@ -8310,13 +8353,17 @@ def _action_priority_items(cap=12):
         sd = sd_by.get(sym) or {}
         fl = flow_by.get(sym) or {}
         ev = (sd.get("evidence") or {})
+        pending_title = event_pending_by.get(sym)
+        event_pending = (True if (pending_title or ev.get("eventContext"))
+                         else (False if calendar_known else None))
         inputs = {
             "isHeld": None, "assetName": s.get("name") or sym,
             "sdRank": sd.get("supplyDemandRank"), "sdCondition": sd.get("condition"),
             "flowClass": fl.get("flowClass") or ev.get("flowAttributionContext"),
             "changePct": fl.get("changePct"),
-            "priorRunupPct": None,
-            "eventPending": bool(ev.get("eventContext")),
+            "priorRunupPct": _ap_prior_runup_pct(sym, mkt),
+            "eventPending": event_pending,
+            "eventName": pending_title or ev.get("eventContext"),
             "instStance": ev.get("institutionalContext"),
             "instDirect": False,
             "regimeRiskOff": risk_off,
@@ -16440,7 +16487,11 @@ def _news_process_message(message, *, backfill=False):
     event["alertEligible"] = (
         not backfill and event["severity"] in ("HIGH", "CRITICAL")
         and (revision_plan["action"] == "create"
-             or revision_plan["alert"] == "severity_increase"))
+             or revision_plan["alert"] in (
+                 # Severity escalation and the market confirming a material
+                 # headline both re-alert; confirmation never edits severity
+                 # (news risk ⊥ market confirmation, owner spec §7).
+                 "severity_increase", "market_confirmation")))
     _NEWS_INTEL["events"][identity] = event
     if identity in _NEWS_INTEL["order"]:
         _NEWS_INTEL["order"].remove(identity)
@@ -30672,6 +30723,43 @@ def _jp_daily_short_history(cached_only=False):
     return durable_rows
 
 
+def _breadth_lag_trading_days():
+    """JP breadth freshness vs the latest completed JP session, in trading days.
+
+    Measured from the Market Ledger's newest breadth periodEnd against
+    argus_market_clock's latest completed session. None whenever either side is
+    unprovable — the probability-truth gate reads None as unverified, never as
+    fresh (owner spec 2026-08-22 §2: UNKNOWN is not FALSE)."""
+    try:
+        by_series = argus_market_ledger.latest_by_series(
+            _MARKET_LEDGER, _ai_now_iso())
+        newest = None
+        for series_id, rows in (by_series or {}).items():
+            if not str(series_id).startswith("breadth"):
+                continue
+            if rows:
+                period_end = str(rows[-1].get("periodEnd") or "")[:10]
+                if len(period_end) == 10 and (newest is None
+                                              or period_end > newest):
+                    newest = period_end
+        if not newest:
+            return None
+        target = argus_market_clock.latest_completed_session_date(
+            argus_market_clock.JP_EQUITY, datetime.now(timezone.utc))
+        cursor = datetime.strptime(newest, "%Y-%m-%d").date()
+        if cursor >= target:
+            return 0
+        lag = 0
+        while cursor < target and lag <= 30:
+            cursor += timedelta(days=1)
+            if argus_market_clock.is_trading_day(
+                    argus_market_clock.JP_EQUITY, cursor):
+                lag += 1
+        return lag
+    except Exception:
+        return None
+
+
 def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                          cached_only=False, precompute_replay=False,
                          daily_rows_override=None):
@@ -30789,6 +30877,17 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
         daily_rows, symbol=symbol, market=market,
         short_history=_short_rows, comparison_rows=_comparison_rows,
         as_of=now_iso)
+    # The pure engine cannot measure breadth freshness (no ledger access), so
+    # the serving layer injects the measured JP lag here. None stays None —
+    # the display gate reads it as unverified, never as fresh.
+    if market == "JP":
+        _breadth_lag = _breadth_lag_trading_days()
+        if _breadth_lag is not None:
+            for _cal_h in ((_today_intel.get("calibration") or {})
+                           .get("horizons") or {}).values():
+                _cal_ev = _cal_h.get("probabilityTruthEvidence")
+                if isinstance(_cal_ev, dict):
+                    _cal_ev["breadthLagTradingDays"] = _breadth_lag
     report["todayIntelligence"] = _today_intel
     # Every Replay instrument keeps an isolated relative-price series.  The JP
     # primary view later adds the full cross-market matrix.
@@ -31159,6 +31258,309 @@ def api_argus_today_headline():
     response.headers["Vary"] = "If-None-Match"
     response.headers["X-ARGUS-Compute-Mode"] = "read-only"
     response.headers["X-ARGUS-Headline-Set-Id"] = document["headlineSetId"]
+    return response
+
+
+# ── V13.5.13 Decision Evidence — canonical artifact references for the SDA ─────
+# The device-side Single Decision Authority deliberately refuses plain-object
+# AVAILABLE references (canonical_artifact_resolver_unavailable). This block is
+# the reviewed backend half of that resolver boundary: per subject it builds
+# the three canonical artifacts from already-cached quote/clock state, runs the
+# same verifiers verify_decision_evidence recomputes, and publishes the
+# resulting reference dicts. No owner data is read, no action is produced, and
+# every failure fails closed to MISSING/STALE references with the reason kept.
+
+_DECISION_EVIDENCE_CACHE = {}
+_DECISION_EVIDENCE_TTL_SEC = 120
+_DECISION_EVIDENCE_MAX_SYMBOLS = 8
+_DECISION_EVIDENCE_DEFAULT_SYMBOLS = ("1321", "1306", "SPY", "QQQ")
+
+
+def _decision_evidence_watch_row(symbol, market):
+    getter = (get_japan_watchlist_snapshot if market == "JP"
+              else get_us_watchlist_snapshot)
+    try:
+        snapshot = getter()
+    except Exception:
+        return None, None
+    if not isinstance(snapshot, dict):
+        return None, None
+    for row in snapshot.get("stocks") or []:
+        if str(row.get("symbol") or "").upper() == symbol:
+            return row, snapshot.get("provider")
+    return None, None
+
+
+def _decision_evidence_market_artifact(symbol, market, cutoff, build_identity):
+    row, provider = _decision_evidence_watch_row(symbol, market)
+    if not isinstance(row, dict):
+        return None, "quote_row_unavailable"
+    observations = _canonical_quote_observations(
+        [(market, provider, row)], cutoff, bare_instrument_ids=True)
+    if not observations:
+        return None, "no_admissible_quote_observation"
+    try:
+        artifact = argus_market_data_truth.build_decision_snapshot(
+            observations,
+            requests=[{"instrumentId": symbol, "market": market,
+                       "factType": "QUOTE",
+                       "currency": "JPY" if market == "JP" else "USD",
+                       "required": True}],
+            decision_at=cutoff, generated_at=cutoff,
+            build_identity=build_identity)
+    except (TypeError, ValueError, OverflowError):
+        return None, "snapshot_build_failed"
+    return artifact, None
+
+
+def _decision_evidence_prediction_artifact(symbol, market, cutoff,
+                                           market_artifact, build_identity):
+    """Ephemeral forward-live decision context bound to the same snapshot.
+
+    This is a CONTEXT record for the SDA's predictionLedger reference (same
+    builder + seal as durable records); the durable append-only ledger on the
+    ledger branch remains the only issued-decision archive."""
+    try:
+        selections = [row for row in market_artifact.get("selections", [])
+                      if row.get("instrumentId") == symbol]
+        if len(selections) != 1:
+            return None, "subject_selection_missing"
+        observation = (selections[0].get("selected") or {}).get("observation")
+        if not isinstance(observation, dict):
+            return None, "selected_observation_missing"
+        values = observation.get("values") or {}
+        change = values.get("changePct")
+        if not isinstance(change, (int, float)) or isinstance(change, bool) \
+                or not math.isfinite(float(change)):
+            return None, "change_pct_unavailable"
+        maturity = _canonical_target_contract(symbol, cutoff, "5d")
+        if not maturity:
+            return None, "maturity_contract_unavailable"
+        band_pct = 2.0
+        scenario_pairs = _scenarios_scaled(float(change), band_pct)
+        scenario_map = {label: float(probability) / 100.0
+                        for label, probability in scenario_pairs}
+        if set(scenario_map) != set(argus_calibration.CLASSES):
+            return None, "scenario_classes_invalid"
+        probabilities = [scenario_map[label]
+                         for label in argus_calibration.CLASSES]
+        distribution = argus_decision_ledger.forecast_distribution(
+            class_labels=list(argus_calibration.CLASSES),
+            probabilities=probabilities,
+            class_order_version=(f"{argus_calibration.SCHEMA_VERSION}:"
+                                 f"{argus_calibration.BAND_VERSION}"))
+        if distribution is None:
+            return None, "forecast_distribution_invalid"
+        winner_index = max(range(len(probabilities)),
+                           key=lambda index: probabilities[index])
+        truth_ref = argus_decision_ledger.point_in_time_truth_ref(
+            snapshot_id=market_artifact["snapshotId"],
+            source_id=observation.get("observationId"),
+            as_of=observation.get("observedAt"),
+            known_at=observation.get("knownAt"),
+            content_hash=observation.get("observationId"),
+            observation_kind="decision_quote",
+            observed_fields=sorted((observation.get("values") or {}).keys()),
+            provider=(observation.get("source") or {}).get("providerKey") or "",
+            revision=str(observation.get("revision") or ""))
+        if not truth_ref:
+            return None, "truth_ref_invalid"
+        _, evaluation_policy = _canonical_scenario_policy(
+            band_pct=band_pct, horizon="5d")
+        record = argus_decision_ledger.prediction_record_v2(
+            mode="forward_live", symbol=symbol, market=market,
+            issued_at=cutoff, horizon="5d", target_type="scenario",
+            forecast_value=argus_calibration.CLASSES[winner_index],
+            forecast_distribution=distribution,
+            truth_ref=truth_ref, maturity=maturity,
+            engine_id="argus-decision-evidence-context",
+            engine_version="decision-evidence-v1",
+            build_sha=build_identity,
+            evaluation_policy=evaluation_policy, now_iso=cutoff,
+            confidence=float(probabilities[winner_index]),
+            candidate_action="",
+            evidence_refs=[observation.get("observationId")])
+        if not record:
+            return None, "prediction_record_invalid"
+        return record, None
+    except (TypeError, ValueError, OverflowError, KeyError):
+        return None, "prediction_context_failed"
+
+
+def _decision_evidence_sho_artifact(symbol, cutoff):
+    """Per-subject SHO reversal artifact with honest zero-input gating.
+
+    The canonical builder is pure; with no PIT rows every family reports
+    absence and the reversal axis stays UNVALIDATED — the artifact is real
+    evidence of "nothing validated", never a fabricated proof. The downside
+    background uses MIXED, the least-claiming state, exactly like the
+    canonical fixture, until the downside layer is wired as a PIT input.
+    """
+    try:
+        return argus_sho.build_reversal_engine(
+            cutoff=cutoff, analysis_instrument=symbol,
+            downside_background="MIXED"), None
+    except (TypeError, ValueError) as exc:
+        return None, f"sho_artifact_failed:{type(exc).__name__}"
+
+
+def _build_decision_evidence_subject(symbol, market, cutoff, build_identity):
+    subject = {"kind": "ASSET", "instrumentId": symbol, "market": market,
+               "horizon": "FIVE_DAY"}
+    reasons = {}
+    market_artifact, market_reason = _decision_evidence_market_artifact(
+        symbol, market, cutoff, build_identity)
+    if market_reason:
+        reasons["marketTruth"] = market_reason
+    prediction_artifact = None
+    if market_artifact is not None:
+        prediction_artifact, prediction_reason = \
+            _decision_evidence_prediction_artifact(
+                symbol, market, cutoff, market_artifact, build_identity)
+        if prediction_reason:
+            reasons["predictionLedger"] = prediction_reason
+    sho_artifact, sho_reason = _decision_evidence_sho_artifact(symbol, cutoff)
+    if sho_reason:
+        reasons["sho"] = sho_reason
+    references = argus_single_decision.canonical_artifact_references(
+        subject=subject, cutoff=cutoff,
+        market_truth_artifact=market_artifact,
+        prediction_ledger_artifact=prediction_artifact,
+        sho_artifact=sho_artifact)
+    failures = dict(references.get("verificationFailures") or {})
+    failures.update(reasons)
+    statuses = {key: references[key]["status"]
+                for key in ("marketTruth", "predictionLedger", "sho")}
+    all_available = all(value == "AVAILABLE" for value in statuses.values())
+    if all_available:
+        quality = {"status": "COMPLETE", "freshness": "FRESH",
+                   "missingReasonCodes": [], "conflictReasonCodes": []}
+    else:
+        prefixes = {"marketTruth": "market_truth",
+                    "predictionLedger": "prediction_ledger", "sho": "sho"}
+        codes = sorted({f"{prefixes[key]}_{value.lower()}"
+                        for key, value in statuses.items()
+                        if value != "AVAILABLE"})
+        market_status = statuses["marketTruth"]
+        quality = {
+            "status": ("PARTIAL" if any(v == "AVAILABLE"
+                                        for v in statuses.values())
+                       else "MISSING"),
+            "freshness": ("FRESH" if market_status == "AVAILABLE"
+                          else "STALE" if market_status == "STALE"
+                          else "UNKNOWN"),
+            "missingReasonCodes": codes,
+            "conflictReasonCodes": [],
+        }
+    return {
+        "subject": subject,
+        "informationCutoffAt": cutoff,
+        "marketTruth": references["marketTruth"],
+        "predictionLedger": references["predictionLedger"],
+        "sho": references["sho"],
+        "shoBuyEligible": bool(references.get("shoBuyEligible")),
+        "quality": quality,
+        "verificationFailures": failures,
+    }
+
+
+def _decision_evidence_document(symbols):
+    now = time.time()
+    generated_at = _ai_now_iso()
+    build_identity = _backend_exact_sha()
+    jp_symbols = {str(s.get("symbol") or "").upper() for s in _JP_WATCHLIST}
+    us_symbols = {str(s.get("symbol") or "").upper() for s in _US_WATCHLIST}
+    subjects = {}
+    for sym in symbols:
+        market = ("JP" if (sym in jp_symbols or sym.isdigit())
+                  else "US" if (sym in us_symbols or sym.isalpha()) else None)
+        if market is None:
+            subjects[sym] = {"status": "unsupported_symbol"}
+            continue
+        cached = _DECISION_EVIDENCE_CACHE.get(sym)
+        if cached and now - cached.get("ts", 0) <= _DECISION_EVIDENCE_TTL_SEC:
+            subjects[sym] = cached["entry"]
+            continue
+        cutoff = _ai_now_iso()
+        if not build_identity:
+            entry = {
+                "subject": {"kind": "ASSET", "instrumentId": sym,
+                            "market": market, "horizon": "FIVE_DAY"},
+                "informationCutoffAt": cutoff,
+                "marketTruth": dict(
+                    argus_single_decision.MISSING_MARKET_TRUTH_REFERENCE),
+                "predictionLedger": dict(
+                    argus_single_decision.MISSING_PREDICTION_LEDGER_REFERENCE),
+                "sho": {**dict(
+                    argus_single_decision.MISSING_SHO_REFERENCE),
+                    "primitiveFactorIds": [], "targets": []},
+                "shoBuyEligible": False,
+                "quality": {"status": "MISSING", "freshness": "UNKNOWN",
+                            "missingReasonCodes": [
+                                "market_truth_missing",
+                                "prediction_ledger_missing",
+                                "sho_missing"],
+                            "conflictReasonCodes": []},
+                "verificationFailures": {
+                    "build": "build_identity_unavailable"},
+            }
+        else:
+            try:
+                entry = _build_decision_evidence_subject(
+                    sym, market, cutoff, build_identity)
+            except Exception as exc:
+                entry = {
+                    "subject": {"kind": "ASSET", "instrumentId": sym,
+                                "market": market},
+                    "informationCutoffAt": cutoff,
+                    "marketTruth": dict(
+                        argus_single_decision.MISSING_MARKET_TRUTH_REFERENCE),
+                    "predictionLedger": dict(
+                        argus_single_decision
+                        .MISSING_PREDICTION_LEDGER_REFERENCE),
+                    "sho": {**dict(
+                        argus_single_decision.MISSING_SHO_REFERENCE),
+                        "primitiveFactorIds": [], "targets": []},
+                    "shoBuyEligible": False,
+                    "quality": {"status": "MISSING", "freshness": "UNKNOWN",
+                                "missingReasonCodes": [
+                                    "market_truth_missing",
+                                    "prediction_ledger_missing",
+                                    "sho_missing"],
+                                "conflictReasonCodes": []},
+                    "verificationFailures": {
+                        "build": f"evidence_build_failed:{type(exc).__name__}"},
+                }
+        _DECISION_EVIDENCE_CACHE[sym] = {"ts": now, "entry": entry}
+        subjects[sym] = entry
+    return {
+        "schemaVersion": "argus-decision-evidence-v1",
+        "generatedAt": generated_at,
+        "automaticAiCalls": 0,
+        "authority": "CANONICAL_ARTIFACT_REFERENCES",
+        "sdaAuthority": False,
+        "actionAuthority": False,
+        "subjects": subjects,
+    }
+
+
+@app.route("/api/argus/decision-evidence")
+def api_argus_decision_evidence():
+    """Canonical artifact references for the device-side SDA (read-only GET).
+
+    Serves per-subject marketTruth / predictionLedger / sho reference dicts
+    verified by argus_single_decision.canonical_artifact_references. Values are
+    derived from already-cached quote/clock state only — this route performs no
+    provider fetch, reads no owner data, and publishes no action.
+    """
+    raw = str(request.args.get("symbols") or "")
+    requested = [part.strip().upper() for part in raw.split(",")
+                 if part.strip()][:_DECISION_EVIDENCE_MAX_SYMBOLS]
+    if not requested:
+        requested = list(_DECISION_EVIDENCE_DEFAULT_SYMBOLS)
+    document = _decision_evidence_document(requested)
+    response = jsonify(document)
+    response.headers["X-ARGUS-Compute-Mode"] = "read-only"
     return response
 
 
@@ -36659,7 +37061,8 @@ def _canonical_quote_candidates(row, snapshot_provider):
                              "unknown"))]
 
 
-def _canonical_quote_observations(rows, decision_at):
+def _canonical_quote_observations(rows, decision_at, *,
+                                  bare_instrument_ids=False):
     observations = []
     seen = set()
     try:
@@ -36676,7 +37079,10 @@ def _canonical_quote_observations(rows, decision_at):
         symbol = str(row.get("symbol") or row.get("id") or "").strip().upper()
         if not symbol:
             continue
-        instrument_id = f"{market}:{symbol}"
+        # The ledger projection binds market-prefixed instrument ids; the
+        # decision-evidence route binds the device-side subject id (the bare
+        # symbol) so its references match the subject the device SDA uses.
+        instrument_id = symbol if bare_instrument_ids else f"{market}:{symbol}"
         explicit_candidates = bool(row.get("providerCandidates"))
         for candidate in _canonical_quote_candidates(row, snapshot_provider):
             # An explicit provider candidate must carry its own status.  The
@@ -36965,6 +37371,29 @@ def _canonical_prediction_candidate_id(family, market, symbol, ordinal):
     return f"{family}:{market}:{symbol}:{ordinal}"
 
 
+def _canonical_candidate_action(symbol, market, generated_at):
+    """The canonical SDA action for this subject at issuance time.
+
+    Server-side there is never an owner context, so the sealed data-gated SDA
+    yields WAIT by construction today; when the canonical artifacts and owner
+    boundary evolve, this stays the single action authority. Failure yields ""
+    (recorded as action-unbound) rather than blocking issuance.
+    """
+    try:
+        subject_market = market if market in ("JP", "US", "CRYPTO", "FUND") \
+            else "FUND"
+        gated = argus_single_decision.build_data_gated_input_v2(
+            subject={"kind": "ASSET", "instrumentId": str(symbol).upper(),
+                     "market": subject_market, "horizon": "FIVE_DAY"},
+            decision_at=generated_at,
+            information_cutoff_at=generated_at)
+        result = argus_single_decision.evaluate_single_decision_authority(gated)
+        action = str(result.get("primaryAction") or "")
+        return action if action in argus_single_decision.PRIMARY_ACTIONS else ""
+    except Exception:
+        return ""
+
+
 def _canonical_prediction_ledger_projection(
         *, legacy_rows, quote_rows, decision_at, engine_version,
         generated_at=None):
@@ -37155,10 +37584,14 @@ def _canonical_prediction_ledger_projection(
                 evaluation_policy=evaluation_policy,
                 now_iso=generated_at,
                 confidence=float(probabilities[winner_index]),
-                # Legacy action emitters depend on flow/regime/other inputs that
-                # are not sealed in this quote-only projection.  Keep the
-                # canonical forecast identity independent of that unbound label.
-                candidate_action="",
+                # v13.5.13 (owner spec §19-21): every issued decision records the
+                # CANONICAL SDA action so WAIT opportunity scoring
+                # (avoided_mae/missed_mfe) can actually resolve. Legacy action
+                # emitters stay excluded — this label is computed by the sealed
+                # data-gated SDA itself (no owner context server-side), never by
+                # flow/regime heuristics.
+                candidate_action=_canonical_candidate_action(symbol, market,
+                                                             generated_at),
                 target_ladder=target_ladder,
                 # Link evidence without changing forecast values/actions.  The
                 # sealed Prediction Ledger remains the only issued-decision

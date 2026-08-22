@@ -351,7 +351,9 @@ def is_duplicate(new_msg: Mapping[str, Any],
 def merge_revision(existing: Optional[Mapping[str, Any]],
                    candidate: Mapping[str, Any]) -> Dict[str, Any]:
     """Revision policy: same event identity updates in place. A severity
-    INCREASE re-alerts; a cosmetic rewrite never does."""
+    INCREASE re-alerts; the market CONFIRMING a still-material headline
+    re-alerts once (severity itself never moves on confirmation — the two
+    axes are independent); a cosmetic rewrite never does."""
     if not existing:
         return {"action": "create", "revision": 1, "alert": None}
     order = {name: index for index, name in enumerate(SEVERITIES)}
@@ -361,6 +363,12 @@ def merge_revision(existing: Optional[Mapping[str, Any]],
         return {"action": "escalate",
                 "revision": int(existing.get("revision") or 1) + 1,
                 "alert": "severity_increase"}
+    if str(existing.get("confirmationState")) != "MARKET_CONFIRMED" \
+            and str(candidate.get("confirmationState")) == "MARKET_CONFIRMED" \
+            and str(candidate.get("severity")) in ("HIGH", "CRITICAL"):
+        return {"action": "update",
+                "revision": int(existing.get("revision") or 1) + 1,
+                "alert": "market_confirmation"}
     if _normalize_title(candidate.get("headlineJa") or "") != \
             _normalize_title(existing.get("headlineJa") or ""):
         return {"action": "update",
@@ -522,10 +530,11 @@ def evaluate_materiality(*, taxonomy: Mapping[str, Any], staleness: str,
         hint in content_event_haystack for hint in _SUMMARY_ACTION_HINTS)
 
     score = 0
+    extreme = any(phrase in haystack for phrase in _EXTREME_PHRASES)
     if family in _HIGH_IMPACT_FAMILIES:
         score += 1
         reasons.append(f"family_{family.lower()}")
-    if any(phrase in haystack for phrase in _EXTREME_PHRASES):
+    if extreme:
         score += 1
         reasons.append("extreme_language")
     if priority:
@@ -535,8 +544,10 @@ def evaluate_materiality(*, taxonomy: Mapping[str, Any], staleness: str,
         if ai_analysis["materialityGuess"] >= 2:
             score += 1
             reasons.append("ai_materiality_high")
+    # NEWS RISK and MARKET CONFIRMATION are independent axes (owner spec
+    # 2026-08-22 §7): `confirmed` is reported via confirmationState below and
+    # never raises or lowers the severity itself.
     if confirmed:
-        score += 1
         reasons.append("market_confirmed")
     container_title = is_mail_container_title(subject)
     if taxonomy.get("lowValueHints") and family in (
@@ -548,12 +559,13 @@ def evaluate_materiality(*, taxonomy: Mapping[str, Any], staleness: str,
         # alert by themselves (§14A: Treasury daily rates, IP/CapU …).
         score = 0
         reasons.append("official_data_input")
-    elif scheduled and not confirmed:
-        # Scheduled macro release received: real facts without invented
-        # beat/miss stay WATCH until the market itself confirms (§14A BLS).
+    elif scheduled and not (priority or extreme or content_action):
+        # Scheduled macro release received: the mail alone carries no beat/miss
+        # evidence, so the news-risk stays WATCH on content grounds (§14A BLS).
+        # Market reaction is reported separately as confirmationState.
         score = min(score, 1)
-        reasons.append("scheduled_release_unconfirmed")
-    elif routine and not confirmed and not priority:
+        reasons.append("scheduled_release_headline_only")
+    elif routine and not priority:
         score = min(score, 1)
         reasons.append("routine_official_publication")
     if container_title and not (content_priority or content_action):
@@ -578,10 +590,10 @@ def evaluate_materiality(*, taxonomy: Mapping[str, Any], staleness: str,
         severity = "WATCH"
     else:
         severity = "INFO"
-    if severity in ("HIGH", "CRITICAL") and staleness in ("DELAYED", "STALE") \
-            and not confirmed:
-        severity = "WATCH"
-        reasons.append("delayed_unconfirmed_downgrade")
+    # Staleness is a freshness property of the news itself; STALE is already
+    # capped above. A merely DELAYED high-impact headline keeps its news-risk
+    # severity — "no market reaction yet" is confirmationState, not a
+    # severity downgrade (owner spec 2026-08-22 §7).
     return {
         "severity": severity,
         "score": score,

@@ -8,6 +8,8 @@ import { useDownsideIncidents } from './useDownsideIncidents';
 import { useVisibilityGuard } from './useVisibilityGuard';
 import { useEventsActive } from './useEventsActive';
 import { useImportantEvents } from './useImportantEvents';
+import { requestDecisionEvidenceSymbols, useDecisionEvidence } from './useDecisionEvidence';
+import { resolveCanonicalArtifactReferences } from '../domain/canonicalDecisionEvidence';
 import { useRatesSnapshot } from './useRatesSnapshot';
 import { useJapanWatchlist } from './useJapanWatchlist';
 import { useUSWatchlist } from './useUSWatchlist';
@@ -192,6 +194,18 @@ export function useAssetIntel(opts: {
   const { data: impEvents } = importantEventsState;
   const importantEventsUnknown = importantEventsState.authority !== 'fresh';
   const downsideUnknown = downsideState.authority !== 'fresh';
+  // v13.5.13: canonical artifact references (marketTruth/predictionLedger/sho)
+  // from the reviewed backend resolver boundary. Held symbols first — those
+  // are the decisions the owner actually needs EVALUATED.
+  const decisionEvidence = useDecisionEvidence();
+  useEffect(() => {
+    requestDecisionEvidenceSymbols(assets
+      .filter((asset) => asset.market === 'JP' || asset.market === 'US')
+      .sort((left, right) =>
+        Number(right.quantity != null && right.quantity > 0)
+        - Number(left.quantity != null && left.quantity > 0))
+      .map((asset) => asset.symbol.toUpperCase()));
+  }, [assets]);
 
   // AI is challenge/dissent evidence only. It never replaces the canonical
   // five-action SDA result.
@@ -694,10 +708,35 @@ export function useAssetIntel(opts: {
     const aiAsOf = validChallengeTime(aiJ.data?.asOf);
     const ruleAsOf = validChallengeTime(al.data?.asOf);
 
-    for (const asset of assets) {
+    // Today headline instruments always receive a canonical decision even
+    // when the owner has not added them to the watchlist (owner context
+    // UNKNOWN → honest WAIT), so Today never falls back to an unledgered stub.
+    const decisionSubjects: Array<{ symbol: string; market: string;
+      quantity: number | null }> = assets.map((asset) => ({
+        symbol: asset.symbol, market: asset.market,
+        quantity: asset.quantity ?? null }));
+    for (const head of [
+      { symbol: '1321', market: 'JP' }, { symbol: '1306', market: 'JP' },
+      { symbol: 'SPY', market: 'US' }, { symbol: 'QQQ', market: 'US' },
+    ]) {
+      if (!decisionSubjects.some((row) =>
+        row.symbol.toUpperCase() === head.symbol)) {
+        decisionSubjects.push({ ...head, quantity: null });
+      }
+    }
+    for (const asset of decisionSubjects) {
       const sym = asset.symbol.toUpperCase();
       const market = ['JP', 'US', 'CRYPTO', 'FUND'].includes(asset.market)
         ? asset.market as 'JP' | 'US' | 'CRYPTO' | 'FUND' : 'FUND';
+      // v13.5.13: canonical artifact references from the backend resolver
+      // boundary. When present and valid, the decision binds to the evidence
+      // cutoff; otherwise the data-gated stub path stays (fail closed).
+      const evidenceEntry = (decisionEvidence.subjects ?? {})[sym] as unknown;
+      const resolved = evidenceEntry
+        ? resolveCanonicalArtifactReferences(evidenceEntry, decisionMs)
+        : null;
+      const cutoffAt = resolved?.informationCutoffAt ?? decisionAt;
+      const cutoffMs = resolved ? Date.parse(cutoffAt) : decisionMs;
       const positionState: 'UNKNOWN' | 'HELD' | 'NOT_HELD' = asset.quantity == null
         || !Number.isFinite(asset.quantity) || asset.quantity < 0 ? 'UNKNOWN'
         : asset.quantity > 0 ? 'HELD' : 'NOT_HELD';
@@ -708,7 +747,12 @@ export function useAssetIntel(opts: {
         positionRiskKnown: ownerNote?.held === true && ownerNote.pnlPct != null,
         concentrationWeightPct: ownerNote?.weightPct,
       });
-      const missingQuote = (market === 'JP' || market === 'US') && !priceBySymbol.has(sym);
+      // A verified canonical market-truth reference is a stronger quote
+      // authority than the display quote map (which only covers the owner's
+      // own watchlist polling).
+      const missingQuote = (market === 'JP' || market === 'US')
+        && !priceBySymbol.has(sym)
+        && resolved?.marketTruth.status !== 'AVAILABLE';
       const addPermission: 'UNKNOWN' | 'BLOCKED' | 'ALLOWED' = positionState === 'UNKNOWN' ? 'UNKNOWN'
         : missingQuote || sessionAuthorityMissing
           || positionBand === 'HIGH' || positionBand === 'CRITICAL'
@@ -716,7 +760,7 @@ export function useAssetIntel(opts: {
       const ownerContext = {
         schemaVersion: 'owner-decision-context-v1' as const,
         privacyClass: 'DEVICE_LOCAL' as const,
-        asOf: decisionAt,
+        asOf: cutoffAt,
         positionState,
         positionRiskBand: positionBand,
         concentrationBand,
@@ -725,10 +769,16 @@ export function useAssetIntel(opts: {
       const input = buildDataGatedInputV2({
         subject: { kind: 'ASSET', instrumentId: sym, market, horizon: 'FIVE_DAY' },
         decisionAt,
-        informationCutoffAt: decisionAt,
+        informationCutoffAt: cutoffAt,
         authorityPolicy: SINGLE_DECISION_AUTHORITY_V2_POLICY,
         ownerContext,
       });
+      if (resolved) {
+        input.marketTruth = resolved.marketTruth;
+        input.predictionLedger = resolved.predictionLedger;
+        input.sho = resolved.sho;
+        input.quality = resolved.quality;
+      }
 
       const contributions: RiskContributionV1[] = [];
       const row = riskBySym.get(sym);
@@ -740,7 +790,7 @@ export function useAssetIntel(opts: {
           : row === 'high' ? 'REDUCE_RISK' : row === 'medium' ? 'BLOCK_BUY' : 'NONE',
         status: 'ACTIVE', severity: riskBand(row),
         confidenceCapBps: row === 'critical' ? 4000 : row === 'high' ? 5500 : 8000,
-        observedAt: decisionAt,
+        observedAt: cutoffAt,
       });
       if (positionExposure.top1Symbol === sym && positionExposure.singleNameRisk) {
         contributions.push({
@@ -750,7 +800,7 @@ export function useAssetIntel(opts: {
           constraint: ['high', 'critical'].includes(positionExposure.singleNameRisk)
             ? 'BLOCK_BUY' : 'NONE',
           status: 'ACTIVE', severity: riskBand(positionExposure.singleNameRisk),
-          confidenceCapBps: 7500, observedAt: decisionAt,
+          confidenceCapBps: 7500, observedAt: cutoffAt,
         });
       }
       if (eventSyms.has(sym) || importantEventsUnknown) contributions.push({
@@ -759,33 +809,37 @@ export function useAssetIntel(opts: {
         constraint: importantEventsUnknown ? 'NONE' : 'WAIT_REQUIRED',
         status: importantEventsUnknown ? 'MISSING' : 'ACTIVE',
         severity: importantEventsUnknown ? 'UNKNOWN' : 'MEDIUM',
-        confidenceCapBps: 5000, observedAt: decisionAt,
+        confidenceCapBps: 5000, observedAt: cutoffAt,
       });
       if (missingQuote || sessionAuthorityMissing || isPartial || visLimited) contributions.push({
         evidenceRef: `discipline:authority-${sym.toLowerCase()}`,
         primitiveFactorId: 'discipline.required_authority', sourceKind: 'DISCIPLINE',
         constraint: 'NONE', status: 'MISSING', severity: 'UNKNOWN',
-        confidenceCapBps: 2500, observedAt: decisionAt,
+        confidenceCapBps: 2500, observedAt: cutoffAt,
       });
       input.riskKernel = buildRiskKernel({
         schemaVersion: 'argus-risk-discipline-input-v1',
         subject: { kind: 'ASSET', instrumentId: sym, market },
-        asOf: decisionAt, informationCutoffAt: decisionAt,
+        asOf: cutoffAt, informationCutoffAt: cutoffAt,
         policy: RISK_DISCIPLINE_POLICY,
         contributions,
       });
 
       const challenges = [] as typeof input.challengeEvidence;
+      const challengeTime = (value: string | null) =>
+        value != null && Date.parse(value) <= cutoffMs ? value : null;
+      const aiTime = challengeTime(aiAsOf);
+      const ruleTime = challengeTime(ruleAsOf);
       const ai = aiBySym.get(sym);
-      if (ai && aiAsOf) challenges.push({
+      if (ai && aiTime) challenges.push({
         challengeId: `ai.${sym.toLowerCase()}`, sourceKind: 'AI', status: 'AVAILABLE',
-        asOf: aiAsOf, proposedAction: legacyFiveAction(ai.aiFinalAction),
+        asOf: aiTime, proposedAction: legacyFiveAction(ai.aiFinalAction),
         dissentReasonCodes: [], evidenceRefs: [`ai:judgment-${sym.toLowerCase()}`],
       });
       const rule = ruleBySym.get(sym);
-      if (rule && ruleAsOf) challenges.push({
+      if (rule && ruleTime) challenges.push({
         challengeId: `legacy.${sym.toLowerCase()}`, sourceKind: 'LEGACY', status: 'AVAILABLE',
-        asOf: ruleAsOf, proposedAction: legacyFiveAction(rule.action),
+        asOf: ruleTime, proposedAction: legacyFiveAction(rule.action),
         dissentReasonCodes: [], evidenceRefs: [`legacy:action-label-${sym.toLowerCase()}`],
       });
       input.challengeEvidence = challenges.sort((left, right) =>
@@ -801,7 +855,7 @@ export function useAssetIntel(opts: {
     }
     return { sda, bindings, views };
   }, [assets, al.data, aiJ.data, aiMeta, positionExposure, impEvents,
-    importantEventsUnknown, priceBySymbol,
+    importantEventsUnknown, priceBySymbol, decisionEvidence,
     sessionAuthorityMissing, isPartial, visLimited]);
   // Ledger appends run one symbol per idle slice: the append itself verifies
   // and re-encodes the stored document, which is far too heavy to run for the

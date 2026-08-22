@@ -936,6 +936,129 @@ def _sho_reference_from_artifact(
     }, buy_eligible)
 
 
+MISSING_MARKET_TRUTH_REFERENCE: Mapping[str, Any] = MappingProxyType({
+    "status": "MISSING", "schemaVersion": None, "snapshotId": None,
+    "observationId": None, "observedAt": None, "knownAt": None,
+    "policyId": None, "policySha256": None,
+})
+MISSING_PREDICTION_LEDGER_REFERENCE: Mapping[str, Any] = MappingProxyType({
+    "status": "MISSING", "schemaVersion": None, "contextId": None,
+    "mode": None, "asOf": None, "policyId": None, "policySha256": None,
+})
+MISSING_SHO_REFERENCE: Mapping[str, Any] = MappingProxyType({
+    "status": "MISSING", "schemaVersion": None, "artifactId": None,
+    "asOf": None, "policyId": None, "policySha256": None, "state": None,
+    "validationStatus": None, "primitiveFactorIds": (), "targets": (),
+    "invalidation": None,
+})
+
+
+def _missing_reference(template: Mapping[str, Any]) -> Dict[str, Any]:
+    out = dict(template)
+    for key, value in out.items():
+        if isinstance(value, tuple):
+            out[key] = list(value)
+    return out
+
+
+def _degraded_market_truth_reference(artifact: Any, *, subject: Mapping[str, Any],
+                                     cutoff: str) -> Optional[Dict[str, Any]]:
+    """A verified snapshot whose subject selection is COMPLETE but no longer
+    FRESH yields an honest STALE reference (identity preserved, authority
+    withheld). Anything else stays MISSING."""
+    if not market_truth.is_builder_issued_decision_snapshot(artifact):
+        return None
+    valid, _reason = market_truth.verify_decision_snapshot(artifact)
+    if not valid or artifact.get("decisionAt") != cutoff:
+        return None
+    selections = [
+        row for row in artifact.get("selections", [])
+        if row.get("instrumentId") == subject.get("instrumentId")
+        and row.get("market") == subject.get("market")
+    ]
+    if len(selections) != 1:
+        return None
+    selection = selections[0]
+    selected = selection.get("selected")
+    observation = selected.get("observation") if isinstance(selected, Mapping) else None
+    if not isinstance(observation, Mapping) or selected.get("selectionEligible") is not True:
+        return None
+    if selection.get("completeness") != market_truth.COMPLETE:
+        return None
+    return {
+        "status": "STALE",
+        "schemaVersion": artifact["schemaVersion"],
+        "snapshotId": artifact["snapshotId"],
+        "observationId": observation["observationId"],
+        "observedAt": observation["observedAt"],
+        "knownAt": observation["knownAt"],
+        "policyId": market_truth.AUTHORITY_POLICY_ID,
+        "policySha256": _canonical_sha(market_truth.repository_authority_policy()),
+    }
+
+
+def canonical_artifact_references(
+    *,
+    subject: Mapping[str, Any],
+    cutoff: str,
+    market_truth_artifact: Any = None,
+    prediction_ledger_artifact: Any = None,
+    sho_artifact: Any = None,
+) -> Dict[str, Any]:
+    """Serving-layer seam: the verified reference dicts a device-side SDA input
+    may carry for these canonical artifacts.
+
+    This is the backend half of the "canonical artifact resolver" boundary the
+    TypeScript authority deliberately refuses to fake (its
+    ``canonical_artifact_resolver_unavailable`` guard). Each reference is
+    exactly what :func:`verify_decision_evidence` recomputes for the artifact;
+    a verification failure fails closed to a MISSING (or, for a merely no
+    longer FRESH market snapshot, STALE) reference with the failure reason
+    preserved. No owner context is read and no action is produced here.
+    """
+    failures: Dict[str, str] = {}
+    market_ref = _missing_reference(MISSING_MARKET_TRUTH_REFERENCE)
+    if market_truth_artifact is not None:
+        try:
+            market_ref = dict(_market_truth_reference_from_artifact(
+                market_truth_artifact, subject=subject, cutoff=cutoff))
+        except ValueError as exc:
+            degraded = _degraded_market_truth_reference(
+                market_truth_artifact, subject=subject, cutoff=cutoff)
+            if degraded is not None:
+                market_ref = degraded
+                failures["marketTruth"] = "subject_selection_not_fresh"
+            else:
+                failures["marketTruth"] = str(exc)
+    prediction_ref = _missing_reference(MISSING_PREDICTION_LEDGER_REFERENCE)
+    if prediction_ledger_artifact is not None:
+        if market_ref.get("status") == "AVAILABLE":
+            try:
+                prediction_ref = dict(_prediction_reference_from_artifact(
+                    prediction_ledger_artifact, market_ref=market_ref,
+                    cutoff=cutoff))
+            except ValueError as exc:
+                failures["predictionLedger"] = str(exc)
+        else:
+            failures["predictionLedger"] = "market_truth_reference_unavailable"
+    sho_ref = _missing_reference(MISSING_SHO_REFERENCE)
+    sho_buy_eligible = False
+    if sho_artifact is not None:
+        try:
+            built_sho, sho_buy_eligible = _sho_reference_from_artifact(
+                sho_artifact, subject=subject, cutoff=cutoff)
+            sho_ref = dict(built_sho)
+        except ValueError as exc:
+            failures["sho"] = str(exc)
+    return {
+        "marketTruth": market_ref,
+        "predictionLedger": prediction_ref,
+        "sho": sho_ref,
+        "shoBuyEligible": bool(sho_buy_eligible),
+        "verificationFailures": failures,
+    }
+
+
 def verify_decision_evidence(
     value: Any,
     *,
@@ -1725,8 +1848,12 @@ __all__ = [
     "SEVEN_SIGN_SCHEMA_VERSION",
     "SINGLE_DECISION_AUTHORITY_V2_POLICY",
     "VERIFIED_EVIDENCE_SCHEMA_VERSION",
+    "MISSING_MARKET_TRUTH_REFERENCE",
+    "MISSING_PREDICTION_LEDGER_REFERENCE",
+    "MISSING_SHO_REFERENCE",
     "SingleDecisionValidationError",
     "build_data_gated_input_v2",
+    "canonical_artifact_references",
     "build_prediction_ledger_v2_adapter",
     "compute_prediction_adapter_id",
     "compute_single_decision_id",

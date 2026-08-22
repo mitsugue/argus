@@ -74,7 +74,13 @@ export default defineConfig({
         description: 'Autonomous Risk and Global Uncertainty Scanner',
         theme_color: '#0B1118',
         background_color: '#0B1118',
-        display: 'fullscreen',
+        // iOS never supported 'fullscreen' and silently fell back to standalone;
+        // newer iOS web-app containers instead honor the unsupported value by
+        // showing browser chrome (top bar + bottom toolbar), which pushed the
+        // bottom nav ~80pt above the physical screen edge. Pin the supported
+        // mode explicitly so a Home-Screen install is chromeless again.
+        display: 'standalone',
+        display_override: ['standalone'],
         orientation: 'portrait',
         // Manifest icon src is resolved relative to the manifest URL, so
         // bare filenames work under any base path.

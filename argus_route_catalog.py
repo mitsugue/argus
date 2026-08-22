@@ -154,6 +154,7 @@ ROUTE_CATALOG = (
     RouteCatalogEntry("/api/argus/daily-digest", ("GET",), "api_argus_daily_digest", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/dashboard-events", ("GET",), "api_argus_dashboard_events", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/data-quality/status", ("GET",), "api_argus_data_quality_status", "PUBLIC", "NONE", False, "PUBLIC_DIAGNOSTICS_V1", "BROWSER_INFRASTRUCTURE"),
+    RouteCatalogEntry("/api/argus/decision-evidence", ("GET",), "api_argus_decision_evidence", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/decision-value/shadow-run", ("POST",), "api_argus_decision_value_shadow_run", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/decision-value/shadow-summary", ("GET", "POST"), "api_argus_decision_value_shadow_summary", "OWNER_SYNC", "OWNER_SYNC_OR_ADMIN", True, "OWNER_PRIVATE", "OWNER_CLIENT"),
     RouteCatalogEntry("/api/argus/downside-incidents", ("GET",), "api_argus_downside_incidents", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),

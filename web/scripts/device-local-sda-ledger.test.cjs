@@ -165,8 +165,11 @@ function main() {
   const backupSource = fs.readFileSync(
     path.join(root, 'src', 'lib', 'backup.ts'), 'utf8');
   assert.doesNotMatch(helperSource, /fetch\s*\(|XMLHttpRequest|WebSocket|sendBeacon/);
-  assert.equal(backupSource.includes(local.DEVICE_LOCAL_SDA_LEDGER_KEY), false,
-    'device-local SDA records must not enter backup/cloud-sync allowlists');
+  // v13.5.13 (owner decision, spec §19): issued decisions must survive device
+  // loss, so the ledger rides the ENCRYPTED vault. The entry privacy screen
+  // (FORBIDDEN_PRIVATE_KEYS) still keeps quantity/cost/P&L out of every row.
+  assert.equal(backupSource.includes(local.DEVICE_LOCAL_SDA_LEDGER_KEY), true,
+    'device-local SDA ledger must ride the encrypted vault backup allowlist');
   assert.match(hookSource, /appendDeviceLocalSdaLedger\(result, adapter\)/);
   assert.match(hookSource, /deriveLocalOwnerRiskBands/);
 

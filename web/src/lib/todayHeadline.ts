@@ -37,7 +37,8 @@ export interface TodayHeadlineEntry {
   calibration?: TodayProjectionInput['calibration'];
   shortSelling?: TodayProjectionInput['shortSelling'];
   failedRally?: TodayProjectionInput['failedRally'];
-  historyCoverage?: { start?: string | null; end?: string | null };
+  historyCoverage?: { start?: string | null; end?: string | null;
+    count?: number | null };
   relativeStrengthSummary?: { nikkeiSp500Change20Pct?: number } | null;
   headlineHash?: string;
 }
@@ -135,7 +136,10 @@ export function headlineProjectionInput(
     authorityState: 'current',
     timeframe: 'daily',
     quoteState: entry.quoteState ?? 'CLOSE',
-    sourceHistoryCount: entry.bars?.length ?? 0,
+    // The compact headline ships only 31 bars for drawing; the calibration
+    // behind it consumed the full history. HISTORY must report the latter —
+    // historyCoverage.count is the full-corpus bar count from the engine.
+    sourceHistoryCount: entry.historyCoverage?.count ?? entry.bars?.length ?? 0,
     instrumentId: metadata.instrumentId as string | undefined,
     source: (metadata.source as string | undefined) ?? 'existing_market_data_cache',
     availableFrom: metadata.availableFrom as string | undefined,

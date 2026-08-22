@@ -55,18 +55,51 @@ const STATUS_JA: Record<string, string> = {
   OAUTH_EXPIRED: '認可期限切れ', RECONCILIATION_FAILED: '再照合失敗',
 };
 
+function rawSafeAreaInsets() {
+  // Uncapped env() readout — the JS clamp in App.tsx rewrites the CSS var, so
+  // diagnosing an oversized/duplicated inset needs a direct measurement.
+  const probe = document.createElement('div');
+  probe.setAttribute('aria-hidden', 'true');
+  probe.style.cssText = [
+    'position:fixed', 'visibility:hidden', 'pointer-events:none',
+    'padding-top:env(safe-area-inset-top,0px)',
+    'padding-bottom:env(safe-area-inset-bottom,0px)',
+  ].join(';');
+  document.documentElement.appendChild(probe);
+  const style = window.getComputedStyle(probe);
+  const top = Number.parseFloat(style.paddingTop);
+  const bottom = Number.parseFloat(style.paddingBottom);
+  probe.remove();
+  return {
+    top: Number.isFinite(top) ? Math.round(top) : null,
+    bottom: Number.isFinite(bottom) ? Math.round(bottom) : null,
+  };
+}
+
+function detectDisplayMode(): string {
+  const modes = ['fullscreen', 'standalone', 'minimal-ui', 'browser'] as const;
+  for (const mode of modes) {
+    if (window.matchMedia?.(`(display-mode: ${mode})`).matches) return mode;
+  }
+  return 'unknown';
+}
+
 function viewportProbe() {
   const nav = document.querySelector('.nav');
   const rect = nav?.getBoundingClientRect();
   const style = getComputedStyle(document.documentElement);
+  const env = rawSafeAreaInsets();
   return {
     innerH: window.innerHeight,
     visualH: Math.round(window.visualViewport?.height ?? 0),
     screenH: window.screen.height,
     safeBottom: style.getPropertyValue('--argus-safe-bottom').trim() || '—',
+    envTopRaw: env.top != null ? `${env.top}px` : '—',
+    envBottomRaw: env.bottom != null ? `${env.bottom}px` : '—',
     navBottom: rect ? Math.round(rect.bottom) : null,
     navGap: rect ? Math.round(window.innerHeight - rect.bottom) : null,
     standalone: (navigator as { standalone?: boolean }).standalone === true,
+    displayMode: detectDisplayMode(),
   };
 }
 
@@ -178,10 +211,13 @@ export const NewsIntakePanel: React.FC = () => {
           ['visualViewport.height', probe.visualH],
           ['screen.height', probe.screenH],
           ['safe-area-bottom', probe.safeBottom],
+          ['env(top) 生値', probe.envTopRaw],
+          ['env(bottom) 生値', probe.envBottomRaw],
           ['ナビ下端の実測位置', probe.navBottom ?? '—'],
           ['ナビ下端〜ビューポート末尾', probe.navGap != null
             ? `${probe.navGap}px` : '—'],
           ['standalone(PWA)', probe.standalone ? 'yes' : 'no'],
+          ['display-mode', probe.displayMode],
         ] as const).map(([label, value]) => <div key={label}
           style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
           <span style={{ color: 'var(--text-muted)' }}>{label}</span>

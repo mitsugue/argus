@@ -502,6 +502,17 @@ interface VerifiedResultRuntimeState {
 
 const VERIFIED_RISK_KERNELS = new WeakMap<object, string>();
 const VERIFIED_DECISION_BUNDLES = new WeakMap<object, VerifiedBundleRuntimeState>();
+// ── Canonical artifact reference registry (backend resolver boundary) ──────
+// The browser cannot re-verify canonical artifacts, so an AVAILABLE reference
+// is executable only when the reviewed resolver module
+// (canonicalDecisionEvidence.ts) validated the backend payload against the
+// repository-pinned policies and registered the exact object here. A plain
+// object — even byte-identical — still throws in verifyDecisionEvidence.
+const VERIFIED_ARTIFACT_REFERENCES = new WeakMap<object, string>();
+export function registerCanonicalArtifactReference(reference: object): void {
+  VERIFIED_ARTIFACT_REFERENCES.set(
+    reference, stableJson(reference as unknown as JsonValue));
+}
 const VERIFIED_DECISION_RESULTS = new WeakMap<object, VerifiedResultRuntimeState>();
 const RISK_INPUT_KEYS = [
   'schemaVersion', 'subject', 'asOf', 'informationCutoffAt', 'policy', 'contributions',
@@ -1488,10 +1499,11 @@ export type VerifiedDecisionEvidenceBundleV2 = SingleDecisionAuthorityInputV2;
  * Admit an ordinary frontend request only after runtime verification.
  *
  * The browser has no canonical Market Truth/Ledger/SHO store or accepted
- * verifier.  Consequently it may issue an opaque capability only for the
- * explicit non-authoritative/missing-artifact path.  AVAILABLE references
- * must be resolved by the backend canonical boundary in a future, separately
- * reviewed integration; a plain object can never activate them here.
+ * verifier.  An AVAILABLE reference is therefore executable only when the
+ * reviewed backend resolver boundary delivered it and
+ * canonicalDecisionEvidence.ts registered the exact object after checking it
+ * against the repository-pinned policies (v13.5.13 integration). A plain
+ * object — even byte-identical — can never activate an AVAILABLE reference.
  */
 export function verifyDecisionEvidence(
   value: unknown,
@@ -1503,9 +1515,24 @@ export function verifyDecisionEvidence(
   const validation = validateSingleDecisionAuthorityInputV2(value);
   if (!validation.ok) throw new TypeError(validation.errors.join('; '));
   const input = value as unknown as SingleDecisionAuthorityInputV2;
-  if ([input.marketTruth, input.predictionLedger, input.sho]
-    .some((reference) => reference.status === 'AVAILABLE')) {
-    throw new TypeError('canonical_artifact_resolver_unavailable');
+  const references = [input.marketTruth, input.predictionLedger, input.sho];
+  for (const reference of references) {
+    if (reference.status !== 'AVAILABLE') continue;
+    const seal = VERIFIED_ARTIFACT_REFERENCES.get(reference);
+    if (seal == null
+        || seal !== stableJson(reference as unknown as JsonValue)) {
+      throw new TypeError('canonical_artifact_resolver_unavailable');
+    }
+  }
+  const allAvailable = references.every(
+    (reference) => reference.status === 'AVAILABLE');
+  if (allAvailable && (input.quality.status !== 'COMPLETE'
+      || input.quality.freshness !== 'FRESH'
+      || input.quality.missingReasonCodes.length > 0
+      || input.quality.conflictReasonCodes.length > 0)) {
+    // Python parity: verified artifacts must derive COMPLETE/FRESH quality.
+    throw new TypeError(
+      'quality: must be derived as COMPLETE/FRESH from verified artifacts');
   }
   const riskSeal = VERIFIED_RISK_KERNELS.get(input.riskKernel);
   if (riskSeal == null || riskSeal !== stableJson(input.riskKernel as unknown as JsonValue)) {
@@ -1514,11 +1541,13 @@ export function verifyDecisionEvidence(
   const verification = {
     schemaVersion: 'verified-decision-evidence-bundle-v1',
     authorityPolicy: SINGLE_DECISION_AUTHORITY_V2_POLICY,
-    marketTruth: null,
-    predictionLedger: null,
-    sho: null,
+    marketTruth: input.marketTruth.status === 'AVAILABLE'
+      ? input.marketTruth.snapshotId : null,
+    predictionLedger: input.predictionLedger.status === 'AVAILABLE'
+      ? input.predictionLedger.contextId : null,
+    sho: input.sho.status === 'AVAILABLE' ? input.sho.artifactId : null,
     riskKernelId: input.riskKernel.riskKernelId,
-  } as const;
+  };
   const canonicalInput = stableJson(input as unknown as JsonValue);
   const bundleId = `vdeb-${sha256HexSync(stableJson({
     input, verification,
@@ -1526,6 +1555,10 @@ export function verifyDecisionEvidence(
   VERIFIED_DECISION_BUNDLES.set(input, {
     bundleId,
     canonicalInput,
+    // Python computes buy eligibility against VERIFIED_SHO_BUY_ARTIFACTS
+    // (artifactId|registrySha|rfcSha). That registry is deliberately empty
+    // and the rfc sha is not part of the reference, so the device value is
+    // structurally false until a reviewed registry lands here as well.
     shoBuyEligible: false,
   });
   return input;

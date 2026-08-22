@@ -43,9 +43,10 @@ def test_us30y_long_end_rate_shock_class_is_high_or_critical():
     assert stale == "FRESH_BREAKING"
     assert materiality["severity"] in ("HIGH", "CRITICAL")
     assert materiality["confirmationState"] == "MARKET_CONFIRMATION_PENDING"
-    # market confirmation raises to CRITICAL with an explicit reason
+    # owner spec §7: news risk ⊥ market confirmation — confirmation flips the
+    # confirmationState axis but never edits the severity axis.
     _, _, confirmed = _event(subject, confirmed=True)
-    assert confirmed["severity"] == "CRITICAL"
+    assert confirmed["severity"] == materiality["severity"]
     assert confirmed["confirmationState"] == "MARKET_CONFIRMED"
     assert "market_confirmed" in confirmed["reasons"]
 
@@ -93,15 +94,24 @@ def test_stale_geopolitics_never_alerts_fresh():
     assert "stale_capped" in materiality["reasons"]
 
 
-def test_unconfirmed_delayed_report_stays_conservative():
+def test_delayed_unconfirmed_report_keeps_news_risk_axis():
+    # Owner spec §7: 「ニュースリスク:HIGH/市場確認:PENDING」は正当な状態。
+    # A delayed, not-yet-market-confirmed attack report keeps its news-risk
+    # severity; the pending market reaction lives on the confirmation axis.
     subject = "イラン攻撃と一部報道 詳細未確認"
     taxonomy, _, _ = _event(subject)
     materiality = ni.evaluate_materiality(
         taxonomy=taxonomy, staleness="DELAYED", source_authenticated=True,
         ai_analysis=None, corroboration={"confirmed": False},
         subject=subject)
-    assert materiality["severity"] == "WATCH"
-    assert "delayed_unconfirmed_downgrade" in materiality["reasons"]
+    assert materiality["severity"] in ("HIGH", "CRITICAL")
+    assert materiality["confirmationState"] == "MARKET_CONFIRMATION_PENDING"
+    assert "delayed_unconfirmed_downgrade" not in materiality["reasons"]
+    fresh = ni.evaluate_materiality(
+        taxonomy=taxonomy, staleness="FRESH_BREAKING", source_authenticated=True,
+        ai_analysis=None, corroboration={"confirmed": False},
+        subject=subject)
+    assert materiality["severity"] == fresh["severity"]
 
 
 # ── §24 low-value news must NOT inflate ─────────────────────────────────────
@@ -269,10 +279,13 @@ def test_treasury_daily_rate_tables_are_data_input_not_alerts():
 def test_bls_scheduled_release_never_invents_surprise():
     pending = _mat("Consumer Price Index - July 2026", "BLS")
     assert pending["severity"] == "WATCH"
-    assert "scheduled_release_unconfirmed" in pending["reasons"]
+    assert "scheduled_release_headline_only" in pending["reasons"]
+    # The release mail itself carries no beat/miss evidence, so the news-risk
+    # severity stays WATCH even after the market moves — the reaction is
+    # reported on the independent confirmation axis (owner spec §7).
     confirmed = _mat("Consumer Price Index - July 2026", "BLS",
                      confirmed=True)
-    assert confirmed["severity"] in ("HIGH", "CRITICAL")
+    assert confirmed["severity"] == "WATCH"
     assert confirmed["confirmationState"] == "MARKET_CONFIRMED"
 
 
