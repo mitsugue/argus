@@ -748,7 +748,10 @@ def test_scanner_projection_binds_truth_distribution_mode_and_session():
     for issued in projection["issuedDecisions"]:
         assert argus_decision_ledger.verify_prediction_record_v2(issued)
         assert issued["mode"] == "forward_live"
-        assert issued["candidateAction"] == ""
+        # v13.6.0: every issued decision records the canonical SDA action
+        # (server-side owner context is UNKNOWN → sealed data-gated WAIT), so
+        # WAIT opportunity scoring can resolve (owner spec §19-21).
+        assert issued["candidateAction"] == "WAIT"
         assert issued["engine"]["buildSha"] == BUILD_SHA
         assert issued["forecastDistribution"]["classLabels"] == list(
             scanner.argus_calibration.CLASSES)
@@ -898,11 +901,15 @@ def test_legacy_action_cannot_change_canonical_prediction_identity():
     right = _projection(legacy_rows=[("tactical_rule", buy)])
 
     assert left["status"] == right["status"] == "COMPLETE"
+    # The sealed forecast identity stays independent of LEGACY action labels —
+    # a legacy WAIT row and a legacy BUY row produce byte-identical records.
+    # The recorded candidateAction comes from the canonical SDA (data-gated →
+    # WAIT), never from the legacy emitters (v13.6.0, owner spec §17/§19).
     assert [row["id"] for row in left["issuedDecisions"]] == [
         row["id"] for row in right["issuedDecisions"]]
     assert [row["integrityHash"] for row in left["issuedDecisions"]] == [
         row["integrityHash"] for row in right["issuedDecisions"]]
-    assert all(row["candidateAction"] == ""
+    assert all(row["candidateAction"] == "WAIT"
                for row in left["issuedDecisions"] + right["issuedDecisions"])
 
 

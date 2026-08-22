@@ -75,8 +75,20 @@ def build_item(symbol: str, market: str, inputs: Dict[str, Any],
     chg = _f(inputs.get("changePct"))
     runup = _f(inputs.get("priorRunupPct"))
     missing = list(inputs.get("dataMissing") or [])
-    event_pending = bool(inputs.get("eventPending"))
-    risk_off = bool(inputs.get("regimeRiskOff"))
+    # Tri-state context inputs (owner spec 2026-08-22 §2: UNKNOWN is never
+    # collapsed to FALSE). True/False are knowledge; None is absence of
+    # knowledge and must stay visible instead of silently reading as "clear".
+    event_pending = inputs.get("eventPending")
+    if event_pending is not None:
+        event_pending = bool(event_pending)
+    risk_off = inputs.get("regimeRiskOff")
+    if risk_off is not None:
+        risk_off = bool(risk_off)
+    unknown_context: List[str] = []
+    if event_pending is None:
+        unknown_context.append("イベント情報未確認")
+    if risk_off is None:
+        unknown_context.append("レジーム情報未確認")
 
     score = 0.0
     reasons: List[str] = []
@@ -146,7 +158,7 @@ def build_item(symbol: str, market: str, inputs: Dict[str, Any],
         reasons.append("PULLBACK_CANDIDATE")
         if category == "no_action":
             category, label = "add_only_on_pullback", "ADD_ONLY_ON_PULLBACK"
-    if readiness == "add_allowed_small" and not adverse and not event_pending:
+    if readiness == "add_allowed_small" and not adverse and event_pending is False:
         score += 6
         if sd_cond == "improving_but_heavy":
             # v11.14.0: 需給改善中でも買い残が重い間は全緑にしない
@@ -172,6 +184,14 @@ def build_item(symbol: str, market: str, inputs: Dict[str, Any],
         blocking = "event_pending"
         if label in ("SMALL_ADD_ALLOWED", "ADD_ONLY_ON_PULLBACK", "NO_ACTION", "MONITOR"):
             category, label = "event_wait", "WAIT_EVENT"
+    elif event_pending is None and label in ("SMALL_ADD_ALLOWED",
+                                             "ADD_ONLY_ON_PULLBACK"):
+        # Calendar knowledge is absent — an add-side label needs a KNOWN clear
+        # calendar, so the judgment is withheld instead of silently granted.
+        reasons.append("EVENT_UNKNOWN")
+        if blocking == "none":
+            blocking = "unknown"
+        category, label = "unknown", "UNKNOWN"
 
     # missing data on held asset = warning item, never silence
     if held and missing:
@@ -214,7 +234,7 @@ def build_item(symbol: str, market: str, inputs: Dict[str, Any],
         category, label = "no_action", "IGNORE_TODAY"
 
     conf = min(0.85, max(0.2, 0.35 + score / 200 + dq_conf_adj
-                         - (0.1 if missing else 0.0)))
+                         - (0.1 if (missing or unknown_context) else 0.0)))
 
     name = inputs.get("assetName") or symbol
     title, why, check, change = _texts(rank, label, category, name, held, sd_rank,
@@ -240,10 +260,11 @@ def build_item(symbol: str, market: str, inputs: Dict[str, Any],
             "eventRisk": inputs.get("eventName") if event_pending else None,
             "flowSignal": flow or None, "supplyDemandSignal": (sd_rank or None),
             "institutionalSignal": inputs.get("instStance"),
-            "marketRegime": ("risk_off" if risk_off else None),
+            "marketRegime": ("risk_off" if risk_off
+                             else "unknown" if risk_off is None else None),
             "priceAction": (f"{chg:+.1f}%" if chg is not None else None),
             "decisionQuality": inputs.get("dqNoteJa"),
-            "missingEvidence": missing[:5],
+            "missingEvidence": (missing + unknown_context)[:5],
         },
         "reasonCodes": reasons[:10],
         "blockingReason": blocking,

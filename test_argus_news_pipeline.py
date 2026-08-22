@@ -135,7 +135,10 @@ def test_material_mail_reaches_major_news_and_alert(monkeypatch, news_env):
     assert len(events) == 2
     top = events[0]
     assert top["eventType"] == "RATES"
-    assert top["severity"] == "CRITICAL"          # confirmed corroboration
+    # Severity comes from the news content alone (family + extreme language);
+    # the confirmed market reaction is reported on the independent axis and
+    # never edits severity (owner spec §7).
+    assert top["severity"] == "HIGH"
     assert top["confirmationState"] == "MARKET_CONFIRMED"
     assert top["alertEligible"] is True
     assert top["analysisState"] == "AI_ANALYSIS_UNAVAILABLE"

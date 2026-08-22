@@ -11,7 +11,7 @@ import hashlib
 import json
 import math
 import random
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import argus_market_data_truth
 
@@ -405,6 +405,55 @@ def probability_eligibility(
     }
 
 
+def _probability_truth_evidence(*, eligible: bool,
+                                oos_effective_n: Optional[int],
+                                rule_effective_n: Optional[int],
+                                model_brier: Optional[float],
+                                baseline_brier: Optional[float],
+                                calibration_error: Optional[float],
+                                probabilities: Optional[Mapping[str, Any]],
+                                ) -> Dict[str, Any]:
+    """Honest display-gate evidence (probability-truth contract v1).
+
+    Every field is either measured here or explicitly None — nothing is
+    fabricated to pass a gate. Independent holdout windows and a momentum
+    baseline do not exist yet, so they are reported absent. breadthLag /
+    partition integrity are injected by the serving layer, which is the only
+    place that can actually measure them (this engine has no ledger access).
+    """
+    top_share: Optional[float] = None
+    if isinstance(probabilities, Mapping) and probabilities:
+        try:
+            top_share = max(float(v) for v in probabilities.values()) / 100.0
+        except (TypeError, ValueError):
+            top_share = None
+    oos = oos_effective_n if isinstance(oos_effective_n, int) else None
+    wilson: Optional[float] = None
+    if top_share is not None and isinstance(oos, int) and oos > 0:
+        z = 1.96
+        half = z * math.sqrt(top_share * (1.0 - top_share) / oos
+                             + z * z / (4.0 * oos * oos))
+        wilson = round(half / (1.0 + z * z / oos) * 100.0, 2)
+    beats: Optional[bool] = None
+    if isinstance(model_brier, float) and isinstance(baseline_brier, float):
+        beats = model_brier < baseline_brier
+    return {
+        "serverEligible": bool(eligible),
+        "oosEffectiveN": oos,
+        "ruleEffectiveN": (rule_effective_n
+                           if isinstance(rule_effective_n, int) else None),
+        "holdouts": [],
+        "beatsUnconditional": beats,
+        "beatsMomentum": None,
+        "wilsonHalfWidthPt": wilson,
+        "ece": (round(calibration_error, 4)
+                if isinstance(calibration_error, float) else None),
+        "breadthLagTradingDays": None,
+        "unresolvedPartitionCount": None,
+        "duplicateCount": None,
+    }
+
+
 def _insufficient_calibration(horizon: int) -> Dict[str, Any]:
     row: Dict[str, Any] = {
         "horizon": horizon, "calibrationStatus": "insufficient_history",
@@ -417,6 +466,10 @@ def _insufficient_calibration(horizon: int) -> Dict[str, Any]:
         "calibrationDatasetHash": None,
     }
     row["probabilityEligibility"] = probability_eligibility(row)
+    row["probabilityTruthEvidence"] = _probability_truth_evidence(
+        eligible=False, oos_effective_n=0, rule_effective_n=0,
+        model_brier=None, baseline_brier=None, calibration_error=None,
+        probabilities=None)
     return row
 
 
@@ -572,6 +625,13 @@ def calibrate_horizon(bars: Sequence[Dict[str, Any]], horizon: int) -> Dict[str,
         None if eligibility["eligible"] else probabilities
     )
     result["probabilityEligibility"] = eligibility
+    result["probabilityTruthEvidence"] = _probability_truth_evidence(
+        eligible=bool(eligibility.get("eligible")),
+        oos_effective_n=brier["evaluationSampleCount"],
+        rule_effective_n=n,
+        model_brier=model_brier, baseline_brier=baseline_brier,
+        calibration_error=brier["calibrationError"],
+        probabilities=probabilities)
     return result
 
 

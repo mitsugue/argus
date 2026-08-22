@@ -69,11 +69,32 @@ def test_event_wait_blocks_add():
 
 # ── pullback-add / small-add / short-covering never auto-buy ───────────────
 def test_add_only_on_pullback_p2():
+    # An add-side label requires KNOWN calendar clearance (eventPending=False);
+    # absent knowledge is a different, withheld state (see tri-state tests).
     r = _b({"isHeld": True, "readiness": "add_only_on_pullback", "sdRank": "A",
-            "assetName": "フジクラ"})
+            "eventPending": False, "assetName": "フジクラ"})
     assert r["category"] == "add_only_on_pullback"
     assert r["actionLabel"] == "ADD_ONLY_ON_PULLBACK"
     assert "押し目" in r["ownerReadableWhyJa"]
+
+
+# ── UNKNOWN ≠ FALSE (owner spec 2026-08-22 §2) ─────────────────────────────
+def test_unknown_event_calendar_withholds_add_labels():
+    r = _b({"isHeld": True, "readiness": "add_only_on_pullback", "sdRank": "A"})
+    assert r["actionLabel"] == "UNKNOWN"
+    assert r["category"] == "unknown"
+    assert r["blockingReason"] == "unknown"
+    assert "EVENT_UNKNOWN" in r["reasonCodes"]
+    assert "イベント情報未確認" in r["evidence"]["missingEvidence"]
+
+
+def test_unknown_regime_is_recorded_not_scored_as_clear():
+    known = _b({"isHeld": False, "eventPending": False, "regimeRiskOff": False})
+    unknown = _b({"isHeld": False, "eventPending": False})
+    assert unknown["evidence"]["marketRegime"] == "unknown"
+    assert known["evidence"]["marketRegime"] is None
+    # absence of knowledge costs confidence; known-clear does not
+    assert unknown["confidence"] < known["confidence"]
 
 
 def test_squeeze_never_becomes_buy_label():
@@ -138,8 +159,8 @@ def _mix():
             "sdRank": "E", "positionRiskLevel": "high"}, symbol="TSLA", market="US"),
         _b({"isHeld": True, "readiness": "avoid_chase", "sdCondition": "squeeze_prone",
             "sdRank": "B"}, symbol="6584"),
-        _b({"isHeld": True, "readiness": "add_only_on_pullback", "sdRank": "A"},
-           symbol="5803"),
+        _b({"isHeld": True, "readiness": "add_only_on_pullback", "sdRank": "A",
+            "eventPending": False}, symbol="5803"),
         _b({"isHeld": False, "eventPending": True, "eventName": "PCE"}, symbol="NVDA",
            market="US"),
         _b({"isHeld": False}, symbol="9501"),

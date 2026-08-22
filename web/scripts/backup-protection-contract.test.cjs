@@ -86,6 +86,12 @@ const protectedStores = {
     lastDrillAt: new Date(now - 60_000).toISOString(),
   },
   'argus.fireCore.v1': { monthlyContributionTotal: 100_000, note: 'post-envelope FIRE edit' },
+  // v13.5.13: append-only device SDA ledger rides the vault (quantity/PL-free).
+  'argus.sda.deviceLedger.v1': {
+    schemaVersion: 'argus-device-local-sda-ledger-v1',
+    privacyClass: 'DEVICE_LOCAL_DERIVED',
+    appendMode: 'APPEND_ONLY', retention: 'BOUNDED_TAIL', entries: [],
+  },
 };
 for (const [key, value] of Object.entries(protectedStores)) {
   localStorage.setItem(key, JSON.stringify(value));
