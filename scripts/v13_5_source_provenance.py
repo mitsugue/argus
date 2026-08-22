@@ -18,14 +18,14 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.14"
+PRODUCT_VERSION = "v13.5.15"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
-    # v13.5.14 owner-functional correction: compact iPhone navigation, concise
+    # v13.5.15 owner-functional correction: compact iPhone navigation, concise
     # Japanese news projection, source-diverse market evidence, and semantic
     # de-duplication of recurring long-end-rate conditions.  Investment and
     # calibration authority stay outside this list and remain fail-closed.
@@ -108,6 +108,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/scripts/runtime-version-truth.test.mjs",
     "web/scripts/today-benchmark.mjs",
     "web/src/App.tsx",
+    "web/index.html",
     "web/src/main.tsx",
     "web/vite.config.ts",
     "web/src/components/dashboard/MobileStickyCommand.css",
@@ -141,7 +142,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/src/routes/PageShell.tsx",
     "web/src/routes/Watchlist.tsx",
     "web/src/types/assetItem.ts",
-    # v13.5.14 owner spec conformance (2026-08-22): news-risk ⊥ market
+    # v13.5.15 owner spec conformance (2026-08-22): news-risk ⊥ market
     # confirmation, tri-state Action Priority context, honest probability-truth
     # evidence, the canonical artifact resolver boundary (backend
     # decision-evidence route + device resolver + SDA registration seam),
