@@ -61,6 +61,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "scripts/checkpoint_v2_isolated_probe.py",
     "scripts/news_gmail_authorize.py",
     "scripts/normalized_hash_resource_probe.py",
+    "scripts/checkpoint_v2_resource_probe.py",
     "scripts/release_gate.sh",
     "scripts/v13_5_pre_mutation_rehearsal.py",
     "scripts/v13_5_release_certificate.py",
