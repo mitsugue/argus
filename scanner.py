@@ -36225,21 +36225,37 @@ def _jq_price_history(code):
     if _JQUANTS_API_KEY:
         try:
             headers = {"x-api-key": _JQUANTS_API_KEY}
-            # v13.5.14 (owner spec): the chart/forecast corpus is TEN years —
-            # the SHO-conditioned engine sweeps the full window (J-Quants
-            # entitlement is rolling 10y; 3660 calendar days ≈ 2,450 sessions).
-            frm = (datetime.now(TZ_JST) - timedelta(days=3660)).strftime("%Y-%m-%d")
-            rows, params = [], {"code": code, "from": frm}
-            for _ in range(12):
-                r = requests.get(f"{_JQUANTS_BASE}/equities/bars/daily",
-                                 headers=headers, params=params, timeout=10)
-                r.raise_for_status()
-                body = r.json()
-                rows.extend(body.get("data", []))
-                pk = body.get("pagination_key")
-                if not pk:
+            # v13.5.17 (owner spec: ten-year corpus): request 3,640 days —
+            # safely INSIDE the rolling 10y J-Quants entitlement. 3,660 days
+            # overhung the contract window by ~a week and J-Quants rejected
+            # the whole request, which blanked the chart (the seed failure
+            # named it: price_history_unavailable). If the wide window still
+            # yields nothing, degrade to the proven 5-year window rather than
+            # serving an empty chart.
+            rows = []
+            for window_days in (3640, 1980):
+                frm = (datetime.now(TZ_JST)
+                       - timedelta(days=window_days)).strftime("%Y-%m-%d")
+                attempt_rows, params = [], {"code": code, "from": frm}
+                try:
+                    for _ in range(12):
+                        r = requests.get(
+                            f"{_JQUANTS_BASE}/equities/bars/daily",
+                            headers=headers, params=params, timeout=10)
+                        r.raise_for_status()
+                        body = r.json()
+                        attempt_rows.extend(body.get("data", []))
+                        pk = body.get("pagination_key")
+                        if not pk:
+                            break
+                        params["pagination_key"] = pk
+                except Exception as window_exc:
+                    add_log(f"[scout] history window {window_days}d failed "
+                            f"{code}: {type(window_exc).__name__}")
+                    attempt_rows = []
+                if attempt_rows:
+                    rows = attempt_rows
                     break
-                params["pagination_key"] = pk
             rows = [q for q in rows if _q_close(q) is not None]
             rows.sort(key=lambda q: q.get("Date", ""), reverse=True)   # newest first
             # v13.5.16: pagination boundaries / in-history adjustment
