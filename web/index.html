@@ -13,7 +13,15 @@
     />
     <meta name="theme-color" content="#0B1118" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- v13.5.15: OPAQUE black status bar. The iOS 26 web-app container lays
+         out black-translucent as a TOP-anchored window of height
+         (screen - statusBar): device diagnostics measured innerHeight 873 vs
+         screen 932 with env(top)=59 reported INSIDE the window, i.e. the
+         missing 59pt is a dead band at the BOTTOM (the unmovable margin the
+         owner kept seeing). The opaque style uses the below-status-bar layout
+         path, whose window ends at the PHYSICAL bottom — the nav lands on the
+         home-indicator line and the status bar stays black-on-black. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="A.R.G.U.S." />
     <meta name="mobile-web-app-capable" content="yes" />
     <link rel="apple-touch-icon" href="/icon-192.svg" />
