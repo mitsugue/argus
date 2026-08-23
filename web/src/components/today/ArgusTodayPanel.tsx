@@ -221,6 +221,8 @@ const NewsSignalStrip: React.FC = () => {
     data-argus-contract="news-event-signal-v1" aria-label="ニュース/イベント判断">
     <small>ニュース/イベント — チャート観とは独立
       {material.length > 1 && ` · 重大${material.length}件(最重要を表示)`}
+      {(news.view?.pendingTranslationCount ?? 0) > 0
+        && ` · 要約処理中${news.view?.pendingTranslationCount}通`}
       {degraded && ' · ⚠ 更新失敗・前回取得分'}</small>
     <div className="ns-head">
       <b>{NEWS_DIRECTION_JA[primary] ?? primary}</b>

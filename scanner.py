@@ -16336,6 +16336,14 @@ def _news_intel_load():
             _NEWS_INTEL["events"] = dict(saved.get("events") or {})
             _NEWS_INTEL["order"] = list(saved.get("order") or [])
             _NEWS_INTEL["audit"] = list(saved.get("audit") or [])
+            _NEWS_INTEL["sources"] = dict(saved.get("sources") or {})
+            _NEWS_INTEL["observedSenders"] = dict(
+                saved.get("observedSenders") or {})
+            _NEWS_INTEL["messageStatus"] = dict(saved.get("messageStatus") or {})
+            _NEWS_INTEL["messageOrder"] = list(saved.get("messageOrder") or [])
+            for key, value in (saved.get("durableCounters") or {}).items():
+                if isinstance(value, int):
+                    _NEWS_INTEL["health"][key] = value
     except Exception:
         pass
 
@@ -16348,10 +16356,23 @@ def _news_intel_persist():
             "events": _NEWS_INTEL["events"],
             "order": _NEWS_INTEL["order"][-_NEWS_EVENT_CAP:],
             "audit": _NEWS_INTEL["audit"][-_NEWS_AUDIT_CAP:],
+            # v13.5.22 (external review): source-acceptance evidence must
+            # survive restarts/deploys — process-memory counters are not an
+            # audit authority.
+            "sources": _NEWS_INTEL.get("sources") or {},
+            "observedSenders": _NEWS_INTEL.get("observedSenders") or {},
+            "messageStatus": _NEWS_INTEL.get("messageStatus") or {},
+            "messageOrder": (_NEWS_INTEL.get("messageOrder") or [])[-120:],
+            "durableCounters": {
+                key: _NEWS_INTEL["health"].get(key, 0)
+                for key in ("quarantined", "duplicatesSuppressed",
+                            "parseFailures", "aiAnalyses", "alertsEligible")},
         }
         blob = json.dumps(payload, ensure_ascii=False)
         if len(blob.encode("utf-8")) > 512 * 1024:  # hard bound (§10/§25)
             payload["audit"] = payload["audit"][-50:]
+            payload["messageStatus"] = {}
+            payload["messageOrder"] = []
             blob = json.dumps(payload, ensure_ascii=False)
         with open(_news_intake_file() + ".tmp", "w",
                   encoding="utf-8") as handle:
@@ -16368,6 +16389,67 @@ def _news_intel_ensure_loaded():
     if not _NEWS_LOADED["value"]:
         _NEWS_LOADED["value"] = True
         _news_intel_load()
+
+
+def _news_source_acceptance():
+    """Per-source acceptance evidence derived from the DURABLE stores
+    (events + audit + persisted source rows) — never process-memory alone
+    (v13.5.22, external review). Public-safe: counts, domains, instants and
+    the verdict vocabulary only; no subjects, no bodies."""
+    events = list(_NEWS_INTEL.get("events", {}).values())
+    audit = list(_NEWS_INTEL.get("audit") or [])
+    out = {}
+    for family in argus_news_intelligence.SOURCE_FAMILIES:
+        fam_events = [e for e in events if e.get("sourceFamily") == family]
+        severities = {}
+        latest_received = latest_processed = latest_event = None
+        pending_translation = 0
+        for event in fam_events:
+            severities[event.get("severity")] =                 severities.get(event.get("severity"), 0) + 1
+            received = str(event.get("sourceReceivedAt") or "")
+            if received > str(latest_received or ""):
+                latest_received = received
+                latest_event = event.get("eventId")
+            processed = str(event.get("processedAt") or "")
+            if processed > str(latest_processed or ""):
+                latest_processed = processed
+            title = str(event.get("titleOriginal") or "")
+            ja = str(event.get("headlineJa") or "")
+            if ja in ("", "翻訳処理中") and title                     and not re.search(r"[぀-ヿ一-鿿]", title):
+                pending_translation += 1
+        quarantined = sum(1 for row in audit
+                          if row.get("stage") == "quarantined"
+                          and row.get("source") == family)
+        row = dict(_NEWS_INTEL.get("sources", {}).get(family) or {})
+        classified = len(fam_events)
+        if classified:
+            verdict = "REAL_MAIL_ACCEPTED"
+        elif quarantined or row.get("quarantined"):
+            verdict = "QUARANTINED"
+        elif row.get("parseFailures"):
+            verdict = "PARSER_FAILED"
+        else:
+            verdict = "NO_MAIL_RECEIVED_YET"
+        out[family] = {
+            "verdict": verdict,
+            "classifiedEvents": classified,
+            "severities": severities,
+            "pendingTranslation": pending_translation,
+            "quarantined": quarantined + int(row.get("quarantined") or 0),
+            "parseFailures": int(row.get("parseFailures") or 0),
+            "observedCount": int(row.get("observedCount") or 0) or classified,
+            "latestReceivedAt": latest_received,
+            "latestProcessedAt": latest_processed or row.get("lastProcessedAt"),
+            "latestEventId": latest_event,
+            "lastAuthenticatedAt": row.get("lastAuthenticatedAt"),
+        }
+    accepted = sum(1 for row in out.values()
+                   if row["verdict"] == "REAL_MAIL_ACCEPTED")
+    overall = ("ALL_SIX_SOURCES_REAL_MAIL_ACCEPTED" if accepted == 6
+               else "PARTIAL_SOURCE_ACCEPTANCE" if accepted
+               else "MAIL_INTAKE_NOT_PROVEN")
+    return {"perSource": out, "acceptedSources": accepted,
+            "overallVerdict": overall}
 
 
 def _news_audit(row):
@@ -16682,7 +16764,42 @@ def _news_intake_cycle(*, backfill=False, backfill_days=10):
     return result["status"]
 
 
+_NEWS_TRANSLATION_WORKER = {
+    "lastRunAt": None, "lastSuccessAt": None, "lastError": None,
+    "consecutiveFailures": 0, "translatedTotal": 0,
+}
+
+
+def _news_translation_tick():
+    """Continuous translation drain (v13.5.22, external review): weekday-only
+    cron scheduling left official English mail invisible for whole weekends.
+    Bounded (cap 20/run), idempotent (cache-keyed), exponential backoff on
+    failures, and fully observable in the intake health payload."""
+    state = _NEWS_TRANSLATION_WORKER
+    backoff = min(2 ** min(state["consecutiveFailures"], 5), 32)
+    if state["consecutiveFailures"] and state.get("lastRunAt"):
+        try:
+            last = datetime.strptime(
+                state["lastRunAt"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=pytz.utc).timestamp()
+            if time.time() - last < backoff * 180:
+                return
+        except Exception:
+            pass
+    state["lastRunAt"] = _ai_now_iso()
+    try:
+        result = _translate_pending_headlines(cap=20, queue_first=True)
+        state["lastSuccessAt"] = _ai_now_iso()
+        state["lastError"] = None
+        state["consecutiveFailures"] = 0
+        state["translatedTotal"] += int(result.get("translated") or 0)
+    except Exception as exc:
+        state["consecutiveFailures"] += 1
+        state["lastError"] = f"{type(exc).__name__}: {str(exc)[:80]}"
+
+
 def _news_intake_loop():
+    translation_beat = 0
     while True:
         try:
             _news_intake_cycle()
@@ -16690,6 +16807,12 @@ def _news_intake_loop():
             with _NEWS_INTEL_LOCK:
                 _NEWS_INTEL["health"]["status"] = "DEGRADED"
                 _NEWS_INTEL["health"]["lastErrorClass"] = type(e).__name__
+        translation_beat += 1
+        if translation_beat % 3 == 0:      # every ~3 intake cycles
+            try:
+                _news_translation_tick()
+            except Exception:
+                pass
         time.sleep(_NEWS_INTAKE_INTERVAL_SEC)
 
 
@@ -16758,8 +16881,21 @@ def api_argus_news_intelligence():
             "translated", "not_needed")
         if not summary_ready and not translation_ready:
             pending_translation_count += 1
-            event["alertEligible"] = False
-            continue
+            # v13.5.22 (external review): translation is PRESENTATION work —
+            # classification/severity/direction were computed on the original
+            # language at intake and a material event must not stay invisible
+            # for a weekend because the Japanese summary is still queued.
+            # HIGH/CRITICAL surface immediately with a safe placeholder (no
+            # licensed content); INFO/WATCH wait for the translated summary.
+            if event.get("severity") in ("HIGH", "CRITICAL"):
+                source_ja = argus_news_intelligence.SOURCE_LABELS.get(
+                    event.get("sourceFamily"), event.get("source") or "公式")
+                event["headlineJa"] = (
+                    f"{source_ja}の重要発表を検知（日本語要約 処理中）")
+                event["translationPending"] = True
+            else:
+                event["alertEligible"] = False
+                continue
         try:
             event["eventMemory"] = _causal_memory_summary(event["eventId"])
         except Exception:
@@ -16804,6 +16940,12 @@ def api_argus_news_intake_health():
                             else "SUBSCRIBED_NO_MESSAGE_OBSERVED_YET")
             per_source[family] = row
         health["perSource"] = per_source
+        health["sourceAcceptance"] = _news_source_acceptance()
+        health["translationWorker"] = {
+            **dict(_NEWS_TRANSLATION_WORKER),
+            "queueDepth": len(_NEWS_JA_VQUEUE),
+            "lastDrainAt": _NEWS_JA_VQUEUE_STATE.get("lastDrainAt"),
+        }
         # Processing-state authority per Gmail message (§6): ARGUS's own
         # ledger proves whether a mail was seen — Gmail read/unread is never
         # mutated. Ids + status only; no subjects on the public surface.
