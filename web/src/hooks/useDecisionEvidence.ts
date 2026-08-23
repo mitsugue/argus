@@ -11,7 +11,7 @@ const REFRESH_INTERVAL_MS = 120_000;   // matches the backend evidence TTL
 const MAX_SYMBOLS_PER_REQUEST = 8;
 const HEADLINE_SYMBOLS = ['1321', '1306', 'SPY', 'QQQ'] as const;
 
-// v13.5.21 (review item A): document-level SHO MARKET VIEW. Display-only —
+// v13.5.22 (review item A): document-level SHO MARKET VIEW. Display-only —
 // the resolver never registers it as an SDA input; actionAuthority stays
 // false by construction on the backend projection.
 export interface ShoMarketView {

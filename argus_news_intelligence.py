@@ -893,7 +893,7 @@ def build_news_event(*, message: Mapping[str, Any],
         confirmation_state=materiality["confirmationState"],
         impact_direction=impact_direction)
     return {
-        # v13.5.21 NEWS/EVENT DIRECTIONAL IMPACT: an independent axis beside
+        # v13.5.22 NEWS/EVENT DIRECTIONAL IMPACT: an independent axis beside
         # severity and market confirmation. Display + evidence only.
         "impactDirection": impact_direction,
         "executionConstraint": execution_constraint,

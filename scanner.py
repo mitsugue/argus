@@ -7081,7 +7081,7 @@ def api_argus_important_events():
         events, owner_symbols=owner_symbols, held_symbols=held,
         ctx={"regime": regime, "vixElevated": vix_elevated}, limit=64)
     items = items_all[:8]
-    # v13.5.21 (review item C): the D/D-1 hard-constraint feed must not
+    # v13.5.22 (review item C): the D/D-1 hard-constraint feed must not
     # depend on the 8-item display cap — the audit showed event #9+ silently
     # produced no constraint. Compact, uncapped imminent list for the
     # device-side SDA/AP event gate, tiered by displayImpact.
@@ -9803,7 +9803,7 @@ def api_argus_intel_collect():
         except Exception:
             continue
     out["supplyDemandWarm"] = warmed
-    # v13.5.21: warm the SHO CORE input caches (^N225/^VIX OHLCV, 1570 weekly
+    # v13.5.22: warm the SHO CORE input caches (^N225/^VIX OHLCV, 1570 weekly
     # margin, FRED VIX). This admin/cron path is the ONLY fetch route; the
     # public decision-evidence GET reads these caches cached-only.
     try:
@@ -12434,11 +12434,28 @@ def api_argus_action_labels():
 # gated by the API keys + the AI run gate + the daily/monthly budget hard-stop. The separate
 # GPT-5.5 Pro Handoff export further below stays manual (copy-paste, no API call).
 _OPENAI_API_KEY        = os.environ.get("OPENAI_API_KEY", "")
-_OPENAI_MODEL          = os.environ.get("OPENAI_MODEL", "") or "gpt-5.5"
+# v13.5.22 (owner directive: use the current generation): primary default is
+# the GPT-5.6 tier already registered in the repo pricing table (terra = the
+# cost-efficient 5.6 SKU; the standard/referee roles were on 5.6 since
+# v12.2.x). Env-overridable without a release, exactly as before.
+_OPENAI_MODEL          = os.environ.get("OPENAI_MODEL", "") or "gpt-5.6-terra"
 # Checker tiering: the DAILY SCORED run (checker=pro) uses the Pro model; the frequent 15-min
 # re-judges (checker=flash) and the 429-quota fallback use Flash, so the double-check DEGRADES
 # instead of disappearing. Both env-overridable.
+# v13.5.22 model currency (corrected after external review): the official
+# Gemini catalog serves gemini-3.1-pro-preview (Pro/preview) and
+# gemini-3.7-flash (Stable) — a "gemini-3.7-pro" endpoint is NOT established
+# and must never be a production default (invented IDs are exactly the
+# silent-degradation trap the fallback chain exists to catch). Judge stays
+# on the Pro preview for quality; the degradation chain is current-gen:
+# 3.1-pro-preview -> 3.7-flash (stable) -> 2.5-flash, every hop logged.
 _GEMINI_JUDGE_MODEL    = os.environ.get("GEMINI_JUDGE_MODEL", "") or "gemini-3.1-pro-preview"
+_GEMINI_PRIOR_MODEL    = os.environ.get("GEMINI_PRIOR_MODEL", "") or "gemini-3.7-flash"
+# The FORMAL BENCHMARK baseline stays pinned to its calibrated epoch model —
+# a judge-default upgrade must never silently change what the 2x comparisons
+# are measured against (epoch re-qualification discipline, v12.2.2).
+_GEMINI_BENCHMARK_MODEL = os.environ.get("GEMINI_BENCHMARK_MODEL", "") \
+    or "gemini-3.1-pro-preview"
 _GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "") or "gemini-2.5-flash"
 _ARGUS_ADMIN_TOKEN     = os.environ.get("ARGUS_ADMIN_TOKEN", "")
 
@@ -12530,6 +12547,10 @@ _AI_PRICING = {
                            "out": _float_env("GEMINI_PRICE_OUTPUT_PER_1M", 10.0)},
     _GEMINI_FALLBACK_MODEL: {"in": _float_env("GEMINI_FLASH_PRICE_INPUT_PER_1M", 0.30),
                              "out": _float_env("GEMINI_FLASH_PRICE_OUTPUT_PER_1M", 2.50)},
+    # Prior-generation judge hop (graceful degradation path) keeps a priced
+    # key so the fallback never bypasses the unknown-price gate.
+    _GEMINI_PRIOR_MODEL: {"in": _float_env("GEMINI_PRICE_INPUT_PER_1M", 1.25),
+                          "out": _float_env("GEMINI_PRICE_OUTPUT_PER_1M", 10.0)},
     # Official prices frozen for the final v12 benchmark.  The benchmark call
     # ceiling is far below Gemini's 200k context tier boundary.
     "gpt-5.6-sol": {"in": 5.0, "out": 30.0},
@@ -13199,11 +13220,31 @@ def _gemini_check(snapshot, openai_out, checker_model=None):
             resp = _gen(model_used, cfg)
         except Exception as e:
             msg = str(e)
-            # Quota exhausted on the configured (pro) model → degrade to the
-            # fallback model rather than losing the double-check entirely.
-            if ("429" in msg or "RESOURCE_EXHAUSTED" in msg) and _GEMINI_FALLBACK_MODEL != model_used:
+            # Quota exhaustion OR an unserved model ID → degrade through the
+            # prior-generation model, then flash, rather than losing the
+            # double-check entirely. Every hop is logged (visible fallback).
+            recoverable = ("429" in msg or "RESOURCE_EXHAUSTED" in msg
+                           or "404" in msg or "NOT_FOUND" in msg
+                           or "not found" in msg.lower()
+                           or "is not supported" in msg.lower())
+            if recoverable and model_used == _GEMINI_JUDGE_MODEL \
+                    and _GEMINI_PRIOR_MODEL not in (model_used,):
+                add_log(f"[AI] gemini {model_used} unavailable ({msg[:60]}) — "
+                        f"falling back to {_GEMINI_PRIOR_MODEL}")
+                model_used = _GEMINI_PRIOR_MODEL
+                try:
+                    resp = _gen(model_used, cfg)
+                except Exception as e2:
+                    msg = str(e2)
+                    if _GEMINI_FALLBACK_MODEL != model_used:
+                        add_log(f"[AI] gemini fallback to {_GEMINI_FALLBACK_MODEL}")
+                        model_used = _GEMINI_FALLBACK_MODEL
+                        resp = _gen(model_used, cfg)
+                    else:
+                        raise
+            elif recoverable and _GEMINI_FALLBACK_MODEL != model_used:
                 model_used = _GEMINI_FALLBACK_MODEL
-                add_log(f"[AI] gemini quota hit — falling back to {model_used}")
+                add_log(f"[AI] gemini degrading to {model_used}")
                 resp = _gen(model_used, cfg)
             else:
                 raise
@@ -16130,7 +16171,7 @@ def _causal_memory_refresh_open(force=False):
                 if not any(row["relation"] in ("SUPPORTING", "CONTRADICTING")
                            for row in evidence):
                     continue
-                # v13.5.21 (review item D): symmetric invalidation. A
+                # v13.5.22 (review item D): symmetric invalidation. A
                 # hypothesis WEAKENED for >= 3 days whose variables STILL all
                 # contradict earns the streak note, which the assessment
                 # policy accepts as an invalidation criterion — INVALIDATED
@@ -16295,6 +16336,14 @@ def _news_intel_load():
             _NEWS_INTEL["events"] = dict(saved.get("events") or {})
             _NEWS_INTEL["order"] = list(saved.get("order") or [])
             _NEWS_INTEL["audit"] = list(saved.get("audit") or [])
+            _NEWS_INTEL["sources"] = dict(saved.get("sources") or {})
+            _NEWS_INTEL["observedSenders"] = dict(
+                saved.get("observedSenders") or {})
+            _NEWS_INTEL["messageStatus"] = dict(saved.get("messageStatus") or {})
+            _NEWS_INTEL["messageOrder"] = list(saved.get("messageOrder") or [])
+            for key, value in (saved.get("durableCounters") or {}).items():
+                if isinstance(value, int):
+                    _NEWS_INTEL["health"][key] = value
     except Exception:
         pass
 
@@ -16307,10 +16356,23 @@ def _news_intel_persist():
             "events": _NEWS_INTEL["events"],
             "order": _NEWS_INTEL["order"][-_NEWS_EVENT_CAP:],
             "audit": _NEWS_INTEL["audit"][-_NEWS_AUDIT_CAP:],
+            # v13.5.22 (external review): source-acceptance evidence must
+            # survive restarts/deploys — process-memory counters are not an
+            # audit authority.
+            "sources": _NEWS_INTEL.get("sources") or {},
+            "observedSenders": _NEWS_INTEL.get("observedSenders") or {},
+            "messageStatus": _NEWS_INTEL.get("messageStatus") or {},
+            "messageOrder": (_NEWS_INTEL.get("messageOrder") or [])[-120:],
+            "durableCounters": {
+                key: _NEWS_INTEL["health"].get(key, 0)
+                for key in ("quarantined", "duplicatesSuppressed",
+                            "parseFailures", "aiAnalyses", "alertsEligible")},
         }
         blob = json.dumps(payload, ensure_ascii=False)
         if len(blob.encode("utf-8")) > 512 * 1024:  # hard bound (§10/§25)
             payload["audit"] = payload["audit"][-50:]
+            payload["messageStatus"] = {}
+            payload["messageOrder"] = []
             blob = json.dumps(payload, ensure_ascii=False)
         with open(_news_intake_file() + ".tmp", "w",
                   encoding="utf-8") as handle:
@@ -16329,6 +16391,67 @@ def _news_intel_ensure_loaded():
         _news_intel_load()
 
 
+def _news_source_acceptance():
+    """Per-source acceptance evidence derived from the DURABLE stores
+    (events + audit + persisted source rows) — never process-memory alone
+    (v13.5.22, external review). Public-safe: counts, domains, instants and
+    the verdict vocabulary only; no subjects, no bodies."""
+    events = list(_NEWS_INTEL.get("events", {}).values())
+    audit = list(_NEWS_INTEL.get("audit") or [])
+    out = {}
+    for family in argus_news_intelligence.SOURCE_FAMILIES:
+        fam_events = [e for e in events if e.get("sourceFamily") == family]
+        severities = {}
+        latest_received = latest_processed = latest_event = None
+        pending_translation = 0
+        for event in fam_events:
+            severities[event.get("severity")] =                 severities.get(event.get("severity"), 0) + 1
+            received = str(event.get("sourceReceivedAt") or "")
+            if received > str(latest_received or ""):
+                latest_received = received
+                latest_event = event.get("eventId")
+            processed = str(event.get("processedAt") or "")
+            if processed > str(latest_processed or ""):
+                latest_processed = processed
+            title = str(event.get("titleOriginal") or "")
+            ja = str(event.get("headlineJa") or "")
+            if ja in ("", "翻訳処理中") and title                     and not re.search(r"[぀-ヿ一-鿿]", title):
+                pending_translation += 1
+        quarantined = sum(1 for row in audit
+                          if row.get("stage") == "quarantined"
+                          and row.get("source") == family)
+        row = dict(_NEWS_INTEL.get("sources", {}).get(family) or {})
+        classified = len(fam_events)
+        if classified:
+            verdict = "REAL_MAIL_ACCEPTED"
+        elif quarantined or row.get("quarantined"):
+            verdict = "QUARANTINED"
+        elif row.get("parseFailures"):
+            verdict = "PARSER_FAILED"
+        else:
+            verdict = "NO_MAIL_RECEIVED_YET"
+        out[family] = {
+            "verdict": verdict,
+            "classifiedEvents": classified,
+            "severities": severities,
+            "pendingTranslation": pending_translation,
+            "quarantined": quarantined + int(row.get("quarantined") or 0),
+            "parseFailures": int(row.get("parseFailures") or 0),
+            "observedCount": int(row.get("observedCount") or 0) or classified,
+            "latestReceivedAt": latest_received,
+            "latestProcessedAt": latest_processed or row.get("lastProcessedAt"),
+            "latestEventId": latest_event,
+            "lastAuthenticatedAt": row.get("lastAuthenticatedAt"),
+        }
+    accepted = sum(1 for row in out.values()
+                   if row["verdict"] == "REAL_MAIL_ACCEPTED")
+    overall = ("ALL_SIX_SOURCES_REAL_MAIL_ACCEPTED" if accepted == 6
+               else "PARTIAL_SOURCE_ACCEPTANCE" if accepted
+               else "MAIL_INTAKE_NOT_PROVEN")
+    return {"perSource": out, "acceptedSources": accepted,
+            "overallVerdict": overall}
+
+
 def _news_audit(row):
     row = dict(row)
     row["at"] = _ai_now_iso()
@@ -16340,7 +16463,7 @@ def _news_audit(row):
 def _news_corroboration(family, polarity=None):
     """Resolve the event-class corroboration plan against EXISTING sensors
     only (§15). Missing values stay visibly missing — never fabricated.
-    v13.5.21: with a detected polarity, confirmation requires the sensors to
+    v13.5.22: with a detected polarity, confirmation requires the sensors to
     move in the HYPOTHESIS direction (CONFIRMATION_EXPECTATIONS) — a large
     opposite move is market-moved evidence, not confirmation."""
     plan = argus_news_intelligence.CORROBORATION_PLAN.get(family) or ()
@@ -16641,7 +16764,42 @@ def _news_intake_cycle(*, backfill=False, backfill_days=10):
     return result["status"]
 
 
+_NEWS_TRANSLATION_WORKER = {
+    "lastRunAt": None, "lastSuccessAt": None, "lastError": None,
+    "consecutiveFailures": 0, "translatedTotal": 0,
+}
+
+
+def _news_translation_tick():
+    """Continuous translation drain (v13.5.22, external review): weekday-only
+    cron scheduling left official English mail invisible for whole weekends.
+    Bounded (cap 20/run), idempotent (cache-keyed), exponential backoff on
+    failures, and fully observable in the intake health payload."""
+    state = _NEWS_TRANSLATION_WORKER
+    backoff = min(2 ** min(state["consecutiveFailures"], 5), 32)
+    if state["consecutiveFailures"] and state.get("lastRunAt"):
+        try:
+            last = datetime.strptime(
+                state["lastRunAt"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=pytz.utc).timestamp()
+            if time.time() - last < backoff * 180:
+                return
+        except Exception:
+            pass
+    state["lastRunAt"] = _ai_now_iso()
+    try:
+        result = _translate_pending_headlines(cap=20, queue_first=True)
+        state["lastSuccessAt"] = _ai_now_iso()
+        state["lastError"] = None
+        state["consecutiveFailures"] = 0
+        state["translatedTotal"] += int(result.get("translated") or 0)
+    except Exception as exc:
+        state["consecutiveFailures"] += 1
+        state["lastError"] = f"{type(exc).__name__}: {str(exc)[:80]}"
+
+
 def _news_intake_loop():
+    translation_beat = 0
     while True:
         try:
             _news_intake_cycle()
@@ -16649,6 +16807,12 @@ def _news_intake_loop():
             with _NEWS_INTEL_LOCK:
                 _NEWS_INTEL["health"]["status"] = "DEGRADED"
                 _NEWS_INTEL["health"]["lastErrorClass"] = type(e).__name__
+        translation_beat += 1
+        if translation_beat % 3 == 0:      # every ~3 intake cycles
+            try:
+                _news_translation_tick()
+            except Exception:
+                pass
         time.sleep(_NEWS_INTAKE_INTERVAL_SEC)
 
 
@@ -16684,7 +16848,7 @@ def api_argus_news_intelligence():
     pending_translation_count = 0
     _now_epoch = time.time()
     for event in events:
-        # v13.5.21 (external review BLOCKER 1): staleness is re-evaluated at
+        # v13.5.22 (external review BLOCKER 1): staleness is re-evaluated at
         # READ time from the stored receipt instant — a CRITICAL that was
         # FRESH_BREAKING at intake must not still present as fresh days later.
         try:
@@ -16717,8 +16881,21 @@ def api_argus_news_intelligence():
             "translated", "not_needed")
         if not summary_ready and not translation_ready:
             pending_translation_count += 1
-            event["alertEligible"] = False
-            continue
+            # v13.5.22 (external review): translation is PRESENTATION work —
+            # classification/severity/direction were computed on the original
+            # language at intake and a material event must not stay invisible
+            # for a weekend because the Japanese summary is still queued.
+            # HIGH/CRITICAL surface immediately with a safe placeholder (no
+            # licensed content); INFO/WATCH wait for the translated summary.
+            if event.get("severity") in ("HIGH", "CRITICAL"):
+                source_ja = argus_news_intelligence.SOURCE_LABELS.get(
+                    event.get("sourceFamily"), event.get("source") or "公式")
+                event["headlineJa"] = (
+                    f"{source_ja}の重要発表を検知（日本語要約 処理中）")
+                event["translationPending"] = True
+            else:
+                event["alertEligible"] = False
+                continue
         try:
             event["eventMemory"] = _causal_memory_summary(event["eventId"])
         except Exception:
@@ -16763,6 +16940,12 @@ def api_argus_news_intake_health():
                             else "SUBSCRIBED_NO_MESSAGE_OBSERVED_YET")
             per_source[family] = row
         health["perSource"] = per_source
+        health["sourceAcceptance"] = _news_source_acceptance()
+        health["translationWorker"] = {
+            **dict(_NEWS_TRANSLATION_WORKER),
+            "queueDepth": len(_NEWS_JA_VQUEUE),
+            "lastDrainAt": _NEWS_JA_VQUEUE_STATE.get("lastDrainAt"),
+        }
         # Processing-state authority per Gmail message (§6): ARGUS's own
         # ledger proves whether a mail was seen — Gmail read/unread is never
         # mutated. Ids + status only; no subjects on the public surface.
@@ -29050,7 +29233,7 @@ def _formal_benchmark_dry_run_value(gemini_model=None):
     # guards; only this frozen one-shot estimate receives the explicit JPY cap.
     benchmark_budget_usd = argus_research_benchmark.HARD_BUDGET_JPY / fx
     dry = argus_research_benchmark.estimate_cost(
-        gemini_model=gemini_model or _GEMINI_JUDGE_MODEL,
+        gemini_model=gemini_model or _GEMINI_BENCHMARK_MODEL,
         argus_model=_OPENAI_MODEL_ROLES.get("standard") or _OPENAI_MODEL,
         evaluator_model=evaluator, pricing=pricing,
         usd_jpy_ceiling=fx,
@@ -30979,7 +31162,7 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
             "vixRows": _fred_vix_history_dated(),
             "usRows": (reference_history("SPY", "US")
                        if str(symbol).upper() != "SPY" else []),
-            # v13.5.21: misconfiguration is REPORTED, never silently identical
+            # v13.5.22: misconfiguration is REPORTED, never silently identical
             # to an honest data gap (the vix dimension would otherwise just
             # vanish from currentFeatureKeys with no visible cause).
             "sourceIssues": ([] if _FRED_API_KEY
@@ -31440,7 +31623,7 @@ def _decision_evidence_history_row(symbol, market):
              "price": float(last["close"]), "date": str(last["date"])[:10],
              # Provenance stays visible; the PROVIDER is the true upstream of
              # the cached daily series (authority ranking is per real
-             # provider — v13.5.21 fix: the synthetic "history-cache" label
+             # provider — v13.5.22 fix: the synthetic "history-cache" label
              # had rank None, so the whole weekend/holiday EOD path was
              # provider_not_authoritative and every subject data-gated).
              "sourceRef": f"history-cache:{symbol}:{str(last['date'])[:10]}"}
@@ -31547,7 +31730,7 @@ def _decision_evidence_prediction_artifact(symbol, market, cutoff,
         return None, "prediction_context_failed"
 
 
-# ━━━ v13.5.21 SHO CORE production inputs (external review item B) ━━━
+# ━━━ v13.5.22 SHO CORE production inputs (external review item B) ━━━
 # The read-only audit confirmed evaluate_d01_d07 was never called from any
 # production path and the live reversal artifact ran on zero rows. This block
 # wires the feeds the process already holds — JPX credit CSV+ledger, J-Quants
@@ -31818,7 +32001,7 @@ def _sho_market_view():
 
 
 def _decision_evidence_sho_artifact(symbol, cutoff):
-    """Per-subject SHO reversal artifact from real PIT inputs (v13.5.21).
+    """Per-subject SHO reversal artifact from real PIT inputs (v13.5.22).
 
     Both reversal axes now evaluate production feeds (^N225/^VIX complete
     OHLCV); cold feeds leave factors MISSING and the axis DATA_GATED — the
@@ -31989,7 +32172,7 @@ def _decision_evidence_document(symbols):
         "authority": "CANONICAL_ARTIFACT_REFERENCES",
         "sdaAuthority": False,
         "actionAuthority": False,
-        # v13.5.21 (review item A): document-level SHO MARKET VIEW — display
+        # v13.5.22 (review item A): document-level SHO MARKET VIEW — display
         # projection only, never an SDA input; the per-subject references
         # above remain the sole decision evidence.
         "marketView": _sho_market_view(),
@@ -36575,7 +36758,7 @@ def _jq_price_history(code):
     if _JQUANTS_API_KEY:
         try:
             headers = {"x-api-key": _JQUANTS_API_KEY}
-            # v13.5.21 (owner spec: ten-year corpus): request 3,640 days —
+            # v13.5.22 (owner spec: ten-year corpus): request 3,640 days —
             # safely INSIDE the rolling 10y J-Quants entitlement. 3,660 days
             # overhung the contract window by ~a week and J-Quants rejected
             # the whole request, which blanked the chart (the seed failure

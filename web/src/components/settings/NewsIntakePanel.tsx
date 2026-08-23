@@ -38,7 +38,30 @@ interface IntakeHealth {
   }>;
   recentMessages?: Array<{ messageId: string; status: string;
     source: string | null; at: string }>;
+  sourceAcceptance?: {
+    perSource: Record<string, {
+      verdict: string; classifiedEvents: number;
+      severities: Record<string, number>; pendingTranslation: number;
+      quarantined: number; parseFailures: number; observedCount: number;
+      latestReceivedAt: string | null; latestProcessedAt: string | null;
+    }>;
+    acceptedSources: number;
+    overallVerdict: string;
+  };
+  translationWorker?: {
+    lastRunAt: string | null; lastSuccessAt: string | null;
+    lastError: string | null; consecutiveFailures: number;
+    translatedTotal: number; queueDepth: number; lastDrainAt: string | null;
+  };
 }
+
+const ACCEPTANCE_JA: Record<string, string> = {
+  REAL_MAIL_ACCEPTED: '実メール受理済み',
+  NO_MAIL_RECEIVED_YET: '購読済・受信待ち',
+  QUARANTINED: '検疫あり(要確認)',
+  PARSER_FAILED: '解析失敗あり',
+  AUTHENTICATION_FAILED: '認証失敗',
+};
 
 const SOURCE_LABEL_JA: Record<string, string> = {
   NIKKEI: '日経', FEDERAL_RESERVE_BOARD: 'FRB', US_TREASURY: '米財務省',
@@ -178,6 +201,33 @@ export const NewsIntakePanel: React.FC = () => {
               + `${row.lastMaterialEventAt ? ' · 重要イベントあり' : ''}`
               : '購読済・受信待ち'}</b>
           </div>)}
+        </div>}
+        {health.sourceAcceptance && <div style={{ marginTop: 6 }}
+          data-argus-contract="news-source-acceptance-v1"
+          data-acceptance-verdict={health.sourceAcceptance.overallVerdict}>
+          <span style={{ color: 'var(--text-muted)' }}>
+            ソース別 受理実証（再起動をまたいで保持） · {
+              health.sourceAcceptance.acceptedSources}/6ソース実証済み</span>
+          {Object.entries(health.sourceAcceptance.perSource).map(([family, row]) => <div
+            key={family} style={{ display: 'flex',
+              justifyContent: 'space-between', gap: 8 }}>
+            <span>{SOURCE_LABEL_JA[family] ?? family}</span>
+            <b>{ACCEPTANCE_JA[row.verdict] ?? row.verdict}
+              {row.classifiedEvents > 0 && ` · ${row.classifiedEvents}件`}
+              {row.pendingTranslation > 0 && ` · 要約待ち${row.pendingTranslation}`}
+              {row.quarantined > 0 && ` · 検疫${row.quarantined}`}
+              {row.latestReceivedAt ? ` · 最終 ${fmt(row.latestReceivedAt)}` : ''}</b>
+          </div>)}
+        </div>}
+        {health.translationWorker && <div style={{ marginTop: 6 }}>
+          <span style={{ color: 'var(--text-muted)' }}>日本語要約ワーカー（常時稼働）</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+            <span>待ち{health.translationWorker.queueDepth}件 · 累計{
+              health.translationWorker.translatedTotal}件</span>
+            <b>{health.translationWorker.lastError
+              ? `エラー: ${health.translationWorker.lastError}`
+              : `最終成功 ${fmt(health.translationWorker.lastSuccessAt)}`}</b>
+          </div>
         </div>}
         {(health.recentMessages ?? []).length > 0 && <div style={{ marginTop: 6 }}>
           <span style={{ color: 'var(--text-muted)' }}>直近メール処理状態</span>

@@ -120,7 +120,7 @@ const NEXT_REVIEW_REASON_JA: Record<string, string> = {
   sho_revalidation: 'チャート分析証拠を再検証',
   evidence_refresh: '正本証拠を更新',
 };
-// v13.5.21 (external review item A): MARKET VIEW (SHO) / ACTION (SDA)
+// v13.5.22 (external review item A): MARKET VIEW (SHO) / ACTION (SDA)
 // separation. The strip renders the document-level SHO consumer projection —
 // reversal + downside axis states and D01-D07 family states — directly under
 // the SDA action so the owner sees "what the market looks like" and "what we
@@ -165,7 +165,7 @@ const MarketViewStrip: React.FC = () => {
   </div>;
 };
 
-// v13.5.21 NEWS/EVENT SIGNAL (owner spec 2026-08-23): the independent news
+// v13.5.22 NEWS/EVENT SIGNAL (owner spec 2026-08-23): the independent news
 // direction axis rendered BESIDE the SHO market view and the SDA action —
 // three separate judgments, never one blended score. A chart view and a news
 // view that disagree stay visibly different; cancellation into a vague
@@ -191,7 +191,7 @@ const newsAgeJa = (event: { ageMinutes?: number }): string | null => {
 };
 const NewsSignalStrip: React.FC = () => {
   const news = useNewsIntelligence();
-  // v13.5.21 (external review): staleness is the backend's UPPERCASE enum,
+  // v13.5.22 (external review): staleness is the backend's UPPERCASE enum,
   // re-evaluated at read time; ordering prefers severity then the RECEIPT
   // instant (processedAt reorders on backfill/reprocess and is not used).
   const material = (news.view?.events ?? [])
@@ -221,6 +221,8 @@ const NewsSignalStrip: React.FC = () => {
     data-argus-contract="news-event-signal-v1" aria-label="ニュース/イベント判断">
     <small>ニュース/イベント — チャート観とは独立
       {material.length > 1 && ` · 重大${material.length}件(最重要を表示)`}
+      {(news.view?.pendingTranslationCount ?? 0) > 0
+        && ` · 要約処理中${news.view?.pendingTranslationCount}通`}
       {degraded && ' · ⚠ 更新失敗・前回取得分'}</small>
     <div className="ns-head">
       <b>{NEWS_DIRECTION_JA[primary] ?? primary}</b>
@@ -386,7 +388,7 @@ const ProjectionChart: React.FC<{
       <span className="invalid">無効 <b>{formatInstrumentPrice(projection.invalidation, projection.instrumentId)}</b></span></div>
     {displayProbabilities ? <div className={`at-proj-prob ${
       projection.directionProbabilities ? 'is-verified' : 'is-reference'}`}>
-      {/* v13.5.21 (external review): the reference-mode numbers are DEMOTED —
+      {/* v13.5.22 (external review): the reference-mode numbers are DEMOTED —
           the ablation showed no out-of-sample edge over the base rate, so the
           lead line says so plainly and the digits render muted/uncolored.
           Verified mode (a future state gated on positive OOS skill) keeps

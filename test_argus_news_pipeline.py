@@ -345,3 +345,96 @@ def test_admin_audit_view_is_gated_and_answers_why(monkeypatch, news_env):
     rows = allowed.get_json()["audit"]
     assert any(r.get("stage") == "quarantined" or r.get("stage") == "classified"
                for r in rows)
+
+
+# ━━━ v13.5.22 — durable source acceptance + classification-first display ━━━
+
+def _seed_event(eid, family, severity, title, ja, received):
+    return {
+        "schemaVersion": "argus-news-event-v1", "eventId": eid, "revision": 1,
+        "source": family, "sourceFamily": family,
+        "sourceTier": "official_agency", "dataInput": False,
+        "sourceFingerprint": "fp-" + eid, "sourceReceivedAt": received,
+        "sourcePublishedAt": None, "processedAt": received,
+        "titleOriginal": title, "headlineJa": ja, "eventType": "RATES",
+        "themeTags": [], "facts": [], "entities": [], "sourceUrl": None,
+        "staleness": "FRESH_UPDATE", "severity": severity,
+        "severityReasons": ["r"],
+        "confirmationState": "MARKET_CONFIRMATION_PENDING",
+        "whyJa": "w", "japanImpactJa": None, "uncertaintyJa": None,
+        "marketReadings": [], "analysisState": "DETERMINISTIC_ONLY",
+        "policyVersion": "news-policy-v3", "authority": "NEWS_RISK_EVIDENCE",
+        "sdaAuthority": False, "backfill": False, "alertEligible": False,
+    }
+
+
+def _reset_news_store(tmp_path, monkeypatch):
+    monkeypatch.setattr(scanner, "_news_intake_file",
+                        lambda: str(tmp_path / "news_intake_state.json"))
+    scanner._NEWS_INTEL["events"] = {}
+    scanner._NEWS_INTEL["order"] = []
+    scanner._NEWS_INTEL["audit"] = []
+    scanner._NEWS_INTEL["sources"] = {}
+    scanner._NEWS_INTEL["observedSenders"] = {}
+    scanner._NEWS_INTEL["messageStatus"] = {}
+    scanner._NEWS_INTEL["messageOrder"] = []
+
+
+def test_source_acceptance_is_derived_from_durable_evidence(tmp_path, monkeypatch):
+    """外部レビュー: 受理実証はプロセスメモリでなく永続ストアから導出。
+    実イベントあり=REAL_MAIL_ACCEPTED / 検疫のみ=QUARANTINED /
+    それ以外=NO_MAIL_RECEIVED_YET(受理と偽らない)。"""
+    _reset_news_store(tmp_path, monkeypatch)
+    scanner._NEWS_INTEL["events"]["e1"] = _seed_event(
+        "e1", "BANK_OF_JAPAN", "INFO", "BOJ schedule", "日銀の定期配信",
+        "2026-08-21T08:52:10Z")
+    scanner._NEWS_INTEL["audit"].append(
+        {"stage": "quarantined", "source": "EIA", "fromDomain": "x.example"})
+    acceptance = scanner._news_source_acceptance()
+    per = acceptance["perSource"]
+    assert per["BANK_OF_JAPAN"]["verdict"] == "REAL_MAIL_ACCEPTED"
+    assert per["BANK_OF_JAPAN"]["latestReceivedAt"] == "2026-08-21T08:52:10Z"
+    assert per["EIA"]["verdict"] == "QUARANTINED"
+    for family in ("NIKKEI", "FEDERAL_RESERVE_BOARD", "US_TREASURY", "BLS"):
+        assert per[family]["verdict"] == "NO_MAIL_RECEIVED_YET"
+    assert acceptance["overallVerdict"] == "PARTIAL_SOURCE_ACCEPTANCE"
+
+
+def test_source_ledgers_survive_persist_and_reload(tmp_path, monkeypatch):
+    _reset_news_store(tmp_path, monkeypatch)
+    scanner._news_source_row("US_TREASURY")["observedCount"] = 8
+    scanner._news_source_row("US_TREASURY")["lastAuthenticatedAt"] = \
+        "2026-08-23T11:14:00Z"
+    scanner._news_message_status("m-77", "SURFACED", "US_TREASURY")
+    scanner._NEWS_INTEL["health"]["quarantined"] = 3
+    scanner._news_intel_persist()
+    scanner._NEWS_INTEL["sources"] = {}
+    scanner._NEWS_INTEL["messageStatus"] = {}
+    scanner._NEWS_INTEL["health"]["quarantined"] = 0
+    scanner._news_intel_load()
+    assert scanner._NEWS_INTEL["sources"]["US_TREASURY"]["observedCount"] == 8
+    assert scanner._NEWS_INTEL["messageStatus"]["m-77"]["status"] == "SURFACED"
+    assert scanner._NEWS_INTEL["health"]["quarantined"] == 3
+
+
+def test_material_english_event_surfaces_before_translation(tmp_path, monkeypatch):
+    """翻訳は表示レイヤー: HIGH/CRITICALの英文イベントはプレースホルダで
+    即時表示(認識を翻訳待ちにしない)。INFO/WATCHは従来どおり要約待ち。"""
+    _reset_news_store(tmp_path, monkeypatch)
+    scanner._NEWS_INTEL["events"]["hi"] = _seed_event(
+        "hi", "US_TREASURY", "HIGH",
+        "Treasury announces new sanctions package", "翻訳処理中",
+        "2026-08-23T11:14:00Z")
+    scanner._NEWS_INTEL["events"]["lo"] = _seed_event(
+        "lo", "BLS", "INFO", "Regular data release note", "翻訳処理中",
+        "2026-08-23T10:00:00Z")
+    scanner._NEWS_INTEL["order"] = ["lo", "hi"]
+    body = scanner.app.test_client().get(
+        "/api/argus/news-intelligence").get_json()
+    served = {e["eventId"]: e for e in body["events"]}
+    assert "hi" in served, "material English mail must not stay invisible"
+    assert served["hi"]["translationPending"] is True
+    assert "重要発表を検知" in served["hi"]["headlineJa"]
+    assert "Treasury announces" not in served["hi"]["headlineJa"]
+    assert "lo" not in served
+    assert body["pendingTranslationCount"] >= 1
