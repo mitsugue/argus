@@ -336,6 +336,20 @@ jobs:
             --expected-sha '${{ needs.candidate-identity.outputs.backend_sha }}' \
             --trigger-id 'v13-production-${{ github.sha }}-${{ github.run_id }}' \
             --out artifacts/business-snapshot-trigger/trigger.json
+      - name: Warm the runtime caches immediately after the swap
+        # v13.5.21: a deploy swap leaves quote/margin/index caches cold, and
+        # the collect cron may not fire for hours (weekends especially) — the
+        # owner saw every subject data-gated for the whole window. The same
+        # admin collect endpoint the cron uses is invoked once here; failures
+        # are reported but never fail the deploy (the cron remains the
+        # steady-state warmer).
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          curl -sS -X POST --max-time 300 \
+            -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "https://argus-backend-3j2m.onrender.com/api/argus/institutional-intelligence/collect" \
+            | head -c 600 || echo "collect-warm failed (cron will recover)"
       - name: Publish producer trigger evidence
         if: always()
         uses: actions/upload-artifact@v4

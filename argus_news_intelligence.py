@@ -623,6 +623,27 @@ DIRECTION_TARGETS = ("broadMarket", "japanEquities", "growth",
 EXECUTION_CONSTRAINTS = ("NO_CONSTRAINT", "CAUTION", "BLOCK_NEW_BUY",
                          "RISK_REVIEW_REQUIRED")
 
+# Expected CROSS-MARKET reaction signs per (family, polarity) — market
+# confirmation must match the HYPOTHESIS direction, not merely "the market
+# moved a lot" (external review: a big move in the OPPOSITE direction is
+# MARKET_MOVED / attribution-uncertain, never confirmation). +1 = up,
+# -1 = down; sensors absent from the map carry no expectation.
+CONFIRMATION_EXPECTATIONS = {
+    ("RATES", "up"): {"us10y": 1, "vix": 1},
+    ("RATES", "down"): {"us10y": -1},
+    ("US_FISCAL", "up"): {"us10y": 1, "vix": 1},
+    ("FED", "up"): {"us10y": 1, "vix": 1},
+    ("FED", "down"): {"us10y": -1},
+    ("IRAN", "escalate"): {"oil": 1, "vix": 1, "usdJpy": -1},
+    ("HORMUZ", "escalate"): {"oil": 1, "vix": 1, "usdJpy": -1},
+    ("WAR_ESCALATION", "escalate"): {"oil": 1, "vix": 1, "usdJpy": -1},
+    ("CEASEFIRE", "deescalate"): {"oil": -1, "vix": -1},
+    ("OIL", "up"): {"oil": 1},
+    ("OIL", "down"): {"oil": -1},
+    ("BOJ", "up"): {"usdJpy": -1},
+    ("BOJ", "down"): {"usdJpy": 1},
+}
+
 _POLARITY_CUES = {
     "up": ("上昇", "急騰", "急上昇", "上回", "加速", "利上げ", "タカ派",
            "最高値", "増額", "増産", "上方修正", "hawkish", "raises", "hike",
@@ -730,14 +751,43 @@ _DIRECTION_RULES: Dict[Any, Dict[str, str]] = {
 }
 
 
+_NEGATION_CUES = (
+    "否定", "せず", "しない", "なし", "ない", "見送", "回避", "撤回", "解除",
+    "至らず", "至っていない", "持ち越", "先送り", "困難", "決裂",
+    "denies", "denied", "no ", "not ", "without", "rules out", "refrain",
+    "fails to", "collapse",
+)
+_DAMPENER_CUES = (
+    "一服", "鈍化", "落ち着", "様子見", "小幅", "限定的", "織り込み済",
+    "pause", "cools", "moderat", "steadies", "muted",
+)
+
+
+def _cue_negated(haystack: str, cue: str) -> bool:
+    """A cue does not carry its polarity when a negation/suspension marker
+    sits in the same local window (「攻撃を否定」「利上げを見送り」), or when
+    a dampener marks the move as ENDING (「金利上昇が一服」)."""
+    index = haystack.find(cue)
+    while index != -1:
+        window = haystack[max(0, index - 14):index + len(cue) + 14]
+        if not any(marker in window for marker in
+                   _NEGATION_CUES + _DAMPENER_CUES):
+            return False           # at least one un-negated occurrence
+        index = haystack.find(cue, index + 1)
+    return True
+
+
 def _detect_polarity(text: str) -> Optional[str]:
-    """First matching polarity by cue priority; None when nothing matches.
-    Escalation/restriction cues outrank generic up/down words so 「攻撃で原油
-    上昇」 reads as escalation, not a benign 'up'."""
+    """First matching polarity by cue priority; None when nothing matches or
+    every matching cue is negated/suspended in context (「停戦合意には至ら
+    ず」 must NOT read as de-escalation — an undetectable direction stays
+    UNCLEAR rather than guessing). Escalation/restriction cues outrank
+    generic up/down words so 「攻撃で原油上昇」 reads as escalation."""
     haystack = _lower(text)
     for polarity in ("deescalate", "escalate", "restrict", "up", "down"):
-        if any(cue in haystack for cue in _POLARITY_CUES[polarity]):
-            return polarity
+        for cue in _POLARITY_CUES[polarity]:
+            if cue in haystack and not _cue_negated(haystack, cue):
+                return polarity
     return None
 
 
@@ -769,10 +819,23 @@ def evaluate_impact_direction(*, taxonomy: Mapping[str, Any], subject: str,
     every target UNCLEAR (a direction is never invented). This signal carries
     no probability and no action authority; SELL/EXIT cannot originate here.
     """
-    family = str(taxonomy.get("eventType") or "OTHER_MARKET_RELEVANT")
+    primary = str(taxonomy.get("eventType") or "OTHER_MARKET_RELEVANT")
     polarity = _detect_polarity(str(subject or "") + "\n"
                                 + str(excerpt or "")[:2000])
-    return direction_for(family, polarity)
+    # Resolve family x polarity JOINTLY: 「イラン停戦合意」 classifies IRAN
+    # first, but the de-escalation rule lives under CEASEFIRE — try every
+    # matched family before falling back to the primary's (likely UNCLEAR)
+    # result, so a reachable rule is never shadowed by family ordering.
+    families = [primary] + [str(f) for f in (taxonomy.get("families") or [])
+                            if str(f) != primary]
+    for family in families:
+        if polarity and (family, polarity) in _DIRECTION_RULES:
+            signal = direction_for(family, polarity)
+            signal["ruleFamily"] = family
+            return signal
+    signal = direction_for(primary, polarity)
+    signal["ruleFamily"] = primary
+    return signal
 
 
 def derive_execution_constraint(*, severity: str, confirmation_state: str,
@@ -830,7 +893,7 @@ def build_news_event(*, message: Mapping[str, Any],
         confirmation_state=materiality["confirmationState"],
         impact_direction=impact_direction)
     return {
-        # v13.5.20 NEWS/EVENT DIRECTIONAL IMPACT: an independent axis beside
+        # v13.5.21 NEWS/EVENT DIRECTIONAL IMPACT: an independent axis beside
         # severity and market confirmation. Display + evidence only.
         "impactDirection": impact_direction,
         "executionConstraint": execution_constraint,

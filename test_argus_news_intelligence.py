@@ -372,7 +372,7 @@ def test_envelope_carries_source_family_and_tier():
     assert event["source"] == "FRB"
 
 
-# ━━━ v13.5.20 — NEWS/EVENT DIRECTIONAL IMPACT (owner spec 2026-08-23) ━━━
+# ━━━ v13.5.21 — NEWS/EVENT DIRECTIONAL IMPACT (owner spec 2026-08-23) ━━━
 
 def _tax(family):
     return {"eventType": family, "families": [family], "themeTags": [],
@@ -472,3 +472,49 @@ def test_direction_rides_the_news_event_record():
     assert event["impactDirection"]["directionByTarget"]["growth"] == "BEARISH"
     assert event["executionConstraint"] == "CAUTION"
     assert event["sdaAuthority"] is False
+
+
+# ━━━ v13.5.21 — hostile polarity fixtures (external review BLOCKER 3) ━━━
+
+def test_negated_cues_do_not_mint_a_direction():
+    """「攻撃を否定」「停戦合意には至らず」「利上げを見送り」「上昇が一服」—
+    人間には明白な非イベントを方向として拾わない(UNCLEARに留める)。"""
+    cases = [
+        (_tax("WAR_ESCALATION"), "当局は攻撃を否定した"),
+        (_tax("CEASEFIRE"), "停戦合意には至らず協議継続"),
+        (_tax("FED"), "FRBは利上げを見送り"),
+        (_tax("RATES"), "米長期金利の上昇が一服"),
+    ]
+    for taxonomy, subject in cases:
+        signal = ni.evaluate_impact_direction(taxonomy=taxonomy, subject=subject)
+        assert signal["polarity"] == "UNDETECTED", (subject, signal["polarity"])
+        assert all(v == "UNCLEAR"
+                   for v in signal["directionByTarget"].values()), subject
+
+
+def test_family_polarity_resolved_jointly():
+    """「イラン停戦合意」= primary family IRAN でも CEASEFIRE の緩和規則へ
+    到達する(family順序が規則を隠さない)。"""
+    taxonomy = {"eventType": "IRAN", "families": ["IRAN", "CEASEFIRE"],
+                "themeTags": [], "lowValueHints": []}
+    signal = ni.evaluate_impact_direction(
+        taxonomy=taxonomy, subject="イラン停戦合意が成立")
+    assert signal["ruleFamily"] == "CEASEFIRE"
+    assert signal["directionByTarget"]["broadMarket"] == "BULLISH"
+    assert signal["directionByTarget"]["energy"] == "BEARISH"
+
+
+def test_confirmation_requires_hypothesis_direction():
+    """市場確認は仮説方向との一致が必要 — 逆方向の大変動はMARKET_MOVEDで
+    あって確認ではない(外部レビューBLOCKER 4)。"""
+    import argus_market_shock as shock
+    expected = ni.CONFIRMATION_EXPECTATIONS[("RATES", "up")]
+    aligned = shock.apply_cross_market_confirmation(
+        "WATCH", vix_change=2.5, usd_jpy_change=None,
+        us10y_change_bp=10.0, expected=expected)
+    assert aligned["confirmed"] is True
+    opposite = shock.apply_cross_market_confirmation(
+        "WATCH", vix_change=2.5, usd_jpy_change=None,
+        us10y_change_bp=-10.0, expected=expected)
+    assert opposite["confirmed"] is False
+    assert "rates_move" in opposite["contradictedSignals"]
