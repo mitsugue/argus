@@ -37,6 +37,15 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # diagnostics), the checkpoint-v2 capacity budgets, and the v13.5.x
     # identity. The accepted baseline is the LIVE v13.5.0 release
     # (f79548bb…); anything outside this list fails the release closed.
+    # v13.5.23 SCHEDULED_AI enablement (owner 「有効にして」 2026-08-23/24):
+    # bounded cost-policy mode + quarantine review. Decision authority remains
+    # deterministic and fail-closed.
+    "argus_cost_policy.py",
+    "test_argus_cost_policy.py",
+    "test_argus_foundation_jobs.py",
+    "test_argus_research_benchmark.py",
+    "test_argus_v12_3_0.py",
+    "web/src/types/marketLedger.ts",
     ".github/actions/v13-5-pre-mutation-rehearsal/action.yml",
     ".github/workflows/caos-scan.yml",
     ".github/workflows/deploy-pages.yml",
