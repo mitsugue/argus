@@ -150,3 +150,20 @@ def test_conditioned_forecast_is_deterministic():
     left = ti.calibrate_forecast(bars, sho_context=context, market="JP")
     right = ti.calibrate_forecast(bars, sho_context=context, market="JP")
     assert left == right
+
+
+def test_source_misconfiguration_is_reported_not_silent(monkeypatch):
+    """v13.5.20 (external review item 6): a missing provider KEY must be
+    distinguishable from an honest data gap — the conditioning metadata
+    names the broken source instead of the vix dimension just vanishing."""
+    bars = _bars(120)
+    context = {"creditRows": [], "vixRows": [], "usRows": [],
+               "sourceIssues": ["vix_provider_key_missing"]}
+    result = ti.calibrate_forecast(
+        bars, sho_context=context, market="JP")
+    meta = result["shoConditioning"]
+    assert meta["sourceIssues"] == ["vix_provider_key_missing"]
+    clean = ti.calibrate_forecast(
+        bars, sho_context={"creditRows": [], "vixRows": [], "usRows": []},
+        market="JP")
+    assert clean["shoConditioning"]["sourceIssues"] == []

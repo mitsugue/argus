@@ -370,3 +370,105 @@ def test_envelope_carries_source_family_and_tier():
     assert event["sourceFamily"] == "FEDERAL_RESERVE_BOARD"
     assert event["sourceTier"] == "official_agency"
     assert event["source"] == "FRB"
+
+
+# ━━━ v13.5.20 — NEWS/EVENT DIRECTIONAL IMPACT (owner spec 2026-08-23) ━━━
+
+def _tax(family):
+    return {"eventType": family, "families": [family], "themeTags": [],
+            "lowValueHints": []}
+
+
+def test_direction_is_per_target_never_one_number():
+    """A US long-yield spike is BEARISH for growth yet BULLISH for banks —
+    one market-wide number would erase exactly the information the owner
+    needs."""
+    signal = ni.evaluate_impact_direction(
+        taxonomy=_tax("RATES"), subject="米30年債利回りが急騰、5%台に上昇")
+    by_target = signal["directionByTarget"]
+    assert by_target["growth"] == "BEARISH"
+    assert by_target["semiconductors"] == "BEARISH"
+    assert by_target["banks"] == "BULLISH"
+    assert signal["primaryDirection"] == "BEARISH"
+    assert signal["directionAuthority"] is False
+    assert signal["transmissionChain"], "why it matters must be explainable"
+
+
+def test_undetected_polarity_stays_unclear_not_invented():
+    signal = ni.evaluate_impact_direction(
+        taxonomy=_tax("RATES"), subject="長期金利に関する市場の見方")
+    assert signal["polarity"] == "UNDETECTED"
+    assert all(v == "UNCLEAR" for v in signal["directionByTarget"].values())
+    assert signal["confidence"] == "LOW"
+
+
+def test_escalation_outranks_generic_up_words():
+    """「攻撃で原油上昇」は escalation として読む(升目違いの'up'にしない)。"""
+    signal = ni.evaluate_impact_direction(
+        taxonomy=_tax("WAR_ESCALATION"),
+        subject="中東で攻撃拡大、原油価格が上昇")
+    assert signal["polarity"] == "escalate"
+    assert signal["directionByTarget"]["broadMarket"] == "BEARISH"
+    assert signal["directionByTarget"]["energy"] == "BULLISH"
+
+
+def test_ceasefire_reverses_energy_direction():
+    signal = ni.evaluate_impact_direction(
+        taxonomy=_tax("CEASEFIRE"), subject="停戦合意が成立")
+    assert signal["directionByTarget"]["broadMarket"] == "BULLISH"
+    assert signal["directionByTarget"]["energy"] == "BEARISH"
+
+
+def test_pending_news_never_hard_blocks():
+    """市場確認前は助言(CAUTION)のみ — 「ニュース時点で警告し、チャートが
+    後から確認する」原則。確認後のみBLOCK_NEW_BUYに昇格する。"""
+    bearish = ni.evaluate_impact_direction(
+        taxonomy=_tax("RATES"), subject="米長期金利が急騰")
+    pending = ni.derive_execution_constraint(
+        severity="HIGH", confirmation_state="MARKET_CONFIRMATION_PENDING",
+        impact_direction=bearish)
+    confirmed = ni.derive_execution_constraint(
+        severity="HIGH", confirmation_state="MARKET_CONFIRMED",
+        impact_direction=bearish)
+    critical = ni.derive_execution_constraint(
+        severity="CRITICAL", confirmation_state="MARKET_CONFIRMED",
+        impact_direction=bearish)
+    assert pending == "CAUTION"
+    assert confirmed == "BLOCK_NEW_BUY"
+    assert critical == "RISK_REVIEW_REQUIRED"
+
+
+def test_bullish_news_is_never_a_constraint_or_buy_signal():
+    bullish = ni.evaluate_impact_direction(
+        taxonomy=_tax("CEASEFIRE"), subject="停戦合意が成立")
+    constraint = ni.derive_execution_constraint(
+        severity="CRITICAL", confirmation_state="MARKET_CONFIRMED",
+        impact_direction=bullish)
+    # energy=BEARISHを含むためレビュー要求(どこかがBEARISH)は成立し得るが、
+    # 全ターゲットBULLISH/UNCLEARのケースで制約ゼロを別途証明する。
+    pure_bullish = {"directionByTarget": {
+        "broadMarket": "BULLISH", "growth": "BULLISH",
+        "japanEquities": "UNCLEAR"}}
+    assert ni.derive_execution_constraint(
+        severity="CRITICAL", confirmation_state="MARKET_CONFIRMED",
+        impact_direction=pure_bullish) == "NO_CONSTRAINT"
+    assert constraint in ("BLOCK_NEW_BUY", "RISK_REVIEW_REQUIRED")
+
+
+def test_direction_rides_the_news_event_record():
+    event = ni.build_news_event(
+        message={"eventIdentity": "ev-dir", "fingerprint": "f" * 16,
+                 "subject": "米30年債利回りが急騰", "url": None,
+                 "headlineJa": "米長期金利が急騰", "receivedIso": None,
+                 "publishedIso": None, "backfill": False},
+        taxonomy=_tax("RATES"), staleness="fresh",
+        materiality={"severity": "HIGH", "reasons": ["r"],
+                     "confirmationState": "MARKET_CONFIRMATION_PENDING",
+                     "dataInput": False},
+        ai_analysis=None,
+        corroboration={"confirmed": False, "readings": [], "missing": []},
+        analysis_state="DETERMINISTIC_ONLY",
+        processed_iso="2026-08-23T00:00:00Z")
+    assert event["impactDirection"]["directionByTarget"]["growth"] == "BEARISH"
+    assert event["executionConstraint"] == "CAUTION"
+    assert event["sdaAuthority"] is False

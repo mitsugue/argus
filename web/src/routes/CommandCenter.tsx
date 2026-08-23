@@ -532,7 +532,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
         isHeld: item.isHeld,
         impact: action === 'BUY' ? 'Good' as const
           : action === 'REDUCE' || action === 'EXIT' ? 'Bad' as const : 'Neutral' as const,
-        actionJa: `${action} · SDA${canonical?.status === 'DATA_GATED' ? ' DATA GATED' : ''}`,
+        actionJa: `${action} · 最終判断${canonical?.status === 'DATA_GATED' ? ' DATA GATED' : ''}`,
         checkNextJa: item.checkNextJa,
         whatWouldChangeJa: item.whatWouldChangeJa,
       }; });
@@ -564,7 +564,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       },
       selectedInstrument,
       systemStatus: { data: dataQuality, backup: backup.protectionLevelJa,
-        rule: `SDA ${canonicalDecision.status}` },
+        rule: `最終判断 ${canonicalDecision.status}` },
       canonicalDecision,
     });
   }, [judgment, overlay, isPartial, visLimited, marketLedger.ledger,

@@ -200,7 +200,7 @@ export const DownsideIncidentQueue: React.FC<{
       </header>
       {overlayActive && <p className="dic-overlay-reason">{data.overlay?.reasonJa}</p>}
       {data.holderRiskOverlay === 'REVIEW_REQUIRED' && (
-        <p className="dic-holder">保有影響のリスク証拠が検出されています。SDAの再評価材料として点検してください。</p>
+        <p className="dic-holder">保有影響のリスク証拠が検出されています。最終判断の再評価材料として点検してください。</p>
       )}
       {incidents.slice(0, maxItems).map((inc) => (
         <IncidentRow key={inc.incidentId} inc={inc} onFocus={onFocus} />
@@ -211,7 +211,7 @@ export const DownsideIncidentQueue: React.FC<{
       {incidents.length === 0 && (
         <p className="dic-reason">個別のインシデントはまだ無いが、日本市場の弱含みをリスク証拠として表示中。</p>
       )}
-      <p className="dic-foot">EVIDENCE ONLY · SDAのPrimary Actionを上書きしません。自動売買なし。</p>
+      <p className="dic-foot">EVIDENCE ONLY · 最終判断（PRIMARY ACTION）を上書きしません。自動売買なし。</p>
     </section>
   );
 };

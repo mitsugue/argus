@@ -11,9 +11,15 @@
      only a 12px visual buffer is retained at the bottom.  The raw 34px inset
      remains available to scrolling/content code; it is not paid twice inside
      the buttons. */
-  --argus-mobile-nav-safe-buffer: clamp(0px, var(--argus-mobile-safe-bottom), 12px);
+  /* v13.5.20 (owner): the bar sat too low after the status-bar container fix
+     — the label row crowded the home indicator. Symmetric geometry: the SAME
+     visual pad above and below the 44px content row, with the full hardware
+     inset reserved BELOW the bottom pad so the indicator never overlaps. */
+  --argus-mobile-nav-pad: 4px;
+  --argus-mobile-nav-safe-buffer: var(--argus-mobile-safe-bottom);
   --argus-mobile-nav-content-height: 44px;
-  --argus-mobile-nav-height: calc(var(--argus-mobile-nav-content-height) + var(--argus-mobile-nav-safe-buffer));
+  --argus-mobile-nav-height: calc(var(--argus-mobile-nav-content-height)
+    + 2 * var(--argus-mobile-nav-pad) + var(--argus-mobile-nav-safe-buffer));
   --argus-mobile-sticky-height: 34px;
   --argus-mobile-nav-label-bottom: 3px;
 }
@@ -153,7 +159,7 @@
   .nav__desktop { display: none; }
   .nav__mobile {
     position: absolute;
-    top: 0;
+    top: var(--argus-mobile-nav-pad);
     left: 4px;
     right: 4px;
     bottom: auto;

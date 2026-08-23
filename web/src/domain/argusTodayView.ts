@@ -69,7 +69,7 @@ export interface TodayProjectionInput {
   eventMarkers?: Array<{ id: string; date: string; labelJa: string; kind: string }>;
   turningPoints?: Array<{ id: string; effectiveFrom: string; status: string; direction: string; facts: string[] }>;
   calibration?: { historyCount: number; calibrationVersion: string; horizons: Record<string, TodayCalibrationInput>;
-    shoConditioning?: { requested?: boolean; currentFeatureKeys?: string[]; coverageDays?: number } | null };
+    shoConditioning?: { requested?: boolean; currentFeatureKeys?: string[]; coverageDays?: number; sourceIssues?: string[] } | null };
   shortSelling?: TodayShortSellingSummary | null;
   failedRally?: TodayFailedRally | null;
 }
@@ -524,13 +524,26 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
     shoConditioningJa: (() => {
       const meta = input.calibration?.shoConditioning;
       const keys = meta?.currentFeatureKeys ?? [];
-      if (!meta?.requested || keys.length === 0) return null;
+      // v13.5.20: a provider MISCONFIGURATION is named, never silently
+      // identical to an honest data gap (external review item 4).
+      const issueJa: Record<string, string> = {
+        vix_provider_key_missing: 'VIX供給が設定障害（プロバイダ鍵未設定）',
+      };
+      const issues = (meta?.sourceIssues ?? [])
+        .map((issue) => issueJa[issue] ?? `供給設定障害: ${issue}`);
+      if (!meta?.requested || keys.length === 0) {
+        return issues.length ? `⚠ ${issues.join('・')}` : null;
+      }
       const names: Record<string, string> = {
         creditRatio: '信用倍率', creditShortTn: '売り残高',
         vixLevel: 'VIX', vixChange10: 'VIX変化', rs20: '日米強弱',
       };
       const labels = [...new Set(keys.map((key) => names[key] ?? key))];
-      return labels.length ? `SHO条件付き: ${labels.join('・')}` : null;
+      const head = labels.length ? `市場状態条件付き: ${labels.join('・')}` : null;
+      if (issues.length) {
+        return head ? `${head} · ⚠ ${issues.join('・')}` : `⚠ ${issues.join('・')}`;
+      }
+      return head;
     })(),
     source: input.source ?? 'existing_market_data_cache',
     availableFrom: input.availableFrom ?? null,

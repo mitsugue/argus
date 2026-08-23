@@ -25,6 +25,21 @@ export interface NewsIntelEvent {
   confirmationState: 'MARKET_CONFIRMED' | 'MARKET_CONFIRMATION_PENDING';
   whyJa: string;
   japanImpactJa: string | null;
+  // v13.5.20 NEWS/EVENT DIRECTIONAL IMPACT — independent axis beside
+  // severity and market confirmation. Optional: events stored before the
+  // direction engine existed simply have no signal (UNCLEAR, not fabricated).
+  impactDirection?: {
+    schemaVersion: string;
+    polarity: string;
+    directionByTarget: Record<string, 'BULLISH' | 'BEARISH' | 'MIXED' | 'UNCLEAR'>;
+    primaryDirection: 'BULLISH' | 'BEARISH' | 'MIXED' | 'UNCLEAR';
+    timeHorizon: string;
+    transmissionChain: string[];
+    confidence: 'LOW' | 'MEDIUM';
+    directionAuthority: false;
+  };
+  executionConstraint?: 'NO_CONSTRAINT' | 'CAUTION' | 'BLOCK_NEW_BUY'
+    | 'RISK_REVIEW_REQUIRED';
   marketReadings: Array<{ key: string; labelJa: string; value: number | null;
     change: number | null; unit: string; asOf?: string | null }>;
   analysisState: string;

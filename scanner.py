@@ -7081,7 +7081,7 @@ def api_argus_important_events():
         events, owner_symbols=owner_symbols, held_symbols=held,
         ctx={"regime": regime, "vixElevated": vix_elevated}, limit=64)
     items = items_all[:8]
-    # v13.5.18 (review item C): the D/D-1 hard-constraint feed must not
+    # v13.5.20 (review item C): the D/D-1 hard-constraint feed must not
     # depend on the 8-item display cap — the audit showed event #9+ silently
     # produced no constraint. Compact, uncapped imminent list for the
     # device-side SDA/AP event gate, tiered by displayImpact.
@@ -9803,7 +9803,7 @@ def api_argus_intel_collect():
         except Exception:
             continue
     out["supplyDemandWarm"] = warmed
-    # v13.5.18: warm the SHO CORE input caches (^N225/^VIX OHLCV, 1570 weekly
+    # v13.5.20: warm the SHO CORE input caches (^N225/^VIX OHLCV, 1570 weekly
     # margin, FRED VIX). This admin/cron path is the ONLY fetch route; the
     # public decision-evidence GET reads these caches cached-only.
     try:
@@ -16130,7 +16130,7 @@ def _causal_memory_refresh_open(force=False):
                 if not any(row["relation"] in ("SUPPORTING", "CONTRADICTING")
                            for row in evidence):
                     continue
-                # v13.5.18 (review item D): symmetric invalidation. A
+                # v13.5.20 (review item D): symmetric invalidation. A
                 # hypothesis WEAKENED for >= 3 days whose variables STILL all
                 # contradict earns the streak note, which the assessment
                 # policy accepts as an invalidation criterion — INVALIDATED
@@ -16539,7 +16539,8 @@ def _news_process_message(message, *, backfill=False):
         materiality=materiality, ai_analysis=analysis,
         corroboration=corroboration, analysis_state=analysis_state,
         processed_iso=_ai_now_iso(), source=source,
-        revision=revision_plan["revision"])
+        revision=revision_plan["revision"],
+        excerpt=message.get("excerpt") or "")
     event["alertEligible"] = (
         not backfill and event["severity"] in ("HIGH", "CRITICAL")
         and (revision_plan["action"] == "create"
@@ -30953,6 +30954,11 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
             "vixRows": _fred_vix_history_dated(),
             "usRows": (reference_history("SPY", "US")
                        if str(symbol).upper() != "SPY" else []),
+            # v13.5.20: misconfiguration is REPORTED, never silently identical
+            # to an honest data gap (the vix dimension would otherwise just
+            # vanish from currentFeatureKeys with no visible cause).
+            "sourceIssues": ([] if _FRED_API_KEY
+                             else ["vix_provider_key_missing"]),
         }
     except Exception:
         _sho_context = None
@@ -31510,7 +31516,7 @@ def _decision_evidence_prediction_artifact(symbol, market, cutoff,
         return None, "prediction_context_failed"
 
 
-# ━━━ v13.5.18 SHO CORE production inputs (external review item B) ━━━
+# ━━━ v13.5.20 SHO CORE production inputs (external review item B) ━━━
 # The read-only audit confirmed evaluate_d01_d07 was never called from any
 # production path and the live reversal artifact ran on zero rows. This block
 # wires the feeds the process already holds — JPX credit CSV+ledger, J-Quants
@@ -31781,7 +31787,7 @@ def _sho_market_view():
 
 
 def _decision_evidence_sho_artifact(symbol, cutoff):
-    """Per-subject SHO reversal artifact from real PIT inputs (v13.5.18).
+    """Per-subject SHO reversal artifact from real PIT inputs (v13.5.20).
 
     Both reversal axes now evaluate production feeds (^N225/^VIX complete
     OHLCV); cold feeds leave factors MISSING and the axis DATA_GATED — the
@@ -31951,7 +31957,7 @@ def _decision_evidence_document(symbols):
         "authority": "CANONICAL_ARTIFACT_REFERENCES",
         "sdaAuthority": False,
         "actionAuthority": False,
-        # v13.5.18 (review item A): document-level SHO MARKET VIEW — display
+        # v13.5.20 (review item A): document-level SHO MARKET VIEW — display
         # projection only, never an SDA input; the per-subject references
         # above remain the sole decision evidence.
         "marketView": _sho_market_view(),
@@ -36537,7 +36543,7 @@ def _jq_price_history(code):
     if _JQUANTS_API_KEY:
         try:
             headers = {"x-api-key": _JQUANTS_API_KEY}
-            # v13.5.18 (owner spec: ten-year corpus): request 3,640 days —
+            # v13.5.20 (owner spec: ten-year corpus): request 3,640 days —
             # safely INSIDE the rolling 10y J-Quants entitlement. 3,660 days
             # overhung the contract window by ~a week and J-Quants rejected
             # the whole request, which blanked the chart (the seed failure

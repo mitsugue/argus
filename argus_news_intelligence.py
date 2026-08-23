@@ -608,6 +608,199 @@ def evaluate_materiality(*, taxonomy: Mapping[str, Any], staleness: str,
 
 # ── Envelope (§11) ──────────────────────────────────────────────────────────
 
+# ── NEWS / EVENT DIRECTIONAL IMPACT (owner spec 2026-08-23) ────────────────
+# An independent judgment axis: "is this news bullish or bearish, for WHICH
+# target?" — separate from severity (how strongly markets may move) and from
+# market confirmation (has the market reacted). CRITICAL news can be bullish
+# for banks and bearish for growth at the same time, so direction is a map
+# per target, never one number, and never a score that cancels against the
+# chart view. Deterministic phrase polarity only; the AI never overrides it.
+# Unknown polarity or an unmapped family stays UNCLEAR — direction is a
+# hypothesis vocabulary, not a fabricated forecast.
+IMPACT_DIRECTIONS = ("BULLISH", "BEARISH", "MIXED", "UNCLEAR")
+DIRECTION_TARGETS = ("broadMarket", "japanEquities", "growth",
+                     "semiconductors", "banks", "exporters", "energy")
+EXECUTION_CONSTRAINTS = ("NO_CONSTRAINT", "CAUTION", "BLOCK_NEW_BUY",
+                         "RISK_REVIEW_REQUIRED")
+
+_POLARITY_CUES = {
+    "up": ("上昇", "急騰", "急上昇", "上回", "加速", "利上げ", "タカ派",
+           "最高値", "増額", "増産", "上方修正", "hawkish", "raises", "hike",
+           "surge", "spike", "record high", "beats"),
+    "down": ("低下", "急落", "下回", "鈍化", "減速", "利下げ", "ハト派",
+             "下方修正", "減産", "安値", "dovish", "cuts", "fall", "plunge",
+             "slump", "misses", "cool"),
+    "escalate": ("攻撃", "空爆", "ミサイル", "侵攻", "激化", "報復", "封鎖",
+                 "武力", "escalat", "strike", "attack", "blockade"),
+    "deescalate": ("停戦", "休戦", "和平", "合意", "緩和", "解除",
+                   "ceasefire", "truce", "de-escalat", "peace deal"),
+    "restrict": ("規制", "禁輸", "制裁", "輸出規制", "関税", "禁止",
+                 "sanction", "ban", "tariff", "restriction", "export control"),
+}
+
+_DIR_TIME_HORIZONS = {
+    "RATES": "1D-5D", "US_FISCAL": "1D-20D", "FED": "1D-5D", "BOJ": "1D-5D",
+    "CENTRAL_BANK": "1D-5D", "INFLATION": "1D-5D", "EMPLOYMENT": "1D-5D",
+    "FX": "IMMEDIATE-5D", "OIL": "IMMEDIATE-5D", "COMMODITIES": "1D-20D",
+    "IRAN": "IMMEDIATE-5D", "HORMUZ": "IMMEDIATE-5D",
+    "WAR_ESCALATION": "IMMEDIATE-5D", "CEASEFIRE": "IMMEDIATE-5D",
+    "TARIFFS": "1D-20D", "SANCTIONS": "1D-20D",
+    "SEMICONDUCTORS": "1D-20D", "AI_DATACENTER": "1D-20D",
+    "EARNINGS": "1D-5D",
+}
+
+_DIR_TRANSMISSION_CHAINS = {
+    ("RATES", "up"): ["長期金利↑", "割引率上昇", "高PER株の評価圧迫",
+                      "グロース/AI/半導体に下押し", "銀行の利ざやには追い風"],
+    ("RATES", "down"): ["長期金利↓", "割引率低下", "高PER株の評価支援"],
+    ("BOJ", "up"): ["日銀引き締め", "円金利↑/円高圧力", "銀行に追い風",
+                    "輸出・グロースに逆風"],
+    ("BOJ", "down"): ["日銀緩和", "円安圧力", "輸出に追い風"],
+    ("FX", "down"): ["円高進行", "輸出採算悪化"],
+    ("FX", "up"): ["円安進行", "輸出採算改善", "輸入コスト上昇"],
+    ("OIL", "up"): ["原油↑", "インフレ圧力/輸入コスト増", "エネルギー株には追い風"],
+    ("WAR_ESCALATION", "escalate"): ["地政学緊張↑", "リスクオフ(VIX↑・円買い)",
+                                     "原油リスクプレミアム↑", "株式全般に下押し"],
+    ("CEASEFIRE", "deescalate"): ["緊張緩和", "リスクプレミアム剥落",
+                                  "原油↓/株式リスクオン"],
+}
+
+_UNCLEAR_ALL = {target: "UNCLEAR" for target in DIRECTION_TARGETS}
+
+
+def _dir_map(**overrides: str) -> Dict[str, str]:
+    result = dict(_UNCLEAR_ALL)
+    result.update(overrides)
+    return result
+
+
+_DIRECTION_RULES: Dict[Any, Dict[str, str]] = {
+    ("RATES", "up"): _dir_map(
+        broadMarket="BEARISH", japanEquities="BEARISH", growth="BEARISH",
+        semiconductors="BEARISH", banks="BULLISH", exporters="MIXED"),
+    ("RATES", "down"): _dir_map(
+        broadMarket="BULLISH", japanEquities="BULLISH", growth="BULLISH",
+        semiconductors="BULLISH", banks="MIXED"),
+    ("US_FISCAL", "up"): _dir_map(
+        broadMarket="BEARISH", japanEquities="BEARISH", growth="BEARISH"),
+    ("INFLATION", "up"): _dir_map(
+        broadMarket="BEARISH", growth="BEARISH", banks="MIXED"),
+    ("INFLATION", "down"): _dir_map(
+        broadMarket="BULLISH", growth="BULLISH"),
+    ("EMPLOYMENT", "up"): _dir_map(broadMarket="MIXED", growth="MIXED"),
+    ("EMPLOYMENT", "down"): _dir_map(broadMarket="MIXED"),
+    ("FED", "up"): _dir_map(
+        broadMarket="BEARISH", growth="BEARISH", banks="MIXED"),
+    ("FED", "down"): _dir_map(
+        broadMarket="BULLISH", growth="BULLISH", exporters="MIXED"),
+    ("BOJ", "up"): _dir_map(
+        banks="BULLISH", exporters="BEARISH", growth="BEARISH",
+        japanEquities="MIXED", broadMarket="MIXED"),
+    ("BOJ", "down"): _dir_map(
+        exporters="BULLISH", japanEquities="BULLISH", banks="BEARISH"),
+    ("FX", "up"): _dir_map(          # 円安
+        exporters="BULLISH", japanEquities="MIXED", energy="MIXED"),
+    ("FX", "down"): _dir_map(        # 円高
+        exporters="BEARISH", japanEquities="BEARISH"),
+    ("OIL", "up"): _dir_map(
+        energy="BULLISH", broadMarket="MIXED", japanEquities="MIXED"),
+    ("OIL", "down"): _dir_map(energy="BEARISH", broadMarket="MIXED"),
+    ("IRAN", "escalate"): _dir_map(
+        broadMarket="BEARISH", japanEquities="BEARISH", energy="BULLISH"),
+    ("HORMUZ", "escalate"): _dir_map(
+        broadMarket="BEARISH", japanEquities="BEARISH", energy="BULLISH"),
+    ("WAR_ESCALATION", "escalate"): _dir_map(
+        broadMarket="BEARISH", japanEquities="BEARISH", growth="BEARISH",
+        energy="BULLISH"),
+    ("CEASEFIRE", "deescalate"): _dir_map(
+        broadMarket="BULLISH", japanEquities="BULLISH", energy="BEARISH"),
+    ("TARIFFS", "restrict"): _dir_map(
+        exporters="BEARISH", semiconductors="BEARISH", japanEquities="BEARISH",
+        broadMarket="MIXED"),
+    ("SANCTIONS", "restrict"): _dir_map(
+        semiconductors="BEARISH", exporters="BEARISH", broadMarket="MIXED"),
+    ("SEMICONDUCTORS", "up"): _dir_map(semiconductors="BULLISH", growth="MIXED"),
+    ("SEMICONDUCTORS", "down"): _dir_map(semiconductors="BEARISH"),
+    ("SEMICONDUCTORS", "restrict"): _dir_map(
+        semiconductors="BEARISH", exporters="MIXED"),
+    ("AI_DATACENTER", "up"): _dir_map(
+        semiconductors="BULLISH", growth="BULLISH"),
+    ("AI_DATACENTER", "down"): _dir_map(
+        semiconductors="BEARISH", growth="BEARISH"),
+}
+
+
+def _detect_polarity(text: str) -> Optional[str]:
+    """First matching polarity by cue priority; None when nothing matches.
+    Escalation/restriction cues outrank generic up/down words so 「攻撃で原油
+    上昇」 reads as escalation, not a benign 'up'."""
+    haystack = _lower(text)
+    for polarity in ("deescalate", "escalate", "restrict", "up", "down"):
+        if any(cue in haystack for cue in _POLARITY_CUES[polarity]):
+            return polarity
+    return None
+
+
+def direction_for(family: str, polarity: Optional[str]) -> Dict[str, Any]:
+    """Direction signal for an ALREADY-KNOWN family+polarity (e.g. the
+    US30Y shock sensor, whose trigger condition IS the 'up' polarity).
+    Unmapped combinations stay UNCLEAR."""
+    rule = _DIRECTION_RULES.get((str(family), polarity)) if polarity else None
+    by_target = dict(rule) if rule else dict(_UNCLEAR_ALL)
+    return {
+        "schemaVersion": "news-impact-direction-v1",
+        "polarity": polarity or "UNDETECTED",
+        "directionByTarget": by_target,
+        "primaryDirection": by_target.get("broadMarket", "UNCLEAR"),
+        "timeHorizon": _DIR_TIME_HORIZONS.get(str(family), "UNCLEAR"),
+        "transmissionChain": list(
+            _DIR_TRANSMISSION_CHAINS.get((str(family), polarity), [])),
+        "confidence": "MEDIUM" if rule else "LOW",
+        "directionAuthority": False,
+    }
+
+
+def evaluate_impact_direction(*, taxonomy: Mapping[str, Any], subject: str,
+                              excerpt: str = "") -> Dict[str, Any]:
+    """Deterministic per-target direction hypothesis for one news event.
+
+    Never a single market-wide number: US long-yield spikes are BEARISH for
+    growth yet BULLISH for banks. Unmapped family or undetected polarity →
+    every target UNCLEAR (a direction is never invented). This signal carries
+    no probability and no action authority; SELL/EXIT cannot originate here.
+    """
+    family = str(taxonomy.get("eventType") or "OTHER_MARKET_RELEVANT")
+    polarity = _detect_polarity(str(subject or "") + "\n"
+                                + str(excerpt or "")[:2000])
+    return direction_for(family, polarity)
+
+
+def derive_execution_constraint(*, severity: str, confirmation_state: str,
+                                impact_direction: Mapping[str, Any]) -> str:
+    """News-lane execution constraint — deliberately weaker than an action.
+
+    News may CAUTION or block NEW buying; it can never SELL/EXIT/WAIT the
+    whole decision. A PENDING (market-unconfirmed) headline never hard-blocks
+    — it advises checking the sensors first (the owner's 'warn before the
+    chart moves, let the chart confirm' principle). BULLISH news is never a
+    buy instruction and produces no constraint.
+    """
+    by_target = (impact_direction or {}).get("directionByTarget") or {}
+    bearish_somewhere = any(v == "BEARISH" for v in by_target.values())
+    confirmed = confirmation_state == "MARKET_CONFIRMED"
+    if severity == "CRITICAL" and bearish_somewhere and confirmed:
+        return "RISK_REVIEW_REQUIRED"
+    if severity in ("HIGH", "CRITICAL") and bearish_somewhere and confirmed:
+        return "BLOCK_NEW_BUY"
+    if severity in ("HIGH", "CRITICAL") and bearish_somewhere:
+        return "CAUTION"                      # PENDING: advise, never block
+    if severity in ("HIGH", "CRITICAL") \
+            and any(v in ("MIXED", "UNCLEAR") for v in by_target.values()) \
+            and not any(v == "BULLISH" for v in by_target.values()):
+        return "CAUTION"
+    return "NO_CONSTRAINT"
+
+
 def build_news_event(*, message: Mapping[str, Any],
                      taxonomy: Mapping[str, Any], staleness: str,
                      materiality: Mapping[str, Any],
@@ -615,7 +808,8 @@ def build_news_event(*, message: Mapping[str, Any],
                      corroboration: Mapping[str, Any],
                      analysis_state: str, processed_iso: str,
                      source: str = "NIKKEI",
-                     revision: int = 1) -> Dict[str, Any]:
+                     revision: int = 1,
+                     excerpt: str = "") -> Dict[str, Any]:
     """Normalized NewsEnvelope — Today/Alerts read THIS, never the raw email.
     Body text is not persisted; headline + ARGUS-generated interpretation only.
     This is NewsRiskEvidence: it never carries an SDA action."""
@@ -626,7 +820,20 @@ def build_news_event(*, message: Mapping[str, Any],
     japan = _JAPAN_TRANSMISSION_JA.get(family)
     readings = corroboration.get("readings") if isinstance(
         corroboration.get("readings"), list) else []
+    # excerpt is used transiently for polarity detection only — the body is
+    # still never persisted on the record.
+    impact_direction = evaluate_impact_direction(
+        taxonomy=taxonomy, subject=str(message.get("subject") or ""),
+        excerpt=excerpt)
+    execution_constraint = derive_execution_constraint(
+        severity=materiality["severity"],
+        confirmation_state=materiality["confirmationState"],
+        impact_direction=impact_direction)
     return {
+        # v13.5.20 NEWS/EVENT DIRECTIONAL IMPACT: an independent axis beside
+        # severity and market confirmation. Display + evidence only.
+        "impactDirection": impact_direction,
+        "executionConstraint": execution_constraint,
         "schemaVersion": NEWS_EVENT_SCHEMA,
         "eventId": message["eventIdentity"],
         "revision": revision,

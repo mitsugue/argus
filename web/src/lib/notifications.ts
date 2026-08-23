@@ -268,7 +268,7 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
     if (previous && previous.action !== decision.action) {
       cands.push({ eventType: 'primary_action_changed', severity: 'high', symbol,
         assetName: decision.name ?? null, titleJa: `Primary Action変更：${nm(symbol, decision.name)}`,
-        bodyJa: `${previous.action} → ${decision.action}。同じSDA正本の更新です。`,
+        bodyJa: `${previous.action} → ${decision.action}。同じ判断正本の更新です。`,
         whyJa: '必要な正本証拠とリスク制約が更新されました。',
         checkNextJa: 'Todayまたは銘柄Decisionで目標・無効化・次の確認を確認',
         dedupeKey: `sda-action|${symbol}|${previous.action}|${decision.action}`,
@@ -440,15 +440,15 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
         assetName: pl.name ?? null,
         titleJa: `計画条件の変化：${nm(sym, pl.name)}が${pl.currentStance === 'trim_consideration' ? '利確検討' : 'リスク確認'}条件に該当`,
         bodyJa: pl.summaryJa?.slice(0, 80) || '保有銘柄の計画条件がリスク確認側に切り替わりました(参考情報)。',
-        whyJa: '悪化信号(需給/フロー/シナリオ)が重なったため。売買指示ではなく、正本判断はSDA。',
-        checkNextJa: '銘柄カードの判断正本(SDA)とPOSITION PLANの無効化条件を確認',
+        whyJa: '悪化信号(需給/フロー/シナリオ)が重なったため。売買指示ではありません（参考情報）。',
+        checkNextJa: '銘柄カードの最終判断とPOSITION PLANの無効化条件を確認',
         dedupeKey: `plan|${sym}|risk`, isPrivate: true });
     } else if (wasAddSide && pl.currentStance === 'avoid_chase') {
       cands.push({ eventType: 'plan_change', severity: 'medium', symbol: sym,
         assetName: pl.name ?? null,
         titleJa: `計画条件の変化：${nm(sym, pl.name)}が追いかけ注意条件に該当`,
         bodyJa: '追加候補条件でしたが、過熱/買い戻し主導の可能性が出たため計画条件は待ち側です(参考情報)。',
-        whyJa: '上昇の持続性が未確認になったため。売買指示ではなく、正本判断はSDA。',
+        whyJa: '上昇の持続性が未確認になったため。売買指示ではありません（参考情報）。',
         checkNextJa: '出来高を伴う押し目か、上昇主体の入れ替わりを確認',
         dedupeKey: `plan|${sym}|chase`, isPrivate: !!pl.isHeld });
     }
@@ -462,8 +462,8 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
         assetName: sc.name ?? null,
         titleJa: `シナリオ証拠の変化：${nm(sym, sc.name)}は弱気側が優勢に`,
         bodyJa: sc.summaryJa?.slice(0, 80) || '複数レイヤーの悪化が重なり、シナリオ証拠が弱気側優勢に切り替わりました(参考情報)。',
-        whyJa: '需給・フロー等の条件付き分岐で弱気側の成立条件が優勢になったため。売買指示ではなく、正本判断はSDA。',
-        checkNextJa: '銘柄カードの判断正本(SDA)とSCENARIOSの無効化条件を参照',
+        whyJa: '需給・フロー等の条件付き分岐で弱気側の成立条件が優勢になったため。売買指示ではありません（参考情報）。',
+        checkNextJa: '銘柄カードの最終判断とSCENARIOSの無効化条件を参照',
         dedupeKey: `scn|${sym}|bearish`, isPrivate: true });
     }
   }

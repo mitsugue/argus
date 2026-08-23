@@ -154,3 +154,38 @@ def test_low_single_outlet_stays_off_shock_surface():
         long_end={"status": "DATA_GATED", "reason": "series_stale"},
         themes=[theme], cross_market={}, now_iso="2026-08-19T12:00:00Z")
     assert view["eventCount"] == 0
+
+
+# ━━━ v13.5.20 — official sensor lane carries the direction vocabulary ━━━
+
+def test_long_end_rates_shock_carries_rates_up_direction():
+    """Review item 3: the US30Y spike sensor must speak the SAME direction
+    language as mail news — its trigger condition IS the 'up' polarity."""
+    long_end = {"status": "EVALUATED", "severity": "HIGH", "level": 5.02,
+                "isWindowHigh": True, "latestDate": "2026-08-22"}
+    doc = shock.build_market_shock_view(
+        long_end=long_end, themes=[],
+        cross_market={"vixChange": 2.0, "usdJpyChange": None,
+                      "us10yChangeBp": 9.0},
+        now_iso="2026-08-23T00:00:00Z")
+    event = next(e for e in doc["events"]
+                 if e["eventClass"] == "LONG_END_RATES")
+    direction = event["impactDirection"]
+    assert direction["polarity"] == "up"
+    assert direction["directionByTarget"]["growth"] == "BEARISH"
+    assert direction["directionByTarget"]["banks"] == "BULLISH"
+    assert direction["directionAuthority"] is False
+
+
+def test_theme_shock_direction_from_headline_polarity():
+    theme = {"status": "EVALUATED", "severity": "MEDIUM", "themeKey":
+             "geopolitics", "outletCount": 2, "headlineCount": 3,
+             "conflicting": False, "reasons": ["multi_outlet"],
+             "sample": [{"title": "ミサイル攻撃が拡大", "domain": "nikkei.com",
+                         "epoch": 1787200000}]}
+    doc = shock.build_market_shock_view(
+        long_end={"status": "DATA_GATED"}, themes=[theme],
+        cross_market={}, now_iso="2026-08-23T00:00:00Z")
+    event = doc["events"][0]
+    assert event["impactDirection"]["polarity"] == "escalate"
+    assert event["impactDirection"]["directionByTarget"]["broadMarket"] == "BEARISH"

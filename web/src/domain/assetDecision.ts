@@ -136,7 +136,7 @@ const AI_VIEW_TONE: Record<string, string> = {
 export interface AssetDecisionView {
   symbol: string;
   judgmentSource: 'sda';
-  sourceTagEn: 'SDA PRIMARY';
+  sourceTagEn: 'PRIMARY';
   /** Authority/evidence state and its exact availability reason. */
   sourceDetailJa: string;
   ageJa: string | null;
@@ -194,21 +194,21 @@ export function projectCanonicalAssetDecision(inp: {
   const missing = inp.result.missingReasonCodes.slice(0, 3);
   const conflict = inp.result.conflictReasonCodes.slice(0, 3);
   const reasonJa = inp.result.status === 'DATA_GATED'
-    ? `SDAはWAITに固定（${[...missing, ...conflict].join(' / ') || '必要証拠未確認'}）`
-    : `SDA ${inp.result.primaryAction}（制約 ${inp.result.guidance.riskConstraint}）`;
+    ? `最終判断はWAITに固定（${[...missing, ...conflict].join(' / ') || '必要証拠未確認'}）`
+    : `最終判断 ${inp.result.primaryAction}（制約 ${inp.result.guidance.riskConstraint}）`;
   const aiAvailable = !!inp.aiLabel && inp.meta.evidenceAvailable;
   const ruleAction = inp.ruleLabel?.action ?? 'HOLD';
   const aiAction = inp.aiLabel?.aiFinalAction ?? null;
   const dissent = [
     aiAction && aiAction !== inp.result.primaryAction
-      ? `AI=${aiAction} / SDA=${inp.result.primaryAction}` : null,
+      ? `AI=${aiAction} / 最終判断=${inp.result.primaryAction}` : null,
     ruleAction !== inp.result.primaryAction
-      ? `旧ルール=${ruleAction} / SDA=${inp.result.primaryAction}` : null,
+      ? `旧ルール=${ruleAction} / 最終判断=${inp.result.primaryAction}` : null,
   ].filter(Boolean).join(' · ') || null;
   return {
     symbol: inp.symbol,
     judgmentSource: 'sda',
-    sourceTagEn: 'SDA PRIMARY',
+    sourceTagEn: 'PRIMARY',
     sourceDetailJa: `${inp.result.status} · ${inp.result.decisionId.slice(0, 16)}…`,
     ageJa,
     reasonJa,
