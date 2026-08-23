@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// v13.5.19 — important-event constraint tiering (external review item C) and
+// v13.5.20 — important-event constraint tiering (external review item C) and
 // the degraded-feed kernel split (item F).
 //
 // Proves:
@@ -78,7 +78,7 @@ assert.ok(hook.includes("from '../domain/importantEventsTier'"),
   'useAssetIntel must import the tier module');
 assert.ok(hook.includes('imminentEventGate(impEvents)'),
   'the kernel event gate must come from the uncapped feed');
-assert.ok(hook.includes('eventKernelConstraint(gateEntry?.displayImpact)'),
+assert.ok(hook.includes('eventKernelConstraint(gateEntry.displayImpact)'),
   'the event constraint must be tiered by impact');
 assert.ok(!hook.includes('missingQuote || sessionAuthorityMissing || isPartial || visLimited'),
   'the composite one-feed-stale→all-symbols-gated lever must be removed');
@@ -100,7 +100,7 @@ assert.ok(store.includes("view.actionAuthority === false ? view : null"),
 
 console.log('important-events-tier.test: ok (tiering, uncapped gate, kernel split, market view)');
 
-// ── v13.5.19 NEWS/EVENT DIRECTIONAL IMPACT (structural contract) ──────────
+// ── v13.5.20 NEWS/EVENT DIRECTIONAL IMPACT (structural contract) ──────────
 // News may only BLOCK new buying, only after MARKET confirmation; the Today
 // surface renders chart view / news view / action as three separate
 // judgments with no summation anywhere.
@@ -118,9 +118,25 @@ const panel2 = fs.readFileSync(path.join(
   __dirname, '..', 'src', 'components', 'today', 'ArgusTodayPanel.tsx'), 'utf8');
 assert.ok(panel2.includes('news-event-signal-v1'),
   'Today must render the independent news signal');
-assert.ok(panel2.includes('チャート判断（SHO）とは独立'),
+assert.ok(panel2.includes('チャート観とは独立'),
   'the strip must declare independence from the chart view');
 assert.ok(panel2.includes('ニュースは売買権限を持たない'),
   'the strip must disclaim action authority');
 
 console.log('important-events-tier.test: news directional impact contract ok');
+
+// ── v13.5.20 — calendar OUTAGE must not data-gate every symbol ────────────
+const unknownBlock = hook.slice(hook.indexOf('if (importantEventsUnknown) {'),
+  hook.indexOf('} else if (gateEntry) {'));
+assert.ok(unknownBlock.includes("constraint: 'BLOCK_BUY'")
+  && unknownBlock.includes("status: 'ACTIVE'"),
+  'calendar outage must BLOCK_BUY (availability failure), not data-gate');
+// Owner directive: internal engine names never render on screen.
+for (const file of ['../src/components/today/ArgusTodayPanel.tsx',
+  '../src/lib/notifications.ts',
+  '../src/components/dashboard/DownsideIncidentCard.tsx']) {
+  const text = fs.readFileSync(path.join(__dirname, file), 'utf8');
+  const visible = text.match(/['"`>][^'"`<\n]*(（SDA）|（SHO）|はSDA|SDAの|SDA正本|SHO証拠)[^'"`<\n]*['"`<]/);
+  assert.ok(!visible, `internal jargon leaked to UI in ${file}: ${visible && visible[0]}`);
+}
+console.log('important-events-tier.test: v13.5.20 outage softening + jargon-free UI ok');

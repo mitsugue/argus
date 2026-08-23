@@ -196,7 +196,7 @@ export function useAssetIntel(opts: {
   const { events: events247 } = useEventsActive();
   const importantEventsState = useImportantEvents();
   const { data: impEvents } = importantEventsState;
-  const newsIntel = useNewsIntelligence().view;   // v13.5.19 news signal
+  const newsIntel = useNewsIntelligence().view;   // v13.5.20 news signal
   const importantEventsUnknown = importantEventsState.authority !== 'fresh';
   const downsideUnknown = downsideState.authority !== 'fresh';
   // v13.5.13: canonical artifact references (marketTruth/predictionLedger/sho)
@@ -698,10 +698,10 @@ export function useAssetIntel(opts: {
     const ruleBySym = new Map((al.data?.labels ?? []).map((row) => [row.symbol.toUpperCase(), row]));
     const aiBySym = new Map((aiJ.data?.labels ?? []).map((row) => [row.symbol.toUpperCase(), row]));
     const riskBySym = new Map(positionExposure.risks.map((row) => [row.symbol, row.riskLevel]));
-    // v13.5.19 (review item C): uncapped imminent feed + impact tiering.
+    // v13.5.20 (review item C): uncapped imminent feed + impact tiering.
     // critical/high → WAIT_REQUIRED; medium/low → BLOCK_BUY only.
     const eventGate = imminentEventGate(impEvents);
-    // v13.5.19 NEWS/EVENT SIGNAL → execution constraint. News can never
+    // v13.5.20 NEWS/EVENT SIGNAL → execution constraint. News can never
     // SELL/EXIT/WAIT the decision; only a MARKET-CONFIRMED HIGH/CRITICAL
     // broad/Japan BEARISH signal blocks NEW buying (held-position judgment
     // continues). A PENDING headline advises on the Today strip but never
@@ -822,18 +822,30 @@ export function useAssetIntel(opts: {
         constraint: 'BLOCK_BUY', status: 'ACTIVE', severity: 'MEDIUM',
         confidenceCapBps: 5500, observedAt: cutoffAt,
       });
+      // v13.5.20 (external review item 7): a calendar FEED outage is an
+      // availability failure, not decision-critical unknowability — it must
+      // not data-gate every symbol into WAIT (single point of failure).
+      // Unknown calendar → BLOCK_BUY + confidence cap + diagnostic ref;
+      // held-position judgment continues on verified evidence.
       const gateEntry = eventGate.get(sym);
-      if (gateEntry || importantEventsUnknown) contributions.push({
-        evidenceRef: `event:calendar-${sym.toLowerCase()}`,
-        primitiveFactorId: 'event.calendar_uncertainty', sourceKind: 'EVENT',
-        constraint: importantEventsUnknown ? 'NONE'
-          : eventKernelConstraint(gateEntry?.displayImpact),
-        status: importantEventsUnknown ? 'MISSING' : 'ACTIVE',
-        severity: importantEventsUnknown ? 'UNKNOWN'
-          : eventKernelSeverity(gateEntry?.displayImpact),
-        confidenceCapBps: 5000, observedAt: cutoffAt,
-      });
-      // v13.5.19 (review item F): the old composite lever data-gated EVERY
+      if (importantEventsUnknown) {
+        contributions.push({
+          evidenceRef: `event:calendar-unavailable-${sym.toLowerCase()}`,
+          primitiveFactorId: 'event.calendar_uncertainty', sourceKind: 'EVENT',
+          constraint: 'BLOCK_BUY', status: 'ACTIVE', severity: 'MEDIUM',
+          confidenceCapBps: 4500, observedAt: cutoffAt,
+        });
+      } else if (gateEntry) {
+        contributions.push({
+          evidenceRef: `event:calendar-${sym.toLowerCase()}`,
+          primitiveFactorId: 'event.calendar_uncertainty', sourceKind: 'EVENT',
+          constraint: eventKernelConstraint(gateEntry.displayImpact),
+          status: 'ACTIVE',
+          severity: eventKernelSeverity(gateEntry.displayImpact),
+          confidenceCapBps: 5000, observedAt: cutoffAt,
+        });
+      }
+      // v13.5.20 (review item F): the old composite lever data-gated EVERY
       // symbol when ONE auxiliary feed (flow/supply/FX/labels) went stale.
       // Split: per-symbol decision authorities (quote, session) still gate;
       // degraded auxiliary feeds only block new adds and cap confidence —

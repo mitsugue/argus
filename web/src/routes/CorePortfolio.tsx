@@ -325,7 +325,7 @@ export const CorePortfolio: React.FC<{
               <div className="core-row" key={f.code}>
                 <div className="core-row__body">
                   <span className="core-row__top">{f.name}</span>
-                  <span className="core-row__reason">{f.code} · {f.date} — 日次NAV証拠(積立アクションはSDAに未接続)</span>
+                  <span className="core-row__reason">{f.code} · {f.date} — 日次NAV証拠(積立アクションは最終判断に未接続)</span>
                 </div>
                 <div style={{ textAlign: 'right', flex: 'none' }}>
                   <div style={{ fontWeight: 700 }}>¥{Math.round(f.navYen).toLocaleString('en-US')}</div>

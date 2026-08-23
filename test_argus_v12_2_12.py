@@ -23,7 +23,7 @@ def test_single_source_of_judgment():
     dec = _read("domain", "assetDecision.ts")
     # AI/旧ルールは異議・証拠として残るが、表示する主判断はSDA v2だけ。
     assert "projectCanonicalAssetDecision" in dec
-    assert "SDA PRIMARY" in dec
+    assert "sourceTagEn: 'PRIMARY'" in dec
     intel = _read("hooks", "useAssetIntel.ts")
     assert "evaluateSingleDecisionAuthority" in intel
     assert "sdaBySymbol" in intel
@@ -48,7 +48,7 @@ def test_ai_honesty_vocabulary():
     assert "RULE TEMPORARY" not in dec
     assert "EVIDENCE_ONLY" in dec
     assert "finalDecisionAuthorityActive: false" in dec
-    assert "SDA PRIMARY" in dec
+    assert "sourceTagEn: 'PRIMARY'" in dec
     assert "16:05" in dec
     # v12.2.12是正: 16:05の案内は実行を保証できる状態のみ(状態別の正確な文言)
     assert "無効化中" in dec                       # disabled=約束しない
@@ -176,7 +176,7 @@ def test_migrated_features_present():
     downside = _read("components", "dashboard", "DownsideIncidentCard.tsx")
     assert "判断支援のみ" not in card
     assert downside.count(
-        "EVIDENCE ONLY · SDAのPrimary Actionを上書きしません。自動売買なし。"
+        "EVIDENCE ONLY · 最終判断（PRIMARY ACTION）を上書きしません。自動売買なし。"
     ) == 1
 
 

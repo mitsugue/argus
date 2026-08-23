@@ -28,7 +28,7 @@ const projected = decision.projectCanonicalAssetDecision({ symbol: '7203', resul
   ruleLabel: { symbol: '7203', action: 'ENTER', reasonJa: 'legacy' },
   aiLabel: { symbol: '7203', aiFinalAction: 'BUY', reasonJa: 'challenge' }, meta: aiMeta });
 check('canonical SDA action owns the asset decision', projected.judgmentSource === 'sda'
-  && projected.sourceTagEn === 'SDA PRIMARY' && projected.reasonJa.includes('EXIT'));
+  && projected.sourceTagEn === 'PRIMARY' && projected.reasonJa.includes('EXIT'));
 check('AI and rule remain dissent evidence only', projected.ai.authorityRole === 'EVIDENCE_ONLY'
   && projected.ai.finalDecisionAuthorityActive === false
   && projected.rule.authorityRole === 'EVIDENCE_ONLY'

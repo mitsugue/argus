@@ -50,6 +50,8 @@ interface Props {
       severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
       headlineJa: string; whyJa: string;
       crossMarket: { confirmed: boolean; signals: string[] };
+      impactDirection?: { primaryDirection: 'BULLISH' | 'BEARISH' | 'MIXED' | 'UNCLEAR';
+        directionByTarget: Record<string, string>; transmissionChain: string[] };
       sources: Array<{ name: string; kind: string }>;
       asOf: string | null;
     }>;
@@ -112,13 +114,13 @@ const NEXT_REVIEW_REASON_JA: Record<string, string> = {
   'resolve.prediction_ledger_missing': '予測台帳の更新を確認',
   'resolve.risk_evidence_missing': 'リスク証拠を更新',
   'resolve.scenario_event_missing': '重要イベント情報を更新',
-  'resolve.sho_evidence_missing': 'SHO証拠を更新',
+  'resolve.sho_evidence_missing': 'チャート分析証拠を更新',
   'resolve.input_invalid': '判断入力を再取得',
   risk_reassessment: 'リスク条件を再確認',
-  sho_revalidation: 'SHO証拠を再検証',
+  sho_revalidation: 'チャート分析証拠を再検証',
   evidence_refresh: '正本証拠を更新',
 };
-// v13.5.19 (external review item A): MARKET VIEW (SHO) / ACTION (SDA)
+// v13.5.20 (external review item A): MARKET VIEW (SHO) / ACTION (SDA)
 // separation. The strip renders the document-level SHO consumer projection —
 // reversal + downside axis states and D01-D07 family states — directly under
 // the SDA action so the owner sees "what the market looks like" and "what we
@@ -146,8 +148,8 @@ const MarketViewStrip: React.FC = () => {
   const reversal = projection.reversal;
   const families = Object.entries(projection.families ?? {});
   return <div className="at-marketview" data-argus-contract="sho-market-view-v1"
-    aria-label="市場観（SHO・行動権限なし）">
-    <small>市場観（SHO） — 行動判断（SDA）とは分離</small>
+    aria-label="市場観（行動権限なし）">
+    <small>市場観（検証前の参考情報） — 売買の最終判断とは別枠</small>
     <div className="mv-states">
       <span>反転: <b>{reversal?.reversalState
         ? (SHO_STATE_JA[reversal.reversalState] ?? reversal.reversalState) : 'データ待ち'}</b></span>
@@ -159,11 +161,11 @@ const MarketViewStrip: React.FC = () => {
         data-family={family} data-family-status={row.status ?? 'MISSING'}>
         {SHO_FAMILY_JA[family] ?? family} {familyStateJa(row)}</i>)}
     </div>}
-    <span className="mv-note">市場観は行動権限を持たない（未検証の候補は確率を主張しない）</span>
+    <span className="mv-note">市場観は行動権限を持たない（各項目は検証前・確率は主張しない）</span>
   </div>;
 };
 
-// v13.5.19 NEWS/EVENT SIGNAL (owner spec 2026-08-23): the independent news
+// v13.5.20 NEWS/EVENT SIGNAL (owner spec 2026-08-23): the independent news
 // direction axis rendered BESIDE the SHO market view and the SDA action —
 // three separate judgments, never one blended score. A chart view and a news
 // view that disagree stay visibly different; cancellation into a vague
@@ -203,7 +205,7 @@ const NewsSignalStrip: React.FC = () => {
     .map(([target]) => NEWS_TARGET_JA[target] ?? target);
   return <div className={`at-newssignal is-${primary.toLowerCase()}`}
     data-argus-contract="news-event-signal-v1" aria-label="ニュース/イベント判断">
-    <small>ニュース/イベント — チャート判断（SHO）とは独立</small>
+    <small>ニュース/イベント — チャート観とは独立</small>
     <div className="ns-head">
       <b>{NEWS_DIRECTION_JA[primary] ?? primary}</b>
       <i>{top.severity}</i>
@@ -223,7 +225,7 @@ const NewsSignalStrip: React.FC = () => {
       && <span className="ns-chain">{direction.transmissionChain.join(' → ')}</span>}
     <span className="ns-note">
       {NEWS_CONSTRAINT_JA[top.executionConstraint ?? 'NO_CONSTRAINT']
-        ?? '制約なし'} · ニュースは売買権限を持たない（正本判断はSDA）</span>
+        ?? '制約なし'} · ニュースは売買権限を持たない</span>
   </div>;
 };
 
@@ -367,8 +369,14 @@ const ProjectionChart: React.FC<{
       <span className="invalid">無効 <b>{formatInstrumentPrice(projection.invalidation, projection.instrumentId)}</b></span></div>
     {displayProbabilities ? <div className={`at-proj-prob ${
       projection.directionProbabilities ? 'is-verified' : 'is-reference'}`}>
-      <span>{projection.horizonDays}D 終値方向{
-        projection.directionProbabilities ? '（検証済み）' : '（参考値・未検証）'}</span>
+      {/* v13.5.20 (external review): the reference-mode numbers are DEMOTED —
+          the ablation showed no out-of-sample edge over the base rate, so the
+          lead line says so plainly and the digits render muted/uncolored.
+          Verified mode (a future state gated on positive OOS skill) keeps
+          the prominent treatment. */}
+      <span>{projection.directionProbabilities
+        ? `${projection.horizonDays}D 終値方向（検証済み）`
+        : `類似局面の分布 — 予測力は未確認（${projection.horizonDays}D・参考のみ）`}</span>
       {(['UP', 'RANGE', 'DOWN'] as const).map((key) => <span key={key}
         className={`${key.toLowerCase()} ${strongest === key ? 'is-max' : ''}`}>{key} <b>{displayProbabilities[key]}%</b></span>)}
       <em>実効n={projection.effectiveSampleCount} · BSS {
@@ -512,7 +520,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       <MarketViewStrip />
       <NewsSignalStrip />
       <div className="at-kpis"><span>確度 <b>{Math.round(view.canonicalDecision.confidence.valueBps / 100)}%</b></span>
-        <span>DATA <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></span></div>
+        <span>DATA <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></span>
+        <span className="at-buy-note">BUYは検証完了まで出ません（方針・現在は構造的に無効）</span></div>
     </article>
 
     <section className="at-event card" aria-label="NEXT EVENT">
@@ -664,6 +673,9 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         className="at-shock-event" data-shock-severity={event.severity}
         data-shock-class={event.eventClass}>
         <div className="at-shock-head"><mark data-severity={event.severity}>{event.severity}</mark>
+          {event.impactDirection && event.impactDirection.primaryDirection !== 'UNCLEAR'
+            && <mark className={`is-dir-${event.impactDirection.primaryDirection.toLowerCase()}`}>
+              {NEWS_DIRECTION_JA[event.impactDirection.primaryDirection]}</mark>}
           <b>{event.headlineJa}</b></div>
         <span>{event.whyJa}</span>
         <em>{event.sources.map((source) => source.name).join(' · ')}

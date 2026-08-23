@@ -21,6 +21,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+import argus_news_intelligence as _news_direction
+
 MARKET_SHOCK_SCHEMA = "argus-market-shock-v1"
 
 # Severity ladder (ordered). Policy constants are explicit so tests and the
@@ -223,6 +225,19 @@ def apply_cross_market_confirmation(
     }
 
 
+# Shock theme -> news-direction family. Themes whose polarity is inherent in
+# the trigger get it from the headline text; unmapped themes stay UNCLEAR.
+_SHOCK_THEME_FAMILY = {
+    "geopolitics": "WAR_ESCALATION",
+    "energy_geopolitics": "HORMUZ",
+    "rates_shock": "RATES",
+    "fx_policy": "FX",
+    "policy_shock": "JAPAN_POLICY",
+    "financial_stress": "OTHER_MARKET_RELEVANT",
+    "disaster": "OTHER_MARKET_RELEVANT",
+}
+
+
 def build_market_shock_view(*, long_end: Mapping[str, Any],
                             themes: Sequence[Mapping[str, Any]],
                             cross_market: Mapping[str, Any],
@@ -250,6 +265,10 @@ def build_market_shock_view(*, long_end: Mapping[str, Any],
                      "日本株のリスク許容度に直接影響します。",
             "evidence": dict(long_end),
             "crossMarket": confirmation,
+            # v13.5.20 (external review item 3): the official sensor lane
+            # carries the SAME direction vocabulary as mail news — the US30Y
+            # spike sensor's trigger condition IS the 'up' polarity.
+            "impactDirection": _news_direction.direction_for("RATES", "up"),
             "sources": [{"name": "FRED DGS30", "kind": "official_series"}],
             "asOf": long_end.get("latestDate"),
         })
@@ -281,6 +300,10 @@ def build_market_shock_view(*, long_end: Mapping[str, Any],
                          ("themeKey", "outletCount", "headlineCount",
                           "conflicting", "reasons")},
             "crossMarket": confirmation,
+            "impactDirection": _news_direction.evaluate_impact_direction(
+                taxonomy={"eventType": _SHOCK_THEME_FAMILY.get(
+                    theme["themeKey"], "OTHER_MARKET_RELEVANT")},
+                subject=(sample[0]["title"] if sample else theme["themeKey"])),
             "sources": [{"name": hit["domain"], "kind": "news_outlet"}
                         for hit in sample],
             "asOf": now_iso,

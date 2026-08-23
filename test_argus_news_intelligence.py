@@ -372,7 +372,7 @@ def test_envelope_carries_source_family_and_tier():
     assert event["source"] == "FRB"
 
 
-# ━━━ v13.5.19 — NEWS/EVENT DIRECTIONAL IMPACT (owner spec 2026-08-23) ━━━
+# ━━━ v13.5.20 — NEWS/EVENT DIRECTIONAL IMPACT (owner spec 2026-08-23) ━━━
 
 def _tax(family):
     return {"eventType": family, "families": [family], "themeTags": [],

@@ -225,3 +225,13 @@
 .at-newssignal .ns-targets{font-size:10.5px}
 .at-newssignal .ns-chain{opacity:.7;font-size:10px}
 .at-newssignal .ns-note{opacity:.55;font-size:10px}
+
+/* v13.5.20 — reference-mode analog distribution DEMOTED (no OOS edge shown) */
+.at-proj-prob.is-reference span b{color:var(--text-muted);font-size:10.5px}
+.at-proj-prob.is-reference .up b,.at-proj-prob.is-reference .down b{color:var(--text-muted)}
+.at-proj-prob.is-reference .is-max{color:var(--text-sub)}
+.at-proj-prob.is-reference .is-max b{color:var(--text-sub)}
+.at-proj-prob.is-reference>span:first-child{color:var(--text-sub);font-weight:600}
+.at-shock-head mark.is-dir-bearish{background:rgba(255,120,120,.16);color:#ff9c9c}
+.at-shock-head mark.is-dir-bullish{background:rgba(110,220,170,.16);color:#7fd8a8}
+.at-shock-head mark.is-dir-mixed{background:rgba(255,255,255,.10);color:var(--text-sub)}

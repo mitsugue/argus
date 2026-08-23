@@ -741,6 +741,25 @@ def _detect_polarity(text: str) -> Optional[str]:
     return None
 
 
+def direction_for(family: str, polarity: Optional[str]) -> Dict[str, Any]:
+    """Direction signal for an ALREADY-KNOWN family+polarity (e.g. the
+    US30Y shock sensor, whose trigger condition IS the 'up' polarity).
+    Unmapped combinations stay UNCLEAR."""
+    rule = _DIRECTION_RULES.get((str(family), polarity)) if polarity else None
+    by_target = dict(rule) if rule else dict(_UNCLEAR_ALL)
+    return {
+        "schemaVersion": "news-impact-direction-v1",
+        "polarity": polarity or "UNDETECTED",
+        "directionByTarget": by_target,
+        "primaryDirection": by_target.get("broadMarket", "UNCLEAR"),
+        "timeHorizon": _DIR_TIME_HORIZONS.get(str(family), "UNCLEAR"),
+        "transmissionChain": list(
+            _DIR_TRANSMISSION_CHAINS.get((str(family), polarity), [])),
+        "confidence": "MEDIUM" if rule else "LOW",
+        "directionAuthority": False,
+    }
+
+
 def evaluate_impact_direction(*, taxonomy: Mapping[str, Any], subject: str,
                               excerpt: str = "") -> Dict[str, Any]:
     """Deterministic per-target direction hypothesis for one news event.
@@ -753,21 +772,7 @@ def evaluate_impact_direction(*, taxonomy: Mapping[str, Any], subject: str,
     family = str(taxonomy.get("eventType") or "OTHER_MARKET_RELEVANT")
     polarity = _detect_polarity(str(subject or "") + "\n"
                                 + str(excerpt or "")[:2000])
-    rule = _DIRECTION_RULES.get((family, polarity)) if polarity else None
-    by_target = dict(rule) if rule else dict(_UNCLEAR_ALL)
-    primary = by_target.get("broadMarket", "UNCLEAR")
-    chain = list(_DIR_TRANSMISSION_CHAINS.get((family, polarity), []))
-    matched = rule is not None
-    return {
-        "schemaVersion": "news-impact-direction-v1",
-        "polarity": polarity or "UNDETECTED",
-        "directionByTarget": by_target,
-        "primaryDirection": primary,
-        "timeHorizon": _DIR_TIME_HORIZONS.get(family, "UNCLEAR"),
-        "transmissionChain": chain,
-        "confidence": "MEDIUM" if matched else "LOW",
-        "directionAuthority": False,
-    }
+    return direction_for(family, polarity)
 
 
 def derive_execution_constraint(*, severity: str, confirmation_state: str,
@@ -825,7 +830,7 @@ def build_news_event(*, message: Mapping[str, Any],
         confirmation_state=materiality["confirmationState"],
         impact_direction=impact_direction)
     return {
-        # v13.5.19 NEWS/EVENT DIRECTIONAL IMPACT: an independent axis beside
+        # v13.5.20 NEWS/EVENT DIRECTIONAL IMPACT: an independent axis beside
         # severity and market confirmation. Display + evidence only.
         "impactDirection": impact_direction,
         "executionConstraint": execution_constraint,
