@@ -130,6 +130,11 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # constraint tiering + uncapped imminent feed (item C), and the
     # degraded-feed kernel split (item F).
     "web/src/domain/importantEventsTier.ts",
+    # v13.5.20 owner directive: internal engine names removed from every
+    # user-visible surface (jargon-free UI sweep).
+    "web/src/components/dashboard/DownsideIncidentCard.tsx",
+    "web/src/domain/assetDecision.ts",
+    "web/src/routes/CorePortfolio.tsx",
     "web/src/hooks/useImportantEvents.ts",
     "web/scripts/important-events-tier.test.cjs",
     "web/src/hooks/useChartIntelligence.ts",
