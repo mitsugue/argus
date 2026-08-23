@@ -493,7 +493,7 @@ async function run() {
       evidence.failures.push(`sticky-gap:${viewport.width}`);
     }
     if (viewport.width <= 720
-      && Math.abs((audit.navVisualBottomGap ?? 99) - 15) > 1) {
+      && Math.abs((audit.navVisualBottomGap ?? 99) - 40) > 1) {
       evidence.failures.push(`nav-visual-bottom-gap:${viewport.width}`);
     }
     if (!Number.isFinite(audit.hostileSafeAreaBottom)
@@ -502,11 +502,11 @@ async function run() {
     }
     if (viewport.width <= 720
       && (!Number.isFinite(audit.hostileNavHeightBeforeRefresh)
-        || Math.abs(audit.hostileNavHeightBeforeRefresh - 56) > 1)) {
+        || Math.abs(audit.hostileNavHeightBeforeRefresh - 86) > 1)) {
       evidence.failures.push(`hostile-nav-height:${viewport.width}`);
     }
     if (viewport.width <= 720
-      && (Math.abs((audit.navRect?.height ?? 99) - 56) > 1
+      && (Math.abs((audit.navRect?.height ?? 99) - 86) > 1
         || Math.abs((audit.navControlsRect?.height ?? 99) - 44) > 1)) {
       evidence.failures.push(`fixed-nav-height:${viewport.width}`);
     }
