@@ -68,16 +68,21 @@ assert.match(shell, /setAnimDir\(pageDirection\)/);
 
 assert.match(navCss, /--argus-safe-bottom:\s*clamp\(0px,\s*env\(safe-area-inset-bottom,\s*0px\),\s*34px\)/);
 assert.match(navCss, /--argus-mobile-safe-bottom:\s*clamp\(0px,\s*var\(--argus-safe-bottom\),\s*34px\)/);
-assert.match(navCss, /--argus-mobile-nav-safe-buffer:\s*clamp\(0px,\s*var\(--argus-mobile-safe-bottom\),\s*12px\)/);
+// v13.5.20 (owner): symmetric nav geometry — the same visual pad above and
+// below the 44px content row, with the FULL hardware inset reserved below
+// the bottom pad (the label row must not crowd the home indicator).
+assert.match(navCss, /--argus-mobile-nav-pad:\s*4px/);
+assert.match(navCss, /--argus-mobile-nav-safe-buffer:\s*var\(--argus-mobile-safe-bottom\)/);
 assert.match(navCss, /--argus-mobile-nav-content-height:\s*44px/);
-assert.match(navCss, /--argus-mobile-nav-height:\s*calc\(var\(--argus-mobile-nav-content-height\) \+ var\(--argus-mobile-nav-safe-buffer\)\)/);
+assert.match(navCss, /--argus-mobile-nav-height:\s*calc\(var\(--argus-mobile-nav-content-height\)\s*\n?\s*\+ 2 \* var\(--argus-mobile-nav-pad\) \+ var\(--argus-mobile-nav-safe-buffer\)\)/);
+assert.match(navCss, /top:\s*var\(--argus-mobile-nav-pad\)/);
 assert.match(navCss, /height:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(navCss, /min-height:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(navCss, /max-height:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(navCss, /block-size:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(navCss, /max-block-size:\s*var\(--argus-mobile-nav-height\)/);
 assert.match(navCss, /--argus-mobile-nav-label-bottom:\s*3px/);
-assert.match(navCss, /top:\s*0;[^]*bottom:\s*auto;/);
+assert.match(navCss, /top:\s*var\(--argus-mobile-nav-pad\);[^]*bottom:\s*auto;/);
 assert.match(navCss, /justify-content:\s*center/);
 assert.match(navCss, /padding:\s*3px 2px var\(--argus-mobile-nav-label-bottom\)/);
 assert.match(stickyCss, /bottom:\s*var\(--argus-mobile-nav-height\)/);

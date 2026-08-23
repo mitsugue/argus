@@ -32,7 +32,7 @@ check('canonical SDA action owns the asset decision', projected.judgmentSource =
 check('AI and rule remain dissent evidence only', projected.ai.authorityRole === 'EVIDENCE_ONLY'
   && projected.ai.finalDecisionAuthorityActive === false
   && projected.rule.authorityRole === 'EVIDENCE_ONLY'
-  && projected.rule.disagreementJa.includes('SDA=EXIT'));
+  && projected.rule.disagreementJa.includes('最終判断=EXIT'));
 check('removed AI merge APIs cannot be called', decision.mergeAiPrimary === undefined
   && decision.resolveAssetDecision === undefined);
 
