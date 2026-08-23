@@ -194,7 +194,11 @@ def evaluate_news_theme(hits: Sequence[Mapping[str, Any]], *,
 
 
 def _notch(severity: Optional[str], up: int) -> Optional[str]:
-    if severity is None or up <= 0:
+    # v13.5.21: callers outside the shock lane pass their own severity
+    # vocabulary (news "WATCH") — an unknown label upgrades to nothing
+    # instead of raising mid-confirmation (latent crash found by the
+    # direction-alignment tests).
+    if severity is None or up <= 0 or severity not in SEVERITIES:
         return severity
     index = SEVERITIES.index(severity)
     return SEVERITIES[min(index + 1, len(SEVERITIES) - 1)]
@@ -203,24 +207,42 @@ def _notch(severity: Optional[str], up: int) -> Optional[str]:
 def apply_cross_market_confirmation(
         severity: Optional[str], *, vix_change: Optional[float],
         usd_jpy_change: Optional[float], us10y_change_bp: Optional[float],
+        expected: Optional[Mapping[str, int]] = None,
 ) -> Dict[str, Any]:
     """At most ONE notch of upgrade, only on explicit multi-signal confirmation.
 
     Confirmation = at least two of: VIX up >= 2.0 points, USDJPY absolute move
     >= 1.5, US10Y move >= 8bp in the same session. Cross-market data can never
     CREATE an event, only raise confidence in one detected elsewhere.
+
+    v13.5.21 (external review): when `expected` carries the HYPOTHESIS
+    directions ({sensor: +1/-1}), a large move in the OPPOSITE direction is
+    MARKET_MOVED evidence, never confirmation — it is reported in
+    contradictedSignals and does not count toward the two-signal rule.
     """
-    signals = []
-    if isinstance(vix_change, (int, float)) and vix_change >= 2.0:
+    def _sign_matches(key: str, value: float) -> bool:
+        want = (expected or {}).get(key)
+        if want is None:
+            return True
+        return (value > 0) == (want > 0)
+
+    signals, contradicted = [], []
+    if isinstance(vix_change, (int, float)) and abs(vix_change) >= 2.0             and (expected or {}).get("vix") is not None:
+        (signals if _sign_matches("vix", vix_change)
+         else contradicted).append("vix_spike")
+    elif isinstance(vix_change, (int, float)) and vix_change >= 2.0             and expected is None:
         signals.append("vix_spike")
     if isinstance(usd_jpy_change, (int, float)) and abs(usd_jpy_change) >= 1.5:
-        signals.append("fx_shock")
+        (signals if _sign_matches("usdJpy", usd_jpy_change)
+         else contradicted).append("fx_shock")
     if isinstance(us10y_change_bp, (int, float)) and abs(us10y_change_bp) >= 8.0:
-        signals.append("rates_move")
+        (signals if _sign_matches("us10y", us10y_change_bp)
+         else contradicted).append("rates_move")
     confirmed = len(signals) >= 2
     return {
         "confirmed": confirmed,
         "signals": signals,
+        "contradictedSignals": contradicted,
         "severity": _notch(severity, 1) if confirmed else severity,
     }
 
@@ -265,7 +287,7 @@ def build_market_shock_view(*, long_end: Mapping[str, Any],
                      "日本株のリスク許容度に直接影響します。",
             "evidence": dict(long_end),
             "crossMarket": confirmation,
-            # v13.5.20 (external review item 3): the official sensor lane
+            # v13.5.21 (external review item 3): the official sensor lane
             # carries the SAME direction vocabulary as mail news — the US30Y
             # spike sensor's trigger condition IS the 'up' polarity.
             "impactDirection": _news_direction.direction_for("RATES", "up"),

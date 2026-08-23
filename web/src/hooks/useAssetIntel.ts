@@ -54,6 +54,7 @@ import {
   eventKernelConstraint, eventKernelSeverity, imminentEventGate,
 } from '../domain/importantEventsTier';
 import { useNewsIntelligence } from './useNewsIntelligence';
+import { newsKernelGate } from '../domain/newsSignalGate';
 import { classifyRole, buildStrategy, type LocalStrategy } from '../domain/portfolioStrategy';
 import {
   buildLocalFireCore, fireCoreMetaSnapshot, subscribeFireCoreMeta,
@@ -196,7 +197,7 @@ export function useAssetIntel(opts: {
   const { events: events247 } = useEventsActive();
   const importantEventsState = useImportantEvents();
   const { data: impEvents } = importantEventsState;
-  const newsIntel = useNewsIntelligence().view;   // v13.5.20 news signal
+  const newsIntel = useNewsIntelligence().view;   // v13.5.21 news signal
   const importantEventsUnknown = importantEventsState.authority !== 'fresh';
   const downsideUnknown = downsideState.authority !== 'fresh';
   // v13.5.13: canonical artifact references (marketTruth/predictionLedger/sho)
@@ -698,20 +699,15 @@ export function useAssetIntel(opts: {
     const ruleBySym = new Map((al.data?.labels ?? []).map((row) => [row.symbol.toUpperCase(), row]));
     const aiBySym = new Map((aiJ.data?.labels ?? []).map((row) => [row.symbol.toUpperCase(), row]));
     const riskBySym = new Map(positionExposure.risks.map((row) => [row.symbol, row.riskLevel]));
-    // v13.5.20 (review item C): uncapped imminent feed + impact tiering.
+    // v13.5.21 (review item C): uncapped imminent feed + impact tiering.
     // critical/high → WAIT_REQUIRED; medium/low → BLOCK_BUY only.
     const eventGate = imminentEventGate(impEvents);
-    // v13.5.20 NEWS/EVENT SIGNAL → execution constraint. News can never
-    // SELL/EXIT/WAIT the decision; only a MARKET-CONFIRMED HIGH/CRITICAL
-    // broad/Japan BEARISH signal blocks NEW buying (held-position judgment
-    // continues). A PENDING headline advises on the Today strip but never
-    // gates here — the owner's "warn first, let the market confirm" rule.
-    const newsGate = (newsIntel?.events ?? []).find((event) =>
-      (event.severity === 'HIGH' || event.severity === 'CRITICAL')
-      && event.staleness !== 'stale'
-      && event.confirmationState === 'MARKET_CONFIRMED'
-      && (event.impactDirection?.directionByTarget?.broadMarket === 'BEARISH'
-        || event.impactDirection?.directionByTarget?.japanEquities === 'BEARISH')) ?? null;
+    // v13.5.21 NEWS/EVENT SIGNAL → execution constraint, PER SUBJECT
+    // (external review BLOCKER 2): the gate lives in domain/newsSignalGate —
+    // only a MARKET-CONFIRMED, non-stale HIGH/CRITICAL bearish signal whose
+    // target actually covers the subject blocks NEW buying. PENDING advises
+    // on the Today strip only; news can never SELL/EXIT/WAIT the decision.
+    const newsEvents = newsIntel?.events;
     const decisionMs = Date.now();
     const decisionAt = exactSecondUtc(decisionMs);
     const validChallengeTime = (value: unknown) => {
@@ -816,13 +812,19 @@ export function useAssetIntel(opts: {
           confidenceCapBps: 7500, observedAt: cutoffAt,
         });
       }
-      if (newsGate && (market === 'JP' || market === 'US')) contributions.push({
-        evidenceRef: `news:impact-${String(newsGate.eventId).slice(0, 40).toLowerCase()}`,
+      const subjectTheme = themeOf({ symbol: sym, market,
+        assetType: market === 'JP' ? 'jp_equity' : 'us_equity',
+        displayName: sym, displayNameJa: sym });
+      const newsHit = newsKernelGate(newsEvents, {
+        symbol: sym, market, theme: subjectTheme });
+      if (newsHit) contributions.push({
+        evidenceRef: `news:impact-${newsHit.matchedTarget.toLowerCase()}-${String(newsHit.eventId).slice(0, 32).toLowerCase()}`,
         primitiveFactorId: 'news.market_impact_confirmed', sourceKind: 'EVENT',
-        constraint: 'BLOCK_BUY', status: 'ACTIVE', severity: 'MEDIUM',
+        constraint: 'BLOCK_BUY', status: 'ACTIVE',
+        severity: newsHit.severity === 'CRITICAL' ? 'HIGH' : 'MEDIUM',
         confidenceCapBps: 5500, observedAt: cutoffAt,
       });
-      // v13.5.20 (external review item 7): a calendar FEED outage is an
+      // v13.5.21 (external review item 7): a calendar FEED outage is an
       // availability failure, not decision-critical unknowability — it must
       // not data-gate every symbol into WAIT (single point of failure).
       // Unknown calendar → BLOCK_BUY + confidence cap + diagnostic ref;
@@ -845,7 +847,7 @@ export function useAssetIntel(opts: {
           confidenceCapBps: 5000, observedAt: cutoffAt,
         });
       }
-      // v13.5.20 (review item F): the old composite lever data-gated EVERY
+      // v13.5.21 (review item F): the old composite lever data-gated EVERY
       // symbol when ONE auxiliary feed (flow/supply/FX/labels) went stale.
       // Split: per-symbol decision authorities (quote, session) still gate;
       // degraded auxiliary feeds only block new adds and cap confidence —

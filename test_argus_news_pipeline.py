@@ -85,7 +85,8 @@ def news_env(monkeypatch, tmp_path):
         "lastErrorClass": None, "restoredFrom": ["test"],
     })
     # keep corroboration deterministic and offline
-    monkeypatch.setattr(scanner, "_news_corroboration", lambda family: {
+    monkeypatch.setattr(scanner, "_news_corroboration",
+                        lambda family, polarity=None: {
         "confirmed": True, "signals": ["vix_spike", "rates_move"],
         "readings": [{"key": "us30y", "labelJa": "米30年債", "value": 5.31,
                       "change": 22.0, "unit": "%", "asOf": "2026-08-19"}],
@@ -206,14 +207,16 @@ def test_backfill_is_marked_and_never_alert_eligible(monkeypatch, news_env):
 def test_escalation_realerts_but_cosmetic_duplicate_does_not(
         monkeypatch, news_env):
     subject = "イラン情勢が緊迫"
-    monkeypatch.setattr(scanner, "_news_corroboration", lambda family: {
+    monkeypatch.setattr(scanner, "_news_corroboration",
+                        lambda family, polarity=None: {
         "confirmed": False, "signals": [], "readings": [], "missing": []})
     run_cycle(monkeypatch, {"e1": mail("e1", subject)})
     first = scanner.app.test_client().get(
         "/api/argus/news-intelligence").get_json()["events"][0]
     assert first["severity"] in ("WATCH", "HIGH")
     # market later confirms → severity increase on the SAME event → re-alert
-    monkeypatch.setattr(scanner, "_news_corroboration", lambda family: {
+    monkeypatch.setattr(scanner, "_news_corroboration",
+                        lambda family, polarity=None: {
         "confirmed": True, "signals": ["vix_spike", "fx_shock"],
         "readings": [], "missing": []})
     run_cycle(monkeypatch, {"e2": mail(
@@ -230,14 +233,16 @@ def test_market_confirmation_transition_realerts_without_severity_change(
     re-alerts (PENDING→CONFIRMED transition), while the severity axis itself
     never moves on confirmation."""
     subject = "米30年債利回りが5%を突破 急騰続く"
-    monkeypatch.setattr(scanner, "_news_corroboration", lambda family: {
+    monkeypatch.setattr(scanner, "_news_corroboration",
+                        lambda family, polarity=None: {
         "confirmed": False, "signals": [], "readings": [], "missing": []})
     run_cycle(monkeypatch, {"c1": mail("c1", subject)})
     first = scanner.app.test_client().get(
         "/api/argus/news-intelligence").get_json()["events"][0]
     assert first["severity"] in ("HIGH", "CRITICAL")
     assert first["confirmationState"] == "MARKET_CONFIRMATION_PENDING"
-    monkeypatch.setattr(scanner, "_news_corroboration", lambda family: {
+    monkeypatch.setattr(scanner, "_news_corroboration",
+                        lambda family, polarity=None: {
         "confirmed": True, "signals": ["us10y_shock"],
         "readings": [], "missing": []})
     run_cycle(monkeypatch, {"c2": mail("c2", subject + " 続報")})

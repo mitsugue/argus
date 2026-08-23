@@ -635,7 +635,7 @@ def orchestrate(full_cycles, retention_cycles, assert_bounds,
         max((int(row.get("cgroupMemoryPeakBytes") or 0)
              for row in repeated.get("cycleReports") or []), default=0))
     cgroup_memory_limit = 4 * 1024 ** 3
-    # v13.5.20 remeasure: the exact production snapshot (161MB state after
+    # v13.5.21 remeasure: the exact production snapshot (161MB state after
     # the ten-year/SHO growth) peaked at 3.08GiB inside the 4GiB cgroup —
     # 2.6% over the previous 3.0GiB acceptance ceiling. Re-tuned to 3.25GiB
     # from the measured peak; ~0.75GiB headroom to the hard cgroup limit and

@@ -19,13 +19,14 @@ export interface NewsIntelEvent {
   themeTags: string[];
   facts: string[];
   sourceUrl: string | null;
-  staleness: string;
+  staleness: string;          // backend UPPERCASE enum, re-evaluated at read time
+  ageMinutes?: number;        // minutes since receipt (server-computed at read)
   severity: 'INFO' | 'WATCH' | 'HIGH' | 'CRITICAL';
   severityReasons: string[];
   confirmationState: 'MARKET_CONFIRMED' | 'MARKET_CONFIRMATION_PENDING';
   whyJa: string;
   japanImpactJa: string | null;
-  // v13.5.20 NEWS/EVENT DIRECTIONAL IMPACT — independent axis beside
+  // v13.5.21 NEWS/EVENT DIRECTIONAL IMPACT — independent axis beside
   // severity and market confirmation. Optional: events stored before the
   // direction engine existed simply have no signal (UNCLEAR, not fabricated).
   impactDirection?: {
