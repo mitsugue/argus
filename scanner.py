@@ -159,9 +159,25 @@ PORT              = int(os.environ.get("PORT", 8080))
 
 # v12.3.0: generated-AI is fail-closed by default.  Market-data adapters are
 # deliberately outside this policy and continue to run in DETERMINISTIC mode.
+# v13.5.23 (owner directive 2026-08-23 「有効にして」): default mode is now
+# SCHEDULED_AI — ONLY news headline translation + news_intel analysis run
+# automatically, under the scheduled daily budget below.  Everything else
+# stays fail-closed; set ARGUS_COST_POLICY_MODE=DETERMINISTIC to revert.
 _COST_POLICY = argus_cost_policy.default_state(
-    os.environ.get("ARGUS_COST_POLICY_MODE", "DETERMINISTIC").strip().upper(),
+    os.environ.get("ARGUS_COST_POLICY_MODE", "SCHEDULED_AI").strip().upper(),
     os.environ.get("ARGUS_EVENT_AI_OPT_IN", "0") == "1")
+try:
+    _SCHEDULED_AI_DAILY_USD = max(0.0, float(
+        os.environ.get("ARGUS_SCHEDULED_AI_DAILY_USD", "2.0") or 2.0))
+except (TypeError, ValueError):
+    _SCHEDULED_AI_DAILY_USD = 2.0
+# Benchmark/preflight runs temporarily switch the policy to RESEARCH_BENCHMARK
+# and afterwards restore the configured idle mode — NOT hardcoded DETERMINISTIC,
+# which would silently disable the scheduled news AI after every run (v13.5.23).
+_COST_POLICY_IDLE_MODES = ("DETERMINISTIC", "SCHEDULED_AI")
+_COST_POLICY_BASELINE_MODE = (
+    _COST_POLICY.get("mode")
+    if _COST_POLICY.get("mode") in _COST_POLICY_IDLE_MODES else "DETERMINISTIC")
 _MARKET_LEDGER = argus_market_ledger.empty_state()
 _MARKET_LEDGER_REMOTE = {"lastVerifiedReadBackAt": None,
                          "verificationStatus": "not_verified"}
@@ -196,10 +212,19 @@ def _cost_policy_authorize(provider, purpose, *, automatic=True,
         confirmation=confirmation,
         estimated_cost_usd=estimated_cost_usd,
         estimated_tokens=estimated_tokens,
-        provider_enabled=True)
+        provider_enabled=True,
+        scheduled_daily_budget_usd=_SCHEDULED_AI_DAILY_USD)
 
 
 def _deterministic_skip_payload(purpose):
+    # The skip reason must state the TRUE mode (v13.5.23): under SCHEDULED_AI
+    # only the news purposes run automatically, so other purposes skip with
+    # their own reason instead of falsely claiming deterministic mode.
+    if _COST_POLICY.get("mode") == "SCHEDULED_AI":
+        return {"ok": True, "status": "scheduled_scope_required",
+                "reason": "scheduled_scope_required",
+                "classification": "expected_skip", "purpose": purpose,
+                "noteJa": "定常AIはニュースの日本語要約/補助解析のみ。この用途は自動実行しません。"}
     return {"ok": True, "status": "deterministic_mode",
             "reason": "deterministic_mode", "classification": "expected_skip",
             "purpose": purpose,
@@ -7081,7 +7106,7 @@ def api_argus_important_events():
         events, owner_symbols=owner_symbols, held_symbols=held,
         ctx={"regime": regime, "vixElevated": vix_elevated}, limit=64)
     items = items_all[:8]
-    # v13.5.22 (review item C): the D/D-1 hard-constraint feed must not
+    # v13.5.23 (review item C): the D/D-1 hard-constraint feed must not
     # depend on the 8-item display cap — the audit showed event #9+ silently
     # produced no constraint. Compact, uncapped imminent list for the
     # device-side SDA/AP event gate, tiered by displayImpact.
@@ -9803,7 +9828,7 @@ def api_argus_intel_collect():
         except Exception:
             continue
     out["supplyDemandWarm"] = warmed
-    # v13.5.22: warm the SHO CORE input caches (^N225/^VIX OHLCV, 1570 weekly
+    # v13.5.23: warm the SHO CORE input caches (^N225/^VIX OHLCV, 1570 weekly
     # margin, FRED VIX). This admin/cron path is the ONLY fetch route; the
     # public decision-evidence GET reads these caches cached-only.
     try:
@@ -12434,7 +12459,7 @@ def api_argus_action_labels():
 # gated by the API keys + the AI run gate + the daily/monthly budget hard-stop. The separate
 # GPT-5.5 Pro Handoff export further below stays manual (copy-paste, no API call).
 _OPENAI_API_KEY        = os.environ.get("OPENAI_API_KEY", "")
-# v13.5.22 (owner directive: use the current generation): primary default is
+# v13.5.23 (owner directive: use the current generation): primary default is
 # the GPT-5.6 tier already registered in the repo pricing table (terra = the
 # cost-efficient 5.6 SKU; the standard/referee roles were on 5.6 since
 # v12.2.x). Env-overridable without a release, exactly as before.
@@ -12442,7 +12467,7 @@ _OPENAI_MODEL          = os.environ.get("OPENAI_MODEL", "") or "gpt-5.6-terra"
 # Checker tiering: the DAILY SCORED run (checker=pro) uses the Pro model; the frequent 15-min
 # re-judges (checker=flash) and the 429-quota fallback use Flash, so the double-check DEGRADES
 # instead of disappearing. Both env-overridable.
-# v13.5.22 model currency (corrected after external review): the official
+# v13.5.23 model currency (corrected after external review): the official
 # Gemini catalog serves gemini-3.1-pro-preview (Pro/preview) and
 # gemini-3.7-flash (Stable) — a "gemini-3.7-pro" endpoint is NOT established
 # and must never be a production default (invented IDs are exactly the
@@ -15467,6 +15492,9 @@ def _translate_headlines_ja(headlines):
         out = safe_json(getattr(resp, "text", "") or "")
         tr = out.get("translations") if isinstance(out, dict) else None
         if isinstance(tr, list):
+            # Record usage so the SCHEDULED_AI daily budget actually accrues.
+            _cost_policy_record("gemini", "headline_translation",
+                                estimated_cost_usd=0.02)
             return {i: str(t)[:200] for i, t in enumerate(tr) if t}
     except Exception as e:
         add_log(f"[news] headline translate failed: {type(e).__name__}")
@@ -16171,7 +16199,7 @@ def _causal_memory_refresh_open(force=False):
                 if not any(row["relation"] in ("SUPPORTING", "CONTRADICTING")
                            for row in evidence):
                     continue
-                # v13.5.22 (review item D): symmetric invalidation. A
+                # v13.5.23 (review item D): symmetric invalidation. A
                 # hypothesis WEAKENED for >= 3 days whose variables STILL all
                 # contradict earns the streak note, which the assessment
                 # policy accepts as an invalidation criterion — INVALIDATED
@@ -16356,7 +16384,7 @@ def _news_intel_persist():
             "events": _NEWS_INTEL["events"],
             "order": _NEWS_INTEL["order"][-_NEWS_EVENT_CAP:],
             "audit": _NEWS_INTEL["audit"][-_NEWS_AUDIT_CAP:],
-            # v13.5.22 (external review): source-acceptance evidence must
+            # v13.5.23 (external review): source-acceptance evidence must
             # survive restarts/deploys — process-memory counters are not an
             # audit authority.
             "sources": _NEWS_INTEL.get("sources") or {},
@@ -16394,7 +16422,7 @@ def _news_intel_ensure_loaded():
 def _news_source_acceptance():
     """Per-source acceptance evidence derived from the DURABLE stores
     (events + audit + persisted source rows) — never process-memory alone
-    (v13.5.22, external review). Public-safe: counts, domains, instants and
+    (v13.5.23, external review). Public-safe: counts, domains, instants and
     the verdict vocabulary only; no subjects, no bodies."""
     events = list(_NEWS_INTEL.get("events", {}).values())
     audit = list(_NEWS_INTEL.get("audit") or [])
@@ -16449,7 +16477,13 @@ def _news_source_acceptance():
                else "PARTIAL_SOURCE_ACCEPTANCE" if accepted
                else "MAIL_INTAKE_NOT_PROVEN")
     return {"perSource": out, "acceptedSources": accepted,
-            "overallVerdict": overall}
+            "overallVerdict": overall,
+            # External review 2026-08-24: "accepted" means observed & accepted
+            # (≥1 real authenticated mail per family) — NOT proof that every
+            # subscription format from that source is handled.
+            "acceptanceSemanticsJa":
+                "受理=各ソース1通以上の実メールを認証つきで正常処理した実証。"
+                "全配信形式の網羅証明ではありません（検疫履歴は個別レビュー対象）。"}
 
 
 def _news_audit(row):
@@ -16463,7 +16497,7 @@ def _news_audit(row):
 def _news_corroboration(family, polarity=None):
     """Resolve the event-class corroboration plan against EXISTING sensors
     only (§15). Missing values stay visibly missing — never fabricated.
-    v13.5.22: with a detected polarity, confirmation requires the sensors to
+    v13.5.23: with a detected polarity, confirmation requires the sensors to
     move in the HYPOTHESIS direction (CONFIRMATION_EXPECTATIONS) — a large
     opposite move is market-moved evidence, not confirmation."""
     plan = argus_news_intelligence.CORROBORATION_PLAN.get(family) or ()
@@ -16767,11 +16801,14 @@ def _news_intake_cycle(*, backfill=False, backfill_days=10):
 _NEWS_TRANSLATION_WORKER = {
     "lastRunAt": None, "lastSuccessAt": None, "lastError": None,
     "consecutiveFailures": 0, "translatedTotal": 0,
+    # v13.5.23: why the last tick did or did not call the LLM ("allowed" or the
+    # cost-policy skip reason). aiExecuted=false must never look like success.
+    "lastPolicyDecision": None,
 }
 
 
 def _news_translation_tick():
-    """Continuous translation drain (v13.5.22, external review): weekday-only
+    """Continuous translation drain (v13.5.23, external review): weekday-only
     cron scheduling left official English mail invisible for whole weekends.
     Bounded (cap 20/run), idempotent (cache-keyed), exponential backoff on
     failures, and fully observable in the intake health payload."""
@@ -16787,6 +16824,12 @@ def _news_translation_tick():
         except Exception:
             pass
     state["lastRunAt"] = _ai_now_iso()
+    gate = _cost_policy_authorize(
+        "gemini", "headline_translation", automatic=True,
+        estimated_cost_usd=0.02, estimated_tokens=3000)
+    state["lastPolicyDecision"] = (
+        "allowed" if gate.get("allowed")
+        else str(gate.get("reason") or gate.get("status") or "blocked"))
     try:
         result = _translate_pending_headlines(cap=20, queue_first=True)
         state["lastSuccessAt"] = _ai_now_iso()
@@ -16848,7 +16891,7 @@ def api_argus_news_intelligence():
     pending_translation_count = 0
     _now_epoch = time.time()
     for event in events:
-        # v13.5.22 (external review BLOCKER 1): staleness is re-evaluated at
+        # v13.5.23 (external review BLOCKER 1): staleness is re-evaluated at
         # READ time from the stored receipt instant — a CRITICAL that was
         # FRESH_BREAKING at intake must not still present as fresh days later.
         try:
@@ -16881,7 +16924,7 @@ def api_argus_news_intelligence():
             "translated", "not_needed")
         if not summary_ready and not translation_ready:
             pending_translation_count += 1
-            # v13.5.22 (external review): translation is PRESENTATION work —
+            # v13.5.23 (external review): translation is PRESENTATION work —
             # classification/severity/direction were computed on the original
             # language at intake and a material event must not stay invisible
             # for a weekend because the Japanese summary is still queued.
@@ -17005,6 +17048,111 @@ def api_argus_admin_news_audit():
                 for mid in reversed(_NEWS_INTEL.setdefault("messageOrder", [])[-60:])
                 if mid in _NEWS_INTEL.setdefault("messageStatus", {})],
         })
+
+
+@app.route("/api/argus/admin/news-intake/quarantine-review", methods=["POST"])
+def api_argus_admin_news_quarantine_review():
+    """Owner directive (2026-08-24, external review): for each historical
+    quarantine decide LEGITIMATE_QUARANTINE vs FALSE_QUARANTINE_OF_OFFICIAL_
+    MAIL by re-fetching auth headers and re-running the CURRENT sender
+    authentication + source resolution. Bodies are never returned. body:
+    {"reprocess": bool, "limit": int<=20} — reprocess re-injects ONLY
+    false-quarantined mail through the normal pipeline as backfill (dedup
+    applies; never fresh alerts)."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    do_reprocess = bool(body.get("reprocess"))
+    try:
+        limit = max(1, min(int(body.get("limit") or 12), 20))
+    except Exception:
+        limit = 12
+    try:
+        with _NEWS_INTEL_LOCK:
+            ordered = list(reversed(_NEWS_INTEL.setdefault("messageOrder", [])))
+            status_map = {mid: dict(row) for mid, row in
+                          _NEWS_INTEL.setdefault("messageStatus", {}).items()}
+            audit_rows = {}
+            for row in _NEWS_INTEL["audit"]:
+                if row.get("stage") == "quarantined" and row.get("messageId"):
+                    audit_rows[row["messageId"]] = dict(row)
+        ids = [mid for mid in ordered
+               if (status_map.get(mid) or {}).get("status") == "QUARANTINED"]
+        for mid in audit_rows:
+            if mid not in ids and (status_map.get(mid) or {}).get(
+                    "status") in (None, "QUARANTINED"):
+                ids.append(mid)
+        ids = ids[:limit]
+        if not ids:
+            return jsonify({"ok": True,
+                            "schemaVersion": "argus-quarantine-review-v1",
+                            "reviewed": [], "counts": {},
+                            "noteJa": "検疫記録に残るメッセージはありません。"})
+        token = argus_gmail_intake.refresh_access_token(
+            os.environ, requests.request)
+        reviewed, counts = [], {}
+        for mid in ids:
+            original = audit_rows.get(mid) or {}
+            entry = {"messageId": mid,
+                     "subjectPrefix": str(original.get("subjectPrefix")
+                                          or "")[:60],
+                     "originalReasons": list(original.get("reasons") or [])}
+            msg = argus_gmail_intake.fetch_message(
+                token, mid, requests.request)
+            if not msg:
+                entry.update({
+                    "verdict": "MESSAGE_NO_LONGER_AVAILABLE",
+                    "reasonJa": "メールボックスから再取得できません（削除済み等）。"})
+            else:
+                auth = argus_gmail_intake.authenticate_sender(
+                    msg.get("headers") or [], _news_allowed_sender_domains())
+                source = argus_news_intelligence.resolve_source(
+                    from_domain=(auth.get("fromDomain")
+                                 or msg.get("fromDomain") or ""),
+                    display_name=msg.get("fromDisplay") or "",
+                    link_domains=msg.get("linkDomains") or [],
+                    env_map=_news_source_domain_map())
+                return_path = ""
+                for h in (msg.get("headers") or []):
+                    if str(h.get("name", "")).lower() == "return-path":
+                        m = re.search(r"@([A-Za-z0-9.-]+)",
+                                      str(h.get("value") or ""))
+                        return_path = m.group(1).lower().rstrip(">") if m else ""
+                entry.update(argus_news_intelligence.review_quarantine(
+                    authenticated=bool(auth.get("authenticated")),
+                    source=source,
+                    quarantine_reasons=auth.get("quarantineReasons") or []))
+                entry.update({
+                    "fromDomain": auth.get("fromDomain") or msg.get("fromDomain"),
+                    "returnPathDomain": return_path or None,
+                    "spf": bool(auth.get("spf")), "dkim": bool(auth.get("dkim")),
+                    "dmarc": bool(auth.get("dmarc")),
+                    "currentQuarantineReasons":
+                        list(auth.get("quarantineReasons") or [])[:4],
+                    "resolvedSource": source,
+                    "linkDomains": (msg.get("linkDomains") or [])[:5]})
+                if do_reprocess and entry["verdict"] == \
+                        "FALSE_QUARANTINE_OF_OFFICIAL_MAIL":
+                    with _NEWS_INTEL_LOCK:
+                        _news_process_message(msg, backfill=True)
+                        entry["reprocessedStatus"] = (
+                            _NEWS_INTEL["messageStatus"].get(mid)
+                            or {}).get("status")
+            counts[entry["verdict"]] = counts.get(entry["verdict"], 0) + 1
+            reviewed.append(entry)
+        with _NEWS_INTEL_LOCK:
+            _news_audit({"stage": "quarantine_review",
+                         "reviewed": len(reviewed), "counts": counts,
+                         "reprocess": do_reprocess})
+            _news_intel_persist()
+        return jsonify({"ok": True,
+                        "schemaVersion": "argus-quarantine-review-v1",
+                        "reviewed": reviewed, "counts": counts,
+                        "reprocess": do_reprocess})
+    except Exception as e:
+        return jsonify({"ok": False,
+                        "error": f"{type(e).__name__}: {str(e)[:120]}"}), 500
 
 
 @app.route("/api/argus/event-memory")
@@ -28402,7 +28550,7 @@ def _gemini_preflight_value():
 def _gemini_preflight_worker(job_id):
     try:
         _foundation_job_update(job_id, status="running")
-        if _COST_POLICY.get("mode") != "DETERMINISTIC":
+        if _COST_POLICY.get("mode") not in _COST_POLICY_IDLE_MODES:
             raise RuntimeError("normal_mode_not_deterministic")
         manual = argus_cost_policy.configure(
             _COST_POLICY, mode="MANUAL", event_opt_in=False)
@@ -28412,7 +28560,7 @@ def _gemini_preflight_worker(job_id):
             result = _gemini_preflight_value()
         finally:
             restored = argus_cost_policy.configure(
-                _COST_POLICY, mode="DETERMINISTIC", event_opt_in=False)
+                _COST_POLICY, mode=_COST_POLICY_BASELINE_MODE, event_opt_in=False)
             _COST_POLICY.clear()
             _COST_POLICY.update(restored)
         if result.get("status") != "verified":
@@ -28420,7 +28568,7 @@ def _gemini_preflight_worker(job_id):
         _foundation_job_update(job_id, status="completed", result=result)
     except Exception as exc:
         restored = argus_cost_policy.configure(
-            _COST_POLICY, mode="DETERMINISTIC", event_opt_in=False)
+            _COST_POLICY, mode=_COST_POLICY_BASELINE_MODE, event_opt_in=False)
         _COST_POLICY.clear()
         _COST_POLICY.update(restored)
         error_class = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
@@ -28572,7 +28720,7 @@ def _benchmark_usage_cost_jpy(calls, usd_jpy):
 
 def _formal_benchmark_worker(benchmark_id, dry_run, availability_proof=None,
                              gemini_model=None):
-    """Frozen calibration then one-shot holdout. Always returns to DETERMINISTIC."""
+    """Frozen calibration then one-shot holdout. Always returns to the idle mode."""
     results = []
     provider_calls = []
     failure = None
@@ -28722,9 +28870,9 @@ def _formal_benchmark_worker(benchmark_id, dry_run, availability_proof=None,
         _FORMAL_BENCHMARK.clear()
         _FORMAL_BENCHMARK.update(failed_state)
     finally:
-        # A benchmark can never leave normal operations AI-enabled.
+        # A benchmark can never leave benchmark-mode AI enabled afterwards.
         restored = argus_cost_policy.configure(
-            _COST_POLICY, mode="DETERMINISTIC", event_opt_in=False)
+            _COST_POLICY, mode=_COST_POLICY_BASELINE_MODE, event_opt_in=False)
         _COST_POLICY.clear()
         _COST_POLICY.update(restored)
         _osint_persist()
@@ -29184,7 +29332,7 @@ def _research_benchmark_v2_job_worker(job_id):
                                error_class=error_class[:80])
     finally:
         restored = argus_cost_policy.configure(
-            _COST_POLICY, mode="DETERMINISTIC", event_opt_in=False)
+            _COST_POLICY, mode=_COST_POLICY_BASELINE_MODE, event_opt_in=False)
         _COST_POLICY.clear()
         _COST_POLICY.update(restored)
         _osint_persist()
@@ -29261,7 +29409,7 @@ def api_argus_admin_research_benchmark_execute():
     dry = _FORMAL_BENCHMARK.get("dryRun") or {}
     if body.get("dryRunHash") != dry.get("dryRunHash"):
         return jsonify({"ok": False, "status": "dry_run_hash_mismatch"}), 409
-    if _COST_POLICY.get("mode") != "DETERMINISTIC":
+    if _COST_POLICY.get("mode") not in _COST_POLICY_IDLE_MODES:
         return jsonify({"ok": False, "status": "normal_mode_not_deterministic"}), 409
     benchmark_id = "gemini-2x-" + argus_research_benchmark.digest({
         "datasetHash": argus_research_benchmark.DATASET_HASH,
@@ -29300,7 +29448,7 @@ def _research_pipeline_preflight_worker(job_id):
                   _FORMAL_BENCHMARK.get("holdoutConsumedBy"))}
     try:
         _foundation_job_update(job_id, status="running")
-        if _COST_POLICY.get("mode") != "DETERMINISTIC":
+        if _COST_POLICY.get("mode") not in _COST_POLICY_IDLE_MODES:
             raise RuntimeError("normal_mode_not_deterministic")
         prior_preflight = next((
             (x.get("result") or {}) for x in reversed(
@@ -29345,7 +29493,7 @@ def _research_pipeline_preflight_worker(job_id):
                 raise RuntimeError(referee_status)
         finally:
             restored = argus_cost_policy.configure(
-                _COST_POLICY, mode="DETERMINISTIC", event_opt_in=False)
+                _COST_POLICY, mode=_COST_POLICY_BASELINE_MODE, event_opt_in=False)
             _COST_POLICY.clear()
             _COST_POLICY.update(restored)
             _osint_persist()
@@ -29355,7 +29503,7 @@ def _research_pipeline_preflight_worker(job_id):
         _foundation_job_update(job_id, status="completed", result=result)
     except Exception as exc:
         restored = argus_cost_policy.configure(
-            _COST_POLICY, mode="DETERMINISTIC", event_opt_in=False)
+            _COST_POLICY, mode=_COST_POLICY_BASELINE_MODE, event_opt_in=False)
         _COST_POLICY.clear()
         _COST_POLICY.update(restored)
         _osint_persist()
@@ -29369,7 +29517,7 @@ def _research_benchmark_job_worker(job_id):
     proof = {"openai": [], "geminiPreflight": None}
     try:
         _foundation_job_update(job_id, status="running")
-        if _COST_POLICY.get("mode") != "DETERMINISTIC":
+        if _COST_POLICY.get("mode") not in _COST_POLICY_IDLE_MODES:
             raise RuntimeError("normal_mode_not_deterministic")
         manual = argus_cost_policy.configure(
             _COST_POLICY, mode="MANUAL", event_opt_in=False)
@@ -29390,7 +29538,7 @@ def _research_benchmark_job_worker(job_id):
             proof["geminiPreflight"] = prior_preflight or _gemini_preflight_value()
         finally:
             restored = argus_cost_policy.configure(
-                _COST_POLICY, mode="DETERMINISTIC", event_opt_in=False)
+                _COST_POLICY, mode=_COST_POLICY_BASELINE_MODE, event_opt_in=False)
             _COST_POLICY.clear()
             _COST_POLICY.update(restored)
         if not all(x.get("accessible") and x.get("usageReturned")
@@ -29440,7 +29588,7 @@ def _research_benchmark_job_worker(job_id):
         _foundation_job_update(job_id, status="completed", result=result)
     except Exception as exc:
         restored = argus_cost_policy.configure(
-            _COST_POLICY, mode="DETERMINISTIC", event_opt_in=False)
+            _COST_POLICY, mode=_COST_POLICY_BASELINE_MODE, event_opt_in=False)
         _COST_POLICY.clear()
         _COST_POLICY.update(restored)
         error_class = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
@@ -31162,7 +31310,7 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
             "vixRows": _fred_vix_history_dated(),
             "usRows": (reference_history("SPY", "US")
                        if str(symbol).upper() != "SPY" else []),
-            # v13.5.22: misconfiguration is REPORTED, never silently identical
+            # v13.5.23: misconfiguration is REPORTED, never silently identical
             # to an honest data gap (the vix dimension would otherwise just
             # vanish from currentFeatureKeys with no visible cause).
             "sourceIssues": ([] if _FRED_API_KEY
@@ -31623,7 +31771,7 @@ def _decision_evidence_history_row(symbol, market):
              "price": float(last["close"]), "date": str(last["date"])[:10],
              # Provenance stays visible; the PROVIDER is the true upstream of
              # the cached daily series (authority ranking is per real
-             # provider — v13.5.22 fix: the synthetic "history-cache" label
+             # provider — v13.5.23 fix: the synthetic "history-cache" label
              # had rank None, so the whole weekend/holiday EOD path was
              # provider_not_authoritative and every subject data-gated).
              "sourceRef": f"history-cache:{symbol}:{str(last['date'])[:10]}"}
@@ -31730,7 +31878,7 @@ def _decision_evidence_prediction_artifact(symbol, market, cutoff,
         return None, "prediction_context_failed"
 
 
-# ━━━ v13.5.22 SHO CORE production inputs (external review item B) ━━━
+# ━━━ v13.5.23 SHO CORE production inputs (external review item B) ━━━
 # The read-only audit confirmed evaluate_d01_d07 was never called from any
 # production path and the live reversal artifact ran on zero rows. This block
 # wires the feeds the process already holds — JPX credit CSV+ledger, J-Quants
@@ -32001,7 +32149,7 @@ def _sho_market_view():
 
 
 def _decision_evidence_sho_artifact(symbol, cutoff):
-    """Per-subject SHO reversal artifact from real PIT inputs (v13.5.22).
+    """Per-subject SHO reversal artifact from real PIT inputs (v13.5.23).
 
     Both reversal axes now evaluate production feeds (^N225/^VIX complete
     OHLCV); cold feeds leave factors MISSING and the axis DATA_GATED — the
@@ -32172,7 +32320,7 @@ def _decision_evidence_document(symbols):
         "authority": "CANONICAL_ARTIFACT_REFERENCES",
         "sdaAuthority": False,
         "actionAuthority": False,
-        # v13.5.22 (review item A): document-level SHO MARKET VIEW — display
+        # v13.5.23 (review item A): document-level SHO MARKET VIEW — display
         # projection only, never an SDA input; the per-subject references
         # above remain the sole decision evidence.
         "marketView": _sho_market_view(),
@@ -36758,7 +36906,7 @@ def _jq_price_history(code):
     if _JQUANTS_API_KEY:
         try:
             headers = {"x-api-key": _JQUANTS_API_KEY}
-            # v13.5.22 (owner spec: ten-year corpus): request 3,640 days —
+            # v13.5.23 (owner spec: ten-year corpus): request 3,640 days —
             # safely INSIDE the rolling 10y J-Quants entitlement. 3,660 days
             # overhung the contract window by ~a week and J-Quants rejected
             # the whole request, which blanked the chart (the seed failure

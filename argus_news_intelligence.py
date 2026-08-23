@@ -90,6 +90,33 @@ def resolve_source(*, from_domain: str, display_name: str = "",
                 return family
     return None
 
+
+# ── Quarantine review (v13.5.23, owner directive 2026-08-24) ────────────────
+# A historical quarantine is either protection (auth really fails) or a
+# profile gap (official mail the CURRENT auth+resolver would accept). The
+# distinction matters: a false quarantine of an FRB/BLS subscription format
+# means a future CRITICAL mail in that format would be silently dropped.
+QUARANTINE_REVIEW_VERDICTS = (
+    "FALSE_QUARANTINE_OF_OFFICIAL_MAIL", "LEGITIMATE_QUARANTINE",
+    "UNRESOLVED_SOURCE_FAMILY", "MESSAGE_NO_LONGER_AVAILABLE")
+
+
+def review_quarantine(*, authenticated: bool, source: Optional[str],
+                      quarantine_reasons: Sequence[str] = ()
+                      ) -> Dict[str, str]:
+    """Pure verdict from a re-run of the CURRENT auth + source resolution."""
+    if authenticated and source:
+        return {"verdict": "FALSE_QUARANTINE_OF_OFFICIAL_MAIL",
+                "reasonJa": "現行の認証・ソース解決なら正規メールとして受理できます"
+                            "（当時のプロファイル不足）。"}
+    if not authenticated:
+        return {"verdict": "LEGITIMATE_QUARANTINE",
+                "reasonJa": "送信ドメイン認証(SPF/DKIM/DMARC)が現在も不合格のため"
+                            "検疫は正当です。"}
+    return {"verdict": "UNRESOLVED_SOURCE_FAMILY",
+            "reasonJa": "認証は合格ですが6ソースのどれにも解決できません"
+                        "（購読対象外の送信元）。"}
+
 # ── Event taxonomy (§12) ────────────────────────────────────────────────────
 # Deterministic seed rules: phrase groups per family. The AI analysis may ADD
 # a candidate eventType, but deterministic policy always validates it against
@@ -893,7 +920,7 @@ def build_news_event(*, message: Mapping[str, Any],
         confirmation_state=materiality["confirmationState"],
         impact_direction=impact_direction)
     return {
-        # v13.5.22 NEWS/EVENT DIRECTIONAL IMPACT: an independent axis beside
+        # v13.5.23 NEWS/EVENT DIRECTIONAL IMPACT: an independent axis beside
         # severity and market confirmation. Display + evidence only.
         "impactDirection": impact_direction,
         "executionConstraint": execution_constraint,

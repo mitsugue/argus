@@ -63,6 +63,66 @@ class CostPolicyTests(unittest.TestCase):
         self.assertFalse(view["automaticAiEnabled"])
         self.assertNotIn("apiKey", view)
 
+    # ── v13.5.23 SCHEDULED_AI (owner 2026-08-23 「有効にして」) ──
+    def test_scheduled_ai_allows_only_the_two_news_purposes(self):
+        state = cp.default_state("SCHEDULED_AI")
+        for purpose in cp.SCHEDULED_PURPOSES:
+            result = cp.authorize(
+                state, provider="gemini", purpose=purpose, automatic=True,
+                now_iso="2026-08-24T01:00:00Z",
+                estimated_cost_usd=0.02, estimated_tokens=3000)
+            self.assertTrue(result["allowed"], purpose)
+        for purpose in ("event_analysis", "ai_judgment", "osint_research",
+                        "buy_candidates", "prose"):
+            result = cp.authorize(
+                state, provider="openai", purpose=purpose, automatic=True,
+                now_iso="2026-08-24T01:00:00Z",
+                estimated_cost_usd=0.02, estimated_tokens=3000)
+            self.assertFalse(result["allowed"], purpose)
+            self.assertEqual(result["reason"], "scheduled_scope_required")
+
+    def test_scheduled_ai_daily_budget_is_a_hard_stop_and_resets_next_day(self):
+        state = cp.default_state("SCHEDULED_AI")
+        for i in range(3):
+            state = cp.record_execution(
+                state, provider="gemini", purpose="headline_translation",
+                at="2026-08-24T0%d:00:00Z" % i, estimated_cost_usd=0.4)
+        blocked = cp.authorize(
+            state, provider="gemini", purpose="headline_translation",
+            automatic=True, now_iso="2026-08-24T04:00:00Z",
+            estimated_cost_usd=0.02, estimated_tokens=3000,
+            scheduled_daily_budget_usd=1.0)
+        self.assertFalse(blocked["allowed"])
+        self.assertEqual(blocked["reason"], "scheduled_daily_budget_exhausted")
+        next_day = cp.authorize(
+            state, provider="gemini", purpose="headline_translation",
+            automatic=True, now_iso="2026-08-25T01:00:00Z",
+            estimated_cost_usd=0.02, estimated_tokens=3000,
+            scheduled_daily_budget_usd=1.0)
+        self.assertTrue(next_day["allowed"])
+
+    def test_scheduled_ai_still_permits_confirmed_manual_ping_only(self):
+        state = cp.default_state("SCHEDULED_AI")
+        ok = cp.authorize(
+            state, provider="openai", purpose="manual_api", automatic=False,
+            confirmation=True, now_iso="2026-08-24T01:00:00Z",
+            estimated_cost_usd=0.001, estimated_tokens=100)
+        self.assertTrue(ok["allowed"])
+        unconfirmed = cp.authorize(
+            state, provider="openai", purpose="manual_api", automatic=False,
+            confirmation=False, now_iso="2026-08-24T01:00:00Z",
+            estimated_cost_usd=0.001, estimated_tokens=100)
+        self.assertFalse(unconfirmed["allowed"])
+        self.assertEqual(unconfirmed["reason"], "confirmation_required")
+
+    def test_scheduled_ai_public_status_reports_automatic_ai_truthfully(self):
+        view = cp.public_status(cp.default_state("SCHEDULED_AI"),
+                                "2026-08-24T01:00:00Z")
+        self.assertTrue(view["automaticAiEnabled"])
+        self.assertIn("日本語要約", view["messageJa"])
+        self.assertFalse(cp.public_status(
+            cp.default_state(), "2026-08-24T01:00:00Z")["automaticAiEnabled"])
+
 
 if __name__ == "__main__":
     unittest.main()

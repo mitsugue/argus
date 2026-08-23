@@ -31,8 +31,8 @@ class ArgusV1230IntegrationTests(unittest.TestCase):
         client = scanner.app.test_client()
         cost = client.get("/api/argus/cost-policy")
         self.assertEqual(cost.status_code, 200)
-        self.assertEqual(cost.get_json()["mode"], "DETERMINISTIC")
-        self.assertFalse(cost.get_json()["automaticAiEnabled"])
+        self.assertEqual(cost.get_json()["mode"], "SCHEDULED_AI")
+        self.assertTrue(cost.get_json()["automaticAiEnabled"])
         ledger = client.get("/api/argus/market-ledger")
         self.assertEqual(ledger.status_code, 200)
         self.assertEqual(ledger.get_json()["schemaVersion"], "argus-market-ledger-v1")
@@ -49,7 +49,7 @@ class ArgusV1230IntegrationTests(unittest.TestCase):
                 "/api/argus/ai-judgment/run?checker=flash",
                 headers={"X-ARGUS-ADMIN-TOKEN": "test-admin"})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["status"], "deterministic_mode")
+        self.assertEqual(response.get_json()["status"], "scheduled_scope_required")
         self.assertEqual(response.get_json()["classification"], "expected_skip")
         execute.assert_not_called()
 
