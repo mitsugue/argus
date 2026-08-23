@@ -7081,7 +7081,7 @@ def api_argus_important_events():
         events, owner_symbols=owner_symbols, held_symbols=held,
         ctx={"regime": regime, "vixElevated": vix_elevated}, limit=64)
     items = items_all[:8]
-    # v13.5.21 (review item C): the D/D-1 hard-constraint feed must not
+    # v13.5.22 (review item C): the D/D-1 hard-constraint feed must not
     # depend on the 8-item display cap — the audit showed event #9+ silently
     # produced no constraint. Compact, uncapped imminent list for the
     # device-side SDA/AP event gate, tiered by displayImpact.
@@ -9803,7 +9803,7 @@ def api_argus_intel_collect():
         except Exception:
             continue
     out["supplyDemandWarm"] = warmed
-    # v13.5.21: warm the SHO CORE input caches (^N225/^VIX OHLCV, 1570 weekly
+    # v13.5.22: warm the SHO CORE input caches (^N225/^VIX OHLCV, 1570 weekly
     # margin, FRED VIX). This admin/cron path is the ONLY fetch route; the
     # public decision-evidence GET reads these caches cached-only.
     try:
@@ -12434,11 +12434,28 @@ def api_argus_action_labels():
 # gated by the API keys + the AI run gate + the daily/monthly budget hard-stop. The separate
 # GPT-5.5 Pro Handoff export further below stays manual (copy-paste, no API call).
 _OPENAI_API_KEY        = os.environ.get("OPENAI_API_KEY", "")
-_OPENAI_MODEL          = os.environ.get("OPENAI_MODEL", "") or "gpt-5.5"
+# v13.5.22 (owner directive: use the current generation): primary default is
+# the GPT-5.6 tier already registered in the repo pricing table (terra = the
+# cost-efficient 5.6 SKU; the standard/referee roles were on 5.6 since
+# v12.2.x). Env-overridable without a release, exactly as before.
+_OPENAI_MODEL          = os.environ.get("OPENAI_MODEL", "") or "gpt-5.6-terra"
 # Checker tiering: the DAILY SCORED run (checker=pro) uses the Pro model; the frequent 15-min
 # re-judges (checker=flash) and the 429-quota fallback use Flash, so the double-check DEGRADES
 # instead of disappearing. Both env-overridable.
+# v13.5.22 model currency (corrected after external review): the official
+# Gemini catalog serves gemini-3.1-pro-preview (Pro/preview) and
+# gemini-3.7-flash (Stable) — a "gemini-3.7-pro" endpoint is NOT established
+# and must never be a production default (invented IDs are exactly the
+# silent-degradation trap the fallback chain exists to catch). Judge stays
+# on the Pro preview for quality; the degradation chain is current-gen:
+# 3.1-pro-preview -> 3.7-flash (stable) -> 2.5-flash, every hop logged.
 _GEMINI_JUDGE_MODEL    = os.environ.get("GEMINI_JUDGE_MODEL", "") or "gemini-3.1-pro-preview"
+_GEMINI_PRIOR_MODEL    = os.environ.get("GEMINI_PRIOR_MODEL", "") or "gemini-3.7-flash"
+# The FORMAL BENCHMARK baseline stays pinned to its calibrated epoch model —
+# a judge-default upgrade must never silently change what the 2x comparisons
+# are measured against (epoch re-qualification discipline, v12.2.2).
+_GEMINI_BENCHMARK_MODEL = os.environ.get("GEMINI_BENCHMARK_MODEL", "") \
+    or "gemini-3.1-pro-preview"
 _GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "") or "gemini-2.5-flash"
 _ARGUS_ADMIN_TOKEN     = os.environ.get("ARGUS_ADMIN_TOKEN", "")
 
@@ -12530,6 +12547,10 @@ _AI_PRICING = {
                            "out": _float_env("GEMINI_PRICE_OUTPUT_PER_1M", 10.0)},
     _GEMINI_FALLBACK_MODEL: {"in": _float_env("GEMINI_FLASH_PRICE_INPUT_PER_1M", 0.30),
                              "out": _float_env("GEMINI_FLASH_PRICE_OUTPUT_PER_1M", 2.50)},
+    # Prior-generation judge hop (graceful degradation path) keeps a priced
+    # key so the fallback never bypasses the unknown-price gate.
+    _GEMINI_PRIOR_MODEL: {"in": _float_env("GEMINI_PRICE_INPUT_PER_1M", 1.25),
+                          "out": _float_env("GEMINI_PRICE_OUTPUT_PER_1M", 10.0)},
     # Official prices frozen for the final v12 benchmark.  The benchmark call
     # ceiling is far below Gemini's 200k context tier boundary.
     "gpt-5.6-sol": {"in": 5.0, "out": 30.0},
@@ -13199,11 +13220,31 @@ def _gemini_check(snapshot, openai_out, checker_model=None):
             resp = _gen(model_used, cfg)
         except Exception as e:
             msg = str(e)
-            # Quota exhausted on the configured (pro) model → degrade to the
-            # fallback model rather than losing the double-check entirely.
-            if ("429" in msg or "RESOURCE_EXHAUSTED" in msg) and _GEMINI_FALLBACK_MODEL != model_used:
+            # Quota exhaustion OR an unserved model ID → degrade through the
+            # prior-generation model, then flash, rather than losing the
+            # double-check entirely. Every hop is logged (visible fallback).
+            recoverable = ("429" in msg or "RESOURCE_EXHAUSTED" in msg
+                           or "404" in msg or "NOT_FOUND" in msg
+                           or "not found" in msg.lower()
+                           or "is not supported" in msg.lower())
+            if recoverable and model_used == _GEMINI_JUDGE_MODEL \
+                    and _GEMINI_PRIOR_MODEL not in (model_used,):
+                add_log(f"[AI] gemini {model_used} unavailable ({msg[:60]}) — "
+                        f"falling back to {_GEMINI_PRIOR_MODEL}")
+                model_used = _GEMINI_PRIOR_MODEL
+                try:
+                    resp = _gen(model_used, cfg)
+                except Exception as e2:
+                    msg = str(e2)
+                    if _GEMINI_FALLBACK_MODEL != model_used:
+                        add_log(f"[AI] gemini fallback to {_GEMINI_FALLBACK_MODEL}")
+                        model_used = _GEMINI_FALLBACK_MODEL
+                        resp = _gen(model_used, cfg)
+                    else:
+                        raise
+            elif recoverable and _GEMINI_FALLBACK_MODEL != model_used:
                 model_used = _GEMINI_FALLBACK_MODEL
-                add_log(f"[AI] gemini quota hit — falling back to {model_used}")
+                add_log(f"[AI] gemini degrading to {model_used}")
                 resp = _gen(model_used, cfg)
             else:
                 raise
@@ -16130,7 +16171,7 @@ def _causal_memory_refresh_open(force=False):
                 if not any(row["relation"] in ("SUPPORTING", "CONTRADICTING")
                            for row in evidence):
                     continue
-                # v13.5.21 (review item D): symmetric invalidation. A
+                # v13.5.22 (review item D): symmetric invalidation. A
                 # hypothesis WEAKENED for >= 3 days whose variables STILL all
                 # contradict earns the streak note, which the assessment
                 # policy accepts as an invalidation criterion — INVALIDATED
@@ -16340,7 +16381,7 @@ def _news_audit(row):
 def _news_corroboration(family, polarity=None):
     """Resolve the event-class corroboration plan against EXISTING sensors
     only (§15). Missing values stay visibly missing — never fabricated.
-    v13.5.21: with a detected polarity, confirmation requires the sensors to
+    v13.5.22: with a detected polarity, confirmation requires the sensors to
     move in the HYPOTHESIS direction (CONFIRMATION_EXPECTATIONS) — a large
     opposite move is market-moved evidence, not confirmation."""
     plan = argus_news_intelligence.CORROBORATION_PLAN.get(family) or ()
@@ -16684,7 +16725,7 @@ def api_argus_news_intelligence():
     pending_translation_count = 0
     _now_epoch = time.time()
     for event in events:
-        # v13.5.21 (external review BLOCKER 1): staleness is re-evaluated at
+        # v13.5.22 (external review BLOCKER 1): staleness is re-evaluated at
         # READ time from the stored receipt instant — a CRITICAL that was
         # FRESH_BREAKING at intake must not still present as fresh days later.
         try:
@@ -29050,7 +29091,7 @@ def _formal_benchmark_dry_run_value(gemini_model=None):
     # guards; only this frozen one-shot estimate receives the explicit JPY cap.
     benchmark_budget_usd = argus_research_benchmark.HARD_BUDGET_JPY / fx
     dry = argus_research_benchmark.estimate_cost(
-        gemini_model=gemini_model or _GEMINI_JUDGE_MODEL,
+        gemini_model=gemini_model or _GEMINI_BENCHMARK_MODEL,
         argus_model=_OPENAI_MODEL_ROLES.get("standard") or _OPENAI_MODEL,
         evaluator_model=evaluator, pricing=pricing,
         usd_jpy_ceiling=fx,
@@ -30979,7 +31020,7 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
             "vixRows": _fred_vix_history_dated(),
             "usRows": (reference_history("SPY", "US")
                        if str(symbol).upper() != "SPY" else []),
-            # v13.5.21: misconfiguration is REPORTED, never silently identical
+            # v13.5.22: misconfiguration is REPORTED, never silently identical
             # to an honest data gap (the vix dimension would otherwise just
             # vanish from currentFeatureKeys with no visible cause).
             "sourceIssues": ([] if _FRED_API_KEY
@@ -31440,7 +31481,7 @@ def _decision_evidence_history_row(symbol, market):
              "price": float(last["close"]), "date": str(last["date"])[:10],
              # Provenance stays visible; the PROVIDER is the true upstream of
              # the cached daily series (authority ranking is per real
-             # provider — v13.5.21 fix: the synthetic "history-cache" label
+             # provider — v13.5.22 fix: the synthetic "history-cache" label
              # had rank None, so the whole weekend/holiday EOD path was
              # provider_not_authoritative and every subject data-gated).
              "sourceRef": f"history-cache:{symbol}:{str(last['date'])[:10]}"}
@@ -31547,7 +31588,7 @@ def _decision_evidence_prediction_artifact(symbol, market, cutoff,
         return None, "prediction_context_failed"
 
 
-# ━━━ v13.5.21 SHO CORE production inputs (external review item B) ━━━
+# ━━━ v13.5.22 SHO CORE production inputs (external review item B) ━━━
 # The read-only audit confirmed evaluate_d01_d07 was never called from any
 # production path and the live reversal artifact ran on zero rows. This block
 # wires the feeds the process already holds — JPX credit CSV+ledger, J-Quants
@@ -31818,7 +31859,7 @@ def _sho_market_view():
 
 
 def _decision_evidence_sho_artifact(symbol, cutoff):
-    """Per-subject SHO reversal artifact from real PIT inputs (v13.5.21).
+    """Per-subject SHO reversal artifact from real PIT inputs (v13.5.22).
 
     Both reversal axes now evaluate production feeds (^N225/^VIX complete
     OHLCV); cold feeds leave factors MISSING and the axis DATA_GATED — the
@@ -31989,7 +32030,7 @@ def _decision_evidence_document(symbols):
         "authority": "CANONICAL_ARTIFACT_REFERENCES",
         "sdaAuthority": False,
         "actionAuthority": False,
-        # v13.5.21 (review item A): document-level SHO MARKET VIEW — display
+        # v13.5.22 (review item A): document-level SHO MARKET VIEW — display
         # projection only, never an SDA input; the per-subject references
         # above remain the sole decision evidence.
         "marketView": _sho_market_view(),
@@ -36575,7 +36616,7 @@ def _jq_price_history(code):
     if _JQUANTS_API_KEY:
         try:
             headers = {"x-api-key": _JQUANTS_API_KEY}
-            # v13.5.21 (owner spec: ten-year corpus): request 3,640 days —
+            # v13.5.22 (owner spec: ten-year corpus): request 3,640 days —
             # safely INSIDE the rolling 10y J-Quants entitlement. 3,660 days
             # overhung the contract window by ~a week and J-Quants rejected
             # the whole request, which blanked the chart (the seed failure

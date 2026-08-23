@@ -158,7 +158,7 @@ def test_references_match_python_authority_resolver(monkeypatch):
     assert references["verificationFailures"] == {}
 
 
-# ━━━ v13.5.21 — SHO CORE production wiring + MARKET VIEW (review items A/B/C) ━━━
+# ━━━ v13.5.22 — SHO CORE production wiring + MARKET VIEW (review items A/B/C) ━━━
 
 def _reset_sho_memos():
     scanner._SHO_PIT_INPUT_MEMO.update({"ts": 0.0, "data": None})
