@@ -16,6 +16,7 @@ on:
           - health
           - quarantine-review
           - quarantine-reprocess
+          - ai-ping
 
 permissions:
   contents: read
@@ -38,6 +39,20 @@ jobs:
           fi
           [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token"; exit 1; }
           case "${{ inputs.action }}" in
+            ai-ping)
+              # Model-currency proof (v13.5.26): confirmed minimal pings for
+              # Terra, Sol and the Gemini judge — requested vs returned model.
+              for TARGET in "openai " "openai ?model=sol" "gemini "; do
+                P="${TARGET%% *}"; Q="${TARGET##* }"
+                RESP=$(curl -sf --max-time 60 -X POST \
+                  -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+                  -H "Content-Type: application/json" \
+                  -d "{\"provider\": \"$P\", \"confirm\": true, \"reason\": \"model currency proof (owner-approved ops dispatch)\"}" \
+                  "$BE/api/argus/ai-provider-status/ping$Q" || echo '{}')
+                echo "$RESP" | python3 -c 'import json,sys; d=json.load(sys.stdin); row=d.get("openai") or d.get("gemini") or {}; print("provider=%s requested=%s returned=%s ok=%s status=%s" % (d.get("provider"), row.get("requestedModel") or d.get("model"), row.get("returnedModel") or row.get("model"), row.get("ok"), d.get("status") or d.get("reason") or "called"))' \
+                  2>/dev/null || echo "ping parse failed: ${RESP:0:160}"
+              done | tee -a "$GITHUB_STEP_SUMMARY"
+              ;;
             quarantine-review|quarantine-reprocess)
               BODY='{"reprocess": false}'
               [ "${{ inputs.action }}" = "quarantine-reprocess" ] && BODY='{"reprocess": true}'

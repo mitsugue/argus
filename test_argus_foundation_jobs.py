@@ -249,8 +249,14 @@ def test_exact_model_pricing_and_response_model_contract(monkeypatch):
     moomoo.RET_OK = 0
     sys.modules.setdefault("moomoo", moomoo)
     import scanner
-    assert scanner._AI_PRICING["gpt-5.6-sol"] == {"in": 5.0, "out": 30.0}
-    assert scanner._AI_PRICING["gpt-5.6-terra"] == {"in": 2.5, "out": 15.0}
+    # v13.5.26: live prices track the CURRENT official rates (Sol promo
+    # through 2026-11-21); the frozen benchmark catalog is asserted separately
+    # via pricingVersion below.
+    assert scanner._AI_PRICING["gpt-5.6-sol"] == {
+        "in": 4.0, "out": 20.0, "cachedIn": 0.40}
+    assert scanner._AI_PRICING["gpt-5.6-terra"] == {
+        "in": 2.0, "out": 12.0, "cachedIn": 0.20}
+    assert scanner._AI_MODEL_PRICING_POLICY["revalidateBy"] == "2026-11-21"
     assert scanner._AI_PRICING["gemini-3.1-pro-preview"] == {"in": 2.0, "out": 12.0}
     assert scanner._AI_PRICING["gemini-2.5-pro"] == {"in": 1.25, "out": 10.0}
     dry = scanner._formal_benchmark_dry_run_value()

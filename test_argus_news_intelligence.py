@@ -372,7 +372,7 @@ def test_envelope_carries_source_family_and_tier():
     assert event["source"] == "FRB"
 
 
-# ━━━ v13.5.25 — NEWS/EVENT DIRECTIONAL IMPACT (owner spec 2026-08-23) ━━━
+# ━━━ v13.5.26 — NEWS/EVENT DIRECTIONAL IMPACT (owner spec 2026-08-23) ━━━
 
 def _tax(family):
     return {"eventType": family, "families": [family], "themeTags": [],
@@ -474,7 +474,7 @@ def test_direction_rides_the_news_event_record():
     assert event["sdaAuthority"] is False
 
 
-# ━━━ v13.5.25 — hostile polarity fixtures (external review BLOCKER 3) ━━━
+# ━━━ v13.5.26 — hostile polarity fixtures (external review BLOCKER 3) ━━━
 
 def test_negated_cues_do_not_mint_a_direction():
     """「攻撃を否定」「停戦合意には至らず」「利上げを見送り」「上昇が一服」—
@@ -518,3 +518,44 @@ def test_confirmation_requires_hypothesis_direction():
         us10y_change_bp=-10.0, expected=expected)
     assert opposite["confirmed"] is False
     assert "rates_move" in opposite["contradictedSignals"]
+
+
+# ━━━ v13.5.26 — Sol escalation routing (external review 2026-08-25) ━━━
+
+def test_sol_escalation_routes_only_consequential_or_difficult():
+    routine = ni.escalation_decision(
+        taxonomy={"eventType": "RATES", "families": ["RATES"],
+                  "lowValueHints": False},
+        impact_direction={"directionByTarget": {"broadMarket": "UNCLEAR"}},
+        terra_analysis={"materialityGuess": 0, "eventTypeCandidate": None},
+        extreme=False)
+    assert routine == {"escalate": False, "reasons": []}
+    high = ni.escalation_decision(
+        taxonomy={"eventType": "FED", "families": ["FED"]},
+        impact_direction={"directionByTarget": {"broadMarket": "UNCLEAR"}},
+        terra_analysis={"materialityGuess": 3, "eventTypeCandidate": None},
+        extreme=True)
+    assert high["escalate"] and "high_candidate" in high["reasons"]
+    novel = ni.escalation_decision(
+        taxonomy={"eventType": "OTHER_MARKET_RELEVANT", "families": []},
+        impact_direction={"directionByTarget": {}},
+        terra_analysis={"materialityGuess": 2, "eventTypeCandidate": None},
+        extreme=False)
+    assert "novel_family" in novel["reasons"]
+    disagree = ni.escalation_decision(
+        taxonomy={"eventType": "RATES", "families": ["RATES"]},
+        impact_direction={"directionByTarget": {"banks": "BULLISH"}},
+        terra_analysis={"materialityGuess": 1, "eventTypeCandidate": "IRAN"},
+        extreme=False)
+    assert disagree["escalate"] \
+        and "model_rule_disagreement" in disagree["reasons"]
+
+
+def test_subtle_novel_mail_still_reaches_semantic_review():
+    """外部レビュー: 決定論がHIGHにしないと意味解析ゼロ、では新型の重大事象を
+    見逃す。地味な新規件名はOTHER_MARKET_RELEVANT(低価値ではない)に分類され、
+    wants_ai経路でTerraが必ず読む。"""
+    tx = ni.classify_event(
+        "Framework update on cross-border settlement plumbing")
+    assert tx["eventType"] == "OTHER_MARKET_RELEVANT"
+    assert not tx["lowValueHints"]

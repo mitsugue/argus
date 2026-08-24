@@ -39,7 +39,7 @@ export interface ImportantEvent {
   releasedAt: string | null;
 }
 
-// v13.5.25 (review item C): uncapped D/D-1 constraint feed. The display list
+// v13.5.26 (review item C): uncapped D/D-1 constraint feed. The display list
 // stays capped at 8, but the SDA/AP event gate must see EVERY imminent linked
 // event — the audit showed event #9+ silently produced no constraint.
 export interface ImminentEvent {

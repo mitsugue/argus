@@ -91,7 +91,7 @@ def resolve_source(*, from_domain: str, display_name: str = "",
     return None
 
 
-# ── Quarantine review (v13.5.25, owner directive 2026-08-24) ────────────────
+# ── Quarantine review (v13.5.26, owner directive 2026-08-24) ────────────────
 # A historical quarantine is either protection (auth really fails) or a
 # profile gap (official mail the CURRENT auth+resolver would accept). The
 # distinction matters: a false quarantine of an FRB/BLS subscription format
@@ -472,6 +472,50 @@ _HIGH_IMPACT_FAMILIES = {
     "INFLATION", "EMPLOYMENT",
 }
 
+# ── Sol escalation routing (v13.5.26, external review 2026-08-25) ───────────
+# Terra reads EVERY substantive trusted mail (routine/low-value mail never
+# reaches AI at all); the frontier Sol model is called ONLY when the case is
+# consequential or difficult. Closed reason vocabulary; the decision is pure
+# and fixture-testable. AI stays non-authoritative for severity/direction/SDA.
+ESCALATION_REASONS = ("high_candidate", "direction_unclear",
+                      "direction_mixed", "novel_family",
+                      "model_rule_disagreement")
+_ESCALATION_DIRECTION_FAMILIES = _HIGH_IMPACT_FAMILIES | {
+    "GEOPOLITICS", "SANCTIONS", "TRADE", "TARIFFS"}
+
+
+def escalation_decision(*, taxonomy: Optional[Mapping[str, Any]],
+                        impact_direction: Optional[Mapping[str, Any]],
+                        terra_analysis: Optional[Mapping[str, Any]],
+                        extreme: bool = False) -> Dict[str, Any]:
+    """Should this mail escalate from Terra to Sol? Difficulty/materiality
+    signals (extreme language, Terra materiality>=2, model-vs-rule
+    disagreement) gate the consequential families so scheduled daily
+    publications (Treasury yields etc.) never burn frontier-model budget."""
+    family = str((taxonomy or {}).get("eventType") or "")
+    material_ai = (isinstance((terra_analysis or {}).get("materialityGuess"),
+                              int)
+                   and terra_analysis["materialityGuess"] >= 2)
+    difficulty = bool(extreme or material_ai)
+    reasons: List[str] = []
+    if family in _HIGH_IMPACT_FAMILIES and difficulty:
+        reasons.append("high_candidate")
+    by_target = dict((impact_direction or {}).get("directionByTarget") or {})
+    dirs = set(by_target.values())
+    if family in _ESCALATION_DIRECTION_FAMILIES and difficulty:
+        if not dirs or dirs <= {"UNCLEAR"}:
+            reasons.append("direction_unclear")
+        elif "MIXED" in dirs or ({"BULLISH", "BEARISH"} <= dirs):
+            reasons.append("direction_mixed")
+    if family == "OTHER_MARKET_RELEVANT" and difficulty:
+        reasons.append("novel_family")
+    ai_family = str((terra_analysis or {}).get("eventTypeCandidate") or "")
+    if ai_family and ai_family in EVENT_FAMILIES and ai_family != family \
+            and ai_family not in ((taxonomy or {}).get("families") or []):
+        reasons.append("model_rule_disagreement")
+    return {"escalate": bool(reasons),
+            "reasons": [r for r in reasons if r in ESCALATION_REASONS][:4]}
+
 # ── Source-specific materiality policy (§14A) ───────────────────────────────
 # Source authority answers "is this trustworthy?", never "is this
 # market-moving?". Routine official publications are capped (data input /
@@ -521,6 +565,12 @@ _EXTREME_PHRASES = (
     "臨時", "%超", "％超", "封鎖", "攻撃", "介入", "破綻", "デフォルト",
     "surge", "spike", "record", "emergency", "breach",
 )
+
+
+def has_extreme_language(subject: str, excerpt: str = "") -> bool:
+    """Pure difficulty signal for Sol escalation (v13.5.26)."""
+    haystack = _lower(subject) + "\n" + _lower(excerpt)[:2000]
+    return any(phrase in haystack for phrase in _EXTREME_PHRASES)
 
 
 def evaluate_materiality(*, taxonomy: Mapping[str, Any], staleness: str,
@@ -920,7 +970,7 @@ def build_news_event(*, message: Mapping[str, Any],
         confirmation_state=materiality["confirmationState"],
         impact_direction=impact_direction)
     return {
-        # v13.5.25 NEWS/EVENT DIRECTIONAL IMPACT: an independent axis beside
+        # v13.5.26 NEWS/EVENT DIRECTIONAL IMPACT: an independent axis beside
         # severity and market confirmation. Display + evidence only.
         "impactDirection": impact_direction,
         "executionConstraint": execution_constraint,
