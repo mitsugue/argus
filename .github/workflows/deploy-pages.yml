@@ -337,7 +337,7 @@ jobs:
             --trigger-id 'v13-production-${{ github.sha }}-${{ github.run_id }}' \
             --out artifacts/business-snapshot-trigger/trigger.json
       - name: Warm the runtime caches immediately after the swap
-        # v13.5.24: a deploy swap leaves quote/margin/index caches cold, and
+        # v13.5.25: a deploy swap leaves quote/margin/index caches cold, and
         # the collect cron may not fire for hours (weekends especially) — the
         # owner saw every subject data-gated for the whole window. The same
         # admin collect endpoint the cron uses is invoked once here; failures

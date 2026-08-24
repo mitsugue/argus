@@ -90,9 +90,20 @@ def is_translated(text: Optional[str], cache: Dict[str, Dict[str, Any]]) -> bool
     return bool(hit and hit.get("ja"))
 
 
+TRANSLATE_MAX_ATTEMPTS = 3
+_FAILED_MAP_CAP = 200
+
+
 def collect_pending(texts: List[str], cache: Dict[str, Dict[str, Any]],
-                    cap: int = 40) -> List[str]:
-    """Distinct English headlines not yet in the cache (for the admin translate run)."""
+                    cap: int = 40,
+                    failed: Optional[Dict[str, int]] = None,
+                    max_attempts: int = TRANSLATE_MAX_ATTEMPTS) -> List[str]:
+    """Distinct English headlines not yet in the cache (for the admin translate
+    run). v13.5.25 (live finding): headlines the model repeatedly returns no
+    translation for must NOT be re-requested forever — the retry loop burned
+    the whole scheduled daily budget on the same stuck batch. `failed` maps
+    text_hash → attempt count; hashes at max_attempts are skipped (display
+    falls back to the existing 翻訳未取得 vocabulary)."""
     out, seen = [], set()
     for t in texts or []:
         s = (t or "").strip()
@@ -100,6 +111,8 @@ def collect_pending(texts: List[str], cache: Dict[str, Dict[str, Any]],
             continue
         h = text_hash(s)
         if h in seen or (cache or {}).get(h, {}).get("ja"):
+            continue
+        if int((failed or {}).get(h) or 0) >= max_attempts:
             continue
         seen.add(h)
         out.append(s)
@@ -188,10 +201,43 @@ def decorate_news_item(item: Dict[str, Any], cache: Dict[str, Dict[str, Any]], *
 
 
 def collect_visible_pending(items: List[Any], cache: Dict[str, Dict[str, Any]],
-                            cap: int = 60) -> List[str]:
+                            cap: int = 60,
+                            failed: Optional[Dict[str, int]] = None) -> List[str]:
     """Distinct untranslated English strings from an ORDERED (priority-first) list of
     title strings — the admin translate run drains these first."""
-    return collect_pending([str(t) for t in (items or []) if t], cache, cap=cap)
+    return collect_pending([str(t) for t in (items or []) if t], cache, cap=cap,
+                           failed=failed)
+
+
+def validate_translation_batch(raw: Any, expected_n: int) -> Dict[int, str]:
+    """v13.5.25 alignment guard: the batch prompt asks for SAME COUNT, SAME
+    ORDER. If the model returns a different count, positional mapping would
+    cache headline B's Japanese under headline A's hash — a silent wrong-pair
+    corruption. Any count mismatch discards the whole batch (retry later)."""
+    tr = raw.get("translations") if isinstance(raw, dict) else None
+    if not isinstance(tr, list) or len(tr) != int(expected_n):
+        return {}
+    return {i: str(t)[:200] for i, t in enumerate(tr)
+            if t and str(t).strip()}
+
+
+def note_translation_attempts(failed: Dict[str, int], originals: List[str],
+                              cache: Dict[str, Dict[str, Any]]
+                              ) -> Dict[str, int]:
+    """After a drain: originals still missing a cached ja get attempts+1;
+    successfully cached ones are cleared. Bounded map (oldest-inserted drop)."""
+    out = dict(failed or {})
+    for s in originals or []:
+        h = text_hash(str(s or "").strip())
+        if not h:
+            continue
+        if (cache or {}).get(h, {}).get("ja"):
+            out.pop(h, None)
+        else:
+            out[h] = int(out.get(h) or 0) + 1
+    while len(out) > _FAILED_MAP_CAP:
+        out.pop(next(iter(out)), None)
+    return out
 
 
 def decorate_from_ja(original: Optional[str], ja: Optional[str], source: str = "") -> Dict[str, Any]:

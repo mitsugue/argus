@@ -135,3 +135,46 @@ def test_translation_queue_status_and_samples():
     assert st["lastQueuedAt"] == "2026-07-03T00:05:00Z"
     s = NI.queue_samples(q, cap=5)
     assert s[0]["source"] == "AP" and "hash" in s[0]
+
+
+# ━━━ v13.5.25 — translation retry-loop and alignment guards (live finding) ━━━
+
+def test_validate_translation_batch_rejects_count_mismatch():
+    ok = NI.validate_translation_batch(
+        {"translations": ["A訳", "B訳"]}, 2)
+    assert ok == {0: "A訳", 1: "B訳"}
+    assert NI.validate_translation_batch({"translations": ["A訳"]}, 2) == {}
+    assert NI.validate_translation_batch(
+        {"translations": ["A訳", "B訳", "C訳"]}, 2) == {}
+    assert NI.validate_translation_batch(None, 2) == {}
+    assert NI.validate_translation_batch({"translations": "A訳"}, 1) == {}
+    partial = NI.validate_translation_batch(
+        {"translations": ["A訳", "", "C訳"]}, 3)
+    assert partial == {0: "A訳", 2: "C訳"}
+
+
+def test_collect_pending_skips_exhausted_attempts_and_recovers():
+    title = "Stubborn English headline that never translates"
+    h = NI.text_hash(title)
+    cache = {}
+    failed = {}
+    for expected in (1, 2, 3):
+        assert NI.collect_pending([title], cache, failed=failed) == [title] \
+            if expected <= NI.TRANSLATE_MAX_ATTEMPTS else True
+        failed = NI.note_translation_attempts(failed, [title], cache)
+        assert failed[h] == expected
+    # at max attempts the title leaves the pending pool entirely
+    assert NI.collect_pending([title], cache, failed=failed) == []
+    # a later successful cache entry clears the failure state
+    cache[h] = {"ja": "頑固な見出し", "at": "2026-08-25T00:00:00Z"}
+    failed = NI.note_translation_attempts(failed, [title], cache)
+    assert h not in failed
+    assert NI.collect_pending([title], cache, failed=failed) == []  # cached
+
+
+def test_note_translation_attempts_is_bounded():
+    failed = {}
+    cache = {}
+    titles = [f"English headline number {i} stays" for i in range(260)]
+    failed = NI.note_translation_attempts(failed, titles, cache)
+    assert len(failed) <= 200
