@@ -159,7 +159,7 @@ PORT              = int(os.environ.get("PORT", 8080))
 
 # v12.3.0: generated-AI is fail-closed by default.  Market-data adapters are
 # deliberately outside this policy and continue to run in DETERMINISTIC mode.
-# v13.5.26 (owner directive 2026-08-23 「有効にして」): default mode is now
+# v13.5.27 (owner directive 2026-08-23 「有効にして」): default mode is now
 # SCHEDULED_AI — ONLY news headline translation + news_intel analysis run
 # automatically, under the scheduled daily budget below.  Everything else
 # stays fail-closed; set ARGUS_COST_POLICY_MODE=DETERMINISTIC to revert.
@@ -173,7 +173,7 @@ except (TypeError, ValueError):
     _SCHEDULED_AI_DAILY_USD = 2.0
 # Benchmark/preflight runs temporarily switch the policy to RESEARCH_BENCHMARK
 # and afterwards restore the configured idle mode — NOT hardcoded DETERMINISTIC,
-# which would silently disable the scheduled news AI after every run (v13.5.26).
+# which would silently disable the scheduled news AI after every run (v13.5.27).
 _COST_POLICY_IDLE_MODES = ("DETERMINISTIC", "SCHEDULED_AI")
 _COST_POLICY_BASELINE_MODE = (
     _COST_POLICY.get("mode")
@@ -217,7 +217,7 @@ def _cost_policy_authorize(provider, purpose, *, automatic=True,
 
 
 def _deterministic_skip_payload(purpose):
-    # The skip reason must state the TRUE mode (v13.5.26): under SCHEDULED_AI
+    # The skip reason must state the TRUE mode (v13.5.27): under SCHEDULED_AI
     # only the news purposes run automatically, so other purposes skip with
     # their own reason instead of falsely claiming deterministic mode.
     if _COST_POLICY.get("mode") == "SCHEDULED_AI":
@@ -7106,7 +7106,7 @@ def api_argus_important_events():
         events, owner_symbols=owner_symbols, held_symbols=held,
         ctx={"regime": regime, "vixElevated": vix_elevated}, limit=64)
     items = items_all[:8]
-    # v13.5.26 (review item C): the D/D-1 hard-constraint feed must not
+    # v13.5.27 (review item C): the D/D-1 hard-constraint feed must not
     # depend on the 8-item display cap — the audit showed event #9+ silently
     # produced no constraint. Compact, uncapped imminent list for the
     # device-side SDA/AP event gate, tiered by displayImpact.
@@ -9828,7 +9828,7 @@ def api_argus_intel_collect():
         except Exception:
             continue
     out["supplyDemandWarm"] = warmed
-    # v13.5.26: warm the SHO CORE input caches (^N225/^VIX OHLCV, 1570 weekly
+    # v13.5.27: warm the SHO CORE input caches (^N225/^VIX OHLCV, 1570 weekly
     # margin, FRED VIX). This admin/cron path is the ONLY fetch route; the
     # public decision-evidence GET reads these caches cached-only.
     try:
@@ -12459,18 +12459,18 @@ def api_argus_action_labels():
 # gated by the API keys + the AI run gate + the daily/monthly budget hard-stop. The separate
 # GPT-5.5 Pro Handoff export further below stays manual (copy-paste, no API call).
 _OPENAI_API_KEY        = os.environ.get("OPENAI_API_KEY", "")
-# v13.5.26 (owner directive: use the current generation): primary default is
+# v13.5.27 (owner directive: use the current generation): primary default is
 # the GPT-5.6 tier already registered in the repo pricing table (terra = the
 # cost-efficient 5.6 SKU; the standard/referee roles were on 5.6 since
 # v12.2.x). Env-overridable without a release, exactly as before.
 _OPENAI_MODEL          = os.environ.get("OPENAI_MODEL", "") or "gpt-5.6-terra"
-# v13.5.26 (external review): frontier escalation model for consequential or
+# v13.5.27 (external review): frontier escalation model for consequential or
 # difficult news only — never the default lane.
 _OPENAI_SOL_MODEL      = os.environ.get("ARGUS_OPENAI_SOL_MODEL", "") or "gpt-5.6-sol"
 # Checker tiering: the DAILY SCORED run (checker=pro) uses the Pro model; the frequent 15-min
 # re-judges (checker=flash) and the 429-quota fallback use Flash, so the double-check DEGRADES
 # instead of disappearing. Both env-overridable.
-# v13.5.26 model currency (corrected after external review): the official
+# v13.5.27 model currency (corrected after external review): the official
 # Gemini catalog serves gemini-3.1-pro-preview (Pro/preview) and
 # gemini-3.7-flash (Stable) — a "gemini-3.7-pro" endpoint is NOT established
 # and must never be a production default (invented IDs are exactly the
@@ -12579,7 +12579,7 @@ _AI_PRICING = {
     # key so the fallback never bypasses the unknown-price gate.
     _GEMINI_PRIOR_MODEL: {"in": _float_env("GEMINI_PRICE_INPUT_PER_1M", 1.25),
                           "out": _float_env("GEMINI_PRICE_OUTPUT_PER_1M", 10.0)},
-    # Live official prices (updated v13.5.26, effective 2026-08-25; see
+    # Live official prices (updated v13.5.27, effective 2026-08-25; see
     # _AI_MODEL_PRICING_POLICY — Sol's rate is promotional, NOT permanent).
     # The v12 benchmark keeps its own frozen catalog below.
     "gpt-5.6-sol": {"in": 4.0, "out": 20.0, "cachedIn": 0.40},
@@ -12587,7 +12587,7 @@ _AI_PRICING = {
     "gemini-3.1-pro-preview": {"in": 2.0, "out": 12.0},
     "gemini-2.5-pro": {"in": 1.25, "out": 10.0},
 }
-# v13.5.26: pricing provenance — the Sol price is an official PROMOTION
+# v13.5.27: pricing provenance — the Sol price is an official PROMOTION
 # (guaranteed at least through 2026-11-21). Never encode it as permanent;
 # revalidate against the official pricing page by the date below.
 _AI_MODEL_PRICING_POLICY = {
@@ -13628,7 +13628,7 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
                 response_format={"type": "json_object"}, timeout=60)
             text = resp.choices[0].message.content
         if isinstance(diagnostic, dict):
-            # Model-currency proof (v13.5.26): requested vs actually-served.
+            # Model-currency proof (v13.5.27): requested vs actually-served.
             diagnostic["requestedModel"] = mdl
             diagnostic["returnedModel"] = str(
                 getattr(resp, "model", None) or "")[:60] or None
@@ -15232,6 +15232,11 @@ def api_argus_security_unlock():
     return jsonify({"status": "unlocked", "softLocked": False, "failedAttempts": 0,
                     "lockedByEnv": _AI_JUDGE_LOCKED_ENV, "locked": _is_locked(), "asOf": _ai_now_iso()})
 
+# v13.5.27: last confirmed ping per provider/model — the ops dispatch reads
+# requested/returned model even when the HTTP response is lost to a timeout.
+_AI_PROVIDER_LAST_PING = {}
+
+
 @app.route("/api/argus/ai-provider-status")
 def api_argus_ai_provider_status():
     # Admin-gated AI provider diagnostics. Returns SAFE booleans/status only —
@@ -15275,6 +15280,7 @@ def api_argus_ai_provider_status():
             "locked": _is_locked(),
             "allowedCountries": _AI_JUDGE_ALLOW_COUNTRIES,
         },
+        "lastPings": dict(_AI_PROVIDER_LAST_PING),
     })
 
 
@@ -15293,7 +15299,7 @@ def api_argus_ai_provider_ping():
             "manual_api", automatic=False,
             confirmation=body.get("confirm") is True,
             estimated_cost_usd=0.002, estimated_tokens=100)
-        # v13.5.26: SCHEDULED_AI allows a CONFIRMED manual ping — honor the
+        # v13.5.27: SCHEDULED_AI allows a CONFIRMED manual ping — honor the
         # policy verdict instead of hard-requiring MANUAL mode.
         if not policy["allowed"]:
             return jsonify({**_deterministic_skip_payload("provider_ping"),
@@ -15312,7 +15318,7 @@ def api_argus_ai_provider_ping():
         return jsonify({**_deterministic_skip_payload("provider_ping"),
                         "reason": policy.get("reason"),
                         "status": policy.get("status")}), 200
-    # v13.5.26: ?model=sol pings the escalation model for currency proof.
+    # v13.5.27: ?model=sol pings the escalation model for currency proof.
     model_choice = str(request.args.get("model")
                        or body.get("model") or "").strip().lower()
     if provider == "openai":
@@ -15343,6 +15349,10 @@ def api_argus_ai_provider_ping():
                              "requestedModel": model,
                              "returnedModel": str(getattr(r, "model", None)
                                                   or "")[:60] or None}
+            _AI_PROVIDER_LAST_PING[f"openai:{model}"] = {
+                "requestedModel": model,
+                "returnedModel": out["openai"]["returnedModel"],
+                "ok": True, "at": _ai_now_iso()}
             _cost_policy_record("openai", "manual_api", estimated_cost_usd=0.001)
         except Exception as e:
             out["openai"] = {"ok": False, "model": model,
@@ -15358,7 +15368,14 @@ def api_argus_ai_provider_ping():
             r = client.models.generate_content(model=_GEMINI_JUDGE_MODEL,
                                                contents="Reply with the single word: pong")
             out["gemini"] = {"ok": True, "model": _GEMINI_JUDGE_MODEL,
-                             "reply": (getattr(r, "text", "") or "")[:40]}
+                             "reply": (getattr(r, "text", "") or "")[:40],
+                             "requestedModel": _GEMINI_JUDGE_MODEL,
+                             "returnedModel": str(getattr(
+                                 r, "model_version", None) or "")[:60] or None}
+            _AI_PROVIDER_LAST_PING[f"gemini:{_GEMINI_JUDGE_MODEL}"] = {
+                "requestedModel": _GEMINI_JUDGE_MODEL,
+                "returnedModel": out["gemini"]["returnedModel"],
+                "ok": True, "at": _ai_now_iso()}
             _cost_policy_record("gemini", "manual_api", estimated_cost_usd=0.001)
         except Exception as e:
             out["gemini"] = {"ok": False, "model": _GEMINI_JUDGE_MODEL,
@@ -15524,7 +15541,7 @@ def _translate_headlines_ja(headlines):
         cfg = _gt.GenerateContentConfig(response_mime_type="application/json")
         resp = client.models.generate_content(model=_GEMINI_FALLBACK_MODEL, contents=prompt, config=cfg)
         # The API call is spent at this point — record it BEFORE validation so
-        # the SCHEDULED_AI daily budget counts every real request (v13.5.26:
+        # the SCHEDULED_AI daily budget counts every real request (v13.5.27:
         # discarded batches must not become free unlimited retries).
         _cost_policy_record("gemini", "headline_translation",
                             estimated_cost_usd=0.02)
@@ -15546,7 +15563,7 @@ def _translate_headlines_ja(headlines):
 # cached by content hash. Any English headline shown anywhere is queued into _SEEN;
 # the admin translate run drains it via the Gemini helper and fills _NEWS_JA_CACHE.
 _NEWS_JA_CACHE = {}                       # hash -> {"ja": str, "at": iso}
-# v13.5.26: hash -> failed attempt count. Headlines the model repeatedly
+# v13.5.27: hash -> failed attempt count. Headlines the model repeatedly
 # returns nothing for stop being re-requested after TRANSLATE_MAX_ATTEMPTS
 # (the retry loop burned the whole scheduled daily budget on one stuck batch).
 _NEWS_JA_FAILED = {}
@@ -15720,7 +15737,7 @@ def _translate_pending_headlines(cap=60, queue_first=False):
     merged = argus_news_i18n.merge_translations(_NEWS_JA_CACHE, pending, tr, now_iso)
     _NEWS_JA_CACHE.clear()
     _NEWS_JA_CACHE.update(merged)
-    # v13.5.26: items still uncached after this drain accrue an attempt;
+    # v13.5.27: items still uncached after this drain accrue an attempt;
     # at TRANSLATE_MAX_ATTEMPTS they leave the pending pool (no retry loop).
     updated_failed = argus_news_i18n.note_translation_attempts(
         _NEWS_JA_FAILED, pending, _NEWS_JA_CACHE)
@@ -16256,7 +16273,7 @@ def _causal_memory_refresh_open(force=False):
                 if not any(row["relation"] in ("SUPPORTING", "CONTRADICTING")
                            for row in evidence):
                     continue
-                # v13.5.26 (review item D): symmetric invalidation. A
+                # v13.5.27 (review item D): symmetric invalidation. A
                 # hypothesis WEAKENED for >= 3 days whose variables STILL all
                 # contradict earns the streak note, which the assessment
                 # policy accepts as an invalidation criterion — INVALIDATED
@@ -16441,7 +16458,7 @@ def _news_intel_persist():
             "events": _NEWS_INTEL["events"],
             "order": _NEWS_INTEL["order"][-_NEWS_EVENT_CAP:],
             "audit": _NEWS_INTEL["audit"][-_NEWS_AUDIT_CAP:],
-            # v13.5.26 (external review): source-acceptance evidence must
+            # v13.5.27 (external review): source-acceptance evidence must
             # survive restarts/deploys — process-memory counters are not an
             # audit authority.
             "sources": _NEWS_INTEL.get("sources") or {},
@@ -16479,7 +16496,7 @@ def _news_intel_ensure_loaded():
 def _news_source_acceptance():
     """Per-source acceptance evidence derived from the DURABLE stores
     (events + audit + persisted source rows) — never process-memory alone
-    (v13.5.26, external review). Public-safe: counts, domains, instants and
+    (v13.5.27, external review). Public-safe: counts, domains, instants and
     the verdict vocabulary only; no subjects, no bodies."""
     events = list(_NEWS_INTEL.get("events", {}).values())
     audit = list(_NEWS_INTEL.get("audit") or [])
@@ -16503,7 +16520,7 @@ def _news_source_acceptance():
             # Translation is applied at DISPLAY time from the JA cache — the
             # stored row keeps its original headlineJa forever, so this
             # counter must consult the cache too or it reports translated
-            # items as pending indefinitely (v13.5.26 live finding).
+            # items as pending indefinitely (v13.5.27 live finding).
             cached_ja = bool((_NEWS_JA_CACHE.get(
                 argus_news_i18n.text_hash(title)) or {}).get("ja"))
             if ja in ("", "翻訳処理中") and title and not cached_ja \
@@ -16561,7 +16578,7 @@ def _news_audit(row):
 def _news_corroboration(family, polarity=None):
     """Resolve the event-class corroboration plan against EXISTING sensors
     only (§15). Missing values stay visibly missing — never fabricated.
-    v13.5.26: with a detected polarity, confirmation requires the sensors to
+    v13.5.27: with a detected polarity, confirmation requires the sensors to
     move in the HYPOTHESIS direction (CONFIRMATION_EXPECTATIONS) — a large
     opposite move is market-moved evidence, not confirmation."""
     plan = argus_news_intelligence.CORROBORATION_PLAN.get(family) or ()
@@ -16642,7 +16659,7 @@ def _news_analyze_ai(subject, excerpt, fingerprint, taxonomy=None):
     """Controlled AI extraction via the existing approved call site
     (_openai_prose: cost-gated, store=False). Cached per fingerprint+policy;
     unavailable AI degrades to ANALYSIS_PENDING, never discards the event.
-    v13.5.26: Terra reads every substantive mail; consequential/difficult
+    v13.5.27: Terra reads every substantive mail; consequential/difficult
     cases escalate ONCE to the frontier Sol model (pure escalation_decision,
     closed reasons). Sol output passes the SAME schema validation and stays
     non-authoritative for severity/direction/SDA."""
@@ -16907,14 +16924,14 @@ def _news_intake_cycle(*, backfill=False, backfill_days=10):
 _NEWS_TRANSLATION_WORKER = {
     "lastRunAt": None, "lastSuccessAt": None, "lastError": None,
     "consecutiveFailures": 0, "translatedTotal": 0,
-    # v13.5.26: why the last tick did or did not call the LLM ("allowed" or the
+    # v13.5.27: why the last tick did or did not call the LLM ("allowed" or the
     # cost-policy skip reason). aiExecuted=false must never look like success.
     "lastPolicyDecision": None,
 }
 
 
 def _news_translation_tick():
-    """Continuous translation drain (v13.5.26, external review): weekday-only
+    """Continuous translation drain (v13.5.27, external review): weekday-only
     cron scheduling left official English mail invisible for whole weekends.
     Bounded (cap 20/run), idempotent (cache-keyed), exponential backoff on
     failures, and fully observable in the intake health payload."""
@@ -16997,7 +17014,7 @@ def api_argus_news_intelligence():
     pending_translation_count = 0
     _now_epoch = time.time()
     for event in events:
-        # v13.5.26 (external review BLOCKER 1): staleness is re-evaluated at
+        # v13.5.27 (external review BLOCKER 1): staleness is re-evaluated at
         # READ time from the stored receipt instant — a CRITICAL that was
         # FRESH_BREAKING at intake must not still present as fresh days later.
         try:
@@ -17030,7 +17047,7 @@ def api_argus_news_intelligence():
             "translated", "not_needed")
         if not summary_ready and not translation_ready:
             pending_translation_count += 1
-            # v13.5.26 (external review): translation is PRESENTATION work —
+            # v13.5.27 (external review): translation is PRESENTATION work —
             # classification/severity/direction were computed on the original
             # language at intake and a material event must not stay invisible
             # for a weekend because the Japanese summary is still queued.
@@ -31416,7 +31433,7 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
             "vixRows": _fred_vix_history_dated(),
             "usRows": (reference_history("SPY", "US")
                        if str(symbol).upper() != "SPY" else []),
-            # v13.5.26: misconfiguration is REPORTED, never silently identical
+            # v13.5.27: misconfiguration is REPORTED, never silently identical
             # to an honest data gap (the vix dimension would otherwise just
             # vanish from currentFeatureKeys with no visible cause).
             "sourceIssues": ([] if _FRED_API_KEY
@@ -31877,7 +31894,7 @@ def _decision_evidence_history_row(symbol, market):
              "price": float(last["close"]), "date": str(last["date"])[:10],
              # Provenance stays visible; the PROVIDER is the true upstream of
              # the cached daily series (authority ranking is per real
-             # provider — v13.5.26 fix: the synthetic "history-cache" label
+             # provider — v13.5.27 fix: the synthetic "history-cache" label
              # had rank None, so the whole weekend/holiday EOD path was
              # provider_not_authoritative and every subject data-gated).
              "sourceRef": f"history-cache:{symbol}:{str(last['date'])[:10]}"}
@@ -31984,7 +32001,7 @@ def _decision_evidence_prediction_artifact(symbol, market, cutoff,
         return None, "prediction_context_failed"
 
 
-# ━━━ v13.5.26 SHO CORE production inputs (external review item B) ━━━
+# ━━━ v13.5.27 SHO CORE production inputs (external review item B) ━━━
 # The read-only audit confirmed evaluate_d01_d07 was never called from any
 # production path and the live reversal artifact ran on zero rows. This block
 # wires the feeds the process already holds — JPX credit CSV+ledger, J-Quants
@@ -32255,7 +32272,7 @@ def _sho_market_view():
 
 
 def _decision_evidence_sho_artifact(symbol, cutoff):
-    """Per-subject SHO reversal artifact from real PIT inputs (v13.5.26).
+    """Per-subject SHO reversal artifact from real PIT inputs (v13.5.27).
 
     Both reversal axes now evaluate production feeds (^N225/^VIX complete
     OHLCV); cold feeds leave factors MISSING and the axis DATA_GATED — the
@@ -32426,7 +32443,7 @@ def _decision_evidence_document(symbols):
         "authority": "CANONICAL_ARTIFACT_REFERENCES",
         "sdaAuthority": False,
         "actionAuthority": False,
-        # v13.5.26 (review item A): document-level SHO MARKET VIEW — display
+        # v13.5.27 (review item A): document-level SHO MARKET VIEW — display
         # projection only, never an SDA input; the per-subject references
         # above remain the sole decision evidence.
         "marketView": _sho_market_view(),
@@ -37012,7 +37029,7 @@ def _jq_price_history(code):
     if _JQUANTS_API_KEY:
         try:
             headers = {"x-api-key": _JQUANTS_API_KEY}
-            # v13.5.26 (owner spec: ten-year corpus): request 3,640 days —
+            # v13.5.27 (owner spec: ten-year corpus): request 3,640 days —
             # safely INSIDE the rolling 10y J-Quants entitlement. 3,660 days
             # overhung the contract window by ~a week and J-Quants rejected
             # the whole request, which blanked the chart (the seed failure
