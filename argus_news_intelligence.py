@@ -91,7 +91,7 @@ def resolve_source(*, from_domain: str, display_name: str = "",
     return None
 
 
-# ── Quarantine review (v13.5.23, owner directive 2026-08-24) ────────────────
+# ── Quarantine review (v13.5.24, owner directive 2026-08-24) ────────────────
 # A historical quarantine is either protection (auth really fails) or a
 # profile gap (official mail the CURRENT auth+resolver would accept). The
 # distinction matters: a false quarantine of an FRB/BLS subscription format
@@ -920,7 +920,7 @@ def build_news_event(*, message: Mapping[str, Any],
         confirmation_state=materiality["confirmationState"],
         impact_direction=impact_direction)
     return {
-        # v13.5.23 NEWS/EVENT DIRECTIONAL IMPACT: an independent axis beside
+        # v13.5.24 NEWS/EVENT DIRECTIONAL IMPACT: an independent axis beside
         # severity and market confirmation. Display + evidence only.
         "impactDirection": impact_direction,
         "executionConstraint": execution_constraint,
