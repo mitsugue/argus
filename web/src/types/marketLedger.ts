@@ -60,7 +60,8 @@ export interface MarketLedgerPayload {
   noteJa: string;
 }
 export interface CostPolicyPayload {
-  mode: 'DETERMINISTIC' | 'EVENT_OPT_IN' | 'MANUAL'; eventOptIn: boolean;
+  mode: 'DETERMINISTIC' | 'EVENT_OPT_IN' | 'MANUAL' | 'RESEARCH_BENCHMARK' | 'SCHEDULED_AI';
+  eventOptIn: boolean;
   automaticAiEnabled: boolean; todayRuns: Record<'openai' | 'gemini' | 'anthropic', number>;
   todayEstimatedCostUsd: number; monthEstimatedCostUsd: number;
   lastExecutionReason: string | null; nextAllowedAiExecution: string; messageJa: string; asOf: string;

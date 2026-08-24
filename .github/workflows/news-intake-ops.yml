@@ -7,13 +7,15 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'reprocess = bounded backfill of the recent mailbox window'
+        description: 'reprocess = bounded backfill / quarantine-review = classify past quarantines (add -reprocess to also re-inject false quarantines)'
         required: true
         default: 'reprocess'
         type: choice
         options:
           - reprocess
           - health
+          - quarantine-review
+          - quarantine-reprocess
 
 permissions:
   contents: read
@@ -35,9 +37,44 @@ jobs:
             exit 0
           fi
           [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token"; exit 1; }
-          RESP=$(python3 scripts/workflow_http.py --name news-reprocess \
-            --method POST --timeout 300 \
-            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
-            --url "$BE/api/argus/admin/news-intake/reprocess")
-          echo "reprocess: $RESP"
-          echo "📥 news reprocess: \`${RESP:0:300}\`" >> "$GITHUB_STEP_SUMMARY"
+          case "${{ inputs.action }}" in
+            quarantine-review|quarantine-reprocess)
+              BODY='{"reprocess": false}'
+              [ "${{ inputs.action }}" = "quarantine-reprocess" ] && BODY='{"reprocess": true}'
+              RESP=$(curl -sf --max-time 300 -X POST \
+                -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+                -H "Content-Type: application/json" -d "$BODY" \
+                "$BE/api/argus/admin/news-intake/quarantine-review")
+              # Public repo: print a REDACTED summary only — verdicts, domains
+              # and auth flags. subjectPrefix (licensed content) never reaches
+              # the log.
+              python3 - "$RESP" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, sys
+          try:
+              data = json.loads(sys.argv[1])
+          except Exception:
+              print("unparseable response head:", sys.argv[1][:200])
+              raise SystemExit(1)
+          print("ok:", data.get("ok"), "counts:",
+                json.dumps(data.get("counts") or {}))
+          if data.get("noteJa"):
+              print("note:", data["noteJa"])
+          for r in data.get("reviewed") or []:
+              print("- {} verdict={} from={} rp={} spf={} dkim={} dmarc={} "
+                    "source={} reprocessed={}".format(
+                        str(r.get("messageId", ""))[:12], r.get("verdict"),
+                        r.get("fromDomain"), r.get("returnPathDomain"),
+                        r.get("spf"), r.get("dkim"), r.get("dmarc"),
+                        r.get("resolvedSource"),
+                        r.get("reprocessedStatus", "-")))
+          PY
+              ;;
+            *)
+              RESP=$(python3 scripts/workflow_http.py --name news-reprocess \
+                --method POST --timeout 300 \
+                --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+                --url "$BE/api/argus/admin/news-intake/reprocess")
+              echo "reprocess: $RESP"
+              echo "📥 news reprocess: \`${RESP:0:300}\`" >> "$GITHUB_STEP_SUMMARY"
+              ;;
+          esac

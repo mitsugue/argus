@@ -47,13 +47,24 @@ interface IntakeHealth {
     }>;
     acceptedSources: number;
     overallVerdict: string;
+    acceptanceSemanticsJa?: string;
   };
   translationWorker?: {
     lastRunAt: string | null; lastSuccessAt: string | null;
     lastError: string | null; consecutiveFailures: number;
     translatedTotal: number; queueDepth: number; lastDrainAt: string | null;
+    lastPolicyDecision?: string | null;
   };
 }
+
+// v13.5.23: the worker's cost-policy decision, in owner vocabulary — never
+// pretend AI ran when the policy skipped it.
+const POLICY_DECISION_JA: Record<string, string> = {
+  allowed: 'AI実行 許可',
+  deterministic_mode: 'AI停止中（決定論モード設定）',
+  scheduled_daily_budget_exhausted: '本日のAI予算を使い切りました（明日再開）',
+  scheduled_scope_required: 'この用途はAI対象外',
+};
 
 const ACCEPTANCE_JA: Record<string, string> = {
   REAL_MAIL_ACCEPTED: '実メール受理済み',
@@ -218,6 +229,9 @@ export const NewsIntakePanel: React.FC = () => {
               {row.quarantined > 0 && ` · 検疫${row.quarantined}`}
               {row.latestReceivedAt ? ` · 最終 ${fmt(row.latestReceivedAt)}` : ''}</b>
           </div>)}
+          {health.sourceAcceptance.acceptanceSemanticsJa && <div
+            style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2 }}>
+            {health.sourceAcceptance.acceptanceSemanticsJa}</div>}
         </div>}
         {health.translationWorker && <div style={{ marginTop: 6 }}>
           <span style={{ color: 'var(--text-muted)' }}>日本語要約ワーカー（常時稼働）</span>
@@ -228,6 +242,12 @@ export const NewsIntakePanel: React.FC = () => {
               ? `エラー: ${health.translationWorker.lastError}`
               : `最終成功 ${fmt(health.translationWorker.lastSuccessAt)}`}</b>
           </div>
+          {health.translationWorker.lastPolicyDecision && <div
+            style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+            <span style={{ color: 'var(--text-muted)' }}>直近のAI実行判定</span>
+            <b>{POLICY_DECISION_JA[health.translationWorker.lastPolicyDecision]
+              ?? health.translationWorker.lastPolicyDecision}</b>
+          </div>}
         </div>}
         {(health.recentMessages ?? []).length > 0 && <div style={{ marginTop: 6 }}>
           <span style={{ color: 'var(--text-muted)' }}>直近メール処理状態</span>

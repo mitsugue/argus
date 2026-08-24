@@ -213,7 +213,7 @@ def test_pipeline_preflight_exercises_stages_and_preserves_holdout(monkeypatch):
         assert set(final["result"]["stages"]) == {
             "geminiSearch", "openaiSearch", "referee"}
         assert scanner._FORMAL_BENCHMARK.get("holdoutConsumedBy") is None
-        assert scanner._COST_POLICY["mode"] == "DETERMINISTIC"
+        assert scanner._COST_POLICY["mode"] == "SCHEDULED_AI"
     finally:
         scanner._FOUNDATION_JOBS.clear()
         scanner._FOUNDATION_JOBS.update(previous_jobs)

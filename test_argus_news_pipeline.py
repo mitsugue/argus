@@ -347,7 +347,7 @@ def test_admin_audit_view_is_gated_and_answers_why(monkeypatch, news_env):
                for r in rows)
 
 
-# ━━━ v13.5.22 — durable source acceptance + classification-first display ━━━
+# ━━━ v13.5.23 — durable source acceptance + classification-first display ━━━
 
 def _seed_event(eid, family, severity, title, ja, received):
     return {
@@ -438,3 +438,121 @@ def test_material_english_event_surfaces_before_translation(tmp_path, monkeypatc
     assert "Treasury announces" not in served["hi"]["headlineJa"]
     assert "lo" not in served
     assert body["pendingTranslationCount"] >= 1
+
+
+# ━━━ v13.5.23 — quarantine review (owner directive 2026-08-24) ━━━
+
+def test_review_quarantine_pure_verdicts():
+    import argus_news_intelligence as ni
+    assert ni.review_quarantine(
+        authenticated=True, source="FEDERAL_RESERVE_BOARD"
+    )["verdict"] == "FALSE_QUARANTINE_OF_OFFICIAL_MAIL"
+    assert ni.review_quarantine(
+        authenticated=False, source=None,
+        quarantine_reasons=["no_spf_or_dkim_pass"],
+    )["verdict"] == "LEGITIMATE_QUARANTINE"
+    assert ni.review_quarantine(
+        authenticated=True, source=None,
+    )["verdict"] == "UNRESOLVED_SOURCE_FAMILY"
+
+
+def test_quarantine_review_endpoint_classifies_and_reprocesses(tmp_path, monkeypatch):
+    """検疫レビュー: 正規メールのfalse quarantineを認証ヘッダ再検証で特定し、
+    reprocess=Trueで通常パイプラインへ再投入(backfill)。本文は応答に出さない。"""
+    _reset_news_store(tmp_path, monkeypatch)
+    scanner._NEWS_INTEL["messageOrder"] = ["m-official", "m-phish"]
+    scanner._NEWS_INTEL["messageStatus"] = {
+        "m-official": {"status": "QUARANTINED", "source": None,
+                       "at": "2026-08-20T00:00:00Z"},
+        "m-phish": {"status": "QUARANTINED", "source": None,
+                    "at": "2026-08-20T00:00:00Z"},
+    }
+    scanner._NEWS_INTEL["audit"] = [
+        {"stage": "quarantined", "messageId": "m-official",
+         "subjectPrefix": "FOMC statement",
+         "reasons": ["from_domain_not_allowed:federalreserve.gov"]},
+        {"stage": "quarantined", "messageId": "m-phish",
+         "subjectPrefix": "URGENT wire transfer",
+         "reasons": ["no_spf_or_dkim_pass"]},
+    ]
+    secret_body = "The Federal Reserve issued a statement raising rates."
+    official = {
+        "messageId": "m-official", "rfcMessageId": "<a@frb>",
+        "subject": "FOMC statement", "dateHeader": "Mon, 24 Aug 2026 09:00:00 +0000",
+        "fromDomain": "federalreserve.gov",
+        "fromDisplay": "Federal Reserve Board",
+        "linkDomains": ["www.federalreserve.gov"],
+        "receivedEpoch": time.time() - 600,
+        "excerpt": secret_body, "url": None,
+        "headers": [
+            {"name": "From", "value": "FRB <no-reply@federalreserve.gov>"},
+            {"name": "Return-Path", "value": "<bounce@federalreserve.gov>"},
+            {"name": "Authentication-Results",
+             "value": ("mx.google.com; spf=pass "
+                       "smtp.mailfrom=federalreserve.gov; dkim=pass "
+                       "header.d=federalreserve.gov; dmarc=pass")},
+        ],
+    }
+    phish = {
+        "messageId": "m-phish", "rfcMessageId": "<b@evil>",
+        "subject": "URGENT wire transfer", "dateHeader": "Mon, 24 Aug 2026 09:00:00 +0000",
+        "fromDomain": "evil.example", "fromDisplay": "Support",
+        "linkDomains": ["evil.example"], "receivedEpoch": time.time() - 600,
+        "excerpt": "click here", "url": None,
+        "headers": [
+            {"name": "From", "value": "Support <phish@evil.example>"},
+            {"name": "Return-Path", "value": "<phish@evil.example>"},
+            {"name": "Authentication-Results",
+             "value": "mx.google.com; spf=fail; dkim=fail"},
+        ],
+    }
+    monkeypatch.setattr(scanner.argus_gmail_intake, "refresh_access_token",
+                        lambda env, http: "tok")
+    monkeypatch.setattr(
+        scanner.argus_gmail_intake, "fetch_message",
+        lambda token, mid, http: {"m-official": official,
+                                  "m-phish": phish}.get(mid))
+    monkeypatch.setenv("ARGUS_NEWS_ALLOWED_SENDER_DOMAINS", "federalreserve.gov")
+    monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "qr-test-token")
+    client = scanner.app.test_client()
+    denied = client.post("/api/argus/admin/news-intake/quarantine-review")
+    assert denied.status_code in (401, 403, 503)
+    res = client.post("/api/argus/admin/news-intake/quarantine-review",
+                      headers={"X-ARGUS-ADMIN-TOKEN": "qr-test-token"},
+                      json={"reprocess": True})
+    body = res.get_json()
+    assert res.status_code == 200 and body["ok"], body
+    by_id = {r["messageId"]: r for r in body["reviewed"]}
+    assert by_id["m-official"]["verdict"] == "FALSE_QUARANTINE_OF_OFFICIAL_MAIL"
+    assert by_id["m-official"]["resolvedSource"] == "FEDERAL_RESERVE_BOARD"
+    assert by_id["m-official"]["dkim"] is True
+    assert by_id["m-official"]["returnPathDomain"] == "federalreserve.gov"
+    assert by_id["m-phish"]["verdict"] == "LEGITIMATE_QUARANTINE"
+    assert "reprocessedStatus" not in by_id["m-phish"]
+    assert by_id["m-official"]["reprocessedStatus"] in (
+        "ALERTED", "SURFACED", "LOW_RELEVANCE", "DUPLICATE")
+    assert scanner._NEWS_INTEL["messageStatus"]["m-official"][
+        "status"] != "QUARANTINED"
+    assert body["counts"]["FALSE_QUARANTINE_OF_OFFICIAL_MAIL"] == 1
+    assert body["counts"]["LEGITIMATE_QUARANTINE"] == 1
+    assert secret_body not in str(body)
+
+
+def test_quarantine_review_reports_unavailable_messages(tmp_path, monkeypatch):
+    _reset_news_store(tmp_path, monkeypatch)
+    scanner._NEWS_INTEL["messageOrder"] = ["m-gone"]
+    scanner._NEWS_INTEL["messageStatus"] = {
+        "m-gone": {"status": "QUARANTINED", "source": None,
+                   "at": "2026-08-20T00:00:00Z"}}
+    monkeypatch.setattr(scanner.argus_gmail_intake, "refresh_access_token",
+                        lambda env, http: "tok")
+    monkeypatch.setattr(scanner.argus_gmail_intake, "fetch_message",
+                        lambda token, mid, http: None)
+    monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "qr-test-token")
+    client = scanner.app.test_client()
+    res = client.post("/api/argus/admin/news-intake/quarantine-review",
+                      headers={"X-ARGUS-ADMIN-TOKEN": "qr-test-token"},
+                      json={})
+    body = res.get_json()
+    assert body["ok"] and body["reviewed"][0][
+        "verdict"] == "MESSAGE_NO_LONGER_AVAILABLE"

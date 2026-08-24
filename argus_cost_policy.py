@@ -4,11 +4,21 @@
 Pure/stdlib-only.  Market-data providers are deliberately outside this policy.
 The default is fail-closed DETERMINISTIC: cached AI output remains readable, but
 no OpenAI/Gemini/Anthropic request is authorized automatically.
+
+v13.5.23 (owner directive 2026-08-23 「有効にして」): SCHEDULED_AI mode allows
+ONLY the news-mail pipeline's two bounded purposes (headline_translation,
+news_intel) to run automatically, under a dedicated daily USD budget computed
+from recorded usage.  Every other purpose in this mode behaves exactly like
+MANUAL (explicit confirmation + manual_api only).
 """
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-MODES = ("DETERMINISTIC", "EVENT_OPT_IN", "MANUAL", "RESEARCH_BENCHMARK")
+MODES = ("DETERMINISTIC", "EVENT_OPT_IN", "MANUAL", "RESEARCH_BENCHMARK",
+         "SCHEDULED_AI")
+# The only purposes that may execute WITHOUT human confirmation in SCHEDULED_AI.
+SCHEDULED_PURPOSES = ("headline_translation", "news_intel")
+SCHEDULED_DAILY_BUDGET_USD = 2.0
 PROVIDERS = ("openai", "gemini", "anthropic")
 EVENT_PHASES = ("pre", "post")
 SCHEMA_VERSION = "argus-cost-policy-v1"
@@ -74,7 +84,9 @@ def authorize(state: Dict[str, Any], *, provider: str, purpose: str,
               estimated_tokens: Optional[int] = None,
               provider_enabled: bool = True,
               event_budget_usd: float = 1.0,
-              event_token_limit: int = 12000) -> Dict[str, Any]:
+              event_token_limit: int = 12000,
+              scheduled_daily_budget_usd: float = SCHEDULED_DAILY_BUDGET_USD
+              ) -> Dict[str, Any]:
     """Return an authorization without performing I/O or mutating state."""
     st = normalize_state(state)
     mode = st["mode"]
@@ -99,6 +111,27 @@ def authorize(state: Dict[str, Any], *, provider: str, purpose: str,
             return _skip(mode, "confirmation_required", purpose)
         if purpose != "research_benchmark":
             return _skip(mode, "benchmark_scope_required", purpose)
+    if mode == "SCHEDULED_AI":
+        if purpose in SCHEDULED_PURPOSES:
+            # Automatic news translation/analysis, bounded by a daily budget
+            # summed over the recorded usage rows of the scheduled lane.
+            today = _day(now_iso)
+            spent = sum(float(x.get("estimatedCostUsd") or 0.0)
+                        for x in st["usage"]
+                        if _day(x.get("at")) == today
+                        and x.get("purpose") in SCHEDULED_PURPOSES)
+            est = (float(estimated_cost_usd)
+                   if isinstance(estimated_cost_usd, (int, float))
+                   and estimated_cost_usd >= 0 else 0.0)
+            if spent + est > max(0.0, float(scheduled_daily_budget_usd)):
+                return _skip(mode, "scheduled_daily_budget_exhausted", purpose)
+        else:
+            if automatic:
+                return _skip(mode, "scheduled_scope_required", purpose)
+            if not confirmation:
+                return _skip(mode, "confirmation_required", purpose)
+            if purpose != "manual_api":
+                return _skip(mode, "manual_api_only", purpose)
     if mode == "EVENT_OPT_IN":
         if not st.get("eventOptIn"):
             return _skip(mode, "event_opt_in_disabled", purpose)
@@ -165,11 +198,15 @@ def public_status(state: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
     next_allowed = ("重要イベントの明示opt-in後" if mode == "EVENT_OPT_IN"
                     else "明示確認付きmanual APIのみ" if mode == "MANUAL"
                     else "固定benchmark実行中のみ" if mode == "RESEARCH_BENCHMARK"
+                    else "ニュースの日本語要約と補助解析のみ日次予算内で自動"
+                    if mode == "SCHEDULED_AI"
                     else "なし(相談パックはAPIなしで随時生成可)")
     return {
         "schemaVersion": SCHEMA_VERSION, "asOf": now_iso, "mode": mode,
         "eventOptIn": bool(st.get("eventOptIn")),
-        "automaticAiEnabled": mode == "EVENT_OPT_IN" and bool(st.get("eventOptIn")),
+        "automaticAiEnabled": (mode == "SCHEDULED_AI"
+                               or (mode == "EVENT_OPT_IN"
+                                   and bool(st.get("eventOptIn")))),
         "todayRuns": counts,
         "todayEstimatedCostUsd": round(sum(float(x.get("estimatedCostUsd") or 0)
                                             for x in day_rows), 6),
@@ -182,5 +219,6 @@ def public_status(state: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
             "EVENT_OPT_IN": "有効化した重要イベントの前後だけAIを実行します。",
             "MANUAL": "明示的に深掘りを実行した場合だけAIを使用します。",
             "RESEARCH_BENCHMARK": "固定済み研究benchmarkだけを上限内で手動実行します。",
+            "SCHEDULED_AI": "ニュースメールの日本語要約と補助解析だけを日次予算内で自動実行します。他のAIは実行しません。",
         }[mode],
     }

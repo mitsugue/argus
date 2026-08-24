@@ -461,7 +461,7 @@ class RouteTests(unittest.TestCase):
                     mock.patch.object(scanner, "_osint_persist"), \
                     mock.patch.object(scanner, "_journal"):
                 scanner._formal_benchmark_worker(bid, dry)
-            self.assertEqual(scanner._COST_POLICY["mode"], "DETERMINISTIC")
+            self.assertEqual(scanner._COST_POLICY["mode"], "SCHEDULED_AI")
             self.assertEqual(scanner._FORMAL_BENCHMARK["runningBenchmarkId"], None)
             self.assertEqual(len(scanner._FORMAL_BENCHMARK["results"]), 1)
             self.assertEqual(len(scanner._FORMAL_BENCHMARK["results"][0]["caseResults"]), 18)

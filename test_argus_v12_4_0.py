@@ -76,7 +76,7 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
         body = response.get_json()
         self.assertEqual(body["schemaVersion"], ci.SCHEMA_VERSION)
         self.assertEqual(body["automaticAiCalls"], 0)
-        self.assertEqual(body["costPolicyMode"], "DETERMINISTIC")
+        self.assertEqual(body["costPolicyMode"], "SCHEDULED_AI")
         self.assertEqual(body["displayNameJa"], "トヨタ自動車")
         self.assertTrue(body["zones"])
         self.assertLessEqual(len(body["critique"]), 5)
@@ -262,7 +262,7 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
         self.assertIn("AI API 0", panel)
 
     def test_runtime_version_matches_release(self):
-        self.assertEqual(scanner._semantic_app_version(), "13.5.22")
+        self.assertEqual(scanner._semantic_app_version(), "13.5.23")
 
 
 if __name__ == "__main__":
