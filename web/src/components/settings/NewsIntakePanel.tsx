@@ -55,9 +55,14 @@ interface IntakeHealth {
     translatedTotal: number; queueDepth: number; lastDrainAt: string | null;
     lastPolicyDecision?: string | null;
   };
+  aiEscalations?: number;
+  aiModels?: Record<string, {
+    requestedModel?: string | null; returnedModel?: string | null;
+    at?: string;
+  }>;
 }
 
-// v13.5.25: the worker's cost-policy decision, in owner vocabulary — never
+// v13.5.26: the worker's cost-policy decision, in owner vocabulary — never
 // pretend AI ran when the policy skipped it.
 const POLICY_DECISION_JA: Record<string, string> = {
   allowed: 'AI実行 許可',
@@ -248,6 +253,18 @@ export const NewsIntakePanel: React.FC = () => {
             <b>{POLICY_DECISION_JA[health.translationWorker.lastPolicyDecision]
               ?? health.translationWorker.lastPolicyDecision}</b>
           </div>}
+        </div>}
+        {health.aiModels && Object.keys(health.aiModels).length > 0
+          && <div style={{ marginTop: 6 }}>
+          <span style={{ color: 'var(--text-muted)' }}>
+            AI意味解析モデル（実測） {(health.aiEscalations ?? 0) > 0
+              && `· 上位エスカレーション${health.aiEscalations}件`}</span>
+          {Object.entries(health.aiModels).map(([lane, row]) => <div key={lane}
+            style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+            <span>{lane === 'sol' ? '上位（重大・困難のみ）' : '標準'}</span>
+            <b style={{ fontFamily: 'monospace' }}>
+              {row.returnedModel ?? row.requestedModel ?? '—'}</b>
+          </div>)}
         </div>}
         {(health.recentMessages ?? []).length > 0 && <div style={{ marginTop: 6 }}>
           <span style={{ color: 'var(--text-muted)' }}>直近メール処理状態</span>
