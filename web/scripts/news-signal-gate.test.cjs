@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// v13.5.27 — the exact NewsEvent → constraint → riskKernel → SDA trace the
+// v13.5.28 — the exact NewsEvent → constraint → riskKernel → SDA trace the
 // external review demanded (BLOCKER 5), plus the per-target relevance rules
 // (BLOCKER 2): an energy-only bearish headline must not block buying an
 // index ETF; PENDING or STALE headlines never gate the kernel at all.
