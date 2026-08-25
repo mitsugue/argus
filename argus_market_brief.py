@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""ARGUS v13.5.34 — MARKET SITUATION BRIEF (pure composer).
+"""ARGUS v13.5.35 — MARKET SITUATION BRIEF (pure composer).
 
 Owner directive 2026-08-26 (+external review conditions): a single Today-top
 card that answers 「今の市場は何が起きているか」 in three parts —

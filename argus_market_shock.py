@@ -194,7 +194,7 @@ def evaluate_news_theme(hits: Sequence[Mapping[str, Any]], *,
 
 
 def _notch(severity: Optional[str], up: int) -> Optional[str]:
-    # v13.5.34: callers outside the shock lane pass their own severity
+    # v13.5.35: callers outside the shock lane pass their own severity
     # vocabulary (news "WATCH") — an unknown label upgrades to nothing
     # instead of raising mid-confirmation (latent crash found by the
     # direction-alignment tests).
@@ -215,7 +215,7 @@ def apply_cross_market_confirmation(
     >= 1.5, US10Y move >= 8bp in the same session. Cross-market data can never
     CREATE an event, only raise confidence in one detected elsewhere.
 
-    v13.5.34 (external review): when `expected` carries the HYPOTHESIS
+    v13.5.35 (external review): when `expected` carries the HYPOTHESIS
     directions ({sensor: +1/-1}), a large move in the OPPOSITE direction is
     MARKET_MOVED evidence, never confirmation — it is reported in
     contradictedSignals and does not count toward the two-signal rule.
@@ -287,7 +287,7 @@ def build_market_shock_view(*, long_end: Mapping[str, Any],
                      "日本株のリスク許容度に直接影響します。",
             "evidence": dict(long_end),
             "crossMarket": confirmation,
-            # v13.5.34 (external review item 3): the official sensor lane
+            # v13.5.35 (external review item 3): the official sensor lane
             # carries the SAME direction vocabulary as mail news — the US30Y
             # spike sensor's trigger condition IS the 'up' polarity.
             "impactDirection": _news_direction.direction_for("RATES", "up"),

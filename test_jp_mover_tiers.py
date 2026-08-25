@@ -406,3 +406,28 @@ def test_scan_and_mover_universe_require_delayed_jquants_status(
 
     assert (scan_count, universe) == (0, [])
     assert recorded == []
+
+
+# ── v13.5.35 compatibility: these legacy fixtures predate the canonical-
+# calendar authority (weekday-agnostic daily sessions). Register a wide
+# synthetic Mon-Fri canonical range so their historical/frozen dates keep the
+# session semantics they were written under; production stays strict.
+import pytest as _pytest
+import argus_market_clock as _clock
+from datetime import date as _date, timedelta as _timedelta
+
+
+@_pytest.fixture(autouse=True)
+def _legacy_wide_canonical_calendar():
+    days = []
+    cursor = _date(2020, 1, 1)
+    while cursor <= _date(2030, 12, 31):
+        if cursor.weekday() < 5:
+            days.append(cursor.isoformat())
+        cursor += _timedelta(days=1)
+    for market in (_clock.JP_EQUITY, _clock.US_EQUITY, _clock.VIX_MKT):
+        _clock.register_canonical_calendar(
+            market, days, start="2020-01-01", end="2030-12-31",
+            source="test:legacy-weekday-world")
+    yield
+    _clock.clear_canonical_calendar()
