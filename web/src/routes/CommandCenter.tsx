@@ -18,6 +18,7 @@ import { buildArgusTodayView, selectTodayNews,
   selectAutoMarket, type MarketSelectionMode, type TodayMoveInput,
   type TodayPositioningRow } from '../domain/argusTodayView';
 import { useTodayHeadline } from '../hooks/useTodayHeadline';
+import { useDecisionEvidence } from '../hooks/useDecisionEvidence';
 import { useMarketShock } from '../hooks/useMarketShock';
 import { useNewsIntelligence } from '../hooks/useNewsIntelligence';
 import { headlineProjectionInput,
@@ -587,8 +588,11 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
   const projectionSource = selectedChart.data ? 'verified-snapshot' as const
     : argusToday.projection ? 'headline' as const : null;
 
-  // Truthful freshness: an open session lamp must never imply live pricing
-  // when the canonical data is previous-close EOD.
+  // Truthful freshness (v13.5.36 phase 2): three separated concepts —
+  // realtime status / daily-session basis / decision eligibility. A normal
+  // closed market must never read as an error; a genuinely missing newer
+  // bar must never hide behind 「市場終了」.
+  const decisionEvidence = useDecisionEvidence();
   const freshnessNoteJa = useMemo(() => {
     const entry = headline.document?.instruments?.[selectedSymbol];
     if (!entry || entry.status !== 'ready') return null;
@@ -600,9 +604,25 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       return `表示価格は前日終値（${entry.periodEnd ?? '基準日不明'} EOD）· `
         + 'ザラ場のリアルタイム価格ではありません';
     }
-    if (eod) return `データ基準: ${entry.periodEnd ?? '不明'} 終値`;
-    return null;
-  }, [headline.document, selectedSymbol, argusToday.sessionLamps]);
+    if (!eod) return null;
+    const basisDate = entry.periodEnd ?? '不明';
+    const closeLabel = entry.market === 'JP'
+      ? `${basisDate} 終値基準（15:30 JST）` : `${basisDate} 終値基準`;
+    const evidenceEntry = decisionEvidence.subjects?.[selectedSymbol] as
+      { marketTruth?: { status?: string } } | undefined;
+    const truthStatus = evidenceEntry?.marketTruth?.status;
+    const dailyEligible = truthStatus === 'AVAILABLE';
+    const dailyDenied = truthStatus === 'STALE' || truthStatus === 'MISSING';
+    if (dailyEligible) {
+      return `市場終了 · ${closeLabel} · 日次判断: 利用可能`;
+    }
+    if (dailyDenied) {
+      return `市場終了 · 最新日足を確認できません（${closeLabel}のまま）· `
+        + '日次判断を保留';
+    }
+    return `市場終了 · ${closeLabel}`;
+  }, [headline.document, selectedSymbol, argusToday.sessionLamps,
+    decisionEvidence.subjects]);
 
   return (
     <PageShell

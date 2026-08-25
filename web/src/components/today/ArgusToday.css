@@ -247,3 +247,15 @@
 .at-brief__chips{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:11px;
   opacity:.9}
 .at-brief__chips b{font-weight:600}
+
+/* v13.5.36 glossary tap-tips (inline expansion — no overlay stacking) */
+.glossary-tip{display:inline}
+.glossary-tip__term{all:unset;cursor:pointer;-webkit-tap-highlight-color:transparent;
+  border-bottom:1px dotted rgba(148,178,255,.55);padding-bottom:1px;
+  min-height:24px;display:inline-flex;align-items:center}
+.glossary-tip__term:focus-visible{outline:1px solid rgba(148,178,255,.8);
+  outline-offset:2px;border-radius:2px}
+.glossary-tip__body{display:block;font-size:11px;line-height:1.5;
+  color:var(--text-muted,#9aa4b2);padding:4px 8px;margin-top:3px;
+  border-left:2px solid rgba(148,178,255,.35);
+  background:rgba(148,178,255,.06);border-radius:0 6px 6px 0}

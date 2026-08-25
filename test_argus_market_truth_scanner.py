@@ -831,7 +831,7 @@ def test_official_close_is_explicit_delayed_and_runner_eligible_at_1605_jst():
 
 
 def test_stale_quote_is_never_admitted_to_canonical_predictions():
-    # v13.5.35: a THURSDAY close two days later is genuinely stale (a newer
+    # v13.5.36: a THURSDAY close two days later is genuinely stale (a newer
     # session existed). The old fixture used a FRIDAY close on Sunday night,
     # which the weekend daily-authority window now correctly keeps DELAYED.
     decision_at = "2026-08-15T19:00:00Z"
@@ -846,7 +846,7 @@ def test_stale_quote_is_never_admitted_to_canonical_predictions():
 
 
 def test_friday_close_stays_delayed_through_the_weekend():
-    """v13.5.35 (owner/GPT #8): no newer session exists between Friday close
+    """v13.5.36 (owner/GPT #8): no newer session exists between Friday close
     and Monday close — Sunday night must classify the Friday official close
     as DELAYED daily evidence, not STALE."""
     decision_at = "2026-08-16T19:00:00Z"          # Sunday 19:00Z

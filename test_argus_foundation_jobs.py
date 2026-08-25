@@ -249,7 +249,7 @@ def test_exact_model_pricing_and_response_model_contract(monkeypatch):
     moomoo.RET_OK = 0
     sys.modules.setdefault("moomoo", moomoo)
     import scanner
-    # v13.5.35: live prices track the CURRENT official rates (Sol promo
+    # v13.5.36: live prices track the CURRENT official rates (Sol promo
     # through 2026-11-21); the frozen benchmark catalog is asserted separately
     # via pricingVersion below.
     assert scanner._AI_PRICING["gpt-5.6-sol"] == {

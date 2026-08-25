@@ -1701,7 +1701,7 @@ function resultFromValidInputV2(
   const ownerUnknown = ownerContextIsUnknown(input.ownerContext);
   if (ownerUnknown) missing.push('owner_context_unknown');
   if (input.quality.status !== 'COMPLETE') missing.push(`quality_${input.quality.status.toLowerCase()}`);
-  // v13.5.35 (owner discussion + external review #8): a FIVE_DAY decision
+  // v13.5.36 (owner discussion + external review #8): a FIVE_DAY decision
   // runs on the latest COMPLETED session's close. DELAYED — a real official
   // close inside its daily-validity window — is the normal evening/night
   // state and must not data-gate the daily decision. STALE/UNKNOWN still
