@@ -62,7 +62,7 @@ interface IntakeHealth {
   }>;
 }
 
-// v13.5.31: the worker's cost-policy decision, in owner vocabulary — never
+// v13.5.32: the worker's cost-policy decision, in owner vocabulary — never
 // pretend AI ran when the policy skipped it.
 const POLICY_DECISION_JA: Record<string, string> = {
   allowed: 'AI実行 許可',

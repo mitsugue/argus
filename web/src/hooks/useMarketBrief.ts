@@ -1,4 +1,4 @@
-// v13.5.31 — MARKET SITUATION BRIEF (Today-top NOW/WHY/NEXT card).
+// v13.5.32 — MARKET SITUATION BRIEF (Today-top NOW/WHY/NEXT card).
 // Read-only evidence for the human reader; sdaAuthority is false by
 // construction and nothing here feeds the decision engine.
 import React from 'react';
