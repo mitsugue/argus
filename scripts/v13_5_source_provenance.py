@@ -42,6 +42,10 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # deterministic and fail-closed.
     "argus_cost_policy.py",
     "smoke_test.py",
+    "test_argus_single_decision.py",
+    "test_argus_market_truth_scanner.py",
+    "argus_single_decision.py",
+    "web/src/domain/singleDecisionAuthority.ts",
     "argus_market_brief.py",
     "test_argus_market_brief.py",
     "test_argus_market_brief_non_authority.py",
