@@ -722,6 +722,15 @@ def v_downside_carries_mover_cause():
     incs = d.get("incidents") or []
     if not incs:
         return True, "no active incidents (shape n/a)"
+    # v13.5.33: a fresh deploy restarts the process with an empty mover-cause
+    # cache; if a REAL incident exists in that window the ladder can lag one
+    # enrichment cycle. Retry once after 90s — persistent absence still fails.
+    if any(not (inc.get("moverCause") or {}).get("causeStatus") for inc in incs):
+        time.sleep(90)
+        c, d = _get("/api/argus/downside-incidents")
+        incs = d.get("incidents") or []
+        if not incs:
+            return True, "incidents cleared during enrichment retry"
     for inc in incs:
         mc = inc.get("moverCause") or {}
         if not mc.get("causeStatus"):

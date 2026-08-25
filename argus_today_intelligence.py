@@ -820,7 +820,7 @@ def calibrate_forecast(rows: Iterable[Dict[str, Any]],
             "requested": bool(sho_context),
             "currentFeatureKeys": current_keys,
             "coverageDays": coverage_days,
-            # v13.5.32 (external review): a provider MISCONFIGURATION (e.g.
+            # v13.5.33 (external review): a provider MISCONFIGURATION (e.g.
             # missing FRED key) must not be indistinguishable from an honest
             # data gap — the serving layer names the broken source here and
             # the UI displays it. Empty when every configured source is fine.
