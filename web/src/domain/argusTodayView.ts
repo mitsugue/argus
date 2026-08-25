@@ -524,7 +524,7 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
     shoConditioningJa: (() => {
       const meta = input.calibration?.shoConditioning;
       const keys = meta?.currentFeatureKeys ?? [];
-      // v13.5.28: a provider MISCONFIGURATION is named, never silently
+      // v13.5.29: a provider MISCONFIGURATION is named, never silently
       // identical to an honest data gap (external review item 4).
       const issueJa: Record<string, string> = {
         vix_provider_key_missing: 'VIX供給が設定障害（プロバイダ鍵未設定）',
