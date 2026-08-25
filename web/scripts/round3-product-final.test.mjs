@@ -87,7 +87,7 @@ assert.match(shell, /\{versionLabel\}/);
 assert.equal((shell.match(/shell__brand-version/g) ?? []).length, 1);
 assert.doesNotMatch(shell, /Frontend v|Backend v|backendSha|deploymentId/);
 assert.deepEqual(productVersion, {
-  schemaVersion: 'argus-product-version-v1', productVersion: 'v13.5.33',
+  schemaVersion: 'argus-product-version-v1', productVersion: 'v13.5.34',
 });
 assert.match(versionTruth, /runtimeVersionLabel\(productVersion: string\)/);
 assert.match(versionTruth, /product version unavailable/);

@@ -121,13 +121,13 @@ const NEXT_REVIEW_REASON_JA: Record<string, string> = {
   sho_revalidation: 'チャート分析証拠を再検証',
   evidence_refresh: '正本証拠を更新',
 };
-// v13.5.33 (external review item A): MARKET VIEW (SHO) / ACTION (SDA)
+// v13.5.34 (external review item A): MARKET VIEW (SHO) / ACTION (SDA)
 // separation. The strip renders the document-level SHO consumer projection —
 // reversal + downside axis states and D01-D07 family states — directly under
 // the SDA action so the owner sees "what the market looks like" and "what we
 // do" as two explicitly different authorities. The projection carries
 // actionAuthority:false by construction and is never an SDA input.
-// v13.5.33 (owner: 「言葉の意味がわからない」): reason codes rendered in plain
+// v13.5.34 (owner: 「言葉の意味がわからない」): reason codes rendered in plain
 // Japanese. Spec-by-design states (owner context, prediction ledger auth) must
 // not read as errors. Unknown codes fall through readably.
 const MISSING_REASON_JA: Record<string, string> = {
@@ -165,7 +165,7 @@ const familyStateJa = (row: { status?: string; conditionMet?: boolean | null }):
   if (row.status !== 'AVAILABLE') return '欠測';
   return row.conditionMet === true ? '成立' : row.conditionMet === false ? '不成立' : '判定不能';
 };
-// v13.5.33 MARKET SITUATION BRIEF (owner 2026-08-26): NOW/WHY/NEXT — the
+// v13.5.34 MARKET SITUATION BRIEF (owner 2026-08-26): NOW/WHY/NEXT — the
 // deterministic composer selects verified facts; AI only compresses them
 // (numbers/probabilities can never be invented — server-side validator).
 const MarketBriefCard: React.FC = () => {
@@ -215,7 +215,7 @@ const MarketViewStrip: React.FC = () => {
   </div>;
 };
 
-// v13.5.33 NEWS/EVENT SIGNAL (owner spec 2026-08-23): the independent news
+// v13.5.34 NEWS/EVENT SIGNAL (owner spec 2026-08-23): the independent news
 // direction axis rendered BESIDE the SHO market view and the SDA action —
 // three separate judgments, never one blended score. A chart view and a news
 // view that disagree stay visibly different; cancellation into a vague
@@ -241,7 +241,7 @@ const newsAgeJa = (event: { ageMinutes?: number }): string | null => {
 };
 const NewsSignalStrip: React.FC = () => {
   const news = useNewsIntelligence();
-  // v13.5.33 (external review): staleness is the backend's UPPERCASE enum,
+  // v13.5.34 (external review): staleness is the backend's UPPERCASE enum,
   // re-evaluated at read time; ordering prefers severity then the RECEIPT
   // instant (processedAt reorders on backfill/reprocess and is not used).
   const material = (news.view?.events ?? [])
@@ -438,7 +438,7 @@ const ProjectionChart: React.FC<{
       <span className="invalid">無効 <b>{formatInstrumentPrice(projection.invalidation, projection.instrumentId)}</b></span></div>
     {displayProbabilities ? <div className={`at-proj-prob ${
       projection.directionProbabilities ? 'is-verified' : 'is-reference'}`}>
-      {/* v13.5.33 (external review): the reference-mode numbers are DEMOTED —
+      {/* v13.5.34 (external review): the reference-mode numbers are DEMOTED —
           the ablation showed no out-of-sample edge over the base rate, so the
           lead line says so plainly and the digits render muted/uncolored.
           Verified mode (a future state gated on positive OOS skill) keeps

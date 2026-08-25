@@ -158,7 +158,7 @@ def test_references_match_python_authority_resolver(monkeypatch):
     assert references["verificationFailures"] == {}
 
 
-# ━━━ v13.5.33 — SHO CORE production wiring + MARKET VIEW (review items A/B/C) ━━━
+# ━━━ v13.5.34 — SHO CORE production wiring + MARKET VIEW (review items A/B/C) ━━━
 
 def _reset_sho_memos():
     scanner._SHO_PIT_INPUT_MEMO.update({"ts": 0.0, "data": None})
@@ -341,3 +341,32 @@ def test_yahoo_index_mapper_drops_incomplete_bars(monkeypatch):
             assert row["availableFrom"] > row["date"]
     finally:
         _reset_sho_memos()
+
+
+def test_history_fallback_selects_latest_bar_regardless_of_row_order(monkeypatch):
+    """v13.5.34 本番バグ再現: 本番キャッシュは新しい順で届き、closes[-1]が
+    最古バー(2016年)を掴んで日次権限が正しく拒否→全夕方判断がdata-gated。
+    並び順に依存せず最新日付の終値を選ぶこと。"""
+    import argus_market_clock
+    now = datetime.now(timezone.utc)
+    session = argus_market_clock.latest_completed_session_date(
+        argus_market_clock.JP_EQUITY, now)
+    prev = session - timedelta(days=1)
+    descending = [
+        {"date": session.isoformat(), "close": 68220.0},
+        {"date": prev.isoformat(), "close": 68000.0},
+        {"date": "2016-09-06", "close": 12000.0},
+    ]
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "a" * 40)
+    monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot",
+                        lambda **kwargs: {"provider": "jquants", "stocks": []})
+    monkeypatch.setattr(scanner, "_chart_history_cached",
+                        lambda symbol, market: descending)
+    scanner._DECISION_EVIDENCE_CACHE.clear()
+    body = _client().get(
+        "/api/argus/decision-evidence?symbols=1321").get_json()
+    entry = body["subjects"]["1321"]
+    assert str(entry["marketTruth"]["observedAt"])[:10] == session.isoformat()
+    assert entry["marketTruth"]["status"] == "AVAILABLE"
+    assert entry["predictionLedger"]["status"] == "AVAILABLE"
+    scanner._DECISION_EVIDENCE_CACHE.clear()
