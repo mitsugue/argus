@@ -347,7 +347,7 @@ def test_admin_audit_view_is_gated_and_answers_why(monkeypatch, news_env):
                for r in rows)
 
 
-# ━━━ v13.5.28 — durable source acceptance + classification-first display ━━━
+# ━━━ v13.5.29 — durable source acceptance + classification-first display ━━━
 
 def _seed_event(eid, family, severity, title, ja, received):
     return {
@@ -440,7 +440,7 @@ def test_material_english_event_surfaces_before_translation(tmp_path, monkeypatc
     assert body["pendingTranslationCount"] >= 1
 
 
-# ━━━ v13.5.28 — quarantine review (owner directive 2026-08-24) ━━━
+# ━━━ v13.5.29 — quarantine review (owner directive 2026-08-24) ━━━
 
 def test_review_quarantine_pure_verdicts():
     import argus_news_intelligence as ni
@@ -559,7 +559,7 @@ def test_quarantine_review_reports_unavailable_messages(tmp_path, monkeypatch):
 
 
 def test_source_acceptance_pending_translation_consults_ja_cache(tmp_path, monkeypatch):
-    """v13.5.28 (live finding): 翻訳は表示時にJAキャッシュから適用されるため、
+    """v13.5.29 (live finding): 翻訳は表示時にJAキャッシュから適用されるため、
     受理テーブルのpendingTranslationもキャッシュを照合しないと翻訳済みを
     永遠に「要約待ち」と数え続ける。"""
     _reset_news_store(tmp_path, monkeypatch)
@@ -582,7 +582,7 @@ def test_source_acceptance_pending_translation_consults_ja_cache(tmp_path, monke
         scanner._NEWS_JA_CACHE.pop(key, None)
 
 
-# ━━━ v13.5.28 — Sol escalation wiring + pricing registry ━━━
+# ━━━ v13.5.29 — Sol escalation wiring + pricing registry ━━━
 
 def _reset_ai_state():
     scanner._NEWS_INTEL["aiCache"] = {}
@@ -660,7 +660,7 @@ def test_model_pricing_registry_holds_current_official_prices():
 
 
 def test_provider_status_exposes_last_pings(monkeypatch):
-    """v13.5.28: ping結果はサーバ側に記録され、クライアントtimeoutでも
+    """v13.5.29: ping結果はサーバ側に記録され、クライアントtimeoutでも
     requested/returnedモデルの実測が後から読める。"""
     monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "ping-test")
     scanner._AI_PROVIDER_LAST_PING["openai:gpt-5.6-sol"] = {
@@ -675,3 +675,47 @@ def test_provider_status_exposes_last_pings(monkeypatch):
             "returnedModel"] == "gpt-5.6-sol-2026"
     finally:
         scanner._AI_PROVIDER_LAST_PING.clear()
+
+
+# ━━━ v13.5.29 — OpenAI fallback for material headlines (live finding) ━━━
+
+def test_material_headline_openai_fallback(tmp_path, monkeypatch):
+    """Gemini flashが空応答を返し続けた制裁系HIGH見出し(実測)は、試行上限後に
+    OpenAIで1回だけ翻訳し、以後どのレーンも再試行しない(99)。"""
+    _reset_news_store(tmp_path, monkeypatch)
+    title = "Treasury Expands Iran-Related Secondary Sanctions Authorities"
+    h = scanner.argus_news_i18n.text_hash(title)
+    ev = _seed_event("e-mat", "US_TREASURY", "HIGH", title, "",
+                     "2026-08-26T00:00:00Z")
+    ev["headlineJa"] = ""
+    scanner._NEWS_INTEL["events"]["e-mat"] = ev
+    scanner._NEWS_JA_CACHE.pop(h, None)
+    scanner._NEWS_JA_FAILED[h] = scanner.argus_news_i18n.TRANSLATE_MAX_ATTEMPTS
+    calls = []
+
+    def fake_prose(user, max_out=600, system=None, *, purpose="prose",
+                   event_id="", event_phase="", model=None, diagnostic=None):
+        calls.append(purpose)
+        return {"ja": "米財務省、対イラン二次制裁の対象を拡大"}
+
+    monkeypatch.setattr(scanner, "_openai_prose", fake_prose)
+    try:
+        done = scanner._news_material_translation_fallback()
+        assert done == 1 and calls == ["headline_translation"]
+        assert scanner._NEWS_JA_CACHE[h]["ja"].startswith("米財務省")
+        assert scanner._NEWS_JA_FAILED[h] == 99
+        # 二度目は何もしない(恒久確定)
+        assert scanner._news_material_translation_fallback() == 0
+        assert len(calls) == 1
+        # geminiレーンがまだ所有している(上限未満)タイトルは触らない
+        h2 = scanner.argus_news_i18n.text_hash("Another headline pending")
+        ev2 = _seed_event("e-own", "US_TREASURY", "HIGH",
+                          "Another headline pending", "",
+                          "2026-08-26T00:00:00Z")
+        ev2["headlineJa"] = ""
+        scanner._NEWS_INTEL["events"]["e-own"] = ev2
+        scanner._NEWS_JA_FAILED[h2] = 1
+        assert scanner._news_material_translation_fallback() == 0
+    finally:
+        scanner._NEWS_JA_CACHE.pop(h, None)
+        scanner._NEWS_JA_FAILED.clear()

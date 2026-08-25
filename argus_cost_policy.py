@@ -5,7 +5,7 @@ Pure/stdlib-only.  Market-data providers are deliberately outside this policy.
 The default is fail-closed DETERMINISTIC: cached AI output remains readable, but
 no OpenAI/Gemini/Anthropic request is authorized automatically.
 
-v13.5.28 (owner directive 2026-08-23 「有効にして」): SCHEDULED_AI mode allows
+v13.5.29 (owner directive 2026-08-23 「有効にして」): SCHEDULED_AI mode allows
 ONLY the news-mail pipeline's two bounded purposes (headline_translation,
 news_intel) to run automatically, under a dedicated daily USD budget computed
 from recorded usage.  Every other purpose in this mode behaves exactly like

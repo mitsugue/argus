@@ -156,7 +156,7 @@ def test_low_single_outlet_stays_off_shock_surface():
     assert view["eventCount"] == 0
 
 
-# ━━━ v13.5.28 — official sensor lane carries the direction vocabulary ━━━
+# ━━━ v13.5.29 — official sensor lane carries the direction vocabulary ━━━
 
 def test_long_end_rates_shock_carries_rates_up_direction():
     """Review item 3: the US30Y spike sensor must speak the SAME direction

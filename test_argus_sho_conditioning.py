@@ -153,7 +153,7 @@ def test_conditioned_forecast_is_deterministic():
 
 
 def test_source_misconfiguration_is_reported_not_silent(monkeypatch):
-    """v13.5.28 (external review item 6): a missing provider KEY must be
+    """v13.5.29 (external review item 6): a missing provider KEY must be
     distinguishable from an honest data gap — the conditioning metadata
     names the broken source instead of the vix dimension just vanishing."""
     bars = _bars(120)
