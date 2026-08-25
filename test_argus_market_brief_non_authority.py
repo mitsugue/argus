@@ -1,4 +1,4 @@
-"""v13.5.32 — MARKET SITUATION BRIEF non-authority guards (owner directive
+"""v13.5.33 — MARKET SITUATION BRIEF non-authority guards (owner directive
 2026-08-26, permanent regression guard).
 
 Invariant: the brief is OUTPUT / EXPLANATION ONLY.

@@ -1,4 +1,4 @@
-"""v13.5.32 — MARKET SITUATION BRIEF (NOW/WHY/NEXT) tests."""
+"""v13.5.33 — MARKET SITUATION BRIEF (NOW/WHY/NEXT) tests."""
 import argus_market_brief as mb
 
 import scanner
@@ -163,3 +163,61 @@ def test_compose_brief_main_risk_uses_shock_headline():
         shock_events=[{"severity": "HIGH", "headlineJa": "米30年債利回り 4.98%",
                        "whyJa": "財政懸念"}])
     assert brief["chips"]["mainRisk"].startswith("米30年債利回り")
+
+
+# ━━━ v13.5.33 — D05 autorefresh + brief chip enum (owner/GPT directives) ━━━
+
+def test_investor_types_autorefresh_feeds_ledger_idempotently(monkeypatch):
+    import argus_market_ledger
+    old_state = dict(scanner._MARKET_LEDGER)
+    scanner._MARKET_LEDGER.clear()
+    scanner._MARKET_LEDGER.update(argus_market_ledger.empty_state())
+    scanner._INVESTOR_TYPES_REFRESH["lastAt"] = 0.0
+    calls = []
+    monkeypatch.setattr(scanner, "_JQUANTS_API_KEY", "test-key")
+    monkeypatch.setattr(scanner, "_jquants_paginated",
+                        lambda path, params: calls.append(path) or [
+                            {"PubDate": "2026-08-21",
+                             "StDate": "2026-08-10", "EnDate": "2026-08-14",
+                             "Section": "TokyoNagoya",
+                             "FrgnBal": 123456}])
+    monkeypatch.setattr(scanner, "_journal", lambda *a, **k: None)
+    monkeypatch.setattr(scanner, "_osint_persist", lambda: None)
+    try:
+        scanner._investor_types_autorefresh()
+        rows = [r for r in scanner._MARKET_LEDGER.get("observations") or []
+                if r.get("seriesId") == "flow.foreign"]
+        assert calls == ["/equities/investor-types"]
+        assert rows, "flow.foreign rows must land in the ledger"
+        assert all(r.get("availableFrom") for r in rows)   # PIT bound
+        # 20h memo → second call is a no-op (no extra provider fetch)
+        scanner._investor_types_autorefresh()
+        assert calls == ["/equities/investor-types"]
+        # memo expiry + same data → dedup keeps the ledger unchanged
+        scanner._INVESTOR_TYPES_REFRESH["lastAt"] = 0.0
+        before = len(scanner._MARKET_LEDGER.get("observations") or [])
+        scanner._investor_types_autorefresh()
+        assert len(scanner._MARKET_LEDGER.get("observations") or []) == before
+    finally:
+        scanner._MARKET_LEDGER.clear()
+        scanner._MARKET_LEDGER.update(old_state)
+        scanner._INVESTOR_TYPES_REFRESH["lastAt"] = 0.0
+
+
+def test_brief_market_view_chip_counts_real_family_enum(monkeypatch):
+    monkeypatch.setattr(scanner, "_sho_market_view", lambda: {
+        "projection": {
+            "reversal": {"reversalState": "RECOVERY_TEST",
+                         "downsideState": "MIXED"},
+            "families": {
+                "D01": {"status": "AVAILABLE", "conditionMet": True},
+                "D02": {"status": "AVAILABLE", "conditionMet": True},
+                "D03": {"status": "AVAILABLE", "conditionMet": None},
+                "D04": {"status": "LICENSE_BLOCKED"},
+                "D05": {"status": "MISSING"},
+                "D06": {"status": "MISSING"},
+                "D07": {"status": "MISSING"},
+            }}})
+    label = scanner._brief_market_view_summary()["label"]
+    assert "成立2/7" in label, label
+    assert "反転:回復試験" in label and "下方:混在" in label

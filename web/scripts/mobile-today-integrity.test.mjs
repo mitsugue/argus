@@ -68,7 +68,7 @@ assert.match(shell, /setAnimDir\(pageDirection\)/);
 
 assert.match(navCss, /--argus-safe-bottom:\s*clamp\(0px,\s*env\(safe-area-inset-bottom,\s*0px\),\s*34px\)/);
 assert.match(navCss, /--argus-mobile-safe-bottom:\s*clamp\(0px,\s*var\(--argus-safe-bottom\),\s*34px\)/);
-// v13.5.32 (owner): symmetric nav geometry — the same visual pad above and
+// v13.5.33 (owner): symmetric nav geometry — the same visual pad above and
 // below the 44px content row, with the FULL hardware inset reserved below
 // the bottom pad (the label row must not crowd the home indicator).
 assert.match(navCss, /--argus-mobile-nav-pad:\s*4px/);

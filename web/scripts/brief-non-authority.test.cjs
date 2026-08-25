@@ -1,4 +1,4 @@
-// v13.5.32 — MARKET SITUATION BRIEF non-authority guard (TS import boundary).
+// v13.5.33 — MARKET SITUATION BRIEF non-authority guard (TS import boundary).
 // Invariant: the brief is OUTPUT/EXPLANATION ONLY. The decision layer
 // (domain/*, useAssetIntel, useDecisionEvidence) must never import or
 // reference it; the ONLY permitted consumer is the Today display card.
