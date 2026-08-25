@@ -99,7 +99,7 @@ def collect_pending(texts: List[str], cache: Dict[str, Dict[str, Any]],
                     failed: Optional[Dict[str, int]] = None,
                     max_attempts: int = TRANSLATE_MAX_ATTEMPTS) -> List[str]:
     """Distinct English headlines not yet in the cache (for the admin translate
-    run). v13.5.29 (live finding): headlines the model repeatedly returns no
+    run). v13.5.30 (live finding): headlines the model repeatedly returns no
     translation for must NOT be re-requested forever — the retry loop burned
     the whole scheduled daily budget on the same stuck batch. `failed` maps
     text_hash → attempt count; hashes at max_attempts are skipped (display
@@ -210,7 +210,7 @@ def collect_visible_pending(items: List[Any], cache: Dict[str, Dict[str, Any]],
 
 
 def validate_translation_batch(raw: Any, expected_n: int) -> Dict[int, str]:
-    """v13.5.29 alignment guard: the batch prompt asks for SAME COUNT, SAME
+    """v13.5.30 alignment guard: the batch prompt asks for SAME COUNT, SAME
     ORDER. If the model returns a different count, positional mapping would
     cache headline B's Japanese under headline A's hash — a silent wrong-pair
     corruption. Any count mismatch discards the whole batch (retry later)."""

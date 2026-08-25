@@ -1,4 +1,4 @@
-// Important-event constraint tiering (v13.5.29, external review item C).
+// Important-event constraint tiering (v13.5.30, external review item C).
 //
 // The reviewer's finding: a flat D/D-1 → WAIT_REQUIRED rule made a medium
 // statistics release carry the same hard constraint as FOMC. The tiered rule:

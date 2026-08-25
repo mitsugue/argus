@@ -1,4 +1,4 @@
-"""v13.5.29 — MARKET SITUATION BRIEF (NOW/WHY/NEXT) tests."""
+"""v13.5.30 — MARKET SITUATION BRIEF (NOW/WHY/NEXT) tests."""
 import argus_market_brief as mb
 
 import scanner
@@ -22,7 +22,7 @@ def test_compose_brief_orders_facts_and_tags_verification():
     brief = mb.compose_brief(
         now_iso="2026-08-26T00:00:00Z",
         market_view_summary={"label": "反転:混在・証拠評価5/7"},
-        shock_events=[{"severity": "HIGH", "titleJa": "米30年金利の急騰",
+        shock_events=[{"severity": "HIGH", "headlineJa": "米30年金利の急騰",
                        "whyJa": "財政懸念による債券売り"}],
         news_events=[_news(confirmed=True)],
         imminent_events=[{"title": "FOMC", "countdown": "D-1",
@@ -146,3 +146,20 @@ def test_market_brief_refresh_polishes_with_ai_and_caches_by_facts(monkeypatch):
     finally:
         scanner._MARKET_BRIEF["data"] = None
         scanner._MARKET_BRIEF["aiFactsHash"] = None
+
+
+def test_compose_brief_shows_placeholder_for_untranslated_material_news():
+    ev = _news()
+    ev["headlineJa"] = "翻訳処理中"
+    brief = mb.compose_brief(now_iso="2026-08-26T00:00:00Z", news_events=[ev])
+    p0 = [f["text"] for f in brief["facts"] if f["priority"] == "P0"]
+    assert any("重要発表（日本語要約 処理中）" in t for t in p0)
+    assert "翻訳処理中。" not in brief["now"]
+
+
+def test_compose_brief_main_risk_uses_shock_headline():
+    brief = mb.compose_brief(
+        now_iso="2026-08-26T00:00:00Z",
+        shock_events=[{"severity": "HIGH", "headlineJa": "米30年債利回り 4.98%",
+                       "whyJa": "財政懸念"}])
+    assert brief["chips"]["mainRisk"].startswith("米30年債利回り")

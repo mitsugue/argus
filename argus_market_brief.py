@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""ARGUS v13.5.29 — MARKET SITUATION BRIEF (pure composer).
+"""ARGUS v13.5.30 — MARKET SITUATION BRIEF (pure composer).
 
 Owner directive 2026-08-26 (+external review conditions): a single Today-top
 card that answers 「今の市場は何が起きているか」 in three parts —
@@ -109,9 +109,12 @@ def compose_brief(*, now_iso: str,
                      and str(e.get("staleness") or "").upper() != "STALE"]
     for event in material_news[:2]:
         confirmed = event.get("confirmationState") == "MARKET_CONFIRMED"
+        headline = str(event.get("headlineJa") or "").strip()
+        if not headline or headline == "翻訳処理中":
+            headline = "重要発表（日本語要約 処理中）"
         facts.append(_fact(
             f"{event.get('sourceLabelJa') or event.get('sourceFamily') or '公式'}: "
-            f"{str(event.get('headlineJa') or '')[:60]}"
+            f"{headline[:60]}"
             f"（{'市場確認済み' if confirmed else '市場確認待ち'}）",
             "P0", "trusted_mail",
             "CORROBORATED" if confirmed else "UNCONFIRMED"))
@@ -119,7 +122,8 @@ def compose_brief(*, now_iso: str,
                      if s.get("severity") in ("HIGH", "CRITICAL")]
     for shock in active_shocks[:2]:
         facts.append(_fact(
-            f"市場ショック: {str(shock.get('titleJa') or shock.get('title') or '')[:60]}",
+            "市場ショック: "
+            f"{str(shock.get('headlineJa') or shock.get('titleJa') or shock.get('title') or '')[:60]}",
             "P0", "official_sensor", "VERIFIED"))
     for event in list(imminent_events)[:2]:
         impact = _IMPACT_JA.get(str(event.get("displayImpact") or ""), "")
@@ -184,7 +188,8 @@ def compose_brief(*, now_iso: str,
         "nextEvent": (f"{str(nearest.get('title') or '')[:26]}"
                       f" · {nearest.get('countdown') or '近日'}"
                       if nearest else "直近の重要イベントなし"),
-        "mainRisk": (str((active_shocks[0].get("titleJa")
+        "mainRisk": (str((active_shocks[0].get("headlineJa")
+                          or active_shocks[0].get("titleJa")
                           or active_shocks[0].get("title") or ""))[:30]
                      if active_shocks else
                      (f"{material_news[0].get('sourceLabelJa') or ''}"
