@@ -509,7 +509,7 @@ def test_analog_retrieval_cost_is_bounded(tmp_path):
     assert elapsed < 0.5
 
 
-# ━━━ v13.5.29 — symmetric INVALIDATED automation (external review item D) ━━━
+# ━━━ v13.5.30 — symmetric INVALIDATED automation (external review item D) ━━━
 
 T3 = "2026-08-22T03:00:00Z"     # 4 days after T2 — beyond the 3-day streak floor
 

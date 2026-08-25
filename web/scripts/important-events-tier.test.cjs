@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// v13.5.29 — important-event constraint tiering (external review item C) and
+// v13.5.30 — important-event constraint tiering (external review item C) and
 // the degraded-feed kernel split (item F).
 //
 // Proves:
@@ -100,13 +100,13 @@ assert.ok(store.includes("view.actionAuthority === false ? view : null"),
 
 console.log('important-events-tier.test: ok (tiering, uncapped gate, kernel split, market view)');
 
-// ── v13.5.29 NEWS/EVENT DIRECTIONAL IMPACT (structural contract) ──────────
+// ── v13.5.30 NEWS/EVENT DIRECTIONAL IMPACT (structural contract) ──────────
 // News may only BLOCK new buying, only after MARKET confirmation; the Today
 // surface renders chart view / news view / action as three separate
 // judgments with no summation anywhere.
 assert.ok(hook.includes("primitiveFactorId: 'news.market_impact_confirmed'"),
   'news constraint must be its own primitive');
-// v13.5.29: the gate itself lives in domain/newsSignalGate (per-subject
+// v13.5.30: the gate itself lives in domain/newsSignalGate (per-subject
 // relevance) and is proven EXECUTABLY by news-signal-gate.test.cjs — here we
 // only pin the wiring and the BLOCK_BUY-only vocabulary.
 assert.ok(hook.includes("newsKernelGate(newsEvents"),
@@ -128,7 +128,7 @@ assert.ok(panel2.includes('ニュースは売買権限を持たない'),
 
 console.log('important-events-tier.test: news directional impact contract ok');
 
-// ── v13.5.29 — calendar OUTAGE must not data-gate every symbol ────────────
+// ── v13.5.30 — calendar OUTAGE must not data-gate every symbol ────────────
 const unknownBlock = hook.slice(hook.indexOf('if (importantEventsUnknown) {'),
   hook.indexOf('} else if (gateEntry) {'));
 assert.ok(unknownBlock.includes("constraint: 'BLOCK_BUY'")
@@ -142,4 +142,4 @@ for (const file of ['../src/components/today/ArgusTodayPanel.tsx',
   const visible = text.match(/['"`>][^'"`<\n]*(（SDA）|（SHO）|はSDA|SDAの|SDA正本|SHO証拠)[^'"`<\n]*['"`<]/);
   assert.ok(!visible, `internal jargon leaked to UI in ${file}: ${visible && visible[0]}`);
 }
-console.log('important-events-tier.test: v13.5.29 outage softening + jargon-free UI ok');
+console.log('important-events-tier.test: v13.5.30 outage softening + jargon-free UI ok');
