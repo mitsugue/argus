@@ -1,7 +1,7 @@
 {
- "asOf": "2026-08-24T08:01:08Z",
+ "asOf": "2026-08-25T07:05:30Z",
  "dailyBudgetUsd": 5.0,
- "day": "2026-08-24",
+ "day": "2026-08-25",
  "dayRemainingUsd": 5.0,
  "daySpentUsd": 0.0,
  "emergencyReserveUsd": 2.0,
@@ -32,13 +32,22 @@
    "out": 10.0
   },
   "gpt-5.6-sol": {
-   "in": 5.0,
-   "out": 30.0
+   "cachedIn": 0.4,
+   "in": 4.0,
+   "out": 20.0
   },
   "gpt-5.6-terra": {
-   "in": 2.5,
-   "out": 15.0
+   "cachedIn": 0.2,
+   "in": 2.0,
+   "out": 12.0
   }
+ },
+ "pricingPolicy": {
+  "effectiveDate": "2026-08-25",
+  "noteJa": "GPT-5.6 Sol=$4/$20(cached入力$0.40)はプロモーション価格(公式保証は2026-11-21まで)。Terra=$2/$12。期日までに公式ページで再検証する。恒久扱いにしない。",
+  "revalidateBy": "2026-11-21",
+  "solPromotionalThrough": "2026-11-21",
+  "sourceUrl": "https://developers.openai.com/api/docs/pricing"
  },
  "recentRuns": []
 }
