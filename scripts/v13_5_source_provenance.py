@@ -41,6 +41,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # bounded cost-policy mode + quarantine review. Decision authority remains
     # deterministic and fail-closed.
     "argus_cost_policy.py",
+    "smoke_test.py",
     "argus_market_brief.py",
     "test_argus_market_brief.py",
     "test_argus_market_brief_non_authority.py",
