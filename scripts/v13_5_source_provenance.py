@@ -18,14 +18,14 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.30"
+PRODUCT_VERSION = "v13.5.31"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
-    # v13.5.30 owner-functional correction: compact iPhone navigation, concise
+    # v13.5.31 owner-functional correction: compact iPhone navigation, concise
     # Japanese news projection, source-diverse market evidence, and semantic
     # de-duplication of recurring long-end-rate conditions.  Investment and
     # calibration authority stay outside this list and remain fail-closed.
@@ -37,7 +37,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # diagnostics), the checkpoint-v2 capacity budgets, and the v13.5.x
     # identity. The accepted baseline is the LIVE v13.5.0 release
     # (f79548bb…); anything outside this list fails the release closed.
-    # v13.5.30 SCHEDULED_AI enablement (owner 「有効にして」 2026-08-23/24):
+    # v13.5.31 SCHEDULED_AI enablement (owner 「有効にして」 2026-08-23/24):
     # bounded cost-policy mode + quarantine review. Decision authority remains
     # deterministic and fail-closed.
     "argus_cost_policy.py",
@@ -137,14 +137,14 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/src/components/today/ArgusToday.css",
     "web/src/components/today/ArgusTodayPanel.tsx",
     "web/src/hooks/useAssetIntel.ts",
-    # v13.5.30 (external-review conformance batch): SHO CORE production
+    # v13.5.31 (external-review conformance batch): SHO CORE production
     # wiring (item B), MARKET VIEW/ACTION separation display (item A), event
     # constraint tiering + uncapped imminent feed (item C), and the
     # degraded-feed kernel split (item F).
     "web/src/domain/importantEventsTier.ts",
     "web/src/domain/newsSignalGate.ts",
     "web/scripts/news-signal-gate.test.cjs",
-    # v13.5.30 owner directive: internal engine names removed from every
+    # v13.5.31 owner directive: internal engine names removed from every
     # user-visible surface (jargon-free UI sweep).
     "web/src/components/dashboard/DownsideIncidentCard.tsx",
     "web/src/domain/assetDecision.ts",
@@ -170,7 +170,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/src/routes/PageShell.tsx",
     "web/src/routes/Watchlist.tsx",
     "web/src/types/assetItem.ts",
-    # v13.5.30 owner spec conformance (2026-08-22): news-risk ⊥ market
+    # v13.5.31 owner spec conformance (2026-08-22): news-risk ⊥ market
     # confirmation, tri-state Action Priority context, honest probability-truth
     # evidence, the canonical artifact resolver boundary (backend
     # decision-evidence route + device resolver + SDA registration seam),

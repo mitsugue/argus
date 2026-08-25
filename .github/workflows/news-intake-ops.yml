@@ -40,7 +40,7 @@ jobs:
           [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token"; exit 1; }
           case "${{ inputs.action }}" in
             ai-ping)
-              # Model-currency proof (v13.5.30): confirmed minimal pings for
+              # Model-currency proof (v13.5.31): confirmed minimal pings for
               # Terra, Sol and the Gemini judge — requested vs returned model.
               for TARGET in "openai " "openai ?model=sol" "gemini "; do
                 P="${TARGET%% *}"; Q="${TARGET##* }"
