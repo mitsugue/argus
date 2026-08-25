@@ -137,7 +137,7 @@ def test_translation_queue_status_and_samples():
     assert s[0]["source"] == "AP" and "hash" in s[0]
 
 
-# ━━━ v13.5.27 — translation retry-loop and alignment guards (live finding) ━━━
+# ━━━ v13.5.28 — translation retry-loop and alignment guards (live finding) ━━━
 
 def test_validate_translation_batch_rejects_count_mismatch():
     ok = NI.validate_translation_batch(

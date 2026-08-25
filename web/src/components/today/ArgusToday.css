@@ -235,3 +235,15 @@
 .at-shock-head mark.is-dir-bearish{background:rgba(255,120,120,.16);color:#ff9c9c}
 .at-shock-head mark.is-dir-bullish{background:rgba(110,220,170,.16);color:#7fd8a8}
 .at-shock-head mark.is-dir-mixed{background:rgba(255,255,255,.10);color:var(--text-sub)}
+
+/* v13.5.28 MARKET SITUATION BRIEF (NOW/WHY/NEXT + glance chips) */
+.at-brief{display:flex;flex-direction:column;gap:5px;padding:8px 10px;
+  border:1px solid var(--line,#2a2f3a);border-radius:8px;margin-top:8px}
+.at-brief small{opacity:.65;letter-spacing:.06em;font-size:10px}
+.at-brief__rows{display:flex;flex-direction:column;gap:3px}
+.at-brief__rows div{display:flex;gap:8px;align-items:baseline}
+.at-brief__rows b{flex:0 0 56px;font-size:11px;opacity:.8}
+.at-brief__rows span{font-size:12px;line-height:1.45}
+.at-brief__chips{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:11px;
+  opacity:.9}
+.at-brief__chips b{font-weight:600}

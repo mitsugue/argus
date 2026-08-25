@@ -499,4 +499,4 @@ def test_timer_secret_isolation_workflow_bound_and_deploy_scope():
         "test_remote_journal_rearm.py",
     ])["backendDeploy"] is False
     assert json.loads(Path("backend-version.json").read_text())[
-        "version"] == "13.5.27"
+        "version"] == "13.5.28"

@@ -372,7 +372,7 @@ def test_envelope_carries_source_family_and_tier():
     assert event["source"] == "FRB"
 
 
-# ━━━ v13.5.27 — NEWS/EVENT DIRECTIONAL IMPACT (owner spec 2026-08-23) ━━━
+# ━━━ v13.5.28 — NEWS/EVENT DIRECTIONAL IMPACT (owner spec 2026-08-23) ━━━
 
 def _tax(family):
     return {"eventType": family, "families": [family], "themeTags": [],
@@ -474,7 +474,7 @@ def test_direction_rides_the_news_event_record():
     assert event["sdaAuthority"] is False
 
 
-# ━━━ v13.5.27 — hostile polarity fixtures (external review BLOCKER 3) ━━━
+# ━━━ v13.5.28 — hostile polarity fixtures (external review BLOCKER 3) ━━━
 
 def test_negated_cues_do_not_mint_a_direction():
     """「攻撃を否定」「停戦合意には至らず」「利上げを見送り」「上昇が一服」—
@@ -520,7 +520,7 @@ def test_confirmation_requires_hypothesis_direction():
     assert "rates_move" in opposite["contradictedSignals"]
 
 
-# ━━━ v13.5.27 — Sol escalation routing (external review 2026-08-25) ━━━
+# ━━━ v13.5.28 — Sol escalation routing (external review 2026-08-25) ━━━
 
 def test_sol_escalation_routes_only_consequential_or_difficult():
     routine = ni.escalation_decision(
