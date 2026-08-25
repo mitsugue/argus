@@ -1,4 +1,4 @@
-"""v13.5.30 — MARKET SITUATION BRIEF (NOW/WHY/NEXT) tests."""
+"""v13.5.31 — MARKET SITUATION BRIEF (NOW/WHY/NEXT) tests."""
 import argus_market_brief as mb
 
 import scanner

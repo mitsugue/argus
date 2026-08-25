@@ -1,4 +1,4 @@
-// News → execution-constraint gate (v13.5.30, external review BLOCKERs 2/5).
+// News → execution-constraint gate (v13.5.31, external review BLOCKERs 2/5).
 //
 // The direction signal is PER TARGET; the kernel constraint must therefore be
 // PER SUBJECT: an energy-only bearish headline may not block buying an index

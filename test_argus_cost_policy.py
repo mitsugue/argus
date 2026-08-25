@@ -63,7 +63,7 @@ class CostPolicyTests(unittest.TestCase):
         self.assertFalse(view["automaticAiEnabled"])
         self.assertNotIn("apiKey", view)
 
-    # ── v13.5.30 SCHEDULED_AI (owner 2026-08-23 「有効にして」) ──
+    # ── v13.5.31 SCHEDULED_AI (owner 2026-08-23 「有効にして」) ──
     def test_scheduled_ai_allows_only_the_two_news_purposes(self):
         state = cp.default_state("SCHEDULED_AI")
         for purpose in cp.SCHEDULED_PURPOSES:
