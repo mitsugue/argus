@@ -91,7 +91,7 @@ def resolve_source(*, from_domain: str, display_name: str = "",
     return None
 
 
-# ── Quarantine review (v13.5.33, owner directive 2026-08-24) ────────────────
+# ── Quarantine review (v13.5.34, owner directive 2026-08-24) ────────────────
 # A historical quarantine is either protection (auth really fails) or a
 # profile gap (official mail the CURRENT auth+resolver would accept). The
 # distinction matters: a false quarantine of an FRB/BLS subscription format
@@ -472,7 +472,7 @@ _HIGH_IMPACT_FAMILIES = {
     "INFLATION", "EMPLOYMENT",
 }
 
-# ── Sol escalation routing (v13.5.33, external review 2026-08-25) ───────────
+# ── Sol escalation routing (v13.5.34, external review 2026-08-25) ───────────
 # Terra reads EVERY substantive trusted mail (routine/low-value mail never
 # reaches AI at all); the frontier Sol model is called ONLY when the case is
 # consequential or difficult. Closed reason vocabulary; the decision is pure
@@ -568,7 +568,7 @@ _EXTREME_PHRASES = (
 
 
 def has_extreme_language(subject: str, excerpt: str = "") -> bool:
-    """Pure difficulty signal for Sol escalation (v13.5.33)."""
+    """Pure difficulty signal for Sol escalation (v13.5.34)."""
     haystack = _lower(subject) + "\n" + _lower(excerpt)[:2000]
     return any(phrase in haystack for phrase in _EXTREME_PHRASES)
 
@@ -970,7 +970,7 @@ def build_news_event(*, message: Mapping[str, Any],
         confirmation_state=materiality["confirmationState"],
         impact_direction=impact_direction)
     return {
-        # v13.5.33 NEWS/EVENT DIRECTIONAL IMPACT: an independent axis beside
+        # v13.5.34 NEWS/EVENT DIRECTIONAL IMPACT: an independent axis beside
         # severity and market confirmation. Display + evidence only.
         "impactDirection": impact_direction,
         "executionConstraint": execution_constraint,

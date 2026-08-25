@@ -831,14 +831,31 @@ def test_official_close_is_explicit_delayed_and_runner_eligible_at_1605_jst():
 
 
 def test_stale_quote_is_never_admitted_to_canonical_predictions():
-    decision_at = "2026-08-16T19:00:00Z"
+    # v13.5.34: a THURSDAY close two days later is genuinely stale (a newer
+    # session existed). The old fixture used a FRIDAY close on Sunday night,
+    # which the weekend daily-authority window now correctly keeps DELAYED.
+    decision_at = "2026-08-15T19:00:00Z"
     projection = _projection(
         quote_rows=[("JP", "jquants", _jquants_row(
+            date="2026-08-13", sourceTimestamp="2026-08-13",
             receivedAt=decision_at))],
-        decision_at=decision_at, generated_at="2026-08-16T19:00:01Z")
+        decision_at=decision_at, generated_at="2026-08-15T19:00:01Z")
     assert projection["status"] == "INCOMPLETE"
     assert projection["truthQualityComplete"] is False
     assert projection["issuedDecisions"] == []
+
+
+def test_friday_close_stays_delayed_through_the_weekend():
+    """v13.5.34 (owner/GPT #8): no newer session exists between Friday close
+    and Monday close — Sunday night must classify the Friday official close
+    as DELAYED daily evidence, not STALE."""
+    decision_at = "2026-08-16T19:00:00Z"          # Sunday 19:00Z
+    projection = _projection(
+        quote_rows=[("JP", "jquants", _jquants_row(
+            receivedAt=decision_at))],            # Friday 08-14 close
+        decision_at=decision_at, generated_at="2026-08-16T19:00:01Z")
+    assert projection["status"] == "COMPLETE"
+    assert projection["truthQualityComplete"] is True
 
 
 def test_mock_provider_alternate_never_enters_truth_or_dissent():

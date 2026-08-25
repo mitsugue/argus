@@ -467,3 +467,41 @@ class SingleDecisionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DailyBasisFreshnessTests(unittest.TestCase):
+    """v13.5.34 (owner discussion + external review #8): a FIVE_DAY decision
+    runs on the latest COMPLETED session close. In mixed states (some
+    reference degraded), DELAYED quality must not ADD a freshness gate code;
+    STALE/UNKNOWN still must. (When every reference is AVAILABLE the verifier
+    already enforces COMPLETE/FRESH, so the mixed state is the only shape
+    where this gate is reachable.)"""
+
+    def _decide_with_freshness(self, freshness):
+        from argus_single_decision import (
+            MISSING_SHO_REFERENCE, evaluate_single_decision_authority)
+        request, artifacts = complete_request()
+        request["sho"] = {**dict(MISSING_SHO_REFERENCE),
+                          "primitiveFactorIds": [], "targets": [],
+                          "invalidation": None}
+        request["quality"] = {"status": "PARTIAL", "freshness": freshness,
+                              "missingReasonCodes": ["sho_missing"],
+                              "conflictReasonCodes": []}
+        verified = verify_decision_evidence(
+            request,
+            market_truth_artifact=artifacts[0],
+            prediction_ledger_artifact=artifacts[1],
+            sho_artifact=None)
+        return evaluate_single_decision_authority(verified)
+
+    def test_delayed_official_close_adds_no_freshness_gate(self):
+        result = self._decide_with_freshness("DELAYED")
+        self.assertFalse([c for c in result["missingReasonCodes"]
+                          if c.startswith("freshness_")],
+                         result["missingReasonCodes"])
+
+    def test_stale_and_unknown_still_gate(self):
+        for freshness in ("STALE", "UNKNOWN"):
+            result = self._decide_with_freshness(freshness)
+            self.assertIn(f"freshness_{freshness.lower()}",
+                          result["missingReasonCodes"])

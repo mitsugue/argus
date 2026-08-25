@@ -722,7 +722,7 @@ def v_downside_carries_mover_cause():
     incs = d.get("incidents") or []
     if not incs:
         return True, "no active incidents (shape n/a)"
-    # v13.5.33: a fresh deploy restarts the process with an empty mover-cause
+    # v13.5.34: a fresh deploy restarts the process with an empty mover-cause
     # cache; if a REAL incident exists in that window the ladder can lag one
     # enrichment cycle. Retry once after 90s — persistent absence still fails.
     if any(not (inc.get("moverCause") or {}).get("causeStatus") for inc in incs):
