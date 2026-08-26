@@ -1,6 +1,7 @@
 name: memory-attribution
 
 on:
+  workflow_dispatch: {}
   pull_request:
     paths:
       - ".github/workflows/memory-attribution.yml"
@@ -21,6 +22,7 @@ on:
       - "argus_asset_chart_cache.py"
       - "argus_verified_snapshot.py"
       - "argus_checkpoint_v2_isolated.py"
+      - "test_argus_checkpoint_v2_isolated.py"
       - "docs/argus-deep-memory-attribution.md"
       - "scanner.py"
       - "argus_recovery_measurement.py"
@@ -108,10 +110,12 @@ on:
       - "codex/normalized-hash-memory-hotfix"
       - "codex/recovery-*"
     paths:
+      - ".github/workflows/memory-attribution.yml"
       - "argus_memory_attribution.py"
       - "argus_asset_chart_cache.py"
       - "argus_verified_snapshot.py"
       - "argus_checkpoint_v2_isolated.py"
+      - "test_argus_checkpoint_v2_isolated.py"
       - "docs/argus-deep-memory-attribution.md"
       - "scanner.py"
       - "argus_recovery_measurement.py"
