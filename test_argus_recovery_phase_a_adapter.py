@@ -190,11 +190,12 @@ def test_startup_uses_only_canonical_resolver_and_in_process_rlock(
     adapter._lock.release()
 
 
-def test_exact_five_scalar_producers_bind_registry_and_remain_incomplete(
+def test_exact_six_scalar_producers_bind_registry_and_remain_incomplete(
         monkeypatch, tmp_path):
     adapter, decision = _start_adapter(monkeypatch, tmp_path)
     expected = (
         "core.ops_journal_transition",
+        "market.ledger_update",
         "core.mission_transition",
         "core.batch_cursor",
         "durability.receipt_ack",
@@ -231,7 +232,7 @@ def test_exact_five_scalar_producers_bind_registry_and_remain_incomplete(
     assert artifact["coverageStatus"] == "INCOMPLETE"
     assert artifact["proofStatus"] == "NOT_PROVEN"
     assert artifact["acceptanceClockStarted"] is False
-    assert artifact["aggregateCounters"]["lifetimeMutationCount"] == 5
+    assert artifact["aggregateCounters"]["lifetimeMutationCount"] == 6
     assert artifact["coverage"]["instrumentedMutationClassIds"] == \
         sorted(expected)
     assert artifact["coverage"]["expectedMutationClassCount"] == 27
@@ -243,6 +244,7 @@ def test_exact_five_scalar_producers_bind_registry_and_remain_incomplete(
     }
     assert classifications == {
         "core.ops_journal_transition": "OBSERVED_UNDURABLE",
+        "market.ledger_update": "OBSERVED_UNDURABLE",
         "core.mission_transition": "OBSERVED_UNDURABLE",
         "core.batch_cursor": "OBSERVED_UNDURABLE",
         "durability.receipt_ack": "OBSERVED_DURABLE",
@@ -250,7 +252,7 @@ def test_exact_five_scalar_producers_bind_registry_and_remain_incomplete(
     }
 
 
-def test_mutation_boundary_is_scalar_only_and_rejects_sixth_class(
+def test_mutation_boundary_is_scalar_only_and_rejects_seventh_class(
         monkeypatch, tmp_path):
     adapter, _decision = _start_adapter(monkeypatch, tmp_path)
     parameters = inspect.signature(
@@ -267,6 +269,9 @@ def test_mutation_boundary_is_scalar_only_and_rejects_sixth_class(
     } & set(parameters)
     assert adapter.record_mutation_after_authority(
         "market.ledger_update", estimated_plaintext_bytes=1,
+        record_count=1, latency_micros=1, observed_at=START) == "recorded"
+    assert adapter.record_mutation_after_authority(
+        "market.calendar_update", estimated_plaintext_bytes=1,
         record_count=1, latency_micros=1,
         observed_at=START) == "invalid_observation"
     assert adapter.record_mutation_after_authority(
@@ -1110,6 +1115,30 @@ def test_verified_receipt_uses_exact_zero_count_sequence_and_completion_time(
     observer_call = source[observer_index:]
     assert "datetime.now(pytz.utc)" in observer_call
     assert "now_iso)" not in observer_call.split("\n", 2)[1]
+
+
+def test_d05_market_ledger_observation_requires_verified_checkpoint(
+        monkeypatch, scanner_recovery_state):
+    probe = _ScannerAdapterProbe()
+    monkeypatch.setattr(scanner, "_RECOVERY_PHASE_A_ADAPTER", probe)
+    result = {"preview": [{"seriesId": "flow.foreign", "value": 1}]}
+    scanner._recovery_phase_a_finish_market_ledger_observation(
+        1, result, {"verified": False})
+    assert probe.mutations == []
+    scanner._recovery_phase_a_finish_market_ledger_observation(
+        1, result, {"verified": True})
+    assert len(probe.mutations) == 1
+    mutation_id, scalars = probe.mutations[0]
+    assert mutation_id == "market.ledger_update"
+    assert scalars["record_count"] == 1
+    assert scalars["estimated_plaintext_bytes"] > 0
+    assert scalars["latency_micros"] >= 0
+
+    source = inspect.getsource(scanner._investor_types_autorefresh)
+    persist_index = source.index("checkpoint = _osint_persist()")
+    observer_index = source.index(
+        "_recovery_phase_a_finish_market_ledger_observation")
+    assert persist_index < observer_index
 
 
 def test_startup_observation_is_once_only_and_never_failed_safe(

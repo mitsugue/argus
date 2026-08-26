@@ -50,6 +50,10 @@ PRODUCER_SEAMS: Tuple[ProducerSeam, ...] = (
         "core.ops_journal_transition", "_journal",
         "after journal authority and required WAL/checkpoint success", "all"),
     ProducerSeam(
+        "market.ledger_update", "_investor_types_autorefresh",
+        "after verified legacy checkpoint",
+        "eventType=market_ledger_investor_types_autorefresh"),
+    ProducerSeam(
         "core.mission_transition", "_append_tick_wal",
         "after WAL append and fsync success", "kind=mission_transition"),
     ProducerSeam(

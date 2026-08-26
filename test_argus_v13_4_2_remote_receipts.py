@@ -31,7 +31,8 @@ HASH = "d" * 16
 NOW = "2026-08-05T03:00:00Z"
 
 
-def _accept(store, number, target=None, *, commit=None, accepted_at=NOW):
+def _accept(store, number, target=None, *, commit=None, accepted_at=NOW,
+            expected_receipt_hash=None):
     return queue.accept_intent(
         store,
         idempotency_key=f"caos-receipt-{number:04d}-{target or number:06d}",
@@ -40,6 +41,7 @@ def _accept(store, number, target=None, *, commit=None, accepted_at=NOW):
         expected_hash=f"{number:016x}"[-16:],
         target_wal_sequence=target if target is not None else number,
         accepted_at=accepted_at,
+        expected_receipt_hash=expected_receipt_hash,
     )
 
 
@@ -48,6 +50,16 @@ def _store(count=1):
     rows = []
     for number in range(1, count + 1):
         state, row, _ = _accept(state, number)
+        rows.append(row)
+    return state, rows
+
+
+def _current_legacy_store(count=1):
+    state = queue.empty_store()
+    rows = []
+    for number in range(1, count + 1):
+        state, row, _ = _accept(
+            state, number, expected_receipt_hash=f"{number:016x}")
         rows.append(row)
     return state, rows
 
@@ -79,7 +91,7 @@ def _legacy_receipt_readback():
     return journal.compact_readback_snapshot(snapshot)
 
 
-def _verify_selected(sequence, *, commit=None):
+def _verify_selected(sequence, *, commit=None, receipt_hash=None):
     def verify(now_iso=None, blob=None):
         scanner._REMOTE_CYCLE.update({
             "readBackVerified": True,
@@ -93,6 +105,8 @@ def _verify_selected(sequence, *, commit=None):
             "walErrorClass": None,
             "errorClass": None,
         })
+        if receipt_hash is not None:
+            scanner._REMOTE_CYCLE["compactReceiptHash"] = receipt_hash
         return {"verificationStatus": "verified"}
     return verify
 
@@ -234,56 +248,241 @@ def test_accepted_intent_survives_restart_and_status_is_public_safe():
     assert status["remoteCommitSha"] == receipt["remoteCommitSha"]
 
 
-def test_33_distinct_commits_ack_oldest_exact_intent_without_regression():
-    scanner._REMOTE_RECEIPT_QUEUE, rows = _store(33)
+def test_full_bounded_legacy_queue_coalesces_to_highest_cumulative_intent():
+    count = queue.MAX_RECEIPTS
+    scanner._REMOTE_RECEIPT_QUEUE, rows = _current_legacy_store(count)
     with mock.patch.object(scanner, "_persist_remote_receipt_queue",
                            side_effect=_persist_in_memory), \
+            mock.patch.object(scanner, "_verified_remote_receipt_artifact",
+                              return_value={}), \
             mock.patch.object(scanner, "_remote_readback_ack",
-                              side_effect=_verify_selected(1)), \
+                              side_effect=_verify_selected(
+                                  count, receipt_hash=f"{count:016x}")), \
             mock.patch.object(scanner, "_journal_compact", return_value=0), \
             mock.patch.object(scanner, "_osint_persist",
                               return_value={"verified": True}) as checkpoint:
         result = scanner._persist_with_remote_receipt_drain(NOW)
     checkpoint.assert_called_once_with()
     flush = result["remoteReceiptFlush"]
-    assert flush["coalescedReceiptCount"] == 1
-    assert flush["targetWalSequence"] == 1
-    assert flush["queueBefore"] == 33
-    assert flush["queueAfter"] == 32
+    assert flush["coalescedReceiptCount"] == count
+    assert flush["targetWalSequence"] == count
+    assert flush["queueBefore"] == count
+    assert flush["queueAfter"] == 0
     assert flush["checkpointCreated"] is True
     assert sum(row["durabilityState"] == "verified"
-               for row in scanner._REMOTE_RECEIPT_QUEUE["receipts"]) == 1
+               for row in scanner._REMOTE_RECEIPT_QUEUE["receipts"]) == count
     assert {row["receiptId"] for row in rows} == {
         row["receiptId"] for row in scanner._REMOTE_RECEIPT_QUEUE["receipts"]}
     first_status = queue.status_view(
         scanner._REMOTE_RECEIPT_QUEUE["receipts"][0], now_iso=NOW)
     assert first_status["remoteCommitSha"] == f"{1:040x}"
-    assert first_status["verifiedByRemoteCommitSha"] == f"{1:040x}"
+    assert first_status["verifiedByRemoteCommitSha"] == f"{count:040x}"
     last_status = queue.status_view(
         scanner._REMOTE_RECEIPT_QUEUE["receipts"][-1], now_iso=NOW)
-    assert last_status["verifiedByRemoteCommitSha"] is None
+    assert last_status["verifiedByRemoteCommitSha"] == f"{count:040x}"
+
+
+def test_scheduled_receipt_arrival_capacity_fits_one_bounded_drain():
+    workflows = pathlib.Path(".github/workflows")
+    producers = sorted(
+        path.name for path in workflows.glob("*.yml")
+        if "remote-journal/commit-receipt" in path.read_text(encoding="utf-8"))
+    assert producers == ["caos-scan.yml", "caos-watchtower.yml"]
+
+    watchtower = pathlib.Path(
+        workflows, "caos-watchtower.yml").read_text(encoding="utf-8")
+    ordinary_watchtower = watchtower.split("  remote-journal-rearm:", 1)[0]
+    scan = pathlib.Path(
+        workflows, "caos-scan.yml").read_text(encoding="utf-8")
+    assert ordinary_watchtower.count("remote-journal/commit-receipt") == 1
+    assert scan.count("remote-journal/commit-receipt") == 1
+    assert "cron: '*/15 * * * 1-5'" in watchtower
+    assert "cron: '7-59/15 * * * 1-5'" in watchtower
+    assert "cron: '7,37 * * * *'" in scan
+
+    # Between natural :07/:37 boundaries the ordinary scheduled maximum is
+    # four Watchtower invocations plus one C.A.O.S. scan.  The queue-bound
+    # legacy drain therefore has >100x interval burst capacity and cannot be
+    # the cause of an age breach under the frozen producer topology.
+    maximum_scheduled_arrivals_per_half_hour = 5
+    assert queue.MAX_RECEIPTS >= \
+        100 * maximum_scheduled_arrivals_per_half_hour
 
 
 def test_newer_receipt_arriving_during_flush_remains_pending():
-    scanner._REMOTE_RECEIPT_QUEUE, _ = _store(2)
+    scanner._REMOTE_RECEIPT_QUEUE, _ = _current_legacy_store(2)
 
     def verify_with_arrival(now_iso=None, blob=None):
-        updated, _, _ = _accept(scanner._REMOTE_RECEIPT_QUEUE, 3, 3)
+        updated, _, _ = _accept(
+            scanner._REMOTE_RECEIPT_QUEUE, 3, 3,
+            expected_receipt_hash=f"{3:016x}")
         _persist_in_memory(updated)
-        return _verify_selected(1)(now_iso, blob)
+        return _verify_selected(
+            2, receipt_hash=f"{2:016x}")(now_iso, blob)
 
     with mock.patch.object(scanner, "_persist_remote_receipt_queue",
                            side_effect=_persist_in_memory), \
+            mock.patch.object(scanner, "_verified_remote_receipt_artifact",
+                              return_value={}), \
             mock.patch.object(scanner, "_remote_readback_ack",
                               side_effect=verify_with_arrival), \
             mock.patch.object(scanner, "_journal_compact", return_value=0), \
             mock.patch.object(scanner, "_osint_persist",
                               side_effect=lambda: {"verified": True}):
         result = scanner._persist_with_remote_receipt_drain(NOW)
-    assert result["remoteReceiptFlush"]["coalescedReceiptCount"] == 1
+    assert result["remoteReceiptFlush"]["coalescedReceiptCount"] == 2
     pending = [row for row in scanner._REMOTE_RECEIPT_QUEUE["receipts"]
                if row["durabilityState"] == "pending"]
-    assert [row["targetWalSequence"] for row in pending] == [2, 3]
+    assert [row["targetWalSequence"] for row in pending] == [3]
+
+
+def test_current_legacy_batch_reverifies_after_crash_without_double_ack():
+    scanner._REMOTE_RECEIPT_QUEUE, _ = _current_legacy_store(3)
+    patches = (
+        mock.patch.object(scanner, "_persist_remote_receipt_queue",
+                          side_effect=_persist_in_memory),
+        mock.patch.object(scanner, "_verified_remote_receipt_artifact",
+                          return_value={}),
+        mock.patch.object(scanner, "_remote_readback_ack",
+                          side_effect=_verify_selected(
+                              3, receipt_hash=f"{3:016x}")),
+        mock.patch.object(scanner, "_journal_compact", return_value=0),
+    )
+    with patches[0], patches[1], patches[2], patches[3]:
+        plan = scanner._prepare_remote_receipt_drain(NOW)
+    assert plan["status"] == "verified_checkpoint_pending"
+    assert queue.summary(scanner._REMOTE_RECEIPT_QUEUE,
+                         now_iso=NOW)["pendingCount"] == 3
+    scanner._REMOTE_RECEIPT_FLUSH_LOCK.release()
+    plan["lockHeld"] = False
+
+    with mock.patch.object(scanner, "_persist_remote_receipt_queue",
+                           side_effect=_persist_in_memory), \
+            mock.patch.object(scanner, "_verified_remote_receipt_artifact",
+                              return_value={}), \
+            mock.patch.object(scanner, "_remote_readback_ack",
+                              side_effect=_verify_selected(
+                                  3, receipt_hash=f"{3:016x}")), \
+            mock.patch.object(scanner, "_journal_compact", return_value=0), \
+            mock.patch.object(scanner, "_osint_persist",
+                              return_value={"verified": True}):
+        result = scanner._persist_with_remote_receipt_drain(
+            "2026-08-05T03:01:00Z")
+    flush = result["remoteReceiptFlush"]
+    assert flush["status"] == "verified"
+    assert flush["coalescedReceiptCount"] == 3
+    assert flush["queueAfter"] == 0
+    assert sum(row["durabilityState"] == "verified"
+               for row in scanner._REMOTE_RECEIPT_QUEUE["receipts"]) == 3
+
+
+@pytest.mark.parametrize(("verified_sequence", "artifact_error",
+                          "expected_error"), [
+    (2, None, "remote_wal_sequence_mismatch"),
+    (4, None, "remote_wal_sequence_mismatch"),
+    (None, "remote_receipt_compact_identity_mismatch",
+     "remote_receipt_compact_identity_mismatch"),
+])
+def test_current_legacy_batch_rejects_stale_gap_and_fork_readback(
+        verified_sequence, artifact_error, expected_error):
+    scanner._REMOTE_RECEIPT_QUEUE, _ = _current_legacy_store(3)
+    artifact = (
+        scanner.argus_remote_recovery.RecoveryBundleError(artifact_error)
+        if artifact_error else {})
+    verify = (
+        _verify_selected(verified_sequence, receipt_hash=f"{3:016x}")
+        if verified_sequence is not None else _verify_selected(3))
+    with mock.patch.object(scanner, "_persist_remote_receipt_queue",
+                           side_effect=_persist_in_memory), \
+            mock.patch.object(scanner, "_verified_remote_receipt_artifact",
+                              side_effect=(artifact if artifact_error else None),
+                              return_value=({} if not artifact_error else None)), \
+            mock.patch.object(scanner, "_remote_readback_ack",
+                              side_effect=verify), \
+            mock.patch.object(scanner, "_osint_persist",
+                              return_value={"verified": True}):
+        result = scanner._persist_with_remote_receipt_drain(NOW)
+    flush = result["remoteReceiptFlush"]
+    assert flush["status"] == "failed"
+    assert flush["errorClass"] == expected_error
+    summary = queue.summary(scanner._REMOTE_RECEIPT_QUEUE, now_iso=NOW)
+    assert summary["failedCount"] == 1
+    assert summary["pendingCount"] == 2
+
+
+def test_keyed_receipts_retain_oldest_exact_fifo_verification():
+    state = queue.empty_store()
+    for number in range(1, 4):
+        state, _, _ = queue.accept_intent(
+            state,
+            idempotency_key=f"caos-keyed-{number:04d}-{number:06d}",
+            build_sha=BUILD, remote_commit_sha=f"{number:040x}",
+            expected_hash=f"{number:016x}",
+            target_wal_sequence=number, accepted_at=NOW,
+            expected_receipt_hash="e" * 16,
+            artifact_mode="encrypted_recovery_v1",
+            recovery_bundle_hash="f" * 64,
+            recovery_generation_id="rrg-" + "a" * 32,
+            recovery_key_id="key-001",
+            ledger_base_commit_sha="d" * 40)
+    scanner._REMOTE_RECEIPT_QUEUE = state
+
+    def verify_oldest(now_iso=None, blob=None):
+        result = _verify_selected(1)(now_iso, blob)
+        scanner._REMOTE_CYCLE["compactReceiptHash"] = "e" * 16
+        return result
+
+    with mock.patch.object(
+            scanner.argus_remote_recovery, "configured_keys",
+            return_value={"status": "configured"}), \
+            mock.patch.object(scanner, "_persist_remote_receipt_queue",
+                              side_effect=_persist_in_memory), \
+            mock.patch.object(scanner, "_verified_remote_receipt_artifact",
+                              return_value={}), \
+            mock.patch.object(scanner, "_remote_readback_ack",
+                              side_effect=verify_oldest), \
+            mock.patch.object(scanner, "_journal_compact", return_value=0), \
+            mock.patch.object(scanner, "_osint_persist",
+                              return_value={"verified": True}):
+        result = scanner._persist_with_remote_receipt_drain(NOW)
+    flush = result["remoteReceiptFlush"]
+    assert flush["targetWalSequence"] == 1
+    assert flush["coalescedReceiptCount"] == 1
+    assert flush["queueAfter"] == 2
+
+
+def test_cumulative_primitive_rejects_keyed_missing_and_partial_batches():
+    legacy, rows = _current_legacy_store(2)
+    with pytest.raises(queue.ReceiptQueueError,
+                       match="receipt_batch_coverage_invalid"):
+        queue.mark_selected_covered_verified(
+            legacy, operation_ids=[rows[0]["operationId"], "rr-missing"],
+            verified_sequence=2, remote_commit_sha=f"{2:040x}",
+            verified_at=NOW)
+    with pytest.raises(queue.ReceiptQueueError,
+                       match="receipt_batch_coverage_invalid"):
+        queue.mark_selected_covered_verified(
+            legacy, operation_ids=[rows[0]["operationId"],
+                                   rows[1]["operationId"]],
+            verified_sequence=1, remote_commit_sha=f"{1:040x}",
+            verified_at=NOW)
+
+    keyed = queue.empty_store()
+    keyed, receipt, _ = queue.accept_intent(
+        keyed, idempotency_key="caos-keyed-boundary-0001",
+        build_sha=BUILD, remote_commit_sha=COMMIT,
+        expected_hash=HASH, target_wal_sequence=1, accepted_at=NOW,
+        expected_receipt_hash="e" * 16,
+        artifact_mode="encrypted_recovery_v1",
+        recovery_bundle_hash="f" * 64,
+        recovery_generation_id="rrg-" + "a" * 32,
+        recovery_key_id="key-001", ledger_base_commit_sha="d" * 40)
+    with pytest.raises(queue.ReceiptQueueError,
+                       match="receipt_batch_coverage_invalid"):
+        queue.mark_selected_covered_verified(
+            keyed, operation_ids=[receipt["operationId"]],
+            verified_sequence=1, remote_commit_sha=COMMIT,
+            verified_at=NOW)
 
 
 @pytest.mark.parametrize("error_class", ["timeout", "http_500", "http_403",

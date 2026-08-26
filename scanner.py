@@ -9844,6 +9844,40 @@ def _jp_canonical_calendar_autoregister():
 _INVESTOR_TYPES_REFRESH = {"lastAt": 0.0}
 
 
+def _recovery_phase_a_begin_market_ledger_observation():
+    """Start optional D05 scalar timing without changing ledger authority."""
+    try:
+        if not _recovery_phase_a_pre_authority_observer_enabled():
+            return None
+        return time.monotonic_ns()
+    except Exception:
+        return None
+
+
+def _recovery_phase_a_finish_market_ledger_observation(
+        started_ns, result, checkpoint):
+    """Observe D05 only after the existing legacy checkpoint is verified."""
+    try:
+        if type(started_ns) is not int or type(result) is not dict or \
+                type(checkpoint) is not dict or \
+                checkpoint.get("verified") is not True:
+            return
+        preview = result.get("preview")
+        if type(preview) is not list:
+            preview = []
+        canonical_bytes = len(json.dumps(
+            preview, ensure_ascii=False, allow_nan=False, sort_keys=True,
+            separators=(",", ":")).encode("utf-8"))
+        _recovery_phase_a_record(
+            "market.ledger_update",
+            estimated_plaintext_bytes=canonical_bytes,
+            record_count=len(preview),
+            latency_micros=_recovery_phase_a_elapsed_micros(started_ns),
+            observed_at=datetime.now(pytz.utc))
+    except Exception:
+        pass
+
+
 def _investor_types_autorefresh():
     """D05 supply (v13.5.36): the PIT investor-types adapter existed but only
     as a manual admin backfill — flow.foreign went stale and SHO D05 sat at
@@ -9875,6 +9909,8 @@ def _investor_types_autorefresh():
                       not in existing]
         if not candidates:
             return
+        measurement_started = \
+            _recovery_phase_a_begin_market_ledger_observation()
         result = argus_market_ledger.import_rows(
             _MARKET_LEDGER, candidates, now_iso=now_iso, dry_run=False)
         if result.get("ok"):
@@ -9884,7 +9920,9 @@ def _investor_types_autorefresh():
                      "market_ledger", result.get("importId"),
                      {"rowCount": len(result.get("preview") or [])},
                      origin="cron")
-            _osint_persist()
+            checkpoint = _osint_persist()
+            _recovery_phase_a_finish_market_ledger_observation(
+                measurement_started, result, checkpoint)
             add_log(f"[d05] investor-types autorefresh "
                     f"+{len(result.get('preview') or [])} rows")
     except Exception as exc:
@@ -27043,12 +27081,16 @@ def _verified_remote_receipt_artifact(selected):
     return readback
 
 
-def _prepare_remote_receipt_drain(now_iso=None, *, batch_limit=33):
-    """Verify one oldest immutable exact-commit intent; do not checkpoint.
+def _prepare_remote_receipt_drain(
+        now_iso=None, *,
+        batch_limit=argus_remote_receipt_queue.MAX_RECEIPTS):
+    """Verify one bounded immutable intent batch; do not checkpoint.
 
     The caller must pass the returned plan to
     ``_complete_remote_receipt_drain`` immediately after its already-required
-    mission checkpoint.  This keeps a natural tick to one full checkpoint.
+    mission checkpoint. Legacy snapshots are cumulative and may coalesce a
+    frozen batch; keyed recovery pairs retain oldest-exact FIFO verification.
+    This keeps a natural tick to one full checkpoint.
     """
     now_iso = now_iso or _ai_now_iso()
     started = time.monotonic()
@@ -27061,13 +27103,32 @@ def _prepare_remote_receipt_drain(now_iso=None, *, batch_limit=33):
         with _REMOTE_RECEIPT_QUEUE_LOCK:
             queue_before = argus_remote_receipt_queue.summary(
                 _REMOTE_RECEIPT_QUEUE, now_iso=now_iso)["pendingCount"]
-            selected = argus_remote_receipt_queue.next_pending(
+            # The queue is already hard-bounded and integrity-sealed at
+            # MAX_RECEIPTS.  Freezing every currently eligible legacy intent
+            # removes a second, arbitrary throughput cap without increasing
+            # network fetches or checkpoints: one highest cumulative immutable
+            # readback still proves the whole frozen set.  Keyed mode below
+            # deliberately continues to select only the oldest exact pair.
+            # This proves batch capacity only; the 1,800-second wall-clock SLO
+            # remains a runtime admission over natural cadence and duration.
+            bounded_limit = max(1, min(
+                argus_remote_receipt_queue.MAX_RECEIPTS, int(batch_limit)))
+            eligible = argus_remote_receipt_queue.pending_receipts(
                 _REMOTE_RECEIPT_QUEUE, now_iso=now_iso,
-                limit=max(1, min(33, int(batch_limit))))
-            if selected is None:
+                limit=bounded_limit)
+            if not eligible:
                 plan.update({"queueBefore": queue_before,
                              "queueAfter": queue_before})
                 return plan
+            recovery_keys = argus_remote_recovery.configured_keys()
+            legacy_coalescing = (
+                recovery_keys.get("status") == "not_configured" and
+                all(str(row.get("artifactMode") or "legacy_full") ==
+                    "legacy_full" for row in eligible))
+            selected = eligible[-1] if legacy_coalescing else eligible[0]
+            coalescing_operation_ids = (
+                [str(row.get("operationId")) for row in eligible]
+                if legacy_coalescing else [])
             attempted = argus_remote_receipt_queue.record_attempt(
                 _REMOTE_RECEIPT_QUEUE, selected["operationId"],
                 attempted_at=now_iso)
@@ -27081,6 +27142,7 @@ def _prepare_remote_receipt_drain(now_iso=None, *, batch_limit=33):
             "targetWalSequence": target,
             "remoteCommitSha": selected.get("remoteCommitSha"),
             "migrationLowerBound": bool(selected.get("migrationLowerBound")),
+            "coalescingOperationIds": coalescing_operation_ids,
         })
         # A receipt accepted during this verification remains in the sidecar.
         # Only a sequence covered by this immutable commit is eligible below.
@@ -27102,7 +27164,6 @@ def _prepare_remote_receipt_drain(now_iso=None, *, batch_limit=33):
             "errorClass": None,
             "walErrorClass": None,
         })
-        recovery_keys = argus_remote_recovery.configured_keys()
         if selected.get("expectedReceiptHash") is None and \
                 recovery_keys.get("status") == "not_configured":
             # Deterministic compatibility for a pre-v13.4.13 fsynced intent.
@@ -27182,7 +27243,7 @@ def _prepare_remote_receipt_drain(now_iso=None, *, batch_limit=33):
 
 
 def _complete_remote_receipt_drain(plan, checkpoint, now_iso=None):
-    """Acknowledge only the exact verified intent after the natural checkpoint."""
+    """Acknowledge an exact intent and its frozen legacy coverage batch."""
     now_iso = now_iso or _ai_now_iso()
     result = dict(plan or {})
     try:
@@ -27208,6 +27269,16 @@ def _complete_remote_receipt_drain(plan, checkpoint, now_iso=None):
                     verified_at=now_iso,
                     allow_sequence_floor=bool(
                         result.get("migrationLowerBound")))
+            coalescing_ids = result.get("coalescingOperationIds")
+            if type(coalescing_ids) is list and coalescing_ids:
+                verified_queue, cumulative_covered = \
+                    argus_remote_receipt_queue.mark_selected_covered_verified(
+                        verified_queue,
+                        operation_ids=coalescing_ids,
+                        verified_sequence=int(result["verifiedWalSequence"]),
+                        remote_commit_sha=str(result["remoteCommitSha"]),
+                        verified_at=now_iso)
+                covered.extend(cumulative_covered)
             queue_after = argus_remote_receipt_queue.summary(
                 verified_queue, now_iso=now_iso)["pendingCount"]
             result.update({
@@ -27233,6 +27304,7 @@ def _complete_remote_receipt_drain(plan, checkpoint, now_iso=None):
     finally:
         result.pop("startedMonotonic", None)
         result.pop("coveredReceiptIds", None)
+        result.pop("coalescingOperationIds", None)
         if result.get("lockHeld"):
             result["lockHeld"] = False
             _REMOTE_RECEIPT_FLUSH_LOCK.release()
