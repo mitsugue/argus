@@ -1,6 +1,7 @@
 """v13.4.5 short-lived Checkpoint V2 writer contracts."""
 from __future__ import annotations
 
+import errno
 import fcntl
 import json
 import os
@@ -23,6 +24,26 @@ import argus_tick_durability as durability
 
 BUILD = "a" * 40
 BOOT = "boot-test-1"
+
+
+_TERMINAL_PROC_DISAPPEARANCE_ERRNOS = frozenset({errno.ENOENT, errno.ESRCH})
+
+
+def _linux_process_state(pid, *, stat_path=None):
+    """Return a Linux process state, or None after terminal disappearance."""
+    path = stat_path or pathlib.Path(f"/proc/{pid}/stat")
+    try:
+        if not path.exists():
+            return None
+        stat = path.read_text()
+    except OSError as exc:
+        # A process can exit after exists() and before read_text().  Only the
+        # two kernel errors proving that disappearance are terminal success;
+        # permission, I/O and malformed-observation failures remain visible.
+        if exc.errno in _TERMINAL_PROC_DISAPPEARANCE_ERRNOS:
+            return None
+        raise
+    return stat.rsplit(") ", 1)[1].split()[0]
 
 
 def snapshot(index=0, payload_bytes=4096):
@@ -361,6 +382,33 @@ def test_timeout_terminates_reaps_and_does_not_promote(tmp_path):
     assert not (tmp_path / "v2" / v2.MANIFEST_NAME).exists()
 
 
+@pytest.mark.parametrize("disappearance", [
+    ProcessLookupError(errno.ESRCH, "process disappeared"),
+    FileNotFoundError(errno.ENOENT, "proc entry disappeared"),
+])
+def test_linux_process_state_accepts_exit_between_exists_and_proc_read(
+        disappearance):
+    stat_path = mock.Mock()
+    stat_path.exists.return_value = True
+    stat_path.read_text.side_effect = disappearance
+
+    assert _linux_process_state(1234, stat_path=stat_path) is None
+    stat_path.exists.assert_called_once_with()
+    stat_path.read_text.assert_called_once_with()
+
+
+def test_linux_process_state_distinguishes_live_child_and_observation_failure():
+    stat_path = mock.Mock()
+    stat_path.exists.return_value = True
+    stat_path.read_text.return_value = "1234 (checkpoint child) S 1 2 3"
+    assert _linux_process_state(1234, stat_path=stat_path) == "S"
+
+    stat_path.read_text.side_effect = PermissionError(
+        errno.EACCES, "proc observation denied")
+    with pytest.raises(PermissionError):
+        _linux_process_state(1234, stat_path=stat_path)
+
+
 @pytest.mark.skipif(not sys.platform.startswith("linux"),
                     reason="Linux parent-death signal contract")
 def test_parent_kill_terminates_child_and_reconciliation_is_deterministic(
@@ -406,23 +454,16 @@ def test_parent_kill_terminates_child_and_reconciliation_is_deterministic(
     os.kill(parent.pid, signal.SIGKILL)
     parent.wait(timeout=10)
 
-    def process_state(pid):
-        try:
-            stat = pathlib.Path(f"/proc/{pid}/stat").read_text()
-        except FileNotFoundError:
-            return None
-        return stat.rsplit(") ", 1)[1].split()[0]
-
     # A container PID 1 is not required to reap an adopted, terminated child
     # promptly.  State Z therefore proves the parent-death signal terminated
     # the child just as absence from /proc does; any runnable/sleeping state is
     # a genuine orphan-process failure.  Normal success/timeout paths retain
     # their stricter Popen.wait() zombie-free assertions.
     deadline = time.monotonic() + 10
-    state = process_state(child_pid)
+    state = _linux_process_state(child_pid)
     while time.monotonic() < deadline and state not in {None, "Z"}:
         time.sleep(0.05)
-        state = process_state(child_pid)
+        state = _linux_process_state(child_pid)
     assert state in {None, "Z"}
     assert not (tmp_path / "v2" / v2.MANIFEST_NAME).exists()
     report = isolated.reconcile_stale_jobs(str(tmp_path / "v2"))
