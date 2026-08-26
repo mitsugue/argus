@@ -1,4 +1,4 @@
-"""v13.5.35 — weekday-agnostic DAILY/EOD authority (owner directive
+"""v13.5.36 — weekday-agnostic DAILY/EOD authority (owner directive
 2026-08-26).
 
 Invariant: a daily observation is decision-eligible iff it IS the

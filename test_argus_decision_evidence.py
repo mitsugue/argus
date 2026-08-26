@@ -158,7 +158,7 @@ def test_references_match_python_authority_resolver(monkeypatch):
     assert references["verificationFailures"] == {}
 
 
-# ━━━ v13.5.35 — SHO CORE production wiring + MARKET VIEW (review items A/B/C) ━━━
+# ━━━ v13.5.36 — SHO CORE production wiring + MARKET VIEW (review items A/B/C) ━━━
 
 def _reset_sho_memos():
     scanner._SHO_PIT_INPUT_MEMO.update({"ts": 0.0, "data": None})
@@ -344,7 +344,7 @@ def test_yahoo_index_mapper_drops_incomplete_bars(monkeypatch):
 
 
 def test_history_fallback_selects_latest_bar_regardless_of_row_order(monkeypatch):
-    """v13.5.35 本番バグ再現: 本番キャッシュは新しい順で届き、closes[-1]が
+    """v13.5.36 本番バグ再現: 本番キャッシュは新しい順で届き、closes[-1]が
     最古バー(2016年)を掴んで日次権限が正しく拒否→全夕方判断がdata-gated。
     並び順に依存せず最新日付の終値を選ぶこと。"""
     import argus_market_clock

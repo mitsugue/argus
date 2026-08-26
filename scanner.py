@@ -113,7 +113,7 @@ import argus_today_headline         # v13.5.0: compact Today bootstrap from veri
 import argus_market_shock           # v13.5.1: market-shock materiality (US30Y + corroborated news)
 import argus_news_intelligence      # v13.5.3: Nikkei mail → news-risk evidence (pure policy)
 import argus_gmail_intake           # v13.5.3: dedicated read-only news mailbox intake
-import argus_market_brief           # v13.5.35: Today-top NOW/WHY/NEXT situation brief
+import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
 import argus_sho                    # v13.5.13: SHO evidence engine (pure; evidence, never action)
 import argus_single_decision        # v13.5.13: canonical artifact references for device SDA
@@ -160,7 +160,7 @@ PORT              = int(os.environ.get("PORT", 8080))
 
 # v12.3.0: generated-AI is fail-closed by default.  Market-data adapters are
 # deliberately outside this policy and continue to run in DETERMINISTIC mode.
-# v13.5.35 (owner directive 2026-08-23 「有効にして」): default mode is now
+# v13.5.36 (owner directive 2026-08-23 「有効にして」): default mode is now
 # SCHEDULED_AI — ONLY news headline translation + news_intel analysis run
 # automatically, under the scheduled daily budget below.  Everything else
 # stays fail-closed; set ARGUS_COST_POLICY_MODE=DETERMINISTIC to revert.
@@ -174,7 +174,7 @@ except (TypeError, ValueError):
     _SCHEDULED_AI_DAILY_USD = 2.0
 # Benchmark/preflight runs temporarily switch the policy to RESEARCH_BENCHMARK
 # and afterwards restore the configured idle mode — NOT hardcoded DETERMINISTIC,
-# which would silently disable the scheduled news AI after every run (v13.5.35).
+# which would silently disable the scheduled news AI after every run (v13.5.36).
 _COST_POLICY_IDLE_MODES = ("DETERMINISTIC", "SCHEDULED_AI")
 _COST_POLICY_BASELINE_MODE = (
     _COST_POLICY.get("mode")
@@ -218,7 +218,7 @@ def _cost_policy_authorize(provider, purpose, *, automatic=True,
 
 
 def _deterministic_skip_payload(purpose):
-    # The skip reason must state the TRUE mode (v13.5.35): under SCHEDULED_AI
+    # The skip reason must state the TRUE mode (v13.5.36): under SCHEDULED_AI
     # only the news purposes run automatically, so other purposes skip with
     # their own reason instead of falsely claiming deterministic mode.
     if _COST_POLICY.get("mode") == "SCHEDULED_AI":
@@ -7101,7 +7101,7 @@ def api_argus_important_events():
 
 
 def _important_events_data():
-    """Shared assembly for the route and the market brief (v13.5.35)."""
+    """Shared assembly for the route and the market brief (v13.5.36)."""
     snap = get_events_snapshot()
     events = snap.get("events") or []
     try:
@@ -7124,7 +7124,7 @@ def _important_events_data():
         events, owner_symbols=owner_symbols, held_symbols=held,
         ctx={"regime": regime, "vixElevated": vix_elevated}, limit=64)
     items = items_all[:8]
-    # v13.5.35 (review item C): the D/D-1 hard-constraint feed must not
+    # v13.5.36 (review item C): the D/D-1 hard-constraint feed must not
     # depend on the 8-item display cap — the audit showed event #9+ silently
     # produced no constraint. Compact, uncapped imminent list for the
     # device-side SDA/AP event gate, tiered by displayImpact.
@@ -9845,7 +9845,7 @@ _INVESTOR_TYPES_REFRESH = {"lastAt": 0.0}
 
 
 def _investor_types_autorefresh():
-    """D05 supply (v13.5.35): the PIT investor-types adapter existed but only
+    """D05 supply (v13.5.36): the PIT investor-types adapter existed but only
     as a manual admin backfill — flow.foreign went stale and SHO D05 sat at
     判定不能 despite the paid J-Quants plan carrying the data. Daily bounded
     refresh (weekly series, 45-day window); idempotent via ledger dedup;
@@ -9899,7 +9899,7 @@ def api_argus_intel_collect():
         return jsonify(err), code
     out = collect_institutional_intel()
     try:
-        _investor_types_autorefresh()      # v13.5.35: keep SHO D05 fed (daily)
+        _investor_types_autorefresh()      # v13.5.36: keep SHO D05 fed (daily)
     except Exception:
         pass
     try:
@@ -9947,7 +9947,7 @@ def api_argus_intel_collect():
         except Exception:
             continue
     out["supplyDemandWarm"] = warmed
-    # v13.5.35: warm the SHO CORE input caches (^N225/^VIX OHLCV, 1570 weekly
+    # v13.5.36: warm the SHO CORE input caches (^N225/^VIX OHLCV, 1570 weekly
     # margin, FRED VIX). This admin/cron path is the ONLY fetch route; the
     # public decision-evidence GET reads these caches cached-only.
     try:
@@ -12578,18 +12578,18 @@ def api_argus_action_labels():
 # gated by the API keys + the AI run gate + the daily/monthly budget hard-stop. The separate
 # GPT-5.5 Pro Handoff export further below stays manual (copy-paste, no API call).
 _OPENAI_API_KEY        = os.environ.get("OPENAI_API_KEY", "")
-# v13.5.35 (owner directive: use the current generation): primary default is
+# v13.5.36 (owner directive: use the current generation): primary default is
 # the GPT-5.6 tier already registered in the repo pricing table (terra = the
 # cost-efficient 5.6 SKU; the standard/referee roles were on 5.6 since
 # v12.2.x). Env-overridable without a release, exactly as before.
 _OPENAI_MODEL          = os.environ.get("OPENAI_MODEL", "") or "gpt-5.6-terra"
-# v13.5.35 (external review): frontier escalation model for consequential or
+# v13.5.36 (external review): frontier escalation model for consequential or
 # difficult news only — never the default lane.
 _OPENAI_SOL_MODEL      = os.environ.get("ARGUS_OPENAI_SOL_MODEL", "") or "gpt-5.6-sol"
 # Checker tiering: the DAILY SCORED run (checker=pro) uses the Pro model; the frequent 15-min
 # re-judges (checker=flash) and the 429-quota fallback use Flash, so the double-check DEGRADES
 # instead of disappearing. Both env-overridable.
-# v13.5.35 model currency (corrected after external review): the official
+# v13.5.36 model currency (corrected after external review): the official
 # Gemini catalog serves gemini-3.1-pro-preview (Pro/preview) and
 # gemini-3.7-flash (Stable) — a "gemini-3.7-pro" endpoint is NOT established
 # and must never be a production default (invented IDs are exactly the
@@ -12698,7 +12698,7 @@ _AI_PRICING = {
     # key so the fallback never bypasses the unknown-price gate.
     _GEMINI_PRIOR_MODEL: {"in": _float_env("GEMINI_PRICE_INPUT_PER_1M", 1.25),
                           "out": _float_env("GEMINI_PRICE_OUTPUT_PER_1M", 10.0)},
-    # Live official prices (updated v13.5.35, effective 2026-08-25; see
+    # Live official prices (updated v13.5.36, effective 2026-08-25; see
     # _AI_MODEL_PRICING_POLICY — Sol's rate is promotional, NOT permanent).
     # The v12 benchmark keeps its own frozen catalog below.
     "gpt-5.6-sol": {"in": 4.0, "out": 20.0, "cachedIn": 0.40},
@@ -12706,7 +12706,7 @@ _AI_PRICING = {
     "gemini-3.1-pro-preview": {"in": 2.0, "out": 12.0},
     "gemini-2.5-pro": {"in": 1.25, "out": 10.0},
 }
-# v13.5.35: pricing provenance — the Sol price is an official PROMOTION
+# v13.5.36: pricing provenance — the Sol price is an official PROMOTION
 # (guaranteed at least through 2026-11-21). Never encode it as permanent;
 # revalidate against the official pricing page by the date below.
 _AI_MODEL_PRICING_POLICY = {
@@ -13747,7 +13747,7 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
                 response_format={"type": "json_object"}, timeout=60)
             text = resp.choices[0].message.content
         if isinstance(diagnostic, dict):
-            # Model-currency proof (v13.5.35): requested vs actually-served.
+            # Model-currency proof (v13.5.36): requested vs actually-served.
             diagnostic["requestedModel"] = mdl
             diagnostic["returnedModel"] = str(
                 getattr(resp, "model", None) or "")[:60] or None
@@ -15351,7 +15351,7 @@ def api_argus_security_unlock():
     return jsonify({"status": "unlocked", "softLocked": False, "failedAttempts": 0,
                     "lockedByEnv": _AI_JUDGE_LOCKED_ENV, "locked": _is_locked(), "asOf": _ai_now_iso()})
 
-# v13.5.35: last confirmed ping per provider/model — the ops dispatch reads
+# v13.5.36: last confirmed ping per provider/model — the ops dispatch reads
 # requested/returned model even when the HTTP response is lost to a timeout.
 _AI_PROVIDER_LAST_PING = {}
 
@@ -15418,7 +15418,7 @@ def api_argus_ai_provider_ping():
             "manual_api", automatic=False,
             confirmation=body.get("confirm") is True,
             estimated_cost_usd=0.002, estimated_tokens=100)
-        # v13.5.35: SCHEDULED_AI allows a CONFIRMED manual ping — honor the
+        # v13.5.36: SCHEDULED_AI allows a CONFIRMED manual ping — honor the
         # policy verdict instead of hard-requiring MANUAL mode.
         if not policy["allowed"]:
             return jsonify({**_deterministic_skip_payload("provider_ping"),
@@ -15437,7 +15437,7 @@ def api_argus_ai_provider_ping():
         return jsonify({**_deterministic_skip_payload("provider_ping"),
                         "reason": policy.get("reason"),
                         "status": policy.get("status")}), 200
-    # v13.5.35: ?model=sol pings the escalation model for currency proof.
+    # v13.5.36: ?model=sol pings the escalation model for currency proof.
     model_choice = str(request.args.get("model")
                        or body.get("model") or "").strip().lower()
     if provider == "openai":
@@ -15660,7 +15660,7 @@ def _translate_headlines_ja(headlines):
         cfg = _gt.GenerateContentConfig(response_mime_type="application/json")
         resp = client.models.generate_content(model=_GEMINI_FALLBACK_MODEL, contents=prompt, config=cfg)
         # The API call is spent at this point — record it BEFORE validation so
-        # the SCHEDULED_AI daily budget counts every real request (v13.5.35:
+        # the SCHEDULED_AI daily budget counts every real request (v13.5.36:
         # discarded batches must not become free unlimited retries).
         _cost_policy_record("gemini", "headline_translation",
                             estimated_cost_usd=0.02)
@@ -15682,7 +15682,7 @@ def _translate_headlines_ja(headlines):
 # cached by content hash. Any English headline shown anywhere is queued into _SEEN;
 # the admin translate run drains it via the Gemini helper and fills _NEWS_JA_CACHE.
 _NEWS_JA_CACHE = {}                       # hash -> {"ja": str, "at": iso}
-# v13.5.35: hash -> failed attempt count. Headlines the model repeatedly
+# v13.5.36: hash -> failed attempt count. Headlines the model repeatedly
 # returns nothing for stop being re-requested after TRANSLATE_MAX_ATTEMPTS
 # (the retry loop burned the whole scheduled daily budget on one stuck batch).
 _NEWS_JA_FAILED = {}
@@ -15856,7 +15856,7 @@ def _translate_pending_headlines(cap=60, queue_first=False):
     merged = argus_news_i18n.merge_translations(_NEWS_JA_CACHE, pending, tr, now_iso)
     _NEWS_JA_CACHE.clear()
     _NEWS_JA_CACHE.update(merged)
-    # v13.5.35: items still uncached after this drain accrue an attempt;
+    # v13.5.36: items still uncached after this drain accrue an attempt;
     # at TRANSLATE_MAX_ATTEMPTS they leave the pending pool (no retry loop).
     updated_failed = argus_news_i18n.note_translation_attempts(
         _NEWS_JA_FAILED, pending, _NEWS_JA_CACHE)
@@ -16109,7 +16109,7 @@ def api_argus_market_shock():
         })
 
 
-# ── v13.5.35 MARKET SITUATION BRIEF ─────────────────────────────────────────
+# ── v13.5.36 MARKET SITUATION BRIEF ─────────────────────────────────────────
 # Deterministic composer over verified stores; Terra compresses (Sol only for
 # CRITICAL fact bases); public GET is cached-only (no LLM on public reads).
 _SHO_STATE_JA = {
@@ -16134,7 +16134,7 @@ def _brief_market_view_summary():
             if state:
                 bits.append(f"{label}:{_SHO_STATE_JA.get(str(state), str(state))}")
         if fams:
-            # v13.5.35: the real family enum is AVAILABLE/LICENSE_BLOCKED/
+            # v13.5.36: the real family enum is AVAILABLE/LICENSE_BLOCKED/
             # MISSING (not "EVALUATED") — the chip showed 0/7 while two
             # families were 成立 on the strip right above it.
             met = sum(1 for r in fams.values()
@@ -16165,7 +16165,7 @@ def _brief_news_events():
             continue
         event["sourceLabelJa"] = argus_news_intelligence.SOURCE_LABELS.get(
             event.get("sourceFamily"), event.get("sourceFamily"))
-        # v13.5.35: translations live in the display-time JA cache, not the
+        # v13.5.36: translations live in the display-time JA cache, not the
         # stored row (same class as the v13.5.24 acceptance-counter fix).
         stored = str(event.get("headlineJa") or "").strip()
         if not stored or stored == "翻訳処理中":
@@ -16549,7 +16549,7 @@ def _causal_memory_refresh_open(force=False):
                 if not any(row["relation"] in ("SUPPORTING", "CONTRADICTING")
                            for row in evidence):
                     continue
-                # v13.5.35 (review item D): symmetric invalidation. A
+                # v13.5.36 (review item D): symmetric invalidation. A
                 # hypothesis WEAKENED for >= 3 days whose variables STILL all
                 # contradict earns the streak note, which the assessment
                 # policy accepts as an invalidation criterion — INVALIDATED
@@ -16734,7 +16734,7 @@ def _news_intel_persist():
             "events": _NEWS_INTEL["events"],
             "order": _NEWS_INTEL["order"][-_NEWS_EVENT_CAP:],
             "audit": _NEWS_INTEL["audit"][-_NEWS_AUDIT_CAP:],
-            # v13.5.35 (external review): source-acceptance evidence must
+            # v13.5.36 (external review): source-acceptance evidence must
             # survive restarts/deploys — process-memory counters are not an
             # audit authority.
             "sources": _NEWS_INTEL.get("sources") or {},
@@ -16772,7 +16772,7 @@ def _news_intel_ensure_loaded():
 def _news_source_acceptance():
     """Per-source acceptance evidence derived from the DURABLE stores
     (events + audit + persisted source rows) — never process-memory alone
-    (v13.5.35, external review). Public-safe: counts, domains, instants and
+    (v13.5.36, external review). Public-safe: counts, domains, instants and
     the verdict vocabulary only; no subjects, no bodies."""
     events = list(_NEWS_INTEL.get("events", {}).values())
     audit = list(_NEWS_INTEL.get("audit") or [])
@@ -16796,7 +16796,7 @@ def _news_source_acceptance():
             # Translation is applied at DISPLAY time from the JA cache — the
             # stored row keeps its original headlineJa forever, so this
             # counter must consult the cache too or it reports translated
-            # items as pending indefinitely (v13.5.35 live finding).
+            # items as pending indefinitely (v13.5.36 live finding).
             cached_ja = bool((_NEWS_JA_CACHE.get(
                 argus_news_i18n.text_hash(title)) or {}).get("ja"))
             if ja in ("", "翻訳処理中") and title and not cached_ja \
@@ -16855,7 +16855,7 @@ def _news_audit(row):
 def _news_corroboration(family, polarity=None):
     """Resolve the event-class corroboration plan against EXISTING sensors
     only (§15). Missing values stay visibly missing — never fabricated.
-    v13.5.35: with a detected polarity, confirmation requires the sensors to
+    v13.5.36: with a detected polarity, confirmation requires the sensors to
     move in the HYPOTHESIS direction (CONFIRMATION_EXPECTATIONS) — a large
     opposite move is market-moved evidence, not confirmation."""
     plan = argus_news_intelligence.CORROBORATION_PLAN.get(family) or ()
@@ -16936,7 +16936,7 @@ def _news_analyze_ai(subject, excerpt, fingerprint, taxonomy=None):
     """Controlled AI extraction via the existing approved call site
     (_openai_prose: cost-gated, store=False). Cached per fingerprint+policy;
     unavailable AI degrades to ANALYSIS_PENDING, never discards the event.
-    v13.5.35: Terra reads every substantive mail; consequential/difficult
+    v13.5.36: Terra reads every substantive mail; consequential/difficult
     cases escalate ONCE to the frontier Sol model (pure escalation_decision,
     closed reasons). Sol output passes the SAME schema validation and stays
     non-authoritative for severity/direction/SDA."""
@@ -17035,7 +17035,7 @@ def _news_process_message(message, *, backfill=False):
         return None
     source_row = _news_source_row(source)
     source_row["observedCount"] += 1
-    # v13.5.35: acceptance evidence must survive event-store eviction — the
+    # v13.5.36: acceptance evidence must survive event-store eviction — the
     # 40-event cap silently un-proved BLS when higher-volume sources pushed
     # its two events out. First real accepted mail stamps a durable flag.
     source_row.setdefault("firstAcceptedAt", _ai_now_iso())
@@ -17205,14 +17205,14 @@ def _news_intake_cycle(*, backfill=False, backfill_days=10):
 _NEWS_TRANSLATION_WORKER = {
     "lastRunAt": None, "lastSuccessAt": None, "lastError": None,
     "consecutiveFailures": 0, "translatedTotal": 0,
-    # v13.5.35: why the last tick did or did not call the LLM ("allowed" or the
+    # v13.5.36: why the last tick did or did not call the LLM ("allowed" or the
     # cost-policy skip reason). aiExecuted=false must never look like success.
     "lastPolicyDecision": None,
 }
 
 
 def _translate_headline_via_openai(title):
-    """v13.5.35 fallback: the Gemini flash lane repeatedly returns nothing
+    """v13.5.36 fallback: the Gemini flash lane repeatedly returns nothing
     for some titles (observed live: OFAC sanction subjects) — material
     headlines must not stay unreadable. One Terra attempt, same
     headline_translation purpose/budget, strict JSON."""
@@ -17260,7 +17260,7 @@ def _news_material_translation_fallback(cap=2):
 
 
 def _news_translation_tick():
-    """Continuous translation drain (v13.5.35, external review): weekday-only
+    """Continuous translation drain (v13.5.36, external review): weekday-only
     cron scheduling left official English mail invisible for whole weekends.
     Bounded (cap 20/run), idempotent (cache-keyed), exponential backoff on
     failures, and fully observable in the intake health payload."""
@@ -17352,7 +17352,7 @@ def api_argus_news_intelligence():
     pending_translation_count = 0
     _now_epoch = time.time()
     for event in events:
-        # v13.5.35 (external review BLOCKER 1): staleness is re-evaluated at
+        # v13.5.36 (external review BLOCKER 1): staleness is re-evaluated at
         # READ time from the stored receipt instant — a CRITICAL that was
         # FRESH_BREAKING at intake must not still present as fresh days later.
         try:
@@ -17385,7 +17385,7 @@ def api_argus_news_intelligence():
             "translated", "not_needed")
         if not summary_ready and not translation_ready:
             pending_translation_count += 1
-            # v13.5.35 (external review): translation is PRESENTATION work —
+            # v13.5.36 (external review): translation is PRESENTATION work —
             # classification/severity/direction were computed on the original
             # language at intake and a material event must not stay invisible
             # for a weekend because the Japanese summary is still queued.
@@ -31774,7 +31774,7 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
             "vixRows": _fred_vix_history_dated(),
             "usRows": (reference_history("SPY", "US")
                        if str(symbol).upper() != "SPY" else []),
-            # v13.5.35: misconfiguration is REPORTED, never silently identical
+            # v13.5.36: misconfiguration is REPORTED, never silently identical
             # to an honest data gap (the vix dimension would otherwise just
             # vanish from currentFeatureKeys with no visible cause).
             "sourceIssues": ([] if _FRED_API_KEY
@@ -32224,7 +32224,7 @@ def _decision_evidence_history_row(symbol, market):
               and row.get("date")]
     if not closes:
         return None, None
-    # v13.5.35 PRODUCTION BUG: the cached history arrives newest-first in
+    # v13.5.36 PRODUCTION BUG: the cached history arrives newest-first in
     # production (ascending in the local repro), so closes[-1] picked the
     # OLDEST bar (2016-09-06 observed live) — the daily-authority check then
     # honestly rejected it as stale and every evening decision data-gated.
@@ -32241,7 +32241,7 @@ def _decision_evidence_history_row(symbol, market):
              "price": float(last["close"]), "date": str(last["date"])[:10],
              # Provenance stays visible; the PROVIDER is the true upstream of
              # the cached daily series (authority ranking is per real
-             # provider — v13.5.35 fix: the synthetic "history-cache" label
+             # provider — v13.5.36 fix: the synthetic "history-cache" label
              # had rank None, so the whole weekend/holiday EOD path was
              # provider_not_authoritative and every subject data-gated).
              "sourceRef": f"history-cache:{symbol}:{str(last['date'])[:10]}"}
@@ -32348,7 +32348,7 @@ def _decision_evidence_prediction_artifact(symbol, market, cutoff,
         return None, "prediction_context_failed"
 
 
-# ━━━ v13.5.35 SHO CORE production inputs (external review item B) ━━━
+# ━━━ v13.5.36 SHO CORE production inputs (external review item B) ━━━
 # The read-only audit confirmed evaluate_d01_d07 was never called from any
 # production path and the live reversal artifact ran on zero rows. This block
 # wires the feeds the process already holds — JPX credit CSV+ledger, J-Quants
@@ -32534,6 +32534,220 @@ def _sho_vix_rows(*, fetch=False):
     return [], ("fred_key_missing" if not _FRED_API_KEY else "cold_cache")
 
 
+# ── SHO D07 supply: earnings disclosures (v13.5.36) ─────────────────────────
+# J-Quants /fins/statements is the authoritative TDnet-derived disclosure
+# record (DisclosedDate/Time = official publication). PIT is carried on the
+# EVENT via knownAt; the first tradable session comes from the canonical
+# trading calendar (v13.5.36 — weekday-agnostic, conservative on gaps).
+# No consensus dataset is contracted → epsEstimate stays None and beat/miss
+# is never synthesized. Unknown provider schema → honest MISSING, never a
+# guessed mapping.
+_SHO_STATEMENTS_CACHE = {"rows": [], "fetchedAt": None, "expires": 0.0,
+                         "source": "cold", "schemaSample": None}
+_SHO_STATEMENTS_TTL_SEC = 6 * 3600
+_SHO_STATEMENTS_WINDOW_DAYS = 14
+
+
+def _stmt_field(row, *names):
+    for name in names:
+        value = row.get(name)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _sho_statements_rows(*, warm=False):
+    """Recent fins/statements rows for the tracked JP universe (cache-only on
+    the public path; warm=True refreshes on the collect cron)."""
+    now = time.time()
+    cache = _SHO_STATEMENTS_CACHE
+    if not warm or (cache["rows"] and now < cache["expires"]):
+        return cache["rows"]
+    if not _JQUANTS_API_KEY:
+        cache["source"] = "missing_key"
+        return cache["rows"]
+    universe = {str(s.get("symbol"))[:4] for s in _JP_WATCHLIST}
+    fetched = []
+    try:
+        for back in range(_SHO_STATEMENTS_WINDOW_DAYS):
+            day = (datetime.now(TZ_JST) - timedelta(days=back)).strftime(
+                "%Y-%m-%d")
+            try:
+                rows = _jquants_paginated("/fins/statements", {"date": day})
+            except RuntimeError:
+                continue
+            for row in rows or []:
+                if not isinstance(row, dict):
+                    continue
+                code = str(_stmt_field(row, "LocalCode", "Code",
+                                       "code") or "")[:4]
+                if code in universe:
+                    fetched.append(row)
+        cache["rows"] = fetched
+        cache["fetchedAt"] = _ai_now_iso()
+        cache["expires"] = now + _SHO_STATEMENTS_TTL_SEC
+        cache["source"] = ("jquants_fins_statements" if fetched
+                           else "no_universe_disclosures")
+        if fetched and cache["schemaSample"] is None:
+            cache["schemaSample"] = sorted(fetched[0].keys())[:24]
+    except Exception as exc:
+        cache["source"] = f"fetch_failed:{type(exc).__name__}"
+    return cache["rows"]
+
+
+def _sho_first_tradable_session(disclosed_date, disclosed_time):
+    """(first_tradable_iso, flags) from the canonical calendar. Conservative:
+    unknown time → treated as after-close; calendar gap → (None, reason)."""
+    flags = {}
+    try:
+        base = datetime.strptime(disclosed_date, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None, {"reason": "invalid_disclosure_date"}
+    time_known = bool(re.fullmatch(r"\d{2}:\d{2}(:\d{2})?",
+                                   str(disclosed_time or "")))
+    if not time_known:
+        flags["publicationTimePrecision"] = "date_only_conservative"
+    try:
+        same_day_trading = argus_market_clock.canonical_trading_day(
+            argus_market_clock.JP_EQUITY, base)
+        hhmm = str(disclosed_time)[:5] if time_known else ""
+        if same_day_trading and time_known and hhmm < "15:30":
+            if hhmm >= "09:00":
+                # During-session disclosure: the daily bar mixes pre/post
+                # disclosure trading — flag the resolution limit honestly.
+                flags["intradayDisclosureDailyResolutionLimited"] = True
+            return base.isoformat(), flags
+        probe = base
+        for _ in range(20):
+            probe = probe + timedelta(days=1)
+            if argus_market_clock.canonical_trading_day(
+                    argus_market_clock.JP_EQUITY, probe):
+                return probe.isoformat(), flags
+        return None, {"reason": "no_next_session_within_20d"}
+    except argus_market_clock.CalendarUnavailableError:
+        return None, {"reason": "calendar_unavailable"}
+
+
+def _sho_earnings_event():
+    """Latest ORIGINAL supported disclosure for the tracked universe as a
+    PIT earnings event (corrections never overwrite the original's state)."""
+    rows = _SHO_STATEMENTS_CACHE["rows"]
+    if not rows:
+        return None, _SHO_STATEMENTS_CACHE["source"]
+    candidates = {}
+    unrecognized = 0
+    for row in rows:
+        code = str(_stmt_field(row, "LocalCode", "Code", "code") or "")[:4]
+        disclosed_date = str(_stmt_field(
+            row, "DisclosedDate", "DiscDate", "disclosedDate") or "")[:10]
+        disclosed_time = str(_stmt_field(
+            row, "DisclosedTime", "DiscTime", "disclosedTime") or "")[:8]
+        doc_type = str(_stmt_field(
+            row, "TypeOfDocument", "DocType", "typeOfDocument") or "")
+        period_end = str(_stmt_field(
+            row, "CurrentPeriodEndDate", "CurPerEnDt",
+            "currentPeriodEndDate") or "")[:10]
+        if not (code and len(disclosed_date) == 10):
+            unrecognized += 1
+            continue
+        identity = (code, doc_type, period_end)
+        stamp = f"{disclosed_date}T{disclosed_time or '99:99'}"
+        row_view = {"code": code, "disclosedDate": disclosed_date,
+                    "disclosedTime": disclosed_time, "docType": doc_type,
+                    "periodEnd": period_end, "raw": row, "stamp": stamp}
+        current = candidates.get(identity)
+        if current is None or stamp < current["stamp"]:
+            # earliest disclosure for the identity = the ORIGINAL; later
+            # rows for the same identity are corrections.
+            if current is not None:
+                row_view["correctionCount"] = (
+                    current.get("correctionCount", 0) + 1)
+            candidates[identity] = {**row_view,
+                                    "correctionCount": row_view.get(
+                                        "correctionCount",
+                                        (current or {}).get(
+                                            "correctionCount", 0))}
+        else:
+            current["correctionCount"] = current.get("correctionCount", 0) + 1
+    if not candidates:
+        return None, ("schema_unrecognized" if unrecognized
+                      else "no_supported_disclosures")
+    originals = sorted(candidates.values(), key=lambda c: c["stamp"])
+    chosen = originals[-1]
+    first_tradable, flags = _sho_first_tradable_session(
+        chosen["disclosedDate"], chosen["disclosedTime"])
+    if first_tradable is None:
+        return None, f"first_session_{flags.get('reason', 'unknown')}"
+    time_known = "publicationTimePrecision" not in flags
+    if time_known:
+        known_at = _canonical_truth_iso(
+            f"{chosen['disclosedDate']}T{chosen['disclosedTime'] or '15:30:00'}+09:00",
+            "JP")
+    else:
+        # date-only: conservatively knowable only from end of that day JST.
+        known_at = _canonical_truth_iso(
+            f"{chosen['disclosedDate']}T23:59:00+09:00", "JP")
+    if not known_at:
+        return None, "disclosure_timestamp_invalid"
+    raw = chosen["raw"]
+    eps_actual = _stmt_field(raw, "EarningsPerShare", "EPS", "Eps")
+    try:
+        eps_actual = float(eps_actual) if eps_actual is not None else None
+    except (TypeError, ValueError):
+        eps_actual = None
+    reported = {}
+    for out_key, names in (
+            ("netSales", ("NetSales", "Sales")),
+            ("operatingProfit", ("OperatingProfit", "OpProfit")),
+            ("ordinaryProfit", ("OrdinaryProfit", "OrdProfit")),
+            ("profit", ("Profit", "NetIncome")),
+            ("forecastEps", ("ForecastEarningsPerShare", "FcstEPS")),
+            ("forecastDividendAnnual",
+             ("ForecastDividendPerShareAnnual", "FcstDivAnnual"))):
+        value = _stmt_field(raw, *names)
+        if value not in (None, ""):
+            reported[out_key] = value
+    event = {
+        "instrumentId": chosen["code"],
+        "date": first_tradable,               # reaction anchor session
+        "knownAt": known_at,
+        "availableFrom": known_at,
+        "sourcePublishedAt": known_at,
+        "fiscalPeriodEnd": chosen["periodEnd"] or None,
+        "docType": chosen["docType"] or None,
+        "epsActual": eps_actual,
+        "epsEstimate": None,                  # no consensus dataset contracted
+        "reportedFacts": reported or None,
+        "correctionCountWithinWindow": chosen.get("correctionCount", 0),
+        "provenance": "JQUANTS_FINS_STATEMENTS",
+        **flags,
+    }
+    return event, "jquants_fins_statements"
+
+
+def _sho_earnings_bars(symbol):
+    """Complete OHLCV rows for the event instrument with per-bar PIT stamps
+    (J-Quants daily publication ≈ evening; conservative 19:00 JST)."""
+    rows = _chart_history_cached(str(symbol)[:4], "JP") or []
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        date = str(row.get("date") or "")[:10]
+        if len(date) != 10:
+            continue
+        values = {k: row.get(k) for k in
+                  ("open", "high", "low", "close", "volume")}
+        if any(not isinstance(v, (int, float)) or isinstance(v, bool)
+               for v in values.values()):
+            continue
+        out.append({"instrumentId": str(symbol)[:4], "date": date,
+                    **values,
+                    "availableFrom": f"{date}T10:00:00Z"})
+    out.sort(key=lambda r: r["date"])
+    return out
+
+
 def _sho_pit_inputs(*, warm=False):
     """Market-level SHO CORE inputs (D01-D07 + reversal axes).
 
@@ -32554,10 +32768,15 @@ def _sho_pit_inputs(*, warm=False):
     margin_rows = _sho_margin_1570_rows(fetch=warm)
     rs_proxy = _sho_relative_strength_proxy()
     flow_rows = _sho_foreign_flow_rows()
+    _sho_statements_rows(warm=warm)
+    earnings_event, earnings_source = _sho_earnings_event()
+    earnings_bars = (_sho_earnings_bars(earnings_event["instrumentId"])
+                     if earnings_event else [])
     data = {
         "creditRows": credit_rows, "margin1570Rows": margin_rows,
         "rsProxy": rs_proxy, "flowRows": flow_rows,
         "vixRows": vix_rows, "nikkeiRows": nikkei_rows,
+        "earningsEvent": earnings_event, "earningsBars": earnings_bars,
         "sourceStatus": {
             "credit": "csv_ledger" if credit_rows else "missing",
             "margin1570": "jquants_weekly" if margin_rows else "cold_cache",
@@ -32565,6 +32784,7 @@ def _sho_pit_inputs(*, warm=False):
             "foreignFlow": "market_ledger" if flow_rows else "missing",
             "vix": vix_source,
             "nikkei": "yahoo_ohlcv" if nikkei_rows else "cold_cache",
+            "earnings": earnings_source,
         },
     }
     memo["ts"], memo["data"] = now, data
@@ -32591,7 +32811,10 @@ def _sho_market_view():
             margin_1570_rows=inputs["margin1570Rows"],
             relative_strength_proxy=inputs["rsProxy"],
             foreign_flow_rows=inputs["flowRows"],
-            vix_rows=inputs["vixRows"])
+            vix_rows=inputs["vixRows"],
+            earnings_event=inputs.get("earningsEvent"),
+            earnings_bars=inputs.get("earningsBars") or (),
+            comparison_index_bars=inputs.get("nikkeiRows") or ())
         reversal = argus_sho.build_reversal_engine(
             cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",
             downside_background="MIXED",
@@ -32619,7 +32842,7 @@ def _sho_market_view():
 
 
 def _decision_evidence_sho_artifact(symbol, cutoff):
-    """Per-subject SHO reversal artifact from real PIT inputs (v13.5.35).
+    """Per-subject SHO reversal artifact from real PIT inputs (v13.5.36).
 
     Both reversal axes now evaluate production feeds (^N225/^VIX complete
     OHLCV); cold feeds leave factors MISSING and the axis DATA_GATED — the
@@ -32790,7 +33013,7 @@ def _decision_evidence_document(symbols):
         "authority": "CANONICAL_ARTIFACT_REFERENCES",
         "sdaAuthority": False,
         "actionAuthority": False,
-        # v13.5.35 (review item A): document-level SHO MARKET VIEW — display
+        # v13.5.36 (review item A): document-level SHO MARKET VIEW — display
         # projection only, never an SDA input; the per-subject references
         # above remain the sole decision evidence.
         "marketView": _sho_market_view(),
@@ -37376,7 +37599,7 @@ def _jq_price_history(code):
     if _JQUANTS_API_KEY:
         try:
             headers = {"x-api-key": _JQUANTS_API_KEY}
-            # v13.5.35 (owner spec: ten-year corpus): request 3,640 days —
+            # v13.5.36 (owner spec: ten-year corpus): request 3,640 days —
             # safely INSIDE the rolling 10y J-Quants entitlement. 3,660 days
             # overhung the contract window by ~a week and J-Quants rejected
             # the whole request, which blanked the chart (the seed failure
@@ -38459,7 +38682,7 @@ def _canonical_quote_candidates(row, snapshot_provider):
 def _daily_close_session_current(market, source_raw, observed_dt,
                                  decision_dt):
     """True when a bare-date daily close IS the latest completed official
-    session per the canonical trading calendar (v13.5.35, owner directive:
+    session per the canonical trading calendar (v13.5.36, owner directive:
     weekday-agnostic). Calendar coverage gaps return False — the row then
     falls through to the non-authoritative wall-clock telemetry window."""
     if not (isinstance(source_raw, str)

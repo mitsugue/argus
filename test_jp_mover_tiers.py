@@ -408,7 +408,7 @@ def test_scan_and_mover_universe_require_delayed_jquants_status(
     assert recorded == []
 
 
-# ── v13.5.35 compatibility: these legacy fixtures predate the canonical-
+# ── v13.5.36 compatibility: these legacy fixtures predate the canonical-
 # calendar authority (weekday-agnostic daily sessions). Register a wide
 # synthetic Mon-Fri canonical range so their historical/frozen dates keep the
 # session semantics they were written under; production stays strict.

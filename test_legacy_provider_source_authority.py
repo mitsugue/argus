@@ -422,7 +422,7 @@ def test_direct_opend_realtime_prices_rejects_invalid_source_time_before_history
     assert scanner.PRICE_HISTORY == {}
 
 
-# ── v13.5.35 compatibility: these legacy fixtures predate the canonical-
+# ── v13.5.36 compatibility: these legacy fixtures predate the canonical-
 # calendar authority (weekday-agnostic daily sessions). Register a wide
 # synthetic Mon-Fri canonical range so their historical/frozen dates keep the
 # session semantics they were written under; production stays strict.

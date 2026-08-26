@@ -1,4 +1,4 @@
-"""v13.5.35 — MARKET SITUATION BRIEF (NOW/WHY/NEXT) tests."""
+"""v13.5.36 — MARKET SITUATION BRIEF (NOW/WHY/NEXT) tests."""
 import argus_market_brief as mb
 
 import scanner
@@ -165,7 +165,7 @@ def test_compose_brief_main_risk_uses_shock_headline():
     assert brief["chips"]["mainRisk"].startswith("米30年債利回り")
 
 
-# ━━━ v13.5.35 — D05 autorefresh + brief chip enum (owner/GPT directives) ━━━
+# ━━━ v13.5.36 — D05 autorefresh + brief chip enum (owner/GPT directives) ━━━
 
 def test_investor_types_autorefresh_feeds_ledger_idempotently(monkeypatch):
     import argus_market_ledger
