@@ -470,7 +470,7 @@ if __name__ == "__main__":
 
 
 class DailyBasisFreshnessTests(unittest.TestCase):
-    """v13.5.34 (owner discussion + external review #8): a FIVE_DAY decision
+    """v13.5.35 (owner discussion + external review #8): a FIVE_DAY decision
     runs on the latest COMPLETED session close. In mixed states (some
     reference degraded), DELAYED quality must not ADD a freshness gate code;
     STALE/UNKNOWN still must. (When every reference is AVAILABLE the verifier

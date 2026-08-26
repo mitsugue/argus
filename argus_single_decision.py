@@ -827,6 +827,10 @@ def _latest_session_daily_authority(
             cutoff, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
         target = argus_market_clock.latest_completed_session_date(
             clock_market, cutoff_dt)
+    except argus_market_clock.CalendarUnavailableError:
+        # Owner directive 2026-08-26: no canonical calendar coverage →
+        # authority unavailable. Weekday arithmetic never substitutes.
+        return False
     except (TypeError, ValueError):
         return False
     observed = str(observation.get("observedAt") or "")[:10]
@@ -1346,7 +1350,7 @@ def _result_from_valid_input(top: _VerifiedDecisionEvidenceBundle) -> Dict[str, 
         missing.append("owner_context_unknown")
     if top["quality"]["status"] != "COMPLETE":
         missing.append(f"quality_{top['quality']['status'].lower()}")
-    # v13.5.34 parity with the device authority: DELAYED (official close
+    # v13.5.35 parity with the device authority: DELAYED (official close
     # inside its daily window) does not gate a FIVE_DAY decision; STALE and
     # UNKNOWN still do.
     if top["quality"]["freshness"] in ("STALE", "UNKNOWN"):

@@ -117,6 +117,84 @@ _HOLIDAYS = {
     FX: set(),                    # FX is independent 24/5
 }
 
+# The static tables above are OFFICIAL-CALENDAR SNAPSHOTS (JPX/NYSE), not
+# weekday arithmetic — but they only cover this range. DAILY decision
+# authority must never silently degrade to weekday inference beyond it
+# (owner directive 2026-08-26).
+_STATIC_TABLE_COVERAGE = {
+    JP_EQUITY: ("2026-01-01", "2026-12-31"),
+    US_EQUITY: ("2026-01-01", "2026-12-31"),
+    VIX_MKT: ("2026-01-01", "2026-12-31"),
+}
+
+
+class CalendarUnavailableError(ValueError):
+    """No canonical trading-calendar coverage for the probed date.
+
+    DAILY authority callers must treat this as 'authority unavailable'
+    (conservative data-gate) — never fall back to weekday arithmetic."""
+
+
+# Runtime-registered canonical calendar (JP: the J-Quants /markets/calendar
+# rows the server fetched and PROVED; tests inject synthetic ranges). When a
+# registered range covers a date it outranks the static snapshot.
+_CANONICAL_CALENDARS: Dict[str, Dict[str, Any]] = {}
+
+
+def register_canonical_calendar(market: str, trading_days: Sequence[str], *,
+                                start: str, end: str,
+                                source: str) -> Dict[str, Any]:
+    """Register provider-proven trading days covering [start, end]."""
+    if market not in (JP_EQUITY, US_EQUITY, VIX_MKT):
+        raise ValueError(f"unsupported canonical market: {market}")
+    days = {str(d)[:10] for d in (trading_days or []) if str(d)[:10]}
+    if not (len(str(start)) == 10 and len(str(end)) == 10 and start <= end):
+        raise ValueError("invalid coverage range")
+    entry = {"tradingDays": frozenset(days), "start": str(start),
+             "end": str(end), "source": str(source)[:80]}
+    _CANONICAL_CALENDARS[market] = entry
+    return {"market": market, "days": len(days),
+            "start": entry["start"], "end": entry["end"],
+            "source": entry["source"]}
+
+
+def clear_canonical_calendar(market: Optional[str] = None) -> None:
+    if market is None:
+        _CANONICAL_CALENDARS.clear()
+    else:
+        _CANONICAL_CALENDARS.pop(market, None)
+
+
+def canonical_calendar_status(market: str) -> Optional[Dict[str, Any]]:
+    entry = _CANONICAL_CALENDARS.get(market)
+    if not entry:
+        return None
+    return {"market": market, "start": entry["start"], "end": entry["end"],
+            "days": len(entry["tradingDays"]), "source": entry["source"]}
+
+
+def canonical_trading_day(market: str, d: date,
+                          *, extra_closures: Sequence[str] = ()) -> bool:
+    """AUTHORITY-GRADE calendar verdict: registered canonical calendar first,
+    then the versioned official static snapshot within its coverage. A date
+    outside BOTH raises CalendarUnavailableError — weekday arithmetic never
+    substitutes for the official calendar in daily decision authority."""
+    if market == CRYPTO:
+        return True
+    key = d.isoformat()
+    if key in set(extra_closures or ()):
+        return False
+    entry = _CANONICAL_CALENDARS.get(market)
+    if entry and entry["start"] <= key <= entry["end"]:
+        return key in entry["tradingDays"]
+    coverage = _STATIC_TABLE_COVERAGE.get(market)
+    if coverage and coverage[0] <= key <= coverage[1]:
+        if d.weekday() >= 5:      # exchange weekends are calendar fact
+            return False
+        return key not in _HOLIDAYS.get(market, set())
+    raise CalendarUnavailableError(
+        f"no canonical trading-calendar coverage for {market} on {key}")
+
 _HOLIDAY_NAMES = {
     JP_EQUITY: _JP_HOLIDAY_NAMES_2026,
     US_EQUITY: _US_HOLIDAY_NAMES_2026,
@@ -154,8 +232,19 @@ def _us_eastern_offset(dt_utc: datetime) -> timedelta:
 
 def is_trading_day(market: str, d: date,
                    *, extra_closures: Sequence[str] = ()) -> bool:
+    """TELEMETRY-GRADE calendar check (schedulers, walkers, display).
+
+    Uses the registered canonical calendar when it covers the date, else the
+    static snapshot, else legacy weekday behavior. DAILY decision authority
+    must use canonical_trading_day()/latest_completed_session_date(), which
+    fail conservatively instead of ever falling back to weekday arithmetic."""
     if market == CRYPTO:
         return True  # 24/7
+    try:
+        return canonical_trading_day(
+            market, d, extra_closures=extra_closures)
+    except CalendarUnavailableError:
+        pass
     if d.weekday() >= 5:  # Sat/Sun
         return False
     key = d.isoformat()
@@ -192,19 +281,34 @@ def _local_close(market: str, d: date, now_utc: datetime) -> datetime:
 
 
 def _origin_trading_date(market: str, now_utc: datetime) -> date:
-    """The most-recent COMPLETED trading session date as of now (post-close)."""
+    """The most-recent COMPLETED trading session date as of now (post-close).
+
+    AUTHORITY-GRADE: every probed date must be answerable by the canonical
+    calendar (registered range or the versioned official snapshot). Coverage
+    gaps raise CalendarUnavailableError — the caller data-gates instead of
+    inferring sessions from weekdays. The 20-day walk-back bounds even the
+    longest official closures (Golden Week, New Year) with margin."""
     if market == CRYPTO:
         return now_utc.date()
-    # walk back from today to the latest trading day whose close has passed
+    if market == FX:
+        # FX 24/5 has no exchange holiday calendar; NY-close weekday walk.
+        probe = now_utc.astimezone(_ET).date()
+        for _ in range(10):
+            if probe.weekday() < 5 and now_utc >= _local_close(
+                    FX, probe, now_utc):
+                return probe
+            probe -= timedelta(days=1)
+        return probe
     local_tz = _JST if market == JP_EQUITY else _ET
     probe = now_utc.astimezone(local_tz).date()
-    for _ in range(10):
-        if is_trading_day(market, probe):
+    for _ in range(20):
+        if canonical_trading_day(market, probe):
             close = _local_close(market, probe, now_utc)
             if now_utc >= close:
                 return probe
         probe -= timedelta(days=1)
-    return probe
+    raise CalendarUnavailableError(
+        f"no completed session found within 20 days for {market}")
 
 
 def latest_completed_session_date(
@@ -494,7 +598,14 @@ def quote_eligibility(
             local_tz = _JST if market == JP_EQUITY else _ET
             session = market_session(market, now_utc)
             quote_date = price_as_of.astimezone(local_tz).date()
-            origin = _origin_trading_date(market, now_utc)
+            try:
+                origin = _origin_trading_date(market, now_utc)
+            except CalendarUnavailableError:
+                return {"eligible": False,
+                        "quoteStatus": "calendar_unavailable",
+                        "missingReason": "calendar_unavailable",
+                        "market": market,
+                        "sourceFreshnessSeconds": int(age)}
             if (session["session"] not in (
                     "MORNING_SESSION", "AFTERNOON_SESSION", "REGULAR")
                     and quote_date == origin):
