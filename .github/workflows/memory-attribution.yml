@@ -106,6 +106,7 @@ on:
   push:
     branches:
       - "codex/normalized-hash-memory-hotfix"
+      - "codex/recovery-*"
     paths:
       - "argus_memory_attribution.py"
       - "argus_asset_chart_cache.py"
@@ -113,6 +114,9 @@ on:
       - "argus_checkpoint_v2_isolated.py"
       - "docs/argus-deep-memory-attribution.md"
       - "scanner.py"
+      - "argus_recovery_measurement.py"
+      - "argus_recovery_measurement_storage.py"
+      - "argus_recovery_phase_a_adapter.py"
       - "argus_remote_journal.py"
       - "argus_remote_nonce_anchor.py"
       - "argus_remote_recovery.py"
@@ -359,7 +363,8 @@ jobs:
                 test_argus_recovery_registry.py \
                 test_argus_recovery_measurement.py \
                 test_argus_recovery_measurement_storage.py \
-                test_argus_recovery_phase_a_adapter.py || workload_status=$?
+                test_argus_recovery_phase_a_adapter.py \
+                test_argus_v13_4_2_remote_receipts.py || workload_status=$?
               python3 -B scripts/recovery_measurement_benchmark.py \
                 > artifacts/recovery-measurement-benchmark.json || workload_status=$?
               python3 -B scripts/recovery_measurement_retention_benchmark.py \

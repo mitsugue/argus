@@ -450,9 +450,9 @@ jobs:
           EXPECTED_HASH=$(printf '%s' "$VERIFIED" | python3 -c \
             'import json,sys; print(json.load(sys.stdin)["actualHash"])')
 
-          # Enqueue only the fsynced asynchronous intent. The next ordinary
-          # natural mission owns immutable read-back, checkpoint, coalescing,
-          # and acknowledgement; this workflow never synchronously flushes.
+          # Enqueue the fsynced asynchronous intent, then request one bounded
+          # authenticated drain after immutable publication. Natural missions
+          # remain the independent fallback and keep their existing cadence.
           RECOVERY_RECEIPT_ARGS=()
           if [ "$ARTIFACT_MODE" = "encrypted_recovery_v1" ]; then
             RECOVERY_RECEIPT_ARGS+=(
@@ -485,9 +485,26 @@ jobs:
             --header 'Content-Type: application/json' \
             --data "$RECEIPT_PAYLOAD" \
             --url "$BE/api/argus/admin/remote-journal/commit-receipt")
-          RECEIPT_STATE=$(printf '%s' "$RECEIPT" | python3 -c \
-            'import json,os,sys; d=json.load(sys.stdin); assert d.get("accepted") is True; assert d.get("operationId"); assert d.get("remoteCommitSha")==os.environ["REMOTE_COMMIT_SHA"]; assert int(d.get("targetWalSequence") or 0)==int(os.environ["RECEIPT_TARGET_WAL"]); state=d.get("durabilityState"); assert state in ("pending","verified"); print(state)')
+          RECEIPT_VALUES=$(printf '%s' "$RECEIPT" | python3 -c \
+            'import json,os,sys; d=json.load(sys.stdin); assert d.get("accepted") is True; assert d.get("operationId"); assert d.get("remoteCommitSha")==os.environ["REMOTE_COMMIT_SHA"]; assert int(d.get("targetWalSequence") or 0)==int(os.environ["RECEIPT_TARGET_WAL"]); state=d.get("durabilityState"); assert state in ("pending","verified"); print(state); print(d["operationId"])')
+          RECEIPT_STATE=$(printf '%s\n' "$RECEIPT_VALUES" | sed -n '1p')
+          OPERATION_ID=$(printf '%s\n' "$RECEIPT_VALUES" | sed -n '2p')
+          export OPERATION_ID
           echo "watchtower Remote Journal receipt accepted: state=$RECEIPT_STATE"
+          if [ "$RECEIPT_STATE" != "verified" ]; then
+            DRAIN_PAYLOAD=$(python3 -c \
+              'import json,sys; print(json.dumps({"operationId":sys.argv[1],"backendBuildSha":sys.argv[2],"triggerClass":"publisher_receipt"},separators=(",",":")))' \
+              "$OPERATION_ID" "$BACKEND_BUILD_SHA")
+            DRAIN=$(python3 "$RUNNER_TEMP/workflow_http.py" \
+              --name watchtower-remote-journal-trigger-drain \
+              --method POST --timeout 240 \
+              --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+              --header 'Content-Type: application/json' --data "$DRAIN_PAYLOAD" \
+              --url "$BE/api/argus/admin/remote-journal/trigger-drain")
+            printf '%s' "$DRAIN" | python3 -c \
+              'import json,os,sys; d=json.load(sys.stdin); assert d.get("operationId")==os.environ["OPERATION_ID"]; assert d.get("remoteCommitSha")==os.environ["REMOTE_COMMIT_SHA"]; state=d.get("durabilityState"); assert state in ("pending","verified"); age=d.get("ageSeconds"); assert state=="verified" or isinstance(age,int) and 0<=age<=1800'
+            echo "watchtower Remote Journal publisher drain: $DRAIN"
+          fi
 
   remote-journal-rearm:
     if: github.event_name == 'workflow_dispatch' && inputs.remoteJournalRearm == true
@@ -748,4 +765,30 @@ jobs:
           assert response.get("artifactMode") == "encrypted_recovery_v1"
           assert response.get("durabilityState") in ("pending", "verified")
           PY
-          echo "remote journal re-arm: one exact pair and one receipt accepted"
+          OPERATION_ID=$(python3 -c \
+            'import json,sys; print(json.loads(sys.argv[1])["operationId"])' \
+            "$RESPONSE")
+          RECEIPT_STATE=$(python3 -c \
+            'import json,sys; print(json.loads(sys.argv[1])["durabilityState"])' \
+            "$RESPONSE")
+          if [ "$RECEIPT_STATE" != "verified" ]; then
+            DRAIN_PAYLOAD=$(python3 -c \
+              'import json,sys; print(json.dumps({"operationId":sys.argv[1],"backendBuildSha":sys.argv[2],"triggerClass":"publisher_receipt"},separators=(",",":")))' \
+              "$OPERATION_ID" "$BACKEND_BUILD_SHA")
+            DRAIN=$(python3 "$RUNNER_TEMP/workflow_http.py" \
+              --name rearm-remote-journal-trigger-drain \
+              --method POST --timeout 240 \
+              --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+              --header 'Content-Type: application/json' --data "$DRAIN_PAYLOAD" \
+              --url "$BE/api/argus/admin/remote-journal/trigger-drain")
+            python3 - "$DRAIN" "$OPERATION_ID" <<'PY'
+          import json, sys
+          response = json.loads(sys.argv[1])
+          assert response.get("operationId") == sys.argv[2]
+          state = response.get("durabilityState")
+          assert state in ("pending", "verified")
+          age = response.get("ageSeconds")
+          assert state == "verified" or isinstance(age, int) and 0 <= age <= 1800
+          PY
+          fi
+          echo "remote journal re-arm: one exact pair, receipt, and bounded drain accepted"

@@ -2,9 +2,9 @@
 
 The queue is deliberately small and contains public proof metadata only.  A
 POST acceptance fsyncs this file and never serializes the large legacy
-checkpoint.  Natural mission ticks later coalesce pending intents by WAL
-sequence and persist the resulting verified state through the existing
-checkpoint writer.
+checkpoint.  A bounded authenticated publisher trigger or a natural mission
+tick later coalesces pending intents by WAL sequence and persists the resulting
+verified state through the existing checkpoint writer.
 """
 from __future__ import annotations
 

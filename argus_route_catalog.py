@@ -123,6 +123,7 @@ ROUTE_CATALOG = (
     RouteCatalogEntry("/api/argus/admin/remote-journal/commit-receipt", ("POST",), "api_argus_admin_remote_journal_commit_receipt", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/admin/remote-journal/receipts/<operation_id>", ("GET",), "api_argus_admin_remote_journal_receipt_status", "AUTH_OPERATIONAL", "ADMIN_TOKEN", False, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/admin/remote-journal/recovery-sidecar", ("GET",), "api_argus_admin_remote_journal_recovery_sidecar", "RECOVERY_PROOF", "ADMIN_TOKEN", False, "RECOVERY_PROOF_LEGACY", "SERVER_RECOVERY"),
+    RouteCatalogEntry("/api/argus/admin/remote-journal/trigger-drain", ("POST",), "api_argus_admin_remote_journal_trigger_drain", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/admin/research-benchmark/dry-run", ("POST",), "api_argus_admin_research_benchmark_dry_run", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/admin/research-benchmark/execute", ("POST",), "api_argus_admin_research_benchmark_execute", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/admin/soak/arm", ("POST",), "api_argus_admin_soak_arm", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),

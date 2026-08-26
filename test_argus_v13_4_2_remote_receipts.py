@@ -296,8 +296,12 @@ def test_scheduled_receipt_arrival_capacity_fits_one_bounded_drain():
         workflows, "caos-scan.yml").read_text(encoding="utf-8")
     assert ordinary_watchtower.count("remote-journal/commit-receipt") == 1
     assert scan.count("remote-journal/commit-receipt") == 1
+    assert ordinary_watchtower.count("remote-journal/trigger-drain") == 1
+    assert scan.count("remote-journal/trigger-drain") == 1
     assert "cron: '*/15 * * * 1-5'" in watchtower
     assert "cron: '7-59/15 * * * 1-5'" in watchtower
+    assert "cron: '0 * * * 0,6'" in watchtower
+    assert "cron: '30 * * * 0,6'" in watchtower
     assert "cron: '7,37 * * * *'" in scan
 
     # Between natural :07/:37 boundaries the ordinary scheduled maximum is
@@ -307,6 +311,116 @@ def test_scheduled_receipt_arrival_capacity_fits_one_bounded_drain():
     maximum_scheduled_arrivals_per_half_hour = 5
     assert queue.MAX_RECEIPTS >= \
         100 * maximum_scheduled_arrivals_per_half_hour
+
+    # Remote Journal authority measures event occurredAt through verified ACK.
+    # The combined weekend publishers have the widest nominal gap: :07->:30
+    # and :37->:00 are 23 minutes.  One publisher-triggered drain retains a
+    # bounded four-minute transport budget, so the repository topology is
+    # structurally inside (not equal to) the existing 1,800-second target.
+    nominal_max_publication_gap_seconds = 23 * 60
+    publisher_drain_budget_seconds = 240
+    assert nominal_max_publication_gap_seconds + \
+        publisher_drain_budget_seconds < 1800
+    assert "--method POST --timeout 240" in ordinary_watchtower
+    assert "--method POST --timeout 240" in scan
+
+
+def test_authenticated_publisher_trigger_drains_once_and_replay_is_noop():
+    scanner._ARGUS_ADMIN_TOKEN = "admin"
+    scanner._REMOTE_RECEIPT_QUEUE, rows = _current_legacy_store(3)
+    client = scanner.app.test_client()
+    payload = {
+        "operationId": rows[-1]["operationId"],
+        "backendBuildSha": BUILD,
+        "triggerClass": "publisher_receipt",
+    }
+    with mock.patch.object(scanner, "_backend_exact_sha", return_value=BUILD), \
+            mock.patch.object(scanner, "_ai_now_iso", return_value=NOW), \
+            mock.patch.object(scanner, "_persist_remote_receipt_queue",
+                              side_effect=_persist_in_memory), \
+            mock.patch.object(scanner, "_verified_remote_receipt_artifact",
+                              return_value={}), \
+            mock.patch.object(scanner, "_remote_readback_ack",
+                              side_effect=_verify_selected(
+                                  3, receipt_hash=f"{3:016x}")), \
+            mock.patch.object(scanner, "_journal_compact", return_value=0), \
+            mock.patch.object(scanner, "_osint_persist",
+                              return_value={"verified": True}) as checkpoint:
+        first = client.post(
+            "/api/argus/admin/remote-journal/trigger-drain",
+            headers={"X-ARGUS-ADMIN-TOKEN": "admin"}, json=payload)
+        replay = client.post(
+            "/api/argus/admin/remote-journal/trigger-drain",
+            headers={"X-ARGUS-ADMIN-TOKEN": "admin"}, json=payload)
+    assert first.status_code == 200
+    assert first.get_json()["durabilityState"] == "verified"
+    assert first.get_json()["coalescedReceiptCount"] == 3
+    assert first.get_json()["checkpointCreated"] is True
+    assert replay.status_code == 200
+    assert replay.get_json()["drainStatus"] == "idempotent_replay"
+    assert replay.get_json()["checkpointCreated"] is False
+    checkpoint.assert_called_once_with()
+
+
+def test_publisher_trigger_is_fail_closed_and_contention_has_no_checkpoint():
+    scanner._ARGUS_ADMIN_TOKEN = "admin"
+    scanner._REMOTE_RECEIPT_QUEUE, rows = _current_legacy_store(1)
+    client = scanner.app.test_client()
+    path = "/api/argus/admin/remote-journal/trigger-drain"
+    payload = {
+        "operationId": rows[0]["operationId"],
+        "backendBuildSha": BUILD,
+        "triggerClass": "publisher_receipt",
+    }
+    assert client.post(path, json=payload).status_code == 401
+    with mock.patch.object(scanner, "_backend_exact_sha", return_value=BUILD):
+        malformed = client.post(
+            path, headers={"X-ARGUS-ADMIN-TOKEN": "admin"},
+            json={**payload, "triggerClass": "manual"})
+        mismatch = client.post(
+            path, headers={"X-ARGUS-ADMIN-TOKEN": "admin"},
+            json={**payload, "backendBuildSha": "a" * 40})
+    assert malformed.status_code == 400
+    assert mismatch.status_code == 409
+
+    scanner._REMOTE_RECEIPT_FLUSH_LOCK.acquire()
+    try:
+        with mock.patch.object(
+                scanner, "_backend_exact_sha", return_value=BUILD), \
+                mock.patch.object(scanner, "_ai_now_iso", return_value=NOW), \
+                mock.patch.object(scanner, "_osint_persist") as checkpoint:
+            contended = client.post(
+                path, headers={"X-ARGUS-ADMIN-TOKEN": "admin"}, json=payload)
+    finally:
+        scanner._REMOTE_RECEIPT_FLUSH_LOCK.release()
+    assert contended.status_code == 202
+    assert contended.get_json()["drainStatus"] == "writer_lock_contended"
+    assert contended.get_json()["checkpointCreated"] is False
+    checkpoint.assert_not_called()
+    assert queue.summary(scanner._REMOTE_RECEIPT_QUEUE,
+                         now_iso=NOW)["pendingCount"] == 1
+
+
+def test_publisher_trigger_never_promotes_failed_or_poison_receipt():
+    scanner._ARGUS_ADMIN_TOKEN = "admin"
+    state, rows = _current_legacy_store(1)
+    state = queue.record_attempt(
+        state, rows[0]["operationId"], attempted_at=NOW)
+    scanner._REMOTE_RECEIPT_QUEUE = queue.record_retry(
+        state, rows[0]["operationId"], now_iso=NOW,
+        error_class="remote_wal_sequence_mismatch", permanent=True)
+    with mock.patch.object(scanner, "_backend_exact_sha", return_value=BUILD), \
+            mock.patch.object(scanner, "_ai_now_iso", return_value=NOW), \
+            mock.patch.object(scanner, "_osint_persist") as checkpoint:
+        response = scanner.app.test_client().post(
+            "/api/argus/admin/remote-journal/trigger-drain",
+            headers={"X-ARGUS-ADMIN-TOKEN": "admin"},
+            json={"operationId": rows[0]["operationId"],
+                  "backendBuildSha": BUILD,
+                  "triggerClass": "publisher_receipt"})
+    assert response.status_code == 409
+    assert response.get_json()["durabilityState"] == "failed"
+    checkpoint.assert_not_called()
 
 
 def test_newer_receipt_arriving_during_flush_remains_pending():

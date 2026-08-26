@@ -27211,7 +27211,10 @@ def _prepare_remote_receipt_drain(
                 "readBackVerified": readback_ok,
             })
             return plan
-        _journal_compact(now_iso)
+        # The drain owns the immediately following checkpoint.  Deferring the
+        # standalone compaction persist prevents an event-triggered receipt
+        # drain from creating two full checkpoints for one immutable proof.
+        _journal_compact(now_iso, defer_persist=True)
         plan.update({
             "status": "verified_checkpoint_pending",
             "verifiedWalSequence": verified_sequence,
@@ -27310,8 +27313,15 @@ def _complete_remote_receipt_drain(plan, checkpoint, now_iso=None):
             _REMOTE_RECEIPT_FLUSH_LOCK.release()
 
 
-def _persist_with_remote_receipt_drain(now_iso=None):
-    """Natural lifecycle adapter: one bounded drainer plus one checkpoint."""
+def _persist_with_remote_receipt_drain(
+        now_iso=None, *, checkpoint_required=True):
+    """One bounded drainer plus at most one checkpoint.
+
+    Natural lifecycle callers retain their already-required checkpoint even
+    when the queue is empty.  An authenticated publisher trigger passes
+    ``checkpoint_required=False`` so lock contention, retry backoff, and noop
+    paths cannot create an unrelated checkpoint.
+    """
     now_iso = now_iso or _ai_now_iso()
     _memory_attribution_path_capture(
         "M18", "remote_receipt_prepare_start")
@@ -27323,9 +27333,13 @@ def _persist_with_remote_receipt_drain(now_iso=None):
             "queueBefore": plan.get("queueBefore"),
         })
     try:
-        _memory_attribution_path_capture(
-            "M20", "checkpoint_adapter_entry")
-        checkpoint = _osint_persist()
+        if plan.get("status") == "verified_checkpoint_pending" or \
+                checkpoint_required:
+            _memory_attribution_path_capture(
+                "M20", "checkpoint_adapter_entry")
+            checkpoint = _osint_persist()
+        else:
+            checkpoint = {"verified": False, "checkpointCreated": False}
         result = _memory_operation_run(
             "journal", "remote_receipt_complete",
             _complete_remote_receipt_drain, plan, checkpoint, now_iso)
@@ -27340,7 +27354,7 @@ def _persist_with_remote_receipt_drain(now_iso=None):
     return checkpoint
 
 
-def _journal_compact(now_iso=None):
+def _journal_compact(now_iso=None, *, defer_persist=False):
     """非critical・検証済みack済みイベントの決定論compaction。criticalは
     ack前に絶対compactしない。歴代件数は_OPS_JOURNAL_METAが保持(ゼロ化なし)。"""
     now_iso = now_iso or _ai_now_iso()
@@ -27354,7 +27368,7 @@ def _journal_compact(now_iso=None):
         _OPS_JOURNAL_COMPACT, batches)
     removed = len(_OPS_JOURNAL) - len(keep)
     _OPS_JOURNAL[:] = keep
-    if not _mission_tick_context_active():
+    if not _mission_tick_context_active() and not defer_persist:
         _osint_persist()
     return removed
 
@@ -30773,7 +30787,7 @@ def api_argus_admin_remote_journal_recovery_sidecar():
 
 @app.route("/api/argus/admin/remote-journal/commit-receipt", methods=["POST"])
 def api_argus_admin_remote_journal_commit_receipt():
-    """Fsync a small intent; immutable read-back runs on a natural tick."""
+    """Fsync intent; read-back runs on a publisher trigger or natural tick."""
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
@@ -30896,6 +30910,88 @@ def api_argus_admin_remote_journal_receipt_status(operation_id):
     return jsonify({"ok": True, "status": "found", **
                     argus_remote_receipt_queue.status_view(
                         receipt, now_iso=_ai_now_iso())})
+
+
+@app.route(
+    "/api/argus/admin/remote-journal/trigger-drain", methods=["POST"])
+def api_argus_admin_remote_journal_trigger_drain():
+    """Run one bounded drain after an authenticated immutable publication."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    operation_id = str(body.get("operationId") or "")
+    backend_build_sha = str(body.get("backendBuildSha") or "").lower()
+    if body.get("triggerClass") != "publisher_receipt" or \
+            not re.fullmatch(r"rr-[0-9a-f]{24}", operation_id) or \
+            not re.fullmatch(r"[0-9a-f]{40}", backend_build_sha):
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "invalid_drain_trigger"}), 400
+    if backend_build_sha != _backend_exact_sha():
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "backend_build_sha_mismatch"}), 409
+
+    now_iso = _ai_now_iso()
+    with _REMOTE_RECEIPT_QUEUE_LOCK:
+        receipt = argus_remote_receipt_queue.get_receipt(
+            _REMOTE_RECEIPT_QUEUE, operation_id)
+    if receipt is None:
+        return jsonify({"ok": False, "status": "missing",
+                        "error": "receipt_operation_missing"}), 404
+    if receipt.get("backendBuildSha") != backend_build_sha:
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "receipt_build_sha_mismatch"}), 409
+    before = argus_remote_receipt_queue.status_view(
+        receipt, now_iso=now_iso)
+    if before["durabilityState"] == "failed":
+        return jsonify({"ok": False, "status": "failed",
+                        "error": before["lastErrorClass"], **before}), 409
+    if before["durabilityState"] == "verified":
+        return jsonify({"ok": True, "status": "verified",
+                        "drainStatus": "idempotent_replay",
+                        "checkpointCreated": False, **before})
+
+    try:
+        checkpoint = _persist_with_remote_receipt_drain(
+            now_iso, checkpoint_required=False)
+        drain = checkpoint.get("remoteReceiptFlush") or {}
+    except Exception:
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "remote_receipt_drain_failed"}), 503
+
+    completed_at = _ai_now_iso()
+    with _REMOTE_RECEIPT_QUEUE_LOCK:
+        receipt = argus_remote_receipt_queue.get_receipt(
+            _REMOTE_RECEIPT_QUEUE, operation_id)
+    if receipt is None:
+        return jsonify({"ok": False, "status": "failed",
+                        "error": "receipt_operation_missing"}), 503
+    view = argus_remote_receipt_queue.status_view(
+        receipt, now_iso=completed_at)
+    if drain.get("status") == "failed":
+        return jsonify({"ok": False, "status": "failed",
+                        "error": drain.get("errorClass") or
+                        "remote_receipt_verification_failed",
+                        "drainStatus": "failed",
+                        "checkpointCreated": False, **view}), 409
+    if view["durabilityState"] == "failed":
+        return jsonify({"ok": False, "status": "failed",
+                        "error": view["lastErrorClass"],
+                        "drainStatus": drain.get("status"),
+                        "checkpointCreated": bool(
+                            drain.get("checkpointCreated")), **view}), 409
+    status = "verified" if view["durabilityState"] == "verified" \
+        else "pending"
+    return jsonify({
+        "ok": True,
+        "status": status,
+        "drainStatus": drain.get("status"),
+        "checkpointCreated": bool(drain.get("checkpointCreated")),
+        "coalescedReceiptCount": drain.get("coalescedReceiptCount"),
+        "queueBefore": drain.get("queueBefore"),
+        "queueAfter": drain.get("queueAfter"),
+        **view,
+    }), (200 if status == "verified" else 202)
 
 
 @app.route("/api/argus/cost-policy")

@@ -35,6 +35,7 @@ _SAFE_OUTPUT_KEYS += (
     "remoteCommitSha", "verifiedByRemoteCommitSha", "readBackVerified",
     "verifiedAt", "attempts",
     "lastErrorClass", "ageSeconds", "idempotentReplay",
+    "drainStatus", "coalescedReceiptCount", "queueBefore", "queueAfter",
     # Business-error names and their status-class diagnostics are safe scalars
     # (never tokens); without them a failing daily run cannot say WHY it failed.
     "error", "diagnostic")

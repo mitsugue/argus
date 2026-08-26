@@ -483,6 +483,19 @@ jobs:
           RECEIPT_STATE=$(printf '%s\n' "$RECEIPT_VALUES" | sed -n '2p')
           STATUS="$RECEIPT"
           if [ "$RECEIPT_STATE" != "verified" ]; then
+            DRAIN_PAYLOAD=$(python3 -c \
+              'import json,sys; print(json.dumps({"operationId":sys.argv[1],"backendBuildSha":sys.argv[2],"triggerClass":"publisher_receipt"},separators=(",",":")))' \
+              "$OPERATION_ID" "$BACKEND_BUILD_SHA")
+            STATUS=$(python3 "$RUNNER_TEMP/workflow_http.py" \
+              --name remote-journal-trigger-drain \
+              --method POST --timeout 240 \
+              --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+              --header 'Content-Type: application/json' --data "$DRAIN_PAYLOAD" \
+              --url "https://argus-backend-3j2m.onrender.com/api/argus/admin/remote-journal/trigger-drain")
+            RECEIPT_STATE=$(printf '%s' "$STATUS" | python3 -c \
+              'import json,sys; d=json.load(sys.stdin); assert d.get("operationId"); print(d.get("durabilityState") or "malformed")')
+          fi
+          if [ "$RECEIPT_STATE" != "verified" ]; then
             for DELAY in 5 10 20 40 80 120; do
               sleep "$DELAY"
               STATUS=$(python3 "$RUNNER_TEMP/workflow_http.py" \
@@ -496,16 +509,22 @@ jobs:
           fi
           echo "remote-journal-receipt-status: $STATUS"
           STATUS_VALUES=$(printf '%s' "$STATUS" | python3 -c \
-            'import json,sys; d=json.load(sys.stdin); state=d.get("durabilityState"); assert state in ("pending","verified","failed"); print(state); print(d.get("verifiedWalSequence") or 0); print(str(d.get("readBackVerified") is True).lower()); print(d.get("remoteCommitSha") or ""); print(d.get("ageSeconds") if d.get("ageSeconds") is not None else -1)')
+            'import json,sys; d=json.load(sys.stdin); state=d.get("durabilityState"); assert state in ("pending","verified","failed"); print(state); print(d.get("verifiedWalSequence") or 0); print(str(d.get("readBackVerified") is True).lower()); print(d.get("remoteCommitSha") or ""); print(d.get("ageSeconds") if d.get("ageSeconds") is not None else -1); print(d.get("verifiedByRemoteCommitSha") or "")')
           FINAL_STATE=$(printf '%s\n' "$STATUS_VALUES" | sed -n '1p')
           VERIFIED_SEQUENCE=$(printf '%s\n' "$STATUS_VALUES" | sed -n '2p')
           READBACK_VERIFIED=$(printf '%s\n' "$STATUS_VALUES" | sed -n '3p')
           VERIFIED_COMMIT=$(printf '%s\n' "$STATUS_VALUES" | sed -n '4p')
           RECEIPT_AGE=$(printf '%s\n' "$STATUS_VALUES" | sed -n '5p')
+          ACK_COMMIT=$(printf '%s\n' "$STATUS_VALUES" | sed -n '6p')
           if [ "$FINAL_STATE" = "verified" ]; then
             [ "$READBACK_VERIFIED" = "true" ] || exit 1
-            [ "$VERIFIED_SEQUENCE" = "$TARGET_WAL_SEQUENCE" ] || exit 1
             [ "$VERIFIED_COMMIT" = "$REMOTE_COMMIT_SHA" ] || exit 1
+            [ -n "$ACK_COMMIT" ] || exit 1
+            if [ "$ACK_COMMIT" = "$REMOTE_COMMIT_SHA" ]; then
+              [ "$VERIFIED_SEQUENCE" = "$TARGET_WAL_SEQUENCE" ] || exit 1
+            else
+              [ "$VERIFIED_SEQUENCE" -ge "$TARGET_WAL_SEQUENCE" ] || exit 1
+            fi
             DURABILITY_RESULT="verified"
           elif [ "$FINAL_STATE" = "pending" ]; then
             [ "$RECEIPT_AGE" -ge 0 ] && [ "$RECEIPT_AGE" -le 1800 ] || exit 1
