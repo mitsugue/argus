@@ -64,7 +64,7 @@ inputs:
 4. the adapter's instrumentation-coverage SHA-256
 
 The adapter validates the Registry as exactly 27 mutation declarations with
-the five instrumented declarations present. It checks all four identities and
+the six instrumented declarations present. It checks all four identities and
 the derived generation ID at load and again at mutation/checkpoint boundaries.
 Build, schema, instrumentation, or generation drift rotates to a fresh empty
 artifact with the core's generic `artifact_invalid` code. Registry policy drift
@@ -79,17 +79,18 @@ not a cross-process authority lock.
 ## Exact producer seams
 
 Scanner calls `record_mutation_after_authority(...)` only at these
-five success boundaries:
+six success boundaries:
 
 | Registry mutation | Scanner seam | Exact success boundary | Measurement coverage |
 |---|---|---|---|
 | `core.ops_journal_transition` | `_journal` | journal append plus its required tick-WAL or non-tick verified checkpoint has completed | `OBSERVED_UNDURABLE` |
+| `market.ledger_update` | `_investor_types_autorefresh` | the D05 investor-types import has succeeded and its existing legacy checkpoint has returned `verified == true` | `OBSERVED_UNDURABLE` |
 | `core.mission_transition` | `_append_tick_wal` | `kind == "mission_transition"`, after WAL append/fsync returns | `OBSERVED_UNDURABLE` |
 | `core.batch_cursor` | `_append_tick_wal` | `kind == "batch_cursor"`, after WAL append/fsync returns | `OBSERVED_UNDURABLE` |
 | `durability.receipt_ack` | `_persist_with_remote_receipt_drain` | `_complete_remote_receipt_drain` returns `status == "verified"` | `OBSERVED_DURABLE` |
 | `startup.restore_transition` | `_startup_bootstrap` | once, after terminal `ready` or `ready_degraded`; never `failed_safe` | `UNKNOWN` |
 
-The other 22 Registry mutation classes remain uninstrumented. Wording must not
+The other 21 Registry mutation classes remain uninstrumented. Wording must not
 suggest their observation, durability, or replay completeness.
 
 Mutation hooks accept only the Registry ID and bounded scalar byte/count/
@@ -217,7 +218,7 @@ completion.
 6. Optional diagnostics persistence is synchronous after authority and may add
    response latency. Burn-in must measure it; it cannot be moved inside the
    authority lock or used to change readiness.
-7. The current Registry has only five instrumented classes. Any Registry count
+7. The current Registry has only six instrumented classes. Any Registry count
    or policy change deliberately disables/rotates measurement until the
    instrumentation manifest is reviewed.
 8. Pre-authority observers must remain lock-free. Calling `adapter.status()` or
@@ -227,7 +228,7 @@ completion.
 ## Verification and deployment gates
 
 Focused tests cover default-disable/no-I/O behavior, strict build identity,
-canonical resolver use, the `RLock`, all five Registry-bound producers,
+canonical resolver use, the `RLock`, all six Registry-bound producers,
 scanner success seams, no adapter call before WAL/journal authority, timer
 exclusion, sequence-pinned WAL-byte estimates, heartbeat-failure observation,
 both durable-lock release paths, scalar-only mutation APIs, transient

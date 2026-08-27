@@ -2,9 +2,9 @@
 
 The queue is deliberately small and contains public proof metadata only.  A
 POST acceptance fsyncs this file and never serializes the large legacy
-checkpoint.  Natural mission ticks later coalesce pending intents by WAL
-sequence and persist the resulting verified state through the existing
-checkpoint writer.
+checkpoint.  A bounded authenticated publisher trigger or a natural mission
+tick later coalesces pending intents by WAL sequence and persists the resulting
+verified state through the existing checkpoint writer.
 """
 from __future__ import annotations
 
@@ -445,6 +445,70 @@ def mark_covered_verified(store: Mapping[str, Any], *, verified_sequence: int,
             covered.append(str(receipt.get("operationId")))
         else:
             updated.append(receipt)
+    state["receipts"] = updated
+    return state, covered
+
+
+def mark_selected_covered_verified(
+        store: Mapping[str, Any], *, operation_ids: list[str],
+        verified_sequence: int, remote_commit_sha: str,
+        verified_at: str) -> tuple[Dict[str, Any], list[str]]:
+    """Cover only pending intents frozen into one verified legacy batch.
+
+    The operation-id boundary prevents an intent accepted while remote
+    verification is in flight from being acknowledged by an older plan.
+    """
+    commit = str(remote_commit_sha or "").lower()
+    if type(operation_ids) is not list or not operation_ids or \
+            len(operation_ids) > MAX_RECEIPTS or \
+            any(type(value) is not str or not value for value in operation_ids) \
+            or len(set(operation_ids)) != len(operation_ids) or \
+            type(verified_sequence) is not int or \
+            isinstance(verified_sequence, bool) or verified_sequence < 0 or \
+            not SHA_RE.fullmatch(commit) or _epoch(verified_at) is None:
+        raise ReceiptQueueError("receipt_batch_coverage_invalid")
+    selected_ids = frozenset(operation_ids)
+    state = normalize_store(store)
+    selected_rows = [
+        receipt for receipt in state["receipts"]
+        if receipt.get("operationId") in selected_ids]
+    if len(selected_rows) != len(selected_ids) or any(
+            str(receipt.get("artifactMode") or "legacy_full") != "legacy_full"
+            for receipt in selected_rows):
+        raise ReceiptQueueError("receipt_batch_coverage_invalid")
+    covered = []
+    updated = []
+    for receipt in state["receipts"]:
+        operation_id = receipt.get("operationId")
+        target = int(receipt.get("targetWalSequence") or 0)
+        if operation_id in selected_ids and \
+                receipt.get("durabilityState") == "pending" and \
+                not receipt.get("poison") and \
+                target <= verified_sequence:
+            row = dict(receipt)
+            row.update({
+                "durabilityState": "verified",
+                "remoteVerifiedWalSequence": verified_sequence,
+                "remoteCommitVerifiedSha": commit,
+                "readBackVerified": True,
+                "verifiedAt": verified_at,
+                "nextAttemptAt": None,
+                "lastErrorClass": None,
+            })
+            updated.append(_seal(row))
+            covered.append(str(operation_id))
+        else:
+            updated.append(receipt)
+    covered_or_exact = set(covered)
+    for receipt in updated:
+        if receipt.get("operationId") in selected_ids and \
+                receipt.get("durabilityState") == "verified" and \
+                receipt.get("remoteVerifiedWalSequence") == verified_sequence \
+                and receipt.get("remoteCommitVerifiedSha") == commit and \
+                receipt.get("verifiedAt") == verified_at:
+            covered_or_exact.add(str(receipt.get("operationId")))
+    if covered_or_exact != selected_ids:
+        raise ReceiptQueueError("receipt_batch_coverage_invalid")
     state["receipts"] = updated
     return state, covered
 
