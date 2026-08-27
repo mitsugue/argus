@@ -1,0 +1,74 @@
+{
+ "asOf": "2026-08-27T18:14:27Z",
+ "dateJst": "2026-08-28",
+ "engineVersion": "scout-ledger-v1",
+ "records": [
+  {
+   "bucket": "avoid",
+   "flowClass": "UNCONFIRMED",
+   "lastClose": 4737.0,
+   "lastDate": "2026-08-27",
+   "score": -1.0,
+   "stance": "見送り",
+   "symbol": "8058"
+  },
+  {
+   "bucket": "avoid",
+   "flowClass": "UNCONFIRMED",
+   "lastClose": 5200.0,
+   "lastDate": "2026-08-27",
+   "score": -0.7,
+   "stance": "中立(急がない)",
+   "symbol": "9984"
+  },
+  {
+   "bucket": "avoid",
+   "flowClass": "UNCONFIRMED",
+   "lastClose": 4089.0,
+   "lastDate": "2026-08-27",
+   "score": -2.3,
+   "stance": "見送り",
+   "symbol": "5801"
+  },
+  {
+   "bucket": "avoid",
+   "flowClass": "UNCONFIRMED",
+   "lastClose": 5500.0,
+   "lastDate": "2026-08-27",
+   "score": -2.8,
+   "stance": "見送り",
+   "symbol": "5803"
+  },
+  {
+   "bucket": "lean",
+   "flowClass": "DISTRIBUTION",
+   "lastClose": 782.0,
+   "lastDate": "2026-08-27",
+   "score": 0.8,
+   "stance": "押し目買い検討圏",
+   "symbol": "6584"
+  },
+  {
+   "bucket": "avoid",
+   "flowClass": "UNCONFIRMED",
+   "lastClose": 52500.0,
+   "lastDate": "2026-08-27",
+   "score": -0.8,
+   "stance": "中立(急がない)",
+   "symbol": "285A"
+  },
+  {
+   "bucket": "lean",
+   "flowClass": "UNCONFIRMED",
+   "lastClose": 529.5,
+   "lastDate": "2026-08-27",
+   "score": 1.1,
+   "stance": "押し目買い検討圏",
+   "symbol": "9501"
+  }
+ ],
+ "mode": "shadow",
+ "authority": "SHADOW_DERIVED",
+ "canonicalPredictionLedger": false,
+ "calibrationEligible": false
+}
