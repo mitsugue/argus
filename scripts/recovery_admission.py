@@ -93,6 +93,26 @@ class AdmissionError(RuntimeError):
     """Stable, fail-closed admission failure."""
 
 
+class _StripCrossOriginAuthorization(urllib.request.HTTPRedirectHandler):
+    """Keep GitHub auth on GitHub, never forward it to signed blob URLs."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        redirected = super().redirect_request(
+            req, fp, code, msg, headers, newurl)
+        if redirected is None:
+            return None
+        old = urllib.parse.urlsplit(req.full_url)
+        new = urllib.parse.urlsplit(newurl)
+        if old.scheme == "https" and new.scheme != "https":
+            raise AdmissionError("github_redirect_insecure")
+        if old.netloc != new.netloc:
+            for values in (redirected.headers, redirected.unredirected_hdrs):
+                for name in list(values):
+                    if name.lower() == "authorization":
+                        del values[name]
+        return redirected
+
+
 def _canonical(value: Any) -> bytes:
     return json.dumps(
         value, ensure_ascii=False, allow_nan=False, sort_keys=True,
@@ -470,7 +490,9 @@ def _api_bytes(url: str, token: str) -> bytes:
         "X-GitHub-Api-Version": "2022-11-28",
     })
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        opener = urllib.request.build_opener(
+            _StripCrossOriginAuthorization())
+        with opener.open(request, timeout=60) as response:
             return response.read()
     except (urllib.error.URLError, TimeoutError) as exc:
         raise AdmissionError("github_api_unavailable") from exc

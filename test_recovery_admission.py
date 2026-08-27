@@ -238,6 +238,52 @@ def test_archive_requires_one_of_each_bound_document(tmp_path):
         recovery._archive_documents(stream.getvalue())
 
 
+def test_cross_origin_artifact_redirect_strips_bearer():
+    handler = recovery._StripCrossOriginAuthorization()
+    request = recovery.urllib.request.Request(
+        "https://api.github.com/repos/mitsugue/argus/actions/artifacts/1/zip",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": "Bearer secret",
+        },
+    )
+    redirected = handler.redirect_request(
+        request, None, 302, "Found", {},
+        "https://productionresultssa.blob.core.windows.net/result.zip?sig=x",
+    )
+    assert redirected is not None
+    assert redirected.get_header("Accept") == "application/vnd.github+json"
+    assert redirected.get_header("Authorization") is None
+
+
+def test_same_origin_redirect_retains_bearer():
+    handler = recovery._StripCrossOriginAuthorization()
+    request = recovery.urllib.request.Request(
+        "https://api.github.com/repos/mitsugue/argus/actions/artifacts/1/zip",
+        headers={"Authorization": "Bearer secret"},
+    )
+    redirected = handler.redirect_request(
+        request, None, 302, "Found", {},
+        "https://api.github.com/repos/mitsugue/argus/actions/artifacts/1/archive",
+    )
+    assert redirected is not None
+    assert redirected.get_header("Authorization") == "Bearer secret"
+
+
+def test_https_artifact_redirect_cannot_downgrade_transport():
+    handler = recovery._StripCrossOriginAuthorization()
+    request = recovery.urllib.request.Request(
+        "https://api.github.com/repos/mitsugue/argus/actions/artifacts/1/zip",
+        headers={"Authorization": "Bearer secret"},
+    )
+    with pytest.raises(recovery.AdmissionError,
+                       match="github_redirect_insecure"):
+        handler.redirect_request(
+            request, None, 302, "Found", {},
+            "http://example.invalid/result.zip",
+        )
+
+
 def test_authority_is_bound_to_exact_check_workflow_and_artifact(
         tmp_path, monkeypatch):
     certificate, classification, evidence = _certificate_documents(tmp_path)
