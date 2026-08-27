@@ -94,6 +94,7 @@ jobs:
             scripts/resolve_backend_identity.py \
             scripts/argus_mission_tick.py \
             scripts/argus_remote_journal_rearm.py \
+            scripts/remote_receipt_drain.py \
             scripts/remote_journal_publish_policy.py \
             scripts/v13_5_release_certificate.py \
             scripts/v13_5_source_provenance.py \

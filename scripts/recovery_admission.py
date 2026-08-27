@@ -50,15 +50,18 @@ RECOVERY_PAYLOAD_PATHS = (
     "argus_route_catalog.py",
     "docs/ops/recovery-phase-a-integration.md",
     "scanner.py",
+    "scripts/remote_receipt_drain.py",
     "scripts/workflow_http.py",
     "test_argus_checkpoint_v2_isolated.py",
     "test_argus_public_operational_boundary.py",
     "test_argus_recovery_phase_a_adapter.py",
     "test_argus_v13_4_2_remote_receipts.py",
     "test_caos_workflow_recovery.py",
+    "test_remote_journal_rearm.py",
+    "test_remote_receipt_drain.py",
 )
 EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256 = (
-    "f21559306a3ee1efea03dad167e494bdab099443a1f9cf13f4f06241eaa9ffed"
+    "76f36f9e99967cf50a359c8751857c5a7892f1189094a777b5d1be198ac645b1"
 )
 
 # Admission-plane files may route and prove Recovery, but are not production

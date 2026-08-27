@@ -150,25 +150,21 @@ def test_async_receipt_contract_is_fast_idempotent_and_exact():
         "remote-journal-accept-receipt", 1)[1].split(")", 1)[0]
 
 
-def test_receipt_polling_is_bounded_and_preserves_pending_slo_truth():
+def test_receipt_drain_is_bounded_and_pending_can_never_be_green():
     text = _text()
     flush = text.split("- name: Commit verified snapshot and post receipt", 1)[1]
-    assert "for DELAY in 5 10 20 40 80 120" in flush
-    trigger_pos = flush.index("remote-journal-trigger-drain")
-    poll_pos = flush.index("remote-journal-receipt-status")
-    assert trigger_pos < poll_pos
-    assert '"triggerClass":"publisher_receipt"' in flush
-    assert "--method POST --timeout 240" in flush
-    assert "/api/argus/admin/remote-journal/receipts/${OPERATION_ID}" in flush
-    assert 'DURABILITY_RESULT="pending_within_slo"' in flush
-    assert '[ "$RECEIPT_AGE" -ge 0 ]' in flush
-    assert '[ "$RECEIPT_AGE" -le 1800 ]' in flush
+    assert 'cp scripts/remote_receipt_drain.py' in text
+    assert '"$RUNNER_TEMP/remote_receipt_drain.py"' in flush
+    assert "--budget-seconds 240" in flush
+    assert "--operation-id \"$OPERATION_ID\"" in flush
+    assert "--target-wal-sequence \"$TARGET_WAL_SEQUENCE\"" in flush
+    assert 'assert d.get("status")=="verified"' in flush
+    assert 'DURABILITY_RESULT="pending_within_slo"' not in flush
+    assert "overallResult=pending_within_slo" not in text
     assert '[ "$VERIFIED_SEQUENCE" = "$TARGET_WAL_SEQUENCE" ]' in flush
     assert '[ "$VERIFIED_SEQUENCE" -ge "$TARGET_WAL_SEQUENCE" ]' in flush
     assert 'd.get("verifiedByRemoteCommitSha") or ""' in flush
     assert '[ "$VERIFIED_COMMIT" = "$REMOTE_COMMIT_SHA" ]' in flush
-    assert "receipt failed: operation=$OPERATION_ID" in flush
-    assert "overallResult=pending_within_slo" in text
     assert "overallResult=verified" in text
 
 

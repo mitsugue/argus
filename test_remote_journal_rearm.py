@@ -484,6 +484,8 @@ def test_timer_secret_isolation_workflow_bound_and_deploy_scope():
     assert "remoteJournalRearm:" in workflow
     assert "inputs.remoteJournalRearm != true" in workflow
     assert "--natural-rearm)" in workflow
+    assert workflow.count("remote_receipt_drain.py") == 6
+    assert workflow.count("--budget-seconds 240") == 2
     assert classify([
         ".github/workflows/caos-watchtower.yml",
         ".github/workflows/memory-attribution.yml",

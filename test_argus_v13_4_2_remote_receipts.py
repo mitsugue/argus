@@ -282,6 +282,28 @@ def test_full_bounded_legacy_queue_coalesces_to_highest_cumulative_intent():
     assert last_status["verifiedByRemoteCommitSha"] == f"{count:040x}"
 
 
+def test_receipt_verified_at_is_checkpoint_completion_not_drain_start():
+    completed_at = "2026-08-05T03:02:03Z"
+    scanner._REMOTE_RECEIPT_QUEUE, rows = _current_legacy_store(1)
+    with mock.patch.object(scanner, "_persist_remote_receipt_queue",
+                           side_effect=_persist_in_memory), \
+            mock.patch.object(scanner, "_verified_remote_receipt_artifact",
+                              return_value={}), \
+            mock.patch.object(scanner, "_remote_readback_ack",
+                              side_effect=_verify_selected(
+                                  1, receipt_hash=f"{1:016x}")), \
+            mock.patch.object(scanner, "_journal_compact", return_value=0), \
+            mock.patch.object(scanner, "_osint_persist",
+                              return_value={"verified": True}), \
+            mock.patch.object(scanner, "_ai_now_iso",
+                              return_value=completed_at):
+        scanner._persist_with_remote_receipt_drain(NOW)
+    receipt = queue.get_receipt(
+        scanner._REMOTE_RECEIPT_QUEUE, rows[0]["operationId"])
+    assert receipt["verifiedAt"] == completed_at
+    assert receipt["verifiedAt"] != NOW
+
+
 def test_scheduled_receipt_arrival_capacity_fits_one_bounded_drain():
     workflows = pathlib.Path(".github/workflows")
     producers = sorted(
@@ -296,8 +318,10 @@ def test_scheduled_receipt_arrival_capacity_fits_one_bounded_drain():
         workflows, "caos-scan.yml").read_text(encoding="utf-8")
     assert ordinary_watchtower.count("remote-journal/commit-receipt") == 1
     assert scan.count("remote-journal/commit-receipt") == 1
-    assert ordinary_watchtower.count("remote-journal/trigger-drain") == 1
-    assert scan.count("remote-journal/trigger-drain") == 1
+    assert ordinary_watchtower.count("remote_receipt_drain.py") == 3
+    assert scan.count("remote_receipt_drain.py") == 3
+    assert ordinary_watchtower.count("--budget-seconds 240") == 1
+    assert scan.count("--budget-seconds 240") == 1
     assert "cron: '*/15 * * * 1-5'" in watchtower
     assert "cron: '7-59/15 * * * 1-5'" in watchtower
     assert "cron: '0 * * * 0,6'" in watchtower
@@ -321,8 +345,8 @@ def test_scheduled_receipt_arrival_capacity_fits_one_bounded_drain():
     publisher_drain_budget_seconds = 240
     assert nominal_max_publication_gap_seconds + \
         publisher_drain_budget_seconds < 1800
-    assert "--method POST --timeout 240" in ordinary_watchtower
-    assert "--method POST --timeout 240" in scan
+    assert "pending_within_slo" not in ordinary_watchtower
+    assert "pending_within_slo" not in scan
 
 
 def test_authenticated_publisher_trigger_drains_once_and_replay_is_noop():
