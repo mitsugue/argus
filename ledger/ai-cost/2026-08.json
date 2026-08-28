@@ -1,5 +1,5 @@
 {
- "asOf": "2026-08-27T18:13:36Z",
+ "asOf": "2026-08-28T07:07:57Z",
  "dailyBudgetUsd": 5.0,
  "day": "2026-08-28",
  "dayRemainingUsd": 5.0,
@@ -7,8 +7,16 @@
  "emergencyReserveUsd": 2.0,
  "estimated": true,
  "groundingUsdPerCall": 0.035,
- "lastRun": null,
- "lastRunCostUsd": null,
+ "lastRun": {
+  "at": "2026-08-28T00:09:13Z",
+  "estimated": true,
+  "gemStatus": "unavailable",
+  "oaiStatus": "live",
+  "rows": [],
+  "runId": "2026-08-28T00:09:13Z",
+  "totalUsd": 0.0
+ },
+ "lastRunCostUsd": 0.0,
  "month": "2026-08",
  "monthRemainingUsd": 80.0,
  "monthSpentUsd": 0.0,
@@ -49,5 +57,15 @@
   "solPromotionalThrough": "2026-11-21",
   "sourceUrl": "https://developers.openai.com/api/docs/pricing"
  },
- "recentRuns": []
+ "recentRuns": [
+  {
+   "at": "2026-08-28T00:09:13Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-08-28T00:09:13Z",
+   "totalUsd": 0.0
+  }
+ ]
 }
