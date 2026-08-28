@@ -29,7 +29,7 @@ on:
 # GitHub concurrency keeps at most one running and one pending run for this
 # event-class group; a newer pending run replaces the older pending run. The
 # dedicated re-arm group cannot cancel or queue behind ordinary patrol work.
-# Together with the EC2 timer's two opportunities per hour and one POST per
+# Together with the EC2 timer's three opportunities per hour and one POST per
 # invocation, re-arm remains bounded without a lossy local wake-up marker.
 concurrency:
   group: ${{ github.event_name == 'workflow_dispatch' && inputs.remoteJournalRearm == true && 'caos-watchtower-remote-journal-rearm' || 'caos-watchtower' }}

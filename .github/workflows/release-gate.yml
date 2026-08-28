@@ -104,8 +104,10 @@ jobs:
           node web/scripts/release-state-machine.mjs validate-contract \
             --contract release/v13-snapshot-readiness-contract.json
           node web/scripts/release-state-machine.test.mjs
-          bash -n scripts/install_argus_mission_timer.sh
+          bash -n scripts/install_argus_mission_timer.sh \
+            scripts/install_argus_remote_journal_rearm.sh
           shellcheck scripts/install_argus_mission_timer.sh \
+            scripts/install_argus_remote_journal_rearm.sh \
             scripts/check_argus_mission_timer.sh
           ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].each { |f| YAML.parse_file(f) }'
       - name: Full gate for exact SHA

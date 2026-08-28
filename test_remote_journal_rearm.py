@@ -5,6 +5,7 @@ import copy
 import io
 import json
 import os
+import re
 import sys
 import types
 from pathlib import Path
@@ -470,9 +471,32 @@ def test_timer_secret_isolation_workflow_bound_and_deploy_scope():
     service = Path("ops/systemd/argus-remote-journal-rearm.service").read_text()
     mission = Path("ops/systemd/argus-mission-tick.service").read_text()
     workflow = Path(".github/workflows/caos-watchtower.yml").read_text()
-    assert "OnCalendar=*-*-* *:13,43:00 UTC" in timer
+    schedule = re.search(r"^OnCalendar=.*\*:(.+):00 UTC$", timer,
+                         re.MULTILINE)
+    assert schedule is not None
+    minutes = [int(value) for value in schedule.group(1).split(",")]
+    gaps = [right - left for left, right in zip(minutes, minutes[1:])]
+    gaps.append(60 + minutes[0] - minutes[-1])
+    ec2_rearm_max_gap_seconds = max(gaps) * 60
+    post_publication_drain_bound_seconds = 240
+    total_modeled_bound_seconds = (
+        ec2_rearm_max_gap_seconds + post_publication_drain_bound_seconds)
+    slo_margin_seconds = 1800 - total_modeled_bound_seconds
+    assert minutes == [13, 33, 53]
+    assert ec2_rearm_max_gap_seconds == 1200
+    assert total_modeled_bound_seconds == 1440
+    assert slo_margin_seconds == 360
+    assert total_modeled_bound_seconds < 1800
     assert "Persistent=true" in timer
+    assert "AccuracySec=1us" in timer
+    assert "RandomizedDelaySec=0" in timer
     assert "EnvironmentFile=/etc/argus-remote-journal-rearm.env" in service
+    assert (
+        "ExecStart=/usr/bin/python3 /opt/argus-rearm/"
+        "argus_remote_journal_rearm.py" in service)
+    assert "/opt/argus/scripts/" not in service
+    assert "User=argus-rearm" in service
+    assert "Group=argus-rearm" in service
     assert "argus-trigger.env" not in service
     assert "argus-trigger.env" not in mission
     assert "ARGUS_REMOTE_JOURNAL_REARM_PAT" not in mission
@@ -484,6 +508,9 @@ def test_timer_secret_isolation_workflow_bound_and_deploy_scope():
     assert "remoteJournalRearm:" in workflow
     assert "inputs.remoteJournalRearm != true" in workflow
     assert "--natural-rearm)" in workflow
+    rearm_job = workflow.split("  remote-journal-rearm:", 1)[1]
+    assert "timeout-minutes: 8" in rearm_job
+    assert "--budget-seconds 240" in rearm_job
     assert workflow.count("remote_receipt_drain.py") == 6
     assert workflow.count("--budget-seconds 240") == 2
     assert classify([
@@ -495,7 +522,9 @@ def test_timer_secret_isolation_workflow_bound_and_deploy_scope():
         "ops/systemd/argus-remote-journal-rearm.timer",
         "scripts/argus_remote_journal_rearm.py",
         "scripts/install_argus_mission_timer.sh",
+        "scripts/install_argus_remote_journal_rearm.sh",
         "scripts/remote_journal_publish_policy.py",
+        "test_argus_identity_installer.py",
         "test_argus_v12_3_2.py",
         "test_remote_journal_liveness.py",
         "test_remote_journal_rearm.py",

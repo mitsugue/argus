@@ -26,12 +26,9 @@ FILES=(
   "scripts/production_release_manifest.py|${ROOT}/scripts/production_release_manifest.py|0755"
   "scripts/argus_build_identity.py|${ROOT}/scripts/argus_build_identity.py|0755"
   "scripts/argus_mission_tick.py|${ROOT}/scripts/argus_mission_tick.py|0755"
-  "scripts/argus_remote_journal_rearm.py|${ROOT}/scripts/argus_remote_journal_rearm.py|0755"
   "scripts/check_argus_mission_timer.sh|${ROOT}/scripts/check_argus_mission_timer.sh|0755"
   "ops/systemd/argus-mission-tick.service|/etc/systemd/system/argus-mission-tick.service|0644"
   "ops/systemd/argus-mission-tick.timer|/etc/systemd/system/argus-mission-tick.timer|0644"
-  "ops/systemd/argus-remote-journal-rearm.service|/etc/systemd/system/argus-remote-journal-rearm.service|0644"
-  "ops/systemd/argus-remote-journal-rearm.timer|/etc/systemd/system/argus-remote-journal-rearm.timer|0644"
 )
 
 sha256() {
@@ -172,54 +169,6 @@ fi
 
 [[ -f /etc/argus-bridge.env ]] || {
   echo "missing /etc/argus-bridge.env; existing secret management is required" >&2
-  exit 1
-}
-
-rearm_env="/etc/argus-remote-journal-rearm.env"
-rearm_service_user="argus-rearm"
-getent passwd "$rearm_service_user" >/dev/null || {
-  echo "missing dedicated $rearm_service_user service user" >&2
-  exit 1
-}
-getent group "$rearm_service_user" >/dev/null || {
-  echo "missing dedicated $rearm_service_user service group" >&2
-  exit 1
-}
-[[ -f "$rearm_env" && ! -L "$rearm_env" ]] || {
-  echo "missing regular $rearm_env; dedicated workflow credential is required" >&2
-  exit 1
-}
-rearm_owner="$(stat -c '%U' "$rearm_env")"
-[[ "$rearm_owner" == "root" ]] || {
-  echo "$rearm_env must be owned by root" >&2
-  exit 1
-}
-rearm_group="$(stat -c '%G' "$rearm_env")"
-[[ "$rearm_group" == "$rearm_service_user" ]] || {
-  echo "$rearm_env must be group-owned by $rearm_service_user" >&2
-  exit 1
-}
-rearm_mode="$(stat -c '%a' "$rearm_env")"
-case "$rearm_mode" in
-  640|440) ;;
-  *)
-    echo "unsafe permissions on $rearm_env; require 0640 (or read-only 0440)" >&2
-    exit 1
-    ;;
-esac
-sudo -u "$rearm_service_user" test -r "$rearm_env" || {
-  echo "$rearm_env is not readable by the rearm service user" >&2
-  exit 1
-}
-# Fail closed unless the file contains exactly one non-comment assignment and
-# that assignment is the dedicated PAT.  Never print the assignment or value.
-awk '
-  /^[[:space:]]*($|#)/ { next }
-  /^ARGUS_REMOTE_JOURNAL_REARM_PAT=[^[:space:]#]+$/ { allowed += 1; next }
-  { invalid += 1 }
-  END { exit !(allowed == 1 && invalid == 0) }
-' "$rearm_env" || {
-  echo "invalid dedicated credential file; require one allowed assignment" >&2
   exit 1
 }
 

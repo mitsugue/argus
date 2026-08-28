@@ -147,6 +147,38 @@ sudo bash scripts/install_argus_mission_timer.sh \
 
 Rollback also performs no daemon-reload or service action.
 
+Remote Journal re-arm is installed independently from protected-main bytes:
+
+```sh
+bash scripts/install_argus_remote_journal_rearm.sh --source-check
+bash scripts/install_argus_remote_journal_rearm.sh --dry-run
+sudo bash scripts/install_argus_remote_journal_rearm.sh --apply
+```
+
+That installer has exactly three destinations: the Python entry point under
+`/opt/argus-rearm` and the matching service/timer units under
+`/etc/systemd/system`. It does not read or write the dirty `/opt/argus`
+checkout, bridge files, mission files, credential bytes, or any queue/journal
+state. It validates the fixed `argus-rearm` identity and credential metadata,
+pins source hashes, performs atomic verified copies, and creates a verified
+rollback manifest. It does not run daemon-reload, enable/start a unit, or send
+a workflow dispatch.
+
+The isolated timer runs at `*:13,33,53 UTC`, with `Persistent=true`,
+`AccuracySec=1us`, and no randomized delay. Thus
+`EC2_REARM_MAX_GAP_SECONDS=1200`; adding the existing authenticated
+`POST_PUBLICATION_DRAIN_BOUND_SECONDS=240` gives
+`TOTAL_MODELED_BOUND_SECONDS=1440` and `SLO_MARGIN_SECONDS=360` against the
+1,800-second Recovery target. GitHub's best-effort cron is not part of this
+hard-bound calculation.
+
+Re-arm rollback is likewise separate and performs no systemd action:
+
+```sh
+sudo bash scripts/install_argus_remote_journal_rearm.sh \
+  --rollback YYYYMMDDTHHMMSSZ
+```
+
 ## Temporary pin removal gate
 
 Do not remove `ARGUS_TRUSTED_BUILD_REF_URL` or

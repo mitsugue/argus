@@ -1,10 +1,111 @@
 import pathlib
 import hashlib
 import os
+import re
+import shutil
 import subprocess
 
 
 ROOT = pathlib.Path(__file__).parent
+REARM_INSTALLER = ROOT / "scripts/install_argus_remote_journal_rearm.sh"
+
+
+def _rearm_test_environment(tmp_path, *, identity="valid"):
+    test_root = tmp_path / "root"
+    (test_root / "etc/systemd/system").mkdir(parents=True)
+    (test_root / "etc").mkdir(exist_ok=True)
+    credential = test_root / "etc/argus-remote-journal-rearm.env"
+    credential.write_text(
+        "ARGUS_REMOTE_JOURNAL_REARM_PAT=test-secret-never-printed\n",
+        encoding="utf-8",
+    )
+    credential.chmod(0o640)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_sudo = fake_bin / "sudo"
+    fake_sudo.write_text(
+        "#!/bin/bash\n"
+        "set -e\n"
+        "if [[ \"${1:-}\" == -u ]]; then shift 2; fi\n"
+        "if [[ \"${1:-}\" == install ]]; then\n"
+        "  shift\n"
+        "  args=()\n"
+        "  while [[ $# -gt 0 ]]; do\n"
+        "    case \"$1\" in\n"
+        "      -o|-g) shift 2 ;;\n"
+        "      *) args+=(\"$1\"); shift ;;\n"
+        "    esac\n"
+        "  done\n"
+        "  exec /usr/bin/install \"${args[@]}\"\n"
+        "fi\n"
+        "if [[ \"${1:-}\" == mv ]]; then\n"
+        "  shift\n"
+        "  args=()\n"
+        "  for value in \"$@\"; do\n"
+        "    [[ \"$value\" == -fT ]] && value=-f\n"
+        "    args+=(\"$value\")\n"
+        "  done\n"
+        "  exec /bin/mv \"${args[@]}\"\n"
+        "fi\n"
+        "exec \"$@\"\n",
+        encoding="utf-8",
+    )
+    fake_sudo.chmod(0o755)
+
+    fake_getent = fake_bin / "getent"
+    fake_getent.write_text(
+        "#!/bin/bash\n"
+        "if [[ \"${FAKE_GETENT_MODE:-valid}\" == missing ]]; then exit 2; fi\n"
+        "uid=\"${ARGUS_REARM_INSTALL_TEST_UID}\"\n"
+        "gid=\"${ARGUS_REARM_INSTALL_TEST_GID}\"\n"
+        "[[ \"${FAKE_GETENT_MODE:-valid}\" == wrong ]] && uid=$((uid + 1))\n"
+        "case \"$1\" in\n"
+        "  passwd) echo \"argus-rearm:x:${uid}:${gid}::/nonexistent:/usr/sbin/nologin\" ;;\n"
+        "  group) echo \"argus-rearm:x:${gid}:\" ;;\n"
+        "  *) exit 2 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    fake_getent.chmod(0o755)
+
+    # Normalize GNU stat's formats on both Linux CI and the developer Mac.
+    fake_stat = fake_bin / "stat"
+    fake_stat.write_text(
+        "#!/usr/bin/env python3\n"
+        "import grp, os, pwd, stat, sys\n"
+        "fmt, path = sys.argv[2], sys.argv[3]\n"
+        "value = os.stat(path, follow_symlinks=False)\n"
+        "values = {\n"
+        "    '%U': pwd.getpwuid(value.st_uid).pw_name,\n"
+        "    '%G': grp.getgrgid(value.st_gid).gr_name,\n"
+        "    '%u': str(value.st_uid),\n"
+        "    '%g': str(value.st_gid),\n"
+        "    '%a': format(stat.S_IMODE(value.st_mode), 'o'),\n"
+        "}\n"
+        "if fmt == '%U:%G:%a':\n"
+        "    print(f\"root:root:{values['%a']}\")\n"
+        "else:\n"
+        "    print(values[fmt])\n",
+        encoding="utf-8",
+    )
+    fake_stat.chmod(0o755)
+
+    fake_systemd_analyze = fake_bin / "systemd-analyze"
+    fake_systemd_analyze.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    fake_systemd_analyze.chmod(0o755)
+
+    environment = {
+        "PATH": f"{fake_bin}:/usr/local/bin:/usr/bin:/bin",
+        "ARGUS_REARM_INSTALL_TEST_MODE": "1",
+        "ARGUS_REARM_INSTALL_TEST_ROOT": str(test_root),
+        "ARGUS_REARM_INSTALL_TEST_UID": str(os.getuid()),
+        "ARGUS_REARM_INSTALL_TEST_GID": str(os.getgid()),
+        "ARGUS_REARM_INSTALL_TEST_CREDENTIAL_OWNER": credential.owner(),
+        "ARGUS_REARM_INSTALL_TEST_CREDENTIAL_GROUP": credential.group(),
+        "FAKE_GETENT_MODE": identity,
+    }
+    return test_root, credential, environment
 
 
 def test_installer_dry_run_has_no_service_or_file_mutation(tmp_path):
@@ -38,7 +139,10 @@ def test_installer_requires_explicit_apply_and_never_runs_service_actions():
 
 
 def test_rearm_credential_is_dedicated_preflight_only_and_secret_safe():
-    source = (ROOT / "scripts/install_argus_mission_timer.sh").read_text()
+    source = REARM_INSTALLER.read_text()
+    mission_installer = (
+        ROOT / "scripts/install_argus_mission_timer.sh"
+    ).read_text()
     service = (
         ROOT / "ops/systemd/argus-remote-journal-rearm.service"
     ).read_text()
@@ -50,100 +154,167 @@ def test_rearm_credential_is_dedicated_preflight_only_and_secret_safe():
     assert "argus-trigger.env" not in service
     assert "GH_WORKFLOW_PAT" not in service
     assert "GH_WORKFLOW_PAT" not in source
-    assert f'rearm_env="{credential}"' in source
-    assert 'rearm_owner" == "root"' in source
-    assert 'rearm_group" == "$rearm_service_user"' in source
+    assert f'ENV_FILE="{credential}"' in source
+    assert 'CREDENTIAL_OWNER="root"' in source
+    assert 'CREDENTIAL_GROUP="$SERVICE_USER"' in source
     assert "640|440" in source
     assert "^ARGUS_REMOTE_JOURNAL_REARM_PAT=[^[:space:]#]+$" in source
-    assert 'sudo -u "$rearm_service_user" test -r "$rearm_env"' in source
-    assert 'rearm_service_user="argus-rearm"' in source
+    assert 'sudo -u "$SERVICE_USER" test -r "$ENV_FILE"' in source
+    assert 'SERVICE_USER="argus-rearm"' in source
     assert "User=argus-rearm" in service
     assert "Group=argus-rearm" in service
 
     files_block = source.split("FILES=(", 1)[1].split("\n)", 1)[0]
     assert credential not in files_block
     assert "ARGUS_REMOTE_JOURNAL_REARM_PAT=" not in service
-    assert 'cat "$rearm_env"' not in source
-    assert 'echo "$rearm_env"' not in source
-    assert source.index('rearm_env="') < source.index('timestamp="')
+    assert 'echo "$ENV_FILE"' not in source
+    assert "ARGUS_REMOTE_JOURNAL_REARM_PAT" not in mission_installer
+    assert "argus_remote_journal_rearm.py" not in mission_installer
+    assert "argus-remote-journal-rearm.service" not in mission_installer
+    assert source.index('ENV_FILE="') < source.index('timestamp="')
 
 
-def test_systemd_analyze_runs_only_after_first_install_copy():
-    source = (ROOT / "scripts/install_argus_mission_timer.sh").read_text()
+def test_rearm_systemd_analyze_runs_only_after_install_copy():
+    source = REARM_INSTALLER.read_text()
     validator = source.split("validate_sources() {", 1)[1].split(
-        "verify_installed_systemd_units() {", 1
+        "validate_identity() {", 1
     )[0]
     assert "systemd-analyze verify" not in validator
     assert source.count("systemd-analyze verify") == 1
-    assert source.rindex("verify_installed_systemd_units") > source.index(
-        'destination_sha="$(sudo sha256sum "$destination"'
+    assert source.index("systemd-analyze verify") > source.index(
+        'installed rearm sha256 mismatch:'
     )
-    assert "apply failed; installed files restored" in source
+    assert "apply failed; destinations restored" in source
 
 
-def test_installer_has_explicit_files_and_timestamped_backup():
-    source = (ROOT / "scripts/install_argus_mission_timer.sh").read_text()
-    assert "scripts/production_release_manifest.py|" in source
-    assert "argus-mission-tick.service|" in source
+def test_rearm_installer_has_only_explicit_isolated_destinations():
+    source = REARM_INSTALLER.read_text()
+    files_block = source.split("FILES=(", 1)[1].split("\n)", 1)[0]
+    assert "scripts/argus_remote_journal_rearm.py|" in files_block
+    assert "/opt/argus-rearm" in source
+    assert files_block.count('"') == 6
+    assert "bridge/" not in files_block
+    assert "argus_mission_tick" not in files_block
+    assert "/opt/argus/" not in files_block
     assert "date -u +%Y%m%dT%H%M%SZ" in source
     assert "sha256 mismatch" in source
     assert "rollback destination not allowed" in source
-    assert '"$previous_state" == "absent"' in source
+    assert '"$previous" == "absent"' in source
     assert 'sudo rm -f -- "$destination"' in source
+    for forbidden in (
+        "sudo systemctl daemon-reload",
+        "sudo systemctl enable",
+        "sudo systemctl start",
+        "sudo systemctl restart",
+        "workflow_dispatch",
+    ):
+        assert forbidden not in source
 
 
-def test_installer_rollback_restores_allowlisted_file(tmp_path):
-    install_root = tmp_path / "install"
-    backup_root = tmp_path / "backups"
-    backup_id = "20260731T000000Z"
-    backup_dir = backup_root / backup_id
-    backup_dir.mkdir(parents=True)
-    destination = install_root / "scripts/argus_mission_tick.py"
-    destination.parent.mkdir(parents=True)
-    destination.write_text("new\n", encoding="utf-8")
-    backup = backup_dir / "argus_mission_tick.py"
-    backup.write_text("old\n", encoding="utf-8")
-    digest = hashlib.sha256(backup.read_bytes()).hexdigest()
-    uid = os.getuid()
-    gid = os.getgid()
-    (backup_dir / "manifest.tsv").write_text(
-        f"{destination}\t{backup}\t{digest}\t{uid}\t{gid}\t0644\tpresent\n",
-        encoding="utf-8",
-    )
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_sudo = fake_bin / "sudo"
-    fake_sudo.write_text(
-        "#!/bin/bash\n"
-        "if [[ \"$1\" == install ]]; then\n"
-        "  args=(\"$@\")\n"
-        "  source=\"${args[${#args[@]}-2]}\"\n"
-        "  destination=\"${args[${#args[@]}-1]}\"\n"
-        "  mkdir -p \"$(dirname \"$destination\")\"\n"
-        "  cp \"$source\" \"$destination\"\n"
-        "  exit 0\n"
-        "fi\n"
-        "exec \"$@\"\n",
-        encoding="utf-8",
-    )
-    fake_sudo.chmod(0o755)
+def test_rearm_source_hash_validation_fails_closed(tmp_path):
+    source_root = tmp_path / "source"
+    shutil.copytree(ROOT / "scripts", source_root / "scripts")
+    shutil.copytree(ROOT / "ops/systemd", source_root / "ops/systemd")
+    service = source_root / "ops/systemd/argus-remote-journal-rearm.service"
+    service.write_text(service.read_text() + "# mutation\n", encoding="utf-8")
     completed = subprocess.run(
-        [
-            "bash",
-            "scripts/install_argus_mission_timer.sh",
-            "--rollback",
-            backup_id,
-        ],
+        ["bash", str(source_root / "scripts/install_argus_remote_journal_rearm.sh")],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/local/bin:/usr/bin:/bin"},
+    )
+    assert completed.returncode != 0
+    assert "source sha256 mismatch" in completed.stderr
+
+
+def test_rearm_apply_and_rollback_are_isolated_from_dirty_opt_argus(tmp_path):
+    test_root, _, environment = _rearm_test_environment(tmp_path)
+    dirty_bridge = test_root / "opt/argus/bridge/moomoo_push.py"
+    mission = test_root / "opt/argus/scripts/argus_mission_tick.py"
+    dirty_bridge.parent.mkdir(parents=True)
+    mission.parent.mkdir(parents=True)
+    dirty_bridge.write_text("dirty bridge\n", encoding="utf-8")
+    mission.write_text("live mission\n", encoding="utf-8")
+
+    runtime = test_root / "opt/argus-rearm"
+    runtime.mkdir()
+    destinations = {
+        runtime / "argus_remote_journal_rearm.py": "old script\n",
+        test_root / "etc/systemd/system/argus-remote-journal-rearm.service":
+            "old service\n",
+        test_root / "etc/systemd/system/argus-remote-journal-rearm.timer":
+            "old timer\n",
+    }
+    for path, contents in destinations.items():
+        path.write_text(contents, encoding="utf-8")
+
+    applied = subprocess.run(
+        ["bash", str(REARM_INSTALLER), "--apply"],
         cwd=ROOT,
         check=True,
         capture_output=True,
         text=True,
-        env={
-            "PATH": f"{fake_bin}:/usr/bin:/bin",
-            "ARGUS_INSTALL_ROOT": str(install_root),
-            "ARGUS_INSTALL_BACKUP_ROOT": str(backup_root),
-        },
+        env=environment,
     )
-    assert destination.read_text(encoding="utf-8") == "old\n"
-    assert "rollback restored backup=" in completed.stdout
-    assert "no service start/restart/POST/heartbeat" in completed.stdout
+    backup_id = re.search(r"backup=([0-9]{8}T[0-9]{6}Z)", applied.stdout)
+    assert backup_id is not None
+    assert "test-secret-never-printed" not in applied.stdout
+    assert "test-secret-never-printed" not in applied.stderr
+    assert dirty_bridge.read_text(encoding="utf-8") == "dirty bridge\n"
+    assert mission.read_text(encoding="utf-8") == "live mission\n"
+    assert hashlib.sha256(
+        (runtime / "argus_remote_journal_rearm.py").read_bytes()
+    ).hexdigest() == "2f2f9d7268f4d853c5a5d12b3628cd22201aaf30c5287274daf966967d2295c1"
+
+    rolled_back = subprocess.run(
+        ["bash", str(REARM_INSTALLER), "--rollback", backup_id.group(1)],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    for path, contents in destinations.items():
+        assert path.read_text(encoding="utf-8") == contents
+    assert "rollback restored backup=" in rolled_back.stdout
+    assert dirty_bridge.read_text(encoding="utf-8") == "dirty bridge\n"
+    assert mission.read_text(encoding="utf-8") == "live mission\n"
+
+
+def test_rearm_preflight_fails_closed_for_credential_and_identity(tmp_path):
+    _, credential, environment = _rearm_test_environment(tmp_path)
+    credential.unlink()
+    missing_credential = subprocess.run(
+        ["bash", str(REARM_INSTALLER), "--dry-run"], cwd=ROOT,
+        check=False, capture_output=True, text=True, env=environment,
+    )
+    assert missing_credential.returncode != 0
+    assert "missing regular" in missing_credential.stderr
+
+    _, credential, environment = _rearm_test_environment(tmp_path / "mode")
+    credential.chmod(0o600)
+    wrong_metadata = subprocess.run(
+        ["bash", str(REARM_INSTALLER), "--dry-run"], cwd=ROOT,
+        check=False, capture_output=True, text=True, env=environment,
+    )
+    assert wrong_metadata.returncode != 0
+    assert "unsafe permissions" in wrong_metadata.stderr
+
+    _, _, environment = _rearm_test_environment(tmp_path / "missing-user",
+                                                 identity="missing")
+    missing_identity = subprocess.run(
+        ["bash", str(REARM_INSTALLER), "--dry-run"], cwd=ROOT,
+        check=False, capture_output=True, text=True, env=environment,
+    )
+    assert missing_identity.returncode != 0
+    assert "missing dedicated" in missing_identity.stderr
+
+    _, _, environment = _rearm_test_environment(tmp_path / "wrong-user",
+                                                 identity="wrong")
+    wrong_identity = subprocess.run(
+        ["bash", str(REARM_INSTALLER), "--dry-run"], cwd=ROOT,
+        check=False, capture_output=True, text=True, env=environment,
+    )
+    assert wrong_identity.returncode != 0
+    assert "identity mismatch" in wrong_identity.stderr

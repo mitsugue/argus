@@ -336,15 +336,18 @@ def test_scheduled_receipt_arrival_capacity_fits_one_bounded_drain():
     assert queue.MAX_RECEIPTS >= \
         100 * maximum_scheduled_arrivals_per_half_hour
 
-    # Remote Journal authority measures event occurredAt through verified ACK.
-    # The combined weekend publishers have the widest nominal gap: :07->:30
-    # and :37->:00 are 23 minutes.  One publisher-triggered drain retains a
-    # bounded four-minute transport budget, so the repository topology is
-    # structurally inside (not equal to) the existing 1,800-second target.
-    nominal_max_publication_gap_seconds = 23 * 60
-    publisher_drain_budget_seconds = 240
-    assert nominal_max_publication_gap_seconds + \
-        publisher_drain_budget_seconds < 1800
+    # GitHub schedules are best-effort and cannot establish the hard Recovery
+    # timing claim.  The owner-controlled EC2 timer supplies one deterministic
+    # opportunity every 20 minutes; the authenticated drain remains bounded to
+    # four minutes after publication.
+    ec2_rearm_max_gap_seconds = 20 * 60
+    post_publication_drain_bound_seconds = 240
+    total_modeled_bound_seconds = (
+        ec2_rearm_max_gap_seconds +
+        post_publication_drain_bound_seconds)
+    assert total_modeled_bound_seconds == 1440
+    assert 1800 - total_modeled_bound_seconds == 360
+    assert total_modeled_bound_seconds < 1800
     assert "pending_within_slo" not in ordinary_watchtower
     assert "pending_within_slo" not in scan
 
