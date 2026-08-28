@@ -30,11 +30,28 @@ timerはUTCの毎時07分・37分に自然起動します。`Persistent=true`で
 backendのcatch-up候補は最大2 windowで、古いwindowを現在扱いで無制限実行
 しません。
 
-Remote Journal re-armは別のoneshot timerとしてUTC毎時13分・43分に動き、
-直前のmissionをブロックしません。installerはファイルを配置するだけで、
-`daemon-reload`、enable、start、restartを実行しません。新timerの初回有効化は
-実行直前の別途明示owner承認が必要なEC2変更です。今回のコード/Draft PR/CI
-承認には含まれません。
+Remote Journal re-armはmission installerから完全に分離されています。専用
+installerが触るのは`/opt/argus-rearm/argus_remote_journal_rearm.py`と二つの
+`argus-remote-journal-rearm` systemd unitだけです。既存の`/opt/argus`、bridge、
+mission fileは読取り・更新の対象にしません。専用oneshot timerはUTC毎時
+13分・33分・53分に動き、calendar上の最大gapは1,200秒です。`Persistent=true`、
+`AccuracySec=1us`、`RandomizedDelaySec=0`のため、timer側に追加の遅延窓は
+ありません。workflow側の認証済みdrain上限240秒と合わせたmodelは
+1,200 + 240 = 1,440秒、1,800秒SLOに対するmarginは360秒です。GitHub Actions
+scheduleはbest-effortであり、このhard boundのauthorityには数えません。
+
+protected mainへmergeされた同一bytesだけをEC2へstageし、次の順でsource check、
+preflight、installを行います。installerはfileを配置するだけで、
+`daemon-reload`、enable、start、restart、workflow dispatchを実行しません。
+
+```bash
+bash scripts/install_argus_remote_journal_rearm.sh --source-check
+bash scripts/install_argus_remote_journal_rearm.sh --dry-run
+sudo bash scripts/install_argus_remote_journal_rearm.sh --apply
+```
+
+新timerの初回有効化はinstall結果とbackup IDを検証した後の、別途明示された
+owner操作です。PR/CIの実行やinstaller applyだけでは有効化されません。
 
 re-arm専用credentialは、installer実行前にsecret managerなどのout-of-band
 手段で`/etc/argus-remote-journal-rearm.env`へ配置します。owner/group/modeは
@@ -42,7 +59,8 @@ re-arm専用credentialは、installer実行前にsecret managerなどのout-of-b
 除く内容は次の1 assignmentだけにします。値をshell history、引数、journal、
 installer出力へ記録しません。installerはこのfileを作成、上書き、backup
 しません。専用system user/group `argus-rearm`もout-of-bandで作成し、installerは
-存在とfile可読性を検証するだけで作成・変更しません。
+UID 997、GID 982、home `/nonexistent`、shell `/usr/sbin/nologin`との完全一致と
+file可読性を検証するだけで作成・変更しません。
 
 ```text
 ARGUS_REMOTE_JOURNAL_REARM_PAT=<redacted>
@@ -53,7 +71,7 @@ permissionはActionsのwrite（workflow dispatch）だけを付与します。Me
 readはGitHubが自動付与する範囲だけとし、Contents、Administration、Secrets等の
 追加権限は付与しません。期限と失効手順もsecret manager側で管理します。
 
-配置内容、credential preflight、dry-run、applyのread-backを確認した後、
+配置内容、credential preflight、source hash、dry-run、applyのread-backを確認した後、
 次の2 commandはre-arm timerだけを対象とし、実行直前にownerが別途明示承認
 した後にのみ実行します。
 

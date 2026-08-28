@@ -194,7 +194,10 @@ class SystemdContractTests(unittest.TestCase):
         mission = (ROOT / "ops/systemd/argus-mission-tick.service").read_text()
         service = (ROOT / "ops/systemd/argus-remote-journal-rearm.service").read_text()
         timer = (ROOT / "ops/systemd/argus-remote-journal-rearm.timer").read_text()
-        installer = (ROOT / "scripts/install_argus_mission_timer.sh").read_text()
+        mission_installer = (
+            ROOT / "scripts/install_argus_mission_timer.sh").read_text()
+        installer = (
+            ROOT / "scripts/install_argus_remote_journal_rearm.sh").read_text()
         self.assertNotIn("GH_WORKFLOW_PAT", mission)
         self.assertNotIn("argus-trigger.env", mission)
         self.assertIn(
@@ -202,26 +205,31 @@ class SystemdContractTests(unittest.TestCase):
         self.assertNotIn("argus-trigger.env", service)
         self.assertNotIn("GH_WORKFLOW_PAT", service)
         self.assertIn(
-            "ExecStart=/usr/bin/python3 /opt/argus/scripts/"
+            "ExecStart=/usr/bin/python3 /opt/argus-rearm/"
             "argus_remote_journal_rearm.py", service)
+        self.assertNotIn("/opt/argus/scripts/", service)
         self.assertIn("TimeoutStartSec=60", service)
         self.assertIn("Restart=no", service)
         self.assertIn("UMask=0077", service)
-        self.assertIn("OnCalendar=*-*-* *:13,43:00 UTC", timer)
+        self.assertIn("OnCalendar=*-*-* *:13,33,53:00 UTC", timer)
         self.assertIn("Persistent=true", timer)
-        self.assertIn("AccuracySec=1s", timer)
+        self.assertIn("AccuracySec=1us", timer)
         self.assertIn("RandomizedDelaySec=0", timer)
         self.assertIn("scripts/argus_remote_journal_rearm.py", installer)
         self.assertIn(
-            'rearm_env="/etc/argus-remote-journal-rearm.env"', installer)
-        self.assertIn('rearm_owner" == "root"', installer)
-        self.assertIn('rearm_group" == "$rearm_service_user"', installer)
-        self.assertIn('rearm_service_user="argus-rearm"', installer)
+            'ENV_FILE="/etc/argus-remote-journal-rearm.env"', installer)
+        self.assertIn('CREDENTIAL_OWNER="root"', installer)
+        self.assertIn('CREDENTIAL_GROUP="$SERVICE_USER"', installer)
+        self.assertIn('SERVICE_USER="argus-rearm"', installer)
         self.assertIn("640|440", installer)
         self.assertIn(
             "^ARGUS_REMOTE_JOURNAL_REARM_PAT=[^[:space:]#]+$", installer)
         self.assertNotIn("GH_WORKFLOW_PAT", installer)
-        self.assertIn("no service enable/start/restart/POST", installer)
+        self.assertIn(
+            "no daemon-reload/enable/start/restart/dispatch was executed",
+            installer)
+        self.assertNotIn("argus_remote_journal_rearm.py", mission_installer)
+        self.assertNotIn("argus-remote-journal-rearm.service", mission_installer)
 
     def test_invoker_emits_stable_utc_window_and_no_secret(self):
         path = ROOT / "scripts/argus_mission_tick.py"

@@ -242,6 +242,10 @@ jobs:
           pytest -q \
             test_recovery_admission.py \
             test_argus_v13_4_2_remote_receipts.py \
+            test_remote_receipt_drain.py \
+            test_remote_journal_rearm.py \
+            test_argus_identity_installer.py \
+            test_argus_v12_3_2.py \
             test_argus_recovery_phase_a_adapter.py \
             test_caos_workflow_recovery.py \
             test_argus_public_operational_boundary.py \

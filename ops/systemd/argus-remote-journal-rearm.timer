@@ -2,10 +2,12 @@
 Description=A.R.G.U.S. Remote Journal natural re-arm opportunities
 
 [Timer]
-# Phase after the natural :07/:37 EC2 mission without blocking that mission.
-OnCalendar=*-*-* *:13,43:00 UTC
+# A hard 20-minute EC2-controlled publication opportunity.  The :13 phase
+# avoids coupling to the existing :07/:37 mission timer, while :33/:53 keep
+# every calendar gap at exactly 1,200 seconds.
+OnCalendar=*-*-* *:13,33,53:00 UTC
 Persistent=true
-AccuracySec=1s
+AccuracySec=1us
 RandomizedDelaySec=0
 Unit=argus-remote-journal-rearm.service
 

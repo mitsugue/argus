@@ -11,7 +11,7 @@ Group=argus-rearm
 # provisioned out of band as root:argus-rearm 0640 and is never managed here.
 EnvironmentFile=/etc/argus-remote-journal-rearm.env
 Environment=ARGUS_BACKEND_URL=https://argus-backend-3j2m.onrender.com
-ExecStart=/usr/bin/python3 /opt/argus/scripts/argus_remote_journal_rearm.py
+ExecStart=/usr/bin/python3 /opt/argus-rearm/argus_remote_journal_rearm.py
 TimeoutStartSec=60
 Restart=no
 UMask=0077

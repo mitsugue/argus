@@ -27340,9 +27340,15 @@ def _persist_with_remote_receipt_drain(
             checkpoint = _osint_persist()
         else:
             checkpoint = {"verified": False, "checkpointCreated": False}
+        # Receipt verification becomes authoritative only after the exact
+        # checkpoint has completed.  Never backdate the durable ACK to the
+        # drain-start timestamp: that would make a long checkpoint look like
+        # zero verification latency and could falsely satisfy the 1,800-second
+        # contract.
+        completed_at = _ai_now_iso()
         result = _memory_operation_run(
             "journal", "remote_receipt_complete",
-            _complete_remote_receipt_drain, plan, checkpoint, now_iso)
+            _complete_remote_receipt_drain, plan, checkpoint, completed_at)
     except Exception:
         if plan.get("lockHeld"):
             _REMOTE_RECEIPT_FLUSH_LOCK.release()

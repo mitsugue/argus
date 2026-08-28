@@ -37,9 +37,9 @@ RECOVERY_CHECK_CONTEXT = "recovery-certificate"
 SHA_RE = re.compile(r"[0-9a-f]{40}", re.ASCII)
 TREE_RE = SHA_RE
 
-# These are the already-reviewed Recovery implementation and evidence paths at
-# the old exact head.  Their base..head patch bytes must retain the pinned
-# digest below; a path allowlist alone is not sufficient authority.
+# These are the reviewed Recovery implementation and evidence paths for the
+# exact candidate. Their base..head patch bytes must retain the pinned digest
+# below; a path allowlist alone is not sufficient authority.
 RECOVERY_PAYLOAD_PATHS = (
     ".github/workflows/caos-scan.yml",
     ".github/workflows/caos-watchtower.yml",
@@ -48,17 +48,28 @@ RECOVERY_PAYLOAD_PATHS = (
     "argus_recovery_phase_a_adapter.py",
     "argus_remote_receipt_queue.py",
     "argus_route_catalog.py",
+    "docs/EC2_MISSION_SCHEDULER.md",
+    "docs/ops/permanent-scheduler-identity-and-soak.md",
     "docs/ops/recovery-phase-a-integration.md",
+    "ops/systemd/argus-remote-journal-rearm.service",
+    "ops/systemd/argus-remote-journal-rearm.timer",
     "scanner.py",
+    "scripts/install_argus_mission_timer.sh",
+    "scripts/install_argus_remote_journal_rearm.sh",
+    "scripts/remote_receipt_drain.py",
     "scripts/workflow_http.py",
     "test_argus_checkpoint_v2_isolated.py",
     "test_argus_public_operational_boundary.py",
     "test_argus_recovery_phase_a_adapter.py",
+    "test_argus_identity_installer.py",
+    "test_argus_v12_3_2.py",
     "test_argus_v13_4_2_remote_receipts.py",
     "test_caos_workflow_recovery.py",
+    "test_remote_journal_rearm.py",
+    "test_remote_receipt_drain.py",
 )
 EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256 = (
-    "f21559306a3ee1efea03dad167e494bdab099443a1f9cf13f4f06241eaa9ffed"
+    "0d77bf7898f272e9a4fb5877738efceff7bd5ac3c46df8c13654fbda4d96fe6c"
 )
 
 # Admission-plane files may route and prove Recovery, but are not production
