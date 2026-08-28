@@ -196,10 +196,10 @@ validate_runtime_root() {
       ;;
   esac
   if sudo test -e "$RUNTIME_ROOT"; then
-    sudo test -d "$RUNTIME_ROOT" && sudo test ! -L "$RUNTIME_ROOT" || {
+    if ! sudo test -d "$RUNTIME_ROOT" || sudo test -L "$RUNTIME_ROOT"; then
       echo "isolated runtime root has unsafe type" >&2
       return 1
-    }
+    fi
     [[ "$(sudo stat -c '%U:%G:%a' "$RUNTIME_ROOT")" == "root:root:755" ]] || {
       echo "isolated runtime root metadata mismatch" >&2
       return 1
@@ -260,18 +260,15 @@ if [[ "$MODE" == "rollback" ]]; then
   backup_dir="${BACKUP_ROOT}/${ROLLBACK_ID}"
   manifest="${backup_dir}/manifest.tsv"
   root_state="${backup_dir}/runtime-root-state"
-  sudo test -d "$backup_dir" && sudo test ! -L "$backup_dir" && \
-    sudo test -f "$manifest" && sudo test ! -L "$manifest" && \
-    sudo test -f "$root_state" && sudo test ! -L "$root_state" || {
-      echo "rearm backup metadata missing or unsafe" >&2
-      exit 1
-    }
+  if ! sudo test -d "$backup_dir" || sudo test -L "$backup_dir" || \
+      ! sudo test -f "$manifest" || sudo test -L "$manifest" || \
+      ! sudo test -f "$root_state" || sudo test -L "$root_state"; then
+    echo "rearm backup metadata missing or unsafe" >&2
+    exit 1
+  fi
   manifest_copy="$(mktemp)"
   root_state_copy="$(mktemp)"
-  cleanup_rollback_copies() {
-    rm -f "$manifest_copy" "$root_state_copy"
-  }
-  trap cleanup_rollback_copies EXIT
+  trap 'rm -f -- "$manifest_copy" "$root_state_copy"' EXIT
   sudo cat "$manifest" | tee "$manifest_copy" >/dev/null
   sudo cat "$root_state" | tee "$root_state_copy" >/dev/null
   restore_manifest "$manifest_copy"
@@ -349,10 +346,10 @@ for row in "${FILES[@]}"; do
   IFS='|' read -r relative destination mode expected <<< "$row"
   source="${SOURCE_ROOT}/${relative}"
   if sudo test -e "$destination"; then
-    sudo test -f "$destination" && sudo test ! -L "$destination" || {
+    if ! sudo test -f "$destination" || sudo test -L "$destination"; then
       echo "rearm destination has unsafe type: $destination" >&2
       exit 1
-    }
+    fi
     owner="$(sudo stat -c '%u' "$destination")"
     group="$(sudo stat -c '%g' "$destination")"
     previous_mode="$(sudo stat -c '%a' "$destination")"

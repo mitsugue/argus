@@ -69,7 +69,7 @@ RECOVERY_PAYLOAD_PATHS = (
     "test_remote_receipt_drain.py",
 )
 EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256 = (
-    "6df595e3b47962d9683a17c22386e49ea8e1b27697f6f9fa3bd4eea90320d7c1"
+    "0d77bf7898f272e9a4fb5877738efceff7bd5ac3c46df8c13654fbda4d96fe6c"
 )
 
 # Admission-plane files may route and prove Recovery, but are not production
