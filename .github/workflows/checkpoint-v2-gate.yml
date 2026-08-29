@@ -200,7 +200,171 @@ jobs:
         with:
           name: checkpoint-v2-exact-source-${{ github.sha }}
           path: artifacts
-      - name: Exact 32-cycle fresh-process writer closure
+      - name: Materialize one shared fail-closed isolated proof validator
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > artifacts/checkpoint-v2-isolated-proof-validator.py <<'PY'
+          import json
+          import pathlib
+          import sys
+
+
+          LIVE_EXACT_STATE = "LIVE_EXACT_STATE"
+          DETERMINISTIC_PRODUCTION_SHAPE = "DETERMINISTIC_PRODUCTION_SHAPE"
+          CYCLES = 32
+          WAL_DELTA_PER_CYCLE = 17
+          CGROUP_MAX_BYTES = 4 * 1024 ** 3
+          CGROUP_LIFETIME_PEAK_MAX_BYTES = 3 * 1024 ** 3
+          PARENT_RSS_GROWTH_MAX_BYTES = 128 * 1024 ** 2
+          DISK_FREE_MIN_BYTES = 1024 ** 3
+          PRODUCTION_SHAPE_GENERATION_MIN_BYTES = 127 * 1024 ** 2
+          PRODUCTION_SHAPE_GENERATION_MAX_BYTES = 240 * 1024 ** 2
+          PRODUCTION_SHAPE_ROWS_MIN = 40_000
+          PRODUCTION_SHAPE_ROWS_MAX = 90_000
+          PRODUCTION_SHAPE_SECTIONS_MIN = 35
+          PRODUCTION_SHAPE_SECTIONS_MAX = 55
+
+
+          def fail(classification):
+              raise SystemExit(classification)
+
+
+          def exact_int(value):
+              return isinstance(value, int) and not isinstance(value, bool)
+
+
+          def validate_shared(report):
+              rows = report.get("cyclesEvidence")
+              cycles = report.get("cycles")
+              if (cycles != CYCLES or not isinstance(rows, list) or
+                      len(rows) != CYCLES or report.get("allVerified") is not True or
+                      not all(row.get("verified") is True for row in rows)):
+                  fail("isolated_live_or_shape_32_cycles_unverified")
+              if (report.get("schemaVersion") !=
+                      "argus-checkpoint-v2-isolated-32-cycle-proof-v1" or
+                      report.get("writerMode") != "isolated_process"):
+                  fail("isolated_live_or_shape_contract_identity_failed")
+              if (report.get("distinctChildProcessCount") != CYCLES or
+                      report.get("distinctFixtureProcessCount") != CYCLES or
+                      report.get("parentPidUnchanged") is not True or
+                      report.get("parentNeverLoadedGenerationSource") is not True):
+                  fail("isolated_live_or_shape_process_topology_failed")
+              original = report.get("originalSourceCursor")
+              start = report.get("walStartSequence")
+              final = report.get("walFinalSequence")
+              targets = [row.get("walTargetSequence") for row in rows]
+              lowers = [row.get("walLowerSequence") for row in rows]
+              if (not exact_int(original) or original < 0 or
+                      not exact_int(start) or start <= 0 or
+                      not exact_int(final) or
+                      not all(exact_int(value) for value in targets + lowers) or
+                      targets != [start + index * WAL_DELTA_PER_CYCLE
+                                  for index in range(CYCLES)] or
+                      lowers != [target - WAL_DELTA_PER_CYCLE
+                                 for target in targets] or
+                      final != targets[-1] or
+                      report.get("allWalExact") is not True or
+                      not all(
+                          row.get("walTargetSequence") ==
+                          row.get("walReconstructedSequence") and
+                          row.get("walHashVerified") is True and
+                          row.get("walFramingVerified") is True
+                          for row in rows)):
+                  fail("isolated_live_or_shape_wal_contract_failed")
+              if (report.get("pendingMaximum") != 0 or
+                      report.get("retainedMaximum", CYCLES) > 4 or
+                      any(row.get("pendingGenerationCount") != 0 or
+                          row.get("retainedGenerationCount", CYCLES) > 4
+                          for row in rows)):
+                  fail("isolated_live_or_shape_generation_retention_failed")
+              if (report.get("parentRssCycles3To32GrowthBytes", -1) < 0 or
+                      report.get("parentRssCycles3To32GrowthBytes") >
+                      PARENT_RSS_GROWTH_MAX_BYTES):
+                  fail("isolated_live_or_shape_parent_rss_plateau_failed")
+              if (report.get("cgroupMemoryMax") != CGROUP_MAX_BYTES or
+                      not exact_int(report.get("cgroupLifetimePeakBytes")) or
+                      report.get("cgroupLifetimePeakBytes") <= 0 or
+                      report.get("cgroupLifetimePeakBytes") >=
+                      CGROUP_LIFETIME_PEAK_MAX_BYTES):
+                  fail("isolated_live_or_shape_cgroup_resource_gate_failed")
+              if (not exact_int(report.get("diskFreeMinimumBytes")) or
+                      report.get("diskFreeMinimumBytes") < DISK_FREE_MIN_BYTES):
+                  fail("isolated_live_or_shape_disk_reserve_failed")
+              if (report.get("fdGrowth") not in (None, 0) or
+                      report.get("threadGrowth") != 0 or
+                      report.get("connectionGrowth") != 0 or
+                      report.get("cursorGrowth") != 0 or
+                      report.get("futureGrowth") != 0 or
+                      report.get("zombieFree") is not True or
+                      report.get("orphanMaximum") != 0 or
+                      any(row.get("stagingOrphanCount") != 0 for row in rows)):
+                  fail("isolated_live_or_shape_parent_resource_leak")
+              if any(row.get("childExitCode") != 0 for row in rows):
+                  fail("isolated_live_or_shape_child_exit_failed")
+              if not all(row.get("manifestPromoted") is True for row in rows):
+                  fail("isolated_live_or_shape_restore_verification_failed")
+              return rows
+
+
+          def validate(report, mode):
+              rows = validate_shared(report)
+              if mode == LIVE_EXACT_STATE:
+                  original = report.get("originalSourceCursor")
+                  if (original <= 0 or report.get("walStartSequence") !=
+                          original + WAL_DELTA_PER_CYCLE or
+                          not all(row.get("originalSourceCursor") == original
+                                  for row in rows)):
+                      fail("isolated_live_exact_source_identity_failed")
+              elif mode == DETERMINISTIC_PRODUCTION_SHAPE:
+                  minimum = report.get("generationBytesMinimum")
+                  maximum = report.get("generationBytesMaximum")
+                  if (not exact_int(minimum) or not exact_int(maximum) or not
+                          (PRODUCTION_SHAPE_GENERATION_MIN_BYTES <= minimum <=
+                           maximum <= PRODUCTION_SHAPE_GENERATION_MAX_BYTES)):
+                      fail("isolated_deterministic_generation_shape_failed")
+                  if not all(
+                          exact_int(row.get("rowCount")) and
+                          PRODUCTION_SHAPE_ROWS_MIN <= row.get("rowCount") <=
+                          PRODUCTION_SHAPE_ROWS_MAX for row in rows):
+                      fail("isolated_deterministic_row_shape_failed")
+                  if not all(
+                          exact_int(row.get("sectionCount")) and
+                          PRODUCTION_SHAPE_SECTIONS_MIN <=
+                          row.get("sectionCount") <=
+                          PRODUCTION_SHAPE_SECTIONS_MAX for row in rows):
+                      fail("isolated_deterministic_section_shape_failed")
+              else:
+                  fail("isolated_proof_mode_invalid")
+              return {
+                  "mode": mode,
+                  "passed": True,
+                  "cycles": CYCLES,
+                  "generationBytesMinimum": report.get(
+                      "generationBytesMinimum"),
+                  "generationBytesMaximum": report.get(
+                      "generationBytesMaximum"),
+                  "rowCountMinimum": min(
+                      int(row.get("rowCount") or 0) for row in rows),
+                  "rowCountMaximum": max(
+                      int(row.get("rowCount") or 0) for row in rows),
+                  "sectionCountMinimum": min(
+                      int(row.get("sectionCount") or 0) for row in rows),
+                  "sectionCountMaximum": max(
+                      int(row.get("sectionCount") or 0) for row in rows),
+              }
+
+
+          if len(sys.argv) != 3:
+              fail("isolated_proof_validator_arguments_invalid")
+          proof_mode = sys.argv[1]
+          proof_path = pathlib.Path(sys.argv[2])
+          proof = json.loads(proof_path.read_text(encoding="utf-8"))
+          print(json.dumps(validate(proof, proof_mode), sort_keys=True))
+          PY
+          python3 -B -m py_compile \
+            artifacts/checkpoint-v2-isolated-proof-validator.py
+      - name: LIVE_EXACT_STATE 32-cycle fresh-process writer closure
         shell: bash
         run: |
           set -euo pipefail
@@ -210,11 +374,34 @@ jobs:
             python:3.12-slim \
             python3 -B scripts/checkpoint_v2_isolated_probe.py \
               --source-json artifacts/checkpoint-v2-exact-source.json \
+              --cycles 32 \
+            | tee artifacts/checkpoint-v2-isolated-live-exact-32-cycle-proof.json
+          python3 -B artifacts/checkpoint-v2-isolated-proof-validator.py \
+            LIVE_EXACT_STATE \
+            artifacts/checkpoint-v2-isolated-live-exact-32-cycle-proof.json \
+            | tee artifacts/checkpoint-v2-isolated-live-exact-validation.json
+      - name: DETERMINISTIC_PRODUCTION_SHAPE 32-cycle threshold closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 512 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            python3 -B scripts/checkpoint_v2_isolated_probe.py \
               --cycles 32 --assert-proof \
-            | tee artifacts/checkpoint-v2-isolated-32-cycle-proof.json
+            | tee artifacts/checkpoint-v2-isolated-production-shape-32-cycle-proof.json
+          python3 -B artifacts/checkpoint-v2-isolated-proof-validator.py \
+            DETERMINISTIC_PRODUCTION_SHAPE \
+            artifacts/checkpoint-v2-isolated-production-shape-32-cycle-proof.json \
+            | tee artifacts/checkpoint-v2-isolated-production-shape-validation.json
       - name: Publish isolated writer proof
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: checkpoint-v2-isolated-32-cycle-proof-${{ github.sha }}
-          path: artifacts/checkpoint-v2-isolated-32-cycle-proof.json
+          path: |
+            artifacts/checkpoint-v2-isolated-live-exact-32-cycle-proof.json
+            artifacts/checkpoint-v2-isolated-live-exact-validation.json
+            artifacts/checkpoint-v2-isolated-production-shape-32-cycle-proof.json
+            artifacts/checkpoint-v2-isolated-production-shape-validation.json

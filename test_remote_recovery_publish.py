@@ -1109,3 +1109,226 @@ def test_exact_4gib_measurement_gate_is_ci_wired_no_swap_and_attributable():
         ["bash", "-n"], input=terminal_script, text=True,
         capture_output=True, check=False)
     assert checked.returncode == 0, checked.stderr
+
+
+def _checkpoint_v2_validator_source():
+    workflow = Path(".github/workflows/checkpoint-v2-gate.yml").read_text(
+        encoding="utf-8")
+    marker = (
+        "cat > artifacts/checkpoint-v2-isolated-proof-validator.py "
+        "<<'PY'\n")
+    embedded = workflow.split(marker, 1)[1].split("\n          PY", 1)[0]
+    return textwrap.dedent(embedded)
+
+
+def _live_exact_report():
+    original = 8_979
+    rows = []
+    for index in range(32):
+        target = original + (index + 1) * 17
+        rows.append({
+            "cycle": index + 1,
+            "fixtureProcessId": 20_000 + index,
+            "originalSourceCursor": original,
+            "childPid": 30_000 + index,
+            "verified": True,
+            "generationBytes": 331_776,
+            "rowCount": 51,
+            "sectionCount": 51,
+            "walLowerSequence": target - 17,
+            "walTargetSequence": target,
+            "walReconstructedSequence": target,
+            "walHashVerified": True,
+            "walFramingVerified": True,
+            "manifestPromoted": True,
+            "childExitCode": 0,
+            "pendingGenerationCount": 0,
+            "retainedGenerationCount": min(index + 1, 4),
+            "stagingOrphanCount": 0,
+        })
+    return {
+        "schemaVersion":
+            "argus-checkpoint-v2-isolated-32-cycle-proof-v1",
+        "writerMode": "isolated_process",
+        "cycles": 32,
+        "parentPidUnchanged": True,
+        "distinctChildProcessCount": 32,
+        "distinctFixtureProcessCount": 32,
+        "parentNeverLoadedGenerationSource": True,
+        "allVerified": True,
+        "allWalExact": True,
+        "walStartSequence": rows[0]["walTargetSequence"],
+        "walFinalSequence": rows[-1]["walTargetSequence"],
+        "originalSourceCursor": original,
+        "generationBytesMinimum": 331_776,
+        "generationBytesMaximum": 331_776,
+        "parentRssCycles3To32GrowthBytes": 1_048_576,
+        "cgroupMemoryMax": 4 * 1024 ** 3,
+        "cgroupLifetimePeakBytes": 512 * 1024 ** 2,
+        "fdGrowth": 0,
+        "threadGrowth": 0,
+        "connectionGrowth": 0,
+        "cursorGrowth": 0,
+        "futureGrowth": 0,
+        "zombieFree": True,
+        "pendingMaximum": 0,
+        "retainedMaximum": 4,
+        "orphanMaximum": 0,
+        "diskFreeMinimumBytes": 2 * 1024 ** 3,
+        "cyclesEvidence": rows,
+    }
+
+
+def _production_shape_report():
+    report = _live_exact_report()
+    report["generationBytesMinimum"] = 144_048_128
+    report["generationBytesMaximum"] = 144_048_128
+    report["originalSourceCursor"] = 0
+    report["walStartSequence"] = 5_017
+    report["walFinalSequence"] = 5_017 + 31 * 17
+    for index, row in enumerate(report["cyclesEvidence"]):
+        target = 5_017 + index * 17
+        row["originalSourceCursor"] = 0
+        row["walLowerSequence"] = target - 17
+        row["walTargetSequence"] = target
+        row["walReconstructedSequence"] = target
+        row["generationBytes"] = 144_048_128
+        row["rowCount"] = 43_350
+        row["sectionCount"] = 43
+    return report
+
+
+def _run_checkpoint_v2_validator(tmp_path, mode, report):
+    proof = tmp_path / f"{mode}.json"
+    proof.write_text(json.dumps(report), encoding="utf-8")
+    return subprocess.run(
+        [sys.executable, "-B", "-", mode, str(proof)],
+        input=_checkpoint_v2_validator_source(), text=True,
+        capture_output=True, check=False)
+
+
+def test_checkpoint_v2_workflow_separates_live_and_shape_without_gate_loss():
+    workflow = Path(".github/workflows/checkpoint-v2-gate.yml").read_text(
+        encoding="utf-8")
+    isolated_job = workflow.split(
+        "\n  isolated-writer-closure-32:\n", 1)[1]
+    live_step = isolated_job.split(
+        "- name: LIVE_EXACT_STATE 32-cycle fresh-process writer closure",
+        1)[1].split(
+        "- name: DETERMINISTIC_PRODUCTION_SHAPE 32-cycle threshold closure",
+        1)[0]
+    shape_step = isolated_job.split(
+        "- name: DETERMINISTIC_PRODUCTION_SHAPE 32-cycle threshold closure",
+        1)[1].split("- name: Publish isolated writer proof", 1)[0]
+    exact_state_job = workflow.split(
+        "\n  linux-4gib-cgroup:\n", 1)[1].split(
+        "\n  mapping-attribution:\n", 1)[0]
+
+    assert "--source-json artifacts/checkpoint-v2-exact-source.json" in \
+        live_step
+    assert "--cycles 32" in live_step
+    assert "--assert-proof" not in live_step
+    assert "LIVE_EXACT_STATE" in live_step
+    assert "--source-json" not in shape_step
+    assert "--cycles 32 --assert-proof" in shape_step
+    assert "DETERMINISTIC_PRODUCTION_SHAPE" in shape_step
+    assert "--memory 4g --memory-swap 4g" in live_step
+    assert "--memory 4g --memory-swap 4g" in shape_step
+    assert "--source-json artifacts/checkpoint-v2-exact-source.json" in \
+        exact_state_job
+    assert "--memory 4g --memory-swap 4g" in exact_state_job
+
+    probe = Path("scripts/checkpoint_v2_isolated_probe.py").read_text(
+        encoding="utf-8")
+    assert "127 * 1024 ** 2" in probe
+    assert "240 * 1024 ** 2" in probe
+    assert "40_000 <= int(row[\"rowCount\"] or 0) <= 90_000" in probe
+    assert "35 <= int(row[\"sectionCount\"] or 0) <= 55" in probe
+
+
+def test_checkpoint_v2_live_exact_below_shape_is_accepted(tmp_path):
+    completed = _run_checkpoint_v2_validator(
+        tmp_path, "LIVE_EXACT_STATE", _live_exact_report())
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout)
+    assert result["passed"] is True
+    assert result["generationBytesMinimum"] == 331_776
+    assert result["rowCountMinimum"] == 51
+
+
+@pytest.mark.parametrize(("case", "classification"), [
+    ("wal", "isolated_live_or_shape_wal_contract_failed"),
+    ("verification", "isolated_live_or_shape_32_cycles_unverified"),
+    ("child", "isolated_live_or_shape_child_exit_failed"),
+    ("zombie", "isolated_live_or_shape_parent_resource_leak"),
+    ("orphan", "isolated_live_or_shape_parent_resource_leak"),
+    ("pending", "isolated_live_or_shape_generation_retention_failed"),
+    ("retention", "isolated_live_or_shape_generation_retention_failed"),
+    ("cgroup", "isolated_live_or_shape_cgroup_resource_gate_failed"),
+])
+def test_checkpoint_v2_live_exact_defects_remain_fail_closed(
+        tmp_path, case, classification):
+    report = _live_exact_report()
+    if case == "wal":
+        report["allWalExact"] = False
+    elif case == "verification":
+        report["allVerified"] = False
+    elif case == "child":
+        report["cyclesEvidence"][0]["childExitCode"] = 1
+    elif case == "zombie":
+        report["zombieFree"] = False
+    elif case == "orphan":
+        report["orphanMaximum"] = 1
+    elif case == "pending":
+        report["pendingMaximum"] = 1
+    elif case == "retention":
+        report["retainedMaximum"] = 5
+    elif case == "cgroup":
+        report["cgroupMemoryMax"] = 0
+    completed = _run_checkpoint_v2_validator(
+        tmp_path, "LIVE_EXACT_STATE", report)
+    assert completed.returncode != 0
+    assert classification in completed.stderr
+
+
+@pytest.mark.parametrize(("case", "classification"), [
+    ("generation_below", "isolated_deterministic_generation_shape_failed"),
+    ("generation_above", "isolated_deterministic_generation_shape_failed"),
+    ("rows_below", "isolated_deterministic_row_shape_failed"),
+    ("rows_above", "isolated_deterministic_row_shape_failed"),
+    ("sections_below", "isolated_deterministic_section_shape_failed"),
+    ("sections_above", "isolated_deterministic_section_shape_failed"),
+])
+def test_checkpoint_v2_deterministic_shape_thresholds_fail_closed(
+        tmp_path, case, classification):
+    report = _production_shape_report()
+    if case == "generation_below":
+        report["generationBytesMinimum"] = 133_169_151
+    elif case == "generation_above":
+        report["generationBytesMaximum"] = 251_658_241
+    elif case == "rows_below":
+        report["cyclesEvidence"][0]["rowCount"] = 39_999
+    elif case == "rows_above":
+        report["cyclesEvidence"][0]["rowCount"] = 90_001
+    elif case == "sections_below":
+        report["cyclesEvidence"][0]["sectionCount"] = 34
+    elif case == "sections_above":
+        report["cyclesEvidence"][0]["sectionCount"] = 56
+    completed = _run_checkpoint_v2_validator(
+        tmp_path, "DETERMINISTIC_PRODUCTION_SHAPE", report)
+    assert completed.returncode != 0
+    assert classification in completed.stderr
+
+
+def test_checkpoint_v2_deterministic_shape_exact_boundaries_pass(tmp_path):
+    report = _production_shape_report()
+    report["generationBytesMinimum"] = 133_169_152
+    report["generationBytesMaximum"] = 251_658_240
+    report["cyclesEvidence"][0]["rowCount"] = 40_000
+    report["cyclesEvidence"][1]["rowCount"] = 90_000
+    report["cyclesEvidence"][0]["sectionCount"] = 35
+    report["cyclesEvidence"][1]["sectionCount"] = 55
+    completed = _run_checkpoint_v2_validator(
+        tmp_path, "DETERMINISTIC_PRODUCTION_SHAPE", report)
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout)["passed"] is True
