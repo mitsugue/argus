@@ -4,22 +4,28 @@ from __future__ import annotations
 import copy
 import concurrent.futures
 import base64
+import contextlib
 import hashlib
 import json
+import os
 from pathlib import Path
+import pathlib
 import secrets
 import subprocess
+import tempfile
 import textwrap
 import types
 from unittest import mock
 
 import pytest
 
+import argus_persistent_storage as storage
 import argus_remote_journal as journal
 import argus_remote_receipt_queue as receipt_queue
 import argus_remote_recovery as recovery
 import argus_remote_recovery_limits as recovery_limits
 import argus_state_journal
+import argus_tick_durability as durability
 from scripts.prepare_remote_journal_publish import (
     inspect_sidecar,
     inspect_pair,
@@ -38,6 +44,15 @@ import sys
 sys.modules.setdefault("moomoo", _moomoo)
 import scanner
 from scripts import prepare_remote_journal_publish as publisher
+from test_argus_persistent_mission_storage import scanner_storage
+from test_remote_recovery_producer import (
+    CURRENT_ID as PRODUCER_CURRENT_ID,
+    CURRENT_KEY as PRODUCER_CURRENT_KEY,
+    _activate_clean_legacy_nonce_authority,
+    _append_verified_cycle,
+    _key_environment,
+    _reset_recovery_targets,
+)
 
 
 BUILD = "b" * 40
@@ -1332,3 +1347,170 @@ def test_checkpoint_v2_deterministic_shape_exact_boundaries_pass(tmp_path):
         tmp_path, "DETERMINISTIC_PRODUCTION_SHAPE", report)
     assert completed.returncode == 0, completed.stderr
     assert json.loads(completed.stdout)["passed"] is True
+
+
+@pytest.mark.parametrize(
+    "failure_point",
+    ("encrypt", "sidecar", "write", "pair", "installed_readback"),
+)
+def test_first_activation_sidecar_failure_preserves_legacy_authority(
+        failure_point):
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            _key_environment(configured=True), \
+            mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
+        _reset_recovery_targets()
+        _append_verified_cycle(paths)
+        _activate_clean_legacy_nonce_authority(paths)
+        wal_before = pathlib.Path(paths["wal"]).read_bytes()
+        checkpoint_before = pathlib.Path(paths["checkpoint"]).read_bytes()
+        real_atomic_write = storage.atomic_write_json
+
+        def fail_recovery_write(path, *args, **kwargs):
+            if os.path.abspath(path) == os.path.abspath(paths["recovery"]):
+                raise storage.PersistentStorageError(
+                    "injected_recovery_write_failure")
+            return real_atomic_write(path, *args, **kwargs)
+
+        with contextlib.ExitStack() as stack:
+            compact = stack.enter_context(mock.patch.object(
+                durability, "compact_verified_wal",
+                wraps=durability.compact_verified_wal))
+            if failure_point == "encrypt":
+                stack.enter_context(mock.patch.object(
+                    recovery, "encrypt_payload",
+                    side_effect=recovery.RecoveryBundleError(
+                        "injected_encrypt_failure")))
+            elif failure_point == "sidecar":
+                stack.enter_context(mock.patch.object(
+                    recovery, "build_sidecar",
+                    side_effect=recovery.RecoveryBundleError(
+                        "injected_sidecar_failure")))
+            elif failure_point == "write":
+                stack.enter_context(mock.patch.object(
+                    storage, "atomic_write_json",
+                    side_effect=fail_recovery_write))
+            elif failure_point == "pair":
+                stack.enter_context(mock.patch.object(
+                    recovery, "validate_pair",
+                    side_effect=recovery.RecoveryBundleError(
+                        "injected_pair_failure")))
+            else:
+                stack.enter_context(mock.patch.object(
+                    scanner, "_read_local_recovery_sidecar",
+                    side_effect=ValueError(
+                        "injected_installed_readback_failure")))
+            with pytest.raises(
+                    scanner._RemoteRecoveryCheckpointError,
+                    match="remote_recovery_sidecar_failed"):
+                scanner._osint_persist()
+
+        assert compact.call_count == 0
+        assert pathlib.Path(paths["wal"]).read_bytes() == wal_before
+        assert pathlib.Path(paths["checkpoint"]).read_bytes() == \
+            checkpoint_before
+        preserved = storage.load_checkpoint(
+            paths["checkpoint"], require_seal=True)
+        assert "remoteRecoveryRequired" not in preserved
+        assert scanner._DURABLE_STATE["remoteRecoverySidecar"][
+            "status"] == "failed"
+        assert not scanner._DURABLE_STATE.get("quarantinedCheckpoint")
+
+
+@pytest.mark.parametrize("boundary", (
+    "after_marker_candidate_checkpoint",
+    "after_encrypted_sidecar_creation",
+    "after_complete_pair",
+))
+def test_first_activation_pair_crash_boundaries_restart_safely(boundary):
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            _key_environment(configured=True), \
+            mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
+        _reset_recovery_targets()
+        _append_verified_cycle(paths)
+        _activate_clean_legacy_nonce_authority(paths)
+        checkpoint_before = pathlib.Path(paths["checkpoint"]).read_bytes()
+        wal_before = pathlib.Path(paths["wal"]).read_bytes()
+        crashed = {"value": False}
+
+        def inject(name):
+            if name == boundary and not crashed["value"]:
+                crashed["value"] = True
+                raise RuntimeError(f"crash:{boundary}")
+
+        with mock.patch.object(
+                scanner, "_remote_recovery_crash_boundary",
+                side_effect=inject):
+            if boundary == "after_encrypted_sidecar_creation":
+                with pytest.raises(
+                        scanner._RemoteRecoveryCheckpointError,
+                        match="remote_recovery_sidecar_failed"):
+                    scanner._osint_persist()
+            else:
+                result = scanner._osint_persist()
+                assert result["verified"] is False
+        assert crashed["value"] is True
+        assert pathlib.Path(paths["wal"]).read_bytes() == wal_before
+
+        canonical = storage.load_checkpoint(
+            paths["checkpoint"], require_seal=True)
+        if boundary == "after_complete_pair":
+            assert "remoteRecoveryRequired" in canonical
+            scanner._verify_local_recovery_sidecar(
+                canonical, allow_legacy_migration=False)
+        else:
+            assert pathlib.Path(paths["checkpoint"]).read_bytes() == \
+                checkpoint_before
+            assert "remoteRecoveryRequired" not in canonical
+
+        restart = scanner._osint_persist()
+        assert restart["verified"] is True
+        installed = storage.load_checkpoint(
+            paths["checkpoint"], require_seal=True)
+        scanner._verify_local_recovery_sidecar(
+            installed, allow_legacy_migration=False)
+        history = scanner._verify_remote_recovery_nonce_authority(
+            recovery.configured_keys())
+        floor = history["keyMaterialCounters"][
+            recovery.nonce_material_domain(PRODUCER_CURRENT_KEY)]
+        assert floor >= (
+            1 if boundary == "after_marker_candidate_checkpoint" else 2)
+        assert scanner._DURABLE_STATE["integrityStatus"] == "ok"
+        assert scanner._DURABLE_STATE["remoteRecoveryLocal"][
+            "status"] == "verified"
+
+
+def test_failed_first_activation_never_projects_attempt_as_success():
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            _key_environment(configured=True), \
+            mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
+        _reset_recovery_targets()
+        _append_verified_cycle(paths)
+        _activate_clean_legacy_nonce_authority(paths)
+        prior_success = "2026-08-12T23:59:00Z"
+        scanner._DURABLE_STATE["lastSuccessAt"] = prior_success
+        checkpoint_before = pathlib.Path(paths["checkpoint"]).read_bytes()
+        captured = {}
+
+        def fail_after_capture(checkpoint, *, checkpoint_path=None,
+                               authenticated_remote_floor=None):
+            candidate = storage.load_checkpoint(
+                checkpoint_path, require_seal=True)
+            captured.update(candidate["checkpointFailureHistory"])
+            raise scanner._RemoteRecoveryCheckpointError(
+                "injected_sidecar_failure")
+
+        with mock.patch.object(
+                scanner, "_persist_remote_recovery_sidecar",
+                side_effect=fail_after_capture), pytest.raises(
+                    scanner._RemoteRecoveryCheckpointError,
+                    match="injected_sidecar_failure"):
+            scanner._osint_persist()
+
+        assert captured["lastSuccessAt"] == prior_success
+        assert scanner._DURABLE_STATE["lastSuccessAt"] == prior_success
+        assert pathlib.Path(paths["checkpoint"]).read_bytes() == \
+            checkpoint_before
+        assert "remoteRecoveryRequired" not in storage.load_checkpoint(
+            paths["checkpoint"], require_seal=True)
+        assert PRODUCER_CURRENT_ID == recovery.configured_keys()[
+            "current"]["keyId"]

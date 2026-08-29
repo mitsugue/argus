@@ -456,6 +456,267 @@ def test_true_clean_legacy_activation_is_single_use_and_starts_at_one(
             CURRENT_ID), "big") == 1
 
 
+def test_existing_empty_lock_is_reused_for_exact_clean_genesis(
+        bootstrap_runtime, tmp_path):
+    with mock.patch.dict(os.environ, _key_env(), clear=True):
+        checkpoint = _write_clean_legacy_checkpoint(tmp_path)
+        lock_path = Path(
+            bootstrap_runtime["recoveryNonceState"] + ".reservation.lock")
+        lock_path.touch(mode=0o600)
+        before = lock_path.stat()
+        with mock.patch.object(
+                scanner, "_probe_pinned_remote_recovery_nonce_floor",
+                return_value=None), mock.patch.object(
+                scanner, "_pinned_recovery_path_never_existed",
+                return_value=True):
+            result = scanner._prepare_keyed_local_recovery_nonce_boot(
+                checkpoint, recovery.configured_keys(), _pinned())
+        after = lock_path.stat()
+        assert result["status"] == "activated_genesis"
+        assert (after.st_dev, after.st_ino) == (before.st_dev, before.st_ino)
+        assert after.st_size > 0
+        assert int.from_bytes(scanner._next_remote_recovery_nonce(
+            CURRENT_ID), "big") == 1
+
+
+def test_existing_empty_lock_genesis_requires_previous_key_absent(
+        bootstrap_runtime, tmp_path):
+    with mock.patch.dict(os.environ, _key_env(previous=True), clear=True):
+        checkpoint = _write_clean_legacy_checkpoint(tmp_path)
+        lock_path = Path(
+            bootstrap_runtime["recoveryNonceState"] + ".reservation.lock")
+        lock_path.touch(mode=0o600)
+        with mock.patch.object(
+                scanner, "_probe_pinned_remote_recovery_nonce_floor",
+                return_value=None), mock.patch.object(
+                scanner, "_pinned_recovery_path_never_existed",
+                return_value=True), pytest.raises(
+                    recovery.RecoveryBundleError,
+                    match="recovery_nonce_history_missing"):
+            scanner._prepare_keyed_local_recovery_nonce_boot(
+                checkpoint, recovery.configured_keys(), _pinned())
+        assert lock_path.stat().st_size == 0
+        assert scanner._remote_recovery_nonce_authority_absent(
+            include_lock=False)
+
+
+@pytest.mark.parametrize("boundary", (
+    "before_lock_creation",
+    "after_empty_lock_creation",
+    "after_initial_lock_metadata",
+    "after_history_write",
+    "after_head_write",
+    "after_anchor_write",
+))
+def test_genesis_crash_boundaries_restart_without_nonce_reuse(
+        bootstrap_runtime, tmp_path, boundary):
+    with mock.patch.dict(os.environ, _key_env(), clear=True):
+        checkpoint = _write_clean_legacy_checkpoint(tmp_path)
+        checkpoint_before = Path(
+            bootstrap_runtime["checkpoint"]).read_bytes()
+        crashed = {"value": False}
+
+        def inject(name):
+            if name == boundary and not crashed["value"]:
+                crashed["value"] = True
+                raise RuntimeError(f"crash:{boundary}")
+
+        probes = (
+            mock.patch.object(
+                scanner, "_probe_pinned_remote_recovery_nonce_floor",
+                return_value=None),
+            mock.patch.object(
+                scanner, "_pinned_recovery_path_never_existed",
+                return_value=True),
+        )
+        with probes[0], probes[1], mock.patch.object(
+                scanner, "_remote_recovery_crash_boundary",
+                side_effect=inject), pytest.raises(
+                    recovery.RecoveryBundleError):
+            scanner._prepare_keyed_local_recovery_nonce_boot(
+                checkpoint, recovery.configured_keys(), _pinned())
+        assert crashed["value"] is True
+        assert Path(bootstrap_runtime["checkpoint"]).read_bytes() == \
+            checkpoint_before
+        assert not Path(bootstrap_runtime["recovery"]).exists()
+
+        with mock.patch.object(
+                scanner, "_probe_pinned_remote_recovery_nonce_floor",
+                return_value=None), mock.patch.object(
+                scanner, "_pinned_recovery_path_never_existed",
+                return_value=True):
+            restart = scanner._prepare_keyed_local_recovery_nonce_boot(
+                checkpoint, recovery.configured_keys(), _pinned())
+        assert restart["status"] in {
+            "activated_genesis", "verified_existing"}
+        assert Path(bootstrap_runtime["checkpoint"]).read_bytes() == \
+            checkpoint_before
+        nonce = int.from_bytes(scanner._next_remote_recovery_nonce(
+            CURRENT_ID), "big")
+        assert nonce == 1
+        history = scanner._verify_remote_recovery_nonce_authority(
+            recovery.configured_keys())
+        assert history["keyMaterialCounters"][
+            scanner._remote_recovery_nonce_domain(CURRENT_KEY)] == 1
+
+
+def test_crash_after_durable_reservation_anchor_consumes_nonce_floor(
+        bootstrap_runtime, tmp_path):
+    with mock.patch.dict(os.environ, _key_env(), clear=True):
+        checkpoint = _write_clean_legacy_checkpoint(tmp_path)
+        checkpoint_before = Path(
+            bootstrap_runtime["checkpoint"]).read_bytes()
+        with mock.patch.object(
+                scanner, "_probe_pinned_remote_recovery_nonce_floor",
+                return_value=None), mock.patch.object(
+                scanner, "_pinned_recovery_path_never_existed",
+                return_value=True):
+            scanner._prepare_keyed_local_recovery_nonce_boot(
+                checkpoint, recovery.configured_keys(), _pinned())
+        crashed = {"value": False}
+
+        def inject(name):
+            if name == "after_durable_reservation_anchor" and not \
+                    crashed["value"]:
+                crashed["value"] = True
+                raise RuntimeError("crash:reservation_anchor")
+
+        with mock.patch.object(
+                scanner, "_remote_recovery_crash_boundary",
+                side_effect=inject), pytest.raises(
+                    RuntimeError, match="crash:reservation_anchor"):
+            scanner._next_remote_recovery_nonce(CURRENT_ID)
+        assert crashed["value"] is True
+        assert Path(bootstrap_runtime["checkpoint"]).read_bytes() == \
+            checkpoint_before
+        assert not Path(bootstrap_runtime["recovery"]).exists()
+        # Counter one reached the monotonic anchor but was never returned.
+        # Restart repairs mirrors from that anchor and must consume two.
+        assert int.from_bytes(scanner._next_remote_recovery_nonce(
+            CURRENT_ID), "big") == 2
+
+
+def test_production_shaped_partial_activation_repair_dry_run_is_exact(
+        bootstrap_runtime, tmp_path):
+    build_sha = "9" * 40
+    wal = 8968
+    with mock.patch.dict(os.environ, {
+            **_key_env(), "RENDER_GIT_COMMIT": build_sha}, clear=True):
+        legacy = remote_snapshot(wal)
+        storage.write_checkpoint(
+            bootstrap_runtime["checkpoint"], legacy,
+            temp_directory=str(tmp_path))
+        sealed_legacy = storage.load_checkpoint(
+            bootstrap_runtime["checkpoint"], require_seal=True)
+        legacy_path = Path(
+            bootstrap_runtime["checkpoint"] +
+            ".quarantine-production-fixture")
+        storage.atomic_write_json(
+            str(legacy_path), sealed_legacy, temp_directory=str(tmp_path),
+            validator=lambda value: storage.verify_checkpoint(
+                value, require_seal=True))
+        marker_only = copy.deepcopy(sealed_legacy)
+        marker_only.pop("localCheckpointIntegrity")
+        marker_only["remoteRecoveryRequired"] = {
+            "schemaVersion": recovery.SIDECAR_SCHEMA,
+            "mode": "encrypted_required",
+            "keyId": CURRENT_ID,
+            "checkpointId": "rcp-" + "1" * 32,
+        }
+        marker_only = storage.seal_checkpoint(marker_only)
+        storage.atomic_write_json(
+            bootstrap_runtime["checkpoint"], marker_only,
+            temp_directory=str(tmp_path),
+            validator=lambda value: storage.verify_checkpoint(
+                value, require_seal=True))
+        lock_path = Path(
+            bootstrap_runtime["recoveryNonceState"] + ".reservation.lock")
+        lock_path.touch(mode=0o600)
+        lock_stat = lock_path.stat()
+        checkpoint_path = Path(bootstrap_runtime["checkpoint"])
+        expected = {
+            "schemaVersion":
+                scanner._PARTIAL_ACTIVATION_REPAIR_SCHEMA,
+            "buildSha": build_sha,
+            "currentKeyId": CURRENT_ID,
+            "checkpointId": "rcp-" + "1" * 32,
+            "currentCheckpointSha256":
+                scanner._remote_recovery_file_sha256(str(checkpoint_path)),
+            "currentCheckpointBytes": checkpoint_path.stat().st_size,
+            "legacyCheckpointPath": str(legacy_path),
+            "legacyCheckpointSha256":
+                scanner._remote_recovery_file_sha256(str(legacy_path)),
+            "legacyCheckpointBytes": legacy_path.stat().st_size,
+            "walSequence": wal,
+            "lockIdentity": {
+                "device": lock_stat.st_dev,
+                "inode": lock_stat.st_ino,
+                "mode": lock_stat.st_mode & 0o777,
+                "size": lock_stat.st_size,
+                "mtimeNs": lock_stat.st_mtime_ns,
+                "ctimeNs": lock_stat.st_ctime_ns,
+            },
+            "writersFenced": True,
+            "ec2TimerDisabled": True,
+            "activeRecoveryWriterCount": 0,
+            "operationalVerification": False,
+            "immutableRecoveryPath": {
+                "status": "absent",
+                "historyQueryStatus": "never_existed",
+                "path": scanner._REMOTE_RECOVERY_PATH,
+                "pinnedCommitSha": "8" * 40,
+            },
+        }
+        before = {
+            "checkpoint": checkpoint_path.read_bytes(),
+            "legacy": legacy_path.read_bytes(),
+            "lock": lock_path.stat(),
+        }
+        plan = scanner._plan_partial_activation_repair(expected)
+        hostile_contracts = []
+        for field, value in (
+                ("writersFenced", False),
+                ("ec2TimerDisabled", False),
+                ("activeRecoveryWriterCount", 1),
+                ("operationalVerification", True),
+                ("currentKeyId", "wrong-current-key"),
+                ("currentCheckpointSha256", "0" * 64),
+                ("legacyCheckpointSha256", "0" * 64),
+                ("walSequence", wal - 1)):
+            hostile = copy.deepcopy(expected)
+            hostile[field] = value
+            hostile_contracts.append(hostile)
+        hostile = copy.deepcopy(expected)
+        hostile["lockIdentity"]["inode"] += 1
+        hostile_contracts.append(hostile)
+        hostile = copy.deepcopy(expected)
+        hostile["immutableRecoveryPath"]["historyQueryStatus"] = "ambiguous"
+        hostile_contracts.append(hostile)
+        for hostile in hostile_contracts:
+            with pytest.raises(recovery.RecoveryBundleError):
+                scanner._plan_partial_activation_repair(hostile)
+        after = lock_path.stat()
+
+    assert plan["status"] == "DRY_RUN_PASS"
+    assert plan["mutationAuthorized"] is False
+    assert plan["walSequence"] == wal
+    assert plan["nonceReuseRisk"] == "NONE"
+    assert plan["currentKeyUnchanged"] is True
+    assert plan["expectedPostRepairState"] == {
+        "canonicalCheckpointSha256": expected["legacyCheckpointSha256"],
+        "remoteRecoveryRequired": "absent",
+        "sidecar": "absent",
+        "nonceAuthority": "absent",
+        "reservationLock": "same_empty_inode",
+        "walSequence": wal,
+    }
+    assert checkpoint_path.read_bytes() == before["checkpoint"]
+    assert legacy_path.read_bytes() == before["legacy"]
+    assert (after.st_dev, after.st_ino, after.st_size) == (
+        before["lock"].st_dev, before["lock"].st_ino,
+        before["lock"].st_size)
+
+
 def test_first_activation_migrates_1065021_byte_legacy_readback_exactly(
         bootstrap_runtime, tmp_path):
     compact, meta, durability = _observed_sized_legacy_readback()
