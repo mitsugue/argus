@@ -135,11 +135,11 @@ def test_result_created_lifecycle_preserves_schedule_ranking_metadata():
 
 
 def test_generic_rehydration_repairs_catalog_rows_and_canonical_dates():
-    pce = scanner._rehydrate_macro_record(
+    pce = MA.rehydrate_schedule_metadata(
         _result_skeleton("us-pce-2026-08-26", "PCE"))
-    cpi = scanner._rehydrate_macro_record(
+    cpi = MA.rehydrate_schedule_metadata(
         _result_skeleton("us-cpi-2026-08-12", "CPI"))
-    auction = scanner._rehydrate_macro_record({
+    auction = MA.rehydrate_schedule_metadata({
         "eventId": "us-treasury-auction-2026-07-22",
         "eventCode": "TREASURY_AUCTION",
         "displayImpact": "high",
@@ -220,8 +220,7 @@ def test_high_pending_result_is_fail_visible_ahead_of_old_complete_event():
         "post": {},
     }
     old_complete = MA.rehydrate_schedule_metadata(
-        _result_skeleton("us-cpi-2026-07-14", "CPI", complete=True),
-        scanner._canonical_schedule_metadata("us-cpi-2026-07-14"))
+        _result_skeleton("us-cpi-2026-07-14", "CPI", complete=True))
 
     out = DS.build_summary(important_events=[], macro_records=[old_complete, pending],
                            now_iso=NOW, limit=1)

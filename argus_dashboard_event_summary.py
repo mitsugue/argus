@@ -262,13 +262,15 @@ def build_summary(*, important_events: List[Dict[str, Any]],
                   limit: int = 8) -> Dict[str, Any]:
     """Merge important events + macro records into the unified display model.
     Deterministic: same inputs → byte-identical output."""
+    # Legacy result-created rows can outlive the temporary live schedule join.
+    # Repair deterministic catalog metadata before dedupe, ranking, and limit.
+    records = [_MA.rehydrate_schedule_metadata(r) for r in (macro_records or [])
+               if isinstance(r, dict)]
     # index macro records by eventId AND by dedupe key so an important event can
     # find its analysis even if the ids differ.
     by_id: Dict[str, Dict[str, Any]] = {}
     by_key: Dict[str, Dict[str, Any]] = {}
-    for r in (macro_records or []):
-        if not isinstance(r, dict):
-            continue
+    for r in records:
         eid = str(r.get("eventId") or "")
         if eid:
             by_id[eid] = r
@@ -308,8 +310,8 @@ def build_summary(*, important_events: List[Dict[str, Any]],
 
     # 2) macro records not already joined above (still surface if released/soon).
     # A record whose dedupeKey already exists is a genuine duplicate → hidden.
-    for r in (macro_records or []):
-        if not isinstance(r, dict) or id(r) in consumed:
+    for r in records:
+        if id(r) in consumed:
             continue
         _add(None, r)
 
