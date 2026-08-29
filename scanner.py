@@ -6968,6 +6968,38 @@ def _build_curated_events(today_jst):
             })
     return out
 
+
+def _canonical_schedule_metadata(event_id, today_jst=None):
+    """Authoritative metadata lookup independent of the live display horizon."""
+    target = str(event_id or "")
+    today = today_jst or datetime.now(TZ_JST).date()
+    for dates, et_time, kind, title, cat, country, source, impact, assets in _EVENT_SPECS:
+        prefix = "jp" if country == "JP" else "us"
+        for event_date in dates:
+            canonical_id = f"{prefix}-{kind}-{event_date}"
+            if canonical_id != target:
+                continue
+            utc, jst_local, days = _event_timing(event_date, et_time, today)
+            resolved_title = (title + " (Outlook Report)"
+                              if kind == "boj" and event_date in _BOJ_OUTLOOK else title)
+            return {
+                "id": canonical_id, "eventId": canonical_id,
+                "eventCode": kind.upper(), "eventFamily": cat, "category": cat,
+                "title": resolved_title, "eventTimeUtc": utc,
+                "eventDate": event_date, "date": event_date,
+                "localTimeJst": jst_local, "daysUntil": days,
+                "baseImpact": impact, "displayImpact": impact, "impact": impact,
+                "source": source, "linkedAssets": list(assets),
+                "countdown": _escalation(days), "escalation": _escalation(days),
+            }
+    return {"eventId": target}
+
+
+def _rehydrate_macro_record(record):
+    """Repair old skeleton metadata from catalog/identity without mutating facts."""
+    metadata = _canonical_schedule_metadata((record or {}).get("eventId"))
+    return argus_macro_event_analysis.rehydrate_schedule_metadata(record, metadata)
+
 def _fetch_treasury_raw():
     """Fetch upcoming Treasury auctions (live JSON). Returns (list, status)."""
     tenors = {"2-Year", "5-Year", "7-Year", "10-Year", "20-Year", "30-Year"}
@@ -13984,6 +14016,11 @@ def _macro_analysis_restore_once():
             _MACRO_ANALYSIS_STATE["pathType"] = "ledger_restored"
     except Exception:
         pass
+    # Old result-created skeletons may predate ranking-metadata persistence.
+    # Rehydrate after every restore source has merged so a legacy ledger snapshot
+    # cannot reintroduce demotion after the local repair pass.
+    for eid, rec in list(_MACRO_ANALYSIS.items()):
+        _MACRO_ANALYSIS[eid] = _rehydrate_macro_record(rec)
 
 
 def _macro_market_context_ja():
@@ -14162,6 +14199,7 @@ def _refresh_macro_results():
         eid = str(ev.get("eventId") or ev.get("eventCode") or "")
         rec = _MACRO_ANALYSIS.get(eid) or argus_macro_event_analysis.new_record(
             {**ev, "id": eid}, now_iso=now_iso)
+        rec = argus_macro_event_analysis.rehydrate_schedule_metadata(rec, ev)
         phase = argus_macro_event_analysis.resolve_macro_event_phase(
             rec.get("eventTimeUtc") or ev.get("eventTimeUtc"), now_iso,
             actual_available=bool((rec.get("actual") or {}).get("available")),
@@ -14346,15 +14384,14 @@ def _generate_macro_event_analysis(limit=8):
         eid = str(ev.get("eventId") or ev.get("eventCode") or "")
         rec = _MACRO_ANALYSIS.get(eid) or argus_macro_event_analysis.new_record(
             {**ev, "id": eid}, now_iso=now_iso)
-        rec["eventTimeUtc"] = rec.get("eventTimeUtc") or ev.get("eventTimeUtc")
-        rec["eventDate"] = rec.get("eventDate") or ev.get("eventDate")
+        rec = argus_macro_event_analysis.rehydrate_schedule_metadata(rec, ev)
         phase = argus_macro_event_analysis.resolve_macro_event_phase(
             rec.get("eventTimeUtc"), now_iso,
             actual_available=bool((rec.get("actual") or {}).get("available")),
             event_date=rec.get("eventDate"))
         rec["phase"] = phase
         rec["daysUntil"] = ev.get("daysUntil")
-        rec["displayImpact"] = ev.get("displayImpact")
+        rec["countdown"] = ev.get("countdown") or rec.get("countdown")
         if argus_macro_event_analysis.should_refresh_pre(rec, phase, now_iso=now_iso):
             out = _openai_prose(argus_macro_event_analysis.build_pre_prompt(ev, ctx), max_out=700,
                                 system=argus_macro_event_analysis.MACRO_EVENT_SYSTEM_JA)
@@ -14564,7 +14601,7 @@ def _build_dashboard_events(limit=8, importance=None):
         ie = _macro_important_events(12)
     except Exception:
         ie = []
-    recs = list(_MACRO_ANALYSIS.values())
+    recs = [_rehydrate_macro_record(rec) for rec in _MACRO_ANALYSIS.values()]
     summ = argus_dashboard_event_summary.build_summary(
         important_events=ie, macro_records=recs, now_iso=now_iso, limit=20)
     items = summ["items"]
