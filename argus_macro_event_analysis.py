@@ -12,6 +12,7 @@ Discipline: never fabricate an official result or a consensus; a missing result 
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 SCHEMA_VERSION = "macro-event-analysis-v1"
 
@@ -24,6 +25,28 @@ _PRE_PHASES = {"pre_early", "pre_watch", "pre_final", "imminent"}
 
 _IMPACT_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
 _CANONICAL_DATE_SUFFIX = re.compile(r"-(\d{4}-\d{2}-\d{2})$")
+_CANONICAL_EVENT_TYPES = {
+    "FOMC": ("14:00", "central_bank", "Federal Reserve", "high",
+             "FOMC Rate Decision", ["USDJPY", "US10Y", "US2Y", "QQQ", "NVDA"]),
+    "CPI": ("08:30", "inflation", "Bureau of Labor Statistics", "high",
+            "US CPI (Consumer Price Index)", ["US10Y", "USDJPY", "QQQ", "SPY"]),
+    "NFP": ("08:30", "jobs", "Bureau of Labor Statistics", "high",
+            "US Employment Situation", ["US10Y", "USDJPY", "SPY", "QQQ"]),
+    "JOLTS": ("10:00", "jobs", "Bureau of Labor Statistics", "medium",
+              "US JOLTS Job Openings", ["US10Y", "USDJPY", "SPY", "QQQ"]),
+    "PPI": ("08:30", "inflation", "Bureau of Labor Statistics", "medium",
+            "US PPI (Producer Price Index)", ["US10Y", "QQQ"]),
+    "PCE": ("08:30", "inflation", "Bureau of Economic Analysis", "high",
+            "US PCE / Personal Income & Outlays", ["US10Y", "USDJPY", "QQQ"]),
+    "GDP": ("08:30", "growth", "Bureau of Economic Analysis", "high",
+            "US GDP", ["US10Y", "SPY", "USDJPY"]),
+    "BOJ": (None, "central_bank", "Bank of Japan", "high",
+            "BOJ Monetary Policy Meeting", ["USDJPY", "JP10Y", "9984", "8058"]),
+    "TREASURY_AUCTION": (None, "rates", "TreasuryDirect", "high",
+                         "US Treasury Auction", ["US10Y", "QQQ"]),
+    "AUCTION": (None, "rates", "TreasuryDirect", "high",
+                "US Treasury Auction", ["US10Y", "QQQ"]),
+}
 
 
 def _parse_utc(iso: Optional[str]) -> Optional[datetime]:
@@ -91,6 +114,37 @@ def canonical_date_from_event_id(event_id: Any) -> Optional[str]:
     return value
 
 
+def _catalog_metadata(event_id: str, event_code: Any,
+                      event_date: Optional[str]) -> Dict[str, Any]:
+    """Canonical type metadata for legacy rows outside the live join horizon."""
+    code = str(event_code or "").upper()
+    spec = _CANONICAL_EVENT_TYPES.get(code)
+    if not spec or not event_date:
+        return {}
+    et_time, family, source, impact, title, assets = spec
+    event_time_utc = local_time_jst = None
+    if et_time:
+        local_et = datetime.strptime(
+            f"{event_date} {et_time}", "%Y-%m-%d %H:%M").replace(
+                tzinfo=ZoneInfo("America/New_York"))
+        event_time_utc = local_et.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        local_time_jst = local_et.astimezone(ZoneInfo("Asia/Tokyo")).strftime(
+            "%Y-%m-%d %H:%M JST")
+    return {
+        "eventId": event_id,
+        "eventCode": code,
+        "eventFamily": family,
+        "title": title,
+        "eventTimeUtc": event_time_utc,
+        "eventDate": event_date,
+        "localTimeJst": local_time_jst,
+        "source": source,
+        "baseImpact": impact,
+        "displayImpact": impact,
+        "linkedAssets": assets,
+    }
+
+
 def rehydrate_schedule_metadata(record: Dict[str, Any],
                                 schedule_event: Optional[Dict[str, Any]] = None
                                 ) -> Dict[str, Any]:
@@ -102,17 +156,23 @@ def rehydrate_schedule_metadata(record: Dict[str, Any],
     impact.  No AI analysis is required and no date is fabricated.
     """
     out = dict(record or {})
-    event = schedule_event or {}
+    supplied_event = schedule_event or {}
     record_id = str(out.get("eventId") or "")
-    schedule_id = str(event.get("eventId") or event.get("id") or "")
+    schedule_id = str(supplied_event.get("eventId") or supplied_event.get("id") or "")
     if schedule_id and record_id and schedule_id != record_id:
         return out
     event_id = record_id or schedule_id
     if event_id:
         out["eventId"] = event_id
 
-    event_date = (event.get("eventDate") or event.get("date")
+    event_date = (supplied_event.get("eventDate") or supplied_event.get("date")
+                  or out.get("eventDate")
                   or canonical_date_from_event_id(event_id))
+    event_code = (supplied_event.get("eventCode") or supplied_event.get("kind")
+                  or out.get("eventCode"))
+    event = _catalog_metadata(event_id, event_code, event_date)
+    event.update({key: value for key, value in supplied_event.items()
+                  if value is not None})
     if not out.get("eventDate") and event_date:
         out["eventDate"] = event_date
 
