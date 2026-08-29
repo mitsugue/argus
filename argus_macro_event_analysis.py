@@ -9,6 +9,7 @@ Pure: no network, no LLM. Prompt builders return strings; the scanner owns the c
 Discipline: never fabricate an official result or a consensus; a missing result is
 "unavailable"; a missing pre makes the post verdict not_scoreable.
 """
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -20,6 +21,9 @@ TRACKED_CODES = {"NFP", "CPI", "FOMC", "BOJ", "PCE", "GDP", "JOLTS", "PPI",
 PHASES = ["pre_early", "pre_watch", "pre_final", "imminent",
           "released_pending_result", "post_result", "post_followup"]
 _PRE_PHASES = {"pre_early", "pre_watch", "pre_final", "imminent"}
+
+_IMPACT_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+_CANONICAL_DATE_SUFFIX = re.compile(r"-(\d{4}-\d{2}-\d{2})$")
 
 
 def _parse_utc(iso: Optional[str]) -> Optional[datetime]:
@@ -70,10 +74,80 @@ def is_pre_phase(phase: str) -> bool:
     return phase in _PRE_PHASES
 
 
+def canonical_date_from_event_id(event_id: Any) -> Optional[str]:
+    """Recover only an ISO date that is already part of a canonical event ID.
+
+    This is identity metadata, not a guessed schedule.  It lets old date-only
+    records fail visibly as historical/stale instead of remaining PRE forever.
+    """
+    match = _CANONICAL_DATE_SUFFIX.search(str(event_id or ""))
+    if not match:
+        return None
+    value = match.group(1)
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return value
+
+
+def rehydrate_schedule_metadata(record: Dict[str, Any],
+                                schedule_event: Optional[Dict[str, Any]] = None
+                                ) -> Dict[str, Any]:
+    """Return a record with deterministic ranking metadata restored.
+
+    The official schedule/catalog is authoritative for identity, family, time,
+    date, source, and base impact.  Existing stronger owner-specific impact is
+    preserved, while a missing/weaker fallback can be raised to the catalog
+    impact.  No AI analysis is required and no date is fabricated.
+    """
+    out = dict(record or {})
+    event = schedule_event or {}
+    record_id = str(out.get("eventId") or "")
+    schedule_id = str(event.get("eventId") or event.get("id") or "")
+    if schedule_id and record_id and schedule_id != record_id:
+        return out
+    event_id = record_id or schedule_id
+    if event_id:
+        out["eventId"] = event_id
+
+    event_date = (event.get("eventDate") or event.get("date")
+                  or canonical_date_from_event_id(event_id))
+    if not out.get("eventDate") and event_date:
+        out["eventDate"] = event_date
+
+    scalar_sources = {
+        "eventCode": event.get("eventCode") or event.get("kind"),
+        "eventFamily": (event.get("eventFamily") or event.get("family")
+                        or event.get("category")),
+        "title": event.get("title"),
+        "eventTimeUtc": event.get("eventTimeUtc"),
+        "localTimeJst": event.get("localTimeJst") or event.get("jstTime"),
+        "source": event.get("source"),
+        "baseImpact": event.get("baseImpact") or event.get("impact"),
+        "daysUntil": event.get("daysUntil"),
+        "countdown": event.get("countdown") or event.get("escalation"),
+        "lifecycle": event.get("lifecycle"),
+    }
+    for key, value in scalar_sources.items():
+        if out.get(key) is None and value is not None:
+            out[key] = value
+    if not out.get("linkedAssets") and event.get("linkedAssets"):
+        out["linkedAssets"] = list(event.get("linkedAssets") or [])[:8]
+
+    existing_impact = str(out.get("displayImpact") or "").lower()
+    catalog_impact = str(event.get("displayImpact") or event.get("importance")
+                         or event.get("impact") or "").lower()
+    if (_IMPACT_RANK.get(catalog_impact, 0)
+            > _IMPACT_RANK.get(existing_impact, 0)):
+        out["displayImpact"] = catalog_impact
+    return out
+
+
 def new_record(event: Dict[str, Any], *, now_iso: str) -> Dict[str, Any]:
     """Skeleton analysis record for one scheduled macro event. Deterministic."""
     eid = str(event.get("id") or event.get("eventId") or event.get("eventCode") or "")
-    return {
+    record = {
         "schemaVersion": SCHEMA_VERSION,
         "analysisId": f"ma-{eid}",
         "eventId": eid,
@@ -97,6 +171,7 @@ def new_record(event: Dict[str, Any], *, now_iso: str) -> Dict[str, Any]:
         "firstSeenAt": now_iso,
         "updatedAt": now_iso,
     }
+    return rehydrate_schedule_metadata(record, event)
 
 
 _PHASE_CHECKPOINT = {"pre_early": 0, "pre_watch": 1, "pre_final": 2, "imminent": 3}

@@ -49,6 +49,9 @@ check('history coverage is shown without claiming ten years early',
 check('event detail is organized into before, official and after phases',
   ['発表前', '公式結果', '発表後'].every((label) => events.includes(label))
   && eventCss.includes('.ie-phase-grid'));
+check('backend item zero remains the single frontend hero authority',
+  events.includes('shown.map((ev, i)') && events.includes('open={i === 0}')
+  && !events.includes('.sort('));
 check('missing historical prediction remains explicit',
   events.includes('事前予測未保存'));
 
