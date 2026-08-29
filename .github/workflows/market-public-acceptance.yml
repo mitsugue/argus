@@ -245,6 +245,9 @@ jobs:
             test_remote_receipt_drain.py \
             test_remote_journal_rearm.py \
             test_argus_identity_installer.py \
+            test_remote_recovery_publish.py \
+            test_remote_recovery_nonce_bootstrap.py \
+            test_remote_recovery_restore.py \
             test_argus_v12_3_2.py \
             test_argus_recovery_phase_a_adapter.py \
             test_caos_workflow_recovery.py \

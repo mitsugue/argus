@@ -18,6 +18,7 @@ import pytest
 import argus_remote_journal as journal
 import argus_remote_receipt_queue as receipt_queue
 import argus_remote_recovery as recovery
+import argus_remote_recovery_limits as recovery_limits
 import argus_state_journal
 from scripts.prepare_remote_journal_publish import (
     inspect_sidecar,
@@ -36,6 +37,7 @@ _moomoo.RET_OK = 0
 import sys
 sys.modules.setdefault("moomoo", _moomoo)
 import scanner
+from scripts import prepare_remote_journal_publish as publisher
 
 
 BUILD = "b" * 40
@@ -109,6 +111,91 @@ def _pair(source_checkpoint_hash="f" * 64, *, generated_at=AT):
         nonce=nonce,
         generation_id="rrg-" + "a" * 32)
     return compact, recovery.build_sidecar(compact, envelope)
+
+
+def _sized_compact_readback(target_bytes):
+    """Build one schema-valid production-shaped proof at an exact size."""
+    event = _event()
+    meta = {journal.OPS_SEQUENCE_HIGH_WATER_FIELD: 1}
+    section = journal.snapshot_journal_section(
+        events=[event], meta=meta, compacted=[], now_iso=AT)
+    durability = {
+        "walAppliedSequence": TARGET,
+        "remoteWalAppliedSequence": TARGET,
+        "verifiedWalSequence": TARGET - 1,
+    }
+    history = [{
+        "from": "unresolved_missing_price", "to": "retry_pending",
+        "at": AT, "reason": "missing_price",
+    }]
+    outcome = {
+        "id": "outcome-contract-proof",
+        "status": "unresolved",
+        "transitionHistory": history,
+        "retainedEvidenceA": "",
+        "retainedEvidenceB": "",
+        "retainedEvidenceC": "",
+    }
+
+    def build():
+        sealed = dict(outcome)
+        sealed["integrityHash"] = journal._h(sealed)
+        return journal.build_compact_readback_snapshot(
+            schema_version=journal.SCHEMA_V3,
+            generated_at=AT, as_of=AT,
+            build_identity={"appVersion": "13.5.36", "buildSha": BUILD},
+            ops_journal=section["opsJournal"],
+            integrity_manifest=section["integrityManifest"],
+            outcomes=[sealed], mission_tick_durability=durability,
+            market_ledger_state_hash="1" * 16,
+            chart_intelligence_state_hash="2" * 16,
+            today_intelligence_state_hash="3" * 16,
+            market_replay_state_hash="4" * 16)
+
+    baseline = build()
+    remaining = target_bytes - journal.compact_readback_serialized_size(
+        baseline)
+    assert remaining >= 0
+    for name in (
+            "retainedEvidenceA", "retainedEvidenceB", "retainedEvidenceC"):
+        used = min(remaining, 900_000)
+        outcome[name] = "x" * used
+        remaining -= used
+    assert remaining == 0
+    exact = build()
+    assert journal.compact_readback_serialized_size(exact) == target_bytes
+    return exact
+
+
+def _rehash_compact_readback(compact):
+    for outcome in compact.get("outcomes") or []:
+        body = {key: value for key, value in outcome.items()
+                if key != "integrityHash"}
+        outcome["integrityHash"] = journal._h(body)
+    body = {key: value for key, value in compact.items()
+            if key != "receiptHash"}
+    compact["receiptHash"] = journal._h(body)
+    return compact
+
+
+def _minimal_targets_for_compact(compact):
+    event = compact["opsJournal"][0]
+    aggregate = f"{event['aggregateType']}:{event['aggregateId']}"
+    sequence = int(event["sequence"])
+    return {
+        "opsJournal": copy.deepcopy(compact["opsJournal"]),
+        "opsJournalMeta": {
+            journal.OPS_SEQUENCE_HIGH_WATER_FIELD: sequence,
+        },
+        "opsJournalCompacted": [],
+        "opsSequenceByAggregate": {aggregate: sequence},
+        "missions": [], "missionWindows": [], "forecasts": [],
+        "outcomes": copy.deepcopy(compact["outcomes"]),
+        "incidents": [], "soak": {}, "postmortems": [],
+        "periodicReports": [], "challengerRuns": [], "agentQueue": {},
+        "missionTickDurability": copy.deepcopy(
+            compact["missionTickDurability"]),
+    }
 
 
 def _write(path: Path, value):
@@ -852,7 +939,9 @@ def test_dedicated_rearm_job_has_bounded_surface_and_one_write_maximum():
     assert "/caos/patrol-health" not in job
     assert "/api/argus/osint/remote-readback" in job
     assert "/remote-journal/recovery-sidecar" in job
-    assert "--max-filesize 1048576" in job
+    assert "MAX_COMPACT_READBACK_BYTES" in job
+    assert '--max-filesize "$READBACK_MAX_BYTES"' in job
+    assert "--max-filesize 1048576" not in job
     assert "--max-filesize 8388608" in job
     assert job.count("origin HEAD:ledger") == 1
     assert job.count("--force-with-lease=refs/heads/ledger:") == 1
@@ -871,6 +960,63 @@ def test_dedicated_rearm_job_has_bounded_surface_and_one_write_maximum():
     assert "verify-ledger-base-ancestor" in job
     assert '--ledger-base-commit-sha "$RECOVERY_LEDGER_BASE"' in job
     assert '--cas-ledger-head "$LEDGER_CAS_BASE"' in job
+
+
+def test_compact_readback_contract_is_one_shared_finite_authority():
+    assert journal.MAX_COMPACT_READBACK_BYTES == 1_572_864
+    assert journal.MAX_COMPACT_READBACK_BYTES is \
+        recovery_limits.MAX_COMPACT_READBACK_BYTES
+    assert recovery.MAX_READBACK_BYTES is journal.MAX_COMPACT_READBACK_BYTES
+    assert scanner._DURABLE_READBACK_MAX_BYTES is \
+        journal.MAX_COMPACT_READBACK_BYTES
+    assert publisher.MAX_READBACK_BYTES is \
+        journal.MAX_COMPACT_READBACK_BYTES
+    workflow = Path(".github/workflows/caos-watchtower.yml").read_text()
+    assert workflow.count("MAX_COMPACT_READBACK_BYTES") == 2
+    assert workflow.count('--max-filesize "$READBACK_MAX_BYTES"') == 2
+    assert "--max-filesize 1048576" not in workflow
+
+
+def test_exact_readback_limit_preserves_plaintext_and_sidecar_reserves():
+    compact = _sized_compact_readback(journal.MAX_COMPACT_READBACK_BYTES)
+    nonce = (1).to_bytes(12, "big")
+    payload = recovery.build_payload(
+        compact_readback=compact,
+        targets=_minimal_targets_for_compact(compact), generated_at=AT,
+        build_identity={"appVersion": "13.5.36", "buildSha": BUILD},
+        source_checkpoint_hash="f" * 64, checkpoint_id=CHECKPOINT_ID,
+        checkpoint_verified_at=AT, ledger_base_commit_sha=BASE,
+        nonce_authority={
+            "schemaVersion": recovery.NONCE_AUTHORITY_SCHEMA,
+            "keyMaterialCounters": {
+                recovery.nonce_material_domain(KEY): 1,
+            },
+        })
+    assert len(recovery._canonical(payload)) <= recovery.MAX_PLAINTEXT_BYTES
+    envelope = recovery.encrypt_payload(
+        payload, KEY, key_identifier=KEY_ID, nonce=nonce,
+        generation_id="rrg-" + "a" * 32)
+    sidecar = recovery.build_sidecar(compact, envelope)
+    assert len(recovery._canonical(sidecar)) <= recovery.MAX_SIDECAR_BYTES
+
+
+def test_compact_readback_exact_limit_accepts_and_limit_plus_one_rejects():
+    exact = _sized_compact_readback(journal.MAX_COMPACT_READBACK_BYTES)
+    assert journal.verify_strict_compact_readback_snapshot(exact)
+
+    oversized = copy.deepcopy(exact)
+    oversized["outcomes"][0]["retainedEvidenceC"] += "x"
+    _rehash_compact_readback(oversized)
+    assert journal.compact_readback_serialized_size(oversized) == \
+        journal.MAX_COMPACT_READBACK_BYTES + 1
+    assert not journal.verify_compact_readback_snapshot(oversized)
+    assert not journal.verify_strict_compact_readback_snapshot(oversized)
+
+
+def test_observed_1065021_byte_legacy_readback_is_canonical_valid():
+    observed = _sized_compact_readback(1_065_021)
+    assert journal.compact_readback_serialized_size(observed) == 1_065_021
+    assert journal.verify_strict_compact_readback_snapshot(observed)
 
 
 def test_exact_4gib_encrypted_producer_probe_is_ci_wired_and_scalar_only():
@@ -963,3 +1109,226 @@ def test_exact_4gib_measurement_gate_is_ci_wired_no_swap_and_attributable():
         ["bash", "-n"], input=terminal_script, text=True,
         capture_output=True, check=False)
     assert checked.returncode == 0, checked.stderr
+
+
+def _checkpoint_v2_validator_source():
+    workflow = Path(".github/workflows/checkpoint-v2-gate.yml").read_text(
+        encoding="utf-8")
+    marker = (
+        "cat > artifacts/checkpoint-v2-isolated-proof-validator.py "
+        "<<'PY'\n")
+    embedded = workflow.split(marker, 1)[1].split("\n          PY", 1)[0]
+    return textwrap.dedent(embedded)
+
+
+def _live_exact_report():
+    original = 8_979
+    rows = []
+    for index in range(32):
+        target = original + (index + 1) * 17
+        rows.append({
+            "cycle": index + 1,
+            "fixtureProcessId": 20_000 + index,
+            "originalSourceCursor": original,
+            "childPid": 30_000 + index,
+            "verified": True,
+            "generationBytes": 331_776,
+            "rowCount": 51,
+            "sectionCount": 51,
+            "walLowerSequence": target - 17,
+            "walTargetSequence": target,
+            "walReconstructedSequence": target,
+            "walHashVerified": True,
+            "walFramingVerified": True,
+            "manifestPromoted": True,
+            "childExitCode": 0,
+            "pendingGenerationCount": 0,
+            "retainedGenerationCount": min(index + 1, 4),
+            "stagingOrphanCount": 0,
+        })
+    return {
+        "schemaVersion":
+            "argus-checkpoint-v2-isolated-32-cycle-proof-v1",
+        "writerMode": "isolated_process",
+        "cycles": 32,
+        "parentPidUnchanged": True,
+        "distinctChildProcessCount": 32,
+        "distinctFixtureProcessCount": 32,
+        "parentNeverLoadedGenerationSource": True,
+        "allVerified": True,
+        "allWalExact": True,
+        "walStartSequence": rows[0]["walTargetSequence"],
+        "walFinalSequence": rows[-1]["walTargetSequence"],
+        "originalSourceCursor": original,
+        "generationBytesMinimum": 331_776,
+        "generationBytesMaximum": 331_776,
+        "parentRssCycles3To32GrowthBytes": 1_048_576,
+        "cgroupMemoryMax": 4 * 1024 ** 3,
+        "cgroupLifetimePeakBytes": 512 * 1024 ** 2,
+        "fdGrowth": 0,
+        "threadGrowth": 0,
+        "connectionGrowth": 0,
+        "cursorGrowth": 0,
+        "futureGrowth": 0,
+        "zombieFree": True,
+        "pendingMaximum": 0,
+        "retainedMaximum": 4,
+        "orphanMaximum": 0,
+        "diskFreeMinimumBytes": 2 * 1024 ** 3,
+        "cyclesEvidence": rows,
+    }
+
+
+def _production_shape_report():
+    report = _live_exact_report()
+    report["generationBytesMinimum"] = 144_048_128
+    report["generationBytesMaximum"] = 144_048_128
+    report["originalSourceCursor"] = 0
+    report["walStartSequence"] = 5_017
+    report["walFinalSequence"] = 5_017 + 31 * 17
+    for index, row in enumerate(report["cyclesEvidence"]):
+        target = 5_017 + index * 17
+        row["originalSourceCursor"] = 0
+        row["walLowerSequence"] = target - 17
+        row["walTargetSequence"] = target
+        row["walReconstructedSequence"] = target
+        row["generationBytes"] = 144_048_128
+        row["rowCount"] = 43_350
+        row["sectionCount"] = 43
+    return report
+
+
+def _run_checkpoint_v2_validator(tmp_path, mode, report):
+    proof = tmp_path / f"{mode}.json"
+    proof.write_text(json.dumps(report), encoding="utf-8")
+    return subprocess.run(
+        [sys.executable, "-B", "-", mode, str(proof)],
+        input=_checkpoint_v2_validator_source(), text=True,
+        capture_output=True, check=False)
+
+
+def test_checkpoint_v2_workflow_separates_live_and_shape_without_gate_loss():
+    workflow = Path(".github/workflows/checkpoint-v2-gate.yml").read_text(
+        encoding="utf-8")
+    isolated_job = workflow.split(
+        "\n  isolated-writer-closure-32:\n", 1)[1]
+    live_step = isolated_job.split(
+        "- name: LIVE_EXACT_STATE 32-cycle fresh-process writer closure",
+        1)[1].split(
+        "- name: DETERMINISTIC_PRODUCTION_SHAPE 32-cycle threshold closure",
+        1)[0]
+    shape_step = isolated_job.split(
+        "- name: DETERMINISTIC_PRODUCTION_SHAPE 32-cycle threshold closure",
+        1)[1].split("- name: Publish isolated writer proof", 1)[0]
+    exact_state_job = workflow.split(
+        "\n  linux-4gib-cgroup:\n", 1)[1].split(
+        "\n  mapping-attribution:\n", 1)[0]
+
+    assert "--source-json artifacts/checkpoint-v2-exact-source.json" in \
+        live_step
+    assert "--cycles 32" in live_step
+    assert "--assert-proof" not in live_step
+    assert "LIVE_EXACT_STATE" in live_step
+    assert "--source-json" not in shape_step
+    assert "--cycles 32 --assert-proof" in shape_step
+    assert "DETERMINISTIC_PRODUCTION_SHAPE" in shape_step
+    assert "--memory 4g --memory-swap 4g" in live_step
+    assert "--memory 4g --memory-swap 4g" in shape_step
+    assert "--source-json artifacts/checkpoint-v2-exact-source.json" in \
+        exact_state_job
+    assert "--memory 4g --memory-swap 4g" in exact_state_job
+
+    probe = Path("scripts/checkpoint_v2_isolated_probe.py").read_text(
+        encoding="utf-8")
+    assert "127 * 1024 ** 2" in probe
+    assert "240 * 1024 ** 2" in probe
+    assert "40_000 <= int(row[\"rowCount\"] or 0) <= 90_000" in probe
+    assert "35 <= int(row[\"sectionCount\"] or 0) <= 55" in probe
+
+
+def test_checkpoint_v2_live_exact_below_shape_is_accepted(tmp_path):
+    completed = _run_checkpoint_v2_validator(
+        tmp_path, "LIVE_EXACT_STATE", _live_exact_report())
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout)
+    assert result["passed"] is True
+    assert result["generationBytesMinimum"] == 331_776
+    assert result["rowCountMinimum"] == 51
+
+
+@pytest.mark.parametrize(("case", "classification"), [
+    ("wal", "isolated_live_or_shape_wal_contract_failed"),
+    ("verification", "isolated_live_or_shape_32_cycles_unverified"),
+    ("child", "isolated_live_or_shape_child_exit_failed"),
+    ("zombie", "isolated_live_or_shape_parent_resource_leak"),
+    ("orphan", "isolated_live_or_shape_parent_resource_leak"),
+    ("pending", "isolated_live_or_shape_generation_retention_failed"),
+    ("retention", "isolated_live_or_shape_generation_retention_failed"),
+    ("cgroup", "isolated_live_or_shape_cgroup_resource_gate_failed"),
+])
+def test_checkpoint_v2_live_exact_defects_remain_fail_closed(
+        tmp_path, case, classification):
+    report = _live_exact_report()
+    if case == "wal":
+        report["allWalExact"] = False
+    elif case == "verification":
+        report["allVerified"] = False
+    elif case == "child":
+        report["cyclesEvidence"][0]["childExitCode"] = 1
+    elif case == "zombie":
+        report["zombieFree"] = False
+    elif case == "orphan":
+        report["orphanMaximum"] = 1
+    elif case == "pending":
+        report["pendingMaximum"] = 1
+    elif case == "retention":
+        report["retainedMaximum"] = 5
+    elif case == "cgroup":
+        report["cgroupMemoryMax"] = 0
+    completed = _run_checkpoint_v2_validator(
+        tmp_path, "LIVE_EXACT_STATE", report)
+    assert completed.returncode != 0
+    assert classification in completed.stderr
+
+
+@pytest.mark.parametrize(("case", "classification"), [
+    ("generation_below", "isolated_deterministic_generation_shape_failed"),
+    ("generation_above", "isolated_deterministic_generation_shape_failed"),
+    ("rows_below", "isolated_deterministic_row_shape_failed"),
+    ("rows_above", "isolated_deterministic_row_shape_failed"),
+    ("sections_below", "isolated_deterministic_section_shape_failed"),
+    ("sections_above", "isolated_deterministic_section_shape_failed"),
+])
+def test_checkpoint_v2_deterministic_shape_thresholds_fail_closed(
+        tmp_path, case, classification):
+    report = _production_shape_report()
+    if case == "generation_below":
+        report["generationBytesMinimum"] = 133_169_151
+    elif case == "generation_above":
+        report["generationBytesMaximum"] = 251_658_241
+    elif case == "rows_below":
+        report["cyclesEvidence"][0]["rowCount"] = 39_999
+    elif case == "rows_above":
+        report["cyclesEvidence"][0]["rowCount"] = 90_001
+    elif case == "sections_below":
+        report["cyclesEvidence"][0]["sectionCount"] = 34
+    elif case == "sections_above":
+        report["cyclesEvidence"][0]["sectionCount"] = 56
+    completed = _run_checkpoint_v2_validator(
+        tmp_path, "DETERMINISTIC_PRODUCTION_SHAPE", report)
+    assert completed.returncode != 0
+    assert classification in completed.stderr
+
+
+def test_checkpoint_v2_deterministic_shape_exact_boundaries_pass(tmp_path):
+    report = _production_shape_report()
+    report["generationBytesMinimum"] = 133_169_152
+    report["generationBytesMaximum"] = 251_658_240
+    report["cyclesEvidence"][0]["rowCount"] = 40_000
+    report["cyclesEvidence"][1]["rowCount"] = 90_000
+    report["cyclesEvidence"][0]["sectionCount"] = 35
+    report["cyclesEvidence"][1]["sectionCount"] = 55
+    completed = _run_checkpoint_v2_validator(
+        tmp_path, "DETERMINISTIC_PRODUCTION_SHAPE", report)
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout)["passed"] is True

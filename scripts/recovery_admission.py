@@ -46,7 +46,10 @@ RECOVERY_PAYLOAD_PATHS = (
     ".github/workflows/checkpoint-v2-gate.yml",
     ".github/workflows/memory-attribution.yml",
     "argus_recovery_phase_a_adapter.py",
+    "argus_remote_journal.py",
     "argus_remote_receipt_queue.py",
+    "argus_remote_recovery.py",
+    "argus_remote_recovery_limits.py",
     "argus_route_catalog.py",
     "docs/EC2_MISSION_SCHEDULER.md",
     "docs/ops/permanent-scheduler-identity-and-soak.md",
@@ -56,6 +59,7 @@ RECOVERY_PAYLOAD_PATHS = (
     "scanner.py",
     "scripts/install_argus_mission_timer.sh",
     "scripts/install_argus_remote_journal_rearm.sh",
+    "scripts/prepare_remote_journal_publish.py",
     "scripts/remote_receipt_drain.py",
     "scripts/workflow_http.py",
     "test_argus_checkpoint_v2_isolated.py",
@@ -67,9 +71,12 @@ RECOVERY_PAYLOAD_PATHS = (
     "test_caos_workflow_recovery.py",
     "test_remote_journal_rearm.py",
     "test_remote_receipt_drain.py",
+    "test_remote_recovery_nonce_bootstrap.py",
+    "test_remote_recovery_publish.py",
+    "test_remote_recovery_restore.py",
 )
 EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256 = (
-    "0d77bf7898f272e9a4fb5877738efceff7bd5ac3c46df8c13654fbda4d96fe6c"
+    "d34f5d5534644e1ebbc4a073fc190d85a9c9e256a8cd62ac2aeee3d19f3113c4"
 )
 
 # Admission-plane files may route and prove Recovery, but are not production
