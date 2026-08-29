@@ -10,6 +10,8 @@ import tempfile
 import types
 from unittest import mock
 
+import pytest
+
 import argus_persistent_storage as storage
 import argus_remote_journal as journal
 import argus_remote_recovery as recovery
@@ -1200,6 +1202,19 @@ def test_remote_recovery_wrapper_cap_fails_closed_before_json_parse():
         assert scanner._osint_restore_once() is None
         assert scanner._DURABLE_STATE["remoteRecoveryError"] == \
             "remote_recovery_unreadable_or_oversized"
+
+
+def test_streamed_oversized_readback_cannot_bypass_decompressed_byte_cap():
+    response = FakeResponse(200)
+    response._encoded = b"[" + (
+        b" " * journal.MAX_COMPACT_READBACK_BYTES)
+    with mock.patch.object(scanner.requests, "get", return_value=response), \
+            pytest.raises(
+                recovery.RecoveryBundleError,
+                match="remote_readback_unreadable_or_oversized"):
+        scanner._fetch_pinned_recovery_object(
+            "https://immutable.invalid/readback.json",
+            scanner._DURABLE_READBACK_MAX_BYTES, "readback")
 
 
 def test_local_sidecar_reader_rejects_symlink_and_growth_before_json_parse():

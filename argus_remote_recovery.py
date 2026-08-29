@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 import argus_remote_journal
+import argus_remote_recovery_limits as recovery_limits
 
 
 PAYLOAD_SCHEMA = "argus-remote-recovery-payload-v1"
@@ -38,10 +39,12 @@ KEY_DERIVATION = "HKDF-SHA-256"
 KEY_DERIVATION_SALT_BYTES = 32
 HKDF_INFO_DOMAIN = b"argus:remote-journal:recovery:data-key:v1"
 AAD_DOMAIN = "argus:remote-journal:recovery:v1"
-MAX_ENCODED_BYTES = 6 * 1024 * 1024
-MAX_READBACK_BYTES = 1024 * 1024
-MAX_SIDECAR_BYTES = 8 * 1024 * 1024
-MAX_PLAINTEXT_BYTES = 4 * 1024 * 1024
+MAX_ENCODED_BYTES = recovery_limits.MAX_RECOVERY_ENCODED_BYTES
+# Compatibility export only.  The canonical authority lives with the compact
+# producer/validator and is imported by every Recovery consumer.
+MAX_READBACK_BYTES = argus_remote_journal.MAX_COMPACT_READBACK_BYTES
+MAX_SIDECAR_BYTES = recovery_limits.MAX_RECOVERY_SIDECAR_BYTES
+MAX_PLAINTEXT_BYTES = recovery_limits.MAX_RECOVERY_PLAINTEXT_BYTES
 PADDED_PLAINTEXT_BYTES = MAX_PLAINTEXT_BYTES + 4
 MAX_NODES = 160_000
 MAX_DEPTH = 32

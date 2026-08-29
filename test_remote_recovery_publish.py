@@ -18,6 +18,7 @@ import pytest
 import argus_remote_journal as journal
 import argus_remote_receipt_queue as receipt_queue
 import argus_remote_recovery as recovery
+import argus_remote_recovery_limits as recovery_limits
 import argus_state_journal
 from scripts.prepare_remote_journal_publish import (
     inspect_sidecar,
@@ -36,6 +37,7 @@ _moomoo.RET_OK = 0
 import sys
 sys.modules.setdefault("moomoo", _moomoo)
 import scanner
+from scripts import prepare_remote_journal_publish as publisher
 
 
 BUILD = "b" * 40
@@ -109,6 +111,91 @@ def _pair(source_checkpoint_hash="f" * 64, *, generated_at=AT):
         nonce=nonce,
         generation_id="rrg-" + "a" * 32)
     return compact, recovery.build_sidecar(compact, envelope)
+
+
+def _sized_compact_readback(target_bytes):
+    """Build one schema-valid production-shaped proof at an exact size."""
+    event = _event()
+    meta = {journal.OPS_SEQUENCE_HIGH_WATER_FIELD: 1}
+    section = journal.snapshot_journal_section(
+        events=[event], meta=meta, compacted=[], now_iso=AT)
+    durability = {
+        "walAppliedSequence": TARGET,
+        "remoteWalAppliedSequence": TARGET,
+        "verifiedWalSequence": TARGET - 1,
+    }
+    history = [{
+        "from": "unresolved_missing_price", "to": "retry_pending",
+        "at": AT, "reason": "missing_price",
+    }]
+    outcome = {
+        "id": "outcome-contract-proof",
+        "status": "unresolved",
+        "transitionHistory": history,
+        "retainedEvidenceA": "",
+        "retainedEvidenceB": "",
+        "retainedEvidenceC": "",
+    }
+
+    def build():
+        sealed = dict(outcome)
+        sealed["integrityHash"] = journal._h(sealed)
+        return journal.build_compact_readback_snapshot(
+            schema_version=journal.SCHEMA_V3,
+            generated_at=AT, as_of=AT,
+            build_identity={"appVersion": "13.5.36", "buildSha": BUILD},
+            ops_journal=section["opsJournal"],
+            integrity_manifest=section["integrityManifest"],
+            outcomes=[sealed], mission_tick_durability=durability,
+            market_ledger_state_hash="1" * 16,
+            chart_intelligence_state_hash="2" * 16,
+            today_intelligence_state_hash="3" * 16,
+            market_replay_state_hash="4" * 16)
+
+    baseline = build()
+    remaining = target_bytes - journal.compact_readback_serialized_size(
+        baseline)
+    assert remaining >= 0
+    for name in (
+            "retainedEvidenceA", "retainedEvidenceB", "retainedEvidenceC"):
+        used = min(remaining, 900_000)
+        outcome[name] = "x" * used
+        remaining -= used
+    assert remaining == 0
+    exact = build()
+    assert journal.compact_readback_serialized_size(exact) == target_bytes
+    return exact
+
+
+def _rehash_compact_readback(compact):
+    for outcome in compact.get("outcomes") or []:
+        body = {key: value for key, value in outcome.items()
+                if key != "integrityHash"}
+        outcome["integrityHash"] = journal._h(body)
+    body = {key: value for key, value in compact.items()
+            if key != "receiptHash"}
+    compact["receiptHash"] = journal._h(body)
+    return compact
+
+
+def _minimal_targets_for_compact(compact):
+    event = compact["opsJournal"][0]
+    aggregate = f"{event['aggregateType']}:{event['aggregateId']}"
+    sequence = int(event["sequence"])
+    return {
+        "opsJournal": copy.deepcopy(compact["opsJournal"]),
+        "opsJournalMeta": {
+            journal.OPS_SEQUENCE_HIGH_WATER_FIELD: sequence,
+        },
+        "opsJournalCompacted": [],
+        "opsSequenceByAggregate": {aggregate: sequence},
+        "missions": [], "missionWindows": [], "forecasts": [],
+        "outcomes": copy.deepcopy(compact["outcomes"]),
+        "incidents": [], "soak": {}, "postmortems": [],
+        "periodicReports": [], "challengerRuns": [], "agentQueue": {},
+        "missionTickDurability": copy.deepcopy(
+            compact["missionTickDurability"]),
+    }
 
 
 def _write(path: Path, value):
@@ -852,7 +939,9 @@ def test_dedicated_rearm_job_has_bounded_surface_and_one_write_maximum():
     assert "/caos/patrol-health" not in job
     assert "/api/argus/osint/remote-readback" in job
     assert "/remote-journal/recovery-sidecar" in job
-    assert "--max-filesize 1048576" in job
+    assert "MAX_COMPACT_READBACK_BYTES" in job
+    assert '--max-filesize "$READBACK_MAX_BYTES"' in job
+    assert "--max-filesize 1048576" not in job
     assert "--max-filesize 8388608" in job
     assert job.count("origin HEAD:ledger") == 1
     assert job.count("--force-with-lease=refs/heads/ledger:") == 1
@@ -871,6 +960,63 @@ def test_dedicated_rearm_job_has_bounded_surface_and_one_write_maximum():
     assert "verify-ledger-base-ancestor" in job
     assert '--ledger-base-commit-sha "$RECOVERY_LEDGER_BASE"' in job
     assert '--cas-ledger-head "$LEDGER_CAS_BASE"' in job
+
+
+def test_compact_readback_contract_is_one_shared_finite_authority():
+    assert journal.MAX_COMPACT_READBACK_BYTES == 1_572_864
+    assert journal.MAX_COMPACT_READBACK_BYTES is \
+        recovery_limits.MAX_COMPACT_READBACK_BYTES
+    assert recovery.MAX_READBACK_BYTES is journal.MAX_COMPACT_READBACK_BYTES
+    assert scanner._DURABLE_READBACK_MAX_BYTES is \
+        journal.MAX_COMPACT_READBACK_BYTES
+    assert publisher.MAX_READBACK_BYTES is \
+        journal.MAX_COMPACT_READBACK_BYTES
+    workflow = Path(".github/workflows/caos-watchtower.yml").read_text()
+    assert workflow.count("MAX_COMPACT_READBACK_BYTES") == 2
+    assert workflow.count('--max-filesize "$READBACK_MAX_BYTES"') == 2
+    assert "--max-filesize 1048576" not in workflow
+
+
+def test_exact_readback_limit_preserves_plaintext_and_sidecar_reserves():
+    compact = _sized_compact_readback(journal.MAX_COMPACT_READBACK_BYTES)
+    nonce = (1).to_bytes(12, "big")
+    payload = recovery.build_payload(
+        compact_readback=compact,
+        targets=_minimal_targets_for_compact(compact), generated_at=AT,
+        build_identity={"appVersion": "13.5.36", "buildSha": BUILD},
+        source_checkpoint_hash="f" * 64, checkpoint_id=CHECKPOINT_ID,
+        checkpoint_verified_at=AT, ledger_base_commit_sha=BASE,
+        nonce_authority={
+            "schemaVersion": recovery.NONCE_AUTHORITY_SCHEMA,
+            "keyMaterialCounters": {
+                recovery.nonce_material_domain(KEY): 1,
+            },
+        })
+    assert len(recovery._canonical(payload)) <= recovery.MAX_PLAINTEXT_BYTES
+    envelope = recovery.encrypt_payload(
+        payload, KEY, key_identifier=KEY_ID, nonce=nonce,
+        generation_id="rrg-" + "a" * 32)
+    sidecar = recovery.build_sidecar(compact, envelope)
+    assert len(recovery._canonical(sidecar)) <= recovery.MAX_SIDECAR_BYTES
+
+
+def test_compact_readback_exact_limit_accepts_and_limit_plus_one_rejects():
+    exact = _sized_compact_readback(journal.MAX_COMPACT_READBACK_BYTES)
+    assert journal.verify_strict_compact_readback_snapshot(exact)
+
+    oversized = copy.deepcopy(exact)
+    oversized["outcomes"][0]["retainedEvidenceC"] += "x"
+    _rehash_compact_readback(oversized)
+    assert journal.compact_readback_serialized_size(oversized) == \
+        journal.MAX_COMPACT_READBACK_BYTES + 1
+    assert not journal.verify_compact_readback_snapshot(oversized)
+    assert not journal.verify_strict_compact_readback_snapshot(oversized)
+
+
+def test_observed_1065021_byte_legacy_readback_is_canonical_valid():
+    observed = _sized_compact_readback(1_065_021)
+    assert journal.compact_readback_serialized_size(observed) == 1_065_021
+    assert journal.verify_strict_compact_readback_snapshot(observed)
 
 
 def test_exact_4gib_encrypted_producer_probe_is_ci_wired_and_scalar_only():

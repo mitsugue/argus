@@ -22,6 +22,33 @@ _BUILD_SHA_RE = re.compile(r"(?:[0-9a-f]{7}|[0-9a-f]{40})")
 _APP_VERSION_RE = re.compile(
     r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?")
 _MAX_COMPACT_OUTCOMES = 200
+MAX_COMPACT_JOURNAL_EVENTS = 400
+# One finite serialized authority for every compact readback producer,
+# publication validator, workflow transport and backend restore consumer.
+#
+# The encrypted plaintext contains the compact readback and the same journal /
+# outcome projections again in ``targets``.  Reserve 1 MiB for every remaining
+# bounded target and Recovery metadata, then divide the rest of the 4 MiB
+# plaintext budget by that exact duplication factor.  Keep the derivation here
+# because the ledger-branch publisher deliberately copies this standalone
+# producer/validator module after switching away from the source branch.
+COMPACT_READBACK_RECOVERY_PLAINTEXT_BYTES = 4 * 1024 * 1024
+COMPACT_READBACK_NON_DUPLICATED_RESERVE_BYTES = 1 * 1024 * 1024
+COMPACT_READBACK_DUPLICATION_FACTOR = 2
+MAX_COMPACT_READBACK_BYTES = (
+    COMPACT_READBACK_RECOVERY_PLAINTEXT_BYTES
+    - COMPACT_READBACK_NON_DUPLICATED_RESERVE_BYTES
+) // COMPACT_READBACK_DUPLICATION_FACTOR
+MAX_COMPACT_JSON_NODES = 80_000
+MAX_COMPACT_JSON_DEPTH = 32
+MAX_COMPACT_STRING_CHARS = 1024 * 1024
+COMPACT_READBACK_FIELDS = frozenset({
+    "receiptSchemaVersion", "schemaVersion", "generatedAt", "asOf",
+    "buildIdentity", "opsJournal", "integrityManifest", "outcomes",
+    "missionTickDurability", "marketLedgerStateHash",
+    "chartIntelligenceStateHash", "todayIntelligenceStateHash",
+    "marketReplayStateHash", "receiptHash",
+})
 OPS_SEQUENCE_BY_AGGREGATE_LIMIT = 4096
 OPS_SEQUENCE_HIGH_WATER_FIELD = "sequenceAllocatorHighWater"
 
@@ -43,6 +70,50 @@ _PRIVATE_FIELDS = ("quantity", "avgCost", "acquisitionPrice", "pnl",
 def _h(o: Any) -> str:
     return hashlib.sha256(json.dumps(o, sort_keys=True,
                                      ensure_ascii=False).encode()).hexdigest()[:16]
+
+
+def compact_readback_serialized_size(value: Any) -> int:
+    """Return exact canonical UTF-8 bytes, or -1 for invalid JSON."""
+    try:
+        return len(json.dumps(
+            value, sort_keys=True, ensure_ascii=False,
+            separators=(",", ":"), allow_nan=False).encode("utf-8"))
+    except (RecursionError, TypeError, ValueError):
+        return -1
+
+
+def compact_readback_within_size_contract(value: Any) -> bool:
+    size = compact_readback_serialized_size(value)
+    return 0 < size <= MAX_COMPACT_READBACK_BYTES
+
+
+def _compact_json_tree_within_contract(value: Any) -> bool:
+    """Bound parsed hostile state before recursive semantic validation."""
+    nodes = 0
+    pending = [(value, 0)]
+    while pending:
+        current, depth = pending.pop()
+        nodes += 1
+        if nodes > MAX_COMPACT_JSON_NODES or depth > MAX_COMPACT_JSON_DEPTH:
+            return False
+        if isinstance(current, str):
+            if len(current) > MAX_COMPACT_STRING_CHARS:
+                return False
+        elif isinstance(current, dict):
+            for key, item in current.items():
+                if not isinstance(key, str) or len(key) > 256:
+                    return False
+                pending.append((item, depth + 1))
+        elif isinstance(current, list):
+            pending.extend((item, depth + 1) for item in current)
+        elif current is None or isinstance(current, (bool, int)):
+            continue
+        elif isinstance(current, float):
+            if current != current or current in (float("inf"), float("-inf")):
+                return False
+        else:
+            return False
+    return True
 
 
 def _ep(iso: Optional[str]) -> Optional[float]:
@@ -292,7 +363,8 @@ def verify_exact_journal_manifest(
         return False
     events = blob.get("opsJournal")
     manifest = blob.get("integrityManifest")
-    if not isinstance(events, list) or not isinstance(manifest, dict):
+    if not isinstance(events, list) or len(events) > \
+            MAX_COMPACT_JOURNAL_EVENTS or not isinstance(manifest, dict):
         return False
     if manifest.get("schemaVersion") != SCHEMA_V3:
         return False
@@ -464,11 +536,15 @@ def build_compact_readback_snapshot(
             verify_compact_public_projection(receipt):
         raise ValueError("remote_snapshot_not_verifiable")
     receipt["receiptHash"] = _h(receipt)
+    if not compact_readback_within_size_contract(receipt):
+        raise ValueError("remote_readback_oversized")
     return receipt
 
 
 def verify_compact_readback_snapshot(blob: Any) -> bool:
-    if not isinstance(blob, dict) or \
+    if not isinstance(blob, dict) or set(blob) != COMPACT_READBACK_FIELDS or \
+            not compact_readback_within_size_contract(blob) or not \
+            _compact_json_tree_within_contract(blob) or \
             blob.get("receiptSchemaVersion") != READBACK_RECEIPT_SCHEMA:
         return False
     expected = blob.get("receiptHash")

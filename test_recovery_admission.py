@@ -414,7 +414,7 @@ def test_wrong_recovery_producer_workflow_fails_closed(tmp_path, monkeypatch):
 def test_policy_has_disjoint_explicit_paths_and_pinned_payload():
     assert not set(recovery.RECOVERY_PAYLOAD_PATHS).intersection(
         recovery.RECOVERY_ADMISSION_PATHS)
-    assert len(recovery.RECOVERY_PAYLOAD_PATHS) == 26
+    assert len(recovery.RECOVERY_PAYLOAD_PATHS) == 33
     assert len(recovery.RECOVERY_ADMISSION_PATHS) == 4
     assert recovery.scope_policy_document()["mixedPolicy"] == "DENY"
     assert len(recovery.EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256) == 64

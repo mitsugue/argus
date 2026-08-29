@@ -14,6 +14,7 @@ from unittest import mock
 import pytest
 
 import argus_persistent_storage as storage
+import argus_remote_journal as journal
 import argus_remote_recovery as recovery
 
 
@@ -209,6 +210,62 @@ def _write_clean_legacy_checkpoint(root, *, marker=False):
         scanner._DURABILITY_PATHS["checkpoint"], require_seal=True)
 
 
+def _observed_sized_legacy_readback(target_bytes=1_065_021):
+    """Create an exact-size legacy proof with retained outcome evidence."""
+    generated_at = "2026-08-13T01:02:03Z"
+    target_wal = 4701
+    event = _event(1)
+    meta = {
+        "totalObserved": 1,
+        journal.OPS_SEQUENCE_HIGH_WATER_FIELD: 1,
+    }
+    section = journal.snapshot_journal_section(
+        events=[event], meta=meta, compacted=[], now_iso=generated_at)
+    durability = {
+        "walAppliedSequence": target_wal,
+        "remoteWalAppliedSequence": target_wal,
+        "verifiedWalSequence": target_wal,
+    }
+    outcome = {
+        "id": "outcome-first-activation",
+        "forecastId": "forecast-first-activation",
+        "status": "unresolved",
+        "resolutionState": "retry_pending",
+        "transitionHistory": [{
+            "from": "unresolved_missing_price", "to": "retry_pending",
+            "at": generated_at, "reason": "missing_price",
+        }],
+        "retainedEvidenceA": "",
+        "retainedEvidenceB": "",
+    }
+
+    def build():
+        sealed = dict(outcome)
+        sealed["integrityHash"] = journal._h(sealed)
+        return journal.build_compact_readback_snapshot(
+            schema_version=journal.SCHEMA_V3,
+            generated_at=generated_at, as_of=generated_at,
+            build_identity={"appVersion": "13.5.36", "buildSha": "b" * 40},
+            ops_journal=section["opsJournal"],
+            integrity_manifest=section["integrityManifest"],
+            outcomes=[sealed], mission_tick_durability=durability,
+            market_ledger_state_hash="1" * 16,
+            chart_intelligence_state_hash="2" * 16,
+            today_intelligence_state_hash="3" * 16,
+            market_replay_state_hash="4" * 16)
+
+    baseline = build()
+    remaining = target_bytes - journal.compact_readback_serialized_size(
+        baseline)
+    assert remaining >= 0
+    outcome["retainedEvidenceA"] = "x" * min(remaining, 900_000)
+    remaining -= len(outcome["retainedEvidenceA"])
+    outcome["retainedEvidenceB"] = "x" * remaining
+    exact = build()
+    assert journal.compact_readback_serialized_size(exact) == target_bytes
+    return exact, meta, durability
+
+
 def _seed_worker(root, start, result, remote_counter):
     try:
         os.environ.clear()
@@ -397,6 +454,73 @@ def test_true_clean_legacy_activation_is_single_use_and_starts_at_one(
         assert result["status"] == "activated_genesis"
         assert int.from_bytes(scanner._next_remote_recovery_nonce(
             CURRENT_ID), "big") == 1
+
+
+def test_first_activation_migrates_1065021_byte_legacy_readback_exactly(
+        bootstrap_runtime, tmp_path):
+    compact, meta, durability = _observed_sized_legacy_readback()
+    assert journal.verify_strict_compact_readback_snapshot(compact)
+    checkpoint = _write_clean_legacy_checkpoint(tmp_path)
+    pinned = _pinned()
+    with mock.patch.dict(os.environ, _key_env(), clear=True), \
+            mock.patch.object(
+                scanner, "_fetch_pinned_recovery_object", side_effect=[
+                    {"status": "present", "value": compact},
+                    {"status": "absent", "value": None},
+                ]), \
+            mock.patch.object(
+                scanner, "_pinned_recovery_path_never_existed",
+                return_value=True):
+        handoff = []
+        boot = scanner._prepare_keyed_local_recovery_nonce_boot(
+            checkpoint, recovery.configured_keys(), pinned,
+            evidence_handoff=handoff)
+        assert boot["status"] == "activated_genesis"
+        assert len(handoff) == 1
+        nonce = scanner._next_remote_recovery_nonce(CURRENT_ID)
+        counter = int.from_bytes(nonce, "big")
+        targets = {
+            "opsJournal": copy.deepcopy(compact["opsJournal"]),
+            "opsJournalMeta": copy.deepcopy(meta),
+            "opsJournalCompacted": [],
+            "opsSequenceByAggregate": {"mission:bootstrap": 1},
+            "missions": [], "missionWindows": [], "forecasts": [],
+            "outcomes": copy.deepcopy(compact["outcomes"]),
+            "incidents": [], "soak": {}, "postmortems": [],
+            "periodicReports": [], "challengerRuns": [], "agentQueue": {},
+            "missionTickDurability": copy.deepcopy(durability),
+        }
+        payload = recovery.build_payload(
+            compact_readback=compact, targets=targets,
+            generated_at=compact["generatedAt"],
+            build_identity=compact["buildIdentity"],
+            source_checkpoint_hash=storage._canonical_sha256(checkpoint),
+            checkpoint_id="rcp-" + "7" * 32,
+            checkpoint_verified_at=compact["generatedAt"],
+            ledger_base_commit_sha=pinned["commitSha"],
+            nonce_authority={
+                "schemaVersion": recovery.NONCE_AUTHORITY_SCHEMA,
+                "keyMaterialCounters": {
+                    recovery.nonce_material_domain(CURRENT_KEY): counter,
+                },
+            })
+        envelope = recovery.encrypt_payload(
+            payload, CURRENT_KEY, key_identifier=CURRENT_ID, nonce=nonce,
+            generation_id="rrg-" + "8" * 32)
+        sidecar = recovery.build_sidecar(compact, envelope)
+        restored = recovery.validate_pair(
+            sidecar["readback"], sidecar["recovery"], CURRENT_KEY,
+            key_identifier=CURRENT_ID)
+
+    assert sidecar["readback"] == compact
+    assert restored["compactReadback"] == compact
+    assert restored["targets"]["outcomes"] == compact["outcomes"]
+    assert recovery.configured_keys({"ARGUS_REMOTE_RECOVERY_CURRENT_KEY_ID":
+                                     CURRENT_ID,
+                                     "ARGUS_REMOTE_RECOVERY_CURRENT_KEY":
+                                     _encoded_key(CURRENT_KEY)})[
+                                         "previous"] is None
+    assert scanner._CHECKPOINT_V2_STAGE1_ENABLED is False
 
 
 def test_marker_with_total_local_loss_never_becomes_genesis(
