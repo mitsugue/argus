@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import fcntl
 import json
 import multiprocessing
 import os
@@ -715,6 +716,378 @@ def test_production_shaped_partial_activation_repair_dry_run_is_exact(
     assert (after.st_dev, after.st_ino, after.st_size) == (
         before["lock"].st_dev, before["lock"].st_ino,
         before["lock"].st_size)
+
+
+_PRODUCTION_LEGACY_CHECKPOINT_BYTES = 41_887_231
+_PRODUCTION_LOCAL_WAL = 8968
+_PRODUCTION_REMOTE_WAL = 8953
+
+
+def _write_exact_sized_legacy(path, root, *, wal, target_bytes):
+    checkpoint = remote_snapshot(wal)
+    checkpoint["productionShapePadding"] = []
+    sealed = storage.seal_checkpoint(checkpoint)
+    growth = target_bytes - len(storage._canonical(sealed))
+    assert growth >= 2
+    chunk_count = 1
+    while growth - (3 * chunk_count - 1) > \
+            chunk_count * storage.MAXIMUM_JSON_SCALAR_CHARS:
+        chunk_count += 1
+    padding_bytes = growth - (3 * chunk_count - 1)
+    assert 0 <= padding_bytes <= \
+        chunk_count * storage.MAXIMUM_JSON_SCALAR_CHARS
+    chunk_size, remainder = divmod(padding_bytes, chunk_count)
+    checkpoint["productionShapePadding"] = [
+        "x" * (chunk_size + (1 if index < remainder else 0))
+        for index in range(chunk_count)
+    ]
+    sealed = storage.seal_checkpoint(checkpoint)
+    assert len(storage._canonical(sealed)) == target_bytes
+    storage.atomic_write_json(
+        str(path), sealed, temp_directory=str(root),
+        validator=lambda value: storage.verify_checkpoint(
+            value, require_seal=True))
+    assert path.stat().st_size == target_bytes
+    return sealed
+
+
+def _artifact_contract(path, *, role, wal, marker, checkpoint_id=None):
+    metadata = path.stat()
+    return {
+        "role": role,
+        "path": str(path),
+        "sha256": scanner._remote_recovery_file_sha256(str(path)),
+        "bytes": metadata.st_size,
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+        "walSequence": wal,
+        "sealValid": True,
+        "marker": marker,
+        "checkpointId": checkpoint_id,
+        "keyId": CURRENT_ID if checkpoint_id is not None else None,
+    }
+
+
+def _canonical_absent_fixture(
+        bootstrap_runtime, root, *, legacy_bytes=512 * 1024):
+    build_sha = "9" * 40
+    checkpoint = Path(bootstrap_runtime["checkpoint"])
+    legacy = Path(str(checkpoint) +
+                  ".quarantine-20260829T040434Z-fe9a72ca")
+    marker_a = Path(str(checkpoint) +
+                    ".quarantine-20260829T063349Z-c8c6d69a")
+    marker_b = Path(str(checkpoint) +
+                    ".quarantine-20260829T063956Z-15ac3388")
+    _write_exact_sized_legacy(
+        legacy, root, wal=_PRODUCTION_LOCAL_WAL,
+        target_bytes=legacy_bytes)
+    for path, checkpoint_id in (
+            (marker_a, "rcp-" + "a" * 32),
+            (marker_b, "rcp-" + "b" * 32)):
+        value = remote_snapshot(_PRODUCTION_LOCAL_WAL)
+        value["remoteRecoveryRequired"] = {
+            "schemaVersion": recovery.SIDECAR_SCHEMA,
+            "mode": "encrypted_required",
+            "keyId": CURRENT_ID,
+            "checkpointId": checkpoint_id,
+        }
+        storage.write_checkpoint(str(path), value, temp_directory=str(root))
+    lock_path = Path(
+        bootstrap_runtime["recoveryNonceState"] + ".reservation.lock")
+    lock_path.touch(mode=0o600)
+    lock = lock_path.stat()
+    pinned = "8" * 40
+    expected = {
+        "schemaVersion":
+            scanner._CANONICAL_ABSENT_PARTIAL_ACTIVATION_REPAIR_SCHEMA,
+        "buildSha": build_sha,
+        "currentKeyId": CURRENT_ID,
+        "previousKeyAbsent": True,
+        "canonicalPath": str(checkpoint),
+        "canonicalStatus": "ABSENT",
+        "legacyCheckpoint": _artifact_contract(
+            legacy, role="legacy_checkpoint", wal=_PRODUCTION_LOCAL_WAL,
+            marker="ABSENT"),
+        "markerA": _artifact_contract(
+            marker_a, role="marker_a", wal=_PRODUCTION_LOCAL_WAL,
+            marker="encrypted_required", checkpoint_id="rcp-" + "a" * 32),
+        "markerB": _artifact_contract(
+            marker_b, role="marker_b", wal=_PRODUCTION_LOCAL_WAL,
+            marker="encrypted_required", checkpoint_id="rcp-" + "b" * 32),
+        "lockIdentity": {
+            "path": str(lock_path),
+            "device": lock.st_dev,
+            "inode": lock.st_ino,
+            "mode": lock.st_mode & 0o777,
+            "size": lock.st_size,
+            "mtimeNs": lock.st_mtime_ns,
+            "ctimeNs": lock.st_ctime_ns,
+            "holder": "NONE",
+        },
+        "nonceAuthority": {
+            "history": "ABSENT", "state": "ABSENT", "head": "ABSENT",
+            "anchor": "ABSENT",
+        },
+        "sidecarStatus": "ABSENT",
+        "immutableRecoveryPath": {
+            "status": "absent", "historyQueryStatus": "never_existed",
+            "path": scanner._REMOTE_RECOVERY_PATH,
+            "pinnedCommitSha": pinned,
+        },
+        "operationalVerification": False,
+        "writersFenced": True,
+        "activeRecoveryWriterCount": 0,
+        "ec2TimerDisabled": True,
+        "ec2TimerInactive": True,
+        "remoteReadback": {
+            "status": "VERIFIED", "walSequence": _PRODUCTION_REMOTE_WAL,
+            "recoveryStatus": "ABSENT", "pinnedCommitSha": pinned,
+        },
+        "competingAuthenticatedWalAuthority": False,
+        "forensicBackupDirectory": str(
+            Path(root) / "argus-recovery-forensic-current-state"),
+    }
+    return expected, {
+        "checkpoint": checkpoint, "legacy": legacy,
+        "markerA": marker_a, "markerB": marker_b, "lock": lock_path,
+    }
+
+
+def _canonical_absent_bytes_and_identity(paths):
+    return {
+        "canonicalAbsent": not paths["checkpoint"].exists(),
+        "legacy": paths["legacy"].read_bytes(),
+        "markerA": paths["markerA"].read_bytes(),
+        "markerB": paths["markerB"].read_bytes(),
+        "lock": tuple(getattr(paths["lock"].stat(), field) for field in (
+            "st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")),
+    }
+
+
+def test_canonical_absent_exact_41887231_byte_fixture_is_repairable_dry_run(
+        bootstrap_runtime, tmp_path):
+    with mock.patch.dict(os.environ, {
+            **_key_env(), "RENDER_GIT_COMMIT": "9" * 40}, clear=True):
+        expected, paths = _canonical_absent_fixture(
+            bootstrap_runtime, tmp_path,
+            legacy_bytes=_PRODUCTION_LEGACY_CHECKPOINT_BYTES)
+        before = _canonical_absent_bytes_and_identity(paths)
+        plan = scanner._plan_partial_activation_repair(expected)
+        executor_dry_run = \
+            scanner._execute_canonical_absent_partial_activation_repair(
+                expected)
+        after = _canonical_absent_bytes_and_identity(paths)
+    assert expected["legacyCheckpoint"]["bytes"] == \
+        _PRODUCTION_LEGACY_CHECKPOINT_BYTES
+    assert plan == executor_dry_run
+    assert plan["stateMode"] == "PARTIAL_ACTIVATION_CANONICAL_ABSENT"
+    assert plan["status"] == "DRY_RUN_PASS"
+    assert plan["mutationAuthorized"] is False
+    assert plan["walSequence"] == _PRODUCTION_LOCAL_WAL
+    assert plan["remoteReadbackWalSequence"] == _PRODUCTION_REMOTE_WAL
+    assert plan["remoteReadbackLag"] == 15
+    assert plan["remoteReadbackDecision"] == \
+        "PRESERVE_LOCAL_NO_DOWNGRADE"
+    assert plan["noCompetingAuthenticatedWalAuthority"] is True
+    assert before == after
+
+
+def test_canonical_absent_planner_rejects_every_bound_mismatch_zero_mutation(
+        bootstrap_runtime, tmp_path):
+    with mock.patch.dict(os.environ, {
+            **_key_env(), "RENDER_GIT_COMMIT": "9" * 40}, clear=True):
+        expected, paths = _canonical_absent_fixture(
+            bootstrap_runtime, tmp_path)
+        before = _canonical_absent_bytes_and_identity(paths)
+        hostile_contracts = []
+
+        def hostile(path, value):
+            candidate = copy.deepcopy(expected)
+            target = candidate
+            for field in path[:-1]:
+                target = target[field]
+            target[path[-1]] = value
+            hostile_contracts.append(candidate)
+
+        hostile(("legacyCheckpoint", "sha256"), "0" * 64)
+        hostile(("legacyCheckpoint", "bytes"),
+                expected["legacyCheckpoint"]["bytes"] + 1)
+        hostile(("legacyCheckpoint", "walSequence"), 8967)
+        hostile(("markerA", "inode"), expected["markerA"]["inode"] + 1)
+        hostile(("markerA", "checkpointId"), "rcp-" + "c" * 32)
+        hostile(("markerB", "sha256"), "0" * 64)
+        hostile(("markerB", "checkpointId"), "rcp-" + "c" * 32)
+        hostile(("lockIdentity", "device"),
+                expected["lockIdentity"]["device"] + 1)
+        hostile(("lockIdentity", "inode"),
+                expected["lockIdentity"]["inode"] + 1)
+        hostile(("lockIdentity", "size"), 1)
+        hostile(("lockIdentity", "holder"), "PID:1")
+        hostile(("nonceAuthority", "state"), "PRESENT")
+        hostile(("sidecarStatus",), "PRESENT")
+        hostile(("immutableRecoveryPath", "status"), "present")
+        hostile(("operationalVerification",), True)
+        hostile(("writersFenced",), False)
+        hostile(("activeRecoveryWriterCount",), 1)
+        hostile(("ec2TimerDisabled",), False)
+        hostile(("ec2TimerInactive",), False)
+        hostile(("currentKeyId",), "wrong-key")
+        hostile(("previousKeyAbsent",), False)
+        for candidate in hostile_contracts:
+            with pytest.raises(recovery.RecoveryBundleError):
+                scanner._plan_partial_activation_repair(candidate)
+            assert _canonical_absent_bytes_and_identity(paths) == before
+
+        with mock.patch.dict(os.environ, {
+                **_key_env(previous=True), "RENDER_GIT_COMMIT": "9" * 40},
+                clear=True), \
+                pytest.raises(recovery.RecoveryBundleError,
+                              match="recovery_canonical_absent_key_mismatch"):
+            scanner._plan_partial_activation_repair(expected)
+        assert _canonical_absent_bytes_and_identity(paths) == before
+
+        Path(bootstrap_runtime["recoveryNonceState"]).write_text(
+            "{}", encoding="utf-8")
+        with pytest.raises(recovery.RecoveryBundleError,
+                          match="recovery_canonical_absent_authority_present"):
+            scanner._plan_partial_activation_repair(expected)
+        Path(bootstrap_runtime["recoveryNonceState"]).unlink()
+        assert _canonical_absent_bytes_and_identity(paths) == before
+
+        Path(bootstrap_runtime["recovery"]).write_text("{}", encoding="utf-8")
+        with pytest.raises(recovery.RecoveryBundleError,
+                          match="recovery_canonical_absent_authority_present"):
+            scanner._plan_partial_activation_repair(expected)
+        Path(bootstrap_runtime["recovery"]).unlink()
+        assert _canonical_absent_bytes_and_identity(paths) == before
+
+        extra = Path(str(paths["checkpoint"]) +
+                     ".quarantine-competing-wal8968")
+        storage.write_checkpoint(
+            str(extra), remote_snapshot(_PRODUCTION_LOCAL_WAL),
+            temp_directory=str(tmp_path))
+        with pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_canonical_absent_competing_legacy_authority"):
+            scanner._plan_partial_activation_repair(expected)
+        extra.unlink()
+        assert _canonical_absent_bytes_and_identity(paths) == before
+
+        with paths["lock"].open("r+b") as held:
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with pytest.raises(recovery.RecoveryBundleError,
+                              match="recovery_nonce_lock_busy"):
+                scanner._plan_partial_activation_repair(expected)
+        assert _canonical_absent_bytes_and_identity(paths) == before
+
+
+def _legacy_compact_readback_at(wal):
+    compact, _envelope_value = _envelope(CURRENT_KEY, CURRENT_ID, 7)
+    value = copy.deepcopy(compact)
+    durability = value["missionTickDurability"]
+    for field in ("walAppliedSequence", "remoteWalAppliedSequence",
+                  "verifiedWalSequence"):
+        durability[field] = wal
+    value["receiptHash"] = journal._h({
+        field: item for field, item in value.items()
+        if field != "receiptHash"
+    })
+    assert journal.verify_strict_compact_readback_snapshot(value)
+    return value
+
+
+def test_canonical_absent_executor_preserves_forensics_and_genesis_no_downgrade(
+        bootstrap_runtime, tmp_path):
+    with mock.patch.dict(os.environ, {
+            **_key_env(), "RENDER_GIT_COMMIT": "9" * 40}, clear=True), \
+            mock.patch.dict(scanner._DURABLE_STATE, {}, clear=True):
+        expected, paths = _canonical_absent_fixture(
+            bootstrap_runtime, tmp_path)
+        legacy_bytes = paths["legacy"].read_bytes()
+        marker_a = paths["markerA"].read_bytes()
+        marker_b = paths["markerB"].read_bytes()
+        lock_before = paths["lock"].stat()
+        result = scanner._execute_canonical_absent_partial_activation_repair(
+            expected, execute=True)
+        assert result["status"] == "REPAIR_APPLIED_PRE_GENESIS"
+        assert paths["checkpoint"].read_bytes() == legacy_bytes
+        assert paths["markerA"].read_bytes() == marker_a
+        assert paths["markerB"].read_bytes() == marker_b
+        lock_after = paths["lock"].stat()
+        assert (lock_after.st_dev, lock_after.st_ino, lock_after.st_size) == (
+            lock_before.st_dev, lock_before.st_ino, 0)
+        backup = Path(result["forensicBackupDirectory"])
+        manifest = json.loads((backup / "manifest.json").read_text(
+            encoding="utf-8"))
+        digest_receipt = (backup / "manifest.sha256").read_text(
+            encoding="ascii").split()[0]
+        assert digest_receipt == scanner._remote_recovery_file_sha256(
+            str(backup / "manifest.json"))
+        assert manifest["walSequence"] == _PRODUCTION_LOCAL_WAL
+        for artifact in manifest["artifacts"]:
+            copied = backup / artifact["backupFile"]
+            assert scanner._remote_recovery_file_sha256(str(copied)) == \
+                artifact["sha256"]
+        assert not Path(bootstrap_runtime["recovery"]).exists()
+        assert scanner._remote_recovery_nonce_authority_absent(
+            include_lock=False)
+
+        pinned = _pinned()
+        readback = _legacy_compact_readback_at(_PRODUCTION_REMOTE_WAL)
+        evidence = scanner._AuthenticatedPinnedLegacyReadbackEvidence(
+            pinned, readback)
+        handoff = []
+        canonical_before_genesis = paths["checkpoint"].read_bytes()
+        with mock.patch.object(
+                scanner, "_probe_pinned_remote_recovery_nonce_floor",
+                return_value=evidence):
+            boot = scanner._prepare_keyed_local_recovery_nonce_boot(
+                storage.load_checkpoint(
+                    str(paths["checkpoint"]), require_seal=True),
+                recovery.configured_keys(), pinned,
+                evidence_handoff=handoff)
+        assert boot["status"] == "activated_genesis"
+        assert handoff == [evidence]
+        assert paths["checkpoint"].read_bytes() == canonical_before_genesis
+        assert not Path(bootstrap_runtime["recovery"]).exists()
+        assert scanner._DURABLE_STATE.get("lastSuccessAt") is None
+        assert scanner._DURABLE_STATE.get("lastRestoreAt") is None
+        first = int.from_bytes(
+            scanner._next_remote_recovery_nonce(CURRENT_ID), "big")
+        second = int.from_bytes(
+            scanner._next_remote_recovery_nonce(CURRENT_ID), "big")
+        assert (first, second) == (1, 2)
+
+
+def test_canonical_absent_executor_rolls_back_before_keyed_authority(
+        bootstrap_runtime, tmp_path):
+    with mock.patch.dict(os.environ, {
+            **_key_env(), "RENDER_GIT_COMMIT": "9" * 40}, clear=True):
+        expected, paths = _canonical_absent_fixture(
+            bootstrap_runtime, tmp_path)
+        marker_a = paths["markerA"].read_bytes()
+        marker_b = paths["markerB"].read_bytes()
+        real_load = storage.load_checkpoint
+
+        def fail_post_restore(path, *args, **kwargs):
+            if os.path.abspath(str(path)) == os.path.abspath(
+                    str(paths["checkpoint"])) and paths["checkpoint"].exists():
+                raise storage.PersistentStorageError(
+                    "simulated_post_restore_validation_failure")
+            return real_load(path, *args, **kwargs)
+
+        with mock.patch.object(
+                storage, "load_checkpoint", side_effect=fail_post_restore), \
+                pytest.raises(storage.PersistentStorageError,
+                              match="simulated_post_restore"):
+            scanner._execute_canonical_absent_partial_activation_repair(
+                expected, execute=True)
+        assert not paths["checkpoint"].exists()
+        assert paths["markerA"].read_bytes() == marker_a
+        assert paths["markerB"].read_bytes() == marker_b
+        assert scanner._remote_recovery_nonce_authority_absent(
+            include_lock=False)
+        assert not Path(bootstrap_runtime["recovery"]).exists()
 
 
 def test_first_activation_migrates_1065021_byte_legacy_readback_exactly(

@@ -475,6 +475,100 @@ def test_deep_remote_outer_envelope_preserves_healthy_local_checkpoint():
         assert scanner._DURABLE_STATE.get("lastRestoreAt") is None
 
 
+def test_remote_ledger_http_failure_preserves_seal_valid_canonical():
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            mock.patch.dict(os.environ, _key_env(), clear=False):
+        storage.write_checkpoint(
+            paths["checkpoint"], remote_snapshot(FULL_WAL),
+            temp_directory=root)
+        before = pathlib.Path(paths["checkpoint"]).read_bytes()
+        with mock.patch.object(
+                scanner, "_pinned_ledger_restore_base",
+                side_effect=recovery.RecoveryBundleError(
+                    "ledger_ref_resolution_http_error")):
+            assert scanner._osint_restore_once() is None
+        assert pathlib.Path(paths["checkpoint"]).read_bytes() == before
+        assert not scanner._DURABLE_STATE.get("quarantinedCheckpoint")
+        assert scanner._DURABLE_STATE["restoreDecision"] == {
+            "RESTORE_STAGE": "REMOTE_NONCE_BOOT",
+            "ERROR_CLASS": "ledger_ref_resolution_http_error",
+            "LOCAL_VALIDITY": "VALID",
+            "REMOTE_FAILURE_CLASS": "ledger_ref_resolution_http_error",
+            "QUARANTINE_DECISION": "PRESERVE",
+            "QUARANTINE_REASON": None,
+        }
+        assert scanner._DURABLE_STATE.get("lastRestoreAt") is None
+        assert scanner._OSINT_PERSIST_STATE.get("restored") is not True
+
+
+def test_remote_object_absent_preserves_marker_only_canonical_fail_closed():
+    readback, _envelope, _targets = _artifacts(mission_count=1)
+    marker_only = _required_checkpoint(remote_snapshot(FULL_WAL))
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            mock.patch.dict(os.environ, _key_env(), clear=False):
+        storage.write_checkpoint(
+            paths["checkpoint"], marker_only, temp_directory=root)
+        before = pathlib.Path(paths["checkpoint"]).read_bytes()
+        with mock.patch.object(
+                scanner.requests, "get", side_effect=
+                _keyed_local_legacy_probe_responses(readback)):
+            assert scanner._osint_restore_once() is None
+        assert pathlib.Path(paths["checkpoint"]).read_bytes() == before
+        assert not scanner._DURABLE_STATE.get("quarantinedCheckpoint")
+        assert scanner._DURABLE_STATE["remoteRecoveryError"] == \
+            "recovery_nonce_authority_missing"
+        assert scanner._DURABLE_STATE["restoreDecision"][
+            "QUARANTINE_DECISION"] == "PRESERVE"
+        assert scanner._DURABLE_STATE["restoreDecision"][
+            "LOCAL_VALIDITY"] == "VALID"
+        assert scanner._DURABLE_STATE.get("lastRestoreAt") is None
+
+
+def test_proven_corrupt_local_checkpoint_is_quarantined_with_exact_reason():
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            mock.patch.object(scanner.requests, "get", return_value=
+                              FakeResponse(503)):
+        pathlib.Path(paths["checkpoint"]).write_text(
+            '{"schemaVersion":"argus-durable-v3",', encoding="utf-8")
+        assert scanner._osint_restore_once() is None
+        assert not pathlib.Path(paths["checkpoint"]).exists()
+        quarantine = pathlib.Path(
+            scanner._DURABLE_STATE["quarantinedCheckpoint"])
+        assert quarantine.is_file()
+        assert scanner._DURABLE_STATE["restoreDecision"] == {
+            "RESTORE_STAGE": "LOCAL_CHECKPOINT_LOAD",
+            "ERROR_CLASS": "JSONDecodeError",
+            "LOCAL_VALIDITY": "INVALID",
+            "REMOTE_FAILURE_CLASS": None,
+            "QUARANTINE_DECISION": "QUARANTINED",
+            "QUARANTINE_REASON": "local_checkpoint_json_invalid",
+        }
+        assert scanner._DURABLE_STATE.get("lastRestoreAt") is None
+
+
+def test_repeated_memory_snapshot_get_does_not_remove_valid_local_state():
+    readback, _envelope, _targets = _artifacts(mission_count=1)
+    marker_only = _required_checkpoint(remote_snapshot(FULL_WAL))
+    responses = (
+        _keyed_local_legacy_probe_responses(readback)[:4] +
+        _keyed_local_legacy_probe_responses(readback)[:4])
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            mock.patch.dict(os.environ, _key_env(), clear=False), \
+            mock.patch.object(scanner.requests, "get", side_effect=responses):
+        storage.write_checkpoint(
+            paths["checkpoint"], marker_only, temp_directory=root)
+        before = pathlib.Path(paths["checkpoint"]).read_bytes()
+        client = scanner.app.test_client()
+        assert client.get(
+            "/api/argus/osint/memory-snapshot").status_code == 200
+        assert pathlib.Path(paths["checkpoint"]).read_bytes() == before
+        assert client.get(
+            "/api/argus/osint/memory-snapshot").status_code == 200
+        assert pathlib.Path(paths["checkpoint"]).read_bytes() == before
+        assert not scanner._DURABLE_STATE.get("quarantinedCheckpoint")
+        assert scanner._DURABLE_STATE.get("lastRestoreAt") is None
+
+
 def test_keyed_boot_local_newer_than_remote_stays_persistent_local():
     remote_wal = RECOVERY_WAL - 10
     remote_readback, remote_envelope, _remote_targets = _artifacts(
