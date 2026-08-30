@@ -752,7 +752,7 @@ def test_immutable_ack_fetches_and_authenticates_same_commit_pair():
             scanner._verified_remote_receipt_artifact(wrong)
 
 
-def test_immutable_ack_rejects_nonancestor_multiparent_and_stale_replay():
+def test_immutable_ack_rejects_nonancestor_multiparent_and_incomplete_path():
     compact, sidecar = _pair()
     envelope = sidecar["recovery"]
     selected = {
@@ -806,10 +806,15 @@ def test_immutable_ack_rejects_nonancestor_multiparent_and_stale_replay():
             mock.patch.object(
                 scanner, "_bounded_ledger_commit_metadata",
                 side_effect=linear_metadata), \
-            mock.patch.object(scanner, "_LEDGER_ANCESTRY_MAX_COMMITS", 2):
+            mock.patch.object(
+                scanner, "_LEDGER_ANCESTRY_FAST_PATH_COMMITS", 2), \
+            mock.patch.object(
+                scanner, "_bounded_ledger_compare",
+                side_effect=recovery.RecoveryBundleError(
+                    "recovery_ledger_commit_nonancestor")):
         with pytest.raises(
                 recovery.RecoveryBundleError,
-                match="recovery_ledger_commit_stale_replay"):
+                match="recovery_ledger_commit_nonancestor"):
             scanner._verified_remote_receipt_artifact(stale)
 
 
