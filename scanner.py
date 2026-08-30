@@ -20672,10 +20672,10 @@ class _AuthenticatedPinnedLegacyReadbackEvidence:
 
     __slots__ = (
         "_token", "_base", "_commit_sha", "_owner", "_repository",
-        "_path_prefix", "_readback", "_readback_hash",
+        "_path_prefix", "_readback", "_readback_hash", "_restore_token",
     )
 
-    def __init__(self, pinned_ledger, readback):
+    def __init__(self, pinned_ledger, readback, restore_token=None):
         self._token = _PINNED_LEGACY_READBACK_PROCESS_TOKEN
         self._base = pinned_ledger["base"]
         self._commit_sha = pinned_ledger["commitSha"]
@@ -20685,6 +20685,62 @@ class _AuthenticatedPinnedLegacyReadbackEvidence:
         self._readback = copy.deepcopy(readback)
         self._readback_hash = \
             argus_persistent_storage._canonical_sha256(readback)
+        self._restore_token = restore_token
+
+
+_LEGACY_RECOVERY_LEDGER_BASE_PROCESS_TOKEN = object()
+
+
+class _LegacyRecoveryLedgerBaseCapability:
+    """Single-use first-activation authority for one staged checkpoint.
+
+    The capability never becomes durable authority.  It binds the exact
+    authenticated legacy readback, pinned Git head, restore invocation,
+    sealed local generation, key material domain, and proved linear ancestry.
+    Ordinary checkpoint writers cannot construct or consume it.
+    """
+
+    __slots__ = (
+        "_token", "_restore_token", "_legacy_evidence", "_pinned_ledger",
+        "_checkpoint_hash", "_target_wal", "_remote_wal",
+        "_remote_receipt_hash", "_base_commit", "_ancestry", "_key_id",
+        "_key_domain", "_binding_hash", "_consumed",
+    )
+
+    def __init__(
+            self, restore_token, legacy_evidence, pinned_ledger,
+            checkpoint_hash, target_wal, remote_wal, remote_receipt_hash,
+            base_commit, ancestry, key_id, key_domain):
+        self._token = _LEGACY_RECOVERY_LEDGER_BASE_PROCESS_TOKEN
+        self._restore_token = restore_token
+        self._legacy_evidence = legacy_evidence
+        self._pinned_ledger = copy.deepcopy(pinned_ledger)
+        self._checkpoint_hash = checkpoint_hash
+        self._target_wal = target_wal
+        self._remote_wal = remote_wal
+        self._remote_receipt_hash = remote_receipt_hash
+        self._base_commit = base_commit
+        self._ancestry = copy.deepcopy(ancestry)
+        self._key_id = key_id
+        self._key_domain = key_domain
+        self._binding_hash = \
+            _legacy_recovery_ledger_base_capability_hash(self)
+        self._consumed = False
+
+
+def _legacy_recovery_ledger_base_capability_hash(capability):
+    return argus_persistent_storage._canonical_sha256({
+        "pinnedLedger": capability._pinned_ledger,
+        "checkpointHash": capability._checkpoint_hash,
+        "targetWalSequence": capability._target_wal,
+        "remoteWalSequence": capability._remote_wal,
+        "remoteReceiptHash": capability._remote_receipt_hash,
+        "ledgerBaseCommitSha": capability._base_commit,
+        "ancestry": capability._ancestry,
+        "keyId": capability._key_id,
+        "keyMaterialDomain": capability._key_domain,
+        "legacyReadbackHash": capability._legacy_evidence._readback_hash,
+    })
 
 
 _LOCAL_RECOVERY_PAIR_PROCESS_TOKEN = object()
@@ -21482,7 +21538,8 @@ def _installed_remote_recovery_nonce_floor(configured):
     return _remote_recovery_nonce_domain(selected["key"]), counter
 
 
-def _probe_pinned_remote_recovery_nonce_floor(configured, pinned_ledger):
+def _probe_pinned_remote_recovery_nonce_floor(
+        configured, pinned_ledger, *, restore_token=None):
     """Authenticate the latest immutable pair and return carried key floors.
 
     This is a boot-time rollback boundary, not an optional availability probe:
@@ -21522,7 +21579,7 @@ def _probe_pinned_remote_recovery_nonce_floor(configured, pinned_ledger):
             raise argus_remote_recovery.RecoveryBundleError(
                 "recovery_nonce_remote_history_exists")
         return _AuthenticatedPinnedLegacyReadbackEvidence(
-            pinned_ledger, readback)
+            pinned_ledger, readback, restore_token)
     if recovery_result.get("status") != "present":
         raise argus_remote_recovery.RecoveryBundleError(
             "recovery_nonce_remote_probe_ambiguous")
@@ -21606,7 +21663,8 @@ def _validated_pinned_remote_recovery_evidence(
     return evidence
 
 
-def _validated_pinned_legacy_readback_evidence(evidence, pinned_ledger):
+def _validated_pinned_legacy_readback_evidence(
+        evidence, pinned_ledger, *, restore_token=None):
     """Revalidate one pre-sidecar compact proof at the already-pinned head."""
     if not isinstance(evidence, _AuthenticatedPinnedLegacyReadbackEvidence) or \
             evidence._token is not _PINNED_LEGACY_READBACK_PROCESS_TOKEN or \
@@ -21621,7 +21679,10 @@ def _validated_pinned_legacy_readback_evidence(evidence, pinned_ledger):
         evidence._base, evidence._commit_sha, evidence._owner,
         evidence._repository, evidence._path_prefix)
     readback = evidence._readback
-    if observed != expected or not re.fullmatch(
+    if observed != expected or (
+            restore_token is not None and (
+                evidence._restore_token is not restore_token or
+                evidence._restore_token is None)) or not re.fullmatch(
             r"[0-9a-f]{40}", str(evidence._commit_sha or "")) or not \
             isinstance(readback, dict) or not \
             hmac.compare_digest(
@@ -21639,6 +21700,152 @@ def _validated_pinned_legacy_readback_evidence(evidence, pinned_ledger):
         raise argus_remote_recovery.RecoveryBundleError(
             "recovery_pinned_legacy_evidence_invalid")
     return evidence
+
+
+def _mint_legacy_recovery_ledger_base_capability(
+        checkpoint_blob, configured, pinned_ledger, legacy_evidence,
+        restore_token):
+    """Prove one first-activation base before any nonce is reserved."""
+    if restore_token is None:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_legacy_ledger_base_restore_invalid")
+    legacy = _validated_pinned_legacy_readback_evidence(
+        legacy_evidence, pinned_ledger, restore_token=restore_token)
+    current = configured.get("current") if isinstance(configured, dict) \
+        else None
+    if not isinstance(configured, dict) or configured.get(
+            "status") != "configured" or not isinstance(
+            current, dict) or configured.get("previous") is not None or not \
+            isinstance(current.get("key"), bytes) or len(
+                current["key"]) != 32:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_legacy_ledger_base_key_invalid")
+    marker = _validated_recovery_required_marker(checkpoint_blob)
+    if marker is None or marker["keyId"] != current.get("keyId") or not \
+            argus_persistent_storage.verify_checkpoint(
+                checkpoint_blob, require_seal=True):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_legacy_ledger_base_checkpoint_invalid")
+    expected_base = (
+        f"https://raw.githubusercontent.com/{pinned_ledger.get('owner')}/"
+        f"{pinned_ledger.get('repository')}/"
+        f"{pinned_ledger.get('commitSha')}"
+        + (f"/{pinned_ledger.get('pathPrefix')}"
+           if pinned_ledger.get("pathPrefix") else ""))
+    if pinned_ledger.get("base") != expected_base:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_legacy_ledger_base_binding_invalid")
+    durability = checkpoint_blob.get("missionTickDurability")
+    local_wal = durability.get("walAppliedSequence") \
+        if isinstance(durability, dict) else None
+    remote_durability = legacy._readback.get("missionTickDurability") or {}
+    remote_wal = remote_durability.get("walAppliedSequence")
+    remote_receipt_hash = str(
+        legacy._readback.get("receiptHash") or "").lower()
+    if isinstance(local_wal, bool) or not isinstance(local_wal, int) or \
+            local_wal <= 0 or isinstance(remote_wal, bool) or not isinstance(
+                remote_wal, int) or remote_wal <= 0 or remote_wal > \
+            local_wal or not re.fullmatch(
+                r"[0-9a-f]{16}", remote_receipt_hash):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_legacy_ledger_base_authority_invalid")
+    cycle = checkpoint_blob.get("remoteJournalCycle")
+    remote_commit = str(
+        cycle.get("remoteCommitSha") if isinstance(cycle, dict) else ""
+    ).lower()
+    receipt_commit = str(
+        cycle.get("receiptCommitSha") if isinstance(cycle, dict) else ""
+    ).lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", remote_commit) or \
+            receipt_commit != remote_commit:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_legacy_ledger_base_commit_invalid")
+    ancestry = _verify_authenticated_ledger_commit_path(
+        remote_commit, pinned_ledger["commitSha"],
+        owner=pinned_ledger["owner"],
+        repository=pinned_ledger["repository"])
+    if ancestry != {
+            "status": "verified", "ledgerBaseCommitSha": remote_commit,
+            "exactCommitSha": pinned_ledger["commitSha"],
+            "distance": ancestry.get("distance")} or isinstance(
+                ancestry.get("distance"), bool) or not isinstance(
+                    ancestry.get("distance"), int) or ancestry.get(
+                        "distance") < 0:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_legacy_ledger_base_ancestry_invalid")
+    return _LegacyRecoveryLedgerBaseCapability(
+        restore_token, legacy, pinned_ledger,
+        argus_persistent_storage._canonical_sha256(checkpoint_blob),
+        local_wal, remote_wal, remote_receipt_hash, remote_commit, ancestry,
+        current["keyId"], _remote_recovery_nonce_domain(current["key"]))
+
+
+def _consume_legacy_recovery_ledger_base_capability(
+        capability, checkpoint_blob, compact_readback, configured,
+        restore_token):
+    """Consume one exact migration proof before durable nonce allocation."""
+    if not isinstance(
+            capability, _LegacyRecoveryLedgerBaseCapability) or \
+            capability._token is not \
+            _LEGACY_RECOVERY_LEDGER_BASE_PROCESS_TOKEN or \
+            capability._consumed or restore_token is None or \
+            capability._restore_token is not restore_token or not \
+            hmac.compare_digest(
+                capability._binding_hash,
+                _legacy_recovery_ledger_base_capability_hash(capability)):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_legacy_ledger_base_capability_invalid")
+    _validated_pinned_legacy_readback_evidence(
+        capability._legacy_evidence, capability._pinned_ledger,
+        restore_token=restore_token)
+    current = configured.get("current") if isinstance(configured, dict) \
+        else None
+    if not isinstance(configured, dict) or configured.get(
+            "status") != "configured" or not isinstance(
+            current, dict) or configured.get("previous") is not None or \
+            current.get("keyId") != capability._key_id or not isinstance(
+                current.get("key"), bytes) or not hmac.compare_digest(
+                    _remote_recovery_nonce_domain(current["key"]),
+                    capability._key_domain):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_legacy_ledger_base_key_invalid")
+    marker = _validated_recovery_required_marker(checkpoint_blob)
+    durability = checkpoint_blob.get("missionTickDurability")
+    local_wal = durability.get("walAppliedSequence") \
+        if isinstance(durability, dict) else None
+    ancestry = capability._ancestry
+    if marker is None or marker["keyId"] != capability._key_id or not \
+            argus_persistent_storage.verify_checkpoint(
+                checkpoint_blob, require_seal=True) or not \
+            hmac.compare_digest(
+                capability._checkpoint_hash,
+                argus_persistent_storage._canonical_sha256(
+                    checkpoint_blob)) or local_wal != \
+            capability._target_wal or capability._remote_wal > local_wal or \
+            not isinstance(ancestry, dict) or ancestry.get(
+                "status") != "verified" or ancestry.get(
+                    "ledgerBaseCommitSha") != capability._base_commit or \
+            ancestry.get("exactCommitSha") != capability._pinned_ledger.get(
+                "commitSha") or isinstance(
+                    ancestry.get("distance"), bool) or not isinstance(
+                        ancestry.get("distance"), int) or ancestry.get(
+                            "distance") < 0:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_legacy_ledger_base_capability_invalid")
+    if not isinstance(compact_readback, dict) or not \
+            argus_remote_journal.verify_strict_compact_readback_snapshot(
+                compact_readback) or (compact_readback.get(
+                    "missionTickDurability") or {}).get(
+                        "walAppliedSequence") != local_wal:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_legacy_ledger_base_compact_invalid")
+    if capability._remote_wal == local_wal and not hmac.compare_digest(
+            capability._remote_receipt_hash,
+            str(compact_readback.get("receiptHash") or "").lower()):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_pinned_legacy_receipt_mismatch")
+    capability._consumed = True
+    return capability._base_commit
 
 
 def _pinned_recovery_path_never_existed(pinned_ledger):
@@ -21837,14 +22044,15 @@ def _verify_remote_recovery_nonce_authority(configured):
 
 
 def _prepare_keyed_local_recovery_nonce_boot(
-        checkpoint_blob, configured, pinned_ledger, *, evidence_handoff=None):
+        checkpoint_blob, configured, pinned_ledger, *, evidence_handoff=None,
+        restore_token=None):
     """Reconcile local authority with immutable remote truth before restore."""
     if evidence_handoff is not None and (
             not isinstance(evidence_handoff, list) or evidence_handoff):
         raise argus_remote_recovery.RecoveryBundleError(
             "recovery_pinned_evidence_handoff_invalid")
     remote_evidence = _probe_pinned_remote_recovery_nonce_floor(
-        configured, pinned_ledger)
+        configured, pinned_ledger, restore_token=restore_token)
     if remote_evidence is None and not _pinned_recovery_path_never_existed(
             pinned_ledger):
         raise argus_remote_recovery.RecoveryBundleError(
@@ -21876,7 +22084,7 @@ def _prepare_keyed_local_recovery_nonce_boot(
         # The compact-only legacy head has no nonce floor to import.  Keep its
         # exact immutable proof for the subsequent local-authority decision.
         _validated_pinned_legacy_readback_evidence(
-            remote_evidence, pinned_ledger)
+            remote_evidence, pinned_ledger, restore_token=restore_token)
     elif remote_evidence is not None:
         raise argus_remote_recovery.RecoveryBundleError(
             "recovery_nonce_remote_probe_invalid")
@@ -22209,7 +22417,8 @@ class _RemoteRecoveryCheckpointError(RuntimeError):
 
 def _persist_remote_recovery_sidecar_once(
         checkpoint, *, checkpoint_path=None,
-        authenticated_remote_floor=None):
+        authenticated_remote_floor=None,
+        legacy_ledger_base_capability=None, restore_token=None):
     """Encrypt the exact verified checkpoint projection before WAL compaction."""
     keys = argus_remote_recovery.configured_keys()
     if keys["status"] == "not_configured":
@@ -22261,6 +22470,15 @@ def _persist_remote_recovery_sidecar_once(
         market_replay_state_hash=checkpoint_blob.get(
             "marketReplayStateHash"))
     current = keys["current"]
+    if (legacy_ledger_base_capability is None) != (restore_token is None):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_legacy_ledger_base_capability_invalid")
+    ledger_base_commit_sha = (
+        _consume_legacy_recovery_ledger_base_capability(
+            legacy_ledger_base_capability, checkpoint_blob, compact, keys,
+            restore_token)
+        if legacy_ledger_base_capability is not None else
+        _recovery_ledger_base(checkpoint_blob))
     reservation = _reserve_remote_recovery_nonce(
         current["keyId"],
         authenticated_remote_floor=authenticated_remote_floor)
@@ -22275,7 +22493,7 @@ def _persist_remote_recovery_sidecar_once(
         source_checkpoint_hash=snapshot_hash,
         checkpoint_id=marker["checkpointId"],
         checkpoint_verified_at=verified_at,
-        ledger_base_commit_sha=_recovery_ledger_base(checkpoint_blob),
+        ledger_base_commit_sha=ledger_base_commit_sha,
         nonce_authority=nonce_authority)
     envelope = argus_remote_recovery.encrypt_payload(
         payload, current["key"], key_identifier=current["keyId"],
@@ -22321,13 +22539,16 @@ def _persist_remote_recovery_sidecar_once(
 
 def _persist_remote_recovery_sidecar(
         checkpoint, *, checkpoint_path=None,
-        authenticated_remote_floor=None):
+        authenticated_remote_floor=None,
+        legacy_ledger_base_capability=None, restore_token=None):
     """Make configured recovery failures terminal for checkpoint callers."""
     _DURABLE_STATE["remoteRecoverySidecar"] = {"status": "generating"}
     try:
         return _persist_remote_recovery_sidecar_once(
             checkpoint, checkpoint_path=checkpoint_path,
-            authenticated_remote_floor=authenticated_remote_floor)
+            authenticated_remote_floor=authenticated_remote_floor,
+            legacy_ledger_base_capability=legacy_ledger_base_capability,
+            restore_token=restore_token)
     except Exception as exc:
         _DURABLE_STATE["remoteRecoverySidecar"] = {
             "status": "failed", "errorClass": type(exc).__name__}
@@ -23500,7 +23721,9 @@ def _validated_recovery_required_marker(checkpoint_blob):
 
 
 def _migrate_legacy_local_recovery(
-        checkpoint_blob, configured, *, authenticated_local_handoff=None):
+        checkpoint_blob, configured, *, authenticated_local_handoff=None,
+        pinned_legacy_evidence=None, pinned_ledger=None,
+        restore_token=None):
     """One-time sealed legacy -> encrypted-required local migration.
 
     The rewritten checkpoint is never returned to the restore applicator until
@@ -23511,6 +23734,26 @@ def _migrate_legacy_local_recovery(
     if not isinstance(current, dict):
         raise argus_remote_recovery.RecoveryBundleError(
             "recovery_current_key_unavailable")
+    migration_handoff = (
+        pinned_legacy_evidence, pinned_ledger, restore_token)
+    if any(value is not None for value in migration_handoff) and not all(
+            value is not None for value in migration_handoff):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_legacy_ledger_base_handoff_invalid")
+    if pinned_legacy_evidence is not None:
+        try:
+            canonical = argus_persistent_storage.load_checkpoint(
+                _OSINT_PERSIST_FILE, require_seal=True)
+        except Exception as exc:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_legacy_ledger_base_checkpoint_invalid") from exc
+        if canonical != checkpoint_blob or not \
+                argus_persistent_storage.verify_checkpoint(
+                    checkpoint_blob, require_seal=True) or \
+                _validated_recovery_required_marker(
+                    checkpoint_blob) is not None:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_legacy_ledger_base_checkpoint_invalid")
     staged_checkpoint = None
     staged_lock = None
     try:
@@ -23550,12 +23793,23 @@ def _migrate_legacy_local_recovery(
         write = argus_persistent_storage.write_checkpoint(
             staged_checkpoint, migrated,
             temp_directory=_DURABILITY_PATHS["tempDirectory"])
+        staged = argus_persistent_storage.load_checkpoint(
+            staged_checkpoint, require_seal=True)
+        ledger_base_capability = None
+        if pinned_legacy_evidence is not None:
+            ledger_base_capability = \
+                _mint_legacy_recovery_ledger_base_capability(
+                    staged, configured, pinned_ledger,
+                    pinned_legacy_evidence, restore_token)
         _persist_remote_recovery_sidecar({
             **write,
             "verified": True,
             "readBackVerified": write.get("readBackVerified") is True,
             "includedWalSequence": target_wal,
-        }, checkpoint_path=staged_checkpoint)
+        }, checkpoint_path=staged_checkpoint,
+            legacy_ledger_base_capability=ledger_base_capability,
+            restore_token=(restore_token
+                           if ledger_base_capability is not None else None))
         staged = argus_persistent_storage.load_checkpoint(
             staged_checkpoint, require_seal=True)
         _verify_local_recovery_sidecar(
@@ -23594,13 +23848,20 @@ def _migrate_legacy_local_recovery(
 
 def _verify_local_recovery_sidecar(
         checkpoint_blob, *, allow_legacy_migration=True,
-        authenticated_local_handoff=None):
+        authenticated_local_handoff=None, pinned_legacy_evidence=None,
+        pinned_ledger=None, restore_token=None):
     """Authenticate a keyed local checkpoint before it becomes authority."""
     if authenticated_local_handoff is not None and (
             not isinstance(authenticated_local_handoff, list) or
             authenticated_local_handoff):
         raise argus_remote_recovery.RecoveryBundleError(
             "recovery_local_evidence_handoff_invalid")
+    migration_handoff = (
+        pinned_legacy_evidence, pinned_ledger, restore_token)
+    if any(value is not None for value in migration_handoff) and not all(
+            value is not None for value in migration_handoff):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_legacy_ledger_base_handoff_invalid")
     marker = _validated_recovery_required_marker(checkpoint_blob)
     configured = argus_remote_recovery.configured_keys()
     if configured.get("status") == "not_configured":
@@ -23616,7 +23877,9 @@ def _verify_local_recovery_sidecar(
                 "recovery_required_marker_missing")
         return _migrate_legacy_local_recovery(
             checkpoint_blob, configured,
-            authenticated_local_handoff=authenticated_local_handoff)
+            authenticated_local_handoff=authenticated_local_handoff,
+            pinned_legacy_evidence=pinned_legacy_evidence,
+            pinned_ledger=pinned_ledger, restore_token=restore_token)
     sidecar = _read_local_recovery_sidecar()
     envelope = sidecar["recovery"]
     if marker["keyId"] != envelope.get("keyId"):
@@ -24476,13 +24739,13 @@ def _local_recovery_pair_has_pinned_provenance(
 
 def _select_keyed_recovery_boot_authority(
         checkpoint_blob, local_evidence, remote_evidence, pinned_ledger,
-        configured):
+        configured, *, restore_token=None):
     """Deterministically select local or exact pinned authority by WAL target."""
     local = _validated_local_recovery_pair(
         local_evidence, checkpoint_blob, configured)
     if isinstance(remote_evidence, _AuthenticatedPinnedLegacyReadbackEvidence):
         legacy = _validated_pinned_legacy_readback_evidence(
-            remote_evidence, pinned_ledger)
+            remote_evidence, pinned_ledger, restore_token=restore_token)
         if not _local_recovery_pair_has_pinned_provenance(
                 local, legacy, pinned_ledger):
             raise argus_remote_recovery.RecoveryBundleError(
@@ -24967,6 +25230,7 @@ def _osint_restore_once():
     source = None
     pinned_ledger = None
     pinned_remote_evidence = None
+    restore_token = object()
     local_validity = "NOT_EVALUATED"
     restore_stage = "LOCAL_CHECKPOINT_LOAD"
     try:
@@ -24987,7 +25251,8 @@ def _osint_restore_once():
                     _DURABLE_STATE["remoteRecoveryNonceBoot"] = \
                         _prepare_keyed_local_recovery_nonce_boot(
                             blob, nonce_keys, pinned_ledger,
-                            evidence_handoff=remote_evidence_handoff)
+                            evidence_handoff=remote_evidence_handoff,
+                            restore_token=restore_token)
                 except argus_remote_recovery.RecoveryBundleError as exc:
                     _DURABLE_STATE["remoteRecoveryError"] = \
                         exc.classification
@@ -25013,7 +25278,17 @@ def _osint_restore_once():
             blob = _verify_local_recovery_sidecar(
                 blob, authenticated_local_handoff=(
                     local_evidence_handoff
-                    if nonce_keys.get("status") == "configured" else None))
+                    if nonce_keys.get("status") == "configured" else None),
+                pinned_legacy_evidence=(
+                    pinned_remote_evidence if isinstance(
+                        pinned_remote_evidence,
+                        _AuthenticatedPinnedLegacyReadbackEvidence) else None),
+                pinned_ledger=(pinned_ledger if isinstance(
+                    pinned_remote_evidence,
+                    _AuthenticatedPinnedLegacyReadbackEvidence) else None),
+                restore_token=(restore_token if isinstance(
+                    pinned_remote_evidence,
+                    _AuthenticatedPinnedLegacyReadbackEvidence) else None))
             if pinned_remote_evidence is not None:
                 if len(local_evidence_handoff) != 1:
                     raise argus_remote_recovery.RecoveryBundleError(
@@ -25021,7 +25296,8 @@ def _osint_restore_once():
                 try:
                     authority = _select_keyed_recovery_boot_authority(
                         blob, local_evidence_handoff[0],
-                        pinned_remote_evidence, pinned_ledger, nonce_keys)
+                        pinned_remote_evidence, pinned_ledger, nonce_keys,
+                        restore_token=restore_token)
                 except argus_remote_recovery.RecoveryBundleError as exc:
                     _DURABLE_STATE["remoteRecoveryError"] = \
                         exc.classification

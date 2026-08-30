@@ -45,6 +45,8 @@ PREVIOUS_KEY = b"\x22" * 32
 CHECKPOINT_ID = "rcp-" + "5" * 32
 PRODUCTION_LEDGER_SHA = "f5f17fcd54e9713f5613ea9fa09b4f230f5662f5"
 PRODUCTION_COMMIT_RESPONSE_BYTES = 86_817
+PRODUCTION_LOCAL_WAL = 8968
+PRODUCTION_REMOTE_WAL = 8953
 
 
 def _encoded_key(value):
@@ -251,6 +253,48 @@ def _verified_legacy_checkpoint(readback, targets):
         "walErrorClass": None,
     }
     return value
+
+
+def _unverified_first_activation_checkpoint(
+        remote_readback, local_targets, *, local_wal=PRODUCTION_LOCAL_WAL,
+        remote_wal=PRODUCTION_REMOTE_WAL):
+    """Production-shaped sealed-local authority with one stale legacy cycle."""
+    value = _full(local_wal)
+    value.update(copy.deepcopy(local_targets))
+    durability = value["missionTickDurability"]
+    durability["walAppliedSequence"] = local_wal
+    durability["remoteWalAppliedSequence"] = remote_wal
+    durability["verifiedWalSequence"] = max(1, remote_wal - 199)
+    manifest_hash = remote_readback["integrityManifest"]["manifestHash"]
+    value["remoteJournalCycle"] = {
+        "remoteCommitSha": BASE_SHA,
+        "receiptCommitSha": BASE_SHA,
+        "committedAt": RECOVERY_AT,
+        "readBackAt": RECOVERY_AT,
+        "readBackVerified": False,
+        "walReadBackVerified": False,
+        "expectedHash": manifest_hash,
+        "actualHash": manifest_hash,
+        "remoteWalAppliedSequence": 0,
+        "verifiedWalSequence": 0,
+        "compactReceiptHash": None,
+        "remoteDurabilityState": "verification_pending",
+        "receiptErrorClass": "hash_mismatch",
+        "errorClass": "hash_mismatch",
+        "walErrorClass": None,
+    }
+    return value
+
+
+def _pinned_legacy_ledger():
+    return {
+        "base": ("https://raw.githubusercontent.com/mitsugue/argus/" +
+                 PINNED_SHA + "/ledger"),
+        "commitSha": PINNED_SHA,
+        "owner": "mitsugue",
+        "repository": "argus",
+        "pathPrefix": "ledger",
+    }
 
 
 def _sealed_local_pair(*, key, key_id, readback, envelope, targets,
@@ -1285,6 +1329,230 @@ def test_configured_legacy_checkpoint_migrates_before_authority():
             "status": "verified", "keyId": CURRENT_ID,
             "targetWalSequence": RECOVERY_WAL}
         assert scanner._DURABLE_STATE.get("lastRestoreAt") is not None
+
+
+def test_first_activation_capability_migrates_wal_8968_over_legacy_8953():
+    remote_readback, _remote_envelope, _remote_targets = _artifacts(
+        target_wal=PRODUCTION_REMOTE_WAL, mission_count=1)
+    _local_readback, _local_envelope, local_targets = _artifacts(
+        target_wal=PRODUCTION_LOCAL_WAL, mission_count=3,
+        nonce=b"\x91" * 12, generation_digit="9")
+    legacy = _unverified_first_activation_checkpoint(
+        remote_readback, local_targets)
+    pinned = _pinned_legacy_ledger()
+    captured_capabilities = []
+
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            mock.patch.dict(os.environ, _key_env(), clear=False):
+        storage.write_checkpoint(paths["checkpoint"], legacy,
+                                 temp_directory=root)
+        configured = recovery.configured_keys()
+        with mock.patch.object(
+                scanner, "_probe_pinned_remote_recovery_nonce_floor",
+                return_value=None), mock.patch.object(
+                    scanner, "_pinned_recovery_path_never_existed",
+                    return_value=True):
+            boot = scanner._prepare_keyed_local_recovery_nonce_boot(
+                storage.load_checkpoint(
+                    paths["checkpoint"], require_seal=True),
+                configured, pinned)
+        assert boot["status"] == "activated_genesis"
+        consumed = [int.from_bytes(
+            scanner._next_remote_recovery_nonce(CURRENT_ID), "big")
+            for _ in range(16)]
+        assert consumed == list(range(1, 17))
+        before = scanner._verify_remote_recovery_nonce_authority(configured)
+        domain = recovery.nonce_material_domain(CURRENT_KEY)
+        assert before["generation"] == 16
+        assert before["keyMaterialCounters"] == {domain: 16}
+
+        responses = _keyed_local_legacy_probe_responses(remote_readback) + [
+            _commit_metadata(PINNED_SHA, [BASE_SHA]),
+            _commit_metadata(BASE_SHA, []),
+        ]
+        real_mint = scanner._mint_legacy_recovery_ledger_base_capability
+
+        def capture_capability(*args, **kwargs):
+            capability = real_mint(*args, **kwargs)
+            captured_capabilities.append(capability)
+            return capability
+
+        with mock.patch.object(
+                scanner.requests, "get", side_effect=responses), \
+                mock.patch.object(
+                    scanner,
+                    "_mint_legacy_recovery_ledger_base_capability",
+                    side_effect=capture_capability):
+            assert scanner._osint_restore_once() == "persistent_local"
+
+        assert len(captured_capabilities) == 1
+        assert captured_capabilities[0]._consumed is True
+        installed = storage.load_checkpoint(
+            paths["checkpoint"], require_seal=True)
+        assert installed["missionTickDurability"][
+            "walAppliedSequence"] == PRODUCTION_LOCAL_WAL
+        assert installed["remoteJournalCycle"]["readBackVerified"] is False
+        assert installed["remoteJournalCycle"][
+            "walReadBackVerified"] is False
+        assert installed["remoteJournalCycle"][
+            "compactReceiptHash"] is None
+        sidecar = scanner._read_local_recovery_sidecar()
+        payload = recovery.validate_pair(
+            sidecar["readback"], sidecar["recovery"], CURRENT_KEY,
+            key_identifier=CURRENT_ID)
+        assert payload["targetWalSequence"] == PRODUCTION_LOCAL_WAL
+        assert payload["ledgerBaseCommitSha"] == BASE_SHA
+        assert payload["targets"]["missions"] == local_targets["missions"]
+        assert int.from_bytes(recovery._b64_decode(
+            sidecar["recovery"]["nonce"], "test_nonce_invalid"), "big") == 17
+        after = scanner._verify_remote_recovery_nonce_authority(configured)
+        assert after["generation"] == 17
+        assert after["keyMaterialCounters"] == {domain: 17}
+        assert scanner._DURABLE_STATE["remoteRecoveryNonceBoot"][
+            "authority"] == "local"
+        with pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_legacy_ledger_base_capability_invalid"):
+            scanner._consume_legacy_recovery_ledger_base_capability(
+                captured_capabilities[0], installed, sidecar["readback"],
+                configured, captured_capabilities[0]._restore_token)
+
+
+def test_first_activation_same_wal_conflict_fails_before_nonce_reservation():
+    remote_readback, _remote_envelope, _remote_targets = _artifacts(
+        target_wal=PRODUCTION_REMOTE_WAL, mission_count=1)
+    _local_readback, _local_envelope, local_targets = _artifacts(
+        target_wal=PRODUCTION_REMOTE_WAL, mission_count=3,
+        nonce=b"\x92" * 12, generation_digit="9")
+    legacy = _unverified_first_activation_checkpoint(
+        remote_readback, local_targets,
+        local_wal=PRODUCTION_REMOTE_WAL,
+        remote_wal=PRODUCTION_REMOTE_WAL)
+    legacy["marketLedgerStateHash"] = "9" * 16
+    pinned = _pinned_legacy_ledger()
+
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            mock.patch.dict(os.environ, _key_env(), clear=False):
+        storage.write_checkpoint(paths["checkpoint"], legacy,
+                                 temp_directory=root)
+        canonical_before = pathlib.Path(paths["checkpoint"]).read_bytes()
+        configured = recovery.configured_keys()
+        with mock.patch.object(
+                scanner, "_probe_pinned_remote_recovery_nonce_floor",
+                return_value=None), mock.patch.object(
+                    scanner, "_pinned_recovery_path_never_existed",
+                    return_value=True):
+            scanner._prepare_keyed_local_recovery_nonce_boot(
+                storage.load_checkpoint(
+                    paths["checkpoint"], require_seal=True),
+                configured, pinned)
+        for _ in range(16):
+            scanner._next_remote_recovery_nonce(CURRENT_ID)
+        domain = recovery.nonce_material_domain(CURRENT_KEY)
+        before = scanner._verify_remote_recovery_nonce_authority(configured)
+        assert before["generation"] == 16
+        assert before["keyMaterialCounters"] == {domain: 16}
+
+        with mock.patch.object(
+                scanner.requests, "get", side_effect=
+                _keyed_local_legacy_probe_responses(remote_readback)):
+            assert scanner._osint_restore_once() is None
+        after = scanner._verify_remote_recovery_nonce_authority(configured)
+        assert after == before
+        assert not pathlib.Path(paths["recovery"]).exists()
+        assert pathlib.Path(paths["checkpoint"]).read_bytes() == \
+            canonical_before
+        assert scanner._DURABLE_STATE["remoteRecoveryLocalError"] == \
+            "recovery_legacy_migration_failed"
+        with pytest.raises(ValueError, match="recovery_ledger_base_unverified"):
+            scanner._recovery_ledger_base(legacy)
+
+
+def test_first_activation_capability_mutation_and_stale_use_fail_closed():
+    remote_readback, _remote_envelope, _remote_targets = _artifacts(
+        target_wal=PRODUCTION_REMOTE_WAL, mission_count=1)
+    _local_readback, _local_envelope, local_targets = _artifacts(
+        target_wal=PRODUCTION_LOCAL_WAL, mission_count=2,
+        nonce=b"\x93" * 12, generation_digit="9")
+    checkpoint = _unverified_first_activation_checkpoint(
+        remote_readback, local_targets)
+    checkpoint["remoteRecoveryRequired"] = {
+        "schemaVersion": recovery.SIDECAR_SCHEMA,
+        "mode": "encrypted_required",
+        "keyId": CURRENT_ID,
+        "checkpointId": CHECKPOINT_ID,
+    }
+    sealed = storage.seal_checkpoint(checkpoint)
+    pinned = _pinned_legacy_ledger()
+    restore_token = object()
+    ancestry = {
+        "status": "verified", "ledgerBaseCommitSha": BASE_SHA,
+        "exactCommitSha": PINNED_SHA, "distance": 1,
+    }
+
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            mock.patch.dict(os.environ, _key_env(), clear=False), \
+            mock.patch.object(
+                scanner, "_verify_authenticated_ledger_commit_path",
+                return_value=ancestry):
+        configured = recovery.configured_keys()
+
+        def mint(evidence=None):
+            return scanner._mint_legacy_recovery_ledger_base_capability(
+                sealed, configured, pinned,
+                evidence or scanner._AuthenticatedPinnedLegacyReadbackEvidence(
+                    pinned, remote_readback, restore_token),
+                restore_token)
+
+        mutated = mint()
+        mutated._base_commit = "c" * 40
+        with pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_legacy_ledger_base_capability_invalid"):
+            scanner._consume_legacy_recovery_ledger_base_capability(
+                mutated, sealed, {}, configured, restore_token)
+
+        stale = mint()
+        with pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_legacy_ledger_base_capability_invalid"):
+            scanner._consume_legacy_recovery_ledger_base_capability(
+                stale, sealed, {}, configured, object())
+
+        changed_evidence = scanner._AuthenticatedPinnedLegacyReadbackEvidence(
+            pinned, remote_readback, restore_token)
+        changed = mint(changed_evidence)
+        changed_evidence._readback["receiptHash"] = "0" * 16
+        with pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_pinned_legacy_evidence_invalid"):
+            scanner._consume_legacy_recovery_ledger_base_capability(
+                changed, sealed, {}, configured, restore_token)
+
+        newer_readback, _newer_envelope, _newer_targets = _artifacts(
+            target_wal=PRODUCTION_LOCAL_WAL + 1, mission_count=1)
+        newer = scanner._AuthenticatedPinnedLegacyReadbackEvidence(
+            pinned, newer_readback, restore_token)
+        with pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_legacy_ledger_base_authority_invalid"):
+            scanner._mint_legacy_recovery_ledger_base_capability(
+                sealed, configured, pinned, newer, restore_token)
+
+        with mock.patch.dict(
+                os.environ, _key_env(previous=PREVIOUS_KEY), clear=False), \
+                pytest.raises(
+                    recovery.RecoveryBundleError,
+                    match="recovery_legacy_ledger_base_key_invalid"):
+            scanner._mint_legacy_recovery_ledger_base_capability(
+                sealed, recovery.configured_keys(), pinned,
+                scanner._AuthenticatedPinnedLegacyReadbackEvidence(
+                    pinned, remote_readback, restore_token),
+                restore_token)
+
+        assert scanner._remote_recovery_nonce_authority_absent(
+            include_lock=False)
+        assert not pathlib.Path(paths["recovery"]).exists()
 
 
 def test_configured_legacy_migration_failure_never_becomes_authority():
