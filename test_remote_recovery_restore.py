@@ -44,6 +44,8 @@ CURRENT_KEY = b"\x11" * 32
 PREVIOUS_KEY = b"\x22" * 32
 CHECKPOINT_ID = "rcp-" + "5" * 32
 PRODUCTION_LEDGER_SHA = "f5f17fcd54e9713f5613ea9fa09b4f230f5662f5"
+PRODUCTION_CHECKPOINT_COMMIT_SHA = \
+    "abd478a4c32f19c3a10a41b34481fe31b493e841"
 PRODUCTION_COMMIT_RESPONSE_BYTES = 86_817
 PRODUCTION_LOCAL_WAL = 8968
 PRODUCTION_REMOTE_WAL = 8953
@@ -171,6 +173,66 @@ def _commit_metadata(sha, parents):
         "sha": sha, "parents": [{"sha": parent} for parent in parents]})
 
 
+def _commit_api_url(owner, repository, sha):
+    return f"https://api.github.com/repos/{owner}/{repository}/commits/{sha}"
+
+
+def _linear_compare_value(base, head, distance, *, owner="mitsugue",
+                          repository="argus"):
+    assert isinstance(distance, int) and distance >= 0
+    request_url = (
+        f"https://api.github.com/repos/{owner}/{repository}/compare/"
+        f"{base}...{head}")
+    base_value = {
+        "sha": base, "url": _commit_api_url(owner, repository, base)}
+    if distance == 0:
+        assert head == base
+        commits = []
+        status = "identical"
+    else:
+        middle = [f"{index:040x}" for index in range(1, distance)]
+        shas = [*middle, head]
+        commits = []
+        parent = base
+        for sha in shas:
+            commits.append({
+                "sha": sha,
+                "url": _commit_api_url(owner, repository, sha),
+                "parents": [{
+                    "sha": parent,
+                    "url": _commit_api_url(owner, repository, parent),
+                }],
+            })
+            parent = sha
+        status = "ahead"
+    return {
+        "url": request_url,
+        "status": status,
+        "ahead_by": distance,
+        "behind_by": 0,
+        "total_commits": distance,
+        "base_commit": copy.deepcopy(base_value),
+        "merge_base_commit": copy.deepcopy(base_value),
+        "commits": commits,
+        "files": [],
+    }
+
+
+def _linear_compare_response(base, head, distance, *, owner="mitsugue",
+                             repository="argus"):
+    return FakeResponse(200, _linear_compare_value(
+        base, head, distance, owner=owner, repository=repository))
+
+
+def _linear_commit_responses(base, head, distance, *, limit=8):
+    assert distance >= 1
+    shas = [base, *[f"{index:040x}" for index in range(1, distance)], head]
+    return [
+        _commit_metadata(shas[index], [shas[index - 1]])
+        for index in range(len(shas) - 1, 0, -1)
+    ][:limit]
+
+
 def _ref_value(sha=PINNED_SHA, *, ref="ledger", owner="mitsugue",
                repository="argus"):
     return {
@@ -286,11 +348,11 @@ def _unverified_first_activation_checkpoint(
     return value
 
 
-def _pinned_legacy_ledger():
+def _pinned_legacy_ledger(commit_sha=PINNED_SHA):
     return {
         "base": ("https://raw.githubusercontent.com/mitsugue/argus/" +
-                 PINNED_SHA + "/ledger"),
-        "commitSha": PINNED_SHA,
+                 commit_sha + "/ledger"),
+        "commitSha": commit_sha,
         "owner": "mitsugue",
         "repository": "argus",
         "pathPrefix": "ledger",
@@ -565,11 +627,11 @@ def _deep_outer_sidecar_response(depth=10_000):
     return response
 
 
-def _keyed_local_legacy_probe_responses(readback, *, history=None,
-                                        ancestry=None):
+def _keyed_local_legacy_probe_responses(
+        readback, *, history=None, ancestry=None, pinned_sha=PINNED_SHA):
     """One immutable legacy readback plus proved recovery-path absence."""
     values = [
-        _ref_response(),
+        _ref_response(pinned_sha),
         FakeResponse(200, readback),
         FakeResponse(404),
         FakeResponse(200, [] if history is None else history),
@@ -1130,35 +1192,127 @@ def test_cold_restore_requires_bounded_linear_base_to_pinned_commit():
             assert scanner._DURABLE_STATE["remoteRecoveryError"] == expected
 
 
-def test_bounded_commit_path_accepts_equal_and_rejects_stale_replay():
+@pytest.mark.parametrize("distance", [0, 1, 7])
+def test_commit_path_fast_path_accepts_old_boundary(distance):
+    base = BASE_SHA
+    head = base if distance == 0 else PINNED_SHA
+    if distance == 0:
+        metadata = [{"sha": base, "parents": []}]
+    else:
+        shas = [base, *[f"{index:040x}"
+                        for index in range(1, distance)], head]
+        metadata = [
+            {"sha": shas[index], "parents": [shas[index - 1]]}
+            for index in range(len(shas) - 1, 0, -1)
+        ]
+        metadata.append({"sha": base, "parents": []})
     with mock.patch.object(
             scanner, "_bounded_ledger_commit_metadata",
-            return_value={"sha": BASE_SHA, "parents": []}) as metadata:
+            side_effect=metadata) as commit_get, \
+            mock.patch.object(scanner, "_bounded_ledger_compare") as compare:
         assert scanner._verify_authenticated_ledger_commit_path(
-            BASE_SHA, BASE_SHA, owner="owner", repository="ledger") == {
+            base, head, owner="mitsugue", repository="argus") == {
+                "status": "verified", "ledgerBaseCommitSha": base,
+                "exactCommitSha": head, "distance": distance}
+    assert commit_get.call_count == distance + 1
+    compare.assert_not_called()
+
+
+@pytest.mark.parametrize("distance", [8, 11, 250])
+def test_bounded_compare_accepts_complete_linear_contract(distance):
+    response = _linear_compare_response(BASE_SHA, PINNED_SHA, distance)
+    with mock.patch.object(scanner.requests, "get", return_value=response) as get:
+        assert scanner._bounded_ledger_compare(
+            "mitsugue", "argus", BASE_SHA, PINNED_SHA) == {
                 "status": "verified", "ledgerBaseCommitSha": BASE_SHA,
-                "exactCommitSha": BASE_SHA, "distance": 0}
-    metadata.assert_called_once_with("owner", "ledger", BASE_SHA)
+                "exactCommitSha": PINNED_SHA, "distance": distance}
+    get.assert_called_once_with(
+        "https://api.github.com/repos/mitsugue/argus/compare/" +
+        BASE_SHA + "..." + PINNED_SHA,
+        timeout=(6, 15), stream=True, allow_redirects=False,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        })
 
-    chain = {f"{index:040x}": f"{index - 1:040x}"
-             for index in range(1, 34)}
 
-    def commit_metadata(_owner, _repository, commit):
-        parent = chain.get(commit)
-        return {"sha": commit, "parents": [parent] if parent else []}
+def test_bounded_compare_rejects_provider_boundary_plus_one():
+    value = _linear_compare_value(BASE_SHA, PINNED_SHA, 250)
+    value.update({"ahead_by": 251, "total_commits": 251})
+    with mock.patch.object(
+            scanner.requests, "get", return_value=FakeResponse(200, value)), \
+            pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_ledger_compare_incomplete"):
+        scanner._bounded_ledger_compare(
+            "mitsugue", "argus", BASE_SHA, PINNED_SHA)
+
+
+def test_bounded_compare_rejects_merge_fork_cycle_and_identity_mutation():
+    merge = _linear_compare_value(BASE_SHA, PINNED_SHA, 1)
+    merge["commits"][0]["parents"].append({
+        "sha": "e" * 40,
+        "url": _commit_api_url("mitsugue", "argus", "e" * 40),
+    })
+    fork = _linear_compare_value(BASE_SHA, PINNED_SHA, 1)
+    fork.update({"status": "diverged", "behind_by": 1})
+    descendant = _linear_compare_value(BASE_SHA, PINNED_SHA, 1)
+    descendant.update({"status": "behind", "ahead_by": 0,
+                       "behind_by": 1, "total_commits": 0, "commits": []})
+    cycle = _linear_compare_value(BASE_SHA, PINNED_SHA, 2)
+    cycle["commits"][1]["parents"][0]["sha"] = \
+        cycle["commits"][1]["sha"]
+    wrong_repository = _linear_compare_value(
+        BASE_SHA, PINNED_SHA, 1, owner="other", repository="repo")
+    mutated_head = _linear_compare_value(BASE_SHA, PINNED_SHA, 1)
+    mutated_head["commits"][-1]["sha"] = "e" * 40
+    malformed = {"url": "https://api.github.com/invalid"}
+    cases = [
+        (merge, "recovery_ledger_commit_multiparent"),
+        (fork, "recovery_ledger_commit_nonancestor"),
+        (descendant, "recovery_ledger_commit_nonancestor"),
+        (cycle, "recovery_ledger_commit_nonancestor"),
+        (wrong_repository, "recovery_ledger_compare_invalid"),
+        (mutated_head, "recovery_ledger_compare_invalid"),
+        (malformed, "recovery_ledger_compare_invalid"),
+    ]
+    for value, expected in cases:
+        with mock.patch.object(
+                scanner.requests, "get",
+                return_value=FakeResponse(200, value)), \
+                pytest.raises(recovery.RecoveryBundleError, match=expected):
+            scanner._bounded_ledger_compare(
+                "mitsugue", "argus", BASE_SHA, PINNED_SHA)
+
+
+def test_bounded_compare_rejects_missing_http_timeout_and_oversized():
+    with mock.patch.object(
+            scanner.requests, "get", return_value=FakeResponse(404)), \
+            pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_ledger_compare_http_error"):
+        scanner._bounded_ledger_compare(
+            "mitsugue", "argus", BASE_SHA, PINNED_SHA)
 
     with mock.patch.object(
-            scanner, "_bounded_ledger_commit_metadata",
-            side_effect=commit_metadata), \
-            mock.patch.object(scanner, "_LEDGER_ANCESTRY_MAX_COMMITS", 2):
-        try:
-            scanner._verify_authenticated_ledger_commit_path(
-                f"{1:040x}", f"{4:040x}", owner="owner",
-                repository="ledger")
-        except recovery.RecoveryBundleError as exc:
-            assert exc.classification == "recovery_ledger_commit_stale_replay"
-        else:
-            raise AssertionError("stale ancestry replay accepted")
+            scanner.requests, "get",
+            side_effect=scanner.requests.Timeout("synthetic")), \
+            pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_ledger_compare_transport_error"):
+        scanner._bounded_ledger_compare(
+            "mitsugue", "argus", BASE_SHA, PINNED_SHA)
+
+    oversized = FakeResponse(200)
+    oversized._encoded = b"x" * 17
+    with mock.patch.object(scanner.requests, "get", return_value=oversized), \
+            mock.patch.object(
+                scanner, "_LEDGER_COMPARE_RESPONSE_MAX_BYTES", 16), \
+            pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_ledger_compare_oversized"):
+        scanner._bounded_ledger_compare(
+            "mitsugue", "argus", BASE_SHA, PINNED_SHA)
 
 
 def test_stale_or_wal_regressing_remote_recovery_never_bootstraps():
@@ -1331,7 +1485,7 @@ def test_configured_legacy_checkpoint_migrates_before_authority():
         assert scanner._DURABLE_STATE.get("lastRestoreAt") is not None
 
 
-def test_first_activation_capability_migrates_wal_8968_over_legacy_8953():
+def test_production_shaped_first_activation_accepts_live_distance_11_from_nonce_32():
     remote_readback, _remote_envelope, _remote_targets = _artifacts(
         target_wal=PRODUCTION_REMOTE_WAL, mission_count=1)
     _local_readback, _local_envelope, local_targets = _artifacts(
@@ -1339,7 +1493,11 @@ def test_first_activation_capability_migrates_wal_8968_over_legacy_8953():
         nonce=b"\x91" * 12, generation_digit="9")
     legacy = _unverified_first_activation_checkpoint(
         remote_readback, local_targets)
-    pinned = _pinned_legacy_ledger()
+    legacy["remoteJournalCycle"].update({
+        "remoteCommitSha": PRODUCTION_CHECKPOINT_COMMIT_SHA,
+        "receiptCommitSha": PRODUCTION_CHECKPOINT_COMMIT_SHA,
+    })
+    pinned = _pinned_legacy_ledger(PRODUCTION_LEDGER_SHA)
     captured_capabilities = []
 
     with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
@@ -1359,17 +1517,25 @@ def test_first_activation_capability_migrates_wal_8968_over_legacy_8953():
         assert boot["status"] == "activated_genesis"
         consumed = [int.from_bytes(
             scanner._next_remote_recovery_nonce(CURRENT_ID), "big")
-            for _ in range(16)]
-        assert consumed == list(range(1, 17))
+            for _ in range(32)]
+        assert consumed == list(range(1, 33))
         before = scanner._verify_remote_recovery_nonce_authority(configured)
         domain = recovery.nonce_material_domain(CURRENT_KEY)
-        assert before["generation"] == 16
-        assert before["keyMaterialCounters"] == {domain: 16}
+        assert before["generation"] == 32
+        assert before["keyMaterialCounters"] == {domain: 32}
+        assert not pathlib.Path(paths["recovery"]).exists()
 
-        responses = _keyed_local_legacy_probe_responses(remote_readback) + [
-            _commit_metadata(PINNED_SHA, [BASE_SHA]),
-            _commit_metadata(BASE_SHA, []),
+        ancestry_once = [
+            *_linear_commit_responses(
+                PRODUCTION_CHECKPOINT_COMMIT_SHA,
+                PRODUCTION_LEDGER_SHA, 11),
+            _linear_compare_response(
+                PRODUCTION_CHECKPOINT_COMMIT_SHA,
+                PRODUCTION_LEDGER_SHA, 11),
         ]
+        responses = _keyed_local_legacy_probe_responses(
+            remote_readback, ancestry=[*ancestry_once, *ancestry_once],
+            pinned_sha=PRODUCTION_LEDGER_SHA)
         real_mint = scanner._mint_legacy_recovery_ledger_base_capability
 
         def capture_capability(*args, **kwargs):
@@ -1401,13 +1567,14 @@ def test_first_activation_capability_migrates_wal_8968_over_legacy_8953():
             sidecar["readback"], sidecar["recovery"], CURRENT_KEY,
             key_identifier=CURRENT_ID)
         assert payload["targetWalSequence"] == PRODUCTION_LOCAL_WAL
-        assert payload["ledgerBaseCommitSha"] == BASE_SHA
+        assert payload["ledgerBaseCommitSha"] == \
+            PRODUCTION_CHECKPOINT_COMMIT_SHA
         assert payload["targets"]["missions"] == local_targets["missions"]
         assert int.from_bytes(recovery._b64_decode(
-            sidecar["recovery"]["nonce"], "test_nonce_invalid"), "big") == 17
+            sidecar["recovery"]["nonce"], "test_nonce_invalid"), "big") == 33
         after = scanner._verify_remote_recovery_nonce_authority(configured)
-        assert after["generation"] == 17
-        assert after["keyMaterialCounters"] == {domain: 17}
+        assert after["generation"] == 33
+        assert after["keyMaterialCounters"] == {domain: 33}
         assert scanner._DURABLE_STATE["remoteRecoveryNonceBoot"][
             "authority"] == "local"
         with pytest.raises(

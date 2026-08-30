@@ -19775,7 +19775,18 @@ _DURABLE_RECOVERY_MAX_BYTES = argus_remote_recovery.MAX_SIDECAR_BYTES
 # inheriting the much larger commit-detail response that includes file diffs.
 _LEDGER_REF_RESPONSE_MAX_BYTES = 2 * 1024
 _LEDGER_COMMIT_METADATA_MAX_BYTES = 32 * 1024
-_LEDGER_ANCESTRY_MAX_COMMITS = 8
+# Short histories retain the exact immutable Git-object walk.  This is a
+# network fast path, not a semantic replay-age limit: unrelated ledger writers
+# can legitimately advance the shared branch while a Recovery checkpoint stays
+# valid.  Longer histories switch to one bounded GitHub comparison response.
+_LEDGER_ANCESTRY_FAST_PATH_COMMITS = 8
+# GitHub's unpaginated compare contract returns at most 250 commits and always
+# includes the newest commit.  Accept only a complete response whose declared
+# distance equals the returned linear parent chain; 251+ is therefore
+# fail-closed rather than partially trusted.
+_LEDGER_COMPARE_MAX_COMMITS = 250
+_LEDGER_COMPARE_RESPONSE_MAX_BYTES = \
+    argus_remote_recovery.MAX_SIDECAR_BYTES
 _OSINT_LOOP_BUDGET = {"fast": 0, "balanced": 1, "deep": 2, "war_room": 3}
 _OSINT_PARSER_HEALTH = {"lastWarnings": [], "at": None}
 _OSINT_URL_QUEUE = []                  # オーナー依頼のURL検証待ち(有界12・worker消化)
@@ -23498,16 +23509,157 @@ def _bounded_ledger_commit_metadata(owner, repository, commit_sha):
             response.close()
 
 
+def _bounded_ledger_compare(owner, repository, base_commit_sha,
+                            exact_commit_sha):
+    """Prove one complete linear ancestry segment in a bounded response.
+
+    GitHub's unpaginated comparison is capped at 250 commits.  Requiring its
+    declared distance to equal the complete returned parent chain preserves
+    the existing no-merge rule without one network request per commit.  A
+    longer or truncated comparison is ambiguous and remains fail-closed.
+    """
+    owner = str(owner or "")
+    repository = str(repository or "")
+    base = str(base_commit_sha or "").lower()
+    exact = str(exact_commit_sha or "").lower()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", owner) or not re.fullmatch(
+            r"[A-Za-z0-9_.-]+", repository):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_ledger_repository_invalid")
+    if not re.fullmatch(r"[0-9a-f]{40}", base) or not re.fullmatch(
+            r"[0-9a-f]{40}", exact):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_ledger_commit_invalid")
+
+    request_url = (
+        f"https://api.github.com/repos/{owner}/{repository}/compare/"
+        f"{base}...{exact}")
+    response = None
+    try:
+        response = requests.get(
+            request_url, timeout=(6, 15), stream=True,
+            allow_redirects=False,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            })
+        if response.status_code != 200:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_ledger_compare_http_error")
+        encoded = bytearray()
+        for chunk in response.iter_content(chunk_size=16 * 1024):
+            if not chunk:
+                continue
+            if len(encoded) + len(chunk) > \
+                    _LEDGER_COMPARE_RESPONSE_MAX_BYTES:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_ledger_compare_oversized")
+            encoded.extend(chunk)
+        try:
+            value = json.loads(encoded.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_ledger_compare_invalid") from exc
+
+        commit_url = (
+            f"https://api.github.com/repos/{owner}/{repository}/commits/")
+        base_value = value.get("base_commit") \
+            if isinstance(value, dict) else None
+        merge_base = value.get("merge_base_commit") \
+            if isinstance(value, dict) else None
+        commits = value.get("commits") if isinstance(value, dict) else None
+        ahead = value.get("ahead_by") if isinstance(value, dict) else None
+        behind = value.get("behind_by") if isinstance(value, dict) else None
+        total = value.get("total_commits") \
+            if isinstance(value, dict) else None
+        status = value.get("status") if isinstance(value, dict) else None
+        if not isinstance(value, dict) or value.get("url") != request_url or \
+                not isinstance(base_value, dict) or \
+                base_value.get("sha") != base or \
+                base_value.get("url") != commit_url + base or \
+                not isinstance(merge_base, dict) or \
+                merge_base.get("sha") != base or \
+                merge_base.get("url") != commit_url + base or \
+                type(ahead) is not int or type(behind) is not int or \
+                type(total) is not int or not isinstance(commits, list):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_ledger_compare_invalid")
+
+        if base == exact:
+            if status != "identical" or ahead != 0 or behind != 0 or \
+                    total != 0 or commits:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_ledger_compare_invalid")
+            return {
+                "status": "verified", "ledgerBaseCommitSha": base,
+                "exactCommitSha": exact, "distance": 0,
+            }
+
+        if status in ("behind", "diverged"):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_ledger_commit_nonancestor")
+        if status != "ahead" or behind != 0 or ahead <= 0 or \
+                total != ahead:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_ledger_compare_invalid")
+        if ahead > _LEDGER_COMPARE_MAX_COMMITS or len(commits) != ahead:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_ledger_compare_incomplete")
+
+        previous = base
+        visited = {base}
+        for commit in commits:
+            commit_sha = str(
+                commit.get("sha") if isinstance(commit, dict) else ""
+            ).lower()
+            parents = commit.get("parents") \
+                if isinstance(commit, dict) else None
+            if not re.fullmatch(r"[0-9a-f]{40}", commit_sha) or \
+                    commit_sha in visited or commit.get("url") != \
+                    commit_url + commit_sha or not isinstance(parents, list):
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_ledger_compare_invalid")
+            if len(parents) > 1:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_ledger_commit_multiparent")
+            if len(parents) != 1:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_ledger_commit_nonancestor")
+            parent = parents[0]
+            parent_sha = str(
+                parent.get("sha") if isinstance(parent, dict) else ""
+            ).lower()
+            if parent_sha != previous or not isinstance(parent, dict) or \
+                    parent.get("url") != commit_url + parent_sha:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_ledger_commit_nonancestor")
+            visited.add(commit_sha)
+            previous = commit_sha
+        if previous != exact:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_ledger_compare_invalid")
+        return {
+            "status": "verified", "ledgerBaseCommitSha": base,
+            "exactCommitSha": exact, "distance": ahead,
+        }
+    except argus_remote_recovery.RecoveryBundleError:
+        raise
+    except Exception as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_ledger_compare_transport_error") from exc
+    finally:
+        if response is not None:
+            response.close()
+
+
 def _verify_authenticated_ledger_commit_path(
         ledger_base_commit_sha, exact_commit_sha, *, owner, repository):
     """Prove authenticated base C is on one bounded linear path to exact X.
 
     ``ledger_base_commit_sha`` is accepted only after AES-GCM pair validation
-    by each caller.  GitHub's immutable Git-object API independently binds the
-    exact pinned/receipt commit X to that C.  Merge commits are rejected so a
-    sibling cannot be smuggled in through second-parent ancestry, and the
-    finite traversal makes an old replay fail closed instead of causing an
-    unbounded boot or ACK operation.
+    by each caller.  Short paths use exact immutable Git objects.  Longer paths
+    use one bounded, complete GitHub comparison.  Both reject merge commits so
+    a sibling cannot be smuggled in through second-parent ancestry.
     """
     base = str(ledger_base_commit_sha or "").lower()
     exact = str(exact_commit_sha or "").lower()
@@ -23515,9 +23667,13 @@ def _verify_authenticated_ledger_commit_path(
             r"[0-9a-f]{40}", exact):
         raise argus_remote_recovery.RecoveryBundleError(
             "recovery_ledger_commit_invalid")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", str(owner or "")) or not \
+            re.fullmatch(r"[A-Za-z0-9_.-]+", str(repository or "")):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_ledger_repository_invalid")
     current = exact
     visited = set()
-    for distance in range(_LEDGER_ANCESTRY_MAX_COMMITS):
+    for distance in range(_LEDGER_ANCESTRY_FAST_PATH_COMMITS):
         if current in visited:
             raise argus_remote_recovery.RecoveryBundleError(
                 "recovery_ledger_commit_metadata_invalid")
@@ -23536,12 +23692,11 @@ def _verify_authenticated_ledger_commit_path(
         if not parents:
             raise argus_remote_recovery.RecoveryBundleError(
                 "recovery_ledger_commit_nonancestor")
-        if distance + 1 >= _LEDGER_ANCESTRY_MAX_COMMITS:
-            raise argus_remote_recovery.RecoveryBundleError(
-                "recovery_ledger_commit_stale_replay")
+        if distance + 1 >= _LEDGER_ANCESTRY_FAST_PATH_COMMITS:
+            return _bounded_ledger_compare(
+                owner, repository, base, exact)
         current = parents[0]
-    raise argus_remote_recovery.RecoveryBundleError(
-        "recovery_ledger_commit_stale_replay")
+    return _bounded_ledger_compare(owner, repository, base, exact)
 
 
 def _pinned_ledger_restore_base():
@@ -28376,6 +28531,9 @@ def _remote_receipt_failure_is_permanent(error_class):
         "recovery_ledger_commit_multiparent",
         "recovery_ledger_commit_nonancestor",
         "recovery_ledger_commit_stale_replay",
+        "recovery_ledger_compare_invalid",
+        "recovery_ledger_compare_oversized",
+        "recovery_ledger_compare_incomplete",
     }
 
 
