@@ -1,6 +1,6 @@
 # A.R.G.U.S. — Autonomous Risk and Global Uncertainty Scanner (backend, velvet-razor)
 # US Market High-Resolution AI Scanner
-import os, time, requests, anthropic, json, threading, re, math, statistics, concurrent.futures, copy
+import os, time, requests, anthropic, json, threading, re, math, statistics, concurrent.futures, copy, shutil
 import fcntl, gc, multiprocessing, resource, signal, stat, struct, sys, tempfile
 try:
     from google import genai as google_genai
@@ -23679,6 +23679,10 @@ def _verify_local_recovery_sidecar(
 
 _PARTIAL_ACTIVATION_REPAIR_SCHEMA = \
     "argus-recovery-partial-activation-repair-v1"
+_CANONICAL_ABSENT_PARTIAL_ACTIVATION_REPAIR_SCHEMA = \
+    "argus-recovery-partial-activation-canonical-absent-v1"
+_CANONICAL_ABSENT_REPAIR_RESULT_SCHEMA = \
+    "argus-recovery-canonical-absent-repair-result-v1"
 
 
 def _remote_recovery_file_sha256(path):
@@ -23700,6 +23704,9 @@ def _plan_partial_activation_repair(expected):
     legacy quarantine, stable lock inode, nonce authority, and sidecar bytes
     untouched during candidate proof.
     """
+    if isinstance(expected, dict) and expected.get("schemaVersion") == \
+            _CANONICAL_ABSENT_PARTIAL_ACTIVATION_REPAIR_SCHEMA:
+        return _plan_canonical_absent_partial_activation_repair(expected)
     required = {
         "schemaVersion", "buildSha", "currentKeyId", "checkpointId",
         "currentCheckpointSha256", "currentCheckpointBytes",
@@ -23860,6 +23867,522 @@ def _plan_partial_activation_repair(expected):
             "walSequence": wal,
         },
     }
+
+
+def _canonical_absent_artifact_identity(expected, *, role, current_key_id):
+    required = {
+        "role", "path", "sha256", "bytes", "device", "inode",
+        "walSequence", "sealValid", "marker", "checkpointId", "keyId",
+    }
+    if not isinstance(expected, dict) or set(expected) != required or \
+            expected.get("role") != role or expected.get(
+                "sealValid") is not True:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_artifact_contract_invalid")
+    path = os.path.abspath(str(expected.get("path") or ""))
+    root = os.path.realpath(_DURABILITY_PATHS["root"])
+    if not path or os.path.islink(path) or \
+            os.path.commonpath((root, os.path.realpath(path))) != root or \
+            ".quarantine-" not in os.path.basename(path):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_artifact_path_invalid")
+    before = os.stat(path, follow_symlinks=False)
+    if not stat.S_ISREG(before.st_mode) or \
+            before.st_dev != expected.get("device") or \
+            before.st_ino != expected.get("inode") or \
+            before.st_size != expected.get("bytes"):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_artifact_identity_mismatch")
+    digest = _remote_recovery_file_sha256(path)
+    checkpoint = argus_persistent_storage.load_checkpoint(
+        path, require_seal=True)
+    after = os.stat(path, follow_symlinks=False)
+    if _remote_recovery_file_identity(before) != \
+            _remote_recovery_file_identity(after) or not \
+            re.fullmatch(r"[0-9a-f]{64}", str(
+                expected.get("sha256") or "")) or not hmac.compare_digest(
+                    digest, str(expected.get("sha256") or "")):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_artifact_identity_mismatch")
+    durability = checkpoint.get("missionTickDurability")
+    wal = expected.get("walSequence")
+    if isinstance(wal, bool) or not isinstance(wal, int) or wal <= 0 or \
+            not isinstance(durability, dict) or \
+            durability.get("walAppliedSequence") != wal:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_artifact_wal_mismatch")
+    marker = _validated_recovery_required_marker(checkpoint)
+    if role == "legacy_checkpoint":
+        if marker is not None or expected.get("marker") != "ABSENT" or \
+                expected.get("checkpointId") is not None or \
+                expected.get("keyId") is not None:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_canonical_absent_legacy_marker_mismatch")
+    elif marker is None or expected.get("marker") != "encrypted_required" or \
+            marker.get("checkpointId") != expected.get("checkpointId") or \
+            marker.get("keyId") != current_key_id or \
+            expected.get("keyId") != current_key_id:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_marker_mismatch")
+    return {
+        "role": role,
+        "path": path,
+        "sha256": digest,
+        "bytes": after.st_size,
+        "device": after.st_dev,
+        "inode": after.st_ino,
+        "walSequence": wal,
+        "sealValid": True,
+        "marker": expected.get("marker"),
+        "checkpointId": expected.get("checkpointId"),
+        "keyId": expected.get("keyId"),
+    }, checkpoint
+
+
+def _canonical_absent_competing_legacy_paths(
+        checkpoint_path, admitted_paths, wal_sequence):
+    directory = os.path.dirname(checkpoint_path)
+    prefix = os.path.basename(checkpoint_path) + ".quarantine-"
+    competing = []
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            path = os.path.abspath(entry.path)
+            if not entry.name.startswith(prefix) or path in admitted_paths:
+                continue
+            try:
+                if entry.is_symlink() or not entry.is_file(
+                        follow_symlinks=False):
+                    continue
+                candidate = argus_persistent_storage.load_checkpoint(
+                    path, require_seal=True)
+                durability = candidate.get("missionTickDurability")
+                if isinstance(durability, dict) and durability.get(
+                        "walAppliedSequence") == wal_sequence and \
+                        _validated_recovery_required_marker(candidate) is None:
+                    competing.append(path)
+            except (OSError, ValueError, UnicodeDecodeError,
+                    json.JSONDecodeError,
+                    argus_persistent_storage.PersistentStorageError,
+                    argus_remote_recovery.RecoveryBundleError):
+                continue
+    return sorted(competing)
+
+
+def _plan_canonical_absent_partial_activation_repair(expected):
+    """Admit only the exact owner-captured canonical-absent Recovery state."""
+    required = {
+        "schemaVersion", "buildSha", "currentKeyId", "previousKeyAbsent",
+        "canonicalPath", "canonicalStatus", "legacyCheckpoint", "markerA",
+        "markerB", "lockIdentity", "nonceAuthority", "sidecarStatus",
+        "immutableRecoveryPath", "operationalVerification", "writersFenced",
+        "activeRecoveryWriterCount", "ec2TimerDisabled", "ec2TimerInactive",
+        "remoteReadback", "competingAuthenticatedWalAuthority",
+        "forensicBackupDirectory",
+    }
+    if not isinstance(expected, dict) or set(expected) != required or \
+            expected.get("schemaVersion") != \
+            _CANONICAL_ABSENT_PARTIAL_ACTIVATION_REPAIR_SCHEMA:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_contract_invalid")
+    if expected.get("previousKeyAbsent") is not True or \
+            expected.get("canonicalStatus") != "ABSENT" or \
+            expected.get("writersFenced") is not True or \
+            expected.get("activeRecoveryWriterCount") != 0 or \
+            expected.get("ec2TimerDisabled") is not True or \
+            expected.get("ec2TimerInactive") is not True or \
+            expected.get("operationalVerification") is not False or \
+            expected.get("sidecarStatus") != "ABSENT" or \
+            expected.get("competingAuthenticatedWalAuthority") is not False:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_fence_unproven")
+    build_sha = str(expected.get("buildSha") or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", build_sha) or \
+            _backend_exact_sha() != build_sha:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_build_mismatch")
+    configured = argus_remote_recovery.configured_keys()
+    current = configured.get("current") if isinstance(configured, dict) \
+        else None
+    if configured.get("status") != "configured" or not isinstance(
+            current, dict) or current.get("keyId") != expected.get(
+                "currentKeyId") or not isinstance(current.get("key"), bytes) or \
+            len(current["key"]) != 32 or configured.get("previous") is not None:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_key_mismatch")
+
+    checkpoint_path = os.path.abspath(_OSINT_PERSIST_FILE)
+    if os.path.abspath(str(expected.get("canonicalPath") or "")) != \
+            checkpoint_path or os.path.lexists(checkpoint_path):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_checkpoint_present")
+    artifacts = []
+    for field, role in (("legacyCheckpoint", "legacy_checkpoint"),
+                        ("markerA", "marker_a"),
+                        ("markerB", "marker_b")):
+        identity, _checkpoint = _canonical_absent_artifact_identity(
+            expected.get(field), role=role,
+            current_key_id=current["keyId"])
+        artifacts.append(identity)
+    if len({row["path"] for row in artifacts}) != 3 or len(
+            {row["checkpointId"] for row in artifacts[1:]}) != 2 or len(
+                {row["sha256"] for row in artifacts}) != 3:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_lineage_ambiguous")
+    wal = artifacts[0]["walSequence"]
+    if any(row["walSequence"] != wal for row in artifacts[1:]):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_wal_mismatch")
+
+    nonce = expected.get("nonceAuthority")
+    if not isinstance(nonce, dict) or set(nonce) != {
+            "history", "state", "head", "anchor"} or any(
+                value != "ABSENT" for value in nonce.values()):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_nonce_contract_invalid")
+    nonce_paths = _remote_recovery_nonce_paths()
+    lock_path = _DURABILITY_PATHS[
+        "recoveryNonceState"] + ".reservation.lock"
+    anchor_path = lock_path + ".anchor"
+    if any(os.path.lexists(path) for path in (
+            nonce_paths["history"], nonce_paths["state"],
+            nonce_paths["head"], anchor_path)) or \
+            os.path.lexists(_REMOTE_RECOVERY_FILE):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_authority_present")
+
+    lock_expected = expected.get("lockIdentity")
+    lock_required = {
+        "path", "device", "inode", "mode", "size", "mtimeNs", "ctimeNs",
+        "holder",
+    }
+    if not isinstance(lock_expected, dict) or set(lock_expected) != \
+            lock_required or os.path.abspath(str(
+                lock_expected.get("path") or "")) != lock_path or \
+            lock_expected.get("holder") != "NONE" or \
+            lock_expected.get("size") != 0 or not os.path.lexists(lock_path) or \
+            os.path.islink(lock_path):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_lock_contract_invalid")
+    lock_handle = None
+    try:
+        lock_handle = _acquire_remote_recovery_nonce_lock(
+            _DURABILITY_PATHS["recoveryNonceState"], blocking=False,
+            create=False)
+        lock_stat = os.fstat(lock_handle.fileno())
+        lock_identity = {
+            "path": lock_path,
+            "device": lock_stat.st_dev,
+            "inode": lock_stat.st_ino,
+            "mode": stat.S_IMODE(lock_stat.st_mode),
+            "size": lock_stat.st_size,
+            "mtimeNs": lock_stat.st_mtime_ns,
+            "ctimeNs": lock_stat.st_ctime_ns,
+            "holder": "NONE",
+        }
+        if lock_identity != lock_expected or \
+                _remote_recovery_nonce_lock_anchor(lock_handle) is not None:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_canonical_absent_lock_identity_mismatch")
+    finally:
+        _release_remote_recovery_nonce_lock(lock_handle)
+
+    immutable = expected.get("immutableRecoveryPath")
+    if not isinstance(immutable, dict) or set(immutable) != {
+            "status", "historyQueryStatus", "path", "pinnedCommitSha"} or \
+            immutable.get("status") != "absent" or \
+            immutable.get("historyQueryStatus") != "never_existed" or \
+            immutable.get("path") != _REMOTE_RECOVERY_PATH or not \
+            re.fullmatch(r"[0-9a-f]{40}", str(
+                immutable.get("pinnedCommitSha") or "").lower()):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_remote_absence_unproven")
+    readback = expected.get("remoteReadback")
+    if not isinstance(readback, dict) or set(readback) != {
+            "status", "walSequence", "recoveryStatus", "pinnedCommitSha"} or \
+            readback.get("status") != "VERIFIED" or \
+            readback.get("recoveryStatus") != "ABSENT" or \
+            readback.get("pinnedCommitSha") != immutable.get(
+                "pinnedCommitSha") or isinstance(
+                    readback.get("walSequence"), bool) or not isinstance(
+                        readback.get("walSequence"), int) or \
+            readback.get("walSequence") <= 0 or \
+            readback.get("walSequence") >= wal:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_remote_readback_invalid")
+    admitted_paths = {row["path"] for row in artifacts}
+    if _canonical_absent_competing_legacy_paths(
+            checkpoint_path, admitted_paths, wal):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_competing_legacy_authority")
+
+    backup_directory = os.path.abspath(str(
+        expected.get("forensicBackupDirectory") or ""))
+    root = os.path.realpath(_DURABILITY_PATHS["root"])
+    if os.path.commonpath((root, os.path.realpath(backup_directory))) != root or \
+            os.path.dirname(backup_directory) != root or \
+            not os.path.basename(backup_directory).startswith(
+                "argus-recovery-forensic-") or \
+            os.path.lexists(backup_directory):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_backup_path_invalid")
+    return {
+        "schemaVersion":
+            _CANONICAL_ABSENT_PARTIAL_ACTIVATION_REPAIR_SCHEMA,
+        "stateMode": "PARTIAL_ACTIVATION_CANONICAL_ABSENT",
+        "status": "DRY_RUN_PASS",
+        "mutationAuthorized": False,
+        "buildSha": build_sha,
+        "currentKeyId": current["keyId"],
+        "currentKeyUnchanged": True,
+        "previousKeyAbsent": True,
+        "canonicalCheckpoint": "ABSENT",
+        "walSequence": wal,
+        "remoteReadbackWalSequence": readback["walSequence"],
+        "remoteReadbackLag": wal - readback["walSequence"],
+        "remoteReadbackDecision": "PRESERVE_LOCAL_NO_DOWNGRADE",
+        "noCompetingAuthenticatedWalAuthority": True,
+        "nonceReuseRisk": "NONE",
+        "forensicBackupDirectory": backup_directory,
+        "forensicArtifacts": artifacts + [{**lock_identity,
+                                             "role": "reservation_lock"}],
+        "proposedMutations": [
+            "create_integrity_verified_forensic_backup_set",
+            "atomically_restore_exact_legacy_checkpoint_to_canonical_path",
+            "preserve_marker_a_and_marker_b_quarantines",
+            "retain_stable_empty_reservation_lock_inode",
+        ],
+        "rollbackBoundary": (
+            "remove_only_the_exact_restored_canonical_before_any_nonce_"
+            "authority_or_authenticated_sidecar_pair_exists"),
+        "expectedPostRepairState": {
+            "canonicalCheckpointSha256": artifacts[0]["sha256"],
+            "remoteRecoveryRequired": "ABSENT",
+            "markerA": "PRESERVED",
+            "markerB": "PRESERVED",
+            "sidecar": "ABSENT",
+            "nonceAuthority": "ABSENT_BEFORE_GENESIS",
+            "reservationLock": "SAME_EMPTY_INODE",
+            "walSequence": wal,
+        },
+    }
+
+
+def _write_canonical_absent_forensic_copy(source, destination, expected):
+    descriptor = os.open(
+        destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+        getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        with open(source, "rb") as reader, os.fdopen(
+                descriptor, "wb", buffering=0) as writer:
+            descriptor = None
+            shutil.copyfileobj(reader, writer, length=1024 * 1024)
+            os.fsync(writer.fileno())
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    if os.path.getsize(destination) != expected["bytes"] or not \
+            hmac.compare_digest(
+                _remote_recovery_file_sha256(destination),
+                expected["sha256"]):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_canonical_absent_backup_verification_failed")
+
+
+def _execute_canonical_absent_partial_activation_repair(
+        expected, *, execute=False):
+    """Apply the owner-gated repair only after two exact-state recaptures.
+
+    Production callers must pass ``execute=True`` explicitly.  The default is
+    the mutation-free planner.  This function never creates nonce authority or
+    an encrypted sidecar; corrected genesis remains a later normal boot step.
+    """
+    plan = _plan_canonical_absent_partial_activation_repair(expected)
+    if execute is not True:
+        return plan
+    root = os.path.realpath(_DURABILITY_PATHS["root"])
+    canonical = os.path.abspath(_OSINT_PERSIST_FILE)
+    legacy = plan["forensicArtifacts"][0]
+    backup_directory = plan["forensicBackupDirectory"]
+    staging = tempfile.mkdtemp(
+        prefix=".argus-recovery-forensic-staging-", dir=root)
+    restore_temp = None
+    canonical_installed = False
+    try:
+        backup_rows = []
+        for artifact, name in zip(
+                plan["forensicArtifacts"][:3],
+                ("legacy-checkpoint.json", "marker-a.json", "marker-b.json")):
+            destination = os.path.join(staging, name)
+            _write_canonical_absent_forensic_copy(
+                artifact["path"], destination, artifact)
+            backup_rows.append({
+                "role": artifact["role"],
+                "sourcePath": artifact["path"],
+                "backupFile": name,
+                "sha256": artifact["sha256"],
+                "bytes": artifact["bytes"],
+                "device": artifact["device"],
+                "inode": artifact["inode"],
+            })
+        manifest = {
+            "schemaVersion":
+                "argus-recovery-canonical-absent-forensic-backup-v1",
+            "buildSha": plan["buildSha"],
+            "currentKeyId": plan["currentKeyId"],
+            "previousKeyAbsent": True,
+            "canonicalInitialState": "ABSENT",
+            "walSequence": plan["walSequence"],
+            "remoteReadbackWalSequence": plan[
+                "remoteReadbackWalSequence"],
+            "remoteReadbackDecision": plan["remoteReadbackDecision"],
+            "artifacts": backup_rows,
+            "reservationLock": plan["forensicArtifacts"][3],
+            "nonceAuthority": "ABSENT",
+            "sidecar": "ABSENT",
+            "immutableEncryptedRecovery": "ABSENT",
+            "operationalVerification": False,
+            "writersFenced": True,
+            "activeRecoveryWriterCount": 0,
+            "ec2TimerDisabled": True,
+            "ec2TimerInactive": True,
+        }
+        manifest_path = os.path.join(staging, "manifest.json")
+        descriptor = os.open(
+            manifest_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+            getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            with os.fdopen(descriptor, "wb", buffering=0) as handle:
+                descriptor = None
+                handle.write(json.dumps(
+                    manifest, ensure_ascii=False, sort_keys=True,
+                    separators=(",", ":")).encode("utf-8"))
+                os.fsync(handle.fileno())
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        manifest_digest = _remote_recovery_file_sha256(manifest_path)
+        digest_path = os.path.join(staging, "manifest.sha256")
+        descriptor = os.open(
+            digest_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+            getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            with os.fdopen(descriptor, "wb", buffering=0) as handle:
+                descriptor = None
+                handle.write((manifest_digest + "  manifest.json\n").encode(
+                    "ascii"))
+                os.fsync(handle.fileno())
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        argus_persistent_storage._fsync_directory(staging)
+
+        # Re-capture every predicate after the potentially long forensic copy
+        # and before the first authoritative mutation.
+        _plan_canonical_absent_partial_activation_repair(expected)
+        os.replace(staging, backup_directory)
+        staging = None
+        argus_persistent_storage._fsync_directory(root)
+
+        descriptor, restore_temp = tempfile.mkstemp(
+            prefix=".argus-recovery-canonical-restore-", dir=root)
+        try:
+            os.fchmod(descriptor, 0o600)
+            with open(legacy["path"], "rb") as reader, os.fdopen(
+                    descriptor, "wb", buffering=0) as writer:
+                descriptor = None
+                shutil.copyfileobj(reader, writer, length=1024 * 1024)
+                os.fsync(writer.fileno())
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        if os.path.getsize(restore_temp) != legacy["bytes"] or not \
+                hmac.compare_digest(
+                    _remote_recovery_file_sha256(restore_temp),
+                    legacy["sha256"]):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_canonical_absent_restore_staging_mismatch")
+        staged = argus_persistent_storage.load_checkpoint(
+            restore_temp, require_seal=True)
+        if _validated_recovery_required_marker(staged) is not None or \
+                os.path.lexists(canonical):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_canonical_absent_state_changed_before_restore")
+        os.replace(restore_temp, canonical)
+        restore_temp = None
+        canonical_installed = True
+        argus_persistent_storage._fsync_directory(root)
+        restored = argus_persistent_storage.load_checkpoint(
+            canonical, require_seal=True)
+        if not hmac.compare_digest(
+                _remote_recovery_file_sha256(canonical), legacy["sha256"]) or \
+                _validated_recovery_required_marker(restored) is not None or \
+                (restored.get("missionTickDurability") or {}).get(
+                    "walAppliedSequence") != plan["walSequence"]:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_canonical_absent_post_restore_invalid")
+        for artifact in plan["forensicArtifacts"][1:3]:
+            metadata = os.stat(artifact["path"], follow_symlinks=False)
+            if metadata.st_dev != artifact["device"] or \
+                    metadata.st_ino != artifact["inode"] or \
+                    metadata.st_size != artifact["bytes"] or not \
+                    hmac.compare_digest(
+                        _remote_recovery_file_sha256(artifact["path"]),
+                        artifact["sha256"]):
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_canonical_absent_forensic_artifact_changed")
+        lock = plan["forensicArtifacts"][3]
+        lock_stat = os.stat(lock["path"], follow_symlinks=False)
+        if (lock_stat.st_dev, lock_stat.st_ino, lock_stat.st_size) != (
+                lock["device"], lock["inode"], 0):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_canonical_absent_lock_changed")
+        if os.path.lexists(_REMOTE_RECOVERY_FILE) or not \
+                _remote_recovery_nonce_authority_absent(include_lock=False):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_canonical_absent_keyed_authority_race")
+        return {
+            "schemaVersion": _CANONICAL_ABSENT_REPAIR_RESULT_SCHEMA,
+            "status": "REPAIR_APPLIED_PRE_GENESIS",
+            "buildSha": plan["buildSha"],
+            "canonicalCheckpointSha256": legacy["sha256"],
+            "walSequence": plan["walSequence"],
+            "forensicBackupDirectory": backup_directory,
+            "markerA": "PRESERVED",
+            "markerB": "PRESERVED",
+            "reservationLock": "SAME_EMPTY_INODE",
+            "nonceAuthority": "ABSENT_BEFORE_GENESIS",
+            "sidecar": "ABSENT_BEFORE_GENESIS",
+            "rollbackBoundary": plan["rollbackBoundary"],
+        }
+    except Exception as exc:
+        if canonical_installed:
+            keyed_authority = os.path.lexists(_REMOTE_RECOVERY_FILE) or not \
+                _remote_recovery_nonce_authority_absent(include_lock=False)
+            if keyed_authority:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_canonical_absent_rollback_blocked_keyed_authority"
+                ) from exc
+            try:
+                if os.path.isfile(canonical) and hmac.compare_digest(
+                        _remote_recovery_file_sha256(canonical),
+                        legacy["sha256"]):
+                    os.unlink(canonical)
+                    argus_persistent_storage._fsync_directory(root)
+                else:
+                    raise OSError("canonical_identity_changed")
+            except Exception as rollback_exc:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_canonical_absent_rollback_failed") \
+                    from rollback_exc
+        raise
+    finally:
+        if restore_temp is not None:
+            try:
+                os.unlink(restore_temp)
+            except OSError:
+                pass
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
 
 
 def _validated_local_recovery_pair(evidence, checkpoint_blob, configured):
@@ -24347,6 +24870,73 @@ def _seed_remote_recovery_wal_floor(blob):
     return change
 
 
+_LOCAL_CHECKPOINT_CORRUPTION_REASONS = frozenset({
+    "local_checkpoint_integrity_invalid",
+    "local_checkpoint_symlink_rejected",
+    "legacy_checkpoint_symlink_rejected",
+    "legacy_checkpoint_seal_symlink_rejected",
+    "legacy_checkpoint_seal_missing",
+    "legacy_checkpoint_seal_oversized",
+    "legacy_checkpoint_seal_invalid",
+    "legacy_checkpoint_file_hash_mismatch",
+})
+
+
+def _restore_error_class(exc):
+    if isinstance(exc, argus_remote_recovery.RecoveryBundleError):
+        return exc.classification
+    if isinstance(exc, argus_persistent_storage.PersistentStorageError):
+        return exc.reason
+    if isinstance(exc, _RemoteRecoveryRestoreError):
+        value = str(exc)
+        if re.fullmatch(r"[a-z][a-z0-9_]{0,95}", value):
+            return value
+    return type(exc).__name__
+
+
+def _record_restore_decision(*, stage, error_class, local_validity,
+                             remote_failure_class, quarantine_decision,
+                             quarantine_reason):
+    """Record one redacted, deterministic restore/quarantine decision."""
+    decision = {
+        "RESTORE_STAGE": str(stage),
+        "ERROR_CLASS": str(error_class),
+        "LOCAL_VALIDITY": str(local_validity),
+        "REMOTE_FAILURE_CLASS": (
+            str(remote_failure_class)
+            if remote_failure_class is not None else None),
+        "QUARANTINE_DECISION": str(quarantine_decision),
+        "QUARANTINE_REASON": (
+            str(quarantine_reason)
+            if quarantine_reason is not None else None),
+    }
+    _DURABLE_STATE["restoreDecision"] = decision
+    print(json.dumps({
+        "event": "recovery_restore_decision", **decision,
+    }, ensure_ascii=True, sort_keys=True), flush=True)
+    return decision
+
+
+def _proven_local_checkpoint_corruption(exc, path):
+    """Return a reason only when canonical-local corruption is proven."""
+    if isinstance(exc, argus_persistent_storage.PersistentStorageError) and \
+            exc.reason in _LOCAL_CHECKPOINT_CORRUPTION_REASONS:
+        return exc.reason
+    if isinstance(exc, json.JSONDecodeError):
+        return "local_checkpoint_json_invalid"
+    if isinstance(exc, UnicodeDecodeError):
+        return "local_checkpoint_encoding_invalid"
+    try:
+        metadata = os.lstat(path)
+    except OSError:
+        return None
+    if stat.S_ISLNK(metadata.st_mode):
+        return "local_checkpoint_symlink_rejected"
+    if not stat.S_ISREG(metadata.st_mode):
+        return "local_checkpoint_not_regular"
+    return None
+
+
 def _osint_restore_once():
     """Restore a sealed local checkpoint or verified Remote Journal snapshot."""
     if _OSINT_PERSIST_STATE.get("restored"):
@@ -24355,11 +24945,15 @@ def _osint_restore_once():
     source = None
     pinned_ledger = None
     pinned_remote_evidence = None
+    local_validity = "NOT_EVALUATED"
+    restore_stage = "LOCAL_CHECKPOINT_LOAD"
     try:
         if _DURABILITY_PRODUCTION:
             blob = argus_persistent_storage.load_checkpoint(
                 _OSINT_PERSIST_FILE, require_seal=True,
                 allow_legacy_file_seal=True)
+            local_validity = "VALID"
+            restore_stage = "REMOTE_NONCE_BOOT"
             nonce_keys = argus_remote_recovery.configured_keys()
             if nonce_keys.get("status") == "configured":
                 remote_evidence_handoff = []
@@ -24377,6 +24971,13 @@ def _osint_restore_once():
                         exc.classification
                     _DURABLE_STATE["remoteRecoveryLocalError"] = \
                         exc.classification
+                    _record_restore_decision(
+                        stage=restore_stage,
+                        error_class=exc.classification,
+                        local_validity=local_validity,
+                        remote_failure_class=exc.classification,
+                        quarantine_decision="PRESERVE",
+                        quarantine_reason=None)
                     _DURABLE_STATE["restoreSource"] = "none_available"
                     return None
                 if len(remote_evidence_handoff) > 1:
@@ -24386,6 +24987,7 @@ def _osint_restore_once():
                     remote_evidence_handoff[0]
                     if remote_evidence_handoff else None)
             local_evidence_handoff = []
+            restore_stage = "LOCAL_RECOVERY_PAIR_VERIFICATION"
             blob = _verify_local_recovery_sidecar(
                 blob, authenticated_local_handoff=(
                     local_evidence_handoff
@@ -24403,6 +25005,13 @@ def _osint_restore_once():
                         exc.classification
                     _DURABLE_STATE["remoteRecoveryLocalError"] = \
                         exc.classification
+                    _record_restore_decision(
+                        stage="REMOTE_AUTHORITY_SELECTION",
+                        error_class=exc.classification,
+                        local_validity=local_validity,
+                        remote_failure_class=exc.classification,
+                        quarantine_decision="PRESERVE",
+                        quarantine_reason=None)
                     _DURABLE_STATE["restoreSource"] = "none_available"
                     return None
                 _DURABLE_STATE["remoteRecoveryNonceBoot"] = {
@@ -24431,7 +25040,25 @@ def _osint_restore_once():
             with open(_OSINT_PERSIST_FILE, encoding="utf-8") as handle:
                 blob = json.load(handle)
             source = "tmp"
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        if local_validity == "VALID":
+            _record_restore_decision(
+                stage=restore_stage,
+                error_class=type(exc).__name__,
+                local_validity=local_validity,
+                remote_failure_class=type(exc).__name__,
+                quarantine_decision="PRESERVE",
+                quarantine_reason=None)
+            _DURABLE_STATE["restoreSource"] = "none_available"
+            return None
+        local_validity = "ABSENT"
+        _record_restore_decision(
+            stage="LOCAL_CHECKPOINT_LOAD",
+            error_class="FileNotFoundError",
+            local_validity=local_validity,
+            remote_failure_class=None,
+            quarantine_decision="NOT_APPLICABLE",
+            quarantine_reason=None)
         if _DURABILITY_PRODUCTION and os.path.lexists(
                 _REMOTE_RECOVERY_FILE):
             try:
@@ -24440,6 +25067,13 @@ def _osint_restore_once():
                 _DURABLE_STATE["remoteRecoveryError"] = exc.classification
                 _DURABLE_STATE["remoteRecoveryLocalError"] = \
                     exc.classification
+                _record_restore_decision(
+                    stage="ORPHAN_SIDECAR_KEY_VALIDATION",
+                    error_class=exc.classification,
+                    local_validity=local_validity,
+                    remote_failure_class=exc.classification,
+                    quarantine_decision="NOT_APPLICABLE",
+                    quarantine_reason=None)
                 _DURABLE_STATE["restoreSource"] = "none_available"
                 return None
             if orphan_keys.get("status") != "configured":
@@ -24447,56 +25081,65 @@ def _osint_restore_once():
                     "recovery_key_not_configured"
                 _DURABLE_STATE["remoteRecoveryLocalError"] = \
                     "recovery_key_not_configured"
+                _record_restore_decision(
+                    stage="ORPHAN_SIDECAR_KEY_VALIDATION",
+                    error_class="recovery_key_not_configured",
+                    local_validity=local_validity,
+                    remote_failure_class="recovery_key_not_configured",
+                    quarantine_decision="NOT_APPLICABLE",
+                    quarantine_reason=None)
                 _DURABLE_STATE["restoreSource"] = "none_available"
                 return None
             _DURABLE_STATE["remoteRecoveryLocalError"] = \
                 "recovery_local_checkpoint_missing"
         blob = None
     except Exception as exc:
+        error_class = _restore_error_class(exc)
         _DURABLE_STATE["localCheckpointError"] = type(exc).__name__
-        preserve_legacy_checkpoint = False
         if isinstance(exc, argus_remote_recovery.RecoveryBundleError):
             _DURABLE_STATE["remoteRecoveryError"] = exc.classification
             _DURABLE_STATE["remoteRecoveryLocalError"] = exc.classification
-            if exc.classification in {
-                    "recovery_key_not_configured",
-                    "recovery_key_config_invalid",
-                    "recovery_key_invalid",
-                    "recovery_key_id_invalid",
-                    "recovery_key_id_duplicate",
-                    "recovery_key_id_unavailable",
-                    "recovery_authentication_failed"}:
-                # Key absence/rotation drift is configuration, not evidence
-                # that the sealed pair itself is corrupt.  Keep it in place and
-                # never downgrade to a legacy remote snapshot.
-                _DURABLE_STATE["restoreSource"] = "none_available"
-                return None
-            if exc.classification in {
-                    "recovery_required_marker_invalid",
-                    "recovery_required_marker_missing",
-                    "recovery_required_marker_key_mismatch"}:
-                try:
-                    repair_keys = argus_remote_recovery.configured_keys()
-                except argus_remote_recovery.RecoveryBundleError:
-                    repair_keys = {"status": "not_configured"}
-                if repair_keys.get("status") != "configured":
-                    _DURABLE_STATE["restoreSource"] = "none_available"
-                    return None
-            if exc.classification == "recovery_legacy_migration_failed":
-                # The migration is staged sidecar-first; its source remains a
-                # fully sealed legacy checkpoint and must stay available for
-                # a later retry or exact remote recovery.  It is deliberately
-                # not applied during this failed keyed boot.
-                preserve_legacy_checkpoint = True
-        if _DURABILITY_PRODUCTION and not preserve_legacy_checkpoint:
-            try:
-                _DURABLE_STATE["quarantinedCheckpoint"] = \
-                    argus_persistent_storage.quarantine(_OSINT_PERSIST_FILE)
-            except Exception as quarantine_exc:
-                _DURABLE_STATE["quarantineError"] = type(
-                    quarantine_exc).__name__
+        corruption_reason = (
+            _proven_local_checkpoint_corruption(exc, _OSINT_PERSIST_FILE)
+            if local_validity != "VALID" else None)
+        if local_validity == "VALID" or corruption_reason is None:
+            _record_restore_decision(
+                stage=restore_stage,
+                error_class=error_class,
+                local_validity=(local_validity if local_validity == "VALID"
+                                else "UNPROVEN"),
+                remote_failure_class=(
+                    error_class if local_validity == "VALID" else None),
+                quarantine_decision="PRESERVE",
+                quarantine_reason=None)
+            _DURABLE_STATE["restoreSource"] = "none_available"
+            return None
+        local_validity = "INVALID"
+        try:
+            _DURABLE_STATE["quarantinedCheckpoint"] = \
+                argus_persistent_storage.quarantine(_OSINT_PERSIST_FILE)
+            _record_restore_decision(
+                stage="LOCAL_CHECKPOINT_LOAD",
+                error_class=error_class,
+                local_validity=local_validity,
+                remote_failure_class=None,
+                quarantine_decision="QUARANTINED",
+                quarantine_reason=corruption_reason)
+        except Exception as quarantine_exc:
+            _DURABLE_STATE["quarantineError"] = type(
+                quarantine_exc).__name__
+            _record_restore_decision(
+                stage="LOCAL_CHECKPOINT_QUARANTINE",
+                error_class=type(quarantine_exc).__name__,
+                local_validity=local_validity,
+                remote_failure_class=None,
+                quarantine_decision="FAILED_PRESERVE",
+                quarantine_reason=corruption_reason)
+            _DURABLE_STATE["restoreSource"] = "none_available"
+            return None
         blob = None
     if blob is None:
+        restore_stage = "REMOTE_COLD_RESTORE"
         try:
             if pinned_ledger is None:
                 pinned_ledger = _pinned_ledger_restore_base()
@@ -24588,7 +25231,20 @@ def _osint_restore_once():
             else:
                 r.close()
         except Exception as exc:
-            _DURABLE_STATE["remoteRestoreError"] = type(exc).__name__
+            error_class = _restore_error_class(exc)
+            _DURABLE_STATE["remoteRestoreError"] = error_class
+            if isinstance(exc, argus_remote_recovery.RecoveryBundleError):
+                _DURABLE_STATE["remoteRecoveryError"] = exc.classification
+            if local_validity != "INVALID":
+                _record_restore_decision(
+                    stage=restore_stage,
+                    error_class=error_class,
+                    local_validity=local_validity,
+                    remote_failure_class=error_class,
+                    quarantine_decision=(
+                        "PRESERVE" if local_validity == "VALID"
+                        else "NOT_APPLICABLE"),
+                    quarantine_reason=None)
             blob = None
     if blob is None:
         _DURABLE_STATE["restoreSource"] = "none_available"
