@@ -112,6 +112,21 @@ class FakeResponse:
         return None
 
 
+def _ledger_ref_response(sha="a" * 40):
+    return FakeResponse(200, {
+        "ref": "refs/heads/ledger",
+        "node_id": "synthetic-ledger-ref",
+        "url": ("https://api.github.com/repos/mitsugue/argus/git/refs/"
+                "heads/ledger"),
+        "object": {
+            "type": "commit",
+            "sha": sha,
+            "url": ("https://api.github.com/repos/mitsugue/argus/git/commits/"
+                    f"{sha}"),
+        },
+    })
+
+
 @contextlib.contextmanager
 def scanner_storage(root: str, *, production=True):
     saved = {
@@ -448,7 +463,7 @@ class BootstrapAndReadinessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root, scanner_storage(root) as value:
             with mock.patch.object(
                     scanner.requests, "get",
-                    side_effect=[FakeResponse(200, {"sha": "a" * 40}),
+                    side_effect=[_ledger_ref_response(),
                                  FakeResponse(200, remote_snapshot()),
                                  FakeResponse(404), FakeResponse(404)]):
                 source = scanner._osint_restore_once()
@@ -462,7 +477,7 @@ class BootstrapAndReadinessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root, scanner_storage(root) as value:
             with mock.patch.object(
                     scanner.requests, "get",
-                    side_effect=[FakeResponse(200, {"sha": "a" * 40}),
+                    side_effect=[_ledger_ref_response(),
                                  FakeResponse(404)]):
                 source = scanner._osint_restore_once()
             self.assertIsNone(source)
@@ -476,7 +491,7 @@ class BootstrapAndReadinessTests(unittest.TestCase):
             malformed["integrityManifest"]["manifestHash"] = "bad"
             with mock.patch.object(
                     scanner.requests, "get",
-                    side_effect=[FakeResponse(200, {"sha": "a" * 40}),
+                    side_effect=[_ledger_ref_response(),
                                  FakeResponse(200, malformed)]):
                 source = scanner._osint_restore_once()
             self.assertIsNone(source)
@@ -580,7 +595,7 @@ class BootstrapAndReadinessTests(unittest.TestCase):
             pathlib.Path(value["checkpoint"]).write_text("{bad")
             with mock.patch.object(
                     scanner.requests, "get",
-                    side_effect=[FakeResponse(200, {"sha": "a" * 40}),
+                    side_effect=[_ledger_ref_response(),
                                  FakeResponse(404)]):
                 scanner._osint_restore_once()
             quarantined = list(pathlib.Path(root).glob(

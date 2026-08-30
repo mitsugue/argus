@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import copy
+import json
 import os
 import pathlib
 import tempfile
@@ -42,6 +43,8 @@ PREVIOUS_ID = "recovery-previous-v1"
 CURRENT_KEY = b"\x11" * 32
 PREVIOUS_KEY = b"\x22" * 32
 CHECKPOINT_ID = "rcp-" + "5" * 32
+PRODUCTION_LEDGER_SHA = "f5f17fcd54e9713f5613ea9fa09b4f230f5662f5"
+PRODUCTION_COMMIT_RESPONSE_BYTES = 86_817
 
 
 def _encoded_key(value):
@@ -166,11 +169,44 @@ def _commit_metadata(sha, parents):
         "sha": sha, "parents": [{"sha": parent} for parent in parents]})
 
 
+def _ref_value(sha=PINNED_SHA, *, ref="ledger", owner="mitsugue",
+               repository="argus"):
+    return {
+        "ref": f"refs/heads/{ref}",
+        "node_id": "synthetic-node-id",
+        "url": (f"https://api.github.com/repos/{owner}/{repository}/git/refs/"
+                f"heads/{ref}"),
+        "object": {
+            "type": "commit",
+            "sha": sha,
+            "url": (f"https://api.github.com/repos/{owner}/{repository}/git/"
+                    f"commits/{sha}"),
+        },
+    }
+
+
+def _ref_response(sha=PINNED_SHA, *, ref="ledger", owner="mitsugue",
+                  repository="argus"):
+    return FakeResponse(200, _ref_value(
+        sha, ref=ref, owner=owner, repository=repository))
+
+
+def _sized_ref_response(size):
+    value = _ref_value()
+    value["node_id"] = ""
+    base = json.dumps(value).encode("utf-8")
+    assert len(base) <= size
+    value["node_id"] = "x" * (size - len(base))
+    response = FakeResponse(200, value)
+    assert len(response._encoded) == size
+    return response
+
+
 def _responses(full, readback, recovery_object, *, ancestry=True):
     sidecar = (recovery_object if isinstance(recovery_object, dict) and
                recovery_object.get("schemaVersion") == recovery.SIDECAR_SCHEMA
                else recovery.build_sidecar(readback, recovery_object))
-    values = [FakeResponse(200, {"sha": PINNED_SHA}),
+    values = [_ref_response(),
               FakeResponse(200, full), FakeResponse(200, readback),
               FakeResponse(200, sidecar)]
     if ancestry:
@@ -251,6 +287,96 @@ def _sealed_local_pair(*, key, key_id, readback, envelope, targets,
 
 def _urls(request_get):
     return [call.args[0] for call in request_get.call_args_list]
+
+
+def test_compact_git_ref_resolves_exact_production_ledger_without_commit_body():
+    oversized_commit = {
+        "sha": PRODUCTION_LEDGER_SHA,
+        "files": [{"filename": "ledger/osint/memory.json", "patch": ""}],
+    }
+    encoded = json.dumps(oversized_commit).encode("utf-8")
+    oversized_commit["files"][0]["patch"] = \
+        "x" * (PRODUCTION_COMMIT_RESPONSE_BYTES - len(encoded))
+    old_response = FakeResponse(200, oversized_commit)
+    assert len(old_response._encoded) == PRODUCTION_COMMIT_RESPONSE_BYTES
+    assert len(old_response._encoded) > scanner._LEDGER_REF_RESPONSE_MAX_BYTES
+
+    with mock.patch.object(
+            scanner.requests, "get",
+            return_value=_ref_response(PRODUCTION_LEDGER_SHA)) as request_get:
+        pinned = scanner._pinned_ledger_restore_base()
+
+    assert pinned == {
+        "base": ("https://raw.githubusercontent.com/mitsugue/argus/" +
+                 PRODUCTION_LEDGER_SHA + "/ledger"),
+        "commitSha": PRODUCTION_LEDGER_SHA,
+        "owner": "mitsugue",
+        "repository": "argus",
+        "pathPrefix": "ledger",
+    }
+    request_get.assert_called_once_with(
+        "https://api.github.com/repos/mitsugue/argus/git/ref/heads/ledger",
+        timeout=(6, 15), stream=True, allow_redirects=False,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        })
+
+
+def test_compact_git_ref_response_exactly_at_bound_is_accepted():
+    with mock.patch.object(
+            scanner.requests, "get",
+            return_value=_sized_ref_response(
+                scanner._LEDGER_REF_RESPONSE_MAX_BYTES)):
+        pinned = scanner._pinned_ledger_restore_base()
+    assert pinned["commitSha"] == PINNED_SHA
+
+
+@pytest.mark.parametrize(("response", "classification"), (
+    (_sized_ref_response(scanner._LEDGER_REF_RESPONSE_MAX_BYTES + 1),
+     "ledger_ref_resolution_unreadable"),
+    (FakeResponse(200, {"ref": "refs/heads/not-ledger"}),
+     "ledger_ref_resolution_invalid"),
+    (FakeResponse(200, {"ref": "refs/heads/ledger"}),
+     "ledger_ref_resolution_invalid"),
+    (_ref_response(ref="not-ledger"), "ledger_ref_resolution_invalid"),
+    (FakeResponse(200, {
+        **_ref_value(), "object": {
+            **_ref_value()["object"], "type": "tag"}}),
+     "ledger_ref_resolution_invalid"),
+    (FakeResponse(200, {
+        **_ref_value(), "object": {
+            **_ref_value()["object"], "sha": "not-a-sha"}}),
+     "ledger_ref_resolution_invalid"),
+    (FakeResponse(200, {
+        **_ref_value(),
+        "url": "https://api.github.com/repos/other/repo/git/refs/heads/ledger",
+     }), "ledger_ref_resolution_invalid"),
+    (FakeResponse(404), "ledger_ref_resolution_http_error"),
+    (FakeResponse(500), "ledger_ref_resolution_http_error"),
+    (FakeResponse(302), "ledger_ref_resolution_http_error"),
+))
+def test_compact_git_ref_hostile_responses_fail_closed(
+        response, classification):
+    with mock.patch.object(scanner.requests, "get", return_value=response), \
+            pytest.raises(scanner._RemoteRecoveryRestoreError,
+                          match=classification):
+        scanner._pinned_ledger_restore_base()
+
+
+def test_compact_git_ref_malformed_json_and_timeout_fail_closed():
+    malformed = FakeResponse(200)
+    malformed._encoded = b'{"ref":'
+    with mock.patch.object(scanner.requests, "get", return_value=malformed), \
+            pytest.raises(scanner._RemoteRecoveryRestoreError,
+                          match="ledger_ref_resolution_unreadable"):
+        scanner._pinned_ledger_restore_base()
+    with mock.patch.object(
+            scanner.requests, "get",
+            side_effect=scanner.requests.Timeout("bounded timeout")), \
+            pytest.raises(scanner._RemoteRecoveryRestoreError,
+                          match="ledger_ref_resolution_transport_error"):
+            scanner._pinned_ledger_restore_base()
 
 
 @contextlib.contextmanager
@@ -347,7 +473,7 @@ def test_new_disk_restores_exact_targets_and_seeds_wal_floor():
         raw_prefix = ("https://raw.githubusercontent.com/mitsugue/argus/"
                       f"{PINNED_SHA}/ledger")
         assert _urls(request_get) == [
-            "https://api.github.com/repos/mitsugue/argus/commits/ledger",
+            "https://api.github.com/repos/mitsugue/argus/git/ref/heads/ledger",
             f"{raw_prefix}/osint/memory.json",
             f"{raw_prefix}/osint/readback.json",
             f"{raw_prefix}/osint/recovery.json",
@@ -371,7 +497,7 @@ def _keyed_local_probe_responses(readback, envelope, *, full=None,
         "schemaVersion") == recovery.SIDECAR_SCHEMA else
         recovery.build_sidecar(readback, envelope))
     values = [
-        FakeResponse(200, {"sha": PINNED_SHA}),
+        _ref_response(),
         FakeResponse(200, readback),
         FakeResponse(200, sidecar),
     ]
@@ -399,7 +525,7 @@ def _keyed_local_legacy_probe_responses(readback, *, history=None,
                                         ancestry=None):
     """One immutable legacy readback plus proved recovery-path absence."""
     values = [
-        FakeResponse(200, {"sha": PINNED_SHA}),
+        _ref_response(),
         FakeResponse(200, readback),
         FakeResponse(404),
         FakeResponse(200, [] if history is None else history),
@@ -454,7 +580,7 @@ def test_deep_remote_outer_envelope_preserves_healthy_local_checkpoint():
         _install_local_pair(paths, root, sealed, sidecar)
         checkpoint_before = pathlib.Path(paths["checkpoint"]).read_bytes()
         responses = [
-            FakeResponse(200, {"sha": PINNED_SHA}),
+            _ref_response(),
             FakeResponse(200, readback),
             _deep_outer_sidecar_response(),
             FakeResponse(500),
@@ -748,21 +874,21 @@ def test_keyed_boot_legacy_readback_or_history_ambiguity_fails_before_local():
     malformed = copy.deepcopy(local_readback)
     malformed["receiptHash"] = "0" * 16
     cases = [
-        ([FakeResponse(200, {"sha": PINNED_SHA}), FakeResponse(404),
+        ([_ref_response(), FakeResponse(404),
           FakeResponse(404)],
          "recovery_nonce_remote_legacy_readback_missing"),
-        ([FakeResponse(200, {"sha": PINNED_SHA}), FakeResponse(200, malformed),
+        ([_ref_response(), FakeResponse(200, malformed),
           FakeResponse(404)],
          "recovery_nonce_remote_legacy_readback_invalid"),
-        ([FakeResponse(200, {"sha": PINNED_SHA}),
+        ([_ref_response(),
           FakeResponse(200, local_readback), FakeResponse(404),
           FakeResponse(503)],
          "recovery_nonce_history_query_ambiguous"),
-        ([FakeResponse(200, {"sha": PINNED_SHA}),
+        ([_ref_response(),
           FakeResponse(200, local_readback), FakeResponse(404),
           FakeResponse(200, {"sha": BASE_SHA})],
          "recovery_nonce_history_query_ambiguous"),
-        ([FakeResponse(200, {"sha": PINNED_SHA}),
+        ([_ref_response(),
           FakeResponse(200, local_readback), FakeResponse(404),
           FakeResponse(200, [{"sha": BASE_SHA}])],
          "recovery_nonce_remote_history_exists"),
@@ -844,7 +970,7 @@ def test_missing_pair_matrix_and_same_commit_pinning():
     with tempfile.TemporaryDirectory() as root, scanner_storage(root), \
             mock.patch.dict(os.environ, {}, clear=True):
         with mock.patch.object(scanner.requests, "get", side_effect=[
-                FakeResponse(200, {"sha": PINNED_SHA}),
+                _ref_response(),
                 FakeResponse(200, _full()), FakeResponse(404),
                 FakeResponse(404)]) as request_get:
             assert scanner._osint_restore_once() == "remote_journal_verified"
@@ -856,7 +982,7 @@ def test_missing_pair_matrix_and_same_commit_pinning():
     with tempfile.TemporaryDirectory() as root, scanner_storage(root), \
             mock.patch.dict(os.environ, _key_env(), clear=False), \
             mock.patch.object(scanner.requests, "get", side_effect=[
-                FakeResponse(200, {"sha": PINNED_SHA}),
+                _ref_response(),
                 FakeResponse(200, _full()), FakeResponse(404),
                 FakeResponse(404)]):
         assert scanner._osint_restore_once() is None
@@ -867,7 +993,7 @@ def test_missing_pair_matrix_and_same_commit_pinning():
     with tempfile.TemporaryDirectory() as root, scanner_storage(root), \
             mock.patch.dict(os.environ, _key_env(), clear=False), \
             mock.patch.object(scanner.requests, "get", side_effect=[
-                FakeResponse(200, {"sha": PINNED_SHA}),
+                _ref_response(),
                 FakeResponse(200, _full()), FakeResponse(200, readback),
                 FakeResponse(404)]):
         assert scanner._osint_restore_once() is None
@@ -888,7 +1014,7 @@ def test_present_encrypted_artifact_requires_readback_and_configured_key():
         with tempfile.TemporaryDirectory() as root, scanner_storage(root), \
                 mock.patch.dict(os.environ, env, clear=True), \
                 mock.patch.object(scanner.requests, "get", side_effect=[
-                    FakeResponse(200, {"sha": PINNED_SHA}),
+                    _ref_response(),
                     FakeResponse(200, _full()), *tail]):
             assert scanner._osint_restore_once() is None
             assert scanner._DURABLE_STATE["remoteRecoveryError"] == expected
@@ -929,7 +1055,7 @@ def test_bare_recovery_envelope_is_never_a_cold_restore_artifact():
     with tempfile.TemporaryDirectory() as root, scanner_storage(root), \
             mock.patch.dict(os.environ, _key_env(), clear=False), \
             mock.patch.object(scanner.requests, "get", side_effect=[
-                FakeResponse(200, {"sha": PINNED_SHA}),
+                _ref_response(),
                 FakeResponse(200, _full()), FakeResponse(200, readback),
                 FakeResponse(200, envelope)]):
         assert scanner._osint_restore_once() is None
@@ -953,7 +1079,7 @@ def test_cold_restore_requires_bounded_linear_base_to_pinned_commit():
         with tempfile.TemporaryDirectory() as root, scanner_storage(root), \
                 mock.patch.dict(os.environ, _key_env(), clear=False), \
                 mock.patch.object(scanner.requests, "get", side_effect=[
-                    FakeResponse(200, {"sha": PINNED_SHA}),
+                    _ref_response(),
                     FakeResponse(200, _full()), FakeResponse(200, readback),
                     FakeResponse(200, sidecar), *ancestry]):
             assert scanner._osint_restore_once() is None

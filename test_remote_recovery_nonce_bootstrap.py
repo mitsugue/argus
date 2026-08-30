@@ -25,13 +25,15 @@ _moomoo.OpenSecTradeContext = lambda *args, **kwargs: None
 _moomoo.RET_OK = 0
 sys.modules.setdefault("moomoo", _moomoo)
 import scanner
-from test_argus_persistent_mission_storage import remote_snapshot
+from test_argus_persistent_mission_storage import FakeResponse, remote_snapshot
 
 
 CURRENT_ID = "bootstrap-current-v1"
 PREVIOUS_ID = "bootstrap-previous-v1"
 CURRENT_KEY = bytes(range(32))
 PREVIOUS_KEY = bytes(reversed(range(32)))
+PRODUCTION_LEDGER_SHA = "f5f17fcd54e9713f5613ea9fa09b4f230f5662f5"
+PRODUCTION_COMMIT_RESPONSE_BYTES = 86_817
 
 
 def _encoded_key(value):
@@ -185,6 +187,34 @@ def _pinned():
         "owner": "owner", "repository": "repository",
         "pathPrefix": "ledger",
     }
+
+
+def _production_ledger_ref_response():
+    return FakeResponse(200, {
+        "ref": "refs/heads/ledger",
+        "node_id": "synthetic-production-ledger-ref",
+        "url": ("https://api.github.com/repos/mitsugue/argus/git/refs/"
+                "heads/ledger"),
+        "object": {
+            "type": "commit",
+            "sha": PRODUCTION_LEDGER_SHA,
+            "url": ("https://api.github.com/repos/mitsugue/argus/git/commits/"
+                    f"{PRODUCTION_LEDGER_SHA}"),
+        },
+    })
+
+
+def _production_oversized_commit_response():
+    value = {
+        "sha": PRODUCTION_LEDGER_SHA,
+        "files": [{"filename": "ledger/osint/memory.json", "patch": ""}],
+    }
+    encoded = json.dumps(value).encode("utf-8")
+    value["files"][0]["patch"] = \
+        "x" * (PRODUCTION_COMMIT_RESPONSE_BYTES - len(encoded))
+    response = FakeResponse(200, value)
+    assert len(response._encoded) == PRODUCTION_COMMIT_RESPONSE_BYTES
+    return response
 
 
 def _install_sidecar(root, key, key_id, counter):
@@ -725,6 +755,33 @@ _PRODUCTION_REMOTE_WAL = 8953
 
 def _write_exact_sized_legacy(path, root, *, wal, target_bytes):
     checkpoint = remote_snapshot(wal)
+    checkpoint.update({
+        "opsSequenceByAggregate": {},
+        "missions": [],
+        "missionWindows": [],
+        "forecasts": [],
+        "incidents": [],
+        "soak": {},
+        "postmortems": [],
+        "periodicReports": [],
+        "challengerRuns": [],
+        "agentQueue": {},
+        "remoteJournalCycle": {
+            "remoteCommitSha": PRODUCTION_LEDGER_SHA,
+            "receiptCommitSha": PRODUCTION_LEDGER_SHA,
+            "readBackVerified": True,
+            "walReadBackVerified": True,
+            "remoteDurabilityState": "verified",
+            "expectedHash": "1" * 16,
+            "actualHash": "1" * 16,
+            "compactReceiptHash": "2" * 16,
+            "remoteWalAppliedSequence": _PRODUCTION_REMOTE_WAL,
+            "verifiedWalSequence": _PRODUCTION_REMOTE_WAL,
+            "errorClass": None,
+            "walErrorClass": None,
+            "receiptErrorClass": None,
+        },
+    })
     checkpoint["productionShapePadding"] = []
     sealed = storage.seal_checkpoint(checkpoint)
     growth = target_bytes - len(storage._canonical(sealed))
@@ -1032,7 +1089,31 @@ def test_canonical_absent_executor_preserves_forensics_and_genesis_no_downgrade(
         assert scanner._remote_recovery_nonce_authority_absent(
             include_lock=False)
 
-        pinned = _pinned()
+        old_response = _production_oversized_commit_response()
+        compact_response = _production_ledger_ref_response()
+        assert len(old_response._encoded) > \
+            scanner._LEDGER_REF_RESPONSE_MAX_BYTES
+        assert len(compact_response._encoded) <= \
+            scanner._LEDGER_REF_RESPONSE_MAX_BYTES
+        with mock.patch.object(
+                scanner.requests, "get",
+                return_value=compact_response) as request_get:
+            pinned = scanner._pinned_ledger_restore_base()
+        assert pinned == {
+            "base": ("https://raw.githubusercontent.com/mitsugue/argus/" +
+                     PRODUCTION_LEDGER_SHA + "/ledger"),
+            "commitSha": PRODUCTION_LEDGER_SHA,
+            "owner": "mitsugue",
+            "repository": "argus",
+            "pathPrefix": "ledger",
+        }
+        request_get.assert_called_once_with(
+            "https://api.github.com/repos/mitsugue/argus/git/ref/heads/ledger",
+            timeout=(6, 15), stream=True, allow_redirects=False,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            })
         readback = _legacy_compact_readback_at(_PRODUCTION_REMOTE_WAL)
         evidence = scanner._AuthenticatedPinnedLegacyReadbackEvidence(
             pinned, readback)
@@ -1052,11 +1133,48 @@ def test_canonical_absent_executor_preserves_forensics_and_genesis_no_downgrade(
         assert not Path(bootstrap_runtime["recovery"]).exists()
         assert scanner._DURABLE_STATE.get("lastSuccessAt") is None
         assert scanner._DURABLE_STATE.get("lastRestoreAt") is None
+        configured = recovery.configured_keys()
+        genesis_history = scanner._verify_remote_recovery_nonce_authority(
+            configured)
+        assert genesis_history["generation"] == 0
+        assert genesis_history["keyMaterialCounters"] == {}
+
+        migrated = scanner._migrate_legacy_local_recovery(
+            storage.load_checkpoint(
+                str(paths["checkpoint"]), require_seal=True),
+            configured)
+        assert migrated["missionTickDurability"][
+            "walAppliedSequence"] == _PRODUCTION_LOCAL_WAL
+        installed = storage.load_checkpoint(
+            str(paths["checkpoint"]), require_seal=True)
+        authenticated_local = []
+        verified = scanner._verify_local_recovery_sidecar(
+            installed, allow_legacy_migration=False,
+            authenticated_local_handoff=authenticated_local)
+        assert verified["missionTickDurability"][
+            "walAppliedSequence"] == _PRODUCTION_LOCAL_WAL
+        assert len(authenticated_local) == 1
+        assert Path(bootstrap_runtime["recovery"]).is_file()
+        assert Path(bootstrap_runtime["recoveryNonceState"]).is_file()
+        assert Path(bootstrap_runtime["recoveryNonceHistory"]).is_file()
+        assert Path(bootstrap_runtime["recoveryNonceHistoryHead"]).is_file()
+        assert paths["lock"].stat().st_size > 0
+        lock_handle = scanner._acquire_remote_recovery_nonce_lock(
+            bootstrap_runtime["recoveryNonceState"], create=False)
+        try:
+            anchor = scanner._remote_recovery_nonce_lock_anchor(lock_handle)
+        finally:
+            scanner._release_remote_recovery_nonce_lock(lock_handle)
+        assert anchor["generation"] == 1
+        committed_history = scanner._verify_remote_recovery_nonce_authority(
+            configured)
+        domain = scanner._remote_recovery_nonce_domain(CURRENT_KEY)
+        assert committed_history["keyMaterialCounters"] == {domain: 1}
         first = int.from_bytes(
             scanner._next_remote_recovery_nonce(CURRENT_ID), "big")
         second = int.from_bytes(
             scanner._next_remote_recovery_nonce(CURRENT_ID), "big")
-        assert (first, second) == (1, 2)
+        assert (first, second) == (2, 3)
 
 
 def test_canonical_absent_executor_rolls_back_before_keyed_authority(

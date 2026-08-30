@@ -19770,7 +19770,10 @@ _DURABLE_RESTORE_HTTP_TIMEOUT = (6, 60)
 _DURABLE_RESTORE_MAX_BYTES = 256 * 1024 * 1024
 _DURABLE_READBACK_MAX_BYTES = argus_remote_recovery.MAX_READBACK_BYTES
 _DURABLE_RECOVERY_MAX_BYTES = argus_remote_recovery.MAX_SIDECAR_BYTES
-_LEDGER_REF_RESPONSE_MAX_BYTES = 64 * 1024
+# GitHub's Git-ref response is a fixed, compact projection (ref, object type,
+# object SHA and canonical URLs).  Keep it independently bounded instead of
+# inheriting the much larger commit-detail response that includes file diffs.
+_LEDGER_REF_RESPONSE_MAX_BYTES = 2 * 1024
 _LEDGER_COMMIT_METADATA_MAX_BYTES = 32 * 1024
 _LEDGER_ANCESTRY_MAX_COMMITS = 8
 _OSINT_LOOP_BUDGET = {"fast": 0, "balanced": 1, "deep": 2, "war_room": 3}
@@ -23336,18 +23339,37 @@ def _pinned_ledger_restore_base():
     else:
         response = None
         try:
+            request_url = (
+                f"https://api.github.com/repos/{owner}/{repository}/git/ref/"
+                f"heads/{ref}")
             response = requests.get(
-                f"https://api.github.com/repos/{owner}/{repository}/commits/"
-                f"{ref}", timeout=(6, 15), stream=True,
-                headers={"Accept": "application/vnd.github+json"})
+                request_url, timeout=(6, 15), stream=True,
+                allow_redirects=False,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                })
             if response.status_code != 200:
                 _remote_recovery_restore_failure(
                     "ledger_ref_resolution_http_error")
             value = _response_bounded_json(
                 response, _LEDGER_REF_RESPONSE_MAX_BYTES,
                 "ledger_ref_resolution_unreadable")
-            sha = str(value.get("sha") if isinstance(value, dict) else "").lower()
-            if not re.fullmatch(r"[0-9a-f]{40}", sha):
+            expected_ref = f"refs/heads/{ref}"
+            expected_ref_url = (
+                f"https://api.github.com/repos/{owner}/{repository}/git/refs/"
+                f"heads/{ref}")
+            target = value.get("object") if isinstance(value, dict) else None
+            sha = str(
+                target.get("sha") if isinstance(target, dict) else "").lower()
+            expected_commit_url = (
+                f"https://api.github.com/repos/{owner}/{repository}/git/"
+                f"commits/{sha}")
+            if not isinstance(value, dict) or value.get("ref") != expected_ref or \
+                    value.get("url") != expected_ref_url or not \
+                    isinstance(target, dict) or target.get("type") != "commit" or \
+                    not re.fullmatch(r"[0-9a-f]{40}", sha) or \
+                    target.get("url") != expected_commit_url:
                 _remote_recovery_restore_failure(
                     "ledger_ref_resolution_invalid")
         except _RemoteRecoveryRestoreError:
