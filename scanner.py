@@ -25708,7 +25708,14 @@ def _local_recovery_pair_has_pinned_provenance(
     """Prove local authenticated base is on the already-pinned ledger line."""
     local_base = local_evidence._payload["ledgerBaseCommitSha"]
     ledger_commit = local_evidence._ledger_commit
-    if ledger_commit != local_base:
+    # A checkpoint-derived commit is stronger corroborating evidence when it
+    # exists and must keep matching the authenticated sidecar base exactly.
+    # Some already-keyed checkpoints predate that durable projection, however,
+    # so absence alone cannot outrank the sidecar's authenticated base.  In
+    # that narrow case the complete bounded ancestry proof below remains the
+    # provenance authority; every pair/key/checkpoint/WAL predicate has already
+    # been revalidated by the selector before this helper is reached.
+    if ledger_commit is not None and ledger_commit != local_base:
         return False
     if isinstance(remote_evidence, _AuthenticatedPinnedRemoteRecoveryEvidence) \
             and local_base == remote_evidence._payload[

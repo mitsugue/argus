@@ -1750,6 +1750,8 @@ def _post_genesis_mismatch_fixture(paths):
     old_payload = recovery.validate_pair(
         old_sidecar["readback"], old_sidecar["recovery"], CURRENT_KEY,
         key_identifier=CURRENT_ID)
+    old_payload["ledgerBaseCommitSha"] = \
+        PRODUCTION_CHECKPOINT_COMMIT_SHA
     old_payload["nonceAuthority"]["keyMaterialCounters"] = {
         recovery.nonce_material_domain(CURRENT_KEY): 33}
     old_payload["payloadHash"] = recovery._hash({
@@ -1873,7 +1875,7 @@ def test_post_genesis_mismatch_repair_plan_is_exact_and_read_only():
         assert not pathlib.Path(plan["forensicBackupDirectory"]).exists()
 
 
-def test_post_genesis_mismatch_repair_rebinds_exact_projection_at_nonce_34():
+def test_post_genesis_repair_rebinds_and_cold_boots_without_nonce_35():
     with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
             mock.patch.dict(os.environ, _key_env(), clear=False):
         current, sidecar, payload, _old = \
@@ -1901,6 +1903,8 @@ def test_post_genesis_mismatch_repair_rebinds_exact_projection_at_nonce_34():
         assert installed_payload["checkpointId"] == \
             current["remoteRecoveryRequired"]["checkpointId"]
         assert installed_payload["targets"] == payload["targets"]
+        assert installed_payload["ledgerBaseCommitSha"] == \
+            PRODUCTION_CHECKPOINT_COMMIT_SHA
         scanner._verify_local_recovery_sidecar(
             current, allow_legacy_migration=False)
         backup = pathlib.Path(result["forensicBackupDirectory"])
@@ -1909,6 +1913,90 @@ def test_post_genesis_mismatch_repair_rebinds_exact_projection_at_nonce_34():
         assert (backup / "sidecar.json").read_bytes() == sidecar_before
         assert (backup / "manifest.json").is_file()
         assert (backup / "manifest.sha256").is_file()
+
+        remote_readback, _remote_envelope, _remote_targets = _artifacts(
+            target_wal=PRODUCTION_REMOTE_WAL, mission_count=1)
+        ancestry = [
+            *_linear_commit_responses(
+                PRODUCTION_CHECKPOINT_COMMIT_SHA,
+                PRODUCTION_LEDGER_SHA, 11),
+            _linear_compare_response(
+                PRODUCTION_CHECKPOINT_COMMIT_SHA,
+                PRODUCTION_LEDGER_SHA, 11),
+        ]
+        pair_before_boot = {
+            paths["checkpoint"]: pathlib.Path(
+                paths["checkpoint"]).read_bytes(),
+            paths["recovery"]: pathlib.Path(paths["recovery"]).read_bytes(),
+        }
+        nonce_before_boot = scanner._verify_remote_recovery_nonce_authority(
+            recovery.configured_keys())
+        nonce_artifacts_before_boot = {
+            name: pathlib.Path(identity["path"]).read_bytes()
+            for name, identity in
+            scanner._post_genesis_repair_nonce_artifacts().items()
+        }
+
+        with mock.patch.object(
+                scanner.requests, "get", side_effect=
+                _keyed_local_legacy_probe_responses(
+                    remote_readback, ancestry=ancestry,
+                    pinned_sha=PRODUCTION_LEDGER_SHA)):
+            assert scanner._osint_restore_once() == "persistent_local"
+
+        nonce_after_boot = scanner._verify_remote_recovery_nonce_authority(
+            recovery.configured_keys())
+        assert nonce_before_boot["generation"] == 34
+        assert max(nonce_before_boot["keyMaterialCounters"].values()) == 34
+        assert nonce_after_boot == nonce_before_boot
+        assert {
+            name: pathlib.Path(identity["path"]).read_bytes()
+            for name, identity in
+            scanner._post_genesis_repair_nonce_artifacts().items()
+        } == nonce_artifacts_before_boot
+        assert {
+            path: pathlib.Path(path).read_bytes()
+            for path in pair_before_boot
+        } == pair_before_boot
+        assert scanner._DURABLE_STATE["remoteRecoveryNonceBoot"][
+            "authority"] == "local"
+        assert scanner._MISSIONS == payload["targets"]["missions"]
+
+
+def test_absent_checkpoint_ledger_commit_requires_bounded_ancestry():
+    local = types.SimpleNamespace(
+        _payload={"ledgerBaseCommitSha": BASE_SHA}, _ledger_commit=None)
+    pinned = _pinned_legacy_ledger()
+    remote = types.SimpleNamespace()
+    verified = {
+        "status": "verified", "ledgerBaseCommitSha": BASE_SHA,
+        "exactCommitSha": PINNED_SHA, "distance": 11,
+    }
+    with mock.patch.object(
+            scanner, "_verify_authenticated_ledger_commit_path",
+            return_value=verified) as ancestry:
+        assert scanner._local_recovery_pair_has_pinned_provenance(
+            local, remote, pinned) is True
+    ancestry.assert_called_once_with(
+        BASE_SHA, PINNED_SHA, owner="mitsugue", repository="argus")
+
+    with mock.patch.object(
+            scanner, "_verify_authenticated_ledger_commit_path",
+            side_effect=recovery.RecoveryBundleError(
+                "recovery_ledger_commit_nonancestor")):
+        assert scanner._local_recovery_pair_has_pinned_provenance(
+            local, remote, pinned) is False
+
+
+def test_present_checkpoint_ledger_commit_mismatch_remains_strict():
+    local = types.SimpleNamespace(
+        _payload={"ledgerBaseCommitSha": BASE_SHA},
+        _ledger_commit="c" * 40)
+    with mock.patch.object(
+            scanner, "_verify_authenticated_ledger_commit_path") as ancestry:
+        assert scanner._local_recovery_pair_has_pinned_provenance(
+            local, types.SimpleNamespace(), _pinned_legacy_ledger()) is False
+    ancestry.assert_not_called()
 
 
 def test_post_genesis_mismatch_repair_rejects_projection_change_and_old_file():
