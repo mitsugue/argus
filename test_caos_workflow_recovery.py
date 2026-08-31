@@ -1,13 +1,68 @@
+import re
 from pathlib import Path
 
 from scripts.deploy_scope import classify
 
 
 WORKFLOW = Path(".github/workflows/caos-scan.yml")
+WATCHTOWER_WORKFLOW = Path(".github/workflows/caos-watchtower.yml")
 
 
 def _text() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
+
+
+def _circular_minute_gaps(minutes: list[int]) -> list[int]:
+    ordered = sorted(minutes)
+    return [
+        *[right - left for left, right in zip(ordered, ordered[1:])],
+        60 - ordered[-1] + ordered[0],
+    ]
+
+
+def test_watchtower_schedule_reregistration_preserves_exact_contract():
+    text = WATCHTOWER_WORKFLOW.read_text(encoding="utf-8")
+    crons = re.findall(r"^\s+- cron: '([^']+)'", text, flags=re.MULTILINE)
+    assert crons == [
+        "4-59/15 * * * 1-5",
+        "11-59/15 * * * 1-5",
+        "4 * * * 0,6",
+        "34 * * * 0,6",
+    ]
+
+    weekday = sorted([*range(4, 60, 15), *range(11, 60, 15)])
+    weekend = [4, 34]
+    assert weekday == [4, 11, 19, 26, 34, 41, 49, 56]
+    assert len(weekday) == len(set(weekday))
+    assert len(weekend) == len(set(weekend))
+    assert _circular_minute_gaps(weekday) == [7, 8, 7, 8, 7, 8, 7, 8]
+    assert max(_circular_minute_gaps(weekday)) * 60 == 480
+    assert _circular_minute_gaps(weekend) == [30, 30]
+    assert max(_circular_minute_gaps(weekend)) * 60 == 1800
+
+    dispatch = text.split("  workflow_dispatch:", 1)[1].split(
+        "\n\n# GitHub concurrency", 1
+    )[0]
+    assert "remoteJournalRearm:" in dispatch
+    assert "required: false" in dispatch
+    assert "default: false" in dispatch
+    assert "type: boolean" in dispatch
+
+    patrol = text.split("  patrol:", 1)[1].split(
+        "\n  remote-journal-rearm:", 1
+    )[0]
+    assert (
+        "if: github.event_name != 'workflow_dispatch' || "
+        "inputs.remoteJournalRearm != true"
+    ) in patrol
+    rearm_header = text.split("  remote-journal-rearm:", 1)[1].split(
+        "    runs-on:", 1
+    )[0]
+    assert (
+        "if: github.event_name == 'workflow_dispatch' && "
+        "inputs.remoteJournalRearm == true"
+    ) in rearm_header
+    assert "github.event_name == 'schedule'" not in rearm_header
 
 
 def test_workflow_only_release_scope_is_backend_false():
