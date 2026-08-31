@@ -1,6 +1,6 @@
 # A.R.G.U.S. — Autonomous Risk and Global Uncertainty Scanner (backend, velvet-razor)
 # US Market High-Resolution AI Scanner
-import os, time, requests, anthropic, json, threading, re, math, statistics, concurrent.futures, copy, shutil
+import os, time, requests, anthropic, json, threading, re, math, statistics, concurrent.futures, copy, shutil, errno
 import fcntl, gc, multiprocessing, resource, signal, stat, struct, sys, tempfile
 try:
     from google import genai as google_genai
@@ -22429,7 +22429,9 @@ class _RemoteRecoveryCheckpointError(RuntimeError):
 def _persist_remote_recovery_sidecar_once(
         checkpoint, *, checkpoint_path=None,
         authenticated_remote_floor=None,
-        legacy_ledger_base_capability=None, restore_token=None):
+        legacy_ledger_base_capability=None, restore_token=None,
+        sidecar_path=None, ledger_base_capability=None,
+        transactional_boundaries=False):
     """Encrypt the exact verified checkpoint projection before WAL compaction."""
     keys = argus_remote_recovery.configured_keys()
     if keys["status"] == "not_configured":
@@ -22484,15 +22486,28 @@ def _persist_remote_recovery_sidecar_once(
     if (legacy_ledger_base_capability is None) != (restore_token is None):
         raise argus_remote_recovery.RecoveryBundleError(
             "recovery_legacy_ledger_base_capability_invalid")
-    ledger_base_commit_sha = (
-        _consume_legacy_recovery_ledger_base_capability(
-            legacy_ledger_base_capability, checkpoint_blob, compact, keys,
-            restore_token)
-        if legacy_ledger_base_capability is not None else
-        _recovery_ledger_base(checkpoint_blob))
+    if legacy_ledger_base_capability is not None and \
+            ledger_base_capability is not None:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_ledger_base_capability_ambiguous")
+    if legacy_ledger_base_capability is not None:
+        ledger_base_commit_sha = \
+            _consume_legacy_recovery_ledger_base_capability(
+                legacy_ledger_base_capability, checkpoint_blob, compact,
+                keys, restore_token)
+    elif ledger_base_capability is not None:
+        ledger_base_commit_sha = \
+            _consume_post_genesis_mismatch_repair_capability(
+                ledger_base_capability, checkpoint_blob, compact, keys)
+    else:
+        ledger_base_commit_sha = _recovery_ledger_base(checkpoint_blob)
+    if transactional_boundaries:
+        _remote_recovery_crash_boundary("before_nonce_reservation")
     reservation = _reserve_remote_recovery_nonce(
         current["keyId"],
         authenticated_remote_floor=authenticated_remote_floor)
+    if transactional_boundaries:
+        _remote_recovery_crash_boundary("after_nonce_reservation")
     nonce_authority = {
         "schemaVersion": argus_remote_recovery.NONCE_AUTHORITY_SCHEMA,
         "keyMaterialCounters": reservation._key_material_counters,
@@ -22523,15 +22538,22 @@ def _persist_remote_recovery_sidecar_once(
         except argus_remote_recovery.RecoveryBundleError:
             return False
 
+    target_sidecar = os.path.abspath(
+        sidecar_path or _REMOTE_RECOVERY_FILE)
+    if transactional_boundaries:
+        _remote_recovery_crash_boundary("before_candidate_sidecar_write")
     write = argus_persistent_storage.atomic_write_json(
-        _REMOTE_RECOVERY_FILE, sidecar,
+        target_sidecar, sidecar,
         temp_directory=_DURABILITY_PATHS["tempDirectory"],
         validator=_verify_exact_sidecar,
         temp_label="recovery",
         maximum_bytes=argus_remote_recovery.MAX_SIDECAR_BYTES)
+    if transactional_boundaries:
+        _remote_recovery_crash_boundary("after_candidate_sidecar_write")
+        _remote_recovery_crash_boundary("after_candidate_sidecar_fsync")
     if write.get("readBackVerified") is not True:
         raise ValueError("recovery_sidecar_readback_unverified")
-    installed = _read_local_recovery_sidecar()
+    installed = _read_local_recovery_sidecar(target_sidecar)
     if not _verify_exact_sidecar(installed):
         raise ValueError("recovery_sidecar_installed_pair_invalid")
     _remote_recovery_crash_boundary("after_encrypted_sidecar_creation")
@@ -22551,7 +22573,9 @@ def _persist_remote_recovery_sidecar_once(
 def _persist_remote_recovery_sidecar(
         checkpoint, *, checkpoint_path=None,
         authenticated_remote_floor=None,
-        legacy_ledger_base_capability=None, restore_token=None):
+        legacy_ledger_base_capability=None, restore_token=None,
+        sidecar_path=None, ledger_base_capability=None,
+        transactional_boundaries=False):
     """Make configured recovery failures terminal for checkpoint callers."""
     _DURABLE_STATE["remoteRecoverySidecar"] = {"status": "generating"}
     try:
@@ -22559,7 +22583,9 @@ def _persist_remote_recovery_sidecar(
             checkpoint, checkpoint_path=checkpoint_path,
             authenticated_remote_floor=authenticated_remote_floor,
             legacy_ledger_base_capability=legacy_ledger_base_capability,
-            restore_token=restore_token)
+            restore_token=restore_token, sidecar_path=sidecar_path,
+            ledger_base_capability=ledger_base_capability,
+            transactional_boundaries=transactional_boundaries)
     except Exception as exc:
         _DURABLE_STATE["remoteRecoverySidecar"] = {
             "status": "failed", "errorClass": type(exc).__name__}
@@ -22650,12 +22676,12 @@ def _verified_checkpoint_preserving_legacy_until_pair(
         path, blob, *, job_id, wal_path, included_sequence,
         allow_wal_compaction, compaction_sequence, build_sha,
         mission_window_id):
-    """Stage first activation so marker-only state is never canonical.
+    """Commit keyed checkpoint/sidecar pairs through one sidecar switch.
 
-    Existing keyed checkpoints retain the already-proven ordinary writer.
-    A legacy or absent canonical checkpoint is switched only after the staged
-    marker checkpoint and exact encrypted sidecar have both survived durable
-    readback and authenticated pair verification.
+    A legacy or absent canonical checkpoint retains its activation staging.
+    After genesis, the previous authenticated pair stays authoritative until
+    a complete hash-named checkpoint generation and candidate sidecar have
+    both survived durable readback and exact pair verification.
     """
     configured = argus_remote_recovery.configured_keys()
     if configured.get("status") != "configured":
@@ -22670,9 +22696,13 @@ def _verified_checkpoint_preserving_legacy_until_pair(
     transaction_lock = None
     staged_checkpoint = None
     staged_lock = None
+    staged_sidecar = None
+    staged_sidecar_lock = None
+    authority_switched = False
     use_staging = False
+    ordinary_authority = None
+    transaction_lock = _acquire_recovery_checkpoint_transaction_lock(path)
     try:
-        transaction_lock = _acquire_recovery_checkpoint_transaction_lock(path)
         try:
             canonical = argus_persistent_storage.load_checkpoint(
                 path, require_seal=True)
@@ -22682,23 +22712,114 @@ def _verified_checkpoint_preserving_legacy_until_pair(
                 _validated_recovery_required_marker(canonical) is None:
             use_staging = True
         else:
-            # A marker-only or mismatched canonical generation is never
-            # silently overwritten as an implicit repair.
-            _verify_local_recovery_sidecar(
-                canonical, allow_legacy_migration=False)
-    finally:
-        if not use_staging:
-            _release_recovery_checkpoint_transaction_lock(transaction_lock)
-            transaction_lock = None
+            # The authenticated sidecar, not the compatibility checkpoint
+            # path, selects the committed generation after genesis.
+            ordinary_authority = \
+                _resolve_authoritative_local_recovery_checkpoint(
+                    canonical, path, configured)
+    except Exception:
+        _release_recovery_checkpoint_transaction_lock(transaction_lock)
+        raise
 
     if not use_staging:
-        return argus_tick_durability.verified_checkpoint(
-            path, blob, job_id=job_id, wal_path=wal_path,
-            included_sequence=included_sequence,
-            allow_wal_compaction=allow_wal_compaction,
-            compaction_sequence=compaction_sequence, build_sha=build_sha,
-            post_verify=_persist_remote_recovery_sidecar,
-            mission_window_id=mission_window_id)
+        try:
+            _remote_recovery_crash_boundary(
+                "before_candidate_checkpoint_staging")
+            staged_checkpoint = os.path.join(
+                _DURABILITY_PATHS["tempDirectory"],
+                (f"{os.path.basename(path)}.{os.getpid()}."
+                 f"{os.urandom(16).hex()}.recovery-pair-checkpoint"))
+            staged_lock = staged_checkpoint + ".writer.lock"
+            checkpoint = argus_tick_durability.verified_checkpoint(
+                staged_checkpoint, blob, job_id=job_id,
+                included_sequence=included_sequence,
+                allow_wal_compaction=False, build_sha=build_sha,
+                mission_window_id=mission_window_id)
+            _remote_recovery_crash_boundary("after_checkpoint_staging")
+            staged_sidecar = os.path.join(
+                _DURABILITY_PATHS["tempDirectory"],
+                (f"{os.path.basename(_REMOTE_RECOVERY_FILE)}.{os.getpid()}."
+                 f"{os.urandom(16).hex()}.candidate"))
+            staged_sidecar_lock = staged_sidecar + ".writer.lock"
+            checkpoint["postVerify"] = _persist_remote_recovery_sidecar(
+                checkpoint, checkpoint_path=staged_checkpoint,
+                sidecar_path=staged_sidecar,
+                transactional_boundaries=True)
+            _DURABLE_STATE["remoteRecoverySidecar"] = {
+                **checkpoint["postVerify"], "status": "candidate_verified"}
+            candidate_sidecar = _read_local_recovery_sidecar(staged_sidecar)
+            staged = argus_persistent_storage.load_checkpoint(
+                staged_checkpoint, require_seal=True)
+            _verify_local_recovery_sidecar(
+                staged, allow_legacy_migration=False,
+                sidecar_value=candidate_sidecar)
+            _remote_recovery_crash_boundary(
+                "after_candidate_pair_verification")
+
+            prior_hash = ordinary_authority["payload"][
+                "sourceCheckpointHash"]
+            candidate_hash = checkpoint["snapshotHash"]
+            _install_recovery_checkpoint_generation(
+                ordinary_authority["path"], path, prior_hash)
+            _install_recovery_checkpoint_generation(
+                staged_checkpoint, path, candidate_hash)
+            _remote_recovery_crash_boundary(
+                "before_pair_authority_switch")
+            os.replace(staged_sidecar, _REMOTE_RECOVERY_FILE)
+            staged_sidecar = None
+            authority_switched = True
+            argus_persistent_storage._fsync_directory(
+                os.path.dirname(os.path.abspath(_REMOTE_RECOVERY_FILE)))
+            _remote_recovery_crash_boundary("after_pair_authority_switch")
+
+            # This path is a compatibility projection only.  Once the
+            # sidecar switch above is durable, restart resolves the immutable
+            # candidate generation even if this projection did not complete.
+            os.replace(staged_checkpoint, path)
+            staged_checkpoint = None
+            argus_persistent_storage._fsync_directory(
+                os.path.dirname(os.path.abspath(path)))
+            installed = argus_persistent_storage.load_checkpoint(
+                path, require_seal=True)
+            resolved = _resolve_authoritative_local_recovery_checkpoint(
+                installed, path, configured)
+            if resolved["payload"]["sourceCheckpointHash"] != candidate_hash:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_pair_authority_switch_unverified")
+            _DURABLE_STATE["remoteRecoverySidecar"] = {
+                **checkpoint["postVerify"], "status": "verified"}
+            checkpoint["path"] = os.path.abspath(path)
+            _remote_recovery_crash_boundary("before_pair_cleanup")
+            _cleanup_recovery_checkpoint_generations(
+                path, (prior_hash, candidate_hash))
+            checkpoint["walCompaction"] = _checkpoint_wal_result(
+                checkpoint, wal_path=wal_path,
+                included_sequence=included_sequence,
+                allow_wal_compaction=allow_wal_compaction,
+                compaction_sequence=compaction_sequence, job_id=job_id,
+                build_sha=build_sha,
+                mission_window_id=mission_window_id)
+            return checkpoint
+        finally:
+            if not authority_switched and _DURABLE_STATE.get(
+                    "remoteRecoverySidecar", {}).get("status") == \
+                    "candidate_verified":
+                _DURABLE_STATE["remoteRecoverySidecar"] = {
+                    "status": "candidate_failed_preserved_previous",
+                    "errorClass": "candidate_not_committed",
+                }
+            for candidate in (
+                    staged_sidecar, staged_sidecar_lock,
+                    staged_checkpoint, staged_lock):
+                if candidate:
+                    try:
+                        os.unlink(candidate)
+                    except FileNotFoundError:
+                        pass
+                    except OSError:
+                        pass
+            _release_recovery_checkpoint_transaction_lock(transaction_lock)
+            transaction_lock = None
 
     try:
         staged_checkpoint = os.path.join(
@@ -23807,12 +23928,13 @@ def _recovery_key_for_envelope(envelope, configured):
         "recovery_key_id_unavailable")
 
 
-def _read_local_recovery_sidecar():
+def _read_local_recovery_sidecar(path=None):
     """Read one bounded local sidecar without exposing encrypted contents."""
+    target = os.path.abspath(path or _REMOTE_RECOVERY_FILE)
     descriptor = None
     try:
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(_REMOTE_RECOVERY_FILE, flags)
+        descriptor = os.open(target, flags)
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode) or before.st_size > \
                 argus_remote_recovery.MAX_SIDECAR_BYTES:
@@ -23849,6 +23971,109 @@ def _read_local_recovery_sidecar():
     finally:
         if descriptor is not None:
             os.close(descriptor)
+
+
+def _recovery_checkpoint_generation_path(checkpoint_path, checkpoint_hash):
+    """Return a deterministic private path for one immutable generation."""
+    normalized = str(checkpoint_hash or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", normalized):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_checkpoint_generation_hash_invalid")
+    canonical = os.path.abspath(checkpoint_path)
+    return canonical + ".recovery-generation-" + normalized
+
+
+def _verify_recovery_checkpoint_generation(path, expected_hash):
+    """Load one regular sealed generation and verify its exact object hash."""
+    target = os.path.abspath(path)
+    try:
+        metadata = os.stat(target, follow_symlinks=False)
+        if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(
+                metadata.st_mode):
+            raise OSError("generation_not_regular")
+        checkpoint = argus_persistent_storage.load_checkpoint(
+            target, require_seal=True)
+    except argus_remote_recovery.RecoveryBundleError:
+        raise
+    except Exception as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_checkpoint_generation_invalid") from exc
+    if not hmac.compare_digest(
+            argus_persistent_storage._canonical_sha256(checkpoint),
+            str(expected_hash or "").lower()):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_checkpoint_generation_hash_mismatch")
+    return checkpoint
+
+
+def _install_recovery_checkpoint_generation(
+        source_path, checkpoint_path, expected_hash):
+    """Install an immutable-by-name checkpoint generation without overwrite."""
+    source = os.path.abspath(source_path)
+    target = _recovery_checkpoint_generation_path(
+        checkpoint_path, expected_hash)
+    checkpoint = _verify_recovery_checkpoint_generation(
+        source, expected_hash)
+    try:
+        os.link(source, target, follow_symlinks=False)
+        argus_persistent_storage._fsync_directory(os.path.dirname(target))
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        if exc.errno not in (errno.EXDEV, errno.EPERM, errno.EACCES,
+                             errno.ENOTSUP):
+            raise
+        descriptor = None
+        try:
+            descriptor = os.open(
+                target, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                getattr(os, "O_NOFOLLOW", 0), 0o600)
+            with open(source, "rb") as reader, os.fdopen(
+                    descriptor, "wb", buffering=0) as writer:
+                descriptor = None
+                shutil.copyfileobj(reader, writer, length=1024 * 1024)
+                os.fsync(writer.fileno())
+            argus_persistent_storage._fsync_directory(
+                os.path.dirname(target))
+        except FileExistsError:
+            pass
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+    installed = _verify_recovery_checkpoint_generation(
+        target, expected_hash)
+    if installed != checkpoint:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_checkpoint_generation_changed")
+    return target
+
+
+def _cleanup_recovery_checkpoint_generations(
+        checkpoint_path, retained_hashes):
+    """Remove only superseded hash-named generations; authority is untouched."""
+    canonical = os.path.abspath(checkpoint_path)
+    directory = os.path.dirname(canonical)
+    prefix = os.path.basename(canonical) + ".recovery-generation-"
+    retained = {str(value or "").lower() for value in retained_hashes}
+    if not retained or any(not re.fullmatch(
+            r"[0-9a-f]{64}", value) for value in retained):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_checkpoint_generation_retention_invalid")
+    _remote_recovery_crash_boundary("during_pair_cleanup")
+    for name in os.listdir(directory):
+        if not name.startswith(prefix):
+            continue
+        suffix = name[len(prefix):]
+        if not re.fullmatch(r"[0-9a-f]{64}", suffix) or suffix in retained:
+            continue
+        candidate = os.path.join(directory, name)
+        metadata = os.stat(candidate, follow_symlinks=False)
+        if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(
+                metadata.st_mode):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_checkpoint_generation_cleanup_invalid")
+        os.unlink(candidate)
+    argus_persistent_storage._fsync_directory(directory)
 
 
 def _validated_recovery_required_marker(checkpoint_blob):
@@ -24004,7 +24229,7 @@ def _migrate_legacy_local_recovery(
 def _verify_local_recovery_sidecar(
         checkpoint_blob, *, allow_legacy_migration=True,
         authenticated_local_handoff=None, pinned_legacy_evidence=None,
-        pinned_ledger=None, restore_token=None):
+        pinned_ledger=None, restore_token=None, sidecar_value=None):
     """Authenticate a keyed local checkpoint before it becomes authority."""
     if authenticated_local_handoff is not None and (
             not isinstance(authenticated_local_handoff, list) or
@@ -24035,7 +24260,9 @@ def _verify_local_recovery_sidecar(
             authenticated_local_handoff=authenticated_local_handoff,
             pinned_legacy_evidence=pinned_legacy_evidence,
             pinned_ledger=pinned_ledger, restore_token=restore_token)
-    sidecar = _read_local_recovery_sidecar()
+    sidecar = (_read_local_recovery_sidecar()
+               if sidecar_value is None else
+               argus_remote_recovery.validate_sidecar(sidecar_value))
     envelope = sidecar["recovery"]
     if marker["keyId"] != envelope.get("keyId"):
         raise argus_remote_recovery.RecoveryBundleError(
@@ -24117,12 +24344,100 @@ def _verify_local_recovery_sidecar(
     return verified
 
 
+def _resolve_authoritative_local_recovery_checkpoint(
+        canonical_checkpoint, checkpoint_path, configured):
+    """Resolve the exact checkpoint selected by the authenticated sidecar.
+
+    The sidecar is the only pair authority selector.  The canonical path is a
+    compatibility projection and may lag an already-committed sidecar switch
+    after a crash.  A lagging projection is accepted only when an immutable
+    hash-named generation verifies against the authenticated payload.
+    """
+    if configured.get("status") != "configured" or not isinstance(
+            canonical_checkpoint, dict):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_checkpoint_resolution_invalid")
+    sidecar = _read_local_recovery_sidecar()
+    envelope = sidecar["recovery"]
+    selected = _recovery_key_for_envelope(envelope, configured)
+    payload = argus_remote_recovery.validate_pair(
+        sidecar["readback"], envelope, selected["key"],
+        key_identifier=selected["keyId"])
+    canonical_marker = _validated_recovery_required_marker(
+        canonical_checkpoint)
+    if canonical_marker is None:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_required_marker_missing")
+    if canonical_marker["keyId"] != envelope.get("keyId"):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_required_marker_key_mismatch")
+    expected_hash = payload["sourceCheckpointHash"]
+    canonical_hash = argus_persistent_storage._canonical_sha256(
+        canonical_checkpoint)
+    if hmac.compare_digest(canonical_hash, expected_hash):
+        verified = _verify_local_recovery_sidecar(
+            canonical_checkpoint, allow_legacy_migration=False,
+            sidecar_value=sidecar)
+        return {
+            "checkpoint": canonical_checkpoint,
+            "verifiedCheckpoint": verified,
+            "path": os.path.abspath(checkpoint_path),
+            "sidecar": sidecar,
+            "payload": payload,
+            "projectionCurrent": True,
+        }
+    generation_path = _recovery_checkpoint_generation_path(
+        checkpoint_path, expected_hash)
+    generation = _verify_recovery_checkpoint_generation(
+        generation_path, expected_hash)
+    verified = _verify_local_recovery_sidecar(
+        generation, allow_legacy_migration=False, sidecar_value=sidecar)
+    return {
+        "checkpoint": generation,
+        "verifiedCheckpoint": verified,
+        "path": generation_path,
+        "sidecar": sidecar,
+        "payload": payload,
+        "projectionCurrent": False,
+    }
+
+
 _PARTIAL_ACTIVATION_REPAIR_SCHEMA = \
     "argus-recovery-partial-activation-repair-v1"
 _CANONICAL_ABSENT_PARTIAL_ACTIVATION_REPAIR_SCHEMA = \
     "argus-recovery-partial-activation-canonical-absent-v1"
 _CANONICAL_ABSENT_REPAIR_RESULT_SCHEMA = \
     "argus-recovery-canonical-absent-repair-result-v1"
+_POST_GENESIS_PAIR_REPAIR_SCHEMA = \
+    "argus-recovery-post-genesis-pair-repair-v1"
+_POST_GENESIS_PAIR_REPAIR_RESULT_SCHEMA = \
+    "argus-recovery-post-genesis-pair-repair-result-v1"
+_POST_GENESIS_PAIR_REPAIR_PROCESS_TOKEN = object()
+
+
+class _PostGenesisMismatchRepairCapability:
+    __slots__ = (
+        "_token", "_checkpoint_path", "_checkpoint_hash",
+        "_checkpoint_identity", "_sidecar_path", "_sidecar_hash",
+        "_sidecar_identity", "_key_id", "_key_domain", "_payload",
+        "_ledger_base", "_consumed")
+
+    def __init__(self, *, checkpoint_path, checkpoint_hash,
+                 checkpoint_identity, sidecar_path, sidecar_hash,
+                 sidecar_identity, key_id, key_domain, payload,
+                 ledger_base):
+        self._token = _POST_GENESIS_PAIR_REPAIR_PROCESS_TOKEN
+        self._checkpoint_path = checkpoint_path
+        self._checkpoint_hash = checkpoint_hash
+        self._checkpoint_identity = checkpoint_identity
+        self._sidecar_path = sidecar_path
+        self._sidecar_hash = sidecar_hash
+        self._sidecar_identity = sidecar_identity
+        self._key_id = key_id
+        self._key_domain = key_domain
+        self._payload = copy.deepcopy(payload)
+        self._ledger_base = ledger_base
+        self._consumed = False
 
 
 def _remote_recovery_file_sha256(path):
@@ -24136,6 +24451,520 @@ def _remote_recovery_file_sha256(path):
     return digest.hexdigest()
 
 
+def _post_genesis_repair_file_identity(path):
+    target = os.path.abspath(path)
+    metadata = os.stat(target, follow_symlinks=False)
+    if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_artifact_invalid")
+    return {
+        "path": target,
+        "sha256": _remote_recovery_file_sha256(target),
+        "bytes": metadata.st_size,
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+        "mode": stat.S_IMODE(metadata.st_mode),
+        "mtimeNs": metadata.st_mtime_ns,
+        "ctimeNs": metadata.st_ctime_ns,
+    }
+
+
+def _read_only_remote_recovery_nonce_authority(configured):
+    """Verify every nonce mirror and anchor without repairing any mirror."""
+    lock_handle = None
+    try:
+        lock_handle = _acquire_remote_recovery_nonce_lock(
+            _DURABILITY_PATHS["recoveryNonceState"], blocking=False,
+            create=False)
+        paths = _remote_recovery_nonce_paths()
+        history = _read_remote_recovery_nonce_history(
+            paths["history"], missing_ok=False)
+        head = _read_remote_recovery_nonce_history_head(
+            paths["head"], missing_ok=False)
+        state = _read_remote_recovery_nonce_state(
+            paths["state"], missing_ok=False)
+        anchor = _remote_recovery_nonce_lock_anchor(lock_handle)
+        if anchor is None or head != \
+                _build_remote_recovery_nonce_history_head(history) or \
+                state != {
+                    "schemaVersion": _REMOTE_RECOVERY_NONCE_STATE_SCHEMA,
+                    "historyGeneration": history["generation"],
+                    "historyRecordHash": history["recordHash"],
+                    "keyMaterialCounters": history[
+                        "keyMaterialCounters"],
+                } or anchor["generation"] != history["generation"] or \
+                not hmac.compare_digest(
+                    anchor["recordHash"], history["recordHash"]):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_post_genesis_repair_nonce_invalid")
+        _verify_installed_remote_recovery_nonce_floor(history, configured)
+        return history
+    finally:
+        _release_remote_recovery_nonce_lock(lock_handle)
+
+
+def _post_genesis_repair_nonce_artifacts():
+    paths = _remote_recovery_nonce_paths()
+    lock_path = _DURABILITY_PATHS[
+        "recoveryNonceState"] + ".reservation.lock"
+    epoch_path = lock_path + ".anchor"
+    return {
+        "state": _post_genesis_repair_file_identity(paths["state"]),
+        "history": _post_genesis_repair_file_identity(paths["history"]),
+        "head": _post_genesis_repair_file_identity(paths["head"]),
+        "anchor": _post_genesis_repair_file_identity(
+            epoch_path if os.path.lexists(epoch_path) else lock_path),
+    }
+
+
+def _find_matching_recovery_checkpoint_artifacts(checkpoint_hash):
+    """Boundedly locate exact sealed artifacts matching one sidecar hash."""
+    root = os.path.realpath(_DURABILITY_PATHS["root"])
+    maximum = argus_persistent_storage._maximum_checkpoint_bytes()
+    matches = []
+    examined = 0
+
+    def fail_scan(exc):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_artifact_scan_ambiguous") from exc
+
+    for directory, names, files in os.walk(
+            root, followlinks=False, onerror=fail_scan):
+        names[:] = [name for name in names if not os.path.islink(
+            os.path.join(directory, name))]
+        for name in files:
+            examined += 1
+            if examined > 512:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_post_genesis_repair_artifact_scan_unbounded")
+            path = os.path.join(directory, name)
+            try:
+                metadata = os.stat(path, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_post_genesis_repair_artifact_scan_ambiguous") \
+                    from exc
+            if not stat.S_ISREG(metadata.st_mode) or \
+                    metadata.st_size <= 0 or metadata.st_size > maximum:
+                continue
+            try:
+                digest = _remote_recovery_file_sha256(path)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_post_genesis_repair_artifact_scan_ambiguous") \
+                    from exc
+            if not hmac.compare_digest(digest, checkpoint_hash):
+                continue
+            try:
+                checkpoint = argus_persistent_storage.load_checkpoint(
+                    path, require_seal=True)
+            except Exception as exc:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_post_genesis_repair_matching_artifact_invalid") \
+                    from exc
+            if not hmac.compare_digest(
+                    argus_persistent_storage._canonical_sha256(checkpoint),
+                    checkpoint_hash):
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_post_genesis_repair_matching_artifact_invalid")
+            matches.append(_post_genesis_repair_file_identity(path))
+    return matches
+
+
+def _plan_post_genesis_pair_repair(expected):
+    """Read-only exact-state plan for the current nonce-present mismatch."""
+    required = {
+        "schemaVersion", "liveBuildSha", "currentCheckpoint",
+        "currentSidecar", "currentKeyId", "previousKeyAbsent",
+        "nonceAuthority", "writersFenced", "activeWriters",
+        "ec2TimerDisabled", "ec2TimerInactive", "recoveryReadback",
+        "previousMatchingCheckpointArtifact", "forensicBackupDirectory",
+    }
+    if not isinstance(expected, dict) or set(expected) != required or \
+            expected.get("schemaVersion") != \
+            _POST_GENESIS_PAIR_REPAIR_SCHEMA:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_contract_invalid")
+    if expected.get("writersFenced") is not True or \
+            expected.get("activeWriters") != 0 or \
+            expected.get("ec2TimerDisabled") is not True or \
+            expected.get("ec2TimerInactive") is not True or \
+            expected.get("recoveryReadback") != \
+            "UNAVAILABLE_PAIR_MISMATCH" or \
+            expected.get("previousMatchingCheckpointArtifact") != \
+            "NOT_PROVEN":
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_fence_unproven")
+    build_sha = str(expected.get("liveBuildSha") or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", build_sha) or \
+            not hmac.compare_digest(_backend_exact_sha(), build_sha):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_build_mismatch")
+    configured = argus_remote_recovery.configured_keys()
+    current = configured.get("current") if isinstance(configured, dict) \
+        else None
+    if configured.get("status") != "configured" or not isinstance(
+            current, dict) or current.get("keyId") != expected.get(
+                "currentKeyId") or expected.get(
+                "previousKeyAbsent") is not True or \
+            configured.get("previous") is not None:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_key_mismatch")
+
+    checkpoint_expected = expected.get("currentCheckpoint")
+    sidecar_expected = expected.get("currentSidecar")
+    if not isinstance(checkpoint_expected, dict) or set(
+            checkpoint_expected) != {
+                "path", "sha256", "bytes", "wal", "sealValid",
+                "checkpointId"} or not isinstance(
+                    sidecar_expected, dict) or set(sidecar_expected) != {
+                "path", "sha256", "bytes", "boundCheckpointSha256",
+                "boundCheckpointId"}:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_artifact_contract_invalid")
+    checkpoint_path = os.path.abspath(_OSINT_PERSIST_FILE)
+    sidecar_path = os.path.abspath(_REMOTE_RECOVERY_FILE)
+    if os.path.abspath(str(checkpoint_expected.get("path") or "")) != \
+            checkpoint_path or os.path.abspath(str(
+                sidecar_expected.get("path") or "")) != sidecar_path:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_path_mismatch")
+    checkpoint_identity = _post_genesis_repair_file_identity(
+        checkpoint_path)
+    sidecar_identity = _post_genesis_repair_file_identity(sidecar_path)
+    if any(checkpoint_identity[name] != checkpoint_expected[name]
+           for name in ("sha256", "bytes")) or any(
+               sidecar_identity[name] != sidecar_expected[name]
+               for name in ("sha256", "bytes")):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_artifact_mismatch")
+    checkpoint = argus_persistent_storage.load_checkpoint(
+        checkpoint_path, require_seal=True)
+    if checkpoint_expected.get("sealValid") is not True or not \
+            argus_persistent_storage.verify_checkpoint(
+                checkpoint, require_seal=True) or not hmac.compare_digest(
+                    argus_persistent_storage._canonical_sha256(checkpoint),
+                    checkpoint_identity["sha256"]):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_checkpoint_invalid")
+    marker = _validated_recovery_required_marker(checkpoint)
+    durability = checkpoint.get("missionTickDurability")
+    if marker is None or marker["keyId"] != current["keyId"] or \
+            marker["checkpointId"] != checkpoint_expected.get(
+                "checkpointId") or not isinstance(durability, dict) or \
+            durability.get("walAppliedSequence") != checkpoint_expected.get(
+                "wal"):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_checkpoint_state_mismatch")
+
+    sidecar = _read_local_recovery_sidecar(sidecar_path)
+    envelope = sidecar["recovery"]
+    selected = _recovery_key_for_envelope(envelope, configured)
+    payload = argus_remote_recovery.validate_pair(
+        sidecar["readback"], envelope, selected["key"],
+        key_identifier=selected["keyId"])
+    if selected["keyId"] != current["keyId"] or \
+            payload["sourceCheckpointHash"] != sidecar_expected.get(
+                "boundCheckpointSha256") or payload["checkpointId"] != \
+            sidecar_expected.get("boundCheckpointId") or \
+            payload["targetWalSequence"] != checkpoint_expected.get(
+                "wal") or (payload["sourceCheckpointHash"] ==
+                    checkpoint_identity["sha256"] and payload[
+                        "checkpointId"] == marker["checkpointId"]):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_sidecar_state_mismatch")
+    export_durability = copy.deepcopy(durability)
+    export_durability["remoteWalAppliedSequence"] = payload[
+        "targetWalSequence"]
+    targets = _checkpoint_recovery_targets(checkpoint, export_durability)
+    if any(targets[name] != payload["targets"][name]
+           for name in argus_remote_recovery.TARGET_KEYS):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_projection_mismatch")
+
+    history = _read_only_remote_recovery_nonce_authority(configured)
+    current_domain = _remote_recovery_nonce_domain(current["key"])
+    maximum_counter = max(history["keyMaterialCounters"].values())
+    nonce_expected = expected.get("nonceAuthority")
+    artifacts = _post_genesis_repair_nonce_artifacts()
+    if not isinstance(nonce_expected, dict) or set(nonce_expected) != {
+            "generation", "maximumCounter", "artifacts"} or \
+            nonce_expected.get("generation") != history["generation"] or \
+            nonce_expected.get("maximumCounter") != maximum_counter or \
+            nonce_expected.get("artifacts") != artifacts or \
+            history["generation"] < 33 or maximum_counter < 33 or \
+            int(history["keyMaterialCounters"].get(current_domain) or 0) != \
+            maximum_counter:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_nonce_mismatch")
+    previous_matches = _find_matching_recovery_checkpoint_artifacts(
+        payload["sourceCheckpointHash"])
+    if previous_matches:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_previous_checkpoint_found")
+
+    backup_directory = os.path.abspath(str(
+        expected.get("forensicBackupDirectory") or ""))
+    root = os.path.realpath(_DURABILITY_PATHS["root"])
+    if os.path.dirname(backup_directory) != root or not \
+            os.path.basename(backup_directory).startswith(
+                "argus-recovery-post-genesis-forensic-") or \
+            os.path.lexists(backup_directory):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_backup_path_invalid")
+    if _post_genesis_repair_file_identity(checkpoint_path) != \
+            checkpoint_identity or \
+            _post_genesis_repair_file_identity(sidecar_path) != \
+            sidecar_identity or \
+            _post_genesis_repair_nonce_artifacts() != artifacts:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_state_changed")
+    return {
+        "schemaVersion": _POST_GENESIS_PAIR_REPAIR_SCHEMA,
+        "status": "DRY_RUN_PASS",
+        "mutationAuthorized": False,
+        "liveBuildSha": build_sha,
+        "currentKeyId": current["keyId"],
+        "previousKeyAbsent": True,
+        "checkpoint": checkpoint_identity,
+        "checkpointId": marker["checkpointId"],
+        "walSequence": checkpoint_expected["wal"],
+        "sidecar": sidecar_identity,
+        "sidecarBoundCheckpointSha256": payload[
+            "sourceCheckpointHash"],
+        "sidecarBoundCheckpointId": payload["checkpointId"],
+        "ledgerBaseCommitSha": envelope["ledgerBaseCommitSha"],
+        "nonceGeneration": history["generation"],
+        "nonceMaximumCounter": maximum_counter,
+        "nonceArtifacts": artifacts,
+        "previousMatchingCheckpointArtifact": "NOT_PROVEN",
+        "projectionEquality": "PROVEN",
+        "forensicBackupDirectory": backup_directory,
+        "repairStrategy": (
+            "authenticate_previous_sidecar_then_exact_projection_rebind_"
+            "current_checkpoint_with_new_nonce_and_atomic_sidecar_switch"),
+    }
+
+
+def _mint_post_genesis_mismatch_repair_capability(plan, checkpoint, payload):
+    configured = argus_remote_recovery.configured_keys()
+    current = configured.get("current") if isinstance(configured, dict) \
+        else None
+    if plan.get("status") != "DRY_RUN_PASS" or not isinstance(
+            current, dict):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_capability_invalid")
+    checkpoint_identity = _post_genesis_repair_file_identity(
+        plan["checkpoint"]["path"])
+    sidecar_identity = _post_genesis_repair_file_identity(
+        plan["sidecar"]["path"])
+    if checkpoint_identity["sha256"] != plan["checkpoint"]["sha256"] or \
+            sidecar_identity["sha256"] != plan["sidecar"]["sha256"]:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_capability_changed")
+    return _PostGenesisMismatchRepairCapability(
+        checkpoint_path=plan["checkpoint"]["path"],
+        checkpoint_hash=plan["checkpoint"]["sha256"],
+        checkpoint_identity=checkpoint_identity,
+        sidecar_path=plan["sidecar"]["path"],
+        sidecar_hash=plan["sidecar"]["sha256"],
+        sidecar_identity=sidecar_identity,
+        key_id=current["keyId"],
+        key_domain=_remote_recovery_nonce_domain(current["key"]),
+        payload=payload, ledger_base=plan["ledgerBaseCommitSha"])
+
+
+def _consume_post_genesis_mismatch_repair_capability(
+        capability, checkpoint_blob, compact, keys):
+    """Consume one private exact-state ledger-base exception for repair."""
+    current = keys.get("current") if isinstance(keys, dict) else None
+    if not isinstance(capability, _PostGenesisMismatchRepairCapability) or \
+            capability._token is not \
+            _POST_GENESIS_PAIR_REPAIR_PROCESS_TOKEN or \
+            capability._consumed or not isinstance(current, dict):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_capability_invalid")
+    capability._consumed = True
+    if current.get("keyId") != capability._key_id or not \
+            hmac.compare_digest(
+                _remote_recovery_nonce_domain(current.get("key")),
+                capability._key_domain) or \
+            _post_genesis_repair_file_identity(
+                capability._checkpoint_path) != \
+            capability._checkpoint_identity or \
+            _post_genesis_repair_file_identity(capability._sidecar_path) != \
+            capability._sidecar_identity or not hmac.compare_digest(
+                _remote_recovery_file_sha256(capability._checkpoint_path),
+                capability._checkpoint_hash) or not hmac.compare_digest(
+                    _remote_recovery_file_sha256(capability._sidecar_path),
+                    capability._sidecar_hash) or \
+            argus_persistent_storage._canonical_sha256(checkpoint_blob) != \
+            capability._checkpoint_hash:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_capability_changed")
+    durability = checkpoint_blob.get("missionTickDurability")
+    if not isinstance(durability, dict):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_capability_changed")
+    export_durability = copy.deepcopy(durability)
+    export_durability["remoteWalAppliedSequence"] = capability._payload[
+        "targetWalSequence"]
+    targets = _checkpoint_recovery_targets(
+        checkpoint_blob, export_durability)
+    if capability._payload["targetWalSequence"] != durability.get(
+            "walAppliedSequence") or any(
+                targets[name] != capability._payload["targets"][name]
+                for name in argus_remote_recovery.TARGET_KEYS) or not \
+            isinstance(compact, dict):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_repair_projection_changed")
+    return capability._ledger_base
+
+
+def _execute_post_genesis_pair_repair(expected, *, execute=False):
+    """Apply the exact mismatch repair only with an explicit owner action."""
+    plan = _plan_post_genesis_pair_repair(expected)
+    if execute is not True:
+        return plan
+    root = os.path.realpath(_DURABILITY_PATHS["root"])
+    staging = tempfile.mkdtemp(
+        prefix=".argus-recovery-post-genesis-forensic-", dir=root)
+    candidate_sidecar = None
+    candidate_sidecar_lock = None
+    try:
+        artifacts = [
+            ("checkpoint.json", plan["checkpoint"]),
+            ("sidecar.json", plan["sidecar"]),
+        ] + [(f"nonce-{name}", identity) for name, identity in sorted(
+            plan["nonceArtifacts"].items())]
+        manifest_artifacts = []
+        for name, identity in artifacts:
+            destination = os.path.join(staging, name)
+            _write_canonical_absent_forensic_copy(
+                identity["path"], destination, identity)
+            manifest_artifacts.append({
+                "role": name, "sourcePath": identity["path"],
+                "backupFile": name, "sha256": identity["sha256"],
+                "bytes": identity["bytes"], "mtimeNs": identity[
+                    "mtimeNs"], "ctimeNs": identity["ctimeNs"],
+            })
+        manifest = {
+            "schemaVersion":
+                "argus-recovery-post-genesis-forensic-backup-v1",
+            "liveBuildSha": plan["liveBuildSha"],
+            "currentKeyId": plan["currentKeyId"],
+            "previousKeyAbsent": True,
+            "walSequence": plan["walSequence"],
+            "checkpointId": plan["checkpointId"],
+            "sidecarBoundCheckpointSha256": plan[
+                "sidecarBoundCheckpointSha256"],
+            "sidecarBoundCheckpointId": plan[
+                "sidecarBoundCheckpointId"],
+            "nonceGeneration": plan["nonceGeneration"],
+            "nonceMaximumCounter": plan["nonceMaximumCounter"],
+            "artifacts": manifest_artifacts,
+        }
+        manifest_path = os.path.join(staging, "manifest.json")
+        manifest_write = argus_persistent_storage.atomic_write_json(
+            manifest_path, manifest, temp_directory=staging,
+            validator=lambda value: value == manifest,
+            temp_label="post-genesis-forensic", file_mode=0o600)
+        if manifest_write.get("readBackVerified") is not True:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_post_genesis_repair_backup_invalid")
+        digest = _remote_recovery_file_sha256(manifest_path)
+        digest_path = os.path.join(staging, "manifest.sha256")
+        descriptor = os.open(
+            digest_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+            getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(descriptor, "wb", buffering=0) as handle:
+            handle.write((digest + "  manifest.json\n").encode("ascii"))
+            os.fsync(handle.fileno())
+        argus_persistent_storage._fsync_directory(staging)
+        _plan_post_genesis_pair_repair(expected)
+        os.replace(staging, plan["forensicBackupDirectory"])
+        staging = None
+        argus_persistent_storage._fsync_directory(root)
+
+        checkpoint = argus_persistent_storage.load_checkpoint(
+            plan["checkpoint"]["path"], require_seal=True)
+        sidecar = _read_local_recovery_sidecar(plan["sidecar"]["path"])
+        configured = argus_remote_recovery.configured_keys()
+        selected = _recovery_key_for_envelope(
+            sidecar["recovery"], configured)
+        payload = argus_remote_recovery.validate_pair(
+            sidecar["readback"], sidecar["recovery"], selected["key"],
+            key_identifier=selected["keyId"])
+        _install_recovery_checkpoint_generation(
+            plan["checkpoint"]["path"], plan["checkpoint"]["path"],
+            plan["checkpoint"]["sha256"])
+        capability = _mint_post_genesis_mismatch_repair_capability(
+            plan, checkpoint, payload)
+        candidate_sidecar = os.path.join(
+            root, f".{os.path.basename(_REMOTE_RECOVERY_FILE)}."
+            f"{os.getpid()}.{os.urandom(16).hex()}.repair-candidate")
+        candidate_sidecar_lock = candidate_sidecar + ".writer.lock"
+        receipt = {
+            "verified": True,
+            "readBackVerified": True,
+            "snapshotHash": plan["checkpoint"]["sha256"],
+            "verifiedAt": _ai_now_iso(),
+            "includedWalSequence": plan["walSequence"],
+        }
+        result = _persist_remote_recovery_sidecar(
+            receipt, checkpoint_path=plan["checkpoint"]["path"],
+            sidecar_path=candidate_sidecar,
+            ledger_base_capability=capability)
+        candidate = _read_local_recovery_sidecar(candidate_sidecar)
+        _verify_local_recovery_sidecar(
+            checkpoint, allow_legacy_migration=False,
+            sidecar_value=candidate)
+        os.replace(candidate_sidecar, _REMOTE_RECOVERY_FILE)
+        candidate_sidecar = None
+        argus_persistent_storage._fsync_directory(
+            os.path.dirname(os.path.abspath(_REMOTE_RECOVERY_FILE)))
+        installed = _resolve_authoritative_local_recovery_checkpoint(
+            checkpoint, _OSINT_PERSIST_FILE, configured)
+        history = _read_only_remote_recovery_nonce_authority(configured)
+        maximum_counter = max(history["keyMaterialCounters"].values())
+        if installed["payload"]["sourceCheckpointHash"] != \
+                plan["checkpoint"]["sha256"] or maximum_counter <= \
+                plan["nonceMaximumCounter"]:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_post_genesis_repair_post_verify_failed")
+        return {
+            "schemaVersion": _POST_GENESIS_PAIR_REPAIR_RESULT_SCHEMA,
+            "status": "REPAIR_APPLIED_KEYED_PAIR_VERIFIED",
+            "liveBuildSha": plan["liveBuildSha"],
+            "checkpointSha256": plan["checkpoint"]["sha256"],
+            "checkpointId": plan["checkpointId"],
+            "targetWalSequence": plan["walSequence"],
+            "keyId": plan["currentKeyId"],
+            "bundleHash": result["bundleHash"],
+            "nonceGeneration": history["generation"],
+            "nonceMaximumCounter": maximum_counter,
+            "forensicBackupDirectory": plan[
+                "forensicBackupDirectory"],
+        }
+    finally:
+        if candidate_sidecar is not None:
+            try:
+                os.unlink(candidate_sidecar)
+            except OSError:
+                pass
+        if candidate_sidecar_lock is not None:
+            try:
+                os.unlink(candidate_sidecar_lock)
+            except OSError:
+                pass
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
+
+
 def _plan_partial_activation_repair(expected):
     """Validate, without mutation, the one owner-gated production repair.
 
@@ -24147,6 +24976,9 @@ def _plan_partial_activation_repair(expected):
     if isinstance(expected, dict) and expected.get("schemaVersion") == \
             _CANONICAL_ABSENT_PARTIAL_ACTIVATION_REPAIR_SCHEMA:
         return _plan_canonical_absent_partial_activation_repair(expected)
+    if isinstance(expected, dict) and expected.get("schemaVersion") == \
+            _POST_GENESIS_PAIR_REPAIR_SCHEMA:
+        return _plan_post_genesis_pair_repair(expected)
     required = {
         "schemaVersion", "buildSha", "currentKeyId", "checkpointId",
         "currentCheckpointSha256", "currentCheckpointBytes",
@@ -25397,6 +26229,19 @@ def _osint_restore_once():
             restore_stage = "REMOTE_NONCE_BOOT"
             nonce_keys = argus_remote_recovery.configured_keys()
             if nonce_keys.get("status") == "configured":
+                if _validated_recovery_required_marker(blob) is not None and \
+                        os.path.lexists(_REMOTE_RECOVERY_FILE):
+                    resolved_local = \
+                        _resolve_authoritative_local_recovery_checkpoint(
+                            blob, _OSINT_PERSIST_FILE, nonce_keys)
+                    blob = resolved_local["checkpoint"]
+                    _DURABLE_STATE["remoteRecoveryCheckpointResolution"] = {
+                        "status": "verified",
+                        "projectionCurrent": resolved_local[
+                            "projectionCurrent"],
+                        "sourceCheckpointHash": resolved_local["payload"][
+                            "sourceCheckpointHash"],
+                    }
                 remote_evidence_handoff = []
                 try:
                     # Resolve the moving ref once.  If the local generation is
@@ -32115,9 +32960,10 @@ def _recovery_export_file_identity(metadata):
     )
 
 
-def _recovery_export_checkpoint_identity():
+def _recovery_export_checkpoint_identity(path=None):
+    target = os.path.abspath(path or _OSINT_PERSIST_FILE)
     try:
-        metadata = os.stat(_OSINT_PERSIST_FILE, follow_symlinks=False)
+        metadata = os.stat(target, follow_symlinks=False)
         maximum = argus_persistent_storage._maximum_checkpoint_bytes()
     except FileNotFoundError as exc:
         raise argus_remote_recovery.RecoveryBundleError(
@@ -32185,7 +33031,7 @@ def _read_bounded_recovery_export_sidecar():
 
 
 def _stream_verified_recovery_checkpoint(
-        expected_hash, *, expected_identity=None):
+        expected_hash, *, expected_identity=None, checkpoint_path=None):
     """Verify the canonical checkpoint file without materializing its JSON.
 
     ``atomic_write_json`` hashes the exact canonical bytes it installs, and
@@ -32195,15 +33041,14 @@ def _stream_verified_recovery_checkpoint(
     replacement during the read is rejected rather than exporting a stale or
     mismatched pair.
     """
+    target = os.path.abspath(checkpoint_path or _OSINT_PERSIST_FILE)
     descriptor = None
     try:
-        if os.path.lexists(_OSINT_PERSIST_FILE) and os.path.islink(
-                _OSINT_PERSIST_FILE):
+        if os.path.lexists(target) and os.path.islink(target):
             raise argus_remote_recovery.RecoveryBundleError(
                 "recovery_export_checkpoint_symlink")
         descriptor = os.open(
-            _OSINT_PERSIST_FILE,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         before = os.fstat(descriptor)
         maximum = argus_persistent_storage._maximum_checkpoint_bytes()
         if not stat.S_ISREG(before.st_mode) or before.st_size <= 0 or \
@@ -32228,7 +33073,7 @@ def _stream_verified_recovery_checkpoint(
             digest.update(chunk)
 
         after = os.fstat(descriptor)
-        current = os.stat(_OSINT_PERSIST_FILE, follow_symlinks=False)
+        current = os.stat(target, follow_symlinks=False)
 
         identity = _recovery_export_file_identity(after)
         if stat.S_ISLNK(current.st_mode) or \
@@ -32268,7 +33113,12 @@ def _validated_local_recovery_export():
         payload = argus_remote_recovery.validate_pair(
             sidecar["readback"], envelope, selected["key"],
             key_identifier=selected["keyId"])
-        checkpoint_identity = _recovery_export_checkpoint_identity()
+        generation_path = _recovery_checkpoint_generation_path(
+            _OSINT_PERSIST_FILE, payload["sourceCheckpointHash"])
+        checkpoint_path = (generation_path if os.path.lexists(
+            generation_path) else os.path.abspath(_OSINT_PERSIST_FILE))
+        checkpoint_identity = _recovery_export_checkpoint_identity(
+            checkpoint_path)
         attestation = {
             "checkpointIdentity": checkpoint_identity,
             "sidecarIdentity": sidecar_identity,
@@ -32283,7 +33133,8 @@ def _validated_local_recovery_export():
         if _REMOTE_RECOVERY_EXPORT_ATTESTATION != attestation:
             _stream_verified_recovery_checkpoint(
                 payload["sourceCheckpointHash"],
-                expected_identity=checkpoint_identity)
+                expected_identity=checkpoint_identity,
+                checkpoint_path=checkpoint_path)
             _REMOTE_RECOVERY_EXPORT_ATTESTATION = attestation
         del payload
         return sidecar

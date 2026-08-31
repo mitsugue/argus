@@ -1738,6 +1738,215 @@ def test_configured_legacy_migration_failure_never_becomes_authority():
         assert scanner._DURABLE_STATE.get("lastRestoreAt") is None
         assert scanner._OSINT_PERSIST_STATE.get("restored") is not True
         assert pathlib.Path(paths["checkpoint"]).read_bytes() == prior
+
+
+def _post_genesis_mismatch_fixture(paths):
+    readback, envelope, targets = _artifacts(
+        target_wal=PRODUCTION_LOCAL_WAL, mission_count=3,
+        nonce=(33).to_bytes(12, "big"), generation_digit="3")
+    old_checkpoint, old_sidecar = _sealed_local_pair(
+        key=CURRENT_KEY, key_id=CURRENT_ID, readback=readback,
+        envelope=envelope, targets=targets, generation_digit="3")
+    old_payload = recovery.validate_pair(
+        old_sidecar["readback"], old_sidecar["recovery"], CURRENT_KEY,
+        key_identifier=CURRENT_ID)
+    old_payload["nonceAuthority"]["keyMaterialCounters"] = {
+        recovery.nonce_material_domain(CURRENT_KEY): 33}
+    old_payload["payloadHash"] = recovery._hash({
+        name: value for name, value in old_payload.items()
+        if name != "payloadHash"})
+    old_envelope = recovery.encrypt_payload(
+        old_payload, CURRENT_KEY, key_identifier=CURRENT_ID,
+        nonce=(33).to_bytes(12, "big"),
+        generation_id="rrg-" + "3" * 32)
+    old_sidecar = recovery.build_sidecar(readback, old_envelope)
+
+    current = copy.deepcopy(old_checkpoint)
+    current["remoteRecoveryRequired"]["checkpointId"] = \
+        "rcp-" + "6" * 32
+    current["remoteJournalCycle"].update({
+        "remoteCommitSha": None, "receiptCommitSha": None,
+        "readBackVerified": False, "walReadBackVerified": False,
+        "remoteDurabilityState": "not_started",
+        "remoteWalAppliedSequence": 0, "verifiedWalSequence": 0,
+        "compactReceiptHash": None,
+    })
+    current = storage.seal_checkpoint(current)
+
+    legacy = copy.deepcopy(current)
+    legacy.pop("remoteRecoveryRequired")
+    legacy = storage.seal_checkpoint(legacy)
+    storage.atomic_write_json(
+        paths["checkpoint"], legacy, temp_directory=paths["tempDirectory"])
+    configured = recovery.configured_keys()
+    pinned = _pinned_legacy_ledger()
+    with mock.patch.object(
+            scanner, "_probe_pinned_remote_recovery_nonce_floor",
+            return_value=None), mock.patch.object(
+                scanner, "_pinned_recovery_path_never_existed",
+                return_value=True):
+        scanner._prepare_keyed_local_recovery_nonce_boot(
+            storage.load_checkpoint(
+                paths["checkpoint"], require_seal=True), configured, pinned)
+    for _ in range(33):
+        scanner._next_remote_recovery_nonce(CURRENT_ID)
+    storage.atomic_write_json(
+        paths["checkpoint"], current,
+        temp_directory=paths["tempDirectory"])
+    storage.atomic_write_json(
+        paths["recovery"], old_sidecar,
+        temp_directory=paths["tempDirectory"])
+    return current, old_sidecar, old_payload, old_checkpoint
+
+
+def _post_genesis_repair_expected(paths, current, sidecar, payload):
+    checkpoint_identity = scanner._post_genesis_repair_file_identity(
+        paths["checkpoint"])
+    sidecar_identity = scanner._post_genesis_repair_file_identity(
+        paths["recovery"])
+    history = scanner._read_only_remote_recovery_nonce_authority(
+        recovery.configured_keys())
+    return {
+        "schemaVersion": scanner._POST_GENESIS_PAIR_REPAIR_SCHEMA,
+        "liveBuildSha": BUILD["buildSha"],
+        "currentCheckpoint": {
+            "path": paths["checkpoint"],
+            "sha256": checkpoint_identity["sha256"],
+            "bytes": checkpoint_identity["bytes"],
+            "wal": PRODUCTION_LOCAL_WAL,
+            "sealValid": True,
+            "checkpointId": current["remoteRecoveryRequired"][
+                "checkpointId"],
+        },
+        "currentSidecar": {
+            "path": paths["recovery"],
+            "sha256": sidecar_identity["sha256"],
+            "bytes": sidecar_identity["bytes"],
+            "boundCheckpointSha256": payload[
+                "sourceCheckpointHash"],
+            "boundCheckpointId": payload["checkpointId"],
+        },
+        "currentKeyId": CURRENT_ID,
+        "previousKeyAbsent": True,
+        "nonceAuthority": {
+            "generation": history["generation"],
+            "maximumCounter": max(
+                history["keyMaterialCounters"].values()),
+            "artifacts": scanner._post_genesis_repair_nonce_artifacts(),
+        },
+        "writersFenced": True,
+        "activeWriters": 0,
+        "ec2TimerDisabled": True,
+        "ec2TimerInactive": True,
+        "recoveryReadback": "UNAVAILABLE_PAIR_MISMATCH",
+        "previousMatchingCheckpointArtifact": "NOT_PROVEN",
+        "forensicBackupDirectory": os.path.join(
+            paths["root"], "argus-recovery-post-genesis-forensic-test"),
+    }
+
+
+def test_post_genesis_mismatch_repair_plan_is_exact_and_read_only():
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            mock.patch.dict(os.environ, _key_env(), clear=False):
+        current, sidecar, payload, _old = \
+            _post_genesis_mismatch_fixture(paths)
+        expected = _post_genesis_repair_expected(
+            paths, current, sidecar, payload)
+        observed_paths = [
+            paths["checkpoint"], paths["recovery"],
+            *[row["path"] for row in expected[
+                "nonceAuthority"]["artifacts"].values()],
+        ]
+        before = {path: pathlib.Path(path).read_bytes()
+                  for path in observed_paths}
+
+        plan = scanner._execute_post_genesis_pair_repair(expected)
+
+        assert plan["status"] == "DRY_RUN_PASS"
+        assert plan["mutationAuthorized"] is False
+        assert plan["previousMatchingCheckpointArtifact"] == "NOT_PROVEN"
+        assert plan["projectionEquality"] == "PROVEN"
+        assert plan["nonceGeneration"] == 33
+        assert plan["nonceMaximumCounter"] == 33
+        assert {path: pathlib.Path(path).read_bytes()
+                for path in observed_paths} == before
+        assert not pathlib.Path(plan["forensicBackupDirectory"]).exists()
+
+
+def test_post_genesis_mismatch_repair_rebinds_exact_projection_at_nonce_34():
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            mock.patch.dict(os.environ, _key_env(), clear=False):
+        current, sidecar, payload, _old = \
+            _post_genesis_mismatch_fixture(paths)
+        expected = _post_genesis_repair_expected(
+            paths, current, sidecar, payload)
+        current_before = pathlib.Path(paths["checkpoint"]).read_bytes()
+        sidecar_before = pathlib.Path(paths["recovery"]).read_bytes()
+
+        result = scanner._execute_post_genesis_pair_repair(
+            expected, execute=True)
+
+        assert result["status"] == "REPAIR_APPLIED_KEYED_PAIR_VERIFIED"
+        assert result["nonceGeneration"] == 34
+        assert result["nonceMaximumCounter"] == 34
+        assert pathlib.Path(paths["checkpoint"]).read_bytes() == \
+            current_before
+        installed = scanner._read_local_recovery_sidecar()
+        assert pathlib.Path(paths["recovery"]).read_bytes() != sidecar_before
+        installed_payload = recovery.validate_pair(
+            installed["readback"], installed["recovery"], CURRENT_KEY,
+            key_identifier=CURRENT_ID)
+        assert installed_payload["sourceCheckpointHash"] == \
+            storage._canonical_sha256(current)
+        assert installed_payload["checkpointId"] == \
+            current["remoteRecoveryRequired"]["checkpointId"]
+        assert installed_payload["targets"] == payload["targets"]
+        scanner._verify_local_recovery_sidecar(
+            current, allow_legacy_migration=False)
+        backup = pathlib.Path(result["forensicBackupDirectory"])
+        assert backup.is_dir()
+        assert (backup / "checkpoint.json").read_bytes() == current_before
+        assert (backup / "sidecar.json").read_bytes() == sidecar_before
+        assert (backup / "manifest.json").is_file()
+        assert (backup / "manifest.sha256").is_file()
+
+
+def test_post_genesis_mismatch_repair_rejects_projection_change_and_old_file():
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            mock.patch.dict(os.environ, _key_env(), clear=False):
+        current, sidecar, payload, _old = \
+            _post_genesis_mismatch_fixture(paths)
+        expected = _post_genesis_repair_expected(
+            paths, current, sidecar, payload)
+        changed = copy.deepcopy(current)
+        changed["missions"] = [{"missionId": "unproven-new-state"}]
+        changed = storage.seal_checkpoint(changed)
+        storage.atomic_write_json(
+            paths["checkpoint"], changed,
+            temp_directory=paths["tempDirectory"])
+        identity = scanner._post_genesis_repair_file_identity(
+            paths["checkpoint"])
+        expected["currentCheckpoint"].update({
+            "sha256": identity["sha256"], "bytes": identity["bytes"]})
+        with pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_post_genesis_repair_projection_mismatch"):
+            scanner._plan_post_genesis_pair_repair(expected)
+
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            mock.patch.dict(os.environ, _key_env(), clear=False):
+        current, sidecar, payload, old = \
+            _post_genesis_mismatch_fixture(paths)
+        expected = _post_genesis_repair_expected(
+            paths, current, sidecar, payload)
+        matching = os.path.join(root, "forensic-old-checkpoint.json")
+        assert storage._canonical_sha256(old) == payload[
+            "sourceCheckpointHash"]
+        pathlib.Path(matching).write_bytes(storage._canonical(old))
+        with pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_post_genesis_repair_previous_checkpoint_found"):
+            scanner._plan_post_genesis_pair_repair(expected)
         assert not scanner._DURABLE_STATE.get("quarantinedCheckpoint")
 
 

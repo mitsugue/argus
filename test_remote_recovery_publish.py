@@ -1484,6 +1484,180 @@ def test_first_activation_pair_crash_boundaries_restart_safely(boundary):
             "status"] == "verified"
 
 
+_ORDINARY_PAIR_CRASH_BOUNDARIES = (
+    "before_candidate_checkpoint_staging",
+    "after_checkpoint_staging",
+    "before_nonce_reservation",
+    "after_nonce_reservation",
+    "before_candidate_sidecar_write",
+    "after_candidate_sidecar_write",
+    "after_candidate_sidecar_fsync",
+    "after_candidate_pair_verification",
+    "before_pair_authority_switch",
+    "after_pair_authority_switch",
+    "before_pair_cleanup",
+    "during_pair_cleanup",
+)
+
+
+def _raise_once_at_boundary(boundary):
+    state = {"raised": False}
+
+    def inject(name):
+        if name == boundary and not state["raised"]:
+            state["raised"] = True
+            raise RuntimeError(f"crash:{boundary}")
+
+    return state, inject
+
+
+def _advance_nonce_floor_to_33():
+    keys = recovery.configured_keys()
+    domain = recovery.nonce_material_domain(PRODUCER_CURRENT_KEY)
+    history = scanner._verify_remote_recovery_nonce_authority(keys)
+    while int(history["keyMaterialCounters"].get(domain) or 0) < 33:
+        scanner._reserve_remote_recovery_nonce(PRODUCER_CURRENT_ID)
+        history = scanner._verify_remote_recovery_nonce_authority(keys)
+    assert history["generation"] >= 33
+    assert history["keyMaterialCounters"][domain] == 33
+    return domain
+
+
+@pytest.mark.parametrize("boundary", _ORDINARY_PAIR_CRASH_BOUNDARIES)
+def test_ordinary_keyed_pair_crash_matrix_preserves_one_generation(boundary):
+    before_switch = _ORDINARY_PAIR_CRASH_BOUNDARIES.index(boundary) <= 8
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            _key_environment(configured=True), \
+            mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
+        _reset_recovery_targets()
+        _append_verified_cycle(paths, sequence=1)
+        _activate_clean_legacy_nonce_authority(paths)
+        assert scanner._osint_persist()["verified"] is True
+        old_checkpoint = pathlib.Path(paths["checkpoint"]).read_bytes()
+        old_sidecar = pathlib.Path(paths["recovery"]).read_bytes()
+        old_pair = scanner._read_local_recovery_sidecar()
+        old_payload = recovery.validate_pair(
+            old_pair["readback"], old_pair["recovery"],
+            PRODUCER_CURRENT_KEY, key_identifier=PRODUCER_CURRENT_ID)
+        domain = _advance_nonce_floor_to_33()
+        _append_verified_cycle(paths, sequence=2)
+        state, inject = _raise_once_at_boundary(boundary)
+
+        with mock.patch.object(
+                scanner, "_remote_recovery_crash_boundary",
+                side_effect=inject):
+            try:
+                scanner._osint_persist()
+            except scanner._RemoteRecoveryCheckpointError:
+                pass
+        assert state["raised"] is True
+
+        canonical = storage.load_checkpoint(
+            paths["checkpoint"], require_seal=True)
+        authority = scanner._resolve_authoritative_local_recovery_checkpoint(
+            canonical, paths["checkpoint"], recovery.configured_keys())
+        selected = authority["checkpoint"]
+        scanner._verify_local_recovery_sidecar(
+            selected, allow_legacy_migration=False,
+            sidecar_value=authority["sidecar"])
+        if before_switch:
+            assert pathlib.Path(paths["checkpoint"]).read_bytes() == \
+                old_checkpoint
+            assert pathlib.Path(paths["recovery"]).read_bytes() == old_sidecar
+            assert authority["payload"]["sourceCheckpointHash"] == \
+                old_payload["sourceCheckpointHash"]
+        else:
+            assert authority["payload"]["sourceCheckpointHash"] != \
+                old_payload["sourceCheckpointHash"]
+            assert authority["payload"]["targetWalSequence"] == 2
+            assert pathlib.Path(scanner._recovery_checkpoint_generation_path(
+                paths["checkpoint"], authority["payload"][
+                    "sourceCheckpointHash"])).exists()
+        history = scanner._verify_remote_recovery_nonce_authority(
+            recovery.configured_keys())
+        floor = history["keyMaterialCounters"][domain]
+        assert floor == (33 if _ORDINARY_PAIR_CRASH_BOUNDARIES.index(
+            boundary) <= 2 else 34)
+        nonce = recovery._b64_decode(
+            authority["sidecar"]["recovery"]["nonce"], "test_invalid")
+        assert int.from_bytes(nonce, "big") <= floor
+
+
+def test_unverified_ordinary_cycle_preserves_previous_authenticated_pair():
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            _key_environment(configured=True), \
+            mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
+        _reset_recovery_targets()
+        _append_verified_cycle(paths, sequence=1)
+        _activate_clean_legacy_nonce_authority(paths)
+        assert scanner._osint_persist()["verified"] is True
+        old_checkpoint = pathlib.Path(paths["checkpoint"]).read_bytes()
+        old_sidecar = pathlib.Path(paths["recovery"]).read_bytes()
+        domain = _advance_nonce_floor_to_33()
+        durability.append_wal(
+            paths["wal"], sequence=2, kind="journal_transition",
+            job_id="producer-test", payload={"transitionId": "producer-2"},
+            occurred_at=AT)
+        scanner._REMOTE_CYCLE.update({
+            "remoteCommitSha": None, "receiptCommitSha": None,
+            "readBackVerified": False, "walReadBackVerified": False,
+            "remoteDurabilityState": "not_started",
+            "remoteWalAppliedSequence": 0, "verifiedWalSequence": 0,
+            "compactReceiptHash": None,
+        })
+
+        with pytest.raises(
+                scanner._RemoteRecoveryCheckpointError,
+                match="remote_recovery_sidecar_failed"):
+            scanner._osint_persist()
+        assert pathlib.Path(paths["checkpoint"]).read_bytes() == old_checkpoint
+        assert pathlib.Path(paths["recovery"]).read_bytes() == old_sidecar
+        canonical = storage.load_checkpoint(
+            paths["checkpoint"], require_seal=True)
+        authority = scanner._resolve_authoritative_local_recovery_checkpoint(
+            canonical, paths["checkpoint"], recovery.configured_keys())
+        assert authority["payload"]["targetWalSequence"] == 1
+        history = scanner._verify_remote_recovery_nonce_authority(
+            recovery.configured_keys())
+        assert history["keyMaterialCounters"][domain] == 33
+
+
+def test_ordinary_keyed_pair_success_switches_exact_next_generation():
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            _key_environment(configured=True), \
+            mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
+        _reset_recovery_targets()
+        _append_verified_cycle(paths, sequence=1)
+        _activate_clean_legacy_nonce_authority(paths)
+        first = scanner._osint_persist()
+        first_sidecar = scanner._read_local_recovery_sidecar()
+        first_payload = recovery.validate_pair(
+            first_sidecar["readback"], first_sidecar["recovery"],
+            PRODUCER_CURRENT_KEY, key_identifier=PRODUCER_CURRENT_ID)
+        domain = _advance_nonce_floor_to_33()
+        _append_verified_cycle(paths, sequence=2)
+
+        second = scanner._osint_persist()
+        assert second["verified"] is True
+        canonical = storage.load_checkpoint(
+            paths["checkpoint"], require_seal=True)
+        authority = scanner._resolve_authoritative_local_recovery_checkpoint(
+            canonical, paths["checkpoint"], recovery.configured_keys())
+        assert authority["payload"]["sourceCheckpointHash"] == \
+            second["snapshotHash"]
+        assert authority["payload"]["targetWalSequence"] == 2
+        assert authority["payload"]["sourceCheckpointHash"] != \
+            first_payload["sourceCheckpointHash"]
+        assert pathlib.Path(scanner._recovery_checkpoint_generation_path(
+            paths["checkpoint"], first_payload[
+                "sourceCheckpointHash"])).exists()
+        assert pathlib.Path(scanner._recovery_checkpoint_generation_path(
+            paths["checkpoint"], second["snapshotHash"])).exists()
+        history = scanner._verify_remote_recovery_nonce_authority(
+            recovery.configured_keys())
+        assert history["keyMaterialCounters"][domain] == 34
+
+
 def test_failed_first_activation_never_projects_attempt_as_success():
     with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
             _key_environment(configured=True), \
