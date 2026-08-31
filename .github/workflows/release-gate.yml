@@ -125,6 +125,20 @@ jobs:
           install -m 0644 ops/systemd/argus-watchtower-writer.service \
             ops/systemd/argus-watchtower-writer.timer \
             "$SYSTEMD_VERIFY_ROOT/etc/systemd/system/"
+          for unit in \
+            basic.target \
+            network-online.target \
+            shutdown.target \
+            sysinit.target \
+            time-set.target \
+            time-sync.target \
+            timers.target; do
+            printf '%s\n' \
+              '[Unit]' \
+              "Description=Deterministic CI fixture for $unit" \
+              'DefaultDependencies=no' \
+              > "$SYSTEMD_VERIFY_ROOT/etc/systemd/system/$unit"
+          done
           touch "$SYSTEMD_VERIFY_ROOT/etc/argus-remote-journal-rearm.env"
           systemd-analyze --root="$SYSTEMD_VERIFY_ROOT" verify \
             argus-watchtower-writer.service \
