@@ -1,0 +1,15 @@
+[Unit]
+Description=A.R.G.U.S. deterministic Watchtower writer opportunities
+
+[Timer]
+# UTC cadence is identical to the reviewed Watchtower writer cadence while
+# eliminating GitHub best-effort schedule delivery as scheduling authority.
+OnCalendar=Mon..Fri *-*-* *:04,11,19,26,34,41,49,56:00 UTC
+OnCalendar=Sat,Sun *-*-* *:04,34:00 UTC
+Persistent=true
+AccuracySec=1us
+RandomizedDelaySec=0
+Unit=argus-watchtower-writer.service
+
+[Install]
+WantedBy=timers.target

@@ -414,7 +414,14 @@ def test_wrong_recovery_producer_workflow_fails_closed(tmp_path, monkeypatch):
 def test_policy_has_disjoint_explicit_paths_and_pinned_payload():
     assert not set(recovery.RECOVERY_PAYLOAD_PATHS).intersection(
         recovery.RECOVERY_ADMISSION_PATHS)
-    assert len(recovery.RECOVERY_PAYLOAD_PATHS) == 34
+    assert len(recovery.RECOVERY_PAYLOAD_PATHS) == 39
+    assert {
+        "scripts/remote_journal_publish_policy.py",
+        "scripts/argus_watchtower_writer_dispatch.py",
+        "scripts/install_argus_watchtower_writer.sh",
+        "ops/systemd/argus-watchtower-writer.service",
+        "ops/systemd/argus-watchtower-writer.timer",
+    }.issubset(recovery.RECOVERY_PAYLOAD_PATHS)
     assert len(recovery.RECOVERY_ADMISSION_PATHS) == 4
     assert recovery.scope_policy_document()["mixedPolicy"] == "DENY"
     assert len(recovery.EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256) == 64

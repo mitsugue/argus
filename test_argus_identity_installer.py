@@ -8,6 +8,7 @@ import subprocess
 
 ROOT = pathlib.Path(__file__).parent
 REARM_INSTALLER = ROOT / "scripts/install_argus_remote_journal_rearm.sh"
+WRITER_INSTALLER = ROOT / "scripts/install_argus_watchtower_writer.sh"
 
 
 def _rearm_test_environment(tmp_path, *, identity="valid"):
@@ -103,6 +104,51 @@ def _rearm_test_environment(tmp_path, *, identity="valid"):
         "ARGUS_REARM_INSTALL_TEST_GID": str(os.getgid()),
         "ARGUS_REARM_INSTALL_TEST_CREDENTIAL_OWNER": credential.owner(),
         "ARGUS_REARM_INSTALL_TEST_CREDENTIAL_GROUP": credential.group(),
+        "FAKE_GETENT_MODE": identity,
+    }
+    return test_root, credential, environment
+
+
+def _writer_test_environment(tmp_path, *, identity="valid"):
+    test_root = tmp_path / "root"
+    (test_root / "etc/systemd/system").mkdir(parents=True)
+    (test_root / "etc").mkdir(exist_ok=True)
+    credential = test_root / "etc/argus-remote-journal-rearm.env"
+    credential.write_text(
+        "ARGUS_REMOTE_JOURNAL_REARM_PAT=github_pat_test_secret_never_printed\n",
+        encoding="utf-8",
+    )
+    credential.chmod(0o640)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_getent = fake_bin / "getent"
+    fake_getent.write_text(
+        "#!/bin/bash\n"
+        "if [[ \"${FAKE_GETENT_MODE:-valid}\" == missing ]]; then exit 2; fi\n"
+        "uid=\"${ARGUS_WATCHTOWER_WRITER_INSTALL_TEST_UID}\"\n"
+        "gid=\"${ARGUS_WATCHTOWER_WRITER_INSTALL_TEST_GID}\"\n"
+        "[[ \"${FAKE_GETENT_MODE:-valid}\" == wrong ]] && uid=$((uid + 1))\n"
+        "case \"$1\" in\n"
+        "  passwd) echo \"argus-rearm:x:${uid}:${gid}::/nonexistent:/usr/sbin/nologin\" ;;\n"
+        "  group) echo \"argus-rearm:x:${gid}:\" ;;\n"
+        "  *) exit 2 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    fake_getent.chmod(0o755)
+    fake_systemd_analyze = fake_bin / "systemd-analyze"
+    fake_systemd_analyze.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    fake_systemd_analyze.chmod(0o755)
+
+    environment = {
+        "PATH": f"{fake_bin}:/usr/local/bin:/usr/bin:/bin",
+        "ARGUS_WATCHTOWER_WRITER_INSTALL_TEST_MODE": "1",
+        "ARGUS_WATCHTOWER_WRITER_INSTALL_TEST_ROOT": str(test_root),
+        "ARGUS_WATCHTOWER_WRITER_INSTALL_TEST_UID": str(os.getuid()),
+        "ARGUS_WATCHTOWER_WRITER_INSTALL_TEST_GID": str(os.getgid()),
+        "ARGUS_WATCHTOWER_WRITER_INSTALL_TEST_ROOT_UID": str(os.getuid()),
+        "ARGUS_WATCHTOWER_WRITER_INSTALL_TEST_ROOT_GID": str(os.getgid()),
         "FAKE_GETENT_MODE": identity,
     }
     return test_root, credential, environment
@@ -318,3 +364,145 @@ def test_rearm_preflight_fails_closed_for_credential_and_identity(tmp_path):
     )
     assert wrong_identity.returncode != 0
     assert "identity mismatch" in wrong_identity.stderr
+
+
+def test_writer_installer_scope_is_isolated_secret_safe_and_inactive():
+    source = WRITER_INSTALLER.read_text(encoding="utf-8")
+    service = (ROOT / "ops/systemd/argus-watchtower-writer.service").read_text()
+    timer = (ROOT / "ops/systemd/argus-watchtower-writer.timer").read_text()
+    files_block = source.split("FILES=(", 1)[1].split("\n)", 1)[0]
+    assert files_block.count('"') == 6
+    assert "scripts/argus_watchtower_writer_dispatch.py|" in files_block
+    assert "ops/systemd/argus-watchtower-writer.service|" in files_block
+    assert "ops/systemd/argus-watchtower-writer.timer|" in files_block
+    assert "/opt/argus-watchtower-writer" in source
+    assert "/var/lib/argus-watchtower-writer" in source
+    assert "/opt/argus/" not in files_block
+    assert "/opt/argus-rearm/" not in files_block
+    assert "/etc/argus-remote-journal-rearm.env" not in files_block
+    assert "ARGUS_REMOTE_JOURNAL_REARM_PAT=" not in service
+    assert "EnvironmentFile=/etc/argus-remote-journal-rearm.env" in service
+    assert "User=argus-rearm" in service
+    assert "Group=argus-rearm" in service
+    assert "Type=oneshot" in service
+    assert "StateDirectoryMode=0700" in service
+    assert "Persistent=true" in timer
+    assert "AccuracySec=1us" in timer
+    assert "RandomizedDelaySec=0" in timer
+    assert "workflow_dispatch" not in source
+    for forbidden in (
+        "\nsystemctl daemon-reload", "\nsystemctl enable",
+        "\nsystemctl start", "\nsystemctl restart", "enable --now",
+        "sudo -v",
+    ):
+        assert forbidden not in source
+    assert "no daemon-reload/enable/start/restart/dispatch was executed" in source
+    assert "writer rollback destination not allowed" in source
+    assert "writer apply failed; destinations restored" in source
+
+
+def test_writer_installer_apply_and_rollback_preserve_other_runtimes(tmp_path):
+    test_root, _, environment = _writer_test_environment(tmp_path)
+    dirty_argus = test_root / "opt/argus/bridge/moomoo_push.py"
+    rearm = test_root / "opt/argus-rearm/argus_remote_journal_rearm.py"
+    dirty_argus.parent.mkdir(parents=True)
+    rearm.parent.mkdir(parents=True)
+    dirty_argus.write_text("dirty argus\n", encoding="utf-8")
+    rearm.write_text("live rearm\n", encoding="utf-8")
+
+    runtime = test_root / "opt/argus-watchtower-writer"
+    runtime.mkdir()
+    destinations = {
+        runtime / "argus_watchtower_writer_dispatch.py": "old writer\n",
+        test_root / "etc/systemd/system/argus-watchtower-writer.service":
+            "old service\n",
+        test_root / "etc/systemd/system/argus-watchtower-writer.timer":
+            "old timer\n",
+    }
+    for path, contents in destinations.items():
+        path.write_text(contents, encoding="utf-8")
+
+    dry_run = subprocess.run(
+        ["bash", str(WRITER_INSTALLER), "--dry-run"], cwd=ROOT,
+        check=True, capture_output=True, text=True, env=environment)
+    assert "no files changed" in dry_run.stdout
+    assert (runtime / "argus_watchtower_writer_dispatch.py").read_text() == \
+        "old writer\n"
+
+    applied = subprocess.run(
+        ["bash", str(WRITER_INSTALLER), "--apply"], cwd=ROOT,
+        check=True, capture_output=True, text=True, env=environment)
+    backup_id = re.search(r"backup=([0-9]{8}T[0-9]{6}Z)", applied.stdout)
+    assert backup_id is not None
+    assert "github_pat_test_secret_never_printed" not in \
+        applied.stdout + applied.stderr
+    assert dirty_argus.read_text() == "dirty argus\n"
+    assert rearm.read_text() == "live rearm\n"
+    state_root = test_root / "var/lib/argus-watchtower-writer"
+    assert state_root.is_dir()
+    assert (state_root.stat().st_mode & 0o777) == 0o700
+
+    rolled_back = subprocess.run(
+        ["bash", str(WRITER_INSTALLER), "--rollback", backup_id.group(1)],
+        cwd=ROOT, check=True, capture_output=True, text=True, env=environment)
+    for path, contents in destinations.items():
+        assert path.read_text(encoding="utf-8") == contents
+    assert not state_root.exists()
+    assert "writer rollback restored backup=" in rolled_back.stdout
+    assert dirty_argus.read_text() == "dirty argus\n"
+    assert rearm.read_text() == "live rearm\n"
+
+
+def test_writer_installer_preflight_rejects_bad_identity_and_credential(tmp_path):
+    _, credential, environment = _writer_test_environment(tmp_path / "mode")
+    credential.chmod(0o600)
+    wrong_mode = subprocess.run(
+        ["bash", str(WRITER_INSTALLER), "--dry-run"], cwd=ROOT,
+        check=False, capture_output=True, text=True, env=environment)
+    assert wrong_mode.returncode != 0
+    assert "unsafe writer credential metadata" in wrong_mode.stderr
+
+    _, credential, environment = _writer_test_environment(tmp_path / "shape")
+    credential.write_text(
+        "ARGUS_REMOTE_JOURNAL_REARM_PAT=secret\nEXTRA=value\n",
+        encoding="utf-8")
+    credential.chmod(0o640)
+    wrong_shape = subprocess.run(
+        ["bash", str(WRITER_INSTALLER), "--dry-run"], cwd=ROOT,
+        check=False, capture_output=True, text=True, env=environment)
+    assert wrong_shape.returncode != 0
+    assert "invalid dedicated writer credential" in wrong_shape.stderr
+    assert "secret" not in wrong_shape.stdout + wrong_shape.stderr
+
+    _, _, environment = _writer_test_environment(
+        tmp_path / "identity", identity="wrong")
+    wrong_identity = subprocess.run(
+        ["bash", str(WRITER_INSTALLER), "--dry-run"], cwd=ROOT,
+        check=False, capture_output=True, text=True, env=environment)
+    assert wrong_identity.returncode != 0
+    assert "identity mismatch" in wrong_identity.stderr
+
+    test_root, _, environment = _writer_test_environment(
+        tmp_path / "state-mode")
+    state_root = test_root / "var/lib/argus-watchtower-writer"
+    state_root.mkdir(parents=True, mode=0o755)
+    state_root.chmod(0o755)
+    wrong_state = subprocess.run(
+        ["bash", str(WRITER_INSTALLER), "--dry-run"], cwd=ROOT,
+        check=False, capture_output=True, text=True, env=environment)
+    assert wrong_state.returncode != 0
+    assert "writer state root metadata mismatch" in wrong_state.stderr
+
+
+def test_writer_source_hash_validation_fails_closed(tmp_path):
+    source_root = tmp_path / "source"
+    shutil.copytree(ROOT / "scripts", source_root / "scripts")
+    shutil.copytree(ROOT / "ops/systemd", source_root / "ops/systemd")
+    service = source_root / "ops/systemd/argus-watchtower-writer.service"
+    service.write_text(service.read_text() + "# mutation\n", encoding="utf-8")
+    completed = subprocess.run(
+        ["bash", str(source_root / "scripts/install_argus_watchtower_writer.sh")],
+        check=False, capture_output=True, text=True,
+        env={"PATH": "/usr/local/bin:/usr/bin:/bin"})
+    assert completed.returncode != 0
+    assert "writer source sha256 mismatch" in completed.stderr

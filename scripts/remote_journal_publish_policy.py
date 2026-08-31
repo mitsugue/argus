@@ -242,6 +242,7 @@ def publication_decision(
         utc_minute: int,
         runtime_data_quality: Optional[Mapping[str, Any]] = None,
         natural_rearm: bool = False,
+        scheduled_writer: bool = False,
         ) -> Dict[str, Any]:
     """Return a scalar-only decision; payloads and identifiers never escape."""
     try:
@@ -255,6 +256,10 @@ def publication_decision(
         raise PublishPolicyError("workflow_event_invalid")
     if natural_rearm and event != MANUAL_EVENT:
         raise PublishPolicyError("natural_rearm_event_invalid")
+    if scheduled_writer and event != MANUAL_EVENT:
+        raise PublishPolicyError("scheduled_writer_event_invalid")
+    if natural_rearm and scheduled_writer:
+        raise PublishPolicyError("scheduled_writer_rearm_mixed")
 
     progress = remote_progress(source_readback, ledger_readback)
     runtime_truth = _runtime_remote_truth(runtime_data_quality)
@@ -275,11 +280,12 @@ def publication_decision(
             runtime_wal_truth["runtimeVerifiedWalSequence"] or
             progress["remoteWalTarget"] > progress["sourceWalTarget"]):
         raise PublishPolicyError("natural_rearm_proof_runtime_mismatch")
-    natural = event == NATURAL_EVENT or natural_rearm
+    natural = event == NATURAL_EVENT or natural_rearm or scheduled_writer
     policy_source = (
         "remote_journal_rearm" if natural_rearm else
+        "ec2_systemd_writer" if scheduled_writer else
         "github_schedule" if event == NATURAL_EVENT else "manual")
-    ordinary_hourly_slot = event == NATURAL_EVENT and minute < 15
+    ordinary_hourly_slot = natural and not natural_rearm and minute < 15
     if not natural:
         action, reason = "publish", "manual"
     elif natural_rearm and runtime_wal_gap == 0:
@@ -303,6 +309,7 @@ def publication_decision(
         "natural": natural,
         "eventName": event,
         "naturalRearm": bool(natural_rearm),
+        "scheduledWriter": bool(scheduled_writer),
         "policySource": policy_source,
         "utcMinute": minute,
         "runtimeTruthAvailable": runtime_pending is not None,
@@ -420,6 +427,7 @@ def _parser() -> argparse.ArgumentParser:
     decision.add_argument("--event-name", required=True)
     decision.add_argument("--utc-minute", required=True, type=int)
     decision.add_argument("--natural-rearm", action="store_true")
+    decision.add_argument("--scheduled-writer", action="store_true")
     receipt = sub.add_parser("receipt")
     receipt.add_argument("--readback", required=True, type=pathlib.Path)
     receipt.add_argument("--remote-commit-sha", required=True)
@@ -449,6 +457,7 @@ def main(argv=None) -> int:
             event_name=args.event_name,
             utc_minute=args.utc_minute,
             natural_rearm=args.natural_rearm,
+            scheduled_writer=args.scheduled_writer,
             runtime_data_quality=(
                 _read_json(args.runtime_data_quality)
                 if args.runtime_data_quality else None))

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import copy
+import datetime as dt
+import fcntl
 import io
 import json
 import os
@@ -20,6 +22,7 @@ import argus_remote_receipt_queue as queue
 import argus_state_journal
 from scripts.deploy_scope import classify
 from scripts import argus_remote_journal_rearm as rearm
+from scripts import argus_watchtower_writer_dispatch as writer
 from scripts.remote_journal_publish_policy import (
     PublishPolicyError,
     publication_decision,
@@ -118,6 +121,325 @@ class _Response:
 
     def read(self, amount=-1):
         return self.body if amount < 0 else self.body[:amount]
+
+
+WRITER_TOKEN = "github_pat_" + "A" * 40
+
+
+def _writer_root(tmp_path):
+    root = tmp_path / "writer-state"
+    root.mkdir(mode=0o700, parents=True)
+    return root
+
+
+def _writer_public_opener(request, timeout):
+    assert timeout > 0
+    body = {
+        "status": "ok", "ready": True, "backendVersion": "13.5.36",
+        "buildSha": BUILD,
+    }
+    return _Response(body)
+
+
+def test_writer_calendar_is_exact_duplicate_free_and_bounded():
+    assert writer.WEEKDAY_MINUTES == (4, 11, 19, 26, 34, 41, 49, 56)
+    assert writer.WEEKEND_MINUTES == (4, 34)
+    weekday_gaps = [7, 8, 7, 8, 7, 8, 7, 8]
+    weekend_gaps = [30, 30]
+    assert max(weekday_gaps) * 60 == 480
+    assert max(weekend_gaps) * 60 == 1800
+    assert len(set(writer.WEEKDAY_MINUTES)) == 8
+    assert len(set(writer.WEEKEND_MINUTES)) == 2
+    monday = dt.datetime(2026, 8, 31, 13, 21, 55,
+                         tzinfo=dt.timezone.utc)
+    sunday = dt.datetime(2026, 8, 30, 13, 50,
+                         tzinfo=dt.timezone.utc)
+    assert writer.format_slot(writer.canonical_slot(monday)) == \
+        "2026-08-31T13:19:00Z"
+    assert writer.format_slot(writer.canonical_slot(sunday)) == \
+        "2026-08-30T13:34:00Z"
+
+
+def test_writer_inputs_are_disjoint_and_deterministically_bound():
+    scheduled = "2026-08-31T13:19:00Z"
+    dispatch_id = writer.writer_dispatch_id(scheduled)
+    natural = writer.validate_dispatch_inputs(
+        remote_journal_rearm=False,
+        dispatch_mode="ec2_systemd_writer",
+        writer_scheduled_for=scheduled,
+        supplied_dispatch_id=dispatch_id)
+    assert natural == {
+        "natural": True,
+        "policySource": "ec2_systemd_writer",
+        "writerScheduledFor": scheduled,
+        "writerDispatchId": dispatch_id,
+    }
+    assert writer.validate_dispatch_inputs(
+        remote_journal_rearm=False, dispatch_mode="owner_manual",
+        writer_scheduled_for="", supplied_dispatch_id=""
+    )["natural"] is False
+    assert writer.validate_dispatch_inputs(
+        remote_journal_rearm=True, dispatch_mode="owner_manual",
+        writer_scheduled_for="", supplied_dispatch_id=""
+    )["policySource"] == "remote_journal_rearm"
+
+
+@pytest.mark.parametrize("kwargs,error", [
+    ({"remote_journal_rearm": False, "dispatch_mode": "ec2_systemd_writer",
+      "writer_scheduled_for": "2026-08-31T13:20:00Z",
+      "supplied_dispatch_id": "awwd-" + "a" * 32},
+     "writer_slot_not_canonical"),
+    ({"remote_journal_rearm": False, "dispatch_mode": "ec2_systemd_writer",
+      "writer_scheduled_for": "2026-08-31T13:19:00Z",
+      "supplied_dispatch_id": "awwd-" + "a" * 32},
+     "writer_dispatch_id_invalid"),
+    ({"remote_journal_rearm": False, "dispatch_mode": "owner_manual",
+      "writer_scheduled_for": "2026-08-31T13:19:00Z",
+      "supplied_dispatch_id": ""}, "manual_dispatch_inputs_mixed"),
+    ({"remote_journal_rearm": True, "dispatch_mode": "ec2_systemd_writer",
+      "writer_scheduled_for": "2026-08-31T13:19:00Z",
+      "supplied_dispatch_id": "awwd-" + "a" * 32},
+     "rearm_dispatch_inputs_mixed"),
+])
+def test_writer_invalid_or_mixed_inputs_fail_closed(kwargs, error):
+    with pytest.raises(writer.WriterDispatchError, match=error):
+        writer.validate_dispatch_inputs(**kwargs)
+
+
+@pytest.mark.parametrize("field,value,error", [
+    ("repository", "other/argus", "writer_repository_invalid"),
+    ("workflow", "other.yml", "writer_workflow_invalid"),
+    ("ref", "ledger", "writer_ref_invalid"),
+])
+def test_writer_wrong_repository_workflow_or_ref_fails(field, value, error):
+    scheduled = "2026-08-31T13:19:00Z"
+    kwargs = {
+        "remote_journal_rearm": False,
+        "dispatch_mode": "ec2_systemd_writer",
+        "writer_scheduled_for": scheduled,
+        "supplied_dispatch_id": writer.writer_dispatch_id(scheduled),
+        field: value,
+    }
+    with pytest.raises(writer.WriterDispatchError, match=error):
+        writer.validate_dispatch_inputs(**kwargs)
+
+
+def test_writer_dispatch_is_exactly_once_and_duplicate_safe(tmp_path):
+    root = _writer_root(tmp_path)
+    posts = []
+
+    def post(request, timeout):
+        assert timeout > 0
+        posts.append(request)
+        return _Response(status=204)
+
+    now = dt.datetime(2026, 8, 31, 13, 21, tzinfo=dt.timezone.utc)
+    first = writer.dispatch_slot(
+        now=now, token=WRITER_TOKEN, root=root,
+        public_opener=_writer_public_opener, post_opener=post)
+    second = writer.dispatch_slot(
+        now=now, token=WRITER_TOKEN, root=root,
+        public_opener=lambda *_args, **_kwargs: pytest.fail(
+            "duplicate fetched public state"),
+        post_opener=lambda *_args, **_kwargs: pytest.fail("duplicate POST"))
+    assert first["phase"] == "DISPATCH_ACCEPTED"
+    assert first["status"] == "dispatch_accepted"
+    assert first["executionProven"] is False
+    assert second["status"] == "duplicate_suppressed"
+    assert len(posts) == 1
+    assert json.loads(posts[0].data) == {
+        "ref": "main",
+        "inputs": {
+            "remoteJournalRearm": "false",
+            "dispatchMode": "ec2_systemd_writer",
+            "writerScheduledFor": "2026-08-31T13:19:00Z",
+            "writerDispatchId": writer.writer_dispatch_id(
+                "2026-08-31T13:19:00Z"),
+        },
+    }
+    assert "Authorization" in posts[0].headers
+    assert WRITER_TOKEN not in json.dumps(first)
+
+
+def test_writer_crash_before_attempt_can_resume_without_duplicate(tmp_path):
+    root = _writer_root(tmp_path)
+    now = dt.datetime(2026, 8, 31, 13, 21, tzinfo=dt.timezone.utc)
+    with pytest.raises(RuntimeError, match="before attempt"):
+        writer.dispatch_slot(
+            now=now, token=WRITER_TOKEN, root=root,
+            public_opener=_writer_public_opener,
+            post_opener=lambda *_args, **_kwargs: pytest.fail(
+                "POST before marker"),
+            before_attempt=lambda: (_ for _ in ()).throw(
+                RuntimeError("before attempt")))
+    sent = []
+    result = writer.dispatch_slot(
+        now=now, token=WRITER_TOKEN, root=root,
+        public_opener=_writer_public_opener,
+        post_opener=lambda request, **_kwargs: (
+            sent.append(request) or _Response(status=204)))
+    assert result["phase"] == "DISPATCH_ACCEPTED"
+    assert len(sent) == 1
+
+
+def test_writer_crash_after_attempt_reconciles_and_never_resends(tmp_path):
+    root = _writer_root(tmp_path)
+    now = dt.datetime(2026, 8, 31, 13, 21, tzinfo=dt.timezone.utc)
+    with pytest.raises(RuntimeError, match="post boundary"):
+        writer.dispatch_slot(
+            now=now, token=WRITER_TOKEN, root=root,
+            public_opener=_writer_public_opener,
+            post_opener=lambda *_args, **_kwargs: pytest.fail(
+                "crash precedes POST"),
+            before_post=lambda: (_ for _ in ()).throw(
+                RuntimeError("post boundary")))
+    dispatch_id = writer.writer_dispatch_id("2026-08-31T13:19:00Z")
+    runs = {"workflow_runs": [{
+        "display_title": f"Watchtower EC2 {dispatch_id}",
+        "event": "workflow_dispatch", "head_branch": "main",
+    }]}
+    result = writer.dispatch_slot(
+        now=now, token=WRITER_TOKEN, root=root,
+        post_opener=lambda *_args, **_kwargs: pytest.fail("ambiguous resend"),
+        reconcile_opener=lambda *_args, **_kwargs: _Response(runs))
+    assert result["phase"] == "DISPATCH_ACCEPTED"
+    assert result["reconciled"] is True
+
+
+def test_writer_crash_after_accepted_post_reconciles_without_resend(tmp_path):
+    root = _writer_root(tmp_path)
+    now = dt.datetime(2026, 8, 31, 13, 21, tzinfo=dt.timezone.utc)
+    with pytest.raises(RuntimeError, match="accepted boundary"):
+        writer.dispatch_slot(
+            now=now, token=WRITER_TOKEN, root=root,
+            public_opener=_writer_public_opener,
+            post_opener=lambda *_args, **_kwargs: _Response(status=204),
+            after_post=lambda: (_ for _ in ()).throw(
+                RuntimeError("accepted boundary")))
+    dispatch_id = writer.writer_dispatch_id("2026-08-31T13:19:00Z")
+    result = writer.dispatch_slot(
+        now=now, token=WRITER_TOKEN, root=root,
+        post_opener=lambda *_args, **_kwargs: pytest.fail(
+            "accepted POST repeated"),
+        reconcile_opener=lambda *_args, **_kwargs: _Response({"workflow_runs": [{
+            "display_title": f"Watchtower EC2 {dispatch_id}",
+            "event": "workflow_dispatch", "head_branch": "main",
+        }]}))
+    assert result["status"] == "dispatch_acceptance_reconciled"
+
+
+def test_writer_unproven_ambiguous_dispatch_is_terminal(tmp_path):
+    root = _writer_root(tmp_path)
+    now = dt.datetime(2026, 8, 31, 13, 21, tzinfo=dt.timezone.utc)
+    with pytest.raises(writer.WriterDispatchError,
+                       match="workflow_dispatch_ambiguous"):
+        writer.dispatch_slot(
+            now=now, token=WRITER_TOKEN, root=root,
+            public_opener=_writer_public_opener,
+            post_opener=lambda *_args, **_kwargs: (
+                _ for _ in ()).throw(TimeoutError()),
+            reconcile_opener=lambda *_args, **_kwargs: _Response(
+                {"workflow_runs": []}))
+    state_file = next(path for path in root.glob("*.json"))
+    assert json.loads(state_file.read_text())["phase"] == "FAILED_AMBIGUOUS"
+
+
+@pytest.mark.parametrize("status,phase", [
+    (401, "FAILED_DEFINITE"), (403, "FAILED_DEFINITE"),
+    (404, "FAILED_DEFINITE"), (500, "FAILED_AMBIGUOUS"),
+])
+def test_writer_http_failures_are_visible_without_retry(tmp_path, status, phase):
+    root = _writer_root(tmp_path)
+
+    def failure(request, timeout):
+        assert timeout > 0
+        raise urllib.error.HTTPError(
+            request.full_url, status, "failure", {}, None)
+
+    with pytest.raises(writer.WriterDispatchError,
+                       match="workflow_dispatch_http_error"):
+        writer.dispatch_slot(
+            now=dt.datetime(2026, 8, 31, 13, 21,
+                            tzinfo=dt.timezone.utc),
+            token=WRITER_TOKEN, root=root,
+            public_opener=_writer_public_opener, post_opener=failure,
+            reconcile_opener=lambda *_args, **_kwargs: _Response(
+                {"workflow_runs": []}))
+    state_file = next(path for path in root.glob("*.json"))
+    assert json.loads(state_file.read_text())["phase"] == phase
+
+
+def test_writer_state_corruption_symlink_mode_and_lock_fail_closed(tmp_path):
+    now = dt.datetime(2026, 8, 31, 13, 21, tzinfo=dt.timezone.utc)
+    scheduled = "2026-08-31T13:19:00Z"
+    dispatch_id = writer.writer_dispatch_id(scheduled)
+
+    corrupt_root = _writer_root(tmp_path / "corrupt")
+    path = writer._state_path(corrupt_root, scheduled)
+    path.write_text("not-json")
+    path.chmod(0o600)
+    with pytest.raises(writer.WriterDispatchError, match="writer_state_corrupt"):
+        writer.dispatch_slot(now=now, token=WRITER_TOKEN, root=corrupt_root)
+
+    mode_root = _writer_root(tmp_path / "mode")
+    path = writer._state_path(mode_root, scheduled)
+    path.write_text(json.dumps(writer._new_state(scheduled, dispatch_id)))
+    path.chmod(0o644)
+    with pytest.raises(writer.WriterDispatchError,
+                       match="writer_state_metadata_invalid"):
+        writer.dispatch_slot(now=now, token=WRITER_TOKEN, root=mode_root)
+
+    symlink_root = _writer_root(tmp_path / "symlink")
+    target = symlink_root / "target"
+    target.write_text("{}")
+    writer._state_path(symlink_root, scheduled).symlink_to(target)
+    with pytest.raises(writer.WriterDispatchError,
+                       match="writer_state_metadata_invalid"):
+        writer.dispatch_slot(now=now, token=WRITER_TOKEN, root=symlink_root)
+
+    lock_root = _writer_root(tmp_path / "lock")
+    lock = (lock_root / ".lock").open("w")
+    lock_root.joinpath(".lock").chmod(0o600)
+    try:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(writer.WriterDispatchError,
+                           match="writer_state_lock_contended"):
+            writer.dispatch_slot(now=now, token=WRITER_TOKEN, root=lock_root)
+    finally:
+        lock.close()
+
+
+def test_writer_reconciliation_is_bounded_and_malformed_fails(tmp_path):
+    oversized = b"x" * (writer.MAX_GITHUB_RESPONSE_BYTES + 1)
+    with pytest.raises(writer.WriterDispatchError,
+                       match="http_response_oversized"):
+        writer.reconcile_dispatch(
+            WRITER_TOKEN, "awwd-" + "a" * 32, timeout=3,
+            opener=lambda *_args, **_kwargs: _Response(oversized))
+    with pytest.raises(writer.WriterDispatchError,
+                       match="github_runs_response_invalid"):
+        writer.reconcile_dispatch(
+            WRITER_TOKEN, "awwd-" + "a" * 32, timeout=3,
+            opener=lambda *_args, **_kwargs: _Response(
+                {"workflow_runs": {}}))
+
+
+def test_writer_invalid_token_and_safe_output_never_disclose_secret(tmp_path):
+    with pytest.raises(writer.WriterDispatchError, match="workflow_pat_invalid"):
+        writer.dispatch_slot(
+            now=dt.datetime(2026, 8, 31, 13, 21,
+                            tzinfo=dt.timezone.utc),
+            token="secret-value", root=_writer_root(tmp_path))
+    output = io.StringIO()
+    with mock.patch.dict(os.environ, {
+            "ARGUS_REMOTE_JOURNAL_REARM_PAT": "secret-value",
+            "ARGUS_WATCHTOWER_WRITER_STATE_ROOT": str(
+                _writer_root(tmp_path / "main")),
+            }, clear=False), mock.patch("sys.stdout", output):
+        assert writer.main([]) == 1
+    assert "secret-value" not in output.getvalue()
+    assert json.loads(output.getvalue())["errorClass"] == \
+        "workflow_pat_invalid"
 
 
 def test_verified_gap_dispatches_exactly_once_without_polling():
@@ -296,6 +618,42 @@ def test_runtime_wal_gap_paths_and_stale_rearm_are_fail_closed():
         utc_minute=7, runtime_data_quality=caught_up, natural_rearm=True)
     assert skip["action"] == "skip"
     assert skip["reason"] == "natural_rearm_caught_up"
+
+
+def test_ec2_scheduled_writer_is_natural_but_owner_manual_stays_manual():
+    _, _, quality = _truth(pending=0, committed=400)
+    current = _readback(LOCAL_WAL, 2)
+    scheduled = publication_decision(
+        current, current, event_name="workflow_dispatch", utc_minute=19,
+        runtime_data_quality=quality, scheduled_writer=True)
+    assert scheduled["natural"] is True
+    assert scheduled["scheduledWriter"] is True
+    assert scheduled["naturalRearm"] is False
+    assert scheduled["policySource"] == "ec2_systemd_writer"
+    assert scheduled["action"] == "skip"
+
+    manual = publication_decision(
+        current, current, event_name="workflow_dispatch", utc_minute=19,
+        runtime_data_quality=quality)
+    assert manual["natural"] is False
+    assert manual["scheduledWriter"] is False
+    assert manual["policySource"] == "manual"
+    assert manual["action"] == "publish"
+
+
+@pytest.mark.parametrize("kwargs,error", [
+    ({"event_name": "schedule", "natural_rearm": False,
+      "scheduled_writer": True}, "scheduled_writer_event_invalid"),
+    ({"event_name": "workflow_dispatch", "natural_rearm": True,
+      "scheduled_writer": True}, "scheduled_writer_rearm_mixed"),
+])
+def test_scheduled_writer_invalid_combinations_fail_closed(kwargs, error):
+    _, _, quality = _truth()
+    current = _readback(LOCAL_WAL, 2)
+    with pytest.raises(PublishPolicyError, match=error):
+        publication_decision(
+            current, current, utc_minute=19,
+            runtime_data_quality=quality, **kwargs)
 
 
 def test_duplicate_rearm_produces_one_idempotent_intent():
@@ -520,9 +878,13 @@ def test_timer_secret_isolation_workflow_bound_and_deploy_scope():
         "docs/EC2_MISSION_SCHEDULER.md",
         "ops/systemd/argus-remote-journal-rearm.service",
         "ops/systemd/argus-remote-journal-rearm.timer",
+        "ops/systemd/argus-watchtower-writer.service",
+        "ops/systemd/argus-watchtower-writer.timer",
         "scripts/argus_remote_journal_rearm.py",
+        "scripts/argus_watchtower_writer_dispatch.py",
         "scripts/install_argus_mission_timer.sh",
         "scripts/install_argus_remote_journal_rearm.sh",
+        "scripts/install_argus_watchtower_writer.sh",
         "scripts/remote_journal_publish_policy.py",
         "test_argus_identity_installer.py",
         "test_argus_v12_3_2.py",

@@ -6,6 +6,8 @@ from scripts.deploy_scope import classify
 
 WORKFLOW = Path(".github/workflows/caos-scan.yml")
 WATCHTOWER_WORKFLOW = Path(".github/workflows/caos-watchtower.yml")
+WATCHTOWER_TIMER = Path("ops/systemd/argus-watchtower-writer.timer")
+WATCHTOWER_SERVICE = Path("ops/systemd/argus-watchtower-writer.service")
 
 
 def _text() -> str:
@@ -20,25 +22,36 @@ def _circular_minute_gaps(minutes: list[int]) -> list[int]:
     ]
 
 
-def test_watchtower_schedule_reregistration_preserves_exact_contract():
+def test_watchtower_uses_one_deterministic_systemd_scheduler_contract():
     text = WATCHTOWER_WORKFLOW.read_text(encoding="utf-8")
+    timer = WATCHTOWER_TIMER.read_text(encoding="utf-8")
+    service = WATCHTOWER_SERVICE.read_text(encoding="utf-8")
     crons = re.findall(r"^\s+- cron: '([^']+)'", text, flags=re.MULTILINE)
-    assert crons == [
-        "4-59/15 * * * 1-5",
-        "11-59/15 * * * 1-5",
-        "4 * * * 0,6",
-        "34 * * * 0,6",
-    ]
+    assert crons == []
+    assert "\n  schedule:" not in text
 
-    weekday = sorted([*range(4, 60, 15), *range(11, 60, 15)])
+    weekday = [4, 11, 19, 26, 34, 41, 49, 56]
     weekend = [4, 34]
-    assert weekday == [4, 11, 19, 26, 34, 41, 49, 56]
     assert len(weekday) == len(set(weekday))
     assert len(weekend) == len(set(weekend))
     assert _circular_minute_gaps(weekday) == [7, 8, 7, 8, 7, 8, 7, 8]
     assert max(_circular_minute_gaps(weekday)) * 60 == 480
     assert _circular_minute_gaps(weekend) == [30, 30]
     assert max(_circular_minute_gaps(weekend)) * 60 == 1800
+    assert (
+        "OnCalendar=Mon..Fri *-*-* *:04,11,19,26,34,41,49,56:00 UTC"
+        in timer)
+    assert "OnCalendar=Sat,Sun *-*-* *:04,34:00 UTC" in timer
+    assert "Persistent=true" in timer
+    assert "AccuracySec=1us" in timer
+    assert "RandomizedDelaySec=0" in timer
+    assert "Unit=argus-watchtower-writer.service" in timer
+    assert "Type=oneshot" in service
+    assert "User=argus-rearm" in service
+    assert "Group=argus-rearm" in service
+    assert "StateDirectory=argus-watchtower-writer" in service
+    assert "/opt/argus-watchtower-writer/" in service
+    assert "/opt/argus/" not in service
 
     dispatch = text.split("  workflow_dispatch:", 1)[1].split(
         "\n\n# GitHub concurrency", 1
@@ -47,6 +60,21 @@ def test_watchtower_schedule_reregistration_preserves_exact_contract():
     assert "required: false" in dispatch
     assert "default: false" in dispatch
     assert "type: boolean" in dispatch
+    assert "dispatchMode:" in dispatch
+    assert "default: owner_manual" in dispatch
+    assert "- ec2_systemd_writer" in dispatch
+    assert "writerScheduledFor:" in dispatch
+    assert "writerDispatchId:" in dispatch
+    assert "run-name:" in text
+    assert "Watchtower EC2 {0}" in text
+    assert text.count("Validate exact Watchtower dispatch identity") == 2
+    assert "--scheduled-writer" in text
+    assert "source=ec2_systemd_writer" in text
+    assert "--writer-scheduled-for '${{ inputs." not in text
+    assert "--writer-dispatch-id '${{ inputs." not in text
+    assert 'scheduledFor=${{ inputs.' not in text
+    assert text.count("WATCHTOWER_SCHEDULED_FOR: ${{ inputs.") == 3
+    assert text.count("WATCHTOWER_DISPATCH_ID: ${{ inputs.") == 3
 
     patrol = text.split("  patrol:", 1)[1].split(
         "\n  remote-journal-rearm:", 1
@@ -63,6 +91,14 @@ def test_watchtower_schedule_reregistration_preserves_exact_contract():
         "inputs.remoteJournalRearm == true"
     ) in rearm_header
     assert "github.event_name == 'schedule'" not in rearm_header
+
+
+def test_watchtower_writer_and_rearm_concurrency_remain_disjoint():
+    text = WATCHTOWER_WORKFLOW.read_text(encoding="utf-8")
+    assert "'caos-watchtower-remote-journal-rearm'" in text
+    assert "|| 'caos-watchtower'" in text
+    assert "cancel-in-progress: false" in text
+    assert "queue: max" not in text
 
 
 def test_workflow_only_release_scope_is_backend_false():

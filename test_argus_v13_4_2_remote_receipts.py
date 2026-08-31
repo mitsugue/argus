@@ -316,20 +316,24 @@ def test_scheduled_receipt_arrival_capacity_fits_one_bounded_drain():
     ordinary_watchtower = watchtower.split("  remote-journal-rearm:", 1)[0]
     scan = pathlib.Path(
         workflows, "caos-scan.yml").read_text(encoding="utf-8")
+    writer_timer = pathlib.Path(
+        "ops/systemd/argus-watchtower-writer.timer"
+    ).read_text(encoding="utf-8")
     assert ordinary_watchtower.count("remote-journal/commit-receipt") == 1
     assert scan.count("remote-journal/commit-receipt") == 1
     assert ordinary_watchtower.count("remote_receipt_drain.py") == 3
     assert scan.count("remote_receipt_drain.py") == 3
     assert ordinary_watchtower.count("--budget-seconds 240") == 1
     assert scan.count("--budget-seconds 240") == 1
-    assert "cron: '4-59/15 * * * 1-5'" in watchtower
-    assert "cron: '11-59/15 * * * 1-5'" in watchtower
-    assert "cron: '4 * * * 0,6'" in watchtower
-    assert "cron: '34 * * * 0,6'" in watchtower
+    assert "cron:" not in watchtower
+    assert (
+        "OnCalendar=Mon..Fri *-*-* *:04,11,19,26,34,41,49,56:00 UTC"
+        in writer_timer)
+    assert "OnCalendar=Sat,Sun *-*-* *:04,34:00 UTC" in writer_timer
     assert "cron: '7,37 * * * *'" in scan
 
-    # Between natural :07/:37 boundaries the ordinary scheduled maximum is
-    # four Watchtower invocations plus one C.A.O.S. scan.  The queue-bound
+    # Between natural :07/:37 boundaries the deterministic EC2 schedule has
+    # at most four Watchtower invocations plus one C.A.O.S. scan. The queue-bound
     # legacy drain therefore has >100x interval burst capacity and cannot be
     # the cause of an age breach under the frozen producer topology.
     maximum_scheduled_arrivals_per_half_hour = 5
