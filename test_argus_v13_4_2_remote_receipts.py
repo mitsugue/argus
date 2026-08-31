@@ -322,10 +322,10 @@ def test_scheduled_receipt_arrival_capacity_fits_one_bounded_drain():
     assert scan.count("remote_receipt_drain.py") == 3
     assert ordinary_watchtower.count("--budget-seconds 240") == 1
     assert scan.count("--budget-seconds 240") == 1
-    assert "cron: '*/15 * * * 1-5'" in watchtower
-    assert "cron: '7-59/15 * * * 1-5'" in watchtower
-    assert "cron: '0 * * * 0,6'" in watchtower
-    assert "cron: '30 * * * 0,6'" in watchtower
+    assert "cron: '4-59/15 * * * 1-5'" in watchtower
+    assert "cron: '11-59/15 * * * 1-5'" in watchtower
+    assert "cron: '4 * * * 0,6'" in watchtower
+    assert "cron: '34 * * * 0,6'" in watchtower
     assert "cron: '7,37 * * * *'" in scan
 
     # Between natural :07/:37 boundaries the ordinary scheduled maximum is
