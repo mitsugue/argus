@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from collections import deque
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 import json
@@ -73,7 +74,11 @@ from scripts.tachibana_readonly_smoke import (
     _observation_is_usable_and_fresh,
     _smoke_pass_allowed,
 )
-from scripts.tachibana_live_sensor_service import _scheduled_auth_time
+from scripts.tachibana_live_acceptance import _live_start_guard
+from scripts.tachibana_live_sensor_service import (
+    _consume_reauthentication_budget,
+    _scheduled_sensor_start,
+)
 
 
 NOW = datetime(2026, 9, 1, 6, 0, 10, tzinfo=timezone.utc)
@@ -1449,9 +1454,12 @@ def test_cross_validation_and_redaction_remain_classified_and_secret_safe():
 
 
 @pytest.mark.parametrize("hour, minute, phase, status", [
+    (7, 59, JapanCashPhase.CLOSED, MarketStatus.CLOSED),
+    (8, 0, JapanCashPhase.PREOPEN, MarketStatus.CLOSED),
     (8, 59, JapanCashPhase.PREOPEN, MarketStatus.CLOSED),
     (9, 0, JapanCashPhase.OPEN, MarketStatus.OPEN),
     (11, 30, JapanCashPhase.LUNCH_CLOSED_INTERVAL, MarketStatus.CLOSED),
+    (12, 5, JapanCashPhase.AFTERNOON_PREOPEN, MarketStatus.CLOSED),
     (12, 30, JapanCashPhase.AFTERNOON_OPEN, MarketStatus.OPEN),
     (15, 30, JapanCashPhase.CLOSED, MarketStatus.CLOSED),
 ])
@@ -1625,7 +1633,7 @@ def test_operational_cross_validation_requires_current_explicitly_live_rows():
 
 
 def test_live_acceptance_requires_event_and_market_progression(tmp_path):
-    now = datetime(2026, 9, 2, 0, 1, 10, tzinfo=timezone.utc)
+    now = [datetime(2026, 9, 1, 23, 0, 10, tzinfo=timezone.utc)]
     config = TachibanaConfig(
         enabled=True, shadow_only=True, authoritative=False,
         websocket_enabled=True, max_symbols=3,
@@ -1636,14 +1644,16 @@ def test_live_acceptance_requires_event_and_market_progression(tmp_path):
         "symbol": symbol,
         "status": "live",
         "realtimeEvidence": True,
-        "sourceTimestamp": now.isoformat(),
+        "sourceTimestamp": datetime(
+            2026, 9, 2, 0, 1, 15, tzinfo=timezone.utc
+        ).isoformat(),
         "price": 2001,
         "volume": 100100,
     } for symbol in symbols]
     runtime = TachibanaLiveRuntime(
         config,
         symbols=symbols,
-        clock=lambda: now,
+        clock=lambda: now[0],
         reference_fetch=lambda *_args, **_kwargs: _ReferenceResponse({
             "status": "live", "stocks": rows,
         }),
@@ -1651,22 +1661,67 @@ def test_live_acceptance_requires_event_and_market_progression(tmp_path):
     runtime._authenticated = True
     runtime.session.diagnostics.health = ProviderHealth.AVAILABLE
     runtime.session.diagnostics.websocket_connected = True
-    first = now - timedelta(seconds=5)
+    first = now[0]
     runtime.progress.connection_started()
     runtime.progress.frame_received(
         sequence=1, provider_timestamp=first, received_at=first,
     )
+    for symbol in symbols:
+        runtime.sensor.ingest(normalize_market_price(
+            _row(
+                sIssueCode=symbol,
+                pQAP="2002", pQBP="1999", pAV="1000", pBV="1100",
+                **{"tDPP:T": ""},
+            ),
+            received_at=first,
+            market_date=date(2026, 9, 2),
+            market_status=MarketStatus.CLOSED,
+            market_date_verified=False,
+            endpoint_category="EVENT",
+        ))
+    assert runtime.acceptance_snapshot().preopen_book_live is False
+
+    now[0] += timedelta(seconds=5)
     runtime.progress.frame_received(
-        sequence=2, provider_timestamp=now, received_at=now,
+        sequence=2, provider_timestamp=now[0], received_at=now[0],
+    )
+    for symbol in symbols:
+        runtime.sensor.ingest(normalize_market_price(
+            _row(
+                sIssueCode=symbol,
+                pQAP="2001", pQBP="2000", pAV="1200", pBV="1300",
+                **{"tDPP:T": ""},
+            ),
+            received_at=now[0],
+            market_date=date(2026, 9, 2),
+            market_status=MarketStatus.CLOSED,
+            market_date_verified=False,
+            endpoint_category="EVENT",
+        ))
+    preopen = runtime.acceptance_snapshot()
+    assert preopen.preopen_book_live is True
+    assert preopen.execution_market_live is False
+    assert preopen.classification == "PREOPEN_BOOK_LIVE"
+
+    now[0] = datetime(2026, 9, 2, 0, 1, 10, tzinfo=timezone.utc)
+    runtime.progress.frame_received(
+        sequence=3, provider_timestamp=now[0], received_at=now[0],
     )
     for symbol in symbols:
         runtime.sensor.ingest(_current_observation(
-            symbol, first, "2000", "100000"
+            symbol, now[0], "2000", "100000"
         ))
+        runtime.progress.observations_ingested(3)
+    assert runtime.acceptance_snapshot().execution_market_live is False
+
+    now[0] += timedelta(seconds=5)
+    runtime.progress.frame_received(
+        sequence=4, provider_timestamp=now[0], received_at=now[0],
+    )
+    for symbol in symbols:
         runtime.sensor.ingest(_current_observation(
-            symbol, now, "2001", "100100"
+            symbol, now[0], "2001", "100100"
         ))
-        runtime.progress.observations_ingested(2)
     accepted = runtime.acceptance_snapshot(cross_validate=True)
     assert accepted.accepted is True
     assert accepted.classification == "ACCEPTED"
@@ -1674,28 +1729,41 @@ def test_live_acceptance_requires_event_and_market_progression(tmp_path):
     assert accepted.event_timestamp_advanced is True
     assert accepted.source_timestamp_advanced is True
     assert accepted.market_value_changed is True
+    assert accepted.book_progression is True
+    assert accepted.execution_progression is True
+    assert accepted.preopen_book_live is True
+    assert accepted.execution_market_live is True
     assert accepted.price_current_count == 3
     assert accepted.cross_validation.acceptable is True
 
 
-def test_service_auth_schedule_is_once_per_provider_operating_day():
+def test_service_starts_only_in_live_sensor_window_and_reauth_is_rolling():
     tokyo = ZoneInfo("Asia/Tokyo")
-    blackout = datetime(2026, 9, 2, 4, 0, tzinfo=tokyo)
-    assert _scheduled_auth_time(
-        now=blackout, last_attempt_date=None
-    ) == datetime(2026, 9, 2, 5, 35, tzinfo=tokyo)
-
+    before = datetime(2026, 9, 2, 5, 35, tzinfo=tokyo)
+    assert _scheduled_sensor_start(now=before) == datetime(
+        2026, 9, 2, 7, 55, tzinfo=tokyo
+    )
     available = datetime(2026, 9, 2, 9, 0, tzinfo=tokyo)
-    assert _scheduled_auth_time(
-        now=available, last_attempt_date=None
-    ) is None
-    assert _scheduled_auth_time(
-        now=available, last_attempt_date=date(2026, 9, 2)
-    ) == datetime(2026, 9, 3, 5, 35, tzinfo=tokyo)
+    assert _scheduled_sensor_start(now=available) is None
+    assert _scheduled_sensor_start(
+        now=available, force_next_trading_day=True
+    ) == datetime(2026, 9, 3, 7, 55, tzinfo=tokyo)
 
-    # 02:00 still belongs to the provider operating day that began at 05:35
-    # on the prior civil date. One attempt is allowed for that operating day.
-    overnight = datetime(2026, 9, 3, 2, 0, tzinfo=tokyo)
-    assert _scheduled_auth_time(
-        now=overnight, last_attempt_date=None
-    ) is None
+    attempts: deque[float] = deque()
+    assert _consume_reauthentication_budget(attempts, now=0.0) is True
+    assert _consume_reauthentication_budget(attempts, now=30.0) is True
+    assert _consume_reauthentication_budget(attempts, now=60.0) is False
+    assert _consume_reauthentication_budget(attempts, now=901.0) is True
+
+
+def test_acceptance_guard_never_consumes_auth_before_live_preopen():
+    tokyo = ZoneInfo("Asia/Tokyo")
+    assert _live_start_guard(datetime(
+        2026, 9, 2, 7, 54, 59, tzinfo=tokyo
+    )) == "LIVE_START_GUARD_BEFORE_0755"
+    assert _live_start_guard(datetime(
+        2026, 9, 2, 7, 55, 0, tzinfo=tokyo
+    )) is None
+    assert _live_start_guard(datetime(
+        2026, 9, 2, 9, 0, 0, tzinfo=tokyo
+    )) == "PREOPEN_START_WINDOW_MISSED"

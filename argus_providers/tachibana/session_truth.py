@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time as wall_time, timezone
 from enum import Enum
 from zoneinfo import ZoneInfo
 
@@ -20,6 +20,7 @@ class JapanCashPhase(str, Enum):
     PREOPEN = "PREOPEN"
     OPEN = "OPEN"
     LUNCH_CLOSED_INTERVAL = "LUNCH_CLOSED_INTERVAL"
+    AFTERNOON_PREOPEN = "AFTERNOON_PREOPEN"
     AFTERNOON_OPEN = "AFTERNOON_OPEN"
     CLOSED = "CLOSED"
     HALTED = "HALTED"
@@ -89,6 +90,17 @@ def resolve_jp_cash_session(
         "HOLIDAY_CLOSED": JapanCashPhase.CLOSED,
         "EMERGENCY_CLOSED": JapanCashPhase.CLOSED,
     }.get(state["session"], JapanCashPhase.UNKNOWN)
+    local_time = current.astimezone(_TOKYO).time()
+    # The canonical ARGUS calendar owns trading-day truth and the execution
+    # boundaries.  JPX's published order-acceptance boundaries refine its
+    # coarse PRE_MARKET/LUNCH_BREAK phases for this read-only sensor only.
+    if phase == JapanCashPhase.PREOPEN and local_time < wall_time(8, 0):
+        phase = JapanCashPhase.CLOSED
+    elif (
+        phase == JapanCashPhase.LUNCH_CLOSED_INTERVAL
+        and local_time >= wall_time(12, 5)
+    ):
+        phase = JapanCashPhase.AFTERNOON_PREOPEN
     market_status = (
         MarketStatus.OPEN
         if phase in {JapanCashPhase.OPEN, JapanCashPhase.AFTERNOON_OPEN}
@@ -96,6 +108,7 @@ def resolve_jp_cash_session(
         if phase in {
             JapanCashPhase.PREOPEN,
             JapanCashPhase.LUNCH_CLOSED_INTERVAL,
+            JapanCashPhase.AFTERNOON_PREOPEN,
             JapanCashPhase.CLOSED,
         }
         else MarketStatus.UNKNOWN

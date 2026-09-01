@@ -53,21 +53,32 @@ build output, or logs.
 
 The host `flock` lease is held for the entire process lifetime. Render is also
 fixed to one instance. EVENT reconnects are bounded to three per Tokyo day.
-Authentication is attempted at most once per provider operating day; the worker
-waits through the documented daily auth closure and starts the next daily
-session at 05:35 JST. Non-daily auth faults and non-session EVENT faults leave
-the worker alive and truthfully degraded so platform restart behavior cannot
-become a retry storm.
+The provider's 05:35 service-availability boundary is not treated as live-market
+readiness. The worker makes no Tachibana request before its 07:55 JST live
+sensor boundary and keeps one healthy session across morning pre-open and the
+09:00 execution transition. A confirmed `SESSION_EXPIRED` state can use at most
+two delayed reauthentication attempts in a rolling 15-minute window. That is a
+bounded recovery policy, not a once-per-day product constraint. Maintenance,
+outside-hours, exhausted recovery, and other faults remain truthfully degraded
+without an authentication or platform-restart storm.
 
 The sensor emits only aggregate operational logs. It retains a bounded window
-in memory and never persists raw frames or market values. Acceptance requires:
+in memory and never persists raw frames or market values. The official JPX
+order-acceptance phases are represented separately from execution phases:
+morning `PREOPEN` begins at 08:00 and `AFTERNOON_PREOPEN` begins at 12:05.
+`UNKNOWN` always fails closed. Acceptance requires both distinct stages:
 
-- a verified current JPX cash-session date and open phase;
-- current PRICE/EVENT observations for all three symbols;
-- advancing EVENT sequence and provider frame timestamp;
-- an advancing trade source timestamp and a price/quote/volume change;
-- independent current-source coverage for at least two of three symbols; and
-- no unclassified cross-provider mismatch.
+- `PREOPEN_BOOK_LIVE`: a verified current JPX date, advancing EVENT chronology,
+  and a current-session bid/ask, quantity, or depth change after 08:00; it does
+  not require an execution-price, volume, turnover, or VWAP change;
+- `EXECUTION_MARKET_LIVE`: after 09:00, current observations for all three
+  symbols, post-open EVENT and trade-source timestamp progression, an observed
+  execution-field change, independent current-source coverage for at least two
+  of three symbols, and no unclassified cross-provider mismatch.
+
+A connected WebSocket without packet progression remains unproven. The exact
+official provider operation code is retained in secret-safe acceptance metadata
+without translating an undocumented code into a stronger market semantic.
 
 Cross-validation allows one yen or 10 bp for independently sampled current
 price, exact-to-1-bp daily reference/OHLC values, and one board lot or 2% for

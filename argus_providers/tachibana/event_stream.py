@@ -37,7 +37,7 @@ from .sensor import (
     parse_event_frame,
 )
 from .session import TachibanaSession
-from .session_truth import SessionTruth, parse_provider_datetime
+from .session_truth import JapanCashPhase, SessionTruth, parse_provider_datetime
 
 
 TOKYO = ZoneInfo("Asia/Tokyo")
@@ -354,6 +354,8 @@ class EventProgressSnapshot:
     first_provider_timestamp: datetime | None
     last_provider_timestamp: datetime | None
     last_frame_received_at: datetime | None
+    provider_market_status: str
+    provider_operation_code: str | None
 
 
 class EventLifecycleProgress:
@@ -368,6 +370,8 @@ class EventLifecycleProgress:
         self._first_provider_timestamp: datetime | None = None
         self._last_provider_timestamp: datetime | None = None
         self._last_frame_received_at: datetime | None = None
+        self._provider_market_status = MarketStatus.UNKNOWN.value
+        self._provider_operation_code: str | None = None
         self._lock = threading.Lock()
 
     def connection_started(self) -> None:
@@ -402,6 +406,22 @@ class EventLifecycleProgress:
         with self._lock:
             self._observations += count
 
+    def provider_state_observed(
+        self, *, market_status: MarketStatus, operation_code: str | None,
+    ) -> None:
+        if (
+            not isinstance(market_status, MarketStatus)
+            or operation_code is not None
+            and re.fullmatch(r"[0-9]{3}", operation_code) is None
+        ):
+            raise TachibanaError(ErrorClass.PROVIDER)
+        with self._lock:
+            self._provider_market_status = market_status.value
+            if operation_code is not None:
+                # Keep the official code verbatim.  Do not invent a stronger
+                # trading semantic than the provider contract supplies.
+                self._provider_operation_code = operation_code
+
     def snapshot(self) -> EventProgressSnapshot:
         with self._lock:
             return EventProgressSnapshot(
@@ -413,6 +433,8 @@ class EventLifecycleProgress:
                 first_provider_timestamp=self._first_provider_timestamp,
                 last_provider_timestamp=self._last_provider_timestamp,
                 last_frame_received_at=self._last_frame_received_at,
+                provider_market_status=self._provider_market_status,
+                provider_operation_code=self._provider_operation_code,
             )
 
 
@@ -557,6 +579,14 @@ class TachibanaEventLifecycle:
                         fields = parse_event_frame(raw_frame)
                         rows = assembler.apply(fields)
                         status = tracker.apply(fields)
+                        self._progress.provider_state_observed(
+                            market_status=status.market_status,
+                            operation_code=(
+                                fields["p_US"]
+                                if fields["p_cmd"] == "US"
+                                else None
+                            ),
+                        )
                         frames += 1
                         last_error = ErrorClass.NONE
                         received_at = self._clock()
@@ -596,8 +626,15 @@ class TachibanaEventLifecycle:
                             )
                             market_date = session_truth.market_date
                             market_status = session_truth.market_status
-                            market_date_verified = (
+                            # A same-day EVENT frame proves the frame date, not
+                            # the date of tDPP.  Before an execution phase,
+                            # tDPP may legitimately describe the prior close.
+                            market_date_verified = bool(
                                 session_truth.market_date_verified
+                                and session_truth.phase in {
+                                    JapanCashPhase.OPEN,
+                                    JapanCashPhase.AFTERNOON_OPEN,
+                                }
                             )
                         for row in rows:
                             observation = normalize_market_price(
