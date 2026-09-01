@@ -41,13 +41,16 @@ RUNS_URL = (
     f"https://api.github.com/repos/{REPOSITORY}/actions/workflows/"
     f"{WORKFLOW}/runs?event=workflow_dispatch&branch={REF}&per_page=20"
 )
+MAIN_REF_URL = (
+    f"https://api.github.com/repos/{REPOSITORY}/git/ref/heads/{REF}"
+)
 MAX_PUBLIC_RESPONSE_BYTES = 64 * 1024
 MAX_GITHUB_RESPONSE_BYTES = 1024 * 1024
 FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
 TOKEN_RE = re.compile(r"^(?:github_pat_[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{20,})$")
 DISPATCH_ID_RE = re.compile(r"^awwd-[0-9a-f]{32}$")
-STATE_SCHEMA = "argus-watchtower-writer-slot-v1"
+STATE_SCHEMA = "argus-watchtower-writer-slot-v2"
 PHASES = {
     "PREPARED", "DISPATCH_ACCEPTED", "FAILED_DEFINITE",
     "FAILED_AMBIGUOUS",
@@ -69,11 +72,11 @@ def _emit(**fields: object) -> None:
     allowed = {
         "status", "reason", "errorClass", "phase", "scheduledFor",
         "writerDispatchId", "httpStatus", "reconciled", "duplicate",
-        "executionProven",
+        "executionProven", "workflowHeadSha",
     }
     safe = {key: value for key, value in fields.items() if key in allowed}
     safe.update({
-        "schemaVersion": "argus-watchtower-writer-dispatch-result-v1",
+        "schemaVersion": "argus-watchtower-writer-dispatch-result-v2",
         "component": "argus-watchtower-writer",
     })
     print(json.dumps(safe, sort_keys=True), flush=True)
@@ -116,11 +119,20 @@ def parse_slot(value: str) -> dt.datetime:
     return parsed
 
 
-def writer_dispatch_id(scheduled_for: str, *, repository: str = REPOSITORY,
+def _full_sha(value: object, classification: str) -> str:
+    candidate = str(value or "").strip()
+    if not FULL_SHA_RE.fullmatch(candidate):
+        raise WriterDispatchError(classification)
+    return candidate
+
+
+def writer_dispatch_id(scheduled_for: str, *, workflow_head_sha: str,
+                       repository: str = REPOSITORY,
                        workflow: str = WORKFLOW, ref: str = REF) -> str:
     parse_slot(scheduled_for)
+    head = _full_sha(workflow_head_sha, "writer_workflow_head_sha_invalid")
     material = "\0".join((
-        "argus-watchtower-writer-v1", repository, workflow, ref,
+        "argus-watchtower-writer-v2", repository, workflow, ref, head,
         scheduled_for,
     )).encode("utf-8")
     return "awwd-" + hashlib.sha256(material).hexdigest()[:32]
@@ -129,6 +141,9 @@ def writer_dispatch_id(scheduled_for: str, *, repository: str = REPOSITORY,
 def validate_dispatch_inputs(*, remote_journal_rearm: bool,
                              dispatch_mode: str, writer_scheduled_for: str,
                              supplied_dispatch_id: str,
+                             expected_head_sha: str,
+                             github_sha: str, github_workflow_sha: str,
+                             checkout_sha: str,
                              repository: str = REPOSITORY,
                              workflow: str = WORKFLOW,
                              ref: str = REF) -> dict[str, object]:
@@ -136,25 +151,43 @@ def validate_dispatch_inputs(*, remote_journal_rearm: bool,
     mode = str(dispatch_mode or "")
     scheduled = str(writer_scheduled_for or "")
     dispatch_id = str(supplied_dispatch_id or "")
+    expected_head = str(expected_head_sha or "").strip()
     if repository != REPOSITORY:
         raise WriterDispatchError("writer_repository_invalid")
     if workflow != WORKFLOW:
         raise WriterDispatchError("writer_workflow_invalid")
     if ref != REF:
         raise WriterDispatchError("writer_ref_invalid")
+    run_sha = _full_sha(github_sha, "github_sha_invalid")
+    workflow_sha = _full_sha(
+        github_workflow_sha, "github_workflow_sha_invalid")
+    checked_out = _full_sha(checkout_sha, "checkout_sha_invalid")
+    if run_sha != workflow_sha or checked_out != run_sha:
+        raise WriterDispatchError("workflow_runtime_identity_mismatch")
     if remote_journal_rearm:
         if mode != OWNER_MANUAL_MODE or scheduled or dispatch_id:
             raise WriterDispatchError("rearm_dispatch_inputs_mixed")
-        return {"natural": True, "policySource": "remote_journal_rearm"}
+        if _full_sha(expected_head, "expected_head_sha_invalid") != run_sha:
+            raise WriterDispatchError("expected_head_sha_mismatch")
+        return {
+            "natural": True, "policySource": "remote_journal_rearm",
+            "workflowHeadSha": run_sha,
+        }
     if mode == OWNER_MANUAL_MODE:
-        if scheduled or dispatch_id:
+        if scheduled or dispatch_id or expected_head:
             raise WriterDispatchError("manual_dispatch_inputs_mixed")
-        return {"natural": False, "policySource": OWNER_MANUAL_MODE}
+        return {
+            "natural": False, "policySource": OWNER_MANUAL_MODE,
+            "workflowHeadSha": run_sha,
+        }
     if mode != DISPATCH_MODE:
         raise WriterDispatchError("writer_dispatch_mode_invalid")
     parse_slot(scheduled)
+    if _full_sha(expected_head, "expected_head_sha_invalid") != run_sha:
+        raise WriterDispatchError("expected_head_sha_mismatch")
     expected = writer_dispatch_id(
-        scheduled, repository=repository, workflow=workflow, ref=ref)
+        scheduled, workflow_head_sha=expected_head, repository=repository,
+        workflow=workflow, ref=ref)
     if not DISPATCH_ID_RE.fullmatch(dispatch_id) or dispatch_id != expected:
         raise WriterDispatchError("writer_dispatch_id_invalid")
     return {
@@ -162,6 +195,7 @@ def validate_dispatch_inputs(*, remote_journal_rearm: bool,
         "policySource": DISPATCH_MODE,
         "writerScheduledFor": scheduled,
         "writerDispatchId": dispatch_id,
+        "workflowHeadSha": expected_head,
     }
 
 
@@ -212,6 +246,23 @@ def verify_public_ready(base: str, *, timeout: int,
         raise WriterDispatchError("backend_identity_mismatch")
     if not SEMVER_RE.fullmatch(version) or ready.get("backendVersion") != version:
         raise WriterDispatchError("backend_version_mismatch")
+
+
+def resolve_main_head(*, timeout: int,
+                      opener: Callable[..., Any] | None = None) -> str:
+    try:
+        value = _request_json(
+            MAIN_REF_URL, timeout=timeout, maximum=MAX_PUBLIC_RESPONSE_BYTES,
+            opener=opener)
+    except urllib.error.HTTPError as exc:
+        raise WriterDispatchError("github_main_http_error") from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise WriterDispatchError("github_main_unavailable") from exc
+    target = value.get("object")
+    if value.get("ref") != f"refs/heads/{REF}" or not isinstance(
+            target, Mapping) or target.get("type") != "commit":
+        raise WriterDispatchError("github_main_ref_invalid")
+    return _full_sha(target.get("sha"), "github_main_sha_invalid")
 
 
 def _token(value: str) -> str:
@@ -265,13 +316,17 @@ def state_lock(root: pathlib.Path):
         os.close(descriptor)
 
 
-def _validate_state(value: object, *, scheduled_for: str,
-                    dispatch_id: str) -> dict[str, Any]:
+def _validate_state(value: object, *, scheduled_for: str) -> dict[str, Any]:
     if not isinstance(value, dict) or value.get("schemaVersion") != STATE_SCHEMA:
         raise WriterDispatchError("writer_state_corrupt")
+    workflow_head_sha = _full_sha(
+        value.get("workflowHeadSha"), "writer_state_workflow_head_invalid")
+    dispatch_id = writer_dispatch_id(
+        scheduled_for, workflow_head_sha=workflow_head_sha)
     expected = {
         "repository": REPOSITORY, "workflow": WORKFLOW, "ref": REF,
         "writerScheduledFor": scheduled_for, "writerDispatchId": dispatch_id,
+        "workflowHeadSha": workflow_head_sha,
     }
     if any(value.get(key) != expected_value
            for key, expected_value in expected.items()):
@@ -284,7 +339,7 @@ def _validate_state(value: object, *, scheduled_for: str,
 
 
 def read_state(root: pathlib.Path, scheduled_for: str,
-               dispatch_id: str) -> dict[str, Any] | None:
+               ) -> dict[str, Any] | None:
     path = _state_path(root, scheduled_for)
     try:
         info = path.lstat()
@@ -298,15 +353,12 @@ def read_state(root: pathlib.Path, scheduled_for: str,
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise WriterDispatchError("writer_state_corrupt") from exc
-    return _validate_state(
-        value, scheduled_for=scheduled_for, dispatch_id=dispatch_id)
+    return _validate_state(value, scheduled_for=scheduled_for)
 
 
 def write_state(root: pathlib.Path, value: Mapping[str, Any]) -> None:
     scheduled_for = str(value.get("writerScheduledFor") or "")
-    dispatch_id = str(value.get("writerDispatchId") or "")
-    checked = _validate_state(
-        dict(value), scheduled_for=scheduled_for, dispatch_id=dispatch_id)
+    checked = _validate_state(dict(value), scheduled_for=scheduled_for)
     destination = _state_path(root, scheduled_for)
     temporary = root / (destination.name + f".tmp.{os.getpid()}")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -331,7 +383,8 @@ def write_state(root: pathlib.Path, value: Mapping[str, Any]) -> None:
             temporary.unlink()
 
 
-def _new_state(scheduled_for: str, dispatch_id: str) -> dict[str, Any]:
+def _new_state(scheduled_for: str, dispatch_id: str,
+               workflow_head_sha: str) -> dict[str, Any]:
     return {
         "schemaVersion": STATE_SCHEMA,
         "repository": REPOSITORY,
@@ -339,6 +392,7 @@ def _new_state(scheduled_for: str, dispatch_id: str) -> dict[str, Any]:
         "ref": REF,
         "writerScheduledFor": scheduled_for,
         "writerDispatchId": dispatch_id,
+        "workflowHeadSha": workflow_head_sha,
         "phase": "PREPARED",
         "dispatchAttempted": False,
         # A 204 or run-object reconciliation proves dispatch admission only.
@@ -349,7 +403,7 @@ def _new_state(scheduled_for: str, dispatch_id: str) -> dict[str, Any]:
 
 
 def _post_dispatch(token: str, *, scheduled_for: str, dispatch_id: str,
-                   timeout: int,
+                   workflow_head_sha: str, timeout: int,
                    opener: Callable[..., Any] | None = None) -> int:
     body = json.dumps({
         "ref": REF,
@@ -358,6 +412,7 @@ def _post_dispatch(token: str, *, scheduled_for: str, dispatch_id: str,
             "dispatchMode": DISPATCH_MODE,
             "writerScheduledFor": scheduled_for,
             "writerDispatchId": dispatch_id,
+            "expectedHeadSha": workflow_head_sha,
         },
     }, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(
@@ -376,7 +431,8 @@ def _post_dispatch(token: str, *, scheduled_for: str, dispatch_id: str,
     return status_code
 
 
-def reconcile_dispatch(token: str, dispatch_id: str, *, timeout: int,
+def reconcile_dispatch(token: str, dispatch_id: str, *, workflow_head_sha: str,
+                       timeout: int,
                        opener: Callable[..., Any] | None = None) -> bool:
     """Perform one bounded read-only reconciliation; never poll or resend."""
     value = _request_json(
@@ -390,7 +446,8 @@ def reconcile_dispatch(token: str, dispatch_id: str, *, timeout: int,
             raise WriterDispatchError("github_runs_response_invalid")
         name = str(run.get("display_title") or run.get("name") or "")
         if dispatch_id in name and run.get("event") == "workflow_dispatch" \
-                and run.get("head_branch") == REF:
+                and run.get("head_branch") == REF and run.get(
+                    "head_sha") == workflow_head_sha:
             return True
     return False
 
@@ -398,19 +455,27 @@ def reconcile_dispatch(token: str, dispatch_id: str, *, timeout: int,
 def dispatch_slot(*, now: dt.datetime, token: str, root: pathlib.Path,
                   backend_url: str = DEFAULT_BACKEND_URL, timeout: int = 6,
                   public_opener: Callable[..., Any] | None = None,
+                  head_opener: Callable[..., Any] | None = None,
                   post_opener: Callable[..., Any] | None = None,
                   reconcile_opener: Callable[..., Any] | None = None,
                   before_attempt: Callable[[], None] | None = None,
                   before_post: Callable[[], None] | None = None,
                   after_post: Callable[[], None] | None = None) -> dict[str, Any]:
     scheduled_for = format_slot(canonical_slot(now))
-    dispatch_id = writer_dispatch_id(scheduled_for)
     secret = _token(token)
     with state_lock(root):
-        state = read_state(root, scheduled_for, dispatch_id)
+        state = read_state(root, scheduled_for)
         if state is None:
-            state = _new_state(scheduled_for, dispatch_id)
+            workflow_head_sha = resolve_main_head(
+                timeout=timeout, opener=head_opener)
+            dispatch_id = writer_dispatch_id(
+                scheduled_for, workflow_head_sha=workflow_head_sha)
+            state = _new_state(
+                scheduled_for, dispatch_id, workflow_head_sha)
             write_state(root, state)
+        else:
+            workflow_head_sha = str(state["workflowHeadSha"])
+            dispatch_id = str(state["writerDispatchId"])
         phase = state["phase"]
         if phase == "DISPATCH_ACCEPTED":
             return {**state, "status": "duplicate_suppressed", "duplicate": True}
@@ -419,7 +484,8 @@ def dispatch_slot(*, now: dt.datetime, token: str, root: pathlib.Path,
         if state["dispatchAttempted"]:
             try:
                 reconciled = reconcile_dispatch(
-                    secret, dispatch_id, timeout=timeout,
+                    secret, dispatch_id,
+                    workflow_head_sha=workflow_head_sha, timeout=timeout,
                     opener=reconcile_opener)
             except (WriterDispatchError, urllib.error.HTTPError,
                     urllib.error.URLError, TimeoutError):
@@ -452,7 +518,8 @@ def dispatch_slot(*, now: dt.datetime, token: str, root: pathlib.Path,
         def finish_ambiguous(failure_class: str) -> dict[str, Any]:
             try:
                 accepted = reconcile_dispatch(
-                    secret, dispatch_id, timeout=timeout,
+                    secret, dispatch_id,
+                    workflow_head_sha=workflow_head_sha, timeout=timeout,
                     opener=reconcile_opener)
             except (WriterDispatchError, urllib.error.HTTPError,
                     urllib.error.URLError, TimeoutError):
@@ -470,10 +537,27 @@ def dispatch_slot(*, now: dt.datetime, token: str, root: pathlib.Path,
 
         if before_post is not None:
             before_post()
+        # Resolve as the final pre-POST operation. The workflow independently
+        # binds github.sha, github.workflow_sha, checkout HEAD, and this stored
+        # authority, closing any remaining ref movement after this sample.
+        try:
+            final_head = resolve_main_head(
+                timeout=timeout, opener=head_opener)
+        except WriterDispatchError as exc:
+            state["phase"] = "FAILED_DEFINITE"
+            state["failureClass"] = str(exc)[:96]
+            write_state(root, state)
+            raise
+        if final_head != workflow_head_sha:
+            state["phase"] = "FAILED_DEFINITE"
+            state["failureClass"] = "github_main_advanced_before_dispatch"
+            write_state(root, state)
+            raise WriterDispatchError("github_main_advanced_before_dispatch")
         try:
             status_code = _post_dispatch(
                 secret, scheduled_for=scheduled_for, dispatch_id=dispatch_id,
-                timeout=timeout, opener=post_opener)
+                workflow_head_sha=workflow_head_sha, timeout=timeout,
+                opener=post_opener)
             if after_post is not None:
                 after_post()
         except urllib.error.HTTPError as exc:
@@ -509,6 +593,10 @@ def _parser() -> argparse.ArgumentParser:
     validate.add_argument("--repository", required=True)
     validate.add_argument("--workflow", required=True)
     validate.add_argument("--ref", required=True)
+    validate.add_argument("--expected-head-sha", default="")
+    validate.add_argument("--github-sha", required=True)
+    validate.add_argument("--github-workflow-sha", required=True)
+    validate.add_argument("--checkout-sha", required=True)
     return parser
 
 
@@ -522,10 +610,15 @@ def main(argv: list[str] | None = None) -> int:
                 dispatch_mode=args.dispatch_mode,
                 writer_scheduled_for=args.writer_scheduled_for,
                 supplied_dispatch_id=args.writer_dispatch_id,
+                expected_head_sha=args.expected_head_sha,
+                github_sha=args.github_sha,
+                github_workflow_sha=args.github_workflow_sha,
+                checkout_sha=args.checkout_sha,
                 repository=args.repository, workflow=args.workflow, ref=args.ref)
             _emit(status="validated", reason=str(result["policySource"]),
                   scheduledFor=result.get("writerScheduledFor"),
-                  writerDispatchId=result.get("writerDispatchId"))
+                  writerDispatchId=result.get("writerDispatchId"),
+                  workflowHeadSha=result.get("workflowHeadSha"))
             return 0
         if arguments:
             raise WriterDispatchError("writer_arguments_invalid")
@@ -547,6 +640,7 @@ def main(argv: list[str] | None = None) -> int:
             status=result["status"], phase=result["phase"],
             scheduledFor=result["writerScheduledFor"],
             writerDispatchId=result["writerDispatchId"],
+            workflowHeadSha=result["workflowHeadSha"],
             httpStatus=result.get("httpStatus"),
             reconciled=result.get("reconciled"),
             duplicate=result.get("duplicate"),

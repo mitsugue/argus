@@ -31,11 +31,14 @@ RECOVERY_KEY_DERIVATION = "HKDF-SHA-256"
 MAX_READBACK_BYTES = argus_remote_journal.MAX_COMPACT_READBACK_BYTES
 MAX_RECOVERY_BYTES = 8 * 1024 * 1024
 SHA40_RE = re.compile(r"[0-9a-f]{40}")
+LEGACY_SHA7_RE = re.compile(r"[0-9a-f]{7}")
 SHA64_RE = re.compile(r"[0-9a-f]{64}")
 GENERATION_RE = re.compile(r"rrg-[0-9a-f]{32}")
 CHECKPOINT_ID_RE = re.compile(r"rcp-[0-9a-f]{32}")
 KEY_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{2,63}")
 URLSAFE_B64_UNPADDED_RE = re.compile(r"[A-Za-z0-9_-]+")
+SEMVER_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?")
+MAX_BUILD_ANCESTRY_COMMITS = 250
 
 
 def _read_json(path: pathlib.Path) -> Dict[str, Any]:
@@ -202,6 +205,129 @@ def verify_ledger_base_ancestor(
         "status": "verified",
         "recoveryLedgerBase": recovery_base,
         "casLedgerHead": cas_head,
+    }
+
+
+def _git(repository: pathlib.Path, *arguments: str) -> str:
+    completed = subprocess.run(
+        ["git", *arguments], cwd=repository, capture_output=True,
+        check=False, text=True)
+    if completed.returncode != 0:
+        raise ValueError("build_provenance_git_proof_failed")
+    return completed.stdout.strip()
+
+
+def resolve_repository_commit(
+    *, repository: pathlib.Path, identity: str,
+    allow_legacy_short: bool,
+) -> str:
+    """Resolve one canonical commit without treating a prefix as identity."""
+    candidate = str(identity or "").strip()
+    if candidate != candidate.lower() or not (
+            SHA40_RE.fullmatch(candidate) or (
+                allow_legacy_short and LEGACY_SHA7_RE.fullmatch(candidate))):
+        raise ValueError("build_provenance_identity_invalid")
+    if LEGACY_SHA7_RE.fullmatch(candidate):
+        matches = [
+            line for line in _git(
+                repository, "rev-parse", f"--disambiguate={candidate}"
+            ).splitlines() if SHA40_RE.fullmatch(line)
+        ]
+        if len(matches) != 1:
+            raise ValueError("build_provenance_short_sha_ambiguous")
+        resolved = matches[0]
+    else:
+        resolved = candidate
+    commit = _git(repository, "rev-parse", "--verify", f"{resolved}^{{commit}}")
+    if not SHA40_RE.fullmatch(commit) or commit != resolved:
+        raise ValueError("build_provenance_commit_missing")
+    return resolved
+
+
+def _bounded_repository_ancestry(
+    *, repository: pathlib.Path, ancestor: str, descendant: str,
+) -> int:
+    if ancestor == descendant:
+        return 0
+    relation = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        cwd=repository, capture_output=True, check=False, text=True)
+    if relation.returncode != 0:
+        raise ValueError("build_provenance_not_ancestor")
+    encoded = _git(
+        repository, "rev-list", "--ancestry-path", "--count",
+        f"--max-count={MAX_BUILD_ANCESTRY_COMMITS + 1}",
+        f"{ancestor}..{descendant}")
+    try:
+        distance = int(encoded)
+    except ValueError as exc:
+        raise ValueError("build_provenance_distance_invalid") from exc
+    if distance <= 0 or distance > MAX_BUILD_ANCESTRY_COMMITS:
+        raise ValueError("build_provenance_capacity_exceeded")
+    return distance
+
+
+def verify_repository_build_provenance(
+    *, repository: pathlib.Path, artifact_producer_sha: str,
+    current_runtime_sha: str, workflow_dispatch_sha: str,
+    workflow_checkout_sha: str, protected_main_sha: str,
+) -> Dict[str, Any]:
+    """Separate historical artifact provenance from exact runtime identity."""
+    artifact = resolve_repository_commit(
+        repository=repository, identity=artifact_producer_sha,
+        allow_legacy_short=True)
+    runtime = resolve_repository_commit(
+        repository=repository, identity=current_runtime_sha,
+        allow_legacy_short=False)
+    protected = resolve_repository_commit(
+        repository=repository, identity=protected_main_sha,
+        allow_legacy_short=False)
+    dispatched = resolve_repository_commit(
+        repository=repository, identity=workflow_dispatch_sha,
+        allow_legacy_short=False)
+    checkout = resolve_repository_commit(
+        repository=repository, identity=workflow_checkout_sha,
+        allow_legacy_short=False)
+    if dispatched != checkout or checkout != protected:
+        raise ValueError("workflow_protected_main_identity_mismatch")
+    artifact_distance = _bounded_repository_ancestry(
+        repository=repository, ancestor=artifact, descendant=runtime)
+    runtime_distance = _bounded_repository_ancestry(
+        repository=repository, ancestor=runtime, descendant=protected)
+    return {
+        "status": "verified",
+        "artifactProducerSha": artifact,
+        "currentRuntimeSha": runtime,
+        "protectedMainSha": protected,
+        "workflowDispatchSha": dispatched,
+        "workflowCheckoutSha": checkout,
+        "artifactToRuntimeDistance": artifact_distance,
+        "runtimeToProtectedMainDistance": runtime_distance,
+    }
+
+
+def verify_runtime_identity(
+    *, health: Mapping[str, Any], ready: Mapping[str, Any],
+    expected_runtime_sha: Optional[str] = None,
+) -> Dict[str, str]:
+    """Prove one exact health/ready runtime sample at a transaction boundary."""
+    if health.get("status") != "ok" or ready.get("ready") is not True:
+        raise ValueError("runtime_not_ready")
+    health_sha = str(health.get("buildSha") or "")
+    ready_sha = str(ready.get("buildSha") or "")
+    if not SHA40_RE.fullmatch(health_sha) or ready_sha != health_sha:
+        raise ValueError("runtime_identity_mismatch")
+    health_version = str(health.get("backendVersion") or "")
+    if not SEMVER_RE.fullmatch(health_version) or ready.get(
+            "backendVersion") != health_version:
+        raise ValueError("runtime_version_mismatch")
+    if expected_runtime_sha is not None and health_sha != str(
+            expected_runtime_sha):
+        raise ValueError("runtime_identity_changed")
+    return {
+        "status": "verified",
+        "runtimeSha": health_sha,
+        "backendVersion": health_version,
     }
 
 
@@ -502,6 +628,18 @@ def _parser() -> argparse.ArgumentParser:
         "--repository", required=True, type=pathlib.Path)
     ancestry_parser.add_argument("--recovery-ledger-base", required=True)
     ancestry_parser.add_argument("--cas-ledger-head", required=True)
+    provenance_parser = sub.add_parser("verify-build-provenance")
+    provenance_parser.add_argument(
+        "--repository", required=True, type=pathlib.Path)
+    provenance_parser.add_argument("--artifact-producer-sha", required=True)
+    provenance_parser.add_argument("--current-runtime-sha", required=True)
+    provenance_parser.add_argument("--workflow-dispatch-sha", required=True)
+    provenance_parser.add_argument("--workflow-checkout-sha", required=True)
+    provenance_parser.add_argument("--protected-main-sha", required=True)
+    runtime_parser = sub.add_parser("verify-runtime")
+    runtime_parser.add_argument("--health", required=True, type=pathlib.Path)
+    runtime_parser.add_argument("--ready", required=True, type=pathlib.Path)
+    runtime_parser.add_argument("--expected-runtime-sha")
     return parser
 
 
@@ -538,12 +676,25 @@ def main(argv=None) -> int:
             expected_recovery_bundle_hash=args.expected_recovery_bundle_hash,
             ledger_base_commit_sha=args.ledger_base_commit_sha,
         )
-    else:
+    elif args.command == "verify-ledger-base-ancestor":
         result = verify_ledger_base_ancestor(
             repository=args.repository,
             recovery_ledger_base=args.recovery_ledger_base,
             cas_ledger_head=args.cas_ledger_head,
         )
+    elif args.command == "verify-build-provenance":
+        result = verify_repository_build_provenance(
+            repository=args.repository,
+            artifact_producer_sha=args.artifact_producer_sha,
+            current_runtime_sha=args.current_runtime_sha,
+            workflow_dispatch_sha=args.workflow_dispatch_sha,
+            workflow_checkout_sha=args.workflow_checkout_sha,
+            protected_main_sha=args.protected_main_sha,
+        )
+    else:
+        result = verify_runtime_identity(
+            health=_read_json(args.health), ready=_read_json(args.ready),
+            expected_runtime_sha=args.expected_runtime_sha)
     print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
     return 0
 

@@ -32,6 +32,7 @@ from scripts.remote_journal_publish_policy import (
 
 BUILD = "a" * 40
 REMOTE_COMMIT = "b" * 40
+WORKFLOW_HEAD = "c" * 40
 LOCAL_WAL = 4694
 REMOTE_WAL = 4659
 
@@ -141,6 +142,24 @@ def _writer_public_opener(request, timeout):
     return _Response(body)
 
 
+def _writer_head_opener(request, timeout):
+    assert timeout > 0
+    assert request.full_url == writer.MAIN_REF_URL
+    return _Response({
+        "ref": "refs/heads/main",
+        "object": {"type": "commit", "sha": WORKFLOW_HEAD},
+    })
+
+
+def _writer_identity_inputs(expected_head=WORKFLOW_HEAD):
+    return {
+        "expected_head_sha": expected_head,
+        "github_sha": WORKFLOW_HEAD,
+        "github_workflow_sha": WORKFLOW_HEAD,
+        "checkout_sha": WORKFLOW_HEAD,
+    }
+
+
 def test_writer_calendar_is_exact_duplicate_free_and_bounded():
     assert writer.WEEKDAY_MINUTES == (4, 11, 19, 26, 34, 41, 49, 56)
     assert writer.WEEKEND_MINUTES == (4, 34)
@@ -162,26 +181,97 @@ def test_writer_calendar_is_exact_duplicate_free_and_bounded():
 
 def test_writer_inputs_are_disjoint_and_deterministically_bound():
     scheduled = "2026-08-31T13:19:00Z"
-    dispatch_id = writer.writer_dispatch_id(scheduled)
+    dispatch_id = writer.writer_dispatch_id(
+        scheduled, workflow_head_sha=WORKFLOW_HEAD)
     natural = writer.validate_dispatch_inputs(
         remote_journal_rearm=False,
         dispatch_mode="ec2_systemd_writer",
         writer_scheduled_for=scheduled,
-        supplied_dispatch_id=dispatch_id)
+        supplied_dispatch_id=dispatch_id, **_writer_identity_inputs())
     assert natural == {
         "natural": True,
         "policySource": "ec2_systemd_writer",
         "writerScheduledFor": scheduled,
         "writerDispatchId": dispatch_id,
+        "workflowHeadSha": WORKFLOW_HEAD,
     }
     assert writer.validate_dispatch_inputs(
         remote_journal_rearm=False, dispatch_mode="owner_manual",
-        writer_scheduled_for="", supplied_dispatch_id=""
+        writer_scheduled_for="", supplied_dispatch_id="",
+        **_writer_identity_inputs(expected_head="")
     )["natural"] is False
     assert writer.validate_dispatch_inputs(
         remote_journal_rearm=True, dispatch_mode="owner_manual",
-        writer_scheduled_for="", supplied_dispatch_id=""
+        writer_scheduled_for="", supplied_dispatch_id="",
+        **_writer_identity_inputs()
     )["policySource"] == "remote_journal_rearm"
+
+
+def test_writer_dispatch_id_is_bound_to_exact_workflow_head():
+    scheduled = "2026-08-31T13:19:00Z"
+    first = writer.writer_dispatch_id(
+        scheduled, workflow_head_sha=WORKFLOW_HEAD)
+    second = writer.writer_dispatch_id(
+        scheduled, workflow_head_sha="d" * 40)
+    assert first != second
+    assert re.fullmatch(r"awwd-[0-9a-f]{32}", first)
+
+
+@pytest.mark.parametrize("field", [
+    "github_sha", "github_workflow_sha", "checkout_sha",
+])
+def test_writer_workflow_runtime_identity_mismatch_fails_closed(field):
+    scheduled = "2026-08-31T13:19:00Z"
+    identities = _writer_identity_inputs()
+    identities[field] = "d" * 40
+    with pytest.raises(writer.WriterDispatchError,
+                       match="workflow_runtime_identity_mismatch"):
+        writer.validate_dispatch_inputs(
+            remote_journal_rearm=False,
+            dispatch_mode="ec2_systemd_writer",
+            writer_scheduled_for=scheduled,
+            supplied_dispatch_id=writer.writer_dispatch_id(
+                scheduled, workflow_head_sha=WORKFLOW_HEAD),
+            **identities)
+
+
+def test_writer_expected_head_mismatch_fails_closed():
+    scheduled = "2026-08-31T13:19:00Z"
+    with pytest.raises(writer.WriterDispatchError,
+                       match="expected_head_sha_mismatch"):
+        writer.validate_dispatch_inputs(
+            remote_journal_rearm=False,
+            dispatch_mode="ec2_systemd_writer",
+            writer_scheduled_for=scheduled,
+            supplied_dispatch_id=writer.writer_dispatch_id(
+                scheduled, workflow_head_sha="d" * 40),
+            **_writer_identity_inputs(expected_head="d" * 40))
+
+
+def test_writer_main_ref_resolution_is_exact_and_bounded():
+    assert writer.resolve_main_head(
+        timeout=3, opener=_writer_head_opener) == WORKFLOW_HEAD
+    invalid = {
+        "ref": "refs/heads/other",
+        "object": {"type": "commit", "sha": WORKFLOW_HEAD},
+    }
+    with pytest.raises(writer.WriterDispatchError,
+                       match="github_main_ref_invalid"):
+        writer.resolve_main_head(
+            timeout=3,
+            opener=lambda *_args, **_kwargs: _Response(invalid))
+    with pytest.raises(writer.WriterDispatchError,
+                       match="github_main_sha_invalid"):
+        writer.resolve_main_head(
+            timeout=3, opener=lambda *_args, **_kwargs: _Response({
+                "ref": "refs/heads/main",
+                "object": {"type": "commit", "sha": "abc1234"},
+            }))
+    with pytest.raises(writer.WriterDispatchError,
+                       match="http_response_oversized"):
+        writer.resolve_main_head(
+            timeout=3, opener=lambda *_args, **_kwargs: _Response(
+                b"x" * (writer.MAX_PUBLIC_RESPONSE_BYTES + 1)))
 
 
 @pytest.mark.parametrize("kwargs,error", [
@@ -203,7 +293,7 @@ def test_writer_inputs_are_disjoint_and_deterministically_bound():
 ])
 def test_writer_invalid_or_mixed_inputs_fail_closed(kwargs, error):
     with pytest.raises(writer.WriterDispatchError, match=error):
-        writer.validate_dispatch_inputs(**kwargs)
+        writer.validate_dispatch_inputs(**kwargs, **_writer_identity_inputs())
 
 
 @pytest.mark.parametrize("field,value,error", [
@@ -217,7 +307,9 @@ def test_writer_wrong_repository_workflow_or_ref_fails(field, value, error):
         "remote_journal_rearm": False,
         "dispatch_mode": "ec2_systemd_writer",
         "writer_scheduled_for": scheduled,
-        "supplied_dispatch_id": writer.writer_dispatch_id(scheduled),
+        "supplied_dispatch_id": writer.writer_dispatch_id(
+            scheduled, workflow_head_sha=WORKFLOW_HEAD),
+        **_writer_identity_inputs(),
         field: value,
     }
     with pytest.raises(writer.WriterDispatchError, match=error):
@@ -236,7 +328,8 @@ def test_writer_dispatch_is_exactly_once_and_duplicate_safe(tmp_path):
     now = dt.datetime(2026, 8, 31, 13, 21, tzinfo=dt.timezone.utc)
     first = writer.dispatch_slot(
         now=now, token=WRITER_TOKEN, root=root,
-        public_opener=_writer_public_opener, post_opener=post)
+        public_opener=_writer_public_opener,
+        head_opener=_writer_head_opener, post_opener=post)
     second = writer.dispatch_slot(
         now=now, token=WRITER_TOKEN, root=root,
         public_opener=lambda *_args, **_kwargs: pytest.fail(
@@ -254,11 +347,63 @@ def test_writer_dispatch_is_exactly_once_and_duplicate_safe(tmp_path):
             "dispatchMode": "ec2_systemd_writer",
             "writerScheduledFor": "2026-08-31T13:19:00Z",
             "writerDispatchId": writer.writer_dispatch_id(
-                "2026-08-31T13:19:00Z"),
+                "2026-08-31T13:19:00Z",
+                workflow_head_sha=WORKFLOW_HEAD),
+            "expectedHeadSha": WORKFLOW_HEAD,
         },
     }
     assert "Authorization" in posts[0].headers
     assert WRITER_TOKEN not in json.dumps(first)
+
+
+def test_writer_main_advance_before_post_is_definite_and_never_posts(tmp_path):
+    root = _writer_root(tmp_path)
+    heads = [WORKFLOW_HEAD, "d" * 40]
+    posts = []
+
+    def advancing_head(_request, timeout):
+        assert timeout > 0
+        return _Response({
+            "ref": "refs/heads/main",
+            "object": {"type": "commit", "sha": heads.pop(0)},
+        })
+
+    with pytest.raises(writer.WriterDispatchError,
+                       match="github_main_advanced_before_dispatch"):
+        writer.dispatch_slot(
+            now=dt.datetime(2026, 8, 31, 13, 21,
+                            tzinfo=dt.timezone.utc),
+            token=WRITER_TOKEN, root=root,
+            public_opener=_writer_public_opener,
+            head_opener=advancing_head,
+            post_opener=lambda request, **_kwargs: (
+                posts.append(request) or _Response(status=204)))
+    assert posts == []
+    state = json.loads(next(root.glob("*.json")).read_text())
+    assert state["phase"] == "FAILED_DEFINITE"
+    assert state["failureClass"] == "github_main_advanced_before_dispatch"
+
+
+def test_writer_v1_same_slot_state_is_rejected_without_reset(tmp_path):
+    root = _writer_root(tmp_path)
+    scheduled = "2026-08-31T13:19:00Z"
+    dispatch_id = writer.writer_dispatch_id(
+        scheduled, workflow_head_sha=WORKFLOW_HEAD)
+    legacy = writer._new_state(scheduled, dispatch_id, WORKFLOW_HEAD)
+    legacy["schemaVersion"] = "argus-watchtower-writer-slot-v1"
+    state_path = writer._state_path(root, scheduled)
+    state_path.write_text(json.dumps(legacy))
+    state_path.chmod(0o600)
+    before = state_path.read_bytes()
+    with pytest.raises(writer.WriterDispatchError,
+                       match="writer_state_corrupt"):
+        writer.dispatch_slot(
+            now=dt.datetime(2026, 8, 31, 13, 21,
+                            tzinfo=dt.timezone.utc),
+            token=WRITER_TOKEN, root=root,
+            head_opener=lambda *_args, **_kwargs: pytest.fail(
+                "legacy state must fail before ref resolution"))
+    assert state_path.read_bytes() == before
 
 
 def test_writer_crash_before_attempt_can_resume_without_duplicate(tmp_path):
@@ -268,6 +413,7 @@ def test_writer_crash_before_attempt_can_resume_without_duplicate(tmp_path):
         writer.dispatch_slot(
             now=now, token=WRITER_TOKEN, root=root,
             public_opener=_writer_public_opener,
+            head_opener=_writer_head_opener,
             post_opener=lambda *_args, **_kwargs: pytest.fail(
                 "POST before marker"),
             before_attempt=lambda: (_ for _ in ()).throw(
@@ -276,6 +422,7 @@ def test_writer_crash_before_attempt_can_resume_without_duplicate(tmp_path):
     result = writer.dispatch_slot(
         now=now, token=WRITER_TOKEN, root=root,
         public_opener=_writer_public_opener,
+        head_opener=_writer_head_opener,
         post_opener=lambda request, **_kwargs: (
             sent.append(request) or _Response(status=204)))
     assert result["phase"] == "DISPATCH_ACCEPTED"
@@ -289,14 +436,17 @@ def test_writer_crash_after_attempt_reconciles_and_never_resends(tmp_path):
         writer.dispatch_slot(
             now=now, token=WRITER_TOKEN, root=root,
             public_opener=_writer_public_opener,
+            head_opener=_writer_head_opener,
             post_opener=lambda *_args, **_kwargs: pytest.fail(
                 "crash precedes POST"),
             before_post=lambda: (_ for _ in ()).throw(
                 RuntimeError("post boundary")))
-    dispatch_id = writer.writer_dispatch_id("2026-08-31T13:19:00Z")
+    dispatch_id = writer.writer_dispatch_id(
+        "2026-08-31T13:19:00Z", workflow_head_sha=WORKFLOW_HEAD)
     runs = {"workflow_runs": [{
         "display_title": f"Watchtower EC2 {dispatch_id}",
         "event": "workflow_dispatch", "head_branch": "main",
+        "head_sha": WORKFLOW_HEAD,
     }]}
     result = writer.dispatch_slot(
         now=now, token=WRITER_TOKEN, root=root,
@@ -313,10 +463,12 @@ def test_writer_crash_after_accepted_post_reconciles_without_resend(tmp_path):
         writer.dispatch_slot(
             now=now, token=WRITER_TOKEN, root=root,
             public_opener=_writer_public_opener,
+            head_opener=_writer_head_opener,
             post_opener=lambda *_args, **_kwargs: _Response(status=204),
             after_post=lambda: (_ for _ in ()).throw(
                 RuntimeError("accepted boundary")))
-    dispatch_id = writer.writer_dispatch_id("2026-08-31T13:19:00Z")
+    dispatch_id = writer.writer_dispatch_id(
+        "2026-08-31T13:19:00Z", workflow_head_sha=WORKFLOW_HEAD)
     result = writer.dispatch_slot(
         now=now, token=WRITER_TOKEN, root=root,
         post_opener=lambda *_args, **_kwargs: pytest.fail(
@@ -324,6 +476,7 @@ def test_writer_crash_after_accepted_post_reconciles_without_resend(tmp_path):
         reconcile_opener=lambda *_args, **_kwargs: _Response({"workflow_runs": [{
             "display_title": f"Watchtower EC2 {dispatch_id}",
             "event": "workflow_dispatch", "head_branch": "main",
+            "head_sha": WORKFLOW_HEAD,
         }]}))
     assert result["status"] == "dispatch_acceptance_reconciled"
 
@@ -336,6 +489,7 @@ def test_writer_unproven_ambiguous_dispatch_is_terminal(tmp_path):
         writer.dispatch_slot(
             now=now, token=WRITER_TOKEN, root=root,
             public_opener=_writer_public_opener,
+            head_opener=_writer_head_opener,
             post_opener=lambda *_args, **_kwargs: (
                 _ for _ in ()).throw(TimeoutError()),
             reconcile_opener=lambda *_args, **_kwargs: _Response(
@@ -362,7 +516,8 @@ def test_writer_http_failures_are_visible_without_retry(tmp_path, status, phase)
             now=dt.datetime(2026, 8, 31, 13, 21,
                             tzinfo=dt.timezone.utc),
             token=WRITER_TOKEN, root=root,
-            public_opener=_writer_public_opener, post_opener=failure,
+            public_opener=_writer_public_opener,
+            head_opener=_writer_head_opener, post_opener=failure,
             reconcile_opener=lambda *_args, **_kwargs: _Response(
                 {"workflow_runs": []}))
     state_file = next(path for path in root.glob("*.json"))
@@ -372,7 +527,8 @@ def test_writer_http_failures_are_visible_without_retry(tmp_path, status, phase)
 def test_writer_state_corruption_symlink_mode_and_lock_fail_closed(tmp_path):
     now = dt.datetime(2026, 8, 31, 13, 21, tzinfo=dt.timezone.utc)
     scheduled = "2026-08-31T13:19:00Z"
-    dispatch_id = writer.writer_dispatch_id(scheduled)
+    dispatch_id = writer.writer_dispatch_id(
+        scheduled, workflow_head_sha=WORKFLOW_HEAD)
 
     corrupt_root = _writer_root(tmp_path / "corrupt")
     path = writer._state_path(corrupt_root, scheduled)
@@ -383,7 +539,8 @@ def test_writer_state_corruption_symlink_mode_and_lock_fail_closed(tmp_path):
 
     mode_root = _writer_root(tmp_path / "mode")
     path = writer._state_path(mode_root, scheduled)
-    path.write_text(json.dumps(writer._new_state(scheduled, dispatch_id)))
+    path.write_text(json.dumps(writer._new_state(
+        scheduled, dispatch_id, WORKFLOW_HEAD)))
     path.chmod(0o644)
     with pytest.raises(writer.WriterDispatchError,
                        match="writer_state_metadata_invalid"):
@@ -414,14 +571,25 @@ def test_writer_reconciliation_is_bounded_and_malformed_fails(tmp_path):
     with pytest.raises(writer.WriterDispatchError,
                        match="http_response_oversized"):
         writer.reconcile_dispatch(
-            WRITER_TOKEN, "awwd-" + "a" * 32, timeout=3,
+            WRITER_TOKEN, "awwd-" + "a" * 32,
+            workflow_head_sha=WORKFLOW_HEAD, timeout=3,
             opener=lambda *_args, **_kwargs: _Response(oversized))
     with pytest.raises(writer.WriterDispatchError,
                        match="github_runs_response_invalid"):
         writer.reconcile_dispatch(
-            WRITER_TOKEN, "awwd-" + "a" * 32, timeout=3,
+            WRITER_TOKEN, "awwd-" + "a" * 32,
+            workflow_head_sha=WORKFLOW_HEAD, timeout=3,
             opener=lambda *_args, **_kwargs: _Response(
                 {"workflow_runs": {}}))
+    wrong_head = {"workflow_runs": [{
+        "display_title": "awwd-" + "a" * 32,
+        "event": "workflow_dispatch", "head_branch": "main",
+        "head_sha": "d" * 40,
+    }]}
+    assert writer.reconcile_dispatch(
+        WRITER_TOKEN, "awwd-" + "a" * 32,
+        workflow_head_sha=WORKFLOW_HEAD, timeout=3,
+        opener=lambda *_args, **_kwargs: _Response(wrong_head)) is False
 
 
 def test_writer_invalid_token_and_safe_output_never_disclose_secret(tmp_path):
@@ -454,10 +622,41 @@ def test_verified_gap_dispatches_exactly_once_without_polling():
         return _Response(status=204)
 
     assert rearm.dispatch_natural_rearm(
-        "secret-test-token", timeout=6, opener=opener) == 204
+        "secret-test-token", expected_head_sha=WORKFLOW_HEAD,
+        timeout=6, opener=opener) == 204
     assert len(seen) == 1
     assert json.loads(seen[0].data) == {
-        "ref": "main", "inputs": {"remoteJournalRearm": "true"}}
+        "ref": "main", "inputs": {
+            "remoteJournalRearm": "true",
+            "expectedHeadSha": WORKFLOW_HEAD,
+        }}
+
+
+def test_rearm_main_ref_resolution_is_exact_and_bounded():
+    valid = {
+        "ref": "refs/heads/main",
+        "object": {"type": "commit", "sha": WORKFLOW_HEAD},
+    }
+    assert rearm.resolve_main_head(
+        timeout=3,
+        opener=lambda *_args, **_kwargs: _Response(valid)) == WORKFLOW_HEAD
+    with pytest.raises(rearm.RearmError, match="github_main_ref_invalid"):
+        rearm.resolve_main_head(
+            timeout=3, opener=lambda *_args, **_kwargs: _Response({
+                "ref": "refs/heads/main",
+                "object": {"type": "tag", "sha": WORKFLOW_HEAD},
+            }))
+    with pytest.raises(rearm.RearmError, match="github_main_sha_invalid"):
+        rearm.resolve_main_head(
+            timeout=3, opener=lambda *_args, **_kwargs: _Response({
+                "ref": "refs/heads/main",
+                "object": {"type": "commit", "sha": "abc1234"},
+            }))
+    with pytest.raises(rearm.RearmError,
+                       match="github_main_response_oversized"):
+        rearm.resolve_main_head(
+            timeout=3, opener=lambda *_args, **_kwargs: _Response(
+                b"x" * (rearm.MAX_PUBLIC_RESPONSE_BYTES + 1)))
 
 
 def test_identity_gate_tracks_live_semver_without_a_frozen_version():
@@ -541,7 +740,7 @@ def test_public_timeout_exhausts_two_attempts():
 def test_non_204_dispatch_is_rejected():
     with pytest.raises(rearm.RearmError, match="workflow_dispatch_rejected"):
         rearm.dispatch_natural_rearm(
-            "secret", timeout=3,
+            "secret", expected_head_sha=WORKFLOW_HEAD, timeout=3,
             opener=lambda *_args, **_kwargs: _Response(status=202))
 
 

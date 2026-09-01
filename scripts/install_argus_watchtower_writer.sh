@@ -41,7 +41,7 @@ if [[ "$TEST_MODE" == "1" ]]; then
 fi
 
 # Re-pinned only after the exact candidate source bytes are final.
-SCRIPT_SHA256="b25feffa94308f869cae0b855e7af37e068d48bbbc7b1680b364dec811b7dfca"
+SCRIPT_SHA256="faf14a9ed90c4c6401dd721465b3fff2735319af8932dd4eaddc7da51f166834"
 SERVICE_SHA256="c28b3c947139dfc42776b55124b1ddc14a8cdbd32e7fb5ccc0c854ab6d371b7e"
 TIMER_SHA256="45e1980efa5099b8cf3464dddc3418ddf5da2d1674d4f6b85103a2b5388dd7a6"
 

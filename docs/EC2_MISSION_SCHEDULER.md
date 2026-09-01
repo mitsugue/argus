@@ -129,12 +129,35 @@ installerはverified backupとrollback metadataを作成しますが、`daemon-r
 enable、start、restart、workflow dispatchは一切実行しません。timer activationは
 repository mergeとは別のowner承認操作です。
 
-各canonical UTC slotの`writerDispatchId`はrepository、workflow、ref、slotから
-決定的に導出され、EC2 state、journal、GitHub run-name、workflow入力、writer
-evidenceを結びます。永続stateは`PREPARED`、`DISPATCH_ACCEPTED`、
+各canonical UTC slotの`writerDispatchId`はrepository、workflow、ref、
+dispatcherが取得したexact protected-main SHA、slotから決定的に導出され、EC2
+state、journal、GitHub run-name、workflow入力、writer evidenceを結びます。
+永続state schemaは`argus-watchtower-writer-slot-v2`で、exact
+`workflowHeadSha`を保持します。旧v1 stateが同じslotに残っている場合はresetや
+blind retryをせずfail closedします。stateは`PREPARED`、`DISPATCH_ACCEPTED`、
 `FAILED_DEFINITE`、`FAILED_AMBIGUOUS`を持ち、POST開始前にfsyncされます。timeoutや
 POST境界crashでは同じslotをblind resendせず、1回のbounded read-only GitHub
-照合で受理を証明できない限り`FAILED_AMBIGUOUS`として停止します。
+照合で同じ`workflowHeadSha`のrun受理を証明できない限り`FAILED_AMBIGUOUS`として
+停止します。
+
+writerとre-armはいずれもdispatch直前にGitHubの`refs/heads/main`をno-redirect、
+bounded responseで解決し、full 40-character SHAを`expectedHeadSha`として送ります。
+workflowはmoving `main`ではなくこのimmutable SHAをcheckoutし、次を完全一致で
+検証してから外部更新へ進みます。
+
+```text
+dispatcher-resolved SHA
+  = github.sha
+  = github.workflow_sha
+  = checkout git HEAD
+  = persisted workflowHeadSha
+```
+
+queued実行やrerunでも上記のcaptured SHAを維持します。resolve後にmainが進んだ
+場合はdispatcher側の最終pre-POST照合、またはworkflow側のexact identity gateの
+どちらかでfail closedし、moving-main fallbackは行いません。re-armはslot stateを
+持ちませんが、同じ`expectedHeadSha` contractを使い、専用classificationと
+concurrencyを維持します。
 
 `workflow_dispatch`のidentityは3種類を混在させません。
 
@@ -146,6 +169,37 @@ POST境界crashでは同じslotをblind resendせず、1回のbounded read-only 
 writer concurrencyは`caos-watchtower`、re-armは
 `caos-watchtower-remote-journal-rearm`のまま分離し、どちらも
 `cancel-in-progress=false`です。
+
+## Recovery artifact provenanceとruntime stability
+
+Watchtower writer/re-armは、過去に生成された認証済みRecovery artifactの
+`ArtifactProducerSha`と、現在応答しているbackendの`CurrentRuntimeSha`を別の
+authorityとして扱います。legacyの7文字producer SHAはlocal repositoryで一意な
+commitにだけ解決し、prefix一致をidentityやancestryとして使用しません。
+
+許可される関係は次だけです。
+
+```text
+ArtifactProducerSha
+  ANCESTOR_OR_EXACT CurrentRuntimeSha
+  ANCESTOR_OR_EXACT captured ProtectedMainSha
+```
+
+repository proofは最大250 commitsに制限します。251以上はstale判定ではなく
+proof capacity exceededとしてfail closedします。unknown、malformed、ambiguous
+short SHA、sibling、fork、future descendant、tree equalityは受理しません。これは
+Recovery ledger自身のancestry contractを変更しません。
+
+current runtimeはfull SHAで、prepare/ready、artifact取得後、ledger mutation直前、
+receipt送信直前、terminal backend ACK後に再取得します。health/readyのSHAまたは
+versionが一致しない場合、あるいは途中でruntimeが変わった場合は、その境界以降の
+外部更新を停止します。
+
+dispatcherまたはinstaller bytesを更新したprotected mergeの後は、既存EC2 runtime
+が自動的に更新されたとは扱いません。source-check、dry-run、apply、read-back、
+backup/rollback metadataを再検証し、ownerの別途明示承認を得るまでwriter/re-armの
+reinstall、daemon-reload、timer enable/start、service start、workflow dispatchを
+実行しません。
 
 ## 監視
 

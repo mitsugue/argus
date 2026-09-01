@@ -311,7 +311,7 @@ def test_rearm_apply_and_rollback_are_isolated_from_dirty_opt_argus(tmp_path):
     assert mission.read_text(encoding="utf-8") == "live mission\n"
     assert hashlib.sha256(
         (runtime / "argus_remote_journal_rearm.py").read_bytes()
-    ).hexdigest() == "2f2f9d7268f4d853c5a5d12b3628cd22201aaf30c5287274daf966967d2295c1"
+        ).hexdigest() == "9654ebab669de9d1b33692f13fcc6dc444a7a914e1a28473f3e4309fc325df35"
 
     rolled_back = subprocess.run(
         ["bash", str(REARM_INSTALLER), "--rollback", backup_id.group(1)],
