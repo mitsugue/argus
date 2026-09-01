@@ -1523,6 +1523,76 @@ def _advance_nonce_floor_to_33():
     return domain
 
 
+def _set_unstarted_ordinary_cycle():
+    scanner._REMOTE_CYCLE.update({
+        "remoteCommitSha": None,
+        "receiptCommitSha": None,
+        "committedAt": None,
+        "readBackAt": None,
+        "readBackVerified": False,
+        "walReadBackVerified": False,
+        "expectedHash": None,
+        "actualHash": None,
+        "remoteDurabilityState": "not_started",
+        "remoteWalAppliedSequence": 0,
+        "verifiedWalSequence": 0,
+        "compactReceiptHash": None,
+        "errorClass": None,
+        "walErrorClass": None,
+        "receiptErrorClass": None,
+    })
+
+
+def _capture_post_genesis_capability(paths):
+    """Capture one valid private capability without reserving its nonce."""
+    captured = {}
+    real_mint = scanner._mint_post_genesis_checkpoint_capability
+
+    def capture_mint(*args, **kwargs):
+        capability = real_mint(*args, **kwargs)
+        captured["mintArgs"] = args
+        captured["mintKwargs"] = kwargs
+        captured["capability"] = capability
+        return capability
+
+    def stop_before_nonce(capability, checkpoint, compact, configured):
+        captured["consumeArgs"] = (
+            capability, checkpoint, compact, configured)
+        raise recovery.RecoveryBundleError("captured_before_nonce")
+
+    with mock.patch.object(
+            scanner, "_mint_post_genesis_checkpoint_capability",
+            side_effect=capture_mint), mock.patch.object(
+                scanner, "_consume_post_genesis_checkpoint_capability",
+                side_effect=stop_before_nonce), pytest.raises(
+                    scanner._RemoteRecoveryCheckpointError,
+                    match="remote_recovery_sidecar_failed"):
+        scanner._osint_persist()
+    assert set(captured) == {
+        "mintArgs", "mintKwargs", "capability", "consumeArgs"}
+    return captured
+
+
+def _prepare_captured_post_genesis_capability(paths):
+    _reset_recovery_targets()
+    _append_verified_cycle(paths, sequence=1)
+    _activate_clean_legacy_nonce_authority(paths)
+    assert scanner._osint_persist()["verified"] is True
+    domain = _advance_nonce_floor_to_33()
+    durability.append_wal(
+        paths["wal"], sequence=2, kind="journal_transition",
+        job_id="producer-test", payload={"transitionId": "producer-2"},
+        occurred_at=AT)
+    _set_unstarted_ordinary_cycle()
+    return domain, _capture_post_genesis_capability(paths)
+
+
+def _nonce_counter(domain):
+    history = scanner._verify_remote_recovery_nonce_authority(
+        recovery.configured_keys())
+    return history["keyMaterialCounters"][domain]
+
+
 @pytest.mark.parametrize("boundary", _ORDINARY_PAIR_CRASH_BOUNDARIES)
 def test_ordinary_keyed_pair_crash_matrix_preserves_one_generation(boundary):
     before_switch = _ORDINARY_PAIR_CRASH_BOUNDARIES.index(boundary) <= 8
@@ -1583,7 +1653,7 @@ def test_ordinary_keyed_pair_crash_matrix_preserves_one_generation(boundary):
         assert int.from_bytes(nonce, "big") <= floor
 
 
-def test_unverified_ordinary_cycle_preserves_previous_authenticated_pair():
+def test_unverified_ordinary_cycle_without_capability_reproduces_old_failure():
     with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
             _key_environment(configured=True), \
             mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
@@ -1598,18 +1668,31 @@ def test_unverified_ordinary_cycle_preserves_previous_authenticated_pair():
             paths["wal"], sequence=2, kind="journal_transition",
             job_id="producer-test", payload={"transitionId": "producer-2"},
             occurred_at=AT)
-        scanner._REMOTE_CYCLE.update({
-            "remoteCommitSha": None, "receiptCommitSha": None,
-            "readBackVerified": False, "walReadBackVerified": False,
-            "remoteDurabilityState": "not_started",
-            "remoteWalAppliedSequence": 0, "verifiedWalSequence": 0,
-            "compactReceiptHash": None,
-        })
+        _set_unstarted_ordinary_cycle()
+        failure = {}
+        real_ledger_base = scanner._recovery_ledger_base
 
-        with pytest.raises(
+        def capture_old_failure(checkpoint_blob):
+            try:
+                return real_ledger_base(checkpoint_blob)
+            except ValueError as exc:
+                failure["type"] = type(exc).__name__
+                failure["reason"] = str(exc)
+                raise
+
+        with mock.patch.object(
+                scanner, "_mint_post_genesis_checkpoint_capability",
+                return_value=None), mock.patch.object(
+                    scanner, "_recovery_ledger_base",
+                    side_effect=capture_old_failure), pytest.raises(
                 scanner._RemoteRecoveryCheckpointError,
                 match="remote_recovery_sidecar_failed"):
             scanner._osint_persist()
+
+        assert failure == {
+            "type": "ValueError",
+            "reason": "recovery_ledger_base_unverified",
+        }
         assert pathlib.Path(paths["checkpoint"]).read_bytes() == old_checkpoint
         assert pathlib.Path(paths["recovery"]).read_bytes() == old_sidecar
         canonical = storage.load_checkpoint(
@@ -1620,6 +1703,333 @@ def test_unverified_ordinary_cycle_preserves_previous_authenticated_pair():
         history = scanner._verify_remote_recovery_nonce_authority(
             recovery.configured_keys())
         assert history["keyMaterialCounters"][domain] == 33
+
+
+def test_unstarted_ordinary_cycle_self_recovers_with_exact_next_generation():
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            _key_environment(configured=True), \
+            mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
+        _reset_recovery_targets()
+        _append_verified_cycle(paths, sequence=1)
+        _activate_clean_legacy_nonce_authority(paths)
+        first = scanner._osint_persist()
+        assert first["verified"] is True
+        old_checkpoint = pathlib.Path(paths["checkpoint"]).read_bytes()
+        old_sidecar = pathlib.Path(paths["recovery"]).read_bytes()
+        old_pair = scanner._read_local_recovery_sidecar()
+        old_payload = recovery.validate_pair(
+            old_pair["readback"], old_pair["recovery"],
+            PRODUCER_CURRENT_KEY, key_identifier=PRODUCER_CURRENT_ID)
+        domain = _advance_nonce_floor_to_33()
+        durability.append_wal(
+            paths["wal"], sequence=2, kind="journal_transition",
+            job_id="producer-test", payload={"transitionId": "producer-2"},
+            occurred_at=AT)
+        _set_unstarted_ordinary_cycle()
+
+        recovered = scanner._osint_persist()
+
+        assert recovered["verified"] is True
+        assert recovered["readBackVerified"] is True
+        assert pathlib.Path(paths["checkpoint"]).read_bytes() != old_checkpoint
+        assert pathlib.Path(paths["recovery"]).read_bytes() != old_sidecar
+        canonical = storage.load_checkpoint(
+            paths["checkpoint"], require_seal=True)
+        authority = scanner._resolve_authoritative_local_recovery_checkpoint(
+            canonical, paths["checkpoint"], recovery.configured_keys())
+        assert authority["payload"]["sourceCheckpointHash"] == \
+            recovered["snapshotHash"]
+        assert authority["payload"]["targetWalSequence"] == 2
+        assert authority["payload"]["ledgerBaseCommitSha"] == \
+            old_payload["ledgerBaseCommitSha"]
+        assert pathlib.Path(scanner._recovery_checkpoint_generation_path(
+            paths["checkpoint"], old_payload[
+                "sourceCheckpointHash"])).exists()
+        history = scanner._verify_remote_recovery_nonce_authority(
+            recovery.configured_keys())
+        assert history["keyMaterialCounters"][domain] == 34
+        assert scanner._DURABLE_STATE["integrityStatus"] == "ok"
+        assert scanner._DURABLE_STATE["remoteRecoverySidecar"][
+            "status"] == "verified"
+
+
+def test_unstarted_ordinary_cycle_next_retry_recovers_after_old_failure():
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            _key_environment(configured=True), \
+            mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
+        _reset_recovery_targets()
+        _append_verified_cycle(paths, sequence=1)
+        _activate_clean_legacy_nonce_authority(paths)
+        assert scanner._osint_persist()["verified"] is True
+        old_checkpoint = pathlib.Path(paths["checkpoint"]).read_bytes()
+        old_sidecar = pathlib.Path(paths["recovery"]).read_bytes()
+        domain = _advance_nonce_floor_to_33()
+        durability.append_wal(
+            paths["wal"], sequence=2, kind="journal_transition",
+            job_id="producer-test", payload={"transitionId": "producer-2"},
+            occurred_at=AT)
+        wal_before = pathlib.Path(paths["wal"]).read_bytes()
+        _set_unstarted_ordinary_cycle()
+
+        with mock.patch.object(
+                scanner, "_mint_post_genesis_checkpoint_capability",
+                return_value=None), pytest.raises(
+                    scanner._RemoteRecoveryCheckpointError,
+                    match="remote_recovery_sidecar_failed"):
+            scanner._osint_persist()
+
+        assert pathlib.Path(paths["checkpoint"]).read_bytes() == \
+            old_checkpoint
+        assert pathlib.Path(paths["recovery"]).read_bytes() == old_sidecar
+        assert pathlib.Path(paths["wal"]).read_bytes() == wal_before
+        assert _nonce_counter(domain) == 33
+        assert scanner._DURABLE_STATE["integrityStatus"] == "write_failed"
+
+        recovered = scanner._osint_persist()
+
+        assert recovered["verified"] is True
+        assert recovered["readBackVerified"] is True
+        assert recovered["includedWalSequence"] == 2
+        assert _nonce_counter(domain) == 34
+        canonical = storage.load_checkpoint(
+            paths["checkpoint"], require_seal=True)
+        authority = scanner._resolve_authoritative_local_recovery_checkpoint(
+            canonical, paths["checkpoint"], recovery.configured_keys())
+        assert authority["payload"]["targetWalSequence"] == 2
+        assert authority["checkpoint"]["missionTickDurability"][
+            "walAppliedSequence"] == 2
+        assert scanner._DURABLE_STATE["integrityStatus"] == "ok"
+
+
+def test_post_genesis_capability_rejects_candidate_wal_downgrade_at_mint():
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            _key_environment(configured=True), \
+            mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
+        _reset_recovery_targets()
+        _append_verified_cycle(paths, sequence=1)
+        _activate_clean_legacy_nonce_authority(paths)
+        assert scanner._osint_persist()["verified"] is True
+        durability.append_wal(
+            paths["wal"], sequence=2, kind="journal_transition",
+            job_id="producer-test", payload={"transitionId": "producer-2"},
+            occurred_at=AT)
+        _append_verified_cycle(paths, sequence=2)
+        assert scanner._osint_persist()["verified"] is True
+        canonical = storage.load_checkpoint(
+            paths["checkpoint"], require_seal=True)
+        authority = scanner._resolve_authoritative_local_recovery_checkpoint(
+            canonical, paths["checkpoint"], recovery.configured_keys())
+        assert authority["payload"]["targetWalSequence"] == 2
+        downgraded = storage._without_seal(copy.deepcopy(canonical))
+        downgraded["missionTickDurability"]["walAppliedSequence"] = 1
+        downgraded = storage.seal_checkpoint(downgraded)
+        domain = recovery.nonce_material_domain(PRODUCER_CURRENT_KEY)
+        nonce_before = _nonce_counter(domain)
+
+        with pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_post_genesis_checkpoint_wal_downgrade"):
+            scanner._mint_post_genesis_checkpoint_capability(
+                authority, paths["checkpoint"], downgraded,
+                recovery.configured_keys(), 1)
+
+        assert _nonce_counter(domain) == nonce_before
+
+
+def test_post_genesis_capability_is_private_single_use_and_pre_nonce():
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            _key_environment(configured=True), \
+            mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
+        domain, captured = _prepare_captured_post_genesis_capability(paths)
+        capability, checkpoint, compact, configured = captured["consumeArgs"]
+        assert capability is captured["capability"]
+        assert _nonce_counter(domain) == 33
+        with pytest.raises(TypeError):
+            json.dumps(capability)
+        with pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_post_genesis_checkpoint_capability_invalid"):
+            scanner._consume_post_genesis_checkpoint_capability(
+                object(), checkpoint, compact, configured)
+        assert scanner._consume_post_genesis_checkpoint_capability(
+            capability, checkpoint, compact, configured) == \
+            capability._ledger_base
+        assert _nonce_counter(domain) == 33
+        with pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_post_genesis_checkpoint_capability_invalid"):
+            scanner._consume_post_genesis_checkpoint_capability(
+                capability, checkpoint, compact, configured)
+        assert _nonce_counter(domain) == 33
+
+
+@pytest.mark.parametrize("mutation", (
+    "pair_identity",
+    "key_identity",
+    "checkpoint_identity",
+    "ledger_base",
+    "candidate_wal_downgrade",
+    "binding_hash",
+))
+def test_post_genesis_capability_mutation_rejects_before_nonce(mutation):
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            _key_environment(configured=True), \
+            mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
+        domain, captured = _prepare_captured_post_genesis_capability(paths)
+        capability, checkpoint, compact, configured = captured["consumeArgs"]
+        if mutation == "pair_identity":
+            capability._pair_identity["generationId"] = "rrg-" + "f" * 32
+        elif mutation == "key_identity":
+            capability._key_configuration["current"]["keyId"] = \
+                "different-current-key"
+        elif mutation == "checkpoint_identity":
+            capability._candidate_checkpoint_id = "rcp-" + "f" * 32
+        elif mutation == "ledger_base":
+            capability._ledger_base = "f" * 40
+        elif mutation == "candidate_wal_downgrade":
+            capability._candidate_wal = capability._previous_target_wal - 1
+        else:
+            capability._binding_hash = "0" * 64
+        with pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_post_genesis_checkpoint_capability_invalid"):
+            scanner._consume_post_genesis_checkpoint_capability(
+                capability, checkpoint, compact, configured)
+        assert _nonce_counter(domain) == 33
+
+
+def test_post_genesis_capability_rejects_cross_key_before_nonce():
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            _key_environment(configured=True), \
+            mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
+        domain, captured = _prepare_captured_post_genesis_capability(paths)
+        capability, checkpoint, compact, configured = captured["consumeArgs"]
+        cross_key = copy.deepcopy(configured)
+        cross_key["current"] = {
+            "keyId": "different-current-key",
+            "key": bytes(reversed(range(32))),
+        }
+        with pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_post_genesis_checkpoint_authority_changed"):
+            scanner._consume_post_genesis_checkpoint_capability(
+                capability, checkpoint, compact, cross_key)
+        assert _nonce_counter(domain) == 33
+
+
+def test_post_genesis_capability_rejects_candidate_identity_change_pre_nonce():
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            _key_environment(configured=True), \
+            mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
+        domain, captured = _prepare_captured_post_genesis_capability(paths)
+        capability, checkpoint, compact, configured = captured["consumeArgs"]
+        changed = storage._without_seal(copy.deepcopy(checkpoint))
+        changed["remoteRecoveryRequired"]["checkpointId"] = \
+            "rcp-" + "f" * 32
+        changed = storage.seal_checkpoint(changed)
+        with pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_post_genesis_checkpoint_candidate_changed"):
+            scanner._consume_post_genesis_checkpoint_capability(
+                capability, changed, compact, configured)
+        assert _nonce_counter(domain) == 33
+
+
+def test_post_genesis_capability_rejects_pair_file_change_before_nonce():
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            _key_environment(configured=True), \
+            mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
+        domain, captured = _prepare_captured_post_genesis_capability(paths)
+        capability, checkpoint, compact, configured = captured["consumeArgs"]
+        sidecar_path = pathlib.Path(paths["recovery"])
+        original = sidecar_path.read_bytes()
+        changed = json.loads(original)
+        changed["recovery"]["bundleHash"] = "0" * 64
+        sidecar_path.write_text(
+            json.dumps(changed, separators=(",", ":")), encoding="utf-8")
+        try:
+            with pytest.raises(recovery.RecoveryBundleError):
+                scanner._consume_post_genesis_checkpoint_capability(
+                    capability, checkpoint, compact, configured)
+        finally:
+            sidecar_path.write_bytes(original)
+        assert _nonce_counter(domain) == 33
+
+
+def test_post_genesis_capability_rejects_stale_cross_pair_use():
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            _key_environment(configured=True), \
+            mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
+        domain, captured = _prepare_captured_post_genesis_capability(paths)
+        capability, checkpoint, compact, configured = captured["consumeArgs"]
+        assert scanner._osint_persist()["verified"] is True
+        assert _nonce_counter(domain) == 34
+        with pytest.raises(
+                recovery.RecoveryBundleError,
+                match="recovery_post_genesis_checkpoint_authority_changed"):
+            scanner._consume_post_genesis_checkpoint_capability(
+                capability, checkpoint, compact, configured)
+        assert _nonce_counter(domain) == 34
+
+
+@pytest.mark.parametrize("failure", ("candidate_auth", "candidate_mismatch"))
+def test_post_genesis_candidate_failure_preserves_old_pair(failure):
+    with tempfile.TemporaryDirectory() as root, scanner_storage(root) as paths, \
+            _key_environment(configured=True), \
+            mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
+        _reset_recovery_targets()
+        _append_verified_cycle(paths, sequence=1)
+        _activate_clean_legacy_nonce_authority(paths)
+        assert scanner._osint_persist()["verified"] is True
+        old_checkpoint = pathlib.Path(paths["checkpoint"]).read_bytes()
+        old_sidecar_bytes = pathlib.Path(paths["recovery"]).read_bytes()
+        old_sidecar = scanner._read_local_recovery_sidecar()
+        domain = _advance_nonce_floor_to_33()
+        durability.append_wal(
+            paths["wal"], sequence=2, kind="journal_transition",
+            job_id="producer-test", payload={"transitionId": "producer-2"},
+            occurred_at=AT)
+        _set_unstarted_ordinary_cycle()
+        real_validate = recovery.validate_pair
+        real_read = scanner._read_local_recovery_sidecar
+
+        def fail_candidate_auth(readback, envelope, key, **kwargs):
+            payload = real_validate(readback, envelope, key, **kwargs)
+            if payload["targetWalSequence"] == 2:
+                raise recovery.RecoveryBundleError(
+                    "injected_candidate_auth_failure")
+            return payload
+
+        def mismatch_candidate(path=None):
+            if path is not None and os.path.abspath(path) != os.path.abspath(
+                    paths["recovery"]):
+                return copy.deepcopy(old_sidecar)
+            return real_read(path)
+
+        with contextlib.ExitStack() as stack:
+            if failure == "candidate_auth":
+                stack.enter_context(mock.patch.object(
+                    recovery, "validate_pair",
+                    side_effect=fail_candidate_auth))
+            else:
+                stack.enter_context(mock.patch.object(
+                    scanner, "_read_local_recovery_sidecar",
+                    side_effect=mismatch_candidate))
+            with pytest.raises(
+                    scanner._RemoteRecoveryCheckpointError,
+                    match="remote_recovery_sidecar_failed"):
+                scanner._osint_persist()
+
+        assert pathlib.Path(paths["checkpoint"]).read_bytes() == old_checkpoint
+        assert pathlib.Path(paths["recovery"]).read_bytes() == \
+            old_sidecar_bytes
+        canonical = storage.load_checkpoint(
+            paths["checkpoint"], require_seal=True)
+        authority = scanner._resolve_authoritative_local_recovery_checkpoint(
+            canonical, paths["checkpoint"], recovery.configured_keys())
+        assert authority["payload"]["targetWalSequence"] == 1
+        assert _nonce_counter(domain) == 34
+        assert scanner._DURABLE_STATE["integrityStatus"] == "write_failed"
 
 
 def test_ordinary_keyed_pair_success_switches_exact_next_generation():
@@ -1671,7 +2081,7 @@ def test_failed_first_activation_never_projects_attempt_as_success():
         captured = {}
 
         def fail_after_capture(checkpoint, *, checkpoint_path=None,
-                               authenticated_remote_floor=None):
+                               authenticated_remote_floor=None, **_kwargs):
             candidate = storage.load_checkpoint(
                 checkpoint_path, require_seal=True)
             captured.update(candidate["checkpointFailureHistory"])
