@@ -173,6 +173,36 @@ def test_watchtower_direct_publish_prechecks_bind_repo_import_path():
         text.replace(direct, "")
 
 
+def test_watchtower_ec2_paths_bind_immutable_head_and_runtime_boundaries():
+    text = WATCHTOWER_WORKFLOW.read_text(encoding="utf-8")
+    patrol = text.split("  patrol:", 1)[1].split(
+        "\n  remote-journal-rearm:", 1
+    )[0]
+    rearm = text.split("  remote-journal-rearm:", 1)[1]
+
+    assert text.count("ref: ${{ inputs.expectedHeadSha }}") == 2
+    assert "Checkout exact EC2 writer head" in patrol
+    assert "Checkout exact re-arm head" in rearm
+    assert "Checkout (main)" not in text
+    assert not re.search(r"(?m)^\s+ref:\s+main\s*$", text)
+    assert "expectedHeadSha:" in text
+    assert text.count("--expected-head-sha") == 2
+    assert text.count("--github-workflow-sha") == 2
+    assert text.count("--checkout-sha") == 2
+    assert patrol.count("verify-build-provenance") == 1
+    assert rearm.count("verify-build-provenance") == 1
+    for section in (patrol, rearm):
+        assert "verify_runtime_boundary pre-ledger-write" in section
+        assert "verify_runtime_boundary pre-receipt" in section
+        assert "verify_runtime_boundary terminal-ack" in section
+        assert section.index("verify-build-provenance") < section.index(
+            "git push")
+        assert section.index("verify_runtime_boundary pre-receipt") < \
+            section.index("/remote-journal/commit-receipt")
+        assert section.index("verify_runtime_boundary terminal-ack") > \
+            section.index("remote_receipt_drain.py")
+
+
 def test_watchtower_publish_helper_import_topologies_are_executable(tmp_path):
     root = Path(__file__).resolve().parent
     direct_env = os.environ.copy()

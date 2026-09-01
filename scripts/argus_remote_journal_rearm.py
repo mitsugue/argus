@@ -19,9 +19,14 @@ from typing import Any, Callable, Mapping
 
 
 DEFAULT_BACKEND_URL = "https://argus-backend-3j2m.onrender.com"
+REPOSITORY = "mitsugue/argus"
+REF = "main"
 DISPATCH_URL = (
-    "https://api.github.com/repos/mitsugue/argus/actions/workflows/"
+    f"https://api.github.com/repos/{REPOSITORY}/actions/workflows/"
     "caos-watchtower.yml/dispatches"
+)
+MAIN_REF_URL = (
+    f"https://api.github.com/repos/{REPOSITORY}/git/ref/heads/{REF}"
 )
 MAX_PUBLIC_RESPONSE_BYTES = 64 * 1024
 FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -44,6 +49,7 @@ def _emit(**fields: object) -> None:
         "status", "reason", "errorClass", "localIncludedWalSequence",
         "remoteVerifiedWalSequence", "walGap", "publicAttempts",
         "dispatchAttempts", "httpStatus",
+        "workflowHeadSha",
     }
     safe = {key: value for key, value in fields.items() if key in allowed}
     safe.update({
@@ -143,13 +149,17 @@ def fetch_public_truth(
 def dispatch_natural_rearm(
     token: str,
     *,
+    expected_head_sha: str,
     timeout: int,
     opener: Callable[..., Any] | None = None,
 ) -> int:
     """Issue exactly one asynchronous dispatch and never poll its status."""
+    head = _full_sha(expected_head_sha, name="expected_head_sha")
     body = json.dumps({
         "ref": "main",
-        "inputs": {"remoteJournalRearm": "true"},
+        "inputs": {
+            "remoteJournalRearm": "true", "expectedHeadSha": head,
+        },
     }, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(
         DISPATCH_URL,
@@ -169,6 +179,40 @@ def dispatch_natural_rearm(
     if status != 204:
         raise RearmError("workflow_dispatch_rejected")
     return status
+
+
+def resolve_main_head(
+    *, timeout: int, opener: Callable[..., Any] | None = None,
+) -> str:
+    """Resolve the exact default-branch commit with no redirect or fallback."""
+    request = urllib.request.Request(MAIN_REF_URL, headers={
+        "Accept": "application/vnd.github+json",
+        "Cache-Control": "no-cache",
+        "User-Agent": "argus-remote-journal-rearm/1",
+        "X-GitHub-Api-Version": "2022-11-28",
+    })
+    safe_opener = opener or urllib.request.build_opener(_NoRedirect()).open
+    try:
+        with safe_opener(request, timeout=timeout) as response:
+            if int(response.status) != 200:
+                raise RearmError("github_main_http_status")
+            raw = response.read(MAX_PUBLIC_RESPONSE_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        raise RearmError("github_main_http_error") from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise RearmError("github_main_unavailable") from exc
+    if len(raw) > MAX_PUBLIC_RESPONSE_BYTES:
+        raise RearmError("github_main_response_oversized")
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise RearmError("github_main_response_invalid") from exc
+    target = value.get("object") if isinstance(value, Mapping) else None
+    if not isinstance(value, Mapping) or value.get(
+            "ref") != f"refs/heads/{REF}" or not isinstance(
+                target, Mapping) or target.get("type") != "commit":
+        raise RearmError("github_main_ref_invalid")
+    return _full_sha(target.get("sha"), name="github_main_sha")
 
 
 def main() -> int:
@@ -197,9 +241,12 @@ def main() -> int:
                   publicAttempts=public_attempts, dispatchAttempts=0,
                   **scalar)
             return 1
-        status = dispatch_natural_rearm(token, timeout=timeout)
+        workflow_head_sha = resolve_main_head(timeout=timeout)
+        status = dispatch_natural_rearm(
+            token, expected_head_sha=workflow_head_sha, timeout=timeout)
         _emit(status="dispatched", httpStatus=status,
-              publicAttempts=public_attempts, dispatchAttempts=1, **scalar)
+              publicAttempts=public_attempts, dispatchAttempts=1,
+              workflowHeadSha=workflow_head_sha, **scalar)
         return 0
     except urllib.error.HTTPError as exc:
         _emit(status="failure", errorClass="workflow_dispatch_http_error",

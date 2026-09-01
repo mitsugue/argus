@@ -62,6 +62,7 @@ RECOVERY_PAYLOAD_PATHS = (
     "scripts/install_argus_mission_timer.sh",
     "scripts/install_argus_remote_journal_rearm.sh",
     "scripts/install_argus_watchtower_writer.sh",
+    "scripts/argus_remote_journal_rearm.py",
     "scripts/prepare_remote_journal_publish.py",
     "scripts/argus_watchtower_writer_dispatch.py",
     "scripts/remote_journal_publish_policy.py",
@@ -82,7 +83,7 @@ RECOVERY_PAYLOAD_PATHS = (
     "test_remote_recovery_restore.py",
 )
 EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256 = (
-    "bd39bb28110598cbad7b52633795dcaa571f34ef3ad1bd608b4e64f93f6c7d07"
+    "ef9f29f9847cfac41e4c4743831d2f2a709b7b7d89cc113dffcb8c064cd13942"
 )
 
 # Admission-plane files may route and prove Recovery, but are not production

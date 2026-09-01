@@ -269,6 +269,128 @@ def test_recovery_base_may_be_ancestor_of_cas_head_but_not_sibling(tmp_path):
             cas_ledger_head=cas_head)
 
 
+def _build_provenance_repository(tmp_path, distance):
+    repository = tmp_path / f"provenance-{distance}"
+    repository.mkdir()
+    _git(repository, "init")
+    _git(repository, "config", "user.name", "test")
+    _git(repository, "config", "user.email", "test@example.invalid")
+    _git(repository, "commit", "--allow-empty", "-m", "root")
+    commits = [_git(repository, "rev-parse", "HEAD")]
+    for number in range(1, distance + 1):
+        _git(repository, "commit", "--allow-empty", "-m", f"step {number}")
+        commits.append(_git(repository, "rev-parse", "HEAD"))
+    return repository, commits
+
+
+def _verify_provenance(repository, artifact, runtime, protected):
+    return publisher.verify_repository_build_provenance(
+        repository=repository,
+        artifact_producer_sha=artifact,
+        current_runtime_sha=runtime,
+        workflow_dispatch_sha=protected,
+        workflow_checkout_sha=protected,
+        protected_main_sha=protected)
+
+
+def test_build_provenance_accepts_same_build_unique_short_and_ancestor(
+        tmp_path):
+    repository, commits = _build_provenance_repository(tmp_path, 2)
+    same = _verify_provenance(
+        repository, commits[2], commits[2], commits[2])
+    assert same["artifactToRuntimeDistance"] == 0
+    assert same["runtimeToProtectedMainDistance"] == 0
+
+    historical = _verify_provenance(
+        repository, commits[0][:7], commits[1], commits[2])
+    assert historical["artifactProducerSha"] == commits[0]
+    assert historical["artifactToRuntimeDistance"] == 1
+    assert historical["runtimeToProtectedMainDistance"] == 1
+
+
+def test_build_provenance_rejects_sibling_future_unknown_and_malformed(
+        tmp_path):
+    repository, commits = _build_provenance_repository(tmp_path, 2)
+    _git(repository, "checkout", "-b", "sibling", commits[0])
+    _git(repository, "commit", "--allow-empty", "-m", "sibling")
+    sibling = _git(repository, "rev-parse", "HEAD")
+
+    with pytest.raises(ValueError, match="build_provenance_not_ancestor"):
+        _verify_provenance(repository, sibling, commits[1], commits[2])
+    with pytest.raises(ValueError, match="build_provenance_not_ancestor"):
+        _verify_provenance(repository, commits[2], commits[1], commits[2])
+    with pytest.raises(ValueError, match="build_provenance_not_ancestor"):
+        _verify_provenance(repository, commits[0], sibling, commits[2])
+    with pytest.raises(ValueError, match="build_provenance_git_proof_failed"):
+        _verify_provenance(repository, "f" * 40, commits[1], commits[2])
+    with pytest.raises(ValueError, match="build_provenance_identity_invalid"):
+        _verify_provenance(repository, "ABC1234", commits[1], commits[2])
+
+
+def test_build_provenance_rejects_ambiguous_legacy_short(tmp_path):
+    with mock.patch.object(
+            publisher, "_git", return_value=("a" * 40 + "\n" + "b" * 40)):
+        with pytest.raises(
+                ValueError, match="build_provenance_short_sha_ambiguous"):
+            publisher.resolve_repository_commit(
+                repository=tmp_path, identity="abc1234",
+                allow_legacy_short=True)
+
+
+def test_build_provenance_capacity_accepts_250_and_rejects_251(tmp_path):
+    repository, commits = _build_provenance_repository(tmp_path, 251)
+    accepted = _verify_provenance(
+        repository, commits[0], commits[250], commits[250])
+    assert accepted["artifactToRuntimeDistance"] == 250
+    with pytest.raises(ValueError, match="build_provenance_capacity_exceeded"):
+        _verify_provenance(repository, commits[0], commits[251], commits[251])
+
+
+def test_build_provenance_requires_exact_workflow_and_protected_identity(
+        tmp_path):
+    repository, commits = _build_provenance_repository(tmp_path, 2)
+    with pytest.raises(
+            ValueError, match="workflow_protected_main_identity_mismatch"):
+        publisher.verify_repository_build_provenance(
+            repository=repository,
+            artifact_producer_sha=commits[0],
+            current_runtime_sha=commits[1],
+            workflow_dispatch_sha=commits[2],
+            workflow_checkout_sha=commits[1],
+            protected_main_sha=commits[2])
+
+
+def test_runtime_identity_is_exact_and_stable_across_boundaries():
+    health = {
+        "status": "ok", "buildSha": "a" * 40,
+        "backendVersion": "13.5.36",
+    }
+    ready = {
+        "ready": True, "buildSha": "a" * 40,
+        "backendVersion": "13.5.36",
+    }
+    assert publisher.verify_runtime_identity(
+        health=health, ready=ready,
+        expected_runtime_sha="a" * 40)["runtimeSha"] == "a" * 40
+    with pytest.raises(ValueError, match="runtime_identity_changed"):
+        publisher.verify_runtime_identity(
+            health=health, ready=ready, expected_runtime_sha="b" * 40)
+    with pytest.raises(ValueError, match="runtime_identity_mismatch"):
+        publisher.verify_runtime_identity(
+            health=health, ready={**ready, "buildSha": "b" * 40})
+    with pytest.raises(ValueError, match="runtime_version_mismatch"):
+        publisher.verify_runtime_identity(
+            health=health,
+            ready={**ready, "backendVersion": "13.5.37"})
+    with pytest.raises(ValueError, match="runtime_version_mismatch"):
+        publisher.verify_runtime_identity(
+            health={**health, "backendVersion": "development"},
+            ready={**ready, "backendVersion": "development"})
+    with pytest.raises(ValueError, match="runtime_not_ready"):
+        publisher.verify_runtime_identity(
+            health=health, ready={**ready, "ready": False})
+
+
 def test_prepare_pair_is_exact_cas_bound_and_returns_only_public_metadata(
         tmp_path):
     compact, sidecar = _pair()
