@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import argus_remote_journal as journal
 from scripts.deploy_scope import classify
 
 
@@ -24,6 +25,56 @@ def _circular_minute_gaps(minutes: list[int]) -> list[int]:
         *[right - left for left, right in zip(ordered, ordered[1:])],
         60 - ordered[-1] + ordered[0],
     ]
+
+
+def _watchtower_job(text: str, name: str, next_name=None) -> str:
+    job = text.split(f"\n  {name}:\n", 1)[1]
+    if next_name is not None:
+        job = job.split(f"\n  {next_name}:\n", 1)[0]
+    return job
+
+
+def _workflow_step_run(job: str, name: str) -> str:
+    step = job.split(f"      - name: {name}\n", 1)[1]
+    boundaries = [
+        position for marker in ("\n      - name: ", "\n      - uses: ")
+        if (position := step.find(marker)) >= 0
+    ]
+    if boundaries:
+        step = step[:min(boundaries)]
+    run = step.split("        run: |\n", 1)[1]
+    return "\n".join(
+        line[10:] if line.startswith("          ") else line
+        for line in run.splitlines()
+    ).rstrip()
+
+
+_READBACK_BOUND_SETUP = """READBACK_MAX_BYTES=$(python3 -c \\
+  'import argus_remote_journal as j; print(j.MAX_COMPACT_READBACK_BYTES)')
+case "$READBACK_MAX_BYTES" in
+  ''|*[!0-9]*)
+    echo "invalid canonical compact readback bound"
+    exit 1
+    ;;
+esac
+[ "$READBACK_MAX_BYTES" -gt 0 ] || {
+  echo "invalid canonical compact readback bound"
+  exit 1
+}"""
+
+_HISTORICAL_PROTECTED_MAIN = "2d6a12800cf732085031b21612b537455fb06e6f"
+
+
+def _readback_curl(step: str) -> str:
+    match = re.search(
+        r'curl --fail --silent --show-error --max-time 60 \\\n'
+        r'\s+--max-filesize "\$READBACK_MAX_BYTES" \\\n'
+        r'\s+"\$BE/api/argus/osint/remote-readback" \\\n'
+        r'\s+-o "\$RUNNER_TEMP/osint-readback\.json"',
+        step,
+    )
+    assert match is not None
+    return match.group(0)
 
 
 def test_watchtower_uses_one_deterministic_systemd_scheduler_contract():
@@ -149,6 +200,124 @@ def test_watchtower_publish_helper_import_topologies_are_executable(tmp_path):
         cwd=tmp_path, env=copied_env, check=False, capture_output=True, text=True,
     )
     assert copied.returncode == 0, copied.stderr
+
+
+def test_protected_main_readback_bound_does_not_cross_shell_step_boundary(
+    tmp_path,
+):
+    assert re.fullmatch(r"[0-9a-f]{40}", _HISTORICAL_PROTECTED_MAIN)
+    env = os.environ.copy()
+    env.pop("READBACK_MAX_BYTES", None)
+    producer = subprocess.run(
+        ["bash", "-c", _READBACK_BOUND_SETUP], env=env, check=False,
+        capture_output=True, text=True,
+    )
+    assert producer.returncode == 0, producer.stderr
+
+    env["RUNNER_TEMP"] = str(tmp_path)
+    historical_consumer = r'''set -e
+curl() {
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--max-filesize" ]; then
+      [ -n "$2" ] || return 2
+      return 0
+    fi
+    shift
+  done
+  return 92
+}
+BE="https://argus-backend-3j2m.onrender.com"
+curl --fail --silent --show-error --max-time 60 \
+  --max-filesize "$READBACK_MAX_BYTES" \
+  "$BE/api/argus/osint/remote-readback" \
+  -o "$RUNNER_TEMP/osint-readback.json"
+'''
+    consumer = subprocess.run(
+        ["bash", "-c", historical_consumer], env=env, check=False,
+        capture_output=True, text=True,
+    )
+    assert consumer.returncode == 2
+    assert not (tmp_path / "osint-readback.json").exists()
+
+
+def test_watchtower_readback_bound_is_owned_and_executable_in_each_curl_step(
+    tmp_path,
+):
+    root = Path(__file__).resolve().parent
+    text = WATCHTOWER_WORKFLOW.read_text(encoding="utf-8")
+    patrol = _watchtower_job(text, "patrol", "remote-journal-rearm")
+    rearm = _watchtower_job(text, "remote-journal-rearm")
+    refresh = _workflow_step_run(
+        patrol, "Watchtower refresh + visible translation (admin; token never logged)"
+    )
+    snapshot = _workflow_step_run(patrol, "Fetch public-safe status snapshot")
+    rearm_fetch = _workflow_step_run(
+        rearm, "Fetch one bounded verified recovery pair"
+    )
+
+    assert "READBACK_MAX_BYTES" not in refresh
+    for step in (snapshot, rearm_fetch):
+        assert step.count(_READBACK_BOUND_SETUP) == 1
+        assert step.count('--max-filesize "$READBACK_MAX_BYTES"') == 1
+
+        runner_temp = tmp_path / str(len(list(tmp_path.iterdir())))
+        runner_temp.mkdir()
+        env = os.environ.copy()
+        env.pop("READBACK_MAX_BYTES", None)
+        env["RUNNER_TEMP"] = str(runner_temp)
+        env["GITHUB_WORKSPACE"] = str(root)
+        script = f"""set -euo pipefail
+{_READBACK_BOUND_SETUP}
+curl() {{
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--max-filesize" ]; then
+      [ "$#" -ge 2 ] || return 90
+      printf '%s' "$2" > "$RUNNER_TEMP/observed-max-filesize"
+      shift 2
+      continue
+    fi
+    if [ "$1" = "-o" ]; then
+      [ "$#" -ge 2 ] || return 91
+      : > "$2"
+      shift 2
+      continue
+    fi
+    shift
+  done
+}}
+BE="https://argus-backend-3j2m.onrender.com"
+{_readback_curl(step)}
+"""
+        completed = subprocess.run(
+            ["bash", "-c", script], cwd=root, env=env, check=False,
+            capture_output=True, text=True,
+        )
+        assert completed.returncode == 0, completed.stderr
+        assert (runner_temp / "observed-max-filesize").read_text() == str(
+            journal.MAX_COMPACT_READBACK_BYTES
+        )
+
+
+def test_watchtower_readback_bound_validation_fails_closed(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_python = fake_bin / "python3"
+    fake_python.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"${FAKE_READBACK_MAX_BYTES-}\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+
+    for invalid in ("", "0", "-1", "abc", "1 2"):
+        env = os.environ.copy()
+        env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+        env["FAKE_READBACK_MAX_BYTES"] = invalid
+        completed = subprocess.run(
+            ["bash", "-c", f"set -euo pipefail\n{_READBACK_BOUND_SETUP}\n"],
+            env=env, check=False, capture_output=True, text=True,
+        )
+        assert completed.returncode != 0, invalid
+        assert "invalid canonical compact readback bound" in completed.stdout
 
 
 def test_workflow_only_release_scope_is_backend_false():
