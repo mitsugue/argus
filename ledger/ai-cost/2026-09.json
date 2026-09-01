@@ -1,5 +1,5 @@
 {
- "asOf": "2026-08-31T15:01:04Z",
+ "asOf": "2026-09-01T07:05:29Z",
  "dailyBudgetUsd": 5.0,
  "day": "2026-09-01",
  "dayRemainingUsd": 5.0,
@@ -8,12 +8,12 @@
  "estimated": true,
  "groundingUsdPerCall": 0.035,
  "lastRun": {
-  "at": "2026-08-31T07:51:19Z",
+  "at": "2026-09-01T03:00:05Z",
   "estimated": true,
   "gemStatus": "unavailable",
   "oaiStatus": "live",
   "rows": [],
-  "runId": "2026-08-31T07:51:19Z",
+  "runId": "2026-09-01T03:00:05Z",
   "totalUsd": 0.0
  },
  "lastRunCostUsd": 0.0,
@@ -58,6 +58,114 @@
   "sourceUrl": "https://developers.openai.com/api/docs/pricing"
  },
  "recentRuns": [
+  {
+   "at": "2026-09-01T03:00:05Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-09-01T03:00:05Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-09-01T02:47:50Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-09-01T02:47:50Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-09-01T02:35:08Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-09-01T02:35:08Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-09-01T02:18:30Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-09-01T02:18:30Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-09-01T01:58:21Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-09-01T01:58:21Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-09-01T01:42:13Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-09-01T01:42:13Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-09-01T01:25:52Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-09-01T01:25:52Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-09-01T01:13:43Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-09-01T01:13:43Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-09-01T00:58:52Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-09-01T00:58:52Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-09-01T00:43:29Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-09-01T00:43:29Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-09-01T00:24:39Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-09-01T00:24:39Z",
+   "totalUsd": 0.0
+  },
+  {
+   "at": "2026-09-01T00:07:50Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [],
+   "runId": "2026-09-01T00:07:50Z",
+   "totalUsd": 0.0
+  },
   {
    "at": "2026-08-31T07:51:19Z",
    "estimated": true,
@@ -128,51 +236,6 @@
    "oaiStatus": "live",
    "rows": [],
    "runId": "2026-08-31T06:20:23Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-08-31T06:06:06Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-08-31T06:06:06Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-08-31T05:52:45Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-08-31T05:52:45Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-08-31T05:40:18Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-08-31T05:40:18Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-08-31T05:39:20Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-08-31T05:39:20Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-08-31T05:35:19Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-08-31T05:35:19Z",
    "totalUsd": 0.0
   }
  ]
