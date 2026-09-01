@@ -73,6 +73,7 @@ from scripts.tachibana_readonly_smoke import (
     _observation_is_usable_and_fresh,
     _smoke_pass_allowed,
 )
+from scripts.tachibana_live_sensor_service import _scheduled_auth_time
 
 
 NOW = datetime(2026, 9, 1, 6, 0, 10, tzinfo=timezone.utc)
@@ -1675,3 +1676,26 @@ def test_live_acceptance_requires_event_and_market_progression(tmp_path):
     assert accepted.market_value_changed is True
     assert accepted.price_current_count == 3
     assert accepted.cross_validation.acceptable is True
+
+
+def test_service_auth_schedule_is_once_per_provider_operating_day():
+    tokyo = ZoneInfo("Asia/Tokyo")
+    blackout = datetime(2026, 9, 2, 4, 0, tzinfo=tokyo)
+    assert _scheduled_auth_time(
+        now=blackout, last_attempt_date=None
+    ) == datetime(2026, 9, 2, 5, 35, tzinfo=tokyo)
+
+    available = datetime(2026, 9, 2, 9, 0, tzinfo=tokyo)
+    assert _scheduled_auth_time(
+        now=available, last_attempt_date=None
+    ) is None
+    assert _scheduled_auth_time(
+        now=available, last_attempt_date=date(2026, 9, 2)
+    ) == datetime(2026, 9, 3, 5, 35, tzinfo=tokyo)
+
+    # 02:00 still belongs to the provider operating day that began at 05:35
+    # on the prior civil date. One attempt is allowed for that operating day.
+    overnight = datetime(2026, 9, 3, 2, 0, tzinfo=tokyo)
+    assert _scheduled_auth_time(
+        now=overnight, last_attempt_date=None
+    ) is None

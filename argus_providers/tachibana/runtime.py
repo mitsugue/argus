@@ -290,6 +290,10 @@ class TachibanaLiveRuntime:
         self._authenticated = False
         self._price_observations: dict[str, TachibanaObservation] = {}
 
+    @property
+    def terminal_error(self) -> ErrorClass:
+        return self._event_error
+
     def start(self) -> None:
         self.session.authenticate()
         self._authenticated = True

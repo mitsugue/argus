@@ -52,10 +52,12 @@ build output, or logs.
 ## Runtime truth and acceptance
 
 The host `flock` lease is held for the entire process lifetime. Render is also
-fixed to one instance. EVENT reconnects are bounded to three per Tokyo day,
-and authentication is attempted only once per process. A terminal auth or
-EVENT error leaves the worker alive and truthfully degraded so platform
-restart behavior cannot become a retry storm.
+fixed to one instance. EVENT reconnects are bounded to three per Tokyo day.
+Authentication is attempted at most once per provider operating day; the worker
+waits through the documented daily auth closure and starts the next daily
+session at 05:35 JST. Non-daily auth faults and non-session EVENT faults leave
+the worker alive and truthfully degraded so platform restart behavior cannot
+become a retry storm.
 
 The sensor emits only aggregate operational logs. It retains a bounded window
 in memory and never persists raw frames or market values. Acceptance requires:
