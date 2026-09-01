@@ -1533,17 +1533,24 @@ def test_event_lifecycle_has_daily_reconnect_exhaustion_and_terminal_st(tmp_path
         tmp_path, websocket_enabled=True, max_event_reconnects_per_day=1,
     )
     connector = ScriptedEventConnector([(), ()])
+    progress = EventLifecycleProgress()
     lifecycle = TachibanaEventLifecycle(
         session,
         EventSubscription(("6501",)),
         TransientLiveSensor(max_symbols=1, window_size=2, window_seconds=30),
         connector=connector, clock=lambda: NOW, random_value=lambda: 0.0,
         waiter=lambda _stop, _delay: False,
+        progress=progress,
     )
     with pytest.raises(TachibanaError) as exhausted:
         lifecycle.run(threading.Event())
     assert exhausted.value.classification == ErrorClass.EVENT_RECONNECT_EXHAUSTED
     assert len(connector.calls) == 2
+    exhausted_progress = progress.snapshot()
+    assert exhausted_progress.connections_started == 2
+    assert exhausted_progress.reconnects_scheduled == 1
+    assert exhausted_progress.last_failure_classification == "NETWORK"
+    assert exhausted_progress.last_failure_detail == "NETWORK"
 
     session2, _, _ = _authenticated_session(tmp_path, websocket_enabled=True)
     terminal = ScriptedEventConnector([(
@@ -1689,19 +1696,31 @@ def test_event_progress_is_thread_safe_value_free_and_proves_advancement():
     progress.connection_started()
     progress.frame_received(
         sequence=1, provider_timestamp=first, received_at=first,
+        command="SS",
     )
+    progress.reconnect_scheduled()
     progress.observations_ingested(3)
     progress.frame_received(
         sequence=2, provider_timestamp=second, received_at=second,
+        command="ST", status_code="1",
+    )
+    progress.failure_observed(
+        classification=ErrorClass.PROVIDER,
+        detail="EVENT_STATUS_ERROR_INVALID",
     )
     snapshot = progress.snapshot()
     assert snapshot.connections_started == 1
+    assert snapshot.reconnects_scheduled == 1
     assert snapshot.frames_received == 2
     assert snapshot.observations_ingested == 3
     assert snapshot.first_sequence == 1
     assert snapshot.last_sequence == 2
     assert snapshot.first_provider_timestamp == first
     assert snapshot.last_provider_timestamp == second
+    assert snapshot.last_command == "ST"
+    assert snapshot.last_status_code == "1"
+    assert snapshot.last_failure_classification == "PROVIDER"
+    assert snapshot.last_failure_detail == "EVENT_STATUS_ERROR_INVALID"
     assert not hasattr(snapshot, "raw_frame")
     assert not hasattr(snapshot, "market_values")
 
@@ -1880,6 +1899,10 @@ def test_live_acceptance_requires_event_and_market_progression(tmp_path):
     assert accepted.classification == "ACCEPTED"
     assert accepted.event_sequence_advanced is True
     assert accepted.event_timestamp_advanced is True
+    assert accepted.event_connections_started == 1
+    assert accepted.event_reconnects_scheduled == 0
+    assert accepted.event_last_failure_classification is None
+    assert accepted.event_last_failure_detail is None
     assert accepted.source_timestamp_advanced is True
     assert accepted.market_value_changed is True
     assert accepted.book_progression is True

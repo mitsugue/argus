@@ -347,6 +347,7 @@ class EventProgressSnapshot:
     """Secret-free, value-free liveness counters for an active EVENT loop."""
 
     connections_started: int
+    reconnects_scheduled: int
     frames_received: int
     observations_ingested: int
     first_sequence: int | None
@@ -354,6 +355,10 @@ class EventProgressSnapshot:
     first_provider_timestamp: datetime | None
     last_provider_timestamp: datetime | None
     last_frame_received_at: datetime | None
+    last_command: str | None
+    last_status_code: str | None
+    last_failure_classification: str | None
+    last_failure_detail: str | None
     provider_market_status: str
     provider_operation_code: str | None
 
@@ -363,6 +368,7 @@ class EventLifecycleProgress:
 
     def __init__(self) -> None:
         self._connections = 0
+        self._reconnects = 0
         self._frames = 0
         self._observations = 0
         self._first_sequence: int | None = None
@@ -370,6 +376,10 @@ class EventLifecycleProgress:
         self._first_provider_timestamp: datetime | None = None
         self._last_provider_timestamp: datetime | None = None
         self._last_frame_received_at: datetime | None = None
+        self._last_command: str | None = None
+        self._last_status_code: str | None = None
+        self._last_failure_classification: str | None = None
+        self._last_failure_detail: str | None = None
         self._provider_market_status = MarketStatus.UNKNOWN.value
         self._provider_operation_code: str | None = None
         self._lock = threading.Lock()
@@ -378,15 +388,27 @@ class EventLifecycleProgress:
         with self._lock:
             self._connections += 1
 
+    def reconnect_scheduled(self) -> None:
+        with self._lock:
+            self._reconnects += 1
+
     def frame_received(
         self, *, sequence: int, provider_timestamp: datetime,
-        received_at: datetime,
+        received_at: datetime, command: str | None = None,
+        status_code: str | None = None,
     ) -> None:
         if (
             type(sequence) is not int
             or sequence < 1
             or provider_timestamp.tzinfo is None
             or received_at.tzinfo is None
+            or command is not None and command not in {
+                "ST", "KP", "FD", "SS", "US",
+            }
+            or status_code is not None and status_code not in {
+                "0", "1", "2", "9", "-1", "-2", "-3", "-12", "-62",
+            }
+            or status_code is not None and command != "ST"
         ):
             raise TachibanaError(ErrorClass.CLOCK_SKEW)
         provider = provider_timestamp.astimezone(timezone.utc)
@@ -399,6 +421,23 @@ class EventLifecycleProgress:
             self._last_sequence = sequence
             self._last_provider_timestamp = provider
             self._last_frame_received_at = received
+            if command is not None:
+                self._last_command = command
+            if status_code is not None:
+                self._last_status_code = status_code
+
+    def failure_observed(
+        self, *, classification: ErrorClass, detail: str,
+    ) -> None:
+        if (
+            not isinstance(classification, ErrorClass)
+            or not isinstance(detail, str)
+            or re.fullmatch(r"[A-Z0-9_]{1,96}", detail) is None
+        ):
+            raise TachibanaError(ErrorClass.CONFIGURATION)
+        with self._lock:
+            self._last_failure_classification = classification.value
+            self._last_failure_detail = detail
 
     def observations_ingested(self, count: int) -> None:
         if type(count) is not int or count < 0:
@@ -426,6 +465,7 @@ class EventLifecycleProgress:
         with self._lock:
             return EventProgressSnapshot(
                 connections_started=self._connections,
+                reconnects_scheduled=self._reconnects,
                 frames_received=self._frames,
                 observations_ingested=self._observations,
                 first_sequence=self._first_sequence,
@@ -433,6 +473,10 @@ class EventLifecycleProgress:
                 first_provider_timestamp=self._first_provider_timestamp,
                 last_provider_timestamp=self._last_provider_timestamp,
                 last_frame_received_at=self._last_frame_received_at,
+                last_command=self._last_command,
+                last_status_code=self._last_status_code,
+                last_failure_classification=self._last_failure_classification,
+                last_failure_detail=self._last_failure_detail,
                 provider_market_status=self._provider_market_status,
                 provider_operation_code=self._provider_operation_code,
             )
@@ -512,6 +556,16 @@ class TachibanaEventLifecycle:
         if isinstance(error, ValueError):
             return ErrorClass.PROVIDER
         return ErrorClass.NETWORK
+
+    @staticmethod
+    def _safe_failure_detail(error: Exception) -> str:
+        if isinstance(error, TachibanaError):
+            return error.classification.value
+        if isinstance(error, ValueError):
+            detail = str(error)
+            if re.fullmatch(r"event_[a-z0-9_]{1,89}", detail):
+                return detail.upper()
+        return "UNCLASSIFIED_EVENT_FAILURE"
 
     def _backoff(self, reconnect_number: int) -> float:
         try:
@@ -600,6 +654,12 @@ class TachibanaEventLifecycle:
                             sequence=int(fields["p_no"]),
                             provider_timestamp=provider_time,
                             received_at=received_at,
+                            command=fields["p_cmd"],
+                            status_code=(
+                                fields["p_errno"]
+                                if fields["p_cmd"] == "ST"
+                                else None
+                            ),
                         )
                         self._diagnostics(
                             connected=True,
@@ -672,6 +732,10 @@ class TachibanaEventLifecycle:
                 if failure is None:
                     failure = TachibanaError(ErrorClass.NETWORK)
                 last_error = self._classification(failure)
+                self._progress.failure_observed(
+                    classification=last_error,
+                    detail=self._safe_failure_detail(failure),
+                )
                 self._diagnostics(error=last_error)
                 if last_error in {
                     ErrorClass.DISABLED,
@@ -689,6 +753,7 @@ class TachibanaEventLifecycle:
                     self._diagnostics(error=last_error)
                     raise TachibanaError(last_error)
                 reconnects += 1
+                self._progress.reconnect_scheduled()
                 if self._waiter(stop_event, self._backoff(reconnects)):
                     break
             return EventRunSummary(

@@ -250,8 +250,14 @@ class LiveAcceptanceSnapshot:
     authenticated: bool
     price_current_count: int
     event_connected: bool
+    event_connections_started: int
+    event_reconnects_scheduled: int
     event_frames: int
     event_observations: int
+    event_last_command: str | None
+    event_last_status_code: str | None
+    event_last_failure_classification: str | None
+    event_last_failure_detail: str | None
     event_sequence_advanced: bool
     event_timestamp_advanced: bool
     source_timestamp_advanced: bool
@@ -568,7 +574,12 @@ class TachibanaLiveRuntime:
         ):
             self._execution_market_live = True
         if self._event_error != ErrorClass.NONE:
-            classification = f"EVENT_{self._event_error.value}"
+            event_error = self._event_error.value
+            classification = (
+                event_error
+                if event_error.startswith("EVENT_")
+                else f"EVENT_{event_error}"
+            )
         elif not self._preopen_book_live:
             classification = (
                 "PREOPEN_BOOK_PROGRESSING"
@@ -611,8 +622,16 @@ class TachibanaLiveRuntime:
             authenticated=self._authenticated,
             price_current_count=len(current),
             event_connected=event_connected,
+            event_connections_started=progress.connections_started,
+            event_reconnects_scheduled=progress.reconnects_scheduled,
             event_frames=progress.frames_received,
             event_observations=progress.observations_ingested,
+            event_last_command=progress.last_command,
+            event_last_status_code=progress.last_status_code,
+            event_last_failure_classification=(
+                progress.last_failure_classification
+            ),
+            event_last_failure_detail=progress.last_failure_detail,
             event_sequence_advanced=sequence_advanced,
             event_timestamp_advanced=timestamp_advanced,
             source_timestamp_advanced=source_advanced,
