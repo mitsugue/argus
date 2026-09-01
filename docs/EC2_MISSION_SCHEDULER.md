@@ -83,6 +83,70 @@ sudo systemctl enable --now argus-remote-journal-rearm.timer
 この初回操作は新しいre-arm timerだけが対象です。既存mission serviceや
 backendをrestartしません。
 
+## Deterministic Watchtower writer scheduler
+
+通常のWatchtower writerはGitHubのbest-effort `on.schedule`をauthorityにせず、
+独立した`argus-watchtower-writer.timer`から起動します。実行経路は次の1本です。
+
+```text
+argus-watchtower-writer.timer
+  -> argus-watchtower-writer.service
+  -> /opt/argus-watchtower-writer/argus_watchtower_writer_dispatch.py
+  -> workflow_dispatch
+  -> caos-watchtower patrol/writer
+```
+
+weekday UTC minuteは`04,11,19,26,34,41,49,56`、weekendは`04,34`です。
+timerは`Persistent=true`、`AccuracySec=1us`、`RandomizedDelaySec=0`で、calendar
+最大gapはweekday 480秒、weekend 1,800秒です。GitHub workflowはexecution plane
+として`workflow_dispatch`を保持しますが、通常writerの二重schedulerとなる
+`on.schedule`は保持しません。
+
+writerは既存`argus-rearm` user/groupと、既存のrepository限定Actions-write PATを
+`/etc/argus-remote-journal-rearm.env`から再利用します。re-arm script/runtime/unit、
+mission tick、backend admin token、Recovery keyには触れません。writer専用installer
+が管理できるのは次だけです。
+
+```text
+/opt/argus-watchtower-writer/argus_watchtower_writer_dispatch.py
+/var/lib/argus-watchtower-writer
+/etc/systemd/system/argus-watchtower-writer.service
+/etc/systemd/system/argus-watchtower-writer.timer
+/var/backups/argus-watchtower-writer
+```
+
+`/opt/argus`と`/opt/argus-rearm`は管理対象外です。installerはcredential内容を
+作成・変更・backupせず、`root:argus-rearm`かつ`0640`/`0440`、assignmentが
+`ARGUS_REMOTE_JOURNAL_REARM_PAT`の1件だけであることをpreflightします。
+
+```bash
+bash scripts/install_argus_watchtower_writer.sh --source-check
+bash scripts/install_argus_watchtower_writer.sh --dry-run
+sudo -n bash scripts/install_argus_watchtower_writer.sh --apply
+```
+
+installerはverified backupとrollback metadataを作成しますが、`daemon-reload`、
+enable、start、restart、workflow dispatchは一切実行しません。timer activationは
+repository mergeとは別のowner承認操作です。
+
+各canonical UTC slotの`writerDispatchId`はrepository、workflow、ref、slotから
+決定的に導出され、EC2 state、journal、GitHub run-name、workflow入力、writer
+evidenceを結びます。永続stateは`PREPARED`、`DISPATCH_ACCEPTED`、
+`FAILED_DEFINITE`、`FAILED_AMBIGUOUS`を持ち、POST開始前にfsyncされます。timeoutや
+POST境界crashでは同じslotをblind resendせず、1回のbounded read-only GitHub
+照合で受理を証明できない限り`FAILED_AMBIGUOUS`として停止します。
+
+`workflow_dispatch`のidentityは3種類を混在させません。
+
+- EC2 writer: `remoteJournalRearm=false`、`dispatchMode=ec2_systemd_writer`、
+  exact `writerScheduledFor`と`writerDispatchId`を必須とし、natural publication。
+- owner manual: `dispatchMode=owner_manual`、slot/IDは空でmanual publication。
+- re-arm: `remoteJournalRearm=true`、従来の専用policy/concurrencyを維持。
+
+writer concurrencyは`caos-watchtower`、re-armは
+`caos-watchtower-remote-journal-rearm`のまま分離し、どちらも
+`cancel-in-progress=false`です。
+
 ## 監視
 
 ```bash

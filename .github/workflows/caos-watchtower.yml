@@ -1,5 +1,6 @@
 # C.A.O.S. Watchtower — near-real-time source patrol for the Core Portfolio
-# universe (V11.5.3). Every 15 min on weekdays / hourly on weekends it: fetches
+# universe (V11.5.3). The deterministic EC2 scheduler supplies 7/8-minute UTC
+# weekday opportunities and 30-minute weekend opportunities. Each run fetches
 # the allow-listed public feeds + targeted per-symbol discovery for urgent/high
 # targets, applies the news-freshness gate (old news never a current lead),
 # queues English headlines for translation, and snapshots the public-safe status
@@ -7,16 +8,9 @@
 # (translate-visible is the only LLM step and touches headlines only).
 # HONESTY: this is near-real-time monitoring, NOT a Bloomberg/Reuters terminal.
 name: caos-watchtower
+run-name: ${{ inputs.dispatchMode == 'ec2_systemd_writer' && format('Watchtower EC2 {0}', inputs.writerDispatchId) || inputs.remoteJournalRearm == true && 'Watchtower Remote Journal re-arm' || 'Watchtower owner manual' }}
 
 on:
-  schedule:
-    - cron: '4-59/15 * * * 1-5'  # quarter-hour rail shifted off load boundaries
-    # GitHub cron is best-effort. Two phase-shifted weekday rails retain the
-    # reviewed 7/8-minute opportunities while staying four minutes away from
-    # :00/:15/:30/:45. Refresh is idempotent and concurrency serializes overlaps.
-    - cron: '11-59/15 * * * 1-5'
-    - cron: '4 * * * 0,6'        # weekend 30-minute cadence, shifted off :00
-    - cron: '34 * * * 0,6'
   workflow_dispatch:
     inputs:
       remoteJournalRearm:
@@ -24,12 +18,30 @@ on:
         required: false
         default: false
         type: boolean
+      dispatchMode:
+        description: Exact caller identity; owner manual is the safe default
+        required: false
+        default: owner_manual
+        type: choice
+        options:
+          - owner_manual
+          - ec2_systemd_writer
+      writerScheduledFor:
+        description: Canonical EC2 UTC slot; empty for owner manual/re-arm
+        required: false
+        default: ''
+        type: string
+      writerDispatchId:
+        description: Deterministic repository/workflow/ref/slot correlation ID
+        required: false
+        default: ''
+        type: string
 
 # GitHub concurrency keeps at most one running and one pending run for this
 # event-class group; a newer pending run replaces the older pending run. The
 # dedicated re-arm group cannot cancel or queue behind ordinary patrol work.
-# Together with the EC2 timer's three opportunities per hour and one POST per
-# invocation, re-arm remains bounded without a lossy local wake-up marker.
+# The ordinary writer and Remote Journal re-arm remain disjoint.  The EC2
+# writer state machine provides slot deduplication before this queue boundary.
 concurrency:
   group: ${{ github.event_name == 'workflow_dispatch' && inputs.remoteJournalRearm == true && 'caos-watchtower-remote-journal-rearm' || 'caos-watchtower' }}
   cancel-in-progress: false
@@ -44,6 +56,23 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
+      - name: Validate exact Watchtower dispatch identity
+        env:
+          WATCHTOWER_REMOTE_REARM: ${{ inputs.remoteJournalRearm }}
+          WATCHTOWER_DISPATCH_MODE: ${{ inputs.dispatchMode }}
+          WATCHTOWER_SCHEDULED_FOR: ${{ inputs.writerScheduledFor }}
+          WATCHTOWER_DISPATCH_ID: ${{ inputs.writerDispatchId }}
+          WATCHTOWER_REPOSITORY: ${{ github.repository }}
+          WATCHTOWER_REF: ${{ github.ref_name }}
+        run: |
+          python3 scripts/argus_watchtower_writer_dispatch.py validate-inputs \
+            --remote-journal-rearm "$WATCHTOWER_REMOTE_REARM" \
+            --dispatch-mode "$WATCHTOWER_DISPATCH_MODE" \
+            --writer-scheduled-for "$WATCHTOWER_SCHEDULED_FOR" \
+            --writer-dispatch-id "$WATCHTOWER_DISPATCH_ID" \
+            --repository "$WATCHTOWER_REPOSITORY" \
+            --workflow 'caos-watchtower.yml' \
+            --ref "$WATCHTOWER_REF"
       - name: Watchtower refresh + visible translation (admin; token never logged)
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
@@ -166,6 +195,9 @@ jobs:
       - name: Commit snapshot and enqueue bounded Remote Journal receipt
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+          WATCHTOWER_DISPATCH_MODE: ${{ inputs.dispatchMode }}
+          WATCHTOWER_SCHEDULED_FOR: ${{ inputs.writerScheduledFor }}
+          WATCHTOWER_DISPATCH_ID: ${{ inputs.writerDispatchId }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
           # Copy exact control-plane helpers before switching to the
@@ -221,6 +253,11 @@ jobs:
           PY
 
           MIN=$(date -u +%M)
+          SCHEDULED_WRITER_ARG=()
+          if [ "$WATCHTOWER_DISPATCH_MODE" = 'ec2_systemd_writer' ]; then
+            SCHEDULED_WRITER_ARG+=(--scheduled-writer)
+            echo "watchtower writer evidence: source=ec2_systemd_writer scheduledFor=$WATCHTOWER_SCHEDULED_FOR writerDispatchId=$WATCHTOWER_DISPATCH_ID"
+          fi
           git fetch origin "ledger:refs/remotes/origin/ledger" 2>/dev/null \
             || git fetch origin ledger 2>/dev/null || true
           if git rev-parse --verify refs/remotes/origin/ledger >/dev/null 2>&1; then
@@ -250,7 +287,7 @@ jobs:
             --ledger-readback ledger/osint/readback.json \
             --runtime-data-quality "$RUNNER_TEMP/data-quality.json" \
             --event-name "${{ github.event_name }}" \
-            --utc-minute "$MIN")
+            --utc-minute "$MIN" "${SCHEDULED_WRITER_ARG[@]}")
           DECISION_VALUES=$(printf '%s' "$DECISION" | python3 -c \
             'import json,sys; d=json.load(sys.stdin); print(d["action"]); print(d["reason"]); print(d["sourceEventCount"]); print(d["remoteEventCount"]); print(d["sourceWalTarget"]); print(d["remoteWalTarget"]); print(d.get("runtimeRemotePendingCount") or 0); print(d.get("runtimeRemoteFailureCount") or 0); print(d["policySource"])')
           DECISION_ACTION=$(printf '%s\n' "$DECISION_VALUES" | sed -n '1p')
@@ -512,6 +549,23 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+      - name: Validate exact Watchtower dispatch identity
+        env:
+          WATCHTOWER_REMOTE_REARM: ${{ inputs.remoteJournalRearm }}
+          WATCHTOWER_DISPATCH_MODE: ${{ inputs.dispatchMode }}
+          WATCHTOWER_SCHEDULED_FOR: ${{ inputs.writerScheduledFor }}
+          WATCHTOWER_DISPATCH_ID: ${{ inputs.writerDispatchId }}
+          WATCHTOWER_REPOSITORY: ${{ github.repository }}
+          WATCHTOWER_REF: ${{ github.ref_name }}
+        run: |
+          python3 scripts/argus_watchtower_writer_dispatch.py validate-inputs \
+            --remote-journal-rearm "$WATCHTOWER_REMOTE_REARM" \
+            --dispatch-mode "$WATCHTOWER_DISPATCH_MODE" \
+            --writer-scheduled-for "$WATCHTOWER_SCHEDULED_FOR" \
+            --writer-dispatch-id "$WATCHTOWER_DISPATCH_ID" \
+            --repository "$WATCHTOWER_REPOSITORY" \
+            --workflow 'caos-watchtower.yml' \
+            --ref "$WATCHTOWER_REF"
       - name: Fetch one bounded verified recovery pair
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
