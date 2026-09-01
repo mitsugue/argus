@@ -20,6 +20,10 @@ The build command is:
 pip install -r requirements-tachibana.txt
 ```
 
+This dedicated dependency file contains only Requests, Cryptography, and the
+WebSocket client. It intentionally does not install the scanner, Moomoo,
+Recovery, AI, Flask, or frontend dependency surfaces.
+
 The service follows protected `main`. Previews are disabled. Only Tachibana
 paths and its dedicated requirements file belong in its build filter.
 
