@@ -82,7 +82,7 @@ RECOVERY_PAYLOAD_PATHS = (
     "test_remote_recovery_restore.py",
 )
 EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256 = (
-    "91e0e38520a488b09dfb774a701cce6244165009e52f201c43078f9ff290aa83"
+    "bd39bb28110598cbad7b52633795dcaa571f34ef3ad1bd608b4e64f93f6c7d07"
 )
 
 # Admission-plane files may route and prove Recovery, but are not production
@@ -94,6 +94,17 @@ RECOVERY_ADMISSION_PATHS = (
     "scripts/recovery_admission.py",
     "test_recovery_admission.py",
 )
+
+# The complete-suite CI harness may accompany a pinned Recovery payload when
+# its bounded execution contract needs correction.  It is admission evidence,
+# never production Recovery payload, and cannot self-select Recovery without a
+# matching pinned payload diff.
+RECOVERY_CI_HARNESS_PATHS = (
+    ".github/workflows/ci.yml",
+)
+RECOVERY_CLASSIFICATION_SUPPORT_PATHS = tuple(sorted(
+    set(RECOVERY_ADMISSION_PATHS).union(RECOVERY_CI_HARNESS_PATHS)
+))
 
 AUTHORITY_ASSERTIONS = {
     "acceptanceClockStarted": False,
@@ -259,7 +270,7 @@ def _product_version(repo: pathlib.Path, commit: str) -> dict[str, Any]:
 def scope_policy_document() -> dict[str, Any]:
     return {
         "schemaVersion": POLICY_SCHEMA,
-        "admissionPaths": list(RECOVERY_ADMISSION_PATHS),
+        "admissionPaths": list(RECOVERY_CLASSIFICATION_SUPPORT_PATHS),
         "admissionWithoutRecoveryPolicy":
             "EXISTING_PRODUCT_CERTIFICATE_REQUIRED",
         "expectedRecoveryPayloadDiffSha256":
@@ -301,7 +312,8 @@ def classify_repository(
     rows = _path_entries(repo, base, head)
     paths = [row["path"] for row in rows]
     payload = sorted(set(paths).intersection(RECOVERY_PAYLOAD_PATHS))
-    admission = sorted(set(paths).intersection(RECOVERY_ADMISSION_PATHS))
+    admission = sorted(
+        set(paths).intersection(RECOVERY_CLASSIFICATION_SUPPORT_PATHS))
     other = sorted(set(paths) - set(payload) - set(admission))
     payload_patch = _patch_bytes(repo, base, head, payload)
     admission_patch = _patch_bytes(repo, base, head, admission)

@@ -22426,11 +22426,329 @@ class _RemoteRecoveryCheckpointError(RuntimeError):
     """Payload-free fail-closed classification for recovery persistence."""
 
 
+_POST_GENESIS_CHECKPOINT_PROCESS_TOKEN = object()
+
+
+class _PostGenesisCheckpointCapability:
+    """Single-use authority for one ordinary keyed pair transaction.
+
+    The capability never enters durable state or diagnostics.  It binds the
+    installed current-key authenticated pair, the exact sealed candidate,
+    configured key domains, selected ledger base, and both WAL floors before
+    any durable nonce is reserved.
+    """
+
+    __slots__ = (
+        "_token", "_canonical_checkpoint_path", "_canonical_identity",
+        "_source_checkpoint_path", "_source_checkpoint_identity",
+        "_sidecar_path", "_sidecar_identity", "_pair_identity",
+        "_key_configuration", "_candidate_checkpoint_hash",
+        "_candidate_checkpoint_id", "_previous_target_wal",
+        "_candidate_wal", "_ledger_base", "_binding_hash", "_consumed",
+    )
+
+    def __init__(
+            self, *, canonical_checkpoint_path, canonical_identity,
+            source_checkpoint_path, source_checkpoint_identity,
+            sidecar_path, sidecar_identity, pair_identity,
+            key_configuration, candidate_checkpoint_hash,
+            candidate_checkpoint_id, previous_target_wal, candidate_wal,
+            ledger_base):
+        self._token = _POST_GENESIS_CHECKPOINT_PROCESS_TOKEN
+        self._canonical_checkpoint_path = canonical_checkpoint_path
+        self._canonical_identity = copy.deepcopy(canonical_identity)
+        self._source_checkpoint_path = source_checkpoint_path
+        self._source_checkpoint_identity = copy.deepcopy(
+            source_checkpoint_identity)
+        self._sidecar_path = sidecar_path
+        self._sidecar_identity = copy.deepcopy(sidecar_identity)
+        self._pair_identity = copy.deepcopy(pair_identity)
+        self._key_configuration = copy.deepcopy(key_configuration)
+        self._candidate_checkpoint_hash = candidate_checkpoint_hash
+        self._candidate_checkpoint_id = candidate_checkpoint_id
+        self._previous_target_wal = previous_target_wal
+        self._candidate_wal = candidate_wal
+        self._ledger_base = ledger_base
+        self._binding_hash = \
+            _post_genesis_checkpoint_capability_hash(self)
+        self._consumed = False
+
+
+def _post_genesis_checkpoint_file_identity(path):
+    """Return a bounded regular-file identity without exposing file bytes."""
+    target = os.path.abspath(path)
+    try:
+        metadata = os.stat(target, follow_symlinks=False)
+    except OSError as exc:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_checkpoint_authority_invalid") from exc
+    if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_checkpoint_authority_invalid")
+    return {
+        "path": target,
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+        "mode": stat.S_IMODE(metadata.st_mode),
+        "bytes": metadata.st_size,
+        "mtimeNs": metadata.st_mtime_ns,
+        "ctimeNs": metadata.st_ctime_ns,
+    }
+
+
+def _post_genesis_checkpoint_key_configuration(configured):
+    """Bind key identities to material domains without retaining key bytes."""
+    if not isinstance(configured, dict) or configured.get(
+            "status") != "configured":
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_checkpoint_key_invalid")
+
+    def bind(slot, *, required=False):
+        value = configured.get(slot)
+        if value is None and not required:
+            return None
+        if not isinstance(value, dict) or not isinstance(
+                value.get("key"), bytes) or len(value["key"]) != 32:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_post_genesis_checkpoint_key_invalid")
+        key_id = str(value.get("keyId") or "")
+        if not argus_remote_recovery.KEY_ID_RE.fullmatch(key_id):
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_post_genesis_checkpoint_key_invalid")
+        return {
+            "keyId": key_id,
+            "keyMaterialDomain": _remote_recovery_nonce_domain(value["key"]),
+        }
+
+    return {"current": bind("current", required=True),
+            "previous": bind("previous")}
+
+
+def _post_genesis_checkpoint_pair_identity(authority):
+    """Project only exact non-secret identity from one authenticated pair."""
+    if not isinstance(authority, dict):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_checkpoint_authority_invalid")
+    checkpoint = authority.get("checkpoint")
+    sidecar = authority.get("sidecar")
+    payload = authority.get("payload")
+    envelope = sidecar.get("recovery") if isinstance(sidecar, dict) else None
+    marker = _validated_recovery_required_marker(checkpoint)
+    if not isinstance(checkpoint, dict) or not isinstance(payload, dict) or \
+            not isinstance(envelope, dict) or marker is None:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_checkpoint_authority_invalid")
+    checkpoint_hash = argus_persistent_storage._canonical_sha256(checkpoint)
+    identity = {
+        "sourceCheckpointHash": payload.get("sourceCheckpointHash"),
+        "checkpointId": payload.get("checkpointId"),
+        "generationId": envelope.get("generationId"),
+        "bundleHash": envelope.get("bundleHash"),
+        "keyId": envelope.get("keyId"),
+        "ledgerBaseCommitSha": payload.get("ledgerBaseCommitSha"),
+        "targetWalSequence": payload.get("targetWalSequence"),
+        "compactReceiptHash": payload.get("compactReceiptHash"),
+        "checkpointObjectHash": checkpoint_hash,
+        "sidecarObjectHash":
+            argus_persistent_storage._canonical_sha256(sidecar),
+    }
+    if identity["sourceCheckpointHash"] != checkpoint_hash or \
+            identity["checkpointId"] != marker["checkpointId"] or \
+            identity["keyId"] != marker["keyId"] or not re.fullmatch(
+                r"[0-9a-f]{64}", str(identity["sourceCheckpointHash"] or "")) or \
+            not re.fullmatch(
+                r"rcp-[0-9a-f]{32}", str(identity["checkpointId"] or "")) or \
+            not re.fullmatch(
+                r"rrg-[0-9a-f]{32}", str(identity["generationId"] or "")) or \
+            not re.fullmatch(
+                r"[0-9a-f]{64}", str(identity["bundleHash"] or "")) or \
+            not re.fullmatch(
+                r"[0-9a-f]{40}", str(identity["ledgerBaseCommitSha"] or "")) or \
+            isinstance(identity["targetWalSequence"], bool) or not \
+            isinstance(identity["targetWalSequence"], int) or \
+            identity["targetWalSequence"] <= 0:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_checkpoint_authority_invalid")
+    return identity
+
+
+def _post_genesis_checkpoint_capability_hash(capability):
+    return argus_persistent_storage._canonical_sha256({
+        "canonicalCheckpointPath": capability._canonical_checkpoint_path,
+        "canonicalIdentity": capability._canonical_identity,
+        "sourceCheckpointPath": capability._source_checkpoint_path,
+        "sourceCheckpointIdentity": capability._source_checkpoint_identity,
+        "sidecarPath": capability._sidecar_path,
+        "sidecarIdentity": capability._sidecar_identity,
+        "pairIdentity": capability._pair_identity,
+        "keyConfiguration": capability._key_configuration,
+        "candidateCheckpointHash": capability._candidate_checkpoint_hash,
+        "candidateCheckpointId": capability._candidate_checkpoint_id,
+        "previousTargetWalSequence": capability._previous_target_wal,
+        "candidateWalSequence": capability._candidate_wal,
+        "ledgerBaseCommitSha": capability._ledger_base,
+    })
+
+
+def _post_genesis_cycle_is_exactly_unstarted(checkpoint_blob):
+    cycle = checkpoint_blob.get("remoteJournalCycle") \
+        if isinstance(checkpoint_blob, dict) else None
+    return isinstance(cycle, dict) and \
+        cycle.get("remoteDurabilityState") == "not_started" and \
+        cycle.get("readBackVerified") in (False, None) and \
+        cycle.get("walReadBackVerified") in (False, None) and \
+        cycle.get("remoteWalAppliedSequence") in (0, None) and \
+        cycle.get("verifiedWalSequence") in (0, None) and \
+        all(cycle.get(key) in (None, "") for key in (
+            "remoteCommitSha", "receiptCommitSha", "expectedHash",
+            "actualHash", "compactReceiptHash", "errorClass",
+            "walErrorClass", "receiptErrorClass"))
+
+
+def _mint_post_genesis_checkpoint_capability(
+        ordinary_authority, canonical_checkpoint_path, candidate_checkpoint,
+        configured, candidate_wal):
+    """Mint one exact current-pair proof before candidate disk staging."""
+    key_configuration = _post_genesis_checkpoint_key_configuration(configured)
+    current_key_id = key_configuration["current"]["keyId"]
+    if not isinstance(candidate_checkpoint, dict) or not \
+            argus_persistent_storage.verify_checkpoint(
+                candidate_checkpoint, require_seal=True):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_checkpoint_candidate_invalid")
+    marker = _validated_recovery_required_marker(candidate_checkpoint)
+    durability = candidate_checkpoint.get("missionTickDurability")
+    if marker is None or marker["keyId"] != current_key_id or not \
+            isinstance(durability, dict) or isinstance(candidate_wal, bool) or \
+            not isinstance(candidate_wal, int) or candidate_wal <= 0 or \
+            durability.get("walAppliedSequence") != candidate_wal:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_checkpoint_candidate_invalid")
+
+    canonical_path = os.path.abspath(canonical_checkpoint_path)
+    canonical = argus_persistent_storage.load_checkpoint(
+        canonical_path, require_seal=True)
+    resolved = _resolve_authoritative_local_recovery_checkpoint(
+        canonical, canonical_path, configured)
+    expected_pair = _post_genesis_checkpoint_pair_identity(
+        ordinary_authority)
+    resolved_pair = _post_genesis_checkpoint_pair_identity(resolved)
+    if expected_pair != resolved_pair or os.path.abspath(str(
+            ordinary_authority.get("path") or "")) != os.path.abspath(
+                str(resolved.get("path") or "")) or \
+            resolved_pair["keyId"] != current_key_id:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_checkpoint_authority_changed")
+    previous_target_wal = resolved_pair["targetWalSequence"]
+    if candidate_wal < previous_target_wal:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_checkpoint_wal_downgrade")
+
+    try:
+        ledger_base = _recovery_ledger_base(candidate_checkpoint)
+        cycle = candidate_checkpoint["remoteJournalCycle"]
+        if int(cycle.get("remoteWalAppliedSequence") or 0) > candidate_wal:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_post_genesis_checkpoint_wal_downgrade")
+    except ValueError as exc:
+        if str(exc) != "recovery_ledger_base_unverified" or not \
+                _post_genesis_cycle_is_exactly_unstarted(
+                    candidate_checkpoint):
+            raise
+        ledger_base = resolved_pair["ledgerBaseCommitSha"]
+
+    source_path = os.path.abspath(resolved["path"])
+    sidecar_path = os.path.abspath(_REMOTE_RECOVERY_FILE)
+    return _PostGenesisCheckpointCapability(
+        canonical_checkpoint_path=canonical_path,
+        canonical_identity=_post_genesis_checkpoint_file_identity(
+            canonical_path),
+        source_checkpoint_path=source_path,
+        source_checkpoint_identity=_post_genesis_checkpoint_file_identity(
+            source_path),
+        sidecar_path=sidecar_path,
+        sidecar_identity=_post_genesis_checkpoint_file_identity(sidecar_path),
+        pair_identity=resolved_pair,
+        key_configuration=key_configuration,
+        candidate_checkpoint_hash=
+            argus_persistent_storage._canonical_sha256(candidate_checkpoint),
+        candidate_checkpoint_id=marker["checkpointId"],
+        previous_target_wal=previous_target_wal,
+        candidate_wal=candidate_wal,
+        ledger_base=ledger_base)
+
+
+def _consume_post_genesis_checkpoint_capability(
+        capability, checkpoint_blob, compact, configured):
+    """Consume an exact ordinary-pair proof before nonce reservation."""
+    if not isinstance(capability, _PostGenesisCheckpointCapability) or \
+            capability._token is not \
+            _POST_GENESIS_CHECKPOINT_PROCESS_TOKEN or \
+            capability._consumed or not hmac.compare_digest(
+                capability._binding_hash,
+                _post_genesis_checkpoint_capability_hash(capability)):
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_checkpoint_capability_invalid")
+    capability._consumed = True
+
+    if _post_genesis_checkpoint_key_configuration(configured) != \
+            capability._key_configuration:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_checkpoint_authority_changed")
+    canonical = argus_persistent_storage.load_checkpoint(
+        capability._canonical_checkpoint_path, require_seal=True)
+    resolved = _resolve_authoritative_local_recovery_checkpoint(
+        canonical, capability._canonical_checkpoint_path, configured)
+    if _post_genesis_checkpoint_file_identity(
+            capability._canonical_checkpoint_path) != \
+            capability._canonical_identity or os.path.abspath(
+                str(resolved.get("path") or "")) != \
+            capability._source_checkpoint_path or \
+            _post_genesis_checkpoint_file_identity(
+                capability._source_checkpoint_path) != \
+            capability._source_checkpoint_identity or \
+            _post_genesis_checkpoint_file_identity(
+                capability._sidecar_path) != capability._sidecar_identity or \
+            _post_genesis_checkpoint_pair_identity(resolved) != \
+            capability._pair_identity:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_checkpoint_authority_changed")
+
+    marker = _validated_recovery_required_marker(checkpoint_blob)
+    durability = checkpoint_blob.get("missionTickDurability") \
+        if isinstance(checkpoint_blob, dict) else None
+    if not isinstance(checkpoint_blob, dict) or not \
+            argus_persistent_storage.verify_checkpoint(
+                checkpoint_blob, require_seal=True) or not \
+            hmac.compare_digest(
+                argus_persistent_storage._canonical_sha256(checkpoint_blob),
+                capability._candidate_checkpoint_hash) or marker is None or \
+            marker["checkpointId"] != capability._candidate_checkpoint_id or \
+            marker["keyId"] != capability._key_configuration[
+                "current"]["keyId"] or not isinstance(durability, dict) or \
+            durability.get("walAppliedSequence") != capability._candidate_wal or \
+            capability._candidate_wal < capability._previous_target_wal:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_checkpoint_candidate_changed")
+    compact_durability = compact.get("missionTickDurability") \
+        if isinstance(compact, dict) else None
+    if not isinstance(compact, dict) or not \
+            argus_remote_journal.verify_strict_compact_readback_snapshot(
+                compact) or not isinstance(compact_durability, dict) or \
+            compact_durability.get("walAppliedSequence") != \
+            capability._candidate_wal or compact_durability.get(
+                "remoteWalAppliedSequence") != capability._candidate_wal:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_post_genesis_checkpoint_projection_changed")
+    return capability._ledger_base
+
+
 def _persist_remote_recovery_sidecar_once(
         checkpoint, *, checkpoint_path=None,
         authenticated_remote_floor=None,
         legacy_ledger_base_capability=None, restore_token=None,
         sidecar_path=None, ledger_base_capability=None,
+        post_genesis_capability=None,
         transactional_boundaries=False):
     """Encrypt the exact verified checkpoint projection before WAL compaction."""
     keys = argus_remote_recovery.configured_keys()
@@ -22486,8 +22804,9 @@ def _persist_remote_recovery_sidecar_once(
     if (legacy_ledger_base_capability is None) != (restore_token is None):
         raise argus_remote_recovery.RecoveryBundleError(
             "recovery_legacy_ledger_base_capability_invalid")
-    if legacy_ledger_base_capability is not None and \
-            ledger_base_capability is not None:
+    if sum(value is not None for value in (
+            legacy_ledger_base_capability, ledger_base_capability,
+            post_genesis_capability)) > 1:
         raise argus_remote_recovery.RecoveryBundleError(
             "recovery_ledger_base_capability_ambiguous")
     if legacy_ledger_base_capability is not None:
@@ -22499,6 +22818,10 @@ def _persist_remote_recovery_sidecar_once(
         ledger_base_commit_sha = \
             _consume_post_genesis_mismatch_repair_capability(
                 ledger_base_capability, checkpoint_blob, compact, keys)
+    elif post_genesis_capability is not None:
+        ledger_base_commit_sha = \
+            _consume_post_genesis_checkpoint_capability(
+                post_genesis_capability, checkpoint_blob, compact, keys)
     else:
         ledger_base_commit_sha = _recovery_ledger_base(checkpoint_blob)
     if transactional_boundaries:
@@ -22575,6 +22898,7 @@ def _persist_remote_recovery_sidecar(
         authenticated_remote_floor=None,
         legacy_ledger_base_capability=None, restore_token=None,
         sidecar_path=None, ledger_base_capability=None,
+        post_genesis_capability=None,
         transactional_boundaries=False):
     """Make configured recovery failures terminal for checkpoint callers."""
     _DURABLE_STATE["remoteRecoverySidecar"] = {"status": "generating"}
@@ -22585,6 +22909,7 @@ def _persist_remote_recovery_sidecar(
             legacy_ledger_base_capability=legacy_ledger_base_capability,
             restore_token=restore_token, sidecar_path=sidecar_path,
             ledger_base_capability=ledger_base_capability,
+            post_genesis_capability=post_genesis_capability,
             transactional_boundaries=transactional_boundaries)
     except Exception as exc:
         _DURABLE_STATE["remoteRecoverySidecar"] = {
@@ -22701,6 +23026,7 @@ def _verified_checkpoint_preserving_legacy_until_pair(
     authority_switched = False
     use_staging = False
     ordinary_authority = None
+    post_genesis_capability = None
     transaction_lock = _acquire_recovery_checkpoint_transaction_lock(path)
     try:
         try:
@@ -22717,6 +23043,10 @@ def _verified_checkpoint_preserving_legacy_until_pair(
             ordinary_authority = \
                 _resolve_authoritative_local_recovery_checkpoint(
                     canonical, path, configured)
+            post_genesis_capability = \
+                _mint_post_genesis_checkpoint_capability(
+                    ordinary_authority, path, blob, configured,
+                    included_sequence)
     except Exception:
         _release_recovery_checkpoint_transaction_lock(transaction_lock)
         raise
@@ -22744,6 +23074,7 @@ def _verified_checkpoint_preserving_legacy_until_pair(
             checkpoint["postVerify"] = _persist_remote_recovery_sidecar(
                 checkpoint, checkpoint_path=staged_checkpoint,
                 sidecar_path=staged_sidecar,
+                post_genesis_capability=post_genesis_capability,
                 transactional_boundaries=True)
             _DURABLE_STATE["remoteRecoverySidecar"] = {
                 **checkpoint["postVerify"], "status": "candidate_verified"}
