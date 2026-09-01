@@ -59,7 +59,17 @@ class ErrorClass(str, Enum):
     SECRET_PERMISSIONS = "SECRET_PERMISSIONS"
     PRIVATE_KEY_INVALID = "PRIVATE_KEY_INVALID"
     AUTH_REJECTED = "AUTH_REJECTED"
+    AUTH_LOCAL_STATE_REJECTED = "AUTH_LOCAL_STATE_REJECTED"
     AUTH_RESPONSE_INVALID = "AUTH_RESPONSE_INVALID"
+    AUTH_SERVER_REJECTED = "AUTH_SERVER_REJECTED"
+    AUTH_SUCCESS_VIRTUAL_URLS_WITHHELD = "AUTH_SUCCESS_VIRTUAL_URLS_WITHHELD"
+    AUTH_SUCCESS_DECRYPT_FAILED = "AUTH_SUCCESS_DECRYPT_FAILED"
+    AUTH_HTTP_FAILED = "AUTH_HTTP_FAILED"
+    AUTH_PROTOCOL_FAILED = "AUTH_PROTOCOL_FAILED"
+    AUTH_TIMEOUT = "AUTH_TIMEOUT"
+    AUTH_MAINTENANCE = "AUTH_MAINTENANCE"
+    AUTH_IP_REJECTED = "AUTH_IP_REJECTED"
+    AUTH_LOCKED = "AUTH_LOCKED"
     VIRTUAL_URL_INVALID = "VIRTUAL_URL_INVALID"
     SESSION_EXPIRED = "SESSION_EXPIRED"
     NETWORK = "NETWORK"
@@ -74,6 +84,69 @@ class ErrorClass(str, Enum):
     CLOCK_SKEW = "CLOCK_SKEW"
     EVENT_IDLE_TIMEOUT = "EVENT_IDLE_TIMEOUT"
     EVENT_RECONNECT_EXHAUSTED = "EVENT_RECONNECT_EXHAUSTED"
+
+
+@dataclass(frozen=True)
+class AuthDiagnostic:
+    """Non-secret facts retained from the latest authentication boundary."""
+
+    classification: str = "AUTH_NOT_ATTEMPTED"
+    boundary: str = "NOT_REACHED"
+    http_status: int | None = None
+    response_clmid: str | None = None
+    result_code: str | None = None
+    official_reason: str | None = None
+    response_matched_ack: bool = False
+    encrypted_virtual_urls_present: bool | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            not re.fullmatch(r"[A-Z0-9_]{1,96}", self.classification)
+            or not re.fullmatch(r"[A-Z0-9_]{1,64}", self.boundary)
+            or (
+                self.http_status is not None
+                and (
+                    type(self.http_status) is not int
+                    or not 100 <= self.http_status <= 599
+                )
+            )
+            or (
+                self.response_clmid is not None
+                and not re.fullmatch(
+                    r"[A-Za-z0-9_]{1,128}", self.response_clmid
+                )
+            )
+            or (
+                self.result_code is not None
+                and not re.fullmatch(r"[0-9]{1,16}", self.result_code)
+            )
+            or (
+                self.official_reason is not None
+                and not re.fullmatch(
+                    r"[A-Z0-9_]{1,128}", self.official_reason
+                )
+            )
+            or type(self.response_matched_ack) is not bool
+            or (
+                self.encrypted_virtual_urls_present is not None
+                and type(self.encrypted_virtual_urls_present) is not bool
+            )
+        ):
+            raise ValueError("invalid_auth_diagnostic")
+
+    def safe_dict(self) -> dict[str, object]:
+        return {
+            "classification": self.classification,
+            "boundary": self.boundary,
+            "httpStatus": self.http_status,
+            "sCLMID": self.response_clmid,
+            "sResultCode": self.result_code,
+            "officialReason": self.official_reason,
+            "responseMatchedCLMAuthLoginAck": self.response_matched_ack,
+            "encryptedVirtualUrlsPresent": (
+                self.encrypted_virtual_urls_present
+            ),
+        }
 
 
 @dataclass(frozen=True)

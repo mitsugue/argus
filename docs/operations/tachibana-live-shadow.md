@@ -84,6 +84,17 @@ A connected WebSocket without packet progression remains unproven. The exact
 official provider operation code is retained in secret-safe acceptance metadata
 without translating an undocumented code into a stronger market semantic.
 
+Authentication diagnostics retain only the HTTP status, safe `sCLMID`, numeric
+`sResultCode`, official normalized reason, Ack-shape match, and whether all five
+encrypted virtual-URL fields were present. They never retain `sResultText`, an
+authentication ID, request body, encrypted/decrypted URL, key, or credential
+hash. The live canary distinguishes `AUTH_SERVER_REJECTED_<RESULT_CODE>`,
+`AUTH_SUCCESS_VIRTUAL_URLS_WITHHELD`, `AUTH_SUCCESS_DECRYPT_FAILED`,
+`AUTH_HTTP_FAILED`, `AUTH_PROTOCOL_FAILED`, `AUTH_TIMEOUT`,
+`AUTH_MAINTENANCE`, `AUTH_IP_REJECTED`, and `AUTH_LOCKED`. A successful Ack
+with no virtual URLs is not an authentication rejection; current official
+documentation identifies unread required documents as one possible cause.
+
 The cross-validation policy is frozen before live observation. Comparable
 fields are current price, previous close, open, high, low, volume, and market
 status only when both providers expose the same semantic. The trusted row must

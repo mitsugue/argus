@@ -67,6 +67,7 @@ def main() -> int:
     teardown = True
     classification = "UNCLASSIFIED_SAFE_FAILURE"
     snapshot: dict[str, object] | None = None
+    auth_diagnostic: dict[str, object] | None = None
     try:
         guarded = _live_start_guard()
         if guarded is not None:
@@ -85,15 +86,26 @@ def main() -> int:
             classification = accepted.classification
     except TachibanaError as exc:
         if classification == "UNCLASSIFIED_SAFE_FAILURE":
-            classification = exc.classification.value
+            if runtime is not None:
+                auth_diagnostic = runtime.session.auth_diagnostic.safe_dict()
+                diagnostic_class = auth_diagnostic.get("classification")
+                if isinstance(diagnostic_class, str):
+                    classification = diagnostic_class
+                else:
+                    classification = exc.classification.value
+            else:
+                classification = exc.classification.value
     except Exception:
         classification = "UNCLASSIFIED_SAFE_FAILURE"
     finally:
         if runtime is not None:
+            if auth_diagnostic is None:
+                auth_diagnostic = runtime.session.auth_diagnostic.safe_dict()
             teardown = runtime.stop()
 
     result = {
         "classification": classification,
+        "authDiagnostic": auth_diagnostic,
         "logout": teardown,
         "secretLeak": False,
         "snapshot": snapshot,

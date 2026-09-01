@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
 import math
 import os
 from pathlib import Path
+import re
 import stat
 import threading
 import time
@@ -21,6 +23,7 @@ import requests
 
 from .config import TachibanaConfig
 from .models import (
+    AuthDiagnostic,
     Diagnostics,
     ErrorClass,
     ProviderHealth,
@@ -58,11 +61,76 @@ _LARGE_RESPONSE_BYTES = {
 _AUTH_MAINTENANCE_ERRNOS = frozenset({"9", "-12"})
 _AUTH_MAINTENANCE_RESULTS = frozenset({"990002", "990003", "990004"})
 _AUTH_OUTSIDE_HOURS_RESULTS = frozenset({"990005"})
+_AUTH_IP_REJECTED_RESULTS = frozenset({"10005"})
+_AUTH_LOCKED_RESULTS = frozenset({"10033"})
+_AUTH_OFFICIAL_REASONS = {
+    "10005": "IP_ADDRESS_INVALID",
+    "10033": "USER_MANAGEMENT_LOGIN_LOCKED",
+    "990002": "SYSTEM_TEMPORARILY_STOPPED",
+    "990003": "SYSTEM_SERVICE_STOPPED_TEST_MODE",
+    "990004": "SYSTEM_SERVICE_STOPPED_MAINTENANCE",
+    "990005": "SYSTEM_OUTSIDE_SERVICE_HOURS",
+    "990006": "SYSTEM_LOGIN_FAILED",
+    "990007": "SYSTEM_ENVIRONMENT_ERROR",
+}
 
 
-def _classify_auth_failure(
+def _safe_result_code(value: Any) -> str | None:
+    if isinstance(value, str) and re.fullmatch(r"[0-9]{1,16}", value):
+        return value
+    return None
+
+
+def _safe_clmid(value: Any) -> str | None:
+    if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_]{1,128}", value):
+        return value
+    return None
+
+
+def _protocol_auth_diagnostic(response: Any) -> AuthDiagnostic:
+    if not isinstance(response, Mapping):
+        return AuthDiagnostic(
+            classification="AUTH_PROTOCOL_FAILED",
+            boundary="PROTOCOL_FAILED",
+        )
+    clmid = _safe_clmid(response.get("sCLMID"))
+    result = _safe_result_code(response.get("sResultCode"))
+    present = tuple(
+        isinstance(response.get(field), str) and bool(response.get(field))
+        for field in _VIRTUAL_RESPONSE_FIELDS.values()
+    )
+    return AuthDiagnostic(
+        classification="AUTH_PROTOCOL_FAILED",
+        boundary="PROTOCOL_FAILED",
+        response_clmid=clmid,
+        result_code=result,
+        response_matched_ack=clmid == "CLMAuthLoginAck",
+        encrypted_virtual_urls_present=all(present) if any(present) else False,
+    )
+
+
+def _auth_result_classification(result: str) -> tuple[ErrorClass, str, str]:
+    reason = _AUTH_OFFICIAL_REASONS.get(
+        result, "UNMAPPED_OFFICIAL_RESULT_CODE"
+    )
+    if result in _AUTH_MAINTENANCE_RESULTS:
+        return ErrorClass.AUTH_MAINTENANCE, "AUTH_MAINTENANCE", reason
+    if result in _AUTH_OUTSIDE_HOURS_RESULTS:
+        return ErrorClass.OUTSIDE_HOURS, "AUTH_SERVER_REJECTED_" + result, reason
+    if result in _AUTH_IP_REJECTED_RESULTS:
+        return ErrorClass.AUTH_IP_REJECTED, "AUTH_IP_REJECTED", reason
+    if result in _AUTH_LOCKED_RESULTS:
+        return ErrorClass.AUTH_LOCKED, "AUTH_LOCKED", reason
+    return (
+        ErrorClass.AUTH_SERVER_REJECTED,
+        "AUTH_SERVER_REJECTED_" + result,
+        reason,
+    )
+
+
+def _inspect_auth_response(
     response: Mapping[str, Any], *, expected_p_no: str
-) -> ErrorClass | None:
+) -> tuple[ErrorClass | None, AuthDiagnostic]:
     """Validate the common auth envelope before inspecting success-only fields.
 
     Provider error responses legitimately omit ``sResultCode`` and the five
@@ -76,30 +144,94 @@ def _classify_auth_failure(
         or not isinstance(response.get("p_errno"), str)
         or response.get("p_no") != expected_p_no
     ):
-        return ErrorClass.AUTH_RESPONSE_INVALID
+        return ErrorClass.AUTH_PROTOCOL_FAILED, _protocol_auth_diagnostic(response)
     errno = response["p_errno"]
     if errno != "0":
         if errno in _AUTH_MAINTENANCE_ERRNOS:
-            return ErrorClass.MAINTENANCE
-        if errno == "-2":
-            return ErrorClass.RATE_LIMITED
-        if errno == "-62":
-            return ErrorClass.OUTSIDE_HOURS
-        if errno == "8":
-            return ErrorClass.CLOCK_SKEW
-        if errno == "6":
-            return ErrorClass.SEQUENCE_DESYNC
-        return ErrorClass.AUTH_REJECTED
-    result = response.get("sResultCode", "0")
-    if not isinstance(result, str):
-        return ErrorClass.AUTH_RESPONSE_INVALID
+            classification = ErrorClass.AUTH_MAINTENANCE
+            normalized = "AUTH_MAINTENANCE"
+        elif errno == "-2":
+            classification = ErrorClass.RATE_LIMITED
+            normalized = "AUTH_RATE_LIMITED"
+        elif errno == "-62":
+            classification = ErrorClass.OUTSIDE_HOURS
+            normalized = "AUTH_OUTSIDE_HOURS"
+        elif errno == "8":
+            classification = ErrorClass.CLOCK_SKEW
+            normalized = "AUTH_CLOCK_SKEW"
+        elif errno == "6":
+            classification = ErrorClass.SEQUENCE_DESYNC
+            normalized = "AUTH_SEQUENCE_DESYNC"
+        else:
+            classification = ErrorClass.AUTH_PROTOCOL_FAILED
+            normalized = "AUTH_PROTOCOL_FAILED"
+        return classification, replace(
+            _protocol_auth_diagnostic(response),
+            classification=normalized,
+        )
+    clmid = _safe_clmid(response.get("sCLMID"))
+    if clmid != "CLMAuthLoginAck":
+        return ErrorClass.AUTH_PROTOCOL_FAILED, _protocol_auth_diagnostic(response)
+    result_value = response.get("sResultCode", "0")
+    result = _safe_result_code(result_value)
+    if result is None:
+        return ErrorClass.AUTH_PROTOCOL_FAILED, _protocol_auth_diagnostic(response)
+    present = tuple(
+        isinstance(response.get(field), str) and bool(response.get(field))
+        for field in _VIRTUAL_RESPONSE_FIELDS.values()
+    )
+    all_present = all(present)
+    none_present = not any(present)
     if result != "0":
-        if result in _AUTH_MAINTENANCE_RESULTS:
-            return ErrorClass.MAINTENANCE
-        if result in _AUTH_OUTSIDE_HOURS_RESULTS:
-            return ErrorClass.OUTSIDE_HOURS
-        return ErrorClass.AUTH_REJECTED
-    return None
+        error_class, normalized, reason = _auth_result_classification(result)
+        return error_class, AuthDiagnostic(
+            classification=normalized,
+            boundary="SERVER_AUTH_REJECTED",
+            response_clmid="CLMAuthLoginAck",
+            result_code=result,
+            official_reason=reason,
+            response_matched_ack=True,
+            encrypted_virtual_urls_present=all_present,
+        )
+    if none_present:
+        return ErrorClass.AUTH_SUCCESS_VIRTUAL_URLS_WITHHELD, AuthDiagnostic(
+            classification="AUTH_SUCCESS_VIRTUAL_URLS_WITHHELD",
+            boundary="AUTH_SUCCESS_VIRTUAL_URLS_WITHHELD",
+            response_clmid="CLMAuthLoginAck",
+            result_code="0",
+            official_reason="SUCCESS_VIRTUAL_URLS_WITHHELD",
+            response_matched_ack=True,
+            encrypted_virtual_urls_present=False,
+        )
+    if not all_present:
+        return ErrorClass.AUTH_PROTOCOL_FAILED, AuthDiagnostic(
+            classification="AUTH_PROTOCOL_FAILED",
+            boundary="PROTOCOL_FAILED",
+            response_clmid="CLMAuthLoginAck",
+            result_code="0",
+            official_reason="SUCCESS_RESPONSE_PARTIAL_VIRTUAL_URLS",
+            response_matched_ack=True,
+            encrypted_virtual_urls_present=False,
+        )
+    return None, AuthDiagnostic(
+        classification="AUTH_RESPONSE_SUCCESS",
+        boundary="AUTH_RESPONSE_SUCCESS",
+        response_clmid="CLMAuthLoginAck",
+        result_code="0",
+        official_reason="SUCCESS",
+        response_matched_ack=True,
+        encrypted_virtual_urls_present=True,
+    )
+
+
+def _classify_auth_failure(
+    response: Mapping[str, Any], *, expected_p_no: str
+) -> ErrorClass | None:
+    """Compatibility wrapper for callers that only need the closed class."""
+    classification, _ = _inspect_auth_response(
+        response, expected_p_no=expected_p_no
+    )
+    return classification
 
 
 class JsonTransport(Protocol):
@@ -120,6 +252,7 @@ class RequestsJsonTransport:
         install_transport_log_redaction()
         self._session = session or requests.Session()
         self._monotonic = monotonic
+        self.last_http_status: int | None = None
         # Owner credentials and credential-equivalent virtual URLs must never
         # be forwarded to a proxy inherited from the process environment.
         self._session.trust_env = False
@@ -128,6 +261,8 @@ class RequestsJsonTransport:
         self, url: str, payload: Mapping[str, str], timeout: int
     ) -> Mapping[str, Any]:
         response = None
+        self.last_http_status = None
+        is_auth = payload.get("sCLMID") == "CLMAuthLoginRequest"
         if type(timeout) is not int or not 1 <= timeout <= 30:
             raise TachibanaError(ErrorClass.CONFIGURATION)
         try:
@@ -153,6 +288,9 @@ class RequestsJsonTransport:
                 allow_redirects=False,
                 stream=True,
             )
+            self.last_http_status = response.status_code
+            if is_auth and response.status_code != 200:
+                raise TachibanaError(ErrorClass.AUTH_HTTP_FAILED)
             if response.status_code == 429:
                 raise TachibanaError(ErrorClass.RATE_LIMITED)
             if response.status_code == 503:
@@ -164,34 +302,58 @@ class RequestsJsonTransport:
                 try:
                     declared_length = int(content_length)
                 except (TypeError, ValueError):
-                    raise TachibanaError(ErrorClass.PROVIDER) from None
+                    raise TachibanaError(
+                        ErrorClass.AUTH_PROTOCOL_FAILED
+                        if is_auth else ErrorClass.PROVIDER
+                    ) from None
                 if declared_length < 0 or declared_length > maximum_response_bytes:
-                    raise TachibanaError(ErrorClass.PROVIDER)
+                    raise TachibanaError(
+                        ErrorClass.AUTH_PROTOCOL_FAILED
+                        if is_auth else ErrorClass.PROVIDER
+                    )
             raw_buffer = bytearray()
             chunks = iter(response.iter_content(chunk_size=64 * 1024))
             while True:
                 if self._monotonic() >= deadline:
-                    raise TachibanaError(ErrorClass.NETWORK)
+                    raise TachibanaError(
+                        ErrorClass.AUTH_TIMEOUT if is_auth else ErrorClass.NETWORK
+                    )
                 try:
                     chunk = next(chunks)
                 except StopIteration:
                     break
                 if self._monotonic() >= deadline:
-                    raise TachibanaError(ErrorClass.NETWORK)
+                    raise TachibanaError(
+                        ErrorClass.AUTH_TIMEOUT if is_auth else ErrorClass.NETWORK
+                    )
                 if not isinstance(chunk, bytes):
-                    raise TachibanaError(ErrorClass.PROVIDER)
+                    raise TachibanaError(
+                        ErrorClass.AUTH_PROTOCOL_FAILED
+                        if is_auth else ErrorClass.PROVIDER
+                    )
                 if len(raw_buffer) + len(chunk) > maximum_response_bytes:
-                    raise TachibanaError(ErrorClass.PROVIDER)
+                    raise TachibanaError(
+                        ErrorClass.AUTH_PROTOCOL_FAILED
+                        if is_auth else ErrorClass.PROVIDER
+                    )
                 raw_buffer.extend(chunk)
             raw = bytes(raw_buffer)
             decoded = raw.decode("shift_jis")
             parsed = json.loads(decoded)
         except TachibanaError:
             raise
+        except requests.Timeout:
+            raise TachibanaError(
+                ErrorClass.AUTH_TIMEOUT if is_auth else ErrorClass.NETWORK
+            ) from None
         except requests.RequestException:
-            raise TachibanaError(ErrorClass.NETWORK) from None
+            raise TachibanaError(
+                ErrorClass.AUTH_HTTP_FAILED if is_auth else ErrorClass.NETWORK
+            ) from None
         except (UnicodeDecodeError, json.JSONDecodeError):
-            raise TachibanaError(ErrorClass.PROVIDER) from None
+            raise TachibanaError(
+                ErrorClass.AUTH_PROTOCOL_FAILED if is_auth else ErrorClass.PROVIDER
+            ) from None
         finally:
             if response is not None:
                 try:
@@ -202,7 +364,9 @@ class RequestsJsonTransport:
                     # virtual URL embedded in third-party exception text.
                     pass
         if not isinstance(parsed, dict):
-            raise TachibanaError(ErrorClass.PROVIDER)
+            raise TachibanaError(
+                ErrorClass.AUTH_PROTOCOL_FAILED if is_auth else ErrorClass.PROVIDER
+            )
         return parsed
 
 
@@ -294,6 +458,7 @@ class TachibanaSession:
         self._endpoints: VirtualEndpoints | None = None
         self.state = SessionState.UNINITIALIZED
         self.diagnostics = Diagnostics()
+        self.auth_diagnostic = AuthDiagnostic()
 
     @property
     def request_lock(self) -> threading.Lock:
@@ -320,11 +485,21 @@ class TachibanaSession:
                 if self.state in {
                     SessionState.AUTHENTICATING, SessionState.AVAILABLE,
                 }:
-                    self.diagnostics.last_error_class = ErrorClass.AUTH_REJECTED
-                    raise TachibanaError(ErrorClass.AUTH_REJECTED)
+                    self.auth_diagnostic = AuthDiagnostic(
+                        classification="AUTH_LOCAL_STATE_REJECTED",
+                        boundary="NOT_SENT",
+                    )
+                    self.diagnostics.last_error_class = (
+                        ErrorClass.AUTH_LOCAL_STATE_REJECTED
+                    )
+                    raise TachibanaError(ErrorClass.AUTH_LOCAL_STATE_REJECTED)
                 self._clear_endpoints()
                 self._sequence = 0
                 self.state = SessionState.AUTHENTICATING
+                self.auth_diagnostic = AuthDiagnostic(
+                    classification="AUTH_IN_PROGRESS",
+                    boundary="NOT_COMPLETED",
+                )
                 try:
                     auth_id_bytes = _read_secret(
                         self.config.auth_id_path, ErrorClass.SECRET_MISSING
@@ -355,23 +530,43 @@ class TachibanaSession:
                         "sCLMID": "CLMAuthLoginRequest",
                         "sAuthId": auth_id,
                     })
-                    response = self._transport.post_json(
-                        self.config.auth_endpoint,
-                        payload,
-                        self.config.request_timeout_seconds,
-                    )
-                    failure = _classify_auth_failure(
+                    try:
+                        response = self._transport.post_json(
+                            self.config.auth_endpoint,
+                            payload,
+                            self.config.request_timeout_seconds,
+                        )
+                    except TachibanaError as exc:
+                        boundary = {
+                            ErrorClass.AUTH_TIMEOUT: "HTTP_FAILED",
+                            ErrorClass.AUTH_HTTP_FAILED: "HTTP_FAILED",
+                            ErrorClass.AUTH_PROTOCOL_FAILED: "PROTOCOL_FAILED",
+                        }.get(exc.classification)
+                        if boundary is not None:
+                            self.auth_diagnostic = AuthDiagnostic(
+                                classification=exc.classification.value,
+                                boundary=boundary,
+                                http_status=getattr(
+                                    self._transport, "last_http_status", None
+                                ),
+                            )
+                        raise
+                    failure, inspected = _inspect_auth_response(
                         response, expected_p_no=payload["p_no"]
+                    )
+                    self.auth_diagnostic = replace(
+                        inspected,
+                        http_status=getattr(
+                            self._transport, "last_http_status", None
+                        ),
                     )
                     if failure is not None:
                         raise TachibanaError(failure)
-                    if response.get("sCLMID") != "CLMAuthLoginAck":
-                        raise TachibanaError(ErrorClass.AUTH_RESPONSE_INVALID)
                     decrypted: dict[str, str] = {}
                     for name, field_name in _VIRTUAL_RESPONSE_FIELDS.items():
                         encrypted = response.get(field_name)
                         if not isinstance(encrypted, str) or not encrypted:
-                            raise TachibanaError(ErrorClass.AUTH_RESPONSE_INVALID)
+                            raise TachibanaError(ErrorClass.AUTH_PROTOCOL_FAILED)
                         try:
                             ciphertext = base64.b64decode(encrypted, validate=True)
                             plaintext = private_key.decrypt(
@@ -383,15 +578,56 @@ class TachibanaSession:
                                 ),
                             ).decode("ascii").strip()
                         except Exception:
+                            self.auth_diagnostic = AuthDiagnostic(
+                                classification="AUTH_SUCCESS_DECRYPT_FAILED",
+                                boundary="DECRYPT_FAILED",
+                                http_status=getattr(
+                                    self._transport, "last_http_status", None
+                                ),
+                                response_clmid="CLMAuthLoginAck",
+                                result_code="0",
+                                official_reason="SUCCESS",
+                                response_matched_ack=True,
+                                encrypted_virtual_urls_present=True,
+                            )
                             raise TachibanaError(
-                                ErrorClass.AUTH_RESPONSE_INVALID
+                                ErrorClass.AUTH_SUCCESS_DECRYPT_FAILED
                             ) from None
-                        decrypted[name] = _validate_virtual_url(plaintext, name)
+                        try:
+                            decrypted[name] = _validate_virtual_url(plaintext, name)
+                        except TachibanaError:
+                            self.auth_diagnostic = AuthDiagnostic(
+                                classification="AUTH_PROTOCOL_FAILED",
+                                boundary="PROTOCOL_FAILED",
+                                http_status=getattr(
+                                    self._transport, "last_http_status", None
+                                ),
+                                response_clmid="CLMAuthLoginAck",
+                                result_code="0",
+                                official_reason="SUCCESS_INVALID_VIRTUAL_URL",
+                                response_matched_ack=True,
+                                encrypted_virtual_urls_present=True,
+                            )
+                            raise TachibanaError(
+                                ErrorClass.AUTH_PROTOCOL_FAILED
+                            ) from None
                     self._endpoints = VirtualEndpoints(**decrypted)
                     self.state = SessionState.AVAILABLE
                     self.diagnostics.session_started_at = self._clock()
                     self.diagnostics.health = ProviderHealth.AVAILABLE
                     self.diagnostics.last_error_class = ErrorClass.NONE
+                    self.auth_diagnostic = AuthDiagnostic(
+                        classification="AUTH_SUCCEEDED",
+                        boundary="AUTH_SUCCEEDED",
+                        http_status=getattr(
+                            self._transport, "last_http_status", None
+                        ),
+                        response_clmid="CLMAuthLoginAck",
+                        result_code="0",
+                        official_reason="SUCCESS",
+                        response_matched_ack=True,
+                        encrypted_virtual_urls_present=True,
+                    )
                 except TachibanaError as exc:
                     self._clear_endpoints()
                     self.state = (
@@ -402,6 +638,11 @@ class TachibanaSession:
                             ErrorClass.PRIVATE_KEY_INVALID,
                             ErrorClass.AUTH_REJECTED,
                             ErrorClass.AUTH_RESPONSE_INVALID,
+                            ErrorClass.AUTH_SERVER_REJECTED,
+                            ErrorClass.AUTH_SUCCESS_DECRYPT_FAILED,
+                            ErrorClass.AUTH_PROTOCOL_FAILED,
+                            ErrorClass.AUTH_IP_REJECTED,
+                            ErrorClass.AUTH_LOCKED,
                             ErrorClass.VIRTUAL_URL_INVALID,
                         }
                         else SessionState.UNAVAILABLE

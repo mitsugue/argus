@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
 import pytest
+import requests
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
@@ -37,6 +38,7 @@ from argus_providers.tachibana.event_stream import (
     WebSocketEventConnector,
 )
 from argus_providers.tachibana.models import (
+    AuthDiagnostic,
     ErrorClass,
     Freshness,
     MarketStatus,
@@ -74,6 +76,7 @@ from scripts.tachibana_readonly_smoke import (
     _observation_is_usable_and_fresh,
     _smoke_pass_allowed,
 )
+import scripts.tachibana_live_acceptance as live_acceptance
 from scripts.tachibana_live_acceptance import _live_start_guard
 from scripts.tachibana_live_sensor_service import (
     _consume_reauthentication_budget,
@@ -311,10 +314,12 @@ def test_auth_uses_official_ack_oaep_sha256_and_category_urls(tmp_path):
     session.authenticate()
     assert session.state == SessionState.AVAILABLE
     called_url, payload, _ = transport.calls[0]
-    assert called_url.endswith("/e_api_v4r10/auth/")
+    assert called_url == "https://kabuka.e-shiten.jp/e_api_v4r10/auth/"
     assert payload["sCLMID"] == "CLMAuthLoginRequest"
     assert payload["sAuthId"] == "test-auth-id"
     assert payload["p_no"] == "1"
+    assert payload["p_sd_date"] == "2026.09.01-15:00:10.000"
+    assert payload["sJsonOfmt"] == "5"
     assert repr(session._endpoints) == "VirtualEndpoints(<redacted>)"
     assert session._market_data_endpoint("price") == urls["sUrlPrice"]
     assert not hasattr(session, "endpoint")
@@ -332,7 +337,8 @@ def test_auth_response_shape_fails_closed(tmp_path, mutation):
     transport.responses.append(response)
     with pytest.raises(TachibanaError) as caught:
         session.authenticate()
-    assert caught.value.classification == ErrorClass.AUTH_RESPONSE_INVALID
+    assert caught.value.classification == ErrorClass.AUTH_PROTOCOL_FAILED
+    assert session.auth_diagnostic.boundary == "PROTOCOL_FAILED"
     assert session.state == SessionState.AUTH_FAILED
     assert session._endpoints is None
 
@@ -341,7 +347,7 @@ def test_auth_response_shape_fails_closed(tmp_path, mutation):
     ({"p_no": "1", "p_errno": "-62", "sCLMID": "CLMAuthLoginRequest"},
      ErrorClass.OUTSIDE_HOURS),
     ({"p_no": "1", "p_errno": "9", "sCLMID": "CLMAuthLoginRequest"},
-     ErrorClass.MAINTENANCE),
+     ErrorClass.AUTH_MAINTENANCE),
     ({"p_no": "1", "p_errno": "-2", "sCLMID": "CLMAuthLoginRequest"},
      ErrorClass.RATE_LIMITED),
 ])
@@ -353,6 +359,108 @@ def test_auth_error_envelope_is_classified_before_success_only_fields(
         session.authenticate()
     assert caught.value.classification == expected
     assert session._endpoints is None
+
+
+@pytest.mark.parametrize(("result", "expected", "normalized", "reason"), [
+    (
+        "123456", ErrorClass.AUTH_SERVER_REJECTED,
+        "AUTH_SERVER_REJECTED_123456", "UNMAPPED_OFFICIAL_RESULT_CODE",
+    ),
+    (
+        "990002", ErrorClass.AUTH_MAINTENANCE,
+        "AUTH_MAINTENANCE", "SYSTEM_TEMPORARILY_STOPPED",
+    ),
+    (
+        "10005", ErrorClass.AUTH_IP_REJECTED,
+        "AUTH_IP_REJECTED", "IP_ADDRESS_INVALID",
+    ),
+    (
+        "10033", ErrorClass.AUTH_LOCKED,
+        "AUTH_LOCKED", "USER_MANAGEMENT_LOGIN_LOCKED",
+    ),
+])
+def test_auth_server_rejection_retains_only_safe_official_diagnostics(
+    tmp_path, result, expected, normalized, reason,
+):
+    response = {
+        "p_no": "1", "p_errno": "0", "sCLMID": "CLMAuthLoginAck",
+        "sResultCode": result, "sResultText": "must not be retained",
+    }
+    session, transport, _ = _session(tmp_path, [response])
+    transport.last_http_status = 200
+    with pytest.raises(TachibanaError) as caught:
+        session.authenticate()
+    assert caught.value.classification == expected
+    assert session.auth_diagnostic.safe_dict() == {
+        "classification": normalized,
+        "boundary": "SERVER_AUTH_REJECTED",
+        "httpStatus": 200,
+        "sCLMID": "CLMAuthLoginAck",
+        "sResultCode": result,
+        "officialReason": reason,
+        "responseMatchedCLMAuthLoginAck": True,
+        "encryptedVirtualUrlsPresent": False,
+    }
+    assert "must not be retained" not in repr(session.auth_diagnostic)
+
+
+def test_auth_diagnostic_rejects_unbounded_or_secret_shaped_fields():
+    with pytest.raises(ValueError, match="invalid_auth_diagnostic"):
+        AuthDiagnostic(classification="owner-auth-secret")
+    with pytest.raises(ValueError, match="invalid_auth_diagnostic"):
+        AuthDiagnostic(result_code="not-a-result-code")
+    with pytest.raises(ValueError, match="invalid_auth_diagnostic"):
+        AuthDiagnostic(http_status=999)
+
+
+def test_auth_success_without_virtual_urls_is_not_server_rejection(tmp_path):
+    response = {
+        "p_no": "1", "p_errno": "0", "sCLMID": "CLMAuthLoginAck",
+        "sResultCode": "0", "sKinsyouhouMidokuFlg": "1",
+    }
+    session, _, _ = _session(tmp_path, [response])
+    with pytest.raises(TachibanaError) as caught:
+        session.authenticate()
+    assert (
+        caught.value.classification
+        == ErrorClass.AUTH_SUCCESS_VIRTUAL_URLS_WITHHELD
+    )
+    assert (
+        session.auth_diagnostic.classification
+        == "AUTH_SUCCESS_VIRTUAL_URLS_WITHHELD"
+    )
+    assert session.auth_diagnostic.result_code == "0"
+    assert session.auth_diagnostic.encrypted_virtual_urls_present is False
+    assert session.state == SessionState.UNAVAILABLE
+
+
+def test_auth_success_decryption_failure_has_its_own_boundary(tmp_path):
+    session, transport, key = _session(tmp_path, [])
+    response, _ = _encrypted_session_response(key.public_key())
+    response["sUrlPrice"] = "not-valid-base64"
+    transport.responses.append(response)
+    with pytest.raises(TachibanaError) as caught:
+        session.authenticate()
+    assert caught.value.classification == ErrorClass.AUTH_SUCCESS_DECRYPT_FAILED
+    assert session.auth_diagnostic.classification == "AUTH_SUCCESS_DECRYPT_FAILED"
+    assert session.auth_diagnostic.boundary == "DECRYPT_FAILED"
+    assert session.auth_diagnostic.result_code == "0"
+    assert session.auth_diagnostic.encrypted_virtual_urls_present is True
+
+
+def test_auth_id_bom_and_edge_whitespace_are_removed_before_json(tmp_path):
+    session, transport, key = _session(tmp_path, [])
+    _write(
+        session.config.auth_id_path,
+        b"\xef\xbb\xbf\r\n  test-auth-id  \r\n",
+    )
+    response, _ = _encrypted_session_response(key.public_key())
+    transport.responses.append(response)
+    session.authenticate()
+    called_url, payload, _ = transport.calls[0]
+    assert called_url == "https://kabuka.e-shiten.jp/e_api_v4r10/auth/"
+    assert payload["sAuthId"] == "test-auth-id"
+    assert str(session.config.auth_id_path) not in payload.values()
 
 
 def test_auth_and_logout_accept_officially_optional_result_code(tmp_path):
@@ -379,7 +487,8 @@ def test_auth_rejects_wrong_category_or_version_in_decrypted_url(tmp_path):
     transport.responses.append(response)
     with pytest.raises(TachibanaError) as caught:
         session.authenticate()
-    assert caught.value.classification == ErrorClass.VIRTUAL_URL_INVALID
+    assert caught.value.classification == ErrorClass.AUTH_PROTOCOL_FAILED
+    assert session.auth_diagnostic.boundary == "PROTOCOL_FAILED"
 
 
 def test_auth_has_no_retry_and_secret_permissions_fail_closed(tmp_path):
@@ -681,6 +790,15 @@ class FakeRequestsSession:
         return self.response
 
 
+class RaisingRequestsSession:
+    def __init__(self, error):
+        self.error = error
+        self.trust_env = True
+
+    def post(self, url, **kwargs):
+        raise self.error
+
+
 def test_http_transport_streams_with_hard_bound_closes_and_ignores_proxy_env():
     raw = json.dumps({"p_errno": "0"}).encode("shift_jis")
     response = FakeHttpResponse([raw], headers={"Content-Length": str(len(raw))})
@@ -698,6 +816,29 @@ def test_http_transport_streams_with_hard_bound_closes_and_ignores_proxy_env():
         RequestsJsonTransport(http).post_json("https://example.invalid", {}, 8)
     assert caught.value.classification == ErrorClass.PROVIDER
     assert oversized.closed is True
+
+
+def test_auth_transport_preserves_http_protocol_and_timeout_boundaries():
+    payload = {"sCLMID": "CLMAuthLoginRequest"}
+    response = FakeHttpResponse([], status=403)
+    transport = RequestsJsonTransport(FakeRequestsSession(response))
+    with pytest.raises(TachibanaError) as caught:
+        transport.post_json("https://example.invalid", payload, 8)
+    assert caught.value.classification == ErrorClass.AUTH_HTTP_FAILED
+    assert transport.last_http_status == 403
+
+    invalid = FakeHttpResponse([b"not-json"], status=200)
+    with pytest.raises(TachibanaError) as caught:
+        RequestsJsonTransport(FakeRequestsSession(invalid)).post_json(
+            "https://example.invalid", payload, 8
+        )
+    assert caught.value.classification == ErrorClass.AUTH_PROTOCOL_FAILED
+
+    with pytest.raises(TachibanaError) as caught:
+        RequestsJsonTransport(
+            RaisingRequestsSession(requests.Timeout())
+        ).post_json("https://example.invalid", payload, 8)
+    assert caught.value.classification == ErrorClass.AUTH_TIMEOUT
 
 
 def test_http_transport_scrubs_credential_paths_from_dependency_debug_logs(caplog):
@@ -1872,3 +2013,50 @@ def test_acceptance_guard_never_consumes_auth_before_live_preopen():
     assert _live_start_guard(datetime(
         2026, 9, 2, 12, 30, 0, tzinfo=tokyo
     )) == "PREOPEN_START_WINDOWS_MISSED"
+
+
+def test_live_canary_outputs_safe_auth_boundary_without_response_text(
+    monkeypatch, capsys,
+):
+    class NullLease:
+        def __init__(self, _path):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class FakeSession:
+        auth_diagnostic = AuthDiagnostic(
+            classification="AUTH_SERVER_REJECTED_990006",
+            boundary="SERVER_AUTH_REJECTED",
+            http_status=200,
+            response_clmid="CLMAuthLoginAck",
+            result_code="990006",
+            official_reason="SYSTEM_LOGIN_FAILED",
+            response_matched_ack=True,
+            encrypted_virtual_urls_present=False,
+        )
+
+    class FakeRuntime:
+        def __init__(self, *_args, **_kwargs):
+            self.session = FakeSession()
+
+        def start(self):
+            raise TachibanaError(ErrorClass.AUTH_SERVER_REJECTED)
+
+        def stop(self):
+            return True
+
+    monkeypatch.setattr(live_acceptance, "_live_start_guard", lambda: None)
+    monkeypatch.setattr(live_acceptance, "ProcessSingletonLease", NullLease)
+    monkeypatch.setattr(live_acceptance, "TachibanaLiveRuntime", FakeRuntime)
+    assert live_acceptance.main() == 2
+    output = capsys.readouterr().out.strip()
+    assert "AUTH_SERVER_REJECTED_990006" in output
+    assert '\"httpStatus\":200' in output
+    assert '\"sCLMID\":\"CLMAuthLoginAck\"' in output
+    assert '\"sResultCode\":\"990006\"' in output
+    assert "sResultText" not in output
