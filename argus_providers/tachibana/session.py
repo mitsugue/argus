@@ -55,6 +55,51 @@ _LARGE_RESPONSE_BYTES = {
     "CLMMfdsGetMarketPriceHistory": 4 * 1024 * 1024,
     "CLMStkGetIssueMstKabu": 8 * 1024 * 1024,
 }
+_AUTH_MAINTENANCE_ERRNOS = frozenset({"9", "-12"})
+_AUTH_MAINTENANCE_RESULTS = frozenset({"990002", "990003", "990004"})
+_AUTH_OUTSIDE_HOURS_RESULTS = frozenset({"990005"})
+
+
+def _classify_auth_failure(
+    response: Mapping[str, Any], *, expected_p_no: str
+) -> ErrorClass | None:
+    """Validate the common auth envelope before inspecting success-only fields.
+
+    Provider error responses legitimately omit ``sResultCode`` and the five
+    virtual URLs.  Requiring success-only fields first masks maintenance and
+    outside-hours truth as a schema error, which makes a bounded operator
+    smoke test misleading.
+    """
+    if (
+        not isinstance(response, Mapping)
+        or not isinstance(response.get("p_no"), str)
+        or not isinstance(response.get("p_errno"), str)
+        or response.get("p_no") != expected_p_no
+    ):
+        return ErrorClass.AUTH_RESPONSE_INVALID
+    errno = response["p_errno"]
+    if errno != "0":
+        if errno in _AUTH_MAINTENANCE_ERRNOS:
+            return ErrorClass.MAINTENANCE
+        if errno == "-2":
+            return ErrorClass.RATE_LIMITED
+        if errno == "-62":
+            return ErrorClass.OUTSIDE_HOURS
+        if errno == "8":
+            return ErrorClass.CLOCK_SKEW
+        if errno == "6":
+            return ErrorClass.SEQUENCE_DESYNC
+        return ErrorClass.AUTH_REJECTED
+    result = response.get("sResultCode", "0")
+    if not isinstance(result, str):
+        return ErrorClass.AUTH_RESPONSE_INVALID
+    if result != "0":
+        if result in _AUTH_MAINTENANCE_RESULTS:
+            return ErrorClass.MAINTENANCE
+        if result in _AUTH_OUTSIDE_HOURS_RESULTS:
+            return ErrorClass.OUTSIDE_HOURS
+        return ErrorClass.AUTH_REJECTED
+    return None
 
 
 class JsonTransport(Protocol):
@@ -315,16 +360,11 @@ class TachibanaSession:
                         payload,
                         self.config.request_timeout_seconds,
                     )
-                    if (
-                        not isinstance(response, Mapping)
-                        or response.get("p_no") != payload["p_no"]
-                        or not isinstance(response.get("p_errno"), str)
-                        or not isinstance(response.get("sResultCode"), str)
-                        or not isinstance(response.get("sCLMID"), str)
-                    ):
-                        raise TachibanaError(ErrorClass.AUTH_RESPONSE_INVALID)
-                    if response["p_errno"] != "0" or response["sResultCode"] != "0":
-                        raise TachibanaError(ErrorClass.AUTH_REJECTED)
+                    failure = _classify_auth_failure(
+                        response, expected_p_no=payload["p_no"]
+                    )
+                    if failure is not None:
+                        raise TachibanaError(failure)
                     if response.get("sCLMID") != "CLMAuthLoginAck":
                         raise TachibanaError(ErrorClass.AUTH_RESPONSE_INVALID)
                     decrypted: dict[str, str] = {}
@@ -405,7 +445,7 @@ class TachibanaSession:
                 return (
                     response.get("p_no") == payload["p_no"]
                     and response.get("p_errno") == "0"
-                    and response.get("sResultCode") == "0"
+                    and response.get("sResultCode", "0") == "0"
                     and response.get("sCLMID") == "CLMAuthLogoutAck"
                 )
             except TachibanaError:

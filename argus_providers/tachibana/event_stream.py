@@ -37,6 +37,7 @@ from .sensor import (
     parse_event_frame,
 )
 from .session import TachibanaSession
+from .session_truth import SessionTruth, parse_provider_datetime
 
 
 TOKYO = ZoneInfo("Asia/Tokyo")
@@ -341,6 +342,80 @@ class EventRunSummary:
     last_error: ErrorClass
 
 
+@dataclass(frozen=True)
+class EventProgressSnapshot:
+    """Secret-free, value-free liveness counters for an active EVENT loop."""
+
+    connections_started: int
+    frames_received: int
+    observations_ingested: int
+    first_sequence: int | None
+    last_sequence: int | None
+    first_provider_timestamp: datetime | None
+    last_provider_timestamp: datetime | None
+    last_frame_received_at: datetime | None
+
+
+class EventLifecycleProgress:
+    """Thread-safe EVENT progression proof without retaining raw frames."""
+
+    def __init__(self) -> None:
+        self._connections = 0
+        self._frames = 0
+        self._observations = 0
+        self._first_sequence: int | None = None
+        self._last_sequence: int | None = None
+        self._first_provider_timestamp: datetime | None = None
+        self._last_provider_timestamp: datetime | None = None
+        self._last_frame_received_at: datetime | None = None
+        self._lock = threading.Lock()
+
+    def connection_started(self) -> None:
+        with self._lock:
+            self._connections += 1
+
+    def frame_received(
+        self, *, sequence: int, provider_timestamp: datetime,
+        received_at: datetime,
+    ) -> None:
+        if (
+            type(sequence) is not int
+            or sequence < 1
+            or provider_timestamp.tzinfo is None
+            or received_at.tzinfo is None
+        ):
+            raise TachibanaError(ErrorClass.CLOCK_SKEW)
+        provider = provider_timestamp.astimezone(timezone.utc)
+        received = received_at.astimezone(timezone.utc)
+        with self._lock:
+            self._frames += 1
+            if self._first_sequence is None:
+                self._first_sequence = sequence
+                self._first_provider_timestamp = provider
+            self._last_sequence = sequence
+            self._last_provider_timestamp = provider
+            self._last_frame_received_at = received
+
+    def observations_ingested(self, count: int) -> None:
+        if type(count) is not int or count < 0:
+            raise TachibanaError(ErrorClass.CONFIGURATION)
+        with self._lock:
+            self._observations += count
+
+    def snapshot(self) -> EventProgressSnapshot:
+        with self._lock:
+            return EventProgressSnapshot(
+                connections_started=self._connections,
+                frames_received=self._frames,
+                observations_ingested=self._observations,
+                first_sequence=self._first_sequence,
+                last_sequence=self._last_sequence,
+                first_provider_timestamp=self._first_provider_timestamp,
+                last_provider_timestamp=self._last_provider_timestamp,
+                last_frame_received_at=self._last_frame_received_at,
+            )
+
+
 class TachibanaEventLifecycle:
     """One synchronous, stop-aware EVENT receive loop with bounded recovery."""
 
@@ -356,6 +431,8 @@ class TachibanaEventLifecycle:
         monotonic: Callable[[], float] = time.monotonic,
         random_value: Callable[[], float] = random.random,
         waiter: Callable[[threading.Event, float], bool] | None = None,
+        session_truth_resolver: Callable[..., SessionTruth] | None = None,
+        progress: EventLifecycleProgress | None = None,
     ) -> None:
         if (
             not isinstance(session, TachibanaSession)
@@ -372,6 +449,8 @@ class TachibanaEventLifecycle:
         self._clock = clock
         self._random_value = random_value
         self._waiter = waiter or (lambda stop, seconds: stop.wait(seconds))
+        self._session_truth_resolver = session_truth_resolver
+        self._progress = progress or EventLifecycleProgress()
         self._budget = EventReconnectBudget(
             self._policy.maximum_reconnects_per_day, clock=clock
         )
@@ -470,6 +549,7 @@ class TachibanaEventLifecycle:
                         stop_event=stop_event,
                     )
                     connections += 1
+                    self._progress.connection_started()
                     self._diagnostics(connected=True)
                     for raw_frame in stream:
                         if stop_event.is_set():
@@ -483,6 +563,14 @@ class TachibanaEventLifecycle:
                         if received_at.tzinfo is None:
                             raise TachibanaError(ErrorClass.CLOCK_SKEW)
                         received_at = received_at.astimezone(timezone.utc)
+                        provider_time = parse_provider_datetime(fields["p_date"])
+                        if provider_time is None:
+                            raise TachibanaError(ErrorClass.CLOCK_SKEW)
+                        self._progress.frame_received(
+                            sequence=int(fields["p_no"]),
+                            provider_timestamp=provider_time,
+                            received_at=received_at,
+                        )
                         self._diagnostics(
                             connected=True,
                             health=status.provider_health,
@@ -496,17 +584,34 @@ class TachibanaEventLifecycle:
                         frame_time = datetime.strptime(
                             fields["p_date"], "%Y.%m.%d-%H:%M:%S.%f"
                         ).replace(tzinfo=TOKYO)
+                        market_date = frame_time.date()
+                        market_status = status.market_status
+                        market_date_verified = False
+                        if self._session_truth_resolver is not None:
+                            session_truth = self._session_truth_resolver(
+                                now=received_at,
+                                provider_time=provider_time,
+                                provider_health=status.provider_health,
+                                provider_market_status=status.market_status,
+                            )
+                            market_date = session_truth.market_date
+                            market_status = session_truth.market_status
+                            market_date_verified = (
+                                session_truth.market_date_verified
+                            )
                         for row in rows:
                             observation = normalize_market_price(
                                 row,
                                 received_at=received_at,
-                                market_date=frame_time.date(),
-                                market_status=status.market_status,
+                                market_date=market_date,
+                                market_status=market_status,
+                                market_date_verified=market_date_verified,
                                 fresh_for_seconds=self._session.config.fresh_for_seconds,
                                 endpoint_category="EVENT",
                             )
                             self._sensor.ingest(observation)
                             observations += 1
+                        self._progress.observations_ingested(len(rows))
                     if stop_event.is_set():
                         break
                     failure = TachibanaError(ErrorClass.NETWORK)
@@ -566,6 +671,8 @@ class TachibanaEventLifecycle:
 
 __all__ = [
     "EventRunSummary",
+    "EventLifecycleProgress",
+    "EventProgressSnapshot",
     "EventStatusSnapshot",
     "EventStatusTracker",
     "TachibanaEventLifecycle",

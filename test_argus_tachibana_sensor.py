@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import threading
 from urllib.parse import parse_qs, urlsplit
+from zoneinfo import ZoneInfo
 
 import pytest
 from cryptography.hazmat.primitives import hashes, serialization
@@ -29,6 +30,7 @@ from argus_providers.tachibana.evidence import (
     to_canonical_observations,
 )
 from argus_providers.tachibana.event_stream import (
+    EventLifecycleProgress,
     EventStatusTracker,
     TachibanaEventLifecycle,
     WebSocketEventConnector,
@@ -53,6 +55,20 @@ from argus_providers.tachibana.sensor import (
     parse_event_frame,
 )
 from argus_providers.tachibana.session import RequestsJsonTransport, TachibanaSession
+from argus_providers.tachibana.session_truth import (
+    JapanCashPhase,
+    parse_provider_datetime,
+    resolve_jp_cash_session,
+)
+from argus_providers.tachibana.singleton import (
+    ProcessSingletonLease,
+    SingletonLeaseError,
+)
+from argus_providers.tachibana.runtime import (
+    TachibanaLiveRuntime,
+    cross_validate_current,
+    validate_live_flags,
+)
 from scripts.tachibana_readonly_smoke import (
     _observation_is_usable_and_fresh,
     _smoke_pass_allowed,
@@ -171,10 +187,15 @@ def _row(**updates):
     return row
 
 
-def _event_frame(sequence: int, command: str, *records: tuple[str, str]) -> str:
+def _event_frame(
+    sequence: int,
+    command: str,
+    *records: tuple[str, str],
+    p_date: str = "2026.09.01-15:00:10.123",
+) -> str:
     fields = [
         ("p_no", str(sequence)),
-        ("p_date", "2026.09.01-15:00:10.123"),
+        ("p_date", p_date),
         ("p_cmd", command),
         *records,
     ]
@@ -307,6 +328,38 @@ def test_auth_response_shape_fails_closed(tmp_path, mutation):
         session.authenticate()
     assert caught.value.classification == ErrorClass.AUTH_RESPONSE_INVALID
     assert session.state == SessionState.AUTH_FAILED
+    assert session._endpoints is None
+
+
+@pytest.mark.parametrize("response, expected", [
+    ({"p_no": "1", "p_errno": "-62", "sCLMID": "CLMAuthLoginRequest"},
+     ErrorClass.OUTSIDE_HOURS),
+    ({"p_no": "1", "p_errno": "9", "sCLMID": "CLMAuthLoginRequest"},
+     ErrorClass.MAINTENANCE),
+    ({"p_no": "1", "p_errno": "-2", "sCLMID": "CLMAuthLoginRequest"},
+     ErrorClass.RATE_LIMITED),
+])
+def test_auth_error_envelope_is_classified_before_success_only_fields(
+    tmp_path, response, expected
+):
+    session, transport, _ = _session(tmp_path, [response])
+    with pytest.raises(TachibanaError) as caught:
+        session.authenticate()
+    assert caught.value.classification == expected
+    assert session._endpoints is None
+
+
+def test_auth_and_logout_accept_officially_optional_result_code(tmp_path):
+    session, transport, key = _session(tmp_path, [])
+    response, _ = _encrypted_session_response(key.public_key())
+    response.pop("sResultCode")
+    transport.responses.extend([
+        response,
+        {"p_no": "2", "p_errno": "0", "sCLMID": "CLMAuthLogoutAck"},
+    ])
+    session.authenticate()
+    assert session.state == SessionState.AVAILABLE
+    assert session.logout() is True
     assert session._endpoints is None
 
 
@@ -1281,6 +1334,42 @@ def test_event_lifecycle_reconnects_on_sequence_gap_and_requires_new_sequence_on
     assert sensor.latest("6501", now=NOW).fields["current_price"] == 2002.0
 
 
+def test_event_lifecycle_uses_current_session_truth_for_fresh_observation(
+    tmp_path,
+):
+    current = datetime(2026, 9, 2, 0, 0, 10, 123000, tzinfo=timezone.utc)
+    session, _, _ = _authenticated_session(tmp_path, websocket_enabled=True)
+    stop = threading.Event()
+
+    def frames(owned_stop):
+        yield _event_frame(
+            1,
+            "FD",
+            ("p_1_DPP", "2000"),
+            ("t_1_DPP:T", "09:00"),
+            p_date="2026.09.02-09:00:10.123",
+        )
+        owned_stop.set()
+
+    sensor = TransientLiveSensor(max_symbols=1, window_size=4, window_seconds=30)
+    lifecycle = TachibanaEventLifecycle(
+        session,
+        EventSubscription(("6501",)),
+        sensor,
+        connector=ScriptedEventConnector([frames]),
+        clock=lambda: current,
+        session_truth_resolver=resolve_jp_cash_session,
+    )
+    summary = lifecycle.run(stop)
+    observation = sensor.latest("6501", now=current)
+    assert summary.observations_ingested == 1
+    assert observation.market_status == MarketStatus.OPEN
+    assert observation.freshness == Freshness.FRESH
+    assert observation.source_timestamp == datetime(
+        2026, 9, 2, 0, 0, tzinfo=timezone.utc
+    )
+
+
 def test_event_lifecycle_has_daily_reconnect_exhaustion_and_terminal_st(tmp_path):
     session, _, _ = _authenticated_session(
         tmp_path, websocket_enabled=True, max_event_reconnects_per_day=1,
@@ -1356,3 +1445,233 @@ def test_cross_validation_and_redaction_remain_classified_and_secret_safe():
     redacted_query = redact_text(query, (auth_id,))
     assert auth_id not in redacted_query
     assert REDACTED in redacted_query
+
+
+@pytest.mark.parametrize("hour, minute, phase, status", [
+    (8, 59, JapanCashPhase.PREOPEN, MarketStatus.CLOSED),
+    (9, 0, JapanCashPhase.OPEN, MarketStatus.OPEN),
+    (11, 30, JapanCashPhase.LUNCH_CLOSED_INTERVAL, MarketStatus.CLOSED),
+    (12, 30, JapanCashPhase.AFTERNOON_OPEN, MarketStatus.OPEN),
+    (15, 30, JapanCashPhase.CLOSED, MarketStatus.CLOSED),
+])
+def test_session_truth_uses_canonical_jpx_boundaries(
+    hour, minute, phase, status
+):
+    provider = datetime(
+        2026, 9, 2, hour, minute, 5, tzinfo=ZoneInfo("Asia/Tokyo")
+    )
+    session_truth = resolve_jp_cash_session(
+        now=provider.astimezone(timezone.utc),
+        provider_time=provider,
+    )
+    assert session_truth.phase == phase
+    assert session_truth.market_status == status
+    assert session_truth.market_date == date(2026, 9, 2)
+    assert session_truth.market_date_verified is True
+    assert session_truth.calendar_version == "cal-2026.2"
+
+
+def test_session_truth_rejects_prior_day_clock_skew_and_provider_conflict():
+    now = datetime(2026, 9, 2, 0, 30, tzinfo=timezone.utc)
+    prior = datetime(2026, 9, 1, 0, 30, tzinfo=timezone.utc)
+    stale = resolve_jp_cash_session(now=now, provider_time=prior)
+    assert stale.phase == JapanCashPhase.UNKNOWN
+    assert stale.market_status == MarketStatus.UNKNOWN
+    assert stale.market_date_verified is False
+
+    closed = resolve_jp_cash_session(
+        now=now,
+        provider_time=now,
+        provider_market_status=MarketStatus.CLOSED,
+    )
+    assert closed.phase == JapanCashPhase.UNKNOWN
+    assert closed.market_status == MarketStatus.UNKNOWN
+    assert closed.market_date_verified is False
+
+    maintenance = resolve_jp_cash_session(
+        now=now,
+        provider_time=now,
+        provider_health=ProviderHealth.MAINTENANCE,
+    )
+    assert maintenance.phase == JapanCashPhase.MAINTENANCE
+    assert maintenance.market_status == MarketStatus.MAINTENANCE
+    assert maintenance.market_date_verified is False
+
+
+def test_provider_datetime_parser_is_exact_and_timezone_aware():
+    parsed = parse_provider_datetime("2026.09.02-09:00:05.123")
+    assert parsed == datetime(2026, 9, 2, 0, 0, 5, 123000, tzinfo=timezone.utc)
+    assert parse_provider_datetime("2026-09-02T09:00:05+09:00") is None
+
+
+def test_host_singleton_is_exclusive_empty_and_recovery_isolated(tmp_path):
+    path = tmp_path / "tachibana-live-sensor.lock"
+    first = ProcessSingletonLease(path)
+    second = ProcessSingletonLease(path)
+    first.acquire()
+    assert first.acquired is True
+    assert path.read_bytes() == b""
+    assert path.stat().st_mode & 0o777 == 0o600
+    with pytest.raises(SingletonLeaseError, match="singleton_held"):
+        second.acquire()
+    first.release()
+    second.acquire()
+    second.release()
+    with pytest.raises(SingletonLeaseError, match="recovery_filesystem"):
+        ProcessSingletonLease(Path("/var/data/tachibana.lock"))
+
+
+def test_event_progress_is_thread_safe_value_free_and_proves_advancement():
+    progress = EventLifecycleProgress()
+    first = datetime(2026, 9, 2, 0, 0, 5, tzinfo=timezone.utc)
+    second = first + timedelta(seconds=5)
+    progress.connection_started()
+    progress.frame_received(
+        sequence=1, provider_timestamp=first, received_at=first,
+    )
+    progress.observations_ingested(3)
+    progress.frame_received(
+        sequence=2, provider_timestamp=second, received_at=second,
+    )
+    snapshot = progress.snapshot()
+    assert snapshot.connections_started == 1
+    assert snapshot.frames_received == 2
+    assert snapshot.observations_ingested == 3
+    assert snapshot.first_sequence == 1
+    assert snapshot.last_sequence == 2
+    assert snapshot.first_provider_timestamp == first
+    assert snapshot.last_provider_timestamp == second
+    assert not hasattr(snapshot, "raw_frame")
+    assert not hasattr(snapshot, "market_values")
+
+
+def test_live_runtime_flags_are_exact_and_symbol_bound_is_three():
+    valid = TachibanaConfig(
+        enabled=True, shadow_only=True, authoritative=False,
+        websocket_enabled=True, max_symbols=3,
+    )
+    validate_live_flags(valid)
+    for invalid in (
+        replace(valid, enabled=False),
+        replace(valid, websocket_enabled=False),
+        replace(valid, max_symbols=4),
+    ):
+        with pytest.raises(TachibanaError) as failure:
+            validate_live_flags(invalid)
+        assert failure.value.classification == ErrorClass.CONFIGURATION
+
+
+class _ReferenceResponse:
+    def __init__(self, payload, *, ok=True):
+        self._payload = payload
+        self.ok = ok
+
+    def json(self):
+        return self._payload
+
+
+def _current_observation(symbol: str, now: datetime, price: str, volume: str):
+    return normalize_market_price(
+        _row(
+            sIssueCode=symbol,
+            pDPP=price,
+            pDV=volume,
+            **{"tDPP:T": now.astimezone(ZoneInfo("Asia/Tokyo")).strftime("%H:%M:%S")},
+        ),
+        received_at=now,
+        market_date=now.astimezone(ZoneInfo("Asia/Tokyo")).date(),
+        market_status=MarketStatus.OPEN,
+        market_date_verified=True,
+    )
+
+
+def test_operational_cross_validation_requires_current_explicitly_live_rows():
+    now = datetime(2026, 9, 2, 0, 1, 10, tzinfo=timezone.utc)
+    observations = {
+        symbol: _current_observation(symbol, now, "2000", "100000")
+        for symbol in ("8058", "9984", "5803")
+    }
+    rows = [{
+        "symbol": symbol,
+        "status": "live",
+        "realtimeEvidence": True,
+        "sourceTimestamp": now.isoformat(),
+        "price": 2000,
+        "volume": 100000,
+    } for symbol in observations]
+    result = cross_validate_current(
+        observations,
+        now=now,
+        fetch=lambda *_args, **_kwargs: _ReferenceResponse({
+            "status": "live", "stocks": rows,
+        }),
+    )
+    assert result.acceptable is True
+    assert result.classification == "ACCEPTABLE"
+    assert result.compared_symbol_count == 3
+    assert result.comparable_field_count == 6
+
+    delayed = [dict(row, realtimeEvidence=False) for row in rows]
+    rejected = cross_validate_current(
+        observations,
+        now=now,
+        fetch=lambda *_args, **_kwargs: _ReferenceResponse({
+            "status": "live", "stocks": delayed,
+        }),
+    )
+    assert rejected.classification == "INSUFFICIENT_CURRENT_COVERAGE"
+    assert rejected.acceptable is False
+
+
+def test_live_acceptance_requires_event_and_market_progression(tmp_path):
+    now = datetime(2026, 9, 2, 0, 1, 10, tzinfo=timezone.utc)
+    config = TachibanaConfig(
+        enabled=True, shadow_only=True, authoritative=False,
+        websocket_enabled=True, max_symbols=3,
+        auth_id_path=tmp_path / "auth", private_key_path=tmp_path / "key",
+    )
+    symbols = ("8058", "9984", "5803")
+    rows = [{
+        "symbol": symbol,
+        "status": "live",
+        "realtimeEvidence": True,
+        "sourceTimestamp": now.isoformat(),
+        "price": 2001,
+        "volume": 100100,
+    } for symbol in symbols]
+    runtime = TachibanaLiveRuntime(
+        config,
+        symbols=symbols,
+        clock=lambda: now,
+        reference_fetch=lambda *_args, **_kwargs: _ReferenceResponse({
+            "status": "live", "stocks": rows,
+        }),
+    )
+    runtime._authenticated = True
+    runtime.session.diagnostics.health = ProviderHealth.AVAILABLE
+    runtime.session.diagnostics.websocket_connected = True
+    first = now - timedelta(seconds=5)
+    runtime.progress.connection_started()
+    runtime.progress.frame_received(
+        sequence=1, provider_timestamp=first, received_at=first,
+    )
+    runtime.progress.frame_received(
+        sequence=2, provider_timestamp=now, received_at=now,
+    )
+    for symbol in symbols:
+        runtime.sensor.ingest(_current_observation(
+            symbol, first, "2000", "100000"
+        ))
+        runtime.sensor.ingest(_current_observation(
+            symbol, now, "2001", "100100"
+        ))
+        runtime.progress.observations_ingested(2)
+    accepted = runtime.acceptance_snapshot(cross_validate=True)
+    assert accepted.accepted is True
+    assert accepted.classification == "ACCEPTED"
+    assert accepted.event_sequence_advanced is True
+    assert accepted.event_timestamp_advanced is True
+    assert accepted.source_timestamp_advanced is True
+    assert accepted.market_value_changed is True
+    assert accepted.price_current_count == 3
+    assert accepted.cross_validation.acceptable is True

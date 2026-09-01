@@ -1,0 +1,495 @@
+"""Single-process, non-authoritative Tachibana live-sensor runtime.
+
+The runtime owns one provider session, one EVENT connection, and only bounded
+in-memory observations.  Its public snapshots contain liveness counters and
+classifications, never market values, virtual URLs, or raw provider frames.
+"""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
+import threading
+import time
+from typing import Callable, Mapping
+
+import requests
+
+from .client import TachibanaReadOnlyClient
+from .config import TachibanaConfig
+from .cross_validation import MismatchClass, compare_shadow
+from .event_stream import (
+    EventLifecycleProgress,
+    EventProgressSnapshot,
+    TachibanaEventLifecycle,
+)
+from .models import (
+    ErrorClass,
+    Freshness,
+    MarketStatus,
+    ProviderHealth,
+    TachibanaError,
+    TachibanaObservation,
+)
+from .normalization import normalize_market_price
+from .sensor import EventSubscription, TransientLiveSensor
+from .session import TachibanaSession
+from .session_truth import (
+    JapanCashPhase,
+    parse_provider_datetime,
+    resolve_jp_cash_session,
+)
+
+
+DEFAULT_SYMBOLS = ("8058", "9984", "5803")
+REFERENCE_ENDPOINT = (
+    "https://argus-backend-3j2m.onrender.com/api/argus/japan-watchlist"
+)
+PRICE_COLUMNS = (
+    "pDPP", "tDPP:T", "pPRP", "pDOP", "tDOP:T", "pDHP", "tDHP:T",
+    "pDLP", "tDLP:T", "pDV", "pDJ", "pVWAP", "pQAP", "pQAS",
+    "pQBP", "pQBS", "pAAV", "pABV", "pAV", "pBV", "pQOV", "pQUV",
+    *(f"pGAP{level}" for level in range(1, 11)),
+    *(f"pGAV{level}" for level in range(1, 11)),
+    *(f"pGBP{level}" for level in range(1, 11)),
+    *(f"pGBV{level}" for level in range(1, 11)),
+)
+_REFERENCE_FIELD_NAMES = {
+    "current_price": ("price", "currentPrice", "current_price", "close"),
+    "previous_close": ("previousClose", "previous_close", "prevClose"),
+    "open": ("open",),
+    "high": ("high",),
+    "low": ("low",),
+    "volume": ("volume",),
+}
+_CHANGE_FIELDS = (
+    "current_price", "best_ask", "best_bid", "volume",
+    "best_ask_volume", "best_bid_volume",
+)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _finite_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    result = float(value)
+    if result != result or result in {float("inf"), float("-inf")}:
+        return None
+    return result
+
+
+def _parse_iso_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def validate_live_flags(config: TachibanaConfig) -> None:
+    if (
+        not config.enabled
+        or not config.shadow_only
+        or config.authoritative
+        or not config.websocket_enabled
+        or not 1 <= config.max_symbols <= 3
+    ):
+        raise TachibanaError(ErrorClass.CONFIGURATION)
+
+
+def validate_symbols(symbols: tuple[str, ...], maximum: int = 3) -> tuple[str, ...]:
+    if not isinstance(symbols, tuple) or not 1 <= len(symbols) <= maximum:
+        raise TachibanaError(ErrorClass.CONFIGURATION)
+    try:
+        EventSubscription(symbols, max_symbols=maximum)
+    except ValueError:
+        raise TachibanaError(ErrorClass.CONFIGURATION) from None
+    return symbols
+
+
+@dataclass(frozen=True)
+class CrossValidationResult:
+    classification: str
+    trusted_symbol_count: int
+    compared_symbol_count: int
+    comparable_field_count: int
+    mismatch_counts: Mapping[str, int]
+
+    @property
+    def acceptable(self) -> bool:
+        return self.classification in {
+            "ACCEPTABLE", "ACCEPTABLE_WITH_DELAY_DIFFERENCES",
+        }
+
+
+def _reference_fields(row: Mapping[str, object]) -> dict[str, float | None]:
+    result: dict[str, float | None] = {}
+    for normalized, candidates in _REFERENCE_FIELD_NAMES.items():
+        result[normalized] = next((
+            parsed for key in candidates
+            if (parsed := _finite_number(row.get(key))) is not None
+        ), None)
+    return result
+
+
+def cross_validate_current(
+    observations: Mapping[str, TachibanaObservation],
+    *,
+    now: datetime | None = None,
+    fetch: Callable[..., object] = requests.get,
+) -> CrossValidationResult:
+    """Compare only independently current, explicitly live ARGUS rows."""
+    current = (now or _utcnow()).astimezone(timezone.utc)
+    try:
+        response = fetch(
+            REFERENCE_ENDPOINT,
+            params={"symbols": ",".join(sorted(observations))},
+            timeout=8,
+        )
+        if getattr(response, "ok", False) is not True:
+            raise ValueError
+        payload = response.json()
+    except Exception:
+        return CrossValidationResult(
+            "REFERENCE_UNAVAILABLE", 0, 0, 0, {},
+        )
+    if not isinstance(payload, Mapping) or payload.get("status") != "live":
+        return CrossValidationResult(
+            "REFERENCE_NOT_CURRENT", 0, 0, 0, {},
+        )
+    raw_rows = payload.get("stocks")
+    if not isinstance(raw_rows, list):
+        return CrossValidationResult(
+            "REFERENCE_INVALID", 0, 0, 0, {},
+        )
+    trusted: dict[str, tuple[Mapping[str, object], datetime]] = {}
+    for candidate in raw_rows:
+        if not isinstance(candidate, Mapping):
+            continue
+        symbol = candidate.get("symbol")
+        source = _parse_iso_timestamp(
+            candidate.get("sourceTimestamp") or candidate.get("exchangeTs")
+        )
+        if (
+            symbol not in observations
+            or candidate.get("status") != "live"
+            or candidate.get("realtimeEvidence") is not True
+            or source is None
+            or not timedelta(0) <= current - source <= timedelta(minutes=20)
+        ):
+            continue
+        trusted[str(symbol)] = (candidate, source)
+    mismatches: dict[str, int] = {}
+    delay_differences_bounded = True
+    compared_symbols = 0
+    comparable_fields = 0
+    for symbol, observation in observations.items():
+        trusted_item = trusted.get(symbol)
+        if trusted_item is None:
+            continue
+        row, timestamp = trusted_item
+        fields = _reference_fields(row)
+        if fields.get("current_price") is None:
+            continue
+        compared_symbols += 1
+        comparable_fields += sum(value is not None for value in fields.values())
+        for mismatch in compare_shadow(
+            observation, fields, trusted_timestamp=timestamp,
+            session_aligned=True,
+        ):
+            key = mismatch.classification.value
+            mismatches[key] = mismatches.get(key, 0) + 1
+            if mismatch.classification == MismatchClass.DELAY_DIFFERENCE:
+                relative_limit = 0.05 if mismatch.field == "volume" else 0.005
+                if (
+                    mismatch.relative_difference is None
+                    or mismatch.relative_difference > relative_limit
+                ):
+                    delay_differences_bounded = False
+    required_symbols = max(1, (len(observations) * 2 + 2) // 3)
+    if compared_symbols < required_symbols:
+        classification = "INSUFFICIENT_CURRENT_COVERAGE"
+    elif not mismatches:
+        classification = "ACCEPTABLE"
+    elif (
+        delay_differences_bounded
+        and set(mismatches) <= {MismatchClass.DELAY_DIFFERENCE.value}
+    ):
+        classification = "ACCEPTABLE_WITH_DELAY_DIFFERENCES"
+    else:
+        classification = "MISMATCH"
+    return CrossValidationResult(
+        classification=classification,
+        trusted_symbol_count=len(trusted),
+        compared_symbol_count=compared_symbols,
+        comparable_field_count=comparable_fields,
+        mismatch_counts=dict(sorted(mismatches.items())),
+    )
+
+
+@dataclass(frozen=True)
+class LiveAcceptanceSnapshot:
+    classification: str
+    authenticated: bool
+    price_current_count: int
+    event_connected: bool
+    event_frames: int
+    event_observations: int
+    event_sequence_advanced: bool
+    event_timestamp_advanced: bool
+    source_timestamp_advanced: bool
+    market_value_changed: bool
+    session_phase: str
+    market_date_verified: bool
+    provider_health: str
+    cross_validation: CrossValidationResult | None
+
+    @property
+    def accepted(self) -> bool:
+        return self.classification == "ACCEPTED"
+
+    def safe_dict(self) -> dict[str, object]:
+        result = asdict(self)
+        result["accepted"] = self.accepted
+        return result
+
+
+class TachibanaLiveRuntime:
+    """Own one authenticated session and one receive-only EVENT lifecycle."""
+
+    def __init__(
+        self,
+        config: TachibanaConfig,
+        *,
+        symbols: tuple[str, ...] = DEFAULT_SYMBOLS,
+        clock: Callable[[], datetime] = _utcnow,
+        reference_fetch: Callable[..., object] = requests.get,
+    ) -> None:
+        validate_live_flags(config)
+        self.config = config
+        self.symbols = validate_symbols(symbols)
+        self._clock = clock
+        self._reference_fetch = reference_fetch
+        self.session = TachibanaSession(config, clock=clock)
+        self.sensor = TransientLiveSensor(
+            max_symbols=len(self.symbols),
+            window_size=config.rolling_window_size,
+            window_seconds=config.rolling_window_seconds,
+        )
+        self.progress = EventLifecycleProgress()
+        self.stop_event = threading.Event()
+        self._event_thread: threading.Thread | None = None
+        self._event_error = ErrorClass.NONE
+        self._authenticated = False
+        self._price_observations: dict[str, TachibanaObservation] = {}
+
+    def start(self) -> None:
+        self.session.authenticate()
+        self._authenticated = True
+        try:
+            self._read_price_snapshot()
+            lifecycle = TachibanaEventLifecycle(
+                self.session,
+                EventSubscription(self.symbols, max_symbols=len(self.symbols)),
+                self.sensor,
+                session_truth_resolver=resolve_jp_cash_session,
+                progress=self.progress,
+            )
+
+            def _receive() -> None:
+                try:
+                    lifecycle.run(self.stop_event)
+                except TachibanaError as exc:
+                    self._event_error = exc.classification
+                except Exception:
+                    self._event_error = ErrorClass.NETWORK
+
+            self._event_thread = threading.Thread(
+                target=_receive,
+                name="tachibana-event-receiver",
+                daemon=False,
+            )
+            self._event_thread.start()
+        except Exception:
+            self.stop()
+            raise
+
+    def _read_price_snapshot(self) -> None:
+        response = TachibanaReadOnlyClient(self.session).market_price(
+            self.symbols, PRICE_COLUMNS
+        )
+        rows = response.get("aCLMMfdsMarketPrice")
+        if not isinstance(rows, list) or len(rows) != len(self.symbols):
+            raise TachibanaError(ErrorClass.PROVIDER)
+        received = self._clock().astimezone(timezone.utc)
+        truth = resolve_jp_cash_session(
+            now=received,
+            provider_time=parse_provider_datetime(response.get("p_rv_date")),
+            provider_health=ProviderHealth.AVAILABLE,
+        )
+        normalized: dict[str, TachibanaObservation] = {}
+        for row in rows:
+            observation = normalize_market_price(
+                row,
+                received_at=received,
+                market_date=truth.market_date,
+                market_status=truth.market_status,
+                market_date_verified=truth.market_date_verified,
+                fresh_for_seconds=self.config.fresh_for_seconds,
+            )
+            normalized[observation.symbol] = observation
+        if set(normalized) != set(self.symbols):
+            raise TachibanaError(ErrorClass.PROVIDER)
+        self._price_observations = normalized
+
+    def _latest_current(self, now: datetime) -> dict[str, TachibanaObservation]:
+        result: dict[str, TachibanaObservation] = {}
+        for symbol in self.symbols:
+            observation = self.sensor.latest(symbol, now=now)
+            if observation is None:
+                observation = self._price_observations.get(symbol)
+            if (
+                observation is not None
+                and observation.freshness == Freshness.FRESH
+                and observation.market_status == MarketStatus.OPEN
+                and observation.fresh_until is not None
+                and observation.fresh_until >= now
+                and _finite_number(observation.fields.get("current_price"))
+                is not None
+            ):
+                result[symbol] = observation
+        return result
+
+    def acceptance_snapshot(self, *, cross_validate: bool = False) -> LiveAcceptanceSnapshot:
+        now = self._clock().astimezone(timezone.utc)
+        progress = self.progress.snapshot()
+        truth = resolve_jp_cash_session(
+            now=now,
+            provider_time=progress.last_provider_timestamp,
+            provider_health=self.session.diagnostics.health,
+        )
+        current = self._latest_current(now)
+        source_advanced = False
+        market_changed = False
+        for symbol in self.symbols:
+            window = self.sensor.window(symbol, now=now)
+            timestamps = {
+                item.source_timestamp for item in window
+                if item.source_timestamp is not None
+            }
+            source_advanced = source_advanced or len(timestamps) >= 2
+            for previous, latest in zip(window, window[1:]):
+                if any(
+                    previous.fields.get(field) != latest.fields.get(field)
+                    for field in _CHANGE_FIELDS
+                ):
+                    market_changed = True
+                    break
+        sequence_advanced = bool(
+            progress.first_sequence is not None
+            and progress.last_sequence is not None
+            and progress.last_sequence > progress.first_sequence
+        )
+        timestamp_advanced = bool(
+            progress.first_provider_timestamp is not None
+            and progress.last_provider_timestamp is not None
+            and progress.last_provider_timestamp > progress.first_provider_timestamp
+        )
+        cross = (
+            cross_validate_current(
+                current, now=now, fetch=self._reference_fetch
+            ) if cross_validate and current else None
+        )
+        event_connected = self.session.diagnostics.websocket_connected
+        if self._event_error != ErrorClass.NONE:
+            classification = f"EVENT_{self._event_error.value}"
+        elif truth.phase not in {
+            JapanCashPhase.OPEN, JapanCashPhase.AFTERNOON_OPEN,
+        }:
+            classification = "MARKET_NOT_OPEN_CURRENT"
+        elif len(current) != len(self.symbols):
+            classification = "PRICE_OR_EVENT_NOT_CURRENT"
+        elif not event_connected:
+            classification = "EVENT_NOT_CONNECTED"
+        elif not sequence_advanced or not timestamp_advanced:
+            classification = "EVENT_NOT_ADVANCING"
+        elif not source_advanced:
+            classification = "SOURCE_TIMESTAMP_NOT_ADVANCING"
+        elif not market_changed:
+            classification = "MARKET_MOVE_NOT_OBSERVED"
+        elif cross is None or not cross.acceptable:
+            classification = "CROSS_VALIDATION_NOT_ACCEPTABLE"
+        else:
+            classification = "ACCEPTED"
+        return LiveAcceptanceSnapshot(
+            classification=classification,
+            authenticated=self._authenticated,
+            price_current_count=len(current),
+            event_connected=event_connected,
+            event_frames=progress.frames_received,
+            event_observations=progress.observations_ingested,
+            event_sequence_advanced=sequence_advanced,
+            event_timestamp_advanced=timestamp_advanced,
+            source_timestamp_advanced=source_advanced,
+            market_value_changed=market_changed,
+            session_phase=truth.phase.value,
+            market_date_verified=truth.market_date_verified,
+            provider_health=self.session.diagnostics.health.value,
+            cross_validation=cross,
+        )
+
+    def wait_for_acceptance(
+        self, *, timeout_seconds: int, interval_seconds: float = 2.0,
+    ) -> LiveAcceptanceSnapshot:
+        if not 30 <= timeout_seconds <= 900 or not 0.2 <= interval_seconds <= 10:
+            raise TachibanaError(ErrorClass.CONFIGURATION)
+        deadline = time.monotonic() + timeout_seconds
+        latest = self.acceptance_snapshot()
+        last_cross_validation = 0.0
+        while time.monotonic() < deadline and not self.stop_event.wait(
+            interval_seconds
+        ):
+            should_cross_validate = (
+                time.monotonic() - last_cross_validation >= 30
+                and self._latest_current(self._clock().astimezone(timezone.utc))
+            )
+            latest = self.acceptance_snapshot(
+                cross_validate=bool(should_cross_validate)
+            )
+            if should_cross_validate:
+                last_cross_validation = time.monotonic()
+            if latest.accepted or self._event_error != ErrorClass.NONE:
+                return latest
+        return latest
+
+    def stop(self) -> bool:
+        self.stop_event.set()
+        if self._event_thread is not None and self._event_thread.is_alive():
+            self._event_thread.join(timeout=5)
+        teardown = True
+        if self._authenticated:
+            teardown = self.session.logout()
+        self._authenticated = False
+        self.sensor.clear()
+        self._price_observations.clear()
+        return teardown
+
+
+__all__ = [
+    "CrossValidationResult",
+    "DEFAULT_SYMBOLS",
+    "LiveAcceptanceSnapshot",
+    "PRICE_COLUMNS",
+    "REFERENCE_ENDPOINT",
+    "TachibanaLiveRuntime",
+    "cross_validate_current",
+    "validate_live_flags",
+    "validate_symbols",
+]

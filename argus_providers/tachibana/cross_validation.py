@@ -30,12 +30,15 @@ class Tolerance:
 
 
 DEFAULT_TOLERANCES: Mapping[str, Tolerance] = MappingProxyType({
-    "current_price": Tolerance(absolute=0.01, relative=0.0001),
+    # Independently sampled live feeds need a small temporal/tick allowance.
+    # One yen or 10 bp is still narrow enough to expose a material divergence.
+    "current_price": Tolerance(absolute=1.0, relative=0.001),
     "previous_close": Tolerance(absolute=0.01, relative=0.0001),
     "open": Tolerance(absolute=0.01, relative=0.0001),
     "high": Tolerance(absolute=0.01, relative=0.0001),
     "low": Tolerance(absolute=0.01, relative=0.0001),
-    "volume": Tolerance(absolute=1.0, relative=0.001),
+    # Both feeds can be captured between lots; tolerate one board lot or 2%.
+    "volume": Tolerance(absolute=100.0, relative=0.02),
 })
 
 
