@@ -136,7 +136,7 @@ jobs:
             -o "$RUNNER_TEMP/osint-recovery.json" -w '%{http_code}' \
             "$BE/api/argus/admin/remote-journal/recovery-sidecar")
           if [ "$RECOVERY_STATUS" = "200" ]; then
-            python3 scripts/prepare_remote_journal_publish.py \
+            PYTHONPATH="$GITHUB_WORKSPACE" python3 scripts/prepare_remote_journal_publish.py \
               validate-sidecar \
               --recovery "$RUNNER_TEMP/osint-recovery.json" > /dev/null
             curl --fail --silent --show-error --max-time 60 \
@@ -644,7 +644,7 @@ jobs:
           assert checkpoint.get("readBackVerified") is True
           assert checkpoint.get("includedWalSequence") == target
           PY
-          python3 scripts/prepare_remote_journal_publish.py \
+          PYTHONPATH="$GITHUB_WORKSPACE" python3 scripts/prepare_remote_journal_publish.py \
             validate-sidecar \
             --recovery "$RUNNER_TEMP/osint-recovery.json" > /dev/null
       - name: Commit exact pair by CAS and enqueue one receipt

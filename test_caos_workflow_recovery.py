@@ -1,4 +1,8 @@
+import os
 import re
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 from scripts.deploy_scope import classify
@@ -99,6 +103,52 @@ def test_watchtower_writer_and_rearm_concurrency_remain_disjoint():
     assert "|| 'caos-watchtower'" in text
     assert "cancel-in-progress: false" in text
     assert "queue: max" not in text
+
+
+def test_watchtower_direct_publish_prechecks_bind_repo_import_path():
+    text = WATCHTOWER_WORKFLOW.read_text(encoding="utf-8")
+    patrol = text.split("  patrol:", 1)[1].split(
+        "\n  remote-journal-rearm:", 1
+    )[0]
+    rearm = text.split("  remote-journal-rearm:", 1)[1]
+    direct = (
+        'PYTHONPATH="$GITHUB_WORKSPACE" python3 '
+        "scripts/prepare_remote_journal_publish.py"
+    )
+
+    assert patrol.count(direct) == 1
+    assert rearm.count(direct) == 1
+    assert "python3 scripts/prepare_remote_journal_publish.py" not in \
+        text.replace(direct, "")
+
+
+def test_watchtower_publish_helper_import_topologies_are_executable(tmp_path):
+    root = Path(__file__).resolve().parent
+    direct_env = os.environ.copy()
+    direct_env["PYTHONPATH"] = str(root)
+    direct = subprocess.run(
+        [sys.executable, "scripts/prepare_remote_journal_publish.py", "--help"],
+        cwd=root, env=direct_env, check=False, capture_output=True, text=True,
+    )
+    assert direct.returncode == 0, direct.stderr
+
+    runner = tmp_path / "runner-temp"
+    runner.mkdir()
+    shutil.copyfile(
+        root / "scripts" / "prepare_remote_journal_publish.py",
+        runner / "prepare_remote_journal_publish.py",
+    )
+    shutil.copyfile(
+        root / "argus_remote_journal.py", runner / "argus_remote_journal.py"
+    )
+    copied_env = os.environ.copy()
+    copied_env.pop("PYTHONPATH", None)
+    copied = subprocess.run(
+        [sys.executable, str(runner / "prepare_remote_journal_publish.py"),
+         "--help"],
+        cwd=tmp_path, env=copied_env, check=False, capture_output=True, text=True,
+    )
+    assert copied.returncode == 0, copied.stderr
 
 
 def test_workflow_only_release_scope_is_backend_false():
