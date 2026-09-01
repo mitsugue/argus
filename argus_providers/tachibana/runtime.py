@@ -260,6 +260,7 @@ class LiveAcceptanceSnapshot:
     execution_progression: bool
     preopen_book_live: bool
     execution_market_live: bool
+    transition_window: str | None
     session_phase: str
     market_date_verified: bool
     provider_health: str
@@ -309,6 +310,7 @@ class TachibanaLiveRuntime:
         self._execution_event_baseline: datetime | None = None
         self._preopen_book_live = False
         self._execution_market_live = False
+        self._transition_window: str | None = None
         self._last_acceptable_cross: CrossValidationResult | None = None
         self._last_acceptable_cross_at: datetime | None = None
 
@@ -415,10 +417,23 @@ class TachibanaLiveRuntime:
         market_changed = False
         book_progression = False
         execution_progression = False
-        preopen_start = datetime.combine(
+        morning_preopen_start = datetime.combine(
             truth.market_date, datetime.min.time(), _TOKYO
         ).replace(hour=8).astimezone(timezone.utc)
-        execution_start = preopen_start + timedelta(hours=1)
+        morning_execution_start = morning_preopen_start + timedelta(hours=1)
+        afternoon_preopen_start = morning_preopen_start + timedelta(
+            hours=4, minutes=5
+        )
+        afternoon_execution_start = morning_preopen_start + timedelta(
+            hours=4, minutes=30
+        )
+        execution_start = (
+            morning_execution_start
+            if self._transition_window == "MORNING"
+            else afternoon_execution_start
+            if self._transition_window == "AFTERNOON"
+            else None
+        )
         for symbol in self.symbols:
             window = self.sensor.window(symbol, now=now)
             timestamps = {
@@ -433,21 +448,31 @@ class TachibanaLiveRuntime:
                 ):
                     market_changed = True
                 if (
-                    previous.received_timestamp >= preopen_start
-                    and latest.received_timestamp < execution_start
-                    and (
-                        previous.asks != latest.asks
-                        or previous.bids != latest.bids
-                        or any(
-                            previous.fields.get(field)
-                            != latest.fields.get(field)
-                            for field in _BOOK_CHANGE_FIELDS
-                        )
+                    (
+                        morning_preopen_start
+                        <= previous.received_timestamp
+                        < morning_execution_start
+                        and latest.received_timestamp < morning_execution_start
+                    )
+                    or (
+                        afternoon_preopen_start
+                        <= previous.received_timestamp
+                        < afternoon_execution_start
+                        and latest.received_timestamp < afternoon_execution_start
+                    )
+                ) and (
+                    previous.asks != latest.asks
+                    or previous.bids != latest.bids
+                    or any(
+                        previous.fields.get(field)
+                        != latest.fields.get(field)
+                        for field in _BOOK_CHANGE_FIELDS
                     )
                 ):
                     book_progression = True
                 if (
-                    previous.received_timestamp >= execution_start
+                    execution_start is not None
+                    and previous.received_timestamp >= execution_start
                     and any(
                         previous.fields.get(field) != latest.fields.get(field)
                         for field in _EXECUTION_CHANGE_FIELDS
@@ -465,7 +490,11 @@ class TachibanaLiveRuntime:
             and progress.last_provider_timestamp > progress.first_provider_timestamp
         )
         if (
-            truth.phase == JapanCashPhase.PREOPEN
+            not self._preopen_book_live
+            and truth.phase in {
+                JapanCashPhase.PREOPEN,
+                JapanCashPhase.AFTERNOON_PREOPEN,
+            }
             and truth.market_date_verified
             and progress.last_provider_timestamp is not None
             and self._preopen_event_baseline is None
@@ -489,13 +518,22 @@ class TachibanaLiveRuntime:
             and progress.last_provider_timestamp > self._execution_event_baseline
         )
         if (
-            truth.phase == JapanCashPhase.PREOPEN
+            not self._preopen_book_live
+            and truth.phase in {
+                JapanCashPhase.PREOPEN,
+                JapanCashPhase.AFTERNOON_PREOPEN,
+            }
             and truth.market_date_verified
             and self.session.diagnostics.websocket_connected
             and preopen_event_progression
             and book_progression
         ):
             self._preopen_book_live = True
+            self._transition_window = (
+                "MORNING"
+                if truth.phase == JapanCashPhase.PREOPEN
+                else "AFTERNOON"
+            )
         cross = (
             cross_validate_current(
                 current, now=now, fetch=self._reference_fetch
@@ -534,11 +572,17 @@ class TachibanaLiveRuntime:
         elif not self._preopen_book_live:
             classification = (
                 "PREOPEN_BOOK_PROGRESSING"
-                if truth.phase == JapanCashPhase.PREOPEN
+                if truth.phase in {
+                    JapanCashPhase.PREOPEN,
+                    JapanCashPhase.AFTERNOON_PREOPEN,
+                }
                 and truth.market_date_verified
                 else "PREOPEN_BOOK_UNPROVEN"
             )
-        elif truth.phase == JapanCashPhase.PREOPEN:
+        elif truth.phase in {
+            JapanCashPhase.PREOPEN,
+            JapanCashPhase.AFTERNOON_PREOPEN,
+        }:
             classification = "PREOPEN_BOOK_LIVE"
         elif truth.phase not in {
             JapanCashPhase.OPEN, JapanCashPhase.AFTERNOON_OPEN,
@@ -579,6 +623,7 @@ class TachibanaLiveRuntime:
             ),
             preopen_book_live=self._preopen_book_live,
             execution_market_live=self._execution_market_live,
+            transition_window=self._transition_window,
             session_phase=truth.phase.value,
             market_date_verified=truth.market_date_verified,
             provider_health=self.session.diagnostics.health.value,
@@ -625,6 +670,7 @@ class TachibanaLiveRuntime:
         self._execution_event_baseline = None
         self._preopen_book_live = False
         self._execution_market_live = False
+        self._transition_window = None
         self._last_acceptable_cross = None
         self._last_acceptable_cross_at = None
         return teardown

@@ -56,7 +56,9 @@ fixed to one instance. EVENT reconnects are bounded to three per Tokyo day.
 The provider's 05:35 service-availability boundary is not treated as live-market
 readiness. The worker makes no Tachibana request before its 07:55 JST live
 sensor boundary and keeps one healthy session across morning pre-open and the
-09:00 execution transition. A confirmed `SESSION_EXPIRED` state can use at most
+09:00 execution transition. If that start window is operationally missed, the
+same proof may instead span the official 12:05 afternoon pre-open and 12:30
+afternoon execution transition. A confirmed `SESSION_EXPIRED` state can use at most
 two delayed reauthentication attempts in a rolling 15-minute window. That is a
 bounded recovery policy, not a once-per-day product constraint. Maintenance,
 outside-hours, exhausted recovery, and other faults remain truthfully degraded
@@ -69,23 +71,68 @@ morning `PREOPEN` begins at 08:00 and `AFTERNOON_PREOPEN` begins at 12:05.
 `UNKNOWN` always fails closed. Acceptance requires both distinct stages:
 
 - `PREOPEN_BOOK_LIVE`: a verified current JPX date, advancing EVENT chronology,
-  and a current-session bid/ask, quantity, or depth change after 08:00; it does
-  not require an execution-price, volume, turnover, or VWAP change;
-- `EXECUTION_MARKET_LIVE`: after 09:00, current observations for all three
-  symbols, post-open EVENT and trade-source timestamp progression, an observed
-  execution-field change, independent current-source coverage for at least two
-  of three symbols, and no unclassified cross-provider mismatch.
+  and a current-session bid/ask, quantity, or depth change in either the
+  08:00–09:00 primary window or 12:05–12:30 fallback window; it does not require
+  an execution-price, volume, turnover, or VWAP change;
+- `EXECUTION_MARKET_LIVE`: after the corresponding 09:00 or 12:30 open, current
+  observations for all configured symbols, post-open EVENT and trade-source
+  timestamp progression, an observed execution-field change, independent
+  current-source coverage for at least two of three symbols, and no
+  unclassified cross-provider mismatch.
 
 A connected WebSocket without packet progression remains unproven. The exact
 official provider operation code is retained in secret-safe acceptance metadata
 without translating an undocumented code into a stronger market semantic.
 
-Cross-validation allows one yen or 10 bp for independently sampled current
-price, exact-to-1-bp daily reference/OHLC values, and one board lot or 2% for
-volume. A classified feed-delay difference is accepted only within 50 bp for
-price/OHLC or 5% for volume. Missing reference fields reduce coverage; they are
-never treated as a match.
+The cross-validation policy is frozen before live observation. Comparable
+fields are current price, previous close, open, high, low, volume, and market
+status only when both providers expose the same semantic. The trusted row must
+be explicitly live, carry realtime evidence, and have a non-future source
+timestamp no older than 20 minutes. At least two of three configured symbols
+must be comparable and current price must be present. Tolerances are one yen or
+10 bp for independently sampled current price, exact-to-1-bp daily
+reference/OHLC values, and one board lot or 2% for volume. A classified
+feed-delay difference is acceptable only within 50 bp for price/OHLC or 5% for
+volume. Missing fields reduce coverage; they are never treated as a match.
+Mismatch classes are `TIMESTAMP_SKEW`, `DELAY_DIFFERENCE`,
+`SESSION_DIFFERENCE`, `FIELD_SEMANTICS`, `CORPORATE_ACTION`, `MARKET_STATE`,
+`PROVIDER_ERROR`, `NORMALIZATION_ERROR`, and `UNKNOWN`; only no mismatch or a
+bounded delay-only result is acceptable.
 
 Tachibana remains `SHADOW_NON_AUTHORITATIVE`. It has no public route, no order
 surface, no scanner integration, and no path to SDA authority or Japanese
 execution.
+
+## Deferred merge, deployment, and production acceptance
+
+Do not execute this sequence until the local dual-phase gate passes:
+
+1. Fetch protected `main`, rebase the isolated branch, and rerun the full
+   backend suite plus frontend lint/build. Reconfirm the diff contains only the
+   Tachibana slice and these operations notes.
+2. Push the isolated branch, open a review, require all protected checks, merge
+   through the repository's protected path, and fetch the resulting immutable
+   main commit and tree identities.
+3. Create exactly one Singapore `0.5c-512mb` background worker in the existing
+   Production environment. Use the build/start commands above, no disk, no
+   inbound endpoint, and no `/var/data` access.
+4. Upload the two secret files from their canonical local paths through the
+   platform's secret-file mechanism. Secret contents must never enter a shell
+   argument, environment value, browser form, Git object, or log.
+5. Apply only the non-secret flags listed above. Confirm one instance,
+   `SHADOW_NON_AUTHORITATIVE`, no execution capability, and no Recovery
+   configuration inheritance before starting the worker.
+6. Observe the worker's bounded `TACHIBANA_SENSOR_STATE` metadata until the
+   same PREOPEN-to-corresponding-OPEN transition produces
+   `TACHIBANA_PRODUCTION_ACCEPTANCE`. A connected socket alone is not a pass.
+
+## Rollback
+
+Rollback affects only the new background worker: suspend it, confirm its single
+session is torn down and its in-memory URLs are erased, then delete the worker
+if rollback is final. The merged files are inert while their enable flag is
+false and have no scanner or public-route integration. Do not roll back the
+existing backend, alter its environment, remove or edit `/var/data`, change any
+Recovery service/timer/workflow, or start Formal Recovery. Verify the public
+backend identity and all Recovery identities remain exactly as observed before
+the Tachibana deployment.

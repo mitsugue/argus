@@ -22,6 +22,8 @@ from argus_providers.tachibana.singleton import ProcessSingletonLease
 _TOKYO = ZoneInfo("Asia/Tokyo")
 _EARLIEST_LIVE_START = wall_time(7, 55)
 _LATEST_PREOPEN_START = wall_time(9, 0)
+_AFTERNOON_LIVE_START = wall_time(12, 0)
+_LATEST_AFTERNOON_PREOPEN_START = wall_time(12, 30)
 
 
 def _timeout() -> int:
@@ -51,9 +53,13 @@ def _live_start_guard(now: datetime | None = None) -> str | None:
         return "JPX_TRADING_DAY_CLOSED"
     if local.time() < _EARLIEST_LIVE_START:
         return "LIVE_START_GUARD_BEFORE_0755"
-    if local.time() >= _LATEST_PREOPEN_START:
-        return "PREOPEN_START_WINDOW_MISSED"
-    return None
+    if local.time() < _LATEST_PREOPEN_START:
+        return None
+    if local.time() < _AFTERNOON_LIVE_START:
+        return "WAIT_FOR_AFTERNOON_PREOPEN"
+    if local.time() < _LATEST_AFTERNOON_PREOPEN_START:
+        return None
+    return "PREOPEN_START_WINDOWS_MISSED"
 
 
 def main() -> int:
