@@ -44,6 +44,54 @@ def test_restoration_allowlist_is_exact_and_core_semantics_stay_closed():
         in source.AUTHORIZED_EXTENSION_PATHS
 
 
+def test_tachibana_shadow_provider_is_authorized_as_isolated_package_only():
+    tachibana = {
+        "argus_providers/__init__.py",
+        "argus_providers/tachibana/__init__.py",
+        "argus_providers/tachibana/client.py",
+        "argus_providers/tachibana/config.py",
+        "argus_providers/tachibana/cross_validation.py",
+        "argus_providers/tachibana/event_stream.py",
+        "argus_providers/tachibana/evidence.py",
+        "argus_providers/tachibana/models.py",
+        "argus_providers/tachibana/normalization.py",
+        "argus_providers/tachibana/redaction.py",
+        "argus_providers/tachibana/runtime.py",
+        "argus_providers/tachibana/sensor.py",
+        "argus_providers/tachibana/session.py",
+        "argus_providers/tachibana/session_truth.py",
+        "argus_providers/tachibana/singleton.py",
+        "docs/evidence/tachibana-v4r10-2026-09-01.md",
+        "docs/operations/tachibana-live-shadow.md",
+        "requirements-tachibana.txt",
+        "scripts/tachibana_live_acceptance.py",
+        "scripts/tachibana_live_sensor_service.py",
+        "scripts/tachibana_readonly_smoke.py",
+        "test_argus_tachibana_sensor.py",
+    }
+    assert tachibana.issubset(source.AUTHORIZED_EXTENSION_PATHS)
+    # The provider stays an isolated package: no authorization is granted to a
+    # product entry point, requirements.txt, or the decision core through it.
+    for closed in ("requirements.txt", "wsgi.py", "gunicorn.conf.py",
+                   "argus_market_data_truth.py", "argus_rules.py"):
+        assert closed not in source.AUTHORIZED_EXTENSION_PATHS
+
+
+def test_recovery_only_admissions_are_listed_without_product_authority():
+    # Paths merged through the independent Recovery certificate route are
+    # listed so the product semantic diff stays computable; the list adds no
+    # Recovery payload outside scripts/recovery_admission.py's pinned set.
+    from scripts import recovery_admission as recovery
+    recovery_paths = set(recovery.RECOVERY_PAYLOAD_PATHS).union(
+        recovery.RECOVERY_CLASSIFICATION_SUPPORT_PATHS)
+    listed = {
+        path for path in source.AUTHORIZED_EXTENSION_PATHS
+        if path in recovery_paths
+    }
+    assert listed
+    assert listed.issubset(recovery_paths)
+
+
 def git(repo: Path, *args: str) -> str:
     return subprocess.check_output(
         ["git", *args], cwd=repo, text=True).strip()

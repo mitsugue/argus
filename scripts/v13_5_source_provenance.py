@@ -212,6 +212,76 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/src/domain/singleDecisionAuthority.ts",
     "web/src/hooks/useDecisionEvidence.ts",
     "web/src/lib/backup.ts",
+    # Recovery-only merges (PR #235-#251) were admitted to protected main
+    # through the independent Recovery certificate route
+    # (scripts/recovery_admission.py, pinned payload digest), not through this
+    # product certificate.  They are already on main; this PR authors no change
+    # to any of them.  Listing them keeps the product semantic diff against the
+    # accepted v13.5.0 source closed and computable for later product
+    # candidates.  Recovery authority, Soak, and acceptance clock stay untouched.
+    ".github/workflows/caos-watchtower.yml",
+    ".github/workflows/checkpoint-v2-gate.yml",
+    ".github/workflows/ci.yml",
+    ".github/workflows/memory-attribution.yml",
+    "argus_recovery_phase_a_adapter.py",
+    "argus_remote_journal.py",
+    "argus_remote_receipt_queue.py",
+    "argus_remote_recovery.py",
+    "argus_remote_recovery_limits.py",
+    "docs/EC2_MISSION_SCHEDULER.md",
+    "docs/ops/permanent-scheduler-identity-and-soak.md",
+    "docs/ops/recovery-phase-a-integration.md",
+    "ops/systemd/argus-remote-journal-rearm.service",
+    "ops/systemd/argus-remote-journal-rearm.timer",
+    "ops/systemd/argus-watchtower-writer.service",
+    "ops/systemd/argus-watchtower-writer.timer",
+    "scripts/argus_remote_journal_rearm.py",
+    "scripts/argus_watchtower_writer_dispatch.py",
+    "scripts/install_argus_mission_timer.sh",
+    "scripts/install_argus_remote_journal_rearm.sh",
+    "scripts/install_argus_watchtower_writer.sh",
+    "scripts/prepare_remote_journal_publish.py",
+    "scripts/recovery_admission.py",
+    "scripts/remote_journal_publish_policy.py",
+    "scripts/remote_receipt_drain.py",
+    "test_argus_checkpoint_v2_isolated.py",
+    "test_argus_identity_installer.py",
+    "test_argus_persistent_mission_storage.py",
+    "test_argus_recovery_phase_a_adapter.py",
+    "test_argus_v12_3_2.py",
+    "test_argus_v13_4_2_remote_receipts.py",
+    "test_recovery_admission.py",
+    "test_remote_receipt_drain.py",
+    "test_remote_recovery_nonce_bootstrap.py",
+    "test_remote_recovery_publish.py",
+    "test_remote_recovery_restore.py",
+    # Tachibana e-Branch v4r10 READ-ONLY SHADOW market-data provider, disabled
+    # by default (candidate a6648da1, tree ec101b16).  A new isolated package
+    # with no scanner import, no public route, no order/amend/cancel surface,
+    # and no path to SDA authority; enable flags default to
+    # ENABLED=false / SHADOW_ONLY=true / AUTHORITATIVE=false.
+    "argus_providers/__init__.py",
+    "argus_providers/tachibana/__init__.py",
+    "argus_providers/tachibana/client.py",
+    "argus_providers/tachibana/config.py",
+    "argus_providers/tachibana/cross_validation.py",
+    "argus_providers/tachibana/event_stream.py",
+    "argus_providers/tachibana/evidence.py",
+    "argus_providers/tachibana/models.py",
+    "argus_providers/tachibana/normalization.py",
+    "argus_providers/tachibana/redaction.py",
+    "argus_providers/tachibana/runtime.py",
+    "argus_providers/tachibana/sensor.py",
+    "argus_providers/tachibana/session.py",
+    "argus_providers/tachibana/session_truth.py",
+    "argus_providers/tachibana/singleton.py",
+    "docs/evidence/tachibana-v4r10-2026-09-01.md",
+    "docs/operations/tachibana-live-shadow.md",
+    "requirements-tachibana.txt",
+    "scripts/tachibana_live_acceptance.py",
+    "scripts/tachibana_live_sensor_service.py",
+    "scripts/tachibana_readonly_smoke.py",
+    "test_argus_tachibana_sensor.py",
 })
 
 
