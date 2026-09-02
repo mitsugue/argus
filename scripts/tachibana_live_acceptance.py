@@ -62,12 +62,34 @@ def _live_start_guard(now: datetime | None = None) -> str | None:
     return "PREOPEN_START_WINDOWS_MISSED"
 
 
+def _initial_read_failure(runtime: object) -> str | None:
+    read_diagnostics = getattr(runtime, "initial_read_diagnostics_safe_dict", None)
+    if not callable(read_diagnostics):
+        return None
+    diagnostics = read_diagnostics()
+    if not isinstance(diagnostics, dict):
+        return None
+    for name in ("providerDate", "priceBaseline"):
+        diagnostic = diagnostics.get(name)
+        if not isinstance(diagnostic, dict):
+            continue
+        stage = diagnostic.get("stage")
+        classification = diagnostic.get("classification")
+        if (
+            isinstance(stage, str)
+            and classification not in {"NOT_ATTEMPTED", "IN_PROGRESS", "PASS"}
+        ):
+            return stage
+    return None
+
+
 def main() -> int:
     runtime: TachibanaLiveRuntime | None = None
     teardown = True
     classification = "UNCLASSIFIED_SAFE_FAILURE"
     snapshot: dict[str, object] | None = None
     auth_diagnostic: dict[str, object] | None = None
+    initial_read_diagnostics: dict[str, object] | None = None
     try:
         guarded = _live_start_guard()
         if guarded is not None:
@@ -89,7 +111,10 @@ def main() -> int:
             if runtime is not None:
                 auth_diagnostic = runtime.session.auth_diagnostic.safe_dict()
                 diagnostic_class = auth_diagnostic.get("classification")
-                if isinstance(diagnostic_class, str):
+                read_failure = _initial_read_failure(runtime)
+                if read_failure is not None:
+                    classification = read_failure
+                elif isinstance(diagnostic_class, str):
                     classification = diagnostic_class
                 else:
                     classification = exc.classification.value
@@ -101,11 +126,17 @@ def main() -> int:
         if runtime is not None:
             if auth_diagnostic is None:
                 auth_diagnostic = runtime.session.auth_diagnostic.safe_dict()
+            read_diagnostics = getattr(
+                runtime, "initial_read_diagnostics_safe_dict", None
+            )
+            if callable(read_diagnostics):
+                initial_read_diagnostics = read_diagnostics()
             teardown = runtime.stop()
 
     result = {
         "classification": classification,
         "authDiagnostic": auth_diagnostic,
+        "initialReads": initial_read_diagnostics,
         "logout": teardown,
         "secretLeak": False,
         "snapshot": snapshot,

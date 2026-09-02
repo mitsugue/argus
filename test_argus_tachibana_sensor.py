@@ -20,7 +20,9 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 import argus_market_data_truth as truth
 from argus_providers.tachibana.client import (
     READ_ONLY_FUNCTIONS,
+    READ_ONLY_RESPONSE_IDS,
     CircuitBreaker,
+    ProviderReadDiagnostic,
     SlidingWindowLimiter,
     TachibanaReadOnlyClient,
 )
@@ -73,6 +75,7 @@ from argus_providers.tachibana.runtime import (
     cross_validate_current,
     validate_live_flags,
 )
+import argus_providers.tachibana.runtime as tachibana_runtime
 from scripts.tachibana_readonly_smoke import (
     _observation_is_usable_and_fresh,
     _smoke_pass_allowed,
@@ -586,6 +589,20 @@ def test_allowlist_is_exact_immutable_and_there_is_no_generic_dispatch(tmp_path)
     }
     with pytest.raises(TypeError):
         READ_ONLY_FUNCTIONS["CLMKabuNewOrder"] = "REQUEST"
+    assert dict(READ_ONLY_RESPONSE_IDS) == {
+        "CLMMfdsGetMarketPrice": "CLMMfdsGetMarketPrice",
+        "CLMMfdsGetMarketPriceHistory": "CLMMfdsGetMarketPriceHistory",
+        "CLMMfdsGetIssueDetail": "CLMMfdsGetIssueDetail",
+        "CLMMfdsGetSyoukinZan": "CLMMfdsGetSyoukinZan",
+        "CLMMfdsGetShinyouZan": "CLMMfdsGetShinyouZan",
+        "CLMMfdsGetHibuInfo": "CLMMfdsGetHibuInfo",
+        "CLMStkGetIssueMstKabu": "CLMStkGetIssueMstKabu",
+        "CLMStkGetDateZyouhou": "CLMDateZyouhou",
+    }
+    with pytest.raises(TypeError):
+        READ_ONLY_RESPONSE_IDS["CLMStkGetDateZyouhou"] = (
+            "CLMStkGetDateZyouhou"
+        )
     session, transport, _ = _session(tmp_path, [])
     client = TachibanaReadOnlyClient(session)
     assert not hasattr(client, "read")
@@ -644,6 +661,33 @@ def test_issue_and_balance_inquiries_route_to_master_and_history_to_price(tmp_pa
     assert routed[5] == urls["sUrlPrice"]
 
 
+def test_price_response_clmid_remains_exact_after_date_exception(tmp_path):
+    response = _success(
+        "CLMUnknownPriceResponse", "aCLMMfdsMarketPrice",
+        [{"sIssueCode": "6501", "pDPP": "2000"}],
+    )
+    session, _, _ = _authenticated_session(tmp_path, [response])
+    client = TachibanaReadOnlyClient(session)
+    with pytest.raises(TachibanaError):
+        client.market_price(("6501",), ("pDPP",))
+    diagnostic = client.read_diagnostic_safe_dict()
+    assert diagnostic["stage"] == "PRICE_BASELINE_RESPONSE_CLMID"
+    assert diagnostic["expectedResponseCLMID"] == "CLMMfdsGetMarketPrice"
+    assert diagnostic["observedResponseCLMID"] == "CLMUnknownPriceResponse"
+
+
+def test_other_master_response_clmid_remains_exact_after_date_exception(tmp_path):
+    response = _success("CLMUnknownMasterResponse", "aCLMMfdsIssueDetail")
+    session, _, _ = _authenticated_session(tmp_path, [response])
+    client = TachibanaReadOnlyClient(session)
+    with pytest.raises(TachibanaError):
+        client.issue_detail(("6501",))
+    diagnostic = client.read_diagnostic_safe_dict()
+    assert diagnostic["stage"] == "PROVIDER_READ_RESPONSE_CLMID"
+    assert diagnostic["expectedResponseCLMID"] == "CLMMfdsGetIssueDetail"
+    assert diagnostic["observedResponseCLMID"] == "CLMUnknownMasterResponse"
+
+
 def test_official_date_information_uses_day_key_001_on_master(tmp_path):
     response = {
         "p_no": "2",
@@ -654,16 +698,108 @@ def test_official_date_information_uses_day_key_001_on_master(tmp_path):
             "sTheDay": "20260902",
             "sMaeEigyouDay_1": "20260901",
             "sYokuEigyouDay_1": "20260903",
+        }, {
+            "sDayKey": "002",
+            "sTheDay": "20260903",
         }],
     }
     session, transport, urls = _authenticated_session(tmp_path, [response])
-    assert TachibanaReadOnlyClient(session).provider_calendar_date() == date(
-        2026, 9, 2
-    )
+    client = TachibanaReadOnlyClient(session)
+    assert client.provider_calendar_date() == date(2026, 9, 2)
     url, payload, _timeout = transport.calls[-1]
     assert url == urls["sUrlMaster"]
     assert payload["sCLMID"] == "CLMStkGetDateZyouhou"
     assert payload["p_no"] == "2"
+    assert client.read_diagnostic_safe_dict() == {
+        "operation": "CLMStkGetDateZyouhou",
+        "endpointClass": "MASTER",
+        "stage": "PROVIDER_DATE_VALUE",
+        "classification": "PASS",
+        "httpStatus": None,
+        "expectedResponseCLMID": "CLMDateZyouhou",
+        "observedResponseCLMID": "CLMDateZyouhou",
+        "resultCode": None,
+        "schemaFailureToken": None,
+    }
+
+
+@pytest.mark.parametrize("observed", [
+    "CLMStkGetDateZyouhou",
+    "CLMUnknownDateResponse",
+])
+def test_date_response_clmid_is_explicit_and_never_request_echoed(
+    tmp_path, observed,
+):
+    response = {
+        "p_no": "2", "p_errno": "0", "sCLMID": observed,
+        "aCLMDateZyouhou": [{
+            "sDayKey": "001", "sTheDay": "20260902",
+        }],
+    }
+    session, _, _ = _authenticated_session(tmp_path, [response])
+    client = TachibanaReadOnlyClient(session)
+    with pytest.raises(TachibanaError) as caught:
+        client.provider_calendar_date()
+    assert caught.value.classification == ErrorClass.PROVIDER
+    diagnostic = client.read_diagnostic_safe_dict()
+    assert diagnostic["stage"] == "PROVIDER_DATE_RESPONSE_CLMID"
+    assert diagnostic["expectedResponseCLMID"] == "CLMDateZyouhou"
+    assert diagnostic["observedResponseCLMID"] == observed
+    assert diagnostic["schemaFailureToken"] == "CLMID_MISMATCH"
+
+
+@pytest.mark.parametrize(("response_update", "stage", "token"), [
+    ({}, "PROVIDER_DATE_SCHEMA", "DATE_LIST_MISSING"),
+    ({"aCLMDateZyouhou": []},
+     "PROVIDER_DATE_DAYKEY", "DAYKEY_001_MISSING"),
+    ({"aCLMDateZyouhou": [{
+        "sDayKey": "002", "sTheDay": "20260903",
+    }]}, "PROVIDER_DATE_DAYKEY", "DAYKEY_001_MISSING"),
+    ({"aCLMDateZyouhou": [
+        {"sDayKey": "001", "sTheDay": "20260902"},
+        {"sDayKey": "001", "sTheDay": "20260902"},
+    ]}, "PROVIDER_DATE_DAYKEY", "DAYKEY_001_DUPLICATE"),
+    ({"aCLMDateZyouhou": [
+        {"sDayKey": "001", "sTheDay": "20260902"},
+        {"sDayKey": "001", "sTheDay": "20260903"},
+    ]}, "PROVIDER_DATE_DAYKEY", "DAYKEY_001_CONFLICT"),
+    ({"aCLMDateZyouhou": [{
+        "sDayKey": "001", "sTheDay": "20260230",
+    }]}, "PROVIDER_DATE_VALUE", "CURRENT_DATE_INVALID"),
+    ({"aCLMDateZyouhou": [{
+        "sDayKey": "001", "sTheDay": "2026-09-02",
+    }]}, "PROVIDER_DATE_SCHEMA", "DATE_ROW_INVALID"),
+])
+def test_date_official_and_adversarial_fixtures_are_stage_classified(
+    tmp_path, response_update, stage, token,
+):
+    response = {
+        "p_no": "2", "p_errno": "0", "sCLMID": "CLMDateZyouhou",
+        **response_update,
+    }
+    session, _, _ = _authenticated_session(tmp_path, [response])
+    client = TachibanaReadOnlyClient(session)
+    with pytest.raises(TachibanaError) as caught:
+        client.provider_calendar_date()
+    assert caught.value.classification == ErrorClass.PROVIDER
+    diagnostic = client.read_diagnostic_safe_dict()
+    assert diagnostic["stage"] == stage
+    assert diagnostic["schemaFailureToken"] == token
+    assert set(diagnostic) == {
+        "operation", "endpointClass", "stage", "classification",
+        "httpStatus", "expectedResponseCLMID", "observedResponseCLMID",
+        "resultCode", "schemaFailureToken",
+    }
+
+
+def test_read_diagnostic_rejects_secret_or_market_value_tokens():
+    with pytest.raises(ValueError):
+        ProviderReadDiagnostic(
+            operation="CLMStkGetDateZyouhou",
+            stage="PROVIDER_DATE_SCHEMA",
+            classification="PROVIDER",
+            schema_failure_token="PRIVATEKEYABC123",
+        )
 
 
 @pytest.mark.parametrize("rows", [
@@ -2481,6 +2617,86 @@ def test_live_acceptance_requires_event_and_market_progression(tmp_path):
     assert accepted.cross_validation.acceptable is True
 
 
+def test_runtime_keeps_date_and_price_initial_read_boundaries_separate(
+    tmp_path, monkeypatch,
+):
+    config = TachibanaConfig(
+        enabled=True, shadow_only=True, authoritative=False,
+        websocket_enabled=True, max_symbols=3,
+        auth_id_path=tmp_path / "auth", private_key_path=tmp_path / "key",
+    )
+    runtime = TachibanaLiveRuntime(config, symbols=("6501",))
+    monkeypatch.setattr(runtime.session, "authenticate", lambda: None)
+    monkeypatch.setattr(runtime, "stop", lambda: True)
+
+    class DateFailureClient:
+        def __init__(self, _session):
+            self.last_read_diagnostic = ProviderReadDiagnostic(
+                operation="CLMStkGetDateZyouhou",
+                endpoint_class="MASTER",
+                stage="PROVIDER_DATE_RESPONSE_CLMID",
+                classification="PROVIDER",
+                expected_response_clmid="CLMDateZyouhou",
+                observed_response_clmid="CLMStkGetDateZyouhou",
+                schema_failure_token="CLMID_MISMATCH",
+            )
+
+        def provider_calendar_date(self):
+            raise TachibanaError(ErrorClass.PROVIDER)
+
+        def market_price(self, *_args):
+            pytest.fail("PRICE must not start after Date contract failure")
+
+    monkeypatch.setattr(
+        tachibana_runtime, "TachibanaReadOnlyClient", DateFailureClient
+    )
+    with pytest.raises(TachibanaError):
+        runtime.start()
+    diagnostics = runtime.initial_read_diagnostics_safe_dict()
+    assert diagnostics["providerDate"]["stage"] == (
+        "PROVIDER_DATE_RESPONSE_CLMID"
+    )
+    assert diagnostics["priceBaseline"]["stage"] == "NOT_STARTED"
+    assert diagnostics["priceBaseline"]["classification"] == "NOT_ATTEMPTED"
+
+
+def test_price_baseline_normalization_failure_has_safe_distinct_stage(
+    tmp_path, monkeypatch,
+):
+    response = _success(
+        "CLMMfdsGetMarketPrice", "aCLMMfdsMarketPrice",
+        [{"sIssueCode": "6501", "pDPP": "2000"}],
+    )
+    response["p_rv_date"] = "2026.09.01-15:00:10.000"
+    session, _, _ = _authenticated_session(tmp_path, [response])
+    client = TachibanaReadOnlyClient(session)
+    config = replace(
+        session.config,
+        shadow_only=True,
+        authoritative=False,
+        websocket_enabled=True,
+        max_symbols=3,
+    )
+    runtime = TachibanaLiveRuntime(config, symbols=("6501",), clock=lambda: NOW)
+    runtime._provider_calendar_date = date(2026, 9, 1)
+    monkeypatch.setattr(
+        tachibana_runtime,
+        "normalize_market_price",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            TachibanaError(ErrorClass.NORMALIZATION)
+        ),
+    )
+    with pytest.raises(TachibanaError) as caught:
+        runtime._read_price_snapshot(client)
+    assert caught.value.classification == ErrorClass.NORMALIZATION
+    assert client.read_diagnostic_safe_dict()["stage"] == (
+        "PRICE_BASELINE_NORMALIZE"
+    )
+    assert client.read_diagnostic_safe_dict()["schemaFailureToken"] == (
+        "NORMALIZATION_REJECTED"
+    )
+
+
 def test_afternoon_preopen_to_open_is_valid_transition_fallback(tmp_path):
     now = [datetime(2026, 9, 2, 3, 5, 10, tzinfo=timezone.utc)]
     symbol = "8058"
@@ -2644,6 +2860,20 @@ def test_live_canary_outputs_safe_auth_boundary_without_response_text(
         def stop(self):
             return True
 
+        def initial_read_diagnostics_safe_dict(self):
+            return {
+                "providerDate": ProviderReadDiagnostic(
+                    operation="CLMStkGetDateZyouhou",
+                    endpoint_class="MASTER",
+                    expected_response_clmid="CLMDateZyouhou",
+                ).safe_dict(),
+                "priceBaseline": ProviderReadDiagnostic(
+                    operation="CLMMfdsGetMarketPrice",
+                    endpoint_class="PRICE",
+                    expected_response_clmid="CLMMfdsGetMarketPrice",
+                ).safe_dict(),
+            }
+
     monkeypatch.setattr(live_acceptance, "_live_start_guard", lambda: None)
     monkeypatch.setattr(live_acceptance, "ProcessSingletonLease", NullLease)
     monkeypatch.setattr(live_acceptance, "TachibanaLiveRuntime", FakeRuntime)
@@ -2653,4 +2883,32 @@ def test_live_canary_outputs_safe_auth_boundary_without_response_text(
     assert '\"httpStatus\":200' in output
     assert '\"sCLMID\":\"CLMAuthLoginAck\"' in output
     assert '\"sResultCode\":\"990006\"' in output
+    assert '\"initialReads\":{' in output
+    assert '\"providerDate\":{' in output
+    assert '\"priceBaseline\":{' in output
     assert "sResultText" not in output
+
+
+def test_live_canary_classifies_post_auth_failure_by_exact_initial_read_stage():
+    class FakeRuntime:
+        def initial_read_diagnostics_safe_dict(self):
+            return {
+                "providerDate": ProviderReadDiagnostic(
+                    operation="CLMStkGetDateZyouhou",
+                    endpoint_class="MASTER",
+                    stage="PROVIDER_DATE_VALUE",
+                    classification="PROVIDER",
+                    expected_response_clmid="CLMDateZyouhou",
+                    observed_response_clmid="CLMDateZyouhou",
+                    schema_failure_token="CURRENT_DATE_INVALID",
+                ).safe_dict(),
+                "priceBaseline": ProviderReadDiagnostic(
+                    operation="CLMMfdsGetMarketPrice",
+                    endpoint_class="PRICE",
+                    expected_response_clmid="CLMMfdsGetMarketPrice",
+                ).safe_dict(),
+            }
+
+    assert live_acceptance._initial_read_failure(FakeRuntime()) == (
+        "PROVIDER_DATE_VALUE"
+    )

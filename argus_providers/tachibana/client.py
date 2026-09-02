@@ -8,7 +8,7 @@ this client cannot address the REQUEST virtual URL.
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 import random
 import re
@@ -24,52 +24,56 @@ from .session import TachibanaSession
 @dataclass(frozen=True)
 class _FunctionContract:
     function_id: str
+    response_id: str
     endpoint_category: str
     allowed_parameters: frozenset[str]
     response_list: str
     maximum_rows: int
-    response_id: str | None = None
 
 
 _FUNCTION_CONTRACTS: Mapping[str, _FunctionContract] = MappingProxyType({
     "CLMMfdsGetMarketPrice": _FunctionContract(
-        "CLMMfdsGetMarketPrice", "price",
+        "CLMMfdsGetMarketPrice", "CLMMfdsGetMarketPrice", "price",
         frozenset({"sTargetIssueCode", "sTargetColumn"}),
         "aCLMMfdsMarketPrice", 64,
     ),
     "CLMMfdsGetMarketPriceHistory": _FunctionContract(
-        "CLMMfdsGetMarketPriceHistory", "price",
+        "CLMMfdsGetMarketPriceHistory", "CLMMfdsGetMarketPriceHistory", "price",
         frozenset({"sIssueCode", "sSizyouC"}),
         "aCLMMfdsMarketPriceHistory", 8_000,
     ),
     # These four use MASTER in the official interface overview. Their CLMMfds
     # prefix does not make them PRICE functions.
     "CLMMfdsGetIssueDetail": _FunctionContract(
-        "CLMMfdsGetIssueDetail", "master", frozenset({"sTargetIssueCode"}),
+        "CLMMfdsGetIssueDetail", "CLMMfdsGetIssueDetail", "master",
+        frozenset({"sTargetIssueCode"}),
         "aCLMMfdsIssueDetail", 64,
     ),
     "CLMMfdsGetSyoukinZan": _FunctionContract(
-        "CLMMfdsGetSyoukinZan", "master", frozenset({"sTargetIssueCode"}),
+        "CLMMfdsGetSyoukinZan", "CLMMfdsGetSyoukinZan", "master",
+        frozenset({"sTargetIssueCode"}),
         "aCLMMfdsSyoukinZan", 64,
     ),
     "CLMMfdsGetShinyouZan": _FunctionContract(
-        "CLMMfdsGetShinyouZan", "master", frozenset({"sTargetIssueCode"}),
+        "CLMMfdsGetShinyouZan", "CLMMfdsGetShinyouZan", "master",
+        frozenset({"sTargetIssueCode"}),
         "aCLMMfdsShinyouZan", 64,
     ),
     "CLMMfdsGetHibuInfo": _FunctionContract(
-        "CLMMfdsGetHibuInfo", "master", frozenset({"sTargetIssueCode"}),
+        "CLMMfdsGetHibuInfo", "CLMMfdsGetHibuInfo", "master",
+        frozenset({"sTargetIssueCode"}),
         "aCLMMfdsHibuInfo", 64,
     ),
     "CLMStkGetIssueMstKabu": _FunctionContract(
-        "CLMStkGetIssueMstKabu", "master", frozenset(),
+        "CLMStkGetIssueMstKabu", "CLMStkGetIssueMstKabu", "master", frozenset(),
         "aCLMStkIssueMstKabu", 20_000,
     ),
     # Current v4r10 official master inquiry. Day key 001 supplies the
     # provider's current calendar date; it is deliberately distinct from an
     # EVENT packet's send date and SS/US effective time.
     "CLMStkGetDateZyouhou": _FunctionContract(
-        "CLMStkGetDateZyouhou", "master", frozenset(),
-        "aCLMDateZyouhou", 2, "CLMDateZyouhou",
+        "CLMStkGetDateZyouhou", "CLMDateZyouhou", "master", frozenset(),
+        "aCLMDateZyouhou", 2,
     ),
 })
 
@@ -77,6 +81,10 @@ _FUNCTION_CONTRACTS: Mapping[str, _FunctionContract] = MappingProxyType({
 # documented virtual-URL category names.
 READ_ONLY_FUNCTIONS: Mapping[str, str] = MappingProxyType({
     function_id: contract.endpoint_category.upper()
+    for function_id, contract in _FUNCTION_CONTRACTS.items()
+})
+READ_ONLY_RESPONSE_IDS: Mapping[str, str] = MappingProxyType({
+    function_id: contract.response_id
     for function_id, contract in _FUNCTION_CONTRACTS.items()
 })
 
@@ -106,6 +114,98 @@ _RESPONSE_COMMON_FIELDS = frozenset({
     "sResultCode", "sResultText", "sWarningCode", "sWarningText",
 })
 _MAX_PARAMETER_VALUE = 4096
+_READ_DIAGNOSTIC_STAGES = frozenset({
+    "NOT_STARTED",
+    "PROVIDER_DATE_REQUEST", "PROVIDER_DATE_HTTP",
+    "PROVIDER_DATE_RESPONSE_CLMID", "PROVIDER_DATE_SCHEMA",
+    "PROVIDER_DATE_DAYKEY", "PROVIDER_DATE_VALUE",
+    "PRICE_BASELINE_REQUEST", "PRICE_BASELINE_HTTP",
+    "PRICE_BASELINE_RESPONSE_CLMID", "PRICE_BASELINE_SCHEMA",
+    "PRICE_BASELINE_NORMALIZE",
+    "PROVIDER_READ_REQUEST", "PROVIDER_READ_HTTP",
+    "PROVIDER_READ_RESPONSE_CLMID", "PROVIDER_READ_SCHEMA",
+})
+_READ_DIAGNOSTIC_TOKENS = frozenset({
+    "CIRCUIT_NOT_PERMITTED", "LOCAL_RATE_LIMIT",
+    "TRANSPORT_OR_PROVIDER_CLASSIFICATION", "PROTOCOL_ERRNO_MISSING",
+    "SEQUENCE_ECHO_MISMATCH", "PROTOCOL_MAINTENANCE",
+    "PROTOCOL_RATE_LIMIT", "PROTOCOL_SESSION_EXPIRED",
+    "PROTOCOL_SEQUENCE_ERROR", "PROTOCOL_CLOCK_SKEW",
+    "PROTOCOL_OUTSIDE_HOURS", "PROTOCOL_ERROR", "RESULT_CODE_INVALID",
+    "RESULT_MAINTENANCE", "RESULT_OUTSIDE_HOURS", "RESULT_SESSION_EXPIRED",
+    "RESULT_ERROR", "CLMID_MISMATCH", "TOP_LEVEL_FIELD_UNKNOWN",
+    "ROW_LIST_INVALID", "ROW_TYPE_INVALID", "PRICE_ROW_FIELD_UNKNOWN",
+    "DATE_ROW_INVALID", "SYMBOL_IDENTITY_INVALID", "HISTORY_IDENTITY_INVALID",
+    "DATE_LIST_MISSING", "DAYKEY_001_MISSING", "DAYKEY_001_DUPLICATE",
+    "DAYKEY_001_CONFLICT", "CURRENT_DATE_MISSING", "CURRENT_DATE_INVALID",
+    "PRICE_ROW_SET_INCOMPLETE", "NORMALIZED_SYMBOL_SET_MISMATCH",
+    "NORMALIZATION_REJECTED", "NORMALIZATION_EXCEPTION",
+})
+_READ_DIAGNOSTIC_CLASSIFICATIONS = frozenset({
+    "NOT_ATTEMPTED", "IN_PROGRESS", "PASS",
+    *(classification.value for classification in ErrorClass),
+})
+
+
+@dataclass(frozen=True)
+class ProviderReadDiagnostic:
+    """One bounded, value-free initial/read contract boundary."""
+
+    operation: str = "NONE"
+    endpoint_class: str | None = None
+    stage: str = "NOT_STARTED"
+    classification: str = "NOT_ATTEMPTED"
+    http_status: int | None = None
+    expected_response_clmid: str | None = None
+    observed_response_clmid: str | None = None
+    result_code: str | None = None
+    schema_failure_token: str | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            self.operation not in {"NONE", *_FUNCTION_CONTRACTS}
+            or self.endpoint_class not in {None, "MASTER", "PRICE"}
+            or self.stage not in _READ_DIAGNOSTIC_STAGES
+            or self.classification not in _READ_DIAGNOSTIC_CLASSIFICATIONS
+            or self.http_status is not None
+            and (type(self.http_status) is not int or not 100 <= self.http_status <= 599)
+            or any(
+                value is not None
+                and re.fullmatch(r"[A-Za-z0-9_]{1,128}", value) is None
+                for value in (
+                    self.expected_response_clmid,
+                    self.observed_response_clmid,
+                )
+            )
+            or self.result_code is not None
+            and re.fullmatch(r"[0-9-]{1,16}", self.result_code) is None
+            or self.schema_failure_token not in {
+                None, *_READ_DIAGNOSTIC_TOKENS
+            }
+        ):
+            raise ValueError("invalid_provider_read_diagnostic")
+
+    def safe_dict(self) -> dict[str, object]:
+        return {
+            "operation": self.operation,
+            "endpointClass": self.endpoint_class,
+            "stage": self.stage,
+            "classification": self.classification,
+            "httpStatus": self.http_status,
+            "expectedResponseCLMID": self.expected_response_clmid,
+            "observedResponseCLMID": self.observed_response_clmid,
+            "resultCode": self.result_code,
+            "schemaFailureToken": self.schema_failure_token,
+        }
+
+
+class _ReadContractError(TachibanaError):
+    def __init__(
+        self, classification: ErrorClass, *, stage_suffix: str, token: str,
+    ) -> None:
+        self.stage_suffix = stage_suffix
+        self.token = token
+        super().__init__(classification)
 
 
 def _security_code(value: str) -> str:
@@ -245,6 +345,29 @@ class TachibanaReadOnlyClient:
         self._sleeper = sleeper
         self._random = random_source
         self._utcnow = utcnow
+        self.last_read_diagnostic = ProviderReadDiagnostic()
+
+    def read_diagnostic_safe_dict(self) -> dict[str, object]:
+        return self.last_read_diagnostic.safe_dict()
+
+    def mark_last_read_stage(
+        self,
+        stage: str,
+        classification: str,
+        *,
+        schema_failure_token: str | None = None,
+    ) -> None:
+        """Advance the current safe diagnostic after contract validation.
+
+        The runtime uses this only for PRICE baseline interpretation. It may
+        attach a bounded token but can never add provider values or payloads.
+        """
+        self.last_read_diagnostic = replace(
+            self.last_read_diagnostic,
+            stage=stage,
+            classification=classification,
+            schema_failure_token=schema_failure_token,
+        )
 
     def market_price(
         self, symbols: tuple[str, ...], columns: tuple[str, ...]
@@ -293,20 +416,49 @@ class TachibanaReadOnlyClient:
         response = self._read_contract("CLMStkGetDateZyouhou", {})
         rows = response.get("aCLMDateZyouhou")
         if not isinstance(rows, list):
+            self.mark_last_read_stage(
+                "PROVIDER_DATE_SCHEMA", ErrorClass.PROVIDER.value,
+                schema_failure_token="DATE_LIST_MISSING",
+            )
             raise TachibanaError(ErrorClass.PROVIDER)
         current_rows = [
             row for row in rows
             if isinstance(row, Mapping) and row.get("sDayKey") == "001"
         ]
-        if len(current_rows) != 1:
+        if not current_rows:
+            self.mark_last_read_stage(
+                "PROVIDER_DATE_DAYKEY", ErrorClass.PROVIDER.value,
+                schema_failure_token="DAYKEY_001_MISSING",
+            )
+            raise TachibanaError(ErrorClass.PROVIDER)
+        if len(current_rows) > 1:
+            dates = {row.get("sTheDay") for row in current_rows}
+            self.mark_last_read_stage(
+                "PROVIDER_DATE_DAYKEY", ErrorClass.PROVIDER.value,
+                schema_failure_token=(
+                    "DAYKEY_001_DUPLICATE"
+                    if len(dates) == 1
+                    else "DAYKEY_001_CONFLICT"
+                ),
+            )
             raise TachibanaError(ErrorClass.PROVIDER)
         value = current_rows[0].get("sTheDay")
         if not isinstance(value, str):
+            self.mark_last_read_stage(
+                "PROVIDER_DATE_VALUE", ErrorClass.PROVIDER.value,
+                schema_failure_token="CURRENT_DATE_MISSING",
+            )
             raise TachibanaError(ErrorClass.PROVIDER)
         try:
-            return datetime.strptime(value, "%Y%m%d").date()
+            result = datetime.strptime(value, "%Y%m%d").date()
         except ValueError:
+            self.mark_last_read_stage(
+                "PROVIDER_DATE_VALUE", ErrorClass.PROVIDER.value,
+                schema_failure_token="CURRENT_DATE_INVALID",
+            )
             raise TachibanaError(ErrorClass.PROVIDER) from None
+        self.mark_last_read_stage("PROVIDER_DATE_VALUE", "PASS")
+        return result
 
     def _symbol_inquiry(
         self, function_id: str, symbols: tuple[str, ...]
@@ -321,6 +473,20 @@ class TachibanaReadOnlyClient:
     ) -> Mapping[str, Any]:
         contract = _FUNCTION_CONTRACTS[function_id]
         clean_parameters = _validate_parameters(parameters, contract)
+        stage_prefix = (
+            "PROVIDER_DATE"
+            if function_id == "CLMStkGetDateZyouhou"
+            else "PRICE_BASELINE"
+            if function_id == "CLMMfdsGetMarketPrice"
+            else "PROVIDER_READ"
+        )
+        self.last_read_diagnostic = ProviderReadDiagnostic(
+            operation=function_id,
+            endpoint_class=contract.endpoint_category.upper(),
+            stage=f"{stage_prefix}_REQUEST",
+            classification="IN_PROGRESS",
+            expected_response_clmid=contract.response_id,
+        )
         attempts = self.session.config.max_read_attempts
         last_error = ErrorClass.PROVIDER
 
@@ -329,12 +495,21 @@ class TachibanaReadOnlyClient:
         # flight and only one half-open circuit probe can escape.
         with self.session.request_lock:
             if not self._breaker.permit():
+                self.mark_last_read_stage(
+                    f"{stage_prefix}_REQUEST", ErrorClass.CIRCUIT_OPEN.value,
+                    schema_failure_token="CIRCUIT_NOT_PERMITTED",
+                )
                 self._record_failure(ErrorClass.CIRCUIT_OPEN)
                 raise TachibanaError(ErrorClass.CIRCUIT_OPEN)
             for attempt in range(attempts):
                 if not self._limiter.acquire():
                     self._breaker.neutral()
                     self.session.diagnostics.rate_limited_requests += 1
+                    self.mark_last_read_stage(
+                        f"{stage_prefix}_REQUEST",
+                        ErrorClass.RATE_LIMITED.value,
+                        schema_failure_token="LOCAL_RATE_LIMIT",
+                    )
                     self._record_failure(ErrorClass.RATE_LIMITED)
                     raise TachibanaError(ErrorClass.RATE_LIMITED)
                 self.session.diagnostics.requests_last_minute = self._limiter.count()
@@ -346,6 +521,15 @@ class TachibanaReadOnlyClient:
                     payload["sCLMID"] = contract.function_id
                     response = self.session._transport.post_json(
                         url, payload, self.session.config.request_timeout_seconds
+                    )
+                    self.last_read_diagnostic = replace(
+                        self.last_read_diagnostic,
+                        stage=f"{stage_prefix}_HTTP",
+                        classification="PASS",
+                        http_status=self._safe_http_status(),
+                        observed_response_clmid=self._safe_clmid(response),
+                        result_code=self._safe_result_code(response),
+                        schema_failure_token=None,
                     )
                     self._check_response(
                         response,
@@ -359,9 +543,23 @@ class TachibanaReadOnlyClient:
                     diagnostics.last_success_at = self._utcnow()
                     diagnostics.last_error_class = ErrorClass.NONE
                     diagnostics.health = ProviderHealth.AVAILABLE
+                    self.mark_last_read_stage(f"{stage_prefix}_SCHEMA", "PASS")
                     return MappingProxyType(dict(response))
                 except TachibanaError as exc:
                     last_error = exc.classification
+                    if isinstance(exc, _ReadContractError):
+                        stage = f"{stage_prefix}_{exc.stage_suffix}"
+                        token = exc.token
+                    else:
+                        stage = f"{stage_prefix}_HTTP"
+                        token = "TRANSPORT_OR_PROVIDER_CLASSIFICATION"
+                    self.last_read_diagnostic = replace(
+                        self.last_read_diagnostic,
+                        stage=stage,
+                        classification=last_error.value,
+                        http_status=self._safe_http_status(),
+                        schema_failure_token=token,
+                    )
                     retryable = last_error in {ErrorClass.NETWORK, ErrorClass.HTTP}
                     if not retryable or attempt + 1 >= attempts:
                         break
@@ -376,6 +574,30 @@ class TachibanaReadOnlyClient:
             self._record_failure(last_error)
             raise TachibanaError(last_error)
 
+    def _safe_http_status(self) -> int | None:
+        value = getattr(self.session._transport, "last_http_status", None)
+        return value if type(value) is int and 100 <= value <= 599 else None
+
+    @staticmethod
+    def _safe_clmid(response: object) -> str | None:
+        if not isinstance(response, Mapping):
+            return None
+        value = response.get("sCLMID")
+        if isinstance(value, str) and re.fullmatch(
+            r"[A-Za-z0-9_]{1,128}", value
+        ):
+            return value
+        return None
+
+    @staticmethod
+    def _safe_result_code(response: object) -> str | None:
+        if not isinstance(response, Mapping):
+            return None
+        value = response.get("sResultCode")
+        if isinstance(value, str) and re.fullmatch(r"[0-9-]{1,16}", value):
+            return value
+        return None
+
     def _check_response(
         self,
         response: Mapping[str, Any],
@@ -388,59 +610,107 @@ class TachibanaReadOnlyClient:
             not isinstance(response, Mapping)
             or not isinstance(response.get("p_errno"), str)
         ):
-            raise TachibanaError(ErrorClass.PROVIDER)
+            raise _ReadContractError(
+                ErrorClass.PROVIDER,
+                stage_suffix="SCHEMA",
+                token="PROTOCOL_ERRNO_MISSING",
+            )
         # The REQUEST common envelope requires p_no on every response and
         # requires it to echo the request value.  An absent or different echo
         # can be a delayed/replayed response, so retire the session rather than
         # accepting same-function, same-symbol data as current.
         if response.get("p_no") != expected_p_no:
             self.session.expire()
-            raise TachibanaError(ErrorClass.SEQUENCE_DESYNC)
+            raise _ReadContractError(
+                ErrorClass.SEQUENCE_DESYNC,
+                stage_suffix="SCHEMA",
+                token="SEQUENCE_ECHO_MISMATCH",
+            )
         errno = response["p_errno"]
         if errno != "0":
             if errno in _MAINTENANCE_ERRNOS:
-                raise TachibanaError(ErrorClass.MAINTENANCE)
+                raise _ReadContractError(
+                    ErrorClass.MAINTENANCE,
+                    stage_suffix="SCHEMA", token="PROTOCOL_MAINTENANCE",
+                )
             if errno in _RATE_ERRNOS:
-                raise TachibanaError(ErrorClass.RATE_LIMITED)
+                raise _ReadContractError(
+                    ErrorClass.RATE_LIMITED,
+                    stage_suffix="SCHEMA", token="PROTOCOL_RATE_LIMIT",
+                )
             if errno == "2":
                 self.session.expire()
-                raise TachibanaError(ErrorClass.SESSION_EXPIRED)
+                raise _ReadContractError(
+                    ErrorClass.SESSION_EXPIRED,
+                    stage_suffix="SCHEMA", token="PROTOCOL_SESSION_EXPIRED",
+                )
             if errno == "6":
                 self.session.expire()
-                raise TachibanaError(ErrorClass.SEQUENCE_DESYNC)
+                raise _ReadContractError(
+                    ErrorClass.SEQUENCE_DESYNC,
+                    stage_suffix="SCHEMA", token="PROTOCOL_SEQUENCE_ERROR",
+                )
             if errno == "8":
-                raise TachibanaError(ErrorClass.CLOCK_SKEW)
+                raise _ReadContractError(
+                    ErrorClass.CLOCK_SKEW,
+                    stage_suffix="SCHEMA", token="PROTOCOL_CLOCK_SKEW",
+                )
             if errno == "-62":
-                raise TachibanaError(ErrorClass.OUTSIDE_HOURS)
-            raise TachibanaError(ErrorClass.PROVIDER)
+                raise _ReadContractError(
+                    ErrorClass.OUTSIDE_HOURS,
+                    stage_suffix="SCHEMA", token="PROTOCOL_OUTSIDE_HOURS",
+                )
+            raise _ReadContractError(
+                ErrorClass.PROVIDER,
+                stage_suffix="SCHEMA", token="PROTOCOL_ERROR",
+            )
 
         # Inquiry examples legitimately omit sResultCode. When present, keep
         # this business-code namespace separate from protocol p_errno.
         if "sResultCode" in response:
             if not isinstance(response["sResultCode"], str):
-                raise TachibanaError(ErrorClass.PROVIDER)
+                raise _ReadContractError(
+                    ErrorClass.PROVIDER,
+                    stage_suffix="SCHEMA", token="RESULT_CODE_INVALID",
+                )
             result = response["sResultCode"]
             if result != "0":
                 if result in _MAINTENANCE_RESULTS:
-                    raise TachibanaError(ErrorClass.MAINTENANCE)
+                    raise _ReadContractError(
+                        ErrorClass.MAINTENANCE,
+                        stage_suffix="SCHEMA", token="RESULT_MAINTENANCE",
+                    )
                 if result in _OUTSIDE_HOURS_RESULTS:
-                    raise TachibanaError(ErrorClass.OUTSIDE_HOURS)
+                    raise _ReadContractError(
+                        ErrorClass.OUTSIDE_HOURS,
+                        stage_suffix="SCHEMA", token="RESULT_OUTSIDE_HOURS",
+                    )
                 if result in _SESSION_RESULTS:
                     self.session.expire()
-                    raise TachibanaError(ErrorClass.SESSION_EXPIRED)
-                raise TachibanaError(ErrorClass.PROVIDER)
+                    raise _ReadContractError(
+                        ErrorClass.SESSION_EXPIRED,
+                        stage_suffix="SCHEMA", token="RESULT_SESSION_EXPIRED",
+                    )
+                raise _ReadContractError(
+                    ErrorClass.PROVIDER,
+                    stage_suffix="SCHEMA", token="RESULT_ERROR",
+                )
 
-        if response.get("sCLMID") != (
-            contract.response_id or contract.function_id
-        ):
-            raise TachibanaError(ErrorClass.PROVIDER)
+        if response.get("sCLMID") != contract.response_id:
+            raise _ReadContractError(
+                ErrorClass.PROVIDER,
+                stage_suffix="RESPONSE_CLMID", token="CLMID_MISMATCH",
+            )
         allowed_top_level = (
             _RESPONSE_COMMON_FIELDS
             | contract.allowed_parameters
             | frozenset({contract.response_list})
         )
         if not set(response) <= allowed_top_level:
-            raise TachibanaError(ErrorClass.PROVIDER)
+            raise _ReadContractError(
+                ErrorClass.PROVIDER,
+                stage_suffix="SCHEMA", token="TOP_LEVEL_FIELD_UNKNOWN",
+            )
         if contract.response_list in response:
             rows = response[contract.response_list]
             requested_symbols = tuple(filter(None, request_parameters.get(
@@ -451,16 +721,25 @@ class TachibanaReadOnlyClient:
                 if requested_symbols else contract.maximum_rows
             )
             if not isinstance(rows, list) or len(rows) > maximum_rows:
-                raise TachibanaError(ErrorClass.PROVIDER)
+                raise _ReadContractError(
+                    ErrorClass.PROVIDER,
+                    stage_suffix="SCHEMA", token="ROW_LIST_INVALID",
+                )
             if any(not isinstance(row, Mapping) for row in rows):
-                raise TachibanaError(ErrorClass.PROVIDER)
+                raise _ReadContractError(
+                    ErrorClass.PROVIDER,
+                    stage_suffix="SCHEMA", token="ROW_TYPE_INVALID",
+                )
             if contract.function_id == "CLMMfdsGetMarketPrice":
                 requested_columns = frozenset(request_parameters[
                     "sTargetColumn"
                 ].split(","))
                 if any(not set(row) <= requested_columns | {"sIssueCode"}
                        for row in rows):
-                    raise TachibanaError(ErrorClass.PROVIDER)
+                    raise _ReadContractError(
+                        ErrorClass.PROVIDER,
+                        stage_suffix="SCHEMA", token="PRICE_ROW_FIELD_UNKNOWN",
+                    )
             elif contract.function_id == "CLMStkGetDateZyouhou":
                 date_fields = frozenset({
                     "sDayKey", "sMaeEigyouDay_1", "sMaeEigyouDay_2",
@@ -483,21 +762,30 @@ class TachibanaReadOnlyClient:
                     )
                     for row in rows
                 ):
-                    raise TachibanaError(ErrorClass.PROVIDER)
+                    raise _ReadContractError(
+                        ErrorClass.PROVIDER,
+                        stage_suffix="SCHEMA", token="DATE_ROW_INVALID",
+                    )
             if requested_symbols:
                 returned_symbols = tuple(row.get("sIssueCode") for row in rows)
                 if (
                     any(symbol not in requested_symbols for symbol in returned_symbols)
                     or len(set(returned_symbols)) != len(returned_symbols)
                 ):
-                    raise TachibanaError(ErrorClass.PROVIDER)
+                    raise _ReadContractError(
+                        ErrorClass.PROVIDER,
+                        stage_suffix="SCHEMA", token="SYMBOL_IDENTITY_INVALID",
+                    )
         if contract.function_id == "CLMMfdsGetMarketPriceHistory":
             if response.get("sIssueCode") not in {
                 None, request_parameters["sIssueCode"]
             } or response.get("sSizyouC") not in {
                 None, request_parameters["sSizyouC"]
             }:
-                raise TachibanaError(ErrorClass.PROVIDER)
+                raise _ReadContractError(
+                    ErrorClass.PROVIDER,
+                    stage_suffix="SCHEMA", token="HISTORY_IDENTITY_INVALID",
+                )
 
     def _record_failure(self, classification: ErrorClass) -> None:
         diagnostics = self.session.diagnostics

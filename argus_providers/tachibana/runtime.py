@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-from .client import TachibanaReadOnlyClient
+from .client import ProviderReadDiagnostic, TachibanaReadOnlyClient
 from .config import TachibanaConfig
 from .cross_validation import DEFAULT_TOLERANCES, MismatchClass, compare_shadow
 from .event_stream import (
@@ -390,6 +390,18 @@ class TachibanaLiveRuntime:
         self._authenticated = False
         self._provider_calendar_date: date | None = None
         self._price_observations: dict[str, TachibanaObservation] = {}
+        self._initial_read_diagnostics = {
+            "providerDate": ProviderReadDiagnostic(
+                operation="CLMStkGetDateZyouhou",
+                endpoint_class="MASTER",
+                expected_response_clmid="CLMDateZyouhou",
+            ),
+            "priceBaseline": ProviderReadDiagnostic(
+                operation="CLMMfdsGetMarketPrice",
+                endpoint_class="PRICE",
+                expected_response_clmid="CLMMfdsGetMarketPrice",
+            ),
+        }
         self._preopen_event_baseline: datetime | None = None
         self._preopen_event_connection_number: int | None = None
         self._execution_event_baseline: datetime | None = None
@@ -404,13 +416,31 @@ class TachibanaLiveRuntime:
     def terminal_error(self) -> ErrorClass:
         return self._event_error
 
+    def initial_read_diagnostics_safe_dict(
+        self,
+    ) -> dict[str, dict[str, object]]:
+        return {
+            name: diagnostic.safe_dict()
+            for name, diagnostic in self._initial_read_diagnostics.items()
+        }
+
     def start(self) -> None:
         self.session.authenticate()
         self._authenticated = True
         try:
             client = TachibanaReadOnlyClient(self.session)
-            self._provider_calendar_date = client.provider_calendar_date()
-            self._read_price_snapshot(client)
+            try:
+                self._provider_calendar_date = client.provider_calendar_date()
+            finally:
+                self._initial_read_diagnostics["providerDate"] = (
+                    client.last_read_diagnostic
+                )
+            try:
+                self._read_price_snapshot(client)
+            finally:
+                self._initial_read_diagnostics["priceBaseline"] = (
+                    client.last_read_diagnostic
+                )
             lifecycle = TachibanaEventLifecycle(
                 self.session,
                 EventSubscription(self.symbols, max_symbols=len(self.symbols)),
@@ -444,42 +474,65 @@ class TachibanaLiveRuntime:
         )
         rows = response.get("aCLMMfdsMarketPrice")
         if not isinstance(rows, list) or len(rows) != len(self.symbols):
-            raise TachibanaError(ErrorClass.PROVIDER)
-        received = self._clock().astimezone(timezone.utc)
-        provider_time = parse_provider_datetime(response.get("p_rv_date"))
-        truth = resolve_jp_cash_session(
-            now=received,
-            provider_time=provider_time,
-            provider_calendar_date=self._provider_calendar_date,
-            provider_health=ProviderHealth.AVAILABLE,
-        )
-        normalized: dict[str, TachibanaObservation] = {}
-        for row in rows:
-            observation = normalize_market_price(
-                row,
-                received_at=received,
-                market_date=truth.market_date,
-                market_status=truth.market_status,
-                # p_rv_date establishes the PRICE response time, not the
-                # trade-date of a time-only tDPP.  During pre-open, tDPP may
-                # still be the prior close and must never be relabelled today.
-                market_date_verified=bool(
-                    truth.market_date_verified
-                    and truth.phase in {
-                        JapanCashPhase.OPEN,
-                        JapanCashPhase.AFTERNOON_OPEN,
-                    }
-                ),
-                market_data_timestamp=provider_time,
-                market_data_date_verified=bool(
-                    truth.provider_calendar_current
-                    and truth.event_packet_current
-                ),
-                fresh_for_seconds=self.config.fresh_for_seconds,
+            client.mark_last_read_stage(
+                "PRICE_BASELINE_SCHEMA", ErrorClass.PROVIDER.value,
+                schema_failure_token="PRICE_ROW_SET_INCOMPLETE",
             )
-            normalized[observation.symbol] = observation
-        if set(normalized) != set(self.symbols):
             raise TachibanaError(ErrorClass.PROVIDER)
+        try:
+            received = self._clock().astimezone(timezone.utc)
+            provider_time = parse_provider_datetime(response.get("p_rv_date"))
+            truth = resolve_jp_cash_session(
+                now=received,
+                provider_time=provider_time,
+                provider_calendar_date=self._provider_calendar_date,
+                provider_health=ProviderHealth.AVAILABLE,
+            )
+            normalized: dict[str, TachibanaObservation] = {}
+            for row in rows:
+                observation = normalize_market_price(
+                    row,
+                    received_at=received,
+                    market_date=truth.market_date,
+                    market_status=truth.market_status,
+                    # p_rv_date establishes the PRICE response time, not the
+                    # trade-date of a time-only tDPP. During pre-open, tDPP may
+                    # still be the prior close and must not be relabelled today.
+                    market_date_verified=bool(
+                        truth.market_date_verified
+                        and truth.phase in {
+                            JapanCashPhase.OPEN,
+                            JapanCashPhase.AFTERNOON_OPEN,
+                        }
+                    ),
+                    market_data_timestamp=provider_time,
+                    market_data_date_verified=bool(
+                        truth.provider_calendar_current
+                        and truth.event_packet_current
+                    ),
+                    fresh_for_seconds=self.config.fresh_for_seconds,
+                )
+                normalized[observation.symbol] = observation
+            if set(normalized) != set(self.symbols):
+                client.mark_last_read_stage(
+                    "PRICE_BASELINE_NORMALIZE", ErrorClass.PROVIDER.value,
+                    schema_failure_token="NORMALIZED_SYMBOL_SET_MISMATCH",
+                )
+                raise TachibanaError(ErrorClass.PROVIDER)
+        except TachibanaError as exc:
+            if client.last_read_diagnostic.classification == "PASS":
+                client.mark_last_read_stage(
+                    "PRICE_BASELINE_NORMALIZE", exc.classification.value,
+                    schema_failure_token="NORMALIZATION_REJECTED",
+                )
+            raise
+        except Exception:
+            client.mark_last_read_stage(
+                "PRICE_BASELINE_NORMALIZE", ErrorClass.NORMALIZATION.value,
+                schema_failure_token="NORMALIZATION_EXCEPTION",
+            )
+            raise TachibanaError(ErrorClass.NORMALIZATION) from None
+        client.mark_last_read_stage("PRICE_BASELINE_NORMALIZE", "PASS")
         self._price_observations = normalized
 
     def _latest_board_current(
