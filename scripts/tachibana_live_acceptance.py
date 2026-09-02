@@ -16,7 +16,10 @@ import argus_market_clock
 from argus_providers.tachibana.config import TachibanaConfig
 from argus_providers.tachibana.models import ErrorClass, TachibanaError
 from argus_providers.tachibana.runtime import DEFAULT_SYMBOLS, TachibanaLiveRuntime
-from argus_providers.tachibana.singleton import ProcessSingletonLease
+from argus_providers.tachibana.singleton import (
+    ProcessSingletonLease,
+    SingletonLeaseError,
+)
 
 
 _TOKYO = ZoneInfo("Asia/Tokyo")
@@ -90,6 +93,7 @@ def main() -> int:
     snapshot: dict[str, object] | None = None
     auth_diagnostic: dict[str, object] | None = None
     initial_read_diagnostics: dict[str, object] | None = None
+    singleton_acquired = False
     try:
         guarded = _live_start_guard()
         if guarded is not None:
@@ -101,11 +105,18 @@ def main() -> int:
             "/tmp/argus-tachibana-live-sensor.lock",
         )
         with ProcessSingletonLease(Path(lock_path)):
+            singleton_acquired = True
             runtime = TachibanaLiveRuntime(config, symbols=_symbols())
             runtime.start()
             accepted = runtime.wait_for_acceptance(timeout_seconds=_timeout())
             snapshot = accepted.safe_dict()
             classification = accepted.classification
+    except SingletonLeaseError as exc:
+        classification = (
+            "DUPLICATE_ACCEPTANCE_PROCESS"
+            if str(exc) == "singleton_held"
+            else "TACHIBANA_SINGLETON_ACQUISITION_FAILED"
+        )
     except TachibanaError as exc:
         if classification == "UNCLASSIFIED_SAFE_FAILURE":
             if runtime is not None:
@@ -139,6 +150,7 @@ def main() -> int:
         "initialReads": initial_read_diagnostics,
         "logout": teardown,
         "secretLeak": False,
+        "singletonAcquired": singleton_acquired,
         "snapshot": snapshot,
     }
     passed = bool(snapshot and snapshot.get("accepted") and teardown)

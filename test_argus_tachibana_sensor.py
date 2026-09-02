@@ -2848,6 +2848,41 @@ def test_acceptance_guard_never_consumes_auth_before_live_preopen():
     )) == "PREOPEN_START_WINDOWS_MISSED"
 
 
+def test_live_canary_classifies_competing_singleton_without_runtime_start(
+    monkeypatch, capsys,
+):
+    class HeldLease:
+        def __init__(self, _path):
+            pass
+
+        def __enter__(self):
+            raise SingletonLeaseError("singleton_held")
+
+        def __exit__(self, *_args):
+            return False
+
+    runtime_started = False
+
+    class ForbiddenRuntime:
+        def __init__(self, *_args, **_kwargs):
+            nonlocal runtime_started
+            runtime_started = True
+
+    monkeypatch.setattr(live_acceptance, "_live_start_guard", lambda: None)
+    monkeypatch.setattr(
+        live_acceptance.TachibanaConfig, "from_env", lambda: object()
+    )
+    monkeypatch.setattr(live_acceptance, "ProcessSingletonLease", HeldLease)
+    monkeypatch.setattr(live_acceptance, "TachibanaLiveRuntime", ForbiddenRuntime)
+
+    assert live_acceptance.main() == 2
+    output = capsys.readouterr().out.strip()
+    assert runtime_started is False
+    assert '"classification":"DUPLICATE_ACCEPTANCE_PROCESS"' in output
+    assert '"authDiagnostic":null' in output
+    assert '"singletonAcquired":false' in output
+
+
 def test_live_canary_outputs_safe_auth_boundary_without_response_text(
     monkeypatch, capsys,
 ):
