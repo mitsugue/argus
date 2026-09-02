@@ -34,6 +34,7 @@ from argus_providers.tachibana.evidence import (
 from argus_providers.tachibana.event_stream import (
     EventLifecycleProgress,
     EventStatusTracker,
+    EventTransportError,
     TachibanaEventLifecycle,
     WebSocketEventConnector,
 )
@@ -1110,7 +1111,7 @@ def test_official_event_frame_multirow_snapshot_diff_and_sequences():
         ))
 
 
-def test_event_parser_rejects_execution_request_key_unknown_fields_and_partial_initial():
+def test_event_parser_rejects_execution_request_key_and_partial_initial():
     with pytest.raises(ValueError, match="not_read_only"):
         parse_event_frame(_event_frame(1, "EC", ("p_ENO", "101")))
     with pytest.raises(ValueError, match="missing"):
@@ -1118,8 +1119,6 @@ def test_event_parser_rejects_execution_request_key_unknown_fields_and_partial_i
             "p_no\x021\x01p_date\x022026.09.01-15:00:10.123\x01"
             "p_evt_cmd\x02FD\x01"
         )
-    with pytest.raises(ValueError, match="unknown"):
-        parse_event_frame(_event_frame(1, "FD", ("p_1_EVIL", "1")))
     assembler = EventSnapshotAssembler(
         row_to_symbol={1: "6501", 2: "7203"}, max_symbols=2
     )
@@ -1182,7 +1181,9 @@ def test_event_status_shapes_are_exact_and_connection_sequence_starts_at_one():
     assert parse_event_frame(_ss_frame(1, 1))["p_SS"] == "0"
     assert parse_event_frame(_us_frame(2, 2))["p_US"] == "200"
     with pytest.raises(ValueError, match="fields_invalid"):
-        parse_event_frame(_ss_frame(1, 1).replace("\x01", "\x01p_EVIL\x021\x01", 1))
+        parse_event_frame(
+            _ss_frame(1, 1).replace("\x01", "\x01p_evil\x021\x01", 1)
+        )
     with pytest.raises(ValueError, match="field_value"):
         parse_event_frame(_ss_frame(1, 1, login_permission="7"))
     with pytest.raises(ValueError, match="operation_field_value"):
@@ -1252,6 +1253,32 @@ def test_status_tracker_retains_only_bounded_cash_equity_operation_keys():
     assert len(tracker._operation_updates) == 16
     assert overflow.market_status == MarketStatus.UNKNOWN
     assert overflow.provider_health == ProviderHealth.DEGRADED
+
+
+def test_event_parser_ignores_safe_unknown_extensions_but_keeps_critical_bounds():
+    assembler = EventSnapshotAssembler(
+        row_to_symbol={1: "6501"}, max_symbols=1
+    )
+    parsed = parse_event_frame(_event_frame(
+        1, "FD", ("p_1_DPP", "2000"), ("p_1_FUTURE", "opaque")
+    ))
+    row, = assembler.apply(parsed)
+    assert row["pDPP"] == "2000"
+    assert "pFUTURE" not in row
+
+    keepalive = parse_event_frame(_event_frame(2, "KP", ("p_FUTURE", "1")))
+    assert keepalive["p_FUTURE"] == "1"
+    system = parse_event_frame(
+        _ss_frame(3, 3)[:-1] + "\x01p_FUTURE\x021\x01"
+    )
+    assert system["p_FUTURE"] == "1"
+
+    with pytest.raises(ValueError, match="row_not_subscribed"):
+        assembler.apply(parse_event_frame(_event_frame(
+            2, "FD", ("p_2_FUTURE", "opaque")
+        )))
+    with pytest.raises(ValueError, match="field_invalid"):
+        parse_event_frame(_event_frame(2, "FD", ("p_FUTURE", "opaque")))
 
 
 def test_keepalive_cannot_override_explicit_unavailable_system_status():
@@ -1337,6 +1364,8 @@ def test_websocket_connector_idle_timeout_and_errors_never_expose_virtual_url():
     with pytest.raises(TachibanaError) as caught:
         list(stream)
     assert caught.value.classification == ErrorClass.EVENT_IDLE_TIMEOUT
+    assert isinstance(caught.value, EventTransportError)
+    assert caught.value.timeout_category == "IDLE"
     assert endpoint not in str(caught.value)
 
     def failed_dial(uri, **_kwargs):
@@ -1351,6 +1380,52 @@ def test_websocket_connector_idle_timeout_and_errors_never_expose_virtual_url():
         )
     assert dial_error.value.classification == ErrorClass.NETWORK
     assert endpoint not in str(dial_error.value)
+
+
+def test_websocket_close_diagnostics_are_bounded_and_reason_is_redacted():
+    class CloseFrame:
+        code = 1011
+        reason = "credential-shaped provider detail must not survive"
+
+    class Closed(RuntimeError):
+        rcvd = CloseFrame()
+
+    connection = FakeWebSocketConnection([Closed("raw close payload")])
+    connector = WebSocketEventConnector(lambda _uri, **_kwargs: connection)
+    stream = connector.receive(
+        _virtual_urls()["sUrlEventWebSocket"],
+        EventSubscription(("6501",)),
+        connect_timeout_seconds=8,
+        idle_timeout_seconds=30,
+        maximum_frame_bytes=1024,
+        stop_event=threading.Event(),
+    )
+    with pytest.raises(EventTransportError) as caught:
+        list(stream)
+    assert caught.value.close_code == 1011
+    assert caught.value.close_reason_classification == "PRESENT_REDACTED"
+    assert "credential-shaped" not in str(caught.value)
+
+
+def test_websocket_connect_timeout_is_classified_without_endpoint_exposure():
+    endpoint = _virtual_urls()["sUrlEventWebSocket"]
+
+    def timed_out(_uri, **_kwargs):
+        raise TimeoutError("secret-shaped timeout detail")
+
+    connector = WebSocketEventConnector(timed_out)
+    with pytest.raises(EventTransportError) as caught:
+        connector.receive(
+            endpoint,
+            EventSubscription(("6501",)),
+            connect_timeout_seconds=8,
+            idle_timeout_seconds=30,
+            maximum_frame_bytes=1024,
+            stop_event=threading.Event(),
+        )
+    assert caught.value.classification == ErrorClass.NETWORK
+    assert caught.value.timeout_category == "CONNECT"
+    assert endpoint not in str(caught.value)
 
 
 def test_websocket_policy_is_disabled_and_reconnect_budget_resets_on_tokyo_day():
@@ -1707,6 +1782,7 @@ def test_event_progress_is_thread_safe_value_free_and_proves_advancement():
     progress.failure_observed(
         classification=ErrorClass.PROVIDER,
         detail="EVENT_STATUS_ERROR_INVALID",
+        stage="STATUS",
     )
     snapshot = progress.snapshot()
     assert snapshot.connections_started == 1
@@ -1721,8 +1797,47 @@ def test_event_progress_is_thread_safe_value_free_and_proves_advancement():
     assert snapshot.last_status_code == "1"
     assert snapshot.last_failure_classification == "PROVIDER"
     assert snapshot.last_failure_detail == "EVENT_STATUS_ERROR_INVALID"
+    assert snapshot.last_failure_stage == "STATUS"
+    assert snapshot.subscription_state == "CONTROL_ACTIVE"
+    assert snapshot.ss_frames == 1
+    assert snapshot.st_frames == 1
+    assert snapshot.sequence_advanced is True
+    assert snapshot.provider_timestamp_advanced is True
     assert not hasattr(snapshot, "raw_frame")
     assert not hasattr(snapshot, "market_values")
+
+    progress.frame_received(
+        sequence=3, provider_timestamp=second + timedelta(seconds=5),
+        received_at=second + timedelta(seconds=5), command="FD", fd_rows=1,
+    )
+    progress.frame_received(
+        sequence=4, provider_timestamp=second + timedelta(seconds=10),
+        received_at=second + timedelta(seconds=10), command="KP",
+    )
+    assert progress.snapshot().subscription_state == "FD_ACTIVE"
+
+
+def test_event_progression_is_connection_local_across_reconnects():
+    progress = EventLifecycleProgress()
+    first = datetime(2026, 9, 2, 0, 0, 5, tzinfo=timezone.utc)
+    progress.connection_started()
+    progress.frame_received(
+        sequence=1, provider_timestamp=first, received_at=first,
+        command="KP",
+    )
+    progress.connection_started()
+    later = first + timedelta(seconds=10)
+    progress.frame_received(
+        sequence=1, provider_timestamp=later, received_at=later,
+        command="KP",
+    )
+    snapshot = progress.snapshot()
+    assert snapshot.frames_received == 2
+    assert snapshot.first_provider_timestamp < snapshot.last_provider_timestamp
+    assert snapshot.current_connection_first_sequence == 1
+    assert snapshot.current_connection_last_sequence == 1
+    assert snapshot.sequence_advanced is False
+    assert snapshot.provider_timestamp_advanced is False
 
 
 def test_live_runtime_flags_are_exact_and_symbol_bound_is_three():

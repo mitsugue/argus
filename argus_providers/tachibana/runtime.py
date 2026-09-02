@@ -258,6 +258,18 @@ class LiveAcceptanceSnapshot:
     event_last_status_code: str | None
     event_last_failure_classification: str | None
     event_last_failure_detail: str | None
+    event_last_failure_stage: str | None
+    event_subscription_state: str
+    event_st_frames: int
+    event_kp_frames: int
+    event_fd_frames: int
+    event_ss_frames: int
+    event_us_frames: int
+    event_fd_rows_assembled: int
+    event_unknown_noncritical_fields: int
+    event_close_code: int | None
+    event_close_reason_classification: str | None
+    event_timeout_category: str | None
     event_sequence_advanced: bool
     event_timestamp_advanced: bool
     source_timestamp_advanced: bool
@@ -313,7 +325,9 @@ class TachibanaLiveRuntime:
         self._authenticated = False
         self._price_observations: dict[str, TachibanaObservation] = {}
         self._preopen_event_baseline: datetime | None = None
+        self._preopen_event_connection_number: int | None = None
         self._execution_event_baseline: datetime | None = None
+        self._execution_event_connection_number: int | None = None
         self._preopen_book_live = False
         self._execution_market_live = False
         self._transition_window: str | None = None
@@ -485,16 +499,9 @@ class TachibanaLiveRuntime:
                     )
                 ):
                     execution_progression = True
-        sequence_advanced = bool(
-            progress.first_sequence is not None
-            and progress.last_sequence is not None
-            and progress.last_sequence > progress.first_sequence
-        )
-        timestamp_advanced = bool(
-            progress.first_provider_timestamp is not None
-            and progress.last_provider_timestamp is not None
-            and progress.last_provider_timestamp > progress.first_provider_timestamp
-        )
+        sequence_advanced = progress.sequence_advanced
+        timestamp_advanced = progress.provider_timestamp_advanced
+        connection_timestamp = progress.current_connection_last_provider_timestamp
         if (
             not self._preopen_book_live
             and truth.phase in {
@@ -502,26 +509,30 @@ class TachibanaLiveRuntime:
                 JapanCashPhase.AFTERNOON_PREOPEN,
             }
             and truth.market_date_verified
-            and progress.last_provider_timestamp is not None
-            and self._preopen_event_baseline is None
+            and connection_timestamp is not None
+            and self._preopen_event_connection_number
+            != progress.connections_started
         ):
-            self._preopen_event_baseline = progress.last_provider_timestamp
+            self._preopen_event_connection_number = progress.connections_started
+            self._preopen_event_baseline = connection_timestamp
         if (
             truth.phase in {JapanCashPhase.OPEN, JapanCashPhase.AFTERNOON_OPEN}
             and truth.market_date_verified
-            and progress.last_provider_timestamp is not None
-            and self._execution_event_baseline is None
+            and connection_timestamp is not None
+            and self._execution_event_connection_number
+            != progress.connections_started
         ):
-            self._execution_event_baseline = progress.last_provider_timestamp
+            self._execution_event_connection_number = progress.connections_started
+            self._execution_event_baseline = connection_timestamp
         preopen_event_progression = bool(
             self._preopen_event_baseline is not None
-            and progress.last_provider_timestamp is not None
-            and progress.last_provider_timestamp > self._preopen_event_baseline
+            and connection_timestamp is not None
+            and connection_timestamp > self._preopen_event_baseline
         )
         execution_event_progression = bool(
             self._execution_event_baseline is not None
-            and progress.last_provider_timestamp is not None
-            and progress.last_provider_timestamp > self._execution_event_baseline
+            and connection_timestamp is not None
+            and connection_timestamp > self._execution_event_baseline
         )
         if (
             not self._preopen_book_live
@@ -632,6 +643,22 @@ class TachibanaLiveRuntime:
                 progress.last_failure_classification
             ),
             event_last_failure_detail=progress.last_failure_detail,
+            event_last_failure_stage=progress.last_failure_stage,
+            event_subscription_state=progress.subscription_state,
+            event_st_frames=progress.st_frames,
+            event_kp_frames=progress.kp_frames,
+            event_fd_frames=progress.fd_frames,
+            event_ss_frames=progress.ss_frames,
+            event_us_frames=progress.us_frames,
+            event_fd_rows_assembled=progress.fd_rows_assembled,
+            event_unknown_noncritical_fields=(
+                progress.unknown_noncritical_fields
+            ),
+            event_close_code=progress.close_code,
+            event_close_reason_classification=(
+                progress.close_reason_classification
+            ),
+            event_timeout_category=progress.timeout_category,
             event_sequence_advanced=sequence_advanced,
             event_timestamp_advanced=timestamp_advanced,
             source_timestamp_advanced=source_advanced,

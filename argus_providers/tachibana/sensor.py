@@ -36,6 +36,7 @@ _US_FIELDS = frozenset({
     "p_PV", "p_ENO", "p_ALT", "p_CT", "p_MC", "p_GSCD", "p_SHSB",
     "p_UC", "p_UU", "p_EDK", "p_US",
 })
+_SAFE_EXTENSION_FIELD = re.compile(r"^p_[A-Z][A-Z0-9_]{0,63}$")
 _EVENT_SOURCE_TIME = re.compile(r"^[0-9]{14}$")
 _DOCUMENTED_MARKETS = frozenset({"00", "01", "02", "05", "07", "08", "09"})
 _DOCUMENTED_OPERATION_CATEGORIES = frozenset(
@@ -198,27 +199,34 @@ def parse_event_frame(frame: str | bytes) -> Mapping[str, str]:
                 match.group("kind") + match.group("code")
                 + (match.group("suffix") or "")
             )
-            if normalized not in _FD_VALUE_FIELDS:
-                raise ValueError("event_fd_field_unknown")
             if normalized == "xLISS":
                 _validate_shift_jis_hex(fields[key])
         if not extra_fields:
             raise ValueError("event_fd_fields_missing")
     elif command == "ST":
-        if extra_fields != _ST_FIELDS:
+        if not _ST_FIELDS <= extra_fields or any(
+            key not in _ST_FIELDS and _SAFE_EXTENSION_FIELD.fullmatch(key) is None
+            for key in extra_fields
+        ):
             raise ValueError("event_status_fields_invalid")
         if fields["p_errno"] not in {
             "0", "1", "2", "9", "-1", "-2", "-3", "-12", "-62",
         }:
             raise ValueError("event_status_error_invalid")
     elif command == "KP":
-        if extra_fields:
+        if any(
+            _SAFE_EXTENSION_FIELD.fullmatch(key) is None
+            for key in extra_fields
+        ):
             raise ValueError("event_keepalive_fields_invalid")
     else:
         if any(_FD_FIELD.fullmatch(key) for key in extra_fields):
             raise ValueError("event_row_field_on_non_fd")
         expected = _SS_FIELDS if command == "SS" else _US_FIELDS
-        if extra_fields != expected:
+        if not expected <= extra_fields or any(
+            key not in expected and _SAFE_EXTENSION_FIELD.fullmatch(key) is None
+            for key in extra_fields
+        ):
             raise ValueError("event_system_fields_invalid")
         try:
             if int(fields["p_ENO"]) < 1:
@@ -244,6 +252,30 @@ def parse_event_frame(frame: str | bytes) -> Mapping[str, str]:
         ):
             raise ValueError("event_operation_field_value_invalid")
     return MappingProxyType(fields)
+
+
+def event_unknown_noncritical_field_count(fields: Mapping[str, str]) -> int:
+    """Count admitted forward-compatible fields without retaining their values."""
+    command = fields.get("p_cmd")
+    if command == "FD":
+        count = 0
+        for key in fields:
+            match = _FD_FIELD.fullmatch(key)
+            if match is None:
+                continue
+            normalized = (
+                match.group("kind") + match.group("code")
+                + (match.group("suffix") or "")
+            )
+            count += normalized not in _FD_VALUE_FIELDS
+        return count
+    expected = {
+        "ST": _ST_FIELDS,
+        "KP": frozenset(),
+        "SS": _SS_FIELDS,
+        "US": _US_FIELDS,
+    }.get(command, frozenset())
+    return len(set(fields) - _COMMON_EVENT_FIELDS - expected)
 
 
 @dataclass(frozen=True)
@@ -566,8 +598,12 @@ class EventSnapshotAssembler:
                     match.group("kind") + match.group("code")
                     + (match.group("suffix") or "")
                 )
+                # Official EVENT revisions may add non-critical FD values.
+                # The parser has already validated the row-key grammar and
+                # subscription bound; ignore unknown values until an explicit
+                # normalization contract exists for them.
                 if normalized_key not in _FD_VALUE_FIELDS:
-                    raise ValueError("event_fd_field_unknown")
+                    continue
                 grouped.setdefault(row_number, {})[normalized_key] = value
             if not grouped:
                 raise ValueError("event_fd_fields_missing")

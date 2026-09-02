@@ -34,6 +34,7 @@ from .sensor import (
     EventSnapshotAssembler,
     EventSubscription,
     TransientLiveSensor,
+    event_unknown_noncritical_field_count,
     parse_event_frame,
 )
 from .session import TachibanaSession
@@ -79,6 +80,54 @@ _MAX_CASH_EQUITY_OPERATION_KEYS = 16
 # safe, non-secret customer identifier to key by, so enforce the conservative
 # process-wide singleton rather than risk two sessions evicting each other.
 _PROCESS_EVENT_LOCK = threading.Lock()
+
+
+class EventTransportError(TachibanaError):
+    """A bounded transport error carrying only non-secret diagnostics."""
+
+    def __init__(
+        self,
+        classification: ErrorClass,
+        *,
+        close_code: int | None = None,
+        close_reason_classification: str | None = None,
+        timeout_category: str | None = None,
+    ) -> None:
+        if (
+            (
+                close_code is not None
+                and (
+                    type(close_code) is not int
+                    or not 1000 <= close_code <= 4999
+                )
+            )
+            or close_reason_classification
+            not in {None, "EMPTY", "PRESENT_REDACTED"}
+            or timeout_category not in {None, "CONNECT", "IDLE"}
+        ):
+            raise ValueError("invalid_event_transport_diagnostic")
+        self.close_code = close_code
+        self.close_reason_classification = close_reason_classification
+        self.timeout_category = timeout_category
+        super().__init__(classification)
+
+
+def _safe_close_diagnostics(error: Exception) -> tuple[int | None, str | None]:
+    received = getattr(error, "rcvd", None)
+    code = getattr(received, "code", None)
+    reason = getattr(received, "reason", None)
+    if code is None:
+        code = getattr(error, "code", None)
+    if reason is None:
+        reason = getattr(error, "reason", None)
+    safe_code = code if type(code) is int and 1000 <= code <= 4999 else None
+    if reason is None:
+        safe_reason = None
+    elif isinstance(reason, str) and reason == "":
+        safe_reason = "EMPTY"
+    else:
+        safe_reason = "PRESENT_REDACTED"
+    return safe_code, safe_reason
 
 
 class _WebSocketConnection(Protocol):
@@ -142,8 +191,17 @@ def _default_websocket_connect(
         return connect(uri, **kwargs)
     except TachibanaError:
         raise
-    except Exception:
-        raise TachibanaError(ErrorClass.NETWORK) from None
+    except TimeoutError:
+        raise EventTransportError(
+            ErrorClass.NETWORK, timeout_category="CONNECT"
+        ) from None
+    except Exception as error:
+        close_code, close_reason = _safe_close_diagnostics(error)
+        raise EventTransportError(
+            ErrorClass.NETWORK,
+            close_code=close_code,
+            close_reason_classification=close_reason,
+        ) from None
 
 
 class WebSocketEventConnector:
@@ -198,8 +256,17 @@ class WebSocketEventConnector:
             )
         except TachibanaError:
             raise
-        except Exception:
-            raise TachibanaError(ErrorClass.NETWORK) from None
+        except TimeoutError:
+            raise EventTransportError(
+                ErrorClass.NETWORK, timeout_category="CONNECT"
+            ) from None
+        except Exception as error:
+            close_code, close_reason = _safe_close_diagnostics(error)
+            raise EventTransportError(
+                ErrorClass.NETWORK,
+                close_code=close_code,
+                close_reason_classification=close_reason,
+            ) from None
 
         def _messages() -> Iterable[str]:
             last_message_at = self._monotonic()
@@ -210,17 +277,28 @@ class WebSocketEventConnector:
                         - (self._monotonic() - last_message_at)
                     )
                     if remaining <= 0:
-                        raise TachibanaError(ErrorClass.EVENT_IDLE_TIMEOUT)
+                        raise EventTransportError(
+                            ErrorClass.EVENT_IDLE_TIMEOUT,
+                            timeout_category="IDLE",
+                        )
                     try:
                         message = connection.recv(timeout=min(1.0, remaining))
                     except TimeoutError:
                         if self._monotonic() - last_message_at >= idle_timeout_seconds:
-                            raise TachibanaError(ErrorClass.EVENT_IDLE_TIMEOUT) from None
+                            raise EventTransportError(
+                                ErrorClass.EVENT_IDLE_TIMEOUT,
+                                timeout_category="IDLE",
+                            ) from None
                         continue
                     except TachibanaError:
                         raise
-                    except Exception:
-                        raise TachibanaError(ErrorClass.NETWORK) from None
+                    except Exception as error:
+                        close_code, close_reason = _safe_close_diagnostics(error)
+                        raise EventTransportError(
+                            ErrorClass.NETWORK,
+                            close_code=close_code,
+                            close_reason_classification=close_reason,
+                        ) from None
                     # The official contract specifies RFC 6455 text frames.
                     # Binary messages are not silently decoded as Shift-JIS.
                     if not isinstance(message, str):
@@ -354,11 +432,29 @@ class EventProgressSnapshot:
     last_sequence: int | None
     first_provider_timestamp: datetime | None
     last_provider_timestamp: datetime | None
+    current_connection_first_sequence: int | None
+    current_connection_last_sequence: int | None
+    current_connection_first_provider_timestamp: datetime | None
+    current_connection_last_provider_timestamp: datetime | None
+    sequence_advanced: bool
+    provider_timestamp_advanced: bool
     last_frame_received_at: datetime | None
+    st_frames: int
+    kp_frames: int
+    fd_frames: int
+    ss_frames: int
+    us_frames: int
+    fd_rows_assembled: int
+    unknown_noncritical_fields: int
+    subscription_state: str
     last_command: str | None
     last_status_code: str | None
     last_failure_classification: str | None
     last_failure_detail: str | None
+    last_failure_stage: str | None
+    close_code: int | None
+    close_reason_classification: str | None
+    timeout_category: str | None
     provider_market_status: str
     provider_operation_code: str | None
 
@@ -375,11 +471,25 @@ class EventLifecycleProgress:
         self._last_sequence: int | None = None
         self._first_provider_timestamp: datetime | None = None
         self._last_provider_timestamp: datetime | None = None
+        self._connection_first_sequence: int | None = None
+        self._connection_last_sequence: int | None = None
+        self._connection_first_provider_timestamp: datetime | None = None
+        self._connection_last_provider_timestamp: datetime | None = None
+        self._command_counts = {
+            command: 0 for command in ("ST", "KP", "FD", "SS", "US")
+        }
+        self._fd_rows_assembled = 0
+        self._unknown_noncritical_fields = 0
+        self._subscription_state = "NOT_CONNECTED"
         self._last_frame_received_at: datetime | None = None
         self._last_command: str | None = None
         self._last_status_code: str | None = None
         self._last_failure_classification: str | None = None
         self._last_failure_detail: str | None = None
+        self._last_failure_stage: str | None = None
+        self._close_code: int | None = None
+        self._close_reason_classification: str | None = None
+        self._timeout_category: str | None = None
         self._provider_market_status = MarketStatus.UNKNOWN.value
         self._provider_operation_code: str | None = None
         self._lock = threading.Lock()
@@ -387,6 +497,14 @@ class EventLifecycleProgress:
     def connection_started(self) -> None:
         with self._lock:
             self._connections += 1
+            self._connection_first_sequence = None
+            self._connection_last_sequence = None
+            self._connection_first_provider_timestamp = None
+            self._connection_last_provider_timestamp = None
+            # The official contract has no registration ACK. A successful
+            # connection means only that the query-carried registration was
+            # presented, never that FD is active.
+            self._subscription_state = "QUERY_REGISTERED"
 
     def reconnect_scheduled(self) -> None:
         with self._lock:
@@ -395,7 +513,8 @@ class EventLifecycleProgress:
     def frame_received(
         self, *, sequence: int, provider_timestamp: datetime,
         received_at: datetime, command: str | None = None,
-        status_code: str | None = None,
+        status_code: str | None = None, fd_rows: int = 0,
+        unknown_noncritical_fields: int = 0,
     ) -> None:
         if (
             type(sequence) is not int
@@ -409,6 +528,11 @@ class EventLifecycleProgress:
                 "0", "1", "2", "9", "-1", "-2", "-3", "-12", "-62",
             }
             or status_code is not None and command != "ST"
+            or type(fd_rows) is not int
+            or fd_rows < 0
+            or type(unknown_noncritical_fields) is not int
+            or unknown_noncritical_fields < 0
+            or command != "FD" and fd_rows != 0
         ):
             raise TachibanaError(ErrorClass.CLOCK_SKEW)
         provider = provider_timestamp.astimezone(timezone.utc)
@@ -420,24 +544,54 @@ class EventLifecycleProgress:
                 self._first_provider_timestamp = provider
             self._last_sequence = sequence
             self._last_provider_timestamp = provider
+            if self._connection_first_sequence is None:
+                self._connection_first_sequence = sequence
+                self._connection_first_provider_timestamp = provider
+            self._connection_last_sequence = sequence
+            self._connection_last_provider_timestamp = provider
             self._last_frame_received_at = received
             if command is not None:
                 self._last_command = command
+                self._command_counts[command] += 1
+                if command == "FD":
+                    self._subscription_state = "FD_ACTIVE"
+                elif self._subscription_state != "FD_ACTIVE":
+                    self._subscription_state = "CONTROL_ACTIVE"
+            self._fd_rows_assembled += fd_rows
+            self._unknown_noncritical_fields += unknown_noncritical_fields
             if status_code is not None:
                 self._last_status_code = status_code
 
     def failure_observed(
-        self, *, classification: ErrorClass, detail: str,
+        self, *, classification: ErrorClass, detail: str, stage: str,
+        close_code: int | None = None,
+        close_reason_classification: str | None = None,
+        timeout_category: str | None = None,
     ) -> None:
         if (
             not isinstance(classification, ErrorClass)
             or not isinstance(detail, str)
             or re.fullmatch(r"[A-Z0-9_]{1,96}", detail) is None
+            or re.fullmatch(r"[A-Z0-9_]{1,32}", stage) is None
+            or (
+                close_code is not None
+                and (
+                    type(close_code) is not int
+                    or not 1000 <= close_code <= 4999
+                )
+            )
+            or close_reason_classification
+            not in {None, "EMPTY", "PRESENT_REDACTED"}
+            or timeout_category not in {None, "CONNECT", "IDLE"}
         ):
             raise TachibanaError(ErrorClass.CONFIGURATION)
         with self._lock:
             self._last_failure_classification = classification.value
             self._last_failure_detail = detail
+            self._last_failure_stage = stage
+            self._close_code = close_code
+            self._close_reason_classification = close_reason_classification
+            self._timeout_category = timeout_category
 
     def observations_ingested(self, count: int) -> None:
         if type(count) is not int or count < 0:
@@ -472,11 +626,47 @@ class EventLifecycleProgress:
                 last_sequence=self._last_sequence,
                 first_provider_timestamp=self._first_provider_timestamp,
                 last_provider_timestamp=self._last_provider_timestamp,
+                current_connection_first_sequence=(
+                    self._connection_first_sequence
+                ),
+                current_connection_last_sequence=(
+                    self._connection_last_sequence
+                ),
+                current_connection_first_provider_timestamp=(
+                    self._connection_first_provider_timestamp
+                ),
+                current_connection_last_provider_timestamp=(
+                    self._connection_last_provider_timestamp
+                ),
+                sequence_advanced=bool(
+                    self._connection_first_sequence is not None
+                    and self._connection_last_sequence is not None
+                    and self._connection_last_sequence
+                    > self._connection_first_sequence
+                ),
+                provider_timestamp_advanced=bool(
+                    self._connection_first_provider_timestamp is not None
+                    and self._connection_last_provider_timestamp is not None
+                    and self._connection_last_provider_timestamp
+                    > self._connection_first_provider_timestamp
+                ),
                 last_frame_received_at=self._last_frame_received_at,
+                st_frames=self._command_counts["ST"],
+                kp_frames=self._command_counts["KP"],
+                fd_frames=self._command_counts["FD"],
+                ss_frames=self._command_counts["SS"],
+                us_frames=self._command_counts["US"],
+                fd_rows_assembled=self._fd_rows_assembled,
+                unknown_noncritical_fields=self._unknown_noncritical_fields,
+                subscription_state=self._subscription_state,
                 last_command=self._last_command,
                 last_status_code=self._last_status_code,
                 last_failure_classification=self._last_failure_classification,
                 last_failure_detail=self._last_failure_detail,
+                last_failure_stage=self._last_failure_stage,
+                close_code=self._close_code,
+                close_reason_classification=self._close_reason_classification,
+                timeout_category=self._timeout_category,
                 provider_market_status=self._provider_market_status,
                 provider_operation_code=self._provider_operation_code,
             )
@@ -614,6 +804,7 @@ class TachibanaEventLifecycle:
                 tracker = EventStatusTracker()
                 stream: Iterable[str | bytes] | None = None
                 failure: Exception | None = None
+                failure_stage = "CONNECT"
                 try:
                     endpoint = self._session._market_data_endpoint("event_websocket")
                     stream = self._connector.receive(
@@ -627,11 +818,15 @@ class TachibanaEventLifecycle:
                     connections += 1
                     self._progress.connection_started()
                     self._diagnostics(connected=True)
+                    failure_stage = "RECEIVE"
                     for raw_frame in stream:
                         if stop_event.is_set():
                             break
+                        failure_stage = "PARSE"
                         fields = parse_event_frame(raw_frame)
+                        failure_stage = "ASSEMBLE"
                         rows = assembler.apply(fields)
+                        failure_stage = "STATUS"
                         status = tracker.apply(fields)
                         self._progress.provider_state_observed(
                             market_status=status.market_status,
@@ -643,6 +838,7 @@ class TachibanaEventLifecycle:
                         )
                         frames += 1
                         last_error = ErrorClass.NONE
+                        failure_stage = "CLOCK"
                         received_at = self._clock()
                         if received_at.tzinfo is None:
                             raise TachibanaError(ErrorClass.CLOCK_SKEW)
@@ -660,6 +856,10 @@ class TachibanaEventLifecycle:
                                 if fields["p_cmd"] == "ST"
                                 else None
                             ),
+                            fd_rows=len(rows),
+                            unknown_noncritical_fields=(
+                                event_unknown_noncritical_field_count(fields)
+                            ),
                         )
                         self._diagnostics(
                             connected=True,
@@ -668,6 +868,7 @@ class TachibanaEventLifecycle:
                             success_at=received_at,
                         )
                         if fields["p_cmd"] == "ST":
+                            failure_stage = "STATUS"
                             raise TachibanaError(
                                 _ST_ERROR_CLASSES[fields["p_errno"]]
                             )
@@ -678,6 +879,7 @@ class TachibanaEventLifecycle:
                         market_status = status.market_status
                         market_date_verified = False
                         if self._session_truth_resolver is not None:
+                            failure_stage = "SESSION_TRUTH"
                             session_truth = self._session_truth_resolver(
                                 now=received_at,
                                 provider_time=provider_time,
@@ -697,6 +899,7 @@ class TachibanaEventLifecycle:
                                 }
                             )
                         for row in rows:
+                            failure_stage = "NORMALIZE"
                             observation = normalize_market_price(
                                 row,
                                 received_at=received_at,
@@ -706,11 +909,14 @@ class TachibanaEventLifecycle:
                                 fresh_for_seconds=self._session.config.fresh_for_seconds,
                                 endpoint_category="EVENT",
                             )
+                            failure_stage = "INGEST"
                             self._sensor.ingest(observation)
                             observations += 1
                         self._progress.observations_ingested(len(rows))
+                        failure_stage = "RECEIVE"
                     if stop_event.is_set():
                         break
+                    failure_stage = "STREAM_END"
                     failure = TachibanaError(ErrorClass.NETWORK)
                 except (TachibanaError, ValueError) as error:
                     failure = error
@@ -735,6 +941,12 @@ class TachibanaEventLifecycle:
                 self._progress.failure_observed(
                     classification=last_error,
                     detail=self._safe_failure_detail(failure),
+                    stage=failure_stage,
+                    close_code=getattr(failure, "close_code", None),
+                    close_reason_classification=getattr(
+                        failure, "close_reason_classification", None
+                    ),
+                    timeout_category=getattr(failure, "timeout_category", None),
                 )
                 self._diagnostics(error=last_error)
                 if last_error in {
@@ -775,6 +987,7 @@ __all__ = [
     "EventRunSummary",
     "EventLifecycleProgress",
     "EventProgressSnapshot",
+    "EventTransportError",
     "EventStatusSnapshot",
     "EventStatusTracker",
     "TachibanaEventLifecycle",
