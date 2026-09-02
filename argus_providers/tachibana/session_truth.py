@@ -34,6 +34,12 @@ class SessionTruth:
     market_status: MarketStatus
     market_date: date
     market_date_verified: bool
+    provider_calendar_date: date | None
+    provider_calendar_current: bool
+    event_packet_date: date | None
+    event_packet_current: bool
+    is_trading_day: bool
+    session_truth_confident: bool
     calendar_version: str
     valid_until: datetime
 
@@ -52,15 +58,17 @@ def resolve_jp_cash_session(
     *,
     now: datetime,
     provider_time: datetime | None,
+    provider_calendar_date: date | None = None,
     provider_health: ProviderHealth = ProviderHealth.AVAILABLE,
     provider_market_status: MarketStatus = MarketStatus.UNKNOWN,
+    control_state_confident: bool = True,
 ) -> SessionTruth:
     """Resolve a frame against ARGUS's versioned JPX calendar.
 
     Tachibana SS/US status is auxiliary and can only close, halt, degrade, or
-    invalidate the calendar result. A frame must carry a same-session,
-    bounded-skew ``p_date`` before time-of-day fields can be anchored to the
-    current exchange date.
+    invalidate the calendar result. The official day-key 001 provider date and
+    a same-date, bounded-skew ``p_date`` must corroborate the versioned JPX
+    trading date before time-only execution fields can be anchored.
     """
     if (
         not isinstance(now, datetime)
@@ -68,8 +76,11 @@ def resolve_jp_cash_session(
         or now.utcoffset() is None
         or provider_time is not None
         and (provider_time.tzinfo is None or provider_time.utcoffset() is None)
+        or provider_calendar_date is not None
+        and not isinstance(provider_calendar_date, date)
         or not isinstance(provider_health, ProviderHealth)
         or not isinstance(provider_market_status, MarketStatus)
+        or type(control_state_confident) is not bool
     ):
         raise ValueError("invalid_session_truth_input")
     current = now.astimezone(timezone.utc)
@@ -77,6 +88,7 @@ def resolve_jp_cash_session(
         argus_market_clock.JP_EQUITY, current
     )
     market_date = date.fromisoformat(state["marketDate"])
+    is_trading_day = bool(state["isTradingDay"])
     valid_until = datetime.fromisoformat(
         state["sessionValidUntil"].replace("Z", "+00:00")
     ).astimezone(timezone.utc)
@@ -113,24 +125,40 @@ def resolve_jp_cash_session(
         }
         else MarketStatus.UNKNOWN
     )
-    frame_verified = bool(
+    provider_calendar_current = bool(
+        provider_calendar_date is not None
+        and provider_calendar_date == current.astimezone(_TOKYO).date()
+        and provider_calendar_date == market_date
+    )
+    event_packet_date = (
+        provider_time.astimezone(_TOKYO).date()
+        if provider_time is not None else None
+    )
+    event_packet_current = bool(
         provider_time is not None
-        and provider_time.astimezone(_TOKYO).date() == market_date
+        and event_packet_date == provider_calendar_date
         and abs((current - provider_time.astimezone(timezone.utc)).total_seconds())
         <= _MAX_PROVIDER_CLOCK_SKEW_SECONDS
     )
+    frame_verified = bool(
+        provider_calendar_current and event_packet_current and is_trading_day
+    )
+    session_truth_confident = frame_verified
 
     if provider_health == ProviderHealth.MAINTENANCE:
         phase = JapanCashPhase.MAINTENANCE
         market_status = MarketStatus.MAINTENANCE
-        frame_verified = False
-    elif provider_health not in {
-        ProviderHealth.AVAILABLE,
-        ProviderHealth.DEGRADED,
-    }:
+    elif provider_health != ProviderHealth.AVAILABLE:
+        # A current operation fault is represented as DEGRADED by the status
+        # reconciler.  Its packet/date evidence remains usable, but it cannot
+        # authorize a calendar-derived continuous-trading phase.
         phase = JapanCashPhase.UNKNOWN
         market_status = MarketStatus.UNKNOWN
-        frame_verified = False
+        session_truth_confident = False
+    elif not control_state_confident:
+        phase = JapanCashPhase.UNKNOWN
+        market_status = MarketStatus.UNKNOWN
+        session_truth_confident = False
     elif provider_market_status == MarketStatus.HALTED:
         phase = JapanCashPhase.HALTED
         market_status = MarketStatus.HALTED
@@ -143,16 +171,23 @@ def resolve_jp_cash_session(
     ):
         phase = JapanCashPhase.UNKNOWN
         market_status = MarketStatus.UNKNOWN
-        frame_verified = False
+        session_truth_confident = False
     elif market_status == MarketStatus.OPEN and not frame_verified:
         phase = JapanCashPhase.UNKNOWN
         market_status = MarketStatus.UNKNOWN
+        session_truth_confident = False
 
     return SessionTruth(
         phase=phase,
         market_status=market_status,
         market_date=market_date,
         market_date_verified=frame_verified,
+        provider_calendar_date=provider_calendar_date,
+        provider_calendar_current=provider_calendar_current,
+        event_packet_date=event_packet_date,
+        event_packet_current=event_packet_current,
+        is_trading_day=is_trading_day,
+        session_truth_confident=session_truth_confident,
         calendar_version=str(state["calendarVersion"]),
         valid_until=valid_until,
     )

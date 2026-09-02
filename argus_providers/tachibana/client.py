@@ -1,6 +1,6 @@
 """Serialized, rate-bounded, structurally read-only v4r10 request client.
 
-Only the seven explicitly modelled market-data inquiry functions below can be
+Only the explicitly modelled market-data/date inquiry functions below can be
 sent. There is deliberately no public generic ``read``/``request`` method and
 this client cannot address the REQUEST virtual URL.
 """
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import random
 import re
 import threading
@@ -28,6 +28,7 @@ class _FunctionContract:
     allowed_parameters: frozenset[str]
     response_list: str
     maximum_rows: int
+    response_id: str | None = None
 
 
 _FUNCTION_CONTRACTS: Mapping[str, _FunctionContract] = MappingProxyType({
@@ -62,6 +63,13 @@ _FUNCTION_CONTRACTS: Mapping[str, _FunctionContract] = MappingProxyType({
     "CLMStkGetIssueMstKabu": _FunctionContract(
         "CLMStkGetIssueMstKabu", "master", frozenset(),
         "aCLMStkIssueMstKabu", 20_000,
+    ),
+    # Current v4r10 official master inquiry. Day key 001 supplies the
+    # provider's current calendar date; it is deliberately distinct from an
+    # EVENT packet's send date and SS/US effective time.
+    "CLMStkGetDateZyouhou": _FunctionContract(
+        "CLMStkGetDateZyouhou", "master", frozenset(),
+        "aCLMDateZyouhou", 2, "CLMDateZyouhou",
     ),
 })
 
@@ -280,6 +288,26 @@ class TachibanaReadOnlyClient:
     def stock_issue_master(self) -> Mapping[str, Any]:
         return self._read_contract("CLMStkGetIssueMstKabu", {})
 
+    def provider_calendar_date(self) -> date:
+        """Return the official day-key 001 provider calendar date."""
+        response = self._read_contract("CLMStkGetDateZyouhou", {})
+        rows = response.get("aCLMDateZyouhou")
+        if not isinstance(rows, list):
+            raise TachibanaError(ErrorClass.PROVIDER)
+        current_rows = [
+            row for row in rows
+            if isinstance(row, Mapping) and row.get("sDayKey") == "001"
+        ]
+        if len(current_rows) != 1:
+            raise TachibanaError(ErrorClass.PROVIDER)
+        value = current_rows[0].get("sTheDay")
+        if not isinstance(value, str):
+            raise TachibanaError(ErrorClass.PROVIDER)
+        try:
+            return datetime.strptime(value, "%Y%m%d").date()
+        except ValueError:
+            raise TachibanaError(ErrorClass.PROVIDER) from None
+
     def _symbol_inquiry(
         self, function_id: str, symbols: tuple[str, ...]
     ) -> Mapping[str, Any]:
@@ -402,7 +430,9 @@ class TachibanaReadOnlyClient:
                     raise TachibanaError(ErrorClass.SESSION_EXPIRED)
                 raise TachibanaError(ErrorClass.PROVIDER)
 
-        if response.get("sCLMID") != contract.function_id:
+        if response.get("sCLMID") != (
+            contract.response_id or contract.function_id
+        ):
             raise TachibanaError(ErrorClass.PROVIDER)
         allowed_top_level = (
             _RESPONSE_COMMON_FIELDS
@@ -430,6 +460,29 @@ class TachibanaReadOnlyClient:
                 ].split(","))
                 if any(not set(row) <= requested_columns | {"sIssueCode"}
                        for row in rows):
+                    raise TachibanaError(ErrorClass.PROVIDER)
+            elif contract.function_id == "CLMStkGetDateZyouhou":
+                date_fields = frozenset({
+                    "sDayKey", "sMaeEigyouDay_1", "sMaeEigyouDay_2",
+                    "sMaeEigyouDay_3", "sTheDay", "sYokuEigyouDay_1",
+                    "sYokuEigyouDay_2", "sYokuEigyouDay_3",
+                    "sYokuEigyouDay_4", "sYokuEigyouDay_5",
+                    "sYokuEigyouDay_6", "sYokuEigyouDay_7",
+                    "sYokuEigyouDay_8", "sYokuEigyouDay_9",
+                    "sYokuEigyouDay_10", "sKabuUkewatasiDay",
+                    "sKabuKariUkewatasiDay", "sBondUkewatasiDay",
+                })
+                if any(
+                    not set(row) <= date_fields
+                    or row.get("sDayKey") not in {"001", "002"}
+                    or any(
+                        not isinstance(value, str)
+                        or re.fullmatch(r"[0-9]{8}", value) is None
+                        for key, value in row.items()
+                        if key != "sDayKey"
+                    )
+                    for row in rows
+                ):
                     raise TachibanaError(ErrorClass.PROVIDER)
             if requested_symbols:
                 returned_symbols = tuple(row.get("sIssueCode") for row in rows)

@@ -70,6 +70,11 @@ order-acceptance phases are represented separately from execution phases:
 morning `PREOPEN` begins at 08:00 and `AFTERNOON_PREOPEN` begins at 12:05.
 `UNKNOWN` always fails closed. Acceptance requires both distinct stages:
 
+Before PRICE/EVENT acceptance, the same authenticated session performs the
+current official read-only MASTER inquiry `CLMStkGetDateZyouhou` and requires
+exactly one day-key `001` row with a valid `sTheDay`. Provider calendar date,
+packet date, SS/US effective time, and execution time remain separate evidence.
+
 - `PREOPEN_BOOK_LIVE`: a verified current JPX date, advancing EVENT chronology,
   and a current-session bid/ask, quantity, or depth change in either the
   08:00–09:00 primary window or 12:05–12:30 fallback window; it does not require
@@ -83,6 +88,9 @@ morning `PREOPEN` begins at 08:00 and `AFTERNOON_PREOPEN` begins at 12:05.
 A connected WebSocket without packet progression remains unproven. The exact
 official provider operation code is retained in secret-safe acceptance metadata
 without translating an undocumented code into a stronger market semantic.
+The same metadata retains only safe SS codes, whether their effective date was
+current, per-key conflict state, and bounded field-degradation tokens. It never
+retains a status frame or market value.
 
 Authentication diagnostics retain only the HTTP status, safe `sCLMID`, numeric
 `sResultCode`, official normalized reason, Ack-shape match, and whether all five
@@ -95,12 +103,14 @@ hash. The live canary distinguishes `AUTH_SERVER_REJECTED_<RESULT_CODE>`,
 with no virtual URLs is not an authentication rejection; current official
 documentation identifies unread required documents as one possible cause.
 
-The cross-validation policy is frozen before live observation. Comparable
+The cross-validation policy is frozen before live observation. Execution
 fields are current price, previous close, open, high, low, volume, and market
-status only when both providers expose the same semantic. The trusted row must
+status only when both providers expose the same semantic; board scope adds
+best bid/ask only when both providers expose those quote semantics. The trusted row must
 be explicitly live, carry realtime evidence, and have a non-future source
 timestamp no older than 20 minutes. At least two of three configured symbols
-must be comparable and current price must be present. Tolerances are one yen or
+must be comparable; execution scope requires current price, while board scope
+requires a bid or ask. Tolerances are one yen or
 10 bp for independently sampled current price, exact-to-1-bp daily
 reference/OHLC values, and one board lot or 2% for volume. A classified
 feed-delay difference is acceptable only within 50 bp for price/OHLC or 5% for
@@ -109,6 +119,14 @@ Mismatch classes are `TIMESTAMP_SKEW`, `DELAY_DIFFERENCE`,
 `SESSION_DIFFERENCE`, `FIELD_SEMANTICS`, `CORPORATE_ACTION`, `MARKET_STATE`,
 `PROVIDER_ERROR`, `NORMALIZATION_ERROR`, and `UNKNOWN`; only no mismatch or a
 bounded delay-only result is acceptable.
+
+Eligibility is scope-specific. Board validation requires the verified provider
+calendar date, a current FD/quote packet, and PREOPEN or OPEN phase; it compares
+bid/ask only when the trusted provider exposes the same semantics. Execution
+validation additionally requires OPEN, a current-date execution timestamp, and
+execution-field progression. A current FD packet can remain truthful current
+board data while unresolved phase keeps execution validation and SDA promotion
+ineligible.
 
 Tachibana remains `SHADOW_NON_AUTHORITATIVE`. It has no public route, no order
 surface, no scanner integration, and no path to SDA authority or Japanese

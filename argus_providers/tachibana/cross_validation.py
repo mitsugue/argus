@@ -33,6 +33,8 @@ DEFAULT_TOLERANCES: Mapping[str, Tolerance] = MappingProxyType({
     # Independently sampled live feeds need a small temporal/tick allowance.
     # One yen or 10 bp is still narrow enough to expose a material divergence.
     "current_price": Tolerance(absolute=1.0, relative=0.001),
+    "best_ask": Tolerance(absolute=1.0, relative=0.001),
+    "best_bid": Tolerance(absolute=1.0, relative=0.001),
     "previous_close": Tolerance(absolute=0.01, relative=0.0001),
     "open": Tolerance(absolute=0.01, relative=0.0001),
     "high": Tolerance(absolute=0.01, relative=0.0001),
@@ -58,11 +60,16 @@ def compare_shadow(
     tolerances: Mapping[str, Tolerance] = DEFAULT_TOLERANCES,
     corporate_action_known: bool = False,
     session_aligned: bool = True,
+    market_data_timing: bool = False,
 ) -> tuple[Mismatch, ...]:
     mismatches: list[Mismatch] = []
-    if tachibana.source_timestamp and trusted_timestamp:
+    live_timestamp = (
+        tachibana.market_data_timestamp
+        if market_data_timing else tachibana.source_timestamp
+    )
+    if live_timestamp and trusted_timestamp:
         skew = abs((
-            tachibana.source_timestamp
+            live_timestamp
             - trusted_timestamp.astimezone(timezone.utc)
         ).total_seconds())
         if skew > 20 * 60:
@@ -88,9 +95,9 @@ def compare_shadow(
             MismatchClass.CORPORATE_ACTION if corporate_action_known
             else MismatchClass.SESSION_DIFFERENCE if not session_aligned
             else MismatchClass.DELAY_DIFFERENCE
-            if tachibana.source_timestamp and trusted_timestamp
+            if live_timestamp and trusted_timestamp
             and abs((
-                tachibana.source_timestamp
+                live_timestamp
                 - trusted_timestamp.astimezone(timezone.utc)
             ).total_seconds()) > 60
             else MismatchClass.UNKNOWN

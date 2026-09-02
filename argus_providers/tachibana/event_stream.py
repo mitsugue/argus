@@ -9,7 +9,7 @@ are explicitly enabled.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import logging
 import random
 import re
@@ -23,6 +23,7 @@ from .models import (
     Diagnostics,
     ErrorClass,
     MarketStatus,
+    NormalizationIssue,
     ProviderHealth,
     TachibanaError,
 )
@@ -75,7 +76,8 @@ _DEFINITELY_CLOSED_STOCK_OPERATIONS = frozenset({
     "900",  # online closed
 })
 _FAULT_STOCK_OPERATIONS = frozenset({"898", "899"})
-_MAX_CASH_EQUITY_OPERATION_KEYS = 16
+_MAX_SYSTEM_STATUS_KEYS = 8
+_MAX_OPERATION_STATUS_KEYS = 64
 # The provider allows only one EVENT connection per customer.  ARGUS has no
 # safe, non-secret customer identifier to key by, so enforce the conservative
 # process-wide singleton rather than risk two sessions evicting each other.
@@ -324,87 +326,238 @@ class WebSocketEventConnector:
 class EventStatusSnapshot:
     provider_health: ProviderHealth
     market_status: MarketStatus
+    login_permission_code: str | None = None
+    system_status_code: str | None = None
+    system_effective_time: datetime | None = None
+    operation_code: str | None = None
+    operation_effective_time: datetime | None = None
+    status_date_verified: bool = False
+    state_conflict: bool = False
+
+
+@dataclass(frozen=True)
+class _SystemStatusState:
+    effective_time: datetime
+    login_permission: str
+    system_status: str
+
+
+@dataclass(frozen=True)
+class _OperationStatusState:
+    effective_time: datetime
+    business_day: str
+    operation_status: str
 
 
 class EventStatusTracker:
     """Reconstruct current SS/US state conservatively from replayed records."""
 
-    def __init__(self) -> None:
-        self._provider_health = ProviderHealth.UNAVAILABLE
-        self._market_status = MarketStatus.UNKNOWN
-        self._explicit_system_status = False
-        self._last_system_update = ""
-        self._operation_updates: dict[tuple[str, str, str, str, str], str] = {}
+    def __init__(self, *, provider_calendar_date: date | None = None) -> None:
+        if provider_calendar_date is not None and not isinstance(
+            provider_calendar_date, date
+        ):
+            raise ValueError("invalid_provider_calendar_date")
+        self._provider_calendar_date = provider_calendar_date
+        self._system_states: dict[tuple[str], _SystemStatusState] = {}
+        self._operation_states: dict[
+            tuple[str, str, str, str, str, str], _OperationStatusState
+        ] = {}
+        self._system_conflicts: set[tuple[str]] = set()
+        self._operation_conflicts: set[
+            tuple[str, str, str, str, str, str]
+        ] = set()
+        self._overflow = False
+        self._traffic_observed = False
+        self._terminal_status = False
 
     @property
     def snapshot(self) -> EventStatusSnapshot:
-        return EventStatusSnapshot(self._provider_health, self._market_status)
+        return self._reconcile()
+
+    @staticmethod
+    def _control_time(value: str) -> datetime:
+        return datetime.strptime(value, "%Y%m%d%H%M%S").replace(
+            tzinfo=TOKYO
+        ).astimezone(timezone.utc)
+
+    def _is_current_date(self, effective_time: datetime) -> bool:
+        return bool(
+            self._provider_calendar_date is None
+            or effective_time.astimezone(TOKYO).date()
+            == self._provider_calendar_date
+        )
+
+    @staticmethod
+    def _cash_equity_key(
+        key: tuple[str, str, str, str, str, str]
+    ) -> bool:
+        _provider, market, group, product, category, unit = key
+        return bool(
+            category == "01"
+            and unit == "0101"
+            and market in {"00", "01"}
+            and group == ""
+            and product in {"", "01"}
+        )
+
+    def _reconcile(self) -> EventStatusSnapshot:
+        if self._terminal_status:
+            return EventStatusSnapshot(
+                ProviderHealth.UNAVAILABLE,
+                MarketStatus.UNKNOWN,
+                state_conflict=bool(
+                    self._system_conflicts or self._operation_conflicts
+                ),
+            )
+        systems = [
+            state for state in self._system_states.values()
+            if self._is_current_date(state.effective_time)
+        ]
+        relevant_operations = [
+            state for key, state in self._operation_states.items()
+            if self._cash_equity_key(key)
+            and self._is_current_date(state.effective_time)
+        ]
+        current_system_conflict = any(
+            key in self._system_conflicts
+            and self._is_current_date(self._system_states[key].effective_time)
+            for key in self._system_states
+        )
+        current_operation_conflict = any(
+            key in self._operation_conflicts
+            and self._cash_equity_key(key)
+            and self._is_current_date(self._operation_states[key].effective_time)
+            for key in self._operation_states
+        )
+        state_conflict = bool(
+            self._overflow
+            or current_system_conflict
+            or current_operation_conflict
+        )
+
+        health = (
+            ProviderHealth.AVAILABLE
+            if self._traffic_observed or systems or relevant_operations
+            else ProviderHealth.UNAVAILABLE
+        )
+        permissions = {state.login_permission for state in systems}
+        if "0" in permissions:
+            health = ProviderHealth.MAINTENANCE
+        elif permissions & {"2", "9"}:
+            health = ProviderHealth.UNAVAILABLE
+        elif permissions == {"1"}:
+            # p_LK=1 means login is permitted. p_SS=1 is a system closure
+            # state, not a provider-health failure and not an exchange phase.
+            health = ProviderHealth.AVAILABLE
+        if (
+            health == ProviderHealth.AVAILABLE
+            and any(
+                state.operation_status in _FAULT_STOCK_OPERATIONS
+                for state in relevant_operations
+            )
+        ) or state_conflict and health == ProviderHealth.AVAILABLE:
+            health = ProviderHealth.DEGRADED
+
+        if health == ProviderHealth.MAINTENANCE:
+            market_status = MarketStatus.MAINTENANCE
+        elif current_operation_conflict or self._overflow:
+            market_status = MarketStatus.UNKNOWN
+        elif any(state.business_day == "2" for state in relevant_operations):
+            market_status = MarketStatus.HALTED
+        elif any(
+            state.operation_status in _FAULT_STOCK_OPERATIONS
+            for state in relevant_operations
+        ):
+            market_status = MarketStatus.UNKNOWN
+        elif relevant_operations and all(
+            state.business_day == "1"
+            or state.operation_status in _DEFINITELY_CLOSED_STOCK_OPERATIONS
+            for state in relevant_operations
+        ):
+            market_status = MarketStatus.CLOSED
+        else:
+            # Order-acceptance states (000/100/200/240) do not prove an
+            # exchange-open edge. The JPX calendar resolves that separately.
+            market_status = MarketStatus.UNKNOWN
+
+        login_permission = (
+            next(iter(permissions)) if len(permissions) == 1 else None
+        )
+        system_codes = {state.system_status for state in systems}
+        system_status = (
+            next(iter(system_codes)) if len(system_codes) == 1 else None
+        )
+        operation_codes = {
+            state.operation_status for state in relevant_operations
+        }
+        operation_code = (
+            next(iter(operation_codes)) if len(operation_codes) == 1 else None
+        )
+        system_effective = max(
+            (state.effective_time for state in systems), default=None
+        )
+        operation_effective = max(
+            (state.effective_time for state in relevant_operations), default=None
+        )
+        return EventStatusSnapshot(
+            provider_health=health,
+            market_status=market_status,
+            login_permission_code=login_permission,
+            system_status_code=system_status,
+            system_effective_time=system_effective,
+            operation_code=operation_code,
+            operation_effective_time=operation_effective,
+            status_date_verified=bool(
+                self._provider_calendar_date is not None
+                and (systems or relevant_operations)
+            ),
+            state_conflict=state_conflict,
+        )
 
     def apply(self, fields: Mapping[str, str]) -> EventStatusSnapshot:
         command = fields["p_cmd"]
+        self._traffic_observed = True
         if command == "ST":
-            self._provider_health = ProviderHealth.UNAVAILABLE
-            self._market_status = MarketStatus.UNKNOWN
-        elif command in {"KP", "FD"}:
-            # Valid traffic proves transport liveness, but cannot override an
-            # explicit SS state and never proves that the exchange is open.
-            if not self._explicit_system_status:
-                self._provider_health = ProviderHealth.AVAILABLE
+            self._terminal_status = True
         elif command == "SS":
-            update = fields["p_CT"]
-            if update >= self._last_system_update:
-                self._last_system_update = update
-                self._explicit_system_status = True
-                if fields["p_LK"] == "0":
-                    self._provider_health = ProviderHealth.MAINTENANCE
-                elif fields["p_LK"] == "1" and fields["p_SS"] == "0":
-                    self._provider_health = ProviderHealth.AVAILABLE
-                else:
-                    self._provider_health = ProviderHealth.UNAVAILABLE
-                if self._provider_health != ProviderHealth.AVAILABLE:
-                    self._market_status = MarketStatus.UNKNOWN
-        elif command == "US":
-            if not self._explicit_system_status:
-                self._provider_health = ProviderHealth.AVAILABLE
-            if not (
-                fields["p_UC"] == "01"
-                and fields["p_UU"] == "0101"
-                and fields["p_MC"] in {"00", "01"}
-            ):
-                # Other operation categories are not evidence for the cash-
-                # equity market state and must not grow retained state.
-                return self.snapshot
-            key = (
-                fields["p_UC"], fields["p_UU"], fields["p_MC"],
-                fields["p_GSCD"], fields["p_SHSB"],
+            key = (fields["p_PV"],)
+            candidate = _SystemStatusState(
+                self._control_time(fields["p_CT"]),
+                fields["p_LK"],
+                fields["p_SS"],
             )
-            if (
-                key not in self._operation_updates
-                and len(self._operation_updates) >= _MAX_CASH_EQUITY_OPERATION_KEYS
+            current = self._system_states.get(key)
+            if current is None and len(self._system_states) >= _MAX_SYSTEM_STATUS_KEYS:
+                self._overflow = True
+            elif current is None or candidate.effective_time > current.effective_time:
+                self._system_states[key] = candidate
+                self._system_conflicts.discard(key)
+            elif candidate.effective_time == current.effective_time and (
+                candidate.login_permission != current.login_permission
+                or candidate.system_status != current.system_status
             ):
-                # Fail closed instead of evicting chronology and later
-                # accepting an old replay for an evicted status key.
-                self._market_status = MarketStatus.UNKNOWN
-                if self._provider_health == ProviderHealth.AVAILABLE:
-                    self._provider_health = ProviderHealth.DEGRADED
-                return self.snapshot
-            update = fields["p_CT"]
-            if update >= self._operation_updates.get(key, ""):
-                self._operation_updates[key] = update
-                if fields["p_EDK"] == "1":
-                    self._market_status = MarketStatus.CLOSED
-                elif fields["p_EDK"] == "2":
-                    self._market_status = MarketStatus.HALTED
-                elif fields["p_US"] in _FAULT_STOCK_OPERATIONS:
-                    self._market_status = MarketStatus.UNKNOWN
-                    if self._provider_health == ProviderHealth.AVAILABLE:
-                        self._provider_health = ProviderHealth.DEGRADED
-                elif fields["p_US"] in _DEFINITELY_CLOSED_STOCK_OPERATIONS:
-                    self._market_status = MarketStatus.CLOSED
-                else:
-                    # 000/100/200/240 are order/operations phases.  The
-                    # official contract doesn't define a market-open edge.
-                    self._market_status = MarketStatus.UNKNOWN
+                self._system_conflicts.add(key)
+        elif command == "US":
+            key = (
+                fields["p_PV"], fields["p_MC"], fields["p_GSCD"],
+                fields["p_SHSB"], fields["p_UC"], fields["p_UU"],
+            )
+            candidate = _OperationStatusState(
+                self._control_time(fields["p_CT"]),
+                fields["p_EDK"],
+                fields["p_US"],
+            )
+            current = self._operation_states.get(key)
+            if current is None and len(self._operation_states) >= _MAX_OPERATION_STATUS_KEYS:
+                self._overflow = True
+            elif current is None or candidate.effective_time > current.effective_time:
+                self._operation_states[key] = candidate
+                self._operation_conflicts.discard(key)
+            elif candidate.effective_time == current.effective_time and (
+                candidate.business_day != current.business_day
+                or candidate.operation_status != current.operation_status
+            ):
+                self._operation_conflicts.add(key)
         return self.snapshot
 
 
@@ -457,6 +610,15 @@ class EventProgressSnapshot:
     timeout_category: str | None
     provider_market_status: str
     provider_operation_code: str | None
+    provider_login_permission_code: str | None
+    provider_system_status_code: str | None
+    provider_status_date_verified: bool
+    provider_state_conflict: bool
+    normalization_degradations: int
+    last_normalization_field: str | None
+    last_normalization_reason: str | None
+    last_normalization_row: int | None
+    last_normalization_symbol: str | None
 
 
 class EventLifecycleProgress:
@@ -492,6 +654,15 @@ class EventLifecycleProgress:
         self._timeout_category: str | None = None
         self._provider_market_status = MarketStatus.UNKNOWN.value
         self._provider_operation_code: str | None = None
+        self._provider_login_permission_code: str | None = None
+        self._provider_system_status_code: str | None = None
+        self._provider_status_date_verified = False
+        self._provider_state_conflict = False
+        self._normalization_degradations = 0
+        self._last_normalization_field: str | None = None
+        self._last_normalization_reason: str | None = None
+        self._last_normalization_row: int | None = None
+        self._last_normalization_symbol: str | None = None
         self._lock = threading.Lock()
 
     def connection_started(self) -> None:
@@ -599,21 +770,43 @@ class EventLifecycleProgress:
         with self._lock:
             self._observations += count
 
-    def provider_state_observed(
-        self, *, market_status: MarketStatus, operation_code: str | None,
-    ) -> None:
+    def provider_state_observed(self, status: EventStatusSnapshot) -> None:
         if (
-            not isinstance(market_status, MarketStatus)
-            or operation_code is not None
-            and re.fullmatch(r"[0-9]{3}", operation_code) is None
+            not isinstance(status, EventStatusSnapshot)
+            or status.operation_code is not None
+            and re.fullmatch(r"[0-9]{3}", status.operation_code) is None
+            or status.login_permission_code not in {None, "0", "1", "2", "9"}
+            or status.system_status_code not in {None, "0", "1"}
         ):
             raise TachibanaError(ErrorClass.PROVIDER)
         with self._lock:
-            self._provider_market_status = market_status.value
-            if operation_code is not None:
-                # Keep the official code verbatim.  Do not invent a stronger
-                # trading semantic than the provider contract supplies.
-                self._provider_operation_code = operation_code
+            self._provider_market_status = status.market_status.value
+            self._provider_login_permission_code = status.login_permission_code
+            self._provider_system_status_code = status.system_status_code
+            self._provider_status_date_verified = status.status_date_verified
+            self._provider_state_conflict = status.state_conflict
+            # Keep only a uniquely reconciled current official code. A mixed
+            # per-key state clears this field rather than preserving the last
+            # arrival as false global authority.
+            self._provider_operation_code = status.operation_code
+
+    def normalization_degraded(
+        self, *, row_number: int, symbol: str, issue: NormalizationIssue,
+    ) -> None:
+        if (
+            type(row_number) is not int
+            or not 1 <= row_number <= 120
+            or re.fullmatch(r"[0-9ACDFGHJKLMNPRSTUWXY]{4}", symbol) is None
+            or not any(character.isdigit() for character in symbol)
+            or not isinstance(issue, NormalizationIssue)
+        ):
+            raise TachibanaError(ErrorClass.CONFIGURATION)
+        with self._lock:
+            self._normalization_degradations += 1
+            self._last_normalization_field = issue.field
+            self._last_normalization_reason = issue.reason
+            self._last_normalization_row = row_number
+            self._last_normalization_symbol = symbol
 
     def snapshot(self) -> EventProgressSnapshot:
         with self._lock:
@@ -669,6 +862,19 @@ class EventLifecycleProgress:
                 timeout_category=self._timeout_category,
                 provider_market_status=self._provider_market_status,
                 provider_operation_code=self._provider_operation_code,
+                provider_login_permission_code=(
+                    self._provider_login_permission_code
+                ),
+                provider_system_status_code=self._provider_system_status_code,
+                provider_status_date_verified=(
+                    self._provider_status_date_verified
+                ),
+                provider_state_conflict=self._provider_state_conflict,
+                normalization_degradations=self._normalization_degradations,
+                last_normalization_field=self._last_normalization_field,
+                last_normalization_reason=self._last_normalization_reason,
+                last_normalization_row=self._last_normalization_row,
+                last_normalization_symbol=self._last_normalization_symbol,
             )
 
 
@@ -688,6 +894,7 @@ class TachibanaEventLifecycle:
         random_value: Callable[[], float] = random.random,
         waiter: Callable[[threading.Event, float], bool] | None = None,
         session_truth_resolver: Callable[..., SessionTruth] | None = None,
+        provider_calendar_date: date | None = None,
         progress: EventLifecycleProgress | None = None,
     ) -> None:
         if (
@@ -695,6 +902,8 @@ class TachibanaEventLifecycle:
             or not isinstance(subscription, EventSubscription)
             or not isinstance(sensor, TransientLiveSensor)
             or sensor.bounds.max_symbols < len(subscription.symbols)
+            or provider_calendar_date is not None
+            and not isinstance(provider_calendar_date, date)
         ):
             raise ValueError("invalid_event_lifecycle")
         self._session = session
@@ -706,6 +915,10 @@ class TachibanaEventLifecycle:
         self._random_value = random_value
         self._waiter = waiter or (lambda stop, seconds: stop.wait(seconds))
         self._session_truth_resolver = session_truth_resolver
+        self._provider_calendar_date = provider_calendar_date
+        self._symbol_to_row = {
+            symbol: row for row, symbol in subscription.row_to_symbol.items()
+        }
         self._progress = progress or EventLifecycleProgress()
         self._budget = EventReconnectBudget(
             self._policy.maximum_reconnects_per_day, clock=clock
@@ -801,7 +1014,9 @@ class TachibanaEventLifecycle:
                     row_to_symbol=self._subscription.row_to_symbol,
                     max_symbols=self._subscription.max_symbols,
                 )
-                tracker = EventStatusTracker()
+                tracker = EventStatusTracker(
+                    provider_calendar_date=self._provider_calendar_date
+                )
                 stream: Iterable[str | bytes] | None = None
                 failure: Exception | None = None
                 failure_stage = "CONNECT"
@@ -828,14 +1043,7 @@ class TachibanaEventLifecycle:
                         rows = assembler.apply(fields)
                         failure_stage = "STATUS"
                         status = tracker.apply(fields)
-                        self._progress.provider_state_observed(
-                            market_status=status.market_status,
-                            operation_code=(
-                                fields["p_US"]
-                                if fields["p_cmd"] == "US"
-                                else None
-                            ),
-                        )
+                        self._progress.provider_state_observed(status)
                         frames += 1
                         last_error = ErrorClass.NONE
                         failure_stage = "CLOCK"
@@ -883,8 +1091,14 @@ class TachibanaEventLifecycle:
                             session_truth = self._session_truth_resolver(
                                 now=received_at,
                                 provider_time=provider_time,
+                                provider_calendar_date=(
+                                    self._provider_calendar_date
+                                ),
                                 provider_health=status.provider_health,
                                 provider_market_status=status.market_status,
+                                control_state_confident=(
+                                    not status.state_conflict
+                                ),
                             )
                             market_date = session_truth.market_date
                             market_status = session_truth.market_status
@@ -906,9 +1120,24 @@ class TachibanaEventLifecycle:
                                 market_date=market_date,
                                 market_status=market_status,
                                 market_date_verified=market_date_verified,
+                                market_data_timestamp=provider_time,
+                                market_data_date_verified=bool(
+                                    self._session_truth_resolver is not None
+                                    and session_truth.provider_calendar_current
+                                    and session_truth.event_packet_current
+                                ),
+                                degrade_noncritical=True,
                                 fresh_for_seconds=self._session.config.fresh_for_seconds,
                                 endpoint_category="EVENT",
                             )
+                            for issue in observation.normalization_issues:
+                                self._progress.normalization_degraded(
+                                    row_number=self._symbol_to_row[
+                                        observation.symbol
+                                    ],
+                                    symbol=observation.symbol,
+                                    issue=issue,
+                                )
                             failure_stage = "INGEST"
                             self._sensor.ingest(observation)
                             observations += 1

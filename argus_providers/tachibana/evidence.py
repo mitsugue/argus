@@ -62,6 +62,16 @@ def to_canonical_observations(
             "realtimeClassification": observation.realtime_classification,
             "marketStatus": observation.market_status.value,
             "sourceTimestampPrecision": observation.source_timestamp_precision,
+            "marketDataTimestamp": (
+                observation.market_data_timestamp.astimezone(
+                    timezone.utc
+                ).isoformat()
+                if observation.market_data_timestamp is not None else None
+            ),
+            "marketDataDateVerified": int(
+                observation.market_data_date_verified
+            ),
+            "normalizationIssueCount": len(observation.normalization_issues),
             "normalizationVersion": observation.normalization_version,
             "authorityState": observation.authority_state.value,
             "availableFields": sorted(

@@ -219,16 +219,19 @@ def _ss_frame(
     provider_time: str = "20260901145959",
     login_permission: str = "1",
     system_status: str = "0",
+    provider: str = "MSGSV",
+    event_date: str = "2026.09.01-15:00:10.123",
 ) -> str:
     return _event_frame(
         sequence,
         "SS",
-        ("p_PV", "MSGSV"),
+        ("p_PV", provider),
         ("p_ENO", str(event_number)),
         ("p_ALT", "0"),
         ("p_CT", provider_time),
         ("p_LK", login_permission),
         ("p_SS", system_status),
+        p_date=event_date,
     )
 
 
@@ -243,21 +246,25 @@ def _us_frame(
     group_code: str = "",
     section: str = "",
     unit: str = "0101",
+    category: str = "01",
+    provider: str = "MSGSV",
+    event_date: str = "2026.09.01-15:00:10.123",
 ) -> str:
     return _event_frame(
         sequence,
         "US",
-        ("p_PV", "MSGSV"),
+        ("p_PV", provider),
         ("p_ENO", str(event_number)),
         ("p_ALT", "0"),
         ("p_CT", provider_time),
         ("p_MC", market),
         ("p_GSCD", group_code),
         ("p_SHSB", section),
-        ("p_UC", "01"),
+        ("p_UC", category),
         ("p_UU", unit),
         ("p_EDK", business_day),
         ("p_US", operation_status),
+        p_date=event_date,
     )
 
 
@@ -575,6 +582,7 @@ def test_allowlist_is_exact_immutable_and_there_is_no_generic_dispatch(tmp_path)
         "CLMMfdsGetShinyouZan": "MASTER",
         "CLMMfdsGetHibuInfo": "MASTER",
         "CLMStkGetIssueMstKabu": "MASTER",
+        "CLMStkGetDateZyouhou": "MASTER",
     }
     with pytest.raises(TypeError):
         READ_ONLY_FUNCTIONS["CLMKabuNewOrder"] = "REQUEST"
@@ -634,6 +642,49 @@ def test_issue_and_balance_inquiries_route_to_master_and_history_to_price(tmp_pa
     routed = [call[0] for call in transport.calls[1:]]
     assert routed[:5] == [urls["sUrlMaster"]] * 5
     assert routed[5] == urls["sUrlPrice"]
+
+
+def test_official_date_information_uses_day_key_001_on_master(tmp_path):
+    response = {
+        "p_no": "2",
+        "p_errno": "0",
+        "sCLMID": "CLMDateZyouhou",
+        "aCLMDateZyouhou": [{
+            "sDayKey": "001",
+            "sTheDay": "20260902",
+            "sMaeEigyouDay_1": "20260901",
+            "sYokuEigyouDay_1": "20260903",
+        }],
+    }
+    session, transport, urls = _authenticated_session(tmp_path, [response])
+    assert TachibanaReadOnlyClient(session).provider_calendar_date() == date(
+        2026, 9, 2
+    )
+    url, payload, _timeout = transport.calls[-1]
+    assert url == urls["sUrlMaster"]
+    assert payload["sCLMID"] == "CLMStkGetDateZyouhou"
+    assert payload["p_no"] == "2"
+
+
+@pytest.mark.parametrize("rows", [
+    [],
+    [
+        {"sDayKey": "001", "sTheDay": "20260902"},
+        {"sDayKey": "001", "sTheDay": "20260902"},
+    ],
+    [{"sDayKey": "001", "sTheDay": "20260230"}],
+])
+def test_provider_calendar_date_fails_closed_on_ambiguous_or_invalid_rows(
+    tmp_path, rows,
+):
+    response = {
+        "p_no": "2", "p_errno": "0", "sCLMID": "CLMDateZyouhou",
+        "aCLMDateZyouhou": rows,
+    }
+    session, _, _ = _authenticated_session(tmp_path, [response])
+    with pytest.raises(TachibanaError) as caught:
+        TachibanaReadOnlyClient(session).provider_calendar_date()
+    assert caught.value.classification == ErrorClass.PROVIDER
 
 
 def test_response_requires_protocol_errno_function_and_bounded_shape(tmp_path):
@@ -943,7 +994,7 @@ def test_delayed_quote_has_bounded_fresh_until_and_live_snapshot_is_not_a_bar():
     assert canonical[0]["freshUntil"] == "2026-09-01T06:15:00Z"
 
 
-def test_time_only_price_needs_verified_session_date_and_open_market_to_be_fresh():
+def test_market_data_freshness_is_separate_from_market_phase_confidence():
     unverified = normalize_market_price(
         _row(), received_at=NOW, market_date=date(2026, 9, 1),
         market_status=MarketStatus.OPEN,
@@ -970,21 +1021,17 @@ def test_time_only_price_needs_verified_session_date_and_open_market_to_be_fresh
         market_status=MarketStatus.UNKNOWN, market_date_verified=True,
     )
     assert unknown.source_timestamp is not None
-    assert unknown.freshness == Freshness.STALE
-    assert unknown.fresh_until is None
+    assert unknown.freshness == Freshness.FRESH
+    assert unknown.fresh_until is not None
+    # Canonical execution evidence still fails closed while phase is unknown.
     assert to_canonical_observations(unknown)[0]["freshness"] == truth.STALE
 
     closed = normalize_market_price(
         _row(), received_at=NOW, market_date=date(2026, 9, 1),
         market_status=MarketStatus.CLOSED, market_date_verified=True,
     )
-    assert closed.freshness == Freshness.STALE
-    with pytest.raises(ValueError, match="requires_open_market"):
-        replace(
-            closed,
-            freshness=Freshness.FRESH,
-            fresh_until=NOW + timedelta(seconds=5),
-        )
+    assert closed.freshness == Freshness.FRESH
+    assert to_canonical_observations(closed)[0]["freshness"] == truth.STALE
 
 
 def test_smoke_pass_gate_requires_price_fresh_open_timestamp_and_teardown_inputs():
@@ -1223,34 +1270,166 @@ def test_status_tracker_uses_provider_time_and_never_invents_market_open():
     )))
     assert fault.market_status == MarketStatus.UNKNOWN
     assert fault.provider_health == ProviderHealth.DEGRADED
+    fault_truth = resolve_jp_cash_session(
+        now=datetime(2026, 9, 1, 6, 3, tzinfo=timezone.utc),
+        provider_time=datetime(2026, 9, 1, 6, 3, tzinfo=timezone.utc),
+        provider_calendar_date=date(2026, 9, 1),
+        provider_health=fault.provider_health,
+        provider_market_status=fault.market_status,
+    )
+    assert fault_truth.market_date_verified is True
+    assert fault_truth.phase == JapanCashPhase.UNKNOWN
+    assert fault_truth.session_truth_confident is False
     halted = tracker.apply(parse_event_frame(_us_frame(
         6, 113, provider_time="20260901150400", business_day="2",
     )))
     assert halted.market_status == MarketStatus.HALTED
 
 
-def test_status_tracker_retains_only_bounded_cash_equity_operation_keys():
+def test_ss_replay_uses_per_provider_p_ct_and_separates_closure_from_health():
+    tracker = EventStatusTracker(provider_calendar_date=date(2026, 9, 2))
+    closed_system = tracker.apply(parse_event_frame(_ss_frame(
+        1, 1, provider_time="20260902052959",
+        login_permission="1", system_status="1",
+    )))
+    assert closed_system.provider_health == ProviderHealth.AVAILABLE
+    assert closed_system.system_status_code == "1"
+    assert closed_system.login_permission_code == "1"
+    assert closed_system.market_status == MarketStatus.UNKNOWN
+    assert closed_system.status_date_verified is True
+
+    opened = tracker.apply(parse_event_frame(_ss_frame(
+        2, 2, provider_time="20260902075500",
+        login_permission="1", system_status="0",
+    )))
+    assert opened.provider_health == ProviderHealth.AVAILABLE
+    assert opened.system_status_code == "0"
+
+    # Later receive order and p_ENO cannot roll the same logical key back.
+    ignored = tracker.apply(parse_event_frame(_ss_frame(
+        3, 3, provider_time="20260902060000",
+        login_permission="0", system_status="1",
+    )))
+    assert ignored.provider_health == ProviderHealth.AVAILABLE
+    assert ignored.system_status_code == "0"
+
+
+def test_us_replay_is_per_full_operation_key_and_aggregated_fail_closed():
+    tracker = EventStatusTracker(provider_calendar_date=date(2026, 9, 2))
+    cash = tracker.apply(parse_event_frame(_us_frame(
+        1, 1, provider_time="20260902080000", operation_status="100",
+    )))
+    assert cash.operation_code == "100"
+    assert cash.market_status == MarketStatus.UNKNOWN
+
+    # A newer derivatives key legitimately coexists and cannot overwrite the
+    # Tokyo cash-equity state.
+    unrelated = tracker.apply(parse_event_frame(_us_frame(
+        2, 2, provider_time="20260902100000", market="01",
+        group_code="101", section="03", unit="0201", category="02",
+        operation_status="900",
+    )))
+    assert unrelated.operation_code == "100"
+    assert unrelated.market_status == MarketStatus.UNKNOWN
+    assert len(tracker._operation_states) == 2
+
+    closed = tracker.apply(parse_event_frame(_us_frame(
+        3, 3, provider_time="20260902113000", operation_status="140",
+    )))
+    assert closed.operation_code == "140"
+    assert closed.market_status == MarketStatus.CLOSED
+
+    # A second relevant Tokyo key with a live acceptance state makes the
+    # aggregate ambiguous, never arrival-order OPEN or CLOSED.
+    mixed = tracker.apply(parse_event_frame(_us_frame(
+        4, 4, provider_time="20260902120500", market="01",
+        operation_status="200",
+    )))
+    assert mixed.operation_code is None
+    assert mixed.market_status == MarketStatus.UNKNOWN
+
+
+def test_stale_status_date_cannot_negate_current_fd_but_current_maintenance_can():
+    tracker = EventStatusTracker(provider_calendar_date=date(2026, 9, 2))
+    stale = tracker.apply(parse_event_frame(_ss_frame(
+        1, 1, provider_time="20260901235900",
+        login_permission="0", system_status="1",
+    )))
+    assert stale.provider_health == ProviderHealth.AVAILABLE
+    assert stale.status_date_verified is False
+    current_fd = tracker.apply(parse_event_frame(_event_frame(
+        2, "FD", ("p_1_DPP", "2000"),
+        p_date="2026.09.02-09:00:00.000",
+    )))
+    assert current_fd.provider_health == ProviderHealth.AVAILABLE
+
+    maintenance = tracker.apply(parse_event_frame(_ss_frame(
+        3, 2, provider_time="20260902090001",
+        login_permission="0", system_status="1",
+    )))
+    assert maintenance.provider_health == ProviderHealth.MAINTENANCE
+    assert maintenance.market_status == MarketStatus.MAINTENANCE
+    assert tracker.apply(parse_event_frame(_event_frame(
+        4, "KP", p_date="2026.09.02-09:00:05.000"
+    ))).provider_health == ProviderHealth.MAINTENANCE
+
+
+def test_equal_p_ct_conflict_is_degraded_until_a_newer_state_supersedes_it():
+    tracker = EventStatusTracker(provider_calendar_date=date(2026, 9, 2))
+    tracker.apply(parse_event_frame(_us_frame(
+        1, 1, provider_time="20260902080000", operation_status="100",
+    )))
+    conflict = tracker.apply(parse_event_frame(_us_frame(
+        2, 2, provider_time="20260902080000", operation_status="140",
+    )))
+    assert conflict.state_conflict is True
+    assert conflict.provider_health == ProviderHealth.DEGRADED
+    assert conflict.market_status == MarketStatus.UNKNOWN
+    now = datetime(2026, 9, 2, 0, 1, tzinfo=timezone.utc)
+    unresolved = resolve_jp_cash_session(
+        now=now,
+        provider_time=now,
+        provider_calendar_date=date(2026, 9, 2),
+        provider_health=conflict.provider_health,
+        provider_market_status=conflict.market_status,
+        control_state_confident=not conflict.state_conflict,
+    )
+    assert unresolved.market_date_verified is True
+    assert unresolved.session_truth_confident is False
+    assert unresolved.phase == JapanCashPhase.UNKNOWN
+
+    recovered = tracker.apply(parse_event_frame(_us_frame(
+        3, 3, provider_time="20260902080001", operation_status="100",
+    )))
+    assert recovered.state_conflict is False
+    assert recovered.provider_health == ProviderHealth.AVAILABLE
+    assert recovered.operation_code == "100"
+
+
+def test_status_tracker_retains_bounded_per_key_operation_state():
     tracker = EventStatusTracker()
     ignored = tracker.apply(parse_event_frame(_us_frame(
         1, 1, unit="0102", operation_status="140",
     )))
     assert ignored.market_status == MarketStatus.UNKNOWN
-    assert tracker._operation_updates == {}
+    assert len(tracker._operation_states) == 1
 
-    for index in range(16):
+    for index in range(63):
         snapshot = tracker.apply(parse_event_frame(_us_frame(
             index + 2,
             index + 2,
             group_code=f"{index:03d}",
             operation_status="140",
         )))
-        assert snapshot.market_status == MarketStatus.CLOSED
-    assert len(tracker._operation_updates) == 16
+        # Non-cash logical keys are retained for chronology but cannot close
+        # the Tokyo cash-equity market globally.
+        assert snapshot.market_status == MarketStatus.UNKNOWN
+    assert len(tracker._operation_states) == 64
 
     overflow = tracker.apply(parse_event_frame(_us_frame(
-        18, 18, group_code="016", operation_status="140",
+        65, 65, group_code="064", operation_status="140",
     )))
-    assert len(tracker._operation_updates) == 16
+    assert len(tracker._operation_states) == 64
     assert overflow.market_status == MarketStatus.UNKNOWN
     assert overflow.provider_health == ProviderHealth.DEGRADED
 
@@ -1592,6 +1771,7 @@ def test_event_lifecycle_uses_current_session_truth_for_fresh_observation(
         connector=ScriptedEventConnector([frames]),
         clock=lambda: current,
         session_truth_resolver=resolve_jp_cash_session,
+        provider_calendar_date=date(2026, 9, 2),
     )
     summary = lifecycle.run(stop)
     observation = sensor.latest("6501", now=current)
@@ -1601,6 +1781,119 @@ def test_event_lifecycle_uses_current_session_truth_for_fresh_observation(
     assert observation.source_timestamp == datetime(
         2026, 9, 2, 0, 0, tzinfo=timezone.utc
     )
+
+
+def test_session_three_safe_shape_reconciles_ss_closed_with_live_cash_fd(
+    tmp_path,
+):
+    current = datetime(2026, 9, 2, 1, 19, 10, tzinfo=timezone.utc)
+    event_date = "2026.09.02-10:19:10.000"
+    session, _, _ = _authenticated_session(tmp_path, websocket_enabled=True)
+    stop = threading.Event()
+
+    def frames(owned_stop):
+        yield _ss_frame(
+            1, 1, provider_time="20260902052959",
+            login_permission="1", system_status="1",
+            event_date=event_date,
+        )
+        yield _us_frame(
+            2, 2, provider_time="20260902064500", market="01",
+            group_code="101", section="03", unit="0201", category="02",
+            operation_status="100", event_date=event_date,
+        )
+        yield _us_frame(
+            3, 3, provider_time="20260902064501", market="01",
+            group_code="101", section="04", unit="0202", category="02",
+            operation_status="100", event_date=event_date,
+        )
+        yield _us_frame(
+            4, 4, provider_time="20260902070000", unit="0500",
+            category="05", section="05", operation_status="000",
+            event_date=event_date,
+        )
+        yield _us_frame(
+            5, 5, provider_time="20260902070001", unit="1100",
+            category="11", operation_status="000", event_date=event_date,
+        )
+        yield _us_frame(
+            6, 6, provider_time="20260902080000", operation_status="100",
+            event_date=event_date,
+        )
+        yield _event_frame(
+            7, "FD", ("p_1_DPP", "2000"),
+            ("t_1_DPP:T", "10:19"), ("p_1_QAP", "2001"),
+            ("p_1_QBP", "2000"), p_date=event_date,
+        )
+        owned_stop.set()
+
+    progress = EventLifecycleProgress()
+    sensor = TransientLiveSensor(max_symbols=1, window_size=4, window_seconds=30)
+    lifecycle = TachibanaEventLifecycle(
+        session,
+        EventSubscription(("6501",)),
+        sensor,
+        connector=ScriptedEventConnector([frames]),
+        clock=lambda: current,
+        session_truth_resolver=resolve_jp_cash_session,
+        provider_calendar_date=date(2026, 9, 2),
+        progress=progress,
+    )
+    summary = lifecycle.run(stop)
+    snapshot = progress.snapshot()
+    observation = sensor.latest("6501", now=current)
+    assert summary.reconnects == 0
+    assert summary.provider_health == ProviderHealth.AVAILABLE
+    assert snapshot.ss_frames == 1
+    assert snapshot.us_frames == 5
+    assert snapshot.fd_frames == 1
+    assert snapshot.provider_login_permission_code == "1"
+    assert snapshot.provider_system_status_code == "1"
+    assert snapshot.provider_operation_code == "100"
+    assert snapshot.provider_status_date_verified is True
+    assert observation.market_status == MarketStatus.OPEN
+    assert observation.freshness == Freshness.FRESH
+    assert observation.market_data_date_verified is True
+
+
+def test_noncritical_fd_normalization_degrades_field_without_reconnect(tmp_path):
+    current = datetime(2026, 9, 2, 0, 1, 10, tzinfo=timezone.utc)
+    session, _, _ = _authenticated_session(tmp_path, websocket_enabled=True)
+    stop = threading.Event()
+
+    def frames(owned_stop):
+        yield _event_frame(
+            1, "FD", ("p_1_DPP", "not-a-number"),
+            ("t_1_DPP:T", "09:01"), ("p_1_QAP", "2001"),
+            ("p_1_QBP", "2000"),
+            p_date="2026.09.02-09:01:10.000",
+        )
+        owned_stop.set()
+
+    progress = EventLifecycleProgress()
+    sensor = TransientLiveSensor(max_symbols=1, window_size=4, window_seconds=30)
+    summary = TachibanaEventLifecycle(
+        session,
+        EventSubscription(("6501",)),
+        sensor,
+        connector=ScriptedEventConnector([frames]),
+        clock=lambda: current,
+        session_truth_resolver=resolve_jp_cash_session,
+        provider_calendar_date=date(2026, 9, 2),
+        progress=progress,
+    ).run(stop)
+    observation = sensor.latest("6501", now=current)
+    safe = progress.snapshot()
+    assert summary.reconnects == 0
+    assert summary.observations_ingested == 1
+    assert observation.fields["current_price"] is None
+    assert observation.field_availability["current_price"] is False
+    assert observation.freshness == Freshness.FRESH
+    assert safe.normalization_degradations == 1
+    assert safe.last_normalization_field == "PDPP"
+    assert safe.last_normalization_reason == "INVALID_NUMBER"
+    assert safe.last_normalization_row == 1
+    assert safe.last_normalization_symbol == "6501"
 
 
 def test_event_lifecycle_has_daily_reconnect_exhaustion_and_terminal_st(tmp_path):
@@ -1706,18 +1999,23 @@ def test_session_truth_uses_canonical_jpx_boundaries(
     session_truth = resolve_jp_cash_session(
         now=provider.astimezone(timezone.utc),
         provider_time=provider,
+        provider_calendar_date=date(2026, 9, 2),
     )
     assert session_truth.phase == phase
     assert session_truth.market_status == status
     assert session_truth.market_date == date(2026, 9, 2)
     assert session_truth.market_date_verified is True
+    assert session_truth.session_truth_confident is True
     assert session_truth.calendar_version == "cal-2026.2"
 
 
 def test_session_truth_rejects_prior_day_clock_skew_and_provider_conflict():
     now = datetime(2026, 9, 2, 0, 30, tzinfo=timezone.utc)
     prior = datetime(2026, 9, 1, 0, 30, tzinfo=timezone.utc)
-    stale = resolve_jp_cash_session(now=now, provider_time=prior)
+    stale = resolve_jp_cash_session(
+        now=now, provider_time=prior,
+        provider_calendar_date=date(2026, 9, 2),
+    )
     assert stale.phase == JapanCashPhase.UNKNOWN
     assert stale.market_status == MarketStatus.UNKNOWN
     assert stale.market_date_verified is False
@@ -1725,20 +2023,111 @@ def test_session_truth_rejects_prior_day_clock_skew_and_provider_conflict():
     closed = resolve_jp_cash_session(
         now=now,
         provider_time=now,
+        provider_calendar_date=date(2026, 9, 2),
         provider_market_status=MarketStatus.CLOSED,
     )
     assert closed.phase == JapanCashPhase.UNKNOWN
     assert closed.market_status == MarketStatus.UNKNOWN
-    assert closed.market_date_verified is False
+    assert closed.market_date_verified is True
+    assert closed.session_truth_confident is False
 
     maintenance = resolve_jp_cash_session(
         now=now,
         provider_time=now,
+        provider_calendar_date=date(2026, 9, 2),
         provider_health=ProviderHealth.MAINTENANCE,
     )
     assert maintenance.phase == JapanCashPhase.MAINTENANCE
     assert maintenance.market_status == MarketStatus.MAINTENANCE
-    assert maintenance.market_date_verified is False
+    assert maintenance.market_date_verified is True
+    assert maintenance.session_truth_confident is True
+
+    lunch_now = datetime(2026, 9, 2, 2, 35, tzinfo=timezone.utc)
+    lunch = resolve_jp_cash_session(
+        now=lunch_now,
+        provider_time=lunch_now,
+        provider_calendar_date=date(2026, 9, 2),
+        provider_health=ProviderHealth.AVAILABLE,
+        provider_market_status=MarketStatus.CLOSED,
+    )
+    assert lunch.phase == JapanCashPhase.LUNCH_CLOSED_INTERVAL
+    assert lunch.market_status == MarketStatus.CLOSED
+    assert lunch.market_date_verified is True
+
+
+def test_provider_calendar_packet_and_trading_date_are_independent_on_weekend():
+    now = datetime(2026, 9, 5, 0, 0, 5, tzinfo=timezone.utc)
+    resolved = resolve_jp_cash_session(
+        now=now,
+        provider_time=now,
+        provider_calendar_date=date(2026, 9, 5),
+    )
+    assert resolved.provider_calendar_current is True
+    assert resolved.event_packet_current is True
+    assert resolved.is_trading_day is False
+    assert resolved.market_date_verified is False
+    assert resolved.session_truth_confident is False
+    assert resolved.phase == JapanCashPhase.CLOSED
+
+    packet_current = normalize_market_price(
+        _row(**{"tDPP:T": ""}),
+        received_at=now,
+        market_date=date(2026, 9, 5),
+        market_status=MarketStatus.CLOSED,
+        market_date_verified=False,
+        market_data_timestamp=now,
+        market_data_date_verified=True,
+        endpoint_category="EVENT",
+    )
+    assert packet_current.freshness == Freshness.FRESH
+    assert packet_current.source_timestamp is None
+
+    holiday_now = datetime(2026, 9, 21, 0, 0, 5, tzinfo=timezone.utc)
+    holiday = resolve_jp_cash_session(
+        now=holiday_now,
+        provider_time=holiday_now,
+        provider_calendar_date=date(2026, 9, 21),
+    )
+    assert holiday.provider_calendar_current is True
+    assert holiday.event_packet_current is True
+    assert holiday.is_trading_day is False
+    assert holiday.market_date_verified is False
+    assert holiday.session_truth_confident is False
+    assert holiday.phase == JapanCashPhase.CLOSED
+
+
+def test_preopen_current_board_does_not_relabel_previous_execution():
+    now = datetime(2026, 9, 1, 23, 30, 5, tzinfo=timezone.utc)
+    observation = normalize_market_price(
+        _row(**{"tDPP:T": "15:30"}),
+        received_at=now,
+        market_date=date(2026, 9, 2),
+        market_status=MarketStatus.CLOSED,
+        market_date_verified=False,
+        market_data_timestamp=now,
+        market_data_date_verified=True,
+        endpoint_category="EVENT",
+    )
+    assert observation.freshness == Freshness.FRESH
+    assert observation.market_data_timestamp == now
+    assert observation.source_timestamp is None
+    assert to_canonical_observations(observation)[0]["observedAt"] is None
+
+
+def test_new_provider_day_does_not_admit_previous_day_status_replay():
+    tracker = EventStatusTracker(provider_calendar_date=date(2026, 9, 3))
+    old = tracker.apply(parse_event_frame(_ss_frame(
+        1, 1, provider_time="20260902235959",
+        login_permission="0", system_status="1",
+    )))
+    assert old.status_date_verified is False
+    assert old.provider_health == ProviderHealth.AVAILABLE
+    current = tracker.apply(parse_event_frame(_ss_frame(
+        2, 2, provider_time="20260903053000",
+        login_permission="1", system_status="1",
+    )))
+    assert current.status_date_verified is True
+    assert current.provider_health == ProviderHealth.AVAILABLE
 
 
 def test_provider_datetime_parser_is_exact_and_timezone_aware():
@@ -1900,6 +2289,7 @@ def test_operational_cross_validation_requires_current_explicitly_live_rows():
         fetch=lambda *_args, **_kwargs: _ReferenceResponse({
             "status": "live", "stocks": rows,
         }),
+        session_phase=JapanCashPhase.OPEN,
     )
     assert result.acceptable is True
     assert result.classification == "ACCEPTABLE"
@@ -1913,9 +2303,67 @@ def test_operational_cross_validation_requires_current_explicitly_live_rows():
         fetch=lambda *_args, **_kwargs: _ReferenceResponse({
             "status": "live", "stocks": delayed,
         }),
+        session_phase=JapanCashPhase.OPEN,
     )
     assert rejected.classification == "INSUFFICIENT_CURRENT_COVERAGE"
     assert rejected.acceptable is False
+
+
+def test_board_cross_validation_is_eligible_in_preopen_without_execution_time():
+    now = datetime(2026, 9, 1, 23, 30, 10, tzinfo=timezone.utc)
+    observation = normalize_market_price(
+        _row(**{"tDPP:T": ""}),
+        received_at=now,
+        market_date=date(2026, 9, 2),
+        market_status=MarketStatus.CLOSED,
+        market_date_verified=False,
+        market_data_timestamp=now,
+        market_data_date_verified=True,
+        endpoint_category="EVENT",
+    )
+    payload = {
+        "status": "live",
+        "stocks": [{
+            "symbol": "6501",
+            "status": "live",
+            "realtimeEvidence": True,
+            "sourceTimestamp": now.isoformat(),
+            "bestAsk": 2001,
+            "bestBid": 2000,
+        }],
+    }
+    board = cross_validate_current(
+        {"6501": observation},
+        now=now,
+        fetch=lambda *_args, **_kwargs: _ReferenceResponse(payload),
+        scope="BOARD",
+        session_phase=JapanCashPhase.PREOPEN,
+    )
+    assert board.acceptable is True
+    assert board.scope == "BOARD"
+    assert board.compared_symbol_count == 1
+    assert board.comparable_field_count == 2
+
+    lunch = cross_validate_current(
+        {"6501": observation},
+        now=now,
+        fetch=lambda *_args, **_kwargs: pytest.fail(
+            "ineligible board scope must not query the reference provider"
+        ),
+        scope="BOARD",
+        session_phase=JapanCashPhase.LUNCH_CLOSED_INTERVAL,
+    )
+    assert lunch.classification == "SESSION_NOT_ELIGIBLE"
+
+    execution = cross_validate_current(
+        {"6501": observation},
+        now=now,
+        fetch=lambda *_args, **_kwargs: _ReferenceResponse(payload),
+        scope="EXECUTION",
+        session_phase=JapanCashPhase.PREOPEN,
+    )
+    assert execution.acceptable is False
+    assert execution.classification == "SESSION_NOT_ELIGIBLE"
 
 
 def test_live_acceptance_requires_event_and_market_progression(tmp_path):
@@ -1945,6 +2393,7 @@ def test_live_acceptance_requires_event_and_market_progression(tmp_path):
         }),
     )
     runtime._authenticated = True
+    runtime._provider_calendar_date = date(2026, 9, 2)
     runtime.session.diagnostics.health = ProviderHealth.AVAILABLE
     runtime.session.diagnostics.websocket_connected = True
     first = now[0]
@@ -1963,6 +2412,8 @@ def test_live_acceptance_requires_event_and_market_progression(tmp_path):
             market_date=date(2026, 9, 2),
             market_status=MarketStatus.CLOSED,
             market_date_verified=False,
+            market_data_timestamp=first,
+            market_data_date_verified=True,
             endpoint_category="EVENT",
         ))
     assert runtime.acceptance_snapshot().preopen_book_live is False
@@ -1982,6 +2433,8 @@ def test_live_acceptance_requires_event_and_market_progression(tmp_path):
             market_date=date(2026, 9, 2),
             market_status=MarketStatus.CLOSED,
             market_date_verified=False,
+            market_data_timestamp=now[0],
+            market_data_date_verified=True,
             endpoint_category="EVENT",
         ))
     preopen = runtime.acceptance_snapshot()
@@ -2056,6 +2509,7 @@ def test_afternoon_preopen_to_open_is_valid_transition_fallback(tmp_path):
         }),
     )
     runtime._authenticated = True
+    runtime._provider_calendar_date = date(2026, 9, 2)
     runtime.session.diagnostics.health = ProviderHealth.AVAILABLE
     runtime.session.diagnostics.websocket_connected = True
     runtime.progress.connection_started()
@@ -2070,6 +2524,7 @@ def test_afternoon_preopen_to_open_is_valid_transition_fallback(tmp_path):
         ),
         received_at=now[0], market_date=date(2026, 9, 2),
         market_status=MarketStatus.CLOSED, market_date_verified=False,
+        market_data_timestamp=now[0], market_data_date_verified=True,
         endpoint_category="EVENT",
     ))
     assert runtime.acceptance_snapshot().preopen_book_live is False
@@ -2086,6 +2541,7 @@ def test_afternoon_preopen_to_open_is_valid_transition_fallback(tmp_path):
         ),
         received_at=now[0], market_date=date(2026, 9, 2),
         market_status=MarketStatus.CLOSED, market_date_verified=False,
+        market_data_timestamp=now[0], market_data_date_verified=True,
         endpoint_category="EVENT",
     ))
     preopen = runtime.acceptance_snapshot()

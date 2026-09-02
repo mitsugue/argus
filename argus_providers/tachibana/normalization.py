@@ -13,6 +13,7 @@ from .models import (
     ErrorClass,
     Freshness,
     MarketStatus,
+    NormalizationIssue,
     QuoteLevel,
     TachibanaError,
     TachibanaObservation,
@@ -47,11 +48,24 @@ _NULL_MARKERS = frozenset({"", "-", "--", "null", "none"})
 _SYMBOL = re.compile(r"^[0-9ACDFGHJKLMNPRSTUWXY]{4}$")
 
 
-def _number(value: Any) -> float | None:
+def _record_issue(
+    issues: list[NormalizationIssue] | None, field: str, reason: str
+) -> None:
+    if issues is None:
+        raise TachibanaError(ErrorClass.NORMALIZATION)
+    if len(issues) < 16:
+        token = re.sub(r"[^A-Za-z0-9]+", "_", field).strip("_").upper()
+        issues.append(NormalizationIssue(token[:64], reason))
+
+
+def _number(
+    value: Any, *, field: str, issues: list[NormalizationIssue] | None
+) -> float | None:
     if value is None:
         return None
     if isinstance(value, bool):
-        raise TachibanaError(ErrorClass.NORMALIZATION)
+        _record_issue(issues, field, "INVALID_NUMBER")
+        return None
     if isinstance(value, str):
         stripped = value.strip().replace(",", "")
         if stripped.lower() in _NULL_MARKERS:
@@ -60,14 +74,17 @@ def _number(value: Any) -> float | None:
     try:
         parsed = float(value)
     except (TypeError, ValueError):
-        raise TachibanaError(ErrorClass.NORMALIZATION) from None
+        _record_issue(issues, field, "INVALID_NUMBER")
+        return None
     if not math.isfinite(parsed):
-        raise TachibanaError(ErrorClass.NORMALIZATION)
+        _record_issue(issues, field, "NONFINITE_NUMBER")
+        return None
     return parsed
 
 
 def _source_timestamp(
-    raw: Any, market_date: date | None, *, market_date_verified: bool
+    raw: Any, market_date: date | None, *, market_date_verified: bool,
+    issues: list[NormalizationIssue] | None,
 ) -> tuple[datetime | None, str]:
     if raw is None or (isinstance(raw, str) and not raw.strip()):
         return None, "UNAVAILABLE"
@@ -93,7 +110,8 @@ def _source_timestamp(
         except ValueError:
             pass
     if parsed_time is None:
-        raise TachibanaError(ErrorClass.NORMALIZATION)
+        _record_issue(issues, "TDPP_T", "INVALID_TIME")
+        return None, "UNAVAILABLE"
     # A time-of-day has no date semantics. Validate the provider syntax above,
     # but never attach the caller's wall date unless it was established by a
     # separately verified exchange session/calendar. This both surfaces corrupt
@@ -106,7 +124,10 @@ def _source_timestamp(
     )
 
 
-def _book(row: Mapping[str, Any], side: str) -> tuple[QuoteLevel, ...]:
+def _book(
+    row: Mapping[str, Any], side: str,
+    issues: list[NormalizationIssue] | None,
+) -> tuple[QuoteLevel, ...]:
     levels: list[QuoteLevel] = []
     if side == "ask":
         pairs = ((f"pGAP{level}", f"pGAV{level}") for level in range(1, 11))
@@ -115,19 +136,23 @@ def _book(row: Mapping[str, Any], side: str) -> tuple[QuoteLevel, ...]:
         pairs = ((f"pGBP{level}", f"pGBV{level}") for level in range(1, 11))
         reverse = True
     for price_field, volume_field in pairs:
-        price = _number(row.get(price_field))
-        volume = _number(row.get(volume_field))
+        price = _number(row.get(price_field), field=price_field, issues=issues)
+        volume = _number(
+            row.get(volume_field), field=volume_field, issues=issues
+        )
         if price is None:
             if volume is not None:
-                raise TachibanaError(ErrorClass.NORMALIZATION)
+                _record_issue(issues, volume_field, "ORPHAN_VOLUME")
             continue
         if price <= 0 or (volume is not None and volume < 0):
-            raise TachibanaError(ErrorClass.NORMALIZATION)
+            _record_issue(issues, price_field, "OUT_OF_RANGE")
+            continue
         levels.append(QuoteLevel(price=price, volume=volume))
     # Do not trust wire/order numbering.  Normalize best-to-far explicitly and
     # reject duplicate prices, which otherwise make diff application ambiguous.
     if len({item.price for item in levels}) != len(levels):
-        raise TachibanaError(ErrorClass.NORMALIZATION)
+        _record_issue(issues, f"{side}_depth", "DUPLICATE_PRICE")
+        return ()
     return tuple(sorted(levels, key=lambda item: item.price, reverse=reverse))
 
 
@@ -138,6 +163,9 @@ def normalize_market_price(
     market_date: date | None,
     market_status: MarketStatus = MarketStatus.UNKNOWN,
     market_date_verified: bool = False,
+    market_data_timestamp: datetime | None = None,
+    market_data_date_verified: bool | None = None,
+    degrade_noncritical: bool = False,
     fresh_for_seconds: int = 15,
     endpoint_category: str = "PRICE",
 ) -> TachibanaObservation:
@@ -157,30 +185,52 @@ def normalize_market_price(
     if (
         not isinstance(market_status, MarketStatus)
         or type(market_date_verified) is not bool
+        or market_data_timestamp is not None
+        and (
+            not isinstance(market_data_timestamp, datetime)
+            or market_data_timestamp.tzinfo is None
+            or market_data_timestamp.utcoffset() is None
+        )
+        or market_data_date_verified is not None
+        and type(market_data_date_verified) is not bool
+        or type(degrade_noncritical) is not bool
         or not 1 <= fresh_for_seconds <= 60
         or endpoint_category not in {"PRICE", "EVENT"}
     ):
         raise TachibanaError(ErrorClass.NORMALIZATION)
+    issues: list[NormalizationIssue] | None = [] if degrade_noncritical else None
     received = received_at.astimezone(timezone.utc)
     source, source_precision = _source_timestamp(
         row.get("tDPP:T"), market_date,
         market_date_verified=market_date_verified,
+        issues=issues,
     )
     if source is not None and source > received + timedelta(seconds=5):
+        _record_issue(issues, "TDPP_T", "FUTURE_TIME")
+        source = None
+        source_precision = "UNAVAILABLE"
+    data_time = (
+        market_data_timestamp.astimezone(timezone.utc)
+        if market_data_timestamp is not None else source
+    )
+    data_date_verified = (
+        market_date_verified
+        if market_data_date_verified is None
+        else market_data_date_verified
+    )
+    if data_time is not None and data_time > received + timedelta(seconds=5):
         raise TachibanaError(ErrorClass.NORMALIZATION)
-    age = (received - source).total_seconds() if source is not None else None
+    age = (received - data_time).total_seconds() if data_time is not None else None
     freshness = (
         Freshness.FRESH
         if (
-            market_date_verified
-            and market_status == MarketStatus.OPEN
+            data_date_verified
             and age is not None
             and age <= fresh_for_seconds
         )
         else Freshness.DELAYED
         if (
-            market_date_verified
-            and market_status == MarketStatus.OPEN
+            data_date_verified
             and age is not None
             and age <= 20 * 60
         )
@@ -189,16 +239,18 @@ def normalize_market_price(
         else Freshness.UNAVAILABLE
     )
     fresh_until = (
-        source + timedelta(seconds=fresh_for_seconds)
-        if source is not None and freshness == Freshness.FRESH
-        else source + timedelta(minutes=20)
-        if source is not None and freshness == Freshness.DELAYED
+        data_time + timedelta(seconds=fresh_for_seconds)
+        if data_time is not None and freshness == Freshness.FRESH
+        else data_time + timedelta(minutes=20)
+        if data_time is not None and freshness == Freshness.DELAYED
         else None
     )
     fields: dict[str, float | str | None] = {}
     availability: dict[str, bool] = {}
     for normalized_name, provider_field in _FIELD_MAP.items():
-        value = _number(row.get(provider_field))
+        value = _number(
+            row.get(provider_field), field=provider_field, issues=issues
+        )
         fields[normalized_name] = value
         availability[normalized_name] = value is not None
     for positive in (
@@ -207,21 +259,30 @@ def normalize_market_price(
     ):
         value = fields[positive]
         if isinstance(value, float) and value <= 0:
-            raise TachibanaError(ErrorClass.NORMALIZATION)
+            _record_issue(issues, _FIELD_MAP[positive], "OUT_OF_RANGE")
+            fields[positive] = None
+            availability[positive] = False
     for nonnegative in (
         "volume", "turnover", "market_ask_volume", "market_bid_volume",
         "best_ask_volume", "best_bid_volume", "sell_over", "buy_under",
     ):
         value = fields[nonnegative]
         if isinstance(value, float) and value < 0:
-            raise TachibanaError(ErrorClass.NORMALIZATION)
+            _record_issue(issues, _FIELD_MAP[nonnegative], "OUT_OF_RANGE")
+            fields[nonnegative] = None
+            availability[nonnegative] = False
     o, h, low, close = (
         fields[name] for name in ("open", "high", "low", "current_price")
     )
     if all(isinstance(item, float) for item in (o, h, low, close)) and (
         h < max(o, close) or low > min(o, close) or h < low
     ):
-        raise TachibanaError(ErrorClass.NORMALIZATION)
+        _record_issue(issues, "OHLC", "INCONSISTENT_RANGE")
+        for name in ("open", "high", "low", "current_price"):
+            fields[name] = None
+            availability[name] = False
+    asks = _book(row, "ask", issues)
+    bids = _book(row, "bid", issues)
     return TachibanaObservation(
         provider="TACHIBANA",
         endpoint_category=endpoint_category,
@@ -238,7 +299,10 @@ def normalize_market_price(
         ),
         fields=fields,
         field_availability=availability,
-        asks=_book(row, "ask"),
-        bids=_book(row, "bid"),
+        market_data_timestamp=data_time,
+        market_data_date_verified=data_date_verified,
+        normalization_issues=tuple(issues or ()),
+        asks=asks,
+        bids=bids,
         normalization_version=NORMALIZATION_VERSION,
     )

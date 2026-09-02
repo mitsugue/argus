@@ -28,6 +28,11 @@ from argus_providers.tachibana.models import (
 )
 from argus_providers.tachibana.normalization import normalize_market_price
 from argus_providers.tachibana.session import TachibanaSession
+from argus_providers.tachibana.session_truth import (
+    JapanCashPhase,
+    parse_provider_datetime,
+    resolve_jp_cash_session,
+)
 
 
 def _observation_is_usable_and_fresh(
@@ -68,6 +73,7 @@ def main() -> int:
             session.authenticate()
             authenticated = True
             client = TachibanaReadOnlyClient(session)
+            provider_calendar_date = client.provider_calendar_date()
             response = client.market_price(("6501",), (
                 "pDPP", "tDPP:T", "pPRP", "pDOP", "pDHP", "pDLP", "pDV",
             ))
@@ -75,10 +81,28 @@ def main() -> int:
             if not isinstance(rows, list) or len(rows) != 1:
                 raise TachibanaError(ErrorClass.PROVIDER)
             received_at = datetime.now(timezone.utc)
+            provider_time = parse_provider_datetime(response.get("p_rv_date"))
+            session_truth = resolve_jp_cash_session(
+                now=received_at,
+                provider_time=provider_time,
+                provider_calendar_date=provider_calendar_date,
+            )
             normalized = normalize_market_price(
                 rows[0], received_at=received_at,
-                # PRICE provides a time-of-day, not a verified trading date.
-                market_date=None,
+                market_date=session_truth.market_date,
+                market_status=session_truth.market_status,
+                market_date_verified=bool(
+                    session_truth.market_date_verified
+                    and session_truth.phase in {
+                        JapanCashPhase.OPEN,
+                        JapanCashPhase.AFTERNOON_OPEN,
+                    }
+                ),
+                market_data_timestamp=provider_time,
+                market_data_date_verified=bool(
+                    session_truth.provider_calendar_current
+                    and session_truth.event_packet_current
+                ),
                 fresh_for_seconds=config.fresh_for_seconds,
             )
     except TachibanaError as exc:

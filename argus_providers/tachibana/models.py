@@ -156,6 +156,21 @@ class QuoteLevel:
 
 
 @dataclass(frozen=True)
+class NormalizationIssue:
+    """One bounded, value-free field degradation diagnostic."""
+
+    field: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        if (
+            re.fullmatch(r"[A-Z0-9_]{1,64}", self.field) is None
+            or re.fullmatch(r"[A-Z0-9_]{1,64}", self.reason) is None
+        ):
+            raise ValueError("invalid_normalization_issue")
+
+
+@dataclass(frozen=True)
 class TachibanaObservation:
     provider: str
     endpoint_category: str
@@ -169,6 +184,9 @@ class TachibanaObservation:
     realtime_classification: str
     fields: Mapping[str, float | str | None]
     field_availability: Mapping[str, bool]
+    market_data_timestamp: datetime | None = None
+    market_data_date_verified: bool = False
+    normalization_issues: tuple[NormalizationIssue, ...] = ()
     asks: tuple[QuoteLevel, ...] = ()
     bids: tuple[QuoteLevel, ...] = ()
     request_result: str = "SUCCESS"
@@ -192,6 +210,13 @@ class TachibanaObservation:
             or set(self.fields) != set(self.field_availability)
             or any(type(value) is not bool
                    for value in self.field_availability.values())
+            or type(self.market_data_date_verified) is not bool
+            or not isinstance(self.normalization_issues, tuple)
+            or len(self.normalization_issues) > 16
+            or any(
+                not isinstance(issue, NormalizationIssue)
+                for issue in self.normalization_issues
+            )
             or not isinstance(self.asks, tuple)
             or not isinstance(self.bids, tuple)
             or any(not isinstance(level, QuoteLevel)
@@ -199,32 +224,33 @@ class TachibanaObservation:
         ):
             raise ValueError("invalid_tachibana_observation")
         if self.source_timestamp is None:
-            if (
-                self.source_timestamp_precision != "UNAVAILABLE"
-                or self.freshness != Freshness.UNAVAILABLE
-            ):
+            if self.source_timestamp_precision != "UNAVAILABLE":
                 raise ValueError("invalid_tachibana_timestamp_precision")
         elif (
             self.source_timestamp.tzinfo is None
             or self.source_timestamp.utcoffset() is None
             or self.source_timestamp_precision not in {"MINUTE", "SECOND"}
-            or self.freshness == Freshness.UNAVAILABLE
         ):
             raise ValueError("invalid_tachibana_timestamp_precision")
+        if self.market_data_timestamp is not None and (
+            self.market_data_timestamp.tzinfo is None
+            or self.market_data_timestamp.utcoffset() is None
+        ):
+            raise ValueError("invalid_tachibana_market_data_timestamp")
         if self.fresh_until is not None and (
             self.fresh_until.tzinfo is None or self.fresh_until.utcoffset() is None
         ):
             raise ValueError("invalid_tachibana_fresh_until")
         if self.freshness in {Freshness.FRESH, Freshness.DELAYED}:
             if (
-                self.source_timestamp is None or self.fresh_until is None
+                self.market_data_timestamp is None
+                or not self.market_data_date_verified
+                or self.fresh_until is None
                 or self.fresh_until < self.received_timestamp
             ):
                 raise ValueError("invalid_tachibana_freshness_window")
         elif self.fresh_until is not None:
             raise ValueError("invalid_tachibana_freshness_window")
-        if self.freshness == Freshness.FRESH and self.market_status != MarketStatus.OPEN:
-            raise ValueError("fresh_tachibana_observation_requires_open_market")
         # ``frozen=True`` does not freeze nested dictionaries.  Provider truth
         # must not be mutable after validation because downstream evidence is
         # derived from these exact values.
