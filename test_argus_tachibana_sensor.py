@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 import argus_market_data_truth as truth
 from argus_providers.tachibana.client import (
+    READ_ONLY_COMPATIBLE_RESPONSE_IDS,
     READ_ONLY_FUNCTIONS,
     READ_ONLY_RESPONSE_IDS,
     CircuitBreaker,
@@ -603,6 +604,13 @@ def test_allowlist_is_exact_immutable_and_there_is_no_generic_dispatch(tmp_path)
         READ_ONLY_RESPONSE_IDS["CLMStkGetDateZyouhou"] = (
             "CLMStkGetDateZyouhou"
         )
+    assert dict(READ_ONLY_COMPATIBLE_RESPONSE_IDS) == {
+        "CLMStkGetDateZyouhou": frozenset({"CLMStkGetDateZyouhou"}),
+    }
+    with pytest.raises(TypeError):
+        READ_ONLY_COMPATIBLE_RESPONSE_IDS["CLMMfdsGetMarketPrice"] = (
+            frozenset({"CLMUnknownPriceResponse"})
+        )
     session, transport, _ = _session(tmp_path, [])
     client = TachibanaReadOnlyClient(session)
     assert not hasattr(client, "read")
@@ -718,20 +726,34 @@ def test_official_date_information_uses_day_key_001_on_master(tmp_path):
         "httpStatus": None,
         "expectedResponseCLMID": "CLMDateZyouhou",
         "observedResponseCLMID": "CLMDateZyouhou",
+        "responseCLMIDMode": "DOCUMENTED",
         "resultCode": None,
         "schemaFailureToken": None,
     }
 
 
-@pytest.mark.parametrize("observed", [
-    "CLMStkGetDateZyouhou",
-    "CLMUnknownDateResponse",
-])
-def test_date_response_clmid_is_explicit_and_never_request_echoed(
-    tmp_path, observed,
-):
+def test_live_observed_date_response_echo_uses_narrow_compatibility(tmp_path):
     response = {
-        "p_no": "2", "p_errno": "0", "sCLMID": observed,
+        "p_no": "2", "p_errno": "0",
+        "sCLMID": "CLMStkGetDateZyouhou",
+        "aCLMDateZyouhou": [{
+            "sDayKey": "001", "sTheDay": "20260902",
+        }],
+    }
+    session, _, _ = _authenticated_session(tmp_path, [response])
+    client = TachibanaReadOnlyClient(session)
+    assert client.provider_calendar_date() == date(2026, 9, 2)
+    diagnostic = client.read_diagnostic_safe_dict()
+    assert diagnostic["stage"] == "PROVIDER_DATE_VALUE"
+    assert diagnostic["classification"] == "PASS"
+    assert diagnostic["observedResponseCLMID"] == "CLMStkGetDateZyouhou"
+    assert diagnostic["responseCLMIDMode"] == "PRODUCTION_ECHO_COMPAT"
+
+
+def test_date_response_third_clmid_still_fails_closed(tmp_path):
+    response = {
+        "p_no": "2", "p_errno": "0",
+        "sCLMID": "CLMUnknownDateResponse",
         "aCLMDateZyouhou": [{
             "sDayKey": "001", "sTheDay": "20260902",
         }],
@@ -744,7 +766,8 @@ def test_date_response_clmid_is_explicit_and_never_request_echoed(
     diagnostic = client.read_diagnostic_safe_dict()
     assert diagnostic["stage"] == "PROVIDER_DATE_RESPONSE_CLMID"
     assert diagnostic["expectedResponseCLMID"] == "CLMDateZyouhou"
-    assert diagnostic["observedResponseCLMID"] == observed
+    assert diagnostic["observedResponseCLMID"] == "CLMUnknownDateResponse"
+    assert diagnostic["responseCLMIDMode"] is None
     assert diagnostic["schemaFailureToken"] == "CLMID_MISMATCH"
 
 
@@ -788,7 +811,7 @@ def test_date_official_and_adversarial_fixtures_are_stage_classified(
     assert set(diagnostic) == {
         "operation", "endpointClass", "stage", "classification",
         "httpStatus", "expectedResponseCLMID", "observedResponseCLMID",
-        "resultCode", "schemaFailureToken",
+        "responseCLMIDMode", "resultCode", "schemaFailureToken",
     }
 
 
@@ -2637,7 +2660,7 @@ def test_runtime_keeps_date_and_price_initial_read_boundaries_separate(
                 stage="PROVIDER_DATE_RESPONSE_CLMID",
                 classification="PROVIDER",
                 expected_response_clmid="CLMDateZyouhou",
-                observed_response_clmid="CLMStkGetDateZyouhou",
+                observed_response_clmid="CLMUnknownDateResponse",
                 schema_failure_token="CLMID_MISMATCH",
             )
 

@@ -29,6 +29,11 @@ class _FunctionContract:
     allowed_parameters: frozenset[str]
     response_list: str
     maximum_rows: int
+    compatible_response_ids: frozenset[str] = frozenset()
+
+    @property
+    def accepted_response_ids(self) -> frozenset[str]:
+        return frozenset({self.response_id, *self.compatible_response_ids})
 
 
 _FUNCTION_CONTRACTS: Mapping[str, _FunctionContract] = MappingProxyType({
@@ -74,6 +79,10 @@ _FUNCTION_CONTRACTS: Mapping[str, _FunctionContract] = MappingProxyType({
     "CLMStkGetDateZyouhou": _FunctionContract(
         "CLMStkGetDateZyouhou", "CLMDateZyouhou", "master", frozenset(),
         "aCLMDateZyouhou", 2,
+        # Live v4r10 production evidence on 2026-09-02 returned the request
+        # identifier here instead of the documented response identifier.
+        # This compatibility exception is deliberately Date-only.
+        frozenset({"CLMStkGetDateZyouhou"}),
     ),
 })
 
@@ -87,6 +96,13 @@ READ_ONLY_RESPONSE_IDS: Mapping[str, str] = MappingProxyType({
     function_id: contract.response_id
     for function_id, contract in _FUNCTION_CONTRACTS.items()
 })
+READ_ONLY_COMPATIBLE_RESPONSE_IDS: Mapping[str, frozenset[str]] = (
+    MappingProxyType({
+        function_id: contract.compatible_response_ids
+        for function_id, contract in _FUNCTION_CONTRACTS.items()
+        if contract.compatible_response_ids
+    })
+)
 
 # TSE cash-equity security codes are exactly four characters. Since January
 # 2024 the second character may be one of the published alpha-code letters.
@@ -158,6 +174,7 @@ class ProviderReadDiagnostic:
     http_status: int | None = None
     expected_response_clmid: str | None = None
     observed_response_clmid: str | None = None
+    response_clmid_mode: str | None = None
     result_code: str | None = None
     schema_failure_token: str | None = None
 
@@ -177,6 +194,9 @@ class ProviderReadDiagnostic:
                     self.observed_response_clmid,
                 )
             )
+            or self.response_clmid_mode not in {
+                None, "DOCUMENTED", "PRODUCTION_ECHO_COMPAT"
+            }
             or self.result_code is not None
             and re.fullmatch(r"[0-9-]{1,16}", self.result_code) is None
             or self.schema_failure_token not in {
@@ -194,6 +214,7 @@ class ProviderReadDiagnostic:
             "httpStatus": self.http_status,
             "expectedResponseCLMID": self.expected_response_clmid,
             "observedResponseCLMID": self.observed_response_clmid,
+            "responseCLMIDMode": self.response_clmid_mode,
             "resultCode": self.result_code,
             "schemaFailureToken": self.schema_failure_token,
         }
@@ -537,6 +558,15 @@ class TachibanaReadOnlyClient:
                         clean_parameters,
                         expected_p_no=payload["p_no"],
                     )
+                    if function_id == "CLMStkGetDateZyouhou":
+                        self.last_read_diagnostic = replace(
+                            self.last_read_diagnostic,
+                            response_clmid_mode=(
+                                "DOCUMENTED"
+                                if response.get("sCLMID") == contract.response_id
+                                else "PRODUCTION_ECHO_COMPAT"
+                            ),
+                        )
                     self._breaker.success()
                     diagnostics = self.session.diagnostics
                     diagnostics.successful_requests += 1
@@ -696,7 +726,7 @@ class TachibanaReadOnlyClient:
                     stage_suffix="SCHEMA", token="RESULT_ERROR",
                 )
 
-        if response.get("sCLMID") != contract.response_id:
+        if response.get("sCLMID") not in contract.accepted_response_ids:
             raise _ReadContractError(
                 ErrorClass.PROVIDER,
                 stage_suffix="RESPONSE_CLMID", token="CLMID_MISMATCH",
