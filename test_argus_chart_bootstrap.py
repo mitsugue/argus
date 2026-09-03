@@ -164,7 +164,8 @@ def test_boot_warm_warms_sho_and_interest_history_and_publishes_valuation():
     assert warm["historyWarmed"] == len(warm["interestSymbols"])
     evidence = val.current_evidence()
     assert evidence["status"] == "AVAILABLE" and evidence["coverage"] == 1
-    assert val.statements_state()["rowCount"] == 1
+    # no V2 fetch seam on this host → the feed is not "read for real": D07 stays MISSING
+    assert val.statements_state()["rowCount"] == 0 and val.statements_state()["warmedAt"] is None
     assert boot.interest_symbols(host)[0] == "5803"
 
 
@@ -233,6 +234,9 @@ def test_warm_cycle_warms_curated_reference_and_statements_when_offered():
     assert calls["curated"] == 1 and warm["curatedWarmedAt"]
     assert "1321" in calls["jq"] and calls["us"] == ["SPY"] and warm["referenceWarmed"] == 2
     assert calls["stmt"] == ["5803"] and warm["statementsFetched"] == 1
+    assert warm["statementsPath"] == "/fins/summary"
+    assert host._SHO_STATEMENTS_CACHE["source"] == "jquants_v2_summary_boot"
+    assert warm["statementsPublished"] == 1 and val.statements_state()["warmedAt"]
     evidence = val.current_evidence()
     assert evidence["status"] == "AVAILABLE" and evidence["coverage"] == 1   # per-code statements merged
 
@@ -269,8 +273,39 @@ def test_statements_fetch_is_retried_across_cycles_and_records_failures():
     assert warm["cycles"] == 2
     assert len(attempts) == 9 and len(set(attempts)) == 9          # 6 first cycle + 3 second, no repeats
     assert warm["statementsFetched"] == 8                           # 9984 failed, recorded, not retried
-    assert warm["statementsErrorClass"].startswith("RuntimeError:jquants_pagination")
+    assert "RuntimeError:jquants_pagination" in warm["statementsErrorClass"]
     assert warm["referenceErrorClass"] == "us:empty"
     evidence = val.current_evidence()
     assert evidence["status"] == "AVAILABLE" and evidence["coverage"] == 8
     assert boot.warm_status_safe()["statementsErrorClass"] == warm["statementsErrorClass"]
+
+
+
+def test_statements_fall_back_to_the_v1_path_and_stay_missing_when_nothing_fetches():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    host = _host([("5803", "JP")], set())
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+    host._JP_WATCHLIST = [{"symbol": "5803"}]
+    seen = []
+
+    def _stmt(path, params, max_pages=8, request_timeout=8):
+        seen.append(path)
+        raise RuntimeError("jquants_http_403")
+
+    host._jquants_paginated = _stmt
+    host._sho_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    host._SHO_STATEMENTS_CACHE = {"rows": [], "source": "no_universe_disclosures"}
+    boot._STATE["warmMaxCycles"] = 1
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    warm = boot.warm_status()
+    assert seen == ["/fins/summary", "/fins/statements"]          # both paths tried once for the code
+    assert warm["statementsFetched"] == 0 and warm["statementsPath"] is None
+    assert warm["statementsErrorClass"].startswith("/fins/statements:RuntimeError:jquants_http_403")
+    assert host._SHO_STATEMENTS_CACHE["source"] == "no_universe_disclosures"   # host cache untouched
+    assert val.statements_state()["warmedAt"] is None             # D07 stays MISSING, not NOT_APPLICABLE

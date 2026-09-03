@@ -4,7 +4,7 @@ The SHO-original D04 proposition needs licensed Nikkei 225 EPS/PER that ARGUS
 does not hold.  This module derives a *labelled* valuation picture for the
 configured Japanese universe from inputs ARGUS is allowed to use:
 
-* J-Quants ``/fins/statements`` rows (annual forecast EPS per issuer), and
+* J-Quants V2 ``/fins/summary`` rows (annual forecast EPS ``FEPS`` per issuer), and
 * the issuer's latest close (curated watch cache or cached daily history).
 
 Derived metrics (never claimed as the official Nikkei 225 PER): per-issuer
@@ -32,10 +32,10 @@ MAX_UNIVERSE = 64
 _LOCK = threading.Lock()
 _STATE: Dict[str, Any] = {"evidence": None, "statements": None}
 
-_EPS_FORECAST_KEYS = ("ForecastEarningsPerShare", "FcstEPS", "forecastEps")
+_EPS_FORECAST_KEYS = ("FEPS", "ForecastEarningsPerShare", "FcstEPS", "forecastEps")   # FEPS = J-Quants V2
 _EPS_ACTUAL_KEYS = ("EarningsPerShare", "EPS", "Eps")
 _CODE_KEYS = ("LocalCode", "Code", "code")
-_DATE_KEYS = ("DisclosedDate", "DiscDate", "disclosedDate")
+_DATE_KEYS = ("DiscDate", "DisclosedDate", "disclosedDate")                          # DiscDate = J-Quants V2
 
 
 def _field(row: Mapping[str, Any], names: Iterable[str]) -> Any:

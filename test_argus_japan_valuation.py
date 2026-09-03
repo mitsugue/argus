@@ -7,6 +7,8 @@ import argus_japan_valuation as val
 import argus_sho as sho
 
 ROWS = [
+    {"Code": "58030", "DiscDate": "2026-08-05", "FEPS": 250.0, "EPS": 60.1,          # V2 summary row shape
+     "DocType": "1QFinancialStatements_Consolidated_JP", "CurPerEn": "2026-06-30"},
     {"LocalCode": "58030", "DisclosedDate": "2026-08-05", "ForecastEarningsPerShare": "250.0",
      "EarningsPerShare": "60.1", "TypeOfDocument": "1QFinancialStatements_Consolidated_JP"},
     {"LocalCode": "58030", "DisclosedDate": "2026-05-10", "ForecastEarningsPerShare": "240.0"},

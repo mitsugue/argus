@@ -368,3 +368,15 @@ the Tachibana deployment.
   interest issuer is covered (refreshed with the 4-hourly SHO warm), and
   records the last failure class (`statementsErrorClass`,
   `referenceErrorClass`) in `japaneseLive.productBoot`.
+
+## v13.5.47 — J-Quants V2 `/fins/summary` for statements
+
+- Production reported `jquants_http_403` for `/fins/statements`: that is the
+  V1 path (V1 discontinued 2026-06-01). The boot warm now fetches
+  `/fins/summary?code=` (V2; keys `Code`/`DiscDate`/`DocType`/`CurPerEn`/
+  `EPS`/`FEPS`), falling back to the V1 path only for legacy hosts, records
+  `statementsPath`, and publishes the fetched rows into the host statements
+  cache so the SHO earnings-event selection (D07) sees real disclosures —
+  the scanner's own `/fins/statements` warm has been silently empty since
+  June (its `no_universe_disclosures` label was false). D07 may report
+  NOT_APPLICABLE only after a real V2 read.
