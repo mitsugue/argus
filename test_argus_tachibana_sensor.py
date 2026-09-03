@@ -3275,3 +3275,76 @@ def test_live_canary_classifies_post_auth_failure_by_exact_initial_read_stage():
     assert live_acceptance._initial_read_failure(FakeRuntime()) == (
         "PROVIDER_DATE_VALUE"
     )
+
+
+# ── v13.5.40 slice 1b: tolerant, secret-safe private key loading ───────────
+def _fresh_rsa_pem() -> bytes:
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+    from cryptography.hazmat.primitives import serialization as _ser
+    key = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return key.private_bytes(_ser.Encoding.PEM, _ser.PrivateFormat.PKCS8,
+                             _ser.NoEncryption())
+
+
+def test_private_key_loader_accepts_platform_reflowed_encodings():
+    from argus_providers.tachibana import session as sess
+    from cryptography.hazmat.primitives import serialization as _ser
+    pem = _fresh_rsa_pem()
+    key, encoding = sess.load_private_key(pem)
+    assert encoding == "PEM" and key.key_size == 2048
+    body = b"".join(line for line in pem.splitlines() if not line.startswith(b"-----"))
+    der = key.private_bytes(_ser.Encoding.DER, _ser.PrivateFormat.PKCS8, _ser.NoEncryption())
+    variants = {
+        "crlf": pem.replace(b"\n", b"\r\n"),
+        "bom": b"\xef\xbb\xbf" + pem,
+        "single_line": b"-----BEGIN PRIVATE KEY----- " + body + b" -----END PRIVATE KEY-----",
+        "no_trailing_newline": pem.strip(),
+        "bare_base64": body,
+        "bare_base64_wrapped": b"\n".join(body[i:i + 76] for i in range(0, len(body), 76)),
+        "der": der,
+        "pkcs1": key.private_bytes(_ser.Encoding.PEM, _ser.PrivateFormat.TraditionalOpenSSL,
+                                   _ser.NoEncryption()),
+    }
+    expected = {"crlf": "PEM", "bom": "PEM", "single_line": "NORMALIZED_PEM",
+                "no_trailing_newline": "PEM", "bare_base64": "ARMORED_BASE64",
+                "bare_base64_wrapped": "ARMORED_BASE64", "der": "DER", "pkcs1": "PEM"}
+    for name, payload in variants.items():
+        loaded, used = sess.load_private_key(payload)
+        assert loaded.key_size == 2048, name
+        # the literal PEM parser may already tolerate a re-flow; the fallback
+        # order only matters when it does not.
+        assert used in {expected[name], "PEM"}, (name, used)
+
+
+def test_private_key_loader_rejects_garbage_and_small_keys():
+    from argus_providers.tachibana import session as sess
+    from argus_providers.tachibana.models import ErrorClass, TachibanaError
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+    from cryptography.hazmat.primitives import serialization as _ser
+    for payload in (b"", b"not a key", b"-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n",
+                    b"\x00\x01\x02"):
+        with pytest.raises(TachibanaError) as info:
+            sess.load_private_key(payload)
+        assert info.value.classification is ErrorClass.PRIVATE_KEY_INVALID
+    small = _rsa.generate_private_key(public_exponent=65537, key_size=1024).private_bytes(
+        _ser.Encoding.PEM, _ser.PrivateFormat.PKCS8, _ser.NoEncryption())
+    with pytest.raises(TachibanaError):
+        sess.load_private_key(small)
+
+
+def test_private_key_shape_is_structural_and_secret_free():
+    import json as _json
+    from argus_providers.tachibana import session as sess
+    pem = _fresh_rsa_pem()
+    body = b"".join(line for line in pem.splitlines() if not line.startswith(b"-----")).decode()
+    shape = sess.private_key_shape(pem.replace(b"\n", b"\r\n"))
+    assert shape["parsed"] == "PEM" and shape["keyType"] == "RSA" and shape["keySize"] == 2048
+    assert shape["armored"] is True and shape["beginLabel"] == "PRIVATE KEY"
+    assert shape["crlf"] is True and shape["bom"] is False and shape["base64Body"] is True
+    serialized = _json.dumps(shape)
+    for i in range(0, len(body) - 12, 12):          # no 12-char slice of the body leaks
+        assert body[i:i + 12] not in serialized
+    assert len(serialized) < 400
+    bad = sess.private_key_shape(b"-----BEGIN SOMETHING ELSE-----\nzz\n-----END SOMETHING ELSE-----\n")
+    assert bad["parsed"] == "FAILED" and bad["beginLabel"] == "OTHER" and bad["base64Body"] is True
+    assert sess.private_key_shape(b"not a key")["armored"] is False

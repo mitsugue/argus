@@ -144,12 +144,19 @@ import type { LiveQuote } from './liveQuote';
 
 let liveDocument: TachibanaLiveDocument | null = null;
 let liveDocumentRevision = 0;
+const liveListeners = new Set<() => void>();
 
 export function setTachibanaLiveDocument(doc: unknown): void {
   const next = doc && typeof doc === 'object' && (doc as TachibanaLiveDocument).provider === 'TACHIBANA'
     ? (doc as TachibanaLiveDocument) : null;
   liveDocument = next;
   liveDocumentRevision += 1;
+  for (const listener of liveListeners) listener();
+}
+
+export function subscribeTachibanaLive(listener: () => void): () => void {
+  liveListeners.add(listener);
+  return () => { liveListeners.delete(listener); };
 }
 
 export function getTachibanaLiveDocument(): TachibanaLiveDocument | null {
@@ -177,6 +184,21 @@ export interface OverlayableJpRow {
   instrumentType?: string;
   quoteTruth?: LiveQuote;
   [key: string]: unknown;
+}
+
+/** Board evidence carried on an overlaid JP row (reference only, no execution). */
+export interface TachibanaBoard {
+  price: number | null; vwap: number | null; bestBid: number | null; bestAsk: number | null;
+  bidQty: number | null; askQty: number | null; volume: number | null;
+  sourceTimestamp: string | null; marketStatus: string | null;
+}
+
+export function tachibanaBoardOf(row: TachibanaLiveRow): TachibanaBoard {
+  return {
+    price: row.price, vwap: row.vwap, bestBid: row.bestBid, bestAsk: row.bestAsk,
+    bidQty: row.bidQty, askQty: row.askQty, volume: row.volume,
+    sourceTimestamp: row.sourceTimestamp, marketStatus: row.marketStatus,
+  };
 }
 
 export interface OverlayableJpSnapshot {
@@ -254,6 +276,7 @@ export function overlayTachibanaLive<T extends OverlayableJpSnapshot>(
       ageSec: quoteTruth.ageSec,
       transportAgeSec: quoteTruth.transportAgeSec,
       tachibanaLive: true,
+      tachibana: tachibanaBoardOf(live),
     };
   });
   if (replaced === 0) return snapshot;
@@ -264,4 +287,75 @@ export function overlayTachibanaLive<T extends OverlayableJpSnapshot>(
     status: allLive ? 'live' : (snapshot.status === 'live' ? 'live' : 'mixed'),
     tachibanaLiveCount: replaced,
   };
+}
+
+// ── v13.5.40: JP realtime health lamp + logo follow Tachibana ───────────────
+//
+// The backend's `jp_realtime` lamp still describes the retired moomoo JP path.
+// Once Tachibana is enabled it is the JP realtime source, so the lamp (and the
+// overall beacon derived from the lamps) is recomputed from the evidence
+// document.  Absent or disabled document → the backend lamp is left untouched.
+export type HealthLampStatus = 'ok' | 'warning' | 'stopped' | 'off';
+export interface OverlayableHealthLamp {
+  key: string; labelJa: string; status: HealthLampStatus; detailJa: string;
+}
+export interface OverlayableSystemHealth {
+  asOf: string; overall: HealthLampStatus; lamps: OverlayableHealthLamp[]; noteJa?: string;
+}
+
+export const JP_REALTIME_LAMP_KEY = 'jp_realtime';
+
+export function tachibanaJpRealtimeLamp(
+  doc: TachibanaLiveDocument | null | undefined, nowMs = Date.now(),
+): { status: HealthLampStatus; detailJa: string } | null {
+  const view = tachibanaLiveView(doc);
+  if (!view.present || view.status === 'DISABLED' || doc?.enabled === false) return null;
+  const current = tachibanaCurrentRows(doc, nowMs);
+  const symbols = [...current.keys()].sort().join('/');
+  switch (view.status) {
+    case 'LIVE':
+      return { status: 'ok', detailJa: `LIVE — Tachibanaから更新中（${symbols}）` };
+    case 'DEGRADED':
+      return { status: 'warning', detailJa: `Tachibana 一部銘柄のみ現在値（${symbols || '—'}）` };
+    case 'STALE':
+      return { status: 'warning', detailJa: 'Tachibana 鮮度期限切れ（再取得待ち）' };
+    case 'AUTH_FAILED': {
+      const boundary = (doc as { authBoundary?: unknown } | null | undefined)?.authBoundary;
+      const code = typeof boundary === 'string' && boundary ? boundary : (doc?.lastErrorClass ?? 'AUTH');
+      return { status: 'warning', detailJa: `Tachibana 認証失敗（${code}）` };
+    }
+    case 'MAINTENANCE':
+      return { status: 'warning', detailJa: 'Tachibana メンテナンス中' };
+    default:
+      return { status: 'off', detailJa: doc?.lastErrorClass
+        ? `Tachibana 未取得（${doc.lastErrorClass}）` : 'Tachibana 待機中（セッション外）' };
+  }
+}
+
+const LAMP_SEVERITY: Record<HealthLampStatus, number> = { off: 0, ok: 1, warning: 2, stopped: 3 };
+
+export function overallFromLamps(lamps: readonly OverlayableHealthLamp[]): HealthLampStatus {
+  let worst: HealthLampStatus = 'off';
+  for (const lamp of lamps) {
+    if (LAMP_SEVERITY[lamp.status] > LAMP_SEVERITY[worst]) worst = lamp.status;
+  }
+  return worst;
+}
+
+export function applyTachibanaHealthOverlay<T extends OverlayableSystemHealth>(
+  health: T | null | undefined,
+  doc: TachibanaLiveDocument | null | undefined = liveDocument,
+  nowMs = Date.now(),
+): T | null | undefined {
+  if (!health || !Array.isArray(health.lamps)) return health;
+  const lamp = tachibanaJpRealtimeLamp(doc, nowMs);
+  if (!lamp) return health;
+  let found = false;
+  const lamps = health.lamps.map((row) => {
+    if (row.key !== JP_REALTIME_LAMP_KEY) return row;
+    found = true;
+    return { ...row, status: lamp.status, detailJa: lamp.detailJa };
+  });
+  if (!found) lamps.push({ key: JP_REALTIME_LAMP_KEY, labelJa: 'JP realtime', ...lamp });
+  return { ...health, lamps, overall: overallFromLamps(lamps), tachibanaOverlay: true };
 }

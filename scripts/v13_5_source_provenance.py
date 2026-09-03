@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.39"
+PRODUCT_VERSION = "v13.5.40"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -293,6 +293,13 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "test_argus_tachibana_live.py",
     "web/src/domain/marketSignals.ts",
     "web/src/domain/tachibanaLive.ts",
+    "web/src/components/assetDesk/deskFormat.ts",
+    "web/src/hooks/useSystemHealth.ts",
+    "web/src/lib/assetStrategy.ts",
+    "argus_dashboard_event_summary.py",
+    "argus_macro_event_analysis.py",
+    "test_argus_important_events_product_correctness.py",
+    "web/scripts/frontend-market-event-truth.test.cjs",
     "web/scripts/market-signals.test.cjs",
     "web/scripts/tachibana-live.test.cjs",
     "docs/operations/tachibana-live-shadow.md",

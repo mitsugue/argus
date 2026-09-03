@@ -130,6 +130,86 @@ const hook = fs.readFileSync(path.join(src, 'hooks', 'useDecisionEvidence.ts'), 
 assert.ok(hook.includes('const japaneseLive = data.japaneseLive ?? view?.japaneseLive ?? null'),
   'decision evidence must read the document-level japaneseLive the backend publishes');
 assert.ok(hook.includes('setTachibanaLiveDocument(japaneseLive)'), 'decision evidence must publish the live document');
-assert.ok(hook.includes('{ ...view, japaneseLive }'), 'panel contract keeps marketView.japaneseLive');
+assert.ok(hook.includes('{ ...marketView, japaneseLive }'), 'panel contract keeps marketView.japaneseLive');
 
 console.log('tachibana-live.test: truthful status, provenance, no fabrication, realtime overlay, glossary ok');
+
+// ── v13.5.40: owner-visible cutover ────────────────────────────────────────
+// (a) the owner never sees the word "mock": an absent quote is 未取得.
+const deskFormat = require(path.join(src, 'components', 'assetDesk', 'deskFormat.ts'));
+const mockLabel = deskFormat.freshnessOf({ status: 'mock', date: null }, undefined);
+assert.equal(mockLabel.text, '未取得');
+assert.ok(!/mock/i.test(mockLabel.text));
+const deskSource = fs.readFileSync(path.join(src, 'components', 'assetDesk', 'deskFormat.ts'), 'utf8');
+assert.ok(!deskSource.includes("text: 'mock'"), 'deskFormat must not render the label "mock"');
+
+// (b) JP realtime lamp + overall beacon follow Tachibana evidence.
+const backendHealth = {
+  asOf: '2026-09-03T05:00:00+09:00', overall: 'warning',
+  lamps: [
+    { key: 'bridge', labelJa: 'ブリッジ', status: 'ok', detailJa: '稼働中' },
+    { key: 'jp_realtime', labelJa: 'JP realtime', status: 'warning', detailJa: 'moomoo日本株クオート権限なし' },
+  ],
+};
+const liveHealth = tl.applyTachibanaHealthOverlay(backendHealth, liveDoc, nowMs);
+const jpLamp = liveHealth.lamps.find((l) => l.key === 'jp_realtime');
+assert.equal(jpLamp.status, 'ok');
+assert.ok(jpLamp.detailJa.startsWith('LIVE — Tachibanaから更新中'), jpLamp.detailJa);
+assert.ok(jpLamp.detailJa.includes('9984'));
+assert.ok(!jpLamp.detailJa.includes('moomoo'));
+assert.equal(liveHealth.overall, 'ok');                       // beacon recomputed from lamps
+assert.equal(backendHealth.lamps[1].status, 'warning');       // input untouched
+// auth failure is shown truthfully with the boundary code, never as LIVE
+const authHealth = tl.applyTachibanaHealthOverlay(backendHealth,
+  { provider: 'TACHIBANA', status: 'AUTH_FAILED', enabled: true, lastErrorClass: 'SECRET_MISSING',
+    authBoundary: 'AUTH_SECRET_UNREADABLE', symbols: {} }, nowMs);
+const authLamp = authHealth.lamps.find((l) => l.key === 'jp_realtime');
+assert.equal(authLamp.status, 'warning');
+assert.ok(authLamp.detailJa.includes('認証失敗') && authLamp.detailJa.includes('AUTH_SECRET_UNREADABLE'));
+assert.equal(authHealth.overall, 'warning');
+// a LIVE claim without current rows never turns the lamp green
+const emptyHealth = tl.applyTachibanaHealthOverlay(backendHealth,
+  { provider: 'TACHIBANA', status: 'LIVE', enabled: true, symbols: {} }, nowMs);
+assert.notEqual(emptyHealth.lamps.find((l) => l.key === 'jp_realtime').status, 'ok');
+// disabled / absent document: backend lamp is left exactly as published
+assert.equal(tl.applyTachibanaHealthOverlay(backendHealth, null, nowMs), backendHealth);
+assert.equal(tl.applyTachibanaHealthOverlay(backendHealth,
+  { provider: 'TACHIBANA', status: 'DISABLED', enabled: false, symbols: {} }, nowMs), backendHealth);
+// a stopped lamp elsewhere still dominates the beacon
+const stoppedHealth = tl.applyTachibanaHealthOverlay(
+  { ...backendHealth, lamps: [{ key: 'budget', labelJa: '予算', status: 'stopped', detailJa: '停止' }, backendHealth.lamps[1]] },
+  liveDoc, nowMs);
+assert.equal(stoppedHealth.overall, 'stopped');
+// the store notifies subscribers so the beacon re-renders on new evidence
+let notified = 0;
+const unsubscribe = tl.subscribeTachibanaLive(() => { notified += 1; });
+tl.setTachibanaLiveDocument(liveDoc);
+unsubscribe();
+tl.setTachibanaLiveDocument(null);
+assert.equal(notified, 1);
+const healthHook = fs.readFileSync(path.join(src, 'hooks', 'useSystemHealth.ts'), 'utf8');
+assert.ok(healthHook.includes('applyTachibanaHealthOverlay(backendHealth, getTachibanaLiveDocument())'),
+  'useSystemHealth must apply the Tachibana overlay for the logo beacon and popover');
+console.log('tachibana-live.test: v13.5.40 owner-visible cutover (未取得 label, JP realtime lamp) ok');
+
+// (c) Asset Detail board: the overlaid row carries VWAP/bid/ask and the desk forwards it.
+const overlaidBoard = tl.overlayTachibanaLive(jpSnapshot, liveDoc, nowMs).stocks.find((r) => r.symbol === '9984');
+assert.equal(overlaidBoard.tachibana.vwap, 8975.5);
+assert.equal(overlaidBoard.tachibana.bestBid, 8999);
+assert.equal(overlaidBoard.tachibana.askQty, null);   // absent in evidence → null, never fabricated
+assert.equal(jpSnapshot.stocks.find((r) => r.symbol === '7203').tachibana, undefined);
+const deskList = fs.readFileSync(path.join(src, 'components', 'assetDesk', 'AssetDeskList.tsx'), 'utf8');
+assert.ok(deskList.includes('.tachibana ?? null'), 'desk list must forward the Tachibana board');
+const details = fs.readFileSync(path.join(src, 'components', 'assetDesk', 'AssetDecisionDetails.tsx'), 'utf8');
+assert.ok(details.includes('data-argus-contract="tachibana-board-v1"'), 'Asset Detail renders the board');
+assert.ok(details.includes('売買権限なし'), 'board is reference only');
+const strategy = require(path.join(src, 'lib', 'assetStrategy.ts'));
+const asset = { symbol: '9984', market: 'JP', name: 'SBG' };
+const withBoard = strategy.deriveStrategy(asset, undefined,
+  { price: 9000, changePct: 1.12, volume: 1, date: '2026-09-03', status: 'live', tachibana: overlaidBoard.tachibana }, undefined, nowMs);
+assert.ok(withBoard.dataLimitations[0].includes('立花ライブ証拠'), withBoard.dataLimitations[0]);
+assert.ok(!withBoard.dataLimitations[0].startsWith('VWAP・資金フロー・板情報は未取得'));
+const withoutBoard = strategy.deriveStrategy(asset, undefined,
+  { price: 9000, changePct: 1.12, volume: 1, date: '2026-09-03', status: 'live' }, undefined, nowMs);
+assert.ok(withoutBoard.dataLimitations[0].includes('未取得'));
+console.log('tachibana-live.test: Asset Detail board (VWAP/板) from Tachibana evidence ok');

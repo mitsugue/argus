@@ -237,3 +237,37 @@ existing backend, alter its environment, remove or edit `/var/data`, change any
 Recovery service/timer/workflow, or start Formal Recovery. Verify the public
 backend identity and all Recovery identities remain exactly as observed before
 the Tachibana deployment.
+
+## v13.5.40 — owner-visible cutover (slice 3)
+
+- **No "mock" label.** The asset desk freshness word for an absent quote is
+  `未取得` (`deskFormat.freshnessOf`). Production never renders the word
+  "mock" to the owner; the frozen backend status value is unchanged.
+- **JP realtime lamp follows Tachibana.** `useSystemHealth` overlays the
+  backend `jp_realtime` lamp with the Tachibana evidence document
+  (`applyTachibanaHealthOverlay`): LIVE → green `LIVE — Tachibanaから更新中（symbols）`,
+  DEGRADED/STALE/MAINTENANCE → amber, AUTH_FAILED → amber with the auth
+  boundary code, UNAVAILABLE → gray waiting. The logo beacon (`overall`) is
+  recomputed from the lamps (worst-of; a `stopped` lamp elsewhere still
+  dominates). A DISABLED or absent document leaves the backend lamp untouched,
+  so the retired moomoo JP message can only be replaced by real evidence.
+- **Auth boundary (slice 1).** `japaneseLive.authBoundary` +
+  `secretFiles` (safe properties only: exists / regular / mode / size>0 /
+  readable / platform-managed; never contents). Platform secret files under
+  `/etc/secrets` are resolved through their symlink and accepted with read bits.
+- **Asset Detail board.** The overlaid JP row carries `tachibana`
+  (`TachibanaBoard`: price / VWAP / best bid+qty / best ask+qty / volume /
+  exchange timestamp). The desk forwards it into `QuoteLite.tachibana`;
+  Asset Detail's first viewport renders `立花ライブ(参考)` rows
+  (`data-argus-contract="tachibana-board-v1"`, labelled 売買権限なし) and the
+  data-limitation line says VWAP/板 are Tachibana evidence while 資金フロー
+  stays 未取得. Absent fields render `—`, never a fabricated number.
+- **Private key tolerance (slice 1b).** Production read both secret files
+  after slice 1 but reported `AUTH_KEY_PARSE_FAILED` (`PRIVATE_KEY_INVALID`).
+  `session.load_private_key` now tries, in order: the literal PEM, a
+  normalized PEM (BOM/CRLF stripped, base64 body re-wrapped at 64 columns),
+  bare base64 re-armored as PKCS#8 then PKCS#1, and raw DER; the result must
+  still be an RSA key of 2048..4096 bits. `secretFiles.privateKey.keyShape`
+  reports structure only (bytes, lineCount, crlf, bom, armored, beginLabel
+  from a fixed label set, base64Body, parsed encoding, keyType, keySize) —
+  never contents, never a hash.

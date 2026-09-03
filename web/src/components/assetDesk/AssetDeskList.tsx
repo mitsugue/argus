@@ -89,6 +89,7 @@ export const AssetDeskList: React.FC<Props> = ({
     for (const s of intel.jpQuotes.data?.stocks ?? []) quotes.set(s.symbol, {
       price: s.price, changePct: s.changePct, volume: s.volume, date: s.date,
       status: s.status, flow: s.flow ?? null, name: s.name, quoteTruth: s.quoteTruth,
+      tachibana: (s as { tachibana?: QuoteLite['tachibana'] }).tachibana ?? null,
     });
     for (const s of intel.usQuotes.data?.stocks ?? []) quotes.set(s.symbol, {
       price: s.price, changePct: s.changePct, volume: s.volume, date: s.date,

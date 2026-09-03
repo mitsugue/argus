@@ -53,7 +53,8 @@ export function freshnessOf(strat: AssetStrategy, quote?: QuoteLite): { text: st
     return { text: delay, color };
   }
   if (strat.status === 'manual') return { text: 'manual', color: STATUS_COLOR.manual };
-  if (strat.status === 'mock')   return { text: 'mock',   color: STATUS_COLOR.mock };
+  // v13.5.40: the owner never sees the word "mock" — an absent quote is 未取得.
+  if (strat.status === 'mock')   return { text: '未取得', color: STATUS_COLOR.mock };
   const lag = lagDays(strat.date);
   if (lag != null && lag > 7) {
     const text = lag >= 14 ? `delayed ${Math.round(lag / 7)}w` : `delayed ${lag}d`;
