@@ -1327,3 +1327,53 @@ def test_sho_statements_feed_uses_jquants_v2_summary_path():
     import inspect, scanner
     source = inspect.getsource(scanner._sho_statements_rows)
     assert '"/fins/summary"' in source and '"/fins/statements"' not in source
+
+
+
+def test_index_chart_route_is_cached_only_and_names_the_index(monkeypatch):
+    """RECOVERY_ONLY v13.5.50: real index charts from the Yahoo OHLCV cache; never fetches."""
+    import datetime as _dt
+    import scanner
+    client = scanner.app.test_client()
+    scanner._SHO_INDEX_OHLCV_CACHE.pop("^N225", None)
+    cold = client.get("/api/argus/index-chart?index=N225").get_json()
+    assert cold["status"] == "expected_skip" and cold["stateUpdate"]["reason"] == "index_cache_cold"
+    assert client.get("/api/argus/index-chart?index=DAX").status_code == 400
+    start = _dt.date(2026, 1, 5)
+    rows = []
+    day, i = start, 0
+    while len(rows) < 120:
+        if day.weekday() < 5:
+            close = 40000 + i * 25 + (i % 7) * 60
+            rows.append({"instrumentId": "NIKKEI_225_INDEX", "date": day.isoformat(),
+                         "open": close - 50, "high": close + 120, "low": close - 130, "close": float(close),
+                         "volume": 1.0e8, "availableFrom": day.isoformat() + "T07:00:00Z",
+                         "adjusted": False, "sourceRef": "yahoo:chart:^N225"})
+            i += 1
+        day += _dt.timedelta(days=1)
+    scanner._SHO_INDEX_OHLCV_CACHE["^N225"] = {"data": rows, "expires": 9e12}
+    calls = []
+
+    class _NoNetwork:
+        status_code = 503
+        def json(self):
+            return {}
+        def raise_for_status(self):
+            raise RuntimeError("offline")
+
+    def _get(url, *a, **k):
+        calls.append(str(url))
+        return _NoNetwork()
+
+    monkeypatch.setattr(scanner.requests, "get", _get)
+    try:
+        body = client.get("/api/argus/index-chart?index=N225").get_json()
+    finally:
+        scanner._SHO_INDEX_OHLCV_CACHE.pop("^N225", None)
+    assert not any("finance.yahoo.com" in url for url in calls)      # index rows are cached-only
+    assert body["index"] == "N225" and body["displayNameJa"] == "日経平均株価(指数)"
+    assert body["proxyDisclosureJa"] is None and "指数そのもの" in body["indexDisclosureJa"]
+    assert body["instrumentMetadata"]["assetType"] == "INDEX"
+    assert body["instrumentMetadata"]["source"] == "yahoo_index_ohlcv"
+    assert body["instrumentMetadata"]["sourceSymbol"] == "^N225"
+    assert len(body["indicators"]["bars"]) >= 100
