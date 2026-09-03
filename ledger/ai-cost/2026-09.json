@@ -1,22 +1,14 @@
 {
- "asOf": "2026-09-02T12:03:52Z",
+ "asOf": "2026-09-03T07:05:28Z",
  "dailyBudgetUsd": 5.0,
- "day": "2026-09-02",
+ "day": "2026-09-03",
  "dayRemainingUsd": 5.0,
  "daySpentUsd": 0.0,
  "emergencyReserveUsd": 2.0,
  "estimated": true,
  "groundingUsdPerCall": 0.035,
- "lastRun": {
-  "at": "2026-09-02T02:44:07Z",
-  "estimated": true,
-  "gemStatus": "unavailable",
-  "oaiStatus": "live",
-  "rows": [],
-  "runId": "2026-09-02T02:44:07Z",
-  "totalUsd": 0.0
- },
- "lastRunCostUsd": 0.0,
+ "lastRun": null,
+ "lastRunCostUsd": null,
  "month": "2026-09",
  "monthRemainingUsd": 80.0,
  "monthSpentUsd": 0.0,
@@ -57,87 +49,5 @@
   "solPromotionalThrough": "2026-11-21",
   "sourceUrl": "https://developers.openai.com/api/docs/pricing"
  },
- "recentRuns": [
-  {
-   "at": "2026-09-02T02:44:07Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-09-02T02:44:07Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-09-02T02:07:24Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-09-02T02:07:24Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-09-02T01:37:59Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-09-02T01:37:59Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-09-02T01:16:22Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-09-02T01:16:22Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-09-02T01:01:58Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-09-02T01:01:58Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-09-02T00:51:08Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-09-02T00:51:08Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-09-02T00:43:54Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-09-02T00:43:54Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-09-02T00:33:11Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-09-02T00:33:11Z",
-   "totalUsd": 0.0
-  },
-  {
-   "at": "2026-09-02T00:27:19Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [],
-   "runId": "2026-09-02T00:27:19Z",
-   "totalUsd": 0.0
-  }
- ]
+ "recentRuns": []
 }
