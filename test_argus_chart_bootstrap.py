@@ -394,3 +394,33 @@ def test_translation_drain_is_hourly_bounded_and_switchable():
                         sleeper=lambda s: None, clock=lambda: 0.0)
     boot._STATE["thread"].join(timeout=5)
     assert calls == [] and boot.warm_status()["translate"] == {"status": "DISABLED"}
+
+
+def test_index_chart_warm_tries_candidates_and_records_the_working_symbol():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    host = _host([("5803", "JP")], set())
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+    calls = []
+
+    def _yahoo(symbol, instrument_id, fetch=False, **kwargs):
+        calls.append((symbol, instrument_id, fetch, tuple(sorted(kwargs))))
+        if symbol == "^TPX":
+            return []                                   # unknown on the provider → next candidate
+        return [{"date": "2026-09-02", "close": 1.0}] * 40
+
+    host._yahoo_index_ohlcv = _yahoo
+    host._jq_price_history = lambda code: {"closes": [1.0]}
+    host._sho_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    boot._STATE["warmMaxCycles"] = 1
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    warm = boot.warm_status()
+    assert warm["indexCharts"] == {"N225": "^N225:40", "TOPIX": "998405.T:40", "SPX": "^GSPC:40", "NDX": "^IXIC:40"}
+    assert ("^N225", "NIKKEI_225_INDEX", True, ("available_hour_utc",)) in calls
+    assert ("^GSPC", "SP500_INDEX", True, ("next_day_available",)) in calls
+    assert boot.warm_status_safe()["indexCharts"]["TOPIX"] == "998405.T:40"

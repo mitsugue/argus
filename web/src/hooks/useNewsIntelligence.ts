@@ -120,14 +120,23 @@ export function useNewsIntelligence(): NewsIntelState {
           setState({ status: 'error', view: memory });
         }
       } catch {
+        // v13.5.50: a failed refresh never relabels retained data as current.
         if (!cancelled) {
-          setState({ status: memory ? 'data' : 'error', view: memory });
+          setState({ status: 'error', view: memory });
         }
       }
     };
     void load();
     const timer = window.setInterval(() => void load(), 5 * 60_000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    const onVisible = () => { if (!document.hidden) void load(); };
+    const onOnline = () => void load();
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', onOnline);
+    return () => {
+      cancelled = true; window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onOnline);
+    };
   }, []);
   return state;
 }

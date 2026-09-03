@@ -58,7 +58,7 @@ export function useMarketShock(): MarketShockState {
     : { status: 'loading', view: null }));
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    const load = async () => {
       if (!inflight) inflight = fetchShock().finally(() => { inflight = null; });
       try {
         const view = await inflight;
@@ -69,10 +69,23 @@ export function useMarketShock(): MarketShockState {
           setState({ status: 'error', view: memory });
         }
       } catch {
-        if (!cancelled) setState({ status: memory ? 'data' : 'error', view: memory });
+        // v13.5.50: a failed refresh never relabels retained data as current.
+        if (!cancelled) setState({ status: 'error', view: memory });
       }
-    })();
-    return () => { cancelled = true; };
+    };
+    void load();
+    // v13.5.50: refresh on a 5-minute cadence, on visibility resume and on
+    // online transition (was a single fetch per mount).
+    const timer = window.setInterval(() => void load(), 5 * 60_000);
+    const onVisible = () => { if (!document.hidden) void load(); };
+    const onOnline = () => void load();
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', onOnline);
+    return () => {
+      cancelled = true; window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onOnline);
+    };
   }, []);
   return state;
 }
