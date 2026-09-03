@@ -345,3 +345,16 @@ the Tachibana deployment.
 - **Owner symbols:** the JP watchlist hook resolves symbols the curated list
   lacks from `/api/argus/price-history` (real EOD close, delayed/EOD, jquants;
   volume marked unavailable) once the boot warm has cached them.
+
+## v13.5.45 — interest registry, curated/reference warm, per-issuer statements
+
+- The decision-evidence subject cache expires in 120 s, so a single device
+  request could miss the 10-minute warm cycle. The boot warm now scans the
+  host caches every minute into a product-side registry (7-day TTL, bounded)
+  and warms from the registry.
+- Each cycle also warms the curated JP watch snapshot (the decision-evidence
+  watch row and curated quotes read it; cold after every deploy) and the
+  SIG-03 proxy histories (1321, SPY). With the 4-hourly SHO warm it fetches
+  each interest issuer's latest `/fins/statements` rows (2 pages) so the
+  ARGUS-derived valuation has forecast EPS beyond the 14-day SHO window.
+- `japaneseLive.productBoot` exposes a bounded, symbol-free warm summary.

@@ -30,7 +30,12 @@ WARM_HOST_ATTRS = ("_sho_pit_inputs", "_jq_price_history", "_DECISION_EVIDENCE_C
                    "_SHO_STATEMENTS_CACHE", "_JP_CACHE", "_JQ_HISTORY_CACHE")
 INTEREST_MAX = 24
 INTEREST_REFRESH_SECONDS = 600.0
+INTEREST_SCAN_SECONDS = 60.0
+INTEREST_TTL_SECONDS = 7 * 86400.0
 SHO_WARM_SECONDS = 4 * 3600.0
+VALUATION_STATEMENT_PAGES = 2
+REFERENCE_JP_HISTORY = ("1321",)         # SIG-03 proxy (1321 vs SPY)
+REFERENCE_US_HISTORY = ("SPY",)
 DEFAULT_DELAY_SECONDS = 15.0
 DEFAULT_PER_SYMBOL_SECONDS = 45.0
 DEFAULT_PAUSE_SECONDS = 2.0
@@ -43,7 +48,10 @@ _STATE: Dict[str, Any] = {
                 "missingAfter": None, "startedAt": None, "finishedAt": None},
     "warm": {"status": "NOT_STARTED", "shoWarmedAt": None, "shoSourceStatus": None,
              "interestSymbols": [], "interestWarmedAt": None, "historyWarmed": 0,
-             "valuation": None, "cycles": 0, "errorClass": None},
+             "valuation": None, "cycles": 0, "errorClass": None,
+             "curatedWarmedAt": None, "referenceWarmed": 0, "statementsFetched": 0},
+    "interest": {},          # JP code -> last seen monotonic clock (product-side registry)
+    "statements": {},        # JP code -> list of statement rows (bounded, 4h refresh)
 }
 
 
@@ -112,11 +120,40 @@ def _jp_code(value: Any) -> Optional[str]:
     return code if len(code) == 4 and code[0].isdigit() else None
 
 
-def interest_symbols(host: Any) -> list:
-    """Bounded JP interest set: symbols the owner's device already asked for
-    (decision-evidence subjects, supply-demand extras, watchlist hints) plus
-    the curated universe.  Owner holdings never leave the device; only the
+def scan_interest(host: Any, now: float) -> None:
+    """Record the JP codes the owner's device recently sent to public routes
+    (decision-evidence subjects, supply-demand extras, watchlist hints) into
+    the product-side registry.  The host caches expire within minutes, so the
+    registry (7-day TTL, bounded) is what the warm cycle reads."""
+    registry = _STATE["interest"]
+    cache = getattr(host, "_DECISION_EVIDENCE_CACHE", None)
+    if isinstance(cache, dict):
+        for key in list(cache.keys()):
+            code = _jp_code(key)
+            if code:
+                registry[code] = now
+    extras = getattr(host, "_SD_EXTRA_SYMBOLS", None)
+    if isinstance(extras, dict):
+        for key, meta in list(extras.items()):
+            code = _jp_code(key)
+            if code and isinstance(meta, dict) and meta.get("market") == "JP":
+                registry[code] = now
+    seen = getattr(host, "_JP_SEEN_SYMBOLS", None)
+    if isinstance(seen, dict):
+        for key in list(seen.keys()):
+            code = _jp_code(key)
+            if code:
+                registry[code] = now
+    for code in [c for c, seen_at in registry.items() if now - seen_at > INTEREST_TTL_SECONDS]:
+        registry.pop(code, None)
+
+
+def interest_symbols(host: Any, now: Optional[float] = None) -> list:
+    """Bounded JP interest set: 5803, the curated universe, then the registry
+    (most recently seen first).  Owner holdings never leave the device; only
     codes the device already sent to public routes are used."""
+    if now is not None:
+        scan_interest(host, now)
     codes: list = []
 
     def add(value: Any) -> None:
@@ -128,19 +165,9 @@ def interest_symbols(host: Any) -> list:
     for item in getattr(host, "_JP_WATCHLIST", None) or []:
         if isinstance(item, dict):
             add(item.get("symbol"))
-    cache = getattr(host, "_DECISION_EVIDENCE_CACHE", None)
-    if isinstance(cache, dict):
-        for key in list(cache.keys()):
-            add(key)
-    extras = getattr(host, "_SD_EXTRA_SYMBOLS", None)
-    if isinstance(extras, dict):
-        for key, meta in list(extras.items()):
-            if isinstance(meta, dict) and meta.get("market") == "JP":
-                add(key)
-    seen = getattr(host, "_JP_SEEN_SYMBOLS", None)
-    if isinstance(seen, dict):
-        for key in list(seen.keys()):
-            add(key)
+    registry = _STATE["interest"]
+    for code in sorted(registry, key=lambda c: -registry[c]):
+        add(code)
     return codes[:INTEREST_MAX]
 
 
@@ -188,7 +215,16 @@ def _warm_cycle(host: Any, *, sleeper: Callable[[float], None], now: Callable[[]
             "rowCount": len(statements.get("rows") or []),
             "source": statements.get("source"),
         })
-    symbols = interest_symbols(host)
+    # curated JP watch snapshot: the decision-evidence watch row and the
+    # owner's curated quotes read this cache, which is cold after every deploy.
+    if hasattr(host, "get_japan_watchlist_snapshot"):
+        try:
+            host.get_japan_watchlist_snapshot(allow_provider_fetch=True,
+                                              record_requested_symbols=False)
+            warm["curatedWarmedAt"] = stamp
+        except Exception as exc:
+            warm["errorClass"] = f"curated:{type(exc).__name__}"
+    symbols = interest_symbols(host, now())
     warm["interestSymbols"] = list(symbols)
     warmed = 0
     if hasattr(host, "_jq_price_history"):
@@ -201,8 +237,41 @@ def _warm_cycle(host: Any, *, sleeper: Callable[[float], None], now: Callable[[]
             sleeper(1.0)
     warm["historyWarmed"] = warmed
     warm["interestWarmedAt"] = stamp
+    # SIG-03 proxy inputs (1321 vs SPY) live in the same history caches.
+    reference = 0
+    for code in REFERENCE_JP_HISTORY:
+        try:
+            if hasattr(host, "_jq_price_history") and host._jq_price_history(code):
+                reference += 1
+        except Exception:
+            pass
+    for code in REFERENCE_US_HISTORY:
+        try:
+            if hasattr(host, "_us_price_history") and host._us_price_history(code):
+                reference += 1
+        except Exception:
+            pass
+    warm["referenceWarmed"] = reference
+    # SIG-04 derived valuation needs each issuer's latest statements (the
+    # 14-day SHO window rarely holds them); fetched per code with the SHO warm.
+    if force_sho and hasattr(host, "_jquants_paginated"):
+        fetched = 0
+        for code in symbols:
+            try:
+                rows = host._jquants_paginated("/fins/statements", {"code": code},
+                                               max_pages=VALUATION_STATEMENT_PAGES,
+                                               request_timeout=8)
+                if isinstance(rows, list):
+                    _STATE["statements"][code] = [row for row in rows if isinstance(row, dict)][-12:]
+                    fetched += 1
+            except Exception:
+                pass
+            sleeper(1.0)
+        warm["statementsFetched"] = fetched
     try:
-        rows = (statements.get("rows") if isinstance(statements, dict) else None) or []
+        rows = list((statements.get("rows") if isinstance(statements, dict) else None) or [])
+        for code_rows in _STATE["statements"].values():
+            rows.extend(code_rows)
         universe = [item.get("symbol") for item in (getattr(host, "_JP_WATCHLIST", None) or [])
                     if isinstance(item, dict)] + symbols
         evidence = argus_japan_valuation.compute(rows, _prices_by_code(host),
@@ -234,7 +303,11 @@ def _warm_loop(host: Any, *, sleeper: Callable[[float], None], now: Callable[[],
             cycles += 1
             if max_cycles is not None and cycles >= max_cycles:
                 break
-            sleeper(INTEREST_REFRESH_SECONDS)
+            waited = 0.0
+            while waited < INTEREST_REFRESH_SECONDS:
+                sleeper(INTEREST_SCAN_SECONDS)
+                waited += INTEREST_SCAN_SECONDS
+                scan_interest(host, now())
         warm["status"] = "DONE"
     except Exception as exc:                        # pragma: no cover - defensive
         warm["status"] = "FAILED"
@@ -274,7 +347,25 @@ def status() -> Dict[str, Any]:
 
 
 def warm_status() -> Dict[str, Any]:
-    return dict(_STATE["warm"])
+    out = dict(_STATE["warm"])
+    out["interestRegistrySize"] = len(_STATE["interest"])
+    return out
+
+
+def warm_status_safe() -> Dict[str, Any]:
+    """Bounded, symbol-free warm summary for public evidence documents."""
+    warm = _STATE["warm"]
+    return {
+        "status": warm.get("status"), "cycles": warm.get("cycles"),
+        "shoWarmedAt": warm.get("shoWarmedAt"), "curatedWarmedAt": warm.get("curatedWarmedAt"),
+        "interestWarmedAt": warm.get("interestWarmedAt"),
+        "interestCount": len(warm.get("interestSymbols") or []),
+        "historyWarmed": warm.get("historyWarmed"), "referenceWarmed": warm.get("referenceWarmed"),
+        "statementsFetched": warm.get("statementsFetched"),
+        "valuation": warm.get("valuation"), "errorClass": warm.get("errorClass"),
+        "chart": {"status": _STATE["summary"].get("status"),
+                  "missingAfter": _STATE["summary"].get("missingAfter")},
+    }
 
 
 def _reset_for_tests() -> None:
@@ -288,3 +379,5 @@ def _reset_for_tests() -> None:
                           "interestSymbols": [], "interestWarmedAt": None, "historyWarmed": 0,
                           "valuation": None, "cycles": 0, "errorClass": None}
         _STATE["warmMaxCycles"] = None
+        _STATE["interest"] = {}
+        _STATE["statements"] = {}
