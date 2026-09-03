@@ -33,7 +33,11 @@ INTEREST_REFRESH_SECONDS = 600.0
 INTEREST_SCAN_SECONDS = 60.0
 INTEREST_TTL_SECONDS = 7 * 86400.0
 SHO_WARM_SECONDS = 4 * 3600.0
-VALUATION_STATEMENT_PAGES = 8        # /fins/statements?code= returns the issuer's history
+VALUATION_STATEMENT_PAGES = 8        # the issuer's statements history is paginated
+# J-Quants V2 (V1 discontinued 2026-06-01): /fins/summary; the V1 path is kept
+# last only so a legacy host keeps working.  The first path that answers wins.
+STATEMENTS_PATHS = ("/fins/summary", "/fins/statements")
+STATEMENTS_CACHE_SECONDS = 4 * 3600.0
 VALUATION_STATEMENTS_PER_CYCLE = 6   # bounded provider budget per 10-minute cycle
 REFERENCE_JP_HISTORY = ("1321",)         # SIG-03 proxy (1321 vs SPY)
 REFERENCE_US_HISTORY = ("SPY",)
@@ -51,7 +55,8 @@ _STATE: Dict[str, Any] = {
              "interestSymbols": [], "interestWarmedAt": None, "historyWarmed": 0,
              "valuation": None, "cycles": 0, "errorClass": None,
              "curatedWarmedAt": None, "referenceWarmed": 0, "statementsFetched": 0,
-             "statementsErrorClass": None, "referenceErrorClass": None},
+             "statementsErrorClass": None, "referenceErrorClass": None,
+             "statementsPath": None, "statementsPublished": 0},
     "interest": {},          # JP code -> last seen monotonic clock (product-side registry)
     "statements": {},        # JP code -> list of statement rows (bounded, 4h refresh)
 }
@@ -211,12 +216,6 @@ def _warm_cycle(host: Any, *, sleeper: Callable[[float], None], now: Callable[[]
         except Exception as exc:
             warm["errorClass"] = f"sho_warm:{type(exc).__name__}"
     statements = getattr(host, "_SHO_STATEMENTS_CACHE", None)
-    if isinstance(statements, dict):
-        argus_japan_valuation.publish_statements_state({
-            "warmedAt": stamp if warm["shoWarmedAt"] else None,
-            "rowCount": len(statements.get("rows") or []),
-            "source": statements.get("source"),
-        })
     # curated JP watch snapshot: the decision-evidence watch row and the
     # owner's curated quotes read this cache, which is cold after every deploy.
     if hasattr(host, "get_japan_watchlist_snapshot"):
@@ -265,17 +264,34 @@ def _warm_cycle(host: Any, *, sleeper: Callable[[float], None], now: Callable[[]
             _STATE["statements"].clear()
         pending = [code for code in symbols if code not in _STATE["statements"]]
         for code in pending[:VALUATION_STATEMENTS_PER_CYCLE]:
-            try:
-                rows = host._jquants_paginated("/fins/statements", {"code": code},
-                                               max_pages=VALUATION_STATEMENT_PAGES,
-                                               request_timeout=8)
+            paths = ([warm["statementsPath"]] if warm["statementsPath"] else list(STATEMENTS_PATHS))
+            for path in paths:
+                try:
+                    rows = host._jquants_paginated(path, {"code": code},
+                                                   max_pages=VALUATION_STATEMENT_PAGES,
+                                                   request_timeout=8)
+                except Exception as exc:
+                    warm["statementsErrorClass"] = f"{path}:{type(exc).__name__}:{str(exc)[:24]}"
+                    continue
                 if isinstance(rows, list):
                     _STATE["statements"][code] = [row for row in rows if isinstance(row, dict)][-12:]
-            except Exception as exc:
-                warm["statementsErrorClass"] = f"{type(exc).__name__}:{str(exc)[:32]}"
-                _STATE["statements"].setdefault(code, [])      # do not retry a failing code every cycle
+                    warm["statementsPath"] = path
+                    break
+            _STATE["statements"].setdefault(code, [])          # do not retry a failing code every cycle
             sleeper(1.0)
         warm["statementsFetched"] = sum(1 for rows in _STATE["statements"].values() if rows)
+        # The host's own statements feed (SHO D07) still calls the V1 path and
+        # is silently empty; publish the V2 rows into its cache so the earnings
+        # event selection sees real disclosures.  Only when we fetched real rows.
+        if warm["statementsFetched"] and isinstance(statements, dict):
+            merged = []
+            for rows in _STATE["statements"].values():
+                merged.extend(rows)
+            statements["rows"] = merged
+            statements["source"] = "jquants_v2_summary_boot"
+            statements["fetchedAt"] = stamp
+            statements["expires"] = time.time() + STATEMENTS_CACHE_SECONDS
+            warm["statementsPublished"] = len(merged)
     try:
         rows = list((statements.get("rows") if isinstance(statements, dict) else None) or [])
         for code_rows in _STATE["statements"].values():
@@ -290,6 +306,14 @@ def _warm_cycle(host: Any, *, sleeper: Callable[[float], None], now: Callable[[]
                              "medianForwardPer": evidence.get("medianForwardPer")}
     except Exception as exc:
         warm["errorClass"] = f"valuation:{type(exc).__name__}"
+    # D07 may report NOT_APPLICABLE only when the statements feed was read
+    # for real (our own V2 fetch succeeded); otherwise it stays MISSING.
+    argus_japan_valuation.publish_statements_state({
+        "warmedAt": stamp if warm["statementsFetched"] else None,
+        "rowCount": warm.get("statementsPublished", 0),
+        "source": (statements.get("source") if isinstance(statements, dict) else None),
+        "path": warm["statementsPath"],
+    })
     warm["cycles"] += 1
 
 
@@ -371,6 +395,8 @@ def warm_status_safe() -> Dict[str, Any]:
         "historyWarmed": warm.get("historyWarmed"), "referenceWarmed": warm.get("referenceWarmed"),
         "statementsFetched": warm.get("statementsFetched"),
         "statementsErrorClass": warm.get("statementsErrorClass"),
+        "statementsPath": warm.get("statementsPath"),
+        "statementsPublished": warm.get("statementsPublished"),
         "referenceErrorClass": warm.get("referenceErrorClass"),
         "valuation": warm.get("valuation"), "errorClass": warm.get("errorClass"),
         "chart": {"status": _STATE["summary"].get("status"),
@@ -389,7 +415,8 @@ def _reset_for_tests() -> None:
                           "interestSymbols": [], "interestWarmedAt": None, "historyWarmed": 0,
                           "valuation": None, "cycles": 0, "errorClass": None,
                           "curatedWarmedAt": None, "referenceWarmed": 0, "statementsFetched": 0,
-                          "statementsErrorClass": None, "referenceErrorClass": None}
+                          "statementsErrorClass": None, "referenceErrorClass": None,
+                          "statementsPath": None, "statementsPublished": 0}
         _STATE["warmMaxCycles"] = None
         _STATE["interest"] = {}
         _STATE["statements"] = {}
