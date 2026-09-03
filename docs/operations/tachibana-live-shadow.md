@@ -271,3 +271,18 @@ the Tachibana deployment.
   reports structure only (bytes, lineCount, crlf, bom, armored, beginLabel
   from a fixed label set, base64Body, parsed encoding, keyType, keySize) —
   never contents, never a hash.
+
+## Recovery handoff (state after v13.5.40 / v13.5.41)
+
+- Product surface is frozen at v13.5.41 (this PR). Tachibana LIVE is wired
+  read-only through `argus_tachibana_live` (product) and the RECOVERY_ONLY
+  scanner seam from PR #257 (`japaneseLive` at the decision-evidence
+  document level, `_tachibana_live_autostart` once per process). Scanner
+  and the other Recovery payload paths were not modified by v13.5.38–41.
+- Production state at handoff: `ARGUS_TACHIBANA_ENABLED=true`; both Render
+  secret files exist (symlinks, mode 0640, readable); the private key file
+  content is not a key (`keyShape`: 63 bytes, one line, no armor, not
+  base64). Until the owner re-uploads the PEM the boundary stays
+  `AUTH_FAILED / AUTH_KEY_PARSE_FAILED` and the owner sees 認証失敗 truthfully.
+- Recovery Smoke must not start before the owner has accepted both
+  v13.5.40 (Tachibana cutover) and v13.5.41 (Events/News) on the real app.

@@ -9,8 +9,10 @@ Pure: no network, no LLM. Prompt builders return strings; the scanner owns the c
 Discipline: never fabricate an official result or a consensus; a missing result is
 "unavailable"; a missing pre makes the post verdict not_scoreable.
 """
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 SCHEMA_VERSION = "macro-event-analysis-v1"
 
@@ -20,6 +22,31 @@ TRACKED_CODES = {"NFP", "CPI", "FOMC", "BOJ", "PCE", "GDP", "JOLTS", "PPI",
 PHASES = ["pre_early", "pre_watch", "pre_final", "imminent",
           "released_pending_result", "post_result", "post_followup"]
 _PRE_PHASES = {"pre_early", "pre_watch", "pre_final", "imminent"}
+
+_IMPACT_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+_CANONICAL_DATE_SUFFIX = re.compile(r"-(\d{4}-\d{2}-\d{2})$")
+_CANONICAL_EVENT_TYPES = {
+    "FOMC": ("14:00", "central_bank", "Federal Reserve", "high",
+             "FOMC Rate Decision", ["USDJPY", "US10Y", "US2Y", "QQQ", "NVDA"]),
+    "CPI": ("08:30", "inflation", "Bureau of Labor Statistics", "high",
+            "US CPI (Consumer Price Index)", ["US10Y", "USDJPY", "QQQ", "SPY"]),
+    "NFP": ("08:30", "jobs", "Bureau of Labor Statistics", "high",
+            "US Employment Situation", ["US10Y", "USDJPY", "SPY", "QQQ"]),
+    "JOLTS": ("10:00", "jobs", "Bureau of Labor Statistics", "medium",
+              "US JOLTS Job Openings", ["US10Y", "USDJPY", "SPY", "QQQ"]),
+    "PPI": ("08:30", "inflation", "Bureau of Labor Statistics", "medium",
+            "US PPI (Producer Price Index)", ["US10Y", "QQQ"]),
+    "PCE": ("08:30", "inflation", "Bureau of Economic Analysis", "high",
+            "US PCE / Personal Income & Outlays", ["US10Y", "USDJPY", "QQQ"]),
+    "GDP": ("08:30", "growth", "Bureau of Economic Analysis", "high",
+            "US GDP", ["US10Y", "SPY", "USDJPY"]),
+    "BOJ": (None, "central_bank", "Bank of Japan", "high",
+            "BOJ Monetary Policy Meeting", ["USDJPY", "JP10Y", "9984", "8058"]),
+    "TREASURY_AUCTION": (None, "rates", "TreasuryDirect", "high",
+                         "US Treasury Auction", ["US10Y", "QQQ"]),
+    "AUCTION": (None, "rates", "TreasuryDirect", "high",
+                "US Treasury Auction", ["US10Y", "QQQ"]),
+}
 
 
 def _parse_utc(iso: Optional[str]) -> Optional[datetime]:
@@ -70,10 +97,117 @@ def is_pre_phase(phase: str) -> bool:
     return phase in _PRE_PHASES
 
 
+def canonical_date_from_event_id(event_id: Any) -> Optional[str]:
+    """Recover only an ISO date that is already part of a canonical event ID.
+
+    This is identity metadata, not a guessed schedule.  It lets old date-only
+    records fail visibly as historical/stale instead of remaining PRE forever.
+    """
+    match = _CANONICAL_DATE_SUFFIX.search(str(event_id or ""))
+    if not match:
+        return None
+    value = match.group(1)
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return value
+
+
+def _catalog_metadata(event_id: str, event_code: Any,
+                      event_date: Optional[str]) -> Dict[str, Any]:
+    """Canonical type metadata for legacy rows outside the live join horizon."""
+    code = str(event_code or "").upper()
+    spec = _CANONICAL_EVENT_TYPES.get(code)
+    if not spec or not event_date:
+        return {}
+    et_time, family, source, impact, title, assets = spec
+    event_time_utc = local_time_jst = None
+    if et_time:
+        local_et = datetime.strptime(
+            f"{event_date} {et_time}", "%Y-%m-%d %H:%M").replace(
+                tzinfo=ZoneInfo("America/New_York"))
+        event_time_utc = local_et.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        local_time_jst = local_et.astimezone(ZoneInfo("Asia/Tokyo")).strftime(
+            "%Y-%m-%d %H:%M JST")
+    return {
+        "eventId": event_id,
+        "eventCode": code,
+        "eventFamily": family,
+        "title": title,
+        "eventTimeUtc": event_time_utc,
+        "eventDate": event_date,
+        "localTimeJst": local_time_jst,
+        "source": source,
+        "baseImpact": impact,
+        "displayImpact": impact,
+        "linkedAssets": assets,
+    }
+
+
+def rehydrate_schedule_metadata(record: Dict[str, Any],
+                                schedule_event: Optional[Dict[str, Any]] = None
+                                ) -> Dict[str, Any]:
+    """Return a record with deterministic ranking metadata restored.
+
+    The official schedule/catalog is authoritative for identity, family, time,
+    date, source, and base impact.  Existing stronger owner-specific impact is
+    preserved, while a missing/weaker fallback can be raised to the catalog
+    impact.  No AI analysis is required and no date is fabricated.
+    """
+    out = dict(record or {})
+    supplied_event = schedule_event or {}
+    record_id = str(out.get("eventId") or "")
+    schedule_id = str(supplied_event.get("eventId") or supplied_event.get("id") or "")
+    if schedule_id and record_id and schedule_id != record_id:
+        return out
+    event_id = record_id or schedule_id
+    if event_id:
+        out["eventId"] = event_id
+
+    event_date = (supplied_event.get("eventDate") or supplied_event.get("date")
+                  or out.get("eventDate")
+                  or canonical_date_from_event_id(event_id))
+    event_code = (supplied_event.get("eventCode") or supplied_event.get("kind")
+                  or out.get("eventCode"))
+    event = _catalog_metadata(event_id, event_code, event_date)
+    event.update({key: value for key, value in supplied_event.items()
+                  if value is not None})
+    if not out.get("eventDate") and event_date:
+        out["eventDate"] = event_date
+
+    scalar_sources = {
+        "eventCode": event.get("eventCode") or event.get("kind"),
+        "eventFamily": (event.get("eventFamily") or event.get("family")
+                        or event.get("category")),
+        "title": event.get("title"),
+        "eventTimeUtc": event.get("eventTimeUtc"),
+        "localTimeJst": event.get("localTimeJst") or event.get("jstTime"),
+        "source": event.get("source"),
+        "baseImpact": event.get("baseImpact") or event.get("impact"),
+        "daysUntil": event.get("daysUntil"),
+        "countdown": event.get("countdown") or event.get("escalation"),
+        "lifecycle": event.get("lifecycle"),
+    }
+    for key, value in scalar_sources.items():
+        if out.get(key) is None and value is not None:
+            out[key] = value
+    if not out.get("linkedAssets") and event.get("linkedAssets"):
+        out["linkedAssets"] = list(event.get("linkedAssets") or [])[:8]
+
+    existing_impact = str(out.get("displayImpact") or "").lower()
+    catalog_impact = str(event.get("displayImpact") or event.get("importance")
+                         or event.get("impact") or "").lower()
+    if (_IMPACT_RANK.get(catalog_impact, 0)
+            > _IMPACT_RANK.get(existing_impact, 0)):
+        out["displayImpact"] = catalog_impact
+    return out
+
+
 def new_record(event: Dict[str, Any], *, now_iso: str) -> Dict[str, Any]:
     """Skeleton analysis record for one scheduled macro event. Deterministic."""
     eid = str(event.get("id") or event.get("eventId") or event.get("eventCode") or "")
-    return {
+    record = {
         "schemaVersion": SCHEMA_VERSION,
         "analysisId": f"ma-{eid}",
         "eventId": eid,
@@ -97,6 +231,7 @@ def new_record(event: Dict[str, Any], *, now_iso: str) -> Dict[str, Any]:
         "firstSeenAt": now_iso,
         "updatedAt": now_iso,
     }
+    return rehydrate_schedule_metadata(record, event)
 
 
 _PHASE_CHECKPOINT = {"pre_early": 0, "pre_watch": 1, "pre_final": 2, "imminent": 3}
