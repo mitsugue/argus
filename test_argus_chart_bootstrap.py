@@ -12,6 +12,21 @@ import argus_asset_chart_cache
 import argus_chart_bootstrap as boot
 
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_product_stores():
+    """Module stores (boot warm, derived valuation, statements state) must never
+    leak into other auto-discovered suites (e.g. D07 expects MISSING when cold)."""
+    import argus_chart_bootstrap as _boot
+    import argus_japan_valuation as _val
+    _boot._reset_for_tests(); _val._reset_for_tests()
+    yield
+    _boot._reset_for_tests(); _val._reset_for_tests()
+
+
+
 def _report(symbol, market):
     """Minimal report accepted by argus_asset_chart_cache._valid_report."""
     return {"reportId": f"{symbol}-daily", "status": "ok", "market": market, "symbol": symbol,
