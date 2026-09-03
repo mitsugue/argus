@@ -313,3 +313,27 @@ def test_module_surface_has_no_order_capability():
     for forbidden in ("NewOrder", "Cancel", "Correct", "sOrder", "CLMKabu"):
         assert forbidden not in source
     assert "SHADOW_NON_AUTHORITATIVE" in source
+
+
+def test_secret_file_diagnostics_report_key_shape_without_contents(tmp_path):
+    import json as _json
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+    from cryptography.hazmat.primitives import serialization as _ser
+    key = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(_ser.Encoding.PEM, _ser.PrivateFormat.PKCS8, _ser.NoEncryption())
+    auth = tmp_path / "e_api_authid.txt"; auth.write_bytes(b"abc123\n"); auth.chmod(0o600)
+    pk = tmp_path / "e_api_private_key.pem"; pk.write_bytes(pem.replace(b"\n", b"\r\n")); pk.chmod(0o600)
+    config = TachibanaConfig.from_env({
+        "ARGUS_TACHIBANA_ENABLED": "true",
+        "ARGUS_TACHIBANA_AUTH_ID_PATH": str(auth),
+        "ARGUS_TACHIBANA_PRIVATE_KEY_PATH": str(pk),
+    })
+    diag = live.secret_file_diagnostics(config)
+    shape = diag["privateKey"]["keyShape"]
+    assert shape["parsed"] == "PEM" and shape["keySize"] == 2048 and shape["crlf"] is True
+    assert "keyShape" not in diag["authId"]
+    serialized = _json.dumps(diag)
+    body = b"".join(l for l in pem.splitlines() if not l.startswith(b"-----")).decode()
+    assert body[:16] not in serialized and "abc123" not in serialized
+    pk.write_bytes(b"garbage")
+    assert live.secret_file_diagnostics(config)["privateKey"]["keyShape"]["parsed"] == "FAILED"

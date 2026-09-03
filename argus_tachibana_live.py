@@ -95,10 +95,27 @@ def secret_file_diagnostics(config: Optional[TachibanaConfig]) -> Dict[str, Any]
                     "readable": os.access(path, os.R_OK),
                     "platformManaged": str(Path(os.path.realpath(path))).startswith("/etc/secrets/"),
                 })
+                if name == "privateKey":
+                    row["keyShape"] = _private_key_shape_safe(path)
         except OSError as exc:
             row["error"] = type(exc).__name__
         out[name] = row
     return out
+
+
+def _private_key_shape_safe(path: Path) -> Dict[str, Any]:
+    """Structural facts only (see session.private_key_shape); never contents."""
+    from argus_providers.tachibana import session as _session
+    try:
+        key_bytes = _session._read_secret(path, ErrorClass.SECRET_MISSING)
+    except TachibanaError as exc:
+        return {"parsed": "UNREADABLE", "errorClass": exc.classification.value}
+    except Exception as exc:                      # pragma: no cover - defensive
+        return {"parsed": "UNREADABLE", "errorClass": type(exc).__name__}
+    try:
+        return _session.private_key_shape(key_bytes)
+    except Exception as exc:                      # pragma: no cover - defensive
+        return {"parsed": "FAILED", "errorClass": type(exc).__name__}
 
 
 def auth_boundary(last_error_class: Optional[str],

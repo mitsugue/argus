@@ -262,3 +262,12 @@ the Tachibana deployment.
   (`data-argus-contract="tachibana-board-v1"`, labelled 売買権限なし) and the
   data-limitation line says VWAP/板 are Tachibana evidence while 資金フロー
   stays 未取得. Absent fields render `—`, never a fabricated number.
+- **Private key tolerance (slice 1b).** Production read both secret files
+  after slice 1 but reported `AUTH_KEY_PARSE_FAILED` (`PRIVATE_KEY_INVALID`).
+  `session.load_private_key` now tries, in order: the literal PEM, a
+  normalized PEM (BOM/CRLF stripped, base64 body re-wrapped at 64 columns),
+  bare base64 re-armored as PKCS#8 then PKCS#1, and raw DER; the result must
+  still be an RSA key of 2048..4096 bits. `secretFiles.privateKey.keyShape`
+  reports structure only (bytes, lineCount, crlf, bom, armored, beginLabel
+  from a fixed label set, base64Body, parsed encoding, keyType, keySize) —
+  never contents, never a hash.

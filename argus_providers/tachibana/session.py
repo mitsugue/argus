@@ -429,6 +429,102 @@ def _read_secret(path: Path, missing_class: ErrorClass) -> bytes:
         os.close(descriptor)
 
 
+_PEM_LABELS = ("PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY",
+               "ENCRYPTED PRIVATE KEY")
+_PEM_BEGIN_RE = re.compile(rb"-----BEGIN ([A-Z ]{3,40})-----")
+_PEM_END_RE = re.compile(rb"-----END ([A-Z ]{3,40})-----")
+_BASE64_BODY_RE = re.compile(rb"^[A-Za-z0-9+/=]+$")
+
+
+def _key_text_variants(key_bytes: bytes) -> list[tuple[str, bytes]]:
+    """Candidate encodings of one secret file, most literal first.
+
+    Platform secret-file editors routinely re-flow a pasted PEM (CRLF, a
+    single line, lost armor, a UTF-8 BOM).  Each candidate is rebuilt from
+    the same bytes; nothing is fetched, guessed or logged.
+    """
+    raw = key_bytes
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
+    text = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n").strip()
+    variants: list[tuple[str, bytes]] = [("PEM", text)]
+    begin = _PEM_BEGIN_RE.search(text)
+    end = _PEM_END_RE.search(text)
+    if begin and end and end.start() > begin.end():
+        label = begin.group(1)
+        body = b"".join(text[begin.end():end.start()].split())
+        if body and _BASE64_BODY_RE.match(body):
+            lines = [body[i:i + 64] for i in range(0, len(body), 64)]
+            rebuilt = (b"-----BEGIN " + label + b"-----\n"
+                       + b"\n".join(lines) + b"\n-----END " + label + b"-----\n")
+            variants.append(("NORMALIZED_PEM", rebuilt))
+    else:
+        body = b"".join(text.split())
+        if body and _BASE64_BODY_RE.match(body) and len(body) % 4 == 0:
+            lines = [body[i:i + 64] for i in range(0, len(body), 64)]
+            for label in (b"PRIVATE KEY", b"RSA PRIVATE KEY"):
+                variants.append(("ARMORED_BASE64", b"-----BEGIN " + label + b"-----\n"
+                                 + b"\n".join(lines) + b"\n-----END " + label + b"-----\n"))
+    variants.append(("DER", key_bytes))
+    return variants
+
+
+def load_private_key(key_bytes: bytes) -> tuple[Any, str]:
+    """Parse an RSA private key from PEM / re-flowed PEM / bare base64 / DER.
+
+    Returns (key, encoding_used).  Raises TachibanaError(PRIVATE_KEY_INVALID)
+    when no candidate parses to an RSA key of 2048..4096 bits.
+    """
+    for encoding, candidate in _key_text_variants(key_bytes):
+        try:
+            if encoding == "DER":
+                key = serialization.load_der_private_key(candidate, password=None)
+            else:
+                key = serialization.load_pem_private_key(candidate, password=None)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(key, rsa.RSAPrivateKey) and 2048 <= key.key_size <= 4096:
+            return key, encoding
+        raise TachibanaError(ErrorClass.PRIVATE_KEY_INVALID)
+    raise TachibanaError(ErrorClass.PRIVATE_KEY_INVALID)
+
+
+def private_key_shape(key_bytes: bytes) -> dict[str, Any]:
+    """Secret-safe structural facts about a private key file.
+
+    Only shape: byte count class, line count, CRLF/BOM presence, whether PEM
+    armor is present and which standard label it carries, whether the body
+    is base64, and which encoding (if any) parses.  Never key material,
+    never a hash of it.
+    """
+    raw = key_bytes
+    has_bom = raw.startswith(b"\xef\xbb\xbf")
+    text = raw[3:] if has_bom else raw
+    begin = _PEM_BEGIN_RE.search(text)
+    end = _PEM_END_RE.search(text)
+    label = begin.group(1).decode("ascii", "replace") if begin else None
+    body = b"".join(text[begin.end():end.start()].split()) if (begin and end and end.start() > begin.end()) \
+        else b"".join(text.split())
+    shape: dict[str, Any] = {
+        "bytes": len(raw),
+        "lineCount": text.count(b"\n") + (0 if text.endswith(b"\n") or not text else 1),
+        "crlf": b"\r\n" in text,
+        "bom": has_bom,
+        "armored": bool(begin and end),
+        "beginLabel": label if label in _PEM_LABELS else ("OTHER" if label else None),
+        "base64Body": bool(body) and _BASE64_BODY_RE.match(body) is not None,
+        "parsed": "FAILED",
+        "keyType": None,
+        "keySize": None,
+    }
+    try:
+        key, encoding = load_private_key(key_bytes)
+    except TachibanaError:
+        return shape
+    shape.update({"parsed": encoding, "keyType": "RSA", "keySize": key.key_size})
+    return shape
+
+
 def _validate_virtual_url(value: str, category: str) -> str:
     if not isinstance(value, str) or not value or len(value) > 4096:
         raise TachibanaError(ErrorClass.VIRTUAL_URL_INVALID)
@@ -538,17 +634,7 @@ class TachibanaSession:
                         raise TachibanaError(ErrorClass.SECRET_MISSING) from None
                     if not auth_id or len(auth_id) > 4096:
                         raise TachibanaError(ErrorClass.SECRET_MISSING)
-                    try:
-                        private_key = serialization.load_pem_private_key(
-                            key_bytes, password=None
-                        )
-                    except (TypeError, ValueError):
-                        raise TachibanaError(ErrorClass.PRIVATE_KEY_INVALID) from None
-                    if (
-                        not isinstance(private_key, rsa.RSAPrivateKey)
-                        or not 2048 <= private_key.key_size <= 4096
-                    ):
-                        raise TachibanaError(ErrorClass.PRIVATE_KEY_INVALID)
+                    private_key, _key_encoding = load_private_key(key_bytes)
 
                     payload = self._next_header()
                     payload.update({
