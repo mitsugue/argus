@@ -247,13 +247,23 @@ def _warm_cycle(host: Any, *, sleeper: Callable[[float], None], now: Callable[[]
         except Exception as exc:
             warm["referenceErrorClass"] = f"jp:{type(exc).__name__}"
     for code in REFERENCE_US_HISTORY:
-        try:
-            if hasattr(host, "_us_price_history") and host._us_price_history(code):
-                reference += 1
-            else:
-                warm["referenceErrorClass"] = "us:empty"
-        except Exception as exc:
-            warm["referenceErrorClass"] = f"us:{type(exc).__name__}"
+        # The SIG-03 proxy reads the chart history cache, which the Twelve
+        # Data fetcher fills; the Finnhub-based fetcher fills a different cache.
+        warmed_us = False
+        for name in ("_td_price_history", "_us_price_history"):
+            fetcher = getattr(host, name, None)
+            if fetcher is None:
+                continue
+            try:
+                if fetcher(code):
+                    warmed_us = True
+                    break
+            except Exception as exc:
+                warm["referenceErrorClass"] = f"us:{name}:{type(exc).__name__}"
+        if warmed_us:
+            reference += 1
+        elif not warm.get("referenceErrorClass"):
+            warm["referenceErrorClass"] = "us:empty"
     warm["referenceWarmed"] = reference
     # SIG-04 derived valuation needs each issuer's latest statements (the
     # 14-day SHO window rarely holds them).  Fetched per code, a bounded

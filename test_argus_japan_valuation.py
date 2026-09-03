@@ -119,3 +119,22 @@ def test_family_conditions_are_deterministic_and_labelled():
     assert d06["status"] == "AVAILABLE" and d06["conditionMet"] in (True, False)
     assert d06["conditionMet"] == (d06["argusBaseline"]["histogram"] < 0)
     assert d06["conditionLineage"] == "ARGUS_CANDIDATE"
+
+
+
+def test_d07_condition_is_reaction_based_and_labelled():
+    cutoff = "2026-09-03T09:00:00Z"
+    event = {"instrumentId": "5803", "date": "2026-08-06", "knownAt": "2026-08-05T15:30:00+09:00",
+             "availableFrom": "2026-08-05T15:30:00+09:00", "epsActual": 60.1, "epsEstimate": None,
+             "qualitySupported": False}
+    def bar(day, close):
+        return {"instrumentId": "5803", "date": day, "open": close - 1, "high": close + 2, "low": close - 3,
+                "close": close, "volume": 1000, "availableFrom": f"{day}T07:00:00Z"}
+    days = ["2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-10", "2026-08-11", "2026-08-12", "2026-08-13"]
+    up = [bar(d, 100 + i * 2) for i, d in enumerate(days)]
+    result = sho.evaluate_d07(cutoff=cutoff, earnings_event=event, stock_bars=up)
+    assert result["status"] == "AVAILABLE" and result["conditionMet"] is True
+    assert result["conditionLineage"] == "ARGUS_CANDIDATE" and "5d" in result["conditionRule"]
+    down = [bar(d, 100 - i * 2) for i, d in enumerate(days)]
+    assert sho.evaluate_d07(cutoff=cutoff, earnings_event=event, stock_bars=down)["conditionMet"] is False
+    assert sho.evaluate_d07(cutoff=cutoff, earnings_event=event, stock_bars=down)["supportedBeatMiss"] is None

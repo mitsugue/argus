@@ -1121,9 +1121,19 @@ def evaluate_d07(*, cutoff: str,
     sector_return = comparison_return(sector_bars, 5)
     index_return = comparison_return(index_bars, 5)
     reaction5 = returns["5"]
+    # v13.5.48: deterministic ARGUS candidate condition — the post-disclosure
+    # reaction is positive (5-session return when available, else 1-session).
+    # SHO-original earnings-quality parameters stay UNKNOWN; no consensus
+    # dataset is contracted, so beat/miss is never synthesized.
+    reaction_basis = ("5d" if reaction5 is not None else
+                      "1d" if returns["1"] is not None else None)
+    reaction_value = reaction5 if reaction5 is not None else returns["1"]
     return {
         "family": "D07", "propositionId": "SHO-D07-ORIGINAL",
         "lineage": "SHO_ORIGINAL", "status": "AVAILABLE",
+        "conditionMet": (reaction_value > 0) if reaction_value is not None else None,
+        "conditionRule": f"post-disclosure return ({reaction_basis or 'n/a'}) > 0",
+        "conditionLineage": "ARGUS_CANDIDATE",
         "eventDate": event_date,
         "earningsQuality": quality,
         "earningsQualityStatus": "AVAILABLE" if quality is not None else "MISSING",

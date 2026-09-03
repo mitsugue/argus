@@ -380,3 +380,13 @@ the Tachibana deployment.
   the scanner's own `/fins/statements` warm has been silently empty since
   June (its `no_universe_disclosures` label was false). D07 may report
   NOT_APPLICABLE only after a real V2 read.
+
+## v13.5.48 — D07 reaction condition, SPY reference cache
+
+- D07 now carries a deterministic ARGUS candidate condition: the
+  post-disclosure return (5 sessions when available, else 1) is positive.
+  Beat/miss is never synthesized (no consensus dataset). SIG-07 therefore
+  reports ACTIVE/CLEAR from real disclosures + bars instead of DATA_GATED.
+- The SIG-03 proxy reads the Twelve Data history cache for SPY; the boot warm
+  now fills that cache first (`_td_price_history`) and falls back to the
+  Finnhub fetcher only when absent.
