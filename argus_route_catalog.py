@@ -175,6 +175,7 @@ ROUTE_CATALOG = (
     RouteCatalogEntry("/api/argus/foundation-jobs", ("GET",), "api_argus_foundation_jobs", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/fund-nav", ("GET",), "api_argus_fund_nav", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/important-events", ("GET",), "api_argus_important_events", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
+    RouteCatalogEntry("/api/argus/index-chart", ("GET",), "api_argus_index_chart", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/institutional-intelligence/capture", ("POST",), "api_argus_intel_capture", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/institutional-intelligence/collect", ("POST",), "api_argus_intel_collect", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/institutional-intelligence/missed", ("POST",), "api_argus_intel_missed", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
