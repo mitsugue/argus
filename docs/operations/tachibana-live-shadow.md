@@ -322,3 +322,26 @@ the Tachibana deployment.
   status stays `delayed`/`mixed` (never live), uncovered symbols stay absent.
 - TACHIBANA LIVE rows show 市場クローズ instead of STALE when the provider
   reports the market closed.
+
+## v13.5.44 — boot warm, real signal conditions, ARGUS-derived valuation, owner rows
+
+- **Root cause of cold signals/charts:** every SHO/asset feed is a process-local
+  cache warmed only by cron paths (`institutional-intelligence/collect` from
+  market-watch/caos-scan). caos-scan has not run since 2026-08-28 and each
+  deploy wipes the caches, so production stayed cold (margin1570/nikkei/
+  earnings = cold, owner symbols without market truth → 価格データ未取得).
+- **Boot warm** (`argus_chart_bootstrap`, after the chart pass): `_sho_pit_inputs(warm=True)`
+  at boot and every 4 h; interest-symbol daily history (`_jq_price_history`)
+  for 5803 + curated + the JP codes the device already sent to public routes
+  (decision-evidence subjects, supply-demand extras, watchlist hints; bounded
+  24) every 10 min; ARGUS-derived valuation published to `argus_japan_valuation`.
+- **Signal conditions:** D03 proxy relative strength > 0; D05 published net
+  foreign flow > 0 (INFLOW); D06 VIX MACD(12/26/9) histogram < 0 — each
+  labelled with `conditionRule` / `conditionLineage`. D04 uses the
+  ARGUS-derived universe forward-PER (median <= 21x = SHO ladder top) when
+  no licensed Nikkei EPS exists; `nikkeiOfficialPer: NOT_CLAIMED`. D07 reports
+  **NOT_APPLICABLE** (new signal state 該当なし) when the statements feed is
+  warm but holds no supported disclosure in the window.
+- **Owner symbols:** the JP watchlist hook resolves symbols the curated list
+  lacks from `/api/argus/price-history` (real EOD close, delayed/EOD, jquants;
+  volume marked unavailable) once the boot warm has cached them.

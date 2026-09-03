@@ -64,7 +64,7 @@ def test_each_signal_state_is_independent_and_truthful():
     assert projection["activeCount"] == 1
     assert projection["stateCounts"] == {
         "ACTIVE": 1, "CLEAR": 1, "DATA_GATED": 1, "STALE": 1,
-        "LICENSE_BLOCKED": 1, "UNAVAILABLE": 2,
+        "LICENSE_BLOCKED": 1, "NOT_APPLICABLE": 0, "UNAVAILABLE": 2,
     }
     assert projection["actionAuthority"] is False
     assert projection["schemaVersion"] == "argus-market-signals-v1"
@@ -105,3 +105,17 @@ def test_sho_projection_embeds_market_signals():
     assert [row["id"] for row in projection["marketSignals"]["signals"]] == \
         list(signals.SIGNAL_IDS)
     assert projection["actionAuthority"] is False and projection["action"] is None
+
+
+def test_not_applicable_is_distinct_from_unavailable_and_never_counts():
+    import argus_market_signals as signals
+    assert signals.signal_state({"status": "NOT_APPLICABLE"}) == "NOT_APPLICABLE"
+    assert "NOT_APPLICABLE" in signals.SIGNAL_STATES
+    projected = signals.project_market_signals({
+        "D01": {"status": "AVAILABLE", "conditionMet": True},
+        "D07": {"status": "NOT_APPLICABLE", "conditionMet": None}})
+    by_id = {row["id"]: row for row in projected["signals"]}
+    assert by_id["SIG-07"]["state"] == "NOT_APPLICABLE"
+    assert by_id["SIG-02"]["state"] == "UNAVAILABLE"
+    assert projected["activeCount"] == 1 and projected["stateCounts"]["NOT_APPLICABLE"] == 1
+    assert "NOT_APPLICABLE" in projected["countRule"]

@@ -106,3 +106,69 @@ def test_bootstrap_tolerates_tick_exceptions():
     boot._STATE["thread"].join(timeout=5)
     summary = boot.status()
     assert summary["status"] == "DONE" and summary["degraded"] == 1 and summary["missingAfter"] == 1
+
+
+# ── v13.5.44: boot warm (SHO inputs, interest history, derived valuation) ──
+def test_boot_warm_warms_sho_and_interest_history_and_publishes_valuation():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    targets = [("5803", "JP")]
+    host = _host(targets, set())
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+    host.sho_calls = []
+    host._sho_pit_inputs = lambda warm=False: (host.sho_calls.append(warm) or
+                                               {"sourceStatus": {"margin1570": "jquants_weekly"}})
+    host.history_calls = []
+    host._jq_price_history = lambda code: (host.history_calls.append(code) or {"closes": [4951.0, 5090.0]})
+    host._DECISION_EVIDENCE_CACHE = {"6965": {}, "314A": {}, "NVDA": {}, "6330": {}}
+    host._SD_EXTRA_SYMBOLS = {"6330": {"market": "JP"}, "AAPL": {"market": "US"}}
+    host._JP_SEEN_SYMBOLS = {"7203": 1.0}
+    host._JP_WATCHLIST = [{"symbol": "8058"}, {"symbol": "5803"}]
+    host._SHO_STATEMENTS_CACHE = {"rows": [
+        {"LocalCode": "58030", "DisclosedDate": "2026-08-05", "ForecastEarningsPerShare": "250.0"}],
+        "source": "jquants"}
+    host._JP_CACHE = {"data": {"stocks": [{"symbol": "5803", "price": 4951.0}]}}
+    host._JQ_HISTORY_CACHE = {"8058": {"data": {"closes": [5059.0]}}}
+    boot._STATE["warmMaxCycles"] = 1
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    warm = boot.warm_status()
+    assert warm["status"] == "DONE" and warm["cycles"] == 1
+    assert host.sho_calls == [True]
+    assert warm["shoSourceStatus"]["margin1570"] == "jquants_weekly"
+    # interest = 5803 + curated + device-requested JP codes (US symbols excluded), bounded
+    assert warm["interestSymbols"][:3] == ["5803", "8058", "6965"]
+    assert set(warm["interestSymbols"]) == {"5803", "8058", "6965", "314A", "6330", "7203"}
+    assert set(host.history_calls) == set(warm["interestSymbols"])
+    assert warm["historyWarmed"] == len(warm["interestSymbols"])
+    evidence = val.current_evidence()
+    assert evidence["status"] == "AVAILABLE" and evidence["coverage"] == 1
+    assert val.statements_state()["rowCount"] == 1
+    assert boot.interest_symbols(host)[0] == "5803"
+
+
+def test_boot_warm_is_isolated_from_host_failures():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    host = _host([("5803", "JP")], set())
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+
+    def _boom(warm=False):
+        raise RuntimeError("provider down")
+
+    host._sho_pit_inputs = _boom
+    host._jq_price_history = _boom
+    boot._STATE["warmMaxCycles"] = 1
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    warm = boot.warm_status()
+    assert warm["status"] == "DONE" and warm["errorClass"].startswith("sho_warm:")
+    assert warm["historyWarmed"] == 0 and warm["cycles"] == 1
