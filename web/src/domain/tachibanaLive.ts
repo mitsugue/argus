@@ -75,7 +75,7 @@ function reasonFor(status: TachibanaStatus, doc: TachibanaLiveDocument | null, p
     case 'LIVE': return '現在の受理済み市場証拠あり（参考表示・売買権限なし）';
     case 'DEGRADED': return '一部銘柄のみ現在値';
     case 'STALE': return '鮮度期限切れ';
-    case 'AUTH_FAILED': return `認証失敗（${doc?.lastErrorClass ?? 'AUTH'}）`;
+    case 'AUTH_FAILED': return `認証失敗（${(doc as { authBoundary?: string } | null)?.authBoundary ?? doc?.lastErrorClass ?? 'AUTH'}）`;
     case 'MAINTENANCE': return 'プロバイダーメンテナンス中';
     case 'DISABLED': return '提供元は無効化中';
     default: return doc?.lastErrorClass ? `未取得（${doc.lastErrorClass}）` : '未取得（セッション外）';

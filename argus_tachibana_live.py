@@ -68,6 +68,69 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def secret_file_diagnostics(config: Optional[TachibanaConfig]) -> Dict[str, Any]:
+    """Secret-safe file facts for the two configured secret paths.
+
+    Reports only: configured path, existence, symlink/regular kind, mode
+    (octal), whether the size is positive, readability, and whether the
+    resolved location is a platform-managed secret root.  Never a byte of
+    content, never a hash.
+    """
+    if config is None:
+        return {}
+    import stat as _stat
+    out: Dict[str, Any] = {}
+    for name, path in (("authId", config.auth_id_path),
+                       ("privateKey", config.private_key_path)):
+        row: Dict[str, Any] = {"configuredPath": str(path), "exists": False}
+        try:
+            row["isSymlink"] = path.is_symlink()
+            if path.exists():
+                info = os.stat(path)
+                row.update({
+                    "exists": True,
+                    "isRegular": _stat.S_ISREG(info.st_mode),
+                    "modeOctal": oct(info.st_mode & 0o777),
+                    "sizePositive": info.st_size > 0,
+                    "readable": os.access(path, os.R_OK),
+                    "platformManaged": str(Path(os.path.realpath(path))).startswith("/etc/secrets/"),
+                })
+        except OSError as exc:
+            row["error"] = type(exc).__name__
+        out[name] = row
+    return out
+
+
+def auth_boundary(last_error_class: Optional[str],
+                  auth_diagnostic: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """Precise, secret-safe authentication boundary token for the owner."""
+    diag = auth_diagnostic or {}
+    if diag.get("classification") == "AUTH_SUCCEEDED":
+        return "AUTH_SUCCESS"
+    mapping = {
+        "CONFIGURATION": "AUTH_CONFIG_MISSING",
+        "SECRET_MISSING": "AUTH_SECRET_MISSING",
+        "SECRET_PERMISSIONS": "AUTH_SECRET_UNREADABLE",
+        "PRIVATE_KEY_INVALID": "AUTH_KEY_PARSE_FAILED",
+        "AUTH_HTTP_FAILED": "AUTH_HTTP_FAILED",
+        "AUTH_PROTOCOL_FAILED": "AUTH_PROTOCOL_FAILED",
+        "AUTH_RESPONSE_INVALID": "AUTH_PROTOCOL_FAILED",
+        "AUTH_SUCCESS_VIRTUAL_URLS_WITHHELD": "AUTH_SUCCESS_URLS_WITHHELD",
+        "AUTH_SUCCESS_DECRYPT_FAILED": "AUTH_SUCCESS_URL_DECRYPT_FAILED",
+        "SESSION_EXPIRED": "AUTH_SESSION_INVALID",
+        "MAINTENANCE": "AUTH_MAINTENANCE",
+        "NETWORK": "AUTH_TIMEOUT",
+    }
+    if last_error_class == "AUTH_SERVER_REJECTED":
+        code = str(diag.get("sResultCode") or "UNKNOWN")
+        return f"AUTH_SERVER_REJECTED_{code}"
+    if last_error_class in mapping:
+        return mapping[last_error_class]
+    if isinstance(diag.get("classification"), str) and diag["classification"].startswith("AUTH_"):
+        return diag["classification"]
+    return None
+
+
 def _iso(value: Optional[datetime]) -> Optional[str]:
     if value is None:
         return None
@@ -183,6 +246,8 @@ class TachibanaLiveService:
         self._auth_attempts = 0
         self._reauth_times: deque = deque()
         self._start_calls = 0
+        self._auth_diagnostic: Optional[Dict[str, Any]] = None
+        self._last_auth_at: Optional[datetime] = None
 
     # ── configuration ────────────────────────────────────────────────────
     def _load_config(self, environ: Optional[Mapping[str, str]]) -> Optional[TachibanaConfig]:
@@ -263,10 +328,12 @@ class TachibanaLiveService:
         runtime = self._runtime_factory(config, symbols=symbols)
         self._start_calls += 1
         self._auth_attempts += 1
+        self._last_auth_at = self._clock()
         try:
             runtime.start()
         except TachibanaError as exc:
             self._last_error_class = exc.classification.value
+            self._capture_auth_diagnostic(runtime)
             runtime.stop()
             if exc.classification == ErrorClass.SESSION_EXPIRED and \
                     self._consume_reauth_budget(_time.monotonic()):
@@ -284,6 +351,7 @@ class TachibanaLiveService:
         self._runtime = runtime
         self._running = True
         self._last_error_class = None
+        self._capture_auth_diagnostic(runtime)
         try:
             while not self._stop.is_set() and in_live_window(self._clock()):
                 self._refresh(runtime, symbols)
@@ -316,6 +384,16 @@ class TachibanaLiveService:
             self._rows = rows
             self._updated_at = now
 
+    def _capture_auth_diagnostic(self, runtime: Any) -> None:
+        """Retain the runtime's bounded, secret-safe auth diagnostic."""
+        try:
+            diagnostic = runtime.session.auth_diagnostic.safe_dict()
+        except Exception:
+            return
+        if isinstance(diagnostic, dict):
+            with self._lock:
+                self._auth_diagnostic = diagnostic
+
     def _set_idle(self) -> None:
         with self._lock:
             self._rows = {}
@@ -334,6 +412,8 @@ class TachibanaLiveService:
             phase = self._phase
             updated_at = self._updated_at
             auth_attempts = self._auth_attempts
+            auth_diagnostic = dict(self._auth_diagnostic) if self._auth_diagnostic else None
+            last_auth_at = self._last_auth_at
         for row in rows.values():
             fresh_until = row.get("freshUntil")
             if row.get("freshness") == Freshness.FRESH.value and fresh_until:
@@ -359,6 +439,10 @@ class TachibanaLiveService:
             "marketPhase": phase,
             "lastErrorClass": last_error,
             "authAttempts": auth_attempts,
+            "lastAuthAt": _iso(last_auth_at),
+            "authBoundary": auth_boundary(last_error, auth_diagnostic),
+            "authDiagnostic": auth_diagnostic,
+            "secretFiles": secret_file_diagnostics(config) if enabled else {},
             "updatedAt": _iso(updated_at),
             "asOf": _iso(moment),
             "symbols": rows,

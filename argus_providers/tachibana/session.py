@@ -375,16 +375,41 @@ def _timestamp(now: datetime) -> str:
     return local.strftime("%Y.%m.%d-%H:%M:%S.000")
 
 
-def _read_secret(path: Path, missing_class: ErrorClass) -> bytes:
+# Platform-managed secret mounts (Render "Secret Files", Kubernetes-style
+# projections) expose secrets through symlinks and may not grant the process
+# permission to chmod them to 0600.  Under this root only, a symlink is
+# resolved before the O_NOFOLLOW open and group/other READ bits are tolerated;
+# WRITE or EXEC bits for group/other are never accepted anywhere.
+PLATFORM_SECRET_ROOTS = (Path("/etc/secrets"),)
+
+
+def _under_platform_secret_root(path: Path) -> bool:
     try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        candidate = Path(os.path.realpath(path))
+    except (OSError, ValueError):
+        return False
+    return any(
+        candidate == root or root in candidate.parents
+        for root in PLATFORM_SECRET_ROOTS
+    )
+
+
+def _read_secret(path: Path, missing_class: ErrorClass) -> bytes:
+    platform_managed = _under_platform_secret_root(path)
+    target = Path(os.path.realpath(path)) if platform_managed else path
+    try:
+        descriptor = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     except OSError:
         raise TachibanaError(missing_class) from None
     try:
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode) or info.st_size <= 0:
             raise TachibanaError(missing_class)
-        if info.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+        forbidden_bits = (
+            stat.S_IWGRP | stat.S_IXGRP | stat.S_IWOTH | stat.S_IXOTH
+            if platform_managed else (stat.S_IRWXG | stat.S_IRWXO)
+        )
+        if info.st_mode & forbidden_bits:
             raise TachibanaError(ErrorClass.SECRET_PERMISSIONS)
         if info.st_size > 64 * 1024:
             raise TachibanaError(ErrorClass.CONFIGURATION)

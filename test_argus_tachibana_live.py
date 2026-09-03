@@ -144,7 +144,8 @@ def test_live_evidence_is_provenance_stamped_bounded_and_secret_free():
     assert row["freshness"] == "FRESH" and row["marketStatus"] == "OPEN"
     assert row["fieldAvailability"]["price"] is True
     serialized = json.dumps(evidence).lower()
-    for forbidden in ("url", "authid", "sauthid", "private", "e_api", "token"):
+    # Secret VALUES never appear; configured secret PATHS are operational facts.
+    for forbidden in ("url", "sauthid", "begin private", "private-material", "token"):
         assert forbidden not in serialized
     assert evidence["symbolCount"] == 2
 
@@ -235,6 +236,75 @@ def test_ensure_started_is_idempotent_and_runs_one_thread(monkeypatch):
     service.stop()
     assert len({t.name for t in threading.enumerate() if t.name == "argus-tachibana-live"}) <= 1
     assert _FakeRuntime.instances and _FakeRuntime.instances[0].started >= 1
+
+
+def test_secret_file_diagnostics_are_facts_only_never_contents(tmp_path):
+    auth = tmp_path / "e_api_authid.txt"
+    auth.write_text("ID-PLACEHOLDER\n")
+    auth.chmod(0o600)
+    missing_key = tmp_path / "missing.pem"
+    config = TachibanaConfig.from_env({
+        "ARGUS_TACHIBANA_ENABLED": "true",
+        "ARGUS_TACHIBANA_AUTH_ID_PATH": str(auth),
+        "ARGUS_TACHIBANA_PRIVATE_KEY_PATH": str(missing_key),
+    })
+    facts = live.secret_file_diagnostics(config)
+    assert facts["authId"]["exists"] is True and facts["authId"]["isRegular"] is True
+    assert facts["authId"]["modeOctal"] == "0o600" and facts["authId"]["sizePositive"] is True
+    assert facts["authId"]["readable"] is True and facts["authId"]["isSymlink"] is False
+    assert facts["privateKey"] == {"configuredPath": str(missing_key), "exists": False,
+                                   "isSymlink": False}
+    serialized = json.dumps(facts)
+    assert "ID-PLACEHOLDER" not in serialized
+    assert live.secret_file_diagnostics(None) == {}
+
+
+def test_auth_boundary_is_precise_and_never_collapses_downstream_failures():
+    assert live.auth_boundary("SECRET_MISSING", None) == "AUTH_SECRET_MISSING"
+    assert live.auth_boundary("SECRET_PERMISSIONS", None) == "AUTH_SECRET_UNREADABLE"
+    assert live.auth_boundary("PRIVATE_KEY_INVALID", None) == "AUTH_KEY_PARSE_FAILED"
+    assert live.auth_boundary("AUTH_SERVER_REJECTED", {"sResultCode": "12345"}) == "AUTH_SERVER_REJECTED_12345"
+    assert live.auth_boundary("AUTH_SUCCESS_DECRYPT_FAILED", None) == "AUTH_SUCCESS_URL_DECRYPT_FAILED"
+    assert live.auth_boundary("NETWORK", {"classification": "AUTH_SUCCEEDED"}) == "AUTH_SUCCESS"
+    # A PROVIDER failure after a successful login is not an auth failure.
+    assert live.auth_boundary("PROVIDER", {"classification": "AUTH_SUCCEEDED"}) == "AUTH_SUCCESS"
+    assert live.auth_boundary("PROVIDER", None) is None
+
+
+def test_evidence_carries_auth_boundary_diagnostic_and_secret_facts(tmp_path):
+    config = TachibanaConfig.from_env({
+        "ARGUS_TACHIBANA_ENABLED": "true",
+        "ARGUS_TACHIBANA_AUTH_ID_PATH": str(tmp_path / "absent.txt"),
+        "ARGUS_TACHIBANA_PRIVATE_KEY_PATH": str(tmp_path / "absent.pem"),
+    })
+
+    class _Diag:
+        def safe_dict(self):
+            return {"classification": "AUTH_IN_PROGRESS", "boundary": "NOT_COMPLETED",
+                    "httpStatus": None, "sCLMID": None, "sResultCode": None}
+
+    class _Session:
+        auth_diagnostic = _Diag()
+
+    class _Runtime(_FakeRuntime):
+        session = _Session()
+
+    service = live.TachibanaLiveService(
+        config_loader=lambda env=None: config,
+        runtime_factory=lambda cfg, *, symbols: _Runtime(cfg, symbols=symbols, fail=ErrorClass.SECRET_MISSING),
+        lease_factory=_FakeLease, clock=lambda: TRADING_NOW,
+        sleeper=lambda seconds: None, symbols=("8058",))
+    service._config = config
+    service._run_session(config, ("8058",))
+    evidence = service.current_evidence_safe(TRADING_NOW)
+    assert evidence["status"] == "AUTH_FAILED"
+    assert evidence["authBoundary"] == "AUTH_SECRET_MISSING"
+    assert evidence["authDiagnostic"]["classification"] == "AUTH_IN_PROGRESS"
+    assert evidence["secretFiles"]["authId"]["exists"] is False
+    assert evidence["lastAuthAt"] is not None
+    text = json.dumps(evidence).lower()
+    for forbidden in ("url", "sauthid", "private-material", "begin private"):
+        assert forbidden not in text
 
 
 def test_module_surface_has_no_order_capability():
