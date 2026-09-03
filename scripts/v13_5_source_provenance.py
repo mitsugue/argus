@@ -300,6 +300,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "argus_japan_valuation.py",
     "web/src/domain/eventTitleJa.ts",
     "web/src/components/dashboard/ImportantEventsCard.tsx",
+    "web/src/components/dashboard/ImportantEventsCard.css",
     "web/scripts/event-title-ja.test.cjs",
     "test_argus_japan_valuation.py",
     "test_argus_sho.py",
