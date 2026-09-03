@@ -155,6 +155,43 @@ Do not execute this sequence until the local dual-phase gate passes:
    same PREOPEN-to-corresponding-OPEN transition produces
    `TACHIBANA_PRODUCTION_ACCEPTANCE`. A connected socket alone is not a pass.
 
+## v13.5.38 product integration boundary
+
+The product consumes Tachibana through exactly one module,
+`argus_tachibana_live.py` (`TachibanaLiveService`):
+
+- lifecycle: one lazily started daemon thread runs the read-only
+  `TachibanaLiveRuntime` inside the JPX cash window (07:55-15:31 JST, trading
+  days) under the host singleton lease, with the bounded reauthentication
+  budget (2 per 15 min) and a 300 s hold on any other failure — no retry
+  storm, no start unless `ARGUS_TACHIBANA_ENABLED=true`;
+- state: latest observation per configured symbol (at most three), no
+  history, no raw frames, no persistence;
+- projection: `current_evidence_safe()` — provenance `provider = TACHIBANA`,
+  authority `SHADOW_NON_AUTHORITATIVE`, status one of `LIVE`, `DEGRADED`,
+  `STALE`, `UNAVAILABLE`, `AUTH_FAILED`, `MAINTENANCE`, `DISABLED`. `LIVE`
+  requires every configured symbol to carry a current `FRESH` price; a
+  connected socket alone never reads `LIVE`.
+
+Topology: the ARGUS backend is a single process (`python scanner.py`,
+`workers = 1` policy), so the sensor is colocated in that process and the
+evidence is read in-memory; there is no inter-process transport and no
+public raw-data endpoint. The backend consumes the document through the
+decision-evidence route as `marketView.japaneseLive`, and the Today market
+view renders `TACHIBANA LIVE` (status + per-symbol price / change / VWAP /
+bid-ask / freshness / provenance). The same seven evidence families are
+re-labeled for the owner as `MARKET SIGNALS` (`SIG-01`..`SIG-07`) by
+`argus_market_signals.py` with a count recomputed from the per-signal states.
+
+Wiring status: `scanner.py` is under the Recovery admission pin, so the
+three-line consumer wiring (import, lazy `ensure_started()` in the request
+autostart hook, `"japaneseLive": argus_tachibana_live.current_evidence_safe()`
+in the decision-evidence document) is delivered as a handoff patch and lands
+when that pin is lifted. Until then the Today indicator truthfully renders
+`UNAVAILABLE` (`未接続`). Production enablement additionally requires the two
+Tachibana secret files on the backend service and `ARGUS_TACHIBANA_ENABLED=true`
+(owner dashboard action; secrets never enter Git, env values, or logs).
+
 ## Rollback
 
 Rollback affects only the new background worker: suspend it, confirm its single
