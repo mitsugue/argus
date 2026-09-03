@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.42"
+PRODUCT_VERSION = "v13.5.43"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -297,6 +297,9 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/src/hooks/useSystemHealth.ts",
     "web/src/lib/assetStrategy.ts",
     "argus_chart_bootstrap.py",
+    "web/src/hooks/useJapanWatchlist.ts",
+    "web/src/domain/jpWatchFallback.ts",
+    "web/scripts/jp-watch-fallback.test.cjs",
     "test_argus_chart_bootstrap.py",
     "argus_dashboard_event_summary.py",
     "argus_macro_event_analysis.py",
