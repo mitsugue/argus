@@ -186,6 +186,21 @@ export interface OverlayableJpRow {
   [key: string]: unknown;
 }
 
+/** Board evidence carried on an overlaid JP row (reference only, no execution). */
+export interface TachibanaBoard {
+  price: number | null; vwap: number | null; bestBid: number | null; bestAsk: number | null;
+  bidQty: number | null; askQty: number | null; volume: number | null;
+  sourceTimestamp: string | null; marketStatus: string | null;
+}
+
+export function tachibanaBoardOf(row: TachibanaLiveRow): TachibanaBoard {
+  return {
+    price: row.price, vwap: row.vwap, bestBid: row.bestBid, bestAsk: row.bestAsk,
+    bidQty: row.bidQty, askQty: row.askQty, volume: row.volume,
+    sourceTimestamp: row.sourceTimestamp, marketStatus: row.marketStatus,
+  };
+}
+
 export interface OverlayableJpSnapshot {
   stocks: OverlayableJpRow[];
   status?: string;
@@ -261,6 +276,7 @@ export function overlayTachibanaLive<T extends OverlayableJpSnapshot>(
       ageSec: quoteTruth.ageSec,
       transportAgeSec: quoteTruth.transportAgeSec,
       tachibanaLive: true,
+      tachibana: tachibanaBoardOf(live),
     };
   });
   if (replaced === 0) return snapshot;

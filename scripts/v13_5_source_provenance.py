@@ -295,6 +295,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/src/domain/tachibanaLive.ts",
     "web/src/components/assetDesk/deskFormat.ts",
     "web/src/hooks/useSystemHealth.ts",
+    "web/src/lib/assetStrategy.ts",
     "argus_dashboard_event_summary.py",
     "argus_macro_event_analysis.py",
     "test_argus_important_events_product_correctness.py",

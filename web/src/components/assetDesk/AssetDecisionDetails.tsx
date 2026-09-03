@@ -1,5 +1,6 @@
 import React from 'react';
 import type { DeskCardData } from './types';
+import { formatJpy } from '../../domain/tachibanaLive';
 
 const ACTION_TONE = { BUY: 'var(--value-positive)', HOLD: 'var(--accent)',
   WAIT: 'var(--amber, #fbbf24)', REDUCE: 'var(--event-high)', EXIT: 'var(--value-negative)' };
@@ -27,6 +28,13 @@ export const AssetDecisionDetails: React.FC<{ d: DeskCardData }> = ({ d }) => {
         {view.invalidation && <div><dt>無効化条件</dt><dd>{`${view.invalidation.value} ${view.invalidation.unit}`}</dd></div>}
       </dl>
 
+      {d.quote?.tachibana && (
+        <dl className="ad-overview__facts ad-overview__board" data-argus-contract="tachibana-board-v1">
+          <div><dt>立花ライブ(参考)</dt><dd>{`現在値 ¥${formatJpy(d.quote.tachibana.price)} · VWAP ¥${formatJpy(d.quote.tachibana.vwap)}`}</dd></div>
+          <div><dt>板</dt><dd>{`買 ¥${formatJpy(d.quote.tachibana.bestBid)}×${formatJpy(d.quote.tachibana.bidQty)} / 売 ¥${formatJpy(d.quote.tachibana.bestAsk)}×${formatJpy(d.quote.tachibana.askQty)}`}</dd></div>
+          <div><dt>時刻</dt><dd>{`${d.quote.tachibana.sourceTimestamp ?? '—'} · 売買権限なし`}</dd></div>
+        </dl>
+      )}
       {view.dataStatus !== 'LIVE' && view.dataStatus !== 'live' && (
         <p className="ad-overview__warning">データ状態：{view.dataStatus}。未取得値を判断根拠として補完しません。</p>
       )}

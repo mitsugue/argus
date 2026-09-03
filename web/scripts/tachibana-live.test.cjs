@@ -191,3 +191,25 @@ const healthHook = fs.readFileSync(path.join(src, 'hooks', 'useSystemHealth.ts')
 assert.ok(healthHook.includes('applyTachibanaHealthOverlay(backendHealth, getTachibanaLiveDocument())'),
   'useSystemHealth must apply the Tachibana overlay for the logo beacon and popover');
 console.log('tachibana-live.test: v13.5.40 owner-visible cutover (未取得 label, JP realtime lamp) ok');
+
+// (c) Asset Detail board: the overlaid row carries VWAP/bid/ask and the desk forwards it.
+const overlaidBoard = tl.overlayTachibanaLive(jpSnapshot, liveDoc, nowMs).stocks.find((r) => r.symbol === '9984');
+assert.equal(overlaidBoard.tachibana.vwap, 8975.5);
+assert.equal(overlaidBoard.tachibana.bestBid, 8999);
+assert.equal(overlaidBoard.tachibana.askQty, null);   // absent in evidence → null, never fabricated
+assert.equal(jpSnapshot.stocks.find((r) => r.symbol === '7203').tachibana, undefined);
+const deskList = fs.readFileSync(path.join(src, 'components', 'assetDesk', 'AssetDeskList.tsx'), 'utf8');
+assert.ok(deskList.includes('.tachibana ?? null'), 'desk list must forward the Tachibana board');
+const details = fs.readFileSync(path.join(src, 'components', 'assetDesk', 'AssetDecisionDetails.tsx'), 'utf8');
+assert.ok(details.includes('data-argus-contract="tachibana-board-v1"'), 'Asset Detail renders the board');
+assert.ok(details.includes('売買権限なし'), 'board is reference only');
+const strategy = require(path.join(src, 'lib', 'assetStrategy.ts'));
+const asset = { symbol: '9984', market: 'JP', name: 'SBG' };
+const withBoard = strategy.deriveStrategy(asset, undefined,
+  { price: 9000, changePct: 1.12, volume: 1, date: '2026-09-03', status: 'live', tachibana: overlaidBoard.tachibana }, undefined, nowMs);
+assert.ok(withBoard.dataLimitations[0].includes('立花ライブ証拠'), withBoard.dataLimitations[0]);
+assert.ok(!withBoard.dataLimitations[0].startsWith('VWAP・資金フロー・板情報は未取得'));
+const withoutBoard = strategy.deriveStrategy(asset, undefined,
+  { price: 9000, changePct: 1.12, volume: 1, date: '2026-09-03', status: 'live' }, undefined, nowMs);
+assert.ok(withoutBoard.dataLimitations[0].includes('未取得'));
+console.log('tachibana-live.test: Asset Detail board (VWAP/板) from Tachibana evidence ok');

@@ -255,3 +255,10 @@ the Tachibana deployment.
   `secretFiles` (safe properties only: exists / regular / mode / size>0 /
   readable / platform-managed; never contents). Platform secret files under
   `/etc/secrets` are resolved through their symlink and accepted with read bits.
+- **Asset Detail board.** The overlaid JP row carries `tachibana`
+  (`TachibanaBoard`: price / VWAP / best bid+qty / best ask+qty / volume /
+  exchange timestamp). The desk forwards it into `QuoteLite.tachibana`;
+  Asset Detail's first viewport renders `立花ライブ(参考)` rows
+  (`data-argus-contract="tachibana-board-v1"`, labelled 売買権限なし) and the
+  data-limitation line says VWAP/板 are Tachibana evidence while 資金フロー
+  stays 未取得. Absent fields render `—`, never a fabricated number.

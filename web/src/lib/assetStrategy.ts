@@ -4,6 +4,7 @@
 // prediction — probabilities are coarse integers that sum to 100.
 
 import type { AssetItem } from '../types/assetItem';
+import type { TachibanaBoard } from '../domain/tachibanaLive';
 import type { ActionLabel } from '../types/actionLabels';
 import type { CatalystItem } from '../types/catalysts';
 import type { ProbabilityProvenance } from '../domain/decisionView';
@@ -49,6 +50,8 @@ export interface QuoteLite {
   flow?: { bigNetRatio: number } | null;
   name?: string | null;   // live snapshot name (JP/US); crypto snapshot has none
   quoteTruth?: LiveQuote;
+  /** v13.5.40: Tachibana board evidence (VWAP/bid/ask), reference only. */
+  tachibana?: TachibanaBoard | null;
 }
 
 /**
@@ -192,9 +195,13 @@ export function deriveStrategy(
 
   let catalystNote = '';
   const dataLimitations: string[] = [
-    flowRatio != null
-      ? 'VWAP・板情報は未取得(大口フローはmoomooブリッジから取得)。'
-      : 'VWAP・資金フロー・板情報は未取得。',
+    quote?.tachibana
+      ? (flowRatio != null
+        ? 'VWAP・板情報は立花ライブ証拠(参考)。大口フローはmoomooブリッジから取得。'
+        : 'VWAP・板情報は立花ライブ証拠(参考)。資金フローは未取得。')
+      : flowRatio != null
+        ? 'VWAP・板情報は未取得(大口フローはmoomooブリッジから取得)。'
+        : 'VWAP・資金フロー・板情報は未取得。',
     '行動ラベルはルールベース(GPT/Geminiは未使用)。',
   ];
   if (asset.market === 'CRYPTO') {
