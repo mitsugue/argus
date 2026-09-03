@@ -15,7 +15,7 @@ import re
 import threading
 import time
 from types import MappingProxyType
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from .models import ErrorClass, ProviderHealth, TachibanaError
 from .session import TachibanaSession
@@ -177,10 +177,22 @@ class ProviderReadDiagnostic:
     response_clmid_mode: str | None = None
     result_code: str | None = None
     schema_failure_token: str | None = None
+    # Names only (never values) of top-level response keys outside the
+    # contract, so a live schema mismatch is diagnosable without retaining
+    # any provider payload.  Bounded: identifier characters, <= 40 chars,
+    # <= 8 names.
+    unexpected_top_level_fields: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if (
-            self.operation not in {"NONE", *_FUNCTION_CONTRACTS}
+            type(self.unexpected_top_level_fields) is not tuple
+            or len(self.unexpected_top_level_fields) > 8
+            or any(
+                type(name) is not str
+                or re.fullmatch(r"[A-Za-z0-9_]{1,40}", name) is None
+                for name in self.unexpected_top_level_fields
+            )
+            or self.operation not in {"NONE", *_FUNCTION_CONTRACTS}
             or self.endpoint_class not in {None, "MASTER", "PRICE"}
             or self.stage not in _READ_DIAGNOSTIC_STAGES
             or self.classification not in _READ_DIAGNOSTIC_CLASSIFICATIONS
@@ -217,15 +229,33 @@ class ProviderReadDiagnostic:
             "responseCLMIDMode": self.response_clmid_mode,
             "resultCode": self.result_code,
             "schemaFailureToken": self.schema_failure_token,
+            "unexpectedTopLevelFields": list(self.unexpected_top_level_fields),
         }
+
+
+_UNEXPECTED_FIELD_NAME = re.compile(r"[A-Za-z0-9_]{1,40}")
+
+
+def _safe_field_names(names: Iterable[object]) -> tuple[str, ...]:
+    """Reduce foreign key names to a bounded, value-free identifier list."""
+    safe: list[str] = []
+    for name in sorted(str(item) for item in names):
+        safe.append(
+            name if _UNEXPECTED_FIELD_NAME.fullmatch(name) else "INVALID_NAME"
+        )
+        if len(safe) == 8:
+            break
+    return tuple(safe)
 
 
 class _ReadContractError(TachibanaError):
     def __init__(
         self, classification: ErrorClass, *, stage_suffix: str, token: str,
+        unexpected_fields: tuple[str, ...] = (),
     ) -> None:
         self.stage_suffix = stage_suffix
         self.token = token
+        self.unexpected_fields = unexpected_fields
         super().__init__(classification)
 
 
@@ -580,15 +610,18 @@ class TachibanaReadOnlyClient:
                     if isinstance(exc, _ReadContractError):
                         stage = f"{stage_prefix}_{exc.stage_suffix}"
                         token = exc.token
+                        unexpected_fields = exc.unexpected_fields
                     else:
                         stage = f"{stage_prefix}_HTTP"
                         token = "TRANSPORT_OR_PROVIDER_CLASSIFICATION"
+                        unexpected_fields = ()
                     self.last_read_diagnostic = replace(
                         self.last_read_diagnostic,
                         stage=stage,
                         classification=last_error.value,
                         http_status=self._safe_http_status(),
                         schema_failure_token=token,
+                        unexpected_top_level_fields=unexpected_fields,
                     )
                     retryable = last_error in {ErrorClass.NETWORK, ErrorClass.HTTP}
                     if not retryable or attempt + 1 >= attempts:
@@ -740,6 +773,9 @@ class TachibanaReadOnlyClient:
             raise _ReadContractError(
                 ErrorClass.PROVIDER,
                 stage_suffix="SCHEMA", token="TOP_LEVEL_FIELD_UNKNOWN",
+                unexpected_fields=_safe_field_names(
+                    set(response) - allowed_top_level
+                ),
             )
         if contract.response_list in response:
             rows = response[contract.response_list]

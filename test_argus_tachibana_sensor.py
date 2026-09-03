@@ -729,6 +729,7 @@ def test_official_date_information_uses_day_key_001_on_master(tmp_path):
         "responseCLMIDMode": "DOCUMENTED",
         "resultCode": None,
         "schemaFailureToken": None,
+        "unexpectedTopLevelFields": [],
     }
 
 
@@ -812,7 +813,63 @@ def test_date_official_and_adversarial_fixtures_are_stage_classified(
         "operation", "endpointClass", "stage", "classification",
         "httpStatus", "expectedResponseCLMID", "observedResponseCLMID",
         "responseCLMIDMode", "resultCode", "schemaFailureToken",
+        "unexpectedTopLevelFields",
     }
+    assert diagnostic["unexpectedTopLevelFields"] == []
+
+
+def test_date_schema_diagnostic_records_unexpected_field_names_only(tmp_path):
+    response = {
+        "p_no": "2", "p_errno": "0", "sCLMID": "CLMStkGetDateZyouhou",
+        "aCLMDateZyouhou": [{"sDayKey": "001", "sTheDay": "20260903"}],
+        "aCLMStkDateZyouhou": [{"sDayKey": "001", "sTheDay": "20260903"}],
+        "sSecretLooking": "https://kabuka.e-shiten.jp/e_api_v4r10/x/",
+        "bad name=1": "value",
+        **{f"sExtra{index}": "v" for index in range(9)},
+    }
+    session, _, _ = _authenticated_session(tmp_path, [response])
+    client = TachibanaReadOnlyClient(session)
+    with pytest.raises(TachibanaError) as caught:
+        client.provider_calendar_date()
+    assert caught.value.classification == ErrorClass.PROVIDER
+    diagnostic = client.read_diagnostic_safe_dict()
+    assert diagnostic["stage"] == "PROVIDER_DATE_SCHEMA"
+    assert diagnostic["schemaFailureToken"] == "TOP_LEVEL_FIELD_UNKNOWN"
+    names = diagnostic["unexpectedTopLevelFields"]
+    # Sorted, capped at eight, identifier-only; a foreign name is replaced by
+    # a marker, and no value, URL, or payload fragment is ever carried.
+    assert len(names) == 8
+    assert "INVALID_NAME" in names
+    assert "aCLMStkDateZyouhou" in names
+    assert "bad name=1" not in names
+    assert all(name == "INVALID_NAME" or name.isidentifier() for name in names)
+    serialized = json.dumps(diagnostic)
+    assert "e-shiten" not in serialized and "value" not in serialized
+    assert "20260903" not in serialized
+
+
+def test_read_diagnostic_rejects_unbounded_or_value_like_field_names():
+    with pytest.raises(ValueError):
+        ProviderReadDiagnostic(
+            operation="CLMStkGetDateZyouhou",
+            stage="PROVIDER_DATE_SCHEMA",
+            classification="PROVIDER",
+            unexpected_top_level_fields=("has space",),
+        )
+    with pytest.raises(ValueError):
+        ProviderReadDiagnostic(
+            operation="CLMStkGetDateZyouhou",
+            stage="PROVIDER_DATE_SCHEMA",
+            classification="PROVIDER",
+            unexpected_top_level_fields=tuple(f"f{i}" for i in range(9)),
+        )
+    with pytest.raises(ValueError):
+        ProviderReadDiagnostic(
+            operation="CLMStkGetDateZyouhou",
+            stage="PROVIDER_DATE_SCHEMA",
+            classification="PROVIDER",
+            unexpected_top_level_fields=("x" * 41,),
+        )
 
 
 def test_read_diagnostic_rejects_secret_or_market_value_tokens():
