@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 import argus_market_data_truth as truth
 from argus_providers.tachibana.client import (
     READ_ONLY_COMPATIBLE_RESPONSE_IDS,
+    READ_ONLY_COMPATIBLE_RESPONSE_LISTS,
     READ_ONLY_FUNCTIONS,
     READ_ONLY_RESPONSE_IDS,
     CircuitBreaker,
@@ -611,6 +612,13 @@ def test_allowlist_is_exact_immutable_and_there_is_no_generic_dispatch(tmp_path)
         READ_ONLY_COMPATIBLE_RESPONSE_IDS["CLMMfdsGetMarketPrice"] = (
             frozenset({"CLMUnknownPriceResponse"})
         )
+    assert dict(READ_ONLY_COMPATIBLE_RESPONSE_LISTS) == {
+        "CLMStkGetDateZyouhou": frozenset({"aCLMStkDateZyouhou"}),
+    }
+    with pytest.raises(TypeError):
+        READ_ONLY_COMPATIBLE_RESPONSE_LISTS["CLMMfdsGetMarketPrice"] = (
+            frozenset({"aCLMUnknownPriceList"})
+        )
     session, transport, _ = _session(tmp_path, [])
     client = TachibanaReadOnlyClient(session)
     assert not hasattr(client, "read")
@@ -727,6 +735,7 @@ def test_official_date_information_uses_day_key_001_on_master(tmp_path):
         "expectedResponseCLMID": "CLMDateZyouhou",
         "observedResponseCLMID": "CLMDateZyouhou",
         "responseCLMIDMode": "DOCUMENTED",
+        "responseListMode": "DOCUMENTED",
         "resultCode": None,
         "schemaFailureToken": None,
         "unexpectedTopLevelFields": [],
@@ -734,10 +743,13 @@ def test_official_date_information_uses_day_key_001_on_master(tmp_path):
 
 
 def test_live_observed_date_response_echo_uses_narrow_compatibility(tmp_path):
+    # Exact production shape observed live on 2026-09-03 10:46 JST (bounded
+    # names-only diagnostic): both the sCLMID and the row-list key echo the
+    # request identifier.
     response = {
         "p_no": "2", "p_errno": "0",
         "sCLMID": "CLMStkGetDateZyouhou",
-        "aCLMDateZyouhou": [{
+        "aCLMStkDateZyouhou": [{
             "sDayKey": "001", "sTheDay": "20260902",
         }],
     }
@@ -749,6 +761,63 @@ def test_live_observed_date_response_echo_uses_narrow_compatibility(tmp_path):
     assert diagnostic["classification"] == "PASS"
     assert diagnostic["observedResponseCLMID"] == "CLMStkGetDateZyouhou"
     assert diagnostic["responseCLMIDMode"] == "PRODUCTION_ECHO_COMPAT"
+    assert diagnostic["responseListMode"] == "PRODUCTION_ECHO_COMPAT"
+    assert diagnostic["unexpectedTopLevelFields"] == []
+    # provider_calendar_date reads only the documented key, so a PASS here
+    # proves the echo list key was normalized before the consumer saw it.
+
+
+def test_date_echo_clmid_with_documented_list_key_is_still_accepted(tmp_path):
+    response = {
+        "p_no": "2", "p_errno": "0",
+        "sCLMID": "CLMStkGetDateZyouhou",
+        "aCLMDateZyouhou": [{
+            "sDayKey": "001", "sTheDay": "20260902",
+        }],
+    }
+    session, _, _ = _authenticated_session(tmp_path, [response])
+    client = TachibanaReadOnlyClient(session)
+    assert client.provider_calendar_date() == date(2026, 9, 2)
+    diagnostic = client.read_diagnostic_safe_dict()
+    assert diagnostic["responseCLMIDMode"] == "PRODUCTION_ECHO_COMPAT"
+    assert diagnostic["responseListMode"] == "DOCUMENTED"
+
+
+@pytest.mark.parametrize("response", [
+    # Documented sCLMID with the echo list key: not a live-proven shape.
+    {"p_no": "2", "p_errno": "0", "sCLMID": "CLMDateZyouhou",
+     "aCLMStkDateZyouhou": [{"sDayKey": "001", "sTheDay": "20260902"}]},
+    # Both list keys at once: ambiguous.
+    {"p_no": "2", "p_errno": "0", "sCLMID": "CLMStkGetDateZyouhou",
+     "aCLMDateZyouhou": [{"sDayKey": "001", "sTheDay": "20260902"}],
+     "aCLMStkDateZyouhou": [{"sDayKey": "001", "sTheDay": "20260903"}]},
+])
+def test_date_list_key_shapes_outside_live_proof_fail_closed(tmp_path, response):
+    session, _, _ = _authenticated_session(tmp_path, [response])
+    client = TachibanaReadOnlyClient(session)
+    with pytest.raises(TachibanaError) as caught:
+        client.provider_calendar_date()
+    assert caught.value.classification == ErrorClass.PROVIDER
+    diagnostic = client.read_diagnostic_safe_dict()
+    assert diagnostic["stage"] == "PROVIDER_DATE_SCHEMA"
+    assert diagnostic["schemaFailureToken"] == "RESPONSE_LIST_SHAPE_INVALID"
+    assert diagnostic["responseListMode"] is None
+
+
+def test_echo_list_key_is_date_only_and_unknown_for_price(tmp_path):
+    response = {
+        "p_no": "2", "p_errno": "0", "sCLMID": "CLMMfdsGetMarketPrice",
+        "aCLMMfdsMarketPrice": [{"sIssueCode": "6501", "pDPP": "100"}],
+        "aCLMStkDateZyouhou": [],
+    }
+    session, _, _ = _authenticated_session(tmp_path, [response])
+    client = TachibanaReadOnlyClient(session)
+    with pytest.raises(TachibanaError) as caught:
+        client.market_price(("6501",), ("pDPP",))
+    assert caught.value.classification == ErrorClass.PROVIDER
+    diagnostic = client.read_diagnostic_safe_dict()
+    assert diagnostic["schemaFailureToken"] == "TOP_LEVEL_FIELD_UNKNOWN"
+    assert diagnostic["unexpectedTopLevelFields"] == ["aCLMStkDateZyouhou"]
 
 
 def test_date_response_third_clmid_still_fails_closed(tmp_path):
@@ -812,8 +881,8 @@ def test_date_official_and_adversarial_fixtures_are_stage_classified(
     assert set(diagnostic) == {
         "operation", "endpointClass", "stage", "classification",
         "httpStatus", "expectedResponseCLMID", "observedResponseCLMID",
-        "responseCLMIDMode", "resultCode", "schemaFailureToken",
-        "unexpectedTopLevelFields",
+        "responseCLMIDMode", "responseListMode", "resultCode",
+        "schemaFailureToken", "unexpectedTopLevelFields",
     }
     assert diagnostic["unexpectedTopLevelFields"] == []
 
@@ -840,7 +909,8 @@ def test_date_schema_diagnostic_records_unexpected_field_names_only(tmp_path):
     # a marker, and no value, URL, or payload fragment is ever carried.
     assert len(names) == 8
     assert "INVALID_NAME" in names
-    assert "aCLMStkDateZyouhou" in names
+    # The live-proven echo list key is an accepted Date shape, never foreign.
+    assert "aCLMStkDateZyouhou" not in names
     assert "bad name=1" not in names
     assert all(name == "INVALID_NAME" or name.isidentifier() for name in names)
     serialized = json.dumps(diagnostic)
