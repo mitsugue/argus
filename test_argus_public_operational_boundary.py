@@ -1290,3 +1290,23 @@ def test_tachibana_wiring_adds_no_route_and_no_order_capability():
     for forbidden in ("NewOrder", "sOrder", "CLMKabu", "Cancel", "Correct"):
         assert forbidden not in boundary
     assert "SHADOW_NON_AUTHORITATIVE" in boundary
+
+
+
+def test_jp_realtime_lamp_follows_tachibana_boundary(monkeypatch):
+    """RECOVERY_ONLY v13.5.45: the raw backend lamp is Tachibana-true, not a UI overlay."""
+    import scanner
+    monkeypatch.setattr(scanner.argus_tachibana_live, "current_evidence_safe",
+                        lambda: {"enabled": True, "status": "CLOSED",
+                                 "symbols": {"5803": {"price": 1.0}, "8058": {"price": 2.0}}})
+    assert scanner._tachibana_jp_realtime_lamp() == ("ok", "Tachibana 接続確認済 · 市場クローズ(5803/8058)")
+    monkeypatch.setattr(scanner.argus_tachibana_live, "current_evidence_safe",
+                        lambda: {"enabled": True, "status": "AUTH_FAILED", "authBoundary": "AUTH_KEY_PARSE_FAILED",
+                                 "symbols": {}})
+    assert scanner._tachibana_jp_realtime_lamp() == ("warning", "Tachibana 認証失敗(AUTH_KEY_PARSE_FAILED)")
+    monkeypatch.setattr(scanner.argus_tachibana_live, "current_evidence_safe",
+                        lambda: {"enabled": False, "status": "DISABLED", "symbols": {}})
+    assert scanner._tachibana_jp_realtime_lamp() is None            # legacy moomoo lamp keeps its truth
+    monkeypatch.setattr(scanner.argus_tachibana_live, "current_evidence_safe",
+                        lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert scanner._tachibana_jp_realtime_lamp() is None
