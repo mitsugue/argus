@@ -15,7 +15,7 @@ import re
 import threading
 import time
 from types import MappingProxyType
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from .models import ErrorClass, ProviderHealth, TachibanaError
 from .session import TachibanaSession
@@ -30,10 +30,17 @@ class _FunctionContract:
     response_list: str
     maximum_rows: int
     compatible_response_ids: frozenset[str] = frozenset()
+    # Row-list keys the live provider is proven to use instead of the
+    # documented one.  Accepted only together with a compatible response id.
+    compatible_response_lists: frozenset[str] = frozenset()
 
     @property
     def accepted_response_ids(self) -> frozenset[str]:
         return frozenset({self.response_id, *self.compatible_response_ids})
+
+    @property
+    def accepted_response_lists(self) -> frozenset[str]:
+        return frozenset({self.response_list, *self.compatible_response_lists})
 
 
 _FUNCTION_CONTRACTS: Mapping[str, _FunctionContract] = MappingProxyType({
@@ -83,6 +90,12 @@ _FUNCTION_CONTRACTS: Mapping[str, _FunctionContract] = MappingProxyType({
         # identifier here instead of the documented response identifier.
         # This compatibility exception is deliberately Date-only.
         frozenset({"CLMStkGetDateZyouhou"}),
+        # Live v4r10 production evidence on 2026-09-03 (bounded names-only
+        # diagnostic session, 10:46 JST): the same echo response names its
+        # row list "aCLMStkDateZyouhou" instead of the documented
+        # "aCLMDateZyouhou".  Accepted only with the echoed sCLMID above and
+        # normalized to the documented key before any consumer sees it.
+        compatible_response_lists=frozenset({"aCLMStkDateZyouhou"}),
     ),
 })
 
@@ -101,6 +114,13 @@ READ_ONLY_COMPATIBLE_RESPONSE_IDS: Mapping[str, frozenset[str]] = (
         function_id: contract.compatible_response_ids
         for function_id, contract in _FUNCTION_CONTRACTS.items()
         if contract.compatible_response_ids
+    })
+)
+READ_ONLY_COMPATIBLE_RESPONSE_LISTS: Mapping[str, frozenset[str]] = (
+    MappingProxyType({
+        function_id: contract.compatible_response_lists
+        for function_id, contract in _FUNCTION_CONTRACTS.items()
+        if contract.compatible_response_lists
     })
 )
 
@@ -150,6 +170,7 @@ _READ_DIAGNOSTIC_TOKENS = frozenset({
     "PROTOCOL_OUTSIDE_HOURS", "PROTOCOL_ERROR", "RESULT_CODE_INVALID",
     "RESULT_MAINTENANCE", "RESULT_OUTSIDE_HOURS", "RESULT_SESSION_EXPIRED",
     "RESULT_ERROR", "CLMID_MISMATCH", "TOP_LEVEL_FIELD_UNKNOWN",
+    "RESPONSE_LIST_SHAPE_INVALID",
     "ROW_LIST_INVALID", "ROW_TYPE_INVALID", "PRICE_ROW_FIELD_UNKNOWN",
     "DATE_ROW_INVALID", "SYMBOL_IDENTITY_INVALID", "HISTORY_IDENTITY_INVALID",
     "DATE_LIST_MISSING", "DAYKEY_001_MISSING", "DAYKEY_001_DUPLICATE",
@@ -175,12 +196,25 @@ class ProviderReadDiagnostic:
     expected_response_clmid: str | None = None
     observed_response_clmid: str | None = None
     response_clmid_mode: str | None = None
+    response_list_mode: str | None = None
     result_code: str | None = None
     schema_failure_token: str | None = None
+    # Names only (never values) of top-level response keys outside the
+    # contract, so a live schema mismatch is diagnosable without retaining
+    # any provider payload.  Bounded: identifier characters, <= 40 chars,
+    # <= 8 names.
+    unexpected_top_level_fields: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if (
-            self.operation not in {"NONE", *_FUNCTION_CONTRACTS}
+            type(self.unexpected_top_level_fields) is not tuple
+            or len(self.unexpected_top_level_fields) > 8
+            or any(
+                type(name) is not str
+                or re.fullmatch(r"[A-Za-z0-9_]{1,40}", name) is None
+                for name in self.unexpected_top_level_fields
+            )
+            or self.operation not in {"NONE", *_FUNCTION_CONTRACTS}
             or self.endpoint_class not in {None, "MASTER", "PRICE"}
             or self.stage not in _READ_DIAGNOSTIC_STAGES
             or self.classification not in _READ_DIAGNOSTIC_CLASSIFICATIONS
@@ -195,6 +229,9 @@ class ProviderReadDiagnostic:
                 )
             )
             or self.response_clmid_mode not in {
+                None, "DOCUMENTED", "PRODUCTION_ECHO_COMPAT"
+            }
+            or self.response_list_mode not in {
                 None, "DOCUMENTED", "PRODUCTION_ECHO_COMPAT"
             }
             or self.result_code is not None
@@ -215,17 +252,36 @@ class ProviderReadDiagnostic:
             "expectedResponseCLMID": self.expected_response_clmid,
             "observedResponseCLMID": self.observed_response_clmid,
             "responseCLMIDMode": self.response_clmid_mode,
+            "responseListMode": self.response_list_mode,
             "resultCode": self.result_code,
             "schemaFailureToken": self.schema_failure_token,
+            "unexpectedTopLevelFields": list(self.unexpected_top_level_fields),
         }
+
+
+_UNEXPECTED_FIELD_NAME = re.compile(r"[A-Za-z0-9_]{1,40}")
+
+
+def _safe_field_names(names: Iterable[object]) -> tuple[str, ...]:
+    """Reduce foreign key names to a bounded, value-free identifier list."""
+    safe: list[str] = []
+    for name in sorted(str(item) for item in names):
+        safe.append(
+            name if _UNEXPECTED_FIELD_NAME.fullmatch(name) else "INVALID_NAME"
+        )
+        if len(safe) == 8:
+            break
+    return tuple(safe)
 
 
 class _ReadContractError(TachibanaError):
     def __init__(
         self, classification: ErrorClass, *, stage_suffix: str, token: str,
+        unexpected_fields: tuple[str, ...] = (),
     ) -> None:
         self.stage_suffix = stage_suffix
         self.token = token
+        self.unexpected_fields = unexpected_fields
         super().__init__(classification)
 
 
@@ -559,11 +615,30 @@ class TachibanaReadOnlyClient:
                         expected_p_no=payload["p_no"],
                     )
                     if function_id == "CLMStkGetDateZyouhou":
+                        compat_list = next((
+                            key for key in sorted(contract.compatible_response_lists)
+                            if key in response
+                        ), None)
+                        if compat_list is not None:
+                            # Normalize the live-proven echo list key to the
+                            # documented key so no consumer learns a second
+                            # spelling.  _check_response already rejected any
+                            # ambiguous or mismatched shape.
+                            normalized = dict(response)
+                            normalized[contract.response_list] = normalized.pop(
+                                compat_list
+                            )
+                            response = normalized
                         self.last_read_diagnostic = replace(
                             self.last_read_diagnostic,
                             response_clmid_mode=(
                                 "DOCUMENTED"
                                 if response.get("sCLMID") == contract.response_id
+                                else "PRODUCTION_ECHO_COMPAT"
+                            ),
+                            response_list_mode=(
+                                "DOCUMENTED"
+                                if compat_list is None
                                 else "PRODUCTION_ECHO_COMPAT"
                             ),
                         )
@@ -580,15 +655,18 @@ class TachibanaReadOnlyClient:
                     if isinstance(exc, _ReadContractError):
                         stage = f"{stage_prefix}_{exc.stage_suffix}"
                         token = exc.token
+                        unexpected_fields = exc.unexpected_fields
                     else:
                         stage = f"{stage_prefix}_HTTP"
                         token = "TRANSPORT_OR_PROVIDER_CLASSIFICATION"
+                        unexpected_fields = ()
                     self.last_read_diagnostic = replace(
                         self.last_read_diagnostic,
                         stage=stage,
                         classification=last_error.value,
                         http_status=self._safe_http_status(),
                         schema_failure_token=token,
+                        unexpected_top_level_fields=unexpected_fields,
                     )
                     retryable = last_error in {ErrorClass.NETWORK, ErrorClass.HTTP}
                     if not retryable or attempt + 1 >= attempts:
@@ -734,15 +812,37 @@ class TachibanaReadOnlyClient:
         allowed_top_level = (
             _RESPONSE_COMMON_FIELDS
             | contract.allowed_parameters
-            | frozenset({contract.response_list})
+            | contract.accepted_response_lists
         )
         if not set(response) <= allowed_top_level:
             raise _ReadContractError(
                 ErrorClass.PROVIDER,
                 stage_suffix="SCHEMA", token="TOP_LEVEL_FIELD_UNKNOWN",
+                unexpected_fields=_safe_field_names(
+                    set(response) - allowed_top_level
+                ),
             )
-        if contract.response_list in response:
-            rows = response[contract.response_list]
+        present_lists = [
+            key for key in sorted(contract.accepted_response_lists)
+            if key in response
+        ]
+        # Exactly one row-list key may appear, and a live-compatible key is
+        # accepted only in the same echo shape that was live-proven (the
+        # echoed sCLMID).  Any other combination is an unknown shape.
+        if len(present_lists) > 1 or (
+            present_lists
+            and present_lists[0] != contract.response_list
+            and response.get("sCLMID") not in contract.compatible_response_ids
+        ):
+            raise _ReadContractError(
+                ErrorClass.PROVIDER,
+                stage_suffix="SCHEMA", token="RESPONSE_LIST_SHAPE_INVALID",
+            )
+        response_list = (
+            present_lists[0] if present_lists else contract.response_list
+        )
+        if response_list in response:
+            rows = response[response_list]
             requested_symbols = tuple(filter(None, request_parameters.get(
                 "sTargetIssueCode", ""
             ).split(",")))
