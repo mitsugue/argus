@@ -2028,7 +2028,10 @@ def test_event_lifecycle_reconnects_on_sequence_gap_and_requires_new_sequence_on
     assert summary.connections_started == 3
     assert summary.reconnects == 2
     assert summary.last_error == ErrorClass.NONE
-    assert delays == [1.0, 2.0]
+    # v13.5.39: after an established connection closes the lifecycle first
+    # waits for the provider's disconnect processing (5 s drain), then backs
+    # off 5 s, 10 s, ... for the SAME-SESSION reconnect (no re-authentication).
+    assert delays == [5.0, 5.0, 5.0, 10.0]
     assert sensor.latest("6501", now=NOW).fields["current_price"] == 2002.0
 
 
@@ -2221,6 +2224,137 @@ def test_event_lifecycle_has_daily_reconnect_exhaustion_and_terminal_st(tmp_path
     assert inactive.value.classification == ErrorClass.SESSION_EXPIRED
     assert session2.state == SessionState.EXPIRED
     assert len(terminal.calls) == 1
+
+
+class _ConnectFailingConnector:
+    """Fails at CONNECT with a NETWORK transport error, N times, then serves."""
+
+    def __init__(self, failures, then=()):
+        self.failures = failures
+        self.then = list(then)
+        self.calls = 0
+
+    def receive(self, endpoint, subscription, **kwargs):
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise EventTransportError(ErrorClass.NETWORK, timeout_category="CONNECT")
+        return iter(self.then.pop(0) if self.then else ())
+
+
+def test_event_policy_defaults_follow_official_contract_recovery_order():
+    policy = EventConnectionPolicy.from_config(
+        TachibanaConfig(websocket_enabled=True, max_event_reconnects_per_day=3))
+    assert policy.reconnect_initial_seconds == 5.0
+    assert policy.reconnect_maximum_seconds == 60.0
+    assert policy.drain_wait_seconds == 5.0
+    assert policy.outage_backoff_seconds == 30.0
+    assert policy.outage_budget_seconds == 900.0
+    with pytest.raises(ValueError):
+        EventConnectionPolicy(enabled=True, connect_timeout_seconds=8,
+                              outage_budget_seconds=10.0)
+    with pytest.raises(ValueError):
+        EventConnectionPolicy(enabled=True, connect_timeout_seconds=8,
+                              drain_wait_seconds=31.0)
+
+
+def test_event_connect_failure_with_unreachable_transport_waits_without_spending_budget(tmp_path):
+    session, _, _ = _authenticated_session(
+        tmp_path, websocket_enabled=True, max_event_reconnects_per_day=1,
+    )
+    connector = _ConnectFailingConnector(failures=99)
+    progress = EventLifecycleProgress()
+    delays = []
+    probes = []
+    policy = EventConnectionPolicy(
+        enabled=True, connect_timeout_seconds=8, maximum_reconnects_per_day=1,
+        outage_backoff_seconds=30.0, outage_budget_seconds=60.0)
+    lifecycle = TachibanaEventLifecycle(
+        session, EventSubscription(("6501",)),
+        TransientLiveSensor(max_symbols=1, window_size=2, window_seconds=30),
+        connector=connector, clock=lambda: NOW, random_value=lambda: 0.0,
+        waiter=lambda _stop, delay: delays.append(delay) or False,
+        progress=progress, policy=policy,
+        reachability_probe=lambda endpoint: probes.append(endpoint) or False,
+    )
+    with pytest.raises(TachibanaError) as exhausted:
+        lifecycle.run(threading.Event())
+    # Two 30 s outage waits fit the 60 s budget; the third exceeds it.  The
+    # single daily reconnect was never consumed and no re-authentication ran.
+    assert exhausted.value.classification == ErrorClass.EVENT_RECONNECT_EXHAUSTED
+    assert delays == [30.0, 30.0]
+    assert connector.calls == 3
+    snapshot = progress.snapshot()
+    assert snapshot.transport_unreachable_waits == 2
+    assert snapshot.reconnects_scheduled == 0
+    assert session.state == SessionState.AVAILABLE
+    assert len(probes) == 3 and all(p.startswith("wss://") for p in probes)
+
+
+def test_event_connect_failure_with_reachable_transport_consumes_reconnect_budget(tmp_path):
+    session, _, _ = _authenticated_session(
+        tmp_path, websocket_enabled=True, max_event_reconnects_per_day=1,
+    )
+    connector = _ConnectFailingConnector(failures=99)
+    progress = EventLifecycleProgress()
+    delays = []
+    lifecycle = TachibanaEventLifecycle(
+        session, EventSubscription(("6501",)),
+        TransientLiveSensor(max_symbols=1, window_size=2, window_seconds=30),
+        connector=connector, clock=lambda: NOW, random_value=lambda: 0.0,
+        waiter=lambda _stop, delay: delays.append(delay) or False,
+        progress=progress, reachability_probe=lambda endpoint: True,
+    )
+    with pytest.raises(TachibanaError) as exhausted:
+        lifecycle.run(threading.Event())
+    assert exhausted.value.classification == ErrorClass.EVENT_RECONNECT_EXHAUSTED
+    # CONNECT failures skip the drain wait; one 5 s reconnect backoff, then
+    # the daily budget is exhausted.  Still the same session.
+    assert delays == [5.0]
+    assert progress.snapshot().reconnects_scheduled == 1
+    assert progress.snapshot().transport_unreachable_waits == 0
+    assert session.state == SessionState.AVAILABLE
+
+
+def test_event_drain_wait_precedes_same_session_reconnect_and_backoff_grows(tmp_path):
+    session, _, _ = _authenticated_session(
+        tmp_path, websocket_enabled=True, max_event_reconnects_per_day=5,
+    )
+    connector = ScriptedEventConnector([(), (), (), (), (), ()])
+    delays = []
+    lifecycle = TachibanaEventLifecycle(
+        session, EventSubscription(("6501",)),
+        TransientLiveSensor(max_symbols=1, window_size=2, window_seconds=30),
+        connector=connector, clock=lambda: NOW, random_value=lambda: 0.0,
+        waiter=lambda _stop, delay: delays.append(delay) or False,
+        reachability_probe=lambda endpoint: True,
+    )
+    with pytest.raises(TachibanaError) as exhausted:
+        lifecycle.run(threading.Event())
+    assert exhausted.value.classification == ErrorClass.EVENT_RECONNECT_EXHAUSTED
+    # drain, backoff pairs: 5|5, 5|10, 5|20, 5|40, 5|60(cap), then a final
+    # drain before the budget check reports exhaustion.
+    assert delays == [5.0, 5.0, 5.0, 10.0, 5.0, 20.0, 5.0, 40.0, 5.0, 60.0, 5.0]
+    assert sum(delays) > 60          # the budget can no longer vanish in seconds
+    assert session.state == SessionState.AVAILABLE   # never re-authenticated
+    assert len(connector.calls) == 6
+
+
+def test_default_reachability_probe_uses_host_only_and_fails_closed(monkeypatch):
+    import argus_providers.tachibana.event_stream as stream
+    seen = []
+
+    class _Sock:
+        def __enter__(self): return self
+        def __exit__(self, *exc): return False
+    monkeypatch.setattr(stream.socket, "create_connection",
+                        lambda address, timeout: seen.append((address, timeout)) or _Sock())
+    assert stream._default_reachability("wss://event.example.test/e_api_v4r10/SECRET-PATH/") is True
+    assert seen == [(("event.example.test", 443), 3.0)]
+    assert "SECRET" not in str(seen)
+    monkeypatch.setattr(stream.socket, "create_connection",
+                        lambda address, timeout: (_ for _ in ()).throw(OSError("down")))
+    assert stream._default_reachability("wss://event.example.test/x/") is False
+    assert stream._default_reachability("not a url") is False
 
 
 def test_transient_sensor_prunes_size_and_age_and_has_no_persistence_surface():

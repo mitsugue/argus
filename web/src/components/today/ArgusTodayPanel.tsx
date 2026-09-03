@@ -531,6 +531,11 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   onMode, onInstrument, onHorizon, onNavigate, onNavigateToAsset, onNavigateToSettings, aiButton,
 }) => {
   const projection = view.projectionsByHorizon[`${horizon}D`] ?? view.projection;
+  // v13.5.39: the top command area renders MARKET SIGNALS (SIG-01..07, x / 7)
+  // from the real market-view projection — the seven-signal system the owner
+  // reads first.  The SDA Seven Sign level stays as a secondary line.
+  const decisionEvidence = useDecisionEvidence();
+  const topSignals = marketSignalsView(decisionEvidence.marketView?.projection ?? null);
   const actionCopy = {
     BUY: '条件内で新規または追加を検討',
     HOLD: '保有を維持し、判断更新条件を待つ',
@@ -604,20 +609,39 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           projection. */}
       <details className="at-seven" data-argus-contract="seven-sign-ladder-v1"
         data-seven-status={view.canonicalDecision.sevenSign.status}
-        data-seven-level={view.actionScore ?? undefined}>
-        <summary aria-label={`Seven Sign ${view.actionScore ?? '未確定'} / 7 · ${view.canonicalDecision.sevenSign.status}`}>
-          <small>SEVEN SIGN</small>
-          <b>{view.actionScore == null ? '— / 7' : `${view.actionScore} / 7`}</b>
+        data-seven-level={view.actionScore ?? undefined}
+        data-market-signals-active={topSignals?.activeCount ?? undefined}
+        data-market-signals-total={topSignals?.total ?? undefined}>
+        <summary aria-label={topSignals
+          ? `Market Signals ${topSignals.countLabel} · Seven Sign ${view.actionScore ?? '未確定'} / 7 · ${view.canonicalDecision.sevenSign.status}`
+          : `Seven Sign ${view.actionScore ?? '未確定'} / 7 · ${view.canonicalDecision.sevenSign.status}`}>
+          <small>MARKET SIGNALS</small>
+          <b data-argus-contract="market-signals-top-v1">
+            {topSignals ? topSignals.countLabel : '— / 7'}</b>
           <span className="at-seven-status">
-            {view.actionScore == null ? 'Calibration pending · ' : ''}
-            {view.canonicalDecision.sevenSign.status}</span>
+            {topSignals ? `点灯 ${topSignals.activeCount} · ` : ''}
+            判断レベル {view.actionScore == null ? '— / 7' : `${view.actionScore} / 7`}
+            {topSignals ? '' : ` · ${view.canonicalDecision.sevenSign.status}`}</span>
           <span className="at-seven-chips" aria-hidden="true">
-            {[1, 2, 3, 4, 5, 6, 7].map((level) => <i key={level}
-              className={level === view.actionScore ? 'is-current' : ''}
-              data-seven-sign-level={level}>{level}</i>)}
+            {topSignals
+              ? topSignals.signals.map((row) => <i key={row.id}
+                className={row.state === 'ACTIVE' ? 'is-current' : ''}
+                data-signal-id={row.id} data-signal-state={row.state}
+                title={`${row.id} ${row.nameJa} ${row.stateJa}`}>{row.id.slice(-1)}</i>)
+              : [1, 2, 3, 4, 5, 6, 7].map((level) => <i key={level}
+                className={level === view.actionScore ? 'is-current' : ''}
+                data-seven-sign-level={level}>{level}</i>)}
           </span>
         </summary>
         <div className="at-seven-detail">
+          {topSignals && <div className="at-seven-signals" data-argus-contract="market-signals-top-detail-v1">
+            {topSignals.signals.map((row) => <GlossaryTip key={row.id} glossaryKey={row.glossaryKey}>
+              <i data-signal-id={row.id} data-signal-state={row.state}>
+                {row.id} {row.nameJa} <b>{row.stateJa}</b></i>
+            </GlossaryTip>)}
+            <small>点灯 = 条件成立のみ数える（判定不能・欠測・古い・要ライセンスは数えない）</small>
+          </div>}
+          <p className="at-seven-gated">判断レベル（SEVEN SIGN・売買判断側の校正段階）:</p>
           <ul>
             {[1, 2, 3, 4, 5, 6, 7].map((level) => <li key={level}
               className={level === view.actionScore ? 'is-current' : ''}>

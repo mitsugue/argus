@@ -12,6 +12,8 @@ import { requestDecisionEvidenceSymbols, useDecisionEvidence } from './useDecisi
 import { resolveCanonicalArtifactReferences } from '../domain/canonicalDecisionEvidence';
 import { useRatesSnapshot } from './useRatesSnapshot';
 import { useJapanWatchlist } from './useJapanWatchlist';
+import { overlayTachibanaLive } from '../domain/tachibanaLive';
+import type { TachibanaLiveDocument } from '../domain/tachibanaLive';
 import { useUSWatchlist } from './useUSWatchlist';
 import { fundNavForAsset, useFundNav } from './useFundNav';
 import { useFlowAttributionList } from './useFlowAttribution';
@@ -276,7 +278,18 @@ export function useAssetIntel(opts: {
   const { signals: sdSignals } = supplyState;
   // Card prices vanish outside sessions (labels carry no price) — fall back to
   // the same real quote hooks Core Portfolio uses (delayed close = real data).
-  const peJp = useJapanWatchlist(jpSyms);
+  const peJpRaw = useJapanWatchlist(jpSyms);
+  // v13.5.39: when the backend carries current Tachibana LIVE evidence for a
+  // monitored JP symbol, that observation becomes the owner-visible realtime
+  // source (provider tachibana, LIVE proven by a ≤60 s exchange timestamp);
+  // every other row keeps its truthfully labeled delayed source.
+  const tachibanaLiveDoc = useDecisionEvidence().marketView?.japaneseLive as
+    TachibanaLiveDocument | null | undefined;
+  const peJp = useMemo(() => ({
+    ...peJpRaw,
+    data: overlayTachibanaLive(peJpRaw.data as unknown as Parameters<typeof overlayTachibanaLive>[0],
+      tachibanaLiveDoc ?? null) as typeof peJpRaw.data,
+  }), [peJpRaw, tachibanaLiveDoc]);
   const peUs = useUSWatchlist(usSyms);
   const fundNav = useFundNav();
   const priceBySymbol = useMemo(() => {

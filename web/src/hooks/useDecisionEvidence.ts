@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
+import { setTachibanaLiveDocument } from '../domain/tachibanaLive';
 
 // Decision Evidence (v13.5.13) — canonical artifact references for the device
 // SDA, served by /api/argus/decision-evidence. The payload carries verified
@@ -111,6 +112,9 @@ const decisionEvidenceStore = createSharedPollingStore<DecisionEvidenceState>(
           const marketView = view
             && view.schemaVersion === 'argus-sho-market-view-v1'
             && view.actionAuthority === false ? view : null;
+          // v13.5.39: publish the Tachibana LIVE evidence document for the JP
+          // quote overlay (absent/invalid documents clear the store).
+          setTachibanaLiveDocument(marketView?.japaneseLive ?? null);
           setState({ subjects: data.subjects, marketView,
             generatedAt: typeof data.generatedAt === 'string' ? data.generatedAt : null,
             loading: false, error: null });

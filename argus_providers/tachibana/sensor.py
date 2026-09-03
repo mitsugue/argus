@@ -350,9 +350,23 @@ class EventConnectionPolicy:
     idle_timeout_seconds: int = 30
     maximum_frame_bytes: int = _MAX_EVENT_FRAME_BYTES
     maximum_reconnects_per_day: int = 10
-    reconnect_initial_seconds: float = 1.0
-    reconnect_maximum_seconds: float = 30.0
+    # v13.5.39 (live 2026-09-03 finding): the official contract keeps the
+    # virtual URLs valid across a socket close and asks the client to wait
+    # for the previous disconnect to finish before the next EVENT connection.
+    # A 1 s / 2 s / 4 s schedule spent the whole daily budget inside one
+    # transient outage; reconnects now start at 5 s and grow to 60 s.
+    reconnect_initial_seconds: float = 5.0
+    reconnect_maximum_seconds: float = 60.0
     reconnect_jitter_fraction: float = 0.20
+    # Wait for the provider's disconnect processing after an established
+    # connection closes, before the same-session reconnect.
+    drain_wait_seconds: float = 5.0
+    # A CONNECT failure while general transport to the provider is
+    # unreachable is a network outage, not a session fault: it never consumes
+    # the reconnect budget and never triggers re-authentication.  Outage waits
+    # are bounded by a rolling per-run budget.
+    outage_backoff_seconds: float = 30.0
+    outage_budget_seconds: float = 900.0
 
     @classmethod
     def from_config(cls, config: TachibanaConfig) -> "EventConnectionPolicy":
@@ -375,6 +389,12 @@ class EventConnectionPolicy:
             or not self.reconnect_initial_seconds <= self.reconnect_maximum_seconds <= 60.0
             or type(self.reconnect_jitter_fraction) not in {int, float}
             or not 0.0 <= self.reconnect_jitter_fraction <= 0.5
+            or type(self.drain_wait_seconds) not in {int, float}
+            or not 0.0 <= self.drain_wait_seconds <= 30.0
+            or type(self.outage_backoff_seconds) not in {int, float}
+            or not 5.0 <= self.outage_backoff_seconds <= 120.0
+            or type(self.outage_budget_seconds) not in {int, float}
+            or not 60.0 <= self.outage_budget_seconds <= 3600.0
         ):
             raise ValueError("invalid_event_connection_policy")
 

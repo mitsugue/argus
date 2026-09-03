@@ -132,3 +132,136 @@ export function formatPct(value: number | null): string {
   const sign = value > 0 ? '+' : '';
   return `${sign}${value.toFixed(2)}%`;
 }
+
+// ── v13.5.39: Tachibana as the owner-visible realtime JP source ─────────────
+//
+// The decision-evidence poller publishes the latest evidence document into a
+// tiny module store; JP quote consumers overlay it onto watchlist rows.  A
+// row is replaced only when Tachibana carries a current FRESH price for that
+// symbol; every other row keeps its existing (truthfully labeled) source.
+import { normalizeLiveQuote } from './liveQuote';
+import type { LiveQuote } from './liveQuote';
+
+let liveDocument: TachibanaLiveDocument | null = null;
+let liveDocumentRevision = 0;
+
+export function setTachibanaLiveDocument(doc: unknown): void {
+  const next = doc && typeof doc === 'object' && (doc as TachibanaLiveDocument).provider === 'TACHIBANA'
+    ? (doc as TachibanaLiveDocument) : null;
+  liveDocument = next;
+  liveDocumentRevision += 1;
+}
+
+export function getTachibanaLiveDocument(): TachibanaLiveDocument | null {
+  return liveDocument;
+}
+
+export function tachibanaLiveRevision(): number {
+  return liveDocumentRevision;
+}
+
+export interface OverlayableJpRow {
+  symbol: string;
+  price?: number | null;
+  changeAbs?: number | null;
+  changePct?: number | null;
+  volume?: number | null;
+  status?: string;
+  provider?: string | null;
+  source?: string | null;
+  sourceTimestamp?: string | number | null;
+  receivedAt?: string | null;
+  delayClass?: string | null;
+  entitlement?: string | null;
+  realtimeEvidence?: boolean | null;
+  instrumentType?: string;
+  quoteTruth?: LiveQuote;
+  [key: string]: unknown;
+}
+
+export interface OverlayableJpSnapshot {
+  stocks: OverlayableJpRow[];
+  status?: string;
+  [key: string]: unknown;
+}
+
+/** Symbols for which the document carries a current, FRESH, priced row. */
+export function tachibanaCurrentRows(
+  doc: TachibanaLiveDocument | null | undefined, nowMs = Date.now(),
+): Map<string, TachibanaLiveRow> {
+  const out = new Map<string, TachibanaLiveRow>();
+  const view = tachibanaLiveView(doc);
+  if (view.status !== 'LIVE' && view.status !== 'DEGRADED') return out;
+  for (const row of view.rows) {
+    if (row.price === null || row.freshness !== 'FRESH' || !row.sourceTimestamp) continue;
+    const age = (nowMs - Date.parse(row.sourceTimestamp)) / 1000;
+    if (!Number.isFinite(age) || age < -5 || age > 60) continue;
+    out.set(row.symbol.toUpperCase(), row);
+  }
+  return out;
+}
+
+/**
+ * Overlay current Tachibana evidence onto a normalized JP watchlist snapshot.
+ * Replaced rows carry provider/source `tachibana`, `delayClass: LIVE` proven
+ * through `realtimeEvidence` + a ≤60 s exchange timestamp, and a rebuilt
+ * `quoteTruth`.  Rows without current Tachibana evidence are untouched.
+ */
+export function overlayTachibanaLive<T extends OverlayableJpSnapshot>(
+  snapshot: T | null | undefined,
+  doc: TachibanaLiveDocument | null | undefined = liveDocument,
+  nowMs = Date.now(),
+): T | null | undefined {
+  if (!snapshot || !Array.isArray(snapshot.stocks)) return snapshot;
+  const current = tachibanaCurrentRows(doc, nowMs);
+  if (current.size === 0) return snapshot;
+  let replaced = 0;
+  const stocks = snapshot.stocks.map((row) => {
+    const live = current.get(String(row.symbol ?? '').toUpperCase());
+    if (!live) return row;
+    const receivedAt = live.receivedAt ?? new Date(nowMs).toISOString();
+    const raw = {
+      ...row,
+      price: live.price,
+      changeAbs: live.changeAbs ?? row.changeAbs ?? null,
+      changePct: live.changePct ?? row.changePct ?? null,
+      volume: live.volume ?? row.volume ?? null,
+      provider: 'tachibana',
+      source: 'tachibana',
+      sourceTimestamp: live.sourceTimestamp,
+      exchangeTs: live.sourceTimestamp,
+      receivedAt,
+      delayClass: 'LIVE',
+      entitlement: 'realtime',
+      realtimeEvidence: true,
+      session: live.marketStatus === 'OPEN' ? 'regular' : row.session,
+      status: 'live',
+    };
+    const quoteTruth = normalizeLiveQuote(raw as Parameters<typeof normalizeLiveQuote>[0], {
+      symbol: row.symbol,
+      instrumentType: (row.instrumentType as 'STOCK' | 'ETF' | undefined) ?? 'STOCK',
+      provider: 'tachibana',
+      receivedAt,
+      nowMs,
+    });
+    // If the proof did not survive normalization (e.g. timestamp drift) keep
+    // the original row rather than showing a false LIVE.
+    if (quoteTruth.delayClass !== 'LIVE') return row;
+    replaced += 1;
+    return {
+      ...raw,
+      quoteTruth,
+      ageSec: quoteTruth.ageSec,
+      transportAgeSec: quoteTruth.transportAgeSec,
+      tachibanaLive: true,
+    };
+  });
+  if (replaced === 0) return snapshot;
+  const allLive = stocks.every((row) => row.status === 'live');
+  return {
+    ...snapshot,
+    stocks,
+    status: allLive ? 'live' : (snapshot.status === 'live' ? 'live' : 'mixed'),
+    tachibanaLiveCount: replaced,
+  };
+}
