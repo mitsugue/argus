@@ -15067,9 +15067,14 @@ def _system_health(*, allow_provider_fetch=True):
             L("us_realtime", "US realtime", "warning", "市場時間中なのにUS push無し")
         else:
             L("us_realtime", "US realtime", "warning", f"状態: {uss}")
-        # JP realtime — entitlement-aware. disabled=gray(意図的), 権限なし=yellow.
+        # JP realtime — v13.5.45: Tachibana is the JP realtime source when its
+        # product boundary reports current/closed evidence; the moomoo
+        # entitlement text only remains while Tachibana is disabled/absent.
         jps = str(hb.get("jpRealtimeStatus") or "unknown")
-        if jps == "disabled":
+        tachibana_lamp = _tachibana_jp_realtime_lamp()
+        if tachibana_lamp is not None:
+            L("jp_realtime", "JP realtime", tachibana_lamp[0], tachibana_lamp[1])
+        elif jps == "disabled":
             L("jp_realtime", "JP realtime", "off",
               "無効化中(US-onlyモード) — 日本株は代替データ(J-Quants/Yahoo)で判定")
         elif jps == "entitlement_unavailable":
@@ -17371,6 +17376,40 @@ def _news_intake_ensure_thread():
 
 
 _TACHIBANA_LIVE_AUTOSTART = {"value": False}
+
+
+def _tachibana_jp_realtime_lamp():
+    """v13.5.45: (status, detailJa) for the JP realtime lamp from the Tachibana
+    product boundary, or None when Tachibana is disabled/absent so the legacy
+    moomoo lamp keeps its truth.  Provider health is kept apart from the
+    market phase: a proven provider while the exchange is closed is green
+    with 市場クローズ, never UNAVAILABLE.  Never raises into the lamp builder."""
+    try:
+        evidence = argus_tachibana_live.current_evidence_safe()
+    except Exception:
+        return None
+    if not isinstance(evidence, dict) or not evidence.get("enabled"):
+        return None
+    status = str(evidence.get("status") or "")
+    rows = evidence.get("symbols") or {}
+    priced = "/".join(sorted(str(k) for k, v in rows.items()
+                             if isinstance(v, dict) and v.get("price") is not None))[:64]
+    if status == "LIVE":
+        return ("ok", f"LIVE — Tachibanaから更新中({priced})")
+    if status == "CLOSED":
+        return ("ok", f"Tachibana 接続確認済 · 市場クローズ({priced})")
+    if status == "DEGRADED":
+        return ("warning", f"Tachibana 一部銘柄のみ現在値({priced or '—'})")
+    if status == "STALE":
+        return ("warning", "Tachibana 鮮度期限切れ(再取得待ち)")
+    if status == "AUTH_FAILED":
+        boundary = str(evidence.get("authBoundary") or evidence.get("lastErrorClass") or "AUTH")[:40]
+        return ("warning", f"Tachibana 認証失敗({boundary})")
+    if status == "MAINTENANCE":
+        return ("warning", "Tachibana メンテナンス中")
+    if status == "UNAVAILABLE":
+        return ("off", "Tachibana 待機中(セッション外)")
+    return None
 
 
 def _tachibana_live_autostart():
