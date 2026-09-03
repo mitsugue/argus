@@ -1310,3 +1310,12 @@ def test_jp_realtime_lamp_follows_tachibana_boundary(monkeypatch):
     monkeypatch.setattr(scanner.argus_tachibana_live, "current_evidence_safe",
                         lambda: (_ for _ in ()).throw(RuntimeError("boom")))
     assert scanner._tachibana_jp_realtime_lamp() is None
+
+
+
+def test_jp_realtime_lamp_is_emitted_in_both_bridge_branches():
+    """RECOVERY_ONLY follow-up: the Tachibana lamp does not depend on a moomoo heartbeat."""
+    import inspect, scanner
+    source = inspect.getsource(scanner)
+    assert source.count('tachibana_lamp = _tachibana_jp_realtime_lamp()') == 2
+    assert source.count('L("jp_realtime", "JP realtime", tachibana_lamp[0], tachibana_lamp[1])') == 2
