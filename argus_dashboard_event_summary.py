@@ -19,7 +19,8 @@ Discipline (baked in):
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 import argus_macro_event_analysis as _MA
 import argus_macro_market_reaction as _RX
@@ -45,6 +46,9 @@ STATE_TONE = {
 }
 _VERDICT_JA = {"hit": "概ね当たり", "partial": "部分的", "miss": "外れ",
                "not_scoreable": "採点不可", "not_available": "未確認"}
+
+_RELEASED_STATES = {"released_pending_result", "post_result",
+                    "post_answer_checked", "stale", "not_scoreable"}
 
 
 def _now_dt(now_iso: str):
@@ -125,7 +129,7 @@ def build_summary_item(*, important_event: Optional[Dict[str, Any]],
 
     event_code = str(rec.get("eventCode") or ie.get("eventCode") or "OTHER").upper() or "OTHER"
     event_time = rec.get("eventTimeUtc") or ie.get("eventTimeUtc")
-    event_date = rec.get("eventDate") or ie.get("eventDate")
+    event_date = rec.get("eventDate") or ie.get("eventDate") or ie.get("date")
     title = rec.get("title") or ie.get("title") or event_code
     event_id = str(rec.get("eventId") or ie.get("eventId") or ie.get("id") or event_code)
     importance = ie.get("displayImpact") or ie.get("importance") or rec.get("displayImpact") or "medium"
@@ -258,13 +262,15 @@ def build_summary(*, important_events: List[Dict[str, Any]],
                   limit: int = 8) -> Dict[str, Any]:
     """Merge important events + macro records into the unified display model.
     Deterministic: same inputs → byte-identical output."""
+    # Legacy result-created rows can outlive the temporary live schedule join.
+    # Repair deterministic catalog metadata before dedupe, ranking, and limit.
+    records = [_MA.rehydrate_schedule_metadata(r) for r in (macro_records or [])
+               if isinstance(r, dict)]
     # index macro records by eventId AND by dedupe key so an important event can
     # find its analysis even if the ids differ.
     by_id: Dict[str, Dict[str, Any]] = {}
     by_key: Dict[str, Dict[str, Any]] = {}
-    for r in (macro_records or []):
-        if not isinstance(r, dict):
-            continue
+    for r in records:
         eid = str(r.get("eventId") or "")
         if eid:
             by_id[eid] = r
@@ -304,19 +310,61 @@ def build_summary(*, important_events: List[Dict[str, Any]],
 
     # 2) macro records not already joined above (still surface if released/soon).
     # A record whose dedupeKey already exists is a genuine duplicate → hidden.
-    for r in (macro_records or []):
-        if not isinstance(r, dict) or id(r) in consumed:
+    for r in records:
+        if id(r) in consumed:
             continue
         _add(None, r)
 
-    # order: critical>high>medium>low, then released/pending before far-future pre,
-    # then soonest first.
+    # Product order:
+    #   1) hero = newest valid released/pending event in the strongest importance
+    #      class (AI answer-check completeness is deliberately irrelevant);
+    #   2) remaining valid dated events by importance + temporal proximity, so the
+    #      next major upcoming event survives the bounded response;
+    #   3) undated/unusable rows last, so stale PRE records cannot crowd out truth.
+    # Within completed events, newer is always before older.
     imp_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-    state_rank = {"post_answer_checked": 0, "post_result": 0, "released_pending_result": 1,
-                  "stale": 1, "imminent": 2, "pre": 3, "not_scoreable": 1}
-    items.sort(key=lambda it: (imp_rank.get(it["importance"], 9),
-                               state_rank.get(it["state"], 5),
-                               str(it.get("eventTimeUtc") or it.get("eventDate") or "z")))
+
+    def _event_epoch(item: Dict[str, Any]) -> Optional[float]:
+        parsed = _MA._parse_utc(item.get("eventTimeUtc"))
+        if parsed is None and item.get("eventDate"):
+            try:
+                parsed = datetime.strptime(str(item["eventDate"])[:10], "%Y-%m-%d").replace(
+                    tzinfo=timezone.utc)
+            except ValueError:
+                parsed = None
+        return parsed.timestamp() if parsed is not None else None
+
+    def _reverse_text(value: Any) -> Tuple[int, ...]:
+        # Explicit deterministic final tie-breaker (descending canonical ID).
+        return tuple(-ord(ch) for ch in str(value or ""))
+
+    now = _now_dt(now_iso)
+    now_epoch = now.timestamp() if now is not None else 0.0
+    dated_released = [it for it in items
+                      if it.get("state") in _RELEASED_STATES
+                      and _event_epoch(it) is not None]
+    hero = None
+    if dated_released:
+        hero = min(dated_released, key=lambda it: (
+            imp_rank.get(it.get("importance"), 9),
+            -float(_event_epoch(it) or 0.0),
+            _reverse_text(it.get("eventId"))))
+
+    def _remaining_key(item: Dict[str, Any]):
+        epoch = _event_epoch(item)
+        dated_rank = 0 if epoch is not None else 1
+        distance = abs(epoch - now_epoch) if epoch is not None else float("inf")
+        # At equal distance, an occurred/pending release precedes an upcoming row.
+        lifecycle_rank = 0 if item.get("state") in _RELEASED_STATES else 1
+        chronology = (-epoch if epoch is not None
+                      and item.get("state") in _RELEASED_STATES
+                      else epoch if epoch is not None else float("inf"))
+        return (imp_rank.get(item.get("importance"), 9), dated_rank, distance,
+                lifecycle_rank, chronology, _reverse_text(item.get("eventId")))
+
+    remaining = [it for it in items if it is not hero]
+    remaining.sort(key=_remaining_key)
+    items = ([hero] if hero is not None else []) + remaining
     items = items[:max(1, limit)]
 
     return {
