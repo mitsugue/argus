@@ -69,3 +69,7 @@
 
 /* v13.5.49: Japanese event title on its own grid row (owner surface names events in Japanese) */
 .ie-title-ja { grid-area: title; font-size: 13px; font-weight: 700; color: var(--text-main); line-height: 1.35; }
+
+/* v13.5.51: canonical lifecycle tier chip */
+.ie-tier { margin-left: 6px; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-sub); vertical-align: middle; }
+.ie-tier[data-tier="NOW"], .ie-tier[data-tier="NEXT"] { border-color: var(--accent); color: var(--text-main); }

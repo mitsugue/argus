@@ -212,7 +212,7 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
     <details className="ie-row" open={open}>
       <summary aria-label={`${ev.eventCode}, ${ds.released ? '発表済' : ev.stateLabelJa}, ${when}`}>
         <span className="ie-when">{when}</span>
-        <span className="ie-code">{ev.eventCode}</span>
+        <span className="ie-code">{ev.eventCode}{ev.lifecycleTierJa && <small className="ie-tier" data-argus-contract="event-lifecycle-tier-v1" data-tier={ev.lifecycleTier}>{ev.lifecycleTierJa}</small>}</span>
         <span className="ie-title-ja" data-argus-contract="event-title-ja-v1">{eventTitleJa(ev.eventCode, ev.title)}</span>
         {ds.stampBoxed ? (
           // v11.5: clear boxed "発表済" stamp so it's obvious the event has printed.

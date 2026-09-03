@@ -433,6 +433,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
         ? String(event.jstTime).replace(' JST', '').replace(' ', 'T') + ':00+09:00'
         : null),
       impact: event.displayImpact, lifecycle: event.lifecycle,
+      lifecycleTier: event.lifecycleTier ?? null,
       descriptionJa: event.rationaleJa,
     }));
     const indexMoves: TodayMoveInput[] = [];

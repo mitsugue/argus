@@ -8,6 +8,7 @@ Event IMPACT = how strongly markets may move, NOT whether the result is good/bad
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 # Beginner-readable, direction-neutral explanations per event kind (en/ja).
@@ -82,6 +83,105 @@ def _proximity_score(days: Optional[int]) -> float:
     if days <= 7:
         return 0.45
     return 0.25
+
+
+# ── v13.5.51: canonical event lifecycle (one truth for Today, dashboard, brief) ──
+#
+# Tiers, from the owner's spec, in canonical rank order:
+#   NOW        high/critical within 24h before or after release        (hero eligible)
+#   NEXT       upcoming 1-7 days                                          (hero eligible)
+#   RECENT     completed 24-72h with result                              (secondary only)
+#   LATER      upcoming 8-30 days
+#   MONITORING released, official result still missing beyond the SLA    (never hero)
+#   HORIZON    upcoming 31-60 days
+#   HISTORY    completed > 72h                                           (never current)
+# Events therefore age out: a released PCE from a week ago is HISTORY and can
+# never outrank tomorrow's NFP (NEXT).  Undated rows get the same windows from
+# their calendar date; rows without any date are HISTORY.
+LIFECYCLE_TIERS = ("NOW", "NEXT", "RECENT", "LATER", "MONITORING", "HORIZON", "HISTORY")
+TIER_RANK = {tier: index for index, tier in enumerate(LIFECYCLE_TIERS)}
+HERO_TIERS = ("NOW", "NEXT")
+TIER_LABEL_JA = {"NOW": "いま", "NEXT": "次", "RECENT": "直近", "LATER": "この先",
+                 "MONITORING": "結果待ち(監視)", "HORIZON": "先々", "HISTORY": "履歴"}
+_HOUR = 3600.0
+_DAY = 86400.0
+RESULT_SLA_HOURS = 3.0
+
+
+def lifecycle_tier(*, event_epoch: Optional[float], now_epoch: float,
+                   importance: str, actual_available: bool = False) -> str:
+    """Deterministic lifecycle tier from the event instant and the clock."""
+    if event_epoch is None:
+        return "HISTORY"
+    delta = float(event_epoch) - float(now_epoch)
+    strong = str(importance or "").lower() in ("critical", "high")
+    if delta >= 0:
+        if delta <= _DAY:
+            return "NOW" if strong else "NEXT"
+        if delta <= 7 * _DAY:
+            return "NEXT"
+        if delta <= 30 * _DAY:
+            return "LATER"
+        if delta <= 60 * _DAY:
+            return "HORIZON"
+        return "HORIZON"
+    age = -delta
+    if age <= _DAY:
+        if strong and (actual_available or age <= RESULT_SLA_HOURS * _HOUR):
+            return "NOW"
+        if not actual_available:
+            return "MONITORING"
+        return "RECENT"
+    if age <= 3 * _DAY:
+        return "RECENT" if actual_available else "MONITORING"
+    return "HISTORY"
+
+
+def lifecycle_tier_from_days(days: int, *, importance: str, actual_available: bool = False) -> str:
+    """Day-granular tier from the schedule's own daysUntil (negative = released)."""
+    strong = str(importance or "").lower() in ("critical", "high")
+    if days >= 0:
+        if days <= 1:
+            return "NOW" if strong else "NEXT"
+        if days <= 7:
+            return "NEXT"
+        if days <= 30:
+            return "LATER"
+        return "HORIZON"
+    age_days = -days
+    if age_days <= 1:
+        if strong and actual_available:
+            return "NOW"
+        return "MONITORING" if not actual_available else "RECENT"
+    if age_days <= 3:
+        return "RECENT" if actual_available else "MONITORING"
+    return "HISTORY"
+
+
+_IMPORTANCE_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+_RELEVANCE_RANK = {"critical": 0, "high": 1, "medium": 2, "normal": 3}
+
+
+def canonical_rank_key(*, tier: str, importance: str, owner_relevance: Optional[str],
+                       event_epoch: Optional[float], now_epoch: float,
+                       result_available: bool, event_id: str):
+    """One ranking contract for every consumer.
+
+    lifecycle tier → importance → owner relevance → time distance (upcoming
+    soonest first, completed newest first) → completeness → stable id.
+    """
+    if event_epoch is None:
+        distance = float("inf")
+    else:
+        distance = abs(float(event_epoch) - float(now_epoch))
+    return (
+        TIER_RANK.get(tier, len(LIFECYCLE_TIERS)),
+        _IMPORTANCE_RANK.get(str(importance or "").lower(), 9),
+        _RELEVANCE_RANK.get(str(owner_relevance or "normal").lower(), 9),
+        distance,
+        0 if result_available else 1,
+        str(event_id or ""),
+    )
 
 
 def lifecycle_state(days: Optional[int]) -> str:
@@ -230,7 +330,62 @@ def build_important_events(events: List[Dict[str, Any]], owner_symbols=None,
             "actual": None,
             "releasedAt": None,
         })
-    rank = IMPACT_RANK
-    out.sort(key=lambda x: (-rank.get(x["displayImpact"], 0), -x["priorityScore"],
-                            x["daysUntil"] if x["daysUntil"] is not None else 999))
-    return out[:limit]
+    # v13.5.51: canonical lifecycle tier + rank key (shared with the dashboard
+    # summary), applied BEFORE the presentation limit.  HISTORY rows never
+    # enter the bounded owner surface.
+    now_epoch = _now_epoch_from_ctx(ctx)
+    for row in out:
+        epoch = _row_epoch(row)
+        # The schedule snapshot already carries daysUntil relative to ITS clock;
+        # prefer it so the tier never depends on a caller-supplied clock drifting
+        # from the snapshot (and stays deterministic for replayed snapshots).
+        days = row.get("daysUntil")
+        if isinstance(days, int) and not isinstance(days, bool):
+            row["lifecycleTier"] = lifecycle_tier_from_days(
+                days, importance=row["displayImpact"], actual_available=bool(row.get("actual")))
+            epoch = now_epoch + days * _DAY
+        else:
+            row["lifecycleTier"] = lifecycle_tier(
+                event_epoch=epoch, now_epoch=now_epoch, importance=row["displayImpact"],
+                actual_available=bool(row.get("actual")))
+        row["lifecycleTierJa"] = TIER_LABEL_JA[row["lifecycleTier"]]
+        row["_rank"] = canonical_rank_key(
+            tier=row["lifecycleTier"], importance=row["displayImpact"],
+            owner_relevance=row.get("ownerRelevance"), event_epoch=epoch,
+            now_epoch=now_epoch, result_available=bool(row.get("actual")),
+            event_id=str(row.get("eventId") or ""))
+    out.sort(key=lambda row: row["_rank"])
+    for row in out:
+        row.pop("_rank", None)
+    current = [row for row in out if row["lifecycleTier"] != "HISTORY"]
+    return current[:limit]
+
+
+def _row_epoch(row: Dict[str, Any]) -> Optional[float]:
+    """UTC epoch of the row's release instant (time when known, else the date)."""
+    raw = row.get("eventTimeUtc")
+    if raw:
+        try:
+            return datetime.strptime(str(raw)[:19], "%Y-%m-%dT%H:%M:%S").replace(
+                tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            pass
+    date = row.get("date") or row.get("eventDate")
+    if date:
+        try:
+            return datetime.strptime(str(date)[:10], "%Y-%m-%d").replace(
+                tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            return None
+    return None
+
+
+def _now_epoch_from_ctx(ctx: Optional[Dict[str, Any]]) -> float:
+    raw = (ctx or {}).get("nowIso") or (ctx or {}).get("now")
+    if raw:
+        try:
+            return datetime.strptime(str(raw)[:19], "%Y-%m-%dT%H:%M:%S").replace(
+                tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            pass
+    return datetime.now(timezone.utc).timestamp()

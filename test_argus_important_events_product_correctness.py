@@ -163,26 +163,23 @@ def test_production_shaped_ordering_is_correct_before_limit(monkeypatch):
     full_ids = [item["eventId"] for item in full]
     bounded_ids = [item["eventId"] for item in bounded]
 
+    # v13.5.51 canonical lifecycle: tomorrow-ish NFP (NEXT) leads; the 08-26
+    # releases (59h old, results in) are RECENT; everything older is HISTORY
+    # and leaves the current surface (a released PCE never outranks NFP).
     expected = [
-        "us-pce-2026-08-26",
-        "us-gdp-2026-08-26",
         "us-nfp-2026-09-04",
-        "us-cpi-2026-08-12",
-        "us-nfp-2026-08-07",
-        "us-pce-2026-07-30",
-        "us-gdp-2026-07-30",
-        "us-fomc-2026-07-29",
+        "us-gdp-2026-08-26",
+        "us-pce-2026-08-26",
     ]
-    assert full_ids[:8] == expected
-    assert bounded_ids == full_ids[:8] == expected
-    assert bounded[0]["importance"] == "high"
-    assert bounded[0]["eventTimeUtc"] == "2026-08-26T12:30:00Z"
-    assert bounded[0]["state"] == "post_result"
-    assert bounded[0]["officialResult"]["available"] is True
-    assert bounded[0]["caos"]["verdict"] == "not_scoreable"
+    assert full_ids == expected
+    assert bounded_ids == full_ids == expected
+    assert bounded[0]["lifecycleTier"] == "NEXT" and bounded[0]["isHero"] is True
+    assert bounded[0]["importance"] == "high" and bounded[0]["state"] == "pre"
+    assert bounded[1]["lifecycleTier"] == "RECENT" and bounded[1]["isHero"] is False
+    assert bounded[1]["state"] == "post_result" and bounded[1]["officialResult"]["available"] is True
+    assert bounded[2]["caos"]["verdict"] == "not_scoreable"
     assert "us-cpi-2026-07-14" not in bounded_ids
     assert not any("treasury-auction" in event_id for event_id in bounded_ids)
-
     completed_times = [item["eventTimeUtc"] or item["eventDate"]
                        for item in full if item["state"] != "pre"]
     assert completed_times == sorted(completed_times, reverse=True)
@@ -204,8 +201,10 @@ def test_optional_ai_analysis_cannot_change_importance_or_order(monkeypatch):
     _, after, _ = scanner._build_dashboard_events(limit=20)
 
     assert [item["eventId"] for item in after] == before_ids
-    assert after[0]["importance"] == "high"
-    assert after[0]["state"] == "post_answer_checked"
+    pce_after = next(item for item in after if item["eventId"] == "us-pce-2026-08-26")
+    assert pce_after["importance"] == "high"
+    assert pce_after["state"] == "post_answer_checked"
+    assert after[0]["eventId"] == "us-nfp-2026-09-04"            # AI completeness never moves the hero
 
 
 def test_high_pending_result_is_fail_visible_ahead_of_old_complete_event():
@@ -250,5 +249,33 @@ def test_undated_stale_pre_cannot_crow_a_bounded_response():
 
     out = DS.build_summary(important_events=[], macro_records=[undated, *valid],
                            now_iso=NOW, limit=8)
-    assert len(out["items"]) == 8
-    assert "legacy-treasury-row" not in [item["eventId"] for item in out["items"]]
+    ids = [item["eventId"] for item in out["items"]]
+    assert "legacy-treasury-row" not in ids                       # undated → HISTORY, never current
+    assert ids and all(item["lifecycleTier"] != "HISTORY" for item in out["items"])
+    assert ids[0] == "us-valid-2026-08-27"                        # newest completed first
+    assert out["dedupe"]["historyCount"] >= 1
+    assert all(item["isHero"] is False for item in out["items"])  # RECENT is secondary only
+
+
+
+def test_lifecycle_tiers_age_out_and_hero_prefers_next_over_released():
+    IE = __import__("argus_important_events")
+    now = 1_000_000_000.0
+    day = 86400.0
+    assert IE.lifecycle_tier(event_epoch=now + 0.5 * day, now_epoch=now, importance="high") == "NOW"
+    assert IE.lifecycle_tier(event_epoch=now + 0.5 * day, now_epoch=now, importance="medium") == "NEXT"
+    assert IE.lifecycle_tier(event_epoch=now + 3 * day, now_epoch=now, importance="high") == "NEXT"
+    assert IE.lifecycle_tier(event_epoch=now + 12 * day, now_epoch=now, importance="high") == "LATER"
+    assert IE.lifecycle_tier(event_epoch=now + 45 * day, now_epoch=now, importance="high") == "HORIZON"
+    assert IE.lifecycle_tier(event_epoch=now - 2 * 3600, now_epoch=now, importance="high", actual_available=True) == "NOW"
+    assert IE.lifecycle_tier(event_epoch=now - 5 * 3600, now_epoch=now, importance="high", actual_available=False) == "MONITORING"
+    assert IE.lifecycle_tier(event_epoch=now - 2 * day, now_epoch=now, importance="high", actual_available=True) == "RECENT"
+    assert IE.lifecycle_tier(event_epoch=now - 8 * day, now_epoch=now, importance="critical", actual_available=True) == "HISTORY"
+    assert IE.lifecycle_tier(event_epoch=None, now_epoch=now, importance="high") == "HISTORY"
+    nfp = IE.canonical_rank_key(tier="NEXT", importance="high", owner_relevance="normal",
+                                event_epoch=now + day, now_epoch=now, result_available=False, event_id="nfp")
+    pce = IE.canonical_rank_key(tier="RECENT", importance="critical", owner_relevance="critical",
+                                event_epoch=now - 2 * day, now_epoch=now, result_available=True, event_id="pce")
+    assert nfp < pce                                               # tier precedes importance/relevance
+    assert IE.lifecycle_tier_from_days(1, importance="high") == "NOW"
+    assert IE.lifecycle_tier_from_days(-5, importance="high", actual_available=True) == "HISTORY"
