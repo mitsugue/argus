@@ -358,3 +358,13 @@ the Tachibana deployment.
   each interest issuer's latest `/fins/statements` rows (2 pages) so the
   ARGUS-derived valuation has forecast EPS beyond the 14-day SHO window.
 - `japaneseLive.productBoot` exposes a bounded, symbol-free warm summary.
+
+## v13.5.46 — per-issuer statements retry (SIG-04)
+
+- Production after v13.5.45 showed `statementsFetched: 0`: `/fins/statements?code=`
+  returns the issuer's full history and the 2-page bound raised
+  `jquants_pagination_limit`, swallowed silently. The fetch now allows 8
+  pages, runs for up to 6 pending issuers per 10-minute cycle until every
+  interest issuer is covered (refreshed with the 4-hourly SHO warm), and
+  records the last failure class (`statementsErrorClass`,
+  `referenceErrorClass`) in `japaneseLive.productBoot`.

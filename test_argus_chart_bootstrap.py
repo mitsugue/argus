@@ -235,3 +235,42 @@ def test_warm_cycle_warms_curated_reference_and_statements_when_offered():
     assert calls["stmt"] == ["5803"] and warm["statementsFetched"] == 1
     evidence = val.current_evidence()
     assert evidence["status"] == "AVAILABLE" and evidence["coverage"] == 1   # per-code statements merged
+
+
+
+def test_statements_fetch_is_retried_across_cycles_and_records_failures():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    host = _host([("5803", "JP")], set())
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+    host._JP_WATCHLIST = [{"symbol": s} for s in ("8058", "9984", "5801", "6584", "285A", "9501", "7203", "6965")]
+    attempts = []
+
+    def _stmt(path, params, max_pages=8, request_timeout=8):
+        attempts.append(params["code"])
+        if params["code"] == "9984":
+            raise RuntimeError("jquants_pagination_limit")
+        return [{"LocalCode": params["code"] + "0", "DisclosedDate": "2026-08-10", "ForecastEarningsPerShare": "100"}]
+
+    host._jquants_paginated = _stmt
+    host._jq_price_history = lambda code: {"closes": [1000.0]}
+    host._us_price_history = lambda code: None
+    host._sho_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    host._SHO_STATEMENTS_CACHE = {"rows": [], "source": "jquants"}
+    host._JQ_HISTORY_CACHE = {c: {"data": {"closes": [1000.0]}} for c in ("5803", "8058", "9984", "5801", "6584", "285A", "9501", "7203", "6965")}
+    boot._STATE["warmMaxCycles"] = 2
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    warm = boot.warm_status()
+    assert warm["cycles"] == 2
+    assert len(attempts) == 9 and len(set(attempts)) == 9          # 6 first cycle + 3 second, no repeats
+    assert warm["statementsFetched"] == 8                           # 9984 failed, recorded, not retried
+    assert warm["statementsErrorClass"].startswith("RuntimeError:jquants_pagination")
+    assert warm["referenceErrorClass"] == "us:empty"
+    evidence = val.current_evidence()
+    assert evidence["status"] == "AVAILABLE" and evidence["coverage"] == 8
+    assert boot.warm_status_safe()["statementsErrorClass"] == warm["statementsErrorClass"]
