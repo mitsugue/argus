@@ -213,3 +213,50 @@ const withoutBoard = strategy.deriveStrategy(asset, undefined,
   { price: 9000, changePct: 1.12, volume: 1, date: '2026-09-03', status: 'live' }, undefined, nowMs);
 assert.ok(withoutBoard.dataLimitations[0].includes('未取得'));
 console.log('tachibana-live.test: Asset Detail board (VWAP/板) from Tachibana evidence ok');
+
+// ── v13.5.42: CLOSED session vocabulary, board baseline, chart current point ──
+const closedDoc = {
+  provider: 'TACHIBANA', status: 'CLOSED', enabled: true, lastAuthResult: 'PASS',
+  updatedAt: '2026-09-03T07:35:00+00:00', marketPhase: 'CLOSED',
+  symbols: {
+    '5803': { provider: 'TACHIBANA', price: 12000, previousClose: 11900, changePct: 0.84, volume: 5000000,
+      vwap: 11950.5, bestBid: 11990, bestAsk: 12010, bidQty: 100, askQty: 200,
+      freshness: 'DELAYED', marketStatus: 'CLOSED', sourceTimestamp: '2026-09-03T06:30:00+00:00' },
+  },
+};
+const closedView = tl.tachibanaLiveView(closedDoc);
+assert.equal(closedView.status, 'CLOSED');
+assert.equal(closedView.statusJa, '市場クローズ');
+assert.ok(closedView.reasonJa.includes('接続確認済'));
+assert.ok(glossary.GLOSSARY[closedView.glossaryKey], 'CLOSED needs a glossary entry');
+// lamp: provider healthy + market closed → green, never UNAVAILABLE, never moomoo text
+const closedHealth = tl.applyTachibanaHealthOverlay(backendHealth, closedDoc, nowMs);
+const closedLamp = closedHealth.lamps.find((l) => l.key === 'jp_realtime');
+assert.equal(closedLamp.status, 'ok');
+assert.ok(closedLamp.detailJa.includes('市場クローズ') && closedLamp.detailJa.includes('5803'));
+assert.ok(!closedLamp.detailJa.includes('moomoo'));
+// CLOSED baseline never overlays price/provider (no false LIVE) but attaches the board
+const jpClosedSnapshot = { status: 'delayed', stocks: [
+  { symbol: '5803', price: 11800, status: 'delayed', provider: 'jquants', quoteTruth: { delayClass: 'DELAYED' } },
+  { symbol: '7203', price: 2900, status: 'delayed', provider: 'jquants' } ] };
+const closedOverlay = tl.overlayTachibanaLive(jpClosedSnapshot, closedDoc, nowMs);
+const fujikura = closedOverlay.stocks.find((r) => r.symbol === '5803');
+assert.equal(fujikura.price, 11800);                 // row price untouched
+assert.equal(fujikura.provider, 'jquants');
+assert.equal(fujikura.tachibana.vwap, 11950.5);
+assert.equal(fujikura.tachibanaMarketStatus, 'CLOSED');
+assert.equal(closedOverlay.tachibanaBoardCount, 1);
+assert.equal(closedOverlay.tachibanaLiveCount, undefined);
+assert.equal(closedOverlay.status, 'delayed');
+assert.equal(closedOverlay.stocks.find((r) => r.symbol === '7203').tachibana, undefined);
+// chart current point: LIVE when current, CLOSED for the baseline, null otherwise
+const livePoint = tl.tachibanaCurrentPoint('9984', liveDoc, nowMs);
+assert.equal(livePoint.state, 'LIVE'); assert.equal(livePoint.price, 9000); assert.equal(livePoint.source, 'TACHIBANA');
+const closedPoint = tl.tachibanaCurrentPoint('5803', closedDoc, nowMs);
+assert.equal(closedPoint.state, 'CLOSED'); assert.equal(closedPoint.price, 12000);
+assert.equal(tl.tachibanaCurrentPoint('7203', closedDoc, nowMs), null);
+assert.equal(tl.tachibanaCurrentPoint('5803', { ...closedDoc, status: 'AUTH_FAILED' }, nowMs), null);
+const chartPanel = fs.readFileSync(path.join(src, "components", "chart", "ChartIntelligencePanel.tsx"), "utf8");
+assert.ok(chartPanel.includes('data-argus-contract="chart-current-point-v1"'), 'chart renders the current point');
+assert.ok(chartPanel.includes('現在値ソース: TACHIBANA'), 'chart names the current price source');
+console.log('tachibana-live.test: v13.5.42 CLOSED vocabulary, board baseline, chart current point ok');

@@ -80,3 +80,10 @@
   .ci-rs-row span:last-of-type { grid-column: 2 / -1; }
   .ci-toolbar { gap: 7px; }
 }
+
+/* v13.5.42: Tachibana current point (reference evidence, never a trade signal) */
+.ci-current-line { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.8; }
+.ci-marker--current { fill: var(--accent); stroke: var(--bg, #0b0f14); stroke-width: 1.5; }
+.ci-marker--closed { fill: var(--text-muted); }
+.ci-current-label { font-size: 12px; fill: var(--accent); }
+.ci-current-source { margin: 4px 0 0; font-size: 11px; color: var(--text-muted); }

@@ -8,7 +8,7 @@
 import { TACHIBANA_STATUS_GLOSSARY } from './glossary';
 
 export type TachibanaStatus =
-  | 'LIVE' | 'DEGRADED' | 'STALE' | 'UNAVAILABLE' | 'AUTH_FAILED' | 'MAINTENANCE' | 'DISABLED';
+  | 'LIVE' | 'DEGRADED' | 'STALE' | 'CLOSED' | 'UNAVAILABLE' | 'AUTH_FAILED' | 'MAINTENANCE' | 'DISABLED';
 
 export interface TachibanaLiveRow {
   symbol: string;
@@ -58,12 +58,12 @@ export interface TachibanaLiveView {
 }
 
 export const TACHIBANA_STATUS_JA: Record<TachibanaStatus, string> = {
-  LIVE: 'ライブ', DEGRADED: '一部', STALE: '古い', UNAVAILABLE: '欠測',
+  LIVE: 'ライブ', DEGRADED: '一部', STALE: '古い', CLOSED: '市場クローズ', UNAVAILABLE: '欠測',
   AUTH_FAILED: '認証失敗', MAINTENANCE: 'メンテナンス', DISABLED: '無効',
 };
 
 const STATUSES: ReadonlySet<string> = new Set(
-  ['LIVE', 'DEGRADED', 'STALE', 'UNAVAILABLE', 'AUTH_FAILED', 'MAINTENANCE', 'DISABLED']);
+  ['LIVE', 'DEGRADED', 'STALE', 'CLOSED', 'UNAVAILABLE', 'AUTH_FAILED', 'MAINTENANCE', 'DISABLED']);
 
 const num = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -75,6 +75,7 @@ function reasonFor(status: TachibanaStatus, doc: TachibanaLiveDocument | null, p
     case 'LIVE': return '現在の受理済み市場証拠あり（参考表示・売買権限なし）';
     case 'DEGRADED': return '一部銘柄のみ現在値';
     case 'STALE': return '鮮度期限切れ';
+    case 'CLOSED': return '接続確認済（認証・日付・価格 PASS）· 市場クローズ中は更新なし';
     case 'AUTH_FAILED': return `認証失敗（${(doc as { authBoundary?: string } | null)?.authBoundary ?? doc?.lastErrorClass ?? 'AUTH'}）`;
     case 'MAINTENANCE': return 'プロバイダーメンテナンス中';
     case 'DISABLED': return '提供元は無効化中';
@@ -229,6 +230,15 @@ export function tachibanaCurrentRows(
  * through `realtimeEvidence` + a ≤60 s exchange timestamp, and a rebuilt
  * `quoteTruth`.  Rows without current Tachibana evidence are untouched.
  */
+/** Symbols with a priced CLOSED-session baseline (auth/date/price proven, market closed). */
+export function tachibanaClosedRows(doc: TachibanaLiveDocument | null | undefined): Map<string, TachibanaLiveRow> {
+  const out = new Map<string, TachibanaLiveRow>();
+  const view = tachibanaLiveView(doc);
+  if (view.status !== 'CLOSED') return out;
+  for (const row of view.rows) if (row.price !== null) out.set(row.symbol.toUpperCase(), row);
+  return out;
+}
+
 export function overlayTachibanaLive<T extends OverlayableJpSnapshot>(
   snapshot: T | null | undefined,
   doc: TachibanaLiveDocument | null | undefined = liveDocument,
@@ -236,11 +246,21 @@ export function overlayTachibanaLive<T extends OverlayableJpSnapshot>(
 ): T | null | undefined {
   if (!snapshot || !Array.isArray(snapshot.stocks)) return snapshot;
   const current = tachibanaCurrentRows(doc, nowMs);
-  if (current.size === 0) return snapshot;
+  const closed = tachibanaClosedRows(doc);
+  if (current.size === 0 && closed.size === 0) return snapshot;
   let replaced = 0;
+  let boards = 0;
   const stocks = snapshot.stocks.map((row) => {
-    const live = current.get(String(row.symbol ?? '').toUpperCase());
-    if (!live) return row;
+    const key = String(row.symbol ?? '').toUpperCase();
+    const live = current.get(key);
+    if (!live) {
+      // CLOSED baseline: attach the board as reference evidence only — the
+      // row keeps its own price/provider/freshness (no false LIVE).
+      const closedRow = closed.get(key);
+      if (!closedRow) return row;
+      boards += 1;
+      return { ...row, tachibana: tachibanaBoardOf(closedRow), tachibanaMarketStatus: closedRow.marketStatus ?? 'CLOSED' };
+    }
     const receivedAt = live.receivedAt ?? new Date(nowMs).toISOString();
     const raw = {
       ...row,
@@ -279,13 +299,15 @@ export function overlayTachibanaLive<T extends OverlayableJpSnapshot>(
       tachibana: tachibanaBoardOf(live),
     };
   });
-  if (replaced === 0) return snapshot;
+  if (replaced === 0 && boards === 0) return snapshot;
+  if (replaced === 0) return { ...snapshot, stocks, tachibanaBoardCount: boards };
   const allLive = stocks.every((row) => row.status === 'live');
   return {
     ...snapshot,
     stocks,
     status: allLive ? 'live' : (snapshot.status === 'live' ? 'live' : 'mixed'),
     tachibanaLiveCount: replaced,
+    tachibanaBoardCount: boards,
   };
 }
 
@@ -319,6 +341,10 @@ export function tachibanaJpRealtimeLamp(
       return { status: 'warning', detailJa: `Tachibana 一部銘柄のみ現在値（${symbols || '—'}）` };
     case 'STALE':
       return { status: 'warning', detailJa: 'Tachibana 鮮度期限切れ（再取得待ち）' };
+    case 'CLOSED': {
+      const priced = view.rows.filter((r) => r.price !== null).map((r) => r.symbol).join('/');
+      return { status: 'ok', detailJa: `Tachibana 接続確認済 · 市場クローズ（${priced || '—'}）` };
+    }
     case 'AUTH_FAILED': {
       const boundary = (doc as { authBoundary?: unknown } | null | undefined)?.authBoundary;
       const code = typeof boundary === 'string' && boundary ? boundary : (doc?.lastErrorClass ?? 'AUTH');
@@ -358,4 +384,28 @@ export function applyTachibanaHealthOverlay<T extends OverlayableSystemHealth>(
   });
   if (!found) lamps.push({ key: JP_REALTIME_LAMP_KEY, labelJa: 'JP realtime', ...lamp });
   return { ...health, lamps, overall: overallFromLamps(lamps), tachibanaOverlay: true };
+}
+
+// ── v13.5.42: chart current point ───────────────────────────────────────────
+export interface TachibanaCurrentPoint {
+  symbol: string; price: number; source: 'TACHIBANA';
+  state: 'LIVE' | 'CLOSED' | 'DELAYED' | 'STALE'; sourceTimestamp: string | null; freshness: string;
+}
+
+/** Current price point for a chart marker: LIVE when current, CLOSED for the closed-session baseline. */
+export function tachibanaCurrentPoint(
+  symbol: string, doc: TachibanaLiveDocument | null | undefined = liveDocument, nowMs = Date.now(),
+): TachibanaCurrentPoint | null {
+  const key = symbol.toUpperCase();
+  const live = tachibanaCurrentRows(doc, nowMs).get(key);
+  if (live && live.price !== null) {
+    return { symbol: key, price: live.price, source: 'TACHIBANA', state: 'LIVE',
+      sourceTimestamp: live.sourceTimestamp, freshness: live.freshness };
+  }
+  const closed = tachibanaClosedRows(doc).get(key);
+  if (closed && closed.price !== null) {
+    return { symbol: key, price: closed.price, source: 'TACHIBANA', state: 'CLOSED',
+      sourceTimestamp: closed.sourceTimestamp, freshness: closed.freshness };
+  }
+  return null;
 }

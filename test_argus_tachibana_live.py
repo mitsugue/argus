@@ -337,3 +337,84 @@ def test_secret_file_diagnostics_report_key_shape_without_contents(tmp_path):
     assert body[:16] not in serialized and "abc123" not in serialized
     pk.write_bytes(b"garbage")
     assert live.secret_file_diagnostics(config)["privateKey"]["keyShape"]["parsed"] == "FAILED"
+
+
+# ── v13.5.42: closed-session probe + CLOSED status ─────────────────────────
+CLOSED_NOW = datetime(2026, 9, 3, 16, 30, tzinfo=TOKYO).astimezone(timezone.utc)
+
+
+class _ProbeRuntime(_FakeRuntime):
+    def __init__(self, config, *, symbols, fail=None):
+        super().__init__(config, symbols=symbols, fail=fail)
+        self.sensor = _FakeSensor({})
+        self._price_observations = {}
+
+    def start(self):
+        super().start()
+        obs = _observation("8058", now=CLOSED_NOW)
+        closed = TachibanaObservation(**{**obs.__dict__, "market_status": MarketStatus.CLOSED,
+                                         "freshness": Freshness.DELAYED})
+        self._price_observations = {"8058": closed}
+
+    def initial_read_diagnostics_safe_dict(self):
+        return {"providerDate": {"stage": "PROVIDER_DATE", "classification": "PASS", "sCLMID": "x"},
+                "priceBaseline": {"stage": "PRICE_BASELINE_NORMALIZE", "classification": "PASS"}}
+
+
+def test_closed_session_probe_proves_auth_date_price_and_reports_closed():
+    config = TachibanaConfig.from_env({"ARGUS_TACHIBANA_ENABLED": "true"})
+    sleeps = []
+    service = live.TachibanaLiveService(
+        config_loader=lambda env=None: config, runtime_factory=_ProbeRuntime,
+        lease_factory=_FakeLease, clock=lambda: CLOSED_NOW,
+        sleeper=lambda seconds: sleeps.append(seconds), symbols=("8058",))
+    service._config = config
+    assert live.in_live_window(CLOSED_NOW) is False
+    assert service._probe_due(CLOSED_NOW) is True
+    service._run_closed_probe(config, ("8058",))
+    runtime = _FakeRuntime.instances[-1]
+    assert runtime.started == 1 and runtime.stopped == 1          # logout after the probe
+    evidence = service.current_evidence_safe(CLOSED_NOW)
+    assert evidence["status"] == "CLOSED"
+    assert evidence["lastAuthResult"] == "PASS" and evidence["authAttempts"] == 1
+    assert evidence["authBoundary"] == "AUTH_SUCCESS" or evidence["lastErrorClass"] is None
+    probe = evidence["closedSessionProbe"]
+    assert probe["result"] == "PASS" and probe["stages"]["providerDate"]["classification"] == "PASS"
+    assert "sCLMID" not in json.dumps(probe)                      # names/classes only
+    row = evidence["symbols"]["8058"]
+    assert row["price"] == 3500.0 and row["marketStatus"] == "CLOSED"
+    # not due again for 4h on success; the idle path keeps the closed rows
+    assert service._probe_due(CLOSED_NOW + timedelta(hours=1)) is False
+    assert service._probe_due(CLOSED_NOW + timedelta(hours=5)) is True
+    service._set_idle(keep_rows=True)
+    assert service.current_evidence_safe(CLOSED_NOW)["status"] == "CLOSED"
+    service._set_idle()
+    assert service.current_evidence_safe(CLOSED_NOW)["status"] == "UNAVAILABLE"
+
+
+def test_closed_session_probe_failure_is_truthful_and_bounded():
+    config = TachibanaConfig.from_env({"ARGUS_TACHIBANA_ENABLED": "true"})
+    service = live.TachibanaLiveService(
+        config_loader=lambda env=None: config,
+        runtime_factory=lambda cfg, *, symbols: _ProbeRuntime(cfg, symbols=symbols, fail=ErrorClass.AUTH_REJECTED),
+        lease_factory=_FakeLease, clock=lambda: CLOSED_NOW, sleeper=lambda s: None, symbols=("8058",))
+    service._config = config
+    service._run_closed_probe(config, ("8058",))
+    evidence = service.current_evidence_safe(CLOSED_NOW)
+    assert evidence["status"] == "AUTH_FAILED" and evidence["lastAuthResult"] == "FAIL"
+    assert evidence["closedSessionProbe"]["result"] == "FAIL"
+    assert service._probe_due(CLOSED_NOW + timedelta(minutes=10)) is False   # 30 min retry hold
+    assert service._probe_due(CLOSED_NOW + timedelta(minutes=31)) is True
+    assert _FakeRuntime.instances[-1].stopped == 1
+
+
+def test_derive_status_closed_requires_probe_and_rows_outside_window():
+    rows = {"8058": {"freshness": "DELAYED", "price": 1.0}}
+    assert live.derive_status(enabled=True, running=False, last_error_class=None, rows=rows,
+                              provider_health="AVAILABLE", in_window=False, closed_probe_ok=True) == "CLOSED"
+    assert live.derive_status(enabled=True, running=False, last_error_class=None, rows=rows,
+                              provider_health="AVAILABLE", in_window=False) == "UNAVAILABLE"
+    assert live.derive_status(enabled=True, running=False, last_error_class=None, rows={},
+                              provider_health="AVAILABLE", in_window=False, closed_probe_ok=True) == "UNAVAILABLE"
+    assert live.derive_status(enabled=True, running=True, last_error_class=None, rows=rows,
+                              provider_health="AVAILABLE", in_window=True, closed_probe_ok=True) == "DEGRADED"

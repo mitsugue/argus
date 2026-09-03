@@ -1,6 +1,9 @@
 import { useSyncExternalStore } from 'react';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
-import { setTachibanaLiveDocument } from '../domain/tachibanaLive';
+import {
+  getTachibanaLiveDocument, setTachibanaLiveDocument, subscribeTachibanaLive,
+} from '../domain/tachibanaLive';
+import type { TachibanaLiveDocument } from '../domain/tachibanaLive';
 
 // Decision Evidence (v13.5.13) — canonical artifact references for the device
 // SDA, served by /api/argus/decision-evidence. The payload carries verified
@@ -164,4 +167,9 @@ export function useDecisionEvidence(): DecisionEvidenceState {
     decisionEvidenceStore.getSnapshot,
     decisionEvidenceStore.getSnapshot,
   );
+}
+
+/** v13.5.42: the latest Tachibana evidence document, re-rendering on publish. */
+export function useTachibanaLiveDocument(): TachibanaLiveDocument | null {
+  return useSyncExternalStore(subscribeTachibanaLive, getTachibanaLiveDocument, getTachibanaLiveDocument);
 }

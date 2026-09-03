@@ -157,6 +157,10 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
     term: '古い',
     explanationJa: '受信した値の鮮度期限が切れています。現在値としては扱いません。',
   },
+  tachibana_closed: {
+    term: '市場クローズ',
+    explanationJa: '立花証券への認証・日付・価格の読取は本番で確認済みで、いまは市場が閉まっているため更新がない状態。提供元の可用性と市場の開閉を分けて表示します。',
+  },
   tachibana_unavailable: {
     term: '欠測',
     explanationJa: '現在、立花証券からライブ値を受け取れていません（セッション外・未接続・取得失敗）。値を推定しません。',
@@ -191,7 +195,7 @@ export const FAMILY_STATE_GLOSSARY: Record<string, string> = {
 };
 
 export const TACHIBANA_STATUS_GLOSSARY: Record<string, string> = {
-  LIVE: 'tachibana_live', DEGRADED: 'tachibana_degraded', STALE: 'tachibana_stale',
+  LIVE: 'tachibana_live', DEGRADED: 'tachibana_degraded', STALE: 'tachibana_stale', CLOSED: 'tachibana_closed',
   UNAVAILABLE: 'tachibana_unavailable', AUTH_FAILED: 'tachibana_auth_failed',
   MAINTENANCE: 'tachibana_maintenance', DISABLED: 'tachibana_disabled',
 };
