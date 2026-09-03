@@ -232,7 +232,7 @@ def test_warm_cycle_warms_curated_reference_and_statements_when_offered():
     boot._STATE["thread"].join(timeout=5)
     warm = boot.warm_status()
     assert calls["curated"] == 1 and warm["curatedWarmedAt"]
-    assert "1321" in calls["jq"] and calls["us"] == ["SPY"] and warm["referenceWarmed"] == 2
+    assert "1321" in calls["jq"] and calls["us"] == ["SPY"] and warm["referenceWarmed"] == 2   # no TD seam → Finnhub fallback
     assert calls["stmt"] == ["5803"] and warm["statementsFetched"] == 1
     assert warm["statementsPath"] == "/fins/summary"
     assert host._SHO_STATEMENTS_CACHE["source"] == "jquants_v2_summary_boot"
@@ -309,3 +309,25 @@ def test_statements_fall_back_to_the_v1_path_and_stay_missing_when_nothing_fetch
     assert warm["statementsErrorClass"].startswith("/fins/statements:RuntimeError:jquants_http_403")
     assert host._SHO_STATEMENTS_CACHE["source"] == "no_universe_disclosures"   # host cache untouched
     assert val.statements_state()["warmedAt"] is None             # D07 stays MISSING, not NOT_APPLICABLE
+
+
+
+def test_us_reference_prefers_the_twelve_data_history_cache():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    host = _host([("5803", "JP")], set())
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+    calls = []
+    host._td_price_history = lambda code: (calls.append(("td", code)) or {"closes": [1.0]})
+    host._us_price_history = lambda code: (calls.append(("finnhub", code)) or None)
+    host._jq_price_history = lambda code: {"closes": [1.0]}
+    host._sho_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    boot._STATE["warmMaxCycles"] = 1
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    warm = boot.warm_status()
+    assert calls == [("td", "SPY")] and warm["referenceWarmed"] == 2 and warm["referenceErrorClass"] is None
