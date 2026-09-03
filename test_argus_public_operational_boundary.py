@@ -175,7 +175,7 @@ def test_route_catalog_matches_every_flask_rule_and_is_fail_closed():
     )
     assert catalog.ROUTE_CATALOG_VALIDATION_ERRORS == ()
     assert catalog.route_contract_keys() == actual
-    assert len(catalog.ROUTE_CATALOG) == len(actual) == 172
+    assert len(catalog.ROUTE_CATALOG) == len(actual) == 173
     assert Counter(row.trustDomain for row in catalog.ROUTE_CATALOG) == {
         "PUBLIC": 69,
         "AUTH_OPERATIONAL": 94,
