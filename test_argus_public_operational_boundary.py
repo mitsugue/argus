@@ -1319,3 +1319,11 @@ def test_jp_realtime_lamp_is_emitted_in_both_bridge_branches():
     source = inspect.getsource(scanner)
     assert source.count('tachibana_lamp = _tachibana_jp_realtime_lamp()') == 2
     assert source.count('L("jp_realtime", "JP realtime", tachibana_lamp[0], tachibana_lamp[1])') == 2
+
+
+
+def test_sho_statements_feed_uses_jquants_v2_summary_path():
+    """RECOVERY_ONLY v13.5.48: the V1 /fins/statements path answers 403 since 2026-06-01."""
+    import inspect, scanner
+    source = inspect.getsource(scanner._sho_statements_rows)
+    assert '"/fins/summary"' in source and '"/fins/statements"' not in source
