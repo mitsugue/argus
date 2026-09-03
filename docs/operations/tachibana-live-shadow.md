@@ -390,3 +390,20 @@ the Tachibana deployment.
 - The SIG-03 proxy reads the Twelve Data history cache for SPY; the boot warm
   now fills that cache first (`_td_price_history`) and falls back to the
   Finnhub fetcher only when absent.
+
+## v13.5.49 — US / crypto charts, Japanese event titles, hourly translation drain
+
+- **US charts:** only the four curated US names had daily bars; the owner's
+  other US symbols had no Twelve Data history → `expected_skip`. The boot
+  warm now keeps a US interest registry (curated + device-requested) and
+  fills the Twelve Data history cache for it.
+- **Crypto charts:** the chart route had no crypto history at all. Crypto
+  daily bars are fetched as Twelve Data pairs (`BTC/USD` …) and aliased
+  under the bare asset symbol the device uses, so the asset chart renders.
+- **Japanese event titles:** important macro events carried English titles
+  by source vocabulary; `eventTitleJa` maps them deterministically (code +
+  known title patterns; unknown titles are never invented).
+- **Translation drain:** the visible-first headline translation queue is
+  drained hourly from the boot warm (cap 20, same host function and AI
+  budget as the cron path; kill switch `ARGUS_BOOT_TRANSLATE=0`), so an
+  English headline does not sit on the owner's screen for hours after close.

@@ -31,7 +31,7 @@
 .ie-row > summary {
   display: grid;
   grid-template-columns: 1fr auto;
-  grid-template-areas: "when when" "code impact";
+  grid-template-areas: "when when" "code impact" "title title";
   column-gap: 10px; row-gap: 2px; align-items: baseline;
   padding: 8px 0; cursor: pointer; list-style: none;
 }
@@ -66,3 +66,6 @@
   .ie-card:not(.is-expanded) .ie-rows .ie-row:nth-child(n+4) { display: none; }
   .ie-phase-grid { grid-template-columns: 1fr; }
 }
+
+/* v13.5.49: Japanese event title on its own grid row (owner surface names events in Japanese) */
+.ie-title-ja { grid-area: title; font-size: 13px; font-weight: 700; color: var(--text-main); line-height: 1.35; }

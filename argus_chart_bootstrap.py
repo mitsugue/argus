@@ -25,7 +25,7 @@ import argus_asset_chart_cache
 REQUIRED_HOST_ATTRS = ("_osint_restore_once", "_precompute_asset_chart_tick",
                        "_asset_chart_targets", "_ASSET_CHART_REPORTS")
 # v13.5.44: optional host seams for the boot warm (each is skipped when absent).
-WARM_HOST_ATTRS = ("_sho_pit_inputs", "_jq_price_history", "_DECISION_EVIDENCE_CACHE",
+WARM_HOST_ATTRS = ("_sho_pit_inputs", "_jq_price_history", "_td_price_history", "_DECISION_EVIDENCE_CACHE",
                    "_SD_EXTRA_SYMBOLS", "_JP_SEEN_SYMBOLS", "_JP_WATCHLIST",
                    "_SHO_STATEMENTS_CACHE", "_JP_CACHE", "_JQ_HISTORY_CACHE")
 INTEREST_MAX = 24
@@ -33,6 +33,8 @@ INTEREST_REFRESH_SECONDS = 600.0
 INTEREST_SCAN_SECONDS = 60.0
 INTEREST_TTL_SECONDS = 7 * 86400.0
 SHO_WARM_SECONDS = 4 * 3600.0
+TRANSLATE_SECONDS = 3600.0             # hourly visible-first headline translation drain
+TRANSLATE_CAP = 20
 VALUATION_STATEMENT_PAGES = 8        # the issuer's statements history is paginated
 # J-Quants V2 (V1 discontinued 2026-06-01): /fins/summary; the V1 path is kept
 # last only so a legacy host keeps working.  The first path that answers wins.
@@ -41,6 +43,12 @@ STATEMENTS_CACHE_SECONDS = 4 * 3600.0
 VALUATION_STATEMENTS_PER_CYCLE = 6   # bounded provider budget per 10-minute cycle
 REFERENCE_JP_HISTORY = ("1321",)         # SIG-03 proxy (1321 vs SPY)
 REFERENCE_US_HISTORY = ("SPY",)
+US_INTEREST_MAX = 16
+# Crypto daily bars come from Twelve Data pairs; the chart route reads the
+# history cache by the bare asset symbol the device uses.
+CRYPTO_PAIRS = {"BTC": "BTC/USD", "ETH": "ETH/USD", "SOL": "SOL/USD", "XRP": "XRP/USD",
+                "ADA": "ADA/USD", "DOGE": "DOGE/USD", "AVAX": "AVAX/USD", "LINK": "LINK/USD",
+                "DOT": "DOT/USD", "LTC": "LTC/USD", "BNB": "BNB/USD", "MATIC": "MATIC/USD"}
 DEFAULT_DELAY_SECONDS = 15.0
 DEFAULT_PER_SYMBOL_SECONDS = 45.0
 DEFAULT_PAUSE_SECONDS = 2.0
@@ -58,6 +66,8 @@ _STATE: Dict[str, Any] = {
              "statementsErrorClass": None, "referenceErrorClass": None,
              "statementsPath": None, "statementsPublished": 0},
     "interest": {},          # JP code -> last seen monotonic clock (product-side registry)
+    "interestUs": {},        # US symbol -> last seen monotonic clock
+    "interestCrypto": {},    # crypto asset symbol -> last seen monotonic clock
     "statements": {},        # JP code -> list of statement rows (bounded, 4h refresh)
 }
 
@@ -114,7 +124,8 @@ def _run(host: Any, *, delay_seconds: float, per_symbol_seconds: float,
         summary["status"] = "DONE"
         # v13.5.44: the boot warm (SHO inputs, interest history, derived
         # valuation) follows the chart pass in the same daemon thread.
-        _warm_loop(host, sleeper=sleeper, now=clock, max_cycles=_STATE.get("warmMaxCycles"))
+        _warm_loop(host, sleeper=sleeper, now=clock, max_cycles=_STATE.get("warmMaxCycles"),
+                   environ=_STATE.get("environ"))
     except Exception as exc:                       # pragma: no cover - defensive
         summary["status"] = "FAILED"
         summary["errorClass"] = type(exc).__name__
@@ -127,24 +138,47 @@ def _jp_code(value: Any) -> Optional[str]:
     return code if len(code) == 4 and code[0].isdigit() else None
 
 
+def _us_symbol(value: Any) -> Optional[str]:
+    code = str(value or "").strip().upper()
+    if code in CRYPTO_PAIRS or not code or not code[0].isalpha() or len(code) > 6:
+        return None
+    return code if all(ch.isalnum() or ch in ".-" for ch in code) else None
+
+
+def _crypto_symbol(value: Any) -> Optional[str]:
+    code = str(value or "").strip().upper()
+    return code if code in CRYPTO_PAIRS else None
+
+
 def scan_interest(host: Any, now: float) -> None:
     """Record the JP codes the owner's device recently sent to public routes
     (decision-evidence subjects, supply-demand extras, watchlist hints) into
     the product-side registry.  The host caches expire within minutes, so the
     registry (7-day TTL, bounded) is what the warm cycle reads."""
     registry = _STATE["interest"]
+    us_registry = _STATE["interestUs"]
+    crypto_registry = _STATE["interestCrypto"]
     cache = getattr(host, "_DECISION_EVIDENCE_CACHE", None)
     if isinstance(cache, dict):
         for key in list(cache.keys()):
             code = _jp_code(key)
             if code:
                 registry[code] = now
+            elif _crypto_symbol(key):
+                crypto_registry[_crypto_symbol(key)] = now
+            elif _us_symbol(key):
+                us_registry[_us_symbol(key)] = now
     extras = getattr(host, "_SD_EXTRA_SYMBOLS", None)
     if isinstance(extras, dict):
         for key, meta in list(extras.items()):
             code = _jp_code(key)
             if code and isinstance(meta, dict) and meta.get("market") == "JP":
                 registry[code] = now
+            elif isinstance(meta, dict) and meta.get("market") == "US" and _us_symbol(key):
+                us_registry[_us_symbol(key)] = now
+    for reg in (us_registry, crypto_registry):
+        for code in [c for c, seen_at in reg.items() if now - seen_at > INTEREST_TTL_SECONDS]:
+            reg.pop(code, None)
     seen = getattr(host, "_JP_SEEN_SYMBOLS", None)
     if isinstance(seen, dict):
         for key in list(seen.keys()):
@@ -176,6 +210,81 @@ def interest_symbols(host: Any, now: Optional[float] = None) -> list:
     for code in sorted(registry, key=lambda c: -registry[c]):
         add(code)
     return codes[:INTEREST_MAX]
+
+
+def us_interest_symbols(host: Any) -> list:
+    """Bounded US interest set: the curated US universe plus device-requested symbols."""
+    codes: list = []
+    for item in getattr(host, "_US_WATCHLIST", None) or []:
+        if isinstance(item, dict) and _us_symbol(item.get("symbol")):
+            codes.append(_us_symbol(item.get("symbol")))
+    registry = _STATE["interestUs"]
+    for code in sorted(registry, key=lambda c: -registry[c]):
+        if code not in codes:
+            codes.append(code)
+    return codes[:US_INTEREST_MAX]
+
+
+def crypto_interest_symbols() -> list:
+    """Device-requested crypto assets (bounded by the known pair table)."""
+    registry = _STATE["interestCrypto"]
+    return [c for c in sorted(registry, key=lambda c: -registry[c]) if c in CRYPTO_PAIRS][:8]
+
+
+def _drain_translations(host: Any, warm: Dict[str, Any], environ: Dict[str, str]) -> None:
+    """Hourly, bounded drain of the visible-first headline translation queue.
+
+    The cron path (macro-event-analysis) drains it every ~2 h; after hours an
+    English headline could stay on the owner's screen until then.  Same host
+    function, same AI budget accounting; kill switch ARGUS_BOOT_TRANSLATE=0.
+    """
+    if str(environ.get("ARGUS_BOOT_TRANSLATE", "1")).strip().lower() in ("0", "false", "off"):
+        warm["translate"] = {"status": "DISABLED"}
+        return
+    drain = getattr(host, "_translate_pending_headlines", None)
+    if drain is None:
+        return
+    try:
+        result = drain(cap=TRANSLATE_CAP, queue_first=True)
+        warm["translate"] = {"status": "OK", "translated": (result or {}).get("translated"),
+                             "pending": (result or {}).get("pending"),
+                             "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    except Exception as exc:
+        warm["translate"] = {"status": "FAILED", "errorClass": type(exc).__name__}
+
+
+def _warm_us_and_crypto(host: Any, warm: Dict[str, Any], sleeper: Callable[[float], None]) -> None:
+    """Daily bars for US interest symbols and crypto pairs (Twelve Data cache).
+
+    The chart route reads `_TD_HISTORY_CACHE[symbol]`; crypto is fetched as a
+    Twelve Data pair and aliased under the bare asset symbol the device uses.
+    """
+    fetcher = getattr(host, "_td_price_history", None)
+    cache = getattr(host, "_TD_HISTORY_CACHE", None)
+    if fetcher is None:
+        return
+    warmed_us = 0
+    for symbol in us_interest_symbols(host):
+        try:
+            if fetcher(symbol):
+                warmed_us += 1
+        except Exception as exc:
+            warm["usErrorClass"] = f"{symbol}:{type(exc).__name__}"
+        sleeper(1.0)
+    warm["usHistoryWarmed"] = warmed_us
+    warmed_crypto = 0
+    for asset in crypto_interest_symbols():
+        pair = CRYPTO_PAIRS[asset]
+        try:
+            data = fetcher(pair)
+        except Exception as exc:
+            warm["cryptoErrorClass"] = f"{asset}:{type(exc).__name__}"
+            continue
+        if data and isinstance(cache, dict) and isinstance(cache.get(pair), dict):
+            cache[asset] = dict(cache[pair])        # alias: route reads the bare symbol
+            warmed_crypto += 1
+        sleeper(1.0)
+    warm["cryptoHistoryWarmed"] = warmed_crypto
 
 
 def _prices_by_code(host: Any) -> Dict[str, float]:
@@ -265,6 +374,7 @@ def _warm_cycle(host: Any, *, sleeper: Callable[[float], None], now: Callable[[]
         elif not warm.get("referenceErrorClass"):
             warm["referenceErrorClass"] = "us:empty"
     warm["referenceWarmed"] = reference
+    _warm_us_and_crypto(host, warm, sleeper)
     # SIG-04 derived valuation needs each issuer's latest statements (the
     # 14-day SHO window rarely holds them).  Fetched per code, a bounded
     # number per cycle, retried on later cycles until every interest issuer
@@ -328,13 +438,15 @@ def _warm_cycle(host: Any, *, sleeper: Callable[[float], None], now: Callable[[]
 
 
 def _warm_loop(host: Any, *, sleeper: Callable[[float], None], now: Callable[[], float],
-               max_cycles: Optional[int]) -> None:
+               max_cycles: Optional[int], environ: Optional[Dict[str, str]] = None) -> None:
     warm = _STATE["warm"]
     if not any(hasattr(host, name) for name in WARM_HOST_ATTRS):
         warm["status"] = "HOST_UNSUPPORTED"
         return
     warm["status"] = "RUNNING"
+    env = dict(os.environ) if environ is None else dict(environ)
     last_sho = None
+    last_translate = None
     cycles = 0
     try:
         while True:
@@ -342,6 +454,9 @@ def _warm_loop(host: Any, *, sleeper: Callable[[float], None], now: Callable[[],
             _warm_cycle(host, sleeper=sleeper, now=now, force_sho=force)
             if force:
                 last_sho = now()
+            if last_translate is None or now() - last_translate >= TRANSLATE_SECONDS:
+                _drain_translations(host, warm, env)
+                last_translate = now()
             cycles += 1
             if max_cycles is not None and cycles >= max_cycles:
                 break
@@ -374,6 +489,7 @@ def ensure_started(host: Any = None, *, environ: Optional[Dict[str, str]] = None
             thread = _STATE["thread"]
             return "RUNNING" if thread is not None and thread.is_alive() else "DONE"
         _STATE["started"] = True
+        _STATE["environ"] = dict(env)
         thread = threading.Thread(
             target=_run, args=(host,),
             kwargs={"delay_seconds": delay_seconds, "per_symbol_seconds": per_symbol_seconds,
@@ -407,6 +523,9 @@ def warm_status_safe() -> Dict[str, Any]:
         "statementsErrorClass": warm.get("statementsErrorClass"),
         "statementsPath": warm.get("statementsPath"),
         "statementsPublished": warm.get("statementsPublished"),
+        "usHistoryWarmed": warm.get("usHistoryWarmed"), "usErrorClass": warm.get("usErrorClass"),
+        "translate": warm.get("translate"),
+        "cryptoHistoryWarmed": warm.get("cryptoHistoryWarmed"), "cryptoErrorClass": warm.get("cryptoErrorClass"),
         "referenceErrorClass": warm.get("referenceErrorClass"),
         "valuation": warm.get("valuation"), "errorClass": warm.get("errorClass"),
         "chart": {"status": _STATE["summary"].get("status"),
@@ -429,4 +548,6 @@ def _reset_for_tests() -> None:
                           "statementsPath": None, "statementsPublished": 0}
         _STATE["warmMaxCycles"] = None
         _STATE["interest"] = {}
+        _STATE["interestUs"] = {}
+        _STATE["interestCrypto"] = {}
         _STATE["statements"] = {}

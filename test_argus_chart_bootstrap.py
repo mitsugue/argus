@@ -331,3 +331,66 @@ def test_us_reference_prefers_the_twelve_data_history_cache():
     boot._STATE["thread"].join(timeout=5)
     warm = boot.warm_status()
     assert calls == [("td", "SPY")] and warm["referenceWarmed"] == 2 and warm["referenceErrorClass"] is None
+
+
+def test_us_and_crypto_interest_warm_fills_the_twelve_data_cache_with_aliases():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    host = _host([("5803", "JP")], set())
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+    host._US_WATCHLIST = [{"symbol": "NVDA"}, {"symbol": "AAPL"}]
+    host._DECISION_EVIDENCE_CACHE = {"AMD": {}, "BTC": {}, "6965": {}, "XRP": {}}
+    host._SD_EXTRA_SYMBOLS = {"PLTR": {"market": "US"}}
+    calls = []
+    host._TD_HISTORY_CACHE = {}
+
+    def _td(sym):
+        calls.append(sym)
+        host._TD_HISTORY_CACHE[sym] = {"data": {"closes": [1.0]}, "expires": 9e9}
+        return host._TD_HISTORY_CACHE[sym]["data"]
+
+    host._td_price_history = _td
+    host._jq_price_history = lambda code: {"closes": [1.0]}
+    host._sho_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    boot._STATE["warmMaxCycles"] = 1
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    warm = boot.warm_status()
+    assert warm["usHistoryWarmed"] == 4 and {"NVDA", "AAPL", "AMD", "PLTR"} <= set(calls)
+    assert warm["cryptoHistoryWarmed"] == 2 and {"BTC/USD", "XRP/USD"} <= set(calls)
+    assert host._TD_HISTORY_CACHE["BTC"]["data"]["closes"] == [1.0]      # alias for the chart route
+    assert "6965" not in calls and "BTC" not in calls                    # JP → J-Quants; crypto only as pair
+    safe = boot.warm_status_safe()
+    assert safe["usHistoryWarmed"] == 4 and safe["cryptoHistoryWarmed"] == 2
+
+
+def test_translation_drain_is_hourly_bounded_and_switchable():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    host = _host([("5803", "JP")], set())
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+    calls = []
+    host._translate_pending_headlines = lambda cap=60, queue_first=False: (calls.append((cap, queue_first)) or {"translated": 2, "pending": 2})
+    host._jq_price_history = lambda code: {"closes": [1.0]}
+    host._sho_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    boot._STATE["warmMaxCycles"] = 2
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    warm = boot.warm_status()
+    assert calls == [(20, True)]                              # once per hour, not per cycle
+    assert warm["translate"]["status"] == "OK" and warm["translate"]["translated"] == 2
+    boot._reset_for_tests()
+    calls.clear()
+    boot._STATE["warmMaxCycles"] = 1
+    boot.ensure_started(host, environ={"ARGUS_BOOT_TRANSLATE": "0"}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    assert calls == [] and boot.warm_status()["translate"] == {"status": "DISABLED"}

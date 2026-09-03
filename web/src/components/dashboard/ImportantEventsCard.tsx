@@ -1,4 +1,5 @@
 import React from 'react';
+import { eventTitleJa } from '../../domain/eventTitleJa';
 import { useImportantEvents, type ImportantEvent, type EventImpact } from '../../hooks/useImportantEvents';
 import { useMacroEventAnalysis, type MacroAnalysis } from '../../hooks/useMacroEventAnalysis';
 import { useDashboardEvents } from '../../hooks/useDashboardEvents';
@@ -148,6 +149,7 @@ const EventRow: React.FC<{ e: ImportantEvent; open: boolean; ai?: MacroAnalysis 
       <summary aria-label={`${e.eventCode}, ${impactLabel}, ${when}`}>
         <span className="ie-when">{when}</span>
         <span className="ie-code">{e.eventCode}</span>
+        <span className="ie-title-ja" data-argus-contract="event-title-ja-v1">{eventTitleJa(e.eventCode, e.title)}</span>
         <span className="ie-impact" style={{ color }} aria-hidden>{IMPACT_ICON[impact]} {impactLabel}</span>
       </summary>
       <div className="ie-body">
@@ -158,7 +160,7 @@ const EventRow: React.FC<{ e: ImportantEvent; open: boolean; ai?: MacroAnalysis 
         <p className="ie-line"><span className="ie-k">{t('ie.nextReview')}</span>{nextReview}</p>
         {ai && <CaosAnalysisBlock ai={ai} released={released} />}
         <p className="ie-data">{t('ie.forecast')}: {t('ie.unavailable')} · {t('ie.previous')}: {t('ie.unavailable')}{e.source ? ` · ${e.source}` : ''}</p>
-        <AskAIEvent code={e.eventCode} titleJa={e.title}
+        <AskAIEvent code={e.eventCode} titleJa={eventTitleJa(e.eventCode, e.title)}
           stateJa={released ? '発表済' : countdown} whyJa={novice}
           linkedAssets={e.linkedAssets || []} />
       </div>
@@ -211,6 +213,7 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
       <summary aria-label={`${ev.eventCode}, ${ds.released ? '発表済' : ev.stateLabelJa}, ${when}`}>
         <span className="ie-when">{when}</span>
         <span className="ie-code">{ev.eventCode}</span>
+        <span className="ie-title-ja" data-argus-contract="event-title-ja-v1">{eventTitleJa(ev.eventCode, ev.title)}</span>
         {ds.stampBoxed ? (
           // v11.5: clear boxed "発表済" stamp so it's obvious the event has printed.
           <span className="ie-stamp" style={{
@@ -265,7 +268,7 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
           <p className="ie-data">注目: {(c.assetsToWatch || []).join(' · ')} ・ AIシナリオはコンセンサスや売買指示ではありません</p>
         )}
         {/* v11.20.0: Event Review Pack copy(端末内合成・自動送信なし) */}
-        <AskAIEvent code={ev.eventCode} titleJa={ev.title}
+        <AskAIEvent code={ev.eventCode} titleJa={eventTitleJa(ev.eventCode, ev.title)}
           stateJa={ds.released ? '発表済' : ev.stateLabelJa || '発表前'}
           whyJa={c.preScenarioJa || c.summaryJa}
           linkedAssets={c.assetsToWatch || []} />
