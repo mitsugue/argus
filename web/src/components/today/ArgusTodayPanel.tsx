@@ -8,6 +8,7 @@ import { useDecisionEvidence } from '../../hooks/useDecisionEvidence';
 import { useMarketBrief } from '../../hooks/useMarketBrief';
 import { GlossaryTip } from '../common/GlossaryTip';
 import { REVERSAL_STATE_GLOSSARY, FAMILY_STATE_GLOSSARY } from '../../domain/glossary';
+import { marketSignalsView } from '../../domain/marketSignals';
 import { useNewsIntelligence } from '../../hooks/useNewsIntelligence';
 import type {
   MarketHorizon, MarketInstrumentMarket, MarketInstrumentSymbol,
@@ -199,9 +200,27 @@ const MarketViewStrip: React.FC = () => {
   if (!projection || projection.actionAuthority !== false) return null;
   const reversal = projection.reversal;
   const families = Object.entries(projection.families ?? {});
+  // v13.5.38 MARKET SIGNALS: the same seven families in the owner vocabulary
+  // (SIG-01..07) with a count recomputed from the per-signal states shown.
+  const signals = marketSignalsView(projection);
   return <div className="at-marketview" data-argus-contract="sho-market-view-v1"
     aria-label="市場観（行動権限なし）">
     <small>市場観（検証前の参考情報） — 売買の最終判断とは別枠</small>
+    {signals && <div className="mv-signals" data-argus-contract="market-signals-v1"
+      data-signals-active={signals.activeCount} data-signals-total={signals.total}
+      data-signals-source={signals.source}>
+      <div className="mv-signals__head">
+        <b>MARKET SIGNALS</b>
+        <em>{signals.countLabel}</em>
+        <span>点灯 = 条件成立のみ数える（判定不能・欠測・古いは数えない）</span>
+      </div>
+      <div className="mv-signals__rows">
+        {signals.signals.map((row) => <GlossaryTip key={row.id} glossaryKey={row.glossaryKey}>
+          <i data-signal-id={row.id} data-signal-state={row.state}>
+            {row.id} {row.nameJa} {row.stateJa}</i>
+        </GlossaryTip>)}
+      </div>
+    </div>}
     <div className="mv-states">
       <span>反転: <GlossaryTip glossaryKey={reversal?.reversalState
         ? (REVERSAL_STATE_GLOSSARY[reversal.reversalState] ?? '') : 'recovery_pending'}>

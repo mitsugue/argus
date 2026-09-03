@@ -205,6 +205,21 @@
   background:rgba(255,255,255,.06);white-space:nowrap}
 .at-marketview .mv-fams i[data-family-status="AVAILABLE"]{background:rgba(110,220,170,.12)}
 .at-marketview .mv-note{opacity:.55;font-size:10px}
+/* v13.5.38 MARKET SIGNALS x/7 header + per-signal chips */
+.at-marketview .mv-signals{display:flex;flex-direction:column;gap:4px}
+.at-marketview .mv-signals__head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.at-marketview .mv-signals__head b{font-size:13px;font-weight:800;letter-spacing:.04em}
+.at-marketview .mv-signals__head em{font-style:normal;font-size:15px;font-weight:800}
+.at-marketview .mv-signals__head span{opacity:.6;font-size:10px}
+.at-marketview .mv-signals__rows{display:flex;gap:5px;flex-wrap:wrap}
+.at-marketview .mv-signals__rows i{font-style:normal;padding:1px 6px;border-radius:4px;
+  background:rgba(255,255,255,.06);white-space:nowrap}
+.at-marketview .mv-signals__rows i[data-signal-state="ACTIVE"]{background:rgba(110,220,170,.22);font-weight:700}
+.at-marketview .mv-signals__rows i[data-signal-state="CLEAR"]{opacity:.85}
+.at-marketview .mv-signals__rows i[data-signal-state="DATA_GATED"],
+.at-marketview .mv-signals__rows i[data-signal-state="STALE"]{background:rgba(255,193,120,.14)}
+.at-marketview .mv-signals__rows i[data-signal-state="UNAVAILABLE"],
+.at-marketview .mv-signals__rows i[data-signal-state="LICENSE_BLOCKED"]{opacity:.6}
 
 /* v13.5.19 — NEWS/EVENT SIGNAL strip (independent axis beside SHO view) */
 .at-newssignal{display:flex;flex-direction:column;gap:4px;padding:8px 10px;

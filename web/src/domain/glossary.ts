@@ -119,6 +119,31 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
     term: '検証前',
     explanationJa: 'この情報は参考表示です。予測力がまだ統計的に証明されていないため、売買判断の根拠にはしていません。',
   },
+  // v13.5.38 MARKET SIGNALS (SIG-01..07) states
+  signal_active: {
+    term: '点灯',
+    explanationJa: 'このシグナルの条件が現在のデータで成立しています。7つのうち点灯している数だけを「x / 7」に数えます。',
+  },
+  signal_clear: {
+    term: '消灯',
+    explanationJa: 'データはそろっていますが、このシグナルの条件は成立していません。数には入りません。',
+  },
+  signal_data_gated: {
+    term: '判定不能',
+    explanationJa: 'データはあるものの、条件を判定できる状態ではありません（検証前・不足など）。数には入りません。',
+  },
+  signal_stale: {
+    term: '古い',
+    explanationJa: 'このシグナルのデータが古く、現在の判定には使えません。数には入りません。',
+  },
+  signal_license: {
+    term: '要ライセンス',
+    explanationJa: 'このシグナルの正式データはライセンス上まだ取り込めません。代替データがない間は数に入りません。',
+  },
+  signal_unavailable: {
+    term: '欠測',
+    explanationJa: 'このシグナルのデータ提供元から現在データが得られていません。ゼロ扱いではなく「欠測」として表示します。',
+  },
 };
 
 // Rendered-state → glossary key maps (kept beside the glossary so the pin
@@ -134,6 +159,12 @@ export const FAMILY_STATE_GLOSSARY: Record<string, string> = {
   '成立': 'family_met', '不成立': 'family_not_met',
   '判定不能': 'family_unknown', '欠測': 'family_missing',
   '要ライセンス': 'family_license',
+};
+
+export const MARKET_SIGNAL_STATE_GLOSSARY: Record<string, string> = {
+  ACTIVE: 'signal_active', CLEAR: 'signal_clear', DATA_GATED: 'signal_data_gated',
+  STALE: 'signal_stale', LICENSE_BLOCKED: 'signal_license',
+  UNAVAILABLE: 'signal_unavailable',
 };
 
 export function glossaryEntry(key: string): GlossaryEntry | null {
