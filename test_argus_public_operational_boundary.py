@@ -1174,3 +1174,119 @@ def test_frontend_has_no_admin_secret_or_moved_public_posts():
     )
     for path in scanner._AUTH_OPERATIONAL_MUTATION_ROUTES:
         assert path not in active_consumers
+
+
+# ── v13.5.38 Tachibana LIVE product wiring (Recovery-admitted seam) ──────────
+# The frozen scanner gains exactly: one import, a lazy once-per-process
+# ensure_started() through the existing request autostart hook, and the
+# "japaneseLive" evidence document on /api/argus/decision-evidence.  These
+# tests pin that the wiring is truthful when disabled, provenance-preserving
+# when evidence exists, isolated on failure, and never a route or authority.
+
+def _decision_evidence_client(monkeypatch):
+    import argus_tachibana_live as live
+    import socket
+
+    def _trip(*_args, **_kwargs):
+        raise AssertionError("NETWORK_ATTEMPT")
+    monkeypatch.setattr(socket.socket, "connect", _trip)
+    monkeypatch.setattr(socket, "create_connection", _trip)
+    monkeypatch.delenv("ARGUS_TACHIBANA_ENABLED", raising=False)
+    monkeypatch.setattr(scanner, "_TACHIBANA_LIVE_AUTOSTART", {"value": False})
+    monkeypatch.setattr(live, "_SERVICE", live.TachibanaLiveService())
+    monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot",
+                        lambda **kwargs: {"provider": "jquants", "stocks": []})
+    scanner._DECISION_EVIDENCE_CACHE.clear()
+    return scanner.app.test_client(), live
+
+
+def test_decision_evidence_carries_truthful_disabled_tachibana_live(monkeypatch):
+    client, live = _decision_evidence_client(monkeypatch)
+    response = client.get("/api/argus/decision-evidence?symbols=1321")
+    assert response.status_code == 200
+    body = response.get_json()
+    japanese = body["japaneseLive"]
+    assert japanese["schemaVersion"] == "argus-tachibana-live-evidence-v1"
+    assert japanese["provider"] == "TACHIBANA"
+    assert japanese["authority"] == "SHADOW_NON_AUTHORITATIVE"
+    assert japanese["status"] == "DISABLED"
+    assert japanese["enabled"] is False and japanese["authoritative"] is False
+    assert japanese["shadowOnly"] is True
+    assert japanese["executionCapability"] is False
+    assert japanese["authAttempts"] == 0 and japanese["symbols"] == {}
+    # Lazy binding happened exactly once through the autostart seam and
+    # started no sensor thread while disabled.
+    assert scanner._TACHIBANA_LIVE_AUTOSTART["value"] is True
+    import threading
+    assert not [t for t in threading.enumerate() if t.name == "argus-tachibana-live"]
+    # The evidence is document-level only: never an SDA input, never a subject.
+    assert body["sdaAuthority"] is False and body["actionAuthority"] is False
+    assert "japaneseLive" not in body["subjects"]
+    text = response.get_data(as_text=True).lower()
+    for forbidden in ("moomoo-rt", "sauthid", "e_api", "kabuka.e-shiten"):
+        assert forbidden not in text
+
+
+def test_decision_evidence_passes_tachibana_evidence_through_with_provenance(monkeypatch):
+    client, live = _decision_evidence_client(monkeypatch)
+    calls = []
+    monkeypatch.setattr(live, "ensure_started", lambda environ=None: calls.append(1) or "DISABLED")
+    evidence = {
+        "schemaVersion": "argus-tachibana-live-evidence-v1", "provider": "TACHIBANA",
+        "authority": "SHADOW_NON_AUTHORITATIVE", "status": "LIVE", "enabled": True,
+        "shadowOnly": True, "authoritative": False, "executionCapability": False,
+        "providerHealth": "AVAILABLE", "marketPhase": "AFTERNOON_OPEN",
+        "lastErrorClass": None, "authAttempts": 1, "updatedAt": "2026-09-03T03:31:00+00:00",
+        "asOf": "2026-09-03T03:31:02+00:00", "symbolCount": 1,
+        "symbols": {"9984": {"provider": "TACHIBANA", "authority": "SHADOW_NON_AUTHORITATIVE",
+                             "symbol": "9984", "price": 9000.0, "changePct": 1.12,
+                             "vwap": 8975.5, "bestBid": 8999.0, "bestAsk": 9001.0,
+                             "freshness": "FRESH", "marketStatus": "OPEN",
+                             "sourceTimestamp": "2026-09-03T03:30:58+00:00",
+                             "receivedAt": "2026-09-03T03:31:00+00:00"}},
+    }
+    monkeypatch.setattr(live, "current_evidence_safe", lambda now=None: evidence)
+    first = client.get("/api/argus/decision-evidence?symbols=1321").get_json()
+    second = client.get("/api/argus/decision-evidence?symbols=1321").get_json()
+    assert calls == [1]                              # once per process, lazy
+    japanese = first["japaneseLive"]
+    assert japanese["status"] == "LIVE"
+    assert japanese["symbols"]["9984"]["provider"] == "TACHIBANA"
+    assert japanese["symbols"]["9984"]["freshness"] == "FRESH"
+    assert japanese["symbols"]["9984"]["price"] == 9000.0
+    assert japanese["authoritative"] is False and japanese["executionCapability"] is False
+    # Live evidence changes nothing about decision authority or the subjects.
+    assert first["sdaAuthority"] is False and second["sdaAuthority"] is False
+    assert "moomoo" not in json.dumps(japanese).lower()
+
+
+def test_tachibana_failure_cannot_take_decision_evidence_down(monkeypatch):
+    client, live = _decision_evidence_client(monkeypatch)
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("provider boundary exploded")
+    monkeypatch.setattr(live, "ensure_started", _boom)
+    monkeypatch.setattr(live, "current_evidence_safe", _boom)
+    response = client.get("/api/argus/decision-evidence?symbols=1321")
+    assert response.status_code == 200
+    japanese = response.get_json()["japaneseLive"]
+    assert japanese["status"] == "UNAVAILABLE"
+    assert japanese["provider"] == "TACHIBANA"
+    assert japanese["lastErrorClass"] == "RuntimeError"
+    assert japanese["symbols"] == {} and japanese["executionCapability"] is False
+
+
+def test_tachibana_wiring_adds_no_route_and_no_order_capability():
+    rules = {rule.rule for rule in scanner.app.url_map.iter_rules()}
+    assert not [rule for rule in rules if "tachibana" in rule.lower()]
+    source = Path("scanner.py").read_text(encoding="utf-8")
+    wiring = [line for line in source.splitlines() if "argus_tachibana_live." in line]
+    # ensure_started, current_evidence_safe, and the three fixed identity
+    # constants of the fail-closed fallback — nothing else.
+    assert {line.strip().split("argus_tachibana_live.")[1].split("(")[0].split(",")[0]
+            for line in wiring} == {"ensure_started", "current_evidence_safe",
+                                    "SCHEMA", "PROVIDER", "AUTHORITY"}
+    boundary = Path("argus_tachibana_live.py").read_text(encoding="utf-8")
+    for forbidden in ("NewOrder", "sOrder", "CLMKabu", "Cancel", "Correct"):
+        assert forbidden not in boundary
+    assert "SHADOW_NON_AUTHORITATIVE" in boundary
