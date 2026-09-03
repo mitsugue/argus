@@ -14,7 +14,7 @@ if (/^import /m.test(glossary)) fail('glossary.ts must not import anything');
 
 // 2) every mapped rendered-state resolves to a real entry.
 for (const name of ['REVERSAL_STATE_GLOSSARY', 'FAMILY_STATE_GLOSSARY',
-  'MARKET_SIGNAL_STATE_GLOSSARY']) {
+  'MARKET_SIGNAL_STATE_GLOSSARY', 'TACHIBANA_STATUS_GLOSSARY']) {
   const block = glossary.split(name)[1]?.split('};')[0] ?? '';
   for (const m of block.matchAll(/'([a-z_]+)'/g)) {
     if (!keys.has(m[1])) fail(`${name} references missing glossary key ${m[1]}`);

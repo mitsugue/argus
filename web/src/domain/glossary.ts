@@ -144,6 +144,35 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
     term: '欠測',
     explanationJa: 'このシグナルのデータ提供元から現在データが得られていません。ゼロ扱いではなく「欠測」として表示します。',
   },
+  // v13.5.38 TACHIBANA LIVE statuses
+  tachibana_live: {
+    term: 'ライブ',
+    explanationJa: '立花証券の現在値が受理済みの鮮度で届いています。参考証拠であり、売買判断を上書きしません。',
+  },
+  tachibana_degraded: {
+    term: '一部',
+    explanationJa: '一部の銘柄だけ現在値が届いています。届いていない銘柄は欠測のまま表示します。',
+  },
+  tachibana_stale: {
+    term: '古い',
+    explanationJa: '受信した値の鮮度期限が切れています。現在値としては扱いません。',
+  },
+  tachibana_unavailable: {
+    term: '欠測',
+    explanationJa: '現在、立花証券からライブ値を受け取れていません（セッション外・未接続・取得失敗）。値を推定しません。',
+  },
+  tachibana_auth_failed: {
+    term: '認証失敗',
+    explanationJa: '立花証券への認証が失敗しました。自動で再試行の嵐は起こさず、上限つきで再接続します。',
+  },
+  tachibana_maintenance: {
+    term: 'メンテナンス',
+    explanationJa: '立花証券側がメンテナンス中です。復旧まで値は届きません。',
+  },
+  tachibana_disabled: {
+    term: '無効',
+    explanationJa: '立花証券の取り込みは現在オフです（設定で有効化されるまで通信しません）。',
+  },
 };
 
 // Rendered-state → glossary key maps (kept beside the glossary so the pin
@@ -159,6 +188,12 @@ export const FAMILY_STATE_GLOSSARY: Record<string, string> = {
   '成立': 'family_met', '不成立': 'family_not_met',
   '判定不能': 'family_unknown', '欠測': 'family_missing',
   '要ライセンス': 'family_license',
+};
+
+export const TACHIBANA_STATUS_GLOSSARY: Record<string, string> = {
+  LIVE: 'tachibana_live', DEGRADED: 'tachibana_degraded', STALE: 'tachibana_stale',
+  UNAVAILABLE: 'tachibana_unavailable', AUTH_FAILED: 'tachibana_auth_failed',
+  MAINTENANCE: 'tachibana_maintenance', DISABLED: 'tachibana_disabled',
 };
 
 export const MARKET_SIGNAL_STATE_GLOSSARY: Record<string, string> = {

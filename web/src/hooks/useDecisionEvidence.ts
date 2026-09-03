@@ -40,6 +40,9 @@ export interface ShoMarketView {
   } | null;
   sourceStatus: Record<string, string>;
   actionAuthority: boolean;
+  // v13.5.38: Tachibana LIVE evidence document (argus_tachibana_live), when
+  // the backend embeds it; absent on backends without the wiring.
+  japaneseLive?: Record<string, unknown> | null;
 }
 
 export interface DecisionEvidenceState {
