@@ -26,11 +26,23 @@ export interface ShoMarketView {
       downsideState?: string; reversalState?: string;
       validationStatus?: string;
     } | null;
+    // v13.5.38: owner-facing SIG-01..07 projection (server-computed x/7).
+    marketSignals?: {
+      schemaVersion?: string; total?: number; activeCount?: number;
+      countLabel?: string; countRule?: string;
+      signals?: Array<{
+        id?: string; family?: string; nameEn?: string; nameJa?: string;
+        state?: string; status?: string | null; conditionMet?: boolean | null;
+      }>;
+    } | null;
     status?: string;
     actionAuthority?: boolean;
   } | null;
   sourceStatus: Record<string, string>;
   actionAuthority: boolean;
+  // v13.5.38: Tachibana LIVE evidence document (argus_tachibana_live), when
+  // the backend embeds it; absent on backends without the wiring.
+  japaneseLive?: Record<string, unknown> | null;
 }
 
 export interface DecisionEvidenceState {

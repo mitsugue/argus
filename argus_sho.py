@@ -19,6 +19,8 @@ import statistics
 from datetime import datetime, time, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+import argus_market_signals  # v13.5.38: owner-facing SIG-01..07 projection (pure)
+
 
 CANONICAL_SHO_RFC_SHA256 = (
     "69a631ebc549b3bede6356cabf338e38d9418fc3683821198ef9a3c1eb440d51"
@@ -2528,6 +2530,10 @@ def project_today_sda_safe(*, cutoff: str,
             value["artifactId"] for value in admitted.values()),
         "rejectedArtifacts": sorted(rejected),
         "families": family_projection,
+        # v13.5.38: the same seven families re-labeled for the owner as
+        # MARKET SIGNALS SIG-01..07 with a computed count (pure, no authority).
+        "marketSignals": argus_market_signals.project_market_signals(
+            family_projection),
         "reversal": reversal_projection,
         "targetZones": target_projection,
         "indexIdentity": identity_projection,

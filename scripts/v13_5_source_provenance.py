@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.37"
+PRODUCT_VERSION = "v13.5.38"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -282,6 +282,20 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "scripts/tachibana_live_sensor_service.py",
     "scripts/tachibana_readonly_smoke.py",
     "test_argus_tachibana_sensor.py",
+    # v13.5.38 Tachibana LIVE product integration: the single product-owned
+    # adapter boundary (argus_tachibana_live), the owner-facing MARKET SIGNALS
+    # SIG-01..07 projection (argus_market_signals, embedded in the SHO market
+    # view), and the Today surfaces that render them.  No scanner/route
+    # change is authored here (those stay under the Recovery admission pin).
+    "argus_market_signals.py",
+    "argus_tachibana_live.py",
+    "test_argus_market_signals.py",
+    "test_argus_tachibana_live.py",
+    "web/src/domain/marketSignals.ts",
+    "web/src/domain/tachibanaLive.ts",
+    "web/scripts/market-signals.test.cjs",
+    "web/scripts/tachibana-live.test.cjs",
+    "docs/operations/tachibana-live-shadow.md",
 })
 
 

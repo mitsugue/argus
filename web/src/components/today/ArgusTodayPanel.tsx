@@ -8,6 +8,9 @@ import { useDecisionEvidence } from '../../hooks/useDecisionEvidence';
 import { useMarketBrief } from '../../hooks/useMarketBrief';
 import { GlossaryTip } from '../common/GlossaryTip';
 import { REVERSAL_STATE_GLOSSARY, FAMILY_STATE_GLOSSARY } from '../../domain/glossary';
+import { marketSignalsView } from '../../domain/marketSignals';
+import { tachibanaLiveView, formatJpy, formatPct } from '../../domain/tachibanaLive';
+import type { TachibanaLiveDocument } from '../../domain/tachibanaLive';
 import { useNewsIntelligence } from '../../hooks/useNewsIntelligence';
 import type {
   MarketHorizon, MarketInstrumentMarket, MarketInstrumentSymbol,
@@ -199,9 +202,53 @@ const MarketViewStrip: React.FC = () => {
   if (!projection || projection.actionAuthority !== false) return null;
   const reversal = projection.reversal;
   const families = Object.entries(projection.families ?? {});
+  // v13.5.38 MARKET SIGNALS: the same seven families in the owner vocabulary
+  // (SIG-01..07) with a count recomputed from the per-signal states shown.
+  const signals = marketSignalsView(projection);
+  // v13.5.38 TACHIBANA LIVE: Japanese-equity live evidence (shadow, read-only).
+  const tachibana = tachibanaLiveView(
+    (evidence.marketView?.japaneseLive ?? null) as TachibanaLiveDocument | null);
   return <div className="at-marketview" data-argus-contract="sho-market-view-v1"
     aria-label="市場観（行動権限なし）">
     <small>市場観（検証前の参考情報） — 売買の最終判断とは別枠</small>
+    <div className="mv-tachibana" data-argus-contract="tachibana-live-v1"
+      data-tachibana-status={tachibana.status} data-tachibana-present={tachibana.present ? '1' : '0'}>
+      <div className="mv-tachibana__head">
+        <b>TACHIBANA LIVE</b>
+        <GlossaryTip glossaryKey={tachibana.glossaryKey}>
+          <i data-status={tachibana.status}>{tachibana.statusJa}</i>
+        </GlossaryTip>
+        <span>{tachibana.reasonJa}</span>
+        {tachibana.updatedAt && <span>更新 {tachibana.updatedAt}</span>}
+      </div>
+      {tachibana.rows.length > 0 && <div className="mv-tachibana__rows">
+        {tachibana.rows.map((row) => <div key={row.symbol} data-symbol={row.symbol}
+          data-freshness={row.freshness}>
+          <b>{row.symbol}</b>
+          <em>{formatJpy(row.price)}</em>
+          <span>{formatPct(row.changePct)}</span>
+          <span>VWAP {formatJpy(row.vwap)}</span>
+          <span>買 {formatJpy(row.bestBid)} / 売 {formatJpy(row.bestAsk)}</span>
+          <small>{row.freshness}{row.sourceTimestamp ? ` · ${row.sourceTimestamp}` : ''} · 提供元 TACHIBANA</small>
+        </div>)}
+      </div>}
+      <span className="mv-tachibana__note">{tachibana.authorityJa}</span>
+    </div>
+    {signals && <div className="mv-signals" data-argus-contract="market-signals-v1"
+      data-signals-active={signals.activeCount} data-signals-total={signals.total}
+      data-signals-source={signals.source}>
+      <div className="mv-signals__head">
+        <b>MARKET SIGNALS</b>
+        <em>{signals.countLabel}</em>
+        <span>点灯 = 条件成立のみ数える（判定不能・欠測・古いは数えない）</span>
+      </div>
+      <div className="mv-signals__rows">
+        {signals.signals.map((row) => <GlossaryTip key={row.id} glossaryKey={row.glossaryKey}>
+          <i data-signal-id={row.id} data-signal-state={row.state}>
+            {row.id} {row.nameJa} {row.stateJa}</i>
+        </GlossaryTip>)}
+      </div>
+    </div>}
     <div className="mv-states">
       <span>反転: <GlossaryTip glossaryKey={reversal?.reversalState
         ? (REVERSAL_STATE_GLOSSARY[reversal.reversalState] ?? '') : 'recovery_pending'}>
