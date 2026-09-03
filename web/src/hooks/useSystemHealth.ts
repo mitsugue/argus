@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  applyTachibanaHealthOverlay, getTachibanaLiveDocument, subscribeTachibanaLive, tachibanaLiveRevision,
+} from '../domain/tachibanaLive';
 
 // System health lamps (v10.51) — at-a-glance green/amber/red for the metered &
 // important systems so a SILENT budget stop / bridge outage becomes visible.
@@ -101,5 +104,12 @@ export function usePublicDiagnostics() {
 }
 
 export function useSystemHealth() {
-  return usePublicDiagnostics().diagnostics?.systemHealth ?? null;
+  const backendHealth = usePublicDiagnostics().diagnostics?.systemHealth ?? null;
+  // v13.5.40: the JP realtime lamp + overall beacon follow the Tachibana
+  // evidence document published by the decision-evidence poller.
+  const [revision, setRevision] = useState(tachibanaLiveRevision());
+  useEffect(() => subscribeTachibanaLive(() => setRevision(tachibanaLiveRevision())), []);
+  return useMemo(
+    () => applyTachibanaHealthOverlay(backendHealth, getTachibanaLiveDocument()) ?? null,
+    [backendHealth, revision]);
 }

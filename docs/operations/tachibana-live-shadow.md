@@ -237,3 +237,21 @@ existing backend, alter its environment, remove or edit `/var/data`, change any
 Recovery service/timer/workflow, or start Formal Recovery. Verify the public
 backend identity and all Recovery identities remain exactly as observed before
 the Tachibana deployment.
+
+## v13.5.40 — owner-visible cutover (slice 3)
+
+- **No "mock" label.** The asset desk freshness word for an absent quote is
+  `未取得` (`deskFormat.freshnessOf`). Production never renders the word
+  "mock" to the owner; the frozen backend status value is unchanged.
+- **JP realtime lamp follows Tachibana.** `useSystemHealth` overlays the
+  backend `jp_realtime` lamp with the Tachibana evidence document
+  (`applyTachibanaHealthOverlay`): LIVE → green `LIVE — Tachibanaから更新中（symbols）`,
+  DEGRADED/STALE/MAINTENANCE → amber, AUTH_FAILED → amber with the auth
+  boundary code, UNAVAILABLE → gray waiting. The logo beacon (`overall`) is
+  recomputed from the lamps (worst-of; a `stopped` lamp elsewhere still
+  dominates). A DISABLED or absent document leaves the backend lamp untouched,
+  so the retired moomoo JP message can only be replaced by real evidence.
+- **Auth boundary (slice 1).** `japaneseLive.authBoundary` +
+  `secretFiles` (safe properties only: exists / regular / mode / size>0 /
+  readable / platform-managed; never contents). Platform secret files under
+  `/etc/secrets` are resolved through their symlink and accepted with read bits.
