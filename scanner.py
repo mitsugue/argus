@@ -35538,7 +35538,10 @@ def _sho_statements_rows(*, warm=False):
             day = (datetime.now(TZ_JST) - timedelta(days=back)).strftime(
                 "%Y-%m-%d")
             try:
-                rows = _jquants_paginated("/fins/statements", {"date": day})
+                # v13.5.48: J-Quants V2 path (V1 /fins/statements was
+                # discontinued 2026-06-01 and answers 403; the feed had been
+                # silently empty since then).
+                rows = _jquants_paginated("/fins/summary", {"date": day})
             except RuntimeError:
                 continue
             for row in rows or []:
@@ -35610,7 +35613,7 @@ def _sho_earnings_event():
         doc_type = str(_stmt_field(
             row, "TypeOfDocument", "DocType", "typeOfDocument") or "")
         period_end = str(_stmt_field(
-            row, "CurrentPeriodEndDate", "CurPerEnDt",
+            row, "CurrentPeriodEndDate", "CurPerEn", "CurPerEnDt",
             "currentPeriodEndDate") or "")[:10]
         if not (code and len(disclosed_date) == 10):
             unrecognized += 1
@@ -35666,7 +35669,7 @@ def _sho_earnings_event():
             ("operatingProfit", ("OperatingProfit", "OpProfit")),
             ("ordinaryProfit", ("OrdinaryProfit", "OrdProfit")),
             ("profit", ("Profit", "NetIncome")),
-            ("forecastEps", ("ForecastEarningsPerShare", "FcstEPS")),
+            ("forecastEps", ("ForecastEarningsPerShare", "FEPS", "FcstEPS")),
             ("forecastDividendAnnual",
              ("ForecastDividendPerShareAnnual", "FcstDivAnnual"))):
         value = _stmt_field(raw, *names)
