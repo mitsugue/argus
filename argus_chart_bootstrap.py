@@ -33,7 +33,8 @@ INTEREST_REFRESH_SECONDS = 600.0
 INTEREST_SCAN_SECONDS = 60.0
 INTEREST_TTL_SECONDS = 7 * 86400.0
 SHO_WARM_SECONDS = 4 * 3600.0
-VALUATION_STATEMENT_PAGES = 2
+VALUATION_STATEMENT_PAGES = 8        # /fins/statements?code= returns the issuer's history
+VALUATION_STATEMENTS_PER_CYCLE = 6   # bounded provider budget per 10-minute cycle
 REFERENCE_JP_HISTORY = ("1321",)         # SIG-03 proxy (1321 vs SPY)
 REFERENCE_US_HISTORY = ("SPY",)
 DEFAULT_DELAY_SECONDS = 15.0
@@ -49,7 +50,8 @@ _STATE: Dict[str, Any] = {
     "warm": {"status": "NOT_STARTED", "shoWarmedAt": None, "shoSourceStatus": None,
              "interestSymbols": [], "interestWarmedAt": None, "historyWarmed": 0,
              "valuation": None, "cycles": 0, "errorClass": None,
-             "curatedWarmedAt": None, "referenceWarmed": 0, "statementsFetched": 0},
+             "curatedWarmedAt": None, "referenceWarmed": 0, "statementsFetched": 0,
+             "statementsErrorClass": None, "referenceErrorClass": None},
     "interest": {},          # JP code -> last seen monotonic clock (product-side registry)
     "statements": {},        # JP code -> list of statement rows (bounded, 4h refresh)
 }
@@ -243,31 +245,37 @@ def _warm_cycle(host: Any, *, sleeper: Callable[[float], None], now: Callable[[]
         try:
             if hasattr(host, "_jq_price_history") and host._jq_price_history(code):
                 reference += 1
-        except Exception:
-            pass
+        except Exception as exc:
+            warm["referenceErrorClass"] = f"jp:{type(exc).__name__}"
     for code in REFERENCE_US_HISTORY:
         try:
             if hasattr(host, "_us_price_history") and host._us_price_history(code):
                 reference += 1
-        except Exception:
-            pass
+            else:
+                warm["referenceErrorClass"] = "us:empty"
+        except Exception as exc:
+            warm["referenceErrorClass"] = f"us:{type(exc).__name__}"
     warm["referenceWarmed"] = reference
     # SIG-04 derived valuation needs each issuer's latest statements (the
-    # 14-day SHO window rarely holds them); fetched per code with the SHO warm.
-    if force_sho and hasattr(host, "_jquants_paginated"):
-        fetched = 0
-        for code in symbols:
+    # 14-day SHO window rarely holds them).  Fetched per code, a bounded
+    # number per cycle, retried on later cycles until every interest issuer
+    # is covered; refreshed with the 4-hourly SHO warm.
+    if hasattr(host, "_jquants_paginated"):
+        if force_sho:
+            _STATE["statements"].clear()
+        pending = [code for code in symbols if code not in _STATE["statements"]]
+        for code in pending[:VALUATION_STATEMENTS_PER_CYCLE]:
             try:
                 rows = host._jquants_paginated("/fins/statements", {"code": code},
                                                max_pages=VALUATION_STATEMENT_PAGES,
                                                request_timeout=8)
                 if isinstance(rows, list):
                     _STATE["statements"][code] = [row for row in rows if isinstance(row, dict)][-12:]
-                    fetched += 1
-            except Exception:
-                pass
+            except Exception as exc:
+                warm["statementsErrorClass"] = f"{type(exc).__name__}:{str(exc)[:32]}"
+                _STATE["statements"].setdefault(code, [])      # do not retry a failing code every cycle
             sleeper(1.0)
-        warm["statementsFetched"] = fetched
+        warm["statementsFetched"] = sum(1 for rows in _STATE["statements"].values() if rows)
     try:
         rows = list((statements.get("rows") if isinstance(statements, dict) else None) or [])
         for code_rows in _STATE["statements"].values():
@@ -362,6 +370,8 @@ def warm_status_safe() -> Dict[str, Any]:
         "interestCount": len(warm.get("interestSymbols") or []),
         "historyWarmed": warm.get("historyWarmed"), "referenceWarmed": warm.get("referenceWarmed"),
         "statementsFetched": warm.get("statementsFetched"),
+        "statementsErrorClass": warm.get("statementsErrorClass"),
+        "referenceErrorClass": warm.get("referenceErrorClass"),
         "valuation": warm.get("valuation"), "errorClass": warm.get("errorClass"),
         "chart": {"status": _STATE["summary"].get("status"),
                   "missingAfter": _STATE["summary"].get("missingAfter")},
@@ -377,7 +387,9 @@ def _reset_for_tests() -> None:
                              "missingAfter": None, "startedAt": None, "finishedAt": None}
         _STATE["warm"] = {"status": "NOT_STARTED", "shoWarmedAt": None, "shoSourceStatus": None,
                           "interestSymbols": [], "interestWarmedAt": None, "historyWarmed": 0,
-                          "valuation": None, "cycles": 0, "errorClass": None}
+                          "valuation": None, "cycles": 0, "errorClass": None,
+                          "curatedWarmedAt": None, "referenceWarmed": 0, "statementsFetched": 0,
+                          "statementsErrorClass": None, "referenceErrorClass": None}
         _STATE["warmMaxCycles"] = None
         _STATE["interest"] = {}
         _STATE["statements"] = {}
