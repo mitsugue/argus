@@ -229,7 +229,7 @@ const MarketViewStrip: React.FC = () => {
           <span>{formatPct(row.changePct)}</span>
           <span>VWAP {formatJpy(row.vwap)}</span>
           <span>買 {formatJpy(row.bestBid)} / 売 {formatJpy(row.bestAsk)}</span>
-          <small>{row.freshness}{row.sourceTimestamp ? ` · ${row.sourceTimestamp}` : ''} · 提供元 TACHIBANA</small>
+          <small>{row.marketStatus === 'CLOSED' ? '市場クローズ' : row.freshness}{row.sourceTimestamp ? ` · ${row.sourceTimestamp}` : ''} · 提供元 TACHIBANA</small>
         </div>)}
       </div>}
       <span className="mv-tachibana__note">{tachibana.authorityJa}</span>

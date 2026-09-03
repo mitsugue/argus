@@ -309,3 +309,16 @@ the Tachibana deployment.
 - **Chart current point.** Asset charts draw the Tachibana current price
   (LIVE when current within 60 s, CLOSED for the baseline) as a marker plus
   `現在値ソース: TACHIBANA`; the point never replaces the historical series.
+
+## v13.5.43 — owner symbols resolve from the curated JP snapshot
+
+- Production defect found after v13.5.42: the public read-only
+  `/api/argus/japan-watchlist?symbols=…` (the mode the real app uses) serves
+  only the per-symbol-set cache, which is filled solely by provider-fetching
+  callers, so after hours it answers an EMPTY `mock` snapshot → the owner saw
+  価格データ未取得 for 5803 although the curated snapshot carried its
+  J-Quants EOD row. `useJapanWatchlist` now falls back to the curated
+  snapshot and keeps only the requested symbols (`jpWatchFallback.ts`):
+  status stays `delayed`/`mixed` (never live), uncovered symbols stay absent.
+- TACHIBANA LIVE rows show 市場クローズ instead of STALE when the provider
+  reports the market closed.

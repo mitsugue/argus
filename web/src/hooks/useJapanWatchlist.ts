@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { dynamicSnapshotIsEmpty, resolveFromCurated } from '../domain/jpWatchFallback';
 import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
 import type { JapanWatchlistSnapshot, JapanStockQuote } from '../types/watch';
 import {
@@ -93,8 +94,9 @@ function japanWatchlistStore(symKey: string): SharedPollingStore<State> {
       setState({ data: normalizedFallback, error: null, loading: false, phase: 'mock', attempt: 0 });
       return () => {};
     }
-    const url = backend.replace(/\/$/, '') + '/api/argus/japan-watchlist'
-      + (dynamic ? `?symbols=${encodeURIComponent(symKey)}` : '');
+    const base = backend.replace(/\/$/, '');
+    const curatedUrl = base + '/api/argus/japan-watchlist';
+    const url = curatedUrl + (dynamic ? `?symbols=${encodeURIComponent(symKey)}` : '');
     let cancelled = false;
     let acquisition: Promise<void> | null = null;
     let cancelExpiry = () => {};
@@ -139,18 +141,36 @@ function japanWatchlistStore(symKey: string): SharedPollingStore<State> {
       armExpiry(aged);
     }
 
-    async function fetchSnapshot(): Promise<JapanTruthSnapshot> {
+    async function fetchJson(target: string): Promise<JapanWatchlistSnapshot> {
       const ctrl = new AbortController();
       controllers.add(ctrl);
       const timer = window.setTimeout(() => ctrl.abort(), ATTEMPT_TIMEOUT_MS);
       try {
-        const response = await fetch(url, { signal: ctrl.signal });
+        const response = await fetch(target, { signal: ctrl.signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return normalizeJapanWatchSnapshot((await response.json()) as JapanWatchlistSnapshot);
+        return (await response.json()) as JapanWatchlistSnapshot;
       } finally {
         window.clearTimeout(timer);
         controllers.delete(ctrl);
       }
+    }
+
+    async function fetchSnapshot(): Promise<JapanTruthSnapshot> {
+      const dynamicSnapshot = await fetchJson(url);
+      // v13.5.43: the dynamic public path is bridge/cache-only and answers an
+      // EMPTY mock when nothing is cached; resolve the owner's symbols from the
+      // curated J-Quants snapshot instead of showing 価格データ未取得.
+      if (dynamic && dynamicSnapshotIsEmpty(dynamicSnapshot as unknown as Parameters<typeof dynamicSnapshotIsEmpty>[0])) {
+        try {
+          const curated = await fetchJson(curatedUrl);
+          const resolved = resolveFromCurated(
+            curated as unknown as Parameters<typeof resolveFromCurated>[0], symKey.split(','));
+          if (resolved) return normalizeJapanWatchSnapshot(resolved as unknown as JapanWatchlistSnapshot);
+        } catch {
+          // keep the truthful dynamic answer below
+        }
+      }
+      return normalizeJapanWatchSnapshot(dynamicSnapshot);
     }
 
     function acquire(task: () => Promise<void>): Promise<void> {
