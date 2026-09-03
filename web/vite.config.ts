@@ -133,6 +133,14 @@ export default defineConfig({
             handler: 'NetworkOnly',
           },
           {
+            // v13.5.50: current intelligence surfaces (events, news, market
+            // shock/news) must never be painted from a 12 h Cache-Storage body
+            // as if current; the hooks own freshness (asOf/generatedAt) and
+            // refresh on mount / visibility / online.
+            urlPattern: /^https:\/\/argus-backend-[a-z0-9]+\.onrender\.com\/api\/argus\/(?:important-events|dashboard-events|news-intelligence|market-news|market-shock|index-chart)(?:\?.*)?$/i,
+            handler: 'NetworkOnly',
+          },
+          {
             // ARGUS backend GETs — StaleWhileRevalidate (v10.190). On launch the SW
             // serves the LAST cached snapshot INSTANTLY (so the screen is populated
             // even while the free-plan dyno cold-starts / the fetches are in flight),

@@ -87,3 +87,9 @@
 .ci-marker--closed { fill: var(--text-muted); }
 .ci-current-label { font-size: 12px; fill: var(--accent); }
 .ci-current-source { margin: 4px 0 0; font-size: 11px; color: var(--text-muted); }
+
+/* v13.5.50: index chart selector (the indices themselves; 1321 stays the verified anchor) */
+.ci-index-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.ci-index-tabs button { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--text-sub); }
+.ci-index-tabs button.active { border-color: var(--accent); color: var(--text-main); font-weight: 700; }
+.ci-index-view .ci-chart-head { display: flex; justify-content: space-between; margin-bottom: 4px; }

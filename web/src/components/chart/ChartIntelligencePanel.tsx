@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useChartIntelligence } from '../../hooks/useChartIntelligence';
+import { useChartIntelligence, useIndexChart, INDEX_CHART_LABELS, type IndexChartKey } from '../../hooks/useChartIntelligence';
 import { useTachibanaLiveDocument } from '../../hooks/useDecisionEvidence';
 import { tachibanaCurrentPoint, type TachibanaCurrentPoint } from '../../domain/tachibanaLive';
 import type { ChartBar, ChartIntelligencePayload } from '../../types/chartIntelligence';
@@ -171,6 +171,11 @@ export const ChartIntelligencePanel: React.FC<{
   scope: 'market' | 'asset'; symbol?: string; market?: string; enabled?: boolean;
 }> = ({ scope, symbol, market, enabled = true }) => {
   const [range, setRange] = useState('1Y');
+  // v13.5.50: the owner can switch the market chart to the indices themselves
+  // (日経225/TOPIX/S&P500/ナスダック); the verified 1321 ETF snapshot stays the
+  // decision anchor and the default.
+  const [indexKey, setIndexKey] = useState<IndexChartKey | null>(null);
+  const indexChart = useIndexChart(scope === 'market' ? indexKey : null, 'daily');
   const [timeframe, setTimeframe] = useState<'daily' | 'weekly'>('daily');
   const [showBB, setShowBB] = useState(false), [showCloud, setShowCloud] = useState(false);
   const [showLongMA, setShowLongMA] = useState(false);
@@ -214,6 +219,23 @@ export const ChartIntelligencePanel: React.FC<{
     ? Object.entries(assetProbabilities).sort((left, right) => right[1] - left[1])[0]?.[0]
     : null;
   return <section id={scope === 'market' ? 'chart-intelligence' : undefined} className="ci-panel">
+    {scope === 'market' && <div className="card ci-index-tabs" data-argus-contract="index-chart-selector-v1" role="tablist" aria-label="指数チャート">
+      <button type="button" role="tab" aria-selected={indexKey === null} className={indexKey === null ? 'active' : ''}
+        onClick={() => setIndexKey(null)}>1321 ETF(検証済)</button>
+      {(Object.keys(INDEX_CHART_LABELS) as IndexChartKey[]).map((key) => <button type="button" role="tab" key={key}
+        aria-selected={indexKey === key} className={indexKey === key ? 'active' : ''} onClick={() => setIndexKey(key)}>{INDEX_CHART_LABELS[key]}</button>)}
+    </div>}
+    {scope === 'market' && indexKey && <div className="card ci-index-view" data-argus-contract="index-chart-v1" data-index={indexKey}>
+      {indexChart.loading && !indexChart.data && <p className="ci-empty">指数チャートを読み込み中</p>}
+      {indexChart.expectedSkip && <p className="ci-empty">{INDEX_CHART_LABELS[indexKey]}の日足はまだ取得されていません（起動後の巡回で自動取得）。</p>}
+      {indexChart.error && <p className="ci-empty">指数チャートを取得できません（{indexChart.error}）</p>}
+      {indexChart.data && <>
+        <div className="ci-chart-head"><b>{indexChart.data.displayNameJa ?? INDEX_CHART_LABELS[indexKey]}</b><span>{indexChart.data.periodEnd ?? '未取得'}</span></div>
+        <PriceChart payload={indexChart.data} range={range} showBB={showBB} showCloud={showCloud} showLongMA={showLongMA} />
+        {(indexChart.data as { indexDisclosureJa?: string }).indexDisclosureJa
+          && <p className="ci-note">{(indexChart.data as { indexDisclosureJa?: string }).indexDisclosureJa}</p>}
+      </>}
+    </div>}
     <div className="section-head"><span className="section-head__title">CHART INTELLIGENCE</span>
       <span className="section-head__count">{data ? statusText : 'deterministic · AI API 0'}
         {data && loading && loaderVisible && <TriangleStepLoader compact label="" />}</span></div>

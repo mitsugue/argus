@@ -545,3 +545,46 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
     },
   };
 }
+
+
+// ── v13.5.50: index charts (the indices themselves; cached-only backend route) ──
+export type IndexChartKey = 'N225' | 'TOPIX' | 'SPX' | 'NDX';
+export const INDEX_CHART_LABELS: Record<IndexChartKey, string> = {
+  N225: '日経225', TOPIX: 'TOPIX', SPX: 'S&P500', NDX: 'ナスダック',
+};
+interface IndexChartState { data: ChartIntelligencePayload | null; expectedSkip: boolean; loading: boolean; error: string | null }
+const indexChartCache = new Map<string, { at: number; state: IndexChartState }>();
+const INDEX_CHART_TTL_MS = 120_000;
+
+export function useIndexChart(index: IndexChartKey | null, timeframe: 'daily' | 'weekly' = 'daily'): IndexChartState {
+  const backend = import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined;
+  const key = index ? `${index}:${timeframe}` : '';
+  const [state, setState] = useState<IndexChartState>(() => indexChartCache.get(key)?.state
+    ?? { data: null, expectedSkip: false, loading: !!index, error: null });
+  useEffect(() => {
+    if (!index || !backend) return;
+    let cancelled = false;
+    const cached = indexChartCache.get(key);
+    if (cached && Date.now() - cached.at < INDEX_CHART_TTL_MS) { setState(cached.state); return; }
+    setState((prev) => ({ ...prev, loading: true, error: null }));
+    const load = async () => {
+      try {
+        const response = await fetch(`${backend.replace(/\/$/, '')}/api/argus/index-chart?index=${index}&timeframe=${timeframe}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const body = await response.json() as ChartIntelligencePayload & { status?: string };
+        const next: IndexChartState = body.status === 'expected_skip'
+          ? { data: null, expectedSkip: true, loading: false, error: null }
+          : { data: body, expectedSkip: false, loading: false, error: null };
+        indexChartCache.set(key, { at: Date.now(), state: next });
+        if (!cancelled) setState(next);
+      } catch (err) {
+        if (!cancelled) setState({ data: null, expectedSkip: false, loading: false, error: err instanceof Error ? err.message : String(err) });
+      }
+    };
+    void load();
+    const onVisible = () => { if (!document.hidden) void load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVisible); };
+  }, [index, timeframe, backend, key]);
+  return state;
+}

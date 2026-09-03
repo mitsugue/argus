@@ -33,7 +33,15 @@ INTEREST_REFRESH_SECONDS = 600.0
 INTEREST_SCAN_SECONDS = 60.0
 INTEREST_TTL_SECONDS = 7 * 86400.0
 SHO_WARM_SECONDS = 4 * 3600.0
-TRANSLATE_SECONDS = 3600.0             # hourly visible-first headline translation drain
+TRANSLATE_SECONDS = 3600.0
+# Index charts (owner: the indices themselves, not the 1321 ETF). Yahoo symbols
+# per index; TOPIX candidates are tried in order and the first with rows wins.
+INDEX_SOURCES = (
+    ("N225", ("^N225",), "NIKKEI_225_INDEX", {"available_hour_utc": 7}),
+    ("TOPIX", ("^TPX", "998405.T"), "TOPIX_INDEX", {"available_hour_utc": 7}),
+    ("SPX", ("^GSPC",), "SP500_INDEX", {"next_day_available": True}),
+    ("NDX", ("^IXIC",), "NASDAQ_COMPOSITE_INDEX", {"next_day_available": True}),
+)             # hourly visible-first headline translation drain
 TRANSLATE_CAP = 20
 VALUATION_STATEMENT_PAGES = 8        # the issuer's statements history is paginated
 # J-Quants V2 (V1 discontinued 2026-06-01): /fins/summary; the V1 path is kept
@@ -229,6 +237,27 @@ def crypto_interest_symbols() -> list:
     """Device-requested crypto assets (bounded by the known pair table)."""
     registry = _STATE["interestCrypto"]
     return [c for c in sorted(registry, key=lambda c: -registry[c]) if c in CRYPTO_PAIRS][:8]
+
+
+def _warm_index_charts(host: Any, warm: Dict[str, Any], sleeper: Callable[[float], None]) -> None:
+    """Fill the Yahoo index OHLCV cache the index-chart route reads (cached-only)."""
+    fetcher = getattr(host, "_yahoo_index_ohlcv", None)
+    if fetcher is None:
+        return
+    result: Dict[str, Any] = {}
+    for index, symbols, instrument_id, kwargs in INDEX_SOURCES:
+        result[index] = None
+        for symbol in symbols:
+            try:
+                rows = fetcher(symbol, instrument_id, fetch=True, **kwargs)
+            except Exception as exc:
+                result[index] = f"{symbol}:{type(exc).__name__}"
+                continue
+            if rows:
+                result[index] = f"{symbol}:{len(rows)}"
+                break
+            sleeper(1.0)
+    warm["indexCharts"] = result
 
 
 def _drain_translations(host: Any, warm: Dict[str, Any], environ: Dict[str, str]) -> None:
@@ -454,6 +483,7 @@ def _warm_loop(host: Any, *, sleeper: Callable[[float], None], now: Callable[[],
             _warm_cycle(host, sleeper=sleeper, now=now, force_sho=force)
             if force:
                 last_sho = now()
+                _warm_index_charts(host, warm, sleeper)
             if last_translate is None or now() - last_translate >= TRANSLATE_SECONDS:
                 _drain_translations(host, warm, env)
                 last_translate = now()
@@ -525,6 +555,7 @@ def warm_status_safe() -> Dict[str, Any]:
         "statementsPublished": warm.get("statementsPublished"),
         "usHistoryWarmed": warm.get("usHistoryWarmed"), "usErrorClass": warm.get("usErrorClass"),
         "translate": warm.get("translate"),
+        "indexCharts": warm.get("indexCharts"),
         "cryptoHistoryWarmed": warm.get("cryptoHistoryWarmed"), "cryptoErrorClass": warm.get("cryptoErrorClass"),
         "referenceErrorClass": warm.get("referenceErrorClass"),
         "valuation": warm.get("valuation"), "errorClass": warm.get("errorClass"),

@@ -407,3 +407,17 @@ the Tachibana deployment.
   drained hourly from the boot warm (cap 20, same host function and AI
   budget as the cron path; kill switch `ARGUS_BOOT_TRANSLATE=0`), so an
   English headline does not sit on the owner's screen for hours after close.
+
+## v13.5.50 — index charts, live-intelligence cache contract
+
+- **Index charts:** the Today market chart gains a selector (1321 ETF 検証済 /
+  日経225 / TOPIX / S&P500 / ナスダック). Index charts come from the cached-only
+  `/api/argus/index-chart` route over the Yahoo index OHLCV cache the boot
+  warm fills every SHO warm (TOPIX candidates `^TPX` → `998405.T`). The
+  verified 1321 snapshot remains the decision anchor and the default.
+- **Service worker:** important-events / dashboard-events / news-intelligence /
+  market-news / market-shock / index-chart are `NetworkOnly` (they were
+  falling into the 12 h StaleWhileRevalidate catch-all).
+- **Hooks:** news-intelligence and market-shock refresh on a 5-minute cadence,
+  on visibility resume and on online transition; a failed refresh keeps the
+  retained view but reports `status: 'error'` (never relabelled as current).
