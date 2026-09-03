@@ -15100,6 +15100,12 @@ def _system_health(*, allow_provider_fetch=True):
         else:
             L("bridge", "moomooブリッジ", "warning" if mkt_open else "off",
               f"最終push {int(min(ages)//60)}分前" + ("(途絶?)" if mkt_open else ""))
+        # v13.5.45: the JP realtime lamp is Tachibana-true even when the moomoo
+        # bridge sends no heartbeat (after hours / bridge idle) — the lamp must
+        # not vanish with the bridge.
+        tachibana_lamp = _tachibana_jp_realtime_lamp()
+        if tachibana_lamp is not None:
+            L("jp_realtime", "JP realtime", tachibana_lamp[0], tachibana_lamp[1])
 
     L("prices_jp", "日本株価格", "ok" if conf("jquants") else "warning",
       "J-Quants 設定済" if conf("jquants") else "要設定")
