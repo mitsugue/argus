@@ -17,6 +17,7 @@ import urllib.request
 
 import pytest
 
+import argus_release_identity
 import argus_remote_journal as journal
 import argus_remote_receipt_queue as queue
 import argus_state_journal
@@ -1091,4 +1092,4 @@ def test_timer_secret_isolation_workflow_bound_and_deploy_scope():
         "test_remote_journal_rearm.py",
     ])["backendDeploy"] is False
     assert json.loads(Path("backend-version.json").read_text())[
-        "version"] == "13.5.36"
+        "version"] == argus_release_identity.backend_version()
