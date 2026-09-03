@@ -31,3 +31,47 @@ export function resolveFromCurated<T extends JpWatchSnapshotLike>(
   const status = statuses.size === 1 ? [...statuses][0] as string : 'mixed';
   return { ...curated, status, stocks: rows, resolvedFromCurated: true, requestedCount: requested.length };
 }
+
+// ── v13.5.44: EOD row from the cached daily history ─────────────────────────
+//
+// `/api/argus/price-history` serves the cached J-Quants daily closes (newest
+// first) for symbols the backend already warmed.  For an owner symbol the
+// curated snapshot does not carry, the latest close is real end-of-day
+// evidence, labelled delayed/EOD and sourced jquants — never a live claim.
+export interface PriceHistoryLike { symbol?: string; available?: boolean; dates?: string[]; closes?: number[] }
+
+export function rowFromPriceHistory(symbol: string, history: PriceHistoryLike | null | undefined): JpWatchRowLike | null {
+  if (!history || history.available !== true) return null;
+  const closes = Array.isArray(history.closes) ? history.closes : [];
+  const dates = Array.isArray(history.dates) ? history.dates : [];
+  const last = closes[0];
+  if (typeof last !== 'number' || !Number.isFinite(last) || last <= 0) return null;
+  const prev = closes[1];
+  const changeAbs = typeof prev === 'number' && Number.isFinite(prev) ? last - prev : 0;
+  const changePct = typeof prev === 'number' && Number.isFinite(prev) && prev > 0 ? ((last / prev) - 1) * 100 : 0;
+  return {
+    symbol: symbol.toUpperCase(), name: symbol.toUpperCase(), price: last,
+    changeAbs: Math.round(changeAbs * 100) / 100, changePct: Math.round(changePct * 100) / 100,
+    volume: 0, volumeUnavailable: true,
+    date: typeof dates[0] === 'string' ? dates[0].slice(0, 10) : null,
+    status: 'delayed', source: 'jquants', provider: 'jquants', delayClass: 'EOD',
+    resolvedFromHistory: true,
+  };
+}
+
+/** Merge history-derived rows for symbols still missing; keeps existing rows first. */
+export function mergeHistoryRows<T extends JpWatchSnapshotLike>(
+  snapshot: T | null | undefined, rows: JpWatchRowLike[], requested: readonly string[],
+): T | null {
+  const base: JpWatchSnapshotLike = snapshot && Array.isArray(snapshot.stocks)
+    ? snapshot : { status: 'mock', asOf: null, stocks: [] };
+  const have = new Set(base.stocks.map((r) => String(r.symbol ?? '').toUpperCase()));
+  const extra = rows.filter((r) => r && !have.has(String(r.symbol ?? '').toUpperCase()));
+  if (extra.length === 0) return (snapshot as T) ?? null;
+  const stocks = [...base.stocks, ...extra];
+  const statuses = new Set(stocks.map((r) => r.status ?? 'delayed'));
+  const status = statuses.size === 1 ? [...statuses][0] as string : 'mixed';
+  const asOf = stocks.map((r) => (r as { date?: string | null }).date ?? null)
+    .filter((d): d is string => typeof d === 'string').sort().at(-1) ?? base.asOf ?? null;
+  return { ...base, status, asOf, stocks, requestedCount: requested.length, historyRowCount: extra.length } as unknown as T;
+}

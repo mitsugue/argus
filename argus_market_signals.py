@@ -43,9 +43,10 @@ SIGNAL_IDS = tuple(row["id"] for row in SIGNAL_DEFINITIONS)
 SIGNAL_TOTAL = len(SIGNAL_DEFINITIONS)
 
 SIGNAL_STATES = ("ACTIVE", "CLEAR", "DATA_GATED", "STALE",
-                 "LICENSE_BLOCKED", "UNAVAILABLE")
+                 "LICENSE_BLOCKED", "NOT_APPLICABLE", "UNAVAILABLE")
 COUNT_RULE = ("ACTIVE = family status AVAILABLE and conditionMet true; "
-              "DATA_GATED, STALE, LICENSE_BLOCKED and UNAVAILABLE never count")
+              "DATA_GATED, STALE, LICENSE_BLOCKED, NOT_APPLICABLE and UNAVAILABLE "
+              "never count")
 _ABSENT = "UNAVAILABLE"
 
 
@@ -65,6 +66,11 @@ def signal_state(row: Optional[Mapping[str, Any]]) -> str:
         return "STALE"
     if status == "LICENSE_BLOCKED":
         return "LICENSE_BLOCKED"
+    if status == "NOT_APPLICABLE":
+        # v13.5.44: the feed was read and holds no applicable event (e.g. no
+        # supported earnings disclosure in the window) — distinct from an
+        # absent provider.
+        return "NOT_APPLICABLE"
     if status in ("PARTIAL", "UNVALIDATED", "DATA_GATED"):
         return "DATA_GATED"
     return _ABSENT

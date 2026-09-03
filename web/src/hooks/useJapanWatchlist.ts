@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from 'react';
-import { dynamicSnapshotIsEmpty, resolveFromCurated } from '../domain/jpWatchFallback';
+import {
+  dynamicSnapshotIsEmpty, mergeHistoryRows, resolveFromCurated, rowFromPriceHistory,
+} from '../domain/jpWatchFallback';
 import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
 import type { JapanWatchlistSnapshot, JapanStockQuote } from '../types/watch';
 import {
@@ -161,14 +163,31 @@ function japanWatchlistStore(symKey: string): SharedPollingStore<State> {
       // EMPTY mock when nothing is cached; resolve the owner's symbols from the
       // curated J-Quants snapshot instead of showing 価格データ未取得.
       if (dynamic && dynamicSnapshotIsEmpty(dynamicSnapshot as unknown as Parameters<typeof dynamicSnapshotIsEmpty>[0])) {
+        const requested = symKey.split(',');
+        let resolved: JapanWatchlistSnapshot | null = null;
         try {
           const curated = await fetchJson(curatedUrl);
-          const resolved = resolveFromCurated(
-            curated as unknown as Parameters<typeof resolveFromCurated>[0], symKey.split(','));
-          if (resolved) return normalizeJapanWatchSnapshot(resolved as unknown as JapanWatchlistSnapshot);
+          resolved = resolveFromCurated(
+            curated as unknown as Parameters<typeof resolveFromCurated>[0], requested,
+          ) as unknown as JapanWatchlistSnapshot | null;
         } catch {
           // keep the truthful dynamic answer below
         }
+        // v13.5.44: owner symbols the curated list does not carry resolve from
+        // the cached daily history (real EOD close, labelled delayed/EOD).
+        const covered = new Set((resolved?.stocks ?? []).map((r) => r.symbol.toUpperCase()));
+        const missing = requested.filter((s) => !covered.has(s.toUpperCase())).slice(0, 8);
+        const historyRows = (await Promise.all(missing.map(async (symbol) => {
+          try {
+            const history = await fetchJson(`${base}/api/argus/price-history?symbol=${encodeURIComponent(symbol)}&market=JP`);
+            return rowFromPriceHistory(symbol, history as unknown as Parameters<typeof rowFromPriceHistory>[1]);
+          } catch {
+            return null;
+          }
+        }))).filter((row): row is NonNullable<typeof row> => row !== null);
+        const merged = mergeHistoryRows(
+          resolved as unknown as Parameters<typeof mergeHistoryRows>[0], historyRows, requested);
+        if (merged) return normalizeJapanWatchSnapshot(merged as unknown as JapanWatchlistSnapshot);
       }
       return normalizeJapanWatchSnapshot(dynamicSnapshot);
     }

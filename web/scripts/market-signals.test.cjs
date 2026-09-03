@@ -93,3 +93,10 @@ assert.ok(panel.includes('data-argus-contract="market-signals-top-detail-v1"'), 
 assert.ok(!/<b>1 \/ 7<\/b>/.test(panel), 'no hard-coded 1 / 7');
 
 console.log('market-signals.test: SIG-01..07, computed x/7, independent states, top block, glossary ok');
+
+// ── v13.5.44: NOT_APPLICABLE is a distinct, glossaried, non-counting state ──
+const naState = ms.signalStateFromFamily({ status: 'NOT_APPLICABLE', conditionMet: null });
+assert.equal(naState, 'NOT_APPLICABLE');
+assert.equal(ms.MARKET_SIGNAL_STATE_JA.NOT_APPLICABLE, '該当なし');
+assert.ok(glossary.GLOSSARY[glossary.MARKET_SIGNAL_STATE_GLOSSARY.NOT_APPLICABLE], 'glossary entry for NOT_APPLICABLE');
+console.log('market-signals.test: NOT_APPLICABLE state ok');

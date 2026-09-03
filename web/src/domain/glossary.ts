@@ -140,6 +140,10 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
     term: '要ライセンス',
     explanationJa: 'このシグナルの正式データはライセンス上まだ取り込めません。代替データがない間は数に入りません。',
   },
+  signal_not_applicable: {
+    term: '該当なし',
+    explanationJa: 'データは読めていて、いまは対象となる出来事（例: 直近の決算開示）が期間内にない状態。欠測とは区別します。',
+  },
   signal_unavailable: {
     term: '欠測',
     explanationJa: 'このシグナルのデータ提供元から現在データが得られていません。ゼロ扱いではなく「欠測」として表示します。',
@@ -203,7 +207,7 @@ export const TACHIBANA_STATUS_GLOSSARY: Record<string, string> = {
 export const MARKET_SIGNAL_STATE_GLOSSARY: Record<string, string> = {
   ACTIVE: 'signal_active', CLEAR: 'signal_clear', DATA_GATED: 'signal_data_gated',
   STALE: 'signal_stale', LICENSE_BLOCKED: 'signal_license',
-  UNAVAILABLE: 'signal_unavailable',
+  NOT_APPLICABLE: 'signal_not_applicable', UNAVAILABLE: 'signal_unavailable',
 };
 
 export function glossaryEntry(key: string): GlossaryEntry | null {

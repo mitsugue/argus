@@ -764,6 +764,12 @@ def evaluate_d03(*, cutoff: str,
         "status": "AVAILABLE" if selected is not None else "MISSING",
         "sourceType": source_type,
         "relativeStrengthValue": selected["value"] if selected else None,
+        # v13.5.44: deterministic ARGUS candidate condition — the analysis
+        # instrument outperformed the comparison over the window (value > 0).
+        # The SHO-original threshold stays UNKNOWN; this is labelled research.
+        "conditionMet": (selected["value"] > 0) if selected else None,
+        "conditionRule": "relative_strength_20d > 0 (analysis outperforms comparison)",
+        "conditionLineage": "ARGUS_CANDIDATE",
         "sourceRef": selected.get("sourceRef") if selected else None,
         "directIdentityRejected": direct_evidence is not None and not direct_identity_ok,
         "proxyIdentityRejected": proxy_evidence is not None and not proxy_identity_ok,
@@ -775,10 +781,38 @@ def evaluate_d03(*, cutoff: str,
     }
 
 
+def _derived_valuation_evidence(value: Any, cutoff: str) -> Optional[Dict[str, Any]]:
+    """v13.5.44: ARGUS-derived Japan valuation (argus_japan_valuation) when no
+    licensed Nikkei EPS is available.  Explicit argument first; otherwise the
+    module store the boot warm publishes.  Only AVAILABLE evidence whose
+    knowledge time is not after the cutoff is admitted."""
+    candidate = value
+    if candidate is None:
+        try:
+            import argus_japan_valuation
+            candidate = argus_japan_valuation.current_evidence()
+        except Exception:
+            candidate = None
+    if not isinstance(candidate, Mapping) or candidate.get("status") != "AVAILABLE":
+        return None
+    if candidate.get("conditionMet") is None:
+        return None
+    available = candidate.get("availableFrom")
+    known = str(candidate.get("knownAt") or "")[:10]
+    if available and known:
+        visible, _ = point_in_time_rows(
+            [{"instrumentId": "JP_UNIVERSE", "seriesId": "derived_valuation",
+              "periodEnd": known, "availableFrom": available, "value": 0}], cutoff)
+        if not visible:
+            return None
+    return dict(candidate)
+
+
 def evaluate_d04(*, cutoff: str, analysis_instrument: str,
                  eps_evidence: Optional[Mapping[str, Any]] = None,
                  index_evidence: Optional[Mapping[str, Any]] = None,
-                 license_status: str = "LICENSE_BLOCKED") -> Dict[str, Any]:
+                 license_status: str = "LICENSE_BLOCKED",
+                 derived_valuation: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     if license_status not in {"AVAILABLE", "LICENSE_BLOCKED", "MISSING"}:
         raise ValueError("invalid_nikkei_valuation_license_status")
     if analysis_instrument != "NIKKEI_225_INDEX":
@@ -796,6 +830,29 @@ def evaluate_d04(*, cutoff: str, analysis_instrument: str,
     eps = _value_and_time(eps_evidence, cutoff) if eps_identity_ok else None
     index = _value_and_time(index_evidence, cutoff) if index_identity_ok else None
     if license_status == "LICENSE_BLOCKED" or eps is None:
+        derived = _derived_valuation_evidence(derived_valuation, cutoff)
+        if derived is not None:
+            return {
+                "family": "D04", "propositionId": "SHO-D04-ORIGINAL",
+                "lineage": "ARGUS_CANDIDATE",
+                "analysisInstrument": analysis_instrument,
+                "status": "AVAILABLE",
+                "derivation": derived.get("derivation"),
+                "eps": None, "indexLevel": index["value"] if index else None,
+                "levels": [], "validationStatus": "UNVALIDATED",
+                "conditionMet": derived.get("conditionMet"),
+                "conditionRule": derived.get("conditionRule"),
+                "conditionLineage": "ARGUS_CANDIDATE",
+                "derived": {key: derived.get(key) for key in (
+                    "medianForwardPer", "interquartileRange", "highValuationShare",
+                    "coverage", "universeSize", "ladder", "knownAt", "computedAt")},
+                "nikkeiOfficialPer": "NOT_CLAIMED",
+                "licensedNikkeiEps": license_status,
+                "missing": [],
+                "epsIdentityRejected": eps_evidence is not None and not eps_identity_ok,
+                "indexIdentityRejected": index_evidence is not None and not index_identity_ok,
+                "identityViolationPrevented": False,
+            }
         return {
             "family": "D04", "propositionId": "SHO-D04-ORIGINAL",
             "lineage": "SHO_ORIGINAL", "analysisInstrument": analysis_instrument,
@@ -839,6 +896,10 @@ def evaluate_d05(rows: Iterable[Mapping[str, Any]], *, cutoff: str) -> Dict[str,
         "direction": ("INFLOW" if value is not None and value > 0 else
                       "OUTFLOW" if value is not None and value < 0 else
                       "FLAT" if value == 0 else None),
+        # v13.5.44: confirmation evidence = published net foreign INFLOW.
+        "conditionMet": (value > 0) if value is not None else None,
+        "conditionRule": "latest published foreign-investor net flow > 0 (INFLOW)",
+        "conditionLineage": "SHO_ORIGINAL",
         "periodEnd": latest.get("periodEnd") if latest else None,
         "availableFrom": latest.get("availableFrom") if latest else None,
         "publicationTimeGated": True,
@@ -927,6 +988,12 @@ def evaluate_d06(rows: Iterable[Mapping[str, Any]], *, cutoff: str) -> Dict[str,
         "level": round(level, 6), "velocity": round(velocity, 6),
         "percentile": percentile, "regime": regime,
         "shoOriginalTransition": None,
+        # v13.5.44: ARGUS 12/26/9 baseline — VIX MACD histogram below zero
+        # (dead-cross side) is the recovery-supportive condition; a golden
+        # cross (histogram >= 0) is the warning side.  SHO-original stays UNKNOWN.
+        "conditionMet": macd_rows[-1]["histogram"] < 0,
+        "conditionRule": "VIX MACD(12,26,9) histogram < 0 (dead-cross side)",
+        "conditionLineage": "ARGUS_CANDIDATE",
         "argusBaseline": {
             "propositionId": "ARGUS-D06-MACD-12-26-9",
             "lineage": "ARGUS_CANDIDATE",
@@ -954,15 +1021,46 @@ def _bar_return(bars: Sequence[Mapping[str, Any]], start_index: int,
     return round((end / start - 1) * 100, 6)
 
 
+def _statements_warm_state(value: Any) -> Optional[Dict[str, Any]]:
+    """Warm state of the statements feed (explicit argument or module store)."""
+    candidate = value
+    if candidate is None:
+        try:
+            import argus_japan_valuation
+            candidate = argus_japan_valuation.statements_state()
+        except Exception:
+            candidate = None
+    if not isinstance(candidate, Mapping) or not candidate.get("warmedAt"):
+        return None
+    return {"warmedAt": str(candidate.get("warmedAt")),
+            "rowCount": int(candidate.get("rowCount") or 0),
+            "source": str(candidate.get("source") or "")[:40] or None}
+
+
 def evaluate_d07(*, cutoff: str,
                  earnings_event: Optional[Mapping[str, Any]] = None,
                  stock_bars: Iterable[Mapping[str, Any]] = (),
                  sector_bars: Iterable[Mapping[str, Any]] = (),
-                 index_bars: Iterable[Mapping[str, Any]] = ()) -> Dict[str, Any]:
+                 index_bars: Iterable[Mapping[str, Any]] = (),
+                 statements_state: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """Evaluate supported earnings reaction without synthesizing quality."""
     event_visible, _ = point_in_time_rows(
         [earnings_event] if isinstance(earnings_event, Mapping) else [], cutoff)
     if not event_visible:
+        warm = _statements_warm_state(statements_state)
+        if warm is not None:
+            # v13.5.44: the feed was read for the window and holds no
+            # supported disclosure — a truthful NOT_APPLICABLE, not a
+            # provider outage.
+            return {
+                "family": "D07", "propositionId": "SHO-D07-ORIGINAL",
+                "lineage": "SHO_ORIGINAL", "status": "NOT_APPLICABLE",
+                "earningsQuality": None, "reaction": None,
+                "conditionMet": None,
+                "validationStatus": "UNVALIDATED",
+                "statementsFeed": warm,
+                "missing": ["no_supported_earnings_event_in_window"],
+            }
         return {
             "family": "D07", "propositionId": "SHO-D07-ORIGINAL",
             "lineage": "SHO_ORIGINAL", "status": "MISSING",

@@ -49,3 +49,27 @@ assert.ok(hook.includes('if (dynamic && dynamicSnapshotIsEmpty('), 'fallback gat
 assert.ok(hook.includes('await fetchJson(curatedUrl)'), 'fallback reads the curated snapshot');
 assert.ok(hook.includes('return normalizeJapanWatchSnapshot(dynamicSnapshot)'), 'dynamic answer kept when nothing resolves');
 console.log('jp-watch-fallback.test: dynamic empty → curated rows, truthful status, no fabrication ok');
+
+// ── v13.5.44: owner symbols the curated list lacks resolve from cached daily history ──
+const hist = { symbol: '6965', available: true, dates: ['2026-09-03', '2026-09-02'], closes: [17280, 17000] };
+const row = fb.rowFromPriceHistory('6965', hist);
+assert.equal(row.price, 17280);
+assert.equal(row.changePct, 1.65);
+assert.equal(row.status, 'delayed'); assert.equal(row.source, 'jquants'); assert.equal(row.delayClass, 'EOD');
+assert.equal(row.date, '2026-09-03');
+assert.equal(row.volumeUnavailable, true);
+assert.equal(fb.rowFromPriceHistory('6965', { available: false, closes: [], dates: [] }), null);
+assert.equal(fb.rowFromPriceHistory('6965', null), null);
+const merged = fb.mergeHistoryRows(resolved, [row], ['5803', '6965', '9984']);
+assert.equal(merged.stocks.length, 2);
+assert.equal(merged.stocks[1].symbol, '6965');
+assert.equal(merged.status, 'delayed');
+assert.equal(merged.historyRowCount, 1);
+assert.equal(merged.asOf, '2026-09-03');
+assert.equal(fb.mergeHistoryRows(resolved, [], ['5803']), resolved);      // nothing to add → identity
+const fromEmpty = fb.mergeHistoryRows(null, [row], ['6965']);
+assert.equal(fromEmpty.status, 'delayed'); assert.equal(fromEmpty.stocks.length, 1);
+const hook2 = fs.readFileSync(path.join(src, 'hooks', 'useJapanWatchlist.ts'), 'utf8');
+assert.ok(hook2.includes('/api/argus/price-history?symbol='), 'history fallback wired');
+assert.ok(hook2.includes('.slice(0, 8)'), 'history fallback is bounded');
+console.log('jp-watch-fallback.test: v13.5.44 history rows for owner symbols ok');

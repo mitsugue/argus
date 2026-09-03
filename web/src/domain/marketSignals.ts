@@ -8,7 +8,7 @@
 import { MARKET_SIGNAL_STATE_GLOSSARY } from './glossary';
 
 export type MarketSignalState =
-  | 'ACTIVE' | 'CLEAR' | 'DATA_GATED' | 'STALE' | 'LICENSE_BLOCKED' | 'UNAVAILABLE';
+  | 'ACTIVE' | 'CLEAR' | 'DATA_GATED' | 'STALE' | 'LICENSE_BLOCKED' | 'NOT_APPLICABLE' | 'UNAVAILABLE';
 
 export interface MarketSignalRow {
   id: string;
@@ -55,11 +55,11 @@ export const MARKET_SIGNAL_DEFINITIONS: ReadonlyArray<{
 
 export const MARKET_SIGNAL_STATE_JA: Record<MarketSignalState, string> = {
   ACTIVE: '点灯', CLEAR: '消灯', DATA_GATED: '判定不能', STALE: '古い',
-  LICENSE_BLOCKED: '要ライセンス', UNAVAILABLE: '欠測',
+  LICENSE_BLOCKED: '要ライセンス', NOT_APPLICABLE: '該当なし', UNAVAILABLE: '欠測',
 };
 
 const STATES: ReadonlySet<string> = new Set(
-  ['ACTIVE', 'CLEAR', 'DATA_GATED', 'STALE', 'LICENSE_BLOCKED', 'UNAVAILABLE']);
+  ['ACTIVE', 'CLEAR', 'DATA_GATED', 'STALE', 'LICENSE_BLOCKED', 'NOT_APPLICABLE', 'UNAVAILABLE']);
 
 /** The single counting rule (mirrors argus_market_signals.signal_state). */
 export function signalStateFromFamily(
@@ -73,6 +73,7 @@ export function signalStateFromFamily(
   }
   if (row.status === 'STALE') return 'STALE';
   if (row.status === 'LICENSE_BLOCKED') return 'LICENSE_BLOCKED';
+  if (row.status === 'NOT_APPLICABLE') return 'NOT_APPLICABLE';
   if (row.status === 'PARTIAL' || row.status === 'UNVALIDATED' || row.status === 'DATA_GATED') {
     return 'DATA_GATED';
   }
