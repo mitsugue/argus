@@ -13,6 +13,7 @@ from datetime import date, datetime, timezone
 import logging
 import random
 import re
+import socket
 import threading
 import time
 from typing import Callable, Iterable, Mapping, Protocol
@@ -619,6 +620,28 @@ class EventProgressSnapshot:
     last_normalization_reason: str | None
     last_normalization_row: int | None
     last_normalization_symbol: str | None
+    # v13.5.39: CONNECT failures while the provider host was unreachable are
+    # waited out (bounded) instead of consuming the reconnect budget.
+    transport_unreachable_waits: int = 0
+
+
+def _default_reachability(endpoint: str, timeout_seconds: float = 3.0) -> bool:
+    """True when a plain TCP connection to the EVENT host succeeds.
+
+    Only the public hostname and port are used; the credential-equivalent
+    virtual path never leaves the session object.  Any failure is
+    'unreachable' — this is a transport probe, not a provider request.
+    """
+    try:
+        parsed = urlsplit(endpoint)
+        host = parsed.hostname
+        if not host:
+            return False
+        port = parsed.port or (443 if parsed.scheme in {"wss", "https"} else 80)
+        with socket.create_connection((host, port), timeout=timeout_seconds):
+            return True
+    except Exception:
+        return False
 
 
 class EventLifecycleProgress:
@@ -627,6 +650,7 @@ class EventLifecycleProgress:
     def __init__(self) -> None:
         self._connections = 0
         self._reconnects = 0
+        self._transport_unreachable = 0
         self._frames = 0
         self._observations = 0
         self._first_sequence: int | None = None
@@ -680,6 +704,10 @@ class EventLifecycleProgress:
     def reconnect_scheduled(self) -> None:
         with self._lock:
             self._reconnects += 1
+
+    def transport_unreachable(self) -> None:
+        with self._lock:
+            self._transport_unreachable += 1
 
     def frame_received(
         self, *, sequence: int, provider_timestamp: datetime,
@@ -813,6 +841,7 @@ class EventLifecycleProgress:
             return EventProgressSnapshot(
                 connections_started=self._connections,
                 reconnects_scheduled=self._reconnects,
+                transport_unreachable_waits=self._transport_unreachable,
                 frames_received=self._frames,
                 observations_ingested=self._observations,
                 first_sequence=self._first_sequence,
@@ -896,6 +925,7 @@ class TachibanaEventLifecycle:
         session_truth_resolver: Callable[..., SessionTruth] | None = None,
         provider_calendar_date: date | None = None,
         progress: EventLifecycleProgress | None = None,
+        reachability_probe: Callable[[str], bool] | None = None,
     ) -> None:
         if (
             not isinstance(session, TachibanaSession)
@@ -920,6 +950,7 @@ class TachibanaEventLifecycle:
             symbol: row for row, symbol in subscription.row_to_symbol.items()
         }
         self._progress = progress or EventLifecycleProgress()
+        self._reachability = reachability_probe or _default_reachability
         self._budget = EventReconnectBudget(
             self._policy.maximum_reconnects_per_day, clock=clock
         )
@@ -1004,6 +1035,7 @@ class TachibanaEventLifecycle:
         reconnects = 0
         frames = 0
         observations = 0
+        outage_waited = 0.0
         last_error = ErrorClass.NONE
         status = EventStatusSnapshot(
             ProviderHealth.UNAVAILABLE, MarketStatus.UNKNOWN
@@ -1020,6 +1052,7 @@ class TachibanaEventLifecycle:
                 stream: Iterable[str | bytes] | None = None
                 failure: Exception | None = None
                 failure_stage = "CONNECT"
+                endpoint = ""
                 try:
                     endpoint = self._session._market_data_endpoint("event_websocket")
                     stream = self._connector.receive(
@@ -1189,6 +1222,28 @@ class TachibanaEventLifecycle:
                     if last_error == ErrorClass.SESSION_EXPIRED:
                         self._session.expire()
                     raise TachibanaError(last_error)
+                # v13.5.39 official-contract recovery order:
+                #   1. a CONNECT failure while the provider host is unreachable
+                #      is a network outage — wait it out (bounded), never
+                #      spending the reconnect budget nor re-authenticating;
+                #   2. after an established connection closes, wait for the
+                #      provider's disconnect processing (drain) before the
+                #      SAME-SESSION reconnect (virtual URLs stay valid);
+                #   3. only then consume one reconnect and back off 5 s→60 s.
+                if failure_stage == "CONNECT" and last_error == ErrorClass.NETWORK \
+                        and endpoint and not self._reachability(endpoint):
+                    outage_waited += self._policy.outage_backoff_seconds
+                    if outage_waited > self._policy.outage_budget_seconds:
+                        last_error = ErrorClass.EVENT_RECONNECT_EXHAUSTED
+                        self._diagnostics(error=last_error)
+                        raise TachibanaError(last_error)
+                    self._progress.transport_unreachable()
+                    if self._waiter(stop_event, self._policy.outage_backoff_seconds):
+                        break
+                    continue
+                if failure_stage != "CONNECT" and self._policy.drain_wait_seconds > 0:
+                    if self._waiter(stop_event, self._policy.drain_wait_seconds):
+                        break
                 if not self._budget.consume():
                     last_error = ErrorClass.EVENT_RECONNECT_EXHAUSTED
                     self._diagnostics(error=last_error)

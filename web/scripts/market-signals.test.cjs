@@ -82,4 +82,14 @@ assert.ok(panel.includes('{signals.countLabel}'), 'count must come from the view
 assert.ok(!/["'`]\s*1 \/ 7\s*["'`]/.test(panel), 'no hard-coded 1 / 7 literal');
 assert.ok(panel.includes('data-signal-state={row.state}'), 'per-signal state rendered independently');
 
-console.log('market-signals.test: SIG-01..07, computed x/7, independent states, glossary ok');
+// 7) v13.5.39: the TOP command area (the block the owner reads first) renders
+//    MARKET SIGNALS x / 7 from the real projection, never a hard-coded count.
+assert.ok(panel.includes('data-argus-contract="market-signals-top-v1"'), 'top block contract marker');
+assert.ok(panel.includes('const topSignals = marketSignalsView(decisionEvidence.marketView?.projection ?? null)'),
+  'top block derives from the projection');
+assert.ok(panel.includes("{topSignals ? topSignals.countLabel : '— / 7'}"), 'top count from the view or truthful placeholder');
+assert.ok(panel.includes('<small>MARKET SIGNALS</small>'), 'owner-facing name at the top');
+assert.ok(panel.includes('data-argus-contract="market-signals-top-detail-v1"'), 'seven per-signal states expand at the top');
+assert.ok(!/<b>1 \/ 7<\/b>/.test(panel), 'no hard-coded 1 / 7');
+
+console.log('market-signals.test: SIG-01..07, computed x/7, independent states, top block, glossary ok');

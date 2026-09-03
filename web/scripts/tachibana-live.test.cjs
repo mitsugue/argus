@@ -77,4 +77,59 @@ assert.ok(panel.includes('提供元 TACHIBANA'), 'rows must show provenance');
 assert.ok(panel.includes('data-tachibana-status={tachibana.status}'));
 assert.ok(!panel.includes("'LIVE'") || !/data-tachibana-status=['"]LIVE['"]/.test(panel), 'status never hard-coded');
 
-console.log('tachibana-live.test: truthful status, provenance, no fabrication, glossary ok');
+// 6) v13.5.39 realtime overlay: a current FRESH Tachibana row replaces the JP
+//    watchlist row as provider tachibana / LIVE; everything else is untouched.
+const nowMs = Date.parse('2026-09-03T04:31:02+00:00');
+const jpSnapshot = {
+  status: 'delayed',
+  stocks: [
+    { symbol: '9984', name: 'ソフトバンクG', price: 8800, changeAbs: -100, changePct: -1.1,
+      status: 'delayed', provider: 'jquants', source: 'jquants', sourceTimestamp: '2026-09-02',
+      delayClass: 'T-1' },
+    { symbol: '7203', name: 'トヨタ', price: 2900, status: 'delayed', provider: 'jquants',
+      source: 'jquants', sourceTimestamp: '2026-09-02', delayClass: 'T-1' },
+  ],
+};
+const liveDoc = {
+  provider: 'TACHIBANA', status: 'LIVE',
+  symbols: {
+    '9984': { provider: 'TACHIBANA', price: 9000, changeAbs: 100, changePct: 1.12, volume: 1200000,
+      vwap: 8975.5, bestBid: 8999, bestAsk: 9001, freshness: 'FRESH', marketStatus: 'OPEN',
+      sourceTimestamp: '2026-09-03T04:30:58+00:00', receivedAt: '2026-09-03T04:31:00+00:00' },
+  },
+};
+const overlaid = tl.overlayTachibanaLive(jpSnapshot, liveDoc, nowMs);
+const sb = overlaid.stocks.find((r) => r.symbol === '9984');
+assert.equal(sb.price, 9000);
+assert.equal(sb.provider, 'tachibana');
+assert.equal(sb.source, 'tachibana');
+assert.equal(sb.status, 'live');
+assert.equal(sb.quoteTruth.delayClass, 'LIVE');
+assert.equal(sb.quoteTruth.provider, 'tachibana');
+assert.equal(sb.tachibanaLive, true);
+assert.equal(overlaid.tachibanaLiveCount, 1);
+assert.equal(overlaid.status, 'mixed');
+const toyota = overlaid.stocks.find((r) => r.symbol === '7203');
+assert.equal(toyota.provider, 'jquants');            // untouched fallback, truthfully delayed
+assert.equal(toyota.price, 2900);
+// stale evidence never overlays (60 s proof window) and a non-LIVE doc never overlays
+const staleDoc = { ...liveDoc, symbols: { '9984': { ...liveDoc.symbols['9984'], freshness: 'STALE' } } };
+assert.equal(tl.overlayTachibanaLive(jpSnapshot, staleDoc, nowMs), jpSnapshot);
+assert.equal(tl.overlayTachibanaLive(jpSnapshot, liveDoc, nowMs + 120_000), jpSnapshot);
+assert.equal(tl.overlayTachibanaLive(jpSnapshot, { ...liveDoc, status: 'AUTH_FAILED' }, nowMs), jpSnapshot);
+assert.equal(tl.overlayTachibanaLive(jpSnapshot, null, nowMs), jpSnapshot);
+// the module store publishes/clears the document
+tl.setTachibanaLiveDocument(liveDoc);
+assert.equal(tl.getTachibanaLiveDocument().status, 'LIVE');
+tl.setTachibanaLiveDocument({ provider: 'moomoo', status: 'LIVE' });
+assert.equal(tl.getTachibanaLiveDocument(), null);
+// the asset pipeline applies the overlay before prices/rows are derived
+const intel = fs.readFileSync(path.join(src, 'hooks', 'useAssetIntel.ts'), 'utf8');
+assert.ok(intel.includes('overlayTachibanaLive(peJpRaw.data'), 'useAssetIntel must overlay Tachibana LIVE onto JP quotes');
+const hook = fs.readFileSync(path.join(src, 'hooks', 'useDecisionEvidence.ts'), 'utf8');
+assert.ok(hook.includes('const japaneseLive = data.japaneseLive ?? view?.japaneseLive ?? null'),
+  'decision evidence must read the document-level japaneseLive the backend publishes');
+assert.ok(hook.includes('setTachibanaLiveDocument(japaneseLive)'), 'decision evidence must publish the live document');
+assert.ok(hook.includes('{ ...view, japaneseLive }'), 'panel contract keeps marketView.japaneseLive');
+
+console.log('tachibana-live.test: truthful status, provenance, no fabrication, realtime overlay, glossary ok');

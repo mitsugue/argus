@@ -54,6 +54,23 @@
   color:var(--accent); }
 .at-seven-detail li i { font-style:normal; font-weight:800; font-size:8px; }
 .at-seven-gated { margin:3px 0 0; color:var(--text-muted); font-size:9.5px; }
+/* v13.5.39 MARKET SIGNALS in the top command area */
+.at-seven-chips i[data-signal-state="ACTIVE"] { color:var(--accent); font-weight:800;
+  background:rgba(110,220,170,.22); }
+.at-seven-chips i[data-signal-state="DATA_GATED"], .at-seven-chips i[data-signal-state="STALE"] {
+  background:rgba(255,193,120,.16); }
+.at-seven-chips i[data-signal-state="UNAVAILABLE"], .at-seven-chips i[data-signal-state="LICENSE_BLOCKED"] {
+  opacity:.55; }
+.at-seven-signals { display:flex; flex-wrap:wrap; gap:4px; margin:2px 0 6px; }
+.at-seven-signals i { font-style:normal; font-size:9.5px; padding:1px 6px; border-radius:4px;
+  background:rgba(255,255,255,.06); white-space:nowrap; color:var(--text-sub); }
+.at-seven-signals i b { font-weight:800; }
+.at-seven-signals i[data-signal-state="ACTIVE"] { background:rgba(110,220,170,.22); color:var(--accent); }
+.at-seven-signals i[data-signal-state="DATA_GATED"], .at-seven-signals i[data-signal-state="STALE"] {
+  background:rgba(255,193,120,.14); }
+.at-seven-signals i[data-signal-state="UNAVAILABLE"], .at-seven-signals i[data-signal-state="LICENSE_BLOCKED"] {
+  opacity:.6; }
+.at-seven-signals small { flex-basis:100%; color:var(--text-muted); font-size:9px; }
 /* v13.5.1 market-shock events on the Major News surface. */
 .at-shock { display:grid; gap:6px; margin-bottom:6px; }
 .at-shock-event { display:grid; gap:2px; padding:7px 8px; border-radius:6px;

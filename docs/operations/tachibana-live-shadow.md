@@ -192,6 +192,41 @@ when that pin is lifted. Until then the Today indicator truthfully renders
 Tachibana secret files on the backend service and `ARGUS_TACHIBANA_ENABLED=true`
 (owner dashboard action; secrets never enter Git, env values, or logs).
 
+## v13.5.39 EVENT recovery order and owner-visible LIVE
+
+Live finding (2026-09-03 afternoon acceptance on `ab9951e7`): AUTH, Date,
+PRICE, EVENT (8,510 frames, FD active, sequence and timestamp progression,
+`PREOPEN_BOOK_LIVE = PASS`, execution progression) all passed; the session
+then lost the socket and every reconnect failed at CONNECT within seconds
+(1 s, 2 s, 4 s), exhausting the daily budget. The final REST logout also
+failed with NETWORK, which points at a transport interruption, not a session
+fault. The official contract keeps the virtual URLs valid across a socket
+close and asks the client to wait for the previous disconnect to finish.
+
+Recovery order now implemented in `TachibanaEventLifecycle.run`:
+
+1. CONNECT failure while the EVENT host is unreachable (plain TCP probe to the
+   public hostname only) → wait `outage_backoff_seconds` (30 s), never consume
+   the reconnect budget, never re-authenticate; bounded by
+   `outage_budget_seconds` (900 s) per run, then `EVENT_RECONNECT_EXHAUSTED`.
+2. An established connection closed → wait `drain_wait_seconds` (5 s) for the
+   provider's disconnect processing, then reconnect in the SAME session.
+3. Consume one reconnect and back off 5 s → 60 s (jittered), bounded by
+   `ARGUS_TACHIBANA_EVENT_RECONNECTS_PER_DAY`.
+4. Re-authentication only on evidenced session invalidity
+   (`SESSION_EXPIRED` from the provider), through the existing bounded
+   2-per-15-minute budget in the service/runtime.
+
+Owner-visible product (v13.5.39): the top command area renders
+`MARKET SIGNALS  x / 7` with the seven `SIG-01..07` states from the real
+projection (the SDA Seven Sign level stays as a secondary line). When the
+decision-evidence document carries current Tachibana evidence
+(`japaneseLive`, status `LIVE`/`DEGRADED`, a `FRESH` row with a ≤ 60 s
+exchange timestamp), the JP watchlist row for that symbol is replaced by the
+Tachibana observation (provider `tachibana`, `delayClass: LIVE`), so prices,
+freshness labels, and non-LIVE warnings reflect the live source; all other
+rows keep their truthfully labeled delayed source.
+
 ## Rollback
 
 Rollback affects only the new background worker: suspend it, confirm its single
