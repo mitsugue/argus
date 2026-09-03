@@ -2357,6 +2357,50 @@ def test_default_reachability_probe_uses_host_only_and_fails_closed(monkeypatch)
     assert stream._default_reachability("not a url") is False
 
 
+def test_secret_reader_resolves_platform_symlinks_and_keeps_local_strictness(tmp_path, monkeypatch):
+    import argus_providers.tachibana.session as session_module
+    from argus_providers.tachibana.session import _read_secret
+    # Platform-managed root (Render "Secret Files" / Kubernetes projection):
+    # the visible path is a symlink into a data directory, files are 0644,
+    # and the process cannot chmod them.  Both must be accepted.
+    platform_root = tmp_path / "etc-secrets"
+    data_dir = platform_root / "..data"
+    data_dir.mkdir(parents=True)
+    target = data_dir / "e_api_authid.txt"
+    target.write_bytes(b"ID-PLACEHOLDER\n")
+    target.chmod(0o644)
+    link = platform_root / "e_api_authid.txt"
+    link.symlink_to(target)
+    monkeypatch.setattr(session_module, "PLATFORM_SECRET_ROOTS", (platform_root,))
+    assert _read_secret(link, ErrorClass.SECRET_MISSING) == b"ID-PLACEHOLDER"
+    # Group/other WRITE remains rejected even under the platform root.
+    target.chmod(0o666)
+    with pytest.raises(TachibanaError) as writable:
+        _read_secret(link, ErrorClass.SECRET_MISSING)
+    assert writable.value.classification == ErrorClass.SECRET_PERMISSIONS
+    target.chmod(0o644)
+    # Outside the platform root the local policy is unchanged: a symlink is
+    # not followed and 0644 is a permissions failure.
+    local_dir = tmp_path / "local"
+    local_dir.mkdir()
+    local_target = local_dir / "real.txt"
+    local_target.write_bytes(b"ID-PLACEHOLDER\n")
+    local_target.chmod(0o600)
+    local_link = local_dir / "link.txt"
+    local_link.symlink_to(local_target)
+    with pytest.raises(TachibanaError) as nofollow:
+        _read_secret(local_link, ErrorClass.SECRET_MISSING)
+    assert nofollow.value.classification == ErrorClass.SECRET_MISSING
+    assert _read_secret(local_target, ErrorClass.SECRET_MISSING) == b"ID-PLACEHOLDER"
+    local_target.chmod(0o644)
+    with pytest.raises(TachibanaError) as perms:
+        _read_secret(local_target, ErrorClass.SECRET_MISSING)
+    assert perms.value.classification == ErrorClass.SECRET_PERMISSIONS
+    with pytest.raises(TachibanaError) as missing:
+        _read_secret(local_dir / "absent.txt", ErrorClass.SECRET_MISSING)
+    assert missing.value.classification == ErrorClass.SECRET_MISSING
+
+
 def test_transient_sensor_prunes_size_and_age_and_has_no_persistence_surface():
     sensor = TransientLiveSensor(max_symbols=1, window_size=2, window_seconds=30)
     for offset, price in enumerate(("2000", "2001", "2002")):
