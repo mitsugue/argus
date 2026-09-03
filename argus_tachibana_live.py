@@ -64,6 +64,15 @@ _FIELD_MAP = (
 )
 
 
+# v13.5.42: closed-session probe (outside the JPX window) — one bounded
+# AUTH → DATE → PRICE → logout so the owner sees a truthful CLOSED state
+# instead of UNAVAILABLE after hours.  Re-run at most every 4 h on success
+# and every 30 min after a failure (no retry storm; auth budget bounded).
+_PROBE_INTERVAL_SECONDS = 4 * 3600
+_PROBE_RETRY_SECONDS = 1800
+_PROBE_SETTLE_SECONDS = 3.0
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -211,7 +220,7 @@ def observation_evidence(observation: Any, *, now: datetime) -> Dict[str, Any]:
 
 def derive_status(*, enabled: bool, running: bool, last_error_class: Optional[str],
                   rows: Mapping[str, Mapping[str, Any]], provider_health: Optional[str],
-                  in_window: bool) -> str:
+                  in_window: bool, closed_probe_ok: bool = False) -> str:
     """Owner-facing status from truthful inputs; never LIVE without evidence."""
     if not enabled:
         return "DISABLED"
@@ -219,6 +228,8 @@ def derive_status(*, enabled: bool, running: bool, last_error_class: Optional[st
         return "AUTH_FAILED"
     if last_error_class == "MAINTENANCE" or provider_health == "MAINTENANCE":
         return "MAINTENANCE"
+    if not in_window and closed_probe_ok and rows and not running:
+        return "CLOSED"
     if not running or not rows:
         return "UNAVAILABLE"
     fresh = [row for row in rows.values()
@@ -265,6 +276,9 @@ class TachibanaLiveService:
         self._start_calls = 0
         self._auth_diagnostic: Optional[Dict[str, Any]] = None
         self._last_auth_at: Optional[datetime] = None
+        self._probe_at: Optional[datetime] = None
+        self._probe_result: Optional[str] = None
+        self._probe_stages: Optional[Dict[str, Any]] = None
 
     # ── configuration ────────────────────────────────────────────────────
     def _load_config(self, environ: Optional[Mapping[str, str]]) -> Optional[TachibanaConfig]:
@@ -330,7 +344,10 @@ class TachibanaLiveService:
                 while not self._stop.is_set():
                     now = self._clock()
                     if not in_live_window(now):
-                        self._set_idle()
+                        if self._probe_due(now):
+                            self._run_closed_probe(config, symbols)
+                        else:
+                            self._set_idle(keep_rows=self._probe_result == "PASS")
                         self._sleeper(_HOLD_SECONDS)
                         continue
                     if not self._run_session(config, symbols):
@@ -382,6 +399,76 @@ class TachibanaLiveService:
             self._runtime = None
         return True
 
+    def _probe_due(self, now: datetime) -> bool:
+        if self._probe_at is None:
+            return True
+        elapsed = (now - self._probe_at).total_seconds()
+        interval = _PROBE_INTERVAL_SECONDS if self._probe_result == "PASS" else _PROBE_RETRY_SECONDS
+        return elapsed >= interval
+
+    def _run_closed_probe(self, config: TachibanaConfig, symbols: tuple) -> None:
+        """One bounded AUTH → DATE → PRICE → logout outside the live window.
+
+        Proves the production credentials and the read contract without a
+        market session; retains the price baseline rows (marketStatus CLOSED)
+        so the owner surface can show CLOSED truthfully.  Never streams.
+        """
+        runtime = self._runtime_factory(config, symbols=symbols)
+        now = self._clock()
+        self._start_calls += 1
+        self._auth_attempts += 1
+        self._last_auth_at = now
+        self._probe_at = now
+        stages: Dict[str, Any] = {}
+        try:
+            runtime.start()
+        except TachibanaError as exc:
+            self._last_error_class = exc.classification.value
+            self._capture_auth_diagnostic(runtime)
+            stages = self._probe_stage_summary(runtime)
+            runtime.stop()
+            with self._lock:
+                self._probe_result, self._probe_stages = "FAIL", stages
+            self._set_idle()
+            return
+        except Exception:
+            self._last_error_class = "UNCLASSIFIED_SAFE_FAILURE"
+            runtime.stop()
+            with self._lock:
+                self._probe_result, self._probe_stages = "FAIL", {}
+            self._set_idle()
+            return
+        self._last_error_class = None
+        self._capture_auth_diagnostic(runtime)
+        try:
+            self._sleeper(_PROBE_SETTLE_SECONDS)
+            self._refresh(runtime, symbols)
+            stages = self._probe_stage_summary(runtime)
+        finally:
+            runtime.stop()
+        with self._lock:
+            self._running = False
+            self._runtime = None
+            self._probe_result = "PASS" if self._rows else "PARTIAL"
+            self._probe_stages = stages
+
+    @staticmethod
+    def _probe_stage_summary(runtime: Any) -> Dict[str, Any]:
+        """Stage classifications only (PASS/error class); never provider text."""
+        try:
+            raw = runtime.initial_read_diagnostics_safe_dict()
+        except Exception:
+            return {}
+        out: Dict[str, Any] = {}
+        if isinstance(raw, dict):
+            for name, diagnostic in list(raw.items())[:4]:
+                if isinstance(diagnostic, dict):
+                    out[str(name)[:32]] = {
+                        "stage": str(diagnostic.get("stage"))[:48],
+                        "classification": str(diagnostic.get("classification"))[:48],
+                    }
+        return out
+
     def _refresh(self, runtime: Any, symbols: tuple) -> None:
         now = self._clock()
         rows: Dict[str, Dict[str, Any]] = {}
@@ -411,9 +498,10 @@ class TachibanaLiveService:
             with self._lock:
                 self._auth_diagnostic = diagnostic
 
-    def _set_idle(self) -> None:
+    def _set_idle(self, keep_rows: bool = False) -> None:
         with self._lock:
-            self._rows = {}
+            if not keep_rows:
+                self._rows = {}
             self._running = False
             self._runtime = None
 
@@ -431,6 +519,8 @@ class TachibanaLiveService:
             auth_attempts = self._auth_attempts
             auth_diagnostic = dict(self._auth_diagnostic) if self._auth_diagnostic else None
             last_auth_at = self._last_auth_at
+            probe_at, probe_result = self._probe_at, self._probe_result
+            probe_stages = dict(self._probe_stages) if self._probe_stages else None
         for row in rows.values():
             fresh_until = row.get("freshUntil")
             if row.get("freshness") == Freshness.FRESH.value and fresh_until:
@@ -442,7 +532,8 @@ class TachibanaLiveService:
         enabled = bool(config.enabled) if config is not None else False
         status = derive_status(enabled=enabled, running=running,
                                last_error_class=last_error, rows=rows,
-                               provider_health=health, in_window=in_live_window(moment))
+                               provider_health=health, in_window=in_live_window(moment),
+                               closed_probe_ok=probe_result == "PASS")
         return {
             "schemaVersion": SCHEMA,
             "provider": PROVIDER,
@@ -458,6 +549,12 @@ class TachibanaLiveService:
             "authAttempts": auth_attempts,
             "lastAuthAt": _iso(last_auth_at),
             "authBoundary": auth_boundary(last_error, auth_diagnostic),
+            "lastAuthResult": ("PASS" if (running or probe_result == "PASS") and last_error is None
+                               else ("FAIL" if last_error else None)),
+            "closedSessionProbe": {
+                "at": _iso(probe_at), "result": probe_result, "stages": probe_stages,
+                "intervalSeconds": _PROBE_INTERVAL_SECONDS,
+            },
             "authDiagnostic": auth_diagnostic,
             "secretFiles": secret_file_diagnostics(config) if enabled else {},
             "updatedAt": _iso(updated_at),
@@ -471,6 +568,13 @@ _SERVICE = TachibanaLiveService()
 
 
 def ensure_started(environ: Optional[Mapping[str, str]] = None) -> str:
+    # v13.5.42: the request autostart seam is the only product-owned boot
+    # hook (scanner is Recovery-frozen), so the chart bootstrap shares it.
+    try:
+        import argus_chart_bootstrap
+        argus_chart_bootstrap.ensure_started()
+    except Exception:
+        pass
     return _SERVICE.ensure_started(environ)
 
 

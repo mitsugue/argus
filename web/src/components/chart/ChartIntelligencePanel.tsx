@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useChartIntelligence } from '../../hooks/useChartIntelligence';
+import { useTachibanaLiveDocument } from '../../hooks/useDecisionEvidence';
+import { tachibanaCurrentPoint, type TachibanaCurrentPoint } from '../../domain/tachibanaLive';
 import type { ChartBar, ChartIntelligencePayload } from '../../types/chartIntelligence';
 import { buildTodayProjection, type TodayProjectionInput } from '../../domain/argusTodayView';
 import { useMarketLedger } from '../../hooks/useMarketLedger';
@@ -88,14 +90,16 @@ function valuationAt(history: Array<{ date: string; availableFrom: string; value
 }
 
 const PriceChart: React.FC<{ payload: ChartIntelligencePayload; range: string;
-  showBB: boolean; showCloud: boolean; showLongMA: boolean }> = ({ payload, range, showBB, showCloud, showLongMA }) => {
+  showBB: boolean; showCloud: boolean; showLongMA: boolean; currentPoint?: TachibanaCurrentPoint | null }> =
+  ({ payload, range, showBB, showCloud, showLongMA, currentPoint = null }) => {
   const all = payload.indicators.bars;
   const bars = all.slice(-(RANGE_COUNT[range] ?? 264));
   if (!bars.length) return <div className="ci-empty">価格履歴は未取得です。候補判定を停止しています。</div>;
   const zoneValues = payload.zones.flatMap((z) => [z.lower, z.upper]);
   const valuation = payload.valuationLevels.flatMap((level) => bars
     .map((bar) => valuationAt(level.history, bar.date)).filter((value): value is number => value != null));
-  const values = bars.flatMap((b) => [b.high, b.low]).concat(zoneValues, valuation).filter(Number.isFinite);
+  const values = bars.flatMap((b) => [b.high, b.low]).concat(zoneValues, valuation)
+    .concat(currentPoint ? [currentPoint.price] : []).filter(Number.isFinite);
   const lo = Math.min(...values), hi = Math.max(...values), span = hi - lo || 1;
   const x = (i: number) => 38 + (i / Math.max(1, bars.length - 1)) * 920;
   const y = (v: number) => 25 + (hi - v) / span * 285;
@@ -133,6 +137,14 @@ const PriceChart: React.FC<{ payload: ChartIntelligencePayload; range: string;
     {payload.eventMarkers?.slice(-30).map((event) => { const idx = bars.findIndex((b) => b.date >= event.date); if (idx < 0) return null;
       return <g key={`${event.id}-${event.date}`}><line x1={x(idx)} x2={x(idx)} y1="25" y2="310" className="ci-event-line" />
         <title>{event.labelJa}</title></g>; })}
+    {currentPoint && <g className="ci-current-point" data-argus-contract="chart-current-point-v1"
+      data-current-source={currentPoint.source} data-current-state={currentPoint.state}>
+      <line x1="38" x2="958" y1={y(currentPoint.price)} y2={y(currentPoint.price)} className="ci-current-line" />
+      <circle cx={x(bars.length - 1)} cy={y(currentPoint.price)} r="5" className={`ci-marker ci-marker--current ci-marker--${currentPoint.state.toLowerCase()}`}>
+        <title>{`現在値 ${currentPoint.price} · 提供元 TACHIBANA · ${currentPoint.state}`}</title></circle>
+      <text x="600" y={Math.max(14, y(currentPoint.price) - 6)} className="ci-current-label">
+        {`現在値 ${currentPoint.price.toLocaleString('ja-JP')} · TACHIBANA · ${currentPoint.state === 'LIVE' ? 'ライブ' : '市場クローズ'}`}</text>
+    </g>}
     <text x="38" y="330">出来高</text><text x="38" y="427">{bars[0]?.date}</text><text x="895" y="427">{bars.at(-1)?.date}</text>
   </svg>;
 };
@@ -167,6 +179,11 @@ export const ChartIntelligencePanel: React.FC<{
     data, loading, error, errorClass, retryAt, retry, snapshotState,
     statusText, loaderVisible, slowInitial,
   } = useChartIntelligence({ scope, symbol, market, timeframe, enabled });
+  // v13.5.42: current point from the Tachibana evidence document (LIVE or CLOSED baseline).
+  const tachibanaDoc = useTachibanaLiveDocument();
+  const currentPoint = useMemo(
+    () => (scope === 'asset' && symbol ? tachibanaCurrentPoint(symbol, tachibanaDoc) : null),
+    [scope, symbol, tachibanaDoc]);
   useEffect(() => {
     if (!retryAt || retryAt <= Date.now()) return;
     const timer = window.setInterval(() => {
@@ -261,7 +278,11 @@ export const ChartIntelligencePanel: React.FC<{
         <label><input type="checkbox" checked={showLongMA} onChange={(e) => setShowLongMA(e.target.checked)} /> 100/200日線</label>
       </div>
       <div className="card ci-chart-wrap"><div className="ci-chart-head"><b>{data.displayNameJa ?? data.symbol}</b><span>{data.periodEnd ?? '未取得'}</span></div>
-        <PriceChart payload={data} range={range} showBB={showBB} showCloud={showCloud} showLongMA={showLongMA} />
+        <PriceChart payload={data} range={range} showBB={showBB} showCloud={showCloud} showLongMA={showLongMA}
+          currentPoint={scope === 'asset' ? currentPoint : null} />
+        {scope === 'asset' && currentPoint && <p className="ci-current-source" data-argus-contract="chart-current-source-v1">
+          現在値ソース: TACHIBANA · {currentPoint.state === 'LIVE' ? 'ライブ' : '市場クローズ'}
+          {currentPoint.sourceTimestamp ? ` · ${currentPoint.sourceTimestamp}` : ''} · 参考証拠（売買権限なし）</p>}
         {data.proxyDisclosureJa && <p className="ci-note">{data.proxyDisclosureJa}</p>}</div>
       {scope === 'market' && <RelativePanel payload={data} />}
       <div className="ci-summary-grid">

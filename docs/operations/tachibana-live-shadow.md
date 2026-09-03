@@ -286,3 +286,26 @@ the Tachibana deployment.
   `AUTH_FAILED / AUTH_KEY_PARSE_FAILED` and the owner sees 認証失敗 truthfully.
 - Recovery Smoke must not start before the owner has accepted both
   v13.5.40 (Tachibana cutover) and v13.5.41 (Events/News) on the real app.
+
+## v13.5.42 — closed-session probe, CLOSED vocabulary, chart bootstrap
+
+- **Closed-session probe.** Outside the JPX window the product boundary runs
+  one bounded AUTH → DATE → PRICE → logout (`_run_closed_probe`), at most
+  every 4 h on success and every 30 min after a failure. Evidence:
+  `lastAuthResult`, `closedSessionProbe {at, result, stages}` (stage
+  classifications only). Price baseline rows are retained with
+  `marketStatus CLOSED`; status becomes **CLOSED** (provider proven, market
+  closed) instead of UNAVAILABLE. No streaming, no reauth storm.
+- **Owner vocabulary.** TACHIBANA LIVE card: 市場クローズ; JP realtime lamp:
+  green `Tachibana 接続確認済 · 市場クローズ（symbols）`; glossary
+  `tachibana_closed`. Asset Detail attaches the closed board as reference
+  evidence without replacing the row's own price/provider (no false LIVE).
+- **Chart bootstrap.** `argus_chart_bootstrap` (product module, started from
+  the request autostart seam because scanner is Recovery-frozen) walks the
+  existing asset-chart tick over every target once after the durable-state
+  restore, using the tick's own bounded provider seed (J-Quants, 2 pages).
+  Kill switch `ARGUS_CHART_BOOTSTRAP=0`. No public-GET fetches, no raw tick
+  warehouse.
+- **Chart current point.** Asset charts draw the Tachibana current price
+  (LIVE when current within 60 s, CLOSED for the baseline) as a marker plus
+  `現在値ソース: TACHIBANA`; the point never replaces the historical series.
