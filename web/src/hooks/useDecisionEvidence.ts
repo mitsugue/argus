@@ -115,11 +115,13 @@ const decisionEvidenceStore = createSharedPollingStore<DecisionEvidenceState>(
           const japaneseLive = data.japaneseLive ?? view?.japaneseLive ?? null;
           const marketView = view
             && view.schemaVersion === 'argus-sho-market-view-v1'
-            && view.actionAuthority === false ? { ...view, japaneseLive } : null;
+            && view.actionAuthority === false ? view : null;
           // v13.5.39: publish the Tachibana LIVE evidence document for the JP
-          // quote overlay (absent/invalid documents clear the store).
+          // quote overlay (absent/invalid documents clear the store) and keep
+          // it reachable as marketView.japaneseLive for the Today strip.
           setTachibanaLiveDocument(japaneseLive);
-          setState({ subjects: data.subjects, marketView,
+          setState({ subjects: data.subjects,
+            marketView: marketView ? { ...marketView, japaneseLive } : null,
             generatedAt: typeof data.generatedAt === 'string' ? data.generatedAt : null,
             loading: false, error: null });
         }

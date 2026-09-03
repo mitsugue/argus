@@ -620,6 +620,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
             {topSignals ? topSignals.countLabel : '— / 7'}</b>
           <span className="at-seven-status">
             {topSignals ? `点灯 ${topSignals.activeCount} · ` : ''}
+            {view.actionScore == null ? 'Calibration pending · ' : ''}
             判断レベル {view.actionScore == null ? '— / 7' : `${view.actionScore} / 7`}
             {topSignals ? '' : ` · ${view.canonicalDecision.sevenSign.status}`}</span>
           <span className="at-seven-chips" aria-hidden="true">
