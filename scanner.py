@@ -117,6 +117,7 @@ import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
 import argus_sho                    # v13.5.13: SHO evidence engine (pure; evidence, never action)
 import argus_single_decision        # v13.5.13: canonical artifact references for device SDA
+import argus_tachibana_live         # v13.5.38: Tachibana LIVE product boundary (shadow, read-only, no orders)
 import argus_tick_durability        # v13.3.1: bounded tick WAL/checkpoint/single-flight
 import argus_persistent_storage     # v13.3.1: fail-closed Render Disk contract
 import argus_remote_receipt_queue   # v13.4.2: fsynced async Remote Journal intents
@@ -17369,9 +17370,27 @@ def _news_intake_ensure_thread():
     threading.Thread(target=_news_intake_loop, daemon=True).start()
 
 
+_TACHIBANA_LIVE_AUTOSTART = {"value": False}
+
+
+def _tachibana_live_autostart():
+    """v13.5.38: bind the Tachibana LIVE product boundary lazily, once per
+    process, through the existing request autostart seam.  Disabled by
+    default (ARGUS_TACHIBANA_ENABLED unset/false): no provider request, no
+    thread, no WebSocket import.  Never raises into the request path."""
+    if _TACHIBANA_LIVE_AUTOSTART["value"]:
+        return
+    _TACHIBANA_LIVE_AUTOSTART["value"] = True
+    try:
+        argus_tachibana_live.ensure_started()
+    except Exception:
+        pass
+
+
 @app.before_request
 def _news_intake_autostart():
     _news_intake_ensure_thread()
+    _tachibana_live_autostart()
     return None
 
 
@@ -35826,6 +35845,25 @@ def _build_decision_evidence_subject(symbol, market, cutoff, build_identity):
     }
 
 
+def _tachibana_live_evidence():
+    """v13.5.38: the Tachibana LIVE evidence document for the decision-evidence
+    route.  Isolation: any failure inside the provider boundary degrades to a
+    fixed, content-free UNAVAILABLE document so the product route survives."""
+    try:
+        return argus_tachibana_live.current_evidence_safe()
+    except Exception as exc:
+        return {
+            "schemaVersion": argus_tachibana_live.SCHEMA,
+            "provider": argus_tachibana_live.PROVIDER,
+            "authority": argus_tachibana_live.AUTHORITY,
+            "status": "UNAVAILABLE",
+            "enabled": False, "shadowOnly": True, "authoritative": False,
+            "executionCapability": False,
+            "lastErrorClass": type(exc).__name__,
+            "symbols": {}, "symbolCount": 0,
+        }
+
+
 def _decision_evidence_document(symbols):
     now = time.time()
     generated_at = _ai_now_iso()
@@ -35918,6 +35956,11 @@ def _decision_evidence_document(symbols):
         # projection only, never an SDA input; the per-subject references
         # above remain the sole decision evidence.
         "marketView": _sho_market_view(),
+        # v13.5.38: Tachibana LIVE evidence (argus_tachibana_live) — provenance
+        # TACHIBANA, SHADOW_NON_AUTHORITATIVE, bounded and secret-free.  A
+        # disabled or failed sensor yields a truthful status, never an error,
+        # and never an SDA input.
+        "japaneseLive": _tachibana_live_evidence(),
         "subjects": subjects,
     }
 
