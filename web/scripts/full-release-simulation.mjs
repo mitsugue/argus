@@ -152,7 +152,16 @@ try {
   for (const label of ['Today', 'Holdings / Watchlist', 'Notifications', 'Settings']) {
     assert.ok(await page.getByText(label, { exact: true }).count() > 0, label);
   }
-  evidence.publicProductAcceptance = { status: 'pass', brand,
+  // v13.5.39: the owner's top command block renders MARKET SIGNALS x / 7 from
+  // the real projection (a truthful '— / 7' placeholder until evidence loads);
+  // this is the rendered DOM on the production route, not a source string.
+  const topSignals = page.locator('[data-argus-contract="market-signals-top-v1"]').first();
+  assert.ok(await topSignals.count() > 0, 'top MARKET SIGNALS block rendered');
+  const topSignalsText = (await topSignals.innerText()).trim();
+  assert.match(topSignalsText, /^(\d|—) \/ 7$/, `top MARKET SIGNALS count: ${topSignalsText}`);
+  assert.ok((await page.locator('.at-seven summary small').first().innerText()).includes('MARKET SIGNALS'),
+    'top block carries the owner-facing name');
+  evidence.publicProductAcceptance = { status: 'pass', brand, topSignals: topSignalsText,
     surfaces: ['Today', 'Holdings / Watchlist', 'Notifications', 'Settings'] };
   await context.close(); context = null;
 
