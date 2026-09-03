@@ -127,6 +127,9 @@ assert.equal(tl.getTachibanaLiveDocument(), null);
 const intel = fs.readFileSync(path.join(src, 'hooks', 'useAssetIntel.ts'), 'utf8');
 assert.ok(intel.includes('overlayTachibanaLive(peJpRaw.data'), 'useAssetIntel must overlay Tachibana LIVE onto JP quotes');
 const hook = fs.readFileSync(path.join(src, 'hooks', 'useDecisionEvidence.ts'), 'utf8');
-assert.ok(hook.includes('setTachibanaLiveDocument(marketView?.japaneseLive'), 'decision evidence must publish the live document');
+assert.ok(hook.includes('const japaneseLive = data.japaneseLive ?? view?.japaneseLive ?? null'),
+  'decision evidence must read the document-level japaneseLive the backend publishes');
+assert.ok(hook.includes('setTachibanaLiveDocument(japaneseLive)'), 'decision evidence must publish the live document');
+assert.ok(hook.includes('{ ...view, japaneseLive }'), 'panel contract keeps marketView.japaneseLive');
 
 console.log('tachibana-live.test: truthful status, provenance, no fabrication, realtime overlay, glossary ok');

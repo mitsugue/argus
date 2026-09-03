@@ -101,6 +101,9 @@ const decisionEvidenceStore = createSharedPollingStore<DecisionEvidenceState>(
           schemaVersion?: string; generatedAt?: string;
           subjects?: Record<string, unknown>;
           marketView?: ShoMarketView;
+          // v13.5.39: the backend publishes the Tachibana LIVE evidence at the
+          // document level (beside marketView), never as an SDA subject.
+          japaneseLive?: Record<string, unknown> | null;
         };
         if (data.schemaVersion !== 'argus-decision-evidence-v1'
             || typeof data.subjects !== 'object' || data.subjects === null) {
@@ -109,12 +112,13 @@ const decisionEvidenceStore = createSharedPollingStore<DecisionEvidenceState>(
         fetchedRevision = revision;
         if (!cancelled) {
           const view = data.marketView;
+          const japaneseLive = data.japaneseLive ?? view?.japaneseLive ?? null;
           const marketView = view
             && view.schemaVersion === 'argus-sho-market-view-v1'
-            && view.actionAuthority === false ? view : null;
+            && view.actionAuthority === false ? { ...view, japaneseLive } : null;
           // v13.5.39: publish the Tachibana LIVE evidence document for the JP
           // quote overlay (absent/invalid documents clear the store).
-          setTachibanaLiveDocument(marketView?.japaneseLive ?? null);
+          setTachibanaLiveDocument(japaneseLive);
           setState({ subjects: data.subjects, marketView,
             generatedAt: typeof data.generatedAt === 'string' ? data.generatedAt : null,
             loading: false, error: null });
