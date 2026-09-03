@@ -12,6 +12,21 @@ import argus_asset_chart_cache
 import argus_chart_bootstrap as boot
 
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_product_stores():
+    """Module stores (boot warm, derived valuation, statements state) must never
+    leak into other auto-discovered suites (e.g. D07 expects MISSING when cold)."""
+    import argus_chart_bootstrap as _boot
+    import argus_japan_valuation as _val
+    _boot._reset_for_tests(); _val._reset_for_tests()
+    yield
+    _boot._reset_for_tests(); _val._reset_for_tests()
+
+
+
 def _report(symbol, market):
     """Minimal report accepted by argus_asset_chart_cache._valid_report."""
     return {"reportId": f"{symbol}-daily", "status": "ok", "market": market, "symbol": symbol,
@@ -141,9 +156,11 @@ def test_boot_warm_warms_sho_and_interest_history_and_publishes_valuation():
     assert host.sho_calls == [True]
     assert warm["shoSourceStatus"]["margin1570"] == "jquants_weekly"
     # interest = 5803 + curated + device-requested JP codes (US symbols excluded), bounded
-    assert warm["interestSymbols"][:3] == ["5803", "8058", "6965"]
+    assert warm["interestSymbols"][:2] == ["5803", "8058"]
     assert set(warm["interestSymbols"]) == {"5803", "8058", "6965", "314A", "6330", "7203"}
-    assert set(host.history_calls) == set(warm["interestSymbols"])
+    assert warm["interestRegistrySize"] == 4                      # registry keeps device codes
+    assert set(warm["interestSymbols"]) <= set(host.history_calls)
+    assert "1321" in host.history_calls                          # SIG-03 proxy history
     assert warm["historyWarmed"] == len(warm["interestSymbols"])
     evidence = val.current_evidence()
     assert evidence["status"] == "AVAILABLE" and evidence["coverage"] == 1
@@ -172,3 +189,49 @@ def test_boot_warm_is_isolated_from_host_failures():
     warm = boot.warm_status()
     assert warm["status"] == "DONE" and warm["errorClass"].startswith("sho_warm:")
     assert warm["historyWarmed"] == 0 and warm["cycles"] == 1
+
+
+
+def test_interest_registry_outlives_host_cache_expiry_and_is_symbol_safe():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    host = _host([("5803", "JP")], set())
+    host._DECISION_EVIDENCE_CACHE = {"6965": {}}
+    boot.scan_interest(host, 100.0)
+    host._DECISION_EVIDENCE_CACHE = {}                           # host cache expired (120 s TTL)
+    assert boot.interest_symbols(host, 200.0)[-1] == "6965"      # registry remembers it
+    boot.scan_interest(host, 100.0 + boot.INTEREST_TTL_SECONDS + 1)
+    assert "6965" not in boot.interest_symbols(host)             # 7-day TTL
+    safe = boot.warm_status_safe()
+    assert "interestSymbols" not in safe and "interestCount" in safe and "chart" in safe
+
+
+def test_warm_cycle_warms_curated_reference_and_statements_when_offered():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    host = _host([("5803", "JP")], set())
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+    calls = {"curated": 0, "jq": [], "us": [], "stmt": []}
+    host.get_japan_watchlist_snapshot = lambda **kw: calls.__setitem__("curated", calls["curated"] + 1)
+    host._jq_price_history = lambda code: (calls["jq"].append(code) or {"closes": [1.0]})
+    host._us_price_history = lambda code: (calls["us"].append(code) or {"closes": [1.0]})
+    host._jquants_paginated = lambda path, params, max_pages=2, request_timeout=8: (
+        calls["stmt"].append(params["code"]) or [
+            {"LocalCode": params["code"] + "0", "DisclosedDate": "2026-08-10", "ForecastEarningsPerShare": "100"}])
+    host._sho_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    host._SHO_STATEMENTS_CACHE = {"rows": [], "source": "jquants"}
+    host._JQ_HISTORY_CACHE = {"5803": {"data": {"closes": [4951.0]}}}
+    host._JP_WATCHLIST = [{"symbol": "5803"}]
+    boot._STATE["warmMaxCycles"] = 1
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    warm = boot.warm_status()
+    assert calls["curated"] == 1 and warm["curatedWarmedAt"]
+    assert "1321" in calls["jq"] and calls["us"] == ["SPY"] and warm["referenceWarmed"] == 2
+    assert calls["stmt"] == ["5803"] and warm["statementsFetched"] == 1
+    evidence = val.current_evidence()
+    assert evidence["status"] == "AVAILABLE" and evidence["coverage"] == 1   # per-code statements merged

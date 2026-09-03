@@ -18,6 +18,21 @@ ROWS = [
 PRICES = {"5803": 4951.0, "8058": 5059.0, "9984": 5001.0, "6584": 1600.0}
 
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_product_stores():
+    """Module stores (boot warm, derived valuation, statements state) must never
+    leak into other auto-discovered suites (e.g. D07 expects MISSING when cold)."""
+    import argus_chart_bootstrap as _boot
+    import argus_japan_valuation as _val
+    _boot._reset_for_tests(); _val._reset_for_tests()
+    yield
+    _boot._reset_for_tests(); _val._reset_for_tests()
+
+
+
 def test_latest_forecast_eps_keeps_newest_disclosure_per_issuer():
     eps = val.latest_forecast_eps(ROWS)
     assert eps["5803"]["forecastEps"] == 250.0 and eps["5803"]["disclosedDate"] == "2026-08-05"

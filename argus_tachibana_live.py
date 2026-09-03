@@ -561,10 +561,21 @@ class TachibanaLiveService:
             "asOf": _iso(moment),
             "symbols": rows,
             "symbolCount": len(rows),
+            "productBoot": _product_boot_summary(),
         }
 
 
 _SERVICE = TachibanaLiveService()
+
+
+def _product_boot_summary() -> Optional[Dict[str, Any]]:
+    """v13.5.45: bounded, symbol-free boot-warm summary (owner-visible truth
+    about why a feed is warm or cold after a deploy).  Never raises."""
+    try:
+        import argus_chart_bootstrap
+        return argus_chart_bootstrap.warm_status_safe()
+    except Exception:
+        return None
 
 
 def ensure_started(environ: Optional[Mapping[str, str]] = None) -> str:
