@@ -563,6 +563,47 @@ claude     = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 STATE_FILE = "/tmp/scan_state.json"
 app        = Flask(__name__)
 
+# ── Request phase timing (v13.5.52) ──────────────────────────────────
+# Owner report 2026-09-04: several cached-only endpoints (events,
+# important-events, dashboard-events, action-labels, supply-demand,
+# flow-attribution, decision-evidence, downside-incidents) answered in
+# 70-155s in production while sibling endpoints on the same process
+# answered in <1s, so the device aborted them and the app rendered
+# "イベントなし / データ未取得". Local runs of the same handlers finish in
+# milliseconds, so the cost is not in the payload build. These two hooks
+# split a request into "hooks" (everything before the view) and "view"
+# (the view plus the response chain) and report the live thread count —
+# bounded integers only, no request data, no secrets, payload untouched.
+# Registered here (before CORS) so the after_request runs last.
+_TIMING_HEADER = "X-Argus-Timing"
+
+
+@app.before_request
+def _argus_timing_begin():
+    try:
+        g._argus_t0 = time.monotonic()
+    except Exception:
+        pass
+    return None
+
+
+@app.after_request
+def _argus_timing_end(response):
+    try:
+        started = getattr(g, "_argus_t0", None)
+        if started is None:
+            return response
+        now = time.monotonic()
+        view_started = getattr(g, "_argus_t1", None) or now
+        response.headers[_TIMING_HEADER] = (
+            f"hooks={int((view_started - started) * 1000)};"
+            f"view={int((now - view_started) * 1000)};"
+            f"threads={threading.active_count()}")
+    except Exception:
+        pass
+    return response
+
+
 # CORS for /api/argus/* — lets the React frontend (Vercel, GitHub Pages,
 # and localhost dev) call the ledger / rates endpoints. Other routes
 # stay same-origin.
@@ -29323,6 +29364,18 @@ def _bootstrap_hook():
         return None
     if _STARTUP["state"] == "bootstrapping":
         _startup_bootstrap()
+
+
+@app.before_request
+def _argus_timing_view_start():
+    """Last before_request: marks the boundary between the hook chain and the
+    view (see _argus_timing_begin). Must stay registered after every other
+    before_request handler."""
+    try:
+        g._argus_t1 = time.monotonic()
+    except Exception:
+        pass
+    return None
 
 
 def _formal_soak_is_active(soak=None):
