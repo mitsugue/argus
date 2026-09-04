@@ -279,3 +279,60 @@ def test_lifecycle_tiers_age_out_and_hero_prefers_next_over_released():
     assert nfp < pce                                               # tier precedes importance/relevance
     assert IE.lifecycle_tier_from_days(1, importance="high") == "NOW"
     assert IE.lifecycle_tier_from_days(-5, importance="high", actual_available=True) == "HISTORY"
+
+
+def test_both_lifecycle_entry_points_agree_on_the_countdown_day():
+    """v13.5.51 states ONE lifecycle for Today and the dashboard, but the two
+    entry points cut the forward windows differently: lifecycle_tier() used
+    elapsed seconds while lifecycle_tier_from_days() used the schedule's
+    calendar days. Measured on 2026-09-04, US CPI on 2026-09-11 was NEXT on
+    /important-events and LATER on /dashboard-events while both records carried
+    the same D-7 label. The windows are stated in DAYS and the countdown label
+    is computed from the Asia/Tokyo calendar-day distance, so both entry points
+    must read the tier off that same integer."""
+    import datetime as _dt
+
+    ie = __import__("argus_important_events")
+    jst = _dt.timezone(_dt.timedelta(hours=9))
+    # 2026-09-04 14:02 JST — the exact clock that produced the mismatch.
+    now = _dt.datetime(2026, 9, 4, 14, 2, tzinfo=jst).timestamp()
+    # 2026-09-11 21:30 JST (CPI, 08:30 ET): 7 calendar days out, 7.31 elapsed.
+    cpi = _dt.datetime(2026, 9, 11, 21, 30, tzinfo=jst).timestamp()
+    assert ie.calendar_days_until(cpi, now) == 7
+    assert ie.lifecycle_tier(event_epoch=cpi, now_epoch=now,
+                             importance="high") == "NEXT"
+
+    # Exhaustive agreement across the forward windows, for every hour of the
+    # day, at both importance levels — a boundary can never drift again. Only
+    # events that have NOT been released are compared: once the release instant
+    # passes, the day count can no longer express NOW vs MONITORING vs RECENT
+    # (that distinction is sub-daily, RESULT_SLA_HOURS), so the instant is the
+    # only faithful input and the builder switches to it on both surfaces.
+    for importance in ("high", "medium"):
+        for days in range(0, 45):
+            for hour in (0, 6, 9, 15, 21, 23):
+                event = _dt.datetime(2026, 9, 4, tzinfo=jst) \
+                    + _dt.timedelta(days=days, hours=hour)
+                epoch = event.timestamp()
+                if epoch < now:
+                    continue
+                assert ie.lifecycle_tier(
+                    event_epoch=epoch, now_epoch=now, importance=importance) \
+                    == ie.lifecycle_tier_from_days(
+                        ie.calendar_days_until(epoch, now), importance=importance), (
+                    days, hour, importance)
+
+    # A released same-day event must read the same on both surfaces: the
+    # builder hands it to the instant path exactly as the dashboard summary
+    # does, so 「いま」 does not appear on one surface and 「結果待ち(監視)」 on the
+    # other for the same record.
+    released = _dt.datetime(2026, 9, 4, 0, 0, tzinfo=jst).timestamp()
+    row = {"id": "us-nfp-2026-09-04", "kind": "nfp", "title": "NFP",
+           "impact": "high", "daysUntil": 0, "escalation": "D",
+           "linkedAssets": ["US10Y"], "eventDate": "2026-09-04",
+           "localTimeJst": "00:00", "rationaleJa": "x", "source": "BLS",
+           "status": "live"}
+    built = ie.build_important_events([row], ctx={"nowEpoch": now})
+    assert built, "a released same-day event must stay on the surface"
+    assert built[0]["lifecycleTier"] == ie.lifecycle_tier(
+        event_epoch=released, now_epoch=now, importance="high")

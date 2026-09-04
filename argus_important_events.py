@@ -107,25 +107,42 @@ TIER_LABEL_JA = {"NOW": "いま", "NEXT": "次", "RECENT": "直近", "LATER": "�
 _HOUR = 3600.0
 _DAY = 86400.0
 RESULT_SLA_HOURS = 3.0
+# The lifecycle windows above are stated in DAYS, and the countdown label the
+# same record carries (D / D-1 / D-3 / D-7) is computed from the schedule's own
+# Asia/Tokyo calendar-day distance.  The tier must be read off that same day
+# count, so the two entry points below cannot drift apart.
+_JST_OFFSET_SEC = 9 * 3600
+
+
+def calendar_days_until(event_epoch: float, now_epoch: float) -> int:
+    """Asia/Tokyo calendar-day distance — the same integer as ``daysUntil``."""
+    def _day_index(epoch: float) -> int:
+        return int((float(epoch) + _JST_OFFSET_SEC) // _DAY)
+    return _day_index(event_epoch) - _day_index(now_epoch)
 
 
 def lifecycle_tier(*, event_epoch: Optional[float], now_epoch: float,
                    importance: str, actual_available: bool = False) -> str:
-    """Deterministic lifecycle tier from the event instant and the clock."""
+    """Deterministic lifecycle tier from the event instant and the clock.
+
+    v13.5.53 (measured 2026-09-04): the forward windows used to be cut on
+    ELAPSED SECONDS here while /important-events cut the same windows on the
+    schedule's calendar days, so one event landed in two different tiers on the
+    two public surfaces — US CPI on 2026-09-11 was NEXT on /important-events
+    and LATER on /dashboard-events while both records carried the D-7 label.
+    v13.5.51 states one lifecycle for both; the forward branch therefore
+    delegates to the day-granular table on the same calendar-day count the
+    countdown label uses.  The released branch keeps instant precision because
+    its SLA (RESULT_SLA_HOURS) is genuinely sub-daily.
+    """
     if event_epoch is None:
         return "HISTORY"
     delta = float(event_epoch) - float(now_epoch)
     strong = str(importance or "").lower() in ("critical", "high")
     if delta >= 0:
-        if delta <= _DAY:
-            return "NOW" if strong else "NEXT"
-        if delta <= 7 * _DAY:
-            return "NEXT"
-        if delta <= 30 * _DAY:
-            return "LATER"
-        if delta <= 60 * _DAY:
-            return "HORIZON"
-        return "HORIZON"
+        return lifecycle_tier_from_days(
+            calendar_days_until(event_epoch, now_epoch),
+            importance=importance, actual_available=actual_available)
     age = -delta
     if age <= _DAY:
         if strong and (actual_available or age <= RESULT_SLA_HOURS * _HOUR):
@@ -341,7 +358,23 @@ def build_important_events(events: List[Dict[str, Any]], owner_symbols=None,
         # prefer it so the tier never depends on a caller-supplied clock drifting
         # from the snapshot (and stays deterministic for replayed snapshots).
         days = row.get("daysUntil")
-        if isinstance(days, int) and not isinstance(days, bool):
+        # ...but a day count cannot express "released N hours ago", which is the
+        # whole distinction between NOW, MONITORING and RECENT.  Once the event
+        # instant has passed, the instant is the only faithful input — and it is
+        # what the dashboard summary uses, so both surfaces stay on one answer
+        # (v13.5.53: a released same-day event read NOW here and MONITORING
+        # there).  Forward events keep the snapshot's own day count.
+        # The instant may refine the tier only when it AGREES with the day
+        # count — same calendar day, and already past.  A snapshot whose
+        # eventDate contradicts its own daysUntil keeps following the declared
+        # schedule, so a replayed or hand-built row can never be aged out by a
+        # derived date.
+        has_days = isinstance(days, int) and not isinstance(days, bool)
+        released = (epoch is not None and epoch < now_epoch
+                    and (not has_days
+                         or (days <= 0
+                             and calendar_days_until(epoch, now_epoch) == days)))
+        if has_days and not released:
             row["lifecycleTier"] = lifecycle_tier_from_days(
                 days, importance=row["displayImpact"], actual_available=bool(row.get("actual")))
             epoch = now_epoch + days * _DAY
