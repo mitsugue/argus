@@ -7,7 +7,14 @@ import { linkedTagJa } from './deskFormat';
 
 export const AssetEventsPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
   if (d.eventTags.length === 0 && !d.strat.catalystNoteJa) {
-    return <p className="uac-next" style={{ margin: 0, color: 'var(--text-faint)' }}>直近の関連イベント・材料の紐付けはありません。</p>;
+    // An unread event feed is not an empty calendar. The owner saw 「紐付けは
+    // ありません」 on a day whose US Employment Situation was at D-0, because
+    // the important-events request had timed out (2026-09-04).
+    return <p className="uac-next" style={{ margin: 0, color: 'var(--text-faint)' }}>{
+      d.eventsAuthorityUnknown
+        ? 'イベント情報を取得できていないため、関連の有無を判定できません。'
+        : '直近の関連イベント・材料の紐付けはありません。'
+    }</p>;
   }
   return (
     <>

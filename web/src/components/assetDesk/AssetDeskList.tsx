@@ -235,6 +235,7 @@ export const AssetDeskList: React.FC<Props> = ({
         aiAgeMin: intel.aiMeta.ageMin,
         aiMeta: intel.aiMeta,
         eventTags,
+        eventsAuthorityUnknown: intel.importantEventsUnknown,
         decisionFirst,
         themeConcentrationPct,
       };

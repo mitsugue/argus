@@ -71,6 +71,15 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # paths. Investment and calibration authority stay outside this list.
     "web/src/domain/liveAuthority.ts",
     "web/scripts/live-authority.test.cjs",
+    # v13.5.53 (owner 2026-09-04: 「イベントが何もないことはないはず」). The asset
+    # card asserted 「直近の関連イベント・材料の紐付けはありません」 and EVENT
+    # EXPOSURE 「直近紐付けなし」 whenever the important-events feed had not been
+    # read, turning an unread feed into a claim about the calendar. These three
+    # display paths carry the "not known" distinction. Investment and
+    # calibration authority stay outside this list.
+    "web/src/components/assetDesk/types.ts",
+    "web/src/components/assetDesk/AssetEventsPanel.tsx",
+    "web/src/components/assetDesk/AssetPositionPanel.tsx",
     "test_argus_cost_policy.py",
     "test_argus_foundation_jobs.py",
     "test_argus_research_benchmark.py",

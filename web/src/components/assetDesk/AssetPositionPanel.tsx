@@ -54,7 +54,8 @@ export const AssetPositionPanel: React.FC<{
         {view.breakEvenDistancePct != null && <div><span>BREAK-EVEN DISTANCE</span>
           <b>{pct(view.breakEvenDistancePct)}</b>
         </div>}
-        <div><span>EVENT EXPOSURE</span><b>{view.eventExposure ?? '直近紐付けなし'}</b></div>
+        <div><span>EVENT EXPOSURE</span><b>{view.eventExposure
+          ?? (d.eventsAuthorityUnknown ? '判定不能(イベント未取得)' : '直近紐付けなし')}</b></div>
         {view.volume != null && <div><span>VOLUME</span><b>{view.volume.toLocaleString()}</b></div>}
       </div>
 

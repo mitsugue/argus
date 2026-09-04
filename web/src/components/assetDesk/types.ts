@@ -37,6 +37,12 @@ export interface DeskCardData {
   aiAgeMin: number | null;
   aiMeta: AiMeta;
   eventTags: DeskEventTag[];
+  /**
+   * True when the important-events feed could not be read, so an empty
+   * `eventTags` means "not known" rather than "no linked event". Absence of
+   * evidence is never evidence (証拠がない ≠ 条件不成立).
+   */
+  eventsAuthorityUnknown: boolean;
   /** Initial/closed/overview sections share this single normalized command. */
   decisionFirst: DecisionFirstView;
   /** Device-local portfolio aggregation; never sent to the backend. */
