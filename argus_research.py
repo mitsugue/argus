@@ -1,7 +1,6 @@
 """ARGUS Evidence-First Research — deterministic dossier engine (dossier-v2, v10.41.1).
 
 Pure, stdlib-only. Builds the structured research dossier GPT #10/#41.1 asks for,
-import argus_fastdate  # v13.5.52: lock-free strptime (no _strptime._cache_lock)
 from signals ARGUS ALREADY has — with NO LLM. Hardened for epistemic honesty:
 - facts / observations / reports / derived metrics / inferences / unverified are
   SEPARATE buckets (a flow classification or a news headline is never a
@@ -17,6 +16,8 @@ Posture is from a research-only set — NEVER a trade instruction.
 import math
 import re
 from datetime import datetime, timedelta, timezone
+
+import argus_fastdate  # v13.5.52: lock-free strptime (no _strptime._cache_lock)
 
 SCHEMA = "dossier-v2"
 CALIB = "uncalibrated_heuristic_v1"        # no outcome calibration yet (honest)
