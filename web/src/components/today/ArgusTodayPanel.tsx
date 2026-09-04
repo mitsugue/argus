@@ -502,7 +502,10 @@ const ProjectionChart: React.FC<{
       if (event.key === 'Enter' || event.key === ' ') onActivate();
     } : undefined}>
     <div className="at-proj-heading"><b>{projection.label}｜{projection.horizon}見通し</b>
-      <span>{projection.proxyFor ? 'ETF PROXY · ' : ''}{shortDate(projection.asOf)} {quoteDisplayLabel(projection.quoteState)}・{projection.timeframeLabel} · 過去{projection.history.length}日｜予測{projection.horizonDays}日</span></div>
+      <span>{projection.proxyFor ? 'ETF PROXY · ' : ''}{shortDate(projection.asOf)} {quoteDisplayLabel(projection.quoteState)}・{projection.timeframeLabel} · 過去{projection.history.length}日｜予測{projection.horizonDays}日</span>
+      {/* v13.5.54: the drawn series is the index; the decision still anchors on
+          the verified ETF snapshot, and the owner is told which is which. */}
+      {projection.disclosureJa && <em className="at-proj-disclosure">{projection.disclosureJa}</em>}</div>
     <svg viewBox="0 0 720 330" role="img" aria-label={`${projection.label} 実績と${projection.horizonDays}営業日シナリオ`}>
       <defs><linearGradient id="at-band" x1="0" x2="1"><stop offset="0" stopColor="#facc15" stopOpacity=".1"/><stop offset="1" stopColor="#facc15" stopOpacity=".35"/></linearGradient></defs>
       {[.25, .5, .75].map((ratio) => <line key={ratio} x1="28" x2="570"
@@ -736,6 +739,14 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       </button> : <p className="at-quiet">{view.eventsAuthorityUnknown
         ? 'イベント情報を取得できていません（予定がないという意味ではありません）'
         : '直近の重要イベントなし'}</p>}
+      {/* v13.5.54: a release that just fired must not vanish from Today the
+          moment it happens — that is when the owner most needs it. */}
+      {view.releasedEvent && <p className="at-released">
+        <b>発表済み</b> {view.releasedEvent.code}
+        <time>{formatEventTime(view.releasedEvent.at)}</time>
+        <span>{view.releasedEvent.lifecycleTier === 'RECENT'
+          ? '結果あり' : '結果待ち'}</span>
+      </p>}
       <div className="at-coming"><b>COMING 30D</b>
         {view.comingEvents.length
           ? view.comingEvents.map((event) => <span key={event.id}>{event.code} {formatEventTime(event.at).split(' ')[0]}</span>)
