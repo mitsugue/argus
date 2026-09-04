@@ -22,6 +22,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+import argus_important_events as _IE
 import argus_macro_event_analysis as _MA
 import argus_macro_market_reaction as _RX
 
@@ -315,13 +316,13 @@ def build_summary(*, important_events: List[Dict[str, Any]],
             continue
         _add(None, r)
 
-    # Product order:
-    #   1) hero = newest valid released/pending event in the strongest importance
-    #      class (AI answer-check completeness is deliberately irrelevant);
-    #   2) remaining valid dated events by importance + temporal proximity, so the
-    #      next major upcoming event survives the bounded response;
-    #   3) undated/unusable rows last, so stale PRE records cannot crowd out truth.
-    # Within completed events, newer is always before older.
+    # v13.5.51 product order — the canonical lifecycle model shared with
+    # /important-events (argus_important_events.lifecycle_tier / canonical_rank_key):
+    #   NOW → NEXT → RECENT → LATER → MONITORING → HORIZON → HISTORY, then
+    #   importance → owner relevance → time distance → completeness → id.
+    # hero = the first NOW/NEXT item.  HISTORY (completed > 72h) is returned
+    # separately and never occupies the bounded current surface; a released
+    # PCE from a week ago can no longer outrank tomorrow's NFP.
     imp_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
     def _event_epoch(item: Dict[str, Any]) -> Optional[float]:
@@ -340,40 +341,40 @@ def build_summary(*, important_events: List[Dict[str, Any]],
 
     now = _now_dt(now_iso)
     now_epoch = now.timestamp() if now is not None else 0.0
-    dated_released = [it for it in items
-                      if it.get("state") in _RELEASED_STATES
-                      and _event_epoch(it) is not None]
-    hero = None
-    if dated_released:
-        hero = min(dated_released, key=lambda it: (
-            imp_rank.get(it.get("importance"), 9),
-            -float(_event_epoch(it) or 0.0),
-            _reverse_text(it.get("eventId"))))
-
-    def _remaining_key(item: Dict[str, Any]):
+    for item in items:
         epoch = _event_epoch(item)
-        dated_rank = 0 if epoch is not None else 1
-        distance = abs(epoch - now_epoch) if epoch is not None else float("inf")
-        # At equal distance, an occurred/pending release precedes an upcoming row.
-        lifecycle_rank = 0 if item.get("state") in _RELEASED_STATES else 1
-        chronology = (-epoch if epoch is not None
-                      and item.get("state") in _RELEASED_STATES
-                      else epoch if epoch is not None else float("inf"))
-        return (imp_rank.get(item.get("importance"), 9), dated_rank, distance,
-                lifecycle_rank, chronology, _reverse_text(item.get("eventId")))
-
-    remaining = [it for it in items if it is not hero]
-    remaining.sort(key=_remaining_key)
-    items = ([hero] if hero is not None else []) + remaining
-    items = items[:max(1, limit)]
+        result_available = item.get("state") in ("post_result", "post_answer_checked")
+        item["lifecycleTier"] = _IE.lifecycle_tier(
+            event_epoch=epoch, now_epoch=now_epoch, importance=item.get("importance"),
+            actual_available=result_available)
+        item["lifecycleTierJa"] = _IE.TIER_LABEL_JA[item["lifecycleTier"]]
+        item["heroEligible"] = item["lifecycleTier"] in _IE.HERO_TIERS
+        item["_rank"] = _IE.canonical_rank_key(
+            tier=item["lifecycleTier"], importance=item.get("importance"),
+            owner_relevance=item.get("ownerRelevance"), event_epoch=epoch,
+            now_epoch=now_epoch, result_available=result_available,
+            event_id=str(item.get("eventId") or ""))
+    items.sort(key=lambda it: it["_rank"])
+    for item in items:
+        item.pop("_rank", None)
+    history = [it for it in items if it["lifecycleTier"] == "HISTORY"]
+    current = [it for it in items if it["lifecycleTier"] != "HISTORY"]
+    hero = next((it for it in current if it["heroEligible"]), None)
+    for item in current:
+        item["isHero"] = item is hero
+    items = current[:max(1, limit)]
 
     return {
         "schemaVersion": SCHEMA_VERSION,
         "asOf": now_iso,
         "items": items,
+        "hero": {"eventId": hero.get("eventId"), "lifecycleTier": hero.get("lifecycleTier")} if hero else None,
+        "history": history[:5],
+        "lifecycleModel": "argus-event-lifecycle-v1",
         "dedupe": {
             "mergedCount": len(items),
             "hiddenDuplicateCount": hidden,
+            "historyCount": len(history),
             "detailsJa": details[:10],
         },
     }

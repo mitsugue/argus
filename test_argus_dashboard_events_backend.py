@@ -17,15 +17,23 @@ def _forbid(monkeypatch):
             monkeypatch.setattr(scanner, name, boom)
 
 
+def _recent_release(hours_ago=2):
+    from datetime import datetime, timedelta, timezone
+    at = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
+    return at.strftime("%Y-%m-%dT%H:%M:%SZ"), at.strftime("%Y-%m-%d")
+
 def _seed_released_nfp(monkeypatch, actual_available=True, with_post=False):
     monkeypatch.setitem(scanner._MACRO_ANALYSIS_STATE, "restored", True)
     now = scanner._ai_now_iso()
+    # v13.5.51 lifecycle: a release older than 72h is HISTORY and leaves the
+    # current surface, so the seeded release is anchored 2h before "now".
+    released_at, released_date = _recent_release()
     rec = {
-        "eventId": "us-nfp-x", "eventCode": "NFP", "eventTimeUtc": "2026-07-02T12:30:00Z",
-        "eventDate": "2026-07-02", "analysisId": "ma-us-nfp-x", "displayImpact": "critical",
+        "eventId": "us-nfp-x", "eventCode": "NFP", "eventTimeUtc": released_at,
+        "eventDate": released_date, "analysisId": "ma-us-nfp-x", "displayImpact": "critical",
         "title": "US Employment Situation", "phase": "pre_final",   # STALE stored phase
         "pre": {"argusScenarioJa": "強ければ金利上", "summaryJa": "重要",
-                "generatedAt": "2026-07-02T08:00:00Z"},
+                "generatedAt": released_at},
         "actual": ({"available": True, "headline": "非農業部門雇用者数 +57千人 / 失業率 4.2%",
                     "metrics": {"nfpChangeK": 57, "unemploymentRate": "4.2"},
                     "source": "BLS", "releasedAt": now} if actual_available

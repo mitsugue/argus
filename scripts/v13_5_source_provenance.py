@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.50"
+PRODUCT_VERSION = "v13.5.51"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -298,6 +298,11 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/src/lib/assetStrategy.ts",
     "argus_chart_bootstrap.py",
     "argus_japan_valuation.py",
+    "argus_important_events.py",
+    "test_important_events.py",
+    "test_argus_dashboard_event_summary.py",
+    "web/src/lib/dashboardEventState.ts",
+    "web/src/hooks/useDashboardEvents.ts",
     "web/src/domain/eventTitleJa.ts",
     "web/src/components/dashboard/ImportantEventsCard.tsx",
     "web/src/components/dashboard/ImportantEventsCard.css",
@@ -312,6 +317,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "argus_dashboard_event_summary.py",
     "argus_macro_event_analysis.py",
     "test_argus_important_events_product_correctness.py",
+    "test_argus_dashboard_events_backend.py",
+    "test_argus_macro_v115_backend.py",
     "web/scripts/frontend-market-event-truth.test.cjs",
     "web/scripts/market-signals.test.cjs",
     "web/scripts/tachibana-live.test.cjs",

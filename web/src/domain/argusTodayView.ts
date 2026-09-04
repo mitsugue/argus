@@ -25,6 +25,8 @@ export interface ArgusFactor {
 export interface TodayEventInput {
   id: string; code: string; title: string; at: string | null;
   impact: string; lifecycle?: string; descriptionJa?: string | null;
+  /** v13.5.51 canonical lifecycle tier from the backend (NOW/NEXT/…/HISTORY). */
+  lifecycleTier?: string | null;
 }
 export interface TodayHoldingInput {
   symbol: string; name: string; rank: number; reasonJa: string; statusJa: string;
@@ -314,11 +316,18 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
   const canonical = input.canonicalDecision;
   const canonicalAction = canonical.primaryAction;
   const nowMs = input.now.getTime();
+  // v13.5.51: one canonical event truth. The backend orders /important-events
+  // by the shared lifecycle tier (NOW → NEXT → …); Today's next event is the
+  // first upcoming item in that canonical order, and HISTORY/RECENT rows can
+  // never become the Today hero.  Rows without a tier (older backend) fall
+  // back to the upcoming-soonest rule.
+  const tiered = (input.events ?? []).some((event) => !!event.lifecycleTier);
   const future = [...(input.events ?? [])]
-    .map((event) => ({ event, at: eventEpoch(event) }))
-    .filter((x): x is { event: TodayEventInput; at: number } => x.at != null && x.at >= nowMs
-      && !['RELEASED', 'RESOLVED'].includes(x.event.lifecycle ?? ''))
-    .sort((a, b) => a.at - b.at || a.event.id.localeCompare(b.event.id));
+    .map((event, index) => ({ event, at: eventEpoch(event), index }))
+    .filter((x): x is { event: TodayEventInput; at: number; index: number } => x.at != null && x.at >= nowMs
+      && !['RELEASED', 'RESOLVED'].includes(x.event.lifecycle ?? '')
+      && (!tiered || ['NOW', 'NEXT', 'LATER', 'HORIZON'].includes(x.event.lifecycleTier ?? '')))
+    .sort((a, b) => (tiered ? a.index - b.index : 0) || a.at - b.at || a.event.id.localeCompare(b.event.id));
   const nextEvent = future[0]?.event ?? null;
   const limit30d = nowMs + 30 * 86_400_000;
   const comingEvents = future.slice(1).filter((x) => x.at <= limit30d).slice(0, 3).map((x) => x.event);

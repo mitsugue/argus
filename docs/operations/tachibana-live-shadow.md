@@ -421,3 +421,19 @@ the Tachibana deployment.
 - **Hooks:** news-intelligence and market-shock refresh on a 5-minute cadence,
   on visibility resume and on online transition; a failed refresh keeps the
   retained view but reports `status: 'error'` (never relabelled as current).
+
+## v13.5.51 — canonical event lifecycle (one truth for Today and dashboard)
+
+- `argus_important_events.lifecycle_tier` / `canonical_rank_key`: NOW (high/
+  critical within 24h before/after release) → NEXT (1–7d) → RECENT (completed
+  24–72h with result) → LATER (8–30d) → MONITORING (released, result missing
+  beyond the 3h SLA, up to 72h) → HORIZON (31–60d) → HISTORY (>72h, or no date).
+  Rank: tier → importance → owner relevance → time distance (upcoming soonest /
+  completed newest) → completeness → id. Applied before the presentation
+  limit in both `/important-events` and `/dashboard-events`.
+- Dashboard hero = first NOW/NEXT item; RECENT is secondary only; HISTORY is
+  returned separately (`history`, bounded) and never occupies the current
+  surface — a released PCE from a week ago can no longer outrank tomorrow's NFP.
+  Undated Treasury rows age out through the same windows (no date → HISTORY).
+- Today derives its next event from the same canonical order (first upcoming
+  NOW/NEXT/LATER/HORIZON row); the card shows the tier chip (いま/次/直近/…).

@@ -25,6 +25,9 @@ export interface ImportantEvent {
   priorityScore: number;
   priorityReasons: string[];
   lifecycle: 'UPCOMING' | 'IMMINENT' | 'RELEASED' | 'REACTION_PENDING' | 'REACTION_CONFIRMED' | 'RESOLVED' | string;
+  /** v13.5.51 canonical lifecycle tier (NOW/NEXT/RECENT/LATER/MONITORING/HORIZON/HISTORY). */
+  lifecycleTier?: string;
+  lifecycleTierJa?: string;
   noviceEn: string;
   noviceJa: string;
   rationaleJa: string | null;

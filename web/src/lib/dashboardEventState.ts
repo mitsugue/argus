@@ -27,6 +27,11 @@ export interface DashboardEventReaction {
   summaryJa?: string; limitationsJa?: string[];
 }
 export interface DashboardEvent {
+  /** v13.5.51 canonical lifecycle tier shared with /important-events. */
+  lifecycleTier?: string;
+  lifecycleTierJa?: string;
+  heroEligible?: boolean;
+  isHero?: boolean;
   displayEventId: string; eventId: string; eventCode: string; title: string;
   eventTimeUtc?: string | null; eventDate?: string | null;
   importance: 'critical' | 'high' | 'medium' | 'low';
