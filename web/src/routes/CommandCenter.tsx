@@ -152,7 +152,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     flowRecords, sdSignals, positionExposure,
     apItems, sessionBrief, scenarioSets, portfolioStrategy, positionPlans,
     judgment, isPartial, visLimited,
-    overlay, sdaBySymbol,
+    overlay, sdaBySymbol, importantEventsUnknown,
   } = useAssetIntel({ publish: true, assets: assetsApi.assets });
   // Headline ETFs have their own backend-only quote reads. They are not added
   // to the user's watchlist and never cause a browser-side provider request.
@@ -548,7 +548,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       dataQuality,
       globalRisk: overlay.globalRegime,
       factors: { JP: jpFactors, US: usFactors },
-      events: eventRows, indexMoves, macroMoves, positioning, attention,
+      events: eventRows, eventsAuthorityUnknown: importantEventsUnknown,
+      indexMoves, macroMoves, positioning, attention,
       holdings: ownerPriorities, news,
       newsCardState: {
         status: marketNews.data?.status ?? 'unavailable',

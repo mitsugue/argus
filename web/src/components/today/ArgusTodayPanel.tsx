@@ -720,9 +720,13 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       {view.nextEvent ? <button type="button" onClick={openEventDetails}>
         <strong>{view.nextEvent.code}</strong><time>{formatEventTime(view.nextEvent.at)}</time>
         {view.nextEvent.descriptionJa && <small>{view.nextEvent.descriptionJa.slice(0, 32)}</small>}
-      </button> : <p className="at-quiet">直近の重要イベントなし</p>}
+      </button> : <p className="at-quiet">{view.eventsAuthorityUnknown
+        ? 'イベント情報を取得できていません（予定がないという意味ではありません）'
+        : '直近の重要イベントなし'}</p>}
       <div className="at-coming"><b>COMING 30D</b>
-        {view.comingEvents.length ? view.comingEvents.map((event) => <span key={event.id}>{event.code} {formatEventTime(event.at).split(' ')[0]}</span>) : <span>予定なし</span>}
+        {view.comingEvents.length
+          ? view.comingEvents.map((event) => <span key={event.id}>{event.code} {formatEventTime(event.at).split(' ')[0]}</span>)
+          : <span>{view.eventsAuthorityUnknown ? '取得待ち' : '予定なし'}</span>}
       </div>
     </section>
 
