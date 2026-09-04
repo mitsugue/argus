@@ -325,14 +325,25 @@ def test_both_lifecycle_entry_points_agree_on_the_countdown_day():
     # A released same-day event must read the same on both surfaces: the
     # builder hands it to the instant path exactly as the dashboard summary
     # does, so 「いま」 does not appear on one surface and 「結果待ち(監視)」 on the
-    # other for the same record.
-    released = _dt.datetime(2026, 9, 4, 0, 0, tzinfo=jst).timestamp()
+    # other for the same record. The clock is pinned through the key the
+    # builder actually reads (nowIso) — `nowEpoch` is not a key it recognises,
+    # so the assertion silently ran against the real wall clock and flipped to
+    # a different tier on the next calendar day.
+    now_iso = "2026-09-04T05:02:00Z"                       # 14:02 JST
+    pinned = _dt.datetime(2026, 9, 4, 5, 2, tzinfo=_dt.timezone.utc).timestamp()
+    released = _dt.datetime(2026, 9, 4, 0, 0, tzinfo=_dt.timezone.utc).timestamp()
     row = {"id": "us-nfp-2026-09-04", "kind": "nfp", "title": "NFP",
            "impact": "high", "daysUntil": 0, "escalation": "D",
            "linkedAssets": ["US10Y"], "eventDate": "2026-09-04",
-           "localTimeJst": "00:00", "rationaleJa": "x", "source": "BLS",
-           "status": "live"}
-    built = ie.build_important_events([row], ctx={"nowEpoch": now})
+           "rationaleJa": "x", "source": "BLS", "status": "live"}
+    built = ie.build_important_events([row], ctx={"nowIso": now_iso})
     assert built, "a released same-day event must stay on the surface"
     assert built[0]["lifecycleTier"] == ie.lifecycle_tier(
-        event_epoch=released, now_epoch=now, importance="high")
+        event_epoch=released, now_epoch=pinned, importance="high")
+    # The pinned clock must actually be honoured: an ignored clock key is what
+    # made this assertion date-dependent in the first place, and an ignored key
+    # looks identical to a correct one until the calendar moves.
+    later = ie.build_important_events(
+        [row], ctx={"nowIso": "2026-09-05T05:02:00Z"})
+    assert not later or later[0]["lifecycleTier"] != built[0]["lifecycleTier"], (
+        "build_important_events did not read the pinned clock")
