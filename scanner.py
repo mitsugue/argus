@@ -3877,6 +3877,59 @@ def _quote_cache_projection(cache):
     return _cached_quote_snapshot(data)
 
 
+def _dynamic_cached_only_snapshot(syms, market, provider):
+    """Public cache-only fallback for a symbol set that was never fetched as one
+    batch (v13.5.52).
+
+    The dynamic branches cache a snapshot under the EXACT requested tuple, and
+    the public GET may not fetch, so a device whose watchlist differs from any
+    previously fetched set got `{"status": "mock", "stocks": []}` forever —
+    measured in production, even ?symbols=NVDA returned zero rows, which is why
+    the owner's whole US column rendered with no price. Assemble the answer
+    per symbol from the caches `_quote_cached_only` already reads (bridge push →
+    any dynamic set → curated). Nothing is fetched and nothing is invented: a
+    symbol with no cached quote is simply omitted and the coverage says so.
+    """
+    rows = []
+    for sym in syms:
+        try:
+            row = _quote_cached_only(str(sym).strip().upper(), market)
+        except Exception:
+            row = None
+        if isinstance(row, dict) and row.get("price") is not None:
+            code = str(sym).strip().upper()
+            # Rows recovered from the bridge push carry no display name; a
+            # nameless row would break the "code + company name" display rule,
+            # so fall back to the code rather than dropping a real quote.
+            rows.append({**row, "symbol": row.get("symbol") or code,
+                         "name": row.get("name") or code})
+    if not rows:
+        return {"status": "mock", "asOf": None, "provider": provider,
+                "stocks": [], "cacheState": "unavailable"}
+    live_n = sum(1 for row in rows if row.get("status") == "live")
+    delayed_n = sum(1 for row in rows if row.get("status") == "delayed")
+    total = len(syms)
+    if len(rows) < total:
+        overall = "partial"          # genuinely incomplete — say so
+    elif live_n == total:
+        overall = "live"
+    elif live_n:
+        overall = "mixed"
+    else:
+        overall = "delayed"
+    return {"status": overall,
+            "asOf": max((row.get("date") for row in rows if row.get("date")),
+                        default=None),
+            "provider": provider, "stocks": rows,
+            "cacheState": "assembled_per_symbol",
+            "coverage": {"live": live_n, "delayed": delayed_n,
+                         "mock": total - len(rows), "total": total},
+            "liveSymbols": [row.get("symbol") for row in rows
+                            if row.get("status") == "live"],
+            "delayedSymbols": [row.get("symbol") for row in rows
+                               if row.get("status") == "delayed"]}
+
+
 def _get_japan_watchlist_core(symbols=None, allow_provider_fetch=True):
     """Live snapshot of watched Japan names (price/change/volume/date).
 
@@ -3895,8 +3948,7 @@ def _get_japan_watchlist_core(symbols=None, allow_provider_fetch=True):
             return hit["data"]
         if not allow_provider_fetch:
             return (_cached_quote_snapshot(hit["data"]) if hit
-                    else {"status": "mock", "asOf": None, "provider": "jquants",
-                          "stocks": []})
+                    else _dynamic_cached_only_snapshot(syms, "JP", "jquants"))
         # Formal quote path: licensed J-Quants when configured. Yahoo is reserved
         # for mover discovery and never fills an Asset Desk/headline quote.
         headers = {"x-api-key": _JQUANTS_API_KEY} if _JQUANTS_API_KEY else None
@@ -4072,7 +4124,17 @@ def _canonical_quote_source_age(source_timestamp, *, now_epoch=None):
     Exact source time must be present, must not be in the future, and must be
     within the bounded quote age.  A real value with missing/old source time is
     retained as delayed evidence; it is never upgraded to realtime truth.
+
+    A bare ``YYYY-MM-DD`` is handled first: it is a real, present, date-only
+    EOD period, not a malformed instant (see _date_only_eod_source_truth).
+    That branch must live HERE and not at a single call site — the snapshot and
+    cached-row projections re-run this contract over stored rows, so a fix
+    applied only where the row is built is overwritten the moment the row is
+    read back through a cache.
     """
+    date_only = _date_only_eod_source_truth(source_timestamp, now_epoch=now_epoch)
+    if date_only is not None:
+        return date_only
     now = time.time() if now_epoch is None else float(now_epoch)
     source_epoch = _coerce_epoch(source_timestamp)
     supplied = source_timestamp is not None and str(source_timestamp).strip() != ""
@@ -4334,6 +4396,58 @@ def _canonical_cached_quote_row_age(row, *, now_epoch=None):
     return result
 
 
+_EOD_QUOTE_MAX_AGE_SEC = 7 * 86400   # same bound the consumers apply to EOD rows
+
+
+def _date_only_eod_source_truth(source_timestamp, *, now_epoch=None):
+    """Source truth for a bare ``YYYY-MM-DD`` end-of-day stamp, or None.
+
+    v13.5.52 (owner 2026-09-04: 米国株が価格も保有損益も出ない).  A daily date
+    proves an EOD period — exactly what ``_jq_fetch_bar_row`` already declares
+    for J-Quants (``delayClass: "EOD"``).  Twelve Data's ``datetime`` for a
+    daily bar is that same date-only stamp, but it was routed through
+    ``_canonical_quote_source_age``, whose ``_coerce_epoch`` only accepts an
+    instant — so the identical evidence class came back MALFORMED/UNKNOWN.
+    The consumer boundary keys off ``delayClass``: UNKNOWN is never
+    decision-usable, so every US row lost its position/exposure P&L while the
+    JP row beside it, on the same kind of close, was fine.
+
+    The same overwrite reached J-Quants rows too: ``_quote_cached_only`` and
+    the snapshot projection re-run the canonical contract over stored rows, so
+    a correctly declared EOD row was downgraded to UNKNOWN as soon as it was
+    read back from a cache.  Hence this is applied inside
+    ``_canonical_quote_source_age`` rather than at any one call site.
+
+    This states what is true: the stamp is present, it is a date-only EOD
+    period, and it is never realtime evidence.  Out-of-range or non-date input
+    returns None so the caller keeps the exact-instant contract.
+    """
+    if not isinstance(source_timestamp, str) or len(source_timestamp.strip()) != 10:
+        return None
+    text = source_timestamp.strip()
+    try:
+        source_epoch = pytz.utc.localize(
+            datetime.strptime(text, "%Y-%m-%d")).timestamp()
+    except (TypeError, ValueError, OverflowError):
+        return None
+    now = time.time() if now_epoch is None else float(now_epoch)
+    # An EOD period is dated at 00:00 UTC, so "today" is legitimately ahead of
+    # that instant; only a genuinely future DATE is an inversion.
+    future = source_epoch - now > 86400
+    age = int(max(0.0, now - source_epoch)) if not future else None
+    return {
+        "ageSec": age,
+        "timestampInversion": bool(future),
+        "sourceTimeStatus": "FUTURE" if future else "PRESENT",
+        "sourceTimestampPrecision": "date_only_eod",
+        "delayClass": "UNKNOWN" if future
+                      or age is None or age > _EOD_QUOTE_MAX_AGE_SEC else "EOD",
+        "realtimeEvidence": False,
+        "freshness": "delayed",
+        "status": "delayed",
+    }
+
+
 def _td_parse_row(s, q):
     """Normalize one Twelve Data quote object → live row, or None if invalid.
 
@@ -4393,8 +4507,8 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
             return _canonical_quote_snapshot_age(hit["data"], "stocks")
         if not allow_provider_fetch:
             return (_cached_quote_snapshot(hit["data"]) if hit
-                    else {"status": "mock", "asOf": None,
-                          "provider": "twelvedata", "stocks": []})
+                    else _dynamic_cached_only_snapshot(
+                        syms, "US", "twelvedata"))
         if not _TWELVEDATA_API_KEY:
             return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
         try:
