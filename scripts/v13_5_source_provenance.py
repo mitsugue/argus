@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.52"
+PRODUCT_VERSION = "v13.5.53"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -62,6 +62,25 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "test_argus_market_brief_non_authority.py",
     "web/scripts/brief-non-authority.test.cjs",
     "web/src/hooks/useMarketBrief.ts",
+    # v13.5.53 (owner 2026-09-04: 「仮想通貨も何も表示できていない」). The client's
+    # crypto freshness budget was shorter than the delivery chain it had to
+    # cover (a 90 s server cache over a source that is already ~30-60 s behind),
+    # so every CoinGecko quote was rejected and every crypto row rendered with
+    # no price. Correcting that budget — and the test that now pins it to the
+    # server cache TTL plus the source lag — needs these two display-authority
+    # paths. Investment and calibration authority stay outside this list.
+    "web/src/domain/liveAuthority.ts",
+    "web/scripts/live-authority.test.cjs",
+    # v13.5.53 (owner 2026-09-04: 「イベントが何もないことはないはず」). The asset
+    # card asserted 「直近の関連イベント・材料の紐付けはありません」 and EVENT
+    # EXPOSURE 「直近紐付けなし」 whenever the important-events feed had not been
+    # read, turning an unread feed into a claim about the calendar. These three
+    # display paths carry the "not known" distinction. Investment and
+    # calibration authority stay outside this list.
+    "web/src/components/assetDesk/types.ts",
+    "web/src/components/assetDesk/AssetEventsPanel.tsx",
+    "web/src/components/assetDesk/AssetPositionPanel.tsx",
+    "web/src/components/assetDesk/AssetEvidenceSummary.tsx",
     "test_argus_cost_policy.py",
     "test_argus_foundation_jobs.py",
     "test_argus_research_benchmark.py",

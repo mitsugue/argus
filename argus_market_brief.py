@@ -169,7 +169,18 @@ def compose_brief(*, now_iso: str,
                            "policy", "VERIFIED"))
 
     # ── deterministic NOW / WHY / NEXT（AI不在でも成立する行） ──
-    p0_texts = [f["text"] for f in facts if f["priority"] == "P0"]
+    p0_facts = [f for f in facts if f["priority"] == "P0"]
+    # v13.5.53 (owner 2026-09-04): 「今」 took the first two P0 facts in
+    # insertion order, and news is appended before the calendar. On a day with
+    # two material headlines the D/D-1 event fact was silently dropped — the
+    # owner's Today read 「今: OFAC…。Nikkei…」 with no mention of that day's
+    # US Employment Situation, the single event most likely to move the book.
+    # A same-day event is one short clause and must never lose its slot: keep
+    # the first P0 fact, then guarantee the imminent-calendar fact the second.
+    p0_imminent = [f for f in p0_facts if f["source"] == "calendar"]
+    if p0_imminent and p0_imminent[0] not in p0_facts[:2]:
+        p0_facts = [p0_facts[0], p0_imminent[0]]
+    p0_texts = [f["text"] for f in p0_facts]
     now_line = ("。".join(t.split("（")[0] for t in p0_texts[:2])
                 or (view_label and f"大きな新規材料なし。{view_label[:40]}")
                 or "大きな新規材料は検知していません")

@@ -117,7 +117,7 @@ const SEVEN_SIGN_REASON_JA: Record<string, string> = {
 const NEXT_REVIEW_REASON_JA: Record<string, string> = {
   'resolve.freshness_unknown': '正本データの更新時刻を確認',
   'resolve.market_truth_missing': '市場データの正本を取得',
-  'resolve.prediction_ledger_missing': '予測台帳の更新を確認',
+  'resolve.prediction_ledger_missing': '市場スナップショットの更新後に再作成',
   'resolve.risk_evidence_missing': 'リスク証拠を更新',
   'resolve.scenario_event_missing': '重要イベント情報を更新',
   'resolve.sho_evidence_missing': 'チャート分析証拠を更新',
@@ -135,21 +135,60 @@ const NEXT_REVIEW_REASON_JA: Record<string, string> = {
 // v13.5.36 (owner: 「言葉の意味がわからない」): reason codes rendered in plain
 // Japanese. Spec-by-design states (owner context, prediction ledger auth) must
 // not read as errors. Unknown codes fall through readably.
+// The code space is closed: `{market_truth|prediction_ledger|sho}_{missing|
+// stale|conflict}` from referenceReasons, `quality_{partial|missing|conflict}`,
+// `freshness_{stale|unknown}`, `owner_context_unknown`, `risk_evidence_empty`,
+// `risk_{missing|conflict}.<factorId>`, plus the server's own quality codes
+// (risk_evidence_missing / scenario_event_missing / sho_evidence_missing).
+// Every one of them is spelled out here — the owner reported seeing raw
+// `freshness_unknown` / `quality_missing` / `risk_evidence_missing` /
+// `scenario_event_missing` / `sho_evidence_missing` on 2026-09-04.
 const MISSING_REASON_JA: Record<string, string> = {
   freshness_stale: 'データ鮮度が低下（次の更新待ち）',
+  freshness_unknown: 'データの鮮度を確認できない（更新時刻が未取得）',
   market_truth_stale: '市場データの鮮度が低下（市場終了後は終値基準で継続）',
   market_truth_missing: '市場データ未取得',
+  market_truth_conflict: '市場データが食い違っています（照合待ち）',
   owner_context_unknown: '保有情報は端末内のみで参照（設計どおり・エラーではありません）',
-  prediction_ledger_missing: '予測台帳が未接続（オーナー認証の設定待ち）',
+  // v13.5.53: this reference is the SDA's EPHEMERAL prediction CONTEXT, built
+  // from the market snapshot — not the durable Layer-2B ledger, and never
+  // gated on owner authentication. Production on 2026-09-04 showed why the old
+  // wording mattered: verificationFailures.predictionLedger was
+  // "market_truth_reference_unavailable", i.e. the context could not be built
+  // because the market snapshot was not fresh, yet the owner was told their
+  // authentication was not set up and sent to fix a problem that did not exist.
+  // State the fact; the market_truth_* line beside it carries the cause.
+  prediction_ledger_missing: '予測コンテキストを作成できていません',
+  prediction_ledger_stale: '予測台帳の鮮度が低下（次の記録待ち）',
+  prediction_ledger_conflict: '予測台帳の記録が食い違っています（照合待ち）',
   quality_partial: 'データが一部不足',
+  quality_missing: '判断に必要なデータが未取得',
+  quality_conflict: '判断に必要なデータが食い違っています（照合待ち）',
+  risk_evidence_empty: 'リスク入力が空（銘柄別の値が未取得）',
+  risk_evidence_missing: 'リスク証拠が未取得',
+  scenario_event_missing: '条件・イベントの証拠が未取得',
   sho_missing: 'チャート証拠が未取得',
+  sho_stale: 'チャート証拠の鮮度が低下（次の更新待ち）',
+  sho_conflict: 'チャート証拠が食い違っています（照合待ち）',
+  sho_evidence_missing: 'チャート証拠が未取得',
   'risk_missing.discipline.required_authority':
     '銘柄別の価格権限なし（市場終了中または取得待ち）',
 };
-const missingReasonJa = (line: string): string =>
-  MISSING_REASON_JA[line]
-  ?? (line.startsWith('risk_missing.')
-    ? `リスク入力の不足（${line.slice('risk_missing.'.length)}）` : line);
+// An unmapped code must never reach the owner as bare English, and its meaning
+// must not be invented either: say what is true (something is still missing)
+// and keep the raw code visible as a code for support. `data-reason-code`
+// still carries the exact identifier for tests and diagnostics.
+const missingReasonJa = (line: string): string => {
+  const mapped = MISSING_REASON_JA[line];
+  if (mapped) return mapped;
+  if (line.startsWith('risk_missing.')) {
+    return `リスク入力の不足（${line.slice('risk_missing.'.length)}）`;
+  }
+  if (line.startsWith('risk_conflict.')) {
+    return `リスク入力の食い違い（${line.slice('risk_conflict.'.length)}）`;
+  }
+  return `追加の証拠待ち（コード: ${line}）`;
+};
 const dissentReasonJa = (line: string): string =>
   line.startsWith('context_missing_advisory')
     ? '文脈証拠が不足しているという参考意見（最終判断は変えません）'
@@ -315,8 +354,13 @@ const NewsSignalStrip: React.FC = () => {
   const degraded = news.status === 'error' && news.view != null;
   if (news.status === 'loading') return null;
   if (!top) {
+    // A feed that has never been read cannot report an absence: with
+    // status 'error' and no retained view there is nothing to say 「なし」 about.
+    const unread = news.status === 'error' && news.view == null;
     return <div className="at-newssignal is-quiet" aria-label="ニュース/イベント">
-      <small>ニュース/イベント</small><span>直近の重大ニュースなし</span>
+      <small>ニュース/イベント</small>
+      <span>{unread ? 'ニュースを取得できていません（重大ニュースが無いという意味ではありません）'
+        : '直近の重大ニュースなし'}</span>
       {degraded && <em className="ns-degraded">更新失敗・前回取得分を表示</em>}</div>;
   }
   const direction = top.impactDirection;
@@ -689,9 +733,13 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       {view.nextEvent ? <button type="button" onClick={openEventDetails}>
         <strong>{view.nextEvent.code}</strong><time>{formatEventTime(view.nextEvent.at)}</time>
         {view.nextEvent.descriptionJa && <small>{view.nextEvent.descriptionJa.slice(0, 32)}</small>}
-      </button> : <p className="at-quiet">直近の重要イベントなし</p>}
+      </button> : <p className="at-quiet">{view.eventsAuthorityUnknown
+        ? 'イベント情報を取得できていません（予定がないという意味ではありません）'
+        : '直近の重要イベントなし'}</p>}
       <div className="at-coming"><b>COMING 30D</b>
-        {view.comingEvents.length ? view.comingEvents.map((event) => <span key={event.id}>{event.code} {formatEventTime(event.at).split(' ')[0]}</span>) : <span>予定なし</span>}
+        {view.comingEvents.length
+          ? view.comingEvents.map((event) => <span key={event.id}>{event.code} {formatEventTime(event.at).split(' ')[0]}</span>)
+          : <span>{view.eventsAuthorityUnknown ? '取得待ち' : '予定なし'}</span>}
       </div>
     </section>
 
@@ -913,9 +961,17 @@ export const ArgusTodayPanel: React.FC<Props> = ({
               && ` · 市場横断確認: ${event.crossMarket.signals.join('/')}`}</em>
         </div>)}
       </div>}
+      {/* v13.5.53 (owner 2026-09-04: 「イベントが何もないことはないはず」). This
+          card watches for UNSCHEDULED shocks, but its empty state used the
+          word イベント, which means the calendar everywhere else in the app
+          (NEXT EVENT / 重要イベント / 目前イベント). On a day whose US
+          Employment Situation was at D-0 that reads as a flat contradiction.
+          Name what is actually being monitored, and point at the surface that
+          does carry the schedule. */}
       {shock.status === 'data' && shockNewsEvents.length === 0
-        && <p className="at-shock-clear">市場影響級イベント: 現在なし
-          （監視中: 中央銀行 · 雇用/物価 · 地政学 · 企業イベント）</p>}
+        && <p className="at-shock-clear">突発の市場ショック: 現在なし
+          （監視中: 中央銀行 · 雇用/物価 · 地政学 · 企業イベント）·
+          予定されている経済イベントはイベント欄に表示されます</p>}
       {shock.status === 'error'
         && <p className="at-shock-clear">市場ショック監視: 取得できません</p>}
       {view.news.length ? <div className="at-news">

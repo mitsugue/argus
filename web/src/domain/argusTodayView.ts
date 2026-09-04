@@ -160,6 +160,8 @@ export interface ArgusTodayInput {
   globalRisk?: string | null;
   factors?: Partial<Record<ArgusMarket, ArgusFactor[]>>;
   events?: TodayEventInput[];
+  /** True when the important-events feed could not be read this cycle. */
+  eventsAuthorityUnknown?: boolean;
   marketMoves?: TodayMoveInput[];
   indexMoves?: TodayMoveInput[];
   macroMoves?: TodayMoveInput[];
@@ -183,6 +185,11 @@ export interface ArgusTodayView {
   sessionLamps: Array<{ key: string; label: string; active: boolean; tone: 'open' | 'standby' | 'closed' }>;
   nextEvent: TodayEventInput | null;
   comingEvents: TodayEventInput[];
+  /**
+   * The important-events feed could not be read, so an empty schedule
+   * means "not known", never "nothing is scheduled".
+   */
+  eventsAuthorityUnknown: boolean;
   finalAction: PrimaryAction;
   /** Seven Sign candidate; null remains visibly DATA_GATED and is never imputed. */
   actionScore: number | null;
@@ -366,6 +373,7 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
       { key: 'CRYPTO', label: 'CRYPTO 24H', active: true, tone: 'open' },
     ],
     nextEvent, comingEvents,
+    eventsAuthorityUnknown: !!input.eventsAuthorityUnknown,
     finalAction: canonicalAction, actionScore,
     confidence: canonical.confidence.valueBps / 10_000,
     dataStatus: dataStatus(input.dataQuality),

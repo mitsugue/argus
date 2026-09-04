@@ -119,5 +119,21 @@ check('Today contains no legacy market decision projection',
   !panel.includes('view.decisions') && !fs.existsSync(path.join(root, 'src/domain/argusEngine.ts'))
   && !fs.existsSync(path.join(root, 'src/domain/commandSummary.ts')));
 
+// v13.5.53 (owner 2026-09-04: 「イベントが何もないことはないはず」). An empty
+// schedule has two causes — nothing is scheduled, or the important-events feed
+// never returned — and on that day it was always the second. The panel must
+// carry the distinction rather than asserting an empty calendar.
+const emptyEventsInput = { now, selectionMode: 'AUTO', dataQuality: 'LIVE',
+  calendar: { JP: state('JP', 'MORNING_SESSION'), US: state('US', 'CLOSED') },
+  canonicalDecision: canonical('WAIT', 'EVALUATED', null), events: [] };
+const unknownView = buildArgusTodayView({ ...emptyEventsInput, eventsAuthorityUnknown: true });
+const knownView = buildArgusTodayView({ ...emptyEventsInput, eventsAuthorityUnknown: false });
+check('an unread event feed is distinguishable from an empty calendar',
+  unknownView.eventsAuthorityUnknown === true && knownView.eventsAuthorityUnknown === false
+  && unknownView.nextEvent === null && knownView.nextEvent === null);
+check('Today never claims an empty calendar it could not read',
+  panel.includes('view.eventsAuthorityUnknown')
+  && panel.includes('予定がないという意味ではありません'));
+
 if (failed) process.exit(1);
 console.log('argus-engine.test: all checks passed');

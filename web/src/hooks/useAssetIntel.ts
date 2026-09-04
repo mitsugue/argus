@@ -135,6 +135,11 @@ export interface AssetIntel {
   judgment: ReturnType<typeof deriveTodayJudgment>;
   overlay: { globalRegime: string; jpIntradayOverlay: string; holderRiskOverlay: string };
   isPartial: boolean;
+  /**
+   * The important-events feed could not be read this cycle. Consumers must
+   * render "not known" rather than asserting that no event is linked.
+   */
+  importantEventsUnknown: boolean;
   visLimited: boolean;
   cappedConf: number | null;
   positionRisk: { alert: boolean; ja: string };
@@ -964,6 +969,7 @@ export function useAssetIntel(opts: {
     positionExposure, apItems, sessionBrief, scenarioSets,
     portfolioStrategy, fireCore, positionPlans,
     phase, judgment, overlay, isPartial, visLimited, cappedConf,
+    importantEventsUnknown,
     positionRisk,
     aiMeta, decisionBySym, sdaBySymbol, sdaLedgerBindingBySymbol,
   };

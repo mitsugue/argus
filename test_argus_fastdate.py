@@ -82,3 +82,46 @@ def test_thread_safe_under_concurrent_first_use():
     [t.start() for t in threads]
     [t.join() for t in threads]
     assert not errors
+
+
+def test_no_silent_divergence_from_the_stdlib_parser():
+    """The module promises it never diverges silently from datetime.strptime.
+    A differential run found exactly one case where it did: the pattern is
+    compiled with IGNORECASE, so a lowercase 'z' was accepted as UTC where the
+    stdlib raises. Sweep the ARGUS format set — valid renderings plus hostile
+    input — and require identical outcomes."""
+    import random
+    from datetime import datetime
+
+    formats = ["%Y%m%d", "%Y%m%d%H%M%S", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S",
+               "%Y-%m-%dT%H:%M:%SZ", "%Y.%m.%d-%H:%M:%S.%f", "%Y-%m-%d %H:%M",
+               "%Y-%m-%dT%H:%M:%S%z", "%Y/%m/%d", "%d %m %Y"]
+    hostile = ["", "2026", "2026-13-01", "2026-02-30", "20260904x", "x20260904",
+               "2026-9-4", "2026-09-04T03:00:60", "2026-09-04T24:00:00",
+               "2026-09-04T03:00:00Z", "2026-09-04T03:00:00+09:00",
+               "2026-09-04T03:00:00z", "2026.09.04-03:00:00.1",
+               "2026.09.04-03:00:00.1234567", "  2026-09-04  ",
+               "2026-09-04T03:00:00.123", "2026-09-04T03:00:00+2400", "٢٠٢٦-٠٩-٠٤"]
+
+    def outcome(parser, text, fmt):
+        try:
+            return ("ok", parser(text, fmt))
+        except ValueError:
+            return ("ValueError", None)
+        except Exception as exc:                     # pragma: no cover
+            return (type(exc).__name__, None)
+
+    random.seed(7)
+    cases = []
+    for fmt in formats:
+        for _ in range(120):
+            moment = datetime(random.randint(1900, 2099), random.randint(1, 12),
+                              random.randint(1, 28), random.randint(0, 23),
+                              random.randint(0, 59), random.randint(0, 59),
+                              random.choice([0, 1, 999999, 123456, 500]))
+            cases.append((moment.strftime(fmt), fmt))
+        cases.extend((text, fmt) for text in hostile)
+
+    divergent = [(text, fmt) for text, fmt in cases
+                 if outcome(fd.strptime, text, fmt) != outcome(datetime.strptime, text, fmt)]
+    assert not divergent, divergent[:5]

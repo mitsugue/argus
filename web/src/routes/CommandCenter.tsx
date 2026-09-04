@@ -152,7 +152,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     flowRecords, sdSignals, positionExposure,
     apItems, sessionBrief, scenarioSets, portfolioStrategy, positionPlans,
     judgment, isPartial, visLimited,
-    overlay, sdaBySymbol,
+    overlay, sdaBySymbol, importantEventsUnknown,
   } = useAssetIntel({ publish: true, assets: assetsApi.assets });
   // Headline ETFs have their own backend-only quote reads. They are not added
   // to the user's watchlist and never cause a browser-side provider request.
@@ -548,7 +548,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       dataQuality,
       globalRisk: overlay.globalRegime,
       factors: { JP: jpFactors, US: usFactors },
-      events: eventRows, indexMoves, macroMoves, positioning, attention,
+      events: eventRows, eventsAuthorityUnknown: importantEventsUnknown,
+      indexMoves, macroMoves, positioning, attention,
       holdings: ownerPriorities, news,
       newsCardState: {
         status: marketNews.data?.status ?? 'unavailable',
@@ -597,11 +598,17 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
   const freshnessNoteJa = useMemo(() => {
     const entry = headline.document?.instruments?.[selectedSymbol];
     if (!entry || entry.status !== 'ready') return null;
-    const marketOpen = argusToday.sessionLamps.some((lamp) =>
-      lamp.key === entry.market && lamp.tone === 'open');
+    // v13.5.53 (owner 2026-09-04): the JP lamp read 「JP LUNCH」 while this line
+    // read 「市場終了」 in the same screenshot. LUNCH_BREAK and PRE_MARKET carry
+    // tone 'standby', so keying "closed" off `tone !== 'open'` declared the
+    // Tokyo session over at 12:10 — it reopens at 12:30. Only tone 'closed' is
+    // actually a finished session; a standby session showing an EOD price is
+    // the same situation as an open one and gets the same honest line.
+    const lamp = argusToday.sessionLamps.find((row) => row.key === entry.market);
+    const sessionClosed = lamp?.tone === 'closed';
     const quoteState = String(entry.quoteState ?? 'CLOSE').toUpperCase();
     const eod = quoteState === 'CLOSE' || quoteState === 'STALE';
-    if (marketOpen && eod) {
+    if (!sessionClosed && eod) {
       return `表示価格は前日終値（${entry.periodEnd ?? '基準日不明'} EOD）· `
         + 'ザラ場のリアルタイム価格ではありません';
     }

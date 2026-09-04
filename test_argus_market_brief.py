@@ -221,3 +221,32 @@ def test_brief_market_view_chip_counts_real_family_enum(monkeypatch):
     label = scanner._brief_market_view_summary()["label"]
     assert "成立2/7" in label, label
     assert "反転:回復試験" in label and "下方:混在" in label
+
+
+def test_same_day_event_keeps_its_slot_in_the_now_line():
+    """Owner report 2026-09-04: Today read 「今: OFAC…。Nikkei…」 on a day whose
+    US Employment Situation was at D-0. The NOW line took the first two P0
+    facts in insertion order and news is appended before the calendar, so the
+    single most decision-relevant fact of the day was dropped. A D/D-1 event is
+    one short clause and must never lose its slot."""
+    news = [{"severity": "HIGH", "sourceLabelJa": "米財務省",
+             "headlineJa": "OFAC SDNリスト更新", "impactDirection": {}},
+            {"severity": "HIGH", "sourceLabelJa": "Nikkei",
+             "headlineJa": "国内住宅事業は資材高", "impactDirection": {}}]
+    imminent = [{"title": "US Employment Situation", "countdown": "D",
+                 "displayImpact": "high"}]
+    upcoming = [{"title": "US Treasury 10-Year Auction", "countdown": "D-7"}]
+    brief = mb.compose_brief(
+        now_iso="2026-09-04T03:00:00Z", market_view_summary={"label": "混在"},
+        news_events=news, imminent_events=imminent, next_events=upcoming)
+    assert "US Employment Situation" in brief["now"], brief["now"]
+    # The leading material headline is still reported, and nothing is invented.
+    assert "OFAC" in brief["now"]
+    # 次に確認 stays the forward calendar, not the same-day event.
+    assert "Treasury" in brief["next"]
+
+    # With no same-day event the previous two-headline behaviour is unchanged.
+    plain = mb.compose_brief(
+        now_iso="2026-09-04T03:00:00Z", market_view_summary={"label": "混在"},
+        news_events=news, imminent_events=[], next_events=upcoming)
+    assert "OFAC" in plain["now"] and "Nikkei" in plain["now"]
