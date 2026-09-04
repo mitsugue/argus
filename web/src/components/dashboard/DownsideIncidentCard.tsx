@@ -187,6 +187,16 @@ export const DownsideIncidentQueue: React.FC<{
   const incidents = data.incidents ?? [];
   const overlayActive = data.jpIntradayOverlay && data.jpIntradayOverlay !== 'NORMAL';
   if (incidents.length === 0 && !overlayActive) return null;
+  // v13.5.52 (owner 2026-09-04). deauthorizeDownsideSnapshot fails CLOSED: an
+  // expired or failed refresh is forced to CAUTION / REVIEW_REQUIRED because
+  // an unknown downside state cannot prove NORMAL/NONE. That posture is right,
+  // but the copy below then reported it as an observation — the owner's card
+  // read 「保有影響のリスク証拠が検出されています」 and 「日本市場の弱含みをリスク証拠
+  // として表示中」 while the truth was simply that the snapshot could not be
+  // read. Absence of evidence is never evidence (証拠がない ≠ 条件不成立), so
+  // when the overlay is manufactured by the authority loss, say that instead.
+  const authorityLost = (data.overlay?.flags ?? []).some((flag) =>
+    flag === 'DOWNSIDE_AUTHORITY_UNAVAILABLE' || flag === 'STALE_DEFENSIVE_REVIEW_ONLY');
 
   return (
     <section className="dic-card" data-authority-role="EVIDENCE_ONLY">
@@ -200,7 +210,9 @@ export const DownsideIncidentQueue: React.FC<{
       </header>
       {overlayActive && <p className="dic-overlay-reason">{data.overlay?.reasonJa}</p>}
       {data.holderRiskOverlay === 'REVIEW_REQUIRED' && (
-        <p className="dic-holder">保有影響のリスク証拠が検出されています。最終判断の再評価材料として点検してください。</p>
+        <p className="dic-holder">{authorityLost
+          ? '保有影響を判定するデータが未取得のため、安全側で再確認の扱いにしています（リスクを検出したわけではありません）。'
+          : '保有影響のリスク証拠が検出されています。最終判断の再評価材料として点検してください。'}</p>
       )}
       {incidents.slice(0, maxItems).map((inc) => (
         <IncidentRow key={inc.incidentId} inc={inc} onFocus={onFocus} />
@@ -209,7 +221,9 @@ export const DownsideIncidentQueue: React.FC<{
         <p className="dic-more">ほか {incidents.length - maxItems}件は資産一覧で確認</p>
       )}
       {incidents.length === 0 && (
-        <p className="dic-reason">個別のインシデントはまだ無いが、日本市場の弱含みをリスク証拠として表示中。</p>
+        <p className="dic-reason">{authorityLost
+          ? '急落インシデントの有無を判定できていません（データ未取得）。市場が弱いという証拠ではなく、判定できるまで安全側に置いた表示です。'
+          : '個別のインシデントはまだ無いが、日本市場の弱含みをリスク証拠として表示中。'}</p>
       )}
       <p className="dic-foot">EVIDENCE ONLY · 最終判断（PRIMARY ACTION）を上書きしません。自動売買なし。</p>
     </section>

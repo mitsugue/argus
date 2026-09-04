@@ -149,7 +149,21 @@ check('Coinbase quote stays diagnostic-only',
 check('missing/future/stale crypto source time fails closed',
   !authority.cryptoQuoteDecisionUsable({ ...quote, source: 'coingecko', sourceTimestamp: null }, NOW)
   && !authority.cryptoQuoteDecisionUsable({ ...quote, source: 'coingecko', sourceTimestamp: new Date(NOW + 1).toISOString() }, NOW)
-  && !authority.cryptoQuoteDecisionUsable({ ...quote, source: 'coingecko', sourceTimestamp: isoAgo(90_001) }, NOW));
+  && !authority.cryptoQuoteDecisionUsable({ ...quote, source: 'coingecko', sourceTimestamp: isoAgo(300_001) }, NOW));
+// The backend serves CoinGecko from a 90 s cache and CoinGecko's own
+// last_updated_at is already ~30-60 s old when it is fetched, so a quote is
+// routinely ~150 s old by the time the browser evaluates it (production
+// samples on 2026-09-04: 92-105 s). A budget below that band rejects every
+// quote and renders every crypto row with no price — the exact owner-visible
+// failure this bound exists to prevent.
+const SERVER_CRYPTO_CACHE_TTL_MS = 90_000;   // scanner._CRYPTO_CACHE_TTL
+const COINGECKO_SOURCE_LAG_MS = 60_000;      // observed last_updated_at lag
+check('crypto budget covers server cache + source lag',
+  authority.LIVE_AUTHORITY_MAX_AGE_MS.cryptoQuote
+    >= SERVER_CRYPTO_CACHE_TTL_MS + COINGECKO_SOURCE_LAG_MS);
+check('a quote delivered at the worst point of the cache cycle still counts',
+  authority.cryptoQuoteDecisionUsable({ ...quote, source: 'coingecko',
+    sourceTimestamp: isoAgo(SERVER_CRYPTO_CACHE_TTL_MS + COINGECKO_SOURCE_LAG_MS) }, NOW));
 
 const alertCards = authority.deauthorizeActionAlerts([
   { action: 'BUY_DIP', confidence: 'high', risk: 'low', reason: '押し目' },

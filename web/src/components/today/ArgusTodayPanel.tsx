@@ -135,21 +135,52 @@ const NEXT_REVIEW_REASON_JA: Record<string, string> = {
 // v13.5.36 (owner: 「言葉の意味がわからない」): reason codes rendered in plain
 // Japanese. Spec-by-design states (owner context, prediction ledger auth) must
 // not read as errors. Unknown codes fall through readably.
+// The code space is closed: `{market_truth|prediction_ledger|sho}_{missing|
+// stale|conflict}` from referenceReasons, `quality_{partial|missing|conflict}`,
+// `freshness_{stale|unknown}`, `owner_context_unknown`, `risk_evidence_empty`,
+// `risk_{missing|conflict}.<factorId>`, plus the server's own quality codes
+// (risk_evidence_missing / scenario_event_missing / sho_evidence_missing).
+// Every one of them is spelled out here — the owner reported seeing raw
+// `freshness_unknown` / `quality_missing` / `risk_evidence_missing` /
+// `scenario_event_missing` / `sho_evidence_missing` on 2026-09-04.
 const MISSING_REASON_JA: Record<string, string> = {
   freshness_stale: 'データ鮮度が低下（次の更新待ち）',
+  freshness_unknown: 'データの鮮度を確認できない（更新時刻が未取得）',
   market_truth_stale: '市場データの鮮度が低下（市場終了後は終値基準で継続）',
   market_truth_missing: '市場データ未取得',
+  market_truth_conflict: '市場データが食い違っています（照合待ち）',
   owner_context_unknown: '保有情報は端末内のみで参照（設計どおり・エラーではありません）',
   prediction_ledger_missing: '予測台帳が未接続（オーナー認証の設定待ち）',
+  prediction_ledger_stale: '予測台帳の鮮度が低下（次の記録待ち）',
+  prediction_ledger_conflict: '予測台帳の記録が食い違っています（照合待ち）',
   quality_partial: 'データが一部不足',
+  quality_missing: '判断に必要なデータが未取得',
+  quality_conflict: '判断に必要なデータが食い違っています（照合待ち）',
+  risk_evidence_empty: 'リスク入力が空（銘柄別の値が未取得）',
+  risk_evidence_missing: 'リスク証拠が未取得',
+  scenario_event_missing: '条件・イベントの証拠が未取得',
   sho_missing: 'チャート証拠が未取得',
+  sho_stale: 'チャート証拠の鮮度が低下（次の更新待ち）',
+  sho_conflict: 'チャート証拠が食い違っています（照合待ち）',
+  sho_evidence_missing: 'チャート証拠が未取得',
   'risk_missing.discipline.required_authority':
     '銘柄別の価格権限なし（市場終了中または取得待ち）',
 };
-const missingReasonJa = (line: string): string =>
-  MISSING_REASON_JA[line]
-  ?? (line.startsWith('risk_missing.')
-    ? `リスク入力の不足（${line.slice('risk_missing.'.length)}）` : line);
+// An unmapped code must never reach the owner as bare English, and its meaning
+// must not be invented either: say what is true (something is still missing)
+// and keep the raw code visible as a code for support. `data-reason-code`
+// still carries the exact identifier for tests and diagnostics.
+const missingReasonJa = (line: string): string => {
+  const mapped = MISSING_REASON_JA[line];
+  if (mapped) return mapped;
+  if (line.startsWith('risk_missing.')) {
+    return `リスク入力の不足（${line.slice('risk_missing.'.length)}）`;
+  }
+  if (line.startsWith('risk_conflict.')) {
+    return `リスク入力の食い違い（${line.slice('risk_conflict.'.length)}）`;
+  }
+  return `追加の証拠待ち（コード: ${line}）`;
+};
 const dissentReasonJa = (line: string): string =>
   line.startsWith('context_missing_advisory')
     ? '文脈証拠が不足しているという参考意見（最終判断は変えません）'
