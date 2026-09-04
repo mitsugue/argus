@@ -23,7 +23,7 @@ export const LIVE_AUTHORITY_MAX_AGE_MS: Readonly<Record<LiveAuthorityKind, numbe
   aiJudgment: 72 * 60 * 60_000,
   visibilityGuard: 2 * 60_000,
   downsideIncidents: 3 * 60_000,
-  // v13.5.52 (owner 2026-09-04: 「仮想通貨も何も表示できていない」). This budget
+  // v13.5.53 (owner 2026-09-04: 「仮想通貨も何も表示できていない」). This budget
   // must cover the whole delivery chain, not just the network hop:
   // CoinGecko's own `last_updated_at` is already ~30-60 s behind when the
   // backend fetches it, and the backend then serves that snapshot from a 90 s

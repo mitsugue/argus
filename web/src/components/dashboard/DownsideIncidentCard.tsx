@@ -187,7 +187,7 @@ export const DownsideIncidentQueue: React.FC<{
   const incidents = data.incidents ?? [];
   const overlayActive = data.jpIntradayOverlay && data.jpIntradayOverlay !== 'NORMAL';
   if (incidents.length === 0 && !overlayActive) return null;
-  // v13.5.52 (owner 2026-09-04). deauthorizeDownsideSnapshot fails CLOSED: an
+  // v13.5.53 (owner 2026-09-04). deauthorizeDownsideSnapshot fails CLOSED: an
   // expired or failed refresh is forced to CAUTION / REVIEW_REQUIRED because
   // an unknown downside state cannot prove NORMAL/NONE. That posture is right,
   // but the copy below then reported it as an observation — the owner's card

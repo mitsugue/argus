@@ -170,7 +170,7 @@ def compose_brief(*, now_iso: str,
 
     # ── deterministic NOW / WHY / NEXT（AI不在でも成立する行） ──
     p0_facts = [f for f in facts if f["priority"] == "P0"]
-    # v13.5.52 (owner 2026-09-04): 「今」 took the first two P0 facts in
+    # v13.5.53 (owner 2026-09-04): 「今」 took the first two P0 facts in
     # insertion order, and news is appended before the calendar. On a day with
     # two material headlines the D/D-1 event fact was silently dropped — the
     # owner's Today read 「今: OFAC…。Nikkei…」 with no mention of that day's

@@ -30,7 +30,11 @@ _DIRECTIVES: Dict[str, str] = {
     "M": r"(?P<M>[0-5]\d|\d)",
     "S": r"(?P<S>6[0-1]|[0-5]\d|\d)",
     "f": r"(?P<f>[0-9]{1,6})",
-    "z": r"(?P<z>Z|[+-]\d{2}:?[0-5]\d(?::?[0-5]\d(?:\.\d{1,6})?)?)",
+    # The whole pattern compiles with IGNORECASE, so ``Z`` needs an explicit
+    # case-sensitive group or a lowercase ``z`` would be accepted as UTC where
+    # the stdlib raises — the one silent divergence a differential run against
+    # datetime.strptime found (v13.5.53).
+    "z": r"(?P<z>(?-i:Z)|[+-]\d{2}:?[0-5]\d(?::?[0-5]\d(?:\.\d{1,6})?)?)",
 }
 
 # format -> (compiled regex, None) or (None, None) when the format needs the
