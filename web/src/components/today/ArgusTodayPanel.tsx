@@ -346,8 +346,13 @@ const NewsSignalStrip: React.FC = () => {
   const degraded = news.status === 'error' && news.view != null;
   if (news.status === 'loading') return null;
   if (!top) {
+    // A feed that has never been read cannot report an absence: with
+    // status 'error' and no retained view there is nothing to say 「なし」 about.
+    const unread = news.status === 'error' && news.view == null;
     return <div className="at-newssignal is-quiet" aria-label="ニュース/イベント">
-      <small>ニュース/イベント</small><span>直近の重大ニュースなし</span>
+      <small>ニュース/イベント</small>
+      <span>{unread ? 'ニュースを取得できていません（重大ニュースが無いという意味ではありません）'
+        : '直近の重大ニュースなし'}</span>
       {degraded && <em className="ns-degraded">更新失敗・前回取得分を表示</em>}</div>;
   }
   const direction = top.impactDirection;
