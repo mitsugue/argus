@@ -1377,3 +1377,98 @@ def test_index_chart_route_is_cached_only_and_names_the_index(monkeypatch):
     assert body["instrumentMetadata"]["source"] == "yahoo_index_ohlcv"
     assert body["instrumentMetadata"]["sourceSymbol"] == "^N225"
     assert len(body["indicators"]["bars"]) >= 100
+
+
+def test_us_daily_bar_is_eod_evidence_not_malformed():
+    """A Twelve Data daily bar carries a date-only stamp, exactly like the
+    J-Quants bar beside it.  It must be declared EOD, not MALFORMED/UNKNOWN:
+    the consumer boundary keys off delayClass, and UNKNOWN is never
+    decision-usable, which stripped every US row of its position P&L while the
+    JP row on the same kind of close stayed usable (owner report 2026-09-04)."""
+    import datetime as _dt
+    day = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=1)).strftime("%Y-%m-%d")
+    row = scanner._td_parse_row(
+        {"symbol": "NVDA", "name": "NVIDIA"},
+        {"close": "180.5", "change": "1.5", "percent_change": "0.8",
+         "volume": "1000", "datetime": day,
+         "open": "179", "high": "181", "low": "178"})
+    assert row is not None
+    assert row["delayClass"] == "EOD"
+    assert row["sourceTimeStatus"] == "PRESENT"
+    assert row["sourceTimestampPrecision"] == "date_only_eod"
+    # An EOD period is never realtime evidence, whatever the label says.
+    assert row["realtimeEvidence"] is False and row["status"] == "delayed"
+    # The declaration must SURVIVE a cache round trip. The snapshot and
+    # cached-row projections re-run the canonical contract over stored rows, so
+    # a fix applied only where the row is built is undone the moment the row is
+    # read back — which is how a correctly declared J-Quants EOD row was also
+    # being downgraded to UNKNOWN on the _quote_cached_only path.
+    assert scanner._canonical_cached_quote_row_age(row)["delayClass"] == "EOD"
+    assert scanner._canonical_quote_snapshot_age(
+        {"status": "delayed", "stocks": [row]}, "stocks")["stocks"][0]["delayClass"] == "EOD"
+    jq_row = {"symbol": "8058", "name": "三菱商事", "price": 5059.0,
+              "status": "delayed", "date": day, "sourceTimestamp": day,
+              "delayClass": "EOD", "source": "jquants", "realtimeEvidence": False}
+    assert scanner._canonical_cached_quote_row_age(jq_row)["delayClass"] == "EOD"
+    # An EOD close is what the daily decision path is allowed to judge on.
+    for candidate, market in ((row, "US"), (jq_row, "JP")):
+        usable = scanner._decision_usable_watch_quote_row(
+            candidate, market, allow_delayed=True, require_latest_completed=False)
+        assert usable is not None and usable["price"] is not None
+
+    # The exact-instant contract is untouched for a real timestamp, and a
+    # stale or future date still fails closed.
+    assert scanner._date_only_eod_source_truth("2026-09-03T20:00:00Z") is None
+    assert scanner._date_only_eod_source_truth("not-a-date") is None
+    assert scanner._canonical_quote_source_age(
+        "not-a-source-time")["sourceTimeStatus"] == "MALFORMED"
+    assert scanner._canonical_quote_source_age(None)["sourceTimeStatus"] == "MISSING"
+    old = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=30)).strftime("%Y-%m-%d")
+    ahead = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=3)).strftime("%Y-%m-%d")
+    assert scanner._date_only_eod_source_truth(old)["delayClass"] == "UNKNOWN"
+    future = scanner._date_only_eod_source_truth(ahead)
+    assert future["timestampInversion"] is True and future["delayClass"] == "UNKNOWN"
+
+
+def test_public_dynamic_watchlist_answers_from_per_symbol_cache(monkeypatch):
+    """The public GET may not fetch, and the dynamic branch caches under the
+    EXACT requested tuple — so a device whose watchlist never matched a
+    previously fetched batch got {"status": "mock", "stocks": []} forever and
+    every US row rendered with no price (owner report 2026-09-04).  The
+    cache-only path must assemble what it already holds, per symbol, and stay
+    honest about what it could not resolve."""
+    import datetime as _dt
+    day = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=1)).strftime("%Y-%m-%d")
+    monkeypatch.setitem(scanner._US_CACHE, "data", {
+        "status": "delayed", "asOf": day, "provider": "twelvedata",
+        "stocks": [{"symbol": "NVDA", "name": "NVIDIA", "price": 180.0,
+                    "status": "delayed", "date": day,
+                    "sourceTimestamp": day, "delayClass": "EOD"}]})
+    monkeypatch.setitem(scanner._US_CACHE, "expires", scanner.time.time() + 600)
+    monkeypatch.setattr(scanner, "_US_DYN_CACHE", {})
+    calls = []
+
+    class _NoNetwork:
+        status_code = 503
+
+        def json(self):
+            return {}
+
+        def raise_for_status(self):
+            raise RuntimeError("offline")
+
+    def _no_fetch(url, *a, **k):
+        calls.append(str(url))
+        return _NoNetwork()
+
+    monkeypatch.setattr(scanner.requests, "get", _no_fetch)
+    body = scanner.app.test_client().get(
+        "/api/argus/us-watchlist?symbols=NVDA,IONQ").get_json()
+    assert not calls
+    symbols = [row["symbol"] for row in body["stocks"]]
+    assert symbols == ["NVDA"]                       # cached row is served…
+    assert body["status"] == "partial"               # …and the gap is admitted
+    assert body["coverage"] == {"live": 0, "delayed": 1, "mock": 1, "total": 2}
+    # Nothing cached at all still refuses to invent a quote.
+    empty = scanner.get_us_watchlist_snapshot(["ZZZZ"], allow_provider_fetch=False)
+    assert empty["status"] == "mock" and empty["stocks"] == []
