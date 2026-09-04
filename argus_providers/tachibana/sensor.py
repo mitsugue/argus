@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argus_fastdate  # v13.5.52: lock-free strptime (no _strptime._cache_lock)
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -98,7 +99,7 @@ def _validate_source_time(value: str) -> bool:
     if not _EVENT_SOURCE_TIME.fullmatch(value):
         return False
     try:
-        datetime.strptime(value, "%Y%m%d%H%M%S")
+        argus_fastdate.strptime(value, "%Y%m%d%H%M%S")
     except ValueError:
         return False
     return True
@@ -183,7 +184,7 @@ def parse_event_frame(frame: str | bytes) -> Mapping[str, str]:
     if sequence < 1 or not _EVENT_DATE.fullmatch(fields["p_date"]):
         raise ValueError("event_common_field_invalid")
     try:
-        datetime.strptime(fields["p_date"], "%Y.%m.%d-%H:%M:%S.%f")
+        argus_fastdate.strptime(fields["p_date"], "%Y.%m.%d-%H:%M:%S.%f")
     except ValueError:
         raise ValueError("event_common_field_invalid") from None
 

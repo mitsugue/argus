@@ -19,6 +19,7 @@ Discipline (baked in):
 """
 from __future__ import annotations
 
+import argus_fastdate  # v13.5.52: lock-free strptime (no _strptime._cache_lock)
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -329,7 +330,7 @@ def build_summary(*, important_events: List[Dict[str, Any]],
         parsed = _MA._parse_utc(item.get("eventTimeUtc"))
         if parsed is None and item.get("eventDate"):
             try:
-                parsed = datetime.strptime(str(item["eventDate"])[:10], "%Y-%m-%d").replace(
+                parsed = argus_fastdate.strptime(str(item["eventDate"])[:10], "%Y-%m-%d").replace(
                     tzinfo=timezone.utc)
             except ValueError:
                 parsed = None

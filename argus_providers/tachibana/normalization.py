@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argus_fastdate  # v13.5.52: lock-free strptime (no _strptime._cache_lock)
 from datetime import date, datetime, time, timedelta, timezone
 import math
 import re
@@ -91,7 +92,7 @@ def _source_timestamp(
     text = str(raw).strip()
     for pattern in ("%Y%m%d%H%M%S", "%Y%m%d %H:%M:%S"):
         try:
-            value = datetime.strptime(text, pattern).replace(
+            value = argus_fastdate.strptime(text, pattern).replace(
                 tzinfo=TOKYO
             ).astimezone(timezone.utc)
             return value, "SECOND"
@@ -104,7 +105,7 @@ def _source_timestamp(
         ("%H:%M", "MINUTE"), ("%H%M", "MINUTE"),
     ):
         try:
-            parsed_time = datetime.strptime(text, pattern).time()
+            parsed_time = argus_fastdate.strptime(text, pattern).time()
             precision = candidate_precision
             break
         except ValueError:

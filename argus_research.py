@@ -17,6 +17,8 @@ import math
 import re
 from datetime import datetime, timedelta, timezone
 
+import argus_fastdate  # v13.5.52: lock-free strptime (no _strptime._cache_lock)
+
 SCHEMA = "dossier-v2"
 CALIB = "uncalibrated_heuristic_v1"        # no outcome calibration yet (honest)
 DISCLAIMER_JA = ("これは調査・判断支援であり、自動売買指示ではありません。確率は予言ではなく状況整理で、"
@@ -121,7 +123,7 @@ def edinet_event_relationship(submit_dt_str, event_observed_at):
             or not _EVENT_OBSERVED_TIME.fullmatch(event_observed_at.strip())):
         return "unknown"
     try:
-        submit = datetime.strptime(
+        submit = argus_fastdate.strptime(
             submit_dt_str.strip(), "%Y-%m-%d %H:%M").replace(
                 tzinfo=timezone(timedelta(hours=9)))
         observed = datetime.fromisoformat(

@@ -8,6 +8,7 @@ as dissent provenance only and cannot select or override the action.
 """
 from __future__ import annotations
 
+import argus_fastdate  # v13.5.52: lock-free strptime (no _strptime._cache_lock)
 import copy
 import hashlib
 import json
@@ -309,7 +310,7 @@ def _utc(value: Any, path: str) -> datetime:
     if not isinstance(value, str) or not _UTC_RE.fullmatch(value):
         _fail(path, "must be an exact UTC timestamp with whole-second precision")
     try:
-        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        return argus_fastdate.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     except ValueError as exc:
         raise SingleDecisionValidationError(f"{path}: invalid UTC timestamp") from exc
 
@@ -823,7 +824,7 @@ def _latest_session_daily_authority(
     if clock_market is None:
         return False
     try:
-        cutoff_dt = datetime.strptime(
+        cutoff_dt = argus_fastdate.strptime(
             cutoff, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
         target = argus_market_clock.latest_completed_session_date(
             clock_market, cutoff_dt)

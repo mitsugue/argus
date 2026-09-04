@@ -21,6 +21,7 @@ dict and calls resolve(). This module only classifies.
 """
 from __future__ import annotations
 
+import argus_fastdate  # v13.5.52: lock-free strptime (no _strptime._cache_lock)
 import hashlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -86,7 +87,7 @@ def _epoch(v: Any, naive_utc_offset_hours: float = 0.0) -> Optional[float]:
     if dt is None:
         for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y-%m-%d"):
             try:
-                dt = datetime.strptime(s, fmt)
+                dt = argus_fastdate.strptime(s, fmt)
                 break
             except Exception:
                 continue

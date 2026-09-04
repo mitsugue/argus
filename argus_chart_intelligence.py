@@ -8,6 +8,7 @@ quality and deterministic IDs.
 """
 from __future__ import annotations
 
+import argus_fastdate  # v13.5.52: lock-free strptime (no _strptime._cache_lock)
 import hashlib
 import json
 import math
@@ -810,7 +811,7 @@ def analyze(symbol: str, market: str, rows: Iterable[Dict[str, Any]], *,
     # confirmed current-state claim.  Eight calendar days tolerates long
     # weekends and common holiday sequences without treating old caches live.
     try:
-        last_date = datetime.strptime(str(report["periodEnd"]), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        last_date = argus_fastdate.strptime(str(report["periodEnd"]), "%Y-%m-%d").replace(tzinfo=timezone.utc)
         now_date = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
         if (now_date - last_date).days > 8:
             report["status"] = "stale"

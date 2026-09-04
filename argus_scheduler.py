@@ -5,6 +5,7 @@
 冪等生成し、lease/claim・期限切れ回収・見逃し検知・重複防止を提供する。
 実行体の正本はEC2 systemd timer。GitHub Actionsはbackup、manualは診断専用。
 """
+import argus_fastdate  # v13.5.52: lock-free strptime (no _strptime._cache_lock)
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -321,7 +322,7 @@ def _exact_service_date(value: str):
     if not isinstance(value, str):
         return None
     try:
-        parsed = datetime.strptime(value, "%Y-%m-%d").date()
+        parsed = argus_fastdate.strptime(value, "%Y-%m-%d").date()
     except (TypeError, ValueError):
         return None
     return parsed if parsed.isoformat() == value else None

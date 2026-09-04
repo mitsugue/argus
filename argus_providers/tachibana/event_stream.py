@@ -8,6 +8,7 @@ are explicitly enabled.
 
 from __future__ import annotations
 
+import argus_fastdate  # v13.5.52: lock-free strptime (no _strptime._cache_lock)
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 import logging
@@ -377,7 +378,7 @@ class EventStatusTracker:
 
     @staticmethod
     def _control_time(value: str) -> datetime:
-        return datetime.strptime(value, "%Y%m%d%H%M%S").replace(
+        return argus_fastdate.strptime(value, "%Y%m%d%H%M%S").replace(
             tzinfo=TOKYO
         ).astimezone(timezone.utc)
 
@@ -1113,7 +1114,7 @@ class TachibanaEventLifecycle:
                             raise TachibanaError(
                                 _ST_ERROR_CLASSES[fields["p_errno"]]
                             )
-                        frame_time = datetime.strptime(
+                        frame_time = argus_fastdate.strptime(
                             fields["p_date"], "%Y.%m.%d-%H:%M:%S.%f"
                         ).replace(tzinfo=TOKYO)
                         market_date = frame_time.date()

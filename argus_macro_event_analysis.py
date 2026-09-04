@@ -9,6 +9,7 @@ Pure: no network, no LLM. Prompt builders return strings; the scanner owns the c
 Discipline: never fabricate an official result or a consensus; a missing result is
 "unavailable"; a missing pre makes the post verdict not_scoreable.
 """
+import argus_fastdate  # v13.5.52: lock-free strptime (no _strptime._cache_lock)
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -82,7 +83,7 @@ def resolve_macro_event_phase(event_time_utc: Optional[str], now_utc: str, *,
         return "post_result" if actual_available else "released_pending_result"
     if event_date:
         try:
-            d = datetime.strptime(str(event_date)[:10], "%Y-%m-%d").date()
+            d = argus_fastdate.strptime(str(event_date)[:10], "%Y-%m-%d").date()
         except ValueError:
             return "pre_watch"
         if now.date() < d:
@@ -108,7 +109,7 @@ def canonical_date_from_event_id(event_id: Any) -> Optional[str]:
         return None
     value = match.group(1)
     try:
-        datetime.strptime(value, "%Y-%m-%d")
+        argus_fastdate.strptime(value, "%Y-%m-%d")
     except ValueError:
         return None
     return value
@@ -124,7 +125,7 @@ def _catalog_metadata(event_id: str, event_code: Any,
     et_time, family, source, impact, title, assets = spec
     event_time_utc = local_time_jst = None
     if et_time:
-        local_et = datetime.strptime(
+        local_et = argus_fastdate.strptime(
             f"{event_date} {et_time}", "%Y-%m-%d %H:%M").replace(
                 tzinfo=ZoneInfo("America/New_York"))
         event_time_utc = local_et.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
