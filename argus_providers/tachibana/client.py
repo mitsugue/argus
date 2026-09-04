@@ -7,6 +7,7 @@ this client cannot address the REQUEST virtual URL.
 
 from __future__ import annotations
 
+import argus_fastdate  # v13.5.52: lock-free strptime (no _strptime._cache_lock)
 from collections import deque
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
@@ -527,7 +528,7 @@ class TachibanaReadOnlyClient:
             )
             raise TachibanaError(ErrorClass.PROVIDER)
         try:
-            result = datetime.strptime(value, "%Y%m%d").date()
+            result = argus_fastdate.strptime(value, "%Y%m%d").date()
         except ValueError:
             self.mark_last_read_stage(
                 "PROVIDER_DATE_VALUE", ErrorClass.PROVIDER.value,

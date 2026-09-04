@@ -437,3 +437,28 @@ the Tachibana deployment.
   Undated Treasury rows age out through the same windows (no date → HISTORY).
 - Today derives its next event from the same canonical order (first upcoming
   NOW/NEXT/LATER/HORIZON row); the card shows the tier chip (いま/次/直近/…).
+
+## v13.5.52 — lock-free timestamp parsing (production stall root cause)
+
+- **Incident:** from ~13–17 minutes after every deploy inside the JP live
+  window, public routes that parse a timestamp (`/events`, `/important-events`,
+  `/dashboard-events`, `/decision-evidence`, `/index-chart`, `/rates`,
+  `/us-watchlist`, `/fund-nav`, …) took 15–90 s while routes without a parse
+  (`/readyz`, `/healthz`, cached chart copies, `/japan-watchlist`) stayed
+  sub-second. Today's MARKET SIGNALS went blank because decision-evidence
+  never answered. The cost was linear in the number of parses (fund-nav:
+  1 code 6 s, 3 codes 19 s).
+- **Cause:** `datetime.strptime` serialises the whole process on
+  `_strptime._cache_lock`. CPU-bound parse loops (Tachibana packet loop,
+  SHO per-row dates, news freshness format probing, chart bars) starve every
+  other parser under the GIL on the single-CPU runtime (lock convoy).
+- **Fix:** `argus_fastdate.strptime` — one compiled regex per format, dict
+  cache, no lock, identical `ValueError` contract; directives outside the
+  `%Y %m %d %H %M %S %f %z` subset fall back to the stdlib parser. Wired into
+  the Tachibana provider modules, SHO, news freshness, mover cause, chart
+  intelligence, single decision, macro analysis, market shock, dashboard
+  summary, evidence bundle, important events, scheduler, verified snapshot,
+  risk discipline and research. `scanner.py`'s own call sites follow through
+  the RECOVERY_ONLY admission route.
+- **Acceptance:** `/api/argus/events` and `/api/argus/decision-evidence`
+  answer in < 2 s 20+ minutes into the JP session on the deployed build.

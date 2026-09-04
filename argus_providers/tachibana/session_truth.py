@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argus_fastdate  # v13.5.52: lock-free strptime (no _strptime._cache_lock)
 from dataclasses import dataclass
 from datetime import date, datetime, time as wall_time, timezone
 from enum import Enum
@@ -48,7 +49,7 @@ def parse_provider_datetime(value: object) -> datetime | None:
     if not isinstance(value, str):
         return None
     try:
-        parsed = datetime.strptime(value, "%Y.%m.%d-%H:%M:%S.%f")
+        parsed = argus_fastdate.strptime(value, "%Y.%m.%d-%H:%M:%S.%f")
     except ValueError:
         return None
     return parsed.replace(tzinfo=_TOKYO).astimezone(timezone.utc)

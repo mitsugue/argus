@@ -18,6 +18,7 @@ produces risk-context information for Today / Alerts surfaces only.
 """
 from __future__ import annotations
 
+import argus_fastdate  # v13.5.52: lock-free strptime (no _strptime._cache_lock)
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
@@ -84,7 +85,7 @@ def evaluate_long_end_rates(observations: Sequence[Mapping[str, Any]],
         return {"status": "DATA_GATED", "reason": "insufficient_observations",
                 "observationCount": len(rows)}
     latest = rows[-1]
-    latest_date = datetime.strptime(latest["date"], "%Y-%m-%d").replace(
+    latest_date = argus_fastdate.strptime(latest["date"], "%Y-%m-%d").replace(
         tzinfo=timezone.utc)
     age_days = (now - latest_date).days
     if age_days > LONG_END_STALE_DAYS:

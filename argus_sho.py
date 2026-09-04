@@ -11,6 +11,7 @@ propositions are evidence generators, never independent action authorities.
 """
 from __future__ import annotations
 
+import argus_fastdate  # v13.5.52: lock-free strptime (no _strptime._cache_lock)
 import copy
 import hashlib
 import json
@@ -174,7 +175,7 @@ def _instant(value: Any) -> Optional[datetime]:
     try:
         if len(text) == 10:
             parsed = datetime.combine(
-                datetime.strptime(text, "%Y-%m-%d").date(),
+                argus_fastdate.strptime(text, "%Y-%m-%d").date(),
                 time(23, 59, 59, 999999),
                 tzinfo=timezone.utc,
             )
@@ -545,7 +546,7 @@ def point_in_time_rows(rows: Iterable[Mapping[str, Any]], cutoff: str) \
         if not instrument:
             instrument = "MARKET"
         try:
-            observed_date = datetime.strptime(period, "%Y-%m-%d").date()
+            observed_date = argus_fastdate.strptime(period, "%Y-%m-%d").date()
         except (TypeError, ValueError, OverflowError):
             observed_date = None
         if not field or len(period) != 10 or observed_date is None or \
@@ -1824,7 +1825,7 @@ def _factor_date_is_bounded(value: Any, cutoff: datetime) -> bool:
     if not isinstance(value, str) or len(value) != 10:
         return False
     try:
-        parsed = datetime.strptime(value, "%Y-%m-%d").date()
+        parsed = argus_fastdate.strptime(value, "%Y-%m-%d").date()
     except (TypeError, ValueError, OverflowError):
         return False
     return parsed.isoformat() == value and parsed <= cutoff.date()

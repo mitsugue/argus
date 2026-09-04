@@ -6,6 +6,7 @@ handlers consume the pointer and never invoke the producer.
 """
 from __future__ import annotations
 
+import argus_fastdate  # v13.5.52: lock-free strptime (no _strptime._cache_lock)
 import copy
 import hashlib
 import json
@@ -139,7 +140,7 @@ def _parse_time(value: Any) -> Optional[datetime]:
         return None
     try:
         if len(text) == 10:
-            return datetime.strptime(text, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            return argus_fastdate.strptime(text, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)

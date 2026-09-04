@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.51"
+PRODUCT_VERSION = "v13.5.52"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -317,6 +317,16 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "argus_dashboard_event_summary.py",
     "argus_macro_event_analysis.py",
     "test_argus_important_events_product_correctness.py",
+    "argus_news_freshness.py",
+    "argus_mover_cause.py",
+    "argus_chart_intelligence.py",
+    "argus_decision_evidence_bundle.py",
+    "argus_scheduler.py",
+    "argus_verified_snapshot.py",
+    "argus_risk_discipline.py",
+    "argus_research.py",
+    "argus_fastdate.py",
+    "test_argus_fastdate.py",
     "test_argus_dashboard_events_backend.py",
     "test_argus_macro_v115_backend.py",
     "web/scripts/frontend-market-event-truth.test.cjs",

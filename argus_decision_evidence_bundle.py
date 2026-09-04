@@ -134,7 +134,9 @@ def _utc(value: Any, path: str) -> datetime:
     if not isinstance(value, str) or not _UTC_RE.fullmatch(value):
         _fail(path, "must be an exact UTC timestamp with whole-second precision")
     try:
-        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        # v13.5.52: fromisoformat is C-level and lock-free; strptime serialises the
+        # process on _strptime._cache_lock (the 2026-09-04 production stall).
+        parsed = datetime.fromisoformat(value[:-1]).replace(tzinfo=timezone.utc)
     except ValueError as exc:
         raise DecisionEvidenceValidationError(f"{path}: invalid UTC timestamp") from exc
     return parsed

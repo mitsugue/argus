@@ -8,6 +8,7 @@ Event IMPACT = how strongly markets may move, NOT whether the result is good/bad
 """
 from __future__ import annotations
 
+import argus_fastdate  # v13.5.52: lock-free strptime (no _strptime._cache_lock)
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -366,14 +367,14 @@ def _row_epoch(row: Dict[str, Any]) -> Optional[float]:
     raw = row.get("eventTimeUtc")
     if raw:
         try:
-            return datetime.strptime(str(raw)[:19], "%Y-%m-%dT%H:%M:%S").replace(
+            return argus_fastdate.strptime(str(raw)[:19], "%Y-%m-%dT%H:%M:%S").replace(
                 tzinfo=timezone.utc).timestamp()
         except ValueError:
             pass
     date = row.get("date") or row.get("eventDate")
     if date:
         try:
-            return datetime.strptime(str(date)[:10], "%Y-%m-%d").replace(
+            return argus_fastdate.strptime(str(date)[:10], "%Y-%m-%d").replace(
                 tzinfo=timezone.utc).timestamp()
         except ValueError:
             return None
@@ -384,7 +385,7 @@ def _now_epoch_from_ctx(ctx: Optional[Dict[str, Any]]) -> float:
     raw = (ctx or {}).get("nowIso") or (ctx or {}).get("now")
     if raw:
         try:
-            return datetime.strptime(str(raw)[:19], "%Y-%m-%dT%H:%M:%S").replace(
+            return argus_fastdate.strptime(str(raw)[:19], "%Y-%m-%dT%H:%M:%S").replace(
                 tzinfo=timezone.utc).timestamp()
         except ValueError:
             pass
