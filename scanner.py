@@ -35097,6 +35097,80 @@ def api_argus_chart_intelligence():
             symbol, market, timeframe, market_scope=False, cached_only=True)))
 
 
+# v13.5.50: the owner asked for the indices themselves (SHO reasons about
+# the Nikkei 225, not the 1321 ETF).  Cached-only public GET over the Yahoo
+# index OHLCV cache the SHO warm already fills; the verified snapshots
+# (1321/1306/SPY/QQQ) remain the decision anchor.  Never fetches here.
+_INDEX_CHART_SOURCES = {
+    "N225": {"yahoo": ("^N225",), "market": "JP", "instrumentId": "NIKKEI_225_INDEX",
+             "displayNameJa": "日経平均株価(指数)"},
+    "TOPIX": {"yahoo": ("^TPX", "998405.T"), "market": "JP", "instrumentId": "TOPIX_INDEX",
+              "displayNameJa": "TOPIX(指数)"},
+    "SPX": {"yahoo": ("^GSPC",), "market": "US", "instrumentId": "SP500_INDEX",
+            "displayNameJa": "S&P 500(指数)"},
+    "NDX": {"yahoo": ("^IXIC",), "market": "US", "instrumentId": "NASDAQ_COMPOSITE_INDEX",
+            "displayNameJa": "ナスダック総合(指数)"},
+}
+_INDEX_CHART_DISCLOSURE_JA = ("指数そのもの(Yahoo Finance 日足・参考表示)。売買判断の正本は"
+                              "検証済みスナップショット(1321/1306/SPY/QQQ)のままです。")
+
+
+@app.route("/api/argus/index-chart")
+def api_argus_index_chart():
+    """PUBLIC cached-only: deterministic chart facts for a real index."""
+    index = (request.args.get("index") or "N225").strip().upper()
+    spec = _INDEX_CHART_SOURCES.get(index)
+    if spec is None:
+        return jsonify({"error": "unsupported_index",
+                        "supported": sorted(_INDEX_CHART_SOURCES)}), 400
+    timeframe = (request.args.get("timeframe") or "daily").strip().lower()
+    if timeframe not in ("daily", "weekly"):
+        return jsonify({"error": "invalid_timeframe"}), 400
+    rows, yahoo_used = None, None
+    for yahoo_symbol in spec["yahoo"]:
+        cached = _SHO_INDEX_OHLCV_CACHE.get(yahoo_symbol)
+        data = cached.get("data") if isinstance(cached, dict) else None
+        if isinstance(data, list) and len(data) >= 30:
+            rows, yahoo_used = data, yahoo_symbol
+            break
+    if not rows:
+        return jsonify({
+            "reportId": None, "status": "expected_skip", "automaticAiCalls": 0,
+            "index": index, "displayNameJa": spec["displayNameJa"],
+            "stateUpdate": {"status": "expected_skip", "reason": "index_cache_cold"},
+            "noteJa": "指数日足はまだ取得されていません(起動後の巡回で自動取得されます)。",
+        })
+    known_at = _ai_now_iso()
+    history = {
+        "dates": [str(row.get("date"))[:10] for row in rows],
+        "opens": [row.get("open") for row in rows],
+        "highs": [row.get("high") for row in rows],
+        "lows": [row.get("low") for row in rows],
+        "closes": [row.get("close") for row in rows],
+        "volumes": [row.get("volume") for row in rows],
+        "adjusted": [False] * len(rows),
+    }
+    chart_rows = _chart_rows_from_history(
+        history, market=spec["market"], provider="yahoo_index",
+        known_at=known_at, dataset_id=f"yahoo_index:{yahoo_used}:{known_at}")
+    report = _chart_public_report(
+        index, spec["market"], timeframe, market_scope=False,
+        cached_only=True, daily_rows_override=chart_rows)
+    report["index"] = index
+    report["displayNameJa"] = spec["displayNameJa"]
+    report["proxyDisclosureJa"] = None
+    report["indexDisclosureJa"] = _INDEX_CHART_DISCLOSURE_JA
+    metadata = report.get("instrumentMetadata")
+    if isinstance(metadata, dict):
+        metadata.update({
+            "instrumentId": f"INDEX:{spec['instrumentId']}", "assetType": "INDEX",
+            "displayNameJa": spec["displayNameJa"], "source": "yahoo_index_ohlcv",
+            "proxyFor": None, "licenseStatus": "display_reference",
+            "sourceSymbol": yahoo_used,
+        })
+    return jsonify(argus_market_intelligence.normalize_public_names(report))
+
+
 @app.route("/api/argus/today-headline")
 def api_argus_today_headline():
     """Compact Today bootstrap derived from the verified market snapshots.
