@@ -117,7 +117,7 @@ const SEVEN_SIGN_REASON_JA: Record<string, string> = {
 const NEXT_REVIEW_REASON_JA: Record<string, string> = {
   'resolve.freshness_unknown': '正本データの更新時刻を確認',
   'resolve.market_truth_missing': '市場データの正本を取得',
-  'resolve.prediction_ledger_missing': '予測台帳の更新を確認',
+  'resolve.prediction_ledger_missing': '市場スナップショットの更新後に再作成',
   'resolve.risk_evidence_missing': 'リスク証拠を更新',
   'resolve.scenario_event_missing': '重要イベント情報を更新',
   'resolve.sho_evidence_missing': 'チャート分析証拠を更新',
@@ -150,7 +150,15 @@ const MISSING_REASON_JA: Record<string, string> = {
   market_truth_missing: '市場データ未取得',
   market_truth_conflict: '市場データが食い違っています（照合待ち）',
   owner_context_unknown: '保有情報は端末内のみで参照（設計どおり・エラーではありません）',
-  prediction_ledger_missing: '予測台帳が未接続（オーナー認証の設定待ち）',
+  // v13.5.53: this reference is the SDA's EPHEMERAL prediction CONTEXT, built
+  // from the market snapshot — not the durable Layer-2B ledger, and never
+  // gated on owner authentication. Production on 2026-09-04 showed why the old
+  // wording mattered: verificationFailures.predictionLedger was
+  // "market_truth_reference_unavailable", i.e. the context could not be built
+  // because the market snapshot was not fresh, yet the owner was told their
+  // authentication was not set up and sent to fix a problem that did not exist.
+  // State the fact; the market_truth_* line beside it carries the cause.
+  prediction_ledger_missing: '予測コンテキストを作成できていません',
   prediction_ledger_stale: '予測台帳の鮮度が低下（次の記録待ち）',
   prediction_ledger_conflict: '予測台帳の記録が食い違っています（照合待ち）',
   quality_partial: 'データが一部不足',
