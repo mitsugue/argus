@@ -944,9 +944,17 @@ export const ArgusTodayPanel: React.FC<Props> = ({
               && ` · 市場横断確認: ${event.crossMarket.signals.join('/')}`}</em>
         </div>)}
       </div>}
+      {/* v13.5.53 (owner 2026-09-04: 「イベントが何もないことはないはず」). This
+          card watches for UNSCHEDULED shocks, but its empty state used the
+          word イベント, which means the calendar everywhere else in the app
+          (NEXT EVENT / 重要イベント / 目前イベント). On a day whose US
+          Employment Situation was at D-0 that reads as a flat contradiction.
+          Name what is actually being monitored, and point at the surface that
+          does carry the schedule. */}
       {shock.status === 'data' && shockNewsEvents.length === 0
-        && <p className="at-shock-clear">市場影響級イベント: 現在なし
-          （監視中: 中央銀行 · 雇用/物価 · 地政学 · 企業イベント）</p>}
+        && <p className="at-shock-clear">突発の市場ショック: 現在なし
+          （監視中: 中央銀行 · 雇用/物価 · 地政学 · 企業イベント）·
+          予定されている経済イベントはイベント欄に表示されます</p>}
       {shock.status === 'error'
         && <p className="at-shock-clear">市場ショック監視: 取得できません</p>}
       {view.news.length ? <div className="at-news">
