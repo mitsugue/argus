@@ -18,6 +18,13 @@ def _forbid(monkeypatch):
             monkeypatch.setattr(scanner, name, boom)
 
 
+
+def _recent_release(hours_ago=2):
+    from datetime import datetime, timedelta, timezone
+    at = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
+    return at.strftime("%Y-%m-%dT%H:%M:%SZ"), at.strftime("%Y-%m-%d")
+
+
 def test_refresh_market_reaction_requires_token():
     with scanner.app.test_client() as c:
         assert c.post("/api/argus/admin/macro-event-analysis/refresh-market-reaction").status_code in (401, 503)
@@ -47,9 +54,9 @@ def test_dashboard_reaction_fields_and_missing_data(monkeypatch):
     # released NFP with actual but NO reaction → 市場反応データ未取得 limitation.
     monkeypatch.setitem(scanner._MACRO_ANALYSIS_STATE, "restored", True)
     now = scanner._ai_now_iso()
-    rec = {"eventId": "us-nfp-x", "eventCode": "NFP", "eventTimeUtc": "2026-07-02T12:30:00Z",
-           "eventDate": "2026-07-02", "displayImpact": "critical", "title": "NFP",
-           "pre": {"argusScenarioJa": "x", "generatedAt": "2026-07-02T08:00:00Z"},
+    rec = {"eventId": "us-nfp-x", "eventCode": "NFP", "eventTimeUtc": _recent_release()[0],
+           "eventDate": _recent_release()[1], "displayImpact": "critical", "title": "NFP",
+           "pre": {"argusScenarioJa": "x", "generatedAt": _recent_release(6)[0]},
            "actual": {"available": True, "headline": "NFP +57K", "metrics": {"nfpChangeK": 57}},
            "post": {"verdict": "not_available", "generatedAt": None},
            "marketReaction": {}}
@@ -64,9 +71,9 @@ def test_dashboard_reaction_fields_and_missing_data(monkeypatch):
 
 def test_dashboard_reaction_numeric_when_present(monkeypatch):
     monkeypatch.setitem(scanner._MACRO_ANALYSIS_STATE, "restored", True)
-    rec = {"eventId": "cpi-x", "eventCode": "CPI", "eventTimeUtc": "2026-07-02T12:30:00Z",
-           "eventDate": "2026-07-02", "displayImpact": "high", "title": "CPI",
-           "pre": {"argusScenarioJa": "x", "generatedAt": "2026-07-02T08:00:00Z"},
+    rec = {"eventId": "cpi-x", "eventCode": "CPI", "eventTimeUtc": _recent_release()[0],
+           "eventDate": _recent_release()[1], "displayImpact": "high", "title": "CPI",
+           "pre": {"argusScenarioJa": "x", "generatedAt": _recent_release(6)[0]},
            "actual": {"available": True, "headline": "CPI +0.2%", "metrics": {"headlineCpiMoM": 0.2}},
            "post": {"verdict": "not_available", "generatedAt": None},
            "marketReaction": {"us10yMoveBp": 5.0, "usdJpyMovePct": 0.3, "spyMovePct": -0.8,

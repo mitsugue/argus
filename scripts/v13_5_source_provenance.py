@@ -317,6 +317,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "argus_dashboard_event_summary.py",
     "argus_macro_event_analysis.py",
     "test_argus_important_events_product_correctness.py",
+    "test_argus_dashboard_events_backend.py",
+    "test_argus_macro_v115_backend.py",
     "web/scripts/frontend-market-event-truth.test.cjs",
     "web/scripts/market-signals.test.cjs",
     "web/scripts/tachibana-live.test.cjs",
