@@ -642,7 +642,14 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     <article className={`at-decision at-primary-hero card is-${view.finalAction.toLowerCase()}`}
       aria-label="A.R.G.U.S. Primary Action">
       <div className="at-call">
-        <small>PRIMARY ACTION · {view.selectedMarket} {view.selectedInstrument?.symbol ?? ''}</small>
+        {/* v13.5.54: name the instrument the DECISION is anchored on, not the
+            series being drawn. Since the headline chart switched to the index,
+            view.selectedInstrument follows the projection — reading
+            「PRIMARY ACTION · JP N225」 while the SDA subject is 1321 is exactly
+            the confusion the index disclosure exists to prevent. */}
+        <small>PRIMARY ACTION · {view.selectedMarket}{' '}
+          {view.canonicalDecision.subject?.instrumentId
+            || view.selectedInstrument?.symbol || ''}</small>
         <strong style={{ color: ACTION_TONE[view.finalAction] }}>{MARKET_STANCE[view.finalAction]}</strong>
         <span className={`at-authority is-${view.canonicalDecision.status.toLowerCase()}`}>
           {view.canonicalDecision.status === 'EVALUATED' ? '確認済み' : '判断データ確認中'}</span>
@@ -784,7 +791,10 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           className={instrument.symbol === selectedSymbol ? 'is-selected' : ''}
           title={`${instrument.fullLabel} · underlying ${instrument.underlying}`}>
           <span className="at-index-name">{instrument.shortLabel}</span>
-          <small className="at-index-type">{instrument.instrumentType}</small>
+          {/* v13.5.54: the tab now names the INDEX, so badging it "ETF" read as
+              a contradiction. The badge carries the instrument the decision is
+              still anchored on instead. */}
+          <small className="at-index-type">{instrument.symbol}</small>
         </button>)}
       </div>
       {freshnessNoteJa && <p className="at-freshness-note">{freshnessNoteJa}</p>}
