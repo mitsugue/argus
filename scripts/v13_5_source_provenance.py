@@ -81,6 +81,12 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/src/components/assetDesk/AssetEventsPanel.tsx",
     "web/src/components/assetDesk/AssetPositionPanel.tsx",
     "web/src/components/assetDesk/AssetEvidenceSummary.tsx",
+    # v13.5.54 (owner 2026-09-04: 「日経平均などの指数がトップに表示されていない、
+    # まだETF」). The Today headline draws the index the owner reasons in; the
+    # verified ETF snapshot remains the decision anchor and the panel discloses
+    # it. Display authority only — investment and calibration authority stay
+    # outside this list.
+    "web/src/domain/marketInstruments.ts",
     "test_argus_cost_policy.py",
     "test_argus_foundation_jobs.py",
     "test_argus_research_benchmark.py",
