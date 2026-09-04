@@ -80,6 +80,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/src/components/assetDesk/types.ts",
     "web/src/components/assetDesk/AssetEventsPanel.tsx",
     "web/src/components/assetDesk/AssetPositionPanel.tsx",
+    "web/src/components/assetDesk/AssetEvidenceSummary.tsx",
     "test_argus_cost_policy.py",
     "test_argus_foundation_jobs.py",
     "test_argus_research_benchmark.py",

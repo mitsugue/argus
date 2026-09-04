@@ -7,7 +7,10 @@ const STATE_JA: Record<EvidenceState, string> = {
   VERIFIED_FACT: '確認済み事実',
   SUPPORTED_HYPOTHESIS: '支持された仮説',
   UNRESOLVED: '原因未確定',
-  UNAVAILABLE: '必要データなし',
+  // v13.5.53: 「必要データなし」 parses in Japanese as "no data is required" —
+  // the opposite of the state it names, which is that the required evidence
+  // could not be obtained.
+  UNAVAILABLE: '必要な証拠が未取得',
   STALE: '前回値',
   CONFLICT: '証拠が矛盾',
 };
