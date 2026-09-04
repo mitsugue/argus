@@ -1,4 +1,5 @@
 import json
+import re
 import pathlib
 import unittest
 
@@ -183,3 +184,43 @@ class DeployScopeTests(unittest.TestCase):
         self.assertIn("fetch-depth: 0", workflow)
         self.assertIn("python3 -B scripts/render_deploy_guard.py", workflow)
         self.assertIn("github.event.pull_request.title", workflow)
+
+    def test_no_stale_version_pin_survives_a_bump(self):
+        """A version bump must not leave a pin behind.
+
+        v13.5.53 shipped with web/scripts/full-release-simulation.mjs still
+        asserting the header read v13.5.52, because that pin is written as a
+        REGEX (``v13\\.5\\.52``) and a plain search-and-replace for the dotted
+        version walks straight past it. CI caught it only in the zero-install
+        runtime proof, several minutes in. Scan the release-control surfaces
+        for any pinned v13.5.x — escaped or not — that disagrees with
+        product-version.json.
+        """
+        current = json.loads(
+            (ROOT / "product-version.json").read_text())["productVersion"]
+        assert current.startswith("v13.5."), current
+        # Matches 13.5.42 and 13\.5\.42 alike.
+        pin = re.compile(r"13\\?\.5\\?\.(\d+)")
+        expected_patch = current.rsplit(".", 1)[1]
+        stale = []
+        for relative in (
+                "web/scripts/full-release-simulation.mjs",
+                "web/scripts/round3-product-final.test.mjs",
+                "web/scripts/runtime-version-truth.test.mjs",
+                "scripts/v13_5_source_provenance.py",
+                "scripts/v13_5_release_certificate.py",
+                "scripts/v13_5_pre_mutation_rehearsal.py"):
+            path = ROOT / relative
+            if not path.exists():
+                continue
+            for number, line in enumerate(
+                    path.read_text().splitlines(), start=1):
+                # Provenance comments legitimately name the release a change
+                # landed in; only executable pins have to track the bump.
+                stripped = line.lstrip()
+                if stripped.startswith(("#", "//", "*")):
+                    continue
+                for found in pin.finditer(line):
+                    if found.group(1) != expected_patch:
+                        stale.append(f"{relative}:{number}: {line.strip()}")
+        self.assertEqual([], stale, "stale version pins after a bump")
