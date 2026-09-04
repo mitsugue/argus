@@ -3827,6 +3827,37 @@ def _sanitize_symbols(raw, pattern, cap):
             out.append(s)
     return out[:cap]
 
+
+def _with_cap_truth(snapshot, requested, pattern, cap):
+    """Attach the dropped-symbol truth to a public watchlist response."""
+    if not isinstance(snapshot, dict) or not requested:
+        return snapshot
+    dropped = _symbols_over_cap(requested, pattern, cap)
+    if not dropped:
+        return snapshot
+    return {**snapshot, "requestedSymbolCount": len(requested),
+            "symbolCap": cap, "droppedSymbols": dropped,
+            "droppedReason": "symbol_cap"}
+
+
+def _symbols_over_cap(raw, pattern, cap):
+    """Valid symbols the cap DROPPED, in request order.
+
+    v13.5.54 (owner 2026-09-04: 米国株が全部は出ない).  The cap exists to bound
+    provider credits, but it truncated silently: the owner's ninth US symbol
+    was discarded and `coverage.total` then reported eight, so neither the app
+    nor the owner could tell a requested symbol had been thrown away — it read
+    exactly like a symbol that does not exist.  A bound the owner cannot see is
+    indistinguishable from data loss, so the response names what it dropped.
+    """
+    accepted, dropped = [], []
+    for s in (raw or []):
+        s = s.strip().upper()
+        if not s or not pattern.match(s) or s in accepted or s in dropped:
+            continue
+        (accepted if len(accepted) < cap else dropped).append(s)
+    return dropped
+
 def _jq_name_for(code4, *, allow_provider_fetch=True):
     """Japanese company name, optionally restricted to the existing master cache."""
     rows = (_jq_master() if allow_provider_fetch
@@ -4050,9 +4081,10 @@ def api_argus_japan_watchlist():
     # Public GET is cache/bridge-only. Provider refresh belongs to scheduled or
     # admin-controlled work. It also must not change the EC2 push target set;
     # dynamic realtime membership comes from authenticated Layer-2B owner sync.
-    return jsonify(get_japan_watchlist_snapshot(
+    snapshot = get_japan_watchlist_snapshot(
         symbols, allow_provider_fetch=False,
-        record_requested_symbols=False))
+        record_requested_symbols=False)
+    return jsonify(_with_cap_truth(snapshot, symbols, _JP_SYM_RE, _JP_DYN_MAX))
 
 
 # Bounded interest hints from trusted internal/background callers. Public browser
@@ -4673,7 +4705,8 @@ def api_argus_us_watchlist():
     raw = (request.args.get("symbols") or "")
     symbols = [s for s in raw.split(",") if s.strip()] or None
     # Public GET is cache/bridge-only; never fetch a market-data provider here.
-    return jsonify(get_us_watchlist_snapshot(symbols, allow_provider_fetch=False))
+    snapshot = get_us_watchlist_snapshot(symbols, allow_provider_fetch=False)
+    return jsonify(_with_cap_truth(snapshot, symbols, _US_SYM_RE, _US_DYN_MAX))
 
 
 # ━━━ moomoo real-time quote push (v9.11) ━━━
@@ -35359,6 +35392,24 @@ def _decision_evidence_watch_row(symbol, market):
     return None, None
 
 
+def _latest_close_date(closes):
+    """Newest bar date in a close list, or "" when there is none."""
+    return max((str(row.get("date"))[:10] for row in closes), default="")
+
+
+def _verified_snapshot_closes(symbol):
+    """Daily closes from the published verified market snapshot, or []."""
+    try:
+        snapshot = _verified_market_snapshot(symbol, 5)
+        bars = (((snapshot or {}).get("payload") or {})
+                .get("indicators") or {}).get("bars") or []
+    except Exception:
+        return []
+    return [row for row in bars if isinstance(row, dict)
+            and isinstance(row.get("close"), (int, float))
+            and row.get("date")]
+
+
 def _decision_evidence_history_row(symbol, market):
     """EOD fallback quote row from the cached daily history.
 
@@ -35371,10 +35422,35 @@ def _decision_evidence_history_row(symbol, market):
     try:
         rows = _chart_history_cached(symbol, market) or []
     except Exception:
-        return None, None
+        rows = []
     closes = [row for row in rows if isinstance(row, dict)
               and isinstance(row.get("close"), (int, float))
               and row.get("date")]
+    # v13.5.54 (owner 2026-09-04, 「まだ完全ではない」).  The provider history cache
+    # was the ONLY source here, and it fails in BOTH directions: it is empty
+    # after every restart, and it holds the previous session for up to six
+    # hours after a close (a pure time TTL with no session-boundary
+    # invalidation).  Both were measured in production on 2026-09-04:
+    #
+    #   08:47Z  cache held 09-03 while the latest completed JP session was
+    #           09-04  -> marketTruth STALE  (subject_selection_not_fresh)
+    #   19:53Z  cache empty minutes after a deploy
+    #           -> marketTruth MISSING
+    #
+    # Either way the owner saw a chart drawn from evidence the decision
+    # claimed not to have, and every subject data-gated to WAIT.
+    #
+    # The verified market snapshot is the SAME canonical evidence the headline
+    # bootstrap already publishes; reading it is an in-memory lookup behind its
+    # own signature check — no provider call, no new authority.  So take
+    # whichever source carries the LATER close: that fixes the empty cache and
+    # the stale cache with one rule, and can never pick older evidence than
+    # before.  The freshness classifier still downgrades the winner honestly,
+    # so this can only ever produce DELAYED/STALE, never a fabricated
+    # AVAILABLE.
+    snapshot_closes = _verified_snapshot_closes(symbol)
+    if snapshot_closes and _latest_close_date(snapshot_closes) > _latest_close_date(closes):
+        closes = snapshot_closes
     if not closes:
         return None, None
     # v13.5.36 PRODUCTION BUG: the cached history arrives newest-first in
