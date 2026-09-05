@@ -37,6 +37,7 @@ import argus_remote_recovery  # bounded cold-restore delta for compact journal p
 import argus_remote_nonce_anchor  # bounded private nonce-authority epochs
 import argus_calibration  # Calibration Ledger v4 foundation: cohorts/epochs/scoring (pure, v10.68)
 import argus_market_clock  # Calibration Ledger v4 Phase 2: market-specific forecast clocks (pure, v10.69)
+import argus_td_warm  # v13.5.54: Twelve Data Basic-plan warm scheduler core (pure; owner 2026-09-05)
 import argus_market_data_truth  # v13 Round 2A: canonical provider-neutral market truth
 import argus_posture  # Calibration Ledger v4: multidimensional posture scoring (pure, v10.74)
 import argus_decision_value  # Decision Value Ledger v1: net expectancy / risk (pure, research-only, v10.75)
@@ -3815,6 +3816,21 @@ _US_DYN_MAX     = _td_int_env("TWELVEDATA_DYNAMIC_MAX", 24 if _TD_GROW else 8)
 _TD_VWAP_MAX    = _td_int_env("TWELVEDATA_VWAP_SYMBOL_MAX", 12 if _TD_GROW else 6)
 _TD_REGIME_ETF_MAX = _td_int_env("TWELVEDATA_REGIME_ETF_MAX", 16 if _TD_GROW else 8)
 _TD_CREDIT_BUDGET_PER_MIN = _td_int_env("TWELVEDATA_CREDIT_BUDGET_PER_MIN", 55 if _TD_GROW else 8)
+# v13.5.54 (owner 2026-09-05): the plan is BASIC. "8 credits/minute" is a REQUEST
+# BATCH cap, not a universe size — a Basic key can carry a larger authorized
+# universe when requests rotate across minutes inside the 800/day budget. So the
+# public cache-only read and the warm scheduler use the AUTHORIZED universe cap;
+# only a single provider request is bounded by _US_DYN_MAX (= batch cap).
+_TD_PLAN_NAME = argus_td_warm.normalize_plan(_TWELVEDATA_PLAN)
+_US_UNIVERSE_CAP = _td_int_env("TWELVEDATA_UNIVERSE_CAP", 24)
+_TD_WARM_DAILY_CAP = _td_int_env(
+    "TWELVEDATA_WARM_DAILY_CAP",
+    # 70% of the plan's daily budget; the rest stays in reserve for the regime
+    # ETF batch, GLD/TLT/XLRE, SMH bars and any curated refresh.
+    int(argus_td_warm.plan_limits(_TWELVEDATA_PLAN)["creditsPerDay"] * 0.7))
+_TD_WARM_REGULAR_SEC = _td_int_env("TWELVEDATA_WARM_REGULAR_SEC", 600)
+_TD_WARM_EXTENDED_SEC = _td_int_env("TWELVEDATA_WARM_EXTENDED_SEC", 1800)
+_TD_WARM_ENABLED = (os.environ.get("TWELVEDATA_WARM_ENABLED", "1") or "1").strip().lower() not in ("0", "false", "off")
 _DYN_CACHE_MAX  = 16
 _JP_DYN_CACHE   = {}    # symbols-tuple -> {"data":..., "expires":...}
 _US_DYN_CACHE   = {}
@@ -4531,16 +4547,26 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
     """
     now = time.time()
     if symbols:
+        if not allow_provider_fetch:
+            # v13.5.54: a cache-only read spends no credits, so it is bounded
+            # by the AUTHORIZED universe cap, not the 8-credit request batch —
+            # the owner's ninth symbol assembles from the warm store instead of
+            # being dropped. An exact previously-fetched batch still wins.
+            universe = tuple(_sanitize_symbols(symbols, _US_SYM_RE, _US_UNIVERSE_CAP))
+            if not universe:
+                return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
+            hit = _US_DYN_CACHE.get(universe)
+            if hit and now < hit["expires"]:
+                return _canonical_quote_snapshot_age(hit["data"], "stocks")
+            return (_cached_quote_snapshot(hit["data"]) if hit
+                    else _dynamic_cached_only_snapshot(
+                        universe, "US", "twelvedata"))
         syms = tuple(_sanitize_symbols(symbols, _US_SYM_RE, _US_DYN_MAX))
         if not syms:
             return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
         hit = _US_DYN_CACHE.get(syms)
         if hit and now < hit["expires"]:
             return _canonical_quote_snapshot_age(hit["data"], "stocks")
-        if not allow_provider_fetch:
-            return (_cached_quote_snapshot(hit["data"]) if hit
-                    else _dynamic_cached_only_snapshot(
-                        syms, "US", "twelvedata"))
         if not _TWELVEDATA_API_KEY:
             return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
         try:
@@ -4576,6 +4602,11 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
 
     if _US_CACHE["data"] is not None and now < _US_CACHE["expires"]:
         return _canonical_quote_snapshot_age(_US_CACHE["data"], "stocks")
+    # v13.5.54: the warm scheduler already carries the curated names; when every
+    # one of them has a fresh warm row, serve those and spend no second credit.
+    warm = _us_curated_from_warm(now)
+    if warm is not None:
+        return warm
     if not allow_provider_fetch:
         return (_cached_quote_snapshot(_US_CACHE["data"]) if _US_CACHE["data"]
                 else _us_mock_snapshot())
@@ -4660,10 +4691,181 @@ def _finnhub_quote_row(sym):
     _FINNHUB_QUOTE_CACHE[sym] = {"row": row, "ts": now}
     return row
 
+# ━━━ Twelve Data Basic-plan warm scheduler (v13.5.54, owner 2026-09-05) ━━━
+# Provider glue only; the policy (rotation, ledger, cadence, universe, budget
+# diagnostics) is argus_td_warm and is fixture-tested there. One per-symbol warm
+# store feeds _quote_cached_only, so the public cache-only GET assembles the
+# owner's whole authorized universe with truthful per-symbol source times.
+_US_WARM_ROWS = {}          # SYMBOL -> {"row": dict, "expires": epoch}
+_TD_WARM_STATE = argus_td_warm.new_state()
+_TD_WARM_LOCK = threading.Lock()
+_TD_WARM_UNIVERSE_CACHE = {"data": None, "expires": 0.0}
+_TD_WARM_UNIVERSE_TTL = 600
+_TD_WARM_LAST_SESSION = {"value": None}
+
+
+def _td_warm_row_ttl():
+    # A warm row stays servable for two regular cadences, so a skipped cycle
+    # (budget, backoff) degrades to "older but present", never to "absent".
+    return max(_US_CACHE_TTL, 2 * _TD_WARM_REGULAR_SEC)
+
+
+def _td_owner_us_members():
+    """Owner-authorized US interest (Layer-2B membership, market == US).
+    Private store; symbols are used for scheduling only and never logged or
+    exposed by the budget diagnostics."""
+    try:
+        mem = _layer2b_read_latest()
+        rows = (mem.get("members") if isinstance(mem, dict) else []) or []
+        return [str(m.get("symbol") or "").upper() for m in rows
+                if isinstance(m, dict) and str(m.get("market") or "").upper() == "US"]
+    except Exception:
+        return []
+
+
+def _td_warm_universe(now=None):
+    now = time.time() if now is None else now
+    cached = _TD_WARM_UNIVERSE_CACHE
+    if cached["data"] is not None and now < cached["expires"]:
+        return cached["data"]
+    universe = argus_td_warm.build_universe(
+        curated=[s["symbol"] for s in _US_WATCHLIST],
+        owner_members=_td_owner_us_members(),
+        universe_cap=_US_UNIVERSE_CAP)
+    cached.update({"data": universe, "expires": now + _TD_WARM_UNIVERSE_TTL})
+    return universe
+
+
+def _td_us_session(now_utc=None):
+    try:
+        return argus_market_clock.market_session(
+            argus_market_clock.US_EQUITY, now_utc)["session"]
+    except Exception:
+        return None
+
+
+def _td_warm_store(rows, now):
+    ttl = _td_warm_row_ttl()
+    for row in rows:
+        sym = str(row.get("symbol") or "").upper()
+        if sym and row.get("price") is not None:
+            _US_WARM_ROWS[sym] = {"row": row, "expires": now + ttl}
+
+
+def _td_warm_row(sym, now):
+    ent = _US_WARM_ROWS.get(sym)
+    if ent and now < float(ent.get("expires") or 0):
+        return ent["row"]
+    return None
+
+
+def _us_curated_from_warm(now):
+    rows = []
+    for s in _US_WATCHLIST:
+        row = _td_warm_row(s["symbol"], now)
+        if row is None:
+            return None
+        rows.append({**row, "name": row.get("name") or s["name"]})
+    overall = ("live" if all(r.get("status") == "live" for r in rows)
+               else "delayed" if all(r.get("status") == "delayed" for r in rows)
+               else "partial")
+    snapshot = {"status": overall,
+                "asOf": max((r.get("date") for r in rows if r.get("date")), default=None),
+                "provider": "twelvedata", "stocks": rows,
+                "cacheState": "warm_scheduler"}
+    return _canonical_quote_snapshot_age(snapshot, "stocks")
+
+
+def _td_warm_fetch(batch):
+    """ONE /quote request for a batch (one credit per symbol). Returns
+    (rows, ok, rate_limited, error_class). Never raises."""
+    try:
+        r = requests.get(_TWELVEDATA_QUOTE,
+                         params={"symbol": ",".join(batch), "apikey": _TWELVEDATA_API_KEY},
+                         timeout=10)
+        if r.status_code == 429:
+            return [], False, True, "http_429"
+        r.raise_for_status()
+        body = r.json()
+        if isinstance(body, dict) and str(body.get("status", "")).lower() == "error":
+            code = body.get("code")
+            return [], False, str(code) == "429", f"provider_error_{code}"
+        names = {s["symbol"]: s["name"] for s in _US_WATCHLIST}
+        rows = []
+        for sym in batch:
+            q = (body.get(sym) if (isinstance(body, dict) and sym in body)
+                 else (body if len(batch) == 1 else None))
+            meta = {"symbol": sym, "name": names.get(sym) or (q or {}).get("name") or sym}
+            row = _td_parse_row(meta, q)
+            if row is not None:
+                rows.append(row)
+        return rows, True, False, None
+    except Exception as e:
+        return [], False, False, type(e).__name__
+
+
+def _td_warm_tick(now_utc=None):
+    """One scheduler tick (called every ~30 s from run_scheduler). Bounded by
+    argus_td_warm.plan_tick: batch cap, daily cap, cadence, backoff."""
+    if not _TWELVEDATA_API_KEY:
+        return {"action": "skip", "reason": "no_api_key"}
+    now_utc = now_utc or datetime.now(pytz.utc)
+    now = now_utc.timestamp()
+    session = _td_us_session(now_utc)
+    _TD_WARM_LAST_SESSION["value"] = session
+    universe = _td_warm_universe(now)
+    with _TD_WARM_LOCK:
+        decision = argus_td_warm.plan_tick(
+            _TD_WARM_STATE, now_utc=now_utc, session=session,
+            universe=universe["symbols"], batch_cap=_US_DYN_MAX,
+            warm_daily_cap=_TD_WARM_DAILY_CAP,
+            regular_sec=_TD_WARM_REGULAR_SEC, extended_sec=_TD_WARM_EXTENDED_SEC,
+            enabled=_TD_WARM_ENABLED)
+        if decision["action"] != "fetch":
+            return decision
+    rows, ok, rate_limited, err = _td_warm_fetch(decision["batch"])
+    with _TD_WARM_LOCK:
+        if ok:
+            _td_warm_store(rows, now)
+        warm_count = sum(1 for sym in universe["symbols"] if _td_warm_row(sym, now))
+        argus_td_warm.record_request(
+            _TD_WARM_STATE, decision, now_utc=now_utc, ok=ok,
+            rate_limited=rate_limited, warm_symbol_count=warm_count,
+            # A 429 means the per-minute window is spent; hold two windows
+            # so the retry cannot land inside the same exhausted minute.
+            backoff_sec=120, error_class=err)
+    return {**decision, "ok": ok, "rateLimited": rate_limited,
+            "rowsStored": len(rows) if ok else 0}
+
+
+def _td_warm_diagnostics():
+    """Public-safe budget/coverage truth (no symbols)."""
+    now = time.time()
+    with _TD_WARM_LOCK:
+        state = dict(_TD_WARM_STATE)
+    return argus_td_warm.diagnostics(
+        state, plan=_TWELVEDATA_PLAN, batch_cap=_US_DYN_MAX,
+        universe=_td_warm_universe(now), warm_daily_cap=_TD_WARM_DAILY_CAP,
+        regular_sec=_TD_WARM_REGULAR_SEC, extended_sec=_TD_WARM_EXTENDED_SEC,
+        session=_TD_WARM_LAST_SESSION["value"], enabled=_TD_WARM_ENABLED,
+        api_key_present=bool(_TWELVEDATA_API_KEY))
+
+
+@app.route("/api/argus/twelvedata-budget")
+def api_argus_twelvedata_budget():
+    """Truthful provider budget status: plan (never impersonated), request batch
+    cap vs authorized universe cap, daily budget, estimated/actual usage and
+    headroom. Counts only — the owner's symbols are never listed here."""
+    return jsonify(_td_warm_diagnostics())
+
+
 def get_us_watchlist_snapshot(symbols=None, allow_provider_fetch=True):
     """Core snapshot + real-time overlay from the local moomoo bridge (v9.11).
     Symbols Twelve Data's free plan omits are back-filled via Finnhub (v10.12.1)."""
-    requested = (_sanitize_symbols(symbols, _US_SYM_RE, _US_DYN_MAX) if symbols
+    # v13.5.54: a cache-only read is bounded by the AUTHORIZED universe cap; a
+    # provider-fetching call stays inside one 8-credit request batch.
+    request_cap = _US_DYN_MAX if allow_provider_fetch else _US_UNIVERSE_CAP
+    requested = (_sanitize_symbols(symbols, _US_SYM_RE, request_cap) if symbols
                  else [s["symbol"] for s in _US_WATCHLIST])
     # Bridge-first (v10.61): the /us-watchlist poll runs every ~15s. Calling Twelve
     # Data on EVERY poll burned 28× the free daily quota (22k/800). When the moomoo
@@ -4706,7 +4908,9 @@ def api_argus_us_watchlist():
     symbols = [s for s in raw.split(",") if s.strip()] or None
     # Public GET is cache/bridge-only; never fetch a market-data provider here.
     snapshot = get_us_watchlist_snapshot(symbols, allow_provider_fetch=False)
-    return jsonify(_with_cap_truth(snapshot, symbols, _US_SYM_RE, _US_DYN_MAX))
+    # v13.5.54: the bound the owner can hit here is the AUTHORIZED universe cap;
+    # the 8-credit batch cap governs single provider requests, not this read.
+    return jsonify(_with_cap_truth(snapshot, symbols, _US_SYM_RE, _US_UNIVERSE_CAP))
 
 
 # ━━━ moomoo real-time quote push (v9.11) ━━━
@@ -5689,6 +5893,10 @@ def _quote_cached_only(sym, market):
         result["decisionUsable"] = _decision_usable_quote_row(
             result, now_epoch=now) is not None
         return result
+    if market == "US":
+        warm = _td_warm_row(sym, now)
+        if warm is not None:
+            return _canonical_cached_quote_row_age(warm, now_epoch=now)
     dyn = _JP_DYN_CACHE if market == "JP" else _US_DYN_CACHE
     try:
         for ent in list(dyn.values()):
@@ -44197,6 +44405,12 @@ def run_scheduler():
                 target=_memory_operation_run,
                 args=("scheduler", "residency_ai_tick", _residency_ai_tick),
                 daemon=True).start()
+        # v13.5.54: Twelve Data Basic-plan warm tick — bounded by the policy core
+        # (8-credit batch per eligible minute, daily cap, market-aware cadence).
+        try:
+            _td_warm_tick()
+        except Exception as e:
+            add_log(f"td-warm tick error: {type(e).__name__}")
         time.sleep(30)
 
 if __name__ == "__main__":
