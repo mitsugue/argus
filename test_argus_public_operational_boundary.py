@@ -1472,3 +1472,95 @@ def test_public_dynamic_watchlist_answers_from_per_symbol_cache(monkeypatch):
     # Nothing cached at all still refuses to invent a quote.
     empty = scanner.get_us_watchlist_snapshot(["ZZZZ"], allow_provider_fetch=False)
     assert empty["status"] == "mock" and empty["stocks"] == []
+
+
+def test_public_watchlist_names_the_symbols_the_cap_dropped(monkeypatch):
+    """A bound the owner cannot see is indistinguishable from data loss.
+
+    The dynamic symbol cap exists to bound provider credits, but it truncated
+    silently: the owner's ninth US symbol was discarded and `coverage.total`
+    then reported eight, so a dropped symbol read exactly like one that does
+    not exist (owner report 2026-09-04, 「米国株は何も拾えていない」). The response
+    must name what it dropped, and stay silent when nothing was dropped."""
+    import datetime as _dt
+    day = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=1)).strftime("%Y-%m-%d")
+    monkeypatch.setitem(scanner._US_CACHE, "data", {
+        "status": "delayed", "asOf": day, "provider": "twelvedata",
+        "stocks": [{"symbol": s, "name": s, "price": 100.0, "status": "delayed",
+                    "date": day, "sourceTimestamp": day, "delayClass": "EOD"}
+                   for s in ("NVDA", "AAPL", "TSLA", "META")]})
+    monkeypatch.setitem(scanner._US_CACHE, "expires", scanner.time.time() + 600)
+    monkeypatch.setattr(scanner, "_US_DYN_CACHE", {})
+    monkeypatch.setattr(scanner, "_US_DYN_MAX", 8)
+    client = scanner.app.test_client()
+
+    over = client.get("/api/argus/us-watchlist"
+                      "?symbols=SPCX,IONQ,SOXS,SOXL,NVDA,AAPL,MU,TSLA,META").get_json()
+    assert over["requestedSymbolCount"] == 9
+    assert over["symbolCap"] == 8
+    assert over["droppedSymbols"] == ["META"]      # the cap keeps request order
+    assert over["droppedReason"] == "symbol_cap"
+
+    inside = client.get("/api/argus/us-watchlist?symbols=NVDA,AAPL").get_json()
+    for key in ("requestedSymbolCount", "symbolCap", "droppedSymbols", "droppedReason"):
+        assert key not in inside, key
+
+    # Invalid symbols are rejected by the pattern, never counted as dropped.
+    assert scanner._symbols_over_cap(["NVDA", "!!", "AAPL"], scanner._US_SYM_RE, 2) == []
+    # Duplicates do not consume cap slots twice.
+    assert scanner._symbols_over_cap(
+        ["NVDA", "NVDA", "AAPL", "TSLA"], scanner._US_SYM_RE, 2) == ["TSLA"]
+
+
+def test_decision_evidence_falls_back_to_the_published_verified_snapshot(monkeypatch):
+    """A cold provider cache must not read as "no market data".
+
+    _decision_evidence_history_row sourced only the provider history cache,
+    which is empty after every restart and for six hours after a session close
+    (pure time TTL, no session boundary). Measured in production 2026-09-04
+    19:53Z: the verified snapshots held SPY/QQQ through 2026-09-03 — the latest
+    completed US session — while this function returned nothing and both
+    subjects reported marketTruth MISSING, so the owner saw a chart drawn from
+    data the decision claimed not to have. The verified snapshot is the same
+    canonical evidence the headline bootstrap publishes; reading it adds no
+    provider call and no new authority."""
+    monkeypatch.setattr(scanner, "_chart_history_cached", lambda *a, **k: [])
+
+    # Nothing published anywhere still fails closed.
+    monkeypatch.setattr(scanner, "_verified_market_snapshot", lambda *a, **k: None)
+    assert scanner._decision_evidence_history_row("SPY", "US") == (None, None)
+
+    bars = [{"date": "2026-09-02", "close": 500.0},
+            {"date": "2026-09-03", "close": 505.0}]
+    monkeypatch.setattr(scanner, "_verified_market_snapshot",
+                        lambda *a, **k: {"payload": {"indicators": {"bars": bars}}})
+    quote, _ = scanner._decision_evidence_history_row("SPY", "US")
+    assert quote is not None
+    assert quote["date"] == "2026-09-03"          # the latest bar, not the first
+    assert quote["price"] == 505.0
+    assert quote["status"] == "delayed"           # never upgraded to live
+    assert quote["sourceRef"].startswith("history-cache:SPY:")
+
+    # Malformed bars are ignored rather than fabricated into a quote.
+    monkeypatch.setattr(scanner, "_verified_market_snapshot",
+                        lambda *a, **k: {"payload": {"indicators": {"bars": [
+                            {"date": "2026-09-03"}, {"close": "x"}, "junk"]}}})
+    assert scanner._decision_evidence_history_row("SPY", "US") == (None, None)
+
+    # A STALE cache fails the same way an empty one does: on 2026-09-04 08:47Z
+    # the cache still held 09-03 after the JP session of 09-04 had completed,
+    # so marketTruth read STALE. Whichever source carries the LATER close wins.
+    monkeypatch.setattr(scanner, "_chart_history_cached", lambda *a, **k: [
+        {"date": "2026-09-02", "close": 490.0}, {"date": "2026-09-03", "close": 495.0}])
+    monkeypatch.setattr(scanner, "_verified_market_snapshot",
+                        lambda *a, **k: {"payload": {"indicators": {"bars": bars + [
+                            {"date": "2026-09-04", "close": 510.0}]}}})
+    fresher, _ = scanner._decision_evidence_history_row("SPY", "US")
+    assert fresher["date"] == "2026-09-04" and fresher["price"] == 510.0
+
+    # ...and it can never pick OLDER evidence than the cache already had.
+    monkeypatch.setattr(scanner, "_verified_market_snapshot",
+                        lambda *a, **k: {"payload": {"indicators": {"bars": [
+                            {"date": "2026-08-01", "close": 400.0}]}}})
+    kept, _ = scanner._decision_evidence_history_row("SPY", "US")
+    assert kept["date"] == "2026-09-03" and kept["price"] == 495.0
