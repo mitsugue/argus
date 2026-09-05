@@ -71,6 +71,14 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # paths. Investment and calibration authority stay outside this list.
     "web/src/domain/liveAuthority.ts",
     "web/scripts/live-authority.test.cjs",
+    # v13.5.54 (owner 2026-09-05: Twelve Data plan is BASIC, 8 credits/min,
+    # 800/day; the ninth US symbol must not be silently dropped and the plan
+    # must never be impersonated). Pure, provider-free warm-scheduler core:
+    # rotation under the request batch cap, UTC-day credit ledger, market-aware
+    # cadence, owner-authorized universe assembly, and symbol-free budget
+    # diagnostics. scanner.py wiring travels separately through Recovery.
+    "argus_td_warm.py",
+    "test_argus_td_warm.py",
     # v13.5.53 (owner 2026-09-04: 「イベントが何もないことはないはず」). The asset
     # card asserted 「直近の関連イベント・材料の紐付けはありません」 and EVENT
     # EXPOSURE 「直近紐付けなし」 whenever the important-events feed had not been
