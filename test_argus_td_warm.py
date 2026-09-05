@@ -142,3 +142,55 @@ def test_diagnostics_expose_budget_truth_and_never_symbols():
     flat = repr(d)
     for s in NINE:
         assert s not in flat, s
+
+
+def test_total_consumption_fits_under_the_daily_limit_by_reducing_cadence():
+    """Owner 2026-09-05: TOTAL Twelve Data consumption across ALL call sites
+    must stay under 800 with a meaningful reserve. Nine symbols at 10/30 min
+    (531) plus ~276 of other traffic exceeds 800 - 80, so the cadence must
+    step down automatically — never up."""
+    fit = tw.fit_cadence(universe_size=9, other_daily_credits=276, daily_budget=800,
+                         reserve=80, regular_sec=600, extended_sec=1800)
+    assert fit["fitted"] is True
+    # The fitter slows the cheaper-to-lose cadence first (extended hours), and
+    # only steps the regular session down when that is not enough.
+    assert fit["reducedFromRegularSec"] == 600 or fit["reducedFromExtendedSec"] == 1800
+    assert fit["regularSec"] >= 600 and fit["extendedSec"] >= 1800
+    assert fit["estimate"]["total"] <= 720 < 800
+    # A configuration that already fits is left alone.
+    keep = tw.fit_cadence(universe_size=4, other_daily_credits=276, daily_budget=800,
+                          reserve=80, regular_sec=600, extended_sec=1800)
+    assert keep["fitted"] is True and keep["regularSec"] == 600 and keep["reducedFromRegularSec"] is None
+    # Never faster than configured.
+    slow = tw.fit_cadence(universe_size=1, other_daily_credits=0, daily_budget=800,
+                          reserve=80, regular_sec=1800, extended_sec=3600)
+    assert slow["regularSec"] == 1800 and slow["extendedSec"] == 3600
+    # An impossible budget is reported, not hidden.
+    over = tw.fit_cadence(universe_size=24, other_daily_credits=790, daily_budget=800,
+                          reserve=80, regular_sec=600, extended_sec=1800)
+    assert over["fitted"] is False and over["note"]
+
+
+def test_diagnostics_report_total_usage_minute_limit_and_backoff_state():
+    state = tw.new_state()
+    universe = tw.build_universe(curated=NINE[:4], owner_members=NINE[4:], universe_cap=24)
+    fit = tw.fit_cadence(universe_size=9, other_daily_credits=276, daily_budget=800,
+                         reserve=80, regular_sec=600, extended_sec=1800)
+    first = tw.plan_tick(state, now_utc=T0, session="REGULAR", universe=universe["symbols"],
+                         batch_cap=8, warm_daily_cap=560,
+                         regular_sec=fit["regularSec"], extended_sec=fit["extendedSec"])
+    tw.record_request(state, first, now_utc=T0, ok=False, rate_limited=True, backoff_sec=120)
+    d = tw.diagnostics(state, plan="", batch_cap=8, universe=universe, warm_daily_cap=560,
+                       regular_sec=fit["regularSec"], extended_sec=fit["extendedSec"],
+                       session="REGULAR", enabled=True, api_key_present=True,
+                       other_daily_credits=276, reserve=80, fit=fit,
+                       now_utc=T0 + timedelta(seconds=30))
+    assert d["plan"] == "basic" and d["minuteLimit"] == 8 and d["dailyLimit"] == 800
+    assert d["otherConsumersDailyEstimate"] == 276
+    assert d["estimatedTotalDailyCredits"] < 800 and d["totalWithinReserve"] is True
+    assert d["cadenceFit"]["fitted"] is True and (
+        d["cadenceFit"]["reducedFromRegularSec"] or d["cadenceFit"]["reducedFromExtendedSec"])
+    assert d["backoff"]["active"] is True and d["backoff"]["until"] == "2026-09-08T14:02:00Z"
+    assert d["usedToday"] == 8
+    for s in NINE:
+        assert s not in repr(d), s

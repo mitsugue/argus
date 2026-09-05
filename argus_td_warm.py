@@ -259,6 +259,57 @@ def record_request(state: Dict[str, Any], decision: Mapping[str, Any], *,
         state["warmSymbolCount"] = int(warm_symbol_count)
 
 
+# Cadence ladder the fitter may step through (seconds). Regular never goes
+# below the configured value; extended never below the configured value.
+CADENCE_LADDER_REGULAR = (600, 720, 900, 1200, 1800, 3600)
+CADENCE_LADDER_EXTENDED = (1800, 3600, 7200)
+
+
+def total_daily_estimate(*, universe_size: int, regular_sec: int, extended_sec: int,
+                         other_daily_credits: int) -> Dict[str, Any]:
+    warm = estimate_daily_usage(universe_size=universe_size, regular_sec=regular_sec,
+                                extended_sec=extended_sec)
+    total = warm["estimatedDailyCredits"] + max(0, int(other_daily_credits))
+    return {"warm": warm["estimatedDailyCredits"], "other": max(0, int(other_daily_credits)),
+            "total": total, **{f"warm_{k}": v for k, v in warm.items()
+                               if k != "estimatedDailyCredits"}}
+
+
+def fit_cadence(*, universe_size: int, other_daily_credits: int, daily_budget: int,
+                reserve: int, regular_sec: int, extended_sec: int) -> Dict[str, Any]:
+    """Owner rule (2026-09-05): TOTAL Twelve Data consumption across ALL call
+    sites must stay under the plan's daily limit with a meaningful reserve. If
+    the configured warm cadence plus the other traffic does not fit, reduce
+    the cadence automatically (never raise it above the configured rate)."""
+    ceiling = max(0, int(daily_budget) - max(0, int(reserve)))
+    configured = (max(60, int(regular_sec)), max(60, int(extended_sec)))
+    candidates = [(r, e) for r in CADENCE_LADDER_REGULAR for e in CADENCE_LADDER_EXTENDED
+                  if r >= configured[0] and e >= configured[1]]
+    if configured not in candidates:
+        candidates.insert(0, configured)
+    candidates.sort()
+    chosen = None
+    for r, e in candidates:
+        est = total_daily_estimate(universe_size=universe_size, regular_sec=r,
+                                   extended_sec=e, other_daily_credits=other_daily_credits)
+        if est["total"] <= ceiling:
+            chosen = (r, e, est)
+            break
+    if chosen is None:
+        r, e = candidates[-1]
+        est = total_daily_estimate(universe_size=universe_size, regular_sec=r,
+                                   extended_sec=e, other_daily_credits=other_daily_credits)
+        return {"regularSec": r, "extendedSec": e, "fitted": False,
+                "reducedFromRegularSec": configured[0], "reducedFromExtendedSec": configured[1],
+                "ceiling": ceiling, "estimate": est,
+                "note": "even_the_slowest_cadence_exceeds_the_ceiling"}
+    r, e, est = chosen
+    return {"regularSec": r, "extendedSec": e, "fitted": True,
+            "reducedFromRegularSec": configured[0] if r != configured[0] else None,
+            "reducedFromExtendedSec": configured[1] if e != configured[1] else None,
+            "ceiling": ceiling, "estimate": est, "note": None}
+
+
 def _iso(epoch: Optional[float]) -> Optional[str]:
     if epoch is None:
         return None
@@ -269,15 +320,35 @@ def _iso(epoch: Optional[float]) -> Optional[str]:
 def diagnostics(state: Mapping[str, Any], *, plan: str, batch_cap: int,
                 universe: Mapping[str, Any], warm_daily_cap: int,
                 regular_sec: int, extended_sec: int, session: Optional[str],
-                enabled: bool, api_key_present: bool) -> Dict[str, Any]:
+                enabled: bool, api_key_present: bool,
+                other_daily_credits: int = 0, reserve: int = 0,
+                fit: Optional[Mapping[str, Any]] = None,
+                now_utc: Optional[datetime] = None) -> Dict[str, Any]:
     """Public-safe budget/coverage truth. Counts and budgets only — the
-    owner's symbols never appear here."""
+    owner's symbols never appear here. `regular_sec`/`extended_sec` are the
+    EFFECTIVE (fitted) cadences; `fit` carries what they were reduced from."""
     limits = plan_limits(plan)
     size = len(universe.get("symbols") or [])
     estimate = estimate_daily_usage(universe_size=size, regular_sec=regular_sec,
                                     extended_sec=extended_sec)
+    total = total_daily_estimate(universe_size=size, regular_sec=regular_sec,
+                                 extended_sec=extended_sec,
+                                 other_daily_credits=other_daily_credits)
     used = int(state.get("usedToday") or 0)
+    now = (now_utc or datetime.now(timezone.utc)).timestamp()
+    backoff_until = state.get("backoffUntil")
     return {
+        "minuteLimit": limits["creditsPerMinute"],
+        "dailyLimit": limits["creditsPerDay"],
+        "otherConsumersDailyEstimate": total["other"],
+        "estimatedTotalDailyCredits": total["total"],
+        "reserveTarget": int(reserve),
+        "totalWithinDailyLimit": total["total"] < limits["creditsPerDay"],
+        "totalWithinReserve": total["total"] <= limits["creditsPerDay"] - int(reserve),
+        "cadenceFit": dict(fit) if fit else None,
+        "backoff": {"active": backoff_until is not None and now < float(backoff_until),
+                    "until": _iso(backoff_until),
+                    "lastError": state.get("lastError")},
         "schemaVersion": "argus-twelvedata-budget-v1",
         "methodVersion": METHOD_VERSION,
         "plan": normalize_plan(plan),
