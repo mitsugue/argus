@@ -1722,3 +1722,55 @@ def test_decision_evidence_falls_back_to_the_published_verified_snapshot(monkeyp
                             {"date": "2026-08-01", "close": 400.0}]}}})
     kept, _ = scanner._decision_evidence_history_row("SPY", "US")
     assert kept["date"] == "2026-09-03" and kept["price"] == 495.0
+
+
+def test_total_twelvedata_consumption_is_fitted_under_the_daily_limit(monkeypatch):
+    """Owner 2026-09-05: TOTAL consumption across ALL call sites < daily limit
+    with a reserve; reduce cadence automatically when the warm ceiling plus
+    other traffic does not fit."""
+    import datetime as _dt
+    _td_fresh_state(monkeypatch)
+    other = scanner._td_other_daily_credits(9)
+    assert other > 0
+    body = scanner.app.test_client().get("/api/argus/twelvedata-budget").get_json()
+    assert body["minuteLimit"] == 8 and body["dailyLimit"] == 800
+    assert body["otherConsumersDailyEstimate"] == other
+    assert body["estimatedTotalDailyCredits"] < 800
+    assert body["totalWithinReserve"] is True and body["reserveTarget"] == 80
+    fit = body["cadenceFit"]
+    assert fit["fitted"] is True
+    assert body["cadence"]["regularSec"] == fit["regularSec"]
+    assert "backoff" in body and body["backoff"]["active"] is False
+    for s in _TD_NINE:
+        assert s not in json.dumps(body), s
+
+
+def test_warm_rows_outlive_a_closed_session_and_curated_refresh_is_ledgered(monkeypatch):
+    import datetime as _dt
+    _td_fresh_state(monkeypatch, owner=())
+    calls = []
+    _td_fake_provider(monkeypatch, calls)
+    t0 = _dt.datetime(2026, 9, 8, 14, 0, tzinfo=_dt.timezone.utc)
+    assert scanner._td_warm_tick(now_utc=t0)["ok"] is True
+    # Closed-session TTL keeps the last row as the session's evidence.
+    monkeypatch.setattr(scanner, "_td_us_session", lambda now_utc=None: "OVERNIGHT_CLOSED")
+    scanner._td_warm_store([scanner._US_WARM_ROWS["NVDA"]["row"]], t0.timestamp(), "OVERNIGHT_CLOSED")
+    assert scanner._US_WARM_ROWS["NVDA"]["expires"] - t0.timestamp() >= 24 * 3600 - 1
+    # The curated refresh spends through the same ledger and stops at the cap.
+    monkeypatch.setattr(scanner, "_US_WARM_ROWS", {})
+    monkeypatch.setitem(scanner._US_CACHE, "data", None)
+    monkeypatch.setitem(scanner._US_CACHE, "expires", 0.0)
+    # The curated path rolls the ledger on the real clock; align the test
+    # ledger day so the charge is additive rather than reset.
+    import argus_td_warm as _tw
+    scanner._TD_WARM_STATE["ledgerDay"] = _tw.utc_day(_dt.datetime.now(_dt.timezone.utc))
+    before = scanner._TD_WARM_STATE["usedToday"]
+    snap = scanner._get_us_watchlist_core(None, allow_provider_fetch=True)
+    assert [r["symbol"] for r in snap["stocks"]] == ["NVDA", "AAPL", "TSLA", "META"]
+    assert scanner._TD_WARM_STATE["usedToday"] == before + 4
+    monkeypatch.setattr(scanner, "_TD_WARM_DAILY_CAP", scanner._TD_WARM_STATE["usedToday"])
+    monkeypatch.setitem(scanner._US_CACHE, "expires", 0.0)
+    n_calls = len(calls)
+    capped = scanner._get_us_watchlist_core(None, allow_provider_fetch=True)
+    assert len(calls) == n_calls                       # no provider call past the cap
+    assert capped["stocks"]                            # last cached rows still served

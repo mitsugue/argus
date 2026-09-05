@@ -3831,6 +3831,11 @@ _TD_WARM_DAILY_CAP = _td_int_env(
 _TD_WARM_REGULAR_SEC = _td_int_env("TWELVEDATA_WARM_REGULAR_SEC", 600)
 _TD_WARM_EXTENDED_SEC = _td_int_env("TWELVEDATA_WARM_EXTENDED_SEC", 1800)
 _TD_WARM_ENABLED = (os.environ.get("TWELVEDATA_WARM_ENABLED", "1") or "1").strip().lower() not in ("0", "false", "off")
+# Reserve kept below the plan's daily limit AFTER all call sites are counted
+# (owner 2026-09-05: total consumption < daily limit with meaningful reserve).
+_TD_DAILY_RESERVE = _td_int_env(
+    "TWELVEDATA_DAILY_RESERVE",
+    int(argus_td_warm.plan_limits(_TWELVEDATA_PLAN)["creditsPerDay"] * 0.1))
 _DYN_CACHE_MAX  = 16
 _JP_DYN_CACHE   = {}    # symbols-tuple -> {"data":..., "expires":...}
 _US_DYN_CACHE   = {}
@@ -4612,6 +4617,15 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
                 else _us_mock_snapshot())
     if not _TWELVEDATA_API_KEY:
         return _us_mock_snapshot()
+    # v13.5.54: the curated refresh is Twelve Data traffic too. Charge the same
+    # ledger the scheduler uses and refuse to exceed the daily warm cap.
+    with _TD_WARM_LOCK:
+        argus_td_warm.roll_ledger(_TD_WARM_STATE, datetime.now(pytz.utc))
+        if int(_TD_WARM_STATE.get("usedToday") or 0) + len(_US_WATCHLIST) > _TD_WARM_DAILY_CAP:
+            return (_cached_quote_snapshot(_US_CACHE["data"]) if _US_CACHE["data"]
+                    else _us_mock_snapshot())
+        _TD_WARM_STATE["usedToday"] = int(_TD_WARM_STATE.get("usedToday") or 0) + len(_US_WATCHLIST)
+        _TD_WARM_STATE["requestsToday"] = int(_TD_WARM_STATE.get("requestsToday") or 0) + 1
     try:
         symbols_q = ",".join(s["symbol"] for s in _US_WATCHLIST)
         r = requests.get(_TWELVEDATA_QUOTE,
@@ -4704,9 +4718,48 @@ _TD_WARM_UNIVERSE_TTL = 600
 _TD_WARM_LAST_SESSION = {"value": None}
 
 
-def _td_warm_row_ttl():
-    # A warm row stays servable for two regular cadences, so a skipped cycle
-    # (budget, backoff) degrades to "older but present", never to "absent".
+def _td_other_daily_credits(universe_size):
+    """Upper-bound daily credits of EVERY other Twelve Data call site, from the
+    real constants: the single _td_timeseries fetcher (regime ETFs + alert
+    ETFs + extra sensors, one credit per symbol, bounded by its 2h TTL), the
+    per-symbol daily history (6h TTL) for the warm universe, the admin
+    provider diagnostics (AAPL quote + SPY bar, 5-min TTL, bounded), symbol
+    search (one credit per search, rate-bucketed), and a cold curated
+    refresh outside warm coverage."""
+    per_day_ts = max(1, int(86400 // max(600, _TD_TS_TTL)))
+    ts_symbols = len(_REGIME_ETFS) + len(_ALERT_ETF_SYMS) + len(_SENSOR_ETF_EXTRA)
+    history = int(universe_size) * max(1, int(86400 // _TD_HISTORY_TTL))
+    return (ts_symbols * per_day_ts + history
+            + _TD_OTHER_DIAGNOSTICS_PER_DAY + _TD_OTHER_SEARCH_PER_DAY
+            + len(_US_WATCHLIST) * _TD_OTHER_CURATED_COLD_REFRESHES)
+
+
+_TD_OTHER_DIAGNOSTICS_PER_DAY = 24   # 2 credits × ≤12 admin diagnostic runs
+_TD_OTHER_SEARCH_PER_DAY = 20        # symbol_search, rate-bucketed
+_TD_OTHER_CURATED_COLD_REFRESHES = 4  # curated batch outside warm coverage
+
+
+def _td_effective_cadence(universe_size):
+    """Fit the warm cadence so warm + every other call site stays under the
+    plan's daily limit minus the reserve. Cached with the universe."""
+    fit = argus_td_warm.fit_cadence(
+        universe_size=universe_size,
+        other_daily_credits=_td_other_daily_credits(universe_size),
+        daily_budget=argus_td_warm.plan_limits(_TWELVEDATA_PLAN)["creditsPerDay"],
+        reserve=_TD_DAILY_RESERVE,
+        regular_sec=_TD_WARM_REGULAR_SEC, extended_sec=_TD_WARM_EXTENDED_SEC)
+    return fit
+
+
+def _td_warm_row_ttl(session=None):
+    # A warm row stays servable for two regular cadences during a session; when
+    # the market is closed the last row IS the session's evidence (its delay
+    # class is recomputed from its own source time on every read), so it is
+    # kept until the next session rather than re-bought outside trading hours.
+    if argus_td_warm.warm_cadence_sec(
+            session, regular_sec=_TD_WARM_REGULAR_SEC,
+            extended_sec=_TD_WARM_EXTENDED_SEC) is None:
+        return 24 * 3600
     return max(_US_CACHE_TTL, 2 * _TD_WARM_REGULAR_SEC)
 
 
@@ -4732,6 +4785,7 @@ def _td_warm_universe(now=None):
         curated=[s["symbol"] for s in _US_WATCHLIST],
         owner_members=_td_owner_us_members(),
         universe_cap=_US_UNIVERSE_CAP)
+    universe["cadenceFit"] = _td_effective_cadence(len(universe["symbols"]))
     cached.update({"data": universe, "expires": now + _TD_WARM_UNIVERSE_TTL})
     return universe
 
@@ -4744,8 +4798,8 @@ def _td_us_session(now_utc=None):
         return None
 
 
-def _td_warm_store(rows, now):
-    ttl = _td_warm_row_ttl()
+def _td_warm_store(rows, now, session=None):
+    ttl = _td_warm_row_ttl(session)
     for row in rows:
         sym = str(row.get("symbol") or "").upper()
         if sym and row.get("price") is not None:
@@ -4815,18 +4869,20 @@ def _td_warm_tick(now_utc=None):
     _TD_WARM_LAST_SESSION["value"] = session
     universe = _td_warm_universe(now)
     with _TD_WARM_LOCK:
+        fit = universe.get("cadenceFit") or {}
         decision = argus_td_warm.plan_tick(
             _TD_WARM_STATE, now_utc=now_utc, session=session,
             universe=universe["symbols"], batch_cap=_US_DYN_MAX,
             warm_daily_cap=_TD_WARM_DAILY_CAP,
-            regular_sec=_TD_WARM_REGULAR_SEC, extended_sec=_TD_WARM_EXTENDED_SEC,
+            regular_sec=fit.get("regularSec") or _TD_WARM_REGULAR_SEC,
+            extended_sec=fit.get("extendedSec") or _TD_WARM_EXTENDED_SEC,
             enabled=_TD_WARM_ENABLED)
         if decision["action"] != "fetch":
             return decision
     rows, ok, rate_limited, err = _td_warm_fetch(decision["batch"])
     with _TD_WARM_LOCK:
         if ok:
-            _td_warm_store(rows, now)
+            _td_warm_store(rows, now, session)
         warm_count = sum(1 for sym in universe["symbols"] if _td_warm_row(sym, now))
         argus_td_warm.record_request(
             _TD_WARM_STATE, decision, now_utc=now_utc, ok=ok,
@@ -4843,12 +4899,17 @@ def _td_warm_diagnostics():
     now = time.time()
     with _TD_WARM_LOCK:
         state = dict(_TD_WARM_STATE)
+    universe = _td_warm_universe(now)
+    fit = universe.get("cadenceFit") or {}
     return argus_td_warm.diagnostics(
         state, plan=_TWELVEDATA_PLAN, batch_cap=_US_DYN_MAX,
-        universe=_td_warm_universe(now), warm_daily_cap=_TD_WARM_DAILY_CAP,
-        regular_sec=_TD_WARM_REGULAR_SEC, extended_sec=_TD_WARM_EXTENDED_SEC,
+        universe=universe, warm_daily_cap=_TD_WARM_DAILY_CAP,
+        regular_sec=fit.get("regularSec") or _TD_WARM_REGULAR_SEC,
+        extended_sec=fit.get("extendedSec") or _TD_WARM_EXTENDED_SEC,
         session=_TD_WARM_LAST_SESSION["value"], enabled=_TD_WARM_ENABLED,
-        api_key_present=bool(_TWELVEDATA_API_KEY))
+        api_key_present=bool(_TWELVEDATA_API_KEY),
+        other_daily_credits=_td_other_daily_credits(len(universe["symbols"])),
+        reserve=_TD_DAILY_RESERVE, fit=fit or None)
 
 
 @app.route("/api/argus/twelvedata-budget")
