@@ -168,9 +168,9 @@ class DeployScopeTests(unittest.TestCase):
         product = json.loads((ROOT / "product-version.json").read_text())
         frontend = json.loads((ROOT / "web/package.json").read_text())["version"]
         backend = json.loads((ROOT / "backend-version.json").read_text())["version"]
-        self.assertEqual("v13.5.53", product["productVersion"])
-        self.assertEqual("13.5.53", frontend)
-        self.assertEqual("13.5.53", backend)
+        self.assertEqual("v13.5.54", product["productVersion"])
+        self.assertEqual("13.5.54", frontend)
+        self.assertEqual("13.5.54", backend)
 
     def test_release_gate_names_product_and_component_coordinates(self):
         source = (ROOT / "scripts/release_gate.sh").read_text()
@@ -188,7 +188,7 @@ class DeployScopeTests(unittest.TestCase):
     def test_no_stale_version_pin_survives_a_bump(self):
         """A version bump must not leave a pin behind.
 
-        v13.5.53 shipped with web/scripts/full-release-simulation.mjs still
+        v13.5.54 shipped with web/scripts/full-release-simulation.mjs still
         asserting the header read v13.5.52, because that pin is written as a
         REGEX (``v13\\.5\\.52``) and a plain search-and-replace for the dotted
         version walks straight past it. CI caught it only in the zero-install
