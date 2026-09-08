@@ -20751,6 +20751,7 @@ def get_cause_attribution(symbol, market="JP", explain=False):
         if mc is None:
             mc = _mover_cause_for(symu, market, chg, name=name, cached_only=True)
         stack["moverCause"] = argus_mover_cause.compact(_mover_cause_serve(mc, _ai_now_iso()))
+        stack["moverCauseAvailability"] = {"status": "available", "reasonCode": None}
         # explain=true is now CACHED-ONLY (the old path fired a billed OpenAI
         # web_search from an unauthenticated public GET). Generation moved to
         # POST /api/argus/admin/mover-causes/explain.
@@ -20769,9 +20770,21 @@ def get_cause_attribution(symbol, market="JP", explain=False):
                     "調査リクエスト受付済み。次回の管理側定期生成で反映されます。" if queued else
                     "AI解説は未生成です。「理由を詳しく調べる」で調査キューに追加できます"
                     "(公開画面からAIは起動しません)。")
-    except Exception:
+    except Exception as exc:
+        # No current-session evidence is an explicit unavailable result. Do
+        # not invent a move start or silently omit the reason for a missing ladder.
+        session_missing = (isinstance(exc, ValueError)
+                           and str(exc) == "current_trading_session_unavailable")
+        stack["moverCauseAvailability"] = {
+            "status": "unavailable",
+            "reasonCode": ("current_trading_session_unavailable" if session_missing
+                           else "cached_evidence_unavailable"),
+        }
         if explain:
             stack["explanationStatus"] = "not_generated"
+            stack["explanationNoteJa"] = (
+                "現在の取引セッションに対応する値動きの根拠がなく、原因を評価できません。"
+                if session_missing else "保存済みの原因データを取得できず、原因を評価できません。")
     # v12.0.8 Part A: OSINT帰属レビュー — 候補原因を 直接材料/テーマ連想/マクロ/
     # 古い背景/不明 に分離し、確度と「外れている可能性」を必ず付ける(cached-only)。
     try:

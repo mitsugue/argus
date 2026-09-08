@@ -21,6 +21,45 @@ FIXED_NOW = "2026-08-14T04:00:00Z"
 ADMIN_HEADER = {"X-ARGUS-ADMIN-TOKEN": "boundary-test-admin"}
 
 
+@pytest.mark.parametrize("error,reason", [
+    (ValueError("current_trading_session_unavailable"), "current_trading_session_unavailable"),
+    (RuntimeError("private provider failure detail"), "cached_evidence_unavailable"),
+])
+def test_public_cause_unavailability_is_explicit_without_ai_or_fabricated_ladder(
+        monkeypatch, error, reason):
+    class ForbiddenCall(BaseException):
+        pass
+
+    def forbidden(*args, **kwargs):
+        raise ForbiddenCall("public explain must not start AI or external requests")
+
+    def unavailable(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot", lambda: {"stocks": []})
+    monkeypatch.setattr(scanner, "get_us_watchlist_snapshot", lambda: {"stocks": []})
+    monkeypatch.setattr(scanner, "get_catalysts_snapshot", lambda: {"items": []})
+    monkeypatch.setattr(scanner, "get_market_news", lambda: {"items": []})
+    monkeypatch.setattr(scanner, "get_tdnet_recent", lambda *args, **kwargs: [])
+    monkeypatch.setattr(scanner, "get_company_news", lambda *args, **kwargs: [])
+    monkeypatch.setattr(scanner, "_mover_causes_restore_once", lambda: None)
+    monkeypatch.setattr(scanner, "_news_ja_restore_once", lambda: None)
+    monkeypatch.setattr(scanner, "_MOVER_CAUSES", {})
+    monkeypatch.setattr(scanner, "_mover_cause_for", unavailable)
+    for name in ("_openai_prose", "_openai_research", "_cause_explain", "_openai_judge"):
+        monkeypatch.setattr(scanner, name, forbidden)
+    monkeypatch.setattr(http_requests.sessions.Session, "request", forbidden)
+    with scanner.app.test_client() as client:
+        response = client.get("/api/argus/cause-attribution?symbol=8058&market=JP&explain=1")
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["moverCauseAvailability"] == {"status": "unavailable", "reasonCode": reason}
+    assert "moverCause" not in body
+    assert body["explanationStatus"] == "not_generated"
+    assert "評価できません" in body["explanationNoteJa"]
+    assert "private provider failure detail" not in json.dumps(body)
+
+
 PUBLIC_KEYS = {
     "schemaVersion", "generatedAt", "service", "freshness", "systemHealth",
     "recovery",
