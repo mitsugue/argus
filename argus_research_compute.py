@@ -21,7 +21,7 @@ from argus_risk_discipline import (
     RiskDisciplineValidationError,
     validate_risk_kernel,
 )
-from argus_sho import validate_reversal_artifact
+from jp_market_engine import validate_reversal_artifact
 
 
 MANIFEST_SCHEMA = "argus-round2-research-manifest-v1"
@@ -37,7 +37,7 @@ OPTIONAL_HORIZON = 40
 PARTITION_NAMES = ("DEVELOPMENT", "HOLDOUT", "GOLDEN", "EMBARGO")
 COUNTERFACTUAL_STRATEGIES = (
     "BUY_NOW",
-    "BUY_ON_SHO_REVERSAL",
+    "BUY_ON_JP_MARKET_ENGINE_REVERSAL",
     "BUY_ON_VIX_DC",
     "BUY_ON_SAR_FLIP",
     "BUY_ON_MACD_GC",
@@ -46,7 +46,7 @@ COUNTERFACTUAL_STRATEGIES = (
     "WAIT",
 )
 SIGNAL_FIELDS = {
-    "BUY_ON_SHO_REVERSAL": "shoReversal",
+    "BUY_ON_JP_MARKET_ENGINE_REVERSAL": "jpMarketEngineReversal",
     "BUY_ON_VIX_DC": "vixDecreasingConfirmation",
     "BUY_ON_SAR_FLIP": "sarFlip",
     "BUY_ON_MACD_GC": "macdGoldenCross",
@@ -956,7 +956,7 @@ def _golden_risk_kernel(value: Any, *, instrument: str,
     return artifact
 
 
-def _golden_sho_reversal(value: Any, *, instrument: str,
+def _golden_jp_market_engine_reversal(value: Any, *, instrument: str,
                          event_cutoff: datetime) -> Optional[Dict[str, Any]]:
     if value is None:
         return None
@@ -968,20 +968,20 @@ def _golden_sho_reversal(value: Any, *, instrument: str,
         "stateMayJump",
     }
     if not isinstance(value, Mapping) or set(value) != keys:
-        raise ResearchContractError("invalid_golden_sho_reversal")
+        raise ResearchContractError("invalid_golden_jp_market_engine_reversal")
     artifact = _copy_json(value)
     try:
         validate_reversal_artifact(artifact)
     except ValueError as exc:
-        raise ResearchContractError("invalid_golden_sho_reversal") from exc
+        raise ResearchContractError("invalid_golden_jp_market_engine_reversal") from exc
     body = {key: artifact[key] for key in artifact if key != "artifactId"}
     cutoff = _timestamp(
-        artifact.get("informationCutoff"), "golden_sho_cutoff")
+        artifact.get("informationCutoff"), "golden_jp_market_engine_cutoff")
     evidence = artifact.get("evidence")
     band = evidence.get("bandWalkEnding") \
         if isinstance(evidence, dict) else None
-    if artifact.get("artifactId") != "sho-reversal-" + sha256_hex(body) or \
-            artifact.get("schemaVersion") != "argus-sho-reversal-v1" or \
+    if artifact.get("artifactId") != "jp-market-engine-reversal-" + sha256_hex(body) or \
+            artifact.get("schemaVersion") != "argus-jp-market-engine-reversal-v1" or \
             artifact.get("canonicalRfcSha256") != (
                 "69a631ebc549b3bede6356cabf338e38d9418fc3683821198ef9a3c1eb440d51") or \
             artifact.get("analysisInstrument") != instrument or \
@@ -994,7 +994,7 @@ def _golden_sho_reversal(value: Any, *, instrument: str,
             band.get("conditionMet") not in (True, False, None) or \
             (band.get("conditionMet") is None) != (
                 band.get("evidenceDate") is None):
-        raise ResearchContractError("invalid_golden_sho_reversal")
+        raise ResearchContractError("invalid_golden_jp_market_engine_reversal")
     if band.get("evidenceDate") is not None:
         evidence_date = _date(
             band["evidenceDate"], "golden_band_walk_evidence_date")
@@ -1013,7 +1013,7 @@ def _normalize_event(raw: Mapping[str, Any], cutoff: datetime,
     allowed = required | {
         "expectedDirection", "probability", "targetPct", "invalidationPct",
         "regime", "ablationTags", "validatedReversal", "evidenceRefs",
-        "riskKernelArtifact", "shoReversalArtifact",
+        "riskKernelArtifact", "jpMarketEngineReversalArtifact",
     }
     if not isinstance(raw, Mapping) or not required.issubset(raw) or \
             not set(raw).issubset(allowed):
@@ -1065,8 +1065,8 @@ def _normalize_event(raw: Mapping[str, Any], cutoff: datetime,
     risk_kernel = _golden_risk_kernel(
         raw.get("riskKernelArtifact"), instrument=instrument,
         event_cutoff=decision_cutoff)
-    sho_reversal = _golden_sho_reversal(
-        raw.get("shoReversalArtifact"), instrument=instrument,
+    jp_market_engine_reversal = _golden_jp_market_engine_reversal(
+        raw.get("jpMarketEngineReversalArtifact"), instrument=instrument,
         event_cutoff=decision_cutoff)
     return {
         "ablationTags": clean_tags,
@@ -1085,7 +1085,7 @@ def _normalize_event(raw: Mapping[str, Any], cutoff: datetime,
         "riskKernelArtifact": risk_kernel,
         "signalDate": signal_date,
         "targetPct": _round(target),
-        "shoReversalArtifact": sho_reversal,
+        "jpMarketEngineReversalArtifact": jp_market_engine_reversal,
         "validatedReversal": bool(raw.get("validatedReversal", False)),
     }
 
@@ -1348,7 +1348,7 @@ def _event_metrics(event: Dict[str, Any], rows: Sequence[Dict[str, Any]],
         "regime": event["regime"],
         "riskKernelArtifact": event["riskKernelArtifact"],
         "signalDate": event["signalDate"],
-        "shoReversalArtifact": event["shoReversalArtifact"],
+        "jpMarketEngineReversalArtifact": event["jpMarketEngineReversalArtifact"],
         "targetPct": target,
         "validatedReversal": event["validatedReversal"],
     }
@@ -1954,14 +1954,14 @@ def build_research_artifact(manifest: Mapping[str, Any],
     golden_risk_artifact = (
         golden_matches[0].get("riskKernelArtifact")
         if len(golden_matches) == 1 else None)
-    golden_sho_artifact = (
-        golden_matches[0].get("shoReversalArtifact")
+    golden_jp_market_engine_artifact = (
+        golden_matches[0].get("jpMarketEngineReversalArtifact")
         if len(golden_matches) == 1 else None)
     golden_fully_scored = bool(
         len(golden_matches) == 1
         and golden_matches[0].get("validatedReversal") is True
         and isinstance(golden_risk_artifact, dict)
-        and isinstance(golden_sho_artifact, dict)
+        and isinstance(golden_jp_market_engine_artifact, dict)
         and all(
             outcome.get("status") in {"OBSERVED", "AMBIGUOUS"}
             for outcome in golden_matches[0].get("horizons", {}).values()))
@@ -1980,7 +1980,7 @@ def build_research_artifact(manifest: Mapping[str, Any],
         "riskOffFirstObservedDate": None,
         "riskOffSufficient": None,
         "sarFlipDetected": None,
-        "shoReversalArtifactId": None,
+        "jpMarketEngineReversalArtifactId": None,
         "vixDecreasingConfirmationDetected": None,
         "waitMissedOpportunityMeasured": None,
     }
@@ -1989,7 +1989,7 @@ def build_research_artifact(manifest: Mapping[str, Any],
         risk_sufficient = golden_risk_artifact["constraint"] in {
             "REDUCE_RISK", "EXIT_RISK"}
         risk_date = golden_risk_artifact["asOf"][:10]
-        band_factor = golden_sho_artifact["evidence"]["bandWalkEnding"]
+        band_factor = golden_jp_market_engine_artifact["evidence"]["bandWalkEnding"]
         band_detected = band_factor["conditionMet"] is True
         band_date = band_factor["evidenceDate"]
         strategies = {
@@ -2011,7 +2011,7 @@ def build_research_artifact(manifest: Mapping[str, Any],
             "riskOffSufficient": risk_sufficient,
             "sarFlipDetected": strategies.get(
                 "BUY_ON_SAR_FLIP", {}).get("entryDate") is not None,
-            "shoReversalArtifactId": golden_sho_artifact["artifactId"],
+            "jpMarketEngineReversalArtifactId": golden_jp_market_engine_artifact["artifactId"],
             "vixDecreasingConfirmationDetected": strategies.get(
                 "BUY_ON_VIX_DC", {}).get("entryDate") is not None,
             "waitMissedOpportunityMeasured": strategies.get(
@@ -2460,7 +2460,7 @@ def verify_research_artifact(value: Any) -> bool:
             "evidenceRefs",
             "expectedDirection", "horizons", "instrumentId",
             "invalidationPct", "partition", "regime", "signalDate",
-            "riskKernelArtifact", "shoReversalArtifact", "status",
+            "riskKernelArtifact", "jpMarketEngineReversalArtifact", "status",
             "targetPct", "validatedReversal",
         }
 
@@ -2525,14 +2525,14 @@ def verify_research_artifact(value: Any) -> bool:
                 item.get("riskKernelArtifact"),
                 instrument=item["instrumentId"],
                 event_cutoff=decision_cutoff)
-            sho_artifact = _golden_sho_reversal(
-                item.get("shoReversalArtifact"),
+            jp_market_engine_artifact = _golden_jp_market_engine_reversal(
+                item.get("jpMarketEngineReversalArtifact"),
                 instrument=item["instrumentId"],
                 event_cutoff=decision_cutoff)
             if item["partition"] == "GOLDEN":
-                if risk_artifact is None or sho_artifact is None:
+                if risk_artifact is None or jp_market_engine_artifact is None:
                     return False
-            elif risk_artifact is not None or sho_artifact is not None:
+            elif risk_artifact is not None or jp_market_engine_artifact is not None:
                 return False
             horizons_value = item.get("horizons")
             if item.get("status") == "UNSCORABLE_SIGNAL_BAR_MISSING":
@@ -3231,7 +3231,7 @@ def verify_research_artifact(value: Any) -> bool:
             "macdGoldenCrossDetected", "riskKernelArtifactId",
             "riskOffFirstObservedDate",
             "riskOffSufficient", "sarFlipDetected",
-            "shoReversalArtifactId",
+            "jpMarketEngineReversalArtifactId",
             "vixDecreasingConfirmationDetected",
             "waitMissedOpportunityMeasured",
         }
@@ -3252,7 +3252,7 @@ def verify_research_artifact(value: Any) -> bool:
                         "riskOffFirstObservedDate": None,
                         "riskOffSufficient": None,
                         "sarFlipDetected": None,
-                        "shoReversalArtifactId": None,
+                        "jpMarketEngineReversalArtifactId": None,
                         "vixDecreasingConfirmationDetected": None,
                         "waitMissedOpportunityMeasured": None,
                     }:
@@ -3269,8 +3269,8 @@ def verify_research_artifact(value: Any) -> bool:
                     not exact_digest(
                         checks.get("riskKernelArtifactId"), "rk-") or \
                     not exact_digest(
-                        checks.get("shoReversalArtifactId"),
-                        "sho-reversal-") or \
+                        checks.get("jpMarketEngineReversalArtifactId"),
+                        "jp-market-engine-reversal-") or \
                     not all(isinstance(checks.get(key), bool) for key in (
                         "bandWalkEndingDetected", "ma25ReclaimDetected",
                         "macdGoldenCrossDetected", "riskOffSufficient",
@@ -3306,14 +3306,14 @@ def verify_research_artifact(value: Any) -> bool:
                 return False
             golden_detail = golden_details[0]
             risk_artifact = golden_detail["riskKernelArtifact"]
-            sho_artifact = golden_detail["shoReversalArtifact"]
-            band_factor = sho_artifact["evidence"]["bandWalkEnding"]
+            jp_market_engine_artifact = golden_detail["jpMarketEngineReversalArtifact"]
+            band_factor = jp_market_engine_artifact["evidence"]["bandWalkEnding"]
             risk_sufficient = risk_artifact["constraint"] in {
                 "REDUCE_RISK", "EXIT_RISK"}
             band_detected = band_factor["conditionMet"] is True
             if checks["riskKernelArtifactId"] != risk_artifact[
                     "riskKernelId"] or \
-                    checks["shoReversalArtifactId"] != sho_artifact[
+                    checks["jpMarketEngineReversalArtifactId"] != jp_market_engine_artifact[
                         "artifactId"] or \
                     checks["riskOffSufficient"] is not risk_sufficient or \
                     checks["riskOffFirstObservedDate"] != (

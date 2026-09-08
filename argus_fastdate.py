@@ -3,7 +3,7 @@
 ``datetime.strptime`` routes every call through ``_strptime._strptime``, which
 serialises the whole process on one module-level lock (``_cache_lock``).  On
 the single-CPU Render runtime that lock became the production stall observed
-on 2026-09-03/04: the Tachibana packet loop, the SHO row evaluation and the
+on 2026-09-03/04: the Tachibana packet loop, the JP_MARKET_ENGINE row evaluation and the
 public GET routes all parse timestamps, so a CPU-bound parser thread starved
 every request that needed one more date parse (a public route with ~35 parses
 took 65 s, a route with none stayed sub-second).

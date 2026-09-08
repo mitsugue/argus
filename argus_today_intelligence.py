@@ -19,18 +19,18 @@ import argus_market_data_truth
 
 
 SCHEMA_VERSION = "argus-today-intelligence-v1"
-METHOD_VERSION = "today-replay-calibration-v3-sho-conditioned"
-CALIBRATION_VERSION = "sho-conditioned-knn-v1"
+METHOD_VERSION = "today-replay-calibration-v3-market-conditioned"
+CALIBRATION_VERSION = "market-conditioned-knn-v1"
 
-# ── SHO conditioning (owner spec 2026-08-22) ────────────────────────────────
-# The chart forecast is driven by SHO's thinking routine: the analog search is
-# conditioned on the point-in-time market state SHO reads — two-market margin
+# ── JP_MARKET_ENGINE conditioning (owner spec 2026-08-22) ────────────────────────────────
+# The chart forecast is driven by JP_MARKET_ENGINE's thinking routine: the analog search is
+# conditioned on the point-in-time market state JP_MARKET_ENGINE reads — two-market margin
 # credit (D01 axis), VIX regime (D06 axis), and Japan-vs-US relative strength
 # (D03 axis) — on top of the price-action features. Every value is joined
 # with an explicit knowledge lag (a JP session close cannot see that same
 # evening's US prints), and days without the full context are compared only
 # against days with the same feature set — absence is never scored as a value.
-SHO_FEATURE_SCALES = {
+JP_MARKET_ENGINE_FEATURE_SCALES = {
     "creditRatio": 1.2,    # 信用倍率 (long/short margin balance)
     "creditShortTn": 0.35, # two-market short margin balance, ¥tn (D01)
     "vixLevel": 8.0,       # VIX regime level (D06)
@@ -228,7 +228,7 @@ def _signal_family(feature: Dict[str, float]) -> str:
         base = "trend_down"
     else:
         base = "range"
-    # SHO reads the same price shape differently under heavy vs light credit
+    # JP_MARKET_ENGINE reads the same price shape differently under heavy vs light credit
     # (信用倍率) — the analog pool splits on that regime when it is known.
     ratio = feature.get("creditRatio")
     if isinstance(ratio, (int, float)):
@@ -243,19 +243,19 @@ def _distance(left: Dict[str, float], right: Dict[str, float]) -> float:
               "closeLocation": .5, "volumeRatio": 1.0}
     total = sum(((left[key] - right[key]) / scales[key]) ** 2
                 for key in scales)
-    # SHO dims participate only when BOTH days actually knew the value; the
+    # JP_MARKET_ENGINE dims participate only when BOTH days actually knew the value; the
     # candidate pool is already restricted to matching feature sets, so this
     # never silently compares a known value against an absent one.
-    for key, scale in SHO_FEATURE_SCALES.items():
+    for key, scale in JP_MARKET_ENGINE_FEATURE_SCALES.items():
         if key in left and key in right:
             total += ((left[key] - right[key]) / scale) ** 2
     return math.sqrt(total)
 
 
-def _sho_daily_features(bars: Sequence[Dict[str, Any]],
-                        sho_context: Optional[Mapping[str, Any]],
+def _jp_market_engine_daily_features(bars: Sequence[Dict[str, Any]],
+                        jp_market_engine_context: Optional[Mapping[str, Any]],
                         market: Optional[str]) -> List[Optional[Dict[str, float]]]:
-    """Point-in-time SHO state per bar.
+    """Point-in-time JP_MARKET_ENGINE state per bar.
 
     Knowledge lags are explicit: a JP session close (15:30 JST) happens before
     that calendar day's US session, so JP analogs may only use VIX / S&P
@@ -263,13 +263,13 @@ def _sho_daily_features(bars: Sequence[Dict[str, Any]],
     prints and may use same-date values. Credit balances use their published
     availableFrom. A day missing a value simply lacks that key.
     """
-    if not sho_context or not bars:
+    if not jp_market_engine_context or not bars:
         return [None] * len(bars)
     us_lag_exclusive = (market == "JP")
 
     credit: List[Tuple[str, float, float]] = []   # (availableFrom, short, long)
     by_period: Dict[str, Dict[str, float]] = {}
-    for row in sho_context.get("creditRows") or []:
+    for row in jp_market_engine_context.get("creditRows") or []:
         if not isinstance(row, Mapping):
             continue
         series = str(row.get("seriesId") or "")
@@ -293,7 +293,7 @@ def _sho_daily_features(bars: Sequence[Dict[str, Any]],
     credit.sort(key=lambda item: item[0])
 
     vix: List[Tuple[str, float]] = []
-    for row in sho_context.get("vixRows") or []:
+    for row in jp_market_engine_context.get("vixRows") or []:
         if not isinstance(row, Mapping):
             continue
         date = str(row.get("date") or "")[:10]
@@ -304,7 +304,7 @@ def _sho_daily_features(bars: Sequence[Dict[str, Any]],
     vix_dates = [item[0] for item in vix]
 
     us_closes: List[Tuple[str, float]] = []
-    for row in normalize_bars(list(sho_context.get("usRows") or [])):
+    for row in normalize_bars(list(jp_market_engine_context.get("usRows") or [])):
         us_closes.append((str(row["date"])[:10], float(row["close"])))
     us_dates = [item[0] for item in us_closes]
 
@@ -603,12 +603,12 @@ def _insufficient_calibration(horizon: int) -> Dict[str, Any]:
 
 
 def calibrate_horizon(bars: Sequence[Dict[str, Any]], horizon: int,
-                      sho_daily: Optional[Sequence[Optional[Dict[str, float]]]] = None,
+                      jp_market_engine_daily: Optional[Sequence[Optional[Dict[str, float]]]] = None,
                       ) -> Dict[str, Any]:
     normalized = normalize_bars(bars)
     if len(normalized) < 80 + horizon:
         return _insufficient_calibration(horizon)
-    daily = list(sho_daily) if sho_daily is not None else [None] * len(normalized)
+    daily = list(jp_market_engine_daily) if jp_market_engine_daily is not None else [None] * len(normalized)
     if len(daily) != len(normalized):
         daily = [None] * len(normalized)
 
@@ -624,25 +624,25 @@ def calibrate_horizon(bars: Sequence[Dict[str, Any]], horizon: int,
     current_feature = merged_feature(len(normalized) - 1)
     if current_feature is None:
         return _insufficient_calibration(horizon)
-    # SHO conditioning: a day is comparable only against days that KNEW the
+    # JP_MARKET_ENGINE conditioning: a day is comparable only against days that KNEW the
     # same state dimensions — absence is a different situation, not a zero.
-    current_sho_keys = frozenset(
-        key for key in SHO_FEATURE_SCALES if key in current_feature)
+    current_jp_market_engine_keys = frozenset(
+        key for key in JP_MARKET_ENGINE_FEATURE_SCALES if key in current_feature)
     family = _signal_family(current_feature)
     all_rows: List[Dict[str, Any]] = []
-    sho_covered = 0
+    jp_market_engine_covered = 0
     for index in range(24, len(normalized) - horizon):
         feature = merged_feature(index)
         if feature is None:
             continue
-        row_sho_keys = frozenset(
-            key for key in SHO_FEATURE_SCALES if key in feature)
-        if row_sho_keys >= current_sho_keys:
-            if current_sho_keys:
-                sho_covered += 1
+        row_jp_market_engine_keys = frozenset(
+            key for key in JP_MARKET_ENGINE_FEATURE_SCALES if key in feature)
+        if row_jp_market_engine_keys >= current_jp_market_engine_keys:
+            if current_jp_market_engine_keys:
+                jp_market_engine_covered += 1
             comparable = {key: value for key, value in feature.items()
-                          if key not in SHO_FEATURE_SCALES
-                          or key in current_sho_keys}
+                          if key not in JP_MARKET_ENGINE_FEATURE_SCALES
+                          or key in current_jp_market_engine_keys}
         else:
             continue
         start = float(normalized[index]["close"])
@@ -800,7 +800,7 @@ CREDIT_JOIN_MAX_DAYS = 45
 VIX_JOIN_MAX_DAYS = 10
 
 
-def sho_input_freshness(sho_context: Optional[Mapping[str, Any]],
+def jp_market_engine_input_freshness(jp_market_engine_context: Optional[Mapping[str, Any]],
                         as_of_date: str, market: Optional[str]) -> Dict[str, Any]:
     """v13.5.65 (stabilization item 5): what the latest bar could join, and
     why not. Per input: the newest period whose availability precedes the bar,
@@ -810,7 +810,7 @@ def sho_input_freshness(sho_context: Optional[Mapping[str, Any]],
     failure from a market where the input does not exist."""
     date = str(as_of_date or "")[:10]
     out: Dict[str, Any] = {}
-    if not sho_context:
+    if not jp_market_engine_context:
         return {"credit": {"status": "no_rows"}, "vix": {"status": "no_rows"},
                 "us": {"status": "no_rows"}}
     # credit (weekly, JP only)
@@ -818,7 +818,7 @@ def sho_input_freshness(sho_context: Optional[Mapping[str, Any]],
         out["credit"] = {"status": "not_applicable"}
     else:
         periods: Dict[str, Dict[str, Any]] = {}
-        for row in sho_context.get("creditRows") or []:
+        for row in jp_market_engine_context.get("creditRows") or []:
             if not isinstance(row, Mapping):
                 continue
             period = str(row.get("periodEnd") or "")[:10]
@@ -852,7 +852,7 @@ def sho_input_freshness(sho_context: Optional[Mapping[str, Any]],
                                  "ageDays": gap, "maxDays": CREDIT_JOIN_MAX_DAYS,
                                  "newestPeriodEnd": newest}
     # vix (daily)
-    vix_dates = sorted(str(r.get("date") or "")[:10] for r in (sho_context.get("vixRows") or [])
+    vix_dates = sorted(str(r.get("date") or "")[:10] for r in (jp_market_engine_context.get("vixRows") or [])
                        if isinstance(r, Mapping) and _number(r.get("value")) is not None)
     if not vix_dates:
         out["vix"] = {"status": "no_rows"}
@@ -870,7 +870,7 @@ def sho_input_freshness(sho_context: Optional[Mapping[str, Any]],
             out["vix"] = {"status": "joined" if joined else "stale_beyond_window",
                           "date": used, "ageDays": gap, "maxDays": VIX_JOIN_MAX_DAYS}
     # us comparison closes (daily)
-    us_dates = sorted(str(r.get("date") or "")[:10] for r in (sho_context.get("usRows") or [])
+    us_dates = sorted(str(r.get("date") or "")[:10] for r in (jp_market_engine_context.get("usRows") or [])
                       if isinstance(r, Mapping) and _number(r.get("close")) is not None)
     if not us_dates:
         out["us"] = {"status": "no_rows" if market == "JP" else "not_applicable"}
@@ -891,13 +891,13 @@ def sho_input_freshness(sho_context: Optional[Mapping[str, Any]],
 
 
 def calibrate_forecast(rows: Iterable[Dict[str, Any]],
-                       sho_context: Optional[Mapping[str, Any]] = None,
+                       jp_market_engine_context: Optional[Mapping[str, Any]] = None,
                        market: Optional[str] = None) -> Dict[str, Any]:
     bars = normalize_bars(rows)
-    sho_daily = _sho_daily_features(bars, sho_context, market)
-    coverage_days = sum(1 for row in sho_daily if row)
-    current_keys = sorted((sho_daily[-1] or {}).keys()) if sho_daily else []
-    result = {str(horizon): calibrate_horizon(bars, horizon, sho_daily)
+    jp_market_engine_daily = _jp_market_engine_daily_features(bars, jp_market_engine_context, market)
+    coverage_days = sum(1 for row in jp_market_engine_daily if row)
+    current_keys = sorted((jp_market_engine_daily[-1] or {}).keys()) if jp_market_engine_daily else []
+    result = {str(horizon): calibrate_horizon(bars, horizon, jp_market_engine_daily)
               for horizon in HORIZONS}
     return {
         "schemaVersion": "argus-forecast-calibration-v1",
@@ -906,25 +906,25 @@ def calibrate_forecast(rows: Iterable[Dict[str, Any]],
         "historyStart": bars[0]["date"] if bars else None,
         "historyEnd": bars[-1]["date"] if bars else None,
         "historyCount": len(bars), "horizons": result,
-        # SHO conditioning transparency: which state dimensions the CURRENT
-        # day actually knows, and how many corpus days carry SHO state. This
+        # JP_MARKET_ENGINE conditioning transparency: which state dimensions the CURRENT
+        # day actually knows, and how many corpus days carry JP_MARKET_ENGINE state. This
         # is measurement, not a claim of skill — skill stays with the
         # walk-forward Brier machinery.
-        "shoConditioning": {
-            "requested": bool(sho_context),
+        "marketConditioning": {
+            "requested": bool(jp_market_engine_context),
             "currentFeatureKeys": current_keys,
             "coverageDays": coverage_days,
             # v13.5.65: per input — the period/date the latest bar joined,
             # or why it could not (interval vs failure vs not applicable).
-            "inputs": sho_input_freshness(
-                sho_context, bars[-1]["date"] if bars else "", market),
+            "inputs": jp_market_engine_input_freshness(
+                jp_market_engine_context, bars[-1]["date"] if bars else "", market),
             # v13.5.36 (external review): a provider MISCONFIGURATION (e.g.
             # missing FRED key) must not be indistinguishable from an honest
             # data gap — the serving layer names the broken source here and
             # the UI displays it. Empty when every configured source is fine.
             "sourceIssues": sorted(
                 str(issue)[:60] for issue in
-                ((sho_context or {}).get("sourceIssues") or [])
+                ((jp_market_engine_context or {}).get("sourceIssues") or [])
                 if issue),
         },
         "automaticAiCalls": 0,
@@ -1062,14 +1062,14 @@ def failed_rally_backtest(rows: Iterable[Dict[str, Any]], *,
 def analyze(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
             short_history: Iterable[Dict[str, Any]] = (),
             comparison_rows: Iterable[Dict[str, Any]] = (),
-            sho_context: Optional[Mapping[str, Any]] = None,
+            jp_market_engine_context: Optional[Mapping[str, Any]] = None,
             as_of: Optional[str] = None) -> Dict[str, Any]:
     source_rows = list(rows or [])
     source_short = list(short_history or [])
     source_comparison = list(comparison_rows or [])
-    context = {key: list((sho_context or {}).get(key) or [])
+    context = {key: list((jp_market_engine_context or {}).get(key) or [])
                for key in ("creditRows", "vixRows", "usRows")} \
-        if sho_context else None
+        if jp_market_engine_context else None
     pit_proofs: Dict[str, Any] = {}
     if as_of:
         source_rows, pit_proofs["bars"] = \
@@ -1080,10 +1080,10 @@ def analyze(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
             argus_market_data_truth.point_in_time_rows(
                 source_comparison, as_of)
         if context is not None:
-            # SHO context obeys the PIT cutoff: anything first known after
+            # JP_MARKET_ENGINE context obeys the PIT cutoff: anything first known after
             # as_of is dropped here, and the per-day knowledge LAGS (a JP
             # close cannot see same-evening US prints) plus staleness windows
-            # are enforced inside _sho_daily_features. The generic row-proof
+            # are enforced inside _jp_market_engine_daily_features. The generic row-proof
             # machinery is bar-shaped (one row per date), so multi-series
             # weekly credit uses this explicit clamp instead.
             as_of_date = str(as_of)[:10]
@@ -1118,7 +1118,7 @@ def analyze(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
             short_change=_number(((short_summary.get("latest") or {}).get("previousDayDifference"))),
             breadth_divergence=_comparison_divergence(bars, comparison, bars[-1]["date"]),
         )
-    calibration = calibrate_forecast(bars, sho_context=context, market=market)
+    calibration = calibrate_forecast(bars, jp_market_engine_context=context, market=market)
     backtest = failed_rally_backtest(bars, short_history=short_rows,
                                      comparison_rows=comparison)
     return {

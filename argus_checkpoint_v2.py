@@ -58,7 +58,7 @@ SECTION_LIMITS = {
     # MAXIMUM_TOTAL_BYTES) are unchanged.
     # v13.5.36 remeasure (2026-08-22 live state): verifiedViewSnapshots
     # reached 49.3MB — 12 CURRENT snapshots of ~4.1MB each (the ten-year
-    # corpus + SHO conditioning grew each verified view), no method-version
+    # corpus + JP_MARKET_ENGINE conditioning grew each verified view), no method-version
     # buildup (history ~0MB). Budget 48→72MB keeps ~46% headroom; the
     # binding assertions (4GiB cgroup, MAXIMUM_TOTAL_BYTES) are unchanged.
     "marketLedger": 120 * 1024 * 1024,

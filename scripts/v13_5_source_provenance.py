@@ -39,7 +39,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     ".github/workflows/jpx-credit-weekly.yml",
     ".github/workflows/research-benchmark.yml",
     "argus_today_intelligence.py",
-    "test_argus_sho_conditioning.py",
+    "test_jp_market_engine_conditioning.py",
     "test_argus_notification_eligibility.py",
     "web/src/domain/deskCoverage.ts",
     "docs/V13_6_HANDOVER.md",
@@ -86,7 +86,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/src/components/common/GlossaryTip.tsx",
     "web/scripts/glossary.test.cjs",
     "web/src/routes/CommandCenter.tsx",
-    "argus_sho.py",
+    "jp_market_engine.py",
     "test_etf_ts_cache.py",
     "test_jp_mover_tiers.py",
     "test_legacy_provider_source_authority.py",
@@ -223,7 +223,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "test_argus_causal_event_memory_backend.py",
     "test_argus_bridge_v1157.py",
     "test_argus_mission_tick_durability.py",
-    "test_argus_sho_non_regression.py",
+    "test_jp_market_engine_non_regression.py",
     "test_argus_gmail_intake.py",
     "test_argus_market_shock.py",
     "test_argus_news_i18n.py",
@@ -276,7 +276,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/src/components/today/ArgusToday.css",
     "web/src/components/today/ArgusTodayPanel.tsx",
     "web/src/hooks/useAssetIntel.ts",
-    # v13.5.36 (external-review conformance batch): SHO CORE production
+    # v13.5.36 (external-review conformance batch): JP_MARKET_ENGINE CORE production
     # wiring (item B), MARKET VIEW/ACTION separation display (item A), event
     # constraint tiering + uncapped imminent feed (item C), and the
     # degraded-feed kernel split (item F).
@@ -324,7 +324,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "argus_single_decision.py",
     "argus_today_intelligence.py",
     "test_argus_action_priority.py",
-    "test_argus_sho_conditioning.py",
+    "test_jp_market_engine_conditioning.py",
     "test_argus_decision_evidence.py",
     "test_argus_market_truth_scanner.py",
     "test_argus_v12_rc.py",
@@ -410,7 +410,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "test_argus_tachibana_sensor.py",
     # v13.5.38 Tachibana LIVE product integration: the single product-owned
     # adapter boundary (argus_tachibana_live), the owner-facing MARKET SIGNALS
-    # SIG-01..07 projection (argus_market_signals, embedded in the SHO market
+    # SIG-01..07 projection (argus_market_signals, embedded in the JP_MARKET_ENGINE market
     # view), and the Today surfaces that render them.  No scanner/route
     # change is authored here (those stay under the Recovery admission pin).
     "argus_market_signals.py",
@@ -435,7 +435,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/scripts/live-intelligence-cache.test.cjs",
     "web/scripts/event-title-ja.test.cjs",
     "test_argus_japan_valuation.py",
-    "test_argus_sho.py",
+    "test_jp_market_engine.py",
     "web/src/hooks/useJapanWatchlist.ts",
     "web/src/domain/jpWatchFallback.ts",
     "web/scripts/jp-watch-fallback.test.cjs",

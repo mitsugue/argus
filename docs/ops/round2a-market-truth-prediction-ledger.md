@@ -1,7 +1,7 @@
 # Round 2A — Market Data Truth and Prediction Ledger
 
 Status: non-production Draft integration. This document describes contracts in
-this branch; it does not activate a final decision authority, SHO, Stage 1, V2
+this branch; it does not activate a final decision authority, JP_MARKET_ENGINE, Stage 1, V2
 authority, Recovery Proof, or a production acceptance clock.
 
 Foundation: `9d23f719ec365eb5d4e9f6e98dc4c111dc9fdba0` (the frozen Round 1
@@ -189,7 +189,7 @@ but inactive. The five future actions are `BUY`, `HOLD`, `WAIT`, `REDUCE`, and
 or side effect. Owner position/cost/P&L remains device-local. REDUCE, EXIT, and
 owner-aware HOLD cannot be derived on the backend without that private join.
 
-No SHO, Turtle, Seven Sign, order, size, target, or broker semantics are encoded.
+No JP_MARKET_ENGINE, Turtle, Seven Sign, order, size, target, or broker semantics are encoded.
 
 ## TACHIBANA_API_READINESS
 
@@ -248,5 +248,5 @@ SHADOW/INCOMPLETE and default-disabled. `exactColdRecovery` stays `NOT_PROVEN`,
 and acceptance clocks remain unarmed.
 
 After the exact-head Draft PR gates pass, development stops at
-`SHO_CANONICAL_SPEC_REQUIRED`. The latest owner-supplied Canonical SHO
-Instruction is required before any SHO implementation.
+`JP_MARKET_ENGINE_CANONICAL_SPEC_REQUIRED`. The latest owner-supplied Canonical JP_MARKET_ENGINE
+Instruction is required before any JP_MARKET_ENGINE implementation.

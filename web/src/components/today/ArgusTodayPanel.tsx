@@ -143,14 +143,14 @@ const NEXT_REVIEW_REASON_JA: Record<string, string> = {
   'resolve.prediction_ledger_missing': '市場スナップショットの更新後に再作成',
   'resolve.risk_evidence_missing': 'リスク証拠を更新',
   'resolve.scenario_event_missing': '重要イベント情報を更新',
-  'resolve.sho_evidence_missing': 'チャート分析証拠を更新',
+  'resolve.jp_market_engine_evidence_missing': 'チャート分析証拠を更新',
   'resolve.input_invalid': '判断入力を再取得',
   risk_reassessment: 'リスク条件を再確認',
-  sho_revalidation: 'チャート分析証拠を再検証',
+  jp_market_engine_revalidation: 'チャート分析証拠を再検証',
   evidence_refresh: '正本証拠を更新',
 };
-// v13.5.36 (external review item A): MARKET VIEW (SHO) / ACTION (SDA)
-// separation. The strip renders the document-level SHO consumer projection —
+// v13.5.36 (external review item A): MARKET VIEW (JP_MARKET_ENGINE) / ACTION (SDA)
+// separation. The strip renders the document-level JP_MARKET_ENGINE consumer projection —
 // reversal + downside axis states and D01-D07 family states — directly under
 // the SDA action so the owner sees "what the market looks like" and "what we
 // do" as two explicitly different authorities. The projection carries
@@ -158,14 +158,14 @@ const NEXT_REVIEW_REASON_JA: Record<string, string> = {
 // v13.5.36 (owner: 「言葉の意味がわからない」): reason codes rendered in plain
 // Japanese. Spec-by-design states (owner context, prediction ledger auth) must
 // not read as errors. Unknown codes fall through readably.
-// The code space is closed: `{market_truth|prediction_ledger|sho}_{missing|
+// The code space is closed: `{market_truth|prediction_ledger|jp_market_engine}_{missing|
 // stale|conflict}` from referenceReasons, `quality_{partial|missing|conflict}`,
 // `freshness_{stale|unknown}`, `owner_context_unknown`, `risk_evidence_empty`,
 // `risk_{missing|conflict}.<factorId>`, plus the server's own quality codes
-// (risk_evidence_missing / scenario_event_missing / sho_evidence_missing).
+// (risk_evidence_missing / scenario_event_missing / jp_market_engine_evidence_missing).
 // Every one of them is spelled out here — the owner reported seeing raw
 // `freshness_unknown` / `quality_missing` / `risk_evidence_missing` /
-// `scenario_event_missing` / `sho_evidence_missing` on 2026-09-04.
+// `scenario_event_missing` / `jp_market_engine_evidence_missing` on 2026-09-04.
 const MISSING_REASON_JA: Record<string, string> = {
   freshness_stale: 'データ鮮度が低下（次の更新待ち）',
   freshness_unknown: 'データの鮮度を確認できない（更新時刻が未取得）',
@@ -190,10 +190,10 @@ const MISSING_REASON_JA: Record<string, string> = {
   risk_evidence_empty: 'リスク入力が空（銘柄別の値が未取得）',
   risk_evidence_missing: 'リスク証拠が未取得',
   scenario_event_missing: '条件・イベントの証拠が未取得',
-  sho_missing: 'チャート証拠が未取得',
-  sho_stale: 'チャート証拠の鮮度が低下（次の更新待ち）',
-  sho_conflict: 'チャート証拠が食い違っています（照合待ち）',
-  sho_evidence_missing: 'チャート証拠が未取得',
+  jp_market_engine_missing: 'チャート証拠が未取得',
+  jp_market_engine_stale: 'チャート証拠の鮮度が低下（次の更新待ち）',
+  jp_market_engine_conflict: 'チャート証拠が食い違っています（照合待ち）',
+  jp_market_engine_evidence_missing: 'チャート証拠が未取得',
   'risk_missing.discipline.required_authority':
     '銘柄別の価格権限なし（市場終了中または取得待ち）',
 };
@@ -217,13 +217,13 @@ const dissentReasonJa = (line: string): string =>
     ? '文脈証拠が不足しているという参考意見（最終判断は変えません）'
     : line;
 
-const SHO_STATE_JA: Record<string, string> = {
+const JP_MARKET_ENGINE_STATE_JA: Record<string, string> = {
   MIXED: '混在', FRAGILE: '脆弱', DOWNSIDE_TRIGGERED: '下方シグナル点灯',
   SELL_OFF_ACTIVE: '売り圧継続', REVERSAL_EARLY: '反転初動',
   TECHNICAL_REBOUND: 'テクニカル反発', RECOVERY_TEST: '回復試験',
   CONFIRMED_ADVANCE: '上昇確認', FALSE_RALLY: 'だまし上げ警戒',
 };
-const SHO_FAMILY_JA: Record<string, string> = {
+const JP_MARKET_ENGINE_FAMILY_JA: Record<string, string> = {
   D01: '信用残', D02: '1570倍率', D03: '相対力', D04: 'EPS基準',
   D05: '海外フロー', D06: 'VIX', D07: '決算反応',
 };
@@ -275,7 +275,7 @@ const MarketViewStrip: React.FC<{ jpNames?: Record<string, string> }> = ({ jpNam
   // v13.5.38 TACHIBANA LIVE: Japanese-equity live evidence (shadow, read-only).
   const tachibana = tachibanaLiveView(
     (evidence.marketView?.japaneseLive ?? null) as TachibanaLiveDocument | null);
-  return <div className="at-marketview" data-argus-contract="sho-market-view-v1"
+  return <div className="at-marketview" data-argus-contract="jp-market-engine-market-view-v1"
     aria-label="市場観（行動権限なし）">
     <small>市場観（検証前の参考情報） — 売買の最終判断とは別枠</small>
     <div className="mv-tachibana" data-argus-contract="tachibana-live-v1"
@@ -310,18 +310,18 @@ const MarketViewStrip: React.FC<{ jpNames?: Record<string, string> }> = ({ jpNam
     </div>
     {/* v13.5.59 (owner iPhone): MARKET SIGNALS is rendered ONCE, at the top of
         the Primary Action (tap to expand). The seven family chips that repeated
-        the same conditions here are gone; only the SHO reversal/downside states
+        the same conditions here are gone; only the JP_MARKET_ENGINE reversal/downside states
         stay, since they are a different judgment. */}
     <div className="mv-states">
       <span>反転: <GlossaryTip glossaryKey={reversal?.reversalState
         ? (REVERSAL_STATE_GLOSSARY[reversal.reversalState] ?? '') : 'recovery_pending'}>
         <b>{reversal?.reversalState
-          ? (SHO_STATE_JA[reversal.reversalState] ?? reversal.reversalState) : 'データ待ち'}</b>
+          ? (JP_MARKET_ENGINE_STATE_JA[reversal.reversalState] ?? reversal.reversalState) : 'データ待ち'}</b>
       </GlossaryTip></span>
       <span>下方: <GlossaryTip glossaryKey={reversal?.downsideState
         ? (REVERSAL_STATE_GLOSSARY[reversal.downsideState] ?? '') : 'recovery_pending'}>
         <b>{reversal?.downsideState
-          ? (SHO_STATE_JA[reversal.downsideState] ?? reversal.downsideState) : 'データ待ち'}</b>
+          ? (JP_MARKET_ENGINE_STATE_JA[reversal.downsideState] ?? reversal.downsideState) : 'データ待ち'}</b>
       </GlossaryTip></span>
     </div>
     <span className="mv-note">市場観は行動権限を持たない（各項目は検証前・確率は主張しない）</span>
@@ -329,7 +329,7 @@ const MarketViewStrip: React.FC<{ jpNames?: Record<string, string> }> = ({ jpNam
 };
 
 // v13.5.36 NEWS/EVENT SIGNAL (owner spec 2026-08-23): the independent news
-// direction axis rendered BESIDE the SHO market view and the SDA action —
+// direction axis rendered BESIDE the JP_MARKET_ENGINE market view and the SDA action —
 // three separate judgments, never one blended score. A chart view and a news
 // view that disagree stay visibly different; cancellation into a vague
 // composite is structurally impossible because nothing here is summed.
@@ -594,10 +594,10 @@ const ProjectionChart: React.FC<{
           · {projection.probabilityTruth.uncertaintyJa} · {projection.probabilityTruth.label}</span></div>}
     <div className="at-proj-meta"><b>{projection.directionLabel}</b><span>{projection.horizon} · 反応{projection.reactionDelay == null ? '—' : `${projection.reactionDelay.toFixed(1)}日`}</span></div>
     {/* v13.5.62 (GPT review items 3/7): the conditioning state is always stated
-        (SHO-conditioned or fallback), and the statistical detail opens on tap. */}
+        (JP_MARKET_ENGINE-conditioned or fallback), and the statistical detail opens on tap. */}
     <details className="at-proj-detail" data-argus-contract="projection-method-detail-v1">
       <summary>方式と根拠の詳細</summary>
-      <span>{projection.shoConditioningJa ?? '需給・トレンド条件の状態を取得できていません'}</span>
+      <span>{projection.marketConditioningJa ?? '需給・トレンド条件の状態を取得できていません'}</span>
       <span>類似局面 実効n={projection.effectiveSampleCount} · BSS {projection.brierSkill == null ? '—' : projection.brierSkill.toFixed(3)}
         {!projection.directionProbabilities && ` · ${projection.probabilityTruth.uncertaintyJa}`}</span>
       <span>割合は類似局面での出現頻度です。検証済み予測確率ではありません（独立holdoutで再現性が証明されるまで確率とは表示しません）。</span>

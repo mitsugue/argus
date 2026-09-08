@@ -118,7 +118,7 @@ the content address.
 No arbitrary dict, nested supporting payload, prose explanation, provider
 response, exception text, secret, owner field, quantity, cost/P&L, prompt, model
 output, price target, order, size, broker instruction, activation control, or
-`SHO` state is part of the contract.
+`JP_MARKET_ENGINE` state is part of the contract.
 
 Supporting evidence in a future result is reference-only and capped at eight
 fact IDs. Facts are not copied into the result. Round 2A returns no supporting

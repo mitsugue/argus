@@ -18,7 +18,7 @@ import json
 import pathlib
 
 import argus_market_brief as mb
-import argus_sho
+import jp_market_engine
 import scanner
 
 ROOT = pathlib.Path(__file__).resolve().parent
@@ -89,9 +89,9 @@ def test_scanner_brief_references_stay_in_display_scope():
 
 
 def test_authority_signatures_cannot_receive_a_brief():
-    """Contract guard: no public argus_sho callable accepts anything
+    """Contract guard: no public jp_market_engine callable accepts anything
     brief-shaped — the forbidden direction is unrepresentable."""
-    for name, fn in inspect.getmembers(argus_sho, inspect.isfunction):
+    for name, fn in inspect.getmembers(jp_market_engine, inspect.isfunction):
         for param in inspect.signature(fn).parameters:
             assert "brief" not in param.lower(), (name, param)
 
@@ -117,7 +117,7 @@ def test_runtime_flipping_the_brief_leaves_sda_projection_identical():
     cutoff = "2026-08-26T00:00:00Z"
 
     def projection_bytes():
-        return json.dumps(argus_sho.project_today_sda_safe(
+        return json.dumps(jp_market_engine.project_today_sda_safe(
             cutoff=cutoff, evidence={}, reversal={}),
             sort_keys=True, ensure_ascii=False)
 

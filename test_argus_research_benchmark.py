@@ -384,6 +384,9 @@ class RouteTests(unittest.TestCase):
             self.assertEqual(status, "ok")
             self.assertEqual(set(axes), {"A", "B"})
             self.assertEqual(len(captured), 2)
+            self.assertIn(
+                scanner.argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA,
+                captured[0]["instructions"])
             for request in captured:
                 self.assertEqual(request["reasoning"], {"effort": "low"})
                 self.assertEqual(request["max_output_tokens"], 4096)

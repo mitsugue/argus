@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 
 import argus_japan_valuation as val
-import argus_sho as sho
+import jp_market_engine as jp_market_engine
 
 ROWS = [
     {"Code": "58030", "DiscDate": "2026-08-05", "FEPS": 250.0, "EPS": 60.1,          # V2 summary row shape
@@ -68,33 +68,33 @@ def test_compute_reports_missing_when_no_coverage():
 def test_d04_uses_derived_evidence_only_when_available_and_visible():
     val._reset_for_tests()
     cutoff = "2026-09-03T09:00:00Z"
-    blocked = sho.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX")
+    blocked = jp_market_engine.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX")
     assert blocked["status"] == "LICENSE_BLOCKED"
     evidence = val.compute(ROWS, PRICES, computed_at=cutoff, universe=["5803", "8058"])
     val.publish(evidence)
-    derived = sho.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX")
+    derived = jp_market_engine.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX")
     assert derived["status"] == "AVAILABLE" and derived["lineage"] == "ARGUS_CANDIDATE"
     assert derived["conditionMet"] is evidence["conditionMet"]
     assert derived["nikkeiOfficialPer"] == "NOT_CLAIMED" and derived["levels"] == []
     assert derived["derived"]["medianForwardPer"] == evidence["medianForwardPer"]
     # explicit argument wins; future-dated evidence is not visible at the cutoff
     future = {**evidence, "availableFrom": "2026-09-04T23:59:00+09:00"}
-    assert sho.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",
+    assert jp_market_engine.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",
                             derived_valuation=future)["status"] == "LICENSE_BLOCKED"
     val._reset_for_tests()
-    assert sho.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX")["status"] == "LICENSE_BLOCKED"
+    assert jp_market_engine.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX")["status"] == "LICENSE_BLOCKED"
 
 
 def test_d07_not_applicable_only_when_statements_feed_is_warm():
     val._reset_for_tests()
-    cold = sho.evaluate_d07(cutoff="2026-09-03T09:00:00Z")
+    cold = jp_market_engine.evaluate_d07(cutoff="2026-09-03T09:00:00Z")
     assert cold["status"] == "MISSING"
     val.publish_statements_state({"warmedAt": "2026-09-03T08:59:00Z", "rowCount": 0, "source": "jquants"})
-    warm = sho.evaluate_d07(cutoff="2026-09-03T09:00:00Z")
+    warm = jp_market_engine.evaluate_d07(cutoff="2026-09-03T09:00:00Z")
     assert warm["status"] == "NOT_APPLICABLE" and warm["missing"] == ["no_supported_earnings_event_in_window"]
     assert warm["statementsFeed"]["rowCount"] == 0
     val._reset_for_tests()
-    explicit = sho.evaluate_d07(cutoff="2026-09-03T09:00:00Z",
+    explicit = jp_market_engine.evaluate_d07(cutoff="2026-09-03T09:00:00Z",
                                 statements_state={"warmedAt": "x", "rowCount": 3, "source": "jquants"})
     assert explicit["status"] == "NOT_APPLICABLE"
 
@@ -103,19 +103,19 @@ def test_family_conditions_are_deterministic_and_labelled():
     cutoff = "2026-09-03T09:00:00Z"
     proxy = {"instrumentId": "1321", "seriesId": "relative_strength_20d", "date": "2026-09-02",
              "value": 0.012, "availableFrom": "2026-09-02T07:00:00Z"}
-    d03 = sho.evaluate_d03(cutoff=cutoff, proxy_evidence=proxy)
+    d03 = jp_market_engine.evaluate_d03(cutoff=cutoff, proxy_evidence=proxy)
     assert d03["conditionMet"] is True and d03["conditionLineage"] == "ARGUS_CANDIDATE"
-    assert sho.evaluate_d03(cutoff=cutoff, proxy_evidence={**proxy, "value": -0.02})["conditionMet"] is False
-    assert sho.evaluate_d03(cutoff=cutoff)["conditionMet"] is None
+    assert jp_market_engine.evaluate_d03(cutoff=cutoff, proxy_evidence={**proxy, "value": -0.02})["conditionMet"] is False
+    assert jp_market_engine.evaluate_d03(cutoff=cutoff)["conditionMet"] is None
     flow = {"seriesId": "flow.foreign", "periodEnd": "2026-08-29", "availableFrom": "2026-09-02T00:00:00Z", "value": -1099300000000.0}
-    d05 = sho.evaluate_d05([flow], cutoff=cutoff)
+    d05 = jp_market_engine.evaluate_d05([flow], cutoff=cutoff)
     assert d05["direction"] == "OUTFLOW" and d05["conditionMet"] is False
-    assert sho.evaluate_d05([{**flow, "value": 5.0}], cutoff=cutoff)["conditionMet"] is True
+    assert jp_market_engine.evaluate_d05([{**flow, "value": 5.0}], cutoff=cutoff)["conditionMet"] is True
     closes = [20 + (i % 7) * 0.5 - (i / 10.0) for i in range(80)]
     rows = [{"instrumentId": "VIX", "seriesId": "vix.close", "value": c,
              "periodEnd": f"2026-0{1 + i // 28}-{1 + i % 28:02d}",
              "availableFrom": f"2026-0{1 + i // 28}-{2 + i % 28:02d}T00:00:00Z"} for i, c in enumerate(closes)]
-    d06 = sho.evaluate_d06(rows, cutoff=cutoff)
+    d06 = jp_market_engine.evaluate_d06(rows, cutoff=cutoff)
     assert d06["status"] == "AVAILABLE" and d06["conditionMet"] in (True, False)
     assert d06["conditionMet"] == (d06["argusBaseline"]["histogram"] < 0)
     assert d06["conditionLineage"] == "ARGUS_CANDIDATE"
@@ -132,9 +132,9 @@ def test_d07_condition_is_reaction_based_and_labelled():
                 "close": close, "volume": 1000, "availableFrom": f"{day}T07:00:00Z"}
     days = ["2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-10", "2026-08-11", "2026-08-12", "2026-08-13"]
     up = [bar(d, 100 + i * 2) for i, d in enumerate(days)]
-    result = sho.evaluate_d07(cutoff=cutoff, earnings_event=event, stock_bars=up)
+    result = jp_market_engine.evaluate_d07(cutoff=cutoff, earnings_event=event, stock_bars=up)
     assert result["status"] == "AVAILABLE" and result["conditionMet"] is True
     assert result["conditionLineage"] == "ARGUS_CANDIDATE" and "5d" in result["conditionRule"]
     down = [bar(d, 100 - i * 2) for i, d in enumerate(days)]
-    assert sho.evaluate_d07(cutoff=cutoff, earnings_event=event, stock_bars=down)["conditionMet"] is False
-    assert sho.evaluate_d07(cutoff=cutoff, earnings_event=event, stock_bars=down)["supportedBeatMiss"] is None
+    assert jp_market_engine.evaluate_d07(cutoff=cutoff, earnings_event=event, stock_bars=down)["conditionMet"] is False
+    assert jp_market_engine.evaluate_d07(cutoff=cutoff, earnings_event=event, stock_bars=down)["supportedBeatMiss"] is None

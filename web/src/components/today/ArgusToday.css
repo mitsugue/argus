@@ -229,7 +229,7 @@
 @media(max-width:720px){.argus-today{gap:6px}.at-event,.at-priorities,.at-decision,.at-evidence,.at-compact,.at-review{grid-column:span 12}.at-event,.at-priorities,.at-decision,.at-compact{padding:9px 11px}.at-event small{display:none}.at-mode span{margin-left:3px}.at-projection svg{height:250px}.at-proj-levels,.at-action-plan{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:390px){.at-lamps{font-size:8.5px}.at-mode button{padding:2px 5px}.at-index-strip b{font-size:10px}.at-index-strip span{font-size:7.5px}.at-spark{width:27px}.at-call strong{font-size:34px}.at-proj-heading{display:grid;gap:1px}.at-proj-heading span{font-size:7.5px}.at-proj-meta{gap:5px}.at-proj-meta small{display:none}.at-proj-prob{gap:4px 7px;font-size:8px;flex-wrap:wrap}.at-proj-prob em{margin-left:0}.at-kpis,.at-factors,.at-perms{gap:4px 8px}.at-rows>div,.at-rows>button{grid-template-columns:58px minmax(0,1fr) auto}}
 
-/* v13.5.18 — MARKET VIEW (SHO) / ACTION (SDA) separation strip */
+/* v13.5.18 — MARKET VIEW (JP_MARKET_ENGINE) / ACTION (SDA) separation strip */
 .at-marketview{display:flex;flex-direction:column;gap:4px;padding:8px 10px;
   border:1px solid rgba(148,178,255,.16);border-radius:8px;font-size:11px;
   background:rgba(148,178,255,.05)}
@@ -275,7 +275,7 @@
 .at-marketview .mv-signals__rows i[data-signal-state="UNAVAILABLE"],
 .at-marketview .mv-signals__rows i[data-signal-state="LICENSE_BLOCKED"]{opacity:.6}
 
-/* v13.5.19 — NEWS/EVENT SIGNAL strip (independent axis beside SHO view) */
+/* v13.5.19 — NEWS/EVENT SIGNAL strip (independent axis beside JP_MARKET_ENGINE view) */
 .at-newssignal{display:flex;flex-direction:column;gap:4px;padding:8px 10px;
   border:1px solid rgba(255,193,120,.18);border-radius:8px;font-size:11px;
   background:rgba(255,193,120,.05)}

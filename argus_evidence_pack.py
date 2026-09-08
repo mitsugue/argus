@@ -16,6 +16,14 @@ from typing import Any, Dict, List, Optional
 
 SCHEMA_VERSION = "evidence-pack-v1"
 
+ANALYSIS_EXPLANATION_POLICY_JA = (
+    "分析方式・理論の説明では個人名や人名由来の方式名を使わず、総称を日本株分析エンジン、"
+    "各機能を需給分析・類似相場分析・価格シナリオなどの役割名で説明する。"
+    "個人の名前を判断の権威にせず、観測データ、計算方法、判断根拠、成立条件、撤回条件を示す。"
+    "研究原典は提供された匿名の参照IDで追跡し、原典の固有名やチャンネル名を説明へ転記しない。"
+    "不明な計算式や未検証の条件を確認済みとせず、買いサインや予測確率へ直結させない。"
+)
+
 # The六 discipline lines every AI prompt must carry (kept here so the prompt builder,
 # the pack, and the tests all quote ONE source of truth).
 DISCIPLINE_JA = [

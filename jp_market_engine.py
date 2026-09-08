@@ -1,4 +1,4 @@
-"""Canonical SHO-JP evidence engine for ARGUS Round 2.
+"""Canonical JP_MARKET_ENGINE-JP evidence engine for ARGUS Round 2.
 
 This module is intentionally pure and bounded.  It performs no network, file,
 environment, clock, AI, storage, order, or broker operation.  Every public
@@ -6,7 +6,7 @@ calculation receives an explicit information cutoff.  Missing evidence stays
 missing, licensed evidence stays license-blocked, and unvalidated research
 never acquires production status merely by being calculable.
 
-The owner-supplied Canonical SHO RFC is bound by its exact SHA-256.  SHO
+The owner-supplied Canonical JP_MARKET_ENGINE RFC is bound by its exact SHA-256.  JP_MARKET_ENGINE
 propositions are evidence generators, never independent action authorities.
 """
 from __future__ import annotations
@@ -23,18 +23,18 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 import argus_market_signals  # v13.5.38: owner-facing SIG-01..07 projection (pure)
 
 
-CANONICAL_SHO_RFC_SHA256 = (
+CANONICAL_JP_MARKET_ENGINE_RFC_SHA256 = (
     "69a631ebc549b3bede6356cabf338e38d9418fc3683821198ef9a3c1eb440d51"
 )
-SHO_REGISTRY_SCHEMA = "argus-sho-proposition-registry-v1"
-SHO_REGISTRY_VERSION = "sho-jp-canonical-2026.08-round2-v1"
-SHO_EVIDENCE_SCHEMA = "argus-sho-evidence-v1"
-REVERSAL_SCHEMA = "argus-sho-reversal-v1"
-TARGET_LADDER_SCHEMA = "argus-sho-target-ladder-v1"
-DIRECT_INDEX_SCHEMA = "argus-sho-direct-index-v1"
-STOCK_LENS_SCHEMA = "argus-stock-sho-lens-v1"
-COVERAGE_SCHEMA = "argus-round2-sho-coverage-v1"
-CONSUMER_PROJECTION_SCHEMA = "argus-sho-today-sda-projection-v1"
+JP_MARKET_ENGINE_REGISTRY_SCHEMA = "argus-jp-market-engine-proposition-registry-v1"
+JP_MARKET_ENGINE_REGISTRY_VERSION = "jp-market-engine-jp-canonical-2026.08-round2-v1"
+JP_MARKET_ENGINE_EVIDENCE_SCHEMA = "argus-jp-market-engine-evidence-v1"
+REVERSAL_SCHEMA = "argus-jp-market-engine-reversal-v1"
+TARGET_LADDER_SCHEMA = "argus-jp-market-engine-target-ladder-v1"
+DIRECT_INDEX_SCHEMA = "argus-jp-market-engine-direct-index-v1"
+STOCK_LENS_SCHEMA = "argus-stock-jp-market-engine-lens-v1"
+COVERAGE_SCHEMA = "argus-round2-jp-market-engine-coverage-v1"
+CONSUMER_PROJECTION_SCHEMA = "argus-jp-market-engine-today-sda-projection-v1"
 
 _REVERSAL_ARTIFACT_SEAL = object()
 
@@ -45,7 +45,7 @@ class _BuilderIssuedReversalArtifact(dict):
     __slots__ = ("_authority_seal", "_body_digest")
 
 LINEAGES = (
-    "SHO_ORIGINAL",
+    "JP_MARKET_ENGINE_ORIGINAL",
     "ARGUS_CANDIDATE",
     "TURTLE_REFERENCE",
     "SEVEN_SIGN_CANDIDATE",
@@ -62,7 +62,7 @@ DATA_STATUSES = (
     "UNKNOWN",
 )
 PROVENANCE_CLASSES = ("OBSERVED", "DERIVED", "INFERRED")
-SHO_STATES = (
+JP_MARKET_ENGINE_STATES = (
     "FRAGILE",
     "DOWNSIDE_TRIGGERED",
     "SELL_OFF_ACTIVE",
@@ -83,7 +83,7 @@ SUPPLY_STATES = (
 )
 HORIZONS = (1, 5, 10, 20, 40)
 
-SHO_D01_THRESHOLD_JPY = 800_000_000_000
+JP_MARKET_ENGINE_D01_THRESHOLD_JPY = 800_000_000_000
 D01_SENSITIVITY_THRESHOLDS_JPY = (
     700_000_000_000,
     750_000_000_000,
@@ -107,7 +107,7 @@ DIRECT_INDEX_TO_PROXY = {
 }
 ANALYSIS_INSTRUMENTS = tuple(DIRECT_INDEX_TO_PROXY)
 
-TARGET_CLUSTER_POLICY_ID = "sho-target-cluster-atr-half-v1"
+TARGET_CLUSTER_POLICY_ID = "jp-market-engine-target-cluster-atr-half-v1"
 TARGET_CLUSTER_POLICY = {
     "policyId": TARGET_CLUSTER_POLICY_ID,
     "version": "1",
@@ -225,20 +225,20 @@ def _proposition(
     factors: Sequence[str],
     notes: Sequence[str],
 ) -> Dict[str, Any]:
-    policy_id = f"sho-jp-{proposition_id.lower()}-v1"
+    policy_id = f"jp-market-engine-jp-{proposition_id.lower()}-v1"
     policy_material = {
         "id": proposition_id,
         "claim": claim,
         "lineage": lineage,
         "parameter": parameter,
         "factors": list(factors),
-        "canonicalRfcSha256": CANONICAL_SHO_RFC_SHA256,
+        "canonicalRfcSha256": CANONICAL_JP_MARKET_ENGINE_RFC_SHA256,
     }
     return {
         "id": proposition_id,
         "family": family,
         "claim": claim,
-        "sourceReference": f"owner-canonical-sho-rfc:{CANONICAL_SHO_RFC_SHA256}",
+        "sourceReference": f"research-rfc:{CANONICAL_JP_MARKET_ENGINE_RFC_SHA256}",
         "sourceTimestamp": None,
         "type": "DOWNSIDE_EVIDENCE",
         "lineage": lineage,
@@ -262,22 +262,22 @@ def _proposition(
 def _proposition_rows() -> List[Dict[str, Any]]:
     rows = [
         _proposition(
-            proposition_id="SHO-D01-ORIGINAL",
+            proposition_id="JP_MARKET_ENGINE-D01-ORIGINAL",
             family="D01",
             claim="Two-market total short margin balance is below JPY 800 billion.",
-            lineage="SHO_ORIGINAL",
+            lineage="JP_MARKET_ENGINE_ORIGINAL",
             importance="P0",
-            parameter=_registry_parameter("<", SHO_D01_THRESHOLD_JPY, "JPY"),
-            original_parameter=_registry_parameter("<", SHO_D01_THRESHOLD_JPY, "JPY"),
+            parameter=_registry_parameter("<", JP_MARKET_ENGINE_D01_THRESHOLD_JPY, "JPY"),
+            original_parameter=_registry_parameter("<", JP_MARKET_ENGINE_D01_THRESHOLD_JPY, "JPY"),
             factors=("two_market_short_margin_balance",),
-            notes=("Most important original SHO condition.",
-                   "Never reduce SHO to condition counting."),
+            notes=("Most important original JP_MARKET_ENGINE condition.",
+                   "Never reduce JP_MARKET_ENGINE to condition counting."),
         ),
         _proposition(
-            proposition_id="SHO-D02-ORIGINAL",
+            proposition_id="JP_MARKET_ENGINE-D02-ORIGINAL",
             family="D02",
             claim="ETF 1570 margin ratio is greater than or equal to 1.",
-            lineage="SHO_ORIGINAL",
+            lineage="JP_MARKET_ENGINE_ORIGINAL",
             importance="UNSPECIFIED",
             parameter=_registry_parameter(">=", 1, "RATIO"),
             original_parameter=_registry_parameter(">=", 1, "RATIO"),
@@ -285,10 +285,10 @@ def _proposition_rows() -> List[Dict[str, Any]]:
             notes=("Missing point-in-time 1570 data remains MISSING.",),
         ),
         _proposition(
-            proposition_id="SHO-D03-ORIGINAL",
+            proposition_id="JP_MARKET_ENGINE-D03-ORIGINAL",
             family="D03",
             claim="Japan relative strength can activate short-cover evidence.",
-            lineage="SHO_ORIGINAL",
+            lineage="JP_MARKET_ENGINE_ORIGINAL",
             importance="UNSPECIFIED",
             parameter="UNKNOWN",
             original_parameter="UNKNOWN",
@@ -296,10 +296,10 @@ def _proposition_rows() -> List[Dict[str, Any]]:
             notes=("Direct index evidence is preferred.",),
         ),
         _proposition(
-            proposition_id="SHO-D04-ORIGINAL",
+            proposition_id="JP_MARKET_ENGINE-D04-ORIGINAL",
             family="D04",
             claim="Nikkei 225 theoretical value is EPS multiplied by the 17x through 21x PER ladder.",
-            lineage="SHO_ORIGINAL",
+            lineage="JP_MARKET_ENGINE_ORIGINAL",
             importance="UNSPECIFIED",
             parameter={"multiples": [17, 18, 19, 20, 21], "unit": "PER_X"},
             original_parameter={"multiples": [17, 18, 19, 20, 21], "unit": "PER_X"},
@@ -307,10 +307,10 @@ def _proposition_rows() -> List[Dict[str, Any]]:
             notes=("Never apply Nikkei valuation directly to ETF 1321.",),
         ),
         _proposition(
-            proposition_id="SHO-D05-ORIGINAL",
+            proposition_id="JP_MARKET_ENGINE-D05-ORIGINAL",
             family="D05",
             claim="Published foreign-investor flow is confirmation evidence.",
-            lineage="SHO_ORIGINAL",
+            lineage="JP_MARKET_ENGINE_ORIGINAL",
             importance="UNSPECIFIED",
             parameter={"publicationTimeGate": True},
             original_parameter={"publicationTimeGate": True},
@@ -318,21 +318,21 @@ def _proposition_rows() -> List[Dict[str, Any]]:
             notes=("Period end is never treated as availability time.",),
         ),
         _proposition(
-            proposition_id="SHO-D06-ORIGINAL",
+            proposition_id="JP_MARKET_ENGINE-D06-ORIGINAL",
             family="D06",
             claim="VIX MACD golden cross warns of equity downside and dead cross supports recovery evidence.",
-            lineage="SHO_ORIGINAL",
+            lineage="JP_MARKET_ENGINE_ORIGINAL",
             importance="UNSPECIFIED",
             parameter="UNKNOWN",
             original_parameter="UNKNOWN",
             factors=("vix_level", "vix_velocity", "vix_percentile", "vix_regime", "vix_macd"),
-            notes=("12/26/9 is not SHO-original without source confirmation.",),
+            notes=("12/26/9 is not JP_MARKET_ENGINE-original without source confirmation.",),
         ),
         _proposition(
-            proposition_id="SHO-D07-ORIGINAL",
+            proposition_id="JP_MARKET_ENGINE-D07-ORIGINAL",
             family="D07",
             claim="Earnings quality and subsequent market reaction form deterministic evidence when supported.",
-            lineage="SHO_ORIGINAL",
+            lineage="JP_MARKET_ENGINE_ORIGINAL",
             importance="UNSPECIFIED",
             parameter="UNKNOWN",
             original_parameter="UNKNOWN",
@@ -373,7 +373,7 @@ def _proposition_rows() -> List[Dict[str, Any]]:
             parameter={"fast": 12, "slow": 26, "signal": 9},
             original_parameter=None,
             factors=("vix_close_history",),
-            notes=("Separate from the unknown SHO-original parameter.",),
+            notes=("Separate from the unknown JP_MARKET_ENGINE-original parameter.",),
         ),
     ])
     return sorted(rows, key=lambda row: row["id"])
@@ -381,9 +381,9 @@ def _proposition_rows() -> List[Dict[str, Any]]:
 
 def _registry_body() -> Dict[str, Any]:
     return {
-        "schemaVersion": SHO_REGISTRY_SCHEMA,
-        "registryVersion": SHO_REGISTRY_VERSION,
-        "canonicalRfcSha256": CANONICAL_SHO_RFC_SHA256,
+        "schemaVersion": JP_MARKET_ENGINE_REGISTRY_SCHEMA,
+        "registryVersion": JP_MARKET_ENGINE_REGISTRY_VERSION,
+        "canonicalRfcSha256": CANONICAL_JP_MARKET_ENGINE_RFC_SHA256,
         "lineages": list(LINEAGES),
         "validationStatuses": list(VALIDATION_STATUSES),
         "automaticPromotion": False,
@@ -391,15 +391,15 @@ def _registry_body() -> Dict[str, Any]:
     }
 
 
-SHO_REGISTRY_SHA256 = _sha256(_registry_body())
+JP_MARKET_ENGINE_REGISTRY_SHA256 = _sha256(_registry_body())
 
 
 def sealed_proposition_registry() -> Dict[str, Any]:
     """Return a fresh copy of the sealed, RFC-bound registry."""
     body = _registry_body()
-    if _sha256(body) != SHO_REGISTRY_SHA256:
-        raise RuntimeError("sho_registry_internal_drift")
-    return {**body, "registrySha256": SHO_REGISTRY_SHA256}
+    if _sha256(body) != JP_MARKET_ENGINE_REGISTRY_SHA256:
+        raise RuntimeError("jp_market_engine_registry_internal_drift")
+    return {**body, "registrySha256": JP_MARKET_ENGINE_REGISTRY_SHA256}
 
 
 def validate_proposition_registry(value: Any) -> Tuple[bool, str]:
@@ -409,7 +409,7 @@ def validate_proposition_registry(value: Any) -> Tuple[bool, str]:
     if value != expected:
         return False, "registry_not_exact_sealed_value"
     originals = [row for row in value["propositions"]
-                 if row["lineage"] == "SHO_ORIGINAL"]
+                 if row["lineage"] == "JP_MARKET_ENGINE_ORIGINAL"]
     if [row["family"] for row in originals] != [f"D0{i}" for i in range(1, 8)]:
         return False, "original_family_set_invalid"
     if any(row["validationStatus"] not in VALIDATION_STATUSES
@@ -477,9 +477,9 @@ def coverage_artifact() -> Dict[str, Any]:
         for row in sealed_proposition_registry()["propositions"]]
     body = {
         "schemaVersion": COVERAGE_SCHEMA,
-        "canonicalRfcSha256": CANONICAL_SHO_RFC_SHA256,
-        "registryVersion": SHO_REGISTRY_VERSION,
-        "registrySha256": SHO_REGISTRY_SHA256,
+        "canonicalRfcSha256": CANONICAL_JP_MARKET_ENGINE_RFC_SHA256,
+        "registryVersion": JP_MARKET_ENGINE_REGISTRY_VERSION,
+        "registrySha256": JP_MARKET_ENGINE_REGISTRY_SHA256,
         "registrySealed": True,
         "registryIndex": registry_index,
         "scope": "repository_only_no_runtime_inference",
@@ -487,7 +487,7 @@ def coverage_artifact() -> Dict[str, Any]:
         "dataGates": [
             "1570_pit_margin_history",
             "durable_vix_history",
-            "source_confirmed_sho_vix_macd_parameters",
+            "source_confirmed_jp_market_engine_vix_macd_parameters",
             "direct_verified_nikkei_topix_history_and_rights",
             "nikkei_valuation_licensed_fields",
             "comprehensive_earnings_quality_history",
@@ -497,7 +497,7 @@ def coverage_artifact() -> Dict[str, Any]:
             "tachibana_actual_field_behavior",
         ],
     }
-    return {**body, "artifactId": "sho-coverage-" + _sha256(body)}
+    return {**body, "artifactId": "jp-market-engine-coverage-" + _sha256(body)}
 
 
 def point_in_time_rows(rows: Iterable[Mapping[str, Any]], cutoff: str) \
@@ -591,7 +591,7 @@ def point_in_time_rows(rows: Iterable[Mapping[str, Any]], cutoff: str) \
         int(row.get("revision") or 0),
     ))
     proof_body = {
-        "policyId": "sho-explicit-publication-pit-v1",
+        "policyId": "jp-market-engine-explicit-publication-pit-v1",
         "cutoff": cutoff,
         "inputCount": len(source),
         "includedCount": len(selected),
@@ -600,7 +600,7 @@ def point_in_time_rows(rows: Iterable[Mapping[str, Any]], cutoff: str) \
         "futureRowsAdmitted": False,
         "datasetHash": _sha256(selected),
     }
-    return selected, {**proof_body, "proofId": "sho-pit-" + _sha256(proof_body)}
+    return selected, {**proof_body, "proofId": "jp-market-engine-pit-" + _sha256(proof_body)}
 
 
 def _series_history(rows: Sequence[Mapping[str, Any]], series_id: str) \
@@ -626,7 +626,7 @@ def _threshold_streak(history: Sequence[Mapping[str, Any]], *, below: bool) -> i
     count = 0
     for row in reversed(history):
         value = float(row["value"])
-        matches = value < SHO_D01_THRESHOLD_JPY if below else value >= SHO_D01_THRESHOLD_JPY
+        matches = value < JP_MARKET_ENGINE_D01_THRESHOLD_JPY if below else value >= JP_MARKET_ENGINE_D01_THRESHOLD_JPY
         if not matches:
             break
         count += 1
@@ -655,7 +655,7 @@ def evaluate_d01(rows: Iterable[Mapping[str, Any]], *, cutoff: str,
         "longBalance4wChange": _change(longs, 4),
         "below800bStreak": _threshold_streak(shorts, below=True) if shorts else 0,
         "aboveOrEqual800bStreak": _threshold_streak(shorts, below=False) if shorts else 0,
-        "distanceFrom800b": short - SHO_D01_THRESHOLD_JPY if short is not None else None,
+        "distanceFrom800b": short - JP_MARKET_ENGINE_D01_THRESHOLD_JPY if short is not None else None,
     }
     candidates = [{
         "propositionId": f"ARGUS-D01-SENS-{threshold // 1_000_000_000}B",
@@ -666,12 +666,12 @@ def evaluate_d01(rows: Iterable[Mapping[str, Any]], *, cutoff: str,
     } for threshold in D01_SENSITIVITY_THRESHOLDS_JPY]
     return {
         "family": "D01",
-        "propositionId": "SHO-D01-ORIGINAL",
-        "lineage": "SHO_ORIGINAL",
+        "propositionId": "JP_MARKET_ENGINE-D01-ORIGINAL",
+        "lineage": "JP_MARKET_ENGINE_ORIGINAL",
         "importance": "P0",
         "status": "AVAILABLE" if short is not None else "MISSING",
-        "conditionMet": short < SHO_D01_THRESHOLD_JPY if short is not None else None,
-        "threshold": {"operator": "<", "value": SHO_D01_THRESHOLD_JPY, "unit": "JPY"},
+        "conditionMet": short < JP_MARKET_ENGINE_D01_THRESHOLD_JPY if short is not None else None,
+        "threshold": {"operator": "<", "value": JP_MARKET_ENGINE_D01_THRESHOLD_JPY, "unit": "JPY"},
         "features": features,
         "featureStatuses": {
             "shortBalance": "AVAILABLE" if short is not None else "MISSING",
@@ -710,8 +710,8 @@ def evaluate_d02(rows: Iterable[Mapping[str, Any]], *, cutoff: str) -> Dict[str,
     ratio = latest[1] if latest else None
     return {
         "family": "D02",
-        "propositionId": "SHO-D02-ORIGINAL",
-        "lineage": "SHO_ORIGINAL",
+        "propositionId": "JP_MARKET_ENGINE-D02-ORIGINAL",
+        "lineage": "JP_MARKET_ENGINE_ORIGINAL",
         "instrumentId": "1570",
         "status": "AVAILABLE" if ratio is not None else "MISSING",
         "marginRatio": ratio,
@@ -749,7 +749,7 @@ def evaluate_d03(*, cutoff: str,
              if proxy_identity_ok else None)
     if direct is not None:
         source_type, lineage, proposition = (
-            "DIRECT_INDEX", "SHO_ORIGINAL", "SHO-D03-ORIGINAL")
+            "DIRECT_INDEX", "JP_MARKET_ENGINE_ORIGINAL", "JP_MARKET_ENGINE-D03-ORIGINAL")
         selected = direct
     elif proxy is not None:
         source_type, lineage, proposition = (
@@ -757,7 +757,7 @@ def evaluate_d03(*, cutoff: str,
         selected = proxy
     else:
         source_type, lineage, proposition, selected = (
-            "NONE", "SHO_ORIGINAL", "SHO-D03-ORIGINAL", None)
+            "NONE", "JP_MARKET_ENGINE_ORIGINAL", "JP_MARKET_ENGINE-D03-ORIGINAL", None)
     return {
         "family": "D03",
         "propositionId": proposition,
@@ -767,7 +767,7 @@ def evaluate_d03(*, cutoff: str,
         "relativeStrengthValue": selected["value"] if selected else None,
         # v13.5.44: deterministic ARGUS candidate condition — the analysis
         # instrument outperformed the comparison over the window (value > 0).
-        # The SHO-original threshold stays UNKNOWN; this is labelled research.
+        # The JP_MARKET_ENGINE-original threshold stays UNKNOWN; this is labelled research.
         "conditionMet": (selected["value"] > 0) if selected else None,
         "conditionRule": "relative_strength_20d > 0 (analysis outperforms comparison)",
         "conditionLineage": "ARGUS_CANDIDATE",
@@ -818,8 +818,8 @@ def evaluate_d04(*, cutoff: str, analysis_instrument: str,
         raise ValueError("invalid_nikkei_valuation_license_status")
     if analysis_instrument != "NIKKEI_225_INDEX":
         return {
-            "family": "D04", "propositionId": "SHO-D04-ORIGINAL",
-            "lineage": "SHO_ORIGINAL", "analysisInstrument": analysis_instrument,
+            "family": "D04", "propositionId": "JP_MARKET_ENGINE-D04-ORIGINAL",
+            "lineage": "JP_MARKET_ENGINE_ORIGINAL", "analysisInstrument": analysis_instrument,
             "status": "MISSING", "levels": [], "validationStatus": "UNVALIDATED",
             "missing": ["nikkei_index_identity_required"],
             "identityViolationPrevented": analysis_instrument in {"1321", "JP:1321:ETF"},
@@ -834,7 +834,7 @@ def evaluate_d04(*, cutoff: str, analysis_instrument: str,
         derived = _derived_valuation_evidence(derived_valuation, cutoff)
         if derived is not None:
             return {
-                "family": "D04", "propositionId": "SHO-D04-ORIGINAL",
+                "family": "D04", "propositionId": "JP_MARKET_ENGINE-D04-ORIGINAL",
                 "lineage": "ARGUS_CANDIDATE",
                 "analysisInstrument": analysis_instrument,
                 "status": "AVAILABLE",
@@ -855,8 +855,8 @@ def evaluate_d04(*, cutoff: str, analysis_instrument: str,
                 "identityViolationPrevented": False,
             }
         return {
-            "family": "D04", "propositionId": "SHO-D04-ORIGINAL",
-            "lineage": "SHO_ORIGINAL", "analysisInstrument": analysis_instrument,
+            "family": "D04", "propositionId": "JP_MARKET_ENGINE-D04-ORIGINAL",
+            "lineage": "JP_MARKET_ENGINE_ORIGINAL", "analysisInstrument": analysis_instrument,
             "status": "LICENSE_BLOCKED" if license_status == "LICENSE_BLOCKED" else "MISSING",
             "eps": None, "indexLevel": index["value"] if index else None,
             "levels": [], "validationStatus": "UNVALIDATED",
@@ -872,8 +872,8 @@ def evaluate_d04(*, cutoff: str, analysis_instrument: str,
                             if index else None),
     } for multiple in (17, 18, 19, 20, 21)]
     return {
-        "family": "D04", "propositionId": "SHO-D04-ORIGINAL",
-        "lineage": "SHO_ORIGINAL", "analysisInstrument": analysis_instrument,
+        "family": "D04", "propositionId": "JP_MARKET_ENGINE-D04-ORIGINAL",
+        "lineage": "JP_MARKET_ENGINE_ORIGINAL", "analysisInstrument": analysis_instrument,
         "status": "AVAILABLE", "eps": eps["value"],
         "indexLevel": index["value"] if index else None,
         "levels": levels, "validationStatus": "UNVALIDATED",
@@ -890,8 +890,8 @@ def evaluate_d05(rows: Iterable[Mapping[str, Any]], *, cutoff: str) -> Dict[str,
     latest = history[-1] if history else None
     value = latest["value"] if latest else None
     return {
-        "family": "D05", "propositionId": "SHO-D05-ORIGINAL",
-        "lineage": "SHO_ORIGINAL",
+        "family": "D05", "propositionId": "JP_MARKET_ENGINE-D05-ORIGINAL",
+        "lineage": "JP_MARKET_ENGINE_ORIGINAL",
         "status": "AVAILABLE" if latest else "MISSING",
         "flowValue": value,
         "direction": ("INFLOW" if value is not None and value > 0 else
@@ -900,7 +900,7 @@ def evaluate_d05(rows: Iterable[Mapping[str, Any]], *, cutoff: str) -> Dict[str,
         # v13.5.44: confirmation evidence = published net foreign INFLOW.
         "conditionMet": (value > 0) if value is not None else None,
         "conditionRule": "latest published foreign-investor net flow > 0 (INFLOW)",
-        "conditionLineage": "SHO_ORIGINAL",
+        "conditionLineage": "JP_MARKET_ENGINE_ORIGINAL",
         "periodEnd": latest.get("periodEnd") if latest else None,
         "availableFrom": latest.get("availableFrom") if latest else None,
         "publicationTimeGated": True,
@@ -965,8 +965,8 @@ def evaluate_d06(rows: Iterable[Mapping[str, Any]], *, cutoff: str) -> Dict[str,
     closes = [value for _, value in history]
     if not closes:
         return {
-            "family": "D06", "propositionId": "SHO-D06-ORIGINAL",
-            "lineage": "SHO_ORIGINAL", "status": "MISSING",
+            "family": "D06", "propositionId": "JP_MARKET_ENGINE-D06-ORIGINAL",
+            "lineage": "JP_MARKET_ENGINE_ORIGINAL", "status": "MISSING",
             "originalParameter": "UNKNOWN", "argusBaseline": None,
             "validationStatus": "UNVALIDATED", "pointInTimeProof": proof,
             "identityRejectedRowCount": len(source) - len(identified),
@@ -983,15 +983,15 @@ def evaluate_d06(rows: Iterable[Mapping[str, Any]], *, cutoff: str) -> Dict[str,
     macd_rows = _macd(closes, ARGUS_MACD_BASELINE)
     transition = _macd_transition(macd_rows)
     return {
-        "family": "D06", "propositionId": "SHO-D06-ORIGINAL",
-        "lineage": "SHO_ORIGINAL", "status": "AVAILABLE",
+        "family": "D06", "propositionId": "JP_MARKET_ENGINE-D06-ORIGINAL",
+        "lineage": "JP_MARKET_ENGINE_ORIGINAL", "status": "AVAILABLE",
         "originalParameter": "UNKNOWN",
         "level": round(level, 6), "velocity": round(velocity, 6),
         "percentile": percentile, "regime": regime,
-        "shoOriginalTransition": None,
+        "jpMarketEngineOriginalTransition": None,
         # v13.5.44: ARGUS 12/26/9 baseline — VIX MACD histogram below zero
         # (dead-cross side) is the recovery-supportive condition; a golden
-        # cross (histogram >= 0) is the warning side.  SHO-original stays UNKNOWN.
+        # cross (histogram >= 0) is the warning side.  JP_MARKET_ENGINE-original stays UNKNOWN.
         "conditionMet": macd_rows[-1]["histogram"] < 0,
         "conditionRule": "VIX MACD(12,26,9) histogram < 0 (dead-cross side)",
         "conditionLineage": "ARGUS_CANDIDATE",
@@ -1007,7 +1007,7 @@ def evaluate_d06(rows: Iterable[Mapping[str, Any]], *, cutoff: str) -> Dict[str,
         },
         "validationStatus": "UNVALIDATED", "pointInTimeProof": proof,
         "identityRejectedRowCount": len(source) - len(identified),
-        "missing": ["source_confirmed_sho_vix_macd_parameters"],
+        "missing": ["source_confirmed_jp_market_engine_vix_macd_parameters"],
     }
 
 
@@ -1054,8 +1054,8 @@ def evaluate_d07(*, cutoff: str,
             # supported disclosure — a truthful NOT_APPLICABLE, not a
             # provider outage.
             return {
-                "family": "D07", "propositionId": "SHO-D07-ORIGINAL",
-                "lineage": "SHO_ORIGINAL", "status": "NOT_APPLICABLE",
+                "family": "D07", "propositionId": "JP_MARKET_ENGINE-D07-ORIGINAL",
+                "lineage": "JP_MARKET_ENGINE_ORIGINAL", "status": "NOT_APPLICABLE",
                 "earningsQuality": None, "reaction": None,
                 "conditionMet": None,
                 "validationStatus": "UNVALIDATED",
@@ -1063,8 +1063,8 @@ def evaluate_d07(*, cutoff: str,
                 "missing": ["no_supported_earnings_event_in_window"],
             }
         return {
-            "family": "D07", "propositionId": "SHO-D07-ORIGINAL",
-            "lineage": "SHO_ORIGINAL", "status": "MISSING",
+            "family": "D07", "propositionId": "JP_MARKET_ENGINE-D07-ORIGINAL",
+            "lineage": "JP_MARKET_ENGINE_ORIGINAL", "status": "MISSING",
             "earningsQuality": None, "reaction": None,
             "validationStatus": "UNVALIDATED",
             "missing": ["supported_earnings_event"],
@@ -1073,8 +1073,8 @@ def evaluate_d07(*, cutoff: str,
     event_instrument = _instrument_code(event)
     if not event_instrument or event_instrument == "MARKET":
         return {
-            "family": "D07", "propositionId": "SHO-D07-ORIGINAL",
-            "lineage": "SHO_ORIGINAL", "status": "MISSING",
+            "family": "D07", "propositionId": "JP_MARKET_ENGINE-D07-ORIGINAL",
+            "lineage": "JP_MARKET_ENGINE_ORIGINAL", "status": "MISSING",
             "earningsQuality": None, "reaction": None,
             "validationStatus": "UNVALIDATED",
             "missing": ["earnings_event_instrument_identity"],
@@ -1089,8 +1089,8 @@ def evaluate_d07(*, cutoff: str,
                   if bar["date"] >= event_date), None)
     if index is None:
         return {
-            "family": "D07", "propositionId": "SHO-D07-ORIGINAL",
-            "lineage": "SHO_ORIGINAL", "status": "MISSING",
+            "family": "D07", "propositionId": "JP_MARKET_ENGINE-D07-ORIGINAL",
+            "lineage": "JP_MARKET_ENGINE_ORIGINAL", "status": "MISSING",
             "earningsQuality": None, "reaction": None,
             "validationStatus": "UNVALIDATED",
             "missing": ["post_earnings_complete_ohlcv"],
@@ -1124,14 +1124,14 @@ def evaluate_d07(*, cutoff: str,
     reaction5 = returns["5"]
     # v13.5.48: deterministic ARGUS candidate condition — the post-disclosure
     # reaction is positive (5-session return when available, else 1-session).
-    # SHO-original earnings-quality parameters stay UNKNOWN; no consensus
+    # JP_MARKET_ENGINE-original earnings-quality parameters stay UNKNOWN; no consensus
     # dataset is contracted, so beat/miss is never synthesized.
     reaction_basis = ("5d" if reaction5 is not None else
                       "1d" if returns["1"] is not None else None)
     reaction_value = reaction5 if reaction5 is not None else returns["1"]
     return {
-        "family": "D07", "propositionId": "SHO-D07-ORIGINAL",
-        "lineage": "SHO_ORIGINAL", "status": "AVAILABLE",
+        "family": "D07", "propositionId": "JP_MARKET_ENGINE-D07-ORIGINAL",
+        "lineage": "JP_MARKET_ENGINE_ORIGINAL", "status": "AVAILABLE",
         "conditionMet": (reaction_value > 0) if reaction_value is not None else None,
         "conditionRule": f"post-disclosure return ({reaction_basis or 'n/a'}) > 0",
         "conditionLineage": "ARGUS_CANDIDATE",
@@ -1192,15 +1192,15 @@ def evaluate_d01_d07(*, cutoff: str,
             index_bars=comparison_index_bars),
     }
     body = {
-        "schemaVersion": SHO_EVIDENCE_SCHEMA,
-        "canonicalRfcSha256": CANONICAL_SHO_RFC_SHA256,
-        "registrySha256": SHO_REGISTRY_SHA256,
+        "schemaVersion": JP_MARKET_ENGINE_EVIDENCE_SCHEMA,
+        "canonicalRfcSha256": CANONICAL_JP_MARKET_ENGINE_RFC_SHA256,
+        "registrySha256": JP_MARKET_ENGINE_REGISTRY_SHA256,
         "informationCutoff": cutoff,
         "families": families,
         "action": None,
         "automaticAiCalls": 0,
     }
-    return {**body, "artifactId": "sho-evidence-" + _sha256(body)}
+    return {**body, "artifactId": "jp-market-engine-evidence-" + _sha256(body)}
 
 
 def normalize_complete_ohlcv(rows: Iterable[Mapping[str, Any]], *, cutoff: str) \
@@ -1254,7 +1254,7 @@ def normalize_complete_ohlcv(rows: Iterable[Mapping[str, Any]], *, cutoff: str) 
         }
     bars = [accepted[key] for key in sorted(accepted)]
     proof_body = {
-        "policyId": "sho-complete-ohlcv-v1",
+        "policyId": "jp-market-engine-complete-ohlcv-v1",
         "pointInTimeProofId": pit_proof["proofId"],
         "pointInTimeProof": pit_proof,
         "visibleCount": pit_proof["includedCount"],
@@ -1266,7 +1266,7 @@ def normalize_complete_ohlcv(rows: Iterable[Mapping[str, Any]], *, cutoff: str) 
     }
     return {
         "bars": bars,
-        "proof": {**proof_body, "proofId": "sho-ohlcv-" + _sha256(proof_body)},
+        "proof": {**proof_body, "proofId": "jp-market-engine-ohlcv-" + _sha256(proof_body)},
     }
 
 
@@ -1497,7 +1497,7 @@ def reversal_evidence(*, cutoff: str,
 
     Both instruments require complete O/H/L/C/V rows.  The VIX MACD parameters
     remain an explicitly unvalidated ARGUS candidate because the RFC does not
-    establish the SHO-original parameters.
+    establish the JP_MARKET_ENGINE-original parameters.
     """
     nikkei_source = list(nikkei_rows or [])
     vix_source = list(vix_rows or [])
@@ -1585,7 +1585,7 @@ def reversal_evidence(*, cutoff: str,
             details={
                 "parameters": {"fast": 12, "slow": 26, "signal": 9},
                 "parameterLineage": "ARGUS_CANDIDATE",
-                "shoOriginalParameters": "UNKNOWN",
+                "jpMarketEngineOriginalParameters": "UNKNOWN",
                 "histogramSlope": v_hist_slope,
                 "histogramExpansion": (-v_hist_slope > 0
                                        if v_hist_slope is not None else None),
@@ -1625,7 +1625,7 @@ def reversal_evidence(*, cutoff: str,
     }
     body = {
         "schemaVersion": REVERSAL_SCHEMA,
-        "canonicalRfcSha256": CANONICAL_SHO_RFC_SHA256,
+        "canonicalRfcSha256": CANONICAL_JP_MARKET_ENGINE_RFC_SHA256,
         "informationCutoff": cutoff,
         "strictCompleteOhlcv": True,
         "nikkeiProof": nikkei_normalized["proof"],
@@ -1637,7 +1637,7 @@ def reversal_evidence(*, cutoff: str,
         "validationStatus": "UNVALIDATED",
         "probability": None,
     }
-    return {**body, "artifactId": "sho-reversal-evidence-" + _sha256(body)}
+    return {**body, "artifactId": "jp-market-engine-reversal-evidence-" + _sha256(body)}
 
 
 def classify_reversal_state(evidence: Mapping[str, Any], *,
@@ -1719,7 +1719,7 @@ def build_reversal_engine(*, cutoff: str, analysis_instrument: str,
         evidence, downside_background=downside_background)
     body = {
         "schemaVersion": REVERSAL_SCHEMA,
-        "canonicalRfcSha256": CANONICAL_SHO_RFC_SHA256,
+        "canonicalRfcSha256": CANONICAL_JP_MARKET_ENGINE_RFC_SHA256,
         "analysisInstrument": analysis_instrument,
         "informationCutoff": cutoff,
         "downsideAxis": {
@@ -1736,7 +1736,7 @@ def build_reversal_engine(*, cutoff: str, analysis_instrument: str,
         "automaticAiCalls": 0,
     }
     artifact = _BuilderIssuedReversalArtifact({
-        **body, "artifactId": "sho-reversal-" + _sha256(body),
+        **body, "artifactId": "jp-market-engine-reversal-" + _sha256(body),
     })
     artifact._authority_seal = _REVERSAL_ARTIFACT_SEAL
     artifact._body_digest = _sha256(artifact)
@@ -1778,13 +1778,13 @@ def _validate_pit_proof(value: Any, information_cutoff: Any) -> bool:
             proof["includedCount"] + proof["excludedFutureCount"] + \
             proof["excludedMalformedCount"] > proof["inputCount"] or \
             proof.get("futureRowsAdmitted") is not False or \
-            proof.get("policyId") != "sho-explicit-publication-pit-v1" or \
+            proof.get("policyId") != "jp-market-engine-explicit-publication-pit-v1" or \
             proof.get("cutoff") != information_cutoff or \
             not _sha256_text(proof.get("datasetHash")):
         return False
     body = copy.deepcopy(proof)
     proof_id = body.pop("proofId", None)
-    return proof_id == "sho-pit-" + _sha256(body)
+    return proof_id == "jp-market-engine-pit-" + _sha256(body)
 
 
 def _validate_ohlcv_proof(value: Any, information_cutoff: Any) -> bool:
@@ -1807,7 +1807,7 @@ def _validate_ohlcv_proof(value: Any, information_cutoff: Any) -> bool:
                     for key, count in reasons.items()) or \
             sum(reasons.values()) != counts[1] or \
             proof.get("filledFields") != [] or \
-            proof.get("policyId") != "sho-complete-ohlcv-v1" or \
+            proof.get("policyId") != "jp-market-engine-complete-ohlcv-v1" or \
             not _sha256_text(proof.get("datasetHash")) or \
             not _validate_pit_proof(
                 proof.get("pointInTimeProof"), information_cutoff) or \
@@ -1818,7 +1818,7 @@ def _validate_ohlcv_proof(value: Any, information_cutoff: Any) -> bool:
         return False
     body = copy.deepcopy(proof)
     proof_id = body.pop("proofId", None)
-    return proof_id == "sho-ohlcv-" + _sha256(body)
+    return proof_id == "jp-market-engine-ohlcv-" + _sha256(body)
 
 
 def _factor_date_is_bounded(value: Any, cutoff: datetime) -> bool:
@@ -1889,7 +1889,7 @@ def _validate_reversal_factor(name: str, value: Any,
         "histogramExpansion", "histogramSlope", "parameters",
     }
     expected_details = (macd_common | {
-        "parameterLineage", "shoOriginalParameters"}
+        "parameterLineage", "jpMarketEngineOriginalParameters"}
         if name == "vixMacdDeadCross" else macd_common)
     if set(details) != expected_details or \
             details.get("parameters") != {"fast": 12, "slow": 26, "signal": 9} or \
@@ -1902,7 +1902,7 @@ def _validate_reversal_factor(name: str, value: Any,
         return False
     if name == "vixMacdDeadCross" and (
             details.get("parameterLineage") != "ARGUS_CANDIDATE" or
-            details.get("shoOriginalParameters") != "UNKNOWN"):
+            details.get("jpMarketEngineOriginalParameters") != "UNKNOWN"):
         return False
     return True
 
@@ -1927,7 +1927,7 @@ def _validate_reversal_evidence_artifact(value: Any,
     factors = artifact.get("factors")
     structurally_valid = (
         artifact.get("schemaVersion") == REVERSAL_SCHEMA and
-        artifact.get("canonicalRfcSha256") == CANONICAL_SHO_RFC_SHA256 and
+        artifact.get("canonicalRfcSha256") == CANONICAL_JP_MARKET_ENGINE_RFC_SHA256 and
         artifact.get("strictCompleteOhlcv") is True and
         artifact.get("validationStatus") == "UNVALIDATED" and
         artifact.get("probability") is None and
@@ -1942,7 +1942,7 @@ def _validate_reversal_evidence_artifact(value: Any,
         isinstance(factors, Mapping) and set(factors) == factor_names and
         all(_validate_reversal_factor(name, factors[name], cutoff)
             for name in factor_names) and
-        _content_id_valid(artifact, "sho-reversal-evidence-")
+        _content_id_valid(artifact, "jp-market-engine-reversal-evidence-")
     )
     if not structurally_valid:
         return False
@@ -1967,7 +1967,7 @@ def _validate_reversal_evidence_artifact(value: Any,
 
 
 def validate_reversal_artifact(value: Any) -> Dict[str, Any]:
-    """Validate the compact content-addressed SHO reversal artifact."""
+    """Validate the compact content-addressed JP_MARKET_ENGINE reversal artifact."""
     expected = {
         "action", "analysisInstrument", "artifactId", "automaticAiCalls",
         "canonicalRfcSha256", "downsideAxis", "evidence",
@@ -1979,7 +1979,7 @@ def validate_reversal_artifact(value: Any) -> Dict[str, Any]:
         raise ValueError("invalid_reversal_artifact_fields")
     artifact = copy.deepcopy(dict(value))
     if artifact.get("schemaVersion") != REVERSAL_SCHEMA or \
-            artifact.get("canonicalRfcSha256") != CANONICAL_SHO_RFC_SHA256 or \
+            artifact.get("canonicalRfcSha256") != CANONICAL_JP_MARKET_ENGINE_RFC_SHA256 or \
             not isinstance(artifact.get("analysisInstrument"), str) or \
             not artifact["analysisInstrument"] or \
             artifact["analysisInstrument"] != \
@@ -2006,12 +2006,12 @@ def validate_reversal_artifact(value: Any) -> Dict[str, Any]:
             not _validate_reversal_evidence_artifact(
                 evidence_artifact, cutoff) or \
             not _content_id_valid(
-                evidence_artifact, "sho-reversal-evidence-") or \
+                evidence_artifact, "jp-market-engine-reversal-evidence-") or \
             artifact.get("evidenceArtifactId") != evidence_artifact.get(
                 "artifactId") or \
             artifact.get("evidence") != evidence_artifact.get("factors") or \
             evidence_artifact.get("canonicalRfcSha256") != \
-            CANONICAL_SHO_RFC_SHA256 or \
+            CANONICAL_JP_MARKET_ENGINE_RFC_SHA256 or \
             evidence_artifact.get("informationCutoff") != artifact.get(
                 "informationCutoff"):
         raise ValueError("invalid_reversal_evidence_artifact")
@@ -2042,7 +2042,7 @@ def validate_reversal_artifact(value: Any) -> Dict[str, Any]:
         evidence_artifact, downside_background=downside["state"])
     if artifact.get("reversalAxis") != expected_axis:
         raise ValueError("invalid_reversal_axis")
-    if not _content_id_valid(artifact, "sho-reversal-"):
+    if not _content_id_valid(artifact, "jp-market-engine-reversal-"):
         raise ValueError("invalid_reversal_artifact_id")
     return artifact
 
@@ -2225,7 +2225,7 @@ def build_target_zones(*, cutoff: str, analysis_instrument: str,
 
     body = {
         "schemaVersion": TARGET_LADDER_SCHEMA,
-        "canonicalRfcSha256": CANONICAL_SHO_RFC_SHA256,
+        "canonicalRfcSha256": CANONICAL_JP_MARKET_ENGINE_RFC_SHA256,
         "informationCutoff": cutoff,
         "analysisInstrument": analysis_instrument,
         "analysisPrice": current_price,
@@ -2249,7 +2249,7 @@ def build_target_zones(*, cutoff: str, analysis_instrument: str,
         "missing": sorted(set(missing)),
         "action": None,
     }
-    return {**body, "artifactId": "sho-targets-" + _sha256(body)}
+    return {**body, "artifactId": "jp-market-engine-targets-" + _sha256(body)}
 
 
 def build_direct_index_model(*, cutoff: str, analysis_instrument: str,
@@ -2309,7 +2309,7 @@ def build_direct_index_model(*, cutoff: str, analysis_instrument: str,
 
     body = {
         "schemaVersion": DIRECT_INDEX_SCHEMA,
-        "canonicalRfcSha256": CANONICAL_SHO_RFC_SHA256,
+        "canonicalRfcSha256": CANONICAL_JP_MARKET_ENGINE_RFC_SHA256,
         "informationCutoff": cutoff,
         "analysisInstrument": {
             "instrumentId": analysis_instrument, "instrumentType": "INDEX",
@@ -2335,7 +2335,7 @@ def build_direct_index_model(*, cutoff: str, analysis_instrument: str,
         "missing": ([] if direct_latest else ["direct_verified_index_ohlcv"]),
         "action": None,
     }
-    return {**body, "artifactId": "sho-direct-index-" + _sha256(body)}
+    return {**body, "artifactId": "jp-market-engine-direct-index-" + _sha256(body)}
 
 
 def validate_evidence_provenance(
@@ -2404,7 +2404,7 @@ def validate_evidence_provenance(
             item[0], item[2]["evidenceId"])):
         buckets[row["provenance"].lower()].append(row)
     proof_body = {
-        "policyId": "sho-stock-evidence-provenance-v1",
+        "policyId": "jp-market-engine-stock-evidence-provenance-v1",
         "cutoff": cutoff,
         "inputCount": len(source),
         "observedCount": len(buckets["observed"]),
@@ -2417,7 +2417,7 @@ def validate_evidence_provenance(
                                 ("observed", "derived", "inferred", "unknown")}),
     }
     return {**buckets, "proof": {
-        **proof_body, "proofId": "sho-provenance-" + _sha256(proof_body)}}
+        **proof_body, "proofId": "jp-market-engine-provenance-" + _sha256(proof_body)}}
 
 
 def _classify_supply_state(
@@ -2498,7 +2498,7 @@ def build_stock_lens(*, cutoff: str, symbol: str,
         state = axis.get("state") if isinstance(axis, Mapping) else market_state.get("state")
     else:
         state = market_state
-    state = str(state) if state in SHO_STATES else None
+    state = str(state) if state in JP_MARKET_ENGINE_STATES else None
     sector = validate_evidence_provenance(sector_style_evidence, cutoff=cutoff)
     supply = validate_evidence_provenance(supply_evidence, cutoff=cutoff)
     technical = validate_evidence_provenance(
@@ -2507,7 +2507,7 @@ def build_stock_lens(*, cutoff: str, symbol: str,
         target_invalidation_evidence, cutoff=cutoff)
     supply_state = _classify_supply_state(supply)
     stages = [
-        {"order": 1, "stage": "SHO_JP_MARKET_STATE",
+        {"order": 1, "stage": "JP_MARKET_ENGINE_JP_MARKET_STATE",
          "status": "AVAILABLE" if state else "MISSING", "value": state},
         {"order": 2, "stage": "SECTOR_STYLE_STATE",
          "status": _stage_status(sector), "evidence": sector},
@@ -2524,7 +2524,7 @@ def build_stock_lens(*, cutoff: str, symbol: str,
     available_stage_count = len(stages) - len(missing_stages)
     body = {
         "schemaVersion": STOCK_LENS_SCHEMA,
-        "canonicalRfcSha256": CANONICAL_SHO_RFC_SHA256,
+        "canonicalRfcSha256": CANONICAL_JP_MARKET_ENGINE_RFC_SHA256,
         "informationCutoff": cutoff,
         "symbol": symbol,
         "hierarchy": [row["stage"] for row in stages],
@@ -2541,7 +2541,7 @@ def build_stock_lens(*, cutoff: str, symbol: str,
         "action": None,
         "automaticAiCalls": 0,
     }
-    return {**body, "artifactId": "sho-stock-lens-" + _sha256(body)}
+    return {**body, "artifactId": "jp-market-engine-stock-lens-" + _sha256(body)}
 
 
 def _content_id_valid(artifact: Any, prefix: str) -> bool:
@@ -2569,11 +2569,11 @@ def project_today_sda_safe(*, cutoff: str,
     """
     _cutoff(cutoff)
     supplied = {
-        "evidence": (evidence, "sho-evidence-"),
-        "reversal": (reversal, "sho-reversal-"),
-        "targetLadder": (target_ladder, "sho-targets-"),
-        "directIndex": (direct_index, "sho-direct-index-"),
-        "stockLens": (stock_lens, "sho-stock-lens-"),
+        "evidence": (evidence, "jp-market-engine-evidence-"),
+        "reversal": (reversal, "jp-market-engine-reversal-"),
+        "targetLadder": (target_ladder, "jp-market-engine-targets-"),
+        "directIndex": (direct_index, "jp-market-engine-direct-index-"),
+        "stockLens": (stock_lens, "jp-market-engine-stock-lens-"),
     }
     admitted: Dict[str, Mapping[str, Any]] = {}
     rejected = []
@@ -2582,7 +2582,7 @@ def project_today_sda_safe(*, cutoff: str,
             continue
         if not isinstance(artifact, Mapping) \
                 or artifact.get("informationCutoff") != cutoff \
-                or artifact.get("canonicalRfcSha256") != CANONICAL_SHO_RFC_SHA256 \
+                or artifact.get("canonicalRfcSha256") != CANONICAL_JP_MARKET_ENGINE_RFC_SHA256 \
                 or not _content_id_valid(artifact, prefix):
             rejected.append(name)
             continue
@@ -2632,7 +2632,7 @@ def project_today_sda_safe(*, cutoff: str,
         }
     body = {
         "schemaVersion": CONSUMER_PROJECTION_SCHEMA,
-        "canonicalRfcSha256": CANONICAL_SHO_RFC_SHA256,
+        "canonicalRfcSha256": CANONICAL_JP_MARKET_ENGINE_RFC_SHA256,
         "informationCutoff": cutoff,
         "consumerRoles": ["TODAY_READ_ONLY", "SDA_READ_ONLY"],
         "sourceArtifactIds": sorted(
@@ -2652,21 +2652,21 @@ def project_today_sda_safe(*, cutoff: str,
         "action": None,
         "automaticAiCalls": 0,
     }
-    return {**body, "artifactId": "sho-consumer-projection-" + _sha256(body)}
+    return {**body, "artifactId": "jp-market-engine-consumer-projection-" + _sha256(body)}
 
 
 __all__ = [
     "ANALYSIS_INSTRUMENTS",
-    "CANONICAL_SHO_RFC_SHA256",
+    "CANONICAL_JP_MARKET_ENGINE_RFC_SHA256",
     "CREDIT_COVERAGE_END",
     "CREDIT_COVERAGE_START",
     "CREDIT_CSV_PATH",
     "CREDIT_CSV_SHA256",
     "CREDIT_POINTS_PER_SERIES",
     "DIRECT_INDEX_TO_PROXY",
-    "SHO_REGISTRY_SHA256",
-    "SHO_REGISTRY_VERSION",
-    "SHO_STATES",
+    "JP_MARKET_ENGINE_REGISTRY_SHA256",
+    "JP_MARKET_ENGINE_REGISTRY_VERSION",
+    "JP_MARKET_ENGINE_STATES",
     "SUPPLY_STATES",
     "build_direct_index_model",
     "build_reversal_engine",

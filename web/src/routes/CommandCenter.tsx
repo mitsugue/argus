@@ -234,7 +234,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     timeframe: 'daily', horizon: chartHorizon, enabled: true,
   });
   // v13.5.54 (owner 2026-09-04: 「日経平均などの指数がトップに表示されていない、
-  // まだETF」). SHO reasons about the Nikkei 225, not the 1321 ETF that tracks
+  // まだETF」). JP_MARKET_ENGINE reasons about the Nikkei 225, not the 1321 ETF that tracks
   // it, so the headline series is the INDEX itself. The verified ETF snapshot
   // stays the decision anchor — the index carries no licensed quote here — and
   // the panel says so; only the drawn series and its projection change.

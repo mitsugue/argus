@@ -70,7 +70,7 @@ def _manifest(*, bar_sha256: Optional[str] = None,
         ],
         "informationCutoffAt": "2026-09-01T00:00:00Z",
         "pitPolicyId": research.PIT_POLICY_ID,
-        "propositionRegistryVersion": "sho-jp-canonical-round2-v1",
+        "propositionRegistryVersion": "jp-market-engine-jp-canonical-round2-v1",
         "policyVersion": "round2-resource-policy-v1",
         "parameterVersion": "round2-resource-parameters-v1",
         "buildSha": "c" * 40,
@@ -147,7 +147,7 @@ def _bars() -> list[Dict[str, Any]]:
         close = trend + (-4.0 if index and index % 37 == 0 else 0.0)
         signals: Dict[str, bool] = {}
         for period, name in (
-            (29, "shoReversal"),
+            (29, "jpMarketEngineReversal"),
             (31, "vixDecreasingConfirmation"),
             (41, "sarFlip"),
             (43, "macdGoldenCross"),

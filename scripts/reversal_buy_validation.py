@@ -4,12 +4,12 @@
 GPT review item 2 (2026-09-07): 「必要データ、対象期間、合格条件、有効化までの
 具体的な作業計画を示し、実行できる検証を進めてください」. This is that
 runnable verification. It reconstructs the production reversal state
-(``argus_sho.build_reversal_engine`` with the same MIXED background the
+(``jp_market_engine.build_reversal_engine`` with the same MIXED background the
 serving layer uses) for every trading day of a ten-year daily corpus and
 measures what happened to the judgment subject (1321) after each entry into a
 BUY-eligible state. Nothing here changes production: the outcome is a report
 whose ``verdict`` says whether the eligibility criteria are met, and the
-registry that enables BUY (``VERIFIED_SHO_BUY_ARTIFACTS``) stays empty until a
+registry that enables BUY (``VERIFIED_JP_MARKET_ENGINE_BUY_ARTIFACTS``) stays empty until a
 PASS report is reviewed and pinned by a code change.
 
 Data (all daily OHLCV, complete bars only, point-in-time stamped):
@@ -47,7 +47,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import argus_sho  # noqa: E402
+import jp_market_engine  # noqa: E402
 import argus_single_decision  # noqa: E402
 
 HORIZONS = (5, 20)
@@ -58,7 +58,7 @@ MIN_HOLDOUT = 60
 MAX_WILSON_HALF_WIDTH_PT = 10.0
 MAX_ECE = 0.05
 HOLDOUT_START = "2023-01-01"
-ELIGIBLE = tuple(argus_single_decision.BUY_ELIGIBLE_SHO_STATES)
+ELIGIBLE = tuple(argus_single_decision.BUY_ELIGIBLE_JP_MARKET_ENGINE_STATES)
 YAHOO = {
     "N225": ("%5EN225", "NIKKEI_225_INDEX", "T07:00:00Z"),
     "VIX": ("%5EVIX", "VIX", "T21:00:00Z"),
@@ -120,7 +120,7 @@ def daily_states(nikkei: Sequence[Dict[str, Any]], vix: Sequence[Dict[str, Any]]
         while v_end < len(vix_dates) and vix_dates[v_end] <= date:
             v_end += 1
         v_window = vix[max(0, v_end - WINDOW_BARS):v_end]
-        artifact = argus_sho.build_reversal_engine(
+        artifact = jp_market_engine.build_reversal_engine(
             cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",
             downside_background="MIXED", nikkei_rows=n_window, vix_rows=v_window)
         axis = artifact["reversalAxis"]
@@ -266,8 +266,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     report.update({
         "schemaVersion": "argus-reversal-buy-validation-v1",
         "evaluatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "policyId": argus_sho.SHO_REGISTRY_VERSION,
-        "policySha256": argus_sho.SHO_REGISTRY_SHA256,
+        "policyId": jp_market_engine.JP_MARKET_ENGINE_REGISTRY_VERSION,
+        "policySha256": jp_market_engine.JP_MARKET_ENGINE_REGISTRY_SHA256,
         "eligibleStates": list(ELIGIBLE),
         "corpus": {"nikkei": [nikkei[0]["date"], nikkei[-1]["date"], len(nikkei)],
                    "vix": [vix[0]["date"], vix[-1]["date"], len(vix)],

@@ -123,8 +123,8 @@ def test_bootstrap_tolerates_tick_exceptions():
     assert summary["status"] == "DONE" and summary["degraded"] == 1 and summary["missingAfter"] == 1
 
 
-# ── v13.5.44: boot warm (SHO inputs, interest history, derived valuation) ──
-def test_boot_warm_warms_sho_and_interest_history_and_publishes_valuation():
+# ── v13.5.44: boot warm (JP_MARKET_ENGINE inputs, interest history, derived valuation) ──
+def test_boot_warm_warms_jp_market_engine_and_interest_history_and_publishes_valuation():
     import argus_japan_valuation as val
     boot._reset_for_tests(); val._reset_for_tests()
     targets = [("5803", "JP")]
@@ -133,8 +133,8 @@ def test_boot_warm_warms_sho_and_interest_history_and_publishes_valuation():
         argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
         timeframe="daily", dataset_hash="h0", method_version="m1",
         report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
-    host.sho_calls = []
-    host._sho_pit_inputs = lambda warm=False: (host.sho_calls.append(warm) or
+    host.jp_market_engine_calls = []
+    host._jp_market_engine_pit_inputs = lambda warm=False: (host.jp_market_engine_calls.append(warm) or
                                                {"sourceStatus": {"margin1570": "jquants_weekly"}})
     host.history_calls = []
     host._jq_price_history = lambda code: (host.history_calls.append(code) or {"closes": [4951.0, 5090.0]})
@@ -142,7 +142,7 @@ def test_boot_warm_warms_sho_and_interest_history_and_publishes_valuation():
     host._SD_EXTRA_SYMBOLS = {"6330": {"market": "JP"}, "AAPL": {"market": "US"}}
     host._JP_SEEN_SYMBOLS = {"7203": 1.0}
     host._JP_WATCHLIST = [{"symbol": "8058"}, {"symbol": "5803"}]
-    host._SHO_STATEMENTS_CACHE = {"rows": [
+    host._JP_MARKET_ENGINE_STATEMENTS_CACHE = {"rows": [
         {"LocalCode": "58030", "DisclosedDate": "2026-08-05", "ForecastEarningsPerShare": "250.0"}],
         "source": "jquants"}
     host._JP_CACHE = {"data": {"stocks": [{"symbol": "5803", "price": 4951.0}]}}
@@ -153,8 +153,8 @@ def test_boot_warm_warms_sho_and_interest_history_and_publishes_valuation():
     boot._STATE["thread"].join(timeout=5)
     warm = boot.warm_status()
     assert warm["status"] == "DONE" and warm["cycles"] == 1
-    assert host.sho_calls == [True]
-    assert warm["shoSourceStatus"]["margin1570"] == "jquants_weekly"
+    assert host.jp_market_engine_calls == [True]
+    assert warm["jpMarketEngineSourceStatus"]["margin1570"] == "jquants_weekly"
     # interest = 5803 + curated + device-requested JP codes (US symbols excluded), bounded
     assert warm["interestSymbols"][:2] == ["5803", "8058"]
     assert set(warm["interestSymbols"]) == {"5803", "8058", "6965", "314A", "6330", "7203"}
@@ -181,14 +181,14 @@ def test_boot_warm_is_isolated_from_host_failures():
     def _boom(warm=False):
         raise RuntimeError("provider down")
 
-    host._sho_pit_inputs = _boom
+    host._jp_market_engine_pit_inputs = _boom
     host._jq_price_history = _boom
     boot._STATE["warmMaxCycles"] = 1
     boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
                         sleeper=lambda s: None, clock=lambda: 0.0)
     boot._STATE["thread"].join(timeout=5)
     warm = boot.warm_status()
-    assert warm["status"] == "DONE" and warm["errorClass"].startswith("sho_warm:")
+    assert warm["status"] == "DONE" and warm["errorClass"].startswith("jp_market_engine_warm:")
     assert warm["historyWarmed"] == 0 and warm["cycles"] == 1
 
 
@@ -222,8 +222,8 @@ def test_warm_cycle_warms_curated_reference_and_statements_when_offered():
     host._jquants_paginated = lambda path, params, max_pages=2, request_timeout=8: (
         calls["stmt"].append(params["code"]) or [
             {"LocalCode": params["code"] + "0", "DisclosedDate": "2026-08-10", "ForecastEarningsPerShare": "100"}])
-    host._sho_pit_inputs = lambda warm=False: {"sourceStatus": {}}
-    host._SHO_STATEMENTS_CACHE = {"rows": [], "source": "jquants"}
+    host._jp_market_engine_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    host._JP_MARKET_ENGINE_STATEMENTS_CACHE = {"rows": [], "source": "jquants"}
     host._JQ_HISTORY_CACHE = {"5803": {"data": {"closes": [4951.0]}}}
     host._JP_WATCHLIST = [{"symbol": "5803"}]
     boot._STATE["warmMaxCycles"] = 1
@@ -235,7 +235,7 @@ def test_warm_cycle_warms_curated_reference_and_statements_when_offered():
     assert "1321" in calls["jq"] and calls["us"] == ["SPY"] and warm["referenceWarmed"] == 2   # no TD seam → Finnhub fallback
     assert calls["stmt"] == ["5803"] and warm["statementsFetched"] == 1
     assert warm["statementsPath"] == "/fins/summary"
-    assert host._SHO_STATEMENTS_CACHE["source"] == "jquants_v2_summary_boot"
+    assert host._JP_MARKET_ENGINE_STATEMENTS_CACHE["source"] == "jquants_v2_summary_boot"
     assert warm["statementsPublished"] == 1 and val.statements_state()["warmedAt"]
     evidence = val.current_evidence()
     assert evidence["status"] == "AVAILABLE" and evidence["coverage"] == 1   # per-code statements merged
@@ -262,8 +262,8 @@ def test_statements_fetch_is_retried_across_cycles_and_records_failures():
     host._jquants_paginated = _stmt
     host._jq_price_history = lambda code: {"closes": [1000.0]}
     host._us_price_history = lambda code: None
-    host._sho_pit_inputs = lambda warm=False: {"sourceStatus": {}}
-    host._SHO_STATEMENTS_CACHE = {"rows": [], "source": "jquants"}
+    host._jp_market_engine_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    host._JP_MARKET_ENGINE_STATEMENTS_CACHE = {"rows": [], "source": "jquants"}
     host._JQ_HISTORY_CACHE = {c: {"data": {"closes": [1000.0]}} for c in ("5803", "8058", "9984", "5801", "6584", "285A", "9501", "7203", "6965")}
     boot._STATE["warmMaxCycles"] = 2
     boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
@@ -297,8 +297,8 @@ def test_statements_fall_back_to_the_v1_path_and_stay_missing_when_nothing_fetch
         raise RuntimeError("jquants_http_403")
 
     host._jquants_paginated = _stmt
-    host._sho_pit_inputs = lambda warm=False: {"sourceStatus": {}}
-    host._SHO_STATEMENTS_CACHE = {"rows": [], "source": "no_universe_disclosures"}
+    host._jp_market_engine_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    host._JP_MARKET_ENGINE_STATEMENTS_CACHE = {"rows": [], "source": "no_universe_disclosures"}
     boot._STATE["warmMaxCycles"] = 1
     boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
                         sleeper=lambda s: None, clock=lambda: 0.0)
@@ -307,7 +307,7 @@ def test_statements_fall_back_to_the_v1_path_and_stay_missing_when_nothing_fetch
     assert seen == ["/fins/summary", "/fins/statements"]          # both paths tried once for the code
     assert warm["statementsFetched"] == 0 and warm["statementsPath"] is None
     assert warm["statementsErrorClass"].startswith("/fins/statements:RuntimeError:jquants_http_403")
-    assert host._SHO_STATEMENTS_CACHE["source"] == "no_universe_disclosures"   # host cache untouched
+    assert host._JP_MARKET_ENGINE_STATEMENTS_CACHE["source"] == "no_universe_disclosures"   # host cache untouched
     assert val.statements_state()["warmedAt"] is None             # D07 stays MISSING, not NOT_APPLICABLE
 
 
@@ -324,7 +324,7 @@ def test_us_reference_prefers_the_twelve_data_history_cache():
     host._td_price_history = lambda code: (calls.append(("td", code)) or {"closes": [1.0]})
     host._us_price_history = lambda code: (calls.append(("finnhub", code)) or None)
     host._jq_price_history = lambda code: {"closes": [1.0]}
-    host._sho_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    host._jp_market_engine_pit_inputs = lambda warm=False: {"sourceStatus": {}}
     boot._STATE["warmMaxCycles"] = 1
     boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
                         sleeper=lambda s: None, clock=lambda: 0.0)
@@ -354,7 +354,7 @@ def test_us_and_crypto_interest_warm_fills_the_twelve_data_cache_with_aliases():
 
     host._td_price_history = _td
     host._jq_price_history = lambda code: {"closes": [1.0]}
-    host._sho_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    host._jp_market_engine_pit_inputs = lambda warm=False: {"sourceStatus": {}}
     boot._STATE["warmMaxCycles"] = 1
     boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
                         sleeper=lambda s: None, clock=lambda: 0.0)
@@ -379,7 +379,7 @@ def test_translation_drain_is_hourly_bounded_and_switchable():
     calls = []
     host._translate_pending_headlines = lambda cap=60, queue_first=False: (calls.append((cap, queue_first)) or {"translated": 2, "pending": 2})
     host._jq_price_history = lambda code: {"closes": [1.0]}
-    host._sho_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    host._jp_market_engine_pit_inputs = lambda warm=False: {"sourceStatus": {}}
     boot._STATE["warmMaxCycles"] = 2
     boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
                         sleeper=lambda s: None, clock=lambda: 0.0)
@@ -414,7 +414,7 @@ def test_index_chart_warm_tries_candidates_and_records_the_working_symbol():
 
     host._yahoo_index_ohlcv = _yahoo
     host._jq_price_history = lambda code: {"closes": [1.0]}
-    host._sho_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    host._jp_market_engine_pit_inputs = lambda warm=False: {"sourceStatus": {}}
     boot._STATE["warmMaxCycles"] = 1
     boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
                         sleeper=lambda s: None, clock=lambda: 0.0)

@@ -48,8 +48,9 @@ v13.6.0（統合 AI と画面リニューアル、Codex + Astra）に引き継�
     追跡は `generateRun`（running/done/failed/interrupted）で、workflow 側のタイムアウト（600 s）後も残る。
 11. **market-watch の intel-collect がコールド起動直後に 90 s で時間切れになる。** 暖機
     （`backend-warm-after-deploy.yml`）が先に走れば起きない。恒久策は v13.6.0 側で検討。
-12. **画面に方式の個人名を出さない。** 画面は「需給・トレンド方式/条件」。コード内の識別子
-    （`argus_sho`、`shoConditioning` 等）は据え置き。
+12. **製品全体で人名由来の名称・識別子を廃止する。** 総称は「日本株分析エンジン」/
+    `jp_market_engine`。API・保存データ・配布物を含む移行と追加検証候補は
+    [正式要件](JP_MARKET_ENGINE_REQUIREMENTS.md)を参照。表示だけの修正では完了としない。
 
 ## 3. 利用中のデータ源
 
@@ -87,7 +88,7 @@ v13.6.0（統合 AI と画面リニューアル、Codex + Astra）に引き継�
 
 - 5 アクション: BUY / HOLD / WAIT / REDUCE / EXIT。BUY は ①リスク制約なし ②需給・トレンドの
   反転状態が反転初期・自律反発・回復試験・上昇確認のいずれかで **検証済み** ③検証済み買い成立
-  レジストリ（`VERIFIED_SHO_BUY_ARTIFACTS`、現在は空）の本番採用 ④保有側の追加許可。
+  レジストリ（`VERIFIED_JP_MARKET_ENGINE_BUY_ARTIFACTS`、現在は空）の本番採用 ④保有側の追加許可。
 - 確度 = min(基準値 {BUY 70, HOLD 60, WAIT 45, REDUCE 70, EXIT 80}%, riskKernel 上限)。
   データ不足時は 25% 固定。
 - REDUCE は保有の含み損 −25% 以下（`positionExposure`）で `REDUCE_RISK`。
@@ -98,12 +99,12 @@ v13.6.0（統合 AI と画面リニューアル、Codex + Astra）に引き継�
 
 ## 6. 既存の予測仕様（変更なし）
 
-- チャート予測: `argus_today_intelligence`（today-replay-calibration-v3-sho-conditioned）。
+- チャート予測: `argus_today_intelligence`（today-replay-calibration-v3-market-conditioned）。
   10 年日足の類似局面 kNN（trend20 / momentum5 / atrPct / closeLocation / volumeRatio）に、
   日本は 信用倍率・売り残高・VIX 水準・VIX 10 日変化・対 SPY 相対力、米国は VIX 水準・
   VIX 10 日変化・対 SPY 相対力 で条件付け（知識ラグ付き PIT 結合、結合窓 信用 45 日・VIX 10 日）。
   出力は 1/5/20 営業日先の方向の **出現頻度**、ATR14 帯、支持抵抗。
-- 反転/下方軸: `argus_sho.build_reversal_engine`（^N225 と ^VIX の MACD/SAR/BB/RSI）、
+- 反転/下方軸: `jp_market_engine.build_reversal_engine`（^N225 と ^VIX の MACD/SAR/BB/RSI）、
   状態 REVERSAL_EARLY / TECHNICAL_REBOUND / RECOVERY_TEST / CONFIRMED_ADVANCE / FALSE_RALLY /
   MIXED。行動権限なし。
 - 対応表: `docs/forecast-method-jp-us.md`。BUY 検証: `docs/REVERSAL_BUY_VALIDATION.md`。

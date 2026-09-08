@@ -116,7 +116,7 @@ import argus_news_intelligence      # v13.5.3: Nikkei mail → news-risk evidenc
 import argus_gmail_intake           # v13.5.3: dedicated read-only news mailbox intake
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
-import argus_sho                    # v13.5.13: SHO evidence engine (pure; evidence, never action)
+import jp_market_engine                    # v13.5.13: JP_MARKET_ENGINE evidence engine (pure; evidence, never action)
 import argus_single_decision        # v13.5.13: canonical artifact references for device SDA
 import argus_tachibana_live         # v13.5.38: Tachibana LIVE product boundary (shadow, read-only, no orders)
 import argus_tick_durability        # v13.3.1: bounded tick WAL/checkpoint/single-flight
@@ -10528,7 +10528,7 @@ def _recovery_phase_a_finish_market_ledger_observation(
 
 def _investor_types_autorefresh():
     """D05 supply (v13.5.36): the PIT investor-types adapter existed but only
-    as a manual admin backfill — flow.foreign went stale and SHO D05 sat at
+    as a manual admin backfill — flow.foreign went stale and JP_MARKET_ENGINE D05 sat at
     判定不能 despite the paid J-Quants plan carrying the data. Daily bounded
     refresh (weekly series, 45-day window); idempotent via ledger dedup;
     same PIT publication policy as the manual route; origin=cron."""
@@ -10634,7 +10634,7 @@ def api_argus_intel_collect():
 def _collect_institutional_intel_and_warm():
     out = collect_institutional_intel()
     try:
-        _investor_types_autorefresh()      # v13.5.36: keep SHO D05 fed (daily)
+        _investor_types_autorefresh()      # v13.5.36: keep JP_MARKET_ENGINE D05 fed (daily)
     except Exception:
         pass
     try:
@@ -10695,14 +10695,14 @@ def _collect_institutional_intel_and_warm():
         except Exception as exc:
             warmed["ownerJpError"] = type(exc).__name__
     out["supplyDemandWarm"] = warmed
-    # v13.5.36: warm the SHO CORE input caches (^N225/^VIX OHLCV, 1570 weekly
+    # v13.5.36: warm the JP_MARKET_ENGINE CORE input caches (^N225/^VIX OHLCV, 1570 weekly
     # margin, FRED VIX). This admin/cron path is the ONLY fetch route; the
     # public decision-evidence GET reads these caches cached-only.
     try:
-        out["shoInputWarm"] = dict(
-            _sho_pit_inputs(warm=True).get("sourceStatus") or {})
+        out["jpMarketEngineInputWarm"] = dict(
+            _jp_market_engine_pit_inputs(warm=True).get("sourceStatus") or {})
     except Exception as exc:
-        out["shoInputWarm"] = {"error": type(exc).__name__}
+        out["jpMarketEngineInputWarm"] = {"error": type(exc).__name__}
     return out
 
 
@@ -12174,7 +12174,7 @@ def _td_price_history(sym):
         try:
             r = requests.get(_TWELVEDATA_TS, params={
                 # v13.5.14: ten-year corpus (≈252 sessions × 10) for the
-                # SHO-conditioned forecast engine.
+                # JP_MARKET_ENGINE-conditioned forecast engine.
                 "symbol": sym, "interval": "1day", "outputsize": 2520,
                 "apikey": _TWELVEDATA_API_KEY}, timeout=15)
             r.raise_for_status()
@@ -13933,7 +13933,7 @@ def _build_ai_snapshot():
     }
     return snap, al
 
-_OPENAI_SYSTEM = (
+_OPENAI_SYSTEM = argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n" + (
     "You are the ARGUS AI judgment layer. ARGUS is NOT a prediction engine: it classifies current "
     "market conditions into action categories and explains stance/reason/risk/confidence/what-would-"
     "change. You REVIEW and critique a deterministic rule engine's labels using ONLY the provided "
@@ -14070,7 +14070,7 @@ def _gemini_prompt(snapshot, openai_out):
     """PURE Gemini challenge prompt (v11.2: evidence-aware). Kept as a separate
     function so tests can assert it carries missingData / visibilityGuard / the
     challenge keys without any API call."""
-    return (
+    return argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n" + (
         "あなたはARGUSの独立検証役です。以下の市場スナップショット・ルールラベル・GPTの提案を検証し、"
         "(1)裏付けのない主張、(2)直近の重大リスク(web情報があれば反映)、(3)GPT提案が強気/積極的すぎないか、"
         "(4)注意すべき銘柄、(5)最終アクションを引き下げるべきか、を点検してください。捏造は禁止。"
@@ -14483,6 +14483,7 @@ _CAOS_EVENT_SYSTEM = (
 def _openai_prose_call(client, model, sys_prompt, user):
     """One model call: Responses API first, chat completions second. Returns
     (response, text). Raises the LAST error when both fail."""
+    sys_prompt = argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n" + sys_prompt
     try:
         resp = client.responses.create(model=model, instructions=sys_prompt,
                                         input=user, timeout=60, store=False)
@@ -17077,7 +17078,7 @@ def api_argus_market_shock():
 # ── v13.5.36 MARKET SITUATION BRIEF ─────────────────────────────────────────
 # Deterministic composer over verified stores; Terra compresses (Sol only for
 # CRITICAL fact bases); public GET is cached-only (no LLM on public reads).
-_SHO_STATE_JA = {
+_JP_MARKET_ENGINE_STATE_JA = {
     "MIXED": "混在", "FRAGILE": "脆弱", "DOWNSIDE_TRIGGERED": "下方シグナル点灯",
     "SELL_OFF_ACTIVE": "売り圧継続", "REVERSAL_EARLY": "反転初動",
     "TECHNICAL_REBOUND": "テクニカル反発", "RECOVERY_TEST": "回復試験",
@@ -17089,7 +17090,7 @@ _MARKET_BRIEF_TTL_SEC = 300
 
 def _brief_market_view_summary():
     try:
-        view = _sho_market_view()
+        view = _jp_market_engine_market_view()
         proj = (view or {}).get("projection") or {}
         rev = proj.get("reversal") or {}
         fams = proj.get("families") or {}
@@ -17097,7 +17098,7 @@ def _brief_market_view_summary():
         for key, label in (("reversalState", "反転"), ("downsideState", "下方")):
             state = rev.get(key)
             if state:
-                bits.append(f"{label}:{_SHO_STATE_JA.get(str(state), str(state))}")
+                bits.append(f"{label}:{_JP_MARKET_ENGINE_STATE_JA.get(str(state), str(state))}")
         if fams:
             # v13.5.36: the real family enum is AVAILABLE/LICENSE_BLOCKED/
             # MISSING (not "EVALUATED") — the chip showed 0/7 while two
@@ -20421,7 +20422,8 @@ def _openai_research_ex(user, role="standard", benchmark=False):
             provider="openai", model=model, role=role, mode="research",
             status="unavailable", started_at=started, completed_at=_ai_now_iso())
     client = openai.OpenAI(api_key=_OPENAI_API_KEY)
-    sysmsg = ("あなたはARGUSのリサーチデスク。最新のニュース・事実を調べ、値動きの理由を簡潔に説明する。"
+    sysmsg = (argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n"
+              "あなたはARGUSのリサーチデスク。最新のニュース・事実を調べ、値動きの理由を簡潔に説明する。"
               "出所のない断定はせず、不明なら正直に不明と言う。投資助言・利益保証はしない。")
     tool_modes = (([{"type": "web_search"}], "ok"),) if benchmark else (
         ([{"type": "web_search"}], "ok"),
@@ -28643,6 +28645,7 @@ _OSINT_SCOUT_SYS = ("あなたはOSINT調査員。出力は必ず指定JSONの�
 def _gemini_osint(prompt, benchmark=False, model_override=None,
                   diagnostic_context=None):
     """Gemini scout(検索グラウンディング付き・admin経路のみから呼ばれる)。"""
+    prompt = argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n" + prompt
     if not _cost_policy_authorize(
             "gemini", "research_benchmark" if benchmark else "osint_research",
             automatic=not benchmark, confirmation=benchmark,
@@ -35139,7 +35142,7 @@ _VERIFIED_VIEW_METHOD_VERSION = (
     f"{argus_chart_intelligence.METHOD_VERSION}:"
     f"{argus_market_replay.METHOD_VERSION}:"
     # v13.5.14: the forecast engine version participates so an engine change
-    # (SHO conditioning) regenerates published snapshots instead of serving
+    # (JP_MARKET_ENGINE conditioning) regenerates published snapshots instead of serving
     # the old calibration until the bars happen to change (「古いまま」根絶).
     f"{argus_today_intelligence.METHOD_VERSION}"
 )
@@ -35886,12 +35889,12 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
     # Public chart GETs only consume a verified cache/durable snapshot.  Provider
     # refresh is owned by the natural scheduled tick below, never UI interaction.
     _short_rows = _jp_daily_short_history(cached_only=True) if market == "JP" else []
-    # SHO conditioning context (owner spec 2026-08-22): the ten-year corpus is
-    # joined per-day to the credit / VIX / relative-strength state SHO reads.
+    # JP_MARKET_ENGINE conditioning context (owner spec 2026-08-22): the ten-year corpus is
+    # joined per-day to the credit / VIX / relative-strength state JP_MARKET_ENGINE reads.
     # Every source is PIT-stamped; assembly failure degrades to the pure
     # price-action engine rather than blocking the chart.
     try:
-        _sho_context = {
+        _jp_market_engine_context = {
             "creditRows": (_jpx_credit_rows_effective()
                            if market == "JP" else []),
             "vixRows": _fred_vix_history_dated(),
@@ -35904,11 +35907,11 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                              else ["vix_provider_key_missing"]),
         }
     except Exception:
-        _sho_context = None
+        _jp_market_engine_context = None
     _today_intel = argus_today_intelligence.analyze(
         daily_rows, symbol=symbol, market=market,
         short_history=_short_rows, comparison_rows=_comparison_rows,
-        sho_context=_sho_context,
+        jp_market_engine_context=_jp_market_engine_context,
         as_of=now_iso)
     # The pure engine cannot measure breadth freshness (no ledger access), so
     # the serving layer injects the measured JP lag here. None stays None —
@@ -36255,9 +36258,9 @@ def api_argus_chart_intelligence():
             symbol, market, timeframe, market_scope=False, cached_only=True)))
 
 
-# v13.5.50: the owner asked for the indices themselves (SHO reasons about
+# v13.5.50: the owner asked for the indices themselves (JP_MARKET_ENGINE reasons about
 # the Nikkei 225, not the 1321 ETF).  Cached-only public GET over the Yahoo
-# index OHLCV cache the SHO warm already fills; the verified snapshots
+# index OHLCV cache the JP_MARKET_ENGINE warm already fills; the verified snapshots
 # (1321/1306/SPY/QQQ) remain the decision anchor.  Never fetches here.
 _INDEX_CHART_SOURCES = {
     "N225": {"yahoo": ("^N225",), "market": "JP", "instrumentId": "NIKKEI_225_INDEX",
@@ -36286,7 +36289,7 @@ def api_argus_index_chart():
         return jsonify({"error": "invalid_timeframe"}), 400
     rows, yahoo_used = None, None
     for yahoo_symbol in spec["yahoo"]:
-        cached = _SHO_INDEX_OHLCV_CACHE.get(yahoo_symbol)
+        cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get(yahoo_symbol)
         data = cached.get("data") if isinstance(cached, dict) else None
         if isinstance(data, list) and len(data) >= 30:
             rows, yahoo_used = data, yahoo_symbol
@@ -36666,34 +36669,34 @@ def _decision_evidence_prediction_artifact(symbol, market, cutoff,
         return None, "prediction_context_failed"
 
 
-# ━━━ v13.5.36 SHO CORE production inputs (external review item B) ━━━
+# ━━━ v13.5.36 JP_MARKET_ENGINE CORE production inputs (external review item B) ━━━
 # The read-only audit confirmed evaluate_d01_d07 was never called from any
 # production path and the live reversal artifact ran on zero rows. This block
 # wires the feeds the process already holds — JPX credit CSV+ledger, J-Quants
 # 1570 weekly margin, ETF-proxy relative strength from the verified chart
 # caches, Market Ledger foreign flow, and Yahoo ^VIX/^N225 complete OHLCV —
-# into the canonical SHO engines. Every row carries an explicit availableFrom
+# into the canonical JP_MARKET_ENGINE engines. Every row carries an explicit availableFrom
 # (PIT); the public decision-evidence GET stays strictly cached-only (fetch is
 # passed ONLY by the 30-min collect cron warm). A cold feed leaves its family
 # MISSING/LICENSE_BLOCKED — absence is reported, never impersonated.
-_SHO_INDEX_OHLCV_CACHE = {}
-_SHO_INDEX_OHLCV_TTL_SEC = 1800
-_SHO_PIT_INPUT_MEMO = {"ts": 0.0, "data": None}
-_SHO_MARKET_VIEW_MEMO = {"ts": 0.0, "view": None}
+_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE = {}
+_JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC = 1800
+_JP_MARKET_ENGINE_PIT_INPUT_MEMO = {"ts": 0.0, "data": None}
+_JP_MARKET_ENGINE_MARKET_VIEW_MEMO = {"ts": 0.0, "view": None}
 
 
 def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
                        available_hour_utc=None, next_day_available=False):
     """Complete OHLCV rows for one index from the public Yahoo v8 chart API.
 
-    Rows are shaped for argus_sho.normalize_complete_ohlcv with an explicit
+    Rows are shaped for jp_market_engine.normalize_complete_ohlcv with an explicit
     per-bar availableFrom, which keeps the current in-progress session OUT of
     evidence until after its close. Volume is passed through exactly as the
     source reports it (0 for ^VIX) and bars with any null component are
     dropped, never filled. Cache-only unless fetch=True (cron warm); a stale
     cache still serves (its rows carry their own PIT stamps)."""
     now = time.time()
-    cached = _SHO_INDEX_OHLCV_CACHE.get(yahoo_symbol)
+    cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get(yahoo_symbol)
     if cached and (not fetch or now < cached["expires"]):
         return cached["data"]
     if not fetch:
@@ -36737,14 +36740,14 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
         rows = [by_date[key] for key in sorted(by_date)]
     except Exception:
         rows = []
-    _SHO_INDEX_OHLCV_CACHE[yahoo_symbol] = {
+    _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE[yahoo_symbol] = {
         "data": rows,
-        "expires": now + (_SHO_INDEX_OHLCV_TTL_SEC if rows else 300)}
+        "expires": now + (_JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC if rows else 300)}
     return rows
 
 
-def _sho_margin_1570_rows(*, fetch=False):
-    """1570 weekly margin ratio as PIT rows for SHO D02.
+def _jp_market_engine_margin_1570_rows(*, fetch=False):
+    """1570 weekly margin ratio as PIT rows for JP_MARKET_ENGINE D02.
 
     J-Quants publishes weekly margin interest during the following week, so
     availableFrom = period + 7 days keeps the join conservative. Cache-only
@@ -36776,10 +36779,10 @@ def _sho_margin_1570_rows(*, fetch=False):
     return rows
 
 
-def _sho_relative_strength_proxy():
+def _jp_market_engine_relative_strength_proxy():
     """20-session relative strength of 1321 vs SPY (verified chart caches).
 
-    One PIT row for SHO D03's explicit ETF-proxy lane (ARGUS_CANDIDATE
+    One PIT row for JP_MARKET_ENGINE D03's explicit ETF-proxy lane (ARGUS_CANDIDATE
     lineage is assigned by the evaluator itself). availableFrom is after the
     15:30 JST close of the row's session; cached-only, None when cold."""
     try:
@@ -36807,8 +36810,8 @@ def _sho_relative_strength_proxy():
         return None
 
 
-def _sho_foreign_flow_rows():
-    """flow.foreign observations from the Market Ledger for SHO D05."""
+def _jp_market_engine_foreign_flow_rows():
+    """flow.foreign observations from the Market Ledger for JP_MARKET_ENGINE D05."""
     rows = []
     try:
         by_series = argus_market_ledger.latest_by_series(
@@ -36828,7 +36831,7 @@ def _sho_foreign_flow_rows():
     return rows
 
 
-def _sho_vix_rows(*, fetch=False):
+def _jp_market_engine_vix_rows(*, fetch=False):
     """VIX rows for D06 + the reversal VIX axis, with an explicit source tag.
 
     Yahoo complete OHLCV is preferred (enables the MACD axis); the FRED
@@ -36852,7 +36855,7 @@ def _sho_vix_rows(*, fetch=False):
     return [], ("fred_key_missing" if not _FRED_API_KEY else "cold_cache")
 
 
-# ── SHO D07 supply: earnings disclosures (v13.5.36) ─────────────────────────
+# ── JP_MARKET_ENGINE D07 supply: earnings disclosures (v13.5.36) ─────────────────────────
 # J-Quants /fins/statements is the authoritative TDnet-derived disclosure
 # record (DisclosedDate/Time = official publication). PIT is carried on the
 # EVENT via knownAt; the first tradable session comes from the canonical
@@ -36860,10 +36863,10 @@ def _sho_vix_rows(*, fetch=False):
 # No consensus dataset is contracted → epsEstimate stays None and beat/miss
 # is never synthesized. Unknown provider schema → honest MISSING, never a
 # guessed mapping.
-_SHO_STATEMENTS_CACHE = {"rows": [], "fetchedAt": None, "expires": 0.0,
+_JP_MARKET_ENGINE_STATEMENTS_CACHE = {"rows": [], "fetchedAt": None, "expires": 0.0,
                          "source": "cold", "schemaSample": None}
-_SHO_STATEMENTS_TTL_SEC = 6 * 3600
-_SHO_STATEMENTS_WINDOW_DAYS = 14
+_JP_MARKET_ENGINE_STATEMENTS_TTL_SEC = 6 * 3600
+_JP_MARKET_ENGINE_STATEMENTS_WINDOW_DAYS = 14
 
 
 def _stmt_field(row, *names):
@@ -36874,11 +36877,11 @@ def _stmt_field(row, *names):
     return None
 
 
-def _sho_statements_rows(*, warm=False):
+def _jp_market_engine_statements_rows(*, warm=False):
     """Recent fins/statements rows for the tracked JP universe (cache-only on
     the public path; warm=True refreshes on the collect cron)."""
     now = time.time()
-    cache = _SHO_STATEMENTS_CACHE
+    cache = _JP_MARKET_ENGINE_STATEMENTS_CACHE
     if not warm or (cache["rows"] and now < cache["expires"]):
         return cache["rows"]
     if not _JQUANTS_API_KEY:
@@ -36887,7 +36890,7 @@ def _sho_statements_rows(*, warm=False):
     universe = {str(s.get("symbol"))[:4] for s in _JP_WATCHLIST}
     fetched = []
     try:
-        for back in range(_SHO_STATEMENTS_WINDOW_DAYS):
+        for back in range(_JP_MARKET_ENGINE_STATEMENTS_WINDOW_DAYS):
             day = (datetime.now(TZ_JST) - timedelta(days=back)).strftime(
                 "%Y-%m-%d")
             try:
@@ -36906,7 +36909,7 @@ def _sho_statements_rows(*, warm=False):
                     fetched.append(row)
         cache["rows"] = fetched
         cache["fetchedAt"] = _ai_now_iso()
-        cache["expires"] = now + _SHO_STATEMENTS_TTL_SEC
+        cache["expires"] = now + _JP_MARKET_ENGINE_STATEMENTS_TTL_SEC
         cache["source"] = ("jquants_fins_statements" if fetched
                            else "no_universe_disclosures")
         if fetched and cache["schemaSample"] is None:
@@ -36916,7 +36919,7 @@ def _sho_statements_rows(*, warm=False):
     return cache["rows"]
 
 
-def _sho_first_tradable_session(disclosed_date, disclosed_time):
+def _jp_market_engine_first_tradable_session(disclosed_date, disclosed_time):
     """(first_tradable_iso, flags) from the canonical calendar. Conservative:
     unknown time → treated as after-close; calendar gap → (None, reason)."""
     flags = {}
@@ -36949,12 +36952,12 @@ def _sho_first_tradable_session(disclosed_date, disclosed_time):
         return None, {"reason": "calendar_unavailable"}
 
 
-def _sho_earnings_event():
+def _jp_market_engine_earnings_event():
     """Latest ORIGINAL supported disclosure for the tracked universe as a
     PIT earnings event (corrections never overwrite the original's state)."""
-    rows = _SHO_STATEMENTS_CACHE["rows"]
+    rows = _JP_MARKET_ENGINE_STATEMENTS_CACHE["rows"]
     if not rows:
-        return None, _SHO_STATEMENTS_CACHE["source"]
+        return None, _JP_MARKET_ENGINE_STATEMENTS_CACHE["source"]
     candidates = {}
     unrecognized = 0
     for row in rows:
@@ -36995,7 +36998,7 @@ def _sho_earnings_event():
                       else "no_supported_disclosures")
     originals = sorted(candidates.values(), key=lambda c: c["stamp"])
     chosen = originals[-1]
-    first_tradable, flags = _sho_first_tradable_session(
+    first_tradable, flags = _jp_market_engine_first_tradable_session(
         chosen["disclosedDate"], chosen["disclosedTime"])
     if first_tradable is None:
         return None, f"first_session_{flags.get('reason', 'unknown')}"
@@ -37046,7 +37049,7 @@ def _sho_earnings_event():
     return event, "jquants_fins_statements"
 
 
-def _sho_earnings_bars(symbol):
+def _jp_market_engine_earnings_bars(symbol):
     """Complete OHLCV rows for the event instrument with per-bar PIT stamps
     (J-Quants daily publication ≈ evening; conservative 19:00 JST)."""
     rows = _chart_history_cached(str(symbol)[:4], "JP") or []
@@ -37069,29 +37072,29 @@ def _sho_earnings_bars(symbol):
     return out
 
 
-def _sho_pit_inputs(*, warm=False):
-    """Market-level SHO CORE inputs (D01-D07 + reversal axes).
+def _jp_market_engine_pit_inputs(*, warm=False):
+    """Market-level JP_MARKET_ENGINE CORE inputs (D01-D07 + reversal axes).
 
     Cached-only on the public path; warm=True (collect cron) refreshes the
     underlying caches. sourceStatus names each feed's live state so a cold or
     key-less feed is visible instead of silently absent."""
     now = time.time()
-    memo = _SHO_PIT_INPUT_MEMO
+    memo = _JP_MARKET_ENGINE_PIT_INPUT_MEMO
     if not warm and memo["data"] is not None and now - memo["ts"] < 120:
         return memo["data"]
-    vix_rows, vix_source = _sho_vix_rows(fetch=warm)
+    vix_rows, vix_source = _jp_market_engine_vix_rows(fetch=warm)
     nikkei_rows = _yahoo_index_ohlcv(
         "^N225", "NIKKEI_225_INDEX", fetch=warm, available_hour_utc=7)
     try:
         credit_rows = _jpx_credit_rows_effective()
     except Exception:
         credit_rows = []
-    margin_rows = _sho_margin_1570_rows(fetch=warm)
-    rs_proxy = _sho_relative_strength_proxy()
-    flow_rows = _sho_foreign_flow_rows()
-    _sho_statements_rows(warm=warm)
-    earnings_event, earnings_source = _sho_earnings_event()
-    earnings_bars = (_sho_earnings_bars(earnings_event["instrumentId"])
+    margin_rows = _jp_market_engine_margin_1570_rows(fetch=warm)
+    rs_proxy = _jp_market_engine_relative_strength_proxy()
+    flow_rows = _jp_market_engine_foreign_flow_rows()
+    _jp_market_engine_statements_rows(warm=warm)
+    earnings_event, earnings_source = _jp_market_engine_earnings_event()
+    earnings_bars = (_jp_market_engine_earnings_bars(earnings_event["instrumentId"])
                      if earnings_event else [])
     data = {
         "creditRows": credit_rows, "margin1570Rows": margin_rows,
@@ -37112,22 +37115,22 @@ def _sho_pit_inputs(*, warm=False):
     return data
 
 
-def _sho_market_view():
-    """Document-level SHO MARKET VIEW projection (external review item A).
+def _jp_market_engine_market_view():
+    """Document-level JP_MARKET_ENGINE MARKET VIEW projection (external review item A).
 
-    The reviewer's central principle: MARKET VIEW belongs to SHO, ACTION
+    The reviewer's central principle: MARKET VIEW belongs to JP_MARKET_ENGINE, ACTION
     belongs to SDA. This read-only consumer projection (D01-D07 family states
     + the two reversal axes) carries zero action authority by construction
     (project_today_sda_safe) and rides the decision-evidence document for the
     Today display. 120s memo keeps the public GET cheap."""
     now = time.time()
-    memo = _SHO_MARKET_VIEW_MEMO
+    memo = _JP_MARKET_ENGINE_MARKET_VIEW_MEMO
     if memo["view"] is not None and now - memo["ts"] < 120:
         return memo["view"]
     cutoff = _ai_now_iso()
     try:
-        inputs = _sho_pit_inputs()
-        evidence = argus_sho.evaluate_d01_d07(
+        inputs = _jp_market_engine_pit_inputs()
+        evidence = jp_market_engine.evaluate_d01_d07(
             cutoff=cutoff, two_market_rows=inputs["creditRows"],
             margin_1570_rows=inputs["margin1570Rows"],
             relative_strength_proxy=inputs["rsProxy"],
@@ -37136,14 +37139,14 @@ def _sho_market_view():
             earnings_event=inputs.get("earningsEvent"),
             earnings_bars=inputs.get("earningsBars") or (),
             comparison_index_bars=inputs.get("nikkeiRows") or ())
-        reversal = argus_sho.build_reversal_engine(
+        reversal = jp_market_engine.build_reversal_engine(
             cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",
             downside_background="MIXED",
             nikkei_rows=inputs["nikkeiRows"], vix_rows=inputs["vixRows"])
-        projection = argus_sho.project_today_sda_safe(
+        projection = jp_market_engine.project_today_sda_safe(
             cutoff=cutoff, evidence=evidence, reversal=reversal)
         view = {
-            "schemaVersion": "argus-sho-market-view-v1",
+            "schemaVersion": "argus-jp-market-engine-market-view-v1",
             "informationCutoff": cutoff,
             "projection": projection,
             "sourceStatus": dict(inputs["sourceStatus"]),
@@ -37152,7 +37155,7 @@ def _sho_market_view():
         }
     except Exception as exc:
         view = {
-            "schemaVersion": "argus-sho-market-view-v1",
+            "schemaVersion": "argus-jp-market-engine-market-view-v1",
             "informationCutoff": cutoff, "projection": None,
             "sourceStatus": {
                 "error": f"market_view_failed:{type(exc).__name__}"},
@@ -37162,8 +37165,8 @@ def _sho_market_view():
     return view
 
 
-def _decision_evidence_sho_artifact(symbol, cutoff):
-    """Per-subject SHO reversal artifact from real PIT inputs (v13.5.36).
+def _decision_evidence_jp_market_engine_artifact(symbol, cutoff):
+    """Per-subject JP_MARKET_ENGINE reversal artifact from real PIT inputs (v13.5.36).
 
     Both reversal axes now evaluate production feeds (^N225/^VIX complete
     OHLCV); cold feeds leave factors MISSING and the axis DATA_GATED — the
@@ -37173,17 +37176,17 @@ def _decision_evidence_sho_artifact(symbol, cutoff):
     until the downside layer is wired as a PIT input.
     """
     try:
-        inputs = _sho_pit_inputs()
+        inputs = _jp_market_engine_pit_inputs()
     except Exception:
         inputs = None
     try:
-        return argus_sho.build_reversal_engine(
+        return jp_market_engine.build_reversal_engine(
             cutoff=cutoff, analysis_instrument=symbol,
             downside_background="MIXED",
             nikkei_rows=(inputs or {}).get("nikkeiRows") or (),
             vix_rows=(inputs or {}).get("vixRows") or ()), None
     except (TypeError, ValueError) as exc:
-        return None, f"sho_artifact_failed:{type(exc).__name__}"
+        return None, f"jp_market_engine_artifact_failed:{type(exc).__name__}"
 
 
 def _build_decision_evidence_subject(symbol, market, cutoff, build_identity):
@@ -37201,25 +37204,25 @@ def _build_decision_evidence_subject(symbol, market, cutoff, build_identity):
                 symbol, market, cutoff, market_artifact, build_identity)
         if prediction_reason:
             reasons["predictionLedger"] = prediction_reason
-    sho_artifact, sho_reason = _decision_evidence_sho_artifact(symbol, cutoff)
-    if sho_reason:
-        reasons["sho"] = sho_reason
+    jp_market_engine_artifact, jp_market_engine_reason = _decision_evidence_jp_market_engine_artifact(symbol, cutoff)
+    if jp_market_engine_reason:
+        reasons["jp_market_engine"] = jp_market_engine_reason
     references = argus_single_decision.canonical_artifact_references(
         subject=subject, cutoff=cutoff,
         market_truth_artifact=market_artifact,
         prediction_ledger_artifact=prediction_artifact,
-        sho_artifact=sho_artifact)
+        jp_market_engine_artifact=jp_market_engine_artifact)
     failures = dict(references.get("verificationFailures") or {})
     failures.update(reasons)
     statuses = {key: references[key]["status"]
-                for key in ("marketTruth", "predictionLedger", "sho")}
+                for key in ("marketTruth", "predictionLedger", "jp_market_engine")}
     all_available = all(value == "AVAILABLE" for value in statuses.values())
     if all_available:
         quality = {"status": "COMPLETE", "freshness": "FRESH",
                    "missingReasonCodes": [], "conflictReasonCodes": []}
     else:
         prefixes = {"marketTruth": "market_truth",
-                    "predictionLedger": "prediction_ledger", "sho": "sho"}
+                    "predictionLedger": "prediction_ledger", "jp_market_engine": "jp_market_engine"}
         codes = sorted({f"{prefixes[key]}_{value.lower()}"
                         for key, value in statuses.items()
                         if value != "AVAILABLE"})
@@ -37239,8 +37242,8 @@ def _build_decision_evidence_subject(symbol, market, cutoff, build_identity):
         "informationCutoffAt": cutoff,
         "marketTruth": references["marketTruth"],
         "predictionLedger": references["predictionLedger"],
-        "sho": references["sho"],
-        "shoBuyEligible": bool(references.get("shoBuyEligible")),
+        "jp_market_engine": references["jp_market_engine"],
+        "jpMarketEngineBuyEligible": bool(references.get("jpMarketEngineBuyEligible")),
         "quality": quality,
         "verificationFailures": failures,
     }
@@ -37303,15 +37306,15 @@ def _decision_evidence_document(symbols):
                     argus_single_decision.MISSING_MARKET_TRUTH_REFERENCE),
                 "predictionLedger": dict(
                     argus_single_decision.MISSING_PREDICTION_LEDGER_REFERENCE),
-                "sho": {**dict(
-                    argus_single_decision.MISSING_SHO_REFERENCE),
+                "jp_market_engine": {**dict(
+                    argus_single_decision.MISSING_JP_MARKET_ENGINE_REFERENCE),
                     "primitiveFactorIds": [], "targets": []},
-                "shoBuyEligible": False,
+                "jpMarketEngineBuyEligible": False,
                 "quality": {"status": "MISSING", "freshness": "UNKNOWN",
                             "missingReasonCodes": [
                                 "market_truth_missing",
                                 "prediction_ledger_missing",
-                                "sho_missing"],
+                                "jp_market_engine_missing"],
                             "conflictReasonCodes": []},
                 "verificationFailures": {
                     "build": "build_identity_unavailable"},
@@ -37330,15 +37333,15 @@ def _decision_evidence_document(symbols):
                     "predictionLedger": dict(
                         argus_single_decision
                         .MISSING_PREDICTION_LEDGER_REFERENCE),
-                    "sho": {**dict(
-                        argus_single_decision.MISSING_SHO_REFERENCE),
+                    "jp_market_engine": {**dict(
+                        argus_single_decision.MISSING_JP_MARKET_ENGINE_REFERENCE),
                         "primitiveFactorIds": [], "targets": []},
-                    "shoBuyEligible": False,
+                    "jpMarketEngineBuyEligible": False,
                     "quality": {"status": "MISSING", "freshness": "UNKNOWN",
                                 "missingReasonCodes": [
                                     "market_truth_missing",
                                     "prediction_ledger_missing",
-                                    "sho_missing"],
+                                    "jp_market_engine_missing"],
                                 "conflictReasonCodes": []},
                     "verificationFailures": {
                         "build": f"evidence_build_failed:{type(exc).__name__}"},
@@ -37353,10 +37356,10 @@ def _decision_evidence_document(symbols):
         "authority": "CANONICAL_ARTIFACT_REFERENCES",
         "sdaAuthority": False,
         "actionAuthority": False,
-        # v13.5.36 (review item A): document-level SHO MARKET VIEW — display
+        # v13.5.36 (review item A): document-level JP_MARKET_ENGINE MARKET VIEW — display
         # projection only, never an SDA input; the per-subject references
         # above remain the sole decision evidence.
-        "marketView": _sho_market_view(),
+        "marketView": _jp_market_engine_market_view(),
         # v13.5.38: Tachibana LIVE evidence (argus_tachibana_live) — provenance
         # TACHIBANA, SHADOW_NON_AUTHORITATIVE, bounded and secret-free.  A
         # disabled or failed sensor yields a truthful status, never an error,
@@ -37370,7 +37373,7 @@ def _decision_evidence_document(symbols):
 def api_argus_decision_evidence():
     """Canonical artifact references for the device-side SDA (read-only GET).
 
-    Serves per-subject marketTruth / predictionLedger / sho reference dicts
+    Serves per-subject marketTruth / predictionLedger / jp_market_engine reference dicts
     verified by argus_single_decision.canonical_artifact_references. Values are
     derived from already-cached quote/clock state only — this route performs no
     provider fetch, reads no owner data, and publishes no action.
@@ -41654,7 +41657,7 @@ def _jpx_credit_rows_effective():
 
     The committed CSV ends 2026-07-10; subsequent weekly imports land in the
     Market Ledger via /admin/market-ledger/import, so newer periods flow into
-    the SHO conditioning without a code change. Never raises."""
+    the JP_MARKET_ENGINE conditioning without a code change. Never raises."""
     base = list(_jpx_credit_rows())
     last_period = max((str(row.get("periodEnd") or "")[:10] for row in base),
                       default="")
@@ -41679,7 +41682,7 @@ def _jpx_credit_rows_effective():
 
 def _fred_vix_history_dated(n=2600):
     """Dated VIX closes (ascending [{date, value, availableFrom}]) for the
-    ten-year SHO conditioning corpus. availableFrom is the day AFTER the
+    ten-year JP_MARKET_ENGINE conditioning corpus. availableFrom is the day AFTER the
     close date (a VIX close is published after that US session), so generic
     PIT filters stay conservative; [] on no key / failure."""
     now = time.time()
@@ -44212,7 +44215,7 @@ _PRO_HANDOFF_TTL   = 180  # 3 min
 
 def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled", reg=None):
     now_jst = datetime.now(TZ_JST)
-    L = []
+    L = [argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA]
     L.append("# A.R.G.U.S. — GPT-5.5 Pro Handoff")
     L.append("You are GPT-5.5 Pro acting as a second-opinion investment decision reviewer for ARGUS.")
     L.append("")

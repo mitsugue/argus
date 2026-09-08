@@ -1322,10 +1322,10 @@ def test_jp_realtime_lamp_is_emitted_in_both_bridge_branches():
 
 
 
-def test_sho_statements_feed_uses_jquants_v2_summary_path():
+def test_jp_market_engine_statements_feed_uses_jquants_v2_summary_path():
     """RECOVERY_ONLY v13.5.48: the V1 /fins/statements path answers 403 since 2026-06-01."""
     import inspect, scanner
-    source = inspect.getsource(scanner._sho_statements_rows)
+    source = inspect.getsource(scanner._jp_market_engine_statements_rows)
     assert '"/fins/summary"' in source and '"/fins/statements"' not in source
 
 
@@ -1335,7 +1335,7 @@ def test_index_chart_route_is_cached_only_and_names_the_index(monkeypatch):
     import datetime as _dt
     import scanner
     client = scanner.app.test_client()
-    scanner._SHO_INDEX_OHLCV_CACHE.pop("^N225", None)
+    scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.pop("^N225", None)
     cold = client.get("/api/argus/index-chart?index=N225").get_json()
     assert cold["status"] == "expected_skip" and cold["stateUpdate"]["reason"] == "index_cache_cold"
     assert client.get("/api/argus/index-chart?index=DAX").status_code == 400
@@ -1351,7 +1351,7 @@ def test_index_chart_route_is_cached_only_and_names_the_index(monkeypatch):
                          "adjusted": False, "sourceRef": "yahoo:chart:^N225"})
             i += 1
         day += _dt.timedelta(days=1)
-    scanner._SHO_INDEX_OHLCV_CACHE["^N225"] = {"data": rows, "expires": 9e12}
+    scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE["^N225"] = {"data": rows, "expires": 9e12}
     calls = []
 
     class _NoNetwork:
@@ -1369,7 +1369,7 @@ def test_index_chart_route_is_cached_only_and_names_the_index(monkeypatch):
     try:
         body = client.get("/api/argus/index-chart?index=N225").get_json()
     finally:
-        scanner._SHO_INDEX_OHLCV_CACHE.pop("^N225", None)
+        scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.pop("^N225", None)
     assert not any("finance.yahoo.com" in url for url in calls)      # index rows are cached-only
     assert body["index"] == "N225" and body["displayNameJa"] == "日経平均株価(指数)"
     assert body["proxyDisclosureJa"] is None and "指数そのもの" in body["indexDisclosureJa"]

@@ -325,12 +325,12 @@ the Tachibana deployment.
 
 ## v13.5.44 — boot warm, real signal conditions, ARGUS-derived valuation, owner rows
 
-- **Root cause of cold signals/charts:** every SHO/asset feed is a process-local
+- **Root cause of cold signals/charts:** every JP_MARKET_ENGINE/asset feed is a process-local
   cache warmed only by cron paths (`institutional-intelligence/collect` from
   market-watch/caos-scan). caos-scan has not run since 2026-08-28 and each
   deploy wipes the caches, so production stayed cold (margin1570/nikkei/
   earnings = cold, owner symbols without market truth → 価格データ未取得).
-- **Boot warm** (`argus_chart_bootstrap`, after the chart pass): `_sho_pit_inputs(warm=True)`
+- **Boot warm** (`argus_chart_bootstrap`, after the chart pass): `_jp_market_engine_pit_inputs(warm=True)`
   at boot and every 4 h; interest-symbol daily history (`_jq_price_history`)
   for 5803 + curated + the JP codes the device already sent to public routes
   (decision-evidence subjects, supply-demand extras, watchlist hints; bounded
@@ -338,7 +338,7 @@ the Tachibana deployment.
 - **Signal conditions:** D03 proxy relative strength > 0; D05 published net
   foreign flow > 0 (INFLOW); D06 VIX MACD(12/26/9) histogram < 0 — each
   labelled with `conditionRule` / `conditionLineage`. D04 uses the
-  ARGUS-derived universe forward-PER (median <= 21x = SHO ladder top) when
+  ARGUS-derived universe forward-PER (median <= 21x = JP_MARKET_ENGINE ladder top) when
   no licensed Nikkei EPS exists; `nikkeiOfficialPer: NOT_CLAIMED`. D07 reports
   **NOT_APPLICABLE** (new signal state 該当なし) when the statements feed is
   warm but holds no supported disclosure in the window.
@@ -354,9 +354,9 @@ the Tachibana deployment.
   and warms from the registry.
 - Each cycle also warms the curated JP watch snapshot (the decision-evidence
   watch row and curated quotes read it; cold after every deploy) and the
-  SIG-03 proxy histories (1321, SPY). With the 4-hourly SHO warm it fetches
+  SIG-03 proxy histories (1321, SPY). With the 4-hourly JP_MARKET_ENGINE warm it fetches
   each interest issuer's latest `/fins/statements` rows (2 pages) so the
-  ARGUS-derived valuation has forecast EPS beyond the 14-day SHO window.
+  ARGUS-derived valuation has forecast EPS beyond the 14-day JP_MARKET_ENGINE window.
 - `japaneseLive.productBoot` exposes a bounded, symbol-free warm summary.
 
 ## v13.5.46 — per-issuer statements retry (SIG-04)
@@ -365,7 +365,7 @@ the Tachibana deployment.
   returns the issuer's full history and the 2-page bound raised
   `jquants_pagination_limit`, swallowed silently. The fetch now allows 8
   pages, runs for up to 6 pending issuers per 10-minute cycle until every
-  interest issuer is covered (refreshed with the 4-hourly SHO warm), and
+  interest issuer is covered (refreshed with the 4-hourly JP_MARKET_ENGINE warm), and
   records the last failure class (`statementsErrorClass`,
   `referenceErrorClass`) in `japaneseLive.productBoot`.
 
@@ -376,7 +376,7 @@ the Tachibana deployment.
   `/fins/summary?code=` (V2; keys `Code`/`DiscDate`/`DocType`/`CurPerEn`/
   `EPS`/`FEPS`), falling back to the V1 path only for legacy hosts, records
   `statementsPath`, and publishes the fetched rows into the host statements
-  cache so the SHO earnings-event selection (D07) sees real disclosures —
+  cache so the JP_MARKET_ENGINE earnings-event selection (D07) sees real disclosures —
   the scanner's own `/fins/statements` warm has been silently empty since
   June (its `no_universe_disclosures` label was false). D07 may report
   NOT_APPLICABLE only after a real V2 read.
@@ -413,7 +413,7 @@ the Tachibana deployment.
 - **Index charts:** the Today market chart gains a selector (1321 ETF 検証済 /
   日経225 / TOPIX / S&P500 / ナスダック). Index charts come from the cached-only
   `/api/argus/index-chart` route over the Yahoo index OHLCV cache the boot
-  warm fills every SHO warm (TOPIX candidates `^TPX` → `998405.T`). The
+  warm fills every JP_MARKET_ENGINE warm (TOPIX candidates `^TPX` → `998405.T`). The
   verified 1321 snapshot remains the decision anchor and the default.
 - **Service worker:** important-events / dashboard-events / news-intelligence /
   market-news / market-shock / index-chart are `NetworkOnly` (they were
@@ -450,12 +450,12 @@ the Tachibana deployment.
   1 code 6 s, 3 codes 19 s).
 - **Cause:** `datetime.strptime` serialises the whole process on
   `_strptime._cache_lock`. CPU-bound parse loops (Tachibana packet loop,
-  SHO per-row dates, news freshness format probing, chart bars) starve every
+  JP_MARKET_ENGINE per-row dates, news freshness format probing, chart bars) starve every
   other parser under the GIL on the single-CPU runtime (lock convoy).
 - **Fix:** `argus_fastdate.strptime` — one compiled regex per format, dict
   cache, no lock, identical `ValueError` contract; directives outside the
   `%Y %m %d %H %M %S %f %z` subset fall back to the stdlib parser. Wired into
-  the Tachibana provider modules, SHO, news freshness, mover cause, chart
+  the Tachibana provider modules, JP_MARKET_ENGINE, news freshness, mover cause, chart
   intelligence, single decision, macro analysis, market shock, dashboard
   summary, evidence bundle, important events, scheduler, verified snapshot,
   risk discipline and research. `scanner.py`'s own call sites follow through

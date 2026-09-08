@@ -94,7 +94,7 @@ export interface TodayProjectionInput {
   eventMarkers?: Array<{ id: string; date: string; labelJa: string; kind: string }>;
   turningPoints?: Array<{ id: string; effectiveFrom: string; status: string; direction: string; facts: string[] }>;
   calibration?: { historyCount: number; calibrationVersion: string; horizons: Record<string, TodayCalibrationInput>;
-    shoConditioning?: { requested?: boolean; currentFeatureKeys?: string[]; coverageDays?: number; sourceIssues?: string[];
+    marketConditioning?: { requested?: boolean; currentFeatureKeys?: string[]; coverageDays?: number; sourceIssues?: string[];
       inputs?: Record<string, { status?: string; periodEnd?: string; availableFrom?: string; date?: string; ageDays?: number | null; maxDays?: number; newestPeriodEnd?: string; newestDate?: string }> | null } | null };
   shortSelling?: TodayShortSellingSummary | null;
   failedRally?: TodayFailedRally | null;
@@ -161,8 +161,8 @@ export interface TodayProjection {
   levelProbabilities: TodayCalibrationInput['levelProbabilities']; reactionDelay: number | null;
   methodLabel: string; timeframeLabel: string; quoteState: string; sourceHistoryCount: number;
   historyStart: string | null; historyEnd: string | null;
-  /** SHO conditioning transparency — which state dimensions conditioned today's analogs. */
-  shoConditioningJa: string | null;
+  /** JP_MARKET_ENGINE conditioning transparency — which state dimensions conditioned today's analogs. */
+  marketConditioningJa: string | null;
   source: string; availableFrom: string | null;
   assetType: string; proxyFor: string | null; licenseStatus: string;
   disclosureJa: string | null;
@@ -493,7 +493,7 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
 // v13.5.65 (stabilization item 5): each conditioning input is named with the
 // period it joined, or the reason it did not — an update interval (next
 // publication), a stale feed, a fetch gap, or a market where it does not exist.
-export function shoInputsJa(
+export function jpMarketEngineInputsJa(
   inputs: Record<string, { status?: string; periodEnd?: string; availableFrom?: string; date?: string; ageDays?: number | null; maxDays?: number; newestPeriodEnd?: string; newestDate?: string }> | null | undefined,
   isUs: boolean,
 ): string | null {
@@ -637,8 +637,8 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
     sourceHistoryCount: input.sourceHistoryCount ?? input.bars.length,
     historyStart: input.historyStart ?? null,
     historyEnd: input.historyEnd ?? input.asOf,
-    shoConditioningJa: (() => {
-      const meta = input.calibration?.shoConditioning;
+    marketConditioningJa: (() => {
+      const meta = input.calibration?.marketConditioning;
       const keys = meta?.currentFeatureKeys ?? [];
       // v13.5.36: a provider MISCONFIGURATION is named, never silently
       // identical to an honest data gap (external review item 4).
@@ -667,7 +667,7 @@ export function buildTodayProjection(input: TodayProjectionInput | null,
       };
       const labels = [...new Set(keys.map((key) => names[key] ?? key))];
       const head = labels.length ? `${marketJa}の市場状態で条件付け: ${labels.join('・')}` : null;
-      const inputsJa = shoInputsJa(meta?.inputs, isUs);
+      const inputsJa = jpMarketEngineInputsJa(meta?.inputs, isUs);
       const withInputs = [head, inputsJa].filter(Boolean).join(' · ');
       if (issues.length) {
         return withInputs ? `${withInputs} · ⚠ ${issues.join('・')}` : `⚠ ${issues.join('・')}`;

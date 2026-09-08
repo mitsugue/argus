@@ -31,11 +31,11 @@ SOURCE_OF_TRUTH = [
 
 
 HEURISTICS = [
-    # Legacy inventory only.  Canonical SHO D01/D02 live in argus_sho and keep
+    # Legacy inventory only.  Canonical JP_MARKET_ENGINE D01/D02 live in jp_market_engine and keep
     # their exact propositions; these rows cannot become decision authority.
-    ("sho_d01_two_market_short_below_800bn", "二市場合計信用売り残が8,000億円未満",
+    ("jp_market_engine_d01_two_market_short_below_800bn", "二市場合計信用売り残が8,000億円未満",
      "insufficient_data", None),
-    ("sho_d02_1570_margin_ratio_ge_1", "1570信用倍率が1倍以上",
+    ("jp_market_engine_d02_1570_margin_ratio_ge_1", "1570信用倍率が1倍以上",
      "insufficient_data", None),
     ("ns_ratio", "NS倍率", "insufficient_data", None),
     ("per_21x", "PER21倍", "argus_heuristic", "VALUATION_CEILING_ROLLOVER"),

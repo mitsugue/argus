@@ -31,7 +31,7 @@ const canonical = (action = 'WAIT', status = 'EVALUATED', level = null) => ({
   guidance: { position: 'NO_ACTION', riskConstraint: 'WAIT_REQUIRED' },
   identities: { authorityPolicyId: 'argus-single-decision-authority-v2',
     marketTruth: { status: 'MISSING' }, predictionLedger: { status: 'MISSING' },
-    sho: { status: 'MISSING' }, risk: { status: 'DATA_GATED' } },
+    jp_market_engine: { status: 'MISSING' }, risk: { status: 'DATA_GATED' } },
   sevenSign: { status: level == null ? 'DATA_GATED' : 'SHADOW', candidateLevel: level,
     productionLevel: null, reasonCodes: [] },
 });
@@ -463,8 +463,8 @@ console.log('argus-engine.test: all checks passed');
     eventAiRunMetaJa('2026-09-07T12:35:10Z', { requestedModel: 'gpt-6-astra', returnedModel: 'gpt-6-astra', estUsd: 0.0438, inputTokens: 1180, outputTokens: 640 })
       === '生成 9/7 21:35 JST · モデル gpt-6-astra（応答一致） · 推定 $0.0438 · 1180+640 tok'
     && eventAiRunMetaJa('2026-07-08T14:57:31Z', null).includes('記録なし'));
-  const noSho = [panel, viewSrc3].every((src) => !/SHO[条状買]/.test(src));
-  check('no personal method name in the owner-visible Today strings', noSho);
+  const noJpMarketEngine = [panel, viewSrc3].every((src) => !/JP_MARKET_ENGINE[条状買]/.test(src));
+  check('no personal method name in the owner-visible Today strings', noJpMarketEngine);
   check('MARKET SIGNALS names the Japanese inputs and the US conditioning when US is selected',
     panel.includes("const usSelected = view.selectedMarket === 'US'") && panel.includes('日本市場の値')
     && panel.includes('米国の条件付けはVIX水準・VIX10日変化・対SPY相対力') && panel.includes("市場状態で条件付け".length ? '' : '')
@@ -484,15 +484,15 @@ console.log('argus-engine.test: all checks passed');
   const wl = fs.readFileSync(path.join(root, 'src/routes/Watchlist.tsx'), 'utf8');
   check('the desk header carries the reconciliation line', wl.includes('data-argus-contract="desk-coverage-v1"') && wl.includes('deskCoverageDetailJa(coverage)'));
   // ── v13.5.65 (stabilization item 5) ──
-  const { shoInputsJa } = require(path.join(root, 'src/domain/argusTodayView.ts'));
+  const { jpMarketEngineInputsJa } = require(path.join(root, 'src/domain/argusTodayView.ts'));
   check('each conditioning input names its joined period or the reason it did not join',
-    shoInputsJa({ credit: { status: 'joined', periodEnd: '2026-08-28', availableFrom: '2026-09-02' }, vix: { status: 'joined', date: '2026-09-05' }, us: { status: 'joined', date: '2026-09-04' } }, false)
+    jpMarketEngineInputsJa({ credit: { status: 'joined', periodEnd: '2026-08-28', availableFrom: '2026-09-02' }, vix: { status: 'joined', date: '2026-09-05' }, us: { status: 'joined', date: '2026-09-04' } }, false)
       === '信用残 8/28週分（9/2公表）・VIX 9/5・対SPY 9/4'
-    && shoInputsJa({ credit: { status: 'stale_beyond_window', periodEnd: '2026-07-10', ageDays: 59, maxDays: 45 } }, false).includes('59日前で結合窓（45日）外')
-    && shoInputsJa({ credit: { status: 'not_yet_available', newestPeriodEnd: '2026-09-04', availableFrom: '2026-09-09' } }, false).includes('9/9公表予定（更新間隔）')
-    && shoInputsJa({ credit: { status: 'no_rows' } }, false).includes('取込失敗または未設定')
-    && shoInputsJa({ credit: { status: 'not_applicable' }, vix: { status: 'joined', date: '2026-09-05' } }, true) === '信用残 米国は対象外・VIX 9/5'
-    && shoInputsJa(null, false) === null);
+    && jpMarketEngineInputsJa({ credit: { status: 'stale_beyond_window', periodEnd: '2026-07-10', ageDays: 59, maxDays: 45 } }, false).includes('59日前で結合窓（45日）外')
+    && jpMarketEngineInputsJa({ credit: { status: 'not_yet_available', newestPeriodEnd: '2026-09-04', availableFrom: '2026-09-09' } }, false).includes('9/9公表予定（更新間隔）')
+    && jpMarketEngineInputsJa({ credit: { status: 'no_rows' } }, false).includes('取込失敗または未設定')
+    && jpMarketEngineInputsJa({ credit: { status: 'not_applicable' }, vix: { status: 'joined', date: '2026-09-05' } }, true) === '信用残 米国は対象外・VIX 9/5'
+    && jpMarketEngineInputsJa(null, false) === null);
   const { deskCoverageJa: coverageJa2 } = require(path.join(root, 'src/domain/deskCoverage.ts'));
   const cov2 = { registered: 3, priced: 3, evidence: 2, evidenceApplicable: 2, displayed: 3, missingPrice: [], missingEvidence: [], notRequested: [], notDisplayed: [], complete: true };
   check('the desk header says when the stored evidence is on screen during the first fetch',

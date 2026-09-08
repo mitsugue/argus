@@ -50,7 +50,7 @@ DEPLOY_BACKEND.md     Backend deploy + env-var guide.
 Round 2A convergence is documented in
 [`docs/ops/round2a-market-truth-prediction-ledger.md`](docs/ops/round2a-market-truth-prediction-ledger.md).
 Its future five-action Single Decision Authority interface is deliberately
-inactive; SHO, production action authority, and new UI are not part of this
+inactive; JP_MARKET_ENGINE, production action authority, and new UI are not part of this
 branch.
 
 ## Verified chart startup (v13.3.0)

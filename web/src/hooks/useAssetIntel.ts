@@ -221,7 +221,7 @@ export function useAssetIntel(opts: {
   const newsIntel = useNewsIntelligence().view;   // v13.5.36 news signal
   const importantEventsUnknown = importantEventsState.authority !== 'fresh';
   const downsideUnknown = downsideState.authority !== 'fresh';
-  // v13.5.13: canonical artifact references (marketTruth/predictionLedger/sho)
+  // v13.5.13: canonical artifact references (marketTruth/predictionLedger/jp_market_engine)
   // from the reviewed backend resolver boundary. Held symbols first — those
   // are the decisions the owner actually needs EVALUATED.
   const decisionEvidence = useDecisionEvidence();
@@ -865,7 +865,7 @@ export function useAssetIntel(opts: {
       if (resolved) {
         input.marketTruth = resolved.marketTruth;
         input.predictionLedger = resolved.predictionLedger;
-        input.sho = resolved.sho;
+        input.jp_market_engine = resolved.jp_market_engine;
         input.quality = resolved.quality;
       }
 

@@ -37,14 +37,13 @@
     }
   ],
   "coverageAsOfDate": "2026-08-16",
-  "coverageDigest": "b82c3107db73cf4436784db85e6138f16fb3bf722c3eec9ef58f0ccf3f748bb1",
   "dataGates": [
     {
       "area": "D01_OUTCOMES_AND_GOLDEN",
       "missing": [
         "Point-in-time direct Nikkei 225 OHLC",
         "Point-in-time direct TOPIX OHLC",
-        "Late-July/August 2026 Golden-case raw direct-index, VIX, and SHO inputs"
+        "Late-July/August 2026 Golden-case raw direct-index, VIX, and JP_MARKET_ENGINE inputs"
       ],
       "status": "DATA_GATED"
     },
@@ -123,7 +122,7 @@
   "researchPlane": {
     "counterfactualStrategies": [
       "BUY_NOW",
-      "BUY_ON_SHO_REVERSAL",
+      "BUY_ON_JP_MARKET_ENGINE_REVERSAL",
       "BUY_ON_VIX_DC",
       "BUY_ON_SAR_FLIP",
       "BUY_ON_MACD_GC",
@@ -172,5 +171,12 @@
     "1/5/10/20-day metrics and preregistered 40-day gate",
     "Counterfactual and Turtle shadow mechanics",
     "Resource bounds and raw-history exclusion"
-  ]
+  ],
+  "namingMigration": {
+    "date": "2026-09-09",
+    "priorCoverageDigest": "b82c3107db73cf4436784db85e6138f16fb3bf722c3eec9ef58f0ccf3f748bb1",
+    "numericalResultsChanged": false,
+    "productionExpectancyValidated": false
+  },
+  "coverageDigest": "ba348f2036b11cab62d308faacec5aad423b46f0aa5e72027796395ba34f266c"
 }

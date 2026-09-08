@@ -205,7 +205,7 @@ def test_investor_types_autorefresh_feeds_ledger_idempotently(monkeypatch):
 
 
 def test_brief_market_view_chip_counts_real_family_enum(monkeypatch):
-    monkeypatch.setattr(scanner, "_sho_market_view", lambda: {
+    monkeypatch.setattr(scanner, "_jp_market_engine_market_view", lambda: {
         "projection": {
             "reversal": {"reversalState": "RECOVERY_TEST",
                          "downsideState": "MIXED"},
