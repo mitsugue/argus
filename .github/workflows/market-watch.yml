@@ -27,7 +27,7 @@ on:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - name: Trigger US market scan
@@ -42,7 +42,5 @@ jobs:
           echo "market-scan: $RESP"
           # Institutional Intelligence — collect allow-listed public feeds (LAYER 2,
           # metadata only, SSRF-hardened, admin-gated). The public GET never fetches.
-          INTEL=$(python3 scripts/workflow_http.py --name intel-collect --method POST --timeout 90 \
-            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
-            --url "$BE/api/argus/institutional-intelligence/collect")
+          INTEL=$(python3 scripts/run_intel_collect.py --base "$BE" --timeout 900)
           echo "intel-collect: $INTEL"

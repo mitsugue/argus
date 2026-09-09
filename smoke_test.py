@@ -641,30 +641,51 @@ def v_dashboard_events():
     return True, f"items={len(d['items'])} hiddenDup={d['dedupe'].get('hiddenDuplicateCount')}"
 
 def v_dashboard_events_nfp():
-    # If NFP's official result is available, the unified card MUST be post (never pre),
-    # show actual first, and carry a non-empty impact comment. If not yet available,
-    # this is a soft pass (nothing to assert about a pre/pending NFP).
-    c, m = _get("/api/argus/macro-event-analysis?eventCode=NFP")
-    nfp_macro = next((it for it in (m.get("items") or []) if it.get("eventCode") == "NFP"), None)
-    actual_avail = bool((nfp_macro or {}).get("actual", {}).get("available")) if nfp_macro else False
-    c, d = _get("/api/argus/dashboard-events?eventCode=NFP")
-    # dashboard-events importance filter isn't code-based, so scan all items for NFP
-    _, dall = _get("/api/argus/dashboard-events?limit=20")
-    nfp = next((it for it in (dall.get("items") or []) if it.get("eventCode") == "NFP"), None)
-    if not actual_avail:
-        return True, f"NFP actual not yet available (soft pass; card state={nfp.get('state') if nfp else 'n/a'})"
-    if not nfp:
-        return False, "NFP actual available but missing from dashboard-events"
-    if nfp["state"] == "pre":
-        return False, "NFP released but state=pre!"
-    if not nfp["display"].get("showActualFirst"):
-        return False, "NFP post but showActualFirst=false"
-    facts = nfp["officialResult"].get("headlineJa") or nfp["display"].get("primaryLineJa")
-    if not facts:
-        return False, "NFP post but no official facts shown"
-    if not (nfp["caos"].get("impactCommentJa") or "").strip():
-        return False, "NFP post but impact comment empty"
-    return True, f"NFP state={nfp['state']} actualFirst=True impact✓"
+    # Match an actual to its own event, inside the current surface's 72h window.
+    # A months-old stored result must not be matched to next month's NFP card.
+    from datetime import datetime, timezone
+
+    def instant(value):
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
+        except (ValueError, TypeError):
+            return None
+
+    code, macro = _get("/api/argus/macro-event-analysis?limit=50")
+    dash_code, dashboard = _get("/api/argus/dashboard-events?limit=20")
+    if code != 200 or dash_code != 200:
+        return False, "NFP source request failed"
+    now = instant(dashboard.get("asOf"))
+    if now is None or not isinstance(macro.get("items"), list) or not isinstance(dashboard.get("items"), list):
+        return False, "NFP source shape or observation time missing"
+    current = {it.get("eventId"): it for it in dashboard["items"] if it.get("eventCode") == "NFP"}
+    checked = archived = 0
+    for record in macro["items"]:
+        if record.get("eventCode") != "NFP" or not (record.get("actual") or {}).get("available"):
+            continue
+        at = instant(record.get("eventTimeUtc") or (record.get("actual") or {}).get("releasedAt"))
+        if at is None:
+            return False, "NFP actual has no dated event or release timestamp"
+        age = (now - at).total_seconds()
+        if age > 72 * 3600:
+            archived += 1
+            continue
+        if age < 0:
+            return False, "NFP actual precedes its release time"
+        nfp = current.get(record.get("eventId"))
+        if not nfp:
+            return False, "recent NFP actual available but same event missing from dashboard-events"
+        if nfp.get("state") not in ("post_result", "post_answer_checked", "not_scoreable"):
+            return False, "NFP released but dashboard state is not post"
+        if not (nfp.get("display") or {}).get("showActualFirst"):
+            return False, "NFP post but showActualFirst=false"
+        facts = (nfp.get("officialResult") or {}).get("headlineJa") or (nfp.get("display") or {}).get("primaryLineJa")
+        if not facts:
+            return False, "NFP post but no official facts shown"
+        if not ((nfp.get("caos") or {}).get("impactCommentJa") or "").strip():
+            return False, "NFP post but impact comment empty"
+        checked += 1
+    return True, f"NFP recent actual cards checked={checked}; archived outside 72h={archived}"
 
 def v_macro_repair_admin_gated():
     import urllib.error

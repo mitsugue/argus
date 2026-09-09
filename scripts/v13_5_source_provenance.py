@@ -25,6 +25,13 @@ CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
+    # Owner-authorized 13.5 stabilization: tracked collection completion and
+    # recent-event smoke coverage; no trade or calibration authority change.
+    "scripts/run_intel_collect.py",
+    "test_run_intel_collect.py",
+    "test_smoke_nfp_lifecycle.py",
+    "docs/V13_5_CODEX_STATUS.md",
+    ".github/workflows/market-watch.yml",
     # v13.5.65 (stabilization item 5): weekly JPX credit import, per-input
     # freshness on the conditioning line, stored-data notes.
     "scripts/jpx_credit_weekly.py",
