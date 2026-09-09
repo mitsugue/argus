@@ -2728,6 +2728,9 @@ def test_reservations_count_against_the_budget_before_the_call_returns(monkeypat
 
 
 def test_cost_ledger_writes_through_and_restores_after_a_restart(monkeypatch, tmp_path):
+    # This test exercises local write/restore. Worker lifetime and coalescing
+    # are exercised below with explicit join before the fixture is restored.
+    monkeypatch.setattr(scanner, "_cost_policy_checkpoint_after_write", lambda committed: None)
     saved = json.loads(json.dumps(scanner._COST_POLICY))
     monkeypatch.setattr(scanner, "_cost_policy_durable_path",
                         lambda: str(tmp_path / "cost_policy_state.json"))
