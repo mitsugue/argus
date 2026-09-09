@@ -861,6 +861,7 @@ def test_journal_reverify_job_records_verified_ack(monkeypatch):
 @pytest.mark.parametrize("execution_mode, expected", [
     ("independent_os_process", True),
     ("independent_spawned_os_process", True),
+    ("independent_exec_os_process", True),
     ("in_process", False),
     (None, False),
 ])
@@ -991,3 +992,135 @@ def test_breadth_child_rejects_changed_parent_before_loading_server(monkeypatch)
     monkeypatch.setattr(worker.os, "getppid", lambda: 100)
     with pytest.raises(RuntimeError, match="breadth_parent_process_changed"):
         worker._bind_parent_lifetime(200)
+
+
+def test_resume_seed_replays_missing_no_trade_and_membership(monkeypatch):
+    import scanner
+
+    dates = ["2026-09-04", "2026-09-07", "2026-09-08"]
+    codes = ["11110", "22220", "33330"]
+    masters = {day: [_master(code, "Standard") for code in codes
+                     if not (day == dates[1] and code == "22220")]
+               for day in dates}
+    bars = {
+        dates[0]: [_bar(code, dates[0], 100) for code in codes],
+        dates[1]: [_bar("11110", dates[1], None),
+                   {**_bar("33330", dates[1], 999), "Vo": 0}],
+        dates[2]: [_bar(code, dates[2], None) for code in codes],
+    }
+    calls = []
+
+    def rows(endpoint, params, **_kwargs):
+        day = params["date"]
+        calls.append((endpoint, day))
+        return (masters if endpoint == "/equities/master" else bars).get(day, [])
+
+    monkeypatch.setattr(scanner, "_jquants_secure_rows", rows)
+    proof = {}
+    previous = scanner._breadth_resume_comparable_closes("2026-09-09", proof)
+    assert previous == {"11110": 100.0, "33330": 100.0}
+    current = jobs.calculate_daily(
+        date="2026-09-09", master_rows=masters[dates[2]],
+        bar_rows=[_bar(code, "2026-09-09", 110) for code in codes],
+        previous_adjusted_closes=previous)
+    assert current["universes"]["tse_all_domestic_common"]["counts"] == {
+        "advancers": 2, "decliners": 0, "unchanged": 0, "unavailable": 1}
+    assert proof["resumeSeedSessionCount"] == 3
+    assert proof["resumeSeedStartDate"] == dates[0]
+    assert proof["resumeSeedDate"] == dates[2]
+    assert all(day < "2026-09-09" for _, day in calls)
+    assert [day for endpoint, day in calls if endpoint == "/equities/master"] == dates
+
+
+def test_resume_seed_is_bounded_to_ten_proven_sessions(monkeypatch):
+    import scanner
+
+    calls = []
+
+    def rows(endpoint, params, **_kwargs):
+        day = params["date"]
+        calls.append((endpoint, day))
+        if endpoint == "/equities/master":
+            return [_master("11110", "Prime")]
+        return [_bar("11110", day, 100)]
+
+    monkeypatch.setattr(scanner, "_jquants_secure_rows", rows)
+    proof = {}
+    assert scanner._breadth_resume_comparable_closes("2026-09-09", proof) == {
+        "11110": 100.0}
+    assert proof["resumeSeedSessionCount"] == 10
+    assert len(calls) == 20
+    assert proof["resumeSeedLeftBoundary"] == "unobserved_prior_close_remains_unknown"
+
+
+def test_resume_seed_rejects_empty_historical_master(monkeypatch):
+    import scanner
+
+    monkeypatch.setattr(scanner, "_jquants_secure_rows", lambda endpoint, params, **kw:
+                        [] if endpoint == "/equities/master" else
+                        [_bar("11110", params["date"], 100)])
+    with pytest.raises(RuntimeError, match="breadth_resume_seed_provider_empty"):
+        scanner._breadth_resume_comparable_closes("2026-09-09", {})
+
+
+@pytest.mark.parametrize("force_mismatch", [False, True])
+def test_one_session_validation_is_separate_from_ten_day_closeout(
+        monkeypatch, force_mismatch):
+    import scanner
+
+    day = "2026-09-09"
+    bars = [_bar("11110", day, 100)]
+    updates, journals = [], []
+    monkeypatch.setattr(scanner, "_MARKET_LEDGER", ledger.empty_state())
+    monkeypatch.setattr(scanner, "_JQUANTS_API_KEY", "test-configured")
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: day + "T14:00:00Z")
+    monkeypatch.setattr(scanner, "_foundation_job", lambda jid: {
+        "parameters": {"from": day, "to": day}})
+    monkeypatch.setattr(scanner, "_foundation_job_update",
+                        lambda jid, **kw: updates.append(kw))
+    monkeypatch.setattr(scanner, "_journal", lambda *a, **kw: journals.append(a))
+    monkeypatch.setattr(scanner, "_jquants_calendar_dates", lambda *a: [day])
+    monkeypatch.setattr(scanner, "_jquants_discover_entitlement_start",
+                        lambda *a: ("2016-09-09", []))
+    monkeypatch.setattr(scanner, "_jquants_discover_production_start",
+                        lambda *a: (day, bars))
+    monkeypatch.setattr(scanner, "_jquants_secure_rows", lambda endpoint, *a, **kw:
+                        [_master("11110", "Prime")] if endpoint == "/equities/master"
+                        else bars)
+    if force_mismatch:
+        original_latest = ledger.latest_by_series
+
+        def mismatched_latest(*args):
+            rows = copy.deepcopy(original_latest(*args))
+            if rows.get("breadth.all.advancers"):
+                rows["breadth.all.advancers"][-1]["value"] = 99
+            return rows
+
+        monkeypatch.setattr(ledger, "latest_by_series", mismatched_latest)
+    scanner._jquants_breadth_worker_process_body("fj-validation")
+    final = updates[-1]
+    assert final["status"] == ("failed" if force_mismatch else "completed")
+    result = final["result"]
+    assert result["sampledRangeSpotCheckPassed"] is (not force_mismatch)
+    assert result["spotCheckSampleCount"] == 1
+    assert result["spotCheckRequiredForFullHistory"] == 10
+    assert result["spotCheckPassed"] is False
+    assert bool(journals) is (not force_mismatch)
+    if force_mismatch:
+        assert final["error_class"] == "breadth_sampled_range_validation_failed"
+
+
+@pytest.mark.parametrize("status, expected", [
+    ("VmRSS: 275472 kB\nVmHWM: 371872 kB\n", 363.16),
+    ("VmRSS: 275472 kB\n", None),
+    ("VmHWM: invalid kB\n", None),
+])
+def test_linux_memory_peak_does_not_reuse_pre_exec_rusage(monkeypatch, status, expected):
+    import io
+    import scanner
+
+    monkeypatch.setattr(scanner.sys, "platform", "linux")
+    monkeypatch.setattr("builtins.open", lambda *a, **kw: io.StringIO(status))
+    monkeypatch.setattr(scanner.resource, "getrusage", lambda *a:
+                        types.SimpleNamespace(ru_maxrss=3147.19 * 1024))
+    assert scanner._process_peak_memory_mb() == expected

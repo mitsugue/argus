@@ -34430,6 +34430,7 @@ def _foundation_closeout_status():
             and breadth_result.get("executionMode") in (
                 "independent_os_process",
                 "independent_spawned_os_process",
+                "independent_exec_os_process",
             )
             and int(breadth_result.get("backendRestartCountDuringJob") or 0) == 0
             and int(breadth_result.get("checkpointPending") or 0) == 0
@@ -38703,6 +38704,50 @@ def _jquants_breadth_finalize_worker(job_id):
                                error_class=error_class[:80])
 
 
+def _breadth_resume_comparable_closes(start_date, proof):
+    """Reconstruct bounded comparable-close continuity using the existing rule.
+
+    Seed sessions never become new ledger observations. The left boundary is
+    explicit: a close absent throughout this window remains unknown.
+    """
+    seed_start = (datetime.strptime(start_date, "%Y-%m-%d")
+                  - timedelta(days=45)).strftime("%Y-%m-%d")
+    seed_end = (datetime.strptime(start_date, "%Y-%m-%d")
+                - timedelta(days=1)).strftime("%Y-%m-%d")
+    # Historical calendar availability is narrower than price entitlement.
+    # Exact dated bars prove sessions, including historical resume windows.
+    seed_bars = {}
+    for seed_date in reversed(argus_foundation_jobs.weekday_candidates(
+            seed_start, seed_end)):
+        bars = _jquants_exact_date_rows(_jquants_secure_rows(
+            "/equities/bars/daily", {"date": seed_date}, proof=proof,
+            max_pages=200), seed_date)
+        if bars:
+            seed_bars[seed_date] = bars
+        if len(seed_bars) == 10:
+            break
+    seed_dates = sorted(seed_bars)
+    if not seed_dates:
+        raise RuntimeError("breadth_resume_seed_provider_empty")
+    previous = {}
+    for seed_date in seed_dates:
+        bars = seed_bars.pop(seed_date)
+        master = _jquants_secure_rows(
+            "/equities/master", {"date": seed_date}, proof=proof, max_pages=100)
+        if not bars or not master:
+            raise RuntimeError("breadth_resume_seed_provider_empty")
+        previous = argus_foundation_jobs.calculate_daily(
+            date=seed_date, master_rows=master, bar_rows=bars,
+            previous_adjusted_closes=previous)["nextAdjustedCloses"]
+    proof.update({"resumeSeedDate": seed_dates[-1],
+                  "resumeSeedStartDate": seed_dates[0],
+                  "resumeSeedSessionCount": len(seed_dates),
+                  "resumeSeedComparableCloseCount": len(previous),
+                  "resumeSeedMethod": "historical_master_comparable_close_replay",
+                  "resumeSeedLeftBoundary": "unobserved_prior_close_remains_unknown"})
+    return previous
+
+
 def _jquants_breadth_worker_process_body(job_id):
     job = _foundation_job(job_id) or {}
     params = job.get("parameters") or {}
@@ -38793,32 +38838,8 @@ def _jquants_breadth_worker_process_body(job_id):
         if not dates:
             raise RuntimeError("jquants_no_trading_dates")
         previous = {}
-        # A resumed slice must compare its first target session with the prior
-        # official close.  Fetch a bounded look-back seed but never persist it
-        # as a new observation or move the requested oldest boundary backward.
         if params.get("resumedFromJobId") or start_date > production_start:
-            seed_start = (datetime.strptime(start_date, "%Y-%m-%d")
-                          - timedelta(days=10)).strftime("%Y-%m-%d")
-            seed_end = (datetime.strptime(start_date, "%Y-%m-%d")
-                        - timedelta(days=1)).strftime("%Y-%m-%d")
-            for seed_date in reversed(argus_foundation_jobs.weekday_candidates(
-                    seed_start, seed_end)):
-                seed_bars = _jquants_secure_rows(
-                    "/equities/bars/daily", {"date": seed_date}, proof=proof,
-                    max_pages=200)
-                seed_bars = _jquants_exact_date_rows(seed_bars, seed_date)
-                if seed_bars:
-                    previous = {}
-                    for seed_row in seed_bars:
-                        try:
-                            seed_close = float(seed_row.get("AdjC"))
-                        except (TypeError, ValueError):
-                            continue
-                        if seed_close > 0:
-                            previous[str(seed_row.get("Code")
-                                         or seed_row.get("code") or "")] = seed_close
-                    proof["resumeSeedDate"] = seed_date
-                    break
+            previous = _breadth_resume_comparable_closes(start_date, proof)
         total = len(dates)
         trading_date_count = 0
         closed_or_no_bars = 0
@@ -39101,6 +39122,10 @@ def _jquants_breadth_worker_process_body(job_id):
             "latestRatios": latest_ratios,
             "universeObservationCounts": universe_observation_counts,
             "spotChecks": spot_checks,
+            "sampledRangeSpotCheckPassed": bool(spot_checks) and all(
+                x["matches"] for x in spot_checks),
+            "spotCheckSampleCount": len(spot_checks),
+            "spotCheckRequiredForFullHistory": 10,
             "spotCheckPassed": len(spot_checks) == 10 and all(
                 x["matches"] for x in spot_checks),
             "turningPointCount": len(points),
@@ -39134,6 +39159,11 @@ def _jquants_breadth_worker_process_body(job_id):
                        "duplicateSafeResume": True,
                        "archiveObservationsExcludedFromWorkerMemory":
                        archive_excluded})
+        if not result["sampledRangeSpotCheckPassed"]:
+            _foundation_job_update(
+                job_id, status="failed", result=result,
+                error_class="breadth_sampled_range_validation_failed")
+            return
         _journal("jquants_breadth_backfill_completed", "market_ledger", job_id,
                  {"rowCount": committed, "oldestDate": oldest,
                   "newestDate": newest, "stateHash": result["stateHash"]},
@@ -39147,7 +39177,18 @@ def _jquants_breadth_worker_process_body(job_id):
 
 
 def _process_peak_memory_mb():
-    """Return a platform-normalized peak RSS without adding a dependency."""
+    """Read this executable's RSS peak; Linux rusage survives execve."""
+    if sys.platform.startswith("linux"):
+        try:
+            with open("/proc/self/status", encoding="utf-8") as handle:
+                for line in handle:
+                    if line.startswith("VmHWM:"):
+                        return round(float(line.split()[1]) / 1024, 2)
+        except (OSError, ValueError, IndexError):
+            pass
+        # Missing measurement is not zero and must not inherit the parent's
+        # pre-exec high-water mark as if it belonged to this worker.
+        return None
     peak = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss or 0)
     return round(peak / (1024 * 1024 if sys.platform == "darwin" else 1024), 2)
 
