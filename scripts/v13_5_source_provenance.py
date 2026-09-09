@@ -42,6 +42,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "test_run_intel_collect.py",
     "test_smoke_nfp_lifecycle.py",
     "docs/V13_5_CODEX_STATUS.md",
+    "docs/V13_6_REQUIREMENTS.md",
     ".github/workflows/market-watch.yml",
     # Owner-required functional naming, explanation policy and data-preserving
     # migration. Formula/action parity is verified separately from name IDs.
