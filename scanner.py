@@ -9488,6 +9488,9 @@ def _operational_diagnostics_snapshot():
     registry = argus_recovery_registry.registry_summary()
     jobs = (_FOUNDATION_JOBS.get("jobs")
             if isinstance(_FOUNDATION_JOBS, dict) else None)
+    with _COST_POLICY_LOCK:
+        cost = argus_cost_policy.public_status(
+            _COST_POLICY, now_iso, _SCHEDULED_AI_DAILY_USD)
     return _recovery_phase_a_bind_null_proof(
         argus_diagnostics_contract.build_operational_diagnostics(
         generated_at=now_iso,
@@ -9575,9 +9578,9 @@ def _operational_diagnostics_snapshot():
                 "ok" if _OSINT_CANARY_LAST.get("data") else "not_run"),
         },
         cost_policy={
-            "mode": _COST_POLICY.get("mode") or "DETERMINISTIC",
-            "daySpentUsd": _AI_COST_STATE.get("daySpentUsd") or 0.0,
-            "monthSpentUsd": _AI_COST_STATE.get("monthSpentUsd") or 0.0,
+            "mode": cost["mode"],
+            "daySpentUsd": cost["todayEstimatedCostUsd"],
+            "monthSpentUsd": cost["monthEstimatedCostUsd"],
         }))
 
 
