@@ -205,8 +205,8 @@ _JAPAN_TRANSMISSION_JA = {
              "バリュエーションを圧迫し、円金利連動でも日本株に波及します。",
     "HORMUZ": "ホルムズ海峡はエネルギー輸送の要衝で、供給不安は原油高・"
               "リスクオフ経由で日本株(輸入コスト・海運・電力)に波及します。",
-    "IRAN": "中東の緊張激化は原油・地政学リスクプレミアム経由で"
-            "リスク許容度を下げ、日本株にも波及し得ます。",
+    "IRAN": "イラン関連の措置・情勢は原油供給や地政学リスクを通じて日本株に"
+            "波及し得ます。影響の方向は措置の内容と市場反応の確認が必要です。",
     "WAR_ESCALATION": "軍事衝突の激化はリスクオフ(VIX上昇・円買い)を通じて"
                       "日本株全体の下押し要因になり得ます。",
     "BOJ": "日銀の政策変更は円金利・為替を直接動かし、銀行・輸出・"
@@ -1132,6 +1132,13 @@ def project_owner_event(event: Mapping[str, Any]) -> Dict[str, Any]:
     immediately instead of inheriting an unrelated concurrent market move.
     """
     projected = dict(event)
+    # Re-project only deterministic fallback text; retain actual AI explanations.
+    if projected.get("eventType") == "IRAN" and not projected.get("facts") \
+            and projected.get("analysisState") in (
+                "AI_ANALYSIS_UNAVAILABLE", "DETERMINISTIC_ONLY") \
+            and projected.get("whyJa") == projected.get("japanImpactJa"):
+        projected["whyJa"] = _JAPAN_TRANSMISSION_JA["IRAN"]
+        projected["japanImpactJa"] = _JAPAN_TRANSMISSION_JA["IRAN"]
     original = str(projected.get("titleOriginal") or projected.get("headlineJa") or "")
     current_headline = str(projected.get("headlineJa") or "")
     # v13.5.63 (GPT review item 5): a digest mail stored as ONE event carried
@@ -1192,13 +1199,20 @@ DIGEST_MAX_ITEMS = 12
 def is_digest_message(message: Mapping[str, Any]) -> bool:
     subject = _lower(str(message.get("subject") or ""))
     body = str(message.get("excerpt") or "")
-    return any(hint in subject for hint in _DIGEST_SUBJECT_HINTS) and \
+    # Some publishers use their first article as the mail subject. The
+    # authenticated body still identifies the digest before the first item.
+    prelude = _lower(body.split(_DIGEST_ITEM_MARKER, 1)[0])[:400]
+    return any(hint in subject or hint in prelude
+               for hint in _DIGEST_SUBJECT_HINTS) and \
         body.count(_DIGEST_ITEM_MARKER) >= 2
 
 
 def _digest_item_headline(text: str) -> str:
     first = re.split(r"[\r\n]+", text.strip(), maxsplit=1)[0]
-    first = re.sub(r"[（(]有料会員限定[）)]", "", first).strip(" 　・")
+    # Mail normalization may collapse line breaks. A subscription marker or
+    # article URL then ends the heading, not the complete article paragraph.
+    first = re.split(r"[（(]有料会員限定[）)]|https?://", first, maxsplit=1)[0]
+    first = first.strip(" 　・")
     return first[:110]
 
 
@@ -1250,6 +1264,8 @@ def split_digest_message(message: Mapping[str, Any]) -> List[Dict[str, Any]]:
             "messageId": f"{base_id}#{index}" if base_id else "",
             "subject": headline,
             "excerpt": item[:2000],
+            "url": (re.search(r"https?://[^\s<>]+", item).group(0)
+                    if re.search(r"https?://[^\s<>]+", item) else None),
             "digestOf": base_id or None,
             "digestIndex": index,
             "digestCount": len(items),

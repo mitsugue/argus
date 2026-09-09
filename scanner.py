@@ -17844,7 +17844,8 @@ def _news_intel_persist():
                 "durableCounters": {
                     key: _NEWS_INTEL["health"].get(key, 0)
                     for key in ("quarantined", "duplicatesSuppressed",
-                                "parseFailures", "aiAnalyses", "alertsEligible")},
+                                "parseFailures", "aiAnalyses", "alertsEligible",
+                                "articleBoundaryRepairVersion")},
             })
         blob = json.dumps(payload, ensure_ascii=False)
         if len(blob.encode("utf-8")) > 512 * 1024:  # hard bound (§10/§25)
@@ -18373,6 +18374,74 @@ def _news_iso_epoch(value):
         return None
 
 
+def _news_repair_article_boundaries():
+    """Re-fetch legacy article-titled digests without removing originals first.
+
+    Only active, unsplit newspaper envelopes select candidates through the
+    existing message-status ledger. Replacements must all be present before
+    retiring the exact parent fingerprint. Failures remain queued on disk.
+    Reclassification is deterministic and never purchases another AI answer.
+    """
+    with _NEWS_INTEL_LOCK:
+        state = _NEWS_INTEL["intakeState"]
+        if _NEWS_INTEL["health"].get("articleBoundaryRepairVersion") != 1:
+            stamps = [_news_iso_epoch(e.get("processedAt"))
+                      for e in _NEWS_INTEL["events"].values()
+                      if e.get("sourceFamily") == "NIKKEI" and not e.get("digestOf")]
+            candidates = [str(mid) for mid, row in
+                          (_NEWS_INTEL.get("messageStatus") or {}).items()
+                          if "#" not in str(mid) and row.get("source") == "NIKKEI"
+                          and (stamp := _news_iso_epoch(row.get("at"))) is not None
+                          and any(s is not None and abs(stamp - s) <= 180 for s in stamps)]
+            state["articleBoundaryRepairIds"] = candidates[:120]
+            _NEWS_INTEL["health"]["articleBoundaryRepairVersion"] = 1
+        pending = list(state.get("articleBoundaryRepairIds") or [])[:6]
+    if not pending or not argus_gmail_intake.is_configured(os.environ):
+        return
+    try:
+        token = argus_gmail_intake.refresh_access_token(os.environ, requests.request)
+    except Exception:
+        return
+    for mid in pending:
+        try:
+            message = argus_gmail_intake.fetch_message(token, mid, requests.request)
+            if message is None:
+                continue
+            parts = argus_news_intelligence.split_digest_message(message)
+            if len(parts) > 1:
+                for part in parts:
+                    _news_process_message(part, backfill=True)
+                fingerprints = {argus_news_intelligence.source_fingerprint(
+                    message_id=p.get("rfcMessageId") or p.get("messageId"),
+                    subject=p.get("subject"), url=p.get("url")) for p in parts}
+                parent = argus_news_intelligence.source_fingerprint(
+                    message_id=message.get("rfcMessageId") or mid,
+                    subject=message.get("subject"), url=message.get("url"))
+                with _NEWS_INTEL_LOCK:
+                    children = [e for e in _NEWS_INTEL["events"].values()
+                                if e.get("digestOf") == mid and
+                                e.get("sourceFingerprint") in fingerprints]
+                    if {e.get("sourceFingerprint") for e in children} != fingerprints:
+                        continue
+                    retired = [eid for eid, e in _NEWS_INTEL["events"].items()
+                               if not e.get("digestOf") and
+                               e.get("sourceFingerprint") == parent]
+                    for eid in retired:
+                        _NEWS_INTEL["events"].pop(eid, None)
+                        if eid in _NEWS_INTEL["order"]:
+                            _NEWS_INTEL["order"].remove(eid)
+                    _news_audit({"stage": "article_boundary_repair", "retired": retired,
+                                 "replacementCount": len(children)})
+            with _NEWS_INTEL_LOCK:
+                queue = _NEWS_INTEL["intakeState"].get("articleBoundaryRepairIds") or []
+                _NEWS_INTEL["intakeState"]["articleBoundaryRepairIds"] = [
+                    value for value in queue if value != mid]
+        except Exception as exc:
+            with _NEWS_INTEL_LOCK:
+                _news_audit({"stage": "article_boundary_repair_pending",
+                             "errorClass": type(exc).__name__})
+
+
 def _news_intake_cycle(*, backfill=False, backfill_days=10):
     with _NEWS_INTAKE_LOCK:
         return _news_intake_cycle_locked(backfill=backfill, backfill_days=backfill_days)
@@ -18436,6 +18505,7 @@ def _news_intake_cycle_locked(*, backfill=False, backfill_days=10):
                     _news_audit({"stage": "parser_failed",
                                  "messageId": part.get("messageId"),
                                  "errorClass": type(e).__name__})
+    _news_repair_article_boundaries()
     with _NEWS_INTEL_LOCK:
         health["pending"] = 0
         health["lastProcessedAt"] = _ai_now_iso()

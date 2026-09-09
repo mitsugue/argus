@@ -3056,3 +3056,75 @@ def test_failed_local_cost_commit_preserves_file_and_uses_journal_fallback(monke
     assert scanner._COST_POLICY_DURABLE["lastError"] == "OSError"
     assert scanner._COST_POLICY_DURABLE["lastPersistAt"] == completed_at
     assert not list(tmp_path.glob(".cost-policy-*"))
+
+
+@_pytest.mark.parametrize("failure", ["fetch", "second_article", None])
+def test_article_boundary_repair_preserves_parent_until_all_children_exist(monkeypatch, tmp_path, failure):
+    import copy
+    message = {"messageId": "mail-a", "rfcMessageId": "rfc-a",
+               "subject": "政府の経済対策", "url": "https://example.com/mail",
+               "excerpt": "日経ニュースメール 昼版 ◆政府の経済対策（有料会員限定） 首相が予算を説明 https://example.com/policy ◆イランの制裁措置（有料会員限定） https://example.com/sanctions"}
+    fingerprint = scanner.argus_news_intelligence.source_fingerprint(
+        message_id=message["rfcMessageId"], subject=message["subject"], url=message["url"])
+    state = copy.deepcopy(scanner._NEWS_INTEL)
+    state.update({"events": {"parent": {"eventId": "parent", "sourceFamily": "NIKKEI",
+                                       "sourceFingerprint": fingerprint, "processedAt": "2026-09-09T03:35:42Z"}},
+                  "order": ["parent"], "intakeState": {}, "audit": [],
+                  "messageStatus": {"mail-a": {"source": "NIKKEI", "at": "2026-09-09T03:35:42Z"}}})
+    state["health"].pop("articleBoundaryRepairVersion", None)
+    monkeypatch.setattr(scanner, "_NEWS_INTEL", state)
+    monkeypatch.setattr(scanner, "_news_intake_file", lambda: str(tmp_path / "news.json"))
+    monkeypatch.setattr(scanner.argus_gmail_intake, "is_configured", lambda env: True)
+    monkeypatch.setattr(scanner.argus_gmail_intake, "refresh_access_token", lambda *a: "fixture-token")
+    monkeypatch.setattr(scanner.argus_gmail_intake, "fetch_message", lambda *a: None if failure == "fetch" else message)
+    processed = []
+    def process(part, backfill=False):
+        assert backfill is True
+        if failure == "second_article" and processed:
+            raise RuntimeError("fixture_interruption")
+        processed.append(part)
+        eid = part["messageId"]
+        state["events"][eid] = {"eventId": eid, "digestOf": part["digestOf"],
+            "sourceFingerprint": scanner.argus_news_intelligence.source_fingerprint(
+                message_id=part["rfcMessageId"], subject=part["subject"], url=part["url"])}
+        state["order"].append(eid)
+    monkeypatch.setattr(scanner, "_news_process_message", process)
+    scanner._news_repair_article_boundaries()
+    if failure:
+        assert "parent" in state["events"]
+        assert state["intakeState"]["articleBoundaryRepairIds"] == ["mail-a"]
+    else:
+        assert "parent" not in state["events"]
+        assert state["intakeState"]["articleBoundaryRepairIds"] == []
+        assert len(processed) == 2
+    scanner._news_intel_persist()
+    saved_events = copy.deepcopy(state["events"])
+    state["events"] = {}
+    state["intakeState"] = {}
+    state["health"]["articleBoundaryRepairVersion"] = 0
+    scanner._news_intel_load()
+    assert state["events"] == saved_events
+    assert state["health"]["articleBoundaryRepairVersion"] == 1
+    assert state["intakeState"]["articleBoundaryRepairIds"] == (["mail-a"] if failure else [])
+    if failure:
+        monkeypatch.setattr(scanner.argus_gmail_intake, "fetch_message", lambda *a: message)
+        failure = None
+        scanner._news_repair_article_boundaries()
+        assert "parent" not in state["events"]
+        assert state["intakeState"]["articleBoundaryRepairIds"] == []
+
+
+def test_article_boundary_refetch_is_bounded_and_does_not_discard_failed_messages(monkeypatch):
+    import copy
+    state = copy.deepcopy(scanner._NEWS_INTEL)
+    state["health"]["articleBoundaryRepairVersion"] = 1
+    queue = [f"mail-{n}" for n in range(9)]
+    state["intakeState"] = {"articleBoundaryRepairIds": list(queue)}
+    monkeypatch.setattr(scanner, "_NEWS_INTEL", state)
+    monkeypatch.setattr(scanner.argus_gmail_intake, "is_configured", lambda env: True)
+    monkeypatch.setattr(scanner.argus_gmail_intake, "refresh_access_token", lambda *a: "fixture-token")
+    fetched = []
+    monkeypatch.setattr(scanner.argus_gmail_intake, "fetch_message", lambda token, mid, http: fetched.append(mid))
+    scanner._news_repair_article_boundaries()
+    assert fetched == queue[:6]
+    assert state["intakeState"]["articleBoundaryRepairIds"] == queue

@@ -82,3 +82,34 @@ def test_a_split_article_records_its_digest_mail():
         processed_iso="2026-09-07T10:00:00Z")
     assert event["digestOf"] == "m-1"
     assert "ホルムズ" not in event["whyJa"]
+
+
+def test_article_titled_digest_uses_body_prelude_and_own_link():
+    message = {**DIGEST, "subject": "政府の経済対策を検証",
+               "url": "https://example.com/mail",
+               "excerpt": "日経ニュースメール 昼版 ◆政府の経済対策を検証（有料会員限定） 首相が補正予算を説明。 https://example.com/policy ◆イランでタンカー攻撃（有料会員限定） https://example.com/oil"}
+    parts = ni.split_digest_message(message)
+    assert len(parts) == 2
+    assert parts[0]["subject"] == "政府の経済対策を検証"
+    assert parts[0]["url"] == "https://example.com/policy"
+    assert parts[1]["url"] == "https://example.com/oil"
+    assert ni.classify_event(parts[0]["subject"], parts[0]["excerpt"])["eventType"] == "JAPAN_POLICY"
+    assert "IRAN" not in ni.classify_event(parts[0]["subject"], parts[0]["excerpt"])["families"]
+    assert ni.split_digest_message(message) == parts
+
+
+def test_unlabelled_bullets_are_not_assumed_to_be_a_digest():
+    message = {**DIGEST, "subject": "政府の経済対策", "excerpt": "政策本文 ◆項目一 ◆項目二"}
+    assert ni.split_digest_message(message) == [message]
+
+
+def test_unconfirmed_iran_fallback_does_not_assert_military_escalation():
+    event = {"eventType": "IRAN", "analysisState": "AI_ANALYSIS_UNAVAILABLE",
+             "whyJa": "old deterministic fallback", "japanImpactJa": "old deterministic fallback",
+             "severity": "HIGH", "impactDirection": {"primaryDirection": "UNCLEAR"}}
+    projected = ni.project_owner_event(event)
+    assert "影響の方向" in projected["whyJa"]
+    assert projected["severity"] == event["severity"]
+    assert projected["impactDirection"] == event["impactDirection"]
+    ai = {**event, "analysisState": "AI_ANALYZED", "whyJa": "verified explanation"}
+    assert ni.project_owner_event(ai)["whyJa"] == "verified explanation"
