@@ -235,6 +235,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     ".github/workflows/news-intake-ops.yml",
     ".github/workflows/prediction-ledger.yml",
     ".github/workflows/release-gate.yml",
+    "argus_breadth_worker.py",
     "argus_causal_event_memory.py",
     "argus_checkpoint_v2.py",
     "argus_gmail_intake.py",
