@@ -60,6 +60,8 @@ CRYPTO_PAIRS = {"BTC": "BTC/USD", "ETH": "ETH/USD", "SOL": "SOL/USD", "XRP": "XR
 DEFAULT_DELAY_SECONDS = 15.0
 DEFAULT_PER_SYMBOL_SECONDS = 45.0
 DEFAULT_PAUSE_SECONDS = 2.0
+CHART_REFRESH_MAX = 3
+CHART_REFRESH_SECONDS = 45.0
 
 _LOCK = threading.Lock()
 _STATE: Dict[str, Any] = {
@@ -466,6 +468,62 @@ def _warm_cycle(host: Any, *, sleeper: Callable[[float], None], now: Callable[[]
     warm["cycles"] += 1
 
 
+
+def _refresh_warm_charts(host: Any, *, clock: Callable[[], float]) -> Dict[str, Any]:
+    """Publish changed cached datasets through the existing parent writer.
+
+    A restored report is not proof that today's collected bars reached it.
+    No provider seed is allowed here. The normal checkpoint lock excludes a
+    concurrent mission; its existing journal/persist path owns each publication.
+    """
+    import argus_market_replay
+    startup = getattr(host, "_STARTUP", None)
+    restored = getattr(host, "_OSINT_PERSIST_STATE", None)
+    if isinstance(startup, dict) and (startup.get("state") != "ready"
+            or not isinstance(restored, dict) or restored.get("restored") is not True):
+        return {"status": "restore_pending", "published": 0}
+    lock = getattr(host, "_DURABLE_CHECKPOINT_LOCK", None)
+    history = getattr(host, "_chart_history_cached", None)
+    if lock is None or history is None:
+        return {"status": "HOST_UNSUPPORTED", "published": 0}
+    if not lock.acquire(blocking=False):
+        return {"status": "busy", "published": 0}
+    result: Dict[str, Any] = {"status": "unchanged", "published": 0,
+                             "checked": 0, "providerFetchAllowed": False}
+    deadline = clock() + CHART_REFRESH_SECONDS
+    try:
+        for index, (symbol, market) in enumerate(host._asset_chart_targets()):
+            if clock() >= deadline or result["published"] >= CHART_REFRESH_MAX:
+                result["bounded"] = True
+                break
+            rows = history(symbol, market)
+            result["checked"] += 1
+            if not rows:
+                continue
+            dataset_hash = argus_market_replay.dataset_hash(rows)
+            records = [argus_asset_chart_cache.current(
+                host._ASSET_CHART_REPORTS, market, symbol, timeframe)
+                for timeframe in ("daily", "weekly")]
+            if all(record and record.get("datasetHash") == dataset_hash
+                   and record.get("methodVersion") == host._ASSET_CHART_METHOD_VERSION
+                   for record in records):
+                continue
+            host._ASSET_CHART_REPORTS["cursor"] = index
+            # Zero remaining seed time makes this an explicitly cache-only tick.
+            tick = host._precompute_asset_chart_tick(deadline_monotonic=clock())
+            if tick.get("generated"):
+                result["published"] += 1
+                result["status"] = "published"
+            elif tick.get("status") == "degraded":
+                result["status"] = "degraded"
+                result["errorClass"] = tick.get("reason")
+        result["completedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    except Exception as exc:
+        result.update(status="degraded", errorClass=type(exc).__name__)
+    finally:
+        lock.release()
+    return result
+
 def _warm_loop(host: Any, *, sleeper: Callable[[float], None], now: Callable[[], float],
                max_cycles: Optional[int], environ: Optional[Dict[str, str]] = None) -> None:
     warm = _STATE["warm"]
@@ -481,6 +539,7 @@ def _warm_loop(host: Any, *, sleeper: Callable[[float], None], now: Callable[[],
         while True:
             force = last_jp_market_engine is None or now() - last_jp_market_engine >= JP_MARKET_ENGINE_WARM_SECONDS
             _warm_cycle(host, sleeper=sleeper, now=now, force_jp_market_engine=force)
+            warm["chartRefresh"] = _refresh_warm_charts(host, clock=now)
             if force:
                 last_jp_market_engine = now()
                 _warm_index_charts(host, warm, sleeper)
@@ -559,6 +618,7 @@ def warm_status_safe() -> Dict[str, Any]:
         "cryptoHistoryWarmed": warm.get("cryptoHistoryWarmed"), "cryptoErrorClass": warm.get("cryptoErrorClass"),
         "referenceErrorClass": warm.get("referenceErrorClass"),
         "valuation": warm.get("valuation"), "errorClass": warm.get("errorClass"),
+        "chartRefresh": warm.get("chartRefresh"),
         "chart": {"status": _STATE["summary"].get("status"),
                   "missingAfter": _STATE["summary"].get("missingAfter")},
     }

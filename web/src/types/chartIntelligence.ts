@@ -115,6 +115,7 @@ export interface ChartIntelligencePayload {
   };
   marketCalendar?: {
     market?: string; marketDate?: string; isTradingDay?: boolean;
+    sessionValidUntil?: string; sessionObservedAt?: string;
     session?: string; holidayName?: string | null; nextTradingDay?: string;
   };
   shortDataAudit?: Array<Record<string, unknown>>;

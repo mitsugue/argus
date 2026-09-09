@@ -424,3 +424,92 @@ def test_index_chart_warm_tries_candidates_and_records_the_working_symbol():
     assert ("^N225", "NIKKEI_225_INDEX", True, ("available_hour_utc",)) in calls
     assert ("^GSPC", "SP500_INDEX", True, ("next_day_available",)) in calls
     assert boot.warm_status_safe()["indexCharts"]["TOPIX"] == "998405.T:40"
+
+
+def _refresh_host(count=4):
+    import argus_market_replay
+    targets = [(str(5803 + i), "JP") for i in range(count)]
+    host = _host(targets, set())
+    host._DURABLE_CHECKPOINT_LOCK = threading.RLock()
+    host._STARTUP = {"state": "ready"}
+    host._OSINT_PERSIST_STATE = {"restored": True}
+    host._ASSET_CHART_METHOD_VERSION = "m1"
+    host._chart_history_cached = lambda symbol, market: [
+        {"date": "2026-09-09", "close": 5493.0}]
+    for symbol, market in targets:
+        host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+            argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS),
+            market=market, symbol=symbol, timeframe="daily", dataset_hash="old",
+            method_version="m1", report=_report(symbol, market),
+            published_at="2026-09-07T21:46:31Z")[0])
+
+    def tick(deadline_monotonic=None):
+        assert host._DURABLE_CHECKPOINT_LOCK._is_owned()
+        symbol, market = targets[host._ASSET_CHART_REPORTS["cursor"]]
+        host.calls.append((symbol, deadline_monotonic))
+        rows = host._chart_history_cached(symbol, market)
+        for timeframe in ("daily", "weekly"):
+            report = _report(symbol, market)
+            report["indicators"]["bars"] = rows
+            store, _ = argus_asset_chart_cache.publish(
+                argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS),
+                market=market, symbol=symbol, timeframe=timeframe,
+                dataset_hash=argus_market_replay.dataset_hash(rows), method_version="m1",
+                report=report, published_at="2026-09-09T12:00:00Z")
+            host._ASSET_CHART_REPORTS.clear()
+            host._ASSET_CHART_REPORTS.update(store)
+        return {"status": "published", "generated": True}
+    host._precompute_asset_chart_tick = tick
+    return host
+
+
+def test_collected_bars_refresh_existing_reports_without_provider_seed_and_are_bounded():
+    host = _refresh_host()
+    before = len(host._ASSET_CHART_REPORTS["records"])
+    first = boot._refresh_warm_charts(host, clock=lambda: 100.0)
+    assert first["published"] == 3 and first["bounded"]
+    assert all(deadline == 100.0 for _, deadline in host.calls)
+    second = boot._refresh_warm_charts(host, clock=lambda: 100.0)
+    assert second["published"] == 1
+    assert boot._refresh_warm_charts(host, clock=lambda: 100.0)["published"] == 0
+    assert len(host.calls) == 4
+    assert len(host._ASSET_CHART_REPORTS["records"]) >= before
+    record = argus_asset_chart_cache.current(host._ASSET_CHART_REPORTS, "JP", "5803", "daily")
+    assert record["payload"]["indicators"]["bars"][-1]["close"] == 5493.0
+
+
+def test_chart_refresh_does_not_publish_before_restore_or_during_mission():
+    host = _refresh_host(1)
+    host._OSINT_PERSIST_STATE["restored"] = False
+    assert boot._refresh_warm_charts(host, clock=lambda: 0.0)["status"] == "restore_pending"
+    host._OSINT_PERSIST_STATE["restored"] = True
+    held, release = threading.Event(), threading.Event()
+    def mission():
+        with host._DURABLE_CHECKPOINT_LOCK:
+            held.set()
+            release.wait(5)
+    thread = threading.Thread(target=mission)
+    thread.start()
+    try:
+        assert held.wait(2)
+        assert boot._refresh_warm_charts(host, clock=lambda: 0.0)["status"] == "busy"
+        assert not host.calls
+    finally:
+        release.set()
+        thread.join(2)
+
+
+def test_chart_refresh_preserves_existing_report_when_collected_data_missing():
+    host = _refresh_host(1)
+    host._chart_history_cached = lambda *args: []
+    before = argus_asset_chart_cache.state_hash(host._ASSET_CHART_REPORTS)
+    assert boot._refresh_warm_charts(host, clock=lambda: 0.0)["published"] == 0
+    assert argus_asset_chart_cache.state_hash(host._ASSET_CHART_REPORTS) == before
+    assert not host.calls
+
+
+def test_chart_refresh_releases_authority_lock_after_failure():
+    host = _refresh_host(1)
+    host._precompute_asset_chart_tick = lambda **kwargs: (_ for _ in ()).throw(ValueError("bad data"))
+    assert boot._refresh_warm_charts(host, clock=lambda: 0.0)["errorClass"] == "ValueError"
+    assert not host._DURABLE_CHECKPOINT_LOCK._is_owned()

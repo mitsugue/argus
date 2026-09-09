@@ -112,6 +112,18 @@ async function main() {
     },
     noteJa: '',
   };
+  const oldReport = { ...payload, periodEnd: '2026-09-07', marketCalendar: {
+    sessionValidUntil: '2026-09-08T00:00:00Z',
+  } };
+  const observation = Date.parse('2026-09-09T12:00:00Z');
+  check('C6b HTTP success cannot label an expired report current',
+    cache.assetChartDataStatus(oldReport, observation) === 'データ 2026-09-07 · 再計算待ち');
+  check('C6c missing calendar keeps data date without claiming freshness',
+    cache.assetChartDataStatus(payload, observation) === 'データ 2026-07-25');
+  check('C6d a valid session retains its actual data date',
+    cache.assetChartDataStatus(oldReport, Date.parse('2026-09-07T23:00:00Z')) === 'データ 2026-09-07');
+  check('C6e stale provider data remains identified after successful retrieval',
+    cache.assetChartDataStatus({ ...oldReport, status: 'stale' }, observation).endsWith('価格更新待ち'));
   const written = await cache.writeAssetChart(identity, payload);
   const restored = await cache.readAssetChart(identity);
   check('C7 offline memory fallback preserves a verified payload',
