@@ -24,6 +24,8 @@ import argus_research  # evidence-first deterministic research dossier (v10.41)
 import argus_event_store  # Lean durable event store: branch snapshot/restore (v10.42)
 import argus_ai_cost  # AI cost ledger + hard budget stops (pure math, v10.50)
 import argus_product_naming
+from scripts import analysis_migration_restore
+from functools import wraps
 import argus_ai_gate  # v12.2.0 AI Integrity Gate(中央実行規律・fail-closed価格・エポック)
 import argus_decision_ledger  # v12.2.0 ADDENDUM: 不変予測台帳/成果解決/適正スコア(純)
 import argus_dual_plane  # v12.2.1 Phase 0: 二面実行(リサーチ面/私的判断面・偽24x365禁止)
@@ -20981,6 +20983,7 @@ _CHECKPOINT_V2_STATUS = {
 _CHECKPOINT_V2_STAGE1_CONTROL = argus_checkpoint_v2_stage1.empty_state(
     str(os.environ.get("RENDER_GIT_COMMIT") or "") or None)
 _OSINT_PERSIST_STATE = {"restored": False}
+_OSINT_RESTORE_LOCK = threading.RLock()
 _DURABLE_RESTORE_HTTP_TIMEOUT = (6, 60)
 _DURABLE_RESTORE_MAX_BYTES = 256 * 1024 * 1024
 _DURABLE_READBACK_MAX_BYTES = argus_remote_recovery.MAX_READBACK_BYTES
@@ -24440,6 +24443,9 @@ def _osint_persist():
 
 
 def _osint_persist_locked():
+    if (_DURABLE_STATE.get("analysisNameMigration") or {}).get("status") in (
+            "RESTORING", "BLOCKED"):
+        return {"verified": False, "errorClass": "analysis_restore_incomplete"}
     attempt_at = _ai_now_iso()
     stage = "source_snapshot_construction"
     _DURABLE_STATE["lastAttemptAt"] = attempt_at
@@ -25072,6 +25078,9 @@ def _restore_mission_wal(after_sequence=0):
         _MISSION_WAL_FILE, after_sequence=int(after_sequence or 0))
     for record in state["records"]:
         if record.get("kind") != "checkpoint_verified":
+            # Retained WAL records are a distinct restore source. Reject an
+            # unreviewed payload without rewriting its authenticated bytes.
+            argus_product_naming.require_allowed(record)
             _apply_mission_wal_record(record)
     if argus_remote_journal.OPS_SEQUENCE_HIGH_WATER_FIELD in \
             _OPS_JOURNAL_META:
@@ -27762,10 +27771,28 @@ def _proven_local_checkpoint_corruption(exc, path):
     return None
 
 
+def _serialized_restore(function):
+    @wraps(function)
+    def restore(*args, **kwargs):
+        with _OSINT_RESTORE_LOCK:
+            return function(*args, **kwargs)
+    return restore
+
+
+@_serialized_restore
 def _osint_restore_once():
     """Restore a sealed local checkpoint or verified Remote Journal snapshot."""
     if _OSINT_PERSIST_STATE.get("restored"):
         return _DURABLE_STATE.get("restoreSource")
+    _analysis_migration_required = bool(
+        os.environ.get("PRODUCT_ANALYSIS_MIGRATION_MAP") or
+        os.environ.get("PRODUCT_NAMING_POLICY") or
+        argus_persistent_storage.production_mode())
+    if _analysis_migration_required:
+        # Background persistence cannot overwrite the source while its
+        # migration is pending, unavailable or rejected during bootstrap.
+        _DURABLE_STATE["analysisNameMigration"] = {
+            "status": "RESTORING", "checkpointVerified": False}
     blob = None
     source = None
     pinned_ledger = None
@@ -28107,7 +28134,13 @@ def _osint_restore_once():
         return None
     _restore_snapshot = _restore_transaction_snapshot()
     _wal_floor_change = None
+    _analysis_migration_receipt = None
     try:
+        # Verification above authenticates the source. Transformation below
+        # retains that source and cannot reuse its seal for changed contents.
+        blob, _analysis_migration_receipt = analysis_migration_restore.prepare_restore(
+            blob, root=_DURABILITY_PATHS["root"],
+            mapping_text=os.environ.get("PRODUCT_ANALYSIS_MIGRATION_MAP"))
         _restore_checkpoint_failure_history(
             blob.get("checkpointFailureHistory"))
         for k, v in (blob.get("termOverlay") or {}).items():
@@ -28516,6 +28549,14 @@ def _osint_restore_once():
         # append is rolled back together with the in-memory transaction.
         _wal_floor_change = _seed_remote_recovery_wal_floor(blob)
         _persist_durability_metadata()
+        if _analysis_migration_receipt is not None:
+            _DURABLE_STATE["analysisNameMigration"] = \
+                analysis_migration_restore.record_restore_applied(
+                    _analysis_migration_receipt, root=_DURABILITY_PATHS["root"],
+                    production=_DURABILITY_PRODUCTION)
+        elif _analysis_migration_required:
+            _DURABLE_STATE["analysisNameMigration"] = {
+                "status": "NOT_NEEDED", "checkpointVerified": False}
         _DURABLE_STATE["lastRestoreAt"] = _ai_now_iso()
         _DURABLE_STATE["restoreSource"] = source
         _OSINT_PERSIST_STATE["restored"] = True
@@ -28529,6 +28570,10 @@ def _osint_restore_once():
                 exc = _RemoteRecoveryRestoreError(
                     "recovery_wal_floor_rollback_failed")
         _restore_transaction_rollback(_restore_snapshot)
+        if _analysis_migration_required:
+            _DURABLE_STATE["analysisNameMigration"] = {
+                "status": "BLOCKED", "errorClass": type(exc).__name__,
+                "checkpointVerified": False}
         _DURABLE_STATE["integrityStatus"] = "corrupt_ignored"
         _DURABLE_STATE["restoreApplyError"] = type(exc).__name__
         if isinstance(exc, _RemoteRecoveryRestoreError):

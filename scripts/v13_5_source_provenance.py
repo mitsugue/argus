@@ -58,6 +58,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "docs/ops/round2a-market-truth-prediction-ledger.md",
     "docs/ops/round2a-single-decision-authority.md",
     "scripts/migrate_analysis_names.py",
+    "scripts/analysis_migration_restore.py",
     "scripts/product_naming_guard.py",
     "scripts/deploy_scope.py",
     "render.yaml",

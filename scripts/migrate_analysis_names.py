@@ -34,16 +34,30 @@ def translate(value, mapping):
     if isinstance(value, str):
         return mapping.get(value, value)
     if isinstance(value, list):
-        return [translate(item, mapping) for item in value]
+        result = [translate(item, mapping) for item in value]
+        return value if all(a is b for a, b in zip(value, result)) else result
     if isinstance(value, dict):
-        result = {}
+        result, changed = {}, False
         for key, child in value.items():
             target = mapping.get(key, key)
             if target in result:
                 raise ValueError("renamed_key_collision")
-            result[target] = translate(child, mapping)
-        return result
+            converted = translate(child, mapping)
+            result[target] = converted
+            changed = changed or target != key or converted is not child
+        return result if changed else value
     return value
+
+
+def _contains_mapping(value, mapping):
+    if isinstance(value, str):
+        return value in mapping
+    if isinstance(value, list):
+        return any(_contains_mapping(item, mapping) for item in value)
+    if isinstance(value, dict):
+        return any(key in mapping or _contains_mapping(child, mapping)
+                   for key, child in value.items())
+    return False
 
 
 def migrate(snapshot, mapping):
@@ -57,7 +71,7 @@ def migrate(snapshot, mapping):
     # Unknown sections are immutable here. A match there needs a separately
     # reviewed migration for its own signature, chronology and storage rules.
     for key, value in snapshot.items():
-        if key not in SECTIONS and translate(value, mapping) != value:
+        if key not in SECTIONS and _contains_mapping(value, mapping):
             raise ValueError("unhandled_section_requires_migration")
     result = dict(snapshot)
     identities, sections = [], []
