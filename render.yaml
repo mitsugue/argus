@@ -24,6 +24,7 @@ services:
         - scanner.py
         - wsgi.py
         - argus_*.py
+        - jp_market_engine.py
         - bridge/**
         - scripts/argus_mission_tick.py
         - scripts/caos_watchtower_worker.py
