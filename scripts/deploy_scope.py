@@ -15,6 +15,8 @@ RENDER_BACKEND_PATHS: Tuple[str, ...] = (
     "wsgi.py",
     "argus_*.py",
     "jp_market_engine.py",
+    "scripts/analysis_migration_restore.py",
+    "scripts/migrate_analysis_names.py",
     "bridge/**",
     "scripts/argus_mission_tick.py",
     "scripts/caos_watchtower_worker.py",
