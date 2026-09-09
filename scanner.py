@@ -210,6 +210,10 @@ _ASSET_CHART_SINGLEFLIGHT = argus_verified_snapshot.SingleFlight()
 # every change so a redeploy restores the day's usage instead of a stale
 # journal snapshot.
 _COST_POLICY_LOCK = threading.RLock()
+_COST_POLICY_FILE_LOCK = threading.Lock()
+_COST_CHECKPOINT_LOCK = threading.Lock()
+_COST_CHECKPOINT_STATE = {"running": False, "pending": False,
+                          "lastError": None, "lastFinishedAt": None}
 _COST_POLICY_DURABLE = {"lastPersistAt": None, "lastRestoreAt": None,
                         "restoredRows": 0, "path": None, "lastError": None,
                         # The write-through targets the PRODUCTION persistent
@@ -242,22 +246,84 @@ def _cost_policy_persist_durable():
     into an existing durability root (never creates one) and only when the
     ledger actually changed — a reservation, a settlement or a record."""
     if not _cost_policy_durable_enabled():
-        return
+        return False
+    temporary = None
     try:
         path = _cost_policy_durable_path()
         if not os.path.isdir(os.path.dirname(path)):
-            return
-        with _COST_POLICY_LOCK:
-            blob = json.dumps(argus_cost_policy.normalize_state(_COST_POLICY),
-                              ensure_ascii=False)
-        with open(path + ".tmp", "w", encoding="utf-8") as handle:
-            handle.write(blob)
-        os.replace(path + ".tmp", path)
-        _COST_POLICY_DURABLE["lastPersistAt"] = _ai_now_iso()
-        _COST_POLICY_DURABLE["path"] = path
-        _COST_POLICY_DURABLE["lastError"] = None
+            raise FileNotFoundError("persistent root unavailable")
+        # Snapshot after taking the writer lock: a delayed older writer must
+        # not replace newer usage. The small ledger has its own lock and fsync;
+        # it does not wait for the full recovery checkpoint's authority lock.
+        with _COST_POLICY_FILE_LOCK:
+            with _COST_POLICY_LOCK:
+                blob = json.dumps(argus_cost_policy.normalize_state(_COST_POLICY),
+                                  ensure_ascii=False)
+            fd, temporary = tempfile.mkstemp(
+                prefix=".cost-policy-", dir=os.path.dirname(path))
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(blob)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+            temporary = None
+            argus_persistent_storage._fsync_directory(os.path.dirname(path))
+            _COST_POLICY_DURABLE["lastPersistAt"] = _ai_now_iso()
+            _COST_POLICY_DURABLE["path"] = path
+            _COST_POLICY_DURABLE["lastError"] = None
+        return True
     except Exception as exc:
         _COST_POLICY_DURABLE["lastError"] = type(exc).__name__
+        return False
+    finally:
+        if temporary:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+
+
+def _cost_checkpoint_worker():
+    """Coalesce full-checkpoint requests after local usage is durable."""
+    while True:
+        with _COST_CHECKPOINT_LOCK:
+            _COST_CHECKPOINT_STATE["pending"] = False
+        try:
+            result = _osint_persist()
+            error = (result.get("errorClass") or "checkpoint_not_verified"
+                     if isinstance(result, dict) and not result.get("verified")
+                     else None)
+        except Exception as exc:
+            error = type(exc).__name__
+        with _COST_CHECKPOINT_LOCK:
+            _COST_CHECKPOINT_STATE["lastError"] = error
+            _COST_CHECKPOINT_STATE["lastFinishedAt"] = _ai_now_iso()
+            if not _COST_CHECKPOINT_STATE["pending"]:
+                _COST_CHECKPOINT_STATE["running"] = False
+                return
+
+
+def _cost_policy_checkpoint_after_write(durable):
+    persist = globals().get("_osint_persist")
+    if not callable(persist):
+        return
+    if not durable:
+        # Preserve the existing synchronous journal fallback when the local
+        # durable write is unavailable. Never claim an uncommitted row saved.
+        persist()
+        return
+    with _COST_CHECKPOINT_LOCK:
+        _COST_CHECKPOINT_STATE["pending"] = True
+        if _COST_CHECKPOINT_STATE["running"]:
+            return
+        _COST_CHECKPOINT_STATE["running"] = True
+    try:
+        threading.Thread(target=_cost_checkpoint_worker,
+                         name="argus-cost-checkpoint", daemon=True).start()
+    except Exception as exc:
+        with _COST_CHECKPOINT_LOCK:
+            _COST_CHECKPOINT_STATE["running"] = False
+            _COST_CHECKPOINT_STATE["lastError"] = type(exc).__name__
 
 
 def _cost_policy_usage_key(row):
@@ -387,17 +453,15 @@ def _cost_policy_settle(reservation_id, *, ok, actual_cost_usd=None):
                 phases[phase] = int(phases.get(phase) or 0) + 1
                 ev["phaseRuns"] = phases
                 _COST_POLICY["events"][event_id] = ev
-    _cost_policy_persist_durable()
+    durable = _cost_policy_persist_durable()
     # Only a real execution is journaled (as _cost_policy_record always did);
     # releasing a reservation changes no spend and must not write a
     # checkpoint — a journal write consumes a recovery nonce.
     if ok:
-        persist = globals().get("_osint_persist")
-        if callable(persist):
-            try:
-                persist()
-            except Exception:
-                pass
+        try:
+            _cost_policy_checkpoint_after_write(durable)
+        except Exception:
+            pass
 
 
 def _deterministic_skip_payload(purpose):
@@ -441,12 +505,10 @@ def _cost_policy_record(provider, purpose, *, event_id="", event_phase="",
             event_id=event_id, event_phase=event_phase)
         _COST_POLICY.clear()
         _COST_POLICY.update(updated)
-    _cost_policy_persist_durable()
+    durable = _cost_policy_persist_durable()
     # Usage counters and the event phase de-duplication guard are durable state.
     # Persist immediately so a restart cannot silently re-authorize the same run.
-    persist = globals().get("_osint_persist")
-    if callable(persist):
-        persist()
+    _cost_policy_checkpoint_after_write(durable)
 
 # ━━━ DST Auto-Detection & Market Time ━━━
 TZ_ET  = pytz.timezone("US/Eastern")
@@ -34965,6 +35027,8 @@ def api_argus_cost_policy_status():
         "lastError": _COST_POLICY_DURABLE.get("lastError"),
         "openReservations": len(pending),
     }
+    with _COST_CHECKPOINT_LOCK:
+        view["ledgerDurability"]["fullCheckpoint"] = dict(_COST_CHECKPOINT_STATE)
     return jsonify(view)
 
 

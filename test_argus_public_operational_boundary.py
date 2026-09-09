@@ -2952,3 +2952,104 @@ def test_first_macro_run_after_restore_keeps_its_new_running_identity(monkeypatc
     result = scanner._generate_macro_event_analysis()
     assert result["generateRun"]["status"] == "done"
     assert result["generateRun"]["startedAt"] == "2026-09-09T00:00:00Z"
+
+
+def test_ai_usage_returns_after_local_commit_while_full_checkpoint_is_blocked(monkeypatch, tmp_path):
+    import threading
+
+    policy = scanner.argus_cost_policy.default_state("SCHEDULED_AI", event_opt_in=True)
+    monkeypatch.setattr(scanner, "_COST_POLICY", policy)
+    monkeypatch.setattr(scanner, "_COST_POLICY_DURABLE", {"enabled": True})
+    monkeypatch.setattr(scanner, "_COST_CHECKPOINT_STATE", {
+        "running": False, "pending": False, "lastError": None, "lastFinishedAt": None})
+    path = tmp_path / "usage.json"
+    monkeypatch.setattr(scanner, "_cost_policy_durable_path", lambda: str(path))
+    entered, release = threading.Event(), threading.Event()
+    checkpoints = []
+
+    def blocked_checkpoint():
+        checkpoints.append(len(scanner._COST_POLICY["usage"]))
+        entered.set()
+        assert release.wait(5), "test checkpoint release was not signalled"
+        return {"verified": True}
+
+    monkeypatch.setattr(scanner, "_osint_persist", blocked_checkpoint)
+    try:
+        scanner._cost_policy_record("gemini", "headline_translation", estimated_cost_usd=0.02)
+        assert entered.wait(2)
+        decision, reservation = scanner._cost_policy_reserve(
+            "openai", "event_analysis", event_id="event-proof", event_phase="pre",
+            estimated_cost_usd=0.08, estimated_tokens=1200)
+        assert decision["allowed"]
+        scanner._cost_policy_settle(reservation, ok=True, actual_cost_usd=0.04)
+        saved = json.loads(path.read_text())
+        assert len(saved["usage"]) == 2
+        assert sum(r["estimatedCostUsd"] for r in saved["usage"]) == pytest.approx(0.06)
+        assert not any(r.get("pending") for r in saved["usage"])
+        assert saved["events"]["event-proof"]["phaseRuns"]["pre"] == 1
+        workers = [t for t in threading.enumerate() if t.name == "argus-cost-checkpoint"]
+        assert len(workers) == 1
+        # Simulate restart before the full checkpoint can finish. The exact
+        # spend and event duplicate guard must come from the committed file.
+        policy.clear()
+        policy.update(scanner.argus_cost_policy.default_state("SCHEDULED_AI", event_opt_in=True))
+        assert scanner._cost_policy_restore_durable() == 2
+        assert policy["events"]["event-proof"]["phaseRuns"]["pre"] == 1
+        assert policy["usage"] == saved["usage"]
+    finally:
+        release.set()
+        for thread in threading.enumerate():
+            if thread.name == "argus-cost-checkpoint":
+                thread.join(5)
+                assert not thread.is_alive()
+    assert checkpoints == [1, 2]
+    assert scanner._COST_CHECKPOINT_STATE["running"] is False
+
+
+def test_concurrent_cost_file_writers_keep_every_execution(monkeypatch, tmp_path):
+    import concurrent.futures
+
+    policy = scanner.argus_cost_policy.default_state("SCHEDULED_AI", event_opt_in=True)
+    monkeypatch.setattr(scanner, "_COST_POLICY", policy)
+    monkeypatch.setattr(scanner, "_COST_POLICY_DURABLE", {"enabled": True})
+    path = tmp_path / "usage.json"
+    monkeypatch.setattr(scanner, "_cost_policy_durable_path", lambda: str(path))
+    monkeypatch.setattr(scanner, "_cost_policy_checkpoint_after_write", lambda committed: None)
+
+    def record(number):
+        scanner._cost_policy_record("openai", "event_analysis",
+                                   event_id=f"parallel-{number}", event_phase="pre",
+                                   estimated_cost_usd=0.01)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
+        list(pool.map(record, range(40)))
+    saved = json.loads(path.read_text())
+    assert len(saved["usage"]) == 40
+    assert {r["eventId"] for r in saved["usage"]} == {f"parallel-{i}" for i in range(40)}
+    assert sum(r["estimatedCostUsd"] for r in saved["usage"]) == pytest.approx(0.4)
+    assert scanner._COST_POLICY_DURABLE["lastError"] is None
+    assert not list(tmp_path.glob(".cost-policy-*"))
+
+
+def test_failed_local_cost_commit_preserves_file_and_uses_journal_fallback(monkeypatch, tmp_path):
+    policy = scanner.argus_cost_policy.default_state("SCHEDULED_AI", event_opt_in=True)
+    monkeypatch.setattr(scanner, "_COST_POLICY", policy)
+    monkeypatch.setattr(scanner, "_COST_POLICY_DURABLE", {"enabled": True})
+    path = tmp_path / "usage.json"
+    monkeypatch.setattr(scanner, "_cost_policy_durable_path", lambda: str(path))
+    assert scanner._cost_policy_persist_durable() is True
+    before = path.read_bytes()
+    completed_at = scanner._COST_POLICY_DURABLE["lastPersistAt"]
+    journal = []
+    monkeypatch.setattr(scanner, "_osint_persist", lambda: journal.append(copy.deepcopy(policy)))
+
+    def fail_replace(*args):
+        raise OSError("simulated disk write failure")
+
+    monkeypatch.setattr(scanner.os, "replace", fail_replace)
+    scanner._cost_policy_record("gemini", "headline_translation", estimated_cost_usd=0.02)
+    assert path.read_bytes() == before
+    assert len(journal) == 1 and len(journal[0]["usage"]) == 1
+    assert scanner._COST_POLICY_DURABLE["lastError"] == "OSError"
+    assert scanner._COST_POLICY_DURABLE["lastPersistAt"] == completed_at
+    assert not list(tmp_path.glob(".cost-policy-*"))
