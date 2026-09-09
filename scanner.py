@@ -39240,18 +39240,23 @@ def _jquants_breadth_worker(job_id):
     process_context = multiprocessing.get_context(start_method)
     ledger_seed = _breadth_worker_seed_state(job_id)
     parent_connection, child_connection = process_context.Pipe(duplex=True)
-    process_target = _jquants_breadth_process_entry
-    if start_method != "fork":
+    if start_method == "fork":
+        process = process_context.Process(
+            target=_jquants_breadth_process_entry,
+            args=(job_id, child_connection, memory_limit, ledger_seed), daemon=True)
+    else:
+        # multiprocessing spawn replays scanner.py as __mp_main__ before its
+        # target runs. Use a dedicated executable so the quote SDK is excluded
+        # before any server import, including in the production start command.
         import argus_breadth_worker
-        process_target = argus_breadth_worker.process_entry
-    process = process_context.Process(
-        target=process_target,
-        args=(job_id, child_connection, memory_limit, ledger_seed), daemon=True)
+        process = argus_breadth_worker.CleanProcess(
+            job_id, parent_connection, child_connection, memory_limit, ledger_seed)
     process.start()
     ledger_seed = None
     gc.collect()
     child_connection.close()
     worker_peak = None
+    startup = {}
     crashed = None
     received_done = False
     try:
@@ -39261,7 +39266,11 @@ def _jquants_breadth_worker(job_id):
             message = parent_connection.recv()
             operation = message.get("op") if isinstance(message, dict) else None
             try:
-                if operation == "job":
+                if operation == "startup":
+                    startup = {"workerEntryPoint": message.get("entryPoint"),
+                               "quoteAdapterPreloaded": message.get("quoteAdapterPreloaded")}
+                    reply = {"ok": True}
+                elif operation == "job":
                     reply = {"ok": True, "job": _foundation_job(message["jobId"])}
                 elif operation == "commit":
                     reply = {"ok": True, "result": list(_breadth_commit_rows(
@@ -39348,10 +39357,12 @@ def _jquants_breadth_worker(job_id):
 
     final = _foundation_job(job_id) or {}
     runtime_metrics = {
-        "executionMode": ("independent_spawned_os_process"
+        "executionMode": ("independent_exec_os_process"
                           if start_method != "fork" else
                           "independent_os_process"),
-        "workerProcessStartMethod": start_method,
+        "workerProcessStartMethod": "exec" if start_method != "fork" else "fork",
+        "requestedProcessStartMethod": start_method,
+        **startup,
         "workerConcurrency": 1,
         "workerMemorySoftLimitMb": memory_limit,
         "workerPeakMemoryMb": worker_peak,
