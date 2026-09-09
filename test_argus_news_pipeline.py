@@ -735,3 +735,73 @@ def test_source_acceptance_survives_event_store_eviction(tmp_path, monkeypatch):
         "observedCount": 0, "quarantined": 1, "parseFailures": 0}
     sa2 = scanner._news_source_acceptance()
     assert sa2["perSource"]["EIA"]["verdict"] == "QUARANTINED"
+
+
+@pytest.mark.parametrize("reason", ["scheduled_daily_budget_exhausted", "state_restore_pending"])
+def test_translation_tick_refusal_preserves_success_and_retry_state(monkeypatch, reason):
+    state = {"lastRunAt": None, "lastSuccessAt": "2026-09-08T01:00:00Z",
+             "lastError": None, "consecutiveFailures": 0, "translatedTotal": 3}
+    monkeypatch.setattr(scanner, "_NEWS_TRANSLATION_WORKER", state)
+    monkeypatch.setattr(scanner, "_cost_policy_authorize",
+                        lambda *a, **k: {"allowed": False, "reason": reason})
+    def forbidden(*a, **k):
+        pytest.fail("refused tick must not consume translation attempts")
+    monkeypatch.setattr(scanner, "_translate_pending_headlines", forbidden)
+    monkeypatch.setattr(scanner, "_news_material_translation_fallback", forbidden)
+    scanner._news_translation_tick()
+    assert state["lastSuccessAt"] == "2026-09-08T01:00:00Z"
+    assert state["translatedTotal"] == 3
+    assert state["lastOutcome"] == "skipped"
+    assert state["lastPolicyDecision"] == reason
+    assert state["lastCompletedAt"] and state["lastRunAt"]
+
+
+@pytest.mark.parametrize("translated,pending,fallback_count,outcome", [
+    (0, 0, 0, "idle"), (0, 2, 0, "no_translation"),
+    (2, 2, 0, "translated"), (0, 0, 1, "translated"),
+])
+def test_translation_tick_success_requires_saved_translation(
+        monkeypatch, translated, pending, fallback_count, outcome):
+    previous = "2026-09-08T01:00:00Z"
+    now = "2026-09-09T13:20:00Z"
+    state = {"lastRunAt": None, "lastSuccessAt": previous,
+             "lastError": None, "consecutiveFailures": 0, "translatedTotal": 3}
+    monkeypatch.setattr(scanner, "_NEWS_TRANSLATION_WORKER", state)
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: now)
+    monkeypatch.setattr(scanner, "_cost_policy_authorize", lambda *a, **k: {"allowed": True})
+    monkeypatch.setattr(scanner, "_translate_pending_headlines",
+                        lambda **k: {"translated": translated, "pending": pending})
+    def fallback(*, diagnostic):
+        diagnostic.update(attempted=fallback_count, translated=fallback_count)
+        return fallback_count
+    monkeypatch.setattr(scanner, "_news_material_translation_fallback", fallback)
+    scanner._news_translation_tick()
+    assert state["lastOutcome"] == outcome
+    assert state["lastSuccessAt"] == (now if translated + fallback_count else previous)
+    assert state["translatedTotal"] == 3 + translated + fallback_count
+    assert state["lastCompletedAt"] == now
+
+
+def test_material_translation_budget_refusal_is_not_terminal_attempt(tmp_path, monkeypatch):
+    _reset_news_store(tmp_path, monkeypatch)
+    title = "Treasury announces a bond auction"
+    h = scanner.argus_news_i18n.text_hash(title)
+    scanner._NEWS_INTEL["events"]["budget-retry"] = _seed_event(
+        "budget-retry", "US_TREASURY", "HIGH", title, "", "2026-09-09T00:00:00Z")
+    monkeypatch.setattr(scanner, "_NEWS_JA_CACHE", {})
+    monkeypatch.setattr(scanner, "_NEWS_JA_FAILED",
+                        {h: scanner.argus_news_i18n.TRANSLATE_MAX_ATTEMPTS})
+    def refused(*a, diagnostic=None, **k):
+        diagnostic.update(outcome="skipped", reason="scheduled_daily_budget_exhausted")
+        return None
+    monkeypatch.setattr(scanner, "_openai_prose", refused)
+    diagnostic = {}
+    assert scanner._news_material_translation_fallback(diagnostic=diagnostic) == 0
+    assert scanner._NEWS_JA_FAILED[h] == scanner.argus_news_i18n.TRANSLATE_MAX_ATTEMPTS
+    assert h not in scanner._NEWS_JA_CACHE
+    assert diagnostic["translated"] == 0
+    assert diagnostic["reason"] == "scheduled_daily_budget_exhausted"
+    monkeypatch.setattr(scanner, "_openai_prose", lambda *a, **k: {"ja": "米財務省が国債入札を発表"})
+    assert scanner._news_material_translation_fallback(diagnostic=diagnostic) == 1
+    assert diagnostic["translated"] == 1
+    assert scanner._NEWS_JA_FAILED[h] == 99
