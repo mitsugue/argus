@@ -179,3 +179,22 @@ def test_tick_time_guard_skips_provider_seed():
     finally:
         scanner._ASSET_CHART_REPORTS.clear()
         scanner._ASSET_CHART_REPORTS.update(saved_store)
+
+
+def test_warm_batch_can_defer_journal_until_outer_authority_lock_is_released():
+    saved_store = asset_cache.normalize_store(scanner._ASSET_CHART_REPORTS)
+    scanner._ASSET_CHART_REPORTS.clear()
+    scanner._ASSET_CHART_REPORTS.update(asset_cache.empty_store())
+    try:
+        with mock.patch.object(scanner, "_chart_history_cached", return_value=chart_rows()), \
+                mock.patch.object(scanner, "_chart_history", side_effect=AssertionError("provider")), \
+                mock.patch.object(scanner, "get_events_snapshot", return_value={"events": []}), \
+                mock.patch.object(scanner, "_jp_daily_short_history", return_value=[]), \
+                mock.patch.object(scanner, "_journal") as journal:
+            tick = scanner._precompute_asset_chart_tick(defer_journal=True)
+        assert tick["generated"] is True
+        journal.assert_not_called()
+        assert asset_cache.current(scanner._ASSET_CHART_REPORTS, "JP", "5803", "daily")
+    finally:
+        scanner._ASSET_CHART_REPORTS.clear()
+        scanner._ASSET_CHART_REPORTS.update(saved_store)

@@ -443,7 +443,14 @@ def _refresh_host(count=4):
             method_version="m1", report=_report(symbol, market),
             published_at="2026-09-07T21:46:31Z")[0])
 
-    def tick(deadline_monotonic=None):
+    host.journal_calls = []
+    def journal(*args):
+        assert not host._DURABLE_CHECKPOINT_LOCK._is_owned()
+        host.journal_calls.append(args)
+    host._journal = journal
+
+    def tick(deadline_monotonic=None, *, defer_journal=False):
+        assert defer_journal is True
         assert host._DURABLE_CHECKPOINT_LOCK._is_owned()
         symbol, market = targets[host._ASSET_CHART_REPORTS["cursor"]]
         host.calls.append((symbol, deadline_monotonic))
@@ -473,6 +480,8 @@ def test_collected_bars_refresh_existing_reports_without_provider_seed_and_are_b
     assert second["published"] == 1
     assert boot._refresh_warm_charts(host, clock=lambda: 100.0)["published"] == 0
     assert len(host.calls) == 4
+    assert len(host.journal_calls) == 2
+    assert [len(call[3]["publications"]) for call in host.journal_calls] == [3, 1]
     assert len(host._ASSET_CHART_REPORTS["records"]) >= before
     record = argus_asset_chart_cache.current(host._ASSET_CHART_REPORTS, "JP", "5803", "daily")
     assert record["payload"]["indicators"]["bars"][-1]["close"] == 5493.0

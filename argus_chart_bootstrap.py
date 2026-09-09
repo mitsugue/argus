@@ -484,13 +484,14 @@ def _refresh_warm_charts(host: Any, *, clock: Callable[[], float]) -> Dict[str, 
         return {"status": "restore_pending", "published": 0}
     lock = getattr(host, "_DURABLE_CHECKPOINT_LOCK", None)
     history = getattr(host, "_chart_history_cached", None)
-    if lock is None or history is None:
+    if lock is None or history is None or not hasattr(host, "_journal"):
         return {"status": "HOST_UNSUPPORTED", "published": 0}
     if not lock.acquire(blocking=False):
         return {"status": "busy", "published": 0}
     result: Dict[str, Any] = {"status": "unchanged", "published": 0,
                              "checked": 0, "providerFetchAllowed": False}
     deadline = clock() + CHART_REFRESH_SECONDS
+    publications = []
     try:
         for index, (symbol, market) in enumerate(host._asset_chart_targets()):
             if clock() >= deadline or result["published"] >= CHART_REFRESH_MAX:
@@ -510,10 +511,13 @@ def _refresh_warm_charts(host: Any, *, clock: Callable[[], float]) -> Dict[str, 
                 continue
             host._ASSET_CHART_REPORTS["cursor"] = index
             # Zero remaining seed time makes this an explicitly cache-only tick.
-            tick = host._precompute_asset_chart_tick(deadline_monotonic=clock())
+            tick = host._precompute_asset_chart_tick(
+                deadline_monotonic=clock(), defer_journal=True)
             if tick.get("generated"):
                 result["published"] += 1
                 result["status"] = "published"
+                publications.append({"instrument": symbol, "market": market,
+                                     "datasetHash": tick.get("datasetHash")})
             elif tick.get("status") == "degraded":
                 result["status"] = "degraded"
                 result["errorClass"] = tick.get("reason")
@@ -522,6 +526,19 @@ def _refresh_warm_charts(host: Any, *, clock: Callable[[], float]) -> Dict[str, 
         result.update(status="degraded", errorClass=type(exc).__name__)
     finally:
         lock.release()
+    if publications:
+        try:
+            # Finalize the existing checkpoint diagnostics only after the outer
+            # authority lock is released; one normal journal covers this batch.
+            host._journal("asset_chart_cache_updated", "asset_chart_cache", "warm", {
+                "stateHash": argus_asset_chart_cache.state_hash(host._ASSET_CHART_REPORTS),
+                "methodVersion": host._ASSET_CHART_METHOD_VERSION,
+                "publications": publications,
+                "timeframes": ["daily", "weekly"],
+            })
+            result["checkpointRequested"] = True
+        except Exception as exc:
+            result.update(status="degraded", errorClass=type(exc).__name__)
     return result
 
 def _warm_loop(host: Any, *, sleeper: Callable[[float], None], now: Callable[[], float],

@@ -35833,13 +35833,15 @@ def _asset_chart_provider_history(symbol, market):
         }
 
 
-def _precompute_asset_chart_tick(deadline_monotonic=None):
+def _precompute_asset_chart_tick(deadline_monotonic=None, *, defer_journal=False):
     """Publish one changed public-watchlist instrument from warm provider data.
 
     Existing admin-collector cache is preferred.  If it is absent and at least
     20 seconds remain, one tightly bounded provider seed is allowed.  Work is
     still limited to one symbol, single-flight, and daily/weekly payloads derive
     from the same daily dataset.
+    Internal warm batches defer the journal until their outer authority lock
+    has been released; normal scheduler calls keep immediate journaling.
     """
     targets = _asset_chart_targets()
     if not targets:
@@ -35952,7 +35954,7 @@ def _precompute_asset_chart_tick(deadline_monotonic=None):
         _ASSET_CHART_SINGLEFLIGHT.run, flight_key, _produce)
     generated = any(
         item["status"] == "published" for item in publications)
-    if generated:
+    if generated and not defer_journal:
         state_hash = _memory_operation_run(
             "internal", "asset_chart.updated_state_hash",
             argus_asset_chart_cache.state_hash, _ASSET_CHART_REPORTS)
