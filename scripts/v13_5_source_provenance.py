@@ -33,6 +33,9 @@ HISTORICAL_REPLACED_BLOBS = {
 }
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
+    # Chart refresh paths already included in the owner-approved PR #319.
+    "test_argus_asset_chart_precompute.py",
+    "web/src/types/chartIntelligence.ts",
     "argus_product_naming.py",
     "test_argus_runtime_naming.py",
     "docs/ops/paired-migration-admission.md",
