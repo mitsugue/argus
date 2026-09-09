@@ -109,7 +109,9 @@ def test_research_rejects_response_without_fallback_and_keeps_usage(monkeypatch)
     monkeypatch.setattr(scanner.argus_ai_gate, "can_execute_external", lambda *a, **k: {"allowed": True})
     monkeypatch.setattr(scanner.argus_ai_gate, "reserve_budget", lambda **k: {"allowed": True})
     monkeypatch.setattr(scanner, "_ai_cost_roll", lambda *a: None)
-    monkeypatch.setattr(scanner, "_ai_record_cost", lambda *a: None)
+    billed, policy_rows = [], []
+    monkeypatch.setattr(scanner, "_ai_record_prose_cost", lambda *a, **k: billed.append((a, k)))
+    monkeypatch.setattr(scanner, "_cost_policy_record", lambda *a, **k: policy_rows.append((a, k)))
     monkeypatch.setattr(scanner, "_AI_INTEGRITY", copy.deepcopy(scanner._AI_INTEGRITY))
     calls = []
     def respond(**kwargs):
@@ -123,6 +125,9 @@ def test_research_rejects_response_without_fallback_and_keeps_usage(monkeypatch)
     assert result["failureReasonRedacted"] == "naming_content_rejected:N001"
     assert result["usage"]["inputTokens"] == 120
     assert result["usage"]["outputTokens"] == 30
+    assert len(billed) == len(policy_rows) == 1
+    assert billed[0][0][1:3] == (120, 30)
+    assert billed[0][0][3] == result["estimatedCost"]
     assert len(calls) == 1
     assert "retired_person" not in json.dumps(result).lower()
     output, result = scanner._openai_research_ex("retired_person")
@@ -195,3 +200,94 @@ def test_rejected_judge_content_cannot_influence_labels_but_retains_billed_token
     assert cost["rows"][0]["inputTokens"] == 120
     assert cost["rows"][0]["outputTokens"] == 30
     assert cost["totalUsd"] > 0
+
+
+@pytest.fixture
+def evaluator(monkeypatch):
+    import scanner
+    monkeypatch.setenv("PRODUCT_NAMING_POLICY", json.dumps(POLICY))
+    monkeypatch.setattr(scanner, "_OPENAI_API_KEY", "synthetic")
+    monkeypatch.setattr(scanner, "_openai_model_for", lambda role: "synthetic-model")
+    monkeypatch.setitem(scanner._AI_PRICING, "synthetic-model", {"in": 2.0, "out": 12.0})
+    monkeypatch.setattr(scanner, "_cost_policy_authorize", lambda *a, **k: {"allowed": True})
+    calls, ledger, costs = [], [], []
+    monkeypatch.setattr(scanner, "_cost_policy_record", lambda *a, **k: ledger.append((a, k)))
+    monkeypatch.setattr(scanner, "_ai_record_prose_cost", lambda *a, **k: costs.append((a, k)))
+    def respond(payload):
+        def create(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(model="synthetic-model", id="synthetic-response",
+                output_text=json.dumps(payload), status="completed",
+                usage=SimpleNamespace(input_tokens=50, output_tokens=10))
+        monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(
+            OpenAI=lambda **kwargs: SimpleNamespace(responses=SimpleNamespace(create=create))))
+    case = {"caseId": "synthetic-case", "question": "observations", "ownerQuestion": "observations",
+            "informationCutoff": "2026-09-08", "allowedEvidenceCutoff": "2026-09-08"}
+    return scanner, case, calls, ledger, costs, respond
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_evaluator_rejects_output_once_and_keeps_paid_usage(evaluator, version):
+    scanner, case, calls, ledger, costs, respond = evaluator
+    respond({"A": {"reason": "ＲＥＴＩＲＥＤ＿ＰＥＲＳＯＮ"}, "B": {"score": 80}})
+    if version == 1:
+        diagnostic = {}
+        axes, status, meta = scanner._formal_blind_evaluate(case, "run", {"gemini": [], "argus": []}, diagnostic)
+        assert diagnostic["status"] == "content_rejected"
+        assert "retired_person" not in json.dumps(diagnostic).lower()
+    else:
+        axes, status, meta, attempts = scanner._v2_evaluate_with_retry(case, "run", {"gemini": [], "argus": []})
+        assert attempts == 1
+    assert axes is None and status == "content_rejected"
+    assert meta["usage"] == {"inputTokens": 50, "outputTokens": 10}
+    assert meta["estimatedCostUsd"] == 0.00022
+    assert len(calls) == len(ledger) == len(costs) == 1
+    assert ledger[0][1]["estimated_cost_usd"] == 0.00022
+    assert costs[0][0][1:3] == (50, 10)
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_evaluator_rejects_source_without_provider_call_or_cost(evaluator, version):
+    scanner, case, calls, ledger, costs, respond = evaluator
+    respond({"A": {"score": 80}, "B": {"score": 75}})
+    claims = {"gemini": [{"title": "retired_person"}], "argus": []}
+    result = (scanner._formal_blind_evaluate(case, "run", claims) if version == 1
+              else scanner._v2_evaluate_with_retry(case, "run", claims))
+    assert result[:3] == (None, "content_rejected", None)
+    assert not calls and not ledger and not costs
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_evaluator_preserves_accepted_scores_and_counts_usage_once(evaluator, version):
+    scanner, case, calls, ledger, costs, respond = evaluator
+    payload = {"A": {"score": 80}, "B": {"score": 75}}
+    respond(payload)
+    result = (scanner._formal_blind_evaluate(case, "run", {"gemini": [], "argus": []}) if version == 1
+              else scanner._v2_evaluate_with_retry(case, "run", {"gemini": [], "argus": []}))
+    assert result[0] == payload and result[1] == "ok"
+    assert len(calls) == len(ledger) == len(costs) == 1
+
+
+def test_scout_rejection_is_not_retried(monkeypatch):
+    import scanner
+    calls = []
+    def rejected():
+        calls.append(True)
+        return None, "rejected"
+    monkeypatch.setattr(scanner.time, "sleep", lambda *a: pytest.fail("unexpected retry"))
+    assert scanner._v2_call_with_retry(rejected) == (None, "rejected", 1)
+    assert len(calls) == 1
+
+
+def test_legacy_crosscheck_rejects_unreviewed_input_before_call(monkeypatch):
+    import scanner
+    monkeypatch.setenv("PRODUCT_NAMING_POLICY", json.dumps(POLICY))
+    monkeypatch.setattr(scanner, "GEMINI_API_KEY", "synthetic")
+    monkeypatch.setattr(scanner, "_cost_policy_authorize", lambda *a, **k: {"allowed": True})
+    calls = []
+    monkeypatch.setattr(scanner, "google_genai", SimpleNamespace(Client=lambda **kw:
+        SimpleNamespace(models=SimpleNamespace(generate_content=lambda **kw: calls.append(kw)))))
+    monkeypatch.setattr(scanner, "add_log", lambda *a: None)
+    result = scanner.gemini_score_stocks([{"symbol": "TEST", "name": "retired_person"}])
+    assert not calls
+    assert result["TEST"]["reason"] == "unavailable"

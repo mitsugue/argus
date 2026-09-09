@@ -373,7 +373,9 @@ class RouteTests(unittest.TestCase):
         scanner._COST_POLICY.update(cost.default_state("RESEARCH_BENCHMARK"))
         try:
             with mock.patch.dict(sys.modules, {"openai": fake_openai}), \
-                    mock.patch.object(scanner, "_ai_record_cost"):
+                    mock.patch.object(scanner, "_ai_record_cost"), \
+                    mock.patch.object(scanner, "_ai_record_prose_cost"), \
+                    mock.patch.object(scanner, "_cost_policy_record"):
                 text, execution = scanner._openai_research_ex(
                     "bounded test", role="standard", benchmark=True)
                 axes, status, _ = scanner._formal_blind_evaluate(

@@ -1696,6 +1696,7 @@ Verify: 1) Is reason accurate NOW? 2) Negative news/SEC issues? 3) Market sentim
 Return ONLY JSON: {{"score": 0-100, "red_flag": true/false, "reason": "1-2 sentences"}}
 Score: 80+=Strong, 60-79=Moderate, 40-59=Weak, <40=Red flag"""
         try:
+            argus_product_naming.require_allowed(prompt)
             response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt,
                 config=genai_types.GenerateContentConfig(
                     tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())], temperature=0.3))
@@ -1933,6 +1934,7 @@ Return ONLY JSON array: [{{"symbol":"TICKER","name":"Company Name","change_pct":
         return
     add_log(f"🤖 Claude analyzing{' (DRY RUN)' if DRY_RUN_MODE else ''}...")
     try:
+        argus_product_naming.require_allowed(prompt)
         res = claude.messages.create(model="claude-opus-4-6", max_tokens=3000, messages=[{"role":"user","content":prompt}])
         top20 = _checked_ai_json(res.content[0].text if res.content else "[]")
         if isinstance(top20, dict): top20 = top20.get("stocks", top20.get("top20", []))
@@ -1980,6 +1982,7 @@ Return ONLY JSON array of TOP 10: [{{"symbol":"TICKER","name":"Name","score":0-1
         return
     add_log(f"🤖 Claude re-scoring{' (DRY RUN)' if DRY_RUN_MODE else ''}...")
     try:
+        argus_product_naming.require_allowed(prompt)
         res = claude.messages.create(model="claude-opus-4-6", max_tokens=2000, messages=[{"role":"user","content":prompt}])
         top10 = _checked_ai_json(res.content[0].text if res.content else "[]")
         if isinstance(top10, dict): top10 = top10.get("stocks", top10.get("top10", []))
@@ -2030,6 +2033,7 @@ Return ONLY JSON array TOP5: [{{"symbol":"TICKER","name":"Name","score":0-100,"c
         return
     add_log(f"🤖 Claude cross-checking{' (DRY RUN)' if DRY_RUN_MODE else ''}...")
     try:
+        argus_product_naming.require_allowed(prompt)
         res = claude.messages.create(model="claude-opus-4-6", max_tokens=2000, messages=[{"role":"user","content":prompt}])
         top5 = _checked_ai_json(res.content[0].text if res.content else "[]")
         if isinstance(top5, dict): top5 = top5.get("stocks", top5.get("top5", []))
@@ -20501,19 +20505,22 @@ def _openai_research_ex(user, role="standard", benchmark=False):
                 kw["max_output_tokens"] = _BENCHMARK_MAX_OUTPUT_TOKENS
             resp = client.responses.create(**kw)
             txt = getattr(resp, "output_text", None)
-            if not txt:
-                last_error_class = "empty_output"
-                last_response_status = str(
-                    getattr(resp, "status", None) or "unknown")[:40]
-                continue
             u = _usage_tokens(resp) or (0, 0)
             usage = {"inputTokens": u[0], "outputTokens": u[1]}
             cost = None
             try:
                 cost = argus_ai_cost.estimate_cost(model, u[0], u[1], _AI_PRICING)
-                _ai_record_cost(_ai_now_iso(), "live", "unavailable", False)
+                purpose = "research_benchmark" if benchmark else "osint_research"
+                _ai_record_prose_cost(getattr(resp, "model", None) or model,
+                                      u[0], u[1], cost, purpose=purpose)
+                _cost_policy_record("openai", purpose, estimated_cost_usd=cost)
             except Exception:
                 pass
+            if not txt:
+                last_error_class = "empty_output"
+                last_response_status = str(
+                    getattr(resp, "status", None) or "unknown")[:40]
+                continue
             if st_ok == "model_only":
                 _AI_INTEGRITY["modelOnlyCount"] += 1
             naming_rejection = None
@@ -33234,6 +33241,23 @@ def _formal_claims(out, case=None):
     return rows
 
 
+def _benchmark_evaluator_usage(response, requested_model):
+    """Retain paid usage before parsing or admitting evaluator content."""
+    usage = _usage_tokens(response) or (0, 0)
+    meta = {"provider": "openai", "apiEndpoint": "responses",
+            "requestedModel": requested_model,
+            "responseModel": getattr(response, "model", None),
+            "responseId": getattr(response, "id", None),
+            "usage": {"inputTokens": usage[0], "outputTokens": usage[1]},
+            "createdAt": _ai_now_iso(), "pricingVersion": _BENCHMARK_PRICING_VERSION}
+    _, estimated_usd = _benchmark_usage_cost_jpy([meta], 1.0)
+    _ai_record_prose_cost(meta["responseModel"] or requested_model, usage[0], usage[1],
+                          estimated_usd, purpose="research_benchmark")
+    _cost_policy_record("openai", "research_benchmark", estimated_cost_usd=estimated_usd)
+    meta["estimatedCostUsd"] = estimated_usd
+    return meta
+
+
 def _formal_blind_evaluate(case, benchmark_id, claims_by_provider,
                            diagnostic_context=None):
     """One OpenAI evaluator call, provider names hidden; no retry/fallback."""
@@ -33253,6 +33277,12 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider,
         f"rubric={json.dumps(argus_research_benchmark.RUBRIC_WEIGHTS, sort_keys=True)} "
         f"answers={json.dumps(answers, ensure_ascii=False, sort_keys=True)} "
         "形式={\"A\":{rubric各キー},\"B\":{rubric各キー}}")
+    try:
+        argus_product_naming.require_allowed(prompt)
+    except argus_product_naming.NamingPolicyError as exc:
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({"status": "content_rejected", "errorClass": str(exc)})
+        return None, "content_rejected", None
     # Dry-run assumes at most 6,000 input tokens. A UTF-8 byte ceiling is a
     # conservative fail-closed guard and prevents an unexpectedly large source
     # payload from escaping the fixed per-call budget.
@@ -33261,6 +33291,7 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider,
             diagnostic_context.update({"status": "input_budget_exceeded",
                                        "errorClass": "input_budget_exceeded"})
         return None, "input_budget_exceeded", None
+    meta = None
     try:
         import openai
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
@@ -33269,7 +33300,8 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider,
             model=evaluator_model, input=prompt, timeout=90, store=False,
             reasoning={"effort": _BENCHMARK_REASONING_EFFORT},
             max_output_tokens=_BENCHMARK_MAX_OUTPUT_TOKENS)
-        parsed = safe_json(getattr(response, "output_text", "") or "")
+        meta = _benchmark_evaluator_usage(response, evaluator_model)
+        parsed = _checked_ai_json(getattr(response, "output_text", "") or "")
         if not isinstance(parsed, dict) or not all(
                 isinstance(parsed.get(k), dict) for k in ("A", "B")):
             if isinstance(diagnostic_context, dict):
@@ -33278,14 +33310,7 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider,
                     "errorClass": "invalid_evaluator_json",
                     "responseStatus": str(
                         getattr(response, "status", None) or "unknown")[:40]})
-            return None, "invalid_evaluator_json", None
-        usage = _usage_tokens(response) or (0, 0)
-        meta = {"provider": "openai", "apiEndpoint": "responses",
-                "requestedModel": evaluator_model,
-                "responseModel": getattr(response, "model", None),
-                "usage": {"inputTokens": usage[0], "outputTokens": usage[1]},
-                "createdAt": _ai_now_iso(),
-                "pricingVersion": _BENCHMARK_PRICING_VERSION}
+            return None, "invalid_evaluator_json", meta
         if isinstance(diagnostic_context, dict):
             diagnostic_context.update({
                 "status": "ok", "errorClass": None,
@@ -33293,6 +33318,11 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider,
                 "responseModel": meta.get("responseModel"),
                 "usage": meta.get("usage")})
         return {"A": parsed["A"], "B": parsed["B"]}, "ok", meta
+    except argus_product_naming.NamingPolicyError as exc:
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({"status": "content_rejected", "errorClass": str(exc),
+                                       "usage": (meta or {}).get("usage")})
+        return None, "content_rejected", meta
     except Exception as exc:
         add_log(f"[formal-benchmark] evaluator failed: {type(exc).__name__}")
         if isinstance(diagnostic_context, dict):
@@ -33381,12 +33411,13 @@ def _formal_benchmark_worker(benchmark_id, dry_run, availability_proof=None,
                 case, benchmark_id, claims,
                 diagnostic_context=referee_diag)
             diagnostic["provider"]["referee"] = referee_diag
+            if evaluator_meta:
+                provider_calls.append(dict(evaluator_meta))
             if eval_status != "ok":
                 failure = eval_status
                 diagnostic.update({"failureStage": "referee",
                                    "failureCaseId": case.get("caseId")})
                 break
-            provider_calls.append(dict(evaluator_meta or {}))
             results.append(argus_research_benchmark.case_result(
                 benchmark_id=benchmark_id, case=case,
                 evaluator_axes_by_label=axes, claims_by_provider=claims))
@@ -33582,8 +33613,13 @@ def _v2_blind_evaluate(case, run_id, claims_by_provider):
         f"rubric={json.dumps(argus_research_benchmark_v2.QUALITY_WEIGHTS, sort_keys=True)} "
         f"answers={json.dumps(answers, ensure_ascii=False, sort_keys=True)} "
         "format={\"A\":{rubric各キー},\"B\":{rubric各キー}}")
+    try:
+        argus_product_naming.require_allowed(prompt)
+    except argus_product_naming.NamingPolicyError:
+        return None, "content_rejected", None
     if len(prompt.encode("utf-8")) > 24_000:
         return None, "input_budget_exceeded", None
+    meta = None
     try:
         import openai
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
@@ -33592,18 +33628,14 @@ def _v2_blind_evaluate(case, run_id, claims_by_provider):
             model=model, input=prompt, timeout=90, store=False,
             reasoning={"effort": _BENCHMARK_REASONING_EFFORT},
             max_output_tokens=_BENCHMARK_MAX_OUTPUT_TOKENS)
-        parsed = safe_json(getattr(response, "output_text", "") or "")
+        meta = _benchmark_evaluator_usage(response, model)
+        parsed = _checked_ai_json(getattr(response, "output_text", "") or "")
         if not isinstance(parsed, dict) or not all(
                 isinstance(parsed.get(label), dict) for label in ("A", "B")):
-            return None, "invalid_evaluator_json", None
-        usage = _usage_tokens(response) or (0, 0)
-        meta = {"provider": "openai", "apiEndpoint": "responses",
-                "requestedModel": model, "responseModel": getattr(response, "model", None),
-                "responseId": getattr(response, "id", None),
-                "usage": {"inputTokens": usage[0], "outputTokens": usage[1]},
-                "pricingVersion": _BENCHMARK_PRICING_VERSION,
-                "createdAt": _ai_now_iso()}
+            return None, "invalid_evaluator_json", meta
         return {"A": parsed["A"], "B": parsed["B"]}, "ok", meta
+    except argus_product_naming.NamingPolicyError:
+        return None, "content_rejected", meta
     except Exception as exc:
         add_log(f"[formal-benchmark-v2] evaluator failed: {type(exc).__name__}")
         return None, "provider_failed", {"errorClass": type(exc).__name__[:80]}
@@ -33617,7 +33649,7 @@ def _v2_evaluate_with_retry(case, run_id, claims_by_provider):
         if last_status == "ok":
             return last_axes, last_status, last_meta, attempt
         if last_status in ("provider_blocked", "invalid_evaluator_json",
-                           "input_budget_exceeded"):
+                           "input_budget_exceeded", "content_rejected"):
             break
         if attempt < 2:
             time.sleep(argus_foundation_jobs.bounded_backoff_seconds(
@@ -33690,7 +33722,7 @@ def _v2_call_with_retry(call):
             return out, status, attempt
         if status in ("disabled", "deterministic_mode", "budget_limited",
                       "unavailable", "invalid_evaluator_json",
-                      "input_budget_exceeded"):
+                      "input_budget_exceeded", "rejected", "content_rejected"):
             break
         if attempt < 2:
             time.sleep(argus_foundation_jobs.bounded_backoff_seconds(
@@ -33812,9 +33844,10 @@ def _research_benchmark_v2_job_worker(job_id):
                           "argus": _formal_claims(argus_out)}
                 axes, eval_status, referee_meta, referee_attempts = \
                     _v2_evaluate_with_retry(case, run_id, claims)
+                if referee_meta:
+                    provider_calls.append(dict(referee_meta))
                 if eval_status != "ok":
                     raise RuntimeError(f"v2_referee_{eval_status}")
-                provider_calls.append(dict(referee_meta or {}))
                 actual_jpy, _ = _benchmark_usage_cost_jpy(
                     provider_calls, dry["usdJpyCeiling"])
                 case_provider_meta = [
