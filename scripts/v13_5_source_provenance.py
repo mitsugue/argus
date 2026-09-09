@@ -25,6 +25,7 @@ CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
+    "docs/ops/paired-migration-admission.md",
     # Owner-authorized 13.5 stabilization: tracked collection completion and
     # recent-event smoke coverage; no trade or calibration authority change.
     "scripts/run_intel_collect.py",

@@ -86,6 +86,12 @@ EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256 = (
     "241098de949e0ddc19c0ed81ad9de97070c067e84637a1a0da40ee0ebc49f1ab"
 )
 
+# Disabled until a reviewed migration pins BOTH implementation diffs. A paired
+# certificate proves only the Recovery half; the existing Product certificate
+# is independently mandatory before merge and before any Pages deployment.
+EXPECTED_PAIRED_PRODUCT_DIFF_SHA256: str | None = None
+PAIRED_CLASSIFICATION = "PRODUCT_AND_RECOVERY"
+
 # Admission-plane files may route and prove Recovery, but are not production
 # Recovery payload.  Without the pinned Recovery payload they stay on the
 # existing product-certificate route; they can never self-select Recovery.
@@ -277,6 +283,8 @@ def scope_policy_document() -> dict[str, Any]:
         "expectedRecoveryPayloadDiffSha256":
             EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256,
         "mixedPolicy": "DENY",
+        "pairedPolicy": "BOTH_EXACT_CERTIFICATES_REQUIRED",
+        "expectedPairedProductDiffSha256": EXPECTED_PAIRED_PRODUCT_DIFF_SHA256,
         "productPolicy": "EXISTING_PRODUCT_CERTIFICATE_REQUIRED",
         "recoveryOnlyPolicy": "EXACT_RECOVERY_CERTIFICATE_REQUIRED",
         "recoveryPayloadPaths": list(RECOVERY_PAYLOAD_PATHS),
@@ -320,12 +328,19 @@ def classify_repository(
     admission_patch = _patch_bytes(repo, base, head, admission)
     payload_digest = _digest_bytes(payload_patch) if payload else None
     admission_digest = _digest_bytes(admission_patch) if admission else None
+    product_digest = _digest_bytes(_patch_bytes(repo, base, head, other)) if other else None
     base_version = _product_version(repo, base)
     head_version = _product_version(repo, head)
 
     if other and payload:
         classification = "MIXED"
         classification_status = "REJECTED"
+        if EXPECTED_PAIRED_PRODUCT_DIFF_SHA256 is not None \
+                and product_digest == EXPECTED_PAIRED_PRODUCT_DIFF_SHA256 \
+                and payload_digest == expected_payload_digest \
+                and base_version == head_version:
+            classification = PAIRED_CLASSIFICATION
+            classification_status = "PASS"
     elif payload:
         if payload_digest != expected_payload_digest:
             raise AdmissionError("recovery_payload_digest_mismatch")
@@ -351,6 +366,7 @@ def classify_repository(
         "productOrUnknownPaths": other,
         "recoveryPayloadDiffSha256": payload_digest,
         "recoveryAdmissionDiffSha256": admission_digest,
+        "productDiffSha256": product_digest,
         "scopePolicySha256": _digest(policy),
         "productVersion": {
             "base": base_version,
@@ -359,7 +375,7 @@ def classify_repository(
         },
         "authorityAssertions": (
             dict(AUTHORITY_ASSERTIONS)
-            if classification == "RECOVERY_ONLY" else None
+            if classification in {"RECOVERY_ONLY", PAIRED_CLASSIFICATION} else None
         ),
     }
     result["classificationDigest"] = _digest(result)
@@ -372,7 +388,7 @@ def validate_classification(value: Mapping[str, Any]) -> dict[str, Any]:
         raise AdmissionError("classification_schema_invalid")
     _validate_digest_document(value, "classificationDigest")
     classification = value.get("classification")
-    if classification not in {"PRODUCT", "RECOVERY_ONLY", "MIXED"}:
+    if classification not in {"PRODUCT", "RECOVERY_ONLY", "MIXED", PAIRED_CLASSIFICATION}:
         raise AdmissionError("classification_value_invalid")
     base, candidate = value.get("base"), value.get("candidate")
     if type(base) is not dict or type(candidate) is not dict or any(
@@ -386,7 +402,17 @@ def validate_classification(value: Mapping[str, Any]) -> dict[str, Any]:
         raise AdmissionError("classification_paths_invalid")
     if value.get("scopePolicySha256") != _digest(scope_policy_document()):
         raise AdmissionError("classification_scope_policy_mismatch")
-    if classification == "RECOVERY_ONLY":
+    if classification == PAIRED_CLASSIFICATION:
+        if EXPECTED_PAIRED_PRODUCT_DIFF_SHA256 is None \
+                or value.get("status") != "PASS" \
+                or not value.get("productOrUnknownPaths") \
+                or not value.get("recoveryPayloadPaths") \
+                or value.get("productDiffSha256") != EXPECTED_PAIRED_PRODUCT_DIFF_SHA256 \
+                or value.get("recoveryPayloadDiffSha256") != EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256 \
+                or value.get("productVersion", {}).get("unchanged") is not True \
+                or value.get("authorityAssertions") != AUTHORITY_ASSERTIONS:
+            raise AdmissionError("paired_classification_contract_invalid")
+    elif classification == "RECOVERY_ONLY":
         if value.get("status") != "PASS" or \
                 value.get("productOrUnknownPaths") != [] or \
                 value.get("recoveryPayloadDiffSha256") != \
@@ -404,7 +430,7 @@ def validate_classification(value: Mapping[str, Any]) -> dict[str, Any]:
 def record_evidence(classification: Mapping[str, Any], junit: pathlib.Path,
                     checks: Sequence[str]) -> dict[str, Any]:
     scope = validate_classification(classification)
-    if scope["classification"] != "RECOVERY_ONLY":
+    if scope["classification"] not in {"RECOVERY_ONLY", PAIRED_CLASSIFICATION}:
         raise AdmissionError("recovery_evidence_scope_invalid")
     if not checks or len(set(checks)) != len(checks) or any(
             not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{1,79}", check)
@@ -470,12 +496,12 @@ def issue_certificate(classification: Mapping[str, Any],
                       evidence: Mapping[str, Any]) -> dict[str, Any]:
     scope = validate_classification(classification)
     proof = validate_evidence(evidence, scope)
-    if scope["classification"] != "RECOVERY_ONLY":
+    if scope["classification"] not in {"RECOVERY_ONLY", PAIRED_CLASSIFICATION}:
         raise AdmissionError("recovery_certificate_scope_invalid")
     result: dict[str, Any] = {
         "schemaVersion": CERTIFICATE_SCHEMA,
         "status": "PASS",
-        "classification": "RECOVERY_ONLY",
+        "classification": scope["classification"],
         "base": scope["base"],
         "candidate": scope["candidate"],
         "changedPathCount": scope["changedPathCount"],
@@ -495,6 +521,9 @@ def issue_certificate(classification: Mapping[str, Any],
             "testCounts": proof["testCounts"],
         },
     }
+    if scope["classification"] == PAIRED_CLASSIFICATION:
+        result["requiresProductCertificate"] = True
+        result["productDiffSha256"] = scope["productDiffSha256"]
     result["certificateDigest"] = _digest(result)
     return result
 

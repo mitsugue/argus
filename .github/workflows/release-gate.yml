@@ -194,7 +194,7 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
       - name: Bind the authorized proof-certificate producer
-        if: needs.classify.outputs.classification == 'PRODUCT'
+        if: (needs.classify.outputs.classification == 'PRODUCT' || needs.classify.outputs.classification == 'PRODUCT_AND_RECOVERY')
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -205,7 +205,7 @@ jobs:
             --out artifacts/premerge-admission/producer-authority.json \
             --timeout-seconds 1500
       - name: Fetch certificate from the completed detached producer workflow
-        if: needs.classify.outputs.classification == 'PRODUCT'
+        if: (needs.classify.outputs.classification == 'PRODUCT' || needs.classify.outputs.classification == 'PRODUCT_AND_RECOVERY')
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -220,7 +220,7 @@ jobs:
             --receipt-out artifacts/premerge-admission/retrieval-receipt.json \
             --timeout-seconds 1500
       - id: runtime
-        if: needs.classify.outputs.classification == 'PRODUCT'
+        if: (needs.classify.outputs.classification == 'PRODUCT' || needs.classify.outputs.classification == 'PRODUCT_AND_RECOVERY')
         uses: ./.github/actions/acceptance-runtime-preflight
         with:
           candidate-sha: ${{ github.event.pull_request.head.sha }}
@@ -228,7 +228,7 @@ jobs:
           evidence-path: artifacts/premerge-admission/runtime-proof.json
       - id: rehearsal
         name: Execute the exact mutation-free production rehearsal
-        if: needs.classify.outputs.classification == 'PRODUCT'
+        if: (needs.classify.outputs.classification == 'PRODUCT' || needs.classify.outputs.classification == 'PRODUCT_AND_RECOVERY')
         uses: ./.github/actions/v13-5-pre-mutation-rehearsal
         with:
           candidate-sha: ${{ github.event.pull_request.head.sha }}
@@ -240,7 +240,7 @@ jobs:
           evidence-dir: artifacts/premerge-admission
       - id: recovery_scope
         name: Independently re-establish exact Recovery scope
-        if: needs.classify.outputs.classification == 'RECOVERY_ONLY'
+        if: (needs.classify.outputs.classification == 'RECOVERY_ONLY' || needs.classify.outputs.classification == 'PRODUCT_AND_RECOVERY')
         run: |
           git fetch --no-tags --unshallow origin
           python3 -B scripts/recovery_admission.py classify \
@@ -252,7 +252,7 @@ jobs:
           test '${{ needs.classify.outputs.classification_digest }}' = \
             "$(python3 -c 'import json; print(json.load(open("artifacts/premerge-admission/recovery-classification.json"))["classificationDigest"])')"
       - name: Bind the authorized recovery-certificate producer
-        if: needs.classify.outputs.classification == 'RECOVERY_ONLY'
+        if: (needs.classify.outputs.classification == 'RECOVERY_ONLY' || needs.classify.outputs.classification == 'PRODUCT_AND_RECOVERY')
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -265,7 +265,7 @@ jobs:
             --timeout-seconds 1500 \
             --out artifacts/premerge-admission/recovery-producer-authority.json
       - name: Fetch the exact detached Recovery certificate
-        if: needs.classify.outputs.classification == 'RECOVERY_ONLY'
+        if: (needs.classify.outputs.classification == 'RECOVERY_ONLY' || needs.classify.outputs.classification == 'PRODUCT_AND_RECOVERY')
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -277,7 +277,7 @@ jobs:
             --evidence-out artifacts/premerge-admission/recovery-evidence.json \
             --receipt-out artifacts/premerge-admission/recovery-retrieval-receipt.json
       - name: Verify the Recovery certificate against local exact scope
-        if: needs.classify.outputs.classification == 'RECOVERY_ONLY'
+        if: (needs.classify.outputs.classification == 'RECOVERY_ONLY' || needs.classify.outputs.classification == 'PRODUCT_AND_RECOVERY')
         run: |
           cmp \
             artifacts/premerge-admission/recovery-classification.json \

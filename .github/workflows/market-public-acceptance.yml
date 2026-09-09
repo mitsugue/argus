@@ -57,7 +57,7 @@ jobs:
     name: zero-install-runtime-proof-1
     if: >-
       github.event_name == 'pull_request' &&
-      needs.scope.outputs.classification == 'PRODUCT'
+      (needs.scope.outputs.classification == 'PRODUCT' || needs.scope.outputs.classification == 'PRODUCT_AND_RECOVERY')
     needs: scope
     runs-on: ubuntu-latest
     container:
@@ -110,7 +110,7 @@ jobs:
     name: zero-install-runtime-proof-2
     if: >-
       github.event_name == 'pull_request' &&
-      needs.scope.outputs.classification == 'PRODUCT'
+      (needs.scope.outputs.classification == 'PRODUCT' || needs.scope.outputs.classification == 'PRODUCT_AND_RECOVERY')
     needs: scope
     runs-on: ubuntu-latest
     container:
@@ -163,7 +163,7 @@ jobs:
     name: proof-certificate
     if: >-
       github.event_name == 'pull_request' &&
-      needs.scope.outputs.classification == 'PRODUCT'
+      (needs.scope.outputs.classification == 'PRODUCT' || needs.scope.outputs.classification == 'PRODUCT_AND_RECOVERY')
     needs: [scope, full_release_simulation_1, full_release_simulation_2]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -215,7 +215,7 @@ jobs:
 
   recovery_evidence:
     name: focused-recovery-evidence
-    if: needs.scope.outputs.classification == 'RECOVERY_ONLY'
+    if: (needs.scope.outputs.classification == 'RECOVERY_ONLY' || needs.scope.outputs.classification == 'PRODUCT_AND_RECOVERY')
     needs: scope
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -272,7 +272,7 @@ jobs:
 
   recovery_certificate:
     name: recovery-certificate
-    if: needs.scope.outputs.classification == 'RECOVERY_ONLY'
+    if: (needs.scope.outputs.classification == 'RECOVERY_ONLY' || needs.scope.outputs.classification == 'PRODUCT_AND_RECOVERY')
     needs: [scope, recovery_evidence]
     runs-on: ubuntu-latest
     timeout-minutes: 10
