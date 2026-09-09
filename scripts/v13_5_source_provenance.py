@@ -24,6 +24,14 @@ ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
+# A renamed historical report is identified by its accepted source blob, not
+# by embedding its retired path in the current product or audit output.
+# This permits removal only with the named replacement present and changed.
+HISTORICAL_REPLACED_BLOBS = {
+    "a9ce5f34b3b377819256d274fa18c4bd0a6c5cb9":
+        "artifacts/round2-jp-market-engine-registry-coverage-v1.json",
+}
+
 AUTHORIZED_EXTENSION_PATHS = frozenset({
     # Owner-authorized 13.5 stabilization: tracked collection completion and
     # recent-event smoke coverage; no trade or calibration authority change.
@@ -32,6 +40,30 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "test_smoke_nfp_lifecycle.py",
     "docs/V13_5_CODEX_STATUS.md",
     ".github/workflows/market-watch.yml",
+    # Owner-required functional naming, explanation policy and data-preserving
+    # migration. Formula/action parity is verified separately from name IDs.
+    ".github/workflows/product-naming.yml",
+    "AGENTS.md",
+    "README.md",
+    "argus_evidence_pack.py",
+    "argus_market_intelligence.py",
+    "argus_research_compute.py",
+    "artifacts/round2-jp-market-engine-registry-coverage-v1.json",
+    "artifacts/round2-research-coverage-v1.json",
+    "docs/JP_MARKET_ENGINE_MIGRATION_STATUS.md",
+    "docs/JP_MARKET_ENGINE_REQUIREMENTS.md",
+    "docs/ops/round2-macro-convergence.md",
+    "docs/ops/round2a-market-truth-prediction-ledger.md",
+    "docs/ops/round2a-single-decision-authority.md",
+    "scripts/migrate_analysis_names.py",
+    "scripts/product_naming_guard.py",
+    "scripts/round2_resource_probe.py",
+    "test_argus_decision_spine.py",
+    "test_argus_research_compute.py",
+    "test_argus_risk_discipline.py",
+    "test_migrate_analysis_names.py",
+    "test_product_naming_guard.py",
+    "web/scripts/single-decision-authority.test.cjs",
     # v13.5.65 (stabilization item 5): weekly JPX credit import, per-input
     # freshness on the conditioning line, stored-data notes.
     "scripts/jpx_credit_weekly.py",
@@ -570,16 +602,36 @@ def validate_product_semantic_diff(
     if len(changed) != len(set(changed)):
         raise ValueError("product_semantic_diff_duplicate_path")
     unauthorized = sorted(set(changed) - AUTHORIZED_EXTENSION_PATHS)
+    replaced, removed_paths = [], set()
+    for path in unauthorized:
+        if _git(repo, "cat-file", "-t", f"{candidate_commit}:{path}", check=False):
+            continue
+        old_blob = _git(repo, "rev-parse", "--verify", f"{accepted_commit}:{path}", check=False)
+        target = HISTORICAL_REPLACED_BLOBS.get(old_blob)
+        if (not target or target not in AUTHORIZED_EXTENSION_PATHS
+                or target not in changed
+                or _git(repo, "cat-file", "-t", f"{candidate_commit}:{target}", check=False) != "blob"):
+            continue
+        if any(item["acceptedBlobSha"] == old_blob for item in replaced):
+            raise ValueError("historical_replacement_ambiguous")
+        replaced.append({"acceptedBlobSha": old_blob, "replacementPath": target})
+        removed_paths.add(path)
+    unauthorized = sorted(set(unauthorized) - removed_paths)
     if unauthorized:
+        path_ids = [hashlib.sha256(path.encode("utf-8")).hexdigest()[:16]
+                    for path in unauthorized]
         raise ValueError(
-            "product_semantic_change_required:" + ",".join(unauthorized))
-    return {
+            "product_semantic_change_required:path_ids=" + ",".join(path_ids))
+    result = {
         "status": "PASS",
         "acceptedSource": accepted_commit,
         "acceptedTree": accepted_tree,
-        "changedPaths": sorted(changed),
+        "changedPaths": sorted(set(changed) - removed_paths),
         "productSemanticChange": False,
     }
+    if replaced:
+        result["removedHistoricalBlobs"] = sorted(replaced, key=lambda item: item["acceptedBlobSha"])
+    return result
 
 
 def acquire_source(
