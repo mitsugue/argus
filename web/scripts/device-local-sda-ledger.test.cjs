@@ -218,6 +218,43 @@ function main() {
   };
   assert.equal(local.readDeviceLocalSdaLedger(unavailableStorage).status, 'STORAGE_UNAVAILABLE');
   assert.equal(unavailableStorage.getItem(local.DEVICE_LOCAL_SDA_LEDGER_KEY), originalText);
+  const pendingStore = new MemoryStorage();
+  pendingStore.values.set(local.DEVICE_LOCAL_SDA_LEDGER_KEY, originalText);
+  const pendingWrite = pendingStore.setItem.bind(pendingStore);
+  let failCompletion = true;
+  pendingStore.setItem = (key, value) => {
+    if (failCompletion && key === local.DEVICE_MIGRATION_RECEIPT_KEY
+      && JSON.parse(value).status === 'COMPLETE') throw new Error('quota');
+    pendingWrite(key, value);
+  };
+  assert.equal(local.readDeviceLocalSdaLedger(pendingStore).status, 'OK');
+  const pendingReceipt = pendingStore.getItem(local.DEVICE_MIGRATION_RECEIPT_KEY);
+  assert.equal(JSON.parse(pendingReceipt).status, 'PREPARED');
+  const savedHistory = pendingStore.getItem(local.DEVICE_LOCAL_SDA_LEDGER_KEY);
+  failCompletion = false;
+  assert.equal(local.readDeviceLocalSdaLedger(pendingStore).status, 'OK');
+  assert.equal(JSON.parse(pendingStore.getItem(local.DEVICE_MIGRATION_RECEIPT_KEY)).status, 'COMPLETE');
+  assert.equal(pendingStore.getItem(local.DEVICE_LOCAL_SDA_LEDGER_KEY), savedHistory);
+
+  // A fresh storage wrapper models reopening the app. Neither a mismatched
+  // destination digest nor mismatched identities may certify completion.
+  for (const alter of [r => { r.afterDigest = 'wrong'; },
+    r => { r.identities[0].after = 'wrong'; },
+    r => { r.entryCountBefore += 1; }]) {
+    const restartStore = new MemoryStorage();
+    const mismatched = JSON.parse(pendingReceipt);
+    alter(mismatched);
+    restartStore.values.set(local.DEVICE_LOCAL_SDA_LEDGER_KEY, savedHistory);
+    restartStore.values.set(local.DEVICE_MIGRATION_RECEIPT_KEY, JSON.stringify(mismatched));
+    assert.equal(local.readDeviceLocalSdaLedger(restartStore).status, 'OK');
+    assert.equal(restartStore.setCalls, 0);
+  }
+  const restartStore = new MemoryStorage();
+  restartStore.values.set(local.DEVICE_LOCAL_SDA_LEDGER_KEY, savedHistory);
+  restartStore.values.set(local.DEVICE_MIGRATION_RECEIPT_KEY, pendingReceipt);
+  assert.equal(local.readDeviceLocalSdaLedger(restartStore).status, 'OK');
+  assert.equal(JSON.parse(restartStore.getItem(local.DEVICE_MIGRATION_RECEIPT_KEY)).status, 'COMPLETE');
+  assert.equal(restartStore.getItem(local.DEVICE_LOCAL_SDA_LEDGER_KEY), savedHistory);
   const corruptPrevious = JSON.parse(originalText);
   corruptPrevious.entries[0].result.confidence.valueBps += 1;
   const corruptStore = new MemoryStorage();

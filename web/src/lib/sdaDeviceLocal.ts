@@ -243,6 +243,35 @@ const verifiedByStorage = new WeakMap<DeviceLocalStorage, {
   document: DeviceLocalSdaLedgerDocument;
 }>();
 
+function finishPreparedMigration(
+  storage: DeviceLocalStorage, raw: string, document: DeviceLocalSdaLedgerDocument,
+): void {
+  // A ledger write can succeed while the receipt write fails. Only the exact
+  // verified destination can finish that receipt; never rewrite history here.
+  try {
+    const saved = storage.getItem(DEVICE_MIGRATION_RECEIPT_KEY);
+    if (saved == null) return;
+    const receipt: unknown = JSON.parse(saved);
+    if (!isRecord(receipt)
+      || receipt.schemaVersion !== 'argus-device-analysis-migration-v1'
+      || receipt.status !== 'PREPARED'
+      || receipt.grantsCurrentDecisionAuthority !== false
+      || receipt.entryCountBefore !== document.entries.length
+      || receipt.entryCountAfter !== document.entries.length
+      || receipt.afterDigest !== historicalMigrationDigest(document)
+      || typeof receipt.beforeDigest !== 'string'
+      || !Array.isArray(receipt.identities)
+      || receipt.identities.length !== document.entries.length
+      || !receipt.identities.every((row: unknown, i: number) => isRecord(row)
+        && typeof row.before === 'string'
+        && row.after === document.entries[i].adapterId)) return;
+    if (storage.getItem(DEVICE_LOCAL_SDA_LEDGER_KEY) !== raw
+      || storage.getItem(DEVICE_MIGRATION_RECEIPT_KEY) !== saved) return;
+    storage.setItem(DEVICE_MIGRATION_RECEIPT_KEY,
+      JSON.stringify({ ...receipt, status: 'COMPLETE' }));
+  } catch { /* Keep the pending receipt and verified history for a later retry. */ }
+}
+
 const loadDocument = (storage: DeviceLocalStorage): {
   status: DeviceLocalSdaLedgerRead['status'];
   document: DeviceLocalSdaLedgerDocument | null;
@@ -255,7 +284,10 @@ const loadDocument = (storage: DeviceLocalStorage): {
   }
   if (raw == null) return { status: 'EMPTY', document: emptyDocument() };
   const verified = verifiedByStorage.get(storage);
-  if (verified && verified.raw === raw) return { status: 'OK', document: verified.document };
+  if (verified && verified.raw === raw) {
+    finishPreparedMigration(storage, raw, verified.document);
+    return { status: 'OK', document: verified.document };
+  }
   if (byteLength(raw) > MAX_DEVICE_LOCAL_SDA_LEDGER_BYTES) {
     return { status: 'CORRUPT', document: null };
   }
@@ -298,6 +330,7 @@ const loadDocument = (storage: DeviceLocalStorage): {
       raw = encoded;
     }
     if (!verifyDeviceLocalSdaLedgerDocument(parsed)) return { status: 'CORRUPT', document: null };
+    finishPreparedMigration(storage, raw, parsed);
     verifiedByStorage.set(storage, { raw, document: parsed });
     return { status: 'OK', document: parsed };
   } catch {
