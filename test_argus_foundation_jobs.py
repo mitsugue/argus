@@ -741,9 +741,12 @@ def test_breadth_spawn_process_starts_clean_and_reports_failure_metrics(
         final = scanner._foundation_job(started["job"]["jobId"])
         assert final["status"] == "failed"
         assert final["errorClass"] == "jquants_not_configured_in_runtime"
-        assert final["result"]["workerProcessStartMethod"] == "spawn"
+        assert final["result"]["workerProcessStartMethod"] == "exec"
+        assert final["result"]["requestedProcessStartMethod"] == "spawn"
+        assert final["result"]["quoteAdapterPreloaded"] is False
+        assert final["result"]["workerEntryPoint"] == "argus_breadth_worker.py"
         assert final["result"]["executionMode"] == (
-            "independent_spawned_os_process")
+            "independent_exec_os_process")
         assert final["result"]["workerPeakMemoryMb"] is not None
         assert final["result"]["backendBootIdStable"] is True
     finally:
@@ -894,3 +897,97 @@ def test_foundation_closeout_accepts_only_independent_breadth_workers(
     finally:
         scanner._FOUNDATION_JOBS.clear()
         scanner._FOUNDATION_JOBS.update(previous_jobs)
+
+
+def test_breadth_exec_does_not_replay_production_style_main(tmp_path):
+    import os
+    from pathlib import Path
+    import subprocess
+
+    repo = Path(__file__).resolve().parent
+    parent = tmp_path / "server_entry.py"
+    parent.write_text('''
+if __name__ == "__mp_main__":
+    raise RuntimeError("server_main_must_not_be_replayed")
+import json
+import multiprocessing
+import time
+from argus_breadth_worker import CleanProcess
+parent, child = multiprocessing.Pipe()
+worker = CleanProcess("fj-exec-proof", parent, child, 1280, {})
+worker.start()
+startup = None
+failed = None
+deadline = time.monotonic() + 15
+while worker.is_alive() or parent.poll():
+    if time.monotonic() > deadline:
+        worker.terminate()
+        raise RuntimeError("bounded_child_test_timeout")
+    if not parent.poll(0.1):
+        continue
+    try:
+        message = parent.recv()
+    except EOFError:
+        break
+    operation = message["op"]
+    if operation == "startup":
+        startup = message
+    if operation == "update" and message.get("status") == "failed":
+        failed = message["errorClass"]
+    if operation in ("done", "crashed"):
+        continue
+    parent.send({"ok": True, "job": {"jobId": "fj-exec-proof", "parameters": {}}})
+worker.join(timeout=5)
+print(json.dumps({"startup": startup, "failed": failed, "exitcode": worker.exitcode}))
+''')
+    env = {**os.environ, "PYTHONPATH": str(repo), "JQUANTS_API_KEY": ""}
+    result = subprocess.run([sys.executable, str(parent)], cwd=repo,
+                            env=env, capture_output=True, text=True, timeout=25)
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout.strip().splitlines()[-1])
+    assert report["startup"] == {
+        "op": "startup", "entryPoint": "argus_breadth_worker.py",
+        "quoteAdapterPreloaded": False,
+    }
+    assert report["failed"] == "jquants_not_configured_in_runtime"
+    assert report["exitcode"] == 0
+
+
+def test_breadth_exec_failed_child_does_not_hold_seed_pipe_open(tmp_path):
+    import os
+    from pathlib import Path
+    import subprocess
+
+    repo = Path(__file__).resolve().parent
+    parent = tmp_path / "failed_child.py"
+    parent.write_text('''
+import multiprocessing
+import subprocess
+import sys
+from argus_breadth_worker import CleanProcess
+original_popen = subprocess.Popen
+subprocess.Popen = lambda *_args, **kwargs: original_popen(
+    [sys.executable, "-c", "raise SystemExit(2)"], **kwargs)
+parent, child = multiprocessing.Pipe()
+worker = CleanProcess("fj-startup-failure", parent, child, 1280,
+                      {"largeSeed": "x" * (8 * 1024 * 1024)})
+try:
+    worker.start()
+except (BrokenPipeError, ConnectionResetError):
+    assert child.closed
+    assert not worker.is_alive()
+    assert worker.ledger_seed is None
+else:
+    raise AssertionError("dead child's seed send must fail")
+''')
+    result = subprocess.run([sys.executable, str(parent)], cwd=repo,
+                            env={**os.environ, "PYTHONPATH": str(repo)},
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+
+
+def test_breadth_child_rejects_changed_parent_before_loading_server(monkeypatch):
+    import argus_breadth_worker as worker
+    monkeypatch.setattr(worker.os, "getppid", lambda: 100)
+    with pytest.raises(RuntimeError, match="breadth_parent_process_changed"):
+        worker._bind_parent_lifetime(200)
