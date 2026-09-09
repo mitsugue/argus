@@ -92,7 +92,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       - id: candidate
         name: Bind the merge to its exact accepted candidate tree
         shell: bash
@@ -104,6 +104,43 @@ jobs:
           test "$(git rev-parse HEAD^{tree})" = "$candidate_tree"
           echo "sha=$parent_two" >> "$GITHUB_OUTPUT"
           echo "tree=$candidate_tree" >> "$GITHUB_OUTPUT"
+          echo "base=$parent_one" >> "$GITHUB_OUTPUT"
+      - id: release_scope
+        name: Recompute the exact predeployment certificate requirements
+        run: |
+          python3 -B scripts/recovery_admission.py classify \
+            --repo . \
+            --base-sha '${{ steps.candidate.outputs.base }}' \
+            --head-sha '${{ steps.candidate.outputs.sha }}' \
+            --out artifacts/v13-release-proof/recovery-classification.json \
+            --github-output "$GITHUB_OUTPUT"
+          python3 -c 'import json; s=json.load(open("artifacts/v13-release-proof/recovery-classification.json")); assert s["status"] == "PASS" and s["classification"] in {"PRODUCT", "PRODUCT_AND_RECOVERY"}'
+      - name: Independently admit Recovery for a paired migration before deployment
+        if: steps.release_scope.outputs.classification == 'PRODUCT_AND_RECOVERY'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B scripts/recovery_admission.py collect-authority \
+            --repository '${{ github.repository }}' \
+            --base-sha '${{ steps.candidate.outputs.base }}' \
+            --candidate-sha '${{ steps.candidate.outputs.sha }}' \
+            --candidate-tree '${{ steps.candidate.outputs.tree }}' \
+            --classification-digest '${{ steps.release_scope.outputs.classification_digest }}' \
+            --timeout-seconds 60 \
+            --out artifacts/v13-release-proof/recovery-producer-authority.json
+          python3 -B scripts/recovery_admission.py fetch-authority \
+            --repository '${{ github.repository }}' \
+            --authority artifacts/v13-release-proof/recovery-producer-authority.json \
+            --certificate-out artifacts/v13-release-proof/recovery-certificate.json \
+            --classification-out artifacts/v13-release-proof/recovery-authority-classification.json \
+            --evidence-out artifacts/v13-release-proof/recovery-evidence.json \
+            --receipt-out artifacts/v13-release-proof/recovery-retrieval-receipt.json
+          cmp artifacts/v13-release-proof/recovery-classification.json \
+            artifacts/v13-release-proof/recovery-authority-classification.json
+          python3 -B scripts/recovery_admission.py verify \
+            --certificate artifacts/v13-release-proof/recovery-certificate.json \
+            --classification artifacts/v13-release-proof/recovery-classification.json \
+            --evidence artifacts/v13-release-proof/recovery-evidence.json
       - name: Reconfirm every CURRENT_REQUIRED check for the candidate
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -172,6 +209,7 @@ jobs:
             artifacts/v13-release-proof/producer-authority.json
             artifacts/v13-release-proof/retrieval-receipt.json
             artifacts/v13-release-proof/current-required.json
+            artifacts/v13-release-proof/recovery-*.json
             artifacts/production-runtime-admission/proof.json
             artifacts/pre-mutation-rehearsal
           if-no-files-found: error

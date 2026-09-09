@@ -2,6 +2,7 @@ import copy
 import hashlib
 import io
 import json
+import re
 import subprocess
 import zipfile
 from pathlib import Path
@@ -157,6 +158,74 @@ def test_mixed_product_and_recovery_change_is_explicitly_denied(tmp_path):
     result = recovery.classify_repository(repo, base, head)
     assert result["classification"] == "MIXED"
     assert result["status"] == "REJECTED"
+
+
+def _paired_scope(tmp_path, monkeypatch):
+    repo, base = _repository(tmp_path)
+    _write(repo, "scanner.py", "RECOVERY = True\n")
+    _write(repo, "README.md", "migration\n")
+    head = _commit(repo)
+    payload = recovery._digest_bytes(recovery._patch_bytes(repo, base, head, ["scanner.py"]))
+    product = recovery._digest_bytes(recovery._patch_bytes(repo, base, head, ["README.md"]))
+    monkeypatch.setattr(recovery, "EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256", payload)
+    monkeypatch.setattr(recovery, "EXPECTED_PAIRED_PRODUCT_DIFF_SHA256", product)
+    scope = recovery.classify_repository(repo, base, head, expected_payload_digest=payload)
+    return repo, base, head, payload, scope
+
+
+def test_paired_migration_requires_both_pinned_diffs_and_never_claims_standalone_authority(
+        tmp_path, monkeypatch):
+    _, _, _, _, scope = _paired_scope(tmp_path, monkeypatch)
+    assert scope["classification"] == recovery.PAIRED_CLASSIFICATION
+    assert scope["status"] == "PASS"
+    recovery.validate_classification(scope)
+    junit = tmp_path / "paired.xml"
+    _junit(junit)
+    evidence = recovery.record_evidence(scope, junit, ["focused-recovery-tests"])
+    certificate = recovery.issue_certificate(scope, evidence)
+    assert certificate["requiresProductCertificate"] is True
+    assert certificate["classification"] != "RECOVERY_ONLY"
+    recovery.verify_certificate(certificate, scope, evidence)
+    certificate.pop("requiresProductCertificate")
+    certificate.pop("certificateDigest")
+    certificate["certificateDigest"] = recovery._digest(certificate)
+    with pytest.raises(recovery.AdmissionError, match="content_mismatch"):
+        recovery.verify_certificate(certificate, scope, evidence)
+
+
+@pytest.mark.parametrize("alter", ["payload", "product", "version", "missing_pin"])
+def test_paired_migration_cannot_expand_past_its_exact_pins(tmp_path, monkeypatch, alter):
+    repo, base, head, payload, _ = _paired_scope(tmp_path, monkeypatch)
+    if alter == "payload":
+        _write(repo, "scanner.py", "RECOVERY = False\n")
+    elif alter == "product":
+        _write(repo, "README.md", "unreviewed expansion\n")
+    elif alter == "version":
+        _write(repo, "product-version.json", json.dumps({
+            "schemaVersion": "argus-product-version-v1", "productVersion": "99.0.0"}))
+    else:
+        monkeypatch.setattr(recovery, "EXPECTED_PAIRED_PRODUCT_DIFF_SHA256", None)
+    if alter != "missing_pin":
+        head = _commit(repo, "changed")
+    scope = recovery.classify_repository(repo, base, head, expected_payload_digest=payload)
+    assert scope["classification"] == "MIXED"
+    assert scope["status"] == "REJECTED"
+    with pytest.raises(recovery.AdmissionError, match="scope_invalid"):
+        recovery.record_evidence(scope, tmp_path / "absent.xml", ["test"])
+
+
+@pytest.mark.parametrize("field,value", [
+    ("productDiffSha256", "wrong"), ("recoveryPayloadDiffSha256", "wrong"),
+    ("productOrUnknownPaths", []), ("recoveryPayloadPaths", []),
+])
+def test_paired_classification_rejects_tampered_scope_even_with_recomputed_digest(
+        tmp_path, monkeypatch, field, value):
+    *_, scope = _paired_scope(tmp_path, monkeypatch)
+    scope[field] = value
+    scope.pop("classificationDigest")
+    scope["classificationDigest"] = recovery._digest(scope)
+    with pytest.raises(recovery.AdmissionError, match="paired_classification_contract"):
+        recovery.validate_classification(scope)
 
 
 def test_recovery_plus_product_version_change_is_mixed_and_denied(tmp_path):
@@ -442,3 +511,38 @@ def test_workflow_contract_keeps_product_and_recovery_authorities_separate():
     assert "needs.classify.outputs.classification == 'RECOVERY_ONLY'" in gate
     assert "needs.classify.outputs.classification == 'PRODUCT'" in gate
     assert "name: gate" in gate
+
+
+def test_paired_workflow_runs_both_producers_and_both_consumers_before_mutation():
+    market = Path(".github/workflows/market-public-acceptance.yml").read_text()
+    gate = Path(".github/workflows/release-gate.yml").read_text()
+    pages = Path(".github/workflows/deploy-pages.yml").read_text()
+
+    def job(source, name):
+        match = re.search(r"^  " + re.escape(name) + r":\n(.*?)(?=^  [\w-]+:|\Z)",
+                          source, re.M | re.S)
+        assert match, name
+        return match.group(1)
+
+    for name, normal in (("full_release_simulation_1", "PRODUCT"),
+                         ("full_release_simulation_2", "PRODUCT"),
+                         ("proof_certificate", "PRODUCT"),
+                         ("recovery_evidence", "RECOVERY_ONLY"),
+                         ("recovery_certificate", "RECOVERY_ONLY")):
+        assert (f"(needs.scope.outputs.classification == '{normal}' || "
+                "needs.scope.outputs.classification == 'PRODUCT_AND_RECOVERY')") in job(market, name)
+    admission = job(gate, "premerge_admission")
+    assert admission.count("classification == 'PRODUCT_AND_RECOVERY'") == 8
+    assert 'v13_5_release_certificate.py fetch-admission' in admission
+    assert 'recovery_admission.py fetch-authority' in admission
+    assert 'recovery_admission.py verify' in admission
+    assert 'needs: [release_checks, premerge_admission]' in job(gate, "gate")
+    before_deploy = job(pages, "acceptance-runtime-admission")
+    assert 'recovery_admission.py classify' in before_deploy
+    assert 'recovery_admission.py collect-authority' in before_deploy
+    assert 'recovery_admission.py fetch-authority' in before_deploy
+    assert 'recovery_admission.py verify' in before_deploy
+    assert 'recovery-authority-classification.json' in before_deploy
+    assert 'v13_5_release_certificate.py fetch-admission' in before_deploy
+    assert 'classification == \'PRODUCT_AND_RECOVERY\'' in before_deploy
+    assert 'acceptance-runtime-admission' in job(pages, "build")
