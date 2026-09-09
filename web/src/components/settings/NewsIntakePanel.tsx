@@ -54,6 +54,7 @@ interface IntakeHealth {
     lastError: string | null; consecutiveFailures: number;
     translatedTotal: number; queueDepth: number; lastDrainAt: string | null;
     lastPolicyDecision?: string | null;
+    lastCompletedAt?: string | null; lastOutcome?: string | null;
   };
   aiEscalations?: number;
   aiModels?: Record<string, {
@@ -64,6 +65,10 @@ interface IntakeHealth {
 
 // v13.5.36: the worker's cost-policy decision, in owner vocabulary — never
 // pretend AI ran when the policy skipped it.
+const TRANSLATION_OUTCOME_JA: Record<string, string> = {
+  translated: '要約を保存', skipped: '実行見送り', idle: '対象なし',
+  no_translation: '要約を取得できず', failed: '巡回失敗',
+};
 const POLICY_DECISION_JA: Record<string, string> = {
   allowed: 'AI実行 許可',
   deterministic_mode: 'AI停止中（決定論モード設定）',
@@ -241,11 +246,17 @@ export const NewsIntakePanel: React.FC = () => {
         {health.translationWorker && <div style={{ marginTop: 6 }}>
           <span style={{ color: 'var(--text-muted)' }}>日本語要約ワーカー（常時稼働）</span>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-            <span>待ち{health.translationWorker.queueDepth}件 · 累計{
+            <span>待ち{health.translationWorker.queueDepth}件 · 起動後要約{
               health.translationWorker.translatedTotal}件</span>
             <b>{health.translationWorker.lastError
               ? `エラー: ${health.translationWorker.lastError}`
-              : `最終成功 ${fmt(health.translationWorker.lastSuccessAt)}`}</b>
+              : `最終要約成功 ${fmt(health.translationWorker.lastSuccessAt)}`}</b>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+            <span style={{ color: 'var(--text-muted)' }}>最終巡回</span>
+            <b>{fmt(health.translationWorker.lastRunAt)} · {
+              TRANSLATION_OUTCOME_JA[health.translationWorker.lastOutcome ?? '']
+              ?? '結果未確認'}</b>
           </div>
           {health.translationWorker.lastPolicyDecision && <div
             style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>

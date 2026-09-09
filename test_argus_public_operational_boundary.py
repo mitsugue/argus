@@ -3204,3 +3204,27 @@ def test_backend_restores_before_starting_scheduler(monkeypatch, restored_state,
     monkeypatch.setattr(scanner.app, "run", lambda **kwargs: order.append("serve"))
     scanner._run_backend_server()
     assert order == expected
+
+
+def test_operational_cost_uses_the_restored_public_usage_ledger(monkeypatch):
+    monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "boundary-test-admin")
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: FIXED_NOW)
+    state = scanner.argus_cost_policy.default_state("SCHEDULED_AI")
+    state["usage"] = [
+        {"provider": "openai", "purpose": "event_analysis", "at": FIXED_NOW,
+         "estimatedCostUsd": 0.25},
+        {"provider": "gemini", "purpose": "headline_translation",
+         "at": "2026-08-13T01:00:00Z", "estimatedCostUsd": 0.75},
+    ]
+    monkeypatch.setattr(scanner, "_COST_POLICY", state)
+    monkeypatch.setitem(scanner._AI_COST_STATE, "daySpentUsd", 0)
+    monkeypatch.setitem(scanner._AI_COST_STATE, "monthSpentUsd", 0)
+    client = scanner.app.test_client()
+    public = client.get("/api/argus/cost-policy").get_json()
+    response = client.get("/api/argus/admin/diagnostics/operational", headers=ADMIN_HEADER)
+    assert response.status_code == 200
+    cost = response.get_json()["costPolicy"]
+    assert cost == {"mode": "SCHEDULED_AI", "daySpentUsd": 0.25, "monthSpentUsd": 1.0}
+    assert cost["daySpentUsd"] == public["todayEstimatedCostUsd"]
+    assert cost["monthSpentUsd"] == public["monthEstimatedCostUsd"]
+    assert state["usage"][0]["estimatedCostUsd"] == 0.25
