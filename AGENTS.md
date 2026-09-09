@@ -16,3 +16,10 @@ schema changes. Record compatibility periods and removal conditions. Verify
 formula, threshold and action parity independently from identity/hash changes.
 Do not activate BUY or treat unvalidated frequencies as predictive probabilities.
 Distinguish implemented, tested, production-observed and complete in reports.
+
+Read `docs/V13_6_REQUIREMENTS.md` for the current scope and acceptance criteria.
+Finish the active naming migration and 13.5 production verification, then
+implement 13.6 from that accepted baseline. Stop after 13.6 production acceptance.
+Do not investigate, prototype, implement, open PRs, or deploy 13.7 until the owner
+explicitly resumes it next week or later. A date change or 13.6 completion is not
+permission. Existing budget/restoration/collection bug fixes remain in 13.5.
