@@ -727,18 +727,28 @@ def _run_id_from_details_url(details_url: Any, repo: str) -> int:
     return int(parts[4])
 
 
-def _validate_producer_run(
+def _validate_producer_identity(
         producer: Any, *, run_id: int, candidate_sha: str,
         expected_workflow: str) -> Dict[str, Any]:
     if type(producer) is not dict \
             or producer.get("id") != run_id \
             or type(producer.get("run_attempt")) is not int \
             or producer.get("run_attempt") <= 0 \
-            or producer.get("status") != "completed" \
-            or producer.get("conclusion") != "success" \
             or producer.get("event") != "pull_request" \
             or producer.get("head_sha") != candidate_sha \
             or producer.get("path") != expected_workflow:
+        raise ValueError("detached_certificate_producer_run_invalid")
+    return producer
+
+
+def _validate_producer_run(
+        producer: Any, *, run_id: int, candidate_sha: str,
+        expected_workflow: str) -> Dict[str, Any]:
+    _validate_producer_identity(
+        producer, run_id=run_id, candidate_sha=candidate_sha,
+        expected_workflow=expected_workflow)
+    if producer.get("status") != "completed" or \
+            producer.get("conclusion") != "success":
         raise ValueError("detached_certificate_producer_run_invalid")
     return producer
 
@@ -802,8 +812,25 @@ def collect_authority(args: argparse.Namespace) -> Dict[str, Any]:
                 int(row.get("id") or 0)), reverse=True)
             if rows and rows[0].get("status") == "completed" \
                     and rows[0].get("conclusion") == "success":
-                check = rows[0]
-                break
+                selected = rows[0]
+                selected_run_id = _run_id_from_details_url(
+                    selected.get("details_url"), args.repo)
+                producer = _validate_producer_identity(_api_json(
+                    f"https://api.github.com/repos/{args.repo}/actions/runs/"
+                    f"{selected_run_id}", token),
+                    run_id=selected_run_id, candidate_sha=args.candidate_sha,
+                    expected_workflow=args.expected_producer_workflow)
+                if producer.get("status") == "completed":
+                    _validate_producer_run(
+                        producer, run_id=selected_run_id,
+                        candidate_sha=args.candidate_sha,
+                        expected_workflow=args.expected_producer_workflow)
+                    check = selected
+                    break
+                if producer.get("status") not in ("queued", "in_progress"):
+                    raise ValueError("detached_certificate_producer_run_invalid")
+                # A sibling certificate can still be running. Re-select the
+                # latest check on every poll; never consume an older attempt.
             if time.monotonic() >= deadline:
                 raise ValueError("detached_certificate_authority_check_not_ready")
             time.sleep(args.poll_seconds)
