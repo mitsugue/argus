@@ -13,6 +13,10 @@ from pathlib import Path
 import re
 import subprocess
 import unicodedata
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from argus_product_naming import compile_policy
 
 
 def load_policy(path: Path, product_root: Path):
@@ -20,25 +24,7 @@ def load_policy(path: Path, product_root: Path):
     if path.is_relative_to(product_root):
         raise ValueError("policy_must_be_outside_product")
     value = json.loads(path.read_text(encoding="utf-8"))
-    if value.get("schemaVersion") != "product-naming-policy-v1":
-        raise ValueError("policy_schema_invalid")
-    rules = value.get("rules")
-    if not isinstance(rules, list) or not rules:
-        raise ValueError("policy_rules_required")
-    compiled, seen = [], set()
-    for row in rules:
-        rid = row.get("id")
-        if not isinstance(rid, str) or not re.fullmatch(r"N[0-9]{3}", rid) or rid in seen:
-            raise ValueError("anonymous_rule_id_required")
-        expression = row.get("pattern")
-        if not isinstance(expression, str) or not expression:
-            raise ValueError("rule_pattern_required")
-        pattern = re.compile(expression)
-        if pattern.search(""):
-            raise ValueError("empty_match_rule_rejected")
-        compiled.append((rid, pattern))
-        seen.add(rid)
-    return compiled
+    return compile_policy(value)
 
 
 def inspect_text(text: str, rules):

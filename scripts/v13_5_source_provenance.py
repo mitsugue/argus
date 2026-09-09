@@ -33,6 +33,8 @@ HISTORICAL_REPLACED_BLOBS = {
 }
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
+    "argus_product_naming.py",
+    "test_argus_runtime_naming.py",
     # Owner-authorized 13.5 stabilization: tracked collection completion and
     # recent-event smoke coverage; no trade or calibration authority change.
     "scripts/run_intel_collect.py",

@@ -23,6 +23,7 @@ import argus_events  # 24/7 gear-shift event backbone (pure foundation, v10.39)
 import argus_research  # evidence-first deterministic research dossier (v10.41)
 import argus_event_store  # Lean durable event store: branch snapshot/restore (v10.42)
 import argus_ai_cost  # AI cost ledger + hard budget stops (pure math, v10.50)
+import argus_product_naming
 import argus_ai_gate  # v12.2.0 AI Integrity Gate(中央実行規律・fail-closed価格・エポック)
 import argus_decision_ledger  # v12.2.0 ADDENDUM: 不変予測台帳/成果解決/適正スコア(純)
 import argus_dual_plane  # v12.2.1 Phase 0: 二面実行(リサーチ面/私的判断面・偽24x365禁止)
@@ -903,6 +904,12 @@ def safe_json(text):
     try: return json.loads(text.replace('\n', ' '))
     except Exception: return {}
 
+
+def _checked_ai_json(text):
+    value = safe_json(text)
+    argus_product_naming.require_allowed([text, value])
+    return value
+
 # Reentrant lock guarding STATE_FILE: serializes reads/writes across the scan
 # worker, scheduler, and request threads. Reentrant so a load→modify→save done
 # while already holding the lock (see add_log) doesn't deadlock.
@@ -1690,7 +1697,7 @@ Score: 80+=Strong, 60-79=Moderate, 40-59=Weak, <40=Red flag"""
             response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt,
                 config=genai_types.GenerateContentConfig(
                     tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())], temperature=0.3))
-            data = safe_json(response.text or "{}")
+            data = _checked_ai_json(response.text or "{}")
             results[symbol] = {"score": data.get("score", 50), "red_flag": data.get("red_flag", False),
                                "reason": data.get("reason", "")}
             add_log(f"  🔮 Gemini: {symbol} → {data.get('score','?')}/100" +
@@ -1925,7 +1932,7 @@ Return ONLY JSON array: [{{"symbol":"TICKER","name":"Company Name","change_pct":
     add_log(f"🤖 Claude analyzing{' (DRY RUN)' if DRY_RUN_MODE else ''}...")
     try:
         res = claude.messages.create(model="claude-opus-4-6", max_tokens=3000, messages=[{"role":"user","content":prompt}])
-        top20 = safe_json(res.content[0].text if res.content else "[]")
+        top20 = _checked_ai_json(res.content[0].text if res.content else "[]")
         if isinstance(top20, dict): top20 = top20.get("stocks", top20.get("top20", []))
         if not isinstance(top20, list): top20 = []
         top20 = top20[:20]
@@ -1972,7 +1979,7 @@ Return ONLY JSON array of TOP 10: [{{"symbol":"TICKER","name":"Name","score":0-1
     add_log(f"🤖 Claude re-scoring{' (DRY RUN)' if DRY_RUN_MODE else ''}...")
     try:
         res = claude.messages.create(model="claude-opus-4-6", max_tokens=2000, messages=[{"role":"user","content":prompt}])
-        top10 = safe_json(res.content[0].text if res.content else "[]")
+        top10 = _checked_ai_json(res.content[0].text if res.content else "[]")
         if isinstance(top10, dict): top10 = top10.get("stocks", top10.get("top10", []))
         if not isinstance(top10, list): top10 = []
         top10 = top10[:10]
@@ -2022,7 +2029,7 @@ Return ONLY JSON array TOP5: [{{"symbol":"TICKER","name":"Name","score":0-100,"c
     add_log(f"🤖 Claude cross-checking{' (DRY RUN)' if DRY_RUN_MODE else ''}...")
     try:
         res = claude.messages.create(model="claude-opus-4-6", max_tokens=2000, messages=[{"role":"user","content":prompt}])
-        top5 = safe_json(res.content[0].text if res.content else "[]")
+        top5 = _checked_ai_json(res.content[0].text if res.content else "[]")
         if isinstance(top5, dict): top5 = top5.get("stocks", top5.get("top5", []))
         if not isinstance(top5, list): top5 = []
         top5 = top5[:5]
@@ -2218,7 +2225,7 @@ def phase5_post_open():
     try:
         prompt = f"Final 30min US stock tracking eval.\n[TOP3]\n{top3_text}\nReturn JSON:{{\"evaluations\":[{{\"code\":\"TICKER\",\"status\":\"HOLD/SELL\",\"message\":\"summary\",\"action_advice\":\"advice\"}}],\"overall\":\"assessment\"}}"
         res = claude.messages.create(model="claude-haiku-4-5-20251001", max_tokens=800, messages=[{"role":"user","content":prompt}])
-        result = safe_json(res.content[0].text if res.content else "{}")
+        result = _checked_ai_json(res.content[0].text if res.content else "{}")
         msg = "📈 30min Complete\n" + result.get("overall","") + "\n"
         for e in result.get("evaluations",[]):
             msg += f"{'✅' if e.get('status')=='HOLD' else '⚠️'} {e.get('code','')} {e.get('message','')}\n→ {e.get('action_advice','')}\n"
@@ -13557,14 +13564,14 @@ def _ai_record_cost(run_id, oai_status, gem_status, grounding_enabled):
     that ran (pro vs flash fallback). Never raises. Returns the run cost record."""
     rows, total = [], 0.0
     oai_u = _AI_LAST_RUN.get("oaiUsage")
-    if oai_status == "live" and oai_u:
+    if oai_status in ("live", "content_rejected") and oai_u:
         c = argus_ai_cost.estimate_cost(_OPENAI_MODEL, oai_u[0], oai_u[1], _AI_PRICING)
         rows.append({"provider": "openai", "model": _OPENAI_MODEL, "fallbackUsed": False,
                      "inputTokens": oai_u[0], "outputTokens": oai_u[1], "grounding": False, "estUsd": c})
         total += c
     gem_u = _AI_LAST_RUN.get("gemUsage")
     gem_model = _AI_LAST_RUN.get("gemModel") or _GEMINI_JUDGE_MODEL
-    if gem_status == "live" and gem_u:
+    if gem_status in ("live", "content_rejected") and gem_u:
         c = argus_ai_cost.estimate_cost(gem_model, gem_u[0], gem_u[1], _AI_PRICING,
                                         grounding=bool(grounding_enabled), grounding_usd=_AI_GROUNDING_USD)
         rows.append({"provider": "gemini", "model": gem_model,
@@ -14013,6 +14020,10 @@ def _usage_tokens(resp):
 
 def _openai_judge(snapshot):
     _AI_LAST_RUN["oaiUsage"] = None
+    try:
+        argus_product_naming.require_allowed(snapshot)
+    except argus_product_naming.NamingPolicyError:
+        return None, "content_rejected"
     if not _cost_policy_authorize(
             "openai", "ai_judgment", automatic=True,
             estimated_cost_usd=0.10, estimated_tokens=8000)["allowed"]:
@@ -14042,10 +14053,12 @@ def _openai_judge(snapshot):
                 response_format={"type": "json_object"}, timeout=60)
             text = resp.choices[0].message.content
         _AI_LAST_RUN["oaiUsage"] = _usage_tokens(resp)
-        out = safe_json(text or "")
+        out = _checked_ai_json(text or "")
         if not isinstance(out, dict) or not isinstance(out.get("labels"), list):
             return None, "partial"
         return out, "live"
+    except argus_product_naming.NamingPolicyError:
+        return None, "content_rejected"
     except Exception as e:
         add_log(f"[AI] openai judge failed: {type(e).__name__}")
         return None, "unavailable"
@@ -14123,6 +14136,7 @@ def _gemini_check(snapshot, openai_out, checker_model=None):
     try:
         client = google_genai.Client(api_key=GEMINI_API_KEY)
         prompt = _gemini_prompt(snapshot, openai_out)
+        argus_product_naming.require_allowed(prompt)
         cfg = None
         try:
             from google.genai import types as _gt
@@ -14132,8 +14146,10 @@ def _gemini_check(snapshot, openai_out, checker_model=None):
             cfg, grounding_enabled = None, False
 
         def _gen(model, config):
-            return (client.models.generate_content(model=model, contents=prompt, config=config)
+            response = (client.models.generate_content(model=model, contents=prompt, config=config)
                     if config else client.models.generate_content(model=model, contents=prompt))
+            _AI_LAST_RUN["gemUsage"] = _gemini_usage_tokens(response)
+            return response
 
         model_used = checker_model or _GEMINI_JUDGE_MODEL   # per-run tier (flash/pro)
         try:
@@ -14169,7 +14185,7 @@ def _gemini_check(snapshot, openai_out, checker_model=None):
             else:
                 raise
         _AI_LAST_RUN["gemModel"] = model_used
-        out = safe_json(getattr(resp, "text", "") or "")
+        out = _checked_ai_json(getattr(resp, "text", "") or "")
         if not isinstance(out, dict) or "disagreements" not in out:
             # Grounding-tool responses often aren't pure JSON. Retry ONCE in
             # strict JSON mode (tools and response_mime_type can't combine).
@@ -14177,8 +14193,10 @@ def _gemini_check(snapshot, openai_out, checker_model=None):
                 from google.genai import types as _gt
                 cfg2 = _gt.GenerateContentConfig(response_mime_type="application/json")
                 resp = _gen(model_used, cfg2)
-                out = safe_json(getattr(resp, "text", "") or "")
+                out = _checked_ai_json(getattr(resp, "text", "") or "")
                 grounding_enabled = False
+            except argus_product_naming.NamingPolicyError:
+                raise
             except Exception as e2:
                 _AI_LAST_RUN["gemError"] = f"json-retry {type(e2).__name__}: {str(e2)[:140]}"
         if not isinstance(out, dict) or "disagreements" not in out:
@@ -14200,7 +14218,11 @@ def _gemini_check(snapshot, openai_out, checker_model=None):
         except Exception:
             pass
         _AI_LAST_RUN["gemUsage"] = _gemini_usage_tokens(resp)
+        argus_product_naming.require_allowed(out)
         return out, "live", grounding_enabled
+    except argus_product_naming.NamingPolicyError as exc:
+        _AI_LAST_RUN["gemError"] = str(exc)
+        return None, "content_rejected", grounding_enabled
     except Exception as e:
         add_log(f"[AI] gemini check failed: {type(e).__name__}")
         _AI_LAST_RUN["gemError"] = f"{type(e).__name__}: {str(e)[:140]}"
@@ -14550,6 +14572,11 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
         _OPENAI_PROSE_LAST.update(call_status)
 
     publish()
+    try:
+        argus_product_naming.require_allowed([user, system or _CAOS_EVENT_SYSTEM])
+    except argus_product_naming.NamingPolicyError as exc:
+        publish(outcome="skipped", reason=str(exc))
+        return None
     decision, reservation = _cost_policy_reserve(
         "openai", purpose, event_id=event_id,
         event_phase=event_phase, estimated_cost_usd=0.08,
@@ -14594,6 +14621,15 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
             pass
         call_status["returnedModel"] = returned
         out = safe_json(text or "")
+        # The provider has spent tokens even when its content is inadmissible.
+        # Reject the entire generated candidate before any caller can save it.
+        try:
+            argus_product_naming.require_allowed([text or "", out])
+        except argus_product_naming.NamingPolicyError as exc:
+            _cost_policy_settle(reservation, ok=True,
+                                actual_cost_usd=(est if est > 0 else 0.08))
+            publish(outcome="rejected", reason=str(exc))
+            return None
         if isinstance(out, dict) and out:
             _cost_policy_settle(reservation, ok=True,
                                 actual_cost_usd=(est if est > 0 else 0.08))
@@ -16412,6 +16448,10 @@ def api_argus_ai_provider_ping():
         model = _GEMINI_JUDGE_MODEL
     out = {"asOf": _ai_now_iso(), "provider": provider, "model": model,
            "estimatedCostUsd": 0.002, "reason": reason}
+    try:
+        argus_product_naming.require_allowed(out)
+    except argus_product_naming.NamingPolicyError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 503
 
     if provider == "openai" and not _OPENAI_API_KEY:
         out["openai"] = {"ok": False, "error": "missing_key"}
@@ -16434,11 +16474,12 @@ def api_argus_ai_provider_ping():
                              "requestedModel": model,
                              "returnedModel": str(getattr(r, "model", None)
                                                   or "")[:60] or None}
+            _cost_policy_record("openai", "manual_api", estimated_cost_usd=0.001)
+            argus_product_naming.require_allowed(out["openai"])
             _AI_PROVIDER_LAST_PING[f"openai:{model}"] = {
                 "requestedModel": model,
                 "returnedModel": out["openai"]["returnedModel"],
                 "ok": True, "at": _ai_now_iso()}
-            _cost_policy_record("openai", "manual_api", estimated_cost_usd=0.001)
         except Exception as e:
             out["openai"] = {"ok": False, "model": model,
                              "error": type(e).__name__, "message": str(e)[:140]}
@@ -16457,11 +16498,12 @@ def api_argus_ai_provider_ping():
                              "requestedModel": _GEMINI_JUDGE_MODEL,
                              "returnedModel": str(getattr(
                                  r, "model_version", None) or "")[:60] or None}
+            _cost_policy_record("gemini", "manual_api", estimated_cost_usd=0.001)
+            argus_product_naming.require_allowed(out["gemini"])
             _AI_PROVIDER_LAST_PING[f"gemini:{_GEMINI_JUDGE_MODEL}"] = {
                 "requestedModel": _GEMINI_JUDGE_MODEL,
                 "returnedModel": out["gemini"]["returnedModel"],
                 "ok": True, "at": _ai_now_iso()}
-            _cost_policy_record("gemini", "manual_api", estimated_cost_usd=0.001)
         except Exception as e:
             out["gemini"] = {"ok": False, "model": _GEMINI_JUDGE_MODEL,
                              "error": type(e).__name__, "message": str(e)[:140]}
@@ -16611,6 +16653,10 @@ def _translate_headlines_ja(headlines):
     """Batch-translate headlines via the cheap Gemini flash model. Best-effort:
     any failure returns {} and the UI falls back to English. Called at most
     once per news-cache refill (10 min), so cost is negligible."""
+    try:
+        argus_product_naming.require_allowed(headlines)
+    except argus_product_naming.NamingPolicyError:
+        return {}
     if not _cost_policy_authorize(
             "gemini", "headline_translation", automatic=True,
             estimated_cost_usd=0.02, estimated_tokens=3000)["allowed"]:
@@ -16631,6 +16677,7 @@ def _translate_headlines_ja(headlines):
         _cost_policy_record("gemini", "headline_translation",
                             estimated_cost_usd=0.02)
         out = safe_json(getattr(resp, "text", "") or "")
+        argus_product_naming.require_allowed([getattr(resp, "text", "") or "", out])
         # Count-mismatch batches are discarded whole — positional mapping
         # would cache wrong-pair translations (alignment guard).
         result = argus_news_i18n.validate_translation_batch(out, len(headlines))
@@ -20376,6 +20423,13 @@ def _openai_research_ex(user, role="standard", benchmark=False):
     - no-toolフォールバックは status=model_only(検証済み調査に偽装不可)"""
     started = _ai_now_iso()
     model = _openai_model_for(role)
+    try:
+        argus_product_naming.require_allowed(user)
+    except argus_product_naming.NamingPolicyError as exc:
+        return None, argus_ai_gate.ai_execution_result(
+            provider="openai", model=model, role=role, mode="research",
+            status="unavailable", started_at=started, completed_at=started,
+            failure_reason_redacted=str(exc))
     if not _cost_policy_authorize(
             "openai", "research_benchmark" if benchmark else "osint_research",
             automatic=not benchmark, confirmation=benchmark,
@@ -20460,9 +20514,16 @@ def _openai_research_ex(user, role="standard", benchmark=False):
                 pass
             if st_ok == "model_only":
                 _AI_INTEGRITY["modelOnlyCount"] += 1
+            naming_rejection = None
+            try:
+                argus_product_naming.require_allowed([txt, safe_json(txt)])
+            except argus_product_naming.NamingPolicyError as exc:
+                naming_rejection = str(exc)
             res = argus_ai_gate.ai_execution_result(
                 provider="openai", model=model, role=role, mode="research",
-                status=st_ok, started_at=started, completed_at=_ai_now_iso(),
+                status="unavailable" if naming_rejection else st_ok,
+                started_at=started, completed_at=_ai_now_iso(),
+                failure_reason_redacted=naming_rejection,
                 prompt_version="research-v1", privacy_mode="redacted",
                 store_disabled=True,
                 tool_calls=[t["type"] for t in (tools or [])],
@@ -20472,7 +20533,7 @@ def _openai_research_ex(user, role="standard", benchmark=False):
                 response_model=getattr(resp, "model", None))
             _AI_INTEGRITY["lastExec"] = {
                 "model": model, "status": res["status"], "at": res["completedAt"]}
-            return txt, res
+            return (None if naming_rejection else txt), res
         except Exception as exc:
             last_error_class = type(exc).__name__[:80]
             continue
@@ -28646,6 +28707,12 @@ def _gemini_osint(prompt, benchmark=False, model_override=None,
                   diagnostic_context=None):
     """Gemini scout(検索グラウンディング付き・admin経路のみから呼ばれる)。"""
     prompt = argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n" + prompt
+    try:
+        argus_product_naming.require_allowed(prompt)
+    except argus_product_naming.NamingPolicyError as exc:
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({"status": "unavailable", "errorClass": str(exc)})
+        return None, "unavailable"
     if not _cost_policy_authorize(
             "gemini", "research_benchmark" if benchmark else "osint_research",
             automatic=not benchmark, confirmation=benchmark,
@@ -28686,6 +28753,18 @@ def _gemini_osint(prompt, benchmark=False, model_override=None,
         txt = getattr(resp, "text", None) or ""
         out, warns = argus_osint_engine.parse_scout_output(txt)   # v12.1.1 頑健パーサ
         out["parserWarnings"] = warns
+        try:
+            argus_product_naming.require_allowed([txt, out])
+        except argus_product_naming.NamingPolicyError as exc:
+            _cost_policy_record("gemini",
+                "research_benchmark" if benchmark else "osint_research",
+                estimated_cost_usd=0.10)
+            if isinstance(diagnostic_context, dict):
+                usage = _gemini_usage_tokens(resp) or (0, 0)
+                diagnostic_context.update({"status": "rejected", "errorClass": str(exc),
+                    "requestedModel": selected_model,
+                    "usage": {"inputTokens": usage[0], "outputTokens": usage[1]}})
+            return None, "rejected"
         if benchmark:
             usage = _gemini_usage_tokens(resp) or (0, 0)
             out["_providerMeta"] = {
