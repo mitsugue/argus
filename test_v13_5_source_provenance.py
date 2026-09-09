@@ -122,6 +122,38 @@ def certificate(path: Path, *, candidate_sha: str, candidate_tree: str,
     path.write_text(json.dumps(value), encoding="utf-8")
 
 
+@pytest.mark.parametrize("case", ["verified", "target_missing", "wrong_blob", "source_retained"])
+def test_historical_report_removal_requires_exact_blob_and_replacement(tmp_path, monkeypatch, case):
+    repo = tmp_path / "rename-case"
+    subprocess.check_call(["git", "init", "-b", "main", str(repo)])
+    write(repo / "legacy-report.json", '{"source":"original evidence"}')
+    accepted = commit(repo, "accepted report")
+    old_blob = git(repo, "rev-parse", accepted + ":legacy-report.json")
+    monkeypatch.setattr(source, "ACCEPTED_V13_SOURCE", accepted)
+    monkeypatch.setattr(source, "ACCEPTED_V13_TREE", git(repo, "rev-parse", accepted + "^{tree}"))
+    monkeypatch.setattr(source, "AUTHORIZED_EXTENSION_PATHS", frozenset({"engine-report.json"}))
+    monkeypatch.setattr(source, "HISTORICAL_REPLACED_BLOBS", {
+        "0" * 40 if case == "wrong_blob" else old_blob: "engine-report.json",
+    })
+    if case == "source_retained":
+        write(repo / "legacy-report.json", '{"modified":true}')
+    else:
+        (repo / "legacy-report.json").unlink()
+    if case != "target_missing":
+        write(repo / "engine-report.json", '{"replacement":"functional report with verified source identity"}')
+    candidate = commit(repo, "candidate report")
+    if case != "verified":
+        with pytest.raises(ValueError, match="product_semantic_change_required") as caught:
+            source.validate_product_semantic_diff(candidate, repo=repo)
+        assert "legacy-report" not in str(caught.value)
+        return
+    result = source.validate_product_semantic_diff(candidate, repo=repo)
+    assert result["changedPaths"] == ["engine-report.json"]
+    assert result["removedHistoricalBlobs"] == [
+        {"acceptedBlobSha": old_blob, "replacementPath": "engine-report.json"}]
+    assert "legacy-report" not in json.dumps(result)
+
+
 @pytest.fixture()
 def shallow_case(tmp_path, monkeypatch):
     origin = tmp_path / "origin.git"

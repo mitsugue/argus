@@ -27,7 +27,7 @@ const fam = (status, conditionMet) => ({ status, conditionMet });
 assert.deepEqual(ms.MARKET_SIGNAL_DEFINITIONS.map((d) => d.id),
   ['SIG-01', 'SIG-02', 'SIG-03', 'SIG-04', 'SIG-05', 'SIG-06', 'SIG-07']);
 for (const d of ms.MARKET_SIGNAL_DEFINITIONS) {
-  assert.ok(!/SHO/.test(d.nameEn) && !/SHO/.test(d.nameJa), `${d.id} must not carry the legacy name`);
+  assert.ok(!/JP_MARKET_ENGINE/.test(d.nameEn) && !/JP_MARKET_ENGINE/.test(d.nameJa), `${d.id} must not carry the legacy name`);
 }
 
 // 2) numerator computed from state — 0, 3 and 7 all derive from data.

@@ -12,7 +12,7 @@ export const VERIFIED_SNAPSHOT_SCHEMA = 'argus-verified-view-snapshot-v1';
 // backend value) and web/scripts/verified-snapshot.test.mjs.
 export const VERIFIED_VIEW_METHOD_VERSION =
   'verified-chart-view-v1:chart-intelligence-phase2-v2-pit-bound:'
-  + 'market-context-replay-v3-pit-bound:today-replay-calibration-v3-sho-conditioned';
+  + 'market-context-replay-v3-pit-bound:today-replay-calibration-v3-market-conditioned';
 const DB_NAME = 'argus-verified-snapshots';
 const DB_VERSION = 1;
 const SNAPSHOT_STORE = 'snapshots';
@@ -271,6 +271,22 @@ function requestValue<T>(request: IDBRequest<T>): Promise<T | null> {
   return new Promise((resolve) => {
     request.onsuccess = () => resolve(request.result ?? null);
     request.onerror = () => resolve(null);
+  });
+}
+
+/** Refresh server-derived views while retaining the owner's chart drawings. */
+export async function clearVerifiedSnapshotCache(): Promise<boolean> {
+  memory.clear();
+  const db = await openDatabase();
+  if (!db) return false;
+  return new Promise((resolve) => {
+    try {
+      const transaction = db.transaction(SNAPSHOT_STORE, 'readwrite');
+      transaction.oncomplete = () => resolve(true);
+      transaction.onerror = () => resolve(false);
+      transaction.onabort = () => resolve(false);
+      transaction.objectStore(SNAPSHOT_STORE).clear();
+    } catch { resolve(false); }
   });
 }
 

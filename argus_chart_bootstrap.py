@@ -25,14 +25,14 @@ import argus_asset_chart_cache
 REQUIRED_HOST_ATTRS = ("_osint_restore_once", "_precompute_asset_chart_tick",
                        "_asset_chart_targets", "_ASSET_CHART_REPORTS")
 # v13.5.44: optional host seams for the boot warm (each is skipped when absent).
-WARM_HOST_ATTRS = ("_sho_pit_inputs", "_jq_price_history", "_td_price_history", "_DECISION_EVIDENCE_CACHE",
+WARM_HOST_ATTRS = ("_jp_market_engine_pit_inputs", "_jq_price_history", "_td_price_history", "_DECISION_EVIDENCE_CACHE",
                    "_SD_EXTRA_SYMBOLS", "_JP_SEEN_SYMBOLS", "_JP_WATCHLIST",
-                   "_SHO_STATEMENTS_CACHE", "_JP_CACHE", "_JQ_HISTORY_CACHE")
+                   "_JP_MARKET_ENGINE_STATEMENTS_CACHE", "_JP_CACHE", "_JQ_HISTORY_CACHE")
 INTEREST_MAX = 24
 INTEREST_REFRESH_SECONDS = 600.0
 INTEREST_SCAN_SECONDS = 60.0
 INTEREST_TTL_SECONDS = 7 * 86400.0
-SHO_WARM_SECONDS = 4 * 3600.0
+JP_MARKET_ENGINE_WARM_SECONDS = 4 * 3600.0
 TRANSLATE_SECONDS = 3600.0
 # Index charts (owner: the indices themselves, not the 1321 ETF). Yahoo symbols
 # per index; TOPIX candidates are tried in order and the first with rows wins.
@@ -67,7 +67,7 @@ _STATE: Dict[str, Any] = {
     "summary": {"status": "NOT_STARTED", "targets": 0, "published": 0,
                 "unchanged": 0, "skipped": 0, "degraded": 0, "missingBefore": None,
                 "missingAfter": None, "startedAt": None, "finishedAt": None},
-    "warm": {"status": "NOT_STARTED", "shoWarmedAt": None, "shoSourceStatus": None,
+    "warm": {"status": "NOT_STARTED", "jpMarketEngineWarmedAt": None, "jpMarketEngineSourceStatus": None,
              "interestSymbols": [], "interestWarmedAt": None, "historyWarmed": 0,
              "valuation": None, "cycles": 0, "errorClass": None,
              "curatedWarmedAt": None, "referenceWarmed": 0, "statementsFetched": 0,
@@ -130,7 +130,7 @@ def _run(host: Any, *, delay_seconds: float, per_symbol_seconds: float,
             sleeper(pause_seconds)
         summary["missingAfter"] = len(_missing_daily(host, targets))
         summary["status"] = "DONE"
-        # v13.5.44: the boot warm (SHO inputs, interest history, derived
+        # v13.5.44: the boot warm (JP_MARKET_ENGINE inputs, interest history, derived
         # valuation) follows the chart pass in the same daemon thread.
         _warm_loop(host, sleeper=sleeper, now=clock, max_cycles=_STATE.get("warmMaxCycles"),
                    environ=_STATE.get("environ"))
@@ -341,19 +341,19 @@ def _prices_by_code(host: Any) -> Dict[str, float]:
 
 
 def _warm_cycle(host: Any, *, sleeper: Callable[[float], None], now: Callable[[], float],
-                force_sho: bool) -> None:
-    """One bounded warm cycle: SHO inputs (4h), interest history, valuation."""
+                force_jp_market_engine: bool) -> None:
+    """One bounded warm cycle: JP_MARKET_ENGINE inputs (4h), interest history, valuation."""
     import argus_japan_valuation
     warm = _STATE["warm"]
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    if force_sho and hasattr(host, "_sho_pit_inputs"):
+    if force_jp_market_engine and hasattr(host, "_jp_market_engine_pit_inputs"):
         try:
-            inputs = host._sho_pit_inputs(warm=True) or {}
-            warm["shoWarmedAt"] = stamp
-            warm["shoSourceStatus"] = dict(inputs.get("sourceStatus") or {})
+            inputs = host._jp_market_engine_pit_inputs(warm=True) or {}
+            warm["jpMarketEngineWarmedAt"] = stamp
+            warm["jpMarketEngineSourceStatus"] = dict(inputs.get("sourceStatus") or {})
         except Exception as exc:
-            warm["errorClass"] = f"sho_warm:{type(exc).__name__}"
-    statements = getattr(host, "_SHO_STATEMENTS_CACHE", None)
+            warm["errorClass"] = f"jp_market_engine_warm:{type(exc).__name__}"
+    statements = getattr(host, "_JP_MARKET_ENGINE_STATEMENTS_CACHE", None)
     # curated JP watch snapshot: the decision-evidence watch row and the
     # owner's curated quotes read this cache, which is cold after every deploy.
     if hasattr(host, "get_japan_watchlist_snapshot"):
@@ -405,11 +405,11 @@ def _warm_cycle(host: Any, *, sleeper: Callable[[float], None], now: Callable[[]
     warm["referenceWarmed"] = reference
     _warm_us_and_crypto(host, warm, sleeper)
     # SIG-04 derived valuation needs each issuer's latest statements (the
-    # 14-day SHO window rarely holds them).  Fetched per code, a bounded
+    # 14-day JP_MARKET_ENGINE window rarely holds them).  Fetched per code, a bounded
     # number per cycle, retried on later cycles until every interest issuer
-    # is covered; refreshed with the 4-hourly SHO warm.
+    # is covered; refreshed with the 4-hourly JP_MARKET_ENGINE warm.
     if hasattr(host, "_jquants_paginated"):
-        if force_sho:
+        if force_jp_market_engine:
             _STATE["statements"].clear()
         pending = [code for code in symbols if code not in _STATE["statements"]]
         for code in pending[:VALUATION_STATEMENTS_PER_CYCLE]:
@@ -429,7 +429,7 @@ def _warm_cycle(host: Any, *, sleeper: Callable[[float], None], now: Callable[[]
             _STATE["statements"].setdefault(code, [])          # do not retry a failing code every cycle
             sleeper(1.0)
         warm["statementsFetched"] = sum(1 for rows in _STATE["statements"].values() if rows)
-        # The host's own statements feed (SHO D07) still calls the V1 path and
+        # The host's own statements feed (JP_MARKET_ENGINE D07) still calls the V1 path and
         # is silently empty; publish the V2 rows into its cache so the earnings
         # event selection sees real disclosures.  Only when we fetched real rows.
         if warm["statementsFetched"] and isinstance(statements, dict):
@@ -474,15 +474,15 @@ def _warm_loop(host: Any, *, sleeper: Callable[[float], None], now: Callable[[],
         return
     warm["status"] = "RUNNING"
     env = dict(os.environ) if environ is None else dict(environ)
-    last_sho = None
+    last_jp_market_engine = None
     last_translate = None
     cycles = 0
     try:
         while True:
-            force = last_sho is None or now() - last_sho >= SHO_WARM_SECONDS
-            _warm_cycle(host, sleeper=sleeper, now=now, force_sho=force)
+            force = last_jp_market_engine is None or now() - last_jp_market_engine >= JP_MARKET_ENGINE_WARM_SECONDS
+            _warm_cycle(host, sleeper=sleeper, now=now, force_jp_market_engine=force)
             if force:
-                last_sho = now()
+                last_jp_market_engine = now()
                 _warm_index_charts(host, warm, sleeper)
             if last_translate is None or now() - last_translate >= TRANSLATE_SECONDS:
                 _drain_translations(host, warm, env)
@@ -545,7 +545,7 @@ def warm_status_safe() -> Dict[str, Any]:
     warm = _STATE["warm"]
     return {
         "status": warm.get("status"), "cycles": warm.get("cycles"),
-        "shoWarmedAt": warm.get("shoWarmedAt"), "curatedWarmedAt": warm.get("curatedWarmedAt"),
+        "jpMarketEngineWarmedAt": warm.get("jpMarketEngineWarmedAt"), "curatedWarmedAt": warm.get("curatedWarmedAt"),
         "interestWarmedAt": warm.get("interestWarmedAt"),
         "interestCount": len(warm.get("interestSymbols") or []),
         "historyWarmed": warm.get("historyWarmed"), "referenceWarmed": warm.get("referenceWarmed"),
@@ -571,7 +571,7 @@ def _reset_for_tests() -> None:
         _STATE["summary"] = {"status": "NOT_STARTED", "targets": 0, "published": 0,
                              "unchanged": 0, "skipped": 0, "degraded": 0, "missingBefore": None,
                              "missingAfter": None, "startedAt": None, "finishedAt": None}
-        _STATE["warm"] = {"status": "NOT_STARTED", "shoWarmedAt": None, "shoSourceStatus": None,
+        _STATE["warm"] = {"status": "NOT_STARTED", "jpMarketEngineWarmedAt": None, "jpMarketEngineSourceStatus": None,
                           "interestSymbols": [], "interestWarmedAt": None, "historyWarmed": 0,
                           "valuation": None, "cycles": 0, "errorClass": None,
                           "curatedWarmedAt": None, "referenceWarmed": 0, "statementsFetched": 0,

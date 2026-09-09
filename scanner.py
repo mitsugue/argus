@@ -23,6 +23,9 @@ import argus_events  # 24/7 gear-shift event backbone (pure foundation, v10.39)
 import argus_research  # evidence-first deterministic research dossier (v10.41)
 import argus_event_store  # Lean durable event store: branch snapshot/restore (v10.42)
 import argus_ai_cost  # AI cost ledger + hard budget stops (pure math, v10.50)
+import argus_product_naming
+from scripts import analysis_migration_restore
+from functools import wraps
 import argus_ai_gate  # v12.2.0 AI Integrity Gate(中央実行規律・fail-closed価格・エポック)
 import argus_decision_ledger  # v12.2.0 ADDENDUM: 不変予測台帳/成果解決/適正スコア(純)
 import argus_dual_plane  # v12.2.1 Phase 0: 二面実行(リサーチ面/私的判断面・偽24x365禁止)
@@ -116,7 +119,7 @@ import argus_news_intelligence      # v13.5.3: Nikkei mail → news-risk evidenc
 import argus_gmail_intake           # v13.5.3: dedicated read-only news mailbox intake
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
-import argus_sho                    # v13.5.13: SHO evidence engine (pure; evidence, never action)
+import jp_market_engine                    # v13.5.13: JP_MARKET_ENGINE evidence engine (pure; evidence, never action)
 import argus_single_decision        # v13.5.13: canonical artifact references for device SDA
 import argus_tachibana_live         # v13.5.38: Tachibana LIVE product boundary (shadow, read-only, no orders)
 import argus_tick_durability        # v13.3.1: bounded tick WAL/checkpoint/single-flight
@@ -965,6 +968,12 @@ def safe_json(text):
     try: return json.loads(text.replace('\n', ' '))
     except Exception: return {}
 
+
+def _checked_ai_json(text):
+    value = safe_json(text)
+    argus_product_naming.require_allowed([text, value])
+    return value
+
 # Reentrant lock guarding STATE_FILE: serializes reads/writes across the scan
 # worker, scheduler, and request threads. Reentrant so a load→modify→save done
 # while already holding the lock (see add_log) doesn't deadlock.
@@ -1749,10 +1758,11 @@ Verify: 1) Is reason accurate NOW? 2) Negative news/SEC issues? 3) Market sentim
 Return ONLY JSON: {{"score": 0-100, "red_flag": true/false, "reason": "1-2 sentences"}}
 Score: 80+=Strong, 60-79=Moderate, 40-59=Weak, <40=Red flag"""
         try:
+            argus_product_naming.require_allowed(prompt)
             response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt,
                 config=genai_types.GenerateContentConfig(
                     tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())], temperature=0.3))
-            data = safe_json(response.text or "{}")
+            data = _checked_ai_json(response.text or "{}")
             results[symbol] = {"score": data.get("score", 50), "red_flag": data.get("red_flag", False),
                                "reason": data.get("reason", "")}
             add_log(f"  🔮 Gemini: {symbol} → {data.get('score','?')}/100" +
@@ -1986,8 +1996,9 @@ Return ONLY JSON array: [{{"symbol":"TICKER","name":"Company Name","change_pct":
         return
     add_log(f"🤖 Claude analyzing{' (DRY RUN)' if DRY_RUN_MODE else ''}...")
     try:
+        argus_product_naming.require_allowed(prompt)
         res = claude.messages.create(model="claude-opus-4-6", max_tokens=3000, messages=[{"role":"user","content":prompt}])
-        top20 = safe_json(res.content[0].text if res.content else "[]")
+        top20 = _checked_ai_json(res.content[0].text if res.content else "[]")
         if isinstance(top20, dict): top20 = top20.get("stocks", top20.get("top20", []))
         if not isinstance(top20, list): top20 = []
         top20 = top20[:20]
@@ -2033,8 +2044,9 @@ Return ONLY JSON array of TOP 10: [{{"symbol":"TICKER","name":"Name","score":0-1
         return
     add_log(f"🤖 Claude re-scoring{' (DRY RUN)' if DRY_RUN_MODE else ''}...")
     try:
+        argus_product_naming.require_allowed(prompt)
         res = claude.messages.create(model="claude-opus-4-6", max_tokens=2000, messages=[{"role":"user","content":prompt}])
-        top10 = safe_json(res.content[0].text if res.content else "[]")
+        top10 = _checked_ai_json(res.content[0].text if res.content else "[]")
         if isinstance(top10, dict): top10 = top10.get("stocks", top10.get("top10", []))
         if not isinstance(top10, list): top10 = []
         top10 = top10[:10]
@@ -2083,8 +2095,9 @@ Return ONLY JSON array TOP5: [{{"symbol":"TICKER","name":"Name","score":0-100,"c
         return
     add_log(f"🤖 Claude cross-checking{' (DRY RUN)' if DRY_RUN_MODE else ''}...")
     try:
+        argus_product_naming.require_allowed(prompt)
         res = claude.messages.create(model="claude-opus-4-6", max_tokens=2000, messages=[{"role":"user","content":prompt}])
-        top5 = safe_json(res.content[0].text if res.content else "[]")
+        top5 = _checked_ai_json(res.content[0].text if res.content else "[]")
         if isinstance(top5, dict): top5 = top5.get("stocks", top5.get("top5", []))
         if not isinstance(top5, list): top5 = []
         top5 = top5[:5]
@@ -2280,7 +2293,7 @@ def phase5_post_open():
     try:
         prompt = f"Final 30min US stock tracking eval.\n[TOP3]\n{top3_text}\nReturn JSON:{{\"evaluations\":[{{\"code\":\"TICKER\",\"status\":\"HOLD/SELL\",\"message\":\"summary\",\"action_advice\":\"advice\"}}],\"overall\":\"assessment\"}}"
         res = claude.messages.create(model="claude-haiku-4-5-20251001", max_tokens=800, messages=[{"role":"user","content":prompt}])
-        result = safe_json(res.content[0].text if res.content else "{}")
+        result = _checked_ai_json(res.content[0].text if res.content else "{}")
         msg = "📈 30min Complete\n" + result.get("overall","") + "\n"
         for e in result.get("evaluations",[]):
             msg += f"{'✅' if e.get('status')=='HOLD' else '⚠️'} {e.get('code','')} {e.get('message','')}\n→ {e.get('action_advice','')}\n"
@@ -10590,7 +10603,7 @@ def _recovery_phase_a_finish_market_ledger_observation(
 
 def _investor_types_autorefresh():
     """D05 supply (v13.5.36): the PIT investor-types adapter existed but only
-    as a manual admin backfill — flow.foreign went stale and SHO D05 sat at
+    as a manual admin backfill — flow.foreign went stale and JP_MARKET_ENGINE D05 sat at
     判定不能 despite the paid J-Quants plan carrying the data. Daily bounded
     refresh (weekly series, 45-day window); idempotent via ledger dedup;
     same PIT publication policy as the manual route; origin=cron."""
@@ -10696,7 +10709,7 @@ def api_argus_intel_collect():
 def _collect_institutional_intel_and_warm():
     out = collect_institutional_intel()
     try:
-        _investor_types_autorefresh()      # v13.5.36: keep SHO D05 fed (daily)
+        _investor_types_autorefresh()      # v13.5.36: keep JP_MARKET_ENGINE D05 fed (daily)
     except Exception:
         pass
     try:
@@ -10757,14 +10770,14 @@ def _collect_institutional_intel_and_warm():
         except Exception as exc:
             warmed["ownerJpError"] = type(exc).__name__
     out["supplyDemandWarm"] = warmed
-    # v13.5.36: warm the SHO CORE input caches (^N225/^VIX OHLCV, 1570 weekly
+    # v13.5.36: warm the JP_MARKET_ENGINE CORE input caches (^N225/^VIX OHLCV, 1570 weekly
     # margin, FRED VIX). This admin/cron path is the ONLY fetch route; the
     # public decision-evidence GET reads these caches cached-only.
     try:
-        out["shoInputWarm"] = dict(
-            _sho_pit_inputs(warm=True).get("sourceStatus") or {})
+        out["jpMarketEngineInputWarm"] = dict(
+            _jp_market_engine_pit_inputs(warm=True).get("sourceStatus") or {})
     except Exception as exc:
-        out["shoInputWarm"] = {"error": type(exc).__name__}
+        out["jpMarketEngineInputWarm"] = {"error": type(exc).__name__}
     return out
 
 
@@ -12236,7 +12249,7 @@ def _td_price_history(sym):
         try:
             r = requests.get(_TWELVEDATA_TS, params={
                 # v13.5.14: ten-year corpus (≈252 sessions × 10) for the
-                # SHO-conditioned forecast engine.
+                # JP_MARKET_ENGINE-conditioned forecast engine.
                 "symbol": sym, "interval": "1day", "outputsize": 2520,
                 "apikey": _TWELVEDATA_API_KEY}, timeout=15)
             r.raise_for_status()
@@ -13619,14 +13632,14 @@ def _ai_record_cost(run_id, oai_status, gem_status, grounding_enabled):
     that ran (pro vs flash fallback). Never raises. Returns the run cost record."""
     rows, total = [], 0.0
     oai_u = _AI_LAST_RUN.get("oaiUsage")
-    if oai_status == "live" and oai_u:
+    if oai_status in ("live", "content_rejected") and oai_u:
         c = argus_ai_cost.estimate_cost(_OPENAI_MODEL, oai_u[0], oai_u[1], _AI_PRICING)
         rows.append({"provider": "openai", "model": _OPENAI_MODEL, "fallbackUsed": False,
                      "inputTokens": oai_u[0], "outputTokens": oai_u[1], "grounding": False, "estUsd": c})
         total += c
     gem_u = _AI_LAST_RUN.get("gemUsage")
     gem_model = _AI_LAST_RUN.get("gemModel") or _GEMINI_JUDGE_MODEL
-    if gem_status == "live" and gem_u:
+    if gem_status in ("live", "content_rejected") and gem_u:
         c = argus_ai_cost.estimate_cost(gem_model, gem_u[0], gem_u[1], _AI_PRICING,
                                         grounding=bool(grounding_enabled), grounding_usd=_AI_GROUNDING_USD)
         rows.append({"provider": "gemini", "model": gem_model,
@@ -13995,7 +14008,7 @@ def _build_ai_snapshot():
     }
     return snap, al
 
-_OPENAI_SYSTEM = (
+_OPENAI_SYSTEM = argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n" + (
     "You are the ARGUS AI judgment layer. ARGUS is NOT a prediction engine: it classifies current "
     "market conditions into action categories and explains stance/reason/risk/confidence/what-would-"
     "change. You REVIEW and critique a deterministic rule engine's labels using ONLY the provided "
@@ -14075,6 +14088,10 @@ def _usage_tokens(resp):
 
 def _openai_judge(snapshot):
     _AI_LAST_RUN["oaiUsage"] = None
+    try:
+        argus_product_naming.require_allowed(snapshot)
+    except argus_product_naming.NamingPolicyError:
+        return None, "content_rejected"
     if not _cost_policy_authorize(
             "openai", "ai_judgment", automatic=True,
             estimated_cost_usd=0.10, estimated_tokens=8000)["allowed"]:
@@ -14104,10 +14121,12 @@ def _openai_judge(snapshot):
                 response_format={"type": "json_object"}, timeout=60)
             text = resp.choices[0].message.content
         _AI_LAST_RUN["oaiUsage"] = _usage_tokens(resp)
-        out = safe_json(text or "")
+        out = _checked_ai_json(text or "")
         if not isinstance(out, dict) or not isinstance(out.get("labels"), list):
             return None, "partial"
         return out, "live"
+    except argus_product_naming.NamingPolicyError:
+        return None, "content_rejected"
     except Exception as e:
         add_log(f"[AI] openai judge failed: {type(e).__name__}")
         return None, "unavailable"
@@ -14132,7 +14151,7 @@ def _gemini_prompt(snapshot, openai_out):
     """PURE Gemini challenge prompt (v11.2: evidence-aware). Kept as a separate
     function so tests can assert it carries missingData / visibilityGuard / the
     challenge keys without any API call."""
-    return (
+    return argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n" + (
         "あなたはARGUSの独立検証役です。以下の市場スナップショット・ルールラベル・GPTの提案を検証し、"
         "(1)裏付けのない主張、(2)直近の重大リスク(web情報があれば反映)、(3)GPT提案が強気/積極的すぎないか、"
         "(4)注意すべき銘柄、(5)最終アクションを引き下げるべきか、を点検してください。捏造は禁止。"
@@ -14185,6 +14204,7 @@ def _gemini_check(snapshot, openai_out, checker_model=None):
     try:
         client = google_genai.Client(api_key=GEMINI_API_KEY)
         prompt = _gemini_prompt(snapshot, openai_out)
+        argus_product_naming.require_allowed(prompt)
         cfg = None
         try:
             from google.genai import types as _gt
@@ -14194,8 +14214,10 @@ def _gemini_check(snapshot, openai_out, checker_model=None):
             cfg, grounding_enabled = None, False
 
         def _gen(model, config):
-            return (client.models.generate_content(model=model, contents=prompt, config=config)
+            response = (client.models.generate_content(model=model, contents=prompt, config=config)
                     if config else client.models.generate_content(model=model, contents=prompt))
+            _AI_LAST_RUN["gemUsage"] = _gemini_usage_tokens(response)
+            return response
 
         model_used = checker_model or _GEMINI_JUDGE_MODEL   # per-run tier (flash/pro)
         try:
@@ -14231,7 +14253,7 @@ def _gemini_check(snapshot, openai_out, checker_model=None):
             else:
                 raise
         _AI_LAST_RUN["gemModel"] = model_used
-        out = safe_json(getattr(resp, "text", "") or "")
+        out = _checked_ai_json(getattr(resp, "text", "") or "")
         if not isinstance(out, dict) or "disagreements" not in out:
             # Grounding-tool responses often aren't pure JSON. Retry ONCE in
             # strict JSON mode (tools and response_mime_type can't combine).
@@ -14239,8 +14261,10 @@ def _gemini_check(snapshot, openai_out, checker_model=None):
                 from google.genai import types as _gt
                 cfg2 = _gt.GenerateContentConfig(response_mime_type="application/json")
                 resp = _gen(model_used, cfg2)
-                out = safe_json(getattr(resp, "text", "") or "")
+                out = _checked_ai_json(getattr(resp, "text", "") or "")
                 grounding_enabled = False
+            except argus_product_naming.NamingPolicyError:
+                raise
             except Exception as e2:
                 _AI_LAST_RUN["gemError"] = f"json-retry {type(e2).__name__}: {str(e2)[:140]}"
         if not isinstance(out, dict) or "disagreements" not in out:
@@ -14262,7 +14286,11 @@ def _gemini_check(snapshot, openai_out, checker_model=None):
         except Exception:
             pass
         _AI_LAST_RUN["gemUsage"] = _gemini_usage_tokens(resp)
+        argus_product_naming.require_allowed(out)
         return out, "live", grounding_enabled
+    except argus_product_naming.NamingPolicyError as exc:
+        _AI_LAST_RUN["gemError"] = str(exc)
+        return None, "content_rejected", grounding_enabled
     except Exception as e:
         add_log(f"[AI] gemini check failed: {type(e).__name__}")
         _AI_LAST_RUN["gemError"] = f"{type(e).__name__}: {str(e)[:140]}"
@@ -14545,6 +14573,7 @@ _CAOS_EVENT_SYSTEM = (
 def _openai_prose_call(client, model, sys_prompt, user):
     """One model call: Responses API first, chat completions second. Returns
     (response, text). Raises the LAST error when both fail."""
+    sys_prompt = argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n" + sys_prompt
     try:
         resp = client.responses.create(model=model, instructions=sys_prompt,
                                         input=user, timeout=60, store=False)
@@ -14611,6 +14640,11 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
         _OPENAI_PROSE_LAST.update(call_status)
 
     publish()
+    try:
+        argus_product_naming.require_allowed([user, system or _CAOS_EVENT_SYSTEM])
+    except argus_product_naming.NamingPolicyError as exc:
+        publish(outcome="skipped", reason=str(exc))
+        return None
     decision, reservation = _cost_policy_reserve(
         "openai", purpose, event_id=event_id,
         event_phase=event_phase, estimated_cost_usd=0.08,
@@ -14655,6 +14689,15 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
             pass
         call_status["returnedModel"] = returned
         out = safe_json(text or "")
+        # The provider has spent tokens even when its content is inadmissible.
+        # Reject the entire generated candidate before any caller can save it.
+        try:
+            argus_product_naming.require_allowed([text or "", out])
+        except argus_product_naming.NamingPolicyError as exc:
+            _cost_policy_settle(reservation, ok=True,
+                                actual_cost_usd=(est if est > 0 else 0.08))
+            publish(outcome="rejected", reason=str(exc))
+            return None
         if isinstance(out, dict) and out:
             _cost_policy_settle(reservation, ok=True,
                                 actual_cost_usd=(est if est > 0 else 0.08))
@@ -16473,6 +16516,10 @@ def api_argus_ai_provider_ping():
         model = _GEMINI_JUDGE_MODEL
     out = {"asOf": _ai_now_iso(), "provider": provider, "model": model,
            "estimatedCostUsd": 0.002, "reason": reason}
+    try:
+        argus_product_naming.require_allowed(out)
+    except argus_product_naming.NamingPolicyError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 503
 
     if provider == "openai" and not _OPENAI_API_KEY:
         out["openai"] = {"ok": False, "error": "missing_key"}
@@ -16495,11 +16542,12 @@ def api_argus_ai_provider_ping():
                              "requestedModel": model,
                              "returnedModel": str(getattr(r, "model", None)
                                                   or "")[:60] or None}
+            _cost_policy_record("openai", "manual_api", estimated_cost_usd=0.001)
+            argus_product_naming.require_allowed(out["openai"])
             _AI_PROVIDER_LAST_PING[f"openai:{model}"] = {
                 "requestedModel": model,
                 "returnedModel": out["openai"]["returnedModel"],
                 "ok": True, "at": _ai_now_iso()}
-            _cost_policy_record("openai", "manual_api", estimated_cost_usd=0.001)
         except Exception as e:
             out["openai"] = {"ok": False, "model": model,
                              "error": type(e).__name__, "message": str(e)[:140]}
@@ -16518,11 +16566,12 @@ def api_argus_ai_provider_ping():
                              "requestedModel": _GEMINI_JUDGE_MODEL,
                              "returnedModel": str(getattr(
                                  r, "model_version", None) or "")[:60] or None}
+            _cost_policy_record("gemini", "manual_api", estimated_cost_usd=0.001)
+            argus_product_naming.require_allowed(out["gemini"])
             _AI_PROVIDER_LAST_PING[f"gemini:{_GEMINI_JUDGE_MODEL}"] = {
                 "requestedModel": _GEMINI_JUDGE_MODEL,
                 "returnedModel": out["gemini"]["returnedModel"],
                 "ok": True, "at": _ai_now_iso()}
-            _cost_policy_record("gemini", "manual_api", estimated_cost_usd=0.001)
         except Exception as e:
             out["gemini"] = {"ok": False, "model": _GEMINI_JUDGE_MODEL,
                              "error": type(e).__name__, "message": str(e)[:140]}
@@ -16672,6 +16721,10 @@ def _translate_headlines_ja(headlines):
     """Batch-translate headlines via the cheap Gemini flash model. Best-effort:
     any failure returns {} and the UI falls back to English. Called at most
     once per news-cache refill (10 min), so cost is negligible."""
+    try:
+        argus_product_naming.require_allowed(headlines)
+    except argus_product_naming.NamingPolicyError:
+        return {}
     if not _cost_policy_authorize(
             "gemini", "headline_translation", automatic=True,
             estimated_cost_usd=0.02, estimated_tokens=3000)["allowed"]:
@@ -16692,6 +16745,7 @@ def _translate_headlines_ja(headlines):
         _cost_policy_record("gemini", "headline_translation",
                             estimated_cost_usd=0.02)
         out = safe_json(getattr(resp, "text", "") or "")
+        argus_product_naming.require_allowed([getattr(resp, "text", "") or "", out])
         # Count-mismatch batches are discarded whole — positional mapping
         # would cache wrong-pair translations (alignment guard).
         result = argus_news_i18n.validate_translation_batch(out, len(headlines))
@@ -17139,7 +17193,7 @@ def api_argus_market_shock():
 # ── v13.5.36 MARKET SITUATION BRIEF ─────────────────────────────────────────
 # Deterministic composer over verified stores; Terra compresses (Sol only for
 # CRITICAL fact bases); public GET is cached-only (no LLM on public reads).
-_SHO_STATE_JA = {
+_JP_MARKET_ENGINE_STATE_JA = {
     "MIXED": "混在", "FRAGILE": "脆弱", "DOWNSIDE_TRIGGERED": "下方シグナル点灯",
     "SELL_OFF_ACTIVE": "売り圧継続", "REVERSAL_EARLY": "反転初動",
     "TECHNICAL_REBOUND": "テクニカル反発", "RECOVERY_TEST": "回復試験",
@@ -17151,7 +17205,7 @@ _MARKET_BRIEF_TTL_SEC = 300
 
 def _brief_market_view_summary():
     try:
-        view = _sho_market_view()
+        view = _jp_market_engine_market_view()
         proj = (view or {}).get("projection") or {}
         rev = proj.get("reversal") or {}
         fams = proj.get("families") or {}
@@ -17159,7 +17213,7 @@ def _brief_market_view_summary():
         for key, label in (("reversalState", "反転"), ("downsideState", "下方")):
             state = rev.get(key)
             if state:
-                bits.append(f"{label}:{_SHO_STATE_JA.get(str(state), str(state))}")
+                bits.append(f"{label}:{_JP_MARKET_ENGINE_STATE_JA.get(str(state), str(state))}")
         if fams:
             # v13.5.36: the real family enum is AVAILABLE/LICENSE_BLOCKED/
             # MISSING (not "EVALUATED") — the chip showed 0/7 while two
@@ -17790,7 +17844,8 @@ def _news_intel_persist():
                 "durableCounters": {
                     key: _NEWS_INTEL["health"].get(key, 0)
                     for key in ("quarantined", "duplicatesSuppressed",
-                                "parseFailures", "aiAnalyses", "alertsEligible")},
+                                "parseFailures", "aiAnalyses", "alertsEligible",
+                                "articleBoundaryRepairVersion")},
             })
         blob = json.dumps(payload, ensure_ascii=False)
         if len(blob.encode("utf-8")) > 512 * 1024:  # hard bound (§10/§25)
@@ -18319,6 +18374,74 @@ def _news_iso_epoch(value):
         return None
 
 
+def _news_repair_article_boundaries():
+    """Re-fetch legacy article-titled digests without removing originals first.
+
+    Only active, unsplit newspaper envelopes select candidates through the
+    existing message-status ledger. Replacements must all be present before
+    retiring the exact parent fingerprint. Failures remain queued on disk.
+    Reclassification is deterministic and never purchases another AI answer.
+    """
+    with _NEWS_INTEL_LOCK:
+        state = _NEWS_INTEL["intakeState"]
+        if _NEWS_INTEL["health"].get("articleBoundaryRepairVersion") != 1:
+            stamps = [_news_iso_epoch(e.get("processedAt"))
+                      for e in _NEWS_INTEL["events"].values()
+                      if e.get("sourceFamily") == "NIKKEI" and not e.get("digestOf")]
+            candidates = [str(mid) for mid, row in
+                          (_NEWS_INTEL.get("messageStatus") or {}).items()
+                          if "#" not in str(mid) and row.get("source") == "NIKKEI"
+                          and (stamp := _news_iso_epoch(row.get("at"))) is not None
+                          and any(s is not None and abs(stamp - s) <= 180 for s in stamps)]
+            state["articleBoundaryRepairIds"] = candidates[:120]
+            _NEWS_INTEL["health"]["articleBoundaryRepairVersion"] = 1
+        pending = list(state.get("articleBoundaryRepairIds") or [])[:6]
+    if not pending or not argus_gmail_intake.is_configured(os.environ):
+        return
+    try:
+        token = argus_gmail_intake.refresh_access_token(os.environ, requests.request)
+    except Exception:
+        return
+    for mid in pending:
+        try:
+            message = argus_gmail_intake.fetch_message(token, mid, requests.request)
+            if message is None:
+                continue
+            parts = argus_news_intelligence.split_digest_message(message)
+            if len(parts) > 1:
+                for part in parts:
+                    _news_process_message(part, backfill=True)
+                fingerprints = {argus_news_intelligence.source_fingerprint(
+                    message_id=p.get("rfcMessageId") or p.get("messageId"),
+                    subject=p.get("subject"), url=p.get("url")) for p in parts}
+                parent = argus_news_intelligence.source_fingerprint(
+                    message_id=message.get("rfcMessageId") or mid,
+                    subject=message.get("subject"), url=message.get("url"))
+                with _NEWS_INTEL_LOCK:
+                    children = [e for e in _NEWS_INTEL["events"].values()
+                                if e.get("digestOf") == mid and
+                                e.get("sourceFingerprint") in fingerprints]
+                    if {e.get("sourceFingerprint") for e in children} != fingerprints:
+                        continue
+                    retired = [eid for eid, e in _NEWS_INTEL["events"].items()
+                               if not e.get("digestOf") and
+                               e.get("sourceFingerprint") == parent]
+                    for eid in retired:
+                        _NEWS_INTEL["events"].pop(eid, None)
+                        if eid in _NEWS_INTEL["order"]:
+                            _NEWS_INTEL["order"].remove(eid)
+                    _news_audit({"stage": "article_boundary_repair", "retired": retired,
+                                 "replacementCount": len(children)})
+            with _NEWS_INTEL_LOCK:
+                queue = _NEWS_INTEL["intakeState"].get("articleBoundaryRepairIds") or []
+                _NEWS_INTEL["intakeState"]["articleBoundaryRepairIds"] = [
+                    value for value in queue if value != mid]
+        except Exception as exc:
+            with _NEWS_INTEL_LOCK:
+                _news_audit({"stage": "article_boundary_repair_pending",
+                             "errorClass": type(exc).__name__})
+
+
 def _news_intake_cycle(*, backfill=False, backfill_days=10):
     with _NEWS_INTAKE_LOCK:
         return _news_intake_cycle_locked(backfill=backfill, backfill_days=backfill_days)
@@ -18382,6 +18505,7 @@ def _news_intake_cycle_locked(*, backfill=False, backfill_days=10):
                     _news_audit({"stage": "parser_failed",
                                  "messageId": part.get("messageId"),
                                  "errorClass": type(e).__name__})
+    _news_repair_article_boundaries()
     with _NEWS_INTEL_LOCK:
         health["pending"] = 0
         health["lastProcessedAt"] = _ai_now_iso()
@@ -20437,6 +20561,13 @@ def _openai_research_ex(user, role="standard", benchmark=False):
     - no-toolフォールバックは status=model_only(検証済み調査に偽装不可)"""
     started = _ai_now_iso()
     model = _openai_model_for(role)
+    try:
+        argus_product_naming.require_allowed(user)
+    except argus_product_naming.NamingPolicyError as exc:
+        return None, argus_ai_gate.ai_execution_result(
+            provider="openai", model=model, role=role, mode="research",
+            status="unavailable", started_at=started, completed_at=started,
+            failure_reason_redacted=str(exc))
     if not _cost_policy_authorize(
             "openai", "research_benchmark" if benchmark else "osint_research",
             automatic=not benchmark, confirmation=benchmark,
@@ -20483,7 +20614,8 @@ def _openai_research_ex(user, role="standard", benchmark=False):
             provider="openai", model=model, role=role, mode="research",
             status="unavailable", started_at=started, completed_at=_ai_now_iso())
     client = openai.OpenAI(api_key=_OPENAI_API_KEY)
-    sysmsg = ("あなたはARGUSのリサーチデスク。最新のニュース・事実を調べ、値動きの理由を簡潔に説明する。"
+    sysmsg = (argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n"
+              "あなたはARGUSのリサーチデスク。最新のニュース・事実を調べ、値動きの理由を簡潔に説明する。"
               "出所のない断定はせず、不明なら正直に不明と言う。投資助言・利益保証はしない。")
     tool_modes = (([{"type": "web_search"}], "ok"),) if benchmark else (
         ([{"type": "web_search"}], "ok"),
@@ -20505,24 +20637,34 @@ def _openai_research_ex(user, role="standard", benchmark=False):
                 kw["max_output_tokens"] = _BENCHMARK_MAX_OUTPUT_TOKENS
             resp = client.responses.create(**kw)
             txt = getattr(resp, "output_text", None)
-            if not txt:
-                last_error_class = "empty_output"
-                last_response_status = str(
-                    getattr(resp, "status", None) or "unknown")[:40]
-                continue
             u = _usage_tokens(resp) or (0, 0)
             usage = {"inputTokens": u[0], "outputTokens": u[1]}
             cost = None
             try:
                 cost = argus_ai_cost.estimate_cost(model, u[0], u[1], _AI_PRICING)
-                _ai_record_cost(_ai_now_iso(), "live", "unavailable", False)
+                purpose = "research_benchmark" if benchmark else "osint_research"
+                _ai_record_prose_cost(getattr(resp, "model", None) or model,
+                                      u[0], u[1], cost, purpose=purpose)
+                _cost_policy_record("openai", purpose, estimated_cost_usd=cost)
             except Exception:
                 pass
+            if not txt:
+                last_error_class = "empty_output"
+                last_response_status = str(
+                    getattr(resp, "status", None) or "unknown")[:40]
+                continue
             if st_ok == "model_only":
                 _AI_INTEGRITY["modelOnlyCount"] += 1
+            naming_rejection = None
+            try:
+                argus_product_naming.require_allowed([txt, safe_json(txt)])
+            except argus_product_naming.NamingPolicyError as exc:
+                naming_rejection = str(exc)
             res = argus_ai_gate.ai_execution_result(
                 provider="openai", model=model, role=role, mode="research",
-                status=st_ok, started_at=started, completed_at=_ai_now_iso(),
+                status="unavailable" if naming_rejection else st_ok,
+                started_at=started, completed_at=_ai_now_iso(),
+                failure_reason_redacted=naming_rejection,
                 prompt_version="research-v1", privacy_mode="redacted",
                 store_disabled=True,
                 tool_calls=[t["type"] for t in (tools or [])],
@@ -20532,7 +20674,7 @@ def _openai_research_ex(user, role="standard", benchmark=False):
                 response_model=getattr(resp, "model", None))
             _AI_INTEGRITY["lastExec"] = {
                 "model": model, "status": res["status"], "at": res["completedAt"]}
-            return txt, res
+            return (None if naming_rejection else txt), res
         except Exception as exc:
             last_error_class = type(exc).__name__[:80]
             continue
@@ -20993,6 +21135,7 @@ _CHECKPOINT_V2_STATUS = {
 _CHECKPOINT_V2_STAGE1_CONTROL = argus_checkpoint_v2_stage1.empty_state(
     str(os.environ.get("RENDER_GIT_COMMIT") or "") or None)
 _OSINT_PERSIST_STATE = {"restored": False}
+_OSINT_RESTORE_LOCK = threading.RLock()
 _DURABLE_RESTORE_HTTP_TIMEOUT = (6, 60)
 _DURABLE_RESTORE_MAX_BYTES = 256 * 1024 * 1024
 _DURABLE_READBACK_MAX_BYTES = argus_remote_recovery.MAX_READBACK_BYTES
@@ -24452,6 +24595,9 @@ def _osint_persist():
 
 
 def _osint_persist_locked():
+    if (_DURABLE_STATE.get("analysisNameMigration") or {}).get("status") in (
+            "RESTORING", "BLOCKED"):
+        return {"verified": False, "errorClass": "analysis_restore_incomplete"}
     attempt_at = _ai_now_iso()
     stage = "source_snapshot_construction"
     _DURABLE_STATE["lastAttemptAt"] = attempt_at
@@ -25084,6 +25230,9 @@ def _restore_mission_wal(after_sequence=0):
         _MISSION_WAL_FILE, after_sequence=int(after_sequence or 0))
     for record in state["records"]:
         if record.get("kind") != "checkpoint_verified":
+            # Retained WAL records are a distinct restore source. Reject an
+            # unreviewed payload without rewriting its authenticated bytes.
+            argus_product_naming.require_allowed(record)
             _apply_mission_wal_record(record)
     if argus_remote_journal.OPS_SEQUENCE_HIGH_WATER_FIELD in \
             _OPS_JOURNAL_META:
@@ -27774,10 +27923,28 @@ def _proven_local_checkpoint_corruption(exc, path):
     return None
 
 
+def _serialized_restore(function):
+    @wraps(function)
+    def restore(*args, **kwargs):
+        with _OSINT_RESTORE_LOCK:
+            return function(*args, **kwargs)
+    return restore
+
+
+@_serialized_restore
 def _osint_restore_once():
     """Restore a sealed local checkpoint or verified Remote Journal snapshot."""
     if _OSINT_PERSIST_STATE.get("restored"):
         return _DURABLE_STATE.get("restoreSource")
+    _analysis_migration_required = bool(
+        os.environ.get("PRODUCT_ANALYSIS_MIGRATION_MAP") or
+        os.environ.get("PRODUCT_NAMING_POLICY") or
+        argus_persistent_storage.production_mode())
+    if _analysis_migration_required:
+        # Background persistence cannot overwrite the source while its
+        # migration is pending, unavailable or rejected during bootstrap.
+        _DURABLE_STATE["analysisNameMigration"] = {
+            "status": "RESTORING", "checkpointVerified": False}
     blob = None
     source = None
     pinned_ledger = None
@@ -28119,7 +28286,13 @@ def _osint_restore_once():
         return None
     _restore_snapshot = _restore_transaction_snapshot()
     _wal_floor_change = None
+    _analysis_migration_receipt = None
     try:
+        # Verification above authenticates the source. Transformation below
+        # retains that source and cannot reuse its seal for changed contents.
+        blob, _analysis_migration_receipt = analysis_migration_restore.prepare_restore(
+            blob, root=_DURABILITY_PATHS["root"],
+            mapping_text=os.environ.get("PRODUCT_ANALYSIS_MIGRATION_MAP"))
         _restore_checkpoint_failure_history(
             blob.get("checkpointFailureHistory"))
         for k, v in (blob.get("termOverlay") or {}).items():
@@ -28528,6 +28701,14 @@ def _osint_restore_once():
         # append is rolled back together with the in-memory transaction.
         _wal_floor_change = _seed_remote_recovery_wal_floor(blob)
         _persist_durability_metadata()
+        if _analysis_migration_receipt is not None:
+            _DURABLE_STATE["analysisNameMigration"] = \
+                analysis_migration_restore.record_restore_applied(
+                    _analysis_migration_receipt, root=_DURABILITY_PATHS["root"],
+                    production=_DURABILITY_PRODUCTION)
+        elif _analysis_migration_required:
+            _DURABLE_STATE["analysisNameMigration"] = {
+                "status": "NOT_NEEDED", "checkpointVerified": False}
         _DURABLE_STATE["lastRestoreAt"] = _ai_now_iso()
         _DURABLE_STATE["restoreSource"] = source
         _OSINT_PERSIST_STATE["restored"] = True
@@ -28541,6 +28722,10 @@ def _osint_restore_once():
                 exc = _RemoteRecoveryRestoreError(
                     "recovery_wal_floor_rollback_failed")
         _restore_transaction_rollback(_restore_snapshot)
+        if _analysis_migration_required:
+            _DURABLE_STATE["analysisNameMigration"] = {
+                "status": "BLOCKED", "errorClass": type(exc).__name__,
+                "checkpointVerified": False}
         _DURABLE_STATE["integrityStatus"] = "corrupt_ignored"
         _DURABLE_STATE["restoreApplyError"] = type(exc).__name__
         if isinstance(exc, _RemoteRecoveryRestoreError):
@@ -28718,6 +28903,13 @@ _OSINT_SCOUT_SYS = ("あなたはOSINT調査員。出力は必ず指定JSONの�
 def _gemini_osint(prompt, benchmark=False, model_override=None,
                   diagnostic_context=None):
     """Gemini scout(検索グラウンディング付き・admin経路のみから呼ばれる)。"""
+    prompt = argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n" + prompt
+    try:
+        argus_product_naming.require_allowed(prompt)
+    except argus_product_naming.NamingPolicyError as exc:
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({"status": "unavailable", "errorClass": str(exc)})
+        return None, "unavailable"
     if not _cost_policy_authorize(
             "gemini", "research_benchmark" if benchmark else "osint_research",
             automatic=not benchmark, confirmation=benchmark,
@@ -28758,6 +28950,18 @@ def _gemini_osint(prompt, benchmark=False, model_override=None,
         txt = getattr(resp, "text", None) or ""
         out, warns = argus_osint_engine.parse_scout_output(txt)   # v12.1.1 頑健パーサ
         out["parserWarnings"] = warns
+        try:
+            argus_product_naming.require_allowed([txt, out])
+        except argus_product_naming.NamingPolicyError as exc:
+            _cost_policy_record("gemini",
+                "research_benchmark" if benchmark else "osint_research",
+                estimated_cost_usd=0.10)
+            if isinstance(diagnostic_context, dict):
+                usage = _gemini_usage_tokens(resp) or (0, 0)
+                diagnostic_context.update({"status": "rejected", "errorClass": str(exc),
+                    "requestedModel": selected_model,
+                    "usage": {"inputTokens": usage[0], "outputTokens": usage[1]}})
+            return None, "rejected"
         if benchmark:
             usage = _gemini_usage_tokens(resp) or (0, 0)
             out["_providerMeta"] = {
@@ -33182,6 +33386,23 @@ def _formal_claims(out, case=None):
     return rows
 
 
+def _benchmark_evaluator_usage(response, requested_model):
+    """Retain paid usage before parsing or admitting evaluator content."""
+    usage = _usage_tokens(response) or (0, 0)
+    meta = {"provider": "openai", "apiEndpoint": "responses",
+            "requestedModel": requested_model,
+            "responseModel": getattr(response, "model", None),
+            "responseId": getattr(response, "id", None),
+            "usage": {"inputTokens": usage[0], "outputTokens": usage[1]},
+            "createdAt": _ai_now_iso(), "pricingVersion": _BENCHMARK_PRICING_VERSION}
+    _, estimated_usd = _benchmark_usage_cost_jpy([meta], 1.0)
+    _ai_record_prose_cost(meta["responseModel"] or requested_model, usage[0], usage[1],
+                          estimated_usd, purpose="research_benchmark")
+    _cost_policy_record("openai", "research_benchmark", estimated_cost_usd=estimated_usd)
+    meta["estimatedCostUsd"] = estimated_usd
+    return meta
+
+
 def _formal_blind_evaluate(case, benchmark_id, claims_by_provider,
                            diagnostic_context=None):
     """One OpenAI evaluator call, provider names hidden; no retry/fallback."""
@@ -33201,6 +33422,12 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider,
         f"rubric={json.dumps(argus_research_benchmark.RUBRIC_WEIGHTS, sort_keys=True)} "
         f"answers={json.dumps(answers, ensure_ascii=False, sort_keys=True)} "
         "形式={\"A\":{rubric各キー},\"B\":{rubric各キー}}")
+    try:
+        argus_product_naming.require_allowed(prompt)
+    except argus_product_naming.NamingPolicyError as exc:
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({"status": "content_rejected", "errorClass": str(exc)})
+        return None, "content_rejected", None
     # Dry-run assumes at most 6,000 input tokens. A UTF-8 byte ceiling is a
     # conservative fail-closed guard and prevents an unexpectedly large source
     # payload from escaping the fixed per-call budget.
@@ -33209,6 +33436,7 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider,
             diagnostic_context.update({"status": "input_budget_exceeded",
                                        "errorClass": "input_budget_exceeded"})
         return None, "input_budget_exceeded", None
+    meta = None
     try:
         import openai
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
@@ -33217,7 +33445,8 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider,
             model=evaluator_model, input=prompt, timeout=90, store=False,
             reasoning={"effort": _BENCHMARK_REASONING_EFFORT},
             max_output_tokens=_BENCHMARK_MAX_OUTPUT_TOKENS)
-        parsed = safe_json(getattr(response, "output_text", "") or "")
+        meta = _benchmark_evaluator_usage(response, evaluator_model)
+        parsed = _checked_ai_json(getattr(response, "output_text", "") or "")
         if not isinstance(parsed, dict) or not all(
                 isinstance(parsed.get(k), dict) for k in ("A", "B")):
             if isinstance(diagnostic_context, dict):
@@ -33226,14 +33455,7 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider,
                     "errorClass": "invalid_evaluator_json",
                     "responseStatus": str(
                         getattr(response, "status", None) or "unknown")[:40]})
-            return None, "invalid_evaluator_json", None
-        usage = _usage_tokens(response) or (0, 0)
-        meta = {"provider": "openai", "apiEndpoint": "responses",
-                "requestedModel": evaluator_model,
-                "responseModel": getattr(response, "model", None),
-                "usage": {"inputTokens": usage[0], "outputTokens": usage[1]},
-                "createdAt": _ai_now_iso(),
-                "pricingVersion": _BENCHMARK_PRICING_VERSION}
+            return None, "invalid_evaluator_json", meta
         if isinstance(diagnostic_context, dict):
             diagnostic_context.update({
                 "status": "ok", "errorClass": None,
@@ -33241,6 +33463,11 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider,
                 "responseModel": meta.get("responseModel"),
                 "usage": meta.get("usage")})
         return {"A": parsed["A"], "B": parsed["B"]}, "ok", meta
+    except argus_product_naming.NamingPolicyError as exc:
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({"status": "content_rejected", "errorClass": str(exc),
+                                       "usage": (meta or {}).get("usage")})
+        return None, "content_rejected", meta
     except Exception as exc:
         add_log(f"[formal-benchmark] evaluator failed: {type(exc).__name__}")
         if isinstance(diagnostic_context, dict):
@@ -33329,12 +33556,13 @@ def _formal_benchmark_worker(benchmark_id, dry_run, availability_proof=None,
                 case, benchmark_id, claims,
                 diagnostic_context=referee_diag)
             diagnostic["provider"]["referee"] = referee_diag
+            if evaluator_meta:
+                provider_calls.append(dict(evaluator_meta))
             if eval_status != "ok":
                 failure = eval_status
                 diagnostic.update({"failureStage": "referee",
                                    "failureCaseId": case.get("caseId")})
                 break
-            provider_calls.append(dict(evaluator_meta or {}))
             results.append(argus_research_benchmark.case_result(
                 benchmark_id=benchmark_id, case=case,
                 evaluator_axes_by_label=axes, claims_by_provider=claims))
@@ -33530,8 +33758,13 @@ def _v2_blind_evaluate(case, run_id, claims_by_provider):
         f"rubric={json.dumps(argus_research_benchmark_v2.QUALITY_WEIGHTS, sort_keys=True)} "
         f"answers={json.dumps(answers, ensure_ascii=False, sort_keys=True)} "
         "format={\"A\":{rubric各キー},\"B\":{rubric各キー}}")
+    try:
+        argus_product_naming.require_allowed(prompt)
+    except argus_product_naming.NamingPolicyError:
+        return None, "content_rejected", None
     if len(prompt.encode("utf-8")) > 24_000:
         return None, "input_budget_exceeded", None
+    meta = None
     try:
         import openai
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
@@ -33540,18 +33773,14 @@ def _v2_blind_evaluate(case, run_id, claims_by_provider):
             model=model, input=prompt, timeout=90, store=False,
             reasoning={"effort": _BENCHMARK_REASONING_EFFORT},
             max_output_tokens=_BENCHMARK_MAX_OUTPUT_TOKENS)
-        parsed = safe_json(getattr(response, "output_text", "") or "")
+        meta = _benchmark_evaluator_usage(response, model)
+        parsed = _checked_ai_json(getattr(response, "output_text", "") or "")
         if not isinstance(parsed, dict) or not all(
                 isinstance(parsed.get(label), dict) for label in ("A", "B")):
-            return None, "invalid_evaluator_json", None
-        usage = _usage_tokens(response) or (0, 0)
-        meta = {"provider": "openai", "apiEndpoint": "responses",
-                "requestedModel": model, "responseModel": getattr(response, "model", None),
-                "responseId": getattr(response, "id", None),
-                "usage": {"inputTokens": usage[0], "outputTokens": usage[1]},
-                "pricingVersion": _BENCHMARK_PRICING_VERSION,
-                "createdAt": _ai_now_iso()}
+            return None, "invalid_evaluator_json", meta
         return {"A": parsed["A"], "B": parsed["B"]}, "ok", meta
+    except argus_product_naming.NamingPolicyError:
+        return None, "content_rejected", meta
     except Exception as exc:
         add_log(f"[formal-benchmark-v2] evaluator failed: {type(exc).__name__}")
         return None, "provider_failed", {"errorClass": type(exc).__name__[:80]}
@@ -33565,7 +33794,7 @@ def _v2_evaluate_with_retry(case, run_id, claims_by_provider):
         if last_status == "ok":
             return last_axes, last_status, last_meta, attempt
         if last_status in ("provider_blocked", "invalid_evaluator_json",
-                           "input_budget_exceeded"):
+                           "input_budget_exceeded", "content_rejected"):
             break
         if attempt < 2:
             time.sleep(argus_foundation_jobs.bounded_backoff_seconds(
@@ -33638,7 +33867,7 @@ def _v2_call_with_retry(call):
             return out, status, attempt
         if status in ("disabled", "deterministic_mode", "budget_limited",
                       "unavailable", "invalid_evaluator_json",
-                      "input_budget_exceeded"):
+                      "input_budget_exceeded", "rejected", "content_rejected"):
             break
         if attempt < 2:
             time.sleep(argus_foundation_jobs.bounded_backoff_seconds(
@@ -33760,9 +33989,10 @@ def _research_benchmark_v2_job_worker(job_id):
                           "argus": _formal_claims(argus_out)}
                 axes, eval_status, referee_meta, referee_attempts = \
                     _v2_evaluate_with_retry(case, run_id, claims)
+                if referee_meta:
+                    provider_calls.append(dict(referee_meta))
                 if eval_status != "ok":
                     raise RuntimeError(f"v2_referee_{eval_status}")
-                provider_calls.append(dict(referee_meta or {}))
                 actual_jpy, _ = _benchmark_usage_cost_jpy(
                     provider_calls, dry["usdJpyCeiling"])
                 case_provider_meta = [
@@ -35216,7 +35446,7 @@ _VERIFIED_VIEW_METHOD_VERSION = (
     f"{argus_chart_intelligence.METHOD_VERSION}:"
     f"{argus_market_replay.METHOD_VERSION}:"
     # v13.5.14: the forecast engine version participates so an engine change
-    # (SHO conditioning) regenerates published snapshots instead of serving
+    # (JP_MARKET_ENGINE conditioning) regenerates published snapshots instead of serving
     # the old calibration until the bars happen to change (「古いまま」根絶).
     f"{argus_today_intelligence.METHOD_VERSION}"
 )
@@ -35963,12 +36193,12 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
     # Public chart GETs only consume a verified cache/durable snapshot.  Provider
     # refresh is owned by the natural scheduled tick below, never UI interaction.
     _short_rows = _jp_daily_short_history(cached_only=True) if market == "JP" else []
-    # SHO conditioning context (owner spec 2026-08-22): the ten-year corpus is
-    # joined per-day to the credit / VIX / relative-strength state SHO reads.
+    # JP_MARKET_ENGINE conditioning context (owner spec 2026-08-22): the ten-year corpus is
+    # joined per-day to the credit / VIX / relative-strength state JP_MARKET_ENGINE reads.
     # Every source is PIT-stamped; assembly failure degrades to the pure
     # price-action engine rather than blocking the chart.
     try:
-        _sho_context = {
+        _jp_market_engine_context = {
             "creditRows": (_jpx_credit_rows_effective()
                            if market == "JP" else []),
             "vixRows": _fred_vix_history_dated(),
@@ -35981,11 +36211,11 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                              else ["vix_provider_key_missing"]),
         }
     except Exception:
-        _sho_context = None
+        _jp_market_engine_context = None
     _today_intel = argus_today_intelligence.analyze(
         daily_rows, symbol=symbol, market=market,
         short_history=_short_rows, comparison_rows=_comparison_rows,
-        sho_context=_sho_context,
+        jp_market_engine_context=_jp_market_engine_context,
         as_of=now_iso)
     # The pure engine cannot measure breadth freshness (no ledger access), so
     # the serving layer injects the measured JP lag here. None stays None —
@@ -36332,9 +36562,9 @@ def api_argus_chart_intelligence():
             symbol, market, timeframe, market_scope=False, cached_only=True)))
 
 
-# v13.5.50: the owner asked for the indices themselves (SHO reasons about
+# v13.5.50: the owner asked for the indices themselves (JP_MARKET_ENGINE reasons about
 # the Nikkei 225, not the 1321 ETF).  Cached-only public GET over the Yahoo
-# index OHLCV cache the SHO warm already fills; the verified snapshots
+# index OHLCV cache the JP_MARKET_ENGINE warm already fills; the verified snapshots
 # (1321/1306/SPY/QQQ) remain the decision anchor.  Never fetches here.
 _INDEX_CHART_SOURCES = {
     "N225": {"yahoo": ("^N225",), "market": "JP", "instrumentId": "NIKKEI_225_INDEX",
@@ -36363,7 +36593,7 @@ def api_argus_index_chart():
         return jsonify({"error": "invalid_timeframe"}), 400
     rows, yahoo_used = None, None
     for yahoo_symbol in spec["yahoo"]:
-        cached = _SHO_INDEX_OHLCV_CACHE.get(yahoo_symbol)
+        cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get(yahoo_symbol)
         data = cached.get("data") if isinstance(cached, dict) else None
         if isinstance(data, list) and len(data) >= 30:
             rows, yahoo_used = data, yahoo_symbol
@@ -36743,34 +36973,34 @@ def _decision_evidence_prediction_artifact(symbol, market, cutoff,
         return None, "prediction_context_failed"
 
 
-# ━━━ v13.5.36 SHO CORE production inputs (external review item B) ━━━
+# ━━━ v13.5.36 JP_MARKET_ENGINE CORE production inputs (external review item B) ━━━
 # The read-only audit confirmed evaluate_d01_d07 was never called from any
 # production path and the live reversal artifact ran on zero rows. This block
 # wires the feeds the process already holds — JPX credit CSV+ledger, J-Quants
 # 1570 weekly margin, ETF-proxy relative strength from the verified chart
 # caches, Market Ledger foreign flow, and Yahoo ^VIX/^N225 complete OHLCV —
-# into the canonical SHO engines. Every row carries an explicit availableFrom
+# into the canonical JP_MARKET_ENGINE engines. Every row carries an explicit availableFrom
 # (PIT); the public decision-evidence GET stays strictly cached-only (fetch is
 # passed ONLY by the 30-min collect cron warm). A cold feed leaves its family
 # MISSING/LICENSE_BLOCKED — absence is reported, never impersonated.
-_SHO_INDEX_OHLCV_CACHE = {}
-_SHO_INDEX_OHLCV_TTL_SEC = 1800
-_SHO_PIT_INPUT_MEMO = {"ts": 0.0, "data": None}
-_SHO_MARKET_VIEW_MEMO = {"ts": 0.0, "view": None}
+_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE = {}
+_JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC = 1800
+_JP_MARKET_ENGINE_PIT_INPUT_MEMO = {"ts": 0.0, "data": None}
+_JP_MARKET_ENGINE_MARKET_VIEW_MEMO = {"ts": 0.0, "view": None}
 
 
 def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
                        available_hour_utc=None, next_day_available=False):
     """Complete OHLCV rows for one index from the public Yahoo v8 chart API.
 
-    Rows are shaped for argus_sho.normalize_complete_ohlcv with an explicit
+    Rows are shaped for jp_market_engine.normalize_complete_ohlcv with an explicit
     per-bar availableFrom, which keeps the current in-progress session OUT of
     evidence until after its close. Volume is passed through exactly as the
     source reports it (0 for ^VIX) and bars with any null component are
     dropped, never filled. Cache-only unless fetch=True (cron warm); a stale
     cache still serves (its rows carry their own PIT stamps)."""
     now = time.time()
-    cached = _SHO_INDEX_OHLCV_CACHE.get(yahoo_symbol)
+    cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get(yahoo_symbol)
     if cached and (not fetch or now < cached["expires"]):
         return cached["data"]
     if not fetch:
@@ -36814,14 +37044,14 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
         rows = [by_date[key] for key in sorted(by_date)]
     except Exception:
         rows = []
-    _SHO_INDEX_OHLCV_CACHE[yahoo_symbol] = {
+    _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE[yahoo_symbol] = {
         "data": rows,
-        "expires": now + (_SHO_INDEX_OHLCV_TTL_SEC if rows else 300)}
+        "expires": now + (_JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC if rows else 300)}
     return rows
 
 
-def _sho_margin_1570_rows(*, fetch=False):
-    """1570 weekly margin ratio as PIT rows for SHO D02.
+def _jp_market_engine_margin_1570_rows(*, fetch=False):
+    """1570 weekly margin ratio as PIT rows for JP_MARKET_ENGINE D02.
 
     J-Quants publishes weekly margin interest during the following week, so
     availableFrom = period + 7 days keeps the join conservative. Cache-only
@@ -36853,10 +37083,10 @@ def _sho_margin_1570_rows(*, fetch=False):
     return rows
 
 
-def _sho_relative_strength_proxy():
+def _jp_market_engine_relative_strength_proxy():
     """20-session relative strength of 1321 vs SPY (verified chart caches).
 
-    One PIT row for SHO D03's explicit ETF-proxy lane (ARGUS_CANDIDATE
+    One PIT row for JP_MARKET_ENGINE D03's explicit ETF-proxy lane (ARGUS_CANDIDATE
     lineage is assigned by the evaluator itself). availableFrom is after the
     15:30 JST close of the row's session; cached-only, None when cold."""
     try:
@@ -36884,8 +37114,8 @@ def _sho_relative_strength_proxy():
         return None
 
 
-def _sho_foreign_flow_rows():
-    """flow.foreign observations from the Market Ledger for SHO D05."""
+def _jp_market_engine_foreign_flow_rows():
+    """flow.foreign observations from the Market Ledger for JP_MARKET_ENGINE D05."""
     rows = []
     try:
         by_series = argus_market_ledger.latest_by_series(
@@ -36905,7 +37135,7 @@ def _sho_foreign_flow_rows():
     return rows
 
 
-def _sho_vix_rows(*, fetch=False):
+def _jp_market_engine_vix_rows(*, fetch=False):
     """VIX rows for D06 + the reversal VIX axis, with an explicit source tag.
 
     Yahoo complete OHLCV is preferred (enables the MACD axis); the FRED
@@ -36929,7 +37159,7 @@ def _sho_vix_rows(*, fetch=False):
     return [], ("fred_key_missing" if not _FRED_API_KEY else "cold_cache")
 
 
-# ── SHO D07 supply: earnings disclosures (v13.5.36) ─────────────────────────
+# ── JP_MARKET_ENGINE D07 supply: earnings disclosures (v13.5.36) ─────────────────────────
 # J-Quants /fins/statements is the authoritative TDnet-derived disclosure
 # record (DisclosedDate/Time = official publication). PIT is carried on the
 # EVENT via knownAt; the first tradable session comes from the canonical
@@ -36937,10 +37167,10 @@ def _sho_vix_rows(*, fetch=False):
 # No consensus dataset is contracted → epsEstimate stays None and beat/miss
 # is never synthesized. Unknown provider schema → honest MISSING, never a
 # guessed mapping.
-_SHO_STATEMENTS_CACHE = {"rows": [], "fetchedAt": None, "expires": 0.0,
+_JP_MARKET_ENGINE_STATEMENTS_CACHE = {"rows": [], "fetchedAt": None, "expires": 0.0,
                          "source": "cold", "schemaSample": None}
-_SHO_STATEMENTS_TTL_SEC = 6 * 3600
-_SHO_STATEMENTS_WINDOW_DAYS = 14
+_JP_MARKET_ENGINE_STATEMENTS_TTL_SEC = 6 * 3600
+_JP_MARKET_ENGINE_STATEMENTS_WINDOW_DAYS = 14
 
 
 def _stmt_field(row, *names):
@@ -36951,11 +37181,11 @@ def _stmt_field(row, *names):
     return None
 
 
-def _sho_statements_rows(*, warm=False):
+def _jp_market_engine_statements_rows(*, warm=False):
     """Recent fins/statements rows for the tracked JP universe (cache-only on
     the public path; warm=True refreshes on the collect cron)."""
     now = time.time()
-    cache = _SHO_STATEMENTS_CACHE
+    cache = _JP_MARKET_ENGINE_STATEMENTS_CACHE
     if not warm or (cache["rows"] and now < cache["expires"]):
         return cache["rows"]
     if not _JQUANTS_API_KEY:
@@ -36964,7 +37194,7 @@ def _sho_statements_rows(*, warm=False):
     universe = {str(s.get("symbol"))[:4] for s in _JP_WATCHLIST}
     fetched = []
     try:
-        for back in range(_SHO_STATEMENTS_WINDOW_DAYS):
+        for back in range(_JP_MARKET_ENGINE_STATEMENTS_WINDOW_DAYS):
             day = (datetime.now(TZ_JST) - timedelta(days=back)).strftime(
                 "%Y-%m-%d")
             try:
@@ -36983,7 +37213,7 @@ def _sho_statements_rows(*, warm=False):
                     fetched.append(row)
         cache["rows"] = fetched
         cache["fetchedAt"] = _ai_now_iso()
-        cache["expires"] = now + _SHO_STATEMENTS_TTL_SEC
+        cache["expires"] = now + _JP_MARKET_ENGINE_STATEMENTS_TTL_SEC
         cache["source"] = ("jquants_fins_statements" if fetched
                            else "no_universe_disclosures")
         if fetched and cache["schemaSample"] is None:
@@ -36993,7 +37223,7 @@ def _sho_statements_rows(*, warm=False):
     return cache["rows"]
 
 
-def _sho_first_tradable_session(disclosed_date, disclosed_time):
+def _jp_market_engine_first_tradable_session(disclosed_date, disclosed_time):
     """(first_tradable_iso, flags) from the canonical calendar. Conservative:
     unknown time → treated as after-close; calendar gap → (None, reason)."""
     flags = {}
@@ -37026,12 +37256,12 @@ def _sho_first_tradable_session(disclosed_date, disclosed_time):
         return None, {"reason": "calendar_unavailable"}
 
 
-def _sho_earnings_event():
+def _jp_market_engine_earnings_event():
     """Latest ORIGINAL supported disclosure for the tracked universe as a
     PIT earnings event (corrections never overwrite the original's state)."""
-    rows = _SHO_STATEMENTS_CACHE["rows"]
+    rows = _JP_MARKET_ENGINE_STATEMENTS_CACHE["rows"]
     if not rows:
-        return None, _SHO_STATEMENTS_CACHE["source"]
+        return None, _JP_MARKET_ENGINE_STATEMENTS_CACHE["source"]
     candidates = {}
     unrecognized = 0
     for row in rows:
@@ -37072,7 +37302,7 @@ def _sho_earnings_event():
                       else "no_supported_disclosures")
     originals = sorted(candidates.values(), key=lambda c: c["stamp"])
     chosen = originals[-1]
-    first_tradable, flags = _sho_first_tradable_session(
+    first_tradable, flags = _jp_market_engine_first_tradable_session(
         chosen["disclosedDate"], chosen["disclosedTime"])
     if first_tradable is None:
         return None, f"first_session_{flags.get('reason', 'unknown')}"
@@ -37123,7 +37353,7 @@ def _sho_earnings_event():
     return event, "jquants_fins_statements"
 
 
-def _sho_earnings_bars(symbol):
+def _jp_market_engine_earnings_bars(symbol):
     """Complete OHLCV rows for the event instrument with per-bar PIT stamps
     (J-Quants daily publication ≈ evening; conservative 19:00 JST)."""
     rows = _chart_history_cached(str(symbol)[:4], "JP") or []
@@ -37146,29 +37376,29 @@ def _sho_earnings_bars(symbol):
     return out
 
 
-def _sho_pit_inputs(*, warm=False):
-    """Market-level SHO CORE inputs (D01-D07 + reversal axes).
+def _jp_market_engine_pit_inputs(*, warm=False):
+    """Market-level JP_MARKET_ENGINE CORE inputs (D01-D07 + reversal axes).
 
     Cached-only on the public path; warm=True (collect cron) refreshes the
     underlying caches. sourceStatus names each feed's live state so a cold or
     key-less feed is visible instead of silently absent."""
     now = time.time()
-    memo = _SHO_PIT_INPUT_MEMO
+    memo = _JP_MARKET_ENGINE_PIT_INPUT_MEMO
     if not warm and memo["data"] is not None and now - memo["ts"] < 120:
         return memo["data"]
-    vix_rows, vix_source = _sho_vix_rows(fetch=warm)
+    vix_rows, vix_source = _jp_market_engine_vix_rows(fetch=warm)
     nikkei_rows = _yahoo_index_ohlcv(
         "^N225", "NIKKEI_225_INDEX", fetch=warm, available_hour_utc=7)
     try:
         credit_rows = _jpx_credit_rows_effective()
     except Exception:
         credit_rows = []
-    margin_rows = _sho_margin_1570_rows(fetch=warm)
-    rs_proxy = _sho_relative_strength_proxy()
-    flow_rows = _sho_foreign_flow_rows()
-    _sho_statements_rows(warm=warm)
-    earnings_event, earnings_source = _sho_earnings_event()
-    earnings_bars = (_sho_earnings_bars(earnings_event["instrumentId"])
+    margin_rows = _jp_market_engine_margin_1570_rows(fetch=warm)
+    rs_proxy = _jp_market_engine_relative_strength_proxy()
+    flow_rows = _jp_market_engine_foreign_flow_rows()
+    _jp_market_engine_statements_rows(warm=warm)
+    earnings_event, earnings_source = _jp_market_engine_earnings_event()
+    earnings_bars = (_jp_market_engine_earnings_bars(earnings_event["instrumentId"])
                      if earnings_event else [])
     data = {
         "creditRows": credit_rows, "margin1570Rows": margin_rows,
@@ -37189,22 +37419,22 @@ def _sho_pit_inputs(*, warm=False):
     return data
 
 
-def _sho_market_view():
-    """Document-level SHO MARKET VIEW projection (external review item A).
+def _jp_market_engine_market_view():
+    """Document-level JP_MARKET_ENGINE MARKET VIEW projection (external review item A).
 
-    The reviewer's central principle: MARKET VIEW belongs to SHO, ACTION
+    The reviewer's central principle: MARKET VIEW belongs to JP_MARKET_ENGINE, ACTION
     belongs to SDA. This read-only consumer projection (D01-D07 family states
     + the two reversal axes) carries zero action authority by construction
     (project_today_sda_safe) and rides the decision-evidence document for the
     Today display. 120s memo keeps the public GET cheap."""
     now = time.time()
-    memo = _SHO_MARKET_VIEW_MEMO
+    memo = _JP_MARKET_ENGINE_MARKET_VIEW_MEMO
     if memo["view"] is not None and now - memo["ts"] < 120:
         return memo["view"]
     cutoff = _ai_now_iso()
     try:
-        inputs = _sho_pit_inputs()
-        evidence = argus_sho.evaluate_d01_d07(
+        inputs = _jp_market_engine_pit_inputs()
+        evidence = jp_market_engine.evaluate_d01_d07(
             cutoff=cutoff, two_market_rows=inputs["creditRows"],
             margin_1570_rows=inputs["margin1570Rows"],
             relative_strength_proxy=inputs["rsProxy"],
@@ -37213,14 +37443,14 @@ def _sho_market_view():
             earnings_event=inputs.get("earningsEvent"),
             earnings_bars=inputs.get("earningsBars") or (),
             comparison_index_bars=inputs.get("nikkeiRows") or ())
-        reversal = argus_sho.build_reversal_engine(
+        reversal = jp_market_engine.build_reversal_engine(
             cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",
             downside_background="MIXED",
             nikkei_rows=inputs["nikkeiRows"], vix_rows=inputs["vixRows"])
-        projection = argus_sho.project_today_sda_safe(
+        projection = jp_market_engine.project_today_sda_safe(
             cutoff=cutoff, evidence=evidence, reversal=reversal)
         view = {
-            "schemaVersion": "argus-sho-market-view-v1",
+            "schemaVersion": "argus-jp-market-engine-market-view-v1",
             "informationCutoff": cutoff,
             "projection": projection,
             "sourceStatus": dict(inputs["sourceStatus"]),
@@ -37229,7 +37459,7 @@ def _sho_market_view():
         }
     except Exception as exc:
         view = {
-            "schemaVersion": "argus-sho-market-view-v1",
+            "schemaVersion": "argus-jp-market-engine-market-view-v1",
             "informationCutoff": cutoff, "projection": None,
             "sourceStatus": {
                 "error": f"market_view_failed:{type(exc).__name__}"},
@@ -37239,8 +37469,8 @@ def _sho_market_view():
     return view
 
 
-def _decision_evidence_sho_artifact(symbol, cutoff):
-    """Per-subject SHO reversal artifact from real PIT inputs (v13.5.36).
+def _decision_evidence_jp_market_engine_artifact(symbol, cutoff):
+    """Per-subject JP_MARKET_ENGINE reversal artifact from real PIT inputs (v13.5.36).
 
     Both reversal axes now evaluate production feeds (^N225/^VIX complete
     OHLCV); cold feeds leave factors MISSING and the axis DATA_GATED — the
@@ -37250,17 +37480,17 @@ def _decision_evidence_sho_artifact(symbol, cutoff):
     until the downside layer is wired as a PIT input.
     """
     try:
-        inputs = _sho_pit_inputs()
+        inputs = _jp_market_engine_pit_inputs()
     except Exception:
         inputs = None
     try:
-        return argus_sho.build_reversal_engine(
+        return jp_market_engine.build_reversal_engine(
             cutoff=cutoff, analysis_instrument=symbol,
             downside_background="MIXED",
             nikkei_rows=(inputs or {}).get("nikkeiRows") or (),
             vix_rows=(inputs or {}).get("vixRows") or ()), None
     except (TypeError, ValueError) as exc:
-        return None, f"sho_artifact_failed:{type(exc).__name__}"
+        return None, f"jp_market_engine_artifact_failed:{type(exc).__name__}"
 
 
 def _build_decision_evidence_subject(symbol, market, cutoff, build_identity):
@@ -37278,25 +37508,25 @@ def _build_decision_evidence_subject(symbol, market, cutoff, build_identity):
                 symbol, market, cutoff, market_artifact, build_identity)
         if prediction_reason:
             reasons["predictionLedger"] = prediction_reason
-    sho_artifact, sho_reason = _decision_evidence_sho_artifact(symbol, cutoff)
-    if sho_reason:
-        reasons["sho"] = sho_reason
+    jp_market_engine_artifact, jp_market_engine_reason = _decision_evidence_jp_market_engine_artifact(symbol, cutoff)
+    if jp_market_engine_reason:
+        reasons["jp_market_engine"] = jp_market_engine_reason
     references = argus_single_decision.canonical_artifact_references(
         subject=subject, cutoff=cutoff,
         market_truth_artifact=market_artifact,
         prediction_ledger_artifact=prediction_artifact,
-        sho_artifact=sho_artifact)
+        jp_market_engine_artifact=jp_market_engine_artifact)
     failures = dict(references.get("verificationFailures") or {})
     failures.update(reasons)
     statuses = {key: references[key]["status"]
-                for key in ("marketTruth", "predictionLedger", "sho")}
+                for key in ("marketTruth", "predictionLedger", "jp_market_engine")}
     all_available = all(value == "AVAILABLE" for value in statuses.values())
     if all_available:
         quality = {"status": "COMPLETE", "freshness": "FRESH",
                    "missingReasonCodes": [], "conflictReasonCodes": []}
     else:
         prefixes = {"marketTruth": "market_truth",
-                    "predictionLedger": "prediction_ledger", "sho": "sho"}
+                    "predictionLedger": "prediction_ledger", "jp_market_engine": "jp_market_engine"}
         codes = sorted({f"{prefixes[key]}_{value.lower()}"
                         for key, value in statuses.items()
                         if value != "AVAILABLE"})
@@ -37316,8 +37546,8 @@ def _build_decision_evidence_subject(symbol, market, cutoff, build_identity):
         "informationCutoffAt": cutoff,
         "marketTruth": references["marketTruth"],
         "predictionLedger": references["predictionLedger"],
-        "sho": references["sho"],
-        "shoBuyEligible": bool(references.get("shoBuyEligible")),
+        "jp_market_engine": references["jp_market_engine"],
+        "jpMarketEngineBuyEligible": bool(references.get("jpMarketEngineBuyEligible")),
         "quality": quality,
         "verificationFailures": failures,
     }
@@ -37380,15 +37610,15 @@ def _decision_evidence_document(symbols):
                     argus_single_decision.MISSING_MARKET_TRUTH_REFERENCE),
                 "predictionLedger": dict(
                     argus_single_decision.MISSING_PREDICTION_LEDGER_REFERENCE),
-                "sho": {**dict(
-                    argus_single_decision.MISSING_SHO_REFERENCE),
+                "jp_market_engine": {**dict(
+                    argus_single_decision.MISSING_JP_MARKET_ENGINE_REFERENCE),
                     "primitiveFactorIds": [], "targets": []},
-                "shoBuyEligible": False,
+                "jpMarketEngineBuyEligible": False,
                 "quality": {"status": "MISSING", "freshness": "UNKNOWN",
                             "missingReasonCodes": [
                                 "market_truth_missing",
                                 "prediction_ledger_missing",
-                                "sho_missing"],
+                                "jp_market_engine_missing"],
                             "conflictReasonCodes": []},
                 "verificationFailures": {
                     "build": "build_identity_unavailable"},
@@ -37407,15 +37637,15 @@ def _decision_evidence_document(symbols):
                     "predictionLedger": dict(
                         argus_single_decision
                         .MISSING_PREDICTION_LEDGER_REFERENCE),
-                    "sho": {**dict(
-                        argus_single_decision.MISSING_SHO_REFERENCE),
+                    "jp_market_engine": {**dict(
+                        argus_single_decision.MISSING_JP_MARKET_ENGINE_REFERENCE),
                         "primitiveFactorIds": [], "targets": []},
-                    "shoBuyEligible": False,
+                    "jpMarketEngineBuyEligible": False,
                     "quality": {"status": "MISSING", "freshness": "UNKNOWN",
                                 "missingReasonCodes": [
                                     "market_truth_missing",
                                     "prediction_ledger_missing",
-                                    "sho_missing"],
+                                    "jp_market_engine_missing"],
                                 "conflictReasonCodes": []},
                     "verificationFailures": {
                         "build": f"evidence_build_failed:{type(exc).__name__}"},
@@ -37430,10 +37660,10 @@ def _decision_evidence_document(symbols):
         "authority": "CANONICAL_ARTIFACT_REFERENCES",
         "sdaAuthority": False,
         "actionAuthority": False,
-        # v13.5.36 (review item A): document-level SHO MARKET VIEW — display
+        # v13.5.36 (review item A): document-level JP_MARKET_ENGINE MARKET VIEW — display
         # projection only, never an SDA input; the per-subject references
         # above remain the sole decision evidence.
-        "marketView": _sho_market_view(),
+        "marketView": _jp_market_engine_market_view(),
         # v13.5.38: Tachibana LIVE evidence (argus_tachibana_live) — provenance
         # TACHIBANA, SHADOW_NON_AUTHORITATIVE, bounded and secret-free.  A
         # disabled or failed sensor yields a truthful status, never an error,
@@ -37447,7 +37677,7 @@ def _decision_evidence_document(symbols):
 def api_argus_decision_evidence():
     """Canonical artifact references for the device-side SDA (read-only GET).
 
-    Serves per-subject marketTruth / predictionLedger / sho reference dicts
+    Serves per-subject marketTruth / predictionLedger / jp_market_engine reference dicts
     verified by argus_single_decision.canonical_artifact_references. Values are
     derived from already-cached quote/clock state only — this route performs no
     provider fetch, reads no owner data, and publishes no action.
@@ -41731,7 +41961,7 @@ def _jpx_credit_rows_effective():
 
     The committed CSV ends 2026-07-10; subsequent weekly imports land in the
     Market Ledger via /admin/market-ledger/import, so newer periods flow into
-    the SHO conditioning without a code change. Never raises."""
+    the JP_MARKET_ENGINE conditioning without a code change. Never raises."""
     base = list(_jpx_credit_rows())
     last_period = max((str(row.get("periodEnd") or "")[:10] for row in base),
                       default="")
@@ -41756,7 +41986,7 @@ def _jpx_credit_rows_effective():
 
 def _fred_vix_history_dated(n=2600):
     """Dated VIX closes (ascending [{date, value, availableFrom}]) for the
-    ten-year SHO conditioning corpus. availableFrom is the day AFTER the
+    ten-year JP_MARKET_ENGINE conditioning corpus. availableFrom is the day AFTER the
     close date (a VIX close is published after that US session), so generic
     PIT filters stay conservative; [] on no key / failure."""
     now = time.time()
@@ -44289,7 +44519,7 @@ _PRO_HANDOFF_TTL   = 180  # 3 min
 
 def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled", reg=None):
     now_jst = datetime.now(TZ_JST)
-    L = []
+    L = [argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA]
     L.append("# A.R.G.U.S. — GPT-5.5 Pro Handoff")
     L.append("You are GPT-5.5 Pro acting as a second-opinion investment decision reviewer for ARGUS.")
     L.append("")

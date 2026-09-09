@@ -433,11 +433,14 @@ def test_duplicate_candidate_artifacts_without_pointer_fail_closed(
         release.fetch_admission(fetch_args(tmp_path, producer_authority=""))
 
 
+@pytest.mark.parametrize("pending_reads", [0, 2])
 def test_collect_authority_binds_check_run_attempt_artifact_and_certificate(
-        monkeypatch):
+        monkeypatch, pending_reads):
     archive = certificate_archive()
     artifact = artifact_row(archive=archive)
     monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    monkeypatch.setattr(release.time, "sleep", lambda _seconds: None)
+    remaining = [pending_reads]
 
     def fake_json(url, _token):
         if "/check-runs?" in url:
@@ -453,6 +456,9 @@ def test_collect_authority_binds_check_run_attempt_artifact_and_certificate(
         if f"/actions/runs/{PRODUCER_RUN_ID}/artifacts?" in url:
             return {"artifacts": [artifact]}
         if f"/actions/runs/{PRODUCER_RUN_ID}" in url:
+            if remaining[0]:
+                remaining[0] -= 1
+                return producer_run(status="in_progress", conclusion=None)
             return producer_run()
         raise AssertionError(f"unexpected URL: {url}")
 
@@ -466,7 +472,7 @@ def test_collect_authority_binds_check_run_attempt_artifact_and_certificate(
         expected_producer_workflow=
             ".github/workflows/market-public-acceptance.yml",
         required_checks="",
-        timeout_seconds=0,
+        timeout_seconds=10,
         poll_seconds=1,
     ))
     assert value["producer"] == {
@@ -921,3 +927,74 @@ def test_simulation_without_full_mobile_acceptance_fails_closed(
     write_json(path, payload)
     with pytest.raises(ValueError, match="full_release_simulation_1_invalid"):
         release._validate_simulation(path, 1, CANDIDATE)
+
+
+@pytest.mark.parametrize("producer_change,expected_error", [
+    ({"status": "in_progress", "conclusion": None},
+     "detached_certificate_authority_check_not_ready"),
+    ({"status": "in_progress", "conclusion": None, "head_sha": "f" * 40},
+     "detached_certificate_producer_run_invalid"),
+    ({"conclusion": "failure"}, "detached_certificate_producer_run_invalid"),
+    ({"conclusion": "cancelled"}, "detached_certificate_producer_run_invalid"),
+])
+def test_collect_requires_whole_producer_success_with_bounded_wait(
+        monkeypatch, producer_change, expected_error):
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+
+    def fake_json(url, _token):
+        if "/check-runs?" in url:
+            return {"check_runs": [{
+                "id": CHECK_RUN_ID, "name": "proof-certificate",
+                "status": "completed", "conclusion": "success",
+                "details_url": f"https://github.com/{REPOSITORY}/actions/"
+                               f"runs/{PRODUCER_RUN_ID}/job/77777",
+            }]}
+        if url.endswith(f"/actions/runs/{PRODUCER_RUN_ID}"):
+            return producer_run(**producer_change)
+        raise AssertionError("artifact must not be fetched before producer success")
+
+    monkeypatch.setattr(release, "_api_json", fake_json)
+    with pytest.raises(ValueError, match=expected_error):
+        release.collect_authority(argparse.Namespace(
+            repo=REPOSITORY, candidate_sha=CANDIDATE["commitSha"],
+            candidate_tree=CANDIDATE["treeSha"],
+            authority_context="proof-certificate",
+            expected_producer_workflow=".github/workflows/market-public-acceptance.yml",
+            required_checks="", timeout_seconds=0, poll_seconds=1,
+        ))
+
+
+def test_waiting_for_sibling_certificate_rechecks_latest_attempt(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    calls = [0]
+    ticks = iter([0, 0, 2])
+    monkeypatch.setattr(release.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(release.time, "sleep", lambda _seconds: None)
+
+    def fake_json(url, _token):
+        if "/check-runs?" in url:
+            calls[0] += 1
+            rows = [{"id": CHECK_RUN_ID, "name": "proof-certificate",
+                     "status": "completed", "conclusion": "success",
+                     "completed_at": "2026-08-21T00:00:00Z",
+                     "details_url": f"https://github.com/{REPOSITORY}/actions/"
+                                    f"runs/{PRODUCER_RUN_ID}/job/77777"}]
+            if calls[0] > 1:
+                rows.append({"id": CHECK_RUN_ID + 1, "name": "proof-certificate",
+                             "status": "in_progress", "conclusion": None,
+                             "started_at": "2026-08-21T00:01:00Z"})
+            return {"check_runs": rows}
+        if url.endswith(f"/actions/runs/{PRODUCER_RUN_ID}"):
+            assert calls[0] == 1, "old producer must not be consumed after supersession"
+            return producer_run(status="in_progress", conclusion=None)
+        raise AssertionError("artifact must not be fetched from superseded attempt")
+
+    monkeypatch.setattr(release, "_api_json", fake_json)
+    with pytest.raises(ValueError, match="detached_certificate_authority_check_not_ready"):
+        release.collect_authority(argparse.Namespace(
+            repo=REPOSITORY, candidate_sha=CANDIDATE["commitSha"],
+            candidate_tree=CANDIDATE["treeSha"], authority_context="proof-certificate",
+            expected_producer_workflow=".github/workflows/market-public-acceptance.yml",
+            required_checks="", timeout_seconds=1, poll_seconds=1,
+        ))
+    assert calls[0] == 2

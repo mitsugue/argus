@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { registerSW } from 'virtual:pwa-register';
 import App from './App';
 import { AssetsProvider } from './hooks/useAssets';
+import { clearVerifiedSnapshotCache } from './lib/verifiedSnapshot';
 import './styles/theme.css';
 
 // ── PWA update reliability (v10.70) ─────────────────────────────────────────
@@ -59,18 +60,9 @@ async function selfHeal(): Promise<void> {
       const keys = await caches.keys();
       await Promise.all(keys.map((k) => caches.delete(k)));
     }
-    // v13.5.14: the Today headline document also lives in IndexedDB and
-    // survived every previous self-heal — a durable 「古いまま」 path.
-    await new Promise<void>((resolve) => {
-      try {
-        const request = indexedDB.deleteDatabase('argus-verified-snapshots');
-        request.onsuccess = () => resolve();
-        request.onerror = () => resolve();
-        request.onblocked = () => resolve();
-      } catch {
-        resolve();
-      }
-    });
+    // IndexedDB also holds owner-created chart drawings. Refresh only the
+    // server-derived views, and bound the wait if another tab blocks storage.
+    await waitAtMost(clearVerifiedSnapshotCache(), PWA_STEP_TIMEOUT_MS);
   } catch {
     /* ignore — fall through to reload */
   }

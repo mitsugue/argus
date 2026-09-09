@@ -426,7 +426,7 @@ export const inactiveSingleDecisionAuthorityV1: SingleDecisionAuthority = Object
 // Active v2: constraint-only Risk Kernel
 
 export type RiskSourceKind =
-  | 'MARKET' | 'SHO' | 'SCENARIO' | 'EVENT' | 'PORTFOLIO' | 'CONCENTRATION' | 'DISCIPLINE';
+  | 'MARKET' | 'JP_MARKET_ENGINE' | 'SCENARIO' | 'EVENT' | 'PORTFOLIO' | 'CONCENTRATION' | 'DISCIPLINE';
 export type RiskConstraint = 'NONE' | 'BLOCK_BUY' | 'WAIT_REQUIRED' | 'REDUCE_RISK' | 'EXIT_RISK';
 export type RiskContributionStatus = 'ACTIVE' | 'INACTIVE' | 'MISSING' | 'CONFLICT';
 export type RiskSeverity = 'NONE' | 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | 'UNKNOWN';
@@ -492,7 +492,7 @@ const VERIFIED_BUNDLE_ID_RE = /^vdeb-[0-9a-f]{64}$/;
 interface VerifiedBundleRuntimeState {
   readonly bundleId: string;
   readonly canonicalInput: string;
-  readonly shoBuyEligible: boolean;
+  readonly jpMarketEngineBuyEligible: boolean;
 }
 
 interface VerifiedResultRuntimeState {
@@ -531,7 +531,7 @@ const RISK_FACTOR_KEYS = [
   'primitiveFactorId', 'status', 'constraint', 'severity', 'confidenceCapBps', 'evidenceRefs',
 ] as const;
 const RISK_SOURCE_KINDS = new Set<RiskSourceKind>([
-  'MARKET', 'SHO', 'SCENARIO', 'EVENT', 'PORTFOLIO', 'CONCENTRATION', 'DISCIPLINE',
+  'MARKET', 'JP_MARKET_ENGINE', 'SCENARIO', 'EVENT', 'PORTFOLIO', 'CONCENTRATION', 'DISCIPLINE',
 ]);
 const RISK_CONSTRAINTS = new Set<RiskConstraint>([
   'NONE', 'BLOCK_BUY', 'WAIT_REQUIRED', 'REDUCE_RISK', 'EXIT_RISK',
@@ -861,10 +861,10 @@ export function validateRiskKernel(value: unknown): ContractValidationResult {
 // Active v2: exact input and output contracts
 
 export type ArtifactReferenceStatus = 'AVAILABLE' | 'MISSING' | 'CONFLICT' | 'STALE';
-export type ShoState =
+export type JpMarketEngineState =
   | 'FRAGILE' | 'DOWNSIDE_TRIGGERED' | 'SELL_OFF_ACTIVE' | 'REVERSAL_EARLY'
   | 'TECHNICAL_REBOUND' | 'RECOVERY_TEST' | 'CONFIRMED_ADVANCE' | 'FALSE_RALLY' | 'MIXED';
-export type ShoValidationStatus = 'VALIDATED' | 'UNVALIDATED' | 'DATA_GATED' | 'CONFLICT';
+export type JpMarketEngineValidationStatus = 'VALIDATED' | 'UNVALIDATED' | 'DATA_GATED' | 'CONFLICT';
 
 export interface DecisionSubjectV2 {
   kind: 'ASSET';
@@ -908,15 +908,15 @@ export interface DecisionInvalidationV2 {
   sourceRef: string;
 }
 
-export interface ShoReferenceV2 {
+export interface JpMarketEngineReferenceV2 {
   status: ArtifactReferenceStatus;
   schemaVersion: string | null;
   artifactId: string | null;
   asOf: string | null;
   policyId: string | null;
   policySha256: string | null;
-  state: ShoState | null;
-  validationStatus: ShoValidationStatus | null;
+  state: JpMarketEngineState | null;
+  validationStatus: JpMarketEngineValidationStatus | null;
   primitiveFactorIds: string[];
   targets: DecisionTargetV2[];
   invalidation: DecisionInvalidationV2 | null;
@@ -967,7 +967,7 @@ export interface SingleDecisionAuthorityInputV2 {
   authorityPolicy: ArtifactPolicyRef;
   marketTruth: MarketTruthReferenceV2;
   predictionLedger: PredictionLedgerReferenceV2;
-  sho: ShoReferenceV2;
+  jp_market_engine: JpMarketEngineReferenceV2;
   riskKernel: RiskKernelV1;
   contextEvidence: ContextEvidenceV2[];
   quality: DecisionQualityV2;
@@ -1015,7 +1015,7 @@ export interface SingleDecisionAuthorityResultV2 {
     authorityPolicySha256: string | null;
     marketTruth: { status: ArtifactReferenceStatus; snapshotId: string | null; observationId: string | null };
     predictionLedger: { status: ArtifactReferenceStatus; contextId: string | null };
-    sho: { status: ArtifactReferenceStatus; artifactId: string | null };
+    jp_market_engine: { status: ArtifactReferenceStatus; artifactId: string | null };
     risk: { status: 'READY' | 'DATA_GATED'; riskKernelId: string | null };
   };
   sevenSign: SevenSignProjectionV1;
@@ -1035,7 +1035,7 @@ export interface PredictionLedgerSdaAdapterV2 {
   authorityPolicyRef: { policyId: string | null; policySha256: string | null };
   marketTruthRef: SingleDecisionAuthorityResultV2['identities']['marketTruth'];
   predictionLedgerRef: SingleDecisionAuthorityResultV2['identities']['predictionLedger'];
-  shoRef: SingleDecisionAuthorityResultV2['identities']['sho'];
+  jpMarketEngineRef: SingleDecisionAuthorityResultV2['identities']['jp_market_engine'];
   riskRef: SingleDecisionAuthorityResultV2['identities']['risk'];
   singleDecisionRef: { schemaVersion: typeof SINGLE_DECISION_AUTHORITY_V2_SCHEMA_VERSION; decisionId: string };
   sevenSignRef: {
@@ -1060,7 +1060,7 @@ export interface PredictionLedgerSdaAdapterV2 {
 
 const SDA_INPUT_KEYS = [
   'schemaVersion', 'subject', 'decisionAt', 'informationCutoffAt', 'authorityPolicy',
-  'marketTruth', 'predictionLedger', 'sho', 'riskKernel', 'contextEvidence', 'quality',
+  'marketTruth', 'predictionLedger', 'jp_market_engine', 'riskKernel', 'contextEvidence', 'quality',
   'ownerContext', 'challengeEvidence', 'sevenSignCalibration',
 ] as const;
 const SDA_SUBJECT_KEYS = ['kind', 'instrumentId', 'market', 'horizon'] as const;
@@ -1071,7 +1071,7 @@ const MARKET_TRUTH_KEYS = [
 const PREDICTION_LEDGER_KEYS = [
   'status', 'schemaVersion', 'contextId', 'mode', 'asOf', 'policyId', 'policySha256',
 ] as const;
-const SHO_KEYS = [
+const JP_MARKET_ENGINE_KEYS = [
   'status', 'schemaVersion', 'artifactId', 'asOf', 'policyId', 'policySha256', 'state',
   'validationStatus', 'primitiveFactorIds', 'targets', 'invalidation',
 ] as const;
@@ -1100,11 +1100,11 @@ const SDA_RESULT_KEYS = [
 const SDA_CONFIDENCE_KEYS = ['valueBps', 'status'] as const;
 const SDA_GUIDANCE_KEYS = ['position', 'riskConstraint'] as const;
 const SDA_IDENTITIES_KEYS = [
-  'authorityPolicyId', 'authorityPolicySha256', 'marketTruth', 'predictionLedger', 'sho', 'risk',
+  'authorityPolicyId', 'authorityPolicySha256', 'marketTruth', 'predictionLedger', 'jp_market_engine', 'risk',
 ] as const;
 const SDA_MARKET_IDENTITY_KEYS = ['status', 'snapshotId', 'observationId'] as const;
 const SDA_PREDICTION_IDENTITY_KEYS = ['status', 'contextId'] as const;
-const SDA_SHO_IDENTITY_KEYS = ['status', 'artifactId'] as const;
+const SDA_JP_MARKET_ENGINE_IDENTITY_KEYS = ['status', 'artifactId'] as const;
 const SDA_RISK_IDENTITY_KEYS = ['status', 'riskKernelId'] as const;
 const SEVEN_RESULT_KEYS = [
   'schemaVersion', 'status', 'candidateLevel', 'productionLevel', 'policyId', 'policySha256',
@@ -1113,7 +1113,7 @@ const SEVEN_RESULT_KEYS = [
 const SDA_ADAPTER_KEYS = [
   'schemaVersion', 'adapterId', 'recordType', 'appendMode', 'mutatesExistingRows',
   'decisionId', 'verifiedEvidenceBundleId', 'issuedAt', 'informationCutoffAt', 'subject',
-  'authorityPolicyRef', 'marketTruthRef', 'predictionLedgerRef', 'shoRef', 'riskRef',
+  'authorityPolicyRef', 'marketTruthRef', 'predictionLedgerRef', 'jpMarketEngineRef', 'riskRef',
   'singleDecisionRef', 'sevenSignRef', 'primaryAction', 'confidenceBps', 'targets',
   'invalidation', 'missingReasonCodes', 'conflictReasonCodes', 'dissentReasonCodes',
   'evidenceRefs', 'primitiveFactorIds',
@@ -1121,14 +1121,14 @@ const SDA_ADAPTER_KEYS = [
 const REFERENCE_STATUSES = new Set<ArtifactReferenceStatus>([
   'AVAILABLE', 'MISSING', 'CONFLICT', 'STALE',
 ]);
-const SHO_STATES = new Set<ShoState>([
+const JP_MARKET_ENGINE_STATES = new Set<JpMarketEngineState>([
   'FRAGILE', 'DOWNSIDE_TRIGGERED', 'SELL_OFF_ACTIVE', 'REVERSAL_EARLY',
   'TECHNICAL_REBOUND', 'RECOVERY_TEST', 'CONFIRMED_ADVANCE', 'FALSE_RALLY', 'MIXED',
 ]);
-const BUY_ELIGIBLE_SHO_STATES = new Set<ShoState>([
+const BUY_ELIGIBLE_JP_MARKET_ENGINE_STATES = new Set<JpMarketEngineState>([
   'REVERSAL_EARLY', 'TECHNICAL_REBOUND', 'RECOVERY_TEST', 'CONFIRMED_ADVANCE',
 ]);
-const SHO_VALIDATION_STATUSES = new Set<ShoValidationStatus>([
+const JP_MARKET_ENGINE_VALIDATION_STATUSES = new Set<JpMarketEngineValidationStatus>([
   'VALIDATED', 'UNVALIDATED', 'DATA_GATED', 'CONFLICT',
 ]);
 
@@ -1295,43 +1295,43 @@ export function validateSingleDecisionAuthorityInputV2(value: unknown): Contract
     }
   }
 
-  if (!hasExactKeys(value.sho, SHO_KEYS)) {
-    errors.push('sho: keys must be exact');
+  if (!hasExactKeys(value.jp_market_engine, JP_MARKET_ENGINE_KEYS)) {
+    errors.push('jp_market_engine: keys must be exact');
   } else {
-    const ref = value.sho;
-    if (!REFERENCE_STATUSES.has(ref.status as ArtifactReferenceStatus)) errors.push('sho.status: unknown');
-    validateNullableId(ref.schemaVersion, 'sho.schemaVersion', errors);
-    validateNullableArtifact(ref.artifactId, 'sho.artifactId', errors);
-    validatePittedTimestamp(ref.asOf, 'sho.asOf', cutoffMs, errors);
-    validateNullableId(ref.policyId, 'sho.policyId', errors);
-    validateNullableSha(ref.policySha256, 'sho.policySha256', errors);
-    if (ref.state !== null && !SHO_STATES.has(ref.state as ShoState)) errors.push('sho.state: unknown');
+    const ref = value.jp_market_engine;
+    if (!REFERENCE_STATUSES.has(ref.status as ArtifactReferenceStatus)) errors.push('jp_market_engine.status: unknown');
+    validateNullableId(ref.schemaVersion, 'jp_market_engine.schemaVersion', errors);
+    validateNullableArtifact(ref.artifactId, 'jp_market_engine.artifactId', errors);
+    validatePittedTimestamp(ref.asOf, 'jp_market_engine.asOf', cutoffMs, errors);
+    validateNullableId(ref.policyId, 'jp_market_engine.policyId', errors);
+    validateNullableSha(ref.policySha256, 'jp_market_engine.policySha256', errors);
+    if (ref.state !== null && !JP_MARKET_ENGINE_STATES.has(ref.state as JpMarketEngineState)) errors.push('jp_market_engine.state: unknown');
     if (ref.validationStatus !== null
-        && !SHO_VALIDATION_STATUSES.has(ref.validationStatus as ShoValidationStatus)) {
-      errors.push('sho.validationStatus: unknown');
+        && !JP_MARKET_ENGINE_VALIDATION_STATUSES.has(ref.validationStatus as JpMarketEngineValidationStatus)) {
+      errors.push('jp_market_engine.validationStatus: unknown');
     }
-    validateCanonicalStringsV2(ref.primitiveFactorIds, 'sho.primitiveFactorIds', 48, errors);
+    validateCanonicalStringsV2(ref.primitiveFactorIds, 'jp_market_engine.primitiveFactorIds', 48, errors);
     if (!Array.isArray(ref.targets) || ref.targets.length > 4) {
-      errors.push('sho.targets: must be an array of at most 4');
+      errors.push('jp_market_engine.targets: must be an array of at most 4');
     } else {
       ref.targets.forEach((target, index) => validateDecisionTargetV2(
-        target, `sho.targets[${index}]`, errors, false));
+        target, `jp_market_engine.targets[${index}]`, errors, false));
       const targetIds = ref.targets.map((target) => isRecord(target) ? target.targetId : null);
       if (JSON.stringify(targetIds) !== JSON.stringify([...new Set(targetIds)].sort())) {
-        errors.push('sho.targets: must be sorted and unique');
+        errors.push('jp_market_engine.targets: must be sorted and unique');
       }
     }
-    if (ref.invalidation !== null) validateDecisionTargetV2(ref.invalidation, 'sho.invalidation', errors, true);
+    if (ref.invalidation !== null) validateDecisionTargetV2(ref.invalidation, 'jp_market_engine.invalidation', errors, true);
     if (ref.status === 'AVAILABLE'
         && [ref.schemaVersion, ref.artifactId, ref.asOf, ref.policyId, ref.policySha256,
           ref.state, ref.validationStatus].some((item) => item === null)) {
-      errors.push('sho: AVAILABLE requires complete identity and state');
+      errors.push('jp_market_engine: AVAILABLE requires complete identity and state');
     }
     if (ref.status === 'MISSING'
         && ([ref.artifactId, ref.asOf, ref.state, ref.validationStatus].some((item) => item !== null)
           || (Array.isArray(ref.primitiveFactorIds) && ref.primitiveFactorIds.length > 0)
           || (Array.isArray(ref.targets) && ref.targets.length > 0)
-          || ref.invalidation !== null)) errors.push('sho: MISSING claims evidence');
+          || ref.invalidation !== null)) errors.push('jp_market_engine: MISSING claims evidence');
   }
 
   const riskValidation = validateRiskKernel(value.riskKernel);
@@ -1498,7 +1498,7 @@ export type VerifiedDecisionEvidenceBundleV2 = SingleDecisionAuthorityInputV2;
 /**
  * Admit an ordinary frontend request only after runtime verification.
  *
- * The browser has no canonical Market Truth/Ledger/SHO store or accepted
+ * The browser has no canonical Market Truth/Ledger/JP_MARKET_ENGINE store or accepted
  * verifier.  An AVAILABLE reference is therefore executable only when the
  * reviewed backend resolver boundary delivered it and
  * canonicalDecisionEvidence.ts registered the exact object after checking it
@@ -1515,7 +1515,7 @@ export function verifyDecisionEvidence(
   const validation = validateSingleDecisionAuthorityInputV2(value);
   if (!validation.ok) throw new TypeError(validation.errors.join('; '));
   const input = value as unknown as SingleDecisionAuthorityInputV2;
-  const references = [input.marketTruth, input.predictionLedger, input.sho];
+  const references = [input.marketTruth, input.predictionLedger, input.jp_market_engine];
   for (const reference of references) {
     if (reference.status !== 'AVAILABLE') continue;
     const seal = VERIFIED_ARTIFACT_REFERENCES.get(reference);
@@ -1545,7 +1545,7 @@ export function verifyDecisionEvidence(
       ? input.marketTruth.snapshotId : null,
     predictionLedger: input.predictionLedger.status === 'AVAILABLE'
       ? input.predictionLedger.contextId : null,
-    sho: input.sho.status === 'AVAILABLE' ? input.sho.artifactId : null,
+    jp_market_engine: input.jp_market_engine.status === 'AVAILABLE' ? input.jp_market_engine.artifactId : null,
     riskKernelId: input.riskKernel.riskKernelId,
   };
   const canonicalInput = stableJson(input as unknown as JsonValue);
@@ -1555,11 +1555,11 @@ export function verifyDecisionEvidence(
   VERIFIED_DECISION_BUNDLES.set(input, {
     bundleId,
     canonicalInput,
-    // Python computes buy eligibility against VERIFIED_SHO_BUY_ARTIFACTS
+    // Python computes buy eligibility against VERIFIED_JP_MARKET_ENGINE_BUY_ARTIFACTS
     // (artifactId|registrySha|rfcSha). That registry is deliberately empty
     // and the rfc sha is not part of the reference, so the device value is
     // structurally false until a reviewed registry lands here as well.
-    shoBuyEligible: false,
+    jpMarketEngineBuyEligible: false,
   });
   return input;
 }
@@ -1576,7 +1576,7 @@ function referenceReasons(
 function selectPrimaryActionV2(
   input: SingleDecisionAuthorityInputV2,
   dataGated: boolean,
-  shoBuyEligible: boolean,
+  jpMarketEngineBuyEligible: boolean,
 ): PrimaryAction {
   const held = input.ownerContext.positionState === 'HELD';
   if (dataGated) return 'WAIT';
@@ -1587,10 +1587,10 @@ function selectPrimaryActionV2(
     case 'BLOCK_BUY': return held ? 'HOLD' : 'WAIT';
     default: break;
   }
-  const buyReady = input.sho.validationStatus === 'VALIDATED'
-    && shoBuyEligible
-    && input.sho.state !== null
-    && BUY_ELIGIBLE_SHO_STATES.has(input.sho.state)
+  const buyReady = input.jp_market_engine.validationStatus === 'VALIDATED'
+    && jpMarketEngineBuyEligible
+    && input.jp_market_engine.state !== null
+    && BUY_ELIGIBLE_JP_MARKET_ENGINE_STATES.has(input.jp_market_engine.state)
     && input.ownerContext.addPermission === 'ALLOWED';
   if (buyReady) return 'BUY';
   return held ? 'HOLD' : 'WAIT';
@@ -1609,8 +1609,8 @@ function sevenCandidateV2(
     return defensive ? 3 : 4;
   }
   if (action === 'HOLD') return 4;
-  if (input.sho.state === 'CONFIRMED_ADVANCE') return 7;
-  if (input.sho.state === 'TECHNICAL_REBOUND' || input.sho.state === 'RECOVERY_TEST') return 6;
+  if (input.jp_market_engine.state === 'CONFIRMED_ADVANCE') return 7;
+  if (input.jp_market_engine.state === 'TECHNICAL_REBOUND' || input.jp_market_engine.state === 'RECOVERY_TEST') return 6;
   return 5;
 }
 
@@ -1690,7 +1690,7 @@ function resultFromValidInputV2(
   ([
     ['market_truth', input.marketTruth.status],
     ['prediction_ledger', input.predictionLedger.status],
-    ['sho', input.sho.status],
+    ['jp_market_engine', input.jp_market_engine.status],
   ] as [string, ArtifactReferenceStatus][]).forEach(([prefix, status]) => {
     const reasons = referenceReasons(prefix, status);
     missing.push(...reasons.missing);
@@ -1713,9 +1713,9 @@ function resultFromValidInputV2(
     || input.riskKernel.status !== 'READY'
     || input.marketTruth.status !== 'AVAILABLE'
     || input.predictionLedger.status !== 'AVAILABLE'
-    || input.sho.status !== 'AVAILABLE'
+    || input.jp_market_engine.status !== 'AVAILABLE'
     || ownerUnknown;
-  const primaryAction = selectPrimaryActionV2(input, dataGated, runtime.shoBuyEligible);
+  const primaryAction = selectPrimaryActionV2(input, dataGated, runtime.jpMarketEngineBuyEligible);
   const confidenceBase: Record<PrimaryAction, number> = {
     BUY: 7_000, HOLD: 6_000, WAIT: 4_500, REDUCE: 7_000, EXIT: 8_000,
   };
@@ -1725,8 +1725,8 @@ function resultFromValidInputV2(
   const riskRefs = input.riskKernel.primitiveFactors.flatMap((factor) => factor.evidenceRefs);
   const contextRefs = input.contextEvidence.map((row) => row.evidenceRef);
   const challengeRefs = input.challengeEvidence.flatMap((row) => row.evidenceRefs);
-  const targetRefs = input.sho.targets.map((target) => target.sourceRef);
-  if (input.sho.invalidation) targetRefs.push(input.sho.invalidation.sourceRef);
+  const targetRefs = input.jp_market_engine.targets.map((target) => target.sourceRef);
+  if (input.jp_market_engine.invalidation) targetRefs.push(input.jp_market_engine.invalidation.sourceRef);
   const dissent: string[] = [];
   input.contextEvidence.forEach((row) => {
     if (row.status === 'MISSING') {
@@ -1745,7 +1745,7 @@ function resultFromValidInputV2(
   });
   const primitiveFactorIds = uniqueBounded([
     ...input.riskKernel.primitiveFactors.map((factor) => factor.primitiveFactorId),
-    ...input.sho.primitiveFactorIds,
+    ...input.jp_market_engine.primitiveFactorIds,
     ...input.contextEvidence.map((row) => row.primitiveFactorId),
   ], 48);
   const canonicalMissing = uniqueBounded(missing, 24);
@@ -1754,7 +1754,7 @@ function resultFromValidInputV2(
     ...canonicalMissing.map((reason) => `resolve.${reason}`),
     ...canonicalConflicts.map((reason) => `resolve.${reason}`),
     ...(input.riskKernel.constraint !== 'NONE' ? ['risk_reassessment'] : []),
-    ...(input.sho.validationStatus !== 'VALIDATED' ? ['sho_revalidation'] : []),
+    ...(input.jp_market_engine.validationStatus !== 'VALIDATED' ? ['jp_market_engine_revalidation'] : []),
   ], 24);
   const body: Omit<SingleDecisionAuthorityResultV2, 'decisionId'> = {
     schemaVersion: SINGLE_DECISION_AUTHORITY_V2_SCHEMA_VERSION,
@@ -1766,8 +1766,8 @@ function resultFromValidInputV2(
     primaryAction,
     confidence: { valueBps: confidence, status: 'BOUNDED' },
     guidance: { position: positionGuidanceV2(primaryAction), riskConstraint: input.riskKernel.constraint },
-    targets: deepClone(input.sho.targets),
-    invalidation: deepClone(input.sho.invalidation),
+    targets: deepClone(input.jp_market_engine.targets),
+    invalidation: deepClone(input.jp_market_engine.invalidation),
     nextReviewConditionCodes,
     freshness: input.quality.freshness,
     missingReasonCodes: canonicalMissing,
@@ -1787,7 +1787,7 @@ function resultFromValidInputV2(
         status: input.predictionLedger.status,
         contextId: input.predictionLedger.contextId,
       },
-      sho: { status: input.sho.status, artifactId: input.sho.artifactId },
+      jp_market_engine: { status: input.jp_market_engine.status, artifactId: input.jp_market_engine.artifactId },
       risk: { status: input.riskKernel.status, riskKernelId: input.riskKernel.riskKernelId },
     },
     sevenSign: sevenSignProjectionV2(primaryAction, input, dataGated),
@@ -1829,7 +1829,7 @@ function invalidSingleDecisionResultV2(): SingleDecisionAuthorityResultV2 {
       authorityPolicySha256: null,
       marketTruth: { status: 'MISSING', snapshotId: null, observationId: null },
       predictionLedger: { status: 'MISSING', contextId: null },
-      sho: { status: 'MISSING', artifactId: null },
+      jp_market_engine: { status: 'MISSING', artifactId: null },
       risk: { status: 'DATA_GATED', riskKernelId: null },
     },
     sevenSign: {
@@ -1968,13 +1968,13 @@ export function validateSingleDecisionAuthorityResultV2(value: unknown): Contrac
       validateNullableArtifact(
         identities.predictionLedger.contextId, 'result.identities.predictionLedger.contextId', errors);
     }
-    if (!hasExactKeys(identities.sho, SDA_SHO_IDENTITY_KEYS)) {
-      errors.push('result.identities.sho: keys must be exact');
+    if (!hasExactKeys(identities.jp_market_engine, SDA_JP_MARKET_ENGINE_IDENTITY_KEYS)) {
+      errors.push('result.identities.jp_market_engine: keys must be exact');
     } else {
-      if (!REFERENCE_STATUSES.has(identities.sho.status as ArtifactReferenceStatus)) {
-        errors.push('result.identities.sho.status: unknown');
+      if (!REFERENCE_STATUSES.has(identities.jp_market_engine.status as ArtifactReferenceStatus)) {
+        errors.push('result.identities.jp_market_engine.status: unknown');
       }
-      validateNullableArtifact(identities.sho.artifactId, 'result.identities.sho.artifactId', errors);
+      validateNullableArtifact(identities.jp_market_engine.artifactId, 'result.identities.jp_market_engine.artifactId', errors);
     }
     if (!hasExactKeys(identities.risk, SDA_RISK_IDENTITY_KEYS)) {
       errors.push('result.identities.risk: keys must be exact');
@@ -2099,7 +2099,7 @@ export function buildDataGatedInputV2(options: DataGatedInputV2Options): SingleD
       status: 'MISSING', schemaVersion: null, contextId: null, mode: null, asOf: null,
       policyId: null, policySha256: null,
     },
-    sho: {
+    jp_market_engine: {
       status: 'MISSING', schemaVersion: null, artifactId: null, asOf: null,
       policyId: null, policySha256: null, state: null, validationStatus: null,
       primitiveFactorIds: [], targets: [], invalidation: null,
@@ -2117,8 +2117,9 @@ export function buildDataGatedInputV2(options: DataGatedInputV2Options): SingleD
       status: 'MISSING',
       freshness: 'UNKNOWN',
       missingReasonCodes: [
+        'jp_market_engine_evidence_missing',
         'market_truth_missing', 'prediction_ledger_missing', 'risk_evidence_missing',
-        'scenario_event_missing', 'sho_evidence_missing',
+        'scenario_event_missing',
       ],
       conflictReasonCodes: [],
     },
@@ -2138,6 +2139,74 @@ export function computePredictionLedgerAdapterId(
 ): string {
   const { adapterId: _ignored, ...body } = adapterOrBody as PredictionLedgerSdaAdapterV2;
   return `pla-${sha256HexSync(stableJson(body as unknown as JsonValue))}`;
+}
+
+/** Upgrade a stored historical pair without granting a current decision seal.
+ * The previous field name is discovered from the exact prior record shape;
+ * no retired personal-name policy is embedded in the application. Remove this
+ * transition path after the target installed app has migrated and verified.
+ */
+export function migrateHistoricalDecisionPair(
+  resultValue: unknown, adapterValue: unknown,
+): { result: SingleDecisionAuthorityResultV2; adapter: PredictionLedgerSdaAdapterV2 } | null {
+  if (!isRecord(resultValue) || !isRecord(adapterValue) || !isRecord(resultValue.identities)) return null;
+  const identities = resultValue.identities;
+  const unknown = Object.keys(identities).filter((key) => !SDA_IDENTITIES_KEYS.some((known) => known === key));
+  if (unknown.length !== 1 || identities.jp_market_engine !== undefined) return null;
+  const prior = unknown[0];
+  if (!/^[a-z][a-z0-9_]{1,31}$/.test(prior)
+    || !hasExactKeys(identities[prior], SDA_JP_MARKET_ENGINE_IDENTITY_KEYS)) return null;
+  if (resultValue.decisionId !== computeSingleDecisionId(resultValue as unknown as SingleDecisionAuthorityResultV2)
+    || adapterValue.adapterId !== computePredictionLedgerAdapterId(adapterValue as unknown as PredictionLedgerSdaAdapterV2)) return null;
+  const forms = [prior, prior.toUpperCase(), prior[0].toUpperCase() + prior.slice(1)];
+  const expression = new RegExp(`(?<![A-Za-z])(?:${forms.join('|')})(?=$|[^A-Za-z]|[A-Z][a-z])|(?<=[a-z])(?:${forms.join('|')})(?=$|_|[A-Z][a-z])`, 'g');
+  const rename = (text: string): string => {
+    const roleNamed = text.replaceAll(`${prior}Conditioning`, 'marketConditioning')
+      .replaceAll(`${prior}-conditioned`, 'market-conditioned');
+    return roleNamed.replace(expression, (match, offset: number) => {
+      if (match === prior.toUpperCase()) return 'JP_MARKET_ENGINE';
+      if (match === forms[2]) return 'JpMarketEngine';
+      const next = roleNamed[offset + match.length];
+      if (next && /[A-Z]/.test(next)) return 'jpMarketEngine';
+      if (roleNamed[offset - 1] === '-' || next === '-') return 'jp-market-engine';
+      return 'jp_market_engine';
+    });
+  };
+  const translate = (value: unknown): unknown => {
+    if (typeof value === 'string') return rename(value);
+    if (Array.isArray(value)) return value.map(translate);
+    if (!isRecord(value)) return value;
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) {
+      const target = rename(key);
+      if (Object.hasOwn(out, target)) throw new TypeError('historical migration key collision');
+      out[target] = translate(child);
+    }
+    return out;
+  };
+  try {
+    const result = translate(resultValue) as SingleDecisionAuthorityResultV2;
+    const adapter = translate(adapterValue) as PredictionLedgerSdaAdapterV2;
+    for (const field of ['nextReviewConditionCodes', 'missingReasonCodes', 'conflictReasonCodes',
+      'dissentReasonCodes', 'primitiveFactorIds', 'evidenceRefs'] as const) {
+      if (Array.isArray(result[field])) result[field].sort();
+    }
+    for (const field of ['missingReasonCodes', 'conflictReasonCodes', 'dissentReasonCodes',
+      'primitiveFactorIds', 'evidenceRefs'] as const) {
+      if (Array.isArray(adapter[field])) adapter[field].sort();
+    }
+    result.decisionId = computeSingleDecisionId(result);
+    adapter.decisionId = result.decisionId;
+    adapter.singleDecisionRef.decisionId = result.decisionId;
+    adapter.adapterId = computePredictionLedgerAdapterId(adapter);
+    if (!validateSingleDecisionAuthorityResultV2(result).ok
+      || !validatePredictionLedgerV2Adapter(adapter, result).ok) return null;
+    return { result, adapter };
+  } catch { return null; }
+}
+
+export function historicalMigrationDigest(value: unknown): string {
+  return sha256HexSync(stableJson(value as JsonValue));
 }
 
 function predictionLedgerAdapterBody(
@@ -2162,7 +2231,7 @@ function predictionLedgerAdapterBody(
     },
     marketTruthRef: deepClone(result.identities.marketTruth),
     predictionLedgerRef: deepClone(result.identities.predictionLedger),
-    shoRef: deepClone(result.identities.sho),
+    jpMarketEngineRef: deepClone(result.identities.jp_market_engine),
     riskRef: deepClone(result.identities.risk),
     singleDecisionRef: {
       schemaVersion: result.schemaVersion,

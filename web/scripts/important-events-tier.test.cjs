@@ -90,7 +90,7 @@ assert.ok(/degraded_auxiliary_feeds[^}]+BLOCK_BUY/s.test(hook),
 // MARKET VIEW strip (item A): display-only, explicitly no action authority.
 const panel = fs.readFileSync(path.join(
   __dirname, '..', 'src', 'components', 'today', 'ArgusTodayPanel.tsx'), 'utf8');
-assert.ok(panel.includes('sho-market-view-v1'), 'panel must render the market view');
+assert.ok(panel.includes('jp-market-engine-market-view-v1'), 'panel must render the market view');
 assert.ok(panel.includes('actionAuthority !== false) return null'),
   'the strip must refuse a projection that claims authority');
 const store = fs.readFileSync(path.join(
@@ -139,7 +139,7 @@ for (const file of ['../src/components/today/ArgusTodayPanel.tsx',
   '../src/lib/notifications.ts',
   '../src/components/dashboard/DownsideIncidentCard.tsx']) {
   const text = fs.readFileSync(path.join(__dirname, file), 'utf8');
-  const visible = text.match(/['"`>][^'"`<\n]*(（SDA）|（SHO）|はSDA|SDAの|SDA正本|SHO証拠)[^'"`<\n]*['"`<]/);
+  const visible = text.match(/['"`>][^'"`<\n]*(（SDA）|（JP_MARKET_ENGINE）|はSDA|SDAの|SDA正本|JP_MARKET_ENGINE証拠)[^'"`<\n]*['"`<]/);
   assert.ok(!visible, `internal jargon leaked to UI in ${file}: ${visible && visible[0]}`);
 }
 console.log('important-events-tier.test: v13.5.36 outage softening + jargon-free UI ok');

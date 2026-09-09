@@ -2,16 +2,16 @@
 
 This document is the operational contract for the Round 2 decision pipeline:
 
-`MarketTruth -> PIT evidence -> SHO-JP -> Risk constraints -> Single Decision Authority -> Seven Sign -> Prediction Ledger`
+`MarketTruth -> PIT evidence -> JP_MARKET_ENGINE-JP -> Risk constraints -> Single Decision Authority -> Seven Sign -> Prediction Ledger`
 
-The implementation authority is the supplied Canonical SHO RFC, SHA-256
+The implementation authority is the supplied Canonical JP_MARKET_ENGINE RFC, SHA-256
 `69a631ebc549b3bede6356cabf338e38d9418fc3683821198ef9a3c1eb440d51`.
 The RFC is not reconstructed from comments, prompts, or legacy heuristic names.
 
 ## Authority invariant
 
 There is one action vocabulary and one reducer: `BUY`, `HOLD`, `WAIT`,
-`REDUCE`, or `EXIT`.  SHO, Turtle, scenarios, AI, legacy labels, Entry Scout,
+`REDUCE`, or `EXIT`.  JP_MARKET_ENGINE, Turtle, scenarios, AI, legacy labels, Entry Scout,
 market posture, and risk models generate evidence.  They do not vote and they
 cannot override the reducer.  Correlated evidence is deduplicated by primitive
 factor identity before risk constraints or support references are produced.
@@ -31,10 +31,10 @@ prediction, or become the displayed Primary Action.  Old ActionLevel level 5
 (`HOLD_ONLY`) is not Seven Sign level 5 (conditional BUY-favoured); the schemas,
 identities, and labels remain separate.
 
-## SHO evidence law
+## JP_MARKET_ENGINE evidence law
 
 The sealed proposition registry preserves four lineages:
-`SHO_ORIGINAL`, `ARGUS_CANDIDATE`, `TURTLE_REFERENCE`, and
+`JP_MARKET_ENGINE_ORIGINAL`, `ARGUS_CANDIDATE`, `TURTLE_REFERENCE`, and
 `SEVEN_SIGN_CANDIDATE`.  Registry records are immutable, versioned,
 content-addressed data.  No expression evaluation, generated execution, or
 automatic promotion is supported.
@@ -44,7 +44,7 @@ The seven original families retain their exact meaning:
 | ID | Canonical evidence | Current lawful repository coverage |
 |---|---|---|
 | D01 | Two-market total short margin balance below JPY 800bn | Official JPX weekly archive, 2002-08-02 through 2026-07-10; proposition evaluation is supported, but direct index outcome calibration remains data-gated. |
-| D02 | 1570 margin ratio greater than or equal to 1 | `MISSING`; no committed point-in-time 1570 ratio/reverse-fee history. The obsolete below-1 heuristic is not SHO authority. |
+| D02 | 1570 margin ratio greater than or equal to 1 | `MISSING`; no committed point-in-time 1570 ratio/reverse-fee history. The obsolete below-1 heuristic is not JP_MARKET_ENGINE authority. |
 | D03 | Japan relative strength | Direct Nikkei 225/TOPIX history is `DATA_GATED`; any 1321/1306 proxy is explicitly a proxy candidate and never relabelled as an index. |
 | D04 | Nikkei EPS times PER at 17/18/19/20/21 | `LICENSE_BLOCKED`; the committed Nikkei valuation file is a template only. Values are never applied to ETF 1321. |
 | D05 | Publication-gated foreign investor flow | `MISSING`; the ledger seam exists but no committed observation archive exists. |
@@ -84,7 +84,7 @@ raw direct-index Golden input is absent, so the Golden result remains
 The manifest precommits separate non-Golden and Golden dataset hashes without
 reading the sealed Golden files.  Opening requires the exact expected event and
 instrument, a validated-reversal marker, complete required horizons, an
-evaluated counterfactual, and content-addressed Risk Kernel and SHO-reversal
+evaluated counterfactual, and content-addressed Risk Kernel and JP_MARKET_ENGINE-reversal
 references already sealed in that event.  Compact acceptance checks separately
 record whether Risk-Off was reached before the reversal, whether Band Walk
 ending was detected, the VIX-DC/SAR/MACD/25DMA trigger observations, and the
@@ -101,13 +101,13 @@ Required outcomes are 1, 5, 10, and 20 sessions.  Forty sessions is accepted
 only when preregistered.  Unavailable outcomes and probability metrics are
 null/unscorable.  False-positive, false-rally, and false-reversal metrics remain
 distinct.  Counterfactuals share one PIT path and one execution/cost
-policy: BUY_NOW, SHO reversal, VIX dead cross, SAR flip, MACD golden cross,
+policy: BUY_NOW, JP_MARKET_ENGINE reversal, VIX dead cross, SAR flip, MACD golden cross,
 25DMA reclaim, Turtle confirmation, and WAIT.  WAIT missing a validated
 reversal is recorded as missed opportunity, never as realised owner P/L.
 
 The Turtle shadow contains only versioned 20/55-day breakouts, 10/20-day exits,
 and ATR/N.  Unsupplied historical details stay `UNVALIDATED`; Turtle is not a
-hard veto on a validated early SHO reversal.
+hard veto on a validated early JP_MARKET_ENGINE reversal.
 
 Only compact, bounded, content-addressed summaries and proofs may be consumed
 outside the research process.  Bulk/raw/licensed bars never enter the live
@@ -130,7 +130,7 @@ listed acceptance tests.
 | Direct Nikkei 225/TOPIX OHLCV | No lawful committed direct-index archive | Explicit 1321/1306 proxy candidate only | Blocks direct D03/outcome and Golden claims | Exact instrument identity; complete OHLCV; corporate/calendar policy; PIT proof; proxy cannot satisfy index request; development/holdout/Golden isolation. |
 | Nikkei EPS/PER | Template only; licensed field | None; D04=`LICENSE_BLOCKED` | Blocks valuation ladder production use | Licence/right metadata; exact source/publication time; EPS/PER units; 17-21x ladder; no ETF-price mixing; retention/display rights test. |
 | Foreign-flow archive | No committed observations | None; D05=`MISSING` | Lowers confidence; blocks D05 validation | Publication timestamp and revision cutoff; complete reporting periods; future revision rejection; regime and ablation report. |
-| VIX history/original parameters | Runtime source is not a durable research dataset; original parameters not confirmed | ARGUS candidate only | Blocks SHO-original D06 and probability calibration | Hash-bound complete series; source-time proof; parameter source identity; original vs candidate separation; transition/false-cross holdout tests. |
+| VIX history/original parameters | Runtime source is not a durable research dataset; original parameters not confirmed | ARGUS candidate only | Blocks JP_MARKET_ENGINE-original D06 and probability calibration | Hash-bound complete series; source-time proof; parameter source identity; original vs candidate separation; transition/false-cross holdout tests. |
 | Earnings quality | No comprehensive point-in-time fundamentals history | Current catalyst facts remain context only | Blocks D07 validation | Exact filing/publication/revision times; deterministic quality definition; market-reaction join after availability; restatement/no-lookahead tests. |
 | Sector/style/rotation history | No complete durable PIT archive | Missing factors | Reduces stock-lens coverage | Versioned constituents/classification; publication availability; survivorship-safe replay; sector/style ablation. |
 | Tachibana live API | Credentials and real field behaviour unavailable | Existing seam reports `UNKNOWN` | No provider priority/authority change | See checklist below. |
@@ -171,7 +171,7 @@ Seven Sign, Prediction Ledger, or provider selection.
 ## Ledger and deployment boundaries
 
 The SDA adapter is append-only and content-addressed.  It binds issuance and
-cutoff, exact truth/SHO/Risk/SDA/Seven identities, Primary Action, confidence,
+cutoff, exact truth/JP_MARKET_ENGINE/Risk/SDA/Seven identities, Primary Action, confidence,
 targets, invalidation, missingness, conflicts, and dissent.  It does not mutate
 existing prediction rows.  Owner-aware decisions remain device-local and are
 not written to the public ledger.  The browser appends the canonical result and

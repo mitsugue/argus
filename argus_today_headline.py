@@ -82,9 +82,9 @@ def _compact_calibration(payload: Mapping[str, Any]) -> Optional[Dict[str, Any]]
         "historyStart": calibration.get("historyStart"),
         "historyEnd": calibration.get("historyEnd"),
         "historyCount": calibration.get("historyCount"),
-        # v13.5.14: SHO conditioning transparency rides to the phone so the
+        # v13.5.14: JP_MARKET_ENGINE conditioning transparency rides to the phone so the
         # owner can SEE which state dimensions conditioned today's analogs.
-        "shoConditioning": copy.deepcopy(calibration.get("shoConditioning")),
+        "marketConditioning": copy.deepcopy(calibration.get("marketConditioning")),
         "horizons": compact_horizons,
     }
 

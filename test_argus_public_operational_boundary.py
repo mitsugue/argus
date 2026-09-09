@@ -1361,10 +1361,10 @@ def test_jp_realtime_lamp_is_emitted_in_both_bridge_branches():
 
 
 
-def test_sho_statements_feed_uses_jquants_v2_summary_path():
+def test_jp_market_engine_statements_feed_uses_jquants_v2_summary_path():
     """RECOVERY_ONLY v13.5.48: the V1 /fins/statements path answers 403 since 2026-06-01."""
     import inspect, scanner
-    source = inspect.getsource(scanner._sho_statements_rows)
+    source = inspect.getsource(scanner._jp_market_engine_statements_rows)
     assert '"/fins/summary"' in source and '"/fins/statements"' not in source
 
 
@@ -1374,7 +1374,7 @@ def test_index_chart_route_is_cached_only_and_names_the_index(monkeypatch):
     import datetime as _dt
     import scanner
     client = scanner.app.test_client()
-    scanner._SHO_INDEX_OHLCV_CACHE.pop("^N225", None)
+    scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.pop("^N225", None)
     cold = client.get("/api/argus/index-chart?index=N225").get_json()
     assert cold["status"] == "expected_skip" and cold["stateUpdate"]["reason"] == "index_cache_cold"
     assert client.get("/api/argus/index-chart?index=DAX").status_code == 400
@@ -1390,7 +1390,7 @@ def test_index_chart_route_is_cached_only_and_names_the_index(monkeypatch):
                          "adjusted": False, "sourceRef": "yahoo:chart:^N225"})
             i += 1
         day += _dt.timedelta(days=1)
-    scanner._SHO_INDEX_OHLCV_CACHE["^N225"] = {"data": rows, "expires": 9e12}
+    scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE["^N225"] = {"data": rows, "expires": 9e12}
     calls = []
 
     class _NoNetwork:
@@ -1408,7 +1408,7 @@ def test_index_chart_route_is_cached_only_and_names_the_index(monkeypatch):
     try:
         body = client.get("/api/argus/index-chart?index=N225").get_json()
     finally:
-        scanner._SHO_INDEX_OHLCV_CACHE.pop("^N225", None)
+        scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.pop("^N225", None)
     assert not any("finance.yahoo.com" in url for url in calls)      # index rows are cached-only
     assert body["index"] == "N225" and body["displayNameJa"] == "日経平均株価(指数)"
     assert body["proxyDisclosureJa"] is None and "指数そのもの" in body["indexDisclosureJa"]
@@ -3056,3 +3056,75 @@ def test_failed_local_cost_commit_preserves_file_and_uses_journal_fallback(monke
     assert scanner._COST_POLICY_DURABLE["lastError"] == "OSError"
     assert scanner._COST_POLICY_DURABLE["lastPersistAt"] == completed_at
     assert not list(tmp_path.glob(".cost-policy-*"))
+
+
+@_pytest.mark.parametrize("failure", ["fetch", "second_article", None])
+def test_article_boundary_repair_preserves_parent_until_all_children_exist(monkeypatch, tmp_path, failure):
+    import copy
+    message = {"messageId": "mail-a", "rfcMessageId": "rfc-a",
+               "subject": "政府の経済対策", "url": "https://example.com/mail",
+               "excerpt": "日経ニュースメール 昼版 ◆政府の経済対策（有料会員限定） 首相が予算を説明 https://example.com/policy ◆イランの制裁措置（有料会員限定） https://example.com/sanctions"}
+    fingerprint = scanner.argus_news_intelligence.source_fingerprint(
+        message_id=message["rfcMessageId"], subject=message["subject"], url=message["url"])
+    state = copy.deepcopy(scanner._NEWS_INTEL)
+    state.update({"events": {"parent": {"eventId": "parent", "sourceFamily": "NIKKEI",
+                                       "sourceFingerprint": fingerprint, "processedAt": "2026-09-09T03:35:42Z"}},
+                  "order": ["parent"], "intakeState": {}, "audit": [],
+                  "messageStatus": {"mail-a": {"source": "NIKKEI", "at": "2026-09-09T03:35:42Z"}}})
+    state["health"].pop("articleBoundaryRepairVersion", None)
+    monkeypatch.setattr(scanner, "_NEWS_INTEL", state)
+    monkeypatch.setattr(scanner, "_news_intake_file", lambda: str(tmp_path / "news.json"))
+    monkeypatch.setattr(scanner.argus_gmail_intake, "is_configured", lambda env: True)
+    monkeypatch.setattr(scanner.argus_gmail_intake, "refresh_access_token", lambda *a: "fixture-token")
+    monkeypatch.setattr(scanner.argus_gmail_intake, "fetch_message", lambda *a: None if failure == "fetch" else message)
+    processed = []
+    def process(part, backfill=False):
+        assert backfill is True
+        if failure == "second_article" and processed:
+            raise RuntimeError("fixture_interruption")
+        processed.append(part)
+        eid = part["messageId"]
+        state["events"][eid] = {"eventId": eid, "digestOf": part["digestOf"],
+            "sourceFingerprint": scanner.argus_news_intelligence.source_fingerprint(
+                message_id=part["rfcMessageId"], subject=part["subject"], url=part["url"])}
+        state["order"].append(eid)
+    monkeypatch.setattr(scanner, "_news_process_message", process)
+    scanner._news_repair_article_boundaries()
+    if failure:
+        assert "parent" in state["events"]
+        assert state["intakeState"]["articleBoundaryRepairIds"] == ["mail-a"]
+    else:
+        assert "parent" not in state["events"]
+        assert state["intakeState"]["articleBoundaryRepairIds"] == []
+        assert len(processed) == 2
+    scanner._news_intel_persist()
+    saved_events = copy.deepcopy(state["events"])
+    state["events"] = {}
+    state["intakeState"] = {}
+    state["health"]["articleBoundaryRepairVersion"] = 0
+    scanner._news_intel_load()
+    assert state["events"] == saved_events
+    assert state["health"]["articleBoundaryRepairVersion"] == 1
+    assert state["intakeState"]["articleBoundaryRepairIds"] == (["mail-a"] if failure else [])
+    if failure:
+        monkeypatch.setattr(scanner.argus_gmail_intake, "fetch_message", lambda *a: message)
+        failure = None
+        scanner._news_repair_article_boundaries()
+        assert "parent" not in state["events"]
+        assert state["intakeState"]["articleBoundaryRepairIds"] == []
+
+
+def test_article_boundary_refetch_is_bounded_and_does_not_discard_failed_messages(monkeypatch):
+    import copy
+    state = copy.deepcopy(scanner._NEWS_INTEL)
+    state["health"]["articleBoundaryRepairVersion"] = 1
+    queue = [f"mail-{n}" for n in range(9)]
+    state["intakeState"] = {"articleBoundaryRepairIds": list(queue)}
+    monkeypatch.setattr(scanner, "_NEWS_INTEL", state)
+    monkeypatch.setattr(scanner.argus_gmail_intake, "is_configured", lambda env: True)
+    monkeypatch.setattr(scanner.argus_gmail_intake, "refresh_access_token", lambda *a: "fixture-token")
+    fetched = []
+    monkeypatch.setattr(scanner.argus_gmail_intake, "fetch_message", lambda token, mid, http: fetched.append(mid))
+    scanner._news_repair_article_boundaries()
+    assert fetched == queue[:6]
+    assert state["intakeState"]["articleBoundaryRepairIds"] == queue

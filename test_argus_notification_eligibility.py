@@ -269,7 +269,10 @@ def test_notification_workflow_consolidation_preserves_schedule_semantics():
     # news-intake-ops manual dispatch (owner-only reprocess/health) plus the
     # v13.5.61 runtime-diagnostics manual dispatch (owner-only thread/memory
     # snapshot; no schedule, no notification).
-    assert len(files) == 29
+    assert len(files) == 30
+    naming = (workflows / "product-naming.yml").read_text(encoding="utf-8")
+    assert "- cron:" not in naming and "ntfy.sh" not in naming
+    assert "product_naming_guard.py" in naming
     assert (workflows / "news-intake-ops.yml").exists()
     diagnostics = (workflows / "runtime-diagnostics.yml").read_text(encoding="utf-8")
     assert "workflow_dispatch" in diagnostics and "- cron:" not in diagnostics

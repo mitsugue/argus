@@ -9,7 +9,7 @@ import argus_market_signals as signals
 
 def _row(status="AVAILABLE", condition=None):
     return {"status": status, "conditionMet": condition,
-            "lineage": "SHO_ORIGINAL", "validationStatus": "UNVALIDATED"}
+            "lineage": "JP_MARKET_ENGINE_ORIGINAL", "validationStatus": "UNVALIDATED"}
 
 
 def test_seven_owner_facing_identities_are_fixed_and_ordered():
@@ -28,7 +28,7 @@ def test_seven_owner_facing_identities_are_fixed_and_ordered():
     assert names["SIG-07"] == "Earnings Reaction"
     # Owner-facing vocabulary never carries the legacy person-derived name.
     for row in signals.SIGNAL_DEFINITIONS:
-        assert "SHO" not in row["nameEn"] and "SHO" not in row["nameJa"]
+        assert "JP_MARKET_ENGINE" not in row["nameEn"] and "JP_MARKET_ENGINE" not in row["nameJa"]
 
 
 def test_numerator_counts_only_active_signals_and_is_not_hard_coded():
@@ -96,10 +96,10 @@ def test_module_is_pure_and_carries_no_authority():
     assert "order" not in source.lower().replace("display order", "")
 
 
-def test_sho_projection_embeds_market_signals():
-    import argus_sho as sho
+def test_jp_market_engine_projection_embeds_market_signals():
+    import jp_market_engine as jp_market_engine
     cutoff = "2026-09-03T02:00:00Z"
-    projection = sho.project_today_sda_safe(cutoff=cutoff)
+    projection = jp_market_engine.project_today_sda_safe(cutoff=cutoff)
     assert projection["marketSignals"]["total"] == 7
     assert projection["marketSignals"]["activeCount"] == 0
     assert [row["id"] for row in projection["marketSignals"]["signals"]] == \

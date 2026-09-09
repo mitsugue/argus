@@ -1,15 +1,15 @@
 # 反転軸 BUY の検証計画と現在の結果（v13.5.63・2026-09-07）
 
 GPT レビュー追加項目 2「BUY の検証を完了へ進める」への回答。BUY は検証が終わるまで
-構造的に無効（`VERIFIED_SHO_BUY_ARTIFACTS` が空）のまま。ここでは **必要データ・対象期間・
+構造的に無効（`VERIFIED_JP_MARKET_ENGINE_BUY_ARTIFACTS` が空）のまま。ここでは **必要データ・対象期間・
 合格条件・有効化までの作業** を固定し、その検証を実行できるスクリプトと、今日の結果を置く。
 画面には方式の個人名を出さない（画面表記は「需給・トレンド方式」）。
 
 ## 1. 何を検証するか
 
-BUY 候補になる反転状態は 4 つ（`argus_single_decision.BUY_ELIGIBLE_SHO_STATES`）:
+BUY 候補になる反転状態は 4 つ（`argus_single_decision.BUY_ELIGIBLE_JP_MARKET_ENGINE_STATES`）:
 `REVERSAL_EARLY` / `TECHNICAL_REBOUND` / `RECOVERY_TEST` / `CONFIRMED_ADVANCE`。
-状態は本番と同じ `argus_sho.build_reversal_engine(downside_background="MIXED")` で、
+状態は本番と同じ `jp_market_engine.build_reversal_engine(downside_background="MIXED")` で、
 ^N225（分析主体）と ^VIX（第 2 軸）の完全 OHLCV から決定論に再構成する。
 
 問い: **「その状態に入った翌営業日の終値で 1321 を買ったとき、5 / 20 営業日後に上がって
@@ -20,7 +20,7 @@ BUY 候補になる反転状態は 4 つ（`argus_single_decision.BUY_ELIGIBLE_S
 | 系列 | 用途 | 出所（検証用） | 本番の出所 |
 |---|---|---|---|
 | NIKKEI_225_INDEX 日足 OHLCV | 反転軸の分析主体 | Yahoo v8 chart `^N225` 10 年 | `_yahoo_index_ohlcv("^N225")` |
-| VIX 日足 OHLCV | 第 2 軸（MACD デッドクロス） | Yahoo v8 chart `^VIX` 10 年 | `_sho_vix_rows` |
+| VIX 日足 OHLCV | 第 2 軸（MACD デッドクロス） | Yahoo v8 chart `^VIX` 10 年 | `_jp_market_engine_vix_rows` |
 | 1321 日足終値 | 判断主体の成績 | Yahoo v8 chart `1321.T` 10 年 | J-Quants |
 
 不完全な足（O/H/L/C/V のいずれか欠落）は補完せず除外する。各足は `availableFrom` を持ち、
@@ -47,7 +47,7 @@ BUY 候補になる反転状態は 4 つ（`argus_single_decision.BUY_ELIGIBLE_S
 | 未来参照 | なし（構造的に保証） |
 
 すべて満たして初めて **PASS**。PASS の報告 JSON を独立に再現し、コードレビューで
-`VERIFIED_SHO_BUY_ARTIFACTS` に artifact identity を固定した時点で、はじめて画面に BUY が出る。
+`VERIFIED_JP_MARKET_ENGINE_BUY_ARTIFACTS` に artifact identity を固定した時点で、はじめて画面に BUY が出る。
 
 ## 5. 実行方法
 
@@ -93,6 +93,6 @@ python3 scripts/reversal_buy_validation.py --fetch --data-dir /tmp/buyval --out 
 
 ## 9. 本番での確認（2026-09-08・v13.5.63・バックエンド eb6f89ed）
 
-- BUY は本番でも構造的に無効のまま（`shoBuyEligible=false`、レジストリ空）。画面の「BUYが出る条件」は本ドキュメントを指す。
-- 反転軸の状態は本番の `argus_sho.build_reversal_engine`（^N225 / ^VIX の完全 OHLCV、MIXED 背景）と同じ経路で再構成しており、上記 §6 の FAIL 判定が有効化を止めている根拠である。
+- BUY は本番でも構造的に無効のまま（`jpMarketEngineBuyEligible=false`、レジストリ空）。画面の「BUYが出る条件」は本ドキュメントを指す。
+- 反転軸の状態は本番の `jp_market_engine.build_reversal_engine`（^N225 / ^VIX の完全 OHLCV、MIXED 背景）と同じ経路で再構成しており、上記 §6 の FAIL 判定が有効化を止めている根拠である。
 - 次回の再実行は §7 の計画どおり月次。PASS が 3 回続くまでレジストリ固定の PR は出さない。

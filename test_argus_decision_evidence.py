@@ -2,13 +2,13 @@
 device-side SDA.
 
 Contract under test (owner spec 2026-08-22):
-  * a FRESH live quote yields AVAILABLE marketTruth + predictionLedger + sho
+  * a FRESH live quote yields AVAILABLE marketTruth + predictionLedger + jp_market_engine
     references with quality COMPLETE/FRESH — the reviewed backend half of the
     frontend's canonical_artifact_resolver_unavailable boundary;
   * a merely DELAYED/stale selection degrades to an honest STALE reference
     (identity kept, authority withheld) — never a fabricated AVAILABLE;
   * absent inputs fail closed to MISSING with reasons, HTTP 200, no network;
-  * SHO stays UNVALIDATED / shoBuyEligible False (BUY remains locked).
+  * JP_MARKET_ENGINE stays UNVALIDATED / jpMarketEngineBuyEligible False (BUY remains locked).
 """
 from datetime import datetime, timedelta, timezone
 
@@ -48,10 +48,10 @@ def test_fresh_live_quote_yields_full_available_chain(monkeypatch):
     assert entry["marketTruth"]["status"] == "AVAILABLE"
     assert entry["predictionLedger"]["status"] == "AVAILABLE"
     assert entry["predictionLedger"]["mode"] == "FORWARD_LIVE"
-    assert entry["sho"]["status"] == "AVAILABLE"
-    # BUY stays locked: nothing here may claim a validated SHO state.
-    assert entry["sho"]["validationStatus"] in ("UNVALIDATED", "DATA_GATED")
-    assert entry["shoBuyEligible"] is False
+    assert entry["jp_market_engine"]["status"] == "AVAILABLE"
+    # BUY stays locked: nothing here may claim a validated JP_MARKET_ENGINE state.
+    assert entry["jp_market_engine"]["validationStatus"] in ("UNVALIDATED", "DATA_GATED")
+    assert entry["jpMarketEngineBuyEligible"] is False
     assert entry["quality"] == {"status": "COMPLETE", "freshness": "FRESH",
                                 "missingReasonCodes": [],
                                 "conflictReasonCodes": []}
@@ -65,7 +65,7 @@ def test_fresh_live_quote_yields_full_available_chain(monkeypatch):
 
 
 def test_latest_session_close_is_daily_authority_available(monkeypatch):
-    """SHOの日次思考: 最新完了セッションの公式終値は「現在の事実」— 週末や
+    """JP_MARKET_ENGINEの日次思考: 最新完了セッションの公式終値は「現在の事実」— 週末や
     連休の壁時計経過でSTALE扱いにしない(owner spec 2026-08-22)。"""
     import argus_market_clock
     now = datetime.now(timezone.utc)
@@ -143,27 +143,27 @@ def test_references_match_python_authority_resolver(monkeypatch):
     prediction, p_reason = scanner._decision_evidence_prediction_artifact(
         "1321", "JP", cutoff, artifact, build_identity)
     assert prediction is not None and p_reason is None
-    sho_artifact, s_reason = scanner._decision_evidence_sho_artifact(
+    jp_market_engine_artifact, s_reason = scanner._decision_evidence_jp_market_engine_artifact(
         "1321", cutoff)
-    assert sho_artifact is not None and s_reason is None
+    assert jp_market_engine_artifact is not None and s_reason is None
     references = argus_single_decision.canonical_artifact_references(
         subject={"kind": "ASSET", "instrumentId": "1321", "market": "JP"},
         cutoff=cutoff,
         market_truth_artifact=artifact,
         prediction_ledger_artifact=prediction,
-        sho_artifact=sho_artifact)
+        jp_market_engine_artifact=jp_market_engine_artifact)
     assert references["marketTruth"]["status"] == "AVAILABLE"
     assert references["predictionLedger"]["contextId"] == prediction["id"]
-    assert references["sho"]["artifactId"] == sho_artifact["artifactId"]
+    assert references["jp_market_engine"]["artifactId"] == jp_market_engine_artifact["artifactId"]
     assert references["verificationFailures"] == {}
 
 
-# ━━━ v13.5.36 — SHO CORE production wiring + MARKET VIEW (review items A/B/C) ━━━
+# ━━━ v13.5.36 — JP_MARKET_ENGINE CORE production wiring + MARKET VIEW (review items A/B/C) ━━━
 
-def _reset_sho_memos():
-    scanner._SHO_PIT_INPUT_MEMO.update({"ts": 0.0, "data": None})
-    scanner._SHO_MARKET_VIEW_MEMO.update({"ts": 0.0, "view": None})
-    scanner._SHO_INDEX_OHLCV_CACHE.clear()
+def _reset_jp_market_engine_memos():
+    scanner._JP_MARKET_ENGINE_PIT_INPUT_MEMO.update({"ts": 0.0, "data": None})
+    scanner._JP_MARKET_ENGINE_MARKET_VIEW_MEMO.update({"ts": 0.0, "view": None})
+    scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.clear()
 
 
 def _fixture_index_bars(instrument_id, days, *, base, step, volume,
@@ -187,7 +187,7 @@ def _fixture_index_bars(instrument_id, days, *, base, step, volume,
     return rows
 
 
-def _seed_sho_inputs():
+def _seed_jp_market_engine_inputs():
     now = datetime.now(timezone.utc)
     credit = []
     for week in range(6, 0, -1):
@@ -224,24 +224,24 @@ def _seed_sho_inputs():
                          "foreignFlow": "missing", "vix": "yahoo_ohlcv",
                          "nikkei": "yahoo_ohlcv"},
     }
-    scanner._SHO_PIT_INPUT_MEMO.update(
+    scanner._JP_MARKET_ENGINE_PIT_INPUT_MEMO.update(
         {"ts": scanner.time.time(), "data": data})
 
 
 def test_market_view_projects_real_family_states(monkeypatch):
     """Review item B: D01-D07 evaluate the wired production feeds, and the
     document-level MARKET VIEW (item A) projects them with zero authority."""
-    _reset_sho_memos()
-    scanner._SHO_MARKET_VIEW_MEMO.update({"ts": 0.0, "view": None})
+    _reset_jp_market_engine_memos()
+    scanner._JP_MARKET_ENGINE_MARKET_VIEW_MEMO.update({"ts": 0.0, "view": None})
     monkeypatch.setenv("RENDER_GIT_COMMIT", "a" * 40)
     monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot",
                         lambda **kwargs: {"provider": "jquants", "stocks": []})
-    _seed_sho_inputs()
+    _seed_jp_market_engine_inputs()
     try:
         body = _client().get(
             "/api/argus/decision-evidence?symbols=1321").get_json()
         view = body["marketView"]
-        assert view["schemaVersion"] == "argus-sho-market-view-v1"
+        assert view["schemaVersion"] == "argus-jp-market-engine-market-view-v1"
         assert view["actionAuthority"] is False
         projection = view["projection"]
         assert projection["actionAuthority"] is False
@@ -263,12 +263,12 @@ def test_market_view_projects_real_family_states(monkeypatch):
         assert reversal["reversalState"], "real bars must classify an axis"
         assert view["sourceStatus"]["vix"] == "yahoo_ohlcv"
     finally:
-        _reset_sho_memos()
+        _reset_jp_market_engine_memos()
 
 
 def test_market_view_cold_inputs_stay_missing_not_fabricated(monkeypatch):
     """Cold caches must yield MISSING families — never invented evidence."""
-    _reset_sho_memos()
+    _reset_jp_market_engine_memos()
     monkeypatch.setenv("RENDER_GIT_COMMIT", "a" * 40)
     monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot",
                         lambda **kwargs: {"provider": "jquants", "stocks": []})
@@ -283,7 +283,7 @@ def test_market_view_cold_inputs_stay_missing_not_fabricated(monkeypatch):
             assert families[name]["status"] in ("MISSING", "LICENSE_BLOCKED")
             assert families[name]["conditionMet"] is None
     finally:
-        _reset_sho_memos()
+        _reset_jp_market_engine_memos()
 
 
 def test_important_events_imminent_feed_is_uncapped(monkeypatch):
@@ -316,7 +316,7 @@ def test_yahoo_index_mapper_drops_incomplete_bars(monkeypatch):
     """The OHLCV mapper passes source values through exactly (volume 0 for
     ^VIX is the reported value) and DROPS bars with any null component —
     components are never filled."""
-    _reset_sho_memos()
+    _reset_jp_market_engine_memos()
     canned = {
         "chart": {"result": [{
             "meta": {"gmtoffset": -18000},
@@ -343,7 +343,7 @@ def test_yahoo_index_mapper_drops_incomplete_bars(monkeypatch):
         for row in rows:
             assert row["availableFrom"] > row["date"]
     finally:
-        _reset_sho_memos()
+        _reset_jp_market_engine_memos()
 
 
 def test_history_fallback_selects_latest_bar_regardless_of_row_order(monkeypatch):

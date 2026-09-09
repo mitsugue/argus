@@ -2,7 +2,7 @@
 
 This is a pure final-action authority over a closed, owner-local context.  It
 accepts only verifier-issued evidence bundles for Market Truth, Prediction
-Ledger, SHO and the constraint-only Risk Kernel.  Reference strings and
+Ledger, JP_MARKET_ENGINE and the constraint-only Risk Kernel.  Reference strings and
 caller booleans are never authority.  AI and legacy challenges are retained
 as dissent provenance only and cannot select or override the action.
 """
@@ -21,7 +21,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 import argus_decision_ledger as decision_ledger
 import argus_market_clock
 import argus_market_data_truth as market_truth
-import argus_sho as sho_authority
+import jp_market_engine as jp_market_engine_authority
 from argus_risk_discipline import (
     KERNEL_SCHEMA_VERSION,
     RiskDisciplineValidationError,
@@ -45,7 +45,7 @@ SINGLE_DECISION_AUTHORITY_V2_POLICY = MappingProxyType(
 
 PRIMARY_ACTIONS = ("BUY", "HOLD", "WAIT", "REDUCE", "EXIT")
 REFERENCE_STATUSES = ("AVAILABLE", "MISSING", "CONFLICT", "STALE")
-SHO_STATES = (
+JP_MARKET_ENGINE_STATES = (
     "FRAGILE",
     "DOWNSIDE_TRIGGERED",
     "SELL_OFF_ACTIVE",
@@ -56,13 +56,13 @@ SHO_STATES = (
     "FALSE_RALLY",
     "MIXED",
 )
-BUY_ELIGIBLE_SHO_STATES = (
+BUY_ELIGIBLE_JP_MARKET_ENGINE_STATES = (
     "REVERSAL_EARLY",
     "TECHNICAL_REBOUND",
     "RECOVERY_TEST",
     "CONFIRMED_ADVANCE",
 )
-SHO_VALIDATION_STATUSES = ("VALIDATED", "UNVALIDATED", "DATA_GATED", "CONFLICT")
+JP_MARKET_ENGINE_VALIDATION_STATUSES = ("VALIDATED", "UNVALIDATED", "DATA_GATED", "CONFLICT")
 QUALITY_STATUSES = ("COMPLETE", "PARTIAL", "MISSING", "CONFLICT")
 FRESHNESS_STATUSES = ("FRESH", "DELAYED", "STALE", "UNKNOWN")
 CONTEXT_STATUSES = ("ACTIVE", "INACTIVE", "MISSING", "CONFLICT")
@@ -82,10 +82,10 @@ MIN_SEVEN_SIGN_SAMPLE_SIZE = 30
 # artifact is approved and pinned here.
 VERIFIED_SEVEN_SIGN_CALIBRATIONS = MappingProxyType({})
 # A production BUY can only be enabled by a repository-pinned, independently
-# verified SHO artifact identity.  Round 2 intentionally has no such entry:
-# canonical SHO remains UNVALIDATED/DATA_GATED until a future code review pins
+# verified JP_MARKET_ENGINE artifact identity.  Round 2 intentionally has no such entry:
+# canonical JP_MARKET_ENGINE remains UNVALIDATED/DATA_GATED until a future code review pins
 # an immutable validation artifact here.
-VERIFIED_SHO_BUY_ARTIFACTS = MappingProxyType({})
+VERIFIED_JP_MARKET_ENGINE_BUY_ARTIFACTS = MappingProxyType({})
 
 _BUNDLE_SEAL = object()
 _RESULT_SEAL = object()
@@ -94,7 +94,7 @@ _RESULT_SEAL = object()
 class _VerifiedDecisionEvidenceBundle(dict):
     """Runtime capability issued only by ``verify_decision_evidence``."""
 
-    __slots__ = ("_authority_seal", "_bundle_id", "_body_digest", "_sho_buy_eligible")
+    __slots__ = ("_authority_seal", "_bundle_id", "_body_digest", "_jp_market_engine_buy_eligible")
 
 
 class _VerifiedSingleDecisionResult(dict):
@@ -110,7 +110,7 @@ _INPUT_KEYS = {
     "authorityPolicy",
     "marketTruth",
     "predictionLedger",
-    "sho",
+    "jp_market_engine",
     "riskKernel",
     "contextEvidence",
     "quality",
@@ -148,7 +148,7 @@ _PREDICTION_LEDGER_KEYS = {
     "policyId",
     "policySha256",
 }
-_SHO_KEYS = {
+_JP_MARKET_ENGINE_KEYS = {
     "status",
     "schemaVersion",
     "artifactId",
@@ -227,12 +227,12 @@ _IDENTITIES_KEYS = {
     "authorityPolicySha256",
     "marketTruth",
     "predictionLedger",
-    "sho",
+    "jp_market_engine",
     "risk",
 }
 _MARKET_IDENTITY_KEYS = {"status", "snapshotId", "observationId"}
 _PREDICTION_IDENTITY_KEYS = {"status", "contextId"}
-_SHO_IDENTITY_KEYS = {"status", "artifactId"}
+_JP_MARKET_ENGINE_IDENTITY_KEYS = {"status", "artifactId"}
 _RISK_IDENTITY_KEYS = {"status", "riskKernelId"}
 _SEVEN_RESULT_KEYS = {
     "schemaVersion",
@@ -259,7 +259,7 @@ _ADAPTER_KEYS = {
     "authorityPolicyRef",
     "marketTruthRef",
     "predictionLedgerRef",
-    "shoRef",
+    "jpMarketEngineRef",
     "riskRef",
     "singleDecisionRef",
     "sevenSignRef",
@@ -565,34 +565,34 @@ def _validate_target(value: Any, path: str, *, invalidation: bool) -> None:
     _artifact_identifier(item["sourceRef"], f"{path}.sourceRef")
 
 
-def _validate_sho(value: Any, cutoff: datetime) -> Mapping[str, Any]:
-    ref = _exact_mapping(value, _SHO_KEYS, "sho")
+def _validate_jp_market_engine(value: Any, cutoff: datetime) -> Mapping[str, Any]:
+    ref = _exact_mapping(value, _JP_MARKET_ENGINE_KEYS, "jp_market_engine")
     if ref["status"] not in REFERENCE_STATUSES:
-        _fail("sho.status", "unknown reference status")
-    _identifier(ref["schemaVersion"], "sho.schemaVersion", nullable=True)
-    _artifact_identifier(ref["artifactId"], "sho.artifactId", nullable=True)
-    _optional_exact_timestamp(ref["asOf"], "sho.asOf", cutoff)
-    _identifier(ref["policyId"], "sho.policyId", nullable=True)
-    _sha(ref["policySha256"], "sho.policySha256", nullable=True)
-    if ref["state"] not in (*SHO_STATES, None):
-        _fail("sho.state", "unknown SHO state")
-    if ref["validationStatus"] not in (*SHO_VALIDATION_STATUSES, None):
-        _fail("sho.validationStatus", "unknown validation status")
+        _fail("jp_market_engine.status", "unknown reference status")
+    _identifier(ref["schemaVersion"], "jp_market_engine.schemaVersion", nullable=True)
+    _artifact_identifier(ref["artifactId"], "jp_market_engine.artifactId", nullable=True)
+    _optional_exact_timestamp(ref["asOf"], "jp_market_engine.asOf", cutoff)
+    _identifier(ref["policyId"], "jp_market_engine.policyId", nullable=True)
+    _sha(ref["policySha256"], "jp_market_engine.policySha256", nullable=True)
+    if ref["state"] not in (*JP_MARKET_ENGINE_STATES, None):
+        _fail("jp_market_engine.state", "unknown JP_MARKET_ENGINE state")
+    if ref["validationStatus"] not in (*JP_MARKET_ENGINE_VALIDATION_STATUSES, None):
+        _fail("jp_market_engine.validationStatus", "unknown validation status")
     primitive_ids = _canonical_strings(
         ref["primitiveFactorIds"],
-        "sho.primitiveFactorIds",
+        "jp_market_engine.primitiveFactorIds",
         cap=MAX_PRIMITIVE_FACTOR_IDS,
     )
     targets = ref["targets"]
     if not isinstance(targets, list) or len(targets) > MAX_TARGETS:
-        _fail("sho.targets", f"must be an array of at most {MAX_TARGETS}")
+        _fail("jp_market_engine.targets", f"must be an array of at most {MAX_TARGETS}")
     for index, target in enumerate(targets):
-        _validate_target(target, f"sho.targets[{index}]", invalidation=False)
+        _validate_target(target, f"jp_market_engine.targets[{index}]", invalidation=False)
     target_ids = [target["targetId"] for target in targets]
     if target_ids != sorted(set(target_ids)):
-        _fail("sho.targets", "must be sorted and unique by targetId")
+        _fail("jp_market_engine.targets", "must be sorted and unique by targetId")
     if ref["invalidation"] is not None:
-        _validate_target(ref["invalidation"], "sho.invalidation", invalidation=True)
+        _validate_target(ref["invalidation"], "jp_market_engine.invalidation", invalidation=True)
 
     if ref["status"] == "AVAILABLE":
         if any(
@@ -607,13 +607,13 @@ def _validate_sho(value: Any, cutoff: datetime) -> Mapping[str, Any]:
                 "validationStatus",
             )
         ):
-            _fail("sho", "AVAILABLE requires complete artifact identity and state")
+            _fail("jp_market_engine", "AVAILABLE requires complete artifact identity and state")
     elif ref["status"] == "MISSING":
         if any(
             ref[field] is not None
             for field in ("artifactId", "asOf", "state", "validationStatus")
         ) or primitive_ids or targets or ref["invalidation"] is not None:
-            _fail("sho", "MISSING cannot claim state, factors, targets, or invalidation")
+            _fail("jp_market_engine", "MISSING cannot claim state, factors, targets, or invalidation")
     return ref
 
 
@@ -782,7 +782,7 @@ def validate_single_decision_input_v2(value: Any) -> None:
     _validate_canonical_authority_policy(top["authorityPolicy"], "authorityPolicy")
     _validate_market_truth(top["marketTruth"], cutoff)
     _validate_prediction_ledger(top["predictionLedger"], cutoff)
-    _validate_sho(top["sho"], cutoff)
+    _validate_jp_market_engine(top["jp_market_engine"], cutoff)
     try:
         validate_risk_kernel(top["riskKernel"])
     except RiskDisciplineValidationError as exc:
@@ -813,7 +813,7 @@ def _latest_session_daily_authority(
     cutoff: str,
 ) -> bool:
     """The official close of the LATEST COMPLETED session is the current
-    daily-authority fact for that market (owner spec 2026-08-22: SHO's daily
+    daily-authority fact for that market (owner spec 2026-08-22: JP_MARKET_ENGINE's daily
     thinking — a close stands until a newer session actually trades), so a
     DELAYED/STALE freshness label from wall-clock age does not by itself
     disqualify it. Any older session remains stale evidence.
@@ -920,49 +920,49 @@ def _prediction_reference_from_artifact(
     }
 
 
-def _sho_reference_from_artifact(
+def _jp_market_engine_reference_from_artifact(
     artifact: Any,
     *,
     subject: Mapping[str, Any],
     cutoff: str,
 ) -> Tuple[Dict[str, Any], bool]:
-    if not sho_authority.is_builder_issued_reversal_artifact(artifact):
+    if not jp_market_engine_authority.is_builder_issued_reversal_artifact(artifact):
         _fail(
-            "artifacts.shoArtifact",
+            "artifacts.jpMarketEngineArtifact",
             "must be an unmodified canonical-builder artifact",
         )
     try:
-        admitted = sho_authority.validate_reversal_artifact(artifact)
+        admitted = jp_market_engine_authority.validate_reversal_artifact(artifact)
     except (TypeError, ValueError) as exc:
-        _fail("artifacts.shoArtifact", f"canonical verifier rejected artifact: {exc}")
+        _fail("artifacts.jpMarketEngineArtifact", f"canonical verifier rejected artifact: {exc}")
     if admitted.get("informationCutoff") != cutoff:
-        _fail("artifacts.shoArtifact.informationCutoff", "must equal informationCutoffAt")
+        _fail("artifacts.jpMarketEngineArtifact.informationCutoff", "must equal informationCutoffAt")
     if admitted.get("analysisInstrument") != subject["instrumentId"]:
-        _fail("artifacts.shoArtifact.analysisInstrument", "must equal the authority subject")
+        _fail("artifacts.jpMarketEngineArtifact.analysisInstrument", "must equal the authority subject")
     axis = admitted["reversalAxis"]
     factors = admitted["evidence"]
     primitive_ids = sorted(
-        f"sho.{re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()}"
+        f"jp_market_engine.{re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()}"
         for name, row in factors.items()
         if isinstance(row, Mapping) and row.get("status") == "AVAILABLE"
     )
     registry_key = "|".join((
         admitted["artifactId"],
-        sho_authority.SHO_REGISTRY_SHA256,
+        jp_market_engine_authority.JP_MARKET_ENGINE_REGISTRY_SHA256,
         admitted["canonicalRfcSha256"],
     ))
     buy_eligible = bool(
         axis.get("validationStatus") == "VALIDATED"
-        and axis.get("state") in BUY_ELIGIBLE_SHO_STATES
-        and registry_key in VERIFIED_SHO_BUY_ARTIFACTS
+        and axis.get("state") in BUY_ELIGIBLE_JP_MARKET_ENGINE_STATES
+        and registry_key in VERIFIED_JP_MARKET_ENGINE_BUY_ARTIFACTS
     )
     return ({
         "status": "AVAILABLE",
         "schemaVersion": admitted["schemaVersion"],
         "artifactId": admitted["artifactId"],
         "asOf": cutoff,
-        "policyId": sho_authority.SHO_REGISTRY_VERSION,
-        "policySha256": sho_authority.SHO_REGISTRY_SHA256,
+        "policyId": jp_market_engine_authority.JP_MARKET_ENGINE_REGISTRY_VERSION,
+        "policySha256": jp_market_engine_authority.JP_MARKET_ENGINE_REGISTRY_SHA256,
         "state": axis["state"],
         "validationStatus": axis["validationStatus"],
         "primitiveFactorIds": primitive_ids,
@@ -980,7 +980,7 @@ MISSING_PREDICTION_LEDGER_REFERENCE: Mapping[str, Any] = MappingProxyType({
     "status": "MISSING", "schemaVersion": None, "contextId": None,
     "mode": None, "asOf": None, "policyId": None, "policySha256": None,
 })
-MISSING_SHO_REFERENCE: Mapping[str, Any] = MappingProxyType({
+MISSING_JP_MARKET_ENGINE_REFERENCE: Mapping[str, Any] = MappingProxyType({
     "status": "MISSING", "schemaVersion": None, "artifactId": None,
     "asOf": None, "policyId": None, "policySha256": None, "state": None,
     "validationStatus": None, "primitiveFactorIds": (), "targets": (),
@@ -1040,7 +1040,7 @@ def canonical_artifact_references(
     cutoff: str,
     market_truth_artifact: Any = None,
     prediction_ledger_artifact: Any = None,
-    sho_artifact: Any = None,
+    jp_market_engine_artifact: Any = None,
 ) -> Dict[str, Any]:
     """Serving-layer seam: the verified reference dicts a device-side SDA input
     may carry for these canonical artifacts.
@@ -1078,20 +1078,20 @@ def canonical_artifact_references(
                 failures["predictionLedger"] = str(exc)
         else:
             failures["predictionLedger"] = "market_truth_reference_unavailable"
-    sho_ref = _missing_reference(MISSING_SHO_REFERENCE)
-    sho_buy_eligible = False
-    if sho_artifact is not None:
+    jp_market_engine_ref = _missing_reference(MISSING_JP_MARKET_ENGINE_REFERENCE)
+    jp_market_engine_buy_eligible = False
+    if jp_market_engine_artifact is not None:
         try:
-            built_sho, sho_buy_eligible = _sho_reference_from_artifact(
-                sho_artifact, subject=subject, cutoff=cutoff)
-            sho_ref = dict(built_sho)
+            built_jp_market_engine, jp_market_engine_buy_eligible = _jp_market_engine_reference_from_artifact(
+                jp_market_engine_artifact, subject=subject, cutoff=cutoff)
+            jp_market_engine_ref = dict(built_jp_market_engine)
         except ValueError as exc:
-            failures["sho"] = str(exc)
+            failures["jp_market_engine"] = str(exc)
     return {
         "marketTruth": market_ref,
         "predictionLedger": prediction_ref,
-        "sho": sho_ref,
-        "shoBuyEligible": bool(sho_buy_eligible),
+        "jp_market_engine": jp_market_engine_ref,
+        "jpMarketEngineBuyEligible": bool(jp_market_engine_buy_eligible),
         "verificationFailures": failures,
     }
 
@@ -1101,7 +1101,7 @@ def verify_decision_evidence(
     *,
     market_truth_artifact: Any = None,
     prediction_ledger_artifact: Any = None,
-    sho_artifact: Any = None,
+    jp_market_engine_artifact: Any = None,
 ) -> Mapping[str, Any]:
     """Resolve and verify every authority-relevant artifact exactly once.
 
@@ -1124,7 +1124,7 @@ def verify_decision_evidence(
     artifacts = (
         ("marketTruth", market_truth_artifact),
         ("predictionLedger", prediction_ledger_artifact),
-        ("sho", sho_artifact),
+        ("jp_market_engine", jp_market_engine_artifact),
     )
     for name, artifact in artifacts:
         status = normalized[name]["status"]
@@ -1138,10 +1138,10 @@ def verify_decision_evidence(
         "authorityPolicy": dict(SINGLE_DECISION_AUTHORITY_V2_POLICY),
         "marketTruth": None,
         "predictionLedger": None,
-        "sho": None,
+        "jp_market_engine": None,
         "riskKernelId": normalized["riskKernel"]["riskKernelId"],
     }
-    sho_buy_eligible = False
+    jp_market_engine_buy_eligible = False
     if market_truth_artifact is not None:
         expected_market = _market_truth_reference_from_artifact(
             market_truth_artifact,
@@ -1160,15 +1160,15 @@ def verify_decision_evidence(
         if normalized["predictionLedger"] != expected_prediction:
             _fail("predictionLedger", "does not exactly match the verified canonical artifact")
         verification["predictionLedger"] = expected_prediction["contextId"]
-    if sho_artifact is not None:
-        expected_sho, sho_buy_eligible = _sho_reference_from_artifact(
-            sho_artifact,
+    if jp_market_engine_artifact is not None:
+        expected_jp_market_engine, jp_market_engine_buy_eligible = _jp_market_engine_reference_from_artifact(
+            jp_market_engine_artifact,
             subject=normalized["subject"],
             cutoff=normalized["informationCutoffAt"],
         )
-        if normalized["sho"] != expected_sho:
-            _fail("sho", "does not exactly match the verified canonical artifact")
-        verification["sho"] = expected_sho["artifactId"]
+        if normalized["jp_market_engine"] != expected_jp_market_engine:
+            _fail("jp_market_engine", "does not exactly match the verified canonical artifact")
+        verification["jp_market_engine"] = expected_jp_market_engine["artifactId"]
 
     if all(normalized[name]["status"] == "AVAILABLE" for name, _ in artifacts):
         if normalized["quality"] != {
@@ -1184,7 +1184,7 @@ def verify_decision_evidence(
     bundle = _VerifiedDecisionEvidenceBundle(copy.deepcopy(normalized))
     bundle._authority_seal = _BUNDLE_SEAL
     bundle._bundle_id = bundle_id
-    bundle._sho_buy_eligible = sho_buy_eligible
+    bundle._jp_market_engine_buy_eligible = jp_market_engine_buy_eligible
     bundle._body_digest = _verified_bundle_digest(bundle)
     return bundle
 
@@ -1214,7 +1214,7 @@ def _owner_is_unknown(owner: Mapping[str, Any]) -> bool:
 
 
 def _select_primary_action(
-    top: Mapping[str, Any], *, data_gated: bool, sho_buy_eligible: bool
+    top: Mapping[str, Any], *, data_gated: bool, jp_market_engine_buy_eligible: bool
 ) -> str:
     owner = top["ownerContext"]
     held = owner["positionState"] == "HELD"
@@ -1230,11 +1230,11 @@ def _select_primary_action(
         return "WAIT"
     if constraint == "BLOCK_BUY":
         return "HOLD" if held else "WAIT"
-    sho = top["sho"]
+    jp_market_engine = top["jp_market_engine"]
     buy_ready = (
-        sho["validationStatus"] == "VALIDATED"
-        and sho_buy_eligible
-        and sho["state"] in BUY_ELIGIBLE_SHO_STATES
+        jp_market_engine["validationStatus"] == "VALIDATED"
+        and jp_market_engine_buy_eligible
+        and jp_market_engine["state"] in BUY_ELIGIBLE_JP_MARKET_ENGINE_STATES
         and owner["addPermission"] == "ALLOWED"
     )
     if buy_ready:
@@ -1259,7 +1259,7 @@ def _seven_candidate(action: str, top: Mapping[str, Any], *, data_gated: bool) -
         return 3 if defensive else 4
     if action == "HOLD":
         return 4
-    state = top["sho"]["state"]
+    state = top["jp_market_engine"]["state"]
     if state == "CONFIRMED_ADVANCE":
         return 7
     if state in ("TECHNICAL_REBOUND", "RECOVERY_TEST"):
@@ -1339,7 +1339,7 @@ def _result_from_valid_input(top: _VerifiedDecisionEvidenceBundle) -> Dict[str, 
     for name, ref in (
         ("market_truth", top["marketTruth"]),
         ("prediction_ledger", top["predictionLedger"]),
-        ("sho", top["sho"]),
+        ("jp_market_engine", top["jp_market_engine"]),
     ):
         ref_missing, ref_conflicts = _reference_reason(name, ref["status"])
         missing.extend(ref_missing)
@@ -1363,13 +1363,13 @@ def _result_from_valid_input(top: _VerifiedDecisionEvidenceBundle) -> Dict[str, 
         or top["riskKernel"]["status"] != "READY"
         or top["marketTruth"]["status"] != "AVAILABLE"
         or top["predictionLedger"]["status"] != "AVAILABLE"
-        or top["sho"]["status"] != "AVAILABLE"
+        or top["jp_market_engine"]["status"] != "AVAILABLE"
         or owner_unknown
     )
     action = _select_primary_action(
         top,
         data_gated=data_gated,
-        sho_buy_eligible=top._sho_buy_eligible,
+        jp_market_engine_buy_eligible=top._jp_market_engine_buy_eligible,
     )
     base_confidence = {
         "BUY": 7_000,
@@ -1393,9 +1393,9 @@ def _result_from_valid_input(top: _VerifiedDecisionEvidenceBundle) -> Dict[str, 
         for challenge in top["challengeEvidence"]
         for evidence_ref in challenge["evidenceRefs"]
     ]
-    target_refs = [target["sourceRef"] for target in top["sho"]["targets"]]
-    if top["sho"]["invalidation"] is not None:
-        target_refs.append(top["sho"]["invalidation"]["sourceRef"])
+    target_refs = [target["sourceRef"] for target in top["jp_market_engine"]["targets"]]
+    if top["jp_market_engine"]["invalidation"] is not None:
+        target_refs.append(top["jp_market_engine"]["invalidation"]["sourceRef"])
 
     dissent: List[str] = []
     for row in top["contextEvidence"]:
@@ -1412,7 +1412,7 @@ def _result_from_valid_input(top: _VerifiedDecisionEvidenceBundle) -> Dict[str, 
 
     primitive_ids = _unique_bounded(
         [factor["primitiveFactorId"] for factor in top["riskKernel"]["primitiveFactors"]]
-        + list(top["sho"]["primitiveFactorIds"])
+        + list(top["jp_market_engine"]["primitiveFactorIds"])
         + [row["primitiveFactorId"] for row in top["contextEvidence"]],
         MAX_PRIMITIVE_FACTOR_IDS,
     )
@@ -1421,7 +1421,7 @@ def _result_from_valid_input(top: _VerifiedDecisionEvidenceBundle) -> Dict[str, 
     next_review = _unique_bounded(
         [f"resolve.{code}" for code in missing + conflicts]
         + (["risk_reassessment"] if top["riskKernel"]["constraint"] != "NONE" else [])
-        + (["sho_revalidation"] if top["sho"]["validationStatus"] != "VALIDATED" else []),
+        + (["jp_market_engine_revalidation"] if top["jp_market_engine"]["validationStatus"] != "VALIDATED" else []),
         MAX_REASON_CODES,
     )
 
@@ -1438,8 +1438,8 @@ def _result_from_valid_input(top: _VerifiedDecisionEvidenceBundle) -> Dict[str, 
             "position": _position_guidance(action),
             "riskConstraint": top["riskKernel"]["constraint"],
         },
-        "targets": copy.deepcopy(top["sho"]["targets"]),
-        "invalidation": copy.deepcopy(top["sho"]["invalidation"]),
+        "targets": copy.deepcopy(top["jp_market_engine"]["targets"]),
+        "invalidation": copy.deepcopy(top["jp_market_engine"]["invalidation"]),
         "nextReviewConditionCodes": next_review,
         "freshness": top["quality"]["freshness"],
         "missingReasonCodes": missing,
@@ -1462,9 +1462,9 @@ def _result_from_valid_input(top: _VerifiedDecisionEvidenceBundle) -> Dict[str, 
                 "status": top["predictionLedger"]["status"],
                 "contextId": top["predictionLedger"]["contextId"],
             },
-            "sho": {
-                "status": top["sho"]["status"],
-                "artifactId": top["sho"]["artifactId"],
+            "jp_market_engine": {
+                "status": top["jp_market_engine"]["status"],
+                "artifactId": top["jp_market_engine"]["artifactId"],
             },
             "risk": {
                 "status": top["riskKernel"]["status"],
@@ -1508,7 +1508,7 @@ def _invalid_result() -> Dict[str, Any]:
             "authorityPolicySha256": None,
             "marketTruth": {"status": "MISSING", "snapshotId": None, "observationId": None},
             "predictionLedger": {"status": "MISSING", "contextId": None},
-            "sho": {"status": "MISSING", "artifactId": None},
+            "jp_market_engine": {"status": "MISSING", "artifactId": None},
             "risk": {"status": "DATA_GATED", "riskKernelId": None},
         },
         "sevenSign": {
@@ -1628,7 +1628,7 @@ def validate_single_decision_result_v2(value: Any) -> None:
         _PREDICTION_IDENTITY_KEYS,
         "result.identities.predictionLedger",
     )
-    sho = _exact_mapping(identities["sho"], _SHO_IDENTITY_KEYS, "result.identities.sho")
+    jp_market_engine = _exact_mapping(identities["jp_market_engine"], _JP_MARKET_ENGINE_IDENTITY_KEYS, "result.identities.jp_market_engine")
     risk = _exact_mapping(identities["risk"], _RISK_IDENTITY_KEYS, "result.identities.risk")
     if market["status"] not in REFERENCE_STATUSES:
         _fail("result.identities.marketTruth.status", "unknown reference status")
@@ -1641,9 +1641,9 @@ def validate_single_decision_result_v2(value: Any) -> None:
     _artifact_identifier(
         prediction["contextId"], "result.identities.predictionLedger.contextId", nullable=True
     )
-    if sho["status"] not in REFERENCE_STATUSES:
-        _fail("result.identities.sho.status", "unknown reference status")
-    _artifact_identifier(sho["artifactId"], "result.identities.sho.artifactId", nullable=True)
+    if jp_market_engine["status"] not in REFERENCE_STATUSES:
+        _fail("result.identities.jp_market_engine.status", "unknown reference status")
+    _artifact_identifier(jp_market_engine["artifactId"], "result.identities.jp_market_engine.artifactId", nullable=True)
     if risk["status"] not in ("READY", "DATA_GATED"):
         _fail("result.identities.risk.status", "unknown risk status")
     if risk["riskKernelId"] is not None and (
@@ -1771,7 +1771,7 @@ def build_data_gated_input_v2(
             "policyId": None,
             "policySha256": None,
         },
-        "sho": {
+        "jp_market_engine": {
             "status": "MISSING",
             "schemaVersion": None,
             "artifactId": None,
@@ -1799,11 +1799,11 @@ def build_data_gated_input_v2(
             "status": "MISSING",
             "freshness": "UNKNOWN",
             "missingReasonCodes": [
+                "jp_market_engine_evidence_missing",
                 "market_truth_missing",
                 "prediction_ledger_missing",
                 "risk_evidence_missing",
                 "scenario_event_missing",
-                "sho_evidence_missing",
             ],
             "conflictReasonCodes": [],
         },
@@ -1846,7 +1846,7 @@ def build_prediction_ledger_v2_adapter(result: Any) -> Dict[str, Any]:
         },
         "marketTruthRef": copy.deepcopy(identities["marketTruth"]),
         "predictionLedgerRef": copy.deepcopy(identities["predictionLedger"]),
-        "shoRef": copy.deepcopy(identities["sho"]),
+        "jpMarketEngineRef": copy.deepcopy(identities["jp_market_engine"]),
         "riskRef": copy.deepcopy(identities["risk"]),
         "singleDecisionRef": {
             "schemaVersion": result["schemaVersion"],
@@ -1890,7 +1890,7 @@ __all__ = [
     "VERIFIED_EVIDENCE_SCHEMA_VERSION",
     "MISSING_MARKET_TRUTH_REFERENCE",
     "MISSING_PREDICTION_LEDGER_REFERENCE",
-    "MISSING_SHO_REFERENCE",
+    "MISSING_JP_MARKET_ENGINE_REFERENCE",
     "SingleDecisionValidationError",
     "build_data_gated_input_v2",
     "canonical_artifact_references",

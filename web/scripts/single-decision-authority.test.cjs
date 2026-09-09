@@ -95,7 +95,7 @@ function riskKernel(constraint = 'NONE') {
 }
 
 function v2Fixture({
-  positionState = 'NOT_HELD', shoState = 'REVERSAL_EARLY',
+  positionState = 'NOT_HELD', jpMarketEngineState = 'REVERSAL_EARLY',
   constraint = 'NONE',
 } = {}) {
   return {
@@ -116,18 +116,18 @@ function v2Fixture({
       asOf: '2026-08-16T08:58:00Z', policyId: 'prediction-ledger-v2',
       policySha256: 'd'.repeat(64),
     },
-    sho: {
-      status: 'AVAILABLE', schemaVersion: 'argus-sho-v1', artifactId: 'sho:artifact-7203',
-      asOf: '2026-08-16T08:58:00Z', policyId: 'sho-policy-v1', policySha256: 'e'.repeat(64),
-      state: shoState, validationStatus: 'VALIDATED',
+    jp_market_engine: {
+      status: 'AVAILABLE', schemaVersion: 'argus-jp-market-engine-v1', artifactId: 'jp_market_engine:artifact-7203',
+      asOf: '2026-08-16T08:58:00Z', policyId: 'jp-market-engine-policy-v1', policySha256: 'e'.repeat(64),
+      state: jpMarketEngineState, validationStatus: 'VALIDATED',
       primitiveFactorIds: ['momentum.reversal', 'trend.market'],
       targets: [{
         targetId: 'target.primary', value: '3125.5', unit: 'PRICE',
-        sourceRef: 'sho:target-primary',
+        sourceRef: 'jp_market_engine:target-primary',
       }],
       invalidation: {
         invalidationId: 'invalidation.primary', value: '2840', unit: 'PRICE',
-        sourceRef: 'sho:invalidation-primary',
+        sourceRef: 'jp_market_engine:invalidation-primary',
       },
     },
     riskKernel: riskKernel(constraint),
@@ -278,8 +278,8 @@ async function main() {
         confidenceCapBps: 7600, observedAt: '2026-08-16T08:58:00Z',
       },
       {
-        evidenceRef: 'sho:volatility', primitiveFactorId: 'volatility.regime',
-        sourceKind: 'SHO', constraint: 'BLOCK_BUY', status: 'ACTIVE', severity: 'MEDIUM',
+        evidenceRef: 'jp_market_engine:volatility', primitiveFactorId: 'volatility.regime',
+        sourceKind: 'JP_MARKET_ENGINE', constraint: 'BLOCK_BUY', status: 'ACTIVE', severity: 'MEDIUM',
         confidenceCapBps: 7200, observedAt: '2026-08-16T08:58:00Z',
       },
     ],
@@ -289,7 +289,7 @@ async function main() {
 
   const forgedMatrix = [
     v2Fixture(),
-    v2Fixture({ positionState: 'HELD', shoState: 'MIXED' }),
+    v2Fixture({ positionState: 'HELD', jpMarketEngineState: 'MIXED' }),
     v2Fixture({ positionState: 'HELD', constraint: 'REDUCE_RISK' }),
     v2Fixture({ positionState: 'HELD', constraint: 'EXIT_RISK' }),
   ];
@@ -308,7 +308,7 @@ async function main() {
     'frontend cannot upgrade AVAILABLE reference strings without canonical resolvers');
 
   const assertedBuy = clone(completeV2);
-  assertedBuy.sho.buyEligible = true;
+  assertedBuy.jp_market_engine.buyEligible = true;
   assert.equal(authority.validateSingleDecisionAuthorityInputV2(assertedBuy).ok, false,
     'caller buyEligible is outside the closed request schema');
   assert.equal(authority.evaluateSingleDecisionAuthority(assertedBuy).primaryAction, 'WAIT');
@@ -342,10 +342,10 @@ async function main() {
   assert.equal(dataGatedResult.status, 'DATA_GATED');
   assert.equal(dataGatedResult.primaryAction, 'WAIT');
   assert.equal(dataGatedResult.verifiedEvidenceBundleId,
-    'vdeb-ab78d51a78706f53606d546c3ff22e3a400bdce89e110ef6419f8c23faef37d2',
+    'vdeb-5c499691375a0f4e3bace429cc8927ce961bc996bc1f4cbdc128fda30aaf54e3',
     'Python/TypeScript verified-bundle identity drifted');
   assert.equal(dataGatedResult.decisionId,
-    'sda-b45ead9150d861e72832c0f239e2471d49a8952a9a0a148d0bb6c8d882fa68b0',
+    'sda-cc622a2c657882264809c7810dcf930ada8a14c815a4bf5081dcf5d1b18da422',
     'Python/TypeScript SDA identity drifted');
   assert.equal(dataGatedResult.identities.marketTruth.status, 'MISSING');
   assert.equal(dataGatedResult.identities.risk.status, 'DATA_GATED');
@@ -363,7 +363,7 @@ async function main() {
   assert.equal(adapter.verifiedEvidenceBundleId, dataGatedResult.verifiedEvidenceBundleId);
   assert.equal(adapter.singleDecisionRef.decisionId, dataGatedResult.decisionId);
   assert.equal(adapter.adapterId,
-    'pla-7291ee01bd17dfa638d53a3dfcb7da5529dfd9e1feaa71a6658b1dba4307adad',
+    'pla-9e738b2e7b74393c2ec8085b8a8fa2c0ea7de02fdb60b13d7fc49d956e6e29ad',
     'Python/TypeScript ledger-adapter identity drifted');
   assert.equal(authority.validatePredictionLedgerV2Adapter(adapter, dataGatedResult).ok, true);
   const fabricatedDecision = clone(dataGatedResult);

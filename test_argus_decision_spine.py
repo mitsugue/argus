@@ -4,6 +4,7 @@ The evidence-pack endpoint, the decision references on labels, the evidence-awar
 prompts, and the Gemini challenge record. No network, no LLM calls.
 """
 import json
+from types import SimpleNamespace
 import scanner
 import argus_evidence_pack as EP
 
@@ -63,6 +64,7 @@ def test_action_label_includes_evidence_pack_id():
 # ── AI wiring (pure parts — no API calls) ────────────────────────────────────
 def test_openai_system_carries_evidence_discipline():
     s = scanner._OPENAI_SYSTEM
+    assert EP.ANALYSIS_EXPLANATION_POLICY_JA in s
     assert "EVIDENCE DISCIPLINE" in s
     assert "CANDIDATE only" in s                    # single-source CAOS
     assert "not necessarily the PRICE CAUSE" in s   # official = fact ≠ cause
@@ -78,10 +80,57 @@ def test_gemini_prompt_includes_missing_data_and_visibility():
         "marketDepthProof": {"trueDepthLiveCount": 0}, "calibrationStage": "burn_in",
         "decisionValuePhase": "engine_ready_no_records_yet"}}
     p = scanner._gemini_prompt(snap, {"summaryJa": "test"})
+    assert EP.ANALYSIS_EXPLANATION_POLICY_JA in p
     assert "missingData" in p and "BRIDGE_STALE" in p
     assert "visibilityGuard" in p
     assert "agreement(confirm|caution|disagree)" in p
     assert "unverifiedAssumptions" in p and "mainWeaknessJa" in p
+
+
+def test_prose_custom_system_and_transport_fallback_preserve_analysis_policy():
+    requests = []
+
+    def unavailable(**kwargs):
+        requests.append(kwargs)
+        raise RuntimeError("synthetic transport failure")
+
+    def fallback(**kwargs):
+        requests.append(kwargs)
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(content='{"summaryJa":"test"}'))])
+
+    client = SimpleNamespace(
+        responses=SimpleNamespace(create=unavailable),
+        chat=SimpleNamespace(completions=SimpleNamespace(create=fallback)))
+    _, text = scanner._openai_prose_call(
+        client, "synthetic-model", "CUSTOM SYSTEM", "observations")
+    assert json.loads(text)["summaryJa"] == "test"
+    assert len(requests) == 2
+    system = requests[0]["instructions"]
+    assert EP.ANALYSIS_EXPLANATION_POLICY_JA in system
+    assert "CUSTOM SYSTEM" in system
+    assert requests[1]["messages"][0]["content"] == system
+    assert requests[1]["messages"][1]["content"] == "observations"
+
+
+def test_gemini_research_transport_receives_analysis_policy(monkeypatch):
+    requests = []
+
+    def respond(**kwargs):
+        requests.append(kwargs)
+        return SimpleNamespace(text='{"claims":[]}')
+
+    monkeypatch.setattr(scanner, "_cost_policy_authorize",
+                        lambda *args, **kwargs: {"allowed": True})
+    monkeypatch.setattr(scanner, "GEMINI_API_KEY", "synthetic-test-key")
+    monkeypatch.setattr(scanner, "google_genai", SimpleNamespace(
+        Client=lambda **kwargs: SimpleNamespace(
+            models=SimpleNamespace(generate_content=respond))))
+    _, status = scanner._gemini_osint("observations")
+    assert status == "ok"
+    assert len(requests) == 1
+    assert EP.ANALYSIS_EXPLANATION_POLICY_JA in requests[0]["contents"]
+    assert requests[0]["contents"].endswith("observations")
 
 
 def test_gemini_challenge_builder_derives_agreement():

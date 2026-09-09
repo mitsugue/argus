@@ -21,7 +21,7 @@ KERNEL_SCHEMA_VERSION = "argus-risk-kernel-v1"
 
 SOURCE_KINDS = (
     "MARKET",
-    "SHO",
+    "JP_MARKET_ENGINE",
     "SCENARIO",
     "EVENT",
     "PORTFOLIO",

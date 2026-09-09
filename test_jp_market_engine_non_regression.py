@@ -1,7 +1,7 @@
-"""Hostile non-regression tests for SHO D01-D07 independence.
+"""Hostile non-regression tests for JP_MARKET_ENGINE D01-D07 independence.
 
 These tests deliberately use compact, content-addressed evidence artifacts so
-that they exercise the production SHO consumer seam without inventing an
+that they exercise the production JP_MARKET_ENGINE consumer seam without inventing an
 action authority or reducing the seven evidence families to votes.
 """
 import ast
@@ -9,7 +9,7 @@ import inspect
 import unittest
 from unittest import mock
 
-import argus_sho as sho
+import jp_market_engine as jp_market_engine
 
 
 CUTOFF = "2026-08-15T00:00:00Z"
@@ -29,8 +29,8 @@ def _family_row(family, state):
         raise ValueError("invalid_test_state")
     return {
         "family": family,
-        "propositionId": f"SHO-{family}-ORIGINAL",
-        "lineage": "SHO_ORIGINAL",
+        "propositionId": f"JP_MARKET_ENGINE-{family}-ORIGINAL",
+        "lineage": "JP_MARKET_ENGINE_ORIGINAL",
         "importance": "P0" if family == "D01" else "UNSPECIFIED",
         "status": status,
         "conditionMet": condition,
@@ -44,19 +44,19 @@ def _evidence_artifact(states):
         for family in FAMILIES
     }
     body = {
-        "schemaVersion": sho.SHO_EVIDENCE_SCHEMA,
-        "canonicalRfcSha256": sho.CANONICAL_SHO_RFC_SHA256,
-        "registrySha256": sho.SHO_REGISTRY_SHA256,
+        "schemaVersion": jp_market_engine.JP_MARKET_ENGINE_EVIDENCE_SCHEMA,
+        "canonicalRfcSha256": jp_market_engine.CANONICAL_JP_MARKET_ENGINE_RFC_SHA256,
+        "registrySha256": jp_market_engine.JP_MARKET_ENGINE_REGISTRY_SHA256,
         "informationCutoff": CUTOFF,
         "families": families,
         "action": None,
         "automaticAiCalls": 0,
     }
-    return {**body, "artifactId": "sho-evidence-" + sho._sha256(body)}
+    return {**body, "artifactId": "jp-market-engine-evidence-" + jp_market_engine._sha256(body)}
 
 
 def _projection(states):
-    return sho.project_today_sda_safe(
+    return jp_market_engine.project_today_sda_safe(
         cutoff=CUTOFF, evidence=_evidence_artifact(states))
 
 
@@ -68,13 +68,13 @@ def _validated_triggers(projection):
     )
 
 
-class ShoIndependentFamilyHostileTest(unittest.TestCase):
+class JpMarketEngineIndependentFamilyHostileTest(unittest.TestCase):
     def test_d01_triggered_with_six_unknown_survives(self):
         projection = _projection({"D01": "TRIGGERED"})
         self.assertEqual(_validated_triggers(projection), ["D01"])
-        registry = sho.sealed_proposition_registry()
+        registry = jp_market_engine.sealed_proposition_registry()
         d01 = next(row for row in registry["propositions"]
-                   if row["id"] == "SHO-D01-ORIGINAL")
+                   if row["id"] == "JP_MARKET_ENGINE-D01-ORIGINAL")
         self.assertEqual(d01["importance"], "P0")
         self.assertEqual(
             projection["families"]["D01"]["validationStatus"], "VALIDATED")
@@ -87,9 +87,9 @@ class ShoIndependentFamilyHostileTest(unittest.TestCase):
     def test_d01_and_d03_confluence_survives_without_other_families(self):
         projection = _projection({"D01": "TRIGGERED", "D03": "TRIGGERED"})
         self.assertEqual(_validated_triggers(projection), ["D01", "D03"])
-        registry = sho.sealed_proposition_registry()
+        registry = jp_market_engine.sealed_proposition_registry()
         d03 = next(row for row in registry["propositions"]
-                   if row["id"] == "SHO-D03-ORIGINAL")
+                   if row["id"] == "JP_MARKET_ENGINE-D03-ORIGINAL")
         self.assertEqual(d03["importance"], "UNSPECIFIED")
         self.assertTrue(all(
             projection["families"][family]["conditionMet"] is None
@@ -125,7 +125,7 @@ class ShoIndependentFamilyHostileTest(unittest.TestCase):
             self.assertIsNone(row["conditionMet"])
             self.assertIsNot(row["conditionMet"], False)
 
-    def test_all_valid_not_triggered_has_no_sho_downside_trigger(self):
+    def test_all_valid_not_triggered_has_no_jp_market_engine_downside_trigger(self):
         projection = _projection({family: "NOT_TRIGGERED" for family in FAMILIES})
         self.assertEqual(_validated_triggers(projection), [])
         self.assertTrue(all(
@@ -151,11 +151,11 @@ class ShoIndependentFamilyHostileTest(unittest.TestCase):
             "reclaimFailure": factor(False),
         }
         evidence = {
-            "artifactId": "sho-reversal-evidence-hostile",
+            "artifactId": "jp-market-engine-reversal-evidence-hostile",
             "factors": factors,
         }
-        with mock.patch.object(sho, "reversal_evidence", return_value=evidence):
-            artifact = sho.build_reversal_engine(
+        with mock.patch.object(jp_market_engine, "reversal_evidence", return_value=evidence):
+            artifact = jp_market_engine.build_reversal_engine(
                 cutoff=CUTOFF,
                 analysis_instrument="NIKKEI_225_INDEX",
                 downside_background="DOWNSIDE_TRIGGERED",
@@ -168,10 +168,10 @@ class ShoIndependentFamilyHostileTest(unittest.TestCase):
 
     def test_production_family_seams_contain_no_all_or_seven_count_gate(self):
         functions = (
-            sho.evaluate_d01_d07,
-            sho.project_today_sda_safe,
-            sho.classify_reversal_state,
-            sho.build_reversal_engine,
+            jp_market_engine.evaluate_d01_d07,
+            jp_market_engine.project_today_sda_safe,
+            jp_market_engine.classify_reversal_state,
+            jp_market_engine.build_reversal_engine,
         )
         for function in functions:
             source = inspect.getsource(function)
@@ -189,7 +189,7 @@ class ShoIndependentFamilyHostileTest(unittest.TestCase):
                     referenced = {family for family in FAMILIES if family in text}
                     self.assertNotEqual(referenced, set(FAMILIES), function.__name__)
 
-        module_tree = ast.parse(inspect.getsource(sho))
+        module_tree = ast.parse(inspect.getsource(jp_market_engine))
         for node in ast.walk(module_tree):
             text = ast.unparse(node) if isinstance(
                 node, (ast.Call, ast.Compare, ast.BoolOp)) else ""

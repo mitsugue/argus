@@ -41,6 +41,31 @@ class RenderDeployGuardTests(unittest.TestCase):
         self.assertTrue(accepted)
         self.assertEqual("backend_deploy_expected", reason)
 
+    def test_market_engine_changes_require_backend_delivery(self):
+        accepted, reason = render_deploy_guard.validate(
+            ["jp_market_engine.py"], "fix: market analysis")
+        self.assertTrue(accepted)
+        self.assertEqual("backend_deploy_expected", reason)
+        accepted, reason = render_deploy_guard.validate(
+            ["jp_market_engine.py"], "[skip render] fix: market analysis")
+        self.assertFalse(accepted)
+        self.assertEqual("backend_sensitive_change_must_not_skip_render", reason)
+
+    def test_runtime_migration_helpers_require_backend_delivery(self):
+        for path in ("scripts/analysis_migration_restore.py",
+                     "scripts/migrate_analysis_names.py",
+                     "argus_product_naming.py"):
+            with self.subTest(path=path):
+                accepted, reason = render_deploy_guard.validate(
+                    [path], "fix: runtime migration")
+                self.assertTrue(accepted)
+                self.assertEqual("backend_deploy_expected", reason)
+                accepted, reason = render_deploy_guard.validate(
+                    [path], "[skip render] fix: runtime migration")
+                self.assertFalse(accepted)
+                self.assertEqual(
+                    "backend_sensitive_change_must_not_skip_render", reason)
+
     def test_render_blueprint_change_never_skips(self):
         accepted, _ = render_deploy_guard.validate(
             ["render.yaml"], "[skip render] chore: blueprint")

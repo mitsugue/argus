@@ -3,7 +3,7 @@
  * backend canonical-artifact boundary (v13.5.13, owner spec 2026-08-22 §1/§17).
  *
  * The backend route /api/argus/decision-evidence publishes, per subject, the
- * marketTruth / predictionLedger / sho reference dicts produced by
+ * marketTruth / predictionLedger / jp_market_engine reference dicts produced by
  * argus_single_decision.canonical_artifact_references — the same builders
  * verify_decision_evidence recomputes server-side. The browser cannot re-run
  * those verifiers, so this module is the explicit trust seam: it validates the
@@ -18,9 +18,9 @@ import {
   type DecisionQualityV2,
   type MarketTruthReferenceV2,
   type PredictionLedgerReferenceV2,
-  type ShoReferenceV2,
-  type ShoState,
-  type ShoValidationStatus,
+  type JpMarketEngineReferenceV2,
+  type JpMarketEngineState,
+  type JpMarketEngineValidationStatus,
 } from './singleDecisionAuthority';
 
 export const DECISION_EVIDENCE_SCHEMA_VERSION = 'argus-decision-evidence-v1';
@@ -32,8 +32,8 @@ const MARKET_TRUTH_POLICY = Object.freeze({
   policyId: 'repo-market-provider-priority-v1',
   policySha256: 'c848e2537828a74ecb0914d374d5755ac5b79a3e99e4791b496e514ee8103bf3',
 });
-const SHO_POLICY = Object.freeze({
-  policyId: 'sho-jp-canonical-2026.08-round2-v1',
+const JP_MARKET_ENGINE_POLICY = Object.freeze({
+  policyId: 'jp-market-engine-jp-canonical-2026.08-round2-v1',
   policySha256: '0ddae6123f70dd858d5135528768fa9b6cea561f31f47201b8e882c978cbf532',
 });
 const PREDICTION_POLICY = Object.freeze({
@@ -47,11 +47,11 @@ const MAX_EVIDENCE_AGE_MS = 10 * 60 * 1000;
 
 const REFERENCE_STATUSES: ReadonlySet<string> =
   new Set(['AVAILABLE', 'MISSING', 'CONFLICT', 'STALE']);
-const SHO_STATES: ReadonlySet<string> = new Set([
+const JP_MARKET_ENGINE_STATES: ReadonlySet<string> = new Set([
   'FRAGILE', 'DOWNSIDE_TRIGGERED', 'SELL_OFF_ACTIVE', 'REVERSAL_EARLY',
   'TECHNICAL_REBOUND', 'RECOVERY_TEST', 'CONFIRMED_ADVANCE', 'FALSE_RALLY',
   'MIXED']);
-const SHO_VALIDATIONS: ReadonlySet<string> =
+const JP_MARKET_ENGINE_VALIDATIONS: ReadonlySet<string> =
   new Set(['VALIDATED', 'UNVALIDATED', 'DATA_GATED', 'CONFLICT']);
 const QUALITY_STATUSES: ReadonlySet<string> =
   new Set(['COMPLETE', 'PARTIAL', 'MISSING', 'CONFLICT']);
@@ -63,7 +63,7 @@ export interface ResolvedDecisionEvidence {
   informationCutoffAt: string;
   marketTruth: MarketTruthReferenceV2;
   predictionLedger: PredictionLedgerReferenceV2;
-  sho: ShoReferenceV2;
+  jp_market_engine: JpMarketEngineReferenceV2;
   quality: DecisionQualityV2;
 }
 
@@ -130,23 +130,23 @@ function resolvePredictionLedger(raw: unknown): PredictionLedgerReferenceV2 | nu
   return reference;
 }
 
-function resolveSho(raw: unknown): ShoReferenceV2 | null {
+function resolveJpMarketEngine(raw: unknown): JpMarketEngineReferenceV2 | null {
   if (!isRecord(raw)) return null;
   const status = referenceStatus(raw.status);
   if (!status) return null;
-  const state = typeof raw.state === 'string' && SHO_STATES.has(raw.state)
-    ? raw.state as ShoState : raw.state === null || raw.state === undefined
+  const state = typeof raw.state === 'string' && JP_MARKET_ENGINE_STATES.has(raw.state)
+    ? raw.state as JpMarketEngineState : raw.state === null || raw.state === undefined
       ? null : undefined;
   const validation = typeof raw.validationStatus === 'string'
-    && SHO_VALIDATIONS.has(raw.validationStatus)
-    ? raw.validationStatus as ShoValidationStatus
+    && JP_MARKET_ENGINE_VALIDATIONS.has(raw.validationStatus)
+    ? raw.validationStatus as JpMarketEngineValidationStatus
     : raw.validationStatus === null || raw.validationStatus === undefined
       ? null : undefined;
   if (state === undefined || validation === undefined) return null;
   const primitiveIds = Array.isArray(raw.primitiveFactorIds)
     ? raw.primitiveFactorIds.filter((item): item is string =>
       typeof item === 'string') : [];
-  const reference: ShoReferenceV2 = {
+  const reference: JpMarketEngineReferenceV2 = {
     status,
     schemaVersion: nullableString(raw.schemaVersion),
     artifactId: nullableString(raw.artifactId),
@@ -160,8 +160,8 @@ function resolveSho(raw: unknown): ShoReferenceV2 | null {
     invalidation: null,
   };
   if (status === 'AVAILABLE') {
-    if (reference.policyId !== SHO_POLICY.policyId
-        || reference.policySha256 !== SHO_POLICY.policySha256) return null;
+    if (reference.policyId !== JP_MARKET_ENGINE_POLICY.policyId
+        || reference.policySha256 !== JP_MARKET_ENGINE_POLICY.policySha256) return null;
     if (!reference.schemaVersion || !reference.artifactId
         || !exactUtc(reference.asOf) || reference.state === null
         || reference.validationStatus === null) return null;
@@ -204,12 +204,12 @@ export function resolveCanonicalArtifactReferences(
   if (cutoffMs > nowMs || nowMs - cutoffMs > MAX_EVIDENCE_AGE_MS) return null;
   const marketTruth = resolveMarketTruth(entry.marketTruth, cutoffMs);
   const predictionLedger = resolvePredictionLedger(entry.predictionLedger);
-  const sho = resolveSho(entry.sho);
+  const jp_market_engine = resolveJpMarketEngine(entry.jp_market_engine);
   const quality = resolveQuality(entry.quality);
-  if (!marketTruth || !predictionLedger || !sho || !quality) return null;
+  if (!marketTruth || !predictionLedger || !jp_market_engine || !quality) return null;
   // Python parity: verified artifacts must derive COMPLETE/FRESH quality —
   // a payload claiming all-AVAILABLE with degraded quality is incoherent.
-  const allAvailable = [marketTruth, predictionLedger, sho]
+  const allAvailable = [marketTruth, predictionLedger, jp_market_engine]
     .every((reference) => reference.status === 'AVAILABLE');
   if (allAvailable && (quality.status !== 'COMPLETE'
       || quality.freshness !== 'FRESH'
@@ -217,6 +217,6 @@ export function resolveCanonicalArtifactReferences(
       || quality.conflictReasonCodes.length > 0)) return null;
   registerCanonicalArtifactReference(marketTruth);
   registerCanonicalArtifactReference(predictionLedger);
-  registerCanonicalArtifactReference(sho);
-  return { informationCutoffAt: cutoff, marketTruth, predictionLedger, sho, quality };
+  registerCanonicalArtifactReference(jp_market_engine);
+  return { informationCutoffAt: cutoff, marketTruth, predictionLedger, jp_market_engine, quality };
 }

@@ -1,4 +1,6 @@
 import {
+  historicalMigrationDigest,
+  migrateHistoricalDecisionPair,
   buildPredictionLedgerV2Adapter,
   validatePredictionLedgerV2Adapter,
   validateSingleDecisionAuthorityResultV2,
@@ -11,6 +13,7 @@ export const DEVICE_LOCAL_SDA_LEDGER_SCHEMA_VERSION = 'argus-device-local-sda-le
 export const DEVICE_LOCAL_SDA_ENTRY_SCHEMA_VERSION = 'argus-device-local-sda-entry-v1';
 export const MAX_DEVICE_LOCAL_SDA_ENTRIES = 128;
 export const MAX_DEVICE_LOCAL_SDA_LEDGER_BYTES = 1024 * 1024;
+export const DEVICE_MIGRATION_RECEIPT_KEY = 'argus.analysisNameMigration.v1';
 
 type OwnerRiskBand = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | 'UNKNOWN';
 
@@ -208,6 +211,28 @@ export function verifyDeviceLocalSdaLedgerDocument(
   }
 }
 
+function migrateStoredDocument(value: unknown): DeviceLocalSdaLedgerDocument | null {
+  if (!hasExactKeys(value, DOCUMENT_KEYS)
+    || value.schemaVersion !== DEVICE_LOCAL_SDA_LEDGER_SCHEMA_VERSION
+    || value.privacyClass !== 'DEVICE_LOCAL_DERIVED'
+    || value.appendMode !== 'APPEND_ONLY' || value.retention !== 'BOUNDED_TAIL'
+    || !Array.isArray(value.entries) || value.entries.length > MAX_DEVICE_LOCAL_SDA_ENTRIES) return null;
+  const entries: DeviceLocalSdaLedgerEntry[] = [];
+  for (const row of value.entries) {
+    if (verifyDeviceLocalSdaLedgerEntry(row)) { entries.push(clone(row)); continue; }
+    if (!hasExactKeys(row, ENTRY_KEYS) || containsPrivateRawField(row)
+      || row.schemaVersion !== DEVICE_LOCAL_SDA_ENTRY_SCHEMA_VERSION
+      || row.privacyClass !== 'DEVICE_LOCAL_DERIVED' || !isRecord(row.adapter)
+      || row.adapterId !== row.adapter.adapterId) return null;
+    const pair = migrateHistoricalDecisionPair(row.result, row.adapter);
+    if (!pair) return null;
+    entries.push({ schemaVersion: DEVICE_LOCAL_SDA_ENTRY_SCHEMA_VERSION,
+      privacyClass: 'DEVICE_LOCAL_DERIVED', adapterId: pair.adapter.adapterId, ...pair });
+  }
+  const out = { ...emptyDocument(), entries };
+  return verifyDeviceLocalSdaLedgerDocument(out) ? out : null;
+}
+
 // Bytes already fully verified this session (or produced by this module after
 // verification) are not cryptographically re-verified. Any byte difference —
 // including external writes to storage — misses this cache and takes the full
@@ -217,6 +242,35 @@ const verifiedByStorage = new WeakMap<DeviceLocalStorage, {
   raw: string;
   document: DeviceLocalSdaLedgerDocument;
 }>();
+
+function finishPreparedMigration(
+  storage: DeviceLocalStorage, raw: string, document: DeviceLocalSdaLedgerDocument,
+): void {
+  // A ledger write can succeed while the receipt write fails. Only the exact
+  // verified destination can finish that receipt; never rewrite history here.
+  try {
+    const saved = storage.getItem(DEVICE_MIGRATION_RECEIPT_KEY);
+    if (saved == null) return;
+    const receipt: unknown = JSON.parse(saved);
+    if (!isRecord(receipt)
+      || receipt.schemaVersion !== 'argus-device-analysis-migration-v1'
+      || receipt.status !== 'PREPARED'
+      || receipt.grantsCurrentDecisionAuthority !== false
+      || receipt.entryCountBefore !== document.entries.length
+      || receipt.entryCountAfter !== document.entries.length
+      || receipt.afterDigest !== historicalMigrationDigest(document)
+      || typeof receipt.beforeDigest !== 'string'
+      || !Array.isArray(receipt.identities)
+      || receipt.identities.length !== document.entries.length
+      || !receipt.identities.every((row: unknown, i: number) => isRecord(row)
+        && typeof row.before === 'string'
+        && row.after === document.entries[i].adapterId)) return;
+    if (storage.getItem(DEVICE_LOCAL_SDA_LEDGER_KEY) !== raw
+      || storage.getItem(DEVICE_MIGRATION_RECEIPT_KEY) !== saved) return;
+    storage.setItem(DEVICE_MIGRATION_RECEIPT_KEY,
+      JSON.stringify({ ...receipt, status: 'COMPLETE' }));
+  } catch { /* Keep the pending receipt and verified history for a later retry. */ }
+}
 
 const loadDocument = (storage: DeviceLocalStorage): {
   status: DeviceLocalSdaLedgerRead['status'];
@@ -230,15 +284,53 @@ const loadDocument = (storage: DeviceLocalStorage): {
   }
   if (raw == null) return { status: 'EMPTY', document: emptyDocument() };
   const verified = verifiedByStorage.get(storage);
-  if (verified && verified.raw === raw) return { status: 'OK', document: verified.document };
+  if (verified && verified.raw === raw) {
+    finishPreparedMigration(storage, raw, verified.document);
+    return { status: 'OK', document: verified.document };
+  }
   if (byteLength(raw) > MAX_DEVICE_LOCAL_SDA_LEDGER_BYTES) {
     return { status: 'CORRUPT', document: null };
   }
   try {
-    const parsed = JSON.parse(raw) as unknown;
+    let parsed = JSON.parse(raw) as unknown;
     if (!verifyDeviceLocalSdaLedgerDocument(parsed)) {
-      return { status: 'CORRUPT', document: null };
+      const upgraded = migrateStoredDocument(parsed);
+      if (!upgraded) return { status: 'CORRUPT', document: null };
+      const encoded = canonicalJson(upgraded);
+      const original = parsed as DeviceLocalSdaLedgerDocument;
+      const receipt = {
+        schemaVersion: 'argus-device-analysis-migration-v1',
+        status: 'PREPARED', entryCountBefore: original.entries.length,
+        entryCountAfter: upgraded.entries.length,
+        beforeDigest: historicalMigrationDigest(original),
+        afterDigest: historicalMigrationDigest(upgraded),
+        identities: original.entries.map((row, i) => ({
+          before: row.adapterId, after: upgraded.entries[i].adapterId,
+        })),
+        grantsCurrentDecisionAuthority: false,
+      };
+      // Both writes are device-local. Never clear storage or touch holdings,
+      // settings, chart drawings or backups. A failed setItem keeps the old
+      // ledger; a concurrent edit aborts before the replacement.
+      try {
+        storage.setItem(DEVICE_MIGRATION_RECEIPT_KEY, JSON.stringify(receipt));
+        if (storage.getItem(DEVICE_LOCAL_SDA_LEDGER_KEY) !== raw) {
+          return { status: 'STORAGE_UNAVAILABLE', document: null };
+        }
+        storage.setItem(DEVICE_LOCAL_SDA_LEDGER_KEY, encoded);
+        if (storage.getItem(DEVICE_LOCAL_SDA_LEDGER_KEY) !== encoded) {
+          return { status: 'STORAGE_UNAVAILABLE', document: null };
+        }
+      } catch {
+        return { status: 'STORAGE_UNAVAILABLE', document: null };
+      }
+      try { storage.setItem(DEVICE_MIGRATION_RECEIPT_KEY, JSON.stringify({ ...receipt, status: 'COMPLETE' })); }
+      catch { /* Verified history is saved; PREPARED receipt retains both digests. */ }
+      parsed = upgraded;
+      raw = encoded;
     }
+    if (!verifyDeviceLocalSdaLedgerDocument(parsed)) return { status: 'CORRUPT', document: null };
+    finishPreparedMigration(storage, raw, parsed);
     verifiedByStorage.set(storage, { raw, document: parsed });
     return { status: 'OK', document: parsed };
   } catch {

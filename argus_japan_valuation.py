@@ -1,6 +1,6 @@
 """v13.5.44 — ARGUS-derived Japan earnings / valuation evidence (SIG-04).
 
-The SHO-original D04 proposition needs licensed Nikkei 225 EPS/PER that ARGUS
+The JP_MARKET_ENGINE-original D04 proposition needs licensed Nikkei 225 EPS/PER that ARGUS
 does not hold.  This module derives a *labelled* valuation picture for the
 configured Japanese universe from inputs ARGUS is allowed to use:
 
@@ -9,11 +9,11 @@ configured Japanese universe from inputs ARGUS is allowed to use:
 
 Derived metrics (never claimed as the official Nikkei 225 PER): per-issuer
 forward PER, universe median, interquartile range, and the share of issuers
-above the SHO ladder top (21x).  ``conditionMet`` is true when the universe
-median forward PER sits inside the SHO 17x-21x ladder (<= 21x).
+above the JP_MARKET_ENGINE ladder top (21x).  ``conditionMet`` is true when the universe
+median forward PER sits inside the JP_MARKET_ENGINE 17x-21x ladder (<= 21x).
 
 A boot-warm thread computes the evidence from the host caches and publishes
-it here; the SHO evaluator reads it when no licensed EPS evidence is passed.
+it here; the JP_MARKET_ENGINE evaluator reads it when no licensed EPS evidence is passed.
 Values are deterministic, bounded and free of provider text.
 """
 from __future__ import annotations
@@ -123,7 +123,7 @@ def compute(statement_rows: Iterable[Mapping[str, Any]],
         "highValuationShare": round(high_share, 4),
         "ladder": {"bottom": LADDER_BOTTOM_PER, "top": LADDER_TOP_PER, "unit": "PER_X"},
         "conditionMet": median <= LADDER_TOP_PER,
-        "conditionRule": f"universe median forward PER <= {LADDER_TOP_PER:g}x (SHO ladder top)",
+        "conditionRule": f"universe median forward PER <= {LADDER_TOP_PER:g}x (JP_MARKET_ENGINE ladder top)",
         "issuers": issuers,
         "missing": [],
         "nikkeiOfficialPer": "NOT_CLAIMED",

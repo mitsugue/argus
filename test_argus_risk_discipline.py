@@ -57,9 +57,9 @@ class RiskDisciplineTests(unittest.TestCase):
                 cap=7600,
             ),
             row(
-                "sho:volatility-1",
+                "jp_market_engine:volatility-1",
                 "volatility.regime",
-                source="SHO",
+                source="JP_MARKET_ENGINE",
                 constraint="BLOCK_BUY",
                 severity="MEDIUM",
                 cap=7200,
@@ -73,7 +73,7 @@ class RiskDisciplineTests(unittest.TestCase):
         self.assertEqual(len(kernel["primitiveFactors"]), 1)
         self.assertEqual(
             kernel["primitiveFactors"][0]["evidenceRefs"],
-            ["market:volatility-1", "sho:volatility-1"],
+            ["jp_market_engine:volatility-1", "market:volatility-1"],
         )
         self.assertFalse(kernel["finalActionAuthority"])
         self.assertTrue({"action", "finalAction", "primaryAction"}.isdisjoint(kernel))

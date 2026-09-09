@@ -7,7 +7,7 @@ import unittest
 
 import argus_decision_ledger as ledger
 import argus_market_data_truth as truth
-import argus_sho as sho
+import jp_market_engine as jp_market_engine
 from argus_risk_discipline import build_risk_kernel
 from argus_single_decision import (
     PRIMARY_ACTIONS,
@@ -150,14 +150,14 @@ def canonical_artifacts():
         candidate_action="",
         evidence_refs=[observation["observationId"]],
     )
-    reversal = sho.build_reversal_engine(
+    reversal = jp_market_engine.build_reversal_engine(
         cutoff=CUTOFF,
         analysis_instrument=INSTRUMENT,
         downside_background="MIXED",
     )
     assert truth.verify_decision_snapshot(snapshot)[0]
     assert ledger.verify_prediction_record_v2(prediction)
-    sho.validate_reversal_artifact(reversal)
+    jp_market_engine.validate_reversal_artifact(reversal)
     return snapshot, prediction, reversal, policy
 
 
@@ -190,13 +190,13 @@ def complete_request(*, position="HELD", constraint="NONE", include_policy=True)
             "policyId": prediction_policy["policyId"],
             "policySha256": canonical_sha(prediction_policy),
         },
-        "sho": {
+        "jp_market_engine": {
             "status": "AVAILABLE",
             "schemaVersion": reversal["schemaVersion"],
             "artifactId": reversal["artifactId"],
             "asOf": CUTOFF,
-            "policyId": sho.SHO_REGISTRY_VERSION,
-            "policySha256": sho.SHO_REGISTRY_SHA256,
+            "policyId": jp_market_engine.JP_MARKET_ENGINE_REGISTRY_VERSION,
+            "policySha256": jp_market_engine.JP_MARKET_ENGINE_REGISTRY_SHA256,
             "state": axis["state"],
             "validationStatus": axis["validationStatus"],
             "primitiveFactorIds": [],
@@ -242,7 +242,7 @@ def admitted_request(**kwargs):
         request,
         market_truth_artifact=artifacts[0],
         prediction_ledger_artifact=artifacts[1],
-        sho_artifact=artifacts[2],
+        jp_market_engine_artifact=artifacts[2],
     )
 
 
@@ -255,7 +255,7 @@ class SingleDecisionTests(unittest.TestCase):
             request,
             market_truth_artifact=artifacts[0],
             prediction_ledger_artifact=artifacts[1],
-            sho_artifact=artifacts[2],
+            jp_market_engine_artifact=artifacts[2],
         )
         self.assertEqual(verified["authorityPolicy"], dict(SINGLE_DECISION_AUTHORITY_V2_POLICY))
         wrong = copy.deepcopy(dict(verified))
@@ -265,13 +265,13 @@ class SingleDecisionTests(unittest.TestCase):
                 wrong,
                 market_truth_artifact=artifacts[0],
                 prediction_ledger_artifact=artifacts[1],
-                sho_artifact=artifacts[2],
+                jp_market_engine_artifact=artifacts[2],
             )
 
     def test_plain_objects_and_caller_buy_boolean_never_execute(self):
         request, _ = complete_request()
-        request["sho"]["validationStatus"] = "VALIDATED"
-        request["sho"]["buyEligible"] = True
+        request["jp_market_engine"]["validationStatus"] = "VALIDATED"
+        request["jp_market_engine"]["buyEligible"] = True
         result = evaluate_single_decision_authority(request)
         self.assertEqual((result["status"], result["primaryAction"]), ("DATA_GATED", "WAIT"))
         with self.assertRaises(SingleDecisionValidationError):
@@ -298,9 +298,9 @@ class SingleDecisionTests(unittest.TestCase):
     def test_real_artifact_fake_reference_matrix_fails_closed(self):
         request, artifacts = complete_request()
         cases = []
-        fake_sho = copy.deepcopy(request)
-        fake_sho["sho"]["artifactId"] = "sho-reversal-" + "1" * 64
-        cases.append(fake_sho)
+        fake_jp_market_engine = copy.deepcopy(request)
+        fake_jp_market_engine["jp_market_engine"]["artifactId"] = "jp-market-engine-reversal-" + "1" * 64
+        cases.append(fake_jp_market_engine)
         fake_market = copy.deepcopy(request)
         fake_market["marketTruth"]["snapshotId"] = "mds-" + "2" * 32
         cases.append(fake_market)
@@ -310,7 +310,7 @@ class SingleDecisionTests(unittest.TestCase):
                     hostile,
                     market_truth_artifact=artifacts[0],
                     prediction_ledger_artifact=artifacts[1],
-                    sho_artifact=artifacts[2],
+                    jp_market_engine_artifact=artifacts[2],
                 )
             self.assertEqual(evaluate_single_decision_authority(hostile)["primaryAction"], "WAIT")
 
@@ -326,7 +326,7 @@ class SingleDecisionTests(unittest.TestCase):
                 request,
                 market_truth_artifact=stale_digest,
                 prediction_ledger_artifact=artifacts[1],
-                sho_artifact=artifacts[2],
+                jp_market_engine_artifact=artifacts[2],
             )
 
         # A byte-identical, self-consistent clone still has no canonical
@@ -340,22 +340,22 @@ class SingleDecisionTests(unittest.TestCase):
                     request,
                     market_truth_artifact=cloned[0],
                     prediction_ledger_artifact=cloned[1],
-                    sho_artifact=cloned[2],
+                    jp_market_engine_artifact=cloned[2],
                 )
 
         recomputed_attacker = copy.deepcopy(request)
-        recomputed_attacker["sho"]["artifactId"] = "sho-reversal-" + "3" * 64
-        recomputed_attacker["sho"]["validationStatus"] = "VALIDATED"
-        recomputed_attacker["sho"]["buyEligible"] = True
+        recomputed_attacker["jp_market_engine"]["artifactId"] = "jp-market-engine-reversal-" + "3" * 64
+        recomputed_attacker["jp_market_engine"]["validationStatus"] = "VALIDATED"
+        recomputed_attacker["jp_market_engine"]["buyEligible"] = True
         self.assertEqual(evaluate_single_decision_authority(recomputed_attacker)["primaryAction"], "WAIT")
 
-    def test_unvalidated_and_data_gated_sho_cannot_be_upgraded(self):
+    def test_unvalidated_and_data_gated_jp_market_engine_cannot_be_upgraded(self):
         verified = admitted_request(position="NOT_HELD")
-        self.assertEqual(verified["sho"]["validationStatus"], "UNVALIDATED")
+        self.assertEqual(verified["jp_market_engine"]["validationStatus"], "UNVALIDATED")
         self.assertEqual(evaluate_single_decision_authority(verified)["primaryAction"], "WAIT")
         hostile = copy.deepcopy(dict(verified))
-        hostile["sho"]["validationStatus"] = "VALIDATED"
-        hostile["sho"]["buyEligible"] = True
+        hostile["jp_market_engine"]["validationStatus"] = "VALIDATED"
+        hostile["jp_market_engine"]["buyEligible"] = True
         self.assertEqual(evaluate_single_decision_authority(hostile)["primaryAction"], "WAIT")
 
     def test_missing_artifacts_builder_is_verified_and_deterministic(self):
@@ -375,11 +375,11 @@ class SingleDecisionTests(unittest.TestCase):
         self.assertEqual((first["status"], first["primaryAction"]), ("DATA_GATED", "WAIT"))
         self.assertEqual(
             first["verifiedEvidenceBundleId"],
-            "vdeb-a349db74bfcdc2ddfdeec558237009ce2f26d5eb7a8db49e374c1a78653bf56b",
+            "vdeb-638480d274e8d4ce7711ebde9bfdc353e977abc8b38f6293fd7ed1facfbd03ed",
         )
         self.assertEqual(
             first["decisionId"],
-            "sda-3168a78e52b8bfc1ad3b85f31be6cae7344288606f9d39b214bfe486bfe6391b",
+            "sda-4ed006726cd8b2187b0674e69a8e6ca65afbcc0a70fedd8c76df2885ae90929a",
         )
 
         cloned = copy.deepcopy(dict(value))
@@ -396,11 +396,11 @@ class SingleDecisionTests(unittest.TestCase):
         result = evaluate_single_decision_authority(value)
         adapter = build_prediction_ledger_v2_adapter(result)
         self.assertEqual(result["verifiedEvidenceBundleId"],
-                         "vdeb-ab78d51a78706f53606d546c3ff22e3a400bdce89e110ef6419f8c23faef37d2")
+                         "vdeb-5c499691375a0f4e3bace429cc8927ce961bc996bc1f4cbdc128fda30aaf54e3")
         self.assertEqual(result["decisionId"],
-                         "sda-b45ead9150d861e72832c0f239e2471d49a8952a9a0a148d0bb6c8d882fa68b0")
+                         "sda-cc622a2c657882264809c7810dcf930ada8a14c815a4bf5081dcf5d1b18da422")
         self.assertEqual(adapter["adapterId"],
-                         "pla-7291ee01bd17dfa638d53a3dfcb7da5529dfd9e1feaa71a6658b1dba4307adad")
+                         "pla-9e738b2e7b74393c2ec8085b8a8fa2c0ea7de02fdb60b13d7fc49d956e6e29ad")
 
     def test_owner_privacy_and_unknown_owner_remain_fail_closed(self):
         private = admitted_request()
@@ -433,7 +433,7 @@ class SingleDecisionTests(unittest.TestCase):
             request,
             market_truth_artifact=artifacts[0],
             prediction_ledger_artifact=artifacts[1],
-            sho_artifact=artifacts[2],
+            jp_market_engine_artifact=artifacts[2],
         )
         result = evaluate_single_decision_authority(verified)
         self.assertEqual(result["primaryAction"], expected)
@@ -445,7 +445,7 @@ class SingleDecisionTests(unittest.TestCase):
             advisory,
             market_truth_artifact=advisory_artifacts[0],
             prediction_ledger_artifact=advisory_artifacts[1],
-            sho_artifact=advisory_artifacts[2],
+            jp_market_engine_artifact=advisory_artifacts[2],
         ))
         self.assertEqual(advisory_result["primaryAction"], expected)
         self.assertIn(
@@ -479,19 +479,19 @@ class DailyBasisFreshnessTests(unittest.TestCase):
 
     def _decide_with_freshness(self, freshness):
         from argus_single_decision import (
-            MISSING_SHO_REFERENCE, evaluate_single_decision_authority)
+            MISSING_JP_MARKET_ENGINE_REFERENCE, evaluate_single_decision_authority)
         request, artifacts = complete_request()
-        request["sho"] = {**dict(MISSING_SHO_REFERENCE),
+        request["jp_market_engine"] = {**dict(MISSING_JP_MARKET_ENGINE_REFERENCE),
                           "primitiveFactorIds": [], "targets": [],
                           "invalidation": None}
         request["quality"] = {"status": "PARTIAL", "freshness": freshness,
-                              "missingReasonCodes": ["sho_missing"],
+                              "missingReasonCodes": ["jp_market_engine_missing"],
                               "conflictReasonCodes": []}
         verified = verify_decision_evidence(
             request,
             market_truth_artifact=artifacts[0],
             prediction_ledger_artifact=artifacts[1],
-            sho_artifact=None)
+            jp_market_engine_artifact=None)
         return evaluate_single_decision_authority(verified)
 
     def test_delayed_official_close_adds_no_freshness_gate(self):

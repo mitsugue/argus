@@ -1,6 +1,6 @@
 // v13.5.36 — canonical plain-Japanese glossary (owner directive: one source,
 // no scattered duplicate strings). DISPLAY ONLY: this module must never
-// import from or influence SHO / news direction / SDA / riskKernel — it maps
+// import from or influence JP_MARKET_ENGINE / news direction / SDA / riskKernel — it maps
 // already-rendered vocabulary to one- or two-sentence explanations a
 // non-specialist can understand.
 

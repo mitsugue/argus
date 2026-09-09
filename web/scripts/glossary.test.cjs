@@ -21,13 +21,13 @@ for (const name of ['REVERSAL_STATE_GLOSSARY', 'FAMILY_STATE_GLOSSARY',
   }
 }
 
-// 3) every SHO reversal state rendered in the panel has a glossary mapping.
+// 3) every JP_MARKET_ENGINE reversal state rendered in the panel has a glossary mapping.
 const panel = read(path.join(src, 'components', 'today', 'ArgusTodayPanel.tsx'));
-const shoStates = [...(panel.split('SHO_STATE_JA')[1]?.split('};')[0] ?? '')
+const jpMarketEngineStates = [...(panel.split('JP_MARKET_ENGINE_STATE_JA')[1]?.split('};')[0] ?? '')
   .matchAll(/([A-Z_]+):/g)].map((m) => m[1]);
 const reversalMap = glossary.split('REVERSAL_STATE_GLOSSARY')[1]?.split('};')[0] ?? '';
-for (const state of shoStates) {
-  if (!reversalMap.includes(`${state}:`)) fail(`SHO state ${state} lacks glossary mapping`);
+for (const state of jpMarketEngineStates) {
+  if (!reversalMap.includes(`${state}:`)) fail(`JP_MARKET_ENGINE state ${state} lacks glossary mapping`);
 }
 
 // 4) the panel actually uses the tap tips.

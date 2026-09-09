@@ -8,7 +8,7 @@ import type { TachibanaLiveDocument } from '../domain/tachibanaLive';
 
 // Decision Evidence (v13.5.13) — canonical artifact references for the device
 // SDA, served by /api/argus/decision-evidence. The payload carries verified
-// marketTruth / predictionLedger / sho reference dicts per subject; the
+// marketTruth / predictionLedger / jp_market_engine reference dicts per subject; the
 // canonicalDecisionEvidence resolver validates and registers them before any
 // SDA input may use them. This hook only transports the document.
 
@@ -24,7 +24,7 @@ const HEADLINE_SYMBOLS = ['1321', '1306', 'SPY', 'QQQ'] as const;
 // symbols already stored on this device).
 const LAST_GOOD_KEY = 'argus.decisionEvidence.lastGood.v1';
 const LAST_GOOD_MAX_BYTES = 400_000;
-type LastGood = { subjects: Record<string, unknown>; marketView: ShoMarketView | null; generatedAt: string | null };
+type LastGood = { subjects: Record<string, unknown>; marketView: JpMarketEngineMarketView | null; generatedAt: string | null };
 export function readLastGoodDecisionEvidence(): LastGood | null {
   try {
     const raw = localStorage.getItem(LAST_GOOD_KEY);
@@ -42,10 +42,10 @@ export function writeLastGoodDecisionEvidence(value: LastGood): void {
   } catch { /* storage is a convenience, never an authority */ }
 }
 
-// v13.5.36 (review item A): document-level SHO MARKET VIEW. Display-only —
+// v13.5.36 (review item A): document-level JP_MARKET_ENGINE MARKET VIEW. Display-only —
 // the resolver never registers it as an SDA input; actionAuthority stays
 // false by construction on the backend projection.
-export interface ShoMarketView {
+export interface JpMarketEngineMarketView {
   schemaVersion: string;
   informationCutoff: string;
   projection: {
@@ -78,7 +78,7 @@ export interface ShoMarketView {
 
 export interface DecisionEvidenceState {
   subjects: Record<string, unknown> | null;
-  marketView: ShoMarketView | null;
+  marketView: JpMarketEngineMarketView | null;
   generatedAt: string | null;
   loading: boolean;
   error: string | null;
@@ -146,7 +146,7 @@ const decisionEvidenceStore = createSharedPollingStore<DecisionEvidenceState>(
         type Doc = {
           schemaVersion?: string; generatedAt?: string;
           subjects?: Record<string, unknown>;
-          marketView?: ShoMarketView;
+          marketView?: JpMarketEngineMarketView;
           // v13.5.39: the backend publishes the Tachibana LIVE evidence at the
           // document level (beside marketView), never as an SDA subject.
           japaneseLive?: Record<string, unknown> | null;
@@ -176,7 +176,7 @@ const decisionEvidenceStore = createSharedPollingStore<DecisionEvidenceState>(
           const view = data.marketView;
           const japaneseLive = data.japaneseLive ?? view?.japaneseLive ?? null;
           const marketView = view
-            && view.schemaVersion === 'argus-sho-market-view-v1'
+            && view.schemaVersion === 'argus-jp-market-engine-market-view-v1'
             && view.actionAuthority === false ? view : null;
           // v13.5.39: publish the Tachibana LIVE evidence document for the JP
           // quote overlay (absent/invalid documents clear the store) and keep

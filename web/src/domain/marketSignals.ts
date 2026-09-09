@@ -1,7 +1,7 @@
 // v13.5.38 — MARKET SIGNALS (SIG-01..07) owner-facing view.
 //
 // The backend projects the seven evidence families into `marketSignals`
-// inside the SHO market view (argus_market_signals.py). This module renders
+// inside the JP_MARKET_ENGINE market view (argus_market_signals.py). This module renders
 // that projection; when an older backend omits it, the same counting rule is
 // derived from the families so the surface never disappears and never lies:
 // ACTIVE counts, everything else is shown as its own truthful state.

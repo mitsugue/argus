@@ -17,7 +17,7 @@ nodeRequire.extensions['.ts'] = (module, filename) => {
   module._compile(output, filename);
 };
 
-async function importTypeScriptModule(relativePath) {
+async function importTypeScriptModule(relativePath, instance = '') {
   const source = fs.readFileSync(path.join(root, relativePath), 'utf8');
   const output = ts.transpileModule(source, {
     compilerOptions: {
@@ -26,7 +26,7 @@ async function importTypeScriptModule(relativePath) {
     },
     fileName: relativePath,
   }).outputText;
-  return import(`data:text/javascript;base64,${Buffer.from(output).toString('base64')}`);
+  return import(`data:text/javascript;base64,${Buffer.from(output).toString('base64')}#${instance}`);
 }
 
 const {
@@ -217,4 +217,57 @@ for (const keyframe of ['19.2308%', '25%', '44.2308%', '50%',
 assert.match(loader, /prefers-reduced-motion:reduce/);
 assert.match(loader, /animation:none/);
 
-console.log('verified-snapshot.test: ok (cache, atomic swap, freshness, loader, Today UI)');
+// Simulate the shared database: refresh may clear derived snapshots only.
+resetVerifiedSnapshotMemoryForTests();
+const priorIndexedDb = globalThis.indexedDB;
+const stores = new Map([
+  ['snapshots', new Map([['cached-view', { generatedAt: '2026-07-23' }]])],
+  ['drawing-state', new Map([['7203', { lines: [{ price: 100, label: 'owner line' }] }]])],
+]);
+const originalDrawings = JSON.stringify([...stores.get('drawing-state')]);
+const requestedStores = [];
+let abortClear = false;
+globalThis.indexedDB = {
+  open() {
+    const request = { result: {
+      transaction(store, mode) {
+        requestedStores.push([store, mode]);
+        const transaction = {
+          objectStore(name) {
+            return { clear() {
+              queueMicrotask(() => {
+                if (abortClear) transaction.onabort();
+                else { stores.get(name).clear(); transaction.oncomplete(); }
+              });
+            } };
+          },
+        };
+        return transaction;
+      },
+    } };
+    queueMicrotask(() => request.onsuccess());
+    return request;
+  },
+  deleteDatabase() { throw new Error('owner database must survive'); },
+};
+try {
+  const { clearVerifiedSnapshotCache } = await importTypeScriptModule(
+    'src/lib/verifiedSnapshot.ts', 'cache-reset');
+  assert.equal(await clearVerifiedSnapshotCache(), true);
+  assert.deepEqual(requestedStores, [['snapshots', 'readwrite']]);
+  assert.equal(stores.get('snapshots').size, 0);
+  assert.equal(JSON.stringify([...stores.get('drawing-state')]), originalDrawings);
+  stores.get('snapshots').set('retained-on-abort', { status: 'cached' });
+  abortClear = true;
+  assert.equal(await clearVerifiedSnapshotCache(), false);
+  assert.equal(stores.get('snapshots').size, 1);
+  assert.equal(JSON.stringify([...stores.get('drawing-state')]), originalDrawings);
+  const mainSource = fs.readFileSync(path.join(root, 'src/main.tsx'), 'utf8');
+  assert.match(mainSource, /waitAtMost\(clearVerifiedSnapshotCache\(\), PWA_STEP_TIMEOUT_MS\)/);
+  assert.doesNotMatch(mainSource, /indexedDB\.deleteDatabase/);
+} finally {
+  globalThis.indexedDB = priorIndexedDb;
+  resetVerifiedSnapshotMemoryForTests();
+}
+
+console.log('verified-snapshot.test: ok (cache, drawing preservation, atomic swap, freshness, loader, Today UI)');

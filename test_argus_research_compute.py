@@ -10,7 +10,7 @@ import pytest
 
 import argus_research_compute as research
 import argus_risk_discipline as risk
-import argus_sho as sho
+import jp_market_engine as jp_market_engine
 
 
 ROOT = Path(__file__).resolve().parent
@@ -78,7 +78,7 @@ def _draft_manifest(*, datasets=None, horizon_40=False):
         "datasets": datasets,
         "informationCutoffAt": "2026-09-01T00:00:00Z",
         "pitPolicyId": research.PIT_POLICY_ID,
-        "propositionRegistryVersion": "sho-registry-fixture-v1",
+        "propositionRegistryVersion": "jp-market-engine-registry-fixture-v1",
         "policyVersion": "round2-policy-fixture-v1",
         "parameterVersion": "round2-parameters-fixture-v1",
         "buildSha": "c" * 40,
@@ -155,7 +155,7 @@ def _bars(*, include_golden=False):
         close = trend + dip
         signals = {}
         if index % 29 == 2:
-            signals["shoReversal"] = True
+            signals["jpMarketEngineReversal"] = True
         if index % 31 == 3:
             signals["vixDecreasingConfirmation"] = True
         if index % 41 == 4:
@@ -202,7 +202,7 @@ def _golden_risk_kernel():
     })
 
 
-def _golden_sho_reversal():
+def _golden_jp_market_engine_reversal():
     cutoff = "2026-07-25T20:30:00Z"
     source = [row for row in _bars(include_golden=True)
               if row["date"] <= "2026-07-25"]
@@ -211,13 +211,13 @@ def _golden_sho_reversal():
         return {
             "instrumentId": instrument, "date": row["date"],
             "availableFrom": row["availableFrom"], "revision": 0,
-            "sourceId": "fixture-sho:" + instrument + ":" + row["date"],
+            "sourceId": "fixture-jp-market-engine:" + instrument + ":" + row["date"],
             "open": row["open"] * scale, "high": row["high"] * scale,
             "low": row["low"] * scale, "close": row["close"] * scale,
             "volume": row["volume"],
         }
 
-    return sho.build_reversal_engine(
+    return jp_market_engine.build_reversal_engine(
         cutoff=cutoff, analysis_instrument="JP:1321:ETF",
         downside_background="SELL_OFF_ACTIVE",
         nikkei_rows=[as_instrument(row, "NIKKEI_225_INDEX") for row in source],
@@ -248,7 +248,7 @@ def _events(*, include_golden=False):
         "evidenceRefs": ["fixture:" + event_id],
         **({
             "riskKernelArtifact": _golden_risk_kernel(),
-            "shoReversalArtifact": _golden_sho_reversal(),
+            "jpMarketEngineReversalArtifact": _golden_jp_market_engine_reversal(),
         } if event_id == "golden-reversal" else {}),
     } for dataset_id, event_id, day, regime, tags in rows]
 
@@ -496,7 +496,7 @@ def test_recorded_holdout_digest_must_match_recomputed_holdout():
 
     changed = _bars()
     holdout = next(row for row in changed if row["date"] == "2026-05-25")
-    holdout["signals"] = {"shoReversal": True}
+    holdout["signals"] = {"jpMarketEngineReversal": True}
     with pytest.raises(research.ResearchContractError,
                        match="recorded_holdout_digest_mismatch"):
         research.build_research_artifact(passed, changed, _events())
@@ -528,7 +528,7 @@ def test_late_known_bar_revision_cannot_backdate_a_historical_trigger():
     late.update({
         "revision": 1,
         "knownAt": "2026-07-01T00:00:00Z",
-        "signals": {"shoReversal": True},
+        "signals": {"jpMarketEngineReversal": True},
     })
     hostile = research.build_research_artifact(
         manifest, rows + [late], _events())
@@ -541,7 +541,7 @@ def test_late_known_bar_revision_cannot_backdate_a_historical_trigger():
     missing_known_at = copy.deepcopy(original)
     missing_known_at.update({
         "revision": 1,
-        "signals": {"shoReversal": True},
+        "signals": {"jpMarketEngineReversal": True},
     })
     with pytest.raises(research.ResearchContractError,
                        match="revision_known_at_required"):
@@ -553,7 +553,7 @@ def test_late_known_bar_revision_cannot_backdate_a_historical_trigger():
         "revision": 1,
         "knownAt": original["date"] + "T20:45:00Z",
         "decisionCutoffAt": original["date"] + "T21:00:00Z",
-        "signals": {"shoReversal": True},
+        "signals": {"jpMarketEngineReversal": True},
     })
     with pytest.raises(research.ResearchContractError,
                        match="bar_decision_cutoff_changed"):
@@ -874,20 +874,20 @@ def test_sealed_golden_rejects_raw_input_and_open_golden_evaluates_last():
     assert checks["evaluationStatus"] == "EVALUATED"
     assert checks["riskOffSufficient"] is True
     assert checks["riskOffFirstObservedDate"] == "2026-07-23"
-    sho_artifact = _golden_sho_reversal()
-    band = sho_artifact["evidence"]["bandWalkEnding"]
+    jp_market_engine_artifact = _golden_jp_market_engine_reversal()
+    band = jp_market_engine_artifact["evidence"]["bandWalkEnding"]
     assert checks["bandWalkEndingDetected"] is (
         band["conditionMet"] is True)
     assert checks["bandWalkEndingFirstObservedDate"] == (
         band["evidenceDate"] if band["conditionMet"] is True else None)
     assert checks["riskKernelArtifactId"] == _golden_risk_kernel()[
         "riskKernelId"]
-    assert checks["shoReversalArtifactId"] == sho_artifact["artifactId"]
+    assert checks["jpMarketEngineReversalArtifactId"] == jp_market_engine_artifact["artifactId"]
     assert checks["waitMissedOpportunityMeasured"] is True
 
     missing_artifacts = _events(include_golden=True)
     missing_artifacts[-1].pop("riskKernelArtifact")
-    missing_artifacts[-1].pop("shoReversalArtifact")
+    missing_artifacts[-1].pop("jpMarketEngineReversalArtifact")
     with pytest.raises(research.ResearchContractError,
                        match="golden_case_not_fully_evaluable"):
         research.build_research_artifact(

@@ -106,10 +106,10 @@ const entry = {
     policyId: 'argus-calibration-three-class-v1',
     policySha256: '62ab147263dfb674301c0dc6585df4c1ffda02cb07380b3d9f94a870ec056379',
   },
-  sho: {
-    status: 'AVAILABLE', schemaVersion: 'argus-sho-reversal-v1',
-    artifactId: 'sho-reversal-' + 'd'.repeat(32), asOf: CUTOFF,
-    policyId: 'sho-jp-canonical-2026.08-round2-v1',
+  jp_market_engine: {
+    status: 'AVAILABLE', schemaVersion: 'argus-jp-market-engine-reversal-v1',
+    artifactId: 'jp-market-engine-reversal-' + 'd'.repeat(32), asOf: CUTOFF,
+    policyId: 'jp-market-engine-jp-canonical-2026.08-round2-v1',
     policySha256: '0ddae6123f70dd858d5135528768fa9b6cea561f31f47201b8e882c978cbf532',
     state: 'MIXED', validationStatus: 'UNVALIDATED',
     primitiveFactorIds: [], targets: [], invalidation: null,
@@ -141,7 +141,7 @@ const buildInput = (withNews) => {
   });
   input.marketTruth = resolved.marketTruth;
   input.predictionLedger = resolved.predictionLedger;
-  input.sho = resolved.sho;
+  input.jp_market_engine = resolved.jp_market_engine;
   input.quality = resolved.quality;
   input.riskKernel = authority.buildRiskKernel({
     schemaVersion: 'argus-risk-discipline-input-v1',

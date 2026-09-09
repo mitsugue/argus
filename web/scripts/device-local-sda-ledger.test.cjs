@@ -173,7 +173,96 @@ function main() {
   assert.match(hookSource, /appendDeviceLocalSdaLedger\(result, adapter\)/);
   assert.match(hookSource, /deriveLocalOwnerRiskBands/);
 
-  console.log('device-local-sda-ledger.test: ok');
+  // A synthetic prior namespace tests migration without embedding a retired
+  // personal identifier. Current action capability must never be reissued.
+  const previous = JSON.parse(storedText.replaceAll('jp_market_engine', 'retired')
+    .replaceAll('jpMarketEngine', 'retired').replaceAll('jp-market-engine', 'retired')
+    .replaceAll('JP_MARKET_ENGINE', 'RETIRED'));
+  for (const row of previous.entries) {
+    row.result.decisionId = authority.computeSingleDecisionId(row.result);
+    row.adapter.decisionId = row.result.decisionId;
+    row.adapter.singleDecisionRef.decisionId = row.result.decisionId;
+    row.adapter.adapterId = authority.computePredictionLedgerAdapterId(row.adapter);
+    row.adapterId = row.adapter.adapterId;
+  }
+  const originalText = JSON.stringify(previous);
+  const migrationStorage = new MemoryStorage();
+  migrationStorage.values.set(local.DEVICE_LOCAL_SDA_LEDGER_KEY, originalText);
+  migrationStorage.values.set('argus.assets.v1', '[{"symbol":"7203","quantity":7}]');
+  migrationStorage.values.set('argus.user.settings', '{"enabled":false}');
+  const migrated = local.readDeviceLocalSdaLedger(migrationStorage);
+  assert.equal(migrated.status, 'OK');
+  assert.equal(migrated.entries.length, previous.entries.length);
+  assert.deepEqual(migrated.entries.map(row => row.result.primaryAction),
+    previous.entries.map(row => row.result.primaryAction));
+  assert.deepEqual(migrated.entries.map(row => row.result.issuedAt),
+    previous.entries.map(row => row.result.issuedAt));
+  assert.equal(migrationStorage.getItem('argus.assets.v1'), '[{"symbol":"7203","quantity":7}]');
+  assert.equal(migrationStorage.getItem('argus.user.settings'), '{"enabled":false}');
+  assert.equal(migrationStorage.getItem(local.DEVICE_LOCAL_SDA_LEDGER_KEY).includes('retired'), false);
+  const receipt = JSON.parse(migrationStorage.getItem(local.DEVICE_MIGRATION_RECEIPT_KEY));
+  assert.equal(receipt.status, 'COMPLETE');
+  assert.equal(receipt.entryCountBefore, receipt.entryCountAfter);
+  assert.equal(receipt.grantsCurrentDecisionAuthority, false);
+  assert.throws(() => authority.buildPredictionLedgerV2Adapter(migrated.entries[0].result),
+    /verified SDA admission/);
+  const afterMigrationWrites = migrationStorage.setCalls;
+  assert.equal(local.readDeviceLocalSdaLedger(migrationStorage).status, 'OK');
+  assert.equal(migrationStorage.setCalls, afterMigrationWrites);
+  const unavailableStorage = new MemoryStorage();
+  unavailableStorage.values.set(local.DEVICE_LOCAL_SDA_LEDGER_KEY, originalText);
+  const normalWrite = unavailableStorage.setItem.bind(unavailableStorage);
+  unavailableStorage.setItem = (key, value) => {
+    if (key === local.DEVICE_LOCAL_SDA_LEDGER_KEY) throw new Error('quota');
+    normalWrite(key, value);
+  };
+  assert.equal(local.readDeviceLocalSdaLedger(unavailableStorage).status, 'STORAGE_UNAVAILABLE');
+  assert.equal(unavailableStorage.getItem(local.DEVICE_LOCAL_SDA_LEDGER_KEY), originalText);
+  const pendingStore = new MemoryStorage();
+  pendingStore.values.set(local.DEVICE_LOCAL_SDA_LEDGER_KEY, originalText);
+  const pendingWrite = pendingStore.setItem.bind(pendingStore);
+  let failCompletion = true;
+  pendingStore.setItem = (key, value) => {
+    if (failCompletion && key === local.DEVICE_MIGRATION_RECEIPT_KEY
+      && JSON.parse(value).status === 'COMPLETE') throw new Error('quota');
+    pendingWrite(key, value);
+  };
+  assert.equal(local.readDeviceLocalSdaLedger(pendingStore).status, 'OK');
+  const pendingReceipt = pendingStore.getItem(local.DEVICE_MIGRATION_RECEIPT_KEY);
+  assert.equal(JSON.parse(pendingReceipt).status, 'PREPARED');
+  const savedHistory = pendingStore.getItem(local.DEVICE_LOCAL_SDA_LEDGER_KEY);
+  failCompletion = false;
+  assert.equal(local.readDeviceLocalSdaLedger(pendingStore).status, 'OK');
+  assert.equal(JSON.parse(pendingStore.getItem(local.DEVICE_MIGRATION_RECEIPT_KEY)).status, 'COMPLETE');
+  assert.equal(pendingStore.getItem(local.DEVICE_LOCAL_SDA_LEDGER_KEY), savedHistory);
+
+  // A fresh storage wrapper models reopening the app. Neither a mismatched
+  // destination digest nor mismatched identities may certify completion.
+  for (const alter of [r => { r.afterDigest = 'wrong'; },
+    r => { r.identities[0].after = 'wrong'; },
+    r => { r.entryCountBefore += 1; }]) {
+    const restartStore = new MemoryStorage();
+    const mismatched = JSON.parse(pendingReceipt);
+    alter(mismatched);
+    restartStore.values.set(local.DEVICE_LOCAL_SDA_LEDGER_KEY, savedHistory);
+    restartStore.values.set(local.DEVICE_MIGRATION_RECEIPT_KEY, JSON.stringify(mismatched));
+    assert.equal(local.readDeviceLocalSdaLedger(restartStore).status, 'OK');
+    assert.equal(restartStore.setCalls, 0);
+  }
+  const restartStore = new MemoryStorage();
+  restartStore.values.set(local.DEVICE_LOCAL_SDA_LEDGER_KEY, savedHistory);
+  restartStore.values.set(local.DEVICE_MIGRATION_RECEIPT_KEY, pendingReceipt);
+  assert.equal(local.readDeviceLocalSdaLedger(restartStore).status, 'OK');
+  assert.equal(JSON.parse(restartStore.getItem(local.DEVICE_MIGRATION_RECEIPT_KEY)).status, 'COMPLETE');
+  assert.equal(restartStore.getItem(local.DEVICE_LOCAL_SDA_LEDGER_KEY), savedHistory);
+  const corruptPrevious = JSON.parse(originalText);
+  corruptPrevious.entries[0].result.confidence.valueBps += 1;
+  const corruptStore = new MemoryStorage();
+  corruptStore.values.set(local.DEVICE_LOCAL_SDA_LEDGER_KEY, JSON.stringify(corruptPrevious));
+  assert.equal(local.readDeviceLocalSdaLedger(corruptStore).status, 'CORRUPT');
+  assert.equal(corruptStore.setCalls, 0);
+
+  console.log('device-local-sda-ledger.test: ok (history migration, quota and authority isolation)');
 }
 
 main();

@@ -56,12 +56,12 @@ function evidenceEntry() {
       policyId: 'argus-calibration-three-class-v1',
       policySha256: '62ab147263dfb674301c0dc6585df4c1ffda02cb07380b3d9f94a870ec056379',
     },
-    sho: {
+    jp_market_engine: {
       status: 'AVAILABLE',
-      schemaVersion: 'argus-sho-reversal-v1',
-      artifactId: 'sho-reversal-' + 'd'.repeat(32),
+      schemaVersion: 'argus-jp-market-engine-reversal-v1',
+      artifactId: 'jp-market-engine-reversal-' + 'd'.repeat(32),
       asOf: CUTOFF,
-      policyId: 'sho-jp-canonical-2026.08-round2-v1',
+      policyId: 'jp-market-engine-jp-canonical-2026.08-round2-v1',
       policySha256: '0ddae6123f70dd858d5135528768fa9b6cea561f31f47201b8e882c978cbf532',
       state: 'MIXED',
       validationStatus: 'UNVALIDATED',
@@ -92,7 +92,7 @@ function evaluatedInput(resolved) {
   });
   input.marketTruth = resolved.marketTruth;
   input.predictionLedger = resolved.predictionLedger;
-  input.sho = resolved.sho;
+  input.jp_market_engine = resolved.jp_market_engine;
   input.quality = resolved.quality;
   input.riskKernel = authority.buildRiskKernel({
     schemaVersion: 'argus-risk-discipline-input-v1',
@@ -122,7 +122,7 @@ assert.equal(result.status, 'EVALUATED',
 assert.equal(result.primaryAction, 'HOLD');
 assert.equal(result.identities.marketTruth.status, 'AVAILABLE');
 assert.equal(result.identities.predictionLedger.status, 'AVAILABLE');
-assert.equal(result.identities.sho.status, 'AVAILABLE');
+assert.equal(result.identities.jp_market_engine.status, 'AVAILABLE');
 assert.equal(result.sevenSign.candidateLevel, 4, 'HOLD projects Seven Sign 4');
 assert.ok(result.confidence.valueBps > 2500,
   'EVALUATED confidence must exceed the data-gated clamp');
