@@ -3128,3 +3128,79 @@ def test_article_boundary_refetch_is_bounded_and_does_not_discard_failed_message
     scanner._news_repair_article_boundaries()
     assert fetched == queue[:6]
     assert state["intakeState"]["articleBoundaryRepairIds"] == queue
+
+
+@pytest.mark.parametrize("state,restored", [
+    ("bootstrapping", False), ("loading_remote", False),
+    ("reconciling", True), ("failed_safe", False), ("ready", False),
+])
+def test_production_ai_cannot_reserve_before_complete_restore(monkeypatch, state, restored):
+    policy = scanner.argus_cost_policy.default_state("SCHEDULED_AI")
+    monkeypatch.setattr(scanner, "_COST_POLICY", policy)
+    monkeypatch.setattr(scanner, "_DURABILITY_PRODUCTION", True)
+    monkeypatch.setattr(scanner, "_STARTUP", {"state": state})
+    monkeypatch.setattr(scanner, "_OSINT_PERSIST_STATE", {"restored": restored})
+    def unexpected_write():
+        pytest.fail("boot refusal must not overwrite the existing durable ledger")
+    monkeypatch.setattr(scanner, "_cost_policy_persist_durable", unexpected_write)
+    before = json.loads(json.dumps(policy))
+    decision, reservation = scanner._cost_policy_reserve(
+        "gemini", "headline_translation", estimated_cost_usd=0.02)
+    assert decision["reason"] == "state_restore_pending"
+    assert not decision["allowed"] and reservation is None
+    assert policy == before
+
+
+def test_restored_production_budget_is_enforced_before_first_call(monkeypatch, tmp_path):
+    policy = scanner.argus_cost_policy.default_state("SCHEDULED_AI")
+    saved = scanner.argus_cost_policy.default_state("SCHEDULED_AI")
+    saved["usage"] = [{"provider": "gemini", "purpose": "headline_translation",
+                        "at": scanner.datetime.now(scanner.pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "estimatedCostUsd": 1.5}]
+    path = tmp_path / "cost_policy_state.json"
+    path.write_text(json.dumps(saved))
+    original = path.read_bytes()
+    monkeypatch.setattr(scanner, "_COST_POLICY", policy)
+    monkeypatch.setattr(scanner, "_COST_POLICY_DURABLE", {"enabled": True})
+    monkeypatch.setattr(scanner, "_cost_policy_durable_path", lambda: str(path))
+    monkeypatch.setattr(scanner, "_SCHEDULED_AI_DAILY_USD", 1.5)
+    monkeypatch.setattr(scanner, "_DURABILITY_PRODUCTION", True)
+    monkeypatch.setattr(scanner, "_STARTUP", {"state": "loading_remote"})
+    monkeypatch.setattr(scanner, "_OSINT_PERSIST_STATE", {"restored": False})
+    assert scanner._cost_policy_restore_durable() == 1
+    scanner._STARTUP["state"] = "ready"
+    scanner._OSINT_PERSIST_STATE["restored"] = True
+    decision, reservation = scanner._cost_policy_reserve(
+        "gemini", "headline_translation", estimated_cost_usd=0.02)
+    assert decision["reason"] == "scheduled_daily_budget_exhausted"
+    assert not decision["allowed"] and reservation is None
+    assert policy["usage"] == saved["usage"]
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("restored_state,expected", [
+    ("ready", ["restore", "scheduler", "serve"]),
+    ("ready_degraded", ["restore", "scheduler", "serve"]),
+    ("failed_safe", ["restore", "serve"]),
+])
+def test_backend_restores_before_starting_scheduler(monkeypatch, restored_state, expected):
+    order = []
+    monkeypatch.setattr(scanner, "_STARTUP", {"state": "bootstrapping"})
+    monkeypatch.setattr(scanner, "_SERVER_RUNTIME", {})
+    monkeypatch.setattr(scanner, "add_log", lambda message: None)
+    def restore():
+        order.append("restore")
+        scanner._STARTUP["state"] = restored_state
+    class SchedulerThread:
+        def __init__(self, *, target, args, daemon):
+            assert target is scanner._memory_operation_run
+            assert args == ("scheduler", "scheduler_loop", scanner.run_scheduler)
+            assert daemon is True
+        def start(self):
+            assert scanner._STARTUP["state"] in ("ready", "ready_degraded")
+            order.append("scheduler")
+    monkeypatch.setattr(scanner, "_startup_bootstrap", restore)
+    monkeypatch.setattr(scanner.threading, "Thread", SchedulerThread)
+    monkeypatch.setattr(scanner.app, "run", lambda **kwargs: order.append("serve"))
+    scanner._run_backend_server()
+    assert order == expected

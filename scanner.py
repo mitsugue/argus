@@ -381,6 +381,14 @@ def _cost_policy_authorize(provider, purpose, *, automatic=True,
     """Central gate for every generated-AI provider call (no I/O)."""
     now_iso = datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     with _COST_POLICY_LOCK:
+        # Startup can restore a much older full checkpoint followed by newer
+        # usage rows. No caller may spend against the temporary empty ledger.
+        if globals().get("_DURABILITY_PRODUCTION") and not (
+                globals().get("_STARTUP", {}).get("state") == "ready" and
+                globals().get("_OSINT_PERSIST_STATE", {}).get("restored") is True):
+            return {"allowed": False, "classification": "expected_skip",
+                    "status": "state_restore_pending", "reason": "state_restore_pending",
+                    "mode": _COST_POLICY.get("mode"), "purpose": purpose}
         decision = argus_cost_policy.authorize(
             _COST_POLICY, provider=provider, purpose=purpose,
             automatic=automatic,
@@ -39242,18 +39250,23 @@ def _jquants_breadth_worker(job_id):
     process_context = multiprocessing.get_context(start_method)
     ledger_seed = _breadth_worker_seed_state(job_id)
     parent_connection, child_connection = process_context.Pipe(duplex=True)
-    process_target = _jquants_breadth_process_entry
-    if start_method != "fork":
+    if start_method == "fork":
+        process = process_context.Process(
+            target=_jquants_breadth_process_entry,
+            args=(job_id, child_connection, memory_limit, ledger_seed), daemon=True)
+    else:
+        # multiprocessing spawn replays scanner.py as __mp_main__ before its
+        # target runs. Use a dedicated executable so the quote SDK is excluded
+        # before any server import, including in the production start command.
         import argus_breadth_worker
-        process_target = argus_breadth_worker.process_entry
-    process = process_context.Process(
-        target=process_target,
-        args=(job_id, child_connection, memory_limit, ledger_seed), daemon=True)
+        process = argus_breadth_worker.CleanProcess(
+            job_id, parent_connection, child_connection, memory_limit, ledger_seed)
     process.start()
     ledger_seed = None
     gc.collect()
     child_connection.close()
     worker_peak = None
+    startup = {}
     crashed = None
     received_done = False
     try:
@@ -39263,7 +39276,11 @@ def _jquants_breadth_worker(job_id):
             message = parent_connection.recv()
             operation = message.get("op") if isinstance(message, dict) else None
             try:
-                if operation == "job":
+                if operation == "startup":
+                    startup = {"workerEntryPoint": message.get("entryPoint"),
+                               "quoteAdapterPreloaded": message.get("quoteAdapterPreloaded")}
+                    reply = {"ok": True}
+                elif operation == "job":
                     reply = {"ok": True, "job": _foundation_job(message["jobId"])}
                 elif operation == "commit":
                     reply = {"ok": True, "result": list(_breadth_commit_rows(
@@ -39350,10 +39367,12 @@ def _jquants_breadth_worker(job_id):
 
     final = _foundation_job(job_id) or {}
     runtime_metrics = {
-        "executionMode": ("independent_spawned_os_process"
+        "executionMode": ("independent_exec_os_process"
                           if start_method != "fork" else
                           "independent_os_process"),
-        "workerProcessStartMethod": start_method,
+        "workerProcessStartMethod": "exec" if start_method != "fork" else "fork",
+        "requestedProcessStartMethod": start_method,
+        **startup,
         "workerConcurrency": 1,
         "workerMemorySoftLimitMb": memory_limit,
         "workerPeakMemoryMb": worker_peak,
@@ -45651,20 +45670,27 @@ def run_scheduler():
             add_log(f"td-warm tick error: {type(e).__name__}")
         time.sleep(30)
 
-if __name__ == "__main__":
+def _run_backend_server():
     sched = get_jst_schedule()
     add_log(f"🚀 A.R.G.U.S. backend v2.0 ({'Summer DST' if is_dst_now() else 'Winter'})")
     add_log(f"  Ph.1:{sched['ph1']} Ph.5:{sched['ph5_1']} JST")
     if MOOMOO_AVAILABLE: add_log(f"  moomoo: {MOOMOO_HOST}:{MOOMOO_PORT}")
     else: add_log("  ⚠️ moomoo-api not installed")
-    threading.Thread(
-        target=_memory_operation_run,
-        args=("scheduler", "scheduler_loop", run_scheduler),
-        daemon=True).start()
     # v12.2.9: 起動復元をboot時に確定(最初のリクエスト/30分cronを待たない)
     _SERVER_RUNTIME.update({"serverType": "flask_dev",
                             "startupMode": "boot_before_serve"})
     _startup_bootstrap()
-    add_log("🟢 Boot complete — IDLING")
+    if _STARTUP.get("state") in ("ready", "ready_degraded"):
+        threading.Thread(
+            target=_memory_operation_run,
+            args=("scheduler", "scheduler_loop", run_scheduler),
+            daemon=True).start()
+        add_log("🟢 Boot complete — IDLING")
+    else:
+        add_log("Startup restoration incomplete — scheduler stopped")
     add_log("💡 Ph.1 to start / Auto: daily per schedule")
     app.run(host="0.0.0.0", port=PORT, debug=False, threaded=True)
+
+
+if __name__ == "__main__":
+    _run_backend_server()
