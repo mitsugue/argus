@@ -1,5 +1,5 @@
 {
- "asOf": "2026-09-10T07:06:37Z",
+ "asOf": "2026-09-10T12:12:29Z",
  "dateJst": "2026-09-10",
  "engineVersion": "scout-ledger-v1",
  "records": [
@@ -62,7 +62,7 @@
    "flowClass": "DISTRIBUTION",
    "lastClose": 546.3,
    "lastDate": "2026-09-10",
-   "score": -1.5,
+   "score": -1.2,
    "stance": "見送り",
    "symbol": "9501"
   }
