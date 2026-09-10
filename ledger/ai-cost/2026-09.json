@@ -1,34 +1,16 @@
 {
- "asOf": "2026-09-09T12:17:14Z",
+ "asOf": "2026-09-10T07:05:33Z",
  "dailyBudgetUsd": 5.0,
- "day": "2026-09-09",
- "dayRemainingUsd": 4.9569,
- "daySpentUsd": 0.0431,
+ "day": "2026-09-10",
+ "dayRemainingUsd": 5.0,
+ "daySpentUsd": 0.0,
  "emergencyReserveUsd": 2.0,
  "estimated": true,
  "groundingUsdPerCall": 0.035,
- "lastRun": {
-  "at": "2026-09-09T11:48:08Z",
-  "estimated": true,
-  "gemStatus": "unavailable",
-  "oaiStatus": "live",
-  "rows": [
-   {
-    "estUsd": 0.04314,
-    "fallbackUsed": false,
-    "grounding": false,
-    "inputTokens": 709,
-    "model": "gpt-6-astra",
-    "outputTokens": 721,
-    "provider": "openai"
-   }
-  ],
-  "runId": "prose-event_analysis",
-  "totalUsd": 0.04314
- },
- "lastRunCostUsd": 0.04314,
+ "lastRun": null,
+ "lastRunCostUsd": null,
  "month": "2026-09",
- "monthRemainingUsd": 79.9569,
+ "monthRemainingUsd": 80.0,
  "monthSpentUsd": 0.207,
  "monthlyBudgetUsd": 80.0,
  "noteJa": "コストは推定値(プロバイダのトークン使用量×設定単価)。OpenAIの前払い残高ではなく、このARGUS側上限がハード停止。",
@@ -72,25 +54,5 @@
   "solPromotionalThrough": "2026-11-21",
   "sourceUrl": "https://developers.openai.com/api/docs/pricing"
  },
- "recentRuns": [
-  {
-   "at": "2026-09-09T11:48:08Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [
-    {
-     "estUsd": 0.04314,
-     "fallbackUsed": false,
-     "grounding": false,
-     "inputTokens": 709,
-     "model": "gpt-6-astra",
-     "outputTokens": 721,
-     "provider": "openai"
-    }
-   ],
-   "runId": "prose-event_analysis",
-   "totalUsd": 0.04314
-  }
- ]
+ "recentRuns": []
 }
