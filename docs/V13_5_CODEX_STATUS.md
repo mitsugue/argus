@@ -219,3 +219,10 @@ iPhoneの本番起動後に実際の保存データを確認するまで、移�
 移行を確認した。判断・時刻・数値、合成保有の数量7・取得価格1000と設定を維持し、
 再読込で履歴のバイト列が一致、破損させた履歴は原文を保持した。ネットワークPOSTは0件。
 これはローカルの合成データ検査であり、iPhone実機の保存内容確認を代替しない。
+
+
+### 2026-09-10: partial release seed retry (local verification only)
+
+PR320 deployed as 097085f6 but its 12-snapshot acceptance timed out. The saved trigger response was 409 with a partial matching matrix. The current producer rejected any matching subset as a duplicate, preventing the built-in retry from producing the missing instruments after a partial failure. The original first failure is not identified by the final 409 artifact.
+The fix retains verified instruments from the same build, trigger and original time, produces only missing instruments, re-verifies all 12 and requires the existing persistent read-back before success. Mixed bindings fail closed. A complete duplicate remains 409 and is not reported as new success. No certificate, nonce, freshness or durability condition is relaxed.
+Five targeted tests and 87 persistence/snapshot tests with 11 subtests pass. The partial-failure regression preserves the first six snapshots exactly and resumes only SPY/QQQ. Production acceptance remains unverified. Stop after 13.6 production acceptance; 13.7 requires explicit owner restart.

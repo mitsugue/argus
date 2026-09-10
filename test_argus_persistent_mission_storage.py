@@ -1543,6 +1543,66 @@ class ContractRegressionTests(unittest.TestCase):
         self.assertEqual(12, payload["snapshotReady"])
         producer.assert_not_called()
 
+    def test_release_snapshot_seed_resumes_only_missing_instruments(self):
+        expected_sha = "a" * 40
+        trigger_id = "v13-release-partial-0001"
+        snapshots, calls = {}, []
+        fail_once = [True]
+        def produce(symbol, market, *, market_scope=False, release_binding=None):
+            calls.append(symbol)
+            if symbol == "SPY" and fail_once[0]:
+                fail_once[0] = False
+                raise RuntimeError("temporary_provider_failure")
+            for horizon in (1, 5, 20):
+                snapshots[(symbol, horizon)] = {
+                    "snapshotId": f"vs-{symbol}-{horizon}",
+                    "generatedAt": "2026-09-10T08:02:30Z",
+                    "verificationStatus": "verified",
+                    "releaseBinding": dict(release_binding),
+                }
+            return {}, {"horizons": [1, 5, 20]}
+        with mock.patch.object(scanner, "_backend_exact_sha", return_value=expected_sha), \
+                mock.patch.object(scanner, "_ai_now_iso", side_effect=[
+                    "2026-09-10T08:02:15Z", "2026-09-10T08:03:15Z", "2026-09-10T08:04:15Z"]), \
+                mock.patch.object(scanner, "_verified_market_snapshot", side_effect=lambda s,h: snapshots.get((s,h))), \
+                mock.patch.object(scanner, "_precompute_verified_market_view", side_effect=produce), \
+                mock.patch.object(scanner, "_osint_persist", return_value={"verified": True, "readBackVerified": True}) as persist:
+            with scanner.app.app_context():
+                first, code = scanner._release_seed_verified_market_views({"expectedBuildSha": expected_sha, "runId": trigger_id})
+                self.assertEqual(code, 503)
+                self.assertEqual(first.get_json()["snapshotReady"], 6)
+                persist.assert_not_called()
+                before = copy.deepcopy(snapshots)
+                second = scanner._release_seed_verified_market_views({"expectedBuildSha": expected_sha, "runId": trigger_id}).get_json()
+                self.assertEqual(second["status"], "completed")
+                self.assertEqual(second["snapshotReady"], 12)
+                self.assertEqual(second["triggeredAt"], "2026-09-10T08:02:15Z")
+                self.assertTrue(second["persistence"]["readBackVerified"])
+                persist.assert_called_once()
+                self.assertEqual(calls, ["1321", "1306", "SPY", "SPY", "QQQ"])
+                for key, snapshot in before.items():
+                    self.assertEqual(snapshots[key], snapshot)
+
+    def test_partial_release_seed_rejects_mixed_original_bindings(self):
+        expected_sha = "a" * 40
+        trigger_id = "v13-release-partial-0002"
+        def readback(symbol, horizon):
+            if symbol != "1321":
+                return None
+            return {"releaseBinding": {"expectedBuildSha": expected_sha,
+                    "producerTriggerId": trigger_id,
+                    "triggeredAt": f"2026-09-10T08:02:{horizon:02d}Z"}}
+        with mock.patch.object(scanner, "_backend_exact_sha", return_value=expected_sha), \
+                mock.patch.object(scanner, "_verified_market_snapshot", side_effect=readback), \
+                mock.patch.object(scanner, "_precompute_verified_market_view") as produce, \
+                mock.patch.object(scanner, "_osint_persist") as persist:
+            with scanner.app.app_context():
+                response, status = scanner._release_seed_verified_market_views({"expectedBuildSha": expected_sha, "runId": trigger_id})
+            self.assertEqual(status, 503)
+            self.assertEqual(response.get_json()["errorDetail"], "release_snapshot_binding_conflict")
+            produce.assert_not_called()
+            persist.assert_not_called()
+
     def test_wal_record_has_dedup_and_chain_identity(self):
         with tempfile.TemporaryDirectory() as root:
             wal = os.path.join(root, "tick.wal")
