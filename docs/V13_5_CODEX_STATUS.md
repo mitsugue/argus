@@ -219,3 +219,10 @@ iPhoneの本番起動後に実際の保存データを確認するまで、移�
 移行を確認した。判断・時刻・数値、合成保有の数量7・取得価格1000と設定を維持し、
 再読込で履歴のバイト列が一致、破損させた履歴は原文を保持した。ネットワークPOSTは0件。
 これはローカルの合成データ検査であり、iPhone実機の保存内容確認を代替しない。
+
+
+### 2026-09-10: oversized chart publication follow-up
+
+Production 8c258233 held the Sep 7 chart while the cached 5803 closes reached Sep 10 (2,434 rows); warm refresh reported ValueError. A same-scale fixture using actual dates/closes but synthetic OHLC, volume and provenance produced 2,503,217 bytes, exceeding the unchanged 2 MiB report limit.
+Oversized display reports now retain the last 600 calculated bars and explicitly disclose the window. Engine input, all other analysis results, turning points and original history remain intact. Normal-size reports are unchanged; the 2 MiB/32 MiB limits still reject other excess. One failed instrument no longer stops later instruments; partial success is explicit.
+The fixture now publishes and reads back 1,219,588 bytes with exact analysis-result and latest-bar parity. This is not a live full-OHLC replay. Related tests: 35 PASS; admission/provenance tests: 47 PASS. Production refresh and actual screens remain unverified. This does not complete 13.5. Stop after 13.6 production acceptance; 13.7 remains on explicit-owner-resume hold.
