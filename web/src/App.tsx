@@ -10,6 +10,7 @@ import { Watchlist } from './routes/Watchlist';
 import { NotificationsPage } from './routes/NotificationsPage';
 import { Settings } from './routes/Settings';
 import { startCloudSync } from './lib/vault';
+import { readDeviceLocalSdaLedger } from './lib/sdaDeviceLocal';
 import { useMarketLedger } from './hooks/useMarketLedger';
 import { resolveSessionJst } from './domain/sessionBrief';
 import type { PlanningSessionAuthority } from './domain/positionPlan';
@@ -111,6 +112,11 @@ const App: React.FC = () => {
   // Recovery remains device-driven. The unavailable push path is disabled in
   // vault.ts; startup/visibility pulls still restore readable encrypted state.
   useEffect(() => { startCloudSync(); }, []);
+  useEffect(() => {
+    // Verify and migrate existing history even when no new decision is saved.
+    // The reader preserves corrupt/unwritable data and grants no authority.
+    readDeviceLocalSdaLedger();
+  }, []);
 
   const marketLedger = useMarketLedger();
   const lastUpdated = useMemo(() => {
