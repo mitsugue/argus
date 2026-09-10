@@ -35639,20 +35639,19 @@ def _release_seed_verified_market_views(body):
     try:
         with _DURABLE_CHECKPOINT_LOCK:
             existing = {
-                (symbol, horizon): _verified_market_snapshot(symbol, horizon)
+                (symbol, horizon): (_verified_market_snapshot(symbol, horizon)
+                                    or {}).get("releaseBinding")
                 for symbol, _, _ in phase_specs
                 for horizon in argus_market_replay.HORIZONS
             }
-            matched = [snapshot for snapshot in existing.values()
-                       if ((snapshot or {}).get("releaseBinding") or {}).get(
-                           "producerTriggerId") == trigger_id]
+            matched = [binding for binding in existing.values()
+                       if (binding or {}).get("producerTriggerId") == trigger_id]
             duplicate_count = len(matched)
             if matched:
-                prior_binding = matched[0]["releaseBinding"]
+                prior_binding = matched[0]
                 if (prior_binding.get("expectedBuildSha") != expected_sha
                         or not prior_binding.get("triggeredAt")
-                        or any(snapshot.get("releaseBinding") != prior_binding
-                               for snapshot in matched)):
+                        or any(binding != prior_binding for binding in matched)):
                     raise ValueError("release_snapshot_binding_conflict")
                 # A failed producer can leave a verified partial matrix. Resume
                 # the same attempt and preserve its original identity/time.
@@ -35669,8 +35668,8 @@ def _release_seed_verified_market_views(body):
                 }), 409
             for symbol, market, market_scope in phase_specs:
                 already_complete = all(
-                    (existing.get((symbol, horizon)) or {}).get("releaseBinding")
-                    == release_binding for horizon in argus_market_replay.HORIZONS)
+                    existing.get((symbol, horizon)) == release_binding
+                    for horizon in argus_market_replay.HORIZONS)
                 if not already_complete:
                     _, publication = _precompute_verified_market_view(
                         symbol, market, market_scope=market_scope,
