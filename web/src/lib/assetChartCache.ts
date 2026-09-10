@@ -53,6 +53,19 @@ export function assetChartUiTransition(
   };
 }
 
+/** Network success says nothing about the date of the server's stored report. */
+export function assetChartDataStatus(payload: ChartIntelligencePayload | null,
+                                     now = Date.now()): string {
+  if (!payload) return 'データ時点未確認';
+  const date = payload.periodEnd || payload.indicators?.bars?.at(-1)?.date;
+  const stamp = date ? `データ ${date.slice(0, 10)}` : 'データ日未確認';
+  const until = Date.parse(payload.marketCalendar?.sessionValidUntil ?? '');
+  if (payload.status === 'stale') return `${stamp} · 価格更新待ち`;
+  if (Number.isFinite(until) && until <= now) return `${stamp} · 再計算待ち`;
+  // Reports without a session deadline cannot establish current freshness.
+  return stamp;
+}
+
 export interface AssetChartIdentity {
   market: string;
   symbol: string;

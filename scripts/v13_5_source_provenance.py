@@ -33,6 +33,9 @@ HISTORICAL_REPLACED_BLOBS = {
 }
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
+    # Chart refresh paths already included in the owner-approved PR #319.
+    "test_argus_asset_chart_precompute.py",
+    "web/src/types/chartIntelligence.ts",
     "argus_product_naming.py",
     "test_argus_runtime_naming.py",
     "docs/ops/paired-migration-admission.md",
@@ -42,6 +45,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "test_run_intel_collect.py",
     "test_smoke_nfp_lifecycle.py",
     "docs/V13_5_CODEX_STATUS.md",
+    "docs/V13_6_REQUIREMENTS.md",
     ".github/workflows/market-watch.yml",
     # Owner-required functional naming, explanation policy and data-preserving
     # migration. Formula/action parity is verified separately from name IDs.

@@ -12,7 +12,7 @@ import {
 } from '../domain/marketInstruments';
 import {
   ASSET_CHART_METHOD_VERSION, assetChartRequestGate, boundedRetryAt,
-  assetChartUiTransition, parseRetryAfter, readAssetChart, verifiedChartRequestGate,
+  assetChartDataStatus, assetChartUiTransition, parseRetryAfter, readAssetChart, verifiedChartRequestGate,
   writeAssetChart,
   type AssetChartIdentity, type AssetChartViewState,
 } from '../lib/assetChartCache';
@@ -461,7 +461,11 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
   }, [expectation]);
 
   const authoritySnapshot = view.key === expectedKey ? view.snapshot : null;
-  const authorityDeadline = snapshotDecisionExpiresAt(authoritySnapshot);
+  const assetDeadline = Date.parse((legacyKey === legacyUrl
+    ? legacyData?.marketCalendar?.sessionValidUntil : null) ?? '');
+  const authorityDeadline = expectation
+    ? snapshotDecisionExpiresAt(authoritySnapshot)
+    : Number.isFinite(assetDeadline) ? assetDeadline : null;
   useEffect(() => {
     if (authorityDeadline == null) return;
     const nowMs = Date.now();
@@ -490,7 +494,7 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
         hour: '2-digit', minute: '2-digit', hour12: false,
       }).format(new Date(parsedTime))
       : null;
-    const statusText = effectiveLegacyState === 'CURRENT_READY' ? '更新済'
+    const statusText = effectiveLegacyState === 'CURRENT_READY' ? assetChartDataStatus(data)
       : effectiveLegacyState === 'CACHE_READY_REVALIDATING'
         ? `前回${cachedTime ? ` ${cachedTime}` : ''} · 更新中`
       : effectiveLegacyState === 'RATE_LIMITED_WITH_CACHE'
