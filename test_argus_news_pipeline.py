@@ -594,6 +594,8 @@ def _reset_ai_state():
 def test_sol_escalation_calls_and_model_recording(tmp_path, monkeypatch):
     _reset_news_store(tmp_path, monkeypatch)
     _reset_ai_state()
+    monkeypatch.setattr(scanner, "_OPENAI_MODEL", "gpt-5.6-terra")
+    monkeypatch.setattr(scanner, "_OPENAI_SOL_MODEL", "gpt-5.6-sol")
     calls = []
 
     def fake_prose(user, max_out=600, system=None, *, purpose="prose",
@@ -617,8 +619,8 @@ def test_sol_escalation_calls_and_model_recording(tmp_path, monkeypatch):
     assert calls == [None, scanner._OPENAI_SOL_MODEL]
     assert scanner._NEWS_INTEL["health"]["aiEscalations"] == 1
     models = scanner._NEWS_INTEL["health"]["aiModels"]
-    assert models["sol"]["returnedModel"].endswith("-served")
-    assert models["terra"]["requestedModel"] == scanner._OPENAI_MODEL
+    assert models["escalation"]["returnedModel"].endswith("-served")
+    assert models["primary"]["requestedModel"] == scanner._OPENAI_MODEL
     routing = [r for r in scanner._NEWS_INTEL["audit"]
                if r.get("stage") == "ai_routing"]
     assert routing and routing[-1]["escalated"] is True
@@ -656,7 +658,8 @@ def test_model_pricing_registry_holds_current_official_prices():
     assert scanner._AI_PRICING["gpt-5.6-terra"]["out"] == 12.0
     assert scanner._AI_MODEL_PRICING_POLICY["revalidateBy"] == "2026-11-21"
     assert "プロモーション" in scanner._AI_MODEL_PRICING_POLICY["noteJa"]
-    assert scanner._OPENAI_SOL_MODEL == "gpt-5.6-sol"
+    assert scanner._OPENAI_SOL_MODEL == "gpt-6-astra"
+    assert scanner._AI_PRICING["gpt-6-astra"] == {"in": 10.0, "out": 50.0, "cachedIn": 1.0}
 
 
 def test_provider_status_exposes_last_pings(monkeypatch):
@@ -874,3 +877,56 @@ def test_material_analysis_retry_keeps_budget_failure_pending_then_recovers(tmp_
     scanner._NEWS_INTEL['events'] = {}
     scanner._news_intel_load()
     assert scanner._NEWS_INTEL['events']['pending-policy'] == event
+
+
+def test_primary_frontier_does_not_repeat_escalation_or_reuse_other_model_cache(tmp_path, monkeypatch):
+    _reset_news_store(tmp_path, monkeypatch)
+    _reset_ai_state()
+    monkeypatch.setattr(scanner, "_OPENAI_MODEL", "gpt-6-astra")
+    monkeypatch.setattr(scanner, "_OPENAI_SOL_MODEL", "gpt-6-astra")
+    calls = []
+    def reply(*a, **kw):
+        calls.append(kw)
+        kw["diagnostic"].update(requestedModel=scanner._OPENAI_MODEL,
+            returnedModel=scanner._OPENAI_MODEL, outcome="ok")
+        return {"facts": ["金利変更の発表"], "eventTypeCandidate": "FED",
+                "entities": [], "causalPathJa": None, "uncertaintyJa": None,
+                "secondOrderJa": None, "materialityGuess": 3}
+    monkeypatch.setattr(scanner, "_openai_prose", reply)
+    tax = {"eventType": "FED", "families": ["FED"], "lowValueHints": False, "themeTags": []}
+    for _ in range(2):
+        scanner._news_analyze_ai("FOMC emergency rate decision", "", "same-input", tax)
+    assert len(calls) == 1
+    assert scanner._NEWS_INTEL["health"]["aiEscalations"] == 0
+    scanner._NEWS_INTEL["health"]["aiModels"]["escalation"] = {"returnedModel": "previous-article"}
+    monkeypatch.setattr(scanner, "_OPENAI_MODEL", "gpt-5.6-sol")
+    monkeypatch.setattr(scanner, "_OPENAI_SOL_MODEL", "gpt-5.6-sol")
+    scanner._news_analyze_ai("FOMC emergency rate decision", "", "same-input", tax)
+    assert len(calls) == 2
+    audit = [row for row in scanner._NEWS_INTEL["audit"] if row.get("stage") == "ai_routing"][-1]
+    assert audit["returnedModel"] == "gpt-5.6-sol"
+
+
+@pytest.mark.parametrize("authenticated,matching,expected", [(True, True, True), (False, True, False), (True, False, False)])
+def test_retry_excerpt_requires_original_fingerprint_and_authenticated_sender(monkeypatch, authenticated, matching, expected):
+    message = gi.normalize_message(mail("matchingmail", "ECB raises interest rates", body="Verified bounded excerpt"))
+    event = {"analysisSourceMessageId": "matchingmail", "sourceFingerprint":
+        scanner.argus_news_intelligence.source_fingerprint(message_id=message["rfcMessageId"],
+            subject=message["subject"], url=message.get("url")) if matching else "different-article"}
+    monkeypatch.setattr(gi, "is_configured", lambda env: True)
+    monkeypatch.setattr(gi, "refresh_access_token", lambda *a: "synthetic")
+    monkeypatch.setattr(gi, "fetch_message", lambda *a: message)
+    monkeypatch.setattr(gi, "authenticate_sender", lambda *a: {"authenticated": authenticated})
+    excerpt, status = scanner._news_retry_input(event)
+    assert bool(excerpt) is expected
+    assert status == ("authenticated_fingerprint_match" if expected else "source_not_matched")
+    assert "excerpt" not in event
+
+
+def test_public_news_projection_excludes_internal_mailbox_reference():
+    original = {"eventId": "example", "analysisSourceMessageId": "private-mail-id",
+                "analysisInputScope": "mail_headline_and_bounded_excerpt"}
+    public = scanner.argus_news_intelligence.project_owner_event(original)
+    assert "analysisSourceMessageId" not in public
+    assert public["analysisInputScope"] == original["analysisInputScope"]
+    assert original["analysisSourceMessageId"] == "private-mail-id"

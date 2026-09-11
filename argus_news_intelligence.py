@@ -1169,6 +1169,8 @@ def project_owner_event(event: Mapping[str, Any]) -> Dict[str, Any]:
     immediately instead of inheriting an unrelated concurrent market move.
     """
     projected = dict(event)
+    # Mailbox references are internal retry inputs, not public news metadata.
+    projected.pop("analysisSourceMessageId", None)
     # Re-project only deterministic fallback text; retain actual AI explanations.
     if projected.get("eventType") == "IRAN" and not projected.get("facts") \
             and projected.get("analysisState") in (

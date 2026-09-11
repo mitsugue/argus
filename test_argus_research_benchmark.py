@@ -446,7 +446,7 @@ class RouteTests(unittest.TestCase):
                           "gemini-3.1-pro-preview-202607")
 
         def gpt_answer(*args, **kwargs):
-            return answer("openai", scanner._OPENAI_MODEL_ROLES["standard"],
+            return answer("openai", scanner._OPENAI_BENCHMARK_MODEL,
                           "gpt-5.6-sol-2026-07-01")
 
         def evaluate(case, benchmark_id, claims, diagnostic_context=None):

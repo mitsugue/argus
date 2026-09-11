@@ -288,6 +288,6 @@ def test_legacy_crosscheck_rejects_unreviewed_input_before_call(monkeypatch):
     monkeypatch.setattr(scanner, "google_genai", SimpleNamespace(Client=lambda **kw:
         SimpleNamespace(models=SimpleNamespace(generate_content=lambda **kw: calls.append(kw)))))
     monkeypatch.setattr(scanner, "add_log", lambda *a: None)
-    result = scanner.gemini_score_stocks([{"symbol": "TEST", "name": "retired_person"}])
+    result = scanner._gpt_crosscheck_stocks([{"symbol": "TEST", "name": "retired_person"}])
     assert not calls
-    assert result["TEST"]["reason"] == "unavailable"
+    assert result == {}

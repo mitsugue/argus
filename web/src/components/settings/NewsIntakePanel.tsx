@@ -272,7 +272,7 @@ export const NewsIntakePanel: React.FC = () => {
               && `· 上位エスカレーション${health.aiEscalations}件`}</span>
           {Object.entries(health.aiModels).map(([lane, row]) => <div key={lane}
             style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-            <span>{lane === 'sol' ? '上位（重大・困難のみ）' : '標準'}</span>
+            <span>{lane === 'escalation' ? '追加解析' : lane === 'primary' ? '主要解析' : '以前の解析'}</span>
             <b style={{ fontFamily: 'monospace' }}>
               {row.returnedModel ?? row.requestedModel ?? '—'}</b>
           </div>)}
