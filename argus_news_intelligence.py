@@ -681,6 +681,16 @@ def reported_policy_decision(subject: str) -> bool:
         r"(?:decided|decides) to (?:raise|cut|lower|hold).{0,40}(?:rate|interest)", text))
 
 
+
+def reported_policy_rate_plan(subject: str) -> bool:
+    """A reported numeric policy-rate target is material, not a completed decision."""
+    text = _lower(subject)
+    if not re.search(r"日銀|日本銀行|ecb|欧州中央銀行|frb|fomc|中央銀行|英中銀", text):
+        return False
+    if re.search(r"予想|予測|見通し|観測|可能性|検討|否定|見送り|決定せず|かどうか|[?？]|expected|forecast|may |could |not |denied", text):
+        return False
+    return bool(re.search(r"政策金利.{0,16}[0-9]+(?:[.][0-9]+)?[%％]へ", text))
+
 def material_news_priority(event: Mapping[str, Any], now_epoch: float) -> tuple:
     """Protect recent material news within bounded storage/display windows."""
     from datetime import datetime
@@ -819,6 +829,12 @@ def evaluate_materiality(*, taxonomy: Mapping[str, Any], staleness: str,
             and SOURCE_TIERS.get(source) in ("trusted_subscription", "official_agency")):
         score = max(score, 2)
         reasons.append("reported_policy_rate_decision")
+    if (family in ("CENTRAL_BANK", "BOJ", "FED")
+            and reported_policy_rate_plan(subject)
+            and source_authenticated
+            and SOURCE_TIERS.get(source) in ("trusted_subscription", "official_agency")):
+        score = max(score, 2)
+        reasons.append("reported_policy_rate_plan")
     if priority:
         score += 1
         reasons.append(f"source_priority_{source.lower()}")

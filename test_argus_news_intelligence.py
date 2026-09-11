@@ -736,3 +736,24 @@ def test_verified_history_restore_preserves_evidence_and_is_idempotent():
         ni.restore_material_news_history({},[],dict(recovery,payloadSha256="0"*64),now_epoch=now)
     expired,_,receipt=ni.restore_material_news_history({},[],recovery,now_epoch=now+8*86400)
     assert expired=={} and receipt["restored"]==0
+
+
+def test_reported_policy_rate_target_is_material_but_not_a_decision():
+    title = "日銀、9月政策金利1.25%へ 利上げ加速で物価上振れリスク回避"
+    assert ni.reported_policy_rate_plan(title)
+    assert not ni.reported_policy_decision(title)
+    result = ni.evaluate_materiality(taxonomy=ni.classify_event(title),
+        staleness="FRESH_BREAKING", source_authenticated=True,
+        ai_analysis=None, corroboration={}, subject=title, source="NIKKEI")
+    assert result["severity"] == "HIGH"
+    assert result["confirmationState"] == "MARKET_CONFIRMATION_PENDING"
+    assert "reported_policy_rate_plan" in result["reasons"]
+    assert "reported_policy_rate_decision" not in result["reasons"]
+    for text in (title + "との予想", title + "の可能性", title + "との観測を否定",
+                 "日銀、政策金利1.25%へ引き上げるか？", "銀行の住宅ローン金利1.25%へ"):
+        assert not ni.reported_policy_rate_plan(text)
+    for stale, authenticated in (("STALE", True), ("FRESH_BREAKING", False)):
+        limited = ni.evaluate_materiality(taxonomy=ni.classify_event(title),
+            staleness=stale, source_authenticated=authenticated,
+            ai_analysis=None, corroboration={}, subject=title, source="NIKKEI")
+        assert limited["severity"] not in ("HIGH", "CRITICAL")

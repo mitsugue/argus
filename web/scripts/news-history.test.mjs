@@ -43,3 +43,52 @@ try {
  assert.equal(calls,2);
  console.log('PASS historical news: on-demand GET, original receipt, past interpretation, retained data on failure');
 } finally { await browser.close(); }
+
+
+// The normal news page must expose received WATCH articles even without AI,
+// and show retained important history without requiring discovery of a fold.
+const panelFixture = await build({
+  stdin: { contents: `import React from 'react'; import {createRoot} from 'react-dom/client';
+    import {NewsAlertsPanel} from './src/components/notifications/NewsAlertsPanel';
+    createRoot(document.getElementById('root')).render(<NewsAlertsPanel/>);`, loader:'tsx', resolveDir:web },
+  bundle:true, write:false, format:'iife', platform:'browser', loader:{'.css':'empty'},
+  define:{'import.meta.env.VITE_ARGUS_BACKEND_URL':JSON.stringify('https://news-history.test'),
+    'process.env.NODE_ENV':JSON.stringify('development')}, logLevel:'silent',
+});
+const panelBrowser = await chromium.launch({headless:true});
+try {
+ const page = await panelBrowser.newPage({viewport:{width:390,height:844}});
+ let historyReads = 0;
+ const row = {eventId:'rate-plan',headlineJa:'日銀、9月政策金利1.25%へ',
+   whyJa:'金利の変更報道。決定と価格反応は未確認です。',source:'Nikkei',severity:'WATCH',
+   sourceReceivedAt:'2026-09-11T22:03:15Z',staleness:'FRESH_BREAKING',
+   analysisState:'AI_ANALYSIS_UNAVAILABLE',marketReadings:[],
+   analysisDiagnostic:{reason:'scheduled_daily_budget_exhausted'},sdaAuthority:false};
+ await page.route('https://news-history.test/**',async route=>{
+   assert.equal(route.request().method(),'GET');
+   const url = new URL(route.request().url());
+   const history = url.searchParams.get('view') === 'history';
+   if(history) historyReads++;
+   const events = url.pathname.endsWith('market-shock') ? [] : history ? [{...row,
+     eventId:'ecb-history',headlineJa:'ECB、0.25%利上げ決定',staleness:'STALE',severity:'HIGH',
+     sourceReceivedAt:'2026-09-10T12:37:11Z',analysisState:'ANALYZED'}] : [row,
+       {...row,eventId:'other-info',severity:'INFO',headlineJa:'その他の受信記事例'}];
+   await route.fulfill({status:200,contentType:'application/json',
+     headers:{'access-control-allow-origin':'*'},body:JSON.stringify({
+       schemaVersion:url.pathname.endsWith('market-shock') ? 'argus-market-shock-v1' : 'argus-news-intelligence-v1',
+       generatedAt:'2026-09-11T22:06:00Z',intakeStatus:'HEALTHY',events})});
+ });
+ await page.setContent('<div id="root"></div>');
+ await page.addScriptTag({content:panelFixture.outputFiles[0].text});
+ await page.locator('[data-received-event="rate-plan"]').waitFor();
+ await page.locator('[data-news-history-event="ecb-history"]').waitFor();
+ assert.equal(historyReads,1);
+ const text = await page.locator('body').innerText();
+ assert.match(text,/日次予算により解析を見送っています/);
+ assert.match(text,/日銀、9月政策金利1.25%へ/);
+ assert.match(text,/過去の情報/);
+ assert.equal(await page.locator('[data-received-event="other-info"]').isVisible(),false);
+ await page.locator('[data-received-other] summary').click();
+ assert.equal(await page.locator('[data-received-event="other-info"]').isVisible(),true);
+ console.log('PASS news visibility: unanalysed WATCH, explicit budget status, automatic past news, optional INFO');
+} finally { await panelBrowser.close(); }

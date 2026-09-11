@@ -45,6 +45,7 @@ export interface NewsIntelEvent {
     change: number | null; unit: string; asOf?: string | null }>;
   analysisState: string;
   analysisInputScope?: string;
+  analysisDiagnostic?: { reason?: string | null; outcome?: string; completedAt?: string; returnedModel?: string | null };
   alertEligible: boolean;
   backfill: boolean;
   sdaAuthority: false;

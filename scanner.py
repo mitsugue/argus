@@ -18452,13 +18452,14 @@ def _news_review_saved_policy_decisions():
     changed = 0
     with _NEWS_INTEL_LOCK:
         for event in _NEWS_INTEL["events"].values():
-            if event.get("materialityReview", {}).get("version") == 1:
+            if event.get("materialityReview", {}).get("version") == 2:
                 continue
             title = str(event.get("titleOriginal") or "")
             source = event.get("sourceFamily")
             if (event.get("sourceTier") not in ("official_agency", "trusted_subscription")
                     or event.get("authority") != "NEWS_RISK_EVIDENCE"
-                    or not argus_news_intelligence.reported_policy_decision(title)):
+                    or not (argus_news_intelligence.reported_policy_decision(title)
+                            or argus_news_intelligence.reported_policy_rate_plan(title))):
                 continue
             received = _news_iso_epoch(event.get("sourceReceivedAt"))
             freshness = argus_news_intelligence.assess_staleness(
@@ -18471,13 +18472,13 @@ def _news_review_saved_policy_decisions():
                     or event.get("severity") not in ("INFO", "WATCH")):
                 continue
             event["materialityReview"] = {
-                "version": 1, "at": _ai_now_iso(), "previousSeverity": event.get("severity"),
+                "version": 2, "at": _ai_now_iso(), "previousSeverity": event.get("severity"),
                 "previousReasons": list(event.get("severityReasons") or []),
-                "method": "stored_authenticated_policy_decision", "aiCalled": False,
+                "method": "stored_authenticated_policy_report", "aiCalled": False,
             }
             event["severity"] = "HIGH"
             event["severityReasons"] = list(dict.fromkeys(
-                list(event.get("severityReasons") or []) + ["reported_policy_rate_decision"]))
+                list(event.get("severityReasons") or []) + result["reasons"]))
             event["alertEligible"] = False
             # Identity, receipt, analysis status, facts and execution constraints
             # remain the original evidence; this is a severity correction only.
@@ -18894,7 +18895,7 @@ def api_argus_news_intelligence():
         order = sorted(candidates,
             key=lambda eid: (*argus_news_intelligence.material_news_priority(
                 _NEWS_INTEL["events"][eid], now_epoch), position[eid]),
-            reverse=True)[:_NEWS_EVENT_CAP if history else 12]
+            reverse=True)[:_NEWS_EVENT_CAP]
         events = [argus_news_intelligence.project_owner_event(
             _NEWS_INTEL["events"][eid]) for eid in order]
         status = _NEWS_INTEL["health"]["status"]
@@ -18943,10 +18944,12 @@ def api_argus_news_intelligence():
             # for a weekend because the Japanese summary is still queued.
             # HIGH/CRITICAL surface immediately with a safe placeholder (no
             # licensed content); INFO/WATCH wait for the translated summary.
-            if event.get("severity") in ("HIGH", "CRITICAL"):
+            if event.get("severity") in ("WATCH", "HIGH", "CRITICAL"):
                 source_ja = argus_news_intelligence.SOURCE_LABELS.get(
                     event.get("sourceFamily"), event.get("source") or "公式")
                 event["headlineJa"] = (
+                    f"{source_ja}の市場関連発表を受信（日本語要約 処理中）"
+                    if event.get("severity") == "WATCH" else
                     f"{source_ja}の重要発表を検知（日本語要約 処理中）")
                 event["translationPending"] = True
             else:
