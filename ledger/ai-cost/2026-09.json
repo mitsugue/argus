@@ -1,34 +1,34 @@
 {
- "asOf": "2026-09-11T07:05:32Z",
+ "asOf": "2026-09-11T12:09:27Z",
  "dailyBudgetUsd": 5.0,
  "day": "2026-09-11",
- "dayRemainingUsd": 4.8634,
- "daySpentUsd": 0.1366,
+ "dayRemainingUsd": 4.8211,
+ "daySpentUsd": 0.1789,
  "emergencyReserveUsd": 2.0,
  "estimated": true,
  "groundingUsdPerCall": 0.035,
  "lastRun": {
-  "at": "2026-09-11T03:53:53Z",
+  "at": "2026-09-11T07:15:25Z",
   "estimated": true,
   "gemStatus": "unavailable",
   "oaiStatus": "live",
   "rows": [
    {
-    "estUsd": 0.003118,
+    "estUsd": 0.04228,
     "fallbackUsed": false,
     "grounding": false,
-    "inputTokens": 629,
-    "model": "gpt-5.6-terra",
-    "outputTokens": 155,
+    "inputTokens": 718,
+    "model": "gpt-6-astra",
+    "outputTokens": 702,
     "provider": "openai"
    }
   ],
-  "runId": "prose-market_brief",
-  "totalUsd": 0.003118
+  "runId": "prose-event_analysis",
+  "totalUsd": 0.04228
  },
- "lastRunCostUsd": 0.003118,
+ "lastRunCostUsd": 0.04228,
  "month": "2026-09",
- "monthRemainingUsd": 79.8634,
+ "monthRemainingUsd": 79.8211,
  "monthSpentUsd": 0.207,
  "monthlyBudgetUsd": 80.0,
  "noteJa": "コストは推定値(プロバイダのトークン使用量×設定単価)。OpenAIの前払い残高ではなく、このARGUS側上限がハード停止。",
@@ -73,6 +73,25 @@
   "sourceUrl": "https://developers.openai.com/api/docs/pricing"
  },
  "recentRuns": [
+  {
+   "at": "2026-09-11T07:15:25Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.04228,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 718,
+     "model": "gpt-6-astra",
+     "outputTokens": 702,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-event_analysis",
+   "totalUsd": 0.04228
+  },
   {
    "at": "2026-09-11T03:53:53Z",
    "estimated": true,
@@ -433,25 +452,6 @@
    ],
    "runId": "prose-news_intel",
    "totalUsd": 0.004664
-  },
-  {
-   "at": "2026-09-11T03:37:50Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [
-    {
-     "estUsd": 0.004492,
-     "fallbackUsed": false,
-     "grounding": false,
-     "inputTokens": 476,
-     "model": "gpt-5.6-terra",
-     "outputTokens": 295,
-     "provider": "openai"
-    }
-   ],
-   "runId": "prose-news_intel",
-   "totalUsd": 0.004492
   }
  ]
 }
