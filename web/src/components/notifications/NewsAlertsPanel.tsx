@@ -117,7 +117,9 @@ export const NewsAlertsPanel: React.FC = () => {
       {pending.length > 0 && <p role="status" className="news-alerts__pending">
         詳細AI解析が未完了の記事が{pending.length}件あります。受信した見出しと規則による判定を表示しています。
         {pending.some(event => event.analysisDiagnostic?.reason === 'scheduled_daily_budget_exhausted')
-          && ' 日次予算により解析を見送っています（毎日9:00 JST更新）。'}
+          && (news.view?.aiBudgetEnforced === false
+            ? ' 費用による停止は解除済みです。前回見送った記事の再解析を待っています。'
+            : ' 日次予算により解析を見送っています（毎日9:00 JST更新）。')}
       </p>}
       {(news.view?.pendingTranslationCount ?? 0) > 0 && <p className="news-alerts__note">日本語要約待ちの記事があります。未表示の記事がないという意味ではありません。</p>}
       {shocks.length > 0 && <div className="news-alerts__group">

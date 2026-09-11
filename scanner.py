@@ -180,6 +180,10 @@ except (TypeError, ValueError):
 # Benchmark/preflight runs temporarily switch the policy to RESEARCH_BENCHMARK
 # and afterwards restore the configured idle mode — NOT hardcoded DETERMINISTIC,
 # which would silently disable the scheduled news AI after every run (v13.5.36).
+# The owner explicitly authorized removing monetary stops for acceptance.
+# Configuration is independent of model roles, authentication and token bounds.
+_AI_BUDGET_ENFORCED = os.environ.get("ARGUS_AI_BUDGET_ENFORCEMENT", "1") != "0"
+_AI_FULL_ANALYSIS_ENABLED = os.environ.get("ARGUS_AI_FULL_ANALYSIS", "0") == "1"
 _COST_POLICY_IDLE_MODES = ("DETERMINISTIC", "SCHEDULED_AI")
 _COST_POLICY_BASELINE_MODE = (
     _COST_POLICY.get("mode")
@@ -404,7 +408,9 @@ def _cost_policy_authorize(provider, purpose, *, automatic=True,
             estimated_cost_usd=estimated_cost_usd,
             estimated_tokens=estimated_tokens,
             provider_enabled=True,
-            scheduled_daily_budget_usd=_SCHEDULED_AI_DAILY_USD)
+            scheduled_daily_budget_usd=_SCHEDULED_AI_DAILY_USD,
+            budget_enforced=_AI_BUDGET_ENFORCED,
+            full_analysis_enabled=_AI_FULL_ANALYSIS_ENABLED)
         # v13.5.63 (GPT additional item 4): a refusal is state — the public status
         # can then say WHY nothing ran. Pure module function; older module = no-op.
         if not decision.get("allowed"):
@@ -489,7 +495,7 @@ def _deterministic_skip_payload(purpose):
         return {"ok": True, "status": "scheduled_scope_required",
                 "reason": "scheduled_scope_required",
                 "classification": "expected_skip", "purpose": purpose,
-                "noteJa": "定常AIはニュースの日本語要約/補助解析のみ。この用途は自動実行しません。"}
+                "noteJa": "この用途は現在の自動実行対象に含まれていません。"}
     return {"ok": True, "status": "deterministic_mode",
             "reason": "deterministic_mode", "classification": "expected_skip",
             "purpose": purpose,
@@ -8329,8 +8335,10 @@ def _entity_profile_make(sym, name="", market=""):
         mkt = "米国株"
     else:
         mkt = "日本株" if sym in {x["symbol"] for x in _JP_WATCHLIST} else "米国株"
+    diagnostic = {}
     pr = _openai_prose(f"銘柄: {sym} {name or sym}({mkt})。この銘柄の連想プロフィールをJSONで返せ。",
-                       max_out=700, system=_ENTITY_PROFILE_SYSTEM)
+                       max_out=700, system=_ENTITY_PROFILE_SYSTEM,
+                       purpose="entity_profiles", diagnostic=diagnostic)
     if not pr or not pr.get("businessJa"):
         return None
     prof = {
@@ -8343,6 +8351,7 @@ def _entity_profile_make(sym, name="", market=""):
         "peers": [str(p)[:20] for p in (pr.get("peers") or [])][:6],
         "keywords": [str(k)[:40] for k in (pr.get("keywords") or [])][:24],
         "source": "ai", "ts": time.time(), "generatedAt": _ai_now_iso(),
+        "aiDiagnostic": dict(diagnostic),
     }
     _ENTITY_PROFILES[sym] = prof
     _ENTITY_PROFILES_META["asOf"] = _ai_now_iso()
@@ -8501,7 +8510,7 @@ def _buy_candidates_generate(limit=4):
                        + json.dumps(rows, ensure_ascii=False)
                        + "\nこの中から、追加調査に値する証拠候補だけを厳選して返せ。"
                        + "売買アクションは返すな(無理に候補を出さない)。",
-                       max_out=900, system=_BUY_CANDIDATE_SYSTEM)
+                       max_out=900, system=_BUY_CANDIDATE_SYSTEM, purpose="candidate_research")
     by = {r["symbol"]: r for r in rows}
     out = []
     for c in ((pr or {}).get("candidates") or []):
@@ -9486,7 +9495,9 @@ def _operational_diagnostics_snapshot():
             if isinstance(_FOUNDATION_JOBS, dict) else None)
     with _COST_POLICY_LOCK:
         cost = argus_cost_policy.public_status(
-            _COST_POLICY, now_iso, _SCHEDULED_AI_DAILY_USD)
+            _COST_POLICY, now_iso, _SCHEDULED_AI_DAILY_USD,
+            budget_enforced=_AI_BUDGET_ENFORCED,
+            full_analysis_enabled=_AI_FULL_ANALYSIS_ENABLED)
     return _recovery_phase_a_bind_null_proof(
         argus_diagnostics_contract.build_operational_diagnostics(
         generated_at=now_iso,
@@ -13637,14 +13648,14 @@ def _ai_record_cost(run_id, oai_status, gem_status, grounding_enabled):
     that ran (pro vs flash fallback). Never raises. Returns the run cost record."""
     rows, total = [], 0.0
     oai_u = _AI_LAST_RUN.get("oaiUsage")
-    if oai_status in ("live", "content_rejected") and oai_u:
+    if oai_u:
         c = argus_ai_cost.estimate_cost(_OPENAI_MODEL, oai_u[0], oai_u[1], _AI_PRICING)
         rows.append({"provider": "openai", "model": _AI_LAST_RUN.get("oaiModel") or _OPENAI_MODEL, "fallbackUsed": False,
                      "inputTokens": oai_u[0], "outputTokens": oai_u[1], "grounding": False, "estUsd": c})
         total += c
     gem_u = _AI_LAST_RUN.get("gemUsage")
     gem_model = _AI_LAST_RUN.get("gemModel") or _GEMINI_FALLBACK_MODEL
-    if gem_status in ("live", "content_rejected") and gem_u:
+    if gem_u:
         c = argus_ai_cost.estimate_cost(gem_model, gem_u[0], gem_u[1], _AI_PRICING,
                                         grounding=bool(grounding_enabled), grounding_usd=_AI_GROUNDING_USD)
         rows.append({"provider": "gemini", "model": gem_model,
@@ -13661,6 +13672,9 @@ def _ai_record_cost(run_id, oai_status, gem_status, grounding_enabled):
         _AI_COST_STATE["monthSpentUsd"] = round(_AI_COST_STATE["monthSpentUsd"] + total, 6)
         _AI_COST_STATE["lastRun"] = rec
         _AI_COST_STATE["runs"].appendleft(rec)
+    for row in rows:
+        _cost_policy_record(row["provider"], "ai_judgment" if row["provider"] == "openai"
+                            else "ai_double_check", estimated_cost_usd=row["estUsd"])
     add_log(f"[AI] cost +${total:.4f} day=${_AI_COST_STATE['daySpentUsd']:.2f} "
             f"month=${_AI_COST_STATE['monthSpentUsd']:.2f}")
     return rec
@@ -13674,6 +13688,7 @@ def _ai_cost_snapshot():
         runs = list(_AI_COST_STATE["runs"])[:20]
     return {
         "asOf": _ai_now_iso(), "estimated": True,
+        "budgetEnforced": _AI_BUDGET_ENFORCED,
         "month": _AI_COST_STATE["month"], "day": _AI_COST_STATE["day"],
         "dailyBudgetUsd": _AI_DAILY_BUDGET_USD, "daySpentUsd": round(day_s, 4),
         "dayRemainingUsd": round(max(0.0, _AI_DAILY_BUDGET_USD - day_s), 4),
@@ -13684,7 +13699,9 @@ def _ai_cost_snapshot():
         "lastRun": last, "recentRuns": runs,
         "pricing": _AI_PRICING, "pricingPolicy": _AI_MODEL_PRICING_POLICY,
         "groundingUsdPerCall": _AI_GROUNDING_USD,
-        "noteJa": "コストは推定値(プロバイダのトークン使用量×設定単価)。OpenAIの前払い残高ではなく、このARGUS側上限がハード停止。",
+        "noteJa": ("コストはトークン使用量と設定単価による推定値です。"
+                   + ("ARGUS側上限で停止します。" if _AI_BUDGET_ENFORCED else
+                      "オーナー指示により費用による停止を解除中です。")),
     }
 
 def _ai_restore_validate(d, now_utc=None):
@@ -15730,7 +15747,7 @@ def api_argus_buy_candidates_generate():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
-    skipped = _scheduled_ai_skip("openai", "buy_candidates")
+    skipped = _scheduled_ai_skip("openai", "candidate_research")
     if skipped:
         skipped["authorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE
         skipped["finalDecisionAuthorityActive"] = False
@@ -15849,7 +15866,8 @@ def _ai_run_gate(force=False):
         "openai", "ai_judgment", automatic=True,
         estimated_cost_usd=0.15, estimated_tokens=12000)
     if not policy["allowed"]:
-        return False, _deterministic_skip_payload("ai_judgment"), 200
+        return False, {**_deterministic_skip_payload("ai_judgment"),
+                       "status": policy.get("status"), "reason": policy.get("reason")}, 200
     now = time.time()
     meta = _client_meta()
     if not _AI_JUDGE_ENABLED:
@@ -15862,7 +15880,8 @@ def _ai_run_gate(force=False):
         _ai_cost_roll(datetime.now(TZ_JST))
         day_s, month_s = _AI_COST_STATE["daySpentUsd"], _AI_COST_STATE["monthSpentUsd"]
     ok_budget, why, used_reserve = argus_ai_cost.budget_check(
-        day_s, month_s, _AI_DAILY_BUDGET_USD, _AI_MONTHLY_BUDGET_USD,
+        day_s, month_s, _AI_DAILY_BUDGET_USD if _AI_BUDGET_ENFORCED else 0,
+        _AI_MONTHLY_BUDGET_USD if _AI_BUDGET_ENFORCED else 0,
         reserve_usd=_AI_EMERGENCY_RESERVE_USD, force=force)
     if not ok_budget:
         send_security_alert({"type": "run_blocked_budget", "meta": meta})
@@ -15985,7 +16004,9 @@ def _system_health(*, allow_provider_fetch=True):
         day_s, mon_s = _AI_COST_STATE["daySpentUsd"], _AI_COST_STATE["monthSpentUsd"]
     def _frac(s, b): return (s / b) if (isinstance(b, (int, float)) and b > 0) else 0.0
     worst = max(_frac(day_s, _AI_DAILY_BUDGET_USD), _frac(mon_s, _AI_MONTHLY_BUDGET_USD))
-    if worst >= 1.0:
+    if not _AI_BUDGET_ENFORCED:
+        L("ai_budget", "AI予算", "ok", "費用による停止を解除中・使用量を記録")
+    elif worst >= 1.0:
         L("ai_budget", "AI予算", "stopped", "上限到達 — 新規AI実行を停止中")
     elif worst >= 0.8:
         L("ai_budget", "AI予算", "warning", "残りわずか(上限の80%超)")
@@ -18971,6 +18992,7 @@ def api_argus_news_intelligence():
         "retainedEventLimit": _NEWS_EVENT_CAP,
         "generatedAt": _ai_now_iso(),
         "intakeStatus": status,
+        "aiBudgetEnforced": _AI_BUDGET_ENFORCED,
         "eventCount": len(visible_events),
         "pendingTranslationCount": pending_translation_count,
         "events": visible_events,
@@ -20803,7 +20825,7 @@ def _openai_research_ex(user, role="standard", benchmark=False):
         rsv = argus_ai_gate.reserve_budget(
             day_spent=_AI_COST_STATE["daySpentUsd"],
             day_budget=_AI_DAILY_BUDGET_USD,
-            estimated_max_cost=(est or 0.05))
+            estimated_max_cost=(est or 0.05), enforced=_AI_BUDGET_ENFORCED)
         if not rsv["allowed"]:
             _AI_INTEGRITY["budgetLimitedCount"] += 1
             return None, argus_ai_gate.ai_execution_result(
@@ -33795,7 +33817,7 @@ def _formal_benchmark_worker(benchmark_id, dry_run, availability_proof=None,
             fx = _float_env("ARGUS_BENCHMARK_USDJPY_CEILING", 160.0)
             actual_cost_jpy, actual_cost_usd = _benchmark_usage_cost_jpy(
                 provider_calls, fx)
-            if actual_cost_jpy > argus_research_benchmark.HARD_BUDGET_JPY:
+            if _AI_BUDGET_ENFORCED and actual_cost_jpy > argus_research_benchmark.HARD_BUDGET_JPY:
                 raise RuntimeError("actual_budget_exceeded")
             completed = argus_research_benchmark.finalize(
                 state=_FORMAL_BENCHMARK, benchmark_id=benchmark_id,
@@ -33875,7 +33897,7 @@ def _v2_dry_run_value():
         argus_research_benchmark_v2.CALIBRATION_CASES
         + argus_research_benchmark_v2.HOLDOUT_CASES)
     estimated_jpy = estimated_usd * fx
-    body = {"status": ("ready" if estimated_jpy <=
+    body = {"status": ("ready" if not _AI_BUDGET_ENFORCED or estimated_jpy <=
                        argus_research_benchmark_v2.HARD_BUDGET_JPY
                        else "budget_blocked"),
             "models": models, "caseCount": 18, "callsPerCase": 3,
@@ -34367,7 +34389,8 @@ def _formal_benchmark_dry_run_value(gemini_model=None):
         grounding_usd_per_call=_AI_GROUNDING_USD,
         existing_budget_usd=benchmark_budget_usd,
         providers_configured=bool(google_genai and GEMINI_API_KEY
-                                  and _OPENAI_API_KEY))
+                                  and _OPENAI_API_KEY),
+        budget_enforced=_AI_BUDGET_ENFORCED)
     dry["pricingVersion"] = _BENCHMARK_PRICING_VERSION
     dry["pricingCatalog"] = _BENCHMARK_PRICING_CATALOG
     dry["cacheApplied"] = False
@@ -35441,7 +35464,9 @@ def api_argus_cost_policy_status():
     try:
         view = argus_cost_policy.public_status(
             _COST_POLICY, _ai_now_iso(), _SCHEDULED_AI_DAILY_USD,
-            openai_key_configured=bool(_OPENAI_API_KEY))
+            openai_key_configured=bool(_OPENAI_API_KEY),
+            budget_enforced=_AI_BUDGET_ENFORCED,
+            full_analysis_enabled=_AI_FULL_ANALYSIS_ENABLED)
     except TypeError:
         view = argus_cost_policy.public_status(_COST_POLICY, _ai_now_iso())
     view["eventModel"] = _OPENAI_EVENT_MODEL
@@ -35489,7 +35514,9 @@ def api_argus_admin_cost_policy():
               "eventOptIn": _COST_POLICY["eventOptIn"]}, origin="admin")
     _osint_persist()
     return jsonify({"ok": True, **argus_cost_policy.public_status(
-        _COST_POLICY, _ai_now_iso())})
+        _COST_POLICY, _ai_now_iso(), _SCHEDULED_AI_DAILY_USD,
+        budget_enforced=_AI_BUDGET_ENFORCED,
+            full_analysis_enabled=_AI_FULL_ANALYSIS_ENABLED)})
 
 
 @app.route("/api/argus/market-ledger")

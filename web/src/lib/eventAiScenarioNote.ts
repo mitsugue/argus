@@ -14,6 +14,7 @@ export interface EventAiCostFacts {
   lastExecutionPurpose?: string | null;
   lastExecutionAt?: string | null;
   lastSkip?: { purpose?: string; reason?: string; at?: string } | null;
+  budgetEnforced?: boolean;
   scheduledLane?: {
     dailyBudgetUsd?: number; spentTodayUsd?: number; eventRemainingUsd?: number;
     eventRunsToday?: number; eventRunsPerDay?: number; eventLaneOpen?: boolean;
@@ -67,7 +68,9 @@ export function eventAiScenarioNote(
     else if (cost.openaiKeyConfigured === false) parts.push('鍵 未設定（OpenAI）');
     parts.push(`実行許可 ${cost.eventOptIn ? 'ON' : 'OFF'}`);
     const lane = cost.scheduledLane;
-    if (lane && typeof lane.dailyBudgetUsd === 'number') {
+    if (cost.budgetEnforced === false) {
+      parts.push('費用による停止は解除中・使用量を記録');
+    } else if (lane && typeof lane.dailyBudgetUsd === 'number') {
       const spent = typeof lane.spentTodayUsd === 'number' ? lane.spentTodayUsd : 0;
       const left = typeof lane.eventRemainingUsd === 'number' ? lane.eventRemainingUsd : Math.max(0, lane.dailyBudgetUsd - spent);
       parts.push(`予算 残$${left.toFixed(2)}（本日$${spent.toFixed(2)}/$${lane.dailyBudgetUsd.toFixed(2)}）`);

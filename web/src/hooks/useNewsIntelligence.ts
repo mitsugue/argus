@@ -71,6 +71,7 @@ export interface NewsIntelView {
   schemaVersion: string;
   generatedAt: string;
   intakeStatus: string;
+  aiBudgetEnforced?: boolean;
   eventCount: number;
   pendingTranslationCount?: number;
   events: NewsIntelEvent[];

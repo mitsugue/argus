@@ -197,7 +197,7 @@ def estimate_cost(*, gemini_model: str, argus_model: str, evaluator_model: str,
                   output_tokens_per_call: int = 1800,
                   grounding_usd_per_call: float = 0.0,
                   existing_budget_usd: Optional[float] = None,
-                  providers_configured: bool = True) -> Dict[str, Any]:
+                  providers_configured: bool = True, budget_enforced: bool = True) -> Dict[str, Any]:
     """Conservative 4-call/case estimate; no provider is contacted."""
     models = (gemini_model, gemini_model, argus_model, evaluator_model)
     missing_models = [m for m in models if not m or m not in pricing]
@@ -219,7 +219,7 @@ def estimate_cost(*, gemini_model: str, argus_model: str, evaluator_model: str,
         status = "provider_blocked"
     elif missing_models:
         status = "invalid"
-    elif total_jpy > configured_cap:
+    elif budget_enforced and total_jpy > configured_cap:
         status = "budget_blocked"
     else:
         status = "ready"

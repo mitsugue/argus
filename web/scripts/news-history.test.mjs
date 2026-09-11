@@ -58,7 +58,7 @@ const panelFixture = await build({
 const panelBrowser = await chromium.launch({headless:true});
 try {
  const page = await panelBrowser.newPage({viewport:{width:390,height:844}});
- let historyReads = 0;
+ let historyReads = 0; let budgetActive = true;
  const row = {eventId:'rate-plan',headlineJa:'日銀、9月政策金利1.25%へ',
    whyJa:'金利の変更報道。決定と価格反応は未確認です。',source:'Nikkei',severity:'WATCH',
    sourceReceivedAt:'2026-09-11T22:03:15Z',staleness:'FRESH_BREAKING',
@@ -76,7 +76,7 @@ try {
    await route.fulfill({status:200,contentType:'application/json',
      headers:{'access-control-allow-origin':'*'},body:JSON.stringify({
        schemaVersion:url.pathname.endsWith('market-shock') ? 'argus-market-shock-v1' : 'argus-news-intelligence-v1',
-       generatedAt:'2026-09-11T22:06:00Z',intakeStatus:'HEALTHY',events})});
+       generatedAt:'2026-09-11T22:06:00Z',intakeStatus:'HEALTHY',aiBudgetEnforced:budgetActive,events})});
  });
  await page.setContent('<div id="root"></div>');
  await page.addScriptTag({content:panelFixture.outputFiles[0].text});
@@ -90,5 +90,12 @@ try {
  assert.equal(await page.locator('[data-received-event="other-info"]').isVisible(),false);
  await page.locator('[data-received-other] summary').click();
  assert.equal(await page.locator('[data-received-event="other-info"]').isVisible(),true);
+ budgetActive = false;
+ await page.goto('about:blank');
+ await page.setContent('<div id="root"></div>');
+ await page.addScriptTag({content:panelFixture.outputFiles[0].text});
+ await page.locator('[data-received-event="rate-plan"]').waitFor();
+ assert.match(await page.locator('body').innerText(),/費用による停止は解除済み/);
+ assert.doesNotMatch(await page.locator('body').innerText(),/日次予算により解析を見送っています/);
  console.log('PASS news visibility: unanalysed WATCH, explicit budget status, automatic past news, optional INFO');
 } finally { await panelBrowser.close(); }
