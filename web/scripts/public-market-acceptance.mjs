@@ -213,7 +213,11 @@ async function selectCombination(page, symbol, horizon) {
       ?.textContent || '';
     const contract = document.querySelector(
       '[data-argus-contract="canonical-market-snapshot-v1"]');
+    const displayedSymbol = document.querySelector('[data-projection-state="available"]')
+      ?.getAttribute('data-projection-symbol');
+    const expectedIndex = { '1321': 'N225', '1306': 'TOPIX', SPY: 'SPX', QQQ: 'NDX' }[expectedSymbol];
     return heading.includes(expectedSymbol) && active === expectedHorizon
+      && (displayedSymbol === expectedSymbol || displayedSymbol === expectedIndex)
       && contract?.getAttribute('data-canonical-verification') === 'verified'
       && contract?.getAttribute('data-canonical-instrument') === expectedSymbol
       && contract?.getAttribute('data-canonical-horizon') === expectedHorizon
@@ -222,6 +226,8 @@ async function selectCombination(page, symbol, horizon) {
   { timeout: DATA_TIMEOUT_MS });
   return page.evaluate(() => ({
     heading: document.querySelector('.at-proj-heading b')?.textContent || '',
+    displayedSymbol: document.querySelector('[data-projection-state="available"]')
+      ?.getAttribute('data-projection-symbol') || null,
     horizon: document.querySelector('.at-horizon button[aria-pressed="true"]')
       ?.textContent || '',
     snapshotId: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')

@@ -3228,3 +3228,60 @@ def test_operational_cost_uses_the_restored_public_usage_ledger(monkeypatch):
     assert cost["daySpentUsd"] == public["todayEstimatedCostUsd"]
     assert cost["monthSpentUsd"] == public["monthEstimatedCostUsd"]
     assert state["usage"][0]["estimatedCostUsd"] == 0.25
+
+
+def test_news_history_reads_expired_important_article_without_reviving_alert(monkeypatch):
+    import copy
+    from datetime import datetime, timezone
+    store = _news_fresh_store(monkeypatch)
+    now = datetime(2026, 9, 11, 14, tzinfo=timezone.utc).timestamp()
+    monkeypatch.setattr(scanner.time, "time", lambda: now)
+    identity, event = _news_fixture_event(10, 12, "ECB、0.25%利上げ決定", severity="HIGH")
+    event["alertEligible"] = True
+    store["events"][identity] = event; store["order"].append(identity)
+    for i in range(14):
+        key, row = _news_fixture_event(11, i, f"最新材料 {i}", severity="WATCH")
+        store["events"][key] = row; store["order"].append(key)
+    before = copy.deepcopy(store["events"])
+    client = scanner.app.test_client()
+    recent = client.get("/api/argus/news-intelligence").get_json()
+    assert identity not in [e["eventId"] for e in recent["events"]]
+    history = client.get("/api/argus/news-intelligence?view=history").get_json()
+    assert history["view"] == "history"
+    assert history["historyWindowDays"] == 7 and history["retainedEventLimit"] == 40
+    assert len(history["events"]) == 1
+    retained = history["events"][0]
+    assert retained["eventId"] == identity and retained["sourceReceivedAt"] == event["sourceReceivedAt"]
+    assert retained["staleness"] == "STALE" and retained["alertEligible"] is False
+    assert retained["sdaAuthority"] is False
+    assert store["events"] == before
+
+
+def test_news_history_recovery_load_persists_and_rejects_corruption(monkeypatch, tmp_path):
+    import hashlib, json
+    from datetime import datetime, timezone
+    store = _news_fresh_store(monkeypatch)
+    now = datetime(2026, 9, 11, 14, tzinfo=timezone.utc).timestamp()
+    monkeypatch.setattr(scanner.time, "time", lambda: now)
+    state_path = tmp_path / "news_intake_state.json"
+    monkeypatch.setattr(scanner, "_news_intake_file", lambda: str(state_path))
+    identity, event = _news_fixture_event(10, 12, "ECB、0.25%利上げ決定", severity="HIGH")
+    rows = [event]
+    payload = {"schemaVersion": "news-history-recovery-v1", "events": rows,
+        "payloadSha256": hashlib.sha256(json.dumps(rows, ensure_ascii=False,
+            sort_keys=True, separators=(",", ":")).encode()).hexdigest()}
+    recovery_path = tmp_path / "news_history_recovery.json"
+    recovery_path.write_text(json.dumps(payload))
+    scanner._news_intel_load()
+    assert store["historyRestore"]["status"] == "verified"
+    assert store["historyRestore"]["restored"] == 1
+    saved = json.loads(state_path.read_text())
+    assert saved["events"][identity]["sourceReceivedAt"] == event["sourceReceivedAt"]
+    assert saved["events"][identity]["alertEligible"] is False
+    scanner._news_intel_load()
+    assert store["historyRestore"]["restored"] == 0
+    recovery_path.write_text('{"schemaVersion":"bad"}')
+    scanner._news_intel_load()
+    assert store["historyRestore"]["status"] == "rejected"
+    assert store["events"][identity] == saved["events"][identity]
+    assert json.loads(state_path.read_text()) == saved
