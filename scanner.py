@@ -35658,6 +35658,12 @@ def _release_seed_verified_market_views(body):
                 release_binding = dict(prior_binding)
                 triggered_at = release_binding["triggeredAt"]
             if duplicate_count == 12:
+                # Complete in-memory results may follow a failed persistence
+                # attempt. Reconfirm durability before duplicate reconciliation.
+                checkpoint = _osint_persist()
+                if checkpoint.get("verified") is not True or \
+                        checkpoint.get("readBackVerified") is not True:
+                    raise ValueError("release_snapshot_persistence_unverified")
                 return jsonify({
                     "ok": False,
                     "status": "duplicate",

@@ -233,3 +233,12 @@ The fixture now publishes and reads back 1,219,588 bytes with exact analysis-res
 PR320 deployed as 097085f6 but its 12-snapshot acceptance timed out. The saved trigger response was 409 with a partial matching matrix. The current producer rejected any matching subset as a duplicate, preventing the built-in retry from producing the missing instruments after a partial failure. The original first failure is not identified by the final 409 artifact.
 The fix retains verified instruments from the same build, trigger and original time, produces only missing instruments, re-verifies all 12 and requires the existing persistent read-back before success. Mixed bindings fail closed. A complete duplicate remains 409 and is not reported as new success. No certificate, nonce, freshness or durability condition is relaxed.
 Five targeted tests and 87 persistence/snapshot tests with 11 subtests pass. The partial-failure regression preserves the first six snapshots exactly and resumes only SPY/QQQ. Production acceptance remains unverified. Stop after 13.6 production acceptance; 13.7 requires explicit owner restart.
+
+### Release retry durability final review (2026-09-11)
+
+The complete 12-view duplicate path previously skipped persistence. A regression
+reproduced HTTP 409 even when the durable readback would fail. The duplicate path
+now requires the existing checkpoint verified/read-back checks before returning
+409; failure remains HTTP 503 so the same release attempt can retry. No snapshot
+is regenerated and the original binding/time is preserved. Local reproduction
+failed before the fix and passes afterward. Production acceptance remains pending.
