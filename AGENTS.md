@@ -19,7 +19,9 @@ Distinguish implemented, tested, production-observed and complete in reports.
 
 Read `docs/V13_6_REQUIREMENTS.md` for the current scope and acceptance criteria.
 Finish the active naming migration and 13.5 production verification, then
-implement 13.6 from that accepted baseline. Stop after 13.6 production acceptance.
+implement 13.6 from that accepted baseline. After 13.6 production acceptance, audit all features for budget/scope blocks,
+stale settings/models, scheduling, persistence and real output delivery. Fix any
+defects and verify production again, then stop. Reuse prior acceptance evidence.
 Do not investigate, prototype, implement, open PRs, or deploy 13.7 until the owner
 explicitly resumes it next week or later. A date change or 13.6 completion is not
 permission. Existing budget/restoration/collection bug fixes remain in 13.5.

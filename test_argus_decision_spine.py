@@ -161,3 +161,38 @@ def test_snapshot_labels_carry_evidence_pack_id(monkeypatch):
     assert "visibilityGuard" in ec and "missingData" in ec and ec["disciplineJa"]
     for x in snap["labels"]:
         assert "evidencePackId" in x
+
+
+def test_gemini_support_checks_supplied_data_without_search(monkeypatch):
+    requests = []
+    def respond(**kwargs):
+        requests.append(kwargs)
+        return SimpleNamespace(text='{"disagreements": [], "agreement": "confirm", "groundingSources": [{"url": "https://example.test/unsupported"}]}')
+    monkeypatch.setattr(scanner, "_cost_policy_authorize", lambda *a, **k: {"allowed": True})
+    monkeypatch.setattr(scanner, "GEMINI_API_KEY", "synthetic")
+    monkeypatch.setattr(scanner, "google_genai", SimpleNamespace(Client=lambda **kw:
+        SimpleNamespace(models=SimpleNamespace(generate_content=respond))))
+    result, status, grounded = scanner._gemini_check({"labels": []}, {"summaryJa": "facts"}, "historical-pro")
+    assert status == "live" and result["agreement"] == "confirm" and not grounded
+    assert result["groundingSources"] == []
+    assert requests[0]["model"] == scanner._GEMINI_FALLBACK_MODEL
+    assert not getattr(requests[0].get("config"), "tools", None)
+    assert "補助照合役" in requests[0]["contents"]
+    assert "外部調査は担当しません" in requests[0]["contents"]
+
+
+def test_primary_judge_records_provider_response_model(monkeypatch):
+    import sys
+    response = SimpleNamespace(model="gpt-6-astra-served", output_text='{"labels": []}',
+        usage=SimpleNamespace(input_tokens=120, output_tokens=30))
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=lambda **kw:
+        SimpleNamespace(responses=SimpleNamespace(create=lambda **kw: response))))
+    monkeypatch.setattr(scanner, "_OPENAI_API_KEY", "synthetic")
+    monkeypatch.setattr(scanner, "_AI_LAST_RUN", {})
+    monkeypatch.setattr(scanner, "_cost_policy_authorize", lambda *a, **k: {"allowed": True})
+    _, status = scanner._openai_judge({"labels": []})
+    assert status == "live"
+    diag = scanner._AI_LAST_RUN["oaiDiagnostic"]
+    assert diag["requestedModel"] == scanner._OPENAI_MODEL
+    assert diag["returnedModel"] == "gpt-6-astra-served"
+    assert (diag["inputTokens"], diag["outputTokens"]) == (120, 30)

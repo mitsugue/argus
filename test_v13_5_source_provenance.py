@@ -349,3 +349,24 @@ def test_only_canonical_github_remote_is_allowed_in_production(shallow_case):
             candidate_sha=shallow_case["candidate_sha"],
             candidate_tree=shallow_case["candidate_tree"],
             certificate_path=shallow_case["certificate"])
+
+
+def test_reviewed_extension_accepts_only_exact_blob_and_rejects_future_edits(tmp_path, monkeypatch):
+    repo = tmp_path / "exact-extension"
+    subprocess.check_call(["git", "init", "-b", "main", str(repo)])
+    write(repo / "component.py", "before\n")
+    accepted = commit(repo, "base")
+    monkeypatch.setattr(source, "ACCEPTED_V13_SOURCE", accepted)
+    monkeypatch.setattr(source, "ACCEPTED_V13_TREE", git(repo, "rev-parse", accepted + "^{tree}"))
+    monkeypatch.setattr(source, "AUTHORIZED_EXTENSION_PATHS", frozenset())
+    write(repo / "component.py", "reviewed candidate\n")
+    reviewed = commit(repo, "reviewed")
+    blob = git(repo, "rev-parse", reviewed + ":component.py")
+    monkeypatch.setattr(source, "REVIEWED_EXTENSION_BLOBS", {"component.py": blob})
+    result = source.validate_product_semantic_diff(reviewed, repo=repo)
+    assert result["status"] == "PASS"
+    assert result["reviewedExtensionBlobs"] == [{"path": "component.py", "blobSha": blob}]
+    write(repo / "component.py", "future unreviewed behavior\n")
+    future = commit(repo, "future")
+    with pytest.raises(ValueError, match="product_semantic_change_required"):
+        source.validate_product_semantic_diff(future, repo=repo)

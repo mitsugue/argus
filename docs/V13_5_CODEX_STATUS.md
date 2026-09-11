@@ -243,6 +243,63 @@ now requires the existing checkpoint verified/read-back checks before returning
 is regenerated and the original binding/time is preserved. Local reproduction
 failed before the fix and passes afterward. Production acceptance remains pending.
 
+### Material news retention and pending AI analysis (2026-09-11)
+
+Production received the ECB policy-rate decision at 2026-09-10T12:37:11Z
+and processed it at 12:37:58Z. Event nie-fa86d64ae698a39c was stored as WATCH,
+AI_ANALYSIS_UNAVAILABLE, with only family_central_bank as its severity reason.
+It ranked 25th by receipt and was excluded by the 12-item public window.
+At processing time retained daily usage was USD1.535688; replay of the existing
+policy with retained usage and the current unchanged USD2 cap reproduced
+scheduled_daily_budget_exhausted (the news lane ceiling is USD1.50). The original
+per-event failure reason was not retained, so this is a reconstruction.
+
+Candidate changes: explicit authenticated policy decisions remain material without
+AI; recent material events have priority within the existing 40/12 item caps;
+separate events are no longer deduplicated by source and family alone. Stored
+decisions are re-evaluated without changing their identity, receipt, facts or
+trading authority, with a prior-severity record and no retroactive alert.
+Failed important analyses retry at most one item per cycle, with a 15-minute
+backoff and three actual attempts per UTC day, through the existing budget gate.
+Each attempt retains its diagnostic. A retry using a stored headline is explicitly
+labeled headline-only, not a reading of the full original article.
+
+Validation: 205 related tests including public-route concurrency and persisted
+retry outcomes passed. Frontend lint/build passed; source876 and built12 UTF-8
+name checks passed before the final input-scope label (repeat final checks before
+release). Production migration, actual AI retry, screen acceptance and detailed
+source verification remain pending. This is a 13.5 correction, not 13.7 cost work.
+
+
+### 2026-09-11: GPT primary and material-news retry candidate (not yet production)
+
+The owner approved rereading authenticated news-mail excerpts (at most 1,500 characters)
+for the same stored article and sending them to the existing OpenAI API. Fingerprint and
+sender authentication must both match; raw mail is never persisted. A missing or mismatched
+source is disclosed as headline-only analysis. This approval resolves the earlier review block.
+
+Primary explanations, news and production research now default to GPT-6 Astra. Existing
+Terra extraction/referee/rollback and the fixed research benchmark baseline remain separate.
+A repeated same-model escalation is suppressed; cache keys include requested model roles and
+per-article diagnostics do not borrow another article's response model. Official migration and
+pricing checked 2026-09-11: https://developers.openai.com/api/docs/guides/latest-model and
+https://developers.openai.com/api/docs/pricing (Astra standard short input/output $10/$50 per
+million tokens, cached input $1). Existing prices already match. No budget cap change.
+Gemini's production checker now only compares supplied values/claims, uses Flash without
+search, and does not lead analysis. Production OSINT calls GPT; its unused Gemini stage is
+explicitly not selected, not fabricated as completed. Failed GPT research remains partial.
+Historical benchmark models/results are unchanged. The legacy pipeline still contains
+Anthropic phases and compatibility storage keys; it is not proof of latest-GPT adoption
+across every historical/manual mode. Do not reactivate that pipeline or unvalidated BUY.
+
+Related tests before final refinements: 310 passed, including refusal to use mismatched or
+unauthenticated mail, same-model dedup, actual model attribution, and public read boundaries.
+Frontend lint/build passed after model labels changed. Full final validation and deployment,
+actual ECB Astra response/save/readback/browser, and Gemini role observation remain pending.
+13.5 is incomplete; 13.6 implementation has not begun; stop after 13.6 production acceptance.
+
+Final local review: full backend run 4,846 PASS / 1 skip / 2 failures (424.58s). The failures exposed coupling to the old benchmark model and a stale worker-copy assertion. The benchmark epoch is now explicitly frozen, the copy assertion follows the new provider role, and final affected checks passed (379 related checks plus the corrected benchmark set: 25 PASS). Primary judge records the provider response model and usage; mailbox retry IDs are removed at public projection. Source naming guard: 876 UTF-8 files PASS; built artifact: 12 UTF-8 files PASS. Full final-head CI and production remain pending.
+
 ### 2026-09-11: bounded official-event refresh candidate (not production)
 
 Production ai-rejudge run 34552978703 returned scheduled_scope_required at

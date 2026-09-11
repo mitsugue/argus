@@ -2626,7 +2626,7 @@ def test_public_news_routes_answer_while_a_cycle_waits_on_external_ai(monkeypatc
     _news_state_for_tests(monkeypatch)
     gate = _threading.Event()
 
-    def slow_ai(subject, excerpt, fingerprint, taxonomy=None):
+    def slow_ai(subject, excerpt, fingerprint, taxonomy=None, diagnostic=None):
         gate.wait(5.0)            # "the model is thinking"
         return None, "AI_ANALYSIS_UNAVAILABLE"
     monkeypatch.setattr(scanner, "_news_analyze_ai", slow_ai)
@@ -2655,7 +2655,7 @@ def test_a_refetched_mail_is_the_same_event_and_never_analysed_twice(monkeypatch
     _news_state_for_tests(monkeypatch)
     calls = []
 
-    def counting_ai(subject, excerpt, fingerprint, taxonomy=None):
+    def counting_ai(subject, excerpt, fingerprint, taxonomy=None, diagnostic=None):
         calls.append(fingerprint)
         return {"causalPathJa": "円高", "facts": [], "entities": []}, "ANALYZED"
     monkeypatch.setattr(scanner, "_news_analyze_ai", counting_ai)

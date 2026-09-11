@@ -174,7 +174,7 @@ def test_worker_has_research_loop_and_progress():
     src = open("scanner.py", encoding="utf-8").read()
     assert "_OSINT_LOOP_BUDGET" in src
     assert '"deep": 2' in src and '"war_room": 3' in src
-    assert "再探索{loop_i}/{max_loops}: Gemini-onlyニュースを回収中" in src
+    assert "再探索{loop_i}/{max_loops}: 未確認の調査候補を検証中" in src
     assert "検証済みに昇格: {promoted}件" in src
 
 
