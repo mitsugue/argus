@@ -594,6 +594,8 @@ def _reset_ai_state():
 def test_sol_escalation_calls_and_model_recording(tmp_path, monkeypatch):
     _reset_news_store(tmp_path, monkeypatch)
     _reset_ai_state()
+    monkeypatch.setattr(scanner, "_OPENAI_MODEL", "gpt-5.6-terra")
+    monkeypatch.setattr(scanner, "_OPENAI_SOL_MODEL", "gpt-5.6-sol")
     calls = []
 
     def fake_prose(user, max_out=600, system=None, *, purpose="prose",
@@ -617,8 +619,8 @@ def test_sol_escalation_calls_and_model_recording(tmp_path, monkeypatch):
     assert calls == [None, scanner._OPENAI_SOL_MODEL]
     assert scanner._NEWS_INTEL["health"]["aiEscalations"] == 1
     models = scanner._NEWS_INTEL["health"]["aiModels"]
-    assert models["sol"]["returnedModel"].endswith("-served")
-    assert models["terra"]["requestedModel"] == scanner._OPENAI_MODEL
+    assert models["escalation"]["returnedModel"].endswith("-served")
+    assert models["primary"]["requestedModel"] == scanner._OPENAI_MODEL
     routing = [r for r in scanner._NEWS_INTEL["audit"]
                if r.get("stage") == "ai_routing"]
     assert routing and routing[-1]["escalated"] is True
@@ -656,7 +658,8 @@ def test_model_pricing_registry_holds_current_official_prices():
     assert scanner._AI_PRICING["gpt-5.6-terra"]["out"] == 12.0
     assert scanner._AI_MODEL_PRICING_POLICY["revalidateBy"] == "2026-11-21"
     assert "プロモーション" in scanner._AI_MODEL_PRICING_POLICY["noteJa"]
-    assert scanner._OPENAI_SOL_MODEL == "gpt-5.6-sol"
+    assert scanner._OPENAI_SOL_MODEL == "gpt-6-astra"
+    assert scanner._AI_PRICING["gpt-6-astra"] == {"in": 10.0, "out": 50.0, "cachedIn": 1.0}
 
 
 def test_provider_status_exposes_last_pings(monkeypatch):
@@ -805,3 +808,180 @@ def test_material_translation_budget_refusal_is_not_terminal_attempt(tmp_path, m
     assert scanner._news_material_translation_fallback(diagnostic=diagnostic) == 1
     assert diagnostic["translated"] == 1
     assert scanner._NEWS_JA_FAILED[h] == 99
+
+
+def test_saved_policy_decision_review_preserves_original_evidence(tmp_path, monkeypatch):
+    import copy
+    from datetime import datetime, timezone
+    _reset_news_store(tmp_path, monkeypatch)
+    now = time.time()
+    stamp = datetime.fromtimestamp(now - 13 * 3600, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    event = _seed_event("policy-decision", "NIKKEI", "WATCH", "ECB、0.25%利上げ決定",
+                        "ECB、0.25%利上げ決定", stamp)
+    event.update(sourceTier="trusted_subscription", eventType="CENTRAL_BANK",
+                 analysisState="AI_ANALYSIS_UNAVAILABLE", severityReasons=["family_central_bank"])
+    original = copy.deepcopy(event)
+    scanner._NEWS_INTEL["events"][event["eventId"]] = event
+    scanner._NEWS_INTEL["order"] = [event["eventId"]]
+    assert scanner._news_review_saved_policy_decisions() == 1
+    assert scanner._news_review_saved_policy_decisions() == 0
+    assert event["severity"] == "HIGH"
+    assert event["alertEligible"] is False
+    for key, value in original.items():
+        if key not in ("severity", "severityReasons"):
+            assert event[key] == value
+    scanner._news_intel_persist()
+    scanner._NEWS_INTEL["events"] = {}
+    scanner._news_intel_load()
+    restored = scanner._NEWS_INTEL["events"]["policy-decision"]
+    assert restored == event
+    assert restored["materialityReview"]["previousSeverity"] == "WATCH"
+
+
+def test_material_analysis_retry_keeps_budget_failure_pending_then_recovers(tmp_path, monkeypatch):
+    import copy
+    from datetime import datetime, timezone
+    _reset_news_store(tmp_path, monkeypatch)
+    stamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    event = _seed_event('pending-policy', 'NIKKEI', 'HIGH', 'ECB、利上げ決定', 'ECB、利上げ決定', stamp)
+    event['analysisState'] = 'AI_ANALYSIS_UNAVAILABLE'
+    scanner._NEWS_INTEL['events'][event['eventId']] = event
+    scanner._NEWS_INTEL['order'] = [event['eventId']]
+    original = copy.deepcopy(event)
+    calls = []
+    def analyze(subject, excerpt, fingerprint, taxonomy=None, diagnostic=None):
+        calls.append(subject)
+        assert excerpt == ''
+        if len(calls) == 1:
+            diagnostic.update(outcome='skipped', reason='scheduled_daily_budget_exhausted')
+            return None, 'AI_ANALYSIS_UNAVAILABLE'
+        diagnostic.update(outcome='ok', requestedModel='test-model', returnedModel='test-model',
+                          inputTokens=100, outputTokens=30, estUsd=0.001)
+        return {'facts': ['政策金利を変更'], 'causalPathJa': '金利と為替への影響を確認',
+                'uncertaintyJa': '市場反応は未確認'}, 'ANALYZED'
+    monkeypatch.setattr(scanner, '_news_analyze_ai', analyze)
+    assert scanner._news_retry_pending_analysis() == 1
+    assert event['analysisRetry']['attempts'] == 0
+    assert event['analysisDiagnostic']['reason'] == 'scheduled_daily_budget_exhausted'
+    assert scanner._news_retry_pending_analysis() == 0
+    event['analysisRetry']['nextAttemptEpoch'] = 0
+    assert scanner._news_retry_pending_analysis() == 1
+    assert event['analysisState'] == 'ANALYZED'
+    assert event['analysisInputScope'] == 'stored_headline_only'
+    assert event['analysisDiagnostic']['returnedModel'] == 'test-model'
+    for key in ('eventId', 'sourceFingerprint', 'sourceReceivedAt', 'severity',
+                'confirmationState', 'alertEligible', 'sdaAuthority'):
+        assert event[key] == original[key]
+    assert scanner._news_retry_pending_analysis() == 0
+    scanner._news_intel_persist()
+    scanner._NEWS_INTEL['events'] = {}
+    scanner._news_intel_load()
+    assert scanner._NEWS_INTEL['events']['pending-policy'] == event
+
+
+def test_primary_frontier_does_not_repeat_escalation_or_reuse_other_model_cache(tmp_path, monkeypatch):
+    _reset_news_store(tmp_path, monkeypatch)
+    _reset_ai_state()
+    monkeypatch.setattr(scanner, "_OPENAI_MODEL", "gpt-6-astra")
+    monkeypatch.setattr(scanner, "_OPENAI_SOL_MODEL", "gpt-6-astra")
+    calls = []
+    def reply(*a, **kw):
+        calls.append(kw)
+        kw["diagnostic"].update(requestedModel=scanner._OPENAI_MODEL,
+            returnedModel=scanner._OPENAI_MODEL, outcome="ok")
+        return {"facts": ["金利変更の発表"], "eventTypeCandidate": "FED",
+                "entities": [], "causalPathJa": None, "uncertaintyJa": None,
+                "secondOrderJa": None, "materialityGuess": 3}
+    monkeypatch.setattr(scanner, "_openai_prose", reply)
+    tax = {"eventType": "FED", "families": ["FED"], "lowValueHints": False, "themeTags": []}
+    for _ in range(2):
+        scanner._news_analyze_ai("FOMC emergency rate decision", "", "same-input", tax)
+    assert len(calls) == 1
+    assert scanner._NEWS_INTEL["health"]["aiEscalations"] == 0
+    scanner._NEWS_INTEL["health"]["aiModels"]["escalation"] = {"returnedModel": "previous-article"}
+    monkeypatch.setattr(scanner, "_OPENAI_MODEL", "gpt-5.6-sol")
+    monkeypatch.setattr(scanner, "_OPENAI_SOL_MODEL", "gpt-5.6-sol")
+    scanner._news_analyze_ai("FOMC emergency rate decision", "", "same-input", tax)
+    assert len(calls) == 2
+    audit = [row for row in scanner._NEWS_INTEL["audit"] if row.get("stage") == "ai_routing"][-1]
+    assert audit["returnedModel"] == "gpt-5.6-sol"
+
+
+@pytest.mark.parametrize("authenticated,matching,expected", [(True, True, True), (False, True, False), (True, False, False)])
+def test_retry_excerpt_requires_original_fingerprint_and_authenticated_sender(monkeypatch, authenticated, matching, expected):
+    message = gi.normalize_message(mail("matchingmail", "ECB raises interest rates", body="Verified bounded excerpt"))
+    event = {"analysisSourceMessageId": "matchingmail", "sourceFingerprint":
+        scanner.argus_news_intelligence.source_fingerprint(message_id=message["rfcMessageId"],
+            subject=message["subject"], url=message.get("url")) if matching else "different-article"}
+    monkeypatch.setattr(gi, "is_configured", lambda env: True)
+    monkeypatch.setattr(gi, "refresh_access_token", lambda *a: "synthetic")
+    monkeypatch.setattr(gi, "fetch_message", lambda *a: message)
+    monkeypatch.setattr(gi, "authenticate_sender", lambda *a: {"authenticated": authenticated})
+    excerpt, status = scanner._news_retry_input(event)
+    assert bool(excerpt) is expected
+    assert status == ("authenticated_fingerprint_match" if expected else "source_not_matched")
+    assert "excerpt" not in event
+
+
+def test_public_news_projection_excludes_internal_mailbox_reference():
+    original = {"eventId": "example", "analysisSourceMessageId": "private-mail-id",
+                "analysisInputScope": "mail_headline_and_bounded_excerpt"}
+    public = scanner.argus_news_intelligence.project_owner_event(original)
+    assert "analysisSourceMessageId" not in public
+    assert public["analysisInputScope"] == original["analysisInputScope"]
+    assert original["analysisSourceMessageId"] == "private-mail-id"
+
+
+
+@pytest.mark.parametrize("fail_provider", [False, True])
+def test_translation_reserves_shared_money_before_another_call_can_start(monkeypatch, fail_provider):
+    import threading
+    import sys
+    from types import SimpleNamespace
+    import scanner
+    cp = scanner.argus_cost_policy
+    now = scanner.datetime.now(scanner.pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    policy = cp.default_state("SCHEDULED_AI", event_opt_in=True)
+    for cost in [0.08] * 5 + [0.07]:
+        policy = cp.record_execution(policy, provider="openai", purpose="event_analysis",
+                                     at=now, estimated_cost_usd=cost)
+    policy = cp.record_execution(policy, provider="openai", purpose="news_intel",
+                                 at=now, estimated_cost_usd=1.5)
+    monkeypatch.setattr(scanner, "_COST_POLICY", policy)
+    monkeypatch.setattr(scanner, "_SCHEDULED_AI_DAILY_USD", 2.0)
+    monkeypatch.setattr(scanner, "_DURABILITY_PRODUCTION", False)
+    monkeypatch.setattr(scanner, "_cost_policy_persist_durable", lambda: True)
+    monkeypatch.setattr(scanner, "_cost_policy_checkpoint_after_write", lambda durable: None)
+    monkeypatch.setattr(scanner, "_osint_persist", lambda: None)
+    monkeypatch.setattr(scanner, "GEMINI_API_KEY", "synthetic")
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    def respond(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(5)
+        if fail_provider:
+            raise RuntimeError("provider unavailable")
+        return SimpleNamespace(text='{"translations":["日本語の見出し"]}')
+    fake = SimpleNamespace(Client=lambda **kwargs: SimpleNamespace(
+        models=SimpleNamespace(generate_content=respond)),
+        types=SimpleNamespace(GenerateContentConfig=lambda **kwargs: kwargs))
+    monkeypatch.setattr(scanner, "google_genai", fake)
+    monkeypatch.setitem(sys.modules, "google.genai", fake)
+    results = []
+    thread = threading.Thread(target=lambda: results.append(scanner._translate_headlines_ja(["First headline"])))
+    thread.start()
+    try:
+        assert entered.wait(2)
+        second = scanner._translate_headlines_ja(["Second headline"])
+    finally:
+        release.set()
+        thread.join(5)
+    assert not thread.is_alive()
+    assert second == {} and len(calls) == 1
+    assert results and bool(results[0]) is (not fail_provider)
+    usage = scanner._COST_POLICY["usage"]
+    assert not any(row.get("pending") for row in usage)
+    assert sum(row.get("estimatedCostUsd", 0) for row in usage) <= 2.0
+    assert sum(row.get("purpose") == "headline_translation" for row in usage) == (0 if fail_provider else 1)

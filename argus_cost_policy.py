@@ -92,6 +92,21 @@ def _skip(mode: str, reason: str, purpose: str) -> Dict[str, Any]:
             "reason": reason, "mode": mode, "purpose": purpose}
 
 
+
+def _scheduled_budget_usage(day_rows, budget):
+    rows = [row for row in day_rows if row.get("purpose") in SCHEDULED_PURPOSES
+            or row.get("purpose") == SCHEDULED_EVENT_PURPOSE]
+    events = [row for row in rows if row.get("purpose") == SCHEDULED_EVENT_PURPOSE]
+    spent = round(sum(float(row.get("estimatedCostUsd") or 0.0) for row in rows), 6)
+    event_spent = round(sum(float(row.get("estimatedCostUsd") or 0.0) for row in events), 6)
+    # Money already spent on events is already included in total spend. Keep
+    # only their outstanding allocation; after the daily run cap no new event
+    # call can use that allocation. Pending reservations count as usage too.
+    reserve = (max(0.0, min(budget, SCHEDULED_EVENT_RESERVE_USD) - event_spent)
+               if len(events) < SCHEDULED_EVENT_RUNS_PER_DAY else 0.0)
+    return spent, event_spent, len(events), reserve
+
+
 def authorize(state: Dict[str, Any], *, provider: str, purpose: str,
               automatic: bool, now_iso: str = "", event_id: str = "",
               event_phase: str = "", confirmation: bool = False,
@@ -140,19 +155,15 @@ def authorize(state: Dict[str, Any], *, provider: str, purpose: str,
             # Automatic news translation/analysis, bounded by a daily budget
             # summed over the recorded usage rows of the scheduled lane.
             today = _day(now_iso)
-            spent = sum(float(x.get("estimatedCostUsd") or 0.0)
-                        for x in st["usage"]
-                        if _day(x.get("at")) == today
-                        and (x.get("purpose") in SCHEDULED_PURPOSES
-                             or x.get("purpose") == SCHEDULED_EVENT_PURPOSE))
             est = (float(estimated_cost_usd)
                    if isinstance(estimated_cost_usd, (int, float))
                    and estimated_cost_usd >= 0 else 0.0)
             budget = max(0.0, float(scheduled_daily_budget_usd))
-            # The event lane may use the whole budget; the news lanes stop at
-            # budget − reserve so translations cannot starve the event lane.
-            lane_cap = budget if scheduled_event else max(
-                0.0, budget - min(budget, SCHEDULED_EVENT_RESERVE_USD))
+            spent, _, _, reserve = _scheduled_budget_usage(
+                [x for x in st["usage"] if _day(x.get("at")) == today], budget)
+            # Both purposes share the hard cap; only still-needed event funds
+            # are held back from news. Never count event spend twice.
+            lane_cap = budget if scheduled_event else max(0.0, budget - reserve)
             if spent + est > lane_cap:
                 return _skip(mode, "scheduled_daily_budget_exhausted", purpose)
         else:
@@ -245,19 +256,17 @@ def public_status(state: Dict[str, Any], now_iso: str,
     mode = st["mode"]
     # v13.5.63 (GPT review item 4): key / budget / permission / last refusal
     # are separate facts. The key is reported as configured-or-not only.
-    lane_rows = [x for x in day_rows
-                 if x.get("purpose") in SCHEDULED_PURPOSES
-                 or x.get("purpose") == SCHEDULED_EVENT_PURPOSE]
-    lane_spent = round(sum(float(x.get("estimatedCostUsd") or 0.0) for x in lane_rows), 6)
     budget = max(0.0, float(scheduled_daily_budget_usd))
-    event_runs = sum(1 for x in day_rows if x.get("purpose") == SCHEDULED_EVENT_PURPOSE)
+    lane_spent, event_spent, event_runs, reserve_remaining = _scheduled_budget_usage(day_rows, budget)
     last = st.get("lastExecution") or {}
     scheduled_lane = {
         "dailyBudgetUsd": budget, "spentTodayUsd": lane_spent,
         "remainingUsd": round(max(0.0, budget - lane_spent), 6),
         "eventReserveUsd": min(budget, SCHEDULED_EVENT_RESERVE_USD),
+        "eventSpentTodayUsd": event_spent,
+        "eventReserveRemainingUsd": round(reserve_remaining, 6),
         "eventRemainingUsd": round(max(0.0, budget - lane_spent), 6),
-        "newsRemainingUsd": round(max(0.0, budget - min(budget, SCHEDULED_EVENT_RESERVE_USD) - lane_spent), 6),
+        "newsRemainingUsd": round(max(0.0, budget - reserve_remaining - lane_spent), 6),
         "eventRunsToday": event_runs, "eventRunsPerDay": SCHEDULED_EVENT_RUNS_PER_DAY,
         "eventLaneOpen": bool(mode == "SCHEDULED_AI" and st.get("eventOptIn")
                               and event_runs < SCHEDULED_EVENT_RUNS_PER_DAY

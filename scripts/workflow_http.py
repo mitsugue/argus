@@ -21,7 +21,8 @@ _FAIL_STATUSES = {"error", "failed", "failure", "unreachable", "unauthorized",
                   "forbidden", "blocked", "invalid"}
 _DEGRADED_STATUSES = {"degraded", "partial"}
 _SKIP_STATUSES = {"expected_skip", "busy", "skipped", "no_work", "noop",
-                  "deterministic_mode"}
+                  "deterministic_mode", "scheduled_scope_required",
+                  "scheduled_daily_budget_exhausted", "scheduled_event_runs_exhausted"}
 _SECRET_KEYS = ("token", "secret", "password", "passphrase", "credential",
                 "authorization", "apikey", "api_key", "hmac")
 _SAFE_OUTPUT_KEYS = ("ok", "status", "buildSha", "ready",

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import argus_news_freshness
 import argus_osint_attribution
@@ -1649,23 +1649,25 @@ AUTOPILOT_TERMINAL = ("completed", "failed_safe")
 
 
 def autopilot_progress(done_keys: List[str], *, failed_stage: Optional[str] = None,
-                       fail_reason_ja: str = "") -> Dict[str, Any]:
+                       fail_reason_ja: str = "", excluded_keys: Sequence[str] = ()) -> Dict[str, Any]:
     """段階進行の構造化。失敗はfailed_safe(途中結果は保持・嘘の完了は返さない)。"""
-    done = [k for k, _ in AUTOPILOT_STAGES if k in set(done_keys or [])]
+    excluded = set(excluded_keys) & {"scout_gemini"}
+    active = [(k, ja) for k, ja in AUTOPILOT_STAGES if k not in excluded]
+    done = [k for k, _ in AUTOPILOT_STAGES if k in set(done_keys or []) and k not in excluded]
     stages = [{"key": k, "labelJa": ja,
-               "state": ("failed" if k == failed_stage else
+               "state": ("not_selected" if k in excluded else "failed" if k == failed_stage else
                          "done" if k in done else "pending")}
               for k, ja in AUTOPILOT_STAGES]
     if failed_stage:
         status = "failed_safe"
-    elif len(done) == len(AUTOPILOT_STAGES):
+    elif len(done) == len(active):
         status = "completed"
     else:
         status = "running"
-    nxt = next((ja for k, ja in AUTOPILOT_STAGES
+    nxt = next((ja for k, ja in active
                 if k not in set(done) and k != failed_stage), None)
     return {"stages": stages, "doneCount": len(done),
-            "totalStages": len(AUTOPILOT_STAGES), "status": status,
+            "totalStages": len(active), "status": status,
             "currentStageJa": (None if status in AUTOPILOT_TERMINAL else nxt),
             "failReasonJa": (fail_reason_ja or "") if failed_stage else ""}
 

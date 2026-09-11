@@ -242,3 +242,193 @@ now requires the existing checkpoint verified/read-back checks before returning
 409; failure remains HTTP 503 so the same release attempt can retry. No snapshot
 is regenerated and the original binding/time is preserved. Local reproduction
 failed before the fix and passes afterward. Production acceptance remains pending.
+
+### Material news retention and pending AI analysis (2026-09-11)
+
+Production received the ECB policy-rate decision at 2026-09-10T12:37:11Z
+and processed it at 12:37:58Z. Event nie-fa86d64ae698a39c was stored as WATCH,
+AI_ANALYSIS_UNAVAILABLE, with only family_central_bank as its severity reason.
+It ranked 25th by receipt and was excluded by the 12-item public window.
+At processing time retained daily usage was USD1.535688; replay of the existing
+policy with retained usage and the current unchanged USD2 cap reproduced
+scheduled_daily_budget_exhausted (the news lane ceiling is USD1.50). The original
+per-event failure reason was not retained, so this is a reconstruction.
+
+Candidate changes: explicit authenticated policy decisions remain material without
+AI; recent material events have priority within the existing 40/12 item caps;
+separate events are no longer deduplicated by source and family alone. Stored
+decisions are re-evaluated without changing their identity, receipt, facts or
+trading authority, with a prior-severity record and no retroactive alert.
+Failed important analyses retry at most one item per cycle, with a 15-minute
+backoff and three actual attempts per UTC day, through the existing budget gate.
+Each attempt retains its diagnostic. A retry using a stored headline is explicitly
+labeled headline-only, not a reading of the full original article.
+
+Validation: 205 related tests including public-route concurrency and persisted
+retry outcomes passed. Frontend lint/build passed; source876 and built12 UTF-8
+name checks passed before the final input-scope label (repeat final checks before
+release). Production migration, actual AI retry, screen acceptance and detailed
+source verification remain pending. This is a 13.5 correction, not 13.7 cost work.
+
+
+### 2026-09-11: GPT primary and material-news retry candidate (not yet production)
+
+The owner approved rereading authenticated news-mail excerpts (at most 1,500 characters)
+for the same stored article and sending them to the existing OpenAI API. Fingerprint and
+sender authentication must both match; raw mail is never persisted. A missing or mismatched
+source is disclosed as headline-only analysis. This approval resolves the earlier review block.
+
+Primary explanations, news and production research now default to GPT-6 Astra. Existing
+Terra extraction/referee/rollback and the fixed research benchmark baseline remain separate.
+A repeated same-model escalation is suppressed; cache keys include requested model roles and
+per-article diagnostics do not borrow another article's response model. Official migration and
+pricing checked 2026-09-11: https://developers.openai.com/api/docs/guides/latest-model and
+https://developers.openai.com/api/docs/pricing (Astra standard short input/output $10/$50 per
+million tokens, cached input $1). Existing prices already match. No budget cap change.
+Gemini's production checker now only compares supplied values/claims, uses Flash without
+search, and does not lead analysis. Production OSINT calls GPT; its unused Gemini stage is
+explicitly not selected, not fabricated as completed. Failed GPT research remains partial.
+Historical benchmark models/results are unchanged. The legacy pipeline still contains
+Anthropic phases and compatibility storage keys; it is not proof of latest-GPT adoption
+across every historical/manual mode. Do not reactivate that pipeline or unvalidated BUY.
+
+Related tests before final refinements: 310 passed, including refusal to use mismatched or
+unauthenticated mail, same-model dedup, actual model attribution, and public read boundaries.
+Frontend lint/build passed after model labels changed. Full final validation and deployment,
+actual ECB Astra response/save/readback/browser, and Gemini role observation remain pending.
+13.5 is incomplete; 13.6 implementation has not begun; stop after 13.6 production acceptance.
+
+Final local review: full backend run 4,846 PASS / 1 skip / 2 failures (424.58s). The failures exposed coupling to the old benchmark model and a stale worker-copy assertion. The benchmark epoch is now explicitly frozen, the copy assertion follows the new provider role, and final affected checks passed (379 related checks plus the corrected benchmark set: 25 PASS). Primary judge records the provider response model and usage; mailbox retry IDs are removed at public projection. Source naming guard: 876 UTF-8 files PASS; built artifact: 12 UTF-8 files PASS. Full final-head CI and production remain pending.
+
+### 2026-09-11: bounded official-event refresh candidate (not production)
+
+Production ai-rejudge run 34552978703 returned scheduled_scope_required at
+02:01:29Z but its HTTP wrapper called this success. Official-event tracking then
+exhausted three 120-second requests; later independent refreshes never ran.
+The candidate reports known scheduled-policy refusals as expected skips, keeps
+HTTP/business failures as failures, and separates each refresh into its own
+workflow step so unrelated failures do not suppress later lanes. A failed step
+still fails the job. A running refresh is allowed to finish within its bounded
+job rather than being cancelled by the next schedule.
+
+Official-event tracking uses a cooperative 25-second work budget and at most
+100 records, with non-overlapping admin calls and a saved continuation cursor.
+Provider pagination honors the remaining work budget; an incomplete paginated
+response cannot overwrite the existing price cache. Missing reactions remain
+pending and are revisited on the next cycle. Calculations and evidence records
+are unchanged. This fixes timeout/starvation; it does not enable blocked AI
+purposes or unvalidated trading decisions. The cursor uses the existing runtime
+cache; it is not a new claim of recovery across loss of that cache.
+
+194 related tests passed, including continuation, deadline/cache preservation,
+non-overlap, official-event persistence, public-route boundaries and HTTP result
+classification. Source naming check passed for 876 UTF-8 files. Full candidate
+CI, production tracking and execution of later lanes are still unverified.
+
+### 2026-09-11: freeze the cost ledger during full checkpoint construction
+
+After PR321, the exact 12-snapshot public/API acceptance and Pages workflow
+34558204494 passed. Its producer HTTP response timed out; reconciliation recovered
+all 12, so that workflow alone does not prove the final disk checkpoint. Runtime
+logs reported recovery_post_genesis_checkpoint_candidate_invalid at 03:38:24Z.
+At 03:47:12Z the last verified checkpoint was still 03:30:26Z, before the new
+release snapshots. Final disk acceptance remains separate.
+
+A local concurrency regression reproduced a real integrity failure: the full
+checkpoint retained references to mutable cost usage rows, and settlement after
+sealing invalidated that checkpoint. The bounded cost ledger is now copied under
+its own lock before inclusion. The test confirms the first disk image retains
+the original reservation, the live ledger retains the settlement, and the next
+verified disk image includes it. No budget limit, accounting rule or recovery
+verification is weakened. The test failed before and passes after the fix;
+26 cost/concurrency checks pass. This is a proven race, not proof that it is the
+only cause of the production error. Production correction remains unverified.
+
+
+### 2026-09-11: Retry deferred cached chart publication
+
+Production 53ad2487 retained the September 7 report for 5803 despite newer
+collected history, while chartRefresh reported busy. The warm worker previously
+waited its full 600-second provider cycle after losing the checkpoint lock.
+During the existing 60-second interest scan it now retries only a busy,
+restore-pending, or bounded cached publication. Successful unchanged results and
+permanent failures retain the regular cycle. Provider/AI cadence, startup restore
+checks, checkpoint authority lock, 45-second/three-publication limits and journal
+ownership are unchanged. No analysis formula or trade decision changes.
+
+A real competing-thread regression reproduces the missed opportunity before the
+change; after it, cached publication proceeds at the next scan without repeating
+provider or AI work. Restore-pending, bounded continuation, repeated contention,
+and permanent-error cases are also covered: 35 chart/bootstrap tests PASS.
+This does not guarantee acquisition during a continuously held lock. Production
+rollout and latest-date chart readback remain unverified; do not mark this closed.
+
+
+### 2026-09-11: remaining operational fixes integrated with PR322
+
+The later PR321 operational readback at 03:58:05Z confirmed a new verified
+checkpoint, readBackVerified at 03:45:52Z, integrity ok, with two successful
+writes and one earlier failure. The release-trigger identifier was also present
+in the stable physical checkpoint file. This closes that pending observation;
+it does not erase the earlier integrity failure or prove the local race fix
+has reached production. The 5803 chart remains dated September 7 in the last recorded public readback.
+
+The bounded event refresh, stable cost snapshot and cached chart retry have
+been integrated with the PR322 news/GPT candidate in a separate worktree.
+170 integrated tests plus 11 subtests pass. Source admission records exact blob
+identities for the reviewed workflow and its two regression files; those paths
+are not added to the permanent allowlist. Full current-candidate CI, both
+certificates, merge, production collection/AI/save/readback and browser acceptance
+remain required. No 13.6 completion or iPhone migration acceptance is claimed.
+
+
+### 2026-09-11: release spent/completed event reservations within the same budget
+
+The 09:21:18Z production public cost response reported USD1.530078 scheduled
+spend, six of six event runs, USD0.469922 total remaining, but zero news remaining.
+The policy subtracted the original USD0.50 reserve from the shared budget even
+after event spending had already been counted and after no event runs remained.
+The candidate reserves only the outstanding event allocation and releases it
+when the daily event quota is consumed. Pending reservations still count against
+the shared budget. Daily USD2.00, the USD0.50 initial reserve, six event runs,
+mode/purpose restrictions and trading gates are unchanged. No contract or
+architecture cost optimization is included.
+
+Public newsRemainingUsd and authorization now use the same calculation; the
+public view additionally reports eventSpentTodayUsd/eventReserveRemainingUsd.
+Four regressions fail before the change and all 18 pure policy checks pass
+after it, including shared hard cap, next UTC day, remaining event protection
+and purpose restrictions. 183 cost/reservation/restore/public/news integration
+checks pass. The previous integrated version passed the whole backend suite
+(4,869 passed, one skip, 20 subtests); that whole-suite result predates this
+additional pure budget calculation, so final candidate CI remains required.
+Actual production re-analysis using the released allowance is still unverified.
+
+
+### 2026-09-11: reserve batch translation before calling its provider
+
+The batch translator checked the remaining allowance but did not reserve it.
+With USD0.03 left, two overlapping USD0.02-estimated calls could both start and
+exceed the shared cap. A real competing-thread regression reproduced this.
+The translator now uses the existing atomic reserve/settle path. A returned
+reply is counted before content/translation validation, and a failed request
+releases its pending reservation. The existing fixed USD0.02 estimate, model,
+retry policy and daily cap are unchanged; this is not a claim of invoice-level
+or returned-token cost measurement. Per-function usage detail remains a13.6
+requirement.
+
+195 news/cost/public/naming integration tests passed. The concurrency regression
+also passes with provider failure and confirms there is no leftover pending
+reservation. Production behavior remains unverified until the next release.
+
+
+### 2026-09-11: one production candidate for news and operational recovery
+
+The final candidate combines PR322's important-news/GPT changes with the tested
+remaining operational fixes above. Production inspection showed that the old
+reserve calculation would keep the new news analysis blocked, so a separate
+intermediate deployment would not satisfy acceptance. The same commits and
+local evidence are retained; there is one combined PR and one final deployment.
+Previous separate-candidate admission pins and certificates do not certify this
+combined head. Its exact diff, source proof, both certificates and current-head
+CI must pass before normal merge. Production/UI/iPhone acceptance remains open.

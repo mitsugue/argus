@@ -1,91 +1,79 @@
-# Option C (owner-chosen, v10.155): periodic AI re-judgment every 15 min DURING
-# MARKET HOURS, so the GPT-5.5 + Gemini view (and its self-scoring/C.A.O.S.-aware
-# confidence) stays fresh through the session — not just the daily 16:05 run.
-#
-# Cost: ~52 runs/weekday ≈ $2.6/day ≈ $57/mo at ~$0.05/run — under the server's
-# $5/day / $80/mo AI budget HARD-STOP, which pauses AI gracefully if exceeded
-# (the real cost guard). The daily ledger/scoring run stays separate (16:05 JST).
-# 'ai-only' style: this only refreshes + caches the AI view; it does NOT write the
-# ledger. Admin-token gated; no-op without the secret.
+# Refresh independent lanes during market hours. Actual executions remain
+# subject to the backend policy; a skipped AI call is never an analysis success.
 name: ai-rejudge
-
 on:
   schedule:
-    - cron: '*/15 0-6 * * 1-5'    # JP session  00:00–06:30 UTC (09:00–15:30 JST)
-    - cron: '*/15 13-20 * * 1-5'  # US session  13:30–20:00 UTC (09:30–16:00 ET)
+    - cron: '*/15 0-6 * * 1-5'
+    - cron: '*/15 13-20 * * 1-5'
   workflow_dispatch: {}
-
 permissions:
   contents: read
-
-# Don't pile up runs if one is slow; latest wins.
 concurrency:
   group: ai-rejudge
-  cancel-in-progress: true
-
+  cancel-in-progress: false
 jobs:
   rejudge:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
+    env:
+      ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
     steps:
       - uses: actions/checkout@v5
-      - name: Trigger AI re-judgment (admin-gated; bounded by the AI budget)
-        env:
-          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+      - name: Refresh AI judgment
+        if: ${{ !cancelled() }}
         run: |
-          # success=HTTP 2xx+valid JSON+business ok; expected_skip=missing
-          # secret or explicit budget/rate gate; degraded/failure=non-zero step.
-          BE="https://argus-backend-3j2m.onrender.com"
           [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — expected_skip"; exit 0; }
-          curl -s --max-time 60 "$BE/api/argus/rates" > /dev/null || true   # warm dyno
-          # checker=flash: the frequent 15-min refresh uses the cheap double-check
-          # tier (routine verification ≈ pro). The daily scored run uses pro.
-          RESP=$(python3 scripts/workflow_http.py --name ai-rejudge --method POST --timeout 240 \
+          python3 scripts/workflow_http.py --name ai-rejudge --method POST --timeout 240 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
-            --expected-status disabled --expected-status budget_exceeded \
-            --expected-status rate_limited --expected-status deterministic_mode \
-            --url "$BE/api/argus/ai-judgment/run?checker=flash")
-          echo "ai-rejudge(flash): ${RESP:0:240}"
-          # C.A.O.S. event lifecycle — pre/post analyses. Self-limited (6h cache per
-          # event; regenerates only on a phase flip or staleness), so calling every
-          # 15 min mostly returns cached (made=0) and costs nothing.
-          EVT=$(python3 scripts/workflow_http.py --name caos-events --method POST --timeout 180 \
+            --expected-status disabled \
+            --expected-status budget_exceeded \
+            --expected-status rate_limited \
+            --expected-status deterministic_mode \
+            --url "https://argus-backend-3j2m.onrender.com/api/argus/ai-judgment/run?checker=flash"
+      - name: Refresh event analysis
+        if: ${{ !cancelled() }}
+        run: |
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — expected_skip"; exit 0; }
+          python3 scripts/workflow_http.py --name caos-events --method POST --timeout 180 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --expected-status deterministic_mode \
-            --url "$BE/api/argus/event-analysis/generate")
-          echo "caos-events: ${EVT:0:200}"
-          # Official-event lifecycle (v11.3): fill pending market-reaction windows from
-          # cached daily bars. No LLM, cheap; most calls update 0 records.
-          OFE=$(python3 scripts/workflow_http.py --name official-events-track --method POST --timeout 120 \
-            --attempts 3 --retry-delay 8 \
+            --url "https://argus-backend-3j2m.onrender.com/api/argus/event-analysis/generate"
+      - name: Track official event reactions
+        if: ${{ !cancelled() }}
+        run: |
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — expected_skip"; exit 0; }
+          python3 scripts/workflow_http.py --name official-events-track --method POST --timeout 90 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
-            --url "$BE/api/argus/official-events/track")
-          echo "official-events-track: ${OFE:0:160}"
-          # Entity profiles (association engine): generates only missing/stale watchlist
-          # profiles (seeds + fresh ones skipped), so this is near-free until a NEW stock
-          # is added — then it auto-profiles it for relationship-aware news linking.
-          PROF=$(python3 scripts/workflow_http.py --name entity-profiles --method POST --timeout 180 \
-            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
-            --expected-status deterministic_mode \
-            --url "$BE/api/argus/entity-profiles/generate")
-          echo "entity-profiles: ${PROF:0:200}"
-          # Mover-cause ladder (v11.3.3): deterministic evidence refresh for today's sharp
-          # movers (both directions) — no LLM, cheap, and placed BEFORE the LLM-heavy
-          # buy-candidates call so a slow AI run can't starve it of the job timeout.
-          MCR=$(python3 scripts/workflow_http.py --name mover-causes --method POST --timeout 120 \
-            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
-            --url "$BE/api/argus/admin/mover-causes/refresh")
-          echo "mover-causes: ${MCR:0:200}"
-          # Buy candidates (本日の注目候補): screens today's movers into a high-bar watch list.
-          BUY=$(python3 scripts/workflow_http.py --name buy-candidates --method POST --timeout 180 \
+            --expected-status partial \
+            --url "https://argus-backend-3j2m.onrender.com/api/argus/official-events/track"
+      - name: Refresh entity profiles
+        if: ${{ !cancelled() }}
+        run: |
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — expected_skip"; exit 0; }
+          python3 scripts/workflow_http.py --name entity-profiles --method POST --timeout 180 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --expected-status deterministic_mode \
-            --url "$BE/api/argus/buy-candidates/generate")
-          echo "buy-candidates: ${BUY:0:200}"
-          # V11.5: translate queued English news headlines to JP (every 15 min so any
-          # page's news is shown translated). Cheap Gemini call; no article bodies.
-          TR=$(python3 scripts/workflow_http.py --name news-translate --method POST --timeout 90 \
+            --url "https://argus-backend-3j2m.onrender.com/api/argus/entity-profiles/generate"
+      - name: Refresh mover causes
+        if: ${{ !cancelled() }}
+        run: |
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — expected_skip"; exit 0; }
+          python3 scripts/workflow_http.py --name mover-causes --method POST --timeout 120 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --url "https://argus-backend-3j2m.onrender.com/api/argus/admin/mover-causes/refresh"
+      - name: Refresh candidate watch list
+        if: ${{ !cancelled() }}
+        run: |
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — expected_skip"; exit 0; }
+          python3 scripts/workflow_http.py --name buy-candidates --method POST --timeout 180 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --expected-status deterministic_mode \
-            --url "$BE/api/argus/admin/news/translate")
-          echo "news-translate: ${TR:0:120}"
+            --url "https://argus-backend-3j2m.onrender.com/api/argus/buy-candidates/generate"
+      - name: Translate queued headlines
+        if: ${{ !cancelled() }}
+        run: |
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — expected_skip"; exit 0; }
+          python3 scripts/workflow_http.py --name news-translate --method POST --timeout 90 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --expected-status deterministic_mode \
+            --url "https://argus-backend-3j2m.onrender.com/api/argus/admin/news/translate"

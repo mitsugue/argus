@@ -403,3 +403,23 @@ def test_memory_snapshot_includes_rps_history():
         body = r.get_data(as_text=True)
         for banned in ("quantity", "avgCost", "passphrase", "hmac"):
             assert banned not in body
+
+
+def test_production_gpt_progress_does_not_invent_gemini_completion():
+    active = [key for key, _ in oe.AUTOPILOT_STAGES if key != "scout_gemini"]
+    done = oe.autopilot_progress(active, excluded_keys=("scout_gemini",))
+    assert done["status"] == "completed"
+    assert done["doneCount"] == done["totalStages"] == 13
+    assert next(row for row in done["stages"] if row["key"] == "scout_gemini")["state"] == "not_selected"
+    pending = oe.autopilot_progress([k for k in active if k != "scout_gpt"], excluded_keys=("scout_gemini",))
+    assert pending["status"] == "running"
+
+
+def test_production_autopilot_wiring_excludes_unused_provider(monkeypatch):
+    monkeypatch.setattr(scanner, "_OSINT_PROGRESS", {})
+    active = [key for key, _ in oe.AUTOPILOT_STAGES if key != "scout_gemini"]
+    scanner._osint_autopilot_mark("TEST", *active)
+    progress = scanner._OSINT_PROGRESS["TEST"]["autopilot"]
+    assert progress["status"] == "completed" and progress["doneCount"] == 13
+    scanner._osint_autopilot_fail("TEST", "scout_gpt", "unavailable")
+    assert scanner._OSINT_PROGRESS["TEST"]["autopilot"]["status"] == "failed_safe"

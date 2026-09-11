@@ -142,6 +142,9 @@ def test_gemini_rejects_new_content_before_cache_admission_and_counts_spend(monk
     monkeypatch.setattr(scanner, "_cost_policy_authorize", lambda *a, **k: {"allowed": True})
     charges, calls = [], []
     monkeypatch.setattr(scanner, "_cost_policy_record", lambda *a, **k: charges.append(k))
+    monkeypatch.setattr(scanner, "_cost_policy_reserve", lambda *a, **k: ({"allowed": True}, "synthetic"))
+    monkeypatch.setattr(scanner, "_cost_policy_settle", lambda rid, **k:
+                        charges.append({"estimated_cost_usd": k["actual_cost_usd"]}) if k["ok"] else None)
     text = json.dumps({"claims": [], "summary": "retired_person"} if lane == "research"
                       else {"translations": ["retired_person"]})
     def respond(**kw):
@@ -288,6 +291,6 @@ def test_legacy_crosscheck_rejects_unreviewed_input_before_call(monkeypatch):
     monkeypatch.setattr(scanner, "google_genai", SimpleNamespace(Client=lambda **kw:
         SimpleNamespace(models=SimpleNamespace(generate_content=lambda **kw: calls.append(kw)))))
     monkeypatch.setattr(scanner, "add_log", lambda *a: None)
-    result = scanner.gemini_score_stocks([{"symbol": "TEST", "name": "retired_person"}])
+    result = scanner._gpt_crosscheck_stocks([{"symbol": "TEST", "name": "retired_person"}])
     assert not calls
-    assert result["TEST"]["reason"] == "unavailable"
+    assert result == {}

@@ -248,3 +248,61 @@ class ScheduledLaneReserveTests(unittest.TestCase):
 def json_dumps(value):
     import json
     return json.dumps(value, ensure_ascii=False)
+
+
+class SpentEventReserveTests(unittest.TestCase):
+    def state(self, news, event_costs):
+        st = cp.default_state("SCHEDULED_AI", event_opt_in=True)
+        for purpose, costs in (("news_intel", [news]), ("event_analysis", event_costs)):
+            for cost in costs:
+                st = cp.record_execution(st, provider="openai", purpose=purpose,
+                                         at="2026-09-11T01:00:00Z", estimated_cost_usd=cost)
+        return st
+
+    def authorize(self, st, cost, purpose="news_intel", at="2026-09-11T09:21:18Z"):
+        return cp.authorize(st, provider="openai", purpose=purpose, automatic=True,
+                            now_iso=at, estimated_cost_usd=cost, estimated_tokens=100)
+
+    def test_spent_event_allocation_is_not_reserved_a_second_time(self):
+        st = self.state(1.3, [0.3])
+        self.assertTrue(self.authorize(st, 0.19)["allowed"])
+        self.assertFalse(self.authorize(st, 0.21)["allowed"])
+        lane = cp.public_status(st, "2026-09-11T09:21:18Z")["scheduledLane"]
+        self.assertAlmostEqual(lane["newsRemainingUsd"], 0.2)
+        self.assertAlmostEqual(lane["eventReserveRemainingUsd"], 0.2)
+        self.assertTrue(lane["eventLaneOpen"])
+        self.assertEqual(lane["eventReserveUsd"], 0.5)
+
+    def test_completed_daily_event_quota_releases_only_unspent_budget(self):
+        # Same total and six-run condition observed on production; per-row
+        # amounts are a synthetic fixture, not claimed production measurements.
+        st = self.state(1.050078, [0.08] * 6)
+        self.assertTrue(self.authorize(st, 0.46)["allowed"])
+        self.assertFalse(self.authorize(st, 0.47)["allowed"])
+        self.assertEqual(self.authorize(st, 0.01, "event_analysis")["reason"],
+                         "scheduled_event_runs_exhausted")
+        lane = cp.public_status(st, "2026-09-11T09:21:18Z")["scheduledLane"]
+        self.assertAlmostEqual(lane["newsRemainingUsd"], 0.469922)
+        self.assertEqual(lane["eventReserveRemainingUsd"], 0.0)
+        self.assertFalse(lane["eventLaneOpen"])
+        self.assertEqual(lane["dailyBudgetUsd"], 2.0)
+        self.assertEqual(cp.normalize_state(st), st)
+
+    def test_shared_cap_next_day_and_purpose_restrictions_remain(self):
+        st = self.state(1.7, [0.1] * 3)
+        self.assertFalse(self.authorize(st, 0.01)["allowed"])
+        self.assertFalse(self.authorize(st, 0.01, "event_analysis")["allowed"])
+        self.assertTrue(self.authorize(st, 0.1, at="2026-09-12T00:00:01Z")["allowed"])
+        self.assertEqual(self.authorize(st, 0.0, "ai_judgment")["reason"],
+                         "scheduled_scope_required")
+        lane = cp.public_status(st, "2026-09-12T00:00:01Z")["scheduledLane"]
+        self.assertEqual(lane["eventReserveRemainingUsd"], 0.5)
+        self.assertEqual(lane["newsRemainingUsd"], 1.5)
+
+    def test_event_overspend_cannot_increase_the_shared_budget(self):
+        st = self.state(1.1, [0.7])
+        self.assertTrue(self.authorize(st, 0.19)["allowed"])
+        self.assertFalse(self.authorize(st, 0.21)["allowed"])
+        lane = cp.public_status(st, "2026-09-11T09:21:18Z")["scheduledLane"]
+        self.assertAlmostEqual(lane["newsRemainingUsd"], 0.2)
+        self.assertEqual(lane["eventReserveRemainingUsd"], 0.0)

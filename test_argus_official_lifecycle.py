@@ -155,3 +155,87 @@ def test_dv_shadow_record_can_reference_official_event():
     assert r["causeStatusAtDecision"] == "probable_catalyst"
     assert r["marketReactionKnownAtDecision"] is False
     assert "netR" not in r
+
+
+def _bounded_track_setup(monkeypatch):
+    events = {str(i): {**rec(), "symbol": str(i)} for i in range(1, 5)}
+    monkeypatch.setattr(scanner, "_OFFICIAL_EVENTS", events)
+    monkeypatch.setattr(scanner, "_OFFICIAL_EVENTS_STATE", {
+        "restored": True, "trackCursor": None, "lastTrackAt": None})
+    monkeypatch.setattr(scanner, "_official_events_restore_once", lambda: None)
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: NOW)
+    monkeypatch.setattr(scanner, "_official_events_persist", lambda: None)
+    return events
+
+
+def test_official_track_resumes_after_missing_prices_without_losing_records(monkeypatch):
+    events = _bounded_track_setup(monkeypatch)
+    original = json.dumps(events, sort_keys=True)
+    calls = []
+    monkeypatch.setattr(scanner, "_OFFICIAL_TRACK_MAX_RECORDS", 2)
+    monkeypatch.setattr(scanner, "_jq_price_history",
+                        lambda symbol, **kwargs: calls.append(symbol))
+    first = scanner._official_events_track()
+    second = scanner._official_events_track()
+    assert first["status"] == "partial" and first["remainingCount"] == 2
+    assert second["status"] == "ok" and second["remainingCount"] == 0
+    assert calls == ["1", "2", "3", "4"]
+    assert json.dumps(events, sort_keys=True) == original
+    scanner._official_events_track()
+    assert calls[-2:] == ["1", "2"]
+
+
+def test_official_track_time_budget_yields_and_next_call_progresses(monkeypatch):
+    _bounded_track_setup(monkeypatch)
+    clock, calls = [100.0], []
+    monkeypatch.setattr(scanner.time, "monotonic", lambda: clock[0])
+    def fetch(symbol, *, deadline):
+        assert deadline == clock[0] + 25
+        calls.append(symbol)
+        clock[0] += 25
+        return None
+    monkeypatch.setattr(scanner, "_jq_price_history", fetch)
+    first = scanner._official_events_track()
+    assert first["processedCount"] == 1 and first["hasMore"]
+    scanner._official_events_track()
+    assert calls == ["1", "2"]
+
+
+def test_official_track_does_not_overlap_admin_calls(monkeypatch):
+    monkeypatch.setattr(scanner, "_require_admin", lambda: (True, None, 200))
+    scanner._OFFICIAL_TRACK_LOCK.acquire()
+    try:
+        with scanner.app.test_client() as client:
+            response = client.post("/api/argus/official-events/track")
+        assert response.get_json()["status"] == "busy"
+    finally:
+        scanner._OFFICIAL_TRACK_LOCK.release()
+
+
+def test_price_history_deadline_preserves_cache_without_partial_pagination(monkeypatch):
+    from unittest.mock import Mock
+    cached = {"data": {"dates": ["2026-06-30"], "closes": [100]}, "expires": 0}
+    cache = {"1234": cached}
+    monkeypatch.setattr(scanner, "_JQ_HISTORY_CACHE", cache)
+    monkeypatch.setattr(scanner, "_JQUANTS_API_KEY", "test-only")
+    clock = iter([100.0, 130.0])
+    monkeypatch.setattr(scanner.time, "monotonic", lambda: next(clock))
+    response = Mock()
+    response.json.return_value = {"data": [{"Date": "2026-07-01", "C": 120}],
+                                  "pagination_key": "next-page"}
+    request = Mock(return_value=response)
+    monkeypatch.setattr(scanner.requests, "get", request)
+    assert scanner._jq_price_history("1234", deadline=125) is cached["data"]
+    assert cache["1234"] is cached
+    assert request.call_count == 1
+    assert request.call_args.kwargs["timeout"] == 10
+
+
+def test_independent_refresh_steps_continue_after_an_unrelated_failure():
+    from pathlib import Path
+    source = Path(".github/workflows/ai-rejudge.yml").read_text()
+    steps = source.split("      - name: ")[1:]
+    assert len(steps) == 7
+    assert all("        if: ${{ !cancelled() }}" in step for step in steps)
+    assert all("continue-on-error" not in step for step in steps)
+    assert all(step.count("scripts/workflow_http.py") == 1 for step in steps)

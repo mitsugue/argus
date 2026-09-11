@@ -32,6 +32,17 @@ HISTORICAL_REPLACED_BLOBS = {
         "artifacts/round2-jp-market-engine-registry-coverage-v1.json",
 }
 
+# Reviewed model and operational fixes, limited to these exact file contents.
+# These paths are NOT added to the general allowlist; future edits fail closed.
+REVIEWED_EXTENSION_BLOBS = {
+    "argus_osint_engine.py": "82c928299eed09004067283d72cc4b67b07753c5",
+    "test_argus_v12_1_1.py": "fcb2a56c79822f5177ae776dfdaf07972da0a49e",
+    "test_argus_v12_1_3.py": "ec334f206cc43a94f3e2dc8c7ea5015b341a0957",
+    ".github/workflows/ai-rejudge.yml": "b81acfa1a3452f2467ba416c0e14ce9d9f905f04",
+    "test_argus_official_lifecycle.py": "94f9ebcb4a3a4457cd0117e52e98cb55e628d3c7",
+    "test_workflow_http.py": "3b02814b97563c1b089de97697d0bb471bee1578",
+}
+
 AUTHORIZED_EXTENSION_PATHS = frozenset({
     # Bounded chart display publication and its regression coverage.
     "argus_asset_chart_cache.py",
@@ -617,6 +628,13 @@ def validate_product_semantic_diff(
     if len(changed) != len(set(changed)):
         raise ValueError("product_semantic_diff_duplicate_path")
     unauthorized = sorted(set(changed) - AUTHORIZED_EXTENSION_PATHS)
+    reviewed = []
+    for path in unauthorized:
+        expected = REVIEWED_EXTENSION_BLOBS.get(path)
+        if expected and _git(repo, "rev-parse", "--verify",
+                             f"{candidate_commit}:{path}", check=False) == expected:
+            reviewed.append({"path": path, "blobSha": expected})
+    unauthorized = sorted(set(unauthorized) - {item["path"] for item in reviewed})
     replaced, removed_paths = [], set()
     for path in unauthorized:
         if _git(repo, "cat-file", "-t", f"{candidate_commit}:{path}", check=False):
@@ -644,6 +662,8 @@ def validate_product_semantic_diff(
         "changedPaths": sorted(set(changed) - removed_paths),
         "productSemanticChange": False,
     }
+    if reviewed:
+        result["reviewedExtensionBlobs"] = reviewed
     if replaced:
         result["removedHistoricalBlobs"] = sorted(replaced, key=lambda item: item["acceptedBlobSha"])
     return result
