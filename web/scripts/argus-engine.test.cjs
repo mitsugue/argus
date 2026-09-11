@@ -456,7 +456,7 @@ console.log('argus-engine.test: all checks passed');
   new Date('2026-09-07T10:40:00Z'));
   check('the AI note separates key, permission, budget, last run, last refusal and the computed slot',
     richNote.includes('鍵 設定済') && richNote.includes('実行許可 ON') && richNote.includes('残$0.40（本日$1.60/$2.00）')
-    && richNote.includes('直近のAI実行: headline_translation 9/7 12:00 JST') && richNote.includes('日次予算を使い切った')
+    && richNote.includes('直近のAI実行: headline_translation 9/7 12:00 JST') && richNote.includes('日次予算枠が不足（毎日9:00 JSTに更新）')
     && richNote.includes('次のcron予定枠（計算値） 9/7 21:35 JST'));
   const { eventAiRunMetaJa } = require(path.join(root, 'src/lib/eventAiScenarioNote.ts'));
   check('a saved scenario names the model that answered and its cost',

@@ -35,7 +35,7 @@ export function nextEventAiSlot(now: Date = new Date()): Date {
 }
 
 const SKIP_REASON_JA: Record<string, string> = {
-  scheduled_daily_budget_exhausted: '日次予算を使い切った',
+  scheduled_daily_budget_exhausted: '日次予算枠が不足（毎日9:00 JSTに更新）',
   scheduled_event_runs_exhausted: '本日のイベント実行回数上限',
   scheduled_scope_required: '自動実行の対象外の用途',
   event_opt_in_disabled: 'イベントAIがオフ',
