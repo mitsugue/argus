@@ -286,3 +286,22 @@ verified disk image includes it. No budget limit, accounting rule or recovery
 verification is weakened. The test failed before and passes after the fix;
 26 cost/concurrency checks pass. This is a proven race, not proof that it is the
 only cause of the production error. Production correction remains unverified.
+
+
+### 2026-09-11: Retry deferred cached chart publication
+
+Production 53ad2487 retained the September 7 report for 5803 despite newer
+collected history, while chartRefresh reported busy. The warm worker previously
+waited its full 600-second provider cycle after losing the checkpoint lock.
+During the existing 60-second interest scan it now retries only a busy,
+restore-pending, or bounded cached publication. Successful unchanged results and
+permanent failures retain the regular cycle. Provider/AI cadence, startup restore
+checks, checkpoint authority lock, 45-second/three-publication limits and journal
+ownership are unchanged. No analysis formula or trade decision changes.
+
+A real competing-thread regression reproduces the missed opportunity before the
+change; after it, cached publication proceeds at the next scan without repeating
+provider or AI work. Restore-pending, bounded continuation, repeated contention,
+and permanent-error cases are also covered: 35 chart/bootstrap tests PASS.
+This does not guarantee acquisition during a continuously held lock. Production
+rollout and latest-date chart readback remain unverified; do not mark this closed.

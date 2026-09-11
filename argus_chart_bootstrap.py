@@ -578,6 +578,13 @@ def _warm_loop(host: Any, *, sleeper: Callable[[float], None], now: Callable[[],
                 sleeper(INTEREST_SCAN_SECONDS)
                 waited += INTEREST_SCAN_SECONDS
                 scan_interest(host, now())
+                refresh = warm.get("chartRefresh") or {}
+                if waited < INTEREST_REFRESH_SECONDS and (
+                        refresh.get("status") in ("busy", "restore_pending")
+                        or refresh.get("bounded") is True):
+                    # Retry only cached publication at the existing scan cadence.
+                    # Keep provider/AI cadence and the authority lock unchanged.
+                    warm["chartRefresh"] = _refresh_warm_charts(host, clock=now)
         warm["status"] = "DONE"
     except Exception as exc:                        # pragma: no cover - defensive
         warm["status"] = "FAILED"

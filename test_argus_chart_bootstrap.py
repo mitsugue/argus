@@ -540,3 +540,73 @@ def test_failed_chart_does_not_starve_other_cached_symbols():
     assert not host._DURABLE_CHECKPOINT_LOCK._is_owned()
     record = argus_asset_chart_cache.current(host._ASSET_CHART_REPORTS, "JP", "5804", "daily")
     assert record["payload"]["indicators"]["bars"][-1]["close"] == 5493.0
+
+
+@pytest.mark.parametrize("initial_status", ["busy", "restore_pending", "bounded"])
+def test_warm_loop_retries_deferred_cached_charts_without_repeating_providers(monkeypatch, initial_status):
+    host = _refresh_host(4 if initial_status == "bounded" else 1)
+    host._JP_WATCHLIST = []
+    elapsed = [0.0]
+    providers, translations, indexes, attempts = [], [], [], []
+    monkeypatch.setattr(boot, "_warm_cycle", lambda *a, **k: providers.append(elapsed[0]))
+    monkeypatch.setattr(boot, "_warm_index_charts", lambda *a: indexes.append(elapsed[0]))
+    monkeypatch.setattr(boot, "_drain_translations", lambda *a: translations.append(elapsed[0]))
+    original_refresh = boot._refresh_warm_charts
+    held, release = threading.Event(), threading.Event()
+    def mission():
+        with host._DURABLE_CHECKPOINT_LOCK:
+            held.set()
+            release.wait(5)
+    thread = None
+    if initial_status == "busy":
+        thread = threading.Thread(target=mission)
+        thread.start()
+        assert held.wait(2)
+    elif initial_status == "restore_pending":
+        host._OSINT_PERSIST_STATE["restored"] = False
+    def refresh(*args, **kwargs):
+        result = original_refresh(*args, **kwargs)
+        attempts.append((elapsed[0], result))
+        return result
+    monkeypatch.setattr(boot, "_refresh_warm_charts", refresh)
+    def sleep(seconds):
+        elapsed[0] += seconds
+        release.set()
+        if thread:
+            thread.join(2)
+        host._OSINT_PERSIST_STATE["restored"] = True
+    try:
+        boot._warm_loop(host, sleeper=sleep, now=lambda: elapsed[0], max_cycles=2, environ={})
+    finally:
+        release.set()
+        if thread:
+            thread.join(2)
+    # A deferred publication resumes after one existing interest scan, while
+    # external collection retains its ten-minute cadence and AI is not retried.
+    assert [stamp for stamp, _ in attempts] == [0.0, 60.0, 600.0]
+    assert attempts[1][1]["status"] == "published"
+    assert attempts[1][1]["published"] == 1
+    assert providers == [0.0, 600.0]
+    assert translations == [0.0] and indexes == [0.0]
+    assert len(host.calls) == (4 if initial_status == "bounded" else 1)
+    record = argus_asset_chart_cache.current(host._ASSET_CHART_REPORTS, "JP", "5803", "daily")
+    assert record["payload"]["indicators"]["bars"][-1]["close"] == 5493.0
+
+
+@pytest.mark.parametrize("status, expected_attempts", [("busy", 11), ("unchanged", 2), ("degraded", 2)])
+def test_warm_retry_is_bounded_and_does_not_spin_on_permanent_failures(monkeypatch, status, expected_attempts):
+    host = types.SimpleNamespace(_JP_WATCHLIST=[])
+    elapsed, attempts = [0.0], []
+    monkeypatch.setattr(boot, "_warm_cycle", lambda *a, **k: None)
+    monkeypatch.setattr(boot, "_warm_index_charts", lambda *a: None)
+    monkeypatch.setattr(boot, "_drain_translations", lambda *a: None)
+    def refresh(*args, **kwargs):
+        attempts.append(elapsed[0])
+        return {"status": status, "published": 0}
+    monkeypatch.setattr(boot, "_refresh_warm_charts", refresh)
+    def sleep(seconds):
+        elapsed[0] += seconds
+    boot._warm_loop(host, sleeper=sleep, now=lambda: elapsed[0], max_cycles=2, environ={})
+    assert len(attempts) == expected_attempts
+    assert attempts[0] == 0.0 and attempts[-1] == 600.0
+    assert all(b - a >= 60.0 for a, b in zip(attempts, attempts[1:]))
