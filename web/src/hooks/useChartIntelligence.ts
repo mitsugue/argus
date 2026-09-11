@@ -562,33 +562,56 @@ const INDEX_CHART_TTL_MS = 120_000;
 
 export function useIndexChart(index: IndexChartKey | null, timeframe: 'daily' | 'weekly' = 'daily'): IndexChartState {
   const backend = import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined;
-  const key = index ? `${index}:${timeframe}` : '';
-  const [state, setState] = useState<IndexChartState>(() => indexChartCache.get(key)?.state
-    ?? { data: null, expectedSkip: false, loading: !!index, error: null });
+  const key = `${backend ?? ''}|${index ?? ''}:${timeframe}`;
+  const empty: IndexChartState = { data: null, expectedSkip: false, loading: !!index && !!backend, error: null };
+  const stateForKey = (): IndexChartState => {
+    if (!index || !backend) return empty;
+    const cached = indexChartCache.get(key);
+    return cached ? { ...cached.state, loading: Date.now() - cached.at >= INDEX_CHART_TTL_MS } : empty;
+  };
+  const [snapshot, setSnapshot] = useState<{ key: string; state: IndexChartState }>(() =>
+    ({ key, state: stateForKey() }));
   useEffect(() => {
-    if (!index || !backend) return;
+    if (!index || !backend) {
+      setSnapshot({ key, state: { data: null, expectedSkip: false, loading: false, error: null } });
+      return;
+    }
     let cancelled = false;
     const cached = indexChartCache.get(key);
-    if (cached && Date.now() - cached.at < INDEX_CHART_TTL_MS) { setState(cached.state); return; }
-    setState((prev) => ({ ...prev, loading: true, error: null }));
+    const fresh = cached && Date.now() - cached.at < INDEX_CHART_TTL_MS;
+    if (fresh) {
+      setSnapshot({ key, state: cached.state });
+    } else {
+      setSnapshot((previous) => ({ key, state: {
+        ...(previous.key === key ? previous.state : cached?.state
+          ?? { data: null, expectedSkip: false }), loading: true, error: null,
+      } }));
+    }
     const load = async () => {
       try {
         const response = await fetch(`${backend.replace(/\/$/, '')}/api/argus/index-chart?index=${index}&timeframe=${timeframe}`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const body = await response.json() as ChartIntelligencePayload & { status?: string };
+        const body = await response.json() as ChartIntelligencePayload & { index?: string; status?: string };
+        if (body.index !== index || (body.status !== 'expected_skip'
+          && (body.symbol !== index || body.timeframe !== timeframe))) {
+          throw new Error('index_chart_identity_mismatch');
+        }
         const next: IndexChartState = body.status === 'expected_skip'
           ? { data: null, expectedSkip: true, loading: false, error: null }
           : { data: body, expectedSkip: false, loading: false, error: null };
         indexChartCache.set(key, { at: Date.now(), state: next });
-        if (!cancelled) setState(next);
+        if (!cancelled) setSnapshot({ key, state: next });
       } catch (err) {
-        if (!cancelled) setState({ data: null, expectedSkip: false, loading: false, error: err instanceof Error ? err.message : String(err) });
+        if (!cancelled) setSnapshot({ key, state: { data: null, expectedSkip: false, loading: false,
+          error: err instanceof Error ? err.message : String(err) } });
       }
     };
-    void load();
+    if (!fresh) void load();
     const onVisible = () => { if (!document.hidden) void load(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => { cancelled = true; document.removeEventListener('visibilitychange', onVisible); };
   }, [index, timeframe, backend, key]);
-  return state;
+  // Effects run after a render. A different subject must never borrow the
+  // previous render's series while its own response is still pending.
+  return snapshot.key === key ? snapshot.state : stateForKey();
 }

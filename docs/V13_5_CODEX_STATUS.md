@@ -432,3 +432,50 @@ local evidence are retained; there is one combined PR and one final deployment.
 Previous separate-candidate admission pins and certificates do not certify this
 combined head. Its exact diff, source proof, both certificates and current-head
 CI must pass before normal merge. Production/UI/iPhone acceptance remains open.
+
+
+### 2026-09-11: PR322 production and index-switch discrepancy
+
+PR322 merged as 5f9700db9609018f75d76c0804fff32ab27d7134 after all 27 checks
+passed and the one planned public-acceptance skip. Exact backend readiness was
+verified at 12:12:21Z. Pages run 34597448152 passed all 11 stages, including the
+12 snapshot combinations and mobile browser acceptance. These browser checks
+are not the owner's iPhone acceptance.
+
+The recovered central-bank article retained its original receipt and was
+analysed by requested/returned gpt-6-astra at 12:19:33–12:19:40Z. Its bounded
+mail excerpt and authenticated fingerprint are recorded; full article retrieval
+and market-reaction confirmation are not claimed. A separate actual Astra call
+allowed 14 pairs of public news/health reads wholly inside its execution span.
+The scheduled budget reserve now releases the spent event allocation. Existing
+usage survived restart; subsequent usage was added, not reset. Production full
+checkpoint completion at 12:24:25Z reported no error. Direct physical-file and
+owner device verification remain separate pending observations.
+
+Manual verification run 34598877298 reached all seven scheduled-workflow steps.
+Three AI purposes were skipped for scheduled scope and event analysis for the
+daily event quota. Official tracking processed 27 records and retained a cursor
+for 573 remaining; eight translations completed. Workflow success does not mean
+all AI purposes executed. Natural scheduled execution remains a separate check.
+
+Inspection of the public browser evidence exposed a display mismatch despite
+its overall PASS: QQQ's 1D selection temporarily retained the previous S&P500
+index series. useIndexChart carried data from the old key while awaiting the
+new request, and the acceptance heading check only looked for the appended
+ETF name. A real React/Chromium regression reproduced this with a held NDX
+response: selected NDX still returned SPX data.
+
+The follow-up binds visible hook state and cache entries to backend/index/
+timeframe, rejects response identity mismatches, and keeps visibility refresh
+attached when a matching cache is reused. Projection markup and public
+acceptance also identify the drawn series independently from the ETF decision
+anchor. Calculations, thresholds, snapshots and trading authority are unchanged.
+The focused browser regression passes delayed switches, late responses, cached
+returns, timeframe changes, mismatched responses, unavailable/disabled indices
+and same-index refresh, with no mixed committed render. Full candidate checks
+and production deployment/acceptance of this follow-up are still pending.
+
+Local follow-up checks passed: the actual React/Chromium regression, frontend
+lint/type checks, production build, and 68 admission/provenance tests. The
+external naming audit passed for source text and all 12 built text artifacts.
+These checks do not yet certify a merged or deployed follow-up.
