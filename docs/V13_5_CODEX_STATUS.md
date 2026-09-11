@@ -267,3 +267,22 @@ cache; it is not a new claim of recovery across loss of that cache.
 non-overlap, official-event persistence, public-route boundaries and HTTP result
 classification. Source naming check passed for 876 UTF-8 files. Full candidate
 CI, production tracking and execution of later lanes are still unverified.
+
+### 2026-09-11: freeze the cost ledger during full checkpoint construction
+
+After PR321, the exact 12-snapshot public/API acceptance and Pages workflow
+34558204494 passed. Its producer HTTP response timed out; reconciliation recovered
+all 12, so that workflow alone does not prove the final disk checkpoint. Runtime
+logs reported recovery_post_genesis_checkpoint_candidate_invalid at 03:38:24Z.
+At 03:47:12Z the last verified checkpoint was still 03:30:26Z, before the new
+release snapshots. Final disk acceptance remains separate.
+
+A local concurrency regression reproduced a real integrity failure: the full
+checkpoint retained references to mutable cost usage rows, and settlement after
+sealing invalidated that checkpoint. The bounded cost ledger is now copied under
+its own lock before inclusion. The test confirms the first disk image retains
+the original reservation, the live ledger retains the settlement, and the next
+verified disk image includes it. No budget limit, accounting rule or recovery
+verification is weakened. The test failed before and passes after the fix;
+26 cost/concurrency checks pass. This is a proven race, not proof that it is the
+only cause of the production error. Production correction remains unverified.

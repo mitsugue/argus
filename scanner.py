@@ -286,6 +286,12 @@ def _cost_policy_persist_durable():
                 pass
 
 
+def _cost_policy_checkpoint_snapshot():
+    """Freeze the bounded ledger while settlements continue independently."""
+    with _COST_POLICY_LOCK:
+        return copy.deepcopy(argus_cost_policy.normalize_state(_COST_POLICY))
+
+
 def _cost_checkpoint_worker():
     """Coalesce full-checkpoint requests after local usage is durable."""
     while True:
@@ -24772,7 +24778,7 @@ def _osint_persist_locked():
                 argus_foundation_jobs.normalize_state, _FOUNDATION_JOBS),
             "costPolicy": _memory_operation_run(
                 "internal", "source.cost_policy.normalize",
-                argus_cost_policy.normalize_state, _COST_POLICY),
+                _cost_policy_checkpoint_snapshot),
         })
         _memory_attribution_source_capture("S3", "control_states_normalized", {
             "topLevelKeys": len(blob),

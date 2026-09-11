@@ -1268,6 +1268,39 @@ class LegacyCheckpointConcurrentCanaryTests(unittest.TestCase):
             scanner._OSINT_CANARY_LAST.clear()
             scanner._OSINT_CANARY_LAST.update(saved_canary)
 
+    def test_cost_settlement_cannot_mutate_an_inflight_sealed_checkpoint(self):
+        saved = copy.deepcopy(scanner._COST_POLICY)
+        try:
+            with tempfile.TemporaryDirectory() as root, scanner_storage(root) as value, \
+                    mock.patch.object(scanner, "_CHECKPOINT_V2_STAGE1_ENABLED", False):
+                scanner._COST_POLICY.clear()
+                scanner._COST_POLICY.update(scanner.argus_cost_policy.default_state("SCHEDULED_AI"))
+                scanner._COST_POLICY["usage"] = [{
+                    "at": "2026-09-11T03:25:00Z", "provider": "openai",
+                    "purpose": "news_intel", "estimatedCostUsd": 0.1, "pending": True}]
+                original_seal = storage.seal_checkpoint
+                def seal_then_settle(blob):
+                    sealed = original_seal(blob)
+                    with scanner._COST_POLICY_LOCK:
+                        scanner._COST_POLICY["usage"][0].update(
+                            estimatedCostUsd=0.2, pending=False)
+                    return sealed
+                with mock.patch.object(storage, "seal_checkpoint", side_effect=seal_then_settle):
+                    result = scanner._osint_persist()
+                self.assertTrue(result["verified"], result)
+                stored = storage.load_checkpoint(value["checkpoint"], require_seal=True)
+                self.assertEqual(stored["costPolicy"]["usage"][0]["estimatedCostUsd"], 0.1)
+                self.assertTrue(stored["costPolicy"]["usage"][0]["pending"])
+                self.assertEqual(scanner._COST_POLICY["usage"][0]["estimatedCostUsd"], 0.2)
+                result = scanner._osint_persist()
+                self.assertTrue(result["verified"], result)
+                stored = storage.load_checkpoint(value["checkpoint"], require_seal=True)
+                self.assertEqual(stored["costPolicy"]["usage"][0]["estimatedCostUsd"], 0.2)
+                self.assertFalse(stored["costPolicy"]["usage"][0]["pending"])
+        finally:
+            scanner._COST_POLICY.clear()
+            scanner._COST_POLICY.update(saved)
+
     def test_failed_write_preserves_last_good_and_wal_then_retry_recovers(self):
         with tempfile.TemporaryDirectory() as root, \
                 scanner_storage(root) as value, \
