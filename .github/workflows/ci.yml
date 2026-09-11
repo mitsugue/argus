@@ -51,6 +51,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Check index chart subject isolation
         run: node web/scripts/index-chart-isolation.test.mjs
+      - name: Check historical news reader
+        run: node web/scripts/news-history.test.mjs
       - name: Build
         run: DEPLOY_BASE=/argus/ npm run build --prefix web
       - name: Secret-value grep (no sk-/AIza values in the bundle)

@@ -479,3 +479,30 @@ Local follow-up checks passed: the actual React/Chromium regression, frontend
 lint/type checks, production build, and 68 admission/provenance tests. The
 external naming audit passed for source text and all 12 built text artifacts.
 These checks do not yet certify a merged or deployed follow-up.
+
+
+### 2026-09-11: important-news history remains a production acceptance gap
+
+At 12:56Z an independent Chromium session displayed Today, Notifications,
+Settings and asset 5803 without page errors or horizontal overflow. It did not
+use the owner's device or credentials and issued no write requests. The ECB
+article was absent from the public 12-item list after its original receipt
+became more than 24 hours old. The previously observed successful Astra
+analysis does not prove that the owner can still read the article.
+
+The follow-up separates seven-day important-news retention priority from the
+unchanged 24-hour current-news/AI-retry window. The existing bounded 40-record
+store and persistence are reused. A public read-only history view and an
+on-demand Notifications reader expose retained older HIGH/CRITICAL articles,
+with original receipt, past interpretation, explicit age and retention limits.
+Reading old records does not renew freshness, alerts, analysis or SDA authority;
+a failed history refresh retains the last loaded view. This is not a complete
+news archive, and existing evicted records are not claimed restored.
+
+Related backend tests: 205 passed. The React/Chromium history test passed
+on-demand reads, original receipt, past labels and failed-refresh retention.
+The chart and news follow-ups are combined for final CI and production
+acceptance. The first chart-only candidate failed the Render skip-marker
+contract; the combined change now requires backend deployment. No gate is
+bypassed. Actual ECB history restoration/readback, owner device checks, final
+candidate certificates and production acceptance remain open.
