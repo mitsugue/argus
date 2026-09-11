@@ -420,3 +420,15 @@ requirement.
 195 news/cost/public/naming integration tests passed. The concurrency regression
 also passes with provider failure and confirms there is no leftover pending
 reservation. Production behavior remains unverified until the next release.
+
+
+### 2026-09-11: one production candidate for news and operational recovery
+
+The final candidate combines PR322's important-news/GPT changes with the tested
+remaining operational fixes above. Production inspection showed that the old
+reserve calculation would keep the new news analysis blocked, so a separate
+intermediate deployment would not satisfy acceptance. The same commits and
+local evidence are retained; there is one combined PR and one final deployment.
+Previous separate-candidate admission pins and certificates do not certify this
+combined head. Its exact diff, source proof, both certificates and current-head
+CI must pass before normal merge. Production/UI/iPhone acceptance remains open.
