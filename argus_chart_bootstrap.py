@@ -511,8 +511,13 @@ def _refresh_warm_charts(host: Any, *, clock: Callable[[], float]) -> Dict[str, 
                 continue
             host._ASSET_CHART_REPORTS["cursor"] = index
             # Zero remaining seed time makes this an explicitly cache-only tick.
-            tick = host._precompute_asset_chart_tick(
-                deadline_monotonic=clock(), defer_journal=True)
+            try:
+                tick = host._precompute_asset_chart_tick(
+                    deadline_monotonic=clock(), defer_journal=True)
+            except Exception as exc:
+                result["failed"] = result.get("failed", 0) + 1
+                result["errorClass"] = type(exc).__name__
+                continue
             if tick.get("generated"):
                 result["published"] += 1
                 result["status"] = "published"
@@ -521,6 +526,8 @@ def _refresh_warm_charts(host: Any, *, clock: Callable[[], float]) -> Dict[str, 
             elif tick.get("status") == "degraded":
                 result["status"] = "degraded"
                 result["errorClass"] = tick.get("reason")
+        if result.get("failed"):
+            result["status"] = "partial" if publications else "degraded"
         result["completedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     except Exception as exc:
         result.update(status="degraded", errorClass=type(exc).__name__)

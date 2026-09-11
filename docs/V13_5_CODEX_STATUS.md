@@ -219,3 +219,26 @@ iPhoneの本番起動後に実際の保存データを確認するまで、移�
 移行を確認した。判断・時刻・数値、合成保有の数量7・取得価格1000と設定を維持し、
 再読込で履歴のバイト列が一致、破損させた履歴は原文を保持した。ネットワークPOSTは0件。
 これはローカルの合成データ検査であり、iPhone実機の保存内容確認を代替しない。
+
+
+### 2026-09-10: oversized chart publication follow-up
+
+Production 8c258233 held the Sep 7 chart while the cached 5803 closes reached Sep 10 (2,434 rows); warm refresh reported ValueError. A same-scale fixture using actual dates/closes but synthetic OHLC, volume and provenance produced 2,503,217 bytes, exceeding the unchanged 2 MiB report limit.
+Oversized display reports now retain the last 600 calculated bars and explicitly disclose the window. Engine input, all other analysis results, turning points and original history remain intact. Normal-size reports are unchanged; the 2 MiB/32 MiB limits still reject other excess. One failed instrument no longer stops later instruments; partial success is explicit.
+The fixture now publishes and reads back 1,219,588 bytes with exact analysis-result and latest-bar parity. This is not a live full-OHLC replay. Related tests: 35 PASS; admission/provenance tests: 47 PASS. Production refresh and actual screens remain unverified. This does not complete 13.5. Stop after 13.6 production acceptance; 13.7 remains on explicit-owner-resume hold.
+
+
+### 2026-09-10: partial release seed retry (local verification only)
+
+PR320 deployed as 097085f6 but its 12-snapshot acceptance timed out. The saved trigger response was 409 with a partial matching matrix. The current producer rejected any matching subset as a duplicate, preventing the built-in retry from producing the missing instruments after a partial failure. The original first failure is not identified by the final 409 artifact.
+The fix retains verified instruments from the same build, trigger and original time, produces only missing instruments, re-verifies all 12 and requires the existing persistent read-back before success. Mixed bindings fail closed. A complete duplicate remains 409 and is not reported as new success. No certificate, nonce, freshness or durability condition is relaxed.
+Five targeted tests and 87 persistence/snapshot tests with 11 subtests pass. The partial-failure regression preserves the first six snapshots exactly and resumes only SPY/QQQ. Production acceptance remains unverified. Stop after 13.6 production acceptance; 13.7 requires explicit owner restart.
+
+### Release retry durability final review (2026-09-11)
+
+The complete 12-view duplicate path previously skipped persistence. A regression
+reproduced HTTP 409 even when the durable readback would fail. The duplicate path
+now requires the existing checkpoint verified/read-back checks before returning
+409; failure remains HTTP 503 so the same release attempt can retry. No snapshot
+is regenerated and the original binding/time is preserved. Local reproduction
+failed before the fix and passes afterward. Production acceptance remains pending.
