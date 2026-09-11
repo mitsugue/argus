@@ -19887,8 +19887,11 @@ def get_tdnet_recent(limit=150):
 _OFFICIAL_EVENTS = {}                 # officialEventId -> lifecycle record
 _OFFICIAL_EVENTS_MAX = 600
 _OFFICIAL_EVENTS_FILE = "/tmp/argus_official_events.json"
-_OFFICIAL_EVENTS_STATE = {"lastIngestAt": None, "lastTrackAt": None, "restored": False,
+_OFFICIAL_EVENTS_STATE = {"lastIngestAt": None, "lastTrackAt": None, "trackCursor": None, "restored": False,
                           "pathType": "ephemeral_tmp", "restoreStatus": "not_attempted"}
+_OFFICIAL_TRACK_LOCK = threading.Lock()
+_OFFICIAL_TRACK_BUDGET_SEC = 25.0
+_OFFICIAL_TRACK_MAX_RECORDS = 100
 _OFFICIAL_LEDGER_CACHE = {"data": None, "expires": 0.0}   # ledger latest.json meta (10-min)
 
 
@@ -19896,7 +19899,7 @@ def _official_events_persist():
     try:
         with open(_OFFICIAL_EVENTS_FILE, "w") as f:
             json.dump({"items": _OFFICIAL_EVENTS, "state": {k: _OFFICIAL_EVENTS_STATE[k]
-                                                            for k in ("lastIngestAt", "lastTrackAt")}},
+                                                            for k in ("lastIngestAt", "lastTrackAt", "trackCursor")}},
                       f, ensure_ascii=False, default=str)
     except Exception:
         pass
@@ -19918,7 +19921,7 @@ def _official_events_restore_once():
             _OFFICIAL_EVENTS.update(blob["items"])
             restored_from.append("tmp")
         _OFFICIAL_EVENTS_STATE.update({k: v for k, v in (blob.get("state") or {}).items()
-                                       if k in ("lastIngestAt", "lastTrackAt")})
+                                       if k in ("lastIngestAt", "lastTrackAt", "trackCursor")})
     except Exception:
         pass
     try:
@@ -20017,8 +20020,16 @@ def _official_events_track():
         return {"status": "expected_skip", "reason": "market_holiday",
                 "updated": 0, "total": len(_OFFICIAL_EVENTS),
                 "asOf": now_iso, "marketCalendar": jp_session}
-    updated = 0
-    for oid, rec in list(_OFFICIAL_EVENTS.items()):
+    deadline = time.monotonic() + _OFFICIAL_TRACK_BUDGET_SEC
+    updated, processed = 0, 0
+    rows = sorted(list(_OFFICIAL_EVENTS.items()))
+    cursor = str(_OFFICIAL_EVENTS_STATE.get("trackCursor") or "")
+    rows = [row for row in rows if row[0] > cursor] or rows
+    for oid, rec in rows:
+        if processed >= _OFFICIAL_TRACK_MAX_RECORDS or time.monotonic() >= deadline:
+            break
+        processed += 1
+        _OFFICIAL_EVENTS_STATE["trackCursor"] = oid
         try:
             d0 = str(rec.get("disclosedAt") or "")[:10]
             if not d0 or not rec.get("symbol"):
@@ -20028,7 +20039,7 @@ def _official_events_track():
                                       ("day3", "day3"), ("day5", "day5")) if not mr.get(k)]
             if not pending:
                 continue
-            hist = _jq_price_history(rec["symbol"])
+            hist = _jq_price_history(rec["symbol"], deadline=deadline)
             if not hist:
                 continue
             dates, closes, vols = hist.get("dates") or [], hist.get("closes") or [], hist.get("volumes") or []
@@ -20074,8 +20085,13 @@ def _official_events_track():
             continue
     if updated:
         _OFFICIAL_EVENTS_STATE["lastTrackAt"] = now_iso
+    if processed:
         _official_events_persist()
-    return {"updated": updated, "total": len(_OFFICIAL_EVENTS), "asOf": now_iso}
+    remaining = max(0, len(rows) - processed)
+    return {"status": "partial" if remaining else "ok", "updated": updated,
+            "total": len(_OFFICIAL_EVENTS), "asOf": now_iso,
+            "processedCount": processed, "remainingCount": remaining,
+            "hasMore": bool(remaining), "cursorAfter": _OFFICIAL_EVENTS_STATE.get("trackCursor")}
 
 
 @app.route("/api/argus/official-events")
@@ -20147,7 +20163,12 @@ def api_argus_official_events_track():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
-    return jsonify(_official_events_track())
+    if not _OFFICIAL_TRACK_LOCK.acquire(blocking=False):
+        return jsonify({"ok": True, "status": "busy", "updated": 0})
+    try:
+        return jsonify(_official_events_track())
+    finally:
+        _OFFICIAL_TRACK_LOCK.release()
 
 
 @app.route("/api/argus/official-events/snapshot")
@@ -42392,7 +42413,7 @@ def _jq_history_behind_completed_session(data, now_utc=None):
         return False
 
 
-def _jq_price_history(code):
+def _jq_price_history(code, *, deadline=None):
     """Up to ~5 years of OHLCV (newest-first) for one TSE code.
     Same daily-bars endpoint the watchlist uses; 6h cache, 10-min fail back-off.
 
@@ -42425,9 +42446,12 @@ def _jq_price_history(code):
                 attempt_rows, params = [], {"code": code, "from": frm}
                 try:
                     for _ in range(12):
+                        remaining = (deadline - time.monotonic()) if deadline is not None else 10.0
+                        if remaining <= 0:
+                            return (c or {}).get("data")
                         r = requests.get(
                             f"{_JQUANTS_BASE}/equities/bars/daily",
-                            headers=headers, params=params, timeout=10)
+                            headers=headers, params=params, timeout=min(10.0, remaining))
                         r.raise_for_status()
                         body = r.json()
                         attempt_rows.extend(body.get("data", []))
@@ -42439,6 +42463,8 @@ def _jq_price_history(code):
                     add_log(f"[scout] history window {window_days}d failed "
                             f"{code}: {type(window_exc).__name__}")
                     attempt_rows = []
+                if deadline is not None and time.monotonic() >= deadline:
+                    return (c or {}).get("data")
                 if attempt_rows:
                     rows = attempt_rows
                     break

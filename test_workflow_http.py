@@ -15,6 +15,15 @@ class WorkflowHttpTests(unittest.TestCase):
         self.assertEqual(wh.classify_response(200, json.dumps({"error": "bad"}))["outcome"], wh.FAILURE)
         self.assertEqual(wh.classify_response(200, json.dumps({"ok": False}))["outcome"], wh.FAILURE)
 
+    def test_scheduled_policy_refusal_is_not_analysis_success(self):
+        for status in ("scheduled_scope_required", "scheduled_daily_budget_exhausted",
+                       "scheduled_event_runs_exhausted"):
+            body = json.dumps({"ok": True, "status": status})
+            self.assertEqual(wh.classify_response(200, body)["outcome"], wh.EXPECTED_SKIP)
+            self.assertEqual(wh.classify_response(500, body)["outcome"], wh.FAILURE)
+        self.assertEqual(wh.classify_response(200, json.dumps({
+            "ok": False, "status": "scheduled_scope_required"}))["outcome"], wh.FAILURE)
+
     def test_http_failures_and_invalid_json(self):
         for code in (401, 403, 500):
             self.assertEqual(wh.classify_response(code, json.dumps({"error": "x"}))["outcome"], wh.FAILURE)

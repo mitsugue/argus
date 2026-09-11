@@ -242,3 +242,28 @@ now requires the existing checkpoint verified/read-back checks before returning
 409; failure remains HTTP 503 so the same release attempt can retry. No snapshot
 is regenerated and the original binding/time is preserved. Local reproduction
 failed before the fix and passes afterward. Production acceptance remains pending.
+
+### 2026-09-11: bounded official-event refresh candidate (not production)
+
+Production ai-rejudge run 34552978703 returned scheduled_scope_required at
+02:01:29Z but its HTTP wrapper called this success. Official-event tracking then
+exhausted three 120-second requests; later independent refreshes never ran.
+The candidate reports known scheduled-policy refusals as expected skips, keeps
+HTTP/business failures as failures, and separates each refresh into its own
+workflow step so unrelated failures do not suppress later lanes. A failed step
+still fails the job. A running refresh is allowed to finish within its bounded
+job rather than being cancelled by the next schedule.
+
+Official-event tracking uses a cooperative 25-second work budget and at most
+100 records, with non-overlapping admin calls and a saved continuation cursor.
+Provider pagination honors the remaining work budget; an incomplete paginated
+response cannot overwrite the existing price cache. Missing reactions remain
+pending and are revisited on the next cycle. Calculations and evidence records
+are unchanged. This fixes timeout/starvation; it does not enable blocked AI
+purposes or unvalidated trading decisions. The cursor uses the existing runtime
+cache; it is not a new claim of recovery across loss of that cache.
+
+194 related tests passed, including continuation, deadline/cache preservation,
+non-overlap, official-event persistence, public-route boundaries and HTTP result
+classification. Source naming check passed for 876 UTF-8 files. Full candidate
+CI, production tracking and execution of later lanes are still unverified.
