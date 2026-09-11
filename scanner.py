@@ -15910,7 +15910,7 @@ def _ai_run_gate(force=False):
             return False, {"status": "rate_limited",
                            "reason": f"min interval {_AI_JUDGE_MIN_INTERVAL}m; retry in ~{wait_m}m",
                            "runCountToday": _AI_GATE_STATE["count"], "asOf": _ai_now_iso()}, 429
-        if _AI_GATE_STATE["count"] >= _AI_JUDGE_MAX_RUNS:
+        if _AI_BUDGET_ENFORCED and _AI_GATE_STATE["count"] >= _AI_JUDGE_MAX_RUNS:
             return False, {"status": "rate_limited",
                            "reason": f"daily limit {_AI_JUDGE_MAX_RUNS} reached",
                            "runCountToday": _AI_GATE_STATE["count"], "asOf": _ai_now_iso()}, 429
@@ -16392,7 +16392,7 @@ def api_argus_security_status():
             "asOf": _ai_now_iso(), "locked": _is_locked(), "lockedByEnv": _AI_JUDGE_LOCKED_ENV,
             "softLocked": _AI_GATE_STATE["softLocked"], "failedAttempts": _AI_GATE_STATE["failedAttempts"],
             "allowedCountries": _AI_JUDGE_ALLOW_COUNTRIES, "runCountToday": count,
-            "minIntervalMinutes": _AI_JUDGE_MIN_INTERVAL, "dailyLimit": _AI_JUDGE_MAX_RUNS,
+            "minIntervalMinutes": _AI_JUDGE_MIN_INTERVAL, "dailyLimit": _AI_JUDGE_MAX_RUNS if _AI_BUDGET_ENFORCED else None,
             "aiJudgeEnabled": _AI_JUDGE_ENABLED, "alertEmailConfigured": bool(_SECURITY_ALERT_EMAIL),
             "bridgeHmacConfigured": bool(_BRIDGE_HMAC_SECRET), "bridgeHmacRequired": _BRIDGE_HMAC_REQUIRED,
         })
@@ -16452,7 +16452,7 @@ def api_argus_ai_provider_status():
         },
         "runGate": {
             "runCountToday": count,
-            "dailyLimit": _AI_JUDGE_MAX_RUNS,
+            "dailyLimit": _AI_JUDGE_MAX_RUNS if _AI_BUDGET_ENFORCED else None,
             "minIntervalMinutes": _AI_JUDGE_MIN_INTERVAL,
             "locked": _is_locked(),
             "allowedCountries": _AI_JUDGE_ALLOW_COUNTRIES,
@@ -18963,8 +18963,8 @@ def api_argus_news_intelligence():
             # classification/severity/direction were computed on the original
             # language at intake and a material event must not stay invisible
             # for a weekend because the Japanese summary is still queued.
-            # HIGH/CRITICAL surface immediately with a safe placeholder (no
-            # licensed content); INFO/WATCH wait for the translated summary.
+            # WATCH/HIGH/CRITICAL surface immediately with a safe placeholder
+            # (no licensed content); INFO waits for the translated summary.
             if event.get("severity") in ("WATCH", "HIGH", "CRITICAL"):
                 source_ja = argus_news_intelligence.SOURCE_LABELS.get(
                     event.get("sourceFamily"), event.get("source") or "公式")
@@ -34148,7 +34148,7 @@ def _research_benchmark_v2_job_worker(job_id):
             raise RuntimeError("v2_manifest_validation_failed")
         _FORMAL_BENCHMARK_V2["manifest"] = manifest
         dry = _v2_dry_run_value()
-        if dry["status"] != "ready" or dry["estimatedCostJpy"] > 2000:
+        if dry["status"] != "ready" or (_AI_BUDGET_ENFORCED and dry["estimatedCostJpy"] > 2000):
             raise RuntimeError("v2_budget_blocked")
         if (_openai_model_for("standard") != "gpt-5.6-sol" or
                 _openai_model_for("referee") != "gpt-5.6-terra"):
@@ -34553,8 +34553,8 @@ def _research_benchmark_job_worker(job_id):
         if proof["openai"][0]["responseModel"] == proof["openai"][1]["responseModel"]:
             raise RuntimeError("evaluator_not_independent")
         dry = _formal_benchmark_dry_run_value(gemini_model)
-        if dry.get("status") != "ready" or float(
-                dry.get("estimatedCostJpy") or 999999) > 2000:
+        if dry.get("status") != "ready" or (_AI_BUDGET_ENFORCED and float(
+                dry.get("estimatedCostJpy") or 999999) > 2000):
             raise RuntimeError(str(dry.get("status") or "dry_run_blocked"))
         _store_formal_dry_run(dry)
         benchmark_id = "gemini-2x-" + argus_research_benchmark.digest({

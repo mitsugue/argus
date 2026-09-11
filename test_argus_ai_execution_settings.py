@@ -34,10 +34,12 @@ def test_judgment_gate_does_not_apply_old_daily_or_monthly_cap(full_execution, m
     monkeypatch.setattr(scanner, '_ai_cost_restore_once', lambda: None)
     monkeypatch.setattr(scanner, '_ai_cost_roll', lambda *a: None)
     monkeypatch.setattr(scanner, '_AI_COST_STATE', {'daySpentUsd': 10000.0, 'monthSpentUsd': 100000.0})
-    monkeypatch.setattr(scanner, '_AI_GATE_STATE', {'date': '', 'count': 0, 'lastRunTs': 0, 'failedAttempts': 0})
+    monkeypatch.setattr(scanner, '_AI_GATE_STATE', {'date': scanner.datetime.now(scanner.TZ_JST).strftime('%Y-%m-%d'),
+        'count': 100, 'lastRunTs': 0, 'failedAttempts': 0})
     with scanner.app.test_request_context('/'):
         ok, result, code = scanner._ai_run_gate()
     assert ok and code == 200
+    assert result["runCountToday"] == 101
     assert scanner._AI_COST_STATE['monthSpentUsd'] == 100000.0
     monkeypatch.setattr(scanner, '_AI_FULL_ANALYSIS_ENABLED', False)
     with scanner.app.test_request_context('/'):
@@ -84,3 +86,20 @@ def test_research_estimate_reports_cost_without_enforcing_the_old_cap():
     result = benchmark.estimate_cost(**args, budget_enforced=False)
     assert result['status'] == 'ready'
     assert result['estimatedCostJpy'] > benchmark.HARD_BUDGET_JPY
+
+
+def test_formal_worker_cost_checks_follow_enforcement_setting():
+    # Exercise the actual worker gate expressions without consuming a holdout.
+    import ast
+    import inspect
+    for worker in (scanner._research_benchmark_v2_job_worker, scanner._research_benchmark_job_worker):
+        tree = ast.parse(inspect.getsource(worker))
+        gates = [node.test for node in ast.walk(tree) if isinstance(node, ast.If)
+                 and 'estimatedCostJpy' in ast.unparse(node.test)]
+        assert len(gates) == 1
+        expression = compile(ast.Expression(gates[0]), '<worker-cost-gate>', 'eval')
+        for enforced, status, blocked in ((False, 'ready', False),
+                                          (True, 'ready', True),
+                                          (False, 'unavailable', True)):
+            assert eval(expression, {'_AI_BUDGET_ENFORCED': enforced,
+                        'dry': {'status': status, 'estimatedCostJpy': 100000.0}}) is blocked
