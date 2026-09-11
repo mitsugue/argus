@@ -701,6 +701,28 @@ def material_news_priority(event: Mapping[str, Any], now_epoch: float) -> tuple:
     return (int(material), stamp)
 
 
+NEWS_HISTORY_DAYS = 7
+
+
+def material_news_retention_priority(event: Mapping[str, Any], now_epoch: float) -> tuple:
+    """Keep recent important history without extending freshness or AI retry."""
+    fresh, stamp = material_news_priority(event, now_epoch)
+    from datetime import datetime
+    try:
+        receipt = datetime.fromisoformat(str(event.get("sourceReceivedAt")).replace("Z", "+00:00"))
+        valid_receipt = receipt.tzinfo is not None and receipt.timestamp() == stamp
+    except (ValueError, TypeError):
+        valid_receipt = False
+    historical = (valid_receipt
+                  and event.get("severity") in ("HIGH", "CRITICAL")
+                  and 86400 < now_epoch - stamp <= NEWS_HISTORY_DAYS * 86400)
+    return (2 if fresh else 1 if historical else 0, stamp)
+
+
+def is_material_news_history(event: Mapping[str, Any], now_epoch: float) -> bool:
+    return material_news_retention_priority(event, now_epoch)[0] == 1
+
+
 def evaluate_materiality(*, taxonomy: Mapping[str, Any], staleness: str,
                          source_authenticated: bool,
                          ai_analysis: Optional[Mapping[str, Any]],

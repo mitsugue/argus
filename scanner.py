@@ -18254,7 +18254,7 @@ def _news_process_message(message, *, backfill=False):
         # event. The store keeps the most RECENT events by receipt time.
         while len(_NEWS_INTEL["order"]) > _NEWS_EVENT_CAP:
             dropped = min(_NEWS_INTEL["order"],
-                          key=lambda eid: argus_news_intelligence.material_news_priority(
+                          key=lambda eid: argus_news_intelligence.material_news_retention_priority(
                               _NEWS_INTEL["events"].get(eid) or {}, now_epoch))
             _NEWS_INTEL["order"].remove(dropped)
             _NEWS_INTEL["events"].pop(dropped, None)
@@ -18865,15 +18865,17 @@ def api_argus_news_intelligence():
     """PUBLIC: normalized Nikkei news-risk envelopes (NewsRiskEvidence). No
     article bodies, no owner data, no SDA authority — evidence only."""
     _news_intel_ensure_loaded()
+    history = request.args.get("view") == "history"
     with _NEWS_INTEL_LOCK:
-        # v13.5.59: the visible window is the 12 most RECENT events by receipt
-        # time, never the last 12 processed (see _news_event_recency_epoch).
+        now_epoch = time.time()
         position = {eid: i for i, eid in enumerate(_NEWS_INTEL["order"])}
-        order = sorted(
-            (eid for eid in _NEWS_INTEL["order"] if eid in _NEWS_INTEL["events"]),
+        candidates = [eid for eid in _NEWS_INTEL["order"] if eid in _NEWS_INTEL["events"]
+                      and (not history or argus_news_intelligence.is_material_news_history(
+                          _NEWS_INTEL["events"][eid], now_epoch))]
+        order = sorted(candidates,
             key=lambda eid: (*argus_news_intelligence.material_news_priority(
-                _NEWS_INTEL["events"][eid], time.time()), position[eid]),
-            reverse=True)[:12]
+                _NEWS_INTEL["events"][eid], now_epoch), position[eid]),
+            reverse=True)[:_NEWS_EVENT_CAP if history else 12]
         events = [argus_news_intelligence.project_owner_event(
             _NEWS_INTEL["events"][eid]) for eid in order]
         status = _NEWS_INTEL["health"]["status"]
@@ -18894,6 +18896,8 @@ def api_argus_news_intelligence():
                     published_epoch=None, received_epoch=_received_epoch,
                     processed_epoch=_now_epoch)
                 event["ageMinutes"] = int((_now_epoch - _received_epoch) / 60)
+                if event["staleness"] == "STALE":
+                    event["alertEligible"] = False
         except Exception:
             pass
         original = event.get("titleOriginal") or event.get("headlineJa") or ""
@@ -18939,6 +18943,9 @@ def api_argus_news_intelligence():
     visible_events.sort(key=lambda ev: -severity_order.get(ev.get("severity"), 0))
     return jsonify({
         "schemaVersion": "argus-news-intelligence-v1",
+        "view": "history" if history else "recent",
+        "historyWindowDays": argus_news_intelligence.NEWS_HISTORY_DAYS,
+        "retainedEventLimit": _NEWS_EVENT_CAP,
         "generatedAt": _ai_now_iso(),
         "intakeStatus": status,
         "eventCount": len(visible_events),

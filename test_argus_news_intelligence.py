@@ -691,3 +691,20 @@ def test_recent_material_news_survives_newer_low_priority_items():
     stale = {"severity": "CRITICAL", "sourceReceivedAt": "2026-09-08T12:00:00Z"}
     assert ni.material_news_priority(material, now) > ni.material_news_priority(newer, now)
     assert ni.material_news_priority(stale, now) < ni.material_news_priority(newer, now)
+
+
+def test_history_retention_does_not_extend_freshness_or_retry_window():
+    from datetime import datetime, timezone
+    now = datetime(2026, 9, 11, 14, tzinfo=timezone.utc).timestamp()
+    old = {"severity": "HIGH", "sourceReceivedAt": "2026-09-10T12:37:11Z"}
+    recent = {"severity": "HIGH", "sourceReceivedAt": "2026-09-11T12:00:00Z"}
+    low = {"severity": "INFO", "sourceReceivedAt": "2026-09-11T13:00:00Z"}
+    expired = dict(old, sourceReceivedAt="2026-09-03T12:00:00Z")
+    assert ni.material_news_retention_priority(recent, now) > ni.material_news_retention_priority(old, now)
+    assert ni.material_news_retention_priority(old, now) > ni.material_news_retention_priority(low, now)
+    assert ni.material_news_priority(old, now)[0] == 0
+    assert ni.is_material_news_history(old, now)
+    for event in (recent, low, expired, dict(old, sourceReceivedAt="invalid", processedAt=old["sourceReceivedAt"]), dict(old, sourceReceivedAt="2026-09-12T12:00:00Z")):
+        assert not ni.is_material_news_history(event, now)
+    assert ni.assess_staleness(published_epoch=None,
+        received_epoch=ni.material_news_priority(old, now)[1], processed_epoch=now) == "STALE"
