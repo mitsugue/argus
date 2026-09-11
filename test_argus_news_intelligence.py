@@ -659,3 +659,35 @@ def test_event_envelope_carries_consensus_evidence_with_split_provenance():
     assert event["consensusEvidence"]["officialActualSource"] == "BLS"
     assert event["sourceFamily"] == "NIKKEI" and event["source"] == "Nikkei"
     assert event["sdaAuthority"] is False
+
+
+def test_policy_rate_decision_is_material_without_ai():
+    title = "ECB、0.25%利上げ決定"
+    result = ni.evaluate_materiality(taxonomy=ni.classify_event(title),
+        staleness="FRESH_BREAKING", source_authenticated=True,
+        ai_analysis=None, corroboration={}, subject=title, source="NIKKEI")
+    assert result["severity"] == "HIGH"
+    assert result["confirmationState"] == "MARKET_CONFIRMATION_PENDING"
+    assert "reported_policy_rate_decision" in result["reasons"]
+
+
+def test_policy_decision_does_not_promote_forecasts_or_denials():
+    for title in ("ECB、利上げ決定の予想", "ECB、利上げ決定を否定",
+                  "ECB、利上げ見送り", "ECB、追加利上げの可能性", "ECB総裁の講演予定"):
+        assert not ni.reported_policy_decision(title)
+    assert ni.reported_policy_decision("日銀、利下げを決定")
+    for stale, authenticated in (("STALE", True), ("FRESH_BREAKING", False)):
+        result = ni.evaluate_materiality(taxonomy=ni.classify_event("ECB、利上げ決定"),
+            staleness=stale, source_authenticated=authenticated,
+            ai_analysis=None, corroboration={}, subject="ECB、利上げ決定", source="NIKKEI")
+        assert result["severity"] not in ("HIGH", "CRITICAL")
+
+
+def test_recent_material_news_survives_newer_low_priority_items():
+    from datetime import datetime, timezone
+    now = datetime(2026, 9, 11, 2, tzinfo=timezone.utc).timestamp()
+    material = {"severity": "HIGH", "sourceReceivedAt": "2026-09-10T12:37:11Z"}
+    newer = {"severity": "INFO", "sourceReceivedAt": "2026-09-11T01:00:00Z"}
+    stale = {"severity": "CRITICAL", "sourceReceivedAt": "2026-09-08T12:00:00Z"}
+    assert ni.material_news_priority(material, now) > ni.material_news_priority(newer, now)
+    assert ni.material_news_priority(stale, now) < ni.material_news_priority(newer, now)

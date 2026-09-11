@@ -219,3 +219,30 @@ iPhoneの本番起動後に実際の保存データを確認するまで、移�
 移行を確認した。判断・時刻・数値、合成保有の数量7・取得価格1000と設定を維持し、
 再読込で履歴のバイト列が一致、破損させた履歴は原文を保持した。ネットワークPOSTは0件。
 これはローカルの合成データ検査であり、iPhone実機の保存内容確認を代替しない。
+
+### Material news retention and pending AI analysis (2026-09-11)
+
+Production received the ECB policy-rate decision at 2026-09-10T12:37:11Z
+and processed it at 12:37:58Z. Event nie-fa86d64ae698a39c was stored as WATCH,
+AI_ANALYSIS_UNAVAILABLE, with only family_central_bank as its severity reason.
+It ranked 25th by receipt and was excluded by the 12-item public window.
+At processing time retained daily usage was USD1.535688; replay of the existing
+policy with retained usage and the current unchanged USD2 cap reproduced
+scheduled_daily_budget_exhausted (the news lane ceiling is USD1.50). The original
+per-event failure reason was not retained, so this is a reconstruction.
+
+Candidate changes: explicit authenticated policy decisions remain material without
+AI; recent material events have priority within the existing 40/12 item caps;
+separate events are no longer deduplicated by source and family alone. Stored
+decisions are re-evaluated without changing their identity, receipt, facts or
+trading authority, with a prior-severity record and no retroactive alert.
+Failed important analyses retry at most one item per cycle, with a 15-minute
+backoff and three actual attempts per UTC day, through the existing budget gate.
+Each attempt retains its diagnostic. A retry using a stored headline is explicitly
+labeled headline-only, not a reading of the full original article.
+
+Validation: 205 related tests including public-route concurrency and persisted
+retry outcomes passed. Frontend lint/build passed; source876 and built12 UTF-8
+name checks passed before the final input-scope label (repeat final checks before
+release). Production migration, actual AI retry, screen acceptance and detailed
+source verification remain pending. This is a 13.5 correction, not 13.7 cost work.

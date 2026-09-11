@@ -1,7 +1,7 @@
 import React from 'react';
 import type { ArgusTodayView, MarketSelectionMode, TodayProjection } from '../../domain/argusTodayView';
 import { formatEventTime, quoteDisplayLabel, subjectDisplayName, confidenceBasisJa, waitKindJa } from '../../domain/argusTodayView';
-import { displayNewsHeadline, isDigestHeadline } from '../../lib/newsHeadline';
+import { displayNewsHeadline, isDigestHeadline, newsAnalysisStatusJa } from '../../lib/newsHeadline';
 import type { RouteKey } from '../NavRail';
 import type { SettingsSection } from '../../navigation';
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
@@ -68,7 +68,7 @@ interface Props {
   newsIntel: {
     status: 'loading' | 'data' | 'error';
     events: Array<{
-      eventId: string; eventType: string;
+      eventId: string; eventType: string; analysisState?: string; analysisInputScope?: string;
       severity: 'INFO' | 'WATCH' | 'HIGH' | 'CRITICAL';
       headlineJa: string; whyJa: string; japanImpactJa: string | null;
       confirmationState: 'MARKET_CONFIRMED' | 'MARKET_CONFIRMATION_PENDING';
@@ -650,7 +650,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   const materialMailEvents = newsIntel.events.filter((event) =>
     event.severity === 'HIGH' || event.severity === 'CRITICAL')
     .filter((event, index, rows) => rows.findIndex((candidate) =>
-      candidate.eventType === event.eventType && candidate.source === event.source) === index);
+      candidate.eventId === event.eventId) === index);
   type NewsRowMemory = Props['newsIntel']['events'][number]['eventMemory'];
   const newsRows: Array<{ id: string; severity: string; kind: '市場リスク' | '重大ニュース';
     headlineJa: string; whyJa: string; metaJa: string; eventMemory: NewsRowMemory }> = [
@@ -664,7 +664,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       headlineJa: displayNewsHeadline(event.headlineJa), whyJa: event.whyJa, eventMemory: event.eventMemory,
       metaJa: `${event.source} · ${event.sourceReceivedAt
         ? new Date(event.sourceReceivedAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '—'}`
-        + ` · ${event.confirmationState === 'MARKET_CONFIRMED' ? '市場確認済み' : '市場確認待ち'}`,
+        + ` · ${event.confirmationState === 'MARKET_CONFIRMED' ? '市場確認済み' : '市場確認待ち'}`
+        + ` · ${newsAnalysisStatusJa(event.analysisState, event.analysisInputScope)}`,
     })),
   ].sort((left, right) => (right.severity === 'CRITICAL' ? 1 : 0) - (left.severity === 'CRITICAL' ? 1 : 0));
   const NEWS_ROWS_CAP = 5;

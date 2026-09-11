@@ -1,4 +1,5 @@
 import React from 'react';
+import { newsAnalysisStatusJa, displayNewsHeadline } from '../../lib/newsHeadline';
 import { useNewsIntelligence, type NewsIntelEvent } from '../../hooks/useNewsIntelligence';
 import { useMarketShock } from '../../hooks/useMarketShock';
 import './NewsAlertsPanel.css';
@@ -25,7 +26,7 @@ export function materialNewsEvents(events: NewsIntelEvent[]): NewsIntelEvent[] {
     .filter((event) => (event.severity === 'HIGH' || event.severity === 'CRITICAL')
       && String(event.staleness).toUpperCase() !== 'STALE')
     .filter((event, index, rows) => rows.findIndex((candidate) =>
-      candidate.eventType === event.eventType && candidate.source === event.source) === index)
+      candidate.eventId === event.eventId) === index)
     .sort((left, right) => (right.severity === 'CRITICAL' ? 1 : 0)
       - (left.severity === 'CRITICAL' ? 1 : 0)
       || String(right.sourceReceivedAt ?? '').localeCompare(String(left.sourceReceivedAt ?? '')));
@@ -59,7 +60,7 @@ export const NewsAlertsPanel: React.FC = () => {
           <p className="news-alerts__title">
             <mark style={{ color: SEVERITY_TONE[event.severity] ?? 'inherit',
               borderColor: SEVERITY_TONE[event.severity] ?? 'inherit' }}>{event.severity}</mark>
-            <b>{event.headlineJa}</b>
+            <b>{displayNewsHeadline(event.headlineJa)}</b>
           </p>
           <p className="news-alerts__why">{event.whyJa}</p>
           <p className="news-alerts__meta">
@@ -85,7 +86,7 @@ export const NewsAlertsPanel: React.FC = () => {
               <mark style={{ color: SEVERITY_TONE[event.severity] ?? 'inherit',
                 borderColor: SEVERITY_TONE[event.severity] ?? 'inherit' }}>{event.severity}</mark>
               <em>{DIRECTION_JA[direction] ?? direction}</em>
-              <b>{event.headlineJa}</b>
+              <b>{displayNewsHeadline(event.headlineJa)}</b>
             </p>
             <p className="news-alerts__why">{event.whyJa}</p>
             {event.japanImpactJa && event.japanImpactJa !== event.whyJa
@@ -97,6 +98,7 @@ export const NewsAlertsPanel: React.FC = () => {
             <p className="news-alerts__meta">
               {event.source} · 受信 {receivedJa(event.sourceReceivedAt)} JST ·{' '}
               {event.confirmationState === 'MARKET_CONFIRMED' ? '市場確認済み' : '市場確認待ち'}
+              {' · '}{newsAnalysisStatusJa(event.analysisState, event.analysisInputScope)}
               {event.backfill ? ' · 再処理(過去分)' : ''}
             </p>
           </article>;

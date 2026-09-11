@@ -20,3 +20,10 @@ export function isDigestHeadline(raw: string | null | undefined): boolean {
   const text = String(raw ?? '');
   return /ニュースメール/.test(text) && text.includes('◆');
 }
+
+
+export function newsAnalysisStatusJa(state: string | null | undefined, scope?: string): string {
+  return state === 'ANALYZED' ? (scope === 'stored_headline_only' ? '見出しのAI解析済み・本文未確認' : 'AI解析済み')
+    : state === 'AI_CACHED' ? '保存済み解析を参照'
+      : '詳細AI解析未完了・規則による判定';
+}

@@ -44,6 +44,7 @@ export interface NewsIntelEvent {
   marketReadings: Array<{ key: string; labelJa: string; value: number | null;
     change: number | null; unit: string; asOf?: string | null }>;
   analysisState: string;
+  analysisInputScope?: string;
   alertEligible: boolean;
   backfill: boolean;
   sdaAuthority: false;

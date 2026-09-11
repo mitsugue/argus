@@ -805,3 +805,72 @@ def test_material_translation_budget_refusal_is_not_terminal_attempt(tmp_path, m
     assert scanner._news_material_translation_fallback(diagnostic=diagnostic) == 1
     assert diagnostic["translated"] == 1
     assert scanner._NEWS_JA_FAILED[h] == 99
+
+
+def test_saved_policy_decision_review_preserves_original_evidence(tmp_path, monkeypatch):
+    import copy
+    from datetime import datetime, timezone
+    _reset_news_store(tmp_path, monkeypatch)
+    now = time.time()
+    stamp = datetime.fromtimestamp(now - 13 * 3600, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    event = _seed_event("policy-decision", "NIKKEI", "WATCH", "ECB、0.25%利上げ決定",
+                        "ECB、0.25%利上げ決定", stamp)
+    event.update(sourceTier="trusted_subscription", eventType="CENTRAL_BANK",
+                 analysisState="AI_ANALYSIS_UNAVAILABLE", severityReasons=["family_central_bank"])
+    original = copy.deepcopy(event)
+    scanner._NEWS_INTEL["events"][event["eventId"]] = event
+    scanner._NEWS_INTEL["order"] = [event["eventId"]]
+    assert scanner._news_review_saved_policy_decisions() == 1
+    assert scanner._news_review_saved_policy_decisions() == 0
+    assert event["severity"] == "HIGH"
+    assert event["alertEligible"] is False
+    for key, value in original.items():
+        if key not in ("severity", "severityReasons"):
+            assert event[key] == value
+    scanner._news_intel_persist()
+    scanner._NEWS_INTEL["events"] = {}
+    scanner._news_intel_load()
+    restored = scanner._NEWS_INTEL["events"]["policy-decision"]
+    assert restored == event
+    assert restored["materialityReview"]["previousSeverity"] == "WATCH"
+
+
+def test_material_analysis_retry_keeps_budget_failure_pending_then_recovers(tmp_path, monkeypatch):
+    import copy
+    from datetime import datetime, timezone
+    _reset_news_store(tmp_path, monkeypatch)
+    stamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    event = _seed_event('pending-policy', 'NIKKEI', 'HIGH', 'ECB、利上げ決定', 'ECB、利上げ決定', stamp)
+    event['analysisState'] = 'AI_ANALYSIS_UNAVAILABLE'
+    scanner._NEWS_INTEL['events'][event['eventId']] = event
+    scanner._NEWS_INTEL['order'] = [event['eventId']]
+    original = copy.deepcopy(event)
+    calls = []
+    def analyze(subject, excerpt, fingerprint, taxonomy=None, diagnostic=None):
+        calls.append(subject)
+        assert excerpt == ''
+        if len(calls) == 1:
+            diagnostic.update(outcome='skipped', reason='scheduled_daily_budget_exhausted')
+            return None, 'AI_ANALYSIS_UNAVAILABLE'
+        diagnostic.update(outcome='ok', requestedModel='test-model', returnedModel='test-model',
+                          inputTokens=100, outputTokens=30, estUsd=0.001)
+        return {'facts': ['政策金利を変更'], 'causalPathJa': '金利と為替への影響を確認',
+                'uncertaintyJa': '市場反応は未確認'}, 'ANALYZED'
+    monkeypatch.setattr(scanner, '_news_analyze_ai', analyze)
+    assert scanner._news_retry_pending_analysis() == 1
+    assert event['analysisRetry']['attempts'] == 0
+    assert event['analysisDiagnostic']['reason'] == 'scheduled_daily_budget_exhausted'
+    assert scanner._news_retry_pending_analysis() == 0
+    event['analysisRetry']['nextAttemptEpoch'] = 0
+    assert scanner._news_retry_pending_analysis() == 1
+    assert event['analysisState'] == 'ANALYZED'
+    assert event['analysisInputScope'] == 'stored_headline_only'
+    assert event['analysisDiagnostic']['returnedModel'] == 'test-model'
+    for key in ('eventId', 'sourceFingerprint', 'sourceReceivedAt', 'severity',
+                'confirmationState', 'alertEligible', 'sdaAuthority'):
+        assert event[key] == original[key]
+    assert scanner._news_retry_pending_analysis() == 0
+    scanner._news_intel_persist()
+    scanner._NEWS_INTEL['events'] = {}
+    scanner._news_intel_load()
+    assert scanner._NEWS_INTEL['events']['pending-policy'] == event

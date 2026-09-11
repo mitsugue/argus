@@ -20,11 +20,9 @@ import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 NEWS_EVENT_SCHEMA = "argus-news-event-v1"
-# v4 (owner 2026-09-05): trusted-publisher actual-vs-consensus evidence is a
-# severity component (publisher_consensus_comparison). The version is part of
-# the AI-analysis cache key, so old results are never reused under the new
-# severity semantics.
-NEWS_POLICY_VERSION = "news-policy-v4"
+# v5: explicit policy-rate decisions remain material without external AI.
+# Existing source, freshness and market-confirmation boundaries still apply.
+NEWS_POLICY_VERSION = "news-policy-v5"
 SEVERITIES = ("INFO", "WATCH", "HIGH", "CRITICAL")
 
 # ── Source families (§2/§9) — the six owner-subscribed sources only ────────
@@ -670,6 +668,39 @@ def publisher_consensus_evidence(*, subject: str, content_text: str = "",
     }
 
 
+def reported_policy_decision(subject: str) -> bool:
+    """Recognize an explicit policy-rate decision, never a forecast or denial."""
+    text = _lower(subject)
+    if not re.search(r"ecb|欧州中央銀行|日銀|日本銀行|frb|fomc|中央銀行|bank of england|英中銀", text):
+        return False
+    if re.search(r"予想|予測|見通し|観測|可能性|検討|否定|見送り|決定せず|かどうか|expected|forecast|may |could |not |denied", text):
+        return False
+    return bool(re.search(
+        r"(?:利上げ|利下げ|金利据え置き).{0,8}(?:を決定|決定|を発表)|"
+        r"(?:政策金利|金利).{0,24}(?:引き上げ|引き下げ|据え置き).{0,8}決定|"
+        r"(?:decided|decides) to (?:raise|cut|lower|hold).{0,40}(?:rate|interest)", text))
+
+
+def material_news_priority(event: Mapping[str, Any], now_epoch: float) -> tuple:
+    """Protect recent material news within bounded storage/display windows."""
+    from datetime import datetime
+    stamp = 0.0
+    has_receipt = False
+    for key in ("sourceReceivedAt", "processedAt"):
+        try:
+            parsed = datetime.fromisoformat(str(event.get(key)).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                continue
+            stamp = parsed.timestamp()
+            has_receipt = key == "sourceReceivedAt"
+            break
+        except (ValueError, TypeError):
+            continue
+    age = now_epoch - stamp
+    material = has_receipt and event.get("severity") in ("HIGH", "CRITICAL") and 0 <= age <= 86400
+    return (int(material), stamp)
+
+
 def evaluate_materiality(*, taxonomy: Mapping[str, Any], staleness: str,
                          source_authenticated: bool,
                          ai_analysis: Optional[Mapping[str, Any]],
@@ -711,6 +742,12 @@ def evaluate_materiality(*, taxonomy: Mapping[str, Any], staleness: str,
     if extreme:
         score += 1
         reasons.append("extreme_language")
+    if (family in ("CENTRAL_BANK", "BOJ", "FED")
+            and reported_policy_decision(subject)
+            and source_authenticated
+            and SOURCE_TIERS.get(source) in ("trusted_subscription", "official_agency")):
+        score = max(score, 2)
+        reasons.append("reported_policy_rate_decision")
     if priority:
         score += 1
         reasons.append(f"source_priority_{source.lower()}")
