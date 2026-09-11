@@ -38,6 +38,8 @@ REVIEWED_EXTENSION_BLOBS = {
     "test_argus_ai_execution_settings.py": "ed1c7c0203e5809d750acc29b3de3879f6646321",
     "argus_research_benchmark.py": "0afebef7261abeb95da017f4b5aa327da55874a1",
     "argus_ai_gate.py": "d0e19fb4d25527e6f0ca70d73c8b21a41bc2a866",
+    'test_smoke_cached_cause.py': '547735d7be278e5650341bd067b50c1fa87dd855',
+    'smoke_test.py': 'e6c003c4d7b3c499744950b98457860f4bc71a77',
     "web/src/components/guide/BackupCard.tsx": "7448961ef09c25babfd84e5c2eec1ec38f76db4e",
     "web/src/components/system/BackupStatusOverview.tsx": "6b0c0bc4e434c8a9464accec8f78100c1da06c43",
     "web/src/lib/vault.ts": "9a43fdfad04ba861367a0552d93703eff874f9e6",

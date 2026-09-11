@@ -779,16 +779,42 @@ def v_learning_memory_admin_gated():
     return True, "build/restore admin-gated"
 
 def v_public_explain_cached_only():
-    # explain=1 must return cached text or not_generated — never a live AI run.
+    # A public read may report an existing queue, but must never generate AI.
     t0 = time.time()
-    c, d = _get("/api/argus/cause-attribution?symbol=8058&market=JP&explain=1", timeout=40)
+    code, data = _get("/api/argus/cause-attribution?symbol=8058&market=JP&explain=1", timeout=40)
     took = time.time() - t0
-    st = d.get("explanationStatus")
-    if st not in ("cached", "not_generated"):
-        return False, f"explanationStatus={st} (live-LLM path suspected)"
-    if "moverCause" not in d:
-        return False, "cause-attribution missing moverCause ladder"
-    return True, f"explanationStatus={st} in {took:.1f}s"
+    if code != 200 or not isinstance(data, dict):
+        return False, f"cause-attribution invalid response (HTTP {code})"
+    status = data.get("explanationStatus")
+    if status not in ("cached", "not_generated", "queued"):
+        return False, f"explanationStatus={status} (live-LLM path suspected)"
+    availability = data.get("moverCauseAvailability")
+    if not isinstance(availability, dict):
+        return False, "cause-attribution missing availability"
+    if availability.get("status") == "unavailable":
+        reason = availability.get("reasonCode")
+        # Market-closed is explicit absence, not completed analysis. Storage or
+        # unexpected failures must still fail monitoring rather than look healthy.
+        if reason != "current_trading_session_unavailable":
+            return False, f"cause-attribution unavailable: {reason}"
+        if ("moverCause" in data or status != "not_generated"
+                or data.get("explanationJa") or not data.get("explanationNoteJa")):
+            return False, "cause-attribution contradicts session unavailability"
+        return True, f"analysis unavailable: {reason}; no AI generated in {took:.1f}s"
+    if availability != {"status": "available", "reasonCode": None}:
+        return False, "cause-attribution invalid availability"
+    ladder = data.get("moverCause")
+    if not isinstance(ladder, dict) or ladder.get("causeStatus") not in {
+        "confirmed_cause", "probable_catalyst", "candidate_catalyst",
+        "no_lead_yet", "not_scoreable",
+    }:
+        return False, "cause-attribution missing or invalid moverCause ladder"
+    text = data.get("explanationJa")
+    if status == "cached" and (not isinstance(text, str) or not text.strip()):
+        return False, "cause-attribution cached explanation missing text"
+    if status != "cached" and text:
+        return False, "cause-attribution explanation contradicts generation status"
+    return True, f"explanationStatus={status} in {took:.1f}s"
 
 def v_ai_judgment_gemini_challenge_shape():
     # v11.2.1: when the cached AI payload is post-v11.2 it must carry the structured
