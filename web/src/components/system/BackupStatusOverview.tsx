@@ -38,6 +38,10 @@ export const BackupStatusOverview: React.FC<{ assets: AssetItem[] }> = ({ assets
       </strong>
       <small>{readiness.summary}</small>
     </div>
+    {sync?.historyRestoreBlocked && <p role="status">
+      クラウド履歴の取込みを保留中です。保存済みデータは維持しています。
+      バックアップの形式確認・移行が必要です。
+    </p>}
     <div className="backup-overview__grid">
       <article><span>RECOVERY SOURCES</span>
         <strong>{readiness.sources.length ? readiness.sources.join(' / ') : 'NONE VERIFIED'}</strong></article>

@@ -7,7 +7,7 @@
 // Honest limits: a WEAK passphrase can be brute-forced offline because the
 // ciphertext is public — use a long one. Losing the passphrase = no restore.
 
-import { restoreBackup, BACKUP_KEYS, type BackupFile } from './backup';
+import { restoreBackup, assertBackupHistoryReadable, BACKUP_KEYS, type BackupFile } from './backup';
 import { mergeAssets, loadTombstones, saveTombstones, type Tombstones } from './assetMerge';
 import type { AssetItem } from '../types/assetItem';
 import { buildRecoveryDurability, type RecoveryDurability } from '../domain/recoveryDurability';
@@ -141,6 +141,7 @@ export interface SyncInfo {
   /** v11.3.4 diagnostics */
   lastPullAppliedAt?: number; lastPushAt?: number;
   remoteProtocol?: number; legacyClientDetected?: boolean;
+  historyRestoreBlocked?: boolean;
 }
 function recordSyncTick(patch: Partial<SyncInfo> & { outcome: SyncInfo['outcome'] }): void {
   try {
@@ -174,6 +175,12 @@ export async function cloudSyncNow(opts: { rawFallback?: boolean } = {}): Promis
     let payload: BackupFile | null = null;
     try { payload = await decryptBackup(pass, env); } catch { payload = null; }
     if (payload?.data) {
+      try { assertBackupHistoryReadable(payload); }
+      catch {
+        recordSyncTick({ outcome: 'noop', merged: false, historyRestoreBlocked: true });
+        return 'noop';
+      }
+      recordSyncTick({ outcome: 'noop', historyRestoreBlocked: false });
       recordExistingEnvelope(payload.exportedAt);
       // v11.3.4 migration guard: a RECENT envelope without syncProtocolVersion
       // means another device still runs pre-sync-v2 code (whole-payload LWW,
@@ -256,8 +263,11 @@ export async function cloudRestore(pass: string): Promise<number> {
     throw new Error('クラウド上にバックアップが見つかりません(パスフレーズ違い、または他端末がまだ一度も送信していません)。');
   }
   const payload = await decryptBackup(pass, envelopeStr);
+  assertBackupHistoryReadable(payload);
   recordExistingEnvelope(payload.exportedAt);
   const n = restoreBackup(payload);
+  if (n > 0) recordSyncTick({ outcome: 'applied', historyRestoreBlocked: false,
+    lastPullAppliedAt: Date.now() });
   // Record what was applied so a later visibility pull does not re-apply it,
   // and let mounted hooks reload without a manual refresh.
   setSyncState({ appliedExportedAt: payload.exportedAt });

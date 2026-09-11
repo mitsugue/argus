@@ -387,6 +387,9 @@ console.log('argus-engine.test: all checks passed');
   check('a digest mail headline is shown by its first item',
     displayNewsHeadline('日経ニュースメール 9/7 夕版 ━ 注目ニュース ━━━━━━━ ◆円半年ぶりに154円台に上昇 円安抑止へ思惑（有料会員限定） ◆次の記事') === '円半年ぶりに154円台に上昇 円安抑止へ思惑'
     && displayNewsHeadline('緩和的な財政政策') === '緩和的な財政政策'
+    && displayNewsHeadline('◆中央銀行、政策金利を変更 ━━━━━━━━━ ■日経電子版アプリのプッシュ通知でも速報を受け取れます') === '中央銀行、政策金利を変更'
+    && displayNewsHeadline('中央銀行、政策金利を変更 ─── ■日経電子版アプリのプッシュ通知でも速報を受け取れます') === '中央銀行、政策金利を変更'
+    && displayNewsHeadline('日経電子版アプリのプッシュ通知でも速報を受け取れます') === '日経電子版アプリのプッシュ通知でも速報を受け取れます'
     && isDigestHeadline('日経ニュースメール 9/7 夕版 ━ ◆x') === true && isDigestHeadline('普通の見出し') === false);
   const ai = fs.readFileSync(path.join(root, 'src/hooks/useAssetIntel.ts'), 'utf8');
   check('crypto quotes try the memo id and the symbol default id',
@@ -456,7 +459,7 @@ console.log('argus-engine.test: all checks passed');
   new Date('2026-09-07T10:40:00Z'));
   check('the AI note separates key, permission, budget, last run, last refusal and the computed slot',
     richNote.includes('鍵 設定済') && richNote.includes('実行許可 ON') && richNote.includes('残$0.40（本日$1.60/$2.00）')
-    && richNote.includes('直近のAI実行: headline_translation 9/7 12:00 JST') && richNote.includes('日次予算を使い切った')
+    && richNote.includes('直近のAI実行: headline_translation 9/7 12:00 JST') && richNote.includes('日次予算枠が不足（毎日9:00 JSTに更新）')
     && richNote.includes('次のcron予定枠（計算値） 9/7 21:35 JST'));
   const { eventAiRunMetaJa } = require(path.join(root, 'src/lib/eventAiScenarioNote.ts'));
   check('a saved scenario names the model that answered and its cost',

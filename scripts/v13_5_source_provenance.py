@@ -35,6 +35,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    "web/src/components/guide/BackupCard.tsx": "7448961ef09c25babfd84e5c2eec1ec38f76db4e",
+    "web/src/components/system/BackupStatusOverview.tsx": "6b0c0bc4e434c8a9464accec8f78100c1da06c43",
+    "web/src/lib/vault.ts": "9a43fdfad04ba861367a0552d93703eff874f9e6",
     "web/scripts/news-history.test.mjs": "7d9deecce539d761269f971e3b4f5cefd312f6ec",
     "web/scripts/public-market-acceptance.mjs": "2e4e63fd5c4c518190483138a2a899ad842061c0",
     "web/scripts/index-chart-isolation.test.mjs": "470dcf9598714a89b9ebba9dd53cfc2f6315092f",

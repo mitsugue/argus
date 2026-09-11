@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { downloadBackup, restoreBackup, type BackupFile } from '../../lib/backup';
+import { downloadBackup, restoreBackup, BackupHistoryValidationError, type BackupFile } from '../../lib/backup';
 import { cloudRestore, getVaultPass, setVaultPass, lastCloudBackupAt, lastSyncInfo } from '../../lib/vault';
 
 // Complete device-data backup UI. Only this full export advances global
@@ -47,8 +47,9 @@ export const BackupCard: React.FC = () => {
         if (n === 0) { setMsg('このファイルはARGUSのバックアップではないようです。'); return; }
         setMsg(`${n}項目を復元しました(${parsed.exportedAt?.slice(0, 10)}のバックアップ)。再読み込みします…`);
         window.setTimeout(() => location.reload(), 1200);
-      } catch {
-        setMsg('読み込みに失敗しました。正しいバックアップファイルか確認してください。');
+      } catch (error) {
+        setMsg(error instanceof BackupHistoryValidationError
+          ? error.message : '読み込みに失敗しました。正しいバックアップファイルか確認してください。');
       }
     };
     reader.readAsText(file);
@@ -99,6 +100,10 @@ export const BackupCard: React.FC = () => {
           その復旧点より新しい変更はこの端末内だけです。上のJSONエクスポートで保護してください。
           パスフレーズを忘れると誰にも復元できません(本人含む)。
         </p>
+        {lastSyncInfo()?.historyRestoreBlocked && <p className="backup__msg" role="status">
+          保存済みクラウド履歴を検証できないため取込みを保留しています。端末データは維持しています。
+          古いバックアップは製品外の移行ツールで変換してから取り込んでください。
+        </p>}
         {cloudMsg && <p className="backup__msg">{cloudMsg}</p>}
       </div>
     </div>

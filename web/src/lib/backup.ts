@@ -2,6 +2,7 @@
 // advance global backup protection; narrower portfolio exports are separate.
 
 import { BACKUP_CONTRACT_VERSION, patchBackupMeta } from './backupMeta';
+import { DEVICE_LOCAL_SDA_LEDGER_KEY, verifyDeviceLocalSdaLedgerDocument } from './sdaDeviceLocal';
 export { BACKUP_CONTRACT_VERSION } from './backupMeta';
 
 // v11.3.3: assetTombstones ride along so deletions propagate across devices
@@ -131,8 +132,23 @@ export function maybeAutoBackup(): boolean {
   }
 }
 
+export class BackupHistoryValidationError extends Error {
+  constructor() {
+    super('判断履歴を検証できません。保存済みデータは変更していません。古いバックアップは製品外の移行ツールで変換してから取り込んでください。');
+    this.name = 'BackupHistoryValidationError';
+  }
+}
+
+export function assertBackupHistoryReadable(parsed: BackupFile): void {
+  const history = parsed.data?.[DEVICE_LOCAL_SDA_LEDGER_KEY];
+  if (history != null && !verifyDeviceLocalSdaLedgerDocument(history)) {
+    throw new BackupHistoryValidationError();
+  }
+}
+
 function restoreBackupInto(parsed: BackupFile, storage: BackupStorage, now: number): number {
   if (parsed.app !== 'argus' || !parsed.data) return 0;
+  assertBackupHistoryReadable(parsed);
   let n = 0;
   for (const k of BACKUP_KEYS) {
     if (parsed.data[k] == null) continue;

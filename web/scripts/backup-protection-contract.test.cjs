@@ -10,7 +10,7 @@ const esbuild = require('esbuild');
 function loadBundled(entry) {
   const output = esbuild.buildSync({
     entryPoints: [entry], bundle: true, write: false, platform: 'node', format: 'cjs',
-    define: { __APP_VERSION__: JSON.stringify('backup-contract-test') },
+    define: { __APP_VERSION__: JSON.stringify('backup-contract-test'), 'import.meta.env': '{}' },
     logLevel: 'silent',
   }).outputFiles[0].text;
   const bundled = new Module(entry, module);
@@ -183,6 +183,43 @@ async function main() {
   assert.equal(JSON.parse(localStorage.getItem('argus.research.v1'))[0].id, 'research-test');
   assert.equal(JSON.parse(localStorage.getItem('argus.fireCore.v1')).monthlyContributionTotal, 100_000);
   assert.equal(JSON.parse(localStorage.getItem('argus.decision.audit.v1'))[0].id, decision.id);
+
+  // Reject an unsupported history before any JSON-import write, including
+  // holdings, deletion markers and backup timestamps.
+  const unsupported = structuredClone(completePayload);
+  unsupported.data['argus.sda.deviceLedger.v1'].schemaVersion = 'unsupported-history-v0';
+  const protectedBefore = [...localStorage.values];
+  assert.throws(() => backup.restoreBackup(unsupported), /判断履歴を検証できません/);
+  assert.deepEqual([...localStorage.values], protectedBefore);
+  assert.equal(backup.verifyBackupRoundTrip(unsupported).passed, false);
+
+  // The same preflight applies to real encrypted cloud restore and automatic
+  // pull. A valid envelope is still decryptable and keeps the normal restore.
+  const vault = loadBundled(path.join(root, 'lib', 'vault.ts'));
+  const passphrase = 'isolated-test-backup-passphrase';
+  const originalFetch = global.fetch;
+  const sealedUnsupported = await vault.encryptBackup(passphrase, unsupported);
+  global.fetch = async () => ({ ok: true, text: async () => sealedUnsupported });
+  assert.deepEqual(await vault.decryptBackup(passphrase, sealedUnsupported), unsupported);
+  assert.throws(() => backup.assertBackupHistoryReadable(unsupported), /判断履歴/);
+  await assert.rejects(vault.cloudRestore(passphrase), /判断履歴/);
+  assert.deepEqual([...localStorage.values], protectedBefore);
+  vault.setVaultPass(passphrase);
+  const beforePull = [...localStorage.values];
+  assert.equal(await vault.cloudSyncNow({ rawFallback: true }), 'noop');
+  assert.equal(vault.lastSyncInfo().historyRestoreBlocked, true);
+  assert.deepEqual([...localStorage.values].filter(([key]) => key !== 'argus.lastSyncInfo.v1'), beforePull);
+  assert.equal(vault.lastSyncInfo().lastPullAppliedAt, undefined);
+  const validEnvelope = await vault.encryptBackup(passphrase, completePayload);
+  global.fetch = async () => ({ ok: true, text: async () => validEnvelope });
+  global.window.dispatchEvent = () => true;
+  assert.equal(await vault.cloudRestore(passphrase), backup.BACKUP_KEYS.length);
+  assert.equal(vault.lastSyncInfo().historyRestoreBlocked, false);
+  assert.equal(vault.lastSyncInfo().outcome, 'applied');
+  assert.ok(vault.lastSyncInfo().lastPullAppliedAt);
+  await vault.cloudSyncNow({ rawFallback: true });
+  assert.equal(vault.lastSyncInfo().historyRestoreBlocked, false);
+  global.fetch = originalFetch;
 
   // Protection discovery covers non-portfolio stores even when no holding is
   // present; FIRE/trade/research-only data must never be labelled no-data.

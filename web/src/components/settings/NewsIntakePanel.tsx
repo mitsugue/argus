@@ -72,7 +72,7 @@ const TRANSLATION_OUTCOME_JA: Record<string, string> = {
 const POLICY_DECISION_JA: Record<string, string> = {
   allowed: 'AI実行 許可',
   deterministic_mode: 'AI停止中（決定論モード設定）',
-  scheduled_daily_budget_exhausted: '本日のAI予算を使い切りました（明日再開）',
+  scheduled_daily_budget_exhausted: 'AIの日次予算枠が不足しています（毎日9:00 JSTに更新）',
   scheduled_scope_required: 'この用途はAI対象外',
 };
 

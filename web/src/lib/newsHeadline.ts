@@ -3,7 +3,12 @@
 // header is not the news. For DISPLAY only, keep the first headline after the
 // first ◆ marker; the stored event text is untouched (evidence stays verbatim).
 export function displayNewsHeadline(raw: string | null | undefined): string {
-  const text = String(raw ?? '').trim();
+  // Strip only the known delivery notice after a mail separator. An article
+  // about the app itself must remain intact; stored evidence is never edited.
+  const text = String(raw ?? '').trim().replace(
+    /\s*[━─―—－-]{3,}\s*■?\s*日経電子版アプリのプッシュ通知でも速報を受け取れます[\s\S]*$/u,
+    '',
+  ).trim();
   if (!text) return '';
   const marker = text.indexOf('◆');
   if (marker < 0) return text;
