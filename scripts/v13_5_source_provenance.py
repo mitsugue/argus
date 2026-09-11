@@ -32,12 +32,15 @@ HISTORICAL_REPLACED_BLOBS = {
         "artifacts/round2-jp-market-engine-registry-coverage-v1.json",
 }
 
-# Owner-reviewed GPT role migration, limited to these exact file contents.
+# Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
     "argus_osint_engine.py": "82c928299eed09004067283d72cc4b67b07753c5",
     "test_argus_v12_1_1.py": "fcb2a56c79822f5177ae776dfdaf07972da0a49e",
     "test_argus_v12_1_3.py": "ec334f206cc43a94f3e2dc8c7ea5015b341a0957",
+    ".github/workflows/ai-rejudge.yml": "b81acfa1a3452f2467ba416c0e14ce9d9f905f04",
+    "test_argus_official_lifecycle.py": "94f9ebcb4a3a4457cd0117e52e98cb55e628d3c7",
+    "test_workflow_http.py": "3b02814b97563c1b089de97697d0bb471bee1578",
 }
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
