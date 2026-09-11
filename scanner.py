@@ -13637,12 +13637,12 @@ def _ai_record_cost(run_id, oai_status, gem_status, grounding_enabled):
                      "inputTokens": oai_u[0], "outputTokens": oai_u[1], "grounding": False, "estUsd": c})
         total += c
     gem_u = _AI_LAST_RUN.get("gemUsage")
-    gem_model = _AI_LAST_RUN.get("gemModel") or _GEMINI_JUDGE_MODEL
+    gem_model = _AI_LAST_RUN.get("gemModel") or _GEMINI_FALLBACK_MODEL
     if gem_status in ("live", "content_rejected") and gem_u:
         c = argus_ai_cost.estimate_cost(gem_model, gem_u[0], gem_u[1], _AI_PRICING,
                                         grounding=bool(grounding_enabled), grounding_usd=_AI_GROUNDING_USD)
         rows.append({"provider": "gemini", "model": gem_model,
-                     "fallbackUsed": (gem_model == _GEMINI_FALLBACK_MODEL and gem_model != _GEMINI_JUDGE_MODEL),
+                     "fallbackUsed": (gem_model == _GEMINI_FALLBACK_MODEL and gem_model != _GEMINI_FALLBACK_MODEL),
                      "inputTokens": gem_u[0], "outputTokens": gem_u[1],
                      "grounding": bool(grounding_enabled), "estUsd": c})
         total += c
@@ -14246,19 +14246,9 @@ def _gemini_check(snapshot, openai_out, checker_model=None):
                                         (getattr(resp, "text", "") or "")[:100])
             return None, "partial", grounding_enabled
         _AI_LAST_RUN["gemError"] = None
-        # Best-effort: pull real grounding citations from response metadata.
-        try:
-            srcs = []
-            for c in (getattr(resp, "candidates", []) or []):
-                gm = getattr(c, "grounding_metadata", None)
-                for ch in (getattr(gm, "grounding_chunks", []) or []):
-                    web = getattr(ch, "web", None)
-                    if web:
-                        srcs.append({"title": getattr(web, "title", "") or "", "url": getattr(web, "uri", "") or ""})
-            if srcs and not out.get("groundingSources"):
-                out["groundingSources"] = srcs[:5]
-        except Exception:
-            pass
+        # This support call has no search tool. Model-written URLs are not
+        # evidence of external verification.
+        out["groundingSources"] = []
         _AI_LAST_RUN["gemUsage"] = _gemini_usage_tokens(resp)
         argus_product_naming.require_allowed(out)
         return out, "live", grounding_enabled
@@ -14446,22 +14436,18 @@ def _ai_judgment_truth(*, allow_restore=True):
 def _ai_disabled_payload(status="disabled", reason="AI judgment is not enabled yet."):
     return {"status": status, "reason": reason,
             "asOf": _ai_now_iso(), "engineVersion": "ai-judge-v1", "runMode": "cached",
-            "models": {"primary": _OPENAI_MODEL, "checker": _GEMINI_JUDGE_MODEL},
+            "models": {"primary": _OPENAI_MODEL, "checker": _GEMINI_FALLBACK_MODEL},
             "summaryJa": "", "marketRiskJa": "", "labels": [],
             "globalRedFlags": [], "groundingSources": []}
 
 def _execute_ai_judgment(run_mode="manual", checker=None):
-    """Run a fresh AI judgment (GPT-5.5 primary + Gemini double-check), arbitrate,
-    cache, return. Never raises. The security gate / run limits are enforced by
-    the caller (POST route) — this function performs the actual model work.
-
-    `checker` picks the Gemini double-check tier per run (cost/quality, v10.159):
-      'flash' → cheap fallback model (the frequent 15-min/off-hours refresh)
-      'pro' / None → the strong configured model (the daily scored run + on-demand).
+    """Run primary GPT analysis with a lightweight consistency checker.
+    Caller authorization and rule arbitration remain unchanged. The legacy
+    checker argument is accepted; production support always uses Flash.
     """
     snap, al = _build_ai_snapshot()
     openai_out, oai_status = _openai_judge(snap)
-    checker_model = _GEMINI_FALLBACK_MODEL if checker == "flash" else _GEMINI_JUDGE_MODEL
+    checker_model = _GEMINI_FALLBACK_MODEL
     gemini_out, gem_status, grounding_enabled = _gemini_check(snap, openai_out, checker_model)
     labels = _arbitrate_ai(al, openai_out, gemini_out)
 
@@ -14488,7 +14474,7 @@ def _execute_ai_judgment(run_mode="manual", checker=None):
         "models": {"primary": (_AI_LAST_RUN.get("oaiModel") if oai_status == "live" else None),
                    # The checker may have quota-degraded to the fallback model —
                    # report what actually ran, not what was configured.
-                   "checker": ((_AI_LAST_RUN.get("gemModel") or _GEMINI_JUDGE_MODEL)
+                   "checker": ((_AI_LAST_RUN.get("gemModel") or _GEMINI_FALLBACK_MODEL)
                                if gem_status == "live" else None)},
         "summaryJa": summary[:400], "marketRiskJa": market_risk[:400], "labels": labels,
         "globalRedFlags": global_flags, "groundingSources": grounding,
@@ -14513,7 +14499,7 @@ def _execute_ai_judgment(run_mode="manual", checker=None):
         payload["models"]["groundingUsed"] = bool(grounding_enabled)
     except Exception:
         pass
-    add_log(f"[AI] run mode={run_mode} models={_OPENAI_MODEL}/{_AI_LAST_RUN.get('gemModel') or _GEMINI_JUDGE_MODEL} "
+    add_log(f"[AI] run mode={run_mode} models={_OPENAI_MODEL}/{_AI_LAST_RUN.get('gemModel') or _GEMINI_FALLBACK_MODEL} "
             f"symbols={len(labels)} oai={oai_status} gem={gem_status} grounding={grounding_enabled} status={status}")
     return payload
 
@@ -15940,7 +15926,7 @@ def api_argus_ai_judgment():
                         "freshness": freshness, "ageMin": age_min,
                         "cacheExpiresInMin": expires_in,
                         "models": cached.get("models") or {"primary": _OPENAI_MODEL,
-                                                            "checker": _GEMINI_JUDGE_MODEL},
+                                                            "checker": _GEMINI_FALLBACK_MODEL},
                         "nextScheduledRun": _next_weekday_run_iso(16, 5),
                         "nextScheduledRunJa": "平日16:05 JST(予測台帳cron)",
                         "fallbackJa": "Action Labelは常にルールベースが主。AIは時刻付きの第二意見で、"
@@ -16427,9 +16413,9 @@ def api_argus_ai_provider_status():
         },
         "gemini": {
             "apiKeyConfigured": bool(GEMINI_API_KEY),
-            "model": _GEMINI_JUDGE_MODEL,
+            "model": _GEMINI_FALLBACK_MODEL,
             "lastRunStatus": _AI_LAST_RUN.get("gem"),
-            "groundingAvailable": (bool(google_genai) if GEMINI_API_KEY else None),
+            "groundingAvailable": False, "role": "supplied_evidence_consistency",
             "lastErrorType": _AI_LAST_RUN.get("gemError"),
         },
         "cache": {
@@ -16488,7 +16474,7 @@ def api_argus_ai_provider_ping():
     if provider == "openai":
         model = _OPENAI_SOL_MODEL if model_choice == "sol" else _OPENAI_MODEL
     else:
-        model = _GEMINI_JUDGE_MODEL
+        model = _GEMINI_FALLBACK_MODEL
     out = {"asOf": _ai_now_iso(), "provider": provider, "model": model,
            "estimatedCostUsd": 0.002, "reason": reason}
     try:
@@ -16534,21 +16520,21 @@ def api_argus_ai_provider_ping():
     elif provider == "gemini":
         try:
             client = google_genai.Client(api_key=GEMINI_API_KEY)
-            r = client.models.generate_content(model=_GEMINI_JUDGE_MODEL,
+            r = client.models.generate_content(model=_GEMINI_FALLBACK_MODEL,
                                                contents="Reply with the single word: pong")
-            out["gemini"] = {"ok": True, "model": _GEMINI_JUDGE_MODEL,
+            out["gemini"] = {"ok": True, "model": _GEMINI_FALLBACK_MODEL,
                              "reply": (getattr(r, "text", "") or "")[:40],
-                             "requestedModel": _GEMINI_JUDGE_MODEL,
+                             "requestedModel": _GEMINI_FALLBACK_MODEL,
                              "returnedModel": str(getattr(
                                  r, "model_version", None) or "")[:60] or None}
             _cost_policy_record("gemini", "manual_api", estimated_cost_usd=0.001)
             argus_product_naming.require_allowed(out["gemini"])
-            _AI_PROVIDER_LAST_PING[f"gemini:{_GEMINI_JUDGE_MODEL}"] = {
-                "requestedModel": _GEMINI_JUDGE_MODEL,
+            _AI_PROVIDER_LAST_PING[f"gemini:{_GEMINI_FALLBACK_MODEL}"] = {
+                "requestedModel": _GEMINI_FALLBACK_MODEL,
                 "returnedModel": out["gemini"]["returnedModel"],
                 "ok": True, "at": _ai_now_iso()}
         except Exception as e:
-            out["gemini"] = {"ok": False, "model": _GEMINI_JUDGE_MODEL,
+            out["gemini"] = {"ok": False, "model": _GEMINI_FALLBACK_MODEL,
                              "error": type(e).__name__, "message": str(e)[:140]}
     return jsonify(out)
 
@@ -43317,7 +43303,7 @@ def _ledger_health():
         "lastUpdated": (ai_asof[:10] if isinstance(ai_asof, str) else None),
         "lastSuccessAt": ai_asof, "ageMin": ai_age,
         "truthStatus": ai_truth.get("status"),
-        "models": {"primary": _OPENAI_MODEL, "checker": _GEMINI_JUDGE_MODEL},
+        "models": {"primary": _OPENAI_MODEL, "checker": _GEMINI_FALLBACK_MODEL},
         "sampleCount": None, "tradingDays": None, "hitRate": None,
         "nextRunJa": "平日16:05 JST(トークン設定時)", "trigger": "予測台帳cron",
         "noteJa": "ルールベースが主、AIは時刻付き第二意見。失効してもルール判定は不変。"})

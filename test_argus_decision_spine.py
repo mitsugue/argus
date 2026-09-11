@@ -167,13 +167,14 @@ def test_gemini_support_checks_supplied_data_without_search(monkeypatch):
     requests = []
     def respond(**kwargs):
         requests.append(kwargs)
-        return SimpleNamespace(text='{"disagreements": [], "agreement": "confirm"}')
+        return SimpleNamespace(text='{"disagreements": [], "agreement": "confirm", "groundingSources": [{"url": "https://example.test/unsupported"}]}')
     monkeypatch.setattr(scanner, "_cost_policy_authorize", lambda *a, **k: {"allowed": True})
     monkeypatch.setattr(scanner, "GEMINI_API_KEY", "synthetic")
     monkeypatch.setattr(scanner, "google_genai", SimpleNamespace(Client=lambda **kw:
         SimpleNamespace(models=SimpleNamespace(generate_content=respond))))
     result, status, grounded = scanner._gemini_check({"labels": []}, {"summaryJa": "facts"}, "historical-pro")
     assert status == "live" and result["agreement"] == "confirm" and not grounded
+    assert result["groundingSources"] == []
     assert requests[0]["model"] == scanner._GEMINI_FALLBACK_MODEL
     assert not getattr(requests[0].get("config"), "tools", None)
     assert "補助照合役" in requests[0]["contents"]
