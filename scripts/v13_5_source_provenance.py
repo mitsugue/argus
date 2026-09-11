@@ -37,7 +37,7 @@ HISTORICAL_REPLACED_BLOBS = {
 REVIEWED_EXTENSION_BLOBS = {
     "web/src/components/guide/BackupCard.tsx": "d5e9c67eaeb9852daa791786b373fd42655a17a0",
     "web/src/components/system/BackupStatusOverview.tsx": "6b0c0bc4e434c8a9464accec8f78100c1da06c43",
-    "web/src/lib/vault.ts": "feb7e7443f397d9092aa416cb573bff7abfd0afa",
+    "web/src/lib/vault.ts": "9a43fdfad04ba861367a0552d93703eff874f9e6",
     "argus_osint_engine.py": "82c928299eed09004067283d72cc4b67b07753c5",
     "test_argus_v12_1_1.py": "fcb2a56c79822f5177ae776dfdaf07972da0a49e",
     "test_argus_v12_1_3.py": "ec334f206cc43a94f3e2dc8c7ea5015b341a0957",

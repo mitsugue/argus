@@ -214,6 +214,9 @@ async function main() {
   global.fetch = async () => ({ ok: true, text: async () => validEnvelope });
   global.window.dispatchEvent = () => true;
   assert.equal(await vault.cloudRestore(passphrase), backup.BACKUP_KEYS.length);
+  assert.equal(vault.lastSyncInfo().historyRestoreBlocked, false);
+  assert.equal(vault.lastSyncInfo().outcome, 'applied');
+  assert.ok(vault.lastSyncInfo().lastPullAppliedAt);
   await vault.cloudSyncNow({ rawFallback: true });
   assert.equal(vault.lastSyncInfo().historyRestoreBlocked, false);
   global.fetch = originalFetch;

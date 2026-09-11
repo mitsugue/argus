@@ -266,6 +266,8 @@ export async function cloudRestore(pass: string): Promise<number> {
   assertBackupHistoryReadable(payload);
   recordExistingEnvelope(payload.exportedAt);
   const n = restoreBackup(payload);
+  if (n > 0) recordSyncTick({ outcome: 'applied', historyRestoreBlocked: false,
+    lastPullAppliedAt: Date.now() });
   // Record what was applied so a later visibility pull does not re-apply it,
   // and let mounted hooks reload without a manual refresh.
   setSyncState({ appliedExportedAt: payload.exportedAt });
