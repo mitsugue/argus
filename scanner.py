@@ -16685,19 +16685,17 @@ def _annotate_news_corroboration(news_items):
     return news_items
 
 def _translate_headlines_ja(headlines):
-    """Batch-translate headlines via the cheap Gemini flash model. Best-effort:
-    any failure returns {} and the UI falls back to English. Called at most
-    once per news-cache refill (10 min), so cost is negligible."""
+    """Batch translation with an atomic reservation of the existing USD0.02
+    estimate. Failure returns {}; received replies count even if validation
+    rejects them. Callers own the background schedule and cached fallback."""
     try:
         argus_product_naming.require_allowed(headlines)
     except argus_product_naming.NamingPolicyError:
         return {}
-    if not _cost_policy_authorize(
-            "gemini", "headline_translation", automatic=True,
-            estimated_cost_usd=0.02, estimated_tokens=3000)["allowed"]:
-        return {}
     if not google_genai or not GEMINI_API_KEY or not headlines:
         return {}
+    reservation_id = None
+    response_received = False
     try:
         client = google_genai.Client(api_key=GEMINI_API_KEY)
         prompt = ("以下の英語ニュース見出しを自然な日本語に翻訳してください。固有名詞は一般的な日本語表記、"
@@ -16705,12 +16703,18 @@ def _translate_headlines_ja(headlines):
                   + json.dumps(headlines, ensure_ascii=False))
         from google.genai import types as _gt
         cfg = _gt.GenerateContentConfig(response_mime_type="application/json")
+        decision, reservation_id = _cost_policy_reserve(
+            "gemini", "headline_translation", estimated_cost_usd=0.02,
+            estimated_tokens=3000)
+        if not decision.get("allowed"):
+            return {}
         resp = client.models.generate_content(model=_GEMINI_FALLBACK_MODEL, contents=prompt, config=cfg)
+        response_received = True
         # The API call is spent at this point — record it BEFORE validation so
         # the SCHEDULED_AI daily budget counts every real request (v13.5.36:
         # discarded batches must not become free unlimited retries).
-        _cost_policy_record("gemini", "headline_translation",
-                            estimated_cost_usd=0.02)
+        _cost_policy_settle(reservation_id, ok=True, actual_cost_usd=0.02)
+        reservation_id = None
         out = safe_json(getattr(resp, "text", "") or "")
         argus_product_naming.require_allowed([getattr(resp, "text", "") or "", out])
         # Count-mismatch batches are discarded whole — positional mapping
@@ -16722,6 +16726,10 @@ def _translate_headlines_ja(headlines):
                 f"(count mismatch or empty; n={len(headlines)})")
     except Exception as e:
         add_log(f"[news] headline translate failed: {type(e).__name__}")
+    finally:
+        if reservation_id:
+            _cost_policy_settle(reservation_id, ok=response_received,
+                                actual_cost_usd=0.02 if response_received else None)
     return {}
 
 

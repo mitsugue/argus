@@ -403,3 +403,20 @@ checks pass. The previous integrated version passed the whole backend suite
 (4,869 passed, one skip, 20 subtests); that whole-suite result predates this
 additional pure budget calculation, so final candidate CI remains required.
 Actual production re-analysis using the released allowance is still unverified.
+
+
+### 2026-09-11: reserve batch translation before calling its provider
+
+The batch translator checked the remaining allowance but did not reserve it.
+With USD0.03 left, two overlapping USD0.02-estimated calls could both start and
+exceed the shared cap. A real competing-thread regression reproduced this.
+The translator now uses the existing atomic reserve/settle path. A returned
+reply is counted before content/translation validation, and a failed request
+releases its pending reservation. The existing fixed USD0.02 estimate, model,
+retry policy and daily cap are unchanged; this is not a claim of invoice-level
+or returned-token cost measurement. Per-function usage detail remains a13.6
+requirement.
+
+195 news/cost/public/naming integration tests passed. The concurrency regression
+also passes with provider failure and confirms there is no leftover pending
+reservation. Production behavior remains unverified until the next release.
