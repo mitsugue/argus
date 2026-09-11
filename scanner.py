@@ -35743,15 +35743,32 @@ def _release_seed_verified_market_views(body):
     observations = []
     try:
         with _DURABLE_CHECKPOINT_LOCK:
-            duplicate_count = sum(
-                1
+            existing = {
+                (symbol, horizon): (_verified_market_snapshot(symbol, horizon)
+                                    or {}).get("releaseBinding")
                 for symbol, _, _ in phase_specs
                 for horizon in argus_market_replay.HORIZONS
-                if ((_verified_market_snapshot(symbol, horizon) or {}).get(
-                    "releaseBinding") or {}).get(
-                        "producerTriggerId") == trigger_id
-            )
-            if duplicate_count:
+            }
+            matched = [binding for binding in existing.values()
+                       if (binding or {}).get("producerTriggerId") == trigger_id]
+            duplicate_count = len(matched)
+            if matched:
+                prior_binding = matched[0]
+                if (prior_binding.get("expectedBuildSha") != expected_sha
+                        or not prior_binding.get("triggeredAt")
+                        or any(binding != prior_binding for binding in matched)):
+                    raise ValueError("release_snapshot_binding_conflict")
+                # A failed producer can leave a verified partial matrix. Resume
+                # the same attempt and preserve its original identity/time.
+                release_binding = dict(prior_binding)
+                triggered_at = release_binding["triggeredAt"]
+            if duplicate_count == 12:
+                # Complete in-memory results may follow a failed persistence
+                # attempt. Reconfirm durability before duplicate reconciliation.
+                checkpoint = _osint_persist()
+                if checkpoint.get("verified") is not True or \
+                        checkpoint.get("readBackVerified") is not True:
+                    raise ValueError("release_snapshot_persistence_unverified")
                 return jsonify({
                     "ok": False,
                     "status": "duplicate",
@@ -35761,13 +35778,17 @@ def _release_seed_verified_market_views(body):
                     "snapshotReady": duplicate_count,
                 }), 409
             for symbol, market, market_scope in phase_specs:
-                _, publication = _precompute_verified_market_view(
-                    symbol, market, market_scope=market_scope,
-                    release_binding=release_binding)
-                published = publication.get("horizons") or []
-                if len(published) != len(argus_market_replay.HORIZONS):
-                    raise ValueError(
-                        f"release_snapshot_publication_incomplete_{symbol}")
+                already_complete = all(
+                    existing.get((symbol, horizon)) == release_binding
+                    for horizon in argus_market_replay.HORIZONS)
+                if not already_complete:
+                    _, publication = _precompute_verified_market_view(
+                        symbol, market, market_scope=market_scope,
+                        release_binding=release_binding)
+                    published = publication.get("horizons") or []
+                    if len(published) != len(argus_market_replay.HORIZONS):
+                        raise ValueError(
+                            f"release_snapshot_publication_incomplete_{symbol}")
                 for horizon in argus_market_replay.HORIZONS:
                     snapshot = _verified_market_snapshot(symbol, horizon)
                     if not snapshot or snapshot.get("releaseBinding") != \

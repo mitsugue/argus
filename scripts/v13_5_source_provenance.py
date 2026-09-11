@@ -41,6 +41,9 @@ REVIEWED_EXTENSION_BLOBS = {
 }
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
+    # Bounded chart display publication and its regression coverage.
+    "argus_asset_chart_cache.py",
+    "test_argus_asset_chart_cache.py",
     # Chart refresh paths already included in the owner-approved PR #319.
     "test_argus_asset_chart_precompute.py",
     "web/src/types/chartIntelligence.ts",

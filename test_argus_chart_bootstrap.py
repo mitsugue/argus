@@ -522,3 +522,21 @@ def test_chart_refresh_releases_authority_lock_after_failure():
     host._precompute_asset_chart_tick = lambda **kwargs: (_ for _ in ()).throw(ValueError("bad data"))
     assert boot._refresh_warm_charts(host, clock=lambda: 0.0)["errorClass"] == "ValueError"
     assert not host._DURABLE_CHECKPOINT_LOCK._is_owned()
+
+
+def test_failed_chart_does_not_starve_other_cached_symbols():
+    host = _refresh_host(2)
+    original_tick = host._precompute_asset_chart_tick
+    def tick(**kwargs):
+        if host._ASSET_CHART_REPORTS["cursor"] == 0:
+            raise ValueError("asset_chart_publication_report_invalid")
+        return original_tick(**kwargs)
+    host._precompute_asset_chart_tick = tick
+    result = boot._refresh_warm_charts(host, clock=lambda: 100.0)
+    assert result["status"] == "partial"
+    assert result["failed"] == 1 and result["published"] == 1
+    assert result["checked"] == 2
+    assert len(host.journal_calls) == 1
+    assert not host._DURABLE_CHECKPOINT_LOCK._is_owned()
+    record = argus_asset_chart_cache.current(host._ASSET_CHART_REPORTS, "JP", "5804", "daily")
+    assert record["payload"]["indicators"]["bars"][-1]["close"] == 5493.0

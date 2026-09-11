@@ -12,6 +12,7 @@ SCHEMA_VERSION = "argus-asset-chart-report-cache-v1"
 MAX_RECORDS = 24
 MAX_PAYLOAD_BYTES = 2 * 1024 * 1024
 MAX_STORE_BYTES = 32 * 1024 * 1024
+MAX_DISPLAY_BARS = 600
 
 
 _NORMALIZED_STORE_MARKER = object()
@@ -201,6 +202,33 @@ def _valid_report(
     )
 
 
+def _bounded_display_report(report: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep computed results intact while bounding an oversized display series.
+
+    This runs after analysis. It never limits engine input or rewrites stored
+    calculation history; the existing payload limit still rejects other excess.
+    Small reports retain their original content and identity.
+    """
+    if not isinstance(report, dict):
+        return report
+    bars = (report.get("indicators") or {}).get("bars")
+    if (not isinstance(bars, list) or len(bars) <= MAX_DISPLAY_BARS
+            or len(_canonical(report).encode("utf-8")) <= MAX_PAYLOAD_BYTES):
+        return report
+    out = copy.deepcopy(report)
+    shown = out["indicators"]["bars"][-MAX_DISPLAY_BARS:]
+    out["indicators"]["bars"] = shown
+    out["displayWindow"] = {
+        "sourceBarCount": len(bars), "displayedBarCount": len(shown),
+        "from": shown[0].get("date"), "to": shown[-1].get("date"),
+        "analysisResultsPreserved": True,
+    }
+    out["noteJa"] = (str(out.get("noteJa") or "") +
+        f" 入力{len(bars):,}本の解析結果を保持し、ローソク足表示は直近{len(shown):,}本"
+        f"（{shown[0].get('date')}〜{shown[-1].get('date')}）です。")
+    return out
+
+
 def publish(
     store: Any,
     *,
@@ -219,6 +247,7 @@ def publish(
     timeframe = str(timeframe).lower()
     if not dataset_hash or not method_version:
         return out, "identity_incomplete"
+    report = _bounded_display_report(report)
     if not _valid_report(
             report, market=market, symbol=symbol, timeframe=timeframe):
         return out, "report_invalid"

@@ -257,3 +257,43 @@ def test_state_hash_releases_serialization_temporaries_without_observer(
     monkeypatch.setattr(cache.hashlib, "sha256", tracked_sha256)
     assert cache.state_hash(store) == ASSET_BOUNDARY_STATE_HASH
     assert released == ["canonical", "bytes"]
+
+
+def test_oversized_display_preserves_results_and_latest_bars_without_raising_limits():
+    import datetime as dt
+    item = report()
+    start = dt.date(2017, 1, 1)
+    item["indicators"]["bars"] = [
+        {"date": (start + dt.timedelta(days=i)).isoformat(), "close": 100 + i,
+         "knownAt": "2026-09-10T00:00:00Z", "sourceId": "fixture-" + "x" * 900}
+        for i in range(2434)]
+    item["todayIntelligence"] = {"action": "WAIT", "score": 17.25}
+    item["turningPoints"] = [{"date": "2017-01-03", "value": 102}]
+    original = copy.deepcopy(item)
+    assert len(cache._canonical(item).encode()) > cache.MAX_PAYLOAD_BYTES
+    store, status = cache.publish(
+        cache.empty_store(), market="JP", symbol="5803", timeframe="daily",
+        dataset_hash="complete-input-digest", method_version="method-a",
+        report=item, published_at="2026-09-10T01:00:00Z")
+    assert status == "published"
+    record = cache.current(store, "JP", "5803", "daily")
+    actual = record["payload"]
+    assert actual["indicators"]["bars"] == original["indicators"]["bars"][-600:]
+    assert actual["todayIntelligence"] == original["todayIntelligence"]
+    assert actual["turningPoints"] == original["turningPoints"]
+    assert actual["reportId"] == original["reportId"]
+    assert actual["displayWindow"]["sourceBarCount"] == 2434
+    assert "2,434" in actual["noteJa"] and "600" in actual["noteJa"]
+    assert record["datasetHash"] == "complete-input-digest"
+    assert item == original
+    assert cache.read_back_verified(store, copy.deepcopy(store))
+    assert cache.MAX_PAYLOAD_BYTES == 2 * 1024 * 1024
+    assert cache.MAX_STORE_BYTES == 32 * 1024 * 1024
+    small = report()
+    assert cache._bounded_display_report(small) is small
+    huge = report()
+    huge["noteJa"] = "x" * cache.MAX_PAYLOAD_BYTES
+    _, status = cache.publish(
+        store, market="JP", symbol="5803", timeframe="daily", dataset_hash="bad",
+        method_version="method-a", report=huge, published_at="2026-09-10T02:00:00Z")
+    assert status == "report_invalid"
