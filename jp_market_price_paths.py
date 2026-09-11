@@ -154,3 +154,74 @@ def reference_ensemble(selection: Mapping[str, Any], paths: Sequence[Mapping[str
         "validationStatus": "UNVALIDATED", "baselineAdditionalBenefitVerified": False,
         "selectionCoverage": selection.get("status"), "actionAuthority": False,
     }
+
+
+def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any],
+                        paths: Sequence[Mapping[str, Any]], ensemble: Mapping[str, Any], *,
+                        scale: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Project one set of calculation identities into the chart contract."""
+    if current.get("status") != "AVAILABLE" or not current.get("window"):
+        raise ValueError("actual_index_window_required")
+    if selection.get("currentSnapshotId") != current.get("snapshotId") or \
+            ensemble.get("selectionId") != selection.get("selectionId"):
+        raise ValueError("chart_calculation_identity_mismatch")
+    anchor_price = current["window"][-1]["close"]
+    use_yen = bool(scale and scale.get("status") == "AVAILABLE")
+    if use_yen and (scale.get("date") != current.get("anchorDate") or
+                    not math.isclose(scale.get("anchorPrice", 0), anchor_price, abs_tol=.01)):
+        raise ValueError("chart_valuation_anchor_mismatch")
+
+    def convert(points):
+        return convert_shape_to_yen(points, scale=scale) if use_yen else [dict(p) for p in points]
+
+    actual = [{"offsetSessions": index - len(current["window"]) + 1,
+               "date": row["date"], "value": row["close"] / anchor_price * 100}
+              for index, row in enumerate(current["window"])]
+    by_id = {path["snapshotId"]: path for path in paths}
+    groups = {"priceShape": "基準値を合わせた価格形状を比較",
+              "marketState": "同じ尺度の市場状態を比較",
+              "conditionOrder": "条件の発生順序を比較",
+              "materialReaction": "同種の材料に対する価格反応を比較"}
+    candidates = []
+    for selected in selection.get("selected", []):
+        path = by_id.get(selected["snapshotId"])
+        if not path:
+            continue
+        differences = []
+        if selected["missingFeatures"]:
+            differences.append(f"市場指標のうち{len(selected['missingFeatures'])}系列が比較できません")
+        if selected["missingGroups"]:
+            missing_labels = {"marketState": "市場状態", "conditionOrder": "条件の順序",
+                              "materialReaction": "材料反応", "priceShape": "価格形状"}
+            differences.append("・".join(missing_labels[key] for key in selected["missingGroups"]) + "の根拠が不足しています")
+        differences.append("過去時点の改訂前データは検証できていません")
+        candidates.append({"snapshotId": selected["snapshotId"], "anchorDate": path["anchorDate"],
+                           "comparisonKind": selected["comparisonKind"],
+                           "comparison": convert(path["comparison"]),
+                           "subsequentReference": convert(path["subsequentReference"]),
+                           "missingFeatures": selected["missingFeatures"], "missingGroups": selected["missingGroups"],
+                           "similarReasons": [groups[key] for key in selected["similarityReasons"]],
+                           "differences": differences})
+    converted_band = []
+    for point in ensemble["forecastBand"]:
+        bounds = convert([{"offsetSessions": point["offsetSessions"], "value": point[key]}
+                          for key in ("lower", "upper")])
+        converted_band.append({"offsetSessions": point["offsetSessions"],
+                               "lower": bounds[0]["value"], "upper": bounds[1]["value"]})
+    return {
+        "schemaVersion": "jp-market-comparison-v1", "informationCutoff": current["cutoff"],
+        "anchorDate": current["anchorDate"], "actualAnchorPrice": anchor_price,
+        "unit": "JPY_INDEX_POINTS" if use_yen else "ANCHOR_100", "actual": convert(actual),
+        "candidates": candidates,
+        "forecast": {"status": ensemble["status"], "line": convert(ensemble["forecastLine"]),
+                     "band": converted_band, "horizonSessions": ensemble["horizonSessions"],
+                     "validationStatus": ensemble["validationStatus"],
+                     "sampleCount": ensemble["frequency"]["sampleCount"],
+                     "counts": ensemble["frequency"]["counts"],
+                     "flatThresholdPct": ensemble["classification"]["upAbove"]},
+        "scaleExplanation": ("同じ基準日の指数EPS×指数PER×比較値/100で円換算しています。短期間のEPS一定を仮定しています。"
+                             if use_yen else "現在と各過去局面の基準日を100に合わせた形状比較です。整合する指数EPS/PERがないため円換算は表示していません。"),
+        "limitations": ["過去の参考経路は確定した未来ではありません。",
+                        "単純トレンド等に対する独立期間の追加効果は未検証です。",
+                        "取得済みの終値までを表示し、欠測した価格は補間していません。"],
+    }

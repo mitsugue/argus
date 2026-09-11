@@ -1,0 +1,31 @@
+.jp-comparison { background: #141e28; border: 1px solid #2c3d49; border-radius: 22px; padding: clamp(18px, 3vw, 30px); color: #dce5eb; min-width: 0; }
+.jp-comparison__heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.jp-comparison__heading h2 { font-size: 21px; font-weight: 500; margin: 0 0 10px; line-height: 1.5; }
+.jp-comparison__heading p, .jp-comparison__heading > span, .jp-comparison__scale { margin: 0; font-size: 13px; line-height: 1.7; color: #a8bac7; }
+.jp-comparison__scale { margin-top: 22px; }
+.jp-comparison__canvas { width: 100%; min-width: 0; }
+.jp-comparison__canvas svg { display: block; width: 100%; height: auto; overflow: visible; }
+.jp-comparison__canvas text { fill: #a8bac7; font-size: 12px; }
+.jp-comparison__grid { stroke: #2a3b48; stroke-width: 1; }
+.jp-comparison__anchor { stroke: #adbbc5; stroke-width: 1; stroke-dasharray: 4 5; }
+.jp-comparison__legend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); list-style: none; padding: 0; margin: 18px 0; gap: 12px 16px; font-size: 13px; }
+.jp-comparison__legend li { display: flex; align-items: center; gap: 8px; }
+.jp-comparison__sample { display: inline-block; flex-shrink: 0; width: 30px; height: 0; border-top: 2px solid; }
+.jp-comparison__sample--actual { border-color: #e1eaf0; border-top-width: 3px; }
+.jp-comparison__sample--past { border-color: #94c5de; }
+.jp-comparison__sample--reference { border-color: #94c5de; border-top-style: dotted; }
+.jp-comparison__sample--forecast { border-color: #79d6b0; border-top-style: dashed; border-top-width: 3px; }
+.jp-comparison__controls { display: flex; flex-wrap: wrap; gap: 10px 20px; font-size: 13px; }
+.jp-comparison__controls label { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+.jp-comparison__controls select { background: #1d2c37; color: #dce5eb; border: 1px solid #536573; border-radius: 8px; padding: 8px; min-height: 44px; font-size: 16px; max-width: 100%; }
+.jp-comparison__controls input { width: 19px; height: 19px; accent-color: #94c5de; }
+.jp-comparison__controls :focus-visible, .jp-comparison__details summary:focus-visible { outline: 2px solid #94c5de; outline-offset: 3px; }
+.jp-comparison__notice { border-left: 2px solid #dfbc83; padding-left: 12px; font-size: 13px; line-height: 1.85; color: #c6d1d8; margin: 20px 0 0; }
+.jp-comparison__details { border-top: 1px solid #30434f; margin-top: 24px; padding-top: 10px; color: #b9c8d3; font-size: 13px; line-height: 1.9; overflow-wrap: anywhere; }
+.jp-comparison__details summary { cursor: pointer; min-height: 44px; display: list-item; align-content: center; }
+.jp-comparison__details h3 { color: #dce5eb; font-size: 14px; font-weight: 500; margin-bottom: 6px; }
+.jp-comparison__details article { padding-top: 12px; }
+.jp-comparison__details p { margin: 8px 0; }
+.jp-comparison__details ul { padding-left: 20px; }
+@media (min-width: 720px) { .jp-comparison__legend { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (prefers-reduced-motion: reduce) { .jp-comparison * { transition: none; } }

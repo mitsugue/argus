@@ -1,7 +1,7 @@
 import unittest
 
 from jp_market_price_paths import (VALUATION_BASIS, convert_shape_to_yen,
-                                   index_valuation_scale, reference_ensemble)
+                                   index_valuation_scale, reference_ensemble, comparison_document)
 
 
 def scale(**patch):
@@ -59,6 +59,25 @@ class ReferenceEnsembleTest(unittest.TestCase):
         self.assertEqual(result["frequency"]["sampleCount"], 1)
         self.assertEqual(result["forecastLine"], [])
         self.assertEqual(result["status"], "INSUFFICIENT_COMPLETE_ANALOGS")
+
+
+class ChartContractTest(unittest.TestCase):
+    def test_calculation_ids_and_anchor_are_shared_by_all_chart_layers(self):
+        from test_jp_market_analogs import DAYS, POLICY, bars, episode
+        from jp_market_analogs import select_episodes, reference_path
+        current, past = episode(83), [episode(11), episode(23)]
+        selected = select_episodes(current, past, session_dates=DAYS, policy=POLICY)
+        paths = [reference_path(item, later_bars=bars(0, 84), display_cutoff=current["cutoff"],
+                                session_dates=DAYS, policy=POLICY) for item in past]
+        ensemble = reference_ensemble(selected, paths)
+        document = comparison_document(current, selected, paths, ensemble)
+        self.assertEqual(document["actual"][-1]["value"], 100)
+        self.assertEqual(document["forecast"]["line"][0]["value"], 100)
+        self.assertEqual(len(document["candidates"]), 2)
+        self.assertEqual(document["unit"], "ANCHOR_100")
+        self.assertEqual(document["forecast"]["validationStatus"], "UNVALIDATED")
+        with self.assertRaisesRegex(ValueError, "chart_calculation_identity_mismatch"):
+            comparison_document(current, dict(selected, currentSnapshotId="other"), paths, ensemble)
 
 
 if __name__ == "__main__":
