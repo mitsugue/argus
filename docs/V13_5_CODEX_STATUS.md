@@ -506,3 +506,25 @@ acceptance. The first chart-only candidate failed the Render skip-marker
 contract; the combined change now requires backend deployment. No gate is
 bypassed. Actual ECB history restoration/readback, owner device checks, final
 candidate certificates and production acceptance remain open.
+
+
+Direct production file readback at 13:45:36Z confirmed the ECB event was absent
+from the 40-record store. The cost file retained 111 current-day rows totaling
+USD 1.990148 with no pending reservation. The news-history follow-up therefore
+also needs an explicit data recovery, not only a reader.
+
+An operator-prepared local recovery envelope now admits bounded historical
+NewsRiskEvidence at startup. It verifies schema, event/fingerprint identity,
+payload digest and the external naming policy; the digest is integrity checking,
+not an authentication signature. It never replaces an existing live event,
+renews receipt/freshness, runs AI or grants an alert/action. Accepted records
+are persisted through the existing news writer. Corrupt input leaves current
+state intact. Expired records are not reintroduced. Recovery status is reported
+on the read-only history API.
+
+The original production-observed ECB response has been preserved outside the
+product and verified against the recovery merger: facts, interpretation,
+original receipt, model and usage are unchanged. 84 news/pipeline tests and
+123 public-boundary tests pass, including real file save/readback, idempotence
+and corruption rejection. Preparing the recovery file is not proof of startup
+application or production history display; those remain pending after final CI.

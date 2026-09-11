@@ -17799,6 +17799,25 @@ def _news_intel_load():
     except Exception:
         pass
 
+    recovery_path = os.path.join(os.path.dirname(_news_intake_file()), "news_history_recovery.json")
+    try:
+        with open(recovery_path, "rb") as handle:
+            raw = handle.read(1_048_577)
+        if len(raw) > 1_048_576:
+            raise ValueError("history_recovery_too_large")
+        recovery = json.loads(raw)
+        argus_product_naming.require_allowed(recovery)
+        events, order, receipt = argus_news_intelligence.restore_material_news_history(
+            _NEWS_INTEL["events"], _NEWS_INTEL["order"], recovery,
+            now_epoch=time.time(), cap=_NEWS_EVENT_CAP)
+        _NEWS_INTEL.update(events=events, order=order, historyRestore=receipt)
+        if receipt["restored"]:
+            _news_intel_persist()
+    except FileNotFoundError:
+        _NEWS_INTEL["historyRestore"] = {"status": "not_configured"}
+    except Exception as exc:
+        _NEWS_INTEL["historyRestore"] = {"status": "rejected", "errorClass": type(exc).__name__}
+
 
 def _news_intel_persist():
     try:
@@ -18945,6 +18964,7 @@ def api_argus_news_intelligence():
         "schemaVersion": "argus-news-intelligence-v1",
         "view": "history" if history else "recent",
         "historyWindowDays": argus_news_intelligence.NEWS_HISTORY_DAYS,
+        "historyRecovery": dict(_NEWS_INTEL.get("historyRestore") or {"status": "not_configured"}),
         "retainedEventLimit": _NEWS_EVENT_CAP,
         "generatedAt": _ai_now_iso(),
         "intakeStatus": status,

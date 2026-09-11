@@ -723,6 +723,55 @@ def is_material_news_history(event: Mapping[str, Any], now_epoch: float) -> bool
     return material_news_retention_priority(event, now_epoch)[0] == 1
 
 
+def restore_material_news_history(events, order, recovery, *, now_epoch, cap=40):
+    """Merge operator-provided historical evidence without replacing live records.
+
+    The digest detects corrupt input; it is not an authentication signature.
+    The caller reads only the protected local recovery file and applies the
+    external content policy before this pure merge.
+    """
+    import hashlib
+    import json
+    import re
+    if not isinstance(recovery, dict) or recovery.get("schemaVersion") != "news-history-recovery-v1":
+        raise ValueError("history_recovery_schema_invalid")
+    rows = recovery.get("events")
+    if not isinstance(rows, list) or not 0 < len(rows) <= cap:
+        raise ValueError("history_recovery_count_invalid")
+    digest = hashlib.sha256(json.dumps(rows, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+    if recovery.get("payloadSha256") != digest:
+        raise ValueError("history_recovery_digest_mismatch")
+    seen = set()
+    for row in rows:
+        if (not isinstance(row, dict) or row.get("schemaVersion") != NEWS_EVENT_SCHEMA
+                or not re.fullmatch(r"nie-[a-f0-9]{16}", str(row.get("eventId") or ""))
+                or not re.fullmatch(r"[a-f0-9]{32}", str(row.get("sourceFingerprint") or ""))
+                or row.get("sdaAuthority") is not False
+                or row.get("authority") != "NEWS_RISK_EVIDENCE"
+                or row["eventId"] in seen):
+            raise ValueError("history_recovery_event_invalid")
+        seen.add(row["eventId"])
+    merged = dict(events)
+    merged_order = list(dict.fromkeys(eid for eid in order if eid in merged))
+    added = []
+    for row in rows:
+        eid = row["eventId"]
+        if eid in merged or not is_material_news_history(row, now_epoch):
+            continue
+        merged[eid] = dict(row, staleness="STALE", alertEligible=False, backfill=True)
+        merged_order.append(eid)
+        added.append(eid)
+    while len(merged_order) > cap:
+        dropped = min(merged_order, key=lambda eid: material_news_retention_priority(merged[eid], now_epoch))
+        merged_order.remove(dropped); merged.pop(dropped, None)
+    return merged, merged_order, {
+        "status": "verified", "payloadSha256": digest,
+        "supplied": len(rows), "restored": sum(eid in merged for eid in added),
+        "skipped": len(rows) - len(added),
+    }
+
+
 def evaluate_materiality(*, taxonomy: Mapping[str, Any], staleness: str,
                          source_authenticated: bool,
                          ai_analysis: Optional[Mapping[str, Any]],

@@ -708,3 +708,31 @@ def test_history_retention_does_not_extend_freshness_or_retry_window():
         assert not ni.is_material_news_history(event, now)
     assert ni.assess_staleness(published_epoch=None,
         received_epoch=ni.material_news_priority(old, now)[1], processed_epoch=now) == "STALE"
+
+
+def test_verified_history_restore_preserves_evidence_and_is_idempotent():
+    import copy, hashlib, json
+    from datetime import datetime, timezone
+    now = datetime(2026, 9, 11, 14, tzinfo=timezone.utc).timestamp()
+    row = {"schemaVersion":ni.NEWS_EVENT_SCHEMA,"eventId":"nie-0123456789abcdef",
+           "sourceFingerprint":"a"*32,"sourceReceivedAt":"2026-09-10T12:37:11Z",
+           "severity":"HIGH","sdaAuthority":False,"authority":"NEWS_RISK_EVIDENCE",
+           "alertEligible":False,"backfill":True,"staleness":"DELAYED",
+           "facts":["確認した事実"],"whyJa":"当時の説明",
+           "analysisDiagnostic":{"returnedModel":"gpt-6-astra","inputTokens":763,"outcome":"ok"}}
+    rows=[row]; recovery={"schemaVersion":"news-history-recovery-v1","events":rows,
+      "payloadSha256":hashlib.sha256(json.dumps(rows,ensure_ascii=False,sort_keys=True,separators=(",",":")).encode()).hexdigest()}
+    original=copy.deepcopy(row)
+    events,order,receipt=ni.restore_material_news_history({},[],recovery,now_epoch=now)
+    assert receipt["restored"]==1 and events[row["eventId"]]["staleness"]=="STALE"
+    assert row==original
+    for key in ("eventId","sourceReceivedAt","sourceFingerprint","facts","whyJa","analysisDiagnostic"):
+        assert events[row["eventId"]][key]==row[key]
+    updated=copy.deepcopy(events);updated[row["eventId"]]["whyJa"]="新しい訂正"
+    again,_,receipt=ni.restore_material_news_history(updated,order,recovery,now_epoch=now)
+    assert again==updated and receipt["restored"]==0
+    import pytest
+    with pytest.raises(ValueError,match="digest_mismatch"):
+        ni.restore_material_news_history({},[],dict(recovery,payloadSha256="0"*64),now_epoch=now)
+    expired,_,receipt=ni.restore_material_news_history({},[],recovery,now_epoch=now+8*86400)
+    assert expired=={} and receipt["restored"]==0
