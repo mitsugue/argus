@@ -362,3 +362,21 @@ provider or AI work. Restore-pending, bounded continuation, repeated contention,
 and permanent-error cases are also covered: 35 chart/bootstrap tests PASS.
 This does not guarantee acquisition during a continuously held lock. Production
 rollout and latest-date chart readback remain unverified; do not mark this closed.
+
+
+### 2026-09-11: remaining operational fixes integrated with PR322
+
+The later PR321 operational readback at 03:58:05Z confirmed a new verified
+checkpoint, readBackVerified at 03:45:52Z, integrity ok, with two successful
+writes and one earlier failure. The release-trigger identifier was also present
+in the stable physical checkpoint file. This closes that pending observation;
+it does not erase the earlier integrity failure or prove the local race fix
+has reached production. The 5803 chart remains dated September 7 as of 09:00Z.
+
+The bounded event refresh, stable cost snapshot and cached chart retry have
+been integrated with the PR322 news/GPT candidate in a separate worktree.
+170 integrated tests plus 11 subtests pass. Source admission records exact blob
+identities for the reviewed workflow and its two regression files; those paths
+are not added to the permanent allowlist. Full current-candidate CI, both
+certificates, merge, production collection/AI/save/readback and browser acceptance
+remain required. No 13.6 completion or iPhone migration acceptance is claimed.
