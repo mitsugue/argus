@@ -13492,10 +13492,9 @@ _AI_GATE_STATE = {
     "date": None,            # JST date string for the daily counter
     "count": 0,              # runs counted today
     "lastRunTs": 0.0,        # epoch of last allowed run (min-interval)
-    "failedAttempts": 0,     # consecutive bad/unauthorized admin attempts
-    "softLocked": False,     # runtime soft lock after repeated failures
+    "failedAttempts": 0,     # rejected admin attempts since the last authorized run
+    "softLocked": False,     # operator runtime lock; never controlled by anonymous traffic
 }
-_FAILED_ATTEMPTS_LOCK_THRESHOLD = 5
 
 # Final AI-judgment cache (v9.1). GET reads this; only an admin-gated POST run
 # writes it. In-memory (resets on dyno restart).
@@ -15791,16 +15790,18 @@ def send_security_alert(event):
 
 def _require_admin():
     """(authorized, error_payload, http_code). 503 if token unconfigured; 401 if
-    missing/wrong (tracks failed attempts → soft lock). Never logs the token."""
+    missing/wrong. Rejections never lock unrelated authorized work.
+    Existing per-IP request throttling still applies. Never logs the token."""
     if not _ARGUS_ADMIN_TOKEN:
         return False, {"error": "admin_unconfigured",
                        "message": "Admin token is not configured on the server."}, 503
     token = request.headers.get("X-ARGUS-ADMIN-TOKEN", "")
-    if not token or token != _ARGUS_ADMIN_TOKEN:
+    if not token or not hmac.compare_digest(token.encode(), _ARGUS_ADMIN_TOKEN.encode()):
         with _AI_LOCK:
             _AI_GATE_STATE["failedAttempts"] += 1
-            if _AI_GATE_STATE["failedAttempts"] >= _FAILED_ATTEMPTS_LOCK_THRESHOLD:
-                _AI_GATE_STATE["softLocked"] = True
+        # Token-less smoke checks and hostile requests have no authority to
+        # stop authenticated jobs. A global failure-triggered lock let any
+        # caller disable scheduled analysis with five rejected requests.
         send_security_alert({"type": "admin_auth_failed", "meta": _client_meta()})
         return False, {"error": "unauthorized"}, 401
     return True, None, 200

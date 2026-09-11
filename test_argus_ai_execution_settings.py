@@ -103,3 +103,35 @@ def test_formal_worker_cost_checks_follow_enforcement_setting():
                                           (False, 'unavailable', True)):
             assert eval(expression, {'_AI_BUDGET_ENFORCED': enforced,
                         'dry': {'status': status, 'estimatedCostJpy': 100000.0}}) is blocked
+
+
+@pytest.mark.parametrize("supplied_token", ["", "wrong-token", "invalid-credential"] )
+def test_rejected_auth_cannot_lock_authorized_analysis(full_execution, monkeypatch, supplied_token):
+    monkeypatch.setattr(scanner, '_ARGUS_ADMIN_TOKEN', 'test-owner-secret')
+    monkeypatch.setattr(scanner, '_AI_JUDGE_LOCKED_ENV', False)
+    monkeypatch.setattr(scanner, '_AI_GATE_STATE', {'failedAttempts': 0, 'softLocked': False})
+    monkeypatch.setattr(scanner, 'send_security_alert', lambda event: None)
+    with scanner.app.test_request_context('/', headers={'X-ARGUS-ADMIN-TOKEN': supplied_token}):
+        for _ in range(10):
+            ok, error, code = scanner._require_admin()
+            assert not ok and code == 401 and error == {'error': 'unauthorized'}
+    assert scanner._AI_GATE_STATE['failedAttempts'] == 10
+    assert not scanner._is_locked()
+    with scanner.app.test_request_context('/', headers={'X-ARGUS-ADMIN-TOKEN': 'test-owner-secret'}):
+        assert scanner._require_admin() == (True, None, 200)
+    # An actual operator lock is still effective and is never auto-cleared.
+    monkeypatch.setattr(scanner, '_AI_JUDGE_LOCKED_ENV', True)
+    assert scanner._is_locked()
+    monkeypatch.setattr(scanner, '_AI_JUDGE_LOCKED_ENV', False)
+    scanner._AI_GATE_STATE['softLocked'] = True
+    assert scanner._is_locked()
+
+
+def test_auth_probe_traffic_is_still_limited_per_client(monkeypatch):
+    monkeypatch.setattr(scanner, '_RL_BUCKETS', {})
+    monkeypatch.setattr(scanner, '_RL_MAX', 2)
+    with scanner.app.test_request_context('/api/argus/security-status'):
+        assert scanner._rate_limit() is None
+        assert scanner._rate_limit() is None
+        response, code = scanner._rate_limit()
+        assert code == 429 and response.get_json()['error'] == 'rate_limited'
