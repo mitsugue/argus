@@ -387,6 +387,9 @@ console.log('argus-engine.test: all checks passed');
   check('a digest mail headline is shown by its first item',
     displayNewsHeadline('日経ニュースメール 9/7 夕版 ━ 注目ニュース ━━━━━━━ ◆円半年ぶりに154円台に上昇 円安抑止へ思惑（有料会員限定） ◆次の記事') === '円半年ぶりに154円台に上昇 円安抑止へ思惑'
     && displayNewsHeadline('緩和的な財政政策') === '緩和的な財政政策'
+    && displayNewsHeadline('◆中央銀行、政策金利を変更 ━━━━━━━━━ ■日経電子版アプリのプッシュ通知でも速報を受け取れます') === '中央銀行、政策金利を変更'
+    && displayNewsHeadline('中央銀行、政策金利を変更 ─── ■日経電子版アプリのプッシュ通知でも速報を受け取れます') === '中央銀行、政策金利を変更'
+    && displayNewsHeadline('日経電子版アプリのプッシュ通知でも速報を受け取れます') === '日経電子版アプリのプッシュ通知でも速報を受け取れます'
     && isDigestHeadline('日経ニュースメール 9/7 夕版 ━ ◆x') === true && isDigestHeadline('普通の見出し') === false);
   const ai = fs.readFileSync(path.join(root, 'src/hooks/useAssetIntel.ts'), 'utf8');
   check('crypto quotes try the memo id and the symbol default id',
