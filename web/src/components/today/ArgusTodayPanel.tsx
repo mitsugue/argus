@@ -519,6 +519,7 @@ const ProjectionChart: React.FC<{
   return <div className="at-projection" role={onActivate ? 'link' : undefined}
     data-argus-contract="today-projection-state-v1"
     data-projection-state="available"
+    data-projection-symbol={projection.symbol}
     data-projection-source={source ?? undefined}
     data-projection-snapshot-id={snapshotId ?? undefined}
     data-projection-response-snapshot-id={responseSnapshotId ?? undefined}

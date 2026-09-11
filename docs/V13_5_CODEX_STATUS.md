@@ -432,3 +432,99 @@ local evidence are retained; there is one combined PR and one final deployment.
 Previous separate-candidate admission pins and certificates do not certify this
 combined head. Its exact diff, source proof, both certificates and current-head
 CI must pass before normal merge. Production/UI/iPhone acceptance remains open.
+
+
+### 2026-09-11: PR322 production and index-switch discrepancy
+
+PR322 merged as 5f9700db9609018f75d76c0804fff32ab27d7134 after all 27 checks
+passed and the one planned public-acceptance skip. Exact backend readiness was
+verified at 12:12:21Z. Pages run 34597448152 passed all 11 stages, including the
+12 snapshot combinations and mobile browser acceptance. These browser checks
+are not the owner's iPhone acceptance.
+
+The recovered central-bank article retained its original receipt and was
+analysed by requested/returned gpt-6-astra at 12:19:33–12:19:40Z. Its bounded
+mail excerpt and authenticated fingerprint are recorded; full article retrieval
+and market-reaction confirmation are not claimed. A separate actual Astra call
+allowed 14 pairs of public news/health reads wholly inside its execution span.
+The scheduled budget reserve now releases the spent event allocation. Existing
+usage survived restart; subsequent usage was added, not reset. Production full
+checkpoint completion at 12:24:25Z reported no error. Direct physical-file and
+owner device verification remain separate pending observations.
+
+Manual verification run 34598877298 reached all seven scheduled-workflow steps.
+Three AI purposes were skipped for scheduled scope and event analysis for the
+daily event quota. Official tracking processed 27 records and retained a cursor
+for 573 remaining; eight translations completed. Workflow success does not mean
+all AI purposes executed. Natural scheduled execution remains a separate check.
+
+Inspection of the public browser evidence exposed a display mismatch despite
+its overall PASS: QQQ's 1D selection temporarily retained the previous S&P500
+index series. useIndexChart carried data from the old key while awaiting the
+new request, and the acceptance heading check only looked for the appended
+ETF name. A real React/Chromium regression reproduced this with a held NDX
+response: selected NDX still returned SPX data.
+
+The follow-up binds visible hook state and cache entries to backend/index/
+timeframe, rejects response identity mismatches, and keeps visibility refresh
+attached when a matching cache is reused. Projection markup and public
+acceptance also identify the drawn series independently from the ETF decision
+anchor. Calculations, thresholds, snapshots and trading authority are unchanged.
+The focused browser regression passes delayed switches, late responses, cached
+returns, timeframe changes, mismatched responses, unavailable/disabled indices
+and same-index refresh, with no mixed committed render. Full candidate checks
+and production deployment/acceptance of this follow-up are still pending.
+
+Local follow-up checks passed: the actual React/Chromium regression, frontend
+lint/type checks, production build, and 68 admission/provenance tests. The
+external naming audit passed for source text and all 12 built text artifacts.
+These checks do not yet certify a merged or deployed follow-up.
+
+
+### 2026-09-11: important-news history remains a production acceptance gap
+
+At 12:56Z an independent Chromium session displayed Today, Notifications,
+Settings and asset 5803 without page errors or horizontal overflow. It did not
+use the owner's device or credentials and issued no write requests. The ECB
+article was absent from the public 12-item list after its original receipt
+became more than 24 hours old. The previously observed successful Astra
+analysis does not prove that the owner can still read the article.
+
+The follow-up separates seven-day important-news retention priority from the
+unchanged 24-hour current-news/AI-retry window. The existing bounded 40-record
+store and persistence are reused. A public read-only history view and an
+on-demand Notifications reader expose retained older HIGH/CRITICAL articles,
+with original receipt, past interpretation, explicit age and retention limits.
+Reading old records does not renew freshness, alerts, analysis or SDA authority;
+a failed history refresh retains the last loaded view. This is not a complete
+news archive, and existing evicted records are not claimed restored.
+
+Related backend tests: 205 passed. The React/Chromium history test passed
+on-demand reads, original receipt, past labels and failed-refresh retention.
+The chart and news follow-ups are combined for final CI and production
+acceptance. The first chart-only candidate failed the Render skip-marker
+contract; the combined change now requires backend deployment. No gate is
+bypassed. Actual ECB history restoration/readback, owner device checks, final
+candidate certificates and production acceptance remain open.
+
+
+Direct production file readback at 13:45:36Z confirmed the ECB event was absent
+from the 40-record store. The cost file retained 111 current-day rows totaling
+USD 1.990148 with no pending reservation. The news-history follow-up therefore
+also needs an explicit data recovery, not only a reader.
+
+An operator-prepared local recovery envelope now admits bounded historical
+NewsRiskEvidence at startup. It verifies schema, event/fingerprint identity,
+payload digest and the external naming policy; the digest is integrity checking,
+not an authentication signature. It never replaces an existing live event,
+renews receipt/freshness, runs AI or grants an alert/action. Accepted records
+are persisted through the existing news writer. Corrupt input leaves current
+state intact. Expired records are not reintroduced. Recovery status is reported
+on the read-only history API.
+
+The original production-observed ECB response has been preserved outside the
+product and verified against the recovery merger: facts, interpretation,
+original receipt, model and usage are unchanged. 84 news/pipeline tests and
+123 public-boundary tests pass, including real file save/readback, idempotence
+and corruption rejection. Preparing the recovery file is not proof of startup
+application or production history display; those remain pending after final CI.

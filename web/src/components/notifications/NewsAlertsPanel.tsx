@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { newsAnalysisStatusJa, displayNewsHeadline } from '../../lib/newsHeadline';
-import { useNewsIntelligence, type NewsIntelEvent } from '../../hooks/useNewsIntelligence';
+import { useNewsIntelligence, type NewsIntelEvent, type NewsIntelView } from '../../hooks/useNewsIntelligence';
 import { useMarketShock } from '../../hooks/useMarketShock';
 import './NewsAlertsPanel.css';
 
@@ -39,6 +39,48 @@ const receivedJa = (value: string | null | undefined): string => {
   return new Date(t).toLocaleString('ja-JP', {
     timeZone: 'Asia/Tokyo', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
   });
+};
+
+export const NewsHistory: React.FC = () => {
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState<NewsIntelView | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+  const load = async () => {
+    if (loading) return;
+    setLoading(true); setError(false);
+    try {
+      const base = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '');
+      if (!base) throw new Error('backend_missing');
+      const response = await fetch(`${base}/api/argus/news-intelligence?view=history`, { cache: 'no-store' });
+      if (!response.ok) throw new Error('history_unavailable');
+      const data = await response.json() as NewsIntelView;
+      if (data.schemaVersion !== 'argus-news-intelligence-v1' || !Array.isArray(data.events)) {
+        throw new Error('history_invalid');
+      }
+      setView(data);
+    } catch { setError(true); } finally { setLoading(false); }
+  };
+  return <div className="news-alerts__group" data-news-history>
+    <button type="button" aria-expanded={open} onClick={() => {
+      setOpen(!open); if (!open && !view) void load();
+    }}>過去の重要ニュースを見る</button>
+    {open && <>
+      <p className="news-alerts__note">受信から24時間を過ぎた直近7日間の保存記事です。保存は最近の記事を含め最大40件で、全記事の一覧ではありません。当時の説明であり、現在の速報・売買判断ではありません。</p>
+      {loading && <p role="status">履歴を読み込み中…</p>}
+      {error && <p role="status">履歴を更新できません。{view ? '前回取得した履歴を表示しています。' : '記事が無いという意味ではありません。'}</p>}
+      {view && <small>最終取得 {receivedJa(view.generatedAt)} JST</small>}
+      {!loading && <button type="button" onClick={() => void load()}>履歴を再取得</button>}
+      {view?.events.length === 0 && <p>保存されている対象記事はありません。</p>}
+      {view?.events.map(event => <article key={event.eventId} className="news-alerts__item"
+        id={`news-history-${event.eventId}`} data-news-history-event={event.eventId}>
+        <p className="news-alerts__title"><b>{displayNewsHeadline(event.headlineJa)}</b></p>
+        <p className="news-alerts__why">当時の解釈: {event.whyJa}</p>
+        {event.japanImpactJa && <p className="news-alerts__japan">当時の日本株への見立て: {event.japanImpactJa}</p>}
+        <p className="news-alerts__meta">{event.source} · 受信 {receivedJa(event.sourceReceivedAt)} JST · 過去の情報 · {newsAnalysisStatusJa(event.analysisState, event.analysisInputScope)}</p>
+      </article>)}
+    </>}
+  </div>;
 };
 
 export const NewsAlertsPanel: React.FC = () => {
@@ -104,6 +146,7 @@ export const NewsAlertsPanel: React.FC = () => {
           </article>;
         })}
       </div>
+      <NewsHistory />
       <p className="news-alerts__note">
         方向判定不能 = このニュースからは上下を決めない、という判定です。ニュースは売買権限を持ちません。
       </p>
