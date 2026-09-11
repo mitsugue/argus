@@ -35,7 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
-    "web/src/components/guide/BackupCard.tsx": "d5e9c67eaeb9852daa791786b373fd42655a17a0",
+    "web/src/components/guide/BackupCard.tsx": "7448961ef09c25babfd84e5c2eec1ec38f76db4e",
     "web/src/components/system/BackupStatusOverview.tsx": "6b0c0bc4e434c8a9464accec8f78100c1da06c43",
     "web/src/lib/vault.ts": "9a43fdfad04ba861367a0552d93703eff874f9e6",
     "argus_osint_engine.py": "82c928299eed09004067283d72cc4b67b07753c5",

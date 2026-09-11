@@ -132,10 +132,17 @@ export function maybeAutoBackup(): boolean {
   }
 }
 
+export class BackupHistoryValidationError extends Error {
+  constructor() {
+    super('判断履歴を検証できません。保存済みデータは変更していません。古いバックアップは製品外の移行ツールで変換してから取り込んでください。');
+    this.name = 'BackupHistoryValidationError';
+  }
+}
+
 export function assertBackupHistoryReadable(parsed: BackupFile): void {
   const history = parsed.data?.[DEVICE_LOCAL_SDA_LEDGER_KEY];
   if (history != null && !verifyDeviceLocalSdaLedgerDocument(history)) {
-    throw new Error('判断履歴を検証できません。保存済みデータは変更していません。古いバックアップは製品外の移行ツールで変換してから取り込んでください。');
+    throw new BackupHistoryValidationError();
   }
 }
 

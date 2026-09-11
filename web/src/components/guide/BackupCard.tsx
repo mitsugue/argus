@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { downloadBackup, restoreBackup, type BackupFile } from '../../lib/backup';
+import { downloadBackup, restoreBackup, BackupHistoryValidationError, type BackupFile } from '../../lib/backup';
 import { cloudRestore, getVaultPass, setVaultPass, lastCloudBackupAt, lastSyncInfo } from '../../lib/vault';
 
 // Complete device-data backup UI. Only this full export advances global
@@ -48,7 +48,7 @@ export const BackupCard: React.FC = () => {
         setMsg(`${n}項目を復元しました(${parsed.exportedAt?.slice(0, 10)}のバックアップ)。再読み込みします…`);
         window.setTimeout(() => location.reload(), 1200);
       } catch (error) {
-        setMsg(error instanceof Error && !(error instanceof SyntaxError)
+        setMsg(error instanceof BackupHistoryValidationError
           ? error.message : '読み込みに失敗しました。正しいバックアップファイルか確認してください。');
       }
     };
