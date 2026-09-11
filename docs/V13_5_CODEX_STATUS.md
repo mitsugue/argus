@@ -380,3 +380,26 @@ identities for the reviewed workflow and its two regression files; those paths
 are not added to the permanent allowlist. Full current-candidate CI, both
 certificates, merge, production collection/AI/save/readback and browser acceptance
 remain required. No 13.6 completion or iPhone migration acceptance is claimed.
+
+
+### 2026-09-11: release spent/completed event reservations within the same budget
+
+The 09:21:18Z production public cost response reported USD1.530078 scheduled
+spend, six of six event runs, USD0.469922 total remaining, but zero news remaining.
+The policy subtracted the original USD0.50 reserve from the shared budget even
+after event spending had already been counted and after no event runs remained.
+The candidate reserves only the outstanding event allocation and releases it
+when the daily event quota is consumed. Pending reservations still count against
+the shared budget. Daily USD2.00, the USD0.50 initial reserve, six event runs,
+mode/purpose restrictions and trading gates are unchanged. No contract or
+architecture cost optimization is included.
+
+Public newsRemainingUsd and authorization now use the same calculation; the
+public view additionally reports eventSpentTodayUsd/eventReserveRemainingUsd.
+Four regressions fail before the change and all 18 pure policy checks pass
+after it, including shared hard cap, next UTC day, remaining event protection
+and purpose restrictions. 183 cost/reservation/restore/public/news integration
+checks pass. The previous integrated version passed the whole backend suite
+(4,869 passed, one skip, 20 subtests); that whole-suite result predates this
+additional pure budget calculation, so final candidate CI remains required.
+Actual production re-analysis using the released allowance is still unverified.
