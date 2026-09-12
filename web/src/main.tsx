@@ -4,6 +4,7 @@ import { registerSW } from 'virtual:pwa-register';
 import App from './App';
 import { AssetsProvider } from './hooks/useAssets';
 import { clearVerifiedSnapshotCache } from './lib/verifiedSnapshot';
+import { repairAppCaches } from './lib/pwaRecovery';
 import './styles/theme.css';
 
 // ── PWA update reliability (v10.70) ─────────────────────────────────────────
@@ -54,12 +55,7 @@ async function fetchDeployedIdentity(): Promise<string | null> {
 
 async function selfHeal(): Promise<void> {
   try {
-    const regs = (await navigator.serviceWorker?.getRegistrations?.()) || [];
-    await Promise.all(regs.map((r) => r.unregister().catch(() => false)));
-    if (window.caches) {
-      const keys = await caches.keys();
-      await Promise.all(keys.map((k) => caches.delete(k)));
-    }
+    await repairAppCaches(import.meta.env.BASE_URL);
     // IndexedDB also holds owner-created chart drawings. Refresh only the
     // server-derived views, and bound the wait if another tab blocks storage.
     await waitAtMost(clearVerifiedSnapshotCache(), PWA_STEP_TIMEOUT_MS);

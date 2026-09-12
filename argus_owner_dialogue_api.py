@@ -8,7 +8,7 @@ import argus_owner_dialogue as dialogue
 import argus_owner_dialogue_store as store
 
 
-def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None):
+def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None):
     boot_id = str(uuid.uuid4())
     lock = threading.Lock()
     save_failures = {}
@@ -104,10 +104,15 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                     return response({'error':'market_context_changed','currentContextId':context_id},409)
                 previous=store.read(path,body['previousRequestId'],boot_id) if body.get('previousRequestId') else None
                 if body.get('previousRequestId') and not previous: return response({'error':'previous_not_found'},404)
+                received_at=now()
+                comparison=subject_comparison(brief=current,symbol=body.get('symbol'),market=body.get('market'),
+                    horizon=body.get('horizon'),cutoff=received_at) if subject_comparison else None
+                materials=subject_materials(symbol=body.get('symbol'),market=body.get('market'),cutoff=received_at) if subject_materials else None
                 context=dialogue.build_context(brief=current,symbol=body.get('symbol'),market=body.get('market'),
-                    horizon=body.get('horizon'),question=body.get('question'),received_at=now(),
+                    horizon=body.get('horizon'),question=body.get('question'),received_at=received_at,
                     owner=body.get('owner'),previous=previous['context'] if previous else None,
-                    hypothesis=body.get('hypothesis'),index_quote=dialogue.index_quote(current,body.get('horizon')))
+                    hypothesis=body.get('hypothesis'),index_quote=dialogue.index_quote(current,body.get('horizon')),
+                    subject_comparison=comparison,material_facts=materials)
                 context['historyStatus']='LOCAL_DURABLE'
                 context['contextId']=dialogue.digest({k:v for k,v in context.items() if k!='contextId'})
                 store.initialize(path)

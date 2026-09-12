@@ -3,6 +3,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import { readFileSync } from 'node:fs';
+import { repairAppCaches } from './src/lib/pwaRecovery';
 
 // GitHub Pages serves the site under /<repo-name>/ — supply this via env at build time.
 // Locally and on other deploy targets (Vercel etc.) set DEPLOY_BASE='/' or leave unset.
@@ -43,7 +44,7 @@ const argusVersionInjector = {
         `globalThis.__ARGUS_VERSION__=${JSON.stringify(bundleVersion)};`,
         `globalThis.__ARGUS_PRODUCT_VERSION__=${JSON.stringify(bundleProductVersion)};`,
         `globalThis.__ARGUS_BUILD_SHA__=${JSON.stringify(frontendBuildSha)};`,
-        `(function(){try{var wanted=${JSON.stringify(`${bundleVersion}|${bundleProductVersion}|${frontendBuildSha}`)};var stored=localStorage.getItem('argus.bundle.identity');var guard='argus_identity_purge_'+wanted;if(stored!==wanted&&!sessionStorage.getItem(guard)){sessionStorage.setItem(guard,'1');document.documentElement.style.visibility='hidden';Promise.all([(navigator.serviceWorker&&navigator.serviceWorker.getRegistrations?navigator.serviceWorker.getRegistrations().then(function(rs){return Promise.all(rs.map(function(r){return r.unregister()}))}):Promise.resolve()),(globalThis.caches?caches.keys().then(function(ks){return Promise.all(ks.map(function(k){return caches.delete(k)}))}):Promise.resolve())]).finally(function(){location.reload()});}}catch(_){}})();`,
+        `(function(){try{var wanted=${JSON.stringify(`${bundleVersion}|${bundleProductVersion}|${frontendBuildSha}`)};var stored=localStorage.getItem('argus.bundle.identity');var guard='argus_identity_purge_'+wanted;if(stored!==wanted&&!sessionStorage.getItem(guard)){sessionStorage.setItem(guard,'1');document.documentElement.style.visibility='hidden';(${repairAppCaches.toString()})(${JSON.stringify(base)}).catch(function(){}).finally(function(){location.reload()});}}catch(_){}})();`,
       ].join(''),
     }];
   },

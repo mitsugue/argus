@@ -127,6 +127,7 @@ import argus_analysis_history
 import argus_owner_dialogue_api
 import argus_owner_dialogue_recovery
 import argus_owner_dialogue_backup
+import argus_subject_materials
 import argus_analysis_history_backup
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
@@ -17773,10 +17774,26 @@ _OWNER_DIALOGUE_RECOVERY = argus_owner_dialogue_recovery.RecoveryWorker(
         repo=os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", ""), headers=_gh_private_headers(), http=requests.request),
     now=_ai_now_iso)
 
+def _owner_dialogue_subject_comparison(*, brief, symbol, market, horizon, cutoff):
+    if market != "JP" or not isinstance(symbol, str) or not re.fullmatch(r"[0-9A-Z]{4}", symbol):
+        return None
+    meta = next((r for r in (_JQ_MASTER_CACHE.get("data") or []) if r.get("code") == symbol), {})
+    classification = {k: meta.get(k) for k in ("sector17Code", "sector33Code", "effectiveDate", "receivedAt")}
+    classification["source"] = "J-Quants V2 equities/master"
+    return argus_owner_dialogue_api.dialogue.cached_subject_comparison(
+        brief=brief, symbol=symbol, horizon=horizon, cutoff=cutoff,
+        history=copy.deepcopy(_JQ_HISTORY_CACHE.get(symbol)), classification=classification,
+        close_row=_jp_internals_close_row)
+
+def _owner_dialogue_subject_materials(*, symbol, market, cutoff):
+    if market not in ("JP", "US") or not isinstance(symbol, str) or symbol == "N225": return None
+    return argus_subject_materials.news_facts(list(_INTEL_STORE), symbol=symbol, cutoff=cutoff)
+
 argus_owner_dialogue_api.register(app, authorize=_require_owner_sync,
     storage_path=_owner_dialogue_path, market_brief=lambda: _MARKET_BRIEF.get("data"),
-    generate=_openai_prose, now=_ai_now_iso,
-    recovery_status=_OWNER_DIALOGUE_RECOVERY.status, recovery_trigger=_OWNER_DIALOGUE_RECOVERY.tick)
+    generate=_openai_prose, now=lambda: datetime.now(pytz.utc).isoformat(),
+    recovery_status=_OWNER_DIALOGUE_RECOVERY.status, recovery_trigger=_OWNER_DIALOGUE_RECOVERY.tick,
+    subject_comparison=_owner_dialogue_subject_comparison, subject_materials=_owner_dialogue_subject_materials)
 
 
 @app.route("/api/argus/market-brief")
@@ -37730,12 +37747,16 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
         return cached["data"]
     if not fetch:
         return []
-    rows = []
+    rows = []; source_hash = None; response = None; fetch_error = None
     try:
         r = requests.get(
             f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}",
             params={"interval": "1d", "range": "2y"},
             headers={"User-Agent": "Mozilla/5.0 (argus)"}, timeout=15)
+        response = r
+        if getattr(r, "status_code", 200) != 200: raise ValueError("index_history_http_failure")
+        content = getattr(r, "content", None)
+        if isinstance(content, bytes): source_hash = hashlib.sha256(content).hexdigest()
         result = ((r.json() or {}).get("chart") or {}).get("result") or []
         meta = (result[0].get("meta") or {}) if result else {}
         offset = int(meta.get("gmtoffset") or 0)
@@ -37767,10 +37788,19 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
                 "sourceRef": f"yahoo:chart:{yahoo_symbol}",
             }
         rows = [by_date[key] for key in sorted(by_date)]
-    except Exception:
-        rows = []
+    except Exception as exc:
+        rows = []; fetch_error = type(exc).__name__
+    finally:
+        if response is not None and hasattr(response, "close"):
+            try: response.close()
+            except Exception: pass
+    if not rows and cached and cached.get("data"):
+        cached.update(expires=now+300, lastFetchStatus="FAILED", lastAttemptAt=_ai_now_iso(),
+                      lastErrorClass=fetch_error or "EmptyIndexHistory")
+        return cached["data"]
     _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE[yahoo_symbol] = {
-        "data": rows,
+        "data": rows, "sourceResponseSha256": source_hash if rows else None,
+        "lastFetchStatus": "AVAILABLE" if rows else "FAILED", "lastAttemptAt": _ai_now_iso(),
         "acquiredAt": datetime.now(pytz.utc).isoformat() if rows else None,
         "expires": now + (_JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC if rows else 300)}
     return rows
@@ -37780,7 +37810,7 @@ def _jp_market_comparison_cached(horizon):
     """Bounded cached-only chart calculation; no fetch, AI or persistence."""
     cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}
     rows = cached.get("data") or []
-    cutoff = _ai_now_iso()
+    cutoff = datetime.now(pytz.utc).isoformat()
     failure = {"status": "unavailable", "comparison": None, "automaticAiCalls": 0,
                "actionAuthority": False, "informationCutoff": cutoff,
                "lastSuccessfulAcquisitionAt": cached.get("acquiredAt")}
@@ -37930,7 +37960,7 @@ def _jp_internals_warm():
 
 
 def _jp_market_internals_cached():
-    cutoff = _ai_now_iso()
+    cutoff = datetime.now(pytz.utc).isoformat()
     try:
         end = argus_market_clock.latest_completed_session_date(argus_market_clock.JP_EQUITY, datetime.now(pytz.utc))
         days = [end - timedelta(days=n) for n in range(70, -1, -1)]
@@ -37943,7 +37973,8 @@ def _jp_market_internals_cached():
                 bar = _jp_internals_close_row(row["date"], row.get("close"))
                 if bar: rows.append(bar)
             prices["NIKKEI_225_INDEX"] = {"instrumentId": "NIKKEI_225_INDEX", "instrumentKind": "INDEX",
-                "priceBasis": "CASH_INDEX_CLOSE", "receivedAt": index["acquiredAt"], "rows": rows, "source": "Yahoo Finance cash index daily close"}
+                "priceBasis": "CASH_INDEX_CLOSE", "receivedAt": index["acquiredAt"], "rows": rows, "source": "Yahoo Finance cash index daily close",
+                "sourceResponseSha256": index.get("sourceResponseSha256"), "sourceFetchStatus": index.get("lastFetchStatus")}
         rolled = set(_MARKET_LEDGER.get("rolledBackImports") or [])
         observations = [r for r in _MARKET_LEDGER.get("observations", []) if r.get("importId") not in rolled
                         and not (r.get("metadata") or {}).get("excludeFromEffective")]
@@ -43334,6 +43365,7 @@ def _jq_price_history(code, *, deadline=None):
         if not (behind and recheck_due):
             return c["data"]
     data = None
+    source_identity_verified = False; source_complete = False
     if _JQUANTS_API_KEY:
         try:
             headers = {"x-api-key": _JQUANTS_API_KEY}
@@ -43371,6 +43403,14 @@ def _jq_price_history(code, *, deadline=None):
                 if deadline is not None and time.monotonic() >= deadline:
                     return (c or {}).get("data")
                 if attempt_rows:
+                    source_complete = not bool(pk)
+                    source_identity_verified = all(str(row.get("Code", ""))[:4] == code for row in attempt_rows)
+                    by_date = {}
+                    for source_row in attempt_rows:
+                        source_day = source_row.get("Date")
+                        if source_day in by_date and by_date[source_day] != source_row:
+                            source_identity_verified = False
+                        by_date[source_day] = source_row
                     rows = attempt_rows
                     break
             rows = [q for q in rows if _q_close(q) is not None]
@@ -43415,7 +43455,14 @@ def _jq_price_history(code, *, deadline=None):
         # still hold) and retries on the next cycle instead of blanking it.
         c["sessionRecheckAt"] = now + _JQ_HISTORY_SESSION_RECHECK_SEC
         return c["data"]
+    snapshot_hash = None
+    if data:
+        try: snapshot_hash = jp_market_internals._hash(data)
+        except (TypeError, ValueError, OverflowError): pass
     _JQ_HISTORY_CACHE[code] = {
+        "instrumentId": code, "sourceIdentityVerified": source_identity_verified,
+        "sourceComplete": source_complete,
+        "sourceSnapshotSha256": snapshot_hash,
         "data": data, "expires": now + (_JQ_HISTORY_TTL if data else 600),
         "acquiredAt": (_ai_now_iso() if data else None),
         "sessionRecheckAt": now + _JQ_HISTORY_SESSION_RECHECK_SEC,

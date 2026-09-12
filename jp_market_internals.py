@@ -56,6 +56,8 @@ def period_return(snapshot, *, start, end, cutoff, instrument_id, kind='EQUITY')
         record={**missing,'status':'AVAILABLE','returnPct':value,'priceBasis':basis,
                 'receivedAt':received,'source':snapshot.get('source'),'sourceResponseSha256':snapshot.get('sourceResponseSha256'),
                 'start':ends[0],'end':ends[1],'historicalVintageVerified':False}
+        if snapshot.get('sourceSnapshotSha256'):
+            record['sourceSnapshotSha256']=snapshot['sourceSnapshotSha256']
         record['evidenceId']=_hash(record);return record
     except (KeyError,TypeError,ValueError,OverflowError):return {**missing,'reason':'history_metadata_invalid'}
 

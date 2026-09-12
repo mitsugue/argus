@@ -6,7 +6,8 @@ import './OwnerDialogue.css';
 type Section={textJa:string;kind:string;evidenceIds:string[]};
 type Job={remoteBackup?:{status?:string;lastVerifiedAt?:string;pending?:boolean};requestId:string;status:string;persistenceStatus:string;remoteRecoveryVerified:boolean;
   context:{question:string;subject:{symbol:string;market:string};horizonSessions:number;baseMarketContextId:string;
-    facts:Array<{evidenceId:string;text:string}>;calculatedHypothesis?:{status:string;value?:number;unit?:string;noteJa?:string;comparisonPoints?:Array<{usdJpy:number;value:number}>}};
+    facts:Array<{evidenceId:string;text:string;provenance?:{url?:string;sourceLabel?:string}}>;
+    calculatedHypothesis?:{status:string;value?:number;unit?:string;noteJa?:string;comparisonPoints?:Array<{usdJpy:number;value:number}>}};
   result?:{answer?:{sections:Record<string,Section>};provider?:{returnedModel?:string;completedAt?:string}}};
 const labels:Record<string,string>={view:'今の見立て',reasons:'重要な理由',changes:'前回からの変化',impact:'自分への影響',next:'次に確認すること',invalidation:'見方を変える条件'};
 const states:Record<string,string>={RUNNING:'AIが根拠を確認しています。履歴は引き続き読めます。',INTERRUPTED:'再起動で処理が中断しました。課金の重複を避けるため、自動再実行はしていません。',REJECTED:'回答の根拠と表現を検証できなかったため、表示を保留しました。',UNAVAILABLE:'AIが応答を返せませんでした。取得済みの市場情報は利用できます。',FAILED:'回答処理に失敗しました。',SAVE_FAILED:'回答の保存に失敗しました。この端末表示だけでは復元を保証できません。'};
@@ -95,7 +96,9 @@ export function OwnerDialogue({symbol,market,horizon,asset}:{symbol:string;marke
       {answer&&Object.entries(labels).map(([key,label])=><div key={key}><strong>{label}</strong><p>{answer.sections[key].textJa}</p><small>{({FACT:'確認済みの事実',INFERENCE:'推論',UNKNOWN:'未確認'} as Record<string,string>)[answer.sections[key].kind]}</small></div>)}
       {job.context.calculatedHypothesis&&<p>{job.context.calculatedHypothesis.status==='AVAILABLE'?`仮定の計算: ${job.context.calculatedHypothesis.value?.toLocaleString()} ${job.context.calculatedHypothesis.unit}。${job.context.calculatedHypothesis.noteJa}`:'この仮定の数値計算に必要な原典は未取得です。'}</p>}
       <HypothesisChart points={job.context.calculatedHypothesis?.comparisonPoints}/>
-      <details><summary>使った根拠と保存状態</summary>{job.context.facts.map(f=><p key={f.evidenceId}>{f.text}</p>)}<p>市場の根拠ID: {job.context.baseMarketContextId}</p><p>応答モデル: {job.result?.provider?.returnedModel||'未確認'} · {job.result?.provider?.completedAt||'完了時刻未確認'}</p>
+      <details><summary>使った根拠と保存状態</summary>{job.context.facts.map(f=><p key={f.evidenceId}>{f.text}
+        {f.provenance?.url?.startsWith('https://')&&<> <a href={f.provenance.url} target="_blank" rel="noopener noreferrer">{f.provenance.sourceLabel||'出典'}を確認</a></>}
+      </p>)}<p>市場の根拠ID: {job.context.baseMarketContextId}</p><p>応答モデル: {job.result?.provider?.returnedModel||'未確認'} · {job.result?.provider?.completedAt||'完了時刻未確認'}</p>
         {job.remoteBackup&&<p>暗号化した遠隔コピー: {job.remoteBackup.status==='VERIFIED'?'保存・読み戻し済み':job.remoteBackup.status==='RUNNING'?'保存確認中':'未確認'}{job.remoteBackup.lastVerifiedAt?` · ${job.remoteBackup.lastVerifiedAt}`:''}{job.remoteBackup.pending?' · 最新変更の保存待ち':''}</p>}
         <p>{job.persistenceStatus==='LOCAL_DURABLE'?'サーバー保存・読み戻し済み':'保存確認待ち'}。別環境からの復旧確認は未完了です。</p></details></article>}
     {matching.length>0&&<div className="owner-dialogue__history">{matching.map(row=><button type="button" key={row.requestId} onClick={()=>setJob(row)}>{row.context.question} · {row.context.horizonSessions}営業日</button>)}</div>}

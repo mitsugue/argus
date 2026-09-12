@@ -7,6 +7,7 @@ import math
 import re
 from collections.abc import Mapping
 import argus_explanation_contract
+import jp_market_internals
 from argus_product_naming import require_allowed
 
 SCHEMA='argus-owner-dialogue-context-v1'
@@ -117,9 +118,63 @@ def index_quote(brief, horizon):
         'observedAt':end.get('closeAt'),'receivedAt':row.get('receivedAt'),'sourceResponseSha256':row.get('sourceResponseSha256')}
 
 
-def subject_fact(brief, symbol, horizon):
+def cached_subject_comparison(*, brief, symbol, horizon, cutoff, history, classification, close_row):
+    """Private cached inputs, compared with the same frozen public market period."""
+    period=market_internals(brief,horizon) or {}
+    missing={'status':'UNAVAILABLE','instrumentId':symbol,'reason':'verified_cached_history_missing'}
+    try:
+        if not period or not isinstance(history,dict) or history.get('instrumentId')!=symbol:
+            return missing
+        if history.get('sourceIdentityVerified') is not True or history.get('sourceComplete') is not True:
+            return missing
+        data=history['data']
+        if not history.get('sourceSnapshotSha256') or digest(data)!=history['sourceSnapshotSha256']:
+            return missing
+        dates=data['dates']
+        if len(dates)>4000 or any(len(data[key])!=len(dates) for key in ('closes','volumes','adjusted')):
+            return missing
+        rows=[]
+        for day in (period['startDate'],period['endDate']):
+            matches=[i for i,value in enumerate(dates) if value==day]
+            if len(matches)!=1:return {**missing,'reason':'exact_session_missing_or_duplicated'}
+            i=matches[0]
+            row=close_row(day,data['closes'][i],volume=data['volumes'][i],adjusted=data['adjusted'][i])
+            if not row:return {**missing,'reason':'canonical_close_missing'}
+            rows.append(row)
+        snapshot={'instrumentId':symbol,'instrumentKind':'EQUITY','priceBasis':'JQUANTS_ADJUSTED_CLOSE',
+            'receivedAt':history['acquiredAt'],'sourceSnapshotSha256':history['sourceSnapshotSha256'],
+            'source':'J-Quants V2 equities/bars/daily; normalized cached snapshot','rows':rows}
+        result=jp_market_internals.period_return(snapshot,start=period['startDate'],end=period['endDate'],
+            cutoff=cutoff,instrument_id=symbol)
+        if result['status']!='AVAILABLE':return result
+        meta=classification or {};sector=None
+        try:
+            if (meta.get('source')=='J-Quants V2 equities/master' and meta.get('effectiveDate')
+                    and meta['effectiveDate']<=period['endDate'] and instant(meta['receivedAt'])<=instant(cutoff)):
+                sector=next((s for s in period.get('sectors',[]) if s['sector17Code']==meta.get('sector17Code')),None)
+        except (KeyError,TypeError,ValueError):pass
+        index=period.get('index') or {}
+        result.update(sector17Code=sector['sector17Code'] if sector else None,
+            sectorNameJa=sector['nameJa'] if sector else None,classification=deepcopy(meta) if sector else None,
+            relativeToNikkeiPct=result['returnPct']-index['returnPct'] if index.get('status')=='AVAILABLE' else None,
+            relativeToSectorPct=result['returnPct']-sector['returnPct'] if sector and sector.get('status')=='AVAILABLE' else None,
+            comparisonScope='OWNER_PRIVATE',baseMarketContextId=brief['unifiedContext']['contextId'],
+            marketIndexEvidenceId=index.get('evidenceId'),sectorEvidenceId=sector.get('evidenceId') if sector else None,
+            informationCutoff=cutoff)
+        result['evidenceId']=digest({k:v for k,v in result.items() if k!='evidenceId'})
+        return result
+    except (KeyError,TypeError,ValueError,OverflowError):return missing
+
+
+def subject_fact(brief, symbol, horizon, subject_comparison=None):
     period=market_internals(brief,horizon) or {}
     row=next((r for r in period.get('assets',[]) if r.get('instrumentId')==symbol),None)
+    if not row or row.get('status')!='AVAILABLE':
+        candidate=subject_comparison or {}
+        if (candidate.get('instrumentId')==symbol and candidate.get('comparisonScope')=='OWNER_PRIVATE'
+                and candidate.get('baseMarketContextId')==(brief.get('unifiedContext') or {}).get('contextId')
+                and candidate.get('startDate')==period.get('startDate') and candidate.get('endDate')==period.get('endDate')):
+            row=candidate
     if not row or row.get('status')!='AVAILABLE':
         return fact('この銘柄の同じ期間の価格・業種比較は未取得です。市場全体の値を銘柄の実績として扱いません。','subject_coverage',kind='UNKNOWN')
     parts=[f"{symbol}の過去{horizon}営業日（{row['startDate']}〜{row['endDate']}）の調整後価格変化は{row['returnPct']:+.2f}%。"]
@@ -129,11 +184,12 @@ def subject_fact(brief, symbol, horizon):
     parts.append('売買注文の観測や将来の予測ではありません。')
     result=fact(''.join(parts),'subject_market_comparison',verification='VERIFIED')
     result['marketInput']=deepcopy(row)
+    result['evidenceId']='dialogue-fact-'+digest({k:v for k,v in result.items() if k!='evidenceId'})
     return result
 
 
 def build_context(*, brief, symbol, market, horizon, question, received_at, owner=None,
-                  previous=None, hypothesis=None, index_quote=None, eps_input=None):
+                  previous=None, hypothesis=None, index_quote=None, eps_input=None, subject_comparison=None, material_facts=None):
     """Copy server facts; private inputs cannot replace the market or official history."""
     if market not in ('JP','US') or not isinstance(symbol,str) or not re.fullmatch(r'[A-Z0-9.^-]{1,16}',symbol):
         raise ValueError('subject_invalid')
@@ -151,7 +207,10 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
     if market=='US':
         facts=[{**f,'applicability':'GLOBAL_CONTEXT_ONLY'} for f in facts if f.get('source') in ('trusted_mail','calendar','official_sensor','policy')]
         facts.append(fact('米国銘柄固有の計算・検証データはこの文脈には未接続です。一般ニュースを日本株の予測ルールへ変換しません。','subject_coverage',kind='UNKNOWN'))
-    if market=='JP' and symbol!='N225':facts.append(subject_fact(brief,symbol,horizon))
+    if market=='JP' and symbol!='N225':facts.append(subject_fact(brief,symbol,horizon,subject_comparison))
+    if material_facts:
+        if not isinstance(material_facts,list) or len(material_facts)>5:raise ValueError('subject_material_bound')
+        facts.extend(deepcopy(material_facts))
     facts.append(fact(f'質問の対象は{market}:{symbol}、比較・見通しの期間は{horizon}営業日です。','requested_subject',kind='REQUEST_SCOPE'))
     private=owner_snapshot(owner,symbol=symbol,market=market,received_at=received_at)
     if private:
@@ -190,6 +249,7 @@ def prompt(context):
         '本人申告は検証済み市場事実ではありません。仮定は実測・実際の保有・正式予測とは別です。'
         '数値は参照した根拠の表記を使い、割合や感応度を創作しないでください。計算不能は定性的に説明します。'
         '根拠がない原因の断定、未観測の注文、信用期日の一律売却を主張しないでください。'
+        '銘柄に関連付けた報道は確認候補です。企業への実際の影響、記事全文、決算の公式結果、価格反応の原因を確認したとは扱いません。'
         '市場の中で変わったこと、質問への答え、自分への影響、次に確認すること、見方を変える条件を簡潔に述べます。'
         'JSONのみ。view/reasons/changes/impact/next/invalidationの6項目、それぞれtextJa(240字以内),'
         'kind(FACT/INFERENCE/UNKNOWN),evidenceIds(参照IDの配列)。数値はその項目が参照する根拠に含まれるものだけ。'
