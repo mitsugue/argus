@@ -1,7 +1,7 @@
 import React from 'react';
 import type { ArgusTodayView, MarketSelectionMode, TodayProjection } from '../../domain/argusTodayView';
 import { formatEventTime, quoteDisplayLabel, subjectDisplayName, confidenceBasisJa, waitKindJa } from '../../domain/argusTodayView';
-import { displayNewsHeadline, isDigestHeadline, newsAnalysisStatusJa } from '../../lib/newsHeadline';
+import { displayNewsHeadline, newsAnalysisStatusJa } from '../../lib/newsHeadline';
 import type { RouteKey } from '../NavRail';
 import type { SettingsSection } from '../../navigation';
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
@@ -12,7 +12,8 @@ import { REVERSAL_STATE_GLOSSARY, FAMILY_STATE_GLOSSARY } from '../../domain/glo
 import { marketSignalsView } from '../../domain/marketSignals';
 import { tachibanaLiveView, formatJpy, formatPct } from '../../domain/tachibanaLive';
 import type { TachibanaLiveDocument } from '../../domain/tachibanaLive';
-import { useNewsIntelligence } from '../../hooks/useNewsIntelligence';
+import type { NewsIntelEvent } from '../../hooks/useNewsIntelligence';
+import { orderMaterialNews, NEWS_IMPORTANCE_JA } from '../../domain/newsPresentation';
 import type {
   MarketHorizon, MarketInstrumentMarket, MarketInstrumentSymbol,
 } from '../../domain/marketInstruments';
@@ -69,6 +70,9 @@ interface Props {
     status: 'loading' | 'data' | 'error';
     events: Array<{
       eventId: string; eventType: string; analysisState?: string; analysisInputScope?: string;
+      revision?: number; processedAt?: string; staleness?: string; ageMinutes?: number;
+      impactDirection?: NewsIntelEvent['impactDirection'];
+      executionConstraint?: NewsIntelEvent['executionConstraint'];
       severity: 'INFO' | 'WATCH' | 'HIGH' | 'CRITICAL';
       headlineJa: string; whyJa: string; japanImpactJa: string | null;
       confirmationState: 'MARKET_CONFIRMED' | 'MARKET_CONFIRMATION_PENDING';
@@ -354,82 +358,63 @@ const newsAgeJa = (event: { ageMinutes?: number }): string | null => {
   if (minutes < 48 * 60) return `${Math.round(minutes / 60)}時間前`;
   return `${Math.round(minutes / 1440)}日前`;
 };
-const NewsSignalStrip: React.FC = () => {
-  const news = useNewsIntelligence();
-  // v13.5.36 (external review): staleness is the backend's UPPERCASE enum,
-  // re-evaluated at read time; ordering prefers severity then the RECEIPT
-  // instant (processedAt reorders on backfill/reprocess and is not used).
-  // v13.5.61 (owner: 「方向判定不能とはなぜか」): a multi-topic digest mail has no
-  // single direction; when a directional single item of the same severity
-  // exists it leads, and the digest headline is shown as its first item.
-  const directional = (event: { impactDirection?: { primaryDirection?: string } }) =>
-    event.impactDirection?.primaryDirection && event.impactDirection.primaryDirection !== 'UNCLEAR' ? 1 : 0;
-  const material = (news.view?.events ?? [])
-    .filter((event) => (event.severity === 'HIGH' || event.severity === 'CRITICAL')
-      && String(event.staleness).toUpperCase() !== 'STALE')
-    .sort((left, right) => (right.severity === 'CRITICAL' ? 1 : 0)
-      - (left.severity === 'CRITICAL' ? 1 : 0)
-      || directional(right) - directional(left)
-      || (isDigestHeadline(left.headlineJa) ? 1 : 0) - (isDigestHeadline(right.headlineJa) ? 1 : 0)
-      || String(right.sourceReceivedAt ?? '').localeCompare(
-        String(left.sourceReceivedAt ?? '')));
-  const top = material[0];
-  const degraded = news.status === 'error' && news.view != null;
-  if (news.status === 'loading') return null;
-  if (!top) {
-    // A feed that has never been read cannot report an absence: with
-    // status 'error' and no retained view there is nothing to say 「なし」 about.
-    const unread = news.status === 'error' && news.view == null;
-    return <div className="at-newssignal is-quiet" aria-label="ニュース/イベント">
-      <small>ニュース/イベント</small>
-      <span>{unread ? 'ニュースを取得できていません（重大ニュースが無いという意味ではありません）'
-        : '直近の重大ニュースなし'}</span>
-      {degraded && <em className="ns-degraded">更新失敗・前回取得分を表示</em>}</div>;
-  }
-  const direction = top.impactDirection;
+const NewsDirectionSummary: React.FC<{ event: Props['newsIntel']['events'][number] }> = ({ event }) => {
+  const direction = event.impactDirection;
   const primary = direction?.primaryDirection ?? 'UNCLEAR';
-  const bearishTargets = Object.entries(direction?.directionByTarget ?? {})
-    .filter(([, value]) => value === 'BEARISH')
-    .map(([target]) => NEWS_TARGET_JA[target] ?? target);
-  const bullishTargets = Object.entries(direction?.directionByTarget ?? {})
-    .filter(([, value]) => value === 'BULLISH')
-    .map(([target]) => NEWS_TARGET_JA[target] ?? target);
-  return <div className={`at-newssignal is-${primary.toLowerCase()}`}
-    data-argus-contract="news-event-signal-v1" aria-label="ニュース/イベント判断">
-    <small>ニュースの方向 — チャート観とは独立
-      {material.length > 1 && ` · 重大${material.length}件(最重要を表示)`}
-      {(news.view?.pendingTranslationCount ?? 0) > 0
-        && ` · 要約処理中${news.view?.pendingTranslationCount}通`}
-      {degraded && ' · ⚠ 更新失敗・前回取得分'}</small>
-    <div className="ns-head">
-      <GlossaryTip glossaryKey={primary === 'MIXED' ? 'news_mixed' : ''}>
-        <b>{NEWS_DIRECTION_JA[primary] ?? primary}</b>
-      </GlossaryTip>
-      {primary === 'UNCLEAR' && <span className="ns-unclear">このニュースからは上下を決めない</span>}
-      <i>{top.severity}</i>
-      <GlossaryTip glossaryKey={top.confirmationState === 'MARKET_CONFIRMED'
-        ? 'market_confirmed' : 'market_confirmation_pending'}>
-        <em>{top.confirmationState === 'MARKET_CONFIRMED'
-          ? '市場確認済み' : '市場確認待ち'}</em>
-      </GlossaryTip>
-      {newsAgeJa(top) && <span>{newsAgeJa(top)}</span>}
-      {direction?.timeHorizon && direction.timeHorizon !== 'UNCLEAR'
-        && <span>想定時間軸 {direction.timeHorizon}</span>}
-    </div>
-    <span className="ns-title">{displayNewsHeadline(top.headlineJa)}</span>
-    {(bearishTargets.length > 0 || bullishTargets.length > 0)
-      && <span className="ns-targets">
-        {bearishTargets.length > 0 && `逆風: ${bearishTargets.join('・')}`}
-        {bearishTargets.length > 0 && bullishTargets.length > 0 && ' ／ '}
-        {bullishTargets.length > 0 && `追い風: ${bullishTargets.join('・')}`}
-      </span>}
-    {direction && direction.transmissionChain.length > 0
-      && <span className="ns-chain">{direction.transmissionChain.join(' → ')}</span>}
-    <span className="ns-note">
-      {NEWS_CONSTRAINT_JA[top.executionConstraint ?? 'NO_CONSTRAINT']
-        ?? '制約なし'} · ニュースは売買権限を持たない</span>
-  </div>;
+  const targets = (state: string) => Object.entries(direction?.directionByTarget ?? {})
+    .filter(([, value]) => value === state).map(([target]) => NEWS_TARGET_JA[target] ?? target);
+  const bearish = targets('BEARISH');
+  const bullish = targets('BULLISH');
+  return <span className="at-news-direction" data-argus-contract="news-event-signal-v1"
+    data-news-event-id={event.eventId}>
+    <span><b>影響の見立て: {NEWS_DIRECTION_JA[primary] ?? '不明'}</b>
+      {primary === 'UNCLEAR' && ' · この記事だけでは上下を決めません'}</span>
+    {(bearish.length > 0 || bullish.length > 0) && <span>
+      {bearish.length > 0 && `逆風: ${bearish.join('・')}`}
+      {bearish.length > 0 && bullish.length > 0 && ' ／ '}
+      {bullish.length > 0 && `追い風: ${bullish.join('・')}`}
+    </span>}
+    {event.executionConstraint && event.executionConstraint !== 'NO_CONSTRAINT'
+      && <span>{NEWS_CONSTRAINT_JA[event.executionConstraint]}</span>}
+  </span>;
 };
+
+type NewsRowMemory = Props['newsIntel']['events'][number]['eventMemory'];
+export type TodayNewsRow = { id: string; eventId: string; severity: string; kind: '市場データ' | 'ニュース';
+    sourceReceivedAt: string | null; headlineJa: string; whyJa: string; metaJa: string;
+    eventMemory: NewsRowMemory; newsEvent?: Props['newsIntel']['events'][number] };
+
+
+export const TodayNewsCards: React.FC<{ rows: readonly TodayNewsRow[]; onOpen: (id: string) => void }> = ({ rows, onOpen }) => (
+<div className="at-news-rows">
+        {rows.map((row) => <article key={row.id}
+          className="at-news-row" data-shock-severity={row.severity} data-news-event-id={row.id}>
+          <button type="button" className="at-news-row__open" onClick={() => onOpen(row.id)}>
+          <span className="at-news-row__head"><mark data-severity={row.severity}>{NEWS_IMPORTANCE_JA[row.severity] ?? row.severity}</mark>
+            <i>{row.kind}</i><b>{row.headlineJa}</b></span>
+          <span className="at-news-row__why">{row.whyJa}</span>
+          {row.newsEvent && <NewsDirectionSummary event={row.newsEvent} />}
+          <em>{row.metaJa} · 詳しく読む</em>
+          </button>
+          {/* Causal event memory (SHADOW): the flag-recovery / analog evidence
+              line stays with the news it qualifies; never an SDA input. */}
+          {row.eventMemory && <details className="at-news-memory">
+            <summary>過去の事例との照合 · 検証中</summary>
+            <span className="at-event-memory"
+            data-event-memory-status={row.eventMemory.status}
+            data-flag-recovery={row.eventMemory.flagRecovery ? 'true' : 'false'}
+            data-calibration-mode={row.eventMemory.calibrationMode}>
+            <b>{row.eventMemory.flagRecovery ? 'フラグ回収' : 'イベント記憶'}</b>
+            {' '}{row.eventMemory.openedDaysAgo != null && row.eventMemory.openedDaysAgo > 0
+              ? `${row.eventMemory.openedDaysAgo}日前から監視 · ` : ''}{row.eventMemory.status}
+            {row.eventMemory.analogEvidence && ` · 類似 ${row.eventMemory.analogEvidence.independentEpisodeCount} 独立事例`
+              + (row.eventMemory.analogEvidence.insufficientEvidence
+                ? ' · 根拠不足' : ` · ${row.eventMemory.analogEvidence.confidence}`)}
+            {' · 校正 SHADOW · 判断権限なし'}
+          </span></details>}
+        </article>)}
+      </div>
+);
 
 const nextReviewLabel = (code: string | undefined): string | undefined => {
   if (!code) return undefined;
@@ -648,27 +633,25 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     window.setTimeout(jump, 350);
     window.setTimeout(jump, 1000);
   };
-  const materialMailEvents = newsIntel.events.filter((event) =>
-    event.severity === 'HIGH' || event.severity === 'CRITICAL')
-    .filter((event, index, rows) => rows.findIndex((candidate) =>
-      candidate.eventId === event.eventId) === index);
-  type NewsRowMemory = Props['newsIntel']['events'][number]['eventMemory'];
-  const newsRows: Array<{ id: string; severity: string; kind: '市場リスク' | '重大ニュース';
-    headlineJa: string; whyJa: string; metaJa: string; eventMemory: NewsRowMemory }> = [
+  const materialMailEvents = orderMaterialNews(newsIntel.events);
+  const newsRows = orderMaterialNews<TodayNewsRow>([
     ...shock.events.map((event) => ({
-      id: event.eventId, severity: event.severity, kind: '市場リスク' as const,
+      id: event.eventId, eventId: event.eventId, severity: event.severity, kind: '市場データ' as const,
+      sourceReceivedAt: event.asOf,
       headlineJa: event.headlineJa, whyJa: event.whyJa, eventMemory: null,
       metaJa: `${event.sources.map((source) => source.name).join(' · ')}${event.asOf ? ` · ${event.asOf}` : ''}`,
     })),
     ...materialMailEvents.map((event) => ({
-      id: event.eventId, severity: event.severity, kind: '重大ニュース' as const,
+      id: event.eventId, eventId: event.eventId, severity: event.severity, kind: 'ニュース' as const,
+      sourceReceivedAt: event.sourceReceivedAt, newsEvent: event,
       headlineJa: displayNewsHeadline(event.headlineJa), whyJa: event.whyJa, eventMemory: event.eventMemory,
       metaJa: `${event.source} · ${event.sourceReceivedAt
-        ? new Date(event.sourceReceivedAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '—'}`
-        + ` · ${event.confirmationState === 'MARKET_CONFIRMED' ? '市場確認済み' : '市場確認待ち'}`
+        ? new Date(event.sourceReceivedAt).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '受信時刻不明'}`
+        + `${newsAgeJa(event) ? ` · ${newsAgeJa(event)}` : ''}`
+        + ` · ${event.confirmationState === 'MARKET_CONFIRMED' ? '市場反応を確認済み' : '市場反応は確認待ち'}`
         + ` · ${newsAnalysisStatusJa(event.analysisState, event.analysisInputScope)}`,
     })),
-  ].sort((left, right) => (right.severity === 'CRITICAL' ? 1 : 0) - (left.severity === 'CRITICAL' ? 1 : 0));
+  ]);
   const NEWS_ROWS_CAP = 5;
   React.useEffect(() => {
     try {
@@ -851,38 +834,20 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       data-argus-contract="today-material-news-v1" data-news-count={newsRows.length}>
       <div className="at-head"><b>重大ニュース・市場リスク</b>
         <span>{newsRows.length > NEWS_ROWS_CAP ? `${NEWS_ROWS_CAP} / ${newsRows.length}件` : `${newsRows.length}件`}</span></div>
-      <NewsSignalStrip />
-      {newsRows.length > 0 && <div className="at-news-rows">
-        {newsRows.slice(0, NEWS_ROWS_CAP).map((row) => <button type="button" key={row.id}
-          className="at-news-row" data-shock-severity={row.severity}
-          onClick={() => openNewsDetails(`news-${row.id}`)}>
-          <span className="at-news-row__head"><mark data-severity={row.severity}>{row.severity}</mark>
-            <i>{row.kind}</i><b>{row.headlineJa}</b></span>
-          <span className="at-news-row__why">{row.whyJa}</span>
-          {/* Causal event memory (SHADOW): the flag-recovery / analog evidence
-              line stays with the news it qualifies; never an SDA input. */}
-          {row.eventMemory && <span className="at-event-memory"
-            data-event-memory-status={row.eventMemory.status}
-            data-flag-recovery={row.eventMemory.flagRecovery ? 'true' : 'false'}
-            data-calibration-mode={row.eventMemory.calibrationMode}>
-            <b>{row.eventMemory.flagRecovery ? 'フラグ回収' : 'イベント記憶'}</b>
-            {' '}{row.eventMemory.openedDaysAgo != null && row.eventMemory.openedDaysAgo > 0
-              ? `${row.eventMemory.openedDaysAgo}日前から監視 · ` : ''}{row.eventMemory.status}
-            {row.eventMemory.analogEvidence && ` · 類似 ${row.eventMemory.analogEvidence.independentEpisodeCount} 独立事例`
-              + (row.eventMemory.analogEvidence.insufficientEvidence
-                ? ' · 根拠不足' : ` · ${row.eventMemory.analogEvidence.confidence}`)}
-            {' · 校正 SHADOW · 判断権限なし'}
-          </span>}
-          <em>{row.metaJa} · タップで詳細</em>
-        </button>)}
-      </div>}
+      <p className="at-news-order">重要度順 · 赤は重大、黄は重要。同じ重要度では新しい情報から表示します。</p>
+      {newsIntel.status === 'error' && <p className="at-shock-clear" role="status">
+        {newsIntel.events.length ? 'ニュース更新失敗・前回取得分を表示しています。' : 'ニュースを取得できていません。'}</p>}
+      {newsIntel.status === 'loading' && newsRows.length === 0 && <p className="at-shock-clear">ニュースを読み込み中…</p>}
+      {newsRows.length > 0 && <TodayNewsCards rows={newsRows.slice(0, NEWS_ROWS_CAP)}
+        onOpen={(id) => openNewsDetails(`news-${id}`)} />}
       {shock.status === 'data' && shock.events.length === 0 && materialMailEvents.length === 0
         && <p className="at-shock-clear">突発の市場ショック: 現在なし
           （監視中: 中央銀行 · 雇用/物価 · 地政学 · 企業イベント）·
           予定されている経済イベントは NEXT EVENT に表示されます</p>}
       {shock.status === 'error' && <p className="at-shock-clear">市場ショック監視: 取得できません</p>}
-      {view.news.length > 0 && <button type="button" className="at-news-more"
-        onClick={() => openNewsDetails()}>一般ニュース {view.news.length}件 · Alerts で見る ↗</button>}
+      <p className="at-news-note">ニュースの方向はチャート観とは独立しています。ニュースは売買権限を持たない参考情報です。</p>
+      <button type="button" className="at-news-more" onClick={() => openNewsDetails()}>ニュース・続報をすべて見る ↗</button>
+
     </section>
 
     <section className="at-event card" aria-label="NEXT EVENT">
