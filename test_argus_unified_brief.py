@@ -80,7 +80,7 @@ def test_existing_numeric_value_allows_grouping_but_not_changed_digits():
     assert diagnostic == {'status': 'ACCEPTED', 'reason': None, 'section': None}
     raw['reasons']['textJa'] = '買残は1,884,104口です。'
     assert mb.validate_unified_ai(raw, context, diagnostic=diagnostic) is None
-    assert diagnostic == {'status': 'REJECTED', 'reason': 'unsupported_numeric_tokens', 'section': 'reasons'}
+    assert diagnostic == {'status': 'REJECTED', 'reason': 'unsupported_numeric_tokens', 'section': 'reasons', 'unsupportedNumericTokens': ['1884104']}
 
 
 def test_rejected_fact_records_only_the_reason_and_section():
@@ -222,3 +222,71 @@ def test_legacy_response_does_not_block_retry_of_six_part_analysis(monkeypatch):
     assert first['unifiedStatus'] == 'INVALID_RESPONSE'
     second = scanner._market_brief_refresh(allow_ai=True)
     assert second['unifiedStatus'] == 'GENERATED' and len(calls) == 2
+
+
+def test_unsupported_number_gets_one_bounded_repair_and_retains_both_call_receipts(monkeypatch):
+    calls=[]
+    def provider(user,**kwargs):
+        calls.append(user)
+        context=json.loads(user.split('\n',1)[1].split('\n前の回答は',1)[0])
+        raw=response(context)
+        if len(calls)==1:raw['reasons']['textJa']='VIX 99へ上昇しています。'
+        kwargs['diagnostic'].update(outcome='ok',completedAt='2026-09-13T00:00:00Z',returnedModel='gpt-6-astra',estUsd=.01)
+        return raw
+    monkeypatch.setattr(scanner,'_openai_prose',provider)
+    b=brief();b['unifiedContext']=mb.unified_context(b)
+    result=scanner._market_brief_ai_polish(b)
+    assert result['unifiedStatus']=='GENERATED' and len(calls)==2
+    assert result['aiDiagnostics']['totalEstUsd']==.02
+    assert result['aiDiagnostics']['attempts'][0]['validation']['unsupportedNumericTokens']==['99']
+    assert result['unifiedValidation']['status']=='ACCEPTED'
+
+
+def test_changed_engine_inputs_regenerate_even_when_headline_is_unchanged(monkeypatch):
+    state = {'data': None, 'composedAt': 0.0, 'aiFactsHash': None}
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF', state)
+    monkeypatch.setattr(scanner, '_compose_market_brief', lambda: brief())
+    monkeypatch.setattr(scanner, '_market_brief_history_save', lambda value: None)
+    calculation = {'epsInput': 3000, 'informationCutoff': '2026-09-12T00:00:00Z'}
+    monkeypatch.setattr(scanner, '_jp_market_comparison_cached', lambda h: copy.deepcopy(calculation))
+    calls = []
+    def model(user, **kwargs):
+        context = json.loads(user.split('\n', 1)[1]); calls.append(context)
+        kwargs['diagnostic'].update(outcome='ok', completedAt='2026-09-13T00:00:00Z', returnedModel='gpt-6-astra')
+        return response(context)
+    monkeypatch.setattr(scanner, '_openai_prose', model)
+    first = scanner._market_brief_refresh(allow_ai=True)
+    calculation['informationCutoff'] = '2026-09-13T00:00:00Z'
+    scanner._market_brief_refresh(allow_ai=True)
+    assert len(calls) == 1
+    calculation['epsInput'] = 3100
+    second = scanner._market_brief_refresh(allow_ai=True)
+    assert len(calls) == 2
+    assert first['calculationSnapshots']['5']['epsInput'] == 3000
+    assert second['calculationSnapshots']['5']['epsInput'] == 3100
+    monkeypatch.setattr(scanner, '_jp_market_comparison_cached', lambda h: pytest.fail('public read computed a new path'))
+    scanner._market_brief_refresh(allow_ai=False)
+    assert len(calls) == 2
+
+
+def test_failed_repair_stays_invalid_and_never_overwrites_last_accepted_view(monkeypatch):
+    prior = brief(); prior['unifiedContext'] = mb.unified_context(prior)
+    prior['unifiedSummary'] = mb.validate_unified_ai(response(prior['unifiedContext']), prior['unifiedContext'])
+    prior['unifiedStatus'] = 'GENERATED'
+    prior['aiDiagnostics'] = {'completedAt':'2026-09-12T00:00:00Z'}
+    state = {'lastSuccessful':copy.deepcopy(prior), 'aiFactsHash':'different'}
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF', state)
+    monkeypatch.setattr(scanner, '_compose_market_brief', lambda:brief())
+    monkeypatch.setattr(scanner, '_jp_market_comparison_cached', lambda h:{})
+    calls=[]
+    def provider(user, **kwargs):
+        calls.append(user)
+        context=json.loads(user.split('\n',1)[1].split('\n前の回答は',1)[0])
+        raw=response(context);raw['reasons']['textJa']='VIX 99へ上昇しています。'
+        kwargs['diagnostic'].update(outcome='ok', completedAt='2026-09-13T00:00:00Z')
+        return raw
+    monkeypatch.setattr(scanner, '_openai_prose', provider)
+    result=scanner._market_brief_refresh(allow_ai=True)
+    assert len(calls)==2 and result['unifiedStatus']=='INVALID_RESPONSE'
+    assert state['lastSuccessful']==prior
+    assert result['lastSuccessfulAiAt']=='2026-09-12T00:00:00Z'

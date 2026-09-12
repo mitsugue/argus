@@ -120,6 +120,7 @@ import argus_market_shock           # v13.5.1: market-shock materiality (US30Y +
 import argus_news_intelligence      # v13.5.3: Nikkei mail → news-risk evidence (pure policy)
 import argus_gmail_intake           # v13.5.3: dedicated read-only news mailbox intake
 import jp_market_positioning
+import argus_analysis_history
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
 import jp_market_price_paths
@@ -17310,6 +17311,82 @@ _MARKET_BRIEF_WORKER = {"lastAttemptMonotonic": None, "lastAttemptAt": None,
                         "lastCompletedAt": None, "status": "NOT_RUN", "errorClass": None}
 
 
+def _market_brief_history_path():
+    if not _cost_policy_durable_enabled():
+        return None
+    return os.path.join(_DURABILITY_PATHS["root"], "market_analysis_history.sqlite3")
+
+
+def _market_brief_history_restore():
+    if _MARKET_BRIEF.get("historyRestoreAttempted"):
+        return
+    _MARKET_BRIEF["historyRestoreAttempted"] = True
+    path = _market_brief_history_path()
+    if not path:
+        return
+    try:
+        record = argus_analysis_history.read_record(path)
+        if record:
+            previous = record["brief"]
+            previous["calculationSnapshots"] = record["calculations"]
+            previous["analysisHistory"] = {"status": "LOCAL_DURABLE", "recordId": record["recordId"],
+                "remoteRecoveryVerified": False, "restoredAt": _ai_now_iso()}
+            _MARKET_BRIEF["lastSuccessful"] = previous
+            _MARKET_BRIEF["aiFactsHash"] = hashlib.sha256(json.dumps(
+                {"facts": previous.get("facts") or [],
+                 "calculations": argus_market_brief.calculation_identity(record["calculations"])},
+                sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        _MARKET_BRIEF["historyRestoreError"] = type(exc).__name__
+        _MARKET_BRIEF["historyRestoreAttempted"] = False
+
+
+def _market_brief_history_save(brief):
+    path = _market_brief_history_path()
+    if not path:
+        brief["analysisHistory"] = {"status": "NOT_CONFIGURED", "remoteRecoveryVerified": False}
+        return
+    if brief.get("analysisHistory", {}).get("status") == "LOCAL_DURABLE":
+        return
+    try:
+        argus_analysis_history.initialize(path)
+        candidate = copy.deepcopy(brief)
+        candidate["unifiedSummary"]["historyStatus"] = "LOCAL_DURABLE"
+        record = argus_analysis_history.make_record(candidate, brief.get("calculationSnapshots") or {})
+        result = argus_analysis_history.append(path, record)
+        # Confirm the exact stored bytes can be read before claiming durability.
+        if argus_analysis_history.read_record(path, record["recordId"]) != record:
+            raise ValueError("analysis_history_readback_mismatch")
+        brief["unifiedSummary"]["historyStatus"] = "LOCAL_DURABLE"
+        brief["analysisHistory"] = {**result, "remoteRecoveryVerified": False}
+    except Exception as exc:
+        brief["analysisHistory"] = {"status": "SAVE_FAILED", "errorClass": type(exc).__name__,
+            "remoteRecoveryVerified": False}
+
+
+def _market_brief_history_outcomes():
+    path = _market_brief_history_path()
+    cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}
+    if not path or not cached.get("acquiredAt"):
+        return
+    try:
+        page = argus_analysis_history.read_page(path,
+            before_sequence=_MARKET_BRIEF.get("outcomeBeforeSequence"), limit=50)
+        for item in page["rows"]:
+            record = argus_analysis_history.read_record(path, item["recordId"])
+            values = argus_analysis_history.outcome_candidates(record, cached.get("data") or [],
+                received_at=cached["acquiredAt"])
+            argus_analysis_history.append_outcomes(path, values)
+        _MARKET_BRIEF["outcomeBeforeSequence"] = page["nextBeforeSequence"] if page["hasMore"] else None
+        _MARKET_BRIEF["outcomeLastCheckedAt"] = _ai_now_iso()
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        _MARKET_BRIEF["outcomeError"] = type(exc).__name__
+
+
 def _market_brief_worker_tick():
     """Independent scheduler lane: news intake latency cannot postpone the view."""
     if not _MARKET_BRIEF_WORKER_LOCK.acquire(blocking=False):
@@ -17322,6 +17399,8 @@ def _market_brief_worker_tick():
         _MARKET_BRIEF_WORKER.update(lastAttemptMonotonic=time.monotonic(),
             lastAttemptAt=_ai_now_iso(), status="RUNNING", errorClass=None)
         try:
+            _market_brief_history_restore()
+            _market_brief_history_outcomes()
             result = _market_brief_refresh(allow_ai=True)
             _MARKET_BRIEF_WORKER.update(status=result.get("unifiedStatus", "UNAVAILABLE"),
                 lastCompletedAt=_ai_now_iso())
@@ -17481,6 +17560,24 @@ def _market_brief_ai_polish(brief):
                        purpose="market_brief", diagnostic=diag)
     validation = {}
     unified = argus_market_brief.validate_unified_ai(raw, context, diagnostic=validation) if raw else None
+    attempts = [{"provider": copy.deepcopy(diag), "validation": copy.deepcopy(validation)}]
+    if raw and not unified and validation.get("reason") in {
+            "unsupported_numeric_tokens", "fact_requires_verified_references",
+            "unknown_evidence_reference", "evidence_reference_required"}:
+        # One bounded correction, still subject to every original constraint.
+        # Provider usage from both calls remains in the existing cost ledger.
+        correction = (user + "\n前の回答は検証で却下されました。理由: "
+            + json.dumps(validation, ensure_ascii=False)
+            + "。数値は根拠欄とチャートに残すので、説明文では新しい数値や丸めた値を使わず、方向と条件を言葉で説明してください。"
+            "根拠IDとFACT/INFERENCE/UNKNOWNの条件を守り、全6項目を返してください。\n前の回答: "
+            + json.dumps(raw, ensure_ascii=False))
+        diag = {}
+        raw = _openai_prose(correction, max_out=1500,
+            system="あなたはARGUSの市場説明担当。与えられた根拠だけを説明し、検証の指摘を修正する。",
+            purpose="market_brief", diagnostic=diag)
+        validation = {}
+        unified = argus_market_brief.validate_unified_ai(raw, context, diagnostic=validation) if raw else None
+        attempts.append({"provider": copy.deepcopy(diag), "validation": copy.deepcopy(validation)})
     brief["unifiedValidation"] = validation or {"status": "NO_RESPONSE", "reason": diag.get("reason"), "section": None}
     if unified:
         sections = unified["sections"]
@@ -17498,6 +17595,8 @@ def _market_brief_ai_polish(brief):
     brief["aiDiagnostics"] = {key: diag.get(key) for key in (
         "outcome", "reason", "requestedModel", "returnedModel", "completedAt",
         "inputTokens", "outputTokens", "estUsd")}
+    brief["aiDiagnostics"]["attempts"] = attempts
+    brief["aiDiagnostics"]["totalEstUsd"] = sum(float((a["provider"].get("estUsd") or 0)) for a in attempts)
     if brief.get("aiText"):
         brief["aiModel"] = diag.get("returnedModel") or diag.get("requestedModel")
     return brief
@@ -17505,10 +17604,15 @@ def _market_brief_ai_polish(brief):
 
 def _market_brief_refresh(allow_ai=True):
     brief = _compose_market_brief()
-    facts_hash = hashlib.sha256(json.dumps(
-        brief.get("facts") or [], sort_keys=True,
-        ensure_ascii=False).encode()).hexdigest()
     previous = _MARKET_BRIEF.get("lastSuccessful") or {}
+    # Bind unchanged-text reuse to the actual engine inputs and saved horizons.
+    calculations = ({str(h): _jp_market_comparison_cached(h) for h in (1, 5, 10, 20)}
+                    if allow_ai else previous.get("calculationSnapshots") or {})
+    brief["calculationSnapshots"] = calculations
+    brief["facts"].extend(argus_market_brief.calculation_facts(calculations))
+    facts_hash = hashlib.sha256(json.dumps({"facts": brief.get("facts") or [],
+        "calculations": argus_market_brief.calculation_identity(calculations)}, sort_keys=True,
+        ensure_ascii=False).encode()).hexdigest()
     same = (facts_hash == _MARKET_BRIEF.get("aiFactsHash")
             and previous.get("unifiedStatus") == "GENERATED"
             and previous.get("unifiedSummary"))
@@ -17518,15 +17622,20 @@ def _market_brief_refresh(allow_ai=True):
     brief["unifiedStatus"] = "AWAITING_AI"
     brief["lastSuccessfulAiAt"] = (previous.get("aiDiagnostics") or {}).get("completedAt")
     if same:
-        for key in ("aiText", "aiModel", "aiDiagnostics", "unifiedSummary", "unifiedStatus", "unifiedValidation"):
+        for key in ("aiText", "aiModel", "aiDiagnostics", "unifiedSummary", "unifiedStatus", "unifiedValidation", "calculationSnapshots", "analysisHistory"):
             if key in previous:
                 brief[key] = copy.deepcopy(previous[key])
     elif allow_ai:
+        # Freeze the engine output before asking the model. Later input updates
+        # create another record; the original calculation is never recomputed.
         brief = _market_brief_ai_polish(brief)
-        if brief.get("aiText"):
+        if brief.get("unifiedStatus") == "GENERATED":
             brief["lastSuccessfulAiAt"] = (brief.get("aiDiagnostics") or {}).get("completedAt")
             _MARKET_BRIEF["aiFactsHash"] = facts_hash
             _MARKET_BRIEF["lastSuccessful"] = copy.deepcopy(brief)
+    if allow_ai and brief.get("unifiedStatus") == "GENERATED":
+        _market_brief_history_save(brief)
+        _MARKET_BRIEF["lastSuccessful"] = copy.deepcopy(brief)
     _MARKET_BRIEF["data"] = brief
     _MARKET_BRIEF["composedAt"] = time.time()
     return brief
@@ -17536,6 +17645,26 @@ def _market_brief_refresh(allow_ai=True):
 def api_argus_market_brief():
     """Public NOW/WHY/NEXT situation brief. Cached-only: a public GET never
     triggers an LLM call — AI polish happens on its independent scheduler worker."""
+    if request.args.get("history") == "1" or request.args.get("historyId"):
+        path = _market_brief_history_path()
+        if not path:
+            return jsonify({"status": "UNAVAILABLE", "reason": "history_storage_not_configured"}), 503
+        try:
+            identity = request.args.get("historyId")
+            if identity:
+                record = argus_analysis_history.read_record(path, identity)
+                return jsonify({"status": "AVAILABLE" if record else "NOT_FOUND", "record": record,
+                    "scope": "PUBLIC_MARKET", "readOnly": True,
+                    "outcomes": argus_analysis_history.read_outcomes(path, identity) if record else []}), 200 if record else 404
+            cursor = request.args.get("beforeSequence")
+            return jsonify(argus_analysis_history.read_page(path,
+                before_sequence=int(cursor) if cursor is not None else None))
+        except FileNotFoundError:
+            return jsonify({"status": "UNAVAILABLE", "reason": "history_not_recorded"}), 503
+        except ValueError as exc:
+            return jsonify({"status": "UNAVAILABLE", "reason": str(exc)}), 400
+        except Exception as exc:
+            return jsonify({"status": "UNAVAILABLE", "reason": type(exc).__name__}), 503
     try:
         if _MARKET_BRIEF["data"] is None or \
                 time.time() - _MARKET_BRIEF["composedAt"] > _MARKET_BRIEF_TTL_SEC:
@@ -37563,7 +37692,8 @@ def _cftc_jpy_autorefresh():
         interval = 20 * 3600 if _CFTC_JPY_STATE["status"] == "AVAILABLE" and _CFTC_JPY_STATE.get("persistenceStatus") == "VERIFIED" else 3600
         if last is not None and time.monotonic() - last < interval:
             return {"status": "NOT_DUE"}
-        _CFTC_JPY_STATE.update(lastAttemptAt=_ai_now_iso(), lastAttemptMonotonic=time.monotonic())
+        _CFTC_JPY_STATE.update(lastAttemptAt=_ai_now_iso(), lastAttemptMonotonic=time.monotonic(),
+                               status="ACQUIRING")
         try:
             with requests.get("https://www.cftc.gov/dea/futures/deacmesf.htm",
                               timeout=(5, 15), stream=True, allow_redirects=False) as response:
@@ -37589,7 +37719,11 @@ def _cftc_jpy_autorefresh():
                     _journal("market_ledger_jpy_position_received", "market_ledger",
                         result.get("importId"), {"rowCount": len(candidates),
                         "reportId": report["reportId"], "positionDate": report["positionDate"]}, origin="cron")
+                _CFTC_JPY_STATE.update(status="AVAILABLE", lastSuccessfulAcquisitionAt=report["receivedAt"],
+                                       errorClass=None)
+                _JP_MARKET_ENGINE_MARKET_VIEW_MEMO["ts"] = 0
                 if candidates or _CFTC_JPY_STATE.get("persistenceStatus") != "VERIFIED":
+                    _CFTC_JPY_STATE["persistenceStatus"] = "SAVING"
                     saved = _osint_persist()
                     _CFTC_JPY_STATE["persistenceStatus"] = "VERIFIED" if saved.get("verified") else "NOT_VERIFIED"
             _CFTC_JPY_STATE.update(status="AVAILABLE", lastSuccessfulAcquisitionAt=report["receivedAt"], errorClass=None)

@@ -1,3 +1,4 @@
+import { MarketAnalysisHistory } from './MarketAnalysisHistory';
 import React from 'react';
 import { MarginDynamicsCard } from './MarginDynamicsCard';
 import { JpyPositionCard } from './JpyPositionCard';
@@ -280,7 +281,9 @@ const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total: number
           <small className="at-unified-brief__kind">{kinds[unified.sections[key].kind]}</small></span></div>)}</div>
       <details><summary>根拠と説明の状態を見る</summary>
         <p>要求モデル {brief.aiDiagnostics?.requestedModel ?? '未確認'} · 応答モデル {brief.aiDiagnostics?.returnedModel ?? '未確認'}</p>
-        <p>前回との比較は現在の起動中の記録です。再起動をまたぐ判断履歴への保存はまだ接続していません。</p>
+        <p>{brief.analysisHistory?.status === 'LOCAL_DURABLE'
+          ? 'この見立てと当時の計算結果をサーバーの永続領域へ保存しました。遠隔バックアップからの復旧確認は未完了です。'
+          : 'この見立ての永続保存は未完了です。画面に表示できても保存成功とは限りません。'}</p>
         {(Object.keys(labels) as Array<keyof typeof labels>).map(key => <div key={key}>
           <b>{labels[key]}の根拠</b>
           {unified.sections[key].evidenceIds.length === 0 ? <p>根拠未取得</p> : unified.sections[key].evidenceIds.map(id => {
@@ -298,6 +301,7 @@ const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total: number
           })}
         </div>)}
       </details>
+      <MarketAnalysisHistory />
     </div>;
   }
   const now = brief.aiText?.nowJa ?? brief.now;
