@@ -11,6 +11,17 @@ export interface MarketBriefFact {
 }
 
 export interface MarketBrief {
+  unifiedSummary?: {
+    schemaVersion: 'argus-unified-brief-v1'; contextId: string; actionAuthority: false;
+    ownerContextAvailable: boolean; historyStatus: 'PROCESS_MEMORY_ONLY';
+    sections: Record<'view' | 'reasons' | 'changes' | 'impact' | 'next' | 'invalidation',
+      { textJa: string; evidenceIds: string[]; kind: 'FACT' | 'INFERENCE' | 'UNKNOWN' }>;
+  } | null;
+  unifiedContext?: { contextId: string; facts: Array<MarketBriefFact & { evidenceId: string }>;
+    previousFacts: Array<MarketBriefFact & { evidenceId: string }>; previousAt: string | null };
+  unifiedStatus?: string;
+  lastSuccessfulAiAt?: string | null;
+  aiDiagnostics?: { requestedModel: string | null; returnedModel: string | null; completedAt: string | null };
   schemaVersion: string;
   generatedAt: string;
   hasCritical?: boolean;

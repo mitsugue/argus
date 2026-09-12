@@ -22,6 +22,8 @@ Discipline (non-negotiable):
 from __future__ import annotations
 
 import re
+import hashlib
+import json
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 BRIEF_SCHEMA = "argus-market-brief-v1"
@@ -247,3 +249,88 @@ def compose_brief(*, now_iso: str,
         "sdaAuthority": False,
         "automaticAiCalls": 0,
     }
+
+
+UNIFIED_SECTIONS = ("view", "reasons", "changes", "impact", "next", "invalidation")
+
+
+def unified_context(brief: Mapping[str, Any], previous: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """Bind explanation references to the exact fact snapshot supplied to GPT.
+
+    Public market context contains no private positions. Process memory is not
+    represented as durable judgment history or a previous-day observation.
+    """
+    def references(document):
+        rows = []
+        for fact in (document or {}).get("facts", [])[:12]:
+            material = {key: str(fact.get(key) or "") for key in
+                        ("text", "source", "priority", "verification")}
+            if material["source"] == "market_view":
+                material["verification"] = "UNCONFIRMED"
+            identity = hashlib.sha256(json.dumps(material, ensure_ascii=False,
+                sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            rows.append({"evidenceId": "brief-fact-" + identity, **material})
+        return rows
+    current, prior = references(brief), references(previous)
+    current_ids, prior_ids = {r["evidenceId"] for r in current}, {r["evidenceId"] for r in prior}
+    body = {"schemaVersion": "argus-unified-brief-context-v1", "scope": "PUBLIC_MARKET",
+            "facts": current, "previousFacts": prior,
+            "previousAt": (previous or {}).get("generatedAt"),
+            "changes": {"comparisonAvailable": bool(prior),
+                        "addedEvidenceIds": sorted(current_ids - prior_ids) if prior else [],
+                        "removedEvidenceIds": sorted(prior_ids - current_ids) if prior else []},
+            "ownerContextAvailable": False, "historyStatus": "PROCESS_MEMORY_ONLY",
+            "sourceTraceScope": "exact_brief_fact_snapshot",
+            "actionAuthority": False}
+    body["contextId"] = hashlib.sha256(json.dumps(body, ensure_ascii=False,
+        sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return body
+
+
+def validate_unified_ai(value: Any, context: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    """Reject unsupported numbers, references and claims of observed inference.
+
+    This is a structural constraint, not proof that every sentence is correct.
+    Source inspection and semantic evaluation remain required before acceptance.
+    """
+    if not isinstance(value, Mapping) or set(value) != set(UNIFIED_SECTIONS):
+        return None
+    current = {r["evidenceId"]: r for r in context.get("facts", [])}
+    prior = {r["evidenceId"]: r for r in context.get("previousFacts", [])}
+    sections = {}
+    for key in UNIFIED_SECTIONS:
+        row = value[key]
+        if not isinstance(row, Mapping) or set(row) != {"textJa", "evidenceIds", "kind"}:
+            return None
+        text, refs, kind = row["textJa"], row["evidenceIds"], row["kind"]
+        if not isinstance(text, str) or not text.strip() or len(text) > 240 or \
+                kind not in {"FACT", "INFERENCE", "UNKNOWN"} or \
+                not isinstance(refs, list) or len(refs) > 6 or \
+                any(not isinstance(ref, str) for ref in refs) or len(set(refs)) != len(refs):
+            return None
+        allowed = {**prior, **current} if key == "changes" else current
+        if any(ref not in allowed for ref in refs):
+            return None
+        if kind != "UNKNOWN" and not refs:
+            return None
+        if key == "impact" and not context.get("ownerContextAvailable") and kind != "UNKNOWN":
+            return None
+        if key == "changes" and not context.get("changes", {}).get("comparisonAvailable") and kind != "UNKNOWN":
+            return None
+        if kind == "FACT" and (key in {"view", "impact", "next", "invalidation"} or
+                any(allowed[ref].get("verification") != "VERIFIED" for ref in refs)):
+            return None
+        if any(p in text for p in _FORBIDDEN_BRIEF_PATTERNS) or "確率" in text:
+            return None
+        allowed_digits = set().union(*(_digits_of(allowed[ref]["text"]) for ref in refs)) if refs else set()
+        if _digits_of(text) - allowed_digits:
+            return None
+        if key == "impact" and not context.get("ownerContextAvailable"):
+            text = "この市場全体の説明には保有情報を含めていません。銘柄ごとの保有状況と合わせた影響は未確認です。"
+        if key == "changes" and not context.get("changes", {}).get("comparisonAvailable"):
+            text = "比較できる前回の見立てをまだ取得していません。"
+        sections[key] = {"textJa": text.strip(), "evidenceIds": list(refs), "kind": kind}
+    return {"schemaVersion": "argus-unified-brief-v1", "contextId": context["contextId"],
+            "sections": sections, "actionAuthority": False,
+            "ownerContextAvailable": context["ownerContextAvailable"],
+            "historyStatus": context["historyStatus"]}

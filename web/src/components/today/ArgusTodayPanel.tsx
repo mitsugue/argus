@@ -251,11 +251,48 @@ const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total: number
   const chartChip = signals ? `成立 ${signals.activeCount}/${signals.total}${cutoffJa ? `（${cutoffJa} 時点）` : ''}`
     : market === 'US' ? '米国: 7条件は適用外（類似局面のみ）' : brief?.chips.chart;
   if (!brief || brief.status === 'unavailable') return null;
+  const unified = brief.unifiedSummary;
+  const hasSixSections = unified && ['view', 'reasons', 'changes', 'impact', 'next', 'invalidation'].every(key => {
+    const row = unified.sections?.[key as keyof typeof unified.sections];
+    return row && typeof row.textJa === 'string' && ['FACT', 'INFERENCE', 'UNKNOWN'].includes(row.kind)
+      && Array.isArray(row.evidenceIds);
+  });
+  if (hasSixSections && unified?.schemaVersion === 'argus-unified-brief-v1'
+    && unified.actionAuthority === false && unified.contextId === brief.unifiedContext?.contextId) {
+    const labels = { view: '今の見立て', reasons: '重要な理由', changes: '前回からの変化',
+      impact: '自分への影響', next: '次に確認すること', invalidation: '見方を変える条件' } as const;
+    const kinds = { FACT: '確認した事実', INFERENCE: '見立て・推論', UNKNOWN: '未確認' };
+    return <div className="at-brief at-unified-brief" aria-label="ARGUSの今日の見立て" data-argus-contract="unified-brief-v1">
+      <small>ARGUSの今日の見立て · {brief.aiDiagnostics?.completedAt
+        ? new Date(brief.aiDiagnostics.completedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '生成時刻を確認中'}</small>
+      <p className="at-unified-brief__view">{unified.sections.view.textJa}</p>
+      <div className="at-brief__rows">{(Object.keys(labels) as Array<keyof typeof labels>).filter(key => key !== 'view').map(key =>
+        <div key={key}><b>{labels[key]}</b><span>{unified.sections[key].textJa}
+          <small className="at-unified-brief__kind">{kinds[unified.sections[key].kind]}</small></span></div>)}</div>
+      <details><summary>根拠と説明の状態を見る</summary>
+        <p>要求モデル {brief.aiDiagnostics?.requestedModel ?? '未確認'} · 応答モデル {brief.aiDiagnostics?.returnedModel ?? '未確認'}</p>
+        <p>前回との比較は現在の起動中の記録です。再起動をまたぐ判断履歴への保存はまだ接続していません。</p>
+        {(Object.keys(labels) as Array<keyof typeof labels>).map(key => <div key={key}>
+          <b>{labels[key]}の根拠</b>
+          {unified.sections[key].evidenceIds.length === 0 ? <p>根拠未取得</p> : unified.sections[key].evidenceIds.map(id => {
+            const current = Array.isArray(brief.unifiedContext?.facts) ? brief.unifiedContext.facts : [];
+            const prior = Array.isArray(brief.unifiedContext?.previousFacts) ? brief.unifiedContext.previousFacts : [];
+            const fact = current.find(row => row.evidenceId === id) ?? prior.find(row => row.evidenceId === id);
+            return <p key={id}>{fact?.text ?? '参照元を確認できません'} <small>{fact?.source ?? ''}</small></p>;
+          })}
+        </div>)}
+      </details>
+    </div>;
+  }
   const now = brief.aiText?.nowJa ?? brief.now;
   const why = brief.aiText?.whyJa ?? brief.why;
   const next = brief.aiText?.nextJa ?? brief.next;
   return <div className="at-brief" data-argus-contract="market-brief-v1"
     aria-label="今の市場（売買権限なし）">
+    {brief.unifiedStatus && brief.unifiedStatus !== 'GENERATED' && <p role="status">
+      統合AIの説明は更新待ちです。取得済み情報の要約を表示しています。
+      {brief.lastSuccessfulAiAt && <small> 最終成功 {brief.lastSuccessfulAiAt}</small>}
+    </p>}
     <small>今の市場 — 検証済み事実の要約{brief.aiText ? '（AI圧縮・参考）' : ''}</small>
     <div className="at-brief__rows">
       <div><b>今</b><span>{now}</span></div>

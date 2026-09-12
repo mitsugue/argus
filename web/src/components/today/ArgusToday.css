@@ -371,3 +371,8 @@
 .at-signals-market { font-style:normal; font-size:8.5px; color:var(--amber); white-space:nowrap; }
 /* v13.5.65: stored evidence shown while the first fetch runs */
 .at-stored-note { display:block; font-size:10px; color:var(--text-faint); margin-top:2px; }
+
+.at-unified-brief__view { color: #e1ebf0; font-size: clamp(20px, 3vw, 30px); line-height: 1.65; margin: 12px 0 20px; }
+.at-unified-brief__kind { display: block; color: #9caebc; margin-top: 5px; }
+.at-unified-brief details { margin-top: 16px; color: #acbdc8; line-height: 1.7; }
+.at-unified-brief summary { cursor: pointer; padding: 10px 0; }
