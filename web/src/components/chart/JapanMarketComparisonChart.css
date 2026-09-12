@@ -1,3 +1,4 @@
+.jp-comparison-panel { grid-column: 1 / -1; min-width: 0; }
 .jp-comparison { background: #141e28; border: 1px solid #2c3d49; border-radius: 22px; padding: clamp(18px, 3vw, 30px); color: #dce5eb; min-width: 0; }
 .jp-comparison__heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .jp-comparison__heading h2 { font-size: 21px; font-weight: 500; margin: 0 0 10px; line-height: 1.5; }

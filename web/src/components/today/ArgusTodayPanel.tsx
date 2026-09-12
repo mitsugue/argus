@@ -1,4 +1,5 @@
 import React from 'react';
+import { JapanMarketComparisonPanel } from '../chart/JapanMarketComparisonPanel';
 import type { ArgusTodayView, MarketSelectionMode, TodayProjection } from '../../domain/argusTodayView';
 import { formatEventTime, quoteDisplayLabel, subjectDisplayName, confidenceBasisJa, waitKindJa } from '../../domain/argusTodayView';
 import { displayNewsHeadline, newsAnalysisStatusJa } from '../../lib/newsHeadline';
@@ -956,6 +957,9 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         <span>将来リターンのSkill未検証</span>
       </div>}
     </section>
+
+    {view.selectedMarket === 'JP' && selectedSymbol === '1321'
+      && <JapanMarketComparisonPanel horizon={horizon} />}
 
     {/* v13.5.59: reading order top-down — decision → signals → what is
         coming → the market itself → then the reference market view and the

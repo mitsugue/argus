@@ -250,3 +250,74 @@ def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any]
                         "単純トレンド等に対する独立期間の追加効果は未検証です。",
                         "取得済みの終値までを表示し、欠測した価格は補間していません。"],
     }
+
+
+def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
+                            session_dates: Sequence[str], horizon_sessions: int = 5,
+                            acquired_at: str | None = None,
+                            valuation: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Connect cached daily observations to the existing four-layer calculation.
+
+    Historical bars are the source's currently reported history. Their session
+    close availability is NOT proof of an archived, unrevised historical vintage.
+    The caller supplies independently verified exchange sessions; missing bars
+    cannot silently compress a twenty-session comparison window.
+    """
+    from jp_market_analogs import (AnalogPolicy, INSTRUMENT, _hash, build_episode,
+                                  reference_path, select_episodes)
+    from jp_market_engine import point_in_time_rows
+
+    if isinstance(horizon_sessions, bool) or horizon_sessions not in (1, 5, 10, 20):
+        raise ValueError("unsupported_reference_horizon")
+    if len(bars) > 1000:
+        raise ValueError("index_history_bound_exceeded")
+    if list(session_dates) != sorted(set(session_dates)):
+        raise ValueError("unique_ordered_session_calendar_required")
+    policy = AnalogPolicy()
+    visible, visibility = point_in_time_rows(
+        [dict(row) for row in bars if row.get("instrumentId") == INSTRUMENT], cutoff)
+    visible.sort(key=lambda row: row.get("date", ""))
+    base = {"status": "unavailable", "automaticAiCalls": 0, "actionAuthority": False,
+            "informationCutoff": cutoff, "lastSuccessfulAcquisitionAt": acquired_at,
+            "historicalVintageVerified": False, "comparison": None,
+            "sourceRef": "yahoo:chart:^N225", "sourceVisibility": visibility}
+    current = build_episode(cutoff=cutoff, bars=visible, policy=policy)
+    if current["status"] != "AVAILABLE":
+        return {**base, "reason": "insufficient_complete_index_history"}
+    # Limit candidates to dates whose complete lookback exists on the official
+    # calendar. The source's list of observed dates is never itself the calendar.
+    positions = {day: i for i, day in enumerate(session_dates)}
+    def complete_window(episode):
+        position = positions.get(episode["anchorDate"])
+        return position is not None and position >= policy.lookback_sessions and \
+            [row["date"] for row in episode["window"]] == list(
+                session_dates[position - policy.lookback_sessions:position + 1])
+    if not complete_window(current):
+        return {**base, "reason": "current_exchange_sessions_missing"}
+    candidates = []
+    for index in range(policy.lookback_sessions, len(visible) - policy.lookback_sessions - 1):
+        row = visible[index]
+        episode = build_episode(cutoff=row["date"] + "T23:59:59Z",
+                                bars=visible[index - policy.lookback_sessions:index + 1], policy=policy)
+        if episode["status"] == "AVAILABLE" and complete_window(episode):
+            candidates.append(episode)
+    selection = select_episodes(current, candidates, session_dates=session_dates, policy=policy)
+    selected = {row["snapshotId"] for row in selection["selected"]}
+    paths = [reference_path(episode, later_bars=visible, display_cutoff=cutoff,
+                            session_dates=session_dates, horizon_sessions=horizon_sessions, policy=policy)
+             for episode in candidates if episode["snapshotId"] in selected]
+    ensemble = reference_ensemble(selection, paths, horizon_sessions=horizon_sessions)
+    scale = index_valuation_scale(valuation, cutoff=cutoff, anchor_date=current["anchorDate"],
+                                  anchor_price=current["window"][-1]["close"])
+    document = comparison_document(current, selection, paths, ensemble, scale=scale)
+    document["limitations"].append("過去比較には取得元が現在報告する履歴を使用しています。改訂前の履歴の再現は未検証です。")
+    document["limitations"].append("市場状態・条件の順序・材料反応の履歴接続は未完了のため、現段階では価格形状の部分比較です。")
+    document["calculationIdentity"] = {"currentSnapshotId": current["snapshotId"],
+                                       "selectionId": selection["selectionId"],
+                                       "sourceContentHash": _hash(visible)}
+    document["valuationStatus"] = scale["status"]
+    return {**base, "status": "available", "reason": None, "comparison": document,
+            "selection": selection, "valuation": scale,
+            "historyCoverage": {"sourceBars": len(visible), "candidateCount": len(candidates),
+                                "calendarStart": session_dates[0] if session_dates else None,
+                                "calendarEnd": session_dates[-1] if session_dates else None}}

@@ -120,6 +120,7 @@ import argus_news_intelligence      # v13.5.3: Nikkei mail → news-risk evidenc
 import argus_gmail_intake           # v13.5.3: dedicated read-only news mailbox intake
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
+import jp_market_price_paths
 import jp_market_engine                    # v13.5.13: JP_MARKET_ENGINE evidence engine (pure; evidence, never action)
 import argus_single_decision        # v13.5.13: canonical artifact references for device SDA
 import argus_tachibana_live         # v13.5.38: Tachibana LIVE product boundary (shadow, read-only, no orders)
@@ -36867,6 +36868,17 @@ def api_argus_index_chart():
     timeframe = (request.args.get("timeframe") or "daily").strip().lower()
     if timeframe not in ("daily", "weekly"):
         return jsonify({"error": "invalid_timeframe"}), 400
+    comparison_mode = request.args.get("comparison") == "1"
+    if comparison_mode:
+        if index != "N225" or timeframe != "daily":
+            return jsonify({"error": "comparison_requires_n225_daily"}), 400
+        try:
+            horizon = int(request.args.get("horizon", "5"))
+        except ValueError:
+            return jsonify({"error": "invalid_comparison_horizon"}), 400
+        if horizon not in (1, 5, 10, 20):
+            return jsonify({"error": "invalid_comparison_horizon"}), 400
+        return jsonify(_jp_market_comparison_cached(horizon))
     rows, yahoo_used = None, None
     for yahoo_symbol in spec["yahoo"]:
         cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get(yahoo_symbol)
@@ -37322,8 +37334,44 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
         rows = []
     _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE[yahoo_symbol] = {
         "data": rows,
+        "acquiredAt": datetime.now(pytz.utc).isoformat() if rows else None,
         "expires": now + (_JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC if rows else 300)}
     return rows
+
+
+def _jp_market_comparison_cached(horizon):
+    """Bounded cached-only chart calculation; no fetch, AI or persistence."""
+    cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}
+    rows = cached.get("data") or []
+    cutoff = _ai_now_iso()
+    failure = {"status": "unavailable", "comparison": None, "automaticAiCalls": 0,
+               "actionAuthority": False, "informationCutoff": cutoff,
+               "lastSuccessfulAcquisitionAt": cached.get("acquiredAt")}
+    if not rows:
+        return {**failure, "reason": "index_cache_cold"}
+    try:
+        from datetime import date as calendar_date
+        ordered = sorted(rows, key=lambda row: row.get("date", ""))
+        first, last = (calendar_date.fromisoformat(ordered[i]["date"]) for i in (0, -1))
+        if len(rows) > 1000 or (last - first).days > 1500:
+            return {**failure, "reason": "index_history_bound_exceeded"}
+        sessions, missing_calendar = [], False
+        for offset in range((last - first).days + 1):
+            day = first + timedelta(days=offset)
+            try:
+                if argus_market_clock.canonical_trading_day(argus_market_clock.JP_EQUITY, day):
+                    sessions.append(day.isoformat())
+            except argus_market_clock.CalendarUnavailableError:
+                missing_calendar = True
+        result = jp_market_price_paths.cached_index_comparison(
+            rows, cutoff=cutoff, session_dates=sessions, horizon_sessions=horizon,
+            acquired_at=cached.get("acquiredAt"))
+        if missing_calendar and result.get("comparison"):
+            result["comparison"]["limitations"].append(
+                "公式営業日表の範囲外の過去局面は、比較候補から除外しています。")
+        return result
+    except (ValueError, TypeError, KeyError, OverflowError):
+        return {**failure, "reason": "index_comparison_input_invalid"}
 
 
 def _jp_market_engine_margin_1570_rows(*, fetch=False):
