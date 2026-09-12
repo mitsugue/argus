@@ -119,6 +119,8 @@ import argus_today_headline         # v13.5.0: compact Today bootstrap from veri
 import argus_market_shock           # v13.5.1: market-shock materiality (US30Y + corroborated news)
 import argus_news_intelligence      # v13.5.3: Nikkei mail → news-risk evidence (pure policy)
 import argus_gmail_intake           # v13.5.3: dedicated read-only news mailbox intake
+import argus_ai_usage_store
+import argus_ai_usage_runtime
 import jp_market_internals
 import jp_market_positioning
 import argus_analysis_history
@@ -14159,6 +14161,69 @@ _OPENAI_SYSTEM = argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n" + (
     "All *Ja fields must be concise Japanese. Return STRICT JSON only."
 )
 
+_AI_USAGE_LOCK = threading.RLock()
+_AI_USAGE_PENDING = {}
+_AI_USAGE_STATUS = {"status": "NO_CALL_THIS_PROCESS", "lastSavedAt": None, "lastErrorClass": None}
+
+
+def _ai_usage_path():
+    return (os.path.join(_DURABILITY_PATHS["root"], "ai_usage_receipts.sqlite3")
+            if _cost_policy_durable_enabled() else None)
+
+
+def _ai_usage_record(row):
+    argus_product_naming.require_allowed(row)
+    with _AI_USAGE_LOCK:
+        _AI_USAGE_PENDING[row["callId"]] = row
+        path = _ai_usage_path()
+        if not path:
+            _AI_USAGE_STATUS.update(status="MEMORY_ONLY", lastErrorClass="durable_path_unavailable")
+            return
+        try:
+            argus_ai_usage_store.initialize(path)
+            pending = list(_AI_USAGE_PENDING.values())[:argus_ai_usage_store.MAX_BATCH]
+            argus_ai_usage_store.append(path, pending)
+            for item in pending: _AI_USAGE_PENDING.pop(item["callId"], None)
+            _AI_USAGE_STATUS.update(status="PARTIAL" if _AI_USAGE_PENDING else "LOCAL_DURABLE", lastSavedAt=_ai_now_iso(), lastErrorClass=None)
+        except Exception as exc:
+            _AI_USAGE_STATUS.update(status="SAVE_FAILED", lastErrorClass=type(exc).__name__)
+
+
+def _ai_usage_provider_call(provider, feature, requested_model, invoke, *, attempt=None, source_ref=None):
+    def estimate(returned_model, inp, out):
+        if returned_model not in _AI_PRICING: return None
+        return argus_ai_cost.estimate_cost(returned_model, inp, out, _AI_PRICING)
+    def report_error(error_class):
+        with _AI_USAGE_LOCK:
+            _AI_USAGE_STATUS.update(status="RECEIPT_FAILED", lastErrorClass=error_class)
+    return argus_ai_usage_runtime.observe(invoke, provider=provider, feature=feature,
+        requested_model=requested_model, record=_ai_usage_record, estimate=estimate,
+        attempt=attempt, source_ref=source_ref, on_record_error=report_error)
+
+
+def _ai_usage_snapshot():
+    """Protected read only; missing storage is unknown, not zero spend."""
+    with _AI_USAGE_LOCK:
+        state = {**_AI_USAGE_STATUS, "pendingReceipts": len(_AI_USAGE_PENDING)}
+    result = {"state": state, "summary": None, "remoteRecoveryVerified": False,
+        "coverage": "sdk_invocations_since_connection_only",
+        "noteJa": "SDK呼出し単位の記録です。応答成功はAI内容の検証・保存成功とは別です。"
+                  "SDK内部の再試行回数は未確認です。費用は既存設定の通常トークン単価による参考推定で、"
+                  "キャッシュ割引・キャッシュ書込・検索ツール・処理階層等の追加料金を含めた請求総額ではありません。"
+                  "既存の費用総額へ加算しないでください。接続前・処理中断時の詳細は再構成していません。"}
+    path = _ai_usage_path()
+    if not path:
+        result["readStatus"] = "NOT_CONFIGURED"; return result
+    try:
+        result["summary"] = argus_ai_usage_store.read_summary(path)
+        result["readStatus"] = "AVAILABLE"
+    except FileNotFoundError:
+        result["readStatus"] = "NOT_RECORDED"
+    except Exception as exc:
+        result.update(readStatus="UNAVAILABLE", readErrorClass=type(exc).__name__)
+    return result
+
+
 def _usage_tokens(resp):
     """Best-effort (input_tokens, output_tokens) from either the OpenAI Responses
     API (input_tokens/output_tokens, reasoning folded into output) or chat
@@ -14203,15 +14268,15 @@ def _openai_judge(snapshot):
         text = None
         try:
             # Current best practice for gpt-5.x: the Responses API.
-            resp = client.responses.create(model=_OPENAI_MODEL, instructions=_OPENAI_SYSTEM,
-                                            input=user, timeout=60, store=False)
+            resp = _ai_usage_provider_call('openai', 'ai_judgment', _OPENAI_MODEL, lambda: client.responses.create(model=_OPENAI_MODEL, instructions=_OPENAI_SYSTEM,
+                                            input=user, timeout=60, store=False), attempt=1, source_ref='_openai_judge')
             text = getattr(resp, "output_text", None)
         except Exception:
             # Fallback for SDKs/models without the Responses API.
-            resp = client.chat.completions.create(
+            resp = _ai_usage_provider_call('openai', 'ai_judgment', _OPENAI_MODEL, lambda: client.chat.completions.create(
                 model=_OPENAI_MODEL,
                 messages=[{"role": "system", "content": _OPENAI_SYSTEM}, {"role": "user", "content": user}],
-                response_format={"type": "json_object"}, timeout=60)
+                response_format={"type": "json_object"}, timeout=60), attempt=2, source_ref='_openai_judge')
             text = resp.choices[0].message.content
         _AI_LAST_RUN["oaiUsage"] = _usage_tokens(resp)
         _AI_LAST_RUN["oaiModel"] = str(getattr(resp, "model", None) or "")[:60] or None
@@ -14314,8 +14379,8 @@ def _gemini_check(snapshot, openai_out, checker_model=None):
             pass
 
         def _gen(model, config):
-            response = (client.models.generate_content(model=model, contents=prompt, config=config)
-                    if config else client.models.generate_content(model=model, contents=prompt))
+            response = (_ai_usage_provider_call('gemini', 'ai_double_check', model, lambda: client.models.generate_content(model=model, contents=prompt, config=config), attempt=None, source_ref='_gemini_check._gen')
+                    if config else _ai_usage_provider_call('gemini', 'ai_double_check', model, lambda: client.models.generate_content(model=model, contents=prompt), attempt=None, source_ref='_gemini_check._gen'))
             _AI_LAST_RUN["gemUsage"] = _gemini_usage_tokens(response)
             return response
 
@@ -14646,19 +14711,19 @@ _CAOS_EVENT_SYSTEM = (
 )
 
 
-def _openai_prose_call(client, model, sys_prompt, user):
+def _openai_prose_call(client, model, sys_prompt, user, *, purpose="prose"):
     """One model call: Responses API first, chat completions second. Returns
     (response, text). Raises the LAST error when both fail."""
     sys_prompt = argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n" + sys_prompt
     try:
-        resp = client.responses.create(model=model, instructions=sys_prompt,
-                                        input=user, timeout=60, store=False)
+        resp = _ai_usage_provider_call('openai', purpose, model, lambda: client.responses.create(model=model, instructions=sys_prompt,
+                                        input=user, timeout=60, store=False), attempt=1, source_ref='_openai_prose_call')
         return resp, getattr(resp, "output_text", None)
     except Exception:
-        resp = client.chat.completions.create(
+        resp = _ai_usage_provider_call('openai', purpose, model, lambda: client.chat.completions.create(
             model=model,
             messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": user}],
-            response_format={"type": "json_object"}, timeout=60)
+            response_format={"type": "json_object"}, timeout=60), attempt=2, source_ref='_openai_prose_call')
         return resp, resp.choices[0].message.content
 
 
@@ -14736,12 +14801,12 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
         used_model, fallback_used = mdl, None
         try:
-            resp, text = _openai_prose_call(client, mdl, sys_prompt, user)
+            resp, text = _openai_prose_call(client, mdl, sys_prompt, user, purpose=purpose)
         except Exception as first:
             if fallback_model and fallback_model != mdl and _openai_model_unavailable(first):
                 add_log(f"[caos] model {mdl} unavailable ({type(first).__name__}); "
                         f"falling back to {fallback_model}")
-                resp, text = _openai_prose_call(client, fallback_model, sys_prompt, user)
+                resp, text = _openai_prose_call(client, fallback_model, sys_prompt, user, purpose=purpose)
                 used_model, fallback_used = fallback_model, fallback_model
             else:
                 raise
@@ -16096,7 +16161,7 @@ def api_argus_ai_cost():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
-    return jsonify(_ai_cost_snapshot())
+    return jsonify({**_ai_cost_snapshot(), "featureUsage": _ai_usage_snapshot()})
 
 def _system_health(*, allow_provider_fetch=True):
     """PUBLIC-safe at-a-glance health lamps for the metered/important systems
@@ -16627,15 +16692,15 @@ def api_argus_ai_provider_ping():
             import openai
             client = openai.OpenAI(api_key=_OPENAI_API_KEY)
             try:
-                r = client.responses.create(model=model,
+                r = _ai_usage_provider_call('openai', 'provider_ping', model, lambda: client.responses.create(model=model,
                                             input="Reply with the single word: pong",
-                                            timeout=30, store=False)
+                                            timeout=30, store=False), attempt=1, source_ref='api_argus_ai_provider_ping')
                 reply = (getattr(r, "output_text", "") or "")[:40]
             except Exception:
-                r = client.chat.completions.create(
+                r = _ai_usage_provider_call('openai', 'provider_ping', model, lambda: client.chat.completions.create(
                     model=model,
                     messages=[{"role": "user", "content": "Reply with the single word: pong"}],
-                    timeout=30)
+                    timeout=30), attempt=2, source_ref='api_argus_ai_provider_ping')
                 reply = (r.choices[0].message.content or "")[:40]
             out["openai"] = {"ok": True, "model": model, "reply": reply,
                              "requestedModel": model,
@@ -16658,8 +16723,8 @@ def api_argus_ai_provider_ping():
     elif provider == "gemini":
         try:
             client = google_genai.Client(api_key=GEMINI_API_KEY)
-            r = client.models.generate_content(model=_GEMINI_FALLBACK_MODEL,
-                                               contents="Reply with the single word: pong")
+            r = _ai_usage_provider_call('gemini', 'provider_ping', _GEMINI_FALLBACK_MODEL, lambda: client.models.generate_content(model=_GEMINI_FALLBACK_MODEL,
+                                               contents="Reply with the single word: pong"), attempt=1, source_ref='api_argus_ai_provider_ping')
             out["gemini"] = {"ok": True, "model": _GEMINI_FALLBACK_MODEL,
                              "reply": (getattr(r, "text", "") or "")[:40],
                              "requestedModel": _GEMINI_FALLBACK_MODEL,
@@ -16840,7 +16905,7 @@ def _translate_headlines_ja(headlines):
             estimated_tokens=3000)
         if not decision.get("allowed"):
             return {}
-        resp = client.models.generate_content(model=_GEMINI_FALLBACK_MODEL, contents=prompt, config=cfg)
+        resp = _ai_usage_provider_call('gemini', 'headline_translation', _GEMINI_FALLBACK_MODEL, lambda: client.models.generate_content(model=_GEMINI_FALLBACK_MODEL, contents=prompt, config=cfg), attempt=None, source_ref='_translate_headlines_ja')
         response_received = True
         # The API call is spent at this point — record it BEFORE validation so
         # the SCHEDULED_AI daily budget counts every real request (v13.5.36:
@@ -21225,7 +21290,7 @@ def _openai_research_ex(user, role="standard", benchmark=False):
                 # cannot consume the entire answer allowance.
                 kw["reasoning"] = {"effort": _BENCHMARK_REASONING_EFFORT}
                 kw["max_output_tokens"] = _BENCHMARK_MAX_OUTPUT_TOKENS
-            resp = client.responses.create(**kw)
+            resp = _ai_usage_provider_call('openai', ('research_benchmark' if benchmark else 'osint_research'), kw['model'], lambda: client.responses.create(**kw), attempt=None, source_ref='_openai_research_ex')
             txt = getattr(resp, "output_text", None)
             u = _usage_tokens(resp) or (0, 0)
             usage = {"inputTokens": u[0], "outputTokens": u[1]}
@@ -29536,10 +29601,10 @@ def _gemini_osint(prompt, benchmark=False, model_override=None,
         except Exception:
             cfg = None
         selected_model = model_override or _GEMINI_JUDGE_MODEL
-        resp = (client.models.generate_content(model=selected_model,
-                                               contents=prompt, config=cfg)
-                if cfg else client.models.generate_content(model=selected_model,
-                                                           contents=prompt))
+        resp = (_ai_usage_provider_call('gemini', ('research_benchmark' if benchmark else 'osint_research'), selected_model, lambda: client.models.generate_content(model=selected_model,
+                                               contents=prompt, config=cfg), attempt=None, source_ref='_gemini_osint')
+                if cfg else _ai_usage_provider_call('gemini', ('research_benchmark' if benchmark else 'osint_research'), selected_model, lambda: client.models.generate_content(model=selected_model,
+                                                           contents=prompt), attempt=None, source_ref='_gemini_osint'))
         txt = getattr(resp, "text", None) or ""
         out, warns = argus_osint_engine.parse_scout_output(txt)   # v12.1.1 頑健パーサ
         out["parserWarnings"] = warns
@@ -33665,9 +33730,9 @@ def _ai_capability_probe(model, *, confirmation=False, expected_text="ok",
     try:
         import openai
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
-        r = client.responses.create(
+        r = _ai_usage_provider_call('openai', purpose, model, lambda: client.responses.create(
             model=model, input=f"Reply exactly {expected_text}",
-            timeout=30, store=False, max_output_tokens=64)
+            timeout=30, store=False, max_output_tokens=64), attempt=None, source_ref='_ai_capability_probe')
         _cost_policy_record("openai", purpose, estimated_cost_usd=0.001)
         output_text = str(getattr(r, "output_text", None) or "").strip()
         out["matchedExpectedText"] = output_text == expected_text
@@ -33810,9 +33875,9 @@ def _gemini_capability_probe(model, *, confirmation=False, max_attempts=1,
     expected = "ARGUS_GEMINI_OK"
     for attempt in range(1, max(1, min(int(max_attempts), 3)) + 1):
         try:
-            response = client.models.generate_content(
+            response = _ai_usage_provider_call('gemini', purpose, model, lambda: client.models.generate_content(
                 model=model, contents="Reply with exactly: ARGUS_GEMINI_OK",
-                config=_gemini_probe_config())
+                config=_gemini_probe_config()), attempt=attempt, source_ref='_gemini_capability_probe')
             row = _gemini_response_metadata(response, model, expected)
             _cost_policy_record("gemini", purpose, estimated_cost_usd=0.01)
         except Exception as exc:
@@ -34027,10 +34092,10 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider,
         import openai
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
         evaluator_model = _openai_model_for("referee")
-        response = client.responses.create(
+        response = _ai_usage_provider_call('openai', 'benchmark_evaluation', evaluator_model, lambda: client.responses.create(
             model=evaluator_model, input=prompt, timeout=90, store=False,
             reasoning={"effort": _BENCHMARK_REASONING_EFFORT},
-            max_output_tokens=_BENCHMARK_MAX_OUTPUT_TOKENS)
+            max_output_tokens=_BENCHMARK_MAX_OUTPUT_TOKENS), attempt=None, source_ref='_formal_blind_evaluate')
         meta = _benchmark_evaluator_usage(response, evaluator_model)
         parsed = _checked_ai_json(getattr(response, "output_text", "") or "")
         if not isinstance(parsed, dict) or not all(
@@ -34355,10 +34420,10 @@ def _v2_blind_evaluate(case, run_id, claims_by_provider):
         import openai
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
         model = _openai_model_for("referee")
-        response = client.responses.create(
+        response = _ai_usage_provider_call('openai', 'benchmark_evaluation', model, lambda: client.responses.create(
             model=model, input=prompt, timeout=90, store=False,
             reasoning={"effort": _BENCHMARK_REASONING_EFFORT},
-            max_output_tokens=_BENCHMARK_MAX_OUTPUT_TOKENS)
+            max_output_tokens=_BENCHMARK_MAX_OUTPUT_TOKENS), attempt=None, source_ref='_v2_blind_evaluate')
         meta = _benchmark_evaluator_usage(response, model)
         parsed = _checked_ai_json(getattr(response, "output_text", "") or "")
         if not isinstance(parsed, dict) or not all(

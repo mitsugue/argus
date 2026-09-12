@@ -2821,7 +2821,7 @@ def test_prose_diagnosis_is_local_when_another_lane_is_refused(monkeypatch, _ai_
     monkeypatch.setitem(_sys.modules, "openai", fake)
     entered, release = _threading.Event(), _threading.Event()
 
-    def waiting_call(client, model, system, user):
+    def waiting_call(client, model, system, user, *, purpose="prose"):
         entered.set()
         assert release.wait(5)
         response = _FakeResp(model)
