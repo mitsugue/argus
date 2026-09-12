@@ -60,6 +60,9 @@ def normalize_state(state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     # v13.5.63: the last refusal is state too — "no run" must have a reason.
     out["lastSkip"] = src.get("lastSkip") if isinstance(
         src.get("lastSkip"), dict) else None
+    if "legacyAiCost" in src:
+        import argus_ai_cost
+        out["legacyAiCost"] = argus_ai_cost.normalize_accounting(src["legacyAiCost"])
     return out
 
 
