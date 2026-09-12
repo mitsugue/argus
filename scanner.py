@@ -14,6 +14,7 @@ try:
 except ImportError:
     MOOMOO_AVAILABLE = False
 import pytz
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from argus_rules import (  # pure scoring layer extracted v10.37 (#9)
     _scout_score_bucket, _margin_signal, _margin_assess_lines,
@@ -357,8 +358,28 @@ def _cost_policy_restore_durable():
     try:
         with open(path, "r", encoding="utf-8") as handle:
             saved = argus_cost_policy.normalize_state(json.load(handle))
-    except Exception:
+    except FileNotFoundError:
         return 0
+    except Exception as exc:
+        _COST_POLICY_DURABLE["lastError"] = type(exc).__name__
+        return 0
+    # A separately preserved pre-upgrade snapshot can be newer than the last
+    # daily publication. Import it only during startup, never on public reads.
+    # Once included, the ordinary encrypted checkpoint carries its provenance.
+    try:
+        migration_path = os.path.join(os.path.dirname(path), "ai_cost_migration_baseline.json")
+        with open(migration_path, "rb") as handle:
+            migration_raw = handle.read(4 * 1024 * 1024 + 1)
+        if len(migration_raw) > 4 * 1024 * 1024:
+            raise ValueError("cost_migration_too_large")
+        saved["legacyAiCost"] = argus_ai_cost.import_legacy_snapshot(
+            saved.get("legacyAiCost"), json.loads(migration_raw))
+        _COST_POLICY_DURABLE["migrationError"] = None
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        # A malformed optional migration must not discard valid core usage.
+        _COST_POLICY_DURABLE["migrationError"] = type(exc).__name__
     added = 0
     with _COST_POLICY_LOCK:
         live = argus_cost_policy.normalize_state(_COST_POLICY)
@@ -379,6 +400,9 @@ def _cost_policy_restore_durable():
                 live[key] = candidate
         for event_id, ev in (saved.get("events") or {}).items():
             live["events"].setdefault(event_id, ev)
+        if "legacyAiCost" in live or "legacyAiCost" in saved:
+            live["legacyAiCost"] = argus_ai_cost.merge_accounting(
+                live.get("legacyAiCost"), saved.get("legacyAiCost"))
         live["mode"], live["eventOptIn"] = _COST_POLICY["mode"], _COST_POLICY["eventOptIn"]
         _COST_POLICY.clear()
         _COST_POLICY.update(live)
@@ -13606,42 +13630,60 @@ _AI_COST_STATE = {
     "runs": deque(maxlen=50),                 # recent run cost records (no prompts/keys)
     "restoredMonth": None,                    # provenance of the restored baseline
 }
-_AI_COST_RESTORE_STATE = {"lastTry": 0.0}
+_AI_COST_WRITER_ID = os.urandom(16).hex()
+_AI_COST_RESTORE_STATE = {"lastTry": 0.0, "lastError": None}
 
 def _ai_cost_roll(now_jst):
-    """Reset the day/month buckets when the calendar advances. Caller holds _AI_LOCK."""
-    mk, dk = argus_ai_cost.month_key(now_jst), argus_ai_cost.day_key(now_jst)
-    if _AI_COST_STATE["month"] != mk:
-        _AI_COST_STATE["month"] = mk
-        _AI_COST_STATE["monthSpentUsd"] = 0.0
-    if _AI_COST_STATE["day"] != dk:
-        _AI_COST_STATE["day"] = dk
-        _AI_COST_STATE["daySpentUsd"] = 0.0
+    """Project cumulative checkpointed counters into the compatibility view."""
+    with _COST_POLICY_LOCK:
+        totals = argus_ai_cost.accounting_totals(_COST_POLICY.get("legacyAiCost"), now_jst)
+    for key in ("month", "day", "monthSpentUsd", "daySpentUsd", "lastRun"):
+        _AI_COST_STATE[key] = totals[key]
+    _AI_COST_STATE["runs"].clear()
+    _AI_COST_STATE["runs"].extend(totals["recentRuns"])
+
+
+def _ai_cost_account_record(record):
+    with _COST_POLICY_LOCK:
+        _COST_POLICY["legacyAiCost"] = argus_ai_cost.record_accounting(
+            _COST_POLICY.get("legacyAiCost"), record, _AI_COST_WRITER_ID)
+    if _cost_policy_durable_enabled():
+        durable = _cost_policy_persist_durable()
+        _cost_policy_checkpoint_after_write(durable)
+
 
 def _ai_cost_restore_once():
-    """Best-effort: restore THIS month's spent total from the ledger branch so the
-    monthly hard stop survives a dyno restart. Never raises; backs off on failure."""
+    """Merge the monthly remote baseline with separately identified local calls."""
     now = time.time()
-    if _AI_COST_STATE["restoredMonth"] == argus_ai_cost.month_key(datetime.now(TZ_JST)):
+    mk = argus_ai_cost.month_key(datetime.now(TZ_JST))
+    if _AI_COST_STATE["restoredMonth"] == mk:
         return
     if now - _AI_COST_RESTORE_STATE["lastTry"] < _AI_RESTORE_BACKOFF_S:
         return
     _AI_COST_RESTORE_STATE["lastTry"] = now
-    mk = argus_ai_cost.month_key(datetime.now(TZ_JST))
     try:
         url = f"{_LEDGER_RAW_BASE}/ai-cost/{mk}.json?cb={int(now)}"
-        with urllib.request.urlopen(url, timeout=20) as r:
-            d = json.loads(r.read().decode("utf-8"))
+        with urllib.request.urlopen(url, timeout=20) as response:
+            raw = response.read(4 * 1024 * 1024 + 1)
+        if len(raw) > 4 * 1024 * 1024:
+            raise ValueError("cost_restore_response_too_large")
+        snapshot = json.loads(raw)
+        if snapshot.get("month") != mk:
+            raise ValueError("cost_restore_month_mismatch")
+        with _COST_POLICY_LOCK:
+            merged = argus_ai_cost.import_legacy_snapshot(
+                _COST_POLICY.get("legacyAiCost"), snapshot)
+            _COST_POLICY["legacyAiCost"] = merged
+        if _cost_policy_durable_enabled():
+            durable = _cost_policy_persist_durable()
+            _cost_policy_checkpoint_after_write(durable)
         with _AI_LOCK:
             _ai_cost_roll(datetime.now(TZ_JST))
-            base = float(d.get("monthSpentUsd") or 0.0)
-            # Restore only if the persisted baseline is higher (never lose spend).
-            if base > _AI_COST_STATE["monthSpentUsd"]:
-                _AI_COST_STATE["monthSpentUsd"] = base
             _AI_COST_STATE["restoredMonth"] = mk
-        add_log(f"[AI] cost baseline restored {mk}: ${base:.2f}")
-    except Exception:
-        pass  # no file yet (first month) or branch unreachable — start from 0
+        _AI_COST_RESTORE_STATE["lastError"] = None
+    except Exception as exc:
+        _AI_COST_RESTORE_STATE["lastError"] = type(exc).__name__
+
 
 def _ai_record_cost(run_id, oai_status, gem_status, grounding_enabled):
     """Add the just-finished run's ESTIMATED cost to the day/month buckets. Reads
@@ -13667,12 +13709,9 @@ def _ai_record_cost(run_id, oai_status, gem_status, grounding_enabled):
     total = round(total, 6)
     rec = {"at": _ai_now_iso(), "runId": run_id, "rows": rows, "totalUsd": total,
            "oaiStatus": oai_status, "gemStatus": gem_status, "estimated": True}
+    _ai_cost_account_record(rec)
     with _AI_LOCK:
         _ai_cost_roll(datetime.now(TZ_JST))
-        _AI_COST_STATE["daySpentUsd"] = round(_AI_COST_STATE["daySpentUsd"] + total, 6)
-        _AI_COST_STATE["monthSpentUsd"] = round(_AI_COST_STATE["monthSpentUsd"] + total, 6)
-        _AI_COST_STATE["lastRun"] = rec
-        _AI_COST_STATE["runs"].appendleft(rec)
     for row in rows:
         _cost_policy_record(row["provider"], "ai_judgment" if row["provider"] == "openai"
                             else "ai_double_check", estimated_cost_usd=row["estUsd"])
@@ -13682,15 +13721,27 @@ def _ai_record_cost(run_id, oai_status, gem_status, grounding_enabled):
 
 def _ai_cost_snapshot():
     """Protected Operations view of AI spend (no prompts/keys). Pure read."""
-    with _AI_LOCK:
-        _ai_cost_roll(datetime.now(TZ_JST))
-        day_s, month_s = _AI_COST_STATE["daySpentUsd"], _AI_COST_STATE["monthSpentUsd"]
-        last = _AI_COST_STATE["lastRun"]
-        runs = list(_AI_COST_STATE["runs"])[:20]
+    with _COST_POLICY_LOCK:
+        accounting = argus_ai_cost.normalize_accounting(_COST_POLICY.get("legacyAiCost"))
+    coverage = argus_ai_cost.accounting_totals(accounting, datetime.now(TZ_JST))
+    day_s, month_s = coverage["daySpentUsd"], coverage["monthSpentUsd"]
+    last, runs = coverage["lastRun"], coverage["recentRuns"]
     return {
+        "accounting": accounting,
+        "accountingStatus": {k: coverage[k] for k in (
+            "historyCoverage", "legacyBaselinePresent", "historicalCallsReconstructed",
+            "displayWindowAffectsTotals", "recordedMonthCalls")},
+        "restoreError": _AI_COST_RESTORE_STATE.get("lastError"),
+        "accountingDurability": {
+            "writeThroughEnabled": _COST_POLICY_DURABLE.get("enabled") is True,
+            "lastPersistAt": _COST_POLICY_DURABLE.get("lastPersistAt"),
+            "lastError": _COST_POLICY_DURABLE.get("lastError"),
+            "migrationError": _COST_POLICY_DURABLE.get("migrationError"),
+            "checkpointLastError": _COST_CHECKPOINT_STATE.get("lastError"),
+        },
         "asOf": _ai_now_iso(), "estimated": True,
         "budgetEnforced": _AI_BUDGET_ENFORCED,
-        "month": _AI_COST_STATE["month"], "day": _AI_COST_STATE["day"],
+        "month": coverage["month"], "day": coverage["day"],
         "dailyBudgetUsd": _AI_DAILY_BUDGET_USD, "daySpentUsd": round(day_s, 4),
         "dayRemainingUsd": round(max(0.0, _AI_DAILY_BUDGET_USD - day_s), 4),
         "monthlyBudgetUsd": _AI_MONTHLY_BUDGET_USD, "monthSpentUsd": round(month_s, 4),
@@ -13701,6 +13752,9 @@ def _ai_cost_snapshot():
         "pricing": _AI_PRICING, "pricingPolicy": _AI_MODEL_PRICING_POLICY,
         "groundingUsdPerCall": _AI_GROUNDING_USD,
         "noteJa": ("コストはトークン使用量と設定単価による推定値です。"
+                   "過去分は保存済み報告値で、移行前の全履歴を再構成した総額ではありません。"
+                   + ("費用台帳の保存エラーを確認してください。" if _COST_POLICY_DURABLE.get("lastError") else "")
+                   + ("更新前の費用原本を確認できていません。" if _COST_POLICY_DURABLE.get("migrationError") else "")
                    + ("ARGUS側上限で停止します。" if _AI_BUDGET_ENFORCED else
                       "オーナー指示により費用による停止を解除中です。")),
     }
@@ -14613,12 +14667,9 @@ def _ai_record_prose_cost(model, input_tokens, output_tokens, est_usd, *,
                      "inputTokens": int(input_tokens or 0), "outputTokens": int(output_tokens or 0),
                      "grounding": False, "estUsd": est_usd}],
            "totalUsd": est_usd, "oaiStatus": "live", "gemStatus": "unavailable", "estimated": True}
+    _ai_cost_account_record(rec)
     with _AI_LOCK:
         _ai_cost_roll(datetime.now(TZ_JST))
-        _AI_COST_STATE["daySpentUsd"] = round(_AI_COST_STATE["daySpentUsd"] + est_usd, 6)
-        _AI_COST_STATE["monthSpentUsd"] = round(_AI_COST_STATE["monthSpentUsd"] + est_usd, 6)
-        _AI_COST_STATE["lastRun"] = rec
-        _AI_COST_STATE["runs"].appendleft(rec)
     return rec
 
 
@@ -28801,6 +28852,9 @@ def _osint_restore_once():
             _restored_cp["mode"] = _COST_POLICY["mode"]
             _restored_cp["eventOptIn"] = _COST_POLICY["eventOptIn"]
             with _COST_POLICY_LOCK:
+                if "legacyAiCost" in _COST_POLICY or "legacyAiCost" in _restored_cp:
+                    _restored_cp["legacyAiCost"] = argus_ai_cost.merge_accounting(
+                        _COST_POLICY.get("legacyAiCost"), _restored_cp.get("legacyAiCost"))
                 _COST_POLICY.clear()
                 _COST_POLICY.update(_restored_cp)
         # v13.5.66: the durable write-through file holds what the journal

@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    "test_ai_cost.py": "e2e1a3094c0fe315993d027592de6e1db9a5b784",
     'web/scripts/news-polling-recovery.test.mjs': '85c1fd980275aa95f832ccf5d2cd4d4eff60d8c1',
     "test_argus_prediction_read_latency.py": "731d0705813a323169ba286315811cac5b06e0f7",
     "web/scripts/news-presentation.test.mjs": "9901647270d36d5d970dd972860fbf9a0e525343",
