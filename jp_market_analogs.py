@@ -139,16 +139,18 @@ def build_episode(*, cutoff: str, bars: Sequence[Mapping[str, Any]],
     enough = len(window) == policy.lookback_sessions + 1 and all(row["close"] for row in window)
     anchor = window[-1]["date"] if window else None
     first = window[0]["date"] if window else None
-    # Shared knowledge time can be later than the anchor session. No feature
-    # with an observation date after that session enters its comparison.
+    # Information may arrive after the latest price close. Its own knowledge
+    # cutoff, not that older price anchor, bounds current descriptive evidence.
+    # Historical candidates are separately required to use their anchor-day cutoff.
+    information_day = _instant(cutoff).date().isoformat()
     states: dict[str, Any] = {}
     for row in _visible([dict(r) for r in state_rows if isinstance(r, Mapping)
                          and _identity(r) == INSTRUMENT], cutoff):
         field = _field(row)
         definition = FEATURE_DEFINITIONS.get(field)
         value = _finite(row.get("value"))
-        if definition and anchor and _period(row) <= anchor and value is not None \
-                and row.get("unit") == definition[0] and (date.fromisoformat(anchor) -
+        if definition and anchor and _period(row) <= information_day and value is not None \
+                and row.get("unit") == definition[0] and (date.fromisoformat(information_day) -
                     date.fromisoformat(_period(row))).days <= FEATURE_MAX_AGE_DAYS[field]:
             states[field] = {"value": value, "unit": definition[0],
                              "date": _period(row), **_receipt(row)}
@@ -156,14 +158,14 @@ def build_episode(*, cutoff: str, bars: Sequence[Mapping[str, Any]],
     for row in _visible([dict(r) for r in condition_rows if isinstance(r, Mapping)
                          and _identity(r) == INSTRUMENT], cutoff):
         value = _finite(row.get("value"))
-        if first and anchor and first <= _period(row) <= anchor and value in (-1, 1):
+        if first and anchor and first <= _period(row) <= information_day and value in (-1, 1):
             conditions.append({"condition": _field(row), "direction": int(value),
                                "date": _period(row), **_receipt(row)})
     reactions: dict[str, Any] = {}
     for row in _visible([dict(r) for r in reaction_rows if isinstance(r, Mapping)
                          and _identity(r) == INSTRUMENT], cutoff):
         value = _finite(row.get("value"))
-        if first and anchor and first <= _period(row) <= anchor and value is not None \
+        if first and anchor and first <= _period(row) <= information_day and value is not None \
                 and row.get("unit") == "PERCENT" and row.get("eventId") \
                 and row.get("eventType") and not isinstance(row.get("reactionWindowSessions"), bool) \
                 and row.get("reactionWindowSessions") in (1, 3, 5):
@@ -269,8 +271,12 @@ def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str
             complete = not missing and order_distance is not None and reaction_distance is not None
             if distance > policy.maximum_distance:
                 continue
-            differences = [{"feature": key, "scaledAbsoluteDifference": value}
-                           for key, value in sorted(state_deltas.items(), key=lambda item: (-item[1], item[0]))[:3]]
+            differences = [{"feature": key, "scaledAbsoluteDifference": value,
+                            "currentValue": current["states"][key]["value"],
+                            "comparisonValue": candidate["states"][key]["value"],
+                            "unit": FEATURE_DEFINITIONS[key][0]}
+                           for key, value in sorted(state_deltas.items(), key=lambda item: (-item[1], item[0]))[:3]
+                           if value > 0]
             if not differences:
                 differences = [{"feature": "marketState", "status": "NOT_COMPARABLE"}]
             scored.append({

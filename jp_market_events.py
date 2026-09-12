@@ -106,7 +106,7 @@ def sq_calendar(*, now: datetime, schedule: Mapping[str, Any], horizon_days: int
             "contractMonth": contract.strftime("%Y-%m"), "sqDate": sq_day.isoformat(),
             "lastTradingDate": last_day.isoformat(), "timezone": "Asia/Tokyo",
             "lastTradingSession": "DAY_SESSION_ONLY",
-            "stage": stage, "calendarDaysUntil": (sq_day - today).days,
+            "calculatedAt": current.isoformat(), "stage": stage, "calendarDaysUntil": (sq_day - today).days,
             "tradingSessionsUntil": distance if calendar_valid else None,
             "calendarStatus": "VERIFIED" if calendar_valid else "UNAVAILABLE_OR_CONFLICT",
             "calculationTiming": "OPENING_PRICES_ON_SQ_DATE",

@@ -182,12 +182,37 @@ def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any]
               "marketState": "同じ尺度の市場状態を比較",
               "conditionOrder": "条件の発生順序を比較",
               "materialReaction": "同種の材料に対する価格反応を比較"}
+    feature_labels = {
+        "credit.ratio": "二市場信用倍率", "credit.ratio_change": "二市場信用倍率の変化",
+        "credit.loss_pct": "信用評価損失率", "margin1570.ratio": "日経レバ信用倍率",
+        "margin1570.long_change_pct": "日経レバ買残の変化率", "margin1570.short_change_pct": "日経レバ売残の変化率",
+        "relative_jp_us.return20": "日米相対力", "vix.level": "VIX水準", "vix.change5": "VIXの変化",
+        "vix.macd_histogram": "VIXのMACD", "foreign_flow.net4w": "海外投資家の4週フロー",
+        "fx.usdjpy_change5": "ドル円の変化率", "rate.jp10y_change5": "日本10年金利の変化幅",
+        "rate.us10y_change5": "米国10年金利の変化幅", "nt.ratio_change5": "NT倍率の変化率",
+        "event.sq_sessions": "SQまでの営業日数",
+    }
+    def display_value(value, unit):
+        labels = {"RATIO": "倍", "PERCENT": "%", "INDEX_POINTS": "ポイント",
+                  "PERCENTAGE_POINTS": "%ポイント", "TRADING_SESSIONS": "営業日", "JPY": "円"}
+        if unit == "JPY" and abs(value) >= 100_000_000:
+            return f"{value / 100_000_000:,.1f}億円"
+        return f"{value:,.3f}".rstrip("0").rstrip(".") + labels.get(unit, "")
+
     candidates = []
     for selected in selection.get("selected", []):
         path = by_id.get(selected["snapshotId"])
         if not path:
             continue
         differences = []
+        for difference in selected.get("importantDifferences", []):
+            if "currentValue" in difference:
+                label = feature_labels.get(difference["feature"], "市場指標")
+                differences.append(f"{label}：現在条件 {display_value(difference['currentValue'], difference['unit'])}、比較時 {display_value(difference['comparisonValue'], difference['unit'])}")
+        if selected["componentDistances"].get("conditionOrder", 0):
+            differences.append("条件が発生した順序には違いがあります")
+        if selected["componentDistances"].get("materialReaction", 0):
+            differences.append("同種の材料に対する価格反応には違いがあります")
         if selected["missingFeatures"]:
             differences.append(f"市場指標のうち{len(selected['missingFeatures'])}系列が比較できません")
         if selected["missingGroups"]:

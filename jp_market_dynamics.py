@@ -99,6 +99,7 @@ def credit_dynamics(rows: Iterable[Mapping[str, Any]], *, cutoff: str,
         raise ValueError("explicit_distinct_credit_series_required")
     scoped = [dict(row) for row in rows if isinstance(row, Mapping) and
               str(row.get("instrumentId") or "MARKET") == instrument_id and
+              row.get("balanceKind", balance_kind) == balance_kind and
               (row.get("seriesId") or row.get("field")) in (long_series, short_series)]
     visible, proof = point_in_time_rows(scoped, cutoff)
     by_period: dict[str, dict[str, Any]] = {}
