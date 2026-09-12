@@ -21,8 +21,16 @@ interface Envelope { v: 1; salt: string; iv: string; ct: string; exportedAt: str
 
 const te = new TextEncoder();
 const td = new TextDecoder();
-const b64 = (buf: ArrayBuffer | Uint8Array) =>
-  btoa(String.fromCharCode(...new Uint8Array(buf instanceof Uint8Array ? buf : new Uint8Array(buf))));
+const b64 = (buf: ArrayBuffer | Uint8Array): string => {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let binary = '';
+  // Full device histories exceed the JavaScript argument limit. Chunking only
+  // changes encoding mechanics; the existing encrypted envelope stays v1.
+  for (let offset = 0; offset < bytes.length; offset += 32_768) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));
+  }
+  return btoa(binary);
+};
 const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
 async function sha256hex(s: string): Promise<string> {

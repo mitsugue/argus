@@ -42,7 +42,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'smoke_test.py': 'e6c003c4d7b3c499744950b98457860f4bc71a77',
     "web/src/components/guide/BackupCard.tsx": "7448961ef09c25babfd84e5c2eec1ec38f76db4e",
     "web/src/components/system/BackupStatusOverview.tsx": "6b0c0bc4e434c8a9464accec8f78100c1da06c43",
-    "web/src/lib/vault.ts": "9a43fdfad04ba861367a0552d93703eff874f9e6",
+    "web/src/lib/vault.ts": "d1b2d2e0b25eaa326947251e083084f851f81eec",
     "web/scripts/news-history.test.mjs": "205849e870b1175bfe5e8b829bf7881f8baf891e",
     "web/scripts/public-market-acceptance.mjs": "2e4e63fd5c4c518190483138a2a899ad842061c0",
     "web/scripts/index-chart-isolation.test.mjs": "470dcf9598714a89b9ebba9dd53cfc2f6315092f",

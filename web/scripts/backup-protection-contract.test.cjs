@@ -210,6 +210,17 @@ async function main() {
   assert.equal(vault.lastSyncInfo().historyRestoreBlocked, true);
   assert.deepEqual([...localStorage.values].filter(([key]) => key !== 'argus.lastSyncInfo.v1'), beforePull);
   assert.equal(vault.lastSyncInfo().lastPullAppliedAt, undefined);
+  // Large, multilingual device history must survive the actual AES envelope
+  // without expanding the entire ciphertext as one function argument list.
+  const largePayload = structuredClone(completePayload);
+  largePayload.data['argus.research.v1'] = [{ id: 'large-history', note: '市場の根拠と見立て🌐'.repeat(50_000) }];
+  assert.ok(Buffer.byteLength(JSON.stringify(largePayload), 'utf8') > 1_000_000);
+  const beforeLarge = [...localStorage.values];
+  const largeEnvelope = await vault.encryptBackup(passphrase, largePayload);
+  assert.equal(JSON.parse(largeEnvelope).v, 1);
+  assert.deepEqual(await vault.decryptBackup(passphrase, largeEnvelope), largePayload);
+  await assert.rejects(vault.decryptBackup(passphrase + '-incorrect', largeEnvelope));
+  assert.deepEqual([...localStorage.values], beforeLarge);
   const validEnvelope = await vault.encryptBackup(passphrase, completePayload);
   global.fetch = async () => ({ ok: true, text: async () => validEnvelope });
   global.window.dispatchEvent = () => true;

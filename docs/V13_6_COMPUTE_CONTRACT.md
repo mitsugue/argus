@@ -134,3 +134,13 @@ VIXの水準・変化・既存12/26/9 MACD、日米の直接指数の20営業日
 再接続・650件保存と500件表示の分離・並行重複・取込み競合・ページ単位の別ファイル復元・
 読取りの非更新・破損拒否など8件のテストに合格。本番ランタイムからの書込み、
 既存遠隔チェックポイントへの接続、Settingsの集計表示はまだ未接続。
+
+### Device envelope encoding preparation
+
+The existing AES-GCM envelope v1 now base64-encodes ciphertext in 32 KiB chunks,
+avoiding a single function argument list that fails for full device histories.
+A multilingual payload exceeding 1 MB round-trips through the actual encrypt /
+decrypt functions with exact data equality and no local-store writes; an
+incorrect passphrase still fails authentication. This is local tested code only,
+not authenticated cloud upload, restart restore, cross-device sync, or iPhone
+acceptance. Existing relay size/auth/persistence integration remains outstanding.
