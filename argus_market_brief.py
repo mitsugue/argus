@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 BRIEF_SCHEMA = "argus-market-brief-v1"
 BRIEF_FACT_LIMIT = 16
+UNIFIED_FACT_LIMIT = 20
 PRIORITIES = ("P0", "P1", "P2", "P3")
 VERIFICATIONS = ("VERIFIED", "CORROBORATED", "UNCONFIRMED")
 
@@ -370,6 +371,47 @@ def compose_brief(*, now_iso: str,
 UNIFIED_SECTIONS = ("view", "reasons", "changes", "impact", "next", "invalidation")
 
 
+def calculation_identity(calculations):
+    """Ignore read timestamps, retaining price/input/definition changes."""
+    def stable(value):
+        if isinstance(value, Mapping):
+            return {key: stable(item) for key, item in value.items()
+                    if key not in {"informationCutoff", "lastSuccessfulAcquisitionAt"}}
+        if isinstance(value, list):
+            return [stable(item) for item in value]
+        return value
+    return hashlib.sha256(json.dumps(stable(calculations), sort_keys=True,
+        separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+
+
+def calculation_facts(calculations):
+    """Explain each saved horizon using engine values, without probability claims."""
+    facts = []
+    for horizon in (1, 5, 10, 20):
+        result = calculations.get(str(horizon)) or {}
+        chart = result.get("comparison") or {}
+        forecast = chart.get("forecast") or {}
+        line = [p for p in forecast.get("line", []) if p.get("offsetSessions") == horizon]
+        if len(line) != 1 or forecast.get("horizonSessions") != horizon:
+            continue
+        value = line[0].get("value")
+        if type(value) not in (int, float) or not math.isfinite(value):
+            continue
+        unit = "基準100" if chart.get("unit") == "ANCHOR_100" else "円建て指数値" if chart.get("unit") == "JPY_INDEX_POINTS" else None
+        if not unit:
+            continue
+        identity = calculation_identity({str(horizon): result})
+        facts.append(_fact(f"日経平均・{chart['anchorDate']}基準の{horizon}営業日先: "
+            f"{unit}の参考計算値{value:.2f}。現在は過去の価格形状による部分比較で、有効性は未検証。"
+            "他の期間の見立てと合算せず、確定した未来とは扱わない。",
+            "P2", "price_path_calculation", "UNCONFIRMED", {
+                "eventId": f"n225-price-path-{horizon}", "asOf": chart["anchorDate"],
+                "sourceLabelJa": "日本株分析エンジン・価格経路計算",
+                "sourceReceivedAt": result.get("lastSuccessfulAcquisitionAt"),
+                "sourceRowSha256": identity}))
+    return facts
+
+
 def unified_context(brief: Mapping[str, Any], previous: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """Bind explanation references to the exact fact snapshot supplied to GPT.
 
@@ -378,7 +420,7 @@ def unified_context(brief: Mapping[str, Any], previous: Optional[Mapping[str, An
     """
     def references(document):
         rows = []
-        for fact in (document or {}).get("facts", [])[:BRIEF_FACT_LIMIT]:
+        for fact in (document or {}).get("facts", [])[:UNIFIED_FACT_LIMIT]:
             material = {key: str(fact.get(key) or "") for key in
                         ("text", "source", "priority", "verification")}
             if isinstance(fact.get("provenance"), Mapping):
@@ -446,8 +488,12 @@ def validate_unified_ai(value: Any, context: Mapping[str, Any], *, diagnostic=No
         if any(p in text for p in _FORBIDDEN_BRIEF_PATTERNS) or "確率" in text:
             return rejected("unsupported_authority_or_probability", key)
         allowed_digits = set().union(*(_digits_of(allowed[ref]["text"]) for ref in refs)) if refs else set()
-        if _digits_of(text) - allowed_digits:
-            return rejected("unsupported_numeric_tokens", key)
+        unsupported = _digits_of(text) - allowed_digits
+        if unsupported:
+            result = rejected("unsupported_numeric_tokens", key)
+            if isinstance(diagnostic, dict):
+                diagnostic["unsupportedNumericTokens"] = sorted(unsupported)[:20]
+            return result
         if key == "impact" and not context.get("ownerContextAvailable"):
             text = "この市場全体の説明には保有情報を含めていません。銘柄ごとの保有状況と合わせた影響は未確認です。"
         if key == "changes" and not context.get("changes", {}).get("comparisonAvailable"):

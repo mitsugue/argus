@@ -396,3 +396,13 @@
 .at-margin-dynamics details { border-top:1px solid var(--line); margin-top:16px; font-size:13px; color:var(--text-sub); }
 .at-margin-dynamics summary { min-height:44px; padding:10px 0; cursor:pointer; color:var(--accent); }
 .at-margin-dynamics a { color:var(--accent); }
+
+.at-analysis-history { margin-top: 20px; padding-top: 16px; border-top: 1px solid #293a46; font-size: 15px; line-height: 1.7; }
+.at-analysis-history > summary { color: #cbd9e1; cursor: pointer; padding: 8px 0; }
+.at-analysis-history p { margin: 12px 0; }
+.at-analysis-history h4 { margin: 20px 0 12px; font-size: 16px; color: #e2e9ed; }
+.at-analysis-history button, .at-analysis-history select { color: #d9e3e9; background: #15222c; border: 1px solid #3c5260; border-radius: 10px; min-height: 44px; padding: 10px 12px; font: inherit; }
+.at-analysis-history button { text-align: left; cursor: pointer; max-width: 100%; }
+.at-analysis-history button:disabled { opacity: .65; cursor: wait; }
+.at-analysis-history button:focus-visible, .at-analysis-history select:focus-visible { outline: 2px solid #91bfd4; outline-offset: 3px; }
+.at-analysis-history label { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 16px 0; }
