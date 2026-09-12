@@ -837,10 +837,11 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       <p className="at-news-order">重要度順 · 赤は重大、黄は重要。同じ重要度では新しい情報から表示します。</p>
       {newsIntel.status === 'error' && <p className="at-shock-clear" role="status">
         {newsIntel.events.length ? 'ニュース更新失敗・前回取得分を表示しています。' : 'ニュースを取得できていません。'}</p>}
-      {newsIntel.status === 'loading' && newsRows.length === 0 && <p className="at-shock-clear">ニュースを読み込み中…</p>}
+      {newsIntel.status === 'loading' && <p className="at-shock-clear" role="status">ニュース記事を取得中です。市場データとは別に読み込んでいます。</p>}
       {newsRows.length > 0 && <TodayNewsCards rows={newsRows.slice(0, NEWS_ROWS_CAP)}
         onOpen={(id) => openNewsDetails(`news-${id}`)} />}
-      {shock.status === 'data' && shock.events.length === 0 && materialMailEvents.length === 0
+      {shock.status === 'data' && newsIntel.status === 'data'
+        && shock.events.length === 0 && materialMailEvents.length === 0
         && <p className="at-shock-clear">突発の市場ショック: 現在なし
           （監視中: 中央銀行 · 雇用/物価 · 地政学 · 企業イベント）·
           予定されている経済イベントは NEXT EVENT に表示されます</p>}
