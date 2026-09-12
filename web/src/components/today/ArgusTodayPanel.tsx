@@ -777,10 +777,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           DATA_GATED the surface stays two short rows instead of a wall.
           Nothing here is computed client-side — it renders the SDA
           projection. */}
-      {/* v13.5.59: confidence and data status qualify the decision, so they
-          sit directly under it — before the signals, not at the bottom. */}
-      <div className="at-kpis"><span>確度 <b>{Math.round(view.canonicalDecision.confidence.valueBps / 100)}%</b></span>
-        <span>DATA <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></span>
+      {/* Data availability qualifies the decision before the signals. */}
+      <div className="at-kpis"><span>DATA <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></span>
         {/* v13.5.60 (owner iPhone review): the reasons behind a non-LIVE DATA
             state are ARGUS-side fetch/freshness facts, not trading information —
             they open on tap instead of occupying the decision area. */}

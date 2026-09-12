@@ -251,7 +251,7 @@ check('Today never claims an empty calendar it could not read',
   const market = panel.indexOf('className="at-market card"');
   const context = panel.indexOf('className="at-event card at-context"');
   const evidence = panel.indexOf('<details className="at-evidence card">');
-  check('confidence and data status sit under the decision, before the signals',
+  check('data status sits under the decision, before the signals',
     kpis > 0 && seven > 0 && kpis < seven);
   check('reading order: next event → market → reference view → evidence',
     nextEvent < market && market < context && context < evidence);
@@ -412,15 +412,21 @@ console.log('argus-engine.test: all checks passed');
   check('batches are eight wide and cover every symbol',
     batches.length === 3 && batches[0].length === 8 && batches[2].length === 3);
   const { waitKindJa, confidenceBasisJa, formatEventWhenJa } = require(path.join(root, 'src/domain/argusTodayView.ts'));
+  for (const decision of [
+    {status:'DATA_GATED',primaryAction:'WAIT',confidence:{valueBps:2500}},
+    {status:'EVALUATED',primaryAction:'WAIT',confidence:{valueBps:4000}},
+    {status:'EVALUATED',primaryAction:'WAIT',confidence:{valueBps:4500}},
+  ]) check('internal rule score is not displayed as a probability', !/[0-9]+[%％]/.test(confidenceBasisJa(decision)));
+
   check('the three WAITs are named',
     waitKindJa({ status: 'DATA_GATED', primaryAction: 'WAIT' }).includes('データ不足')
     && waitKindJa({ status: 'EVALUATED', primaryAction: 'WAIT', guidance: { riskConstraint: 'BLOCK_BUY' } }).includes('リスク制約')
     && waitKindJa({ status: 'EVALUATED', primaryAction: 'WAIT', guidance: { riskConstraint: 'NONE' } }).includes('買い条件が未成立')
     && waitKindJa({ status: 'EVALUATED', primaryAction: 'HOLD' }) === null);
-  check('the confidence percentage states its basis',
-    confidenceBasisJa({ status: 'DATA_GATED', primaryAction: 'WAIT', confidence: { valueBps: 2500 } }).includes('データ不足時の上限')
-    && confidenceBasisJa({ status: 'EVALUATED', primaryAction: 'WAIT', confidence: { valueBps: 4000 } }).includes('リスク上限 40%')
-    && confidenceBasisJa({ status: 'EVALUATED', primaryAction: 'WAIT', confidence: { valueBps: 4500 } }).includes('基準値'));
+  check('internal rule constraints are explained without a probability',
+    confidenceBasisJa({ status: 'DATA_GATED', primaryAction: 'WAIT', confidence: { valueBps: 2500 } }).includes('判断に必要なデータが不足')
+    && confidenceBasisJa({ status: 'EVALUATED', primaryAction: 'WAIT', confidence: { valueBps: 4000 } }).includes('リスク制約を適用')
+    && confidenceBasisJa({ status: 'EVALUATED', primaryAction: 'WAIT', confidence: { valueBps: 4500 } }).includes('内部ルールの基準'));
   const when = formatEventWhenJa('2026-09-11T12:30:00Z', false, new Date('2026-09-07T10:00:00Z'));
   const dateOnly = formatEventWhenJa('2026-09-09T23:59:59+09:00', true, new Date('2026-09-07T10:00:00Z'));
   check('one event-time format for Today and Alerts',
