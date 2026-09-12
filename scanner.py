@@ -14221,6 +14221,10 @@ def _build_gemini_challenge(openai_out, gemini_out):
 def _gemini_check(snapshot, openai_out, checker_model=None):
     """Returns (out|None, status, grounding_enabled)."""
     _AI_LAST_RUN["gemUsage"] = None
+    _AI_LAST_RUN["gemModel"] = None
+    if _AI_FULL_ANALYSIS_ENABLED:
+        # GPT owns judgment; Gemini translation is a separate support lane.
+        return None, "not_enabled_by_role_policy", False
     if not _cost_policy_authorize(
             "gemini", "ai_double_check", automatic=True,
             estimated_cost_usd=0.05, estimated_tokens=8000)["allowed"]:
@@ -14405,7 +14409,8 @@ def _ai_judgment_truth(*, allow_restore=True):
     true). Reads cache + env presence only — no model call, no secret exposed.
       disabled         — AI_JUDGE_ENABLED is false
       missing_keys     — enabled, but neither OpenAI nor Gemini key configured
-      partial          — enabled, exactly one provider key configured, no live cache
+      partial          — legacy two-provider mode has only one configured key
+      missing_keys     — GPT-primary mode has no primary key
       no_cached_result — enabled + keys present, but no successful run cached
       live/partial/mock— a fresh non-expired cached run exists (its real status)
     """
@@ -14424,19 +14429,19 @@ def _ai_judgment_truth(*, allow_restore=True):
 
     if not enabled:
         status = "disabled"
-    elif not oai and not gem:
+    elif not oai and (_AI_FULL_ANALYSIS_ENABLED or not gem):
         status = "missing_keys"
     elif has_cache:
         status = cached.get("status", "no_cached_result")  # real run result
-    elif not (oai and gem):
-        status = "partial"        # only one provider configured; cannot be fully live
+    elif not _AI_FULL_ANALYSIS_ENABLED and not (oai and gem):
+        status = "partial"
     else:
         status = "no_cached_result"
 
     # publicGetStatus mirrors exactly what GET /api/argus/ai-judgment returns.
     if not enabled:
         public_get = "disabled"
-    elif not oai and not gem:
+    elif not oai and (_AI_FULL_ANALYSIS_ENABLED or not gem):
         public_get = "missing_keys"
     elif has_cache:
         public_get = cached.get("status", "no_cached_result")
@@ -14463,9 +14468,9 @@ def _ai_disabled_payload(status="disabled", reason="AI judgment is not enabled y
             "globalRedFlags": [], "groundingSources": []}
 
 def _execute_ai_judgment(run_mode="manual", checker=None):
-    """Run primary GPT analysis with a lightweight consistency checker.
-    Caller authorization and rule arbitration remain unchanged. The legacy
-    checker argument is accepted; production support always uses Flash.
+    """Run GPT judgment; report separately any configured consistency check.
+    Caller authorization and rule arbitration remain unchanged. Full analysis
+    uses GPT for judgment and Gemini in the separate translation lane.
     """
     snap, al = _build_ai_snapshot()
     openai_out, oai_status = _openai_judge(snap)
@@ -14473,10 +14478,19 @@ def _execute_ai_judgment(run_mode="manual", checker=None):
     gemini_out, gem_status, grounding_enabled = _gemini_check(snap, openai_out, checker_model)
     labels = _arbitrate_ai(al, openai_out, gemini_out)
 
-    ai_ok = (1 if oai_status == "live" else 0) + (1 if gem_status == "live" else 0)
+    required_symbols = [str(row.get("symbol")) for row in al.get("labels", [])]
+    primary_rows = (openai_out.get("labels", []) if isinstance(openai_out, dict) else [])
+    supplied_symbols = [str(row.get("symbol")) for row in primary_rows
+                        if isinstance(row, dict) and str(row.get("reasonJa") or "").strip()]
+    missing_symbols = sorted(set(required_symbols) - set(supplied_symbols))
+    duplicate_symbols = sorted({sym for sym in supplied_symbols if supplied_symbols.count(sym) > 1})
+    primary_complete = bool(required_symbols) and not missing_symbols and not duplicate_symbols
+    checker_required = not _AI_FULL_ANALYSIS_ENABLED
+    checker_complete = (gem_status == "live" or
+                        (not checker_required and gem_status == "not_enabled_by_role_policy"))
     if al.get("status") == "mock":
         status = "mock"
-    elif ai_ok == 2:
+    elif oai_status == "live" and primary_complete and checker_complete:
         status = "live"
     else:
         status = "partial"
@@ -14492,7 +14506,14 @@ def _execute_ai_judgment(run_mode="manual", checker=None):
 
     payload = {
         "status": status, "asOf": _ai_now_iso(), "engineVersion": "ai-judge-v1", "runMode": run_mode,
-        "providerExecutions": {"primary": dict(_AI_LAST_RUN.get("oaiDiagnostic") or {})},
+        "providerExecutions": {
+            "primary": {**dict(_AI_LAST_RUN.get("oaiDiagnostic") or {}), "status": oai_status},
+            "checker": {"status": gem_status, "required": checker_required,
+                        "role": "supplied_evidence_consistency"}},
+        "analysisCoverage": {"requiredSymbols": required_symbols,
+                             "missingSymbols": missing_symbols,
+                             "duplicateSymbols": duplicate_symbols,
+                             "complete": primary_complete},
         "models": {"primary": (_AI_LAST_RUN.get("oaiModel") if oai_status == "live" else None),
                    # The checker may have quota-degraded to the fallback model —
                    # report what actually ran, not what was configured.
@@ -14507,7 +14528,6 @@ def _execute_ai_judgment(run_mode="manual", checker=None):
     if status != "mock":
         _AI_RESULT_CACHE["data"] = payload
         _AI_RESULT_CACHE["expires"] = time.time() + _AI_CACHE_TTL
-        _ai_persist_latest(payload)   # /tmp — survive in-instance restarts (every run)
     _AI_LAST_RUN.update({"oai": oai_status, "gem": gem_status,
                          "groundingEnabled": grounding_enabled, "at": _ai_now_iso()})
     # Cost ledger (v10.50): record this run's estimated spend into the day/month
@@ -14521,6 +14541,9 @@ def _execute_ai_judgment(run_mode="manual", checker=None):
         payload["models"]["groundingUsed"] = bool(grounding_enabled)
     except Exception:
         pass
+    if status != "mock":
+        # Persist the final model/usage fields, not the earlier partial payload.
+        _ai_persist_latest(payload)
     add_log(f"[AI] run mode={run_mode} models={_OPENAI_MODEL}/{_AI_LAST_RUN.get('gemModel') or _GEMINI_FALLBACK_MODEL} "
             f"symbols={len(labels)} oai={oai_status} gem={gem_status} grounding={grounding_enabled} status={status}")
     return payload
@@ -15926,9 +15949,9 @@ def api_argus_ai_judgment():
     # Public + frontend-safe. Reads the cached judgment ONLY — never calls a model.
     if not _AI_JUDGE_ENABLED:
         return jsonify(_ai_disabled_payload("disabled", "AI judgment is not enabled yet."))
-    if not _OPENAI_API_KEY and not GEMINI_API_KEY:
+    if not _OPENAI_API_KEY and (_AI_FULL_ANALYSIS_ENABLED or not GEMINI_API_KEY):
         return jsonify(_ai_disabled_payload(
-            "missing_keys", "AI judgment is enabled but no OpenAI/Gemini API key is configured on the server."))
+            "missing_keys", "The required primary analysis API key is not configured on the server."))
     # Freshness truth (v10.36, #4): distinguish a FRESH in-cache run from a
     # PERSISTED one restored from the ledger branch (last good run, maybe from a
     # prior day). A 30-min TTL lapsing does NOT mean yesterday's judgment ceased
@@ -15964,8 +15987,7 @@ def api_argus_ai_judgment():
 
 @app.route("/api/argus/ai-judgment/run", methods=["POST"])
 def api_argus_ai_judgment_run():
-    # Admin-gated fresh run: GPT-5.5 primary + Gemini double-check. NEVER reachable
-    # from the public frontend (admin token required).
+    # Authenticated GPT-primary run; public GET never starts analysis.
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
@@ -15974,8 +15996,8 @@ def api_argus_ai_judgment_run():
     allowed, info, code = _ai_run_gate(force=force)
     if not allowed:
         return jsonify(info), code
-    # ?checker=flash|pro picks the Gemini double-check tier (default pro). The 15-min
-    # ai-rejudge cron passes flash (cheap, frequent); the daily scored run passes pro.
+    # Retain the old query contract; the effective provider role policy decides
+    # whether a supplementary consistency check is enabled.
     checker = (request.args.get("checker") or "").strip().lower()
     checker = checker if checker in ("flash", "pro") else None
     return jsonify(_execute_ai_judgment(run_mode="manual", checker=checker))
@@ -18555,7 +18577,7 @@ def _news_retry_input(event):
 
 
 def _news_retry_pending_analysis():
-    """Retry one recent material headline in the existing budget, outside the state lock."""
+    """Retry one pending article outside the state lock, with material news first."""
     now = time.time()
     day = _ai_now_iso()[:10]
     with _NEWS_INTEL_LOCK:
@@ -18563,14 +18585,16 @@ def _news_retry_pending_analysis():
         for event in _NEWS_INTEL["events"].values():
             retry = event.get("analysisRetry") or {}
             if (event.get("analysisState") not in ("AI_ANALYSIS_UNAVAILABLE", "AI_SCHEMA_REJECTED", "DETERMINISTIC_ONLY")
-                    or not argus_news_intelligence.material_news_priority(event, now)[0]
+                    or not argus_news_intelligence.analysis_retry_priority(
+                        event, now, full_analysis=_AI_FULL_ANALYSIS_ENABLED)[0]
                     or now < float(retry.get("nextAttemptEpoch") or 0)
                     or (retry.get("day") == day and int(retry.get("attempts") or 0) >= 3)):
                 continue
             candidates.append(copy.deepcopy(event))
         if not candidates:
             return 0
-        event = max(candidates, key=lambda row: argus_news_intelligence.material_news_priority(row, now))
+        event = max(candidates, key=lambda row: argus_news_intelligence.analysis_retry_priority(
+            row, now, full_analysis=_AI_FULL_ANALYSIS_ENABLED))
     diagnostic = {}
     title = str(event.get("titleOriginal") or "")
     excerpt, source_status = _news_retry_input(event)
@@ -41668,7 +41692,7 @@ def _source_registry(*, allow_provider_fetch=True):
         S("VWAP", "—", "JP/US", "unavailable", "入力未接続", "—", "—", "VWAP入力は未接続。"),
         S("FX / 先物 / 商品", "—", "GLOBAL", "unavailable", "プロバイダ未確認", "—", "—",
           "確認済みプロバイダが無いためliveにしない(枠だけ確保)。"),
-        S("AI判定(GPT-5.5)", "OpenAI", "—", {"live": "confirmed_live", "partial": "partial"}.get(rt("openai"), "missing"),
+        S(f"AI判定({_OPENAI_MODEL})", "OpenAI", "—", {"live": "confirmed_live", "partial": "partial"}.get(rt("openai"), "missing"),
           "管理者実行のみ", "paid", "ok", "ルール判定の第二意見。"),
         S("AIチェック(Gemini)", "Gemini", "—", {"live": "confirmed_live", "partial": "partial"}.get(rt("gemini"), "missing"),
           "管理者実行のみ", "paid/free", "ok", "OpenAI判断の二重チェック。"),
@@ -44973,7 +44997,7 @@ def _compose_pro_prompt(rates, jp, us, ev, al, cat=None, aij_status="disabled", 
     L.append("- The action labels above are RULE-BASED (Action Label Engine v0). They are NOT generated by GPT or Gemini.")
     _aij_human = {
         "live": "LIVE (cached admin-run result)",
-        "partial": "PARTIAL (only one provider succeeded / configured)",
+        "partial": "PARTIAL (required analysis or symbol coverage is incomplete)",
         "no_cached_result": "NOT RUN YET (keys present, no cached result — needs an admin run)",
         "missing_keys": "DISABLED (enabled but OpenAI/Gemini API keys are NOT configured on the server)",
         "disabled": "DISABLED (AI_JUDGE_ENABLED is off)",
