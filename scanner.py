@@ -26,6 +26,7 @@ import argus_ai_cost  # AI cost ledger + hard budget stops (pure math, v10.50)
 import argus_product_naming
 from scripts import analysis_migration_restore
 from functools import wraps
+import argus_fastdate
 import argus_ai_gate  # v12.2.0 AI Integrity Gate(中央実行規律・fail-closed価格・エポック)
 import argus_decision_ledger  # v12.2.0 ADDENDUM: 不変予測台帳/成果解決/適正スコア(純)
 import argus_dual_plane  # v12.2.1 Phase 0: 二面実行(リサーチ面/私的判断面・偽24x365禁止)
@@ -3255,7 +3256,7 @@ def _rate_timestamp(value, *, allow_date_only=False):
         return None, "missing"
     try:
         if allow_date_only and len(raw) == 10:
-            parsed = pytz.utc.localize(datetime.strptime(raw, "%Y-%m-%d"))
+            parsed = pytz.utc.localize(argus_fastdate.strptime(raw, "%Y-%m-%d"))
             return parsed.strftime("%Y-%m-%dT%H:%M:%SZ"), "date_only"
         epoch = _coerce_epoch(value)
         if epoch is None or not math.isfinite(float(epoch)):
@@ -4669,7 +4670,7 @@ def _bounded_source_epoch(value, *, allow_date_only=False):
     """Parse an exact timestamp, optionally accepting UTC date-only evidence."""
     if allow_date_only and isinstance(value, str) and len(value) == 10:
         try:
-            return pytz.utc.localize(datetime.strptime(
+            return pytz.utc.localize(argus_fastdate.strptime(
                 value, "%Y-%m-%d")).timestamp()
         except (TypeError, ValueError, OverflowError):
             return None
@@ -4772,7 +4773,7 @@ def _date_only_eod_source_truth(source_timestamp, *, now_epoch=None):
     text = source_timestamp.strip()
     try:
         source_epoch = pytz.utc.localize(
-            datetime.strptime(text, "%Y-%m-%d")).timestamp()
+            argus_fastdate.strptime(text, "%Y-%m-%d")).timestamp()
     except (TypeError, ValueError, OverflowError):
         return None
     now = time.time() if now_epoch is None else float(now_epoch)
@@ -5705,7 +5706,7 @@ _TDNET_METRIC_TTL_DAYS = 14
 
 def _parse_iso_z(s):
     try:
-        return datetime.strptime(str(s), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
+        return argus_fastdate.strptime(str(s), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
     except Exception:
         return None
 
@@ -6024,7 +6025,7 @@ def _events_active_list():
 
 def _parse_iso_epoch(iso):
     try:
-        return datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc).timestamp()
+        return argus_fastdate.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc).timestamp()
     except Exception:
         return None
 
@@ -6543,7 +6544,7 @@ def _ev_item(n, eid, source, stype, claim_type, claim, reliability, *,
     fresh = None
     if observed_at and now_iso:
         try:
-            o = datetime.strptime(observed_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
+            o = argus_fastdate.strptime(observed_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
             fresh = max(0, int((datetime.now(pytz.utc) - o).total_seconds()))
         except Exception:
             fresh = None
@@ -7029,7 +7030,7 @@ def _av_lastupdated_epoch(s):
         return None
     try:
         base = str(s).replace("US/Eastern", "").replace("US/E-DST", "").strip()
-        dt = datetime.strptime(base, "%Y-%m-%d %H:%M:%S")
+        dt = argus_fastdate.strptime(base, "%Y-%m-%d %H:%M:%S")
         return pytz.timezone("America/New_York").localize(dt).timestamp()
     except Exception:
         return None
@@ -7337,7 +7338,7 @@ def _jq_market_movers():
             if isinstance(row, dict) and str(
                 row.get("Date") or row.get("date") or "") == latest_date}
         prev = {}
-        ld = datetime.strptime(latest_date, "%Y-%m-%d").date()
+        ld = argus_fastdate.strptime(latest_date, "%Y-%m-%d").date()
         for back in range(1, 12):
             prior_date = ld - timedelta(days=back)
             if not argus_market_clock.is_trading_day(
@@ -7652,13 +7653,13 @@ def _event_timing(date_str, et_time, today_jst):
     fixed announcement time) keep UTC/JST null and use the published date.
     """
     if et_time:
-        et = _TZ_ET.localize(datetime.strptime(f"{date_str} {et_time}", "%Y-%m-%d %H:%M"))
+        et = _TZ_ET.localize(argus_fastdate.strptime(f"{date_str} {et_time}", "%Y-%m-%d %H:%M"))
         utc = et.astimezone(pytz.utc)
         jst = et.astimezone(TZ_JST)
         return (utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 jst.strftime("%Y-%m-%d %H:%M JST"),
                 (jst.date() - today_jst).days)
-    d = datetime.strptime(date_str, "%Y-%m-%d").date()
+    d = argus_fastdate.strptime(date_str, "%Y-%m-%d").date()
     return (None, None, (d - today_jst).days)
 
 def _escalation(days):
@@ -7744,7 +7745,7 @@ def _build_auction_events(today_jst, *, allow_provider_fetch=True):
         rows, status = [], "stale"
     out = []
     for a in rows:
-        days = (datetime.strptime(a["date"], "%Y-%m-%d").date() - today_jst).days
+        days = (argus_fastdate.strptime(a["date"], "%Y-%m-%d").date() - today_jst).days
         if days < -_EVENT_RELEASED_KEEP_DAYS or days > _EVENT_HORIZON_DAYS:
             continue
         slug = a["term"].lower().replace("-", "")
@@ -11894,7 +11895,7 @@ def _regime_etf_coverage(series, symbols, *, now_epoch=None):
         source_precision = "missing"
         if isinstance(source_raw, str) and len(source_raw) == 10:
             try:
-                source_epoch = pytz.utc.localize(datetime.strptime(
+                source_epoch = pytz.utc.localize(argus_fastdate.strptime(
                     source_raw, "%Y-%m-%d")).timestamp()
                 source_precision = "date_only_eod"
             except (TypeError, ValueError, OverflowError):
@@ -12001,7 +12002,7 @@ def _regime_cache_evidence_expiry(payload, *, now_epoch=None):
         if row.get("sourceTimestampPrecision") == "date_only_eod" \
                 and isinstance(raw, str) and len(raw) == 10:
             try:
-                source_epoch = pytz.utc.localize(datetime.strptime(
+                source_epoch = pytz.utc.localize(argus_fastdate.strptime(
                     raw, "%Y-%m-%d")).timestamp()
             except (TypeError, ValueError, OverflowError):
                 source_epoch = None
@@ -12984,7 +12985,7 @@ def _classify_symbol(meta, chg, esc, posture):
 def _quote_lag_days(date_str):
     """Calendar days between a quote's data date and today (JST), or None."""
     try:
-        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+        d = argus_fastdate.strptime(date_str, "%Y-%m-%d").date()
         return (datetime.now(TZ_JST).date() - d).days
     except Exception:
         return None
@@ -13712,7 +13713,7 @@ def _ai_restore_validate(d, now_utc=None):
     if not isinstance(d.get("labels"), list) or not d["labels"] or not d.get("asOf"):
         return None
     try:
-        run_at = datetime.strptime(d["asOf"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
+        run_at = argus_fastdate.strptime(d["asOf"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
     except Exception:
         return None
     now = now_utc or datetime.now(pytz.utc)
@@ -14360,7 +14361,7 @@ def _age_min_iso(iso):
     if not iso or not isinstance(iso, str):
         return None
     try:
-        t = datetime.strptime(iso.replace("Z", "+0000"), "%Y-%m-%dT%H:%M:%S%z")
+        t = argus_fastdate.strptime(iso.replace("Z", "+0000"), "%Y-%m-%dT%H:%M:%S%z")
         return max(0, int((datetime.now(pytz.utc) - t).total_seconds() / 60))
     except Exception:
         return None
@@ -14397,7 +14398,7 @@ def _ai_session_freshness(as_of_iso, age_min):
     if age_min <= _AI_CACHE_TTL / 60 + 5:
         return "fresh"
     try:
-        run_dt = datetime.strptime(as_of_iso.replace("Z", "+0000"), "%Y-%m-%dT%H:%M:%S%z").astimezone(TZ_JST)
+        run_dt = argus_fastdate.strptime(as_of_iso.replace("Z", "+0000"), "%Y-%m-%dT%H:%M:%S%z").astimezone(TZ_JST)
         return "persisted" if run_dt >= _last_weekday_run_dt(16, 5) else "stale"
     except Exception:
         return "persisted" if age_min < 24 * 60 else "stale"
@@ -14967,7 +14968,7 @@ def _bls_nfp_result(event):
         # reference month of THIS release = the month before the event date
         ev_d = str(event.get("eventDate") or event.get("eventTimeUtc") or "")[:10]
         try:
-            evdt = datetime.strptime(ev_d, "%Y-%m-%d")
+            evdt = argus_fastdate.strptime(ev_d, "%Y-%m-%d")
             ref = (evdt.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
         except Exception:
             ref = None
@@ -17268,7 +17269,7 @@ def _brief_news_events():
     for event in events:
         received = event.get("sourceReceivedAt")
         try:
-            age_min = (now_epoch - datetime.strptime(
+            age_min = (now_epoch - argus_fastdate.strptime(
                 str(received)[:19], "%Y-%m-%dT%H:%M:%S").replace(
                 tzinfo=pytz.utc).timestamp()) / 60.0
         except Exception:
@@ -18163,7 +18164,7 @@ def _news_event_recency_epoch(event):
         if not value:
             continue
         try:
-            return datetime.strptime(str(value), "%Y-%m-%dT%H:%M:%SZ").replace(
+            return argus_fastdate.strptime(str(value), "%Y-%m-%dT%H:%M:%SZ").replace(
                 tzinfo=pytz.utc).timestamp()
         except Exception:
             continue
@@ -18416,7 +18417,7 @@ def _news_repair_digest_containers():
 
 def _news_iso_epoch(value):
     try:
-        return datetime.strptime(str(value), "%Y-%m-%dT%H:%M:%SZ").replace(
+        return argus_fastdate.strptime(str(value), "%Y-%m-%dT%H:%M:%SZ").replace(
             tzinfo=pytz.utc).timestamp()
     except Exception:
         return None
@@ -18787,7 +18788,7 @@ def _news_translation_tick():
     backoff = min(2 ** min(state["consecutiveFailures"], 5), 32)
     if state["consecutiveFailures"] and state.get("lastRunAt"):
         try:
-            last = datetime.strptime(
+            last = argus_fastdate.strptime(
                 state["lastRunAt"], "%Y-%m-%dT%H:%M:%SZ").replace(
                 tzinfo=pytz.utc).timestamp()
             if time.time() - last < backoff * 180:
@@ -18955,7 +18956,7 @@ def api_argus_news_intelligence():
         try:
             _received = event.get("sourceReceivedAt")
             if _received:
-                _received_epoch = datetime.strptime(
+                _received_epoch = argus_fastdate.strptime(
                     _received, "%Y-%m-%dT%H:%M:%SZ").replace(
                     tzinfo=pytz.utc).timestamp()
                 event["staleness"] = argus_news_intelligence.assess_staleness(
@@ -19430,7 +19431,7 @@ def get_news_radar():
             seen_iso = None
             if isinstance(seen_raw, str):
                 try:
-                    seen_iso = datetime.strptime(
+                    seen_iso = argus_fastdate.strptime(
                         seen_raw, "%Y%m%dT%H%M%SZ").replace(
                             tzinfo=pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 except (TypeError, ValueError):
@@ -20249,7 +20250,7 @@ def _official_events_track():
             offsets = {"same_day": (i0, i0 + 1), "next_session": (i0 - 1, i0),
                        "day3": (i0 - 3, i0), "day5": (i0 - 5, i0)}
             try:
-                reaction_session = datetime.strptime(d0, "%Y-%m-%d").date()
+                reaction_session = argus_fastdate.strptime(d0, "%Y-%m-%d").date()
                 move_started_at = argus_market_clock.market_session_bounds(
                     argus_market_clock.JP_EQUITY,
                     reaction_session).get("regularOpenUtc")
@@ -20997,7 +20998,7 @@ def get_cause_attribution(symbol, market="JP", explain=False):
     clock_state = argus_market_clock.market_session(clock_market, now_utc)
     move_started = None
     try:
-        session_date = datetime.strptime(
+        session_date = argus_fastdate.strptime(
             str(clock_state.get("marketDate")), "%Y-%m-%d").date()
         bounds = argus_market_clock.market_session_bounds(
             clock_market, session_date)
@@ -35633,7 +35634,7 @@ def _chart_weekly_rows(rows):
     weekly = {}
     for row in sorted(rows, key=lambda x: str(x.get("date") or "")):
         try:
-            dt = datetime.strptime(str(row.get("date"))[:10], "%Y-%m-%d")
+            dt = argus_fastdate.strptime(str(row.get("date"))[:10], "%Y-%m-%d")
         except (TypeError, ValueError):
             continue
         key = f"{dt.isocalendar().year}-W{dt.isocalendar().week:02d}"
@@ -36341,7 +36342,7 @@ def _breadth_lag_trading_days():
                 argus_market_clock.JP_EQUITY, datetime.now(timezone.utc))
         except argus_market_clock.CalendarUnavailableError:
             return None
-        cursor = datetime.strptime(newest, "%Y-%m-%d").date()
+        cursor = argus_fastdate.strptime(newest, "%Y-%m-%d").date()
         if cursor >= target:
             return 0
         lag = 0
@@ -37347,7 +37348,7 @@ def _jp_market_engine_margin_1570_rows(*, fetch=False):
         if len(date) != 10 or short_volume <= 0:
             continue
         try:
-            available = (datetime.strptime(date, "%Y-%m-%d").date()
+            available = (argus_fastdate.strptime(date, "%Y-%m-%d").date()
                          + timedelta(days=7)).isoformat() + "T00:00:00Z"
         except ValueError:
             continue
@@ -37503,7 +37504,7 @@ def _jp_market_engine_first_tradable_session(disclosed_date, disclosed_time):
     unknown time → treated as after-close; calendar gap → (None, reason)."""
     flags = {}
     try:
-        base = datetime.strptime(disclosed_date, "%Y-%m-%d").date()
+        base = argus_fastdate.strptime(disclosed_date, "%Y-%m-%d").date()
     except (TypeError, ValueError):
         return None, {"reason": "invalid_disclosure_date"}
     time_known = bool(re.fullmatch(r"\d{2}:\d{2}(:\d{2})?",
@@ -38222,8 +38223,8 @@ def _jquants_calendar_dates(start_date, end_date, proof):
     # window.  Longer historical windows can return HTTP 400 even on the Premium
     # plan, so reuse that provider-confirmed contract instead of guessing a
     # larger range. Pagination is still followed within every bounded window.
-    cursor = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d")
+    cursor = argus_fastdate.strptime(start_date, "%Y-%m-%d")
+    end = argus_fastdate.strptime(end_date, "%Y-%m-%d")
     while cursor <= end:
         window_end = min(cursor + timedelta(days=6), end)
         frm = cursor.strftime("%Y-%m-%d")
@@ -38237,7 +38238,7 @@ def _jquants_calendar_dates(start_date, end_date, proof):
 def _jquants_discover_entitlement_start(as_of_date, proof):
     """Find the first provider-accessible trading day at the rolling boundary."""
     boundary = argus_foundation_jobs.rolling_entitlement_start(as_of_date)
-    cursor = datetime.strptime(boundary, "%Y-%m-%d")
+    cursor = argus_fastdate.strptime(boundary, "%Y-%m-%d")
     for offset in range(15):
         candidate = (cursor + timedelta(days=offset)).strftime("%Y-%m-%d")
         try:
@@ -38259,7 +38260,7 @@ def _jquants_discover_entitlement_start(as_of_date, proof):
 def _jquants_discover_production_start(as_of_date, proof):
     """Find the first official session in the rolling five-year core window."""
     boundary = argus_foundation_jobs.production_calendar_start(as_of_date)
-    cursor = datetime.strptime(boundary, "%Y-%m-%d")
+    cursor = argus_fastdate.strptime(boundary, "%Y-%m-%d")
     for offset in range(15):
         candidate = (cursor + timedelta(days=offset)).strftime("%Y-%m-%d")
         rows = _jquants_exact_date_rows(_jquants_secure_rows(
@@ -38628,7 +38629,7 @@ def _breadth_worker_seed_state(job_id):
                    datetime.now(TZ_JST).strftime("%Y-%m-%d"))[:10]
     production_boundary = argus_foundation_jobs.production_calendar_start(
         end_date)
-    seed_boundary = (datetime.strptime(production_boundary, "%Y-%m-%d")
+    seed_boundary = (argus_fastdate.strptime(production_boundary, "%Y-%m-%d")
                      - timedelta(days=14)).strftime("%Y-%m-%d")
     seed = argus_market_ledger.empty_state()
     seed["observations"] = [row for row in
@@ -38659,7 +38660,7 @@ def _jquants_breadth_finalize_worker(job_id):
             raise RuntimeError("jquants_not_configured_in_runtime")
         end_date = datetime.now(TZ_JST).strftime("%Y-%m-%d")
         entitlement_start, _ = _jquants_discover_entitlement_start(end_date, proof)
-        calendar_start = (datetime.strptime(end_date, "%Y-%m-%d")
+        calendar_start = (argus_fastdate.strptime(end_date, "%Y-%m-%d")
                           - timedelta(days=45)).strftime("%Y-%m-%d")
         calendar_dates = _jquants_calendar_dates(calendar_start, end_date, proof)
         live_bars = {}
@@ -38976,9 +38977,9 @@ def _breadth_resume_comparable_closes(start_date, proof):
     Seed sessions never become new ledger observations. The left boundary is
     explicit: a close absent throughout this window remains unknown.
     """
-    seed_start = (datetime.strptime(start_date, "%Y-%m-%d")
+    seed_start = (argus_fastdate.strptime(start_date, "%Y-%m-%d")
                   - timedelta(days=45)).strftime("%Y-%m-%d")
-    seed_end = (datetime.strptime(start_date, "%Y-%m-%d")
+    seed_end = (argus_fastdate.strptime(start_date, "%Y-%m-%d")
                 - timedelta(days=1)).strftime("%Y-%m-%d")
     # Historical calendar availability is narrower than price entitlement.
     # Exact dated bars prove sessions, including historical resume windows.
@@ -39048,7 +39049,7 @@ def _jquants_breadth_worker_process_body(job_id):
                                checkpoint={"providerProof": proof})
         if not _JQUANTS_API_KEY:
             raise RuntimeError("jquants_not_configured_in_runtime")
-        recent_start = (datetime.strptime(requested_end_date, "%Y-%m-%d")
+        recent_start = (argus_fastdate.strptime(requested_end_date, "%Y-%m-%d")
                         - timedelta(days=45)).strftime("%Y-%m-%d")
         recent_dates = _jquants_calendar_dates(
             recent_start, requested_end_date, proof)
@@ -39089,7 +39090,7 @@ def _jquants_breadth_worker_process_body(job_id):
         # history does not extend to the 2008 Premium price start, so historical
         # trading dates are proven by the existence of official adjusted daily
         # bars, not by inventing holiday rows or treating weekdays as trades.
-        calendar_probe_start = (datetime.strptime(end_date, "%Y-%m-%d")
+        calendar_probe_start = (argus_fastdate.strptime(end_date, "%Y-%m-%d")
                                 - timedelta(days=6)).strftime("%Y-%m-%d")
         _jquants_calendar_dates(calendar_probe_start, end_date, proof)
         candidate_dates = argus_foundation_jobs.weekday_candidates(
@@ -40015,7 +40016,7 @@ def _mover_move_started_iso(market, now_utc=None):
     if state.get("isTradingDay") is not True:
         return None
     try:
-        session_date = datetime.strptime(
+        session_date = argus_fastdate.strptime(
             str(state.get("marketDate")), "%Y-%m-%d").date()
         opened = argus_market_clock.market_session_bounds(
             clock_market, session_date).get("regularOpenUtc")
@@ -41380,7 +41381,7 @@ def _coerce_epoch(ex):
             pass
         for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
             try:
-                return datetime.strptime(ex, fmt).replace(tzinfo=pytz.utc).timestamp()
+                return argus_fastdate.strptime(ex, fmt).replace(tzinfo=pytz.utc).timestamp()
             except Exception:
                 continue
     return None
@@ -42337,7 +42338,7 @@ def _fred_vix_history_dated(n=2600):
                 value = float(raw)
             except (TypeError, ValueError):
                 continue
-            available = (datetime.strptime(date, "%Y-%m-%d")
+            available = (argus_fastdate.strptime(date, "%Y-%m-%d")
                          + timedelta(days=1)).strftime("%Y-%m-%d")
             rows.append({"date": date, "value": value,
                          "availableFrom": available})
@@ -42925,7 +42926,7 @@ def _bounded_market_session_date(value, market, max_calendar_days, *,
         if not isinstance(fmt, str) or not fmt:
             continue
         try:
-            candidate = datetime.strptime(value, fmt).date()
+            candidate = argus_fastdate.strptime(value, fmt).date()
         except (TypeError, ValueError):
             continue
         if candidate.strftime(fmt) == value:
@@ -43048,7 +43049,7 @@ def _entry_history_source_usable(history, market, *, now_epoch=None):
     if not isinstance(raw, str) or len(raw) != 10:
         return False, "malformed_latest_session_date"
     try:
-        latest = datetime.strptime(raw, "%Y-%m-%d").date()
+        latest = argus_fastdate.strptime(raw, "%Y-%m-%d").date()
     except (TypeError, ValueError):
         return False, "malformed_latest_session_date"
     now = time.time() if now_epoch is None else float(now_epoch)
@@ -43351,7 +43352,7 @@ def _closepin_summary():
 def _days_since_date(date_str):
     """Calendar days since a 'YYYY-MM-DD' string; None if unparseable."""
     try:
-        d = datetime.strptime(date_str[:10], "%Y-%m-%d").date()
+        d = argus_fastdate.strptime(date_str[:10], "%Y-%m-%d").date()
         return (datetime.now(TZ_JST).date() - d).days
     except Exception:
         return None
@@ -43363,7 +43364,7 @@ def _ledger_health():
     # how many weekdays since a date (the real expected cadence)
     def weekday_gap(date_str):
         try:
-            d = datetime.strptime(date_str[:10], "%Y-%m-%d").date()
+            d = argus_fastdate.strptime(date_str[:10], "%Y-%m-%d").date()
         except Exception:
             return None
         n, c = 0, d
@@ -43647,7 +43648,7 @@ def _canonical_truth_iso(value, market, *, date_means_close=False):
             if len(raw) == 10:
                 if not date_means_close:
                     return None
-                day = datetime.strptime(raw, "%Y-%m-%d")
+                day = argus_fastdate.strptime(raw, "%Y-%m-%d")
                 if market == "JP":
                     parsed = TZ_JST.localize(day.replace(hour=15, minute=30))
                 elif market == "US":
@@ -44621,18 +44622,23 @@ def get_prediction_snapshot():
 
 _PREDICTION_SNAPSHOT_CACHE = {"data": None, "expires": 0.0}
 
-@app.route("/api/argus/prediction-snapshot")
-def api_argus_prediction_snapshot():
-    # Cache 90s: the v2 snapshot fetches ~11 JP names (4 sensors + 7 benchmark) +
-    # US/ETF, so an uncached public endpoint would hammer J-Quants (429s). The
-    # daily recording reads at most once per cache window, so freshness is fine.
+def _prediction_snapshot_cached_build():
+    # Recheck under the shared flight: a request may arrive just as a prior
+    # builder publishes. Start the 90-second TTL after a successful build.
     now = time.time()
     if _PREDICTION_SNAPSHOT_CACHE["data"] and now < _PREDICTION_SNAPSHOT_CACHE["expires"]:
-        return jsonify(_PREDICTION_SNAPSHOT_CACHE["data"])
+        return _PREDICTION_SNAPSHOT_CACHE["data"]
     snap = get_prediction_snapshot()
     _PREDICTION_SNAPSHOT_CACHE["data"] = snap
-    _PREDICTION_SNAPSHOT_CACHE["expires"] = now + 90
-    return jsonify(snap)
+    _PREDICTION_SNAPSHOT_CACHE["expires"] = time.time() + 90
+    return snap
+
+
+@app.route("/api/argus/prediction-snapshot")
+def api_argus_prediction_snapshot():
+    # Client retries join one snapshot build instead of launching another
+    # provider/observation projection after the first socket times out.
+    return _single_flight_json("prediction-snapshot", _prediction_snapshot_cached_build)
 
 @app.route("/api/argus/sensor-quotes")
 def api_argus_sensor_quotes():
@@ -45345,7 +45351,7 @@ def _sec_filing_authority(row, *, now_epoch=None):
     if not isinstance(raw, str):
         return None
     try:
-        parsed = datetime.strptime(raw, "%Y-%m-%d").date()
+        parsed = argus_fastdate.strptime(raw, "%Y-%m-%d").date()
     except (TypeError, ValueError):
         return None
     if parsed.isoformat() != raw:
@@ -45535,7 +45541,7 @@ def _jquants_catalysts():
 
 def _days_until(date_str, today):
     try:
-        return (datetime.strptime(date_str[:10], "%Y-%m-%d").date() - today).days
+        return (argus_fastdate.strptime(date_str[:10], "%Y-%m-%d").date() - today).days
     except Exception:
         return None
 
@@ -45572,14 +45578,14 @@ def get_catalysts_snapshot():
             if (f.get("decisionUsable") is True
                     and f.get("form") in ("8-K", "10-Q", "10-K")
                     and f.get("filingDate")):
-                d = (today - datetime.strptime(f["filingDate"], "%Y-%m-%d").date()).days
+                d = (today - argus_fastdate.strptime(f["filingDate"], "%Y-%m-%d").date()).days
                 if d >= 0 and (recent_filing_days is None or d < recent_filing_days):
                     recent_filing_days = d
         n24 = 0
         for n in news:
             if n.get("publishedAt"):
                 try:
-                    age = (datetime.now(pytz.utc) - datetime.strptime(n["publishedAt"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)).total_seconds()
+                    age = (datetime.now(pytz.utc) - argus_fastdate.strptime(n["publishedAt"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)).total_seconds()
                     if age <= 86400:
                         n24 += 1
                 except Exception:
@@ -45622,7 +45628,7 @@ def get_catalysts_snapshot():
         disc_days = None
         if disc and disc.get("decisionUsable") is True and disc.get("date"):
             try:
-                disc_days = (today - datetime.strptime(
+                disc_days = (today - argus_fastdate.strptime(
                     disc["date"], "%Y-%m-%d").date()).days
                 if disc_days < 0:
                     disc_days = None
