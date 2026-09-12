@@ -37,5 +37,10 @@ export interface JapanMarketComparison {
     flatThresholdPct: number;
   };
   scaleExplanation: string;
+  valuationEvidence?: {
+    date: string; eps: number; per: number; epsKind: string;
+    knownAt: string; publishedAt: string | null; sourceRef: string;
+    sourceResponseSha256: string | null;
+  };
   limitations: string[];
 }

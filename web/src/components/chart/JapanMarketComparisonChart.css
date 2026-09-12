@@ -27,6 +27,8 @@
 .jp-comparison__details h3 { color: #dce5eb; font-size: 14px; font-weight: 500; margin-bottom: 6px; }
 .jp-comparison__details article { padding-top: 12px; }
 .jp-comparison__details p { margin: 8px 0; }
+.jp-comparison__details a { color: #94c5de; text-underline-offset: 3px; }
+.jp-comparison__details a:focus-visible { outline: 2px solid #94c5de; outline-offset: 3px; }
 .jp-comparison__details ul { padding-left: 20px; }
 @media (min-width: 720px) { .jp-comparison__legend { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (prefers-reduced-motion: reduce) { .jp-comparison * { transition: none; } }

@@ -132,6 +132,7 @@ import argus_analysis_history_backup
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
 import jp_market_price_paths
+import jp_market_valuation
 import jp_market_source_adapters
 import jp_market_dynamics
 import jp_market_events
@@ -37806,6 +37807,15 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
     return rows
 
 
+_JP_INDEX_VALUATION = jp_market_valuation.ValuationCache()
+
+
+def _jp_index_valuation_warm():
+    path = (os.path.join(_DURABILITY_PATHS["root"], "jp_market_valuation.sqlite3")
+            if _cost_policy_durable_enabled() else None)
+    _JP_INDEX_VALUATION.warm(path, get=requests.get)
+
+
 def _jp_market_comparison_cached(horizon):
     """Bounded cached-only chart calculation; no fetch, AI or persistence."""
     cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}
@@ -37832,7 +37842,8 @@ def _jp_market_comparison_cached(horizon):
                 missing_calendar = True
         result = jp_market_price_paths.cached_index_comparison(
             rows, cutoff=cutoff, session_dates=sessions, horizon_sessions=horizon,
-            acquired_at=cached.get("acquiredAt"))
+            acquired_at=cached.get("acquiredAt"), valuation=_JP_INDEX_VALUATION.snapshot(cutoff))
+        result["valuationAcquisition"] = dict(_JP_INDEX_VALUATION.status)
         if missing_calendar and result.get("comparison"):
             result["comparison"]["limitations"].append(
                 "公式営業日表の範囲外の過去局面は、比較候補から除外しています。")
@@ -38413,6 +38424,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         credit_rows = []
     if warm:
         _cftc_jpy_autorefresh()
+        _jp_index_valuation_warm()
         _jp_internals_warm()
     margin_rows = _jp_market_engine_margin_1570_rows(fetch=warm)
     rs_proxy = _jp_market_engine_relative_strength_proxy()
