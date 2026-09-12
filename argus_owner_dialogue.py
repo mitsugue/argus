@@ -6,7 +6,7 @@ import json
 import math
 import re
 from collections.abc import Mapping
-import argus_market_brief
+import argus_explanation_contract
 from argus_product_naming import require_allowed
 
 SCHEMA='argus-owner-dialogue-context-v1'
@@ -144,7 +144,7 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
         raise ValueError('market_context_unavailable')
     if public['contextId']!=digest({k:v for k,v in public.items() if k!='contextId'}):raise ValueError('market_context_integrity')
     facts=deepcopy(public.get('facts') or [])
-    if len(facts)>argus_market_brief.UNIFIED_FACT_LIMIT or any(not isinstance(f,dict) for f in facts):raise ValueError('market_facts_invalid')
+    if len(facts)>argus_explanation_contract.UNIFIED_FACT_LIMIT or any(not isinstance(f,dict) for f in facts):raise ValueError('market_facts_invalid')
     # Only the requested horizon's calculation facts enter the private explanation.
     facts=[f for f in facts if not str((f.get('provenance') or {}).get('eventId','')).startswith(('market-internals-','n225-price-path-'))
         or str((f.get('provenance') or {}).get('eventId','')).endswith('-'+str(horizon))]
@@ -199,7 +199,7 @@ def prompt(context):
 
 def validate_answer(value, context, *, diagnostic=None):
     require_allowed(value)
-    answer=argus_market_brief.validate_unified_ai(value,context,diagnostic=diagnostic)
+    answer=argus_explanation_contract.validate_unified_ai(value,context,diagnostic=diagnostic)
     if answer is None:return None
     hypothesis_ids={f['evidenceId'] for f in context['facts']+context['previousFacts'] if f.get('evidenceKind')=='HYPOTHESIS'}
     for row in answer['sections'].values():

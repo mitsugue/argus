@@ -202,13 +202,18 @@ def synchronize(path, remote, *, last_verified_head=None):
 
 class GitHubStore:
     """Bounded Contents API on the already configured authenticated connection."""
+    write_message = 'Save immutable public market analysis recovery'
     def __init__(self, *, repo, headers, http):
         if not isinstance(repo,str) or len(repo.split('/')) != 2 or any(not p or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-' for c in p) for p in repo.split('/')):
             raise ValueError('history_remote_repository_invalid')
         self.base = 'https://api.github.com/repos/' + repo + '/contents/'
         self.headers = dict(headers); self.http = http
 
+    def _check_deadline(self):
+        pass
+
     def get(self, path):
+        self._check_deadline()
         response = self.http('GET', self.base + path, headers=self.headers, timeout=(5,20),
                              allow_redirects=False, stream=True)
         try:
@@ -216,6 +221,7 @@ class GitHubStore:
             if response.status_code != 200: raise ValueError('history_remote_read_unavailable')
             parts = []; total = 0
             for part in response.iter_content(32768):
+                self._check_deadline()
                 total += len(part)
                 if total > 1024 * 1024: raise ValueError('history_remote_response_bound')
                 parts.append(part)
@@ -230,7 +236,7 @@ class GitHubStore:
 
     def put(self, path, raw, *, expected_version):
         if len(raw) > CHUNK_BYTES: raise ValueError('history_remote_write_bound')
-        body = {'message': 'Save immutable public market analysis recovery',
+        body = {'message': self.write_message,
                 'content': base64.b64encode(raw).decode('ascii')}
         if expected_version is not None: body['sha'] = expected_version
         response = self.http('PUT', self.base + path, headers=self.headers, json=body, timeout=(5,20), allow_redirects=False)

@@ -125,6 +125,8 @@ import jp_market_internals
 import jp_market_positioning
 import argus_analysis_history
 import argus_owner_dialogue_api
+import argus_owner_dialogue_recovery
+import argus_owner_dialogue_backup
 import argus_analysis_history_backup
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
@@ -17491,6 +17493,7 @@ def _market_brief_history_outcomes():
 
 def _market_brief_worker_tick():
     """Independent scheduler lane: news intake latency cannot postpone the view."""
+    _OWNER_DIALOGUE_RECOVERY.tick()
     if not _MARKET_BRIEF_WORKER_LOCK.acquire(blocking=False):
         return {"status": "ALREADY_RUNNING"}
     try:
@@ -17751,9 +17754,29 @@ def _market_brief_refresh(allow_ai=True):
     return brief
 
 
+def _owner_dialogue_path():
+    return os.path.join(_DURABILITY_PATHS["root"], "owner_dialogue.sqlite3") if _cost_policy_durable_enabled() else None
+
+
+def _owner_dialogue_recovery_configuration():
+    fields=("ARGUS_LAYER2B_PRIVATE_REPO", "ARGUS_LAYER2B_PRIVATE_TOKEN",
+            "ARGUS_REMOTE_RECOVERY_CURRENT_KEY_ID", "ARGUS_REMOTE_RECOVERY_CURRENT_KEY",
+            "ARGUS_REMOTE_RECOVERY_PREVIOUS_KEY_ID", "ARGUS_REMOTE_RECOVERY_PREVIOUS_KEY")
+    values=[os.environ.get(field, "") for field in fields]
+    return any(values), hashlib.sha256(json.dumps(values).encode()).hexdigest()
+
+
+_OWNER_DIALOGUE_RECOVERY = argus_owner_dialogue_recovery.RecoveryWorker(
+    storage_path=_owner_dialogue_path, configuration=_owner_dialogue_recovery_configuration,
+    keys=argus_remote_recovery.configured_keys,
+    remote=lambda: argus_owner_dialogue_backup.PrivateGitHubStore(
+        repo=os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", ""), headers=_gh_private_headers(), http=requests.request),
+    now=_ai_now_iso)
+
 argus_owner_dialogue_api.register(app, authorize=_require_owner_sync,
-    storage_path=lambda: os.path.join(_DURABILITY_PATHS["root"], "owner_dialogue.sqlite3") if _cost_policy_durable_enabled() else None,
-    market_brief=lambda: _MARKET_BRIEF.get("data"), generate=_openai_prose, now=_ai_now_iso)
+    storage_path=_owner_dialogue_path, market_brief=lambda: _MARKET_BRIEF.get("data"),
+    generate=_openai_prose, now=_ai_now_iso,
+    recovery_status=_OWNER_DIALOGUE_RECOVERY.status, recovery_trigger=_OWNER_DIALOGUE_RECOVERY.tick)
 
 
 @app.route("/api/argus/market-brief")

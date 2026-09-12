@@ -8,10 +8,21 @@ import argus_owner_dialogue as dialogue
 import argus_owner_dialogue_store as store
 
 
-def register(app, *, authorize, storage_path, market_brief, generate, now):
+def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None):
     boot_id = str(uuid.uuid4())
     lock = threading.Lock()
     save_failures = {}
+
+    def remote_status():
+        return recovery_status() if recovery_status else {'configured':False,'generationReady':True,'remoteRecoveryVerified':False}
+
+    def decorate(item):
+        return {**item,'remoteBackup':remote_status()} if item else item
+
+    def changed():
+        if recovery_trigger:
+            try:recovery_trigger(force=True)
+            except Exception:pass
 
     def worker(path, identity, context):
         diagnostic = {}; validation = {}
@@ -28,6 +39,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now):
             store.complete(path, identity, result)
             if store.read(path, identity, boot_id)['result']['status'] != result['status']:
                 raise ValueError('dialogue_completion_readback')
+            changed()
         except Exception:
             # Retain an already paid result for a later explicit status request.
             # Never call the provider again to recover a failed local write.
@@ -53,7 +65,9 @@ def register(app, *, authorize, storage_path, market_brief, generate, now):
         action=body.get('action')
         try:
             if action=='history':
-                return response(store.history(path,boot_id,before=body.get('before')))
+                page=store.history(path,boot_id,before=body.get('before'))
+                state=remote_status()
+                return response({**page,'items':[{**item,'remoteBackup':state} for item in page['items']],'remoteBackup':state})
             identity=store.request_id(body.get('requestId'))
             if action=='save':
                 with lock:
@@ -63,13 +77,14 @@ def register(app, *, authorize, storage_path, market_brief, generate, now):
                         if store.read(path,identity,boot_id)['result']['status']!=unsaved['status']:
                             raise ValueError('dialogue_completion_readback')
                         save_failures.pop(identity,None)
+                        changed()
                 item=store.read(path,identity,boot_id)
-                return response(item or {'error':'not_found'},200 if item else 404)
+                return response(decorate(item) or {'error':'not_found'},200 if item else 404)
             if action=='status':
                 item=store.read(path,identity,boot_id)
                 with lock: unsaved=deepcopy(save_failures.get(identity))
                 if unsaved and item: item.update(status='SAVE_FAILED',result=unsaved,persistenceStatus='SAVE_FAILED')
-                return response(item or {'error':'not_found'},200 if item else 404)
+                return response(decorate(item) or {'error':'not_found'},200 if item else 404)
             if action!='ask': return response({'error':'unknown_action'},400)
             fields={'action','ownerToken','requestId','baseContextId','symbol','market','horizon','question','owner','hypothesis','previousRequestId'}
             if set(body)-fields: return response({'error':'unsupported_request_fields'},400)
@@ -79,7 +94,10 @@ def register(app, *, authorize, storage_path, market_brief, generate, now):
                 old=store.read(path,identity,boot_id)
                 if old:
                     if old['inputHash']!=input_hash: return response({'error':'dialogue_request_conflict'},409)
-                    return response(old)
+                    return response(decorate(old))
+                if not remote_status()['generationReady']:
+                    changed()
+                    return response({'error':'dialogue_recovery_pending','remoteBackup':remote_status()},503)
                 current=deepcopy(market_brief() or {})
                 context_id=(current.get('unifiedContext') or {}).get('contextId')
                 if not context_id or body.get('baseContextId')!=context_id:
@@ -96,11 +114,12 @@ def register(app, *, authorize, storage_path, market_brief, generate, now):
                 created=store.submit(path,identity=identity,input_hash=input_hash,boot_id=boot_id,context=context)
                 item=store.read(path,identity,boot_id)
                 if created:
+                    changed()
                     try: threading.Thread(target=worker,args=(path,identity,context),daemon=True,name='owner-dialogue').start()
                     except Exception:
                         store.complete(path,identity,{'status':'FAILED','answer':None,'completedAt':now(),'errorClass':'WorkerStartFailed'})
                         return response(store.read(path,identity,boot_id),503)
-                return response(item,202)
+                return response(decorate(item),202)
         except ValueError as exc:
             reason=str(exc)
             known={'dialogue_busy','dialogue_request_conflict'}

@@ -166,3 +166,9 @@ def test_repo_grep_tripwire_frontend_authority_files():
             text = path.read_text()
             for banned in ("useMarketBrief", "market-brief", "MarketBrief"):
                 assert banned not in text, (str(path), banned)
+
+
+def test_shared_explanation_contract_importers_are_only_explanation_modules():
+    importers={path.name for path in ROOT.glob('*.py')
+               if not path.name.startswith('test_') and 'argus_explanation_contract' in _imports_of(path)}
+    assert importers=={'argus_market_brief.py','argus_owner_dialogue.py'}
