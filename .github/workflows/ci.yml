@@ -51,6 +51,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Check index chart subject isolation
         run: node web/scripts/index-chart-isolation.test.mjs
+      - name: Check news presentation hierarchy
+        run: node web/scripts/news-presentation.test.mjs
       - name: Check historical news reader
         run: node web/scripts/news-history.test.mjs
       - name: Build
