@@ -362,6 +362,23 @@ def _cost_policy_restore_durable():
     except Exception as exc:
         _COST_POLICY_DURABLE["lastError"] = type(exc).__name__
         return 0
+    # A separately preserved pre-upgrade snapshot can be newer than the last
+    # daily publication. Import it only during startup, never on public reads.
+    # Once included, the ordinary encrypted checkpoint carries its provenance.
+    try:
+        migration_path = os.path.join(os.path.dirname(path), "ai_cost_migration_baseline.json")
+        with open(migration_path, "rb") as handle:
+            migration_raw = handle.read(4 * 1024 * 1024 + 1)
+        if len(migration_raw) > 4 * 1024 * 1024:
+            raise ValueError("cost_migration_too_large")
+        saved["legacyAiCost"] = argus_ai_cost.import_legacy_snapshot(
+            saved.get("legacyAiCost"), json.loads(migration_raw))
+        _COST_POLICY_DURABLE["migrationError"] = None
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        # A malformed optional migration must not discard valid core usage.
+        _COST_POLICY_DURABLE["migrationError"] = type(exc).__name__
     added = 0
     with _COST_POLICY_LOCK:
         live = argus_cost_policy.normalize_state(_COST_POLICY)
@@ -13718,6 +13735,7 @@ def _ai_cost_snapshot():
             "writeThroughEnabled": _COST_POLICY_DURABLE.get("enabled") is True,
             "lastPersistAt": _COST_POLICY_DURABLE.get("lastPersistAt"),
             "lastError": _COST_POLICY_DURABLE.get("lastError"),
+            "migrationError": _COST_POLICY_DURABLE.get("migrationError"),
             "checkpointLastError": _COST_CHECKPOINT_STATE.get("lastError"),
         },
         "asOf": _ai_now_iso(), "estimated": True,
@@ -13735,6 +13753,7 @@ def _ai_cost_snapshot():
         "noteJa": ("コストはトークン使用量と設定単価による推定値です。"
                    "過去分は保存済み報告値で、移行前の全履歴を再構成した総額ではありません。"
                    + ("費用台帳の保存エラーを確認してください。" if _COST_POLICY_DURABLE.get("lastError") else "")
+                   + ("更新前の費用原本を確認できていません。" if _COST_POLICY_DURABLE.get("migrationError") else "")
                    + ("ARGUS側上限で停止します。" if _AI_BUDGET_ENFORCED else
                       "オーナー指示により費用による停止を解除中です。")),
     }

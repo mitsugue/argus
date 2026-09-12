@@ -276,3 +276,19 @@ def test_full_checkpoint_cost_capture_is_detached_and_retains_accounting(monkeyp
     # the exact prefix; later local restoration merges rather than overwrites it.
     import inspect
     assert '_cost_policy_checkpoint_snapshot' in inspect.getsource(scanner._osint_persist_locked)
+
+
+def test_pre_upgrade_baseline_import_uses_existing_startup_restore(monkeypatch, tmp_path):
+    import json
+    scanner = _runtime(monkeypatch, tmp_path)
+    scanner._ai_record_prose_cost('gpt-6-astra', 1, 1, 0.3)
+    (tmp_path / 'ai_cost_migration_baseline.json').write_text(json.dumps(_prior()))
+    scanner._cost_policy_restore_durable()
+    assert scanner._ai_cost_snapshot()['monthSpentUsd'] == 0.5
+    scanner._cost_policy_restore_durable()
+    assert scanner._ai_cost_snapshot()['monthSpentUsd'] == 0.5
+    assert scanner._cost_policy_checkpoint_snapshot()['legacyAiCost']['legacyMonths']['2026-09']['micros'] == 200000
+    (tmp_path / 'ai_cost_migration_baseline.json').write_text('{bad')
+    scanner._cost_policy_restore_durable()
+    assert scanner._ai_cost_snapshot()['monthSpentUsd'] == 0.5
+    assert scanner._ai_cost_snapshot()['accountingDurability']['migrationError'] == 'JSONDecodeError'
