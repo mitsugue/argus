@@ -243,14 +243,20 @@ const familyStateJa = (row: { status?: string; conditionMet?: boolean | null }):
 // (numbers/probabilities can never be invented — server-side validator).
 const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total: number } | null;
   cutoff?: string | null; market?: string }> = ({ signals, cutoff, market }) => {
-  const { brief } = useMarketBrief();
+  const { brief, error, loading, retry } = useMarketBrief();
   // v13.5.62 (GPT review item 4): the brief's 成立x/7 chip is rendered from the
   // SAME market-view document as the MARKET SIGNALS header, stamped with its
   // information cutoff, so the two never show different counts.
   const cutoffJa = cutoff ? new Date(cutoff).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }) : null;
   const chartChip = signals ? `成立 ${signals.activeCount}/${signals.total}${cutoffJa ? `（${cutoffJa} 時点）` : ''}`
     : market === 'US' ? '米国: 7条件は適用外（類似局面のみ）' : brief?.chips.chart;
-  if (!brief || brief.status === 'unavailable') return null;
+  const updateState = error ? <p role="status" className="at-brief__update">
+    {brief ? '見立てを更新できません。最後に取得した説明を表示しています。' : '見立てを取得できません。'}
+    {brief && <small> 要約作成 {new Date(brief.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}</small>}
+    <button type="button" onClick={retry} disabled={loading}>再読込</button>
+  </p> : null;
+  if (!brief) return <div className="at-brief" aria-label="ARGUSの今日の見立て">
+    {updateState ?? <p role="status">見立てを確認中です。</p>}</div>;
   const unified = brief.unifiedSummary;
   const hasSixSections = unified && ['view', 'reasons', 'changes', 'impact', 'next', 'invalidation'].every(key => {
     const row = unified.sections?.[key as keyof typeof unified.sections];
@@ -265,6 +271,7 @@ const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total: number
     return <div className="at-brief at-unified-brief" aria-label="ARGUSの今日の見立て" data-argus-contract="unified-brief-v1">
       <small>ARGUSの今日の見立て · {brief.aiDiagnostics?.completedAt
         ? new Date(brief.aiDiagnostics.completedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '生成時刻を確認中'}</small>
+      {updateState}
       <p className="at-unified-brief__view">{unified.sections.view.textJa}</p>
       <div className="at-brief__rows">{(Object.keys(labels) as Array<keyof typeof labels>).filter(key => key !== 'view').map(key =>
         <div key={key}><b>{labels[key]}</b><span>{unified.sections[key].textJa}
@@ -278,7 +285,14 @@ const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total: number
             const current = Array.isArray(brief.unifiedContext?.facts) ? brief.unifiedContext.facts : [];
             const prior = Array.isArray(brief.unifiedContext?.previousFacts) ? brief.unifiedContext.previousFacts : [];
             const fact = current.find(row => row.evidenceId === id) ?? prior.find(row => row.evidenceId === id);
-            return <p key={id}>{fact?.text ?? '参照元を確認できません'} <small>{fact?.source ?? ''}</small></p>;
+            return <div key={id} className="at-brief-source"><p>{fact?.text ?? '参照元を確認できません'}</p>
+              <small>{fact?.provenance?.sourceLabel ?? fact?.source ?? '出典未確認'}
+                {fact?.provenance?.eventId ? ` · 記録 ${fact.provenance.eventId}` : ''}
+                {fact?.provenance?.revision != null ? ` · 改訂 ${fact.provenance.revision}` : ''}</small>
+              <small>公表 {fact?.provenance?.publishedAt ?? '未確認'} · 受信 {fact?.provenance?.receivedAt ?? '未確認'}
+                {fact?.provenance?.observedAt ? ` · 観測 ${fact.provenance.observedAt}` : ''}</small>
+              {fact?.provenance?.url && <a href={fact.provenance.url} target="_blank" rel="noopener noreferrer">出典を開く</a>}
+            </div>;
           })}
         </div>)}
       </details>
@@ -289,11 +303,12 @@ const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total: number
   const next = brief.aiText?.nextJa ?? brief.next;
   return <div className="at-brief" data-argus-contract="market-brief-v1"
     aria-label="今の市場（売買権限なし）">
+    {updateState}
     {brief.unifiedStatus && brief.unifiedStatus !== 'GENERATED' && <p role="status">
       統合AIの説明は更新待ちです。取得済み情報の要約を表示しています。
       {brief.lastSuccessfulAiAt && <small> 最終成功 {brief.lastSuccessfulAiAt}</small>}
     </p>}
-    <small>今の市場 — 検証済み事実の要約{brief.aiText ? '（AI圧縮・参考）' : ''}</small>
+    <small>今の市場 — 取得済み情報の要約{brief.aiText ? '（AI圧縮・参考）' : ''}</small>
     <div className="at-brief__rows">
       <div><b>今</b><span>{now}</span></div>
       <div><b>理由</b><span>{why}</span></div>

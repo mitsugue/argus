@@ -94,3 +94,31 @@ def test_runtime_preserves_last_success_across_public_refresh_and_failure(monkey
     final = scanner._market_brief_refresh(allow_ai=True)
     assert final["unifiedContext"]["previousFacts"] == first["unifiedContext"]["facts"]
     assert final["aiDiagnostics"]["returnedModel"] == "gpt-6-astra"
+
+
+@pytest.mark.parametrize("source,priority", [("official_sensor", "P2"), ("policy", "P3")])
+def test_transmission_and_checking_policy_are_not_observed_facts(source, priority):
+    document = brief(source=source); document["facts"][0]["priority"] = priority
+    context = mb.unified_context(document)
+    assert context["facts"][0]["verification"] == "UNCONFIRMED"
+    raw = response(context); raw["reasons"]["kind"] = "FACT"
+    assert mb.validate_unified_ai(raw, context) is None
+
+
+def test_article_provenance_is_bound_to_exact_reference_and_revision():
+    event = {"eventId":"nie-1234567890abcdef", "revision":2, "severity":"HIGH",
+             "headlineJa":"政策決定の報道", "sourceLabelJa":"公式発表",
+             "sourcePublishedAt":"2026-09-12T09:00:00Z", "sourceReceivedAt":"2026-09-12T09:02:00Z",
+             "sourceUrl":"https://example.org/decision", "analysisSourceMessageId":"private", "body":"private"}
+    document = mb.compose_brief(now_iso="2026-09-12T10:00:00Z",news_events=[event])
+    current = mb.unified_context(document)
+    row = next(row for row in current["facts"] if row["priority"] == "P0")
+    assert row["provenance"]["publishedAt"] != row["provenance"]["receivedAt"]
+    assert row["provenance"]["eventId"] == event["eventId"]
+    assert "private" not in json.dumps(current)
+    changed = copy.deepcopy(document);changed["facts"][0]["provenance"]["revision"] = 3
+    assert mb.unified_context(changed)["facts"][0]["evidenceId"] != row["evidenceId"]
+    event["sourcePublishedAt"] = None;event["sourceUrl"] = "javascript:alert(1)"
+    later = mb.compose_brief(now_iso="2026-09-12T10:00:00Z",news_events=[event])
+    assert later["facts"][0]["provenance"]["publishedAt"] is None
+    assert later["facts"][0]["provenance"]["url"] is None

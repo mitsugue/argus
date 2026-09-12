@@ -376,3 +376,16 @@
 .at-unified-brief__kind { display: block; color: #9caebc; margin-top: 5px; }
 .at-unified-brief details { margin-top: 16px; color: #acbdc8; line-height: 1.7; }
 .at-unified-brief summary { cursor: pointer; padding: 10px 0; }
+
+.at-unified-brief { padding: 18px; gap: 12px; }
+.at-unified-brief .at-brief__rows { gap: 18px; }
+.at-unified-brief .at-brief__rows div { flex-direction: column; gap: 6px; }
+.at-unified-brief .at-brief__rows b { flex: auto; font-size: 13px; color: #a9c9db; }
+.at-unified-brief .at-brief__rows span { font-size: 15px; line-height: 1.7; }
+.at-unified-brief .at-brief__rows div:nth-child(2) { border-left: 2px solid #8ab8d0; padding-left: 12px; }
+.at-brief__update { font-size: 13px; line-height: 1.6; color: #e0c285; }
+.at-brief__update button { min-height: 44px; margin-left: 8px; }
+
+.at-brief-source { margin: 12px 0; padding-left: 10px; border-left: 1px solid #344653; overflow-wrap: anywhere; }
+.at-brief-source small { display: block; }
+.at-brief-source a { display: inline-block; min-height: 44px; padding-top: 8px; color: #9ac9df; }

@@ -24,6 +24,8 @@ from __future__ import annotations
 import re
 import hashlib
 import json
+from datetime import datetime
+from urllib.parse import urlsplit
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 BRIEF_SCHEMA = "argus-market-brief-v1"
@@ -68,11 +70,55 @@ def validate_ai_brief(ai: Any, fact_texts: Sequence[str]) -> Optional[Dict[str, 
     return out
 
 
+def _source_reference(origin: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Only explicit public provenance; missing publication time stays missing.
+
+    Receipt is when ARGUS received the item, not the publisher's timestamp.
+    No mailbox identifiers, article bodies, credentials or arbitrary fields.
+    """
+    origin = origin or {}
+    result = {"scope": "published_metadata_snapshot", "eventId": None,
+              "revision": None, "publishedAt": None, "receivedAt": None,
+              "observedAt": None, "url": None, "sourceLabel": None}
+    event_id = origin.get("eventId")
+    if isinstance(event_id, str) and re.fullmatch(r"[a-zA-Z0-9_.:-]{1,160}", event_id):
+        result["eventId"] = event_id
+    revision = origin.get("revision")
+    if type(revision) is int and revision >= 0:
+        result["revision"] = revision
+    for target, source in (("publishedAt", "sourcePublishedAt"),
+                           ("receivedAt", "sourceReceivedAt"), ("observedAt", "asOf")):
+        value = origin.get(source)
+        if isinstance(value, str) and len(value) <= 40:
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if parsed.tzinfo is not None or (target == "observedAt" and len(value) == 10):
+                    result[target] = value
+            except ValueError:
+                pass
+    url = origin.get("sourceUrl")
+    if isinstance(url, str) and len(url) <= 2048:
+        try:
+            parts = urlsplit(url)
+            if parts.scheme == "https" and parts.hostname and not parts.username and not parts.password:
+                result["url"] = url
+        except ValueError:
+            pass
+    label = origin.get("sourceLabelJa") or origin.get("source")
+    if not label and isinstance(origin.get("sources"), list):
+        label = " / ".join(str(row.get("name") or "") for row in origin["sources"][:3] if isinstance(row, Mapping))
+    if isinstance(label, str) and label.strip():
+        result["sourceLabel"] = label[:160]
+    return result
+
+
 def _fact(text: str, priority: str, source: str,
-          verification: str) -> Dict[str, str]:
-    return {"text": str(text)[:160], "priority": priority, "source": source,
-            "verification": verification
-            if verification in VERIFICATIONS else "UNCONFIRMED"}
+          verification: str, origin: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    row = {"text": str(text)[:160], "priority": priority, "source": source,
+           "verification": verification if verification in VERIFICATIONS else "UNCONFIRMED"}
+    if origin is not None:
+        row["provenance"] = _source_reference(origin)
+    return row
 
 
 def _news_direction_summary(events: Sequence[Mapping[str, Any]]) -> str:
@@ -119,21 +165,21 @@ def compose_brief(*, now_iso: str,
             f"{headline[:60]}"
             f"（{'市場確認済み' if confirmed else '市場確認待ち'}）",
             "P0", "trusted_mail",
-            "CORROBORATED" if confirmed else "UNCONFIRMED"))
+            "CORROBORATED" if confirmed else "UNCONFIRMED", event))
     active_shocks = [s for s in shock_events
                      if s.get("severity") in ("HIGH", "CRITICAL")]
     for shock in active_shocks[:2]:
         facts.append(_fact(
             "市場ショック: "
             f"{str(shock.get('headlineJa') or shock.get('titleJa') or shock.get('title') or '')[:60]}",
-            "P0", "official_sensor", "VERIFIED"))
+            "P0", "official_sensor", "VERIFIED", shock))
     for event in list(imminent_events)[:2]:
         impact = _IMPACT_JA.get(str(event.get("displayImpact") or ""), "")
         facts.append(_fact(
             f"目前イベント: {str(event.get('title') or '')[:50]}"
             f"（{event.get('countdown') or '近日'}"
             f"{'・' + impact if impact else ''}）",
-            "P0", "calendar", "VERIFIED"))
+            "P0", "calendar", "VERIFIED", event))
 
     # ── P1: 現在の相場方向 ──
     view_label = str((market_view_summary or {}).get("label") or "").strip()
@@ -152,19 +198,19 @@ def compose_brief(*, now_iso: str,
                 or (event.get("impactDirection") or {}).get("transmission"))
         if path:
             facts.append(_fact(f"波及経路: {str(path)[:90]}", "P2",
-                               "trusted_mail", "UNCONFIRMED"))
+                               "trusted_mail", "UNCONFIRMED", event))
     for shock in active_shocks[:1]:
         why = shock.get("whyJa") or shock.get("noteJa")
         if why:
             facts.append(_fact(f"背景: {str(why)[:90]}", "P2",
-                               "official_sensor", "VERIFIED"))
+                               "official_sensor", "UNCONFIRMED", shock))
 
     # ── P3: 次に何を確認するか ──
     for event in list(next_events)[:2]:
         facts.append(_fact(
             f"次: {str(event.get('title') or '')[:50]}"
             f"（{event.get('countdown') or event.get('whenJa') or '予定'}）",
-            "P3", "calendar", "VERIFIED"))
+            "P3", "calendar", "VERIFIED", event))
     if material_news:
         facts.append(_fact("次: 上記ニュースの市場確認センサー"
                            "（金利・株価指数・為替）の反応を確認", "P3",
@@ -265,7 +311,10 @@ def unified_context(brief: Mapping[str, Any], previous: Optional[Mapping[str, An
         for fact in (document or {}).get("facts", [])[:12]:
             material = {key: str(fact.get(key) or "") for key in
                         ("text", "source", "priority", "verification")}
-            if material["source"] == "market_view":
+            if isinstance(fact.get("provenance"), Mapping):
+                # Composer already selected a bounded public metadata snapshot.
+                material["provenance"] = dict(fact["provenance"])
+            if material["source"] in {"market_view", "policy"} or material["priority"] == "P2":
                 material["verification"] = "UNCONFIRMED"
             identity = hashlib.sha256(json.dumps(material, ensure_ascii=False,
                 sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -280,7 +329,7 @@ def unified_context(brief: Mapping[str, Any], previous: Optional[Mapping[str, An
                         "addedEvidenceIds": sorted(current_ids - prior_ids) if prior else [],
                         "removedEvidenceIds": sorted(prior_ids - current_ids) if prior else []},
             "ownerContextAvailable": False, "historyStatus": "PROCESS_MEMORY_ONLY",
-            "sourceTraceScope": "exact_brief_fact_snapshot",
+            "sourceTraceScope": "exact_brief_fact_and_available_public_metadata",
             "actionAuthority": False}
     body["contextId"] = hashlib.sha256(json.dumps(body, ensure_ascii=False,
         sort_keys=True, separators=(",", ":")).encode()).hexdigest()

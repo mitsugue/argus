@@ -1,73 +1,36 @@
-// v13.5.36 — MARKET SITUATION BRIEF (Today-top NOW/WHY/NEXT card).
-// Read-only evidence for the human reader; sdaAuthority is false by
-// construction and nothing here feeds the decision engine.
-import React from 'react';
+import { useSyncExternalStore } from 'react';
+import { createSharedPollingStore } from '../lib/sharedPollingStore';
+import { validMarketBrief, type MarketBrief } from '../lib/marketBrief';
+export type { MarketBrief, MarketBriefFact } from '../lib/marketBrief';
 
-export interface MarketBriefFact {
-  text: string;
-  priority: 'P0' | 'P1' | 'P2' | 'P3';
-  source: string;
-  verification: 'VERIFIED' | 'CORROBORATED' | 'UNCONFIRMED';
-}
-
-export interface MarketBrief {
-  unifiedSummary?: {
-    schemaVersion: 'argus-unified-brief-v1'; contextId: string; actionAuthority: false;
-    ownerContextAvailable: boolean; historyStatus: 'PROCESS_MEMORY_ONLY';
-    sections: Record<'view' | 'reasons' | 'changes' | 'impact' | 'next' | 'invalidation',
-      { textJa: string; evidenceIds: string[]; kind: 'FACT' | 'INFERENCE' | 'UNKNOWN' }>;
-  } | null;
-  unifiedContext?: { contextId: string; facts: Array<MarketBriefFact & { evidenceId: string }>;
-    previousFacts: Array<MarketBriefFact & { evidenceId: string }>; previousAt: string | null };
-  unifiedStatus?: string;
-  lastSuccessfulAiAt?: string | null;
-  aiDiagnostics?: { requestedModel: string | null; returnedModel: string | null; completedAt: string | null };
-  schemaVersion: string;
-  generatedAt: string;
-  hasCritical?: boolean;
-  now: string;
-  why: string;
-  next: string;
-  aiText: { nowJa: string; whyJa: string; nextJa: string } | null;
-  aiModel: string | null;
-  chips: { chart: string; news: string; nextEvent: string; mainRisk: string };
-  facts: MarketBriefFact[];
-  noteJa: string;
-  sdaAuthority: false;
-  status?: string;
-}
-
-const REFRESH_MS = 5 * 60 * 1000;
-
-function baseUrl() {
-  return (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)
-    ?.replace(/\/$/, '') ?? null;
-}
-
-export function useMarketBrief(): { brief: MarketBrief | null; error: boolean } {
-  const [brief, setBrief] = React.useState<MarketBrief | null>(null);
-  const [error, setError] = React.useState(false);
-  React.useEffect(() => {
-    let cancelled = false;
-    const base = baseUrl();
-    if (!base) { setError(true); return undefined; }
-    const load = async () => {
-      try {
-        const response = await fetch(`${base}/api/argus/market-brief`,
-          { cache: 'no-store', headers: { Accept: 'application/json' } });
-        if (!response.ok) throw new Error(String(response.status));
-        const body = await response.json() as MarketBrief;
-        if (!cancelled && body && body.schemaVersion) {
-          setBrief(body);
-          setError(false);
-        }
-      } catch {
-        if (!cancelled) setError(true);
-      }
-    };
-    void load();
-    const timer = window.setInterval(() => { void load(); }, REFRESH_MS);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, []);
-  return { brief, error };
+type State = { brief: MarketBrief | null; error: boolean; loading: boolean };
+let retry = () => {};
+const store = createSharedPollingStore<State>({ brief: null, error: false, loading: true }, (set, get) => {
+  let stopped = false; let flight: AbortController | null = null;
+  const base = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '');
+  const load = async () => {
+    if (stopped || flight) return;
+    const controller = new AbortController(); flight = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 12_000);
+    set({ ...get(), loading: true });
+    try {
+      if (!base) throw new Error('backend_missing');
+      const response = await fetch(base + '/api/argus/market-brief',
+        { cache: 'no-store', signal: controller.signal, headers: { Accept: 'application/json' } });
+      if (!response.ok) throw new Error('brief_fetch_failed');
+      const brief: unknown = await response.json();
+      if (!validMarketBrief(brief)) throw new Error('brief_invalid');
+      if (!stopped) set({ brief, error: false, loading: false });
+    } catch { if (!stopped) set({ ...get(), error: true, loading: false }); }
+    finally { window.clearTimeout(timeout); flight = null; }
+  };
+  retry = () => { void load(); };
+  const visible = () => { if (document.visibilityState === 'visible') void load(); };
+  const timer = window.setInterval(visible, 5 * 60_000);
+  document.addEventListener('visibilitychange', visible); void load();
+  return () => { stopped = true; flight?.abort(); window.clearInterval(timer);
+    document.removeEventListener('visibilitychange', visible); retry = () => {}; };
+});
+export function useMarketBrief() {
+  return { ...useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot), retry: () => retry() };
 }
