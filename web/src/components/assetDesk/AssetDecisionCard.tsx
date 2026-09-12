@@ -3,6 +3,7 @@ import type { DeskCardData, DeskTab } from './types';
 import { sectionAnchorId, tabForDeskSection } from './types';
 import { AssetDecisionSummary } from './AssetDecisionSummary';
 import { AssetDecisionDetails } from './AssetDecisionDetails';
+import { AssetMarketContext } from './AssetMarketContext';
 import { AssetPositionPanel } from './AssetPositionPanel';
 import { AssetWhyPanel } from './AssetWhyPanel';
 import { AssetFlowPanel } from './AssetFlowPanel';
@@ -105,6 +106,7 @@ export const AssetDecisionCard: React.FC<Props> = ({
             {tab === 'decision' && (
               <Section symbol={sym} id="decision">
                 <AssetDecisionDetails d={d} />
+                <AssetMarketContext symbol={sym} market={d.asset.market} />
                 <details className="ad-plan-detail">
                   <summary>条件と分岐を確認</summary>
                   <AssetScenarioPanel d={d} />

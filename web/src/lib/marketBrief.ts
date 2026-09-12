@@ -13,6 +13,7 @@ export interface MarketBriefFact {
 }
 
 export interface MarketBrief {
+  calculationSnapshots?: Record<string, { marketInternals?: unknown }>;
   unifiedSummary?: {
     schemaVersion: 'argus-unified-brief-v1'; contextId: string; actionAuthority: false;
     ownerContextAvailable: boolean; historyStatus: 'PROCESS_MEMORY_ONLY' | 'LOCAL_DURABLE';

@@ -418,3 +418,11 @@
 .at-internals__asset { padding: 14px 0; border-bottom: 1px solid #25343e; }
 
 .at-internals__id { overflow-wrap: anywhere; font-size: 12px; }
+
+.at-shared-context__status { color: #96aab7; font-size: 14px; line-height: 1.7; margin: 12px 20px; }
+.ad-market-context { margin-top: 24px; }
+.ad-market-context > label { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 15px; }
+.ad-market-context select { min-height: 44px; padding: 8px 12px; color: #dce6eb; background: #14212b; border: 1px solid #344653; border-radius: 8px; }
+.ad-market-context__brief { margin-top: 16px; border-top: 1px solid #2c3b46; padding-top: 12px; }
+.ad-market-context__brief > summary { min-height: 44px; padding: 10px 0; cursor: pointer; font-size: 15px; }
+.ad-market-context__brief > p { color: #96aab7; font-size: 14px; line-height: 1.7; }
