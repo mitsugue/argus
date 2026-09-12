@@ -29,7 +29,7 @@ _ALLOWED_SCANNER_SCOPES = {
     "_brief_market_view_summary", "_brief_news_events", "_brief_sq_events",
     "_compose_market_brief", "_market_brief_ai_polish",
     "_market_brief_refresh", "api_argus_market_brief",
-    "_news_intake_loop",
+    "_market_brief_worker_tick",
 }
 _BRIEF_SYMBOL_PREFIXES = ("_market_brief", "_brief_")
 _BRIEF_SYMBOLS = {"argus_market_brief", "_MARKET_BRIEF"}
@@ -60,11 +60,12 @@ def test_static_import_boundary_no_module_imports_the_brief():
 
 def test_scanner_brief_references_stay_in_display_scope():
     """Inside scanner, brief symbols may only appear in the brief's own
-    functions, its route and the intake worker — never inside evidence
+    functions, its route and the explanation worker — never inside evidence
     builders, riskKernel producers or decision reducers."""
     tree = ast.parse((ROOT / "scanner.py").read_text())
     offenders = []
     stack = []
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
 
     class Visitor(ast.NodeVisitor):
         def visit_FunctionDef(self, node):
@@ -79,6 +80,16 @@ def test_scanner_brief_references_stay_in_display_scope():
             if name in _BRIEF_SYMBOLS or any(
                     name.startswith(p) for p in _BRIEF_SYMBOL_PREFIXES):
                 scope = stack[-1] if stack else "<module>"
+                # Scheduler may launch the isolated explanation thread only;
+                # it cannot read the generated explanation or use its result.
+                parent = parents.get(node)
+                call = parents.get(parent)
+                if (scope == "run_scheduler" and name == "_market_brief_worker_tick"
+                        and isinstance(parent, ast.keyword) and parent.arg == "target"
+                        and isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                        and isinstance(call.func.value, ast.Name)
+                        and call.func.value.id == "threading" and call.func.attr == "Thread"):
+                    return
                 # module level = the import + the state literal, allowed.
                 if scope != "<module>" and scope not in _ALLOWED_SCANNER_SCOPES:
                     offenders.append((scope, name))
