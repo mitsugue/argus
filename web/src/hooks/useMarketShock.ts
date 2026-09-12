@@ -41,15 +41,23 @@ function baseUrl() {
 async function fetchShock(): Promise<MarketShockView | null> {
   const base = baseUrl();
   if (!base) return null;
-  const response = await fetch(`${base}/api/argus/market-shock`, {
-    method: 'GET', cache: 'no-store', headers: { Accept: 'application/json' },
-  });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const body = await response.json() as MarketShockView;
-  if (body.schemaVersion !== 'argus-market-shock-v1') {
-    throw new Error('schema_incompatible');
+  // Release the shared flight on stalled headers/body so later refreshes can
+  // recover. Previously acquired rows remain visible with an error state.
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 20_000);
+  try {
+    const response = await fetch(`${base}/api/argus/market-shock`, {
+      method: 'GET', cache: 'no-store', signal: controller.signal, headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body = await response.json() as MarketShockView;
+    if (body.schemaVersion !== 'argus-market-shock-v1') {
+      throw new Error('schema_incompatible');
+    }
+    return body;
+  } finally {
+    window.clearTimeout(timer);
   }
-  return body;
 }
 
 export function useMarketShock(): MarketShockState {
