@@ -757,3 +757,24 @@ def test_reported_policy_rate_target_is_material_but_not_a_decision():
             staleness=stale, source_authenticated=authenticated,
             ai_analysis=None, corroboration={}, subject=title, source="NIKKEI")
         assert limited["severity"] not in ("HIGH", "CRITICAL")
+
+
+def test_analysis_retry_recovers_skipped_articles_without_rewriting_freshness():
+    from datetime import datetime, timezone
+    import copy
+    now = datetime(2026, 9, 12, 1, tzinfo=timezone.utc).timestamp()
+    row = {'sourceReceivedAt': '2026-09-11T22:00:00Z', 'processedAt': '2026-09-12T00:00:00Z',
+           'severity': 'WATCH', 'analysisState': 'AI_ANALYSIS_UNAVAILABLE', 'staleness': 'FRESH_BREAKING'}
+    original = copy.deepcopy(row)
+    assert ni.analysis_retry_priority(row, now)[0] == 0
+    assert ni.analysis_retry_priority(row, now, full_analysis=True)[0] == 1
+    material = dict(row, severity='HIGH')
+    assert ni.analysis_retry_priority(material, now, full_analysis=True) > ni.analysis_retry_priority(row, now, full_analysis=True)
+    historical = dict(row, sourceReceivedAt='2026-09-09T22:00:00Z', staleness='STALE')
+    assert ni.analysis_retry_priority(historical, now, full_analysis=True)[0] == 1
+    for overrides in ({'analysisState': 'DETERMINISTIC_ONLY'}, {'analysisState': 'ANALYZED'},
+                      {'analysisState': 'AI_CACHED'}, {'sourceReceivedAt': None},
+                      {'sourceReceivedAt': '2026-09-12T02:00:00Z'},
+                      {'sourceReceivedAt': '2026-09-01T00:00:00Z'}):
+        assert ni.analysis_retry_priority(dict(row, **overrides), now, full_analysis=True)[0] == 0
+    assert row == original

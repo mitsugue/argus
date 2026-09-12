@@ -104,7 +104,7 @@ export const NewsAlertsPanel: React.FC = () => {
   const watch = received.filter(event => event.severity === 'WATCH');
   const other = received.filter(event => event.severity !== 'WATCH');
   const pending = (news.view?.events ?? []).filter(event =>
-    !['ANALYZED', 'AI_CACHED'].includes(event.analysisState));
+    ['AI_ANALYSIS_UNAVAILABLE', 'AI_SCHEMA_REJECTED'].includes(event.analysisState));
   const unread = news.status === 'error' && news.view == null;
   return (
     <section id={NEWS_ALERTS_SECTION_ID} className="news-alerts card" aria-label="ニュース・市場リスク">

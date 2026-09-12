@@ -714,6 +714,29 @@ def material_news_priority(event: Mapping[str, Any], now_epoch: float) -> tuple:
 NEWS_HISTORY_DAYS = 7
 
 
+def analysis_retry_priority(event: Mapping[str, Any], now_epoch: float,
+                            *, full_analysis: bool = False) -> tuple:
+    """Prioritize important news, then recover previously attempted analysis.
+
+    A failed WATCH/INFO analysis must not become permanently stranded when a
+    monetary gate is removed. Deliberate rule-only classification is not an
+    analysis failure. Historical retries keep the original receipt/freshness.
+    """
+    material, stamp = material_news_priority(event, now_epoch)
+    if material:
+        return (2, stamp)
+    if not full_analysis or event.get("analysisState") not in (
+            "AI_ANALYSIS_UNAVAILABLE", "AI_SCHEMA_REJECTED"):
+        return (0, stamp)
+    from datetime import datetime
+    try:
+        receipt = datetime.fromisoformat(str(event.get("sourceReceivedAt")).replace("Z", "+00:00"))
+        valid = receipt.tzinfo is not None and receipt.timestamp() == stamp
+    except (TypeError, ValueError):
+        valid = False
+    return (int(valid and 0 <= now_epoch - stamp <= NEWS_HISTORY_DAYS * 86400), stamp)
+
+
 def material_news_retention_priority(event: Mapping[str, Any], now_epoch: float) -> tuple:
     """Keep recent important history without extending freshness or AI retry."""
     fresh, stamp = material_news_priority(event, now_epoch)

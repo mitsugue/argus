@@ -290,7 +290,7 @@ check('Today never claims an empty calendar it could not read',
     hero > 0 && newsTop > hero && newsTop < nextEvent);
   check('the news block lists up to five rows and each row jumps to its Alerts anchor',
     panel.includes('const NEWS_ROWS_CAP = 5;') && panel.includes('newsRows.slice(0, NEWS_ROWS_CAP)')
-    && panel.includes("openNewsDetails(`news-${row.id}`)")
+    && panel.includes("openNewsDetails(`news-${id}`)") && panel.includes("onOpen(row.id)")
     && panel.includes("document.getElementById('news-intel')"));
   check('the old single-item risk and news cards are gone',
     !panel.includes('title="市場リスク"') && !panel.includes('title="重大ニュース"'));
@@ -302,7 +302,7 @@ check('Today never claims an empty calendar it could not read',
     panel.indexOf('className="at-positioning"') > panel.indexOf('className="at-event card at-context"')
     && !panel.includes('title={`${view.selectedMarket} 需給`}'));
   check('UNCLEAR news direction is named as a verdict',
-    panel.includes("UNCLEAR: '方向判定不能'") && panel.includes('このニュースからは上下を決めない'));
+    panel.includes("UNCLEAR: '方向判定不能'") && panel.includes('この記事だけでは上下を決めません'));
   const alerts = fs.readFileSync(path.join(root, 'src/routes/NotificationsPage.tsx'), 'utf8');
   const newsPanel = fs.readFileSync(path.join(root, 'src/components/notifications/NewsAlertsPanel.tsx'), 'utf8');
   const notifPanel = fs.readFileSync(path.join(root, 'src/components/NotificationPanel.tsx'), 'utf8');

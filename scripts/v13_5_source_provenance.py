@@ -35,7 +35,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
-    "test_argus_ai_execution_settings.py": "e4c429b98321e7bd563ec9e234dfe49468fec778",
+    "web/scripts/news-presentation.test.mjs": "9901647270d36d5d970dd972860fbf9a0e525343",
+    "web/src/domain/newsPresentation.ts": "930560386a00ea78157c463eb9f07c386731a160",
+    "test_argus_ai_execution_settings.py": "91724952d7a992ea4d0c58a8f9bfaaf567f70a64",
     "argus_research_benchmark.py": "0afebef7261abeb95da017f4b5aa327da55874a1",
     "argus_ai_gate.py": "d0e19fb4d25527e6f0ca70d73c8b21a41bc2a866",
     'test_smoke_cached_cause.py': '547735d7be278e5650341bd067b50c1fa87dd855',
@@ -43,7 +45,7 @@ REVIEWED_EXTENSION_BLOBS = {
     "web/src/components/guide/BackupCard.tsx": "7448961ef09c25babfd84e5c2eec1ec38f76db4e",
     "web/src/components/system/BackupStatusOverview.tsx": "6b0c0bc4e434c8a9464accec8f78100c1da06c43",
     "web/src/lib/vault.ts": "d1b2d2e0b25eaa326947251e083084f851f81eec",
-    "web/scripts/news-history.test.mjs": "205849e870b1175bfe5e8b829bf7881f8baf891e",
+    "web/scripts/news-history.test.mjs": "766b69d112dc01d32631025446007b506d7e55f6",
     "web/scripts/public-market-acceptance.mjs": "2e4e63fd5c4c518190483138a2a899ad842061c0",
     "web/scripts/index-chart-isolation.test.mjs": "470dcf9598714a89b9ebba9dd53cfc2f6315092f",
     "argus_osint_engine.py": "82c928299eed09004067283d72cc4b67b07753c5",
