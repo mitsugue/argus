@@ -27,7 +27,7 @@ const reference = {scope:'published_metadata_snapshot',eventId:'nie-1234567890ab
 assert.equal(valid({...doc,facts:[{...fact,provenance:reference}]}),true);
 for(const url of ['javascript:alert(1)','https://secret@example.org/path']) assert.equal(valid({...doc,facts:[{...fact,provenance:{...reference,url}}]}),false);
 
-const moreFacts = Array.from({length:20}, (_,i) => ({...fact,evidenceId:'brief-fact-'+i.toString(16).padStart(64,'0')}));
+const moreFacts = Array.from({length:24}, (_,i) => ({...fact,evidenceId:'brief-fact-'+i.toString(16).padStart(64,'0')}));
 assert.equal(valid({...doc,unifiedStatus:'AWAITING_AI',unifiedSummary:null,facts:moreFacts}),true);
 assert.equal(valid({...doc,unifiedStatus:'AWAITING_AI',unifiedSummary:null,facts:[...moreFacts,fact]}),false);
 assert.equal(valid({...doc,facts:[{...fact,provenance:{...reference,sourceResponseSha256:'a'.repeat(64)}}]}),true);

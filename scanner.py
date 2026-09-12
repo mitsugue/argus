@@ -119,6 +119,7 @@ import argus_today_headline         # v13.5.0: compact Today bootstrap from veri
 import argus_market_shock           # v13.5.1: market-shock materiality (US30Y + corroborated news)
 import argus_news_intelligence      # v13.5.3: Nikkei mail → news-risk evidence (pure policy)
 import argus_gmail_intake           # v13.5.3: dedicated read-only news mailbox intake
+import jp_market_internals
 import jp_market_positioning
 import argus_analysis_history
 import argus_analysis_history_backup
@@ -17640,9 +17641,14 @@ def _market_brief_refresh(allow_ai=True):
     previous = _MARKET_BRIEF.get("lastSuccessful") or {}
     # Bind unchanged-text reuse to the actual engine inputs and saved horizons.
     calculations = ({str(h): _jp_market_comparison_cached(h) for h in (1, 5, 10, 20)}
-                    if allow_ai else previous.get("calculationSnapshots") or {})
+                    if allow_ai else copy.deepcopy(previous.get("calculationSnapshots") or {}))
+    internals = (_jp_market_internals_cached() if allow_ai else
+                 (calculations.get("5") or {}).get("marketInternals") or {})
+    for calculation in calculations.values():
+        calculation["marketInternals"] = internals
     brief["calculationSnapshots"] = calculations
     brief["facts"].extend(argus_market_brief.calculation_facts(calculations))
+    brief["facts"].extend(jp_market_internals.explanation_facts(internals))
     facts_hash = hashlib.sha256(json.dumps({"facts": brief.get("facts") or [],
         "calculations": argus_market_brief.calculation_identity(calculations)}, sort_keys=True,
         ensure_ascii=False).encode()).hexdigest()
@@ -37706,6 +37712,152 @@ def _jp_market_comparison_cached(horizon):
         return {**failure, "reason": "index_comparison_input_invalid"}
 
 
+_JP_INTERNALS_CACHE = {"prices": {}, "classifications": {}, "restoreAttempted": False}
+_JP_INTERNALS_ACQUISITION = {"status": "NOT_RUN", "lastAttemptAt": None, "lastSuccessfulAcquisitionAt": None}
+_JP_INTERNALS_REFRESH_LOCK = threading.Lock()
+
+
+def _jp_internals_path():
+    return (os.path.join(_DURABILITY_PATHS["root"], "jp_market_internals_cache.json")
+            if _cost_policy_durable_enabled() else None)
+
+
+def _jp_internals_storage(*, restore=False):
+    path = _jp_internals_path()
+    if not path:
+        return
+    if restore:
+        if _JP_INTERNALS_CACHE["restoreAttempted"]: return
+        try:
+            if os.path.islink(path): raise ValueError("internals_cache_symlink")
+            with open(path, "rb") as handle: raw = handle.read(6 * 1024 * 1024 + 1)
+            if len(raw) > 6 * 1024 * 1024: raise ValueError("internals_cache_bound")
+            value = json.loads(raw); body = value["body"]
+            if value.get("schemaVersion") != "jp-market-internals-cache-v1" or value.get("sha256") != jp_market_internals._hash(body):
+                raise ValueError("internals_cache_integrity")
+            argus_product_naming.require_allowed(body)
+            if set(body) != {"prices", "classifications"} or any(not isinstance(body[k], dict) or len(body[k]) > 100 for k in body):
+                raise ValueError("internals_cache_schema")
+            _JP_INTERNALS_CACHE["prices"].update(body["prices"])
+            _JP_INTERNALS_CACHE["classifications"].update(body["classifications"])
+            _JP_INTERNALS_ACQUISITION["restoredAt"] = _ai_now_iso()
+        except FileNotFoundError: pass
+        except Exception as exc:
+            _JP_INTERNALS_ACQUISITION["restoreError"] = type(exc).__name__
+            return
+        _JP_INTERNALS_CACHE["restoreAttempted"] = True
+    else:
+        body = {k: copy.deepcopy(_JP_INTERNALS_CACHE[k]) for k in ("prices", "classifications")}
+        argus_product_naming.require_allowed(body)
+        value = {"schemaVersion": "jp-market-internals-cache-v1", "body": body, "sha256": jp_market_internals._hash(body)}
+        argus_persistent_storage.atomic_write_json(path, value, maximum_bytes=6 * 1024 * 1024, file_mode=0o600)
+        with open(path, "rb") as handle: stored = json.load(handle)
+        if stored != value: raise ValueError("internals_cache_readback_mismatch")
+        _JP_INTERNALS_ACQUISITION["persistenceStatus"] = "VERIFIED"
+
+
+def _jp_internals_close_row(day, close, *, volume=None, adjusted=None):
+    parsed = datetime.fromisoformat(day).date()
+    if not argus_market_clock.canonical_trading_day(argus_market_clock.JP_EQUITY, parsed):
+        return None
+    close_at = argus_market_clock.market_session_bounds(argus_market_clock.JP_EQUITY, parsed)["regularCloseUtc"]
+    if not close_at: return None
+    return {"date": day, "close": close, "closeAt": close_at,
+            "completed": True, "volume": volume, "adjusted": adjusted}
+
+
+def _jp_internals_warm():
+    """Short daily-bar windows on the existing authenticated collection lane."""
+    if not _JP_INTERNALS_REFRESH_LOCK.acquire(blocking=False): return
+    try:
+        _jp_internals_storage(restore=True)
+        if not _JQUANTS_API_KEY:
+            _JP_INTERNALS_ACQUISITION.update(status="NOT_CONFIGURED"); return
+        last = _JP_INTERNALS_ACQUISITION.get("lastAttemptMonotonic")
+        if last is not None and time.monotonic() - last < 1800: return
+        _JP_INTERNALS_ACQUISITION.update(status="RUNNING", lastAttemptAt=_ai_now_iso(), lastAttemptMonotonic=time.monotonic())
+        public = [r["symbol"] for r in _JP_WATCHLIST]
+        master = _jq_master()
+        for row in master:
+            if row.get("code4") in public and row.get("sector17Code"):
+                _JP_INTERNALS_CACHE["classifications"][row["code4"]] = {
+                    "sector17Code": row["sector17Code"], "sector33Code": row.get("sector33Code"),
+                    "effectiveDate": row.get("effectiveDate"), "receivedAt": row.get("receivedAt"),
+                    "source": "J-Quants V2 equities/master"}
+        symbols = ["1306", *[r["symbol"] for r in jp_market_internals.SECTORS.values()], *public]
+        deadline = time.monotonic() + 150; failed = []; updated = []
+        start = (datetime.now(TZ_JST) - timedelta(days=100)).date().isoformat()
+        for symbol in symbols:
+            if time.monotonic() >= deadline:
+                failed.append(symbol); continue
+            try:
+                with requests.get(f"{_JQUANTS_BASE}/equities/bars/daily", headers={"x-api-key": _JQUANTS_API_KEY},
+                        params={"code": symbol, "from": start}, timeout=(5, 12), stream=True, allow_redirects=False) as response:
+                    if response.status_code != 200: raise ValueError("internals_daily_unavailable")
+                    chunks = []; size = 0
+                    for chunk in response.iter_content(32768):
+                        if time.monotonic() >= deadline: raise ValueError("internals_collection_deadline")
+                        size += len(chunk)
+                        if size > 2 * 1024 * 1024: raise ValueError("internals_response_bound")
+                        chunks.append(chunk)
+                raw = b"".join(chunks); value = json.loads(raw)
+                if value.get("pagination_key"): raise ValueError("internals_incomplete_pagination")
+                rows = value.get("data")
+                if not isinstance(rows, list) or not 1 <= len(rows) <= 150: raise ValueError("internals_daily_empty_or_bound")
+                normalized = []
+                for row in rows:
+                    if str(row.get("Code", ""))[:4] != symbol: raise ValueError("internals_instrument_mismatch")
+                    if not jp_market_internals._positive(row.get("AdjC")): continue
+                    bar = _jp_internals_close_row(str(row["Date"]), row["AdjC"], volume=row.get("Vo"), adjusted=True)
+                    if bar: normalized.append(bar)
+                if not normalized: raise ValueError("internals_no_adjusted_rows")
+                received = _ai_now_iso()
+                _JP_INTERNALS_CACHE["prices"][symbol] = {"instrumentId": symbol,
+                    "instrumentKind": "ETF" if symbol not in public else "EQUITY",
+                    "priceBasis": "JQUANTS_ADJUSTED_CLOSE", "receivedAt": received,
+                    "source": "J-Quants V2 equities/bars/daily", "sourceResponseSha256": hashlib.sha256(raw).hexdigest(),
+                    "rows": sorted(normalized, key=lambda r: r["date"])}
+                updated.append(symbol)
+            except Exception as exc:
+                failed.append(symbol)
+                _JP_INTERNALS_ACQUISITION["lastErrorClass"] = type(exc).__name__
+        _JP_INTERNALS_ACQUISITION.update(status="AVAILABLE" if not failed else "PARTIAL", failedSymbols=failed, updatedSymbols=updated)
+        if updated: _JP_INTERNALS_ACQUISITION["lastSuccessfulAcquisitionAt"] = _ai_now_iso()
+        try: _jp_internals_storage()
+        except Exception as exc:
+            _JP_INTERNALS_ACQUISITION.update(persistenceStatus="FAILED", persistenceError=type(exc).__name__)
+        _JP_MARKET_ENGINE_MARKET_VIEW_MEMO["ts"] = 0
+    finally: _JP_INTERNALS_REFRESH_LOCK.release()
+
+
+def _jp_market_internals_cached():
+    cutoff = _ai_now_iso()
+    try:
+        end = argus_market_clock.latest_completed_session_date(argus_market_clock.JP_EQUITY, datetime.now(pytz.utc))
+        days = [end - timedelta(days=n) for n in range(70, -1, -1)]
+        sessions = [d.isoformat() for d in days if argus_market_clock.canonical_trading_day(argus_market_clock.JP_EQUITY, d)]
+        prices = dict(_JP_INTERNALS_CACHE["prices"])
+        index = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}
+        if index.get("acquiredAt"):
+            rows = []
+            for row in (index.get("data") or [])[-100:]:
+                bar = _jp_internals_close_row(row["date"], row.get("close"))
+                if bar: rows.append(bar)
+            prices["NIKKEI_225_INDEX"] = {"instrumentId": "NIKKEI_225_INDEX", "instrumentKind": "INDEX",
+                "priceBasis": "CASH_INDEX_CLOSE", "receivedAt": index["acquiredAt"], "rows": rows, "source": "Yahoo Finance cash index daily close"}
+        rolled = set(_MARKET_LEDGER.get("rolledBackImports") or [])
+        observations = [r for r in _MARKET_LEDGER.get("observations", []) if r.get("importId") not in rolled
+                        and not (r.get("metadata") or {}).get("excludeFromEffective")]
+        result = jp_market_internals.build_snapshot(session_dates=sessions, cutoff=cutoff, prices=prices,
+            symbols=[r["symbol"] for r in _JP_WATCHLIST], classifications=_JP_INTERNALS_CACHE["classifications"],
+            breadth=jp_market_internals.breadth_from_ledger(observations, cutoff=cutoff))
+        result["acquisition"] = {k: v for k, v in _JP_INTERNALS_ACQUISITION.items() if k != "lastAttemptMonotonic"}
+        return result
+    except Exception as exc:
+        return {"schemaVersion": jp_market_internals.SCHEMA, "status": "UNAVAILABLE", "reason": type(exc).__name__,
+                "actionAuthority": False, "automaticAiCalls": 0}
+
+
 _CFTC_JPY_REFRESH_LOCK = threading.Lock()
 _CFTC_JPY_STATE = {"lastAttemptAt": None, "lastSuccessfulAcquisitionAt": None,
                    "status": "NOT_ACQUIRED", "lastAttemptMonotonic": None}
@@ -38131,6 +38283,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         credit_rows = []
     if warm:
         _cftc_jpy_autorefresh()
+        _jp_internals_warm()
     margin_rows = _jp_market_engine_margin_1570_rows(fetch=warm)
     rs_proxy = _jp_market_engine_relative_strength_proxy()
     flow_rows = _jp_market_engine_foreign_flow_rows()
@@ -38194,6 +38347,7 @@ def _jp_market_engine_market_view():
             "sourceStatus": dict(inputs["sourceStatus"]),
             "margin1570Dynamics": _jp_market_margin_1570_dynamics(cutoff=cutoff),
             "jpyPosition": _cftc_jpy_document(cutoff=cutoff),
+            "internals": _jp_market_internals_cached(),
             "actionAuthority": False,
             "automaticAiCalls": 0,
         }
@@ -43164,8 +43318,7 @@ def _jq_price_history(code, *, deadline=None):
         return c["data"]
     _JQ_HISTORY_CACHE[code] = {
         "data": data, "expires": now + (_JQ_HISTORY_TTL if data else 600),
-        "acquiredAt": (datetime.fromtimestamp(now, pytz.utc).strftime(
-            "%Y-%m-%dT%H:%M:%S.%fZ") if data else None),
+        "acquiredAt": (_ai_now_iso() if data else None),
         "sessionRecheckAt": now + _JQ_HISTORY_SESSION_RECHECK_SEC,
     }
     return data
@@ -46189,7 +46342,8 @@ _SEARCH_MAX = 12
 
 def _jq_master():
     """All listed JP issues (cached 24h): list of {code4, ja, en, mkt}."""
-    if _JQ_MASTER_CACHE["data"] is not None and time.time() < _JQ_MASTER_CACHE["expires"]:
+    if (_JQ_MASTER_CACHE["data"] is not None and time.time() < _JQ_MASTER_CACHE["expires"]
+            and all("sector17Code" in r for r in _JQ_MASTER_CACHE["data"])):
         return _JQ_MASTER_CACHE["data"]
     if not _JQUANTS_API_KEY:
         return []
@@ -46204,7 +46358,9 @@ def _jq_master():
                 if not code:
                     continue
                 rows.append({"code4": code[:4], "ja": x.get("CoName", "") or "",
-                             "en": x.get("CoNameEn", "") or "", "mkt": x.get("MktNm", "") or ""})
+                             "en": x.get("CoNameEn", "") or "", "mkt": x.get("MktNm", "") or "",
+                             "sector17Code": str(x.get("S17") or ""), "sector33Code": str(x.get("S33") or ""),
+                             "effectiveDate": x.get("Date"), "receivedAt": _ai_now_iso()})
             pk = body.get("pagination_key")
             if not pk:
                 break

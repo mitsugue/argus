@@ -1,6 +1,7 @@
 import { MarketAnalysisHistory } from './MarketAnalysisHistory';
 import React from 'react';
 import { MarginDynamicsCard } from './MarginDynamicsCard';
+import { MarketInternalsCard } from './MarketInternalsCard';
 import { JpyPositionCard } from './JpyPositionCard';
 import { JapanSqCalendarCard, JapanSqApproachNotice } from '../dashboard/JapanSqCalendarCard';
 import { JapanMarketComparisonPanel } from '../chart/JapanMarketComparisonPanel';
@@ -1025,6 +1026,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     {view.selectedMarket === 'JP' && selectedSymbol === '1321'
       && <JapanMarketComparisonPanel horizon={horizon} />}
 
+    {!usSelected && <MarketInternalsCard document={decisionEvidence.marketView?.internals} horizon={horizon} />}
     {!usSelected && <MarginDynamicsCard document={decisionEvidence.marketView?.margin1570Dynamics} refreshFailed={!!decisionEvidence.error} />}
     {!usSelected && <JpyPositionCard document={decisionEvidence.marketView?.jpyPosition} />}
 

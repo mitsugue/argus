@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 BRIEF_SCHEMA = "argus-market-brief-v1"
 BRIEF_FACT_LIMIT = 16
-UNIFIED_FACT_LIMIT = 20
+UNIFIED_FACT_LIMIT = 24
 PRIORITIES = ("P0", "P1", "P2", "P3")
 VERIFICATIONS = ("VERIFIED", "CORROBORATED", "UNCONFIRMED")
 

@@ -406,3 +406,15 @@
 .at-analysis-history button:disabled { opacity: .65; cursor: wait; }
 .at-analysis-history button:focus-visible, .at-analysis-history select:focus-visible { outline: 2px solid #91bfd4; outline-offset: 3px; }
 .at-analysis-history label { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 16px 0; }
+
+.at-internals { padding: 20px; font-size: 15px; line-height: 1.7; }
+.at-internals h3 { font-size: 19px; margin: 0 0 16px; }
+.at-internals p { margin: 12px 0; }
+.at-internals__lead { color: #dce6eb; }
+.at-internals details { border-top: 1px solid #2c3b46; margin-top: 16px; padding-top: 12px; }
+.at-internals summary { cursor: pointer; padding: 8px 0; color: #a9c9d9; }
+.at-internals__rows > div { display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; padding: 12px 0; border-bottom: 1px solid #25343e; }
+.at-internals__rows small { grid-column: 1 / -1; color: #91a2af; }
+.at-internals__asset { padding: 14px 0; border-bottom: 1px solid #25343e; }
+
+.at-internals__id { overflow-wrap: anywhere; font-size: 12px; }
