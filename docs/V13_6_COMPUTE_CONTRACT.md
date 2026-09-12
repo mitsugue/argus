@@ -144,3 +144,13 @@ decrypt functions with exact data equality and no local-store writes; an
 incorrect passphrase still fails authentication. This is local tested code only,
 not authenticated cloud upload, restart restore, cross-device sync, or iPhone
 acceptance. Existing relay size/auth/persistence integration remains outstanding.
+
+### Backend delivery preparation
+
+Japan analysis modules and the official SQ calendar are explicit backend deploy
+inputs in both the Render blueprint and the release classifier. A calendar-only
+update must reach the running backend; documentation/test-only changes preserve
+the current backend. The 31 deploy-scope/guard tests pass locally. The live
+Render service is dashboard-managed: its corresponding path filter still needs
+to be verified and updated before the integrated 13.6 release. This preparation
+is not evidence that the new analysis is running in production.
