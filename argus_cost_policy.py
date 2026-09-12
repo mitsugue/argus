@@ -22,6 +22,8 @@ SCHEDULED_PURPOSES = ("headline_translation", "news_intel", "market_brief")
 # scenarios may ALSO run automatically under SCHEDULED_AI, but only when the
 # owner has opted in (ARGUS_EVENT_AI_OPT_IN=1 / eventOptIn), inside the same
 # daily budget, and never more than this many runs per UTC day.
+SCHEDULED_MAIN_PURPOSES = ("ai_judgment", "entity_profiles", "candidate_research",
+                           "mover_explanation", "osint_research")
 SCHEDULED_EVENT_PURPOSE = "event_analysis"
 SCHEDULED_EVENT_RUNS_PER_DAY = 6
 SCHEDULED_DAILY_BUDGET_USD = 2.0
@@ -94,7 +96,7 @@ def _skip(mode: str, reason: str, purpose: str) -> Dict[str, Any]:
 
 
 def _scheduled_budget_usage(day_rows, budget):
-    rows = [row for row in day_rows if row.get("purpose") in SCHEDULED_PURPOSES
+    rows = [row for row in day_rows if row.get("purpose") in SCHEDULED_PURPOSES + SCHEDULED_MAIN_PURPOSES
             or row.get("purpose") == SCHEDULED_EVENT_PURPOSE]
     events = [row for row in rows if row.get("purpose") == SCHEDULED_EVENT_PURPOSE]
     spent = round(sum(float(row.get("estimatedCostUsd") or 0.0) for row in rows), 6)
@@ -115,7 +117,8 @@ def authorize(state: Dict[str, Any], *, provider: str, purpose: str,
               provider_enabled: bool = True,
               event_budget_usd: float = 1.0,
               event_token_limit: int = 12000,
-              scheduled_daily_budget_usd: float = SCHEDULED_DAILY_BUDGET_USD
+              scheduled_daily_budget_usd: float = SCHEDULED_DAILY_BUDGET_USD,
+              budget_enforced: bool = True, full_analysis_enabled: bool = False
               ) -> Dict[str, Any]:
     """Return an authorization without performing I/O or mutating state."""
     st = normalize_state(state)
@@ -149,9 +152,12 @@ def authorize(state: Dict[str, Any], *, provider: str, purpose: str,
             runs = sum(1 for x in st["usage"]
                        if _day(x.get("at")) == today
                        and x.get("purpose") == SCHEDULED_EVENT_PURPOSE)
-            if runs >= SCHEDULED_EVENT_RUNS_PER_DAY:
+            if budget_enforced and runs >= SCHEDULED_EVENT_RUNS_PER_DAY:
                 return _skip(mode, "scheduled_event_runs_exhausted", purpose)
-        if purpose in SCHEDULED_PURPOSES or scheduled_event:
+        full_analysis = full_analysis_enabled and purpose in SCHEDULED_MAIN_PURPOSES
+        if full_analysis and p != "openai":
+            return _skip(mode, "primary_analysis_requires_openai", purpose)
+        if purpose in SCHEDULED_PURPOSES or scheduled_event or full_analysis:
             # Automatic news translation/analysis, bounded by a daily budget
             # summed over the recorded usage rows of the scheduled lane.
             today = _day(now_iso)
@@ -164,7 +170,7 @@ def authorize(state: Dict[str, Any], *, provider: str, purpose: str,
             # Both purposes share the hard cap; only still-needed event funds
             # are held back from news. Never count event spend twice.
             lane_cap = budget if scheduled_event else max(0.0, budget - reserve)
-            if spent + est > lane_cap:
+            if budget_enforced and spent + est > lane_cap:
                 return _skip(mode, "scheduled_daily_budget_exhausted", purpose)
         else:
             if automatic:
@@ -189,7 +195,7 @@ def authorize(state: Dict[str, Any], *, provider: str, purpose: str,
         event_token_limit = min(event_token_limit, int(ev.get("tokenLimit") or event_token_limit))
     if estimated_cost_usd is None or estimated_cost_usd < 0:
         return _skip(mode, "cost_unknown", purpose)
-    if estimated_cost_usd > event_budget_usd:
+    if budget_enforced and estimated_cost_usd > event_budget_usd:
         return _skip(mode, "event_budget_exceeded", purpose)
     if estimated_tokens is None or estimated_tokens < 0:
         return _skip(mode, "tokens_unknown", purpose)
@@ -246,7 +252,8 @@ def _month(s: str) -> str:
 
 def public_status(state: Dict[str, Any], now_iso: str,
                   scheduled_daily_budget_usd: float = SCHEDULED_DAILY_BUDGET_USD,
-                  *, openai_key_configured: Optional[bool] = None) -> Dict[str, Any]:
+                  *, openai_key_configured: Optional[bool] = None,
+                  budget_enforced: bool = True, full_analysis_enabled: bool = False) -> Dict[str, Any]:
     st = normalize_state(state)
     today, month = _day(now_iso), _month(now_iso)
     day_rows = [x for x in st["usage"] if _day(x.get("at")) == today]
@@ -260,6 +267,7 @@ def public_status(state: Dict[str, Any], now_iso: str,
     lane_spent, event_spent, event_runs, reserve_remaining = _scheduled_budget_usage(day_rows, budget)
     last = st.get("lastExecution") or {}
     scheduled_lane = {
+        "budgetEnforced": bool(budget_enforced),
         "dailyBudgetUsd": budget, "spentTodayUsd": lane_spent,
         "remainingUsd": round(max(0.0, budget - lane_spent), 6),
         "eventReserveUsd": min(budget, SCHEDULED_EVENT_RESERVE_USD),
@@ -269,17 +277,23 @@ def public_status(state: Dict[str, Any], now_iso: str,
         "newsRemainingUsd": round(max(0.0, budget - reserve_remaining - lane_spent), 6),
         "eventRunsToday": event_runs, "eventRunsPerDay": SCHEDULED_EVENT_RUNS_PER_DAY,
         "eventLaneOpen": bool(mode == "SCHEDULED_AI" and st.get("eventOptIn")
-                              and event_runs < SCHEDULED_EVENT_RUNS_PER_DAY
-                              and lane_spent < budget),
+                              and (not budget_enforced or (event_runs < SCHEDULED_EVENT_RUNS_PER_DAY
+                              and lane_spent < budget))),
     }
     next_allowed = ("重要イベントの明示opt-in後" if mode == "EVENT_OPT_IN"
                     else "明示確認付きmanual APIのみ" if mode == "MANUAL"
                     else "固定benchmark実行中のみ" if mode == "RESEARCH_BENCHMARK"
+                    else "GPTの分析・説明と補助翻訳を自動実行" if mode == "SCHEDULED_AI" and full_analysis_enabled
                     else "ニュースの日本語要約と補助解析のみ日次予算内で自動"
                     if mode == "SCHEDULED_AI"
                     else "なし(相談パックはAPIなしで随時生成可)")
     return {
         "schemaVersion": SCHEMA_VERSION, "asOf": now_iso, "mode": mode,
+        "budgetEnforced": bool(budget_enforced),
+        "fullAnalysisEnabled": bool(full_analysis_enabled),
+        "enabledScheduledPurposes": list(SCHEDULED_PURPOSES) + (list(SCHEDULED_MAIN_PURPOSES) if full_analysis_enabled else []),
+        "budgetNoteJa": ("設定上限を適用中" if budget_enforced else
+                         "オーナー指示により費用による停止を解除中。使用量・費用は記録します。"),
         "eventOptIn": bool(st.get("eventOptIn")),
         "automaticAiEnabled": (mode == "SCHEDULED_AI"
                                or (mode == "EVENT_OPT_IN"
@@ -297,11 +311,11 @@ def public_status(state: Dict[str, Any], now_iso: str,
         "scheduledLane": scheduled_lane,
         "openaiKeyConfigured": openai_key_configured,
         "nextAllowedAiExecution": next_allowed,
-        "messageJa": {
+        "messageJa": ("GPTを主分析に使用し、Geminiは翻訳等を補助します。" if mode == "SCHEDULED_AI" and full_analysis_enabled else {
             "DETERMINISTIC": "市場データ、イベント、台帳、ルール判断は動作します。自動AIは実行しません。",
             "EVENT_OPT_IN": "有効化した重要イベントの前後だけAIを実行します。",
             "MANUAL": "明示的に深掘りを実行した場合だけAIを使用します。",
             "RESEARCH_BENCHMARK": "固定済み研究benchmarkだけを上限内で手動実行します。",
             "SCHEDULED_AI": "ニュースメールの日本語要約と補助解析だけを日次予算内で自動実行します。他のAIは実行しません。",
-        }[mode],
+        }[mode]),
     }

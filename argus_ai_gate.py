@@ -114,10 +114,10 @@ def can_execute_external(model: str, pricing_table: Dict[str, Any],
 
 def reserve_budget(*, day_spent: float, day_budget: float,
                    estimated_max_cost: float,
-                   reserved: float = 0.0) -> Dict[str, Any]:
+                   reserved: float = 0.0, enforced: bool = True) -> Dict[str, Any]:
     """呼び出し前予約: spent+reserved+今回最大 <= budget。"""
     total = float(day_spent) + float(reserved) + float(estimated_max_cost)
-    ok = total <= float(day_budget)
+    ok = not enforced or total <= float(day_budget)
     return {"allowed": ok, "wouldTotal": round(total, 4),
             "dayBudget": float(day_budget),
             "reasonJa": (None if ok else

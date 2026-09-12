@@ -1898,6 +1898,7 @@ def test_public_news_window_is_the_most_recent_by_receipt_not_last_processed(mon
     list showed a batch from 08-28..09-01 and the released NFP story (09-04)
     vanished — it was still in the store, hidden behind `order[-12:]`."""
     store = _news_fresh_store(monkeypatch)
+    monkeypatch.setattr(scanner, "_NEWS_EVENT_CAP", 12)
     # 13 recent events processed first (09-02..09-06), then a backfill appends
     # 12 older ones (08-25..08-30) LAST in processing order.
     recent = [_news_fixture_event(2 + i // 3, 8 + (i % 3) * 4, f"米金利 見出し {i}") for i in range(13)]
@@ -3245,7 +3246,9 @@ def test_news_history_reads_expired_important_article_without_reviving_alert(mon
     before = copy.deepcopy(store["events"])
     client = scanner.app.test_client()
     recent = client.get("/api/argus/news-intelligence").get_json()
-    assert identity not in [e["eventId"] for e in recent["events"]]
+    old_recent = next(e for e in recent["events"] if e["eventId"] == identity)
+    assert old_recent["staleness"] == "STALE"
+    assert old_recent["alertEligible"] is False
     history = client.get("/api/argus/news-intelligence?view=history").get_json()
     assert history["view"] == "history"
     assert history["historyWindowDays"] == 7 and history["retainedEventLimit"] == 40

@@ -274,11 +274,16 @@ def test_multi_source_families_resolve_and_apply_policy(monkeypatch, news_env):
     assert status == "HEALTHY"
     client = scanner.app.test_client()
     body = client.get("/api/argus/news-intelligence").get_json()
-    # English agency titles remain classified evidence but are withheld from
-    # owner surfaces until their Japanese cache entry exists.
+    # English titles stay withheld; a WATCH item has a Japanese pending notice
+    # so an unanalysed agency release does not disappear.
     by_family = {e["sourceFamily"]: e
                  for e in news_env["events"].values()}
-    assert body["events"] == []
+    assert len(body["events"]) == 1
+    assert body["events"][0]["sourceFamily"] == "BLS"
+    assert body["events"][0]["severity"] == "WATCH"
+    assert body["events"][0]["translationPending"] is True
+    assert "日本語要約 処理中" in body["events"][0]["headlineJa"]
+    assert "Consumer Price Index" not in body["events"][0]["headlineJa"]
     assert body["pendingTranslationCount"] == 2
     # Treasury daily rates: data input, never an alert (§14A)
     treasury = by_family["US_TREASURY"]
@@ -307,14 +312,18 @@ def test_multi_source_families_resolve_and_apply_policy(monkeypatch, news_env):
     assert statuses["f1"] == "QUARANTINED"
 
 
-def test_english_news_is_withheld_until_japanese_translation_exists(
+def test_english_watch_has_pending_notice_until_japanese_translation_exists(
         monkeypatch, news_env):
     subject = "Treasury Increases Sanctions on Target Network"
     run_cycle(monkeypatch, {"en1": mail("en1", subject)})
     client = scanner.app.test_client()
 
     pending = client.get("/api/argus/news-intelligence").get_json()
-    assert pending["events"] == []
+    assert len(pending["events"]) == 1
+    assert pending["events"][0]["severity"] == "WATCH"
+    assert pending["events"][0]["translationPending"] is True
+    assert subject not in pending["events"][0]["headlineJa"]
+    assert "日本語要約 処理中" in pending["events"][0]["headlineJa"]
     assert pending["pendingTranslationCount"] == 1
 
     scanner._NEWS_JA_CACHE[news_i18n.text_hash(subject)] = {
@@ -985,3 +994,52 @@ def test_translation_reserves_shared_money_before_another_call_can_start(monkeyp
     assert not any(row.get("pending") for row in usage)
     assert sum(row.get("estimatedCostUsd", 0) for row in usage) <= 2.0
     assert sum(row.get("purpose") == "headline_translation" for row in usage) == (0 if fail_provider else 1)
+
+
+def test_saved_rate_plan_review_preserves_evidence_and_never_calls_ai(tmp_path, monkeypatch):
+    import copy
+    from datetime import datetime, timezone
+    _reset_news_store(tmp_path, monkeypatch)
+    title = "日銀、9月政策金利1.25%へ 利上げ加速で物価上振れリスク回避"
+    stamp = datetime.fromtimestamp(time.time() - 3600, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    event = _seed_event("rate-plan", "NIKKEI", "WATCH", title, title, stamp)
+    event.update(sourceTier="trusted_subscription", eventType="CENTRAL_BANK",
+                 analysisState="AI_ANALYSIS_UNAVAILABLE", severityReasons=["family_central_bank"])
+    original = copy.deepcopy(event)
+    scanner._NEWS_INTEL["events"][event["eventId"]] = event
+    scanner._NEWS_INTEL["order"] = [event["eventId"]]
+    monkeypatch.setattr(scanner, "_openai_prose", lambda *a, **kw: pytest.fail("No AI during reclassification"))
+    assert scanner._news_review_saved_policy_decisions() == 1
+    assert scanner._news_review_saved_policy_decisions() == 0
+    assert event["severity"] == "HIGH"
+    assert event["alertEligible"] is False
+    assert "reported_policy_rate_plan" in event["severityReasons"]
+    assert "reported_policy_rate_decision" not in event["severityReasons"]
+    for key, value in original.items():
+        if key not in ("severity", "severityReasons"):
+            assert event[key] == value
+    scanner._news_intel_persist()
+    scanner._NEWS_INTEL["events"] = {}
+    scanner._news_intel_load()
+    assert scanner._NEWS_INTEL["events"][event["eventId"]] == event
+
+
+def test_recent_api_exposes_bounded_watch_articles_beyond_first_twelve(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    _reset_news_store(tmp_path, monkeypatch)
+    stamp = datetime.fromtimestamp(time.time() - 60, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for i in range(18):
+        title = "日銀の政策金利に関する記事" if i == 0 else f"受信記事 {i}"
+        event = _seed_event(f"received-{i}", "NIKKEI", "WATCH" if i == 0 else "INFO", title, title, stamp)
+        scanner._NEWS_INTEL["events"][event["eventId"]] = event
+        scanner._NEWS_INTEL["order"].append(event["eventId"])
+    monkeypatch.setattr(scanner, "_news_intel_ensure_loaded", lambda: None)
+    monkeypatch.setattr(scanner, "_causal_memory_summary", lambda *a: None)
+    monkeypatch.setattr(scanner, "_openai_prose", lambda *a, **kw: pytest.fail("Public GET must not generate"))
+    with scanner.app.test_client() as client:
+        response = client.get("/api/argus/news-intelligence")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert len(data["events"]) == 18
+    assert any(event["eventId"] == "received-0" for event in data["events"])
+    assert data["sdaAuthority"] is False

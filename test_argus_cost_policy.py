@@ -306,3 +306,46 @@ class SpentEventReserveTests(unittest.TestCase):
         lane = cp.public_status(st, "2026-09-11T09:21:18Z")["scheduledLane"]
         self.assertAlmostEqual(lane["newsRemainingUsd"], 0.2)
         self.assertEqual(lane["eventReserveRemainingUsd"], 0.0)
+
+
+class OwnerUnlimitedAcceptanceTests(unittest.TestCase):
+    def test_no_monetary_or_event_count_stop_but_accounting_remains(self):
+        state = cp.default_state("SCHEDULED_AI", event_opt_in=True)
+        for i in range(7):
+            state = cp.record_execution(state, provider="openai", purpose="event_analysis",
+                at="2026-09-12T01:00:00Z", estimated_cost_usd=100.0)
+        for purpose in ("news_intel", "event_analysis"):
+            kwargs = dict(provider="openai", purpose=purpose, automatic=True,
+                now_iso="2026-09-12T02:00:00Z", estimated_cost_usd=50.0, estimated_tokens=1000)
+            assert not cp.authorize(state, **kwargs)["allowed"]
+            assert cp.authorize(state, budget_enforced=False, **kwargs)["allowed"]
+        view = cp.public_status(state, "2026-09-12T02:00:00Z", budget_enforced=False)
+        assert view["budgetEnforced"] is False
+        assert view["todayEstimatedCostUsd"] == 700.0
+        assert view["todayRuns"]["openai"] == 7
+        assert view["scheduledLane"]["eventLaneOpen"] is True
+
+    def test_full_analysis_is_explicit_gpt_only_and_bounded_by_mode(self):
+        state = cp.default_state("SCHEDULED_AI")
+        for purpose in cp.SCHEDULED_MAIN_PURPOSES:
+            kwargs = dict(provider="openai", purpose=purpose, automatic=True,
+                estimated_cost_usd=0.1, estimated_tokens=1000)
+            assert not cp.authorize(state, **kwargs)["allowed"]
+            assert cp.authorize(state, full_analysis_enabled=True, **kwargs)["allowed"]
+            assert not cp.authorize(cp.default_state(), full_analysis_enabled=True,
+                                    budget_enforced=False, **kwargs)["allowed"]
+            kwargs["provider"] = "gemini"
+            assert cp.authorize(state, full_analysis_enabled=True, **kwargs)["reason"] == "primary_analysis_requires_openai"
+        denied = cp.authorize(state, provider="openai", purpose="prose", automatic=True,
+            full_analysis_enabled=True, budget_enforced=False,
+            estimated_cost_usd=0.1, estimated_tokens=1000)
+        assert denied["reason"] == "scheduled_scope_required"
+
+    def test_unlimited_keeps_token_bounds_and_event_opt_in(self):
+        state = cp.default_state("SCHEDULED_AI")
+        assert cp.authorize(state, provider="openai", purpose="event_analysis",
+            automatic=True, budget_enforced=False, estimated_cost_usd=0.1,
+            estimated_tokens=1000)["reason"] == "scheduled_scope_required"
+        assert cp.authorize(state, provider="openai", purpose="news_intel",
+            automatic=True, budget_enforced=False, estimated_cost_usd=100,
+            estimated_tokens=99999)["reason"] == "event_token_limit"
