@@ -1,3 +1,4 @@
+import { OwnerDialogue } from '../dialogue/OwnerDialogue';
 import { MarketBriefCard } from './MarketBriefCard';
 import React from 'react';
 import { MarginDynamicsCard } from './MarginDynamicsCard';
@@ -935,6 +936,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     {view.selectedMarket === 'JP' && selectedSymbol === '1321'
       && <JapanMarketComparisonPanel horizon={horizon} />}
 
+    {view.selectedMarket === 'JP' && selectedSymbol === '1321' && <OwnerDialogue symbol="N225" market="JP" horizon={horizon} />}
     {!usSelected && <SharedMarketContext horizon={horizon} />}
     {!usSelected && <MarginDynamicsCard document={decisionEvidence.marketView?.margin1570Dynamics} refreshFailed={!!decisionEvidence.error} />}
     {!usSelected && <JpyPositionCard document={decisionEvidence.marketView?.jpyPosition} />}

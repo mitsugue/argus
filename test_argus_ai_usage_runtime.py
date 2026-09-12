@@ -97,7 +97,7 @@ def test_every_sdk_call_in_scanner_is_wrapped_with_feature_receipt():
             count+=1;parent=parents[node]
             assert isinstance(parent,ast.Lambda)
             wrapper=parents[parent];assert isinstance(wrapper,ast.Call) and isinstance(wrapper.func,ast.Name) and wrapper.func.id=='_ai_usage_provider_call'
-    assert count==17
+    assert count==18
 
 
 def test_prose_sdk_fallback_retains_both_attempts_and_feature(bound_store):

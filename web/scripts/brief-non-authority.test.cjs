@@ -39,7 +39,7 @@ for (const file of walk(root)) {
     importers.push(path.relative(root, file).split(path.sep).join('/'));
   }
 }
-const expected = ['components/today/MarketBriefCard.tsx', 'components/today/SharedMarketContext.tsx'];
+const expected = ['components/dialogue/OwnerDialogue.tsx', 'components/today/MarketBriefCard.tsx', 'components/today/SharedMarketContext.tsx'];
 if (JSON.stringify(importers.sort()) !== JSON.stringify(expected)) {
   fail(`useMarketBrief importers must be exactly ${JSON.stringify(expected)}, `
     + `got ${JSON.stringify(importers)}`);

@@ -28,7 +28,7 @@ export interface AssetItem {
   targetAllocation?: number;
   currentAllocation?: number;
   // Holdings (v10.0 Portfolio Exposure). Device-local only (localStorage) —
-  // ARGUS never uploads position sizes anywhere.
+  // Sent to the private owner dialogue only when the owner submits a question.
   quantity?: number;   // shares / coins held
   avgCost?: number;    // average acquisition price (native currency)
   memo?: string;

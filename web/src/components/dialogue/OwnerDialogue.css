@@ -1,0 +1,8 @@
+.owner-dialogue{margin:22px 0;padding:22px;background:#0b131a;border:1px solid #293b48;border-radius:18px;color:#dce5eb;overflow-wrap:anywhere}
+.owner-dialogue h3{font-size:22px;font-weight:500;margin:0 0 12px}.owner-dialogue p{line-height:1.8;margin:8px 0 14px}.owner-dialogue small{color:#9aafbd}.owner-dialogue label{display:block;margin:12px 0}
+.owner-dialogue input,.owner-dialogue textarea{box-sizing:border-box;width:100%;margin-top:8px;border:1px solid #354955;border-radius:10px;background:#141f28;color:#e1e9ee;padding:12px;font:inherit;font-size:16px}.owner-dialogue textarea{min-height:110px;resize:vertical}
+.owner-dialogue button{font:inherit;min-height:44px;border-radius:12px;border:1px solid #354955;background:#192a35;color:#bedced;padding:10px 14px;cursor:pointer}.owner-dialogue button:disabled{opacity:.5;cursor:default}
+.owner-dialogue__suggestions,.owner-dialogue__actions{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0}.owner-dialogue article{margin-top:22px;padding-top:18px;border-top:1px solid #354955}.owner-dialogue article h4{font-size:21px;font-weight:500}.owner-dialogue article>div{margin:18px 0}.owner-dialogue details{margin:14px 0}.owner-dialogue summary{cursor:pointer;line-height:1.8;min-height:44px}.owner-dialogue__history{display:grid;gap:10px;margin-top:16px}
+@media(max-width:480px){.owner-dialogue{padding:16px;border-radius:14px}.owner-dialogue__actions button{width:100%}.owner-dialogue h3{font-size:20px}}
+
+.owner-dialogue__chart{margin:20px 0}.owner-dialogue__chart svg{width:100%;height:auto}.owner-dialogue__chart figcaption{font-size:14px;color:#a8b9c6}

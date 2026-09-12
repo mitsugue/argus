@@ -81,9 +81,11 @@ def hypothesis_calculation(value, *, index_quote=None, eps_input=None, cutoff=No
             return {'status':'UNAVAILABLE','reason':'verified_cash_index_required','isHypothesis':True,'actionAuthority':False}
         if not valid_input_time(quote,cutoff):return {'status':'UNAVAILABLE','reason':'input_time_or_source_unverified','isHypothesis':True,'actionAuthority':False}
         price=number(quote.get('close'),positive=True);usd=price/fx
-        if not math.isfinite(usd):raise ValueError('hypothesis_result_not_finite')
+        if not math.isfinite(usd) or any(not math.isfinite(fx*f) or not math.isfinite(price/(fx*f)) for f in (0.9,1.0,1.1)):
+            raise ValueError('hypothesis_result_not_finite')
         return {'status':'AVAILABLE','kind':kind,'isHypothesis':True,'unit':'USD','value':usd,
             'assumptions':{'usdJpy':fx,'yenIndexUnchanged':True},'input':deepcopy(quote),'actionAuthority':False,
+            'comparisonPoints':[{'usdJpy':fx*factor,'value':price/(fx*factor)} for factor in (0.9,1.0,1.1)],
             'noteJa':'日経平均の円建て価格が変わらないと仮定したドル換算です。円高による日本株の騰落や海外の買い注文の予測ではありません。'}
     if kind=='EPS_MULTIPLE':
         if set(value)!={'kind','per'}:raise ValueError('hypothesis_fields_invalid')
@@ -97,6 +99,37 @@ def hypothesis_calculation(value, *, index_quote=None, eps_input=None, cutoff=No
             'assumptions':{'per':per},'input':deepcopy(eps),'actionAuthority':False,
             'noteJa':'仮定したPERと公表EPSの積です。到達予測・確定した上限・検証済み確率ではありません。'}
     raise ValueError('unsupported_hypothesis')
+
+
+def market_internals(brief, horizon):
+    saved=((brief.get('calculationSnapshots') or {}).get(str(horizon)) or {}).get('marketInternals')
+    facts=(brief.get('unifiedContext') or {}).get('facts') or []
+    if not isinstance(saved,dict) or saved.get('schemaVersion')!='jp-market-internals-v1' or saved.get('actionAuthority') is not False:return None
+    if not any(f.get('source')=='market_internals_calculation' and (f.get('provenance') or {}).get('eventId')==f'market-internals-{horizon}' and (f.get('provenance') or {}).get('sourceRowSha256')==saved.get('evidenceId') for f in facts):return None
+    return (saved.get('periods') or {}).get(str(horizon))
+
+
+def index_quote(brief, horizon):
+    row=(market_internals(brief,horizon) or {}).get('index') or {}
+    if row.get('status')!='AVAILABLE':return None
+    end=row.get('end') or {}
+    return {'instrumentId':'NIKKEI_225_INDEX','priceBasis':row.get('priceBasis'),'close':end.get('close'),
+        'observedAt':end.get('closeAt'),'receivedAt':row.get('receivedAt'),'sourceResponseSha256':row.get('sourceResponseSha256')}
+
+
+def subject_fact(brief, symbol, horizon):
+    period=market_internals(brief,horizon) or {}
+    row=next((r for r in period.get('assets',[]) if r.get('instrumentId')==symbol),None)
+    if not row or row.get('status')!='AVAILABLE':
+        return fact('この銘柄の同じ期間の価格・業種比較は未取得です。市場全体の値を銘柄の実績として扱いません。','subject_coverage',kind='UNKNOWN')
+    parts=[f"{symbol}の過去{horizon}営業日（{row['startDate']}〜{row['endDate']}）の調整後価格変化は{row['returnPct']:+.2f}%。"]
+    for key,label in [('relativeToNikkeiPct','日経平均比'),('relativeToSectorPct','業種ETF比')]:
+        if row.get(key) is not None:parts.append(f"{label}{row[key]:+.2f}ポイント。")
+    if row.get('sectorNameJa'):parts.append('現在の業種区分: '+row['sectorNameJa']+'。')
+    parts.append('売買注文の観測や将来の予測ではありません。')
+    result=fact(''.join(parts),'subject_market_comparison',verification='VERIFIED')
+    result['marketInput']=deepcopy(row)
+    return result
 
 
 def build_context(*, brief, symbol, market, horizon, question, received_at, owner=None,
@@ -118,6 +151,7 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
     if market=='US':
         facts=[{**f,'applicability':'GLOBAL_CONTEXT_ONLY'} for f in facts if f.get('source') in ('trusted_mail','calendar','official_sensor','policy')]
         facts.append(fact('米国銘柄固有の計算・検証データはこの文脈には未接続です。一般ニュースを日本株の予測ルールへ変換しません。','subject_coverage',kind='UNKNOWN'))
+    if market=='JP' and symbol!='N225':facts.append(subject_fact(brief,symbol,horizon))
     facts.append(fact(f'質問の対象は{market}:{symbol}、比較・見通しの期間は{horizon}営業日です。','requested_subject',kind='REQUEST_SCOPE'))
     private=owner_snapshot(owner,symbol=symbol,market=market,received_at=received_at)
     if private:

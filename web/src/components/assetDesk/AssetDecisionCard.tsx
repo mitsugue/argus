@@ -106,7 +106,7 @@ export const AssetDecisionCard: React.FC<Props> = ({
             {tab === 'decision' && (
               <Section symbol={sym} id="decision">
                 <AssetDecisionDetails d={d} />
-                <AssetMarketContext symbol={sym} market={d.asset.market} />
+                <AssetMarketContext symbol={sym} market={d.asset.market} asset={d.asset} />
                 <details className="ad-plan-detail">
                   <summary>条件と分岐を確認</summary>
                   <AssetScenarioPanel d={d} />

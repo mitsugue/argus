@@ -23,7 +23,7 @@ SCHEDULED_PURPOSES = ("headline_translation", "news_intel", "market_brief")
 # owner has opted in (ARGUS_EVENT_AI_OPT_IN=1 / eventOptIn), inside the same
 # daily budget, and never more than this many runs per UTC day.
 SCHEDULED_MAIN_PURPOSES = ("ai_judgment", "entity_profiles", "candidate_research",
-                           "mover_explanation", "osint_research")
+                           "mover_explanation", "osint_research", "owner_dialogue")
 SCHEDULED_EVENT_PURPOSE = "event_analysis"
 SCHEDULED_EVENT_RUNS_PER_DAY = 6
 SCHEDULED_DAILY_BUDGET_USD = 2.0

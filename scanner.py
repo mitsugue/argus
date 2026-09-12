@@ -124,6 +124,7 @@ import argus_ai_usage_runtime
 import jp_market_internals
 import jp_market_positioning
 import argus_analysis_history
+import argus_owner_dialogue_api
 import argus_analysis_history_backup
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
@@ -2795,7 +2796,7 @@ def _require_owner_sync(body_token=None):
     admin token, from a header OR the request body (body lets a non-ASCII
     passphrase work — header values must be ASCII). The dedicated token is
     limited to OWNER_SYNC catalog operations (membership, Layer-2B calibration,
-    and owner profile actions); it has no general admin or deploy authority.
+    owner profile actions and private dialogue); it has no general admin or deploy authority.
     Never logs it."""
     owner = os.environ.get("ARGUS_OWNER_SYNC_TOKEN", "")
     admin = _ARGUS_ADMIN_TOKEN
@@ -14715,6 +14716,11 @@ def _openai_prose_call(client, model, sys_prompt, user, *, purpose="prose"):
     """One model call: Responses API first, chat completions second. Returns
     (response, text). Raises the LAST error when both fail."""
     sys_prompt = argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n" + sys_prompt
+    if purpose == "owner_dialogue":
+        resp = _ai_usage_provider_call('openai', purpose, model, lambda: client.responses.create(
+            model=model, instructions=sys_prompt, input=user, max_output_tokens=3000,
+            timeout=60, store=False), attempt=1, source_ref='_openai_prose_call')
+        return resp, getattr(resp, "output_text", None)
     try:
         resp = _ai_usage_provider_call('openai', purpose, model, lambda: client.responses.create(model=model, instructions=sys_prompt,
                                         input=user, timeout=60, store=False), attempt=1, source_ref='_openai_prose_call')
@@ -14798,7 +14804,7 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
     mdl = model or _OPENAI_MODEL
     try:
         import openai
-        client = openai.OpenAI(api_key=_OPENAI_API_KEY)
+        client = openai.OpenAI(api_key=_OPENAI_API_KEY, **({"max_retries": 0} if purpose == "owner_dialogue" else {}))
         used_model, fallback_used = mdl, None
         try:
             resp, text = _openai_prose_call(client, mdl, sys_prompt, user, purpose=purpose)
@@ -17743,6 +17749,11 @@ def _market_brief_refresh(allow_ai=True):
     _MARKET_BRIEF["data"] = brief
     _MARKET_BRIEF["composedAt"] = time.time()
     return brief
+
+
+argus_owner_dialogue_api.register(app, authorize=_require_owner_sync,
+    storage_path=lambda: os.path.join(_DURABILITY_PATHS["root"], "owner_dialogue.sqlite3") if _cost_policy_durable_enabled() else None,
+    market_brief=lambda: _MARKET_BRIEF.get("data"), generate=_openai_prose, now=_ai_now_iso)
 
 
 @app.route("/api/argus/market-brief")

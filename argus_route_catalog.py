@@ -160,6 +160,7 @@ ROUTE_CATALOG = (
     RouteCatalogEntry("/api/argus/decision-value/shadow-summary", ("GET", "POST"), "api_argus_decision_value_shadow_summary", "OWNER_SYNC", "OWNER_SYNC_OR_ADMIN", True, "OWNER_PRIVATE", "OWNER_CLIENT"),
     RouteCatalogEntry("/api/argus/downside-incidents", ("GET",), "api_argus_downside_incidents", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/entity-profiles", ("GET",), "api_argus_entity_profiles", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
+    RouteCatalogEntry("/api/argus/owner-dialogue", ("POST",), "api_argus_owner_dialogue", "OWNER_SYNC", "OWNER_SYNC_OR_ADMIN", True, "OWNER_PRIVATE", "OWNER_CLIENT"),
     RouteCatalogEntry("/api/argus/entity-profiles/edit", ("POST",), "api_argus_entity_profiles_edit", "OWNER_SYNC", "OWNER_SYNC_OR_ADMIN", True, "OWNER_PRIVATE", "OWNER_CLIENT"),
     RouteCatalogEntry("/api/argus/entity-profiles/generate", ("POST",), "api_argus_entity_profiles_generate", "OWNER_SYNC", "OWNER_SYNC_OR_ADMIN", True, "OWNER_PRIVATE", "OWNER_CLIENT"),
     RouteCatalogEntry("/api/argus/event-analysis/generate", ("POST",), "api_argus_event_analysis_generate", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
