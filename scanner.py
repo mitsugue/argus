@@ -121,6 +121,7 @@ import argus_news_intelligence      # v13.5.3: Nikkei mail → news-risk evidenc
 import argus_gmail_intake           # v13.5.3: dedicated read-only news mailbox intake
 import jp_market_positioning
 import argus_analysis_history
+import argus_analysis_history_backup
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
 import jp_market_price_paths
@@ -17311,6 +17312,35 @@ _MARKET_BRIEF_WORKER = {"lastAttemptMonotonic": None, "lastAttemptAt": None,
                         "lastCompletedAt": None, "status": "NOT_RUN", "errorClass": None}
 
 
+_MARKET_BRIEF_HISTORY_REMOTE = {"status": "NOT_RUN", "lastVerifiedAt": None,
+                                "lastAttemptAt": None, "headVersion": None}
+
+
+def _market_brief_history_sync():
+    """Use the existing private recovery connection, solely on the worker lane."""
+    path = _market_brief_history_path()
+    repo = os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", "")
+    token_configured = bool(os.environ.get("ARGUS_LAYER2B_PRIVATE_TOKEN", ""))
+    if not path or not repo or not token_configured:
+        _MARKET_BRIEF_HISTORY_REMOTE.update(status="NOT_CONFIGURED")
+        return
+    _MARKET_BRIEF_HISTORY_REMOTE.update(lastAttemptAt=_ai_now_iso(), status="RUNNING")
+    try:
+        remote = argus_analysis_history_backup.GitHubStore(
+            repo=repo, headers=_gh_private_headers(), http=requests.request)
+        result = argus_analysis_history_backup.synchronize(path, remote,
+            last_verified_head=_MARKET_BRIEF_HISTORY_REMOTE.get("headVersion"))
+        _MARKET_BRIEF_HISTORY_REMOTE.update(result, lastVerifiedAt=_ai_now_iso(), errorClass=None)
+    except Exception as exc:
+        _MARKET_BRIEF_HISTORY_REMOTE.update(status="FAILED", errorClass=type(exc).__name__)
+
+
+def _market_brief_history_remote_status():
+    # Read-back of remote bytes is separate from production cold-start acceptance.
+    return {key: value for key, value in _MARKET_BRIEF_HISTORY_REMOTE.items()
+            if key != "headVersion"}
+
+
 def _market_brief_history_path():
     if not _cost_policy_durable_enabled():
         return None
@@ -17399,9 +17429,12 @@ def _market_brief_worker_tick():
         _MARKET_BRIEF_WORKER.update(lastAttemptMonotonic=time.monotonic(),
             lastAttemptAt=_ai_now_iso(), status="RUNNING", errorClass=None)
         try:
+            if not _MARKET_BRIEF.get("historyRestoreAttempted"):
+                _market_brief_history_sync()
             _market_brief_history_restore()
             _market_brief_history_outcomes()
             result = _market_brief_refresh(allow_ai=True)
+            _market_brief_history_sync()
             _MARKET_BRIEF_WORKER.update(status=result.get("unifiedStatus", "UNAVAILABLE"),
                 lastCompletedAt=_ai_now_iso())
         except Exception as exc:
@@ -17657,8 +17690,10 @@ def api_argus_market_brief():
                     "scope": "PUBLIC_MARKET", "readOnly": True,
                     "outcomes": argus_analysis_history.read_outcomes(path, identity) if record else []}), 200 if record else 404
             cursor = request.args.get("beforeSequence")
-            return jsonify(argus_analysis_history.read_page(path,
-                before_sequence=int(cursor) if cursor is not None else None))
+            page = argus_analysis_history.read_page(path,
+                before_sequence=int(cursor) if cursor is not None else None)
+            page["remoteBackup"] = _market_brief_history_remote_status()
+            return jsonify(page)
         except FileNotFoundError:
             return jsonify({"status": "UNAVAILABLE", "reason": "history_not_recorded"}), 503
         except ValueError as exc:
