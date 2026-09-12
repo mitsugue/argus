@@ -17794,7 +17794,8 @@ argus_owner_dialogue_api.register(app, authorize=_require_owner_sync,
     storage_path=_owner_dialogue_path, market_brief=lambda: _MARKET_BRIEF.get("data"),
     generate=_openai_prose, now=lambda: datetime.now(pytz.utc).isoformat(),
     recovery_status=_OWNER_DIALOGUE_RECOVERY.status, recovery_trigger=_OWNER_DIALOGUE_RECOVERY.tick,
-    subject_comparison=_owner_dialogue_subject_comparison, subject_materials=_owner_dialogue_subject_materials)
+    subject_comparison=_owner_dialogue_subject_comparison, subject_materials=_owner_dialogue_subject_materials,
+    usage_snapshot=_ai_usage_snapshot)
 
 
 @app.route("/api/argus/market-brief")

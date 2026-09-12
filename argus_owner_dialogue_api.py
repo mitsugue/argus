@@ -6,9 +6,10 @@ import uuid
 from flask import jsonify, request
 import argus_owner_dialogue as dialogue
 import argus_owner_dialogue_store as store
+import argus_ai_usage_view
 
 
-def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None):
+def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None):
     boot_id = str(uuid.uuid4())
     lock = threading.Lock()
     save_failures = {}
@@ -60,6 +61,18 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
             return response({'error':'invalid_request'},400)
         ok, error, code = authorize(body.get('ownerToken'))
         if not ok: return response(error,code)
+        if body.get('action') == 'usage':
+            if set(body) - {'action', 'ownerToken', 'month', 'offset', 'throughSequence'}:
+                return response({'error':'invalid_request'},400)
+            if not usage_snapshot: return response({'error':'usage_unavailable'},503)
+            try:
+                return response(argus_ai_usage_view.monthly_view(usage_snapshot(), at=now(),
+                    month=body.get('month'), offset=body.get('offset',0), through_sequence=body.get('throughSequence')))
+            except ValueError as exc:
+                code = str(exc)
+                return response({'error':code if code in {'invalid_usage_period','invalid_usage_cursor','usage_snapshot_changed'} else 'usage_unavailable'},
+                                409 if code == 'usage_snapshot_changed' else 400 if code in {'invalid_usage_period','invalid_usage_cursor'} else 503)
+            except Exception: return response({'error':'usage_unavailable'},503)
         path = storage_path()
         if not path: return response({'error':'durable_storage_unavailable'},503)
         action=body.get('action')

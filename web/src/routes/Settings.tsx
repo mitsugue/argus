@@ -3,6 +3,7 @@ import { setLocale, useLocale } from '../i18n';
 import type { SettingsSection } from '../navigation';
 import { BackupSettingsPanel } from './BackupPage';
 import { NewsIntakePanel } from '../components/settings/NewsIntakePanel';
+import { AiUsagePanel } from '../components/settings/AiUsagePanel';
 import { PublicDiagnosticsPanel } from './DataQualityPage';
 import { PageShell } from './PageShell';
 import {
@@ -71,6 +72,7 @@ export const Settings: React.FC<Props> = ({ settingsSection = 'status' }) => {
       </section>
 
       <NewsIntakePanel />
+      <AiUsagePanel />
       <PublicDiagnosticsPanel />
       <BackupSettingsPanel initiallyOpen={settingsSection === 'recovery'} />
 

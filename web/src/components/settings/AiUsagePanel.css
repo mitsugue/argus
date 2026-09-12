@@ -1,0 +1,14 @@
+.ai-usage { min-width: 0; color: #dce5eb; }
+.ai-usage h3 { font-size: 19px; margin: 0 0 12px; font-weight: 500; }
+.ai-usage p { color: #acbecb; line-height: 1.8; font-size: 14px; overflow-wrap: anywhere; }
+.ai-usage__row, .ai-usage__controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.ai-usage__row strong { font-size: 18px; font-weight: 500; overflow-wrap: anywhere; }
+.ai-usage label { display: grid; gap: 8px; max-width: 100%; }
+.ai-usage input { box-sizing: border-box; min-height: 44px; max-width: 100%; padding: 8px; font-size: 16px; background: #15212b; color: #dce5eb; border: 1px solid #536573; border-radius: 8px; }
+.ai-usage button { min-height: 44px; padding: 8px 14px; background: #20333f; color: #a9d6eb; border: 1px solid #536573; border-radius: 8px; }
+.ai-usage button:disabled { opacity: .5; }
+.ai-usage summary { min-height: 44px; align-content: center; cursor: pointer; font-size: 14px; }
+.ai-usage__group { margin-top: 16px; padding: 16px; border: 1px solid #344754; border-radius: 12px; }
+.ai-usage__group h4 { margin: 0; font-size: 16px; font-weight: 500; }
+.ai-usage__group p { margin: 6px 0; }
+.ai-usage :focus-visible { outline: 2px solid #94c5de; outline-offset: 3px; }
