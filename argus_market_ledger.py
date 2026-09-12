@@ -23,6 +23,10 @@ MAX_BACKTESTS = 64
 MAX_IMPORT_RECEIPTS = 1000
 
 SERIES = {
+    "fx.jpy.speculative.long": ("CONTRACTS", "円先物・非商業の買い建玉", "cftc", "official"),
+    "fx.jpy.speculative.short": ("CONTRACTS", "円先物・非商業の売り建玉", "cftc", "official"),
+    "fx.jpy.speculative.spread": ("CONTRACTS", "円先物・非商業のスプレッド建玉", "cftc", "official"),
+    "fx.jpy.speculative.net": ("CONTRACTS", "円先物・非商業のネット建玉", "cftc", "official"),
     "credit.short_balance": ("JPY", "二市場合計売り残", "manual_csv", "official"),
     "credit.long_balance": ("JPY", "二市場合計買い残", "manual_csv", "official"),
     "credit.ratio": ("ratio", "信用倍率", "derived", "derived"),

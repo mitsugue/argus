@@ -5,6 +5,45 @@ import argus_market_brief as mb
 import scanner
 
 
+def test_scheduler_brief_is_independent_of_busy_news_intake_and_has_a_cadence(monkeypatch):
+    state = {"lastAttemptMonotonic": None, "lastAttemptAt": None,
+             "lastCompletedAt": None, "status": "NOT_RUN", "errorClass": None}
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF_WORKER', state)
+    calls = []
+    def refresh(*, allow_ai):
+        calls.append(allow_ai)
+        return {'unifiedStatus': 'GENERATED'}
+    monkeypatch.setattr(scanner, '_market_brief_refresh', refresh)
+    with scanner._NEWS_INTAKE_LOCK:
+        assert scanner._market_brief_worker_tick()['status'] == 'GENERATED'
+    assert scanner._market_brief_worker_tick()['status'] == 'NOT_DUE'
+    assert calls == [True]
+
+
+def test_brief_worker_rejects_overlap_and_preserves_failure_diagnostics(monkeypatch):
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF_WORKER', {
+        'lastAttemptMonotonic': None, 'status': 'NOT_RUN'})
+    with scanner._MARKET_BRIEF_WORKER_LOCK:
+        assert scanner._market_brief_worker_tick()['status'] == 'ALREADY_RUNNING'
+    def failure(**kwargs): raise RuntimeError('provider failure')
+    monkeypatch.setattr(scanner, '_market_brief_refresh', failure)
+    result = scanner._market_brief_worker_tick()
+    assert result['status'] == 'FAILED' and result['errorClass'] == 'RuntimeError'
+    assert result['lastCompletedAt']
+
+
+def test_public_brief_does_not_start_or_run_the_independent_ai_worker(monkeypatch):
+    state = {'data': {'status': 'cached'}, 'composedAt': scanner.time.time()}
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF', state)
+    calls = []
+    monkeypatch.setattr(scanner, '_market_brief_worker_tick', lambda: calls.append('worker'))
+    monkeypatch.setattr(scanner, '_market_brief_refresh', lambda **kw: calls.append(kw))
+    with scanner.app.test_request_context('/api/argus/market-brief'):
+        result = scanner.api_argus_market_brief().get_json()
+    assert result['status'] == 'cached' and 'generationWorker' in result
+    assert calls == []
+
+
 def brief(text="VIX 20、上昇を観測", verified="VERIFIED", source="official_sensor"):
     return mb.compose_brief(now_iso="2026-09-12T10:00:00Z", shock_events=[
         {"severity": "HIGH", "headlineJa": text}]) | {
@@ -30,6 +69,26 @@ def test_six_parts_are_linked_and_no_private_holdings_claim_is_generated():
     assert answer["historyStatus"] == "PROCESS_MEMORY_ONLY"
     assert answer["sections"]["impact"]["kind"] == "UNKNOWN"
     assert "未確認" in answer["sections"]["impact"]["textJa"]
+
+
+def test_existing_numeric_value_allows_grouping_but_not_changed_digits():
+    context = mb.unified_context(brief('VIX 20、買残1884103口'))
+    raw = response(context)
+    raw['reasons']['textJa'] = '買残は1,884,103口です。'
+    diagnostic = {}
+    assert mb.validate_unified_ai(raw, context, diagnostic=diagnostic)
+    assert diagnostic == {'status': 'ACCEPTED', 'reason': None, 'section': None}
+    raw['reasons']['textJa'] = '買残は1,884,104口です。'
+    assert mb.validate_unified_ai(raw, context, diagnostic=diagnostic) is None
+    assert diagnostic == {'status': 'REJECTED', 'reason': 'unsupported_numeric_tokens', 'section': 'reasons'}
+
+
+def test_rejected_fact_records_only_the_reason_and_section():
+    context = mb.unified_context(brief(verified='UNCONFIRMED'))
+    raw = response(context); raw['reasons']['kind'] = 'FACT'
+    diagnostic = {}
+    assert mb.validate_unified_ai(raw, context, diagnostic=diagnostic) is None
+    assert diagnostic == {'status': 'REJECTED', 'reason': 'fact_requires_verified_references', 'section': 'reasons'}
 
 
 @pytest.mark.parametrize("patch", [
@@ -144,3 +203,22 @@ def test_sq_calendar_enters_brief_without_ai_or_direction(monkeypatch):
 def test_sq_missing_calendar_never_creates_an_imminent_event(monkeypatch):
     monkeypatch.setattr(scanner.jp_market_events,"published_sq_calendar",lambda **kwargs:{"status":"UNAVAILABLE","events":[]})
     assert scanner._brief_sq_events() == []
+
+
+def test_legacy_response_does_not_block_retry_of_six_part_analysis(monkeypatch):
+    current = brief()
+    state = {'data': None, 'composedAt': 0.0, 'aiFactsHash': None}
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF', state)
+    monkeypatch.setattr(scanner, '_compose_market_brief', lambda: copy.deepcopy(current))
+    calls = []
+    def model(user, **kwargs):
+        calls.append(user)
+        kwargs['diagnostic'].update(outcome='ok', returnedModel='gpt-6-astra', completedAt='2026-09-12T10:01:00Z')
+        if len(calls) == 1:
+            return {'nowJa':'VIX 20を確認。', 'whyJa':'VIX 20を確認。', 'nextJa':'VIX 20を確認。'}
+        return response(json.loads(user.split('\n', 1)[1]))
+    monkeypatch.setattr(scanner, '_openai_prose', model)
+    first = scanner._market_brief_refresh(allow_ai=True)
+    assert first['unifiedStatus'] == 'INVALID_RESPONSE'
+    second = scanner._market_brief_refresh(allow_ai=True)
+    assert second['unifiedStatus'] == 'GENERATED' and len(calls) == 2

@@ -35,12 +35,17 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'argus_market_ledger.py': '4bb12ff9be4c423dbf41c17ffd6a184286fd921b',
+    'jp_market_positioning.py': '37661655f15f27baf2beec9e08fb2b5977cfbe9f',
+    'test_jp_market_positioning.py': 'f6134d86859e836ca26ab54b0c707ed7b7c8aa14',
+    'web/scripts/jpy-position.test.cjs': '250fc6fde44ad782d5be85c1325c04f86692f716',
+    'web/src/components/today/JpyPositionCard.tsx': '17fd54006ba230e31bfa0d12ab324430017a9afd',
     # Owner-authorized staged analysis delivery; exact tested file contents only.
     'argus_ai_usage_receipt.py': '23b0d1e44d6e6e2b77639d7cd8916e4e25e5bc56',
     'argus_ai_usage_store.py': 'bc0ccd94eeb2b601da72ecb4a847c8ba3bbf07e1',
     'argus_macro_event_store.py': '0f3bf526a88c83a22576abbf06490bc2861af433',
     'argus_macro_results.py': '4d6e3c0c88fd8be18595f9a25d9c9465f14ec19e',
-    'docs/V13_6_ANALYSIS_ACCEPTANCE.md': 'c2af03e556098b6bd2de5457d76ff8eecbf9d565',
+    'docs/V13_6_ANALYSIS_ACCEPTANCE.md': '9704bff6cc9710b454c269a8e12294e21e7f0ee6',
     'docs/V13_6_COMPUTE_CONTRACT.md': '4ad0e52d419c261b24be8775d9c635bd310e9417',
     'jp_market_analogs.py': 'a4783914d10baae18ff0a473e4624da293c4bd27',
     'jp_market_dynamics.py': '6949bb8b2cc4a1526f09016fb0c0e10369ce488d',
@@ -53,7 +58,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_ai_usage_store.py': '03dce630d6b901cc3e4277c78a7a241b2fac724a',
     'test_argus_macro_result_revisions.py': '0745614163ed8614560868201a64d117b0e77e22',
     'test_argus_macro_results.py': '647520e693f5f87f902033bb1e2a0c0762bfc407',
-    'test_argus_unified_brief.py': 'c9e68aa9b67567fd4f550cd6aa55d4c13f668132',
+    'test_argus_unified_brief.py': '1279611436cf85bdb2417bcc812d1beee29711e9',
     'test_jp_market_analogs.py': 'b9d34aea24c17ed03513620f33c607b2c5487854',
     'test_jp_market_comparison_runtime.py': '26af8c21655615f6f4156e7a7dabb140521a1a4b',
     'test_jp_market_dynamics.py': 'dab9901948bb7c6ab339ee5d4b7a8244eeb79cf6',
@@ -79,7 +84,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/hooks/useJapanSqCalendar.ts': '3bd95e491810c395faf23203356d85eb7d0d385e',
     'web/src/lib/japanMarketComparison.ts': '5ef9f012d608085b193bf55b827d983f5b69d857',
     'web/src/lib/japanSqCalendar.ts': '947b1c9121f7b6f8a5e7b501211b8b43449b329b',
-    'web/src/lib/marketBrief.ts': 'ea2ced852535e5b5ca3ea0c414a836d9daee7f75',
+    'web/src/lib/marketBrief.ts': '87da0fcc9bf731148c348a105ca0fb9be78745ec',
     'web/src/types/japanMarketComparison.ts': 'b7d0c221f5f397e7a908d2ca2ac8403e3479f184',
     "test_ai_cost.py": "e2e1a3094c0fe315993d027592de6e1db9a5b784",
     'web/scripts/news-polling-recovery.test.mjs': '85c1fd980275aa95f832ccf5d2cd4d4eff60d8c1',
