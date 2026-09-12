@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import sqlite3
 import stat
+import tempfile
 from typing import Iterable, Mapping
 
 from argus_ai_usage_receipt import validate_receipt, summarize
@@ -45,28 +46,39 @@ def _connect(path: Path, *, readonly=False):
 def initialize(path: str | Path):
     """Explicit write initialization; existing records are never reset."""
     path = Path(path)
-    try:
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
-    except FileExistsError:
+    if path.exists() or path.is_symlink():
         connection = _connect(path, readonly=True)
         connection.close()
         return
+    # Publish only a complete database. Concurrent first calls must never see
+    # an empty file or replace a database another writer has already filled.
+    fd, temporary = tempfile.mkstemp(prefix=".usage-init-", dir=path.parent)
     os.close(fd)
-    connection = sqlite3.connect(path, isolation_level=None)
     try:
-        connection.execute("PRAGMA synchronous=FULL")
-        connection.execute("BEGIN IMMEDIATE")
-        connection.execute("CREATE TABLE usage_receipts (sequence INTEGER PRIMARY KEY, call_id TEXT NOT NULL UNIQUE, digest TEXT NOT NULL, started_at TEXT NOT NULL, body TEXT NOT NULL)")
-        connection.execute("CREATE INDEX usage_receipts_started ON usage_receipts(started_at)")
-        connection.execute("PRAGMA user_version=1")
-        connection.execute("COMMIT")
+        connection = sqlite3.connect(temporary, isolation_level=None)
+        try:
+            connection.execute("PRAGMA synchronous=FULL")
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("CREATE TABLE usage_receipts (sequence INTEGER PRIMARY KEY, call_id TEXT NOT NULL UNIQUE, digest TEXT NOT NULL, started_at TEXT NOT NULL, body TEXT NOT NULL)")
+            connection.execute("CREATE INDEX usage_receipts_started ON usage_receipts(started_at)")
+            connection.execute("PRAGMA user_version=1")
+            connection.execute("COMMIT")
+        finally:
+            connection.close()
+        with open(temporary, "rb") as handle:
+            os.fsync(handle.fileno())
+        try:
+            os.link(temporary, path, follow_symlinks=False)
+        except FileExistsError:
+            connection = _connect(path, readonly=True)
+            connection.close()
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     finally:
-        connection.close()
-    directory = os.open(path.parent, os.O_RDONLY)
-    try:
-        os.fsync(directory)
-    finally:
-        os.close(directory)
+        os.unlink(temporary)
 
 
 def append(path: str | Path, receipts: Iterable[Mapping]):

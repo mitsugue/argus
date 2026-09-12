@@ -154,3 +154,11 @@ the current backend. The 31 deploy-scope/guard tests pass locally. The live
 Render service is dashboard-managed: its corresponding path filter still needs
 to be verified and updated before the integrated 13.6 release. This preparation
 is not evidence that the new analysis is running in production.
+
+### Usage store first-write concurrency
+
+Initialization now publishes a complete SQLite database atomically without
+replacing an existing destination. Eight concurrent first callers each retain
+their own receipt. A failed publication leaves no empty database that could be
+misreported as an empty history; retry can initialize safely. The usage receipt
+and durable store tests total 26 passes. Runtime integration is still pending.

@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 import sqlite3
 import tempfile
+import threading
+from unittest.mock import patch
 from concurrent.futures import ThreadPoolExecutor
 import unittest
 
@@ -23,6 +25,28 @@ class DurableUsageTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.path = Path(self.directory.name) / "usage.sqlite3"
         initialize(self.path)
+
+    def test_concurrent_first_writes_never_see_partial_database(self):
+        target = self.path.with_name("first-calls.sqlite3")
+        barrier = threading.Barrier(8)
+        def write(index):
+            barrier.wait(timeout=5)
+            initialize(target)
+            return append(target, [receipt(str(index))])
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(write, range(8)))
+        self.assertEqual(sum(row["inserted"] for row in results), 8)
+        self.assertEqual(read_summary(target)["durableReceiptCount"], 8)
+        self.assertEqual(list(target.parent.glob(".usage-init-*")), [])
+
+    def test_failed_initialization_does_not_publish_empty_store(self):
+        target = self.path.with_name("failed-init.sqlite3")
+        with patch("argus_ai_usage_store.os.link", side_effect=OSError("disk failure")):
+            with self.assertRaises(OSError): initialize(target)
+        self.assertFalse(target.exists())
+        self.assertEqual(list(target.parent.glob(".usage-init-*")), [])
+        initialize(target)
+        self.assertEqual(read_summary(target)["durableReceiptCount"], 0)
 
     def test_reopen_preserves_identity_and_estimate(self):
         original = receipt("one")
