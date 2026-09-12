@@ -2,6 +2,7 @@ export interface MarketBriefProvenance {
   scope: 'published_metadata_snapshot'; eventId: string | null; revision: number | null;
   publishedAt: string | null; receivedAt: string | null; observedAt: string | null;
   url: string | null; sourceLabel: string | null;
+  sourceResponseSha256?: string; sourceRowSha256?: string;
 }
 export interface MarketBriefFact {
   provenance?: MarketBriefProvenance;
@@ -48,6 +49,8 @@ const provenance = (value: unknown) => {
     || !(value.revision === null || (Number.isSafeInteger(value.revision) && value.revision >= 0))
     || !(value.sourceLabel === null || text(value.sourceLabel, 160))
     || !['publishedAt', 'receivedAt', 'observedAt'].every(key => value[key] === null || instant(value[key]))) return false;
+  if (!['sourceResponseSha256','sourceRowSha256'].every(key => value[key] === undefined
+    || (typeof value[key] === 'string' && /^[a-f0-9]{64}$/.test(value[key])))) return false;
   if (value.url === null) return true;
   if (!text(value.url, 2048)) return false;
   try { const url = new URL(value.url); return url.protocol === 'https:' && !!url.hostname && !url.username && !url.password; }
@@ -65,7 +68,7 @@ export function validMarketBrief(value: unknown): value is MarketBrief {
     || value.sdaAuthority !== false || value.status === 'unavailable'
     || !instant(value.generatedAt) || !['now', 'why', 'next'].every(key => text(value[key]))
     || !object(value.chips) || !['chart', 'news', 'nextEvent', 'mainRisk'].every(key => text(value.chips[key]))
-    || !Array.isArray(value.facts) || value.facts.length > 12 || !value.facts.every(fact)) return false;
+    || !Array.isArray(value.facts) || value.facts.length > 16 || !value.facts.every(fact)) return false;
   if (value.aiText != null && (!object(value.aiText)
     || !['nowJa', 'whyJa', 'nextJa'].every(key => text(value.aiText[key], 240)))) return false;
   if (value.aiModel != null && !text(value.aiModel, 100)) return false;
@@ -83,7 +86,7 @@ export function validMarketBrief(value: unknown): value is MarketBrief {
     || summary.contextId !== context.contextId || !object(summary.sections)
     || Object.keys(summary.sections).length !== sections.length) return false;
   for (const rows of [context.facts, context.previousFacts]) {
-    if (!Array.isArray(rows) || rows.length > 12 || !rows.every(row => object(row) && typeof row.evidenceId === 'string'
+    if (!Array.isArray(rows) || rows.length > 16 || !rows.every(row => object(row) && typeof row.evidenceId === 'string'
       && /^brief-fact-[a-f0-9]{64}$/.test(row.evidenceId) && fact(row))
       || new Set(rows.map(row => row.evidenceId)).size !== rows.length) return false;
   }

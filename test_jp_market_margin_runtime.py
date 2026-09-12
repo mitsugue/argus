@@ -103,3 +103,55 @@ def test_incomplete_pagination_is_visible(feed):
     assert result["paginationRemaining"] is True
     assert result["sourceStatus"] == "PARTIAL"
     assert "not-exposed" not in json.dumps(result)
+
+
+def test_same_runtime_balances_reach_unified_ai_with_provenance(feed, monkeypatch):
+    scanner._jq_weekly_margin("1570")
+    monkeypatch.setattr(scanner, "_important_events_data", lambda: {"events": [], "imminent": []})
+    monkeypatch.setattr(scanner, "get_market_shock", lambda: {"events": []})
+    monkeypatch.setattr(scanner, "_brief_market_view_summary", lambda: {})
+    monkeypatch.setattr(scanner, "_brief_news_events", lambda: [])
+    result = scanner._compose_market_brief()
+    facts = result["facts"]
+    raw = next(r for r in facts if r["source"] == "licensed_market_data")
+    derived = next(r for r in facts if r["source"] == "derived_margin_change")
+    assert "買残150口" in raw["text"] and "売残15口" in raw["text"]
+    assert raw["verification"] == "VERIFIED"
+    assert raw["provenance"]["publishedAt"] is None
+    assert raw["provenance"]["receivedAt"] == "2026-09-12T01:12:11+00:00"
+    assert len(raw["provenance"]["sourceResponseSha256"]) == 64
+    assert derived["verification"] == "UNCONFIRMED"
+    assert "買い戻し注文は未観測" in derived["text"]
+    context = scanner.argus_market_brief.unified_context(result)
+    assert any(r["text"] == raw["text"] for r in context["facts"])
+    changed = copy.deepcopy(result)
+    next(r for r in changed["facts"] if r["source"] == "licensed_market_data")["provenance"]["sourceRowSha256"] = "f" * 64
+    assert scanner.argus_market_brief.unified_context(changed)["contextId"] != context["contextId"]
+
+
+def test_margin_addition_preserves_full_news_and_event_slots(feed):
+    scanner._jq_weekly_margin("1570")
+    mb = scanner.argus_market_brief
+    result = mb.compose_brief(now_iso=AT, margin_dynamics=scanner._jp_market_margin_1570_dynamics(),
+        market_view_summary={"label": "市場の参考観測"},
+        news_events=[{"severity": "HIGH", "headlineJa": "ニュース" + str(i),
+                      "impactDirection": {"transmissionJa": "波及" + str(i)}} for i in range(2)],
+        shock_events=[{"severity": "HIGH", "headlineJa": "市場リスク" + str(i), "whyJa": "背景"} for i in range(2)],
+        imminent_events=[{"title": "SQ接近" + str(i)} for i in range(2)],
+        next_events=[{"title": "次の予定" + str(i)} for i in range(2)])
+    assert len(result["facts"]) == 16
+    assert any("SQ接近" in r["text"] for r in result["facts"])
+    assert len([r for r in result["facts"] if r["priority"] == "P3"]) == 3
+    assert len(mb.unified_context(result)["facts"]) == 16
+
+
+def test_failed_margin_fetch_is_not_a_new_confirmed_ai_fact(feed):
+    scanner._jq_weekly_margin("1570")
+    scanner._JQ_MARGIN_CACHE["1570"]["expires"] = 0
+    feed[0].status_code = 503
+    scanner._jq_weekly_margin("1570")
+    result = scanner.argus_market_brief.compose_brief(now_iso=AT,
+        margin_dynamics=scanner._jp_market_margin_1570_dynamics())
+    raw = next(r for r in result["facts"] if r["source"] == "licensed_market_data")
+    assert raw["verification"] == "UNCONFIRMED"
+    assert "更新失敗・前回取得" in raw["text"]

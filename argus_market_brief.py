@@ -22,6 +22,7 @@ Discipline (non-negotiable):
 from __future__ import annotations
 
 import re
+import math
 import hashlib
 import json
 from datetime import datetime
@@ -29,6 +30,7 @@ from urllib.parse import urlsplit
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 BRIEF_SCHEMA = "argus-market-brief-v1"
+BRIEF_FACT_LIMIT = 16
 PRIORITIES = ("P0", "P1", "P2", "P3")
 VERIFICATIONS = ("VERIFIED", "CORROBORATED", "UNCONFIRMED")
 
@@ -96,6 +98,10 @@ def _source_reference(origin: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
                     result[target] = value
             except ValueError:
                 pass
+    for key in ("sourceResponseSha256", "sourceRowSha256"):
+        value = origin.get(key)
+        if isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value):
+            result[key] = value
     url = origin.get("sourceUrl")
     if isinstance(url, str) and len(url) <= 2048:
         try:
@@ -137,8 +143,42 @@ def _news_direction_summary(events: Sequence[Mapping[str, Any]]) -> str:
     return "方向材料は限定的"
 
 
+def _margin_facts(document: Optional[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """Received balances and computed differences; no observed covering orders."""
+    if not isinstance(document, Mapping) or document.get("actionAuthority") is not False:
+        return []
+    current, change = document.get("current"), document.get("change") or {}
+    if not isinstance(current, Mapping) or current.get("unit") != "UNITS":
+        return []
+    def finite(value):
+        return type(value) in (int, float) and math.isfinite(value)
+    if not all(finite(current.get(k)) for k in ("longBalance", "shortBalance", "ratio")):
+        return []
+    source = (current.get("sourceRows") or {}).get("long") or {}
+    origin = {"sourceLabelJa": "J-Quants信用取引週末残高", "sourceUrl": source.get("sourceRef"),
+              "sourceReceivedAt": source.get("observedAt"), "asOf": current.get("periodEnd"),
+              "sourceResponseSha256": source.get("sourceResponseSha256"),
+              "sourceRowSha256": source.get("sourceRowSha256")}
+    failed = document.get("acquisitionStatus") not in ("AVAILABLE", "PARTIAL")
+    prefix = "更新失敗・前回取得" if failed else "一部取得" if document.get("sourceStatus") == "PARTIAL" else "取得済み"
+    rows = [_fact(
+        f"日経レバ信用残（{prefix}、{current.get('periodEnd')}）: "
+        f"買残{current['longBalance']:.0f}口・売残{current['shortBalance']:.0f}口、倍率{current['ratio']:.4f}倍。",
+        "P1", "licensed_market_data", "UNCONFIRMED" if failed else "VERIFIED", origin)]
+    if change.get("status") == "AVAILABLE" and all(finite(change.get(k)) for k in
+            ("ratioChange", "longContribution", "shortContribution")):
+        previous = document.get("previous") or {}
+        rows.append(_fact(
+            f"{previous.get('periodEnd')}からの倍率差{change['ratioChange']:+.4f}倍: "
+            f"買残変化の寄与{change['longContribution']:+.4f}、売残変化の寄与{change['shortContribution']:+.4f}。"
+            "実際の買い戻し注文は未観測。買いサインではない。",
+            "P1", "derived_margin_change", "UNCONFIRMED", origin))
+    return rows
+
+
 def compose_brief(*, now_iso: str,
                   market_view_summary: Optional[Mapping[str, Any]] = None,
+                  margin_dynamics: Optional[Mapping[str, Any]] = None,
                   shock_events: Sequence[Mapping[str, Any]] = (),
                   news_events: Sequence[Mapping[str, Any]] = (),
                   imminent_events: Sequence[Mapping[str, Any]] = (),
@@ -191,6 +231,8 @@ def compose_brief(*, now_iso: str,
                        "trusted_mail", "CORROBORATED"
                        if any(e.get("confirmationState") == "MARKET_CONFIRMED"
                               for e in material_news) else "UNCONFIRMED"))
+
+    facts.extend(_margin_facts(margin_dynamics))
 
     # ── P2: なぜそうなっているか ──
     for event in material_news[:2]:
@@ -285,7 +327,7 @@ def compose_brief(*, now_iso: str,
         "aiText": None,           # scanner fills after validate_ai_brief
         "aiModel": None,
         "chips": chips,
-        "facts": facts[:12],
+        "facts": facts[:BRIEF_FACT_LIMIT],
         "priorityOrderJa": "P0 今日これだけは知るべき / P1 相場方向 / "
                            "P2 なぜ / P3 次に確認",
         "noteJa": "事実はARGUS検証済みストアの優先順位圧縮。AIは要約のみで"
@@ -308,7 +350,7 @@ def unified_context(brief: Mapping[str, Any], previous: Optional[Mapping[str, An
     """
     def references(document):
         rows = []
-        for fact in (document or {}).get("facts", [])[:12]:
+        for fact in (document or {}).get("facts", [])[:BRIEF_FACT_LIMIT]:
             material = {key: str(fact.get(key) or "") for key in
                         ("text", "source", "priority", "verification")}
             if isinstance(fact.get("provenance"), Mapping):

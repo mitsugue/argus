@@ -17399,6 +17399,7 @@ def _compose_market_brief():
     return argus_market_brief.compose_brief(
         now_iso=_ai_now_iso(),
         market_view_summary=_brief_market_view_summary(),
+        margin_dynamics=_jp_market_margin_1570_dynamics(),
         shock_events=shock_events,
         news_events=_brief_news_events(),
         imminent_events=imminent,
