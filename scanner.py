@@ -14920,6 +14920,7 @@ _MACRO_ANALYSIS_STATE = {"restored": False, "lastGenerateAt": None, "lastResults
 # running / done / failed with timestamps — survives the workflow's client
 # timeout and a redeploy (persisted with the analyses).
 _MACRO_GENERATE_LOCK = threading.Lock()
+_MACRO_RECORD_LOCK = threading.RLock()
 # V11.5: per-event-code result adapter state (metricsAvailable filled on success).
 _MACRO_RESULT_STATE = {code: {"provider": argus_macro_results.PROVIDER.get(code), "status": "not_run",
                               "lastSuccessAt": None, "sampleEventId": None, "metricsAvailable": []}
@@ -14928,16 +14929,27 @@ _MACRO_RESULT_STATE = {code: {"provider": argus_macro_results.PROVIDER.get(code)
 _MACRO_NOT_IMPLEMENTED = ("BOJ", "TREASURY_AUCTION", "AUCTION")
 
 
+def _macro_merge_record(eid, record, now_iso):
+    with _MACRO_RECORD_LOCK:
+        _MACRO_ANALYSIS[eid] = argus_macro_event_store.merge_record(
+            _MACRO_ANALYSIS.get(eid), record, now_iso=now_iso)
+        return _MACRO_ANALYSIS[eid]
+
+
 def _macro_analysis_persist():
-    try:
-        with open(_MACRO_ANALYSIS_FILE, "w") as f:
-            json.dump({"items": _MACRO_ANALYSIS,
-                       "state": {k: _MACRO_ANALYSIS_STATE.get(k)
-                                 for k in ("lastGenerateAt", "lastResultsAt",
-                                           "lastGenerate", "generateRun")}},
-                      f, ensure_ascii=False, default=str)
-    except Exception:
-        pass
+    with _MACRO_RECORD_LOCK:
+        try:
+            receipt = argus_persistent_storage.atomic_write_json(_MACRO_ANALYSIS_FILE,
+                {"items": _MACRO_ANALYSIS,
+                 "state": {k: _MACRO_ANALYSIS_STATE.get(k) for k in
+                           ("lastGenerateAt", "lastResultsAt", "lastGenerate", "generateRun")}},
+                file_mode=0o600)
+            _MACRO_ANALYSIS_STATE["localPersistence"] = {"status": "saved", "at": _ai_now_iso()}
+            return receipt
+        except Exception as exc:
+            _MACRO_ANALYSIS_STATE["localPersistence"] = {
+                "status": "failed", "errorClass": type(exc).__name__, "at": _ai_now_iso()}
+            return None
 
 
 def _macro_analysis_restore_once():
@@ -14949,7 +14961,8 @@ def _macro_analysis_restore_once():
         with open(_MACRO_ANALYSIS_FILE, "r") as f:
             blob = json.load(f)
         if isinstance(blob.get("items"), dict):
-            _MACRO_ANALYSIS.update(blob["items"])
+            _MACRO_ANALYSIS.update(argus_macro_event_store.restore_from_snapshot(
+                {"items": list(blob["items"].values()), "asOf": _ai_now_iso()}))
             _MACRO_ANALYSIS_STATE["pathType"] = "durable_restored"
         _MACRO_ANALYSIS_STATE.update({k: v for k, v in (blob.get("state") or {}).items()
                                       if k in ("lastGenerateAt", "lastResultsAt",
@@ -15093,7 +15106,7 @@ def _macro_result_fetch(event):
         if code == "NFP":
             return _bls_nfp_result(event)
         if code == "CPI":
-            raw, st = _bls_fetch(["CUSR0000SA0", "CUSR0000SA0L1E"])
+            raw, st = _bls_fetch(["CUSR0000SA0", "CUSR0000SA0L1E", "CUUR0000SA0", "CUUR0000SA0L1E"])
             if raw is None:
                 return MR._empty("rate_limited" if st == 429 else "source_unreachable",
                                  [f"BLS HTTP {st}"], "BLS")
@@ -15145,12 +15158,13 @@ def _macro_important_events(limit=8):
 
 def _refresh_macro_results():
     """Admin/cron: fetch official results for events past their release time."""
+    from copy import deepcopy
     _macro_analysis_restore_once()
     now_iso = _ai_now_iso()
     checked = updated = 0
     for ev in _macro_important_events(10):
         eid = str(ev.get("eventId") or ev.get("eventCode") or "")
-        rec = _MACRO_ANALYSIS.get(eid) or argus_macro_event_analysis.new_record(
+        rec = deepcopy(_MACRO_ANALYSIS.get(eid)) or argus_macro_event_analysis.new_record(
             {**ev, "id": eid}, now_iso=now_iso)
         phase = argus_macro_event_analysis.resolve_macro_event_phase(
             rec.get("eventTimeUtc") or ev.get("eventTimeUtc"), now_iso,
@@ -15160,7 +15174,13 @@ def _refresh_macro_results():
             continue
         checked += 1
         if (rec.get("actual") or {}).get("available"):
-            continue
+            # Recheck CPI revisions within the existing event window; bound provider IO.
+            if str(ev.get("eventCode") or "").upper() != "CPI":
+                continue
+            last = argus_macro_event_store._instant(rec.get("lastResultAttemptAt"))
+            if argus_macro_event_store._instant(now_iso) - last < 21600:
+                continue
+        rec["lastResultAttemptAt"] = now_iso
         actual = _macro_result_fetch(ev)
         # V11.5: record per-code adapter status for the result-status endpoint.
         _code = str(ev.get("eventCode") or "").upper()
@@ -15178,8 +15198,7 @@ def _refresh_macro_results():
             rec.setdefault("actual", {}).update(limitationsJa=actual.get("limitationsJa", []),
                                                 status=actual.get("status"))
         rec["updatedAt"] = now_iso
-        _MACRO_ANALYSIS[eid] = argus_macro_event_store.merge_record(
-            _MACRO_ANALYSIS.get(eid), rec, now_iso=now_iso)
+        _macro_merge_record(eid, rec, now_iso)
     _MACRO_ANALYSIS_STATE["lastResultsAt"] = now_iso
     _macro_analysis_persist()
     return {"checked": checked, "resultsFetched": updated, "asOf": now_iso}
@@ -15262,12 +15281,14 @@ def _refresh_macro_market_reaction():
     """Admin/cron: for events released in the last 48h, capture a baseline on first
     observation, then compute the reaction (baseline → now) and merge it in. No LLM.
     If post.marketReactionJa is empty, fill a deterministic summary."""
+    from copy import deepcopy
     _macro_analysis_restore_once()
     now_iso = _ai_now_iso()
     now_vals = _market_snapshot_values(cached_only=False)
     checked = updated = 0
     items = []
-    for eid, rec in list(_MACRO_ANALYSIS.items()):
+    for eid, original in list(_MACRO_ANALYSIS.items()):
+        rec = deepcopy(original)
         phase = argus_macro_event_analysis.resolve_macro_event_phase(
             rec.get("eventTimeUtc"), now_iso,
             actual_available=bool((rec.get("actual") or {}).get("available")),
@@ -15291,8 +15312,7 @@ def _refresh_macro_market_reaction():
             mr["baseline"] = {**now_vals, "capturedAt": now_iso}
             rec["marketReaction"] = mr
             rec["updatedAt"] = now_iso
-            _MACRO_ANALYSIS[eid] = argus_macro_event_store.merge_record(
-                _MACRO_ANALYSIS.get(eid), rec, now_iso=now_iso)
+            _macro_merge_record(eid, rec, now_iso)
             items.append({"eventId": eid, "eventCode": rec.get("eventCode"),
                           "windowsUpdated": [], "summaryJa": "",
                           "limitationsJa": ["初回観測でベースラインを取得（次回以降に反応を算出）"]})
@@ -15310,8 +15330,7 @@ def _refresh_macro_market_reaction():
             post["marketReactionJa"] = compact["summaryJa"]
             rec["post"] = post
         rec["updatedAt"] = now_iso
-        _MACRO_ANALYSIS[eid] = argus_macro_event_store.merge_record(
-            _MACRO_ANALYSIS.get(eid), rec, now_iso=now_iso)
+        _macro_merge_record(eid, rec, now_iso)
         wins = [w["window"] for w in (compact.get("windows") or [])
                 if any(w.get(k) is not None for k in argus_macro_market_reaction._ASSET_KEYS)]
         updated += 1
@@ -15365,6 +15384,7 @@ def _generate_macro_event_analysis(limit=8):
 
 
 def _generate_macro_event_analysis_locked(limit=8):
+    from copy import deepcopy
     _macro_analysis_restore_once()
     now_iso = _ai_now_iso()
     ctx = _macro_market_context_ja()
@@ -15394,7 +15414,7 @@ def _generate_macro_event_analysis_locked(limit=8):
 
     for ev in _macro_important_events(limit):
         eid = str(ev.get("eventId") or ev.get("eventCode") or "")
-        rec = _MACRO_ANALYSIS.get(eid) or argus_macro_event_analysis.new_record(
+        rec = deepcopy(_MACRO_ANALYSIS.get(eid)) or argus_macro_event_analysis.new_record(
             {**ev, "id": eid}, now_iso=now_iso)
         rec["eventTimeUtc"] = rec.get("eventTimeUtc") or ev.get("eventTimeUtc")
         rec["eventDate"] = rec.get("eventDate") or ev.get("eventDate")
@@ -15438,10 +15458,10 @@ def _generate_macro_event_analysis_locked(limit=8):
                     rec["post"] = argus_macro_event_analysis.parse_post(
                         out or {}, now_iso=now_iso, pre_exists=pre_exists,
                         actual_available=bool((rec.get("actual") or {}).get("available")))
+                rec["post"]["actualRevisionId"] = argus_macro_event_store.actual_revision_id(rec.get("actual"))
                 made_post += 1
         rec["updatedAt"] = now_iso
-        _MACRO_ANALYSIS[eid] = argus_macro_event_store.merge_record(
-            _MACRO_ANALYSIS.get(eid), rec, now_iso=now_iso)
+        _macro_merge_record(eid, rec, now_iso)
     _MACRO_ANALYSIS_STATE["lastGenerateAt"] = now_iso
     _MACRO_ANALYSIS_STATE["lastGenerate"] = {
         "at": now_iso, "pre": made_pre, "post": made_post,
@@ -15494,6 +15514,7 @@ def api_argus_macro_event_analysis():
                     # generated, and per event why not (policy / error class).
                     "lastGenerate": _MACRO_ANALYSIS_STATE.get("lastGenerate"),
                     "generateRun": _MACRO_ANALYSIS_STATE.get("generateRun"),
+                    "localPersistence": _MACRO_ANALYSIS_STATE.get("localPersistence"),
                     "eventModel": _OPENAI_EVENT_MODEL})
 
 

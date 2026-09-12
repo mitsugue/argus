@@ -293,12 +293,16 @@ def build_post_prompt(event: Dict[str, Any], pre: Dict[str, Any],
     pre_txt = _json.dumps({k: pre.get(k) for k in
                            ("summaryJa", "argusScenarioJa", "marketPricingJa",
                             "whatWouldSurpriseJa")}, ensure_ascii=False)
-    actual_txt = (_json.dumps({k: actual.get(k) for k in ("headline", "metrics", "source")},
+    actual_txt = (_json.dumps({k: actual.get(k) for k in ("headline", "metrics", "metricDefinitions", "metricInputs", "previousMetrics",
+                                "referenceMatched", "releasedAt", "receivedAt", "source", "sourceUrl", "limitationsJa")},
                               ensure_ascii=False)
                   if actual.get("available") else "公式結果未取得")
     return (
         "あなたはARGUSのマクロイベント事後検証役です。発表前に保存されたARGUSの事前予想と、公式結果・"
         "実測の市場文脈を突き合わせ、答え合わせをしてください。" + _NO_FABRICATION +
+        "指標の総合/コア、前年比/前月比、季節調整、対象月を区別し、未取得項目を補わない。"
+        "取得日時を公表日時と呼ばない。事前の市場予想や価格の根拠なしに織り込み済みと断定しない。"
+        "現物・先物（限月）・ETF・CFDと観測時点を区別する。値動きだけで単一の原因を断定しない。" +
         "\n追加規則: 公式結果が『公式結果未取得』の場合、答え合わせはverdict=not_scoreable。"
         "事前予想が空の場合もverdict=not_scoreable（『事前予想が保存されていないため答え合わせ不可』と明記）。"
         "\nキー: verdict(hit|partial|miss|not_scoreable), "

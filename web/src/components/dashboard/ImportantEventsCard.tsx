@@ -1,4 +1,5 @@
 import React from 'react';
+import { MacroResultDetails } from './MacroResultDetails';
 import { eventTitleJa } from '../../domain/eventTitleJa';
 import { useImportantEvents, type ImportantEvent, type EventImpact } from '../../hooks/useImportantEvents';
 import { useMacroEventAnalysis, type MacroAnalysis } from '../../hooks/useMacroEventAnalysis';
@@ -123,6 +124,7 @@ const CaosAnalysisBlock: React.FC<{ ai: MacroAnalysis; released: boolean }> = ({
       {ai.actual?.available
         ? <p className="ie-line"><span className="ie-k">公式結果</span>{ai.actual.headline || '取得済み'}</p>
         : <p className="ie-line" style={{ color: 'var(--text-faint)' }}><span className="ie-k">公式結果</span>公式結果待ち</p>}
+      <MacroResultDetails result={ai.actual} />
       {!hasPre
         ? <p className="ie-line" style={{ color: 'var(--text-faint)' }}><span className="ie-k">答え合わせ</span>事前予想が保存されていないため答え合わせ不可</p>
         : (post.answerCheckJa || post.verdict) && (
@@ -253,6 +255,7 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
                 ? <p>発表時刻通過・取得待ち</p>
                 : <p>発表待ち</p>}
             {ev.officialResult.source && <small>source：{ev.officialResult.source}</small>}
+            <MacroResultDetails result={ev.officialResult} />
             {ds.showPendingResult && <small>定期更新待ち{lastRefresh
               ? ` · 最終確認 ${String(lastRefresh).slice(11, 16)}Z` : ''}</small>}
           </section>

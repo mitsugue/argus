@@ -40,7 +40,7 @@ def test_cpi_parses_headline_and_core():
     assert r["available"] is True
     assert r["metrics"]["headlineCpiMoM"] == round((312.0 / 311.0 - 1) * 100, 2)
     assert r["metrics"]["coreCpiMoM"] == round((320.0 / 319.0 - 1) * 100, 2)
-    assert r["metrics"]["headlineCpiYoY"] is not None      # 13 months present
+    assert r["metrics"]["headlineCpiYoY"] is None  # NSA series absent; never replace with SA
     assert "消費者物価指数" in r["headline"]
     assert "consensus" not in json.dumps(r).lower()
 
@@ -191,3 +191,58 @@ def test_compact_for_store_flattens_best_window():
     c = RX.compact_for_store(rx)
     assert c["us10yMoveBp"] == 5.0 and c["spyMovePct"] is not None
     assert c["window"] == "1h" and isinstance(c["windows"], list)
+
+
+def test_cpi_separate_adjustment_exact_month_and_receipt():
+    raw = _bls_multi({
+        "CUSR0000SA0": [("2026", "M06", 312), ("2026", "M05", 311), ("2025", "M06", 290)],
+        "CUSR0000SA0L1E": [("2026", "M06", 320), ("2026", "M05", 319)],
+        "CUUR0000SA0": [("2026", "M06", 313), ("2025", "M06", 300)],
+        "CUUR0000SA0L1E": [("2026", "M06", 322), ("2025", "M06", 310)],
+    })
+    r = MR.parse_cpi(raw, {"eventDate": "2026-07-15"}, NOW)
+    assert r["status"] == "live" and r["referenceMatched"]
+    assert r["metrics"]["headlineCpiYoY"] == 4.33
+    assert r["metrics"]["coreCpiYoY"] == 3.87
+    assert r["metricDefinitions"]["headlineCpiMoM"]["seasonalAdjustment"] == "SA"
+    assert r["metricDefinitions"]["headlineCpiYoY"]["seasonalAdjustment"] == "NSA"
+    assert r["metricInputs"]["headlineCpiYoY"]["comparisonMonth"] == "2025-06"
+    assert r["releasedAt"] is None and r["receivedAt"] == r["availableFrom"] == NOW
+    assert len(r["sourceResponseSha256"]) == 64
+
+
+def test_cpi_does_not_attach_previous_month_result_to_new_release():
+    raw = _bls("CUSR0000SA0", [("2026", "M05", 311), ("2026", "M04", 310)])
+    r = MR.parse_cpi(raw, {"eventDate": "2026-07-15"}, NOW)
+    assert not r["available"] and r["expectedReferenceMonth"] == "2026-06"
+
+
+def test_cpi_selects_event_month_even_if_newer_observations_present():
+    raw = _bls("CUSR0000SA0", [("2026", "M07", 350), ("2026", "M06", 312), ("2026", "M05", 311)])
+    r = MR.parse_cpi(raw, {"eventDate": "2026-07-15"}, NOW)
+    assert r["metrics"]["referenceMonth"] == "2026-06"
+    assert r["metrics"]["headlineCpiMoM"] == 0.32
+    assert r["metricInputs"]["headlineCpiMoM"]["currentIndex"] == 312
+
+
+def test_monthly_changes_ignore_annual_and_never_bridge_missing_months():
+    rows = [{"year": "2026", "period": "M13", "value": "999"},
+            {"year": "2026", "period": "M06", "value": "312"},
+            {"year": "2026", "period": "M04", "value": "300"},
+            {"year": "2025", "period": "M06", "value": "300"}]
+    mom, yoy, month = MR._mom_yoy(rows)
+    assert mom is None and yoy == 4 and month == "2026-06"
+
+
+def test_cpi_does_not_combine_core_from_another_month():
+    raw = _bls_multi({"CUSR0000SA0": [("2026", "M06", 312), ("2026", "M05", 311)],
+                      "CUSR0000SA0L1E": [("2026", "M05", 320), ("2026", "M04", 319)]})
+    r = MR.parse_cpi(raw, {"eventDate": "2026-07-15"}, NOW)
+    assert r["metrics"]["coreCpiMoM"] is None
+
+
+def test_conflicting_duplicate_and_non_finite_monthly_values_are_missing():
+    rows = [{"year": "2026", "period": "M06", "value": "312"},
+            {"year": "2026", "period": "M06", "value": "313"},
+            {"year": "2026", "period": "M05", "value": "NaN"}]
+    assert MR._mom_yoy(rows) == (None, None, "2026-06")
