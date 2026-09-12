@@ -26,7 +26,7 @@ ROOT = pathlib.Path(__file__).resolve().parent
 # scanner functions allowed to touch brief symbols: the brief's own block,
 # its public route, and the background worker that refreshes it.
 _ALLOWED_SCANNER_SCOPES = {
-    "_brief_market_view_summary", "_brief_news_events",
+    "_brief_market_view_summary", "_brief_news_events", "_brief_sq_events",
     "_compose_market_brief", "_market_brief_ai_polish",
     "_market_brief_refresh", "api_argus_market_brief",
     "_news_intake_loop",

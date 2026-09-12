@@ -122,3 +122,25 @@ def test_article_provenance_is_bound_to_exact_reference_and_revision():
     later = mb.compose_brief(now_iso="2026-09-12T10:00:00Z",news_events=[event])
     assert later["facts"][0]["provenance"]["publishedAt"] is None
     assert later["facts"][0]["provenance"]["url"] is None
+
+
+def test_sq_calendar_enters_brief_without_ai_or_direction(monkeypatch):
+    monkeypatch.setattr(scanner,"_ai_now_iso",lambda:"2026-10-08T00:00:00Z")
+    monkeypatch.setattr(scanner,"_important_events_data",lambda:{"events":[],"imminent":[]})
+    monkeypatch.setattr(scanner,"get_market_shock",lambda:{"events":[]})
+    monkeypatch.setattr(scanner,"_brief_market_view_summary",lambda:{})
+    monkeypatch.setattr(scanner,"_brief_news_events",lambda:[])
+    def forbidden(*args,**kwargs): raise AssertionError("calendar must not call AI")
+    monkeypatch.setattr(scanner,"_openai_prose",forbidden)
+    result = scanner._compose_market_brief()
+    assert "2026-10-09" in result["now"]
+    sq = next(row for row in result["facts"] if row.get("provenance",{}).get("eventId") == "jp-monthly-sq-2026-10")
+    assert sq["priority"] == "P0" and "最終取引日" in sq["text"]
+    assert sq["provenance"]["publishedAt"] is None
+    assert result["sdaAuthority"] is False and result["aiText"] is None
+    assert result["hasCritical"] is False
+
+
+def test_sq_missing_calendar_never_creates_an_imminent_event(monkeypatch):
+    monkeypatch.setattr(scanner.jp_market_events,"published_sq_calendar",lambda **kwargs:{"status":"UNAVAILABLE","events":[]})
+    assert scanner._brief_sq_events() == []

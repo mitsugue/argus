@@ -17351,6 +17351,25 @@ def _brief_news_events():
     return out
 
 
+def _brief_sq_events():
+    """Official calendar metadata only; an SQ date is not a price direction."""
+    calendar = jp_market_events.published_sq_calendar(
+        now=datetime.fromisoformat(_ai_now_iso().replace("Z", "+00:00")))
+    rows = []
+    for event in calendar.get("events", []):
+        if event.get("calendarStatus") != "VERIFIED":
+            continue
+        stage = event.get("stage")
+        phase = {"TODAY": "本日", "LAST_TRADING_DAY": "本日が最終取引日",
+                 "EVENT_WEEK": "今週", "UPCOMING": "予定"}.get(stage, "予定")
+        rows.append({"eventId": event["eventId"], "title": event["title"] + " " + event["sqDate"],
+                     "countdown": phase, "calendarDaysUntil": event["calendarDaysUntil"],
+                     "imminent": stage in {"TODAY", "LAST_TRADING_DAY", "EVENT_WEEK"},
+                     "sourceLabelJa": "JPX公式日程", "sourceUrl": event["sourceRef"],
+                     "sourceReceivedAt": event["knownAt"], "sourcePublishedAt": None})
+    return rows
+
+
 def _compose_market_brief():
     """Deterministic composition from verified stores only (no LLM here)."""
     try:
@@ -17362,9 +17381,19 @@ def _compose_market_brief():
         shock_events = list(shock.get("events") or [])
     except Exception:
         shock_events = []
-    imminent = list(events_data.get("imminent") or [])
+    try:
+        sq_events = _brief_sq_events()
+    except (ValueError, KeyError, TypeError):
+        sq_events = []
+    imminent = [row for row in sq_events if row["imminent"]] + list(events_data.get("imminent") or [])
     upcoming = [e for e in (events_data.get("events") or [])
-                if e.get("countdown") not in ("D", "D-1")][:3]
+                if e.get("countdown") not in ("D", "D-1")] + [row for row in sq_events if not row["imminent"]]
+    def event_distance(row):
+        if type(row.get("calendarDaysUntil")) is int:
+            return row["calendarDaysUntil"]
+        match = re.fullmatch(r"D-(\d+)", str(row.get("countdown") or ""))
+        return int(match.group(1)) if match else 9999
+    upcoming.sort(key=event_distance)
     return argus_market_brief.compose_brief(
         now_iso=_ai_now_iso(),
         market_view_summary=_brief_market_view_summary(),

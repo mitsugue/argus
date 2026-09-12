@@ -31,3 +31,22 @@ export const JapanSqCalendarCard: React.FC = () => {
     <p className="jp-sq__source">予定はAI解析とは独立して表示します。</p>
   </section>;
 };
+
+
+export const JapanSqApproachNotice: React.FC = () => {
+  const { data, failed, checkedAt } = useJapanSqCalendar();
+  if (failed || !sqCalendarIsCurrent(data, checkedAt)) return null;
+  const approaching = data?.events.find(event => event.calendarStatus === 'VERIFIED' && event.stage !== 'UPCOMING');
+  if (!approaching) return null;
+  const openDetails = () => {
+    const element = document.getElementById(approaching.eventId);
+    if (element instanceof HTMLDetailsElement) element.open = true;
+    element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  return <aside className="jp-sq-approach" aria-label="接近するSQの案内">
+    <div><b>{STAGE[approaching.stage]} · {approaching.title}</b>
+      <p>{approaching.sqDate} 算出 · 最終取引 {approaching.lastTradingDate} 日中まで</p>
+      <small>清算に関係する日程です。金利・需給・実際の値動きと合わせて確認します。</small></div>
+    <button type="button" onClick={openDetails}>日程の詳細</button>
+  </aside>;
+};

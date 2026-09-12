@@ -1,5 +1,5 @@
 import React from 'react';
-import { JapanSqCalendarCard } from '../dashboard/JapanSqCalendarCard';
+import { JapanSqCalendarCard, JapanSqApproachNotice } from '../dashboard/JapanSqCalendarCard';
 import { JapanMarketComparisonPanel } from '../chart/JapanMarketComparisonPanel';
 import type { ArgusTodayView, MarketSelectionMode, TodayProjection } from '../../domain/argusTodayView';
 import { formatEventTime, quoteDisplayLabel, subjectDisplayName, confidenceBasisJa, waitKindJa } from '../../domain/argusTodayView';
@@ -748,6 +748,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     // release-acceptance contract are 1321/1306/SPY/QQQ.
     data-canonical-instrument={selectedSymbol}
     data-canonical-horizon={`${projection?.horizonDays ?? horizon}D`}>
+    <JapanSqApproachNotice />
+
     <article className={`at-decision at-primary-hero card is-${view.finalAction.toLowerCase()}`}
       aria-label="A.R.G.U.S. Primary Action">
       <div className="at-call">
