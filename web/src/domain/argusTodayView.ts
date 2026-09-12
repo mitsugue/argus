@@ -798,10 +798,10 @@ export function confidenceBasisJa(decision: { status: string; primaryAction: Pri
   const value = Math.round(decision.confidence.valueBps / 100);
   const base = CONFIDENCE_BASE_PCT[decision.primaryAction];
   if (decision.status === 'DATA_GATED') {
-    return `確度 ${value}% = データ不足時の上限（25%）。${decision.primaryAction} の基準 ${base}% には届きません`;
+    return '判断に必要なデータが不足しています。内部ルールで判定を制限しており、予測の確率や的中率は示していません。';
   }
-  if (value < base) return `確度 ${value}% = ${decision.primaryAction} の基準 ${base}% をリスク上限 ${value}% で抑えた値`;
-  return `確度 ${value}% = ${decision.primaryAction} の基準値（リスク上限なし）`;
+  if (value < base) return '内部ルールの基準にリスク制約を適用しています。このスコアは検証済みの予測確率ではありません。';
+  return '内部ルールの基準に基づく判断です。このスコアは検証済みの予測確率ではありません。';
 }
 
 /**

@@ -73,3 +73,9 @@
 /* v13.5.51: canonical lifecycle tier chip */
 .ie-tier { margin-left: 6px; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-sub); vertical-align: middle; }
 .ie-tier[data-tier="NOW"], .ie-tier[data-tier="NEXT"] { border-color: var(--accent); color: var(--text-main); }
+
+.ie-result-details { margin-top: 12px; min-width: 0; overflow-wrap: anywhere; }
+.ie-result-details > summary { min-height: 44px; padding: 10px 0; cursor: pointer; color: var(--text-muted); }
+
+.ie-result-details .ie-line { font-size: 14px; line-height: 1.6; }
+.ie-result-details .ie-data, .ie-result-details small { font-size: 13px; line-height: 1.6; }

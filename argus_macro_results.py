@@ -11,6 +11,11 @@ scenario is never called "consensus"; consensus is never fabricated here either.
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
+from datetime import date, timedelta
+import math
+import re
+import hashlib
+import json
 
 SCHEMA_VERSION = "macro-result-v1"
 
@@ -54,50 +59,110 @@ def _bls_series(raw: Any, series_id: str) -> List[Dict[str, Any]]:
 
 
 def _num(v: Any) -> Optional[float]:
+    if isinstance(v, bool):
+        return None
     try:
-        return float(v)
-    except Exception:
+        n = float(v)
+        return n if math.isfinite(n) else None
+    except (ValueError, TypeError):
         return None
 
 
+def _monthly_values(rows):
+    """Monthly observations only; annual averages and conflicting duplicates are missing."""
+    values, conflicts = {}, set()
+    for row in rows:
+        year, period = str(row.get("year") or ""), str(row.get("period") or "")
+        if not re.fullmatch(r"[0-9]{4}", year) or not re.fullmatch(r"M(0[1-9]|1[0-2])", period):
+            continue
+        key, value = year + "-" + period[1:], _num(row.get("value"))
+        if key in values and values[key] != value:
+            conflicts.add(key)
+        values[key] = value if value is not None and value > 0 else None
+    for key in conflicts:
+        values[key] = None
+    return values
+
+
+def _month_shift(month, shift):
+    y, m = map(int, month.split("-"))
+    y, m = divmod(y * 12 + m - 1 + shift, 12)
+    return f"{y:04d}-{m + 1:02d}"
+
+
+def _change(values, month, lag):
+    before_month = _month_shift(month, -lag)
+    current, before = values.get(month), values.get(before_month)
+    value = round((current / before - 1) * 100, 2) if current and before else None
+    return value, {"currentMonth": month, "currentIndex": current,
+                   "comparisonMonth": before_month, "comparisonIndex": before}
+
+
 def _mom_yoy(rows: List[Dict[str, Any]]) -> Tuple[Optional[float], Optional[float], Optional[str]]:
-    """(m/m %, y/y %, referenceMonth) from a newest-first index-level series."""
-    if len(rows) < 2:
+    values = _monthly_values(rows)
+    if not values:
         return None, None, None
-    latest = _num(rows[0].get("value"))
-    prev = _num(rows[1].get("value"))
-    mom = round((latest / prev - 1) * 100, 2) if (latest and prev) else None
-    yoy = None
-    if len(rows) >= 13:
-        yago = _num(rows[12].get("value"))
-        if latest and yago:
-            yoy = round((latest / yago - 1) * 100, 2)
-    ref = f"{rows[0].get('year')}-{str(rows[0].get('period') or '').replace('M', '')}"
-    return mom, yoy, ref
+    month = max(values)
+    return _change(values, month, 1)[0], _change(values, month, 12)[0], month
 
 
 # ── CPI / PPI (BLS index levels) ─────────────────────────────────────────────
 def parse_cpi(raw: Any, event: Dict[str, Any], now_iso: str,
               headline_series="CUSR0000SA0", core_series="CUSR0000SA0L1E") -> Dict[str, Any]:
-    head = _bls_series(raw, headline_series)
-    core = _bls_series(raw, core_series)
-    if not head:
-        return _empty("partial", ["CPI系列が空（公式結果未反映の可能性）"], "BLS")
-    h_mom, h_yoy, ref = _mom_yoy(head)
-    c_mom, c_yoy, _ = _mom_yoy(core)
+    # BLS headline convention: SA month/month; NSA year/year. Never substitute SA YoY.
+    series = {"headlineCpiMoM": (headline_series, 1, "SA", "ALL_ITEMS"),
+              "coreCpiMoM": (core_series, 1, "SA", "LESS_FOOD_ENERGY"),
+              "headlineCpiYoY": ("CUUR0000SA0", 12, "NSA", "ALL_ITEMS"),
+              "coreCpiYoY": ("CUUR0000SA0L1E", 12, "NSA", "LESS_FOOD_ENERGY")}
+    values = {key: _monthly_values(_bls_series(raw, spec[0])) for key, spec in series.items()}
+    reference = event.get("referenceMonth")
+    if not isinstance(reference, str) or not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", reference):
+        try:
+            event_date = date.fromisoformat(str(event.get("eventDate") or event.get("eventTimeUtc") or "")[:10])
+            reference = (event_date.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+        except ValueError:
+            reference = None
+    matched = reference is not None
+    if not reference:
+        reference = max(values["headlineCpiMoM"], default=None)
+    if reference is None or not values["headlineCpiMoM"].get(reference):
+        result = _empty("partial", ["今回の対象月のCPI公式系列は未取得"], "BLS")
+        result.update(receivedAt=now_iso, expectedReferenceMonth=reference)
+        return result
+    metrics, definitions, inputs = {"referenceMonth": reference}, {}, {}
+    for key, (sid, lag, adjustment, component) in series.items():
+        metrics[key], inputs[key] = _change(values[key], reference, lag)
+        definitions[key] = {"seriesId": sid, "component": component, "unit": "PERCENT_CHANGE",
+                            "comparison": "MoM" if lag == 1 else "YoY", "seasonalAdjustment": adjustment,
+                            "referenceMonth": reference, "method": "DERIVED_FROM_PUBLISHED_INDEX"}
+    h_mom = metrics["headlineCpiMoM"]
     if h_mom is None:
-        return _empty("partial", ["CPIの前月比を計算できるデータが不足"], "BLS")
-    metrics = {"headlineCpiMoM": h_mom, "headlineCpiYoY": h_yoy,
-               "coreCpiMoM": c_mom, "coreCpiYoY": c_yoy, "referenceMonth": ref}
-    parts = [f"総合CPI 前月比{h_mom:+.1f}%"]
-    if h_yoy is not None:
-        parts[0] += f"・前年比{h_yoy:+.1f}%"
-    if c_mom is not None:
-        parts.append(f"コア前月比{c_mom:+.1f}%")
-    lims = [] if h_yoy is not None else ["前年比は12か月分のデータが揃うまで未算出"]
-    return {"available": True, "status": "live" if h_yoy is not None else "partial",
-            "source": "BLS", "releasedAt": now_iso, "headline": "消費者物価指数 " + " / ".join(parts),
-            "metrics": metrics, "sourceUrl": _SOURCE_URL["CPI"], "limitationsJa": lims}
+        result = _empty("partial", ["対象月とその前月のCPI指数が揃わず前月比は未算出"], "BLS")
+        result.update(receivedAt=now_iso, expectedReferenceMonth=reference)
+        return result
+    parts = [f"総合CPI 前月比（季節調整済み）{h_mom:+.1f}%"]
+    if metrics["headlineCpiYoY"] is not None:
+        parts.append(f"前年比（季節調整なし）{metrics['headlineCpiYoY']:+.1f}%")
+    if metrics["coreCpiMoM"] is not None:
+        parts.append(f"コア前月比（季節調整済み）{metrics['coreCpiMoM']:+.1f}%")
+    missing = [k for k in series if metrics[k] is None]
+    limitations = ["公式指数から算出。公表文の丸め済み変化率そのものではありません。",
+                   "公表日時は系列応答から確認できず、取得日時以降のみ利用可能。"]
+    if missing:
+        limitations.append("不足系列の変化率は未算出。季節調整済み系列で前年比を代用しません。")
+    if not matched:
+        limitations.append("対象イベントの月との照合は未確認。")
+    return {"available": True, "status": "partial" if missing or not matched else "live",
+            "source": "BLS", "releasedAt": None, "receivedAt": now_iso,
+            "availableFrom": now_iso, "referenceMatched": matched,
+            "schemaVersion": "macro-cpi-result-v2", "headline": "消費者物価指数 " + " / ".join(parts),
+            "metrics": metrics, "metricDefinitions": definitions, "metricInputs": inputs,
+            "previousReferenceMonth": _month_shift(reference, -1),
+            "previousMetrics": {key: _change(values[key], _month_shift(reference, -1), spec[1])[0]
+                                for key, spec in series.items()},
+            "sourceResponseSha256": hashlib.sha256(json.dumps(raw, ensure_ascii=False, sort_keys=True,
+                    separators=(",", ":"), allow_nan=False).encode()).hexdigest(),
+            "sourceUrl": _SOURCE_URL["CPI"], "limitationsJa": limitations}
 
 
 def parse_ppi(raw: Any, event: Dict[str, Any], now_iso: str,

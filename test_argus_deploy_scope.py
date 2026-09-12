@@ -32,6 +32,24 @@ class DeployScopeTests(unittest.TestCase):
         self.assertTrue(result["newBackendSoak"])
         self.assertFalse(result["checkpointStage1"])
 
+    def test_japan_analysis_and_sq_calendar_changes_deploy_backend(self):
+        for path in ("jp_market_engine.py", "jp_market_analogs.py",
+                     "jp_market_source_adapters.py",
+                     "ops/calendar/jp_index_sq_2026.json"):
+            with self.subTest(path=path):
+                result = deploy_scope.classify([path])
+                self.assertTrue(result["backendDeploy"])
+                self.assertTrue(result["newBackendSoak"])
+                self.assertFalse(result["checkpointStage1"])
+
+    def test_analysis_docs_and_tests_do_not_restart_backend(self):
+        result = deploy_scope.classify([
+            "docs/V13_6_COMPUTE_CONTRACT.md",
+            "test_jp_market_analogs.py",
+        ])
+        self.assertFalse(result["backendDeploy"])
+        self.assertTrue(result["preserveBackendSoak"])
+
     def test_shared_api_type_deploys_both_planes(self):
         result = deploy_scope.classify(["web/src/types/chartIntelligence.ts"])
         self.assertTrue(result["frontendDeploy"])

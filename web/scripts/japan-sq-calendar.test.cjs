@@ -1,0 +1,15 @@
+const ts = require('typescript');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const source = ts.transpileModule(fs.readFileSync('src/lib/japanSqCalendar.ts', 'utf8'), {compilerOptions: {module: ts.ModuleKind.CommonJS}}).outputText;
+const ctx = {exports: {}, URL, Date, Set}; vm.runInNewContext(source, ctx);
+const {validJapanSqCalendar: valid, sqCalendarIsCurrent: current} = ctx.exports;
+const item = {eventId:'jp-monthly-sq-2026-10',title:'SQ',kind:'MONTHLY_SQ',sqDate:'2026-10-09',lastTradingDate:'2026-10-08',stage:'UPCOMING',calendarStatus:'VERIFIED',tradingSessionsUntil:17,sourceRef:'https://www.jpx.co.jp/calendar.xlsx',sourceSha256:'a'.repeat(64),knownAt:'2026-09-11T11:17:56Z',summary:'公式予定',directionalSignal:null,requiresAiResult:false};
+const doc = {schemaVersion:'jp-market-sq-calendar-v1',asOf:'2026-09-12T10:00:00Z',rangeStart:'2026-09-12',rangeEnd:'2026-10-12',status:'AVAILABLE',events:[item],gaps:[],dependsOnAi:false,actionAuthority:false,automaticAiCalls:0,lastSuccessfulAcquisitionAt:item.knownAt};
+assert.equal(valid(doc),true);
+for(const change of [{actionAuthority:true},{dependsOnAi:true},{automaticAiCalls:1},{events:[item,item]},{asOf:'bad'}, {rangeEnd:'2026-02-31'}, {events:[{...item,sourceRef:'javascript:alert(1)'}]}, {events:[{...item,directionalSignal:'BUY'}]}, {events:[{...item,sqDate:'2026-11-09'}]}]) assert.equal(valid({...doc,...change}),false);
+assert.equal(current(doc,Date.parse(doc.asOf)+1000),true);
+assert.equal(current(doc,Date.parse(doc.asOf)+180000),false);
+assert.equal(current({...doc,asOf:'2026-09-12T14:59:30Z'},Date.parse('2026-09-12T15:00:00Z')),false);
+console.log('SQ response validation and JST expiry PASS');

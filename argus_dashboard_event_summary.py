@@ -205,6 +205,8 @@ def build_summary_item(*, important_event: Optional[Dict[str, Any]],
         "source": actual.get("source"),
         "sourceUrl": actual.get("sourceUrl"),
         "releasedAt": actual.get("releasedAt"),
+        **{key: actual.get(key) for key in ("schemaVersion", "receivedAt", "referenceMatched",
+             "metricDefinitions", "previousMetrics", "previousReferenceMonth", "sourceResponseSha256") if key in actual},
         "limitationsJa": list(actual.get("limitationsJa") or [])[:5],
     }
     # answer-check honesty: released + actual available + no preserved pre → not_scoreable

@@ -15,6 +15,9 @@ export interface DashboardEventCaos {
   limitationsJa?: string[];
 }
 export interface DashboardEventOfficial {
+  schemaVersion?: string; receivedAt?: string | null; referenceMatched?: boolean;
+  metricDefinitions?: Record<string, unknown>; previousMetrics?: Record<string, unknown>;
+  previousReferenceMonth?: string; sourceResponseSha256?: string;
   available?: boolean; headlineJa?: string; metrics?: Record<string, unknown>;
   source?: string | null; sourceUrl?: string | null; releasedAt?: string | null;
   limitationsJa?: string[];

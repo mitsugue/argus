@@ -6,6 +6,9 @@ by a blank; an older snapshot cannot wipe newer progress; the post record travel
 its preserved pre. Deterministic serialization; public-safe metadata only.
 """
 import json
+import hashlib
+from copy import deepcopy
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 SCHEMA_VERSION = "macro-event-analysis-v1"
@@ -23,6 +26,80 @@ def _has_pre(rec: Dict[str, Any]) -> bool:
     return bool(pre.get("argusScenarioJa") or pre.get("summaryJa"))
 
 
+def _snapshot_digest(actual):
+    return hashlib.sha256(json.dumps(actual, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+
+
+def actual_revision_id(actual):
+    if not isinstance(actual, dict) or not actual.get("available"):
+        return None
+    # Repeated receipts of the same values are not a new economic revision.
+    keys = ("schemaVersion", "source", "sourceUrl", "metrics", "metricDefinitions", "metricInputs",
+            "previousMetrics", "previousReferenceMonth", "referenceMatched")
+    payload = {key: actual[key] for key in keys if key in actual}
+    return "macro-result-" + hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+
+
+def _instant(value):
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return dt.timestamp() if dt.tzinfo is not None else float("-inf")
+    except (ValueError, TypeError):
+        return float("-inf")
+
+
+def _result_time(record):
+    actual = record.get("actual") or {}
+    return _instant(actual.get("receivedAt") or record.get("updatedAt"))
+
+
+def _preserve_revisions(merged, existing, incoming, now_iso):
+    """Append observed results and explanations; existing snapshots keep their bytes."""
+    results, analyses = {}, {}
+    for record in (existing, incoming):
+        for revision in record.get("resultRevisions") or []:
+            if (revision.get("revisionId") != actual_revision_id(revision.get("actual"))
+                    or revision.get("snapshotSha256") != _snapshot_digest(revision.get("actual"))):
+                raise ValueError("macro_result_revision_integrity")
+            results.setdefault(revision["revisionId"], deepcopy(revision))
+        for revision in record.get("analysisRevisions") or []:
+            payload = {key: revision.get(key) for key in ("phase", "analysis", "actualRevisionId", "inputLinkStatus")}
+            identity = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+            if revision.get("revisionId") != identity:
+                raise ValueError("macro_analysis_revision_integrity")
+            analyses.setdefault(identity, deepcopy(revision))
+        actual = record.get("actual") or {}
+        identity = actual_revision_id(actual)
+        if identity:
+            results.setdefault(identity, {"revisionId": identity, "recordedAt": now_iso,
+                "firstObservedAt": actual.get("receivedAt"),
+                "receiptStatus": "RECEIVED" if actual.get("receivedAt") else "LEGACY_UNVERIFIED",
+                "actual": deepcopy(actual), "snapshotSha256": _snapshot_digest(actual)})
+        for phase in ("pre", "post"):
+            analysis = record.get(phase) or {}
+            if not analysis.get("generatedAt"):
+                continue
+            payload = {"phase": phase, "analysis": deepcopy(analysis),
+                       "actualRevisionId": analysis.get("actualRevisionId"),
+                       "inputLinkStatus": "RECORDED" if analysis.get("actualRevisionId") else "LEGACY_UNVERIFIED"}
+            key = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+            analyses.setdefault(key, {"revisionId": key, "recordedAt": now_iso, **payload})
+    merged["resultRevisions"] = sorted(results.values(), key=lambda row: row["revisionId"])
+    merged["analysisRevisions"] = sorted(analyses.values(), key=lambda row: row["revisionId"])
+    current_id = actual_revision_id(merged.get("actual"))
+    merged["actualRevisionId"] = current_id
+    previous_id = actual_revision_id(existing.get("actual"))
+    post_id = (merged.get("post") or {}).get("actualRevisionId")
+    if (post_id and post_id != current_id) or (previous_id and current_id != previous_id and post_id != current_id):
+        merged["post"] = {"verdict": "not_scoreable", "generatedAt": None,
+                          "limitationsJa": ["公式結果の入力が更新されました。以前の説明は改訂履歴に保存し、再照合を待っています。"]}
+    return merged
+
+
 def merge_record(existing: Optional[Dict[str, Any]], incoming: Dict[str, Any],
                  *, now_iso: str) -> Dict[str, Any]:
     """Merge one analysis record by eventId.
@@ -33,12 +110,12 @@ def merge_record(existing: Optional[Dict[str, Any]], incoming: Dict[str, Any],
       * actual: available=True wins; never regress to unavailable;
       * post: newer generatedAt wins;
       * scalars from the newer updatedAt side; updatedAt = now."""
-    inc = sanitize(incoming)
+    inc = deepcopy(sanitize(incoming))
     if not existing:
         rec = dict(inc)
         rec["updatedAt"] = now_iso
-        return rec
-    ex = sanitize(existing)
+        return _preserve_revisions(rec, {}, inc, now_iso)
+    ex = deepcopy(sanitize(existing))
     ex_upd = str(ex.get("updatedAt") or "")
     in_upd = str(inc.get("updatedAt") or "")
     newer, older = (inc, ex) if in_upd >= ex_upd else (ex, inc)
@@ -64,7 +141,7 @@ def merge_record(existing: Optional[Dict[str, Any]], incoming: Dict[str, Any],
     elif in_act.get("available") and not ex_act.get("available"):
         merged["actual"] = in_act
     else:
-        merged["actual"] = in_act or ex_act
+        merged["actual"] = (in_act if _result_time(inc) >= _result_time(ex) else ex_act) or in_act or ex_act
     # post: newer generatedAt wins
     ex_post, in_post = (ex.get("post") or {}), (inc.get("post") or {})
     merged["post"] = (in_post if str(in_post.get("generatedAt") or "") >= str(ex_post.get("generatedAt") or "")
@@ -72,7 +149,7 @@ def merge_record(existing: Optional[Dict[str, Any]], incoming: Dict[str, Any],
     merged["firstSeenAt"] = min(filter(None, [ex.get("firstSeenAt"), inc.get("firstSeenAt")]),
                                 default=now_iso)
     merged["updatedAt"] = now_iso
-    return merged
+    return _preserve_revisions(merged, ex, inc, now_iso)
 
 
 def merge_records(existing: Dict[str, Dict[str, Any]], incoming: List[Dict[str, Any]],
@@ -107,5 +184,6 @@ def restore_from_snapshot(snapshot: Optional[Dict[str, Any]]) -> Dict[str, Dict[
     out: Dict[str, Dict[str, Any]] = {}
     for r in ((snapshot or {}).get("items") or []):
         if isinstance(r, dict) and r.get("eventId"):
-            out[r["eventId"]] = sanitize(r)
+            rec = deepcopy(sanitize(r))
+            out[r["eventId"]] = _preserve_revisions(rec, {}, rec, (snapshot or {}).get("asOf"))
     return out

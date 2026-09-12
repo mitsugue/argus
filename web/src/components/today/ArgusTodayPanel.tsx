@@ -1,4 +1,7 @@
 import React from 'react';
+import { MarginDynamicsCard } from './MarginDynamicsCard';
+import { JapanSqCalendarCard, JapanSqApproachNotice } from '../dashboard/JapanSqCalendarCard';
+import { JapanMarketComparisonPanel } from '../chart/JapanMarketComparisonPanel';
 import type { ArgusTodayView, MarketSelectionMode, TodayProjection } from '../../domain/argusTodayView';
 import { formatEventTime, quoteDisplayLabel, subjectDisplayName, confidenceBasisJa, waitKindJa } from '../../domain/argusTodayView';
 import { displayNewsHeadline, newsAnalysisStatusJa } from '../../lib/newsHeadline';
@@ -241,20 +244,72 @@ const familyStateJa = (row: { status?: string; conditionMet?: boolean | null }):
 // (numbers/probabilities can never be invented — server-side validator).
 const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total: number } | null;
   cutoff?: string | null; market?: string }> = ({ signals, cutoff, market }) => {
-  const { brief } = useMarketBrief();
+  const { brief, error, loading, retry } = useMarketBrief();
   // v13.5.62 (GPT review item 4): the brief's 成立x/7 chip is rendered from the
   // SAME market-view document as the MARKET SIGNALS header, stamped with its
   // information cutoff, so the two never show different counts.
   const cutoffJa = cutoff ? new Date(cutoff).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }) : null;
   const chartChip = signals ? `成立 ${signals.activeCount}/${signals.total}${cutoffJa ? `（${cutoffJa} 時点）` : ''}`
     : market === 'US' ? '米国: 7条件は適用外（類似局面のみ）' : brief?.chips.chart;
-  if (!brief || brief.status === 'unavailable') return null;
+  const updateState = error ? <p role="status" className="at-brief__update">
+    {brief ? '見立てを更新できません。最後に取得した説明を表示しています。' : '見立てを取得できません。'}
+    {brief && <small> 要約作成 {new Date(brief.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}</small>}
+    <button type="button" onClick={retry} disabled={loading}>再読込</button>
+  </p> : null;
+  if (!brief) return <div className="at-brief" aria-label="ARGUSの今日の見立て">
+    {updateState ?? <p role="status">見立てを確認中です。</p>}</div>;
+  const unified = brief.unifiedSummary;
+  const hasSixSections = unified && ['view', 'reasons', 'changes', 'impact', 'next', 'invalidation'].every(key => {
+    const row = unified.sections?.[key as keyof typeof unified.sections];
+    return row && typeof row.textJa === 'string' && ['FACT', 'INFERENCE', 'UNKNOWN'].includes(row.kind)
+      && Array.isArray(row.evidenceIds);
+  });
+  if (hasSixSections && unified?.schemaVersion === 'argus-unified-brief-v1'
+    && unified.actionAuthority === false && unified.contextId === brief.unifiedContext?.contextId) {
+    const labels = { view: '今の見立て', reasons: '重要な理由', changes: '前回からの変化',
+      impact: '自分への影響', next: '次に確認すること', invalidation: '見方を変える条件' } as const;
+    const kinds = { FACT: '確認した事実', INFERENCE: '見立て・推論', UNKNOWN: '未確認' };
+    return <div className="at-brief at-unified-brief" aria-label="ARGUSの今日の見立て" data-argus-contract="unified-brief-v1">
+      <small>ARGUSの今日の見立て · {brief.aiDiagnostics?.completedAt
+        ? new Date(brief.aiDiagnostics.completedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '生成時刻を確認中'}</small>
+      {updateState}
+      <p className="at-unified-brief__view">{unified.sections.view.textJa}</p>
+      <div className="at-brief__rows">{(Object.keys(labels) as Array<keyof typeof labels>).filter(key => key !== 'view').map(key =>
+        <div key={key}><b>{labels[key]}</b><span>{unified.sections[key].textJa}
+          <small className="at-unified-brief__kind">{kinds[unified.sections[key].kind]}</small></span></div>)}</div>
+      <details><summary>根拠と説明の状態を見る</summary>
+        <p>要求モデル {brief.aiDiagnostics?.requestedModel ?? '未確認'} · 応答モデル {brief.aiDiagnostics?.returnedModel ?? '未確認'}</p>
+        <p>前回との比較は現在の起動中の記録です。再起動をまたぐ判断履歴への保存はまだ接続していません。</p>
+        {(Object.keys(labels) as Array<keyof typeof labels>).map(key => <div key={key}>
+          <b>{labels[key]}の根拠</b>
+          {unified.sections[key].evidenceIds.length === 0 ? <p>根拠未取得</p> : unified.sections[key].evidenceIds.map(id => {
+            const current = Array.isArray(brief.unifiedContext?.facts) ? brief.unifiedContext.facts : [];
+            const prior = Array.isArray(brief.unifiedContext?.previousFacts) ? brief.unifiedContext.previousFacts : [];
+            const fact = current.find(row => row.evidenceId === id) ?? prior.find(row => row.evidenceId === id);
+            return <div key={id} className="at-brief-source"><p>{fact?.text ?? '参照元を確認できません'}</p>
+              <small>{fact?.provenance?.sourceLabel ?? fact?.source ?? '出典未確認'}
+                {fact?.provenance?.eventId ? ` · 記録 ${fact.provenance.eventId}` : ''}
+                {fact?.provenance?.revision != null ? ` · 改訂 ${fact.provenance.revision}` : ''}</small>
+              <small>公表 {fact?.provenance?.publishedAt ?? '未確認'} · 受信 {fact?.provenance?.receivedAt ?? '未確認'}
+                {fact?.provenance?.observedAt ? ` · 観測 ${fact.provenance.observedAt}` : ''}</small>
+              {fact?.provenance?.url && <a href={fact.provenance.url} target="_blank" rel="noopener noreferrer">出典を開く</a>}
+            </div>;
+          })}
+        </div>)}
+      </details>
+    </div>;
+  }
   const now = brief.aiText?.nowJa ?? brief.now;
   const why = brief.aiText?.whyJa ?? brief.why;
   const next = brief.aiText?.nextJa ?? brief.next;
   return <div className="at-brief" data-argus-contract="market-brief-v1"
     aria-label="今の市場（売買権限なし）">
-    <small>今の市場 — 検証済み事実の要約{brief.aiText ? '（AI圧縮・参考）' : ''}</small>
+    {updateState}
+    {brief.unifiedStatus && brief.unifiedStatus !== 'GENERATED' && <p role="status">
+      統合AIの説明は更新待ちです。取得済み情報の要約を表示しています。
+      {brief.lastSuccessfulAiAt && <small> 最終成功 {brief.lastSuccessfulAiAt}</small>}
+    </p>}
+    <small>今の市場 — 取得済み情報の要約{brief.aiText ? '（AI圧縮・参考）' : ''}</small>
     <div className="at-brief__rows">
       <div><b>今</b><span>{now}</span></div>
       <div><b>理由</b><span>{why}</span></div>
@@ -694,6 +749,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     // release-acceptance contract are 1321/1306/SPY/QQQ.
     data-canonical-instrument={selectedSymbol}
     data-canonical-horizon={`${projection?.horizonDays ?? horizon}D`}>
+    <JapanSqApproachNotice />
+
     <article className={`at-decision at-primary-hero card is-${view.finalAction.toLowerCase()}`}
       aria-label="A.R.G.U.S. Primary Action">
       <div className="at-call">
@@ -721,10 +778,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           DATA_GATED the surface stays two short rows instead of a wall.
           Nothing here is computed client-side — it renders the SDA
           projection. */}
-      {/* v13.5.59: confidence and data status qualify the decision, so they
-          sit directly under it — before the signals, not at the bottom. */}
-      <div className="at-kpis"><span>確度 <b>{Math.round(view.canonicalDecision.confidence.valueBps / 100)}%</b></span>
-        <span>DATA <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></span>
+      {/* Data availability qualifies the decision before the signals. */}
+      <div className="at-kpis"><span>DATA <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></span>
         {/* v13.5.60 (owner iPhone review): the reasons behind a non-LIVE DATA
             state are ARGUS-side fetch/freshness facts, not trading information —
             they open on tap instead of occupying the decision area. */}
@@ -851,6 +906,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
 
     </section>
 
+    <JapanSqCalendarCard />
+
     <section className="at-event card" aria-label="NEXT EVENT">
       <div className="at-head"><b>NEXT EVENT</b>{view.nextEvent && <span>{view.nextEvent.impact.toUpperCase()}</span>}</div>
       {view.nextEvent ? <button type="button" onClick={openEventDetails}>
@@ -956,6 +1013,11 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         <span>将来リターンのSkill未検証</span>
       </div>}
     </section>
+
+    {view.selectedMarket === 'JP' && selectedSymbol === '1321'
+      && <JapanMarketComparisonPanel horizon={horizon} />}
+
+    {!usSelected && <MarginDynamicsCard document={decisionEvidence.marketView?.margin1570Dynamics} refreshFailed={!!decisionEvidence.error} />}
 
     {/* v13.5.59: reading order top-down — decision → signals → what is
         coming → the market itself → then the reference market view and the

@@ -22,9 +22,15 @@ Discipline (non-negotiable):
 from __future__ import annotations
 
 import re
+import math
+import hashlib
+import json
+from datetime import datetime
+from urllib.parse import urlsplit
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 BRIEF_SCHEMA = "argus-market-brief-v1"
+BRIEF_FACT_LIMIT = 16
 PRIORITIES = ("P0", "P1", "P2", "P3")
 VERIFICATIONS = ("VERIFIED", "CORROBORATED", "UNCONFIRMED")
 
@@ -66,11 +72,59 @@ def validate_ai_brief(ai: Any, fact_texts: Sequence[str]) -> Optional[Dict[str, 
     return out
 
 
+def _source_reference(origin: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Only explicit public provenance; missing publication time stays missing.
+
+    Receipt is when ARGUS received the item, not the publisher's timestamp.
+    No mailbox identifiers, article bodies, credentials or arbitrary fields.
+    """
+    origin = origin or {}
+    result = {"scope": "published_metadata_snapshot", "eventId": None,
+              "revision": None, "publishedAt": None, "receivedAt": None,
+              "observedAt": None, "url": None, "sourceLabel": None}
+    event_id = origin.get("eventId")
+    if isinstance(event_id, str) and re.fullmatch(r"[a-zA-Z0-9_.:-]{1,160}", event_id):
+        result["eventId"] = event_id
+    revision = origin.get("revision")
+    if type(revision) is int and revision >= 0:
+        result["revision"] = revision
+    for target, source in (("publishedAt", "sourcePublishedAt"),
+                           ("receivedAt", "sourceReceivedAt"), ("observedAt", "asOf")):
+        value = origin.get(source)
+        if isinstance(value, str) and len(value) <= 40:
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if parsed.tzinfo is not None or (target == "observedAt" and len(value) == 10):
+                    result[target] = value
+            except ValueError:
+                pass
+    for key in ("sourceResponseSha256", "sourceRowSha256"):
+        value = origin.get(key)
+        if isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value):
+            result[key] = value
+    url = origin.get("sourceUrl")
+    if isinstance(url, str) and len(url) <= 2048:
+        try:
+            parts = urlsplit(url)
+            if parts.scheme == "https" and parts.hostname and not parts.username and not parts.password:
+                result["url"] = url
+        except ValueError:
+            pass
+    label = origin.get("sourceLabelJa") or origin.get("source")
+    if not label and isinstance(origin.get("sources"), list):
+        label = " / ".join(str(row.get("name") or "") for row in origin["sources"][:3] if isinstance(row, Mapping))
+    if isinstance(label, str) and label.strip():
+        result["sourceLabel"] = label[:160]
+    return result
+
+
 def _fact(text: str, priority: str, source: str,
-          verification: str) -> Dict[str, str]:
-    return {"text": str(text)[:160], "priority": priority, "source": source,
-            "verification": verification
-            if verification in VERIFICATIONS else "UNCONFIRMED"}
+          verification: str, origin: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    row = {"text": str(text)[:160], "priority": priority, "source": source,
+           "verification": verification if verification in VERIFICATIONS else "UNCONFIRMED"}
+    if origin is not None:
+        row["provenance"] = _source_reference(origin)
+    return row
 
 
 def _news_direction_summary(events: Sequence[Mapping[str, Any]]) -> str:
@@ -89,8 +143,42 @@ def _news_direction_summary(events: Sequence[Mapping[str, Any]]) -> str:
     return "方向材料は限定的"
 
 
+def _margin_facts(document: Optional[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """Received balances and computed differences; no observed covering orders."""
+    if not isinstance(document, Mapping) or document.get("actionAuthority") is not False:
+        return []
+    current, change = document.get("current"), document.get("change") or {}
+    if not isinstance(current, Mapping) or current.get("unit") != "UNITS":
+        return []
+    def finite(value):
+        return type(value) in (int, float) and math.isfinite(value)
+    if not all(finite(current.get(k)) for k in ("longBalance", "shortBalance", "ratio")):
+        return []
+    source = (current.get("sourceRows") or {}).get("long") or {}
+    origin = {"sourceLabelJa": "J-Quants信用取引週末残高", "sourceUrl": source.get("sourceRef"),
+              "sourceReceivedAt": source.get("observedAt"), "asOf": current.get("periodEnd"),
+              "sourceResponseSha256": source.get("sourceResponseSha256"),
+              "sourceRowSha256": source.get("sourceRowSha256")}
+    failed = document.get("acquisitionStatus") not in ("AVAILABLE", "PARTIAL")
+    prefix = "更新失敗・前回取得" if failed else "一部取得" if document.get("sourceStatus") == "PARTIAL" else "取得済み"
+    rows = [_fact(
+        f"日経レバ信用残（{prefix}、{current.get('periodEnd')}）: "
+        f"買残{current['longBalance']:.0f}口・売残{current['shortBalance']:.0f}口、倍率{current['ratio']:.4f}倍。",
+        "P1", "licensed_market_data", "UNCONFIRMED" if failed else "VERIFIED", origin)]
+    if change.get("status") == "AVAILABLE" and all(finite(change.get(k)) for k in
+            ("ratioChange", "longContribution", "shortContribution")):
+        previous = document.get("previous") or {}
+        rows.append(_fact(
+            f"{previous.get('periodEnd')}からの倍率差{change['ratioChange']:+.4f}倍: "
+            f"買残変化の寄与{change['longContribution']:+.4f}、売残変化の寄与{change['shortContribution']:+.4f}。"
+            "実際の買い戻し注文は未観測。買いサインではない。",
+            "P1", "derived_margin_change", "UNCONFIRMED", origin))
+    return rows
+
+
 def compose_brief(*, now_iso: str,
                   market_view_summary: Optional[Mapping[str, Any]] = None,
+                  margin_dynamics: Optional[Mapping[str, Any]] = None,
                   shock_events: Sequence[Mapping[str, Any]] = (),
                   news_events: Sequence[Mapping[str, Any]] = (),
                   imminent_events: Sequence[Mapping[str, Any]] = (),
@@ -117,21 +205,21 @@ def compose_brief(*, now_iso: str,
             f"{headline[:60]}"
             f"（{'市場確認済み' if confirmed else '市場確認待ち'}）",
             "P0", "trusted_mail",
-            "CORROBORATED" if confirmed else "UNCONFIRMED"))
+            "CORROBORATED" if confirmed else "UNCONFIRMED", event))
     active_shocks = [s for s in shock_events
                      if s.get("severity") in ("HIGH", "CRITICAL")]
     for shock in active_shocks[:2]:
         facts.append(_fact(
             "市場ショック: "
             f"{str(shock.get('headlineJa') or shock.get('titleJa') or shock.get('title') or '')[:60]}",
-            "P0", "official_sensor", "VERIFIED"))
+            "P0", "official_sensor", "VERIFIED", shock))
     for event in list(imminent_events)[:2]:
         impact = _IMPACT_JA.get(str(event.get("displayImpact") or ""), "")
         facts.append(_fact(
             f"目前イベント: {str(event.get('title') or '')[:50]}"
             f"（{event.get('countdown') or '近日'}"
             f"{'・' + impact if impact else ''}）",
-            "P0", "calendar", "VERIFIED"))
+            "P0", "calendar", "VERIFIED", event))
 
     # ── P1: 現在の相場方向 ──
     view_label = str((market_view_summary or {}).get("label") or "").strip()
@@ -144,25 +232,27 @@ def compose_brief(*, now_iso: str,
                        if any(e.get("confirmationState") == "MARKET_CONFIRMED"
                               for e in material_news) else "UNCONFIRMED"))
 
+    facts.extend(_margin_facts(margin_dynamics))
+
     # ── P2: なぜそうなっているか ──
     for event in material_news[:2]:
         path = ((event.get("impactDirection") or {}).get("transmissionJa")
                 or (event.get("impactDirection") or {}).get("transmission"))
         if path:
             facts.append(_fact(f"波及経路: {str(path)[:90]}", "P2",
-                               "trusted_mail", "UNCONFIRMED"))
+                               "trusted_mail", "UNCONFIRMED", event))
     for shock in active_shocks[:1]:
         why = shock.get("whyJa") or shock.get("noteJa")
         if why:
             facts.append(_fact(f"背景: {str(why)[:90]}", "P2",
-                               "official_sensor", "VERIFIED"))
+                               "official_sensor", "UNCONFIRMED", shock))
 
     # ── P3: 次に何を確認するか ──
     for event in list(next_events)[:2]:
         facts.append(_fact(
             f"次: {str(event.get('title') or '')[:50]}"
             f"（{event.get('countdown') or event.get('whenJa') or '予定'}）",
-            "P3", "calendar", "VERIFIED"))
+            "P3", "calendar", "VERIFIED", event))
     if material_news:
         facts.append(_fact("次: 上記ニュースの市場確認センサー"
                            "（金利・株価指数・為替）の反応を確認", "P3",
@@ -237,7 +327,7 @@ def compose_brief(*, now_iso: str,
         "aiText": None,           # scanner fills after validate_ai_brief
         "aiModel": None,
         "chips": chips,
-        "facts": facts[:12],
+        "facts": facts[:BRIEF_FACT_LIMIT],
         "priorityOrderJa": "P0 今日これだけは知るべき / P1 相場方向 / "
                            "P2 なぜ / P3 次に確認",
         "noteJa": "事実はARGUS検証済みストアの優先順位圧縮。AIは要約のみで"
@@ -247,3 +337,91 @@ def compose_brief(*, now_iso: str,
         "sdaAuthority": False,
         "automaticAiCalls": 0,
     }
+
+
+UNIFIED_SECTIONS = ("view", "reasons", "changes", "impact", "next", "invalidation")
+
+
+def unified_context(brief: Mapping[str, Any], previous: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """Bind explanation references to the exact fact snapshot supplied to GPT.
+
+    Public market context contains no private positions. Process memory is not
+    represented as durable judgment history or a previous-day observation.
+    """
+    def references(document):
+        rows = []
+        for fact in (document or {}).get("facts", [])[:BRIEF_FACT_LIMIT]:
+            material = {key: str(fact.get(key) or "") for key in
+                        ("text", "source", "priority", "verification")}
+            if isinstance(fact.get("provenance"), Mapping):
+                # Composer already selected a bounded public metadata snapshot.
+                material["provenance"] = dict(fact["provenance"])
+            if material["source"] in {"market_view", "policy"} or material["priority"] == "P2":
+                material["verification"] = "UNCONFIRMED"
+            identity = hashlib.sha256(json.dumps(material, ensure_ascii=False,
+                sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            rows.append({"evidenceId": "brief-fact-" + identity, **material})
+        return rows
+    current, prior = references(brief), references(previous)
+    current_ids, prior_ids = {r["evidenceId"] for r in current}, {r["evidenceId"] for r in prior}
+    body = {"schemaVersion": "argus-unified-brief-context-v1", "scope": "PUBLIC_MARKET",
+            "facts": current, "previousFacts": prior,
+            "previousAt": (previous or {}).get("generatedAt"),
+            "changes": {"comparisonAvailable": bool(prior),
+                        "addedEvidenceIds": sorted(current_ids - prior_ids) if prior else [],
+                        "removedEvidenceIds": sorted(prior_ids - current_ids) if prior else []},
+            "ownerContextAvailable": False, "historyStatus": "PROCESS_MEMORY_ONLY",
+            "sourceTraceScope": "exact_brief_fact_and_available_public_metadata",
+            "actionAuthority": False}
+    body["contextId"] = hashlib.sha256(json.dumps(body, ensure_ascii=False,
+        sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return body
+
+
+def validate_unified_ai(value: Any, context: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    """Reject unsupported numbers, references and claims of observed inference.
+
+    This is a structural constraint, not proof that every sentence is correct.
+    Source inspection and semantic evaluation remain required before acceptance.
+    """
+    if not isinstance(value, Mapping) or set(value) != set(UNIFIED_SECTIONS):
+        return None
+    current = {r["evidenceId"]: r for r in context.get("facts", [])}
+    prior = {r["evidenceId"]: r for r in context.get("previousFacts", [])}
+    sections = {}
+    for key in UNIFIED_SECTIONS:
+        row = value[key]
+        if not isinstance(row, Mapping) or set(row) != {"textJa", "evidenceIds", "kind"}:
+            return None
+        text, refs, kind = row["textJa"], row["evidenceIds"], row["kind"]
+        if not isinstance(text, str) or not text.strip() or len(text) > 240 or \
+                kind not in {"FACT", "INFERENCE", "UNKNOWN"} or \
+                not isinstance(refs, list) or len(refs) > 6 or \
+                any(not isinstance(ref, str) for ref in refs) or len(set(refs)) != len(refs):
+            return None
+        allowed = {**prior, **current} if key == "changes" else current
+        if any(ref not in allowed for ref in refs):
+            return None
+        if kind != "UNKNOWN" and not refs:
+            return None
+        if key == "impact" and not context.get("ownerContextAvailable") and kind != "UNKNOWN":
+            return None
+        if key == "changes" and not context.get("changes", {}).get("comparisonAvailable") and kind != "UNKNOWN":
+            return None
+        if kind == "FACT" and (key in {"view", "impact", "next", "invalidation"} or
+                any(allowed[ref].get("verification") != "VERIFIED" for ref in refs)):
+            return None
+        if any(p in text for p in _FORBIDDEN_BRIEF_PATTERNS) or "確率" in text:
+            return None
+        allowed_digits = set().union(*(_digits_of(allowed[ref]["text"]) for ref in refs)) if refs else set()
+        if _digits_of(text) - allowed_digits:
+            return None
+        if key == "impact" and not context.get("ownerContextAvailable"):
+            text = "この市場全体の説明には保有情報を含めていません。銘柄ごとの保有状況と合わせた影響は未確認です。"
+        if key == "changes" and not context.get("changes", {}).get("comparisonAvailable"):
+            text = "比較できる前回の見立てをまだ取得していません。"
+        sections[key] = {"textJa": text.strip(), "evidenceIds": list(refs), "kind": kind}
+    return {"schemaVersion": "argus-unified-brief-v1", "contextId": context["contextId"],
+            "sections": sections, "actionAuthority": False,
+            "ownerContextAvailable": context["ownerContextAvailable"],
+            "historyStatus": context["historyStatus"]}
