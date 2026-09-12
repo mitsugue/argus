@@ -112,7 +112,7 @@ def test_market_brief_route_is_cached_only_and_public_safe(monkeypatch):
         scanner._MARKET_BRIEF["composedAt"] = 0.0
 
 
-def test_market_brief_refresh_polishes_with_ai_and_caches_by_facts(monkeypatch):
+def test_market_brief_retains_legacy_text_but_retries_missing_six_part_analysis(monkeypatch):
     monkeypatch.setattr(scanner, "_important_events_data",
                         lambda: {"events": [], "imminent": []})
     monkeypatch.setattr(scanner, "get_market_shock", lambda: {"events": []})
@@ -139,10 +139,11 @@ def test_market_brief_refresh_polishes_with_ai_and_caches_by_facts(monkeypatch):
         brief = scanner._market_brief_refresh(allow_ai=True)
         assert brief["aiText"]["nowJa"].startswith("金利関連")
         assert brief["aiModel"] == "terra-served"
-        assert calls == [("market_brief", None)]     # Terra, not Sol
-        # unchanged facts → cached aiText, no second LLM call
+        assert calls == [("market_brief", None)]
+        # A legacy response is readable but does not satisfy six-part generation.
+        assert brief["unifiedStatus"] == "INVALID_RESPONSE"
         scanner._market_brief_refresh(allow_ai=True)
-        assert len(calls) == 1
+        assert len(calls) == 2
     finally:
         scanner._MARKET_BRIEF["data"] = None
         scanner._MARKET_BRIEF["aiFactsHash"] = None

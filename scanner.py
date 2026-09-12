@@ -119,6 +119,7 @@ import argus_today_headline         # v13.5.0: compact Today bootstrap from veri
 import argus_market_shock           # v13.5.1: market-shock materiality (US30Y + corroborated news)
 import argus_news_intelligence      # v13.5.3: Nikkei mail → news-risk evidence (pure policy)
 import argus_gmail_intake           # v13.5.3: dedicated read-only news mailbox intake
+import jp_market_positioning
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
 import jp_market_price_paths
@@ -17304,6 +17305,33 @@ _JP_MARKET_ENGINE_STATE_JA = {
 }
 _MARKET_BRIEF = {"data": None, "composedAt": 0.0, "aiFactsHash": None}
 _MARKET_BRIEF_TTL_SEC = 300
+_MARKET_BRIEF_WORKER_LOCK = threading.Lock()
+_MARKET_BRIEF_WORKER = {"lastAttemptMonotonic": None, "lastAttemptAt": None,
+                        "lastCompletedAt": None, "status": "NOT_RUN", "errorClass": None}
+
+
+def _market_brief_worker_tick():
+    """Independent scheduler lane: news intake latency cannot postpone the view."""
+    if not _MARKET_BRIEF_WORKER_LOCK.acquire(blocking=False):
+        return {"status": "ALREADY_RUNNING"}
+    try:
+        last = _MARKET_BRIEF_WORKER["lastAttemptMonotonic"]
+        interval = 600 if _MARKET_BRIEF_WORKER["status"] == "GENERATED" else 120
+        if last is not None and time.monotonic() - last < interval:
+            return {"status": "NOT_DUE"}
+        _MARKET_BRIEF_WORKER.update(lastAttemptMonotonic=time.monotonic(),
+            lastAttemptAt=_ai_now_iso(), status="RUNNING", errorClass=None)
+        try:
+            result = _market_brief_refresh(allow_ai=True)
+            _MARKET_BRIEF_WORKER.update(status=result.get("unifiedStatus", "UNAVAILABLE"),
+                lastCompletedAt=_ai_now_iso())
+        except Exception as exc:
+            _MARKET_BRIEF_WORKER.update(status="FAILED", errorClass=type(exc).__name__,
+                lastCompletedAt=_ai_now_iso())
+        return {key: value for key, value in _MARKET_BRIEF_WORKER.items() if key != "lastAttemptMonotonic"}
+    finally:
+        _MARKET_BRIEF_WORKER_LOCK.release()
+
 
 
 def _brief_market_view_summary():
@@ -17421,6 +17449,7 @@ def _compose_market_brief():
         now_iso=_ai_now_iso(),
         market_view_summary=_brief_market_view_summary(),
         margin_dynamics=_jp_market_margin_1570_dynamics(),
+        jpy_position=_cftc_jpy_document(),
         shock_events=shock_events,
         news_events=_brief_news_events(),
         imminent_events=imminent,
@@ -17438,6 +17467,9 @@ def _market_brief_ai_polish(brief):
         "impact=利用者の銘柄への影響、next=次に確認すること、invalidation=見方を変える条件。"
         "各項目を {textJa:文字列,evidenceIds:根拠IDの配列,kind:FACTまたはINFERENCEまたはUNKNOWN} とする。"
         "根拠にない数値・割合・確率・価格予測・売買指示は禁止。推論を観測済み事実と呼ばない。"
+        "根拠IDは項目ごとに重複なしで最大6件。FACTはverificationがVERIFIEDの根拠だけを参照できる。"
+        "CORROBORATED・UNCONFIRMEDの根拠を含む説明はINFERENCEにする。"
+        "入力数値を勝手に丸めたり、日数や比率を新たに計算しない。確率に関する文章は書かない。"
         "changes以外でpreviousFactsを現在の事実として引用しない。以前の観測がない場合はchangesをUNKNOWNにする。"
         "保有情報はこの公開文脈に含まれないのでimpactはUNKNOWNとし、保有銘柄を推測しない。"
         "view、next、invalidationは推論または不明。警戒と回復を点灯数で強気度へ合算しない。"
@@ -17447,7 +17479,9 @@ def _market_brief_ai_polish(brief):
     raw = _openai_prose(user, max_out=1500,
                        system="あなたはARGUSの市場説明担当。根拠、推論、不明点を分け、計算・既存判定は上書きしない。",
                        purpose="market_brief", diagnostic=diag)
-    unified = argus_market_brief.validate_unified_ai(raw, context) if raw else None
+    validation = {}
+    unified = argus_market_brief.validate_unified_ai(raw, context, diagnostic=validation) if raw else None
+    brief["unifiedValidation"] = validation or {"status": "NO_RESPONSE", "reason": diag.get("reason"), "section": None}
     if unified:
         sections = unified["sections"]
         brief["unifiedSummary"] = unified
@@ -17475,14 +17509,16 @@ def _market_brief_refresh(allow_ai=True):
         brief.get("facts") or [], sort_keys=True,
         ensure_ascii=False).encode()).hexdigest()
     previous = _MARKET_BRIEF.get("lastSuccessful") or {}
-    same = facts_hash == _MARKET_BRIEF.get("aiFactsHash") and previous.get("aiText")
+    same = (facts_hash == _MARKET_BRIEF.get("aiFactsHash")
+            and previous.get("unifiedStatus") == "GENERATED"
+            and previous.get("unifiedSummary"))
     brief["unifiedContext"] = (previous.get("unifiedContext") if same else None) or \
         argus_market_brief.unified_context(brief, previous)
     brief["unifiedSummary"] = None
     brief["unifiedStatus"] = "AWAITING_AI"
     brief["lastSuccessfulAiAt"] = (previous.get("aiDiagnostics") or {}).get("completedAt")
     if same:
-        for key in ("aiText", "aiModel", "aiDiagnostics", "unifiedSummary", "unifiedStatus"):
+        for key in ("aiText", "aiModel", "aiDiagnostics", "unifiedSummary", "unifiedStatus", "unifiedValidation"):
             if key in previous:
                 brief[key] = copy.deepcopy(previous[key])
     elif allow_ai:
@@ -17499,12 +17535,14 @@ def _market_brief_refresh(allow_ai=True):
 @app.route("/api/argus/market-brief")
 def api_argus_market_brief():
     """Public NOW/WHY/NEXT situation brief. Cached-only: a public GET never
-    triggers an LLM call — AI polish happens on the intake worker."""
+    triggers an LLM call — AI polish happens on its independent scheduler worker."""
     try:
         if _MARKET_BRIEF["data"] is None or \
                 time.time() - _MARKET_BRIEF["composedAt"] > _MARKET_BRIEF_TTL_SEC:
             _market_brief_refresh(allow_ai=False)
-        return jsonify(_MARKET_BRIEF["data"])
+        return jsonify({**_MARKET_BRIEF["data"], "generationWorker": {
+            key: value for key, value in _MARKET_BRIEF_WORKER.items()
+            if key != "lastAttemptMonotonic"}})
     except Exception as exc:
         return jsonify({"schemaVersion": argus_market_brief.BRIEF_SCHEMA,
                         "status": "unavailable",
@@ -18981,11 +19019,6 @@ def _news_intake_loop():
         if translation_beat % 3 == 0:      # every ~3 intake cycles
             try:
                 _news_translation_tick()
-            except Exception:
-                pass
-        if translation_beat % 8 == 0:      # ~10min: refresh the market brief
-            try:
-                _market_brief_refresh(allow_ai=True)
             except Exception:
                 pass
         time.sleep(_NEWS_INTAKE_INTERVAL_SEC)
@@ -37509,6 +37542,66 @@ def _jp_market_comparison_cached(horizon):
         return {**failure, "reason": "index_comparison_input_invalid"}
 
 
+_CFTC_JPY_REFRESH_LOCK = threading.Lock()
+_CFTC_JPY_STATE = {"lastAttemptAt": None, "lastSuccessfulAcquisitionAt": None,
+                   "status": "NOT_ACQUIRED", "lastAttemptMonotonic": None}
+
+
+def _cftc_jpy_document(*, cutoff=None):
+    result = jp_market_positioning.latest_from_ledger(_MARKET_LEDGER,
+        cutoff=cutoff or _ai_now_iso())
+    return {**result, "acquisition": {key: value for key, value in _CFTC_JPY_STATE.items()
+                                     if key != "lastAttemptMonotonic"}}
+
+
+def _cftc_jpy_autorefresh():
+    """Free, bounded official weekly input on the existing authenticated collect lane."""
+    if not _CFTC_JPY_REFRESH_LOCK.acquire(blocking=False):
+        return {"status": "ALREADY_RUNNING"}
+    try:
+        last = _CFTC_JPY_STATE["lastAttemptMonotonic"]
+        interval = 20 * 3600 if _CFTC_JPY_STATE["status"] == "AVAILABLE" and _CFTC_JPY_STATE.get("persistenceStatus") == "VERIFIED" else 3600
+        if last is not None and time.monotonic() - last < interval:
+            return {"status": "NOT_DUE"}
+        _CFTC_JPY_STATE.update(lastAttemptAt=_ai_now_iso(), lastAttemptMonotonic=time.monotonic())
+        try:
+            with requests.get("https://www.cftc.gov/dea/futures/deacmesf.htm",
+                              timeout=(5, 15), stream=True, allow_redirects=False) as response:
+                if response.status_code != 200:
+                    raise ValueError("cftc_http_unavailable")
+                chunks, size = [], 0
+                for chunk in response.iter_content(32768):
+                    size += len(chunk)
+                    if size > 1024 * 1024:
+                        raise ValueError("cftc_response_bound_exceeded")
+                    chunks.append(chunk)
+            report = jp_market_positioning.normalize_cftc_jpy_report(b"".join(chunks),
+                received_at=_ai_now_iso())
+            with _DURABLE_CHECKPOINT_LOCK:
+                candidates = jp_market_positioning.ledger_candidates(report, _MARKET_LEDGER)
+                if candidates:
+                    result = argus_market_ledger.import_rows(_MARKET_LEDGER, candidates,
+                        now_iso=report["receivedAt"], dry_run=False)
+                    if not result.get("ok"):
+                        raise ValueError("cftc_ledger_import_failed")
+                    _MARKET_LEDGER.clear()
+                    _MARKET_LEDGER.update(result.pop("state"))
+                    _journal("market_ledger_jpy_position_received", "market_ledger",
+                        result.get("importId"), {"rowCount": len(candidates),
+                        "reportId": report["reportId"], "positionDate": report["positionDate"]}, origin="cron")
+                if candidates or _CFTC_JPY_STATE.get("persistenceStatus") != "VERIFIED":
+                    saved = _osint_persist()
+                    _CFTC_JPY_STATE["persistenceStatus"] = "VERIFIED" if saved.get("verified") else "NOT_VERIFIED"
+            _CFTC_JPY_STATE.update(status="AVAILABLE", lastSuccessfulAcquisitionAt=report["receivedAt"], errorClass=None)
+            _JP_MARKET_ENGINE_MARKET_VIEW_MEMO["ts"] = 0
+            return {"status": "AVAILABLE", "appendedRows": len(candidates), "reportId": report["reportId"]}
+        except Exception as exc:
+            _CFTC_JPY_STATE.update(status="FAILED", errorClass=type(exc).__name__)
+            return {"status": "FAILED", "errorClass": type(exc).__name__}
+    finally:
+        _CFTC_JPY_REFRESH_LOCK.release()
+
+
 def _jp_market_margin_1570_dynamics(*, cutoff=None):
     """Cached received balances, separate from daily securities finance."""
     cached = _JQ_MARGIN_CACHE.get("1570") or {}
@@ -37867,6 +37960,8 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         credit_rows = _jpx_credit_rows_effective()
     except Exception:
         credit_rows = []
+    if warm:
+        _cftc_jpy_autorefresh()
     margin_rows = _jp_market_engine_margin_1570_rows(fetch=warm)
     rs_proxy = _jp_market_engine_relative_strength_proxy()
     flow_rows = _jp_market_engine_foreign_flow_rows()
@@ -37929,6 +38024,7 @@ def _jp_market_engine_market_view():
             "projection": projection,
             "sourceStatus": dict(inputs["sourceStatus"]),
             "margin1570Dynamics": _jp_market_margin_1570_dynamics(cutoff=cutoff),
+            "jpyPosition": _cftc_jpy_document(cutoff=cutoff),
             "actionAuthority": False,
             "automaticAiCalls": 0,
         }
@@ -46198,6 +46294,9 @@ def run_scheduler():
                 target=_memory_operation_run,
                 args=("scheduler", "residency_ai_tick", _residency_ai_tick),
                 daemon=True).start()
+        # The public explanation progresses even when mail intake is slow or
+        # no mailbox is configured. No public request starts this AI worker.
+        threading.Thread(target=_market_brief_worker_tick, daemon=True).start()
         # v13.5.54: Twelve Data Basic-plan warm tick — bounded by the policy core
         # (8-credit batch per eligible minute, daily cap, market-aware cadence).
         try:

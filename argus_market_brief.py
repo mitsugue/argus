@@ -47,7 +47,11 @@ _FORBIDDEN_BRIEF_PATTERNS = (
 
 
 def _digits_of(text: str) -> set:
-    return set(re.findall(r"\d+(?:\.\d+)?", str(text or "")))
+    # Formatting an existing value with thousands separators does not invent
+    # a new number. Only correctly grouped numeric tokens are normalized.
+    value = re.sub(r"(?<![\d,])\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![\d,])",
+                   lambda match: match.group(0).replace(",", ""), str(text or ""))
+    return set(re.findall(r"\d+(?:\.\d+)?", value))
 
 
 def validate_ai_brief(ai: Any, fact_texts: Sequence[str]) -> Optional[Dict[str, str]]:
@@ -176,9 +180,32 @@ def _margin_facts(document: Optional[Mapping[str, Any]]) -> List[Dict[str, Any]]
     return rows
 
 
+def _jpy_position_facts(document):
+    if not isinstance(document, Mapping) or document.get("status") not in ("AVAILABLE", "STALE"):
+        return []
+    if document.get("reportType") != "LEGACY_FUTURES_ONLY" or document.get("actionAuthority") is not False:
+        return []
+    current, change = document.get("current") or {}, document.get("change") or {}
+    if not all(type(row.get(field)) is int for row in (current, change)
+               for field in ("longContracts", "shortContracts", "netContracts", "spreadContracts")):
+        return []
+    failed = (document.get("acquisition") or {}).get("status") == "FAILED"
+    prefix = "更新失敗・保存分" if failed else "古い保存分" if document["status"] == "STALE" else "週次の観測"
+    origin = {"eventId": "cftc-jpy:" + document["reportId"],
+              "sourceLabelJa": "CFTC・円先物の非商業建玉", "sourceUrl": document["sourceRef"],
+              "sourcePublishedAt": document.get("publishedAt"), "sourceReceivedAt": document["receivedAt"],
+              "asOf": document["positionDate"], "sourceResponseSha256": document["sourceResponseSha256"]}
+    return [_fact(
+        f"CFTC円先物・非商業（{prefix}、{document['positionDate']}）: 買{current['longContracts']}・売{current['shortContracts']}・"
+        f"差引{current['netContracts']:+}枚。前週差は買{change['longContracts']:+}・売{change['shortContracts']:+}枚。"
+        "現在の建玉は未観測。買い越しでも売り建玉は残る。",
+        "P1", "official_weekly_position", "UNCONFIRMED" if failed or document["status"] == "STALE" else "VERIFIED", origin)]
+
+
 def compose_brief(*, now_iso: str,
                   market_view_summary: Optional[Mapping[str, Any]] = None,
                   margin_dynamics: Optional[Mapping[str, Any]] = None,
+                  jpy_position: Optional[Mapping[str, Any]] = None,
                   shock_events: Sequence[Mapping[str, Any]] = (),
                   news_events: Sequence[Mapping[str, Any]] = (),
                   imminent_events: Sequence[Mapping[str, Any]] = (),
@@ -233,6 +260,7 @@ def compose_brief(*, now_iso: str,
                               for e in material_news) else "UNCONFIRMED"))
 
     facts.extend(_margin_facts(margin_dynamics))
+    facts.extend(_jpy_position_facts(jpy_position))
 
     # ── P2: なぜそうなっているか ──
     for event in material_news[:2]:
@@ -378,49 +406,55 @@ def unified_context(brief: Mapping[str, Any], previous: Optional[Mapping[str, An
     return body
 
 
-def validate_unified_ai(value: Any, context: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+def validate_unified_ai(value: Any, context: Mapping[str, Any], *, diagnostic=None) -> Optional[Dict[str, Any]]:
     """Reject unsupported numbers, references and claims of observed inference.
 
     This is a structural constraint, not proof that every sentence is correct.
     Source inspection and semantic evaluation remain required before acceptance.
     """
-    if not isinstance(value, Mapping) or set(value) != set(UNIFIED_SECTIONS):
+    def rejected(reason, section=None):
+        if isinstance(diagnostic, dict):
+            diagnostic.update(status="REJECTED", reason=reason, section=section)
         return None
+    if not isinstance(value, Mapping) or set(value) != set(UNIFIED_SECTIONS):
+        return rejected("six_section_schema_required")
     current = {r["evidenceId"]: r for r in context.get("facts", [])}
     prior = {r["evidenceId"]: r for r in context.get("previousFacts", [])}
     sections = {}
     for key in UNIFIED_SECTIONS:
         row = value[key]
         if not isinstance(row, Mapping) or set(row) != {"textJa", "evidenceIds", "kind"}:
-            return None
+            return rejected("section_schema_invalid", key)
         text, refs, kind = row["textJa"], row["evidenceIds"], row["kind"]
         if not isinstance(text, str) or not text.strip() or len(text) > 240 or \
                 kind not in {"FACT", "INFERENCE", "UNKNOWN"} or \
                 not isinstance(refs, list) or len(refs) > 6 or \
                 any(not isinstance(ref, str) for ref in refs) or len(set(refs)) != len(refs):
-            return None
+            return rejected("section_field_invalid", key)
         allowed = {**prior, **current} if key == "changes" else current
         if any(ref not in allowed for ref in refs):
-            return None
+            return rejected("unknown_evidence_reference", key)
         if kind != "UNKNOWN" and not refs:
-            return None
+            return rejected("evidence_reference_required", key)
         if key == "impact" and not context.get("ownerContextAvailable") and kind != "UNKNOWN":
-            return None
+            return rejected("owner_context_unavailable", key)
         if key == "changes" and not context.get("changes", {}).get("comparisonAvailable") and kind != "UNKNOWN":
-            return None
+            return rejected("previous_context_unavailable", key)
         if kind == "FACT" and (key in {"view", "impact", "next", "invalidation"} or
                 any(allowed[ref].get("verification") != "VERIFIED" for ref in refs)):
-            return None
+            return rejected("fact_requires_verified_references", key)
         if any(p in text for p in _FORBIDDEN_BRIEF_PATTERNS) or "確率" in text:
-            return None
+            return rejected("unsupported_authority_or_probability", key)
         allowed_digits = set().union(*(_digits_of(allowed[ref]["text"]) for ref in refs)) if refs else set()
         if _digits_of(text) - allowed_digits:
-            return None
+            return rejected("unsupported_numeric_tokens", key)
         if key == "impact" and not context.get("ownerContextAvailable"):
             text = "この市場全体の説明には保有情報を含めていません。銘柄ごとの保有状況と合わせた影響は未確認です。"
         if key == "changes" and not context.get("changes", {}).get("comparisonAvailable"):
             text = "比較できる前回の見立てをまだ取得していません。"
         sections[key] = {"textJa": text.strip(), "evidenceIds": list(refs), "kind": kind}
+    if isinstance(diagnostic, dict):
+        diagnostic.update(status="ACCEPTED", reason=None, section=None)
     return {"schemaVersion": "argus-unified-brief-v1", "contextId": context["contextId"],
             "sections": sections, "actionAuthority": False,
             "ownerContextAvailable": context["ownerContextAvailable"],

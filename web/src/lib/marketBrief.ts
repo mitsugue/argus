@@ -22,6 +22,7 @@ export interface MarketBrief {
   unifiedContext?: { contextId: string; facts: Array<MarketBriefFact & { evidenceId: string }>;
     previousFacts: Array<MarketBriefFact & { evidenceId: string }>; previousAt: string | null };
   unifiedStatus?: string;
+  generationWorker?: { status: string; lastAttemptAt?: string | null; lastCompletedAt?: string | null; errorClass?: string | null };
   lastSuccessfulAiAt?: string | null;
   aiDiagnostics?: { requestedModel: string | null; returnedModel: string | null; completedAt: string | null };
   schemaVersion: string;
@@ -73,6 +74,10 @@ export function validMarketBrief(value: unknown): value is MarketBrief {
     || !['nowJa', 'whyJa', 'nextJa'].every(key => text(value.aiText[key], 240)))) return false;
   if (value.aiModel != null && !text(value.aiModel, 100)) return false;
   if (value.lastSuccessfulAiAt != null && !instant(value.lastSuccessfulAiAt)) return false;
+  if (value.generationWorker != null && (!object(value.generationWorker)
+    || !['NOT_RUN', 'RUNNING', 'GENERATED', 'AWAITING_AI', 'INVALID_RESPONSE', 'UNAVAILABLE', 'FAILED'].includes(value.generationWorker.status)
+    || !['lastAttemptAt', 'lastCompletedAt'].every(key => value.generationWorker[key] == null || instant(value.generationWorker[key]))
+    || (value.generationWorker.errorClass != null && !text(value.generationWorker.errorClass, 100)))) return false;
   if (value.aiDiagnostics != null && (!object(value.aiDiagnostics)
     || !['requestedModel', 'returnedModel'].every(key => value.aiDiagnostics[key] == null || text(value.aiDiagnostics[key], 100))
     || (value.aiDiagnostics.completedAt != null && !instant(value.aiDiagnostics.completedAt)))) return false;

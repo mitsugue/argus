@@ -70,6 +70,7 @@ export interface JpMarketEngineMarketView {
     actionAuthority?: boolean;
   } | null;
   margin1570Dynamics?: unknown;
+  jpyPosition?: unknown;
   sourceStatus: Record<string, string>;
   actionAuthority: boolean;
   // v13.5.38: Tachibana LIVE evidence document (argus_tachibana_live), when

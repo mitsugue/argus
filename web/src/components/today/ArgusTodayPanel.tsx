@@ -1,5 +1,6 @@
 import React from 'react';
 import { MarginDynamicsCard } from './MarginDynamicsCard';
+import { JpyPositionCard } from './JpyPositionCard';
 import { JapanSqCalendarCard, JapanSqApproachNotice } from '../dashboard/JapanSqCalendarCard';
 import { JapanMarketComparisonPanel } from '../chart/JapanMarketComparisonPanel';
 import type { ArgusTodayView, MarketSelectionMode, TodayProjection } from '../../domain/argusTodayView';
@@ -306,7 +307,10 @@ const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total: number
     aria-label="今の市場（売買権限なし）">
     {updateState}
     {brief.unifiedStatus && brief.unifiedStatus !== 'GENERATED' && <p role="status">
-      統合AIの説明は更新待ちです。取得済み情報の要約を表示しています。
+      {brief.generationWorker?.status === 'RUNNING' ? '統合AIが見立てを更新しています。'
+        : ['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(brief.generationWorker?.status ?? '')
+          ? '統合AIの更新を完了できませんでした。次の定期処理で再試行します。'
+          : '統合AIの説明は更新待ちです。'}取得済み情報の要約を表示しています。
       {brief.lastSuccessfulAiAt && <small> 最終成功 {brief.lastSuccessfulAiAt}</small>}
     </p>}
     <small>今の市場 — 取得済み情報の要約{brief.aiText ? '（AI圧縮・参考）' : ''}</small>
@@ -1018,6 +1022,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       && <JapanMarketComparisonPanel horizon={horizon} />}
 
     {!usSelected && <MarginDynamicsCard document={decisionEvidence.marketView?.margin1570Dynamics} refreshFailed={!!decisionEvidence.error} />}
+    {!usSelected && <JpyPositionCard document={decisionEvidence.marketView?.jpyPosition} />}
 
     {/* v13.5.59: reading order top-down — decision → signals → what is
         coming → the market itself → then the reference market view and the
