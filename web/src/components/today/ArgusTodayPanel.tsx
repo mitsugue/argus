@@ -1,4 +1,5 @@
 import React from 'react';
+import { MarginDynamicsCard } from './MarginDynamicsCard';
 import { JapanSqCalendarCard, JapanSqApproachNotice } from '../dashboard/JapanSqCalendarCard';
 import { JapanMarketComparisonPanel } from '../chart/JapanMarketComparisonPanel';
 import type { ArgusTodayView, MarketSelectionMode, TodayProjection } from '../../domain/argusTodayView';
@@ -1015,6 +1016,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
 
     {view.selectedMarket === 'JP' && selectedSymbol === '1321'
       && <JapanMarketComparisonPanel horizon={horizon} />}
+
+    {!usSelected && <MarginDynamicsCard document={decisionEvidence.marketView?.margin1570Dynamics} refreshFailed={!!decisionEvidence.error} />}
 
     {/* v13.5.59: reading order top-down — decision → signals → what is
         coming → the market itself → then the reference market view and the

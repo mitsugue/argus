@@ -122,6 +122,8 @@ import argus_gmail_intake           # v13.5.3: dedicated read-only news mailbox 
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
 import jp_market_price_paths
+import jp_market_source_adapters
+import jp_market_dynamics
 import jp_market_events
 import jp_market_engine                    # v13.5.13: JP_MARKET_ENGINE evidence engine (pure; evidence, never action)
 import argus_single_decision        # v13.5.13: canonical artifact references for device SDA
@@ -37485,36 +37487,51 @@ def _jp_market_comparison_cached(horizon):
         return {**failure, "reason": "index_comparison_input_invalid"}
 
 
-def _jp_market_engine_margin_1570_rows(*, fetch=False):
-    """1570 weekly margin ratio as PIT rows for JP_MARKET_ENGINE D02.
+def _jp_market_margin_1570_dynamics(*, cutoff=None):
+    """Cached received balances, separate from daily securities finance."""
+    cached = _JQ_MARGIN_CACHE.get("1570") or {}
+    snapshot = cached.get("sourceSnapshot") or {}
+    result = jp_market_dynamics.credit_dynamics(
+        snapshot.get("rows") or [], cutoff=cutoff or _ai_now_iso(),
+        instrument_id="1570", balance_kind="WEEKLY_MARGIN",
+        long_series="margin.long_balance", short_series="margin.short_balance")
+    result.update({"acquisitionStatus": cached.get("sourceStatus", "NOT_ACQUIRED"),
+                   "lastSuccessfulAcquisitionAt": snapshot.get("observedAt"),
+                   "lastAttemptAt": cached.get("lastAttemptAt"),
+                   "sourceStatus": snapshot.get("status", "UNAVAILABLE"),
+                   "paginationRemaining": snapshot.get("paginationRemaining", False),
+                   "rejectedRows": snapshot.get("rejectedRows", []),
+                   "sourceRows": snapshot.get("rows", []),
+                   "historyStatus": "PROCESS_CACHE_ONLY"})
+    return result
 
-    J-Quants publishes weekly margin interest during the following week, so
-    availableFrom = period + 7 days keeps the join conservative. Cache-only
-    unless the cron warm passes fetch."""
+
+def _jp_market_engine_margin_1570_rows(*, fetch=False):
+    """Ratio formula unchanged; availability is actual receipt, never period+7.
+
+    A legacy ratio-only cache has no acquisition proof and remains unavailable
+    until the existing collector succeeds. Public reads never fetch.
+    """
     if fetch:
-        data = _jq_weekly_margin("1570")
-    else:
-        cached = _JQ_MARGIN_CACHE.get("1570")
-        data = cached.get("data") if isinstance(cached, dict) else None
+        _jq_weekly_margin("1570")
+    snapshot = (_JQ_MARGIN_CACHE.get("1570") or {}).get("sourceSnapshot") or {}
+    by_period = {}
+    for row in snapshot.get("rows") or []:
+        if row.get("seriesId") in ("margin.long_balance", "margin.short_balance"):
+            by_period.setdefault(row["periodEnd"], {})[row["seriesId"]] = row
     rows = []
-    for row in data or []:
-        try:
-            date = str(row.get("date") or "")[:10]
-            long_volume = float(row.get("longVol"))
-            short_volume = float(row.get("shortVol"))
-        except (TypeError, ValueError):
+    for period, sides in sorted(by_period.items()):
+        long_row = sides.get("margin.long_balance")
+        short_row = sides.get("margin.short_balance")
+        if not long_row or not short_row or short_row["value"] <= 0:
             continue
-        if len(date) != 10 or short_volume <= 0:
-            continue
-        try:
-            available = (argus_fastdate.strptime(date, "%Y-%m-%d").date()
-                         + timedelta(days=7)).isoformat() + "T00:00:00Z"
-        except ValueError:
-            continue
-        rows.append({"instrumentId": "1570", "field": "margin_ratio",
-                     "date": date,
-                     "value": round(long_volume / short_volume, 6),
-                     "availableFrom": available})
+        rows.append({"instrumentId": "1570", "field": "margin_ratio", "date": period,
+                     "value": round(long_row["value"] / short_row["value"], 6),
+                     "availableFrom": long_row["availableFrom"],
+                     "observedAt": long_row["observedAt"], "publishedAt": None,
+                     "sourceRef": long_row["sourceRef"],
+                     "sourceResponseSha256": long_row["sourceResponseSha256"],
+                     "historicalVintageVerified": False})
     return rows
 
 
@@ -37889,6 +37906,7 @@ def _jp_market_engine_market_view():
             "informationCutoff": cutoff,
             "projection": projection,
             "sourceStatus": dict(inputs["sourceStatus"]),
+            "margin1570Dynamics": _jp_market_margin_1570_dynamics(cutoff=cutoff),
             "actionAuthority": False,
             "automaticAiCalls": 0,
         }
@@ -42879,6 +42897,9 @@ def _jq_weekly_margin(code):
     if c and now < c["expires"]:
         return c["data"]
     data = None
+    source_snapshot = (c or {}).get("sourceSnapshot")
+    source_status = "KEY_NOT_CONFIGURED" if not _JQUANTS_API_KEY else "FETCH_FAILED"
+    attempted_at = _ai_now_iso()
     if _JQUANTS_API_KEY:
         try:
             headers = {"x-api-key": _JQUANTS_API_KEY}
@@ -42886,7 +42907,19 @@ def _jq_weekly_margin(code):
             r = requests.get(f"{_JQUANTS_BASE}/markets/margin-interest",
                              headers=headers, params={"code": code, "from": frm}, timeout=10)
             if r.status_code == 200:
-                rows = (r.json() or {}).get("data", []) or []
+                if str(code) == "1570" and len(r.content) > 2 * 1024 * 1024:
+                    raise ValueError("margin_response_too_large")
+                payload = r.json() or {}
+                rows = payload.get("data", []) or []
+                if str(code) == "1570":
+                    candidate = jp_market_source_adapters.normalize_jquants_margin_snapshot(
+                        payload, instrument_id="1570", observed_at=_ai_now_iso(),
+                        response_sha256=hashlib.sha256(r.content).hexdigest(), volume_unit="UNITS")
+                    if candidate["rows"]:
+                        source_snapshot = candidate
+                        source_status = candidate["status"]
+                    else:
+                        source_status = "INVALID_OR_EMPTY_RESPONSE"
                 norm = []
                 for q in rows:
                     lv = q.get("LongVol", q.get("LongMarginTradeVolume"))
@@ -42897,13 +42930,19 @@ def _jq_weekly_margin(code):
                 norm.sort(key=lambda x: x["date"] or "", reverse=True)
                 if norm:
                     data = norm[:4]
-            # 403/404 → plan does not include it → leave data None (honest gap)
+            else:
+                source_status = "HTTP_" + str(r.status_code)
+            # Existing consumers retain their original normalized four-row shape.
         except Exception as e:
             add_log(f"[scout] margin fetch failed {code}: {type(e).__name__}")
     # On failure cache a short empty window so we retry, but a real None (plan
     # gap) is cached for the full TTL — no point hammering an endpoint the plan
     # will keep refusing.
-    _JQ_MARGIN_CACHE[code] = {"data": data, "expires": now + (_JQ_MARGIN_TTL if data is not None else 1800)}
+    _JQ_MARGIN_CACHE[code] = {
+        "data": data, "expires": now + (_JQ_MARGIN_TTL if data is not None else 1800),
+        "sourceSnapshot": source_snapshot, "sourceStatus": source_status,
+        "lastAttemptAt": attempted_at,
+    }
     return data
 
 
