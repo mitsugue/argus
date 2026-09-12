@@ -189,6 +189,7 @@ ROUTE_CATALOG = (
     RouteCatalogEntry("/api/argus/macro-event-analysis", ("GET",), "api_argus_macro_event_analysis", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/market-ledger", ("GET",), "api_argus_market_ledger_view", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/market-news", ("GET",), "api_argus_market_news", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
+    RouteCatalogEntry("/api/argus/jp-sq-calendar", ("GET",), "api_argus_jp_sq_calendar", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/market-brief", ("GET",), "api_argus_market_brief", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/market-shock", ("GET",), "api_argus_market_shock", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/news-intelligence", ("GET",), "api_argus_news_intelligence", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
