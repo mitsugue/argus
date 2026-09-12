@@ -1,4 +1,5 @@
 import React from 'react';
+import { JapanSqCalendarCard } from '../components/dashboard/JapanSqCalendarCard';
 import { ImportantEventsCard } from '../components/dashboard/ImportantEventsCard';
 import { NotificationPanel } from '../components/NotificationPanel';
 import { NewsAlertsPanel } from '../components/notifications/NewsAlertsPanel';
@@ -20,6 +21,7 @@ export const NotificationsPage: React.FC = () => (
   >
     <NewsAlertsPanel />
     <NotificationPanel />
+    <JapanSqCalendarCard />
     <ImportantEventsCard />
   </PageShell>
 );

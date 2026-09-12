@@ -1,4 +1,5 @@
 import React from 'react';
+import { JapanSqCalendarCard } from '../dashboard/JapanSqCalendarCard';
 import { JapanMarketComparisonPanel } from '../chart/JapanMarketComparisonPanel';
 import type { ArgusTodayView, MarketSelectionMode, TodayProjection } from '../../domain/argusTodayView';
 import { formatEventTime, quoteDisplayLabel, subjectDisplayName, confidenceBasisJa, waitKindJa } from '../../domain/argusTodayView';
@@ -851,6 +852,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       <button type="button" className="at-news-more" onClick={() => openNewsDetails()}>ニュース・続報をすべて見る ↗</button>
 
     </section>
+
+    <JapanSqCalendarCard />
 
     <section className="at-event card" aria-label="NEXT EVENT">
       <div className="at-head"><b>NEXT EVENT</b>{view.nextEvent && <span>{view.nextEvent.impact.toUpperCase()}</span>}</div>

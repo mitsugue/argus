@@ -1,0 +1,12 @@
+.jp-sq { grid-column: 1 / -1; min-width: 0; padding: 20px; color: #dce6ec; background: #111b24; }
+.jp-sq__head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.jp-sq__head h2 { font-size: 18px; margin: 0 0 14px; }
+.jp-sq__head > span, .jp-sq__source { color: #a2b4c0; font-size: 12px; }
+.jp-sq__event { border-top: 1px solid #30404d; }
+.jp-sq__event summary { cursor: pointer; min-height: 48px; padding: 12px 0; line-height: 1.65; }
+.jp-sq__event summary > span { display: block; color: #9fd0e2; }
+.jp-sq__event summary .jp-sq__title { color: #e4edf2; font-size: 16px; }
+.jp-sq__detail { line-height: 1.75; font-size: 14px; overflow-wrap: anywhere; }
+.jp-sq__detail dl { margin: 16px 0; }.jp-sq__detail dt { color: #a2b4c0; }.jp-sq__detail dd { margin: 0 0 10px; }
+.jp-sq__detail a { display: inline-block; padding: 10px 0; color: #9fd0e2; }
+.jp-sq button { min-height: 44px; margin-left: 8px; color: #9fd0e2; background: #1d303c; border: 1px solid #3b5364; border-radius: 8px; padding: 8px 12px; }

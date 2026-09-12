@@ -1,6 +1,8 @@
 """Official-date Japan SQ planning, independent of AI and monetary policy gates."""
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable, Mapping, Sequence
 
@@ -144,3 +146,31 @@ def sq_calendar(*, now: datetime, schedule: Mapping[str, Any], horizon_days: int
     result["events"].sort(key=lambda row: row["sqDate"])
     result["gaps"] = sorted(set(result["gaps"]))
     return result
+
+
+def published_sq_calendar(*, now: datetime, schedule_path: Path | None = None) -> dict[str, Any]:
+    """Read the shipped official schedule without external acquisition or AI.
+
+    The bounded file is reread so a calendar deployment takes effect directly.
+    Missing coverage remains explicit; next year's dates are never extrapolated.
+    """
+    path = schedule_path or Path(__file__).parent / "ops/calendar/jp_index_sq_2026.json"
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(65537)
+        if len(raw) > 65536:
+            raise ValueError("schedule_size_limit")
+        schedule = json.loads(raw)
+        if schedule.get("schemaVersion") != "jp-official-monthly-sq-schedule-v1":
+            raise ValueError("schedule_schema_invalid")
+        result = sq_calendar(now=now, schedule=schedule)
+        return {**result, "automaticAiCalls": 0, "lastSuccessfulAcquisitionAt": schedule["knownAt"]}
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        current = _now(now)
+        return {"schemaVersion": SCHEMA_VERSION, "asOf": current.isoformat(),
+                "timezone": "Asia/Tokyo", "rangeStart": current.date().isoformat(),
+                "rangeEnd": (current.date() + timedelta(days=30)).isoformat(),
+                "status": "UNAVAILABLE", "gaps": ["official_schedule_unavailable"],
+                "events": [], "notificationProposals": [], "dependsOnAi": False,
+                "actionAuthority": False, "automaticAiCalls": 0,
+                "lastSuccessfulAcquisitionAt": None}

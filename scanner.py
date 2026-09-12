@@ -122,6 +122,7 @@ import argus_gmail_intake           # v13.5.3: dedicated read-only news mailbox 
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
 import jp_market_price_paths
+import jp_market_events
 import jp_market_engine                    # v13.5.13: JP_MARKET_ENGINE evidence engine (pure; evidence, never action)
 import argus_single_decision        # v13.5.13: canonical artifact references for device SDA
 import argus_tachibana_live         # v13.5.38: Tachibana LIVE product boundary (shadow, read-only, no orders)
@@ -7839,6 +7840,13 @@ def _events_mock_snapshot():
 def api_argus_events():
     # v13.5.60: one TreasuryDirect-backed build at a time (single-flight).
     return _single_flight_json("events", get_events_snapshot)
+
+@app.route("/api/argus/jp-sq-calendar")
+def api_argus_jp_sq_calendar():
+    """Independent published dates; no market fetch, AI call or action gate."""
+    return jsonify(jp_market_events.published_sq_calendar(
+        now=datetime.fromisoformat(_ai_now_iso().replace("Z", "+00:00"))))
+
 
 @app.route("/api/argus/important-events")
 def api_argus_important_events():
