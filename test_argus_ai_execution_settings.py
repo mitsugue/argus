@@ -135,3 +135,80 @@ def test_auth_probe_traffic_is_still_limited_per_client(monkeypatch):
         assert scanner._rate_limit() is None
         response, code = scanner._rate_limit()
         assert code == 429 and response.get_json()['error'] == 'rate_limited'
+
+
+@pytest.mark.parametrize('primary_status,checker_status,full,expected', [
+    ('live', 'not_enabled_by_role_policy', True, 'live'),
+    ('unavailable', 'not_enabled_by_role_policy', True, 'partial'),
+    ('partial', 'not_enabled_by_role_policy', True, 'partial'),
+    ('live', 'unavailable', True, 'partial'),
+    ('live', 'live', False, 'live'),
+    ('live', 'unavailable', False, 'partial'),
+])
+def test_execution_status_tracks_required_primary_without_hiding_failures(
+        monkeypatch, primary_status, checker_status, full, expected):
+    import copy
+    monkeypatch.setattr(scanner, '_AI_FULL_ANALYSIS_ENABLED', full)
+    monkeypatch.setattr(scanner, '_AI_RESULT_CACHE', {'data': None, 'expires': 0})
+    monkeypatch.setattr(scanner, '_AI_LAST_RUN', {'oaiModel': 'actual-primary',
+        'gemModel': 'actual-support',
+        'oaiDiagnostic': {'requestedModel': 'requested-primary', 'returnedModel': 'actual-primary'}})
+    rules = {'status': 'partial', 'labels': [{'symbol': '8058'}]}
+    output = {'labels': [{'symbol': '8058', 'reasonJa': '観測された変化の説明'}]}
+    monkeypatch.setattr(scanner, '_build_ai_snapshot', lambda: ({}, rules))
+    monkeypatch.setattr(scanner, '_openai_judge', lambda _: (output, primary_status))
+    monkeypatch.setattr(scanner, '_gemini_check', lambda *args: (None, checker_status, False))
+    monkeypatch.setattr(scanner, '_arbitrate_ai', lambda *args: [{'symbol': '8058', 'ruleAction': 'WAIT'}])
+    monkeypatch.setattr(scanner, '_ai_record_cost', lambda *args: {'totalUsd': 0.12})
+    persisted = []
+    monkeypatch.setattr(scanner, '_ai_persist_latest', lambda value: persisted.append(copy.deepcopy(value)))
+    result = scanner._execute_ai_judgment()
+    assert result['status'] == expected
+    assert result['providerExecutions']['checker']['required'] is (not full)
+    assert result['providerExecutions']['primary']['status'] == primary_status
+    assert result['models']['primary'] == ('actual-primary' if primary_status == 'live' else None)
+    assert result['models']['checker'] == ('actual-support' if checker_status == 'live' else None)
+    assert result['analysisCoverage']['complete'] is True
+    assert persisted == [result], 'saved payload must include final usage and actual model fields'
+    assert result['costEstimateUsd'] == 0.12
+
+
+@pytest.mark.parametrize('primary_labels', [[], [{'symbol': '8058'}],
+    [{'symbol': '8058', 'reasonJa': '説明'}, {'symbol': '8058', 'reasonJa': '重複'}]])
+def test_incomplete_symbol_output_cannot_be_live(monkeypatch, primary_labels):
+    monkeypatch.setattr(scanner, '_AI_FULL_ANALYSIS_ENABLED', True)
+    monkeypatch.setattr(scanner, '_AI_RESULT_CACHE', {'data': None, 'expires': 0})
+    monkeypatch.setattr(scanner, '_AI_LAST_RUN', {})
+    monkeypatch.setattr(scanner, '_build_ai_snapshot', lambda: ({}, {
+        'status': 'live', 'labels': [{'symbol': '8058'}]}))
+    monkeypatch.setattr(scanner, '_openai_judge', lambda _: ({'labels': primary_labels}, 'live'))
+    monkeypatch.setattr(scanner, '_gemini_check', lambda *a: (None, 'not_enabled_by_role_policy', False))
+    monkeypatch.setattr(scanner, '_arbitrate_ai', lambda *a: [])
+    monkeypatch.setattr(scanner, '_ai_record_cost', lambda *a: {'totalUsd': 0.12})
+    monkeypatch.setattr(scanner, '_ai_persist_latest', lambda *a: None)
+    result = scanner._execute_ai_judgment()
+    assert result['status'] == 'partial'
+    assert result['analysisCoverage']['complete'] is False
+
+
+def test_primary_mode_checker_is_explicit_non_call(monkeypatch):
+    monkeypatch.setattr(scanner, '_AI_FULL_ANALYSIS_ENABLED', True)
+    monkeypatch.setattr(scanner, '_AI_LAST_RUN', {'gemUsage': (100, 200), 'gemModel': 'earlier-model'})
+    def unexpected(*args, **kwargs):
+        raise AssertionError('role-disabled checker must not authorize, bill, or call a provider')
+    monkeypatch.setattr(scanner, '_cost_policy_authorize', unexpected)
+    assert scanner._gemini_check({}, {}) == (None, 'not_enabled_by_role_policy', False)
+    assert scanner._AI_LAST_RUN['gemUsage'] is None
+    assert scanner._AI_LAST_RUN['gemModel'] is None
+
+
+@pytest.mark.parametrize('primary_key,expected', [('configured', 'no_cached_result'), ('', 'missing_keys')])
+def test_primary_mode_truth_does_not_require_support_key(monkeypatch, primary_key, expected):
+    monkeypatch.setattr(scanner, '_AI_FULL_ANALYSIS_ENABLED', True)
+    monkeypatch.setattr(scanner, '_AI_JUDGE_ENABLED', True)
+    monkeypatch.setattr(scanner, '_OPENAI_API_KEY', primary_key)
+    monkeypatch.setattr(scanner, 'GEMINI_API_KEY', '')
+    monkeypatch.setattr(scanner, '_AI_RESULT_CACHE', {'data': None, 'expires': 0})
+    result = scanner._ai_judgment_truth(allow_restore=False)
+    assert result['status'] == expected
+    assert result['publicGetStatus'] == expected

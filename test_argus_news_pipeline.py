@@ -1043,3 +1043,28 @@ def test_recent_api_exposes_bounded_watch_articles_beyond_first_twelve(tmp_path,
     assert len(data["events"]) == 18
     assert any(event["eventId"] == "received-0" for event in data["events"])
     assert data["sdaAuthority"] is False
+
+
+def test_full_analysis_drains_previously_failed_watch_after_material(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    _reset_news_store(tmp_path, monkeypatch)
+    monkeypatch.setattr(scanner, '_AI_FULL_ANALYSIS_ENABLED', True)
+    monkeypatch.setattr(scanner, '_news_retry_input', lambda _: ('', 'source_not_matched'))
+    stamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    rows = [_seed_event('watch-retry', 'FED', 'WATCH', '金利見通し', '金利見通し', stamp),
+            _seed_event('priority-retry', 'NIKKEI', 'HIGH', 'ECB、利上げ決定', 'ECB、利上げ決定', stamp)]
+    for event in rows:
+        event['analysisState'] = 'AI_ANALYSIS_UNAVAILABLE'
+        scanner._NEWS_INTEL['events'][event['eventId']] = event
+    calls = []
+    def analyze(subject, *args, diagnostic=None, **kwargs):
+        calls.append(subject)
+        diagnostic.update(outcome='ok', returnedModel='test-primary')
+        return {'facts': ['確認した事実'], 'causalPathJa': '市場反応を確認'}, 'ANALYZED'
+    monkeypatch.setattr(scanner, '_news_analyze_ai', analyze)
+    assert scanner._news_retry_pending_analysis() == 1
+    assert scanner._news_retry_pending_analysis() == 1
+    assert scanner._news_retry_pending_analysis() == 0
+    assert calls == ['ECB、利上げ決定', '金利見通し']
+    assert all(row['analysisState'] == 'ANALYZED' for row in rows)
+    assert all(row['sourceReceivedAt'] == stamp for row in rows)
