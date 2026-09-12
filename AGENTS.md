@@ -25,3 +25,13 @@ defects and verify production again, then stop. Reuse prior acceptance evidence.
 Do not investigate, prototype, implement, open PRs, or deploy 13.7 until the owner
 explicitly resumes it next week or later. A date change or 13.6 completion is not
 permission. Existing budget/restoration/collection bug fixes remain in 13.5.
+
+## Release merge shape
+
+The Pages release binds the exact pre-merge certificate to the second parent
+of a two-parent merge commit, with identical candidate and merge trees. Use
+`gh pr merge --merge --match-head-commit <verified-head>`; squash, rebase and
+fast-forward merges cannot enter this release path. For frontend-only changes,
+set the merge commit subject explicitly to include `[skip render]`, as well as
+the PR title. Verify the existing required checks and exact admission proofs;
+do not relax the tree or certificate checks to repair a failed deployment.

@@ -5,7 +5,7 @@ on:
     # Deploy only from main. The github-pages environment allows deploys from
     # main (and gh-pages) only, so triggering on a feature branch produced a
     # build that always failed at the deploy step — noisy failure emails for no
-    # reason. Feature work reaches Pages by merging/fast-forwarding into main.
+    # reason. Pages requires a two-parent merge with the accepted candidate tree.
     branches:
       - main
     paths:
@@ -99,7 +99,10 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           read -r merge parent_one parent_two extra < <(git rev-list --parents -n 1 HEAD)
-          test -n "$parent_one" && test -n "$parent_two" && test -z "$extra"
+          if [ -z "$parent_one" ] || [ -z "$parent_two" ] || [ -n "$extra" ]; then
+            echo "::error::Pages requires a two-parent merge commit of the exact admitted candidate; use gh pr merge --merge."
+            exit 1
+          fi
           candidate_tree=$(git rev-parse "$parent_two^{tree}")
           test "$(git rev-parse HEAD^{tree})" = "$candidate_tree"
           echo "sha=$parent_two" >> "$GITHUB_OUTPUT"
