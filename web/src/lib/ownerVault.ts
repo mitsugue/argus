@@ -1,7 +1,8 @@
 import { BACKUP_CONTRACT_VERSION, buildBackupPayload, assertBackupHistoryReadable, verifyBackupRoundTrip, type BackupFile } from './backup';
 import {encryptBackup,decryptBackup,vaultIdFrom} from './vault';
+import {OWNER_VAULT_RECEIPT,readOwnerVaultReceipt} from './ownerVaultReceipt';
+export {OWNER_VAULT_RECEIPT} from './ownerVaultReceipt';
 export type VaultSnapshot={snapshotId:string;bytes:number;savedAt:number;exportedAt:string};
-export const OWNER_VAULT_RECEIPT='argus.ownerVaultReceipt.v1';
 export async function digest(value:string){const raw=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));return Array.from(new Uint8Array(raw),b=>b.toString(16).padStart(2,'0')).join('');}
 export async function vaultRequest(token:string,vaultId:string,operation:string,fields:Record<string,unknown>={},signal?:AbortSignal){
   const base=(import.meta.env.VITE_ARGUS_BACKEND_URL as string|undefined)?.replace(/\/$/,'');
@@ -89,8 +90,8 @@ async function pendingVault(vaultId:string,value?:Pending|null):Promise<Pending|
 
 export async function ownerVaultProtection():Promise<{current:boolean;exportedAt:string;savedAt:number}|null>{
   try{
-    const receipt=JSON.parse(localStorage.getItem(OWNER_VAULT_RECEIPT)||'null');
-    if(!receipt||receipt.contractVersion!==BACKUP_CONTRACT_VERSION||!/^[a-f0-9]{64}$/.test(receipt.snapshotId)||!/^[a-f0-9]{64}$/.test(receipt.dataHash)||!Number.isFinite(receipt.savedAt)||!Number.isFinite(Date.parse(receipt.exportedAt)))return null;
+    const receipt=readOwnerVaultReceipt();
+    if(!receipt)return null;
     const current=await digest(JSON.stringify(buildBackupPayload(false,{deviceId:'protection-check'}).data))===receipt.dataHash;
     return{current,exportedAt:receipt.exportedAt,savedAt:receipt.savedAt};
   }catch{return null;}
@@ -104,7 +105,6 @@ export function saveOwnerVault(token:string,pass:string,onProgress:(message:stri
   const job=saveQueue.then(work,work);saveQueue=job.catch(()=>{});return job;
 }
 export async function alreadySavedForVault(pass:string,payload:BackupFile):Promise<boolean>{
-  try{const receipt=JSON.parse(localStorage.getItem(OWNER_VAULT_RECEIPT)||'null');return !!receipt&&receipt.contractVersion===BACKUP_CONTRACT_VERSION
-    &&/^[a-f0-9]{64}$/.test(receipt.snapshotId)&&Number.isFinite(receipt.savedAt)&&Number.isFinite(Date.parse(receipt.exportedAt))
+  try{const receipt=readOwnerVaultReceipt();return !!receipt
     &&receipt.vaultId===await vaultIdFrom(pass)&&receipt.dataHash===await digest(JSON.stringify(payload.data));}catch{return false;}
 }

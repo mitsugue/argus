@@ -9,6 +9,7 @@ import { ProHandoffButton } from '../components/dashboard/ProHandoffButton';
 import { MobileStickyCommand } from '../components/dashboard/MobileStickyCommand';
 import { runNotificationEngine } from '../lib/notifications';
 import { assessBackupSafety } from '../lib/backupSafety';
+import {ownerVaultProtection} from '../lib/ownerVault';
 import { listSnapshots } from '../lib/portfolioSync';
 import type { RouteKey } from '../components/NavRail';
 import type { SettingsSection } from '../navigation';
@@ -286,7 +287,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
 
   // v11.14.0: 通知エンジン — 変化検知のみ(60sスロットル+dedupe+静音時間内蔵)。
   useEffect(() => {
-    const t = setTimeout(() => {
+    const t = setTimeout(async () => {
       try {
         const sdBySymbol: Record<string, { rank: string; condition: string; level?: string; name?: string; isHeld?: boolean }> = {};
         for (const s of sdSignals) {
@@ -351,6 +352,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
           vaultConfigured: backupSafety.vaultConfigured,
           localExportAgeDays: backupSafety.exportAgeDays,
           restoreVerified: backupSafety.restoreVerified,
+          ownerSnapshotCurrent:(await ownerVaultProtection())?.current===true,
           canonicalDecisions,
         });
       } catch { /* never break Today */ }

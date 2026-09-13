@@ -130,7 +130,7 @@ assert.doesNotMatch(markLocalEdit, /setTimeout|cloudSyncNow|fetch\(/);
 assert.match(startCloudSync, /cloudSyncNow\(\{ rawFallback: true \}\)/);
 assert.match(startCloudSync, /visibilitychange/);
 assert.doesNotMatch(startCloudSync, /setInterval|setTimeout/);
-assert.match(backupCard, /公開ブラウザからのクラウド送信と端末間ライブ同期は利用できません/);
+assert.match(backupCard, /この旧方式は読み取り専用で、送信と端末間ライブ同期は行いません/);
 assert.match(backupCard, /完全バックアップJSONを書き出す/);
 assert.match(backupCard, /クラウドから復元/);
 assert.doesNotMatch(backupCard, /今すぐ送信|cloudBackupNow/);
