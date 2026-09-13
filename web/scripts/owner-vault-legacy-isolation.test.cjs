@@ -1,0 +1,13 @@
+const assert=require('node:assert/strict'),Module=require('node:module'),path=require('node:path'),esbuild=require('esbuild');
+const entry=path.resolve('src/lib/vault.ts');const code=esbuild.buildSync({entryPoints:[entry],bundle:true,write:false,platform:'node',format:'cjs',define:{__APP_VERSION__:'"test"','import.meta.env':'{"VITE_ARGUS_BACKEND_URL":"https://local.test"}'},logLevel:'silent'}).outputFiles[0].text;
+const mod=new Module(entry,module);mod.filename=entry;mod.paths=module.paths;mod._compile(code,entry);const api=mod.exports;
+const values=new Map([['argus.vaultPass.v1','pass']]);global.localStorage={getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)};global.window=new EventTarget();
+(async()=>{let calls=0;global.fetch=async()=>{calls++;return{ok:false}};
+ for(const key of ['argus.ownerVaultAutoSave.v1','argus.ownerVaultReceipt.v1']){values.set(key,'{}');assert.equal(await api.cloudSyncNow(),'noop');values.delete(key);}assert.equal(calls,0);
+ await api.cloudSyncNow();assert.equal(calls,1);
+ const data={'argus.locale.v1':'en'};const blob=await api.encryptBackup('pass',{app:'argus',exportedAt:new Date().toISOString(),data});
+ global.fetch=async()=>({ok:true,json:async()=>{values.set('argus.ownerVaultAutoSave.v1','{"enabled":true}');return{blob}}});
+ assert.equal(await api.cloudSyncNow(),'noop');assert.equal(values.has('argus.locale.v1'),false);
+ global.fetch=async()=>({ok:true,json:async()=>({blob})});assert.equal(await api.cloudRestore('pass'),1);assert.equal(values.get('argus.locale.v1'),'"en"');
+ console.log('Owner snapshot isolation: no old auto import, opt-in during fetch, explicit old restore retained PASS');
+})().catch(e=>{console.error(e);process.exit(1)});

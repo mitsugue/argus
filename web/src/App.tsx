@@ -11,6 +11,7 @@ import { NotificationsPage } from './routes/NotificationsPage';
 import { Settings } from './routes/Settings';
 import { startCloudSync } from './lib/vault';
 import { readDeviceLocalSdaLedger } from './lib/sdaDeviceLocal';
+import { startOwnerVaultAutoSave } from './lib/ownerVaultAutoSave';
 import { useMarketLedger } from './hooks/useMarketLedger';
 import { resolveSessionJst } from './domain/sessionBrief';
 import type { PlanningSessionAuthority } from './domain/positionPlan';
@@ -116,6 +117,7 @@ const App: React.FC = () => {
     // Verify and migrate existing history even when no new decision is saved.
     // The reader preserves corrupt/unwritable data and grants no authority.
     readDeviceLocalSdaLedger();
+    startOwnerVaultAutoSave();
   }, []);
 
   const marketLedger = useMarketLedger();
