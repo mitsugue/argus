@@ -151,7 +151,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/japan-sq-calendar.test.cjs': '41fc84761bab22b8218bb5c1347767521472a2c6',
     'web/scripts/macro-result-details.test.cjs': 'b2bcdb290db61a0ef8d8ffcd090a55e5020e10a1',
     'web/scripts/margin-dynamics.test.cjs': '2ab221c47cfeb6afa4d0adcb1dfebd17b862b608',
-    'web/scripts/market-brief-response.test.cjs': '011a372a43fffb835f84a5dd32fe2c4b6a4c6f1d',
+    'web/scripts/market-brief-response.test.cjs': 'a0b9296048de2038a4f4e647c1583af010d1c3e5',
     'web/src/components/chart/JapanMarketComparisonChart.css': '7e594bcd28089cdbc154691909ecdc825ff172e4',
     'web/src/components/chart/JapanMarketComparisonChart.tsx': '36694e16a5aadda00f547ab2d3ec9a196ac39cb3',
     'web/src/components/chart/JapanMarketComparisonPanel.tsx': 'c5c26b176e2c0c5503669698bb696cb0150cd04f',
