@@ -26,6 +26,7 @@ const SEVERITY_TONE: Record<string, string> = {
 const DIRECTION_JA: Record<string, string> = {
   BULLISH: '強気', BEARISH: '弱気', MIXED: '混在', UNCLEAR: '方向判定不能',
 };
+const SEVERITY_JA: Record<string, string> = { CRITICAL: '重大', HIGH: '重要' };
 
 export function materialNewsEvents(events: NewsIntelEvent[]): NewsIntelEvent[] {
   return events
@@ -136,7 +137,7 @@ export const NewsAlertsPanel: React.FC = () => {
           id={`news-${event.eventId}`} data-severity={event.severity}>
           <p className="news-alerts__title">
             <mark style={{ color: SEVERITY_TONE[event.severity] ?? 'inherit',
-              borderColor: SEVERITY_TONE[event.severity] ?? 'inherit' }}>{event.severity}</mark>
+              borderColor: SEVERITY_TONE[event.severity] ?? 'inherit' }}>{SEVERITY_JA[event.severity] ?? event.severity}</mark>
             <b>{displayNewsHeadline(event.headlineJa)}</b>
           </p>
           <p className="news-alerts__why">{event.whyJa}</p>
@@ -148,7 +149,7 @@ export const NewsAlertsPanel: React.FC = () => {
         </article>)}
       </div>}
       <div className="news-alerts__group">
-        <small>重大ニュース（ARGUSの解釈 · 記事本文ではありません）</small>
+        <small>重要なニュースと影響</small>
         {news.status === 'loading' && material.length === 0
           && <p className="news-alerts__empty">読み込み中…</p>}
         {news.status !== 'loading' && material.length === 0 && <p className="news-alerts__empty">
@@ -161,8 +162,8 @@ export const NewsAlertsPanel: React.FC = () => {
             id={`news-${event.eventId}`} data-severity={event.severity}>
             <p className="news-alerts__title">
               <mark style={{ color: SEVERITY_TONE[event.severity] ?? 'inherit',
-                borderColor: SEVERITY_TONE[event.severity] ?? 'inherit' }}>{event.severity}</mark>
-              <em>{DIRECTION_JA[direction] ?? direction}</em>
+                borderColor: SEVERITY_TONE[event.severity] ?? 'inherit' }}>{SEVERITY_JA[event.severity] ?? event.severity}</mark>
+              <em>規則による暫定方向: {DIRECTION_JA[direction] ?? direction}</em>
               <b>{displayNewsHeadline(event.headlineJa)}</b>
             </p>
             <p className="news-alerts__why">{event.whyJa}</p>
@@ -179,6 +180,8 @@ export const NewsAlertsPanel: React.FC = () => {
               {' · '}{newsAnalysisStatusJa(event.analysisState, event.analysisInputScope)}
               {event.backfill ? ' · 再処理(過去分)' : ''}
             </p>
+            {event.sourceUrl && /^https?:\/\//i.test(event.sourceUrl)
+              && <a href={event.sourceUrl} target="_blank" rel="noopener noreferrer">配信元の記事を開く</a>}
           </article>;
         })}
       </div>
