@@ -1,6 +1,6 @@
 import base64
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -133,6 +133,17 @@ def test_news_pending_ai_can_notify_but_backfill_cannot():
     record={'eventId':'ev-123','severity':'HIGH','sourceReceivedAt':now.isoformat(),'alertEligible':True,'analysisState':'AI_ANALYSIS_PENDING'}
     assert push.proposals({},[record],now.timestamp())[0]['hash']=='#notifications/news/ev-123'
     assert push.proposals({},[{**record,'backfill':True}],now.timestamp())==[]
+
+
+def test_reanalysis_does_not_refresh_old_or_unknown_intake():
+    now=datetime(2026,9,13,tzinfo=timezone.utc)
+    record={'eventId':'ev-old','severity':'HIGH','alertEligible':True,
+            'processedAt':now.isoformat(),'staleness':'FRESH_BREAKING'}
+    assert push.proposals({},[record],now.timestamp())==[]
+    record['sourceReceivedAt']=(now-timedelta(days=2)).isoformat()
+    assert push.proposals({},[record],now.timestamp())==[]
+    record['sourceReceivedAt']=(now-timedelta(hours=2)).isoformat()
+    assert len(push.proposals({},[record],now.timestamp()))==1
 
 
 def test_worker_reads_news_store_independently_of_brief(monkeypatch):

@@ -236,9 +236,12 @@ def proposals(calendar, news, now):
         if not isinstance(event_id,str) or not re.fullmatch(r'[A-Za-z0-9:_-]{1,150}',event_id): continue
         try:
             stamp = datetime.fromisoformat(received.replace('Z','+00:00'))
-            if stamp.tzinfo is None: continue
+            source_stamp = datetime.fromisoformat(str(item.get('sourceReceivedAt')).replace('Z','+00:00'))
+            if stamp.tzinfo is None or source_stamp.tzinfo is None: continue
             due = stamp.timestamp()
         except Exception: continue
+        # Reanalysis does not turn a days-old intake into a new notification.
+        if not 0<=now-source_stamp.timestamp()<=24*3600: continue
         if not 0<=now-due<=3600: continue
         # Public, rights-cleared product projection is the only input; no article text on lock screen.
         result.append({'key':'news:'+event_id+':'+item['severity'],'kind':'news',
