@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',
     'web/src/lib/presentationIntent.ts': '26423697215f15ce9e13686c043ad03d995f5ff4',
     'web/src/components/today/ArgusEditorialSurface.tsx': '9b7443f03dfdaf10b8cf8503e7524f620eddb843',
     'web/src/components/today/ArgusEditorialSurface.css': 'd1d1c55d2f42c42b2cef07c6357f8079d0d4b4dc',
