@@ -35,7 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
-    'web/src/components/dialogue/OwnerOverview.tsx': '59b10585ecd5a67de3f13c4d799582ae1a7e7324',
+    'web/src/components/dialogue/OwnerOverview.tsx': '2d06c4e91290b95668e16347ec210bf3276f0f8b',
     'web/src/components/dialogue/OwnerOverview.css': 'e608b1f63bbbf8596454a9e0100cea6ee8a41a0f',
     'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',
     'web/src/lib/presentationIntent.ts': 'a1472108a10b2b485e4ed98eea9bc6aa8f105928',
