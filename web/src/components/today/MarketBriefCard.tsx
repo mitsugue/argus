@@ -21,7 +21,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
     <button type="button" onClick={retry} disabled={loading}>再読込</button>
   </p> : null;
   if (!brief) return <div className="at-brief" aria-label="ARGUSの今日の見立て">
-    {updateState ?? <p role="status">見立てを確認中です。</p>}<MarketAnalysisHistory /></div>;
+    {updateState ?? <p role="status">見立てを確認中です。</p>}<MarketAnalysisHistory key="saved-history" /></div>;
   const unified = brief.unifiedSummary;
   const hasSixSections = unified && ['view', 'reasons', 'changes', 'impact', 'next', 'invalidation'].every(key => {
     const row = unified.sections?.[key as keyof typeof unified.sections];
@@ -63,7 +63,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
           })}
         </div>)}
       </details>
-      <MarketAnalysisHistory />
+      <MarketAnalysisHistory key="saved-history" />
     </div>;
   }
   const now = brief.aiText?.nowJa ?? brief.now;
@@ -101,7 +101,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
       <span>次イベント <b>{brief.chips.nextEvent}</b></span>
       <span>主リスク <b>{brief.chips.mainRisk}</b></span>
     </div>
-    <MarketAnalysisHistory />
+    <MarketAnalysisHistory key="saved-history" />
   </div>;
 };
 
