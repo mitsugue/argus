@@ -143,6 +143,12 @@ function pollPwaState(checkServiceWorker = true): Promise<void> {
   return current;
 }
 
+// Installed apps often suspend timers while closed. Reconcile on return as well.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') pollPwaState().catch(() => {});
+});
+window.addEventListener('online', () => { pollPwaState().catch(() => {}); });
+
 // Check shortly after first paint, then use one 60s scheduler for both the SW
 // update check and deployed-version reconciliation.
 window.setTimeout(() => { pollPwaState(false).catch(() => {}); }, 4_000);

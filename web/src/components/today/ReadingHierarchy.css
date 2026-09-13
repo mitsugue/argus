@@ -1,0 +1,58 @@
+/* Shared reading order: view, changes, comparison, conversation, then evidence. */
+.page--today { max-width:1060px; margin:0 auto; padding:24px 32px 40px; gap:24px; }
+.page--today .page__head { flex-direction:row; align-items:baseline; gap:12px; flex-wrap:wrap; }
+.page--today .page__title { font-size:14px; font-weight:500; color:#9eb2c0; }
+.page--today .page__subtitle { font-size:12px; color:#9aa9b4; }
+.page--today .page__guide-link { margin-left:auto; font-size:12px; }
+.argus-today { display:flex; flex-direction:column; gap:24px; font-size:14px; line-height:1.7; }
+.argus-today > * { width:100%; }
+.argus-today .card { border-radius:14px; }
+.argus-today .at-view-hero { padding:4px 0 0; }
+.at-view-hero .at-brief { border:0; background:transparent; padding:0; gap:12px; }
+.at-view-hero .at-brief small { font-size:12px; opacity:1; letter-spacing:0; color:#9cabb6; }
+.at-view-hero .at-brief > small:first-child { color:#98c3d7; }
+.at-view-hero .at-unified-brief__view,.at-view-hero .at-brief__unavailable-title { font-size:clamp(22px,2.6vw,30px); font-weight:500; line-height:1.6; letter-spacing:.01em; margin:4px 0 8px; max-width:30em; color:#e2e9ee; }
+.at-view-hero .at-brief > p[role="status"] { font-size:13px; color:#b4bcc3; line-height:1.7; }
+.at-view-hero .at-brief > p[role="status"] small { display:block; margin-top:6px; }
+.at-view-hero .at-brief__rows { gap:18px; }
+.at-view-hero .at-brief__rows > div { display:block; }
+.at-view-hero .at-brief__rows b { display:block; font-size:12px; color:#a4b8c5; font-weight:500; margin-bottom:6px; opacity:1; }
+.at-view-hero .at-brief__rows span { font-size:14px; color:#c3cdd5; line-height:1.8; }
+.at-view-hero [data-brief-section="changes"] { border-left:2px solid #92bed3; padding-left:16px; }
+.at-view-hero .at-unified-brief__kind { margin-left:8px; }
+.at-view-hero details { font-size:13px; color:#a6b6c2; }
+.at-view-hero summary { min-height:44px; align-content:center; cursor:pointer; }
+.at-view-hero .at-analysis-history { margin-top:0; padding-top:4px; }
+.at-view-hero .at-brief__fallback[open] { padding-bottom:12px; }
+.argus-today .at-primary-hero { padding:0 16px; background:#101a22; border:1px solid #293944; }
+.at-decision-details > summary { display:flex; justify-content:space-between; align-items:center; gap:12px; min-height:48px; cursor:pointer; font-size:13px; font-weight:500; color:#c6d1d9; }
+.at-decision-details > summary span { font-size:12px; color:#95a7b4; font-weight:400; }
+.at-decision-details[open] { padding-bottom:16px; }
+.at-decision-details .at-call strong { font-size:22px; }
+.argus-today .at-head b { font-size:15px; font-weight:500; letter-spacing:0; }
+.argus-today .at-head span { font-size:12px; }
+.argus-today .at-news-row { background:#111c25; border-radius:10px; }
+.argus-today .at-news-row__head { align-items:baseline; gap:8px; }
+.argus-today .at-news-row__head b { font-size:15px; line-height:1.65; font-weight:600; }
+.argus-today .at-news-row__head mark,.argus-today .at-news-row__head i { font-size:11px; }
+.argus-today .at-news-row__why { font-size:13px; line-height:1.75; color:#b2c0cb; }
+.argus-today .at-news-direction,.argus-today .at-news-row__open > em,.argus-today .at-news-memory { font-size:12px; line-height:1.7; }
+.argus-today .at-news-order,.argus-today .at-news-note { font-size:12px; line-height:1.65; }
+.argus-today .at-event,.argus-today .at-market,.argus-today .at-priorities { padding:18px; }
+.argus-today .owner-dialogue { margin:0; padding:20px; border-radius:14px; font-size:14px; }
+.argus-today .owner-dialogue h3 { font-size:17px; }
+.argus-today .owner-dialogue article h4 { font-size:18px; }
+.argus-today .owner-dialogue__suggestions button { font-size:13px; }
+.argus-today .jp-comparison { padding:22px; border-radius:14px; }
+.argus-today .jp-comparison__heading h2 { font-size:18px; }
+.argus-today .at-internals h3,.argus-today .at-margin-dynamics h3 { font-size:16px; }
+.argus-today .at-internals,.argus-today .at-margin-dynamics { font-size:13px; }
+.shell__release-id { font-size:10px; color:#a5b5bf; }
+@media(max-width:720px) {
+ .page--today { padding:18px 18px 12px; gap:20px; }
+ .argus-today { gap:20px; }
+ .at-decision-details > summary { align-items:flex-start; justify-content:center; flex-direction:column; gap:0; padding:10px 0; }
+ .argus-today .at-event,.argus-today .at-market,.argus-today .at-priorities,.argus-today .owner-dialogue,.argus-today .jp-comparison { padding:16px; }
+ .shell__brand { gap:8px; }
+ .shell__brand-version { font-size:9px; padding:1px 4px; }
+}

@@ -24,6 +24,7 @@ import type {
   MarketHorizon, MarketInstrumentMarket, MarketInstrumentSymbol,
 } from '../../domain/marketInstruments';
 import './ArgusToday.css';
+import './ReadingHierarchy.css';
 
 export interface TodayInstrumentState {
   symbol: MarketInstrumentSymbol;
@@ -627,6 +628,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     })),
   ]);
   const NEWS_ROWS_CAP = 5;
+  const urgentNews = newsRows.filter(row => row.severity === 'CRITICAL').slice(0, 1);
+  const remainingNews = newsRows.filter(row => !urgentNews.some(urgent => urgent.id === row.id));
   React.useEffect(() => {
     try {
       sessionStorage.setItem('argus.todayDecisionMirror', JSON.stringify({
@@ -669,9 +672,19 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     data-canonical-instrument={selectedSymbol}
     data-canonical-horizon={`${projection?.horizonDays ?? horizon}D`}>
     <JapanSqApproachNotice />
+    {urgentNews.length > 0 && <section className="at-urgent-news" aria-label="最優先で確認する変化">
+      <TodayNewsCards rows={urgentNews} onOpen={openNewsDetails} />
+    </section>}
+
+    <section className="at-view-hero" aria-label="今日の見立て">
+      <MarketBriefCard signals={topSignals && !usSelected ? { activeCount: topSignals.activeCount, total: topSignals.total } : null}
+        cutoff={decisionEvidence.marketView?.informationCutoff ?? null} market={view.selectedMarket} />
+    </section>
 
     <article className={`at-decision at-primary-hero card is-${view.finalAction.toLowerCase()}`}
       aria-label="A.R.G.U.S. Primary Action">
+      <details className="at-decision-details">
+        <summary>売買判断：{MARKET_STANCE[view.finalAction]}<span>判断条件とデータの状態を見る</span></summary>
       <div className="at-call">
         {/* v13.5.54: name the instrument the DECISION is anchored on, not the
             series being drawn. Since the headline chart switched to the index,
@@ -800,19 +813,43 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         <div><b>次の確認</b><span>{nextReviewLabel(view.canonicalDecision.nextReviewConditionCodes[0])
           ?? (view.nextEvent ? `${view.nextEvent.code} ${formatEventTime(view.nextEvent.at, view.nextEvent.dateOnly)}` : '正本証拠の更新')}</span></div>
       </div>
-      <MarketBriefCard signals={topSignals && !usSelected ? { activeCount: topSignals.activeCount, total: topSignals.total } : null}
-        cutoff={decisionEvidence.marketView?.informationCutoff ?? null} market={view.selectedMarket} />
+
+      </details>
     </article>
 
+    {view.selectedMarket === 'JP' && selectedSymbol === '1321'
+      && <JapanMarketComparisonPanel horizon={horizon} />}
+
+    {view.selectedMarket === 'JP' && selectedSymbol === '1321' && <OwnerDialogue symbol="N225" market="JP" horizon={horizon} />}
+
+    {view.holdingsReview.length > 0 && <section className="at-priorities card" aria-label="OWNER PRIORITIES">
+      <div className="at-head"><b>自分の銘柄への影響</b><span>優先して確認</span></div>
+      {view.holdingsReview.map((item) => {
+        const content = <>
+          <span className="at-priority-title">
+            <b>{item.name?.trim() || item.symbol}</b><em>{item.isHeld ? '保有' : 'WATCH'}</em>
+            <mark className={`is-${(item.impact ?? 'Neutral').toLowerCase()}`}>{item.impact ?? 'Neutral'}</mark>
+            <strong>{item.actionJa ?? item.statusJa}</strong>
+          </span>
+          <span className="at-priority-impact">{item.reasonJa}</span>
+          <small>次に確認: {item.checkNextJa || '証拠更新待ち'}
+            {item.whatWouldChangeJa ? ` · 判断更新: ${item.whatWouldChangeJa}` : ''}</small>
+        </>;
+        return onNavigateToAsset ? <button type="button" key={item.symbol}
+          onClick={() => onNavigateToAsset(item.symbol)}>{content}</button>
+          : <div key={item.symbol}>{content}</div>;
+      })}
+    </section>}
+
     <section className="at-event card at-news-top" aria-label="重大ニュース・市場リスク"
-      data-argus-contract="today-material-news-v1" data-news-count={newsRows.length}>
+      data-argus-contract="today-material-news-v1" data-news-count={remainingNews.length}>
       <div className="at-head"><b>重大ニュース・市場リスク</b>
-        <span>{newsRows.length > NEWS_ROWS_CAP ? `${NEWS_ROWS_CAP} / ${newsRows.length}件` : `${newsRows.length}件`}</span></div>
+        <span>{remainingNews.length > NEWS_ROWS_CAP ? `${NEWS_ROWS_CAP} / ${remainingNews.length}件` : `${remainingNews.length}件`}</span></div>
       <p className="at-news-order">重要度順 · 赤は重大、黄は重要。同じ重要度では新しい情報から表示します。</p>
       {newsIntel.status === 'error' && <p className="at-shock-clear" role="status">
         {newsIntel.events.length ? 'ニュース更新失敗・前回取得分を表示しています。' : 'ニュースを取得できていません。'}</p>}
       {newsIntel.status === 'loading' && <p className="at-shock-clear" role="status">ニュース記事を取得中です。市場データとは別に読み込んでいます。</p>}
-      {newsRows.length > 0 && <TodayNewsCards rows={newsRows.slice(0, NEWS_ROWS_CAP)}
+      {remainingNews.length > 0 && <TodayNewsCards rows={remainingNews.slice(0, NEWS_ROWS_CAP)}
         onOpen={(id) => openNewsDetails(`news-${id}`)} />}
       {shock.status === 'data' && newsIntel.status === 'data'
         && shock.events.length === 0 && materialMailEvents.length === 0
@@ -828,7 +865,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     <JapanSqCalendarCard />
 
     <section className="at-event card" aria-label="NEXT EVENT">
-      <div className="at-head"><b>NEXT EVENT</b>{view.nextEvent && <span>{view.nextEvent.impact.toUpperCase()}</span>}</div>
+      <div className="at-head"><b>次の重要イベント</b>{view.nextEvent && <span>{view.nextEvent.impact.toUpperCase()}</span>}</div>
       {view.nextEvent ? <button type="button" onClick={openEventDetails}>
         <strong>{view.nextEvent.code}</strong><time>{formatEventTime(view.nextEvent.at, view.nextEvent.dateOnly)}</time>
         {view.nextEvent.descriptionJa && <small>{view.nextEvent.descriptionJa.slice(0, 32)}</small>}
@@ -843,7 +880,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         <span>{view.releasedEvent.lifecycleTier === 'RECENT'
           ? '結果あり' : '結果待ち'}</span>
       </p>}
-      <div className="at-coming"><b>COMING 30D</b>
+      <div className="at-coming"><b>30日先までの予定</b>
         {view.comingEvents.length
           ? view.comingEvents.map((event) => <span key={event.id}>{event.code} {formatEventTime(event.at, event.dateOnly).split(' ')[0]}</span>)
           : <span>{view.eventsAuthorityUnknown ? '取得待ち' : '予定なし'}</span>}
@@ -933,10 +970,6 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       </div>}
     </section>
 
-    {view.selectedMarket === 'JP' && selectedSymbol === '1321'
-      && <JapanMarketComparisonPanel horizon={horizon} />}
-
-    {view.selectedMarket === 'JP' && selectedSymbol === '1321' && <OwnerDialogue symbol="N225" market="JP" horizon={horizon} />}
     {!usSelected && <SharedMarketContext horizon={horizon} />}
     {!usSelected && <MarginDynamicsCard document={decisionEvidence.marketView?.margin1570Dynamics} refreshFailed={!!decisionEvidence.error} />}
     {!usSelected && <JpyPositionCard document={decisionEvidence.marketView?.jpyPosition} />}
@@ -1012,24 +1045,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       </div>
     </details>
 
-    {view.holdingsReview.length > 0 && <section className="at-priorities card" aria-label="OWNER PRIORITIES">
-      <div className="at-head"><b>OWNER PRIORITIES</b><span>MAX 3</span></div>
-      {view.holdingsReview.map((item) => {
-        const content = <>
-          <span className="at-priority-title">
-            <b>{item.name?.trim() || item.symbol}</b><em>{item.isHeld ? '保有' : 'WATCH'}</em>
-            <mark className={`is-${(item.impact ?? 'Neutral').toLowerCase()}`}>{item.impact ?? 'Neutral'}</mark>
-            <strong>{item.actionJa ?? item.statusJa}</strong>
-          </span>
-          <span className="at-priority-impact">{item.reasonJa}</span>
-          <small>次に確認: {item.checkNextJa || '証拠更新待ち'}
-            {item.whatWouldChangeJa ? ` · 判断更新: ${item.whatWouldChangeJa}` : ''}</small>
-        </>;
-        return onNavigateToAsset ? <button type="button" key={item.symbol}
-          onClick={() => onNavigateToAsset(item.symbol)}>{content}</button>
-          : <div key={item.symbol}>{content}</div>;
-      })}
-    </section>}
+
 
 
 
