@@ -13,7 +13,14 @@ export interface MarketBriefFact {
 }
 
 export interface MarketBrief {
-  calculationSnapshots?: Record<string, { marketInternals?: unknown }>;
+  retainedPresentation?: MarketBrief;
+  calculationSnapshots?: Record<string, { marketInternals?: unknown; comparison?: unknown }>;
+  presentationStatus?: string;
+  presentationCatalog?: { contextId: string; inventoryId: string; surface: string; subject: string; horizonSessions: number;
+    elements: Array<{ id: string; kind: string; payloadId: string; evidenceIds: string[]; mandatory: boolean; urgent: boolean }> };
+  presentationPlan?: { schemaVersion: string; planId: string; contextId: string; inventoryId: string;
+    surface: string; subject: string; horizonSessions: number; intentJa: string; actionAuthority: false;
+    elements: Array<{ id: string; purposeJa: string; placement: 'lead' | 'support' | 'detail'; emphasis: 'primary' | 'normal' | 'quiet' }> };
   unifiedSummary?: {
     schemaVersion: 'argus-unified-brief-v1'; contextId: string; actionAuthority: false;
     ownerContextAvailable: boolean; historyStatus: 'PROCESS_MEMORY_ONLY' | 'LOCAL_DURABLE';

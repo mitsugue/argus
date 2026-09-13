@@ -2,12 +2,14 @@ import React from 'react';
 import { MarketAnalysisHistory } from './MarketAnalysisHistory';
 import { useMarketBrief } from '../../hooks/useMarketBrief';
 import './ArgusToday.css';
+import { editorialEdition } from '../../lib/presentationIntent';
+import { ArgusEditorialSurface } from './ArgusEditorialSurface';
 
 // v13.5.36 MARKET SITUATION BRIEF (owner 2026-08-26): NOW/WHY/NEXT — the
 // deterministic composer selects verified facts; AI only compresses them
 // (numbers/probabilities can never be invented — server-side validator).
 export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total: number } | null;
-  cutoff?: string | null; market?: string }> = ({ signals, cutoff, market }) => {
+  cutoff?: string | null; market?: string; editorial?: boolean }> = ({ signals, cutoff, market, editorial = false }) => {
   const { brief, error, loading, retry } = useMarketBrief();
   // v13.5.62 (GPT review item 4): the brief's 成立x/7 chip is rendered from the
   // SAME market-view document as the MARKET SIGNALS header, stamped with its
@@ -22,6 +24,8 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
   </p> : null;
   if (!brief) return <div className="at-brief" aria-label="ARGUSの今日の見立て">
     {updateState ?? <p role="status">見立てを確認中です。</p>}<MarketAnalysisHistory key="saved-history" /></div>;
+  const edition = editorial ? editorialEdition(brief) : null;
+  if (edition) return <ArgusEditorialSurface brief={edition} updateState={updateState} retained={edition !== brief} />;
   const unified = brief.unifiedSummary;
   const hasSixSections = unified && ['view', 'reasons', 'changes', 'impact', 'next', 'invalidation'].every(key => {
     const row = unified.sections?.[key as keyof typeof unified.sections];
@@ -108,4 +112,3 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
     <MarketAnalysisHistory key="saved-history" />
   </div>;
 };
-
