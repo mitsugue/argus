@@ -19119,6 +19119,52 @@ def _news_retry_input(event):
         return "", type(exc).__name__[:60]
 
 
+def _news_repair_attack_context():
+    """Correct one authenticated digital-attack false positive; retain its old revision."""
+    with _NEWS_INTEL_LOCK:
+        candidates = [copy.deepcopy(e) for e in _NEWS_INTEL["events"].values()
+            if e.get("eventType") == "WAR_ESCALATION" and not e.get("classificationReview")
+            and not e.get("facts") and e.get("analysisState") in
+                ("AI_ANALYSIS_UNAVAILABLE", "DETERMINISTIC_ONLY")]
+    for event in candidates[:1]:
+        excerpt, status = _news_retry_input(event)
+        if status != "authenticated_fingerprint_match":
+            return
+        title = str(event.get("titleOriginal") or "")
+        taxonomy = argus_news_intelligence.classify_event(title, excerpt)
+        with _NEWS_INTEL_LOCK:
+            current = _NEWS_INTEL["events"].get(event["eventId"])
+            if not current or current != event:
+                return
+            current["classificationReview"] = {"version": 1, "at": _ai_now_iso(),
+                "sourceReadStatus": status, "changed": False}
+            if taxonomy["eventType"] == "WAR_ESCALATION":
+                return
+            # Original record remains durable and addressable by its old revision.
+            previous = copy.deepcopy(event)
+            materiality = argus_news_intelligence.evaluate_materiality(
+                taxonomy=taxonomy, staleness=event.get("staleness") or "DELAYED",
+                source_authenticated=True, ai_analysis=None, corroboration={},
+                subject=title, content_text=excerpt, source=event.get("sourceFamily") or "NIKKEI")
+            corrected = argus_news_intelligence.build_news_event(
+                message={"eventIdentity": event["eventId"], "fingerprint": event["sourceFingerprint"],
+                    "subject": title, "headlineJa": title, "url": event.get("sourceUrl"),
+                    "receivedIso": event.get("sourceReceivedAt"), "publishedIso": event.get("sourcePublishedAt"),
+                    "digestOf": event.get("digestOf"), "backfill": event.get("backfill")},
+                taxonomy=taxonomy, staleness=event.get("staleness") or "DELAYED", materiality=materiality,
+                ai_analysis=None, corroboration={}, analysis_state="DETERMINISTIC_ONLY",
+                processed_iso=_ai_now_iso(), source=event.get("sourceFamily") or "NIKKEI",
+                revision=int(event.get("revision") or 1)+1, excerpt=excerpt)
+            current.update(corrected)
+            current["classificationPreviousRevision"] = previous
+            current["classificationReview"]["changed"] = True
+            current["analysisRetry"] = {}
+            current["alertEligible"] = False
+            _news_audit({"stage": "classification_context_corrected", "eventId": event["eventId"],
+                "previousRevision": event.get("revision"), "revision": current["revision"], "aiCalled": False})
+        return
+
+
 def _news_retry_pending_analysis():
     """Retry one pending article outside the state lock, with material news first."""
     now = time.time()
@@ -19236,6 +19282,7 @@ def _news_intake_cycle_locked(*, backfill=False, backfill_days=10):
                                  "messageId": part.get("messageId"),
                                  "errorClass": type(e).__name__})
     _news_repair_article_boundaries()
+    _news_repair_attack_context()
     _news_retry_pending_analysis()
     with _NEWS_INTEL_LOCK:
         health["pending"] = 0
@@ -19540,7 +19587,8 @@ def api_argus_news_intelligence():
                 event["alertEligible"] = False
                 continue
         try:
-            event["eventMemory"] = _causal_memory_summary(event["eventId"])
+            event["eventMemory"] = (None if (event.get("classificationReview") or {}).get("changed")
+                                    else _causal_memory_summary(event["eventId"]))
         except Exception:
             event["eventMemory"] = None
         visible_events.append(event)
