@@ -19187,7 +19187,7 @@ def _news_retry_pending_analysis():
                     or not argus_news_intelligence.analysis_retry_priority(
                         event, now, full_analysis=_AI_FULL_ANALYSIS_ENABLED)[0]
                     or now < float(retry.get("nextAttemptEpoch") or 0)
-                    or (retry.get("day") == day and int(retry.get("attempts") or 0) >= 3)):
+                    or argus_news_intelligence.analysis_retry_daily_limit_reached(event, day)):
                 continue
             candidates.append(copy.deepcopy(event))
         if not candidates:
