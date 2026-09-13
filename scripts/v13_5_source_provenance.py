@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'argus_persistent_storage.py': '2758da5b1589b9fb52328f3fb6b3c23af0ecc183',
     'web/src/components/today/ReadingHierarchy.css': 'e8a61092d0b5c846a3706c9a1e53424f68f5e0b4',
     'web/src/components/AppShell.tsx': '5a438f0fd9d20b3b5eca9399f6c314993421a96b',
     'web/src/routes/BackupPage.tsx': '76ef9bb18e9e440afafaad5f9e290c925fc7ac61',
