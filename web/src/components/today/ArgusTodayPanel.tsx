@@ -1,7 +1,7 @@
 import { OwnerDialogue } from '../dialogue/OwnerDialogue';
 import { MarketBriefCard } from './MarketBriefCard';
 import { useMarketBrief } from '../../hooks/useMarketBrief';
-import { editorialEdition } from '../../lib/presentationIntent';
+import { editorialEdition, editorialCoversNews } from '../../lib/presentationIntent';
 import React from 'react';
 import { MarginDynamicsCard } from './MarginDynamicsCard';
 import { SharedMarketContext } from './SharedMarketContext';
@@ -614,6 +614,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     window.setTimeout(jump, 1000);
   };
   const materialMailEvents = orderMaterialNews(newsIntel.events);
+  const unexplainedMailEvents = materialMailEvents.filter(event =>
+    !editorialScope || !editorialCoversNews(editorialBrief, event));
   const newsRows = orderMaterialNews<TodayNewsRow>([
     ...shock.events.map((event) => ({
       id: event.eventId, eventId: event.eventId, severity: event.severity, kind: '市場データ' as const,
@@ -621,7 +623,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       headlineJa: event.headlineJa, whyJa: event.whyJa, eventMemory: null,
       metaJa: `${event.sources.map((source) => source.name).join(' · ')}${event.asOf ? ` · ${event.asOf}` : ''}`,
     })),
-    ...materialMailEvents.map((event) => ({
+    ...unexplainedMailEvents.map((event) => ({
       id: event.eventId, eventId: event.eventId, severity: event.severity, kind: 'ニュース' as const,
       sourceReceivedAt: event.sourceReceivedAt, newsEvent: event,
       headlineJa: displayNewsHeadline(event.headlineJa), whyJa: event.whyJa, eventMemory: event.eventMemory,

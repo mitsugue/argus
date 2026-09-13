@@ -1,6 +1,6 @@
 import React from 'react';
 import type { MarketBrief } from '../../lib/marketBrief';
-import { hasEditorialIntent } from '../../lib/presentationIntent';
+import { hasEditorialIntent, editorialElementLabel } from '../../lib/presentationIntent';
 import { validJapanMarketComparison } from '../../lib/japanMarketComparison';
 import { JapanMarketComparisonChart } from '../chart/JapanMarketComparisonChart';
 import { OwnerDialogue } from '../dialogue/OwnerDialogue';
@@ -32,6 +32,24 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false }: 
           <JapanMarketComparisonChart document={chart} />
           {!retained && <OwnerDialogue symbol="N225" market="JP" horizon={5} baseContextId={plan.contextId} />}
         </div> : null;
+      const evidenceLabel = editorialElementLabel(choice.id);
+      if (evidenceLabel && choice.caption) {
+        const facts = (brief.unifiedContext?.facts ?? []).filter(f => source.evidenceIds.includes(f.evidenceId));
+        const content = <><p className="argus-editorial__text">{choice.caption.textJa}</p>
+          {choice.caption.kind === 'UNKNOWN' && <small className="argus-editorial__uncertain">確認できていない範囲を含みます</small>}
+          <details className="argus-editorial__fact-list"><summary>使った情報・数値・時点を見る</summary>
+            {facts.map(f => <div key={f.evidenceId} data-evidence-id={f.evidenceId}>
+              <p>{f.text}</p><small>{f.provenance?.sourceLabel ?? f.source}
+                {f.provenance?.observedAt && ` · 観測 ${f.provenance.observedAt}`}
+                {f.provenance?.publishedAt && ` · 公表 ${f.provenance.publishedAt}`}
+                {f.provenance?.receivedAt && ` · 取得 ${f.provenance.receivedAt}`}</small>
+              {f.provenance?.url && <a href={f.provenance.url} target="_blank" rel="noopener noreferrer">出典を開く</a>}
+            </div>)}
+          </details></>;
+        return choice.placement === 'detail'
+          ? <details className={className} key={choice.id} data-payload-id={source.payloadId}><summary>{evidenceLabel}</summary>{content}</details>
+          : <section className={className} key={choice.id} aria-label={evidenceLabel} data-payload-id={source.payloadId}><h2>{evidenceLabel}</h2>{content}</section>;
+      }
       const key = choice.id as Section; const row = summary.sections[key];
       const content = <><p className="argus-editorial__text">{row.textJa}</p>
         {row.kind === 'UNKNOWN' && <small className="argus-editorial__uncertain">確認できていない範囲</small>}</>;
@@ -43,7 +61,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false }: 
     {!hasChart && !retained && <OwnerDialogue symbol="N225" market="JP" horizon={5} baseContextId={plan.contextId} />}
     <details className="argus-editorial__evidence"><summary>説明の根拠と、今回の構成について</summary>
       <p>{plan.intentJa}</p>
-      {plan.elements.map(choice => <p key={choice.id}><b>{labels[choice.id as Section] ?? '比較チャート'}：</b>{choice.purposeJa}</p>)}
+      {plan.elements.map(choice => <p key={choice.id}><b>{labels[choice.id as Section] ?? editorialElementLabel(choice.id) ?? '比較チャート'}：</b>{choice.purposeJa}</p>)}
       {Object.entries(summary.sections).map(([key, row]) => <section key={key}><h3>{labels[key as Section]}</h3>
         <p>{row.kind === 'FACT' ? '確認した事実' : row.kind === 'INFERENCE' ? '根拠に基づく推論' : '未確認'}</p>
         {row.evidenceIds.map(id => {

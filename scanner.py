@@ -17700,40 +17700,50 @@ def _market_brief_ai_polish(brief):
         + argus_presentation_intent.generation_instruction(presentation_catalog).replace("\n", " ")
         + "\n" + json.dumps(context, ensure_ascii=False, separators=(",", ":")))
     diag = {}
-    raw = _openai_prose(user, max_out=2600,
+    raw = _openai_prose(user, max_out=5200,
                        system=argus_presentation_intent.VOICE,
                        purpose="market_brief", diagnostic=diag)
     validation = {}
     unified = argus_market_brief.validate_unified_ai(
         {key: value for key, value in raw.items() if key != "presentation"}, context, diagnostic=validation) if isinstance(raw, dict) else None
+    def checked_presentation(value, summary, diagnostic):
+        if not summary or not isinstance(value, dict):
+            return None
+        try:
+            return argus_presentation_intent.validate_plan(value.get("presentation"), presentation_catalog, context)
+        except ValueError as exc:
+            diagnostic.update(status="REJECTED", reason="presentation_invalid",
+                              section="presentation", detail=str(exc))
+            return None
+    presentation = checked_presentation(raw, unified, validation)
     attempts = [{"provider": copy.deepcopy(diag), "validation": copy.deepcopy(validation)}]
-    if raw and not unified and validation.get("reason") in {
+    if raw and validation.get("reason") in {
             "unsupported_numeric_tokens", "fact_requires_verified_references",
-            "unknown_evidence_reference", "evidence_reference_required"}:
+            "unknown_evidence_reference", "evidence_reference_required", "presentation_invalid"}:
         # One bounded correction, still subject to every original constraint.
         # Provider usage from both calls remains in the existing cost ledger.
         correction = (user + "\n前の回答は検証で却下されました。理由: "
             + json.dumps(validation, ensure_ascii=False)
             + "。数値は根拠欄とチャートに残すので、説明文では新しい数値や丸めた値を使わず、方向と条件を言葉で説明してください。"
-            "根拠IDとFACT/INFERENCE/UNKNOWNの条件を守り、全6項目を返してください。\n前の回答: "
+            "根拠IDとFACT/INFERENCE/UNKNOWNの条件を守り、全6項目と表示候補を全て含むpresentationを返してください。\n前の回答: "
             + json.dumps(raw, ensure_ascii=False))
         diag = {}
-        raw = _openai_prose(correction, max_out=2600,
+        raw = _openai_prose(correction, max_out=5200,
             system=argus_presentation_intent.VOICE,
             purpose="market_brief", diagnostic=diag)
         validation = {}
         unified = argus_market_brief.validate_unified_ai(
             {key: value for key, value in raw.items() if key != "presentation"}, context, diagnostic=validation) if isinstance(raw, dict) else None
+        presentation = checked_presentation(raw, unified, validation)
         attempts.append({"provider": copy.deepcopy(diag), "validation": copy.deepcopy(validation)})
-    brief["presentationPlan"] = None
+    brief["presentationPlan"] = presentation
     brief["presentationStatus"] = "UNAVAILABLE"
     if unified and isinstance(raw, dict):
-        try:
-            brief["presentationPlan"] = argus_presentation_intent.validate_plan(raw.get("presentation"), presentation_catalog)
+        if presentation:
             brief["presentationStatus"] = "GENERATED"
-        except ValueError as exc:
+        else:
             brief["presentationStatus"] = "INVALID_RESPONSE"
-            brief["presentationError"] = str(exc)
+            brief["presentationError"] = validation.get("detail")
     brief["unifiedValidation"] = validation or {"status": "NO_RESPONSE", "reason": diag.get("reason"), "section": None}
     if unified:
         sections = unified["sections"]

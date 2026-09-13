@@ -35,12 +35,12 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
-    'web/src/lib/presentationIntent.ts': '26423697215f15ce9e13686c043ad03d995f5ff4',
-    'web/src/components/today/ArgusEditorialSurface.tsx': '9b7443f03dfdaf10b8cf8503e7524f620eddb843',
-    'web/src/components/today/ArgusEditorialSurface.css': 'd1d1c55d2f42c42b2cef07c6357f8079d0d4b4dc',
+    'web/src/lib/presentationIntent.ts': 'a1472108a10b2b485e4ed98eea9bc6aa8f105928',
+    'web/src/components/today/ArgusEditorialSurface.tsx': 'dfd82ff1755f6b345fee006172379758279b410a',
+    'web/src/components/today/ArgusEditorialSurface.css': '66bc60414e09d490bc0216cf054465bc19dd7993',
     'test_argus_presentation_intent.py': '26221c60a2a167272ff8ca5765590bb49fbbe4c8',
-    'docs/V13_6_PRESENTATION_INTENT.md': 'f4768d0c712f625cb82d630de240c0d98d5f26aa',
-    'argus_presentation_intent.py': 'f5b7369016c25a5e6c10b9019c06cdc99a234b87',
+    'docs/V13_6_PRESENTATION_INTENT.md': '549a00eefa2a1153e58c326cefd0e052f35561d8',
+    'argus_presentation_intent.py': 'e7d0a9c0bac18b6e628539fb4f351f8f2c49f9cb',
     'argus_persistent_storage.py': 'e4974ddbd86e6364f1707ab3da52384369e1fc71',
     'web/src/components/today/ReadingHierarchy.css': 'e8a61092d0b5c846a3706c9a1e53424f68f5e0b4',
     'web/src/components/AppShell.tsx': '5a438f0fd9d20b3b5eca9399f6c314993421a96b',
@@ -163,7 +163,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/hooks/useJapanSqCalendar.ts': '3bd95e491810c395faf23203356d85eb7d0d385e',
     'web/src/lib/japanMarketComparison.ts': 'ff923a52da97a388b92d024f57596b8a76046df3',
     'web/src/lib/japanSqCalendar.ts': '947b1c9121f7b6f8a5e7b501211b8b43449b329b',
-    'web/src/lib/marketBrief.ts': '0e318d6eb8df9b67cd25af7bb46a37c60334f8a4',
+    'web/src/lib/marketBrief.ts': '91345ed79f9aa76049c227b579608cdc04ca92f1',
     'web/src/types/japanMarketComparison.ts': '5f0562b0bff96deb54159d2acfb1017a943c169a',
     "test_ai_cost.py": "e2e1a3094c0fe315993d027592de6e1db9a5b784",
     'web/scripts/news-polling-recovery.test.mjs': '85c1fd980275aa95f832ccf5d2cd4d4eff60d8c1',

@@ -3,6 +3,14 @@ import { validJapanMarketComparison } from './japanMarketComparison';
 
 const sections = ['view', 'reasons', 'changes', 'impact', 'next', 'invalidation'];
 const hash = (v: unknown) => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
+export const editorialEvidenceLabels: Record<string, string> = {
+  news: 'いま注目するニュース', events: '次に備える予定', supply: '需給の変化',
+  currency: '為替と円のポジション', horizons: '期間ごとの見通し', market: '市場の中で起きていること',
+};
+export const editorialElementLabel = (id: string): string | null => {
+  const match = /^evidence-(news|events|supply|currency|horizons|market)-[0-2]$/.exec(id);
+  return match ? editorialEvidenceLabels[match[1]] : null;
+};
 
 export function hasEditorialIntent(brief: MarketBrief | null): boolean {
   const plan = brief?.presentationPlan; const catalog = brief?.presentationCatalog;
@@ -26,7 +34,21 @@ export function hasEditorialIntent(brief: MarketBrief | null): boolean {
       || !['lead', 'support', 'detail'].includes(row.placement) || !['primary', 'normal', 'quiet'].includes(row.emphasis)
       || (source.mandatory && row.placement === 'detail')
       || (source.urgent && (nonurgent || row.placement !== 'lead' || row.emphasis === 'quiet'))
-      || (!sections.includes(row.id) && row.id !== 'nikkei-comparison')) return false;
+      || (!sections.includes(row.id) && row.id !== 'nikkei-comparison' && !editorialElementLabel(row.id))) return false;
+    if (editorialElementLabel(row.id)) {
+      const caption = row.caption;
+      const facts = brief.unifiedContext?.facts ?? [];
+      if (!caption || typeof caption.textJa !== 'string' || !caption.textJa.trim() || caption.textJa.length > 180
+        || (row.emphasis === 'primary' && caption.textJa.length > 80)
+        || !['FACT', 'INFERENCE', 'UNKNOWN'].includes(caption.kind)
+        || !Array.isArray(source.evidenceIds) || !source.evidenceIds.length || source.evidenceIds.length > 24
+        || new Set(source.evidenceIds).size !== source.evidenceIds.length
+        || !source.evidenceIds.every(id => facts.some(f => f.evidenceId === id))
+        || !Array.isArray(caption.evidenceIds) || !caption.evidenceIds.length || caption.evidenceIds.length > 6
+        || new Set(caption.evidenceIds).size !== caption.evidenceIds.length
+        || !caption.evidenceIds.every(id => source.evidenceIds.includes(id))
+        || (caption.kind === 'FACT' && caption.evidenceIds.some(id => facts.find(f => f.evidenceId === id)?.verification !== 'VERIFIED'))) return false;
+    }
     if (!source.urgent) nonurgent = true;
     seen.add(row.id); if (row.emphasis === 'primary') primary++;
     if (row.id === 'nikkei-comparison' && !validJapanMarketComparison(brief.calculationSnapshots?.['5']?.comparison, 5)) return false;
@@ -38,4 +60,17 @@ export function editorialEdition(brief: MarketBrief | null): MarketBrief | null 
   if (hasEditorialIntent(brief)) return brief;
   const previous = brief?.retainedPresentation;
   return previous && validMarketBrief(previous) && hasEditorialIntent(previous) ? previous : null;
+}
+
+export function editorialCoversNews(brief: MarketBrief | null,
+  event: { eventId: string; revision?: number; processedAt?: string }): boolean {
+  if (!Number.isFinite(Date.parse(event.processedAt ?? '')) || !Number.isFinite(Date.parse(brief?.generatedAt ?? ''))) return false;
+  if (!hasEditorialIntent(brief) || !event.processedAt
+    || Date.parse(event.processedAt) > Date.parse(brief!.generatedAt)) return false;
+  const cited = new Set(brief!.presentationPlan!.elements
+    .filter(row => row.id.startsWith('evidence-news-') && row.placement !== 'detail')
+    .flatMap(row => row.caption?.evidenceIds ?? []));
+  return brief!.unifiedContext!.facts.some(f => cited.has(f.evidenceId) && f.source === 'trusted_mail'
+    && f.priority === 'P0' && f.provenance?.eventId === event.eventId
+    && f.provenance?.revision != null && f.provenance.revision === event.revision);
 }
