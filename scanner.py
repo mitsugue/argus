@@ -37933,7 +37933,8 @@ def _jp_market_comparison_cached(horizon):
             condition_rows=_JP_MARKET_FEATURE_HISTORY.get("conditions", ()))
         result["marketFeatureAcquisition"] = {k: _JP_MARKET_FEATURE_HISTORY.get(k)
             for k in ("status", "lastSuccessfulCalculationAt", "errorClass", "firstCutoff", "lastCutoff")}
-        result["marketFeatureSnapshot"] = _JP_MARKET_FEATURE_HISTORY.get("latest")
+        if horizon == 5:
+            result["marketFeatureSnapshot"] = _JP_MARKET_FEATURE_HISTORY.get("latest")
         result["valuationAcquisition"] = dict(_JP_INDEX_VALUATION.status)
         if missing_calendar and result.get("comparison"):
             result["comparison"]["limitations"].append(
