@@ -159,7 +159,8 @@ check('S13 navigation commits route state and canonical primary or asset hashes'
 check('S14 shared controls expose their selected and close semantics',
   settingsSource.includes('aria-pressed={locale === value}')
   && notificationSource.includes('aria-label="通知"')
-  && notificationSource.includes('DEVICE LOCAL'));
+  && notificationSource.includes('この端末に保存した通知の記録')
+  && notificationSource.includes('n.notificationIds.forEach(dismissNotification)'));
 
 if (failed) {
   console.error(`\nproduct-integrity tests: ${failed} FAILED`);
