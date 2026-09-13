@@ -19,7 +19,8 @@ SCHEMA = 'argus-market-analysis-record-v1'
 MAX_RECORD_BYTES = 2 * 1024 * 1024
 BRIEF_FIELDS = ('schemaVersion', 'generatedAt', 'facts', 'chips', 'now', 'why', 'next',
     'aiText', 'aiModel', 'aiDiagnostics', 'unifiedContext', 'unifiedSummary',
-    'unifiedStatus', 'lastSuccessfulAiAt', 'sdaAuthority', 'noteJa', 'hasCritical')
+    'unifiedStatus', 'lastSuccessfulAiAt', 'sdaAuthority', 'noteJa', 'hasCritical',
+    'presentationCatalog', 'presentationPlan', 'presentationStatus')
 
 
 def _json(value):
