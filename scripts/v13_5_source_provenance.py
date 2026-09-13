@@ -41,7 +41,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_presentation_intent.py': '26221c60a2a167272ff8ca5765590bb49fbbe4c8',
     'docs/V13_6_PRESENTATION_INTENT.md': 'f4768d0c712f625cb82d630de240c0d98d5f26aa',
     'argus_presentation_intent.py': 'f5b7369016c25a5e6c10b9019c06cdc99a234b87',
-    'argus_persistent_storage.py': 'e4974ddbd86e6364f1707ab3da52384369e1fc71',
+    'argus_persistent_storage.py': '822f60d3ce54a7f5dfbf16638ff79727cb7e4e64',
     'web/src/components/today/ReadingHierarchy.css': 'e8a61092d0b5c846a3706c9a1e53424f68f5e0b4',
     'web/src/components/AppShell.tsx': '5a438f0fd9d20b3b5eca9399f6c314993421a96b',
     'web/src/routes/BackupPage.tsx': '76ef9bb18e9e440afafaad5f9e290c925fc7ac61',
