@@ -289,7 +289,10 @@ check('Today never claims an empty calendar it could not read',
   check('news and market risk sit between the decision and NEXT EVENT',
     hero > 0 && newsTop > hero && newsTop < nextEvent);
   check('the news block lists up to five rows and each row jumps to its Alerts anchor',
-    panel.includes('const NEWS_ROWS_CAP = 5;') && panel.includes('newsRows.slice(0, NEWS_ROWS_CAP)')
+    panel.includes('const NEWS_ROWS_CAP = 5;') && panel.includes('remainingNews.slice(0, NEWS_ROWS_CAP)')
+      && panel.includes("newsRows.filter(row => row.severity === 'CRITICAL').slice(0, 1)")
+      && panel.includes('newsRows.filter(row => !urgentNews.some(urgent => urgent.id === row.id))')
+      && panel.includes('TodayNewsCards rows={urgentNews}')
     && panel.includes("openNewsDetails(`news-${id}`)") && panel.includes("onOpen(row.id)")
     && panel.includes("document.getElementById('news-intel')"));
   check('the old single-item risk and news cards are gone',
@@ -480,7 +483,7 @@ console.log('argus-engine.test: all checks passed');
     && panel.includes('米国の条件付けはVIX水準・VIX10日変化・対SPY相対力') && panel.includes("市場状態で条件付け".length ? '' : '')
     && viewSrc3.includes("vixLevel: 'VIX水準', vixChange10: 'VIX10日変化', rs20: '対SPY相対力'"));
   check('the brief chart chip does not borrow the Japanese count for the US market',
-    panel.includes("market === 'US' ? '米国: 7条件は適用外") && panel.includes('signals={topSignals && !usSelected ?'));
+    fs.readFileSync(path.join(root, 'src/components/today/MarketBriefCard.tsx'), 'utf8').includes("market === 'US' ? '米国: 7条件は適用外") && panel.includes('signals={topSignals && !usSelected ?'));
   const { deskCoverage, deskCoverageJa, deskCoverageDetailJa } = require(path.join(root, 'src/domain/deskCoverage.ts'));
   const cov = deskCoverage({
     assets: [{ symbol: '5803', market: 'JP' }, { symbol: '1321', market: 'JP' }, { symbol: 'NVDA', market: 'US' }, { symbol: 'BTC', market: 'CRYPTO' }],
@@ -517,3 +520,5 @@ console.log('argus-engine.test: all checks passed');
     && quoteFreshnessJa({ delayClass: 'LIVE', provider: 'TACHIBANA', sourceTimestamp: '2026-09-07T01:00:00Z' }).startsWith('リアルタイム')
     && quoteFreshnessJa({ delayClass: 'UNKNOWN', provider: 'CoinGecko', sourceTimestamp: null }) === '取得時刻不明（CoinGecko）');
 }
+
+if (failed) process.exit(1);
