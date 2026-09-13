@@ -240,6 +240,7 @@ _ASSET_CHART_SINGLEFLIGHT = argus_verified_snapshot.SingleFlight()
 _COST_POLICY_LOCK = threading.RLock()
 _COST_POLICY_FILE_LOCK = threading.Lock()
 _COST_CHECKPOINT_LOCK = threading.Lock()
+_COST_CHECKPOINT_CONDITION = threading.Condition(_COST_CHECKPOINT_LOCK)
 _COST_CHECKPOINT_STATE = {"running": False, "pending": False,
                           "lastError": None, "lastFinishedAt": None}
 _COST_POLICY_DURABLE = {"lastPersistAt": None, "lastRestoreAt": None,
@@ -320,7 +321,12 @@ def _cost_policy_checkpoint_snapshot():
 def _cost_checkpoint_worker():
     """Coalesce full-checkpoint requests after local usage is durable."""
     while True:
-        with _COST_CHECKPOINT_LOCK:
+        with _COST_CHECKPOINT_CONDITION:
+            # Usage is already fsynced in its small ledger. Give a registered
+            # release producer the next turn instead of repeatedly reacquiring
+            # the full-checkpoint lock ahead of it after every provider attempt.
+            while _COST_CHECKPOINT_STATE.get("releaseSeedWaiters", 0):
+                _COST_CHECKPOINT_CONDITION.wait()
             _COST_CHECKPOINT_STATE["pending"] = False
         try:
             result = _osint_persist()
@@ -36443,6 +36449,9 @@ def _release_seed_verified_market_views(body):
         ("QQQ", "US", False),
     )
     observations = []
+    with _COST_CHECKPOINT_CONDITION:
+        _COST_CHECKPOINT_STATE["releaseSeedWaiters"] = (
+            _COST_CHECKPOINT_STATE.get("releaseSeedWaiters", 0) + 1)
     try:
         with _DURABLE_CHECKPOINT_LOCK:
             existing = {
@@ -36526,6 +36535,10 @@ def _release_seed_verified_market_views(body):
             "snapshotExpected": 12,
             "snapshotReady": len(observations),
         }), 503
+    finally:
+        with _COST_CHECKPOINT_CONDITION:
+            _COST_CHECKPOINT_STATE["releaseSeedWaiters"] -= 1
+            _COST_CHECKPOINT_CONDITION.notify_all()
     return jsonify({
         "ok": True,
         "status": "completed",
