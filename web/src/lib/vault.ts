@@ -123,7 +123,9 @@ export function recoveryDurability(hasLocalData: boolean, lastLocalExportAt?: nu
     local LWW timestamp; unavailable browser-side cloud push is never retried. */
 export function markLocalEdit(): void {
   if (Date.now() < suppressEditsUntil) return;  // change came FROM a sync apply
-  try { localStorage.setItem(EDIT_KEY, String(Date.now())); } catch { /* ignore */ }
+  try { localStorage.setItem(EDIT_KEY, String(Date.now()));
+    if(typeof window!=='undefined')window.dispatchEvent(new CustomEvent('argus:local-data-edited'));
+  } catch { /* ignore */ }
 }
 
 async function fetchRemoteEnvelope(vaultId: string, rawFallback: boolean): Promise<string | null> {
@@ -162,6 +164,15 @@ export function lastSyncInfo(): SyncInfo | null {
   catch { return null; }
 }
 
+function ownerSnapshotRecoverySelected(): boolean {
+  try {
+    // Keep explicit old-envelope restore available without importing older
+    // remote edits automatically into the owner's newer snapshot workflow.
+    return localStorage.getItem('argus.ownerVaultAutoSave.v1') !== null
+      || localStorage.getItem('argus.ownerVaultReceipt.v1') !== null;
+  } catch { return true; }
+}
+
 /** One read/apply cycle for an existing sync-v2 envelope.
     WATCHLIST (`argus.assets.v1`) is merged PER-ITEM: union by id, newer
     updatedAt wins, deletions propagate via tombstones. Both devices converge
@@ -169,6 +180,7 @@ export function lastSyncInfo(): SyncInfo | null {
     nothing is clobbered. Other keys (journal/trades/research) keep the v1
     whole-key LWW with the never-synced-device safety gate. */
 export async function cloudSyncNow(opts: { rawFallback?: boolean } = {}): Promise<'applied' | 'pushed' | 'noop'> {
+  if (ownerSnapshotRecoverySelected()) return 'noop';
   const pass = getVaultPass();
   if (!pass) return 'noop';
   const vaultId = await vaultIdFrom(pass);
@@ -182,6 +194,7 @@ export async function cloudSyncNow(opts: { rawFallback?: boolean } = {}): Promis
   if (env) {
     let payload: BackupFile | null = null;
     try { payload = await decryptBackup(pass, env); } catch { payload = null; }
+    if (ownerSnapshotRecoverySelected()) return 'noop';
     if (payload?.data) {
       try { assertBackupHistoryReadable(payload); }
       catch {
@@ -264,7 +277,7 @@ export function startCloudSync(): void {
 
 /** Restore from an existing encrypted envelope using only the passphrase.
     Tries the read-only relay first, then the durable GitHub copy. */
-export async function cloudRestore(pass: string): Promise<number> {
+export async function cloudRestore(pass: string, beforeApply?:()=>Promise<void>): Promise<number> {
   const vaultId = await vaultIdFrom(pass);
   const envelopeStr = await fetchRemoteEnvelope(vaultId, true);
   if (!envelopeStr) {
@@ -272,6 +285,7 @@ export async function cloudRestore(pass: string): Promise<number> {
   }
   const payload = await decryptBackup(pass, envelopeStr);
   assertBackupHistoryReadable(payload);
+  await beforeApply?.();
   recordExistingEnvelope(payload.exportedAt);
   const n = restoreBackup(payload);
   if (n > 0) recordSyncTick({ outcome: 'applied', historyRestoreBlocked: false,

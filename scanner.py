@@ -125,6 +125,8 @@ import jp_market_internals
 import jp_market_positioning
 import argus_analysis_history
 import argus_owner_dialogue_api
+import argus_web_push
+import argus_owner_vault
 import argus_owner_dialogue_recovery
 import argus_owner_dialogue_backup
 import argus_subject_materials
@@ -132,6 +134,7 @@ import argus_analysis_history_backup
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
 import jp_market_price_paths
+import jp_market_valuation
 import jp_market_source_adapters
 import jp_market_dynamics
 import jp_market_events
@@ -17789,11 +17792,42 @@ def _owner_dialogue_subject_materials(*, symbol, market, cutoff):
     if market not in ("JP", "US") or not isinstance(symbol, str) or symbol == "N225": return None
     return argus_subject_materials.news_facts(list(_INTEL_STORE), symbol=symbol, cutoff=cutoff)
 
+_WEB_PUSH = argus_web_push.PushService(
+    path=lambda: os.path.join(_DURABILITY_PATHS["root"], "web_push.sqlite3") if _cost_policy_durable_enabled() else None,
+    config=lambda: argus_web_push.configuration(os.environ), now=time.time)
+
+
+def _web_push_tick():
+    try:
+        if not argus_web_push.configuration(os.environ)['configured']: return
+        _news_intel_ensure_loaded()
+        with _NEWS_INTEL_LOCK:
+            records = [dict(_NEWS_INTEL['events'][eid])
+                       for eid in reversed(_NEWS_INTEL.get('order') or [])
+                       if eid in _NEWS_INTEL.get('events', {})][:_NEWS_EVENT_CAP]
+        events = []
+        for record in records:
+            try:
+                events.append(argus_news_intelligence.project_owner_event(record))
+            except Exception:
+                continue
+        calendar = jp_market_events.published_sq_calendar(now=datetime.now(pytz.utc))
+        _WEB_PUSH.tick(argus_web_push.proposals(calendar, events, time.time()))
+    except Exception as exc:
+        add_log(f"web-push tick unavailable: {type(exc).__name__}")
+
+
+_OWNER_VAULT = argus_owner_vault.VaultService(
+    path=lambda: os.path.join(_DURABILITY_PATHS["root"], "owner_vault_uploads.sqlite3") if _cost_policy_durable_enabled() else None,
+    remote=lambda: argus_owner_vault.PrivateStore(repo=os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", ""),
+        headers=_gh_private_headers(), http=requests.request))
+
 argus_owner_dialogue_api.register(app, authorize=_require_owner_sync,
     storage_path=_owner_dialogue_path, market_brief=lambda: _MARKET_BRIEF.get("data"),
     generate=_openai_prose, now=lambda: datetime.now(pytz.utc).isoformat(),
     recovery_status=_OWNER_DIALOGUE_RECOVERY.status, recovery_trigger=_OWNER_DIALOGUE_RECOVERY.tick,
-    subject_comparison=_owner_dialogue_subject_comparison, subject_materials=_owner_dialogue_subject_materials)
+    subject_comparison=_owner_dialogue_subject_comparison, subject_materials=_owner_dialogue_subject_materials,
+    usage_snapshot=_ai_usage_snapshot, push_service=_WEB_PUSH, vault_service=_OWNER_VAULT)
 
 
 @app.route("/api/argus/market-brief")
@@ -37806,6 +37840,15 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
     return rows
 
 
+_JP_INDEX_VALUATION = jp_market_valuation.ValuationCache()
+
+
+def _jp_index_valuation_warm():
+    path = (os.path.join(_DURABILITY_PATHS["root"], "jp_market_valuation.sqlite3")
+            if _cost_policy_durable_enabled() else None)
+    _JP_INDEX_VALUATION.warm(path, get=requests.get)
+
+
 def _jp_market_comparison_cached(horizon):
     """Bounded cached-only chart calculation; no fetch, AI or persistence."""
     cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}
@@ -37832,7 +37875,8 @@ def _jp_market_comparison_cached(horizon):
                 missing_calendar = True
         result = jp_market_price_paths.cached_index_comparison(
             rows, cutoff=cutoff, session_dates=sessions, horizon_sessions=horizon,
-            acquired_at=cached.get("acquiredAt"))
+            acquired_at=cached.get("acquiredAt"), valuation=_JP_INDEX_VALUATION.snapshot(cutoff))
+        result["valuationAcquisition"] = dict(_JP_INDEX_VALUATION.status)
         if missing_calendar and result.get("comparison"):
             result["comparison"]["limitations"].append(
                 "公式営業日表の範囲外の過去局面は、比較候補から除外しています。")
@@ -38413,6 +38457,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         credit_rows = []
     if warm:
         _cftc_jpy_autorefresh()
+        _jp_index_valuation_warm()
         _jp_internals_warm()
     margin_rows = _jp_market_engine_margin_1570_rows(fetch=warm)
     rs_proxy = _jp_market_engine_relative_strength_proxy()
@@ -46768,6 +46813,7 @@ def run_scheduler():
         # The public explanation progresses even when mail intake is slow or
         # no mailbox is configured. No public request starts this AI worker.
         threading.Thread(target=_market_brief_worker_tick, daemon=True).start()
+        threading.Thread(target=_web_push_tick, daemon=True, name="web-push").start()
         # v13.5.54: Twelve Data Basic-plan warm tick — bounded by the policy core
         # (8-credit batch per eligible minute, daily cap, market-aware cadence).
         try:

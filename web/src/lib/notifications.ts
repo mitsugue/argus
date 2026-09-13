@@ -167,6 +167,7 @@ export interface NotifInputs {
   vaultConfigured: boolean;
   localExportAgeDays?: number | null;
   restoreVerified?: boolean;
+  ownerSnapshotCurrent?: boolean;
   canonicalDecisions?: Record<string, {
     action: PrimaryAction; status: 'EVALUATED' | 'DATA_GATED'; name?: string;
     isHeld?: boolean; targetReached?: boolean; invalidationReached?: boolean;
@@ -251,6 +252,11 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
   if (Date.now() - _lastRunMs < 60_000) return { delivered: 0 };   // no polling spam
   _lastRunMs = Date.now();
   const st = load();
+  if(inp.ownerSnapshotCurrent===true){
+    for(const item of st.items){
+      if(item.eventType==='sync_backup_warning'||item.eventType==='restore_not_verified')item.deliveryState='dismissed';
+    }
+  }
   const now = new Date().toISOString();
   const day = jstDay();
   const cands: Omit<AppNotification, 'id' | 'createdAt' | 'deliveryState'>[] = [];
@@ -489,11 +495,11 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
         whyJa: '復元できないバックアップは保護になりません。', checkNextJa: 'Settings / Recovery → 復元ドリルを実行',
         dedupeKey: 'drill', isPrivate: true });
     }
-    if (inp.localExportAgeDays == null || inp.localExportAgeDays > 30) {
+    if (inp.ownerSnapshotCurrent!==true&&(inp.localExportAgeDays == null || inp.localExportAgeDays > 30)) {
       cands.push({ eventType: 'sync_backup_warning', severity: 'low', symbol: null, assetName: null,
-        titleJa: 'JSONバックアップを更新',
-        bodyJa: '最近30日以内のローカルJSONエクスポートが確認できません。端末故障やサイトデータ消去に備えて保存してください。',
-        whyJa: '公開ブラウザから新しいクラウド復旧点は送信できません。', checkNextJa: 'Settings / Recovery → 完全バックアップJSONを書き出す',
+        titleJa: 'バックアップの保存状況を確認',
+        bodyJa: '現在の内容と一致する暗号化保存点、または最近30日以内の完全バックアップJSONをこの確認では確定できません。',
+        whyJa: '未保存の変更は端末故障やデータ消去で失われる可能性があります。', checkNextJa: 'Settings / Recovery → 暗号化保存の照合または完全バックアップJSON',
         dedupeKey: 'local-export', isPrivate: true });
     }
   }

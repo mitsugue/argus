@@ -4,6 +4,7 @@ import './JapanMarketComparisonChart.css';
 
 const COLOURS = ['#94c5de', '#c7b6ed', '#dfbc83'];
 const number = (value: number) => value.toLocaleString('ja-JP', { maximumFractionDigits: 1 });
+const valuationNumber = (value: number) => value.toLocaleString('ja-JP', { maximumFractionDigits: 2 });
 
 export function JapanMarketComparisonChart({ document }: { document: JapanMarketComparison }) {
   const container = useRef<HTMLDivElement>(null);
@@ -113,6 +114,12 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
       計算予測は検証中です。帯は比較事例の中央半分の範囲で、将来の価格が入る確率ではありません。</p>}
     <details className="jp-comparison__details"><summary>比較元・尺度・検証状態を見る</summary>
       <p>{document.scaleExplanation}</p>
+      {document.valuationEvidence && <p>
+        {document.valuationEvidence.date}の指数ベースPER {valuationNumber(document.valuationEvidence.per)}倍、
+        同日の指数終値から逆算したEPS {valuationNumber(document.valuationEvidence.eps)}円。
+        公表EPSそのものではありません。取得：{new Date(document.valuationEvidence.knownAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST。
+        公表時刻は未確認です。<a href={document.valuationEvidence.sourceRef} target="_blank" rel="noreferrer">日経公式の算出資料</a>
+      </p>}
       <p>情報締切：{new Date(document.informationCutoff).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST</p>
       {candidates.map(candidate => <article key={candidate.snapshotId}>
         <h3>{candidate.anchorDate}を基準とする{candidate.comparisonKind === 'MARKET_ANALOG' ? '市場比較' : '部分比較'}</h3>

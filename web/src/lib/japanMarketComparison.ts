@@ -22,6 +22,16 @@ export function validJapanMarketComparison(v: unknown, horizon: number): v is Ja
     || typeof v.scaleExplanation !== 'string' || !strings(v.limitations)
     || !Array.isArray(v.candidates) || v.candidates.length > 10) return false;
   const ids = new Set<string>();
+  if (v.valuationEvidence !== undefined) {
+    const e = v.valuationEvidence;
+    if (!object(e) || e.date !== v.anchorDate || !finite(e.eps) || e.eps <= 0
+      || !finite(e.per) || e.per <= 0 || e.epsKind !== 'DERIVED_FROM_INDEX_CLOSE_AND_INDEX_BASED_PER'
+      || typeof e.knownAt !== 'string' || !Number.isFinite(Date.parse(e.knownAt))
+      || Date.parse(e.knownAt) > Date.parse(v.informationCutoff)
+      || e.publishedAt !== null
+      || e.sourceRef !== 'https://indexes.nikkei.co.jp/nkave/archives/summary/'
+      || typeof e.sourceResponseSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(e.sourceResponseSha256)) return false;
+  }
   for (const c of v.candidates) {
     if (!object(c) || typeof c.snapshotId !== 'string' || ids.has(c.snapshotId)
       || typeof c.anchorDate !== 'string' || !['MARKET_ANALOG', 'PARTIAL_COMPARISON'].includes(String(c.comparisonKind))

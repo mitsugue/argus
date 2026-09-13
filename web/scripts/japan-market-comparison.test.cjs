@@ -30,3 +30,15 @@ for (const mutate of [
   assert(!validJapanMarketComparison(invalid, 5));
 }
 console.log('Japan comparison response validation PASS');
+const withScale = { ...document, unit: 'JPY_INDEX_POINTS', valuationEvidence: {
+  date: document.anchorDate, eps: 2000, per: 20,
+  epsKind: 'DERIVED_FROM_INDEX_CLOSE_AND_INDEX_BASED_PER', knownAt: '2026-09-11T07:30:00Z',
+  publishedAt: null, sourceRef: 'https://indexes.nikkei.co.jp/nkave/archives/summary/', sourceResponseSha256: 'a'.repeat(64),
+} };
+assert(validJapanMarketComparison(withScale, 5));
+for (const patch of [{ eps: NaN }, { per: 0 }, { knownAt: '2026-09-12T00:00:00Z' },
+  { date: '2026-09-10' }, { sourceRef: 'javascript:void(0)' }, { epsKind: 'PUBLISHED_EPS' },
+  { publishedAt: '2026-09-11T07:30:00Z' }, { sourceResponseSha256: null }]) {
+  assert(!validJapanMarketComparison({ ...withScale, valuationEvidence: { ...withScale.valuationEvidence, ...patch } }, 5));
+}
+console.log('Index valuation evidence validation PASS');

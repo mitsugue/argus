@@ -369,7 +369,7 @@ def calculation_identity(calculations):
     def stable(value):
         if isinstance(value, Mapping):
             return {key: stable(item) for key, item in value.items()
-                    if key not in {"informationCutoff", "lastSuccessfulAcquisitionAt"}}
+                    if key not in {"informationCutoff", "lastSuccessfulAcquisitionAt", "valuationAcquisition"}}
         if isinstance(value, list):
             return [stable(item) for item in value]
         return value
@@ -394,9 +394,15 @@ def calculation_facts(calculations):
         if not unit:
             continue
         identity = calculation_identity({str(horizon): result})
+        valuation = result.get("valuation") or {}
+        scale_note = ""
+        if valuation.get("status") == "AVAILABLE" and all(
+                type(valuation.get(k)) in (int, float) and math.isfinite(valuation[k]) for k in ("eps", "per")):
+            scale_note = (f"指数ベースPER{valuation['per']:.2f}倍、同日終値から逆算したEPS{valuation['eps']:.2f}円を固定した換算。"
+                          "独立した公表EPSや利益成長の予測ではない。")
         facts.append(_fact(f"日経平均・{chart['anchorDate']}基準の{horizon}営業日先: "
             f"{unit}の参考計算値{value:.2f}。現在は過去の価格形状による部分比較で、有効性は未検証。"
-            "他の期間の見立てと合算せず、確定した未来とは扱わない。",
+            "他の期間の見立てと合算せず、確定した未来とは扱わない。" + scale_note,
             "P2", "price_path_calculation", "UNCONFIRMED", {
                 "eventId": f"n225-price-path-{horizon}", "asOf": chart["anchorDate"],
                 "sourceLabelJa": "日本株分析エンジン・価格経路計算",

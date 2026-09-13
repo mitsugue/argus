@@ -12,3 +12,4 @@ moomoo-api
 xlrd
 gunicorn==23.0.0
 cryptography==49.0.0
+pywebpush==2.3.0

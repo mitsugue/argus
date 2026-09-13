@@ -10,6 +10,7 @@ import {
   hasBackupContent, type BackupRoundTripProof,
 } from './backup';
 import { certifiedCompleteExportAt } from './backupMeta';
+import {readOwnerVaultReceipt} from './ownerVaultReceipt';
 
 export type ProtectionLevel = 'protected' | 'partially_protected' | 'unprotected' | 'needs_attention' | 'unknown';
 export const LEVEL_JA: Record<ProtectionLevel, string> = {
@@ -63,6 +64,19 @@ export function assessBackupSafety(_assets: AssetItem[]): BackupSafety {
   const m = meta();
   const verified = !!m.restoreVerified && m.restoreContractVersion === BACKUP_CONTRACT_VERSION;
   const durability = recoveryDurability(hasData, Date.parse(completeExportAt || '') || null);
+
+  const ownerPoint=readOwnerVaultReceipt();
+  if(hasData&&ownerPoint)return {
+    protectionLevel:'partially_protected',protectionLevelJa:'暗号化保存点あり',
+    storageMode:'owner_encrypted_snapshot',vaultConfigured:true,
+    vaultSyncAgeDays:Math.max(0,Math.floor((Date.now()-ownerPoint.savedAt*1000)/86_400_000)),
+    snapshotAgeDays,exportAgeDays,restoreVerified:true,lastDrillAt:new Date(ownerPoint.savedAt*1000).toISOString(),
+    riskFlags:['current_owner_content_requires_check'],
+    statusJa:'暗号化保存点を読み戻し、復号と隔離復元を照合した記録があります。現在の変更まで保存済みかは保存・復旧画面で確認できます。',
+    riskJa:'この診断は保存時点の記録です。現在の内容との一致や、実機での復元受入を表すものではありません。',
+    nextStepJa:'Settingsの保存・復旧で現在の内容と保存点の照合状況を確認',
+    whatCanBeLostJa:'保存点に含まれていない変更は端末故障・データ消去で失われる可能性があります。接続キーとパスフレーズは別途保持してください。',
+  };
 
   const risks: string[] = [];
   risks.push('cloud_push_unavailable');
@@ -145,5 +159,6 @@ export function runRecoveryDrill(_assets: AssetItem[], _appVersion: string):
 /** Handoff用のredacted一行(保有数値・パスフレーズ情報なし)。 */
 export function backupSafetyLineJa(assets: AssetItem[]): string {
   const b = assessBackupSafety(assets);
+  if(b.storageMode==='owner_encrypted_snapshot')return 'バックアップ: 暗号化保存点あり / 保存点の隔離復元照合済み / 現在の変更と実機復元は別確認';
   return `バックアップ: ${b.protectionLevelJa} / スナップショット${b.snapshotAgeDays != null ? `${b.snapshotAgeDays}日前` : 'なし'} / 復元確認${b.restoreVerified ? '済' : '未'}`;
 }

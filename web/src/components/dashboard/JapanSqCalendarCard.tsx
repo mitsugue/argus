@@ -6,6 +6,15 @@ const STAGE = { TODAY: '本日SQ', LAST_TRADING_DAY: '本日が最終取引日',
 export const JapanSqCalendarCard: React.FC = () => {
   const { data, loading, failed, checkedAt, retry } = useJapanSqCalendar();
   const current = sqCalendarIsCurrent(data, checkedAt);
+  React.useEffect(() => {
+    const focus = () => {
+      const match = /^#notifications\/sq\/(jp-monthly-sq-\d{4}-\d{2})$/.exec(window.location.hash);
+      const item = match && document.getElementById(match[1]);
+      if (item instanceof HTMLDetailsElement) { item.open = true; item.scrollIntoView({block:'start'}); }
+    };
+    focus(); window.addEventListener('hashchange',focus);
+    return () => window.removeEventListener('hashchange',focus);
+  }, [data]);
   return <section className="jp-sq card" aria-label="SQ・30日先の予定">
     <div className="jp-sq__head"><h2>SQ・30日先の予定</h2><span>日本市場</span></div>
     {loading && !data && <p role="status">公式日程を確認しています…</p>}

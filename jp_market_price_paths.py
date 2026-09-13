@@ -64,6 +64,9 @@ def index_valuation_scale(valuation: Mapping[str, Any] | None, *, cutoff: str,
     return {**result, "status": "AVAILABLE", "reason": None,
             "eps": eps, "per": per, "anchorPrice": anchor, "date": anchor_date,
             "basis": VALUATION_BASIS, "sourceRef": valuation["sourceRef"],
+            "epsKind": valuation.get("epsKind", "DERIVED_FROM_INDEX_CLOSE_AND_INDEX_BASED_PER"),
+            "publishedAt": valuation.get("publishedAt"),
+            "sourceResponseSha256": valuation.get("sourceResponseSha256"),
             "availableFrom": valuation.get("availableFrom"), "knownAt": valuation.get("knownAt"),
             "epsDerivation": "same-session index close / index-based PER",
             "shapeToYenFormula": "current index EPS * current index PER * shape / 100",
@@ -316,6 +319,12 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                                        "selectionId": selection["selectionId"],
                                        "sourceContentHash": _hash(visible)}
     document["valuationStatus"] = scale["status"]
+    if scale["status"] == "AVAILABLE":
+        document["valuationEvidence"] = {key: scale.get(key) for key in (
+            "date", "eps", "per", "epsKind", "knownAt", "publishedAt", "sourceRef", "sourceResponseSha256")}
+        document["limitations"].append(
+            "EPSは同日の指数終値÷指数ベースPERによる逆算値で、独立した公表EPSではありません。"
+            "円換算はこの尺度を固定した形状の換算です。利益成長やPER変動を別に予測したものではありません。")
     return {**base, "status": "available", "reason": None, "comparison": document,
             "selection": selection, "valuation": scale,
             "historyCoverage": {"sourceBars": len(visible), "candidateCount": len(candidates),

@@ -23,7 +23,7 @@ jobs:
       - name: Install minimal deps (only what `import scanner` needs)
         run: >-
           pip install --quiet anthropic flask flask-cors requests pytz
-          python-dotenv json-repair pytest cryptography==49.0.0
+          python-dotenv json-repair pytest cryptography==49.0.0 pywebpush==2.3.0
       - name: Syntax check
         run: |
           python -c 'import importlib.metadata as m; assert m.version("cryptography") == "49.0.0"'
