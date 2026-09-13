@@ -17800,8 +17800,19 @@ _WEB_PUSH = argus_web_push.PushService(
 def _web_push_tick():
     try:
         if not argus_web_push.configuration(os.environ)['configured']: return
+        _news_intel_ensure_loaded()
+        with _NEWS_INTEL_LOCK:
+            records = [dict(_NEWS_INTEL['events'][eid])
+                       for eid in reversed(_NEWS_INTEL.get('order') or [])
+                       if eid in _NEWS_INTEL.get('events', {})][:_NEWS_EVENT_CAP]
+        events = []
+        for record in records:
+            try:
+                events.append(argus_news_intelligence.project_owner_event(record))
+            except Exception:
+                continue
         calendar = jp_market_events.published_sq_calendar(now=datetime.now(pytz.utc))
-        _WEB_PUSH.tick(argus_web_push.proposals(calendar, _brief_news_events(), time.time()))
+        _WEB_PUSH.tick(argus_web_push.proposals(calendar, events, time.time()))
     except Exception as exc:
         add_log(f"web-push tick unavailable: {type(exc).__name__}")
 

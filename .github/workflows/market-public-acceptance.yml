@@ -229,7 +229,7 @@ jobs:
       - name: Install exact Recovery test dependencies
         run: >-
           pip install --quiet anthropic flask flask-cors requests pytz
-          python-dotenv json-repair pytest cryptography==49.0.0
+          python-dotenv json-repair pytest cryptography==49.0.0 pywebpush==2.3.0
       - name: Re-establish exact scope locally
         run: |
           python3 -B scripts/recovery_admission.py classify \

@@ -133,3 +133,31 @@ def test_news_pending_ai_can_notify_but_backfill_cannot():
     record={'eventId':'ev-123','severity':'HIGH','sourceReceivedAt':now.isoformat(),'alertEligible':True,'analysisState':'AI_ANALYSIS_PENDING'}
     assert push.proposals({},[record],now.timestamp())[0]['hash']=='#notifications/news/ev-123'
     assert push.proposals({},[{**record,'backfill':True}],now.timestamp())==[]
+
+
+def test_worker_reads_news_store_independently_of_brief(monkeypatch):
+    import copy
+    import scanner
+    now = datetime.now(timezone.utc).isoformat()
+    records = {'material': {'eventId': 'material', 'severity': 'CRITICAL',
+               'alertEligible': True, 'sourceReceivedAt': now}}
+    records.update({str(i): {'eventId': str(i), 'severity': 'INFO'} for i in range(15)})
+    before = copy.deepcopy(records)
+    monkeypatch.setitem(scanner._NEWS_INTEL, 'events', records)
+    monkeypatch.setitem(scanner._NEWS_INTEL, 'order', list(records))
+    monkeypatch.setattr(scanner, '_news_intel_ensure_loaded', lambda: None)
+    monkeypatch.setattr(push, 'configuration', lambda env: {'configured': True})
+    projected = []
+    def project(record):
+        projected.append(record['eventId'])
+        if record['eventId'] == '0': raise ValueError('invalid record')
+        return dict(record)
+    monkeypatch.setattr(scanner.argus_news_intelligence, 'project_owner_event', project)
+    def forbidden(): raise AssertionError('generated explanation must not drive notifications')
+    monkeypatch.setattr(scanner, '_brief_news_events', forbidden)
+    sent = []
+    monkeypatch.setattr(scanner._WEB_PUSH, 'tick', lambda rows: sent.extend(rows))
+    scanner._web_push_tick()
+    assert any(row['hash'] == '#notifications/news/material' for row in sent)
+    assert 'material' in projected and len(projected) == 16
+    assert records == before
