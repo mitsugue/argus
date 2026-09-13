@@ -72,6 +72,9 @@ const decision = {
 };
 
 const protectedStores = {
+  'argus.locale.v1': 'ja',
+  'argus.notificationPreferences.v1': { action: true, catalyst: false, risk: true, authority: true, recovery: true },
+  'argus.analysisNameMigration.v1': {},
   'argus.assets.v1': [asset],
   'argus.judgmentLog.v1': [{ id: 'judgment-test', note: 'owner judgment' }],
   'argus.trades.v1': [{ id: 'trade-test', symbol: '5803', quantity: 1 }],

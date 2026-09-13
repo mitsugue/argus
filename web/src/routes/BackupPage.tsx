@@ -1,4 +1,5 @@
 import React from 'react';
+import { OwnerVaultPanel } from '../components/settings/OwnerVaultPanel';
 import { useAssets } from '../hooks/useAssets';
 import { PortfolioSyncCard } from '../components/dashboard/PortfolioSyncCard';
 import { BackupCard } from '../components/guide/BackupCard';
@@ -19,6 +20,7 @@ export const BackupSettingsPanel: React.FC<{ initiallyOpen?: boolean }> = ({ ini
   return (
     <section id="settings-recovery" aria-label="Backup and recovery">
       <BackupStatusOverview assets={assetsApi.assets} />
+      <OwnerVaultPanel />
       <details className="backup-actions" open={actionsOpen}
         onToggle={(event) => setActionsOpen(event.currentTarget.open)}>
         <summary>Manual export / import / restore actions</summary>

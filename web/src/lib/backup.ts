@@ -18,7 +18,8 @@ export const BACKUP_KEYS = ['argus.assets.v1', 'argus.judgmentLog.v1', 'argus.tr
   // decision ledger rides the ENCRYPTED vault so issued decisions survive
   // device loss. Its own privacy screen keeps quantity/cost/P&L out of every
   // entry, so nothing here widens what the vault already carries.
-  'argus.sda.deviceLedger.v1'] as const;
+  'argus.sda.deviceLedger.v1', 'argus.locale.v1', 'argus.notificationPreferences.v1',
+  'argus.analysisNameMigration.v1'] as const;
 const LAST_AUTO_KEY = 'argus.lastAutoBackup.v1';
 const AUTO_INTERVAL_MS = 7 * 86_400_000; // weekly
 const BACKUP_META_ONLY_KEYS = new Set<string>([
@@ -27,6 +28,7 @@ const BACKUP_META_ONLY_KEYS = new Set<string>([
 
 export interface BackupFile {
   app: 'argus';
+  backupContractVersion?: number;
   exportedAt: string;
   version: string;
   auto?: boolean;
@@ -86,7 +88,7 @@ export function buildBackupPayload(
     const raw = localStorage.getItem(k);
     if (raw != null) data[k] = JSON.parse(raw) as unknown;
   }
-  return { app: 'argus', exportedAt: new Date().toISOString(), version: __APP_VERSION__,
+  return { app: 'argus', backupContractVersion: BACKUP_CONTRACT_VERSION, exportedAt: new Date().toISOString(), version: __APP_VERSION__,
            syncProtocolVersion: SYNC_PROTOCOL_VERSION, deviceId: options.deviceId ?? deviceId(), auto, data };
 }
 

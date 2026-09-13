@@ -1,5 +1,5 @@
 export const BACKUP_META_KEY = 'argus.portfolioSync.meta.v1';
-export const BACKUP_CONTRACT_VERSION = 1;
+export const BACKUP_CONTRACT_VERSION = 2;
 
 export interface BackupMeta {
   lastExportAt?: string;

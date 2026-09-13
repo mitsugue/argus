@@ -1,4 +1,5 @@
 import React from 'react';
+import {ownerVaultProtection} from '../../lib/ownerVault';
 import type { AssetItem } from '../../types/assetItem';
 import { assessBackupSafety, drillMeta } from '../../lib/backupSafety';
 import { syncMeta } from '../../lib/portfolioSync';
@@ -14,6 +15,13 @@ const fmt = (value?: string | number | null) => {
 };
 
 export const BackupStatusOverview: React.FC<{ assets: AssetItem[] }> = ({ assets }) => {
+  const [ownerPoint,setOwnerPoint]=React.useState<Awaited<ReturnType<typeof ownerVaultProtection>>>(null);
+  React.useEffect(()=>{
+    let active=true;let revision=0;
+    const refresh=()=>{const id=++revision;void ownerVaultProtection().then(value=>{if(active&&id===revision)setOwnerPoint(value);});};
+    refresh();window.addEventListener('argus:vault-saved',refresh);window.addEventListener('argus:data-synced',refresh);window.addEventListener('focus',refresh);window.addEventListener('storage',refresh);
+    return()=>{active=false;window.removeEventListener('argus:vault-saved',refresh);window.removeEventListener('argus:data-synced',refresh);window.removeEventListener('focus',refresh);window.removeEventListener('storage',refresh);};
+  },[assets]);
   const safety = assessBackupSafety(assets);
   const sync = lastSyncInfo();
   const local = syncMeta();
@@ -30,6 +38,14 @@ export const BackupStatusOverview: React.FC<{ assets: AssetItem[] }> = ({ assets
   ].map((value) => value ? new Date(value).getTime() : 0).filter((value) => Number.isFinite(value) && value > 0);
   const latestRecoveryPoint = recoveryTimes.length ? Math.max(...recoveryTimes) : null;
 
+  if(ownerPoint?.current)return <section className="backup-overview" aria-label="暗号化保存点の確認状況">
+    <div className="backup-overview__command"><span>端末データの保存点</span><strong style={{color:'var(--value-positive)'}}>保存・復号照合済み</strong>
+      <small>現在の保存対象データと、非公開保存先から読み戻して復号した内容が一致しています。端末間の自動統合は行いません。</small></div>
+    <div className="backup-overview__grid"><article><span>作成時点</span><strong>{fmt(ownerPoint.exportedAt)}</strong></article>
+      <article><span>遠隔保存・読み戻し確認</span><strong>{fmt(ownerPoint.savedAt*1000)}</strong></article>
+      <article className="backup-overview__wide"><span>次の確認</span><strong>別端末では接続キーとパスフレーズで保存点を開き、復元内容を確認してください。実機受入は別の確認です。</strong></article></div>
+  </section>;
+
   return <section className="backup-overview" aria-labelledby="backup-status">
     <div className="backup-overview__command">
       <span id="backup-status">RESTORE READINESS</span>
@@ -38,6 +54,7 @@ export const BackupStatusOverview: React.FC<{ assets: AssetItem[] }> = ({ assets
       </strong>
       <small>{readiness.summary}</small>
     </div>
+    {ownerPoint&&!ownerPoint.current&&<p role="status">暗号化保存点の後に端末データが変わっています。現在分を保存すると、変更も遠隔保護されます。</p>}
     {sync?.historyRestoreBlocked && <p role="status">
       クラウド履歴の取込みを保留中です。保存済みデータは維持しています。
       バックアップの形式確認・移行が必要です。

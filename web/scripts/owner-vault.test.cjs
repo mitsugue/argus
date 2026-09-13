@@ -1,0 +1,10 @@
+const assert=require('node:assert/strict'),Module=require('node:module'),path=require('node:path'),esbuild=require('esbuild');
+const entry=path.resolve('src/lib/ownerVault.ts');const code=esbuild.buildSync({entryPoints:[entry],bundle:true,write:false,platform:'node',format:'cjs',define:{__APP_VERSION__:'"test"','import.meta.env':'{}'},logLevel:'silent'}).outputFiles[0].text;
+const mod=new Module(entry,module);mod.filename=entry;mod.paths=module.paths;mod._compile(code,entry);const api=mod.exports;
+const values=new Map([['argus.assets.v1',JSON.stringify([{id:'one',quantity:5}])],['argus.locale.v1','"ja"']]);
+global.localStorage={getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)};
+(async()=>{const data=Object.fromEntries([...values].map(([k,v])=>[k,JSON.parse(v)]));const receipt={snapshotId:'a'.repeat(64),contractVersion:2,dataHash:await api.digest(JSON.stringify(data)),savedAt:Date.now()/1000,exportedAt:new Date().toISOString()};
+values.set(api.OWNER_VAULT_RECEIPT,JSON.stringify(receipt));assert.equal((await api.ownerVaultProtection()).current,true);
+values.set('argus.assets.v1',JSON.stringify([{id:'one',quantity:6}]));assert.equal((await api.ownerVaultProtection()).current,false);
+values.set(api.OWNER_VAULT_RECEIPT,JSON.stringify({...receipt,contractVersion:1}));assert.equal(await api.ownerVaultProtection(),null);
+console.log('Owner vault protection: exact current content, changed holdings and old contract distinguished PASS');})().catch(e=>{console.error(e);process.exit(1)});

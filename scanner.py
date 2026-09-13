@@ -126,6 +126,7 @@ import jp_market_positioning
 import argus_analysis_history
 import argus_owner_dialogue_api
 import argus_web_push
+import argus_owner_vault
 import argus_owner_dialogue_recovery
 import argus_owner_dialogue_backup
 import argus_subject_materials
@@ -17805,12 +17806,17 @@ def _web_push_tick():
         add_log(f"web-push tick unavailable: {type(exc).__name__}")
 
 
+_OWNER_VAULT = argus_owner_vault.VaultService(
+    path=lambda: os.path.join(_DURABILITY_PATHS["root"], "owner_vault_uploads.sqlite3") if _cost_policy_durable_enabled() else None,
+    remote=lambda: argus_owner_vault.PrivateStore(repo=os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", ""),
+        headers=_gh_private_headers(), http=requests.request))
+
 argus_owner_dialogue_api.register(app, authorize=_require_owner_sync,
     storage_path=_owner_dialogue_path, market_brief=lambda: _MARKET_BRIEF.get("data"),
     generate=_openai_prose, now=lambda: datetime.now(pytz.utc).isoformat(),
     recovery_status=_OWNER_DIALOGUE_RECOVERY.status, recovery_trigger=_OWNER_DIALOGUE_RECOVERY.tick,
     subject_comparison=_owner_dialogue_subject_comparison, subject_materials=_owner_dialogue_subject_materials,
-    usage_snapshot=_ai_usage_snapshot, push_service=_WEB_PUSH)
+    usage_snapshot=_ai_usage_snapshot, push_service=_WEB_PUSH, vault_service=_OWNER_VAULT)
 
 
 @app.route("/api/argus/market-brief")
