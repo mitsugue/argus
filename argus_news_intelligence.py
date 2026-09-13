@@ -1302,6 +1302,17 @@ def project_owner_event(event: Mapping[str, Any]) -> Dict[str, Any]:
             and projected.get("whyJa") == projected.get("japanImpactJa"):
         projected["whyJa"] = _JAPAN_TRANSMISSION_JA["IRAN"]
         projected["japanImpactJa"] = _JAPAN_TRANSMISSION_JA["IRAN"]
+    # A sector transmission template is background, not an interpretation of
+    # this article. Keep the stored record and risk calculations untouched.
+    general = _JAPAN_TRANSMISSION_JA.get(str(projected.get("eventType") or ""))
+    if general:
+        projected["generalTransmissionJa"] = general
+        if projected.get("japanImpactJa") == general:
+            projected["japanImpactJa"] = None
+        if (projected.get("whyJa") == general
+                and projected.get("analysisState") in (
+                    "AI_ANALYSIS_UNAVAILABLE", "AI_SCHEMA_REJECTED", "DETERMINISTIC_ONLY")):
+            projected["whyJa"] = "この記事のAI解析が完了していないため、影響の方向はまだ判断していません。"
     original = str(projected.get("titleOriginal") or projected.get("headlineJa") or "")
     current_headline = str(projected.get("headlineJa") or "")
     if re.match(r"^(?:メール(?:の見出し)?|見出し|件名|抜粋)(?:は|では|には|によると)", current_headline):
