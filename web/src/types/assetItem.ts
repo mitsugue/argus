@@ -28,7 +28,7 @@ export interface AssetItem {
   targetAllocation?: number;
   currentAllocation?: number;
   // Holdings (v10.0 Portfolio Exposure). Device-local only (localStorage) —
-  // Sent to the private owner dialogue only when the owner submits a question.
+  // Used by the authenticated private overview and owner-submitted dialogue.
   quantity?: number;   // shares / coins held
   avgCost?: number;    // average acquisition price (native currency)
   memo?: string;

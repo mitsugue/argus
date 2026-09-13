@@ -255,6 +255,7 @@ def prompt(context):
         'JSONのみ。view/reasons/changes/impact/next/invalidationの6項目、それぞれtextJa(240字以内),'
         'kind(FACT/INFERENCE/UNKNOWN),evidenceIds(参照IDの配列)。数値はその項目が参照する根拠に含まれるものだけ。'
         '前回比較がなければchangesはUNKNOWN。保有申告がなければimpactはUNKNOWN。'
+        'previousViewは保存した当時の説明です。現在の事実や正解ではありません。前回の説明を維持・変更する理由は現在と前回の根拠から述べ、過去の説明を書き換えないでください。'
         '\n入力データ:\n'+json.dumps(context,ensure_ascii=False,separators=(',',':'))
         + '\n' + generation_instruction(dialogue_inventory(context)))
 

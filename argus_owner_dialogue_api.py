@@ -18,7 +18,13 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         return recovery_status() if recovery_status else {'configured':False,'generationReady':True,'remoteRecoveryVerified':False}
 
     def decorate(item):
-        return {**item,'remoteBackup':remote_status()} if item else item
+        if not item: return item
+        result = {**item, 'remoteBackup': remote_status()}
+        context = item['context']
+        if context.get('intent') == 'SUBJECT_OVERVIEW':
+            result['previousOverview'] = store.latest_subject_overview(storage_path(), boot_id,
+                **context['subject'], horizon=context['horizonSessions'], before=item['sequence'])
+        return result
 
     def changed():
         if recovery_trigger:
@@ -91,11 +97,19 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         path = storage_path()
         if not path: return response({'error':'durable_storage_unavailable'},503)
         action=body.get('action')
+        previous=None
         try:
             if action=='history':
                 page=store.history(path,boot_id,before=body.get('before'))
                 state=remote_status()
                 return response({**page,'items':[{**item,'remoteBackup':state} for item in page['items']],'remoteBackup':state})
+            overview = action == 'overview'
+            if overview:
+                fields = {'action', 'ownerToken', 'baseContextId', 'symbol', 'market', 'horizon', 'owner'}
+                if set(body) - fields: return response({'error': 'unsupported_request_fields'}, 400)
+                body = {**body, 'question': '今の市場とこの銘柄をどう捉え、前回から何が変わり、登録した保有・監視情報にどう影響するか。次の確認と見方を変える条件まで説明してください。'}
+                stable = {k: v for k, v in body.items() if k not in ('action', 'ownerToken')}
+                body['requestId'] = str(uuid.uuid5(uuid.NAMESPACE_URL, 'argus:subject-overview:' + dialogue.digest(stable)))
             identity=store.request_id(body.get('requestId'))
             if action=='save':
                 with lock:
@@ -113,7 +127,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                 with lock: unsaved=deepcopy(save_failures.get(identity))
                 if unsaved and item: item.update(status='SAVE_FAILED',result=unsaved,persistenceStatus='SAVE_FAILED')
                 return response(decorate(item) or {'error':'not_found'},200 if item else 404)
-            if action!='ask': return response({'error':'unknown_action'},400)
+            if action!='ask' and not overview: return response({'error':'unknown_action'},400)
             fields={'action','ownerToken','requestId','baseContextId','symbol','market','horizon','question','owner','hypothesis','previousRequestId'}
             if set(body)-fields: return response({'error':'unsupported_request_fields'},400)
             inputs={k:v for k,v in body.items() if k not in ('ownerToken','requestId','action')}
@@ -123,14 +137,16 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                 if old:
                     if old['inputHash']!=input_hash: return response({'error':'dialogue_request_conflict'},409)
                     return response(decorate(old))
+                previous = (store.latest_subject_overview(path, boot_id, symbol=body.get('symbol'),
+                    market=body.get('market'), horizon=body.get('horizon')) if overview else
+                    store.read(path, body['previousRequestId'], boot_id) if body.get('previousRequestId') else None)
                 if not remote_status()['generationReady']:
                     changed()
-                    return response({'error':'dialogue_recovery_pending','remoteBackup':remote_status()},503)
+                    return response({'error':'dialogue_recovery_pending','remoteBackup':remote_status(),'previousOverview':previous if overview else None},503)
                 current=deepcopy(market_brief() or {})
                 context_id=(current.get('unifiedContext') or {}).get('contextId')
                 if not context_id or body.get('baseContextId')!=context_id:
-                    return response({'error':'market_context_changed','currentContextId':context_id},409)
-                previous=store.read(path,body['previousRequestId'],boot_id) if body.get('previousRequestId') else None
+                    return response({'error':'market_context_changed','currentContextId':context_id,'previousOverview':previous if overview else None},409)
                 if body.get('previousRequestId') and not previous: return response({'error':'previous_not_found'},404)
                 received_at=now()
                 comparison=subject_comparison(brief=current,symbol=body.get('symbol'),market=body.get('market'),
@@ -141,7 +157,19 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                     owner=body.get('owner'),previous=previous['context'] if previous else None,
                     hypothesis=body.get('hypothesis'),index_quote=dialogue.index_quote(current,body.get('horizon')),
                     subject_comparison=comparison,material_facts=materials)
+                if overview:
+                    context['intent'] = 'SUBJECT_OVERVIEW'
+                if (previous and (previous.get('result') or {}).get('answer')
+                        and previous['context'].get('subject') == context['subject']
+                        and previous['context'].get('horizonSessions') == context['horizonSessions']
+                        and not previous['context'].get('isHypotheticalConversation')):
+                    context['previousView'] = {'requestId': previous['requestId'],
+                        'contextId': previous['context']['contextId'],
+                        'completedAt': previous['result'].get('completedAt'),
+                        'sections': deepcopy(previous['result']['answer']['sections'])}
                 context['historyStatus']='LOCAL_DURABLE'
+                if len(json.dumps(context, ensure_ascii=False).encode()) > 65536:
+                    raise ValueError('private_context_size_bound')
                 context['contextId']=dialogue.digest({k:v for k,v in context.items() if k!='contextId'})
                 store.initialize(path)
                 created=store.submit(path,identity=identity,input_hash=input_hash,boot_id=boot_id,context=context)
@@ -156,7 +184,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         except ValueError as exc:
             reason=str(exc)
             known={'dialogue_busy','dialogue_request_conflict'}
-            return response({'error':reason if reason in known else 'dialogue_input_invalid'},409 if reason in known else 400)
+            return response({'error':reason if reason in known else 'dialogue_input_invalid','previousOverview':previous if action=='overview' else None},409 if reason in known else 400)
         except Exception:
             return response({'error':'dialogue_storage_unavailable'},503)
 

@@ -71,7 +71,18 @@ def _completion(raw,context):
     dialogue.instant(value['completedAt'])
     if value['status']=='SUCCEEDED':
         answer=value.get('answer') or {}
-        if dialogue.validate_answer(answer.get('sections'),context)!=answer:raise ValueError('dialogue_backup_answer_invalid')
+        supplied = dict(answer.get('sections') or {})
+        presentation_status = answer.get('presentationStatus')
+        if presentation_status == 'GENERATED':
+            plan = answer.get('presentationPlan') or {}
+            supplied['presentation'] = {key: plan.get(key) for key in ('inventoryId', 'intentJa', 'elements')}
+        rebuilt = dialogue.validate_answer(supplied, context)
+        if rebuilt is not None and presentation_status in (None, 'INVALID_RESPONSE'):
+            # Older accepted prose can lack editorial intent, or explicitly
+            # record an invalid intent. Preserve that state, not an invented plan.
+            if presentation_status is None: rebuilt.pop('presentationStatus', None)
+            else: rebuilt['presentationStatus'] = presentation_status
+        if rebuilt != answer: raise ValueError('dialogue_backup_answer_invalid')
     elif value.get('answer') is not None:raise ValueError('dialogue_backup_unaccepted_answer')
     return value
 
