@@ -14731,12 +14731,29 @@ def _openai_prose_call(client, model, sys_prompt, user, *, purpose="prose"):
         resp = _ai_usage_provider_call('openai', purpose, model, lambda: client.responses.create(model=model, instructions=sys_prompt,
                                         input=user, timeout=60, store=False), attempt=1, source_ref='_openai_prose_call')
         return resp, getattr(resp, "output_text", None)
-    except Exception:
+    except Exception as exc:
+        # A second endpoint cannot restore provider credits or rate capacity.
+        if getattr(exc, "status_code", None) == 429:
+            raise
         resp = _ai_usage_provider_call('openai', purpose, model, lambda: client.chat.completions.create(
             model=model,
             messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": user}],
             response_format={"type": "json_object"}, timeout=60), attempt=2, source_ref='_openai_prose_call')
         return resp, resp.choices[0].message.content
+
+
+def _openai_failure_code(exc):
+    """Only known provider codes may enter public diagnostics; never raw errors."""
+    body = getattr(exc, "body", None)
+    if not isinstance(body, dict):
+        return None
+    detail = body.get("error", body)
+    code = detail.get("code") if isinstance(detail, dict) else None
+    return code if isinstance(code, str) and code in {
+        "credit_balance_exhausted", "organization_spend_limit_exceeded",
+        "project_spend_limit_exceeded", "organization_usage_limit_exceeded",
+        "insufficient_quota", "rate_limit_exceeded", "slow_down",
+    } else None
 
 
 def _openai_model_unavailable(exc):
@@ -14778,7 +14795,7 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
     tokens, cost and completion time for the saved record."""
     now_iso = _ai_now_iso()
     call_status = {"at": now_iso, "purpose": purpose, "outcome": None,
-                   "reason": None, "errorClass": None,
+                   "reason": None, "errorClass": None, "errorCode": None,
                    "requestedModel": model or _OPENAI_MODEL, "returnedModel": None}
 
     def publish(**changes):
@@ -14861,7 +14878,7 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
         _cost_policy_settle(reservation, ok=False)
         add_log(f"[caos] event prose failed: {type(e).__name__}")
         publish(outcome="error", reason="model_call_failed",
-                errorClass=type(e).__name__)
+                errorClass=type(e).__name__, errorCode=_openai_failure_code(e))
         return None
 
 
@@ -17706,7 +17723,7 @@ def _market_brief_ai_polish(brief):
         brief["unifiedStatus"] = "INVALID_RESPONSE" if raw else "UNAVAILABLE"
     brief["aiDiagnostics"] = {key: diag.get(key) for key in (
         "outcome", "reason", "requestedModel", "returnedModel", "completedAt",
-        "inputTokens", "outputTokens", "estUsd")}
+        "inputTokens", "outputTokens", "estUsd", "errorCode")}
     brief["aiDiagnostics"]["attempts"] = attempts
     brief["aiDiagnostics"]["totalEstUsd"] = sum(float((a["provider"].get("estUsd") or 0)) for a in attempts)
     if brief.get("aiText"):
