@@ -260,6 +260,10 @@ def _warm_index_charts(host: Any, warm: Dict[str, Any], sleeper: Callable[[float
                 break
             sleeper(1.0)
     warm["indexCharts"] = result
+    feature_refresh = getattr(host, "_jp_market_feature_history_warm", None)
+    if callable(feature_refresh):
+        feature_refresh()
+        warm["marketFeatures"] = dict(getattr(host, "_JP_MARKET_FEATURE_HISTORY", {})).get("status")
 
 
 def _drain_translations(host: Any, warm: Dict[str, Any], environ: Dict[str, str]) -> None:

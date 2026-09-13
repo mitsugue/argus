@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any,Dict,Mapping,Optional
 
-UNIFIED_FACT_LIMIT = 24
+UNIFIED_FACT_LIMIT = 64
 
 
 _FORBIDDEN_BRIEF_PATTERNS = (
@@ -80,4 +80,3 @@ def validate_unified_ai(value: Any, context: Mapping[str, Any], *, diagnostic=No
             "sections": sections, "actionAuthority": False,
             "ownerContextAvailable": context["ownerContextAvailable"],
             "historyStatus": context["historyStatus"]}
-
