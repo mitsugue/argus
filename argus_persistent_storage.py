@@ -68,14 +68,28 @@ def _canonical_chunks(value: Any):
         remaining[0] -= 1
         if remaining[0] < 0:
             return False
-        if isinstance(current, str):
+        kind = type(current)
+        if kind is str:
             remaining[1] -= len(current)
             return remaining[1] >= 0
-        if isinstance(current, dict):
-            return all(fits(key, remaining) and fits(item, remaining)
-                       for key, item in current.items())
-        if isinstance(current, (list, tuple)):
-            return all(fits(item, remaining) for item in current)
+        if kind is dict:
+            for key, item in current.items():
+                if not fits(key, remaining) or not fits(item, remaining):
+                    return False
+        elif kind in (list, tuple):
+            for item in current:
+                if not fits(item, remaining):
+                    return False
+        elif kind not in (int, float, bool, type(None)):
+            # Keep the previous semantics for subclasses and unsupported values.
+            if isinstance(current, str):
+                remaining[1] -= len(current)
+                return remaining[1] >= 0
+            if isinstance(current, dict):
+                return all(fits(key, remaining) and fits(item, remaining)
+                           for key, item in current.items())
+            if isinstance(current, (list, tuple)):
+                return all(fits(item, remaining) for item in current)
         return True
 
     def parts(current):
@@ -127,13 +141,16 @@ def _validate_streamable_value(value: Any) -> None:
     active = set()
 
     def visit(current: Any) -> None:
-        if isinstance(current, str):
+        kind = type(current)
+        if kind in (int, float, bool, type(None)):
+            return
+        if kind is str or isinstance(current, str):
             if len(current) > MAXIMUM_JSON_SCALAR_CHARS:
                 raise PersistentStorageError(
                     "checkpoint_json_scalar_too_large",
                     details={"maximumCharacters": MAXIMUM_JSON_SCALAR_CHARS})
             return
-        if isinstance(current, Mapping):
+        if kind is dict or (kind is not list and kind is not tuple and isinstance(current, Mapping)):
             identity = id(current)
             if identity in active:
                 raise PersistentStorageError("checkpoint_json_cycle_detected")
@@ -144,7 +161,7 @@ def _validate_streamable_value(value: Any) -> None:
                     visit(item)
             finally:
                 active.discard(identity)
-        elif isinstance(current, (list, tuple)):
+        elif kind in (list, tuple) or isinstance(current, (list, tuple)):
             identity = id(current)
             if identity in active:
                 raise PersistentStorageError("checkpoint_json_cycle_detected")
