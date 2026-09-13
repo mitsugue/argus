@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 NEWS_EVENT_SCHEMA = "argus-news-event-v1"
 # v5: explicit policy-rate decisions remain material without external AI.
 # Existing source, freshness and market-confirmation boundaries still apply.
-NEWS_POLICY_VERSION = "news-policy-v5"
+NEWS_POLICY_VERSION = "news-policy-v6"
 SEVERITIES = ("INFO", "WATCH", "HIGH", "CRITICAL")
 
 # ── Source families (§2/§9) — the six owner-subscribed sources only ────────
@@ -257,9 +257,14 @@ def classify_event(subject: str, excerpt: str = "") -> Dict[str, Any]:
     instructions). Returns primary family, all matched families, and generic
     theme tags (never owner-specific)."""
     haystack = _lower(subject) + "\n" + _lower(excerpt)[:2000]
+    # Digital attacks alone do not establish an armed conflict. Independent
+    # military cues in the same article still participate in classification.
+    military_text = re.sub(r"(?:サイバー|サイバ|ハッキング|ddos|dos)[・\s-]*攻撃|cyber[\s-]*attack", "", haystack)
     matched = [family for family, phrases in _FAMILY_RULES
-               if any(phrase in haystack for phrase in phrases)]
-    low_value = any(hint in haystack for hint in _LOW_VALUE_HINTS)
+               if any(phrase in (military_text if family == "WAR_ESCALATION" else haystack)
+                      for phrase in phrases)]
+    # A report quoting an interview is not itself an interview/digest section.
+    low_value = any(hint in _lower(subject) for hint in _LOW_VALUE_HINTS)
     if not matched:
         primary = "LOW_RELEVANCE" if low_value else "OTHER_MARKET_RELEVANT"
     else:
@@ -1289,6 +1294,7 @@ def project_owner_event(event: Mapping[str, Any]) -> Dict[str, Any]:
     projected = dict(event)
     # Mailbox references are internal retry inputs, not public news metadata.
     projected.pop("analysisSourceMessageId", None)
+    projected.pop("classificationPreviousRevision", None)
     # Re-project only deterministic fallback text; retain actual AI explanations.
     if projected.get("eventType") == "IRAN" and not projected.get("facts") \
             and projected.get("analysisState") in (
