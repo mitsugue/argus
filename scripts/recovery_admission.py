@@ -90,7 +90,7 @@ EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256 = (
 # certificate proves only the Recovery half; the existing Product certificate
 # is independently mandatory before merge and before any Pages deployment.
 EXPECTED_PAIRED_PRODUCT_DIFF_SHA256: str | None = (
-    "03dc4450073952b65989ede7fd9d3022b44a49cf4d2144fa69e113f9054becf1"
+    "62b2e1b15f04302169c7ce92c86aaa813c115954d29a4ab357a6f8e83cbbfa69"
 )
 PAIRED_CLASSIFICATION = "PRODUCT_AND_RECOVERY"
 
