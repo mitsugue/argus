@@ -698,7 +698,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
 
   return (
     <PageShell
-      title={tEn('page.today')}
+      title="Today"
       subtitle={<span>{formatDate(judgment.date)}</span>}
       className="page--today"
     >

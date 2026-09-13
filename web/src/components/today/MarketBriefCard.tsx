@@ -39,7 +39,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
       {updateState}
       <p className="at-unified-brief__view">{unified.sections.view.textJa}</p>
       <div className="at-brief__rows">{(Object.keys(labels) as Array<keyof typeof labels>).filter(key => key !== 'view').map(key =>
-        <div key={key}><b>{labels[key]}</b><span>{unified.sections[key].textJa}
+        <div key={key} data-brief-section={key}><b>{labels[key]}</b><span>{unified.sections[key].textJa}
           <small className="at-unified-brief__kind">{kinds[unified.sections[key].kind]}</small></span></div>)}</div>
       <details><summary>根拠と説明の状態を見る</summary>
         <p>要求モデル {brief.aiDiagnostics?.requestedModel ?? '未確認'} · 応答モデル {brief.aiDiagnostics?.returnedModel ?? '未確認'}</p>
@@ -81,14 +81,17 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
           : null;
   return <div className="at-brief" data-argus-contract="market-brief-v1"
     aria-label="今の市場（売買権限なし）">
+    <small>ARGUSの今日の見立て</small>
+    <p className="at-brief__unavailable-title">{brief.generationWorker?.status === 'RUNNING' ? '新しい見立てを確認中です。' : '見立ての更新が止まっています。'}</p>
     {updateState}
     {brief.unifiedStatus && brief.unifiedStatus !== 'GENERATED' && <p role="status">
       {providerMessage ?? (brief.generationWorker?.status === 'RUNNING' ? '統合AIが見立てを更新しています。'
         : ['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(brief.generationWorker?.status ?? '')
           ? '統合AIの更新を完了できませんでした。次の定期処理で再試行します。'
           : '統合AIの説明は更新待ちです。')}取得済み情報の要約を表示しています。
-      {brief.lastSuccessfulAiAt && <small> 最終成功 {brief.lastSuccessfulAiAt}</small>}
+      {brief.lastSuccessfulAiAt && <small> 最終成功 {new Date(brief.lastSuccessfulAiAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</small>}
     </p>}
+    <details className="at-brief__fallback"><summary>取得済みの情報を見る</summary>
     <small>今の市場 — 取得済み情報の要約{brief.aiText ? '（AI圧縮・参考）' : ''}</small>
     <div className="at-brief__rows">
       <div><b>今</b><span>{now}</span></div>
@@ -101,6 +104,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
       <span>次イベント <b>{brief.chips.nextEvent}</b></span>
       <span>主リスク <b>{brief.chips.mainRisk}</b></span>
     </div>
+    </details>
     <MarketAnalysisHistory key="saved-history" />
   </div>;
 };

@@ -35,6 +35,8 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'web/src/components/today/ReadingHierarchy.css': 'e8a61092d0b5c846a3706c9a1e53424f68f5e0b4',
+    'web/src/components/AppShell.tsx': '5a438f0fd9d20b3b5eca9399f6c314993421a96b',
     'web/src/routes/BackupPage.tsx': '76ef9bb18e9e440afafaad5f9e290c925fc7ac61',
     'web/src/navigation.ts': 'af45a759ac501412f35904890c355f8e71e8736b',
     'web/src/lib/webPush.ts': '4747406da3274991a7fb0e6eccfd041377f45a6f',
@@ -96,8 +98,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/shared-market-context.test.cjs': '6ba958105e283011e25af76c3ce538e14833c75b',
     'web/src/components/assetDesk/AssetMarketContext.tsx': '960f5fe351b8e94a42097806e3b6717b011d52ea',
     'web/src/components/dialogue/OwnerDialogue.css': '696bed395bce7b22fae7c7ddc2797f5b24b0a1dd',
-    'web/src/components/dialogue/OwnerDialogue.tsx': '5d61aed99bf6fe10359d47bb0937ea7d24eaf348',
-    'web/src/components/today/MarketBriefCard.tsx': '6ff4fdabe2e4cca182dfaa65cacb6b695f1143ec',
+    'web/src/components/dialogue/OwnerDialogue.tsx': 'c1681a21f01cd79e030381797fbde68cd9e8fe25',
+    'web/src/components/today/MarketBriefCard.tsx': 'b4df9c9e33540ab604d31a2973678243b3134886',
     'web/src/components/today/MarketInternalsCard.tsx': '500b81f9fe26073262c4175d9f7c1fbc1fa9bfde',
     'web/src/components/today/SharedMarketContext.tsx': '0d126ec6d92e76957a4b58ef532e9b99b85b6f13',
     'web/src/lib/marketInternals.ts': '0f8adf278b3dba1c4e55e6963ad450a1a8f66b0d',

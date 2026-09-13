@@ -778,3 +778,26 @@ def test_analysis_retry_recovers_skipped_articles_without_rewriting_freshness():
                       {'sourceReceivedAt': '2026-09-01T00:00:00Z'}):
         assert ni.analysis_retry_priority(dict(row, **overrides), now, full_analysis=True)[0] == 0
     assert row == original
+
+
+def test_headline_uses_article_event_instead_of_extraction_narration():
+    import argus_news_intelligence as news
+    subject = 'ECB、政策金利の引き上げを決定'
+    result = news.summarize_headline_ja(subject=subject, excerpt='',
+        taxonomy={'eventType': 'ECB'}, source='nikkei',
+        ai_analysis={'facts': ['メールの見出しはECBが政策金利を引き上げると伝えている']})
+    assert result == subject
+
+
+def test_saved_news_copy_reprojection_preserves_analysis_and_risk():
+    import argus_news_intelligence as news
+    original = {'titleOriginal': 'ECB、政策金利の引き上げを決定',
+        'headlineJa': 'メールの見出しはECBが政策金利を引き上げると伝えている',
+        'eventType': 'ECB', 'sourceFamily': 'nikkei', 'facts': ['ECBの利上げが報じられた'],
+        'severity': 'HIGH', 'alertEligible': True, 'whyJa': '金利上昇が株式の評価に影響する可能性',
+        'analysisState': 'AI_ANALYZED', 'eventId': 'article-copy-regression'}
+    projected = news.project_owner_event(original)
+    assert projected['headlineJa'] == original['titleOriginal']
+    for key in ('facts', 'severity', 'alertEligible', 'whyJa', 'analysisState', 'eventId'):
+        assert projected[key] == original[key]
+    assert original['headlineJa'].startswith('メールの見出しは')
