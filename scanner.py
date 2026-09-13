@@ -17695,9 +17695,9 @@ def _market_brief_ai_polish(brief):
         "changes以外でpreviousFactsを現在の事実として引用しない。以前の観測がない場合はchangesをUNKNOWNにする。"
         "保有情報はこの公開文脈に含まれないのでimpactはUNKNOWNとし、保有銘柄を推測しない。"
         "view、next、invalidationは推論または不明。警戒と回復を点灯数で強気度へ合算しない。"
-        "STRICT JSONで6項目とpresentationを返してください。\n"
-        + json.dumps(context, ensure_ascii=False, separators=(",", ":"))
-        + "\n" + argus_presentation_intent.generation_instruction(presentation_catalog))
+        "STRICT JSONで6項目とpresentationを返してください。"
+        + argus_presentation_intent.generation_instruction(presentation_catalog).replace("\n", " ")
+        + "\n" + json.dumps(context, ensure_ascii=False, separators=(",", ":")))
     diag = {}
     raw = _openai_prose(user, max_out=2600,
                        system=argus_presentation_intent.VOICE,
@@ -17776,7 +17776,7 @@ def _market_brief_refresh(allow_ai=True):
     same = (facts_hash == _MARKET_BRIEF.get("aiFactsHash")
             and previous.get("unifiedStatus") == "GENERATED"
             and previous.get("unifiedSummary")
-            and previous.get("presentationStatus") == "GENERATED")
+            and (not allow_ai or previous.get("presentationStatus") == "GENERATED"))
     brief["unifiedContext"] = (previous.get("unifiedContext") if same else None) or \
         argus_market_brief.unified_context(brief, previous)
     brief["unifiedSummary"] = None
