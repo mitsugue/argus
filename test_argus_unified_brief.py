@@ -253,7 +253,14 @@ def test_changed_engine_inputs_regenerate_even_when_headline_is_unchanged(monkey
     def model(user, **kwargs):
         context = json.loads(user.split('\n', 1)[1]); calls.append(context)
         kwargs['diagnostic'].update(outcome='ok', completedAt='2026-09-13T00:00:00Z', returnedModel='gpt-6-astra')
-        return response(context)
+        result = response(context)
+        catalog = scanner.argus_presentation_intent.brief_inventory(context, {})
+        result['presentation'] = {'inventoryId': catalog['inventoryId'], 'intentJa': '変化を伝えます。',
+            'elements': [{'id': row['id'], 'purposeJa': '根拠を確認します。',
+                'placement': 'lead' if row['urgent'] else 'support',
+                'emphasis': 'primary' if index == 0 else 'normal'}
+                for index, row in enumerate(catalog['elements'])]}
+        return result
     monkeypatch.setattr(scanner, '_openai_prose', model)
     first = scanner._market_brief_refresh(allow_ai=True)
     calculation['informationCutoff'] = '2026-09-13T00:00:00Z'

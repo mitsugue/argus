@@ -1,0 +1,21 @@
+.argus-editorial{color:#dfe8ed;padding:8px 0 20px;max-width:980px;margin:auto}
+.argus-editorial__edition{display:flex;justify-content:space-between;gap:16px;color:#92bbce;font-size:13px;letter-spacing:.04em}
+.argus-editorial__edition time,.argus-editorial__period{color:#8e9ba5;font-size:12px}
+.argus-editorial__period{margin:10px 0 30px}
+.argus-editorial__element{margin:0 0 24px;min-width:0}
+.argus-editorial__element h2{font-weight:500;font-size:13px;color:#a7c5d3;margin:0 0 10px;letter-spacing:.04em}
+.argus-editorial__text{font-size:15px;line-height:1.9;margin:0;text-wrap:pretty;overflow-wrap:anywhere;color:#c4cdd4}
+.argus-editorial__element.is-primary{margin-top:14px;margin-bottom:30px}
+.argus-editorial__element.is-primary>.argus-editorial__text{font-size:clamp(23px,3.1vw,32px);font-weight:500;line-height:1.7;letter-spacing:.025em;color:#e3ebef;max-width:28em}
+.argus-editorial__element.is-quiet>.argus-editorial__text{font-size:13px;color:#a1aeb8}
+.argus-editorial__element.element-changes{border-left:2px solid #93c6df;padding:2px 0 3px 17px}
+.argus-editorial__element.element-changes h2{color:#c6d7de}
+.argus-editorial__element.placement-lead{margin-bottom:30px}
+.argus-editorial__element.element-nikkei-comparison{margin-top:32px}
+.argus-editorial__element.element-nikkei-comparison .jp-comparison{background:#141e28;border-color:#2b3b47;border-radius:18px}
+.argus-editorial__uncertain{display:block;color:#8e9ba5;font-size:11px;margin-top:5px}
+.argus-editorial details summary{cursor:pointer;min-height:44px;align-content:center;color:#9aadb9;font-size:13px}
+.argus-editorial__evidence{border-top:1px solid #25323c;padding-top:10px;margin-top:24px;font-size:13px;line-height:1.8;color:#a3b0ba}
+.argus-editorial__evidence h3{font-size:13px;color:#bccbd4}
+.argus-editorial__evidence small{display:block;font-size:11px;color:#7f919e}
+@media(max-width:480px){.argus-editorial__edition{font-size:12px}.argus-editorial__period{margin-bottom:24px}.argus-editorial__text{font-size:14px;line-height:1.85}.argus-editorial__element{margin-bottom:22px}.argus-editorial__element.is-primary>.argus-editorial__text{font-size:24px;line-height:1.7}.argus-editorial__element.element-changes{padding-left:14px}}
