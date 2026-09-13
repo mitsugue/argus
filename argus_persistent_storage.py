@@ -61,8 +61,58 @@ def _canonical_chunks(value: Any):
     _validate_streamable_value(value)
     encoder = json.JSONEncoder(
         ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    for text in encoder.iterencode(value):
-        encoded = text.encode("utf-8")
+    # Encode bounded subtrees through the standard library's C encoder. The
+    # previous deep iterencode chain crossed Python generators for every
+    # punctuation token, once again for each integrity verification.
+    def fits(current, remaining):
+        remaining[0] -= 1
+        if remaining[0] < 0:
+            return False
+        if isinstance(current, str):
+            remaining[1] -= len(current)
+            return remaining[1] >= 0
+        if isinstance(current, dict):
+            return all(fits(key, remaining) and fits(item, remaining)
+                       for key, item in current.items())
+        if isinstance(current, (list, tuple)):
+            return all(fits(item, remaining) for item in current)
+        return True
+
+    def parts(current):
+        if fits(current, [1024, 32 * 1024]):
+            yield encoder.encode(current)
+        elif type(current) is dict and all(isinstance(key, str) for key in current):
+            yield "{"
+            for index, key in enumerate(sorted(current)):
+                if index:
+                    yield ","
+                yield encoder.encode(key)
+                yield ":"
+                yield from parts(current[key])
+            yield "}"
+        elif type(current) in (list, tuple):
+            yield "["
+            for index, item in enumerate(current):
+                if index:
+                    yield ","
+                yield from parts(item)
+            yield "]"
+        else:
+            yield from encoder.iterencode(current)
+
+    pending = []
+    pending_chars = 0
+    for text in parts(value):
+        pending.append(text)
+        pending_chars += len(text)
+        if pending_chars >= 64 * 1024:
+            encoded = "".join(pending).encode("utf-8")
+            pending.clear()
+            pending_chars = 0
+            for offset in range(0, len(encoded), JSON_STREAM_CHUNK_BYTES):
+                yield encoded[offset:offset + JSON_STREAM_CHUNK_BYTES]
+    if pending:
+        encoded = "".join(pending).encode("utf-8")
         for offset in range(0, len(encoded), JSON_STREAM_CHUNK_BYTES):
             yield encoded[offset:offset + JSON_STREAM_CHUNK_BYTES]
 
