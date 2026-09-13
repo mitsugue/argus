@@ -1,5 +1,7 @@
 import { OwnerDialogue } from '../dialogue/OwnerDialogue';
 import { MarketBriefCard } from './MarketBriefCard';
+import { useMarketBrief } from '../../hooks/useMarketBrief';
+import { editorialEdition } from '../../lib/presentationIntent';
 import React from 'react';
 import { MarginDynamicsCard } from './MarginDynamicsCard';
 import { SharedMarketContext } from './SharedMarketContext';
@@ -576,6 +578,9 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   // from the real market-view projection — the seven-signal system the owner
   // reads first.  The SDA Seven Sign level stays as a secondary line.
   const decisionEvidence = useDecisionEvidence();
+  const { brief: editorialBrief } = useMarketBrief();
+  const editorialScope = view.selectedMarket === 'JP' && selectedSymbol === '1321' && horizon === 5;
+  const editorialActive = editorialScope && !!editorialEdition(editorialBrief);
   const topSignals = marketSignalsView(decisionEvidence.marketView?.projection ?? null);
   // v13.5.63 (GPT review item 1): the seven signals are Japanese inputs.
   const usSelected = view.selectedMarket === 'US';
@@ -678,7 +683,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
 
     <section className="at-view-hero" aria-label="今日の見立て">
       <MarketBriefCard signals={topSignals && !usSelected ? { activeCount: topSignals.activeCount, total: topSignals.total } : null}
-        cutoff={decisionEvidence.marketView?.informationCutoff ?? null} market={view.selectedMarket} />
+        cutoff={decisionEvidence.marketView?.informationCutoff ?? null} market={view.selectedMarket} editorial={editorialScope} />
     </section>
 
     <article className={`at-decision at-primary-hero card is-${view.finalAction.toLowerCase()}`}
@@ -817,10 +822,10 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       </details>
     </article>
 
-    {view.selectedMarket === 'JP' && selectedSymbol === '1321'
+    {view.selectedMarket === 'JP' && selectedSymbol === '1321' && !editorialActive
       && <JapanMarketComparisonPanel horizon={horizon} />}
 
-    {view.selectedMarket === 'JP' && selectedSymbol === '1321' && <OwnerDialogue symbol="N225" market="JP" horizon={horizon} />}
+    {view.selectedMarket === 'JP' && selectedSymbol === '1321' && !editorialActive && <OwnerDialogue symbol="N225" market="JP" horizon={horizon} />}
 
     {view.holdingsReview.length > 0 && <section className="at-priorities card" aria-label="OWNER PRIORITIES">
       <div className="at-head"><b>自分の銘柄への影響</b><span>優先して確認</span></div>

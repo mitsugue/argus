@@ -125,13 +125,15 @@ def append(path, record):
     finally: conn.close()
 
 
-def read_record(path, record_id=None):
+def read_record(path, record_id=None, *, presentation_only=False):
     if record_id is not None and not re.fullmatch('[a-f0-9]{64}', str(record_id)):
         raise ValueError('invalid_analysis_record_id')
     conn = _connect(path, True)
     try:
         row = (conn.execute('SELECT record_id,body FROM views WHERE record_id=?', (record_id,)).fetchone()
-               if record_id else conn.execute('SELECT record_id,body FROM views ORDER BY julianday(recorded_at) DESC,sequence DESC LIMIT 1').fetchone())
+               if record_id else conn.execute('SELECT record_id,body FROM views '
+                   + ("WHERE json_extract(body,'$.brief.presentationStatus')='GENERATED' " if presentation_only else '')
+                   + 'ORDER BY julianday(recorded_at) DESC,sequence DESC LIMIT 1').fetchone())
         if not row: return None
         record = validate_record(json.loads(row[1]))
         if record['recordId'] != row[0]: raise ValueError('analysis_index_integrity_mismatch')

@@ -1,14 +1,16 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {useMarketBrief} from '../../hooks/useMarketBrief';
 import type {AssetItem} from '../../types/assetItem';
+import type {MarketBrief} from '../../lib/marketBrief';
 import './OwnerDialogue.css';
+import '../today/ArgusEditorialSurface.css';
 
 type Section={textJa:string;kind:string;evidenceIds:string[]};
 type Job={remoteBackup?:{status?:string;lastVerifiedAt?:string;pending?:boolean};requestId:string;status:string;persistenceStatus:string;remoteRecoveryVerified:boolean;
-  context:{question:string;subject:{symbol:string;market:string};horizonSessions:number;baseMarketContextId:string;
+  context:{contextId:string;question:string;subject:{symbol:string;market:string};horizonSessions:number;baseMarketContextId:string;
     facts:Array<{evidenceId:string;text:string;provenance?:{url?:string;sourceLabel?:string}}>;
     calculatedHypothesis?:{status:string;value?:number;unit?:string;noteJa?:string;comparisonPoints?:Array<{usdJpy:number;value:number}>}};
-  result?:{answer?:{sections:Record<string,Section>};provider?:{returnedModel?:string;completedAt?:string}}};
+  result?:{answer?:{sections:Record<string,Section>;presentationStatus?:string;presentationPlan?:MarketBrief['presentationPlan']};provider?:{returnedModel?:string;completedAt?:string}}};
 const labels:Record<string,string>={view:'今の見立て',reasons:'重要な理由',changes:'前回からの変化',impact:'自分への影響',next:'次に確認すること',invalidation:'見方を変える条件'};
 const states:Record<string,string>={RUNNING:'AIが根拠を確認しています。履歴は引き続き読めます。',INTERRUPTED:'再起動で処理が中断しました。課金の重複を避けるため、自動再実行はしていません。',REJECTED:'回答の根拠と表現を検証できなかったため、表示を保留しました。',UNAVAILABLE:'AIが応答を返せませんでした。取得済みの市場情報は利用できます。',FAILED:'回答処理に失敗しました。',SAVE_FAILED:'回答の保存に失敗しました。この端末表示だけでは復元を保証できません。'};
 const errors:Record<string,string>={unauthorized:'所有者の接続キーを確認してください。',owner_sync_unconfigured:'サーバーの所有者認証が未設定です。',durable_storage_unavailable:'履歴の保存先が利用できないため、質問を送信できません。',market_context_changed:'市場の根拠が更新されました。更新後に新しい質問として送信してください。',dialogue_recovery_pending:'保存した会話を復旧中、または遠隔保存の接続を確認できていません。二重実行を防ぐため、復旧確認後に質問できます。',dialogue_busy:'別の質問に回答中です。履歴から進行状況を確認できます。',dialogue_input_invalid:'入力した対象・期間・仮定を確認してください。'};
@@ -16,7 +18,20 @@ const readKey=()=>{try{return localStorage.getItem('argus.ownerSyncToken.v1')||'
 const validJob=(x:any):x is Job=>!!x&&typeof x.requestId==='string'&&typeof x.status==='string'&&x.context?.subject&&Array.isArray(x.context?.facts)
   &&typeof x.context?.question==='string'&&(!x.result?.answer||Object.keys(labels).every(k=>typeof x.result.answer.sections?.[k]?.textJa==='string'));
 
-export function OwnerDialogue({symbol,market,horizon,asset}:{symbol:string;market:'JP'|'US';horizon:number;asset?:AssetItem}) {
+function dialogueChoices(job: Job | null) {
+  const answer=job?.result?.answer;const plan=answer?.presentationPlan;
+  if(answer?.presentationStatus==='GENERATED'&&plan?.schemaVersion==='argus-presentation-intent-v1'
+    &&plan.actionAuthority===false&&plan.surface==='dialogue'&&plan.contextId===job?.context.contextId
+    &&plan.subject===job?.context.subject.symbol&&plan.horizonSessions===job?.context.horizonSessions
+    &&Array.isArray(plan.elements)&&plan.elements.length===6&&new Set(plan.elements.map(row=>row?.id)).size===6
+    &&plan.elements.filter(row=>row?.emphasis==='primary').length===1
+    &&plan.elements.every(row=>row&&Object.hasOwn(labels,row.id)&&['lead','support','detail'].includes(row.placement)
+      &&['primary','normal','quiet'].includes(row.emphasis)&&!(['view','impact','invalidation'].includes(row.id)&&row.placement==='detail')))
+    return plan.elements;
+  return Object.keys(labels).map(id=>({id,placement:'support',emphasis:'normal',purposeJa:''}));
+}
+
+export function OwnerDialogue({symbol,market,horizon,asset,baseContextId}:{symbol:string;market:'JP'|'US';horizon:number;asset?:AssetItem;baseContextId?:string}) {
   const {brief,retry}=useMarketBrief(); const [token,setToken]=useState(readKey);
   const [connectionOpen,setConnectionOpen]=useState(false);
   const [question,setQuestion]=useState('');const [reason,setReason]=useState('');const [period,setPeriod]=useState('');
@@ -55,7 +70,7 @@ export function OwnerDialogue({symbol,market,horizon,asset}:{symbol:string;marke
         const owner=asset?{symbol,market,state:(asset.quantity??0)>0?'HELD':'WATCHING',
           ...((asset.quantity??0)>0?{quantity:asset.quantity,averageCost:asset.avgCost}:{}),
           ...(reason.trim()?{purchaseReason:reason.trim()}:{}),...(period.trim()?{holdingPeriod:period.trim()}:{}),reportedAt:new Date().toISOString()}:undefined;
-        pending.current={action:'ask',requestId:crypto.randomUUID(),baseContextId:brief?.unifiedContext?.contextId,
+        pending.current={action:'ask',requestId:crypto.randomUUID(),baseContextId:baseContextId ?? brief?.unifiedContext?.contextId,
           symbol,market,horizon,question:question.trim(),owner,
           ...(job?{previousRequestId:job.requestId}:{}),
           ...(fx?{hypothesis:{kind:'FX_TRANSLATION',usdJpy:Number(fx),yenIndexUnchanged:true}}:{})};
@@ -93,7 +108,13 @@ export function OwnerDialogue({symbol,market,horizon,asset}:{symbol:string;marke
     {job&&<article aria-live="polite"><h4>{job.context.question}</h4><p>{job.context.horizonSessions}営業日 · {job.context.subject.symbol}</p>
       {states[job.status]&&<p role="status">{states[job.status]}</p>}
       {job.status==='SAVE_FAILED'&&<button type="button" onClick={()=>void post({action:'save',requestId:job.requestId}).then(data=>{if(validJob(data))setJob(data);}).catch(()=>setError('保存を再試行できませんでした。'))}>AIを再実行せず保存を再試行</button>}
-      {answer&&Object.entries(labels).map(([key,label])=><div key={key}><strong>{label}</strong><p>{answer.sections[key].textJa}</p><small>{({FACT:'確認済みの事実',INFERENCE:'推論',UNKNOWN:'未確認'} as Record<string,string>)[answer.sections[key].kind]}</small></div>)}
+      {answer&&<div className="argus-editorial owner-dialogue__answer">{dialogueChoices(job).map(choice=>{
+        const content=<><p className="argus-editorial__text">{answer.sections[choice.id].textJa}</p>
+          {answer.sections[choice.id].kind==='UNKNOWN'&&<small>確認できていない範囲</small>}</>;
+        const className=`argus-editorial__element is-${choice.emphasis} placement-${choice.placement} element-${choice.id}`;
+        return choice.placement==='detail'?<details className={className} key={choice.id}><summary>{labels[choice.id]}</summary>{content}</details>
+          :<section className={className} key={choice.id}><h2>{labels[choice.id]}</h2>{content}</section>;
+      })}</div>}
       {job.context.calculatedHypothesis&&<p>{job.context.calculatedHypothesis.status==='AVAILABLE'?`仮定の計算: ${job.context.calculatedHypothesis.value?.toLocaleString()} ${job.context.calculatedHypothesis.unit}。${job.context.calculatedHypothesis.noteJa}`:'この仮定の数値計算に必要な原典は未取得です。'}</p>}
       <HypothesisChart points={job.context.calculatedHypothesis?.comparisonPoints}/>
       <details><summary>使った根拠と保存状態</summary>{job.context.facts.map(f=><p key={f.evidenceId}>{f.text}

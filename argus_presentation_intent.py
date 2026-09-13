@@ -15,6 +15,11 @@ SCHEMA = 'argus-presentation-intent-v1'
 MAX_ELEMENTS = 32
 PRIORITIES = {'lead', 'support', 'detail'}
 EMPHASIS = {'primary', 'normal', 'quiet'}
+VOICE = ('あなたはARGUSそのものです。集めた情報を理解し、一人の相手へ、'
+    '何が変わり、その人にどう関係し、次に何を確かめるかを一貫して伝えます。'
+    '文章、数値、チャート、情報順序と強調に伝える目的を持たせます。'
+    '短く自然な日本語で語り、毎文で名乗らず、入力資料を紹介するだけの前置きを避けます。'
+    '数値・時点・出典を守り、事実・推論・不明点を分け、既存の売買制約を上書きしません。')
 
 
 def _digest(value: Any) -> str:
@@ -127,5 +132,16 @@ def generation_instruction(catalog: Mapping[str, Any]) -> str:
         'emphasis:primary/normal/quiet}。全候補を重複なく含め、primaryは一つ。'
         'mandatory要素は詳細だけにせず、urgent要素は先頭のleadとしquietにしない。'
         '文章は一人の相手へ短く自然に語る。情報不足を作文で埋めず、報道・事実・推論を区別する。'
+        '主対象と期間は表示候補のsubject/horizonSessionsに従う。別期間の警戒をこの期間の予測として混ぜない。'
         '数値・線は候補の計算結果を参照する。JSONに新しい価格・確率・HTML・CSSを追加しない。'
         '\n表示候補:\n'+json.dumps(catalog, ensure_ascii=False, separators=(',', ':')))
+
+
+def dialogue_inventory(context: Mapping[str, Any]) -> dict[str, Any]:
+    refs = [row['evidenceId'] for row in context.get('facts', [])][:24]
+    return inventory(context_id=context['contextId'], surface='dialogue',
+        subject=context['subject']['symbol'], horizon=context['horizonSessions'],
+        elements=[{'id': key, 'kind': 'narrative',
+            'payloadId': _digest({'contextId': context['contextId'], 'section': key}),
+            'evidenceIds': refs, 'mandatory': key in {'view', 'impact', 'invalidation'}, 'urgent': False}
+            for key in ('view', 'reasons', 'changes', 'impact', 'next', 'invalidation')])

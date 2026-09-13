@@ -17462,6 +17462,13 @@ def _market_brief_history_restore():
                 {"facts": previous.get("facts") or [],
                  "calculations": argus_market_brief.calculation_identity(record["calculations"])},
                 sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        presentation = argus_analysis_history.read_record(path, presentation_only=True)
+        if presentation:
+            retained = presentation["brief"]
+            retained["calculationSnapshots"] = presentation["calculations"]
+            retained["analysisHistory"] = {"status": "LOCAL_DURABLE", "recordId": presentation["recordId"],
+                "remoteRecoveryVerified": False, "restoredAt": _ai_now_iso()}
+            _MARKET_BRIEF["lastPresentation"] = retained
     except FileNotFoundError:
         pass
     except Exception as exc:
@@ -17693,7 +17700,7 @@ def _market_brief_ai_polish(brief):
         + "\n" + argus_presentation_intent.generation_instruction(presentation_catalog))
     diag = {}
     raw = _openai_prose(user, max_out=2600,
-                       system="あなたはARGUSの市場説明担当。根拠、推論、不明点を分け、計算・既存判定は上書きしない。",
+                       system=argus_presentation_intent.VOICE,
                        purpose="market_brief", diagnostic=diag)
     validation = {}
     unified = argus_market_brief.validate_unified_ai(
@@ -17711,7 +17718,7 @@ def _market_brief_ai_polish(brief):
             + json.dumps(raw, ensure_ascii=False))
         diag = {}
         raw = _openai_prose(correction, max_out=2600,
-            system="あなたはARGUSの市場説明担当。与えられた根拠だけを説明し、検証の指摘を修正する。",
+            system=argus_presentation_intent.VOICE,
             purpose="market_brief", diagnostic=diag)
         validation = {}
         unified = argus_market_brief.validate_unified_ai(
@@ -17790,6 +17797,12 @@ def _market_brief_refresh(allow_ai=True):
     if allow_ai and brief.get("unifiedStatus") == "GENERATED":
         _market_brief_history_save(brief)
         _MARKET_BRIEF["lastSuccessful"] = copy.deepcopy(brief)
+    if brief.get("presentationStatus") == "GENERATED":
+        _MARKET_BRIEF["lastPresentation"] = copy.deepcopy(brief)
+    elif _MARKET_BRIEF.get("lastPresentation"):
+        # Retain one complete edition with its original numbers and time.
+        # Never combine its text/plan with the newly collected calculations.
+        brief["retainedPresentation"] = copy.deepcopy(_MARKET_BRIEF["lastPresentation"])
     _MARKET_BRIEF["data"] = brief
     _MARKET_BRIEF["composedAt"] = time.time()
     return brief
