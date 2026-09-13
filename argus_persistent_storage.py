@@ -58,9 +58,13 @@ def _canonical(value: Any) -> bytes:
 
 def _canonical_chunks(value: Any):
     """Yield canonical JSON without retaining the complete encoding in RAM."""
-    _validate_streamable_value(value)
     encoder = json.JSONEncoder(
         ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    active = set()
+    atomic_types = (int, float, bool, type(None))
+    # Validate scalars/cycles during the bounded subtree walk, before each
+    # encoder call. No second full-graph walk is needed. An invalid later
+    # subtree aborts hashing or the atomic temporary writer, never commits it.
     # Encode bounded subtrees through the standard library's C encoder. The
     # previous deep iterencode chain crossed Python generators for every
     # punctuation token, once again for each integrity verification.
@@ -70,48 +74,64 @@ def _canonical_chunks(value: Any):
             return False
         kind = type(current)
         if kind is str:
+            if len(current) > MAXIMUM_JSON_SCALAR_CHARS:
+                raise PersistentStorageError("checkpoint_json_scalar_too_large",
+                    details={"maximumCharacters": MAXIMUM_JSON_SCALAR_CHARS})
             remaining[1] -= len(current)
             return remaining[1] >= 0
-        if kind is dict:
-            for key, item in current.items():
-                if not fits(key, remaining) or not fits(item, remaining):
-                    return False
-        elif kind in (list, tuple):
-            for item in current:
-                if not fits(item, remaining):
-                    return False
-        elif kind not in (int, float, bool, type(None)):
-            # Keep the previous semantics for subclasses and unsupported values.
-            if isinstance(current, str):
-                remaining[1] -= len(current)
-                return remaining[1] >= 0
-            if isinstance(current, dict):
-                return all(fits(key, remaining) and fits(item, remaining)
-                           for key, item in current.items())
-            if isinstance(current, (list, tuple)):
-                return all(fits(item, remaining) for item in current)
+        if kind is dict or kind in (list, tuple):
+            identity = id(current)
+            if identity in active:
+                raise PersistentStorageError("checkpoint_json_cycle_detected")
+            active.add(identity)
+            try:
+                if kind is dict:
+                    for key, item in current.items():
+                        if not fits(key, remaining) or not fits(item, remaining):
+                            return False
+                else:
+                    for item in current:
+                        if not fits(item, remaining):
+                            return False
+            finally:
+                active.remove(identity)
+        elif kind not in atomic_types:
+            # Subclasses and unsupported values retain the existing validator
+            # and standard encoder path rather than entering the fast path.
+            return False
         return True
 
     def parts(current):
         if fits(current, [1024, 32 * 1024]):
             yield encoder.encode(current)
         elif type(current) is dict and all(isinstance(key, str) for key in current):
-            yield "{"
-            for index, key in enumerate(sorted(current)):
-                if index:
-                    yield ","
-                yield encoder.encode(key)
-                yield ":"
-                yield from parts(current[key])
-            yield "}"
+            identity = id(current)
+            active.add(identity)
+            try:
+                yield "{"
+                for index, key in enumerate(sorted(current)):
+                    if index:
+                        yield ","
+                    yield from parts(key)
+                    yield ":"
+                    yield from parts(current[key])
+                yield "}"
+            finally:
+                active.remove(identity)
         elif type(current) in (list, tuple):
-            yield "["
-            for index, item in enumerate(current):
-                if index:
-                    yield ","
-                yield from parts(item)
-            yield "]"
+            identity = id(current)
+            active.add(identity)
+            try:
+                yield "["
+                for index, item in enumerate(current):
+                    if index:
+                        yield ","
+                    yield from parts(item)
+                yield "]"
+            finally:
+                active.remove(identity)
         else:
+            _validate_streamable_value(current)
             yield from encoder.iterencode(current)
 
     pending = []
