@@ -14,7 +14,22 @@ export const ALERTS_SECTION_IDS = {
   events: 'important-events',
 } as const;
 
-export const NotificationsPage: React.FC = () => (
+export const NotificationsPage: React.FC = () => {
+  React.useEffect(() => {
+    let observer: MutationObserver | undefined;
+    const focus = () => {
+      const match = /^#notifications\/news\/([A-Za-z0-9:_-]{1,150})$/.exec(window.location.hash);
+      const element = match && document.getElementById('news-'+match[1]);
+      if (element) { element.scrollIntoView({block:'start'}); observer?.disconnect(); return true; }
+      return false;
+    };
+    const start = () => { observer?.disconnect(); if (!focus()) {
+      observer = new MutationObserver(focus); observer.observe(document.body,{childList:true,subtree:true});
+    }};
+    start(); window.addEventListener('hashchange',start);
+    return () => { observer?.disconnect(); window.removeEventListener('hashchange',start); };
+  }, []);
+  return (
   <PageShell
     title="Notifications"
     subtitle="重大ニュース・市場リスク、銘柄と判断の変化、経済イベントを確認します。"
@@ -25,5 +40,6 @@ export const NotificationsPage: React.FC = () => (
     <ImportantEventsCard />
   </PageShell>
 );
+};
 
 export default NotificationsPage;

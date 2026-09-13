@@ -9,7 +9,7 @@ import argus_owner_dialogue_store as store
 import argus_ai_usage_view
 
 
-def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None):
+def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None, push_service=None):
     boot_id = str(uuid.uuid4())
     lock = threading.Lock()
     save_failures = {}
@@ -61,6 +61,13 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
             return response({'error':'invalid_request'},400)
         ok, error, code = authorize(body.get('ownerToken'))
         if not ok: return response(error,code)
+        if body.get('action') == 'notifications':
+            if not push_service: return response({'error':'push_unavailable'},503)
+            try: return response(push_service.handle(body))
+            except ValueError as exc:
+                reason=str(exc)
+                return response({'error':reason if reason.startswith(('push_','invalid_push_','invalid_subscription','unsupported_push_')) else 'invalid_push_request'},400)
+            except Exception: return response({'error':'push_unavailable'},503)
         if body.get('action') == 'usage':
             if set(body) - {'action', 'ownerToken', 'month', 'offset', 'throughSequence'}:
                 return response({'error':'invalid_request'},400)

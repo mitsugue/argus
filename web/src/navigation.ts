@@ -59,6 +59,8 @@ const safeDecode = (value: string) => {
 };
 
 export function parseLocationHash(hash: string): ParsedLocation | undefined {
+  if (/^#notifications\/news\/[A-Za-z0-9:_-]{1,150}$/.test(hash)) return { route: 'notifications' };
+  if (/^#notifications\/sq\/jp-monthly-sq-\d{4}-\d{2}$/.test(hash)) return { route: 'notifications' };
   if (hash.startsWith('#asset/')) {
     const [rawSymbol = '', rawSection] = hash.slice('#asset/'.length).split('/', 2);
     const symbol = safeDecode(rawSymbol).trim().toUpperCase();

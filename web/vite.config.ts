@@ -106,6 +106,7 @@ export default defineConfig({
         ],
       },
       workbox: {
+        importScripts: [`${base}push-worker.js`],
         cleanupOutdatedCaches: true,
         clientsClaim: true,
         skipWaiting: true,

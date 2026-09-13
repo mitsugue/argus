@@ -125,6 +125,7 @@ import jp_market_internals
 import jp_market_positioning
 import argus_analysis_history
 import argus_owner_dialogue_api
+import argus_web_push
 import argus_owner_dialogue_recovery
 import argus_owner_dialogue_backup
 import argus_subject_materials
@@ -17790,12 +17791,26 @@ def _owner_dialogue_subject_materials(*, symbol, market, cutoff):
     if market not in ("JP", "US") or not isinstance(symbol, str) or symbol == "N225": return None
     return argus_subject_materials.news_facts(list(_INTEL_STORE), symbol=symbol, cutoff=cutoff)
 
+_WEB_PUSH = argus_web_push.PushService(
+    path=lambda: os.path.join(_DURABILITY_PATHS["root"], "web_push.sqlite3") if _cost_policy_durable_enabled() else None,
+    config=lambda: argus_web_push.configuration(os.environ), now=time.time)
+
+
+def _web_push_tick():
+    try:
+        if not argus_web_push.configuration(os.environ)['configured']: return
+        calendar = jp_market_events.published_sq_calendar(now=datetime.now(pytz.utc))
+        _WEB_PUSH.tick(argus_web_push.proposals(calendar, _brief_news_events(), time.time()))
+    except Exception as exc:
+        add_log(f"web-push tick unavailable: {type(exc).__name__}")
+
+
 argus_owner_dialogue_api.register(app, authorize=_require_owner_sync,
     storage_path=_owner_dialogue_path, market_brief=lambda: _MARKET_BRIEF.get("data"),
     generate=_openai_prose, now=lambda: datetime.now(pytz.utc).isoformat(),
     recovery_status=_OWNER_DIALOGUE_RECOVERY.status, recovery_trigger=_OWNER_DIALOGUE_RECOVERY.tick,
     subject_comparison=_owner_dialogue_subject_comparison, subject_materials=_owner_dialogue_subject_materials,
-    usage_snapshot=_ai_usage_snapshot)
+    usage_snapshot=_ai_usage_snapshot, push_service=_WEB_PUSH)
 
 
 @app.route("/api/argus/market-brief")
@@ -46781,6 +46796,7 @@ def run_scheduler():
         # The public explanation progresses even when mail intake is slow or
         # no mailbox is configured. No public request starts this AI worker.
         threading.Thread(target=_market_brief_worker_tick, daemon=True).start()
+        threading.Thread(target=_web_push_tick, daemon=True, name="web-push").start()
         # v13.5.54: Twelve Data Basic-plan warm tick — bounded by the policy core
         # (8-credit batch per eligible minute, daily cap, market-aware cadence).
         try:
