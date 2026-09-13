@@ -49,7 +49,7 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:
             if(value.error==='dialogue_busy'||value.error==='dialogue_recovery_pending')timer=window.setTimeout(()=>void load(),10000);}
           return;
         }
-        if(!validJob(value)||value.context.intent!=='SUBJECT_OVERVIEW'||value.context.subject.symbol!==symbol||value.context.subject.market!==market||value.context.horizonSessions!==horizon)throw new Error('invalid_overview');
+        if(!validJob(value)||value.context.intent!=='SUBJECT_OVERVIEW'||value.context.subject.symbol!==symbol||value.context.subject.market!==market||value.context.horizonSessions!==horizon||value.context.baseMarketContextId!==contextId)throw new Error('invalid_overview');
         if(!stopped){setEdition({key:requestKey,job:value});setError('');requestId=value.requestId;
           if(value.status==='RUNNING')timer=window.setTimeout(()=>void load(),3000);}
       }catch{if(!stopped)setError('接続を確認できませんでした。再取得でも同じ生成IDを使います。');}
