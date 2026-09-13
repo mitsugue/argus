@@ -137,6 +137,7 @@ import jp_market_price_paths
 import jp_market_valuation
 import jp_market_source_adapters
 import jp_market_dynamics
+import jp_market_features
 import jp_market_events
 import jp_market_engine                    # v13.5.13: JP_MARKET_ENGINE evidence engine (pure; evidence, never action)
 import argus_single_decision        # v13.5.13: canonical artifact references for device SDA
@@ -37784,6 +37785,8 @@ _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE = {}
 _JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC = 1800
 _JP_MARKET_ENGINE_PIT_INPUT_MEMO = {"ts": 0.0, "data": None}
 _JP_MARKET_ENGINE_MARKET_VIEW_MEMO = {"ts": 0.0, "view": None}
+_JP_MARKET_FEATURE_HISTORY = {"status": "NOT_RUN", "features": [], "conditions": []}
+_JP_MARKET_FEATURE_HISTORY_LOCK = threading.Lock()
 
 
 def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
@@ -37896,7 +37899,12 @@ def _jp_market_comparison_cached(horizon):
                 missing_calendar = True
         result = jp_market_price_paths.cached_index_comparison(
             rows, cutoff=cutoff, session_dates=sessions, horizon_sessions=horizon,
-            acquired_at=cached.get("acquiredAt"), valuation=_JP_INDEX_VALUATION.snapshot(cutoff))
+            acquired_at=cached.get("acquiredAt"), valuation=_JP_INDEX_VALUATION.snapshot(cutoff),
+            state_rows=_JP_MARKET_FEATURE_HISTORY.get("features", ()),
+            condition_rows=_JP_MARKET_FEATURE_HISTORY.get("conditions", ()))
+        result["marketFeatureAcquisition"] = {k: _JP_MARKET_FEATURE_HISTORY.get(k)
+            for k in ("status", "lastSuccessfulCalculationAt", "errorClass", "firstCutoff", "lastCutoff")}
+        result["marketFeatureSnapshot"] = _JP_MARKET_FEATURE_HISTORY.get("latest")
         result["valuationAcquisition"] = dict(_JP_INDEX_VALUATION.status)
         if missing_calendar and result.get("comparison"):
             result["comparison"]["limitations"].append(
@@ -38459,6 +38467,64 @@ def _jp_market_engine_earnings_bars(symbol):
     return out
 
 
+def _jp_market_feature_history_warm():
+    """Calculate on the collection lane; public chart reads only this cache."""
+    global _JP_MARKET_FEATURE_HISTORY
+    if not _JP_MARKET_FEATURE_HISTORY_LOCK.acquire(blocking=False):
+        return
+    try:
+        now = _ai_now_iso()
+        price_series = {}
+        for name, symbols in (("nikkei", ("^N225",)), ("sp500", ("^GSPC",)),
+                              ("vix", ("^VIX",)), ("topix", ("^TPX", "998405.T"))):
+            price_series[name] = next((list((_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get(symbol) or {}).get("data") or [])
+                for symbol in symbols if (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get(symbol) or {}).get("data")), [])
+        bars = price_series["nikkei"]
+        if not bars:
+            _JP_MARKET_FEATURE_HISTORY = {**_JP_MARKET_FEATURE_HISTORY, "status": "INDEX_CACHE_COLD"}
+            return
+        if any(len(rows) > 1000 for rows in price_series.values()):
+            raise ValueError("feature_price_history_bound")
+        oldest = (datetime.fromisoformat(min(r["date"] for r in bars)) - timedelta(days=100)).date().isoformat()
+        # Preserve source units and receipt/publication times, including revisions.
+        # A legacy CSV has only conservative availability, not vintage proof.
+        import csv
+        with open(_JPX_CREDIT_CSV_PATH, newline="", encoding="utf-8") as handle:
+            credit = [{**r, "value": float(r["value"]), "instrumentId": "MARKET"}
+                      for r in csv.DictReader(handle) if r.get("periodEnd", "") >= oldest
+                      and r.get("seriesId") in ("credit.long_balance", "credit.short_balance")]
+        rolled = set(_MARKET_LEDGER.get("rolledBackImports") or [])
+        ledger = [{**r, "instrumentId": r.get("instrumentId") or "MARKET",
+                   "knownAt": r.get("knownAt") or r.get("observedAt") or r.get("availableFrom")}
+            for r in _MARKET_LEDGER.get("observations", [])
+            if r.get("importId") not in rolled and r.get("periodEnd", "") >= oldest
+            and not (r.get("metadata") or {}).get("excludeFromEffective")]
+        last_csv = max((r["periodEnd"] for r in credit), default="")
+        credit += [r for r in ledger if r.get("seriesId") in ("credit.long_balance", "credit.short_balance")
+                   and r.get("periodEnd", "") > last_csv]
+        margin = ((_JQ_MARGIN_CACHE.get("1570") or {}).get("sourceSnapshot") or {}).get("rows") or []
+        loss = [{**r, "unit": "PERCENT" if r.get("unit") == "percent" else r.get("unit"),
+                 "signConvention": (r.get("metadata") or {}).get("signConvention")}
+                for r in ledger if r.get("seriesId") == "credit.valuation_loss_pct"]
+        inputs = {"price_series": price_series, "two_market_credit": credit, "margin_1570": margin,
+                  "foreign_flow": [r for r in ledger if r.get("seriesId") == "flow.foreign"], "valuation_loss": loss}
+        identity = hashlib.sha256(json.dumps(inputs, sort_keys=True, ensure_ascii=False, allow_nan=False,
+            separators=(",", ":")).encode()).hexdigest()
+        if identity == _JP_MARKET_FEATURE_HISTORY.get("inputIdentity") and \
+                now[:10] == str(_JP_MARKET_FEATURE_HISTORY.get("lastSuccessfulCalculationAt", ""))[:10]:
+            return
+        cutoffs = sorted({r["date"] + "T23:59:59Z" for r in bars if r["date"] < now[:10]})
+        history = jp_market_features.build_feature_history(cutoffs=[*cutoffs, now], **inputs)
+        _JP_MARKET_FEATURE_HISTORY = {**history, "status": "AVAILABLE", "inputIdentity": identity,
+                                     "lastSuccessfulCalculationAt": now}
+        _JP_MARKET_ENGINE_MARKET_VIEW_MEMO["ts"] = 0
+    except Exception as exc:
+        _JP_MARKET_FEATURE_HISTORY = {**_JP_MARKET_FEATURE_HISTORY, "status": "FAILED",
+                                     "errorClass": type(exc).__name__}
+    finally:
+        _JP_MARKET_FEATURE_HISTORY_LOCK.release()
+
+
 def _jp_market_engine_pit_inputs(*, warm=False):
     """Market-level JP_MARKET_ENGINE CORE inputs (D01-D07 + reversal axes).
 
@@ -38487,6 +38553,8 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     earnings_event, earnings_source = _jp_market_engine_earnings_event()
     earnings_bars = (_jp_market_engine_earnings_bars(earnings_event["instrumentId"])
                      if earnings_event else [])
+    if warm:
+        _jp_market_feature_history_warm()
     data = {
         "creditRows": credit_rows, "margin1570Rows": margin_rows,
         "rsProxy": rs_proxy, "flowRows": flow_rows,
@@ -38544,6 +38612,8 @@ def _jp_market_engine_market_view():
             "margin1570Dynamics": _jp_market_margin_1570_dynamics(cutoff=cutoff),
             "jpyPosition": _cftc_jpy_document(cutoff=cutoff),
             "internals": _jp_market_internals_cached(),
+            "marketFeatures": _JP_MARKET_FEATURE_HISTORY.get("latest"),
+            "marketFeatureStatus": _JP_MARKET_FEATURE_HISTORY.get("status"),
             "actionAuthority": False,
             "automaticAiCalls": 0,
         }
