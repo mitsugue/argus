@@ -380,6 +380,39 @@ def calculation_identity(calculations):
 def calculation_facts(calculations):
     """Explain each saved horizon using engine values, without probability claims."""
     facts = []
+    snapshot = (calculations.get("5") or {}).get("marketFeatureSnapshot") or {}
+    labels = {
+        "credit.ratio": "二市場の信用買残÷売残（倍）",
+        "credit.ratio_change": "二市場信用倍率の前週差（倍）",
+        "credit.loss_pct": "信用評価損率（損失を正とする%）",
+        "margin1570.ratio": "日経レバ信用買残÷売残（倍）",
+        "margin1570.long_change_pct": "日経レバ信用買残の前週変化率（%）",
+        "margin1570.short_change_pct": "日経レバ信用売残の前週変化率（%）",
+        "relative_jp_us.return20": "日経平均とS&P500の各市場20営業日騰落率差（ポイント）",
+        "vix.level": "VIX終値",
+        "vix.change5": "VIXの5営業日変化（ポイント）",
+        "vix.macd_histogram": "VIX MACDヒストグラム（12・26・9）",
+        "foreign_flow.net4w": "海外投資家の4週純売買合計（円）",
+        "fx.usdjpy_change5": "ドル円の5営業日変化率（%）",
+        "rate.jp10y_change5": "日本10年金利の5営業日変化（ポイント）",
+        "rate.us10y_change5": "米国10年金利の5営業日変化（ポイント）",
+        "nt.ratio_change5": "NT倍率の5営業日変化率（%）",
+        "event.sq_sessions": "SQまでの営業日数",
+    }
+    for row in snapshot.get("features", []):
+        label = labels.get(row.get("seriesId")); value = row.get("value")
+        if not label or type(value) not in (int, float) or not math.isfinite(value):
+            continue
+        facts.append(_fact(f"{row['date']}時点、{label}: {value:.4f}。観測値からの記述計算であり、予測力は未検証。",
+            "P1", "market_feature_calculation", "UNCONFIRMED", {
+                "eventId": "market-feature-" + row["seriesId"], "asOf": row["date"],
+                "sourceLabelJa": "日本株分析エンジン・市場条件計算",
+                "sourceReceivedAt": snapshot.get("informationCutoff"),
+                "sourceRowSha256": hashlib.sha256(json.dumps(row, sort_keys=True,
+                    ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()}))
+    if snapshot.get("features"):
+        facts.append(_fact("相対力は買い戻し注文の観測ではなく、売残減少も全てが買い戻しとは限らない。NT倍率だけで高配当株の強さを判断しない。VIX一日変化とMACD転換は別。警戒と回復を合算しない。",
+            "P1", "market_feature_interpretation", "UNCONFIRMED"))
     for horizon in (1, 5, 10, 20):
         result = calculations.get(str(horizon)) or {}
         chart = result.get("comparison") or {}
@@ -400,8 +433,10 @@ def calculation_facts(calculations):
                 type(valuation.get(k)) in (int, float) and math.isfinite(valuation[k]) for k in ("eps", "per")):
             scale_note = (f"指数ベースPER{valuation['per']:.2f}倍、同日終値から逆算したEPS{valuation['eps']:.2f}円を固定した換算。"
                           "独立した公表EPSや利益成長の予測ではない。")
+        has_states = bool(((chart.get("marketEvidence") or {}).get("currentCounts") or {}).get("states"))
+        scope = "価格形状と取得済み市場条件による部分比較" if has_states else "価格形状による部分比較"
         facts.append(_fact(f"日経平均・{chart['anchorDate']}基準の{horizon}営業日先: "
-            f"{unit}の参考計算値{value:.2f}。現在は過去の価格形状による部分比較で、有効性は未検証。"
+            f"{unit}の参考計算値{value:.2f}。現在は過去の{scope}で、有効性は未検証。"
             "他の期間の見立てと合算せず、確定した未来とは扱わない。" + scale_note,
             "P2", "price_path_calculation", "UNCONFIRMED", {
                 "eventId": f"n225-price-path-{horizon}", "asOf": chart["anchorDate"],

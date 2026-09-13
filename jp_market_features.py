@@ -16,6 +16,43 @@ from jp_market_dynamics import _number, credit_dynamics, normalize_valuation_los
 from jp_market_analogs import FEATURE_DEFINITIONS, FEATURE_MAX_AGE_DAYS, INSTRUMENT
 
 
+def build_feature_history(*, cutoffs: Sequence[str], **inputs) -> dict[str, Any]:
+    """Replay descriptive features without selecting on subsequent outcomes.
+
+    A historical source download is not an archived historical vintage. Keep
+    that limitation even when every calculation respects its explicit cutoff.
+    Full input references remain in the latest snapshot; historical features
+    carry the content digest of those same references to bound cache size.
+    """
+    from jp_market_engine import _instant
+    if not cutoffs or len(cutoffs) > 1001 or any(_instant(at) is None for at in cutoffs):
+        raise ValueError("bounded_valid_feature_cutoffs_required")
+    ordered = sorted(set(cutoffs), key=_instant)
+    groups = {"features": [], "conditions": []}
+    previous = {}
+    revisions = {}
+    latest = None
+    for at in ordered:
+        latest = build_market_features(cutoff=at, **inputs)
+        for group in groups:
+            for row in latest[group]:
+                key = (group, row["instrumentId"], row["seriesId"], row["date"])
+                body = {k: v for k, v in row.items() if k != "inputReferences"}
+                digest = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False,
+                    allow_nan=False, separators=(",", ":")).encode()).hexdigest()
+                if previous.get(key) == digest:
+                    continue
+                revision = revisions.get(key, -1) + 1
+                previous[key], revisions[key] = digest, revision
+                groups[group].append({**body, "revision": revision, "knownAt": at})
+        if sum(map(len, groups.values())) > 20000:
+            raise ValueError("market_evidence_history_bound_exceeded")
+    return {"schemaVersion": "jp-market-feature-history-v1", **groups,
+            "latest": latest, "firstCutoff": ordered[0], "lastCutoff": ordered[-1],
+            "cutoffCount": len(ordered), "historicalVintageVerified": False,
+            "actionAuthority": False, "automaticAiCalls": 0}
+
+
 def _day(row):
     return str(row.get("periodEnd") or row.get("date") or "")[:10]
 

@@ -94,3 +94,46 @@ def test_cold_and_invalid_requests_are_explicit(monkeypatch):
         assert body["comparison"] is None
         for params in ("index=SPX", "index=N225&timeframe=weekly", "horizon=0", "horizon=bad"):
             assert client.get("/api/argus/index-chart?comparison=1&" + params).status_code == 400
+
+
+def test_runtime_compares_available_market_state_order_and_reaction_without_authority():
+    days, rows = history()
+    states = [{"instrumentId": "NIKKEI_225_INDEX", "date": day, "seriesId": "vix.level",
+               "value": 20 + i % 3, "unit": "INDEX_POINTS", "availableFrom": day + "T07:00:00Z",
+               "sourceRef": "test:observed-volatility"} for i, day in enumerate(days)]
+    conditions = [{**row, "seriesId": "vix_macd_cross", "unit": "DIRECTION", "value": 1}
+                  for i, row in enumerate(states) if i % 10 == 0]
+    reactions = [{**row, "seriesId": "policy_reaction", "unit": "PERCENT", "value": 1,
+                  "eventId": "test:policy:" + row["date"], "eventType": "MONETARY_POLICY",
+                  "reactionWindowSessions": 1} for i, row in enumerate(states) if i % 10 == 0]
+    before = copy.deepcopy([states, conditions, reactions])
+    result = cached_index_comparison(rows, cutoff=days[-1] + "T08:00:00Z", session_dates=days,
+                                    state_rows=states, condition_rows=conditions, reaction_rows=reactions)
+    evidence = result["comparison"]["marketEvidence"]
+    assert evidence["currentCounts"]["states"] == 1
+    assert evidence["candidateCoverage"]["states"] > 0
+    assert all(value > 0 for value in evidence["currentCounts"].values())
+    assert any("marketState" in candidate["similarityReasons"] for candidate in result["selection"]["selected"])
+    assert result["selection"]["status"] == "PARTIAL_COMPARISONS_ONLY"
+    assert result["selection"]["predictiveProbability"] is None
+    assert result["actionAuthority"] is False and before == [states, conditions, reactions]
+
+
+def test_runtime_late_revision_does_not_replace_past_known_market_state():
+    days, rows = history()
+    states = [{"instrumentId": "NIKKEI_225_INDEX", "date": day, "seriesId": "vix.level",
+               "value": 20, "unit": "INDEX_POINTS", "availableFrom": day + "T07:00:00Z",
+               "sourceRef": "test:observed-volatility", "revision": 0} for day in days]
+    args = {"cutoff": days[-1] + "T08:00:00Z", "session_dates": days}
+    baseline = cached_index_comparison(rows, state_rows=states, **args)
+    corrected = {**states[35], "value": 200, "revision": 1, "knownAt": args["cutoff"]}
+    assert baseline == cached_index_comparison(rows, state_rows=states + [corrected], **args)
+    future = {**states[-1], "value": 300, "revision": 1, "knownAt": days[-1] + "T09:00:00Z"}
+    assert baseline == cached_index_comparison(rows, state_rows=states + [future], **args)
+
+
+def test_runtime_bounds_market_evidence_before_comparison():
+    days, rows = history()
+    with pytest.raises(ValueError, match="market_evidence_history_bound_exceeded"):
+        cached_index_comparison(rows, cutoff=days[-1] + "T08:00:00Z", session_dates=days,
+                                state_rows=[{}] * 20001)

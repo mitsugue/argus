@@ -258,7 +258,10 @@ def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any]
 def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                             session_dates: Sequence[str], horizon_sessions: int = 5,
                             acquired_at: str | None = None,
-                            valuation: Mapping[str, Any] | None = None) -> dict[str, Any]:
+                            valuation: Mapping[str, Any] | None = None,
+                            state_rows: Sequence[Mapping[str, Any]] = (),
+                            condition_rows: Sequence[Mapping[str, Any]] = (),
+                            reaction_rows: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:
     """Connect cached daily observations to the existing four-layer calculation.
 
     Historical bars are the source's currently reported history. Their session
@@ -266,7 +269,7 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     The caller supplies independently verified exchange sessions; missing bars
     cannot silently compress a twenty-session comparison window.
     """
-    from jp_market_analogs import (AnalogPolicy, INSTRUMENT, _hash, build_episode,
+    from jp_market_analogs import (AnalogPolicy, INSTRUMENT, FEATURE_MAX_AGE_DAYS, _hash, build_episode,
                                   reference_path, select_episodes)
     from jp_market_engine import point_in_time_rows
 
@@ -284,7 +287,39 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
             "informationCutoff": cutoff, "lastSuccessfulAcquisitionAt": acquired_at,
             "historicalVintageVerified": False, "comparison": None,
             "sourceRef": "yahoo:chart:^N225", "sourceVisibility": visibility}
-    current = build_episode(cutoff=cutoff, bars=visible, policy=policy)
+    # Retain revisions until each candidate's own cutoff. Filtering all inputs
+    # to the latest revision first would erase the information known then.
+    from bisect import bisect_left, bisect_right
+    from datetime import date, timedelta
+    evidence = (state_rows, condition_rows, reaction_rows)
+    if sum(len(rows) for rows in evidence) > 20000:
+        raise ValueError("market_evidence_history_bound_exceeded")
+    indexed = []
+    for rows in evidence:
+        dated = []
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            day = str(row.get("periodEnd") or row.get("date") or "")[:10]
+            try:
+                date.fromisoformat(day)
+            except ValueError:
+                continue
+            dated.append((day, dict(row)))
+        dated.sort(key=lambda pair: pair[0])
+        indexed.append(([pair[0] for pair in dated], [pair[1] for pair in dated]))
+
+    def episode_at(at, price_rows):
+        end = _instant(at).date()
+        oldest = (end - timedelta(days=max(FEATURE_MAX_AGE_DAYS.values()))).isoformat()
+        if price_rows:
+            oldest = min(oldest, price_rows[max(0, len(price_rows) - policy.lookback_sessions - 1)]["date"])
+        scoped = [rows[bisect_left(days, oldest):bisect_right(days, end.isoformat())]
+                  for days, rows in indexed]
+        return build_episode(cutoff=at, bars=price_rows, state_rows=scoped[0],
+                             condition_rows=scoped[1], reaction_rows=scoped[2], policy=policy)
+
+    current = episode_at(cutoff, visible)
     if current["status"] != "AVAILABLE":
         return {**base, "reason": "insufficient_complete_index_history"}
     # Limit candidates to dates whose complete lookback exists on the official
@@ -300,8 +335,8 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     candidates = []
     for index in range(policy.lookback_sessions, len(visible) - policy.lookback_sessions - 1):
         row = visible[index]
-        episode = build_episode(cutoff=row["date"] + "T23:59:59Z",
-                                bars=visible[index - policy.lookback_sessions:index + 1], policy=policy)
+        episode = episode_at(row["date"] + "T23:59:59Z",
+                             visible[index - policy.lookback_sessions:index + 1])
         if episode["status"] == "AVAILABLE" and complete_window(episode):
             candidates.append(episode)
     selection = select_episodes(current, candidates, session_dates=session_dates, policy=policy)
@@ -314,7 +349,17 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                                   anchor_price=current["window"][-1]["close"])
     document = comparison_document(current, selection, paths, ensemble, scale=scale)
     document["limitations"].append("過去比較には取得元が現在報告する履歴を使用しています。改訂前の履歴の再現は未検証です。")
-    document["limitations"].append("市場状態・条件の順序・材料反応の履歴接続は未完了のため、現段階では価格形状の部分比較です。")
+    groups = {key: len(current[key]) for key in ("states", "conditions", "reactions")}
+    document["marketEvidence"] = {
+        "informationCutoff": current["cutoff"], "current": {key: current[key] for key in groups},
+        "currentCounts": groups,
+        "candidateCoverage": {key: sum(bool(episode[key]) for episode in candidates) for key in groups},
+        "historicalVintageVerified": False, "actionAuthority": False,
+    }
+    if not any(groups.values()):
+        document["limitations"].append("市場状態・条件の順序・材料反応の履歴が未取得のため、価格形状の部分比較です。")
+    elif selection["status"] != "MARKET_ANALOGS_AVAILABLE":
+        document["limitations"].append("入手時点を確認できる市場条件だけを比較しています。未取得の条件・材料反応は補完せず、比較可能な範囲を候補ごとに表示します。")
     document["calculationIdentity"] = {"currentSnapshotId": current["snapshotId"],
                                        "selectionId": selection["selectionId"],
                                        "sourceContentHash": _hash(visible)}
