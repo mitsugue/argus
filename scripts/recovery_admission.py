@@ -83,14 +83,14 @@ RECOVERY_PAYLOAD_PATHS = (
     "test_remote_recovery_restore.py",
 )
 EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256 = (
-    "f40ea16ffb794db9ff24d75e002052c19758197500e64ff2ffb933a041243068"
+    "66179bdcd4a8a18a6db6000919f4fe78b4ee9cb53db8d350596ee140da5c76eb"
 )
 
 # This owner-authorized staged analysis delivery pins BOTH implementation diffs. A paired
 # certificate proves only the Recovery half; the existing Product certificate
 # is independently mandatory before merge and before any Pages deployment.
 EXPECTED_PAIRED_PRODUCT_DIFF_SHA256: str | None = (
-    "11d117486f73ad7430855b0fb87396cdca9ac7d4685a6e0784b068da1efb69d7"
+    "7f8ba4f9a062f0df6e887e9d9e797c7c2c35581300f2fa9a5df3bb720701ba07"
 )
 PAIRED_CLASSIFICATION = "PRODUCT_AND_RECOVERY"
 
