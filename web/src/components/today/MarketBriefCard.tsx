@@ -21,7 +21,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
     <button type="button" onClick={retry} disabled={loading}>再読込</button>
   </p> : null;
   if (!brief) return <div className="at-brief" aria-label="ARGUSの今日の見立て">
-    {updateState ?? <p role="status">見立てを確認中です。</p>}</div>;
+    {updateState ?? <p role="status">見立てを確認中です。</p>}<MarketAnalysisHistory key="saved-history" /></div>;
   const unified = brief.unifiedSummary;
   const hasSixSections = unified && ['view', 'reasons', 'changes', 'impact', 'next', 'invalidation'].every(key => {
     const row = unified.sections?.[key as keyof typeof unified.sections];
@@ -63,20 +63,30 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
           })}
         </div>)}
       </details>
-      <MarketAnalysisHistory />
+      <MarketAnalysisHistory key="saved-history" />
     </div>;
   }
   const now = brief.aiText?.nowJa ?? brief.now;
   const why = brief.aiText?.whyJa ?? brief.why;
   const next = brief.aiText?.nextJa ?? brief.next;
+  const providerIssue = brief.aiDiagnostics?.errorCode;
+  const providerMessage = providerIssue === 'credit_balance_exhausted'
+    ? '統合AIはAPIの前払い残高不足で停止しています。残高の補充が必要です。'
+    : ['organization_spend_limit_exceeded', 'project_spend_limit_exceeded'].includes(providerIssue ?? '')
+      ? '統合AIはAPI側の支出上限に達しています。APIの上限設定の変更が必要です。'
+      : ['organization_usage_limit_exceeded', 'insufficient_quota'].includes(providerIssue ?? '')
+        ? '統合AIはAPI側の利用枠不足で停止しています。APIの請求・利用枠の確認が必要です。'
+        : ['rate_limit_exceeded', 'slow_down'].includes(providerIssue ?? '')
+          ? '統合AIはAPI側の一時的な呼出し制限で更新を待っています。'
+          : null;
   return <div className="at-brief" data-argus-contract="market-brief-v1"
     aria-label="今の市場（売買権限なし）">
     {updateState}
     {brief.unifiedStatus && brief.unifiedStatus !== 'GENERATED' && <p role="status">
-      {brief.generationWorker?.status === 'RUNNING' ? '統合AIが見立てを更新しています。'
+      {providerMessage ?? (brief.generationWorker?.status === 'RUNNING' ? '統合AIが見立てを更新しています。'
         : ['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(brief.generationWorker?.status ?? '')
           ? '統合AIの更新を完了できませんでした。次の定期処理で再試行します。'
-          : '統合AIの説明は更新待ちです。'}取得済み情報の要約を表示しています。
+          : '統合AIの説明は更新待ちです。')}取得済み情報の要約を表示しています。
       {brief.lastSuccessfulAiAt && <small> 最終成功 {brief.lastSuccessfulAiAt}</small>}
     </p>}
     <small>今の市場 — 取得済み情報の要約{brief.aiText ? '（AI圧縮・参考）' : ''}</small>
@@ -91,6 +101,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
       <span>次イベント <b>{brief.chips.nextEvent}</b></span>
       <span>主リスク <b>{brief.chips.mainRisk}</b></span>
     </div>
+    <MarketAnalysisHistory key="saved-history" />
   </div>;
 };
 
