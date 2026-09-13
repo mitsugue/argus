@@ -1312,7 +1312,7 @@ def project_owner_event(event: Mapping[str, Any]) -> Dict[str, Any]:
         if (projected.get("whyJa") == general
                 and projected.get("analysisState") in (
                     "AI_ANALYSIS_UNAVAILABLE", "AI_SCHEMA_REJECTED", "DETERMINISTIC_ONLY")):
-            projected["whyJa"] = "この記事のAI解析が完了していないため、市場への影響はまだ判断していません。"
+            projected["whyJa"] = "この記事のAI解析が完了していないため、影響の方向はまだ判断していません。"
     original = str(projected.get("titleOriginal") or projected.get("headlineJa") or "")
     current_headline = str(projected.get("headlineJa") or "")
     if re.match(r"^(?:メール(?:の見出し)?|見出し|件名|抜粋)(?:は|では|には|によると)", current_headline):
