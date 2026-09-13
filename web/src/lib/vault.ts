@@ -123,7 +123,9 @@ export function recoveryDurability(hasLocalData: boolean, lastLocalExportAt?: nu
     local LWW timestamp; unavailable browser-side cloud push is never retried. */
 export function markLocalEdit(): void {
   if (Date.now() < suppressEditsUntil) return;  // change came FROM a sync apply
-  try { localStorage.setItem(EDIT_KEY, String(Date.now())); } catch { /* ignore */ }
+  try { localStorage.setItem(EDIT_KEY, String(Date.now()));
+    if(typeof window!=='undefined')window.dispatchEvent(new CustomEvent('argus:local-data-edited'));
+  } catch { /* ignore */ }
 }
 
 async function fetchRemoteEnvelope(vaultId: string, rawFallback: boolean): Promise<string | null> {
@@ -275,7 +277,7 @@ export function startCloudSync(): void {
 
 /** Restore from an existing encrypted envelope using only the passphrase.
     Tries the read-only relay first, then the durable GitHub copy. */
-export async function cloudRestore(pass: string): Promise<number> {
+export async function cloudRestore(pass: string, beforeApply?:()=>Promise<void>): Promise<number> {
   const vaultId = await vaultIdFrom(pass);
   const envelopeStr = await fetchRemoteEnvelope(vaultId, true);
   if (!envelopeStr) {
@@ -283,6 +285,7 @@ export async function cloudRestore(pass: string): Promise<number> {
   }
   const payload = await decryptBackup(pass, envelopeStr);
   assertBackupHistoryReadable(payload);
+  await beforeApply?.();
   recordExistingEnvelope(payload.exportedAt);
   const n = restoreBackup(payload);
   if (n > 0) recordSyncTick({ outcome: 'applied', historyRestoreBlocked: false,

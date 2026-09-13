@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
-import { downloadBackup, restoreBackup, BackupHistoryValidationError, type BackupFile } from '../../lib/backup';
+import { downloadBackup, restoreBackup, type BackupFile } from '../../lib/backup';
 import { cloudRestore, getVaultPass, setVaultPass, lastCloudBackupAt, lastSyncInfo } from '../../lib/vault';
+import {preserveBeforeOwnerRestore} from '../../lib/ownerRestoreGuard';
 
 // Complete device-data backup UI. Only this full export advances global
 // backup-protection state; portfolio-only tools remain separately labelled.
@@ -18,9 +19,10 @@ export const BackupCard: React.FC = () => {
     if (!p) { setCloudMsg('復元にはパスフレーズを入力してください。'); return; }
     setBusy(true);
     try {
-      const n = await cloudRestore(p);
+      let ownerWorkflow=false;
+      const n = await cloudRestore(p,async()=>{ownerWorkflow=await preserveBeforeOwnerRestore(setCloudMsg);});
       if (n > 0) {
-        setVaultPass(p);
+        if(!ownerWorkflow)setVaultPass(p);
         setCloudMsg(`✅ ${n}項目をクラウドから復元しました。再読み込みします…`);
         window.setTimeout(() => location.reload(), 1200);
       } else {
@@ -39,18 +41,22 @@ export const BackupCard: React.FC = () => {
   }
 
   function doImport(file: File) {
+    setBusy(true);
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onerror=()=>{setMsg('ファイルを読み込めませんでした。端末データは変更していません。');setBusy(false);};
+    reader.onload = async () => {
       try {
         const parsed = JSON.parse(String(reader.result)) as BackupFile;
+        if(parsed.app!=='argus'||!parsed.data)throw new Error('invalid_backup');
+        await preserveBeforeOwnerRestore(setMsg);
         const n = restoreBackup(parsed);
         if (n === 0) { setMsg('このファイルはARGUSのバックアップではないようです。'); return; }
         setMsg(`${n}項目を復元しました(${parsed.exportedAt?.slice(0, 10)}のバックアップ)。再読み込みします…`);
         window.setTimeout(() => location.reload(), 1200);
       } catch (error) {
-        setMsg(error instanceof BackupHistoryValidationError
+        setMsg(error instanceof Error&&error.message!=='invalid_backup'
           ? error.message : '読み込みに失敗しました。正しいバックアップファイルか確認してください。');
-      }
+      }finally{setBusy(false);}
     };
     reader.readAsText(file);
   }
@@ -62,10 +68,10 @@ export const BackupCard: React.FC = () => {
         「完全バックアップJSONを書き出す」で全対象データを安全な場所へ保存し、新しい端末では「インポート」で復元できます。
       </p>
       <div className="backup__actions">
-        <button className="asset-btn asset-btn--primary" onClick={doExport}>
+        <button className="asset-btn asset-btn--primary" disabled={busy} onClick={doExport}>
           完全バックアップJSONを書き出す
         </button>
-        <button className="asset-btn" onClick={() => fileRef.current?.click()}>
+        <button className="asset-btn" disabled={busy} onClick={() => fileRef.current?.click()}>
           インポート(バックアップから復元)
         </button>
         <input ref={fileRef} type="file" accept="application/json,.json" style={{ display: 'none' }}
@@ -81,9 +87,8 @@ export const BackupCard: React.FC = () => {
           <b>☁️ 既存の暗号化バックアップから復元(読み取り専用)</b>
         </p>
         <p className="backup__note" style={{ borderLeft: '3px solid var(--amber,#fbbf24)', paddingLeft: 8 }}>
-          <b>現在、公開ブラウザからのクラウド送信と端末間ライブ同期は利用できません。</b>
-          15秒ポーリングや失敗する送信再試行は行いません。既に保存済みの暗号文は読み取り・復元できます。
-          新しい復旧点は上のJSONエクスポートで作成してください。
+          <b>この旧方式は読み取り専用で、送信と端末間ライブ同期は行いません。</b>
+          既に保存済みの暗号文を復元できます。新しい復旧点は「端末データを暗号化して保存」または完全バックアップJSONで作成してください。
         </p>
         <div className="backup__actions">
           <input className="modal__input backup__pass" type="password" value={pass}
@@ -97,7 +102,7 @@ export const BackupCard: React.FC = () => {
           最終取込: {lastSyncInfo()?.lastPullAppliedAt
             ? new Date(lastSyncInfo()!.lastPullAppliedAt!).toLocaleString('ja-JP') : '未記録'}。
           既存復旧点は端末上で復号され、サーバーとGitHubにあるのは保存済みの<b>暗号文だけ</b>です。
-          その復旧点より新しい変更はこの端末内だけです。上のJSONエクスポートで保護してください。
+          旧方式だけでは、その復旧点より新しい変更はこの端末内だけです。新方式の保存照合状況は上の欄で確認できます。
           パスフレーズを忘れると誰にも復元できません(本人含む)。
         </p>
         {lastSyncInfo()?.historyRestoreBlocked && <p className="backup__msg" role="status">

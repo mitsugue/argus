@@ -9,5 +9,8 @@ const values=new Map([['argus.vaultPass.v1','pass']]);global.localStorage={getIt
  global.fetch=async()=>({ok:true,json:async()=>{values.set('argus.ownerVaultAutoSave.v1','{"enabled":true}');return{blob}}});
  assert.equal(await api.cloudSyncNow(),'noop');assert.equal(values.has('argus.locale.v1'),false);
  global.fetch=async()=>({ok:true,json:async()=>({blob})});assert.equal(await api.cloudRestore('pass'),1);assert.equal(values.get('argus.locale.v1'),'"en"');
+ values.set('argus.locale.v1','"ja"');let guarded=false;
+ await assert.rejects(api.cloudRestore('pass',async()=>{guarded=true;throw new Error('current edits are not preserved')}),/not preserved/);
+ assert.equal(guarded,true);assert.equal(values.get('argus.locale.v1'),'"ja"');
  console.log('Owner snapshot isolation: no old auto import, opt-in during fetch, explicit old restore retained PASS');
 })().catch(e=>{console.error(e);process.exit(1)});
