@@ -44,7 +44,8 @@ assert.match(notifications, /event\.translationStatus/);
 assert.match(vite, /__APP_VERSION__:\s*JSON\.stringify\(bundleVersion\)/);
 assert.doesNotMatch(vite, /__APP_VERSION__:\s*'globalThis\.__ARGUS_VERSION__'/);
 assert.match(vite, /argus\.bundle\.identity/);
-assert.match(vite, /navigator\.serviceWorker\.getRegistrations/);
+assert.match(vite, /repairAppCaches\.toString\(\)/);
+assert.match(read('src/lib/pwaRecovery.ts'), /navigator\.serviceWorker\?\.getRegistrations/);
 assert.match(main, /RUNNING_IDENTITY/);
 assert.match(main, /fetchDeployedIdentity/);
 

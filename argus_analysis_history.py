@@ -130,7 +130,7 @@ def read_record(path, record_id=None):
     conn = _connect(path, True)
     try:
         row = (conn.execute('SELECT record_id,body FROM views WHERE record_id=?', (record_id,)).fetchone()
-               if record_id else conn.execute('SELECT record_id,body FROM views ORDER BY sequence DESC LIMIT 1').fetchone())
+               if record_id else conn.execute('SELECT record_id,body FROM views ORDER BY julianday(recorded_at) DESC,sequence DESC LIMIT 1').fetchone())
         if not row: return None
         record = validate_record(json.loads(row[1]))
         if record['recordId'] != row[0]: raise ValueError('analysis_index_integrity_mismatch')

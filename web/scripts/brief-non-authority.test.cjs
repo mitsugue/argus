@@ -1,7 +1,7 @@
 // v13.5.36 — MARKET SITUATION BRIEF non-authority guard (TS import boundary).
 // Invariant: the brief is OUTPUT/EXPLANATION ONLY. The decision layer
 // (domain/*, useAssetIntel, useDecisionEvidence) must never import or
-// reference it; the ONLY permitted consumer is the Today display card.
+// reference it; the permitted consumers are explicit display components.
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -30,7 +30,7 @@ for (const file of authorityFiles) {
 }
 
 // 2) import-boundary: enumerate every importer of the brief hook — the set
-//    must be exactly the Today display card.
+//    must be exactly the shared display components.
 const importers = [];
 for (const file of walk(root)) {
   if (file.endsWith(`hooks${path.sep}useMarketBrief.ts`)) continue;
@@ -39,7 +39,7 @@ for (const file of walk(root)) {
     importers.push(path.relative(root, file).split(path.sep).join('/'));
   }
 }
-const expected = ['components/today/ArgusTodayPanel.tsx'];
+const expected = ['components/dialogue/OwnerDialogue.tsx', 'components/today/MarketBriefCard.tsx', 'components/today/SharedMarketContext.tsx'];
 if (JSON.stringify(importers.sort()) !== JSON.stringify(expected)) {
   fail(`useMarketBrief importers must be exactly ${JSON.stringify(expected)}, `
     + `got ${JSON.stringify(importers)}`);

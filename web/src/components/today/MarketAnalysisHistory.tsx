@@ -15,6 +15,7 @@ export function MarketAnalysisHistory() {
   const [loaded, setLoaded] = useState(false), [next, setNext] = useState<number | null>(null);
   const [horizon, setHorizon] = useState(5);
   const [outcomes, setOutcomes] = useState<Result[]>([]);
+  const [remoteBackup, setRemoteBackup] = useState<{status:string;lastVerifiedAt?:string} | null>(null);
   const flight = useRef<AbortController | null>(null);
   useEffect(() => () => flight.current?.abort(), []);
   const load = async (id?: string, more=false) => {
@@ -38,6 +39,7 @@ export function MarketAnalysisHistory() {
           ||!value.rows.every((r:Entry)=>/^[a-f0-9]{64}$/.test(r.recordId)&&Number.isSafeInteger(r.sequence)
             &&Number.isFinite(Date.parse(r.recordedAt))&&typeof r.sections?.view?.textJa==='string'))throw new Error('invalid_history');
         setRows(previous=>more?[...previous,...value.rows]:value.rows);
+        if(value.remoteBackup && typeof value.remoteBackup.status==='string')setRemoteBackup(value.remoteBackup);
         setNext(value.hasMore&&Number.isSafeInteger(value.nextBeforeSequence)?value.nextBeforeSequence:null);setLoaded(true);
       }
     } catch { setError(true); }
@@ -47,6 +49,9 @@ export function MarketAnalysisHistory() {
   return <details className="at-analysis-history" onToggle={event=>{if(event.currentTarget.open&&!loaded&&!busy)void load();}}>
     <summary>前回の見立て・保存した予測を見る</summary>
     <p>発表した時点の根拠と計算結果です。後の入力で過去の線を書き換えません。</p>
+    {remoteBackup&&<p>{remoteBackup.status==='VERIFIED'
+      ? `遠隔保存先との内容照合済み${remoteBackup.lastVerifiedAt?` · ${stamp(remoteBackup.lastVerifiedAt)}`:''}。本番のコールド復旧受入は別途確認します。`
+      : `遠隔保存は${remoteBackup.status==='RUNNING'?'処理中':'未確認'}です。最後の照合成功 ${remoteBackup.lastVerifiedAt?stamp(remoteBackup.lastVerifiedAt):'未確認'}。サーバー内の履歴は引き続き参照できます。`}</p>}
     {busy&&<p role="status">履歴を読み込んでいます。</p>}
     {error&&<p role="status">履歴を取得できませんでした。<button type="button" onClick={()=>void load()}>再取得</button></p>}
     {loaded&&!rows.length&&<p>保存済みの見立てはまだありません。</p>}

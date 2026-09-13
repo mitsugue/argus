@@ -51,7 +51,8 @@ def make_receipt(*, call_id: str, provider: str, feature: str,
                  outcome: str, input_tokens: int | None = None,
                  output_tokens: int | None = None, cached_input_tokens: int | None = None,
                  estimated_cost_usd: float | None = None, provider_called: bool | None = None,
-                 attempt: int | None = None, source_ref: str | None = None) -> dict[str, Any]:
+                 attempt: int | None = None, source_ref: str | None = None,
+                 error_class: str | None = None, provider_request_id: str | None = None) -> dict[str, Any]:
     start = _instant(started_at)
     end = _instant(completed_at) if completed_at is not None else None
     if end is not None and end < start:
@@ -85,6 +86,8 @@ def make_receipt(*, call_id: str, provider: str, feature: str,
         'estimatedCostUsd': round(float(estimated_cost_usd), 9) if estimated_cost_usd is not None else None,
         'sourceRef': _text(source_ref), 'costIsEstimate': True,
     }
+    if error_class is not None:result['errorClass'] = _text(error_class, required=True)
+    if provider_request_id is not None:result['providerRequestId'] = _text(provider_request_id, required=True)
     result['receiptDigest'] = _digest(result)
     return result
 
@@ -98,7 +101,8 @@ def validate_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
         returned_model=receipt.get('returnedModel'), outcome=receipt.get('outcome'),
         input_tokens=receipt.get('inputTokens'), output_tokens=receipt.get('outputTokens'),
         cached_input_tokens=receipt.get('cachedInputTokens'), estimated_cost_usd=receipt.get('estimatedCostUsd'),
-        provider_called=receipt.get('providerCalled'), attempt=receipt.get('attempt'), source_ref=receipt.get('sourceRef'))
+        provider_called=receipt.get('providerCalled'), attempt=receipt.get('attempt'), source_ref=receipt.get('sourceRef'),
+        error_class=receipt.get('errorClass'), provider_request_id=receipt.get('providerRequestId'))
     if dict(receipt) != rebuilt:
         raise ValueError('usage_receipt_integrity_mismatch')
     return rebuilt
@@ -155,7 +159,7 @@ def summarize(receipts: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         group = groups.setdefault(key, {
             'dayUtc': day, 'monthUtc': day[:7], 'feature': row['feature'], 'provider': row['provider'],
             'requestedModel': row['requestedModel'], 'returnedModel': row['returnedModel'],
-            'records': 0, 'providerCalls': 0, 'unknownProviderCallCount': 0, 'outcomes': {},
+            'records': 0, 'providerCalls': 0, 'unknownProviderCallCount': 0, 'outcomes': {}, 'errorClasses': {},
             'knownEstimatedCostUsd': 0.0, 'unknownCostRecords': 0,
             'inputTokens': 0, 'outputTokens': 0, 'cachedInputTokens': 0,
             'unknownTokenRecords': {'inputTokens': 0, 'outputTokens': 0, 'cachedInputTokens': 0},
@@ -166,6 +170,8 @@ def summarize(receipts: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         group['providerCalls'] += row['providerCalled'] is True
         group['unknownProviderCallCount'] += row['providerCalled'] is None
         group['outcomes'][row['outcome']] = group['outcomes'].get(row['outcome'], 0) + 1
+        if row.get('errorClass'):
+            group['errorClasses'][row['errorClass']] = group['errorClasses'].get(row['errorClass'], 0) + 1
         if row['estimatedCostUsd'] is None:
             group['unknownCostRecords'] += 1
         else:

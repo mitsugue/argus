@@ -29,7 +29,7 @@ _ALLOWED_SCANNER_SCOPES = {
     "_brief_market_view_summary", "_brief_news_events", "_brief_sq_events",
     "_compose_market_brief", "_market_brief_ai_polish",
     "_market_brief_refresh", "api_argus_market_brief",
-    "_market_brief_worker_tick", "_market_brief_history_restore", "_market_brief_history_save", "_market_brief_history_outcomes",
+    "_market_brief_worker_tick", "_market_brief_history_restore", "_market_brief_history_save", "_market_brief_history_outcomes", "_market_brief_history_sync",
 }
 _BRIEF_SYMBOL_PREFIXES = ("_market_brief", "_brief_")
 _BRIEF_SYMBOLS = {"argus_market_brief", "_MARKET_BRIEF"}
@@ -166,3 +166,9 @@ def test_repo_grep_tripwire_frontend_authority_files():
             text = path.read_text()
             for banned in ("useMarketBrief", "market-brief", "MarketBrief"):
                 assert banned not in text, (str(path), banned)
+
+
+def test_shared_explanation_contract_importers_are_only_explanation_modules():
+    importers={path.name for path in ROOT.glob('*.py')
+               if not path.name.startswith('test_') and 'argus_explanation_contract' in _imports_of(path)}
+    assert importers=={'argus_market_brief.py','argus_owner_dialogue.py'}

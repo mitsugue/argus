@@ -119,8 +119,16 @@ import argus_today_headline         # v13.5.0: compact Today bootstrap from veri
 import argus_market_shock           # v13.5.1: market-shock materiality (US30Y + corroborated news)
 import argus_news_intelligence      # v13.5.3: Nikkei mail → news-risk evidence (pure policy)
 import argus_gmail_intake           # v13.5.3: dedicated read-only news mailbox intake
+import argus_ai_usage_store
+import argus_ai_usage_runtime
+import jp_market_internals
 import jp_market_positioning
 import argus_analysis_history
+import argus_owner_dialogue_api
+import argus_owner_dialogue_recovery
+import argus_owner_dialogue_backup
+import argus_subject_materials
+import argus_analysis_history_backup
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
 import jp_market_price_paths
@@ -2791,7 +2799,7 @@ def _require_owner_sync(body_token=None):
     admin token, from a header OR the request body (body lets a non-ASCII
     passphrase work — header values must be ASCII). The dedicated token is
     limited to OWNER_SYNC catalog operations (membership, Layer-2B calibration,
-    and owner profile actions); it has no general admin or deploy authority.
+    owner profile actions and private dialogue); it has no general admin or deploy authority.
     Never logs it."""
     owner = os.environ.get("ARGUS_OWNER_SYNC_TOKEN", "")
     admin = _ARGUS_ADMIN_TOKEN
@@ -14157,6 +14165,69 @@ _OPENAI_SYSTEM = argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n" + (
     "All *Ja fields must be concise Japanese. Return STRICT JSON only."
 )
 
+_AI_USAGE_LOCK = threading.RLock()
+_AI_USAGE_PENDING = {}
+_AI_USAGE_STATUS = {"status": "NO_CALL_THIS_PROCESS", "lastSavedAt": None, "lastErrorClass": None}
+
+
+def _ai_usage_path():
+    return (os.path.join(_DURABILITY_PATHS["root"], "ai_usage_receipts.sqlite3")
+            if _cost_policy_durable_enabled() else None)
+
+
+def _ai_usage_record(row):
+    argus_product_naming.require_allowed(row)
+    with _AI_USAGE_LOCK:
+        _AI_USAGE_PENDING[row["callId"]] = row
+        path = _ai_usage_path()
+        if not path:
+            _AI_USAGE_STATUS.update(status="MEMORY_ONLY", lastErrorClass="durable_path_unavailable")
+            return
+        try:
+            argus_ai_usage_store.initialize(path)
+            pending = list(_AI_USAGE_PENDING.values())[:argus_ai_usage_store.MAX_BATCH]
+            argus_ai_usage_store.append(path, pending)
+            for item in pending: _AI_USAGE_PENDING.pop(item["callId"], None)
+            _AI_USAGE_STATUS.update(status="PARTIAL" if _AI_USAGE_PENDING else "LOCAL_DURABLE", lastSavedAt=_ai_now_iso(), lastErrorClass=None)
+        except Exception as exc:
+            _AI_USAGE_STATUS.update(status="SAVE_FAILED", lastErrorClass=type(exc).__name__)
+
+
+def _ai_usage_provider_call(provider, feature, requested_model, invoke, *, attempt=None, source_ref=None):
+    def estimate(returned_model, inp, out):
+        if returned_model not in _AI_PRICING: return None
+        return argus_ai_cost.estimate_cost(returned_model, inp, out, _AI_PRICING)
+    def report_error(error_class):
+        with _AI_USAGE_LOCK:
+            _AI_USAGE_STATUS.update(status="RECEIPT_FAILED", lastErrorClass=error_class)
+    return argus_ai_usage_runtime.observe(invoke, provider=provider, feature=feature,
+        requested_model=requested_model, record=_ai_usage_record, estimate=estimate,
+        attempt=attempt, source_ref=source_ref, on_record_error=report_error)
+
+
+def _ai_usage_snapshot():
+    """Protected read only; missing storage is unknown, not zero spend."""
+    with _AI_USAGE_LOCK:
+        state = {**_AI_USAGE_STATUS, "pendingReceipts": len(_AI_USAGE_PENDING)}
+    result = {"state": state, "summary": None, "remoteRecoveryVerified": False,
+        "coverage": "sdk_invocations_since_connection_only",
+        "noteJa": "SDK呼出し単位の記録です。応答成功はAI内容の検証・保存成功とは別です。"
+                  "SDK内部の再試行回数は未確認です。費用は既存設定の通常トークン単価による参考推定で、"
+                  "キャッシュ割引・キャッシュ書込・検索ツール・処理階層等の追加料金を含めた請求総額ではありません。"
+                  "既存の費用総額へ加算しないでください。接続前・処理中断時の詳細は再構成していません。"}
+    path = _ai_usage_path()
+    if not path:
+        result["readStatus"] = "NOT_CONFIGURED"; return result
+    try:
+        result["summary"] = argus_ai_usage_store.read_summary(path)
+        result["readStatus"] = "AVAILABLE"
+    except FileNotFoundError:
+        result["readStatus"] = "NOT_RECORDED"
+    except Exception as exc:
+        result.update(readStatus="UNAVAILABLE", readErrorClass=type(exc).__name__)
+    return result
+
+
 def _usage_tokens(resp):
     """Best-effort (input_tokens, output_tokens) from either the OpenAI Responses
     API (input_tokens/output_tokens, reasoning folded into output) or chat
@@ -14201,15 +14272,15 @@ def _openai_judge(snapshot):
         text = None
         try:
             # Current best practice for gpt-5.x: the Responses API.
-            resp = client.responses.create(model=_OPENAI_MODEL, instructions=_OPENAI_SYSTEM,
-                                            input=user, timeout=60, store=False)
+            resp = _ai_usage_provider_call('openai', 'ai_judgment', _OPENAI_MODEL, lambda: client.responses.create(model=_OPENAI_MODEL, instructions=_OPENAI_SYSTEM,
+                                            input=user, timeout=60, store=False), attempt=1, source_ref='_openai_judge')
             text = getattr(resp, "output_text", None)
         except Exception:
             # Fallback for SDKs/models without the Responses API.
-            resp = client.chat.completions.create(
+            resp = _ai_usage_provider_call('openai', 'ai_judgment', _OPENAI_MODEL, lambda: client.chat.completions.create(
                 model=_OPENAI_MODEL,
                 messages=[{"role": "system", "content": _OPENAI_SYSTEM}, {"role": "user", "content": user}],
-                response_format={"type": "json_object"}, timeout=60)
+                response_format={"type": "json_object"}, timeout=60), attempt=2, source_ref='_openai_judge')
             text = resp.choices[0].message.content
         _AI_LAST_RUN["oaiUsage"] = _usage_tokens(resp)
         _AI_LAST_RUN["oaiModel"] = str(getattr(resp, "model", None) or "")[:60] or None
@@ -14312,8 +14383,8 @@ def _gemini_check(snapshot, openai_out, checker_model=None):
             pass
 
         def _gen(model, config):
-            response = (client.models.generate_content(model=model, contents=prompt, config=config)
-                    if config else client.models.generate_content(model=model, contents=prompt))
+            response = (_ai_usage_provider_call('gemini', 'ai_double_check', model, lambda: client.models.generate_content(model=model, contents=prompt, config=config), attempt=None, source_ref='_gemini_check._gen')
+                    if config else _ai_usage_provider_call('gemini', 'ai_double_check', model, lambda: client.models.generate_content(model=model, contents=prompt), attempt=None, source_ref='_gemini_check._gen'))
             _AI_LAST_RUN["gemUsage"] = _gemini_usage_tokens(response)
             return response
 
@@ -14644,19 +14715,24 @@ _CAOS_EVENT_SYSTEM = (
 )
 
 
-def _openai_prose_call(client, model, sys_prompt, user):
+def _openai_prose_call(client, model, sys_prompt, user, *, purpose="prose"):
     """One model call: Responses API first, chat completions second. Returns
     (response, text). Raises the LAST error when both fail."""
     sys_prompt = argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n" + sys_prompt
+    if purpose == "owner_dialogue":
+        resp = _ai_usage_provider_call('openai', purpose, model, lambda: client.responses.create(
+            model=model, instructions=sys_prompt, input=user, max_output_tokens=3000,
+            timeout=60, store=False), attempt=1, source_ref='_openai_prose_call')
+        return resp, getattr(resp, "output_text", None)
     try:
-        resp = client.responses.create(model=model, instructions=sys_prompt,
-                                        input=user, timeout=60, store=False)
+        resp = _ai_usage_provider_call('openai', purpose, model, lambda: client.responses.create(model=model, instructions=sys_prompt,
+                                        input=user, timeout=60, store=False), attempt=1, source_ref='_openai_prose_call')
         return resp, getattr(resp, "output_text", None)
     except Exception:
-        resp = client.chat.completions.create(
+        resp = _ai_usage_provider_call('openai', purpose, model, lambda: client.chat.completions.create(
             model=model,
             messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": user}],
-            response_format={"type": "json_object"}, timeout=60)
+            response_format={"type": "json_object"}, timeout=60), attempt=2, source_ref='_openai_prose_call')
         return resp, resp.choices[0].message.content
 
 
@@ -14731,15 +14807,15 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
     mdl = model or _OPENAI_MODEL
     try:
         import openai
-        client = openai.OpenAI(api_key=_OPENAI_API_KEY)
+        client = openai.OpenAI(api_key=_OPENAI_API_KEY, **({"max_retries": 0} if purpose == "owner_dialogue" else {}))
         used_model, fallback_used = mdl, None
         try:
-            resp, text = _openai_prose_call(client, mdl, sys_prompt, user)
+            resp, text = _openai_prose_call(client, mdl, sys_prompt, user, purpose=purpose)
         except Exception as first:
             if fallback_model and fallback_model != mdl and _openai_model_unavailable(first):
                 add_log(f"[caos] model {mdl} unavailable ({type(first).__name__}); "
                         f"falling back to {fallback_model}")
-                resp, text = _openai_prose_call(client, fallback_model, sys_prompt, user)
+                resp, text = _openai_prose_call(client, fallback_model, sys_prompt, user, purpose=purpose)
                 used_model, fallback_used = fallback_model, fallback_model
             else:
                 raise
@@ -16094,7 +16170,7 @@ def api_argus_ai_cost():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
-    return jsonify(_ai_cost_snapshot())
+    return jsonify({**_ai_cost_snapshot(), "featureUsage": _ai_usage_snapshot()})
 
 def _system_health(*, allow_provider_fetch=True):
     """PUBLIC-safe at-a-glance health lamps for the metered/important systems
@@ -16625,15 +16701,15 @@ def api_argus_ai_provider_ping():
             import openai
             client = openai.OpenAI(api_key=_OPENAI_API_KEY)
             try:
-                r = client.responses.create(model=model,
+                r = _ai_usage_provider_call('openai', 'provider_ping', model, lambda: client.responses.create(model=model,
                                             input="Reply with the single word: pong",
-                                            timeout=30, store=False)
+                                            timeout=30, store=False), attempt=1, source_ref='api_argus_ai_provider_ping')
                 reply = (getattr(r, "output_text", "") or "")[:40]
             except Exception:
-                r = client.chat.completions.create(
+                r = _ai_usage_provider_call('openai', 'provider_ping', model, lambda: client.chat.completions.create(
                     model=model,
                     messages=[{"role": "user", "content": "Reply with the single word: pong"}],
-                    timeout=30)
+                    timeout=30), attempt=2, source_ref='api_argus_ai_provider_ping')
                 reply = (r.choices[0].message.content or "")[:40]
             out["openai"] = {"ok": True, "model": model, "reply": reply,
                              "requestedModel": model,
@@ -16656,8 +16732,8 @@ def api_argus_ai_provider_ping():
     elif provider == "gemini":
         try:
             client = google_genai.Client(api_key=GEMINI_API_KEY)
-            r = client.models.generate_content(model=_GEMINI_FALLBACK_MODEL,
-                                               contents="Reply with the single word: pong")
+            r = _ai_usage_provider_call('gemini', 'provider_ping', _GEMINI_FALLBACK_MODEL, lambda: client.models.generate_content(model=_GEMINI_FALLBACK_MODEL,
+                                               contents="Reply with the single word: pong"), attempt=1, source_ref='api_argus_ai_provider_ping')
             out["gemini"] = {"ok": True, "model": _GEMINI_FALLBACK_MODEL,
                              "reply": (getattr(r, "text", "") or "")[:40],
                              "requestedModel": _GEMINI_FALLBACK_MODEL,
@@ -16838,7 +16914,7 @@ def _translate_headlines_ja(headlines):
             estimated_tokens=3000)
         if not decision.get("allowed"):
             return {}
-        resp = client.models.generate_content(model=_GEMINI_FALLBACK_MODEL, contents=prompt, config=cfg)
+        resp = _ai_usage_provider_call('gemini', 'headline_translation', _GEMINI_FALLBACK_MODEL, lambda: client.models.generate_content(model=_GEMINI_FALLBACK_MODEL, contents=prompt, config=cfg), attempt=None, source_ref='_translate_headlines_ja')
         response_received = True
         # The API call is spent at this point — record it BEFORE validation so
         # the SCHEDULED_AI daily budget counts every real request (v13.5.36:
@@ -17311,6 +17387,35 @@ _MARKET_BRIEF_WORKER = {"lastAttemptMonotonic": None, "lastAttemptAt": None,
                         "lastCompletedAt": None, "status": "NOT_RUN", "errorClass": None}
 
 
+_MARKET_BRIEF_HISTORY_REMOTE = {"status": "NOT_RUN", "lastVerifiedAt": None,
+                                "lastAttemptAt": None, "headVersion": None}
+
+
+def _market_brief_history_sync():
+    """Use the existing private recovery connection, solely on the worker lane."""
+    path = _market_brief_history_path()
+    repo = os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", "")
+    token_configured = bool(os.environ.get("ARGUS_LAYER2B_PRIVATE_TOKEN", ""))
+    if not path or not repo or not token_configured:
+        _MARKET_BRIEF_HISTORY_REMOTE.update(status="NOT_CONFIGURED")
+        return
+    _MARKET_BRIEF_HISTORY_REMOTE.update(lastAttemptAt=_ai_now_iso(), status="RUNNING")
+    try:
+        remote = argus_analysis_history_backup.GitHubStore(
+            repo=repo, headers=_gh_private_headers(), http=requests.request)
+        result = argus_analysis_history_backup.synchronize(path, remote,
+            last_verified_head=_MARKET_BRIEF_HISTORY_REMOTE.get("headVersion"))
+        _MARKET_BRIEF_HISTORY_REMOTE.update(result, lastVerifiedAt=_ai_now_iso(), errorClass=None)
+    except Exception as exc:
+        _MARKET_BRIEF_HISTORY_REMOTE.update(status="FAILED", errorClass=type(exc).__name__)
+
+
+def _market_brief_history_remote_status():
+    # Read-back of remote bytes is separate from production cold-start acceptance.
+    return {key: value for key, value in _MARKET_BRIEF_HISTORY_REMOTE.items()
+            if key != "headVersion"}
+
+
 def _market_brief_history_path():
     if not _cost_policy_durable_enabled():
         return None
@@ -17389,6 +17494,7 @@ def _market_brief_history_outcomes():
 
 def _market_brief_worker_tick():
     """Independent scheduler lane: news intake latency cannot postpone the view."""
+    _OWNER_DIALOGUE_RECOVERY.tick()
     if not _MARKET_BRIEF_WORKER_LOCK.acquire(blocking=False):
         return {"status": "ALREADY_RUNNING"}
     try:
@@ -17399,9 +17505,12 @@ def _market_brief_worker_tick():
         _MARKET_BRIEF_WORKER.update(lastAttemptMonotonic=time.monotonic(),
             lastAttemptAt=_ai_now_iso(), status="RUNNING", errorClass=None)
         try:
+            if not _MARKET_BRIEF.get("historyRestoreAttempted"):
+                _market_brief_history_sync()
             _market_brief_history_restore()
             _market_brief_history_outcomes()
             result = _market_brief_refresh(allow_ai=True)
+            _market_brief_history_sync()
             _MARKET_BRIEF_WORKER.update(status=result.get("unifiedStatus", "UNAVAILABLE"),
                 lastCompletedAt=_ai_now_iso())
         except Exception as exc:
@@ -17607,9 +17716,14 @@ def _market_brief_refresh(allow_ai=True):
     previous = _MARKET_BRIEF.get("lastSuccessful") or {}
     # Bind unchanged-text reuse to the actual engine inputs and saved horizons.
     calculations = ({str(h): _jp_market_comparison_cached(h) for h in (1, 5, 10, 20)}
-                    if allow_ai else previous.get("calculationSnapshots") or {})
+                    if allow_ai else copy.deepcopy(previous.get("calculationSnapshots") or {}))
+    internals = (_jp_market_internals_cached() if allow_ai else
+                 (calculations.get("5") or {}).get("marketInternals") or {})
+    for calculation in calculations.values():
+        calculation["marketInternals"] = internals
     brief["calculationSnapshots"] = calculations
     brief["facts"].extend(argus_market_brief.calculation_facts(calculations))
+    brief["facts"].extend(jp_market_internals.explanation_facts(internals))
     facts_hash = hashlib.sha256(json.dumps({"facts": brief.get("facts") or [],
         "calculations": argus_market_brief.calculation_identity(calculations)}, sort_keys=True,
         ensure_ascii=False).encode()).hexdigest()
@@ -17641,6 +17755,47 @@ def _market_brief_refresh(allow_ai=True):
     return brief
 
 
+def _owner_dialogue_path():
+    return os.path.join(_DURABILITY_PATHS["root"], "owner_dialogue.sqlite3") if _cost_policy_durable_enabled() else None
+
+
+def _owner_dialogue_recovery_configuration():
+    fields=("ARGUS_LAYER2B_PRIVATE_REPO", "ARGUS_LAYER2B_PRIVATE_TOKEN",
+            "ARGUS_REMOTE_RECOVERY_CURRENT_KEY_ID", "ARGUS_REMOTE_RECOVERY_CURRENT_KEY",
+            "ARGUS_REMOTE_RECOVERY_PREVIOUS_KEY_ID", "ARGUS_REMOTE_RECOVERY_PREVIOUS_KEY")
+    values=[os.environ.get(field, "") for field in fields]
+    return any(values), hashlib.sha256(json.dumps(values).encode()).hexdigest()
+
+
+_OWNER_DIALOGUE_RECOVERY = argus_owner_dialogue_recovery.RecoveryWorker(
+    storage_path=_owner_dialogue_path, configuration=_owner_dialogue_recovery_configuration,
+    keys=argus_remote_recovery.configured_keys,
+    remote=lambda: argus_owner_dialogue_backup.PrivateGitHubStore(
+        repo=os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", ""), headers=_gh_private_headers(), http=requests.request),
+    now=_ai_now_iso)
+
+def _owner_dialogue_subject_comparison(*, brief, symbol, market, horizon, cutoff):
+    if market != "JP" or not isinstance(symbol, str) or not re.fullmatch(r"[0-9A-Z]{4}", symbol):
+        return None
+    meta = next((r for r in (_JQ_MASTER_CACHE.get("data") or []) if r.get("code") == symbol), {})
+    classification = {k: meta.get(k) for k in ("sector17Code", "sector33Code", "effectiveDate", "receivedAt")}
+    classification["source"] = "J-Quants V2 equities/master"
+    return argus_owner_dialogue_api.dialogue.cached_subject_comparison(
+        brief=brief, symbol=symbol, horizon=horizon, cutoff=cutoff,
+        history=copy.deepcopy(_JQ_HISTORY_CACHE.get(symbol)), classification=classification,
+        close_row=_jp_internals_close_row)
+
+def _owner_dialogue_subject_materials(*, symbol, market, cutoff):
+    if market not in ("JP", "US") or not isinstance(symbol, str) or symbol == "N225": return None
+    return argus_subject_materials.news_facts(list(_INTEL_STORE), symbol=symbol, cutoff=cutoff)
+
+argus_owner_dialogue_api.register(app, authorize=_require_owner_sync,
+    storage_path=_owner_dialogue_path, market_brief=lambda: _MARKET_BRIEF.get("data"),
+    generate=_openai_prose, now=lambda: datetime.now(pytz.utc).isoformat(),
+    recovery_status=_OWNER_DIALOGUE_RECOVERY.status, recovery_trigger=_OWNER_DIALOGUE_RECOVERY.tick,
+    subject_comparison=_owner_dialogue_subject_comparison, subject_materials=_owner_dialogue_subject_materials)
+
+
 @app.route("/api/argus/market-brief")
 def api_argus_market_brief():
     """Public NOW/WHY/NEXT situation brief. Cached-only: a public GET never
@@ -17657,8 +17812,10 @@ def api_argus_market_brief():
                     "scope": "PUBLIC_MARKET", "readOnly": True,
                     "outcomes": argus_analysis_history.read_outcomes(path, identity) if record else []}), 200 if record else 404
             cursor = request.args.get("beforeSequence")
-            return jsonify(argus_analysis_history.read_page(path,
-                before_sequence=int(cursor) if cursor is not None else None))
+            page = argus_analysis_history.read_page(path,
+                before_sequence=int(cursor) if cursor is not None else None)
+            page["remoteBackup"] = _market_brief_history_remote_status()
+            return jsonify(page)
         except FileNotFoundError:
             return jsonify({"status": "UNAVAILABLE", "reason": "history_not_recorded"}), 503
         except ValueError as exc:
@@ -21184,7 +21341,7 @@ def _openai_research_ex(user, role="standard", benchmark=False):
                 # cannot consume the entire answer allowance.
                 kw["reasoning"] = {"effort": _BENCHMARK_REASONING_EFFORT}
                 kw["max_output_tokens"] = _BENCHMARK_MAX_OUTPUT_TOKENS
-            resp = client.responses.create(**kw)
+            resp = _ai_usage_provider_call('openai', ('research_benchmark' if benchmark else 'osint_research'), kw['model'], lambda: client.responses.create(**kw), attempt=None, source_ref='_openai_research_ex')
             txt = getattr(resp, "output_text", None)
             u = _usage_tokens(resp) or (0, 0)
             usage = {"inputTokens": u[0], "outputTokens": u[1]}
@@ -29495,10 +29652,10 @@ def _gemini_osint(prompt, benchmark=False, model_override=None,
         except Exception:
             cfg = None
         selected_model = model_override or _GEMINI_JUDGE_MODEL
-        resp = (client.models.generate_content(model=selected_model,
-                                               contents=prompt, config=cfg)
-                if cfg else client.models.generate_content(model=selected_model,
-                                                           contents=prompt))
+        resp = (_ai_usage_provider_call('gemini', ('research_benchmark' if benchmark else 'osint_research'), selected_model, lambda: client.models.generate_content(model=selected_model,
+                                               contents=prompt, config=cfg), attempt=None, source_ref='_gemini_osint')
+                if cfg else _ai_usage_provider_call('gemini', ('research_benchmark' if benchmark else 'osint_research'), selected_model, lambda: client.models.generate_content(model=selected_model,
+                                                           contents=prompt), attempt=None, source_ref='_gemini_osint'))
         txt = getattr(resp, "text", None) or ""
         out, warns = argus_osint_engine.parse_scout_output(txt)   # v12.1.1 頑健パーサ
         out["parserWarnings"] = warns
@@ -33624,9 +33781,9 @@ def _ai_capability_probe(model, *, confirmation=False, expected_text="ok",
     try:
         import openai
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
-        r = client.responses.create(
+        r = _ai_usage_provider_call('openai', purpose, model, lambda: client.responses.create(
             model=model, input=f"Reply exactly {expected_text}",
-            timeout=30, store=False, max_output_tokens=64)
+            timeout=30, store=False, max_output_tokens=64), attempt=None, source_ref='_ai_capability_probe')
         _cost_policy_record("openai", purpose, estimated_cost_usd=0.001)
         output_text = str(getattr(r, "output_text", None) or "").strip()
         out["matchedExpectedText"] = output_text == expected_text
@@ -33769,9 +33926,9 @@ def _gemini_capability_probe(model, *, confirmation=False, max_attempts=1,
     expected = "ARGUS_GEMINI_OK"
     for attempt in range(1, max(1, min(int(max_attempts), 3)) + 1):
         try:
-            response = client.models.generate_content(
+            response = _ai_usage_provider_call('gemini', purpose, model, lambda: client.models.generate_content(
                 model=model, contents="Reply with exactly: ARGUS_GEMINI_OK",
-                config=_gemini_probe_config())
+                config=_gemini_probe_config()), attempt=attempt, source_ref='_gemini_capability_probe')
             row = _gemini_response_metadata(response, model, expected)
             _cost_policy_record("gemini", purpose, estimated_cost_usd=0.01)
         except Exception as exc:
@@ -33986,10 +34143,10 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider,
         import openai
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
         evaluator_model = _openai_model_for("referee")
-        response = client.responses.create(
+        response = _ai_usage_provider_call('openai', 'benchmark_evaluation', evaluator_model, lambda: client.responses.create(
             model=evaluator_model, input=prompt, timeout=90, store=False,
             reasoning={"effort": _BENCHMARK_REASONING_EFFORT},
-            max_output_tokens=_BENCHMARK_MAX_OUTPUT_TOKENS)
+            max_output_tokens=_BENCHMARK_MAX_OUTPUT_TOKENS), attempt=None, source_ref='_formal_blind_evaluate')
         meta = _benchmark_evaluator_usage(response, evaluator_model)
         parsed = _checked_ai_json(getattr(response, "output_text", "") or "")
         if not isinstance(parsed, dict) or not all(
@@ -34314,10 +34471,10 @@ def _v2_blind_evaluate(case, run_id, claims_by_provider):
         import openai
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
         model = _openai_model_for("referee")
-        response = client.responses.create(
+        response = _ai_usage_provider_call('openai', 'benchmark_evaluation', model, lambda: client.responses.create(
             model=model, input=prompt, timeout=90, store=False,
             reasoning={"effort": _BENCHMARK_REASONING_EFFORT},
-            max_output_tokens=_BENCHMARK_MAX_OUTPUT_TOKENS)
+            max_output_tokens=_BENCHMARK_MAX_OUTPUT_TOKENS), attempt=None, source_ref='_v2_blind_evaluate')
         meta = _benchmark_evaluator_usage(response, model)
         parsed = _checked_ai_json(getattr(response, "output_text", "") or "")
         if not isinstance(parsed, dict) or not all(
@@ -37590,12 +37747,16 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
         return cached["data"]
     if not fetch:
         return []
-    rows = []
+    rows = []; source_hash = None; response = None; fetch_error = None
     try:
         r = requests.get(
             f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}",
             params={"interval": "1d", "range": "2y"},
             headers={"User-Agent": "Mozilla/5.0 (argus)"}, timeout=15)
+        response = r
+        if getattr(r, "status_code", 200) != 200: raise ValueError("index_history_http_failure")
+        content = getattr(r, "content", None)
+        if isinstance(content, bytes): source_hash = hashlib.sha256(content).hexdigest()
         result = ((r.json() or {}).get("chart") or {}).get("result") or []
         meta = (result[0].get("meta") or {}) if result else {}
         offset = int(meta.get("gmtoffset") or 0)
@@ -37627,10 +37788,19 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
                 "sourceRef": f"yahoo:chart:{yahoo_symbol}",
             }
         rows = [by_date[key] for key in sorted(by_date)]
-    except Exception:
-        rows = []
+    except Exception as exc:
+        rows = []; fetch_error = type(exc).__name__
+    finally:
+        if response is not None and hasattr(response, "close"):
+            try: response.close()
+            except Exception: pass
+    if not rows and cached and cached.get("data"):
+        cached.update(expires=now+300, lastFetchStatus="FAILED", lastAttemptAt=_ai_now_iso(),
+                      lastErrorClass=fetch_error or "EmptyIndexHistory")
+        return cached["data"]
     _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE[yahoo_symbol] = {
-        "data": rows,
+        "data": rows, "sourceResponseSha256": source_hash if rows else None,
+        "lastFetchStatus": "AVAILABLE" if rows else "FAILED", "lastAttemptAt": _ai_now_iso(),
         "acquiredAt": datetime.now(pytz.utc).isoformat() if rows else None,
         "expires": now + (_JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC if rows else 300)}
     return rows
@@ -37640,7 +37810,7 @@ def _jp_market_comparison_cached(horizon):
     """Bounded cached-only chart calculation; no fetch, AI or persistence."""
     cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}
     rows = cached.get("data") or []
-    cutoff = _ai_now_iso()
+    cutoff = datetime.now(pytz.utc).isoformat()
     failure = {"status": "unavailable", "comparison": None, "automaticAiCalls": 0,
                "actionAuthority": False, "informationCutoff": cutoff,
                "lastSuccessfulAcquisitionAt": cached.get("acquiredAt")}
@@ -37669,6 +37839,153 @@ def _jp_market_comparison_cached(horizon):
         return result
     except (ValueError, TypeError, KeyError, OverflowError):
         return {**failure, "reason": "index_comparison_input_invalid"}
+
+
+_JP_INTERNALS_CACHE = {"prices": {}, "classifications": {}, "restoreAttempted": False}
+_JP_INTERNALS_ACQUISITION = {"status": "NOT_RUN", "lastAttemptAt": None, "lastSuccessfulAcquisitionAt": None}
+_JP_INTERNALS_REFRESH_LOCK = threading.Lock()
+
+
+def _jp_internals_path():
+    return (os.path.join(_DURABILITY_PATHS["root"], "jp_market_internals_cache.json")
+            if _cost_policy_durable_enabled() else None)
+
+
+def _jp_internals_storage(*, restore=False):
+    path = _jp_internals_path()
+    if not path:
+        return
+    if restore:
+        if _JP_INTERNALS_CACHE["restoreAttempted"]: return
+        try:
+            if os.path.islink(path): raise ValueError("internals_cache_symlink")
+            with open(path, "rb") as handle: raw = handle.read(6 * 1024 * 1024 + 1)
+            if len(raw) > 6 * 1024 * 1024: raise ValueError("internals_cache_bound")
+            value = json.loads(raw); body = value["body"]
+            if value.get("schemaVersion") != "jp-market-internals-cache-v1" or value.get("sha256") != jp_market_internals._hash(body):
+                raise ValueError("internals_cache_integrity")
+            argus_product_naming.require_allowed(body)
+            if set(body) != {"prices", "classifications"} or any(not isinstance(body[k], dict) or len(body[k]) > 100 for k in body):
+                raise ValueError("internals_cache_schema")
+            _JP_INTERNALS_CACHE["prices"].update(body["prices"])
+            _JP_INTERNALS_CACHE["classifications"].update(body["classifications"])
+            _JP_INTERNALS_ACQUISITION["restoredAt"] = _ai_now_iso()
+        except FileNotFoundError: pass
+        except Exception as exc:
+            _JP_INTERNALS_ACQUISITION["restoreError"] = type(exc).__name__
+            return
+        _JP_INTERNALS_CACHE["restoreAttempted"] = True
+    else:
+        body = {k: copy.deepcopy(_JP_INTERNALS_CACHE[k]) for k in ("prices", "classifications")}
+        argus_product_naming.require_allowed(body)
+        value = {"schemaVersion": "jp-market-internals-cache-v1", "body": body, "sha256": jp_market_internals._hash(body)}
+        argus_persistent_storage.atomic_write_json(path, value, maximum_bytes=6 * 1024 * 1024, file_mode=0o600)
+        with open(path, "rb") as handle: stored = json.load(handle)
+        if stored != value: raise ValueError("internals_cache_readback_mismatch")
+        _JP_INTERNALS_ACQUISITION["persistenceStatus"] = "VERIFIED"
+
+
+def _jp_internals_close_row(day, close, *, volume=None, adjusted=None):
+    parsed = datetime.fromisoformat(day).date()
+    if not argus_market_clock.canonical_trading_day(argus_market_clock.JP_EQUITY, parsed):
+        return None
+    close_at = argus_market_clock.market_session_bounds(argus_market_clock.JP_EQUITY, parsed)["regularCloseUtc"]
+    if not close_at: return None
+    return {"date": day, "close": close, "closeAt": close_at,
+            "completed": True, "volume": volume, "adjusted": adjusted}
+
+
+def _jp_internals_warm():
+    """Short daily-bar windows on the existing authenticated collection lane."""
+    if not _JP_INTERNALS_REFRESH_LOCK.acquire(blocking=False): return
+    try:
+        _jp_internals_storage(restore=True)
+        if not _JQUANTS_API_KEY:
+            _JP_INTERNALS_ACQUISITION.update(status="NOT_CONFIGURED"); return
+        last = _JP_INTERNALS_ACQUISITION.get("lastAttemptMonotonic")
+        if last is not None and time.monotonic() - last < 1800: return
+        _JP_INTERNALS_ACQUISITION.update(status="RUNNING", lastAttemptAt=_ai_now_iso(), lastAttemptMonotonic=time.monotonic())
+        public = [r["symbol"] for r in _JP_WATCHLIST]
+        master = _jq_master()
+        for row in master:
+            if row.get("code4") in public and row.get("sector17Code"):
+                _JP_INTERNALS_CACHE["classifications"][row["code4"]] = {
+                    "sector17Code": row["sector17Code"], "sector33Code": row.get("sector33Code"),
+                    "effectiveDate": row.get("effectiveDate"), "receivedAt": row.get("receivedAt"),
+                    "source": "J-Quants V2 equities/master"}
+        symbols = ["1306", *[r["symbol"] for r in jp_market_internals.SECTORS.values()], *public]
+        deadline = time.monotonic() + 150; failed = []; updated = []
+        start = (datetime.now(TZ_JST) - timedelta(days=100)).date().isoformat()
+        for symbol in symbols:
+            if time.monotonic() >= deadline:
+                failed.append(symbol); continue
+            try:
+                with requests.get(f"{_JQUANTS_BASE}/equities/bars/daily", headers={"x-api-key": _JQUANTS_API_KEY},
+                        params={"code": symbol, "from": start}, timeout=(5, 12), stream=True, allow_redirects=False) as response:
+                    if response.status_code != 200: raise ValueError("internals_daily_unavailable")
+                    chunks = []; size = 0
+                    for chunk in response.iter_content(32768):
+                        if time.monotonic() >= deadline: raise ValueError("internals_collection_deadline")
+                        size += len(chunk)
+                        if size > 2 * 1024 * 1024: raise ValueError("internals_response_bound")
+                        chunks.append(chunk)
+                raw = b"".join(chunks); value = json.loads(raw)
+                if value.get("pagination_key"): raise ValueError("internals_incomplete_pagination")
+                rows = value.get("data")
+                if not isinstance(rows, list) or not 1 <= len(rows) <= 150: raise ValueError("internals_daily_empty_or_bound")
+                normalized = []
+                for row in rows:
+                    if str(row.get("Code", ""))[:4] != symbol: raise ValueError("internals_instrument_mismatch")
+                    if not jp_market_internals._positive(row.get("AdjC")): continue
+                    bar = _jp_internals_close_row(str(row["Date"]), row["AdjC"], volume=row.get("Vo"), adjusted=True)
+                    if bar: normalized.append(bar)
+                if not normalized: raise ValueError("internals_no_adjusted_rows")
+                received = _ai_now_iso()
+                _JP_INTERNALS_CACHE["prices"][symbol] = {"instrumentId": symbol,
+                    "instrumentKind": "ETF" if symbol not in public else "EQUITY",
+                    "priceBasis": "JQUANTS_ADJUSTED_CLOSE", "receivedAt": received,
+                    "source": "J-Quants V2 equities/bars/daily", "sourceResponseSha256": hashlib.sha256(raw).hexdigest(),
+                    "rows": sorted(normalized, key=lambda r: r["date"])}
+                updated.append(symbol)
+            except Exception as exc:
+                failed.append(symbol)
+                _JP_INTERNALS_ACQUISITION["lastErrorClass"] = type(exc).__name__
+        _JP_INTERNALS_ACQUISITION.update(status="AVAILABLE" if not failed else "PARTIAL", failedSymbols=failed, updatedSymbols=updated)
+        if updated: _JP_INTERNALS_ACQUISITION["lastSuccessfulAcquisitionAt"] = _ai_now_iso()
+        try: _jp_internals_storage()
+        except Exception as exc:
+            _JP_INTERNALS_ACQUISITION.update(persistenceStatus="FAILED", persistenceError=type(exc).__name__)
+        _JP_MARKET_ENGINE_MARKET_VIEW_MEMO["ts"] = 0
+    finally: _JP_INTERNALS_REFRESH_LOCK.release()
+
+
+def _jp_market_internals_cached():
+    cutoff = datetime.now(pytz.utc).isoformat()
+    try:
+        end = argus_market_clock.latest_completed_session_date(argus_market_clock.JP_EQUITY, datetime.now(pytz.utc))
+        days = [end - timedelta(days=n) for n in range(70, -1, -1)]
+        sessions = [d.isoformat() for d in days if argus_market_clock.canonical_trading_day(argus_market_clock.JP_EQUITY, d)]
+        prices = dict(_JP_INTERNALS_CACHE["prices"])
+        index = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}
+        if index.get("acquiredAt"):
+            rows = []
+            for row in (index.get("data") or [])[-100:]:
+                bar = _jp_internals_close_row(row["date"], row.get("close"))
+                if bar: rows.append(bar)
+            prices["NIKKEI_225_INDEX"] = {"instrumentId": "NIKKEI_225_INDEX", "instrumentKind": "INDEX",
+                "priceBasis": "CASH_INDEX_CLOSE", "receivedAt": index["acquiredAt"], "rows": rows, "source": "Yahoo Finance cash index daily close",
+                "sourceResponseSha256": index.get("sourceResponseSha256"), "sourceFetchStatus": index.get("lastFetchStatus")}
+        rolled = set(_MARKET_LEDGER.get("rolledBackImports") or [])
+        observations = [r for r in _MARKET_LEDGER.get("observations", []) if r.get("importId") not in rolled
+                        and not (r.get("metadata") or {}).get("excludeFromEffective")]
+        result = jp_market_internals.build_snapshot(session_dates=sessions, cutoff=cutoff, prices=prices,
+            symbols=[r["symbol"] for r in _JP_WATCHLIST], classifications=_JP_INTERNALS_CACHE["classifications"],
+            breadth=jp_market_internals.breadth_from_ledger(observations, cutoff=cutoff))
+        result["acquisition"] = {k: v for k, v in _JP_INTERNALS_ACQUISITION.items() if k != "lastAttemptMonotonic"}
+        return result
+    except Exception as exc:
+        return {"schemaVersion": jp_market_internals.SCHEMA, "status": "UNAVAILABLE", "reason": type(exc).__name__,
+                "actionAuthority": False, "automaticAiCalls": 0}
 
 
 _CFTC_JPY_REFRESH_LOCK = threading.Lock()
@@ -38096,6 +38413,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         credit_rows = []
     if warm:
         _cftc_jpy_autorefresh()
+        _jp_internals_warm()
     margin_rows = _jp_market_engine_margin_1570_rows(fetch=warm)
     rs_proxy = _jp_market_engine_relative_strength_proxy()
     flow_rows = _jp_market_engine_foreign_flow_rows()
@@ -38159,6 +38477,7 @@ def _jp_market_engine_market_view():
             "sourceStatus": dict(inputs["sourceStatus"]),
             "margin1570Dynamics": _jp_market_margin_1570_dynamics(cutoff=cutoff),
             "jpyPosition": _cftc_jpy_document(cutoff=cutoff),
+            "internals": _jp_market_internals_cached(),
             "actionAuthority": False,
             "automaticAiCalls": 0,
         }
@@ -43046,6 +43365,7 @@ def _jq_price_history(code, *, deadline=None):
         if not (behind and recheck_due):
             return c["data"]
     data = None
+    source_identity_verified = False; source_complete = False
     if _JQUANTS_API_KEY:
         try:
             headers = {"x-api-key": _JQUANTS_API_KEY}
@@ -43083,6 +43403,14 @@ def _jq_price_history(code, *, deadline=None):
                 if deadline is not None and time.monotonic() >= deadline:
                     return (c or {}).get("data")
                 if attempt_rows:
+                    source_complete = not bool(pk)
+                    source_identity_verified = all(str(row.get("Code", ""))[:4] == code for row in attempt_rows)
+                    by_date = {}
+                    for source_row in attempt_rows:
+                        source_day = source_row.get("Date")
+                        if source_day in by_date and by_date[source_day] != source_row:
+                            source_identity_verified = False
+                        by_date[source_day] = source_row
                     rows = attempt_rows
                     break
             rows = [q for q in rows if _q_close(q) is not None]
@@ -43127,10 +43455,16 @@ def _jq_price_history(code, *, deadline=None):
         # still hold) and retries on the next cycle instead of blanking it.
         c["sessionRecheckAt"] = now + _JQ_HISTORY_SESSION_RECHECK_SEC
         return c["data"]
+    snapshot_hash = None
+    if data:
+        try: snapshot_hash = jp_market_internals._hash(data)
+        except (TypeError, ValueError, OverflowError): pass
     _JQ_HISTORY_CACHE[code] = {
+        "instrumentId": code, "sourceIdentityVerified": source_identity_verified,
+        "sourceComplete": source_complete,
+        "sourceSnapshotSha256": snapshot_hash,
         "data": data, "expires": now + (_JQ_HISTORY_TTL if data else 600),
-        "acquiredAt": (datetime.fromtimestamp(now, pytz.utc).strftime(
-            "%Y-%m-%dT%H:%M:%S.%fZ") if data else None),
+        "acquiredAt": (_ai_now_iso() if data else None),
         "sessionRecheckAt": now + _JQ_HISTORY_SESSION_RECHECK_SEC,
     }
     return data
@@ -46154,7 +46488,8 @@ _SEARCH_MAX = 12
 
 def _jq_master():
     """All listed JP issues (cached 24h): list of {code4, ja, en, mkt}."""
-    if _JQ_MASTER_CACHE["data"] is not None and time.time() < _JQ_MASTER_CACHE["expires"]:
+    if (_JQ_MASTER_CACHE["data"] is not None and time.time() < _JQ_MASTER_CACHE["expires"]
+            and all("sector17Code" in r for r in _JQ_MASTER_CACHE["data"])):
         return _JQ_MASTER_CACHE["data"]
     if not _JQUANTS_API_KEY:
         return []
@@ -46169,7 +46504,9 @@ def _jq_master():
                 if not code:
                     continue
                 rows.append({"code4": code[:4], "ja": x.get("CoName", "") or "",
-                             "en": x.get("CoNameEn", "") or "", "mkt": x.get("MktNm", "") or ""})
+                             "en": x.get("CoNameEn", "") or "", "mkt": x.get("MktNm", "") or "",
+                             "sector17Code": str(x.get("S17") or ""), "sector33Code": str(x.get("S33") or ""),
+                             "effectiveDate": x.get("Date"), "receivedAt": _ai_now_iso()})
             pk = body.get("pagination_key")
             if not pk:
                 break

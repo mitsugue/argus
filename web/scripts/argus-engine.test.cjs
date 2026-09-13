@@ -441,7 +441,8 @@ console.log('argus-engine.test: all checks passed');
   check('a fallback to the unconditioned analog search is stated as such',
     viewSrc3.includes('需給・トレンド条件なし（無条件の類似局面）') && viewSrc3.includes('無条件の類似局面へ切替中'));
   check('the brief chart chip is rendered from the market-view document with its cutoff',
-    panel.includes('const chartChip = signals ?') && panel.includes('<MarketBriefCard signals={topSignals'));
+    fs.readFileSync(path.join(root, 'src/components/today/MarketBriefCard.tsx'), 'utf8').includes('const chartChip = signals ?')
+      && panel.includes('<MarketBriefCard signals={topSignals'));
   const { eventAiScenarioNote, nextEventAiSlot } = require(path.join(root, 'src/lib/eventAiScenarioNote.ts'));
   const slot = nextEventAiSlot(new Date('2026-09-07T10:40:00Z'));
   check('the AI note names the real reason and the next scheduled slot',
