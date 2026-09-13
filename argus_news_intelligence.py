@@ -289,6 +289,9 @@ def summarize_headline_ja(*, subject: str, excerpt: str,
     mail body and never changes severity or SDA authority.
     """
     candidates: List[str] = []
+    # Prefer an article's own headline to an extraction model's account of it.
+    if not is_mail_container_title(subject) and re.search(r"[぀-ヿ一-鿿]", subject):
+        candidates.append(subject)
     for fact in list((ai_analysis or {}).get("facts") or [])[:3]:
         if isinstance(fact, str):
             candidates.append(fact)
@@ -298,6 +301,8 @@ def summarize_headline_ja(*, subject: str, excerpt: str,
         text = re.sub(r"\s+", " ", text).strip(" ・:：-—")
         lower = _lower(text)
         if len(text) < 10 or len(text) > 160:
+            continue
+        if re.search(r"(?:メール(?:の見出し)?|見出し|件名|抜粋)(?:に|は|では|には|で).{0,24}(?:伝え|述べ|書か|示し|報じ)|^(?:メール(?:の見出し)?|見出し|件名|抜粋)(?:は|では|には|によると)", text):
             continue
         if any(hint in lower for hint in _MAIL_BOILERPLATE_HINTS):
             continue
@@ -416,6 +421,9 @@ ANALYSIS_SYSTEM_JA = (
     " \"eventTypeCandidate\": 大文字スネークケース1語, \"entities\": [固有名詞,最大8],"
     " \"causalPathJa\": 市場への因果経路1-2文, \"uncertaintyJa\": 不確実性1文,"
     " \"secondOrderJa\": 二次的影響1文, \"materialityGuess\": 0-3の整数}。"
+    "factsは報道された出来事を短く記述し、メールや見出しを紹介する文章にしない。"
+    "報道・計画・決定・実測を区別し、抜粋しかない時に本文を読んだと主張しない。"
+    "causalPathJaは条件と市場への影響を先に述べ、材料だけで価格反応の原因を断定しない。"
     "価格・時刻・出所の真正性は判定しません。売買推奨は出力しません。"
 )
 
@@ -1290,6 +1298,11 @@ def project_owner_event(event: Mapping[str, Any]) -> Dict[str, Any]:
         projected["japanImpactJa"] = _JAPAN_TRANSMISSION_JA["IRAN"]
     original = str(projected.get("titleOriginal") or projected.get("headlineJa") or "")
     current_headline = str(projected.get("headlineJa") or "")
+    if re.match(r"^(?:メール(?:の見出し)?|見出し|件名|抜粋)(?:は|では|には|によると)", current_headline):
+        projected["headlineJa"] = summarize_headline_ja(
+            subject=original, excerpt="", taxonomy={"eventType": projected.get("eventType")},
+            ai_analysis={"facts": projected.get("facts") or []}, source=str(projected.get("sourceFamily") or ""))
+        current_headline = projected["headlineJa"]
     # v13.5.63 (GPT review item 5): a digest mail stored as ONE event carried
     # the first article's headline with an explanation from another article
     # (a yen headline with a Hormuz line). Until the intake re-splits it, the

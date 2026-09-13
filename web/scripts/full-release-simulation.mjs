@@ -155,6 +155,7 @@ try {
   // v13.5.39: the owner's top command block renders MARKET SIGNALS x / 7 from
   // the real projection (a truthful '— / 7' placeholder until evidence loads);
   // this is the rendered DOM on the production route, not a source string.
+  await page.locator('.at-decision-details > summary').click();
   const topSignals = page.locator('[data-argus-contract="market-signals-top-v1"]').first();
   assert.ok(await topSignals.count() > 0, 'top MARKET SIGNALS block rendered');
   const topSignalsText = (await topSignals.innerText()).trim();

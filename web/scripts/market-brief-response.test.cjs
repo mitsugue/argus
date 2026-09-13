@@ -34,3 +34,10 @@ assert.equal(valid({...doc,facts:[{...fact,provenance:{...reference,sourceRespon
 assert.equal(valid({...doc,facts:[{...fact,provenance:{...reference,sourceResponseSha256:{}}}]}),false);
 
 assert.equal(valid({...doc, unifiedSummary:{...doc.unifiedSummary,historyStatus:'LOCAL_DURABLE'}}),true);
+
+for (const errorCode of [null, 'credit_balance_exhausted', 'organization_spend_limit_exceeded', 'project_spend_limit_exceeded', 'organization_usage_limit_exceeded', 'insufficient_quota', 'rate_limit_exceeded', 'slow_down']) {
+ assert.equal(valid({...doc, aiDiagnostics:{errorCode}}), true);
+}
+for (const errorCode of [{}, [], 'unreviewed-provider-text']) {
+ assert.equal(valid({...doc, aiDiagnostics:{errorCode}}), false);
+}

@@ -18,7 +18,7 @@ const validJob=(x:any):x is Job=>!!x&&typeof x.requestId==='string'&&typeof x.st
 
 export function OwnerDialogue({symbol,market,horizon,asset}:{symbol:string;market:'JP'|'US';horizon:number;asset?:AssetItem}) {
   const {brief,retry}=useMarketBrief(); const [token,setToken]=useState(readKey);
-  const [connectionOpen,setConnectionOpen]=useState(()=>!readKey());
+  const [connectionOpen,setConnectionOpen]=useState(false);
   const [question,setQuestion]=useState('');const [reason,setReason]=useState('');const [period,setPeriod]=useState('');
   const [fx,setFx]=useState('');const [job,setJob]=useState<Job|null>(null);const [rows,setRows]=useState<Job[]>([]);
   const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [nextBefore,setNextBefore]=useState<number|null>(null);

@@ -123,3 +123,34 @@ def test_rejected_receipt_does_not_poison_retry_queue(bound_store,monkeypatch):
     expected=response()
     assert scanner._ai_usage_provider_call('openai','market_brief','test-model',lambda:expected) is expected
     assert not scanner._AI_USAGE_PENDING and scanner._AI_USAGE_STATUS['status']=='RECEIPT_FAILED'
+
+
+@pytest.mark.parametrize('code', ['credit_balance_exhausted', 'rate_limit_exceeded'])
+def test_provider_429_does_not_repeat_on_another_endpoint(bound_store, code):
+    class ProviderError(Exception):
+        status_code = 429
+        body = {'code': code, 'message': 'private diagnostic text'}
+    error = ProviderError()
+    calls = []
+    def responses(**kwargs):
+        calls.append('responses')
+        raise error
+    def chat(**kwargs):
+        raise AssertionError('another endpoint cannot restore provider capacity')
+    client = N(responses=N(create=responses), chat=N(completions=N(create=chat)))
+    with pytest.raises(ProviderError) as caught:
+        scanner._openai_prose_call(client, 'test-model', 'test system', 'test input', purpose='market_brief')
+    assert caught.value is error and calls == ['responses']
+    rows = store.read_page(bound_store)['rows']
+    assert len(rows) == 1 and rows[0]['receipt']['estimatedCostUsd'] is None
+    assert scanner._openai_failure_code(error) == code
+
+
+@pytest.mark.parametrize('body, expected', [
+    ({'error': {'code': 'credit_balance_exhausted', 'message': 'private'}}, 'credit_balance_exhausted'),
+    ({'code': 'organization_spend_limit_exceeded'}, 'organization_spend_limit_exceeded'),
+    ({'code': 'unreviewed-provider-text'}, None), ({'code': []}, None),
+    ({'error': 'private text'}, None), (None, None),
+])
+def test_public_provider_diagnostic_only_accepts_known_codes(body, expected):
+    assert scanner._openai_failure_code(N(body=body)) == expected

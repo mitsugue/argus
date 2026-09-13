@@ -96,6 +96,9 @@ assert.match(diagnostics, /Product <b>\{versions\?\.productVersion/);
 assert.match(diagnostics, /Frontend \{versions\?\.frontendVersion/);
 assert.match(diagnostics, /Backend \/ API \{versions\?\.backendVersion/);
 assert.match(diagnostics, /Build frontend \{versions\?\.frontendBuildSha/);
-assert.doesNotMatch(shell, /__APP_VERSION__|__FRONTEND_BUILD_SHA__/);
+assert.doesNotMatch(shell, /__APP_VERSION__/);
+assert.match(shell, /runtimeVersionLabel\(__PRODUCT_VERSION__\)/);
+assert.match(shell, /shell__release-id/);
+assert.match(shell, /__FRONTEND_BUILD_SHA__\.slice\(0, 7\)/);
 
 console.log('round3-product-final.test: ok (one SDA, four surfaces, sparse notifications)');

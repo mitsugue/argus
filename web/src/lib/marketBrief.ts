@@ -26,7 +26,7 @@ export interface MarketBrief {
   unifiedStatus?: string;
   generationWorker?: { status: string; lastAttemptAt?: string | null; lastCompletedAt?: string | null; errorClass?: string | null };
   lastSuccessfulAiAt?: string | null;
-  aiDiagnostics?: { requestedModel: string | null; returnedModel: string | null; completedAt: string | null };
+  aiDiagnostics?: { errorCode?: string | null; requestedModel: string | null; returnedModel: string | null; completedAt: string | null };
   schemaVersion: string;
   generatedAt: string;
   hasCritical?: boolean;
@@ -82,6 +82,7 @@ export function validMarketBrief(value: unknown): value is MarketBrief {
     || (value.generationWorker.errorClass != null && !text(value.generationWorker.errorClass, 100)))) return false;
   if (value.aiDiagnostics != null && (!object(value.aiDiagnostics)
     || !['requestedModel', 'returnedModel'].every(key => value.aiDiagnostics[key] == null || text(value.aiDiagnostics[key], 100))
+    || (value.aiDiagnostics.errorCode != null && !['credit_balance_exhausted', 'organization_spend_limit_exceeded', 'project_spend_limit_exceeded', 'organization_usage_limit_exceeded', 'insufficient_quota', 'rate_limit_exceeded', 'slow_down'].includes(value.aiDiagnostics.errorCode))
     || (value.aiDiagnostics.completedAt != null && !instant(value.aiDiagnostics.completedAt)))) return false;
   const summary = value.unifiedSummary;
   if (summary == null) return value.unifiedStatus !== 'GENERATED';
