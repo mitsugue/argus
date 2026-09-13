@@ -26,6 +26,7 @@ export interface NewsIntelEvent {
   confirmationState: 'MARKET_CONFIRMED' | 'MARKET_CONFIRMATION_PENDING';
   whyJa: string;
   japanImpactJa: string | null;
+  generalTransmissionJa?: string;
   // v13.5.36 NEWS/EVENT DIRECTIONAL IMPACT — independent axis beside
   // severity and market confirmation. Optional: events stored before the
   // direction engine existed simply have no signal (UNCLEAR, not fabricated).

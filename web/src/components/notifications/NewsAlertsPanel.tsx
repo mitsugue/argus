@@ -12,6 +12,12 @@ import './NewsAlertsPanel.css';
 
 export const NEWS_ALERTS_SECTION_ID = 'news-intel';
 
+const NewsBackground: React.FC<{ event: NewsIntelEvent }> = ({ event }) => event.generalTransmissionJa
+  ? <details className="news-alerts__background"><summary>この分野の一般的な波及経路</summary>
+    <p>{event.generalTransmissionJa}</p>
+    <small>この記事で実際に生じた影響や、AIが記事を解析した結論を示すものではありません。</small>
+  </details> : null;
+
 const SEVERITY_TONE: Record<string, string> = {
   CRITICAL: 'var(--value-negative)', HIGH: 'var(--amber, #fbbf24)',
   MEDIUM: 'var(--accent)', LOW: 'var(--text-muted)',
@@ -78,6 +84,7 @@ export const NewsHistory: React.FC<{ automatic?: boolean }> = ({ automatic = fal
         <p className="news-alerts__title"><b>{displayNewsHeadline(event.headlineJa)}</b></p>
         <p className="news-alerts__why">当時の解釈: {event.whyJa}</p>
         {event.japanImpactJa && <p className="news-alerts__japan">当時の日本株への見立て: {event.japanImpactJa}</p>}
+        <NewsBackground event={event} />
         <p className="news-alerts__meta">{event.source} · 受信 {receivedJa(event.sourceReceivedAt)} JST · 過去の情報 · {newsAnalysisStatusJa(event.analysisState, event.analysisInputScope)}</p>
       </article>)}
     </>}
@@ -88,6 +95,7 @@ const ReceivedNews: React.FC<{ event: NewsIntelEvent }> = ({ event }) => <articl
   className="news-alerts__item" id={`news-${event.eventId}`} data-received-event={event.eventId}>
   <p className="news-alerts__title"><b>{displayNewsHeadline(event.headlineJa)}</b></p>
   <p className="news-alerts__why">{event.whyJa}</p>
+  <NewsBackground event={event} />
   <p className="news-alerts__meta">{event.source} · 受信 {receivedJa(event.sourceReceivedAt)} JST · {newsAnalysisStatusJa(event.analysisState, event.analysisInputScope)}</p>
   {event.sourceUrl && /^https?:\/\//i.test(event.sourceUrl)
     && <a href={event.sourceUrl} target="_blank" rel="noopener noreferrer">配信元の記事を開く</a>}
@@ -160,6 +168,7 @@ export const NewsAlertsPanel: React.FC = () => {
             <p className="news-alerts__why">{event.whyJa}</p>
             {event.japanImpactJa && event.japanImpactJa !== event.whyJa
               && <p className="news-alerts__japan">日本株への波及: {event.japanImpactJa}</p>}
+            <NewsBackground event={event} />
             {event.marketReadings.length > 0 && <p className="news-alerts__readings">
               {event.marketReadings.slice(0, 4).map((reading) =>
                 `${reading.labelJa} ${reading.value ?? '—'}${reading.unit}`).join(' · ')}
