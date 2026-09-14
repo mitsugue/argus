@@ -25,3 +25,24 @@ export function orderMaterialNews<T extends MaterialItem>(events: readonly T[]):
       || instant(b.sourceReceivedAt) - instant(a.sourceReceivedAt)
       || a.eventId.localeCompare(b.eventId));
 }
+
+/** Group only the backend's identified episode; preserve every source article. */
+export function groupNewsEpisodes<T extends MaterialItem & {
+  eventMemory?: { episodeId?: string } | null;
+}>(events: readonly T[]): Array<{ lead: T; related: T[] }> {
+  const groups = new Map<string, T[]>();
+  for (const event of events) {
+    const key = event.eventMemory?.episodeId || event.eventId;
+    const rows = groups.get(key) ?? [];
+    const previous = rows.findIndex(row => row.eventId === event.eventId);
+    if (previous < 0) rows.push(event);
+    else if ((event.revision ?? 0) >= (rows[previous].revision ?? 0)) rows[previous] = event;
+    groups.set(key, rows);
+  }
+  return [...groups.values()].map(rows => {
+    rows.sort((a, b) => (priority[b.severity] ?? 0) - (priority[a.severity] ?? 0)
+      || instant(b.sourceReceivedAt) - instant(a.sourceReceivedAt)
+      || a.eventId.localeCompare(b.eventId));
+    return { lead: rows[0], related: rows.slice(1) };
+  });
+}
