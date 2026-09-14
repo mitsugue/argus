@@ -1,3 +1,4 @@
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import React from 'react';
 import { useJapanSqCalendar } from '../../hooks/useJapanSqCalendar';
 import { sqCalendarIsCurrent } from '../../lib/japanSqCalendar';
@@ -17,7 +18,7 @@ export const JapanSqCalendarCard: React.FC = () => {
   }, [data]);
   return <section className="jp-sq card" aria-label="SQ・30日先の予定">
     <div className="jp-sq__head"><h2>SQ・30日先の予定</h2><span>日本市場</span></div>
-    {loading && !data && <p role="status">公式日程を確認しています…</p>}
+    {loading && <p><TriangleStepLoader label={data ? "保存済みの予定を表示しながら更新しています" : "SQの公式日程を読み込んでいます"} /></p>}
     {failed && <p role="status">日程の更新を確認できません。{data?.events.length ? '最後に取得した予定を表示しています。' : '予定なしという意味ではありません。'}
       <button type="button" onClick={retry}>再読込</button></p>}
     {data && !current && <p role="status">日程の最終確認 {data.asOf}。接近日数・本日の案内は更新待ちです。</p>}

@@ -68,7 +68,9 @@ function loadDiagnostics(backend: string | undefined, force = false): Promise<vo
     return Promise.resolve();
   }
   publish({ ...state, loading: true, failed: false });
-  inFlight = fetch(`${base}/api/argus/data-quality/status`)
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 12_000);
+  inFlight = fetch(`${base}/api/argus/data-quality/status`, { signal: controller.signal })
     .then((response) => {
       if (!response.ok) throw new Error('public_diagnostics_unavailable');
       return response.json() as Promise<PublicDiagnostics>;
@@ -81,7 +83,7 @@ function loadDiagnostics(backend: string | undefined, force = false): Promise<vo
       publish({ diagnostics: value, loading: false, failed: false });
     })
     .catch(() => publish({ ...state, loading: false, failed: true }))
-    .finally(() => { inFlight = null; });
+    .finally(() => { window.clearTimeout(timeout); inFlight = null; });
   return inFlight;
 }
 

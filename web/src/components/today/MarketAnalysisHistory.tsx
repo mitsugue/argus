@@ -1,3 +1,4 @@
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import React, { useRef, useState, useEffect } from 'react';
 import { validMarketBrief, type MarketBrief } from '../../lib/marketBrief';
 import { validJapanMarketComparison } from '../../lib/japanMarketComparison';
@@ -57,7 +58,7 @@ export function MarketAnalysisHistory() {
     {remoteBackup&&<p>{remoteBackup.status==='VERIFIED'
       ? `遠隔保存先との内容照合済み${remoteBackup.lastVerifiedAt?` · ${stamp(remoteBackup.lastVerifiedAt)}`:''}。本番のコールド復旧受入は別途確認します。`
       : `遠隔保存は${remoteBackup.status==='RUNNING'?'処理中':'未確認'}です。最後の照合成功 ${remoteBackup.lastVerifiedAt?stamp(remoteBackup.lastVerifiedAt):'未確認'}。サーバー内の履歴は引き続き参照できます。`}</p>}
-    {busy&&<p role="status">履歴を読み込んでいます。</p>}
+    {busy&&<p><TriangleStepLoader label="履歴を読み込んでいます" /></p>}
     {error&&<p role="status">履歴を取得できませんでした。<button type="button" onClick={()=>void load()}>再取得</button></p>}
     {loaded&&!rows.length&&<p>保存済みの見立てはまだありません。</p>}
     {!saved&&rows.map(row=><p key={row.recordId}><button type="button" disabled={busy} onClick={()=>void load(row.recordId)}>

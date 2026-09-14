@@ -22,13 +22,14 @@ const store = createSharedPollingStore<State>({ brief: null, error: false, loadi
       const brief: unknown = await response.json();
       if (!validMarketBrief(brief)) throw new Error('brief_invalid');
       let readable = retainEditorialEdition(brief, get().brief);
-      if (!stopped) set({ brief: readable, error: false, loading: false });
-      if (!editorialEdition(readable)) {
+      const restoringHistory = !editorialEdition(readable);
+      if (!stopped) set({ brief: readable, error: false, loading: restoringHistory });
+      if (restoringHistory) {
         try {
           const saved = await readRecentEditorialEdition(base, controller.signal);
           readable = retainEditorialEdition(readable, saved);
           if (!stopped) set({ brief: readable, error: false, loading: false });
-        } catch { /* The current response remains usable while history restores. */ }
+        } catch { if (!stopped) set({ ...get(), loading: false }); }
       }
     } catch { if (!stopped) set({ ...get(), error: true, loading: false }); }
     finally {

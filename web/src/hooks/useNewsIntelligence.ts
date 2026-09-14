@@ -120,6 +120,7 @@ export function useNewsIntelligence(): NewsIntelState {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
+      if (!cancelled) setState(current => ({ ...current, status: 'loading' }));
       if (!inflight) {
         inflight = fetchNewsIntel().finally(() => { inflight = null; });
       }

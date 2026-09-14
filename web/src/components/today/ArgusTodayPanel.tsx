@@ -730,7 +730,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         {/* v13.5.65 (stabilization item 5): while this session's first fetch runs,
             the stored evidence is on screen — with its time, never silently. */}
         {decisionEvidence.loading && decisionEvidence.generatedAt && <span className="at-stored-note" data-argus-contract="stored-evidence-note-v1">
-          保存分 {new Date(decisionEvidence.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} を表示中（更新取得中）</span>}</div>
+          <TriangleStepLoader compact label="判断の根拠を更新中" /> 保存分 {new Date(decisionEvidence.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} を表示中（更新取得中）</span>}</div>
 
       <details className="at-seven" data-argus-contract="seven-sign-ladder-v1"
         data-seven-status={view.canonicalDecision.sevenSign.status}
@@ -877,7 +877,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       <p className="at-news-order">重要度順 · 赤は重大、黄は重要。同じ重要度では新しい情報から表示します。</p>
       {newsIntel.status === 'error' && <p className="at-shock-clear" role="status">
         {newsIntel.events.length ? 'ニュース更新失敗・前回取得分を表示しています。' : 'ニュースを取得できていません。'}</p>}
-      {newsIntel.status === 'loading' && <p className="at-shock-clear" role="status">ニュース記事を取得中です。市場データとは別に読み込んでいます。</p>}
+      {newsIntel.status === 'loading' && <p className="at-shock-clear"><TriangleStepLoader label="ニュースを更新しています。取得済みの記事は引き続き読めます" /></p>}
       {newsRows.length > 0 && <TodayNewsCards rows={newsRows.slice(0, NEWS_ROWS_CAP)}
         onOpen={(id) => openNewsDetails(`news-${id}`)} />}
       {shock.status === 'data' && newsIntel.status === 'data'

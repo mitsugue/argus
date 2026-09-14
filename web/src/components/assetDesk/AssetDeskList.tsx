@@ -1,3 +1,4 @@
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import type { HoldingUpdate } from '../../types/assetItem';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -372,7 +373,7 @@ export const AssetDeskList: React.FC<Props> = ({
         }}
       />
       {toolbar}
-      {connecting && <div className="asset-empty asset-empty--card">connecting… 最新の判断を取得中</div>}
+      {connecting && <div className="asset-empty asset-empty--card"><TriangleStepLoader label="銘柄の判断を読み込んでいます" /></div>}
       <div className="asset-filter">
         <button className={`asset-filter__chip${filter === 'all' ? ' is-active' : ''}`}
                 aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>{t('wl.filterAll')}</button>
