@@ -35,3 +35,12 @@ fast-forward merges cannot enter this release path. For frontend-only changes,
 set the merge commit subject explicitly to include `[skip render]`, as well as
 the PR title. Verify the existing required checks and exact admission proofs;
 do not relax the tree or certificate checks to repair a failed deployment.
+
+## Patch release identity
+
+For each user-visible production correction, advance the patch version and
+keep product/frontend/backend identity manifests and exact release expectations
+consistent. Do not keep a patch number fixed solely because 13.6 acceptance is
+unfinished. A patch increment is not a declaration that all 13.5 or 13.6 work
+is complete. Preserve the executing build identifier and the existing update,
+cache, holdings, and history protection mechanisms.

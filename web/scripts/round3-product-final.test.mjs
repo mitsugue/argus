@@ -87,7 +87,7 @@ assert.match(shell, /\{versionLabel\}/);
 assert.equal((shell.match(/shell__brand-version/g) ?? []).length, 1);
 assert.doesNotMatch(shell, /Frontend v|Backend v|backendSha|deploymentId/);
 assert.deepEqual(productVersion, {
-  schemaVersion: 'argus-product-version-v1', productVersion: 'v13.5.67',
+  schemaVersion: 'argus-product-version-v1', productVersion: 'v13.5.68',
 });
 assert.match(versionTruth, /runtimeVersionLabel\(productVersion: string\)/);
 assert.match(versionTruth, /product version unavailable/);
@@ -98,7 +98,7 @@ assert.match(diagnostics, /Backend \/ API \{versions\?\.backendVersion/);
 assert.match(diagnostics, /Build frontend \{versions\?\.frontendBuildSha/);
 assert.doesNotMatch(shell, /__APP_VERSION__/);
 assert.match(shell, /runtimeVersionLabel\(__PRODUCT_VERSION__\)/);
-assert.match(shell, /shell__release-id/);
-assert.match(shell, /__FRONTEND_BUILD_SHA__\.slice\(0, 7\)/);
+assert.doesNotMatch(shell, /shell__release-id/);
+assert.doesNotMatch(shell, /__FRONTEND_BUILD_SHA__/);
 
 console.log('round3-product-final.test: ok (one SDA, four surfaces, sparse notifications)');
