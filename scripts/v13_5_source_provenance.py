@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.6.5"
+PRODUCT_VERSION = "v13.6.6"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -38,7 +38,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_macro_schedule.py': 'a49e0d008eca24af791b080848df063e625bb0df',
     'test_macro_readiness.py': 'd1348cbcc814fb28857bd42095007f355728cd5a',
     'scripts/macro_readiness.py': 'd9d736333960d220a5ce3fc55951abc901ea47f0',
-    'docs/V13_7_REQUIREMENTS.md': '5896a15875014a1710cf65924aa786aa7841e416',
+    'docs/V13_7_REQUIREMENTS.md': 'b8820f8073b26b5a969f244d3eee765ab0dff0df',
     'web/src/hooks/useOsintInvestigation.ts': 'ada26a80e0f0f439f97cb75858407647dc7c5d8d',
     'web/src/components/guide/Layer2BSyncCard.tsx': '20dae8bccafee961a17aad41b39f738fd5f60b76',
     'web/src/components/dashboard/ProHandoffButton.tsx': 'ff35d429cd6c8b615fbeb355edf475edacc992a5',
@@ -55,7 +55,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_prediction_ledger_workflow.py': 'e01ff8eae80ebfa77d62a7b9772860785e3bafbd',
     'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
     'web/src/hooks/useAssets.ts': 'ee6addd411bbf71c253e74a7f76165063189254b',
-    'web/src/components/dialogue/OwnerOverview.tsx': '4997ba12831a209ec386449413d2b355029a5d41',
+    'web/src/components/dialogue/OwnerOverview.tsx': '31f6dfb6e33b737052b63dcc7b31f6c159fdbe42',
     'web/src/components/dialogue/OwnerOverview.css': 'e608b1f63bbbf8596454a9e0100cea6ee8a41a0f',
     'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',
     'web/src/lib/presentationIntent.ts': '77c0c79423a2291fc3e28a58e1b0397b11a83828',
@@ -105,8 +105,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_ai_usage_runtime.py': 'f65f5bd3196c162ad1152a1468a5d2be531f778b',
     'argus_analysis_history_backup.py': 'b669c6294fe71be98e50bf6cccab6f57c772e325',
     'argus_explanation_contract.py': '4a73ee4e0e7428fe428c783ba8e2cfec99bac51c',
-    'argus_owner_dialogue.py': '5485ff357064cfaa689a973403d5ab599de84a35',
-    'argus_owner_dialogue_api.py': 'c809fbd191337763685cbeaad9f632ec3baef330',
+    'argus_owner_dialogue.py': 'e092d84381dcec09c46d85221663d4ee6e8f2a39',
+    'argus_owner_dialogue_api.py': '61bcd636bd36cfe9b58a5bf59015a7e5b9dc190a',
     'argus_owner_dialogue_backup.py': 'ab8afc376e2b31cb617cb6b48b043a15e1ad98c6',
     'argus_owner_dialogue_recovery.py': 'bfc92ba9d12514167c622df5bcf04f87e945d721',
     'argus_owner_dialogue_store.py': '72422e35451def9da106bb200acd49e880a9a2f1',
@@ -119,7 +119,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_analysis_history_backup.py': '1c835dc2afa2595e422b596439fe0bef54bc7773',
     'test_argus_owner_cached_inputs.py': '16576a56eed1a31ddce4925ea6bcfcdf961052c3',
     'test_argus_owner_dialogue.py': 'a11e03918d90fbdf5e50754264420f6af12542f8',
-    'test_argus_owner_dialogue_api.py': '3088457c595378dba25c6494d455aab209795baf',
+    'test_argus_owner_dialogue_api.py': '4299e53077e3146a36066b173e3d2535fbe3e998',
     'test_argus_owner_dialogue_backup.py': '6fe13fa23a90a3a90930fbf96257a117ebee88b0',
     'test_argus_owner_dialogue_recovery.py': 'cd35ae9060ba9ce6ae20850306c7207d8ab60ecd',
     'test_argus_subject_materials.py': 'e71b8a78d4af5a99640f0b61bbd173f8fcabf7b6',
@@ -128,7 +128,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/shared-market-context.test.cjs': '6ba958105e283011e25af76c3ce538e14833c75b',
     'web/src/components/assetDesk/AssetMarketContext.tsx': 'da84417e9b9a7d5861f0f65f3d2a11d95408a6c6',
     'web/src/components/dialogue/OwnerDialogue.css': '696bed395bce7b22fae7c7ddc2797f5b24b0a1dd',
-    'web/src/components/dialogue/OwnerDialogue.tsx': 'b55bf7cd858725f3f04d35ed37af1c2fab528c3c',
+    'web/src/components/dialogue/OwnerDialogue.tsx': 'd14476ad65fad5103cc3f03c7a07d56036ffbd4e',
     'web/src/components/today/MarketBriefCard.tsx': 'e0411ccea4be66940b86c4f2c1a13e7fa22ff991',
     'web/src/components/today/MarketInternalsCard.tsx': 'f51d80a4bae476e9e20842d52a18cd92d68caaec',
     'web/src/components/today/SharedMarketContext.tsx': '0d126ec6d92e76957a4b58ef532e9b99b85b6f13',

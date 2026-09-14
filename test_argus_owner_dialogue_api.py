@@ -255,3 +255,181 @@ def test_saved_edition_reference_cannot_supply_or_substitute_unverified_context(
         market_reference=lambda rid:selected)
     response=app.test_client().post('/api/argus/owner-dialogue',json=body)
     assert response.status_code in (400,409) and not calls and not path.exists()
+
+
+def test_overview_reuse_tracks_relevant_inputs_and_keeps_saved_editions(tmp_path):
+    import argus_market_brief
+    import argus_owner_dialogue as dialogue
+    path=tmp_path/'owner.sqlite3';brief=[market_brief()];calls=[];materials=[[]]
+    clock=[AT];policy={'model':'test-primary','ruleVersion':'test-contract-v1'}
+    def setup():
+        app=Flask(__name__)
+        controls=api.register(app,authorize=lambda token:(token=='test-owner',{'error':'unauthorized'},401),
+            storage_path=lambda:str(path),market_brief=lambda:brief[0],
+            generate=lambda user,**kw:(calls.append(user),answer())[1],now=lambda:clock[0],
+            subject_materials=lambda **kw:copy.deepcopy(materials[0]),generation_policy=lambda:copy.deepcopy(policy))
+        return app.test_client(),controls
+    client,controls=setup()
+    body={'action':'overview','ownerToken':'test-owner','baseContextId':brief[0]['unifiedContext']['contextId'],
+        'symbol':'5803','market':'JP','horizon':5,
+        'owner':{'symbol':'5803','market':'JP','state':'HELD','quantity':100,'reportedAt':AT}}
+    def saved(value):
+        for _ in range(100):
+            row=store.read(path,value['requestId'],controls['bootId'])
+            if row and row['status']!='RUNNING':return row
+            time.sleep(.01)
+        pytest.fail('overview worker did not complete')
+    first=saved(client.post('/api/argus/owner-dialogue',json=body).json)
+    before=copy.deepcopy(first)
+    clock[0]='2026-09-13T00:10:00Z'
+    # The common market changes only in another requested period.
+    brief[0]['facts'][0]['text']='日経平均・1営業日先の参考値101。'
+    brief[0]['unifiedContext']=argus_market_brief.unified_context(brief[0])
+    body['baseContextId']=brief[0]['unifiedContext']['contextId']
+    reused=client.post('/api/argus/owner-dialogue',json=body)
+    assert reused.status_code==200 and len(calls)==1
+    assert reused.json['requestId']==first['requestId']
+    assert reused.json['overviewReuse']['checkedAt']==clock[0]
+    assert reused.json['overviewReuse']['originalCompletedAt']==AT
+    assert reused.json['context']==first['context'] and reused.json['result']==first['result']
+    assert controls['refreshSubjectOverviews']()['status']=='CURRENT' and len(calls)==1
+    # Restart preserves reuse without modifying the old saved record.
+    client,controls=setup()
+    assert client.post('/api/argus/owner-dialogue',json=body).json['requestId']==first['requestId']
+    assert store.read(path,first['requestId'],controls['bootId'])['context']==before['context']
+    assert len(calls)==1
+    # A new company material must be collected even with an unchanged common ID.
+    materials[0]=[dialogue.fact('企業の公式発表を確認中です。','company_material',kind='UNKNOWN')]
+    assert controls['refreshSubjectOverviews']()['status']=='STARTED'
+    rows=store.history(path,controls['bootId'])['items'];second=saved(rows[0])
+    assert second['context']['baseMarketContextId']==body['baseContextId']
+    assert second['context']['previousView']['requestId']==first['requestId'] and len(calls)==2
+    assert client.post('/api/argus/owner-dialogue',json=body).json['requestId']==second['requestId']
+    # A -> B -> A produces a new immutable edition, rather than relabelling old A.
+    materials[0]=[]
+    third=saved(client.post('/api/argus/owner-dialogue',json=body).json)
+    assert third['requestId'] not in (first['requestId'],second['requestId']) and len(calls)==3
+    assert third['context']['previousView']['requestId']==second['requestId']
+    policy['model']='test-next-primary'
+    fourth=saved(client.post('/api/argus/owner-dialogue',json=body).json)
+    assert fourth['requestId']!=third['requestId'] and len(calls)==4
+    policy['ruleVersion']='test-contract-v2'
+    fifth=saved(client.post('/api/argus/owner-dialogue',json=body).json)
+    assert fifth['requestId']!=fourth['requestId'] and len(calls)==5
+    body['owner']['quantity']=200
+    sixth=saved(client.post('/api/argus/owner-dialogue',json=body).json)
+    assert sixth['context']['owner']['quantity']==200 and len(calls)==6
+    clock[0]='2026-09-13T01:00:00Z'
+    seventh=saved(client.post('/api/argus/owner-dialogue',json=body).json)
+    assert seventh['requestId']!=sixth['requestId'] and len(calls)==7
+    assert len(store.history(path,controls['bootId'])['items'])==7
+    assert store.read(path,first['requestId'],controls['bootId'])['result']==before['result']
+    assert client.post('/api/argus/owner-dialogue',json={**body,'ownerToken':'wrong'}).status_code==401
+    assert len(calls)==7
+
+
+@pytest.mark.parametrize('change', ['source_revision','source_time','missingness','chart','owner_report',
+                                   'horizon','unknown_field','model','rule','hour'])
+def test_overview_input_changes_invalidate_without_mutating_context(change):
+    import argus_owner_dialogue as dialogue
+    c=context();c['intent']='SUBJECT_OVERVIEW'
+    c['contextId']=dialogue.digest({k:v for k,v in c.items() if k!='contextId'})
+    original=copy.deepcopy(c);policy={'model':'test-primary','ruleVersion':'v1'}
+    before=dialogue.overview_input_digest(c,policy)
+    if change=='source_revision':c['facts'][0]['revision']='corrected'
+    if change=='source_time':c['facts'][0]['acquiredAt']='2026-09-13T00:00:01Z'
+    if change=='missingness':c['facts'][0]['verification']='UNAVAILABLE'
+    if change=='chart':c['indexComparison']={'forecast':{'value':123}}
+    if change=='owner_report':c['owner']={'reportedAt':'2026-09-12T00:00:00Z'}
+    if change=='horizon':c['horizonSessions']=10
+    if change=='unknown_field':c['newCondition']={'value':True}
+    if change=='model':policy['model']='test-next'
+    if change=='rule':policy['ruleVersion']='v2'
+    if change=='hour':c['receivedAt']='2026-09-13T01:00:00Z'
+    c['contextId']=dialogue.digest({k:v for k,v in c.items() if k!='contextId'})
+    snapshot=copy.deepcopy(c)
+    assert dialogue.overview_input_digest(c,policy)!=before
+    assert c==snapshot
+    if change not in ('model','rule'):assert original['contextId']!=c['contextId']
+
+
+def test_pending_overview_deduplicates_after_unrelated_market_change(tmp_path):
+    import argus_market_brief
+    brief=market_brief();path=tmp_path/'owner.sqlite';entered=threading.Event();release=threading.Event();calls=[]
+    app=Flask(__name__)
+    def generate(user,**kw):
+        calls.append(user);entered.set();release.wait(3);return answer()
+    controls=api.register(app,authorize=lambda token:(True,None,200),storage_path=lambda:str(path),
+        market_brief=lambda:brief,generate=generate,now=lambda:AT,
+        generation_policy=lambda:{'model':'test-primary','ruleVersion':'v1'})
+    client=app.test_client();body={'action':'overview','ownerToken':'test-owner',
+        'baseContextId':brief['unifiedContext']['contextId'],'symbol':'5803','market':'JP','horizon':5}
+    try:
+        first=client.post('/api/argus/owner-dialogue',json=body).json
+        assert entered.wait(2)
+        brief['facts'][0]['text']='他の期間の更新。'
+        brief['unifiedContext']=argus_market_brief.unified_context(brief)
+        body['baseContextId']=brief['unifiedContext']['contextId']
+        second=client.post('/api/argus/owner-dialogue',json=body)
+        assert second.status_code==200 and second.json['requestId']==first['requestId']
+        assert second.json['overviewEvaluation']['baseMarketContextId']==body['baseContextId']
+        assert second.json['status']=='RUNNING' and len(calls)==1
+        assert len(store.history(path,controls['bootId'])['items'])==1
+    finally:release.set()
+
+
+def test_missing_generation_policy_rejects_reuse_without_provider_call(tmp_path):
+    app=Flask(__name__);calls=[];brief=market_brief()
+    api.register(app,authorize=lambda token:(True,None,200),storage_path=lambda:str(tmp_path/'owner.sqlite'),
+        market_brief=lambda:brief,generate=lambda *a,**kw:calls.append(1),now=lambda:AT,
+        generation_policy=lambda:{})
+    response=app.test_client().post('/api/argus/owner-dialogue',json={'action':'overview',
+        'baseContextId':brief['unifiedContext']['contextId'],'symbol':'5803','market':'JP','horizon':5})
+    assert response.status_code==400 and not calls
+
+
+
+def test_real_cached_price_comparison_reuses_clock_change_but_not_source_change(tmp_path):
+    from datetime import timedelta
+    from test_argus_owner_cached_inputs import inputs, AT as source_at
+    import scanner
+    import argus_owner_dialogue as dialogue
+    import argus_market_brief
+    brief,history,classification=inputs();clock=[source_at];calls=[];path=tmp_path/'owner.sqlite'
+    brief['facts']=brief['unifiedContext']['facts']
+    brief['unifiedContext']=argus_market_brief.unified_context(brief)
+    def comparison(**kw):
+        return dialogue.cached_subject_comparison(brief=kw['brief'],symbol=kw['symbol'],
+            horizon=kw['horizon'],cutoff=kw['cutoff'],history=history,
+            classification=classification,close_row=scanner._jp_internals_close_row)
+    app=Flask(__name__)
+    controls=api.register(app,authorize=lambda token:(True,None,200),storage_path=lambda:str(path),
+        market_brief=lambda:brief,generate=lambda *a,**kw:(calls.append(1),answer())[1],
+        now=lambda:clock[0],subject_comparison=comparison,
+        generation_policy=lambda:{'model':'test-primary','ruleVersion':'v1'})
+    client=app.test_client();body={'action':'overview','baseContextId':brief['unifiedContext']['contextId'],
+        'symbol':'1234','market':'JP','horizon':5}
+    first=client.post('/api/argus/owner-dialogue',json=body).json
+    for _ in range(100):
+        saved=store.read(path,first['requestId'],controls['bootId'])
+        if saved['status']=='SUCCEEDED':break
+        time.sleep(.01)
+    assert saved['status']=='SUCCEEDED'
+    frozen=copy.deepcopy(saved)
+    assert any(f['source']=='subject_market_comparison' for f in saved['context']['facts'])
+    clock[0]=(dialogue.instant(source_at)+timedelta(seconds=10)).isoformat()
+    second=client.post('/api/argus/owner-dialogue',json=body)
+    assert second.status_code==200 and second.json['requestId']==first['requestId']
+    assert second.json['overviewReuse']['checkedAt']==clock[0] and len(calls)==1
+    assert controls['refreshSubjectOverviews']()['status']=='CURRENT' and len(calls)==1
+    brief['facts'][0]['text']='他の期間の更新です。'
+    brief['unifiedContext']=argus_market_brief.unified_context(brief)
+    body['baseContextId']=brief['unifiedContext']['contextId']
+    assert client.post('/api/argus/owner-dialogue',json=body).json['requestId']==first['requestId']
+    assert len(calls)==1
+    # An actual source vintage update must not be dismissed as request time.
+    history['acquiredAt']=clock[0]
+    third=client.post('/api/argus/owner-dialogue',json=body)
+    assert third.status_code==202 and third.json['requestId']!=first['requestId']
+    assert store.read(path,first['requestId'],controls['bootId'])['context']==frozen['context']
+    assert store.read(path,first['requestId'],controls['bootId'])['result']==frozen['result']

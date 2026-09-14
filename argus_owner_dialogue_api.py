@@ -46,7 +46,7 @@ def generate_answer(context, generate):
         'answer': answer, 'provider': provider, 'validation': validation}
 
 
-def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None, push_service=None, vault_service=None, event_snapshot=None, market_reference=None):
+def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None, push_service=None, vault_service=None, event_snapshot=None, market_reference=None, generation_policy=None):
     boot_id = str(uuid.uuid4())
     lock = threading.Lock()
     save_failures = {}
@@ -70,6 +70,10 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
 
     def worker(path, identity, context):
         try:
+            binding = context.get('overviewInputs')
+            if binding and (generation_policy is None
+                    or dialogue.digest(generation_policy()) != binding.get('generationPolicyDigest')):
+                raise ValueError('overview_generation_policy_changed')
             result = {**generate_answer(context, generate), 'completedAt': now()}
         except Exception as exc:
             result = {'status':'FAILED', 'answer':None, 'completedAt':now(), 'errorClass':type(exc).__name__}
@@ -90,6 +94,62 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
 
     overview_question = '今の市場とこの銘柄をどう捉え、前回から何が変わり、登録した保有・監視情報にどう影響するか。次の確認と見方を変える条件まで説明してください。'
 
+    def prepare_overview(current, subject, horizon, owner, previous):
+        received_at = now()
+        policy = generation_policy()
+        comparison = subject_comparison(brief=current, **subject, horizon=horizon,
+            cutoff=received_at) if subject_comparison else None
+        materials = subject_materials(**subject, cutoff=received_at) if subject_materials else None
+        prior = previous['context'] if previous else None
+        context = dialogue.build_context(brief=current, **subject, horizon=horizon,
+            question=overview_question, received_at=received_at, owner=owner, previous=prior,
+            index_quote=dialogue.index_quote(current,horizon), subject_comparison=comparison,
+            material_facts=materials)
+        context['intent'] = 'SUBJECT_OVERVIEW'
+        context['historyStatus'] = 'LOCAL_DURABLE'
+        if previous:
+            context['previousView'] = {'requestId':previous['requestId'],
+                'contextId':prior['contextId'], 'completedAt':previous['result'].get('completedAt'),
+                'sections':deepcopy(previous['result']['answer']['sections'])}
+        context['contextId'] = dialogue.digest({k:v for k,v in context.items() if k!='contextId'})
+        key = dialogue.overview_input_digest(context, policy)
+        context['overviewInputs'] = {'schemaVersion':'argus-overview-inputs-v1',
+            'digest':key, 'generationPolicyDigest':dialogue.digest(policy)}
+        context['contextId'] = dialogue.digest({k:v for k,v in context.items() if k!='contextId'})
+        if len(json.dumps(context,ensure_ascii=False).encode()) > 65536:
+            raise ValueError('private_context_size_bound')
+        return context, key
+
+    def current_or_start_overview(path, current, subject, horizon, owner, previous):
+        context, key = prepare_overview(current, subject, horizon, owner, previous)
+        if (previous and previous['status'] == 'SUCCEEDED'
+                and dialogue.instant(previous['result']['completedAt']) <= dialogue.instant(context['receivedAt'])
+                and (previous['context'].get('overviewInputs') or {}).get('digest') == key):
+            # Response metadata only: never rewrite a saved context or completion.
+            return {**decorate(previous), 'overviewReuse':{
+                'checkedAt':context['receivedAt'], 'baseMarketContextId':context['baseMarketContextId'],
+                'inputsDigest':key, 'originalCompletedAt':previous['result'].get('completedAt')}}, False
+        # Bind to the preceding successful edition: A -> B -> A is a new record.
+        stable = {'inputsDigest':key, 'previousRequestId':previous['requestId'] if previous else None}
+        identity = str(uuid.uuid5(uuid.NAMESPACE_URL,'argus:subject-overview:v3:'+dialogue.digest(stable)))
+        old = store.read(path,identity,boot_id)
+        if old:
+            return {**decorate(old), 'overviewEvaluation':{
+                'checkedAt':context['receivedAt'], 'baseMarketContextId':context['baseMarketContextId'],
+                'inputsDigest':key}}, False
+        store.initialize(path)
+        created = store.submit(path,identity=identity,input_hash=dialogue.digest(stable),
+            boot_id=boot_id,context=context)
+        if created:
+            changed()
+            try:
+                threading.Thread(target=worker,args=(path,identity,context),daemon=True,
+                    name='owner-overview-refresh').start()
+            except Exception:
+                store.complete(path,identity,{'status':'FAILED','answer':None,
+                    'completedAt':now(),'errorClass':'WorkerStartFailed'})
+        return decorate(store.read(path,identity,boot_id)), created
+
     def refresh_subject_overviews(limit=20):
         """Advance one saved subject overview without requiring an open browser."""
         path=storage_path();state=remote_status()
@@ -99,13 +159,29 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         if not context_id:return {'status':'WAITING','started':0}
         for previous in store.latest_subject_overviews(path,boot_id,limit=limit):
             prior=previous['context']
-            if prior.get('baseMarketContextId')==context_id:continue
+            if generation_policy is None and prior.get('baseMarketContextId')==context_id:continue
             subject=prior.get('subject') or {};symbol=subject.get('symbol');market=subject.get('market')
             horizon=prior.get('horizonSessions');received_at=now()
             saved_owner=prior.get('owner') or {}
             owner=({k:saved_owner[k] for k in ('symbol','market','state','quantity','averageCost',
                     'purchaseReason','holdingPeriod','reportedAt') if k in saved_owner}
                    if saved_owner else None)
+            if generation_policy is not None:
+                try:
+                    with lock:
+                        latest = store.latest_subject_overview(path,boot_id,symbol=symbol,
+                            market=market,horizon=horizon)
+                        if latest and latest['requestId'] != previous['requestId']:
+                            continue
+                        item, created = current_or_start_overview(path,current,
+                            {'symbol':symbol,'market':market},horizon,owner,previous)
+                    if created:return {'status':'STARTED','started':1}
+                    if item['status']=='RUNNING':return {'status':'BUSY','started':0}
+                    if item['status']!='SUCCEEDED':return {'status':'UNAVAILABLE','started':0}
+                    continue
+                except ValueError as exc:
+                    return {'status':'BUSY' if str(exc)=='dialogue_busy' else 'UNAVAILABLE','started':0}
+                except Exception:return {'status':'UNAVAILABLE','started':0}
             stable={'baseContextId':context_id,'symbol':symbol,'market':market,'horizon':horizon,
                     'owner':owner,'question':overview_question}
             identity=str(uuid.uuid5(uuid.NAMESPACE_URL,'argus:subject-overview:v2:'+dialogue.digest(stable)))
@@ -191,6 +267,23 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
             if overview:
                 fields = {'action', 'ownerToken', 'baseContextId', 'symbol', 'market', 'horizon', 'owner'}
                 if set(body) - fields: return response({'error': 'unsupported_request_fields'}, 400)
+                if generation_policy is not None:
+                    with lock:
+                        previous = store.latest_subject_overview(path,boot_id,symbol=body.get('symbol'),
+                            market=body.get('market'),horizon=body.get('horizon'))
+                        if not remote_status()['generationReady']:
+                            changed()
+                            return response({'error':'dialogue_recovery_pending',
+                                'remoteBackup':remote_status(),'previousOverview':previous},503)
+                        current = deepcopy(market_brief() or {})
+                        context_id = (current.get('unifiedContext') or {}).get('contextId')
+                        if not context_id or body.get('baseContextId') != context_id:
+                            return response({'error':'market_context_changed','currentContextId':context_id,
+                                'previousOverview':previous},409)
+                        item, created = current_or_start_overview(path,current,
+                            {'symbol':body.get('symbol'),'market':body.get('market')},
+                            body.get('horizon'),body.get('owner'),previous)
+                        return response(item,202 if created else 200)
                 body = {**body, 'question': overview_question}
                 stable = {k: v for k, v in body.items() if k not in ('action', 'ownerToken')}
                 body['requestId'] = str(uuid.uuid5(uuid.NAMESPACE_URL, 'argus:subject-overview:v2:' + dialogue.digest(stable)))

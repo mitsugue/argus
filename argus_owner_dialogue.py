@@ -356,3 +356,47 @@ def validate_answer(value, context, *, diagnostic=None):
         'isHypotheticalConversation':context['isHypotheticalConversation'],
         'calculatedHypothesis':deepcopy(context['calculatedHypothesis']),
         'officialMarketStateMutation':False,'officialPositionMutation':False,'officialPredictionMutation':False}
+
+
+def overview_input_digest(context, generation_policy):
+    """Compare current inputs, retaining source vintages and unknown new fields.
+
+    The caller supplies effective generation settings and a prompt/rule revision.
+    Only request bookkeeping and the prior edition are excluded. The saved
+    explanation remains an immutable prior edition, never a new AI assessment.
+    Hourly expiry bounds reuse when event proximity changes without a new row.
+    """
+    if (context.get('intent') != 'SUBJECT_OVERVIEW'
+            or context.get('isHypotheticalConversation') is not False
+            or context.get('contextId') != digest({k:v for k,v in context.items() if k!='contextId'})
+            or not isinstance(generation_policy, Mapping)
+            or any(not isinstance(generation_policy.get(k), str) or not generation_policy[k].strip()
+                   for k in ('model', 'ruleVersion'))):
+        raise ValueError('overview_reuse_inputs_invalid')
+    at = instant(context['receivedAt'])
+    inputs = deepcopy(context)
+    for key in ('contextId', 'baseMarketContextId', 'receivedAt', 'previousFacts',
+                'previousView', 'changes', 'historyStatus', 'overviewInputs'):
+        inputs.pop(key, None)
+    if isinstance(inputs.get('owner'), dict):
+        inputs['owner'].pop('receivedAt', None)
+    for row in inputs.get('facts') or []:
+        market_input = row.get('marketInput') or {}
+        # Only this locally built comparison includes the current request's
+        # cutoff and common-context binding in its derived identity. Verify
+        # both original hashes before comparing its unchanged source inputs.
+        if (row.get('source') == 'subject_market_comparison'
+                and row.get('verification') == 'VERIFIED'
+                and market_input.get('comparisonScope') == 'OWNER_PRIVATE'
+                and market_input.get('baseMarketContextId') == context['baseMarketContextId']
+                and market_input.get('informationCutoff') == context['receivedAt']
+                and market_input.get('evidenceId') == digest({k:v for k,v in market_input.items() if k!='evidenceId'})
+                and row.get('evidenceId') == 'dialogue-fact-'+digest({k:v for k,v in row.items() if k!='evidenceId'})):
+            row.pop('evidenceId')
+            for key in ('evidenceId', 'informationCutoff', 'baseMarketContextId'):
+                market_input.pop(key)
+    # Do not strip observedAt/acquiredAt/reportedAt or source timestamps.
+
+    return digest({'schemaVersion':'argus-overview-inputs-v1', 'inputs':inputs,
+                   'generationPolicy':dict(generation_policy),
+                   'evaluationHour':int(at.timestamp()) // 3600})
