@@ -64,6 +64,7 @@ export function editorialEdition(brief: MarketBrief | null): MarketBrief | null 
 
 export function editorialCoversNews(brief: MarketBrief | null,
   event: { eventId: string; revision?: number; processedAt?: string }): boolean {
+  brief = editorialEdition(brief);
   if (!Number.isFinite(Date.parse(event.processedAt ?? '')) || !Number.isFinite(Date.parse(brief?.generatedAt ?? ''))) return false;
   if (!hasEditorialIntent(brief) || !event.processedAt
     || Date.parse(event.processedAt) > Date.parse(brief!.generatedAt)) return false;

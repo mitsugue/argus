@@ -19,7 +19,7 @@ import argus_analysis_history as history
 PREFIX = 'market-analysis/v1'
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 CHUNK_BYTES = 512 * 1024
-MAX_SYNC_SECONDS = 45
+MAX_SYNC_SECONDS = 180
 SCHEMA = 'argus-public-analysis-backup-v1'
 
 
