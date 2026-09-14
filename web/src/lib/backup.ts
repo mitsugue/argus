@@ -26,6 +26,19 @@ const BACKUP_META_ONLY_KEYS = new Set<string>([
   'argus.portfolioSync.meta.v1', 'argus.backupSafety.meta.v1',
 ]);
 
+// The locale writer stores a plain string; protected documents store JSON.
+// Earlier restores wrote a JSON string for the locale. Read both formats,
+// but restore the format used by the actual settings writer.
+function readBackupValue(key: string, raw: string): unknown {
+  if (key === 'argus.locale.v1' && (raw === 'ja' || raw === 'en')) return raw;
+  return JSON.parse(raw) as unknown;
+}
+
+function writeBackupValue(key: string, value: unknown): string {
+  if (key === 'argus.locale.v1' && (value === 'ja' || value === 'en')) return value;
+  return JSON.stringify(value);
+}
+
 export interface BackupFile {
   app: 'argus';
   backupContractVersion?: number;
@@ -68,7 +81,7 @@ export function hasBackupContent(storage: Pick<Storage, 'getItem'> = localStorag
     try {
       const raw = storage.getItem(key);
       if (raw == null) continue;
-      const value = JSON.parse(raw) as unknown;
+      const value = readBackupValue(key, raw);
       if (Array.isArray(value) ? value.length > 0
         : value && typeof value === 'object' ? Object.keys(value).length > 0
         : value != null && value !== '') return true;
@@ -86,7 +99,7 @@ export function buildBackupPayload(
   const data: Record<string, unknown> = {};
   for (const k of BACKUP_KEYS) {
     const raw = localStorage.getItem(k);
-    if (raw != null) data[k] = JSON.parse(raw) as unknown;
+    if (raw != null) data[k] = readBackupValue(k, raw);
   }
   return { app: 'argus', backupContractVersion: BACKUP_CONTRACT_VERSION, exportedAt: new Date().toISOString(), version: __APP_VERSION__,
            syncProtocolVersion: SYNC_PROTOCOL_VERSION, deviceId: options.deviceId ?? deviceId(), auto, data };
@@ -170,7 +183,7 @@ function restoreBackupInto(parsed: BackupFile, storage: BackupStorage, now: numb
         storage.setItem('argus.assetTombstones.v1', JSON.stringify(tombs));
       } catch { /* ignore */ }
     }
-    storage.setItem(k, JSON.stringify(value));
+    storage.setItem(k, writeBackupValue(k, value));
     n++;
   }
   // Stamp restored state as a new local edit so an older read-only envelope is
@@ -213,7 +226,7 @@ export function verifyBackupRoundTrip(parsed: BackupFile): BackupRoundTripProof 
       expected = (expected as Record<string, unknown>[]).map((asset) => ({ ...asset, updatedAt: now }));
     }
     try {
-      if (JSON.stringify(JSON.parse(raw)) !== JSON.stringify(expected)) mismatchedKeys.push(key);
+      if (JSON.stringify(readBackupValue(key, raw)) !== JSON.stringify(expected)) mismatchedKeys.push(key);
       else restoredKeys.push(key);
     } catch {
       mismatchedKeys.push(key);
