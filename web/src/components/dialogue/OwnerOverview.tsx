@@ -66,7 +66,7 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:
   useEffect(()=>{onReference(token?saved??null:null);},[saved,token,onReference]);
   if(!token)return <section className="owner-overview"><h3>この銘柄について</h3><p>所有者の接続設定を保存すると、市場と登録した保有情報から説明を自動更新します。</p></section>;
   return <section className="owner-overview" aria-label="この銘柄へのARGUSの説明">
-    <header><p className="owner-overview__eyebrow">{asset?.displayNameJa||asset?.displayName||symbol}</p><span>{horizon}営業日の見通し</span></header>
+    <header><p className="owner-overview__eyebrow">{asset?.displayNameJa||asset?.displayName||(symbol==='N225'?'日経平均':symbol)}</p><span>{horizon}営業日の見通し</span></header>
     {!contextId&&<p role="status">市場の根拠を取得しています。</p>}
     {error&&<p role="status">{error}</p>}
     {!error&&contextId&&!current&&<p role="status">{job&&edition?.key===requestKey?statusText[job.status]||'説明の更新を確認しています。':'今の根拠から説明を更新しています。'}</p>}

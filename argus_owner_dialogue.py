@@ -289,6 +289,20 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
         'calculatedHypothesis':calculated,'isHypotheticalConversation':hypothesis is not None,'actionAuthority':False,
         'officialMarketStateMutation':False,'officialPositionMutation':False,'officialPredictionMutation':False}
     if selected_event is not None: context['eventFocus'] = selected_event
+    if market == 'JP' and symbol == 'N225':
+        from argus_market_brief import calculation_identity
+        snapshot = (brief.get('calculationSnapshots') or {}).get(str(horizon))
+        if isinstance(snapshot, Mapping) and isinstance(snapshot.get('comparison'), Mapping):
+            identity = calculation_identity({str(horizon): snapshot})
+            matching_fact = next((f for f in facts if f.get('source') == 'price_path_calculation'
+                and (f.get('provenance') or {}).get('eventId') == f'n225-price-path-{horizon}'
+                and (f.get('provenance') or {}).get('sourceRowSha256') == identity), None)
+            chart = snapshot['comparison']
+            if (matching_fact and chart.get('schemaVersion') == 'jp-market-comparison-v1'
+                    and (chart.get('forecast') or {}).get('horizonSessions') == horizon
+                    and instant(chart['informationCutoff']) <= instant(received_at)):
+                context['indexComparison'] = deepcopy(chart)
+                context['indexComparisonEvidenceId'] = matching_fact['evidenceId']
     if len(json.dumps(context,ensure_ascii=False).encode())>65536:raise ValueError('private_context_size_bound')
     require_allowed(context);context['contextId']=digest(context);return context
 

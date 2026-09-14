@@ -36,6 +36,7 @@ SCHEDULED_EVENT_RESERVE_USD = 0.5
 PROVIDERS = ("openai", "gemini", "anthropic")
 EVENT_PHASES = ("pre", "post")
 SCHEMA_VERSION = "argus-cost-policy-v1"
+MAX_REQUEST_ESTIMATED_TOKENS = 65536
 
 
 def default_state(mode: str = "DETERMINISTIC", event_opt_in: bool = False) -> Dict[str, Any]:
@@ -202,7 +203,9 @@ def authorize(state: Dict[str, Any], *, provider: str, purpose: str,
         return _skip(mode, "event_budget_exceeded", purpose)
     if estimated_tokens is None or estimated_tokens < 0:
         return _skip(mode, "tokens_unknown", purpose)
-    if estimated_tokens > event_token_limit:
+    if estimated_tokens > MAX_REQUEST_ESTIMATED_TOKENS:
+        return _skip(mode, "request_token_bound", purpose)
+    if budget_enforced and estimated_tokens > event_token_limit:
         return _skip(mode, "event_token_limit", purpose)
     return {"allowed": True, "classification": "success", "status": "allowed",
             "reason": None, "mode": mode, "purpose": purpose,

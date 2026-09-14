@@ -348,4 +348,12 @@ class OwnerUnlimitedAcceptanceTests(unittest.TestCase):
             estimated_tokens=1000)["reason"] == "scheduled_scope_required"
         assert cp.authorize(state, provider="openai", purpose="news_intel",
             automatic=True, budget_enforced=False, estimated_cost_usd=100,
-            estimated_tokens=99999)["reason"] == "event_token_limit"
+            estimated_tokens=99999)["reason"] == "request_token_bound"
+
+    def test_expanded_brief_is_not_blocked_by_disabled_token_budget(self):
+        state = cp.default_state("SCHEDULED_AI")
+        args = dict(provider="openai", purpose="market_brief", automatic=True,
+                    estimated_cost_usd=.08, estimated_tokens=5200 * 3)
+        assert cp.authorize(state, **args)["reason"] == "event_token_limit"
+        assert cp.authorize(state, budget_enforced=False, **args)["allowed"]
+        assert cp.authorize(cp.default_state(), budget_enforced=False, **args)["reason"] == "deterministic_mode"

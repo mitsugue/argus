@@ -2,6 +2,9 @@ import React, {useEffect, useRef, useState} from 'react';
 import {useMarketBrief} from '../../hooks/useMarketBrief';
 import type {AssetItem} from '../../types/assetItem';
 import type {MarketBrief} from '../../lib/marketBrief';
+import type {JapanMarketComparison} from '../../types/japanMarketComparison';
+import {validJapanMarketComparison} from '../../lib/japanMarketComparison';
+import {JapanMarketComparisonChart} from '../chart/JapanMarketComparisonChart';
 import './OwnerDialogue.css';
 import '../today/ArgusEditorialSurface.css';
 
@@ -9,6 +12,7 @@ type Section={textJa:string;kind:string;evidenceIds:string[]};
 export type Job={remoteBackup?:{status?:string;lastVerifiedAt?:string;pending?:boolean};requestId:string;status:string;persistenceStatus:string;remoteRecoveryVerified:boolean;
   previousOverview?:Job|null;context:{intent?:string;eventFocus?:{eventId:string};contextId:string;question:string;subject:{symbol:string;market:string};horizonSessions:number;baseMarketContextId:string;
     facts:Array<{evidenceId:string;text:string;provenance?:{url?:string;sourceLabel?:string}}>;
+    indexComparison?:JapanMarketComparison;indexComparisonEvidenceId?:string;
     calculatedHypothesis?:{status:string;value?:number;unit?:string;noteJa?:string;comparisonPoints?:Array<{usdJpy:number;value:number}>}};
   result?:{answer?:{sections:Record<string,Section>;presentationStatus?:string;presentationPlan?:MarketBrief['presentationPlan']};provider?:{returnedModel?:string;completedAt?:string}}};
 const labels:Record<string,string>={view:'今の見立て',reasons:'重要な理由',changes:'前回からの変化',impact:'自分への影響',next:'次に確認すること',invalidation:'見方を変える条件'};
@@ -20,13 +24,16 @@ export const validJob=(x:any):x is Job=>!!x&&typeof x.requestId==='string'&&type
 
 function dialogueChoices(job: Job | null) {
   const answer=job?.result?.answer;const plan=answer?.presentationPlan;
+  const hasChart=job?.context.subject.symbol==='N225'&&job.context.subject.market==='JP'
+    &&validJapanMarketComparison(job.context.indexComparison,job.context.horizonSessions);
+  const expected=hasChart?[...Object.keys(labels),'nikkei-comparison']:Object.keys(labels);
   if(answer?.presentationStatus==='GENERATED'&&plan?.schemaVersion==='argus-presentation-intent-v1'
     &&plan.actionAuthority===false&&plan.surface==='dialogue'&&plan.contextId===job?.context.contextId
     &&plan.subject===job?.context.subject.symbol&&plan.horizonSessions===job?.context.horizonSessions
-    &&Array.isArray(plan.elements)&&plan.elements.length===6&&new Set(plan.elements.map(row=>row?.id)).size===6
+    &&Array.isArray(plan.elements)&&plan.elements.length===expected.length&&new Set(plan.elements.map(row=>row?.id)).size===expected.length
     &&plan.elements.filter(row=>row?.emphasis==='primary').length===1
-    &&plan.elements.every(row=>row&&Object.hasOwn(labels,row.id)&&['lead','support','detail'].includes(row.placement)
-      &&['primary','normal','quiet'].includes(row.emphasis)&&!(['view','impact','invalidation'].includes(row.id)&&row.placement==='detail')))
+    &&plan.elements.every(row=>row&&expected.includes(row.id)&&['lead','support','detail'].includes(row.placement)
+      &&['primary','normal','quiet'].includes(row.emphasis)&&!(['view','impact','invalidation','nikkei-comparison'].includes(row.id)&&row.placement==='detail')))
     return plan.elements;
   return Object.keys(labels).map(id=>({id,placement:'support',emphasis:'normal',purposeJa:''}));
 }
@@ -141,6 +148,10 @@ export function OwnerAnswerBody({job}:{job:Job}) {
   const answer=job.result?.answer;
   if(!answer)return null;
   return <div className="argus-editorial owner-dialogue__answer">{dialogueChoices(job).map(choice=>{
+        if(choice.id==='nikkei-comparison')return <section className={`argus-editorial__element is-${choice.emphasis} placement-${choice.placement}`} key={choice.id}>
+          <JapanMarketComparisonChart document={job.context.indexComparison!}/>
+          <p className="argus-editorial__uncertain">この回答を作成した時点の比較です。現在の値で過去の線を書き換えていません。</p>
+        </section>;
         const content=<><p className="argus-editorial__text">{answer.sections[choice.id].textJa}</p>
           {answer.sections[choice.id].kind==='UNKNOWN'&&<small>確認できていない範囲</small>}</>;
         const className=`argus-editorial__element is-${choice.emphasis} placement-${choice.placement} element-${choice.id}`;

@@ -200,9 +200,14 @@ def generation_instruction(catalog: Mapping[str, Any]) -> str:
 
 def dialogue_inventory(context: Mapping[str, Any]) -> dict[str, Any]:
     refs = [row['evidenceId'] for row in context.get('facts', [])][:24]
+    elements = [{'id': key, 'kind': 'narrative',
+        'payloadId': _digest({'contextId': context['contextId'], 'section': key}),
+        'evidenceIds': refs, 'mandatory': key in {'view', 'impact', 'invalidation'}, 'urgent': False}
+        for key in ('view', 'reasons', 'changes', 'impact', 'next', 'invalidation')]
+    if context.get('indexComparison') is not None:
+        elements.append({'id': 'nikkei-comparison', 'kind': 'chart',
+            'payloadId': _digest(context['indexComparison']),
+            'evidenceIds': [context['indexComparisonEvidenceId']], 'mandatory': True, 'urgent': False})
     return inventory(context_id=context['contextId'], surface='dialogue',
         subject=context['subject']['symbol'], horizon=context['horizonSessions'],
-        elements=[{'id': key, 'kind': 'narrative',
-            'payloadId': _digest({'contextId': context['contextId'], 'section': key}),
-            'evidenceIds': refs, 'mandatory': key in {'view', 'impact', 'invalidation'}, 'urgent': False}
-            for key in ('view', 'reasons', 'changes', 'impact', 'next', 'invalidation')])
+        elements=elements)
