@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.70"
+PRODUCT_VERSION = "v13.5.71"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -41,7 +41,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dialogue/OwnerOverview.css': 'e608b1f63bbbf8596454a9e0100cea6ee8a41a0f',
     'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',
     'web/src/lib/presentationIntent.ts': 'a1472108a10b2b485e4ed98eea9bc6aa8f105928',
-    'web/src/components/today/ArgusEditorialSurface.tsx': 'dfd82ff1755f6b345fee006172379758279b410a',
+    'web/src/components/today/ArgusEditorialSurface.tsx': '4e4386e99ef027fff5006a71c8e672c52c59b28e',
     'web/src/components/today/ArgusEditorialSurface.css': '66bc60414e09d490bc0216cf054465bc19dd7993',
     'test_argus_presentation_intent.py': '26221c60a2a167272ff8ca5765590bb49fbbe4c8',
     'docs/V13_6_PRESENTATION_INTENT.md': '88d35d6f5f603628e7e89bae56308e16b7c76ea6',
@@ -116,7 +116,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/today/SharedMarketContext.tsx': '0d126ec6d92e76957a4b58ef532e9b99b85b6f13',
     'web/src/lib/marketInternals.ts': '0f8adf278b3dba1c4e55e6963ad450a1a8f66b0d',
     'web/src/lib/pwaRecovery.ts': '038fe1dc3e55433a0f72e8a06ca1701176155438',
-    'web/src/components/today/MarketAnalysisHistory.tsx': 'b87fddd6fd5192510d2335f6aba0e58aab93631f',
+    'web/src/components/today/MarketAnalysisHistory.tsx': 'bd38f618e07be59830a3a465faf73525409aa55e',
     'test_argus_analysis_history.py': '41563064d1cd9f719add08a20e1b3de3af35fbf9',
     'argus_analysis_history.py': '1ebd8d01e69f9a79eb4fd4f3272569fe375310cc',
     'argus_market_ledger.py': '4bb12ff9be4c423dbf41c17ffd6a184286fd921b',
@@ -164,7 +164,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': 'bd01394fcfce1b2af42119cefba08eb56bc6520b',
     'web/src/components/dashboard/MacroResultDetails.tsx': '1ae4f62354c917002f6b60b1b8e72de1a126a3f6',
     'web/src/components/today/MarginDynamicsCard.tsx': '916091e12c4362a7340ad5cb5dff373b1d36300e',
-    'web/src/hooks/useJapanMarketComparison.ts': '0826fa226cb87c08e74c2c4b75496108baeeb117',
+    'web/src/hooks/useJapanMarketComparison.ts': '23226d5fa95e4acdcefe2f156bc7ac6de95df61a',
     'web/src/hooks/useJapanSqCalendar.ts': '3bd95e491810c395faf23203356d85eb7d0d385e',
     'web/src/lib/japanMarketComparison.ts': 'ff923a52da97a388b92d024f57596b8a76046df3',
     'web/src/lib/japanSqCalendar.ts': '947b1c9121f7b6f8a5e7b501211b8b43449b329b',

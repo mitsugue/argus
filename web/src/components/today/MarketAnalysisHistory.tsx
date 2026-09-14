@@ -2,10 +2,12 @@ import React, { useRef, useState, useEffect } from 'react';
 import { validMarketBrief, type MarketBrief } from '../../lib/marketBrief';
 import { validJapanMarketComparison } from '../../lib/japanMarketComparison';
 import { JapanMarketComparisonChart } from '../chart/JapanMarketComparisonChart';
+import { ArgusEditorialSurface } from './ArgusEditorialSurface';
+import { hasEditorialIntent } from '../../lib/presentationIntent';
 
 type Entry = { recordId: string; recordedAt: string; sequence: number; sections: NonNullable<MarketBrief['unifiedSummary']>['sections'] };
 type Result = { resultId: string; targetDate: string; horizonSessions: number; actualClose: number; forecastValue: number; actualComparisonValue: number; comparisonUnit: string; absoluteErrorPct: number; actualClass: string; receivedAt: string };
-type Saved = { recordId: string; recordedAt: string; brief: MarketBrief; calculations: Record<string, { comparison?: unknown }> };
+type Saved = { recordId: string; recordedAt: string; brief: MarketBrief; calculations: NonNullable<MarketBrief['calculationSnapshots']> };
 const base = () => String(import.meta.env.VITE_ARGUS_BACKEND_URL ?? '').replace(/\/$/, '');
 const stamp = (value: string) => new Date(value).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
 
@@ -46,6 +48,9 @@ export function MarketAnalysisHistory() {
     finally {window.clearTimeout(timeout);flight.current=null;setBusy(false);}
   };
   const comparison=saved?.calculations?.[String(horizon)]?.comparison;
+  const savedEdition=saved?{...saved.brief,calculationSnapshots:saved.calculations}:null;
+  const savedEditorial=hasEditorialIntent(savedEdition);
+  const savedFiveDayChart=savedEditorial&&savedEdition?.presentationPlan?.elements.some(row=>row.id==='nikkei-comparison');
   return <details className="at-analysis-history" onToggle={event=>{if(event.currentTarget.open&&!loaded&&!busy)void load();}}>
     <summary>前回の見立て・保存した予測を見る</summary>
     <p>発表した時点の根拠と計算結果です。後の入力で過去の線を書き換えません。</p>
@@ -55,18 +60,23 @@ export function MarketAnalysisHistory() {
     {busy&&<p role="status">履歴を読み込んでいます。</p>}
     {error&&<p role="status">履歴を取得できませんでした。<button type="button" onClick={()=>void load()}>再取得</button></p>}
     {loaded&&!rows.length&&<p>保存済みの見立てはまだありません。</p>}
-    {rows.map(row=><p key={row.recordId}><button type="button" disabled={busy} onClick={()=>void load(row.recordId)}>
+    {!saved&&rows.map(row=><p key={row.recordId}><button type="button" disabled={busy} onClick={()=>void load(row.recordId)}>
       {stamp(row.recordedAt)} · {row.sections.view.textJa}</button></p>)}
-    {next&&<button type="button" disabled={busy} onClick={()=>void load(undefined,true)}>さらに前を見る</button>}
+    {!saved&&next&&<button type="button" disabled={busy} onClick={()=>void load(undefined,true)}>さらに前を見る</button>}
+    {saved&&<button type="button" onClick={()=>setSaved(null)}>保存した説明を選び直す</button>}
     {saved&&<section aria-label="保存した見立て">
       <h4>{stamp(saved.recordedAt)}の見立て</h4>
+      {savedEditorial&&savedEdition?<ArgusEditorialSurface brief={savedEdition} archived/>:<>
+      <p>当時の日経平均・5営業日の説明</p>
       <p>{saved.brief.unifiedSummary?.sections.view.textJa}</p>
       <p>変更理由：{saved.brief.unifiedSummary?.sections.changes.textJa}</p>
-      <p>見方を変える条件：{saved.brief.unifiedSummary?.sections.invalidation.textJa}</p>
+      <p>見方を変える条件：{saved.brief.unifiedSummary?.sections.invalidation.textJa}</p></>}
       <label>保存した予測の期間 <select value={horizon} onChange={e=>setHorizon(Number(e.target.value))}>
         {[1,5,10,20].map(value=><option key={value} value={value}>{value}営業日</option>)}</select></label>
-      {validJapanMarketComparison(comparison,horizon)?<JapanMarketComparisonChart document={comparison}/>
-        :<p>この時点・期間の計算結果は未取得です。</p>}
+      {horizon!==5&&<p>以下は同じ保存時点の{horizon}営業日の計算です。上の5営業日の説明を、この期間の見通しへ読み替えません。</p>}
+      {horizon===5&&savedFiveDayChart?<p>5営業日の計算は、当時の説明に含まれるチャートをご覧ください。</p>
+        :validJapanMarketComparison(comparison,horizon)?<JapanMarketComparisonChart document={comparison}/>
+          :<p>この時点・期間の計算結果は未取得です。</p>}
       <details><summary>当時の根拠とモデル</summary>
         {saved.brief.facts.map((fact,index)=><p key={index}>{fact.text}</p>)}
         <p>要求 {saved.brief.aiDiagnostics?.requestedModel??'未確認'} ／ 応答 {saved.brief.aiDiagnostics?.returnedModel??'未確認'}</p>
