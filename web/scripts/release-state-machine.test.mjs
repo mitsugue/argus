@@ -123,7 +123,7 @@ assert.match(evaluateBusinessSnapshotSet({
 assert.equal(snapshotIdentity(observed[0]), contract.snapshots[0].identity);
 // v13.5.66: cold-start margins (see the constants' comment for the measurement)
 assert.equal(BUSINESS_TRIGGER_TRANSPORT_TIMEOUT_MS, 600_000);
-assert.equal(BUSINESS_RECONCILIATION_DEADLINE_MS, 900_000);
+assert.equal(BUSINESS_RECONCILIATION_DEADLINE_MS, 1_800_000);
 
 const jsonResponse = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { 'Content-Type': 'application/json' },
@@ -159,6 +159,7 @@ const triggerOptions = (fetchImpl, overrides = {}) => ({
   expectedBuildSha: buildSha, producerTriggerId: triggerId, fetchImpl,
   nowMs: () => Date.parse(generatedAt) + 1000,
   reconciliationDeadlineMs: 0,
+  sleepImpl: async () => {},
   ...overrides,
 });
 const captureRejection = async (promise) => {
@@ -303,6 +304,30 @@ const polled = await triggerBusinessSnapshots(triggerOptions(pollingFetch, {
 }));
 assert.equal(polled.reconciliation.outcome, 'COMPLETE');
 assert.equal(polled.reconciliation.attempts, 2);
+
+// A single existing trigger can finish after the preceding checkpoint releases
+// the writer. Simulated elapsed time proves the real default without waiting.
+let queuedClock = Date.parse(generatedAt) + 1000;
+const queuedStart = queuedClock;
+let queuedPosts = 0;
+const queuedSnapshots = observed.map(row => ({...row,
+  generatedAt: new Date(queuedStart + 1_000_000).toISOString(),
+}));
+const queuedResult = await triggerBusinessSnapshots(triggerOptions(snapshotFetch({
+  snapshots: queuedSnapshots,
+  post: () => { queuedPosts += 1; throw new TypeError('fetch failed'); },
+  onRead: () => queuedClock - queuedStart < 1_000_000
+    ? jsonResponse({status:'pending'},404) : null,
+}), {
+  nowMs: () => queuedClock,
+  reconciliationDeadlineMs: BUSINESS_RECONCILIATION_DEADLINE_MS,
+  reconciliationPollMs: 100_000,
+  sleepImpl: async milliseconds => { queuedClock += milliseconds; },
+}));
+assert.equal(queuedPosts, 1);
+assert.equal(queuedResult.reconciliation.outcome, 'COMPLETE');
+assert.equal(queuedResult.reconciliation.snapshots.length, 12);
+assert.ok(queuedClock - queuedStart > 900_000);
 
 // 13. A durable but unverified snapshot cannot satisfy the canonical gate.
 const unverifiedSnapshots = structuredClone(observed);

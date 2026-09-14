@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'docs/V13_7_REQUIREMENTS.md': '6c8ecf42af217b1dfc861027079ec0cb411a8fb5',
     'web/src/hooks/useOsintInvestigation.ts': 'ada26a80e0f0f439f97cb75858407647dc7c5d8d',
     'web/src/components/guide/Layer2BSyncCard.tsx': '20dae8bccafee961a17aad41b39f738fd5f60b76',
     'web/src/components/dashboard/ProHandoffButton.tsx': 'ff35d429cd6c8b615fbeb355edf475edacc992a5',
