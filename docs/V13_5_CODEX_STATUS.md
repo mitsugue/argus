@@ -528,3 +528,34 @@ original receipt, model and usage are unchanged. 84 news/pipeline tests and
 123 public-boundary tests pass, including real file save/readback, idempotence
 and corruption rejection. Preparing the recovery file is not proof of startup
 application or production history display; those remain pending after final CI.
+
+### 2026-09-14: 13.5.77 production closeout and Recovery activation
+
+PR364 merged as `702fc1fce6f36253e118c43e81b5874bf30dcd52` after the
+required Product and Recovery evidence passed. Backend readiness and Pages both
+reported 13.5.77 and that exact build. A real browser showed the plain version,
+healthy news intake, the owner-change notification preference and matching
+frontend/backend identity. After restart, the public cost diagnostic reported
+three restored rows, write-through persistence and a later persist timestamp.
+
+A new market edition requested and received `gpt-6-astra`. The first response
+failed the unsupported-number check; the single correction was accepted and
+saved. Requested/returned model, tokens and estimated cost are present in the
+functional usage ledger. This is direct generation and persistence evidence;
+independent predictive uplift and owner-iPhone display are separate.
+
+PR365 was classified Recovery-only, passed its required exact-head gate and
+merged as `f7a16fe497f0c864de9d95e4495b84298cfb5522`. The scheduler now evaluates
+bounded owner-symbol Web Push proposals and refreshes stale, previously saved
+subject editions without an open browser. Failure to load private owner data
+does not prevent SQ or news push evaluation. Actual closed-app receipt and deep
+link opening on the owner's iPhone remain unverified.
+
+Tachibana authentication is currently `AUTH_SUCCEEDED`/PASS; the feed remains
+read-only shadow and the market was closed at observation time. Overseas investor
+flow is acquired through the market ledger and appears in the production market
+edition; its predictive usefulness remains unvalidated. Official index-consistent
+EPS/PER is still unavailable because the selected source returns HTTP 403 in both
+local and production environments. BUY remains disabled and analogous frequency
+is not labelled probability. The 13.5 fixes are the base for the 13.6.0 Product
+release; 13.7 remains prohibited until an explicit owner restart.
