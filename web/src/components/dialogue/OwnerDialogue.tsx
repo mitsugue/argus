@@ -10,14 +10,14 @@ import '../today/ArgusEditorialSurface.css';
 
 type Section={textJa:string;kind:string;evidenceIds:string[]};
 export type Job={remoteBackup?:{status?:string;lastVerifiedAt?:string;pending?:boolean};requestId:string;status:string;persistenceStatus:string;remoteRecoveryVerified:boolean;
-  previousOverview?:Job|null;context:{intent?:string;eventFocus?:{eventId:string};contextId:string;question:string;subject:{symbol:string;market:string};horizonSessions:number;baseMarketContextId:string;
+  previousOverview?:Job|null;context:{referenceEdition?:{recordId:string;recordedAt:string;isCurrentMarketAnalysis:false};intent?:string;eventFocus?:{eventId:string};contextId:string;question:string;subject:{symbol:string;market:string};horizonSessions:number;baseMarketContextId:string;
     facts:Array<{evidenceId:string;text:string;provenance?:{url?:string;sourceLabel?:string}}>;
     indexComparison?:JapanMarketComparison;indexComparisonEvidenceId?:string;
     calculatedHypothesis?:{status:string;value?:number;unit?:string;noteJa?:string;comparisonPoints?:Array<{usdJpy:number;value:number}>}};
   result?:{answer?:{sections:Record<string,Section>;presentationStatus?:string;presentationPlan?:MarketBrief['presentationPlan']};provider?:{returnedModel?:string;completedAt?:string}}};
 const labels:Record<string,string>={view:'今の見立て',reasons:'重要な理由',changes:'前回からの変化',impact:'自分への影響',next:'次に確認すること',invalidation:'見方を変える条件'};
 const states:Record<string,string>={RUNNING:'AIが根拠を確認しています。履歴は引き続き読めます。',INTERRUPTED:'再起動で処理が中断しました。課金の重複を避けるため、自動再実行はしていません。',REJECTED:'回答の根拠と表現を検証できなかったため、表示を保留しました。',UNAVAILABLE:'AIが応答を返せませんでした。取得済みの市場情報は利用できます。',FAILED:'回答処理に失敗しました。',SAVE_FAILED:'回答の保存に失敗しました。この端末表示だけでは復元を保証できません。'};
-const errors:Record<string,string>={unauthorized:'所有者の接続キーを確認してください。',owner_sync_unconfigured:'サーバーの所有者認証が未設定です。',durable_storage_unavailable:'履歴の保存先が利用できないため、質問を送信できません。',market_context_changed:'市場の根拠が更新されました。更新後に新しい質問として送信してください。',dialogue_recovery_pending:'保存した会話を復旧中、または遠隔保存の接続を確認できていません。二重実行を防ぐため、復旧確認後に質問できます。',dialogue_busy:'別の質問に回答中です。履歴から進行状況を確認できます。',dialogue_input_invalid:'入力した対象・期間・仮定を確認してください。'};
+const errors:Record<string,string>={saved_market_reference_unavailable:'表示していた説明の保存データを復旧中です。復旧後に同じ質問を再送できます。',unauthorized:'所有者の接続キーを確認してください。',owner_sync_unconfigured:'サーバーの所有者認証が未設定です。',durable_storage_unavailable:'履歴の保存先が利用できないため、質問を送信できません。',market_context_changed:'市場の根拠が更新されました。更新後に新しい質問として送信してください。',dialogue_recovery_pending:'保存した会話を復旧中、または遠隔保存の接続を確認できていません。二重実行を防ぐため、復旧確認後に質問できます。',dialogue_busy:'別の質問に回答中です。履歴から進行状況を確認できます。',dialogue_input_invalid:'入力した対象・期間・仮定を確認してください。'};
 const readKey=()=>{try{return localStorage.getItem('argus.ownerSyncToken.v1')||'';}catch{return '';}};
 export const validJob=(x:any):x is Job=>!!x&&typeof x.requestId==='string'&&typeof x.status==='string'&&x.context?.subject&&Array.isArray(x.context?.facts)
   &&typeof x.context?.question==='string'&&(!x.result?.answer||Object.keys(labels).every(k=>typeof x.result.answer.sections?.[k]?.textJa==='string'));
@@ -38,7 +38,7 @@ function dialogueChoices(job: Job | null) {
   return Object.keys(labels).map(id=>({id,placement:'support',emphasis:'normal',purposeJa:''}));
 }
 
-export function OwnerDialogue({symbol,market,horizon,asset,baseContextId,previousRequestId,initialQuestion,focusEventId}:{symbol:string;market:'JP'|'US';horizon:number;asset?:AssetItem;baseContextId?:string;previousRequestId?:string;initialQuestion?:string;focusEventId?:string}) {
+export function OwnerDialogue({symbol,market,horizon,asset,baseContextId,previousRequestId,initialQuestion,focusEventId,referenceRecordId}:{symbol:string;market:'JP'|'US';horizon:number;asset?:AssetItem;baseContextId?:string;previousRequestId?:string;initialQuestion?:string;focusEventId?:string;referenceRecordId?:string}) {
   const {brief,retry}=useMarketBrief(); const [token,setToken]=useState(readKey);
   const [connectionOpen,setConnectionOpen]=useState(false);
   const [question,setQuestion]=useState(initialQuestion??'');const [reason,setReason]=useState<string|null>(null);const [period,setPeriod]=useState<string|null>(null);
@@ -46,7 +46,7 @@ export function OwnerDialogue({symbol,market,horizon,asset,baseContextId,previou
   const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [nextBefore,setNextBefore]=useState<number|null>(null);
   const pending=useRef<Record<string,unknown>|null>(null);const alive=useRef(true);
   const base=(import.meta.env.VITE_ARGUS_BACKEND_URL as string|undefined)?.replace(/\/$/,'');
-  const scope=`${market}:${symbol}:${horizon}:${focusEventId??''}`;const scopeRef=useRef(scope);scopeRef.current=scope;
+  const scope=`${market}:${symbol}:${horizon}:${focusEventId??''}:${referenceRecordId??''}`;const scopeRef=useRef(scope);scopeRef.current=scope;
   useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
   const previousScope=useRef(scope);
   useEffect(()=>{if(previousScope.current===scope)return;previousScope.current=scope;setJob(null);setRows([]);setError('');setQuestion(initialQuestion??'');setReason(null);setPeriod(null);setFx('');pending.current=null;setNextBefore(null);},[scope]);
@@ -81,6 +81,7 @@ export function OwnerDialogue({symbol,market,horizon,asset,baseContextId,previou
         pending.current={action:'ask',requestId:crypto.randomUUID(),baseContextId:baseContextId ?? brief?.unifiedContext?.contextId,
           symbol,market,horizon,question:question.trim(),owner,
           ...(focusEventId?{focusEventId}:{}),
+          ...(referenceRecordId?{referenceRecordId}:{}),
           ...(job||previousRequestId?{previousRequestId:job?.requestId??previousRequestId}:{}),
           ...(fx?{hypothesis:{kind:'FX_TRANSLATION',usdJpy:Number(fx),yenIndexUnchanged:true}}:{})};
       }
@@ -111,7 +112,7 @@ export function OwnerDialogue({symbol,market,horizon,asset,baseContextId,previou
     <label>ARGUSへの質問<textarea maxLength={1000} value={question} placeholder="あなたの気になること" onChange={e=>{setQuestion(e.target.value);pending.current=null;}}/></label>
     {market==='JP'&&symbol==='N225'&&<details><summary>為替の仮定を試す</summary><p>日経平均の円建て価格を変えずにドル換算します。円高による株価予測とは異なります。</p>
       <label>仮定するドル円<input type="number" min="0.01" step="0.01" value={fx} onChange={e=>{setFx(e.target.value);pending.current=null;}}/></label></details>}
-    <div className="owner-dialogue__actions"><button type="button" disabled={busy||job?.status==='RUNNING'||!token||!question.trim()||!brief?.unifiedContext} onClick={()=>void ask()}>{busy?'送信中…':pending.current?'同じ質問IDで再送':'ARGUSに質問する'}</button>
+    <div className="owner-dialogue__actions"><button type="button" disabled={busy||job?.status==='RUNNING'||!token||!question.trim()||!(baseContextId ?? brief?.unifiedContext?.contextId)} onClick={()=>void ask()}>{busy?'送信中…':pending.current?'同じ質問IDで再送':'ARGUSに質問する'}</button>
       <button type="button" disabled={!token} onClick={()=>void history()}>保存した会話</button><button type="button" onClick={reset}>仮定を閉じて元の見立てへ</button></div>
     {error&&<p role="alert">{error} <button type="button" onClick={()=>{retry();pending.current=null;}}>市場の根拠を更新</button></p>}
     {job&&<article aria-live="polite"><h4>{job.context.question}</h4><p>{job.context.horizonSessions}営業日 · {job.context.subject.symbol}</p>
@@ -147,7 +148,9 @@ function HypothesisChart({points}:{points?:Array<{usdJpy:number;value:number}>})
 export function OwnerAnswerBody({job}:{job:Job}) {
   const answer=job.result?.answer;
   if(!answer)return null;
-  return <div className="argus-editorial owner-dialogue__answer">{dialogueChoices(job).map(choice=>{
+  return <div className="argus-editorial owner-dialogue__answer">
+    {job.context.referenceEdition&&<p className="argus-editorial__retained">保存した説明（{new Date(job.context.referenceEdition.recordedAt).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})}）の根拠への回答です。最新の市場分析とは区別しています。</p>}
+    {dialogueChoices(job).map(choice=>{
         if(choice.id==='nikkei-comparison')return <section className={`argus-editorial__element is-${choice.emphasis} placement-${choice.placement}`} key={choice.id}>
           <JapanMarketComparisonChart document={job.context.indexComparison!}/>
           <p className="argus-editorial__uncertain">この回答を作成した時点の比較です。現在の値で過去の線を書き換えていません。</p>
