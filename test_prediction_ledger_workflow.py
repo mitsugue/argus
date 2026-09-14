@@ -41,6 +41,16 @@ def test_runtime_is_staged_from_exact_triggering_sha_before_ledger_checkout():
     assert "ref: main" not in source
 
 
+def test_slow_ai_observation_cannot_block_the_canonical_ledger():
+    source = _source()
+    ai = source[source.index("Trigger AI judgment run without blocking the canonical ledger"):
+                source.index("Switch to ledger branch")]
+    assert "--timeout 420" in ai
+    assert "|| AI_RC=$?" in ai
+    assert 'if [ "$AI_RC" -ne 0 ]; then' in ai
+    assert "canonical ledger processing continued independently" in ai
+
+
 def test_canonical_runner_receives_only_bounded_snapshot_contract():
     source = _source()
     canonical = source[source.index("Append canonical Prediction Ledger v2 records"):

@@ -76,7 +76,7 @@ jobs:
             "$RUNTIME/argus_market_data_truth.py" \
             "$RUNTIME/argus_market_clock.py" \
             > "$RUNTIME/SHA256SUMS"
-      - name: Trigger AI judgment run (skipped without ARGUS_ADMIN_TOKEN secret)
+      - name: Trigger AI judgment run without blocking the canonical ledger
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
@@ -97,14 +97,19 @@ jobs:
           echo "🔐 gate: \`${GATE}\`" >> "$GITHUB_STEP_SUMMARY"
           # checker=pro supplies bounded candidate evidence. It is not final action
           # authority; canonical issuance remains governed by the snapshot contract.
-          RESP=$(python3 scripts/workflow_http.py --name ledger-ai-run --method POST --timeout 240 \
+          AI_RC=0
+          RESP=$(python3 scripts/workflow_http.py --name ledger-ai-run --method POST --timeout 420 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --expected-status disabled --expected-status budget_exceeded \
             --expected-status rate_limited --expected-status deterministic_mode \
-            --url "$BE/api/argus/ai-judgment/run?checker=pro")
+            --url "$BE/api/argus/ai-judgment/run?checker=pro") || AI_RC=$?
           SHORT=$(echo "$RESP" | head -c 300)
           echo "ai run: $SHORT"
           echo "🤖 ai run: \`${SHORT}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$AI_RC" -ne 0 ]; then
+            echo "::warning title=AI judgment observation incomplete::The backend did not finish inside the 420-second observation window. The canonical prediction ledger will still be recorded and scored."
+            echo "🤖 AI observation: **INCOMPLETE** — canonical ledger processing continued independently." >> "$GITHUB_STEP_SUMMARY"
+          fi
           # Per-provider diagnostics (esp. WHY Gemini failed — lastErrorType is
           # an exception type + message head, never a key). Admin-gated source,
           # surfaced here so a failing checker is debuggable from the run page.
