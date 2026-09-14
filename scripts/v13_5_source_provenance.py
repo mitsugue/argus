@@ -35,6 +35,8 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # Owner-authorized v13.6.1 prediction-ledger continuity regression proof.
+    'test_prediction_ledger_workflow.py': 'e01ff8eae80ebfa77d62a7b9772860785e3bafbd',
     'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
     'web/src/hooks/useAssets.ts': 'ee6addd411bbf71c253e74a7f76165063189254b',
     'web/src/components/dialogue/OwnerOverview.tsx': '295c6283172d3452ceb55ccd632acb4487727bec',
