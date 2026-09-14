@@ -14,6 +14,36 @@ from test_argus_owner_dialogue import market_brief, context, answer, AT
 def identity(): return str(uuid.uuid4())
 
 
+@pytest.mark.parametrize('corrected', [True, False])
+def test_invalid_numeric_answer_gets_one_correction_with_fixed_evidence(corrected):
+    c=context(); before=copy.deepcopy(c); calls=[]
+    invalid=answer()
+    invalid['reasons']={'textJa':'利益は999です。','kind':'INFERENCE',
+        'evidenceIds':[c['facts'][0]['evidenceId']]}
+    def generate(user, **kwargs):
+        calls.append(user)
+        kwargs['diagnostic'].update(returnedModel='test-primary',estUsd=.25)
+        return answer() if corrected and len(calls)==2 else copy.deepcopy(invalid)
+    result=api.generate_answer(c,generate)
+    assert len(calls)==2 and c==before
+    assert json.dumps(c,ensure_ascii=False,separators=(',',':')) in calls[1]
+    assert 'unsupported_numeric_tokens' in calls[1]
+    assert result['provider']['totalEstUsd']==.5
+    assert len(result['provider']['attempts'])==2
+    assert result['provider']['attempts'][0]['validation']['status']=='REJECTED'
+    assert result['status']==('SUCCEEDED' if corrected else 'REJECTED')
+    assert bool(result['answer']) is corrected
+
+
+def test_unavailable_provider_does_not_create_a_correction_loop():
+    calls=[]
+    def generate(user, **kwargs):
+        calls.append(user);kwargs['diagnostic']['errorCode']='insufficient_quota'
+        return None
+    result=api.generate_answer(context(),generate)
+    assert result['status']=='UNAVAILABLE' and len(calls)==1
+
+
 def test_store_append_read_and_restart_never_reexecutes(tmp_path):
     path=tmp_path/'owner.sqlite3'
     assert store.history(path,'boot')['items']==[] and not path.exists()
