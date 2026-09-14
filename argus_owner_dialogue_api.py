@@ -29,12 +29,14 @@ def generate_answer(context, generate):
         attempts.append({'provider': deepcopy(diagnostic), 'validation': deepcopy(validation)})
         if attempt or not value or validation.get('reason') not in {
                 'unsupported_numeric_tokens', 'fact_requires_verified_references',
-                'unknown_evidence_reference', 'evidence_reference_required', 'presentation_invalid'}:
+                'unknown_evidence_reference', 'evidence_reference_required', 'presentation_invalid',
+                'section_schema_invalid', 'section_field_invalid', 'six_section_schema_required'}:
             break
         user_prompt = (original_prompt + '\n前の回答は検証で却下されました。理由: '
             + json.dumps(validation, ensure_ascii=False)
             + '。同じ対象・期間・根拠を維持してください。数値は根拠とチャートに残し、説明は方向と条件を言葉で述べてください。'
-            '根拠IDとFACT/INFERENCE/UNKNOWNの条件を守り、全6項目と全表示候補を含むpresentationを返してください。'
+            '各項目のtextJaは短く、evidenceIdsは重複なし最大6件とし、根拠IDとFACT/INFERENCE/UNKNOWNの条件を守ってください。'
+            '全6項目と全表示候補を含むpresentationを返してください。'
             '\n前の回答（検証で却下済みの資料）: ' + json.dumps(value, ensure_ascii=False))
     provider = {**diagnostic, 'attempts': attempts,
         'totalEstUsd': sum(float(row['provider'].get('estUsd') or 0) for row in attempts)}

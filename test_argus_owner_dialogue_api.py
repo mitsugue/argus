@@ -44,6 +44,30 @@ def test_unavailable_provider_does_not_create_a_correction_loop():
     assert result['status']=='UNAVAILABLE' and len(calls)==1
 
 
+@pytest.mark.parametrize('field', ['length', 'references'])
+@pytest.mark.parametrize('corrected', [True, False])
+def test_structural_correction_keeps_limits_and_one_retry(field, corrected):
+    c=context(); before=copy.deepcopy(c); calls=[]
+    invalid=answer()
+    if field == 'length':
+        invalid['next']['textJa']='次の変化を確認します。'*30
+    else:
+        invalid['next']['evidenceIds']=[c['facts'][0]['evidenceId']]*7
+    def generate(user, **kwargs):
+        calls.append(user); kwargs['diagnostic']['estUsd']=.1
+        return answer() if corrected and len(calls)==2 else copy.deepcopy(invalid)
+    result=api.generate_answer(c,generate)
+    assert len(calls)==2 and c==before
+    diagnostic=result['provider']['attempts'][0]['validation']
+    assert diagnostic['reason']=='section_field_invalid' and diagnostic['section']=='next'
+    assert diagnostic['fieldIssues']['textLimit']==240
+    assert diagnostic['fieldIssues']['referenceLimit']==6
+    assert 'fieldIssues' in calls[1] and '最大6件' in calls[1]
+    assert result['status']==('SUCCEEDED' if corrected else 'REJECTED')
+    assert bool(result['answer']) is corrected
+    assert result['provider']['totalEstUsd']==.2
+
+
 def test_store_append_read_and_restart_never_reexecutes(tmp_path):
     path=tmp_path/'owner.sqlite3'
     assert store.history(path,'boot')['items']==[] and not path.exists()

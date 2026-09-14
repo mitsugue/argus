@@ -49,6 +49,16 @@ def validate_unified_ai(value: Any, context: Mapping[str, Any], *, diagnostic=No
                 kind not in {"FACT", "INFERENCE", "UNKNOWN"} or \
                 not isinstance(refs, list) or len(refs) > 6 or \
                 any(not isinstance(ref, str) for ref in refs) or len(set(refs)) != len(refs):
+            if isinstance(diagnostic, dict):
+                diagnostic['fieldIssues'] = {
+                    'textCharacters': len(text) if isinstance(text, str) else None,
+                    'textLimit': 240,
+                    'kindAllowed': kind in {'FACT', 'INFERENCE', 'UNKNOWN'} if isinstance(kind, str) else False,
+                    'referenceCount': len(refs) if isinstance(refs, list) else None,
+                    'referenceLimit': 6,
+                    'referencesDistinctStrings': isinstance(refs, list) and all(isinstance(ref, str) for ref in refs)
+                        and len(set(refs)) == len(refs),
+                }
             return rejected("section_field_invalid", key)
         allowed = {**prior, **current} if key == "changes" else current
         if any(ref not in allowed for ref in refs):
