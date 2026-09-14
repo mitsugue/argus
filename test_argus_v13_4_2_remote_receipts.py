@@ -304,6 +304,34 @@ def test_receipt_verified_at_is_checkpoint_completion_not_drain_start():
     assert receipt["verifiedAt"] != NOW
 
 
+@pytest.mark.parametrize("checkpoint_fails", [False, True])
+def test_receipt_reserves_checkpoint_priority_and_releases_it_on_failure(checkpoint_fails):
+    saved = dict(scanner._COST_CHECKPOINT_STATE)
+    scanner._COST_CHECKPOINT_STATE["receiptWaiters"] = 0
+
+    def persist():
+        assert scanner._COST_CHECKPOINT_STATE["receiptWaiters"] == 1
+        if checkpoint_fails:
+            raise RuntimeError("checkpoint unavailable")
+        return {"verified": True}
+
+    try:
+        with mock.patch.object(scanner, "_prepare_remote_receipt_drain",
+                               return_value={"status": "verified_checkpoint_pending"}), \
+                mock.patch.object(scanner, "_osint_persist", side_effect=persist), \
+                mock.patch.object(scanner, "_complete_remote_receipt_drain", return_value={}), \
+                mock.patch.object(scanner, "_recovery_phase_a_record_verified_receipt"):
+            if checkpoint_fails:
+                with pytest.raises(RuntimeError, match="checkpoint unavailable"):
+                    scanner._persist_with_remote_receipt_drain(NOW)
+            else:
+                scanner._persist_with_remote_receipt_drain(NOW)
+        assert scanner._COST_CHECKPOINT_STATE["receiptWaiters"] == 0
+    finally:
+        scanner._COST_CHECKPOINT_STATE.clear()
+        scanner._COST_CHECKPOINT_STATE.update(saved)
+
+
 def test_scheduled_receipt_arrival_capacity_fits_one_bounded_drain():
     workflows = pathlib.Path(".github/workflows")
     producers = sorted(
@@ -323,8 +351,8 @@ def test_scheduled_receipt_arrival_capacity_fits_one_bounded_drain():
     assert scan.count("remote-journal/commit-receipt") == 1
     assert ordinary_watchtower.count("remote_receipt_drain.py") == 3
     assert scan.count("remote_receipt_drain.py") == 3
-    assert ordinary_watchtower.count("--budget-seconds 240") == 1
-    assert scan.count("--budget-seconds 240") == 1
+    assert ordinary_watchtower.count("--budget-seconds 1800") == 1
+    assert scan.count("--budget-seconds 1800") == 1
     assert "cron:" not in watchtower
     assert (
         "OnCalendar=Mon..Fri *-*-* *:04,11,19,26,34,41,49,56:00 UTC"
