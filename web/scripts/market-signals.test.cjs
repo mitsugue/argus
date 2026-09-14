@@ -95,7 +95,7 @@ assert.ok(panel.includes('data-argus-contract="market-signals-top-v1"'), 'top bl
 assert.ok(panel.includes('const topSignals = marketSignalsView(decisionEvidence.marketView?.projection ?? null)'),
   'top block derives from the projection');
 assert.ok(panel.includes("{topSignals ? topSignals.countLabel : '— / 7'}"), 'top count from the view or truthful placeholder');
-assert.ok(panel.includes('<small>MARKET SIGNALS</small>'), 'owner-facing name at the top');
+assert.ok(panel.includes('<small>セブンサイン · 日本株の7条件</small>'), 'owner-facing name at the top');
 assert.ok(panel.includes('data-argus-contract="market-signals-top-detail-v1"'), 'seven per-signal states expand at the top');
 assert.ok(!/<b>1 \/ 7<\/b>/.test(panel), 'no hard-coded 1 / 7');
 

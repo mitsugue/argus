@@ -80,7 +80,7 @@ try {
   await page.goto(publicUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForFunction((sha) => globalThis.__ARGUS_BUILD_SHA__ === sha,
     candidateSha, { timeout: 30_000 });
-  assert.equal(await page.evaluate(() => globalThis.__ARGUS_PRODUCT_VERSION__), 'v13.5.66');
+  assert.equal(await page.evaluate(() => globalThis.__ARGUS_PRODUCT_VERSION__), 'v13.5.67');
   evidence.identitiesConverged = true;
 
   const producerTriggerId = `full-release-simulation-${runNumber}-${candidateSha.slice(0, 12)}`;
@@ -148,19 +148,21 @@ try {
 
   const brand = await page.locator('.shell__brand').innerText();
   assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro/);
-  assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro\s+v13\.5\.66/);
+  assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro\s+v13\.5\.67/);
   for (const label of ['Today', 'Holdings / Watchlist', 'Notifications', 'Settings']) {
     assert.ok(await page.getByText(label, { exact: true }).count() > 0, label);
   }
   // v13.5.39: the owner's top command block renders MARKET SIGNALS x / 7 from
   // the real projection (a truthful '— / 7' placeholder until evidence loads);
   // this is the rendered DOM on the production route, not a source string.
-  await page.locator('.at-decision-details > summary').click();
+  assert.equal(await page.locator('.at-decision-details').getAttribute('open'), null, 'decision details start collapsed');
   const topSignals = page.locator('[data-argus-contract="market-signals-top-v1"]').first();
   assert.ok(await topSignals.count() > 0, 'top MARKET SIGNALS block rendered');
+  assert.ok(await topSignals.isVisible(), 'signals remain visible while decision details are collapsed');
+  assert.equal(await page.locator('.at-urgent-news').count(), 0, 'news has one list rather than a detached leading article');
   const topSignalsText = (await topSignals.innerText()).trim();
   assert.match(topSignalsText, /^(\d|—) \/ 7$/, `top MARKET SIGNALS count: ${topSignalsText}`);
-  assert.ok((await page.locator('.at-seven summary small').first().innerText()).includes('MARKET SIGNALS'),
+  assert.ok((await page.locator('.at-seven summary small').first().innerText()).includes('セブンサイン'),
     'top block carries the owner-facing name');
   evidence.publicProductAcceptance = { status: 'pass', brand, topSignals: topSignalsText,
     surfaces: ['Today', 'Holdings / Watchlist', 'Notifications', 'Settings'] };

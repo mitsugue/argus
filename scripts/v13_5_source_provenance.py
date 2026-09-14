@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.66"
+PRODUCT_VERSION = "v13.5.67"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -45,7 +45,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/V13_6_PRESENTATION_INTENT.md': 'b418a94eecb8090d5d3df2adb555dddf21a3880f',
     'argus_presentation_intent.py': 'e7d0a9c0bac18b6e628539fb4f351f8f2c49f9cb',
     'argus_persistent_storage.py': '822f60d3ce54a7f5dfbf16638ff79727cb7e4e64',
-    'web/src/components/today/ReadingHierarchy.css': 'e8a61092d0b5c846a3706c9a1e53424f68f5e0b4',
+    'web/src/components/today/ReadingHierarchy.css': 'd874ebe85adcd7a6d6fd0501273ffc419c4626aa',
     'web/src/components/AppShell.tsx': '5a438f0fd9d20b3b5eca9399f6c314993421a96b',
     'web/src/routes/BackupPage.tsx': '76ef9bb18e9e440afafaad5f9e290c925fc7ac61',
     'web/src/navigation.ts': 'af45a759ac501412f35904890c355f8e71e8736b',
