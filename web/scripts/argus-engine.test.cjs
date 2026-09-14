@@ -289,10 +289,9 @@ check('Today never claims an empty calendar it could not read',
   check('news and market risk sit between the decision and NEXT EVENT',
     hero > 0 && newsTop > hero && newsTop < nextEvent);
   check('the news block lists up to five rows and each row jumps to its Alerts anchor',
-    panel.includes('const NEWS_ROWS_CAP = 5;') && panel.includes('remainingNews.slice(0, NEWS_ROWS_CAP)')
-      && panel.includes("newsRows.filter(row => row.severity === 'CRITICAL').slice(0, 1)")
-      && panel.includes('newsRows.filter(row => !urgentNews.some(urgent => urgent.id === row.id))')
-      && panel.includes('TodayNewsCards rows={urgentNews}')
+    panel.includes('const NEWS_ROWS_CAP = 5;') && panel.includes('newsRows.slice(0, NEWS_ROWS_CAP)')
+      && !panel.includes('TodayNewsCards rows={urgentNews}')
+      && panel.includes('id="today-material-news"')
     && panel.includes("openNewsDetails(`news-${id}`)") && panel.includes("onOpen(row.id)")
     && panel.includes("document.getElementById('news-intel')"));
   check('the old single-item risk and news cards are gone',
