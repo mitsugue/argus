@@ -10,6 +10,47 @@ from scripts import workflow_http as wh
 
 
 class WorkflowHttpTests(unittest.TestCase):
+    def test_readiness_waits_through_deploy_without_posting(self):
+        ready = {"schemaVersion": "argus-public-readiness-v1",
+                 "ready": True, "status": "ready"}
+        pending = {**ready, "ready": False, "status": "not_ready"}
+        with mock.patch.object(wh, "request_json", side_effect=[
+                (502, "Bad Gateway"), (200, json.dumps(pending)),
+                (200, json.dumps(ready))]) as request, \
+                mock.patch.object(wh.time, "sleep"):
+            rc = wh.main(["--name", "ready", "--url", "https://example.invalid/readyz",
+                          "--require-ready", "--attempts", "5"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(request.call_count, 3)
+        self.assertTrue(all(c.kwargs["method"] == "GET" and c.kwargs["data"] is None
+                            for c in request.call_args_list))
+
+    def test_readiness_exhaustion_is_failure_and_bounded(self):
+        pending = {"schemaVersion": "argus-public-readiness-v1",
+                   "ready": "true", "status": "ready"}
+        with mock.patch.object(wh, "request_json", return_value=(200, json.dumps(pending))) as request, \
+                mock.patch.object(wh.time, "sleep") as sleep:
+            rc = wh.main(["--name", "ready", "--url", "https://example.invalid/readyz",
+                          "--require-ready", "--attempts", "5", "--retry-delay", "30"])
+        self.assertEqual(rc, 1)
+        self.assertEqual(request.call_count, 5)
+        self.assertEqual(sleep.call_count, 4)
+
+    def test_readiness_does_not_accept_arbitrary_success_or_auth_failure(self):
+        for response in [(200, '{"ok":true}'), (201, '{"ok":true}'),
+                         (401, '{"error":"unauthorized"}')]:
+            with self.subTest(response=response), mock.patch.object(
+                    wh, "request_json", return_value=response) as request:
+                self.assertEqual(wh.main(["--name", "ready", "--url", "https://example.invalid",
+                                         "--require-ready", "--attempts", "5"]), 1)
+                self.assertEqual(request.call_count, 1)
+
+    def test_readiness_mode_rejects_post_before_request(self):
+        with mock.patch.object(wh, "request_json") as request, self.assertRaises(SystemExit):
+            wh.main(["--name", "ready", "--url", "https://example.invalid",
+                     "--require-ready", "--method", "POST"])
+        request.assert_not_called()
+
     def test_success_and_business_error(self):
         self.assertEqual(wh.classify_response(200, json.dumps({"ok": True}))["outcome"], wh.SUCCESS)
         self.assertEqual(wh.classify_response(200, json.dumps({"error": "bad"}))["outcome"], wh.FAILURE)
