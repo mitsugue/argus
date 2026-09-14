@@ -33,7 +33,7 @@
   100%{transform:translate(0,0)}
 }
 @media(prefers-reduced-motion:reduce){
-  .triangle-step-loader__dot{animation:none}
+  .triangle-step-loader .triangle-step-loader__dot{animation:none}
   .triangle-step-loader{transition:none}
 }
 

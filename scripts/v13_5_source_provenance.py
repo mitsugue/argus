@@ -38,7 +38,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dashboard/SystemHealthPopover.tsx': '3893f26c3bef9812d841600832a96193231000ed',
     'web/src/routes/DataQualityPage.tsx': 'c86b933832c2e50f3d694f4ca1ac79428096fe55',
     'web/src/components/common/TriangleStepLoader.tsx': '218b53b03160f619d00d3e6c3b2eec90fe7922c6',
-    'web/src/components/common/TriangleStepLoader.css': '7d3c888b468466f60ff376c04fb8c2294d714c3e',
+    'web/src/components/common/TriangleStepLoader.css': '189ca3825669144c1ecec4248f9cc72376d77387',
     'web/src/i18n/index.ts': '933221ee4ca1f3adccdb8ebf5c950419fe7ce019',
     # Owner-authorized v13.6.1 prediction-ledger continuity regression proof.
     'test_prediction_ledger_workflow.py': 'e01ff8eae80ebfa77d62a7b9772860785e3bafbd',
