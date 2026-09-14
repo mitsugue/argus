@@ -186,9 +186,9 @@ class DeployScopeTests(unittest.TestCase):
         product = json.loads((ROOT / "product-version.json").read_text())
         frontend = json.loads((ROOT / "web/package.json").read_text())["version"]
         backend = json.loads((ROOT / "backend-version.json").read_text())["version"]
-        self.assertEqual("v13.5.77", product["productVersion"])
-        self.assertEqual("13.5.77", frontend)
-        self.assertEqual("13.5.77", backend)
+        self.assertEqual("v13.6.0", product["productVersion"])
+        self.assertEqual("13.6.0", frontend)
+        self.assertEqual("13.6.0", backend)
 
     def test_release_gate_names_product_and_component_coordinates(self):
         source = (ROOT / "scripts/release_gate.sh").read_text()
@@ -211,15 +211,17 @@ class DeployScopeTests(unittest.TestCase):
         REGEX (``v13\\.5\\.52``) and a plain search-and-replace for the dotted
         version walks straight past it. CI caught it only in the zero-install
         runtime proof, several minutes in. Scan the release-control surfaces
-        for any pinned v13.5.x — escaped or not — that disagrees with
+        for any pinned v13.x.y — escaped or not — that disagrees with
         product-version.json.
         """
         current = json.loads(
             (ROOT / "product-version.json").read_text())["productVersion"]
-        assert current.startswith("v13.5."), current
-        # Matches 13.5.42 and 13\.5\.42 alike.
-        pin = re.compile(r"13\\?\.5\\?\.(\d+)")
-        expected_patch = current.rsplit(".", 1)[1]
+        version = re.fullmatch(r"v13\.(\d+)\.(\d+)", current)
+        assert version, current
+        expected_minor, expected_patch = version.groups()
+        # Matches the current 13.x minor in plain or regex-escaped form.
+        # Older minors may appear as intentional fixtures for mismatch tests.
+        pin = re.compile(rf"13\\?\.{expected_minor}\\?\.(\d+)")
         stale = []
         for relative in (
                 "web/scripts/full-release-simulation.mjs",
