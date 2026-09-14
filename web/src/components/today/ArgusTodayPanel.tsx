@@ -1,4 +1,7 @@
 import { OwnerDialogue } from '../dialogue/OwnerDialogue';
+import type { Job } from '../dialogue/OwnerDialogue';
+import { OwnerOverview } from '../dialogue/OwnerOverview';
+import { validJapanMarketComparison } from '../../lib/japanMarketComparison';
 import { MarketBriefCard } from './MarketBriefCard';
 import { useMarketBrief } from '../../hooks/useMarketBrief';
 import { editorialEdition, editorialCoversNews } from '../../lib/presentationIntent';
@@ -581,6 +584,13 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   const { brief: editorialBrief } = useMarketBrief();
   const editorialScope = view.selectedMarket === 'JP' && selectedSymbol === '1321' && horizon === 5;
   const editorialActive = editorialScope && !!editorialEdition(editorialBrief);
+  const [periodOverview,setPeriodOverview] = React.useState<Job|null>(null);
+  const scopedSubject = view.selectedMarket === 'JP' && selectedSymbol === '1321' ? 'N225' : selectedSymbol;
+  const matchingOverview = periodOverview?.context.subject.symbol === scopedSubject
+    && periodOverview.context.subject.market === view.selectedMarket
+    && periodOverview.context.horizonSessions === horizon ? periodOverview : null;
+  const hasSavedPeriodChart = !editorialScope && matchingOverview?.result?.answer?.presentationStatus === 'GENERATED'
+    && validJapanMarketComparison(matchingOverview.context.indexComparison,horizon);
   const topSignals = marketSignalsView(decisionEvidence.marketView?.projection ?? null);
   // v13.5.63 (GPT review item 1): the seven signals are Japanese inputs.
   const usSelected = view.selectedMarket === 'US';
@@ -680,8 +690,13 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     <JapanSqApproachNotice />
 
     <section className="at-view-hero" aria-label="今日の見立て">
-      <MarketBriefCard signals={topSignals && !usSelected ? { activeCount: topSignals.activeCount, total: topSignals.total } : null}
-        cutoff={decisionEvidence.marketView?.informationCutoff ?? null} market={view.selectedMarket} editorial={editorialScope} />
+      {editorialScope ? <MarketBriefCard signals={topSignals && !usSelected ? { activeCount: topSignals.activeCount, total: topSignals.total } : null}
+        cutoff={decisionEvidence.marketView?.informationCutoff ?? null} market="JP" editorial />
+        : <><OwnerOverview key={`${view.selectedMarket}:${scopedSubject}:${horizon}`}
+          symbol={scopedSubject} market={view.selectedMarket} horizon={horizon} onReference={setPeriodOverview}/>
+          <details className="at-brief__fallback"><summary>市場全体の説明 · 日経平均・5営業日</summary>
+            <MarketBriefCard market="JP"/>
+          </details></>}
       {criticalNewsCount > 0 && <button type="button" className="at-critical-jump"
         onClick={()=>document.getElementById('today-material-news')?.scrollIntoView({behavior:'smooth',block:'start'})}>
         重大なニュース・市場変化 {criticalNewsCount}件を確認する ↓
@@ -826,10 +841,12 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       </details>
     </article>
 
-    {view.selectedMarket === 'JP' && selectedSymbol === '1321' && !editorialActive
+    {view.selectedMarket === 'JP' && selectedSymbol === '1321' && !editorialActive && !hasSavedPeriodChart
       && <JapanMarketComparisonPanel horizon={horizon} />}
 
-    {view.selectedMarket === 'JP' && selectedSymbol === '1321' && !editorialActive && <OwnerDialogue symbol="N225" market="JP" horizon={horizon} />}
+    {!editorialActive && <OwnerDialogue key={`${view.selectedMarket}:${scopedSubject}:${horizon}`}
+      symbol={scopedSubject} market={view.selectedMarket} horizon={horizon}
+      previousRequestId={matchingOverview?.requestId}/>}
 
     {view.holdingsReview.length > 0 && <section className="at-priorities card" aria-label="OWNER PRIORITIES">
       <div className="at-head"><b>自分の銘柄への影響</b><span>優先して確認</span></div>

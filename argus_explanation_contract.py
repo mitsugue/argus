@@ -1,6 +1,8 @@
 """Shared explanation validation only: no market composer or decision authority."""
 from __future__ import annotations
 import re
+import hashlib
+import json
 from typing import Any,Dict,Mapping,Optional
 
 UNIFIED_FACT_LIMIT = 64
@@ -80,3 +82,16 @@ def validate_unified_ai(value: Any, context: Mapping[str, Any], *, diagnostic=No
             "sections": sections, "actionAuthority": False,
             "ownerContextAvailable": context["ownerContextAvailable"],
             "historyStatus": context["historyStatus"]}
+
+
+def calculation_identity(calculations):
+    """Ignore read timestamps, retaining price/input/definition changes."""
+    def stable(value):
+        if isinstance(value, Mapping):
+            return {key: stable(item) for key, item in value.items()
+                    if key not in {"informationCutoff", "lastSuccessfulAcquisitionAt", "valuationAcquisition"}}
+        if isinstance(value, list):
+            return [stable(item) for item in value]
+        return value
+    return hashlib.sha256(json.dumps(stable(calculations), sort_keys=True,
+        separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()).hexdigest()

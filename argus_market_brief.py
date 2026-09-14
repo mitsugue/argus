@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from argus_explanation_contract import (
     UNIFIED_FACT_LIMIT, UNIFIED_SECTIONS, _FORBIDDEN_BRIEF_PATTERNS,
-    _digits_of, validate_unified_ai,
+    _digits_of, validate_unified_ai, calculation_identity,
 )
 
 BRIEF_SCHEMA = "argus-market-brief-v1"
@@ -363,18 +363,6 @@ def compose_brief(*, now_iso: str,
 
 
 
-
-def calculation_identity(calculations):
-    """Ignore read timestamps, retaining price/input/definition changes."""
-    def stable(value):
-        if isinstance(value, Mapping):
-            return {key: stable(item) for key, item in value.items()
-                    if key not in {"informationCutoff", "lastSuccessfulAcquisitionAt", "valuationAcquisition"}}
-        if isinstance(value, list):
-            return [stable(item) for item in value]
-        return value
-    return hashlib.sha256(json.dumps(stable(calculations), sort_keys=True,
-        separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()).hexdigest()
 
 
 def calculation_facts(calculations):

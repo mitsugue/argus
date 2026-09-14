@@ -135,7 +135,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                 if set(body) - fields: return response({'error': 'unsupported_request_fields'}, 400)
                 body = {**body, 'question': '今の市場とこの銘柄をどう捉え、前回から何が変わり、登録した保有・監視情報にどう影響するか。次の確認と見方を変える条件まで説明してください。'}
                 stable = {k: v for k, v in body.items() if k not in ('action', 'ownerToken')}
-                body['requestId'] = str(uuid.uuid5(uuid.NAMESPACE_URL, 'argus:subject-overview:' + dialogue.digest(stable)))
+                body['requestId'] = str(uuid.uuid5(uuid.NAMESPACE_URL, 'argus:subject-overview:v2:' + dialogue.digest(stable)))
             identity=store.request_id(body.get('requestId'))
             if action=='save':
                 with lock:
