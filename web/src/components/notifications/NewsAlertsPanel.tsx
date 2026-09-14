@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { newsAnalysisStatusJa, displayNewsHeadline } from '../../lib/newsHeadline';
 import { useNewsIntelligence, type NewsIntelEvent, type NewsIntelView } from '../../hooks/useNewsIntelligence';
 import { useMarketShock } from '../../hooks/useMarketShock';
+import { groupNewsEpisodes } from '../../domain/newsPresentation';
 import './NewsAlertsPanel.css';
 
 // v13.5.60 (owner iPhone review 2026-09-07): the Alerts page opens with the
@@ -92,7 +93,12 @@ export const NewsHistory: React.FC<{ automatic?: boolean }> = ({ automatic = fal
   </div>;
 };
 
-const ReceivedNews: React.FC<{ event: NewsIntelEvent }> = ({ event }) => <article
+const RelatedNews: React.FC<{ events?: NewsIntelEvent[] }> = ({ events }) => events?.length
+  ? <details className="news-alerts__background"><summary>同じ出来事の速報・続報 {events.length}件</summary>
+    {events.map(event => <ReceivedNews key={event.eventId} event={event} />)}
+  </details> : null;
+
+const ReceivedNews: React.FC<{ event: NewsIntelEvent; related?: NewsIntelEvent[] }> = ({ event, related }) => <article
   className="news-alerts__item" id={`news-${event.eventId}`} data-received-event={event.eventId}>
   <p className="news-alerts__title"><b>{displayNewsHeadline(event.headlineJa)}</b></p>
   <p className="news-alerts__why">{event.whyJa}</p>
@@ -100,15 +106,19 @@ const ReceivedNews: React.FC<{ event: NewsIntelEvent }> = ({ event }) => <articl
   <p className="news-alerts__meta">{event.source} · 受信 {receivedJa(event.sourceReceivedAt)} JST · {newsAnalysisStatusJa(event.analysisState, event.analysisInputScope)}</p>
   {event.sourceUrl && /^https?:\/\//i.test(event.sourceUrl)
     && <a href={event.sourceUrl} target="_blank" rel="noopener noreferrer">配信元の記事を開く</a>}
+  <RelatedNews events={related} />
 </article>;
 
 export const NewsAlertsPanel: React.FC = () => {
   const news = useNewsIntelligence();
   const shock = useMarketShock();
-  const material = materialNewsEvents(news.view?.events ?? []);
+  const groups = groupNewsEpisodes((news.view?.events ?? []).filter(event => event.staleness !== 'STALE'));
+  const leads = groups.map(group => group.lead);
+  const related = new Map(groups.map(group => [group.lead.eventId, group.related]));
+  const material = materialNewsEvents(leads);
   const shocks = shock.view?.events ?? [];
   const materialIds = new Set(material.map(event => event.eventId));
-  const received = (news.view?.events ?? []).filter(event => !materialIds.has(event.eventId)
+  const received = leads.filter(event => !materialIds.has(event.eventId)
     && event.staleness !== 'STALE');
   const watch = received.filter(event => event.severity === 'WATCH');
   const other = received.filter(event => event.severity !== 'WATCH');
@@ -182,17 +192,18 @@ export const NewsAlertsPanel: React.FC = () => {
             </p>
             {event.sourceUrl && /^https?:\/\//i.test(event.sourceUrl)
               && <a href={event.sourceUrl} target="_blank" rel="noopener noreferrer">配信元の記事を開く</a>}
+            <RelatedNews events={related.get(event.eventId)} />
           </article>;
         })}
       </div>
       {watch.length > 0 && <div className="news-alerts__group" data-received-watch>
         <h3>受信した注目記事</h3>
         <p className="news-alerts__note">WATCHは規則による分類です。重要でない、または影響がないという意味ではありません。</p>
-        {watch.map(event => <ReceivedNews key={event.eventId} event={event} />)}
+        {watch.map(event => <ReceivedNews key={event.eventId} event={event} related={related.get(event.eventId)} />)}
       </div>}
       {other.length > 0 && <details className="news-alerts__group" data-received-other>
         <summary>その他の受信記事 {other.length}件</summary>
-        {other.map(event => <ReceivedNews key={event.eventId} event={event} />)}
+        {other.map(event => <ReceivedNews key={event.eventId} event={event} related={related.get(event.eventId)} />)}
       </details>}
       <NewsHistory automatic />
       <p className="news-alerts__note">

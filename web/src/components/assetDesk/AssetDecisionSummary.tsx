@@ -31,7 +31,7 @@ export const AssetDecisionSummary: React.FC<{
       <span className="ad-l2">
         <span className="ad-cmd" style={{ color: sigColor }}>{view.currentActionJa}</span>
         {view.canonicalDecisionStatus && <span className="ad-data">
-          SDA {view.canonicalDecisionStatus} · {Math.round((view.canonicalConfidenceBps ?? 0) / 100)}%
+          {view.canonicalDecisionStatus === 'DATA_GATED' ? '判断に必要な条件を確認中' : '判断条件を評価済み'}
         </span>}
         <span className="ad-owner-state">
           {view.held
