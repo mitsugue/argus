@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.6.4"
+PRODUCT_VERSION = "v13.6.5"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,6 +35,13 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'docs/V13_7_REQUIREMENTS.md': '6c8ecf42af217b1dfc861027079ec0cb411a8fb5',
+    'web/src/hooks/useOsintInvestigation.ts': 'ada26a80e0f0f439f97cb75858407647dc7c5d8d',
+    'web/src/components/guide/Layer2BSyncCard.tsx': '20dae8bccafee961a17aad41b39f738fd5f60b76',
+    'web/src/components/dashboard/ProHandoffButton.tsx': 'ff35d429cd6c8b615fbeb355edf475edacc992a5',
+    'web/src/components/dashboard/OsintDeepDive.tsx': '875c23041a7d765379aa834bbfe70ae24abf0f05',
+    'web/src/components/dashboard/AddAssetModal.tsx': '56b5df9a55e8238db3538c829f1e29fd157398ce',
+    'web/src/components/assetDesk/AssetResearchPanel.tsx': '9a80e0d55a72085dd54749477144aed43abfe163',
     'test_argus_v12_3_1.py': 'c26d3849a5c7219d537c1cdd8a3484c5087e4da1',
     'web/src/components/dashboard/SystemHealthPopover.tsx': '3893f26c3bef9812d841600832a96193231000ed',
     'web/src/routes/DataQualityPage.tsx': 'c86b933832c2e50f3d694f4ca1ac79428096fe55',
@@ -69,7 +76,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/lib/aiUsageView.ts': '033d8391844e4fa00f80945858a483b0c98393bf',
     'web/src/components/settings/WebPushPanel.tsx': 'd7a23961f75c12f16671cc869c5653c03cc9f180',
     'web/src/components/settings/WebPushPanel.css': '00b2bef993a8eca959afedbf2015796b5746e724',
-    'web/src/components/settings/OwnerVaultPanel.tsx': 'fb4b4e000751a3c0793ded74a07996a88076c8fc',
+    'web/src/components/settings/OwnerVaultPanel.tsx': '981ca9ecbbcc6af8068297d384ef786d874f6846',
     'web/src/components/settings/AiUsagePanel.tsx': 'b17e0d0a666b2c00ec5e5d7098086e54b1eb0615',
     'web/src/components/settings/AiUsagePanel.css': 'eb215c910039c200f8b5fb01287672f3f4eb6376',
     'web/src/components/dashboard/PortfolioSyncCard.tsx': '0129397cbfc2d8686057bb9fd98290b9511e8250',
@@ -188,7 +195,7 @@ REVIEWED_EXTENSION_BLOBS = {
     "argus_ai_gate.py": "d0e19fb4d25527e6f0ca70d73c8b21a41bc2a866",
     'test_smoke_cached_cause.py': '547735d7be278e5650341bd067b50c1fa87dd855',
     'smoke_test.py': 'e6c003c4d7b3c499744950b98457860f4bc71a77',
-    "web/src/components/guide/BackupCard.tsx": "dcb2a26e2e84172748ced002d00deebd62116143",
+    'web/src/components/guide/BackupCard.tsx': '7af09b55b37840fc69c2c14234d1cb429b2624de',
     "web/src/components/system/BackupStatusOverview.tsx": "39488f34de87013943edf08bb3faddce91f7b996",
     "web/src/lib/vault.ts": "9180eba851c0b62a99ac449166f90f2404e18370",
     "web/scripts/news-history.test.mjs": "766b69d112dc01d32631025446007b506d7e55f6",

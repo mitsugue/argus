@@ -14,7 +14,12 @@ export const SNAPSHOT_CONTRACT_SCHEMA = 'argus-v13-snapshot-readiness-contract-v
 // (deploy-pages.yml) and these limits carry a cold-start margin; a warm
 // instance still reconciles in well under a minute.
 export const BUSINESS_TRIGGER_TRANSPORT_TIMEOUT_MS = 600_000;
-export const BUSINESS_RECONCILIATION_DEADLINE_MS = 900_000;
+// 13.6 production run 34876599435: the prior checkpoint occupied the writer
+// until 18:01:09Z; 11/12 new views arrived by 18:03:12Z, but the original
+// 17:48:57Z request exhausted its 15-minute observation window. Continue
+// observing the same trigger through the bounded checkpoint queue. This is
+// a transport/observation allowance, not a relaxed freshness or RPO claim.
+export const BUSINESS_RECONCILIATION_DEADLINE_MS = 1_800_000;
 export const BUSINESS_RECONCILIATION_POLL_MS = 5_000;
 export const BUSINESS_READBACK_REQUEST_TIMEOUT_MS = 30_000;
 export const BUSINESS_RECONCILIATION_OUTCOMES = Object.freeze([

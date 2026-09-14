@@ -1,5 +1,6 @@
 import { SYMBOL_TO_COINGECKO } from '../../lib/cryptoIds';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import { createPortal } from 'react-dom';
 import { searchFunds } from '../../lib/fundCatalog';
 import type { AssetMarket, AssetType, AssetSource } from '../../types/assetItem';
@@ -44,18 +45,21 @@ export const AddAssetModal: React.FC<Props> = ({ onClose, onAdd }) => {
 
   // Debounced symbol/name search → candidate list (skips Core/Fund and after a pick).
   useEffect(() => {
-    if (!cfg.searchMarket || !backend || picked) { setResults([]); return; }
+    if (!cfg.searchMarket || !backend || picked) { setResults([]); setSearching(false); return; }
     const q = symbol.trim();
     if (q.length < 1) { setResults([]); setSearching(false); setSearchErr(null); return; }
     setSearching(true); setSearchErr(null);
     window.clearTimeout(debounce.current);
     const ctrl = new AbortController();
+    let active = true;
     debounce.current = window.setTimeout(async () => {
       try {
         const url = backend.replace(/\/$/, '') + `/api/argus/symbol-search?market=${cfg.searchMarket}&q=${encodeURIComponent(q)}`;
-        const r = await fetch(url, { signal: ctrl.signal });
+        const r = await fetch(url, { signal: AbortSignal.any([ctrl.signal, AbortSignal.timeout(12000)]) });
+        if (!active) return;
         if (r.status === 429) { setResults([]); setSearchErr('混雑しています。数秒待って入力し直してください。'); return; }
         const d = await r.json();
+        if (!active) return;
         // status 'error'/'unavailable' from the backend ≠ "no such symbol" — say so
         if (d && (d.status === 'error' || d.status === 'unavailable') && (!Array.isArray(d.results) || !d.results.length)) {
           setResults([]); setSearchErr('検索が一時的に使えません。少し待って再試行してください。'); return;
@@ -63,11 +67,11 @@ export const AddAssetModal: React.FC<Props> = ({ onClose, onAdd }) => {
         setSearchErr(null);
         setResults(Array.isArray(d.results) ? d.results.slice(0, 12) : []);
       } catch (e) {
-        if ((e as { name?: string })?.name !== 'AbortError') setSearchErr(null);  // network/abort → silent
+        if (active && (e as { name?: string })?.name !== 'AbortError') setSearchErr('検索結果を取得できませんでした。入力し直すと再試行します。');
       }
-      finally { setSearching(false); }
+      finally { if (active) setSearching(false); }
     }, 300);
-    return () => { ctrl.abort(); window.clearTimeout(debounce.current); };
+    return () => { active = false; ctrl.abort(); window.clearTimeout(debounce.current); };
   }, [symbol, cfg.searchMarket, backend, picked]);
 
   function pick(c: Candidate) {
@@ -134,7 +138,7 @@ export const AddAssetModal: React.FC<Props> = ({ onClose, onAdd }) => {
 
         {cfg.searchMarket && !picked && (
           <div className="search-results">
-            {searching && <div className="search-results__hint">検索中…</div>}
+            {searching && <div className="search-results__hint"><TriangleStepLoader label="銘柄を検索しています" /></div>}
             {!searching && searchErr && <div className="search-results__hint" style={{ color: 'var(--amber,#fbbf24)' }}>{searchErr}</div>}
             {!searching && !searchErr && symbol.trim() && results.length === 0 && <div className="search-results__hint">候補なし</div>}
             {results.map((c) => (

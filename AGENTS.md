@@ -18,13 +18,14 @@ Do not activate BUY or treat unvalidated frequencies as predictive probabilities
 Distinguish implemented, tested, production-observed and complete in reports.
 
 Read `docs/V13_6_REQUIREMENTS.md` for the current scope and acceptance criteria.
-Finish the active naming migration and 13.5 production verification, then
-implement 13.6 from that accepted baseline. After 13.6 production acceptance, audit all features for budget/scope blocks,
-stale settings/models, scheduling, persistence and real output delivery. Fix any
-defects and verify production again, then stop. Reuse prior acceptance evidence.
-Do not investigate, prototype, implement, open PRs, or deploy 13.7 until the owner
-explicitly resumes it next week or later. A date change or 13.6 completion is not
-permission. Existing budget/restoration/collection bug fixes remain in 13.5.
+Finish the active 13.6 production repairs and relevant acceptance first, then
+continue into 13.7 under `docs/V13_7_REQUIREMENTS.md`. The owner's explicit
+2026-09-15 instruction supersedes the earlier 13.7 hold. Keep 13.6 repairs and
+13.7 improvements in separate change units. Reuse completed evidence; do not
+start another broad prerequisite audit or rebuild the platform. Unrelated
+remaining limitations are documented, not silently completed or used to block
+independent improvements. Preserve auth, release proofs, histories and risk
+constraints. No automated trading, orders or brokerage-account operations.
 
 ## Release merge shape
 
