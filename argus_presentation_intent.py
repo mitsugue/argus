@@ -29,7 +29,7 @@ def _digest(value: Any) -> str:
 
 
 def inventory(*, context_id: str, surface: str, subject: str, horizon: int,
-              elements: list[dict[str, Any]]) -> dict[str, Any]:
+              elements: list[dict[str, Any]], reading_flow=None) -> dict[str, Any]:
     """Freeze displayable evidence and numeric/chart payload identities first."""
     if not re.fullmatch('[a-f0-9]{64}', context_id) or surface not in {'today', 'asset', 'dialogue'}:
         raise ValueError('presentation_scope_invalid')
@@ -53,6 +53,10 @@ def inventory(*, context_id: str, surface: str, subject: str, horizon: int,
             raise ValueError('presentation_evidence_invalid')
     body = {'contextId': context_id, 'surface': surface, 'subject': subject,
             'horizonSessions': horizon, 'elements': deepcopy(elements)}
+    if reading_flow is not None:
+        if reading_flow != 'main-account-first-v1' or surface != 'today':
+            raise ValueError('presentation_reading_flow_invalid')
+        body['readingFlow'] = reading_flow
     return {**body, 'inventoryId': _digest(body)}
 
 
@@ -138,10 +142,13 @@ def validate_plan(value: Any, catalog: Mapping[str, Any], context=None) -> dict[
             'subject': catalog['subject'], 'horizonSessions': catalog['horizonSessions'],
             'intentJa': intent.strip(), 'elements': deepcopy(rows),
             'actionAuthority': False, 'semanticValidation': 'UNVERIFIED'}
-    return {**body, 'planId': _digest(body)}
+    plan = {**body, 'planId': _digest(body)}
+    if catalog.get('readingFlow') == 'main-account-first-v1':
+        validate_current_reading_flow(plan, catalog)
+    return plan
 
 
-def validate_current_reading_flow(plan, catalog, summary):
+def validate_current_reading_flow(plan, catalog, summary=None):
     """Apply current editorial criteria only to new Today editions, not archives."""
     if catalog['surface'] != 'today':
         return plan
@@ -150,7 +157,7 @@ def validate_current_reading_flow(plan, catalog, summary):
     position = ids.index('view'); view = rows[position]
     if position > 1 or view['placement'] != 'lead' or view['emphasis'] != 'primary':
         raise ValueError('presentation_main_account_buried')
-    if len(summary['sections']['view']['textJa']) > 60:
+    if summary is not None and len(summary['sections']['view']['textJa']) > 60:
         raise ValueError('presentation_main_account_too_long')
     if position and (not known[rows[0]['id']]['urgent']
                      or len(rows[0].get('caption', {}).get('textJa', '')) > 48):
@@ -199,7 +206,7 @@ def brief_inventory(context: Mapping[str, Any], calculations: Mapping[str, Any])
                 'payloadId': _digest(chunk), 'evidenceIds': [r['evidenceId'] for r in chunk],
                 'mandatory': urgent, 'urgent': urgent})
     return inventory(context_id=context['contextId'], surface='today', subject='N225',
-        horizon=5, elements=elements)
+        horizon=5, elements=elements, reading_flow='main-account-first-v1')
 
 
 def generation_instruction(catalog: Mapping[str, Any]) -> str:

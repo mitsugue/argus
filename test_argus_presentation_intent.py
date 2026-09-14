@@ -65,7 +65,9 @@ def test_new_edition_reads_as_one_account_without_rewriting_old_editions():
     context = unified_context({'generatedAt':'2026-09-14T00:00:00Z','facts':[
         {'text':'報道後の市場反応は確認待ちです。','source':source,'priority':'P0','verification':'UNCONFIRMED'}
         for source in ('trusted_mail','calendar','market_data')]})
-    catalog = brief_inventory(context, {'5':{'comparison':{}}})
+    current_catalog = brief_inventory(context, {'5':{'comparison':{}}})
+    catalog = inventory(context_id=context['contextId'],surface='today',subject='N225',
+        horizon=5,elements=current_catalog['elements'])
     choices = {}
     for source in catalog['elements']:
         row = {'id':source['id'],'purposeJa':'変化と次の確認を伝える',
@@ -85,6 +87,10 @@ def test_new_edition_reads_as_one_account_without_rewriting_old_editions():
         validate_current_reading_flow(old,catalog,summary)
     # Archive validation still accepts the exact old presentation and identity.
     assert validate_plan(raw,catalog,context)==old
+    current_raw=deepcopy(raw);current_raw['inventoryId']=current_catalog['inventoryId']
+    with pytest.raises(ValueError,match='main_account_buried'):
+        validate_plan(current_raw,current_catalog,context)
+    catalog=current_catalog;raw['inventoryId']=catalog['inventoryId']
     raw['elements']=[choices[key] for key in ['view']+urgent+tail]
     current=validate_plan(raw,catalog,context)
     assert validate_current_reading_flow(current,catalog,summary)==current
