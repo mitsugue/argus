@@ -32,9 +32,13 @@ export interface AssetItem {
   quantity?: number;   // shares / coins held
   avgCost?: number;    // average acquisition price (native currency)
   memo?: string;
+  purchaseReason?: string;
+  holdingPeriod?: string;
   createdAt: number;
   updatedAt: number;
 }
+
+export type HoldingUpdate = { quantity?: number | null; avgCost?: number | null; purchaseReason?: string | null; holdingPeriod?: string | null };
 
 // Owner-facing groups, always displayed in this order.
 export type GenreKey = 'jp' | 'us' | 'funds' | 'crypto';

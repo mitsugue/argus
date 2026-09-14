@@ -2,7 +2,7 @@ import {
   createContext, createElement, useCallback, useContext, useEffect, useRef, useState,
   type ReactNode,
 } from 'react';
-import type { AssetItem, AssetMarket, AssetType, AssetSource } from '../types/assetItem';
+import type { AssetItem, AssetMarket, AssetType, AssetSource, HoldingUpdate } from '../types/assetItem';
 import { markLocalEdit } from '../lib/vault';
 import { recordTombstone } from '../lib/assetMerge';
 
@@ -83,8 +83,8 @@ export interface UseAssets {
   reorderGenre: (orderedIds: string[]) => void;
   toggle: (id: string) => void;
   /** Set/clear one asset's holding (quantity & average cost). Pass
-      null/undefined to clear a field. Device-local only — never uploaded. */
-  updateHolding: (id: string, h: { quantity?: number | null; avgCost?: number | null }) => void;
+      null/undefined to clear a field. Included in the existing encrypted backup. */
+  updateHolding: (id: string, h: HoldingUpdate) => void;
   reset: () => void;
 }
 
@@ -158,6 +158,12 @@ function useAssetsStore(): UseAssets {
       };
       if ('quantity' in h) setNum('quantity', h.quantity);
       if ('avgCost' in h) setNum('avgCost', h.avgCost);
+      for (const key of ['purchaseReason', 'holdingPeriod'] as const) {
+        if (!(key in h)) continue;
+        const value = h[key];
+        if (value == null || !value.trim()) delete next[key];
+        else if (value.length <= (key === 'purchaseReason' ? 1000 : 160)) next[key] = value.trim();
+      }
       return next;
     })), []);
 

@@ -1,3 +1,4 @@
+import type { HoldingUpdate } from '../../types/assetItem';
 import React, { useState } from 'react';
 import type { DeskCardData } from './types';
 import { buildAssetPositionView } from '../../domain/assetDeskInternal';
@@ -12,7 +13,7 @@ const pct = (value: number) => `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
 
 export const AssetPositionPanel: React.FC<{
   d: DeskCardData;
-  onUpdateHolding: (id: string, h: { quantity?: number | null; avgCost?: number | null }) => void;
+  onUpdateHolding: (id: string, h: HoldingUpdate) => void;
 }> = ({ d, onUpdateHolding }) => {
   const [riskLine, setRiskLine] = useState<number | null>(
     () => readAssetRiskLine(d.asset.symbol),
@@ -61,7 +62,7 @@ export const AssetPositionPanel: React.FC<{
 
       {/* Holdings (v10.0) — device-local; Positions & RiskのExposureを駆動 */}
       <div className="asset-hold">
-        <span className="asset-detail__k">Holding（端末内のみ）</span>
+        <span className="asset-detail__k">登録した保有情報</span>
         <div className="asset-hold__body">
           <label className="asset-hold__field">数量
             <input type="number" inputMode="decimal" min="0" step="any"
@@ -76,6 +77,21 @@ export const AssetPositionPanel: React.FC<{
               onBlur={(e) => onUpdateHolding(d.asset.id, { avgCost: num(e.currentTarget.value) })} />
           </label>
         </div>
+      </div>
+
+      <div className="ad-owner-intent">
+        <label className="asset-hold__field">購入・監視の理由
+          <textarea key={d.asset.purchaseReason ?? ''} defaultValue={d.asset.purchaseReason ?? ''} maxLength={1000}
+            onClick={e => e.stopPropagation()}
+            onBlur={e => onUpdateHolding(d.asset.id, { purchaseReason: e.currentTarget.value })} />
+        </label>
+        <label className="asset-hold__field">保有予定の期間
+          <input key={d.asset.holdingPeriod ?? ''} defaultValue={d.asset.holdingPeriod ?? ''} maxLength={160}
+            placeholder="例：次の決算まで、中長期"
+            onClick={e => e.stopPropagation()}
+            onBlur={e => onUpdateHolding(d.asset.id, { holdingPeriod: e.currentTarget.value })} />
+        </label>
+        <p>登録内容は銘柄の説明と会話に使います。保存の状態は設定画面で確認できます。</p>
       </div>
 
       <div className="ad-risk-line">

@@ -21,6 +21,8 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:
   const contextId=brief?.unifiedContext?.contextId;
   const owner=asset?{symbol,market,state:(asset.quantity??0)>0?'HELD':'WATCHING',
     ...((asset.quantity??0)>0?{quantity:asset.quantity,averageCost:asset.avgCost}:{}),
+    ...(asset.purchaseReason?.trim()?{purchaseReason:asset.purchaseReason.trim()}:{}),
+    ...(asset.holdingPeriod?.trim()?{holdingPeriod:asset.holdingPeriod.trim()}:{}),
     ...(Number.isFinite(asset.updatedAt)?{reportedAt:new Date(asset.updatedAt).toISOString()}:{}),
   }:undefined;
   const requestKey=JSON.stringify({action:'overview',baseContextId:contextId,symbol,market,horizon,owner});

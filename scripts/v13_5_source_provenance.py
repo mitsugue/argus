@@ -35,14 +35,16 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
-    'web/src/components/dialogue/OwnerOverview.tsx': '2d06c4e91290b95668e16347ec210bf3276f0f8b',
+    'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
+    'web/src/hooks/useAssets.ts': 'ef8cdf9cc07cb067f2b83597ad60dad9b81df30f',
+    'web/src/components/dialogue/OwnerOverview.tsx': 'ca8b79b46a0d46d781ccaa5ac42b88a725147fe8',
     'web/src/components/dialogue/OwnerOverview.css': 'e608b1f63bbbf8596454a9e0100cea6ee8a41a0f',
     'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',
     'web/src/lib/presentationIntent.ts': 'a1472108a10b2b485e4ed98eea9bc6aa8f105928',
     'web/src/components/today/ArgusEditorialSurface.tsx': 'dfd82ff1755f6b345fee006172379758279b410a',
     'web/src/components/today/ArgusEditorialSurface.css': '66bc60414e09d490bc0216cf054465bc19dd7993',
     'test_argus_presentation_intent.py': '26221c60a2a167272ff8ca5765590bb49fbbe4c8',
-    'docs/V13_6_PRESENTATION_INTENT.md': 'b418a94eecb8090d5d3df2adb555dddf21a3880f',
+    'docs/V13_6_PRESENTATION_INTENT.md': '88d35d6f5f603628e7e89bae56308e16b7c76ea6',
     'argus_presentation_intent.py': 'e7d0a9c0bac18b6e628539fb4f351f8f2c49f9cb',
     'argus_persistent_storage.py': '822f60d3ce54a7f5dfbf16638ff79727cb7e4e64',
     'web/src/components/today/ReadingHierarchy.css': 'f031a35a7ec9cb1aac772bbae8c0ab1de44c4a85',
@@ -108,7 +110,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/shared-market-context.test.cjs': '6ba958105e283011e25af76c3ce538e14833c75b',
     'web/src/components/assetDesk/AssetMarketContext.tsx': 'da84417e9b9a7d5861f0f65f3d2a11d95408a6c6',
     'web/src/components/dialogue/OwnerDialogue.css': '696bed395bce7b22fae7c7ddc2797f5b24b0a1dd',
-    'web/src/components/dialogue/OwnerDialogue.tsx': '7218a5d340fa70aca36710674f0b6ee8bdf054b2',
+    'web/src/components/dialogue/OwnerDialogue.tsx': 'bb7890285a414fba9da2316a5f70b1a6670f5f32',
     'web/src/components/today/MarketBriefCard.tsx': '99cf4ddb342e5e582a43f24c2a2c85e6ad7c2fff',
     'web/src/components/today/MarketInternalsCard.tsx': '500b81f9fe26073262c4175d9f7c1fbc1fa9bfde',
     'web/src/components/today/SharedMarketContext.tsx': '0d126ec6d92e76957a4b58ef532e9b99b85b6f13',
