@@ -104,7 +104,6 @@ class WorkflowHttpTests(unittest.TestCase):
         body = {
             "status": "ok",
             "buildSha": "6a4ac01",
-            "backendVersion": "13.6.1",
             "ready": True,
             "token": "must-not-leak",
             "privateState": {"owner": "must-not-leak"},
@@ -117,7 +116,6 @@ class WorkflowHttpTests(unittest.TestCase):
                                           "https://example.invalid"]), 0)
         summary = json.loads(out.getvalue())
         self.assertEqual(summary["buildSha"], "6a4ac01")
-        self.assertEqual(summary["backendVersion"], "13.6.1")
         self.assertIs(summary["ready"], True)
         self.assertNotIn("token", summary)
         self.assertNotIn("privateState", summary)
