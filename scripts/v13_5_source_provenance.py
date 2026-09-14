@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.75"
+PRODUCT_VERSION = "v13.5.76"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -41,7 +41,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dialogue/OwnerOverview.css': 'e608b1f63bbbf8596454a9e0100cea6ee8a41a0f',
     'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',
     'web/src/lib/presentationIntent.ts': '77c0c79423a2291fc3e28a58e1b0397b11a83828',
-    'web/src/components/today/ArgusEditorialSurface.tsx': '4e4386e99ef027fff5006a71c8e672c52c59b28e',
+    'web/src/components/today/ArgusEditorialSurface.tsx': 'f78aa4d745e7e97e0f9ad7a2f2621679423879bb',
     'web/src/components/today/ArgusEditorialSurface.css': '66bc60414e09d490bc0216cf054465bc19dd7993',
     'test_argus_presentation_intent.py': 'e79beae902a1382fae9e5ea3359e09301abf9733',
     'docs/V13_6_PRESENTATION_INTENT.md': '88d35d6f5f603628e7e89bae56308e16b7c76ea6',
@@ -110,8 +110,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/shared-market-context.test.cjs': '6ba958105e283011e25af76c3ce538e14833c75b',
     'web/src/components/assetDesk/AssetMarketContext.tsx': 'da84417e9b9a7d5861f0f65f3d2a11d95408a6c6',
     'web/src/components/dialogue/OwnerDialogue.css': '696bed395bce7b22fae7c7ddc2797f5b24b0a1dd',
-    'web/src/components/dialogue/OwnerDialogue.tsx': 'b870191adecba4f987941739b650a6648c545e89',
-    'web/src/components/today/MarketBriefCard.tsx': '99cf4ddb342e5e582a43f24c2a2c85e6ad7c2fff',
+    'web/src/components/dialogue/OwnerDialogue.tsx': '2727b4ba245eb4b0d2dddc52b5dd276838d7545b',
+    'web/src/components/today/MarketBriefCard.tsx': '6081703c8b44cb1617680b519d4e19ad8c284c87',
     'web/src/components/today/MarketInternalsCard.tsx': 'f51d80a4bae476e9e20842d52a18cd92d68caaec',
     'web/src/components/today/SharedMarketContext.tsx': '0d126ec6d92e76957a4b58ef532e9b99b85b6f13',
     'web/src/lib/marketInternals.ts': 'cf96a5b15512e7f20ef9bcf211d6295307ccec9a',

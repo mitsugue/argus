@@ -25,7 +25,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
   if (!brief) return <div className="at-brief" aria-label="ARGUSの今日の見立て">
     {updateState ?? <p role="status">見立てを確認中です。</p>}<MarketAnalysisHistory key="saved-history" /></div>;
   const edition = editorial ? editorialEdition(brief) : null;
-  if (edition) return <ArgusEditorialSurface brief={edition} updateState={updateState} retained={edition !== brief} />;
+  if (edition) return <ArgusEditorialSurface brief={edition} updateState={updateState} retained={edition !== brief} generationStatus={brief.generationWorker?.status} />;
   const unified = brief.unifiedSummary;
   const hasSixSections = unified && ['view', 'reasons', 'changes', 'impact', 'next', 'invalidation'].every(key => {
     const row = unified.sections?.[key as keyof typeof unified.sections];
