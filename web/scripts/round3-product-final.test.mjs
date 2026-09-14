@@ -54,7 +54,7 @@ assert.ok(today.indexOf('at-primary-hero') >= 0);
 assert.ok(today.indexOf('at-primary-hero')
   < today.indexOf('<details className="at-evidence card">'));
 assert.match(today, /view\.canonicalDecision/);
-assert.match(today, /Calibration pending/);
+assert.match(today, /校正待ち/);
 assert.doesNotMatch(today, /candidateLevel \?\? 4|view\.decisions/);
 assert.match(command, /sdaBySymbol/);
 assert.match(command, /canonicalDecisions/);
