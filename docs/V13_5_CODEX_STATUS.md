@@ -559,3 +559,21 @@ EPS/PER is still unavailable because the selected source returns HTTP 403 in bot
 local and production environments. BUY remains disabled and analogous frequency
 is not labelled probability. The 13.5 fixes are the base for the 13.6.0 Product
 release; 13.7 remains prohibited until an explicit owner restart.
+
+### 2026-09-14: v13.6 production acceptance and ledger continuity follow-up
+
+The v13.6.0 product release merged as
+`38ca70ad6f2fb7ef93b0cdc233af3733085e3673`. Backend and Pages reported the
+same version and build, and Pages run `34851485670` passed its PWA, mobile
+Today, twelve-snapshot, public API and shared-engine acceptance stages.
+
+The scheduled prediction-ledger run overlapped that deployment. Its GPT
+judgment completed in production, but the caller's 240-second observation
+window expired about one minute earlier, so the independent canonical append
+did not run. The v13.6.1 follow-up uses the observed 420-second bound and keeps
+canonical recording/scoring available when an external AI observation is slow.
+It changes no calculation, threshold, action authority or prediction rule.
+
+Owner-iPhone persistence and an actual closed-app notification receipt remain
+separate device acceptance items. v13.7 work remains prohibited until the owner
+explicitly restarts it.
