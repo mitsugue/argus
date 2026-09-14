@@ -87,7 +87,7 @@ def test_missing_classification_keeps_price_comparison_and_provenance_changes_id
 def test_runtime_private_resolver_is_cached_only(monkeypatch):
     brief,history,meta=inputs()
     monkeypatch.setattr(scanner,'_JQ_HISTORY_CACHE',{'1234':history})
-    monkeypatch.setattr(scanner,'_JQ_MASTER_CACHE',{'data':[{'code':'1234',**meta}]})
+    monkeypatch.setattr(scanner,'_JQ_MASTER_CACHE',{'data':[{'code4':'1234',**meta}]})
     monkeypatch.setattr(scanner.requests,'get',lambda *a,**kw:pytest.fail('no request allowed'))
     result=scanner._owner_dialogue_subject_comparison(brief=brief,symbol='1234',market='JP',horizon=5,cutoff=AT)
     assert result['status']=='AVAILABLE' and result['relativeToSectorPct']==pytest.approx(-5)

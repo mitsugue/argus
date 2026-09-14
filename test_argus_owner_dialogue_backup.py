@@ -119,3 +119,18 @@ def test_chunking_and_immutable_conflict_preserve_live_rows(tmp_path,monkeypatch
     second=add(a);backup.synchronize(a,remote,keys());before=b.read_bytes()
     with pytest.raises(ValueError,match='immutable_conflict'):backup.synchronize(b,remote,keys())
     assert b.read_bytes()==before and store.read(b,second,'new') is None
+
+
+def test_saved_edition_reference_and_answer_survive_encrypted_restart(tmp_path):
+    path=tmp_path/'local';store.initialize(path);remote=Remote();identity=str(uuid.uuid4())
+    c=context();c['referenceEdition']={'recordId':'a'*64,'recordedAt':AT,'isCurrentMarketAnalysis':False}
+    c['facts'].append(dialogue.fact('保存した当時の説明への質問です。','saved_market_edition',kind='REQUEST_SCOPE'))
+    c['contextId']=dialogue.digest({k:v for k,v in c.items() if k!='contextId'})
+    store.submit(path,identity=identity,input_hash='b'*64,boot_id='old',context=c)
+    result={'status':'SUCCEEDED','answer':dialogue.validate_answer(answer(),c),'completedAt':AT}
+    assert result['answer'] is not None
+    store.complete(path,identity,result);before=store.read(path,identity,'old')
+    backup.synchronize(path,remote,keys());cold=tmp_path/'cold'
+    backup.synchronize(cold,remote,keys());after=store.read(cold,identity,'new')
+    assert after['context']==before['context'] and after['result']==before['result']
+    assert after['context']['referenceEdition']['isCurrentMarketAnalysis'] is False
