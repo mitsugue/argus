@@ -2270,3 +2270,40 @@ def test_failed_first_activation_never_projects_attempt_as_success():
             paths["checkpoint"], require_seal=True)
         assert PRODUCER_CURRENT_ID == recovery.configured_keys()[
             "current"]["keyId"]
+
+
+@pytest.mark.parametrize("suffix", ["git/ref/heads/ledger", "git/commits/"+"a"*40, "compare/"+"a"*40+"..."+"b"*40])
+def test_recovery_metadata_uses_existing_github_credential_only_for_ledger(suffix):
+    response = mock.Mock(status_code=200)
+    supplied = {"Accept": "application/vnd.github+json"}
+    with mock.patch.dict(os.environ, {"ARGUS_RECOVERY_GITHUB_READ_TOKEN": "", "ARGUS_LAYER2B_PRIVATE_TOKEN": "existing-test-credential"}), \
+            mock.patch.object(scanner, "_LEDGER_RAW_BASE", "https://raw.githubusercontent.com/example/ledger/ledger/ledger"), \
+            mock.patch.object(scanner.requests, "get", return_value=response) as get:
+        assert scanner._recovery_github_get("https://api.github.com/repos/example/ledger/"+suffix, headers=supplied, allow_redirects=True) is response
+        assert get.call_args.kwargs["headers"]["Authorization"] == "Bearer existing-test-credential"
+        assert get.call_args.kwargs["allow_redirects"] is False
+        assert "Authorization" not in supplied
+
+
+@pytest.mark.parametrize("url", [
+    "https://outside.example/repos/example/ledger/git/ref/heads/ledger",
+    "https://api.github.com.outside.example/repos/example/ledger/git/ref/heads/ledger",
+    "https://api.github.com/repos/example/other/git/ref/heads/ledger",
+    "https://api.github.com/repos/example/ledger/issues",
+    "https://api.github.com/repos/example/ledger/git/ref/heads/ledger?redirect=outside",
+])
+def test_recovery_credential_never_sent_to_other_routes(url):
+    with mock.patch.dict(os.environ, {"ARGUS_RECOVERY_GITHUB_READ_TOKEN": "dedicated-test-credential"}), \
+            mock.patch.object(scanner, "_LEDGER_RAW_BASE", "https://raw.githubusercontent.com/example/ledger/ledger/ledger"), \
+            mock.patch.object(scanner.requests, "get") as get, \
+            pytest.raises(recovery.RecoveryBundleError, match="recovery_github_credential_destination_invalid"):
+        scanner._recovery_github_get(url)
+    get.assert_not_called()
+
+
+def test_recovery_dedicated_read_credential_takes_precedence():
+    with mock.patch.dict(os.environ, {"ARGUS_RECOVERY_GITHUB_READ_TOKEN": "dedicated-test-credential", "ARGUS_LAYER2B_PRIVATE_TOKEN": "existing-test-credential"}), \
+            mock.patch.object(scanner, "_LEDGER_RAW_BASE", "https://raw.githubusercontent.com/example/ledger/ledger/ledger"), \
+            mock.patch.object(scanner.requests, "get", return_value=mock.Mock(status_code=200)) as get:
+        scanner._recovery_github_get("https://api.github.com/repos/example/ledger/git/ref/heads/ledger")
+        assert get.call_args.kwargs["headers"]["Authorization"] == "Bearer dedicated-test-credential"
