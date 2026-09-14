@@ -48,6 +48,45 @@ def test_short_recovery_and_longer_decline_are_separate_and_snapshot_id_is_stabl
     assert len(facts)==4 and all('営業日' in f['text'] for f in facts)
 
 
+def test_post_close_publication_gap_keeps_complete_previous_comparison():
+    p,m=snapshot(); before=deepcopy((p,m)); day='2026-09-14'
+    expected=build(p,m)
+    # A row obtained before the close is never evidence of the closing price.
+    for source in p.values():
+        source['rows'].append({**deepcopy(source['rows'][-1]),'date':day,
+            'closeAt':day+'T06:30:00Z','close':999})
+        source['receivedAt']=day+'T06:20:00Z'
+    data_before=deepcopy(p)
+    result=internal.build_snapshot(session_dates=DATES+[day],cutoff=day+'T07:00:00Z',
+        prices=p,symbols=['1234','2345'],classifications=m)
+    assert result['asOfDate']==DATES[-1]
+    assert result['comparisonAvailability']=={'latestCompletedSessionDate':day,
+        'comparedThrough':DATES[-1],'latestSessionIncluded':False}
+    for h in ('1','5','10','20'):
+        assert result['periods'][h]['index']['returnPct']==expected['periods'][h]['index']['returnPct']
+        assert result['periods'][h]['assets'][0]['returnPct']==expected['periods'][h]['assets'][0]['returnPct']
+    assert all('取得待ち' in f['text'] for f in internal.explanation_facts(result))
+    assert p==data_before and m==before[1]
+    # An index alone cannot advance the shared comparison ahead of the benchmark.
+    p['NIKKEI_225_INDEX']['receivedAt']=day+'T07:00:00Z'
+    still=internal.build_snapshot(session_dates=DATES+[day],cutoff=day+'T07:00:00Z',
+        prices=p,symbols=['1234'],classifications=m)
+    assert still['asOfDate']==DATES[-1]
+    for source in p.values():source['receivedAt']=day+'T07:00:00Z'
+    current=internal.build_snapshot(session_dates=DATES+[day],cutoff=day+'T07:00:00Z',
+        prices=p,symbols=['1234'],classifications=m)
+    assert current['asOfDate']==day and current['comparisonAvailability']['latestSessionIncluded']
+    assert current['periods']['1']['index']['returnPct']!=expected['periods']['1']['index']['returnPct']
+
+
+def test_unavailable_benchmark_does_not_hide_observed_index_or_invent_sector_comparison():
+    p,m=snapshot();del p['1306']
+    result=build(p,m)
+    assert result['asOfDate']==DATES[-1]
+    assert result['periods']['5']['index']['returnPct']==pytest.approx(-10)
+    assert all(s['relativeToBenchmarkPct'] is None for s in result['periods']['5']['sectors'])
+
+
 @pytest.mark.parametrize('fault',['late','missing_session','unadjusted','no_trade','future_close','wrong_instrument','duplicate_session'])
 def test_unusable_prices_never_fill_from_another_day_or_basis(fault):
     p,m=snapshot();r=p['1234']

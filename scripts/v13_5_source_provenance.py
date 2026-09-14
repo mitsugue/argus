@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.74"
+PRODUCT_VERSION = "v13.5.75"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -96,7 +96,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/V13_6_AI_USAGE.md': 'f455ad3d0a366f2fad38564bbea7bc4e6bbf3856',
     'docs/V13_6_MARKET_INTERNALS.md': 'f57f78cac4a3d6398f6bb68430dca549661a9003',
     'docs/V13_6_OWNER_DIALOGUE.md': 'd666e8da147254dd4d9562a16f25e162b5efb801',
-    'jp_market_internals.py': '8c64060a47266a4bd82affce15925120600d031f',
+    'jp_market_internals.py': '289cf25368b32e1a53aa3d23528c72543e9a6c77',
     'test_argus_ai_usage_runtime.py': 'f5f0e0fedc3caf85136684fa9d241b2e6e0d1975',
     'test_argus_analysis_history_backup.py': '1c835dc2afa2595e422b596439fe0bef54bc7773',
     'test_argus_owner_cached_inputs.py': '16576a56eed1a31ddce4925ea6bcfcdf961052c3',
@@ -105,16 +105,16 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_owner_dialogue_backup.py': '6fe13fa23a90a3a90930fbf96257a117ebee88b0',
     'test_argus_owner_dialogue_recovery.py': 'cd35ae9060ba9ce6ae20850306c7207d8ab60ecd',
     'test_argus_subject_materials.py': 'e71b8a78d4af5a99640f0b61bbd173f8fcabf7b6',
-    'test_jp_market_internals.py': 'f64c20b90167cd14818383828bcb946ba14fa36b',
+    'test_jp_market_internals.py': '49eb3f360af263f28847f3fb9fceae31c8a539d5',
     'web/scripts/pwa-recovery.test.mjs': 'd2fc2ff86480cb685328e1341e61d4415285d8a6',
     'web/scripts/shared-market-context.test.cjs': '6ba958105e283011e25af76c3ce538e14833c75b',
     'web/src/components/assetDesk/AssetMarketContext.tsx': 'da84417e9b9a7d5861f0f65f3d2a11d95408a6c6',
     'web/src/components/dialogue/OwnerDialogue.css': '696bed395bce7b22fae7c7ddc2797f5b24b0a1dd',
     'web/src/components/dialogue/OwnerDialogue.tsx': 'b870191adecba4f987941739b650a6648c545e89',
     'web/src/components/today/MarketBriefCard.tsx': '99cf4ddb342e5e582a43f24c2a2c85e6ad7c2fff',
-    'web/src/components/today/MarketInternalsCard.tsx': '500b81f9fe26073262c4175d9f7c1fbc1fa9bfde',
+    'web/src/components/today/MarketInternalsCard.tsx': 'f51d80a4bae476e9e20842d52a18cd92d68caaec',
     'web/src/components/today/SharedMarketContext.tsx': '0d126ec6d92e76957a4b58ef532e9b99b85b6f13',
-    'web/src/lib/marketInternals.ts': '0f8adf278b3dba1c4e55e6963ad450a1a8f66b0d',
+    'web/src/lib/marketInternals.ts': 'cf96a5b15512e7f20ef9bcf211d6295307ccec9a',
     'web/src/lib/pwaRecovery.ts': '038fe1dc3e55433a0f72e8a06ca1701176155438',
     'web/src/components/today/MarketAnalysisHistory.tsx': 'bd38f618e07be59830a3a465faf73525409aa55e',
     'test_argus_analysis_history.py': '4a9c705d81507ebf9f6cecafea1f583572b13fc0',
@@ -129,7 +129,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_ai_usage_store.py': 'bc0ccd94eeb2b601da72ecb4a847c8ba3bbf07e1',
     'argus_macro_event_store.py': '0f3bf526a88c83a22576abbf06490bc2861af433',
     'argus_macro_results.py': '4d6e3c0c88fd8be18595f9a25d9c9465f14ec19e',
-    'docs/V13_6_ANALYSIS_ACCEPTANCE.md': '0c3cd12ec5670fb6b11f768b491798137df18d6c',
+    'docs/V13_6_ANALYSIS_ACCEPTANCE.md': '5f3f34d75eefb1a18abb18c8d2407d6921bcd57a',
     'docs/V13_6_COMPUTE_CONTRACT.md': '4ad0e52d419c261b24be8775d9c635bd310e9417',
     'jp_market_analogs.py': 'a4783914d10baae18ff0a473e4624da293c4bd27',
     'jp_market_dynamics.py': '6949bb8b2cc4a1526f09016fb0c0e10369ce488d',

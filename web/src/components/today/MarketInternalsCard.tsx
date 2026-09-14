@@ -16,6 +16,9 @@ export function MarketInternalsCard({document,horizon,focusSymbol}:{document:unk
   return <section className="card at-internals" aria-label="日本株の指数・業種比較">
     <h3>{focusSymbol?`${focusSymbol}と市場の変化`:"市場の中で起きた変化"}</h3>
     <p>{row.startDate} → {row.endDate} · 過去{horizon}営業日の比較</p>
+    {document.comparisonAvailability?.latestSessionIncluded===false&&<p role="status">
+      {document.comparisonAvailability.latestCompletedSessionDate}の終値が比較に必要な系列でそろっていないため、{document.comparisonAvailability.comparedThrough}までの確定値を表示しています。
+    </p>}
     <p className="at-internals__lead">日経平均 <strong>{percent(row.index.returnPct)}</strong>
       {top&&<> ／ 相対上位の業種ETF：{top.nameJa} <strong>{percent(top.returnPct)}</strong></>}</p>
     {top&&<p>{top.nameJa}のETFは、同じ期間のTOPIX連動ETFより{points(top.relativeToBenchmarkPct)}。指数全体と業種の値動きを分けて確認します。</p>}

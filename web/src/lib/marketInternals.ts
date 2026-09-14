@@ -6,6 +6,7 @@ type Asset = Return & { sectorNameJa:string|null; relativeToSectorPct:number|nul
 type Counts = { advancers:number; decliners:number; unchanged:number; available:number;expected:number;missing:number };
 type Period = { horizonSessions:number;startDate:string;endDate:string;index:Return;benchmark:Return;sectors:Sector[];assets:Asset[];sample:{isWholeMarket:false;counts:Counts};indexContributions:{status:string} };
 export type MarketInternalsDocument = { schemaVersion:string;evidenceId:string;asOfDate:string;periods:Record<string,Period>;actionAuthority:false;predictiveProbabilityVerified:false;limitationsJa:string[];
+  comparisonAvailability?:{latestCompletedSessionDate:string;comparedThrough:string;latestSessionIncluded:boolean};
   breadth:{status:string;periodEnd?:string;universeLabelJa?:string;receivedAt?:string;counts?:{advancers:number;decliners:number;unchanged:number;unavailable:number;totalUniverseCount:number}};
   acquisition?:{status:string;lastSuccessfulAcquisitionAt?:string;failedSymbols?:string[]} };
 const obj=(v:unknown):v is Record<string,any>=>!!v&&typeof v==='object'&&!Array.isArray(v);
@@ -18,6 +19,13 @@ export function validMarketInternals(v:unknown):v is MarketInternalsDocument {
     ||typeof v.evidenceId!=='string'||! /^[a-f0-9]{64}$/.test(v.evidenceId)||!obj(v.periods)||!obj(v.breadth)
     ||!['AVAILABLE','UNAVAILABLE'].includes(v.breadth.status)||Object.keys(v.periods).length===0
     ||!Array.isArray(v.limitationsJa)||!v.limitationsJa.every((x:unknown)=>typeof x==='string'))return false;
+  if(v.comparisonAvailability!==undefined){
+    const a=v.comparisonAvailability;
+    if(!obj(a)||typeof a.latestCompletedSessionDate!=='string'||typeof a.comparedThrough!=='string'
+      ||!/^\d{4}-\d{2}-\d{2}$/.test(a.latestCompletedSessionDate)||!/^\d{4}-\d{2}-\d{2}$/.test(a.comparedThrough)
+      ||a.comparedThrough!==v.asOfDate
+      ||a.comparedThrough>a.latestCompletedSessionDate||a.latestSessionIncluded!==(a.comparedThrough===a.latestCompletedSessionDate))return false;
+  }
   if(v.breadth.status==='AVAILABLE') {
     const counts=v.breadth.counts;
     if(!obj(counts)||!['advancers','decliners','unchanged','unavailable','totalUniverseCount'].every(k=>Number.isSafeInteger(counts[k])&&counts[k]>=0)
