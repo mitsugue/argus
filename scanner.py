@@ -240,6 +240,7 @@ _ASSET_CHART_SINGLEFLIGHT = argus_verified_snapshot.SingleFlight()
 _COST_POLICY_LOCK = threading.RLock()
 _COST_POLICY_FILE_LOCK = threading.Lock()
 _COST_CHECKPOINT_LOCK = threading.Lock()
+_COST_CHECKPOINT_CONDITION = threading.Condition(_COST_CHECKPOINT_LOCK)
 _COST_CHECKPOINT_STATE = {"running": False, "pending": False,
                           "lastError": None, "lastFinishedAt": None}
 _COST_POLICY_DURABLE = {"lastPersistAt": None, "lastRestoreAt": None,
@@ -320,7 +321,12 @@ def _cost_policy_checkpoint_snapshot():
 def _cost_checkpoint_worker():
     """Coalesce full-checkpoint requests after local usage is durable."""
     while True:
-        with _COST_CHECKPOINT_LOCK:
+        with _COST_CHECKPOINT_CONDITION:
+            # Usage is already fsynced in its small ledger. Give a registered
+            # release producer the next turn instead of repeatedly reacquiring
+            # the full-checkpoint lock ahead of it after every provider attempt.
+            while _COST_CHECKPOINT_STATE.get("releaseSeedWaiters", 0):
+                _COST_CHECKPOINT_CONDITION.wait()
             _COST_CHECKPOINT_STATE["pending"] = False
         try:
             result = _osint_persist()
@@ -17700,40 +17706,50 @@ def _market_brief_ai_polish(brief):
         + argus_presentation_intent.generation_instruction(presentation_catalog).replace("\n", " ")
         + "\n" + json.dumps(context, ensure_ascii=False, separators=(",", ":")))
     diag = {}
-    raw = _openai_prose(user, max_out=2600,
+    raw = _openai_prose(user, max_out=5200,
                        system=argus_presentation_intent.VOICE,
                        purpose="market_brief", diagnostic=diag)
     validation = {}
     unified = argus_market_brief.validate_unified_ai(
         {key: value for key, value in raw.items() if key != "presentation"}, context, diagnostic=validation) if isinstance(raw, dict) else None
+    def checked_presentation(value, summary, diagnostic):
+        if not summary or not isinstance(value, dict):
+            return None
+        try:
+            return argus_presentation_intent.validate_plan(value.get("presentation"), presentation_catalog, context)
+        except ValueError as exc:
+            diagnostic.update(status="REJECTED", reason="presentation_invalid",
+                              section="presentation", detail=str(exc))
+            return None
+    presentation = checked_presentation(raw, unified, validation)
     attempts = [{"provider": copy.deepcopy(diag), "validation": copy.deepcopy(validation)}]
-    if raw and not unified and validation.get("reason") in {
+    if raw and validation.get("reason") in {
             "unsupported_numeric_tokens", "fact_requires_verified_references",
-            "unknown_evidence_reference", "evidence_reference_required"}:
+            "unknown_evidence_reference", "evidence_reference_required", "presentation_invalid"}:
         # One bounded correction, still subject to every original constraint.
         # Provider usage from both calls remains in the existing cost ledger.
         correction = (user + "\n前の回答は検証で却下されました。理由: "
             + json.dumps(validation, ensure_ascii=False)
             + "。数値は根拠欄とチャートに残すので、説明文では新しい数値や丸めた値を使わず、方向と条件を言葉で説明してください。"
-            "根拠IDとFACT/INFERENCE/UNKNOWNの条件を守り、全6項目を返してください。\n前の回答: "
+            "根拠IDとFACT/INFERENCE/UNKNOWNの条件を守り、全6項目と表示候補を全て含むpresentationを返してください。\n前の回答: "
             + json.dumps(raw, ensure_ascii=False))
         diag = {}
-        raw = _openai_prose(correction, max_out=2600,
+        raw = _openai_prose(correction, max_out=5200,
             system=argus_presentation_intent.VOICE,
             purpose="market_brief", diagnostic=diag)
         validation = {}
         unified = argus_market_brief.validate_unified_ai(
             {key: value for key, value in raw.items() if key != "presentation"}, context, diagnostic=validation) if isinstance(raw, dict) else None
+        presentation = checked_presentation(raw, unified, validation)
         attempts.append({"provider": copy.deepcopy(diag), "validation": copy.deepcopy(validation)})
-    brief["presentationPlan"] = None
+    brief["presentationPlan"] = presentation
     brief["presentationStatus"] = "UNAVAILABLE"
     if unified and isinstance(raw, dict):
-        try:
-            brief["presentationPlan"] = argus_presentation_intent.validate_plan(raw.get("presentation"), presentation_catalog)
+        if presentation:
             brief["presentationStatus"] = "GENERATED"
-        except ValueError as exc:
+        else:
             brief["presentationStatus"] = "INVALID_RESPONSE"
-            brief["presentationError"] = str(exc)
+            brief["presentationError"] = validation.get("detail")
     brief["unifiedValidation"] = validation or {"status": "NO_RESPONSE", "reason": diag.get("reason"), "section": None}
     if unified:
         sections = unified["sections"]
@@ -17839,6 +17855,18 @@ def _owner_dialogue_subject_comparison(*, brief, symbol, market, horizon, cutoff
         history=copy.deepcopy(_JQ_HISTORY_CACHE.get(symbol)), classification=classification,
         close_row=_jp_internals_close_row)
 
+
+def _owner_dialogue_event_snapshot(event_id):
+    if not isinstance(event_id, str) or not 1 <= len(event_id) <= 160:
+        return None
+    try:
+        _, items, _ = _build_dashboard_events(limit=20)
+        return next((copy.deepcopy(row) for row in items
+            if event_id in (row.get('eventId'), row.get('displayEventId'))), None)
+    except Exception:
+        return None
+
+
 def _owner_dialogue_subject_materials(*, symbol, market, cutoff):
     if market not in ("JP", "US") or not isinstance(symbol, str) or symbol == "N225": return None
     return argus_subject_materials.news_facts(list(_INTEL_STORE), symbol=symbol, cutoff=cutoff)
@@ -17878,7 +17906,8 @@ argus_owner_dialogue_api.register(app, authorize=_require_owner_sync,
     generate=_openai_prose, now=lambda: datetime.now(pytz.utc).isoformat(),
     recovery_status=_OWNER_DIALOGUE_RECOVERY.status, recovery_trigger=_OWNER_DIALOGUE_RECOVERY.tick,
     subject_comparison=_owner_dialogue_subject_comparison, subject_materials=_owner_dialogue_subject_materials,
-    usage_snapshot=_ai_usage_snapshot, push_service=_WEB_PUSH, vault_service=_OWNER_VAULT)
+    usage_snapshot=_ai_usage_snapshot, push_service=_WEB_PUSH, vault_service=_OWNER_VAULT,
+    event_snapshot=_owner_dialogue_event_snapshot)
 
 
 @app.route("/api/argus/market-brief")
@@ -19177,7 +19206,7 @@ def _news_retry_pending_analysis():
                     or not argus_news_intelligence.analysis_retry_priority(
                         event, now, full_analysis=_AI_FULL_ANALYSIS_ENABLED)[0]
                     or now < float(retry.get("nextAttemptEpoch") or 0)
-                    or (retry.get("day") == day and int(retry.get("attempts") or 0) >= 3)):
+                    or argus_news_intelligence.analysis_retry_daily_limit_reached(event, day)):
                 continue
             candidates.append(copy.deepcopy(event))
         if not candidates:
@@ -36433,6 +36462,9 @@ def _release_seed_verified_market_views(body):
         ("QQQ", "US", False),
     )
     observations = []
+    with _COST_CHECKPOINT_CONDITION:
+        _COST_CHECKPOINT_STATE["releaseSeedWaiters"] = (
+            _COST_CHECKPOINT_STATE.get("releaseSeedWaiters", 0) + 1)
     try:
         with _DURABLE_CHECKPOINT_LOCK:
             existing = {
@@ -36516,6 +36548,10 @@ def _release_seed_verified_market_views(body):
             "snapshotExpected": 12,
             "snapshotReady": len(observations),
         }), 503
+    finally:
+        with _COST_CHECKPOINT_CONDITION:
+            _COST_CHECKPOINT_STATE["releaseSeedWaiters"] -= 1
+            _COST_CHECKPOINT_CONDITION.notify_all()
     return jsonify({
         "ok": True,
         "status": "completed",

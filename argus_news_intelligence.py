@@ -727,6 +727,30 @@ def material_news_priority(event: Mapping[str, Any], now_epoch: float) -> tuple:
 NEWS_HISTORY_DAYS = 7
 
 
+def analysis_retry_daily_limit_reached(event: Mapping[str, Any], day: str) -> bool:
+    """Keep content failures bounded without stranding provider recovery.
+
+    Provider failures retain their attempt history and the caller's cooldown.
+    A replenished account must be able to recover on the next scheduled retry,
+    rather than waiting for a UTC date change after three rejected API calls.
+    """
+    retry = event.get("analysisRetry") or {}
+    if retry.get("day") != day or int(retry.get("attempts") or 0) < 3:
+        return False
+    diagnostic = event.get("analysisDiagnostic") or {}
+    provider_unavailable = (
+        event.get("analysisState") == "AI_ANALYSIS_UNAVAILABLE"
+        and diagnostic.get("outcome") == "error"
+        and not diagnostic.get("returnedModel")
+        and diagnostic.get("errorCode") in {
+            "credit_balance_exhausted", "organization_spend_limit_exceeded",
+            "project_spend_limit_exceeded", "organization_usage_limit_exceeded",
+            "insufficient_quota", "rate_limit_exceeded", "slow_down",
+        }
+    )
+    return not provider_unavailable
+
+
 def analysis_retry_priority(event: Mapping[str, Any], now_epoch: float,
                             *, full_analysis: bool = False) -> tuple:
     """Prioritize important news, then recover previously attempted analysis.

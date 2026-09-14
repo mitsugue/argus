@@ -1,3 +1,4 @@
+import type { HoldingUpdate } from '../../types/assetItem';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors,
@@ -42,7 +43,7 @@ interface Props {
   intel: AssetIntel;
   onReorder: (orderedIds: string[]) => void;
   onRemove: (id: string) => void;
-  onUpdateHolding: (id: string, h: { quantity?: number | null; avgCost?: number | null }) => void;
+  onUpdateHolding: (id: string, h: HoldingUpdate) => void;
   focus?: AssetFocusIntent | null;
   toolbar?: React.ReactNode;
   /** Lean v13 contextual detail: render only this asset, fully expanded. */

@@ -28,13 +28,17 @@ export interface AssetItem {
   targetAllocation?: number;
   currentAllocation?: number;
   // Holdings (v10.0 Portfolio Exposure). Device-local only (localStorage) —
-  // Sent to the private owner dialogue only when the owner submits a question.
+  // Used by the authenticated private overview and owner-submitted dialogue.
   quantity?: number;   // shares / coins held
   avgCost?: number;    // average acquisition price (native currency)
   memo?: string;
+  purchaseReason?: string;
+  holdingPeriod?: string;
   createdAt: number;
   updatedAt: number;
 }
+
+export type HoldingUpdate = { quantity?: number | null; avgCost?: number | null; purchaseReason?: string | null; holdingPeriod?: string | null };
 
 // Owner-facing groups, always displayed in this order.
 export type GenreKey = 'jp' | 'us' | 'funds' | 'crypto';

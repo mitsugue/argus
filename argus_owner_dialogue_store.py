@@ -126,3 +126,21 @@ def history(path, boot_id, *, before=None):
     with closing(connect(path, True)) as db:
         rows = db.execute('SELECT request_id,sequence FROM requests WHERE sequence<? ORDER BY sequence DESC LIMIT 21', (before or 9223372036854775807,)).fetchall()
     return {'items':[read(path, row[0], boot_id) for row in rows[:20]], 'nextBefore': rows[19][1] if len(rows)>20 else None}
+
+
+def latest_subject_overview(path, boot_id, *, symbol, market, horizon, before=None):
+    """Find a saved successful edition without rewriting prior requests."""
+    if not Path(path).exists(): return None
+    if before is not None and (type(before) is not int or before < 1):
+        raise ValueError('dialogue_cursor_invalid')
+    with closing(connect(path, True)) as db:
+        row = db.execute('''SELECT r.request_id FROM requests r JOIN completions c USING(request_id)
+            WHERE r.sequence < ?
+              AND json_extract(r.body, '$.context.intent') = 'SUBJECT_OVERVIEW'
+              AND json_extract(r.body, '$.context.subject.symbol') = ?
+              AND json_extract(r.body, '$.context.subject.market') = ?
+              AND json_extract(r.body, '$.context.horizonSessions') = ?
+              AND json_extract(c.body, '$.status') = 'SUCCEEDED'
+            ORDER BY r.sequence DESC LIMIT 1''',
+            (before or 9223372036854775807, symbol, market, horizon)).fetchone()
+    return read(path, row[0], boot_id) if row else None

@@ -20,7 +20,8 @@ export interface MarketBrief {
     elements: Array<{ id: string; kind: string; payloadId: string; evidenceIds: string[]; mandatory: boolean; urgent: boolean }> };
   presentationPlan?: { schemaVersion: string; planId: string; contextId: string; inventoryId: string;
     surface: string; subject: string; horizonSessions: number; intentJa: string; actionAuthority: false;
-    elements: Array<{ id: string; purposeJa: string; placement: 'lead' | 'support' | 'detail'; emphasis: 'primary' | 'normal' | 'quiet' }> };
+    elements: Array<{ id: string; purposeJa: string; placement: 'lead' | 'support' | 'detail'; emphasis: 'primary' | 'normal' | 'quiet';
+      caption?: { textJa: string; evidenceIds: string[]; kind: 'FACT' | 'INFERENCE' | 'UNKNOWN' } }> };
   unifiedSummary?: {
     schemaVersion: 'argus-unified-brief-v1'; contextId: string; actionAuthority: false;
     ownerContextAvailable: boolean; historyStatus: 'PROCESS_MEMORY_ONLY' | 'LOCAL_DURABLE';

@@ -205,3 +205,9 @@
 /* リサーチメモ/Holdingのラベルは縦flex内で130px基底が高さになる(旧行レイアウト用) — 打ち消し */
 .ad-card .asset-detail__note .asset-detail__k,
 .ad-card .asset-hold .asset-detail__k { flex: 0 0 auto; }
+
+.ad-owner-intent { display: grid; gap: 12px; margin: 18px 0; }
+.ad-owner-intent .asset-hold__field { display: grid; gap: 6px; font-size: 13px; }
+.ad-owner-intent input, .ad-owner-intent textarea { width: 100%; box-sizing: border-box; min-height: 44px; background: var(--bg-card, #121c25); color: var(--text); border: 1px solid var(--border, #2b3945); border-radius: 8px; padding: 10px; font: inherit; }
+.ad-owner-intent textarea { min-height: 88px; resize: vertical; }
+.ad-owner-intent p { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.6; }

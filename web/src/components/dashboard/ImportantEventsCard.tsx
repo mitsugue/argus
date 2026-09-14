@@ -14,7 +14,7 @@ function useEventAiScenarioNote(): string {
 import { useDashboardEvents } from '../../hooks/useDashboardEvents';
 import { deriveDashboardEventDisplayState, type DashboardEvent, type DashboardEventReaction } from '../../lib/dashboardEventState';
 import { useLocale, t, pick } from '../../i18n';
-import { buildReviewPackMarkdown, copyPack } from '../../lib/reviewPack';
+import { OwnerDialogue } from '../dialogue/OwnerDialogue';
 import { EVENT_DESC_JA } from '../../lib/eventLabels';
 import { formatEventWhenJa } from '../../domain/argusTodayView';
 import './ImportantEventsCard.css';
@@ -170,37 +170,22 @@ const EventRow: React.FC<{ e: ImportantEvent; open: boolean; ai?: MacroAnalysis 
         <p className="ie-line"><span className="ie-k">{t('ie.nextReview')}</span>{nextReview}</p>
         {ai && <CaosAnalysisBlock ai={ai} released={released} />}
         <p className="ie-data">{t('ie.forecast')}: {t('ie.unavailable')} · {t('ie.previous')}: {t('ie.unavailable')}{e.source ? ` · ${e.source}` : ''}</p>
-        <AskAIEvent code={e.eventCode} titleJa={eventTitleJa(e.eventCode, e.title)}
-          stateJa={released ? '発表済' : countdown} whyJa={novice}
-          linkedAssets={e.linkedAssets || []} />
+        <AskAIEvent eventId={e.eventId} when={when} titleJa={eventTitleJa(e.eventCode, e.title)} />
       </div>
     </details>
   );
 };
 
-// v11.20.0 — 「このイベントをAIに相談」: Event Review Packをコピー(自動送信なし)。
-const AskAIEvent: React.FC<{ code: string; titleJa: string; stateJa: string;
-  whyJa?: string; linkedAssets: string[] }> = ({ code, titleJa, stateJa, whyJa, linkedAssets }) => {
-  const [msg, setMsg] = React.useState<string | null>(null);
-  return (
-    <p className="ie-line" style={{ fontSize: 10.5 }}>
-      <button type="button"
-        style={{ fontSize: 10.5, cursor: 'pointer', background: 'transparent',
-                 color: 'var(--accent)', border: '1px solid var(--line)',
-                 borderRadius: 5, padding: '1px 8px' }}
-        onClick={async () => {
-          const md = buildReviewPackMarkdown({ packType: 'event', privacyMode: 'owner_copy',
-            length: 'full', appVersion: __APP_VERSION__,
-            event: { code, titleJa, stateJa, whyJa, linkedAssets,
-              checksAfterJa: ['金利(US10Y)の初動', 'ドル円', '指数(SPY/QQQ/日経先物)', '関連銘柄の出来高'] } });
-          setMsg(await copyPack(md) ? '✓ コピーしました' : 'コピー失敗');
-          window.setTimeout(() => setMsg(null), 2500);
-        }}>
-        このイベントをAIに相談(コピー)
-      </button>
-      {msg && <span style={{ marginLeft: 6, color: 'var(--value-positive)' }}>{msg}</span>}
-    </p>
-  );
+const AskAIEvent: React.FC<{ eventId: string; when: string; titleJa: string }> = ({ eventId, when, titleJa }) => {
+  const [open, setOpen] = React.useState(false);
+  return <div className="ie-dialogue">
+    <button type="button" aria-expanded={open} onClick={()=>setOpen(value=>!value)}
+      style={{minHeight:44,fontSize:14,padding:'10px 14px',borderRadius:10,border:'1px solid var(--line)',background:'transparent',color:'var(--accent)',cursor:'pointer'}}>
+      {open?'ARGUSとの対話を閉じる':'このイベントについてARGUSに聞く'}
+    </button>
+    {open&&<OwnerDialogue key={eventId} symbol="N225" market="JP" horizon={5} focusEventId={eventId}
+      initialQuestion={`${titleJa}（${when}）について、事前予想・公式結果・実際の市場反応を分けて、今の見立てへの影響と次に確認することを教えて。`}/>}
+  </div>;
 };
 
 // v11.4.1 UNIFIED ROW — the single event surface. After release, official result +
@@ -279,11 +264,7 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
         {(c.assetsToWatch || []).length > 0 && (
           <p className="ie-data">注目: {(c.assetsToWatch || []).join(' · ')} ・ AIシナリオはコンセンサスや売買指示ではありません</p>
         )}
-        {/* v11.20.0: Event Review Pack copy(端末内合成・自動送信なし) */}
-        <AskAIEvent code={ev.eventCode} titleJa={eventTitleJa(ev.eventCode, ev.title)}
-          stateJa={ds.released ? '発表済' : ev.stateLabelJa || '発表前'}
-          whyJa={c.preScenarioJa || c.summaryJa}
-          linkedAssets={c.assetsToWatch || []} />
+        <AskAIEvent eventId={ev.eventId} when={when} titleJa={eventTitleJa(ev.eventCode, ev.title)} />
       </div>
     </details>
   );
@@ -311,7 +292,7 @@ export const ImportantEventsCard: React.FC<Props> = ({ embedded }) => {
         aria-label="Important events">
         <div className="ie-head">
           <span className="ie-title">{t('ie.title')}</span>
-          {dash.items.length > 5 && <button className="ie-viewall"
+          {dash.items.length > 3 && <button className="ie-viewall"
             onClick={() => setShowAll((value) => !value)}>
             {showAll ? '折りたたむ' : t('ie.viewAll')} {showAll ? '↑' : '↓'}
           </button>}

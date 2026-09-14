@@ -224,7 +224,7 @@ def compose_brief(*, now_iso: str,
             headline = "重要発表（日本語要約 処理中）"
         facts.append(_fact(
             f"{event.get('sourceLabelJa') or event.get('sourceFamily') or '公式'}: "
-            f"{headline[:60]}"
+            f"{headline[:160]}"
             f"（{'市場確認済み' if confirmed else '市場確認待ち'}）",
             "P0", "trusted_mail",
             "CORROBORATED" if confirmed else "UNCONFIRMED", event))

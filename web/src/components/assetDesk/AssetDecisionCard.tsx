@@ -1,3 +1,4 @@
+import type { HoldingUpdate } from '../../types/assetItem';
 import React, { useEffect, useState } from 'react';
 import type { DeskCardData, DeskTab } from './types';
 import { sectionAnchorId, tabForDeskSection } from './types';
@@ -22,7 +23,7 @@ interface Props {
   open: boolean;
   onToggle: () => void;
   onRemove: (id: string) => void;
-  onUpdateHolding: (id: string, h: { quantity?: number | null; avgCost?: number | null }) => void;
+  onUpdateHolding: (id: string, h: HoldingUpdate) => void;
   nowMs: number;
   dragHandle?: React.ReactNode;
   focusSection?: string;

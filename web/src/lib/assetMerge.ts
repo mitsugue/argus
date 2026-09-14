@@ -43,7 +43,7 @@ function prune(t: Tombstones): Tombstones {
 function fingerprint(items: AssetItem[]): string {
   const rows = [...items]
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-    .map((a) => [a.id, a.updatedAt, a.enabled, a.sortOrder, a.quantity ?? null, a.avgCost ?? null, a.memo ?? null]);
+    .map((a) => [a.id, a.updatedAt, a.enabled, a.sortOrder, a.quantity ?? null, a.avgCost ?? null, a.memo ?? null, a.purchaseReason ?? null, a.holdingPeriod ?? null]);
   return JSON.stringify(rows);
 }
 
