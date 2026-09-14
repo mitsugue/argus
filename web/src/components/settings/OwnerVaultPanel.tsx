@@ -15,7 +15,7 @@ export function OwnerVaultPanel(){
  useEffect(()=>{const refresh=()=>{setAutomatic(autoSaveEnabled());setAutoState(autoSaveState());};
    window.addEventListener('argus:vault-auto-state',refresh);window.addEventListener('argus:vault-auto-config',refresh);window.addEventListener('storage',refresh);
    return()=>{window.removeEventListener('argus:vault-auto-state',refresh);window.removeEventListener('argus:vault-auto-config',refresh);window.removeEventListener('storage',refresh);};},[]);
- const run=async(work:()=>Promise<void>)=>{setBusy(true);setError('');try{await work();}catch(e){setError(e instanceof Error?e.message:'保存先を確認できませんでした。');}finally{setBusy(false);}};
+ const run=async(work:()=>Promise<void>)=>{setBusy(true);setError('');setMessage('');try{await work();}catch(e){setError(e instanceof Error?e.message:'保存先を確認できませんでした。');}finally{setBusy(false);}};
  const clear=()=>{setRows([]);setPreview(null);setNext(null);setMessage('');setError('');};
  const list=async(more=false)=>{const data=await vaultRequest(token,await vaultIdFrom(pass),'list',more&&next!==null?{offset:next}:{});
    if(!Array.isArray(data.snapshots)||!data.snapshots.every((r:VaultSnapshot)=>/^[a-f0-9]{64}$/.test(r.snapshotId)&&Number.isFinite(r.savedAt)&&Number.isFinite(r.bytes)))throw new Error('保存点一覧の形式を確認できません。');

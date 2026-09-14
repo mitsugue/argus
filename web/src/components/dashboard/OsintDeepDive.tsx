@@ -1,4 +1,5 @@
 import React from 'react';
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import { useOsintInvestigation } from '../../hooks/useOsintInvestigation';
 import { publishOsintDeep } from '../../lib/positionExposureShare';
 
@@ -16,7 +17,7 @@ const COVERAGE_TONE: Record<string, string> = {
 export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: boolean }>
   = ({ symbol, market, held }) => {
   void market;
-  const { inv, progress, queuePosition, etaMin, reload } = useOsintInvestigation(symbol);
+  const { inv, progress, queuePosition, etaMin, reload, loading, error } = useOsintInvestigation(symbol);
   const [dismissed, setDismissed] = React.useState<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem('argus.osintGapDismiss.v1') ?? '[]') as string[]); }
     catch { return new Set(); }
@@ -69,6 +70,8 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
   return (
     <div className="uac-sec">
       <div className="uac-sec-t">OSINT DEEP DIVE</div>
+      {loading && <p><TriangleStepLoader label={inv ? "保存済みの調査を表示しながら更新しています" : "調査結果を読み込んでいます"} /></p>}
+      {error && <p role="status">調査結果を取得できませんでした。<button type="button" style={btn} disabled={loading} onClick={reload}>再取得</button></p>}
 
       {/* 弱カバレッジ警告(保有/P1相当は特に) */}
       {(!inv || weak) && (

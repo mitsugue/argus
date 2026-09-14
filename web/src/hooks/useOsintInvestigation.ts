@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 // Recovery Phase A: cached public GET remains available. Mutation helpers are
 // absent because the static bundle must never carry admin auth.
@@ -126,25 +126,32 @@ export interface OsintProgress {
   };
 }
 
-interface State { inv: OsintInvestigation | null; loading: boolean;
+interface State { inv: OsintInvestigation | null; loading: boolean; error: boolean;
   progress: OsintProgress | null; queuePosition: number | null; etaMin: number | null; }
 
 export function useOsintInvestigation(symbol: string) {
-  const [state, setState] = useState<State>({ inv: null, loading: true,
+  const [state, setState] = useState<State>({ inv: null, loading: true, error: false,
     progress: null, queuePosition: null, etaMin: null });
   const backend = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '');
+  const request = useRef<AbortController | null>(null);
 
   const load = useCallback(() => {
+    request.current?.abort();
     if (!backend) { setState((s) => ({ ...s, loading: false })); return; }
-    fetch(`${backend}/api/argus/osint/investigation?symbol=${encodeURIComponent(symbol)}`)
-      .then((r) => r.json())
-      .then((d) => setState((s) => ({ ...s, inv: d.investigation ?? null, loading: false,
+    const ctrl = new AbortController(); request.current = ctrl;
+    setState((s) => ({ ...s, loading: true, error: false }));
+    fetch(`${backend}/api/argus/osint/investigation?symbol=${encodeURIComponent(symbol)}`, { signal: AbortSignal.any([ctrl.signal, AbortSignal.timeout(12000)]) })
+      .then((r) => { if (!r.ok) throw new Error('investigation_unavailable'); return r.json(); })
+      .then((d) => { if (ctrl.signal.aborted) return; setState((s) => ({ ...s, inv: d.investigation ?? null, loading: false,
         progress: d.progress ?? null, queuePosition: d.queuePosition ?? null,
-        etaMin: d.nextCronEtaMin ?? null })))
-      .catch(() => setState((s) => ({ ...s, loading: false })));
+        etaMin: d.nextCronEtaMin ?? null })); })
+      .catch(() => { if (!ctrl.signal.aborted) setState((s) => ({ ...s, loading: false, error: true })); });
   }, [backend, symbol]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    setState({ inv: null, loading: true, error: false, progress: null, queuePosition: null, etaMin: null });
+    load(); return () => request.current?.abort();
+  }, [load]);
 
   return { ...state, reload: load };
 }

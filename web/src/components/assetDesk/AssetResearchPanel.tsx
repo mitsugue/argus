@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import type { DeskCardData } from './types';
 import { getNote, saveNote } from '../../lib/researchNotes';
 import { buildReviewPackMarkdown, copyPack } from '../../lib/reviewPack';
@@ -30,7 +31,7 @@ async function buildAndCopyConsult(d: DeskCardData,
       if (!backend) return Promise.resolve(null);
       const params = new URLSearchParams({ scope: 'asset', symbol: d.asset.symbol,
         market: d.asset.market, timeframe: 'daily' });
-      return fetch(`${backend}/api/argus/chart-intelligence?${params}`, { method: 'GET' })
+      return fetch(`${backend}/api/argus/chart-intelligence?${params}`, { method: 'GET', signal: AbortSignal.timeout(12000) })
         .then((r) => r.ok ? r.json() as Promise<{ critique?: Array<{ label: string; text: string }> }> : null)
         .catch(() => null);
     })(),
@@ -77,6 +78,7 @@ export const AssetResearchPanel: React.FC<{
   const [note, setNote] = useState(() => getNote(d.asset.symbol)?.text ?? '');
   const [noteSaved, setNoteSaved] = useState(false);
   const [llmCopied, setLlmCopied] = useState<string | null>(null);
+  const [consultLoading, setConsultLoading] = useState(false);
   const [packMsg, setPackMsg] = useState<string | null>(null);
   const doCopyPack = async (privacyMode: 'owner_copy' | 'redacted', length: 'full' | 'short') => {
     const md = buildReviewPackMarkdown({ packType: 'asset', privacyMode, length,
@@ -106,12 +108,13 @@ export const AssetResearchPanel: React.FC<{
         <button type="button" style={aiBtn} onClick={() => void doCopyPack('owner_copy', 'short')}>短縮</button>
         <button type="button" style={aiBtn} onClick={() => void doCopyPack('redacted', 'full')}>redacted</button>
         {(['ChatGPT', 'Gemini'] as const).map((provider) => <button key={provider} type="button" style={aiBtn}
-                title={`${provider}用の相談文をコピーします。APIは呼びません。`}
-                onClick={() => void buildAndCopyConsult(d, provider).then((ok) => {
+                title={`${provider}用の相談文をコピーします。APIは呼びません。`} disabled={consultLoading}
+                onClick={() => { setConsultLoading(true); void buildAndCopyConsult(d, provider).then((ok) => {
                   if (ok) { setLlmCopied(provider); window.setTimeout(() => setLlmCopied(null), 2500); }
-                })}>
+                }).catch(() => setPackMsg('相談資料を準備できませんでした。')).finally(() => setConsultLoading(false)); }}>
           {llmCopied === provider ? '✓ コピー完了' : `${provider}に相談`}
         </button>)}
+        {consultLoading && <TriangleStepLoader compact label="相談資料を準備しています" />}
         {packMsg && <span style={{ marginLeft: 6, color: 'var(--value-positive)' }}>{packMsg}</span>}
       </p>
 

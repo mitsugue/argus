@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import { buildReviewPackMarkdown, copyPack } from '../../lib/reviewPack';
 import { latestEventsJa } from '../../lib/positionExposureShare';
 import type { TodayEventInput } from '../../domain/argusTodayView';
@@ -23,7 +24,7 @@ export const ProHandoffButton: React.FC<{ nextEvent?: TodayEventInput | null; se
       let serverContextMd: string | undefined;
       if (kind === 'market' && backend) {
         try {
-          const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/pro-handoff');
+          const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/pro-handoff', { signal: AbortSignal.timeout(12000) });
           if (r.ok) serverContextMd = ((await r.json()).promptText || '') as string;
         } catch { /* server context optional — pack remains local-complete */ }
       }
@@ -65,7 +66,7 @@ export const ProHandoffButton: React.FC<{ nextEvent?: TodayEventInput | null; se
       <button type="button" onClick={() => setOpen((v) => !v)} disabled={state === 'loading'}
         style={{ fontSize: 12, cursor: 'pointer', background: 'transparent', color: 'var(--accent)',
                  border: '1px solid var(--line)', borderRadius: 6, padding: '4px 10px' }}>
-        {label}
+        {state === 'loading' ? <TriangleStepLoader compact label="相談資料を準備しています" /> : label}
       </button>
       {open && (
         <span style={{ position: 'absolute', zIndex: 30, top: '110%', left: 0, minWidth: 240,

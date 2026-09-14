@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import type { AssetItem } from '../../types/assetItem';
 
 // Layer 2B — sync the owner's watchlist MEMBERSHIP (symbols only, no holdings) so
@@ -18,18 +19,21 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
     try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; }
   });
   const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState('');
   const [result, setResult] = useState<string | null>(null);
   const [summary, setSummary] = useState<any>(null);
   const [syncStatus, setSyncStatus] = useState<{ synced: string[]; missing: string[] } | null>(null);
   const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
 
   async function restoreFromLayer2B() {
+    if (busy) return;
     if (!backend || !token.trim()) { setResult('復元には合言葉を入力してください'); return; }
     if (!confirm('Layer 2Bに同期済みの銘柄でこの端末のウォッチリストを置き換えます(保有数量・取得単価は対象外)。よろしいですか?')) return;
+    setBusy(true); setBusyLabel('保存済みの銘柄情報を確認しています');
     try {
       const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/calibration/watchlist-membership', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ownerToken: token.trim() }),
+        body: JSON.stringify({ ownerToken: token.trim() }), signal: AbortSignal.timeout(12000),
       });
       const d = await r.json().catch(() => null);
       const members = d?.membership?.members;
@@ -52,20 +56,22 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
       setResult(`✅ ${restored.length}銘柄を復元しました(JP/US/暗号資産)。投信(CORE)と保有数量はバックアップから復元してください。`);
     } catch (e) {
       setResult('復元エラー: ' + String(e).slice(0, 80));
-    }
+    } finally { setBusy(false); }
   }
 
   async function loadSummary() {
+    if (busy) return;
     if (!backend || !token.trim()) { setResult('成績を見るには合言葉を入力してください'); return; }
+    setBusy(true); setBusyLabel('保存済みの銘柄情報を確認しています');
     try {
       const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/calibration/layer2b-summary', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ownerToken: token.trim() }),
+        body: JSON.stringify({ ownerToken: token.trim() }), signal: AbortSignal.timeout(12000),
       });
       const d = await r.json().catch(() => null);
       if (d && d.status === 'ok') setSummary(d.summary);
       else setResult(`成績: ${d?.status || 'エラー'}`);
-    } catch { setResult('成績の取得に失敗'); }
+    } catch { setResult('成績の取得に失敗'); } finally { setBusy(false); }
   }
 
   // Send ONLY non-monetary flags. `held` is derived from local holdings but the
@@ -85,11 +91,13 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
   // #7 — confirm the server (private store) actually treats this device's held /
   // priority names as held/active. If a held name is missing, warn explicitly.
   async function checkSyncStatus() {
+    if (busy) return;
     if (!backend || !token.trim()) { setResult('同期状態の確認には合言葉を入力してください'); return; }
+    setBusy(true); setBusyLabel('保存済みの銘柄情報を確認しています');
     try {
       const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/calibration/watchlist-membership', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ownerToken: token.trim() }),
+        body: JSON.stringify({ ownerToken: token.trim() }), signal: AbortSignal.timeout(12000),
       });
       const d = await r.json().catch(() => null);
       const members: any[] = d?.membership?.members || [];
@@ -100,14 +108,15 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
       const synced = heldLocal.filter((s) => serverHeld.has(s));
       const missing = heldLocal.filter((s) => !serverHeld.has(s));
       setSyncStatus({ synced, missing });
-    } catch { setResult('同期状態の確認に失敗(合言葉/通信を確認)'); }
+    } catch { setResult('同期状態の確認に失敗(合言葉/通信を確認)'); } finally { setBusy(false); }
   }
 
   async function sync() {
+    if (busy) return;
     if (!backend) { setResult('バックエンド未設定'); return; }
     if (!token.trim()) { setResult('オーナー同期トークンを入力してください'); return; }
     try { localStorage.setItem(TOKEN_KEY, token.trim()); } catch { /* ignore */ }
-    setBusy(true); setResult(null);
+    setBusy(true); setBusyLabel('銘柄情報を同期しています'); setResult(null);
     const base = backend.replace(/\/$/, '');
     // Render cold-start can return a non-JSON 502/timeout for the first hit, which
     // made r.json() throw "did not match the expected pattern". Warm the dyno,
@@ -202,6 +211,7 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
                      border: '1px solid var(--border, #2a3340)' }}>
             同期状態を確認
           </button>
+          {busy && <p><TriangleStepLoader label={busyLabel} /></p>}
           {syncStatus && (
             <div style={{ fontSize: '0.85em', marginTop: 10, lineHeight: 1.6 }}>
               {heldLocal.length === 0 ? (

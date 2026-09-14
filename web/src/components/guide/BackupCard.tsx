@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import { downloadBackup, restoreBackup, type BackupFile } from '../../lib/backup';
 import { cloudRestore, getVaultPass, setVaultPass, lastCloudBackupAt, lastSyncInfo } from '../../lib/vault';
 import {preserveBeforeOwnerRestore} from '../../lib/ownerRestoreGuard';
@@ -11,13 +12,14 @@ export const BackupCard: React.FC = () => {
   const [msg, setMsg] = useState('');
   const [pass, setPass] = useState('');
   const [cloudMsg, setCloudMsg] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [operation, setOperation] = useState<'file' | 'cloud' | null>(null);
+  const busy = operation !== null;
   const enabled = !!getVaultPass();
 
   async function restoreCloud() {
     const p = pass.trim();
     if (!p) { setCloudMsg('復元にはパスフレーズを入力してください。'); return; }
-    setBusy(true);
+    setOperation('cloud');
     try {
       let ownerWorkflow=false;
       const n = await cloudRestore(p,async()=>{ownerWorkflow=await preserveBeforeOwnerRestore(setCloudMsg);});
@@ -30,7 +32,7 @@ export const BackupCard: React.FC = () => {
       }
     } catch (e) {
       setCloudMsg(String(e instanceof Error ? e.message : e));
-    } finally { setBusy(false); }
+    } finally { setOperation(null); }
   }
 
   function doExport() {
@@ -41,9 +43,9 @@ export const BackupCard: React.FC = () => {
   }
 
   function doImport(file: File) {
-    setBusy(true);
+    setOperation('file');
     const reader = new FileReader();
-    reader.onerror=()=>{setMsg('ファイルを読み込めませんでした。端末データは変更していません。');setBusy(false);};
+    reader.onerror=()=>{setMsg('ファイルを読み込めませんでした。端末データは変更していません。');setOperation(null);};
     reader.onload = async () => {
       try {
         const parsed = JSON.parse(String(reader.result)) as BackupFile;
@@ -56,7 +58,7 @@ export const BackupCard: React.FC = () => {
       } catch (error) {
         setMsg(error instanceof Error&&error.message!=='invalid_backup'
           ? error.message : '読み込みに失敗しました。正しいバックアップファイルか確認してください。');
-      }finally{setBusy(false);}
+      }finally{setOperation(null);}
     };
     reader.readAsText(file);
   }
@@ -78,6 +80,7 @@ export const BackupCard: React.FC = () => {
                onChange={(e) => { const f = e.target.files?.[0]; if (f) doImport(f); e.target.value = ''; }} />
       </div>
       {msg && <p className="backup__msg">{msg}</p>}
+      {operation === 'file' && <p><TriangleStepLoader label="バックアップファイルを読み込み、保存内容を確認しています" /></p>}
       <p className="backup__note">
         ※復元はこの端末の現在のデータを上書きします。自動ダウンロードは行いません。
       </p>
@@ -109,6 +112,7 @@ export const BackupCard: React.FC = () => {
           保存済みクラウド履歴を検証できないため取込みを保留しています。端末データは維持しています。
           古いバックアップは製品外の移行ツールで変換してから取り込んでください。
         </p>}
+        {operation === 'cloud' && <p><TriangleStepLoader label="暗号化バックアップを読み込み、保存内容を確認しています" /></p>}
         {cloudMsg && <p className="backup__msg">{cloudMsg}</p>}
       </div>
     </div>
