@@ -17903,7 +17903,13 @@ def _web_push_tick():
             except Exception:
                 continue
         calendar = jp_market_events.published_sq_calendar(now=datetime.now(pytz.utc))
-        owner = _owner_symbols_cached()
+        try:
+            owner = _owner_symbols_cached()
+        except Exception:
+            # SQ and major-news delivery must remain available when the private
+            # owner profile is temporarily unavailable. Only owner-event
+            # proposals are omitted for this tick.
+            owner = {}
         with _EVENT_LOCK:
             owner_events = []
             for event in _EVENTS_LOG:
