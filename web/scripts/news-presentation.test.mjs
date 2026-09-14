@@ -10,8 +10,9 @@ const web = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixture = await build({
   stdin: {contents: `import React from 'react'; import {createRoot} from 'react-dom/client';
     import {TodayNewsCards} from './src/components/today/ArgusTodayPanel';
-    import {orderMaterialNews} from './src/domain/newsPresentation';
+    import {orderMaterialNews, groupNewsEpisodes} from './src/domain/newsPresentation';
     window.orderNews = orderMaterialNews;
+    window.groupNews = groupNewsEpisodes;
     window.renderNews = rows => createRoot(document.getElementById('root')).render(
       <div className="argus-today"><section className="at-event card">
       <TodayNewsCards rows={orderMaterialNews(rows)} onOpen={id => {window.openedNews = id;}} />
@@ -50,6 +51,18 @@ try {
   assert.equal(JSON.stringify(input),before,'presentation must not mutate stored input');
   const followups=await page.evaluate(rows=>window.orderNews(rows),[story,{...story,id:'followup',eventId:'followup'}]);
   assert.equal(followups.length,2,'same-title follow-ups with distinct IDs remain available');
+  const episodeRows = [
+    {...story, eventMemory:{episodeId:'episode-one'}},
+    {...story, id:'update', eventId:'update', sourceReceivedAt:'2026-09-12T03:00:00Z',
+      headlineJa:'続報で確認された変更', eventMemory:{episodeId:'episode-one'}},
+    {...story, id:'separate', eventId:'separate', eventMemory:null},
+  ];
+  const grouped=await page.evaluate(rows=>window.groupNews(rows),episodeRows);
+  assert.equal(grouped.length,2,'identical titles alone do not merge unrelated events');
+  assert.equal(grouped[0].lead.eventId,'update','latest same-severity development leads');
+  assert.deepEqual(grouped[0].related.map(row=>row.eventId),['story']);
+  assert.deepEqual(grouped.flatMap(group=>[group.lead,...group.related]).map(row=>row.eventId).sort(),
+    episodeRows.map(row=>row.eventId).sort(),'grouping retains every original article');
   const revised=await page.evaluate(rows=>window.orderNews(rows),[
     {...story,revision:1},{...story,revision:2,severity:'INFO'}]);
   assert.equal(revised.length,0,'latest revision can remove a stale importance classification');

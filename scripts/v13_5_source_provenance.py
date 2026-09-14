@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.6.1"
+PRODUCT_VERSION = "v13.6.2"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -175,8 +175,8 @@ REVIEWED_EXTENSION_BLOBS = {
     "test_ai_cost.py": "e2e1a3094c0fe315993d027592de6e1db9a5b784",
     'web/scripts/news-polling-recovery.test.mjs': '85c1fd980275aa95f832ccf5d2cd4d4eff60d8c1',
     "test_argus_prediction_read_latency.py": "731d0705813a323169ba286315811cac5b06e0f7",
-    "web/scripts/news-presentation.test.mjs": "9901647270d36d5d970dd972860fbf9a0e525343",
-    "web/src/domain/newsPresentation.ts": "930560386a00ea78157c463eb9f07c386731a160",
+    "web/scripts/news-presentation.test.mjs": "163019b4aa4c6a454a5351b7ad8c68ff5024712a",
+    "web/src/domain/newsPresentation.ts": "c94d6f4d8e368d328359e55ca040b039e705c4cd",
     "test_argus_ai_execution_settings.py": "91724952d7a992ea4d0c58a8f9bfaaf567f70a64",
     "argus_research_benchmark.py": "0afebef7261abeb95da017f4b5aa327da55874a1",
     "argus_ai_gate.py": "d0e19fb4d25527e6f0ca70d73c8b21a41bc2a866",
