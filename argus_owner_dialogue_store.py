@@ -144,3 +144,24 @@ def latest_subject_overview(path, boot_id, *, symbol, market, horizon, before=No
             ORDER BY r.sequence DESC LIMIT 1''',
             (before or 9223372036854775807, symbol, market, horizon)).fetchone()
     return read(path, row[0], boot_id) if row else None
+
+
+def latest_subject_overviews(path, boot_id, *, limit=20):
+    """Return the newest successful edition for each monitored subject/period."""
+    if type(limit) is not int or not 1 <= limit <= 50:
+        raise ValueError('dialogue_overview_limit_invalid')
+    if not Path(path).exists(): return []
+    with closing(connect(path, True)) as db:
+        rows = db.execute('''SELECT r.request_id FROM requests r JOIN completions c USING(request_id)
+            WHERE json_extract(r.body, '$.context.intent') = 'SUBJECT_OVERVIEW'
+              AND json_extract(c.body, '$.status') = 'SUCCEEDED'
+            ORDER BY r.sequence DESC LIMIT 500''').fetchall()
+    result=[];seen=set()
+    for row in rows:
+        item=read(path,row[0],boot_id);context=(item or {}).get('context') or {}
+        subject=context.get('subject') or {}
+        key=(subject.get('market'),subject.get('symbol'),context.get('horizonSessions'))
+        if key in seen:continue
+        seen.add(key);result.append(item)
+        if len(result)>=limit:break
+    return result
