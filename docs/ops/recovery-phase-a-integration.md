@@ -342,3 +342,10 @@ disabled; unexpected destinations fail before sending a request. No new write
 operation, token issuance, permissions expansion, or authority fallback is added.
 Response identity, signatures, ancestry and recovery acceptance remain mandatory.
 Production startup verification of this correction is pending deployment.
+
+
+## GPTの重複再試行抑制（2026-09-15）
+
+説明用GPTのSDK内部再試行を0にする。タイムアウト・接続切断は生成済みの可能性があるため別APIへ再送せず、401/403/408/409/429と一時的なサーバー障害も別APIへ連鎖しない。失敗は既存診断・費用台帳へ残し、不明な費用を0としない。明確な互換経路と指定されたモデル未提供時の代替は従来どおり。
+
+市場解説が連続失敗した際の再試行を2、4、8、16、30分へ延ばす。成功後は通常の10分へ戻す。これは障害時の再試行抑制であり、変化のない成功済み解説の再利用は別の作業。ニュース収集・記事解析・予定・明示的な会話を停止せず、直前の成功した表示と時刻を保持する。削減額は配信後の台帳で測定し、設定変更を実請求削減としない。

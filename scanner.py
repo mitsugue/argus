@@ -14748,6 +14748,10 @@ _CAOS_EVENT_SYSTEM = (
 def _openai_prose_call(client, model, sys_prompt, user, *, purpose="prose"):
     """One model call: Responses API first, chat completions second. Returns
     (response, text). Raises the LAST error when both fail."""
+    # The scheduler owns retries; hidden SDK retries can duplicate an accepted
+    # generation after its response is lost and escape per-attempt receipts.
+    if hasattr(client, "with_options"):
+        client = client.with_options(max_retries=0)
     sys_prompt = argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n" + sys_prompt
     if purpose == "owner_dialogue":
         resp = _ai_usage_provider_call('openai', purpose, model, lambda: client.responses.create(
@@ -14759,8 +14763,14 @@ def _openai_prose_call(client, model, sys_prompt, user, *, purpose="prose"):
                                         input=user, timeout=60, store=False), attempt=1, source_ref='_openai_prose_call')
         return resp, getattr(resp, "output_text", None)
     except Exception as exc:
-        # A second endpoint cannot restore provider credits or rate capacity.
-        if getattr(exc, "status_code", None) == 429:
+        # A timeout or connection loss may follow an already accepted request.
+        # Do not submit that work again through another endpoint. Likewise,
+        # auth, capacity and server failures are not endpoint incompatibility.
+        status = getattr(exc, "status_code", None)
+        if (isinstance(exc, (TimeoutError, ConnectionError))
+                or type(exc).__name__ in {"APITimeoutError", "APIConnectionError"}
+                or status in {401, 403, 408, 409, 429}
+                or (isinstance(status, int) and status >= 500 and status != 501)):
             raise
         resp = _ai_usage_provider_call('openai', purpose, model, lambda: client.chat.completions.create(
             model=model,
@@ -17555,7 +17565,8 @@ def _market_brief_worker_tick():
         return {"status": "ALREADY_RUNNING"}
     try:
         last = _MARKET_BRIEF_WORKER["lastAttemptMonotonic"]
-        interval = 600 if _MARKET_BRIEF_WORKER["status"] == "GENERATED" else 120
+        failures = min(5, max(0, int(_MARKET_BRIEF_WORKER.get("consecutiveFailures") or 0)))
+        interval = 600 if _MARKET_BRIEF_WORKER["status"] == "GENERATED" else min(1800, 120 * (2 ** max(0, failures - 1)))
         if last is not None and time.monotonic() - last < interval:
             return {"status": "NOT_DUE"}
         _MARKET_BRIEF_WORKER.update(lastAttemptMonotonic=time.monotonic(),
@@ -17572,6 +17583,8 @@ def _market_brief_worker_tick():
         except Exception as exc:
             _MARKET_BRIEF_WORKER.update(status="FAILED", errorClass=type(exc).__name__,
                 lastCompletedAt=_ai_now_iso())
+        _MARKET_BRIEF_WORKER["consecutiveFailures"] = (
+            0 if _MARKET_BRIEF_WORKER["status"] == "GENERATED" else min(5, failures + 1))
         return {key: value for key, value in _MARKET_BRIEF_WORKER.items() if key != "lastAttemptMonotonic"}
     finally:
         _MARKET_BRIEF_WORKER_LOCK.release()

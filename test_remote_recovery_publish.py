@@ -2307,3 +2307,69 @@ def test_recovery_dedicated_read_credential_takes_precedence():
             mock.patch.object(scanner.requests, "get", return_value=mock.Mock(status_code=200)) as get:
         scanner._recovery_github_get("https://api.github.com/repos/example/ledger/git/ref/heads/ledger")
         assert get.call_args.kwargs["headers"]["Authorization"] == "Bearer dedicated-test-credential"
+
+
+@pytest.mark.parametrize('error', [TimeoutError(), ConnectionError(),
+    type('APITimeoutError', (Exception,), {})(),
+    type('APIConnectionError', (Exception,), {})(),
+    *[type('ProviderFailure', (Exception,), {'status_code': code})()
+      for code in (401, 403, 408, 409, 429, 500, 502, 503)]])
+def test_prose_uncertain_failure_never_resubmits_to_second_endpoint(monkeypatch, error):
+    calls = []
+    def fail(**kwargs):
+        calls.append('responses')
+        raise error
+    def duplicate(**kwargs):
+        raise AssertionError('uncertain generation must not be duplicated')
+    client = types.SimpleNamespace(responses=types.SimpleNamespace(create=fail),
+        chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=duplicate)))
+    monkeypatch.setattr(scanner, '_ai_usage_provider_call', lambda provider, purpose, model, call, **kw: call())
+    with pytest.raises(type(error)):
+        scanner._openai_prose_call(client, 'test-model', 'system', 'input', purpose='market_brief')
+    assert calls == ['responses']
+
+
+def test_prose_disables_hidden_sdk_retries_and_keeps_success(monkeypatch):
+    seen = []
+    response = types.SimpleNamespace(output_text='{}')
+    client = types.SimpleNamespace(responses=types.SimpleNamespace(create=lambda **kw: response))
+    def options(**kwargs):
+        seen.append(kwargs)
+        return client
+    client.with_options = options
+    monkeypatch.setattr(scanner, '_ai_usage_provider_call', lambda provider, purpose, model, call, **kw: call())
+    assert scanner._openai_prose_call(client, 'test-model', 'system', 'input') == (response, '{}')
+    assert seen == [{'max_retries': 0}]
+
+
+def test_market_brief_failed_generation_backs_off_and_success_resets(monkeypatch):
+    import threading
+    state = {'lastAttemptMonotonic': None, 'status': 'NOT_RUN'}
+    clock = [1000.0]
+    calls = []
+    result = {'unifiedStatus': 'INVALID_RESPONSE'}
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF_WORKER', state)
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF_WORKER_LOCK', threading.Lock())
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF', {'historyRestoreAttempted': True})
+    monkeypatch.setattr(scanner.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(scanner._OWNER_DIALOGUE_RECOVERY, 'tick', lambda: None)
+    for name in ('_market_brief_history_restore', '_market_brief_history_outcomes', '_market_brief_history_sync'):
+        monkeypatch.setattr(scanner, name, lambda: None)
+    def generate(**kw):
+        calls.append(clock[0])
+        return result
+    monkeypatch.setattr(scanner, '_market_brief_refresh', generate)
+    assert scanner._market_brief_worker_tick()['status'] == 'INVALID_RESPONSE'
+    for delay in (120, 240, 480, 960, 1800):
+        clock[0] += delay - 1
+        assert scanner._market_brief_worker_tick()['status'] == 'NOT_DUE'
+        clock[0] += 1
+        assert scanner._market_brief_worker_tick()['status'] == 'INVALID_RESPONSE'
+    result['unifiedStatus'] = 'GENERATED'
+    clock[0] += 1800
+    assert scanner._market_brief_worker_tick()['consecutiveFailures'] == 0
+    clock[0] += 599
+    assert scanner._market_brief_worker_tick()['status'] == 'NOT_DUE'
+    clock[0] += 1
+    assert scanner._market_brief_worker_tick()['status'] == 'GENERATED'
+    assert len(calls) == 8
