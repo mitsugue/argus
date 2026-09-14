@@ -342,3 +342,17 @@ disabled; unexpected destinations fail before sending a request. No new write
 operation, token issuance, permissions expansion, or authority fallback is added.
 Response identity, signatures, ancestry and recovery acceptance remain mandatory.
 Production startup verification of this correction is pending deployment.
+
+## 2026-09-15 recovered owner explanation generation binding
+
+The owner overview registration supplies the effective GPT model and the exact
+40-character executing backend commit as its rule revision. Provider endpoint,
+organization and project settings enter only as a digest; no credential is
+copied into a saved context. Missing executable identity prevents authorizing
+reuse. A restart with the same model, executable and inputs can reuse the saved
+immutable explanation; a model, provider context or code revision change cannot.
+The Product implementation and its existing append-only SQLite/remote recovery
+remain separate from this narrow scanner registration change. No recovery
+signature, release certificate, auth, persistence or trade-authority condition
+is relaxed. This connection is not proof of actual production cache hits or
+billing savings; those require post-deployment API and browser observation.
