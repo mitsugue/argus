@@ -1,6 +1,8 @@
 """Authenticated owner dialogue: persist first, generate once, read without AI."""
 from copy import deepcopy
 import json
+import re
+import argus_analysis_history as public_history
 import threading
 import uuid
 from flask import jsonify, request
@@ -44,7 +46,7 @@ def generate_answer(context, generate):
         'answer': answer, 'provider': provider, 'validation': validation}
 
 
-def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None, push_service=None, vault_service=None, event_snapshot=None):
+def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None, push_service=None, vault_service=None, event_snapshot=None, market_reference=None):
     boot_id = str(uuid.uuid4())
     lock = threading.Lock()
     save_failures = {}
@@ -156,7 +158,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                 if unsaved and item: item.update(status='SAVE_FAILED',result=unsaved,persistenceStatus='SAVE_FAILED')
                 return response(decorate(item) or {'error':'not_found'},200 if item else 404)
             if action!='ask' and not overview: return response({'error':'unknown_action'},400)
-            fields={'action','ownerToken','requestId','baseContextId','symbol','market','horizon','question','owner','hypothesis','previousRequestId','focusEventId'}
+            fields={'action','ownerToken','requestId','baseContextId','symbol','market','horizon','question','owner','hypothesis','previousRequestId','focusEventId','referenceRecordId'}
             if set(body)-fields: return response({'error':'unsupported_request_fields'},400)
             inputs={k:v for k,v in body.items() if k not in ('ownerToken','requestId','action')}
             input_hash=dialogue.digest(inputs)
@@ -173,19 +175,43 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                     return response({'error':'dialogue_recovery_pending','remoteBackup':remote_status(),'previousOverview':previous if overview else None},503)
                 current=deepcopy(market_brief() or {})
                 context_id=(current.get('unifiedContext') or {}).get('contextId')
+                reference = None
+                if 'referenceRecordId' in body:
+                    rid = body['referenceRecordId']
+                    if (overview or body.get('symbol') != 'N225' or body.get('market') != 'JP'
+                            or body.get('focusEventId') or not isinstance(rid, str)
+                            or not re.fullmatch('[a-f0-9]{64}', rid)):
+                        raise ValueError('saved_market_reference_invalid')
+                    reference = market_reference(rid) if market_reference else None
+                    if reference is None:
+                        return response({'error':'saved_market_reference_unavailable'},409)
+                    reference = public_history.validate_record(reference)
+                    if reference['recordId'] != rid:
+                        raise ValueError('saved_market_reference_invalid')
+                    current = deepcopy(reference['brief'])
+                    current['calculationSnapshots'] = deepcopy(reference['calculations'])
+                    context_id = (current.get('unifiedContext') or {}).get('contextId')
                 if not context_id or body.get('baseContextId')!=context_id:
                     return response({'error':'market_context_changed','currentContextId':context_id,'previousOverview':previous if overview else None},409)
                 if body.get('previousRequestId') and not previous: return response({'error':'previous_not_found'},404)
                 received_at=now()
+                if reference is not None and dialogue.instant(reference['recordedAt']) > dialogue.instant(received_at):
+                    raise ValueError('saved_market_reference_after_question')
                 comparison=subject_comparison(brief=current,symbol=body.get('symbol'),market=body.get('market'),
-                    horizon=body.get('horizon'),cutoff=received_at) if subject_comparison else None
-                materials=subject_materials(symbol=body.get('symbol'),market=body.get('market'),cutoff=received_at) if subject_materials else None
+                    horizon=body.get('horizon'),cutoff=received_at) if subject_comparison and reference is None else None
+                materials=subject_materials(symbol=body.get('symbol'),market=body.get('market'),cutoff=received_at) if subject_materials and reference is None else None
                 context=dialogue.build_context(brief=current,symbol=body.get('symbol'),market=body.get('market'),
                     horizon=body.get('horizon'),question=body.get('question'),received_at=received_at,
                     owner=body.get('owner'),previous=previous['context'] if previous else None,
                     hypothesis=body.get('hypothesis'),index_quote=dialogue.index_quote(current,body.get('horizon')),
                     subject_comparison=comparison,material_facts=materials,focus_event_id=body.get('focusEventId'),
                     event_snapshot=event_snapshot(body['focusEventId']) if event_snapshot and body.get('focusEventId') else None)
+                if reference is not None:
+                    context['referenceEdition'] = {'recordId':reference['recordId'],
+                        'recordedAt':reference['recordedAt'], 'isCurrentMarketAnalysis':False}
+                    context['facts'].append(dialogue.fact(
+                        f"表示していた説明は{reference['recordedAt']}に保存した版です。その時点の根拠と計算で質問へ答えます。最新の市場分析とは区別します。",
+                        'saved_market_edition', kind='REQUEST_SCOPE'))
                 if overview:
                     context['intent'] = 'SUBJECT_OVERVIEW'
                 if (previous and (previous.get('result') or {}).get('answer')

@@ -119,3 +119,26 @@ def test_later_result_is_appended_and_wrong_session_or_preissue_data_cannot_scor
     assert history.read_record(path,record['recordId'])==record
     after_close=history.make_record(brief('2026-09-14T08:00:00Z'),{'1':calculation})
     assert history.outcome_candidates(after_close,[{'date':'2026-09-14','close':98}],received_at='2026-09-15T07:00:00Z')==[]
+
+
+def test_recovered_history_invalidates_startup_cache_without_ai_or_data_fetch(tmp_path,monkeypatch):
+    path=tmp_path/'history.sqlite'
+    monkeypatch.setattr(scanner,'_market_brief_history_path',lambda:str(path))
+    saved=brief(); saved['calculationSnapshots']={'5':{'epsInput':3000}}
+    scanner._market_brief_history_save(saved)
+    cached={'unifiedStatus':'AWAITING_AI','calculationSnapshots':{}}
+    state={'data':cached,'composedAt':scanner.time.time()}
+    monkeypatch.setattr(scanner,'_MARKET_BRIEF',state)
+    scanner._market_brief_history_restore()
+    assert state['composedAt']==0 and state['data'] is cached
+    def forbidden(*args,**kwargs):raise AssertionError('read must not generate or acquire')
+    monkeypatch.setattr(scanner,'_openai_prose',forbidden)
+    monkeypatch.setattr(scanner,'_jp_market_comparison_cached',forbidden)
+    monkeypatch.setattr(scanner,'_jp_market_internals_cached',forbidden)
+    monkeypatch.setattr(scanner,'_compose_market_brief',lambda:composer.compose_brief(now_iso='2026-09-14T00:00:00Z'))
+    with scanner.app.test_request_context('/api/argus/market-brief'):
+        received=scanner.api_argus_market_brief().get_json()
+    assert received['calculationSnapshots']['5']['epsInput']==3000
+    assert received['lastSuccessfulAiAt']==saved['aiDiagnostics']['completedAt']
+    assert state['composedAt']>0 and state['data'] is not cached
+    assert history.read_record(path,saved['analysisHistory']['recordId'])['calculations']['5']['epsInput']==3000
