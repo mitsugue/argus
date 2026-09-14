@@ -62,6 +62,36 @@ export function editorialEdition(brief: MarketBrief | null): MarketBrief | null 
   return previous && validMarketBrief(previous) && hasEditorialIntent(previous) ? previous : null;
 }
 
+export function retainEditorialEdition(current: MarketBrief, previous: MarketBrief | null): MarketBrief {
+  if (editorialEdition(current)) return current;
+  const retained = editorialEdition(previous);
+  return retained ? { ...current, retainedPresentation: retained } : current;
+}
+
+// Public history is read-only. Restore the whole edition, never its prose alone.
+export async function readRecentEditorialEdition(base: string, signal: AbortSignal): Promise<MarketBrief | null> {
+  const read = async (query: string) => {
+    const response = await fetch(`${base}/api/argus/market-brief?${query}`,
+      { cache: 'no-store', signal, headers: { Accept: 'application/json' } });
+    if (!response.ok) throw new Error('history_unavailable');
+    return response.json();
+  };
+  const page = await read('history=1');
+  if (page.scope !== 'PUBLIC_MARKET' || page.actionAuthority !== false || !Array.isArray(page.rows)
+    || page.rows.length > 20 || !page.rows.every((row: { recordId?: unknown }) => row && hash(row.recordId))) return null;
+  for (const row of page.rows.slice(0, 3)) {
+    const value = await read(`historyId=${encodeURIComponent(row.recordId)}`);
+    const record = value.record;
+    if (value.scope !== 'PUBLIC_MARKET' || value.readOnly !== true || record?.recordId !== row.recordId
+      || !validMarketBrief(record.brief) || !record.calculations || Array.isArray(record.calculations)
+      || typeof record.calculations !== 'object') continue;
+    const candidate: MarketBrief = { ...record.brief, calculationSnapshots: record.calculations,
+      analysisHistory: { status: 'LOCAL_DURABLE', recordId: record.recordId, remoteRecoveryVerified: false } };
+    if (hasEditorialIntent(candidate)) return candidate;
+  }
+  return null;
+}
+
 export function editorialCoversNews(brief: MarketBrief | null,
   event: { eventId: string; revision?: number; processedAt?: string }): boolean {
   brief = editorialEdition(brief);
