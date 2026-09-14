@@ -18,7 +18,7 @@
 .ie-title { font-size: 12px; font-weight: 800; letter-spacing: 0.06em; color: var(--text-sub); }
 .ie-viewall {
   background: none; border: none; cursor: pointer; font-size: 12px; font-weight: 600;
-  color: var(--text-sub); padding: 2px 4px;
+  color: var(--text-sub); padding: 10px 8px; min-height: 44px;
 }
 .ie-viewall:hover { color: var(--text-main); }
 
@@ -79,3 +79,5 @@
 
 .ie-result-details .ie-line { font-size: 14px; line-height: 1.6; }
 .ie-result-details .ie-data, .ie-result-details small { font-size: 13px; line-height: 1.6; }
+
+.ie-dialogue .owner-dialogue article h4 { font-size: 15px; line-height: 1.65; font-weight: 500; }

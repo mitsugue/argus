@@ -17855,6 +17855,18 @@ def _owner_dialogue_subject_comparison(*, brief, symbol, market, horizon, cutoff
         history=copy.deepcopy(_JQ_HISTORY_CACHE.get(symbol)), classification=classification,
         close_row=_jp_internals_close_row)
 
+
+def _owner_dialogue_event_snapshot(event_id):
+    if not isinstance(event_id, str) or not 1 <= len(event_id) <= 160:
+        return None
+    try:
+        _, items, _ = _build_dashboard_events(limit=20)
+        return next((copy.deepcopy(row) for row in items
+            if event_id in (row.get('eventId'), row.get('displayEventId'))), None)
+    except Exception:
+        return None
+
+
 def _owner_dialogue_subject_materials(*, symbol, market, cutoff):
     if market not in ("JP", "US") or not isinstance(symbol, str) or symbol == "N225": return None
     return argus_subject_materials.news_facts(list(_INTEL_STORE), symbol=symbol, cutoff=cutoff)
@@ -17894,7 +17906,8 @@ argus_owner_dialogue_api.register(app, authorize=_require_owner_sync,
     generate=_openai_prose, now=lambda: datetime.now(pytz.utc).isoformat(),
     recovery_status=_OWNER_DIALOGUE_RECOVERY.status, recovery_trigger=_OWNER_DIALOGUE_RECOVERY.tick,
     subject_comparison=_owner_dialogue_subject_comparison, subject_materials=_owner_dialogue_subject_materials,
-    usage_snapshot=_ai_usage_snapshot, push_service=_WEB_PUSH, vault_service=_OWNER_VAULT)
+    usage_snapshot=_ai_usage_snapshot, push_service=_WEB_PUSH, vault_service=_OWNER_VAULT,
+    event_snapshot=_owner_dialogue_event_snapshot)
 
 
 @app.route("/api/argus/market-brief")

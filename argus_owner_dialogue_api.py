@@ -9,7 +9,7 @@ import argus_owner_dialogue_store as store
 import argus_ai_usage_view
 
 
-def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None, push_service=None, vault_service=None):
+def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None, push_service=None, vault_service=None, event_snapshot=None):
     boot_id = str(uuid.uuid4())
     lock = threading.Lock()
     save_failures = {}
@@ -128,7 +128,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                 if unsaved and item: item.update(status='SAVE_FAILED',result=unsaved,persistenceStatus='SAVE_FAILED')
                 return response(decorate(item) or {'error':'not_found'},200 if item else 404)
             if action!='ask' and not overview: return response({'error':'unknown_action'},400)
-            fields={'action','ownerToken','requestId','baseContextId','symbol','market','horizon','question','owner','hypothesis','previousRequestId'}
+            fields={'action','ownerToken','requestId','baseContextId','symbol','market','horizon','question','owner','hypothesis','previousRequestId','focusEventId'}
             if set(body)-fields: return response({'error':'unsupported_request_fields'},400)
             inputs={k:v for k,v in body.items() if k not in ('ownerToken','requestId','action')}
             input_hash=dialogue.digest(inputs)
@@ -156,13 +156,15 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                     horizon=body.get('horizon'),question=body.get('question'),received_at=received_at,
                     owner=body.get('owner'),previous=previous['context'] if previous else None,
                     hypothesis=body.get('hypothesis'),index_quote=dialogue.index_quote(current,body.get('horizon')),
-                    subject_comparison=comparison,material_facts=materials)
+                    subject_comparison=comparison,material_facts=materials,focus_event_id=body.get('focusEventId'),
+                    event_snapshot=event_snapshot(body['focusEventId']) if event_snapshot and body.get('focusEventId') else None)
                 if overview:
                     context['intent'] = 'SUBJECT_OVERVIEW'
                 if (previous and (previous.get('result') or {}).get('answer')
                         and previous['context'].get('subject') == context['subject']
                         and previous['context'].get('horizonSessions') == context['horizonSessions']
-                        and not previous['context'].get('isHypotheticalConversation')):
+                        and not previous['context'].get('isHypotheticalConversation')
+                        and (previous['context'].get('eventFocus') or {}).get('eventId') == (context.get('eventFocus') or {}).get('eventId')):
                     context['previousView'] = {'requestId': previous['requestId'],
                         'contextId': previous['context']['contextId'],
                         'completedAt': previous['result'].get('completedAt'),
