@@ -88,6 +88,60 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         out.headers['Cache-Control'] = 'private, no-store'
         return out
 
+    overview_question = '今の市場とこの銘柄をどう捉え、前回から何が変わり、登録した保有・監視情報にどう影響するか。次の確認と見方を変える条件まで説明してください。'
+
+    def refresh_subject_overviews(limit=20):
+        """Advance one saved subject overview without requiring an open browser."""
+        path=storage_path();state=remote_status()
+        if not path or not state.get('generationReady'):
+            return {'status':'WAITING','started':0}
+        current=deepcopy(market_brief() or {});context_id=(current.get('unifiedContext') or {}).get('contextId')
+        if not context_id:return {'status':'WAITING','started':0}
+        for previous in store.latest_subject_overviews(path,boot_id,limit=limit):
+            prior=previous['context']
+            if prior.get('baseMarketContextId')==context_id:continue
+            subject=prior.get('subject') or {};symbol=subject.get('symbol');market=subject.get('market')
+            horizon=prior.get('horizonSessions');received_at=now()
+            saved_owner=prior.get('owner') or {}
+            owner=({k:saved_owner[k] for k in ('symbol','market','state','quantity','averageCost',
+                    'purchaseReason','holdingPeriod','reportedAt') if k in saved_owner}
+                   if saved_owner else None)
+            stable={'baseContextId':context_id,'symbol':symbol,'market':market,'horizon':horizon,
+                    'owner':owner,'question':overview_question}
+            identity=str(uuid.uuid5(uuid.NAMESPACE_URL,'argus:subject-overview:v2:'+dialogue.digest(stable)))
+            if store.read(path,identity,boot_id):continue
+            try:
+                comparison=subject_comparison(brief=current,symbol=symbol,market=market,
+                    horizon=horizon,cutoff=received_at) if subject_comparison else None
+                materials=subject_materials(symbol=symbol,market=market,cutoff=received_at) if subject_materials else None
+                context=dialogue.build_context(brief=current,symbol=symbol,market=market,horizon=horizon,
+                    question=overview_question,received_at=received_at,owner=owner,previous=prior,
+                    index_quote=dialogue.index_quote(current,horizon),subject_comparison=comparison,
+                    material_facts=materials)
+                context['intent']='SUBJECT_OVERVIEW'
+                context['previousView']={'requestId':previous['requestId'],'contextId':prior['contextId'],
+                    'completedAt':previous['result'].get('completedAt'),
+                    'sections':deepcopy(previous['result']['answer']['sections'])}
+                context['historyStatus']='LOCAL_DURABLE'
+                context['contextId']=dialogue.digest({k:v for k,v in context.items() if k!='contextId'})
+                created=store.submit(path,identity=identity,input_hash=dialogue.digest(stable),
+                    boot_id=boot_id,context=context)
+                if not created:continue
+                changed()
+                try:
+                    threading.Thread(target=worker,args=(path,identity,context),daemon=True,
+                        name='owner-overview-refresh').start()
+                except Exception:
+                    store.complete(path,identity,{'status':'FAILED','answer':None,
+                        'completedAt':now(),'errorClass':'WorkerStartFailed'})
+                    return {'status':'UNAVAILABLE','started':0}
+                return {'status':'STARTED','started':1}
+            except ValueError as exc:
+                if str(exc)=='dialogue_busy':return {'status':'BUSY','started':0}
+                continue
+            except Exception:return {'status':'UNAVAILABLE','started':0}
+        return {'status':'CURRENT','started':0}
+
     @app.route('/api/argus/owner-dialogue', methods=['POST'])
     def api_argus_owner_dialogue():
         raw = request.stream.read(32769)
@@ -137,7 +191,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
             if overview:
                 fields = {'action', 'ownerToken', 'baseContextId', 'symbol', 'market', 'horizon', 'owner'}
                 if set(body) - fields: return response({'error': 'unsupported_request_fields'}, 400)
-                body = {**body, 'question': '今の市場とこの銘柄をどう捉え、前回から何が変わり、登録した保有・監視情報にどう影響するか。次の確認と見方を変える条件まで説明してください。'}
+                body = {**body, 'question': overview_question}
                 stable = {k: v for k, v in body.items() if k not in ('action', 'ownerToken')}
                 body['requestId'] = str(uuid.uuid5(uuid.NAMESPACE_URL, 'argus:subject-overview:v2:' + dialogue.digest(stable)))
             identity=store.request_id(body.get('requestId'))
@@ -244,4 +298,4 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         except Exception:
             return response({'error':'dialogue_storage_unavailable'},503)
 
-    return {'bootId':boot_id}
+    return {'bootId':boot_id,'refreshSubjectOverviews':refresh_subject_overviews}

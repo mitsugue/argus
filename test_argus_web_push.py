@@ -22,7 +22,7 @@ def service(tmp_path):
     return value,clock,sent
 
 def subscribe(value,**kwargs):
-    return value.handle({'operation':'subscribe','subscription':sub(),'sq':True,'news':True,**kwargs})['subscriptionId']
+    return value.handle({'operation':'subscribe','subscription':sub(),'sq':True,'news':True,'ownerChanges':True,**kwargs})['subscriptionId']
 
 def event(clock,**kwargs):
     return {'key':'event:week','kind':'sq','title':'SQの週です','body':'日程を確認','hash':'#notifications/sq/jp-monthly-sq-2026-10','due':clock[0],'expires':clock[0]+100,**kwargs}
@@ -133,6 +133,37 @@ def test_news_pending_ai_can_notify_but_backfill_cannot():
     record={'eventId':'ev-123','severity':'HIGH','sourceReceivedAt':now.isoformat(),'alertEligible':True,'analysisState':'AI_ANALYSIS_PENDING'}
     assert push.proposals({},[record],now.timestamp())[0]['hash']=='#notifications/news/ev-123'
     assert push.proposals({},[{**record,'backfill':True}],now.timestamp())==[]
+
+
+def test_owner_change_is_opt_in_generic_and_not_backfilled(service):
+    value,clock,sent=service
+    data=sub();identity=subscribe(value,subscription=data,ownerChanges=False)
+    item={'eventId':'move-1','severity':4,'symbol':'7203','sourceTimeValidated':True,
+          'ingestAt':datetime.fromtimestamp(clock[0],timezone.utc).isoformat(),
+          'ownerState':'held'}
+    rows=push.proposals({},[],clock[0],owner_events=[item])
+    assert rows[0]['kind']=='owner_changes' and rows[0]['hash']=='#holdings'
+    assert rows[0]['title'].startswith('保有銘柄')
+    assert '7203' not in json.dumps(rows[0],ensure_ascii=False)
+    value.tick(rows);assert not sent
+    subscribe(value,subscription=data,ownerChanges=True);value.tick(rows);assert len(sent)==1
+    old={**item,'eventId':'move-old','ingestAt':datetime.fromtimestamp(clock[0]-3601,timezone.utc).isoformat()}
+    assert push.proposals({},[],clock[0],owner_events=[old])==[]
+
+
+def test_existing_subscription_schema_migrates_without_enabling_owner_changes(service):
+    value,clock,sent=service
+    path=value.path();import sqlite3
+    with sqlite3.connect(path) as db:
+        db.executescript('''CREATE TABLE subscriptions (
+          id TEXT PRIMARY KEY, body TEXT NOT NULL, created REAL NOT NULL,
+          enabled INTEGER NOT NULL, sq INTEGER NOT NULL, news INTEGER NOT NULL);
+          CREATE TABLE deliveries (id TEXT PRIMARY KEY, subscription_id TEXT NOT NULL,
+          event_key TEXT NOT NULL, payload TEXT NOT NULL, due REAL NOT NULL, expires REAL NOT NULL,
+          status TEXT NOT NULL, attempted REAL, display_at TEXT, opened_at TEXT,
+          UNIQUE(subscription_id,event_key));''')
+    identity=subscribe(value,ownerChanges=False)
+    assert value.status(identity)['ownerChanges'] is False
 
 
 def test_reanalysis_does_not_refresh_old_or_unknown_intake():
