@@ -17903,7 +17903,18 @@ def _web_push_tick():
             except Exception:
                 continue
         calendar = jp_market_events.published_sq_calendar(now=datetime.now(pytz.utc))
-        _WEB_PUSH.tick(argus_web_push.proposals(calendar, events, time.time()))
+        owner = _owner_symbols_cached()
+        with _EVENT_LOCK:
+            owner_events = []
+            for event in _EVENTS_LOG:
+                symbol = str(event.get('symbol') or '').upper()
+                if symbol not in owner:
+                    continue
+                projected = copy.deepcopy(event)
+                projected['ownerState'] = (owner[symbol] or {}).get('ownerState') or 'watch'
+                owner_events.append(projected)
+        _WEB_PUSH.tick(argus_web_push.proposals(
+            calendar, events, time.time(), owner_events=owner_events))
     except Exception as exc:
         add_log(f"web-push tick unavailable: {type(exc).__name__}")
 
@@ -17913,13 +17924,20 @@ _OWNER_VAULT = argus_owner_vault.VaultService(
     remote=lambda: argus_owner_vault.PrivateStore(repo=os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", ""),
         headers=_gh_private_headers(), http=requests.request))
 
-argus_owner_dialogue_api.register(app, authorize=_require_owner_sync,
+_OWNER_DIALOGUE_API = argus_owner_dialogue_api.register(app, authorize=_require_owner_sync,
     storage_path=_owner_dialogue_path, market_brief=lambda: _MARKET_BRIEF.get("data"),
     generate=_openai_prose, now=lambda: datetime.now(pytz.utc).isoformat(),
     recovery_status=_OWNER_DIALOGUE_RECOVERY.status, recovery_trigger=_OWNER_DIALOGUE_RECOVERY.tick,
     subject_comparison=_owner_dialogue_subject_comparison, subject_materials=_owner_dialogue_subject_materials,
     usage_snapshot=_ai_usage_snapshot, push_service=_WEB_PUSH, vault_service=_OWNER_VAULT,
     event_snapshot=_owner_dialogue_event_snapshot, market_reference=_owner_dialogue_market_reference)
+
+
+def _owner_overview_tick():
+    try:
+        _OWNER_DIALOGUE_API['refreshSubjectOverviews']()
+    except Exception as exc:
+        add_log(f"owner-overview tick unavailable: {type(exc).__name__}")
 
 
 @app.route("/api/argus/market-brief")
@@ -47030,6 +47048,8 @@ def run_scheduler():
         # The public explanation progresses even when mail intake is slow or
         # no mailbox is configured. No public request starts this AI worker.
         threading.Thread(target=_market_brief_worker_tick, daemon=True).start()
+        threading.Thread(target=_owner_overview_tick, daemon=True,
+                         name="owner-overview-refresh").start()
         threading.Thread(target=_web_push_tick, daemon=True, name="web-push").start()
         # v13.5.54: Twelve Data Basic-plan warm tick — bounded by the policy core
         # (8-credit batch per eligible minute, daily cap, market-aware cadence).
