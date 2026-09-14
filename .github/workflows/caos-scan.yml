@@ -224,7 +224,7 @@ jobs:
     needs: [backend-identity, mission-backup, caos-collection]
     if: always() && !cancelled() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 35
     outputs:
       durabilityResult: ${{ steps.flush.outputs.durabilityResult }}
       remoteCommitSha: ${{ steps.flush.outputs.remoteCommitSha }}
@@ -490,7 +490,7 @@ jobs:
             --backend-build-sha "$BACKEND_BUILD_SHA" \
             --remote-commit-sha "$REMOTE_COMMIT_SHA" \
             --target-wal-sequence "$TARGET_WAL_SEQUENCE" \
-            --token-env ARGUS_ADMIN_TOKEN --budget-seconds 240)
+            --token-env ARGUS_ADMIN_TOKEN --budget-seconds 1800)
           echo "remote-journal-terminal-status: $STATUS"
           STATUS_VALUES=$(printf '%s' "$STATUS" | python3 -c \
             'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="verified"; print(d["status"]); print(d.get("verifiedWalSequence") or 0); print(str(d.get("readBackVerified") is True).lower()); print(d.get("remoteCommitSha") or ""); print(d.get("verifiedByRemoteCommitSha") or "")')

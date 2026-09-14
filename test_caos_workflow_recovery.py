@@ -495,7 +495,7 @@ def test_receipt_drain_is_bounded_and_pending_can_never_be_green():
     flush = text.split("- name: Commit verified snapshot and post receipt", 1)[1]
     assert 'cp scripts/remote_receipt_drain.py' in text
     assert '"$RUNNER_TEMP/remote_receipt_drain.py"' in flush
-    assert "--budget-seconds 240" in flush
+    assert "--budget-seconds 1800" in flush
     assert "--operation-id \"$OPERATION_ID\"" in flush
     assert "--target-wal-sequence \"$TARGET_WAL_SEQUENCE\"" in flush
     assert 'assert d.get("status")=="verified"' in flush

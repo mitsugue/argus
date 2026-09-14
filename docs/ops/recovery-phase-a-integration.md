@@ -273,3 +273,34 @@ and key identities, immutable external references, start/end restore roots,
 verification receipts, and trustworthy clock/freshness evidence. Until that
 entire verifier boundary exists and passes owner review, production remains
 `NOT_PROVEN` and hard-RPO claims remain forbidden.
+
+## 2026-09-15 receipt completion audit
+
+The owner-manual Watchtower run `34865264082` successfully collected sources,
+translated headlines, and published immutable ledger commit
+`0d63777bb6ae8384c18ea8274c7564f3380dc30d`. Its receipt
+`rr-7ed99e206fae1707edf3d6fc` was accepted at 2026-09-14T15:56:43Z and
+verified at 16:11:46Z on backend `d8a58205fbfd6b7da673dab37f8db050e493c04d`.
+The workflow failed after its 240-second observation budget while the original
+backend request continued; the final receipt was verified after 903 seconds.
+The cost checkpoint initially held the durable lock. The receipt then acquired
+it and completed the verified recovery-generation installation. This is actual
+manual publication/read-back evidence, not natural scheduler or cold-RPO proof.
+
+The correction reserves checkpoint priority for receipt drainers just as the
+existing release producer does. The reservation is released on both success
+and exception. Cost settlements retain their independent durable usage file.
+The three operational drain calls allow up to 1,800 seconds, with 35-minute
+job envelopes for collection/publication and final identity checks. Individual
+HTTP calls remain capped at 180 seconds. After a request timeout, the helper
+only reads the same operation's status; it does not submit duplicate writes.
+The default helper budget remains 240 seconds for other callers. Pending,
+failed checkpoints, mismatched identities, or missing read-back verification
+still fail. ACK timestamps remain actual completion timestamps, and the
+existing recovery/liveness acceptance criteria are unchanged.
+
+Local targeted checks cover the 903-second completion using a simulated clock,
+budget exhaustion, exact identity, no duplicate POST, and priority cleanup.
+Production verification of the correction is pending its deployment. The
+15-minute checkpoint duration and natural EC2 scheduling remain separate
+operational limitations; this change does not claim them resolved.

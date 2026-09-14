@@ -29,7 +29,8 @@ except ImportError:  # Copied beside workflow_http.py in GitHub Actions.
 FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 OPERATION_RE = re.compile(r"^rr-[0-9a-f]{24}$")
 MIN_BUDGET_SECONDS = 1
-MAX_BUDGET_SECONDS = 240
+DEFAULT_BUDGET_SECONDS = 240
+MAX_BUDGET_SECONDS = 1800
 REQUEST_TIMEOUT_CAP_SECONDS = 180
 FINAL_STATUS_RESERVE_SECONDS = 15
 RETRY_DELAYS_SECONDS = (1, 2, 4, 8, 15, 30)
@@ -150,7 +151,7 @@ def _verified_result(
 def drain_until_verified(
         *, base_url: str, operation_id: str, backend_build_sha: str,
         remote_commit_sha: str, target_wal_sequence: int, token: str,
-        budget_seconds: int = MAX_BUDGET_SECONDS,
+        budget_seconds: int = DEFAULT_BUDGET_SECONDS,
         request_json: Callable[..., tuple[int, str]] =
         workflow_http.request_json,
         monotonic: Callable[[], float] = time.monotonic,
@@ -251,7 +252,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--target-wal-sequence", required=True, type=int)
     parser.add_argument("--token-env", default="ARGUS_ADMIN_TOKEN")
     parser.add_argument("--budget-seconds", type=int,
-                        default=MAX_BUDGET_SECONDS)
+                        default=DEFAULT_BUDGET_SECONDS)
     args = parser.parse_args(argv)
     try:
         result = drain_until_verified(

@@ -326,7 +326,8 @@ def _cost_checkpoint_worker():
             # Usage is already fsynced in its small ledger. Give a registered
             # release producer the next turn instead of repeatedly reacquiring
             # the full-checkpoint lock ahead of it after every provider attempt.
-            while _COST_CHECKPOINT_STATE.get("releaseSeedWaiters", 0):
+            while (_COST_CHECKPOINT_STATE.get("releaseSeedWaiters", 0) or
+                   _COST_CHECKPOINT_STATE.get("receiptWaiters", 0)):
                 _COST_CHECKPOINT_CONDITION.wait()
             _COST_CHECKPOINT_STATE["pending"] = False
         try:
@@ -32414,7 +32415,18 @@ def _persist_with_remote_receipt_drain(
                 checkpoint_required:
             _memory_attribution_path_capture(
                 "M20", "checkpoint_adapter_entry")
-            checkpoint = _osint_persist()
+            # The usage ledger is already durable. Reserve the next full
+            # checkpoint for the receipt instead of letting settlements
+            # repeatedly take the lock ahead of its authoritative ACK.
+            with _COST_CHECKPOINT_CONDITION:
+                _COST_CHECKPOINT_STATE["receiptWaiters"] = (
+                    _COST_CHECKPOINT_STATE.get("receiptWaiters", 0) + 1)
+            try:
+                checkpoint = _osint_persist()
+            finally:
+                with _COST_CHECKPOINT_CONDITION:
+                    _COST_CHECKPOINT_STATE["receiptWaiters"] -= 1
+                    _COST_CHECKPOINT_CONDITION.notify_all()
         else:
             checkpoint = {"verified": False, "checkpointCreated": False}
         # Receipt verification becomes authoritative only after the exact
