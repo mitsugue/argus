@@ -4,6 +4,8 @@ import { OwnerOverview } from '../dialogue/OwnerOverview';
 import { validJapanMarketComparison } from '../../lib/japanMarketComparison';
 import { MarketBriefCard } from './MarketBriefCard';
 import { useMarketBrief } from '../../hooks/useMarketBrief';
+import { useDashboardEvents } from '../../hooks/useDashboardEvents';
+import { releasedEventResultLabel } from '../../lib/dashboardEventState';
 import { editorialEdition, editorialCoversNews } from '../../lib/presentationIntent';
 import React from 'react';
 import { MarginDynamicsCard } from './MarginDynamicsCard';
@@ -582,6 +584,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   // reads first.  The SDA Seven Sign level stays as a secondary line.
   const decisionEvidence = useDecisionEvidence();
   const { brief: editorialBrief } = useMarketBrief();
+  const dashboardEvents = useDashboardEvents();
   const editorialScope = view.selectedMarket === 'JP' && selectedSymbol === '1321' && horizon === 5;
   const editorialActive = editorialScope && !!editorialEdition(editorialBrief);
   const [periodOverview,setPeriodOverview] = React.useState<Job|null>(null);
@@ -903,8 +906,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       {view.releasedEvent && <p className="at-released">
         <b>発表済み</b> {view.releasedEvent.code}
         <time>{formatEventTime(view.releasedEvent.at, view.releasedEvent.dateOnly)}</time>
-        <span>{view.releasedEvent.lifecycleTier === 'RECENT'
-          ? '結果あり' : '結果待ち'}</span>
+        <span>{releasedEventResultLabel(view.releasedEvent, dashboardEvents)}</span>
       </p>}
       <div className="at-coming"><b>30日先までの予定</b>
         {view.comingEvents.length

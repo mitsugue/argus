@@ -57,6 +57,16 @@ export interface DashboardEventsResponse {
   status: Record<string, unknown>;
 }
 
+export function releasedEventResultLabel(
+  event: { id: string; code: string }, dashboard: DashboardEventsResponse | null,
+): string {
+  const matching = dashboard?.items.find(row => row.eventId === event.id && row.eventCode === event.code);
+  if (!matching) return '結果の取得状況は未確認';
+  const state = deriveDashboardEventDisplayState(matching);
+  if (!state.released) return '発表時刻を照合中';
+  return matching.officialResult?.available ? '公式結果あり' : '公式結果を取得中';
+}
+
 const BADGE_JA: Record<DashboardEventState, string> = {
   pre: '発表前', imminent: 'まもなく',
   released_pending_result: '発表済み・公式結果取得中',
