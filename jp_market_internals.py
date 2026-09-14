@@ -103,6 +103,18 @@ def build_snapshot(*, session_dates, cutoff, prices, symbols, classifications, b
     if len(symbols)>100 or len(set(symbols))!=len(symbols):raise ValueError('public_sample_bound_or_duplicate')
     if not session_dates or len(set(session_dates))!=len(session_dates) or session_dates!=sorted(session_dates):
         raise ValueError('canonical_ordered_sessions_required')
+    latest_session=session_dates[-1]
+    # Compare complete observed sessions, including during the post-close
+    # publication gap. Each series still has to pass the unchanged row checks.
+    observed={}
+    for symbol,kind in (('NIKKEI_225_INDEX','INDEX'),('1306','ETF')):
+        observed[symbol]=[day for day in session_dates[-70:]
+            if period_return(prices.get(symbol),start=day,end=day,cutoff=cutoff,
+                instrument_id=symbol,kind=kind)['status']=='AVAILABLE']
+    index_days=observed['NIKKEI_225_INDEX']
+    common=sorted(set(index_days).intersection(observed['1306']))
+    comparable_end=(common or index_days or [latest_session])[-1]
+    session_dates=[day for day in session_dates if day<=comparable_end]
     end=session_dates[-1];periods={}
     for horizon in (1,5,10,20):
         if len(session_dates)<=horizon:continue
@@ -140,6 +152,8 @@ def build_snapshot(*, session_dates, cutoff, prices, symbols, classifications, b
             'directionScore':None,'actionAuthority':False}
     body={'schemaVersion':SCHEMA,'market':'JP','asOfDate':end,'periods':periods,
           'breadth':breadth or {'status':'UNAVAILABLE'},'classificationBasis':'CURRENT_RECEIVED_MASTER',
+          'comparisonAvailability':{'latestCompletedSessionDate':latest_session,
+              'comparedThrough':end,'latestSessionIncluded':end==latest_session},
           'actionAuthority':False,'automaticAiCalls':0,'predictiveProbabilityVerified':False,
           'limitationsJa':['取得できた監視サンプルを市場全体として扱いません。',
             '業種はETF価格による比較です。業種指数そのもの、配当再投資リターンや資金流入量ではありません。',
@@ -155,6 +169,9 @@ def explanation_facts(snapshot):
         candidates=[r for r in row['sectors'] if r['relativeToBenchmarkPct'] is not None]
         strongest=max(candidates,key=lambda r:r['relativeToBenchmarkPct']) if candidates else None
         text=f"{row['startDate']}から{row['endDate']}の{horizon}営業日: 日経平均{row['index']['returnPct']:+.2f}%。"
+        availability=snapshot.get('comparisonAvailability') or {}
+        if availability.get('latestSessionIncluded') is False:
+            text+=f"最新完了営業日{availability['latestCompletedSessionDate']}の比較は取得待ちで、取得済みの確定値までの比較です。"
         if strongest:text+=f"取得業種ETF中の相対上位は{strongest['nameJa']}、TOPIX連動ETF比{strongest['relativeToBenchmarkPct']:+.2f}ポイント。業種全体の資金流入とは未確認。"
         facts.append({'text':text,'priority':'P1','source':'market_internals_calculation','verification':'UNCONFIRMED',
             'provenance':{'scope':'published_metadata_snapshot','eventId':'market-internals-'+horizon,
