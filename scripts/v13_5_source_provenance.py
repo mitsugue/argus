@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.6.2"
+PRODUCT_VERSION = "v13.6.3"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'web/src/i18n/index.ts': '933221ee4ca1f3adccdb8ebf5c950419fe7ce019',
     # Owner-authorized v13.6.1 prediction-ledger continuity regression proof.
     'test_prediction_ledger_workflow.py': 'e01ff8eae80ebfa77d62a7b9772860785e3bafbd',
     'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
@@ -68,8 +69,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/settings/AiUsagePanel.css': 'eb215c910039c200f8b5fb01287672f3f4eb6376',
     'web/src/components/dashboard/PortfolioSyncCard.tsx': '0129397cbfc2d8686057bb9fd98290b9511e8250',
     'web/scripts/web-push.test.mjs': '220bdd38d81b8cf506d9559a01787076d56b113b',
-    'web/scripts/owner-vault.test.cjs': 'd022291d5c527defb660ac6e46ab66f267ea8d2c',
-    'web/scripts/owner-vault-legacy-isolation.test.cjs': '91d3eb24c8409201f51cdc149f84b45fa35610d9',
+    'web/scripts/owner-vault.test.cjs': '2458ab4b91f044bdc69fb6894705cd949af8ffbb',
+    'web/scripts/owner-vault-legacy-isolation.test.cjs': 'b58bd43566481f8ebb60dc2272dd95ab3b5e2fac',
     'web/scripts/owner-vault-auto-save.test.cjs': '7181233ba2be7d1cd5111b8c11386b545e511c29',
     'web/scripts/owner-restore-guard.test.cjs': 'a6711358fc81ad10afaab52af2b118f79133d7ce',
     'web/scripts/owner-protection-consistency.test.cjs': 'f6365d9edfda291084bc17ee05e8d2499bc2774b',
