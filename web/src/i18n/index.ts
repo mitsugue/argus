@@ -10,7 +10,8 @@ const KEY = 'argus.locale.v1';
 
 function read(): Locale {
   try {
-    const v = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(KEY);
+    const v = raw === '"ja"' || raw === '"en"' ? JSON.parse(raw) : raw;
     return v === 'ja' || v === 'en' ? v : 'ja';   // default Japanese (v10.129): long
     // copy reads in Japanese; only the punchy action keywords stay English.
   } catch { return 'ja'; }

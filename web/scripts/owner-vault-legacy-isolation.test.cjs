@@ -8,7 +8,7 @@ const values=new Map([['argus.vaultPass.v1','pass']]);global.localStorage={getIt
  const data={'argus.locale.v1':'en'};const blob=await api.encryptBackup('pass',{app:'argus',exportedAt:new Date().toISOString(),data});
  global.fetch=async()=>({ok:true,json:async()=>{values.set('argus.ownerVaultAutoSave.v1','{"enabled":true}');return{blob}}});
  assert.equal(await api.cloudSyncNow(),'noop');assert.equal(values.has('argus.locale.v1'),false);
- global.fetch=async()=>({ok:true,json:async()=>({blob})});assert.equal(await api.cloudRestore('pass'),1);assert.equal(values.get('argus.locale.v1'),'"en"');
+ global.fetch=async()=>({ok:true,json:async()=>({blob})});assert.equal(await api.cloudRestore('pass'),1);assert.equal(values.get('argus.locale.v1'),'en');
  values.set('argus.locale.v1','"ja"');let guarded=false;
  await assert.rejects(api.cloudRestore('pass',async()=>{guarded=true;throw new Error('current edits are not preserved')}),/not preserved/);
  assert.equal(guarded,true);assert.equal(values.get('argus.locale.v1'),'"ja"');

@@ -97,13 +97,26 @@ const protectedStores = {
   },
 };
 for (const [key, value] of Object.entries(protectedStores)) {
-  localStorage.setItem(key, JSON.stringify(value));
+  localStorage.setItem(key, key === 'argus.locale.v1' ? value : JSON.stringify(value));
 }
 localStorage.setItem('argus.vaultPass.v1', 'read-only-envelope-pass');
 localStorage.setItem('argus.lastCloudBackup.v1', String(oldEnvelopeAt));
 localStorage.setItem('argus.lastLocalEditAt.v1', String(postEnvelopeEditAt));
 
 async function main() {
+  const locale = loadBundled(path.join(root, 'i18n', 'index.ts'));
+  for (const language of ['en', 'ja']) {
+    locale.setLocale(language);
+    const payload = backup.buildBackupPayload(false, {deviceId:'locale-contract'});
+    assert.equal(payload.data['argus.locale.v1'], language);
+    assert.equal(backup.verifyBackupRoundTrip(payload).passed, true);
+    assert.equal(localStorage.getItem('argus.locale.v1'), language);
+  }
+  localStorage.setItem('argus.locale.v1', '"en"');
+  assert.equal(loadBundled(path.join(root, 'i18n', 'index.ts')).getLocale(), 'en');
+  assert.equal(backup.buildBackupPayload(false, {deviceId:'locale-contract'}).data['argus.locale.v1'], 'en');
+  locale.setLocale('ja');
+
   // Exact old failure: the partial portfolio action may download its file, but
   // cannot advance the global complete-backup timestamp or protected state.
   portfolio.downloadPortfolioBackup([asset], 'test');
@@ -182,6 +195,7 @@ async function main() {
   for (const key of backup.BACKUP_KEYS) {
     assert.notEqual(localStorage.getItem(key), null, `${key} must survive production restore`);
   }
+  assert.equal(localStorage.getItem('argus.locale.v1'), 'ja');
   assert.equal(JSON.parse(localStorage.getItem('argus.trades.v1'))[0].id, 'trade-test');
   assert.equal(JSON.parse(localStorage.getItem('argus.research.v1'))[0].id, 'research-test');
   assert.equal(JSON.parse(localStorage.getItem('argus.fireCore.v1')).monthlyContributionTotal, 100_000);
