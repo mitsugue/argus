@@ -35,6 +35,8 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_macro_readiness.py': 'd1348cbcc814fb28857bd42095007f355728cd5a',
+    'scripts/macro_readiness.py': 'd9d736333960d220a5ce3fc55951abc901ea47f0',
     'docs/V13_7_REQUIREMENTS.md': '6c8ecf42af217b1dfc861027079ec0cb411a8fb5',
     'web/src/hooks/useOsintInvestigation.ts': 'ada26a80e0f0f439f97cb75858407647dc7c5d8d',
     'web/src/components/guide/Layer2BSyncCard.tsx': '20dae8bccafee961a17aad41b39f738fd5f60b76',
