@@ -690,7 +690,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     <JapanSqApproachNotice />
 
     <section className="at-view-hero" aria-label="今日の見立て">
-      {editorialScope ? <MarketBriefCard signals={topSignals ? { activeCount: topSignals.activeCount, total: topSignals.total } : null}
+      {editorialScope ? <MarketBriefCard signals={topSignals && !usSelected ? { activeCount: topSignals.activeCount, total: topSignals.total } : null}
         cutoff={decisionEvidence.marketView?.informationCutoff ?? null} market="JP" editorial />
         : <><OwnerOverview key={`${view.selectedMarket}:${scopedSubject}:${horizon}`}
           symbol={scopedSubject} market={view.selectedMarket} horizon={horizon} onReference={setPeriodOverview}/>
