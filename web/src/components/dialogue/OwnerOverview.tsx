@@ -52,7 +52,15 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:
             if(value.error==='dialogue_busy'||value.error==='dialogue_recovery_pending')timer=window.setTimeout(()=>void load(),10000);}
           return;
         }
-        if(!validJob(value)||value.context.intent!=='SUBJECT_OVERVIEW'||value.context.subject.symbol!==symbol||value.context.subject.market!==market||value.context.horizonSessions!==horizon||value.context.baseMarketContextId!==contextId)throw new Error('invalid_overview');
+        const evaluation=value.overviewEvaluation;
+        const checkedEvaluation=evaluation?.baseMarketContextId===contextId
+          &&typeof evaluation.inputsDigest==='string'&&/^[a-f0-9]{64}$/.test(evaluation.inputsDigest)
+          &&Number.isFinite(Date.parse(evaluation.checkedAt));
+        const reused=value.overviewReuse;
+        const checkedReuse=value.status==='SUCCEEDED'&&reused?.baseMarketContextId===contextId
+          &&typeof reused.inputsDigest==='string'&&/^[a-f0-9]{64}$/.test(reused.inputsDigest)
+          &&Number.isFinite(Date.parse(reused.checkedAt))&&Number.isFinite(Date.parse(reused.originalCompletedAt));
+        if(!validJob(value)||value.context.intent!=='SUBJECT_OVERVIEW'||value.context.subject.symbol!==symbol||value.context.subject.market!==market||value.context.horizonSessions!==horizon||(value.context.baseMarketContextId!==contextId&&!checkedReuse&&!checkedEvaluation&&value.requestId!==requestId))throw new Error('invalid_overview');
         if(!stopped){setEdition({key:requestKey,job:value});setError('');requestId=value.requestId;
           if(value.status==='RUNNING')timer=window.setTimeout(()=>void load(),3000);}
       }catch{if(!stopped)setError('接続を確認できませんでした。再取得でも同じ生成IDを使います。');}
@@ -72,6 +80,7 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:
     {error&&<p role="status">{error}</p>}
     {!error&&contextId&&!current&&<p role="status">{fetching||job?.status==='RUNNING'?<TriangleStepLoader label={saved?'前回の説明を表示しながら更新しています':'この銘柄の説明を確認しています'}/>:job&&edition?.key===requestKey?statusText[job.status]||'説明の更新を確認しています。':'説明の更新待ちです。'}</p>}
     {saved&&<>{!current&&<p className="owner-overview__retained">前回の説明 · {saved.result?.provider?.completedAt||'時刻未確認'}。現在の分析とは区別して表示しています。</p>}
+      {current&&job?.overviewReuse&&<p className="owner-overview__retained">この銘柄・期間の根拠と保有条件に変更がないため、{new Date(job.overviewReuse.originalCompletedAt).toLocaleString('ja-JP')}の説明を引き続き表示しています。新しいAI解析は行っていません。</p>}
       <OwnerAnswerBody job={saved}/>
       <details><summary>使った根拠・時点・保存状態</summary>
         {saved.context.facts.map(f=><p key={f.evidenceId}>{f.text}{f.provenance?.url?.startsWith('https://')&&<> <a href={f.provenance.url} target="_blank" rel="noopener noreferrer">出典</a></>}</p>)}

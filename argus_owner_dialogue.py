@@ -356,3 +356,31 @@ def validate_answer(value, context, *, diagnostic=None):
         'isHypotheticalConversation':context['isHypotheticalConversation'],
         'calculatedHypothesis':deepcopy(context['calculatedHypothesis']),
         'officialMarketStateMutation':False,'officialPositionMutation':False,'officialPredictionMutation':False}
+
+
+def overview_input_digest(context, generation_policy):
+    """Compare current inputs, retaining source vintages and unknown new fields.
+
+    The caller supplies effective generation settings and a prompt/rule revision.
+    Only request bookkeeping and the prior edition are excluded. The saved
+    explanation remains an immutable prior edition, never a new AI assessment.
+    Hourly expiry bounds reuse when event proximity changes without a new row.
+    """
+    if (context.get('intent') != 'SUBJECT_OVERVIEW'
+            or context.get('isHypotheticalConversation') is not False
+            or context.get('contextId') != digest({k:v for k,v in context.items() if k!='contextId'})
+            or not isinstance(generation_policy, Mapping)
+            or any(not isinstance(generation_policy.get(k), str) or not generation_policy[k].strip()
+                   for k in ('model', 'ruleVersion'))):
+        raise ValueError('overview_reuse_inputs_invalid')
+    at = instant(context['receivedAt'])
+    inputs = deepcopy(context)
+    for key in ('contextId', 'baseMarketContextId', 'receivedAt', 'previousFacts',
+                'previousView', 'changes', 'historyStatus', 'overviewInputs'):
+        inputs.pop(key, None)
+    if isinstance(inputs.get('owner'), dict):
+        inputs['owner'].pop('receivedAt', None)
+    # Do not strip observedAt/acquiredAt/reportedAt or timestamps inside facts.
+    return digest({'schemaVersion':'argus-overview-inputs-v1', 'inputs':inputs,
+                   'generationPolicy':dict(generation_policy),
+                   'evaluationHour':int(at.timestamp()) // 3600})
