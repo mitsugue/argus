@@ -209,7 +209,7 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, over
           <span
             className="shell__brand-version"
           >
-            {versionLabel}<span className="shell__release-id" title="この画面に配信されたビルド"> · {__FRONTEND_BUILD_SHA__ === 'local' ? '開発中' : __FRONTEND_BUILD_SHA__.slice(0, 7)}</span>
+            {versionLabel}
           </span>
           <span className="shell__brand-tag">
             Autonomous Risk and Global Uncertainty Scanner
