@@ -171,3 +171,57 @@ def test_owner_sdk_has_one_bounded_attempt_and_usage(monkeypatch):
     scanner._openai_prose_call(client,'test-primary','system','question',purpose='owner_dialogue')
     assert len(calls)==1 and calls[0]['max_output_tokens']==3000 and calls[0]['store'] is False
     assert recorded==[('openai','owner_dialogue','test-primary')]
+
+
+def test_question_about_displayed_saved_edition_keeps_exact_inputs_and_no_current_fetch(tmp_path,monkeypatch):
+    import argus_analysis_history as history
+    from test_argus_analysis_history import brief as public_brief
+    frozen=public_brief(); history_path=tmp_path/'market.sqlite'
+    history.initialize(history_path)
+    record=history.make_record(frozen,{'5':{'epsInput':3000}});history.append(history_path,record)
+    original=history_path.read_bytes();current=market_brief();calls=[];done=threading.Event()
+    def generate(user,**kw):calls.append(user);done.set();return None
+    def forbidden(**kw):pytest.fail('frozen edition must not mix current materials or prices')
+    app=Flask(__name__);path=tmp_path/'owner.sqlite'
+    api.register(app,authorize=lambda token:(token=='test-owner',{'error':'unauthorized'},401),
+        storage_path=lambda:str(path),market_brief=lambda:current,generate=generate,now=lambda:AT,
+        market_reference=lambda rid:history.read_record(history_path,rid),
+        subject_comparison=forbidden,subject_materials=forbidden)
+    client=app.test_client();body=payload(frozen,symbol='N225',referenceRecordId=record['recordId'])
+    assert client.post('/api/argus/owner-dialogue',json={**body,'ownerToken':'wrong'}).status_code==401
+    assert not calls and not path.exists()
+    result=client.post('/api/argus/owner-dialogue',json=body)
+    assert result.status_code==202 and done.wait(2)
+    context=result.json['context']
+    assert context['baseMarketContextId']==frozen['unifiedContext']['contextId']
+    assert context['baseMarketContextId']!=current['unifiedContext']['contextId']
+    assert context['referenceEdition']=={'recordId':record['recordId'],'recordedAt':record['recordedAt'],'isCurrentMarketAnalysis':False}
+    assert any(f['source']=='saved_market_edition' and record['recordedAt'] in f['text'] for f in context['facts'])
+    assert frozen['unifiedContext']['facts'][0]['text'] in calls[0]
+    assert history_path.read_bytes()==original
+    assert client.post('/api/argus/owner-dialogue',json=body).status_code==200
+    assert len(calls)==1
+
+
+@pytest.mark.parametrize('fault',['missing','wrong_id','wrong_context','private','overview','wrong_subject','future'])
+def test_saved_edition_reference_cannot_supply_or_substitute_unverified_context(tmp_path,fault):
+    import argus_analysis_history as history
+    from test_argus_analysis_history import brief as public_brief
+    frozen=public_brief();record=history.make_record(frozen,{})
+    body=payload(frozen,symbol='N225',referenceRecordId=record['recordId']);calls=[]
+    selected=copy.deepcopy(record)
+    if fault=='future':
+        selected=history.make_record(public_brief('2026-09-14T00:00:00Z'),{})
+        body.update(referenceRecordId=selected['recordId'],baseContextId=selected['brief']['unifiedContext']['contextId'])
+    if fault=='missing':selected=None
+    if fault=='wrong_id':body['referenceRecordId']='f'*64
+    if fault=='wrong_context':body['baseContextId']='f'*64
+    if fault=='private':selected['scope']='OWNER_PRIVATE'
+    if fault=='overview':body['action']='overview'
+    if fault=='wrong_subject':body['symbol']='5803'
+    app=Flask(__name__);path=tmp_path/'owner.sqlite'
+    api.register(app,authorize=lambda token:(True,None,200),storage_path=lambda:str(path),
+        market_brief=market_brief,generate=lambda *a,**kw:calls.append(kw),now=lambda:AT,
+        market_reference=lambda rid:selected)
+    response=app.test_client().post('/api/argus/owner-dialogue',json=body)
+    assert response.status_code in (400,409) and not calls and not path.exists()

@@ -17465,6 +17465,7 @@ def _market_brief_history_restore():
             previous["analysisHistory"] = {"status": "LOCAL_DURABLE", "recordId": record["recordId"],
                 "remoteRecoveryVerified": False, "restoredAt": _ai_now_iso()}
             _MARKET_BRIEF["lastSuccessful"] = previous
+            _MARKET_BRIEF["composedAt"] = 0.0
             _MARKET_BRIEF["aiFactsHash"] = hashlib.sha256(json.dumps(
                 {"facts": previous.get("facts") or [],
                  "calculations": argus_market_brief.calculation_identity(record["calculations"])},
@@ -17476,6 +17477,7 @@ def _market_brief_history_restore():
             retained["analysisHistory"] = {"status": "LOCAL_DURABLE", "recordId": presentation["recordId"],
                 "remoteRecoveryVerified": False, "restoredAt": _ai_now_iso()}
             _MARKET_BRIEF["lastPresentation"] = retained
+            _MARKET_BRIEF["composedAt"] = 0.0
     except FileNotFoundError:
         pass
     except Exception as exc:
@@ -17847,13 +17849,23 @@ _OWNER_DIALOGUE_RECOVERY = argus_owner_dialogue_recovery.RecoveryWorker(
 def _owner_dialogue_subject_comparison(*, brief, symbol, market, horizon, cutoff):
     if market != "JP" or not isinstance(symbol, str) or not re.fullmatch(r"[0-9A-Z]{4}", symbol):
         return None
-    meta = next((r for r in (_JQ_MASTER_CACHE.get("data") or []) if r.get("code") == symbol), {})
+    meta = next((r for r in (_JQ_MASTER_CACHE.get("data") or []) if r.get("code4") == symbol), {})
     classification = {k: meta.get(k) for k in ("sector17Code", "sector33Code", "effectiveDate", "receivedAt")}
     classification["source"] = "J-Quants V2 equities/master"
     return argus_owner_dialogue_api.dialogue.cached_subject_comparison(
         brief=brief, symbol=symbol, horizon=horizon, cutoff=cutoff,
         history=copy.deepcopy(_JQ_HISTORY_CACHE.get(symbol)), classification=classification,
         close_row=_jp_internals_close_row)
+
+
+def _owner_dialogue_market_reference(record_id):
+    path = _market_brief_history_path()
+    if not path:
+        return None
+    try:
+        return argus_analysis_history.read_record(path, record_id)
+    except FileNotFoundError:
+        return None
 
 
 def _owner_dialogue_event_snapshot(event_id):
@@ -17907,7 +17919,7 @@ argus_owner_dialogue_api.register(app, authorize=_require_owner_sync,
     recovery_status=_OWNER_DIALOGUE_RECOVERY.status, recovery_trigger=_OWNER_DIALOGUE_RECOVERY.tick,
     subject_comparison=_owner_dialogue_subject_comparison, subject_materials=_owner_dialogue_subject_materials,
     usage_snapshot=_ai_usage_snapshot, push_service=_WEB_PUSH, vault_service=_OWNER_VAULT,
-    event_snapshot=_owner_dialogue_event_snapshot)
+    event_snapshot=_owner_dialogue_event_snapshot, market_reference=_owner_dialogue_market_reference)
 
 
 @app.route("/api/argus/market-brief")
