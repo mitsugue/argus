@@ -380,7 +380,23 @@ def overview_input_digest(context, generation_policy):
         inputs.pop(key, None)
     if isinstance(inputs.get('owner'), dict):
         inputs['owner'].pop('receivedAt', None)
-    # Do not strip observedAt/acquiredAt/reportedAt or timestamps inside facts.
+    for row in inputs.get('facts') or []:
+        market_input = row.get('marketInput') or {}
+        # Only this locally built comparison includes the current request's
+        # cutoff and common-context binding in its derived identity. Verify
+        # both original hashes before comparing its unchanged source inputs.
+        if (row.get('source') == 'subject_market_comparison'
+                and row.get('verification') == 'VERIFIED'
+                and market_input.get('comparisonScope') == 'OWNER_PRIVATE'
+                and market_input.get('baseMarketContextId') == context['baseMarketContextId']
+                and market_input.get('informationCutoff') == context['receivedAt']
+                and market_input.get('evidenceId') == digest({k:v for k,v in market_input.items() if k!='evidenceId'})
+                and row.get('evidenceId') == 'dialogue-fact-'+digest({k:v for k,v in row.items() if k!='evidenceId'})):
+            row.pop('evidenceId')
+            for key in ('evidenceId', 'informationCutoff', 'baseMarketContextId'):
+                market_input.pop(key)
+    # Do not strip observedAt/acquiredAt/reportedAt or source timestamps.
+
     return digest({'schemaVersion':'argus-overview-inputs-v1', 'inputs':inputs,
                    'generationPolicy':dict(generation_policy),
                    'evaluationHour':int(at.timestamp()) // 3600})
