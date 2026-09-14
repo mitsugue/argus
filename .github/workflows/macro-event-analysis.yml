@@ -10,9 +10,8 @@ name: macro-event-analysis
 on:
   schedule:
     - cron: '35 0,2,4,6,8,10,12,14,16,18,20,22 * * 1-5'
-    # V11.4.1 hot-refresh minutes after the 08:30 ET (12:30 UTC) US releases so the
-    # dashboard never shows a stale "pre" card once NFP/CPI/etc. have printed.
-    - cron: '35 12 * * 1-5'
+    # The regular expression above already includes 12:35 UTC. Keep one run
+    # there and preserve each later follow-up after the official release.
     - cron: '45 12 * * 1-5'
     - cron: '30 13 * * 1-5'
     # V11.5 later follow-ups to capture the market REACTION after the US cash open.
