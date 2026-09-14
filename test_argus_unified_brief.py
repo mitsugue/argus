@@ -60,6 +60,27 @@ def response(context):
     return result
 
 
+
+def model_response(user):
+    instruction, payload = user.split("\n", 1)
+    context = json.loads(payload.split("\n前の回答は", 1)[0])
+    catalog = json.loads(instruction.split("表示候補: ", 1)[1])
+    result = response(context)
+    ordered = sorted(catalog['elements'], key=lambda row: not row['urgent'])
+    elements = []
+    for index, row in enumerate(ordered):
+        choice = {'id': row['id'], 'purposeJa': '根拠と確認条件を伝えます。',
+            'placement': 'lead' if row['urgent'] else 'support',
+            'emphasis': 'primary' if index == 0 else 'normal'}
+        if row['id'].startswith('evidence-'):
+            choice['caption'] = {'textJa': '確認できる変化と不足を分けて確認します。',
+                'evidenceIds': row['evidenceIds'][:1], 'kind': 'UNKNOWN'}
+        elements.append(choice)
+    result['presentation'] = {'inventoryId': catalog['inventoryId'],
+        'intentJa': '変化と根拠を伝えます。', 'elements': elements}
+    return context, result
+
+
 def test_six_parts_are_linked_and_no_private_holdings_claim_is_generated():
     context = mb.unified_context(brief())
     answer = mb.validate_unified_ai(response(context), context)
@@ -131,10 +152,10 @@ def test_runtime_preserves_last_success_across_public_refresh_and_failure(monkey
     monkeypatch.setattr(scanner, "_compose_market_brief", lambda: copy.deepcopy(current["value"]))
     calls = []; fail = {"value": False}
     def model(user, **kwargs):
-        context = json.loads(user.split("\n", 1)[1]);calls.append(context)
+        context, result = model_response(user);calls.append(context)
         kwargs["diagnostic"].update(requestedModel="gpt-6-astra", returnedModel="gpt-6-astra",
                                      completedAt="2026-09-12T10:01:00Z", outcome="ok")
-        return None if fail["value"] else response(context)
+        return None if fail["value"] else result
     monkeypatch.setattr(scanner, "_openai_prose", model)
     first = scanner._market_brief_refresh(allow_ai=True)
     assert first["unifiedStatus"] == "GENERATED"
@@ -216,7 +237,7 @@ def test_legacy_response_does_not_block_retry_of_six_part_analysis(monkeypatch):
         kwargs['diagnostic'].update(outcome='ok', returnedModel='gpt-6-astra', completedAt='2026-09-12T10:01:00Z')
         if len(calls) == 1:
             return {'nowJa':'VIX 20を確認。', 'whyJa':'VIX 20を確認。', 'nextJa':'VIX 20を確認。'}
-        return response(json.loads(user.split('\n', 1)[1]))
+        return model_response(user)[1]
     monkeypatch.setattr(scanner, '_openai_prose', model)
     first = scanner._market_brief_refresh(allow_ai=True)
     assert first['unifiedStatus'] == 'INVALID_RESPONSE'
@@ -228,8 +249,7 @@ def test_unsupported_number_gets_one_bounded_repair_and_retains_both_call_receip
     calls=[]
     def provider(user,**kwargs):
         calls.append(user)
-        context=json.loads(user.split('\n',1)[1].split('\n前の回答は',1)[0])
-        raw=response(context)
+        context, raw=model_response(user)
         if len(calls)==1:raw['reasons']['textJa']='VIX 99へ上昇しています。'
         kwargs['diagnostic'].update(outcome='ok',completedAt='2026-09-13T00:00:00Z',returnedModel='gpt-6-astra',estUsd=.01)
         return raw
@@ -251,15 +271,8 @@ def test_changed_engine_inputs_regenerate_even_when_headline_is_unchanged(monkey
     monkeypatch.setattr(scanner, '_jp_market_comparison_cached', lambda h: copy.deepcopy(calculation))
     calls = []
     def model(user, **kwargs):
-        context = json.loads(user.split('\n', 1)[1]); calls.append(context)
+        context, result = model_response(user); calls.append(context)
         kwargs['diagnostic'].update(outcome='ok', completedAt='2026-09-13T00:00:00Z', returnedModel='gpt-6-astra')
-        result = response(context)
-        catalog = scanner.argus_presentation_intent.brief_inventory(context, {})
-        result['presentation'] = {'inventoryId': catalog['inventoryId'], 'intentJa': '変化を伝えます。',
-            'elements': [{'id': row['id'], 'purposeJa': '根拠を確認します。',
-                'placement': 'lead' if row['urgent'] else 'support',
-                'emphasis': 'primary' if index == 0 else 'normal'}
-                for index, row in enumerate(catalog['elements'])]}
         return result
     monkeypatch.setattr(scanner, '_openai_prose', model)
     first = scanner._market_brief_refresh(allow_ai=True)
@@ -288,8 +301,7 @@ def test_failed_repair_stays_invalid_and_never_overwrites_last_accepted_view(mon
     calls=[]
     def provider(user, **kwargs):
         calls.append(user)
-        context=json.loads(user.split('\n',1)[1].split('\n前の回答は',1)[0])
-        raw=response(context);raw['reasons']['textJa']='VIX 99へ上昇しています。'
+        context, raw=model_response(user);raw['reasons']['textJa']='VIX 99へ上昇しています。'
         kwargs['diagnostic'].update(outcome='ok', completedAt='2026-09-13T00:00:00Z')
         return raw
     monkeypatch.setattr(scanner, '_openai_prose', provider)
