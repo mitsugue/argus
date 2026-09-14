@@ -43,7 +43,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/V13_6_PRESENTATION_INTENT.md': 'f4768d0c712f625cb82d630de240c0d98d5f26aa',
     'argus_presentation_intent.py': 'f5b7369016c25a5e6c10b9019c06cdc99a234b87',
     'argus_persistent_storage.py': '822f60d3ce54a7f5dfbf16638ff79727cb7e4e64',
-    'web/src/components/today/ReadingHierarchy.css': 'd874ebe85adcd7a6d6fd0501273ffc419c4626aa',
+    'web/src/components/today/ReadingHierarchy.css': 'f031a35a7ec9cb1aac772bbae8c0ab1de44c4a85',
     'web/src/components/AppShell.tsx': '5a438f0fd9d20b3b5eca9399f6c314993421a96b',
     'web/src/routes/BackupPage.tsx': '76ef9bb18e9e440afafaad5f9e290c925fc7ac61',
     'web/src/navigation.ts': 'af45a759ac501412f35904890c355f8e71e8736b',
