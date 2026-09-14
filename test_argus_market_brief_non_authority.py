@@ -30,6 +30,7 @@ _ALLOWED_SCANNER_SCOPES = {
     "_compose_market_brief", "_market_brief_ai_polish",
     "_market_brief_refresh", "api_argus_market_brief",
     "_market_brief_worker_tick", "_market_brief_history_restore", "_market_brief_history_save", "_market_brief_history_outcomes", "_market_brief_history_sync",
+    "_owner_dialogue_market_reference",
 }
 _BRIEF_SYMBOL_PREFIXES = ("_market_brief", "_brief_")
 _BRIEF_SYMBOLS = {"argus_market_brief", "_MARKET_BRIEF"}
