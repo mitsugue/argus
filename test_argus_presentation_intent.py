@@ -57,3 +57,55 @@ def test_urgent_information_cannot_be_buried_by_editorial_choice():
     with pytest.raises(ValueError):validate_plan(raw, catalog)
     raw['elements'].reverse();raw['elements'][0]['placement'] = 'lead'
     assert validate_plan(raw, catalog)['elements'][0]['id'] == 'comparison'
+
+
+def test_new_edition_reads_as_one_account_without_rewriting_old_editions():
+    from argus_market_brief import unified_context
+    from argus_presentation_intent import brief_inventory, validate_current_reading_flow
+    context = unified_context({'generatedAt':'2026-09-14T00:00:00Z','facts':[
+        {'text':'報道後の市場反応は確認待ちです。','source':source,'priority':'P0','verification':'UNCONFIRMED'}
+        for source in ('trusted_mail','calendar','market_data')]})
+    current_catalog = brief_inventory(context, {'5':{'comparison':{}}})
+    catalog = inventory(context_id=context['contextId'],surface='today',subject='N225',
+        horizon=5,elements=current_catalog['elements'])
+    choices = {}
+    for source in catalog['elements']:
+        row = {'id':source['id'],'purposeJa':'変化と次の確認を伝える',
+               'placement':'lead' if source['urgent'] or source['id']=='view' else 'support',
+               'emphasis':'primary' if source['id']=='view' else 'normal'}
+        if source['id'].startswith('evidence-'):
+            row['caption']={'textJa':'報道後の市場反応は確認待ちです。',
+                'evidenceIds':source['evidenceIds'][:1],'kind':'UNKNOWN'}
+        choices[source['id']]=row
+    urgent=[row['id'] for row in catalog['elements'] if row['urgent']]
+    tail=['changes','nikkei-comparison','reasons','impact','next','invalidation']
+    raw={'inventoryId':catalog['inventoryId'],'intentJa':'主文から変化とチャートへつなぐ',
+         'elements':[choices[key] for key in urgent+['view']+tail]}
+    old=validate_plan(raw,catalog,context)
+    summary={'sections':{'view':{'textJa':'私は慎重に見ています。市場の反応を確かめます。'}}}
+    with pytest.raises(ValueError,match='main_account_buried'):
+        validate_current_reading_flow(old,catalog,summary)
+    # Archive validation still accepts the exact old presentation and identity.
+    assert validate_plan(raw,catalog,context)==old
+    current_raw=deepcopy(raw);current_raw['inventoryId']=current_catalog['inventoryId']
+    with pytest.raises(ValueError,match='main_account_buried'):
+        validate_plan(current_raw,current_catalog,context)
+    catalog=current_catalog;raw['inventoryId']=catalog['inventoryId']
+    raw['elements']=[choices[key] for key in ['view']+urgent+tail]
+    current=validate_plan(raw,catalog,context)
+    assert validate_current_reading_flow(current,catalog,summary)==current
+    assert current['planId']!=old['planId']
+    raw['elements']=[choices[key] for key in [urgent[0],'view']+urgent[1:]+tail]
+    assert validate_current_reading_flow(validate_plan(raw,catalog,context),catalog,summary)
+    choices[urgent[0]]['caption']['textJa']='報道の確認を続けます。'*5
+    with pytest.raises(ValueError,match='advance_notice_too_long'):
+        validate_current_reading_flow(validate_plan(raw,catalog,context),catalog,summary)
+
+
+def test_urgent_item_after_chart_still_fails_with_main_account_first():
+    catalog,raw=example();elements=deepcopy(catalog['elements'])
+    elements.append({'id':'notice','kind':'event','payloadId':'d'*64,'evidenceIds':['fact-one'],'mandatory':True,'urgent':True})
+    catalog=inventory(context_id='a'*64,surface='today',subject='N225',horizon=5,elements=elements)
+    raw['inventoryId']=catalog['inventoryId']
+    raw['elements'].append({'id':'notice','purposeJa':'重要な変化を伝える','placement':'lead','emphasis':'normal'})
+    with pytest.raises(ValueError,match='urgent_order'):validate_plan(raw,catalog)

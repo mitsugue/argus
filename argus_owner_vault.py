@@ -43,11 +43,13 @@ def envelope(raw):
 class PrivateStore(transport.GitHubStore):
     write_message='Save client-encrypted owner device snapshot'
     def __init__(self,**kwargs):
-        self.deadline=time.monotonic()+180
         self.repository=kwargs['repo'];self.private_verified=False
         super().__init__(**kwargs)
+        self.deadline=self.monotonic()+180
     def _check_deadline(self):
-        if time.monotonic()>self.deadline:raise TimeoutError('vault_remote_deadline')
+        remaining=self.deadline-self.monotonic()
+        if remaining<=0:raise TimeoutError('vault_remote_deadline')
+        return remaining
     def assert_private(self):
         self._check_deadline()
         response=self.http('GET',self.base.removesuffix('/contents/'),headers=self.headers,timeout=(5,15),allow_redirects=False,stream=True)

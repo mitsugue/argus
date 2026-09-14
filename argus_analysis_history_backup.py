@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import tempfile
 import time
@@ -209,6 +210,7 @@ class GitHubStore:
         if not isinstance(repo,str) or len(repo.split('/')) != 2 or any(not p or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-' for c in p) for p in repo.split('/')):
             raise ValueError('history_remote_repository_invalid')
         self.base = 'https://api.github.com/repos/' + repo + '/contents/'
+        self.blobs = 'https://api.github.com/repos/' + repo + '/git/blobs/'
         self.headers = dict(headers); self.http = http
         self.monotonic = monotonic or time.monotonic
         self.deadline = self.monotonic() + MAX_SYNC_SECONDS
@@ -222,12 +224,12 @@ class GitHubStore:
         remaining = self._check_deadline()
         return min(5, remaining / 2), min(20, remaining / 2)
 
-    def get(self, path):
-        response = self.http('GET', self.base + path, headers=self.headers, timeout=self._timeout(),
+    def _read_json(self, url):
+        response = self.http('GET', url, headers=self.headers, timeout=self._timeout(),
                              allow_redirects=False, stream=True)
         try:
             self._check_deadline()
-            if response.status_code == 404: return None, None
+            if response.status_code == 404: return None
             if response.status_code != 200: raise ValueError('history_remote_read_unavailable')
             parts = []; total = 0
             for part in response.iter_content(32768):
@@ -236,13 +238,38 @@ class GitHubStore:
                 if total > 1024 * 1024: raise ValueError('history_remote_response_bound')
                 parts.append(part)
             value = json.loads(b''.join(parts))
-            if value.get('encoding') != 'base64' or not isinstance(value.get('content'),str) or len(value['content']) > 900000:
-                raise ValueError('history_remote_content_bound')
-            raw = base64.b64decode(value['content'].replace('\n',''), validate=True)
-            if len(raw) > CHUNK_BYTES or not isinstance(value.get('sha'),str) or len(value['sha']) != 40:
-                raise ValueError('history_remote_object_invalid')
-            return raw, value['sha']
+            if not isinstance(value, dict): raise ValueError('history_remote_object_invalid')
+            return value
         finally: response.close()
+
+    @staticmethod
+    def _content(value):
+        if value.get('encoding') != 'base64' or not isinstance(value.get('content'),str) or len(value['content']) > 900000:
+            raise ValueError('history_remote_content_bound')
+        return base64.b64decode(value['content'].replace('\n',''), validate=True)
+
+    @staticmethod
+    def _matches_blob(raw, sha, size):
+        return (len(raw) == size and len(raw) <= CHUNK_BYTES
+                and hashlib.sha1(b'blob ' + str(len(raw)).encode('ascii') + b'\0' + raw).hexdigest() == sha)
+
+    def get(self, path):
+        value = self._read_json(self.base + path)
+        if value is None: return None, None
+        sha, size = value.get('sha'), value.get('size')
+        if not isinstance(sha,str) or not re.fullmatch('[a-f0-9]{40}',sha) or type(size) is not int or not 0 <= size <= CHUNK_BYTES:
+            raise ValueError('history_remote_object_invalid')
+        raw = self._content(value)
+        if not self._matches_blob(raw,sha,size):
+            # Re-read the exact Git object. Never trim or normalize file bytes
+            # to hide a damaged Contents response; both size and identity must match.
+            blob = self._read_json(self.blobs + sha)
+            if blob is None or blob.get('sha') != sha or blob.get('size') != size:
+                raise ValueError('history_remote_blob_integrity_invalid')
+            raw = self._content(blob)
+            if not self._matches_blob(raw,sha,size):
+                raise ValueError('history_remote_blob_integrity_invalid')
+        return raw, sha
 
     def put(self, path, raw, *, expected_version):
         if len(raw) > CHUNK_BYTES: raise ValueError('history_remote_write_bound')

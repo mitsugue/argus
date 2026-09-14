@@ -29,7 +29,7 @@ def _digest(value: Any) -> str:
 
 
 def inventory(*, context_id: str, surface: str, subject: str, horizon: int,
-              elements: list[dict[str, Any]]) -> dict[str, Any]:
+              elements: list[dict[str, Any]], reading_flow=None) -> dict[str, Any]:
     """Freeze displayable evidence and numeric/chart payload identities first."""
     if not re.fullmatch('[a-f0-9]{64}', context_id) or surface not in {'today', 'asset', 'dialogue'}:
         raise ValueError('presentation_scope_invalid')
@@ -53,6 +53,10 @@ def inventory(*, context_id: str, surface: str, subject: str, horizon: int,
             raise ValueError('presentation_evidence_invalid')
     body = {'contextId': context_id, 'surface': surface, 'subject': subject,
             'horizonSessions': horizon, 'elements': deepcopy(elements)}
+    if reading_flow is not None:
+        if reading_flow != 'main-account-first-v1' or surface != 'today':
+            raise ValueError('presentation_reading_flow_invalid')
+        body['readingFlow'] = reading_flow
     return {**body, 'inventoryId': _digest(body)}
 
 
@@ -131,14 +135,40 @@ def validate_plan(value: Any, catalog: Mapping[str, Any], context=None) -> dict[
     for row in rows:
         if known[row['id']]['urgent'] and seen_nonurgent:
             raise ValueError('presentation_urgent_order')
-        if not known[row['id']]['urgent']:
+        if not known[row['id']]['urgent'] and row['id'] != 'view':
             seen_nonurgent = True
     body = {'schemaVersion': SCHEMA, 'contextId': catalog['contextId'],
             'inventoryId': catalog['inventoryId'], 'surface': catalog['surface'],
             'subject': catalog['subject'], 'horizonSessions': catalog['horizonSessions'],
             'intentJa': intent.strip(), 'elements': deepcopy(rows),
             'actionAuthority': False, 'semanticValidation': 'UNVERIFIED'}
-    return {**body, 'planId': _digest(body)}
+    plan = {**body, 'planId': _digest(body)}
+    if catalog.get('readingFlow') == 'main-account-first-v1':
+        validate_current_reading_flow(plan, catalog)
+    return plan
+
+
+def validate_current_reading_flow(plan, catalog, summary=None):
+    """Apply current editorial criteria only to new Today editions, not archives."""
+    if catalog['surface'] != 'today':
+        return plan
+    rows = plan['elements']; ids = [row['id'] for row in rows]
+    known = {row['id']: row for row in catalog['elements']}
+    position = ids.index('view'); view = rows[position]
+    if position > 1 or view['placement'] != 'lead' or view['emphasis'] != 'primary':
+        raise ValueError('presentation_main_account_buried')
+    if summary is not None and len(summary['sections']['view']['textJa']) > 60:
+        raise ValueError('presentation_main_account_too_long')
+    if position and (not known[rows[0]['id']]['urgent']
+                     or len(rows[0].get('caption', {}).get('textJa', '')) > 48):
+        raise ValueError('presentation_advance_notice_too_long')
+    for row in rows:
+        if known[row['id']]['urgent'] and len(row.get('caption', {}).get('textJa', '')) > 80:
+            raise ValueError('presentation_urgent_summary_too_long')
+    if 'nikkei-comparison' in ids and 'changes' in ids:
+        if ids.index('changes') > ids.index('nikkei-comparison'):
+            raise ValueError('presentation_change_after_chart')
+    return plan
 
 
 def brief_inventory(context: Mapping[str, Any], calculations: Mapping[str, Any]) -> dict[str, Any]:
@@ -176,7 +206,7 @@ def brief_inventory(context: Mapping[str, Any], calculations: Mapping[str, Any])
                 'payloadId': _digest(chunk), 'evidenceIds': [r['evidenceId'] for r in chunk],
                 'mandatory': urgent, 'urgent': urgent})
     return inventory(context_id=context['contextId'], surface='today', subject='N225',
-        horizon=5, elements=elements)
+        horizon=5, elements=elements, reading_flow='main-account-first-v1')
 
 
 def generation_instruction(catalog: Mapping[str, Any]) -> str:
@@ -185,7 +215,11 @@ def generation_instruction(catalog: Mapping[str, Any]) -> str:
         'presentation={inventoryId:下記ID,intentJa:今回の編集意図160字以内,elements:表示順の配列}。'
         '各要素は{id:候補ID,purposeJa:表示する理由160字以内,placement:lead/support/detail,'
         'emphasis:primary/normal/quiet}。全候補を重複なく含め、primaryは一つ。'
-        'mandatory要素は詳細だけにせず、urgent要素は先頭のleadとしquietにしない。'
+        'mandatory要素は詳細だけにせず、urgent要素は冒頭のleadとしquietにしない。'
+        'Todayではviewをprimaryのleadとして最初に置く。緊急時だけ、48字以内のurgentの短い案内を一つ前へ置ける。'
+        '複数のニュースや資料説明を並べてから主文を読ませない。その他のurgentはview直後に80字以内の短い案内としてまとめて置く。'
+        'urgentを隠さず、その後にchanges、比較チャート、影響と次の確認へつなぐ。changesは比較チャートより先に置く。'
+        'viewは60字以内。見出しに長い報道要約を流用せず、この相手に今伝える要点を選ぶ。'
         '文章は一人の相手へ短く自然に語る。情報不足を作文で埋めず、報道・事実・推論を区別する。'
         '主対象と期間は表示候補のsubject/horizonSessionsに従う。別期間の警戒をこの期間の予測として混ぜない。'
         'evidence-で始まる候補にはcaption:{textJa:180字以内,evidenceIds:同候補から1〜6件,kind:FACT/INFERENCE/UNKNOWN}も必須。'

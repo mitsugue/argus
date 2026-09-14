@@ -49,7 +49,7 @@ export function hasEditorialIntent(brief: MarketBrief | null): boolean {
         || !caption.evidenceIds.every(id => source.evidenceIds.includes(id))
         || (caption.kind === 'FACT' && caption.evidenceIds.some(id => facts.find(f => f.evidenceId === id)?.verification !== 'VERIFIED'))) return false;
     }
-    if (!source.urgent) nonurgent = true;
+    if (!source.urgent && row.id !== 'view') nonurgent = true;
     seen.add(row.id); if (row.emphasis === 'primary') primary++;
     if (row.id === 'nikkei-comparison' && !validJapanMarketComparison(brief.calculationSnapshots?.['5']?.comparison, 5)) return false;
   }

@@ -108,15 +108,72 @@ def test_existing_authenticated_transport_checks_readback_bounds_and_compare_and
         def __init__(self,body):self.body=body;self.closed=False
         def iter_content(self,size):yield self.body
         def close(self):self.closed=True
-    response=Response(json.dumps({'sha':'a'*40,'encoding':'base64','content':base64.b64encode(b'record').decode()}).encode())
+    import hashlib
+    sha=hashlib.sha1(b'blob 6\0record').hexdigest()
+    response=Response(json.dumps({'sha':sha,'size':6,'encoding':'base64','content':base64.b64encode(b'record').decode()}).encode())
     def http(method,url,**kwargs):calls.append((method,url,kwargs));return response
     store=backup.GitHubStore(repo='test-owner/test-private',headers={'Authorization':'Bearer test-token'},http=http)
-    assert store.get(backup.PREFIX+'/head.json')==(b'record','a'*40)
+    assert store.get(backup.PREFIX+'/head.json')==(b'record',sha)
     assert calls[0][2]['stream'] is True and calls[0][2]['allow_redirects'] is False and response.closed
     store.put(backup.PREFIX+'/head.json',b'next',expected_version='b'*40)
     assert calls[-1][2]['json']['sha']=='b'*40
     response.body=b'x'*(1024*1024+1)
     with pytest.raises(ValueError,match='response_bound'):store.get(backup.PREFIX+'/head.json')
+
+
+@pytest.mark.parametrize('damage', ['extra_byte','same_size_wrong_bytes'])
+def test_contents_representation_recovers_from_exact_git_blob_without_trimming(damage):
+    import base64,hashlib,json
+    original=b'x'*backup.CHUNK_BYTES
+    sha=hashlib.sha1(b'blob '+str(len(original)).encode()+b'\0'+original).hexdigest()
+    damaged=original+b'!' if damage=='extra_byte' else original[:-1]+b'!'
+    calls=[];responses=[]
+    class Response:
+        status_code=200
+        def __init__(self,raw):
+            self.body=json.dumps({'sha':sha,'size':len(original),'encoding':'base64','content':base64.b64encode(raw).decode()}).encode();self.closed=False
+        def iter_content(self,size):
+            for start in range(0,len(self.body),size):yield self.body[start:start+size]
+        def close(self):self.closed=True
+    def http(method,url,**kwargs):
+        calls.append((method,url,kwargs));r=Response(original if '/git/blobs/' in url else damaged);responses.append(r);return r
+    remote=backup.GitHubStore(repo='test-owner/test-private',headers={},http=http)
+    result,version=remote.get(backup.PREFIX+'/chunks/'+backup.digest(original)+'.bin')
+    assert result==original and version==sha and len(calls)==2
+    assert calls[-1][1].endswith('/git/blobs/'+sha)
+    assert all(row[0]=='GET' and row[2]['allow_redirects'] is False for row in calls)
+    assert all(r.closed for r in responses)
+    def corrupt_http(method,url,**kwargs):return Response(damaged)
+    remote=backup.GitHubStore(repo='test-owner/test-private',headers={},http=corrupt_http)
+    with pytest.raises(ValueError,match='blob_integrity_invalid'):
+        remote.get(backup.PREFIX+'/chunks/'+backup.digest(original)+'.bin')
+
+
+@pytest.mark.parametrize('kind', ['dialogue','vault'])
+def test_private_transports_keep_their_own_deadline_and_can_read_and_write(kind):
+    import base64,hashlib,json
+    import argus_owner_dialogue_backup as dialogue
+    import argus_owner_vault as vault
+    clock=[100.0];calls=[];raw=b'bounded encrypted bytes'
+    sha=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+    class Response:
+        status_code=200
+        def iter_content(self,n):yield json.dumps({'sha':sha,'size':len(raw),'encoding':'base64','content':base64.b64encode(raw).decode()}).encode()
+        def close(self):pass
+    def http(method,url,**kwargs):calls.append((method,kwargs));return Response()
+    cls=dialogue.PrivateGitHubStore if kind=='dialogue' else vault.PrivateStore
+    remote=cls(repo='owner/private',headers={},http=http,monotonic=lambda:clock[0])
+    path=dialogue.PREFIX+'/head.json' if kind=='dialogue' else vault.PREFIX+'/'+'a'*64+'/catalog.json'
+    clock[0]=150.0
+    assert remote.get(path)==(raw,sha)
+    with pytest.raises(ValueError,match='private_scope_required'):remote.put(path,raw,expected_version=sha)
+    remote.private_verified=True
+    remote.put(path,raw,expected_version=sha)
+    assert calls[-1][0]=='PUT' and calls[-1][1]['json']['sha']==sha
+    clock[0]=280.0
+    before=len(calls)
+    with pytest.raises(TimeoutError):remote.get(path)
+    assert len(calls)==before
 
 
 def test_worker_connection_and_public_status_do_not_expose_credentials(tmp_path,monkeypatch):
