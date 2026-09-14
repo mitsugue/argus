@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.5.68"
+PRODUCT_VERSION = "v13.5.69"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -88,7 +88,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_analysis_history_backup.py': 'cef7d94cc0b7bf790cf1506797cdf75a94dde6da',
     'argus_explanation_contract.py': 'ee2164dfb84226eb6e4ee5eb411cbc9c4b15523b',
     'argus_owner_dialogue.py': '1e9d9d0a6ccd803b21a13fc477f31fe58ae8fb88',
-    'argus_owner_dialogue_api.py': '4d4a2e82bcd5b43c44f2b7ae87b7463fd0359bff',
+    'argus_owner_dialogue_api.py': 'e827f71cc4043e5abcdb3e4ede28d492c5e3b9ba',
     'argus_owner_dialogue_backup.py': '7a86e46b2060156cc5581fc3f331c34895126e84',
     'argus_owner_dialogue_recovery.py': 'bfc92ba9d12514167c622df5bcf04f87e945d721',
     'argus_owner_dialogue_store.py': '4a84bb5052aa620b0d275adc3d3cc3cb87bb791d',
@@ -101,7 +101,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_analysis_history_backup.py': 'f288750d191063a3f4a22ac165afaebd3545a92c',
     'test_argus_owner_cached_inputs.py': '7cbf6969f32ac6356cf1337bcbabd3990fb9f001',
     'test_argus_owner_dialogue.py': 'a11e03918d90fbdf5e50754264420f6af12542f8',
-    'test_argus_owner_dialogue_api.py': '5e2b7e308a14d4e4de4c7933c701cae58d7a360d',
+    'test_argus_owner_dialogue_api.py': '6b0e26ec724c975544ccb4fbb360d9715473f3af',
     'test_argus_owner_dialogue_backup.py': 'dc5309d7c66517114f684d593b9cd937bff1196d',
     'test_argus_owner_dialogue_recovery.py': 'cd35ae9060ba9ce6ae20850306c7207d8ab60ecd',
     'test_argus_subject_materials.py': 'e71b8a78d4af5a99640f0b61bbd173f8fcabf7b6',
