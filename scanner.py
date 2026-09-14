@@ -245,6 +245,7 @@ _COST_CHECKPOINT_STATE = {"running": False, "pending": False,
                           "lastError": None, "lastFinishedAt": None}
 _COST_POLICY_DURABLE = {"lastPersistAt": None, "lastRestoreAt": None,
                         "restoredRows": 0, "path": None, "lastError": None,
+                        "releasedReservations": 0,
                         # The write-through targets the PRODUCTION persistent
                         # root only; everywhere else (tests, dev) the ledger
                         # stays in memory + journal, so no test's temporary
@@ -405,10 +406,22 @@ def _cost_policy_restore_durable():
         # A malformed optional migration must not discard valid core usage.
         _COST_POLICY_DURABLE["migrationError"] = type(exc).__name__
     added = 0
+    # A provider call cannot survive a process restart.  Pending rows restored
+    # from either the full checkpoint or the small write-through ledger are
+    # therefore abandoned reservations, not spend and not live work.  Keeping
+    # them made the public ledger report open work forever after a redeploy.
+    abandoned_reservations = set()
     with _COST_POLICY_LOCK:
         live = argus_cost_policy.normalize_state(_COST_POLICY)
+        for row in live["usage"]:
+            if row.get("pending"):
+                abandoned_reservations.add(_cost_policy_usage_key(row))
+        live["usage"] = [r for r in live["usage"] if not r.get("pending")]
         seen = {_cost_policy_usage_key(r) for r in live["usage"]}
         for row in saved["usage"]:
+            if row.get("pending"):
+                abandoned_reservations.add(_cost_policy_usage_key(row))
+                continue
             if _cost_policy_usage_key(row) not in seen:
                 live["usage"].append(row)
                 seen.add(_cost_policy_usage_key(row))
@@ -432,6 +445,11 @@ def _cost_policy_restore_durable():
         _COST_POLICY.update(live)
     _COST_POLICY_DURABLE["lastRestoreAt"] = _ai_now_iso()
     _COST_POLICY_DURABLE["restoredRows"] = added
+    _COST_POLICY_DURABLE["releasedReservations"] = len(abandoned_reservations)
+    if abandoned_reservations:
+        # Remove abandoned reservations from the write-through authority now;
+        # do not wait for another billable provider call to rewrite the file.
+        _cost_policy_persist_durable()
     return added
 
 
@@ -36158,6 +36176,8 @@ def api_argus_cost_policy_status():
         "lastPersistAt": _COST_POLICY_DURABLE.get("lastPersistAt"),
         "lastRestoreAt": _COST_POLICY_DURABLE.get("lastRestoreAt"),
         "restoredRows": _COST_POLICY_DURABLE.get("restoredRows"),
+        "releasedReservations": _COST_POLICY_DURABLE.get(
+            "releasedReservations", 0),
         "lastError": _COST_POLICY_DURABLE.get("lastError"),
         "openReservations": len(pending),
     }
@@ -42342,7 +42362,7 @@ def get_integrations_snapshot(*, allow_provider_fetch=True):
          "configured": bool(FINNHUB_API_KEY), "runtimeStatus": finnhub_rt,
          "usedFor": ["corporate-catalysts"], "lastKnownStatus": finnhub_rt,
          "notesJa": "未設定なら米国ニュース/決算カレンダーはpartial。"},
-        {"id": "openai", "label": "OpenAI GPT-5.5", "category": "ai",
+        {"id": "openai", "label": f"OpenAI {_OPENAI_EVENT_MODEL}", "category": "ai",
          "configured": bool(_OPENAI_API_KEY), "runtimeStatus": oai_rt,
          "usedFor": ["ai-judgment"], "lastKnownStatus": _AI_LAST_RUN.get("oai"),
          "notesJa": "APIキーとAI_JUDGE_ENABLEDが必要。ChatGPT Proとは別請求。"},

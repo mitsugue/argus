@@ -2766,6 +2766,32 @@ def test_cost_ledger_writes_through_and_restores_after_a_restart(monkeypatch, tm
         scanner._COST_POLICY.update(saved)
 
 
+def test_cost_ledger_restart_releases_only_abandoned_reservations(monkeypatch, tmp_path):
+    policy = scanner.argus_cost_policy.default_state("SCHEDULED_AI", event_opt_in=True)
+    settled = {"provider": "openai", "purpose": "market_brief",
+               "at": "2026-09-14T01:00:00Z", "estimatedCostUsd": 0.2,
+               "pending": False, "reservationId": "rsv-settled"}
+    abandoned = {"provider": "openai", "purpose": "market_brief",
+                 "at": "2026-09-14T02:00:00Z", "estimatedCostUsd": 0.3,
+                 "pending": True, "reservationId": "rsv-abandoned"}
+    policy["usage"] = [dict(abandoned)]
+    durable = scanner.argus_cost_policy.default_state("SCHEDULED_AI", event_opt_in=True)
+    durable["usage"] = [dict(settled), dict(abandoned)]
+    path = tmp_path / "cost_policy_state.json"
+    path.write_text(json.dumps(durable))
+    monkeypatch.setattr(scanner, "_COST_POLICY", policy)
+    monkeypatch.setattr(scanner, "_COST_POLICY_DURABLE", {"enabled": True})
+    monkeypatch.setattr(scanner, "_cost_policy_durable_path", lambda: str(path))
+
+    assert scanner._cost_policy_restore_durable() == 1
+    assert policy["usage"] == [settled]
+    assert json.loads(path.read_text())["usage"] == [settled]
+    assert scanner._COST_POLICY_DURABLE["releasedReservations"] == 1
+    body = scanner.app.test_client().get("/api/argus/cost-policy").get_json()
+    assert body["ledgerDurability"]["openReservations"] == 0
+    assert body["ledgerDurability"]["releasedReservations"] == 1
+
+
 def test_generation_run_is_single_flight_and_tracked_through_failure(monkeypatch):
     monkeypatch.setattr(scanner, "_macro_analysis_persist", lambda: None)
     monkeypatch.setattr(scanner, "_macro_analysis_restore_once", lambda: None)
