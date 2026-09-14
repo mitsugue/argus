@@ -52,7 +52,7 @@ export const PublicDiagnosticsPanel: React.FC = () => {
           <button type="button" onClick={() => void refresh()}>再読込</button>
         </div>
       )}
-      {diagnostics && !loading && (
+      {diagnostics && (
         <>
           <section>
             <div className="section-head">

@@ -1,3 +1,4 @@
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import React from 'react';
 
 // v13.5.3 — NIKKEI MAIL INTAKE diagnostics (§6). Owner-facing truth: the
@@ -155,19 +156,21 @@ export const NewsIntakePanel: React.FC = () => {
     let cancelled = false;
     const base = baseUrl();
     if (!base) { setError(true); return undefined; }
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12_000);
     void (async () => {
       try {
         const response = await fetch(`${base}/api/argus/news-intake/health`,
-          { cache: 'no-store', headers: { Accept: 'application/json' } });
+          { cache: 'no-store', signal: controller.signal, headers: { Accept: 'application/json' } });
         if (!response.ok) throw new Error(String(response.status));
         const body = await response.json() as IntakeHealth;
         if (!cancelled) setHealth(body);
       } catch {
         if (!cancelled) setError(true);
-      }
+      } finally { window.clearTimeout(timeout); }
     })();
     const timer = window.setTimeout(() => setProbe(viewportProbe()), 800);
-    return () => { cancelled = true; window.clearTimeout(timer); };
+    return () => { cancelled = true; controller.abort(); window.clearTimeout(timeout); window.clearTimeout(timer); };
   }, []);
 
   const fmt = (iso: string | null | undefined) => (iso
@@ -197,7 +200,7 @@ export const NewsIntakePanel: React.FC = () => {
       <div className="section-head">
         <span className="section-head__title">NIKKEI MAIL INTAKE</span>
       </div>
-      {!health && !error && <p className="cmd-alloc__note">確認中…</p>}
+      {!health && !error && <p className="cmd-alloc__note"><TriangleStepLoader label="ニュースの収集状況を読み込んでいます" /></p>}
       {error && <p className="cmd-alloc__note">取込ヘルスを取得できません。</p>}
       {health && !health.configured && <p className="cmd-alloc__note">
         専用ニュースメールボックスは未設定です（MAILBOX_UNCONFIGURED）。
