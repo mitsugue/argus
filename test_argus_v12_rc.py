@@ -50,6 +50,17 @@ class _Boom:
 
 def test_all_public_endpoints_clean(monkeypatch):
     monkeypatch.setattr(scanner, "requests", _Boom())
+    # Use a fixed corpus; preceding collection tests may populate the process
+    # with live articles, whose quoted headlines are not generated instructions.
+    monkeypatch.setattr(scanner, "_INTEL_STORE", [{
+        "intelligenceId": "public-boundary-signal", "title": "Market outlook update",
+        "publicSnippet": "", "institutionId": "unknown", "sourceId": "reuters_jp",
+        "linkedAssets": ["NVDA"], "linkedThemes": [], "language": "en",
+        "publishedAt": scanner._ai_now_iso(), "fetchedAt": scanner._ai_now_iso(),
+        "canonicalUrl": "https://example.com/market", "sourceTier": "wire",
+    }])
+    monkeypatch.setitem(scanner._PRO_HANDOFF_CACHE, "data", None)
+    monkeypatch.setitem(scanner._PRO_HANDOFF_CACHE, "expires", 0.0)
     # v12.0.7: 一度きりの復元fetch(翻訳キャッシュ等)も抑止してcached-onlyを厳密検証
     monkeypatch.setitem(scanner._NEWS_JA_STATE, "restored", True)
     with scanner.app.test_client() as c:

@@ -117,6 +117,36 @@ def test_timed_out_trigger_switches_to_status_only_and_accepts_exact_terminal():
     assert "/receipts/" + OPERATION in calls[1]["url"]
 
 
+def test_large_checkpoint_completes_after_old_budget_without_duplicate_write():
+    clock = _Clock()
+    methods = []
+
+    def request(**kwargs):
+        methods.append(kwargs["method"])
+        if len(methods) == 1:
+            clock.value += kwargs["timeout"]
+            raise socket.timeout()
+        if clock.value < 903:
+            return _body()
+        return _body(state="verified", drain_status=None,
+                     verified_at="2026-09-14T16:11:46Z")
+
+    result = _run(request, clock, budget=1800)
+    assert result["elapsedSeconds"] == 903
+    assert result["status"] == "verified"
+    assert methods.count("POST") == 1
+    assert set(methods[1:]) == {"GET"}
+
+
+def test_extended_wait_is_still_bounded_and_pending_still_fails():
+    clock = _Clock()
+    with pytest.raises(drain.DrainError, match="receipt_not_verified_within_budget"):
+        _run(lambda **kwargs: _body(), clock, budget=1800)
+    assert clock.value == 1800
+    with pytest.raises(drain.DrainError, match="drain_budget_invalid"):
+        _run(lambda **kwargs: _body(), clock, budget=1801)
+
+
 @pytest.mark.parametrize("field,value,error", [
     ("operationId", "rr-" + "d" * 24, "drain_operation_mismatch"),
     ("remoteCommitSha", "d" * 40, "drain_commit_mismatch"),

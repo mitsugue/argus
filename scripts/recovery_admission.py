@@ -73,6 +73,8 @@ RECOVERY_PAYLOAD_PATHS = (
     "test_argus_public_operational_boundary.py",
     "test_argus_recovery_phase_a_adapter.py",
     "test_argus_identity_installer.py",
+    "test_argus_v12_3_1.py",
+    "test_argus_v12_rc.py",
     "test_argus_v12_3_2.py",
     "test_argus_v13_4_2_remote_receipts.py",
     "test_caos_workflow_recovery.py",
@@ -83,7 +85,7 @@ RECOVERY_PAYLOAD_PATHS = (
     "test_remote_recovery_restore.py",
 )
 EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256 = (
-    "910a3af7817d4cc269d10adfed4c60ade03f46462640bc4d052829cdcb0e973c"
+    "ab04195b720f8cd33507f1f1ef107674e2c45bb472c37b1bb2bc36134d2c9279"
 )
 
 # This owner-authorized staged analysis delivery pins BOTH implementation diffs. A paired

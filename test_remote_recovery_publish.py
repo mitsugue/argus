@@ -970,6 +970,51 @@ def test_commit_metadata_fetch_is_immutable_exact_and_bounded():
         scanner._bounded_ledger_commit_metadata("owner", "ledger", COMMIT)
 
 
+@pytest.mark.parametrize("first_status", [429, 500, 502, 503, 504])
+def test_commit_metadata_retries_transient_http_then_validates_exact_commit(first_status):
+    closed = []
+    temporary = types.SimpleNamespace(status_code=first_status, headers={},
+                                      close=lambda: closed.append(first_status))
+    valid = types.SimpleNamespace(status_code=200, headers={},
+        iter_content=lambda chunk_size: iter((json.dumps({
+            "sha": COMMIT, "parents": [{"sha": BASE}],
+        }).encode(),)), close=lambda: closed.append(200))
+    with mock.patch.object(scanner.requests, "get", side_effect=[temporary, valid]) as get, \
+            mock.patch.object(scanner.time, "sleep") as sleep:
+        assert scanner._bounded_ledger_commit_metadata("owner", "ledger", COMMIT) == {
+            "sha": COMMIT, "parents": [BASE]}
+    assert get.call_count == 2
+    assert all(call.kwargs["allow_redirects"] is False for call in get.call_args_list)
+    sleep.assert_called_once_with(0.25)
+    assert closed == [first_status, 200]
+
+
+def test_recovery_get_has_three_attempt_bound_and_keeps_http_failure():
+    response = types.SimpleNamespace(status_code=503, headers={}, close=mock.Mock())
+    with mock.patch.object(scanner.requests, "get", return_value=response) as get, \
+            mock.patch.object(scanner.time, "sleep") as sleep, \
+            pytest.raises(recovery.RecoveryBundleError, match="metadata_http_error_503"):
+        scanner._bounded_ledger_commit_metadata("owner", "ledger", COMMIT)
+    assert get.call_count == 3
+    assert sleep.call_args_list == [mock.call(0.25), mock.call(0.75)]
+    assert response.close.call_count == 3
+
+
+def test_recovery_get_retries_transport_but_not_permanent_auth_or_redirect():
+    response = types.SimpleNamespace(status_code=200, headers={}, close=mock.Mock())
+    with mock.patch.object(scanner.requests, "get", side_effect=[scanner.requests.Timeout(), response]) as get, \
+            mock.patch.object(scanner.time, "sleep"):
+        assert scanner._recovery_github_get("https://api.github.com", timeout=(6, 15)) is response
+    assert get.call_count == 2
+    for code in (301, 302, 401, 403, 404):
+        failure = types.SimpleNamespace(status_code=code, headers={}, close=mock.Mock())
+        with mock.patch.object(scanner.requests, "get", return_value=failure) as get, \
+                mock.patch.object(scanner.time, "sleep") as sleep:
+            assert scanner._recovery_github_get("https://api.github.com") is failure
+        get.assert_called_once()
+        sleep.assert_not_called()
+
+
 def test_immutable_ack_rejects_bare_envelope_even_when_crypto_is_valid():
     compact, sidecar = _pair()
     envelope = sidecar["recovery"]

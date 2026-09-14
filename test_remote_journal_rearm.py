@@ -1036,15 +1036,15 @@ def test_timer_secret_isolation_workflow_bound_and_deploy_scope():
     gaps = [right - left for left, right in zip(minutes, minutes[1:])]
     gaps.append(60 + minutes[0] - minutes[-1])
     ec2_rearm_max_gap_seconds = max(gaps) * 60
-    post_publication_drain_bound_seconds = 240
+    post_publication_drain_bound_seconds = 1800
     total_modeled_bound_seconds = (
         ec2_rearm_max_gap_seconds + post_publication_drain_bound_seconds)
     slo_margin_seconds = 1800 - total_modeled_bound_seconds
     assert minutes == [13, 33, 53]
     assert ec2_rearm_max_gap_seconds == 1200
-    assert total_modeled_bound_seconds == 1440
-    assert slo_margin_seconds == 360
-    assert total_modeled_bound_seconds < 1800
+    assert total_modeled_bound_seconds == 3000
+    assert slo_margin_seconds == -1200
+    assert total_modeled_bound_seconds > 1800  # Observation does not prove the RPO target.
     assert "Persistent=true" in timer
     assert "AccuracySec=1us" in timer
     assert "RandomizedDelaySec=0" in timer
@@ -1067,10 +1067,10 @@ def test_timer_secret_isolation_workflow_bound_and_deploy_scope():
     assert "inputs.remoteJournalRearm != true" in workflow
     assert "--natural-rearm)" in workflow
     rearm_job = workflow.split("  remote-journal-rearm:", 1)[1]
-    assert "timeout-minutes: 8" in rearm_job
-    assert "--budget-seconds 240" in rearm_job
+    assert "timeout-minutes: 35" in rearm_job
+    assert "--budget-seconds 1800" in rearm_job
     assert workflow.count("remote_receipt_drain.py") == 6
-    assert workflow.count("--budget-seconds 240") == 2
+    assert workflow.count("--budget-seconds 1800") == 2
     assert classify([
         ".github/workflows/caos-watchtower.yml",
         ".github/workflows/memory-attribution.yml",
