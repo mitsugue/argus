@@ -137,6 +137,36 @@ def test_route_auth_idempotence_nonblocking_reads_and_frozen_context(service):
     assert 'test-owner' not in path.read_bytes().decode('utf-8',errors='ignore')
 
 
+def test_saved_subject_overview_advances_after_context_change_with_browser_closed(tmp_path):
+    import argus_market_brief
+    app=Flask(__name__);path=tmp_path/'owner.sqlite3';brief=[market_brief()];calls=[]
+    def generate(user,**kw):calls.append(user);return answer()
+    controls=api.register(app,authorize=lambda token:(True,None,200),storage_path=lambda:str(path),
+        market_brief=lambda:brief[0],generate=generate,now=lambda:AT)
+    client=app.test_client();body={'action':'overview','ownerToken':'test-owner',
+        'baseContextId':brief[0]['unifiedContext']['contextId'],'symbol':'5803','market':'JP',
+        'horizon':5,'owner':{'symbol':'5803','market':'JP','state':'HELD','quantity':100,
+            'averageCost':5000,'purchaseReason':'需要を確認','holdingPeriod':'数か月','reportedAt':AT}}
+    first=client.post('/api/argus/owner-dialogue',json=body).json
+    for _ in range(100):
+        saved=store.read(path,first['requestId'],controls['bootId'])
+        if saved and saved['status']=='SUCCEEDED':break
+        time.sleep(.01)
+    changed=copy.deepcopy(brief[0]);changed['facts'][0]['text']='日経平均・1営業日先の参考値101。'
+    changed['unifiedContext']=argus_market_brief.unified_context(changed);brief[0]=changed
+    assert controls['refreshSubjectOverviews']()['status']=='STARTED'
+    for _ in range(100):
+        rows=store.history(path,controls['bootId'])['items']
+        if len(rows)==2 and rows[0]['status']=='SUCCEEDED':break
+        time.sleep(.01)
+    assert len(rows)==2 and len(calls)==2
+    latest=rows[0]
+    assert latest['context']['baseMarketContextId']==changed['unifiedContext']['contextId']
+    assert latest['context']['previousView']['requestId']==first['requestId']
+    assert latest['context']['owner']['purchaseReason']=='需要を確認'
+    assert controls['refreshSubjectOverviews']()['status']=='CURRENT'
+
+
 def test_stale_context_and_injected_market_fields_never_call_ai(service):
     app,path,entered,release,calls,brief=service;client=app.test_client()
     assert client.post('/api/argus/owner-dialogue',json=payload(brief,baseContextId='a'*64)).status_code==409

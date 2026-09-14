@@ -1,4 +1,4 @@
-export type PushStatus = {subscriptionId:string;enabled:boolean;sq:boolean;news:boolean;deliveries:Array<{
+export type PushStatus = {subscriptionId:string;enabled:boolean;sq:boolean;news:boolean;ownerChanges:boolean;deliveries:Array<{
   id:string;status:string;attempted:number|null;display_at:string|null;opened_at:string|null}>};
 export async function pushRequest(token:string, operation:string, fields:Record<string,unknown>={}) {
   const base = (import.meta.env.VITE_ARGUS_BACKEND_URL as string|undefined)?.replace(/\/$/,'');

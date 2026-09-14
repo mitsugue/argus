@@ -100,18 +100,23 @@ class PushService:
             conn.execute('PRAGMA synchronous=FULL')
             conn.executescript('''CREATE TABLE IF NOT EXISTS subscriptions (
               id TEXT PRIMARY KEY, body TEXT NOT NULL, created REAL NOT NULL,
-              enabled INTEGER NOT NULL, sq INTEGER NOT NULL, news INTEGER NOT NULL);
+              enabled INTEGER NOT NULL, sq INTEGER NOT NULL, news INTEGER NOT NULL,
+              owner_changes INTEGER NOT NULL DEFAULT 0);
               CREATE TABLE IF NOT EXISTS deliveries (
               id TEXT PRIMARY KEY, subscription_id TEXT NOT NULL, event_key TEXT NOT NULL,
               payload TEXT NOT NULL, due REAL NOT NULL, expires REAL NOT NULL,
               status TEXT NOT NULL, attempted REAL, display_at TEXT, opened_at TEXT,
               UNIQUE(subscription_id,event_key));''')
+            columns = {row['name'] for row in conn.execute(
+                'PRAGMA table_info(subscriptions)').fetchall()}
+            if 'owner_changes' not in columns:
+                conn.execute('ALTER TABLE subscriptions ADD COLUMN owner_changes INTEGER NOT NULL DEFAULT 0')
             yield conn
             conn.commit()
         finally: conn.close()
 
     def handle(self, body):
-        allowed = {'action','ownerToken','operation','subscription','subscriptionId','sq','news','receipts'}
+        allowed = {'action','ownerToken','operation','subscription','subscriptionId','sq','news','ownerChanges','receipts'}
         if set(body) - allowed: raise ValueError('invalid_push_request')
         operation = body.get('operation')
         config = self.config()
@@ -124,17 +129,19 @@ class PushService:
         if operation == 'subscribe':
             if not config['configured']: raise ValueError('push_not_configured')
             sub = subscription(body.get('subscription'))
-            if not isinstance(body.get('sq'), bool) or not isinstance(body.get('news'), bool):
+            if (not isinstance(body.get('sq'), bool) or not isinstance(body.get('news'), bool)
+                    or ('ownerChanges' in body and not isinstance(body.get('ownerChanges'), bool))):
                 raise ValueError('invalid_push_preferences')
+            owner_changes = bool(body.get('ownerChanges', False))
             identity = hashlib.sha256(sub['endpoint'].encode()).hexdigest()
             with self.db() as db:
                 db.execute('BEGIN IMMEDIATE')
                 if not db.execute('SELECT 1 FROM subscriptions WHERE id=?', (identity,)).fetchone() and db.execute(
                     'SELECT count(*) FROM subscriptions WHERE enabled=1').fetchone()[0] >= 10:
                     raise ValueError('push_device_limit')
-                db.execute('INSERT INTO subscriptions VALUES(?,?,?,1,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body, enabled=1,sq=excluded.sq,news=excluded.news,created=CASE WHEN subscriptions.enabled=0 OR (subscriptions.news=0 AND excluded.news=1) THEN excluded.created ELSE subscriptions.created END',
-                           (identity, json.dumps(sub), now, int(body['sq']), int(body['news'])))
-                db.execute("UPDATE deliveries SET status='CANCELLED' WHERE subscription_id=? AND status='QUEUED' AND ((?=0 AND event_key LIKE 'news:%') OR (?=0 AND event_key LIKE 'jp-monthly-sq-%'))",(identity,int(body['news']),int(body['sq'])))
+                db.execute('INSERT INTO subscriptions(id,body,created,enabled,sq,news,owner_changes) VALUES(?,?,?,1,?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body, enabled=1,sq=excluded.sq,news=excluded.news,owner_changes=excluded.owner_changes,created=CASE WHEN subscriptions.enabled=0 OR (subscriptions.news=0 AND excluded.news=1) OR (subscriptions.owner_changes=0 AND excluded.owner_changes=1) THEN excluded.created ELSE subscriptions.created END',
+                           (identity, json.dumps(sub), now, int(body['sq']), int(body['news']), int(owner_changes)))
+                db.execute("UPDATE deliveries SET status='CANCELLED' WHERE subscription_id=? AND status='QUEUED' AND ((?=0 AND event_key LIKE 'news:%') OR (?=0 AND event_key LIKE 'jp-monthly-sq-%') OR (?=0 AND event_key LIKE 'owner-change:%'))",(identity,int(body['news']),int(body['sq']),int(owner_changes)))
             return self.status(identity)
         identity = body.get('subscriptionId')
         if not isinstance(identity, str) or not re.fullmatch('[a-f0-9]{64}', identity):
@@ -174,10 +181,11 @@ class PushService:
 
     def status(self, identity):
         with self.db() as db:
-            row = db.execute('SELECT enabled,sq,news FROM subscriptions WHERE id=?', (identity,)).fetchone()
+            row = db.execute('SELECT enabled,sq,news,owner_changes FROM subscriptions WHERE id=?', (identity,)).fetchone()
             records = [dict(r) for r in db.execute('SELECT id,event_key,status,attempted,display_at,opened_at FROM deliveries WHERE subscription_id=? ORDER BY due DESC LIMIT 20', (identity,))]
         return {'subscriptionId': identity, 'enabled': bool(row['enabled']), 'sq': bool(row['sq']),
-                'news': bool(row['news']), 'deliveries': records, 'remoteRecoveryVerified': False}
+                'news': bool(row['news']), 'ownerChanges': bool(row['owner_changes']),
+                'deliveries': records, 'remoteRecoveryVerified': False}
 
     def enqueue(self, db, identity, event, now):
         if not event['due'] <= event['expires'] or event['expires'] <= now: return
@@ -197,7 +205,8 @@ class PushService:
             with self.db() as db:
                 for sub in db.execute('SELECT * FROM subscriptions WHERE enabled=1').fetchall():
                     for event in events[:20]:
-                        if event['kind'] not in {'sq','news'} or not sub[event['kind']]: continue
+                        column = {'sq':'sq','news':'news','owner_changes':'owner_changes'}.get(event['kind'])
+                        if not column or not sub[column]: continue
                         if event['kind']=='news' and event['due']<sub['created']: continue
                         self.enqueue(db,sub['id'],event,now)
                 db.execute("UPDATE deliveries SET status='EXPIRED' WHERE status='QUEUED' AND expires<=?", (now,))
@@ -222,7 +231,7 @@ class PushService:
         finally: self.lock.release()
 
 
-def proposals(calendar, news, now):
+def proposals(calendar, news, now, owner_events=()):
     result = []
     for p in calendar.get('notificationProposals',[]):
         result.append({'key':p['deduplicationKey'],'kind':'sq','title':p['title'],
@@ -247,4 +256,24 @@ def proposals(calendar, news, now):
         result.append({'key':'news:'+event_id+':'+item['severity'],'kind':'news',
             'title':'重大ニュースを確認してください','body':'市場に影響し得る新しい材料があります。記事と確認状況をARGUSで確認してください。',
             'hash':'#notifications/news/'+event_id,'due':due,'expires':due+3600})
+    for item in owner_events:
+        event_id = item.get('eventId')
+        received = item.get('ingestAt') or item.get('observedAt')
+        if (not isinstance(event_id, str) or not re.fullmatch(r'[A-Za-z0-9:_-]{1,150}', event_id)
+                or item.get('sourceTimeValidated') is not True
+                or not isinstance(item.get('severity'), int) or item['severity'] < 4):
+            continue
+        try:
+            due = datetime.fromisoformat(str(received).replace('Z', '+00:00')).timestamp()
+        except Exception:
+            continue
+        if not 0 <= now-due <= 3600:
+            continue
+        state = str(item.get('ownerState') or
+                    (item.get('downsideIncident') or {}).get('ownerState') or '')
+        audience = '保有銘柄' if state in {'held','active','protected'} else '監視銘柄'
+        result.append({'key':'owner-change:'+event_id+':'+str(item['severity']),
+            'kind':'owner_changes','title':audience+'に重要な変化があります',
+            'body':'価格と市場の反応が確認条件に達しました。アプリで根拠と次に見る条件を確認してください。',
+            'hash':'#holdings','due':due,'expires':due+3600})
     return result
