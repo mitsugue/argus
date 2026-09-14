@@ -17716,7 +17716,8 @@ def _market_brief_ai_polish(brief):
         if not summary or not isinstance(value, dict):
             return None
         try:
-            return argus_presentation_intent.validate_plan(value.get("presentation"), presentation_catalog, context)
+            plan = argus_presentation_intent.validate_plan(value.get("presentation"), presentation_catalog, context)
+            return argus_presentation_intent.validate_current_reading_flow(plan, presentation_catalog, summary)
         except ValueError as exc:
             diagnostic.update(status="REJECTED", reason="presentation_invalid",
                               section="presentation", detail=str(exc))

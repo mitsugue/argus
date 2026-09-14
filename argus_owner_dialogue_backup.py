@@ -195,16 +195,18 @@ def synchronize(path,remote,keys,*,previous=None):
 class PrivateGitHubStore(transport.GitHubStore):
     write_message='Save encrypted owner dialogue recovery'
     def __init__(self,**kwargs):
-        self.deadline=time.monotonic()+180
         original=kwargs['http']
         def bounded_http(method,url,**options):
-            remaining=self.deadline-time.monotonic()
+            remaining=self.deadline-self.monotonic()
             if remaining<=0:raise TimeoutError('dialogue_backup_deadline')
             options['timeout']=(min(5,remaining),min(20,remaining))
             return original(method,url,**options)
         super().__init__(**{**kwargs,'http':bounded_http});self.repository=kwargs['repo'];self.private_verified=False
+        self.deadline=self.monotonic()+180
     def _check_deadline(self):
-        if time.monotonic()>=self.deadline:raise TimeoutError('dialogue_backup_deadline')
+        remaining=self.deadline-self.monotonic()
+        if remaining<=0:raise TimeoutError('dialogue_backup_deadline')
+        return remaining
     def assert_private(self):
         response=self.http('GET',self.base.removesuffix('/contents/'),headers=self.headers,timeout=(5,20),allow_redirects=False,stream=True)
         try:

@@ -66,12 +66,12 @@ def model_response(user):
     context = json.loads(payload.split("\n前の回答は", 1)[0])
     catalog = json.loads(instruction.split("表示候補: ", 1)[1])
     result = response(context)
-    ordered = sorted(catalog['elements'], key=lambda row: not row['urgent'])
+    ordered = sorted(catalog['elements'], key=lambda row: 0 if row['id']=='view' else 1 if row['urgent'] else 2)
     elements = []
     for index, row in enumerate(ordered):
         choice = {'id': row['id'], 'purposeJa': '根拠と確認条件を伝えます。',
-            'placement': 'lead' if row['urgent'] else 'support',
-            'emphasis': 'primary' if index == 0 else 'normal'}
+            'placement': 'lead' if row['urgent'] or row['id']=='view' else 'support',
+            'emphasis': 'primary' if row['id']=='view' else 'normal'}
         if row['id'].startswith('evidence-'):
             choice['caption'] = {'textJa': '確認できる変化と不足を分けて確認します。',
                 'evidenceIds': row['evidenceIds'][:1], 'kind': 'UNKNOWN'}
