@@ -150,11 +150,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--expected-value", action="append", default=[])
     p.add_argument("--attempts", type=int, default=1)
     p.add_argument("--retry-delay", type=float, default=2.0)
-    p.add_argument("--require-ready", action="store_true",
-                   help="Require the public readiness contract on a GET; never replay work")
     args = p.parse_args(argv)
-    if args.require_ready and (args.method.upper() != "GET" or args.data is not None):
-        p.error("--require-ready requires a read-only GET")
     headers = {}
     result = {"outcome": FAILURE, "reason": "not_attempted",
               "httpStatus": None, "body": None}
@@ -174,15 +170,6 @@ def main(argv: Optional[list[str]] = None) -> int:
                 result = classify_response(
                     code, raw, expected_statuses=args.expected_status,
                     expected_values=args.expected_value)
-                if args.require_ready and code != 200:
-                    result.update(outcome=FAILURE, reason=f"http_{code}")
-                elif args.require_ready:
-                    body = result.get("body")
-                    if not isinstance(body, dict) or body.get("schemaVersion") != \
-                            "argus-public-readiness-v1":
-                        result.update(outcome=FAILURE, reason="readiness_contract_invalid")
-                    elif body.get("ready") is not True or body.get("status") != "ready":
-                        result.update(outcome=FAILURE, reason="readiness_not_ready")
             except (TimeoutError, socket.timeout):
                 result = {"outcome": FAILURE, "reason": "timeout",
                           "httpStatus": None, "body": None}
@@ -193,7 +180,6 @@ def main(argv: Optional[list[str]] = None) -> int:
             transient_http = result.get("httpStatus") in (
                 408, 425, 500, 502, 503, 504)
             transient = result.get("reason") == "timeout" or \
-                result.get("reason") == "readiness_not_ready" or \
                 str(result.get("reason") or "").startswith("transport:") or \
                 transient_http
             if result["outcome"] != FAILURE or not transient or \

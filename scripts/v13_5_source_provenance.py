@@ -35,6 +35,8 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_macro_readiness.py': 'd1348cbcc814fb28857bd42095007f355728cd5a',
+    'scripts/macro_readiness.py': 'd9d736333960d220a5ce3fc55951abc901ea47f0',
     'docs/V13_7_REQUIREMENTS.md': '6c8ecf42af217b1dfc861027079ec0cb411a8fb5',
     'web/src/hooks/useOsintInvestigation.ts': 'ada26a80e0f0f439f97cb75858407647dc7c5d8d',
     'web/src/components/guide/Layer2BSyncCard.tsx': '20dae8bccafee961a17aad41b39f738fd5f60b76',
@@ -206,7 +208,7 @@ REVIEWED_EXTENSION_BLOBS = {
     "test_argus_v12_1_3.py": "ec334f206cc43a94f3e2dc8c7ea5015b341a0957",
     ".github/workflows/ai-rejudge.yml": "b81acfa1a3452f2467ba416c0e14ce9d9f905f04",
     "test_argus_official_lifecycle.py": "94f9ebcb4a3a4457cd0117e52e98cb55e628d3c7",
-    "test_workflow_http.py": "b99be649e412b6d4180b5769fec51caeec5b27f3",
+    "test_workflow_http.py": "3b02814b97563c1b089de97697d0bb471bee1578",
 }
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
