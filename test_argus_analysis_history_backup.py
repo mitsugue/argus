@@ -136,3 +136,32 @@ def test_worker_connection_and_public_status_do_not_expose_credentials(tmp_path,
         result=scanner.api_argus_market_brief().get_json()
     assert result['remoteBackup']['counts']['views']==1 and result['remoteRecoveryVerified'] is False
     assert 'test-token' not in str(result) and 'headVersion' not in str(result)
+
+
+def test_remote_deadline_prevents_more_network_and_preserves_local_history(tmp_path):
+    path=tmp_path/'history.sqlite';record=add(path,'2026-09-12T00:00:00Z',3000)
+    clock=[0.0];calls=[]
+    def http(*args,**kwargs):calls.append(args);raise AssertionError('expired operation sent a request')
+    remote=backup.GitHubStore(repo='test-owner/test-private',headers={},http=http,monotonic=lambda:clock[0])
+    clock[0]=backup.MAX_SYNC_SECONDS
+    with pytest.raises(TimeoutError,match='history_remote_deadline_exceeded'):
+        backup.synchronize(path,remote)
+    with pytest.raises(TimeoutError):remote.put(backup.PREFIX+'/head.json',b'new',expected_version=None)
+    assert not calls and history.read_record(path)==record
+
+
+def test_remote_stream_deadline_closes_response_and_request_timeout_shrinks():
+    clock=[0.0];timeouts=[]
+    class Response:
+        status_code=200
+        closed=False
+        def iter_content(self,size):
+            clock[0]=backup.MAX_SYNC_SECONDS+1
+            yield b'late bytes'
+        def close(self):self.closed=True
+    response=Response()
+    def http(*args,**kwargs):timeouts.append(kwargs['timeout']);return response
+    remote=backup.GitHubStore(repo='test-owner/test-private',headers={},http=http,monotonic=lambda:clock[0])
+    clock[0]=backup.MAX_SYNC_SECONDS-4
+    with pytest.raises(TimeoutError):remote.get(backup.PREFIX+'/head.json')
+    assert sum(timeouts[0])<=4 and response.closed

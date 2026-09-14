@@ -11,12 +11,14 @@ import os
 from pathlib import Path
 import sqlite3
 import tempfile
+import time
 
 import argus_analysis_history as history
 
 PREFIX = 'market-analysis/v1'
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 CHUNK_BYTES = 512 * 1024
+MAX_SYNC_SECONDS = 45
 SCHEMA = 'argus-public-analysis-backup-v1'
 
 
@@ -203,20 +205,28 @@ def synchronize(path, remote, *, last_verified_head=None):
 class GitHubStore:
     """Bounded Contents API on the already configured authenticated connection."""
     write_message = 'Save immutable public market analysis recovery'
-    def __init__(self, *, repo, headers, http):
+    def __init__(self, *, repo, headers, http, monotonic=None):
         if not isinstance(repo,str) or len(repo.split('/')) != 2 or any(not p or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-' for c in p) for p in repo.split('/')):
             raise ValueError('history_remote_repository_invalid')
         self.base = 'https://api.github.com/repos/' + repo + '/contents/'
         self.headers = dict(headers); self.http = http
+        self.monotonic = monotonic or time.monotonic
+        self.deadline = self.monotonic() + MAX_SYNC_SECONDS
 
     def _check_deadline(self):
-        pass
+        remaining = self.deadline - self.monotonic()
+        if remaining <= 0: raise TimeoutError('history_remote_deadline_exceeded')
+        return remaining
+
+    def _timeout(self):
+        remaining = self._check_deadline()
+        return min(5, remaining / 2), min(20, remaining / 2)
 
     def get(self, path):
-        self._check_deadline()
-        response = self.http('GET', self.base + path, headers=self.headers, timeout=(5,20),
+        response = self.http('GET', self.base + path, headers=self.headers, timeout=self._timeout(),
                              allow_redirects=False, stream=True)
         try:
+            self._check_deadline()
             if response.status_code == 404: return None, None
             if response.status_code != 200: raise ValueError('history_remote_read_unavailable')
             parts = []; total = 0
@@ -239,7 +249,8 @@ class GitHubStore:
         body = {'message': self.write_message,
                 'content': base64.b64encode(raw).decode('ascii')}
         if expected_version is not None: body['sha'] = expected_version
-        response = self.http('PUT', self.base + path, headers=self.headers, json=body, timeout=(5,20), allow_redirects=False)
+        response = self.http('PUT', self.base + path, headers=self.headers, json=body, timeout=self._timeout(), allow_redirects=False)
         try:
+            self._check_deadline()
             if response.status_code not in (200,201): raise ValueError('history_remote_write_conflict_or_unavailable')
         finally: response.close()
