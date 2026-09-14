@@ -1,3 +1,5 @@
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
+import { usePublicDiagnostics } from '../../hooks/useSystemHealth';
 import { useEffect } from 'react';
 import type { SystemHealth, LampStatus } from '../../hooks/useSystemHealth';
 import './SystemHealthLamps.css';
@@ -13,6 +15,7 @@ const OVERALL_JA: Record<LampStatus, string> = {
 };
 
 export function SystemHealthPopover({ health, onClose }: { health: SystemHealth | null; onClose: () => void }) {
+  const { loading, failed } = usePublicDiagnostics();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -26,8 +29,9 @@ export function SystemHealthPopover({ health, onClose }: { health: SystemHealth 
         <div className="shl-pop-head">
           <span className={`shl-dot ${health ? DOT[health.overall] : DOT.off}`} />
           <span className="shl-pop-title">システム状態</span>
-          <span className="shl-pop-overall">{health ? OVERALL_JA[health.overall] : '取得中…'}</span>
+          <span className="shl-pop-overall">{health ? OVERALL_JA[health.overall] : '未取得'}</span>
         </div>
+        {loading && <p className="shl-note"><TriangleStepLoader label={health ? "前回の状態を表示しながら更新しています" : "接続状況を読み込んでいます"} /></p>}
         {health ? (
           <div className="shl-grid">
             {health.lamps.map((l) => (
@@ -40,7 +44,7 @@ export function SystemHealthPopover({ health, onClose }: { health: SystemHealth 
             {health.noteJa && <div className="shl-note">{health.noteJa}</div>}
           </div>
         ) : (
-          <div className="shl-note">取得中…</div>
+          !loading && <div className="shl-note">{failed ? "接続状況を取得できませんでした。Settingsから再取得できます。" : "接続状況は未取得です。"}</div>
         )}
       </div>
     </>

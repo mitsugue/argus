@@ -1,3 +1,4 @@
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import React, { useEffect, useState } from 'react';
 import { newsAnalysisStatusJa, displayNewsHeadline } from '../../lib/newsHeadline';
 import { useNewsIntelligence, type NewsIntelEvent, type NewsIntelView } from '../../hooks/useNewsIntelligence';
@@ -76,7 +77,7 @@ export const NewsHistory: React.FC<{ automatic?: boolean }> = ({ automatic = fal
     }}>{open ? '過去の重要ニュースを折りたたむ' : '過去の重要ニュースを見る'}</button>
     {open && <>
       <p className="news-alerts__note">受信から24時間を過ぎた直近7日間の保存記事です。保存は最近の記事を含め最大40件で、全記事の一覧ではありません。当時の説明であり、現在の速報・売買判断ではありません。</p>
-      {loading && <p role="status">履歴を読み込み中…</p>}
+      {loading && <p><TriangleStepLoader label="続報の履歴を読み込んでいます" /></p>}
       {error && <p role="status">履歴を更新できません。{view ? '前回取得した履歴を表示しています。' : '記事が無いという意味ではありません。'}</p>}
       {view && <small>最終取得 {receivedJa(view.generatedAt)} JST</small>}
       {!loading && <button type="button" onClick={() => void load()}>履歴を再取得</button>}
@@ -160,8 +161,8 @@ export const NewsAlertsPanel: React.FC = () => {
       </div>}
       <div className="news-alerts__group">
         <small>重要なニュースと影響</small>
-        {news.status === 'loading' && material.length === 0
-          && <p className="news-alerts__empty">読み込み中…</p>}
+        {news.status === 'loading'
+          && <p className="news-alerts__empty"><TriangleStepLoader label={material.length ? '前回の記事を表示しながら更新しています' : 'ニュースを読み込んでいます'} /></p>}
         {news.status !== 'loading' && material.length === 0 && <p className="news-alerts__empty">
           {unread ? 'ニュースを取得できていません（重大ニュースが無いという意味ではありません）'
             : '現行の規則で重大と分類した直近の記事はありません。受信した記事と解析状態は下に表示します。'}

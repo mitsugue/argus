@@ -1,3 +1,4 @@
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import React, { useEffect, useRef, useState } from 'react';
 import { validUsageView, usageCost, usageCount, type UsageView, type UsageGroup } from '../../lib/aiUsageView';
 import './AiUsagePanel.css';
@@ -68,7 +69,7 @@ export function AiUsagePanel() {
     <div className="ai-usage__controls"><label>集計月（UTC）<input type="month" value={month} max={monthNow()}
       onChange={e=>change(()=>setMonth(e.target.value))}/></label>
       <button type="button" disabled={busy||!token||!month} onClick={()=>void load()}>内訳を更新</button></div>
-    {busy&&<p role="status">保存された記録を確認しています。</p>}
+    {busy&&<p><TriangleStepLoader label="費用の記録を読み込んでいます" /></p>}
     {error&&<p role="alert">{error}{view?' 前回取得した内訳を表示しています。':''}</p>}
     {view&&<>
       <p>内訳の取得：{localTime(view.generatedAt)}</p>

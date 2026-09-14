@@ -1,9 +1,9 @@
 .triangle-step-loader{
-  display:inline-flex;align-items:center;justify-content:center;gap:6px;
-  min-height:24px;color:var(--text-sub);font-size:10px;line-height:1;
+  display:inline-flex;align-items:center;justify-content:flex-start;gap:6px;max-width:100%;
+  min-height:24px;color:var(--text-sub);font-size:12px;line-height:1.5;
   opacity:1;transition:opacity .14s ease
 }
-.triangle-step-loader svg{display:block;width:24px;height:24px;overflow:visible}
+.triangle-step-loader svg{display:block;flex-shrink:0;width:24px;height:24px;overflow:visible}
 .triangle-step-loader.is-compact svg{width:20px;height:20px}
 .triangle-step-loader__dot{fill:rgba(255,255,255,.92);transform-box:view-box;
   animation-duration:5.2s;animation-timing-function:linear;
@@ -33,6 +33,8 @@
   100%{transform:translate(0,0)}
 }
 @media(prefers-reduced-motion:reduce){
-  .triangle-step-loader__dot{animation:none}
+  .triangle-step-loader .triangle-step-loader__dot{animation:none}
   .triangle-step-loader{transition:none}
 }
+
+.triangle-step-loader__label{min-width:0;overflow-wrap:anywhere}

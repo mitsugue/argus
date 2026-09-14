@@ -1,3 +1,4 @@
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import React,{useEffect,useState} from 'react';
 import {buildBackupPayload,hasBackupContent,restoreBackup,type BackupFile} from '../../lib/backup';
 import {getVaultPass,vaultIdFrom} from '../../lib/vault';
@@ -36,12 +37,12 @@ export function OwnerVaultPanel(){
      <p>パスフレーズはサーバーに送信しません。手動保存だけなら入力を端末へ保存しません。自動保存を有効にすると、この接続キーとパスフレーズを既存の端末設定に保持します。変更する場合は先に自動保存を停止してください。別端末での復元にも同じ接続情報が必要です。</p></details>
    <div className="ai-usage__group"><h4>編集後の自動保存</h4><p>アプリを開いている間、変更をまとめて暗号化保存します。アプリを閉じた後の保存は保証できません。終了前に保存照合済みの表示を確認してください。</p>
      <button disabled={busy||(!automatic&&(!token||!pass))} onClick={()=>{setError('');try{if(automatic)disableAutoSave();else enableAutoSave(token,pass);setAutomatic(autoSaveEnabled());}catch(e){setError(e instanceof Error?e.message:'自動保存の設定を変更できませんでした。');}}}>{automatic?'自動保存を停止':'接続情報を端末に保持して自動保存を開始'}</button>
-     <p role="status" data-vault-auto-phase={autoState.phase}>{autoState.message}</p>
+     <p role="status" data-vault-auto-phase={autoState.phase}>{autoState.phase==='SAVING'?<TriangleStepLoader label={autoState.message}/>:autoState.message}</p>
      {autoState.lastSuccessAt&&<p>最終保存照合 {new Date(autoState.lastSuccessAt).toLocaleString('ja-JP')}</p>}
      <p>停止しても接続情報と既存の保存点は保持します。この方式の利用後は旧方式からの自動取込みも停止します。旧保存点は明示的な復元で確認できます。</p></div>
    <div className="ai-usage__controls"><button disabled={busy||automatic||!token||!pass} onClick={()=>void save()}>今のデータを保存・送信再開</button>
      <button disabled={busy||!token||!pass} onClick={()=>void run(()=>list())}>保存点を確認</button></div>
-   {message&&<p role="status">{message}</p>}{error&&<p role="alert">{error}</p>}
+   {busy&&<p><TriangleStepLoader label={message||"保存データを確認しています"}/></p>}{!busy&&message&&<p role="status">{message}</p>}{error&&<p role="alert">{error}</p>}
    {rows.map(row=><article key={row.snapshotId} className="ai-usage__group"><p>作成 {new Date(row.exportedAt).toLocaleString('ja-JP')} · {(row.bytes/1024).toFixed(0)} KiB</p>
      <button disabled={busy} onClick={()=>void inspect(row)}>この保存点の内容を確認</button></article>)}
    {next!==null&&<button disabled={busy} onClick={()=>void run(()=>list(true))}>以前の保存点</button>}
