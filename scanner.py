@@ -26209,7 +26209,23 @@ def _github_ledger_repository(raw_base):
 
 
 def _recovery_github_get(url, **kwargs):
-    """Retry only transient GET failures before any recovery state is trusted."""
+    """Read only the configured ledger metadata with existing GitHub authority."""
+    token = (os.environ.get("ARGUS_RECOVERY_GITHUB_READ_TOKEN", "") or
+             os.environ.get("ARGUS_LAYER2B_PRIVATE_TOKEN", ""))
+    if token:
+        owner, repository = _github_ledger_repository(_LEDGER_RAW_BASE)
+        prefix = (r"https://api\.github\.com/repos/" + re.escape(owner) +
+                  "/" + re.escape(repository) + "/")
+        route = (r"(?:git/commits/[0-9a-f]{40}|git/ref/heads/[A-Za-z0-9_.-]+|"
+                 r"compare/[0-9a-f]{40}\.\.\.[0-9a-f]{40})")
+        if re.fullmatch(prefix + route, str(url)) is None:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_github_credential_destination_invalid")
+        headers = dict(kwargs.get("headers") or {})
+        headers["Authorization"] = "Bearer " + token
+        kwargs["headers"] = headers
+    # A credential must never follow a redirect, even if a caller requests it.
+    kwargs["allow_redirects"] = False
     for attempt in range(3):
         try:
             response = requests.get(url, **kwargs)

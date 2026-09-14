@@ -325,3 +325,20 @@ Authentication failures, redirects and invalid successful documents do not gain
 a fallback. Original signature, identity and ancestry checks remain mandatory.
 166 local publish/restore tests passed; recurrence prevention in production is
 pending deployment.
+
+## 2026-09-15 authenticated metadata acquisition
+
+After deploying a588459a, production reported HTTP 403 from GitHub metadata
+reads. From the same instance, an anonymous public-ledger GET returned 403 with
+remaining 0/60; the existing backend GitHub credential returned 200 with 4,804
+of 5,000 requests remaining. Short transient retries cannot recover an exhausted
+anonymous hourly window.
+
+Recovery metadata GETs use ARGUS_RECOVERY_GITHUB_READ_TOKEN when set, otherwise
+the existing ARGUS_LAYER2B_PRIVATE_TOKEN already used for backend GitHub storage.
+The credential is sent only to api.github.com and the exact configured ledger
+repository's ref, immutable commit, and compare read routes. Redirects are
+disabled; unexpected destinations fail before sending a request. No new write
+operation, token issuance, permissions expansion, or authority fallback is added.
+Response identity, signatures, ancestry and recovery acceptance remain mandatory.
+Production startup verification of this correction is pending deployment.
