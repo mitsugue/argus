@@ -633,8 +633,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     })),
   ]);
   const NEWS_ROWS_CAP = 5;
-  const urgentNews = newsRows.filter(row => row.severity === 'CRITICAL').slice(0, 1);
-  const remainingNews = newsRows.filter(row => !urgentNews.some(urgent => urgent.id === row.id));
+  const criticalNewsCount = newsRows.filter(row => row.severity === 'CRITICAL').length;
   React.useEffect(() => {
     try {
       sessionStorage.setItem('argus.todayDecisionMirror', JSON.stringify({
@@ -677,45 +676,18 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     data-canonical-instrument={selectedSymbol}
     data-canonical-horizon={`${projection?.horizonDays ?? horizon}D`}>
     <JapanSqApproachNotice />
-    {urgentNews.length > 0 && <section className="at-urgent-news" aria-label="最優先で確認する変化">
-      <TodayNewsCards rows={urgentNews} onOpen={openNewsDetails} />
-    </section>}
 
     <section className="at-view-hero" aria-label="今日の見立て">
       <MarketBriefCard signals={topSignals && !usSelected ? { activeCount: topSignals.activeCount, total: topSignals.total } : null}
         cutoff={decisionEvidence.marketView?.informationCutoff ?? null} market={view.selectedMarket} editorial={editorialScope} />
+      {criticalNewsCount > 0 && <button type="button" className="at-critical-jump"
+        onClick={()=>document.getElementById('today-material-news')?.scrollIntoView({behavior:'smooth',block:'start'})}>
+        重大なニュース・市場変化 {criticalNewsCount}件を確認する ↓
+      </button>}
     </section>
 
     <article className={`at-decision at-primary-hero card is-${view.finalAction.toLowerCase()}`}
       aria-label="A.R.G.U.S. Primary Action">
-      <details className="at-decision-details">
-        <summary>売買判断：{MARKET_STANCE[view.finalAction]}<span>判断条件とデータの状態を見る</span></summary>
-      <div className="at-call">
-        {/* v13.5.54: name the instrument the DECISION is anchored on, not the
-            series being drawn. Since the headline chart switched to the index,
-            view.selectedInstrument follows the projection — reading
-            「PRIMARY ACTION · JP N225」 while the SDA subject is 1321 is exactly
-            the confusion the index disclosure exists to prevent. */}
-        {/* v13.5.61 (owner: 「数字の表示は止めること」): the subject is named in
-            words on Today; its code stays on the Holdings page and in the
-            data-canonical-instrument contract attribute. */}
-        <small>PRIMARY ACTION · {view.selectedMarket}{' '}
-          {subjectDisplayName(view.canonicalDecision.subject?.instrumentId
-            || view.selectedInstrument?.symbol || '', view.selectedInstrument?.label)}</small>
-        <strong style={{ color: ACTION_TONE[view.finalAction] }}>{MARKET_STANCE[view.finalAction]}</strong>
-        <span className={`at-authority is-${view.canonicalDecision.status.toLowerCase()}`}>
-          {view.canonicalDecision.status === 'EVALUATED' ? '確認済み' : '判断データ確認中'}</span>
-      </div>
-      <p className="at-impact-copy">{actionCopy}</p>
-      {/* v13.5.62 (GPT review item 1): which WAIT this is — data-gated, risk-constrained, or no BUY case. */}
-      {waitKindJa(view.canonicalDecision) && <p className="at-wait-kind" data-argus-contract="wait-kind-v1">{waitKindJa(view.canonicalDecision)}</p>}
-      {/* v13.5.2: Seven Sign is COMPACT — one summary line + seven chips,
-          with meanings and the exact machine reason codes expanding on tap.
-          All truthful canonical states are preserved; while everything is
-          DATA_GATED the surface stays two short rows instead of a wall.
-          Nothing here is computed client-side — it renders the SDA
-          projection. */}
-      {/* Data availability qualifies the decision before the signals. */}
       <div className="at-kpis"><span>DATA <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></span>
         {/* v13.5.60 (owner iPhone review): the reasons behind a non-LIVE DATA
             state are ARGUS-side fetch/freshness facts, not trading information —
@@ -739,6 +711,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
             the stored evidence is on screen — with its time, never silently. */}
         {decisionEvidence.loading && decisionEvidence.generatedAt && <span className="at-stored-note" data-argus-contract="stored-evidence-note-v1">
           保存分 {new Date(decisionEvidence.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} を表示中（更新取得中）</span>}</div>
+
       <details className="at-seven" data-argus-contract="seven-sign-ladder-v1"
         data-seven-status={view.canonicalDecision.sevenSign.status}
         data-seven-level={view.actionScore ?? undefined}
@@ -747,7 +720,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         <summary aria-label={topSignals
           ? `Market Signals ${topSignals.countLabel} · Seven Sign ${view.actionScore ?? '未確定'} / 7 · ${view.canonicalDecision.sevenSign.status}`
           : `Seven Sign ${view.actionScore ?? '未確定'} / 7 · ${view.canonicalDecision.sevenSign.status}`}>
-          <small>MARKET SIGNALS</small>
+          <small>セブンサイン · 日本株の7条件</small>
           {/* v13.5.63 (GPT review item 1): the seven conditions are Japanese
               market inputs (credit balances, 1570, foreign flow…). With the US
               market selected they are labelled as Japan's, and the US
@@ -762,7 +735,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           <span className="at-seven-status">
             {usSelected ? '米国選択中: 7条件は日本固有（米国は適用外）· 米国の条件付けはVIX水準・VIX10日変化・対SPY相対力 · ' : ''}
             {topSignals ? `点灯 ${topSignals.activeCount} · ` : ''}
-            {view.actionScore == null ? 'Calibration pending · ' : ''}
+            {view.actionScore == null ? '校正待ち · ' : ''}
             判断レベル {view.actionScore == null ? '— / 7' : `${view.actionScore} / 7`}
             {topSignals ? '' : ` · ${view.canonicalDecision.sevenSign.status}`}</span>
           <span className="at-seven-chips" aria-hidden="true">
@@ -811,6 +784,35 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           </p>}
         </div>
       </details>
+      <details className="at-decision-details">
+        <summary>売買判断：{MARKET_STANCE[view.finalAction]}<span>判断条件とデータの状態を見る</span></summary>
+      <div className="at-call">
+        {/* v13.5.54: name the instrument the DECISION is anchored on, not the
+            series being drawn. Since the headline chart switched to the index,
+            view.selectedInstrument follows the projection — reading
+            「PRIMARY ACTION · JP N225」 while the SDA subject is 1321 is exactly
+            the confusion the index disclosure exists to prevent. */}
+        {/* v13.5.61 (owner: 「数字の表示は止めること」): the subject is named in
+            words on Today; its code stays on the Holdings page and in the
+            data-canonical-instrument contract attribute. */}
+        <small>PRIMARY ACTION · {view.selectedMarket}{' '}
+          {subjectDisplayName(view.canonicalDecision.subject?.instrumentId
+            || view.selectedInstrument?.symbol || '', view.selectedInstrument?.label)}</small>
+        <strong style={{ color: ACTION_TONE[view.finalAction] }}>{MARKET_STANCE[view.finalAction]}</strong>
+        <span className={`at-authority is-${view.canonicalDecision.status.toLowerCase()}`}>
+          {view.canonicalDecision.status === 'EVALUATED' ? '確認済み' : '判断データ確認中'}</span>
+      </div>
+      <p className="at-impact-copy">{actionCopy}</p>
+      {/* v13.5.62 (GPT review item 1): which WAIT this is — data-gated, risk-constrained, or no BUY case. */}
+      {waitKindJa(view.canonicalDecision) && <p className="at-wait-kind" data-argus-contract="wait-kind-v1">{waitKindJa(view.canonicalDecision)}</p>}
+      {/* v13.5.2: Seven Sign is COMPACT — one summary line + seven chips,
+          with meanings and the exact machine reason codes expanding on tap.
+          All truthful canonical states are preserved; while everything is
+          DATA_GATED the surface stays two short rows instead of a wall.
+          Nothing here is computed client-side — it renders the SDA
+          projection. */}
+      {/* Data availability qualifies the decision before the signals. */}
+
       <div className="at-action-plan" aria-label="行動条件">
         <div><b>今すること</b><span>{actionCopy}</span></div>
         <div><b>目標</b><span>{target ? `${target.value} ${target.unit}` : '検証済み目標なし'}</span></div>
@@ -846,15 +848,15 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       })}
     </section>}
 
-    <section className="at-event card at-news-top" aria-label="重大ニュース・市場リスク"
-      data-argus-contract="today-material-news-v1" data-news-count={remainingNews.length}>
+    <section id="today-material-news" className="at-event card at-news-top" aria-label="重大ニュース・市場リスク"
+      data-argus-contract="today-material-news-v1" data-news-count={newsRows.length}>
       <div className="at-head"><b>重大ニュース・市場リスク</b>
-        <span>{remainingNews.length > NEWS_ROWS_CAP ? `${NEWS_ROWS_CAP} / ${remainingNews.length}件` : `${remainingNews.length}件`}</span></div>
+        <span>{newsRows.length > NEWS_ROWS_CAP ? `${NEWS_ROWS_CAP} / ${newsRows.length}件` : `${newsRows.length}件`}</span></div>
       <p className="at-news-order">重要度順 · 赤は重大、黄は重要。同じ重要度では新しい情報から表示します。</p>
       {newsIntel.status === 'error' && <p className="at-shock-clear" role="status">
         {newsIntel.events.length ? 'ニュース更新失敗・前回取得分を表示しています。' : 'ニュースを取得できていません。'}</p>}
       {newsIntel.status === 'loading' && <p className="at-shock-clear" role="status">ニュース記事を取得中です。市場データとは別に読み込んでいます。</p>}
-      {remainingNews.length > 0 && <TodayNewsCards rows={remainingNews.slice(0, NEWS_ROWS_CAP)}
+      {newsRows.length > 0 && <TodayNewsCards rows={newsRows.slice(0, NEWS_ROWS_CAP)}
         onOpen={(id) => openNewsDetails(`news-${id}`)} />}
       {shock.status === 'data' && newsIntel.status === 'data'
         && shock.events.length === 0 && materialMailEvents.length === 0
