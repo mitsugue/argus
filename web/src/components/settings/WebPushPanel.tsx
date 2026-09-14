@@ -1,3 +1,4 @@
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import React,{useState} from 'react';
 import {appPushRegistration,applicationKey,pushReceipts,pushRequest,type PushStatus} from '../../lib/webPush';
 import './AiUsagePanel.css';
@@ -55,7 +56,7 @@ export function WebPushPanel(){
     <label className="web-push__preference"><input type="checkbox" checked={ownerChanges} disabled={busy} onChange={e=>setOwnerChanges(e.target.checked)}/>保有・監視銘柄の重要な変化</label>
     <div className="ai-usage__controls"><button disabled={busy||!token||!publicKey} onClick={enable}>{status?.enabled?'通知項目を保存':'通知を有効にする'}</button>
       {status?.enabled&&<><button disabled={busy} onClick={()=>void test()}>1分後に確認通知</button><button disabled={busy} onClick={()=>void disable()}>この端末への通知を停止</button></>}</div>
-    {busy&&<p role="status">通知の接続を確認しています。</p>}{message&&<p role="status">{message}</p>}
+    {busy&&<p><TriangleStepLoader label="通知の接続を確認しています" /></p>}{message&&<p role="status">{message}</p>}
     {status&&<><p>サーバー設定：{status.enabled?'有効':'停止中'}</p>
       {status.deliveries.map(d=><article key={d.id} className="ai-usage__group"><strong>{labels[d.status]||'状態を確認中'}</strong>
         <p>端末から報告された表示処理：{stamp(d.display_at)}<br/>通知を開いた記録：{stamp(d.opened_at)}</p></article>)}

@@ -226,7 +226,7 @@ export const ChartIntelligencePanel: React.FC<{
         aria-selected={indexKey === key} className={indexKey === key ? 'active' : ''} onClick={() => setIndexKey(key)}>{INDEX_CHART_LABELS[key]}</button>)}
     </div>}
     {scope === 'market' && indexKey && <div className="card ci-index-view" data-argus-contract="index-chart-v1" data-index={indexKey}>
-      {indexChart.loading && !indexChart.data && <p className="ci-empty">指数チャートを読み込み中</p>}
+      {indexChart.loading && <p className="ci-empty"><TriangleStepLoader label={indexChart.data ? "指数チャートを更新しています" : "指数チャートを読み込んでいます"} /></p>}
       {indexChart.expectedSkip && <p className="ci-empty">{INDEX_CHART_LABELS[indexKey]}の日足はまだ取得されていません（起動後の巡回で自動取得）。</p>}
       {indexChart.error && <p className="ci-empty">指数チャートを取得できません（{indexChart.error}）</p>}
       {indexChart.data && <>

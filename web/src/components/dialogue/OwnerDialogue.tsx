@@ -1,3 +1,4 @@
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import React, {useEffect, useRef, useState} from 'react';
 import {useMarketBrief} from '../../hooks/useMarketBrief';
 import type {AssetItem} from '../../types/assetItem';
@@ -43,7 +44,7 @@ export function OwnerDialogue({symbol,market,horizon,asset,baseContextId,previou
   const [connectionOpen,setConnectionOpen]=useState(false);
   const [question,setQuestion]=useState(initialQuestion??'');const [reason,setReason]=useState<string|null>(null);const [period,setPeriod]=useState<string|null>(null);
   const [fx,setFx]=useState('');const [job,setJob]=useState<Job|null>(null);const [rows,setRows]=useState<Job[]>([]);
-  const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [nextBefore,setNextBefore]=useState<number|null>(null);
+  const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [historyLoading,setHistoryLoading]=useState(false);const [nextBefore,setNextBefore]=useState<number|null>(null);
   const pending=useRef<Record<string,unknown>|null>(null);const alive=useRef(true);
   const base=(import.meta.env.VITE_ARGUS_BACKEND_URL as string|undefined)?.replace(/\/$/,'');
   const scope=`${market}:${symbol}:${horizon}:${focusEventId??''}:${referenceRecordId??''}`;const scopeRef=useRef(scope);scopeRef.current=scope;
@@ -92,11 +93,12 @@ export function OwnerDialogue({symbol,market,horizon,asset,baseContextId,previou
     finally{if(alive.current)setBusy(false);}
   };
   const history=async(more=false)=>{
-    const startScope=scope;setError('');
+    if(historyLoading)return;setHistoryLoading(true);const startScope=scope;setError('');
     try{const data=await post({action:'history',...(more&&nextBefore?{before:nextBefore}:{})});
       if(!Array.isArray(data.items)||!data.items.every(validJob))throw new Error('履歴形式を確認できませんでした。');
       if(alive.current&&scopeRef.current===startScope){setRows(old=>more?[...old,...data.items]:data.items);setNextBefore(data.nextBefore);}}
-    catch(e){setError(e instanceof Error?e.message:'履歴を取得できませんでした。');}
+    catch(e){if(alive.current)setError(e instanceof Error?e.message:'履歴を取得できませんでした。');}
+    finally{if(alive.current)setHistoryLoading(false);}
   };
   const reset=()=>{setJob(null);setFx('');pending.current=null;setError('');};
   const answer=job?.result?.answer;const matching=rows.filter(r=>r.context.subject.symbol===symbol&&r.context.subject.market===market&&r.context.horizonSessions===horizon&&(r.context.eventFocus?.eventId??null)===(focusEventId??null));
@@ -112,11 +114,11 @@ export function OwnerDialogue({symbol,market,horizon,asset,baseContextId,previou
     <label>ARGUSへの質問<textarea maxLength={1000} value={question} placeholder="あなたの気になること" onChange={e=>{setQuestion(e.target.value);pending.current=null;}}/></label>
     {market==='JP'&&symbol==='N225'&&<details><summary>為替の仮定を試す</summary><p>日経平均の円建て価格を変えずにドル換算します。円高による株価予測とは異なります。</p>
       <label>仮定するドル円<input type="number" min="0.01" step="0.01" value={fx} onChange={e=>{setFx(e.target.value);pending.current=null;}}/></label></details>}
-    <div className="owner-dialogue__actions"><button type="button" disabled={busy||job?.status==='RUNNING'||!token||!question.trim()||!(baseContextId ?? brief?.unifiedContext?.contextId)} onClick={()=>void ask()}>{busy?'送信中…':pending.current?'同じ質問IDで再送':'ARGUSに質問する'}</button>
-      <button type="button" disabled={!token} onClick={()=>void history()}>保存した会話</button><button type="button" onClick={reset}>仮定を閉じて元の見立てへ</button></div>
+    <div className="owner-dialogue__actions"><button type="button" disabled={busy||job?.status==='RUNNING'||!token||!question.trim()||!(baseContextId ?? brief?.unifiedContext?.contextId)} onClick={()=>void ask()}>{busy?<TriangleStepLoader compact label="送信中"/>:pending.current?'同じ質問IDで再送':'ARGUSに質問する'}</button>
+      <button type="button" disabled={!token||historyLoading} onClick={()=>void history()}>保存した会話</button><button type="button" onClick={reset}>仮定を閉じて元の見立てへ</button></div>
     {error&&<p role="alert">{error} <button type="button" onClick={()=>{retry();pending.current=null;}}>市場の根拠を更新</button></p>}
     {job&&<article aria-live="polite"><h4>{job.context.question}</h4><p>{job.context.horizonSessions}営業日 · {job.context.subject.symbol}</p>
-      {states[job.status]&&<p role="status">{states[job.status]}</p>}
+      {states[job.status]&&<p role="status">{job.status==='RUNNING'?<TriangleStepLoader label={states[job.status]}/>:states[job.status]}</p>}
       {job.status==='SAVE_FAILED'&&<button type="button" onClick={()=>void post({action:'save',requestId:job.requestId}).then(data=>{if(validJob(data))setJob(data);}).catch(()=>setError('保存を再試行できませんでした。'))}>AIを再実行せず保存を再試行</button>}
       {answer&&<OwnerAnswerBody job={job}/>}
       {job.context.calculatedHypothesis&&<p>{job.context.calculatedHypothesis.status==='AVAILABLE'?`仮定の計算: ${job.context.calculatedHypothesis.value?.toLocaleString()} ${job.context.calculatedHypothesis.unit}。${job.context.calculatedHypothesis.noteJa}`:'この仮定の数値計算に必要な原典は未取得です。'}</p>}
@@ -126,8 +128,9 @@ export function OwnerDialogue({symbol,market,horizon,asset,baseContextId,previou
       </p>)}<p>市場の根拠ID: {job.context.baseMarketContextId}</p><p>応答モデル: {job.result?.provider?.returnedModel||'未確認'} · {job.result?.provider?.completedAt||'完了時刻未確認'}</p>
         {job.remoteBackup&&<p>暗号化した遠隔コピー: {job.remoteBackup.status==='VERIFIED'?'保存・読み戻し済み':job.remoteBackup.status==='RUNNING'?'保存確認中':'未確認'}{job.remoteBackup.lastVerifiedAt?` · ${job.remoteBackup.lastVerifiedAt}`:''}{job.remoteBackup.pending?' · 最新変更の保存待ち':''}</p>}
         <p>{job.persistenceStatus==='LOCAL_DURABLE'?'サーバー保存・読み戻し済み':'保存確認待ち'}。別環境からの復旧確認は未完了です。</p></details></article>}
+    {historyLoading&&<p><TriangleStepLoader label="保存した会話を読み込んでいます"/></p>}
     {matching.length>0&&<div className="owner-dialogue__history">{matching.map(row=><button type="button" key={row.requestId} onClick={()=>setJob(row)}>{row.context.question} · {row.context.horizonSessions}営業日</button>)}</div>}
-    {nextBefore&&<button type="button" onClick={()=>void history(true)}>以前の会話を読む</button>}
+    {nextBefore&&<button type="button" disabled={historyLoading} onClick={()=>void history(true)}>以前の会話を読む</button>}
   </section>;
 }
 

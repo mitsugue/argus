@@ -1,3 +1,4 @@
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import React from 'react';
 import { MarketAnalysisHistory } from './MarketAnalysisHistory';
 import { useMarketBrief } from '../../hooks/useMarketBrief';
@@ -17,13 +18,13 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
   const cutoffJa = cutoff ? new Date(cutoff).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }) : null;
   const chartChip = signals ? `成立 ${signals.activeCount}/${signals.total}${cutoffJa ? `（${cutoffJa} 時点）` : ''}`
     : market === 'US' ? '米国: 7条件は適用外（類似局面のみ）' : brief?.chips.chart;
-  const updateState = error ? <p role="status" className="at-brief__update">
+  const updateState = loading ? <p className="at-brief__update"><TriangleStepLoader label={brief ? "前回の見立てを表示しながら更新しています" : "見立てを読み込んでいます"} /></p> : error ? <p role="status" className="at-brief__update">
     {brief ? '見立てを更新できません。最後に取得した説明を表示しています。' : '見立てを取得できません。'}
     {brief && <small> 要約作成 {new Date(brief.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}</small>}
     <button type="button" onClick={retry} disabled={loading}>再読込</button>
   </p> : null;
   if (!brief) return <div className="at-brief" aria-label="ARGUSの今日の見立て">
-    {updateState ?? <p role="status">見立てを確認中です。</p>}<MarketAnalysisHistory key="saved-history" /></div>;
+    {updateState ?? <p role="status">見立てはまだありません。</p>}<MarketAnalysisHistory key="saved-history" /></div>;
   const edition = editorial ? editorialEdition(brief) : null;
   if (edition) return <ArgusEditorialSurface brief={edition} updateState={updateState} retained={edition !== brief} generationStatus={brief.generationWorker?.status} />;
   const unified = brief.unifiedSummary;
@@ -86,7 +87,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
   return <div className="at-brief" data-argus-contract="market-brief-v1"
     aria-label="今の市場（売買権限なし）">
     <small>ARGUSの今日の見立て</small>
-    <p className="at-brief__unavailable-title">{brief.generationWorker?.status === 'RUNNING' ? '新しい見立てを確認中です。' : '見立ての更新が止まっています。'}</p>
+    <p className="at-brief__unavailable-title">{brief.generationWorker?.status === 'RUNNING' ? <TriangleStepLoader label="新しい見立てを作成しています" /> : '見立ての更新が止まっています。'}</p>
     {updateState}
     {brief.unifiedStatus && brief.unifiedStatus !== 'GENERATED' && <p role="status">
       {providerMessage ?? (brief.generationWorker?.status === 'RUNNING' ? '統合AIが見立てを更新しています。'

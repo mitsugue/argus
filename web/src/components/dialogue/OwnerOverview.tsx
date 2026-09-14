@@ -1,3 +1,4 @@
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import React, {useEffect, useState} from 'react';
 import {useMarketBrief} from '../../hooks/useMarketBrief';
 import type {AssetItem} from '../../types/assetItem';
@@ -14,9 +15,9 @@ const statusText:Record<string,string>={
   SAVE_FAILED:'回答の保存を確認できませんでした。保存済みの説明を表示します。',
 };
 export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:string;market:'JP'|'US';horizon:number;asset?:AssetItem;onReference:(job:Job|null)=>void}) {
-  const {brief}=useMarketBrief();const [token,setToken]=useState(readToken);
+  const {brief,loading:marketLoading,error:marketError}=useMarketBrief();const [token,setToken]=useState(readToken);
   const [edition,setEdition]=useState<{key:string;job:Job}|null>(null);
-  const [error,setError]=useState('');const [revision,setRevision]=useState(0);
+  const [error,setError]=useState('');const [fetching,setFetching]=useState(false);const [revision,setRevision]=useState(0);
   const base=(import.meta.env.VITE_ARGUS_BACKEND_URL as string|undefined)?.replace(/\/$/,'');
   const contextId=brief?.unifiedContext?.contextId;
   const owner=asset?{symbol,market,state:(asset.quantity??0)>0?'HELD':'WATCHING',
@@ -33,12 +34,12 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:
     return()=>{window.removeEventListener('storage',changed);window.removeEventListener('argus-owner-connection',changed);};
   },[]);
   useEffect(()=>{
-    if(!token||!contextId||!base)return;
+    if(!token||!contextId||!base){setFetching(false);return;}
     let stopped=false;let timer:number|undefined;let requestId:string|undefined;
     let active:AbortController|undefined;
     setError('');
     const load=async()=>{
-      const controller=new AbortController();active=controller;
+      const controller=new AbortController();active=controller;setFetching(true);
       const timeout=window.setTimeout(()=>controller.abort(),15000);
       try{
         const response=await fetch(base+'/api/argus/owner-dialogue',{method:'POST',cache:'no-store',signal:controller.signal,
@@ -55,7 +56,7 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:
         if(!stopped){setEdition({key:requestKey,job:value});setError('');requestId=value.requestId;
           if(value.status==='RUNNING')timer=window.setTimeout(()=>void load(),3000);}
       }catch{if(!stopped)setError('接続を確認できませんでした。再取得でも同じ生成IDを使います。');}
-      finally{window.clearTimeout(timeout);}
+      finally{window.clearTimeout(timeout);if(!stopped)setFetching(false);}
     };
     void load();
     return()=>{stopped=true;active?.abort();if(timer!==undefined)window.clearTimeout(timer);};
@@ -67,9 +68,9 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:
   if(!token)return <section className="owner-overview"><h3>この銘柄について</h3><p>所有者の接続設定を保存すると、市場と登録した保有情報から説明を自動更新します。</p></section>;
   return <section className="owner-overview" aria-label="この銘柄へのARGUSの説明">
     <header><p className="owner-overview__eyebrow">{asset?.displayNameJa||asset?.displayName||(symbol==='N225'?'日経平均':symbol)}</p><span>{horizon}営業日の見通し</span></header>
-    {!contextId&&<p role="status">市場の根拠を取得しています。</p>}
+    {!contextId&&<p role="status">{marketLoading?<TriangleStepLoader label="市場の根拠を読み込んでいます"/>:marketError?"市場の根拠を取得できません。":"市場の根拠はまだありません。"}</p>}
     {error&&<p role="status">{error}</p>}
-    {!error&&contextId&&!current&&<p role="status">{job&&edition?.key===requestKey?statusText[job.status]||'説明の更新を確認しています。':'今の根拠から説明を更新しています。'}</p>}
+    {!error&&contextId&&!current&&<p role="status">{fetching||job?.status==='RUNNING'?<TriangleStepLoader label={saved?'前回の説明を表示しながら更新しています':'この銘柄の説明を確認しています'}/>:job&&edition?.key===requestKey?statusText[job.status]||'説明の更新を確認しています。':'説明の更新待ちです。'}</p>}
     {saved&&<>{!current&&<p className="owner-overview__retained">前回の説明 · {saved.result?.provider?.completedAt||'時刻未確認'}。現在の分析とは区別して表示しています。</p>}
       <OwnerAnswerBody job={saved}/>
       <details><summary>使った根拠・時点・保存状態</summary>

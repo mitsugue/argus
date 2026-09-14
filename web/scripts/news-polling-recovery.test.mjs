@@ -38,6 +38,7 @@ try{
   await page.evaluate(()=>window.dispatchEvent(new Event('online')));
   await requested;await observedStall;
   assert.ok(counts[key]>countBefore);
+  if(key==='news'){const during=await value(key);assert.equal(during.status,'loading');assert.deepEqual(during.view,before.view,'refresh retains readable articles');}
   const other=key==='news'?'risk':'news';
   await page.waitForFunction(({id,phase})=>{const s=JSON.parse(document.getElementById(id).textContent);return s.status==='data'&&s.view.events[0].eventId===id+'-'+phase;},{id:other,phase});
   await page.clock.fastForward(20_001);

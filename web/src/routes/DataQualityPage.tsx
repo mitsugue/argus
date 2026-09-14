@@ -1,3 +1,4 @@
+import { TriangleStepLoader } from '../components/common/TriangleStepLoader';
 import React from 'react';
 import { publishDataQuality } from '../lib/positionExposureShare';
 import {
@@ -44,7 +45,7 @@ export const PublicDiagnosticsPanel: React.FC = () => {
 
   return (
     <section id="settings-status" aria-label="Data quality status">
-      {loading && <p className="cmd-alloc__note">公開診断を確認中…</p>}
+      {loading && <p className="cmd-alloc__note"><TriangleStepLoader label="接続状況を読み込んでいます" /></p>}
       {failed && !loading && (
         <div className="card cmd-alloc">
           <p className="cmd-alloc__note">公開診断を取得できません。再読込してください。</p>
