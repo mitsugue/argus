@@ -2309,6 +2309,30 @@ def test_recovery_dedicated_read_credential_takes_precedence():
         assert get.call_args.kwargs["headers"]["Authorization"] == "Bearer dedicated-test-credential"
 
 
+
+def test_recovered_overview_generation_policy_tracks_executable_model_and_provider():
+    with mock.patch.object(scanner, "_OPENAI_MODEL", "test-primary"), \
+            mock.patch.dict(os.environ, {"RENDER_GIT_COMMIT": "a"*40,
+                "OPENAI_BASE_URL": "https://api.example/v1", "OPENAI_PROJECT_ID": "test-project"}):
+        initial = scanner._owner_overview_generation_policy()
+        assert initial["model"] == "test-primary" and initial["ruleVersion"] == "a"*40
+        assert initial["maxOutputTokens"] == 3000 and initial["maxValidationAttempts"] == 2
+        assert "test-project" not in str(initial) and "https://api.example" not in str(initial)
+        with mock.patch.object(scanner, "_OPENAI_MODEL", "test-next"):
+            assert scanner._owner_overview_generation_policy()["model"] == "test-next"
+        with mock.patch.dict(os.environ, {"RENDER_GIT_COMMIT": "b"*40}):
+            assert scanner._owner_overview_generation_policy()["ruleVersion"] != initial["ruleVersion"]
+        with mock.patch.dict(os.environ, {"OPENAI_PROJECT_ID": "test-next-project"}):
+            assert scanner._owner_overview_generation_policy()["providerSettingsDigest"] != initial["providerSettingsDigest"]
+        assert scanner._owner_overview_generation_policy() == initial
+
+
+def test_recovered_overview_cannot_authorize_reuse_without_exact_executable_identity():
+    for value in ("", "unknown", "a"*7):
+        with mock.patch.dict(os.environ, {"RENDER_GIT_COMMIT": value}), \
+                pytest.raises(ValueError, match="overview_executable_identity_unavailable"):
+            scanner._owner_overview_generation_policy()
+
 @pytest.mark.parametrize('error', [TimeoutError(), ConnectionError(),
     type('APITimeoutError', (Exception,), {})(),
     type('APIConnectionError', (Exception,), {})(),

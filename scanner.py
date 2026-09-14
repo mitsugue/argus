@@ -17962,13 +17962,28 @@ _OWNER_VAULT = argus_owner_vault.VaultService(
     remote=lambda: argus_owner_vault.PrivateStore(repo=os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", ""),
         headers=_gh_private_headers(), http=requests.request))
 
+def _owner_overview_generation_policy():
+    """Bind recovered explanations to this executable and its effective GPT lane."""
+    from argus_owner_dialogue import digest
+    revision = _backend_exact_sha()
+    if revision is None:
+        raise ValueError("overview_executable_identity_unavailable")
+    return {"model": _OPENAI_MODEL, "ruleVersion": revision,
+            "provider": "openai", "endpoint": "responses",
+            "maxOutputTokens": 3000, "maxValidationAttempts": 2,
+            "providerSettingsDigest": digest({
+                key: os.environ.get(key, "") for key in
+                ("OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID")})}
+
+
 _OWNER_DIALOGUE_API = argus_owner_dialogue_api.register(app, authorize=_require_owner_sync,
     storage_path=_owner_dialogue_path, market_brief=lambda: _MARKET_BRIEF.get("data"),
     generate=_openai_prose, now=lambda: datetime.now(pytz.utc).isoformat(),
     recovery_status=_OWNER_DIALOGUE_RECOVERY.status, recovery_trigger=_OWNER_DIALOGUE_RECOVERY.tick,
     subject_comparison=_owner_dialogue_subject_comparison, subject_materials=_owner_dialogue_subject_materials,
     usage_snapshot=_ai_usage_snapshot, push_service=_WEB_PUSH, vault_service=_OWNER_VAULT,
-    event_snapshot=_owner_dialogue_event_snapshot, market_reference=_owner_dialogue_market_reference)
+    event_snapshot=_owner_dialogue_event_snapshot, market_reference=_owner_dialogue_market_reference,
+    generation_policy=_owner_overview_generation_policy)
 
 
 def _owner_overview_tick():
