@@ -36,7 +36,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
     'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
-    'web/src/hooks/useAssets.ts': 'ef8cdf9cc07cb067f2b83597ad60dad9b81df30f',
+    'web/src/hooks/useAssets.ts': 'ee6addd411bbf71c253e74a7f76165063189254b',
     'web/src/components/dialogue/OwnerOverview.tsx': 'ca8b79b46a0d46d781ccaa5ac42b88a725147fe8',
     'web/src/components/dialogue/OwnerOverview.css': 'e608b1f63bbbf8596454a9e0100cea6ee8a41a0f',
     'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',

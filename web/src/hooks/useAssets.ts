@@ -149,9 +149,9 @@ function useAssetsStore(): UseAssets {
     setAssets((cur) => cur.map((x) => (x.id === id ? { ...x, enabled: !x.enabled, updatedAt: now() } : x))), []);
 
   const updateHolding: UseAssets['updateHolding'] = useCallback((id, h) =>
-    setAssets((cur) => cur.map((x) => {
+    setAssets((cur) => { const items = cur.map((x) => {
       if (x.id !== id) return x;
-      const next = { ...x, updatedAt: now() };
+      const next = { ...x };
       const setNum = (key: 'quantity' | 'avgCost', v: number | null | undefined) => {
         if (v == null || !Number.isFinite(v) || v < 0) delete next[key];
         else next[key] = v;
@@ -164,8 +164,10 @@ function useAssetsStore(): UseAssets {
         if (value == null || !value.trim()) delete next[key];
         else if (value.length <= (key === 'purchaseReason' ? 1000 : 160)) next[key] = value.trim();
       }
-      return next;
-    })), []);
+      const unchanged = (['quantity', 'avgCost', 'purchaseReason', 'holdingPeriod'] as const)
+        .every(key => next[key] === x[key]);
+      return unchanged ? x : { ...next, updatedAt: now() };
+    }); return items.every((item, index) => item === cur[index]) ? cur : items; }), []);
 
   const reset = useCallback(() => setAssets((cur) => {
     // reset = deliberate wipe: tombstone everything current so the old items
