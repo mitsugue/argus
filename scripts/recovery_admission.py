@@ -73,6 +73,8 @@ RECOVERY_PAYLOAD_PATHS = (
     "test_argus_public_operational_boundary.py",
     "test_argus_recovery_phase_a_adapter.py",
     "test_argus_identity_installer.py",
+    "test_argus_v12_3_1.py",
+    "test_argus_v12_rc.py",
     "test_argus_v12_3_2.py",
     "test_argus_v13_4_2_remote_receipts.py",
     "test_caos_workflow_recovery.py",

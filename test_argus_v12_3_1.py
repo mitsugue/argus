@@ -140,7 +140,9 @@ class MissionWindowTests(unittest.TestCase):
         self.assertIn("workflow_dispatch", src)
         self.assertIn("group: caos-scan-scheduled-missions", src)
         self.assertIn("cancel-in-progress: false", src)
-        self.assertIn("timeout-minutes: 10", src)
+        durability_job = src.split("  durability-flush:", 1)[1].split("\n  report:", 1)[0]
+        self.assertIn("timeout-minutes: 35", durability_job)
+        self.assertIn("--budget-seconds 1800", durability_job)
         self.assertIn('"triggerSource":os.environ["TRIGGER_SOURCE"]', src)
         self.assertNotIn('curl -s --max-time 60 "$BE/healthz" > /dev/null || true', src)
 

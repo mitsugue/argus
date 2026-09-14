@@ -304,3 +304,24 @@ budget exhaustion, exact identity, no duplicate POST, and priority cleanup.
 Production verification of the correction is pending its deployment. The
 15-minute checkpoint duration and natural EC2 scheduling remain separate
 operational limitations; this change does not claim them resolved.
+
+The maximum timer gap (1,200 seconds) plus the new observation envelope
+(1,800 seconds) totals 3,000 seconds. This exceeds the 1,800-second RPO
+target; longer observation is not an RPO improvement or acceptance proof.
+The older workflow assertions now check the actual job and receipt envelopes.
+The public-route unit audit uses a fixed news corpus and clears the derived
+handoff cache so earlier live-source collection tests cannot change its inputs.
+Actual third-party quoted headlines and ARGUS-generated instructions remain
+distinct; this fixture stabilization does not certify the entire live corpus.
+
+## Transient startup metadata reads
+
+The 13.6.2 deployment stopped safely when the immutable ledger commit metadata
+GET returned an HTTP error. A subsequent GET succeeded and an unchanged service
+restart became ready at 2026-09-14T16:40:27Z. Startup metadata, ancestry compare,
+and pinned-base reads now retry transient transport/408/429/5xx responses up to
+three times. The two pauses total one second; existing request timeouts remain.
+Authentication failures, redirects and invalid successful documents do not gain
+a fallback. Original signature, identity and ancestry checks remain mandatory.
+166 local publish/restore tests passed; recurrence prevention in production is
+pending deployment.

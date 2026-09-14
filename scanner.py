@@ -26208,6 +26208,25 @@ def _github_ledger_repository(raw_base):
     return matched.group(1), matched.group(2)
 
 
+def _recovery_github_get(url, **kwargs):
+    """Retry only transient GET failures before any recovery state is trusted."""
+    for attempt in range(3):
+        try:
+            response = requests.get(url, **kwargs)
+        except (requests.Timeout, requests.ConnectionError):
+            if attempt == 2:
+                raise
+        else:
+            transient = response.status_code in (408, 429, 500, 502, 503, 504)
+            headers = getattr(response, "headers", {}) or {}
+            rate_limited = (response.status_code == 403 and
+                            headers.get("X-RateLimit-Remaining") == "0")
+            if attempt == 2 or not (transient or rate_limited):
+                return response
+            response.close()
+        time.sleep((0.25, 0.75)[attempt])
+
+
 def _bounded_ledger_commit_metadata(owner, repository, commit_sha):
     """Fetch one immutable Git commit object with a strict response cap."""
     commit = str(commit_sha or "").lower()
@@ -26216,13 +26235,13 @@ def _bounded_ledger_commit_metadata(owner, repository, commit_sha):
             "recovery_ledger_commit_invalid")
     response = None
     try:
-        response = requests.get(
+        response = _recovery_github_get(
             f"https://api.github.com/repos/{owner}/{repository}/git/commits/"
-            f"{commit}", timeout=(6, 15), stream=True,
+            f"{commit}", timeout=(6, 15), stream=True, allow_redirects=False,
             headers={"Accept": "application/vnd.github+json"})
         if response.status_code != 200:
             raise argus_remote_recovery.RecoveryBundleError(
-                "recovery_ledger_commit_metadata_http_error")
+                f"recovery_ledger_commit_metadata_http_error_{response.status_code}")
         encoded = bytearray()
         for chunk in response.iter_content(chunk_size=4096):
             if not chunk:
@@ -26287,7 +26306,7 @@ def _bounded_ledger_compare(owner, repository, base_commit_sha,
         f"{base}...{exact}")
     response = None
     try:
-        response = requests.get(
+        response = _recovery_github_get(
             request_url, timeout=(6, 15), stream=True,
             allow_redirects=False,
             headers={
@@ -26296,7 +26315,7 @@ def _bounded_ledger_compare(owner, repository, base_commit_sha,
             })
         if response.status_code != 200:
             raise argus_remote_recovery.RecoveryBundleError(
-                "recovery_ledger_compare_http_error")
+                f"recovery_ledger_compare_http_error_{response.status_code}")
         encoded = bytearray()
         for chunk in response.iter_content(chunk_size=16 * 1024):
             if not chunk:
@@ -26469,7 +26488,7 @@ def _pinned_ledger_restore_base():
             request_url = (
                 f"https://api.github.com/repos/{owner}/{repository}/git/ref/"
                 f"heads/{ref}")
-            response = requests.get(
+            response = _recovery_github_get(
                 request_url, timeout=(6, 15), stream=True,
                 allow_redirects=False,
                 headers={
@@ -26478,7 +26497,7 @@ def _pinned_ledger_restore_base():
                 })
             if response.status_code != 200:
                 _remote_recovery_restore_failure(
-                    "ledger_ref_resolution_http_error")
+                    f"ledger_ref_resolution_http_error_{response.status_code}")
             value = _response_bounded_json(
                 response, _LEDGER_REF_RESPONSE_MAX_BYTES,
                 "ledger_ref_resolution_unreadable")
