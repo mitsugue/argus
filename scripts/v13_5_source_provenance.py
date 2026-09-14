@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_v12_3_1.py': 'c26d3849a5c7219d537c1cdd8a3484c5087e4da1',
     'web/src/components/dashboard/SystemHealthPopover.tsx': '3893f26c3bef9812d841600832a96193231000ed',
     'web/src/routes/DataQualityPage.tsx': 'c86b933832c2e50f3d694f4ca1ac79428096fe55',
     'web/src/components/common/TriangleStepLoader.tsx': '218b53b03160f619d00d3e6c3b2eec90fe7922c6',
