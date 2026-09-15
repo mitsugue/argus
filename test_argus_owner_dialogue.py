@@ -147,3 +147,11 @@ def test_old_hypothesis_stays_explicit_when_discussing_changes():
     assert dialogue.validate_answer(value,current) is None
     value['changes']['textJa']='仮定の計算は400 USDでした。'
     assert dialogue.validate_answer(value,current)
+
+
+def test_context_rejects_unidentified_market_evidence_before_selection():
+    b=market_brief();b['unifiedContext']['facts'][0].pop('evidenceId')
+    b['unifiedContext']['contextId']=dialogue.digest({k:v for k,v in b['unifiedContext'].items() if k!='contextId'})
+    with pytest.raises(ValueError,match='market_facts_invalid'):
+        dialogue.build_context(brief=b,symbol='N225',market='JP',horizon=5,
+            question='何が変わりましたか？',received_at=AT)
