@@ -37355,11 +37355,14 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
         }
     except Exception:
         _jp_market_engine_context = None
+    _saved_calculation = next((row for row in reversed(_TODAY_INTELLIGENCE.get("snapshots") or [])
+        if row.get("symbol") == symbol and row.get("market") == market
+        and row.get("methodVersion") == argus_today_intelligence.METHOD_VERSION), None)
     _today_intel = argus_today_intelligence.analyze(
         daily_rows, symbol=symbol, market=market,
         short_history=_short_rows, comparison_rows=_comparison_rows,
         jp_market_engine_context=_jp_market_engine_context,
-        as_of=now_iso)
+        as_of=now_iso, stored_calculation=_saved_calculation)
     # The pure engine cannot measure breadth freshness (no ledger access), so
     # the serving layer injects the measured JP lag here. None stays None —
     # the display gate reads it as unverified, never as fresh.
