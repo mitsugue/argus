@@ -1,49 +1,49 @@
 {
- "asOf": "2026-09-14T15:27:01Z",
+ "asOf": "2026-09-15T07:07:58Z",
  "dateJst": "2026-09-15",
  "engineVersion": "scout-ledger-v1",
  "records": [
   {
    "bucket": "avoid",
    "flowClass": "UNCONFIRMED",
-   "lastClose": 4991.0,
-   "lastDate": "2026-09-14",
-   "score": -0.7,
+   "lastClose": 4910.0,
+   "lastDate": "2026-09-15",
+   "score": -0.8,
    "stance": "中立(急がない)",
    "symbol": "8058"
   },
   {
    "bucket": "neutral",
-   "flowClass": "DISTRIBUTION",
-   "lastClose": 5839.0,
-   "lastDate": "2026-09-14",
-   "score": -0.1,
+   "flowClass": "NEW_LONG_ACCUMULATION",
+   "lastClose": 6279.0,
+   "lastDate": "2026-09-15",
+   "score": -0.5,
    "stance": "中立(急がない)",
    "symbol": "9984"
   },
   {
    "bucket": "neutral",
-   "flowClass": "UNCONFIRMED",
-   "lastClose": 3845.0,
-   "lastDate": "2026-09-14",
-   "score": 0.3,
+   "flowClass": "SHORT_COVERING",
+   "lastClose": 3719.0,
+   "lastDate": "2026-09-15",
+   "score": 0.2,
    "stance": "中立(急がない)",
    "symbol": "5801"
   },
   {
-   "bucket": "lean",
+   "bucket": "neutral",
    "flowClass": "UNCONFIRMED",
-   "lastClose": 4834.0,
-   "lastDate": "2026-09-14",
-   "score": 1.2,
-   "stance": "押し目買い検討圏",
+   "lastClose": 4744.0,
+   "lastDate": "2026-09-15",
+   "score": 0.2,
+   "stance": "中立(急がない)",
    "symbol": "5803"
   },
   {
    "bucket": "neutral",
    "flowClass": "NEW_LONG_ACCUMULATION",
-   "lastClose": 777.0,
-   "lastDate": "2026-09-14",
+   "lastClose": 766.0,
+   "lastDate": "2026-09-15",
    "score": -0.2,
    "stance": "中立(急がない)",
    "symbol": "6584"
@@ -51,8 +51,8 @@
   {
    "bucket": "avoid",
    "flowClass": "UNCONFIRMED",
-   "lastClose": 50590.0,
-   "lastDate": "2026-09-14",
+   "lastClose": 51750.0,
+   "lastDate": "2026-09-15",
    "score": -0.6,
    "stance": "中立(急がない)",
    "symbol": "285A"
@@ -60,9 +60,9 @@
   {
    "bucket": "neutral",
    "flowClass": "DISTRIBUTION",
-   "lastClose": 538.1,
-   "lastDate": "2026-09-14",
-   "score": -0.2,
+   "lastClose": 529.8,
+   "lastDate": "2026-09-15",
+   "score": -0.5,
    "stance": "中立(急がない)",
    "symbol": "9501"
   }
