@@ -2500,3 +2500,39 @@ def test_brief_reuse_invalidates_prices_conditions_and_missing_executable(monkey
     assert scanner._market_brief_generation_input_digest(brief, internals) != original
     monkeypatch.setattr(scanner, '_backend_exact_sha', lambda: None)
     assert scanner._market_brief_generation_input_digest(brief, internals) is None
+
+
+def test_market_prompt_short_references_are_lossless_and_keep_facts():
+    reference = 'brief-fact-' + 'a' * 64
+    context = {'contextId': 'b' * 64, 'facts': [{'evidenceId': reference,
+        'text': 'VIX 20、2026-09-15時点。', 'verification': 'VERIFIED',
+        'provenance': {'sourceRowSha256': 'c' * 64, 'receivedAt': '2026-09-15T00:00:00Z'}}],
+        'previousFacts': [{'evidenceId': reference, 'text': '以前の見方'}],
+        'changes': {'addedEvidenceIds': [reference], 'removedEvidenceIds': []}}
+    catalog = {'inventoryId': 'd' * 64, 'contextId': context['contextId'],
+        'elements': [{'id': 'view', 'evidenceIds': [reference], 'payloadId': 'e' * 64}]}
+    before = copy.deepcopy((context, catalog))
+    short, short_catalog, restore, compact = scanner._market_brief_prompt_references(context, catalog)
+    assert restore(short) == context and restore(short_catalog) == catalog
+    assert (context, catalog) == before
+    ref = short['facts'][0]['evidenceId']
+    assert short_catalog['elements'][0]['evidenceIds'] == [ref]
+    assert short['previousFacts'][0]['evidenceId'] == ref
+    assert short['facts'][0]['text'] == context['facts'][0]['text']
+    assert short['facts'][0]['provenance']['receivedAt'] == '2026-09-15T00:00:00Z'
+    assert compact({'evidenceIds': [reference]}) == {'evidenceIds': [ref]}
+    assert restore({'textJa': ref, 'evidenceIds': [ref, 'ref-999999']}) == {
+        'textJa': ref, 'evidenceIds': [reference, 'ref-999999']}
+    assert len(json.dumps([short, short_catalog])) < len(json.dumps([context, catalog]))
+
+
+def test_market_prompt_unknown_short_reference_is_rejected_by_original_validator():
+    from test_argus_unified_brief import brief, response
+    context = scanner.argus_market_brief.unified_context(brief())
+    catalog = scanner.argus_presentation_intent.brief_inventory(context, {})
+    short, _, restore, _ = scanner._market_brief_prompt_references(context, catalog)
+    answer = response(short)
+    answer['reasons']['evidenceIds'] = ['ref-999999']
+    diagnostic = {}
+    assert scanner.argus_market_brief.validate_unified_ai(restore(answer), context, diagnostic=diagnostic) is None
+    assert diagnostic['reason'] == 'unknown_evidence_reference'
