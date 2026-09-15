@@ -169,7 +169,11 @@ export function OwnerAnswerBody({job}:{job:Job}) {
     {job.context.retrievalRecord?.policyVersion==='owner-edition-retrieval-v1'&&<details className="argus-editorial__element is-quiet placement-detail">
       <summary>この回答で確認した範囲</summary>
       <p className="argus-editorial__text">この対象・期間の現在の根拠と、比較できる前回の根拠を読みました。内容が変わらない資料は一度だけ読み、変更・相違・不明点は残しています。</p>
-      <p className="argus-editorial__uncertain">過去の全記録を検索する機能はまだ接続していません。今回の資料に反証が見当たらなくても、反証が存在しないことを意味しません。</p>
+      <p className="argus-editorial__uncertain">{job.context.retrievalRecord.archiveSearchStatus==='BOUNDED_EVENT_MEMORY'
+        ?'同じテーマの保存済みイベントから、当時の根拠と反対材料を件数・容量の範囲内で確認しました。過去の仮説に対する反証であり、現在の見方を直接否定するものではありません。全履歴を網羅した検索ではありません。'
+        :job.context.retrievalRecord.archiveSearchStatus==='UNAVAILABLE'
+          ?'関連する過去記録を確認できなかったため、現在と前回の根拠で説明しています。'
+          :'過去の全記録を検索する機能はまだ接続していません。'}見つからなかったことは、反証が存在しないことを意味しません。</p>
     </details>}
     </div>;
 }

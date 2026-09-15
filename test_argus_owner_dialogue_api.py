@@ -462,3 +462,32 @@ def test_real_cached_price_comparison_reuses_clock_change_but_not_source_change(
     assert third.status_code==202 and third.json['requestId']!=first['requestId']
     assert store.read(path,first['requestId'],controls['bootId'])['context']==frozen['context']
     assert store.read(path,first['requestId'],controls['bootId'])['result']==frozen['result']
+
+
+@pytest.mark.parametrize('lookup_fails', [False, True])
+def test_event_history_uses_request_cutoff_and_keeps_current_facts(tmp_path, lookup_fails):
+    import argus_causal_event_memory as cem
+    from test_argus_causal_event_memory import build_event, news, ledger_state
+    _, state = ledger_state(tmp_path, build_event(news(event_type='INFLATION')))
+    app=Flask(__name__);path=tmp_path/'dialogue.sqlite3';brief=market_brief()
+    snapshot={'eventId':'calendar-cpi','eventCode':'CPI','title':'CPI'}
+    lookups=[];finished=threading.Event()
+    def lookup(selected, *, cutoff):
+        lookups.append((copy.deepcopy(selected),cutoff));selected['title']='local change'
+        if lookup_fails:raise OSError('unavailable')
+        return cem.reasoning_retrieval(state,family='INFLATION_RATES',as_of=cutoff)
+    def generate(*args,**kwargs):finished.set();return answer()
+    api.register(app,authorize=lambda token:(True,None,200),storage_path=lambda:str(path),
+        market_brief=lambda:brief,generate=generate,now=lambda:AT,
+        event_snapshot=lambda event_id:snapshot,event_history=lookup)
+    body=payload(brief,focusEventId='calendar-cpi');client=app.test_client()
+    response=client.post('/api/argus/owner-dialogue',json=body)
+    assert response.status_code==202 and finished.wait(2)
+    assert lookups==[(snapshot,AT)] and snapshot['title']=='CPI'
+    saved=client.post('/api/argus/owner-dialogue',json={'action':'history','ownerToken':'test-owner'}).json['items'][0]['context']
+    assert saved['eventFocus']['snapshot']['title']=='CPI'
+    assert any(f['source']=='price_path_calculation' for f in saved['facts'])
+    assert saved['retrievalRecord']['archiveSearchStatus']==('UNAVAILABLE' if lookup_fails else 'BOUNDED_EVENT_MEMORY')
+    before=len(lookups)
+    assert client.post('/api/argus/owner-dialogue',json=body).status_code==200
+    assert len(lookups)==before

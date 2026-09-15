@@ -47,7 +47,7 @@ def generate_answer(context, generate):
         'answer': answer, 'provider': provider, 'validation': validation}
 
 
-def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None, push_service=None, vault_service=None, event_snapshot=None, market_reference=None, generation_policy=None):
+def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None, push_service=None, vault_service=None, event_snapshot=None, market_reference=None, generation_policy=None, event_history=None):
     boot_id = str(uuid.uuid4())
     lock = threading.Lock()
     save_failures = {}
@@ -348,12 +348,19 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                 comparison=subject_comparison(brief=current,symbol=body.get('symbol'),market=body.get('market'),
                     horizon=body.get('horizon'),cutoff=received_at) if subject_comparison and reference is None else None
                 materials=subject_materials(symbol=body.get('symbol'),market=body.get('market'),cutoff=received_at) if subject_materials and reference is None else None
+                selected_event = (deepcopy(event_snapshot(body['focusEventId']))
+                    if event_snapshot and body.get('focusEventId') else None)
+                if isinstance(selected_event, dict) and event_history:
+                    try:
+                        selected_event['relatedMemory'] = event_history(deepcopy(selected_event), cutoff=received_at)
+                    except Exception:
+                        selected_event['relatedMemory'] = {'status':'UNAVAILABLE', 'reason':'event_history_lookup_failed'}
                 context=dialogue.build_context(brief=current,symbol=body.get('symbol'),market=body.get('market'),
                     horizon=body.get('horizon'),question=body.get('question'),received_at=received_at,
                     owner=body.get('owner'),previous=previous['context'] if previous else None,
                     hypothesis=body.get('hypothesis'),index_quote=dialogue.index_quote(current,body.get('horizon')),
                     subject_comparison=comparison,material_facts=materials,focus_event_id=body.get('focusEventId'),
-                    event_snapshot=event_snapshot(body['focusEventId']) if event_snapshot and body.get('focusEventId') else None)
+                    event_snapshot=selected_event)
                 if reference is not None:
                     context['referenceEdition'] = {'recordId':reference['recordId'],
                         'recordedAt':reference['recordedAt'], 'isCurrentMarketAnalysis':False}
