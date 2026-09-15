@@ -17985,7 +17985,8 @@ def _owner_dialogue_event_snapshot(event_id):
             return selected
         # The detailed calendar also offers events beyond the urgent seven-day list.
         snapshot = get_events_snapshot(allow_provider_fetch=False)
-        calendar = argus_important_events.build_important_events(snapshot.get('events') or [],
+        calendar = argus_important_events.build_important_events(
+            [event for event in snapshot.get('events') or [] if event.get('id') == event_id],
             owner_symbols=_owner_symbols_for_events())
         for event in calendar:
             if event.get('eventId') != event_id:
