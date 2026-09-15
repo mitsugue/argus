@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from argus_explanation_contract import (
     UNIFIED_FACT_LIMIT, UNIFIED_SECTIONS, _FORBIDDEN_BRIEF_PATTERNS,
-    _digits_of, validate_unified_ai, calculation_identity,
+    _digits_of, validate_unified_ai, calculation_identity, prompt_references,
 )
 
 BRIEF_SCHEMA = "argus-market-brief-v1"

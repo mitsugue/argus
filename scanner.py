@@ -17716,8 +17716,7 @@ def _compose_market_brief():
 
 def _market_brief_prompt_references(context, catalog):
     """Share lossless request-local references with owner explanations."""
-    from argus_explanation_contract import prompt_references
-    return prompt_references(context, catalog)
+    return argus_market_brief.prompt_references(context, catalog)
 
 
 def _market_brief_ai_polish(brief):
