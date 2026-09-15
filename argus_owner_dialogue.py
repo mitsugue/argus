@@ -249,7 +249,7 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
         raise ValueError('market_context_unavailable')
     if public['contextId']!=digest({k:v for k,v in public.items() if k!='contextId'}):raise ValueError('market_context_integrity')
     facts=deepcopy(public.get('facts') or [])
-    if len(facts)>argus_explanation_contract.UNIFIED_FACT_LIMIT or any(not isinstance(f,dict) for f in facts):raise ValueError('market_facts_invalid')
+    if len(facts)>argus_explanation_contract.UNIFIED_FACT_LIMIT or any(not isinstance(f,dict) or not isinstance(f.get('evidenceId'),str) or not f['evidenceId'] for f in facts):raise ValueError('market_facts_invalid')
     # Only the requested horizon's calculation facts enter the private explanation.
     facts=[f for f in facts if not str((f.get('provenance') or {}).get('eventId','')).startswith(('market-internals-','n225-price-path-'))
         or str((f.get('provenance') or {}).get('eventId','')).endswith('-'+str(horizon))]
