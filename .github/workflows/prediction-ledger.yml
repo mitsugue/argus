@@ -49,10 +49,13 @@ jobs:
         run: |
           RUNTIME="$RUNNER_TEMP/argus-prediction-ledger-runtime"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          install -d "$RUNTIME"
+          install -d "$RUNTIME" "$RUNTIME/scripts"
           test -f scripts/run_prediction_ledger.py
           install -m 0644 scripts/run_prediction_ledger.py \
             "$RUNNER_TEMP/run_prediction_ledger.py"
+          install -m 0644 scripts/run_prediction_ledger.py "$RUNTIME/scripts/run_prediction_ledger.py"
+          install -m 0644 scripts/export_event_prediction_results.py "$RUNTIME/scripts/export_event_prediction_results.py"
+          install -m 0644 argus_event_prediction_results.py "$RUNTIME/argus_event_prediction_results.py"
           # The Layer 2B / DV shadow steps run after the ledger-branch
           # checkout, where scripts/ no longer exists in the working tree —
           # stage the HTTP helper next to the ledger runtime.
@@ -75,6 +78,9 @@ jobs:
             "$RUNTIME/argus_decision_ledger.py" \
             "$RUNTIME/argus_market_data_truth.py" \
             "$RUNTIME/argus_market_clock.py" \
+            "$RUNTIME/scripts/run_prediction_ledger.py" \
+            "$RUNTIME/scripts/export_event_prediction_results.py" \
+            "$RUNTIME/argus_event_prediction_results.py" \
             > "$RUNTIME/SHA256SUMS"
       - name: Trigger AI judgment run without blocking the canonical ledger
         env:
@@ -570,6 +576,7 @@ jobs:
           PY
 
       - name: Commit to ledger branch
+        id: canonical_commit
         if: github.event.inputs.mode != 'ai-only'
         run: |
           git config user.name "argus-ledger[bot]"
@@ -642,6 +649,27 @@ jobs:
             --expected-value private_store_not_configured \
             --url "$BE/api/argus/decision-value/shadow-run")
           echo "🎛️ DV shadow: \`${RESP:0:200}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish bounded event prediction result lookup
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
+        run: |
+          RUNTIME="$RUNNER_TEMP/argus-prediction-ledger-runtime"
+          sha256sum -c "$RUNTIME/SHA256SUMS"
+          SOURCE_COMMIT=$(git rev-parse HEAD)
+          # Canonical records are committed; private-store failures do not block this lookup.
+          # This replaceable lookup carries original pairs, never new scores.
+          python3 "$RUNTIME/scripts/export_event_prediction_results.py" \
+            --ledger-root ledger/prediction/v2 \
+            --output "$RUNNER_TEMP/event-prediction-results.json" \
+            --source-commit "$SOURCE_COMMIT"
+          install -d ledger/event-prediction-results/v1
+          install -m 0644 "$RUNNER_TEMP/event-prediction-results.json" \
+            ledger/event-prediction-results/v1/recent.json
+          git add ledger/event-prediction-results/v1/recent.json
+          if ! git diff --cached --quiet; then
+            git commit -m "ledger: refresh bounded event prediction result lookup"
+            git push origin HEAD:ledger
+          fi
 
       # The ledger is ARGUS's memory — a silent failure would quietly stop the
       # learning loop. Push a phone alert if ANY step above failed (v10.3.1).

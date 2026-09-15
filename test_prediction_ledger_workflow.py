@@ -127,3 +127,18 @@ def test_event_ledger_plain_push_shares_the_writer_queue():
     assert "group: ledger-branch-writer" in source
     assert "cancel-in-progress: false" in source
     assert "git push origin HEAD:ledger" in source
+
+
+def test_result_lookup_runs_after_canonical_commit_with_exact_staged_runtime():
+    source = _source()
+    publish = source.index('Publish bounded event prediction result lookup')
+    assert source.index('Commit to ledger branch') < publish
+    assert 'id: canonical_commit' in source
+    assert "steps.canonical_commit.outcome == 'success'" in source[publish:]
+    step = source[publish:source.index('# The ledger is ARGUS', publish)]
+    assert 'sha256sum -c "$RUNTIME/SHA256SUMS"' in step
+    assert 'SOURCE_COMMIT=$(git rev-parse HEAD)' in step
+    assert '--source-commit "$SOURCE_COMMIT"' in step
+    assert 'git add ledger/event-prediction-results/v1/recent.json' in step
+    assert '/api/' not in step and 'curl ' not in step
+    assert 'scripts/export_event_prediction_results.py' in source[:source.index('Switch to ledger branch')]

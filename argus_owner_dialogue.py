@@ -189,7 +189,7 @@ def subject_fact(brief, symbol, horizon, subject_comparison=None):
 
 
 
-def event_focus(value, event_id, cutoff):
+def event_focus(value, event_id, cutoff, *, market=None, symbol=None):
     """Freeze the selected server event; client labels never become evidence."""
     if event_id is None: return None, []
     event_id = text(event_id, 160)
@@ -294,6 +294,28 @@ def event_focus(value, event_id, cutoff):
             ensure_ascii=False, separators=(',',':'))
             + '。見つからないことは反証が存在しないという意味ではありません。',
             'related_event_memory_coverage', kind='UNKNOWN'))
+    result_source = value.get('predictionResultSource')
+    if result_source is not None:
+        try:
+            from argus_event_prediction_results import related_result_context
+            if not isinstance(result_source, Mapping) or result_source.get('status') != 'AVAILABLE':
+                raise ValueError('prediction_result_source_unavailable')
+            linked = related_result_context(selected.get('relatedMemory') or {},
+                result_source['data'], as_of=cutoff, market=market, symbol=symbol)
+            selected['relatedPredictionResults'] = linked
+            entry = fact('当時この出来事を参照した予測とその後の結果。対象商品・期間を保持し、出来事が値動きを起こした証明とは扱いません: '
+                + json.dumps(linked, ensure_ascii=False, separators=(',',':')),
+                'related_prediction_results', kind='HISTORICAL_CONTEXT')
+            entry['provenance'] = {'receivedAt':result_source.get('readAt'),
+                'observedAt':linked['source']['asOf'], 'sourceRowSha256':linked['digest'],
+                'sourceLabel':'ARGUSが記録した予測と結果',
+                'url':'https://github.com/mitsugue/argus/tree/' + linked['source']['sourceCommit'] + '/ledger/prediction/v2'}
+            rows.append(entry)
+        except (ValueError, KeyError, TypeError):
+            selected['relatedPredictionResults'] = {'status':'UNAVAILABLE',
+                'lastSuccessfulReadAt':result_source.get('lastSuccessfulReadAt') if isinstance(result_source, Mapping) else None}
+            rows.append(fact('当時の予測に対応する結果を読み取り・検証できませんでした。未確認を的中や結果なしとは扱いません。',
+                             'related_prediction_results', kind='UNKNOWN'))
     require_allowed(selected)
     return {'eventId': event_id, 'status': 'AVAILABLE', 'capturedAt': cutoff,
         'snapshot': selected, 'snapshotSha256': digest(selected)}, rows
@@ -322,7 +344,7 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
     if material_facts:
         if not isinstance(material_facts,list) or len(material_facts)>5:raise ValueError('subject_material_bound')
         facts.extend(deepcopy(material_facts))
-    selected_event, event_facts = event_focus(event_snapshot, focus_event_id, received_at)
+    selected_event, event_facts = event_focus(event_snapshot, focus_event_id, received_at, market=market, symbol=symbol)
     facts.extend(event_facts)
     facts.append(fact(f'質問の対象は{market}:{symbol}、比較・見通しの期間は{horizon}営業日です。','requested_subject',kind='REQUEST_SCOPE'))
     private=owner_snapshot(owner,symbol=symbol,market=market,received_at=received_at)
@@ -366,6 +388,16 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
                 context['indexComparison'] = deepcopy(chart)
                 context['indexComparisonEvidenceId'] = matching_fact['evidenceId']
     context['retrievalRecord'] = retrieval_record(context)
+    linked = ((context.get('eventFocus') or {}).get('snapshot') or {}).get('relatedPredictionResults') or {}
+    if linked.get('status') == 'AVAILABLE' and len(json.dumps(context, ensure_ascii=False).encode()) > 65536:
+        context['facts'] = [row for row in context['facts'] if row.get('source') != 'related_prediction_results']
+        context['facts'].append(fact('今回の入力上限により、関連する予測結果の本文を省略しています。現在の情報と関連イベントの根拠は残しています。',
+                                     'related_prediction_results', kind='UNKNOWN'))
+        focus = context['eventFocus']
+        focus['snapshot']['relatedPredictionResults'] = {'status':'UNAVAILABLE', 'reason':'CONTEXT_BYTE_BOUND',
+            'omittedResultCount':len(linked['records']), 'omittedPackageDigest':linked['digest']}
+        focus['snapshotSha256'] = digest(focus['snapshot'])
+        context['retrievalRecord'] = retrieval_record(context)
     if len(json.dumps(context,ensure_ascii=False).encode())>65536:raise ValueError('private_context_size_bound')
     require_allowed(context);context['contextId']=digest(context);return context
 
@@ -442,6 +474,16 @@ def reasoning_context(context):
         memory.pop('records')
         memory['recordsEvidenceReferences'] = references
         memory['recordBodiesSource'] = 'facts:related_event_memory'
+    linked = event_snapshot.get('relatedPredictionResults') or {}
+    if linked.get('status') == 'AVAILABLE':
+        serialized = json.dumps(linked, ensure_ascii=False, separators=(',',':'))
+        evidence = next((row for row in current if row.get('source') == 'related_prediction_results'
+            and (row.get('provenance') or {}).get('sourceRowSha256') == linked.get('digest')
+            and row.get('text', '').endswith(': ' + serialized)), None)
+        if evidence:
+            event_snapshot['relatedPredictionResults'] = {'schemaVersion':linked['schemaVersion'],
+                'digest':linked['digest'], 'recordBodiesSource':'facts:related_prediction_results',
+                'evidenceId':evidence['evidenceId']}
     value['retrievalCoverage'] = {
         'scope': record['scope'], 'archiveSearchStatus': record['archiveSearchStatus'],
         'counterevidenceSearchStatus': record['counterevidenceSearchStatus'],
@@ -474,6 +516,7 @@ def prompt(context, *, prepared_context=None, prepared_catalog=None):
         'previousSharedEvidenceIdsは前回にも存在し、出典・時点を含め内容が完全に同じ根拠です。本文はfactsを参照し、前回情報がないとは扱いません。'
         'retrievalCoverageの検索範囲を超えて過去を網羅した、反証が存在しない、と断定しません。現在と前回で異なる根拠や不明点は、支持・反対の両方から検討します。'
         'outcomeWindowsは元の仮説について後から観測した結果です。当時の予測・別期間の結果・現在の見通しを分け、originと観測窓を保ちます。結果がない、UNSCORABLE、DATA_GATEDを成功やゼロ変化とせず、結果から原因・的中率・売買判断を作りません。'
+        'relatedPredictionResultsは、出来事を当時の根拠に含めていた正本予測と実測結果の対応です。対象銘柄と期間を明示し、出来事による因果関係・仮説の的中・校正された確率とは解釈しません。UNSCORABLEは未評価であり、別の銘柄や期間の結果で代用しません。'
         '\n入力データ:\n'+json.dumps(reasoning_context(context) if prepared_context is None else prepared_context,ensure_ascii=False,separators=(',',':'))
         + '\n' + generation_instruction(dialogue_inventory(context) if prepared_catalog is None else prepared_catalog))
 
