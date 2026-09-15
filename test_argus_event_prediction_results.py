@@ -112,3 +112,77 @@ def test_bounds_and_timezone_are_enforced(history):
         select(history, limit=0)
     with pytest.raises(ValueError, match='timezone_required'):
         select(history, as_of='2026-08-13T00:00:00')
+
+
+def test_bounded_loader_reads_original_from_its_committed_segment(history, tmp_path):
+    original = copy.deepcopy(history)
+    loaded = results.load_recent_pairs(tmp_path)
+    assert loaded['pairs'] == [history[1]]
+    assert loaded['sourceSegmentCount'] == 2
+    assert loaded['outcomeCount'] == loaded['selectedPairCount'] == 1
+    assert loaded['scope'] == 'LATEST_COMMITTED_SEGMENT_OUTCOMES'
+    assert loaded['historyComplete'] is False
+    assert loaded['actionAuthority'] is False
+    assert loaded['omissions'] == {}
+    assert select(loaded['pairs'])['records'] == select(history)['records']
+    assert history == original
+
+
+def test_bounded_loader_reports_omitted_sources_and_never_invents_results(history, tmp_path, monkeypatch):
+    monkeypatch.setattr(results, 'MAX_SOURCE_SEGMENTS', 1)
+    loaded = results.load_recent_pairs(tmp_path)
+    assert loaded['pairs'] == []
+    assert loaded['omissions'] == {'SOURCE_SEGMENT_BOUND': 1}
+    monkeypatch.setattr(results, 'MAX_SOURCE_SEGMENTS', 8)
+    monkeypatch.setattr(results, 'MAX_PAIR_BYTES', 2)
+    loaded = results.load_recent_pairs(tmp_path)
+    assert loaded['pairs'] == []
+    assert loaded['omissions'] == {'PAIR_BYTE_BOUND': 1}
+
+
+def test_bounded_loader_rejects_changed_original_and_mismatched_manifest(history, tmp_path):
+    import json
+    from scripts import run_prediction_ledger as runner
+    head = _read(tmp_path / 'commit-head.json')
+    manifest_path = tmp_path / head['manifest']['path']
+    manifest = _read(manifest_path)
+    original = manifest_path.read_bytes()
+    manifest['generation'] += 1
+    manifest.pop('digest')
+    manifest_path.write_bytes(runner._canonical_bytes(runner._sealed_document(manifest)) + b'\n')
+    with pytest.raises(ValueError, match='commit_manifest_mismatch'):
+        results.load_recent_pairs(tmp_path)
+    manifest_path.write_bytes(original)
+    index = _read(tmp_path / manifest['index']['path'])
+    identity = next(row for row in index['identities'] if row['id'] == history[1]['prediction']['id'])
+    path = tmp_path / identity['sourceSegment']
+    value = json.loads(path.read_text())
+    value['issuedDecisions'][0]['forecastValue'] = 'altered'
+    path.write_bytes(runner._canonical_bytes(value) + b'\n')
+    with pytest.raises(runner.LedgerRunError, match='digest'):
+        results.load_recent_pairs(tmp_path)
+
+
+def test_bounded_loader_limits_bytes_and_rejects_symlink(history, tmp_path, monkeypatch):
+    monkeypatch.setattr(results, 'MAX_SOURCE_BYTES', 8)
+    with pytest.raises(ValueError, match='source_byte_bound'):
+        results.load_recent_pairs(tmp_path)
+    monkeypatch.setattr(results, 'MAX_SOURCE_BYTES', 48 * 1024 * 1024)
+    head = tmp_path / 'commit-head.json'; moved = tmp_path / 'saved-head.json'
+    head.rename(moved); head.symlink_to(moved)
+    with pytest.raises(OSError):
+        results.load_recent_pairs(tmp_path)
+
+
+def test_derived_export_preserves_canonical_files_and_is_repeatable(history, tmp_path):
+    from scripts.export_event_prediction_results import export
+    original = {p.relative_to(tmp_path): p.read_bytes() for p in tmp_path.rglob('*.json')}
+    target = tmp_path.parent / (tmp_path.name + '-lookup.json')
+    first = export(tmp_path, target, source_commit='1' * 40)
+    raw = target.read_bytes()
+    assert export(tmp_path, target, source_commit='1' * 40) == first
+    assert target.read_bytes() == raw
+    assert first['sourceCommit'] == '1' * 40 and first['rebuildable'] is True
+    assert all((tmp_path / path).read_bytes() == body for path, body in original.items())
+    with pytest.raises(ValueError, match='must_not_replace_canonical'):
+        export(tmp_path, tmp_path / 'commit-head.json', source_commit='1' * 40)

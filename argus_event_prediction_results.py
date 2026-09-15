@@ -130,3 +130,118 @@ def select_event_results(event, pairs, *, as_of, market, symbol, limit=2):
             'excludedFutureCount': excluded_future,
             'omittedByLimit': max(0, len(rows) - limit),
             'historyComplete': False, 'actionAuthority': False}
+
+
+MAX_SOURCE_SEGMENTS = 8
+MAX_SOURCE_BYTES = 48 * 1024 * 1024
+MAX_PAIR_BYTES = 1024 * 1024
+
+
+def load_recent_pairs(ledger_root):
+    """Read a bounded projection of one committed ledger generation.
+
+    This is a derived retrieval input, never a replacement for the writer's
+    complete authority validation. Call after the writer has committed, or
+    against a checkout pinned to one Git commit; do not rescan on each UI read.
+    Missing indexed originals and bounded omissions remain explicit.
+    """
+    import json
+    import os
+    import stat
+    from pathlib import Path
+    from scripts import run_prediction_ledger as runner
+
+    root = Path(ledger_root)
+    read_bytes = 0
+
+    def read(path, maximum):
+        nonlocal read_bytes
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, 'rb') as source:
+            info = os.fstat(source.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                raise ValueError('event_result_regular_file_required')
+            remaining = min(maximum, MAX_SOURCE_BYTES - read_bytes)
+            if info.st_size > remaining:
+                raise ValueError('event_result_source_byte_bound')
+            raw = source.read(remaining + 1)
+            if len(raw) > remaining:
+                raise ValueError('event_result_source_byte_bound')
+        read_bytes += len(raw)
+        value = json.loads(raw)
+        if raw != runner._canonical_bytes(value) + b'\n':
+            raise ValueError('event_result_source_encoding_invalid')
+        return value
+
+    head = runner._decode_commit_head(read(root / 'commit-head.json', runner.MAX_COMMIT_HEAD_BYTES))
+    manifest_path = runner._confined_path(root, head['manifest']['path'], top='manifests')
+    manifest = runner._verify_document(read(manifest_path, runner.MAX_MANIFEST_BYTES),
+        schema=runner.MANIFEST_SCHEMA, record_type='prediction_ledger_manifest')
+    if head != runner._commit_head_document(manifest, manifest_path=head['manifest']['path']):
+        raise ValueError('event_result_commit_manifest_mismatch')
+    as_of = manifest['updatedAt']
+    _time(as_of)
+    inventory_ref = manifest['inventory']
+    inventory_path = runner._confined_path(root, inventory_ref['path'], top='inventories')
+    inventory = runner._decode_inventory(read(inventory_path, runner.MAX_INVENTORY_BYTES))
+    if inventory['digest'] != inventory_ref['digest'] or inventory['head'] != manifest['head']:
+        raise ValueError('event_result_inventory_mismatch')
+    references = {row['path']: row for row in inventory['segments']}
+    index_ref = manifest['index']
+    index_path = runner._confined_path(root, index_ref['path'], top='indexes')
+    index_doc = read(index_path, runner.MAX_INDEX_BYTES)
+    index = runner._decode_index(index_doc)
+    if index_doc['digest'] != index_ref['digest']:
+        raise ValueError('event_result_index_mismatch')
+    segments = {}
+    omissions = {}
+
+    def omit(reason): omissions[reason] = omissions.get(reason, 0) + 1
+
+    def segment(relative):
+        if relative in segments: return segments[relative]
+        if relative not in references:
+            raise ValueError('event_result_segment_not_committed')
+        if len(segments) >= MAX_SOURCE_SEGMENTS:
+            omit('SOURCE_SEGMENT_BOUND'); return None
+        ref = references[relative]
+        path = runner._confined_path(root, relative, top='segments')
+        if read_bytes + path.lstat().st_size > MAX_SOURCE_BYTES:
+            omit('SOURCE_BYTE_BOUND'); return None
+        value = runner._verify_segment(read(path, runner.MAX_SEGMENT_BYTES))
+        if runner._segment_reference(value, relative) != ref:
+            raise ValueError('event_result_segment_reference_mismatch')
+        segments[relative] = value
+        return value
+
+    current = segment(manifest['head']['path'])
+    if current is None: raise ValueError('event_result_head_unreadable')
+    outcomes = sorted(current['outcomeResolutions'],
+        key=lambda row: (row['recordedAt'], row['predictionId'], row['sequence']), reverse=True)
+    pairs = []; pair_bytes = 2
+    for outcome in outcomes:
+        if len(pairs) >= MAX_PAIRS:
+            omit('PAIR_COUNT_BOUND'); continue
+        identity = index['identities'].get(outcome['predictionId'])
+        if not identity:
+            omit('ORIGINAL_NOT_IN_BOUNDED_INDEX'); continue
+        original = segment(identity['sourceSegment'])
+        if original is None: continue
+        prediction = next((row for row in original['issuedDecisions']
+                           if row['id'] == outcome['predictionId']), None)
+        if prediction is None or prediction['integrityHash'] != identity['integrityHash']:
+            raise ValueError('event_result_original_reference_mismatch')
+        project_result(prediction, outcome, as_of=as_of)
+        pair = {'prediction': prediction, 'outcome': outcome}
+        size = len(json.dumps(pair, ensure_ascii=False, separators=(',', ':')).encode()) + 1
+        if pair_bytes + size > MAX_PAIR_BYTES:
+            omit('PAIR_BYTE_BOUND'); continue
+        pair_bytes += size; pairs.append(copy.deepcopy(pair))
+    return {'schemaVersion': 'argus-event-result-source-v1',
+        'asOf': as_of, 'manifestDigest': manifest['digest'],
+        'commitHeadDigest': head['digest'], 'generation': manifest['generation'],
+        'scope': 'LATEST_COMMITTED_SEGMENT_OUTCOMES', 'historyComplete': False,
+        'sourceSegmentCount': len(segments), 'sourceBytesRead': read_bytes,
+        'outcomeCount': len(outcomes), 'selectedPairCount': len(pairs),
+        'omissions': omissions, 'pairs': pairs,
+        'actionAuthority': False, 'causalAttributionVerified': False}
