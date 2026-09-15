@@ -14,6 +14,7 @@ export type Job={remoteBackup?:{status?:string;lastVerifiedAt?:string;pending?:b
   overviewReuse?:{checkedAt:string;baseMarketContextId:string;inputsDigest:string;originalCompletedAt:string};
   previousOverview?:Job|null;context:{referenceEdition?:{recordId:string;recordedAt:string;isCurrentMarketAnalysis:false};intent?:string;eventFocus?:{eventId:string};contextId:string;question:string;subject:{symbol:string;market:string};horizonSessions:number;baseMarketContextId:string;
     facts:Array<{evidenceId:string;text:string;provenance?:{url?:string;sourceLabel?:string}}>;
+    retrievalRecord?:{policyVersion:string;scope:string;archiveSearchStatus:string;counterevidenceSearchStatus:string;selection:{mandatoryCurrent:string[];previousDistinct:string[];previousSharedWithCurrent:string[]}};
     indexComparison?:JapanMarketComparison;indexComparisonEvidenceId?:string;
     calculatedHypothesis?:{status:string;value?:number;unit?:string;noteJa?:string;comparisonPoints?:Array<{usdJpy:number;value:number}>}};
   result?:{answer?:{sections:Record<string,Section>;presentationStatus?:string;presentationPlan?:MarketBrief['presentationPlan']};provider?:{returnedModel?:string;completedAt?:string}}};
@@ -164,5 +165,11 @@ export function OwnerAnswerBody({job}:{job:Job}) {
         const className=`argus-editorial__element is-${choice.emphasis} placement-${choice.placement} element-${choice.id}`;
         return choice.placement==='detail'?<details className={className} key={choice.id}><summary>{labels[choice.id]}</summary>{content}</details>
           :<section className={className} key={choice.id}><h2>{labels[choice.id]}</h2>{content}</section>;
-      })}</div>;
+      })}
+    {job.context.retrievalRecord?.policyVersion==='owner-edition-retrieval-v1'&&<details className="argus-editorial__element is-quiet placement-detail">
+      <summary>この回答で確認した範囲</summary>
+      <p className="argus-editorial__text">この対象・期間の現在の根拠と、比較できる前回の根拠を読みました。内容が変わらない資料は一度だけ読み、変更・相違・不明点は残しています。</p>
+      <p className="argus-editorial__uncertain">過去の全記録を検索する機能はまだ接続していません。今回の資料に反証が見当たらなくても、反証が存在しないことを意味しません。</p>
+    </details>}
+    </div>;
 }

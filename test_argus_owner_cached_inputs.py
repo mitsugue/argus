@@ -6,6 +6,7 @@ import pytest
 import scanner
 import argus_owner_dialogue as dialogue
 import jp_market_internals as internal
+import argus_market_brief
 from test_jp_market_internals import snapshot, build, AT, DATES
 from test_argus_owner_dialogue import market_brief
 
@@ -33,7 +34,8 @@ def inputs():
     brief=market_brief()
     brief['calculationSnapshots']={'5':{'marketInternals':saved}}
     brief['unifiedContext']['facts']+=internal.explanation_facts(saved)
-    brief['unifiedContext']['contextId']=dialogue.digest({k:v for k,v in brief['unifiedContext'].items() if k!='contextId'})
+    # Use the production composer to assign stable IDs to raw calculation facts.
+    brief['unifiedContext']=argus_market_brief.unified_context({'facts':brief['unifiedContext']['facts']})
     data={'dates':list(reversed(DATES)), 'closes':[105]+[100]*(len(DATES)-1),
           'volumes':[1000]*len(DATES),'adjusted':[True]*len(DATES)}
     history={'instrumentId':'1234','sourceIdentityVerified':True,'sourceComplete':True,
