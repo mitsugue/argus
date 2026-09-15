@@ -2397,3 +2397,106 @@ def test_market_brief_failed_generation_backs_off_and_success_resets(monkeypatch
     clock[0] += 1
     assert scanner._market_brief_worker_tick()['status'] == 'GENERATED'
     assert len(calls) == 8
+
+
+def _reuse_inputs(monkeypatch):
+    monkeypatch.setattr(scanner, '_backend_exact_sha', lambda: 'a' * 40)
+    monkeypatch.setattr(scanner, '_owner_overview_generation_policy', lambda: {'model': 'test-primary', 'ruleVersion': 'a' * 40})
+    monkeypatch.setattr(scanner, '_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE', {'^N225': {
+        'data': [{'close': 100, 'availableFrom': '2026-01-01T00:00:00Z'}],
+        'acquiredAt': '2026-01-02T00:00:00Z', 'sourceResponseSha256': 'original', 'expires': 123}})
+    monkeypatch.setattr(scanner, '_JP_MARKET_FEATURE_HISTORY', {'status': 'AVAILABLE', 'features': []})
+    monkeypatch.setattr(scanner, '_JP_INDEX_VALUATION', types.SimpleNamespace(
+        snapshot=lambda cutoff: None, status={'status': 'NOT_ACQUIRED'}))
+    return {'generatedAt': '2026-01-02T00:00:00Z', 'facts': [{'text': 'Observation', 'revision': 1}]}, {
+        'informationCutoff': '2026-01-02T00:00:00Z', 'status': 'AVAILABLE', 'receivedAt': '2026-01-01T00:00:00Z'}
+
+
+def test_brief_input_reuse_preserves_source_changes_and_unknown_fields(monkeypatch):
+    brief, internals = _reuse_inputs(monkeypatch)
+    initial = scanner._market_brief_generation_input_digest(brief, internals)
+    brief['generatedAt'] = '2026-01-02T00:10:00Z'
+    internals['informationCutoff'] = brief['generatedAt']
+    scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE['^N225']['expires'] += 10
+    assert scanner._market_brief_generation_input_digest(brief, internals) == initial
+    for target, key, value in [(brief['facts'][0], 'revision', 2),
+            (internals, 'receivedAt', '2026-01-02T00:01:00Z'),
+            (internals, 'status', 'FAILED'), (internals, 'newField', 'new value'),
+            (scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE['^N225'], 'sourceResponseSha256', 'corrected')]:
+        before = copy.deepcopy(target)
+        target[key] = value
+        assert scanner._market_brief_generation_input_digest(brief, internals) != initial
+        target.clear(); target.update(before)
+    monkeypatch.setattr(scanner, '_owner_overview_generation_policy', lambda: {'model': 'changed'})
+    assert scanner._market_brief_generation_input_digest(brief, internals) != initial
+
+
+def test_brief_reuse_returns_original_edition_without_chart_or_provider_calls(monkeypatch):
+    brief, internals = _reuse_inputs(monkeypatch)
+    previous = {'generatedAt': '2026-01-02T00:00:00Z', 'unifiedStatus': 'GENERATED',
+        'presentationStatus': 'GENERATED', 'unifiedSummary': {'view': 'original'},
+        'calculationSnapshots': {'original': [100, 101]}, 'analysisHistory': {'recordId': 'original'}}
+    state = {'lastSuccessful': copy.deepcopy(previous), 'generationInputDigest':
+        scanner._market_brief_generation_input_digest(brief, internals)}
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF', state)
+    monkeypatch.setattr(scanner, '_compose_market_brief', lambda: copy.deepcopy(brief))
+    monkeypatch.setattr(scanner, '_jp_market_internals_cached', lambda: copy.deepcopy(internals))
+    def forbidden(*args, **kwargs): raise AssertionError('unchanged edition must not be generated or saved again')
+    for name in ('_jp_market_comparison_cached', '_market_brief_ai_polish', '_market_brief_history_save'):
+        monkeypatch.setattr(scanner, name, forbidden)
+    result = scanner._market_brief_refresh(allow_ai=True)
+    assert result['generationReuse']['newAiCalls'] == 0
+    assert {k: v for k, v in result.items() if k != 'generationReuse'} == previous
+    assert state['lastSuccessful'] == previous
+
+
+def test_brief_reuse_expires_on_hour_or_future_input_eligibility(monkeypatch):
+    from datetime import datetime, timezone
+    current = [datetime(2026, 1, 2, 10, 5, tzinfo=timezone.utc)]
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None): return current[0]
+    brief, internals = _reuse_inputs(monkeypatch)
+    monkeypatch.setattr(scanner, 'datetime', Clock)
+    scanner._JP_MARKET_FEATURE_HISTORY['features'] = [{'knownAt': '2026-01-02T10:15:00Z'}]
+    before = scanner._market_brief_generation_input_digest(brief, internals)
+    current[0] = datetime(2026, 1, 2, 10, 10, tzinfo=timezone.utc)
+    assert scanner._market_brief_generation_input_digest(brief, internals) == before
+    current[0] = datetime(2026, 1, 2, 10, 15, tzinfo=timezone.utc)
+    eligible = scanner._market_brief_generation_input_digest(brief, internals)
+    assert eligible != before
+    current[0] = datetime(2026, 1, 2, 11, 0, tzinfo=timezone.utc)
+    assert scanner._market_brief_generation_input_digest(brief, internals) != eligible
+
+
+def test_brief_input_change_during_generation_cannot_authorize_reuse(monkeypatch):
+    brief, internals = _reuse_inputs(monkeypatch)
+    state = {}
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF', state)
+    monkeypatch.setattr(scanner, '_compose_market_brief', lambda: copy.deepcopy(brief))
+    monkeypatch.setattr(scanner, '_jp_market_internals_cached', lambda: copy.deepcopy(internals))
+    monkeypatch.setattr(scanner, '_jp_market_comparison_cached', lambda horizon: {})
+    monkeypatch.setattr(scanner, '_market_brief_history_save', lambda result: None)
+    def generate(result):
+        brief['facts'][0]['revision'] += 1
+        result.update(unifiedStatus='GENERATED', presentationStatus='GENERATED',
+            unifiedSummary={'view': 'original'}, aiDiagnostics={'completedAt': brief['generatedAt']})
+        return result
+    monkeypatch.setattr(scanner, '_market_brief_ai_polish', generate)
+    scanner._market_brief_refresh(allow_ai=True)
+    assert state['generationInputDigest'] is None
+    assert state['lastSuccessful']['facts'][0]['revision'] == 1
+    assert brief['facts'][0]['revision'] == 2
+
+
+def test_brief_reuse_invalidates_prices_conditions_and_missing_executable(monkeypatch):
+    brief, internals = _reuse_inputs(monkeypatch)
+    original = scanner._market_brief_generation_input_digest(brief, internals)
+    price = scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE['^N225']['data'][0]
+    price['close'] = 101
+    assert scanner._market_brief_generation_input_digest(brief, internals) != original
+    price['close'] = 100
+    scanner._JP_MARKET_FEATURE_HISTORY['features'].append({'value': 2, 'seriesId': 'credit.ratio'})
+    assert scanner._market_brief_generation_input_digest(brief, internals) != original
+    monkeypatch.setattr(scanner, '_backend_exact_sha', lambda: None)
+    assert scanner._market_brief_generation_input_digest(brief, internals) is None

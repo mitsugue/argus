@@ -17808,13 +17808,70 @@ def _market_brief_ai_polish(brief):
     return brief
 
 
+
+def _market_brief_generation_input_digest(brief, internals):
+    """Bind reuse to cached source inputs before request-time chart IDs exist.
+
+    Receipt times and raw response hashes stay in the inputs. Only the local
+    composition/check time and cache expiry timer are separated. Unknown fields
+    remain significant. No source record or saved forecast is rewritten.
+    """
+    revision = _backend_exact_sha()
+    if not revision:
+        return None
+    now = datetime.now(pytz.utc)
+    index = copy.deepcopy(_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {})
+    index.pop("expires", None)
+    internal_inputs = copy.deepcopy(internals)
+    internal_inputs.pop("informationCutoff", None)
+    inputs = {
+        "brief": {key: value for key, value in brief.items() if key != "generatedAt"},
+        "index": index, "marketFeatures": copy.deepcopy(_JP_MARKET_FEATURE_HISTORY),
+        "internals": internal_inputs,
+        "valuation": _JP_INDEX_VALUATION.snapshot(now.isoformat()),
+        "valuationStatus": copy.deepcopy(_JP_INDEX_VALUATION.status),
+        "generationPolicy": {**_owner_overview_generation_policy(),
+            "purpose": "market_brief", "maxOutputRequest": 5200},
+        "ruleVersion": revision, "hour": now.strftime("%Y-%m-%dT%H"),
+    }
+    # Future-dated cached records can become eligible without a cache write.
+    # Crossing any input timestamp invalidates reuse, even inside the same hour.
+    passed = set()
+    def visit(value):
+        if isinstance(value, dict):
+            for item in value.values(): visit(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value: visit(item)
+        elif isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}T.+", value):
+            try:
+                at = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if at.tzinfo is not None and at <= now: passed.add(value)
+            except ValueError:
+                pass
+    visit(inputs)
+    inputs["eligibleInputTimes"] = sorted(passed)
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True, ensure_ascii=False,
+        separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+
+
 def _market_brief_refresh(allow_ai=True):
     brief = _compose_market_brief()
     previous = _MARKET_BRIEF.get("lastSuccessful") or {}
+    internals = _jp_market_internals_cached() if allow_ai else None
+    input_digest = _market_brief_generation_input_digest(brief, internals) if allow_ai else None
+    if (allow_ai and input_digest and input_digest == _MARKET_BRIEF.get("generationInputDigest")
+            and previous.get("unifiedStatus") == "GENERATED"
+            and previous.get("presentationStatus") == "GENERATED"
+            and previous.get("unifiedSummary")):
+        retained = copy.deepcopy(previous)
+        retained["generationReuse"] = {"inputsCheckedAt": _ai_now_iso(),
+            "originalGeneratedAt": previous.get("generatedAt"), "newAiCalls": 0}
+        _MARKET_BRIEF.update(data=retained, composedAt=time.time())
+        return retained
     # Bind unchanged-text reuse to the actual engine inputs and saved horizons.
     calculations = ({str(h): _jp_market_comparison_cached(h) for h in (1, 5, 10, 20)}
                     if allow_ai else copy.deepcopy(previous.get("calculationSnapshots") or {}))
-    internals = (_jp_market_internals_cached() if allow_ai else
+    internals = (internals if allow_ai else
                  (calculations.get("5") or {}).get("marketInternals") or {})
     for calculation in calculations.values():
         calculation["marketInternals"] = internals
@@ -17827,6 +17884,8 @@ def _market_brief_refresh(allow_ai=True):
     same = (facts_hash == _MARKET_BRIEF.get("aiFactsHash")
             and previous.get("unifiedStatus") == "GENERATED"
             and previous.get("unifiedSummary")
+            and (not allow_ai or not input_digest
+                 or input_digest == _MARKET_BRIEF.get("generationInputDigest"))
             and (not allow_ai or previous.get("presentationStatus") == "GENERATED"))
     brief["unifiedContext"] = (previous.get("unifiedContext") if same else None) or \
         argus_market_brief.unified_context(brief, previous)
@@ -17848,6 +17907,13 @@ def _market_brief_refresh(allow_ai=True):
     if allow_ai and brief.get("unifiedStatus") == "GENERATED":
         _market_brief_history_save(brief)
         _MARKET_BRIEF["lastSuccessful"] = copy.deepcopy(brief)
+    if allow_ai:
+        # Do not cache a generation if source inputs moved while GPT was working.
+        unchanged = input_digest and input_digest == _market_brief_generation_input_digest(
+            _compose_market_brief(), _jp_market_internals_cached())
+        _MARKET_BRIEF["generationInputDigest"] = (input_digest if unchanged
+            and brief.get("unifiedStatus") == "GENERATED"
+            and brief.get("presentationStatus") == "GENERATED" else None)
     if brief.get("presentationStatus") == "GENERATED":
         _MARKET_BRIEF["lastPresentation"] = copy.deepcopy(brief)
     elif _MARKET_BRIEF.get("lastPresentation"):
