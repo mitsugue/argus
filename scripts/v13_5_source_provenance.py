@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.6"
+PRODUCT_VERSION = "v13.7.7"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_owner_overview_pending.py': '3bbebf3d717ad4d4f30e175d14fd2402e64396cf',
     'test_argus_analysis_history_compact.py': 'a62aa02724f8e1456a2e191eb327f15c1cb915e3',
     'argus_analysis_history_compact.py': '013d0927c21cc753a223d07a22cb574293fa38d3',
     'argus_event_prediction_results.py': 'dc3475083bfbed3df6ae49885667d0a5308385e4',
@@ -45,7 +46,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_macro_schedule.py': 'a49e0d008eca24af791b080848df063e625bb0df',
     'test_macro_readiness.py': 'd1348cbcc814fb28857bd42095007f355728cd5a',
     'scripts/macro_readiness.py': 'd9d736333960d220a5ce3fc55951abc901ea47f0',
-    'docs/V13_7_REQUIREMENTS.md': '38ccdebaea6d4a79b057369efe41a93bb187732b',
+    'docs/V13_7_REQUIREMENTS.md': '831087d1eb5fe9bc8bcf50c150a1f7e451431af8',
     'web/src/hooks/useOsintInvestigation.ts': 'ada26a80e0f0f439f97cb75858407647dc7c5d8d',
     'web/src/components/guide/Layer2BSyncCard.tsx': '20dae8bccafee961a17aad41b39f738fd5f60b76',
     'web/src/components/dashboard/ProHandoffButton.tsx': 'ff35d429cd6c8b615fbeb355edf475edacc992a5',
@@ -113,7 +114,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_analysis_history_backup.py': 'ae9013e5b81e9bf743821cd6ef0ea17c1b829ceb',
     'argus_explanation_contract.py': '28c20f0d1362c0edb3f3666629cb4eba4d903b5a',
     'argus_owner_dialogue.py': 'c9309979d4a4aa3857a7da4e4fb137562ec82f6e',
-    'argus_owner_dialogue_api.py': 'ec248582f8b1ab6832e7cbef026c70fda2961520',
+    'argus_owner_dialogue_api.py': 'a389405f6c0571d3f3f11bbad7f8be0a7a0437e9',
     'argus_owner_dialogue_backup.py': 'ab8afc376e2b31cb617cb6b48b043a15e1ad98c6',
     'argus_owner_dialogue_recovery.py': 'bfc92ba9d12514167c622df5bcf04f87e945d721',
     'argus_owner_dialogue_store.py': '72422e35451def9da106bb200acd49e880a9a2f1',

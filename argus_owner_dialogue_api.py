@@ -156,7 +156,17 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         path=storage_path();state=remote_status()
         if not path or not state.get('generationReady'):
             return {'status':'WAITING','started':0}
-        current=deepcopy(market_brief() or {});context_id=(current.get('unifiedContext') or {}).get('contextId')
+        current=deepcopy(market_brief() or {})
+        if current.get('unifiedStatus') in ('AWAITING_AI', 'UNAVAILABLE', 'INVALID_RESPONSE'):
+            # Public reads may publish a still-changing composition. Advance the
+            # background overview from the same completed edition shown to the
+            # owner; fresh company materials are still collected independently.
+            retained = current.get('retainedPresentation') or {}
+            if (retained.get('unifiedStatus') != 'GENERATED'
+                    or retained.get('presentationStatus') != 'GENERATED'):
+                return {'status':'WAITING','started':0,'reason':'market_edition_pending'}
+            current = deepcopy(retained)
+        context_id=(current.get('unifiedContext') or {}).get('contextId')
         if not context_id:return {'status':'WAITING','started':0}
         for previous in store.latest_subject_overviews(path,boot_id,limit=limit):
             prior=previous['context']
