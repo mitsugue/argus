@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 import time
+import zlib
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -16,6 +17,7 @@ import argus_owner_dialogue_store as store
 
 PREFIX='owner-dialogue/v1'
 SCHEMA='argus-owner-dialogue-backup-v1'
+ENVELOPE_SCHEMA='argus-owner-dialogue-envelope-v2'
 MAX_ARCHIVE_BYTES=32*1024*1024
 CHUNK_BYTES=512*1024
 MAX_CIPHER_BYTES=MAX_ARCHIVE_BYTES+4096
@@ -28,12 +30,17 @@ def _key(material,salt):
 
 
 def _encrypt(raw,current):
+    if len(raw)>MAX_ARCHIVE_BYTES:raise ValueError('dialogue_backup_archive_bound')
     salt=os.urandom(32);nonce=os.urandom(12)
-    header={'schemaVersion':SCHEMA,'scope':'OWNER_PRIVATE','keyId':current['keyId'],
-        'salt':base64.b64encode(salt).decode(),'nonce':base64.b64encode(nonce).decode()}
+    header={'schemaVersion':ENVELOPE_SCHEMA,'scope':'OWNER_PRIVATE','keyId':current['keyId'],
+        'salt':base64.b64encode(salt).decode(),'nonce':base64.b64encode(nonce).decode(),
+        'codec':'zlib','plainBytes':len(raw)}
     store.require_allowed(header)
+    packed=zlib.compress(raw,6)
+    # Incompressible input keeps the original wire bound, with no truncation.
+    if len(packed)>=len(raw):header['codec']='identity';packed=raw
     encoded=transport.encode(header)
-    return len(encoded).to_bytes(4,'big')+encoded+AESGCM(_key(current['key'],salt)).encrypt(nonce,raw,encoded)
+    return len(encoded).to_bytes(4,'big')+encoded+AESGCM(_key(current['key'],salt)).encrypt(nonce,packed,encoded)
 
 
 def _decrypt(raw,keys):
@@ -41,13 +48,29 @@ def _decrypt(raw,keys):
     size=int.from_bytes(raw[:4],'big')
     if not 1<=size<=2048:raise ValueError('dialogue_backup_header_bound')
     encoded=raw[4:4+size];header=json.loads(encoded)
-    if set(header)!={'schemaVersion','scope','keyId','salt','nonce'} or header['schemaVersion']!=SCHEMA or header['scope']!='OWNER_PRIVATE':
+    fields={'schemaVersion','scope','keyId','salt','nonce'}
+    legacy=isinstance(header,dict) and header.get('schemaVersion')==SCHEMA
+    if (not isinstance(header,dict) or header.get('scope')!='OWNER_PRIVATE'
+            or (legacy and set(header)!=fields)
+            or (not legacy and (header.get('schemaVersion')!=ENVELOPE_SCHEMA
+                or set(header)!=fields|{'codec','plainBytes'}
+                or header.get('codec') not in ('identity','zlib')
+                or type(header.get('plainBytes')) is not int
+                or not 0<=header['plainBytes']<=MAX_ARCHIVE_BYTES))):
         raise ValueError('dialogue_backup_header_invalid')
     selected=next((keys.get(k) for k in ('current','previous') if (keys.get(k) or {}).get('keyId')==header['keyId']),None)
     if not selected:raise ValueError('dialogue_backup_key_unavailable')
     salt=base64.b64decode(header['salt'],validate=True);nonce=base64.b64decode(header['nonce'],validate=True)
     if len(salt)!=32 or len(nonce)!=12:raise ValueError('dialogue_backup_nonce_invalid')
     plain=AESGCM(_key(selected['key'],salt)).decrypt(nonce,raw[4+size:],encoded)
+    if not legacy:
+        # Authenticate codec/size and ciphertext before bounded decompression.
+        if header['codec']=='zlib':
+            decoder=zlib.decompressobj()
+            plain=decoder.decompress(plain,header['plainBytes']+1)
+            if not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
+                raise ValueError('dialogue_backup_compression_invalid')
+        if len(plain)!=header['plainBytes']:raise ValueError('dialogue_backup_plain_size_invalid')
     if len(plain)>MAX_ARCHIVE_BYTES:raise ValueError('dialogue_backup_archive_bound')
     return plain,header['keyId']
 
