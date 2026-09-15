@@ -237,7 +237,7 @@ def event_focus(value, event_id, cutoff):
         try:
             if (not isinstance(memory, Mapping)
                     or memory.get('schemaVersion') != 'argus-event-reasoning-retrieval-v1'
-                    or memory.get('policyVersion') != 'bounded-event-history-v1'
+                    or memory.get('policyVersion') not in ('bounded-event-history-v1', 'bounded-event-history-v2')
                     or memory.get('actionAuthority') is not False
                     or memory.get('status') not in ('AVAILABLE', 'UNAVAILABLE')
                     or (memory.get('status') != 'AVAILABLE' and memory.get('records'))
@@ -256,6 +256,26 @@ def event_focus(value, event_id, cutoff):
                     if any(instant(e['knownAt']) > instant(assessment['evaluatedAt'])
                            for e in assessment.get('evidence') or []):
                         raise ValueError('related_memory_evidence_from_future')
+                outcomes = record.get('outcomeWindows') or []
+                if outcomes and (memory['policyVersion'] != 'bounded-event-history-v2' or len(outcomes) > 2):
+                    raise ValueError('related_memory_outcome_policy')
+                if outcomes:
+                    from argus_causal_event_memory import validate_outcome_window
+                    hypotheses = {row['hypothesisId'] for row in record['causalHypotheses']}
+                    for outcome in outcomes:
+                        validate_outcome_window(outcome)
+                        if (outcome.get('eventId') != record['eventId']
+                                or outcome.get('episodeId') != record['episodeId']
+                                or outcome.get('origin') != record['origin']
+                                or outcome.get('hypothesisId') not in hypotheses
+                                or not instant(record['firstSeenAt']) <= instant(outcome['targetAt'])
+                                    <= instant(outcome['observedAt']) <= instant(outcome['knownAt'])
+                                    <= instant(memory['asOf'])
+                                or (outcome.get('status') == 'OBSERVED'
+                                    and (not outcome.get('metrics') or not outcome.get('truthRefs')))
+                                or any(type(row.get('value')) not in (int, float)
+                                    or not math.isfinite(row['value']) for row in outcome.get('metrics') or [])):
+                            raise ValueError('related_memory_outcome_invalid')
             selected['relatedMemory'] = deepcopy(memory)
             if len(json.dumps(selected, ensure_ascii=False).encode()) > 16384:
                 raise ValueError('related_memory_size_bound')
@@ -453,6 +473,7 @@ def prompt(context, *, prepared_context=None, prepared_catalog=None):
         'previousViewは保存した当時の説明です。現在の事実や正解ではありません。前回の説明を維持・変更する理由は現在と前回の根拠から述べ、過去の説明を書き換えないでください。'
         'previousSharedEvidenceIdsは前回にも存在し、出典・時点を含め内容が完全に同じ根拠です。本文はfactsを参照し、前回情報がないとは扱いません。'
         'retrievalCoverageの検索範囲を超えて過去を網羅した、反証が存在しない、と断定しません。現在と前回で異なる根拠や不明点は、支持・反対の両方から検討します。'
+        'outcomeWindowsは元の仮説について後から観測した結果です。当時の予測・別期間の結果・現在の見通しを分け、originと観測窓を保ちます。結果がない、UNSCORABLE、DATA_GATEDを成功やゼロ変化とせず、結果から原因・的中率・売買判断を作りません。'
         '\n入力データ:\n'+json.dumps(reasoning_context(context) if prepared_context is None else prepared_context,ensure_ascii=False,separators=(',',':'))
         + '\n' + generation_instruction(dialogue_inventory(context) if prepared_catalog is None else prepared_catalog))
 

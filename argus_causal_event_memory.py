@@ -1279,13 +1279,14 @@ def reasoning_retrieval(state: Mapping[str, Any], *, family: str,
         raise ValueError("unsupported_retrieval_family")
     result = {
         "schemaVersion": "argus-event-reasoning-retrieval-v1",
-        "policyVersion": "bounded-event-history-v1", "asOf": _iso(as_of, "as_of"),
+        "policyVersion": "bounded-event-history-v2", "asOf": _iso(as_of, "as_of"),
         "family": family, "status": "AVAILABLE", "records": [], "selection": [],
         "scannedEventCount": 0, "matchingEventCount": 0,
         "historicalContradictionCount": 0, "omissions": {},
         "scope": "LOADED_EVENT_LEDGER_SAME_FAMILY",
         "historyDetailScope": "LATEST_KNOWN_REVISION_AND_LATEST_AND_CONTRARY_ASSESSMENTS",
-        "outcomeLookupStatus": "NOT_INCLUDED_IN_THIS_LOOKUP",
+        "outcomeLookupStatus": "LATEST_KNOWN_WINDOWS_PER_EVENT",
+        "maximumOutcomeWindowsPerEvent": 2,
         "maximumScannedEvents": 2000, "maximumSelectedEvents": 6,
         "maximumPackageBytes": 8192, "additionalAiCalls": 0,
         "actionAuthority": False,
@@ -1340,6 +1341,26 @@ def reasoning_retrieval(state: Mapping[str, Any], *, family: str,
             for key in ("factualClaims", "sourceRefs", "sourcePublishedAt", "receivedAt", "normalizedAt"):
                 body[key] = copy.deepcopy(revision.get(key))
             body["assessments"] = sorted(selected.values(), key=lambda item: item["evaluatedAt"])
+            known_outcomes = [row for row in raw.get("outcomes") or []
+                              if _parse_time(row["knownAt"], "outcome_known_at") <= cutoff]
+            latest_outcomes = {}
+            for row in sorted(known_outcomes, key=lambda item: item["knownAt"]):
+                key = (row["hypothesisId"], row["horizon"], row["targetAt"])
+                latest_outcomes[key] = row
+            windows = sorted(latest_outcomes.values(),
+                key=lambda item: (item["knownAt"], item["hypothesisId"], item["horizon"], item["targetAt"]),
+                reverse=True)
+            if len(windows) > 2:
+                omit("OUTCOME_WINDOW_BOUND", len(windows) - 2)
+            body["outcomeWindows"] = copy.deepcopy(windows[:2])
+            body["outcomeCoverage"] = {
+                "scope": "LATEST_KNOWN_PER_HYPOTHESIS_HORIZON_TARGET",
+                "knownRecordCount": len(known_outcomes),
+                "supersededRecordCount": len(known_outcomes) - len(windows),
+                "selectedWindowCount": len(body["outcomeWindows"]),
+                "omittedWindowCount": max(0, len(windows) - 2),
+                "absenceMeaning": "NOT_RECORDED_AT_CUTOFF",
+            }
             body["relationScope"] = "ORIGINAL_HYPOTHESES_ONLY"
             body["snapshotSha256"] = _hash(body)
             candidates.append((is_contrary, body))
