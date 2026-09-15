@@ -358,7 +358,7 @@ def reasoning_context(context):
     return value
 
 
-def prompt(context):
+def prompt(context, *, prepared_context=None, prepared_catalog=None):
     require_allowed(context)
     from argus_presentation_intent import VOICE, dialogue_inventory, generation_instruction
     return (VOICE + '所有者の質問に、提供された根拠だけで答えてください。これは説明であり売買判定の権限はありません。'
@@ -382,8 +382,8 @@ def prompt(context):
         'previousViewは保存した当時の説明です。現在の事実や正解ではありません。前回の説明を維持・変更する理由は現在と前回の根拠から述べ、過去の説明を書き換えないでください。'
         'previousSharedEvidenceIdsは前回にも存在し、出典・時点を含め内容が完全に同じ根拠です。本文はfactsを参照し、前回情報がないとは扱いません。'
         'retrievalCoverageの検索範囲を超えて過去を網羅した、反証が存在しない、と断定しません。現在と前回で異なる根拠や不明点は、支持・反対の両方から検討します。'
-        '\n入力データ:\n'+json.dumps(reasoning_context(context),ensure_ascii=False,separators=(',',':'))
-        + '\n' + generation_instruction(dialogue_inventory(context)))
+        '\n入力データ:\n'+json.dumps(reasoning_context(context) if prepared_context is None else prepared_context,ensure_ascii=False,separators=(',',':'))
+        + '\n' + generation_instruction(dialogue_inventory(context) if prepared_catalog is None else prepared_catalog))
 
 
 def validate_answer(value, context, *, diagnostic=None):
@@ -458,3 +458,11 @@ def overview_input_digest(context, generation_policy):
     return digest({'schemaVersion':'argus-overview-inputs-v1', 'inputs':inputs,
                    'generationPolicy':dict(generation_policy),
                    'evaluationHour':int(at.timestamp()) // 3600})
+
+
+def generation_prompt(context):
+    """Compact transport IDs together with the catalog, keeping validation original."""
+    from argus_presentation_intent import dialogue_inventory
+    value, catalog, restore, compact = argus_explanation_contract.prompt_references(
+        reasoning_context(context), dialogue_inventory(context))
+    return prompt(context, prepared_context=value, prepared_catalog=catalog), restore, compact

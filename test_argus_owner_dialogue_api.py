@@ -26,7 +26,7 @@ def test_invalid_numeric_answer_gets_one_correction_with_fixed_evidence(correcte
         return answer() if corrected and len(calls)==2 else copy.deepcopy(invalid)
     result=api.generate_answer(c,generate)
     assert len(calls)==2 and c==before
-    assert json.dumps(api.dialogue.reasoning_context(c),ensure_ascii=False,separators=(',',':')) in calls[1]
+    assert api.dialogue.generation_prompt(c)[0] in calls[1]
     assert 'unsupported_numeric_tokens' in calls[1]
     assert result['provider']['totalEstUsd']==.5
     assert len(result['provider']['attempts'])==2
@@ -42,6 +42,34 @@ def test_unavailable_provider_does_not_create_a_correction_loop():
         return None
     result=api.generate_answer(context(),generate)
     assert result['status']=='UNAVAILABLE' and len(calls)==1
+
+
+def test_owner_short_references_restore_before_validation_and_keep_saved_context():
+    from argus_presentation_intent import dialogue_inventory
+    c=context();before=copy.deepcopy(c)
+    full=api.dialogue.reasoning_context(c);catalog=dialogue_inventory(c)
+    short,short_catalog,restore,compact=api.dialogue.argus_explanation_contract.prompt_references(full,catalog)
+    assert restore(short)==full and restore(short_catalog)==catalog
+    assert len(json.dumps(short))+len(json.dumps(short_catalog))<len(json.dumps(full))+len(json.dumps(catalog))
+    f=c['facts'][0];v=answer()
+    v['reasons']={'textJa':f['text'],'kind':'INFERENCE','evidenceIds':[f['evidenceId']]}
+    calls=[]
+    def generate(user,**kwargs):
+        calls.append(user)
+        assert f['evidenceId'] not in user
+        return compact(v)
+    result=api.generate_answer(c,generate)
+    assert result['status']=='SUCCEEDED' and len(calls)==1 and c==before
+    assert result['answer']['sections']['reasons']['evidenceIds']==[f['evidenceId']]
+    assert restore({'textJa':'ref-0'})=={'textJa':'ref-0'}
+
+
+def test_owner_unknown_alias_never_becomes_an_accepted_reference():
+    c=context();v=answer();v['reasons']={'textJa':'確認します。','kind':'INFERENCE','evidenceIds':['ref-999999']}
+    calls=[]
+    result=api.generate_answer(c,lambda *args,**kwargs:(calls.append(args[0]),copy.deepcopy(v))[1])
+    assert len(calls)==2 and result['status']=='REJECTED'
+    assert result['validation']['reason']=='unknown_evidence_reference'
 
 
 @pytest.mark.parametrize('field', ['length', 'references'])
