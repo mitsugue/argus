@@ -154,6 +154,11 @@ def _restore(path, manifest, remote, directory):
     latest = last_view['recordId'] if last_view else None
     if counts != manifest['counts'] or latest != manifest['latestRecordId']:
         raise ValueError('history_archive_counts_invalid')
+    _merge_validated(path, staging)
+    return counts
+
+
+def _merge_validated(path, staging):
     history.initialize(path)
     conn = history._connect(path)
     try:
@@ -174,7 +179,6 @@ def _restore(path, manifest, remote, directory):
         if conn.in_transaction: conn.execute('ROLLBACK')
         raise
     finally: conn.close()
-    return counts
 
 
 def _immutable(remote, path, raw):
@@ -221,6 +225,13 @@ def _publish_chunks(remote, chunks, directory):
 
 
 def synchronize(path, remote, *, last_verified_head=None):
+    if getattr(remote, 'history_format_version', 1) == 2:
+        from argus_analysis_history_compact import synchronize as compact_sync
+        return compact_sync(path, remote, last_verified_head=last_verified_head)
+    return synchronize_v1(path, remote, last_verified_head=last_verified_head)
+
+
+def synchronize_v1(path, remote, *, last_verified_head=None):
     """Restore/merge before publishing; concurrent writers cannot drop each other."""
     with tempfile.TemporaryDirectory(prefix='.analysis-recovery-', dir=Path(path).parent) as directory:
         manifest, version = _head(remote)
@@ -246,6 +257,7 @@ def synchronize(path, remote, *, last_verified_head=None):
 class GitHubStore:
     """Bounded Contents API on the already configured authenticated connection."""
     write_message = 'Save immutable public market analysis recovery'
+    history_format_version = 2
     def __init__(self, *, repo, headers, http, monotonic=None):
         if not isinstance(repo,str) or len(repo.split('/')) != 2 or any(not p or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-' for c in p) for p in repo.split('/')):
             raise ValueError('history_remote_repository_invalid')
