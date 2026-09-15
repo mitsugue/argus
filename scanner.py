@@ -132,6 +132,7 @@ import argus_owner_dialogue_backup
 import argus_subject_materials
 import argus_analysis_history_backup
 import argus_presentation_intent
+import argus_jp_market_research
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
 import jp_market_price_paths
@@ -17705,7 +17706,7 @@ def _compose_market_brief():
         match = re.fullmatch(r"D-(\d+)", str(row.get("countdown") or ""))
         return int(match.group(1)) if match else 9999
     upcoming.sort(key=event_distance)
-    return argus_market_brief.compose_brief(
+    brief = argus_market_brief.compose_brief(
         now_iso=_ai_now_iso(),
         market_view_summary=_brief_market_view_summary(),
         margin_dynamics=_jp_market_margin_1570_dynamics(),
@@ -17714,6 +17715,11 @@ def _compose_market_brief():
         news_events=_brief_news_events(),
         imminent_events=imminent,
         next_events=upcoming)
+    research = argus_jp_market_research.lookup(
+        _TODAY_INTELLIGENCE, cutoff=brief["generatedAt"])
+    brief["numericalResearch"] = research
+    brief["facts"].extend(argus_jp_market_research.explanation_facts(research))
+    return brief
 
 
 
@@ -17835,8 +17841,12 @@ def _market_brief_generation_input_digest(brief, internals):
     index.pop("expires", None)
     internal_inputs = copy.deepcopy(internals)
     internal_inputs.pop("informationCutoff", None)
+    brief_inputs = {key: value for key, value in brief.items() if key != "generatedAt"}
+    if isinstance(brief_inputs.get("numericalResearch"), dict):
+        brief_inputs["numericalResearch"] = {key: value for key, value in
+            brief_inputs["numericalResearch"].items() if key != "readReceipt"}
     inputs = {
-        "brief": {key: value for key, value in brief.items() if key != "generatedAt"},
+        "brief": brief_inputs,
         "index": index, "marketFeatures": copy.deepcopy(_JP_MARKET_FEATURE_HISTORY),
         "internals": internal_inputs,
         "valuation": _JP_INDEX_VALUATION.snapshot(now.isoformat()),

@@ -337,6 +337,8 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
     # Only the requested horizon's calculation facts enter the private explanation.
     facts=[f for f in facts if not str((f.get('provenance') or {}).get('eventId','')).startswith(('market-internals-','n225-price-path-'))
         or str((f.get('provenance') or {}).get('eventId','')).endswith('-'+str(horizon))]
+    facts = [f for f in facts if f.get('source') != 'jp_market_research'
+        or str((f.get('provenance') or {}).get('eventId', '')).endswith('-horizon-' + str(horizon))]
     if market=='US':
         facts=[{**f,'applicability':'GLOBAL_CONTEXT_ONLY'} for f in facts if f.get('source') in ('trusted_mail','calendar','official_sensor','policy')]
         facts.append(fact('米国銘柄固有の計算・検証データはこの文脈には未接続です。一般ニュースを日本株の予測ルールへ変換しません。','subject_coverage',kind='UNKNOWN'))
@@ -373,6 +375,12 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
         'changes':{'comparisonAvailable':bool(prior)},'historyStatus':'PROCESS_MEMORY_ONLY',
         'calculatedHypothesis':calculated,'isHypotheticalConversation':hypothesis is not None,'actionAuthority':False,
         'officialMarketStateMutation':False,'officialPositionMutation':False,'officialPredictionMutation':False}
+    if market == 'JP' and isinstance(public.get('researchPackages'), list):
+        context['researchPackages'] = [
+            {**deepcopy(row), 'horizons': {str(horizon): deepcopy(row['horizons'][str(horizon)])},
+             'applicability': 'SUBJECT_RESEARCH' if row.get('instrumentId', '').split(':')[1:2] == [symbol] else 'MARKET_CONTEXT_ONLY'}
+            for row in public['researchPackages'][:2]
+            if isinstance(row, dict) and str(horizon) in (row.get('horizons') or {})]
     if selected_event is not None: context['eventFocus'] = selected_event
     if market == 'JP' and symbol == 'N225':
         snapshot = (brief.get('calculationSnapshots') or {}).get(str(horizon))

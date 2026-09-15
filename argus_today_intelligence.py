@@ -913,6 +913,9 @@ def calibrate_forecast(rows: Iterable[Dict[str, Any]],
         "marketConditioning": {
             "requested": bool(jp_market_engine_context),
             "currentFeatureKeys": current_keys,
+            "currentFeatureValues": dict(jp_market_engine_daily[-1] or {}) if jp_market_engine_daily else {},
+            "featureCoverageDays": {key: sum(1 for row in jp_market_engine_daily
+                if row and key in row) for key in JP_MARKET_ENGINE_FEATURE_SCALES},
             "coverageDays": coverage_days,
             # v13.5.65: per input — the period/date the latest bar joined,
             # or why it could not (interval vs failure vs not applicable).
