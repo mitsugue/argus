@@ -261,3 +261,60 @@ def test_remote_stream_deadline_closes_response_and_request_timeout_shrinks():
     clock[0]=backup.MAX_SYNC_SECONDS-4
     with pytest.raises(TimeoutError):remote.get(backup.PREFIX+'/head.json')
     assert sum(timeouts[0])<=4 and response.closed
+
+
+@pytest.mark.parametrize('case', [
+    test_cold_restore_keeps_original_inputs_and_merges_local_newer_views,
+    test_corrupt_snapshot_is_rejected_before_mutating_local_history,
+    test_concurrent_pointer_change_fails_without_overwriting_remote_writer,
+])
+def test_prefetched_publish_preserves_existing_recovery_contracts(tmp_path, monkeypatch, case):
+    monkeypatch.setattr(Remote, 'read_chunks', backup.GitHubStore.read_chunks, raising=False)
+    case(tmp_path)
+
+
+def test_prefetched_publish_serializes_writes_and_verifies_each_new_chunk(tmp_path):
+    import threading
+    main = threading.get_ident()
+    class RecordingRemote(Remote):
+        read_chunks = backup.GitHubStore.read_chunks
+        def __init__(self):
+            super().__init__(); self.trace = []
+        def put(self, path, raw, *, expected_version):
+            assert threading.get_ident() == main
+            self.trace.append(('put', path))
+            return super().put(path, raw, expected_version=expected_version)
+        def get(self, path):
+            if threading.get_ident() == main: self.trace.append(('get', path))
+            return super().get(path)
+    remote = RecordingRemote()
+    raws = [b'existing', b'new-one', b'new-two']
+    chunks = [{'sha256': backup.digest(raw), 'bytes': len(raw)} for raw in raws]
+    for chunk, raw in zip(chunks, raws): (tmp_path / chunk['sha256']).write_bytes(raw)
+    existing_path = backup.PREFIX + '/chunks/' + chunks[0]['sha256'] + '.bin'
+    remote.files[existing_path] = raws[0]
+    backup._publish_chunks(remote, chunks, tmp_path)
+    assert existing_path not in remote.puts and len(remote.puts) == 2
+    for path in remote.puts:
+        index = remote.trace.index(('put', path))
+        # Remote.put also reads its CAS version; a subsequent read must verify bytes.
+        assert remote.trace[index + 1:index + 3] == [('get', path), ('get', path)]
+
+
+def test_prefetched_publish_readback_failure_closes_reader_without_advancing_head(tmp_path):
+    class CorruptReadback(Remote):
+        closed = False
+        def read_chunks(self, chunks):
+            try:
+                for _ in chunks: yield None
+            finally: self.closed = True
+        def get(self, path):
+            raw, version = super().get(path)
+            return (b'corrupt', version) if raw is not None else (raw, version)
+    raw = b'original'; identity = backup.digest(raw)
+    (tmp_path / identity).write_bytes(raw)
+    remote = CorruptReadback()
+    with pytest.raises(ValueError, match='readback_mismatch'):
+        backup._publish_chunks(remote, [{'sha256': identity, 'bytes': len(raw)}], tmp_path)
+    assert remote.closed
+    assert not any(path.endswith('/head.json') for path in remote.puts)
