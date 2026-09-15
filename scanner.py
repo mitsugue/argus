@@ -17928,6 +17928,16 @@ def _market_brief_refresh(allow_ai=True):
     if allow_ai and brief.get("unifiedStatus") == "GENERATED":
         _market_brief_history_save(brief)
         _MARKET_BRIEF["lastSuccessful"] = copy.deepcopy(brief)
+    if brief.get("presentationStatus") == "GENERATED":
+        _MARKET_BRIEF["lastPresentation"] = copy.deepcopy(brief)
+    elif _MARKET_BRIEF.get("lastPresentation"):
+        # Retain one complete edition with its original numbers and time.
+        # Never combine its text/plan with the newly collected calculations.
+        brief["retainedPresentation"] = copy.deepcopy(_MARKET_BRIEF["lastPresentation"])
+    # Publish the saved edition before the potentially slow source comparison.
+    # That comparison controls the NEXT generation, not this accepted output.
+    _MARKET_BRIEF["data"] = brief
+    _MARKET_BRIEF["composedAt"] = time.time()
     if allow_ai:
         # Do not cache a generation if source inputs moved while GPT was working.
         unchanged = input_digest and input_digest == _market_brief_generation_input_digest(
@@ -17935,14 +17945,6 @@ def _market_brief_refresh(allow_ai=True):
         _MARKET_BRIEF["generationInputDigest"] = (input_digest if unchanged
             and brief.get("unifiedStatus") == "GENERATED"
             and brief.get("presentationStatus") == "GENERATED" else None)
-    if brief.get("presentationStatus") == "GENERATED":
-        _MARKET_BRIEF["lastPresentation"] = copy.deepcopy(brief)
-    elif _MARKET_BRIEF.get("lastPresentation"):
-        # Retain one complete edition with its original numbers and time.
-        # Never combine its text/plan with the newly collected calculations.
-        brief["retainedPresentation"] = copy.deepcopy(_MARKET_BRIEF["lastPresentation"])
-    _MARKET_BRIEF["data"] = brief
-    _MARKET_BRIEF["composedAt"] = time.time()
     return brief
 
 

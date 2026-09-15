@@ -101,3 +101,34 @@ def test_malformed_saved_computation_falls_back_without_changing_values(prepared
     result = engine.analyze(bars, symbol='N225', market='JP', as_of=AT, stored_calculation=snapshot)
     assert result['calibration'] == original['calibration']
     assert result['calculationReuse']['calibration'] is False
+
+
+def test_saved_research_edition_is_visible_before_next_input_comparison(monkeypatch):
+    import scanner
+    state = {'lastPresentation': {'generatedAt': '2026-09-15T09:00:00Z'}}
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF', state)
+    monkeypatch.setattr(scanner, '_compose_market_brief', lambda: {'facts': [], 'generatedAt': AT})
+    monkeypatch.setattr(scanner, '_jp_market_internals_cached', lambda: {})
+    monkeypatch.setattr(scanner, '_jp_market_comparison_cached', lambda h: {})
+    monkeypatch.setattr(scanner.argus_market_brief, 'calculation_facts', lambda c: [])
+    monkeypatch.setattr(scanner.jp_market_internals, 'explanation_facts', lambda i: [])
+    monkeypatch.setattr(scanner.argus_market_brief, 'unified_context', lambda *a: {})
+    calls = []
+    def fingerprint(*args):
+        if calls:
+            # A slow/failing post-generation refresh must not hold back saved output.
+            assert state['data']['unifiedStatus'] == 'GENERATED'
+            assert state['lastPresentation']['generatedAt'] == AT
+            assert state['lastPresentation']['analysisHistory']['status'] == 'LOCAL_DURABLE'
+        calls.append(True)
+        return str(len(calls))
+    def polish(brief):
+        return {**brief, 'unifiedStatus': 'GENERATED', 'presentationStatus': 'GENERATED',
+                'unifiedSummary': {'sections': {}}, 'aiDiagnostics': {'completedAt': AT}}
+    monkeypatch.setattr(scanner, '_market_brief_generation_input_digest', fingerprint)
+    monkeypatch.setattr(scanner, '_market_brief_ai_polish', polish)
+    monkeypatch.setattr(scanner, '_market_brief_history_save',
+                        lambda b: b.update(analysisHistory={'status': 'LOCAL_DURABLE'}))
+    scanner._market_brief_refresh(allow_ai=True)
+    assert len(calls) == 2
+    assert state['generationInputDigest'] is None
