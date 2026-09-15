@@ -42,6 +42,17 @@ def test_event_history_retrieval_is_saved_with_current_facts_and_coverage(tmp_pa
     assert c['officialPredictionMutation'] is False
     short, restore, _ = dialogue.generation_prompt(c)
     assert 'ORIGINAL_HYPOTHESES_ONLY' in short
+    before = deepcopy(c)
+    prepared = dialogue.reasoning_context(c)
+    compact_memory = prepared['eventFocus']['snapshot']['relatedMemory']
+    assert 'records' not in compact_memory
+    assert c == before and prepared['facts'] == c['facts']
+    import json
+    for ref, original_record in zip(compact_memory['recordsEvidenceReferences'], memory['records']):
+        selected = next(row for row in prepared['facts'] if row['evidenceId']==ref['evidenceId'])
+        assert selected['text'].endswith(': '+json.dumps(original_record,ensure_ascii=False,separators=(',',':')))
+    assert len(json.dumps(prepared)) < len(json.dumps(c))
+    assert dialogue.validate_answer(answer(),c)
 
 
 @pytest.mark.parametrize('invalid', ['future','integrity','too_large'])
@@ -196,3 +207,15 @@ def test_context_rejects_unidentified_market_evidence_before_selection():
     with pytest.raises(ValueError,match='market_facts_invalid'):
         dialogue.build_context(brief=b,symbol='N225',market='JP',horizon=5,
             question='何が変わりましたか？',received_at=AT)
+
+
+def test_history_prompt_keeps_records_when_body_reference_does_not_match(tmp_path):
+    import argus_causal_event_memory as cem
+    from test_argus_causal_event_memory import build_event, news, ledger_state
+    _, state = ledger_state(tmp_path, build_event(news(event_type='INFLATION')))
+    memory = cem.reasoning_retrieval(state, family='INFLATION_RATES', as_of=AT)
+    c=context(focus_event_id='cpi',event_snapshot={'eventId':'cpi','relatedMemory':memory})
+    c['facts']=[f for f in c['facts'] if f['source']!='related_event_memory']
+    c['retrievalRecord']=dialogue.retrieval_record(c)
+    prepared=dialogue.reasoning_context(c)
+    assert prepared['eventFocus']['snapshot']['relatedMemory']['records']==memory['records']
