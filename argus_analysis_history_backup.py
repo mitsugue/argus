@@ -5,6 +5,8 @@ advanced with compare-and-swap. Missing remote data and unavailable remote data
 are distinct. No trading decisions, private portfolios or providers are accessed.
 """
 import base64
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -115,12 +117,19 @@ def _head(remote):
 def _restore(path, manifest, remote, directory):
     """Validate the whole remote snapshot before adding anything to the live file."""
     archive = Path(directory) / 'received.ndjson'; checksum = hashlib.sha256()
-    with archive.open('wb') as out:
-        for chunk in manifest['chunks']:
-            raw, _ = remote.get(PREFIX + '/chunks/' + chunk['sha256'] + '.bin')
-            if raw is None or len(raw) != chunk['bytes'] or digest(raw) != chunk['sha256']:
-                raise ValueError('history_remote_chunk_missing_or_corrupt')
-            checksum.update(raw); out.write(raw)
+    chunks = manifest['chunks']
+    reader = getattr(remote, 'read_chunks', None)
+    reads = reader(chunks) if callable(reader) else (
+        remote.get(PREFIX + '/chunks/' + chunk['sha256'] + '.bin')[0] for chunk in chunks)
+    try:
+        with archive.open('wb') as out:
+            for chunk, raw in zip(chunks, reads, strict=True):
+                if raw is None or len(raw) != chunk['bytes'] or digest(raw) != chunk['sha256']:
+                    raise ValueError('history_remote_chunk_missing_or_corrupt')
+                checksum.update(raw); out.write(raw)
+    finally:
+        close = getattr(reads, 'close', None)
+        if callable(close): close()
     if checksum.hexdigest() != manifest['archiveSha256']:
         raise ValueError('history_remote_archive_digest_invalid')
     staging = Path(directory) / 'validated.sqlite3'; history.initialize(staging)
@@ -270,6 +279,31 @@ class GitHubStore:
             if not self._matches_blob(raw,sha,size):
                 raise ValueError('history_remote_blob_integrity_invalid')
         return raw, sha
+
+    def read_chunks(self, chunks):
+        """Prefetch four independent reads; preserve order and all byte checks.
+
+        Keep at most four chunk bodies in flight instead of queuing the entire
+        archive. Writes and the final pointer compare-and-swap stay serial.
+        Every request uses this operation's existing shared deadline.
+        """
+        def read(chunk):
+            return self.get(PREFIX + '/chunks/' + chunk['sha256'] + '.bin')[0]
+        pending = deque()
+        remaining = iter(chunks)
+        pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix='analysis-restore-read')
+        try:
+            for _ in range(4):
+                chunk = next(remaining, None)
+                if chunk is not None: pending.append(pool.submit(read, chunk))
+            while pending:
+                raw = pending.popleft().result()
+                yield raw
+                chunk = next(remaining, None)
+                if chunk is not None: pending.append(pool.submit(read, chunk))
+        finally:
+            for task in pending: task.cancel()
+            pool.shutdown(wait=True, cancel_futures=True)
 
     def put(self, path, raw, *, expected_version):
         if len(raw) > CHUNK_BYTES: raise ValueError('history_remote_write_bound')

@@ -100,6 +100,45 @@ def test_large_snapshot_is_split_and_limits_never_truncate_history(tmp_path,monk
     assert remote.files==before and history.read_record(path)==record
 
 
+def test_restore_prefetch_is_bounded_ordered_and_closes_on_failure():
+    import threading
+    remote=backup.GitHubStore(repo='test-owner/test-private',headers={},http=None)
+    gate=threading.Barrier(4,timeout=5)
+    lock=threading.Lock();entered=[];active=[0];maximum=[0]
+    def read(path):
+        number=int(path.rsplit('/',1)[1].removesuffix('.bin'))
+        with lock:
+            entered.append(number);active[0]+=1;maximum[0]=max(maximum[0],active[0])
+        try:
+            if number<4:gate.wait()
+            return str(number).encode(),None
+        finally:
+            with lock:active[0]-=1
+    remote.get=read
+    chunks=[{'sha256':str(n)} for n in range(10)]
+    stream=remote.read_chunks(chunks)
+    assert next(stream)==b'0'
+    assert set(entered)==set(range(4)) and maximum[0]==4
+    assert list(stream)==[str(n).encode() for n in range(1,10)]
+    assert active[0]==0 and maximum[0]<=4
+    called=[]
+    def fail(path):
+        called.append(path);raise TimeoutError('read deadline')
+    remote.get=fail
+    with pytest.raises(TimeoutError):list(remote.read_chunks(chunks))
+    assert len(called)<=4
+
+
+def test_prefetched_corrupt_chunk_never_changes_live_history(tmp_path):
+    source=tmp_path/'source.sqlite';remote=Remote()
+    add(source,'2026-09-12T00:00:00Z',3000);backup.synchronize(source,remote)
+    target=tmp_path/'target.sqlite';original=add(target,'2026-09-13T00:00:00Z',3100)
+    remote.read_chunks=lambda chunks:iter([b'corrupt']*len(chunks))
+    before=copy.deepcopy(remote.files)
+    with pytest.raises(ValueError,match='chunk'):backup.synchronize(target,remote)
+    assert history.read_record(target)==original and remote.files==before
+
+
 def test_existing_authenticated_transport_checks_readback_bounds_and_compare_and_swap():
     import base64,json
     calls=[]

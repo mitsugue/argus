@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.2"
+PRODUCT_VERSION = "v13.7.3"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -38,7 +38,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_macro_schedule.py': 'a49e0d008eca24af791b080848df063e625bb0df',
     'test_macro_readiness.py': 'd1348cbcc814fb28857bd42095007f355728cd5a',
     'scripts/macro_readiness.py': 'd9d736333960d220a5ce3fc55951abc901ea47f0',
-    'docs/V13_7_REQUIREMENTS.md': '9b05841036ec345cd9a28e0ee76dcf8e0a6622bf',
+    'docs/V13_7_REQUIREMENTS.md': '48e275ba1292b3ec442917466a506849910ae472',
     'web/src/hooks/useOsintInvestigation.ts': 'ada26a80e0f0f439f97cb75858407647dc7c5d8d',
     'web/src/components/guide/Layer2BSyncCard.tsx': '20dae8bccafee961a17aad41b39f738fd5f60b76',
     'web/src/components/dashboard/ProHandoffButton.tsx': 'ff35d429cd6c8b615fbeb355edf475edacc992a5',
@@ -103,7 +103,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_owner_vault.py': '9c3d105716b1115a205bc69dbbbd18e3a7356457',
     'argus_ai_usage_view.py': 'cd86138feaaa5f61a305b2eaa4e74f2b8de3b163',
     'argus_ai_usage_runtime.py': 'f65f5bd3196c162ad1152a1468a5d2be531f778b',
-    'argus_analysis_history_backup.py': 'b669c6294fe71be98e50bf6cccab6f57c772e325',
+    'argus_analysis_history_backup.py': '1abff15e944644a37d36921c11b1d3f538e58c40',
     'argus_explanation_contract.py': '28c20f0d1362c0edb3f3666629cb4eba4d903b5a',
     'argus_owner_dialogue.py': '6588ecbf965d93b27c6149b9f04d8b99f685dd46',
     'argus_owner_dialogue_api.py': '947465d29fb361ec1ad86c6d5b271e61b989ecde',
@@ -116,7 +116,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/V13_6_OWNER_DIALOGUE.md': '6363817a4c2378931c8ba2fb9f30dc3fd691ac21',
     'jp_market_internals.py': '289cf25368b32e1a53aa3d23528c72543e9a6c77',
     'test_argus_ai_usage_runtime.py': 'f5f0e0fedc3caf85136684fa9d241b2e6e0d1975',
-    'test_argus_analysis_history_backup.py': '1c835dc2afa2595e422b596439fe0bef54bc7773',
+    'test_argus_analysis_history_backup.py': 'fc2b3b3f0d299dd822d02999373abfe7fe217f6f',
     'test_argus_owner_cached_inputs.py': 'b0720ae1abca274197bf3f1cdf47f7dda8c37451',
     'test_argus_owner_dialogue.py': '6bb279b967eaf20974275999877541895d116371',
     'test_argus_owner_dialogue_api.py': '4fab358d4a03c0e75bed38ffc6fc495fe6150dcb',
