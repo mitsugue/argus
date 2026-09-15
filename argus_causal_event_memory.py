@@ -1266,6 +1266,108 @@ def all_event_views(state: Mapping[str, Any]) -> List[Dict[str, Any]]:
     return sorted(views, key=lambda row: (row["firstSeenAt"], row["eventId"]))
 
 
+def reasoning_retrieval(state: Mapping[str, Any], *, family: str,
+                        as_of: str) -> Dict[str, Any]:
+    """Bounded related history, separate from mandatory current observations.
+
+    A historical contradiction concerns its own hypothesis, not the current
+    event. This is a context lookup, never an analog forecast or trade signal.
+    Only the already verified, loaded event ledger is consulted.
+    """
+    cutoff = _parse_time(as_of, "as_of")
+    if family not in set(_EVENT_FAMILY.values()):
+        raise ValueError("unsupported_retrieval_family")
+    result = {
+        "schemaVersion": "argus-event-reasoning-retrieval-v1",
+        "policyVersion": "bounded-event-history-v1", "asOf": _iso(as_of, "as_of"),
+        "family": family, "status": "AVAILABLE", "records": [], "selection": [],
+        "scannedEventCount": 0, "matchingEventCount": 0,
+        "historicalContradictionCount": 0, "omissions": {},
+        "scope": "LOADED_EVENT_LEDGER_SAME_FAMILY",
+        "historyDetailScope": "LATEST_KNOWN_REVISION_AND_LATEST_AND_CONTRARY_ASSESSMENTS",
+        "outcomeLookupStatus": "NOT_INCLUDED_IN_THIS_LOOKUP",
+        "maximumScannedEvents": 2000, "maximumSelectedEvents": 6,
+        "maximumPackageBytes": 8192, "additionalAiCalls": 0,
+        "actionAuthority": False,
+        "interpretation": "Historical relations apply to their original hypotheses; "
+            "same family does not establish a comparable market regime or current causation.",
+    }
+    def omit(reason, count=1):
+        result["omissions"][reason] = result["omissions"].get(reason, 0) + count
+
+    if state.get("ledgerStatus") not in ("VERIFIED", "EMPTY"):
+        result["status"] = "UNAVAILABLE"
+        omit("LEDGER_NOT_VERIFIED")
+    else:
+        events = state.get("events") or {}
+        candidates = []
+        # Ledger insertion order bounds the scan without sorting the whole archive.
+        for raw in reversed(events.values()):
+            if result["scannedEventCount"] >= 2000:
+                omit("SCAN_BOUND", len(events) - result["scannedEventCount"])
+                break
+            result["scannedEventCount"] += 1
+            if any(len(raw.get(key) or []) > 256 for key in
+                   ("revisions", "assessments", "outcomes", "reviews", "links")):
+                omit("EVENT_RECORD_BOUND")
+                continue
+            try:
+                view = event_view_at(raw, as_of=as_of)
+            except (ValueError, KeyError, TypeError):
+                omit("NOT_KNOWN_OR_INVALID_AT_CUTOFF")
+                continue
+            if view["eventFamily"] != family:
+                continue
+            result["matchingEventCount"] += 1
+            assessments = [copy.deepcopy(row) for row in raw.get("assessments") or []
+                           if _parse_time(row["evaluatedAt"], "evaluated_at") <= cutoff]
+            # Keep the latest state AND latest contrary observation per hypothesis.
+            latest, contrary = {}, {}
+            for row in sorted(assessments, key=lambda item: item["evaluatedAt"]):
+                latest[row["hypothesisId"]] = row
+                if any(e.get("relation") == "CONTRADICTING" for e in row.get("evidence") or []):
+                    contrary[row["hypothesisId"]] = row
+            selected = {_hash(row): row for row in [*latest.values(), *contrary.values()]}
+            is_contrary = bool(contrary) or view["currentStatus"] == "INVALIDATED"
+            if is_contrary:
+                result["historicalContradictionCount"] += 1
+            body = {key: copy.deepcopy(view[key]) for key in (
+                "eventId", "episodeId", "eventVersion", "eventFamily", "headline",
+                "firstSeenAt", "lastKnownAt", "origin", "currentStatus", "sourceRefs",
+                "causalHypotheses", "regimeContext")}
+            revision = [row for row in raw["revisions"]
+                        if _parse_time(row["knownAt"], "known_at") <= cutoff][-1]
+            for key in ("factualClaims", "sourceRefs", "sourcePublishedAt", "receivedAt", "normalizedAt"):
+                body[key] = copy.deepcopy(revision.get(key))
+            body["assessments"] = sorted(selected.values(), key=lambda item: item["evaluatedAt"])
+            body["relationScope"] = "ORIGINAL_HYPOTHESES_ONLY"
+            body["snapshotSha256"] = _hash(body)
+            candidates.append((is_contrary, body))
+        candidates.sort(key=lambda item: (item[1]["lastKnownAt"], item[1]["eventId"]), reverse=True)
+        # Reserve early places for counterevidence; never select only confirmations.
+        preferred = [item for item in candidates if item[0]][:2]
+        preferred += [item for item in candidates if item not in preferred]
+        for contrary, body in preferred:
+            if len(result["records"]) >= 6:
+                omit("SELECTED_EVENT_BOUND")
+                continue
+            entry = {"eventId": body["eventId"], "eventVersion": body["eventVersion"],
+                "snapshotSha256": body["snapshotSha256"], "reason":
+                "HISTORICAL_COUNTEREVIDENCE" if contrary else "RECENT_RELATED_EVENT"}
+            result["records"].append(body)
+            result["selection"].append(entry)
+            # Leave room for final omission counts, integrity hash and coverage state.
+            if len(_canonical(result)) > 7680:
+                result["records"].pop()
+                result["selection"].pop()
+                omit("PACKAGE_BYTE_BOUND")
+    result["coverage"] = "BOUNDED_PARTIAL" if result["omissions"] else "SCANNED_LOADED_SCOPE"
+    result["searchFinding"] = "SELECTED_RECORDS" if result["records"] else "NO_SELECTED_RECORDS"
+    result["notFoundDoesNotProveAbsence"] = True
+    result["retrievalDigest"] = _hash(result)
+    return result
+
+
 def _regime_similarity(left: Mapping[str, Any], right: Mapping[str, Any]) -> float:
     keys = ("ratesRegime", "equityVolatility", "monetaryPolicyRegime",
             "growthValueRegime", "liquidityState", "oilCommodityState",

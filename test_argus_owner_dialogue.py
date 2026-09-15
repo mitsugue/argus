@@ -21,6 +21,47 @@ def context(**kwargs):
 def answer():return {key:{'textJa':'根拠を確認できていません。','kind':'UNKNOWN','evidenceIds':[]} for key in brief.UNIFIED_SECTIONS}
 
 
+def test_event_history_retrieval_is_saved_with_current_facts_and_coverage(tmp_path):
+    import argus_causal_event_memory as cem
+    from test_argus_causal_event_memory import build_event, news, ledger_state
+    _, state = ledger_state(tmp_path, build_event(news(event_type='INFLATION')))
+    memory = cem.reasoning_retrieval(state, family='INFLATION_RATES', as_of=AT)
+    snapshot = {'eventId':'calendar-cpi', 'eventCode':'US_CPI', 'title':'CPI', 'relatedMemory':memory}
+    original = deepcopy(snapshot)
+    c = context(focus_event_id='calendar-cpi', event_snapshot=snapshot)
+    assert snapshot == original
+    assert c['retrievalRecord']['archiveSearchStatus'] == 'BOUNDED_EVENT_MEMORY'
+    assert c['retrievalRecord']['counterevidenceSearchStatus'] == 'HISTORICAL_ORIGINAL_HYPOTHESES_ONLY'
+    assert c['retrievalRecord']['eventMemoryLookup']['retrievalDigest'] == memory['retrievalDigest']
+    assert c['eventFocus']['snapshot']['relatedMemory'] == memory
+    assert any(f['source']=='price_path_calculation' for f in c['facts'])
+    assert any(f['source']=='related_event_memory' for f in c['facts'])
+    selection=c['retrievalRecord']['selection']
+    assert selection['relatedHistorical']
+    assert not set(selection['relatedHistorical']) & set(selection['mandatoryCurrent'])
+    assert c['officialPredictionMutation'] is False
+    short, restore, _ = dialogue.generation_prompt(c)
+    assert 'ORIGINAL_HYPOTHESES_ONLY' in short
+
+
+@pytest.mark.parametrize('invalid', ['future','integrity','too_large'])
+def test_unusable_event_history_keeps_current_context_available(tmp_path, invalid):
+    import argus_causal_event_memory as cem
+    from test_argus_causal_event_memory import build_event, news, ledger_state
+    _, state = ledger_state(tmp_path, build_event(news(event_type='INFLATION')))
+    memory = cem.reasoning_retrieval(state, family='INFLATION_RATES', as_of=AT)
+    if invalid=='future':
+        memory['asOf']='2027-01-01T00:00:00Z'
+        memory['retrievalDigest']=dialogue.digest({k:v for k,v in memory.items() if k!='retrievalDigest'})
+    elif invalid=='too_large':memory['extra']='x'*9000
+    else:memory['records'][0]['headline']='Altered content'
+    c=context(focus_event_id='calendar-cpi',event_snapshot={'eventId':'calendar-cpi','relatedMemory':memory})
+    assert c['retrievalRecord']['archiveSearchStatus']=='UNAVAILABLE'
+    assert not any(f['source']=='related_event_memory' for f in c['facts'])
+    assert any(f['source']=='price_path_calculation' for f in c['facts'])
+    assert any(f['source']=='related_event_memory_coverage' for f in c['facts'])
+
+
 def test_private_context_never_mutates_public_or_owner_and_keeps_only_target_horizon():
     b=market_brief();o=owner();before=deepcopy((b,o));c=dialogue.build_context(brief=b,symbol='5803',market='JP',horizon=5,question='理由は？',received_at=AT,owner=o)
     assert (b,o)==before and c['scope']=='OWNER_PRIVATE' and c['ownerContextAvailable'] is True

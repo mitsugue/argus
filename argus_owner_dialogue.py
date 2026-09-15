@@ -232,6 +232,48 @@ def event_focus(value, event_id, cutoff):
     if any(value is not None for value in reaction.values()):
         append('保存された市場反応（対象商品・観測窓・不足を区別し、値動きから原因を一つに断定しません）', reaction, 'OBSERVATION')
     else: rows.append(fact('選択したイベント後の市場反応は未取得です。織り込み済みとは断定しません。', 'selected_event', kind='UNKNOWN'))
+    memory = value.get('relatedMemory')
+    if memory is not None:
+        try:
+            if (not isinstance(memory, Mapping)
+                    or memory.get('schemaVersion') != 'argus-event-reasoning-retrieval-v1'
+                    or memory.get('policyVersion') != 'bounded-event-history-v1'
+                    or memory.get('actionAuthority') is not False
+                    or memory.get('status') not in ('AVAILABLE', 'UNAVAILABLE')
+                    or (memory.get('status') != 'AVAILABLE' and memory.get('records'))
+                    or len(json.dumps(memory, ensure_ascii=False, separators=(',',':')).encode()) > 8192
+                    or memory.get('retrievalDigest') != digest({k:v for k,v in memory.items() if k!='retrievalDigest'})
+                    or instant(memory['asOf']) > instant(cutoff)
+                    or len(memory.get('records') or []) > 6):
+                raise ValueError('related_memory_invalid')
+            for record in memory.get('records') or []:
+                if (record.get('snapshotSha256') != digest({k:v for k,v in record.items() if k!='snapshotSha256'})
+                        or instant(record['lastKnownAt']) > instant(memory['asOf'])):
+                    raise ValueError('related_memory_record_invalid')
+                for assessment in record.get('assessments') or []:
+                    if instant(assessment['evaluatedAt']) > instant(memory['asOf']):
+                        raise ValueError('related_memory_from_future')
+                    if any(instant(e['knownAt']) > instant(assessment['evaluatedAt'])
+                           for e in assessment.get('evidence') or []):
+                        raise ValueError('related_memory_evidence_from_future')
+            selected['relatedMemory'] = deepcopy(memory)
+            if len(json.dumps(selected, ensure_ascii=False).encode()) > 16384:
+                raise ValueError('related_memory_size_bound')
+        except (ValueError, TypeError, KeyError):
+            selected['relatedMemory'] = {'status':'UNAVAILABLE', 'reason':'related_memory_not_verified_or_too_large'}
+        saved_memory = selected['relatedMemory']
+        for record in saved_memory.get('records') or []:
+            entry = fact('同じテーマの過去記録です。当時の仮説と反対材料であり、現在の因果関係や予測の証明ではありません: '
+                + json.dumps(record, ensure_ascii=False, separators=(',',':')), 'related_event_memory', kind='HISTORICAL_CONTEXT')
+            entry['provenance'] = {'eventId':record['eventId'], 'observedAt':record['lastKnownAt'],
+                'receivedAt':saved_memory['asOf'], 'sourceRowSha256':record['snapshotSha256'],
+                'sourceLabel':'ARGUSの時点を固定したイベント記憶'}
+            rows.append(entry)
+        rows.append(fact('過去資料の検索範囲・省略・不足: ' + json.dumps(
+            {k:v for k,v in saved_memory.items() if k not in ('records','selection')},
+            ensure_ascii=False, separators=(',',':'))
+            + '。見つからないことは反証が存在しないという意味ではありません。',
+            'related_event_memory_coverage', kind='UNKNOWN'))
     require_allowed(selected)
     return {'eventId': event_id, 'status': 'AVAILABLE', 'capturedAt': cutoff,
         'snapshot': selected, 'snapshotSha256': digest(selected)}, rows
@@ -316,7 +358,7 @@ def retrieval_record(context):
     # A correction or contrary observation is never removed for low similarity.
     shared = [row['evidenceId'] for row in previous if row in current]
     changed = [row['evidenceId'] for row in previous if row not in current]
-    return {
+    result = {
         'policyVersion': 'owner-edition-retrieval-v1',
         'scope': 'CURRENT_AND_PREVIOUS_MATCHING_EDITION',
         'asOf': context['receivedAt'],
@@ -337,6 +379,17 @@ def retrieval_record(context):
         'counterevidenceSearchStatus': 'CURRENT_AND_PREVIOUS_ONLY',
         'additionalAiCalls': 0,
     }
+    memory = (((context.get('eventFocus') or {}).get('snapshot') or {}).get('relatedMemory') or {})
+    if memory:
+        historical_ids = [row['evidenceId'] for row in current if row.get('source') == 'related_event_memory']
+        result['selection']['mandatoryCurrent'] = [identity for identity in result['selection']['mandatoryCurrent'] if identity not in historical_ids]
+        result['selection']['relatedHistorical'] = historical_ids
+        result['reasons']['relatedHistorical'] = 'RELATED_HISTORY_NOT_CURRENT_OBSERVATIONS'
+        result['archiveSearchStatus'] = ('BOUNDED_EVENT_MEMORY' if memory.get('status') == 'AVAILABLE' else 'UNAVAILABLE')
+        result['counterevidenceSearchStatus'] = 'HISTORICAL_ORIGINAL_HYPOTHESES_ONLY' if memory.get('status') == 'AVAILABLE' else 'UNAVAILABLE'
+        result['eventMemoryLookup'] = {k:deepcopy(memory.get(k)) for k in
+            ('retrievalDigest','family','asOf','selection','coverage','omissions','scannedEventCount','matchingEventCount')}
+    return result
 
 
 def reasoning_context(context):

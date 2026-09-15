@@ -15,6 +15,80 @@ BEFORE_T0 = "2026-07-19T02:34:00Z"
 SHA = "a" * 40
 
 
+def test_reasoning_retrieval_is_point_in_time_and_preserves_original_claims(tmp_path):
+    original = build_event(news(event_id="inflation-a", event_type="INFLATION",
+        facts=["Original observation"], themes=["RATES"], entities=["BLS"]))
+    _, state = ledger_state(tmp_path, original)
+    prior = state["events"][original["eventId"]]
+    revision = build_event(news(event_id="inflation-a", event_type="INFLATION",
+        facts=["Later corrected observation"], received=T1, processed=T1,
+        themes=["RATES"], entities=["BLS"]), prior=prior, known=T1,
+        episode={"episodeId": prior["episodeId"]})
+    _, state = ledger_state(tmp_path, original, revision)
+    before = copy.deepcopy(state)
+    past = cem.reasoning_retrieval(state, family="INFLATION_RATES", as_of=T0)
+    current = cem.reasoning_retrieval(state, family="INFLATION_RATES", as_of=T2)
+    assert past["records"][0]["factualClaims"] == ["Original observation"]
+    assert current["records"][0]["factualClaims"] == ["Later corrected observation"]
+    assert "Later corrected observation" not in json.dumps(past)
+    assert state == before
+    assert past["retrievalDigest"] == cem._hash({k:v for k,v in past.items() if k!="retrievalDigest"})
+
+
+def test_reasoning_retrieval_retains_contradiction_only_after_it_was_known(tmp_path):
+    initial = build_event(news(event_id="inflation-contrary", event_type="INFLATION"))
+    _, state = ledger_state(tmp_path, initial)
+    view = cem.event_view(state["events"][initial["eventId"]])
+    assessment = cem.build_assessment(event=view,
+        hypothesis_id=view["causalHypotheses"][0]["hypothesisId"], evaluated_at=T1,
+        evidence=[{"variable":"long_end_yields", "relation":"CONTRADICTING",
+            "observedDirection":"DOWN", "expectedDirection":"UP", "knownAt":T1,
+            "sourceRef":"official:test-yields", "noteCode":"OBSERVED_MOVE"}])
+    _, state = ledger_state(tmp_path, initial, assessment)
+    past = cem.reasoning_retrieval(state, family="INFLATION_RATES", as_of=T0)
+    current = cem.reasoning_retrieval(state, family="INFLATION_RATES", as_of=T2)
+    assert past["historicalContradictionCount"] == 0
+    assert past["records"][0]["assessments"] == []
+    assert current["historicalContradictionCount"] == 1
+    assert current["selection"][0]["reason"] == "HISTORICAL_COUNTEREVIDENCE"
+    assert current["records"][0]["assessments"][0]["evidence"] == assessment["evidence"]
+    assert current["records"][0]["relationScope"] == "ORIGINAL_HYPOTHESES_ONLY"
+    assert current["actionAuthority"] is False
+
+
+def test_reasoning_retrieval_reports_byte_omissions_instead_of_truncating_claims(tmp_path):
+    events = [build_event(news(event_id=f"inflation-{i}", event_type="INFLATION",
+        facts=["Observed claim " + "x"*220]*12)) for i in range(8)]
+    _, state = ledger_state(tmp_path, *events)
+    result = cem.reasoning_retrieval(state, family="INFLATION_RATES", as_of=T2)
+    assert len(cem._canonical(result)) <= result["maximumPackageBytes"]
+    assert 0 < len(result["records"]) < result["matchingEventCount"] == 8
+    assert result["omissions"]["PACKAGE_BYTE_BOUND"] > 0
+    assert result["coverage"] == "BOUNDED_PARTIAL"
+    for record in result["records"]:
+        assert record["factualClaims"] == events[0]["factualClaims"]
+
+
+def test_reasoning_retrieval_never_calls_unverified_or_absent_history_complete(tmp_path):
+    _, state = ledger_state(tmp_path, build_event())
+    unrelated = cem.reasoning_retrieval(state, family="INFLATION_RATES", as_of=T2)
+    assert unrelated["records"] == [] and unrelated["notFoundDoesNotProveAbsence"]
+    state["ledgerStatus"] = "CORRUPTED"
+    result = cem.reasoning_retrieval(state, family="INFLATION_RATES", as_of=T2)
+    assert result["status"] == "UNAVAILABLE" and result["records"] == []
+    with pytest.raises(ValueError, match="unsupported_retrieval_family"):
+        cem.reasoning_retrieval(state, family="ALL", as_of=T2)
+
+
+def test_reasoning_retrieval_bounds_loaded_event_scan(tmp_path):
+    _, state = ledger_state(tmp_path, build_event())
+    raw = next(iter(state["events"].values()))
+    state["events"] = {str(i): raw for i in range(2003)}
+    result = cem.reasoning_retrieval(state, family="INFLATION_RATES", as_of=T2)
+    assert result["scannedEventCount"] == 2000
+    assert result["omissions"]["SCAN_BOUND"] == 3
+
+
 def news(event_id="nie-iran-1", *, event_type="IRAN", severity="WATCH",
          processed=T0, received="2026-07-20T02:33:00Z", headline="Iran tension rises",
          themes=None, entities=None, backfill=False, facts=None):
