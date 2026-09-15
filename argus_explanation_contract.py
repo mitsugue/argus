@@ -105,3 +105,33 @@ def calculation_identity(calculations):
         return value
     return hashlib.sha256(json.dumps(stable(calculations), sort_keys=True,
         separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+
+
+def prompt_references(context, catalog):
+    """Use request-local short references; restore originals before validation.
+
+    All facts, text, units, dates and verification flags remain verbatim. The
+    mapping is local to this request and never changes a stored evidence ID.
+    """
+    fields = {"evidenceId", "evidenceIds", "contextId", "inventoryId", "payloadId",
+              "sourceRowSha256", "addedEvidenceIds", "removedEvidenceIds",
+              "previousSharedEvidenceIds", "baseMarketContextId", "indexComparisonEvidenceId"}
+    forward, reverse = {}, {}
+    def walk(value, mapping, *, key=None, allocate=False):
+        if isinstance(value, dict):
+            return {k: walk(v, mapping, key=k, allocate=allocate) for k, v in value.items()}
+        if isinstance(value, list):
+            return [walk(v, mapping, key=key, allocate=allocate) for v in value]
+        if key in fields and isinstance(value, str):
+            if allocate and re.fullmatch(r"(?:(?:brief|dialogue)-fact-)?[a-f0-9]{64}", value):
+                if value not in mapping:
+                    alias = "ref-" + str(len(mapping))
+                    mapping[value] = alias
+                    reverse[alias] = value
+            return mapping.get(value, value)
+        return value
+    short_context = walk(context, forward, allocate=True)
+    short_catalog = walk(catalog, forward, allocate=True)
+    def restore(value): return walk(value, reverse)
+    def compact(value): return walk(value, forward)
+    return short_context, short_catalog, restore, compact
