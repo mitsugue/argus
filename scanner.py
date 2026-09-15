@@ -17979,8 +17979,20 @@ def _owner_dialogue_event_snapshot(event_id):
         return None
     try:
         _, items, _ = _build_dashboard_events(limit=20)
-        return next((copy.deepcopy(row) for row in items
+        selected = next((copy.deepcopy(row) for row in items
             if event_id in (row.get('eventId'), row.get('displayEventId'))), None)
+        if selected is not None:
+            return selected
+        # The detailed calendar also offers events beyond the urgent seven-day list.
+        snapshot = get_events_snapshot(allow_provider_fetch=False)
+        calendar = argus_important_events.build_important_events(snapshot.get('events') or [],
+            owner_symbols=_owner_symbols_for_events())
+        for event in calendar:
+            if event.get('eventId') != event_id:
+                continue
+            return argus_dashboard_event_summary.build_summary_item(important_event=event,
+                macro_record=copy.deepcopy(_MACRO_ANALYSIS.get(event_id)), now_iso=_ai_now_iso())
+        return None
     except Exception:
         return None
 
