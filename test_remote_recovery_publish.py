@@ -2512,7 +2512,7 @@ def test_market_prompt_short_references_are_lossless_and_keep_facts():
     catalog = {'inventoryId': 'd' * 64, 'contextId': context['contextId'],
         'elements': [{'id': 'view', 'evidenceIds': [reference], 'payloadId': 'e' * 64}]}
     before = copy.deepcopy((context, catalog))
-    short, short_catalog, restore, compact = scanner._market_brief_prompt_references(context, catalog)
+    short, short_catalog, restore, compact = scanner.argus_market_brief.prompt_references(context, catalog)
     assert restore(short) == context and restore(short_catalog) == catalog
     assert (context, catalog) == before
     ref = short['facts'][0]['evidenceId']
@@ -2530,7 +2530,7 @@ def test_market_prompt_unknown_short_reference_is_rejected_by_original_validator
     from test_argus_unified_brief import brief, response
     context = scanner.argus_market_brief.unified_context(brief())
     catalog = scanner.argus_presentation_intent.brief_inventory(context, {})
-    short, _, restore, _ = scanner._market_brief_prompt_references(context, catalog)
+    short, _, restore, _ = scanner.argus_market_brief.prompt_references(context, catalog)
     answer = response(short)
     answer['reasons']['evidenceIds'] = ['ref-999999']
     diagnostic = {}
