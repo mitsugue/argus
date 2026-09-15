@@ -17979,10 +17979,33 @@ def _owner_dialogue_event_snapshot(event_id):
         return None
     try:
         _, items, _ = _build_dashboard_events(limit=20)
-        return next((copy.deepcopy(row) for row in items
+        selected = next((copy.deepcopy(row) for row in items
             if event_id in (row.get('eventId'), row.get('displayEventId'))), None)
+        if selected is not None:
+            return selected
+        # The detailed calendar also offers events beyond the urgent seven-day list.
+        snapshot = get_events_snapshot(allow_provider_fetch=False)
+        calendar = argus_important_events.build_important_events(snapshot.get('events') or [],
+            owner_symbols=_owner_symbols_for_events())
+        for event in calendar:
+            if event.get('eventId') != event_id:
+                continue
+            return argus_dashboard_event_summary.build_summary_item(important_event=event,
+                macro_record=copy.deepcopy(_MACRO_ANALYSIS.get(event_id)), now_iso=_ai_now_iso())
+        return None
     except Exception:
         return None
+
+
+
+def _owner_dialogue_event_history(event, *, cutoff):
+    if event.get('eventCode') != 'CPI':
+        return None
+    # The request cutoff is fixed before lookup; do not substitute a later clock.
+    with _CAUSAL_MEMORY_LOCK:
+        _causal_memory_load_locked()
+        return argus_causal_event_memory.reasoning_retrieval(
+            _CAUSAL_MEMORY['state'], family='INFLATION_RATES', as_of=cutoff)
 
 
 def _owner_dialogue_subject_materials(*, symbol, market, cutoff):
@@ -18056,7 +18079,8 @@ _OWNER_DIALOGUE_API = argus_owner_dialogue_api.register(app, authorize=_require_
     recovery_status=_OWNER_DIALOGUE_RECOVERY.status, recovery_trigger=_OWNER_DIALOGUE_RECOVERY.tick,
     subject_comparison=_owner_dialogue_subject_comparison, subject_materials=_owner_dialogue_subject_materials,
     usage_snapshot=_ai_usage_snapshot, push_service=_WEB_PUSH, vault_service=_OWNER_VAULT,
-    event_snapshot=_owner_dialogue_event_snapshot, market_reference=_owner_dialogue_market_reference,
+    event_snapshot=_owner_dialogue_event_snapshot, event_history=_owner_dialogue_event_history,
+    market_reference=_owner_dialogue_market_reference,
     generation_policy=_owner_overview_generation_policy)
 
 
