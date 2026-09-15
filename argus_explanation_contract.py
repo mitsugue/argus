@@ -99,7 +99,7 @@ def calculation_identity(calculations):
     def stable(value):
         if isinstance(value, Mapping):
             return {key: stable(item) for key, item in value.items()
-                    if key not in {"informationCutoff", "lastSuccessfulAcquisitionAt", "valuationAcquisition"}}
+                    if key not in {"informationCutoff", "lastSuccessfulAcquisitionAt", "valuationAcquisition", "researchCache"}}
         if isinstance(value, list):
             return [stable(item) for item in value]
         return value
