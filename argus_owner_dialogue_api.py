@@ -47,7 +47,7 @@ def generate_answer(context, generate):
         'answer': answer, 'provider': provider, 'validation': validation}
 
 
-def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None, push_service=None, vault_service=None, event_snapshot=None, market_reference=None, generation_policy=None, event_history=None):
+def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None, push_service=None, vault_service=None, event_snapshot=None, market_reference=None, generation_policy=None, event_history=None, prediction_result_source=None):
     boot_id = str(uuid.uuid4())
     lock = threading.Lock()
     save_failures = {}
@@ -355,6 +355,15 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                         selected_event['relatedMemory'] = event_history(deepcopy(selected_event), cutoff=received_at)
                     except Exception:
                         selected_event['relatedMemory'] = {'status':'UNAVAILABLE', 'reason':'event_history_lookup_failed'}
+                if isinstance(selected_event, dict) and (selected_event.get('relatedMemory') or {}).get('status') == 'AVAILABLE':
+                    try:
+                        if prediction_result_source is None:
+                            from argus_event_result_source import read_source
+                            selected_event['predictionResultSource'] = read_source()
+                        else:
+                            selected_event['predictionResultSource'] = prediction_result_source()
+                    except Exception:
+                        selected_event['predictionResultSource'] = {'status':'UNAVAILABLE'}
                 context=dialogue.build_context(brief=current,symbol=body.get('symbol'),market=body.get('market'),
                     horizon=body.get('horizon'),question=body.get('question'),received_at=received_at,
                     owner=body.get('owner'),previous=previous['context'] if previous else None,

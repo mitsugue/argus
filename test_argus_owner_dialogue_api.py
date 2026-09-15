@@ -479,7 +479,8 @@ def test_event_history_uses_request_cutoff_and_keeps_current_facts(tmp_path, loo
     def generate(*args,**kwargs):finished.set();return answer()
     api.register(app,authorize=lambda token:(True,None,200),storage_path=lambda:str(path),
         market_brief=lambda:brief,generate=generate,now=lambda:AT,
-        event_snapshot=lambda event_id:snapshot,event_history=lookup)
+        event_snapshot=lambda event_id:snapshot,event_history=lookup,
+        prediction_result_source=lambda:{"status":"UNAVAILABLE"})
     body=payload(brief,focusEventId='calendar-cpi');client=app.test_client()
     response=client.post('/api/argus/owner-dialogue',json=body)
     assert response.status_code==202 and finished.wait(2)

@@ -186,3 +186,99 @@ def test_derived_export_preserves_canonical_files_and_is_repeatable(history, tmp
     assert all((tmp_path / path).read_bytes() == body for path, body in original.items())
     with pytest.raises(ValueError, match='must_not_replace_canonical'):
         export(tmp_path, tmp_path / 'commit-head.json', source_commit='1' * 40)
+
+
+def test_export_runtime_works_after_switching_away_from_source_checkout(history, tmp_path):
+    import json
+    import os
+    from pathlib import Path
+    import shutil
+    import subprocess
+    import sys
+    runtime = tmp_path.parent / (tmp_path.name + '-runtime')
+    (runtime / 'scripts').mkdir(parents=True)
+    repo = Path(__file__).resolve().parent
+    for path in ['argus_calibration.py', 'argus_decision_ledger.py',
+                 'argus_market_data_truth.py', 'argus_market_clock.py',
+                 'argus_event_prediction_results.py',
+                 'scripts/run_prediction_ledger.py', 'scripts/export_event_prediction_results.py']:
+        shutil.copyfile(repo / path, runtime / path)
+    target = runtime / 'lookup.json'
+    run = subprocess.run([sys.executable, str(runtime / 'scripts/export_event_prediction_results.py'),
+        '--ledger-root', str(tmp_path), '--output', str(target), '--source-commit', '1' * 40],
+        cwd=tmp_path, env={**os.environ, 'PYTHONPATH': str(runtime), 'PYTHONDONTWRITEBYTECODE': '1'},
+        capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    assert json.loads(target.read_text())['pairs'] == [history[1]]
+
+
+@pytest.fixture
+def related_source(tmp_path):
+    import json
+    import argus_causal_event_memory as cem
+    from scripts.export_event_prediction_results import export
+    from test_argus_causal_event_memory import build_event, news, ledger_state
+    from test_argus_owner_dialogue import AT
+    initial = build_event(news(event_id='linked-inflation-event', event_type='INFLATION'))
+    _, state = ledger_state(tmp_path / 'events', initial)
+    memory = cem.reasoning_retrieval(state, family='INFLATION_RATES', as_of=AT)
+    event = memory['records'][0]
+    prediction, snapshot = _prediction(action='WAIT')
+    prediction = _reseal_prediction(prediction, evidence_refs=[
+        'causal-event:' + event['eventId'], 'causal-hypothesis:' + event['causalHypotheses'][0]['hypothesisId']])
+    root = tmp_path / 'canonical'
+    _run(_snapshot(as_of=ISSUED, decisions=[prediction], market_snapshot=snapshot), root, 'issue')
+    _run(_snapshot(as_of=RUN_AT, outcomes=[_outcome_bar()]), root, 'observed')
+    target = tmp_path / 'lookup.json'
+    export(root, target, source_commit='1' * 40)
+    return memory, json.loads(target.read_text())
+
+
+def test_related_result_selection_keeps_subject_and_original_metric(related_source):
+    from test_argus_owner_dialogue import AT
+    memory, source = related_source
+    saved = copy.deepcopy(source)
+    linked = results.related_result_context(memory, source, as_of=AT, market='US', symbol='AAPL')
+    assert len(linked['records']) == 1
+    assert linked['records'][0]['metrics'] == source['pairs'][0]['outcome']['metrics']
+    assert linked['records'][0]['forecastHorizon'] == source['pairs'][0]['prediction']['forecastHorizon']
+    assert linked['causalAttributionVerified'] is False
+    assert results.related_result_context(memory, source, as_of=AT, market='JP', symbol='N225')['records'] == []
+    assert source == saved
+    source['pairs'][0]['outcome']['metrics'][0]['value'] = 12345
+    with pytest.raises(ValueError, match='canonical_pair_invalid'):
+        results.related_result_context(memory, source, as_of=AT, market='US', symbol='AAPL')
+
+
+def test_linked_results_reach_saved_dialogue_and_prompt_once(related_source, tmp_path):
+    import json
+    import threading
+    from flask import Flask
+    import argus_owner_dialogue as dialogue
+    import argus_owner_dialogue_api as api
+    from test_argus_owner_dialogue import AT, market_brief, answer
+    from test_argus_owner_dialogue_api import payload
+    memory, source = related_source
+    snapshot = {'eventId':'calendar-inflation', 'eventCode':'CPI', 'title':'CPI', 'state':'UPCOMING'}
+    current = market_brief(); done = threading.Event(); calls = []
+    def generate(*args, **kwargs): done.set(); return answer()
+    def lookup(): calls.append(True); return {'status':'AVAILABLE','data':source,'readAt':AT}
+    app = Flask(__name__)
+    api.register(app, authorize=lambda token:(True,None,200), storage_path=lambda:str(tmp_path/'owner.sqlite3'),
+        market_brief=lambda:current, generate=generate, now=lambda:AT,
+        event_snapshot=lambda event_id:snapshot, event_history=lambda *args,**kwargs:memory,
+        prediction_result_source=lookup)
+    client = app.test_client()
+    response = client.post('/api/argus/owner-dialogue', json=payload(current,
+        symbol='AAPL', market='US', horizon=1, focusEventId='calendar-inflation'))
+    assert response.status_code == 202 and done.wait(2)
+    saved = client.post('/api/argus/owner-dialogue',json={'action':'history','ownerToken':'test-owner'}).json['items'][0]['context']
+    linked = saved['eventFocus']['snapshot']['relatedPredictionResults']
+    assert linked['records'][0]['status'] == 'OBSERVED' and len(calls) == 1
+    before = copy.deepcopy(saved)
+    prompt = dialogue.generation_prompt(saved)[0]
+    serialized = json.dumps(linked, ensure_ascii=False, separators=(',',':'))
+    assert prompt.count(serialized) == 1
+    assert saved == before
+    assert client.post('/api/argus/owner-dialogue',json={'action':'history','ownerToken':'test-owner'}).status_code == 200
+    assert len(calls) == 1

@@ -15,6 +15,8 @@ SCHEMA = 'argus-event-prediction-result-v1'
 
 
 def _time(value):
+    if not isinstance(value, str):
+        raise ValueError('event_result_time_required')
     parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
     if parsed.tzinfo is None:
         raise ValueError('event_result_timezone_required')
@@ -245,3 +247,52 @@ def load_recent_pairs(ledger_root):
         'outcomeCount': len(outcomes), 'selectedPairCount': len(pairs),
         'omissions': omissions, 'pairs': pairs,
         'actionAuthority': False, 'causalAttributionVerified': False}
+
+
+def related_result_context(memory, source, *, as_of, market, symbol):
+    """Select prior canonical outcomes for the exact requested instrument."""
+    import hashlib
+    import json
+    import re
+    def encoded(value):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+    if (not isinstance(source, dict) or source.get('schemaVersion') != 'argus-event-result-source-v1'
+            or source.get('actionAuthority') is not False or source.get('rebuildable') is not True
+            or source.get('historyComplete') is not False
+            or source.get('scope') != 'LATEST_COMMITTED_SEGMENT_OUTCOMES'
+            or not re.fullmatch(r'[a-f0-9]{40}', str(source.get('sourceCommit') or ''))
+            or any(not re.fullmatch(r'[a-f0-9]{64}', str(source.get(key) or ''))
+                   for key in ('manifestDigest', 'commitHeadDigest'))
+            or not isinstance(source.get('pairs'), list) or len(source['pairs']) > MAX_PAIRS
+            or source.get('selectedPairCount') != len(source['pairs'])
+            or _time(source['asOf']) > _time(as_of)):
+        raise ValueError('event_result_source_invalid')
+    # Validate the full bounded input even when no related event matches.
+    for pair in source['pairs']:
+        project_result(pair['prediction'], pair['outcome'], as_of=source['asOf'])
+    events = memory.get('records') or []
+    if memory.get('status') != 'AVAILABLE' or len(events) > 6:
+        raise ValueError('event_result_related_memory_unavailable')
+    receipt = {key: copy.deepcopy(source[key]) for key in (
+        'sourceCommit', 'manifestDigest', 'commitHeadDigest', 'generation', 'asOf',
+        'scope', 'sourceSegmentCount', 'sourceBytesRead', 'outcomeCount',
+        'selectedPairCount', 'omissions')}
+    result = {'schemaVersion': 'argus-related-prediction-results-v1',
+        'status': 'AVAILABLE', 'asOf': as_of, 'market': market, 'symbol': symbol,
+        'source': receipt, 'records': [], 'omittedResultCount': 0,
+        'actionAuthority': False, 'causalAttributionVerified': False,
+        'predictiveProbabilityVerified': False, 'historyComplete': False}
+    seen = set()
+    for event in events:
+        selected = select_event_results(event, source['pairs'], as_of=as_of,
+                                        market=market, symbol=symbol, limit=1)
+        for row in selected['records']:
+            if row['outcomeId'] in seen: continue
+            result['records'].append(row)
+            if len(encoded(result)) > 7168:
+                result['records'].pop(); result['omittedResultCount'] += 1
+            else: seen.add(row['outcomeId'])
+        result['omittedResultCount'] += selected.get('omittedByLimit', 0)
+    result['searchFinding'] = 'SELECTED_RECORDS' if result['records'] else 'NOT_RECORDED_IN_SEARCH_SCOPE'
+    result['digest'] = hashlib.sha256(encoded(result)).hexdigest()
+    return result
