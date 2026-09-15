@@ -22,6 +22,7 @@ Discipline (non-negotiable):
 from __future__ import annotations
 
 import re
+import argus_jp_market_research
 import math
 import hashlib
 import json
@@ -465,6 +466,8 @@ def unified_context(brief: Mapping[str, Any], previous: Optional[Mapping[str, An
             "ownerContextAvailable": False, "historyStatus": "PROCESS_MEMORY_ONLY",
             "sourceTraceScope": "exact_brief_fact_and_available_public_metadata",
             "actionAuthority": False}
+    if isinstance(brief.get("numericalResearch"), Mapping):
+        body["researchPackages"] = argus_jp_market_research.context_references(brief["numericalResearch"])
     body["contextId"] = hashlib.sha256(json.dumps(body, ensure_ascii=False,
         sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return body

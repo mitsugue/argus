@@ -29,7 +29,10 @@ export interface MarketBrief {
       { textJa: string; evidenceIds: string[]; kind: 'FACT' | 'INFERENCE' | 'UNKNOWN' }>;
   } | null;
   unifiedContext?: { contextId: string; facts: Array<MarketBriefFact & { evidenceId: string }>;
-    previousFacts: Array<MarketBriefFact & { evidenceId: string }>; previousAt: string | null };
+    previousFacts: Array<MarketBriefFact & { evidenceId: string }>; previousAt: string | null;
+    researchPackages?: Array<{ packageId: string; packageVersion: string; labelJa: string;
+      coverage: { historyStart: string | null; historyEnd: string | null; historyCount: number };
+      horizons: Record<string, { effectiveSampleCount: number | null; calibrationStatus: string | null }> }> };
   analysisHistory?: { status: string; recordId?: string; remoteRecoveryVerified: boolean };
   unifiedStatus?: string;
   generationWorker?: { status: string; lastAttemptAt?: string | null; lastCompletedAt?: string | null; errorClass?: string | null };
