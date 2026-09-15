@@ -19,7 +19,7 @@ Distinguish implemented, tested, production-observed and complete in reports.
 
 Read `docs/V13_6_REQUIREMENTS.md` for the current scope and acceptance criteria.
 Finish the active 13.6 production repairs and relevant acceptance first, then
-continue into 13.7 under `docs/V13_7_REQUIREMENTS.md`. The owner's explicit
+continue into 13.7 under `docs/V13_7_REQUIREMENTS.md`. That document now contains the owner’s unified design v1.0 (2026-09-15), which supersedes conflicting earlier 13.7 directions. Reuse existing evidence, event memory, owner context and prediction stores; prioritize unnecessary GPT calls, then one end-to-end case with bounded retrieval and counterevidence. Do not recreate parallel decision or history infrastructure. The owner's explicit
 2026-09-15 instruction supersedes the earlier 13.7 hold. Keep 13.6 repairs and
 13.7 improvements in separate change units. Reuse completed evidence; do not
 start another broad prerequisite audit or rebuild the platform. Unrelated

@@ -38,7 +38,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_macro_schedule.py': 'a49e0d008eca24af791b080848df063e625bb0df',
     'test_macro_readiness.py': 'd1348cbcc814fb28857bd42095007f355728cd5a',
     'scripts/macro_readiness.py': 'd9d736333960d220a5ce3fc55951abc901ea47f0',
-    'docs/V13_7_REQUIREMENTS.md': 'b8820f8073b26b5a969f244d3eee765ab0dff0df',
+    'docs/V13_7_REQUIREMENTS.md': '2339e233c134eb18413b6d925b0ddbc6d92e20c5',
     'web/src/hooks/useOsintInvestigation.ts': 'ada26a80e0f0f439f97cb75858407647dc7c5d8d',
     'web/src/components/guide/Layer2BSyncCard.tsx': '20dae8bccafee961a17aad41b39f738fd5f60b76',
     'web/src/components/dashboard/ProHandoffButton.tsx': 'ff35d429cd6c8b615fbeb355edf475edacc992a5',
