@@ -17573,7 +17573,10 @@ def _market_brief_worker_tick():
             lastAttemptAt=_ai_now_iso(), status="RUNNING", errorClass=None)
         try:
             if not _MARKET_BRIEF.get("historyRestoreAttempted"):
+                # Expose the verified local edition while remote recovery runs.
+                _market_brief_history_restore()
                 _market_brief_history_sync()
+                _MARKET_BRIEF["historyRestoreAttempted"] = False
             _market_brief_history_restore()
             _market_brief_history_outcomes()
             result = _market_brief_refresh(allow_ai=True)

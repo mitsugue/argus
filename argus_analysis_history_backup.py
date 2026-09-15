@@ -187,6 +187,32 @@ def _immutable(remote, path, raw):
     if verified != raw: raise ValueError('history_remote_readback_mismatch')
 
 
+def _publish_chunks(remote, chunks, directory):
+    """Overlap independent existence reads; keep writes and readbacks serial."""
+    reader = getattr(remote, 'read_chunks', None)
+    if not callable(reader):
+        for chunk in chunks:
+            _immutable(remote, PREFIX + '/chunks/' + chunk['sha256'] + '.bin',
+                       (Path(directory) / chunk['sha256']).read_bytes())
+        return
+    reads = reader(chunks)
+    try:
+        for chunk, existing in zip(chunks, reads, strict=True):
+            raw = (Path(directory) / chunk['sha256']).read_bytes()
+            if len(raw) != chunk['bytes'] or digest(raw) != chunk['sha256']:
+                raise ValueError('history_local_chunk_changed')
+            if existing is not None:
+                if existing != raw: raise ValueError('history_remote_immutable_conflict')
+                continue
+            path = PREFIX + '/chunks/' + chunk['sha256'] + '.bin'
+            remote.put(path, raw, expected_version=None)
+            verified, _ = remote.get(path)
+            if verified != raw: raise ValueError('history_remote_readback_mismatch')
+    finally:
+        close = getattr(reads, 'close', None)
+        if callable(close): close()
+
+
 def synchronize(path, remote, *, last_verified_head=None):
     """Restore/merge before publishing; concurrent writers cannot drop each other."""
     with tempfile.TemporaryDirectory(prefix='.analysis-recovery-', dir=Path(path).parent) as directory:
@@ -197,9 +223,7 @@ def synchronize(path, remote, *, last_verified_head=None):
         history.initialize(path)
         local = _snapshot(path, directory)
         if manifest != local:
-            for chunk in local['chunks']:
-                _immutable(remote, PREFIX + '/chunks/' + chunk['sha256'] + '.bin',
-                           (Path(directory) / chunk['sha256']).read_bytes())
+            _publish_chunks(remote, local['chunks'], directory)
             encoded = encode(local); identity = digest(encoded)
             _immutable(remote, PREFIX + '/manifests/' + identity + '.json', encoded)
             remote.put(PREFIX + '/head.json', encode({'schemaVersion': SCHEMA, 'manifestSha256': identity}),
