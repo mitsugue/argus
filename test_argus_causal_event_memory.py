@@ -15,6 +15,49 @@ BEFORE_T0 = "2026-07-19T02:34:00Z"
 SHA = "a" * 40
 
 
+def test_reasoning_outcomes_keep_original_cutoff_and_latest_correction(tmp_path):
+    initial = build_event(news(event_id="inflation-result", event_type="INFLATION"))
+    _, base = ledger_state(tmp_path / "base", initial)
+    event = cem.event_view(base["events"][initial["eventId"]])
+    def outcome(value, known):
+        return cem.build_outcome_window(event=event,
+            hypothesis_id=event["causalHypotheses"][0]["hypothesisId"], horizon="5D",
+            target_at=T1, observed_at=T1, known_at=known,
+            metrics=[{"metric":"RETURN", "instrument":"QQQ", "value":value,"unit":"%"}],
+            truth_refs=["truth:public-price:"+known])
+    original, corrected = outcome(1.5,T1), outcome(-2.0,T2)
+    _, state = ledger_state(tmp_path / "results", initial, original, corrected)
+    saved = copy.deepcopy(state)
+    past = cem.reasoning_retrieval(state, family="INFLATION_RATES", as_of=T0)
+    before_revision = cem.reasoning_retrieval(state, family="INFLATION_RATES", as_of=T1)
+    current = cem.reasoning_retrieval(state, family="INFLATION_RATES", as_of=T2)
+    assert past["records"][0]["outcomeWindows"] == []
+    assert before_revision["records"][0]["outcomeWindows"] == [original]
+    assert current["records"][0]["outcomeWindows"] == [corrected]
+    assert current["records"][0]["outcomeCoverage"]["supersededRecordCount"] == 1
+    assert state == saved and len(state["events"][initial["eventId"]]["outcomes"]) == 2
+    assert current["actionAuthority"] is False
+
+
+def test_reasoning_outcomes_bound_windows_and_keep_unscorable_state(tmp_path):
+    initial = build_event(news(event_id="inflation-missing-result", event_type="INFLATION"))
+    _, base = ledger_state(tmp_path / "base", initial)
+    event = cem.event_view(base["events"][initial["eventId"]])
+    windows = [cem.build_outcome_window(event=event,
+        hypothesis_id=event["causalHypotheses"][0]["hypothesisId"], horizon=h,
+        target_at=T1, observed_at=T1, known_at=T1, metrics=None, truth_refs=None,
+        missing_reasons=["price_history_missing"]) for h in ("1D","5D","20D")]
+    _, state = ledger_state(tmp_path / "results", initial, *windows)
+    current = cem.reasoning_retrieval(state, family="INFLATION_RATES", as_of=T2)
+    record = current["records"][0]
+    assert len(record["outcomeWindows"]) == 2
+    assert record["outcomeCoverage"]["omittedWindowCount"] == 1
+    assert current["omissions"]["OUTCOME_WINDOW_BOUND"] == 1
+    assert current["coverage"] == "BOUNDED_PARTIAL"
+    assert all(w["status"] == "UNSCORABLE" and w["metrics"] == [] for w in record["outcomeWindows"])
+    assert len(cem._canonical(current)) <= current["maximumPackageBytes"]
+
+
 def test_reasoning_retrieval_is_point_in_time_and_preserves_original_claims(tmp_path):
     original = build_event(news(event_id="inflation-a", event_type="INFLATION",
         facts=["Original observation"], themes=["RATES"], entities=["BLS"]))

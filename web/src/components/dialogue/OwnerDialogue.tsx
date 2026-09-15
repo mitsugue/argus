@@ -12,7 +12,7 @@ import '../today/ArgusEditorialSurface.css';
 type Section={textJa:string;kind:string;evidenceIds:string[]};
 export type Job={remoteBackup?:{status?:string;lastVerifiedAt?:string;pending?:boolean};requestId:string;status:string;persistenceStatus:string;remoteRecoveryVerified:boolean;
   overviewReuse?:{checkedAt:string;baseMarketContextId:string;inputsDigest:string;originalCompletedAt:string};
-  previousOverview?:Job|null;context:{referenceEdition?:{recordId:string;recordedAt:string;isCurrentMarketAnalysis:false};intent?:string;eventFocus?:{eventId:string};contextId:string;question:string;subject:{symbol:string;market:string};horizonSessions:number;baseMarketContextId:string;
+  previousOverview?:Job|null;context:{referenceEdition?:{recordId:string;recordedAt:string;isCurrentMarketAnalysis:false};intent?:string;eventFocus?:{eventId:string;snapshot?:{relatedMemory?:{policyVersion?:string;records?:Array<{outcomeWindows?:Array<{status:string}>}>}}};contextId:string;question:string;subject:{symbol:string;market:string};horizonSessions:number;baseMarketContextId:string;
     facts:Array<{evidenceId:string;text:string;provenance?:{url?:string;sourceLabel?:string}}>;
     retrievalRecord?:{policyVersion:string;scope:string;archiveSearchStatus:string;counterevidenceSearchStatus:string;selection:{mandatoryCurrent:string[];previousDistinct:string[];previousSharedWithCurrent:string[]}};
     indexComparison?:JapanMarketComparison;indexComparisonEvidenceId?:string;
@@ -174,6 +174,11 @@ export function OwnerAnswerBody({job}:{job:Job}) {
         :job.context.retrievalRecord.archiveSearchStatus==='UNAVAILABLE'
           ?'関連する過去記録を確認できなかったため、現在と前回の根拠で説明しています。'
           :'過去の全記録を検索する機能はまだ接続していません。'}見つからなかったことは、反証が存在しないことを意味しません。</p>
+      {job.context.eventFocus?.snapshot?.relatedMemory?.policyVersion==='bounded-event-history-v2'&&<p className="argus-editorial__uncertain">
+        {job.context.eventFocus.snapshot.relatedMemory.records?.some(record=>record.outcomeWindows?.some(window=>window.status==='OBSERVED'))
+          ?'過去の仮説に結び付いた、その後の実測結果も参照しました。当時の予測と現在の見通しは分け、結果不足を的中扱いにしていません。'
+          :'後日の実測結果は、この回答の検索範囲では確認できていません。過去の仮説が当たったという根拠には使っていません。'}
+      </p>}
     </details>}
     </div>;
 }

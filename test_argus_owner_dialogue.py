@@ -21,6 +21,46 @@ def context(**kwargs):
 def answer():return {key:{'textJa':'根拠を確認できていません。','kind':'UNKNOWN','evidenceIds':[]} for key in brief.UNIFIED_SECTIONS}
 
 
+@pytest.mark.parametrize('mutation', [None, 'future', 'wrong_event', 'missing_source', 'legacy'])
+def test_event_outcomes_validate_time_source_and_saved_legacy_compatibility(tmp_path, mutation):
+    import argus_causal_event_memory as cem
+    from test_argus_causal_event_memory import build_event, news, ledger_state, T1
+    initial=build_event(news(event_type='INFLATION'))
+    _, state=ledger_state(tmp_path / 'base',initial)
+    view=cem.event_view(state['events'][initial['eventId']])
+    outcome=cem.build_outcome_window(event=view,
+        hypothesis_id=view['causalHypotheses'][0]['hypothesisId'],horizon='5D',
+        target_at=T1,observed_at=T1,known_at=T1,
+        metrics=[{'metric':'RETURN','instrument':'QQQ','value':-2.0,'unit':'%'}],
+        truth_refs=['truth:public-price'])
+    _, state=ledger_state(tmp_path / 'result',initial,outcome)
+    memory=cem.reasoning_retrieval(state,family='INFLATION_RATES',as_of=AT)
+    record=memory['records'][0]
+    if mutation=='future':record['outcomeWindows'][0]['knownAt']='2027-01-01T00:00:00Z'
+    if mutation=='wrong_event':record['outcomeWindows'][0]['eventId']='unrelated-event'
+    if mutation=='missing_source':record['outcomeWindows'][0]['truthRefs']=[]
+    if mutation=='legacy':
+        memory['policyVersion']='bounded-event-history-v1'
+        memory['outcomeLookupStatus']='NOT_INCLUDED_IN_THIS_LOOKUP'
+        memory.pop('maximumOutcomeWindowsPerEvent')
+        for old in memory['records']:
+            old.pop('outcomeWindows');old.pop('outcomeCoverage')
+    record['snapshotSha256']=dialogue.digest({k:v for k,v in record.items() if k!='snapshotSha256'})
+    memory['selection'][0]['snapshotSha256']=record['snapshotSha256']
+    memory['retrievalDigest']=dialogue.digest({k:v for k,v in memory.items() if k!='retrievalDigest'})
+    original=deepcopy(memory)
+    c=context(focus_event_id='calendar-cpi',event_snapshot={'eventId':'calendar-cpi','relatedMemory':memory})
+    saved=c['eventFocus']['snapshot']['relatedMemory']
+    assert memory==original and any(f['source']=='price_path_calculation' for f in c['facts'])
+    if mutation in ('future','wrong_event','missing_source'):
+        assert saved['status']=='UNAVAILABLE'
+        assert not any(f['source']=='related_event_memory' for f in c['facts'])
+    else:
+        assert saved==memory
+        assert dialogue.reasoning_context(c)['eventFocus']['snapshot']['relatedMemory']['recordsEvidenceReferences']
+        if mutation is None:assert saved['records'][0]['outcomeWindows']==[outcome]
+
+
 def test_event_history_retrieval_is_saved_with_current_facts_and_coverage(tmp_path):
     import argus_causal_event_memory as cem
     from test_argus_causal_event_memory import build_event, news, ledger_state
