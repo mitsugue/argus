@@ -371,6 +371,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                         'completedAt': previous['result'].get('completedAt'),
                         'sections': deepcopy(previous['result']['answer']['sections'])}
                 context['historyStatus']='LOCAL_DURABLE'
+                context['retrievalRecord']=dialogue.retrieval_record(context)
                 if len(json.dumps(context, ensure_ascii=False).encode()) > 65536:
                     raise ValueError('private_context_size_bound')
                 context['contextId']=dialogue.digest({k:v for k,v in context.items() if k!='contextId'})

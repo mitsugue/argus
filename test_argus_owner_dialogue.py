@@ -51,6 +51,43 @@ def test_prior_same_scope_requires_integrity_and_preserves_changes():
     with pytest.raises(ValueError,match='integrity'):context(previous=old)
 
 
+def test_retrieval_sends_identical_previous_evidence_once_without_losing_history():
+    old=context(owner=owner());c=context(owner=owner(),previous=old);saved=deepcopy(c)
+    selected=dialogue.reasoning_context(c)
+    assert c==saved and c['previousFacts']==old['facts']
+    assert selected['facts']==c['facts'] and selected['previousFacts']==[]
+    assert selected['previousSharedEvidenceIds']==[f['evidenceId'] for f in old['facts']]
+    record=c['retrievalRecord']
+    assert record['omittedEvidenceCount']==0 and record['additionalAiCalls']==0
+    assert record['archiveSearchStatus']=='NOT_CONNECTED'
+    assert record['counterevidenceSearchStatus']=='CURRENT_AND_PREVIOUS_ONLY'
+    value=answer();f=old['facts'][0]
+    value['changes']={'textJa':f['text'],'kind':'INFERENCE','evidenceIds':[f['evidenceId']]}
+    assert dialogue.validate_answer(value,c) is not None
+
+
+def test_retrieval_preserves_contrary_missing_and_revised_source_evidence():
+    old=context(owner=owner())
+    contrary=dialogue.fact('前回の改善条件は成立していません。','counter_observation',kind='UNKNOWN')
+    old['facts'].append(contrary)
+    revised=old['facts'][0]
+    revised['provenance']={**revised.get('provenance',{}),'receivedAt':'2026-09-12T00:00:00Z'}
+    old['contextId']=dialogue.digest({k:v for k,v in old.items() if k!='contextId'})
+    c=context(owner=owner(),previous=old);selected=dialogue.reasoning_context(c)
+    assert contrary in selected['previousFacts'] and revised in selected['previousFacts']
+    assert selected['facts']==c['facts']
+    c['retrievalRecord']['selection']['previousDistinct']=[]
+    with pytest.raises(ValueError,match='retrieval_record_integrity'):dialogue.reasoning_context(c)
+
+
+def test_retrieval_rejects_future_edition_and_keeps_legacy_context_readable():
+    old=context();old['receivedAt']='2026-09-14T00:00:00Z'
+    old['contextId']=dialogue.digest({k:v for k,v in old.items() if k!='contextId'})
+    with pytest.raises(ValueError,match='previous_context_from_future'):context(previous=old)
+    legacy=context();legacy.pop('retrievalRecord')
+    assert dialogue.reasoning_context(legacy)==legacy
+
+
 def quote():return {'instrumentId':'NIKKEI_225_INDEX','priceBasis':'CASH_INDEX_CLOSE','close':60000,'observedAt':'2026-09-11T06:30:00Z','receivedAt':AT,'sourceResponseSha256':'a'*64}
 
 

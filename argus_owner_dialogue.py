@@ -281,6 +281,7 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
         else:facts.append(fact('仮定の数値計算に必要な原典を確認できていません。','conversation_hypothesis',kind='UNKNOWN'))
     matching_previous=isinstance(previous,Mapping) and previous.get('scope')=='OWNER_PRIVATE' and previous.get('subject')=={'symbol':symbol,'market':market} and previous.get('horizonSessions')==horizon and previous.get('schemaVersion')==SCHEMA and (previous.get('eventFocus') or {}).get('eventId')==(selected_event or {}).get('eventId')
     if matching_previous and previous.get('contextId')!=digest({k:v for k,v in previous.items() if k!='contextId'}):raise ValueError('previous_context_integrity')
+    if matching_previous and instant(previous['receivedAt'])>instant(received_at):raise ValueError('previous_context_from_future')
     prior=deepcopy(previous.get('facts') or []) if matching_previous else []
     context={'schemaVersion':SCHEMA,'scope':'OWNER_PRIVATE','subject':{'symbol':symbol,'market':market},
         'horizonSessions':horizon,'question':question,'receivedAt':received_at,'baseMarketContextId':public['contextId'],
@@ -302,8 +303,59 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
                     and instant(chart['informationCutoff']) <= instant(received_at)):
                 context['indexComparison'] = deepcopy(chart)
                 context['indexComparisonEvidenceId'] = matching_fact['evidenceId']
+    context['retrievalRecord'] = retrieval_record(context)
     if len(json.dumps(context,ensure_ascii=False).encode())>65536:raise ValueError('private_context_size_bound')
     require_allowed(context);context['contextId']=digest(context);return context
+
+
+def retrieval_record(context):
+    """Describe the bounded current/previous edition selection, without another store."""
+    current = context.get('facts') or []
+    previous = context.get('previousFacts') or []
+    # Equality includes provenance, acquisition times, verification and the original ID.
+    # A correction or contrary observation is never removed for low similarity.
+    shared = [row['evidenceId'] for row in previous if row in current]
+    changed = [row['evidenceId'] for row in previous if row not in current]
+    return {
+        'policyVersion': 'owner-edition-retrieval-v1',
+        'scope': 'CURRENT_AND_PREVIOUS_MATCHING_EDITION',
+        'asOf': context['receivedAt'],
+        'currentContextId': context['baseMarketContextId'],
+        'selection': {
+            'mandatoryCurrent': [row['evidenceId'] for row in current],
+            'previousDistinct': changed,
+            'previousSharedWithCurrent': shared,
+        },
+        'reasons': {
+            'mandatoryCurrent': 'ALL_SCOPED_CURRENT_FACTS_INCLUDING_UNKNOWNS',
+            'previousDistinct': 'MATCHING_SUBJECT_HORIZON_EVENT_PRESERVE_ALL_DIFFERENCES',
+            'previousSharedWithCurrent': 'EXACT_DUPLICATE_BODY_REFERENCED_ONCE',
+        },
+        'candidateCount': len(current) + len(previous),
+        'omittedEvidenceCount': 0,
+        'archiveSearchStatus': 'NOT_CONNECTED',
+        'counterevidenceSearchStatus': 'CURRENT_AND_PREVIOUS_ONLY',
+        'additionalAiCalls': 0,
+    }
+
+
+def reasoning_context(context):
+    """Send unchanged evidence once; preserve complete, immutable saved editions."""
+    value = deepcopy(context)
+    record = value.pop('retrievalRecord', None)
+    if record is None:
+        return value  # Previously saved contexts retain their original interpretation.
+    if record != retrieval_record(context):
+        raise ValueError('retrieval_record_integrity')
+    current = value.get('facts') or []
+    previous = value.get('previousFacts') or []
+    value['previousFacts'] = [row for row in previous if row not in current]
+    value['previousSharedEvidenceIds'] = record['selection']['previousSharedWithCurrent']
+    value['retrievalCoverage'] = {
+        'scope': record['scope'], 'archiveSearchStatus': record['archiveSearchStatus'],
+        'counterevidenceSearchStatus': record['counterevidenceSearchStatus'],
+    }
+    return value
 
 
 def prompt(context):
@@ -328,7 +380,9 @@ def prompt(context):
         'changes以外ではpreviousFactsを引用しません。UNKNOWN以外の項目には根拠IDが必要です。'
         '前回比較がなければchangesはUNKNOWN。保有申告がなければimpactはUNKNOWN。'
         'previousViewは保存した当時の説明です。現在の事実や正解ではありません。前回の説明を維持・変更する理由は現在と前回の根拠から述べ、過去の説明を書き換えないでください。'
-        '\n入力データ:\n'+json.dumps(context,ensure_ascii=False,separators=(',',':'))
+        'previousSharedEvidenceIdsは前回にも存在し、出典・時点を含め内容が完全に同じ根拠です。本文はfactsを参照し、前回情報がないとは扱いません。'
+        'retrievalCoverageの検索範囲を超えて過去を網羅した、反証が存在しない、と断定しません。現在と前回で異なる根拠や不明点は、支持・反対の両方から検討します。'
+        '\n入力データ:\n'+json.dumps(reasoning_context(context),ensure_ascii=False,separators=(',',':'))
         + '\n' + generation_instruction(dialogue_inventory(context)))
 
 
@@ -375,6 +429,10 @@ def overview_input_digest(context, generation_policy):
         raise ValueError('overview_reuse_inputs_invalid')
     at = instant(context['receivedAt'])
     inputs = deepcopy(context)
+    if 'retrievalRecord' in inputs:
+        if inputs['retrievalRecord'] != retrieval_record(context):
+            raise ValueError('retrieval_record_integrity')
+        inputs['retrievalPolicyVersion'] = inputs.pop('retrievalRecord')['policyVersion']
     for key in ('contextId', 'baseMarketContextId', 'receivedAt', 'previousFacts',
                 'previousView', 'changes', 'historyStatus', 'overviewInputs'):
         inputs.pop(key, None)

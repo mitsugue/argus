@@ -26,7 +26,7 @@ def test_invalid_numeric_answer_gets_one_correction_with_fixed_evidence(correcte
         return answer() if corrected and len(calls)==2 else copy.deepcopy(invalid)
     result=api.generate_answer(c,generate)
     assert len(calls)==2 and c==before
-    assert json.dumps(c,ensure_ascii=False,separators=(',',':')) in calls[1]
+    assert json.dumps(api.dialogue.reasoning_context(c),ensure_ascii=False,separators=(',',':')) in calls[1]
     assert 'unsupported_numeric_tokens' in calls[1]
     assert result['provider']['totalEstUsd']==.5
     assert len(result['provider']['attempts'])==2
@@ -346,6 +346,7 @@ def test_overview_input_changes_invalidate_without_mutating_context(change):
     if change=='model':policy['model']='test-next'
     if change=='rule':policy['ruleVersion']='v2'
     if change=='hour':c['receivedAt']='2026-09-13T01:00:00Z'
+    c['retrievalRecord']=dialogue.retrieval_record(c)
     c['contextId']=dialogue.digest({k:v for k,v in c.items() if k!='contextId'})
     snapshot=copy.deepcopy(c)
     assert dialogue.overview_input_digest(c,policy)!=before
