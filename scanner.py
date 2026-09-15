@@ -37762,7 +37762,9 @@ def api_argus_index_chart():
             "stateUpdate": {"status": "expected_skip", "reason": "index_cache_cold"},
             "noteJa": "指数日足はまだ取得されていません(起動後の巡回で自動取得されます)。",
         })
-    known_at = _ai_now_iso()
+    # A screen read does not acquire a new price revision. Keep the provider's
+    # original timestamp so PIT identity and stored calculation reuse agree.
+    known_at = _history_cache_known_at(cached, _JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC)
     history = {
         "dates": [str(row.get("date"))[:10] for row in rows],
         "opens": [row.get("open") for row in rows],

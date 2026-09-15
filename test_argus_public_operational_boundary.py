@@ -1390,7 +1390,8 @@ def test_index_chart_route_is_cached_only_and_names_the_index(monkeypatch):
                          "adjusted": False, "sourceRef": "yahoo:chart:^N225"})
             i += 1
         day += _dt.timedelta(days=1)
-    scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE["^N225"] = {"data": rows, "expires": 9e12}
+    scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE["^N225"] = {
+        "data": rows, "expires": 9e12, "acquiredAt": "2026-09-15T10:00:00Z"}
     calls = []
 
     class _NoNetwork:
@@ -1416,6 +1417,31 @@ def test_index_chart_route_is_cached_only_and_names_the_index(monkeypatch):
     assert body["instrumentMetadata"]["source"] == "yahoo_index_ohlcv"
     assert body["instrumentMetadata"]["sourceSymbol"] == "^N225"
     assert len(body["indicators"]["bars"]) >= 100
+
+
+def test_index_chart_reads_keep_original_provider_revision(monkeypatch):
+    import datetime as dt
+    from test_argus_today_intelligence import market_bars
+    rows = market_bars(40)
+    cache = {"^N225": {"data": rows, "expires": 9e12,
+                        "acquiredAt": "2026-09-15T10:00:00Z"}}
+    monkeypatch.setattr(scanner, "_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE", cache)
+    inputs = []
+    def report(*args, **kwargs):
+        inputs.append(kwargs["daily_rows_override"])
+        return {"instrumentMetadata": {}}
+    monkeypatch.setattr(scanner, "_chart_public_report", report)
+    with scanner.app.test_client() as client:
+        for hour in (11, 12):
+            monkeypatch.setattr(scanner, "_ai_now_iso", lambda: f"2026-09-15T{hour}:00:00Z")
+            assert client.get("/api/argus/index-chart?index=N225").status_code == 200
+    assert inputs[0] == inputs[1]
+    assert inputs[0][-1]["knownAt"] == "2026-09-15T10:00:00.000000Z"
+    assert inputs[0][-1]["close"] == rows[-1]["close"]
+    cache["^N225"]["acquiredAt"] = "2026-09-15T12:30:00Z"
+    with scanner.app.test_client() as client:
+        assert client.get("/api/argus/index-chart?index=N225").status_code == 200
+    assert inputs[2][-1]["datasetId"] != inputs[1][-1]["datasetId"]
 
 
 def test_us_daily_bar_is_eod_evidence_not_malformed():
