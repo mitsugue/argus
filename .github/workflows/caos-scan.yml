@@ -294,7 +294,7 @@ jobs:
             -o "$RUNNER_TEMP/osint-recovery-status.json" -w '%{http_code}' \
             "$BE/api/argus/admin/remote-journal/recovery-sidecar")
           if [ "$RECOVERY_STATUS" = "200" ]; then
-            python3 scripts/prepare_remote_journal_publish.py \
+            PYTHONPATH="$GITHUB_WORKSPACE" python3 scripts/prepare_remote_journal_publish.py \
               validate-sidecar \
               --recovery "$RUNNER_TEMP/osint-recovery-status.json" > /dev/null
             rm -f "$RUNNER_TEMP/osint-recovery-status.json"

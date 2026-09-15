@@ -526,3 +526,17 @@ def test_identity_and_durability_recheck_use_safe_http_summary_contract():
     assert "ready" in __import__(
         "scripts.workflow_http", fromlist=["_SAFE_OUTPUT_KEYS"]
     )._SAFE_OUTPUT_KEYS
+
+
+def test_scheduled_scan_publish_precheck_runs_with_checkout_imports():
+    root = Path(__file__).resolve().parent
+    step = _workflow_step_run(_text(), 'Fetch validated durable snapshots')
+    command = next(line.strip().removesuffix('\\').strip()
+        for line in step.splitlines() if 'python3 scripts/prepare_remote_journal_publish.py' in line)
+    env = os.environ.copy()
+    env.pop('PYTHONPATH', None)
+    env['GITHUB_WORKSPACE'] = str(root)
+    result = subprocess.run(['bash', '-c', command + ' --help'], cwd=root, env=env,
+        capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert 'validate-sidecar' in result.stdout
