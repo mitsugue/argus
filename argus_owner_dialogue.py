@@ -404,6 +404,24 @@ def reasoning_context(context):
     previous = value.get('previousFacts') or []
     value['previousFacts'] = [row for row in previous if row not in current]
     value['previousSharedEvidenceIds'] = record['selection']['previousSharedWithCurrent']
+    event_snapshot = (value.get('eventFocus') or {}).get('snapshot') or {}
+    memory = event_snapshot.get('relatedMemory') or {}
+    records = memory.get('records') or []
+    references = []
+    for saved in records:
+        serialized = json.dumps(saved, ensure_ascii=False, separators=(',',':'))
+        evidence = next((row for row in current
+            if row.get('source') == 'related_event_memory'
+            and (row.get('provenance') or {}).get('sourceRowSha256') == saved.get('snapshotSha256')
+            and row.get('text', '').endswith(': ' + serialized)), None)
+        if evidence is None:
+            break
+        references.append({'eventId':saved['eventId'], 'snapshotSha256':saved['snapshotSha256'],
+            'evidenceId':evidence['evidenceId']})
+    if records and len(references) == len(records):
+        memory.pop('records')
+        memory['recordsEvidenceReferences'] = references
+        memory['recordBodiesSource'] = 'facts:related_event_memory'
     value['retrievalCoverage'] = {
         'scope': record['scope'], 'archiveSearchStatus': record['archiveSearchStatus'],
         'counterevidenceSearchStatus': record['counterevidenceSearchStatus'],
