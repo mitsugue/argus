@@ -35,10 +35,14 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    "test_jp_market_engine.py": "142cc381d94e879def14ee46bf107ae411ddbbd9",
+    "test_argus_japan_valuation.py": "e7daf10f9e931db0492155b424ffd0d4745cfa2f",
+    "test_argus_valuation_addendum.py": "f5d413b959fba23f0103ec9c131fba8a94f30c0d",
+    "scripts/verify_index_valuation_anchors.py": "b6520b17bcf79cb8376b12c975dc6f8d8010ba7e",
     'test_argus_research_calculation_reuse.py': '0aec958de8cffbd8caca9e1e56c9c52dc3227cad',
     'web/src/components/today/NumericalResearchDetails.tsx': '48bab6718ecaf2626c6409791f495c029c7dd9ab',
     'test_argus_jp_market_research.py': '5840581f2992d026e7f952201c5b5aae81b3a2f2',
-    'docs/V13_7_NUMERICAL_RESEARCH_INVENTORY.md': '690b5d3d71c27a0f96b25761fa67f5d3840a4c34',
+    'docs/V13_7_NUMERICAL_RESEARCH_INVENTORY.md': "88536ce3105461ac6dd3db26990f928e982fd17b",
     'argus_jp_market_research.py': '125974892a7b61d601dafe3bd9e2058b2f5b5f5c',
     'test_argus_owner_dialogue_compression.py': '2cb55fe8e96b350d9d951401acf5cde43785b6c2',
     'test_argus_owner_overview_pending.py': '3bbebf3d717ad4d4f30e175d14fd2402e64396cf',
@@ -190,7 +194,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/margin-dynamics.test.cjs': '2ab221c47cfeb6afa4d0adcb1dfebd17b862b608',
     'web/scripts/market-brief-response.test.cjs': 'a0b9296048de2038a4f4e647c1583af010d1c3e5',
     'web/src/components/chart/JapanMarketComparisonChart.css': '7e594bcd28089cdbc154691909ecdc825ff172e4',
-    'web/src/components/chart/JapanMarketComparisonChart.tsx': '36694e16a5aadda00f547ab2d3ec9a196ac39cb3',
+    'web/src/components/chart/JapanMarketComparisonChart.tsx': "220f56ec7a4fce1ef7fa548cf92ddaea2c13be3d",
     'web/src/components/chart/JapanMarketComparisonPanel.tsx': '46200ccbd95ca54520eb72728ecf3e9a7803808f',
     'web/src/components/dashboard/JapanSqCalendarCard.css': 'a8bfb645823551f415e2d05e8f6721273c09083b',
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': '77f4e4fa1edee0e5f42db6d82597a4ec1ad82083',
