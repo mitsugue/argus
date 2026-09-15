@@ -128,7 +128,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/shared-market-context.test.cjs': '6ba958105e283011e25af76c3ce538e14833c75b',
     'web/src/components/assetDesk/AssetMarketContext.tsx': 'da84417e9b9a7d5861f0f65f3d2a11d95408a6c6',
     'web/src/components/dialogue/OwnerDialogue.css': '696bed395bce7b22fae7c7ddc2797f5b24b0a1dd',
-    'web/src/components/dialogue/OwnerDialogue.tsx': '527059cf9b5946adcb3f005da93dc2bbd34c28cf',
+    'web/src/components/dialogue/OwnerDialogue.tsx': '92205a92073f60fe9213d1a5eb8169ae96d2e648',
     'web/src/components/today/MarketBriefCard.tsx': 'e0411ccea4be66940b86c4f2c1a13e7fa22ff991',
     'web/src/components/today/MarketInternalsCard.tsx': 'f51d80a4bae476e9e20842d52a18cd92d68caaec',
     'web/src/components/today/SharedMarketContext.tsx': '0d126ec6d92e76957a4b58ef532e9b99b85b6f13',
