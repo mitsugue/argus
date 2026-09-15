@@ -388,6 +388,16 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
                 context['indexComparison'] = deepcopy(chart)
                 context['indexComparisonEvidenceId'] = matching_fact['evidenceId']
     context['retrievalRecord'] = retrieval_record(context)
+    linked = ((context.get('eventFocus') or {}).get('snapshot') or {}).get('relatedPredictionResults') or {}
+    if linked.get('status') == 'AVAILABLE' and len(json.dumps(context, ensure_ascii=False).encode()) > 65536:
+        context['facts'] = [row for row in context['facts'] if row.get('source') != 'related_prediction_results']
+        context['facts'].append(fact('今回の入力上限により、関連する予測結果の本文を省略しています。現在の情報と関連イベントの根拠は残しています。',
+                                     'related_prediction_results', kind='UNKNOWN'))
+        focus = context['eventFocus']
+        focus['snapshot']['relatedPredictionResults'] = {'status':'UNAVAILABLE', 'reason':'CONTEXT_BYTE_BOUND',
+            'omittedResultCount':len(linked['records']), 'omittedPackageDigest':linked['digest']}
+        focus['snapshotSha256'] = digest(focus['snapshot'])
+        context['retrievalRecord'] = retrieval_record(context)
     if len(json.dumps(context,ensure_ascii=False).encode())>65536:raise ValueError('private_context_size_bound')
     require_allowed(context);context['contextId']=digest(context);return context
 

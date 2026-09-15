@@ -133,6 +133,8 @@ def test_result_lookup_runs_after_canonical_commit_with_exact_staged_runtime():
     source = _source()
     publish = source.index('Publish bounded event prediction result lookup')
     assert source.index('Commit to ledger branch') < publish
+    assert 'id: canonical_commit' in source
+    assert "steps.canonical_commit.outcome == 'success'" in source[publish:]
     step = source[publish:source.index('# The ledger is ARGUS', publish)]
     assert 'sha256sum -c "$RUNTIME/SHA256SUMS"' in step
     assert 'SOURCE_COMMIT=$(git rev-parse HEAD)' in step

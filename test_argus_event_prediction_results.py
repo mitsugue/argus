@@ -282,3 +282,26 @@ def test_linked_results_reach_saved_dialogue_and_prompt_once(related_source, tmp
     assert saved == before
     assert client.post('/api/argus/owner-dialogue',json={'action':'history','ownerToken':'test-owner'}).status_code == 200
     assert len(calls) == 1
+
+
+def test_optional_results_cannot_displace_current_material_at_context_bound(related_source):
+    import json
+    import argus_owner_dialogue as dialogue
+    from test_argus_owner_dialogue import AT, market_brief
+    memory, source = related_source
+    snapshot = {'eventId':'calendar-inflation', 'eventCode':'CPI', 'title':'CPI', 'state':'UPCOMING',
+        'relatedMemory':memory, 'predictionResultSource':{'status':'AVAILABLE','data':source,'readAt':AT}}
+    def build(padding):
+        material = dialogue.fact('x' * padding, 'current_material')
+        return dialogue.build_context(brief=market_brief(), symbol='AAPL', market='US', horizon=1,
+            question='What changed?', received_at=AT, focus_event_id='calendar-inflation',
+            event_snapshot=snapshot, material_facts=[material])
+    small = build(1)
+    assert small['eventFocus']['snapshot']['relatedPredictionResults']['status'] == 'AVAILABLE'
+    size = len(json.dumps(small, ensure_ascii=False).encode())
+    padding = 65536 - size + 101
+    large = build(padding)
+    assert large['eventFocus']['snapshot']['relatedPredictionResults']['reason'] == 'CONTEXT_BYTE_BOUND'
+    assert any(row['source'] == 'current_material' and row['text'] == 'x' * padding for row in large['facts'])
+    assert large['eventFocus']['snapshot']['relatedMemory']['status'] == 'AVAILABLE'
+    assert len(json.dumps(large, ensure_ascii=False).encode()) <= 65536

@@ -318,3 +318,16 @@ def test_prefetched_publish_readback_failure_closes_reader_without_advancing_hea
         backup._publish_chunks(remote, [{'sha256': identity, 'bytes': len(raw)}], tmp_path)
     assert remote.closed
     assert not any(path.endswith('/head.json') for path in remote.puts)
+
+
+def test_repeated_identical_chunk_does_not_repeat_a_prefetched_missing_write(tmp_path):
+    class PrefetchedMissing(Remote):
+        def read_chunks(self, chunks):
+            for _ in chunks: yield None
+    remote = PrefetchedMissing()
+    raw = b'repeated-archive-content'; identity = backup.digest(raw)
+    (tmp_path / identity).write_bytes(raw)
+    chunk = {'sha256':identity,'bytes':len(raw)}
+    backup._publish_chunks(remote, [chunk, chunk], tmp_path)
+    assert len(remote.puts) == 1
+    assert remote.files[backup.PREFIX + '/chunks/' + identity + '.bin'] == raw

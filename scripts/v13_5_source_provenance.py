@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.4"
+PRODUCT_VERSION = "v13.7.5"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,10 +35,15 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'argus_event_prediction_results.py': 'dc3475083bfbed3df6ae49885667d0a5308385e4',
+    'test_argus_event_prediction_results.py': '47fa68f06010802bdff9398be5a3a581ca6c261d',
+    'scripts/export_event_prediction_results.py': '179bde75c50c32f426a42fffc117f2584c6e45a7',
+    'argus_event_result_source.py': '5d19291205687f62f00f77c43c2cd50225ebe363',
+    'test_argus_event_result_source.py': 'cf0a4dca842fd1763341002dcc9a82b2ef49b6ad',
     'test_macro_schedule.py': 'a49e0d008eca24af791b080848df063e625bb0df',
     'test_macro_readiness.py': 'd1348cbcc814fb28857bd42095007f355728cd5a',
     'scripts/macro_readiness.py': 'd9d736333960d220a5ce3fc55951abc901ea47f0',
-    'docs/V13_7_REQUIREMENTS.md': '1f343d2f8da8230aaffc3560e8a896f156d44573',
+    'docs/V13_7_REQUIREMENTS.md': 'bef89e193ba3ecd63aa98e23814cc2f4016c391f',
     'web/src/hooks/useOsintInvestigation.ts': 'ada26a80e0f0f439f97cb75858407647dc7c5d8d',
     'web/src/components/guide/Layer2BSyncCard.tsx': '20dae8bccafee961a17aad41b39f738fd5f60b76',
     'web/src/components/dashboard/ProHandoffButton.tsx': 'ff35d429cd6c8b615fbeb355edf475edacc992a5',
@@ -52,7 +57,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/common/TriangleStepLoader.css': '189ca3825669144c1ecec4248f9cc72376d77387',
     'web/src/i18n/index.ts': '933221ee4ca1f3adccdb8ebf5c950419fe7ce019',
     # Owner-authorized v13.6.1 prediction-ledger continuity regression proof.
-    'test_prediction_ledger_workflow.py': 'e01ff8eae80ebfa77d62a7b9772860785e3bafbd',
+    'test_prediction_ledger_workflow.py': 'd6306218d6d3545fedf43950fb866f98cda2d006',
     'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
     'web/src/hooks/useAssets.ts': 'ee6addd411bbf71c253e74a7f76165063189254b',
     'web/src/components/dialogue/OwnerOverview.tsx': '31f6dfb6e33b737052b63dcc7b31f6c159fdbe42',
@@ -103,10 +108,10 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_owner_vault.py': '9c3d105716b1115a205bc69dbbbd18e3a7356457',
     'argus_ai_usage_view.py': 'cd86138feaaa5f61a305b2eaa4e74f2b8de3b163',
     'argus_ai_usage_runtime.py': 'f65f5bd3196c162ad1152a1468a5d2be531f778b',
-    'argus_analysis_history_backup.py': '948e605801175f4d76da9330a66cb29a6dd7ffc0',
+    'argus_analysis_history_backup.py': '82acd23e8d1d51b95bc48277c6704726b5b8613d',
     'argus_explanation_contract.py': '28c20f0d1362c0edb3f3666629cb4eba4d903b5a',
-    'argus_owner_dialogue.py': '6588ecbf965d93b27c6149b9f04d8b99f685dd46',
-    'argus_owner_dialogue_api.py': '947465d29fb361ec1ad86c6d5b271e61b989ecde',
+    'argus_owner_dialogue.py': 'c9309979d4a4aa3857a7da4e4fb137562ec82f6e',
+    'argus_owner_dialogue_api.py': 'ec248582f8b1ab6832e7cbef026c70fda2961520',
     'argus_owner_dialogue_backup.py': 'ab8afc376e2b31cb617cb6b48b043a15e1ad98c6',
     'argus_owner_dialogue_recovery.py': 'bfc92ba9d12514167c622df5bcf04f87e945d721',
     'argus_owner_dialogue_store.py': '72422e35451def9da106bb200acd49e880a9a2f1',
@@ -116,10 +121,10 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/V13_6_OWNER_DIALOGUE.md': '6363817a4c2378931c8ba2fb9f30dc3fd691ac21',
     'jp_market_internals.py': '289cf25368b32e1a53aa3d23528c72543e9a6c77',
     'test_argus_ai_usage_runtime.py': 'f5f0e0fedc3caf85136684fa9d241b2e6e0d1975',
-    'test_argus_analysis_history_backup.py': '00b0f1a5df4d6a64dfa884163d0d3acd745b53be',
+    'test_argus_analysis_history_backup.py': 'd0b721fe82d01f830727a98ef29a70f51a73df2f',
     'test_argus_owner_cached_inputs.py': 'b0720ae1abca274197bf3f1cdf47f7dda8c37451',
     'test_argus_owner_dialogue.py': '6bb279b967eaf20974275999877541895d116371',
-    'test_argus_owner_dialogue_api.py': '4fab358d4a03c0e75bed38ffc6fc495fe6150dcb',
+    'test_argus_owner_dialogue_api.py': '9bf956addfbe63debf9aa5c60c5e0a94374f9327',
     'test_argus_owner_dialogue_backup.py': '6fe13fa23a90a3a90930fbf96257a117ebee88b0',
     'test_argus_owner_dialogue_recovery.py': 'cd35ae9060ba9ce6ae20850306c7207d8ab60ecd',
     'test_argus_subject_materials.py': 'e71b8a78d4af5a99640f0b61bbd173f8fcabf7b6',

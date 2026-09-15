@@ -576,6 +576,7 @@ jobs:
           PY
 
       - name: Commit to ledger branch
+        id: canonical_commit
         if: github.event.inputs.mode != 'ai-only'
         run: |
           git config user.name "argus-ledger[bot]"
@@ -650,12 +651,12 @@ jobs:
           echo "🎛️ DV shadow: \`${RESP:0:200}\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish bounded event prediction result lookup
-        if: github.event.inputs.mode != 'ai-only'
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
         run: |
           RUNTIME="$RUNNER_TEMP/argus-prediction-ledger-runtime"
           sha256sum -c "$RUNTIME/SHA256SUMS"
           SOURCE_COMMIT=$(git rev-parse HEAD)
-          # Canonical records and private-store steps are already committed.
+          # Canonical records are committed; private-store failures do not block this lookup.
           # This replaceable lookup carries original pairs, never new scores.
           python3 "$RUNTIME/scripts/export_event_prediction_results.py" \
             --ledger-root ledger/prediction/v2 \

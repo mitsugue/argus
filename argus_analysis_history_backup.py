@@ -196,18 +196,25 @@ def _publish_chunks(remote, chunks, directory):
                        (Path(directory) / chunk['sha256']).read_bytes())
         return
     reads = reader(chunks)
+    verified_chunks = set()
     try:
         for chunk, existing in zip(chunks, reads, strict=True):
             raw = (Path(directory) / chunk['sha256']).read_bytes()
             if len(raw) != chunk['bytes'] or digest(raw) != chunk['sha256']:
                 raise ValueError('history_local_chunk_changed')
+            path = PREFIX + '/chunks/' + chunk['sha256'] + '.bin'
+            if chunk['sha256'] in verified_chunks:
+                # A prefetched miss may precede this same object's first write.
+                _immutable(remote, path, raw)
+                continue
             if existing is not None:
                 if existing != raw: raise ValueError('history_remote_immutable_conflict')
+                verified_chunks.add(chunk['sha256'])
                 continue
-            path = PREFIX + '/chunks/' + chunk['sha256'] + '.bin'
             remote.put(path, raw, expected_version=None)
             verified, _ = remote.get(path)
             if verified != raw: raise ValueError('history_remote_readback_mismatch')
+            verified_chunks.add(chunk['sha256'])
     finally:
         close = getattr(reads, 'close', None)
         if callable(close): close()
