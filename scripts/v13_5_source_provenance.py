@@ -35,9 +35,10 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_research_calculation_reuse.py': '0aec958de8cffbd8caca9e1e56c9c52dc3227cad',
     'web/src/components/today/NumericalResearchDetails.tsx': '48bab6718ecaf2626c6409791f495c029c7dd9ab',
     'test_argus_jp_market_research.py': '5840581f2992d026e7f952201c5b5aae81b3a2f2',
-    'docs/V13_7_NUMERICAL_RESEARCH_INVENTORY.md': 'e035c7bb99c9269cc0b692961f010aa1a919f9f1',
+    'docs/V13_7_NUMERICAL_RESEARCH_INVENTORY.md': '690b5d3d71c27a0f96b25761fa67f5d3840a4c34',
     'argus_jp_market_research.py': '125974892a7b61d601dafe3bd9e2058b2f5b5f5c',
     'test_argus_owner_dialogue_compression.py': '2cb55fe8e96b350d9d951401acf5cde43785b6c2',
     'test_argus_owner_overview_pending.py': '3bbebf3d717ad4d4f30e175d14fd2402e64396cf',

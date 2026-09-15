@@ -8,10 +8,11 @@ as weekly credit balance or reported institutional short interest.
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
 import json
 import bisect
 import math
-from datetime import date as dtdate
+from datetime import date as dtdate, datetime
 import random
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -1062,11 +1063,48 @@ def failed_rally_backtest(rows: Iterable[Dict[str, Any]], *,
     }
 
 
+def _stored_computation(snapshot, *, symbol, market, cutoff, kind, input_digest):
+    """Only an intact, already available computation can satisfy an input match."""
+    if not isinstance(snapshot, dict) or snapshot.get("symbol") != symbol or snapshot.get("market") != market:
+        return None
+    if snapshot.get("methodVersion") != METHOD_VERSION or not cutoff:
+        return None
+    try:
+        at = datetime.fromisoformat(snapshot["asOf"].replace("Z", "+00:00"))
+        limit = datetime.fromisoformat(cutoff.replace("Z", "+00:00"))
+        if at.tzinfo is None or limit.tzinfo is None or at > limit:
+            return None
+        if snapshot.get("id") != "today-" + _hash({k: v for k, v in snapshot.items() if k != "id"}):
+            return None
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+    digests = snapshot.get("researchInputDigests")
+    if not isinstance(digests, dict) or digests.get(kind) != input_digest:
+        return None
+    value = snapshot.get("calibration") if kind == "calibration" else (snapshot.get("failedRally") or {}).get("backtest")
+    if not isinstance(value, dict):
+        return None
+    restored = deepcopy(value)
+    if kind == "calibration":
+        # Live breadth freshness belongs to the caller, not a saved calibration.
+        horizons = restored.get("horizons")
+        if not isinstance(horizons, dict):
+            return None
+        for row in horizons.values():
+            if not isinstance(row, dict):
+                return None
+            evidence = row.get("probabilityTruthEvidence")
+            if isinstance(evidence, dict):
+                evidence["breadthLagTradingDays"] = None
+    return restored
+
+
 def analyze(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
             short_history: Iterable[Dict[str, Any]] = (),
             comparison_rows: Iterable[Dict[str, Any]] = (),
             jp_market_engine_context: Optional[Mapping[str, Any]] = None,
-            as_of: Optional[str] = None) -> Dict[str, Any]:
+            as_of: Optional[str] = None,
+            stored_calculation: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     source_rows = list(rows or [])
     source_short = list(short_history or [])
     source_comparison = list(comparison_rows or [])
@@ -1121,9 +1159,23 @@ def analyze(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
             short_change=_number(((short_summary.get("latest") or {}).get("previousDayDifference"))),
             breadth_divergence=_comparison_divergence(bars, comparison, bars[-1]["date"]),
         )
-    calibration = calibrate_forecast(bars, jp_market_engine_context=context, market=market)
-    backtest = failed_rally_backtest(bars, short_history=short_rows,
-                                     comparison_rows=comparison)
+    input_digests = {
+        "calibration": _hash({"methodVersion": METHOD_VERSION, "calibrationVersion": CALIBRATION_VERSION,
+            "symbol": symbol, "market": market, "bars": bars, "conditioning": context}, 64),
+        "failedRally": _hash({"methodVersion": METHOD_VERSION, "symbol": symbol, "market": market,
+            "bars": bars, "shortRows": short_rows, "comparison": comparison}, 64),
+    }
+    calibration = _stored_computation(stored_calculation, symbol=symbol, market=market,
+        cutoff=as_of, kind="calibration", input_digest=input_digests["calibration"])
+    calibration_reused = calibration is not None
+    if calibration is None:
+        calibration = calibrate_forecast(bars, jp_market_engine_context=context, market=market)
+    backtest = _stored_computation(stored_calculation, symbol=symbol, market=market,
+        cutoff=as_of, kind="failedRally", input_digest=input_digests["failedRally"])
+    backtest_reused = backtest is not None
+    if backtest is None:
+        backtest = failed_rally_backtest(bars, short_history=short_rows,
+                                         comparison_rows=comparison)
     return {
         "schemaVersion": SCHEMA_VERSION, "methodVersion": METHOD_VERSION,
         "symbol": symbol, "market": market,
@@ -1137,6 +1189,9 @@ def analyze(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
         "historyCoverage": {"start": bars[0]["date"] if bars else None,
                             "end": bars[-1]["date"] if bars else None,
                             "count": len(bars)},
+        "researchInputDigests": input_digests,
+        "calculationReuse": {"calibration": calibration_reused, "failedRally": backtest_reused,
+            "policy": "exact_filtered_inputs_and_verified_saved_output_v1"},
         "calibration": calibration, "shortSelling": short_summary,
         "failedRally": {**current_failed, "backtest": backtest,
                         "probability": (backtest.get("probability")
@@ -1203,8 +1258,14 @@ def merge_analysis(state: Dict[str, Any], analysis: Dict[str, Any],
         "failedRally": analysis.get("failedRally"),
         "methodVersion": METHOD_VERSION,
     }
+    if isinstance(analysis.get("researchInputDigests"), dict):
+        snapshot_body["researchInputDigests"] = dict(analysis["researchInputDigests"])
     snapshot = {**snapshot_body, "id": "today-" + _hash(snapshot_body)}
-    if snapshot["id"] not in {row.get("id") for row in out["snapshots"]}:
+    previous = next((row for row in reversed(out["snapshots"])
+        if row.get("symbol") == snapshot.get("symbol") and row.get("market") == snapshot.get("market")), None)
+    unchanged = bool(previous) and all(
+        previous.get(key) == value for key, value in snapshot_body.items() if key != "asOf")
+    if not unchanged and snapshot["id"] not in {row.get("id") for row in out["snapshots"]}:
         out["snapshots"].append(snapshot)
     for row in (((analysis.get("failedRally") or {}).get("backtest") or {}).get("cases") or []):
         if not isinstance(row, dict) or not row.get("date"):

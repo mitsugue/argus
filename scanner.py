@@ -17928,6 +17928,16 @@ def _market_brief_refresh(allow_ai=True):
     if allow_ai and brief.get("unifiedStatus") == "GENERATED":
         _market_brief_history_save(brief)
         _MARKET_BRIEF["lastSuccessful"] = copy.deepcopy(brief)
+    if brief.get("presentationStatus") == "GENERATED":
+        _MARKET_BRIEF["lastPresentation"] = copy.deepcopy(brief)
+    elif _MARKET_BRIEF.get("lastPresentation"):
+        # Retain one complete edition with its original numbers and time.
+        # Never combine its text/plan with the newly collected calculations.
+        brief["retainedPresentation"] = copy.deepcopy(_MARKET_BRIEF["lastPresentation"])
+    # Publish the saved edition before the potentially slow source comparison.
+    # That comparison controls the NEXT generation, not this accepted output.
+    _MARKET_BRIEF["data"] = brief
+    _MARKET_BRIEF["composedAt"] = time.time()
     if allow_ai:
         # Do not cache a generation if source inputs moved while GPT was working.
         unchanged = input_digest and input_digest == _market_brief_generation_input_digest(
@@ -17935,14 +17945,6 @@ def _market_brief_refresh(allow_ai=True):
         _MARKET_BRIEF["generationInputDigest"] = (input_digest if unchanged
             and brief.get("unifiedStatus") == "GENERATED"
             and brief.get("presentationStatus") == "GENERATED" else None)
-    if brief.get("presentationStatus") == "GENERATED":
-        _MARKET_BRIEF["lastPresentation"] = copy.deepcopy(brief)
-    elif _MARKET_BRIEF.get("lastPresentation"):
-        # Retain one complete edition with its original numbers and time.
-        # Never combine its text/plan with the newly collected calculations.
-        brief["retainedPresentation"] = copy.deepcopy(_MARKET_BRIEF["lastPresentation"])
-    _MARKET_BRIEF["data"] = brief
-    _MARKET_BRIEF["composedAt"] = time.time()
     return brief
 
 
@@ -37355,11 +37357,14 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
         }
     except Exception:
         _jp_market_engine_context = None
+    _saved_calculation = next((row for row in reversed(_TODAY_INTELLIGENCE.get("snapshots") or [])
+        if row.get("symbol") == symbol and row.get("market") == market
+        and row.get("methodVersion") == argus_today_intelligence.METHOD_VERSION), None)
     _today_intel = argus_today_intelligence.analyze(
         daily_rows, symbol=symbol, market=market,
         short_history=_short_rows, comparison_rows=_comparison_rows,
         jp_market_engine_context=_jp_market_engine_context,
-        as_of=now_iso)
+        as_of=now_iso, stored_calculation=_saved_calculation)
     # The pure engine cannot measure breadth freshness (no ledger access), so
     # the serving layer injects the measured JP lag here. None stays None —
     # the display gate reads it as unverified, never as fresh.
@@ -37759,7 +37764,9 @@ def api_argus_index_chart():
             "stateUpdate": {"status": "expected_skip", "reason": "index_cache_cold"},
             "noteJa": "指数日足はまだ取得されていません(起動後の巡回で自動取得されます)。",
         })
-    known_at = _ai_now_iso()
+    # A screen read does not acquire a new price revision. Keep the provider's
+    # original timestamp so PIT identity and stored calculation reuse agree.
+    known_at = _history_cache_known_at(cached, _JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC)
     history = {
         "dates": [str(row.get("date"))[:10] for row in rows],
         "opens": [row.get("open") for row in rows],
