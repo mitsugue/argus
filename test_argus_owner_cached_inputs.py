@@ -137,3 +137,46 @@ def test_history_adds_provenance_without_changing_existing_price_selection(monke
         assert result['closes']==[101.0]*len(DATES)
         assert cache['sourceSnapshotSha256']==dialogue.digest(result)
         assert cache['sourceIdentityVerified'] is (fault is None)
+
+
+@pytest.mark.parametrize('gap,expected_range',[(1,'5d'),(30,'2y')])
+def test_n225_delta_fetch_retains_history_and_recovers_after_long_gap(monkeypatch,gap,expected_range):
+    from datetime import datetime,timedelta,timezone
+    from test_argus_index_history import bar
+    class Clock(datetime):
+        @classmethod
+        def now(cls,tz=None):return cls(2026,9,16,8,tzinfo=timezone.utc)
+    monkeypatch.setattr(scanner,'datetime',Clock)
+    end=Clock.now().date()-timedelta(days=gap)
+    existing=[bar((end-timedelta(days=i)).isoformat(),100) for i in reversed(range(30))]
+    monkeypatch.setattr(scanner,'_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE',{'^N225':{'data':existing,'expires':0}})
+    params=[]
+    body={'chart':{'result':[{'meta':{'gmtoffset':32400},'timestamp':[1789516800],
+        'indicators':{'quote':[{'open':[100],'high':[101],'low':[99],'close':[100],'volume':[0]}]}}]}}
+    class Response:
+        status_code=200
+        content=json.dumps(body).encode()
+        def json(self):return body
+        def close(self):pass
+    def get(*args,**kwargs):params.append(kwargs['params']);return Response()
+    monkeypatch.setattr(scanner.requests,'get',get)
+    rows=scanner._yahoo_index_ohlcv('^N225','NIKKEI_225_INDEX',fetch=True,available_hour_utc=7)
+    assert params[0]['range']==expected_range
+    assert len(rows)>=len(existing) and rows[0]==existing[0]
+
+
+def test_restored_index_history_keeps_successful_source_time_not_attempt_time(monkeypatch,tmp_path):
+    import argus_index_history as history
+    from test_argus_index_history import bar
+    body={'data':[bar('2026-09-15')], 'lastAttemptAt':'2026-09-16T08:00:00Z',
+          'currentSourceAcquiredAt':'2026-09-15T08:00:00Z','currentSourceSha256':'a'*64}
+    (tmp_path/'n225_analog_inputs.json').write_text(json.dumps(history.envelope(body)))
+    monkeypatch.setattr(scanner,'_DURABILITY_PATHS',{'root':str(tmp_path)})
+    monkeypatch.setattr(scanner,'_cost_policy_durable_enabled',lambda:True)
+    monkeypatch.setattr(scanner,'_N225_ANALOG_HISTORY_RESTORE_ATTEMPTED',False)
+    monkeypatch.setattr(scanner,'_N225_ANALOG_HISTORY',{})
+    monkeypatch.setattr(scanner,'_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE',{})
+    scanner._n225_analog_history_restore()
+    restored=scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE['^N225']
+    assert restored['acquiredAt']==body['currentSourceAcquiredAt']
+    assert restored['sourceResponseSha256']==body['currentSourceSha256']

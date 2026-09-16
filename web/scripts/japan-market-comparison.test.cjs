@@ -42,3 +42,19 @@ for (const patch of [{ eps: NaN }, { per: 0 }, { knownAt: '2026-09-12T00:00:00Z'
   assert(!validJapanMarketComparison({ ...withScale, valuationEvidence: { ...withScale.valuationEvidence, ...patch } }, 5));
 }
 console.log('Index valuation evidence validation PASS');
+const withCoverage = { ...document, historyCoverage: {
+  sourceBars: 2450, sourceStart: '2016-09-16', sourceEnd: '2026-09-11',
+  candidateCount: 2300, candidateStart: '2016-10-20', candidateEnd: '2026-08-10',
+  calendarStart: '2016-09-16', calendarEnd: '2026-09-11',
+  candidatesByYear: { '2016': 30, '2017': 240 },
+  excluded: { missingCalendarOrPriceSession: 2, incompleteEpisode: 0 },
+  maximumSelected: 3, selectedCount: 0, admittedCount: 0,
+  allMarketFeaturesTenYearsVerified: false,
+} };
+assert(validJapanMarketComparison(withCoverage, 5));
+for (const patch of [{ sourceBars: NaN }, { candidateCount: -1 },
+  { candidatesByYear: { invalid: 2 } }, { sourceStart: 'unknown' }]) {
+  assert(!validJapanMarketComparison({ ...withCoverage,
+    historyCoverage: { ...withCoverage.historyCoverage, ...patch } }, 5));
+}
+console.log('Historical comparison coverage validation PASS');
