@@ -64,6 +64,7 @@ import {
 } from '../lib/fireCore';
 import { deriveTodayJudgment, combinePhase, type TodayPhase } from '../lib/todayCall';
 import type { AssetItem } from '../types/assetItem';
+import { importantEventDisplayLabel } from '../domain/argusTodayView';
 
 const RISK_DISCIPLINE_POLICY = Object.freeze({
   policyId: 'argus-risk-discipline-v1',
@@ -451,7 +452,9 @@ export function useAssetIntel(opts: {
     const eventSyms = new Map<string, string>();
     for (const ie of impEvents?.events ?? []) {
       if (ie.countdown === 'D' || ie.countdown === 'D-1') {
-        for (const a of ie.linkedAssets ?? []) eventSyms.set(String(a).toUpperCase(), ie.eventCode);
+        for (const a of ie.linkedAssets ?? []) {
+          eventSyms.set(String(a).toUpperCase(), importantEventDisplayLabel(ie));
+        }
       }
     }
     // DQ modifier (modest): symbols whose past avoid_chase was contradicted
@@ -503,7 +506,9 @@ export function useAssetIntel(opts: {
   const sessionBrief = useMemo(() => {
     const eventNames: string[] = [];
     for (const ie of impEvents?.events ?? []) {
-      if (ie.countdown === 'D' || ie.countdown === 'D-1') eventNames.push(ie.eventCode);
+      if (ie.countdown === 'D' || ie.countdown === 'D-1') {
+        eventNames.push(importantEventDisplayLabel(ie));
+      }
     }
     if (importantEventsUnknown) eventNames.push('重要イベント情報未確認');
     const regLabel = regime.data?.regime?.label ?? null;
@@ -533,7 +538,9 @@ export function useAssetIntel(opts: {
     const eventSyms = new Map<string, string>();
     for (const ie of impEvents?.events ?? []) {
       if (ie.countdown === 'D' || ie.countdown === 'D-1') {
-        for (const a of ie.linkedAssets ?? []) eventSyms.set(String(a).toUpperCase(), ie.eventCode);
+        for (const a of ie.linkedAssets ?? []) {
+          eventSyms.set(String(a).toUpperCase(), importantEventDisplayLabel(ie));
+        }
       }
     }
     const sets = assets.map((a) => {
@@ -618,7 +625,9 @@ export function useAssetIntel(opts: {
     const eventSyms = new Map<string, string>();
     for (const ie of impEvents?.events ?? []) {
       if (ie.countdown === 'D' || ie.countdown === 'D-1') {
-        for (const a of ie.linkedAssets ?? []) eventSyms.set(String(a).toUpperCase(), ie.eventCode);
+        for (const a of ie.linkedAssets ?? []) {
+          eventSyms.set(String(a).toUpperCase(), importantEventDisplayLabel(ie));
+        }
       }
     }
     const tacticalStretched = ['stretched', 'exceeded'].includes(portfolioStrategy.tacticalBudget);

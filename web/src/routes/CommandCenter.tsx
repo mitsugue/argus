@@ -16,6 +16,7 @@ import type { SettingsSection } from '../navigation';
 import '../components/dashboard/Dashboard.css';
 import { ArgusTodayPanel } from '../components/today/ArgusTodayPanel';
 import { buildArgusTodayView, selectTodayNews,
+  importantEventDisplayLabel,
   type MarketSelectionMode, type TodayMoveInput,
   type TodayPositioningRow } from '../domain/argusTodayView';
 import { useTodayHeadline } from '../hooks/useTodayHeadline';
@@ -286,7 +287,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
         runNotificationEngine({
           apItems, eventNames: [...new Set((impEvents?.events ?? [])
             .filter((ie) => ie.countdown === 'D' || ie.countdown === 'D-1')
-            .map((ie) => ie.eventCode))],
+            .map((ie) => importantEventDisplayLabel(ie)))],
           marketShockEvents: (marketShock.view?.events ?? []).map((event) => ({
             eventId: event.eventId, eventClass: event.eventClass,
             severity: event.severity,
