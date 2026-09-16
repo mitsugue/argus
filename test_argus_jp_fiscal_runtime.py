@@ -187,6 +187,30 @@ def test_existing_collector_merges_and_retries_save_without_duplicate_fetch(monk
     assert scanner._JP_FISCAL_REFRESH_STATE['status']=='NOT_DUE' and len(calls)==3
 
 
+def test_saved_fiscal_report_keeps_verified_restore_truth_before_worker_runs(monkeypatch):
+    import scanner
+    get,_,_,_=fixture(monkeypatch)
+    saved=runtime.refresh(ledger.empty_state(),now_iso=AT,
+                          calendar=calendar(),get=get)['state']
+    report_id=runtime.public_document(saved)['id']
+    monkeypatch.setattr(scanner,'_MARKET_LEDGER',saved)
+    monkeypatch.setattr(scanner,'_JP_FISCAL_REFRESH_STATE',{
+        'status':'NOT_RUN','persistenceStatus':'UNVERIFIED',
+        'pendingPersistence':False})
+    monkeypatch.setattr(scanner,'_OSINT_PERSIST_STATE',{'restored':True})
+    monkeypatch.setattr(scanner,'_DURABLE_STATE',{
+        'lastRestoreAt':'2026-09-16T13:33:00Z'})
+
+    document=scanner._jp_fiscal_environment_document()
+
+    assert document['id']==report_id
+    assert document['worker']=={
+        'status':'RESTORED','persistenceStatus':'VERIFIED',
+        'pendingPersistence':False,'reportId':report_id,
+        'verifiedReportId':report_id,
+        'restoredAt':'2026-09-16T13:33:00Z'}
+
+
 def test_unified_context_and_existing_history_hold_same_fiscal_snapshot(monkeypatch,tmp_path):
     import argus_market_brief as brief
     import argus_analysis_history as history
