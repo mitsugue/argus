@@ -828,7 +828,30 @@ export function formatEventTime(value: string | null, dateOnly = false): string 
   const t = Date.parse(value);
   if (!Number.isFinite(t)) return '';
   if (dateOnly) {
-    return new Date(t).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' });
+    const day = new Date(t).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' });
+    return `${day}・時刻未公表`;
   }
   return new Date(t).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * One owner-facing event reference for every Today surface. Important-events
+ * carries an explicit JST string for timed releases and only `date` for
+ * date-only schedules; keep that distinction instead of inventing midnight.
+ */
+export function importantEventDisplayLabel(event: {
+  eventCode?: string | null;
+  eventTimeUtc?: string | null;
+  jstTime?: string | null;
+  date?: string | null;
+}): string {
+  const jst = String(event.jstTime ?? '');
+  const jstIso = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(jst)
+    ? `${jst.slice(0, 10)}T${jst.slice(11, 16)}:00+09:00`
+    : null;
+  const dateOnly = !event.eventTimeUtc && !jstIso;
+  const value = event.eventTimeUtc ?? jstIso
+    ?? (event.date ? `${event.date}T00:00:00+09:00` : null);
+  const when = formatEventTime(value, dateOnly) || '日時未確認';
+  return `${event.eventCode || '重要イベント'}（${when}）`;
 }
