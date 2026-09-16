@@ -17883,6 +17883,16 @@ def _market_brief_generation_input_digest(brief, internals):
         separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
 
+def _market_brief_urgent_signature(brief):
+    """Changes that must bypass routine GPT coalescing immediately."""
+    facts = [fact for fact in brief.get("facts") or []
+             if fact.get("priority") == "P0" or
+             (fact.get("priority") == "P1" and fact.get("source") in
+              {"market_view", "trusted_mail", "jp_fiscal_environment"})]
+    return hashlib.sha256(json.dumps(facts, sort_keys=True, ensure_ascii=False,
+        separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+
+
 def _market_brief_refresh(allow_ai=True):
     brief = _compose_market_brief()
     previous = _MARKET_BRIEF.get("lastSuccessful") or {}
@@ -17897,6 +17907,29 @@ def _market_brief_refresh(allow_ai=True):
             "originalGeneratedAt": previous.get("generatedAt"), "newAiCalls": 0}
         _MARKET_BRIEF.update(data=retained, composedAt=time.time())
         return retained
+    # Small price/cache revisions can change the input digest every ten-minute
+    # tick. Preserve one complete, timestamped edition for at most one hour;
+    # never combine its prose with newer calculations. Material news, shock,
+    # event, posture, news-direction or fiscal-warning changes bypass this
+    # coalescing immediately. Owner questions use their independent lane.
+    if (allow_ai and input_digest and previous.get("unifiedStatus") == "GENERATED"
+            and previous.get("presentationStatus") == "GENERATED"
+            and previous.get("unifiedSummary")
+            and _market_brief_urgent_signature(brief) ==
+                _market_brief_urgent_signature(previous)):
+        last = (previous.get("aiDiagnostics") or {}).get("completedAt") or previous.get("generatedAt")
+        try:
+            last_at = datetime.fromisoformat(str(last).replace("Z", "+00:00"))
+            age = (datetime.now(pytz.utc) - last_at.astimezone(pytz.utc)).total_seconds()
+        except (TypeError, ValueError, AttributeError):
+            age = 3600
+        if 0 <= age < 3600:
+            retained = copy.deepcopy(previous)
+            retained["generationReuse"] = {"inputsCheckedAt": _ai_now_iso(),
+                "originalGeneratedAt": previous.get("generatedAt"), "newAiCalls": 0,
+                "reason": "NONURGENT_CHANGE_COALESCED"}
+            _MARKET_BRIEF.update(data=retained, composedAt=time.time())
+            return retained
     # Bind unchanged-text reuse to the actual engine inputs and saved horizons.
     calculations = ({str(h): _jp_market_comparison_cached(h) for h in (1, 5, 10, 20)}
                     if allow_ai else copy.deepcopy(previous.get("calculationSnapshots") or {}))
@@ -38667,7 +38700,18 @@ _JP_FISCAL_REFRESH_STATE = {"status": "NOT_RUN", "persistenceStatus": "UNVERIFIE
 def _jp_fiscal_environment_document():
     """Public reads only project the small saved monitor, with no provider calls."""
     document = argus_jp_fiscal_runtime.public_document(_MARKET_LEDGER)
-    document["worker"] = dict(_JP_FISCAL_REFRESH_STATE)
+    worker = dict(_JP_FISCAL_REFRESH_STATE)
+    # A sealed checkpoint restore already verified the complete Market Ledger,
+    # including this report.  Do not reset that truth to UNVERIFIED merely
+    # because the new process has not yet run the collection worker.  A later
+    # collection attempt replaces this projection with its live worker state.
+    if document.get("id") and worker.get("status") == "NOT_RUN" \
+            and _OSINT_PERSIST_STATE.get("restored"):
+        worker.update(status="RESTORED", persistenceStatus="VERIFIED",
+                      pendingPersistence=False, reportId=document["id"],
+                      verifiedReportId=document["id"],
+                      restoredAt=_DURABLE_STATE.get("lastRestoreAt"))
+    document["worker"] = worker
     return document
 
 
