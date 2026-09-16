@@ -173,12 +173,16 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
         self.assertEqual(view["turningPointPage"]["uiDisplayCount"], 200)
         self.assertIsNotNone(view["turningPointPage"]["nextCursor"])
 
-    def test_frontend_contract_has_local_selection_and_no_ai_post(self):
+    def test_frontend_contract_has_one_today_outlook_and_no_ai_post(self):
         route = pathlib.Path("web/src/routes/CommandCenter.tsx").read_text()
         panel = pathlib.Path("web/src/components/today/ArgusTodayPanel.tsx").read_text()
-        self.assertIn("argus.today.selectedInstrument.v1", route)
+        self.assertIn("const marketMode: MarketSelectionMode = 'JP'", route)
+        self.assertIn("const chartHorizon: MarketHorizon = 5", route)
+        self.assertNotIn("argus.today.selectedInstrument.v1", route)
         self.assertNotIn("argus.replayContext", panel)
-        self.assertIn("<ProjectionChart projection={projection}", panel)
+        self.assertNotIn("<ProjectionChart projection={projection}", panel)
+        self.assertIn('data-argus-contract="other-markets-actuals-v1"', panel)
+        self.assertIn("Todayの見通しや確率は切り替わりません", panel)
         self.assertNotIn("onActivate={() => setDetail(true)}", panel)
         self.assertIn("([1, 5, 20] as const)", panel)
         self.assertNotIn("method: 'POST'", route + panel)

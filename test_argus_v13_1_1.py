@@ -104,8 +104,10 @@ def test_today_acceptance_uses_strict_truth_gate_and_honest_price_time():
     assert "projection.probabilityTruth.uncertaintyJa" in panel
     assert 'aria-label="主要指数現在値"' not in panel
     assert "quoteDisplayLabel(projection.quoteState)" in panel
-    assert "上昇失速パターン" in panel
-    assert "将来リターンのSkill未検証" in panel
+    # 旧パネル専用の失速表示はTodayから外すが、研究入力はview modelに保全する。
+    assert "上昇失速パターン" not in panel
+    assert "failedRallyState: projection?.failedRally ?? null" in domain
+    assert "probabilityTruth.exactPercentageAllowed" in domain
     assert "翌5日下落" not in panel
     assert "実績 · 終値" in panel
     assert "営業日先 予測" in panel
