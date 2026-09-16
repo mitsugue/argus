@@ -17709,7 +17709,7 @@ def _brief_sq_events():
         phase = {"TODAY": "本日", "LAST_TRADING_DAY": "本日が最終取引日",
                  "EVENT_WEEK": "今週", "UPCOMING": "予定"}.get(stage, "予定")
         rows.append({"eventId": event["eventId"], "title": event["title"],
-                     "whenJa": event["sqDate"].replace("-", "/") + "・寄付き基準",
+                     "whenJa": event["sqDate"] + "・寄付き基準",
                      "sqDate": event["sqDate"],
                      "countdown": phase, "calendarDaysUntil": event["calendarDaysUntil"],
                      "imminent": stage in {"TODAY", "LAST_TRADING_DAY", "EVENT_WEEK"},
