@@ -2399,6 +2399,32 @@ def test_market_brief_failed_generation_backs_off_and_success_resets(monkeypatch
     assert len(calls) == 8
 
 
+def test_market_brief_generation_completes_while_remote_history_is_slow(monkeypatch):
+    import threading
+    state = {'lastAttemptMonotonic': None, 'status': 'NOT_RUN'}
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF_WORKER', state)
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF', {'historyRestoreAttempted': True})
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF_HISTORY_REMOTE', {'status': 'NOT_RUN'})
+    monkeypatch.setattr(scanner, '_market_brief_history_outcomes', lambda: None)
+    monkeypatch.setattr(scanner, '_market_brief_refresh',
+                        lambda **kwargs: {'unifiedStatus': 'GENERATED'})
+    started, release = threading.Event(), threading.Event()
+    def slow_sync():
+        scanner._MARKET_BRIEF_HISTORY_REMOTE['status'] = 'RUNNING'
+        started.set()
+        release.wait(2)
+        scanner._MARKET_BRIEF_HISTORY_REMOTE['status'] = 'VERIFIED'
+    monkeypatch.setattr(scanner, '_market_brief_history_sync', slow_sync)
+    try:
+        result = scanner._market_brief_worker_tick()
+        assert result['status'] == 'GENERATED' and result['lastCompletedAt']
+        assert started.wait(1)
+        assert scanner._market_brief_worker_tick()['status'] == 'NOT_DUE'
+        assert scanner._MARKET_BRIEF_HISTORY_REMOTE['status'] == 'RUNNING'
+    finally:
+        release.set()
+
+
 def _reuse_inputs(monkeypatch):
     monkeypatch.setattr(scanner, '_backend_exact_sha', lambda: 'a' * 40)
     monkeypatch.setattr(scanner, '_owner_overview_generation_policy', lambda: {'model': 'test-primary', 'ruleVersion': 'a' * 40})
