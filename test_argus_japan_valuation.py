@@ -65,7 +65,7 @@ def test_compute_reports_missing_when_no_coverage():
     assert evidence["missing"] == ["derived_forward_per_coverage"]
 
 
-def test_d04_uses_derived_evidence_only_when_available_and_visible():
+def test_d04_keeps_universe_valuation_separate_and_point_in_time():
     val._reset_for_tests()
     cutoff = "2026-09-03T09:00:00Z"
     blocked = jp_market_engine.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX")
@@ -73,10 +73,11 @@ def test_d04_uses_derived_evidence_only_when_available_and_visible():
     evidence = val.compute(ROWS, PRICES, computed_at=cutoff, universe=["5803", "8058"])
     val.publish(evidence)
     derived = jp_market_engine.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX")
-    assert derived["status"] == "AVAILABLE" and derived["lineage"] == "ARGUS_CANDIDATE"
-    assert derived["conditionMet"] is evidence["conditionMet"]
-    assert derived["nikkeiOfficialPer"] == "NOT_CLAIMED" and derived["levels"] == []
-    assert derived["derived"]["medianForwardPer"] == evidence["medianForwardPer"]
+    assert derived["status"] == "LICENSE_BLOCKED"
+    assert derived["conditionMet"] is None and derived["levels"] == []
+    alternate = derived["alternativeValuation"]
+    assert alternate["appliesToD04"] is False
+    assert alternate["evidence"]["medianForwardPer"] == evidence["medianForwardPer"]
     # explicit argument wins; future-dated evidence is not visible at the cutoff
     future = {**evidence, "availableFrom": "2026-09-04T23:59:00+09:00"}
     assert jp_market_engine.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",

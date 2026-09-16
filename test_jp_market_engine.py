@@ -222,8 +222,9 @@ class PointInTimeAndPropositionTest(unittest.TestCase):
         direct = jp_market_engine.evaluate_d04(
             cutoff=CUTOFF, analysis_instrument="NIKKEI_225_INDEX",
             eps_evidence=eps, license_status="AVAILABLE")
-        self.assertEqual([row["multiple"] for row in direct["levels"]],
-                         [17, 18, 19, 20, 21])
+        self.assertEqual(direct["levels"], [])
+        self.assertEqual(direct["status"], "MISSING")
+        self.assertIsNone(direct["conditionMet"])
 
     def test_foreign_flow_is_publication_gated(self):
         row = evidence("flow.foreign", 123, available="2026-08-20T00:00:00Z")

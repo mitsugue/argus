@@ -813,75 +813,44 @@ def evaluate_d04(*, cutoff: str, analysis_instrument: str,
                  eps_evidence: Optional[Mapping[str, Any]] = None,
                  index_evidence: Optional[Mapping[str, Any]] = None,
                  license_status: str = "LICENSE_BLOCKED",
-                 derived_valuation: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+                 derived_valuation: Optional[Mapping[str, Any]] = None,
+                 index_valuation: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """D04 is same-session index-based valuation, never an equity-universe proxy."""
     if license_status not in {"AVAILABLE", "LICENSE_BLOCKED", "MISSING"}:
         raise ValueError("invalid_nikkei_valuation_license_status")
-    if analysis_instrument != "NIKKEI_225_INDEX":
-        return {
-            "family": "D04", "propositionId": "JP_MARKET_ENGINE-D04-ORIGINAL",
-            "lineage": "JP_MARKET_ENGINE_ORIGINAL", "analysisInstrument": analysis_instrument,
-            "status": "MISSING", "levels": [], "validationStatus": "UNVALIDATED",
-            "missing": ["nikkei_index_identity_required"],
-            "identityViolationPrevented": analysis_instrument in {"1321", "JP:1321:ETF"},
-        }
-    eps_identity_ok = (isinstance(eps_evidence, Mapping)
-                       and _identity_matches(eps_evidence, "NIKKEI_225_INDEX"))
-    index_identity_ok = (isinstance(index_evidence, Mapping)
-                         and _identity_matches(index_evidence, "NIKKEI_225_INDEX"))
-    eps = _value_and_time(eps_evidence, cutoff) if eps_identity_ok else None
-    index = _value_and_time(index_evidence, cutoff) if index_identity_ok else None
-    if license_status == "LICENSE_BLOCKED" or eps is None:
-        derived = _derived_valuation_evidence(derived_valuation, cutoff)
-        if derived is not None:
-            return {
-                "family": "D04", "propositionId": "JP_MARKET_ENGINE-D04-ORIGINAL",
-                "lineage": "ARGUS_CANDIDATE",
-                "analysisInstrument": analysis_instrument,
-                "status": "AVAILABLE",
-                "derivation": derived.get("derivation"),
-                "eps": None, "indexLevel": index["value"] if index else None,
-                "levels": [], "validationStatus": "UNVALIDATED",
-                "conditionMet": derived.get("conditionMet"),
-                "conditionRule": derived.get("conditionRule"),
-                "conditionLineage": "ARGUS_CANDIDATE",
-                "derived": {key: derived.get(key) for key in (
-                    "medianForwardPer", "interquartileRange", "highValuationShare",
-                    "coverage", "universeSize", "ladder", "knownAt", "computedAt")},
-                "nikkeiOfficialPer": "NOT_CLAIMED",
-                "licensedNikkeiEps": license_status,
-                "missing": [],
-                "epsIdentityRejected": eps_evidence is not None and not eps_identity_ok,
-                "indexIdentityRejected": index_evidence is not None and not index_identity_ok,
-                "identityViolationPrevented": False,
-            }
-        return {
-            "family": "D04", "propositionId": "JP_MARKET_ENGINE-D04-ORIGINAL",
-            "lineage": "JP_MARKET_ENGINE_ORIGINAL", "analysisInstrument": analysis_instrument,
-            "status": "LICENSE_BLOCKED" if license_status == "LICENSE_BLOCKED" else "MISSING",
-            "eps": None, "indexLevel": index["value"] if index else None,
-            "levels": [], "validationStatus": "UNVALIDATED",
-            "missing": ["licensed_nikkei_eps_per"],
-            "epsIdentityRejected": eps_evidence is not None and not eps_identity_ok,
-            "indexIdentityRejected": index_evidence is not None and not index_identity_ok,
-            "identityViolationPrevented": False,
-        }
-    levels = [{
-        "multiple": multiple,
-        "theoreticalValue": round(eps["value"] * multiple, 6),
-        "distanceToIndex": (round(eps["value"] * multiple - index["value"], 6)
-                            if index else None),
-    } for multiple in (17, 18, 19, 20, 21)]
-    return {
+    result = {
         "family": "D04", "propositionId": "JP_MARKET_ENGINE-D04-ORIGINAL",
         "lineage": "JP_MARKET_ENGINE_ORIGINAL", "analysisInstrument": analysis_instrument,
-        "status": "AVAILABLE", "eps": eps["value"],
-        "indexLevel": index["value"] if index else None,
-        "levels": levels, "validationStatus": "UNVALIDATED",
-        "missing": [] if index else ["nikkei_index_level"],
-        "epsIdentityRejected": eps_evidence is not None and not eps_identity_ok,
-        "indexIdentityRejected": index_evidence is not None and not index_identity_ok,
-        "identityViolationPrevented": False,
+        "status": "MISSING", "eps": None, "indexLevel": None, "per": None,
+        "epsLabelJa": "終値・指数ベースPERから算出した概算EPS",
+        "levels": [], "validationStatus": "UNVALIDATED", "conditionMet": None,
+        "actionAuthority": False, "probability": None,
+        "missing": ["same_session_index_based_valuation"],
+        "epsIdentityRejected": eps_evidence is not None,
+        "indexIdentityRejected": index_evidence is not None,
+        "identityViolationPrevented": analysis_instrument in {"1321", "JP:1321:ETF"},
     }
+    if analysis_instrument != "NIKKEI_225_INDEX":
+        return {**result, "missing": ["nikkei_index_identity_required"]}
+    if isinstance(index_valuation, Mapping):
+        from jp_market_price_paths import index_valuation_scale
+        scale = index_valuation_scale(index_valuation, cutoff=cutoff,
+            anchor_date=index_valuation.get("date"), anchor_price=index_valuation.get("indexClose"))
+        if scale.get("status") == "AVAILABLE":
+            return {**result, "status": "AVAILABLE", "missing": [],
+                "eps": scale["eps"], "indexLevel": scale["anchorPrice"], "per": scale["per"],
+                "valuation": scale, "epsKind": scale["epsKind"],
+                "conditionRule": "descriptive_same_session_index_valuation_no_validated_signal"}
+        result["missing"] = [scale.get("reason") or "same_session_index_based_valuation"]
+    else:
+        result["status"] = "LICENSE_BLOCKED" if license_status == "LICENSE_BLOCKED" else "MISSING"
+    # Keep the independent universe statistic available as evidence, without
+    # promoting its thresholds or median PER to D04 or a Nikkei EPS series.
+    alternate = _derived_valuation_evidence(derived_valuation, cutoff)
+    if alternate is not None:
+        result["alternativeValuation"] = {"scope": "JP_EQUITY_UNIVERSE_ONLY",
+            "appliesToD04": False, "evidence": alternate}
+    return result
 
 
 def evaluate_d05(rows: Iterable[Mapping[str, Any]], *, cutoff: str) -> Dict[str, Any]:
@@ -1167,6 +1136,7 @@ def evaluate_d01_d07(*, cutoff: str,
                      nikkei_eps: Optional[Mapping[str, Any]] = None,
                      nikkei_index: Optional[Mapping[str, Any]] = None,
                      nikkei_license_status: str = "LICENSE_BLOCKED",
+                     nikkei_valuation: Optional[Mapping[str, Any]] = None,
                      foreign_flow_rows: Iterable[Mapping[str, Any]] = (),
                      vix_rows: Iterable[Mapping[str, Any]] = (),
                      earnings_event: Optional[Mapping[str, Any]] = None,
@@ -1183,7 +1153,7 @@ def evaluate_d01_d07(*, cutoff: str,
         "D04": evaluate_d04(
             cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",
             eps_evidence=nikkei_eps, index_evidence=nikkei_index,
-            license_status=nikkei_license_status),
+            license_status=nikkei_license_status, index_valuation=nikkei_valuation),
         "D05": evaluate_d05(foreign_flow_rows, cutoff=cutoff),
         "D06": evaluate_d06(vix_rows, cutoff=cutoff),
         "D07": evaluate_d07(

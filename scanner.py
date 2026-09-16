@@ -39071,6 +39071,7 @@ def _jp_market_engine_market_view():
         inputs = _jp_market_engine_pit_inputs()
         evidence = jp_market_engine.evaluate_d01_d07(
             cutoff=cutoff, two_market_rows=inputs["creditRows"],
+            nikkei_valuation=_JP_INDEX_VALUATION.snapshot(cutoff),
             margin_1570_rows=inputs["margin1570Rows"],
             relative_strength_proxy=inputs["rsProxy"],
             foreign_flow_rows=inputs["flowRows"],
