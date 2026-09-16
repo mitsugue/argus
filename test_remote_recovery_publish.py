@@ -2450,7 +2450,7 @@ def test_brief_reuse_returns_original_edition_without_chart_or_provider_calls(mo
     assert state['lastSuccessful'] == previous
 
 
-def test_brief_nonurgent_changes_coalesce_but_p0_changes_bypass(monkeypatch):
+def test_brief_headlines_coalesce_but_objective_shocks_bypass(monkeypatch):
     from datetime import datetime, timezone
     current = datetime(2026, 1, 2, 10, 20, tzinfo=timezone.utc)
     class Clock(datetime):
@@ -2479,9 +2479,17 @@ def test_brief_nonurgent_changes_coalesce_but_p0_changes_bypass(monkeypatch):
     assert retained['generationReuse']['reason'] == 'NONURGENT_CHANGE_COALESCED'
     assert retained['generationReuse']['newAiCalls'] == 0
 
-    changed = copy.deepcopy(brief)
-    changed['facts'].append({'text': 'new material event', 'priority': 'P0',
-                             'source': 'trusted_mail'})
+    headline = copy.deepcopy(brief)
+    headline['facts'].append({'text': 'new headline', 'priority': 'P0',
+                              'source': 'trusted_mail'})
+    monkeypatch.setattr(scanner, '_compose_market_brief', lambda: copy.deepcopy(headline))
+    retained = scanner._market_brief_refresh(allow_ai=True)
+    assert retained['generationReuse']['reason'] == 'NONURGENT_CHANGE_COALESCED'
+    assert retained['generationReuse']['newAiCalls'] == 0
+
+    changed = copy.deepcopy(headline)
+    changed['facts'].append({'text': 'observed market shock', 'priority': 'P0',
+                             'source': 'official_sensor'})
     monkeypatch.setattr(scanner, '_compose_market_brief', lambda: copy.deepcopy(changed))
     monkeypatch.setattr(scanner, '_jp_market_comparison_cached', lambda horizon: {})
     monkeypatch.setattr(scanner, '_market_brief_ai_polish', lambda result: {
