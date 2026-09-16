@@ -16,7 +16,7 @@ import type { SettingsSection } from '../navigation';
 import '../components/dashboard/Dashboard.css';
 import { ArgusTodayPanel } from '../components/today/ArgusTodayPanel';
 import { buildArgusTodayView, selectTodayNews,
-  selectAutoMarket, type MarketSelectionMode, type TodayMoveInput,
+  type MarketSelectionMode, type TodayMoveInput,
   type TodayPositioningRow } from '../domain/argusTodayView';
 import { useTodayHeadline } from '../hooks/useTodayHeadline';
 import { useDecisionEvidence } from '../hooks/useDecisionEvidence';
@@ -30,9 +30,8 @@ import { useMarketNews } from '../hooks/useMarketNews';
 import type { ChartIntelligencePayload } from '../types/chartIntelligence';
 import type { TodayProjectionInput } from '../domain/argusTodayView';
 import {
-  MARKET_INSTRUMENTS, marketInstrument, normalizeMarketInstrument,
-  INDEX_FOR_INSTRUMENT, INDEX_DISPLAY_JA,
-  type MarketHorizon, type MarketInstrumentSymbol,
+  marketInstrument, INDEX_FOR_INSTRUMENT,
+  type MarketHorizon,
 } from '../domain/marketInstruments';
 import { useAssets } from '../hooks/useAssets';
 import { usePublicDiagnostics } from '../hooks/useSystemHealth';
@@ -109,7 +108,7 @@ function headlineMove(entry: TodayHeadlineEntry | undefined,
       : `${changePct >= 0 ? '▲' : '▼'}${Math.abs(changePct).toFixed(1)}%`,
     asOf: latest.date,
     status: entry.payloadStatus === 'delayed' ? 'delayed' : 'close',
-    history: bars.slice(-12).map((bar) => ({ date: bar.date, value: bar.close })) };
+    history: bars.slice(-30).map((bar) => ({ date: bar.date, value: bar.close })) };
 }
 
 function marketMove(payload: ChartIntelligencePayload | null, id: string): TodayMoveInput | null {
@@ -181,53 +180,15 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
   const marketLedger = useMarketLedger();
   const marketNews = useMarketNews();
   const { diagnostics: publicDiagnostics } = usePublicDiagnostics();
-  const [marketMode, setMarketMode] = useState<MarketSelectionMode>(() => {
-    try {
-      const saved = localStorage.getItem('argus.today.marketSelection.v1');
-      return saved === 'JP' || saved === 'US' ? saved : 'AUTO';
-    } catch { return 'AUTO'; }
-  });
-  const changeMarketMode = (mode: MarketSelectionMode) => {
-    setMarketMode(mode);
-    try { localStorage.setItem('argus.today.marketSelection.v1', mode); } catch { /* device-local best effort */ }
-  };
-  const [selectedInstrument, setSelectedInstrument] = useState<{
-    JP: MarketInstrumentSymbol; US: MarketInstrumentSymbol;
-  }>(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('argus.today.selectedInstrument.v1') || '{}') as Record<string, string>;
-      return {
-        JP: normalizeMarketInstrument('JP', saved.JP),
-        US: normalizeMarketInstrument('US', saved.US),
-      };
-    } catch { return { JP: '1321', US: 'SPY' }; }
-  });
-  const changeInstrument = (market: 'JP' | 'US', symbol: string) => {
-    const next = { ...selectedInstrument,
-      [market]: normalizeMarketInstrument(market, symbol) };
-    setSelectedInstrument(next);
-    setMarketMode(market);
-    try {
-      localStorage.setItem('argus.today.selectedInstrument.v1', JSON.stringify(next));
-      localStorage.setItem('argus.today.marketSelection.v1', market);
-    } catch { /* device-local best effort */ }
-  };
-  const [chartHorizon, setChartHorizon] = useState<MarketHorizon>(() => {
-    try {
-      const saved = Number(localStorage.getItem('argus.today.chartHorizon.v1'));
-      return saved === 1 || saved === 20 ? saved : 5;
-    } catch { return 5; }
-  });
-  const changeChartHorizon = (value: MarketHorizon) => {
-    setChartHorizon(value);
-    try { localStorage.setItem('argus.today.chartHorizon.v1', String(value)); } catch { /* device-local */ }
-  };
+  // Today has one editorial subject: Nikkei 225 over five sessions. Other
+  // indices are a read-only comparison below and never change this judgment.
+  const marketMode: MarketSelectionMode = 'JP';
+  const selectedInstrument = { JP: '1321' as const, US: 'SPY' as const };
+  const chartHorizon: MarketHorizon = 5;
   const decisionCalendar = !marketLedger.error && !marketLedger.loading
     && !marketLedger.sessionExpired
     ? marketLedger.ledger?.phase3?.calendar ?? null : null;
-  const effectiveMarket = marketMode === 'AUTO'
-    ? selectAutoMarket(decisionCalendar)
-    : marketMode;
+  const effectiveMarket = 'JP' as const;
   const selectedSymbol = selectedInstrument[effectiveMarket];
   const selectedDefinition = marketInstrument(selectedSymbol)!;
   const selectedChart = useChartIntelligence({
@@ -409,10 +370,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       if (value === 'HIGH' || value === 'LOW') return value;
       return value && value !== 'UNKNOWN' ? '△' : '—';
     };
-    const selectedJpChart = effectiveMarket === 'JP'
-      ? selectedChart.decisionData : null;
-    const selectedUsChart = effectiveMarket === 'US'
-      ? selectedChart.decisionData : null;
+    const selectedJpChart = selectedChart.decisionData;
     const headlineEntry = (symbol: string) => {
       const entry = headline.document?.instruments?.[symbol];
       return entry?.status === 'ready' ? entry : undefined;
@@ -440,12 +398,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
         const base = projectionInput(headlineIndex.data);
         return base ? { ...base, label: `${base.label}・判断の正本 ${selectedInstrument[effectiveMarket]}` } : null;
       })() : null;
-    const selectedJpProjection = effectiveMarket === 'JP'
-      ? (indexProjection ?? (selectedChart.data ? projectionInput(selectedChart.data)
-        : headlineFallback(selectedInstrument.JP))) : null;
-    const selectedUsProjection = effectiveMarket === 'US'
-      ? (indexProjection ?? (selectedChart.data ? projectionInput(selectedChart.data)
-        : headlineFallback(selectedInstrument.US))) : null;
+    const selectedJpProjection = indexProjection ?? (selectedChart.data
+      ? projectionInput(selectedChart.data) : headlineFallback(selectedInstrument.JP));
+    const selectedUsProjection: TodayProjectionInput | null = null;
     const shortState = selectedJpChart?.todayIntelligence?.shortSelling;
     const jpFactors = [
       { key: 'TREND' as const, state: regime.data?.regime?.label === 'RISK_ON' ? '↑' as const : regime.data?.regime?.label === 'RISK_OFF' ? '↓' as const : '△' as const, source: 'market-regime' },
@@ -456,7 +411,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       source: 'jquants-daily-short-ratio' },
       { key: 'CLOSE' as const, state: '—' as const, source: 'closing-window' },
     ];
-    const usBars = selectedUsChart?.indicators.bars ?? [];
+    const usBars = headlineEntry('SPY')?.bars ?? [];
     const usLatest = usBars.at(-1);
     const usFactors = [
       { key: 'TREND' as const, state: usLatest?.ma?.['25'] == null ? '—' as const
@@ -561,8 +516,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     if (qqq20 != null && spy20 != null) usPositioning.push({ key: 'us-relative-numeric', label: 'NASDAQ対SPY',
       value: `${signed(qqq20 - spy20, 1)}pt`, detail: qqq20 >= spy20 ? 'NASDAQ優位' : 'SPY優位',
       tone: qqq20 >= spy20 ? 'positive' : 'negative' });
-    const usVolume = headlineEntry(selectedInstrument.US)?.bars?.at(-1)?.volumeRatio20
-      ?? selectedUsChart?.indicators.bars.at(-1)?.volumeRatio20;
+    const usVolume = headlineEntry(selectedInstrument.US)?.bars?.at(-1)?.volumeRatio20;
     if (usVolume != null) usPositioning.push({ key: 'us-volume-regime', label: '出来高',
       value: `${usVolume.toFixed(2)}×`, detail: usVolume >= 1.2 ? '増加' : usVolume <= .8 ? '低調' : '平常',
       tone: usVolume >= 1.2 ? 'positive' : 'neutral' });
@@ -637,19 +591,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     selectedInstrument, effectiveMarket, selectedChart.decisionData, decisionCalendar,
     sdaBySymbol]);
 
-  // v13.5.1: the four instruments are lightweight NAME selectors only.
-  const todayInstruments = useMemo(() => MARKET_INSTRUMENTS.map((item) => {
-    // v13.5.54: the tab names the INDEX the owner thinks in; the ETF that
-    // anchors the decision stays visible in the full label.
-    const indexJa = INDEX_DISPLAY_JA[INDEX_FOR_INSTRUMENT[item.symbol]];
-    return {
-      symbol: item.symbol, market: item.market,
-      shortLabel: indexJa,
-      fullLabel: `${indexJa}（判断の正本: ${item.shortLabel}）`,
-      instrumentType: item.instrumentType, underlying: item.underlying,
-    };
-  }), []);
-
   // Which canonical source feeds the visible projection right now.
   const projectionSource = selectedChart.data ? 'verified-snapshot' as const
     : argusToday.projection ? 'headline' as const : null;
@@ -702,16 +643,15 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       subtitle={<span>{formatDate(judgment.date)}</span>}
       className="page--today"
     >
-      <ArgusTodayPanel view={argusToday} instruments={todayInstruments}
+      <ArgusTodayPanel view={argusToday}
         selectedSymbol={selectedSymbol} horizon={chartHorizon}
-        chartLoad={selectedChart} onMode={changeMarketMode}
+        chartLoad={selectedChart}
         projectionSource={projectionSource} freshnessNoteJa={freshnessNoteJa}
         jpNameBySymbol={jpNameBySymbol}
         shock={{ status: marketShock.status,
           events: marketShock.view?.events ?? [] }}
         newsIntel={{ status: newsIntel.status,
           events: newsIntel.view?.events ?? [] }}
-        onInstrument={changeInstrument} onHorizon={changeChartHorizon}
         onNavigate={onNavigate} onNavigateToAsset={onNavigateToAsset}
         onNavigateToSettings={onNavigateToSettings}
         aiButton={<ProHandoffButton nextEvent={argusToday.nextEvent} />} />

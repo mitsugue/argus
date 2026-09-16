@@ -108,24 +108,31 @@ export function OwnerDialogue({symbol,market,horizon,asset,baseContextId,previou
   };
   const reset=()=>{setJob(null);setFx('');setFiscalGrowth('');setFiscalRate('');pending.current=null;setError('');};
   const answer=job?.result?.answer;const matching=rows.filter(r=>r.context.subject.symbol===symbol&&r.context.subject.market===market&&r.context.horizonSessions===horizon&&(r.context.eventFocus?.eventId??null)===(focusEventId??null));
+  const connected=Boolean(token.trim());
+  const contextReady=Boolean(baseContextId ?? brief?.unifiedContext?.contextId);
+  const canAsk=connected&&contextReady&&Boolean(question.trim())&&!busy&&job?.status!=='RUNNING';
   return <section className="owner-dialogue" aria-label="ARGUSに質問する">
-    <h3>{focusEventId?'このイベントについて話す':'この見立てについて話す'}</h3><p>{market==='JP'&&symbol==='N225'?'日経平均':symbol} · {horizon}営業日。表示中の市場の根拠と、登録した保有情報から説明します。</p>
-    <details open={connectionOpen} onToggle={e=>setConnectionOpen(e.currentTarget.open)}><summary>所有者の接続設定</summary>
+    <div className="owner-dialogue__intro"><div><h3>{focusEventId?'このイベントについて話す':'この見立てについて話す'}</h3>
+      <p>{market==='JP'&&symbol==='N225'?'日経平均':symbol} · {horizon}営業日。表示中の根拠を保ったまま、ARGUSに続けて質問できます。</p></div>
+      <span className={connected?'is-connected':'is-disconnected'}>{connected?'接続済み':'接続が必要'}</span></div>
+    <details className="owner-dialogue__connection" open={connectionOpen||!connected} onToggle={e=>setConnectionOpen(e.currentTarget.open)}><summary>{connected?'接続設定を確認':'質問機能を接続する'}</summary>
       <label>接続キー<input aria-label="所有者の接続キー" type="password" autoComplete="off" value={token} onChange={e=>setToken(e.target.value)}/></label>
       <button type="button" onClick={()=>{try{localStorage.setItem('argus.ownerSyncToken.v1',token);window.dispatchEvent(new Event('argus-owner-connection'));setConnectionOpen(false);}catch{setError('接続キーを保存できませんでした。');}}}>この端末に保存</button></details>
     {asset&&<details><summary>今回の回答に使う保有情報</summary><p>{(asset.quantity??0)>0?`保有数量 ${asset.quantity}・平均取得単価 ${asset.avgCost??'未登録'}`:'監視中・保有数量は未登録'}。質問時に所有者専用の履歴とAIへ送信します。ここでの変更は今回の会話だけに使い、登録した保有情報は変更しません。</p>
       <label>購入理由<input value={ownerReason} maxLength={1000} onChange={e=>{pending.current=null;setReason(e.target.value);}}/></label>
       <label>保有期間<input value={ownerPeriod} maxLength={160} onChange={e=>{pending.current=null;setPeriod(e.target.value);}}/></label></details>}
-    <div className="owner-dialogue__suggestions">{(focusEventId?['事前の予想と結果はどう違う？','市場は実際にどう反応した？','次に何を確認すればいい？']:['前回から何が変わった？','この状況なら、何を待てばいい？','短期と中期で見方は違う？']).map(q=><button key={q} type="button" onClick={()=>{setQuestion(q);pending.current=null;}}>{q}</button>)}</div>
-    <label>ARGUSへの質問<textarea maxLength={1000} value={question} placeholder="あなたの気になること" onChange={e=>{setQuestion(e.target.value);pending.current=null;}}/></label>
+    <div className="owner-dialogue__suggestions" aria-label="質問候補">{(focusEventId?['事前の予想と結果はどう違う？','市場は実際にどう反応した？','次に何を確認すればいい？']:['前回から何が変わった？','この状況なら、何を待てばいい？','短期と中期で見方は違う？']).map(q=><button key={q} type="button" onClick={()=>{setQuestion(q);pending.current=null;}}>{q}</button>)}</div>
+    <div className="owner-dialogue__composer"><label>質問を入力<textarea maxLength={1000} value={question} placeholder="例：円高が続いたら、この見立てはどう変わる？" onChange={e=>{setQuestion(e.target.value);pending.current=null;}}/></label>
+      <div className="owner-dialogue__send"><small>{!connected?'この端末の接続キーを保存すると質問できます。':!contextReady?'見立ての根拠を読み込み中です。':'表示中の根拠と同じ対象・期間で回答します。'}</small>
+        <button type="button" className="owner-dialogue__primary" disabled={!canAsk} onClick={()=>void ask()}>{busy?<TriangleStepLoader compact label="送信中"/>:pending.current?'同じ質問IDで再送':'質問する'}</button></div></div>
     {market==='JP'&&symbol==='N225'&&<details><summary>為替の仮定を試す</summary><p>日経平均の円建て価格を変えずにドル換算します。円高による株価予測とは異なります。</p>
       <label>仮定するドル円<input type="number" min="0.01" step="0.01" value={fx} onChange={e=>{setFx(e.target.value);setFiscalGrowth('');setFiscalRate('');pending.current=null;}}/></label></details>}
     {market==='JP'&&Boolean(brief?.unifiedContext?.fiscalEnvironment)&&<details><summary>財政環境の仮定を試す</summary>
       <p>現在の公表値を基準に、名目成長率か政府の実効金利を変えた場合の機械的な債務比率の圧力を計算します。市場の10年国債利回りや日本株の価格予測ではありません。</p>
       <label>仮定する日本の名目GDP成長率（%）<input type="number" step="0.1" value={fiscalGrowth} onChange={e=>{setFiscalGrowth(e.target.value);setFx('');pending.current=null;}}/></label>
       <label>仮定する政府の実効金利（%）<input type="number" step="0.1" value={fiscalRate} onChange={e=>{setFiscalRate(e.target.value);setFx('');pending.current=null;}}/></label></details>}
-    <div className="owner-dialogue__actions"><button type="button" disabled={busy||job?.status==='RUNNING'||!token||!question.trim()||!(baseContextId ?? brief?.unifiedContext?.contextId)} onClick={()=>void ask()}>{busy?<TriangleStepLoader compact label="送信中"/>:pending.current?'同じ質問IDで再送':'ARGUSに質問する'}</button>
-      <button type="button" disabled={!token||historyLoading} onClick={()=>void history()}>保存した会話</button><button type="button" onClick={reset}>仮定を閉じて元の見立てへ</button></div>
+    <div className="owner-dialogue__actions"><button type="button" disabled={!connected||historyLoading} onClick={()=>void history()}>保存した会話を見る</button>
+      {(job||fx||fiscalGrowth||fiscalRate)&&<button type="button" onClick={reset}>元の見立てへ戻す</button>}</div>
     {error&&<p role="alert">{error} <button type="button" onClick={()=>{retry();pending.current=null;}}>市場の根拠を更新</button></p>}
     {job&&<article aria-live="polite"><h4>{job.context.question}</h4><p>{job.context.horizonSessions}営業日 · {job.context.subject.symbol}</p>
       {states[job.status]&&<p role="status">{job.status==='RUNNING'?<TriangleStepLoader label={states[job.status]}/>:states[job.status]}</p>}

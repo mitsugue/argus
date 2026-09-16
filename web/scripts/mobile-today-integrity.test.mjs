@@ -119,15 +119,16 @@ for (const symbol of ['1321', '1306', 'SPY', 'QQQ']) {
 assert.equal(instruments.isVerifiedMarketInstrument('1321', 'weekly'), false);
 assert.equal(instruments.normalizeMarketInstrument('JP', 'bad'), '1321');
 assert.equal(instruments.normalizeMarketInstrument('US', 'bad'), 'SPY');
-assert.match(command, /MARKET_INSTRUMENTS\.map/);
+assert.match(command, /const marketMode: MarketSelectionMode = 'JP'/);
 assert.match(command, /horizon:\s*chartHorizon/);
-assert.match(today, /instruments\.map/);
-// v13.5.1: the four instruments are lightweight NAME selectors; the one
-// selected projection chart below carries all data and probabilities.
-assert.match(today, /at-index-strip--selectors/);
+assert.match(today, /<OtherMarketsActuals moves=\{view\.indexMoves\}/);
+// v13.7.18: Today is one Nikkei view. Other markets expose actual ETF closes
+// in a small disclosure and cannot switch the judgment or its horizon.
+assert.match(today, /data-argus-contract="other-markets-actuals-v1"/);
+assert.doesNotMatch(today, /at-index-strip--selectors/);
 assert.doesNotMatch(today, /HeadlineMiniChart|at-headline-probs/);
-assert.match(today, /data-projection-source/);
-assert.match(todayCss, /grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
+assert.doesNotMatch(today, /<ProjectionChart projection=\{projection\}/);
+assert.match(todayCss, /\.at-other-markets__rows\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
 
 assert.match(hook, /isVerifiedMarketInstrument/);
 assert.match(hook, /instrument:\s*symbol!\.toUpperCase\(\)/);
@@ -136,10 +137,10 @@ assert.match(hook, /requestSequence !== sequence\.current/);
 assert.match(hook, /inflight\.get\(url\)/);
 assert.doesNotMatch(app + command + today, /MarketRegime|MarketContextReplay|#market/);
 
-assert.match(today, /chartLoad\.loaderVisible/);
+assert.match(today, /TriangleStepLoader/);
 assert.match(today, /TriangleStepLoader compact/);
-assert.match(today, /slowInitial[\s\S]*初回データを準備中/);
-assert.match(today, /chartLoad\.retry/);
+assert.match(today, /sqCalendar\.loading/);
+assert.match(hook, /retry/);
 assert.match(hook, /225/);
 assert.match(hook, /5_000/);
 assert.doesNotMatch(loaderCss, /rotate\(/);

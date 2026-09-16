@@ -37,7 +37,7 @@ export const INDEX_FOR_INSTRUMENT: Record<MarketInstrumentSymbol, IndexChartKey>
   '1321': 'N225', '1306': 'TOPIX', SPY: 'SPX', QQQ: 'NDX',
 };
 export const INDEX_DISPLAY_JA: Record<IndexChartKey, string> = {
-  N225: '日経平均株価', TOPIX: 'TOPIX', SPX: 'S&P 500', NDX: 'ナスダック総合',
+  N225: '日経平均株価', TOPIX: 'TOPIX', SPX: 'S&P 500', NDX: 'NASDAQ-100',
 };
 
 export const MARKET_HORIZONS: readonly MarketHorizon[] = [1, 5, 20];

@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.17"
+PRODUCT_VERSION = "v13.7.18"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -100,8 +100,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dialogue/OwnerOverview.css': 'e608b1f63bbbf8596454a9e0100cea6ee8a41a0f',
     'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',
     'web/src/lib/presentationIntent.ts': '77c0c79423a2291fc3e28a58e1b0397b11a83828',
-    'web/src/components/today/ArgusEditorialSurface.tsx': '6f399e7b7bff0584a772e0e19dddfecbc5d3ef7c',
-    'web/src/components/today/ArgusEditorialSurface.css': '66bc60414e09d490bc0216cf054465bc19dd7993',
+    'web/src/components/today/ArgusEditorialSurface.tsx': '2509b3671659a28908a013d5977376db171081db',
+    'web/src/components/today/ArgusEditorialSurface.css': 'c11ff9b79ce546d415e55cb7e8eb29b928b80fc5',
     'test_argus_presentation_intent.py': 'e79beae902a1382fae9e5ea3359e09301abf9733',
     'docs/V13_6_PRESENTATION_INTENT.md': '88d35d6f5f603628e7e89bae56308e16b7c76ea6',
     'argus_presentation_intent.py': '60c24f1b40b9e75ed7716753b2118345132f3350',
@@ -167,8 +167,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/pwa-recovery.test.mjs': 'd2fc2ff86480cb685328e1341e61d4415285d8a6',
     'web/scripts/shared-market-context.test.cjs': '6ba958105e283011e25af76c3ce538e14833c75b',
     'web/src/components/assetDesk/AssetMarketContext.tsx': 'da84417e9b9a7d5861f0f65f3d2a11d95408a6c6',
-    'web/src/components/dialogue/OwnerDialogue.css': '696bed395bce7b22fae7c7ddc2797f5b24b0a1dd',
-    'web/src/components/dialogue/OwnerDialogue.tsx': '12d6c6f800f2e08ff26b2d78b1eecd24da2ccf26',
+    'web/src/components/dialogue/OwnerDialogue.css': '99f542e0fc1391a58a1cb60ac1c5bec249fe9a28',
+    'web/src/components/dialogue/OwnerDialogue.tsx': 'db7e54561f5ad02c336fcba8e505d8437e7174d7',
     'web/src/components/today/MarketBriefCard.tsx': '7b8f0305a0346a43cea572f8954bae9f87cc8359',
     'web/src/components/today/MarketInternalsCard.tsx': 'f51d80a4bae476e9e20842d52a18cd92d68caaec',
     'web/src/components/today/SharedMarketContext.tsx': '0d126ec6d92e76957a4b58ef532e9b99b85b6f13',
@@ -242,7 +242,8 @@ REVIEWED_EXTENSION_BLOBS = {
     "web/src/components/system/BackupStatusOverview.tsx": "39488f34de87013943edf08bb3faddce91f7b996",
     "web/src/lib/vault.ts": "9180eba851c0b62a99ac449166f90f2404e18370",
     "web/scripts/news-history.test.mjs": "766b69d112dc01d32631025446007b506d7e55f6",
-    "web/scripts/public-market-acceptance.mjs": "2e4e63fd5c4c518190483138a2a899ad842061c0",
+    "web/scripts/public-market-acceptance.mjs": "6b54ac09d516a6c6834f625d8c206b5b381d06a6",
+    "web/scripts/canonical-snapshot-selection.mjs": "85eff19fcf41a5edb651cbec91291cf4625d8182",
     "web/scripts/index-chart-isolation.test.mjs": "470dcf9598714a89b9ebba9dd53cfc2f6315092f",
     "argus_osint_engine.py": "82c928299eed09004067283d72cc4b67b07753c5",
     "test_argus_v12_1_1.py": "fcb2a56c79822f5177ae776dfdaf07972da0a49e",
@@ -250,6 +251,11 @@ REVIEWED_EXTENSION_BLOBS = {
     ".github/workflows/ai-rejudge.yml": "b81acfa1a3452f2467ba416c0e14ce9d9f905f04",
     "test_argus_official_lifecycle.py": "94f9ebcb4a3a4457cd0117e52e98cb55e628d3c7",
     "test_workflow_http.py": "3b02814b97563c1b089de97697d0bb471bee1578",
+    # v13.7.18 owner-required Today consolidation: these exact acceptance
+    # assertions remove the legacy four-index selector and its duplicate
+    # outlook without relaxing the underlying research/truth contracts.
+    "test_argus_v12_0_6.py": "14c660ebc25f8f0fe50743da58d2c50eb6e26256",
+    "test_argus_v13_1_1.py": "0dcfbd099dd00f4e84b89df51da6a03fa96c2e4f",
 }
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({

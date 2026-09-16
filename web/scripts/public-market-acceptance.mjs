@@ -201,35 +201,34 @@ async function waitForToday(page, timeout = 30_000) {
 }
 
 async function selectCombination(page, symbol, horizon) {
-  await openCanonicalEvidence(page);
   await page.locator(`[data-argus-control="market-instrument"][data-instrument="${symbol}"]`)
     .click();
   await page.locator(`[data-argus-control="canonical-horizon"][data-horizon="${horizon}"]`)
     .click();
   await waitForToday(page);
   await page.waitForFunction(({ expectedSymbol, expectedHorizon }) => {
-    const heading = document.querySelector('.at-proj-heading b')?.textContent || '';
-    const active = document.querySelector('.at-horizon button[aria-pressed="true"]')
-      ?.textContent || '';
+    const actuals = document.querySelector(
+      '[data-argus-contract="other-market-actuals-explorer-v1"]');
+    const selectedChart = actuals?.querySelector('[data-market-snapshot-id]');
     const contract = document.querySelector(
       '[data-argus-contract="canonical-market-snapshot-v1"]');
-    const displayedSymbol = document.querySelector('[data-projection-state="available"]')
-      ?.getAttribute('data-projection-symbol');
-    const expectedIndex = { '1321': 'N225', '1306': 'TOPIX', SPY: 'SPX', QQQ: 'NDX' }[expectedSymbol];
-    return heading.includes(expectedSymbol) && active === expectedHorizon
-      && (displayedSymbol === expectedSymbol || displayedSymbol === expectedIndex)
+    return actuals?.getAttribute('data-other-market-symbol') === expectedSymbol
+      && actuals?.getAttribute('data-other-market-horizon') === expectedHorizon
+      && Boolean(selectedChart?.getAttribute('data-market-snapshot-id'))
       && contract?.getAttribute('data-canonical-verification') === 'verified'
-      && contract?.getAttribute('data-canonical-instrument') === expectedSymbol
-      && contract?.getAttribute('data-canonical-horizon') === expectedHorizon
+      && contract?.getAttribute('data-canonical-instrument') === '1321'
+      && contract?.getAttribute('data-canonical-horizon') === '5D'
       && Boolean(contract?.getAttribute('data-canonical-snapshot-id'));
   }, { expectedSymbol: symbol, expectedHorizon: horizon },
   { timeout: DATA_TIMEOUT_MS });
   return page.evaluate(() => ({
-    heading: document.querySelector('.at-proj-heading b')?.textContent || '',
-    displayedSymbol: document.querySelector('[data-projection-state="available"]')
-      ?.getAttribute('data-projection-symbol') || null,
-    horizon: document.querySelector('.at-horizon button[aria-pressed="true"]')
-      ?.textContent || '',
+    displayedSymbol: document.querySelector('[data-argus-contract="other-market-actuals-explorer-v1"]')
+      ?.getAttribute('data-other-market-symbol') || null,
+    horizon: document.querySelector('[data-argus-contract="other-market-actuals-explorer-v1"]')
+      ?.getAttribute('data-other-market-horizon') || '',
+    selectedSnapshotId: document.querySelector(
+      '[data-argus-contract="other-market-actuals-explorer-v1"] [data-market-snapshot-id]')
+      ?.getAttribute('data-market-snapshot-id') || null,
     snapshotId: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
       ?.getAttribute('data-canonical-snapshot-id') || null,
     snapshotState: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
@@ -246,7 +245,7 @@ async function selectCombination(page, symbol, horizon) {
 async function visualAudit(page, viewport) {
   await page.setViewportSize(viewport);
   return page.evaluate((size) => {
-    const chart = document.querySelector('.at-projection');
+    const chart = document.querySelector('.jp-comparison');
     const background = chart ? getComputedStyle(chart).backgroundColor : null;
     const fillPaintTags = new Set([
       'circle', 'ellipse', 'path', 'polygon', 'polyline', 'rect', 'text', 'tspan', 'use',
@@ -254,7 +253,7 @@ async function visualAudit(page, viewport) {
     const strokePaintTags = new Set([
       'circle', 'ellipse', 'line', 'path', 'polygon', 'polyline', 'rect', 'text', 'use',
     ]);
-    const blackFallbackCount = [...document.querySelectorAll('.at-projection svg *')]
+    const blackFallbackCount = [...document.querySelectorAll('.jp-comparison svg *')]
       .filter((element) => {
         const style = getComputedStyle(element);
         const tag = element.tagName.toLowerCase();
@@ -549,6 +548,10 @@ async function run() {
     if (await page.evaluate(() => location.hash) !== '#today') {
       evidence.failures.push('canonical-today-deeplink');
     }
+    const otherMarkets = page.locator('[data-argus-contract="other-markets-actuals-v1"]');
+    if (!await otherMarkets.evaluate((element) => element.open)) {
+      await otherMarkets.locator('summary').click();
+    }
     if (await page.locator('[data-argus-control="market-instrument"]').count() !== 4) {
       evidence.failures.push('market-instrument-count');
     }
@@ -557,8 +560,9 @@ async function run() {
       for (const horizon of HORIZONS) {
         const record = await selectCombination(page, symbol, horizon);
         evidence.combinations.push({ symbol, horizon, ...record });
-        if (!record.snapshotId || record.verification !== 'verified'
-            || record.instrument !== symbol || record.canonicalHorizon !== horizon) {
+        if (!record.snapshotId || !record.selectedSnapshotId || record.verification !== 'verified'
+            || record.instrument !== '1321' || record.canonicalHorizon !== '5D'
+            || record.displayedSymbol !== symbol || record.horizon !== horizon) {
           evidence.failures.push(`missing-snapshot:${symbol}:${horizon}`);
         }
         await page.waitForTimeout(COMBINATION_PACE_MS);

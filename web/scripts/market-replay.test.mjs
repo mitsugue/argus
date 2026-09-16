@@ -15,7 +15,7 @@ for (const symbol of ['1321', '1306', 'SPY', 'QQQ']) {
 }
 assert.match(instruments, /MarketHorizon = 1 \| 5 \| 20/);
 assert.match(instruments, /MARKET_HORIZONS[^=]*= \[1, 5, 20\]/);
-assert.match(today, /\(\[1, 5, 20\] as const\)\.map/);
+assert.match(command, /const chartHorizon: MarketHorizon = 5/);
 assert.match(command, /horizon: chartHorizon/);
 assert.match(chartHook, /method: 'GET', cache: 'no-store'/);
 assert.doesNotMatch(chartHook, /method:\s*'POST'/);
@@ -30,7 +30,6 @@ assert.match(types, /derivedMetricMigration/);
 
 assert.match(command, /useChartIntelligence/);
 assert.match(today, /ProjectionChart/);
-assert.match(today, /data-snapshot-id=\{chartLoad\.snapshotId/);
 assert.match(today, /data-argus-contract="canonical-market-snapshot-v1"/);
 assert.match(today, /data-canonical-snapshot-id=\{chartLoad\.snapshotId/);
 // v13.5.57: the contract names the DECISION SUBJECT (verified ETF), not the
@@ -38,7 +37,9 @@ assert.match(today, /data-canonical-snapshot-id=\{chartLoad\.snapshotId/);
 assert.match(today, /data-canonical-instrument=\{selectedSymbol\}/);
 assert.match(today, /data-canonical-horizon=\{`\$\{projection\?\.horizonDays \?\? horizon\}D`\}/);
 assert.match(today, /effectiveSampleCount/);
-assert.match(today, /<ProjectionChart projection=\{projection\}/);
+assert.doesNotMatch(today, /<ProjectionChart projection=\{projection\}/,
+  'legacy projection UI is not rendered on Today');
+assert.match(today, /data-argus-contract="other-markets-actuals-v1"/);
 assert.doesNotMatch(today, /onActivate=\{\(\) => (?:setDetail\(true\)|undefined)\}/);
 assert.doesNotMatch(today, /argus\.replayContext|onNavigate\('regime'\)/);
 assert.doesNotMatch(app + navigation, /MarketRegime|#market|'regime'/);

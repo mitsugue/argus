@@ -30,7 +30,12 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
     <p className="argus-editorial__period">日経平均 · 5営業日先まで</p>
     {updateState}
     {archived && <p className="argus-editorial__retained">当時の説明・構成・比較線です。現在の見立てとしては扱いません。</p>}
-    {retained && !archived && <p role="status" className="argus-editorial__retained">{generationStatus === 'RUNNING' ? <TriangleStepLoader label="最新の説明を準備しています" /> : ['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(generationStatus ?? '') ? '最新の説明を取得できていません。' : '説明の更新を待っています。'}前回の説明と、その時点のチャートを表示しています。</p>}
+    {retained && !archived && <div role="status" className="argus-editorial__retained argus-editorial__retained--update">
+      {generationStatus === 'RUNNING' ? <TriangleStepLoader label="新しい説明を作成中" />
+        : <span>{['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(generationStatus ?? '')
+          ? '新しい説明を取得できませんでした。' : '説明の更新を待っています。'}</span>}
+      <span>前回の説明とチャートを表示中</span>
+    </div>}
     {plan.elements.map(choice => {
       const source = brief.presentationCatalog!.elements.find(row => row.id === choice.id)!;
       const className = `argus-editorial__element is-${choice.emphasis} placement-${choice.placement} element-${choice.id}`;

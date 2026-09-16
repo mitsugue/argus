@@ -12,9 +12,11 @@ import React from 'react';
 import { MarginDynamicsCard } from './MarginDynamicsCard';
 import { SharedMarketContext } from './SharedMarketContext';
 import { JpyPositionCard } from './JpyPositionCard';
-import { JapanSqCalendarCard, JapanSqApproachNotice } from '../dashboard/JapanSqCalendarCard';
+import { useJapanSqCalendar } from '../../hooks/useJapanSqCalendar';
+import { sqCalendarIsCurrent } from '../../lib/japanSqCalendar';
 import { JapanMarketComparisonPanel } from '../chart/JapanMarketComparisonPanel';
-import type { ArgusTodayView, MarketSelectionMode, TodayProjection } from '../../domain/argusTodayView';
+import { useChartIntelligence } from '../../hooks/useChartIntelligence';
+import type { ArgusTodayView, TodayProjection } from '../../domain/argusTodayView';
 import { formatEventTime, quoteDisplayLabel, subjectDisplayName, confidenceBasisJa, waitKindJa } from '../../domain/argusTodayView';
 import { displayNewsHeadline, newsAnalysisStatusJa } from '../../lib/newsHeadline';
 import type { RouteKey } from '../NavRail';
@@ -28,20 +30,9 @@ import { tachibanaLiveView, formatJpy, formatPct } from '../../domain/tachibanaL
 import type { TachibanaLiveDocument } from '../../domain/tachibanaLive';
 import type { NewsIntelEvent } from '../../hooks/useNewsIntelligence';
 import { orderMaterialNews, groupRepeatedNewsHeadlines, NEWS_IMPORTANCE_JA } from '../../domain/newsPresentation';
-import type {
-  MarketHorizon, MarketInstrumentMarket, MarketInstrumentSymbol,
-} from '../../domain/marketInstruments';
+import type { MarketHorizon, MarketInstrumentSymbol } from '../../domain/marketInstruments';
 import './ArgusToday.css';
 import './ReadingHierarchy.css';
-
-export interface TodayInstrumentState {
-  symbol: MarketInstrumentSymbol;
-  market: MarketInstrumentMarket;
-  shortLabel: string;
-  fullLabel: string;
-  instrumentType: 'ETF';
-  underlying: string;
-}
 
 export interface TodayChartLoadState {
   loading: boolean;
@@ -57,7 +48,6 @@ export interface TodayChartLoadState {
 
 interface Props {
   view: ArgusTodayView;
-  instruments: readonly TodayInstrumentState[];
   selectedSymbol: MarketInstrumentSymbol;
   horizon: MarketHorizon;
   chartLoad: TodayChartLoadState;
@@ -104,9 +94,6 @@ interface Props {
       } | null;
     }>;
   };
-  onMode: (mode: MarketSelectionMode) => void;
-  onInstrument: (market: 'JP' | 'US', symbol: string) => void;
-  onHorizon: (horizon: MarketHorizon) => void;
   onNavigate: (key: RouteKey) => void;
   onNavigateToAsset?: (symbol: string, section?: string) => void;
   onNavigateToSettings?: (section: SettingsSection) => void;
@@ -235,6 +222,55 @@ const dissentReasonJa = (line: string): string =>
   line.startsWith('context_missing_advisory')
     ? '文脈証拠が不足しているという参考意見（最終判断は変えません）'
     : line;
+
+type OtherMarketMove = ArgusTodayView['indexMoves'][number];
+const OTHER_MARKET_META = {
+  nikkei: { instrument: '1321', name: '日経平均', product: '1321 日経225 ETF' },
+  topix: { instrument: '1306', name: 'TOPIX', product: '1306 TOPIX ETF' },
+  sp500: { instrument: 'SPY', name: 'S&P 500', product: 'SPY' },
+  nasdaq: { instrument: 'QQQ', name: 'NASDAQ-100', product: 'QQQ' },
+} as const;
+
+const OtherMarketsActuals: React.FC<{ moves: OtherMarketMove[] }> = ({ moves }) => {
+  const [selectedId, setSelectedId] = React.useState<keyof typeof OTHER_MARKET_META>('topix');
+  const [sessions, setSessions] = React.useState<1 | 5 | 20>(5);
+  const move = moves.find((row) => row.id === selectedId) ?? moves[0];
+  const meta = OTHER_MARKET_META[selectedId];
+  const snapshot = useChartIntelligence({ scope: 'market', symbol: meta.instrument,
+    market: ['1321', '1306'].includes(meta.instrument) ? 'JP' : 'US',
+    timeframe: 'daily', horizon: sessions });
+  const bars = snapshot.data?.indicators.bars ?? [];
+  const points = bars.slice(-(sessions + 1)).map((bar) => ({ date: bar.date, value: bar.close }));
+  const values = points.map((point) => point.value).filter(Number.isFinite);
+  const low = Math.min(...values), high = Math.max(...values), span = high - low || 1;
+  const polyline = points.map((point, index) => `${index / Math.max(1, points.length - 1) * 300},${82 - (point.value - low) / span * 68}`).join(' ');
+  const first = values[0], last = values.at(-1);
+  const change = first && last ? (last - first) / first * 100 : null;
+  return <div className="at-other-markets__explorer" data-argus-contract="other-market-actuals-explorer-v1"
+    data-other-market-symbol={meta.instrument} data-other-market-horizon={`${sessions}D`}>
+    <div className="at-other-markets__controls" role="group" aria-label="比較する市場">
+      {(Object.entries(OTHER_MARKET_META) as Array<[keyof typeof OTHER_MARKET_META, typeof meta]>).map(([id, row]) =>
+        <button type="button" key={id} data-argus-control="market-instrument" data-instrument={row.instrument}
+          aria-pressed={selectedId === id} onClick={() => setSelectedId(id)}>{row.name}</button>)}
+    </div>
+    <div className="at-other-markets__controls" role="group" aria-label="比較期間">
+      {([1, 5, 20] as const).map(value => <button type="button" key={value}
+        data-argus-control="canonical-horizon" data-horizon={`${value}D`}
+        aria-pressed={sessions === value} onClick={() => setSessions(value)}>{value}営業日</button>)}
+    </div>
+    {snapshot.loading && <p><TriangleStepLoader compact label="選んだ市場の実績を読み込んでいます" /></p>}
+    {snapshot.error && <p role="status">実績の更新を確認できません。<button type="button" onClick={snapshot.retry}>再取得</button></p>}
+    {snapshot.snapshotId && points.length >= 2 ? <figure data-market-snapshot-id={snapshot.snapshotId}>
+      <figcaption><b>{meta.name}</b>
+      <span>{meta.product}の終値 · {sessions}営業日の実績</span></figcaption>
+      <svg viewBox="0 0 300 96" role="img" aria-label={`${meta.name}連動ETFの${sessions}営業日実績`}>
+        <polyline points={polyline} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+      </svg><p><strong>{change == null ? '変化率未確認' : `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`}</strong>
+        <span>（{points.at(-1)?.date ?? move?.asOf ?? '時点未確認'} 終値）</span></p></figure>
+      : <p className="at-quiet">この期間の実績データを確認中です。</p>}
+    <p className="at-other-markets__note">指数の予測や売買判断ではありません。連動ETFの実績を比較しています。</p>
+  </div>;
+};
 
 const JP_MARKET_ENGINE_STATE_JA: Record<string, string> = {
   MIXED: '混在', FRAGILE: '脆弱', DOWNSIDE_TRIGGERED: '下方シグナル点灯',
@@ -585,9 +621,9 @@ const ProjectionChart: React.FC<{
 };
 
 export const ArgusTodayPanel: React.FC<Props> = ({
-  view, instruments, selectedSymbol, horizon, chartLoad,
+  view, selectedSymbol, horizon, chartLoad,
   projectionSource, freshnessNoteJa, shock, newsIntel,
-  onMode, onInstrument, onHorizon, onNavigate, onNavigateToAsset, onNavigateToSettings, aiButton, jpNameBySymbol,
+  onNavigate, onNavigateToAsset, onNavigateToSettings, aiButton, jpNameBySymbol,
 }) => {
   const projection = view.projectionsByHorizon[`${horizon}D`] ?? view.projection;
   // v13.5.39: the top command area renders MARKET SIGNALS (SIG-01..07, x / 7)
@@ -596,9 +632,12 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   const decisionEvidence = useDecisionEvidence();
   const { brief: editorialBrief } = useMarketBrief();
   const dashboardEvents = useDashboardEvents();
+  const sqCalendar = useJapanSqCalendar();
+  const sqCalendarCurrent = sqCalendarIsCurrent(sqCalendar.data, sqCalendar.checkedAt);
   const editorialScope = view.selectedMarket === 'JP' && selectedSymbol === '1321' && horizon === 5;
   const editorialActive = editorialScope && !!editorialEdition(editorialBrief);
   const [periodOverview,setPeriodOverview] = React.useState<Job|null>(null);
+  const [otherMarketsOpen, setOtherMarketsOpen] = React.useState(false);
   const scopedSubject = view.selectedMarket === 'JP' && selectedSymbol === '1321' ? 'N225' : selectedSymbol;
   const matchingOverview = periodOverview?.context.subject.symbol === scopedSubject
     && periodOverview.context.subject.market === view.selectedMarket
@@ -623,6 +662,16 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     onNavigate('notifications');
     const jump = () => document.getElementById('important-events')
       ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.setTimeout(jump, 350);
+    window.setTimeout(jump, 1000);
+  };
+  const openSqDetails = (eventId: string) => {
+    onNavigate('notifications');
+    const jump = () => {
+      const item = document.getElementById(eventId);
+      if (item instanceof HTMLDetailsElement) item.open = true;
+      item?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
     window.setTimeout(jump, 350);
     window.setTimeout(jump, 1000);
   };
@@ -664,6 +713,19 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   ]);
   const NEWS_ROWS_CAP = 5;
   const criticalNewsCount = newsRows.filter(row => row.severity === 'CRITICAL').length;
+  const scheduledEvents = [
+    ...(view.nextEvent ? [{ kind: 'macro' as const, id: view.nextEvent.id,
+      sortAt: Date.parse(view.nextEvent.at ?? ''), event: view.nextEvent }] : []),
+    ...view.comingEvents.map((event) => ({ kind: 'macro' as const, id: event.id,
+      sortAt: Date.parse(event.at ?? ''), event })),
+    ...(sqCalendar.data?.events ?? []).map((event) => ({ kind: 'sq' as const,
+      id: event.eventId, sortAt: Date.parse(`${event.sqDate}T08:45:00+09:00`), event })),
+  ].sort((left, right) => {
+    const leftAt = Number.isFinite(left.sortAt) ? left.sortAt : Number.MAX_SAFE_INTEGER;
+    const rightAt = Number.isFinite(right.sortAt) ? right.sortAt : Number.MAX_SAFE_INTEGER;
+    return leftAt - rightAt || left.id.localeCompare(right.id);
+  });
+  const nextScheduledEvent = scheduledEvents[0] ?? null;
   React.useEffect(() => {
     try {
       sessionStorage.setItem('argus.todayDecisionMirror', JSON.stringify({
@@ -705,8 +767,14 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     // release-acceptance contract are 1321/1306/SPY/QQQ.
     data-canonical-instrument={selectedSymbol}
     data-canonical-horizon={`${projection?.horizonDays ?? horizon}D`}>
-    <JapanSqApproachNotice />
-
+    <span className="at-contract-state" aria-hidden="true"
+      data-argus-contract="today-projection-state-v1"
+      data-projection-state={chartLoad.snapshotId ? 'available' : 'missing'}
+      data-projection-symbol="N225"
+      data-projection-snapshot-id={chartLoad.snapshotId ?? undefined}
+      data-projection-response-snapshot-id={coherentResponseSnapshotId ?? undefined}
+      data-projection-snapshot-state={chartLoad.snapshotState}
+      data-projection-revalidation-state={revalidationState} />
     <section className="at-view-hero" aria-label="今日の見立て">
       {editorialScope ? <MarketBriefCard signals={topSignals && !usSelected ? { activeCount: topSignals.activeCount, total: topSignals.total } : null}
         cutoff={decisionEvidence.marketView?.informationCutoff ?? null} market="JP" editorial />
@@ -720,6 +788,14 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         重大なニュース・市場変化 {criticalNewsCount}件を確認する ↓
       </button>}
     </section>
+    {!chartLoad.snapshotId && <div className="at-canonical-load-status" role="status">
+      {chartLoad.loaderVisible && <TriangleStepLoader label={chartLoad.slowInitial
+        ? '日経平均の根拠を確認しています。前回の説明は引き続き読めます'
+        : '日経平均の根拠を読み込んでいます'} />}
+      {!chartLoad.loaderVisible && <span>日経平均の根拠を準備しています</span>}
+      {chartLoad.error && <><span>根拠を取得できませんでした。</span>
+        <button type="button" onClick={chartLoad.retry}>再取得</button></>}
+    </div>}
 
     <article className={`at-decision at-primary-hero card is-${view.finalAction.toLowerCase()}`}
       aria-label="A.R.G.U.S. Primary Action">
@@ -853,7 +929,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         <div><b>目標</b><span>{target ? `${target.value} ${target.unit}` : '検証済み目標なし'}</span></div>
         <div><b>無効化</b><span>{invalidation ? `${invalidation.value} ${invalidation.unit}` : '検証済み無効化条件なし'}</span></div>
         <div><b>次の確認</b><span>{nextReviewLabel(view.canonicalDecision.nextReviewConditionCodes[0])
-          ?? (view.nextEvent ? `${view.nextEvent.code} ${formatEventTime(view.nextEvent.at, view.nextEvent.dateOnly)}` : '正本証拠の更新')}</span></div>
+          ?? (view.nextEvent ? `${view.nextEvent.code}（${formatEventTime(view.nextEvent.at, view.nextEvent.dateOnly)}）` : '正本証拠の更新')}</span></div>
       </div>
 
       </details>
@@ -899,20 +975,27 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         && shock.events.length === 0 && materialMailEvents.length === 0
         && <p className="at-shock-clear">突発の市場ショック: 現在なし
           （監視中: 中央銀行 · 雇用/物価 · 地政学 · 企業イベント）·
-          予定されている経済イベントは NEXT EVENT に表示されます</p>}
+          予定されている経済イベントはイベント欄に表示されます</p>}
       {shock.status === 'error' && <p className="at-shock-clear">市場ショック監視: 取得できません</p>}
       <p className="at-news-note">ニュースの方向はチャート観とは独立しています。ニュースは売買権限を持たない参考情報です。</p>
       <button type="button" className="at-news-more" onClick={() => openNewsDetails()}>ニュース・続報をすべて見る ↗</button>
 
     </section>
 
-    <JapanSqCalendarCard />
-
-    <section className="at-event card" aria-label="NEXT EVENT">
-      <div className="at-head"><b>次の重要イベント</b>{view.nextEvent && <span>{view.nextEvent.impact.toUpperCase()}</span>}</div>
-      {view.nextEvent ? <button type="button" onClick={openEventDetails}>
-        <strong>{view.nextEvent.code}</strong><time>{formatEventTime(view.nextEvent.at, view.nextEvent.dateOnly)}</time>
-        {view.nextEvent.descriptionJa && <small>{view.nextEvent.descriptionJa.slice(0, 32)}</small>}
+    <section className="at-event card" aria-label="重要イベント" data-argus-contract="unified-event-schedule-v1">
+      <div className="at-head"><b>重要イベント</b><span>30日先まで</span></div>
+      {nextScheduledEvent ? <button type="button"
+        onClick={() => nextScheduledEvent.kind === 'sq'
+          ? openSqDetails(nextScheduledEvent.event.eventId) : openEventDetails()}>
+        {nextScheduledEvent.kind === 'sq' ? <>
+          <strong>{nextScheduledEvent.event.title}（{nextScheduledEvent.event.sqDate.replaceAll('-', '/')}・寄付き基準）</strong>
+          <time>{nextScheduledEvent.event.kind === 'MAJOR_SQ' ? 'メジャーSQ' : 'SQ'}</time>
+          <small>取引所日程。方向判断ではありません</small>
+        </> : <>
+          <strong>{nextScheduledEvent.event.code}（{formatEventTime(nextScheduledEvent.event.at, nextScheduledEvent.event.dateOnly)}）</strong>
+          <time>{nextScheduledEvent.event.impact.toUpperCase()}</time>
+          {nextScheduledEvent.event.descriptionJa && <small>{nextScheduledEvent.event.descriptionJa.slice(0, 32)}</small>}
+        </>}
       </button> : <p className="at-quiet">{view.eventsAuthorityUnknown
         ? 'イベント情報を取得できていません（予定がないという意味ではありません）'
         : '直近の重要イベントなし'}</p>}
@@ -920,98 +1003,38 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           moment it happens — that is when the owner most needs it. */}
       {view.releasedEvent && <p className="at-released">
         <b>発表済み</b> {view.releasedEvent.code}
-        <time>{formatEventTime(view.releasedEvent.at, view.releasedEvent.dateOnly)}</time>
+        <time>（{formatEventTime(view.releasedEvent.at, view.releasedEvent.dateOnly)}）</time>
         <span>{releasedEventResultLabel(view.releasedEvent, dashboardEvents)}</span>
       </p>}
-      <div className="at-coming"><b>30日先までの予定</b>
-        {view.comingEvents.length
-          ? view.comingEvents.map((event) => <span key={event.id}>{event.code} {formatEventTime(event.at, event.dateOnly).split(' ')[0]}</span>)
+      <div className="at-coming"><b>この先の予定</b>
+        {scheduledEvents.length > 1
+          ? scheduledEvents.slice(1).map((row) => row.kind === 'sq'
+            ? <button type="button" key={row.id} onClick={() => openSqDetails(row.event.eventId)}
+              data-event-kind={row.event.kind}>{row.event.title}（{row.event.sqDate.replaceAll('-', '/')}・寄付き基準）
+              <small>{sqCalendarCurrent && !sqCalendar.failed ? row.event.stage === 'TODAY' ? '本日' : row.event.stage === 'LAST_TRADING_DAY'
+                ? '最終取引日' : row.event.stage === 'EVENT_WEEK' ? '今週' : '予定' : '保存済み日程'}</small></button>
+            : <button type="button" key={row.id} onClick={openEventDetails}>
+              {row.event.code}（{formatEventTime(row.event.at, row.event.dateOnly)}）</button>)
           : <span>{view.eventsAuthorityUnknown ? '取得待ち' : '予定なし'}</span>}
+        {sqCalendar.loading && <span><TriangleStepLoader compact label="SQ日程を更新中" /></span>}
+        {sqCalendar.failed && !sqCalendar.data?.events.length && <span> SQ日程は更新を確認できません</span>}
       </div>
+      <button type="button" className="at-event-more" onClick={openEventDetails}>イベントの結果・出典を見る ↗</button>
     </section>
 
-    {/* v13.5.0 restoration: the market block — session lamps, the four
-        headline charts, and the projection — is the product, so it is always
-        visible. Only system/verification detail stays behind the disclosure
-        below. */}
-    <section className="at-market card" aria-label="市場データ">
+    <details className="at-other-markets card" data-argus-contract="other-markets-actuals-v1"
+      onToggle={(event) => setOtherMarketsOpen(event.currentTarget.open)}>
+      <summary>他の市場を見る</summary>
       <section className="at-lamps" aria-label="市場セッション">
         {view.sessionLamps.map((lamp) => <span key={lamp.key} className={`is-${lamp.tone}`}>
           <i aria-hidden />{lamp.label}
         </span>)}
       </section>
-      <div className="at-mode" role="group" aria-label="表示市場">
-        {(['AUTO', 'JP', 'US'] as MarketSelectionMode[]).map((mode) => <button type="button" key={mode}
-          aria-pressed={view.selectionMode === mode} className={view.selectionMode === mode ? 'active' : ''}
-          onClick={() => onMode(mode)}>{mode}</button>)}
-        <span>SELECTED {view.selectedMarket}</span>{view.globalRisk && <em>GLOBAL {view.globalRisk}</em>}
-      </div>
-      {/* v13.5.1: four lightweight NAME selectors only. All chart, price,
-          and probability information lives in the single selected projection
-          chart below — no duplicated mini-charts or probability chips. */}
-      <div className="at-index-strip at-index-strip--selectors"
-        role="group" aria-label="銘柄選択">
-        {instruments.map((instrument) => <button type="button"
-          key={instrument.symbol}
-          data-argus-control="market-instrument"
-          data-instrument={instrument.symbol}
-          aria-pressed={instrument.symbol === selectedSymbol}
-          onClick={() => onInstrument(instrument.market, instrument.symbol)}
-          className={instrument.symbol === selectedSymbol ? 'is-selected' : ''}
-          title={`${instrument.fullLabel} · underlying ${instrument.underlying}`}>
-          <span className="at-index-name">{instrument.shortLabel}</span>
-          {/* v13.5.54: the tab now names the INDEX, so badging it "ETF" read as
-              a contradiction. The badge carries the instrument the decision is
-              still anchored on instead. */}
-          {/* v13.5.61 (owner): no codes on Today — the badge says what the
-              decision subject IS (the index-tracking ETF), not its number. */}
-          <small className="at-index-type">連動ETF</small>
-        </button>)}
-      </div>
       {freshnessNoteJa && <p className="at-freshness-note">{freshnessNoteJa}</p>}
-      <div className="at-chart-controls">
-        <div className="at-chart-status" data-snapshot-state={chartLoad.snapshotState}
-          data-snapshot-id={chartLoad.snapshotId ?? undefined}>
-          <span>{chartLoad.error && projectionSource
-            ? 'ライブ再検証は失敗中 · 検証済みデータを表示しています'
-            : chartLoad.statusText}</span>
-          {projection && chartLoad.loading && chartLoad.loaderVisible &&
-            <TriangleStepLoader compact label="" />}
-          {chartLoad.error && <button type="button" onClick={chartLoad.retry}>再試行</button>}
-        </div>
-        <div className="at-horizon" role="group" aria-label="予測期間">{([1, 5, 20] as const).map((value) =>
-          <button type="button" key={value} aria-pressed={horizon === value}
-            data-argus-control="canonical-horizon" data-horizon={`${value}D`}
-            onClick={() => onHorizon(value)}>{value}D</button>)}</div>
-      </div>
-      {projection ? <ProjectionChart projection={projection}
-        snapshotId={chartLoad.snapshotId}
-        responseSnapshotId={coherentResponseSnapshotId}
-        snapshotState={chartLoad.snapshotState}
-        revalidationState={revalidationState}
-        source={projectionSource} />
-        : <div className="at-projection-missing" aria-busy={chartLoad.loading}
-          data-argus-contract="today-projection-state-v1"
-          data-projection-state="missing"
-          data-projection-snapshot-id={chartLoad.snapshotId ?? undefined}
-          data-projection-response-snapshot-id={coherentResponseSnapshotId ?? undefined}
-          data-projection-snapshot-state={chartLoad.snapshotState}
-          data-projection-revalidation-state={revalidationState}>
-        {chartLoad.loaderVisible
-          ? <TriangleStepLoader label={chartLoad.slowInitial
-            ? '初回データを準備中' : 'データ確認中'} />
-          : <span aria-hidden className="at-projection-placeholder" />}
-        {!chartLoad.loading && <span>{chartLoad.error ? '取得できません' : '実測OHLCV確認待ち'}</span>}
-        {chartLoad.error && <button type="button" onClick={chartLoad.retry}>再試行</button>}
-      </div>}
-      {view.factors.length > 0 && <div className="at-factors">{view.factors.map((factor) =>
-        <span key={factor.key} className={factor.state === '↑' || factor.state === 'LOW' ? 'is-positive'
-          : factor.state === '↓' || factor.state === 'HIGH' ? 'is-negative' : 'is-neutral'}>{factor.key} <b>{factor.state}</b></span>)}</div>}
-      {view.failedRallyState && view.failedRallyState.state !== 'NONE' && <div className="at-failed-rally">
-        <b>上昇失速パターン　{view.failedRallyState.state === 'CONFIRMED' ? '観測済み' : '候補'}</b>
-        <span>将来リターンのSkill未検証</span>
-      </div>}
-    </section>
+      <p className="at-other-markets__note">市場間の実績比較です。Todayの見通しや確率は切り替わりません。</p>
+      {otherMarketsOpen && <OtherMarketsActuals moves={view.indexMoves} />}
+      <p className="at-other-markets__note">指数そのもののリアルタイム値ではありません。NASDAQ総合ではなくNASDAQ-100連動ETFを参照しています。</p>
+    </details>
 
     {!usSelected && <SharedMarketContext horizon={horizon} />}
     {!usSelected && <MarginDynamicsCard document={decisionEvidence.marketView?.margin1570Dynamics} refreshFailed={!!decisionEvidence.error} />}

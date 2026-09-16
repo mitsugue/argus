@@ -35,8 +35,8 @@ const VIEWPORTS = [
 const GATE_INVENTORY = [
   { id: 'M01', name: 'shell-identity-version-sha' },
   { id: 'M02', name: 'canonical-1321-5d-selection' },
-  { id: 'M03', name: 'today-selector-four-instruments' },
-  { id: 'M04', name: 'twelve-combination-verified-projection' },
+  { id: 'M03', name: 'today-single-nikkei-outlook' },
+  { id: 'M04', name: 'twelve-research-snapshots-retained-off-surface' },
   { id: 'M05', name: 'responsive-geometry-matrix' },
   { id: 'M06', name: 'navigation-history-active-state' },
   { id: 'M07', name: 'cold-loader-semantics' },
@@ -262,14 +262,6 @@ async function waitForCanonicalProjectionContract(page, timeout = 30_000) {
 
 async function selectCanonicalControls(page, timeout = 30_000) {
   await openCanonicalEvidence(page, timeout);
-  await page.getByRole('group', { name: '表示市場' })
-    .getByRole('button', { name: 'JP', exact: true }).click();
-  await page.locator(
-    '[data-argus-control="market-instrument"][data-instrument="1321"]',
-  ).click();
-  await page.locator(
-    '[data-argus-control="canonical-horizon"][data-horizon="5D"]',
-  ).click();
   await page.waitForFunction(() => {
     const contract = document.querySelector(
       '[data-argus-contract="canonical-market-snapshot-v1"]',
@@ -278,6 +270,28 @@ async function selectCanonicalControls(page, timeout = 30_000) {
       && contract?.getAttribute('data-canonical-horizon') === '5D'
       && contract?.getAttribute('data-canonical-verification') === 'verified';
   }, null, { timeout });
+}
+
+async function verifyRetainedResearchMatrix(page, backendOrigin) {
+  return page.evaluate(async ({ origin, symbols, horizons }) => {
+    const rows = [];
+    for (const symbol of symbols) for (const horizon of horizons) {
+      const url = new URL('/api/argus/chart-intelligence', origin);
+      url.searchParams.set('scope', 'market');
+      url.searchParams.set('symbol', symbol);
+      url.searchParams.set('horizon', horizon);
+      url.searchParams.set('snapshot', 'verified');
+      const response = await fetch(url, { cache: 'no-store' });
+      const body = await response.json();
+      const payload = body?.payload ?? body;
+      rows.push({ symbol, horizon, status: response.status,
+        snapshotId: body?.snapshotId ?? null,
+        verification: body?.verificationStatus ?? null,
+        instrument: payload?.instrument ?? payload?.symbol ?? symbol,
+        automaticAiCalls: payload?.automaticAiCalls ?? null });
+    }
+    return rows;
+  }, { origin: backendOrigin, symbols: SYMBOLS, horizons: HORIZONS });
 }
 
 async function geometry(page, viewport) {
@@ -414,10 +428,14 @@ async function run() {
   const initialRequestsAt = evidence.network.length;
   await page.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(page);
+  await selectCanonical1321FiveDay(page);
+  const otherMarkets = page.locator('[data-argus-contract="other-markets-actuals-v1"]');
+  if (!await otherMarkets.evaluate((element) => element.open)) {
+    await otherMarkets.locator('summary').click();
+  }
   const selector = page.locator('[data-argus-control="market-instrument"]');
   await selector.first().waitFor({ state: 'attached', timeout: 30_000 });
-  await selectCanonical1321FiveDay(page);
-  if (await selector.count() !== 4) evidence.failures.push('today-selector-not-four');
+  if (await selector.count() !== 4) evidence.failures.push('other-market-selector-not-four');
   const initialChartRequests = evidence.network.slice(initialRequestsAt)
     .filter((row) => row.pathname === '/api/argus/chart-intelligence');
   const initialKeys = new Set(initialChartRequests.map(
@@ -432,17 +450,28 @@ async function run() {
       ).click();
       await waitForTodayChart(page);
       await page.waitForFunction(({ expectedSymbol, expectedHorizon }) => {
+        const actuals = document.querySelector(
+          '[data-argus-contract="other-market-actuals-explorer-v1"]');
+        const selectedChart = actuals?.querySelector('[data-market-snapshot-id]');
         const contract = document.querySelector(
           '[data-argus-contract="canonical-market-snapshot-v1"]',
         );
-        return contract?.getAttribute('data-canonical-instrument') === expectedSymbol
-          && contract?.getAttribute('data-canonical-horizon') === expectedHorizon
+        return actuals?.getAttribute('data-other-market-symbol') === expectedSymbol
+          && actuals?.getAttribute('data-other-market-horizon') === expectedHorizon
+          && Boolean(selectedChart?.getAttribute('data-market-snapshot-id'))
+          && contract?.getAttribute('data-canonical-instrument') === '1321'
+          && contract?.getAttribute('data-canonical-horizon') === '5D'
           && contract?.getAttribute('data-canonical-verification') === 'verified';
       }, { expectedSymbol: symbol, expectedHorizon: horizon }, { timeout: 30_000 });
       await waitForCanonicalProjectionContract(page);
       const record = await page.evaluate(({ expectedSymbol, expectedHorizon }) => ({
-        symbol: document.querySelector('.at-proj-heading b')?.textContent ?? '',
-        horizon: document.querySelector('.at-horizon button[aria-pressed="true"]')?.textContent ?? '',
+        symbol: document.querySelector('[data-argus-contract="other-market-actuals-explorer-v1"]')
+          ?.getAttribute('data-other-market-symbol') ?? '',
+        horizon: document.querySelector('[data-argus-contract="other-market-actuals-explorer-v1"]')
+          ?.getAttribute('data-other-market-horizon') ?? '',
+        selectedSnapshotId: document.querySelector(
+          '[data-argus-contract="other-market-actuals-explorer-v1"] [data-market-snapshot-id]')
+          ?.getAttribute('data-market-snapshot-id'),
         snapshotId: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
           ?.getAttribute('data-canonical-snapshot-id'),
         snapshotState: document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')
@@ -458,10 +487,11 @@ async function run() {
         expectedSymbol, expectedHorizon,
       }), { expectedSymbol: symbol, expectedHorizon: horizon });
       evidence.combinations.push(record);
-      if (record.horizon !== horizon || !record.snapshotId
+      if (record.horizon !== horizon || !record.snapshotId || !record.selectedSnapshotId
           || record.verification !== 'verified'
-          || record.canonicalInstrument !== symbol
-          || record.canonicalHorizon !== horizon) {
+          || record.symbol !== symbol
+          || record.canonicalInstrument !== '1321'
+          || record.canonicalHorizon !== '5D') {
         evidence.failures.push(`today-combination:${symbol}:${horizon}`);
       }
       const projectionState = await readCanonicalProjectionState(page, {
@@ -532,7 +562,7 @@ async function run() {
       if (!root) return;
       const record = () => {
         if (globalThis.__ARGUS_LOADER_FIRST_AT__ == null
-            && document.querySelector('.at-projection-missing .triangle-step-loader')) {
+            && document.querySelector('.at-canonical-load-status .triangle-step-loader')) {
           globalThis.__ARGUS_LOADER_FIRST_AT__ = performance.now();
         }
       };
@@ -547,7 +577,7 @@ async function run() {
     (route) => fulfillCapturedSnapshot(route, evidence, 4_000));
   const coldPage = await cold.newPage();
   const coldLoaderAppeared = coldPage.locator(
-    '.at-projection-missing .triangle-step-loader',
+    '.at-canonical-load-status .triangle-step-loader',
   ).waitFor({ state: 'visible', timeout: 5_000 });
   await coldPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(coldPage);
@@ -580,12 +610,12 @@ async function run() {
     && loaderTiming.roundedDelayMs < LOADER_THRESHOLD_MS - LOADER_TIMING_TOLERANCE_MS
     ? 1 : 0;
   const after225 = await coldPage.locator(
-    '.at-projection-missing .triangle-step-loader').count();
-  const skeletonHeight = await coldPage.locator('.at-projection-missing').evaluate(
+    '.at-canonical-load-status .triangle-step-loader').count();
+  const skeletonHeight = await coldPage.locator('.at-canonical-load-status').evaluate(
     (element) => element.getBoundingClientRect().height);
   await screenshot(coldPage, 'today-cold-loader.png');
   if (!coldSemanticState.pass || loaderTiming.roundedDelayMs == null || before225
-      || !after225 || skeletonHeight < 250) {
+      || !after225 || skeletonHeight < 90) {
     evidence.failures.push('cold-loader-contract');
   }
   await cold.close();
@@ -602,15 +632,16 @@ async function run() {
     const nodes = [...document.querySelectorAll(selector)];
     if (nodes.length !== 1) return false;
     const node = nodes[0];
+    const visibleStatus = document.querySelector('.at-canonical-load-status');
     if (node.getAttribute('data-projection-state') !== 'missing'
         || node.getAttribute('data-projection-snapshot-id')
         || node.getAttribute('data-projection-response-snapshot-id')
         || node.getAttribute('data-projection-snapshot-state') !== 'NO_CACHE_LOADING'
-        || !node.textContent?.includes('初回データを準備中')) return false;
+        || !visibleStatus?.textContent?.includes('日経平均の根拠を確認しています')) return false;
     return {
       state: 'missing',
       snapshotState: 'NO_CACHE_LOADING',
-      label: '初回データを準備中',
+      label: '日経平均の根拠を確認しています',
     };
   }, { selector: CANONICAL_PROJECTION_STATE_SELECTOR }, { timeout: 7_000 });
   await slowPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
@@ -618,7 +649,8 @@ async function run() {
   await openCanonicalEvidence(slowPage);
   const slowState = await slowStateAppeared.then((handle) => handle.jsonValue());
   const slowLabel = slowState?.label ?? null;
-  if (slowState?.state !== 'missing' || slowState?.label !== '初回データを準備中') {
+  if (slowState?.state !== 'missing'
+      || slowState?.label !== '日経平均の根拠を確認しています') {
     evidence.failures.push('slow-label');
   }
   await slow.close();
@@ -635,13 +667,13 @@ async function run() {
   await failurePage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(failurePage);
   await openCanonicalEvidence(failurePage);
-  await failurePage.locator('.at-projection-missing')
-    .getByRole('button', { name: '再試行' })
+  await failurePage.locator('.at-canonical-load-status')
+    .getByRole('button', { name: '再取得' })
     .waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {});
   const failureState = {
-    loader: await failurePage.locator('.at-projection-missing .triangle-step-loader').count(),
-    retry: await failurePage.locator('.at-projection-missing')
-      .getByRole('button', { name: '再試行' }).count(),
+    loader: await failurePage.locator('.at-canonical-load-status .triangle-step-loader').count(),
+    retry: await failurePage.locator('.at-canonical-load-status')
+      .getByRole('button', { name: '再取得' }).count(),
   };
   if (failureState.loader || !failureState.retry) evidence.failures.push('failure-loader-contract');
   await failure.close();
@@ -843,11 +875,9 @@ async function run() {
     evidence.failures.push('offline-snapshot-continuity');
   }
 
-  // M15 — headline-first decision visibility: with every heavy verified
-  // chart request held open, the four headline charts and their canonical
-  // probabilities must still appear from the compact bootstrap. This is the
-  // structural regression gate for "decision info hidden behind heavy
-  // visualization payloads".
+  // M15 — headline-first decision visibility: with the verified Nikkei
+  // snapshot held open, ARGUS's editorial view and canonical decision remain
+  // readable. The retired four-market probability panel must not reappear.
   let releaseHeavyHold;
   const heavyHold = new Promise((resolve) => { releaseHeavyHold = resolve; });
   const headlineContext = await browser.newContext({
@@ -870,9 +900,6 @@ async function run() {
   await headlinePage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(headlinePage);
   try {
-    // v13.5.1 contract: four NAME selectors + the single selected projection
-    // chart rendered from the compact headline (data-projection-source), with
-    // its canonical probability row, all while heavy requests stay held.
     await waitForContractState(headlinePage, 'headline-first-decision-visibility',
       () => {
         const selectors = document.querySelectorAll(
@@ -880,11 +907,14 @@ async function run() {
         const projection = document.querySelector(
           '[data-argus-contract="today-projection-state-v1"]');
         const probabilityRow = document.querySelector('.at-proj-prob');
+        const editorial = document.querySelector('.at-view-hero .at-brief');
+        const decision = document.querySelector('.at-decision');
+        const loader = document.querySelector('.at-canonical-load-status .triangle-step-loader');
         const primary = document.querySelector('.at-call strong');
-        return selectors.length === 4
-          && projection?.getAttribute('data-projection-state') === 'available'
-          && projection?.getAttribute('data-projection-source') === 'headline'
-          && !!probabilityRow
+        return selectors.length === 0
+          && projection?.getAttribute('data-projection-state') === 'missing'
+          && !probabilityRow
+          && !!editorial && !!decision && !!loader
           && !!primary && (primary.textContent ?? '').trim().length > 0;
       }, null);
     evidence.headlineFirst = {
