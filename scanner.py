@@ -154,6 +154,7 @@ import argus_memory_attribution     # bounded parent-process phase telemetry
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
 import argus_foundation_job_checkpoint  # small job-state sidecar; avoids full-checkpoint OOM
 import argus_asset_chart_cache      # bounded durable Asset Desk chart reports
+import argus_index_research_cache
 import argus_diagnostics_contract  # closed public/operational DTO boundary
 import argus_recovery_registry     # accepted shadow registry metadata only
 import argus_recovery_phase_a_adapter  # optional shadow measurement/null proof
@@ -37308,7 +37309,7 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                          or [str(_eps.get("asOf") or "")])
         ledger["valuationHistory"].append({**_eps, "availableFrom": _available})
     try:
-        event_doc = get_events_snapshot()
+        event_doc = get_events_snapshot(allow_provider_fetch=not cached_only)
         events = event_doc.get("events") if isinstance(event_doc, dict) else []
     except Exception:
         events = []
@@ -37382,7 +37383,8 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
         _jp_market_engine_context = {
             "creditRows": (_jpx_credit_rows_effective()
                            if market == "JP" else []),
-            "vixRows": _fred_vix_history_dated(),
+            "vixRows": (list(_VIX_HIST_DATED_CACHE.get("data") or []) if cached_only
+                        else _fred_vix_history_dated()),
             "usRows": (reference_history("SPY", "US")
                        if str(symbol).upper() != "SPY" else []),
             # v13.5.36: misconfiguration is REPORTED, never silently identical
@@ -37786,6 +37788,20 @@ def api_argus_index_chart():
         if horizon not in (1, 5, 10, 20):
             return jsonify({"error": "invalid_comparison_horizon"}), 400
         return jsonify(_jp_market_comparison_cached(horizon))
+    cached_report = _index_research_read(f"chart:{index}:{timeframe}")
+    if cached_report:
+        return jsonify(cached_report)
+    return jsonify({
+        "reportId": None, "status": "expected_skip", "automaticAiCalls": 0,
+        "index": index, "displayNameJa": spec["displayNameJa"],
+        "stateUpdate": {"status": "expected_skip", "reason": "index_cache_cold"},
+        "noteJa": "指数の比較計算を定期更新で準備しています。",
+    })
+
+
+def _index_chart_calculate(index, timeframe):
+    """Existing numerical calculation, called only by the collection lane."""
+    spec = _INDEX_CHART_SOURCES[index]
     rows, yahoo_used = None, None
     for yahoo_symbol in spec["yahoo"]:
         cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get(yahoo_symbol)
@@ -37794,12 +37810,12 @@ def api_argus_index_chart():
             rows, yahoo_used = data, yahoo_symbol
             break
     if not rows:
-        return jsonify({
+        return {
             "reportId": None, "status": "expected_skip", "automaticAiCalls": 0,
             "index": index, "displayNameJa": spec["displayNameJa"],
             "stateUpdate": {"status": "expected_skip", "reason": "index_cache_cold"},
             "noteJa": "指数日足はまだ取得されていません(起動後の巡回で自動取得されます)。",
-        })
+        }
     # A screen read does not acquire a new price revision. Keep the provider's
     # original timestamp so PIT identity and stored calculation reuse agree.
     known_at = _history_cache_known_at(cached, _JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC)
@@ -37830,7 +37846,7 @@ def api_argus_index_chart():
             "proxyFor": None, "licenseStatus": "display_reference",
             "sourceSymbol": yahoo_used,
         })
-    return jsonify(argus_market_intelligence.normalize_public_names(report))
+    return argus_market_intelligence.normalize_public_names(report)
 
 
 @app.route("/api/argus/today-headline")
@@ -38272,7 +38288,102 @@ def _jp_index_valuation_warm():
     _JP_INDEX_VALUATION.warm(path, get=requests.get)
 
 
+_INDEX_RESEARCH_REPORTS = {}
+_INDEX_RESEARCH_STATUS = {"status": "NOT_RUN", "restoreAttempted": False}
+_INDEX_RESEARCH_LOCK = threading.Lock()
+_INDEX_RESEARCH_METHOD = (
+    f"index-research-background-v1:{argus_today_intelligence.METHOD_VERSION}:"
+    f"{argus_today_intelligence.CALIBRATION_VERSION}:{argus_market_replay.METHOD_VERSION}:"
+    f"{argus_chart_intelligence.METHOD_VERSION}:{jp_market_price_paths.METHOD}")
+
+
+def _index_research_path():
+    return (os.path.join(_DURABILITY_PATHS["root"], "index_research_cache.json")
+            if _cost_policy_durable_enabled() else None)
+
+
+def _index_research_restore():
+    if _INDEX_RESEARCH_STATUS.get("restoreAttempted"):
+        return
+    _INDEX_RESEARCH_STATUS["restoreAttempted"] = True
+    path = _index_research_path()
+    if not path:
+        return
+    try:
+        restored = argus_index_research_cache.load(path, method=_INDEX_RESEARCH_METHOD, now=_ai_now_iso())
+        argus_product_naming.require_allowed(restored)
+        _INDEX_RESEARCH_REPORTS.update(restored)
+        _INDEX_RESEARCH_STATUS["restoredCount"] = len(restored)
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        _INDEX_RESEARCH_STATUS["restoreError"] = type(exc).__name__
+
+
+def _index_research_read(key):
+    stored = argus_index_research_cache.read(_INDEX_RESEARCH_REPORTS, key,
+        method=_INDEX_RESEARCH_METHOD, now=_ai_now_iso())
+    if not stored:
+        return None
+    result = stored["payload"]
+    result["researchCache"] = {"mode": "saved_background_calculation", "calculatedAt": stored["calculatedAt"],
+        "recordSha256": stored["sha256"], "refreshStatus": _INDEX_RESEARCH_STATUS.get("status"),
+        "historicalFetches": 0, "fullRecalculations": 0, "automaticAiCalls": 0}
+    if key.startswith("chart:"):
+        result["indexDisclosureJa"] = (_INDEX_CHART_DISCLOSURE_JA
+            + " 計算時点: " + stored["calculatedAt"] + "。保存済みの比較結果を表示しています。")
+    return result
+
+
 def _jp_market_comparison_cached(horizon):
+    return _index_research_read(f"comparison:N225:{horizon}") or {
+        "status": "unavailable", "comparison": None, "automaticAiCalls": 0,
+        "actionAuthority": False, "reason": "index_research_preparing", "informationCutoff": None}
+
+
+def _index_research_warm():
+    if not _INDEX_RESEARCH_LOCK.acquire(blocking=False):
+        return
+    try:
+        _index_research_restore()
+        last = _INDEX_RESEARCH_STATUS.get("lastAttemptMonotonic")
+        if last is not None and time.monotonic() - last < 1800:
+            return
+        _INDEX_RESEARCH_STATUS.update(status="RUNNING", lastAttemptMonotonic=time.monotonic())
+        failures = []; updated = []
+        # Fixed existing index universe; no provider requests or LLM calls here.
+        for key in sorted(argus_index_research_cache.KEYS):
+            try:
+                kind, index, interval = key.split(":")
+                result = (_index_chart_calculate(index, interval) if kind == "chart"
+                          else _jp_market_comparison_calculate(int(interval)))
+                if result.get("status") in ("unavailable", "expected_skip"):
+                    failures.append(key); continue
+                at = _ai_now_iso()
+                value = argus_index_research_cache.record(key, result, method=_INDEX_RESEARCH_METHOD, at=at)
+                argus_product_naming.require_allowed(value)
+                _INDEX_RESEARCH_REPORTS[key] = value
+                updated.append(key)
+            except Exception:
+                failures.append(key)
+        _INDEX_RESEARCH_STATUS.update(status="PARTIAL" if failures else "AVAILABLE",
+            updated=updated, unavailable=failures, lastCompletedAt=_ai_now_iso())
+        path = _index_research_path()
+        if path and updated:
+            doc = argus_index_research_cache.envelope(_INDEX_RESEARCH_REPORTS)
+            argus_persistent_storage.atomic_write_json(path, doc,
+                maximum_bytes=argus_index_research_cache.MAX_BYTES, file_mode=0o600)
+            restored = argus_index_research_cache.load(path, method=_INDEX_RESEARCH_METHOD, now=_ai_now_iso())
+            if restored != _INDEX_RESEARCH_REPORTS:
+                raise ValueError("index_research_readback_mismatch")
+            _INDEX_RESEARCH_STATUS["persistenceStatus"] = "VERIFIED"
+    except Exception as exc:
+        _INDEX_RESEARCH_STATUS.update(status="FAILED", errorClass=type(exc).__name__)
+    finally:
+        _INDEX_RESEARCH_LOCK.release()
+
+
+def _jp_market_comparison_calculate(horizon):
     """Bounded cached-only chart calculation; no fetch, AI or persistence."""
     cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}
     rows = cached.get("data") or []
@@ -38935,6 +39046,8 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     memo = _JP_MARKET_ENGINE_PIT_INPUT_MEMO
     if not warm and memo["data"] is not None and now - memo["ts"] < 120:
         return memo["data"]
+    if warm:
+        _index_research_restore()
     vix_rows, vix_source = _jp_market_engine_vix_rows(fetch=warm)
     nikkei_rows = _yahoo_index_ohlcv(
         "^N225", "NIKKEI_225_INDEX", fetch=warm, available_hour_utc=7)
@@ -38954,6 +39067,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     earnings_bars = (_jp_market_engine_earnings_bars(earnings_event["instrumentId"])
                      if earnings_event else [])
     if warm:
+        _fred_vix_history_dated()
         _jp_market_feature_history_warm()
     data = {
         "creditRows": credit_rows, "margin1570Rows": margin_rows,
@@ -38971,6 +39085,8 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         },
     }
     memo["ts"], memo["data"] = now, data
+    if warm:
+        _index_research_warm()
     return data
 
 
@@ -38991,6 +39107,7 @@ def _jp_market_engine_market_view():
         inputs = _jp_market_engine_pit_inputs()
         evidence = jp_market_engine.evaluate_d01_d07(
             cutoff=cutoff, two_market_rows=inputs["creditRows"],
+            nikkei_valuation=_JP_INDEX_VALUATION.snapshot(cutoff),
             margin_1570_rows=inputs["margin1570Rows"],
             relative_strength_proxy=inputs["rsProxy"],
             foreign_flow_rows=inputs["flowRows"],

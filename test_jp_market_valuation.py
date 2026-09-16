@@ -97,7 +97,7 @@ def test_runtime_cached_comparison_uses_scale_without_network(monkeypatch):
         return {'status':'available'}
     monkeypatch.setattr(scanner.jp_market_price_paths,'cached_index_comparison',calculate)
     monkeypatch.setattr(scanner.requests,'get',lambda *a,**kw:pytest.fail('public GET cannot fetch'))
-    assert scanner._jp_market_comparison_cached(5)['status'] == 'available'
+    assert scanner._jp_market_comparison_calculate(5)['status'] == 'available'
 
 
 def test_refresh_status_does_not_regenerate_ai_but_changed_per_does():

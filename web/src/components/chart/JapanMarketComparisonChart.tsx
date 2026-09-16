@@ -116,7 +116,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
       <p>{document.scaleExplanation}</p>
       {document.valuationEvidence && <p>
         {document.valuationEvidence.date}の指数ベースPER {valuationNumber(document.valuationEvidence.per)}倍、
-        同日の指数終値から逆算したEPS {valuationNumber(document.valuationEvidence.eps)}円。
+        終値・指数ベースPERから算出した概算EPS {valuationNumber(document.valuationEvidence.eps)}円。
         公表EPSそのものではありません。取得：{new Date(document.valuationEvidence.knownAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST。
         公表時刻は未確認です。<a href={document.valuationEvidence.sourceRef} target="_blank" rel="noreferrer">日経公式の算出資料</a>
       </p>}

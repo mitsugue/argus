@@ -1374,6 +1374,7 @@ def test_index_chart_route_is_cached_only_and_names_the_index(monkeypatch):
     import datetime as _dt
     import scanner
     client = scanner.app.test_client()
+    monkeypatch.setattr(scanner, "_INDEX_RESEARCH_REPORTS", {})
     scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.pop("^N225", None)
     cold = client.get("/api/argus/index-chart?index=N225").get_json()
     assert cold["status"] == "expected_skip" and cold["stateUpdate"]["reason"] == "index_cache_cold"
@@ -1406,6 +1407,10 @@ def test_index_chart_route_is_cached_only_and_names_the_index(monkeypatch):
         return _NoNetwork()
 
     monkeypatch.setattr(scanner.requests, "get", _get)
+    computed = scanner._index_chart_calculate("N225", "daily")
+    scanner._INDEX_RESEARCH_REPORTS['chart:N225:daily'] = scanner.argus_index_research_cache.record(
+        'chart:N225:daily', computed, method=scanner._INDEX_RESEARCH_METHOD, at=scanner._ai_now_iso())
+    monkeypatch.setattr(scanner, '_chart_public_report', lambda *a, **kw: pytest.fail('screen recalculated research'))
     try:
         body = client.get("/api/argus/index-chart?index=N225").get_json()
     finally:
@@ -1434,13 +1439,13 @@ def test_index_chart_reads_keep_original_provider_revision(monkeypatch):
     with scanner.app.test_client() as client:
         for hour in (11, 12):
             monkeypatch.setattr(scanner, "_ai_now_iso", lambda: f"2026-09-15T{hour}:00:00Z")
-            assert client.get("/api/argus/index-chart?index=N225").status_code == 200
+            scanner._index_chart_calculate("N225", "daily")
     assert inputs[0] == inputs[1]
     assert inputs[0][-1]["knownAt"] == "2026-09-15T10:00:00.000000Z"
     assert inputs[0][-1]["close"] == rows[-1]["close"]
     cache["^N225"]["acquiredAt"] = "2026-09-15T12:30:00Z"
     with scanner.app.test_client() as client:
-        assert client.get("/api/argus/index-chart?index=N225").status_code == 200
+        scanner._index_chart_calculate("N225", "daily")
     assert inputs[2][-1]["datasetId"] != inputs[1][-1]["datasetId"]
 
 
