@@ -45,14 +45,14 @@ export function WebPushPanel(){
   const test=()=>run(async()=>{if(!status)return;show(await pushRequest(token,'test',{subscriptionId:status.subscriptionId}));
     setMessage('約1分後の確認通知を予約しました。アプリを閉じて確認し、戻って「接続・受信状況を更新」を押してください。');});
   return <section className="card ai-usage web-push" aria-label="アプリを閉じたときの通知"><h3>アプリを閉じたときの通知</h3>
-    <p>SQの週・最終取引日・当日の案内、新しい重大ニュース、登録銘柄の重要な変化を知らせます。売買の指示ではありません。</p>
+    <p>SQの週・最終取引日・当日の案内、新しい重大ニュース・財政金利の警戒変化、登録銘柄の重要な変化を知らせます。売買の指示ではありません。</p>
     <p>iPhoneはiOS 16.4以降のホーム画面版で、通知の許可が必要です。対応するSafari・Chrome・Firefoxでも利用できます。</p>
     <details><summary>所有者の接続設定</summary><label>接続キー<input type="password" autoComplete="off" value={token} disabled={busy}
       onChange={e=>{setToken(e.target.value);setStatus(null);setPublicKey('');setMessage('');}}/></label>
       <p>この欄の入力は端末へ保存しません。購読先と通知設定をサーバーに保存します。保有情報や記事本文は通知に送りません。</p></details>
     <div className="ai-usage__controls"><button disabled={busy||!token} onClick={()=>void load()}>接続・受信状況を更新</button></div>
     <label className="web-push__preference"><input type="checkbox" checked={sq} disabled={busy} onChange={e=>setSq(e.target.checked)}/>SQの日程案内</label>
-    <label className="web-push__preference"><input type="checkbox" checked={news} disabled={busy} onChange={e=>setNews(e.target.checked)}/>新しい重大ニュース</label>
+    <label className="web-push__preference"><input type="checkbox" checked={news} disabled={busy} onChange={e=>setNews(e.target.checked)}/>重大ニュース・財政金利の警戒変化</label>
     <label className="web-push__preference"><input type="checkbox" checked={ownerChanges} disabled={busy} onChange={e=>setOwnerChanges(e.target.checked)}/>保有・監視銘柄の重要な変化</label>
     <div className="ai-usage__controls"><button disabled={busy||!token||!publicKey} onClick={enable}>{status?.enabled?'通知項目を保存':'通知を有効にする'}</button>
       {status?.enabled&&<><button disabled={busy} onClick={()=>void test()}>1分後に確認通知</button><button disabled={busy} onClick={()=>void disable()}>この端末への通知を停止</button></>}</div>

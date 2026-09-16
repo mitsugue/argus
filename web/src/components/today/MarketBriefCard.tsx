@@ -1,4 +1,5 @@
 import { NumericalResearchDetails } from './NumericalResearchDetails';
+import { FiscalEnvironmentDetails } from './FiscalEnvironmentDetails';
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import React from 'react';
 import { MarketAnalysisHistory } from './MarketAnalysisHistory';
@@ -70,6 +71,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
         </div>)}
       </details>
       <NumericalResearchDetails brief={brief} />
+      <FiscalEnvironmentDetails brief={brief} />
       <MarketAnalysisHistory key="saved-history" />
     </div>;
   }

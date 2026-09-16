@@ -150,6 +150,14 @@ def refresh(state, *, now_iso, calendar, get, fx_rows=()):
         control['reportStatus']='CALENDAR_UNAVAILABLE'
     if session:
         control['reportStatus']='AVAILABLE'
+        transitions={case:deepcopy(row['notificationCandidate'])
+            for case,row in control['report'].get('cases',{}).items()
+            if row.get('notificationCandidate')}
+        if transitions:
+            import json
+            key=sha256(json.dumps(transitions,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+            control['notification']={'id':key,'reportId':control['report']['id'],
+                'createdAt':now_iso,'cases':transitions,'actionAuthority':False}
     return {'changed':True,'status':control['acquisitionStatus'],
         'state':{**updated,'fiscalMonitor':control},'requests':control['requests']}
 
@@ -179,7 +187,7 @@ def public_document(state):
         'expectedMarketSession':report.get('expectedMarketSession'),
         'selectedCase':None,'cases':cases,'market':deepcopy(first.get('market')),
         'actionAuthority':False,'predictivePerformance':'UNVALIDATED',
-        'automaticAiCalls':0,'fetchesDuringRead':0,'notificationDelivery':'NOT_CONNECTED',
+        'automaticAiCalls':0,'fetchesDuringRead':0,'notificationDelivery':'EXISTING_WEB_PUSH_NEWS_SETTING',
         'persistenceMechanism':'SHARED_LEDGER_CHECKPOINT'}
 
 
@@ -273,3 +281,36 @@ def context_reference(document):
     if len(json.dumps(reference,ensure_ascii=False,allow_nan=False).encode()) > 16_000:
         raise ValueError('fiscal_explanation_context_bound')
     return reference
+
+
+def notification_proposals(state, *, now):
+    """One aggregate change for alternative cases, using existing push dedupe.
+
+    Repeated reads retain the original due time. Transport and physical display
+    remain the responsibility of the existing delivery/receipt service.
+    """
+    packet=(state.get('fiscalMonitor') or {}).get('notification') or {}
+    if packet.get('actionAuthority') is not False:
+        return []
+    try:
+        due=instant(packet['createdAt']).timestamp()
+        if not 0 <= now-due <= 6*3600:
+            return []
+        changes=list(packet['cases'].values())
+        if not changes or len(changes)>3 or any(row.get('actionAuthority') is not False for row in changes):
+            return []
+        kinds={row['kind'] for row in changes}
+        if not kinds <= {'NEW_WATCH','ESCALATED','RELEASED','EVIDENCE_UPDATED'}:
+            return []
+        if not isinstance(packet.get('id'),str) or len(packet['id'])!=64:
+            return []
+    except (KeyError,ValueError,TypeError):
+        return []
+    released=kinds=={'RELEASED'}
+    title=('日本の財政・金利の警戒条件が解消しました' if released else
+        '日本の財政・金利で警戒が強まりました' if 'ESCALATED' in kinds else
+        '日本の財政・金利に注視する変化があります' if 'NEW_WATCH' in kinds else
+        '日本の財政・金利の警戒根拠が変わりました')
+    return [{'key':'news:fiscal:'+packet['id'],'kind':'news','title':title,
+        'body':'比較できる統計と市場の変化に基づくお知らせです。Todayで理由と確認条件をご覧ください。売買や危機の判定ではありません。',
+        'hash':'#today','due':due,'expires':due+6*3600}]

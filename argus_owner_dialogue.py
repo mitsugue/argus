@@ -381,6 +381,9 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
              'applicability': 'SUBJECT_RESEARCH' if row.get('instrumentId', '').split(':')[1:2] == [symbol] else 'MARKET_CONTEXT_ONLY'}
             for row in public['researchPackages'][:2]
             if isinstance(row, dict) and str(horizon) in (row.get('horizons') or {})]
+    if market == 'JP' and isinstance(public.get('fiscalEnvironment'), Mapping):
+        context['fiscalEnvironment'] = deepcopy(public['fiscalEnvironment'])
+        context['fiscalEnvironment']['applicability'] = 'JAPAN_MACRO_CONTEXT_ONLY'
     if selected_event is not None: context['eventFocus'] = selected_event
     if market == 'JP' and symbol == 'N225':
         snapshot = (brief.get('calculationSnapshots') or {}).get(str(horizon))

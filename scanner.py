@@ -18072,8 +18072,12 @@ def _web_push_tick():
                 projected = copy.deepcopy(event)
                 projected['ownerState'] = (owner[symbol] or {}).get('ownerState') or 'watch'
                 owner_events.append(projected)
-        _WEB_PUSH.tick(argus_web_push.proposals(
-            calendar, events, time.time(), owner_events=owner_events))
+        proposals = argus_web_push.proposals(
+            calendar, events, time.time(), owner_events=owner_events)
+        if not _JP_FISCAL_REFRESH_STATE.get("pendingPersistence"):
+            proposals.extend(argus_jp_fiscal_runtime.notification_proposals(
+                _MARKET_LEDGER, now=time.time()))
+        _WEB_PUSH.tick(proposals)
     except Exception as exc:
         add_log(f"web-push tick unavailable: {type(exc).__name__}")
 

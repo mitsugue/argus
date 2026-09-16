@@ -1,5 +1,6 @@
 from copy import deepcopy
 from datetime import date, timedelta
+from test_argus_web_push import service
 import hashlib
 import json
 
@@ -112,7 +113,7 @@ def test_public_and_llm_projection_use_saved_numbers_and_same_evidence(monkeypat
     assert '見通し' in facts[0]['text'] and '-3.09' in facts[0]['text']
     assert all(f['verification']=='UNCONFIRMED' for f in facts)
     assert public['automaticAiCalls']==public['fetchesDuringRead']==0
-    assert public['notificationDelivery']=='NOT_CONNECTED'
+    assert public['notificationDelivery']=='EXISTING_WEB_PUSH_NEWS_SETTING'
     assert state==before
     assert runtime.explanation_facts(runtime.public_document(ledger.empty_state()))==[]
 
@@ -210,3 +211,69 @@ def test_unified_context_and_existing_history_hold_same_fiscal_snapshot(monkeypa
     restored=history.read_record(path,record['recordId'])
     assert restored['brief']['fiscalEnvironment']['cases']['baseline']['fiscal']['values']['growthPct']==3.0
     assert restored['brief']['unifiedContext']['fiscalEnvironment']['id']==public['id']
+
+
+def test_owner_dialogue_preserves_same_fiscal_reference_and_scope(monkeypatch):
+    import argus_market_brief as brief
+    import argus_owner_dialogue as dialogue
+    get,_,_,_=fixture(monkeypatch)
+    state=runtime.refresh(ledger.empty_state(),now_iso=AT,calendar=calendar(),get=get)['state']
+    document=runtime.public_document(state)
+    market={'facts':runtime.explanation_facts(document),
+        'fiscalEnvironment':runtime.context_reference(document)}
+    market['unifiedContext']=brief.unified_context(market)
+    before=deepcopy(market)
+    for symbol in ('N225','7203'):
+        context=dialogue.build_context(brief=market,symbol=symbol,market='JP',horizon=5,
+            question='金利の変化をどう考える？',received_at=AT)
+        reference=context['fiscalEnvironment']
+        assert reference['id']==document['id']
+        assert reference['cases']==market['fiscalEnvironment']['cases']
+        assert reference['applicability']=='JAPAN_MACRO_CONTEXT_ONLY'
+        assert dialogue.reasoning_context(context)['fiscalEnvironment']==reference
+        assert not context['officialPredictionMutation'] and not reference['actionAuthority']
+    us=dialogue.build_context(brief=market,symbol='SPY',market='US',horizon=5,
+        question='金利の影響は？',received_at=AT)
+    assert 'fiscalEnvironment' not in us
+    assert market==before
+
+
+def test_fiscal_push_packet_survives_poll_restore_and_failed_source(monkeypatch):
+    from argus_jp_fiscal_monitor import instant
+    get,_,_,_=fixture(monkeypatch)
+    initial=runtime.refresh(ledger.empty_state(),now_iso=AT,calendar=calendar(),get=get)['state']
+    packet=initial['fiscalMonitor']['notification']
+    assert len(packet['cases'])==3
+    now=instant(AT).timestamp()
+    proposals=runtime.notification_proposals(initial,now=now)
+    assert len(proposals)==1 and proposals[0]['key'].startswith('news:fiscal:')
+    restored=ledger.normalize_state(json.loads(json.dumps(initial)))
+    assert runtime.notification_proposals(restored,now=now+180)==proposals
+    repeat=runtime.refresh(restored,now_iso='2026-09-16T08:00:00Z',calendar=calendar(),get=get)['state']
+    assert repeat['fiscalMonitor']['notification']==packet
+    def fail(*a,**k):raise TimeoutError()
+    failed=runtime.refresh(restored,now_iso='2026-09-17T07:00:01Z',calendar=calendar(),get=fail)['state']
+    assert failed['fiscalMonitor']['notification']==packet
+    assert runtime.notification_proposals(failed,now=now+86401)==[]
+    assert runtime.notification_proposals(initial,now=now-1)==[]
+
+
+def test_fiscal_push_reuses_opt_in_and_durable_unique_delivery(service,monkeypatch):
+    from test_argus_web_push import subscribe, sub
+    from argus_jp_fiscal_monitor import instant
+    value,clock,sent=service
+    get,_,_,_=fixture(monkeypatch)
+    state=runtime.refresh(ledger.empty_state(),now_iso=AT,calendar=calendar(),get=get)['state']
+    clock[0]=instant(AT).timestamp()
+    identity=subscribe(value,news=False)
+    events=runtime.notification_proposals(state,now=clock[0])
+    value.tick(events);assert not sent
+    subscribe(value,news=True)
+    value.tick(events);value.tick(events)
+    assert len(sent)==1
+    assert value.status(identity)['deliveries'][0]['status']=='SERVICE_ACCEPTED'
+    assert value.status(identity)['deliveries'][0]['display_at'] is None
+    # Opening the existing durable service again must not resend this event.
+    import argus_web_push
+    reloaded=argus_web_push.PushService(path=value.path,config=value.config,now=value.now,sender=value.sender)
+    reloaded.tick(events);assert len(sent)==1
