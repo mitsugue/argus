@@ -17451,31 +17451,44 @@ _MARKET_BRIEF_WORKER = {"lastAttemptMonotonic": None, "lastAttemptAt": None,
 
 _MARKET_BRIEF_HISTORY_REMOTE = {"status": "NOT_RUN", "lastVerifiedAt": None,
                                 "lastAttemptAt": None, "headVersion": None}
+_MARKET_BRIEF_HISTORY_SYNC_LOCK = threading.Lock()
 
 
 def _market_brief_history_sync():
     """Use the existing private recovery connection, solely on the worker lane."""
-    path = _market_brief_history_path()
-    repo = os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", "")
-    token_configured = bool(os.environ.get("ARGUS_LAYER2B_PRIVATE_TOKEN", ""))
-    if not path or not repo or not token_configured:
-        _MARKET_BRIEF_HISTORY_REMOTE.update(status="NOT_CONFIGURED")
+    if not _MARKET_BRIEF_HISTORY_SYNC_LOCK.acquire(blocking=False):
         return
-    _MARKET_BRIEF_HISTORY_REMOTE.update(lastAttemptAt=_ai_now_iso(), status="RUNNING")
     try:
+        now = time.monotonic()
+        last = _MARKET_BRIEF_HISTORY_REMOTE.get("lastAttemptMonotonic")
+        interval = 1800 if _MARKET_BRIEF_HISTORY_REMOTE.get("status") == "FAILED" else 600
+        if last is not None and now - last < interval:
+            return
+        _MARKET_BRIEF_HISTORY_REMOTE["lastAttemptMonotonic"] = now
+        path = _market_brief_history_path()
+        repo = os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", "")
+        token_configured = bool(os.environ.get("ARGUS_LAYER2B_PRIVATE_TOKEN", ""))
+        if not path or not repo or not token_configured:
+            _MARKET_BRIEF_HISTORY_REMOTE.update(status="NOT_CONFIGURED")
+            return
+        _MARKET_BRIEF_HISTORY_REMOTE.update(lastAttemptAt=_ai_now_iso(), status="RUNNING")
         remote = argus_analysis_history_backup.GitHubStore(
             repo=repo, headers=_gh_private_headers(), http=requests.request)
         result = argus_analysis_history_backup.synchronize(path, remote,
             last_verified_head=_MARKET_BRIEF_HISTORY_REMOTE.get("headVersion"))
         _MARKET_BRIEF_HISTORY_REMOTE.update(result, lastVerifiedAt=_ai_now_iso(), errorClass=None)
+        if result.get("restoredCounts") is not None:
+            _MARKET_BRIEF["historyRestoreAttempted"] = False
     except Exception as exc:
         _MARKET_BRIEF_HISTORY_REMOTE.update(status="FAILED", errorClass=type(exc).__name__)
+    finally:
+        _MARKET_BRIEF_HISTORY_SYNC_LOCK.release()
 
 
 def _market_brief_history_remote_status():
     # Read-back of remote bytes is separate from production cold-start acceptance.
     return {key: value for key, value in _MARKET_BRIEF_HISTORY_REMOTE.items()
-            if key != "headVersion"}
+            if key not in ("headVersion", "lastAttemptMonotonic")}
 
 
 def _market_brief_history_path():
@@ -17578,19 +17591,21 @@ def _market_brief_worker_tick():
             lastAttemptAt=_ai_now_iso(), status="RUNNING", errorClass=None)
         try:
             if not _MARKET_BRIEF.get("historyRestoreAttempted"):
-                # Expose the verified local edition while remote recovery runs.
                 _market_brief_history_restore()
-                _market_brief_history_sync()
-                _MARKET_BRIEF["historyRestoreAttempted"] = False
-            _market_brief_history_restore()
             _market_brief_history_outcomes()
             result = _market_brief_refresh(allow_ai=True)
-            _market_brief_history_sync()
             _MARKET_BRIEF_WORKER.update(status=result.get("unifiedStatus", "UNAVAILABLE"),
                 lastCompletedAt=_ai_now_iso())
         except Exception as exc:
             _MARKET_BRIEF_WORKER.update(status="FAILED", errorClass=type(exc).__name__,
                 lastCompletedAt=_ai_now_iso())
+        # Remote recovery may take minutes or fail; neither delays a saved
+        # explanation nor converts a successful AI result into a worker error.
+        try:
+            threading.Thread(target=_market_brief_history_sync, daemon=True,
+                             name="market-brief-history-sync").start()
+        except RuntimeError as exc:
+            _MARKET_BRIEF_HISTORY_REMOTE.update(status="FAILED", errorClass=type(exc).__name__)
         _MARKET_BRIEF_WORKER["consecutiveFailures"] = (
             0 if _MARKET_BRIEF_WORKER["status"] == "GENERATED" else min(5, failures + 1))
         return {key: value for key, value in _MARKET_BRIEF_WORKER.items() if key != "lastAttemptMonotonic"}
