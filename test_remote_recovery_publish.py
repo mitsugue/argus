@@ -2450,6 +2450,48 @@ def test_brief_reuse_returns_original_edition_without_chart_or_provider_calls(mo
     assert state['lastSuccessful'] == previous
 
 
+def test_brief_nonurgent_changes_coalesce_but_p0_changes_bypass(monkeypatch):
+    from datetime import datetime, timezone
+    current = datetime(2026, 1, 2, 10, 20, tzinfo=timezone.utc)
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None): return current
+    brief, internals = _reuse_inputs(monkeypatch)
+    brief['facts'] = [{'text': 'same important state', 'priority': 'P1',
+                       'source': 'market_view'}]
+    previous = copy.deepcopy(brief)
+    previous.update(generatedAt='2026-01-02T10:00:00Z',
+        unifiedStatus='GENERATED', presentationStatus='GENERATED',
+        unifiedSummary={'view': 'original'},
+        aiDiagnostics={'completedAt': '2026-01-02T10:00:00Z'})
+    brief['nonUrgentCacheRevision'] = 2
+    state = {'lastSuccessful': copy.deepcopy(previous),
+             'generationInputDigest': 'old-input'}
+    monkeypatch.setattr(scanner, 'datetime', Clock)
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF', state)
+    monkeypatch.setattr(scanner, '_compose_market_brief', lambda: copy.deepcopy(brief))
+    monkeypatch.setattr(scanner, '_jp_market_internals_cached', lambda: copy.deepcopy(internals))
+    def forbidden(*args, **kwargs): raise AssertionError('nonurgent change must not call GPT')
+    for name in ('_jp_market_comparison_cached', '_market_brief_ai_polish',
+                 '_market_brief_history_save'):
+        monkeypatch.setattr(scanner, name, forbidden)
+    retained = scanner._market_brief_refresh(allow_ai=True)
+    assert retained['generationReuse']['reason'] == 'NONURGENT_CHANGE_COALESCED'
+    assert retained['generationReuse']['newAiCalls'] == 0
+
+    changed = copy.deepcopy(brief)
+    changed['facts'].append({'text': 'new material event', 'priority': 'P0',
+                             'source': 'trusted_mail'})
+    monkeypatch.setattr(scanner, '_compose_market_brief', lambda: copy.deepcopy(changed))
+    monkeypatch.setattr(scanner, '_jp_market_comparison_cached', lambda horizon: {})
+    monkeypatch.setattr(scanner, '_market_brief_ai_polish', lambda result: {
+        **result, 'unifiedStatus': 'GENERATED', 'presentationStatus': 'GENERATED',
+        'unifiedSummary': {'view': 'new'},
+        'aiDiagnostics': {'completedAt': current.isoformat()}})
+    monkeypatch.setattr(scanner, '_market_brief_history_save', lambda result: None)
+    assert scanner._market_brief_refresh(allow_ai=True)['unifiedSummary']['view'] == 'new'
+
+
 def test_brief_reuse_expires_on_hour_or_future_input_eligibility(monkeypatch):
     from datetime import datetime, timezone
     current = [datetime(2026, 1, 2, 10, 5, tzinfo=timezone.utc)]
