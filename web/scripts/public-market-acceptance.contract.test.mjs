@@ -114,7 +114,7 @@ assert.match(script, /fillPaintTags\.has\(tag\)/,
   'visual acceptance must ignore default fill values on non-fillable SVG containers');
 assert.match(script, /strokePaintTags\.has\(tag\)/,
   'visual acceptance must inspect only elements whose stroke can actually paint');
-assert.match(script, /DATA_TIMEOUT_MS = 5_000/);
+assert.match(script, /DATA_TIMEOUT_MS = 15_000/);
 assert.match(script, /BACKEND_READY_TIMEOUT_MS = 8 \* 60_000/);
 assert.match(script, /MARKET_CACHE_READY_TIMEOUT_MS = 30 \* 60_000/);
 assert.match(script, /waitForMarketCache\(page\.request\)/);
