@@ -357,28 +357,16 @@ def verified_checkpoint(path: str, blob: Dict[str, Any], *,
     """Stream, fsync, hash read-back, then atomically replace the snapshot."""
     started = time.monotonic()
     sealed = "localCheckpointIntegrity" in blob
-    if not isinstance(blob, dict):
+    if not isinstance(blob, dict) or (sealed and not
+            argus_persistent_storage.verify_checkpoint(
+                blob, require_seal=True)):
         raise ValueError("checkpoint_source_integrity_invalid")
-    validation_ms = [0]
-
-    def validate_source(value):
-        validation_started = time.monotonic()
-        valid = isinstance(value, dict) and (
+    serialization_ms = round((time.monotonic() - started) * 1000)
+    write = argus_persistent_storage.atomic_write_json(
+        path, blob, temp_directory=os.path.dirname(os.path.abspath(path)),
+        validator=lambda value: isinstance(value, dict) and (
             not sealed or argus_persistent_storage.verify_checkpoint(
-                value, require_seal=True))
-        validation_ms[0] = round(
-            (time.monotonic() - validation_started) * 1000)
-        return valid
-
-    try:
-        write = argus_persistent_storage.atomic_write_json(
-            path, blob, temp_directory=os.path.dirname(os.path.abspath(path)),
-            validator=validate_source, temp_label="tmp")
-    except argus_persistent_storage.PersistentStorageError as exc:
-        if exc.reason == "checkpoint_source_invalid":
-            raise ValueError("checkpoint_source_integrity_invalid") from exc
-        raise
-    serialization_ms = validation_ms[0]
+                value, require_seal=True)), temp_label="tmp")
     expected_hash = write["snapshotHash"]
     verified_at = _iso_now()
     result = {
