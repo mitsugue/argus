@@ -11,6 +11,15 @@ export interface ComparisonBandPoint {
 export interface JapanMarketComparison {
   schemaVersion: 'jp-market-comparison-v1';
   informationCutoff: string;
+  historyCoverage?: {
+    sourceBars: number; sourceStart: string | null; sourceEnd: string | null;
+    candidateCount: number; candidateStart: string | null; candidateEnd: string | null;
+    calendarStart: string | null; calendarEnd: string | null;
+    candidatesByYear: Record<string, number>;
+    excluded: { missingCalendarOrPriceSession: number; incompleteEpisode: number };
+    maximumSelected: number; selectedCount: number; admittedCount: number;
+    allMarketFeaturesTenYearsVerified: boolean;
+  };
   anchorDate: string;
   actualAnchorPrice: number;
   unit: 'ANCHOR_100' | 'JPY_INDEX_POINTS';

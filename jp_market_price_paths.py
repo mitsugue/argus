@@ -13,7 +13,7 @@ from typing import Any, Mapping, Sequence
 from jp_market_engine import _instant
 
 VALUATION_BASIS = "NIKKEI_225_INDEX_BASED_PER"
-METHOD = "jp-index-analog-median-research-v1"
+METHOD = "jp-index-analog-median-research-v2-history-coverage"
 
 
 def _finite(value: Any) -> float | None:
@@ -275,7 +275,7 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
 
     if isinstance(horizon_sessions, bool) or horizon_sessions not in (1, 5, 10, 20):
         raise ValueError("unsupported_reference_horizon")
-    if len(bars) > 1000:
+    if len(bars) > 3000:
         raise ValueError("index_history_bound_exceeded")
     if list(session_dates) != sorted(set(session_dates)):
         raise ValueError("unique_ordered_session_calendar_required")
@@ -292,7 +292,7 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     from bisect import bisect_left, bisect_right
     from datetime import date, timedelta
     evidence = (state_rows, condition_rows, reaction_rows)
-    if sum(len(rows) for rows in evidence) > 20000:
+    if sum(len(rows) for rows in evidence) > 60000:
         raise ValueError("market_evidence_history_bound_exceeded")
     indexed = []
     for rows in evidence:
@@ -333,11 +333,16 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     if not complete_window(current):
         return {**base, "reason": "current_exchange_sessions_missing"}
     candidates = []
+    excluded = {"missingCalendarOrPriceSession": 0, "incompleteEpisode": 0}
     for index in range(policy.lookback_sessions, len(visible) - policy.lookback_sessions - 1):
         row = visible[index]
         episode = episode_at(row["date"] + "T23:59:59Z",
                              visible[index - policy.lookback_sessions:index + 1])
-        if episode["status"] == "AVAILABLE" and complete_window(episode):
+        if episode["status"] != "AVAILABLE":
+            excluded["incompleteEpisode"] += 1
+        elif not complete_window(episode):
+            excluded["missingCalendarOrPriceSession"] += 1
+        else:
             candidates.append(episode)
     selection = select_episodes(current, candidates, session_dates=session_dates, policy=policy)
     selected = {row["snapshotId"] for row in selection["selected"]}
@@ -363,6 +368,23 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     document["calculationIdentity"] = {"currentSnapshotId": current["snapshotId"],
                                        "selectionId": selection["selectionId"],
                                        "sourceContentHash": _hash(visible)}
+    by_year = {}
+    for episode in candidates:
+        year = episode["anchorDate"][:4]
+        by_year[year] = by_year.get(year, 0) + 1
+    coverage = {"sourceBars": len(visible),
+        "sourceStart": visible[0]["date"] if visible else None,
+        "sourceEnd": visible[-1]["date"] if visible else None,
+        "candidateCount": len(candidates),
+        "candidateStart": min((row["anchorDate"] for row in candidates), default=None),
+        "candidateEnd": max((row["anchorDate"] for row in candidates), default=None),
+        "calendarStart": session_dates[0] if session_dates else None,
+        "calendarEnd": session_dates[-1] if session_dates else None,
+        "candidatesByYear": by_year, "excluded": excluded,
+        "maximumSelected": policy.maximum_candidates,
+        "selectedCount": len(selection["selected"]), "admittedCount": selection["admittedCount"],
+        "allMarketFeaturesTenYearsVerified": False}
+    document["historyCoverage"] = coverage
     document["valuationStatus"] = scale["status"]
     if scale["status"] == "AVAILABLE":
         document["valuationEvidence"] = {key: scale.get(key) for key in (
@@ -372,6 +394,4 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
             "円換算はこの尺度を固定した形状の換算です。利益成長やPER変動を別に予測したものではありません。")
     return {**base, "status": "available", "reason": None, "comparison": document,
             "selection": selection, "valuation": scale,
-            "historyCoverage": {"sourceBars": len(visible), "candidateCount": len(candidates),
-                                "calendarStart": session_dates[0] if session_dates else None,
-                                "calendarEnd": session_dates[-1] if session_dates else None}}
+            "historyCoverage": coverage}

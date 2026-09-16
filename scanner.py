@@ -136,6 +136,7 @@ import argus_jp_market_research
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
 import jp_market_price_paths
+import argus_index_history
 import jp_market_valuation
 import jp_market_source_adapters
 import jp_market_dynamics
@@ -38224,7 +38225,10 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
     try:
         r = requests.get(
             f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}",
-            params={"interval": "1d", "range": "2y"},
+            params={"interval": "1d", "range": ("5d" if yahoo_symbol == "^N225"
+                and cached and len(cached.get("data") or []) > 21
+                and cached["data"][-1]["date"] >= (datetime.now(TZ_JST).date() - timedelta(days=4)).isoformat()
+                else "2y")},
             headers={"User-Agent": "Mozilla/5.0 (argus)"}, timeout=15)
         response = r
         if getattr(r, "status_code", 200) != 200: raise ValueError("index_history_http_failure")
@@ -38261,6 +38265,11 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
                 "sourceRef": f"yahoo:chart:{yahoo_symbol}",
             }
         rows = [by_date[key] for key in sorted(by_date)]
+        if rows and yahoo_symbol == "^N225" and cached and cached.get("data"):
+            # Merge the small correction window, retaining the cached history.
+            earliest = (datetime.now(TZ_JST).date() - timedelta(days=732)).isoformat()
+            rows = argus_index_history.merge_bars(
+                [row for row in cached["data"] if row["date"] >= earliest], rows)
     except Exception as exc:
         rows = []; fetch_error = type(exc).__name__
     finally:
@@ -38277,6 +38286,68 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
         "acquiredAt": datetime.now(pytz.utc).isoformat() if rows else None,
         "expires": now + (_JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC if rows else 300)}
     return rows
+
+
+_N225_ANALOG_HISTORY = {}
+_N225_ANALOG_HISTORY_RESTORE_ATTEMPTED = False
+_N225_ANALOG_HISTORY_LOCK = threading.Lock()
+
+
+def _n225_analog_history_restore():
+    global _N225_ANALOG_HISTORY, _N225_ANALOG_HISTORY_RESTORE_ATTEMPTED
+    path = (os.path.join(_DURABILITY_PATHS["root"], "n225_analog_inputs.json")
+            if _cost_policy_durable_enabled() else None)
+    if not _N225_ANALOG_HISTORY_RESTORE_ATTEMPTED:
+        _N225_ANALOG_HISTORY_RESTORE_ATTEMPTED = True
+        if path:
+            try:
+                _N225_ANALOG_HISTORY = argus_index_history.read(path)
+                data = _N225_ANALOG_HISTORY.get("data") or []
+                if data and not _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225"):
+                    # Seed the ordinary two-year index input from the same saved
+                    # source. Other index engines retain their existing scope.
+                    earliest = (datetime.now(TZ_JST).date() - timedelta(days=732)).isoformat()
+                    _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE["^N225"] = {
+                        "data": [row for row in data if row["date"] >= earliest],
+                        "expires": 0, "acquiredAt": _N225_ANALOG_HISTORY.get("currentSourceAcquiredAt"),
+                        "sourceResponseSha256": _N225_ANALOG_HISTORY.get("currentSourceSha256"),
+                        "lastFetchStatus": "RESTORED"}
+            except FileNotFoundError:
+                pass
+            except Exception as exc:
+                _N225_ANALOG_HISTORY["restoreErrorClass"] = type(exc).__name__
+    return path
+
+
+def _n225_analog_history_warm(current_rows):
+    """Existing collection lane only: reuse history, bounded backfill and delta calendar."""
+    global _N225_ANALOG_HISTORY
+    if not _N225_ANALOG_HISTORY_LOCK.acquire(blocking=False):
+        return
+    try:
+        path = _n225_analog_history_restore()
+        def calendar(start, end):
+            if not _JQUANTS_API_KEY:
+                raise ValueError("calendar_credentials_unavailable")
+            return _jquants_paginated("/markets/calendar", {"from": start, "to": end},
+                                      max_pages=3, request_timeout=12)
+        updated = argus_index_history.refresh(_N225_ANALOG_HISTORY, current_rows=current_rows,
+            now_iso=_ai_now_iso(), get=requests.get, fetch_calendar=calendar)
+        source = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}
+        if source.get("acquiredAt"):
+            updated["currentSourceAcquiredAt"] = source["acquiredAt"]
+            updated["currentSourceSha256"] = source.get("sourceResponseSha256")
+        argus_product_naming.require_allowed(updated)
+        if path:
+            argus_persistent_storage.atomic_write_json(path, argus_index_history.envelope(updated),
+                maximum_bytes=argus_index_history.MAX_BYTES, file_mode=0o600)
+            if argus_index_history.read(path) != updated:
+                raise ValueError("index_history_readback_mismatch")
+        _N225_ANALOG_HISTORY = updated
+    except Exception as exc:
+        _N225_ANALOG_HISTORY["refreshErrorClass"] = type(exc).__name__
+    finally:
+        _N225_ANALOG_HISTORY_LOCK.release()
 
 
 _JP_INDEX_VALUATION = jp_market_valuation.ValuationCache()
@@ -38386,7 +38457,8 @@ def _index_research_warm():
 def _jp_market_comparison_calculate(horizon):
     """Bounded cached-only chart calculation; no fetch, AI or persistence."""
     cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}
-    rows = cached.get("data") or []
+    stored_history = _N225_ANALOG_HISTORY
+    rows = stored_history.get("data") or cached.get("data") or []
     cutoff = datetime.now(pytz.utc).isoformat()
     failure = {"status": "unavailable", "comparison": None, "automaticAiCalls": 0,
                "actionAuthority": False, "informationCutoff": cutoff,
@@ -38397,13 +38469,18 @@ def _jp_market_comparison_calculate(horizon):
         from datetime import date as calendar_date
         ordered = sorted(rows, key=lambda row: row.get("date", ""))
         first, last = (calendar_date.fromisoformat(ordered[i]["date"]) for i in (0, -1))
-        if len(rows) > 1000 or (last - first).days > 1500:
+        if len(rows) > argus_index_history.MAX_BARS or (last - first).days > argus_index_history.MAX_DAYS:
             return {**failure, "reason": "index_history_bound_exceeded"}
         sessions, missing_calendar = [], False
+        historical_calendar = {row["Date"]: row["HolDiv"] for row in stored_history.get("calendar", [])}
         for offset in range((last - first).days + 1):
             day = first + timedelta(days=offset)
             try:
-                if argus_market_clock.canonical_trading_day(argus_market_clock.JP_EQUITY, day):
+                if day.isoformat() in historical_calendar:
+                    is_open = historical_calendar[day.isoformat()] == "1"
+                else:
+                    is_open = argus_market_clock.canonical_trading_day(argus_market_clock.JP_EQUITY, day)
+                if is_open:
                     sessions.append(day.isoformat())
             except argus_market_clock.CalendarUnavailableError:
                 missing_calendar = True
@@ -38990,11 +39067,13 @@ def _jp_market_feature_history_warm():
                               ("vix", ("^VIX",)), ("topix", ("^TPX", "998405.T"))):
             price_series[name] = next((list((_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get(symbol) or {}).get("data") or [])
                 for symbol in symbols if (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get(symbol) or {}).get("data")), [])
+        if _N225_ANALOG_HISTORY.get("data"):
+            price_series["nikkei"] = list(_N225_ANALOG_HISTORY["data"])
         bars = price_series["nikkei"]
         if not bars:
             _JP_MARKET_FEATURE_HISTORY = {**_JP_MARKET_FEATURE_HISTORY, "status": "INDEX_CACHE_COLD"}
             return
-        if any(len(rows) > 1000 for rows in price_series.values()):
+        if any(len(rows) > argus_index_history.MAX_BARS for rows in price_series.values()):
             raise ValueError("feature_price_history_bound")
         oldest = (datetime.fromisoformat(min(r["date"] for r in bars)) - timedelta(days=100)).date().isoformat()
         # Preserve source units and receipt/publication times, including revisions.
@@ -39048,6 +39127,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         return memo["data"]
     if warm:
         _index_research_restore()
+        _n225_analog_history_restore()
     vix_rows, vix_source = _jp_market_engine_vix_rows(fetch=warm)
     nikkei_rows = _yahoo_index_ohlcv(
         "^N225", "NIKKEI_225_INDEX", fetch=warm, available_hour_utc=7)
@@ -39068,6 +39148,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
                      if earnings_event else [])
     if warm:
         _fred_vix_history_dated()
+        _n225_analog_history_warm(nikkei_rows)
         _jp_market_feature_history_warm()
     data = {
         "creditRows": credit_rows, "margin1570Rows": margin_rows,

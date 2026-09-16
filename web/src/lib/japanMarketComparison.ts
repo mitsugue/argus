@@ -21,6 +21,17 @@ export function validJapanMarketComparison(v: unknown, horizon: number): v is Ja
     || !points(v.actual) || !(v.actual as unknown[]).length
     || typeof v.scaleExplanation !== 'string' || !strings(v.limitations)
     || !Array.isArray(v.candidates) || v.candidates.length > 10) return false;
+  if (v.historyCoverage !== undefined) {
+    const h = v.historyCoverage;
+    const count = (n: unknown) => finite(n) && Number.isInteger(n) && n >= 0;
+    const day = (d: unknown) => d === null || (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d));
+    if (!object(h) || !['sourceBars', 'candidateCount', 'maximumSelected', 'selectedCount', 'admittedCount'].every(k => count(h[k]))
+      || !['sourceStart', 'sourceEnd', 'candidateStart', 'candidateEnd', 'calendarStart', 'calendarEnd'].every(k => day(h[k]))
+      || !object(h.candidatesByYear) || Object.keys(h.candidatesByYear).length > 12
+      || !Object.entries(h.candidatesByYear).every(([year, n]) => /^\d{4}$/.test(year) && count(n))
+      || !object(h.excluded) || !count(h.excluded.missingCalendarOrPriceSession) || !count(h.excluded.incompleteEpisode)
+      || typeof h.allMarketFeaturesTenYearsVerified !== 'boolean') return false;
+  }
   const ids = new Set<string>();
   if (v.valuationEvidence !== undefined) {
     const e = v.valuationEvidence;
