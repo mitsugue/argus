@@ -9,6 +9,37 @@ const instant = (value?: string | null) => {
   const parsed = Date.parse(value ?? '');
   return Number.isFinite(parsed) ? parsed : 0;
 };
+
+/** Fold repeated deliveries without claiming that their article bodies match. */
+export function groupRepeatedNewsHeadlines<T extends MaterialItem & {
+  headlineJa: string; source: string; eventMemory?: { episodeId?: string } | null;
+}>(events: readonly T[]): Array<{ lead: T; previous: T[] }> {
+  const revisions = new Map<string, T>();
+  for (const row of events) {
+    const prior = revisions.get(row.eventId);
+    if (!prior || (row.revision ?? 0) > (prior.revision ?? 0)
+      || ((row.revision ?? 0) === (prior.revision ?? 0)
+        && instant(row.processedAt) > instant(prior.processedAt))) revisions.set(row.eventId, row);
+  }
+  const groups = new Map<string, T[]>();
+  for (const row of revisions.values()) {
+    const at = instant(row.sourceReceivedAt);
+    const day = at ? new Date(at + 9 * 3600_000).toISOString().slice(0, 10) : null;
+    const headline = row.headlineJa.normalize('NFKC').replace(/\s+/g, ' ').trim();
+    const episode = row.eventMemory?.episodeId;
+    // A headline alone is not event identity. Require the identified episode,
+    // publisher, and same Japanese receipt day; all older deliveries stay openable.
+    const key = episode && row.source && headline && day
+      ? JSON.stringify([episode, row.source, headline, day]) : row.eventId;
+    const rows = groups.get(key) ?? [];
+    rows.push(row); groups.set(key, rows);
+  }
+  return [...groups.values()].map(rows => {
+    rows.sort((a, b) => instant(b.sourceReceivedAt) - instant(a.sourceReceivedAt)
+      || instant(b.processedAt) - instant(a.processedAt) || a.eventId.localeCompare(b.eventId));
+    return { lead: rows[0], previous: rows.slice(1) };
+  });
+}
 export function orderMaterialNews<T extends MaterialItem>(events: readonly T[]): T[] {
   const unique = new Map<string, T>();
   for (const event of events) {

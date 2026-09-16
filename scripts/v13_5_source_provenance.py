@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.12"
+PRODUCT_VERSION = "v13.7.13"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'web/scripts/news-delivery-grouping.test.cjs': 'f197d0b0a32ce7efbc2192b1ae80a762300017f3',
     'docs/V13_7_INDEX_ANALOG_COVERAGE.md': '905dca1b82c5c24ed1e7e11ce6278e8503221564',
     'test_argus_index_history.py': 'ce4a258925493926854d121d0d43e1f3559597e1',
     'argus_index_history.py': 'f4f50d4bcb69d60e35f831647c4308dc0432b8ad',
@@ -216,7 +217,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/news-polling-recovery.test.mjs': 'a5675fb01973b14712491809f7eb30c5814851f0',
     "test_argus_prediction_read_latency.py": "731d0705813a323169ba286315811cac5b06e0f7",
     "web/scripts/news-presentation.test.mjs": "163019b4aa4c6a454a5351b7ad8c68ff5024712a",
-    "web/src/domain/newsPresentation.ts": "c94d6f4d8e368d328359e55ca040b039e705c4cd",
+    "web/src/domain/newsPresentation.ts": "88361ceaf9b7da66ff5b6344e118d4707a8d6dea",
     "test_argus_ai_execution_settings.py": "91724952d7a992ea4d0c58a8f9bfaaf567f70a64",
     "argus_research_benchmark.py": "0afebef7261abeb95da017f4b5aa327da55874a1",
     "argus_ai_gate.py": "d0e19fb4d25527e6f0ca70d73c8b21a41bc2a866",
