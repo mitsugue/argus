@@ -26,7 +26,7 @@ import argus_jp_market_research
 import math
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
@@ -43,6 +43,22 @@ VERIFICATIONS = ("VERIFIED", "CORROBORATED", "UNCONFIRMED")
 _DIRECTION_JA = {"BULLISH": "強気", "BEARISH": "弱気", "MIXED": "強弱混在",
                  "UNCLEAR": "方向未確定"}
 _IMPACT_JA = {"critical": "最重要", "high": "重要", "medium": "中", "low": "小"}
+
+
+def _event_when_ja(event: Mapping[str, Any]) -> str:
+    """Use only source-carried schedule precision; never invent a clock time."""
+    direct = str(event.get("whenJa") or event.get("jstTime") or "").strip()
+    if direct:
+        return direct.replace(" JST", "（日本時間）")
+    instant = str(event.get("eventTimeUtc") or "").strip()
+    if instant:
+        try:
+            parsed = datetime.fromisoformat(instant.replace("Z", "+00:00"))
+            return parsed.astimezone(timezone(timedelta(hours=9))).strftime("%Y/%m/%d %H:%M（日本時間）")
+        except ValueError:
+            pass
+    date = str(event.get("date") or event.get("sqDate") or "").strip()
+    return date.replace("-", "/") if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) else "日時未確認"
 
 # Vocabulary the composer AND the AI polish must never emit (RC discipline:
 # no execution orders, no invented probabilities/targets).
@@ -240,7 +256,7 @@ def compose_brief(*, now_iso: str,
         impact = _IMPACT_JA.get(str(event.get("displayImpact") or ""), "")
         facts.append(_fact(
             f"目前イベント: {str(event.get('title') or '')[:50]}"
-            f"（{event.get('countdown') or '近日'}"
+            f"（{_event_when_ja(event)}・{event.get('countdown') or '近日'}"
             f"{'・' + impact if impact else ''}）",
             "P0", "calendar", "VERIFIED", event))
 
@@ -275,7 +291,7 @@ def compose_brief(*, now_iso: str,
     for event in list(next_events)[:2]:
         facts.append(_fact(
             f"次: {str(event.get('title') or '')[:50]}"
-            f"（{event.get('countdown') or event.get('whenJa') or '予定'}）",
+            f"（{_event_when_ja(event)}・{event.get('countdown') or '予定'}）",
             "P3", "calendar", "VERIFIED", event))
     if material_news:
         facts.append(_fact("次: 上記ニュースの市場確認センサー"
@@ -312,7 +328,7 @@ def compose_brief(*, now_iso: str,
     if p0_imminent and p0_imminent[0] not in p0_facts[:2]:
         p0_facts = [p0_facts[0], p0_imminent[0]]
     p0_texts = [f["text"] for f in p0_facts]
-    now_line = ("。".join(t.split("（")[0] for t in p0_texts[:2])
+    now_line = ("。".join(t for t in p0_texts[:2])
                 or (view_label and f"大きな新規材料なし。{view_label[:40]}")
                 or "大きな新規材料は検知していません")
     p2_texts = [f["text"] for f in facts if f["priority"] == "P2"]
@@ -328,7 +344,7 @@ def compose_brief(*, now_iso: str,
         "chart": view_label[:40] or "市場観 取得中（検証前・参考）",
         "news": news_line,
         "nextEvent": (f"{str(nearest.get('title') or '')[:26]}"
-                      f" · {nearest.get('countdown') or '近日'}"
+                      f"（{_event_when_ja(nearest)}） · {nearest.get('countdown') or '近日'}"
                       if nearest else "直近の重要イベントなし"),
         "mainRisk": (str((active_shocks[0].get("headlineJa")
                           or active_shocks[0].get("titleJa")

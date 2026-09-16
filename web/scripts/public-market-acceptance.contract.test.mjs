@@ -71,7 +71,7 @@ assert.match(today, /data-canonical-verification=\{chartLoad\.snapshotId \? 'ver
 // drawn series — since the headline draws the index, projection.symbol is N225.
 assert.match(today, /data-canonical-instrument=\{selectedSymbol\}/);
 assert.match(today, /data-canonical-horizon=\{`\$\{projection\?\.horizonDays \?\? horizon\}D`\}/);
-assert.match(script, /\.at-projection/);
+assert.match(script, /\.jp-comparison/);
 for (const source of [script + canonicalSelection, mobileAcceptance + canonicalSelection]) {
   assert.match(source, /getByText\('根拠・市場データ・システム情報', \{ exact: true \}\)\.click\(\)/,
     'acceptance must deliberately open the collapsed evidence disclosure before chart interaction');
@@ -79,9 +79,10 @@ for (const source of [script + canonicalSelection, mobileAcceptance + canonicalS
   assert.match(source, /\.open === true/,
     'acceptance must verify that the disclosure is actually open before chart interaction');
 }
-for (const source of [script, mobileAcceptance, canonicalSelection]) {
+for (const source of [script, mobileAcceptance]) {
   assert.match(source, /data-argus-control/);
 }
+assert.match(canonicalSelection, /fixed-product-subject/);
 assert.match(canonicalSelection, /waitForRequest/);
 assert.match(canonicalSelection, /waitForResponse/);
 assert.match(canonicalSelection, /product_verified_response_contract/);

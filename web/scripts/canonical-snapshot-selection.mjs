@@ -276,13 +276,6 @@ export async function openCanonicalEvidence(page, timeout = 30_000) {
   null, { timeout });
 }
 
-async function activate(locator) {
-  // State changes, not layout animation stability, are the release evidence.
-  // Dispatch the real DOM click synchronously and verify aria-pressed below.
-  await locator.waitFor({ state: 'attached' });
-  await locator.evaluate((element) => element.click());
-}
-
 export async function selectCanonical1321FiveDay(page, {
   expectedSnapshotId = null,
   timeout = CANONICAL_RESULT_TIMEOUT_MS,
@@ -292,52 +285,20 @@ export async function selectCanonical1321FiveDay(page, {
   await openCanonicalEvidence(page, timeout);
   machine.transition('R11_PRODUCT_SELECTION_READY');
 
-  // Make both canonical controls real state transitions. A reopened profile
-  // can already contain 1321/5D; merely clicking an already-selected button
-  // would create no request and would reintroduce a wait-before-trigger lock.
-  const canonicalInstrument = page.locator(
-    '[data-argus-control="market-instrument"][data-instrument="1321"]',
-  );
-  const canonicalHorizon = page.locator(
-    '[data-argus-control="canonical-horizon"][data-horizon="5D"]',
-  );
-  if (await canonicalInstrument.getAttribute('aria-pressed') === 'true') {
-    const stagingInstrument = page.locator(
-      '[data-argus-control="market-instrument"][data-instrument="1306"]',
-    );
-    await activate(stagingInstrument);
-    await page.waitForFunction(() => document.querySelector(
-      '[data-argus-control="market-instrument"][data-instrument="1306"]',
-    )?.getAttribute('aria-pressed') === 'true', null, { timeout });
-  }
-  if (await canonicalHorizon.getAttribute('aria-pressed') === 'true') {
-    const stagingHorizon = page.locator(
-      '[data-argus-control="canonical-horizon"][data-horizon="1D"]',
-    );
-    await activate(stagingHorizon);
-    await page.waitForFunction(() => document.querySelector(
-      '[data-argus-control="canonical-horizon"][data-horizon="1D"]',
-    )?.getAttribute('aria-pressed') === 'true', null, { timeout });
-  }
+  // v13.7.18: Today has one explicit product subject. The old four-index and
+  // three-horizon selector matrix was removed from the owner surface; the
+  // release proof now verifies that the product itself is immutably bound to
+  // the Nikkei 225 decision proxy (1321) and five sessions.
+  await page.waitForFunction(({ selector }) => {
+    const contract = document.querySelector(selector);
+    return contract?.getAttribute('data-canonical-instrument') === '1321'
+      && contract?.getAttribute('data-canonical-horizon') === '5D';
+  }, { selector: '[data-argus-contract="canonical-market-snapshot-v1"]' }, { timeout });
+  machine.transition('R12_1321_SELECTED', { mode: 'fixed-product-subject' });
+  machine.transition('R13_5D_SELECTED', { mode: 'fixed-product-horizon' });
 
-  const marketGroup = page.getByRole('group', { name: '表示市場' });
-  const jpMarket = marketGroup.getByRole('button', { name: 'JP', exact: true });
-  if (await jpMarket.getAttribute('aria-pressed') !== 'true') await activate(jpMarket);
-  await activate(canonicalInstrument);
-  await page.waitForFunction(() => document.querySelector(
-    '[data-argus-control="market-instrument"][data-instrument="1321"]',
-  )?.getAttribute('aria-pressed') === 'true', null, { timeout });
-  machine.transition('R12_1321_SELECTED');
-  await activate(canonicalHorizon);
-  await page.waitForFunction(() => document.querySelector(
-    '[data-argus-control="canonical-horizon"][data-horizon="5D"]',
-  )?.getAttribute('aria-pressed') === 'true', null, { timeout });
-  machine.transition('R13_5D_SELECTED');
-
-  // The four selector summaries intentionally prefetch 5D. A direct 1321/5D
-  // click may therefore reuse an already-verified cache and emit no request.
-  // Persist the explicit selection, arm observers, then make the app perform
-  // its normal reload/revalidation path. This is the causal trigger for R13.
+  // Arm observers, then make the fixed product subject perform its normal
+  // reload/revalidation path. This remains the causal trigger for R13.
   let response = null;
   const httpStatuses = [];
   for (let attempt = 1; attempt <= 3; attempt += 1) {

@@ -247,14 +247,14 @@ check('Today never claims an empty calendar it could not read',
 {
   const kpis = panel.indexOf('className="at-kpis"');
   const seven = panel.indexOf('<details className="at-seven"');
-  const nextEvent = panel.indexOf('aria-label="NEXT EVENT"');
-  const market = panel.indexOf('className="at-market card"');
+  const nextEvent = panel.indexOf('aria-label="重要イベント"');
+  const otherMarkets = panel.indexOf('className="at-other-markets card"');
   const context = panel.indexOf('className="at-event card at-context"');
   const evidence = panel.indexOf('<details className="at-evidence card">');
   check('data status sits under the decision, before the signals',
     kpis > 0 && seven > 0 && kpis < seven);
-  check('reading order: next event → market → reference view → evidence',
-    nextEvent < market && market < context && context < evidence);
+  check('reading order: events → optional market actuals → reference view → evidence',
+    nextEvent < otherMarkets && otherMarkets < context && context < evidence);
   check('the market view and news axis left the hero article',
     !/<MarketBriefCard \/>\s*<MarketViewStrip \/>/.test(panel));
   // v13.5.60 (owner): Today's Tachibana line names the company, never the code,
@@ -285,8 +285,8 @@ check('Today never claims an empty calendar it could not read',
 {
   const hero = panel.indexOf('aria-label="A.R.G.U.S. Primary Action"');
   const newsTop = panel.indexOf('className="at-event card at-news-top"');
-  const nextEvent = panel.indexOf('aria-label="NEXT EVENT"');
-  check('news and market risk sit between the decision and NEXT EVENT',
+  const nextEvent = panel.indexOf('aria-label="重要イベント"');
+  check('news and market risk sit between the decision and important events',
     hero > 0 && newsTop > hero && newsTop < nextEvent);
   check('the news block lists up to five rows and each row jumps to its Alerts anchor',
     panel.includes('const NEWS_ROWS_CAP = 5;') && panel.includes('newsRows.slice(0, NEWS_ROWS_CAP)')
@@ -361,7 +361,7 @@ console.log('argus-engine.test: all checks passed');
 {
   check('the decision subject is named in words, never by code',
     panel.includes("subjectDisplayName(view.canonicalDecision.subject?.instrumentId")
-    && panel.includes('<small className="at-index-type">連動ETF</small>')
+    && panel.includes('連動ETFの実績を比較しています')
     && !panel.includes('<small className="at-index-type">{instrument.symbol}</small>'));
   check('owner priorities show the company name',
     panel.includes("<b>{item.name?.trim() || item.symbol}</b>"));

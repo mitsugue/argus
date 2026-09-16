@@ -44,6 +44,19 @@ def test_compose_brief_orders_facts_and_tags_verification():
         assert banned not in joined
 
 
+def test_event_mentions_carry_source_backed_date_time_in_parentheses():
+    brief = mb.compose_brief(
+        now_iso="2026-09-17T00:00:00Z",
+        imminent_events=[{"title": "FOMC", "countdown": "本日",
+                          "eventTimeUtc": "2026-09-17T18:00:00Z"}],
+        next_events=[{"title": "メジャーSQ", "countdown": "予定",
+                      "sqDate": "2026-12-11"}],
+    )
+    assert "FOMC（2026/09/18 03:00（日本時間）・本日）" in brief["now"]
+    assert "メジャーSQ（2026/12/11・予定）" in brief["next"]
+    assert "FOMC（2026/09/18 03:00（日本時間））" in brief["chips"]["nextEvent"]
+
+
 def test_compose_brief_is_honest_with_empty_inputs():
     brief = mb.compose_brief(now_iso="2026-08-26T00:00:00Z")
     assert "大きな新規材料は検知していません" in brief["now"]

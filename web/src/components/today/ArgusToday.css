@@ -2,6 +2,8 @@
    small gap — the old 54px margin stacked with the shell's nav padding and
    safe-area inset into a large dead band on iPhone screens. */
 .argus-today { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:8px; margin-bottom:0; }
+.at-contract-state { display:none!important; }
+.at-canonical-load-status{grid-column:span 12;display:grid;place-items:center;align-content:center;gap:8px;min-height:110px;padding:18px;border:1px dashed var(--line);border-radius:10px;color:var(--text-faint);text-align:center;font-size:10px}.at-canonical-load-status button{border:1px solid var(--line);border-radius:999px;padding:7px 12px;background:transparent;color:var(--accent);cursor:pointer}
 @media (min-width: 721px) { .argus-today { margin-bottom:10px; } }
 /* v13.5.1 owner correction: no dead black band under Today on a phone. The
    summary-bar spacer plus a slim page padding are the whole bottom stack;
@@ -18,7 +20,7 @@
 .at-lamps .is-open i { background:#22c55e; color:#22c55e; box-shadow:0 0 7px #22c55e80; }
 .at-lamps .is-standby i { background:#facc15; color:#facc15; }
 .at-lamps .is-closed i { background:#64748b; color:#64748b; }
-.at-event,.at-priorities,.at-decision,.at-evidence,.at-market { grid-column:span 12; }
+.at-event,.at-priorities,.at-decision,.at-evidence,.at-market,.at-other-markets { grid-column:span 12; }
 .at-market { padding:6px 12px 11px; }
 /* v13.5.1: four lightweight NAME selectors — all data lives in the single
    selected projection chart below. */
@@ -121,8 +123,11 @@
 .at-priority-title strong { margin-left:auto; color:var(--accent); font-size:11px; }
 .at-priority-impact { color:var(--text-sub); font-size:11px; }
 .at-priorities small { color:var(--text-faint); font-size:10px; }
-.at-coming { display:flex; align-items:baseline; gap:4px 10px; margin-top:5px; flex-wrap:wrap; font-size:9.5px; color:var(--text-sub); }  /* v13.5.60: the coming month wraps, never clips */
-.at-coming b { color:var(--text-muted); letter-spacing:.08em; }.at-quiet { margin:5px 0 0; color:var(--text-faint); font-size:11px; }
+.at-coming { display:flex; align-items:baseline; gap:5px 8px; margin-top:8px; flex-wrap:wrap; font-size:9.5px; color:var(--text-sub); }  /* v13.5.60: the coming month wraps, never clips */
+.at-coming b { flex-basis:100%; color:var(--text-muted); letter-spacing:.08em; }
+.at-coming button{display:inline-flex;align-items:baseline;gap:5px;min-height:32px;padding:5px 8px;border:1px solid var(--line);border-radius:999px;background:color-mix(in srgb,var(--surface) 94%,var(--accent));color:var(--text-sub);font:inherit;text-align:left;cursor:pointer}
+.at-coming button small{margin:0;color:var(--text-faint);font-size:8px}.at-quiet { margin:5px 0 0; color:var(--text-faint); font-size:11px; }
+.at-event-more{margin-top:9px!important;color:var(--accent)!important;font-size:10px!important;font-weight:700}
 .at-proj-disclosure { display:block; margin-top:2px; color:var(--text-faint);
   font-size:10px; font-style:normal; line-height:1.4; }
 /* v13.5.54: a release that just fired stays visible on Today. */
@@ -131,6 +136,12 @@
 .at-released b { color:var(--text-muted); letter-spacing:.06em; }
 .at-released time { color:var(--text-main); font-variant-numeric:tabular-nums; }
 .at-released span { color:var(--amber,#fbbf24); }
+.at-other-markets{padding:0 12px 10px}.at-other-markets>summary{cursor:pointer;min-height:44px;display:flex;align-items:center;color:var(--accent);font-size:11px;font-weight:750;letter-spacing:.04em}
+.at-other-markets__note{margin:5px 0;color:var(--text-muted);font-size:9.5px;line-height:1.55}
+.at-other-markets__rows{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:7px 0}
+.at-other-markets__rows>div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 7px;padding:9px;border:1px solid var(--line);border-radius:8px;background:color-mix(in srgb,var(--surface) 96%,#0ea5e9)}
+.at-other-markets__rows span{display:grid;min-width:0}.at-other-markets__rows b{font-size:11px}.at-other-markets__rows small,.at-other-markets__rows time{color:var(--text-muted);font-size:8.5px}.at-other-markets__rows strong{font-variant-numeric:tabular-nums;font-size:13px}.at-other-markets__rows em{font-style:normal;color:var(--text-sub);font-size:9px}.at-other-markets__rows time{grid-column:1/-1}
+.at-other-markets__explorer{display:grid;gap:8px;margin:8px 0}.at-other-markets__controls{display:flex;gap:5px;overflow-x:auto;padding-bottom:2px}.at-other-markets__controls button{min-height:38px;padding:6px 9px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--text-sub);white-space:nowrap}.at-other-markets__controls button[aria-pressed="true"]{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--text)}.at-other-markets__explorer figure{margin:0;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}.at-other-markets__explorer figcaption{display:flex;justify-content:space-between;gap:8px;align-items:baseline}.at-other-markets__explorer figcaption span{color:var(--text-muted);font-size:9px}.at-other-markets__explorer svg{display:block;width:100%;height:96px;color:var(--accent);margin:5px 0}.at-other-markets__explorer figure p{display:flex;justify-content:space-between;margin:0}.at-other-markets__explorer figure p span{color:var(--text-muted);font-size:9px}
 .at-decision { position:relative; overflow:hidden; padding:12px 14px; border-top:2px solid #facc15; }
 .at-decision.is-buy { border-top-color:#16a34a; }.at-decision.is-reduce,.at-decision.is-exit { border-top-color:#dc2626; }
 .at-primary-hero { display:grid; gap:9px; background:linear-gradient(135deg,color-mix(in srgb,var(--surface) 94%,var(--accent)),var(--surface)); }
@@ -226,7 +237,7 @@
 .at-news { display:grid; gap:6px; }.at-news a { display:grid; gap:2px; color:var(--text-main); text-decoration:none; font-size:10.5px; line-height:1.25; }.at-news a b { display:-webkit-box; overflow:hidden; -webkit-line-clamp:2; -webkit-box-orient:vertical; }.at-news a span { color:var(--text-muted); font-size:9px; }
 .at-news-card{min-height:74px}.at-news-card.is-stale{border-color:#f59e0b80}.at-news-zero{display:flex;justify-content:space-between;align-items:center;padding:8px 2px;color:var(--text-muted);font-size:10px}.at-news-zero span{color:var(--text-main);font-weight:800}
 .at-review { grid-column:span 12; padding:9px 12px; }.at-review div { display:flex; justify-content:space-between; gap:8px; font-size:11px; }.at-review div span { color:var(--text-sub); }.at-review strong { display:block; margin-top:4px; color:var(--text-main); font-size:11px; }
-@media(max-width:720px){.argus-today{gap:6px}.at-event,.at-priorities,.at-decision,.at-evidence,.at-compact,.at-review{grid-column:span 12}.at-event,.at-priorities,.at-decision,.at-compact{padding:9px 11px}.at-event small{display:none}.at-mode span{margin-left:3px}.at-projection svg{height:250px}.at-proj-levels,.at-action-plan{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:720px){.argus-today{gap:6px}.at-event,.at-priorities,.at-decision,.at-evidence,.at-compact,.at-review{grid-column:span 12}.at-event,.at-priorities,.at-decision,.at-compact{padding:9px 11px}.at-event>button small{display:none}.at-mode span{margin-left:3px}.at-projection svg{height:250px}.at-proj-levels,.at-action-plan{grid-template-columns:repeat(2,minmax(0,1fr))}.at-other-markets__rows{grid-template-columns:1fr}.at-other-markets__rows>div{grid-template-columns:minmax(0,1fr) auto auto}.at-other-markets__rows time{grid-column:1/-1}}
 @media(max-width:390px){.at-lamps{font-size:8.5px}.at-mode button{padding:2px 5px}.at-index-strip b{font-size:10px}.at-index-strip span{font-size:7.5px}.at-spark{width:27px}.at-call strong{font-size:34px}.at-proj-heading{display:grid;gap:1px}.at-proj-heading span{font-size:7.5px}.at-proj-meta{gap:5px}.at-proj-meta small{display:none}.at-proj-prob{gap:4px 7px;font-size:8px;flex-wrap:wrap}.at-proj-prob em{margin-left:0}.at-kpis,.at-factors,.at-perms{gap:4px 8px}.at-rows>div,.at-rows>button{grid-template-columns:58px minmax(0,1fr) auto}}
 
 /* v13.5.18 — MARKET VIEW (JP_MARKET_ENGINE) / ACTION (SDA) separation strip */
