@@ -159,7 +159,7 @@ def test_fe_collapse_persistence_local_only():
     assert "localStorage" in src
     assert "fetch(" not in src                       # 端末内のみ(サーバー送信なし)
     assert "resetTodayLayout" in src
-    # v13.7.19: Todayの見通しは日経225 ETF・5営業日に一本化。
+    # v13.7.18: Todayの見通しは日経225 ETF・5営業日に一本化。
     # 旧4指数パネルの選択状態は保存せず、判断詳細はnative detailsで閉じる。
     cc = _read("routes", "CommandCenter.tsx")
     assert "const marketMode: MarketSelectionMode = 'JP'" in cc
