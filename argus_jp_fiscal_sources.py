@@ -225,7 +225,8 @@ def ledger_market_rows(state, *, as_of):
 
 
 def ledger_environment_report(state, *, fiscal_year, expected_session, as_of,
-                              fx_rows=(), previous=None, market_acquisition='AVAILABLE'):
+                              fx_rows=(), previous=None, market_acquisition='AVAILABLE',
+                              fiscal_acquisition='AVAILABLE'):
     """Read the existing vintage ledger; keep alternative fiscal cases separate.
 
     The caller supplies the official expected session and acquisition outcome.
@@ -250,6 +251,9 @@ def ledger_environment_report(state, *, fiscal_year, expected_session, as_of,
             prior_rows = ledger_fiscal_inputs(state, year=fiscal_year-1, case=case, as_of=as_of)
             prior_fiscal = calculate(prior_rows, as_of=as_of)
         rows = ledger_fiscal_inputs(state, year=fiscal_year, case=case, as_of=as_of)
+        if fiscal_acquisition != 'AVAILABLE':
+            for row in rows.values():
+                row['acquisitionStatus'] = fiscal_acquisition
         fiscal = calculate(rows, as_of=as_of, previous=prior_fiscal)
         cases[case] = environment_assessment(fiscal, market, previous=prior)
     body = {'schemaVersion':'jp-fiscal-ledger-report-v1', 'fiscalYear':fiscal_year,
