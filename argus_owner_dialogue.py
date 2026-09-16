@@ -7,6 +7,7 @@ import math
 import re
 from collections.abc import Mapping
 import argus_explanation_contract
+import argus_jp_fiscal_monitor
 import jp_market_internals
 from argus_product_naming import require_allowed
 
@@ -68,7 +69,8 @@ def valid_input_time(value,cutoff):
     except (KeyError,TypeError,ValueError):return False
 
 
-def hypothesis_calculation(value, *, index_quote=None, eps_input=None, cutoff=None):
+def hypothesis_calculation(value, *, index_quote=None, eps_input=None,
+                           fiscal_reference=None, cutoff=None):
     """Only explicitly supplied arithmetic assumptions; never an FX-to-equity forecast."""
     if value is None:return None
     if not isinstance(value,Mapping):raise ValueError('hypothesis_invalid')
@@ -99,6 +101,13 @@ def hypothesis_calculation(value, *, index_quote=None, eps_input=None, cutoff=No
         return {'status':'AVAILABLE','kind':kind,'isHypothesis':True,'unit':'JPY','value':price,
             'assumptions':{'per':per},'input':deepcopy(eps),'actionAuthority':False,
             'noteJa':'仮定したPERと公表EPSの積です。到達予測・確定した上限・検証済み確率ではありません。'}
+    if kind=='FISCAL_ASSUMPTION':
+        if (set(value)-{'kind','growthPct','effectiveRatePct'}
+                or len(value)==1):
+            raise ValueError('fiscal_assumption_fields_invalid')
+        return argus_jp_fiscal_monitor.reference_scenario(fiscal_reference,
+            as_of=cutoff, growth_pct=value.get('growthPct'),
+            effective_rate_pct=value.get('effectiveRatePct'))
     raise ValueError('unsupported_hypothesis')
 
 
@@ -359,10 +368,15 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
                 fields.append(f'{label}: {value}')
         facts.append(fact(' / '.join(fields),'owner_report',kind='OWNER_REPORTED'))
     if market!='JP' and hypothesis is not None:raise ValueError('japan_hypothesis_not_applicable')
-    calculated=hypothesis_calculation(hypothesis,index_quote=index_quote,eps_input=eps_input,cutoff=received_at)
+    calculated=hypothesis_calculation(hypothesis,index_quote=index_quote,eps_input=eps_input,
+        fiscal_reference=public.get('fiscalEnvironment') if market=='JP' else None,
+        cutoff=received_at)
     if calculated:
         if calculated['status']=='AVAILABLE':
-            description=f"会話の仮定だけの計算: {json.dumps(calculated['assumptions'],ensure_ascii=False)} → {calculated['value']:g} {calculated['unit']}。{calculated['noteJa']}"
+            before=(f"もとの圧力{calculated['baselinePressurePoints']:g}ポイント → "
+                if calculated.get('kind')=='FISCAL_ASSUMPTION' else '')
+            description=(f"会話の仮定だけの計算: {json.dumps(calculated['assumptions'],ensure_ascii=False)} → "
+                f"{before}{calculated['value']:g} {calculated['unit']}。{calculated['noteJa']}")
             facts.append(fact(description,'conversation_hypothesis',kind='HYPOTHESIS'))
         else:facts.append(fact('仮定の数値計算に必要な原典を確認できていません。','conversation_hypothesis',kind='UNKNOWN'))
     matching_previous=isinstance(previous,Mapping) and previous.get('scope')=='OWNER_PRIVATE' and previous.get('subject')=={'symbol':symbol,'market':market} and previous.get('horizonSessions')==horizon and previous.get('schemaVersion')==SCHEMA and (previous.get('eventFocus') or {}).get('eventId')==(selected_event or {}).get('eventId')

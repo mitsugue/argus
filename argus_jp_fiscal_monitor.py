@@ -39,6 +39,22 @@ def finite(value):
     return float(value)
 
 
+def mechanical_values(growth, rate, surplus, base_debt):
+    """The same definition-bound arithmetic for official rows and private what-ifs."""
+    growth, rate, surplus, base_debt = map(finite, (growth, rate, surplus, base_debt))
+    if growth <= -100 or rate <= -100 or base_debt < 0:
+        raise ValueError('invalid_fiscal_scenario_domain')
+    effect = (rate-growth)/(100+growth)*base_debt
+    result = {'growthPct': growth, 'effectiveRatePct': rate,
+        'spreadPoints': growth-rate, 'primarySurplusPct': surplus,
+        'priorDebtRatioPct': base_debt, 'interestGrowthEffectPoints': effect,
+        'pressurePoints': effect-surplus,
+        'mechanicalDebtRatioPct': base_debt+effect-surplus}
+    if not all(math.isfinite(value) for value in result.values()):
+        raise ValueError('nonfinite_result')
+    return result
+
+
 def exceeds(value, threshold):
     return value > threshold and not math.isclose(value, threshold, rel_tol=1e-10, abs_tol=1e-12)
 
@@ -132,14 +148,7 @@ def calculate(rows, *, as_of, previous=None):
         if g['value'] <= -100 or r['value'] <= -100:
             raise ValueError('invalid_rate_domain')
         growth, rate, surplus, base_debt = (float(row['value']) for row in (g, r, pb, debt))
-        effect = (rate-growth)/(100+growth)*base_debt
-        values = {'growthPct': growth, 'effectiveRatePct': rate,
-            'spreadPoints': growth-rate, 'primarySurplusPct': surplus,
-            'priorDebtRatioPct': base_debt, 'interestGrowthEffectPoints': effect,
-            'pressurePoints': effect-surplus,
-            'mechanicalDebtRatioPct': base_debt+effect-surplus}
-        if not all(math.isfinite(v) for v in values.values()):
-            raise ValueError('nonfinite_result')
+        values = mechanical_values(growth, rate, surplus, base_debt)
         definition = {k: r[k] for k in (*COMMON, *FISCAL, 'year', 'estimateType')}
         definition['scenario'] = g.get('scenario')
         # Interval propagation over the published rounding cells. A near-zero
@@ -214,6 +223,71 @@ def scenario(rows, *, as_of, growth_pct=None, effective_rate_pct=None):
     if result.get('id'):
         result['id'] = 'fiscal-scenario-' + digest({'base':result['id'], 'assumptions':assumptions})
     return result
+
+
+def reference_scenario(reference, *, as_of, growth_pct=None, effective_rate_pct=None):
+    """Private dialogue what-if from an already calculated, source-bound case.
+
+    The compact dialogue reference deliberately omits raw fiscal rows. This
+    recomputes only the published mechanical expression, never its warning
+    rule, official history, notifications, or an equity price forecast.
+    """
+    cutoff = instant(as_of)
+    assumptions = {}
+    for key, value in (('growthPct', growth_pct), ('effectiveRatePct', effective_rate_pct)):
+        if value is not None:
+            assumptions[key] = finite(value)
+    if not assumptions:
+        raise ValueError('fiscal_assumption_required')
+    unavailable = {'status':'UNAVAILABLE','reason':'verified_fiscal_reference_required',
+        'recordKind':'HYPOTHETICAL_SCENARIO','isHypothesis':True,
+        'actionAuthority':False,'officialHistoryWriteAllowed':False,
+        'notificationAllowed':False,'probability':None}
+    try:
+        if not isinstance(reference, dict) or reference.get('status') != 'AVAILABLE':
+            return unavailable
+        case = (reference.get('cases') or {}).get('baseline') or {}
+        fiscal = case.get('fiscal') or {}
+        if fiscal.get('status') != 'AVAILABLE' or not isinstance(fiscal.get('id'), str):
+            return unavailable
+        definition = fiscal.get('definition') or {}
+        if (definition.get('country') != 'JP' or definition.get('frequency') != 'ANNUAL'
+                or definition.get('periodBasis') not in ('FISCAL_YEAR','CALENDAR_YEAR')
+                or definition.get('estimateType') not in ('ACTUAL','ESTIMATE','FORECAST')):
+            return unavailable
+        sources = reference.get('sources') or []
+        if not sources or any(not isinstance(source, dict)
+                or not re.fullmatch('[a-f0-9]{64}', str(source.get('sourceHash') or ''))
+                or instant(source['knownAt']) > cutoff for source in sources):
+            return unavailable
+        current = fiscal.get('values') or {}
+        base = mechanical_values(current['growthPct'], current['effectiveRatePct'],
+            current['primarySurplusPct'], current['priorDebtRatioPct'])
+        if any(not math.isclose(base[key], finite(current[key]), rel_tol=1e-10, abs_tol=1e-10)
+                for key in base):
+            return unavailable
+        changed = mechanical_values(assumptions.get('growthPct', base['growthPct']),
+            assumptions.get('effectiveRatePct', base['effectiveRatePct']),
+            base['primarySurplusPct'], base['priorDebtRatioPct'])
+        identity = {'sourceCaseId': fiscal['id'], 'assumptions': assumptions,
+            'method': 'jp-fiscal-mechanical-what-if-v1'}
+        return {'status':'AVAILABLE','id':'fiscal-scenario-'+digest(identity),
+            'kind':'FISCAL_ASSUMPTION','recordKind':'HYPOTHETICAL_SCENARIO',
+            'isHypothesis':True,'sourceReferenceId':reference.get('id'),
+            'sourceCaseId':fiscal['id'],'definition':deepcopy(definition),
+            'sourceKnownAt':max(sources,key=lambda source:instant(source['knownAt']))['knownAt'],
+            'assumptions':assumptions,'baselinePressurePoints':base['pressurePoints'],
+            'value':changed['pressurePoints'],'unit':'ポイント',
+            'pressureChangePoints':changed['pressurePoints']-base['pressurePoints'],
+            'calculatedValues':changed,'actionAuthority':False,
+            'officialHistoryWriteAllowed':False,'notificationAllowed':False,
+            'probability':None,'stockPriceForecast':None,
+            'noteJa':'成長率・政府実効金利の明示した仮定による、債務GDP比の機械的な圧力です。'
+                '基礎的財政収支と前年度の債務比率は保存時点の値に固定しています。'
+                '市場の10年国債利回りではなく、政府の実効金利を仮定しています。'
+                '実績・正式予測・財政危機や株価方向の予測ではありません。'}
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return unavailable
 
 
 def transition(previous, current):

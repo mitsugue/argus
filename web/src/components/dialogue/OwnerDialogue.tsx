@@ -16,7 +16,7 @@ export type Job={remoteBackup?:{status?:string;lastVerifiedAt?:string;pending?:b
     facts:Array<{evidenceId:string;text:string;provenance?:{url?:string;sourceLabel?:string}}>;
     retrievalRecord?:{policyVersion:string;scope:string;archiveSearchStatus:string;counterevidenceSearchStatus:string;selection:{mandatoryCurrent:string[];previousDistinct:string[];previousSharedWithCurrent:string[]}};
     indexComparison?:JapanMarketComparison;indexComparisonEvidenceId?:string;
-    calculatedHypothesis?:{status:string;value?:number;unit?:string;noteJa?:string;comparisonPoints?:Array<{usdJpy:number;value:number}>}};
+    calculatedHypothesis?:{status:string;value?:number;unit?:string;noteJa?:string;baselinePressurePoints?:number;comparisonPoints?:Array<{usdJpy:number;value:number}>}};
   result?:{answer?:{sections:Record<string,Section>;presentationStatus?:string;presentationPlan?:MarketBrief['presentationPlan']};provider?:{returnedModel?:string;completedAt?:string}}};
 const labels:Record<string,string>={view:'今の見立て',reasons:'重要な理由',changes:'前回からの変化',impact:'自分への影響',next:'次に確認すること',invalidation:'見方を変える条件'};
 const states:Record<string,string>={RUNNING:'AIが根拠を確認しています。履歴は引き続き読めます。',INTERRUPTED:'再起動で処理が中断しました。課金の重複を避けるため、自動再実行はしていません。',REJECTED:'回答の根拠と表現を検証できなかったため、表示を保留しました。',UNAVAILABLE:'AIが応答を返せませんでした。取得済みの市場情報は利用できます。',FAILED:'回答処理に失敗しました。',SAVE_FAILED:'回答の保存に失敗しました。この端末表示だけでは復元を保証できません。'};
@@ -45,14 +45,15 @@ export function OwnerDialogue({symbol,market,horizon,asset,baseContextId,previou
   const {brief,retry}=useMarketBrief(); const [token,setToken]=useState(readKey);
   const [connectionOpen,setConnectionOpen]=useState(false);
   const [question,setQuestion]=useState(initialQuestion??'');const [reason,setReason]=useState<string|null>(null);const [period,setPeriod]=useState<string|null>(null);
-  const [fx,setFx]=useState('');const [job,setJob]=useState<Job|null>(null);const [rows,setRows]=useState<Job[]>([]);
+  const [fx,setFx]=useState('');const [fiscalGrowth,setFiscalGrowth]=useState('');
+  const [fiscalRate,setFiscalRate]=useState('');const [job,setJob]=useState<Job|null>(null);const [rows,setRows]=useState<Job[]>([]);
   const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [historyLoading,setHistoryLoading]=useState(false);const [nextBefore,setNextBefore]=useState<number|null>(null);
   const pending=useRef<Record<string,unknown>|null>(null);const alive=useRef(true);
   const base=(import.meta.env.VITE_ARGUS_BACKEND_URL as string|undefined)?.replace(/\/$/,'');
   const scope=`${market}:${symbol}:${horizon}:${focusEventId??''}:${referenceRecordId??''}`;const scopeRef=useRef(scope);scopeRef.current=scope;
   useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
   const previousScope=useRef(scope);
-  useEffect(()=>{if(previousScope.current===scope)return;previousScope.current=scope;setJob(null);setRows([]);setError('');setQuestion(initialQuestion??'');setReason(null);setPeriod(null);setFx('');pending.current=null;setNextBefore(null);},[scope]);
+  useEffect(()=>{if(previousScope.current===scope)return;previousScope.current=scope;setJob(null);setRows([]);setError('');setQuestion(initialQuestion??'');setReason(null);setPeriod(null);setFx('');setFiscalGrowth('');setFiscalRate('');pending.current=null;setNextBefore(null);},[scope]);
   const post=async (payload:Record<string,unknown>)=>{
     const controller=new AbortController();const timer=window.setTimeout(()=>controller.abort(),15000);
     try {
@@ -86,7 +87,10 @@ export function OwnerDialogue({symbol,market,horizon,asset,baseContextId,previou
           ...(focusEventId?{focusEventId}:{}),
           ...(referenceRecordId?{referenceRecordId}:{}),
           ...(job||previousRequestId?{previousRequestId:job?.requestId??previousRequestId}:{}),
-          ...(fx?{hypothesis:{kind:'FX_TRANSLATION',usdJpy:Number(fx),yenIndexUnchanged:true}}:{})};
+          ...(fiscalGrowth||fiscalRate?{hypothesis:{kind:'FISCAL_ASSUMPTION',
+            ...(fiscalGrowth?{growthPct:Number(fiscalGrowth)}:{}),
+            ...(fiscalRate?{effectiveRatePct:Number(fiscalRate)}:{})}}:
+            fx?{hypothesis:{kind:'FX_TRANSLATION',usdJpy:Number(fx),yenIndexUnchanged:true}}:{})};
       }
       const data=await post(pending.current);
       if(!validJob(data))throw new Error('回答形式を確認できませんでした。');
@@ -102,7 +106,7 @@ export function OwnerDialogue({symbol,market,horizon,asset,baseContextId,previou
     catch(e){if(alive.current)setError(e instanceof Error?e.message:'履歴を取得できませんでした。');}
     finally{if(alive.current)setHistoryLoading(false);}
   };
-  const reset=()=>{setJob(null);setFx('');pending.current=null;setError('');};
+  const reset=()=>{setJob(null);setFx('');setFiscalGrowth('');setFiscalRate('');pending.current=null;setError('');};
   const answer=job?.result?.answer;const matching=rows.filter(r=>r.context.subject.symbol===symbol&&r.context.subject.market===market&&r.context.horizonSessions===horizon&&(r.context.eventFocus?.eventId??null)===(focusEventId??null));
   return <section className="owner-dialogue" aria-label="ARGUSに質問する">
     <h3>{focusEventId?'このイベントについて話す':'この見立てについて話す'}</h3><p>{market==='JP'&&symbol==='N225'?'日経平均':symbol} · {horizon}営業日。表示中の市場の根拠と、登録した保有情報から説明します。</p>
@@ -115,7 +119,11 @@ export function OwnerDialogue({symbol,market,horizon,asset,baseContextId,previou
     <div className="owner-dialogue__suggestions">{(focusEventId?['事前の予想と結果はどう違う？','市場は実際にどう反応した？','次に何を確認すればいい？']:['前回から何が変わった？','この状況なら、何を待てばいい？','短期と中期で見方は違う？']).map(q=><button key={q} type="button" onClick={()=>{setQuestion(q);pending.current=null;}}>{q}</button>)}</div>
     <label>ARGUSへの質問<textarea maxLength={1000} value={question} placeholder="あなたの気になること" onChange={e=>{setQuestion(e.target.value);pending.current=null;}}/></label>
     {market==='JP'&&symbol==='N225'&&<details><summary>為替の仮定を試す</summary><p>日経平均の円建て価格を変えずにドル換算します。円高による株価予測とは異なります。</p>
-      <label>仮定するドル円<input type="number" min="0.01" step="0.01" value={fx} onChange={e=>{setFx(e.target.value);pending.current=null;}}/></label></details>}
+      <label>仮定するドル円<input type="number" min="0.01" step="0.01" value={fx} onChange={e=>{setFx(e.target.value);setFiscalGrowth('');setFiscalRate('');pending.current=null;}}/></label></details>}
+    {market==='JP'&&Boolean(brief?.unifiedContext?.fiscalEnvironment)&&<details><summary>財政環境の仮定を試す</summary>
+      <p>現在の公表値を基準に、名目成長率か政府の実効金利を変えた場合の機械的な債務比率の圧力を計算します。市場の10年国債利回りや日本株の価格予測ではありません。</p>
+      <label>仮定する日本の名目GDP成長率（%）<input type="number" step="0.1" value={fiscalGrowth} onChange={e=>{setFiscalGrowth(e.target.value);setFx('');pending.current=null;}}/></label>
+      <label>仮定する政府の実効金利（%）<input type="number" step="0.1" value={fiscalRate} onChange={e=>{setFiscalRate(e.target.value);setFx('');pending.current=null;}}/></label></details>}
     <div className="owner-dialogue__actions"><button type="button" disabled={busy||job?.status==='RUNNING'||!token||!question.trim()||!(baseContextId ?? brief?.unifiedContext?.contextId)} onClick={()=>void ask()}>{busy?<TriangleStepLoader compact label="送信中"/>:pending.current?'同じ質問IDで再送':'ARGUSに質問する'}</button>
       <button type="button" disabled={!token||historyLoading} onClick={()=>void history()}>保存した会話</button><button type="button" onClick={reset}>仮定を閉じて元の見立てへ</button></div>
     {error&&<p role="alert">{error} <button type="button" onClick={()=>{retry();pending.current=null;}}>市場の根拠を更新</button></p>}
@@ -123,7 +131,7 @@ export function OwnerDialogue({symbol,market,horizon,asset,baseContextId,previou
       {states[job.status]&&<p role="status">{job.status==='RUNNING'?<TriangleStepLoader label={states[job.status]}/>:states[job.status]}</p>}
       {job.status==='SAVE_FAILED'&&<button type="button" onClick={()=>void post({action:'save',requestId:job.requestId}).then(data=>{if(validJob(data))setJob(data);}).catch(()=>setError('保存を再試行できませんでした。'))}>AIを再実行せず保存を再試行</button>}
       {answer&&<OwnerAnswerBody job={job}/>}
-      {job.context.calculatedHypothesis&&<p>{job.context.calculatedHypothesis.status==='AVAILABLE'?`仮定の計算: ${job.context.calculatedHypothesis.value?.toLocaleString()} ${job.context.calculatedHypothesis.unit}。${job.context.calculatedHypothesis.noteJa}`:'この仮定の数値計算に必要な原典は未取得です。'}</p>}
+      {job.context.calculatedHypothesis&&<p>{job.context.calculatedHypothesis.status==='AVAILABLE'?`仮定の計算: ${job.context.calculatedHypothesis.baselinePressurePoints!=null?`もとの圧力 ${job.context.calculatedHypothesis.baselinePressurePoints.toLocaleString()} ポイント → `:''}${job.context.calculatedHypothesis.value?.toLocaleString()} ${job.context.calculatedHypothesis.unit}。${job.context.calculatedHypothesis.noteJa}`:'この仮定の数値計算に必要な原典は未取得です。'}</p>}
       <HypothesisChart points={job.context.calculatedHypothesis?.comparisonPoints}/>
       <details><summary>使った根拠と保存状態</summary>{job.context.facts.map(f=><p key={f.evidenceId}>{f.text}
         {f.provenance?.url?.startsWith('https://')&&<> <a href={f.provenance.url} target="_blank" rel="noopener noreferrer">{f.provenance.sourceLabel||'出典'}を確認</a></>}
