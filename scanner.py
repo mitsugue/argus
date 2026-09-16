@@ -7929,6 +7929,17 @@ def _important_events_data():
     items_all = argus_important_events.build_important_events(
         events, owner_symbols=owner_symbols, held_symbols=held,
         ctx={"regime": regime, "vixElevated": vix_elevated}, limit=64)
+    # Keep the source's schedule precision on every consumer surface.  The
+    # brief previously received only title/countdown for imminent rows, so the
+    # integrated AI could not state a known FOMC time and called it unknown.
+    # Date-only schedules remain explicit instead of inventing a clock time.
+    for event in items_all:
+        when_ja = str(event.get("jstTime") or "").strip()
+        if not when_ja:
+            event_date = str(event.get("date") or "").strip()
+            when_ja = (event_date.replace("-", "/") + "・時刻未公表"
+                       if re.fullmatch(r"\d{4}-\d{2}-\d{2}", event_date) else "日時未確認")
+        event["whenJa"] = when_ja
     # v13.5.60 (owner iPhone review 2026-09-07: 「せめて向こう1ヶ月先まで」).
     # The display list used to stop at 8 rows, which on a busy week ended
     # ~11 days out. The list now carries every scheduled event inside the
@@ -7947,6 +7958,10 @@ def _important_events_data():
         "displayImpact": event.get("displayImpact"),
         "linkedAssets": list(event.get("linkedAssets") or [])[:12],
         "title": event.get("title"),
+        "eventTimeUtc": event.get("eventTimeUtc"),
+        "date": event.get("date"),
+        "jstTime": event.get("jstTime"),
+        "whenJa": event.get("whenJa"),
     } for event in items_all if event.get("countdown") in ("D", "D-1")]
     return {"status": snap.get("status"), "asOf": snap.get("asOf"),
             "timezone": "Asia/Tokyo", "engineVersion": "important-events-v1",
@@ -17693,7 +17708,9 @@ def _brief_sq_events():
         stage = event.get("stage")
         phase = {"TODAY": "本日", "LAST_TRADING_DAY": "本日が最終取引日",
                  "EVENT_WEEK": "今週", "UPCOMING": "予定"}.get(stage, "予定")
-        rows.append({"eventId": event["eventId"], "title": event["title"] + " " + event["sqDate"],
+        rows.append({"eventId": event["eventId"], "title": event["title"],
+                     "whenJa": event["sqDate"] + "・寄付き基準",
+                     "sqDate": event["sqDate"],
                      "countdown": phase, "calendarDaysUntil": event["calendarDaysUntil"],
                      "imminent": stage in {"TODAY", "LAST_TRADING_DAY", "EVENT_WEEK"},
                      "sourceLabelJa": "JPX公式日程", "sourceUrl": event["sourceRef"],
@@ -17765,8 +17782,9 @@ def _market_brief_ai_polish(brief):
         "impact=利用者の銘柄への影響、next=次に確認すること、invalidation=見方を変える条件。"
         "各項目を {textJa:文字列,evidenceIds:根拠IDの配列,kind:FACTまたはINFERENCEまたはUNKNOWN} とする。"
         "根拠にない数値・割合・確率・価格予測・売買指示は禁止。推論を観測済み事実と呼ばない。"
-        "数値・日付・価格は根拠欄と計算済みチャートに表示します。6項目のtextJaとpresentationの説明文では、"
-        "数値や日付を繰り返さず、変化の方向・意味・条件を言葉で伝えてください。"
+        "数値・価格は根拠欄と計算済みチャートに表示します。説明文では変化の方向・意味・条件を言葉で伝えてください。"
+        "ただし予定イベントへ言及するときは、入力根拠にある日時を名称の直後へ全角括弧で必ず添えてください。"
+        "時刻が公表されていない日程は日付と『時刻未公表』または『寄付き基準』を添え、時刻を推測しないでください。"
         "根拠IDや資料の時刻に含まれる数字を観測値として文章に転記しないでください。"
         "根拠IDは項目ごとに重複なしで最大6件。FACTはverificationがVERIFIEDの根拠だけを参照できる。"
         "CORROBORATED・UNCONFIRMEDの根拠を含む説明はINFERENCEにする。"
