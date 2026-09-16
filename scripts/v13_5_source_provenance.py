@@ -43,7 +43,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'ops/fiscal/cao_20260730.json': '72b7f9ded706ebf1aa9ae92ebb4396b8bf055ae6',
     'scripts/extract_cao_fiscal_table.py': '7b274ad6a393577802e0c6efb0d09882c244df32',
     'test_argus_jp_fiscal_monitor.py': 'c15814b4a0ca8f0c38e137e882320b0d377315e5',
-    'test_argus_jp_fiscal_runtime.py': '8e587eda8fe58b8dc83db27c35fe83c93e429b0a',
+    'test_argus_jp_fiscal_runtime.py': '147ff4d092920be0090fdfe56951a817457c2298',
     'test_argus_jp_fiscal_sources.py': '240b86e2e5df5cde777742bc52d34c47c9f91ea3',
     'web/src/components/today/FiscalEnvironmentDetails.css': 'c5830b9d9414c8b7fafb69b5fa4f7d4a0db83700',
     'web/src/components/today/FiscalEnvironmentDetails.tsx': 'd696c18bf0e8e18abbd3ca167e135fe02d581386',

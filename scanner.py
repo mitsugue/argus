@@ -38700,18 +38700,7 @@ _JP_FISCAL_REFRESH_STATE = {"status": "NOT_RUN", "persistenceStatus": "UNVERIFIE
 def _jp_fiscal_environment_document():
     """Public reads only project the small saved monitor, with no provider calls."""
     document = argus_jp_fiscal_runtime.public_document(_MARKET_LEDGER)
-    worker = dict(_JP_FISCAL_REFRESH_STATE)
-    # A sealed checkpoint restore already verified the complete Market Ledger,
-    # including this report.  Do not reset that truth to UNVERIFIED merely
-    # because the new process has not yet run the collection worker.  A later
-    # collection attempt replaces this projection with its live worker state.
-    if document.get("id") and worker.get("status") == "NOT_RUN" \
-            and _OSINT_PERSIST_STATE.get("restored"):
-        worker.update(status="RESTORED", persistenceStatus="VERIFIED",
-                      pendingPersistence=False, reportId=document["id"],
-                      verifiedReportId=document["id"],
-                      restoredAt=_DURABLE_STATE.get("lastRestoreAt"))
-    document["worker"] = worker
+    document["worker"] = dict(_JP_FISCAL_REFRESH_STATE)
     return document
 
 
