@@ -2295,3 +2295,57 @@ def test_wal_floor_readback_failure_removes_only_new_anchor():
             else:
                 raise AssertionError("corrupt WAL floor read-back accepted")
         assert not pathlib.Path(paths["wal"]).exists()
+
+
+def _segmented_compare_get(distance, *, damage=None):
+    full = _linear_compare_value(BASE_SHA, PINNED_SHA, distance)
+    rows = full['commits']
+    positions = {row['sha']: i + 1 for i, row in enumerate(rows)}
+    def get(url, **kwargs):
+        head = url.rsplit('...', 1)[1]
+        count = positions[head]
+        value = copy.deepcopy(full)
+        value.update(url=url, ahead_by=count, total_commits=count,
+                     commits=copy.deepcopy(rows[max(0, count - 250):count]))
+        if damage == 'gap' and count < distance:
+            value['commits'] = value['commits'][1:]
+        if damage == 'distance' and count < distance:
+            value['ahead_by'] += 1; value['total_commits'] += 1
+        if damage == 'merge' and count < distance:
+            value['commits'][0]['parents'].append({'sha':'e'*40, 'url':_commit_api_url('mitsugue','argus','e'*40)})
+        if damage == 'fork' and count < distance:
+            value.update(status='diverged', behind_by=1)
+        return FakeResponse(200, value)
+    return get
+
+
+@pytest.mark.parametrize('distance', [251, 253, 501, 2000])
+def test_bounded_segments_verify_every_parent_to_authenticated_base(distance):
+    with mock.patch.object(scanner.requests, 'get', side_effect=_segmented_compare_get(distance)) as get:
+        result = scanner._bounded_ledger_compare('mitsugue','argus',BASE_SHA,PINNED_SHA)
+    assert result == {'status':'verified','ledgerBaseCommitSha':BASE_SHA,
+                      'exactCommitSha':PINNED_SHA,'distance':distance}
+    assert get.call_count == (distance + 249) // 250
+
+
+@pytest.mark.parametrize('damage', ['gap', 'distance', 'merge', 'fork'])
+def test_bounded_segments_reject_missing_or_ambiguous_prefix(damage):
+    with mock.patch.object(scanner.requests, 'get', side_effect=_segmented_compare_get(253,damage=damage)), \
+            pytest.raises(recovery.RecoveryBundleError):
+        scanner._bounded_ledger_compare('mitsugue','argus',BASE_SHA,PINNED_SHA)
+
+
+def test_bounded_segments_keep_total_call_byte_and_time_limits():
+    with mock.patch.object(scanner.requests, 'get', side_effect=_segmented_compare_get(2001)) as get, \
+            pytest.raises(recovery.RecoveryBundleError, match='incomplete'):
+        scanner._bounded_ledger_compare('mitsugue','argus',BASE_SHA,PINNED_SHA)
+    assert get.call_count == 1
+    with mock.patch.object(scanner.requests, 'get', side_effect=_segmented_compare_get(253)), \
+            mock.patch.object(scanner, '_LEDGER_COMPARE_RESPONSE_MAX_BYTES', 100), \
+            pytest.raises(recovery.RecoveryBundleError, match='oversized'):
+        scanner._bounded_ledger_compare('mitsugue','argus',BASE_SHA,PINNED_SHA)
+    with mock.patch.object(scanner.requests, 'get') as get, \
+            mock.patch.object(scanner, '_LEDGER_COMPARE_DEADLINE_SECONDS', 0), \
+            pytest.raises(recovery.RecoveryBundleError, match='incomplete'):
+        scanner._bounded_ledger_compare('mitsugue','argus',BASE_SHA,PINNED_SHA)
+    get.assert_not_called()
