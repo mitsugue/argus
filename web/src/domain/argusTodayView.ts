@@ -828,7 +828,8 @@ export function formatEventTime(value: string | null, dateOnly = false): string 
   const t = Date.parse(value);
   if (!Number.isFinite(t)) return '';
   if (dateOnly) {
-    return new Date(t).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' });
+    const day = new Date(t).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' });
+    return `${day}・時刻未公表`;
   }
   return new Date(t).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }

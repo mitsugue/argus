@@ -186,7 +186,7 @@ check('Today never claims an empty calendar it could not read',
   check('a date-only event stays visible on the day it lands',
     sameDay.nextEvent?.code === 'AUCTION');
   check('a date-only event never renders an invented clock time',
-    formatEventTime(dateOnlyAt, true) === '7/22'
+    formatEventTime(dateOnlyAt, true) === '7/22・時刻未公表'
     && formatEventTime(dateOnlyAt, false).includes(':'));
   const nextDay = buildArgusTodayView({ ...base, events: [auction, cpi],
     now: new Date('2026-07-23T00:00:00Z') });

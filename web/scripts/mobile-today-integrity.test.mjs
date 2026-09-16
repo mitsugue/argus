@@ -122,7 +122,7 @@ assert.equal(instruments.normalizeMarketInstrument('US', 'bad'), 'SPY');
 assert.match(command, /const marketMode: MarketSelectionMode = 'JP'/);
 assert.match(command, /horizon:\s*chartHorizon/);
 assert.match(today, /<OtherMarketsActuals moves=\{view\.indexMoves\}/);
-// v13.7.18: Today is one Nikkei view. Other markets expose actual ETF closes
+// v13.7.19: Today is one Nikkei view. Other markets expose actual ETF closes
 // in a small disclosure and cannot switch the judgment or its horizon.
 assert.match(today, /data-argus-contract="other-markets-actuals-v1"/);
 assert.doesNotMatch(today, /at-index-strip--selectors/);

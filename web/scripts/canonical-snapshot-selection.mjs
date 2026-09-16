@@ -285,7 +285,7 @@ export async function selectCanonical1321FiveDay(page, {
   await openCanonicalEvidence(page, timeout);
   machine.transition('R11_PRODUCT_SELECTION_READY');
 
-  // v13.7.18: Today has one explicit product subject. The old four-index and
+  // v13.7.19: Today has one explicit product subject. The old four-index and
   // three-horizon selector matrix was removed from the owner surface; the
   // release proof now verifies that the product itself is immutably bound to
   // the Nikkei 225 decision proxy (1321) and five sessions.
