@@ -25,6 +25,25 @@ import scanner
 
 
 class WalCheckpointTests(unittest.TestCase):
+    def test_verified_checkpoint_hashes_source_integrity_once(self):
+        storage = durability.argus_persistent_storage
+        sealed = storage.seal_checkpoint({
+            "schemaVersion": "argus-durable-v3",
+            "rows": [{"id": index, "value": "x" * 32}
+                     for index in range(128)],
+        })
+
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(
+                storage, "verify_checkpoint",
+                wraps=storage.verify_checkpoint) as verify:
+            result = durability.verified_checkpoint(
+                os.path.join(root, "state.json"), sealed,
+                job_id="single-source-integrity-pass")
+
+        self.assertTrue(result["verified"])
+        self.assertTrue(result["readBackVerified"])
+        self.assertEqual(verify.call_count, 1)
+
     def test_one_hundred_transitions_are_small_wal_appends(self):
         with tempfile.TemporaryDirectory() as directory:
             wal = os.path.join(directory, "mission.wal")
