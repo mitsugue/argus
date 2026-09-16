@@ -251,6 +251,11 @@ REVIEWED_EXTENSION_BLOBS = {
     ".github/workflows/ai-rejudge.yml": "b81acfa1a3452f2467ba416c0e14ce9d9f905f04",
     "test_argus_official_lifecycle.py": "94f9ebcb4a3a4457cd0117e52e98cb55e628d3c7",
     "test_workflow_http.py": "3b02814b97563c1b089de97697d0bb471bee1578",
+    # v13.7.18 owner-required Today consolidation: these exact acceptance
+    # assertions remove the legacy four-index selector and its duplicate
+    # outlook without relaxing the underlying research/truth contracts.
+    "test_argus_v12_0_6.py": "14c660ebc25f8f0fe50743da58d2c50eb6e26256",
+    "test_argus_v13_1_1.py": "0dcfbd099dd00f4e84b89df51da6a03fa96c2e4f",
 }
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
