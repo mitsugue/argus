@@ -2094,6 +2094,31 @@ def test_important_events_horizon_constants():
     assert scanner._IMPORTANT_EVENTS_DISPLAY_CAP == 24
 
 
+def test_important_events_preserve_schedule_precision_for_integrated_ai(monkeypatch):
+    fomc = _event("FOMC", 0)
+    fomc.update({"kind": "fomc", "escalation": "D",
+                 "eventTimeUtc": "2026-09-16T18:00:00Z",
+                 "eventDate": "2026-09-16",
+                 "localTimeJst": "2026-09-17 03:00 JST"})
+    auction = _event("AUCTION", 1)
+    auction.update({"kind": "auction", "escalation": "D-1",
+                    "eventDate": "2026-09-18"})
+    monkeypatch.setattr(scanner, "get_events_snapshot",
+                        lambda **_: {"status": "live", "asOf": "x",
+                                     "events": [fomc, auction]})
+    monkeypatch.setattr(scanner, "_owner_symbols_cached", lambda: {})
+    monkeypatch.setattr(scanner, "get_rates_snapshot", lambda: {})
+
+    body = scanner._important_events_data()
+    rows = {row["eventCode"]: row for row in body["events"]}
+    assert rows["FOMC"]["whenJa"] == "2026-09-17 03:00 JST"
+    assert rows["AUCTION"]["whenJa"] == "2026/09/18・時刻未公表"
+    imminent = {row["eventCode"]: row for row in body["imminent"]}
+    assert imminent["FOMC"]["eventTimeUtc"] == "2026-09-16T18:00:00Z"
+    assert imminent["FOMC"]["whenJa"] == "2026-09-17 03:00 JST"
+    assert imminent["AUCTION"]["whenJa"] == "2026/09/18・時刻未公表"
+
+
 # ── the moomoo bridge lamp is US-only ────────────────────────────────────────
 
 def test_legacy_bridge_lamp_is_idle_not_warning_during_a_tokyo_only_session(monkeypatch):

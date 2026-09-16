@@ -7929,6 +7929,17 @@ def _important_events_data():
     items_all = argus_important_events.build_important_events(
         events, owner_symbols=owner_symbols, held_symbols=held,
         ctx={"regime": regime, "vixElevated": vix_elevated}, limit=64)
+    # Keep the source's schedule precision on every consumer surface.  The
+    # brief previously received only title/countdown for imminent rows, so the
+    # integrated AI could not state a known FOMC time and called it unknown.
+    # Date-only schedules remain explicit instead of inventing a clock time.
+    for event in items_all:
+        when_ja = str(event.get("jstTime") or "").strip()
+        if not when_ja:
+            event_date = str(event.get("date") or "").strip()
+            when_ja = (event_date.replace("-", "/") + "・時刻未公表"
+                       if re.fullmatch(r"\d{4}-\d{2}-\d{2}", event_date) else "日時未確認")
+        event["whenJa"] = when_ja
     # v13.5.60 (owner iPhone review 2026-09-07: 「せめて向こう1ヶ月先まで」).
     # The display list used to stop at 8 rows, which on a busy week ended
     # ~11 days out. The list now carries every scheduled event inside the
@@ -7947,6 +7958,10 @@ def _important_events_data():
         "displayImpact": event.get("displayImpact"),
         "linkedAssets": list(event.get("linkedAssets") or [])[:12],
         "title": event.get("title"),
+        "eventTimeUtc": event.get("eventTimeUtc"),
+        "date": event.get("date"),
+        "jstTime": event.get("jstTime"),
+        "whenJa": event.get("whenJa"),
     } for event in items_all if event.get("countdown") in ("D", "D-1")]
     return {"status": snap.get("status"), "asOf": snap.get("asOf"),
             "timezone": "Asia/Tokyo", "engineVersion": "important-events-v1",
