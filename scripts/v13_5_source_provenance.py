@@ -39,7 +39,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_jp_fiscal_monitor.py': '3584e845b3c66c2ebdbb41aae6e8b3bfd9866117',
     'argus_jp_fiscal_runtime.py': '5ba1577db358b3fe270b81e8f4685efb0f20d87e',
     'argus_jp_fiscal_sources.py': 'cf2b63e3062a193eab8b3c990005e5e4033a6150',
-    'docs/V13_7_JP_FISCAL_MONITOR.md': '58498e9819208825f203c37acff3d5c33c473dff',
+    'docs/V13_7_JP_FISCAL_MONITOR.md': 'c5c2d4f4b566ff0e06e8749a62553712ffd9b52e',
     'ops/fiscal/cao_20260730.json': '72b7f9ded706ebf1aa9ae92ebb4396b8bf055ae6',
     'scripts/extract_cao_fiscal_table.py': '7b274ad6a393577802e0c6efb0d09882c244df32',
     'test_argus_jp_fiscal_monitor.py': 'c15814b4a0ca8f0c38e137e882320b0d377315e5',
