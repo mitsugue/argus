@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'argus_tick_durability.py': 'fd2f2a97652cf1f3bb18084fd1aa5f54a19247da',
     'argus_jp_fiscal_monitor.py': '3584e845b3c66c2ebdbb41aae6e8b3bfd9866117',
     'argus_jp_fiscal_runtime.py': '5ba1577db358b3fe270b81e8f4685efb0f20d87e',
     'argus_jp_fiscal_sources.py': 'cf2b63e3062a193eab8b3c990005e5e4033a6150',
