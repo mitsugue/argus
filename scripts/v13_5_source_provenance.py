@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.14"
+PRODUCT_VERSION = "v13.7.15"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,7 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
-    'argus_jp_fiscal_monitor.py': 'a215a16a34581f15ad6609eddba62e51c33908f0',
+    'argus_jp_fiscal_monitor.py': '3584e845b3c66c2ebdbb41aae6e8b3bfd9866117',
     'argus_jp_fiscal_runtime.py': '5ba1577db358b3fe270b81e8f4685efb0f20d87e',
     'argus_jp_fiscal_sources.py': 'cf2b63e3062a193eab8b3c990005e5e4033a6150',
     'docs/V13_7_JP_FISCAL_MONITOR.md': 'c5c2d4f4b566ff0e06e8749a62553712ffd9b52e',
@@ -142,7 +142,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_ai_usage_runtime.py': 'f65f5bd3196c162ad1152a1468a5d2be531f778b',
     'argus_analysis_history_backup.py': 'ae9013e5b81e9bf743821cd6ef0ea17c1b829ceb',
     "argus_explanation_contract.py": "f51cbb07276b486327c405e71a36645e99731a61",
-    'argus_owner_dialogue.py': 'c9e90ff0f8ca92736c8b13b007d26d9b7e1ef808',
+    'argus_owner_dialogue.py': '1a69ea5771619efbab39b2fadc58526034add110',
     'argus_owner_dialogue_api.py': 'a389405f6c0571d3f3f11bbad7f8be0a7a0437e9',
     'argus_owner_dialogue_backup.py': '4560f85996da2d78a68ff0cb4e28a1cdb8bf50bc',
     'argus_owner_dialogue_recovery.py': 'bfc92ba9d12514167c622df5bcf04f87e945d721',
@@ -155,7 +155,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_ai_usage_runtime.py': 'f5f0e0fedc3caf85136684fa9d241b2e6e0d1975',
     'test_argus_analysis_history_backup.py': 'd0b721fe82d01f830727a98ef29a70f51a73df2f',
     'test_argus_owner_cached_inputs.py': '444cb79f894d9a756d42d0ad47ce646a3f1b36ea',
-    'test_argus_owner_dialogue.py': '6bb279b967eaf20974275999877541895d116371',
+    'test_argus_owner_dialogue.py': 'bff782b47a6fa2290aec53909d0c63ddf4478cca',
     'test_argus_owner_dialogue_api.py': '9bf956addfbe63debf9aa5c60c5e0a94374f9327',
     'test_argus_owner_dialogue_backup.py': '6fe13fa23a90a3a90930fbf96257a117ebee88b0',
     'test_argus_owner_dialogue_recovery.py': 'cd35ae9060ba9ce6ae20850306c7207d8ab60ecd',
@@ -165,7 +165,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/shared-market-context.test.cjs': '6ba958105e283011e25af76c3ce538e14833c75b',
     'web/src/components/assetDesk/AssetMarketContext.tsx': 'da84417e9b9a7d5861f0f65f3d2a11d95408a6c6',
     'web/src/components/dialogue/OwnerDialogue.css': '696bed395bce7b22fae7c7ddc2797f5b24b0a1dd',
-    'web/src/components/dialogue/OwnerDialogue.tsx': '92205a92073f60fe9213d1a5eb8169ae96d2e648',
+    'web/src/components/dialogue/OwnerDialogue.tsx': '12d6c6f800f2e08ff26b2d78b1eecd24da2ccf26',
     'web/src/components/today/MarketBriefCard.tsx': '7b8f0305a0346a43cea572f8954bae9f87cc8359',
     'web/src/components/today/MarketInternalsCard.tsx': 'f51d80a4bae476e9e20842d52a18cd92d68caaec',
     'web/src/components/today/SharedMarketContext.tsx': '0d126ec6d92e76957a4b58ef532e9b99b85b6f13',

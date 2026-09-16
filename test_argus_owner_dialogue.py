@@ -1,6 +1,7 @@
 from copy import deepcopy
 import pytest
 import argus_owner_dialogue as dialogue
+import argus_jp_fiscal_monitor as fiscal
 import argus_market_brief as brief
 
 AT='2026-09-13T00:00:00Z'
@@ -19,6 +20,39 @@ def context(**kwargs):
 
 
 def answer():return {key:{'textJa':'根拠を確認できていません。','kind':'UNKNOWN','evidenceIds':[]} for key in brief.UNIFIED_SECTIONS}
+
+
+def test_private_fiscal_assumption_uses_saved_case_without_changing_official_history():
+    from test_argus_jp_fiscal_monitor import rows, AT as fiscal_at
+    measured = fiscal.calculate(rows(), as_of=fiscal_at)
+    reference = {'id':'saved-fiscal-environment','status':'AVAILABLE',
+        'cases':{'baseline':{'fiscal':{'id':measured['id'],'status':'AVAILABLE',
+            'values':measured['values'],'definition':measured['definition']}}},
+        'sources':[{'sourceHash':'a'*64,'knownAt':fiscal_at}]}
+    original = deepcopy(reference)
+    snapshot = market_brief()
+    public = snapshot['unifiedContext']
+    public['fiscalEnvironment'] = reference
+    public['contextId'] = dialogue.digest({key:value for key,value in public.items() if key!='contextId'})
+    result = dialogue.build_context(brief=snapshot,symbol='N225',market='JP',horizon=5,
+        question='政府の実効金利が4%になったら？',received_at=fiscal_at,
+        hypothesis={'kind':'FISCAL_ASSUMPTION','effectiveRatePct':4})
+    calculation = result['calculatedHypothesis']
+    assert calculation['status']=='AVAILABLE'
+    assert calculation['sourceCaseId']==measured['id']
+    assert calculation['baselinePressurePoints']==pytest.approx(measured['values']['pressurePoints'])
+    assert calculation['value']==pytest.approx((4-3)/103*200+5)
+    assert calculation['officialHistoryWriteAllowed'] is False
+    assert calculation['notificationAllowed'] is False
+    assert calculation['stockPriceForecast'] is None
+    assert result['officialPredictionMutation'] is False
+    assert reference==original
+    assert any('政府の実効金利' in row['text'] for row in result['facts'])
+    with pytest.raises(ValueError, match='fiscal_assumption_fields_invalid'):
+        dialogue.hypothesis_calculation({'kind':'FISCAL_ASSUMPTION','marketYieldPct':4},
+            fiscal_reference=reference,cutoff=fiscal_at)
+    assert fiscal.reference_scenario(reference,as_of='2026-09-15T00:00:00Z',
+        growth_pct=2)['status']=='UNAVAILABLE'
 
 
 @pytest.mark.parametrize('mutation', [None, 'future', 'wrong_event', 'missing_source', 'legacy'])
