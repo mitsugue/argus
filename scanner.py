@@ -42,6 +42,7 @@ import argus_remote_recovery  # bounded cold-restore delta for compact journal p
 import argus_remote_nonce_anchor  # bounded private nonce-authority epochs
 import argus_calibration  # Calibration Ledger v4 foundation: cohorts/epochs/scoring (pure, v10.68)
 import argus_market_clock  # Calibration Ledger v4 Phase 2: market-specific forecast clocks (pure, v10.69)
+import argus_jp_fiscal_runtime
 import argus_td_warm  # v13.5.54: Twelve Data Basic-plan warm scheduler core (pure; owner 2026-09-05)
 import argus_market_data_truth  # v13 Round 2A: canonical provider-neutral market truth
 import argus_posture  # Calibration Ledger v4: multidimensional posture scoring (pure, v10.74)
@@ -10875,6 +10876,7 @@ def _collect_institutional_intel_and_warm():
             _jp_market_engine_pit_inputs(warm=True).get("sourceStatus") or {})
     except Exception as exc:
         out["jpMarketEngineInputWarm"] = {"error": type(exc).__name__}
+    out["jpFiscalEnvironmentWarm"] = _jp_fiscal_environment_warm()
     return out
 
 
@@ -17721,6 +17723,10 @@ def _compose_market_brief():
         _TODAY_INTELLIGENCE, cutoff=brief["generatedAt"])
     brief["numericalResearch"] = research
     brief["facts"].extend(argus_jp_market_research.explanation_facts(research))
+    fiscal = _jp_fiscal_environment_document()
+    if fiscal.get("id"):
+        brief["fiscalEnvironment"] = argus_jp_fiscal_runtime.context_reference(fiscal)
+        brief["facts"].extend(argus_jp_fiscal_runtime.explanation_facts(fiscal))
     return brief
 
 
@@ -18066,8 +18072,12 @@ def _web_push_tick():
                 projected = copy.deepcopy(event)
                 projected['ownerState'] = (owner[symbol] or {}).get('ownerState') or 'watch'
                 owner_events.append(projected)
-        _WEB_PUSH.tick(argus_web_push.proposals(
-            calendar, events, time.time(), owner_events=owner_events))
+        proposals = argus_web_push.proposals(
+            calendar, events, time.time(), owner_events=owner_events)
+        if not _JP_FISCAL_REFRESH_STATE.get("pendingPersistence"):
+            proposals.extend(argus_jp_fiscal_runtime.notification_proposals(
+                _MARKET_LEDGER, now=time.time()))
+        _WEB_PUSH.tick(proposals)
     except Exception as exc:
         add_log(f"web-push tick unavailable: {type(exc).__name__}")
 
@@ -38647,6 +38657,84 @@ def _jp_market_internals_cached():
     except Exception as exc:
         return {"schemaVersion": jp_market_internals.SCHEMA, "status": "UNAVAILABLE", "reason": type(exc).__name__,
                 "actionAuthority": False, "automaticAiCalls": 0}
+
+
+_JP_FISCAL_REFRESH_LOCK = threading.Lock()
+_JP_FISCAL_REFRESH_STATE = {"status": "NOT_RUN", "persistenceStatus": "UNVERIFIED",
+                           "pendingPersistence": False}
+
+
+def _jp_fiscal_environment_document():
+    """Public reads only project the small saved monitor, with no provider calls."""
+    document = argus_jp_fiscal_runtime.public_document(_MARKET_LEDGER)
+    document["worker"] = dict(_JP_FISCAL_REFRESH_STATE)
+    return document
+
+
+@app.route("/api/argus/jp-fiscal-environment", methods=["GET"])
+def api_argus_jp_fiscal_environment():
+    return jsonify(_jp_fiscal_environment_document())
+
+
+def _jp_fiscal_environment_warm():
+    """Join the existing collect lane without blocking its other data feeds.
+
+    Only one collector runs. Observations use the existing append-only ledger,
+    writer lock and checkpoint. A started thread is never reported as saved.
+    """
+    if not _JP_FISCAL_REFRESH_LOCK.acquire(blocking=False):
+        return {"status": "ALREADY_RUNNING"}
+    _JP_FISCAL_REFRESH_STATE.update(status="RUNNING", startedAt=_ai_now_iso(),
+                                   errorClass=None, finishedAt=None)
+
+    def work():
+        try:
+            with _DURABLE_CHECKPOINT_LOCK:
+                original = argus_jp_fiscal_runtime.ledger_slice(_MARKET_LEDGER)
+            now = datetime.now(TZ_JST)
+            calendar = []
+            try:
+                for offset in range(15):
+                    day = now.date() - timedelta(days=offset)
+                    calendar.append({"Date": day.isoformat(), "HolDiv": "1" if
+                        argus_market_clock.canonical_trading_day(argus_market_clock.JP_EQUITY, day) else "0"})
+            except argus_market_clock.CalendarUnavailableError:
+                calendar = []
+            result = argus_jp_fiscal_runtime.refresh(original, now_iso=_ai_now_iso(),
+                calendar=calendar, get=requests.get)
+            if not result["changed"] and not _JP_FISCAL_REFRESH_STATE.get("pendingPersistence"):
+                _JP_FISCAL_REFRESH_STATE["status"] = "NOT_DUE"
+                return
+            with _DURABLE_CHECKPOINT_LOCK:
+                if result["changed"]:
+                    merged = argus_market_ledger.merge_restored_state(_MARKET_LEDGER, result["state"])
+                    _MARKET_LEDGER.clear()
+                    _MARKET_LEDGER.update(merged)
+                report_id = (_MARKET_LEDGER["fiscalMonitor"].get("report") or {}).get("id")
+                _JP_FISCAL_REFRESH_STATE.update(status=_MARKET_LEDGER["fiscalMonitor"]["acquisitionStatus"],
+                    reportId=report_id, pendingPersistence=True,
+                    persistenceStatus="SAVING", sourceRequests=result["requests"])
+                if result["changed"]:
+                    _journal("jp_fiscal_environment_updated", "market_ledger", report_id,
+                        {"importedRows": _MARKET_LEDGER["fiscalMonitor"]["importedRows"],
+                         "acquisitionStatus": result["status"]}, origin="cron")
+                checkpoint = _osint_persist()
+                verified = checkpoint.get("verified") is True and checkpoint.get("readBackVerified") is True
+                _JP_FISCAL_REFRESH_STATE.update(persistenceStatus="VERIFIED" if verified else "UNVERIFIED",
+                    verifiedReportId=report_id if verified else None, pendingPersistence=not verified)
+        except Exception as exc:
+            _JP_FISCAL_REFRESH_STATE.update(status="FAILED", errorClass=type(exc).__name__)
+        finally:
+            _JP_FISCAL_REFRESH_STATE["finishedAt"] = _ai_now_iso()
+            _JP_FISCAL_REFRESH_LOCK.release()
+
+    try:
+        threading.Thread(target=work, name="argus-jp-fiscal-collect", daemon=True).start()
+    except Exception as exc:
+        _JP_FISCAL_REFRESH_STATE.update(status="FAILED", errorClass=type(exc).__name__)
+        _JP_FISCAL_REFRESH_LOCK.release()
+        return dict(_JP_FISCAL_REFRESH_STATE)
+    return {"status": "ACCEPTED", "completed": False}
 
 
 _CFTC_JPY_REFRESH_LOCK = threading.Lock()

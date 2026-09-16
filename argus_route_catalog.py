@@ -182,6 +182,7 @@ ROUTE_CATALOG = (
     RouteCatalogEntry("/api/argus/institutional-intelligence/missed", ("POST",), "api_argus_intel_missed", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/institutional-intelligence/missed/apply", ("POST",), "api_argus_intel_missed_apply", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/japan-watchlist", ("GET",), "api_argus_japan_watchlist", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
+    RouteCatalogEntry("/api/argus/jp-fiscal-environment", ("GET",), "api_argus_jp_fiscal_environment", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/jp-movers-push", ("POST",), "api_argus_jp_movers_push", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/jp-universe", ("GET",), "api_argus_jp_universe", "AUTH_OPERATIONAL", "ADMIN_TOKEN", False, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/jp-watchlist-codes", ("GET",), "api_argus_jp_watchlist_codes", "AUTH_OPERATIONAL", "ADMIN_TOKEN", False, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),

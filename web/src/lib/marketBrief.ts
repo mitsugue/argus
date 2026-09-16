@@ -29,6 +29,7 @@ export interface MarketBrief {
       { textJa: string; evidenceIds: string[]; kind: 'FACT' | 'INFERENCE' | 'UNKNOWN' }>;
   } | null;
   unifiedContext?: { contextId: string; facts: Array<MarketBriefFact & { evidenceId: string }>;
+    fiscalEnvironment?: unknown;
     previousFacts: Array<MarketBriefFact & { evidenceId: string }>; previousAt: string | null;
     researchPackages?: Array<{ packageId: string; packageVersion: string; labelJa: string;
       coverage: { historyStart: string | null; historyEnd: string | null; historyCount: number };

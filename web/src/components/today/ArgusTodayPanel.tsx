@@ -1,3 +1,4 @@
+import { revealNewsArticle } from '../../lib/revealNewsArticle';
 import { OwnerDialogue } from '../dialogue/OwnerDialogue';
 import type { Job } from '../dialogue/OwnerDialogue';
 import { OwnerOverview } from '../dialogue/OwnerOverview';
@@ -630,9 +631,10 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   // five items instead of one; a tap lands on the matching Alerts section.
   const openNewsDetails = (anchorId?: string) => {
     onNavigate('notifications');
-    const jump = () => (document.getElementById(anchorId ?? '')
-      ?? document.getElementById('news-intel'))
-      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const jump = () => {
+      const element = document.getElementById(anchorId ?? '') ?? document.getElementById('news-intel');
+      if (element) revealNewsArticle(element, 'smooth');
+    };
     window.setTimeout(jump, 350);
     window.setTimeout(jump, 1000);
   };

@@ -4,8 +4,10 @@ import csv
 import hashlib
 import io
 import json
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+from argus_jp_fiscal_sources import ledger_series as fiscal_ledger_series
 
 SCHEMA_VERSION = "argus-market-ledger-v1"
 METHOD_VERSION = "market-ledger-phase1-v1"
@@ -85,6 +87,7 @@ SERIES = {
 }
 
 BREADTH_PREFIXES = ("breadth", "breadth.first_section", "breadth.prime", "breadth.all")
+SERIES.update(fiscal_ledger_series())
 
 
 def empty_state() -> Dict[str, Any]:
@@ -129,6 +132,13 @@ def normalize_state(state: Any) -> Dict[str, Any]:
     out["lastRebuiltObservationCount"] = int(
         src.get("lastRebuiltObservationCount", len(out["observations"])) or 0)
     out["lastRebuiltAt"] = src.get("lastRebuiltAt")
+    if "fiscalMonitor" in src:
+        monitor = src["fiscalMonitor"]
+        if not isinstance(monitor, dict) or monitor.get("schemaVersion") != "jp-fiscal-monitor-state-v1":
+            raise ValueError("fiscal_monitor_state_invalid")
+        if len(json.dumps(monitor, ensure_ascii=False, allow_nan=False).encode()) > 512_000:
+            raise ValueError("fiscal_monitor_state_size")
+        out["fiscalMonitor"] = deepcopy(monitor)
     return out
 
 
@@ -176,6 +186,9 @@ def merge_restored_state(local: Dict[str, Any],
             int(restored.get("lastRebuiltObservationCount") or 0),
             len(merged["observations"]))
     merged["lastRebuiltAt"] = restored.get("lastRebuiltAt")
+    monitors = [s["fiscalMonitor"] for s in (merged, restored) if s.get("fiscalMonitor")]
+    if monitors:
+        merged["fiscalMonitor"] = deepcopy(max(monitors, key=lambda s: str(s.get("updatedAt") or "")))
     return merged
 
 
@@ -186,9 +199,12 @@ def _hash(obj: Any, n: int = 20) -> str:
 
 def state_hash(state: Dict[str, Any]) -> str:
     st = normalize_state(state)
-    return _hash({k: st[k] for k in ("observations", "derivedMetrics",
+    material = {k: st[k] for k in ("observations", "derivedMetrics",
                                      "turningPoints", "backtests", "imports",
-                                     "rolledBackImports")}, 32)
+                                     "rolledBackImports")}
+    if "fiscalMonitor" in st:
+        material["fiscalMonitor"] = st["fiscalMonitor"]
+    return _hash(material, 32)
 
 
 def rebuild_required(state: Dict[str, Any]) -> bool:
