@@ -8,6 +8,7 @@ const genres = read('src/types/assetItem.ts');
 const summary = read('src/components/assetDesk/AssetDecisionSummary.tsx');
 const details = read('src/components/assetDesk/AssetDecisionDetails.tsx');
 const today = read('src/components/today/ArgusTodayPanel.tsx');
+const editorial = read('src/components/today/ArgusEditorialSurface.tsx');
 const chart = read('src/components/chart/ChartIntelligencePanel.tsx');
 const newsHook = read('src/hooks/useNewsIntelligence.ts');
 const notifications = read('src/lib/notifications.ts');
@@ -31,6 +32,9 @@ assert.doesNotMatch(details, /検証済み目標なし|検証済み無効化条�
 assert.match(today, /NEXT_REVIEW_REASON_JA/);
 assert.match(today, /正本データの更新時刻を確認/);
 assert.doesNotMatch(today, /<span>\{view\.canonicalDecision\.nextReviewConditionCodes\[0\]/);
+assert.match(editorial, /required-nikkei-comparison-fallback-v1/);
+assert.match(editorial, /!hasChart && chartReady/);
+assert.match(editorial, /!chartReady && discussion/);
 
 assert.match(chart, /buildTodayProjection/);
 assert.match(chart, /方向確率を検証できないため、チャートは表示しません/);
