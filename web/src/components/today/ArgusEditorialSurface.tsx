@@ -20,6 +20,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
   const chart = brief.calculationSnapshots?.['5']?.comparison;
   const at = brief.aiDiagnostics?.completedAt ?? brief.generatedAt;
   const hasChart = plan.elements.some(row => row.id === 'nikkei-comparison');
+  const chartReady = validJapanMarketComparison(chart, 5);
   const canDiscuss = !archived && (!retained || !!brief.analysisHistory?.recordId);
   const discussion = canDiscuss ? <OwnerDialogue symbol="N225" market="JP" horizon={5} baseContextId={plan.contextId}
     referenceRecordId={retained ? brief.analysisHistory?.recordId : undefined} /> : null;
@@ -39,9 +40,9 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
     {plan.elements.map(choice => {
       const source = brief.presentationCatalog!.elements.find(row => row.id === choice.id)!;
       const className = `argus-editorial__element is-${choice.emphasis} placement-${choice.placement} element-${choice.id}`;
-      if (choice.id === 'nikkei-comparison') return validJapanMarketComparison(chart, 5)
+      if (choice.id === 'nikkei-comparison') return chartReady
         ? <div className={className} key={choice.id} data-payload-id={source.payloadId}>
-          <JapanMarketComparisonChart document={chart} />
+          <JapanMarketComparisonChart document={chart!} />
           {discussion}
         </div> : null;
       const evidenceLabel = editorialElementLabel(choice.id);
@@ -70,7 +71,12 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
         : <section className={className} key={key} aria-label={labels[key]} data-payload-id={source.payloadId}>
           <h2>{archived && key === 'view' ? '当時の見立て' : labels[key]}</h2>{content}</section>;
     })}
-    {!hasChart && discussion}
+    {!hasChart && chartReady && <div className="argus-editorial__element placement-support element-nikkei-comparison"
+      data-argus-contract="required-nikkei-comparison-fallback-v1">
+      <JapanMarketComparisonChart document={chart!} />
+      {discussion}
+    </div>}
+    {!chartReady && discussion}
     <details className="argus-editorial__evidence"><summary>説明の根拠と、今回の構成について</summary>
       <p>{plan.intentJa}</p>
       {plan.elements.map(choice => <p key={choice.id}><b>{labels[choice.id as Section] ?? editorialElementLabel(choice.id) ?? '比較チャート'}：</b>{choice.purposeJa}</p>)}
