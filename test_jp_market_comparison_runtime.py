@@ -144,4 +144,23 @@ def test_runtime_bounds_market_evidence_before_comparison():
     days, rows = history()
     with pytest.raises(ValueError, match="market_evidence_history_bound_exceeded"):
         cached_index_comparison(rows, cutoff=days[-1] + "T08:00:00Z", session_dates=days,
-                                state_rows=[{}] * 20001)
+                                state_rows=[{}] * 60001)
+
+
+def test_ten_year_candidate_search_includes_past_years_and_exposes_its_scope():
+    # Deliberately synthetic trading-day sequence, independently passed as calendar.
+    first=date(2016,9,16)
+    days=[(first+timedelta(days=i)).isoformat() for i in range(3652)
+          if (first+timedelta(days=i)).weekday()<5]
+    rows=[{'instrumentId':'NIKKEI_225_INDEX','field':'close','date':day,'close':40000+(i%20)*20,
+           'availableFrom':day+'T07:00:00Z','sourceRef':'test:ten-year-direct-index'}
+          for i,day in enumerate(days)]
+    result=cached_index_comparison(rows,cutoff=days[-1]+'T23:59:59Z',session_dates=days)
+    coverage=result['comparison']['historyCoverage']
+    assert coverage['sourceBars']>2400
+    assert coverage['candidateStart']<'2017-01-01'
+    assert all(str(year) in coverage['candidatesByYear'] for year in range(2017,2026))
+    assert any(row['anchorDate']<'2020-01-01' for row in result['selection']['selected'])
+    assert result['selection']['outcomesUsedForSelection'] is False
+    assert coverage['allMarketFeaturesTenYearsVerified'] is False
+    assert coverage==result['historyCoverage']

@@ -25,7 +25,7 @@ def build_feature_history(*, cutoffs: Sequence[str], **inputs) -> dict[str, Any]
     carry the content digest of those same references to bound cache size.
     """
     from jp_market_engine import _instant
-    if not cutoffs or len(cutoffs) > 1001 or any(_instant(at) is None for at in cutoffs):
+    if not cutoffs or len(cutoffs) > 3001 or any(_instant(at) is None for at in cutoffs):
         raise ValueError("bounded_valid_feature_cutoffs_required")
     ordered = sorted(set(cutoffs), key=_instant)
     groups = {"features": [], "conditions": []}
@@ -45,7 +45,7 @@ def build_feature_history(*, cutoffs: Sequence[str], **inputs) -> dict[str, Any]
                 revision = revisions.get(key, -1) + 1
                 previous[key], revisions[key] = digest, revision
                 groups[group].append({**body, "revision": revision, "knownAt": at})
-        if sum(map(len, groups.values())) > 20000:
+        if sum(map(len, groups.values())) > 60000:
             raise ValueError("market_evidence_history_bound_exceeded")
     return {"schemaVersion": "jp-market-feature-history-v1", **groups,
             "latest": latest, "firstCutoff": ordered[0], "lastCutoff": ordered[-1],

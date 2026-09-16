@@ -97,6 +97,12 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
       <li><i className="jp-comparison__sample jp-comparison__sample--reference" />過去のその後</li>
       <li><i className="jp-comparison__sample jp-comparison__sample--forecast" />現在の計算予測</li>
     </ul>
+    {document.historyCoverage && <p className="jp-comparison__scale">
+      候補を探した期間：{document.historyCoverage.candidateStart ?? '確認できていません'}
+      {document.historyCoverage.candidateEnd && `〜${document.historyCoverage.candidateEnd}`}。
+      {document.historyCoverage.candidateCount.toLocaleString('ja-JP')}局面から
+      {document.historyCoverage.selectedCount}件を表示しています。
+    </p>}
     <div className="jp-comparison__controls">
       <label>比較する局面 <select value={document.candidates.some(item => item.snapshotId === selectedId) ? selectedId : 'all'}
         onChange={event => setSelectedId(event.target.value)}>
@@ -114,6 +120,18 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
       計算予測は検証中です。帯は比較事例の中央半分の範囲で、将来の価格が入る確率ではありません。</p>}
     <details className="jp-comparison__details"><summary>比較元・尺度・検証状態を見る</summary>
       <p>{document.scaleExplanation}</p>
+      {document.historyCoverage && <>
+        <p>価格の収録：{document.historyCoverage.sourceStart}〜{document.historyCoverage.sourceEnd}
+          （{document.historyCoverage.sourceBars.toLocaleString('ja-JP')}営業日）。
+          全指標がこの期間すべてにそろっているという意味ではありません。</p>
+        <p>年別の検索対象：{Object.entries(document.historyCoverage.candidatesByYear)
+          .map(([year, count]) => `${year}年 ${count}局面`).join(' / ')}</p>
+        <p>営業日表または価格の欠損による除外：
+          {document.historyCoverage.excluded.missingCalendarOrPriceSession}局面。
+          直近の重複区間を除き、似た条件の候補を最大{document.historyCoverage.maximumSelected}件選びます。
+          年ごとの枠や、その後の値動きの良し悪しで選んでいません。</p>
+      </>}
+
       {document.valuationEvidence && <p>
         {document.valuationEvidence.date}の指数ベースPER {valuationNumber(document.valuationEvidence.per)}倍、
         終値・指数ベースPERから算出した概算EPS {valuationNumber(document.valuationEvidence.eps)}円。
