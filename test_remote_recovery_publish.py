@@ -2492,6 +2492,27 @@ def test_brief_nonurgent_changes_coalesce_but_p0_changes_bypass(monkeypatch):
     assert scanner._market_brief_refresh(allow_ai=True)['unifiedSummary']['view'] == 'new'
 
 
+def test_saved_fiscal_report_keeps_verified_restore_truth_before_worker_runs(monkeypatch):
+    report_id = 'fiscal-report-restored'
+    monkeypatch.setattr(scanner.argus_jp_fiscal_runtime, 'public_document',
+                        lambda _ledger: {'id': report_id, 'status': 'AVAILABLE'})
+    monkeypatch.setattr(scanner, '_MARKET_LEDGER', {})
+    monkeypatch.setattr(scanner, '_JP_FISCAL_REFRESH_STATE', {
+        'status': 'NOT_RUN', 'persistenceStatus': 'UNVERIFIED',
+        'pendingPersistence': False})
+    monkeypatch.setattr(scanner, '_OSINT_PERSIST_STATE', {'restored': True})
+    monkeypatch.setattr(scanner, '_DURABLE_STATE', {
+        'lastRestoreAt': '2026-09-16T13:33:00Z'})
+
+    document = scanner._jp_fiscal_environment_document()
+
+    assert document['worker'] == {
+        'status': 'RESTORED', 'persistenceStatus': 'VERIFIED',
+        'pendingPersistence': False, 'reportId': report_id,
+        'verifiedReportId': report_id,
+        'restoredAt': '2026-09-16T13:33:00Z'}
+
+
 def test_brief_reuse_expires_on_hour_or_future_input_eligibility(monkeypatch):
     from datetime import datetime, timezone
     current = [datetime(2026, 1, 2, 10, 5, tzinfo=timezone.utc)]
