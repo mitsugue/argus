@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 
 from scripts.run_breadth_freshness import (
+    RequestFailure,
     classify_terminal,
     ledger_summary,
     run,
@@ -130,4 +131,52 @@ def test_already_published_run_is_get_only_and_verifies_identity():
     assert evidence["backendIdentityStable"] is True
     assert evidence["soakIdentityStable"] is True
     assert evidence["before"]["lagTradingDays"] == 0
+    assert all(payload is None for _, payload in calls)
+
+
+def test_transient_preflight_502_is_retried_without_starting_a_job():
+    calls = []
+    sleeps = []
+
+    def fake_request(url, **kwargs):
+        calls.append((url, kwargs.get("payload")))
+        if url.endswith("/healthz") and sum(
+                1 for called, _ in calls if called.endswith("/healthz")) == 1:
+            raise RequestFailure("http_502")
+        if url.endswith("/healthz"):
+            return {"backendVersion": "13.7.16", "buildSha": "f" * 40}
+        if url.endswith("/readyz"):
+            return {"ready": True}
+        if url.endswith("/api/argus/market-ledger"):
+            return {**_ledger("2026-09-16"),
+                    "latestConfirmedTradingDate": "2026-09-16"}
+        if url.endswith("/api/argus/admin/diagnostics/operational"):
+            return {
+                "service": {"backendVersion": "13.7.16", "buildSha": "f" * 40,
+                            "processBootedAt": "2026-09-16T09:00:00+09:00"},
+                "features": {"soakState": "running", "soakArmed": True},
+            }
+        raise AssertionError(url)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        artifact = Path(tmp) / "evidence.json"
+        result = run(
+            base_url="https://example.test",
+            token="redacted",
+            artifact_path=artifact,
+            attempts=3,
+            retry_seconds=600,
+            poll_seconds=30,
+            max_wait_seconds=1,
+            now=dt.datetime(2026, 9, 16, 9, tzinfo=dt.timezone.utc),
+            request=fake_request,
+            sleeper=sleeps.append,
+        )
+        evidence = json.loads(artifact.read_text())
+
+    assert result == 0
+    assert sleeps == [30]
+    assert evidence["transientReadRetries"] == [{
+        "path": "/healthz", "attempt": 1, "errorClass": "http_502",
+    }]
     assert all(payload is None for _, payload in calls)

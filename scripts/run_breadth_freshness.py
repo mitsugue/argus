@@ -288,6 +288,13 @@ def _read_optional(
         return None
 
 
+def _transient_read_failure(error: RequestFailure) -> bool:
+    marker = str(error).lower()
+    return marker.startswith("transport_") or marker in {
+        "http_429", "http_502", "http_503", "http_504",
+    }
+
+
 def _write_artifact(path: Path, report: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
@@ -322,11 +329,31 @@ def run(
             "workerConcurrency": 1,
         },
         "attempts": [],
+        "transientReadRetries": [],
     }
+    read_attempts = max(1, attempts)
+    read_retry_seconds = min(max(1, poll_seconds), 60)
+
+    def read(path: str, *, timeout: int) -> Dict[str, Any]:
+        url = f"{base}{path}"
+        for read_attempt in range(1, read_attempts + 1):
+            try:
+                return request(url, timeout=timeout)
+            except RequestFailure as exc:
+                if read_attempt >= read_attempts or not _transient_read_failure(exc):
+                    raise
+                report["transientReadRetries"].append({
+                    "path": path,
+                    "attempt": read_attempt,
+                    "errorClass": str(exc),
+                })
+                sleeper(read_retry_seconds)
+        raise AssertionError("unreachable")
+
     try:
-        health_before = request(f"{base}/healthz", timeout=180)
-        ready_before = request(f"{base}/readyz", timeout=180)
-        ledger_before = request(f"{base}/api/argus/market-ledger", timeout=240)
+        health_before = read("/healthz", timeout=180)
+        ready_before = read("/readyz", timeout=180)
+        ledger_before = read("/api/argus/market-ledger", timeout=240)
         quality_before = _read_optional(
             base, "/api/argus/admin/diagnostics/operational", token, request)
         before = ledger_summary(ledger_before)
@@ -377,11 +404,9 @@ def run(
                 deadline = time.monotonic() + max_wait_seconds
                 final_job = {}
                 while time.monotonic() < deadline:
-                    status_body = request(
-                        f"{base}/api/argus/foundation-jobs?"
-                        + urllib.parse.urlencode({"jobId": job_id}),
-                        timeout=180,
-                    )
+                    status_body = read(
+                        "/api/argus/foundation-jobs?"
+                        + urllib.parse.urlencode({"jobId": job_id}), timeout=180)
                     final_job = _job_row(status_body, job_id)
                     if str(final_job.get("status") or "").lower() in TERMINAL:
                         break
@@ -390,7 +415,7 @@ def run(
                     final_job = {"jobId": job_id, "status": "failed",
                                  "errorClass": "bounded_poll_timeout"}
 
-                ledger_after = request(f"{base}/api/argus/market-ledger", timeout=240)
+                ledger_after = read("/api/argus/market-ledger", timeout=240)
                 after = ledger_summary(ledger_after)
                 if after.get("lagTradingDays") is None:
                     after["lagTradingDays"] = _weekday_gap(
@@ -420,8 +445,8 @@ def run(
                 else "no_new_session" if report["classification"] == "no_new_session"
                 else "failure"
             )
-        health_after = request(f"{base}/healthz", timeout=180)
-        ready_after = request(f"{base}/readyz", timeout=180)
+        health_after = read("/healthz", timeout=180)
+        ready_after = read("/readyz", timeout=180)
         quality_after = _read_optional(
             base, "/api/argus/admin/diagnostics/operational", token, request)
         backend_after = _data_quality_identity(quality_after)
