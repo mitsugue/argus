@@ -80,7 +80,7 @@ try {
   await page.goto(publicUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForFunction((sha) => globalThis.__ARGUS_BUILD_SHA__ === sha,
     candidateSha, { timeout: 30_000 });
-  assert.equal(await page.evaluate(() => globalThis.__ARGUS_PRODUCT_VERSION__), 'v13.7.15');
+  assert.equal(await page.evaluate(() => globalThis.__ARGUS_PRODUCT_VERSION__), 'v13.7.16');
   evidence.identitiesConverged = true;
 
   const producerTriggerId = `full-release-simulation-${runNumber}-${candidateSha.slice(0, 12)}`;
