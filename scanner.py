@@ -17693,7 +17693,9 @@ def _brief_sq_events():
         stage = event.get("stage")
         phase = {"TODAY": "本日", "LAST_TRADING_DAY": "本日が最終取引日",
                  "EVENT_WEEK": "今週", "UPCOMING": "予定"}.get(stage, "予定")
-        rows.append({"eventId": event["eventId"], "title": event["title"] + " " + event["sqDate"],
+        rows.append({"eventId": event["eventId"], "title": event["title"],
+                     "whenJa": event["sqDate"].replace("-", "/") + "・寄付き基準",
+                     "sqDate": event["sqDate"],
                      "countdown": phase, "calendarDaysUntil": event["calendarDaysUntil"],
                      "imminent": stage in {"TODAY", "LAST_TRADING_DAY", "EVENT_WEEK"},
                      "sourceLabelJa": "JPX公式日程", "sourceUrl": event["sourceRef"],
@@ -17765,8 +17767,9 @@ def _market_brief_ai_polish(brief):
         "impact=利用者の銘柄への影響、next=次に確認すること、invalidation=見方を変える条件。"
         "各項目を {textJa:文字列,evidenceIds:根拠IDの配列,kind:FACTまたはINFERENCEまたはUNKNOWN} とする。"
         "根拠にない数値・割合・確率・価格予測・売買指示は禁止。推論を観測済み事実と呼ばない。"
-        "数値・日付・価格は根拠欄と計算済みチャートに表示します。6項目のtextJaとpresentationの説明文では、"
-        "数値や日付を繰り返さず、変化の方向・意味・条件を言葉で伝えてください。"
+        "数値・価格は根拠欄と計算済みチャートに表示します。説明文では変化の方向・意味・条件を言葉で伝えてください。"
+        "ただし予定イベントへ言及するときは、入力根拠にある日時を名称の直後へ全角括弧で必ず添えてください。"
+        "時刻が公表されていない日程は日付と『時刻未公表』または『寄付き基準』を添え、時刻を推測しないでください。"
         "根拠IDや資料の時刻に含まれる数字を観測値として文章に転記しないでください。"
         "根拠IDは項目ごとに重複なしで最大6件。FACTはverificationがVERIFIEDの根拠だけを参照できる。"
         "CORROBORATED・UNCONFIRMEDの根拠を含む説明はINFERENCEにする。"
