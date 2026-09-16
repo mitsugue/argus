@@ -35,6 +35,8 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'scripts/run_breadth_freshness.py': '93922a3409750a1562fb928eb34933f5feb22a68',
+    'test_breadth_freshness_workflow.py': '4a7926a32e990576327d14db059504e57f7cc2a8',
     'argus_tick_durability.py': 'fd2f2a97652cf1f3bb18084fd1aa5f54a19247da',
     'argus_jp_fiscal_monitor.py': '3584e845b3c66c2ebdbb41aae6e8b3bfd9866117',
     'argus_jp_fiscal_runtime.py': '5ba1577db358b3fe270b81e8f4685efb0f20d87e',
