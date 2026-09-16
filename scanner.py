@@ -22216,10 +22216,11 @@ _LEDGER_COMMIT_METADATA_MAX_BYTES = 32 * 1024
 # valid.  Longer histories switch to one bounded GitHub comparison response.
 _LEDGER_ANCESTRY_FAST_PATH_COMMITS = 8
 # GitHub's unpaginated compare contract returns at most 250 commits and always
-# includes the newest commit.  Accept only a complete response whose declared
-# distance equals the returned linear parent chain; 251+ is therefore
-# fail-closed rather than partially trusted.
+# includes the newest commit. Verify every returned parent; bounded older
+# segments must join exactly before the complete ancestry can be admitted.
 _LEDGER_COMPARE_MAX_COMMITS = 250
+_LEDGER_COMPARE_MAX_SEGMENTS = 8
+_LEDGER_COMPARE_DEADLINE_SECONDS = 90
 _LEDGER_COMPARE_RESPONSE_MAX_BYTES = \
     argus_remote_recovery.MAX_SIDECAR_BYTES
 _OSINT_LOOP_BUDGET = {"fast": 0, "balanced": 1, "deep": 2, "war_room": 3}
@@ -26438,13 +26439,13 @@ def _bounded_ledger_commit_metadata(owner, repository, commit_sha):
 
 
 def _bounded_ledger_compare(owner, repository, base_commit_sha,
-                            exact_commit_sha):
+                            exact_commit_sha, *, _budget=None):
     """Prove one complete linear ancestry segment in a bounded response.
 
-    GitHub's unpaginated comparison is capped at 250 commits.  Requiring its
-    declared distance to equal the complete returned parent chain preserves
-    the existing no-merge rule without one network request per commit.  A
-    longer or truncated comparison is ambiguous and remains fail-closed.
+    GitHub returns at most 250 commits ending at the exact head. When the
+    declared distance is longer, verify the returned linear suffix and then
+    its predecessor back to the same authenticated base. Every link and the
+    summed distance must match. All segments share byte, call and time bounds.
     """
     owner = str(owner or "")
     repository = str(repository or "")
@@ -26462,6 +26463,14 @@ def _bounded_ledger_compare(owner, repository, base_commit_sha,
     request_url = (
         f"https://api.github.com/repos/{owner}/{repository}/compare/"
         f"{base}...{exact}")
+    if _budget is None:
+        _budget = {"calls": _LEDGER_COMPARE_MAX_SEGMENTS,
+                   "bytes": _LEDGER_COMPARE_RESPONSE_MAX_BYTES,
+                   "deadline": time.monotonic() + _LEDGER_COMPARE_DEADLINE_SECONDS}
+    if _budget["calls"] <= 0 or time.monotonic() >= _budget["deadline"]:
+        raise argus_remote_recovery.RecoveryBundleError(
+            "recovery_ledger_compare_incomplete")
+    _budget["calls"] -= 1
     response = None
     try:
         response = _recovery_github_get(
@@ -26478,10 +26487,13 @@ def _bounded_ledger_compare(owner, repository, base_commit_sha,
         for chunk in response.iter_content(chunk_size=16 * 1024):
             if not chunk:
                 continue
-            if len(encoded) + len(chunk) > \
-                    _LEDGER_COMPARE_RESPONSE_MAX_BYTES:
+            if time.monotonic() >= _budget["deadline"]:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_ledger_compare_incomplete")
+            if len(chunk) > _budget["bytes"]:
                 raise argus_remote_recovery.RecoveryBundleError(
                     "recovery_ledger_compare_oversized")
+            _budget["bytes"] -= len(chunk)
             encoded.extend(chunk)
         try:
             value = json.loads(encoded.decode("utf-8"))
@@ -26530,12 +26542,25 @@ def _bounded_ledger_compare(owner, repository, base_commit_sha,
                 total != ahead:
             raise argus_remote_recovery.RecoveryBundleError(
                 "recovery_ledger_compare_invalid")
-        if ahead > _LEDGER_COMPARE_MAX_COMMITS or len(commits) != ahead:
+        if ahead > _LEDGER_COMPARE_MAX_COMMITS * (_budget["calls"] + 1) or \
+                len(commits) != min(ahead, _LEDGER_COMPARE_MAX_COMMITS):
             raise argus_remote_recovery.RecoveryBundleError(
                 "recovery_ledger_compare_incomplete")
+        suffix = ahead > _LEDGER_COMPARE_MAX_COMMITS
+        segment_base = base
+        if suffix:
+            parents = commits[0].get("parents") if isinstance(commits[0], dict) else None
+            if not isinstance(parents, list) or len(parents) != 1:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_ledger_compare_incomplete")
+            segment_base = parents[0].get("sha") if isinstance(parents[0], dict) else None
+            if not re.fullmatch(r"[0-9a-f]{40}", str(segment_base or "")) or \
+                    segment_base in (base, exact):
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_ledger_compare_incomplete")
 
-        previous = base
-        visited = {base}
+        previous = segment_base
+        visited = {base, segment_base}
         for commit in commits:
             commit_sha = str(
                 commit.get("sha") if isinstance(commit, dict) else ""
@@ -26566,6 +26591,17 @@ def _bounded_ledger_compare(owner, repository, base_commit_sha,
         if previous != exact:
             raise argus_remote_recovery.RecoveryBundleError(
                 "recovery_ledger_compare_invalid")
+        if suffix:
+            response.close()
+            response = None
+            prefix = _bounded_ledger_compare(
+                owner, repository, base, segment_base, _budget=_budget)
+            if prefix["distance"] + len(commits) != ahead:
+                raise argus_remote_recovery.RecoveryBundleError(
+                    "recovery_ledger_compare_incomplete")
+        if time.monotonic() >= _budget["deadline"]:
+            raise argus_remote_recovery.RecoveryBundleError(
+                "recovery_ledger_compare_incomplete")
         return {
             "status": "verified", "ledgerBaseCommitSha": base,
             "exactCommitSha": exact, "distance": ahead,
