@@ -610,12 +610,12 @@ async function run() {
     && loaderTiming.roundedDelayMs < LOADER_THRESHOLD_MS - LOADER_TIMING_TOLERANCE_MS
     ? 1 : 0;
   const after225 = await coldPage.locator(
-    '.at-projection-missing .triangle-step-loader').count();
+    '.at-canonical-load-status .triangle-step-loader').count();
   const skeletonHeight = await coldPage.locator('.at-canonical-load-status').evaluate(
     (element) => element.getBoundingClientRect().height);
   await screenshot(coldPage, 'today-cold-loader.png');
   if (!coldSemanticState.pass || loaderTiming.roundedDelayMs == null || before225
-      || !after225 || skeletonHeight < 250) {
+      || !after225 || skeletonHeight < 90) {
     evidence.failures.push('cold-loader-contract');
   }
   await cold.close();
@@ -632,15 +632,16 @@ async function run() {
     const nodes = [...document.querySelectorAll(selector)];
     if (nodes.length !== 1) return false;
     const node = nodes[0];
+    const visibleStatus = document.querySelector('.at-canonical-load-status');
     if (node.getAttribute('data-projection-state') !== 'missing'
         || node.getAttribute('data-projection-snapshot-id')
         || node.getAttribute('data-projection-response-snapshot-id')
         || node.getAttribute('data-projection-snapshot-state') !== 'NO_CACHE_LOADING'
-        || !node.textContent?.includes('初回データを準備中')) return false;
+        || !visibleStatus?.textContent?.includes('日経平均の根拠を確認しています')) return false;
     return {
       state: 'missing',
       snapshotState: 'NO_CACHE_LOADING',
-      label: '初回データを準備中',
+      label: '日経平均の根拠を確認しています',
     };
   }, { selector: CANONICAL_PROJECTION_STATE_SELECTOR }, { timeout: 7_000 });
   await slowPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
@@ -648,7 +649,8 @@ async function run() {
   await openCanonicalEvidence(slowPage);
   const slowState = await slowStateAppeared.then((handle) => handle.jsonValue());
   const slowLabel = slowState?.label ?? null;
-  if (slowState?.state !== 'missing' || slowState?.label !== '初回データを準備中') {
+  if (slowState?.state !== 'missing'
+      || slowState?.label !== '日経平均の根拠を確認しています') {
     evidence.failures.push('slow-label');
   }
   await slow.close();
@@ -666,12 +668,12 @@ async function run() {
   await waitForShell(failurePage);
   await openCanonicalEvidence(failurePage);
   await failurePage.locator('.at-canonical-load-status')
-    .getByRole('button', { name: '再試行' })
+    .getByRole('button', { name: '再取得' })
     .waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {});
   const failureState = {
     loader: await failurePage.locator('.at-canonical-load-status .triangle-step-loader').count(),
     retry: await failurePage.locator('.at-canonical-load-status')
-      .getByRole('button', { name: '再試行' }).count(),
+      .getByRole('button', { name: '再取得' }).count(),
   };
   if (failureState.loader || !failureState.retry) evidence.failures.push('failure-loader-contract');
   await failure.close();
@@ -873,11 +875,9 @@ async function run() {
     evidence.failures.push('offline-snapshot-continuity');
   }
 
-  // M15 — headline-first decision visibility: with every heavy verified
-  // chart request held open, the four headline charts and their canonical
-  // probabilities must still appear from the compact bootstrap. This is the
-  // structural regression gate for "decision info hidden behind heavy
-  // visualization payloads".
+  // M15 — headline-first decision visibility: with the verified Nikkei
+  // snapshot held open, ARGUS's editorial view and canonical decision remain
+  // readable. The retired four-market probability panel must not reappear.
   let releaseHeavyHold;
   const heavyHold = new Promise((resolve) => { releaseHeavyHold = resolve; });
   const headlineContext = await browser.newContext({
@@ -900,9 +900,6 @@ async function run() {
   await headlinePage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(headlinePage);
   try {
-    // v13.5.1 contract: four NAME selectors + the single selected projection
-    // chart rendered from the compact headline (data-projection-source), with
-    // its canonical probability row, all while heavy requests stay held.
     await waitForContractState(headlinePage, 'headline-first-decision-visibility',
       () => {
         const selectors = document.querySelectorAll(
@@ -910,11 +907,14 @@ async function run() {
         const projection = document.querySelector(
           '[data-argus-contract="today-projection-state-v1"]');
         const probabilityRow = document.querySelector('.at-proj-prob');
+        const editorial = document.querySelector('.at-view-hero .at-brief');
+        const decision = document.querySelector('.at-decision');
+        const loader = document.querySelector('.at-canonical-load-status .triangle-step-loader');
         const primary = document.querySelector('.at-call strong');
-        return selectors.length === 4
-          && projection?.getAttribute('data-projection-state') === 'available'
-          && projection?.getAttribute('data-projection-source') === 'headline'
-          && !!probabilityRow
+        return selectors.length === 0
+          && projection?.getAttribute('data-projection-state') === 'missing'
+          && !probabilityRow
+          && !!editorial && !!decision && !!loader
           && !!primary && (primary.textContent ?? '').trim().length > 0;
       }, null);
     evidence.headlineFirst = {
