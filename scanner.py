@@ -17884,11 +17884,19 @@ def _market_brief_generation_input_digest(brief, internals):
 
 
 def _market_brief_urgent_signature(brief):
-    """Changes that must bypass routine GPT coalescing immediately."""
+    """Changes that must bypass routine GPT coalescing immediately.
+
+    News cards and deterministic market calculations update independently of
+    this long-form edition.  A new headline or a routine Seven Sign revision
+    therefore does not justify another full GPT rewrite inside the one-hour
+    window.  Objective shock sensors, imminent calendar changes and the
+    fiscal warning state still bypass the window immediately.
+    """
     facts = [fact for fact in brief.get("facts") or []
-             if fact.get("priority") == "P0" or
-             (fact.get("priority") == "P1" and fact.get("source") in
-              {"market_view", "trusted_mail", "jp_fiscal_environment"})]
+             if (fact.get("priority") == "P0" and fact.get("source") in
+                 {"official_sensor", "calendar"}) or
+             (fact.get("priority") == "P1" and fact.get("source") ==
+                 "jp_fiscal_environment")]
     return hashlib.sha256(json.dumps(facts, sort_keys=True, ensure_ascii=False,
         separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
