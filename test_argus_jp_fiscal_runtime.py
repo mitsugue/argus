@@ -115,3 +115,98 @@ def test_public_and_llm_projection_use_saved_numbers_and_same_evidence(monkeypat
     assert public['notificationDelivery']=='NOT_CONNECTED'
     assert state==before
     assert runtime.explanation_facts(runtime.public_document(ledger.empty_state()))==[]
+
+
+def test_ledger_slice_and_llm_context_preserve_case_scope_without_receipt_churn(monkeypatch):
+    get,_,_,_=fixture(monkeypatch)
+    stored=runtime.refresh(ledger.empty_state(),now_iso=AT,calendar=calendar(),get=get)['state']
+    stored['observations'].append({'seriesId':'unrelated.series','id':'separate','privateValue':'excluded'})
+    sliced=runtime.ledger_slice(stored)
+    assert all(row['seriesId']!='unrelated.series' for row in sliced['observations'])
+    assert sliced['fiscalMonitor']==stored['fiscalMonitor']
+    public=runtime.public_document(sliced)
+    before=runtime.context_reference(public)
+    assert len(before['cases'])==3 and before['selectedCase'] is None
+    assert before['cases']['baseline']['currentReasons'] is not None
+    assert before['interpretation']['marketYieldIsEffectiveGovernmentRate'] is False
+    public['sourceVerifiedAt']='2026-09-17T07:00:00Z'
+    public['calculatedAt']='2026-09-17T07:00:00Z'
+    assert runtime.context_reference(public)==before
+    assert len(json.dumps(before,ensure_ascii=False).encode())<32_000
+    for fact in runtime.explanation_facts(public):
+        provenance=fact['provenance']
+        assert provenance['scope']=='published_metadata_snapshot'
+        assert {'publishedAt','receivedAt','observedAt','revision','url','sourceLabel'} <= set(provenance)
+        assert provenance['publishedAt'] is None
+
+
+def test_existing_collector_merges_and_retries_save_without_duplicate_fetch(monkeypatch):
+    import scanner
+    from datetime import datetime
+    import threading
+    get,calls,_,_=fixture(monkeypatch)
+    seed=ledger.empty_state()
+    seed['observations']=[{'id':'unrelated-row','seriesId':'unrelated.series','periodEnd':'2026-09-15'}]
+    monkeypatch.setattr(scanner,'_MARKET_LEDGER',seed)
+    monkeypatch.setattr(scanner,'_JP_FISCAL_REFRESH_LOCK',threading.Lock())
+    monkeypatch.setattr(scanner,'_JP_FISCAL_REFRESH_STATE',{'pendingPersistence':False})
+    monkeypatch.setattr(scanner,'_DURABLE_CHECKPOINT_LOCK',threading.RLock())
+    monkeypatch.setattr(scanner,'_ai_now_iso',lambda:AT)
+    monkeypatch.setattr(scanner.requests,'get',get)
+    monkeypatch.setattr(scanner,'_journal',lambda *a,**k:None)
+    class Clock:
+        @staticmethod
+        def now(tz):return datetime.fromisoformat(AT.replace('Z','+00:00')).astimezone(tz)
+    monkeypatch.setattr(scanner,'datetime',Clock)
+    work=[]
+    class Thread:
+        def __init__(self,*,target,**kwargs):self.target=target
+        def start(self):work.append(self.target)
+    monkeypatch.setattr(scanner.threading,'Thread',Thread)
+    checkpoints=iter([{'verified':True,'readBackVerified':False},
+                      {'verified':True,'readBackVerified':True}])
+    monkeypatch.setattr(scanner,'_osint_persist',lambda:next(checkpoints))
+    assert scanner._jp_fiscal_environment_warm()=={'status':'ACCEPTED','completed':False}
+    assert scanner._jp_fiscal_environment_warm()['status']=='ALREADY_RUNNING'
+    assert len(calls)==0
+    work.pop()()
+    assert len(calls)==3
+    assert any(row['id']=='unrelated-row' for row in scanner._MARKET_LEDGER['observations'])
+    assert scanner._JP_FISCAL_REFRESH_STATE['persistenceStatus']=='UNVERIFIED'
+    # A failed read-back is retried through the same checkpoint without refetch.
+    scanner._jp_fiscal_environment_warm(); work.pop()()
+    assert len(calls)==3
+    assert scanner._JP_FISCAL_REFRESH_STATE['persistenceStatus']=='VERIFIED'
+    assert not scanner._JP_FISCAL_REFRESH_STATE['pendingPersistence']
+    with scanner.app.test_request_context('/api/argus/jp-fiscal-environment'):
+        document=scanner.api_argus_jp_fiscal_environment().get_json()
+    assert document['id']==scanner._JP_FISCAL_REFRESH_STATE['verifiedReportId']
+    assert document['fetchesDuringRead']==0 and len(calls)==3
+    scanner._jp_fiscal_environment_warm(); work.pop()()
+    assert scanner._JP_FISCAL_REFRESH_STATE['status']=='NOT_DUE' and len(calls)==3
+
+
+def test_unified_context_and_existing_history_hold_same_fiscal_snapshot(monkeypatch,tmp_path):
+    import argus_market_brief as brief
+    import argus_analysis_history as history
+    get,_,_,_=fixture(monkeypatch)
+    state=runtime.refresh(ledger.empty_state(),now_iso=AT,calendar=calendar(),get=get)['state']
+    public=runtime.public_document(state)
+    item=brief.compose_brief(now_iso=AT)
+    item['fiscalEnvironment']=runtime.context_reference(public)
+    item['facts'].extend(runtime.explanation_facts(public))
+    context=brief.unified_context(item)
+    assert context['fiscalEnvironment']==item['fiscalEnvironment']
+    ref=next(row['evidenceId'] for row in context['facts'] if row['source']=='jp_fiscal_environment')
+    response={key:{'textJa':'金利と財政収支の変化を分けて確認します。',
+        'evidenceIds':[ref],'kind':'INFERENCE'} for key in brief.UNIFIED_SECTIONS}
+    for key in ('changes','impact'):
+        response[key]={'textJa':'未確認です。','evidenceIds':[],'kind':'UNKNOWN'}
+    item.update(unifiedContext=context,unifiedSummary=brief.validate_unified_ai(response,context),
+        unifiedStatus='GENERATED',aiDiagnostics={'completedAt':AT})
+    record=history.make_record(item,{})
+    path=tmp_path/'history.sqlite3';history.initialize(path);history.append(path,record)
+    item['fiscalEnvironment']['cases']['baseline']['fiscal']['values']['growthPct']=999
+    restored=history.read_record(path,record['recordId'])
+    assert restored['brief']['fiscalEnvironment']['cases']['baseline']['fiscal']['values']['growthPct']==3.0
+    assert restored['brief']['unifiedContext']['fiscalEnvironment']['id']==public['id']

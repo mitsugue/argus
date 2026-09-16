@@ -14,6 +14,22 @@ CAO_INDEX = 'https://www5.cao.go.jp/keizai2/keizai-syakai/shisan.html'
 JST = ZoneInfo('Asia/Tokyo')
 
 
+def ledger_slice(state):
+    """Only this monitor's observations; unrelated histories are never copied."""
+    series = sources.ledger_series()
+    rows = [deepcopy(row) for row in state.get('observations', ())
+            if row.get('seriesId') in series]
+    imports = {row.get('importId') for row in rows}
+    result = ledger.empty_state()
+    result.update(observations=rows,
+        imports=[deepcopy(row) for row in state.get('imports', ()) if row.get('importId') in imports],
+        rolledBackImports=[key for key in state.get('rolledBackImports', ()) if key in imports],
+        lastUpdatedAt=state.get('lastUpdatedAt'))
+    if state.get('fiscalMonitor'):
+        result['fiscalMonitor'] = deepcopy(state['fiscalMonitor'])
+    return result
+
+
 def expected_session(calendar, now_iso):
     """MOF publishes a session on the following JP business day around 09:30."""
     now = instant(now_iso).astimezone(JST)
@@ -146,7 +162,7 @@ def public_document(state):
         fiscal=row.get('fiscal') or {}
         inputs=fiscal.get('inputs') or {}
         cases[case]={k:deepcopy(row.get(k)) for k in ('id','warningLevel','dataCompleteness',
-            'reasons','releaseConditions','previousWarningRetained','ruleVersion','ruleValidation')}
+            'currentReasons','releaseConditions','previousWarningRetained','ruleVersion','ruleValidation')}
         cases[case]['fiscal']={k:deepcopy(fiscal.get(k)) for k in
             ('id','status','values','definition','comparison','uncertainty','missing','limitations')}
         cases[case]['sources']=[{k:deepcopy(v.get(k)) for k in ('id','metric','year',
@@ -199,4 +215,61 @@ def explanation_facts(document):
             'priority':'P1','source':'jp_fiscal_environment','verification':'UNCONFIRMED',
             'provenance':{'eventId':market.get('id'),'asOf':document.get('expectedMarketSession'),
                 'sourceLabelJa':'財務省・国債市場金利','url':sources.JGB_URL}})
+    # Use the existing browser/brief provenance contract, not a parallel shape.
+    for fact in facts:
+        original = fact['provenance']
+        at = original.get('asOf')
+        fact['provenance'] = {'scope':'published_metadata_snapshot',
+            'eventId':original.get('eventId'),'revision':None,'publishedAt':None,
+            'receivedAt':at if isinstance(at,str) and len(at)>10 else None,
+            'observedAt':at,'url':original.get('url'),
+            'sourceLabel':original.get('sourceLabelJa')}
     return facts
+
+
+def context_reference(document):
+    """Small immutable calculation snapshot, with receipt-only times excluded.
+
+    This is explanatory context, never a replacement for the stock/index
+    forecast. Stable observations do not become new AI work on each poll.
+    """
+    if not document.get('id'):
+        return None
+    reference = {key:deepcopy(document.get(key)) for key in (
+        'id','status','fiscalAcquisitionStatus','marketAcquisitionStatus',
+        'expectedMarketSession','selectedCase','actionAuthority',
+        'predictivePerformance')}
+    reference['cases'] = {}
+    source_documents = {}
+    for case,row in document.get('cases',{}).items():
+        # IDs bind back to the saved ledger; repeated source metadata is sent once.
+        fiscal = row['fiscal']
+        reference['cases'][case] = {key:deepcopy(row.get(key)) for key in (
+            'id','warningLevel','dataCompleteness','currentReasons','releaseConditions',
+            'previousWarningRetained','ruleVersion','ruleValidation')}
+        reference['cases'][case]['fiscal'] = {key:deepcopy(fiscal.get(key)) for key in (
+            'id','status','values','definition','comparison','uncertainty','missing','limitations')}
+        for source in row.get('sources',()):
+            identity = source.get('sourceHash') or source.get('sourceUrl')
+            source_documents[identity] = {key:deepcopy(source.get(key)) for key in (
+                'sourceHash','sourceUrl','sourceRevision','publishedDate','publishedAt','knownAt')}
+    reference['sources'] = list(source_documents.values())
+    market = document.get('market') or {}
+    reference['market'] = {key:deepcopy(market.get(key)) for key in (
+        'id','status','warningLevel','adverseGroups','groups','auctionStatus','rule','causalityConfirmed')}
+    reference['market']['series'] = {sid:{key:deepcopy(row.get(key)) for key in (
+        'status','adverse','latestValue','change','comparisonFrom','comparisonTo',
+        'comparisonSessions','confirmationSessions','threshold','sourceUrl','observedAt')}
+        for sid,row in market.get('series',{}).items()}
+    reference['interpretation'] = {
+        'explanationOrder':['change','meaning','facts_and_assumptions','conditional_transmission',
+                            'owner_asset_evidence','next_checks_and_release_conditions'],
+        'marketYieldIsEffectiveGovernmentRate':False,
+        'fiscalStatisticsAlonePredictStockDirection':False,
+        'companySpecificEffectsRequireCompanyEvidence':True,
+        'stockProbabilityCalculationAllowed':False,
+        'scenarioMustRemainSeparate':True}
+    import json
+    if len(json.dumps(reference,ensure_ascii=False,allow_nan=False).encode()) > 16_000:
+        raise ValueError('fiscal_explanation_context_bound')
+    return reference
