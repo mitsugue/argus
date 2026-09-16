@@ -26,7 +26,7 @@ import { marketSignalsView } from '../../domain/marketSignals';
 import { tachibanaLiveView, formatJpy, formatPct } from '../../domain/tachibanaLive';
 import type { TachibanaLiveDocument } from '../../domain/tachibanaLive';
 import type { NewsIntelEvent } from '../../hooks/useNewsIntelligence';
-import { orderMaterialNews, NEWS_IMPORTANCE_JA } from '../../domain/newsPresentation';
+import { orderMaterialNews, groupRepeatedNewsHeadlines, NEWS_IMPORTANCE_JA } from '../../domain/newsPresentation';
 import type {
   MarketHorizon, MarketInstrumentMarket, MarketInstrumentSymbol,
 } from '../../domain/marketInstruments';
@@ -364,7 +364,8 @@ const NewsDirectionSummary: React.FC<{ event: Props['newsIntel']['events'][numbe
 type NewsRowMemory = Props['newsIntel']['events'][number]['eventMemory'];
 export type TodayNewsRow = { id: string; eventId: string; severity: string; kind: '市場データ' | 'ニュース';
     sourceReceivedAt: string | null; headlineJa: string; whyJa: string; metaJa: string;
-    eventMemory: NewsRowMemory; newsEvent?: Props['newsIntel']['events'][number] };
+    eventMemory: NewsRowMemory; newsEvent?: Props['newsIntel']['events'][number];
+    previousDeliveries?: Props['newsIntel']['events'] };
 
 
 export const TodayNewsCards: React.FC<{ rows: readonly TodayNewsRow[]; onOpen: (id: string) => void }> = ({ rows, onOpen }) => (
@@ -378,6 +379,15 @@ export const TodayNewsCards: React.FC<{ rows: readonly TodayNewsRow[]; onOpen: (
           {row.newsEvent && <NewsDirectionSummary event={row.newsEvent} />}
           <em>{row.metaJa} · 詳しく読む</em>
           </button>
+          {!!row.previousDeliveries?.length && <details className="at-news-memory">
+            <summary>同じ見出しの以前の配信 · {row.previousDeliveries.length}件</summary>
+            <p>続報・訂正の有無は各配信の詳細で確認できます。</p>
+            {row.previousDeliveries.map(event => <button key={event.eventId} type="button"
+              className="at-news-row__open" onClick={() => onOpen(event.eventId)}>
+              {event.sourceReceivedAt ? new Date(event.sourceReceivedAt).toLocaleTimeString('ja-JP',
+                { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' }) : '時刻不明'}の配信を読む
+            </button>)}
+          </details>}
           {/* Causal event memory (SHADOW): the flag-recovery / analog evidence
               line stays with the news it qualifies; never an SDA input. */}
           {row.eventMemory && <details className="at-news-memory">
@@ -626,7 +636,9 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     window.setTimeout(jump, 350);
     window.setTimeout(jump, 1000);
   };
-  const materialMailEvents = orderMaterialNews(newsIntel.events);
+  const deliveryGroups = groupRepeatedNewsHeadlines(newsIntel.events);
+  const previousDeliveries = new Map(deliveryGroups.map(group => [group.lead.eventId, group.previous]));
+  const materialMailEvents = orderMaterialNews(deliveryGroups.map(group => group.lead));
   const unexplainedMailEvents = materialMailEvents.filter(event =>
     !editorialScope || !editorialCoversNews(editorialBrief, event));
   const newsRows = orderMaterialNews<TodayNewsRow>([
@@ -639,6 +651,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     ...unexplainedMailEvents.map((event) => ({
       id: event.eventId, eventId: event.eventId, severity: event.severity, kind: 'ニュース' as const,
       sourceReceivedAt: event.sourceReceivedAt, newsEvent: event,
+      previousDeliveries: previousDeliveries.get(event.eventId),
       headlineJa: displayNewsHeadline(event.headlineJa), whyJa: event.whyJa, eventMemory: event.eventMemory,
       metaJa: `${event.source} · ${event.sourceReceivedAt
         ? new Date(event.sourceReceivedAt).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '受信時刻不明'}`
