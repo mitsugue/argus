@@ -76,6 +76,13 @@ def test_existing_public_route_is_read_only_even_with_no_ai_budget(monkeypatch, 
     for name in ("_openai_prose", "_openai_judge", "_cost_policy_persist_durable"):
         monkeypatch.setattr(scanner, name, forbidden)
     before = copy.deepcopy(cached)
+    monkeypatch.setattr(scanner, "_INDEX_RESEARCH_REPORTS", {})
+    monkeypatch.setattr(scanner, "_INDEX_RESEARCH_STATUS", {"restoreAttempted": False})
+    monkeypatch.setattr(scanner, "_index_research_path", lambda: None)
+    monkeypatch.setattr(scanner.argus_index_research_cache, "KEYS", {f"comparison:N225:{horizon}"})
+    scanner._index_research_warm()
+    monkeypatch.setattr(scanner, "_jp_market_comparison_calculate", forbidden)
+    monkeypatch.setattr(scanner, "_index_research_warm", forbidden)
     with scanner.app.test_client() as client:
         response = client.get(f"/api/argus/index-chart?index=N225&comparison=1&horizon={horizon}")
     assert response.status_code == 200
@@ -87,10 +94,11 @@ def test_existing_public_route_is_read_only_even_with_no_ai_budget(monkeypatch, 
 
 
 def test_cold_and_invalid_requests_are_explicit(monkeypatch):
+    monkeypatch.setattr(scanner, "_INDEX_RESEARCH_REPORTS", {})
     monkeypatch.setattr(scanner, "_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE", {})
     with scanner.app.test_client() as client:
         body = client.get("/api/argus/index-chart?index=N225&comparison=1").get_json()
-        assert body["reason"] == "index_cache_cold"
+        assert body["reason"] == "index_research_preparing"
         assert body["comparison"] is None
         for params in ("index=SPX", "index=N225&timeframe=weekly", "horizon=0", "horizon=bad"):
             assert client.get("/api/argus/index-chart?comparison=1&" + params).status_code == 400

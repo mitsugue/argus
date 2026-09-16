@@ -183,7 +183,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_macro_results.py': '647520e693f5f87f902033bb1e2a0c0762bfc407',
     'test_argus_unified_brief.py': 'f0ebcf75d9ab36653c5b4346d0c6c7ecca1bb710',
     'test_jp_market_analogs.py': 'b9d34aea24c17ed03513620f33c607b2c5487854',
-    'test_jp_market_comparison_runtime.py': '5011e4aaf6f991e08ca7b99b2dac9a5817690b15',
+    'test_jp_market_comparison_runtime.py': '7080ef42df3b3e5d39aa48fe4a07a57dbd52e6af',
     'test_jp_market_dynamics.py': 'dab9901948bb7c6ab339ee5d4b7a8244eeb79cf6',
     'test_jp_market_events.py': 'c18777fb3a7eb629ac1161cc16533923f4e20424',
     'test_jp_market_events_runtime.py': '76c27382d35b39c8745e5de09450942da852342d',
