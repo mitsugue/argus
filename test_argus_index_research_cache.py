@@ -103,3 +103,42 @@ def test_cache_read_diagnostics_do_not_invent_a_changed_calculation():
     assert calculation_identity(first) == calculation_identity(second)
     second['5']['comparison']['estimate'] = 99.8
     assert calculation_identity(first) != calculation_identity(second)
+
+
+def test_feature_history_restart_reuses_exact_inputs_without_replay(monkeypatch, tmp_path):
+    import scanner
+    from unittest.mock import Mock
+    from test_jp_market_features import prices
+    monkeypatch.setattr(scanner, '_JP_MARKET_FEATURE_HISTORY', {'status':'NOT_RUN'})
+    monkeypatch.setattr(scanner, '_JP_MARKET_FEATURE_CACHE_STATUS', {'restoreAttempted':False})
+    monkeypatch.setattr(scanner, '_JP_MARKET_ENGINE_MARKET_VIEW_MEMO', {'ts':0})
+    monkeypatch.setattr(scanner, '_DURABILITY_PATHS', {'root':str(tmp_path)})
+    monkeypatch.setattr(scanner, '_cost_policy_durable_enabled', lambda:True)
+    monkeypatch.setattr(scanner, '_ai_now_iso', lambda:'2026-08-01T12:00:00Z')
+    monkeypatch.setattr(scanner.argus_product_naming, 'require_allowed', lambda v:None)
+    monkeypatch.setattr(scanner, '_N225_ANALOG_HISTORY', {'data':prices('NIKKEI_225_INDEX', count=3)})
+    monkeypatch.setattr(scanner, '_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE', {'^VIX':{'data':prices('VIX', count=3)}})
+    monkeypatch.setattr(scanner, '_JQ_MARGIN_CACHE', {})
+    monkeypatch.setattr(scanner, '_MARKET_LEDGER', {'observations':[]})
+    csv = tmp_path/'credit.csv'
+    csv.write_text('periodEnd,seriesId,value\n')
+    monkeypatch.setattr(scanner, '_JPX_CREDIT_CSV_PATH', str(csv))
+    calculate = Mock(wraps=scanner.jp_market_features.build_feature_history)
+    monkeypatch.setattr(scanner.jp_market_features, 'build_feature_history', calculate)
+    scanner._jp_market_feature_history_warm()
+    original = deepcopy(scanner._JP_MARKET_FEATURE_HISTORY)
+    assert original['status'] == 'AVAILABLE'
+    assert scanner._JP_MARKET_FEATURE_CACHE_STATUS['persistenceStatus'] == 'VERIFIED'
+    assert calculate.call_count == 1
+    monkeypatch.setattr(scanner, '_JP_MARKET_FEATURE_HISTORY', {'status':'NOT_RUN'})
+    monkeypatch.setattr(scanner, '_JP_MARKET_FEATURE_CACHE_STATUS', {'restoreAttempted':False})
+    scanner._jp_market_feature_history_warm()
+    assert scanner._JP_MARKET_FEATURE_HISTORY == original
+    assert scanner._JP_MARKET_FEATURE_CACHE_STATUS['restoreStatus'] == 'VERIFIED'
+    assert calculate.call_count == 1
+    # A correction invalidates the calculation; the old input identity cannot
+    # suppress changed evidence even on the same day.
+    scanner._N225_ANALOG_HISTORY['data'][0]['value'] += 1
+    scanner._jp_market_feature_history_warm()
+    assert calculate.call_count == 2
+    assert scanner._JP_MARKET_FEATURE_HISTORY['inputIdentity'] != original['inputIdentity']

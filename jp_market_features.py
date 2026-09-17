@@ -9,11 +9,79 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import date
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from jp_market_engine import ARGUS_MACD_BASELINE, _knowledge_time, _macd, point_in_time_rows
 from jp_market_dynamics import _number, credit_dynamics, normalize_valuation_loss
 from jp_market_analogs import FEATURE_DEFINITIONS, FEATURE_MAX_AGE_DAYS, INSTRUMENT
+
+
+HISTORY_CACHE_SCHEMA = "jp-market-feature-cache-v1"
+HISTORY_CACHE_MAX_BYTES = 32 * 1024 * 1024
+
+
+def history_method_identity() -> str:
+    """Bind restored calculations to all four numerical implementations."""
+    root = Path(__file__).resolve().parent
+    files = ("jp_market_features.py", "jp_market_engine.py",
+             "jp_market_dynamics.py", "jp_market_analogs.py")
+    material = {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+                for name in files}
+    return _history_digest(material)
+
+
+def _history_digest(value) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
+        allow_nan=False, separators=(",", ":")).encode()).hexdigest()
+
+
+def history_cache_envelope(history, *, method: str) -> dict[str, Any]:
+    """Derived cache only; it does not certify historical vintage or skill."""
+    from jp_market_engine import _instant
+    if (not isinstance(history, dict) or history.get("status") != "AVAILABLE"
+            or history.get("schemaVersion") != "jp-market-feature-history-v1"
+            or not isinstance(history.get("inputIdentity"), str)
+            or len(history["inputIdentity"]) != 64
+            or not isinstance(history.get("cutoffCount"), int)
+            or not 1 <= history["cutoffCount"] <= 3001
+            or history.get("historicalVintageVerified") is not False
+            or history.get("actionAuthority") is not False
+            or history.get("automaticAiCalls") != 0
+            or not isinstance(method, str) or len(method) != 64):
+        raise ValueError("feature_cache_identity")
+    dates = [_instant(history.get(name)) for name in
+             ("firstCutoff", "lastCutoff", "lastSuccessfulCalculationAt")]
+    if any(at is None for at in dates) or not dates[0] <= dates[1] <= dates[2]:
+        raise ValueError("feature_cache_times")
+    groups = [history.get(key) for key in ("features", "conditions")]
+    if any(not isinstance(rows, list) for rows in groups) or sum(map(len, groups)) > 60000:
+        raise ValueError("feature_cache_history_bound")
+    body = {"schemaVersion": HISTORY_CACHE_SCHEMA, "methodIdentity": method,
+            "history": history}
+    return {**body, "sha256": _history_digest(body)}
+
+
+def load_history_cache(path, *, method: str, now: str):
+    """Read once on the background lane; mismatch never becomes current data."""
+    from jp_market_engine import _instant
+    target = Path(path)
+    if target.is_symlink():
+        raise ValueError("feature_cache_symlink")
+    with target.open("rb") as handle:
+        raw = handle.read(HISTORY_CACHE_MAX_BYTES + 1)
+    if len(raw) > HISTORY_CACHE_MAX_BYTES:
+        raise ValueError("feature_cache_size_bound")
+    doc = json.loads(raw)
+    if not isinstance(doc, dict) or doc.get("schemaVersion") != HISTORY_CACHE_SCHEMA:
+        raise ValueError("feature_cache_schema")
+    expected = history_cache_envelope(doc.get("history"), method=doc.get("methodIdentity"))
+    if doc != expected:
+        raise ValueError("feature_cache_integrity")
+    instant = _instant(now)
+    if instant is None or _instant(doc["history"]["lastSuccessfulCalculationAt"]) > instant:
+        raise ValueError("feature_cache_future")
+    return doc["history"] if doc["methodIdentity"] == method else None
 
 
 def build_feature_history(*, cutoffs: Sequence[str], **inputs) -> dict[str, Any]:
