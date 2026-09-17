@@ -65,3 +65,34 @@
   バックアップ／読取りは維持し、ARGUSの正式な予測・判断履歴には変更しない。
 - 残件: 保有数量・FIRE・ライブ取得等の撤去、配信証明、後続の版更新、本番画面。
   本変更だけでウォッチリスト整理完了や料金削減実績とはしない。
+
+
+## Quantity-free watchlist candidate (2026-09-18, not deployed)
+
+- Product-facing asset reads use a whitelist of registration fields; quantity,
+  cost basis, allocation, contributions and purchase/horizon records remain in
+  the original protected store. Mounting, toggling registration and restoring
+  a backup do not erase those archived fields or reactivate portfolio analysis.
+- Holdings entry, allocation/FIRE route and portfolio daily snapshot generation
+  are disconnected. Exposure, FIRE and portfolio strategy calculators remain
+  preserved for archival research, but active Asset Intel does not call them.
+  Shared market scenarios, evidence, data quality and formal SDA history remain.
+- Existing full encrypted/export recovery remains. The old partial-portfolio
+  import/export is recovery compatibility, labelled as archived records; it
+  does not create new valuation snapshots. Remove this compatibility entry only
+  after full archive export/restore is verified on the owner's iPhone and any
+  remaining legacy partial backups have a verified migration path.
+- Registered symbols can receive P1 and worsening-scenario notifications
+  without quantities; existing throttle, preferences and deduplication remain.
+  The private integrated-overview request sends WATCHING context without old
+  quantity, cost, purchase-reason or holding-period inputs.
+- Local checks: actual asset-store mount/edit/restore preservation, notification
+  execution/deduplication, all frontend lint steps (resumed after updating
+  obsolete portfolio/label expectations), production build, source/artifact
+  naming guards passed. Existing archived numerical tests were retained.
+- This is a local frontend candidate, not production acceptance or measured
+  monetary savings. Pending: integration with the separately prepared live-feed
+  retirement, exact provenance registration, version bump and release checks,
+  actual desktop/mobile/iPhone acceptance, backend handling of legacy private
+  context, view-triggered generation retirement, bridge/job/provider contracts.
+  A quantity-free warning is not a validated prediction or a BUY permission.

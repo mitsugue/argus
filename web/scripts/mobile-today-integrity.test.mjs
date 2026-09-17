@@ -34,7 +34,7 @@ const indexHtml = read('index.html');
 
 assert.deepEqual(
   navigation.PRIMARY_NAVIGATION.map((item) => item.mobileLabel),
-  ['Today', 'Holdings', 'Alerts', 'Settings'],
+  ['Today', 'Watchlist', 'Alerts', 'Settings'],
 );
 assert.deepEqual(
   navigation.PRIMARY_NAVIGATION.map((item) => item.route),

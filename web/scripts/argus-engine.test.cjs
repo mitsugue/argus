@@ -395,7 +395,7 @@ console.log('argus-engine.test: all checks passed');
     && isDigestHeadline('日経ニュースメール 9/7 夕版 ━ ◆x') === true && isDigestHeadline('普通の見出し') === false);
   const ai = fs.readFileSync(path.join(root, 'src/hooks/useAssetIntel.ts'), 'utf8');
   check('crypto quotes try the memo id and the symbol default id',
-    ai.includes('SYMBOL_TO_COINGECKO[a.symbol.toUpperCase()]') && ai.includes("positionRiskTypes: riskTypesBySym.get(sym) ?? []"));
+    ai.includes('SYMBOL_TO_COINGECKO[a.symbol.toUpperCase()]') && ai.includes('candidates.map((id) => cw.byId?.[id]).find((row) => row)'));
 }
 
 // v13.5.62 (GPT review 2026-09-07). Every registered symbol gets decision
@@ -457,9 +457,9 @@ console.log('argus-engine.test: all checks passed');
     { symbol: '5803', riskLevel: 'medium', riskType: 'event_risk', whyJa: '', checkNextJa: '' }]);
   check('the most severe risk per symbol wins', worst.get('5803') === 'high');
   const ai = fs.readFileSync(path.join(root, 'src/hooks/useAssetIntel.ts'), 'utf8');
-  check('every risk map in the intel hook uses the most severe entry',
-    (ai.match(/mostSevereRiskBySymbol\(positionExposure\.risks\)/g) || []).length === 3
-    && !ai.includes('new Map(positionExposure.risks.map((r) => [r.symbol, r.riskLevel]))'));
+  check('portfolio risk calculations are retired from active watchlist analysis',
+    !ai.includes('positionExposure.risks') && !ai.includes('buildPositionExposure(')
+    && ai.includes('positionRiskTypes: []'));
   // ── v13.5.63 (GPT additional items 1/3/4) ──
   const richNote = eventAiScenarioNote({ eventOptIn: true, mode: 'SCHEDULED_AI', lastExecutionPurpose: 'headline_translation',
     lastExecutionAt: '2026-09-07T03:00:00Z', openaiKeyConfigured: true,

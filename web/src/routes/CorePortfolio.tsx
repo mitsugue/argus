@@ -29,7 +29,11 @@ const fmtJpy = (v: number) => `¥${Math.round(v).toLocaleString('ja-JP')}`;
 
 export const CorePortfolio: React.FC<{
   assetsApi: UseAssets;
-  portfolioIntel: AssetIntel;
+  portfolioIntel: AssetIntel & {
+    positionExposure: import('../domain/positionExposure').PortfolioExposure;
+    portfolioStrategy: import('../domain/portfolioStrategy').LocalStrategy;
+    fireCore: import('../lib/fireCore').LocalFireCore;
+  };
 }> = ({ assetsApi, portfolioIntel }) => {
   useLocale();   // re-render on locale switch
   const { assets } = assetsApi;

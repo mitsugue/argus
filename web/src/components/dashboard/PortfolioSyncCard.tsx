@@ -1,8 +1,7 @@
 import React from 'react';
 import type { UseAssets } from '../../hooks/useAssets';
-import { latestExposure } from '../../lib/positionExposureShare';
 import {
-  applyImport, createSnapshot, downloadPortfolioBackup, listSnapshots,
+  applyImport, downloadPortfolioBackup, listSnapshots,
   previewImport, syncMeta, type ImportPreview,
 } from '../../lib/portfolioSync';
 import { assessBackupSafety, runRecoveryDrill, drillMeta, LEVEL_TONE } from '../../lib/backupSafety';
@@ -15,12 +14,11 @@ import {preserveBeforeOwnerRestore,usesOwnerSnapshots} from '../../lib/ownerRest
 const fmtTs = (iso?: string) => (iso ? iso.slice(0, 16).replace('T', ' ') : '—');
 
 export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: string }> = ({ assetsApi, appVersion }) => {
-  const { assets, add, updateHolding } = assetsApi;
+  const { archivedAssets: assets, add, updateHolding } = assetsApi;
   const latestAssets=React.useRef(assets);latestAssets.current=assets;
   const [, bump] = React.useReducer((x: number) => x + 1, 0);
   const [preview, setPreview] = React.useState<ImportPreview | null>(null);
   const [applied, setApplied] = React.useState<string | null>(null);
-  const [snapMsg, setSnapMsg] = React.useState<string | null>(null);
   const [importing,setImporting]=React.useState(false);
   const fileRef = React.useRef<HTMLInputElement>(null);
 
@@ -57,20 +55,11 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
     finally{setImporting(false);}
   };
 
-  const onSnapshot = () => {
-    const pe = latestExposure();
-    if (!pe) { setSnapMsg('先にTodayページを開いて計算させてください。'); return; }
-    const s = createSnapshot(pe, { appVersion });
-    setSnapMsg(s ? `スナップショット作成: ${s.asOf}(この端末内に保存。保護するにはJSONを書き出してください)`
-      : '保有数量・価格が揃っていないため、スナップショットは作成できません(捏造しません)。');
-    bump();
-  };
-
   return (
     <section>
       <div className="section-head">
         <span className="section-head__title">LOCAL BACKUP &amp; RESTORE</span>
-        <span className="section-head__count">端末内 + 手動JSON</span>
+        <span className="section-head__count">旧記録の保全・復元</span>
       </div>
       <div className="card cmd-alloc">
         {/* BACKUP SAFETY (v11.16.0) — 保護状態の見える化(端末内判定) */}
@@ -98,11 +87,11 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
         </>}
 
         <div className="cmd-alloc__note" style={{ fontSize: 12, color: 'var(--text-sub)' }}>
-          保存モード: <b>端末内 + 手動JSONエクスポート</b>
+          保存モード: <b>旧記録の保全・復元エクスポート</b>
           {vaultOn && ' / 既存の暗号化復旧点は読み取り可能'}
         </div>
         <div className="cmd-alloc__note">
-          ここでのJSON書出しとスナップショット作成は端末内の操作です。所有者の暗号化保存は上の専用欄で扱います。
+          ここでの旧記録のJSON書出しと復元は端末内の操作です。所有者の暗号化保存は上の専用欄で扱います。
         </div>
         <div className="cmd-alloc__note">
           端末間ライブ同期は行いません。新方式を利用している場合は、取込み前に現在の変更を暗号化保存点へ退避します。
@@ -115,7 +104,6 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
           <button type="button" onClick={() => { downloadPortfolioBackup(assets, appVersion); bump(); }}
                   style={btn}>ポートフォリオのみJSONを書き出す</button>
           <button type="button" onClick={() => fileRef.current?.click()} style={btn}>ポートフォリオJSONを読み込む</button>
-          <button type="button" onClick={onSnapshot} style={btn}>今すぐスナップショット作成</button>
           <button type="button" style={btn}
                   onClick={() => { const r = runRecoveryDrill(assets, appVersion); setDrillMsg(r.resultJa); bump(); }}>
             復元ドリルを実行(非破壊)</button>
@@ -131,7 +119,7 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
         )}
         {preview?.ok && (
           <div className="cmd-alloc__note" style={{ border: '1px solid var(--line)', borderRadius: 6, padding: 8 }}>
-            <b>インポート内容の確認</b> — 保有あり{preview.withQuantity}件 / 監視のみ{preview.watchOnly}件 /
+            <b>インポート内容の確認</b> — 登録銘柄{preview.withQuantity + preview.watchOnly}件 /
             スナップショット{preview.snapshots}件 / 判断記録{preview.decisions}件
             {preview.symbols.length > 0 && <> ・銘柄例: {preview.symbols.join(' / ')}</>}
             <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
@@ -145,7 +133,6 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
           </div>
         )}
         {applied && <p className="cmd-alloc__note" style={{ color: 'var(--value-positive)' }}>{applied}</p>}
-        {snapMsg && <p className="cmd-alloc__note">{snapMsg}</p>}
         {drillMsg && <p className="cmd-alloc__note">{drillMsg}</p>}
 
         {snaps.length > 0 && (
@@ -157,7 +144,7 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
           </div>
         )}
         <p className="cmd-alloc__note" style={{ fontSize: 10 }}>
-          日次スナップショットはTodayを開くと自動で1日1回、端末内に記録されます(あの日ARGUSが何を言っていたかの将来検証用・売買指示ではありません)。
+          旧ポートフォリオ記録は保全されています。新しい評価額・損益・積立計画は計算しません。ARGUSの判断履歴は別途継続して記録します。
         </p>
       </div>
     </section>

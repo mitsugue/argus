@@ -83,7 +83,7 @@ export const Settings: React.FC<Props> = ({ settingsSection = 'status' }) => {
           <span className="section-head__title">HELP</span>
         </div>
         <p className="cmd-alloc__note">
-          Todayで今日の姿勢、Holdings / Watchlistで保有と銘柄詳細、Notificationsで変化と重要イベントを確認します。
+          Todayで今日の姿勢、Watchlistで登録銘柄の見通しと根拠、Notificationsで変化と重要イベントを確認します。
           銘柄の行を開くとDecision / Chart / Evidence / Positionの順で詳細を確認できます。
         </p>
         <p className="cmd-alloc__note">

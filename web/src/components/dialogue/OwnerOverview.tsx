@@ -20,10 +20,7 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:
   const [error,setError]=useState('');const [fetching,setFetching]=useState(false);const [revision,setRevision]=useState(0);
   const base=(import.meta.env.VITE_ARGUS_BACKEND_URL as string|undefined)?.replace(/\/$/,'');
   const contextId=brief?.unifiedContext?.contextId;
-  const owner=asset?{symbol,market,state:(asset.quantity??0)>0?'HELD':'WATCHING',
-    ...((asset.quantity??0)>0?{quantity:asset.quantity,averageCost:asset.avgCost}:{}),
-    ...(asset.purchaseReason?.trim()?{purchaseReason:asset.purchaseReason.trim()}:{}),
-    ...(asset.holdingPeriod?.trim()?{holdingPeriod:asset.holdingPeriod.trim()}:{}),
+  const owner=asset?{symbol,market,state:'WATCHING',
     ...(Number.isFinite(asset.updatedAt)?{reportedAt:new Date(asset.updatedAt).toISOString()}:{}),
   }:undefined;
   const requestKey=JSON.stringify({action:'overview',baseContextId:contextId,symbol,market,horizon,owner});

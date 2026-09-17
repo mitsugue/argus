@@ -14,10 +14,6 @@ export const AssetDecisionDetails: React.FC<{ d: DeskCardData }> = ({ d }) => {
       <div className="ad-overview__action">
         <span>いまの判断</span>
         <strong style={{ color: tone }}>{view.currentActionJa}</strong>
-        <div>
-          <small>保有中</small><b>{view.ownerActionJa}</b>
-          <small>新規</small><b>{view.entryActionJa}</b>
-        </div>
       </div>
 
       <dl className="ad-overview__facts">

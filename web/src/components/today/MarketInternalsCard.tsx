@@ -26,7 +26,7 @@ export function MarketInternalsCard({document,horizon,focusSymbol}:{document:unk
       {selectedAsset?.status==='AVAILABLE'?<>
         <p>{focusSymbol} <strong>{percent(selectedAsset.returnPct)}</strong> ／ 日経平均との差 <strong>{points(selectedAsset.relativeToNikkeiPct)}</strong></p>
         <p>{selectedAsset.sectorNameJa??'業種未確認'} · 業種ETFとの差 {points(selectedAsset.relativeToSectorPct)}。</p>
-        <p>これは同じ期間の価格比較です。企業固有の材料や実際の保有状態に対する判断は、追加の根拠と合わせて確認します。</p>
+        <p>これは同じ期間の価格比較です。登録銘柄への影響は企業固有の材料など、追加の根拠と合わせて確認します。</p>
       </>:<p>この銘柄について、同じ期間・尺度で比較できるデータは未取得です。別の銘柄や業種の値で補いません。</p>}
     </div>}
     {!focusSymbol&&<p>公開監視サンプル{counts.expected}銘柄のうち比較できた{counts.available}銘柄：上昇{counts.advancers}・下落{counts.decliners}・横ばい{counts.unchanged}。

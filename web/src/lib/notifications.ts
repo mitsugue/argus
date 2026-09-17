@@ -163,6 +163,8 @@ export interface NotifInputs {
   fireCoreState?: { valuation: string; contribution: string; ratio: string } | null;
   briefSession: string;
   hasHoldings: boolean;
+  /** Quantity-free product: all registered symbols are eligible. */
+  watchlistOnly?: boolean;
   snapshotAgeDays: number | null;
   vaultConfigured: boolean;
   localExportAgeDays?: number | null;
@@ -265,7 +267,7 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
   cands.push(...newsIntelCandidates(inp));
 
   const p0Now = inp.apItems.filter((i) => i.priorityRank === 'P0').map((i) => i.symbol);
-  const p1HeldNow = inp.apItems.filter((i) => i.priorityRank === 'P1' && i.isHeld).map((i) => i.symbol);
+  const p1HeldNow = inp.apItems.filter((i) => i.priorityRank === 'P1' && (inp.watchlistOnly || i.isHeld)).map((i) => i.symbol);
   const chaseNow = inp.apItems.filter((i) => i.category === 'avoid_chase').map((i) => i.symbol);
 
   for (const [symbol, decision] of Object.entries(inp.canonicalDecisions ?? {})) {
@@ -305,13 +307,13 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
     if (it.priorityRank === 'P0' && !(st.prev.p0 ?? []).includes(it.symbol)) {
       cands.push({ eventType: 'p0_priority', severity: 'critical', symbol: it.symbol,
         assetName: it.assetName, titleJa: `最優先確認：${nm(it.symbol, it.assetName)}`,
-        bodyJa: `保有中の${nm(it.symbol, it.assetName)}に複数のリスク信号が重なっています。`,
+        bodyJa: `登録銘柄の${nm(it.symbol, it.assetName)}に複数のリスク信号が重なっています。`,
         whyJa: it.whyJa, checkNextJa: it.checkNextJa,
         dedupeKey: `p0|${it.symbol}|${day}`, isPrivate: it.isHeld });
-    } else if (it.priorityRank === 'P1' && it.isHeld && !(st.prev.p1Held ?? []).includes(it.symbol)
+    } else if (it.priorityRank === 'P1' && (inp.watchlistOnly || it.isHeld) && !(st.prev.p1Held ?? []).includes(it.symbol)
       && !(st.prev.p0 ?? []).includes(it.symbol)) {
       cands.push({ eventType: 'p1_held_priority', severity: 'high', symbol: it.symbol,
-        assetName: it.assetName, titleJa: `保有銘柄の優先確認：${nm(it.symbol, it.assetName)}`,
+        assetName: it.assetName, titleJa: `登録銘柄の優先確認：${nm(it.symbol, it.assetName)}`,
         bodyJa: `${nm(it.symbol, it.assetName)}は今日確認が必要です。`,
         whyJa: it.whyJa, checkNextJa: it.checkNextJa,
         dedupeKey: `p1|${it.symbol}|${day}`, isPrivate: true });
@@ -441,11 +443,11 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
     // Plan stances are EVIDENCE, never an action instruction — the only
     // action authority is the SDA (owner spec §17). The wording reports a
     // condition change and routes the reader to the canonical judgment.
-    if (pl.isHeld && nowRisk && !wasRisk) {
+    if ((inp.watchlistOnly || pl.isHeld) && nowRisk && !wasRisk) {
       cands.push({ eventType: 'plan_change', severity: 'high', symbol: sym,
         assetName: pl.name ?? null,
         titleJa: `計画条件の変化：${nm(sym, pl.name)}が${pl.currentStance === 'trim_consideration' ? '利確検討' : 'リスク確認'}条件に該当`,
-        bodyJa: pl.summaryJa?.slice(0, 80) || '保有銘柄の計画条件がリスク確認側に切り替わりました(参考情報)。',
+        bodyJa: pl.summaryJa?.slice(0, 80) || '登録銘柄の計画条件がリスク確認側に切り替わりました(参考情報)。',
         whyJa: '悪化信号(需給/フロー/シナリオ)が重なったため。売買指示ではありません（参考情報）。',
         checkNextJa: '銘柄カードの最終判断とPOSITION PLANの無効化条件を確認',
         dedupeKey: `plan|${sym}|risk`, isPrivate: true });
@@ -463,7 +465,7 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
   // 監視銘柄・弱気→改善方向はここでは通知しない(材料が出れば他ルールが拾う)。
   for (const [sym, sc] of Object.entries(inp.scenarioBySymbol ?? {})) {
     const was = (st.prev.scenario ?? {})[sym];
-    if (sc.isHeld && sc.dominant === 'bearish' && was && was !== 'bearish') {
+    if ((inp.watchlistOnly || sc.isHeld) && sc.dominant === 'bearish' && was && was !== 'bearish') {
       cands.push({ eventType: 'scenario_change', severity: 'high', symbol: sym,
         assetName: sc.name ?? null,
         titleJa: `シナリオ証拠の変化：${nm(sym, sc.name)}は弱気側が優勢に`,

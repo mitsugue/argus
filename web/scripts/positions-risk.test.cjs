@@ -103,11 +103,12 @@ check('P16 FIRE Core renders the live hook result instead of a stale singleton',
   routeSource.includes('fireCore={portfolioIntel.fireCore}')
   && fireCoreCardSource.includes('fireCore: LocalFireCore')
   && !fireCoreCardSource.includes('latestFireCore'));
-check('P17 FIRE Core edits invalidate same-tab and cross-tab derived totals',
+check('P17 archived FIRE helpers remain but active calculation is retired',
   fireCoreSource.includes('argus:fire-core-change')
   && fireCoreSource.includes("window.addEventListener('storage'")
-  && assetIntelSource.includes('useSyncExternalStore')
-  && assetIntelSource.includes('fireCoreMetaRevision'));
+  && !assetIntelSource.includes('buildLocalFireCore(')
+  && !assetIntelSource.includes('fireCoreMetaRevision')
+  && !holdingsSource.includes('CorePortfolio'));
 check('P18 Fund NAV is part of the canonical price map',
   assetIntelSource.includes('fundNavForAsset')
   && assetIntelSource.includes('prices.set(asset.symbol.toUpperCase(), fund.navYen)'));
