@@ -1,5 +1,7 @@
-# Refresh independent lanes during market hours. Actual executions remain
-# subject to the backend policy; a skipped AI call is never an analysis success.
+# Refresh independent supporting lanes during market hours. The resident backend
+# scheduler owns integrated AI judgment and applies its interval/cost gate before
+# each run. Keeping a second remote trigger here duplicated model work and made
+# this workflow fail when an accepted generation outlived the HTTP observation.
 name: ai-rejudge
 on:
   schedule:
@@ -19,17 +21,6 @@ jobs:
       ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
     steps:
       - uses: actions/checkout@v5
-      - name: Refresh AI judgment
-        if: ${{ !cancelled() }}
-        run: |
-          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — expected_skip"; exit 0; }
-          python3 scripts/workflow_http.py --name ai-rejudge --method POST --timeout 240 \
-            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
-            --expected-status disabled \
-            --expected-status budget_exceeded \
-            --expected-status rate_limited \
-            --expected-status deterministic_mode \
-            --url "https://argus-backend-3j2m.onrender.com/api/argus/ai-judgment/run?checker=flash"
       - name: Refresh event analysis
         if: ${{ !cancelled() }}
         run: |
