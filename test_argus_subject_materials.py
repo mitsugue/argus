@@ -61,8 +61,8 @@ def test_authenticated_api_freezes_server_materials_and_idempotent_reads_do_not_
     def resolve(**kw):calls.append(kw);return deepcopy(facts)
     api.register(app,authorize=lambda token:(True,None,200),storage_path=lambda:str(tmp_path/'private.sqlite3'),
         market_brief=lambda:brief,generate=lambda *a,**kw:None,now=lambda:AT,subject_materials=resolve)
-    client=app.test_client();body={'action':'ask','requestId':str(uuid.uuid4()),'symbol':'1234','market':'JP',
-        'horizon':5,'question':'この材料の影響は？','baseContextId':brief['unifiedContext']['contextId']}
+    client=app.test_client();body={'action':'overview','symbol':'1234','market':'JP',
+        'horizon':5,'baseContextId':brief['unifiedContext']['contextId']}
     first=client.post('/api/argus/owner-dialogue',json=body)
     assert first.status_code==202 and facts[0] in first.json['context']['facts']
     facts.clear()

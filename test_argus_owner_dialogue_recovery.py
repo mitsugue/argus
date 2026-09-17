@@ -47,6 +47,6 @@ def test_api_recovery_gate_does_not_call_ai_and_history_does_not_trigger_sync(tm
     client=app.test_client()
     history=client.post('/api/argus/owner-dialogue',json={'action':'history'}).json
     assert history['remoteBackup']['generationReady'] is False and not triggers and not path.exists()
-    result=client.post('/api/argus/owner-dialogue',json=payload(brief))
+    result=client.post('/api/argus/owner-dialogue',json={k:v for k,v in payload(brief, action='overview').items() if k not in ('requestId','question')})
     assert result.status_code==503 and result.json['error']=='dialogue_recovery_pending'
     assert calls==[] and len(triggers)==1 and not path.exists()

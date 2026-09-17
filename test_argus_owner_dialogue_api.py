@@ -143,25 +143,34 @@ def service(tmp_path):
 def payload(brief,**patch):return {'action':'ask','ownerToken':'test-owner','requestId':identity(),'baseContextId':brief['unifiedContext']['contextId'],'symbol':'5803','market':'JP','horizon':5,'question':'どう見ている？',**patch}
 
 
-def test_route_auth_idempotence_nonblocking_reads_and_frozen_context(service):
-    app,path,entered,release,calls,brief=service;client=app.test_client();body=payload(brief);before=copy.deepcopy(brief)
+def test_retired_conversation_never_reads_materials_or_calls_ai(service, monkeypatch):
+    app,path,entered,release,calls,brief=service;client=app.test_client();body=payload(brief)
     assert client.post('/api/argus/owner-dialogue',json={**body,'ownerToken':'wrong'}).status_code==401
-    assert not path.exists()
+    for extra in ({}, {'hypothesis':{'kind':'FX','value':140}}, {'focusEventId':'calendar-cpi'}):
+        response=client.post('/api/argus/owner-dialogue',json={**body,**extra})
+        assert response.status_code==410
+        assert response.json=={'error':'conversation_retired','historicalRecordsPreserved':True}
+        assert response.headers['Cache-Control']=='private, no-store'
+    assert not path.exists() and not calls
+
+
+def test_overview_auth_idempotence_nonblocking_reads_and_frozen_context(service):
+    app,path,entered,release,calls,brief=service;client=app.test_client();before=copy.deepcopy(brief)
+    body={'action':'overview','ownerToken':'test-owner','baseContextId':brief['unifiedContext']['contextId'],
+          'symbol':'5803','market':'JP','horizon':5}
     first=client.post('/api/argus/owner-dialogue',json=body);assert first.status_code==202
-    assert first.headers['Cache-Control']=='private, no-store' and entered.wait(2)
-    repeated=client.post('/api/argus/owner-dialogue',json=body);assert repeated.status_code==200
-    assert client.post('/api/argus/owner-dialogue',json={**body,'question':'変更'}).status_code==409
-    assert client.post('/api/argus/owner-dialogue',json=payload(brief)).status_code==409
+    identity=first.json['requestId']
+    assert entered.wait(2)
+    assert client.post('/api/argus/owner-dialogue',json=body).status_code==200
     rows=client.post('/api/argus/owner-dialogue',json={'action':'history','ownerToken':'test-owner'}).json['items']
     assert len(rows)==1 and rows[0]['status']=='RUNNING' and len(calls)==1
     release.set()
     for _ in range(100):
-        got=client.post('/api/argus/owner-dialogue',json={'action':'status','ownerToken':'test-owner','requestId':body['requestId']}).json
+        got=client.post('/api/argus/owner-dialogue',json={'action':'status','ownerToken':'test-owner','requestId':identity}).json
         if got['status']!='RUNNING':break
         time.sleep(.01)
-    assert got['status']=='SUCCEEDED' and got['result']['answer']['scope']=='OWNER_PRIVATE'
+    assert got['status']=='SUCCEEDED' and got['context']['intent']=='SUBJECT_OVERVIEW'
     assert got['context']['baseMarketContextId']==body['baseContextId'] and brief==before
-    assert calls[0]['purpose']=='owner_dialogue' and calls[0]['max_out']==3000
     assert 'test-owner' not in path.read_bytes().decode('utf-8',errors='ignore')
 
 
@@ -197,25 +206,27 @@ def test_saved_subject_overview_advances_after_context_change_with_browser_close
 
 def test_stale_context_and_injected_market_fields_never_call_ai(service):
     app,path,entered,release,calls,brief=service;client=app.test_client()
-    assert client.post('/api/argus/owner-dialogue',json=payload(brief,baseContextId='a'*64)).status_code==409
-    assert client.post('/api/argus/owner-dialogue',json=payload(brief,eps_input={'value':3000})).status_code==400
+    assert client.post('/api/argus/owner-dialogue',json={'action':'overview','baseContextId':'a'*64,'symbol':'5803','market':'JP','horizon':5,'ownerToken':'test-owner'}).status_code==409
+    assert client.post('/api/argus/owner-dialogue',json={'action':'overview','baseContextId':brief['unifiedContext']['contextId'],'symbol':'5803','market':'JP','horizon':5,'ownerToken':'test-owner','eps_input':{'value':3000}}).status_code==400
     assert not calls and not path.exists()
     assert client.post('/api/argus/owner-dialogue',data=b'x'*32769).status_code==413
 
 
 def test_save_failure_retry_never_repeats_paid_request(service, monkeypatch):
-    app,path,entered,release,calls,brief=service;client=app.test_client();body=payload(brief)
+    app,path,entered,release,calls,brief=service;client=app.test_client();body={'action':'overview','ownerToken':'test-owner','baseContextId':brief['unifiedContext']['contextId'],'symbol':'5803','market':'JP','horizon':5}
     original=store.complete
     monkeypatch.setattr(store,'complete',lambda *a,**kw:(_ for _ in ()).throw(OSError('disk unavailable')))
-    assert client.post('/api/argus/owner-dialogue',json=body).status_code==202
+    first=client.post('/api/argus/owner-dialogue',json=body)
+    assert first.status_code==202
+    request_id=first.json['requestId']
     assert entered.wait(2);release.set()
     for _ in range(100):
-        got=client.post('/api/argus/owner-dialogue',json={'action':'status','ownerToken':'test-owner','requestId':body['requestId']}).json
+        got=client.post('/api/argus/owner-dialogue',json={'action':'status','ownerToken':'test-owner','requestId':request_id}).json
         if got['status']=='SAVE_FAILED':break
         time.sleep(.01)
     assert got['status']=='SAVE_FAILED' and got['result']['answer']
     monkeypatch.setattr(store,'complete',original)
-    saved=client.post('/api/argus/owner-dialogue',json={'action':'save','ownerToken':'test-owner','requestId':body['requestId']}).json
+    saved=client.post('/api/argus/owner-dialogue',json={'action':'save','ownerToken':'test-owner','requestId':request_id}).json
     assert saved['status']=='SUCCEEDED' and len(calls)==1
 
 
@@ -249,16 +260,9 @@ def test_question_about_displayed_saved_edition_keeps_exact_inputs_and_no_curren
     assert client.post('/api/argus/owner-dialogue',json={**body,'ownerToken':'wrong'}).status_code==401
     assert not calls and not path.exists()
     result=client.post('/api/argus/owner-dialogue',json=body)
-    assert result.status_code==202 and done.wait(2)
-    context=result.json['context']
-    assert context['baseMarketContextId']==frozen['unifiedContext']['contextId']
-    assert context['baseMarketContextId']!=current['unifiedContext']['contextId']
-    assert context['referenceEdition']=={'recordId':record['recordId'],'recordedAt':record['recordedAt'],'isCurrentMarketAnalysis':False}
-    assert any(f['source']=='saved_market_edition' and record['recordedAt'] in f['text'] for f in context['facts'])
-    assert frozen['unifiedContext']['facts'][0]['text'] in calls[0]
+    assert result.status_code==410 and not calls
     assert history_path.read_bytes()==original
-    assert client.post('/api/argus/owner-dialogue',json=body).status_code==200
-    assert len(calls)==1
+    assert not path.exists()
 
 
 @pytest.mark.parametrize('fault',['missing','wrong_id','wrong_context','private','overview','wrong_subject','future'])
@@ -282,7 +286,7 @@ def test_saved_edition_reference_cannot_supply_or_substitute_unverified_context(
         market_brief=market_brief,generate=lambda *a,**kw:calls.append(kw),now=lambda:AT,
         market_reference=lambda rid:selected)
     response=app.test_client().post('/api/argus/owner-dialogue',json=body)
-    assert response.status_code in (400,409) and not calls and not path.exists()
+    assert response.status_code in (400,410) and not calls and not path.exists()
 
 
 def test_overview_reuse_tracks_relevant_inputs_and_keeps_saved_editions(tmp_path):
@@ -483,12 +487,5 @@ def test_event_history_uses_request_cutoff_and_keeps_current_facts(tmp_path, loo
         prediction_result_source=lambda:{"status":"UNAVAILABLE"})
     body=payload(brief,focusEventId='calendar-cpi');client=app.test_client()
     response=client.post('/api/argus/owner-dialogue',json=body)
-    assert response.status_code==202 and finished.wait(2)
-    assert lookups==[(snapshot,AT)] and snapshot['title']=='CPI'
-    saved=client.post('/api/argus/owner-dialogue',json={'action':'history','ownerToken':'test-owner'}).json['items'][0]['context']
-    assert saved['eventFocus']['snapshot']['title']=='CPI'
-    assert any(f['source']=='price_path_calculation' for f in saved['facts'])
-    assert saved['retrievalRecord']['archiveSearchStatus']==('UNAVAILABLE' if lookup_fails else 'BOUNDED_EVENT_MEMORY')
-    before=len(lookups)
-    assert client.post('/api/argus/owner-dialogue',json=body).status_code==200
-    assert len(lookups)==before
+    assert response.status_code==410 and not finished.is_set()
+    assert not lookups and not path.exists() and snapshot['title']=='CPI'

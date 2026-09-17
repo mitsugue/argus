@@ -6,7 +6,6 @@ import type { MarketBrief } from '../../lib/marketBrief';
 import { hasEditorialIntent, editorialElementLabel } from '../../lib/presentationIntent';
 import { validJapanMarketComparison } from '../../lib/japanMarketComparison';
 import { JapanMarketComparisonChart } from '../chart/JapanMarketComparisonChart';
-import { OwnerDialogue } from '../dialogue/OwnerDialogue';
 import { MarketAnalysisHistory } from './MarketAnalysisHistory';
 import './ArgusEditorialSurface.css';
 
@@ -21,9 +20,6 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
   const at = brief.aiDiagnostics?.completedAt ?? brief.generatedAt;
   const hasChart = plan.elements.some(row => row.id === 'nikkei-comparison');
   const chartReady = validJapanMarketComparison(chart, 5);
-  const canDiscuss = !archived && (!retained || !!brief.analysisHistory?.recordId);
-  const discussion = canDiscuss ? <OwnerDialogue symbol="N225" market="JP" horizon={5} baseContextId={plan.contextId}
-    referenceRecordId={retained ? brief.analysisHistory?.recordId : undefined} /> : null;
   return <section className="argus-editorial" aria-label={archived ? '当時のARGUSの説明' : 'ARGUSの今日の見立て'}
     data-argus-contract="presentation-intent-v1" data-presentation-id={plan.planId} data-context-id={plan.contextId}>
     <header className="argus-editorial__edition"><span>{archived ? '保存した説明 / 日本市場' : 'Today / 日本市場'}</span>
@@ -43,7 +39,6 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
       if (choice.id === 'nikkei-comparison') return chartReady
         ? <div className={className} key={choice.id} data-payload-id={source.payloadId}>
           <JapanMarketComparisonChart document={chart!} />
-          {discussion}
         </div> : null;
       const evidenceLabel = editorialElementLabel(choice.id);
       if (evidenceLabel && choice.caption) {
@@ -74,9 +69,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
     {!hasChart && chartReady && <div className="argus-editorial__element placement-support element-nikkei-comparison"
       data-argus-contract="required-nikkei-comparison-fallback-v1">
       <JapanMarketComparisonChart document={chart!} />
-      {discussion}
     </div>}
-    {!chartReady && discussion}
     <details className="argus-editorial__evidence"><summary>説明の根拠と、今回の構成について</summary>
       <p>{plan.intentJa}</p>
       {plan.elements.map(choice => <p key={choice.id}><b>{labels[choice.id as Section] ?? editorialElementLabel(choice.id) ?? '比較チャート'}：</b>{choice.purposeJa}</p>)}

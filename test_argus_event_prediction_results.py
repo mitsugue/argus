@@ -250,38 +250,40 @@ def test_related_result_selection_keeps_subject_and_original_metric(related_sour
         results.related_result_context(memory, source, as_of=AT, market='US', symbol='AAPL')
 
 
-def test_linked_results_reach_saved_dialogue_and_prompt_once(related_source, tmp_path):
+def test_archived_event_results_remain_readable_without_regeneration(related_source, tmp_path):
     import json
-    import threading
     from flask import Flask
     import argus_owner_dialogue as dialogue
     import argus_owner_dialogue_api as api
-    from test_argus_owner_dialogue import AT, market_brief, answer
-    from test_argus_owner_dialogue_api import payload
+    import argus_owner_dialogue_store as store
+    from test_argus_owner_dialogue import AT, market_brief
+    from test_argus_owner_dialogue_api import identity
     memory, source = related_source
-    snapshot = {'eventId':'calendar-inflation', 'eventCode':'CPI', 'title':'CPI', 'state':'UPCOMING'}
-    current = market_brief(); done = threading.Event(); calls = []
-    def generate(*args, **kwargs): done.set(); return answer()
-    def lookup(): calls.append(True); return {'status':'AVAILABLE','data':source,'readAt':AT}
+    snapshot = {'eventId':'calendar-inflation', 'eventCode':'CPI', 'title':'CPI',
+        'state':'UPCOMING', 'relatedMemory':memory,
+        'predictionResultSource':{'status':'AVAILABLE','data':source,'readAt':AT}}
+    saved = dialogue.build_context(brief=market_brief(), symbol='AAPL', market='US', horizon=1,
+        question='What changed?', received_at=AT, focus_event_id='calendar-inflation',
+        event_snapshot=snapshot)
+    path = tmp_path/'owner.sqlite3'
+    request_id = identity()
+    store.initialize(path)
+    store.submit(path, identity=request_id, input_hash=dialogue.digest(saved), boot_id='old-boot', context=saved)
+    store.complete(path, request_id, {'status':'UNAVAILABLE', 'answer':None, 'completedAt':AT})
+    def forbidden(*args, **kwargs):
+        raise AssertionError('archived read invoked generation or source lookup')
     app = Flask(__name__)
-    api.register(app, authorize=lambda token:(True,None,200), storage_path=lambda:str(tmp_path/'owner.sqlite3'),
-        market_brief=lambda:current, generate=generate, now=lambda:AT,
-        event_snapshot=lambda event_id:snapshot, event_history=lambda *args,**kwargs:memory,
-        prediction_result_source=lookup)
+    api.register(app, authorize=lambda token:(True,None,200), storage_path=lambda:str(path),
+        market_brief=forbidden, generate=forbidden, now=lambda:AT,
+        event_snapshot=forbidden, event_history=forbidden, prediction_result_source=forbidden)
     client = app.test_client()
-    response = client.post('/api/argus/owner-dialogue', json=payload(current,
-        symbol='AAPL', market='US', horizon=1, focusEventId='calendar-inflation'))
-    assert response.status_code == 202 and done.wait(2)
-    saved = client.post('/api/argus/owner-dialogue',json={'action':'history','ownerToken':'test-owner'}).json['items'][0]['context']
+    for _ in range(2):
+        response = client.post('/api/argus/owner-dialogue',json={'action':'history','ownerToken':'test-owner'})
+        assert response.status_code == 200
+        assert response.json['items'][0]['context'] == saved
     linked = saved['eventFocus']['snapshot']['relatedPredictionResults']
-    assert linked['records'][0]['status'] == 'OBSERVED' and len(calls) == 1
-    before = copy.deepcopy(saved)
-    prompt = dialogue.generation_prompt(saved)[0]
-    serialized = json.dumps(linked, ensure_ascii=False, separators=(',',':'))
-    assert prompt.count(serialized) == 1
-    assert saved == before
-    assert client.post('/api/argus/owner-dialogue',json={'action':'history','ownerToken':'test-owner'}).status_code == 200
-    assert len(calls) == 1
+    assert linked['records'][0]['status'] == 'OBSERVED'
+    assert linked['records'][0]['metrics'] == source['pairs'][0]['outcome']['metrics']
 
 
 def test_optional_results_cannot_displace_current_material_at_context_bound(related_source):
