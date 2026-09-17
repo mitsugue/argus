@@ -129,3 +129,12 @@ changes an event-state fact and observes one new generation with the previous
 record linked. Provider calls were stubs: production call counts and dollar
 savings are not yet measured. This does not complete cached-only page reads;
 first-visit generation and durable watchlist registration remain pending.
+### 個別ライブ取得の廃止（実装候補）
+
+個別ライブサービスの製品起動口を停止し、旧設定が有効でも認証・接続・専用スレッドを開始しない。
+共用のチャート履歴準備は同じ起動口から維持する。旧クライアント向けの読取りはDISABLEDと
+feature_retiredを返し、保存済み研究コード・既存履歴は削除しない。Todayのライブ帯、
+銘柄詳細の板・VWAP、チャートの現在値重ね描き、遅延価格へのライブ上書きを外す。
+当日の業種取得、既存の遅延価格、判断根拠と履歴は別経路として維持する。
+本項目はローカル実装・検証段階。配信、専用スレッド停止の本番確認、他のライブ取得経路の
+廃止、契約縮小は未完了であり、個別ライブ全体の停止済みとはしない。
