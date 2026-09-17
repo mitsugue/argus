@@ -200,7 +200,8 @@ def test_saved_subject_overview_advances_after_context_change_with_browser_close
     latest=rows[0]
     assert latest['context']['baseMarketContextId']==changed['unifiedContext']['contextId']
     assert latest['context']['previousView']['requestId']==first['requestId']
-    assert latest['context']['owner']['purchaseReason']=='需要を確認'
+    assert latest['context']['owner']['state']=='WATCHING'
+    assert 'purchaseReason' not in latest['context']['owner']
     assert controls['refreshSubjectOverviews']()['status']=='CURRENT'
 
 
@@ -350,14 +351,15 @@ def test_overview_reuse_tracks_relevant_inputs_and_keeps_saved_editions(tmp_path
     assert fifth['requestId']!=fourth['requestId'] and len(calls)==5
     body['owner']['quantity']=200
     sixth=saved(client.post('/api/argus/owner-dialogue',json=body).json)
-    assert sixth['context']['owner']['quantity']==200 and len(calls)==6
+    assert sixth['requestId']==fifth['requestId'] and len(calls)==5
+    assert 'quantity' not in sixth['context']['owner']
     clock[0]='2026-09-13T01:00:00Z'
     seventh=saved(client.post('/api/argus/owner-dialogue',json=body).json)
-    assert seventh['requestId']!=sixth['requestId'] and len(calls)==7
-    assert len(store.history(path,controls['bootId'])['items'])==7
+    assert seventh['requestId']!=sixth['requestId'] and len(calls)==6
+    assert len(store.history(path,controls['bootId'])['items'])==6
     assert store.read(path,first['requestId'],controls['bootId'])['result']==before['result']
     assert client.post('/api/argus/owner-dialogue',json={**body,'ownerToken':'wrong'}).status_code==401
-    assert len(calls)==7
+    assert len(calls)==6
 
 
 @pytest.mark.parametrize('change', ['source_revision','source_time','missingness','chart','owner_report',
@@ -489,3 +491,43 @@ def test_event_history_uses_request_cutoff_and_keeps_current_facts(tmp_path, loo
     response=client.post('/api/argus/owner-dialogue',json=body)
     assert response.status_code==410 and not finished.is_set()
     assert not lookups and not path.exists() and snapshot['title']=='CPI'
+
+
+def test_background_refresh_excludes_archived_portfolio_from_actual_prompt(tmp_path):
+    import argus_owner_dialogue as dialogue
+    path = tmp_path/'owner.sqlite3'
+    old = dialogue.build_context(brief=market_brief(),symbol='5803',market='JP',horizon=5,
+        question='以前の見立て',received_at=AT,
+        owner={'symbol':'5803','market':'JP','state':'HELD','quantity':987654,
+               'averageCost':123456,'purchaseReason':'ARCHIVED_PRIVATE_REASON',
+               'holdingPeriod':'ARCHIVED_PRIVATE_HORIZON'})
+    old['intent']='SUBJECT_OVERVIEW'
+    old['contextId']=dialogue.digest({k:v for k,v in old.items() if k!='contextId'})
+    old_id=identity();store.initialize(path)
+    store.submit(path,identity=old_id,input_hash='old',boot_id='old-boot',context=old)
+    result={'status':'SUCCEEDED','completedAt':AT,'answer':{'sections':{
+        'impact':{'textJa':'ARCHIVED_PRIVATE_PROSE','kind':'OWNER_REPORTED','evidenceIds':[]}}}}
+    store.complete(path,old_id,result)
+    before=store.read(path,old_id,'old-boot');prompts=[]
+    controls=api.register(Flask(__name__),authorize=lambda token:(True,None,200),
+        storage_path=lambda:str(path),market_brief=market_brief,now=lambda:AT,
+        generate=lambda user,**kwargs:(prompts.append(user),answer())[1],
+        generation_policy=lambda:{'model':'test-primary','ruleVersion':'watchlist-v1'})
+    assert controls['refreshSubjectOverviews']()['status']=='STARTED'
+    for _ in range(100):
+        rows=store.history(path,controls['bootId'])['items']
+        if rows[0]['status']!='RUNNING':break
+        time.sleep(.01)
+    fresh=rows[0]
+    assert fresh['status']=='SUCCEEDED' and len(prompts)==1
+    assert fresh['context']['owner']['state']=='WATCHING'
+    assert fresh['context']['previousRecord']['requestId']==old_id
+    assert fresh['context']['previousViewUnavailableReason']=='LEGACY_PORTFOLIO_CONTEXT_EXCLUDED'
+    assert 'previousView' not in fresh['context']
+    for private in ('987654','123456','ARCHIVED_PRIVATE_REASON','ARCHIVED_PRIVATE_HORIZON','ARCHIVED_PRIVATE_PROSE'):
+        assert private not in prompts[0]
+        assert private not in json.dumps(fresh['context'])
+    assert fresh['context']['actionAuthority'] is False
+    assert store.read(path,old_id,'old-boot')==before
+    assert controls['refreshSubjectOverviews']()['status']=='CURRENT'
+    assert len(prompts)==1

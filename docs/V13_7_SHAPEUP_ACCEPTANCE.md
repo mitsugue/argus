@@ -96,3 +96,20 @@
   actual desktop/mobile/iPhone acceptance, backend handling of legacy private
   context, view-triggered generation retirement, bridge/job/provider contracts.
   A quantity-free warning is not a validated prediction or a BUY permission.
+
+
+### Backend registration-only context candidate
+
+All active subject-overview construction paths (request and background refresh)
+now use quantity-free registration context. Old-client quantities/costs and
+purchase/horizon notes are not generation inputs or cache-invalidation reasons.
+Legacy previous records retain their original digest/content; their personal
+facts and old generated prose are excluded from a new watchlist explanation,
+with the original record ID and exclusion reason retained. New market facts and
+previous market facts remain bound to the same subject and horizon.
+
+116 focused backend tests passed, including the actual constructed provider
+prompt, immutable original archive, no repeat generation after migration, and
+changed materials/rules still causing a new edition. This is local validation;
+production prompt, saved-answer read-only operation and cost reduction remain
+unconfirmed. No hosted provider call or paid recalculation was made for tests.
