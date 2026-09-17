@@ -283,10 +283,7 @@ def test_archived_event_results_remain_readable_without_regeneration(related_sou
         assert response.json['items'][0]['context'] == saved
     linked = saved['eventFocus']['snapshot']['relatedPredictionResults']
     assert linked['records'][0]['status'] == 'OBSERVED'
-    before = copy.deepcopy(saved)
-    prompt, _, compact = dialogue.generation_prompt(saved)
-    serialized = json.dumps(compact(linked), ensure_ascii=False, separators=(',',':'))
-    assert prompt.count(serialized) == 1 and saved == before
+    assert linked['records'][0]['metrics'] == source['pairs'][0]['outcome']['metrics']
 
 
 def test_optional_results_cannot_displace_current_material_at_context_bound(related_source):

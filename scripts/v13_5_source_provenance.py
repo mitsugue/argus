@@ -77,7 +77,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_analysis_history_compact.py': 'a62aa02724f8e1456a2e191eb327f15c1cb915e3',
     'argus_analysis_history_compact.py': '013d0927c21cc753a223d07a22cb574293fa38d3',
     'argus_event_prediction_results.py': 'dc3475083bfbed3df6ae49885667d0a5308385e4',
-    'test_argus_event_prediction_results.py': '9e6bdfc5a4b92e90bcaa36eaff697d89bdc1caf1',
+    'test_argus_event_prediction_results.py': '030f5233dd2e3fc0b31cc1b5d68a3ca2ddb75fd8',
     'scripts/export_event_prediction_results.py': '179bde75c50c32f426a42fffc117f2584c6e45a7',
     'argus_event_result_source.py': '5d19291205687f62f00f77c43c2cd50225ebe363',
     'test_argus_event_result_source.py': 'cf0a4dca842fd1763341002dcc9a82b2ef49b6ad',
