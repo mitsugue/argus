@@ -45019,26 +45019,6 @@ def _scout_summary():
     _SCOUT_SUMMARY_CACHE["expires"] = now + (1800 if data else 600)
     return data
 
-_CLOSEPIN_SUMMARY_CACHE = {"data": None, "expires": 0.0}
-
-def _closepin_summary():
-    """The accumulated close-pin scoring (ledger/closepin/summary.json) — 30-min
-    cache, None until the 14:30 pin has been recorded+scored. Never raises."""
-    now = time.time()
-    if now < _CLOSEPIN_SUMMARY_CACHE["expires"]:
-        return _CLOSEPIN_SUMMARY_CACHE["data"]
-    data = None
-    try:
-        r = requests.get(f"{_LEDGER_RAW_BASE}/closepin/summary.json", timeout=6)
-        if r.status_code == 200:
-            d = r.json()
-            data = d if isinstance(d, dict) else None
-    except Exception:
-        data = None
-    _CLOSEPIN_SUMMARY_CACHE["data"] = data
-    _CLOSEPIN_SUMMARY_CACHE["expires"] = now + (1800 if data else 600)
-    return data
-
 # ── Ledger Health (v10.36, #5) — one view of every self-scoring loop ─────────
 def _days_since_date(date_str):
     """Calendar days since a 'YYYY-MM-DD' string; None if unparseable."""
@@ -45075,7 +45055,6 @@ def _ledger_health():
 
     pred = _ledger_summary() or {}
     scout = _scout_summary() or {}
-    cpin = _closepin_summary() or {}
     ai_truth = _ai_judgment_truth()
     ai_cached = _ai_cached_result()                 # the real last run (cache or restored)
     ai_asof = (ai_cached or {}).get("asOf")          # actual run time, not call time
@@ -45097,14 +45076,6 @@ def _ledger_health():
         "nextRunJa": "平日16:05 JST(予測台帳と同時)", "trigger": "EC2 cron + GH fallback",
         "staleWeekdays": weekday_gap(scout.get("updated")),
         "noteJa": "scoreバケット/フロー分類を実現リターンで採点。最低20件まで参考値。"})
-    co = cpin.get("overall") or {}
-    out.append({
-        "id": "closepin", "labelJa": "引けピン(14:30→同日終値)",
-        "status": state(cpin.get("updated")), "lastUpdated": cpin.get("updated"),
-        "sampleCount": co.get("n"), "tradingDays": co.get("days"), "hitRate": co.get("hitRate"),
-        "nextRunJa": "平日14:30 JST(ピン)+16:05採点", "trigger": "EC2 cron(GHは時刻窓で大抵拒否)",
-        "staleWeekdays": weekday_gap(cpin.get("updated")),
-        "noteJa": "リアルタイム価格が取れた行のみ採点。bridgeのライブ配信が前提。"})
     # Session-aware: a run at/after the last scheduled 16:05 slot is healthy
     # (current for the latest session); only a genuinely MISSED run is stale.
     ai_fresh = _ai_session_freshness(ai_asof, ai_age) if ai_cached else None
@@ -45132,7 +45103,7 @@ def get_scout_batch():
     if _SCOUT_BATCH_CACHE["data"] and now < _SCOUT_BATCH_CACHE["expires"]:
         return _SCOUT_BATCH_CACHE["data"]
     recs = []
-    for sym in _CLOSEPIN_ACTIVES_JP:
+    for sym in _SCOUT_RESEARCH_SYMBOLS_JP:
         s = get_entry_scout(sym)
         if not isinstance(s, dict) or s.get("status") != "live":
             continue
@@ -45154,137 +45125,15 @@ def get_scout_batch():
 def api_argus_scout_batch():
     return jsonify(get_scout_batch())
 
-# ── Close Pin Intraday Ledger (closepin-v1, v10.11) ──────────────────────────
-# The second ledger system of the user-approved architecture: at ~14:30 JST a
-# REALTIME price pin + a scenario distribution for "where does today's 15:30
-# close land vs this pin" is recorded; the 16:05 daily run scores it the SAME
-# day. Same-day feedback = the fastest calibration loop in the system.
-# Realtime-only by honesty: a T-1 J-Quants close cannot pin an intraday
-# prediction, so rows without a fresh moomoo push are excluded.
-_CLOSEPIN_BANDS = (0.25, 0.8)   # % vs pin: |x|<0.25 flat / 0.25–0.8 up·down / >0.8 strong.
-                                # ≈ a one-hour sigma for JP large caps: the daily ±2% band
-                                # scaled by √(1h/6.5h) ≈ 0.39 → ~0.8%, half of it = 0.25%.
-_CLOSEPIN_ACTIVES_JP = ["8058", "9984", "5801", "5803", "6584", "285A", "9501"]
-# JP names whose price is dominated by US-tech/AI beta (NASDAQ/SMH link) — for
-# these, the US-tech backdrop matters more than the stock's own chart. SBG
-# (9984, Arm + AI holdings), Kioxia (285A, NAND/AI memory), Advantest/SoftBank
-# adjacents. Used only to surface a 参考 'US-tech link' material note.
+# Shared entry-scout research universe and US technology context remain in use.
+_SCOUT_RESEARCH_SYMBOLS_JP = ["8058", "9984", "5801", "5803", "6584", "285A", "9501"]
 _US_TECH_LINKED_JP = {"9984", "285A", "6857", "8035"}
-
-def _closepin_scenarios(chg_so_far, flow_ratio, posture):
-    """Pure (unit-tested): scenario distribution for the close-vs-pin move.
-    Calm baseline 10/20/40/20/10 with two small, capped tilts:
-      - momentum continuation (intraday trends mildly persist into the close;
-        ±0.04 per 1% of day change, capped ±0.12 so it never dominates)
-      - big-money flow confirmation (same signal family as _flow_adjust)
-    Elevated-rates posture damps only the strong-up tail. Sums to 1."""
-    p = [0.10, 0.20, 0.40, 0.20, 0.10]  # strongDown, down, flat, up, strongUp
-    tilt = max(-0.12, min(0.12, (chg_so_far or 0.0) * 0.04))
-    if isinstance(flow_ratio, (int, float)):
-        tilt += max(-0.06, min(0.06, flow_ratio * 0.15))
-    tilt = max(-0.15, min(0.15, tilt))
-    if tilt >= 0:
-        p = [p[0] - tilt * 0.3, p[1] - tilt * 0.7, p[2], p[3] + tilt * 0.7, p[4] + tilt * 0.3]
-    else:
-        t = -tilt
-        p = [p[0] + t * 0.3, p[1] + t * 0.7, p[2], p[3] - t * 0.7, p[4] - t * 0.3]
-    if posture == "elevated":
-        d = min(0.03, p[4] * 0.3)
-        p[4] -= d
-        p[2] += d
-    p = [max(0.02, x) for x in p]
-    s = sum(p)
-    p = [round(x / s, 3) for x in p]
-    p[2] = round(p[2] + (1.0 - sum(p)), 3)  # rounding drift lands on flat
-    return {"strongDown": p[0], "down": p[1], "flat": p[2], "up": p[3], "strongUp": p[4]}
-
-_CLOSEPIN_CACHE = {"data": None, "expires": 0.0}
-
-def get_closepin_snapshot():
-    rates = get_rates_snapshot()
-    posture = _rates_posture(rates)
-    sensor_syms = [s for s, _ in _L1_SENSORS_JP]
-    syms = sensor_syms + [s for s in _CLOSEPIN_ACTIVES_JP if s not in sensor_syms]
-    jp = get_japan_watchlist_snapshot(syms)
-    rows = []
-    evidence_deadlines = []
-    for q in (jp.get("stocks", []) if isinstance(jp, dict) else []):
-        # Realtime pins only — see module comment above.
-        q = _decision_usable_watch_quote_row(
-            q, "JP", allow_delayed=False)
-        if q is None or q.get("source") != "moomoo-rt":
-            continue
-        chg = q.get("changePct")
-        # Price can be a current pin; the untimestamped flow sample cannot tilt
-        # scenarios or enter the calibration ledger.
-        flow_ratio = None
-        sym = q["symbol"]
-        source_epoch = _coerce_epoch(q.get("sourceTimestamp"))
-        if source_epoch is not None:
-            evidence_deadlines.append(
-                source_epoch + _DECISION_QUOTE_LIVE_MAX_AGE_SEC)
-        rows.append({
-            "symbol": sym, "name": q.get("name"),
-            "layer": 1 if sym in sensor_syms else _layer_of(sym),
-            "pinPrice": q.get("price"), "changePct": chg, "flowRatio": flow_ratio,
-            "bandPct": list(_CLOSEPIN_BANDS),
-            "scenarios": _closepin_scenarios(chg, flow_ratio, posture),
-        })
-    # ⑩ Intraday phase (v10.118): the pin is a LATE-day read (full-day context),
-    # and 15:25–15:30 is the closing auction — NOT continuous trading. Be explicit
-    # so nothing claims continuous quotes or block-trade certainty in that window.
-    _jn = datetime.now(pytz.timezone("Asia/Tokyo"))
-    _hm = _jn.hour * 60 + _jn.minute
-    if _jn.weekday() >= 5:
-        phase = "closed_weekend"
-    elif _hm < 9 * 60:
-        phase = "pre_market"
-    elif _hm < 14 * 60 + 30:
-        phase = "intraday_pre_pin"
-    elif _hm < 15 * 60 + 25:
-        phase = "decision_window"      # 14:30–15:25 — heaviest weight, final decision
-    elif _hm < 15 * 60 + 30:
-        phase = "closing_auction"      # 15:25–15:30 — auction, not continuous trading
-    else:
-        phase = "closed"
-    return {
-        "engineVersion": "closepin-v1",
-        "asOf": datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "dateJst": _jn.strftime("%Y-%m-%d"),
-        "status": "live" if rows else "no_realtime",
-        "evidenceValidUntil": (
-            datetime.fromtimestamp(min(evidence_deadlines), pytz.utc)
-            .strftime("%Y-%m-%dT%H:%M:%SZ")
-            if evidence_deadlines else None),
-        "marketPosture": posture,
-        "intradayPhase": phase,
-        "rows": rows,
-        "scoringRule": {
-            "targetJa": "同日15:30の終値がピン価格に対してどのバケットに着地するか",
-            "buckets": {"flatWithinPct": _CLOSEPIN_BANDS[0], "strongBeyondPct": _CLOSEPIN_BANDS[1]},
-            "noteJa": "リアルタイム価格(moomooブリッジ)が取れた銘柄のみピン。T-1価格では当日予測にならないため除外。",
-        },
-        "dataLimitations": [
-            "ピンは大引け前(全日の値動きを織り込んだ後半の読み)。14:30→15:25が最終判断窓。",
-            "15:25–15:30は引け条件(クロージング・オークション)で連続売買ではない。連続的な気配は前提にしない。",
-            "板(L2)/VWAP/ティック未取得のため、ブロック取引・新規ロングの断定はしない。",
-        ],
-    }
 
 @app.route("/api/argus/closepin-snapshot")
 def api_argus_closepin_snapshot():
-    # Public read for the pin workflow; 2-min cache coalesces bursts.
-    now = time.time()
-    if _CLOSEPIN_CACHE["data"] and now < _CLOSEPIN_CACHE["expires"]:
-        return jsonify(_CLOSEPIN_CACHE["data"])
-    snap = get_closepin_snapshot()
-    _CLOSEPIN_CACHE["data"] = snap
-    evidence_expiry = _coerce_epoch(snap.get("evidenceValidUntil"))
-    _CLOSEPIN_CACHE["expires"] = (
-        min(now + 120, evidence_expiry)
-        if evidence_expiry is not None and evidence_expiry > now
-        else now)
-    return jsonify(snap)
+    """Retired endpoint: old clients must not trigger acquisition or scoring."""
+    return jsonify({"status": "RETIRED", "reason": "feature_retired",
+                    "historicalRecordsPreserved": True}), 410
 
 
 def _v4_record_meta(symbol):
