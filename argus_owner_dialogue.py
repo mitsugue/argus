@@ -587,7 +587,8 @@ def overview_input_digest(context, generation_policy):
     The caller supplies effective generation settings and a prompt/rule revision.
     Only request bookkeeping and the prior edition are excluded. The saved
     explanation remains an immutable prior edition, never a new AI assessment.
-    Hourly expiry bounds reuse when event proximity changes without a new row.
+    Time alone does not regenerate prose. Event state/freshness must be explicit
+    input facts; an unchanged saved explanation retains its original timestamp.
     """
     if (context.get('intent') != 'SUBJECT_OVERVIEW'
             or context.get('isHypotheticalConversation') is not False
@@ -596,7 +597,7 @@ def overview_input_digest(context, generation_policy):
             or any(not isinstance(generation_policy.get(k), str) or not generation_policy[k].strip()
                    for k in ('model', 'ruleVersion'))):
         raise ValueError('overview_reuse_inputs_invalid')
-    at = instant(context['receivedAt'])
+    instant(context['receivedAt'])
     inputs = deepcopy(context)
     if 'retrievalRecord' in inputs:
         if inputs['retrievalRecord'] != retrieval_record(context):
@@ -625,9 +626,8 @@ def overview_input_digest(context, generation_policy):
                 market_input.pop(key)
     # Do not strip observedAt/acquiredAt/reportedAt or source timestamps.
 
-    return digest({'schemaVersion':'argus-overview-inputs-v1', 'inputs':inputs,
-                   'generationPolicy':dict(generation_policy),
-                   'evaluationHour':int(at.timestamp()) // 3600})
+    return digest({'schemaVersion':'argus-overview-inputs-v2', 'inputs':inputs,
+                   'generationPolicy':dict(generation_policy)})
 
 
 def generation_prompt(context):

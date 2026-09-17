@@ -355,11 +355,12 @@ def test_overview_reuse_tracks_relevant_inputs_and_keeps_saved_editions(tmp_path
     assert 'quantity' not in sixth['context']['owner']
     clock[0]='2026-09-13T01:00:00Z'
     seventh=saved(client.post('/api/argus/owner-dialogue',json=body).json)
-    assert seventh['requestId']!=sixth['requestId'] and len(calls)==6
-    assert len(store.history(path,controls['bootId'])['items'])==6
+    assert seventh['requestId']==sixth['requestId'] and len(calls)==5
+    assert seventh['result']['completedAt']==sixth['result']['completedAt']
+    assert len(store.history(path,controls['bootId'])['items'])==5
     assert store.read(path,first['requestId'],controls['bootId'])['result']==before['result']
     assert client.post('/api/argus/owner-dialogue',json={**body,'ownerToken':'wrong'}).status_code==401
-    assert len(calls)==6
+    assert len(calls)==5
 
 
 @pytest.mark.parametrize('change', ['source_revision','source_time','missingness','chart','owner_report',
@@ -383,7 +384,10 @@ def test_overview_input_changes_invalidate_without_mutating_context(change):
     c['retrievalRecord']=dialogue.retrieval_record(c)
     c['contextId']=dialogue.digest({k:v for k,v in c.items() if k!='contextId'})
     snapshot=copy.deepcopy(c)
-    assert dialogue.overview_input_digest(c,policy)!=before
+    if change == 'hour':
+        assert dialogue.overview_input_digest(c,policy)==before
+    else:
+        assert dialogue.overview_input_digest(c,policy)!=before
     assert c==snapshot
     if change not in ('model','rule'):assert original['contextId']!=c['contextId']
 
@@ -531,3 +535,40 @@ def test_background_refresh_excludes_archived_portfolio_from_actual_prompt(tmp_p
     assert store.read(path,old_id,'old-boot')==before
     assert controls['refreshSubjectOverviews']()['status']=='CURRENT'
     assert len(prompts)==1
+
+
+def test_elapsed_days_reuse_saved_prose_but_event_state_change_refreshes(tmp_path):
+    import argus_owner_dialogue as dialogue
+    path=tmp_path/'owner.sqlite3';clock=[AT];calls=[];materials=[[]]
+    controls=api.register(Flask(__name__),authorize=lambda token:(True,None,200),
+        storage_path=lambda:str(path),market_brief=market_brief,now=lambda:clock[0],
+        subject_materials=lambda **kwargs:copy.deepcopy(materials[0]),
+        generate=lambda user,**kwargs:(calls.append(user),answer())[1],
+        generation_policy=lambda:{'model':'test-primary','ruleVersion':'watchlist-v1'})
+    # Seed a successfully calculated registration without requiring another API
+    # or provider. Subsequent work is driven through the production tick.
+    c=dialogue.build_context(brief=market_brief(),symbol='5803',market='JP',horizon=5,
+        question='以前の見立て',received_at=AT,watchlist_only=True)
+    c['intent']='SUBJECT_OVERVIEW';c['contextId']=dialogue.digest({k:v for k,v in c.items() if k!='contextId'})
+    store.initialize(path);rid=identity()
+    store.submit(path,identity=rid,input_hash='seed',boot_id=controls['bootId'],context=c)
+    store.complete(path,rid,{'status':'SUCCEEDED','completedAt':AT,'answer':{'sections':{}}})
+    def finish():
+        for _ in range(100):
+            newest=store.history(path,controls['bootId'])['items'][0]
+            if newest['status']!='RUNNING':return newest
+            time.sleep(.01)
+        pytest.fail('background worker did not finish')
+    assert controls['refreshSubjectOverviews']()['status']=='STARTED'
+    saved=finish();assert saved['status']=='SUCCEEDED' and len(calls)==1
+    for moment in ('2026-09-13T01:00:00Z','2026-09-13T23:00:00Z','2026-09-14T01:00:00Z'):
+        clock[0]=moment
+        assert controls['refreshSubjectOverviews']()['status']=='CURRENT'
+        assert len(calls)==1
+    assert store.read(path,saved['requestId'],controls['bootId'])['result']==saved['result']
+    materials[0]=[dialogue.fact('公式発表は予定時刻を過ぎましたが、結果をまだ確認できません。',
+                              'event_state',kind='UNKNOWN')]
+    assert controls['refreshSubjectOverviews']()['status']=='STARTED'
+    changed=finish();assert changed['status']=='SUCCEEDED' and len(calls)==2
+    assert changed['context']['previousRecord']['requestId']==saved['requestId']
+    assert controls['refreshSubjectOverviews']()['status']=='CURRENT'

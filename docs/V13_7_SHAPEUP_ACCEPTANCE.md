@@ -113,3 +113,19 @@ prompt, immutable original archive, no repeat generation after migration, and
 changed materials/rules still causing a new edition. This is local validation;
 production prompt, saved-answer read-only operation and cost reduction remain
 unconfirmed. No hosted provider call or paid recalculation was made for tests.
+
+
+### Unchanged-hour generation removal candidate
+
+The subject-overview reuse key no longer includes a wall-clock hour. The prior
+implementation could regenerate the same explanation each hour even if source
+facts, event status, model and rules were unchanged. Input-key version v2 retains
+source vintages, missingness, event facts and calculation/model/rule changes.
+The saved answer's completion time is never refreshed merely because it was read.
+
+117 focused backend tests passed. A background-tick test crosses multiple hours
+and the next day with unchanged facts and observes no extra generation, then
+changes an event-state fact and observes one new generation with the previous
+record linked. Provider calls were stubs: production call counts and dollar
+savings are not yet measured. This does not complete cached-only page reads;
+first-visit generation and durable watchlist registration remain pending.

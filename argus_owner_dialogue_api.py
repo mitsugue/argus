@@ -127,7 +127,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         attach_previous_view(context, previous)
         context['contextId'] = dialogue.digest({k:v for k,v in context.items() if k!='contextId'})
         key = dialogue.overview_input_digest(context, policy)
-        context['overviewInputs'] = {'schemaVersion':'argus-overview-inputs-v1',
+        context['overviewInputs'] = {'schemaVersion':'argus-overview-inputs-v2',
             'digest':key, 'generationPolicyDigest':dialogue.digest(policy)}
         context['contextId'] = dialogue.digest({k:v for k,v in context.items() if k!='contextId'})
         if len(json.dumps(context,ensure_ascii=False).encode()) > 65536:
