@@ -259,6 +259,8 @@ async function visualAudit(page, viewport) {
     ]);
     const blackFallbackCount = [...document.querySelectorAll('.jp-comparison svg *')]
       .filter((element) => {
+        // Clip geometry is stored under <defs>; it cannot paint on the chart.
+        if (element.closest('defs')) return false;
         const style = getComputedStyle(element);
         const tag = element.tagName.toLowerCase();
         const visible = style.display !== 'none' && style.visibility !== 'hidden'
@@ -556,6 +558,8 @@ async function run() {
     if (!await otherMarkets.evaluate((element) => element.open)) {
       await otherMarkets.locator('summary').click();
     }
+    await page.locator('[data-argus-control="market-instrument"]')
+      .first().waitFor({ state: 'visible', timeout: DATA_TIMEOUT_MS });
     if (await page.locator('[data-argus-control="market-instrument"]').count() !== 4) {
       evidence.failures.push('market-instrument-count');
     }
