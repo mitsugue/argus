@@ -248,8 +248,8 @@ REVIEWED_EXTENSION_BLOBS = {
     "argus_osint_engine.py": "82c928299eed09004067283d72cc4b67b07753c5",
     "test_argus_v12_1_1.py": "fcb2a56c79822f5177ae776dfdaf07972da0a49e",
     "test_argus_v12_1_3.py": "ec334f206cc43a94f3e2dc8c7ea5015b341a0957",
-    ".github/workflows/ai-rejudge.yml": "b81acfa1a3452f2467ba416c0e14ce9d9f905f04",
-    "test_argus_official_lifecycle.py": "94f9ebcb4a3a4457cd0117e52e98cb55e628d3c7",
+    ".github/workflows/ai-rejudge.yml": "3fff3c5530adf4ca322e93d72dffb38d52ad7520",
+    "test_argus_official_lifecycle.py": "94895d787c27281d6699182cce75a415c7ad896b",
     "test_workflow_http.py": "3b02814b97563c1b089de97697d0bb471bee1578",
     # v13.7.18 owner-required Today consolidation: these exact acceptance
     # assertions remove the legacy four-index selector and its duplicate
