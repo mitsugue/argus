@@ -69,13 +69,11 @@ for (const status of ['LIVE', 'DEGRADED', 'STALE', 'UNAVAILABLE', 'AUTH_FAILED',
 // unknown status token never renders as LIVE
 assert.equal(tl.tachibanaLiveView({ provider: 'TACHIBANA', status: 'WHATEVER' }).status, 'UNAVAILABLE');
 
-// 5) the panel renders from the evidence document only and shows provenance.
+// Retired product controls must remain absent; numerical archive helpers below are retained.
 const panel = fs.readFileSync(path.join(src, 'components', 'today', 'ArgusTodayPanel.tsx'), 'utf8');
-assert.ok(panel.includes('data-argus-contract="tachibana-live-v1"'));
-assert.ok(panel.includes('evidence.marketView?.japaneseLive'), 'panel must read the backend evidence document');
-assert.ok(panel.includes('提供元 TACHIBANA'), 'rows must show provenance');
-assert.ok(panel.includes('data-tachibana-status={tachibana.status}'));
-assert.ok(!panel.includes("'LIVE'") || !/data-tachibana-status=['"]LIVE['"]/.test(panel), 'status never hard-coded');
+assert.ok(!panel.includes('data-argus-contract="tachibana-live-v1"'));
+assert.ok(!panel.includes('tachibanaLiveView('));
+assert.ok(panel.includes('jp-market-engine-market-view-v1'), 'shared market view remains');
 
 // 6) v13.5.39 realtime overlay: a current FRESH Tachibana row replaces the JP
 //    watchlist row as provider tachibana / LIVE; everything else is untouched.
@@ -125,14 +123,15 @@ tl.setTachibanaLiveDocument({ provider: 'moomoo', status: 'LIVE' });
 assert.equal(tl.getTachibanaLiveDocument(), null);
 // the asset pipeline applies the overlay before prices/rows are derived
 const intel = fs.readFileSync(path.join(src, 'hooks', 'useAssetIntel.ts'), 'utf8');
-assert.ok(intel.includes('overlayTachibanaLive(peJpRaw.data'), 'useAssetIntel must overlay Tachibana LIVE onto JP quotes');
+assert.ok(!intel.includes('overlayTachibanaLive'), 'retired live overlay must not replace delayed quotes');
+assert.ok(intel.includes('useJapanWatchlist(jpSyms)'), 'shared delayed quote source remains');
 const hook = fs.readFileSync(path.join(src, 'hooks', 'useDecisionEvidence.ts'), 'utf8');
 assert.ok(hook.includes('const japaneseLive = data.japaneseLive ?? view?.japaneseLive ?? null'),
   'decision evidence must read the document-level japaneseLive the backend publishes');
 assert.ok(hook.includes('setTachibanaLiveDocument(japaneseLive)'), 'decision evidence must publish the live document');
 assert.ok(hook.includes('{ ...marketView, japaneseLive }'), 'panel contract keeps marketView.japaneseLive');
 
-console.log('tachibana-live.test: truthful status, provenance, no fabrication, realtime overlay, glossary ok');
+console.log('tachibana-live.test: archived status and overlay helpers preserved; retired product controls absent');
 
 // ── v13.5.40: owner-visible cutover ────────────────────────────────────────
 // (a) the owner never sees the word "mock": an absent quote is 未取得.
@@ -201,8 +200,8 @@ assert.equal(jpSnapshot.stocks.find((r) => r.symbol === '7203').tachibana, undef
 const deskList = fs.readFileSync(path.join(src, 'components', 'assetDesk', 'AssetDeskList.tsx'), 'utf8');
 assert.ok(deskList.includes('.tachibana ?? null'), 'desk list must forward the Tachibana board');
 const details = fs.readFileSync(path.join(src, 'components', 'assetDesk', 'AssetDecisionDetails.tsx'), 'utf8');
-assert.ok(details.includes('data-argus-contract="tachibana-board-v1"'), 'Asset Detail renders the board');
-assert.ok(details.includes('売買権限なし'), 'board is reference only');
+assert.ok(!details.includes('data-argus-contract="tachibana-board-v1"'), 'retired board must not render');
+assert.ok(details.includes('view.dataStatus'), 'shared data limitations remain');
 const strategy = require(path.join(src, 'lib', 'assetStrategy.ts'));
 const asset = { symbol: '9984', market: 'JP', name: 'SBG' };
 const withBoard = strategy.deriveStrategy(asset, undefined,
@@ -212,7 +211,7 @@ assert.ok(!withBoard.dataLimitations[0].startsWith('VWAP・資金フロー・板
 const withoutBoard = strategy.deriveStrategy(asset, undefined,
   { price: 9000, changePct: 1.12, volume: 1, date: '2026-09-03', status: 'live' }, undefined, nowMs);
 assert.ok(withoutBoard.dataLimitations[0].includes('未取得'));
-console.log('tachibana-live.test: Asset Detail board (VWAP/板) from Tachibana evidence ok');
+console.log('tachibana-live.test: archived board calculation preserved; product board removed');
 
 // ── v13.5.42: CLOSED session vocabulary, board baseline, chart current point ──
 const closedDoc = {
@@ -257,6 +256,6 @@ assert.equal(closedPoint.state, 'CLOSED'); assert.equal(closedPoint.price, 12000
 assert.equal(tl.tachibanaCurrentPoint('7203', closedDoc, nowMs), null);
 assert.equal(tl.tachibanaCurrentPoint('5803', { ...closedDoc, status: 'AUTH_FAILED' }, nowMs), null);
 const chartPanel = fs.readFileSync(path.join(src, "components", "chart", "ChartIntelligencePanel.tsx"), "utf8");
-assert.ok(chartPanel.includes('data-argus-contract="chart-current-point-v1"'), 'chart renders the current point');
-assert.ok(chartPanel.includes('現在値ソース: TACHIBANA'), 'chart names the current price source');
-console.log('tachibana-live.test: v13.5.42 CLOSED vocabulary, board baseline, chart current point ok');
+assert.ok(!chartPanel.includes('data-argus-contract="chart-current-point-v1"'), 'retired live point must not render');
+assert.ok(!chartPanel.includes('useTachibanaLiveDocument'), 'chart must not subscribe to retired live observations');
+console.log('tachibana-live.test: archived CLOSED and current-point helpers preserved; live chart overlay removed');

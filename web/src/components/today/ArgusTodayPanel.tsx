@@ -25,8 +25,6 @@ import { useDecisionEvidence } from '../../hooks/useDecisionEvidence';
 import { GlossaryTip } from '../common/GlossaryTip';
 import { REVERSAL_STATE_GLOSSARY, FAMILY_STATE_GLOSSARY } from '../../domain/glossary';
 import { marketSignalsView } from '../../domain/marketSignals';
-import { tachibanaLiveView, formatJpy, formatPct } from '../../domain/tachibanaLive';
-import type { TachibanaLiveDocument } from '../../domain/tachibanaLive';
 import type { NewsIntelEvent } from '../../hooks/useNewsIntelligence';
 import { orderMaterialNews, groupRepeatedNewsHeadlines, NEWS_IMPORTANCE_JA } from '../../domain/newsPresentation';
 import type { MarketHorizon, MarketInstrumentSymbol } from '../../domain/marketInstruments';
@@ -287,49 +285,16 @@ const familyStateJa = (row: { status?: string; conditionMet?: boolean | null }):
   return row.conditionMet === true ? '成立' : row.conditionMet === false ? '不成立' : '判定不能';
 };
 
-const MarketViewStrip: React.FC<{ jpNames?: Record<string, string> }> = ({ jpNames }) => {
+const MarketViewStrip: React.FC = () => {
   const evidence = useDecisionEvidence();
   const projection = evidence.marketView?.projection;
   if (!projection || projection.actionAuthority !== false) return null;
   const reversal = projection.reversal;
   // v13.5.38 MARKET SIGNALS: the same seven families in the owner vocabulary
   // (SIG-01..07) with a count recomputed from the per-signal states shown.
-  // v13.5.38 TACHIBANA LIVE: Japanese-equity live evidence (shadow, read-only).
-  const tachibana = tachibanaLiveView(
-    (evidence.marketView?.japaneseLive ?? null) as TachibanaLiveDocument | null);
   return <div className="at-marketview" data-argus-contract="jp-market-engine-market-view-v1"
     aria-label="市場観（行動権限なし）">
     <small>市場観（検証前の参考情報） — 売買の最終判断とは別枠</small>
-    <div className="mv-tachibana" data-argus-contract="tachibana-live-v1"
-      data-tachibana-status={tachibana.status} data-tachibana-present={tachibana.present ? '1' : '0'}>
-      <div className="mv-tachibana__head">
-        <b>TACHIBANA LIVE</b>
-        <GlossaryTip glossaryKey={tachibana.glossaryKey}>
-          <i data-status={tachibana.status}>{tachibana.statusJa}</i>
-        </GlossaryTip>
-        <span>{tachibana.reasonJa}</span>
-        {tachibana.updatedAt && <span>更新 {tachibana.updatedAt}</span>}
-      </div>
-      {/* v13.5.60 (owner iPhone review 2026-09-07): Today carries ONE line of
-          what the Holdings page cannot say at a glance — how many holdings are
-          on a current price right now and which moved most — named by company,
-          never by code. Per-symbol prices, VWAP and the book live on Holdings. */}
-      {tachibana.rows.length > 0 && <span className="mv-tachibana__compact"
-        data-argus-contract="tachibana-live-compact-v1">
-        {(() => {
-          const current = tachibana.rows.filter((row) => row.price !== null && row.freshness === 'FRESH');
-          const mover = [...tachibana.rows].filter((row) => row.changePct !== null)
-            .sort((left, right) => Math.abs(right.changePct ?? 0) - Math.abs(left.changePct ?? 0))[0];
-          const moverName = mover ? (jpNames?.[mover.symbol] ?? '保有銘柄') : null;
-          return <>
-            保有{tachibana.rows.length}銘柄のうち現在値 {current.length}件
-            {mover && moverName && <> · 最大変動 <b>{moverName}</b> {formatPct(mover.changePct)}</>}
-            {' · 個別の価格は Holdings · 提供元 TACHIBANA'}
-          </>;
-        })()}
-      </span>}
-      <span className="mv-tachibana__note">{tachibana.authorityJa}</span>
-    </div>
     {/* v13.5.59 (owner iPhone): MARKET SIGNALS is rendered ONCE, at the top of
         the Primary Action (tap to expand). The seven family chips that repeated
         the same conditions here are gone; only the JP_MARKET_ENGINE reversal/downside states
@@ -1046,7 +1011,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     <section className="at-event card at-context" aria-label="市場観・需給（参考）">
       <div className="at-context__block" data-market="JP">
         <small className="at-context__title">日本株</small>
-        <MarketViewStrip jpNames={jpNameBySymbol} />
+        <MarketViewStrip />
         {view.positioningByMarket.JP.length > 0 && <div className="at-positioning">
           <small>JP 需給</small>
           <div className="at-position-rows">

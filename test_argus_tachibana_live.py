@@ -438,3 +438,21 @@ def test_session_ended_by_a_terminal_error_holds_before_reconnecting():
     assert _FakeRuntime.instances[-1].stopped == 1
     assert sleeps and sleeps[-1] == live._TERMINAL_HOLD_SECONDS
     assert service.current_evidence_safe()["lastErrorClass"] == ErrorClass.AUTH_REJECTED.value
+
+
+def test_retired_product_boundary_preserves_shared_bootstrap(monkeypatch):
+    import argus_tachibana_live as live
+    import argus_chart_bootstrap as bootstrap
+    calls = []
+    monkeypatch.setattr(bootstrap, "ensure_started", lambda: calls.append("chart"))
+    def forbidden(*args, **kwargs):
+        raise AssertionError("retired provider must not execute")
+    monkeypatch.setattr(live._SERVICE, "ensure_started", forbidden)
+    monkeypatch.setattr(live._SERVICE, "current_evidence_safe", forbidden)
+    assert live.ensure_started({"ARGUS_TACHIBANA_ENABLED": "true"}) == "RETIRED"
+    evidence = live.current_evidence_safe(TRADING_NOW)
+    assert calls == ["chart"]
+    assert evidence["reason"] == "feature_retired"
+    assert evidence["symbols"] == {} and evidence["authAttempts"] == 0
+    assert evidence["enabled"] is False
+    assert evidence["historicalRecordsPreserved"] is True

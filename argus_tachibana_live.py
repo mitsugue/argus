@@ -596,11 +596,18 @@ def ensure_started(environ: Optional[Mapping[str, str]] = None) -> str:
         argus_chart_bootstrap.ensure_started()
     except Exception:
         pass
-    return _SERVICE.ensure_started(environ)
+    # Individual live monitoring is retired; shared historical chart warmup remains.
+    return "RETIRED"
 
 
 def current_evidence_safe(now: Optional[datetime] = None) -> Dict[str, Any]:
-    return _SERVICE.current_evidence_safe(now)
+    # Keep a truthful compatibility envelope for old clients without provider access.
+    return {"schemaVersion": SCHEMA, "provider": PROVIDER, "authority": AUTHORITY,
+            "status": "DISABLED", "reason": "feature_retired", "enabled": False,
+            "shadowOnly": True, "authoritative": False, "executionCapability": False,
+            "symbols": {}, "symbolCount": 0, "authAttempts": 0,
+            "asOf": _iso(now or _utcnow()), "updatedAt": None,
+            "historicalRecordsPreserved": True, "productBoot": _product_boot_summary()}
 
 
 __all__ = [
