@@ -114,6 +114,10 @@ assert.match(script, /fillPaintTags\.has\(tag\)/,
   'visual acceptance must ignore default fill values on non-fillable SVG containers');
 assert.match(script, /strokePaintTags\.has\(tag\)/,
   'visual acceptance must inspect only elements whose stroke can actually paint');
+assert.match(script, /element\.closest\('defs'\)/,
+  'clip-path definitions do not paint and must not count as black fallback');
+assert.match(script, /\.first\(\)\.waitFor\(\{ state: 'visible', timeout: DATA_TIMEOUT_MS \}\)/,
+  'the market control count must wait for the explorer to render');
 assert.match(script, /DATA_TIMEOUT_MS = 15_000/);
 assert.match(script, /BACKEND_READY_TIMEOUT_MS = 8 \* 60_000/);
 assert.match(script, /MARKET_CACHE_READY_TIMEOUT_MS = 30 \* 60_000/);
