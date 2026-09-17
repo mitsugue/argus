@@ -66,7 +66,7 @@ def test_all_public_endpoints_clean(monkeypatch):
     with scanner.app.test_client() as c:
         for path in PUBLIC_GETS:
             r = c.get(path)
-            assert r.status_code == 200, path
+            assert r.status_code == (410 if path == "/api/argus/pro-handoff" else 200), path
             d = r.get_json()
             blob = json.dumps(d, ensure_ascii=False)
             low = blob.lower()

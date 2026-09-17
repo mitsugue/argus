@@ -161,7 +161,8 @@ def test_migrated_features_present():
     assert not os.path.exists(os.path.join(WEB, "components", "assetDesk", "AssetEntryScout.tsx"))
     assert "AssetEntryScout" not in _read("components", "assetDesk", "AssetDecisionCard.tsx")
     research = _read("components", "assetDesk", "AssetResearchPanel.tsx")
-    assert "saveNote" in research and "buildReviewPackMarkdown" in research
+    assert "saveNote" in research and "getNote" in research
+    assert "buildReviewPackMarkdown" not in research
     assert "OsintDeepDive" in research and "decisionHistoryFor" in research
     pos = _read("components", "assetDesk", "AssetPositionPanel.tsx")
     assert "onUpdateHolding" in pos and "端末内のみ" in pos
@@ -191,7 +192,11 @@ def test_portfolio_wide_features_moved_to_core():
     assert "PortfolioExposureCard" in cp and "WhatIfPanel" not in cp
     # Owner editing remains contextual; no replacement global framework is added.
     assert "FireCoreCard" in cp
-    for capability in ("TradeJournalCard", "EntityProfileEditor", "Layer2BSyncCard"):
+    assert "TradeJournalCard" not in wl
+    journal = _read("lib", "tradeJournal.ts")
+    assert "argus.trades.v1" in journal and "readTrades" in journal
+    assert "localStorage.setItem" not in journal
+    for capability in ("EntityProfileEditor", "Layer2BSyncCard"):
         assert capability in wl
 
 

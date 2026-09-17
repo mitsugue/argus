@@ -1,10 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { PageShell } from './PageShell';
-import { ProHandoffButton } from '../components/dashboard/ProHandoffButton';
 import { AssetDeskList, type AssetFocusIntent } from '../components/assetDesk/AssetDeskList';
 import { EntityProfileEditor } from '../components/dashboard/EntityProfileEditor';
 import { AddAssetModal } from '../components/dashboard/AddAssetModal';
-import { TradeJournalCard } from '../components/dashboard/TradeJournalCard';
 import { Layer2BSyncCard } from '../components/guide/Layer2BSyncCard';
 import { useAssets } from '../hooks/useAssets';
 import { useAssetIntel } from '../hooks/useAssetIntel';
@@ -124,10 +122,6 @@ export const Watchlist: React.FC<Props> = ({
         {supportOpen && <div className="ad-support__body">
           <Layer2BSyncCard assets={assets} />
           <EntityProfileEditor assets={assets} />
-          <TradeJournalCard assets={assets} priceBySymbol={intel.priceBySymbol} />
-          <div className="watch-toolbar">
-            <ProHandoffButton />
-          </div>
         </div>}
       </details>}
 

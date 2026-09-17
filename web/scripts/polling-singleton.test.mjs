@@ -122,6 +122,7 @@ for (const source of [assetDesk, portfolio]) {
   assert.doesNotMatch(source, /useAssetIntel\(|useFundNav\(/);
 }
 assert.doesNotMatch(trades, /useJapanWatchlist|useUSWatchlist|setInterval/);
-assert.match(trades, /priceBySymbol/);
+assert.doesNotMatch(trades, /readTrades|addTrade|tradePnlPct/);
+assert.doesNotMatch(holdings, /TradeJournalCard|ProHandoffButton/);
 
 console.log('polling-singleton.test: ok (assets/intel/NAV 1, Trade loops 0, event read 1, health timer 0)');
