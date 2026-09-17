@@ -248,12 +248,10 @@ def test_direct_workflow_ntfy_inventory_is_non_security_only():
         if "ntfy.sh" in path.read_text(encoding="utf-8")
     }
     assert set(direct) == {
-        "closepin-pin.yml",
         "market-alerts.yml",
         "prediction-ledger.yml",
         "smoke-test.yml",
     }
-    assert "Notify on failure" in direct["closepin-pin.yml"]
     assert "Notify on failure" in direct["prediction-ledger.yml"]
     assert "Notify on failure" in direct["smoke-test.yml"]
     assert "posture flip" in direct["market-alerts.yml"]

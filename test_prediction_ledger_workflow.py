@@ -54,7 +54,7 @@ def test_slow_ai_observation_cannot_block_the_canonical_ledger():
 def test_canonical_runner_receives_only_bounded_snapshot_contract():
     source = _source()
     canonical = source[source.index("Append canonical Prediction Ledger v2 records"):
-                       source.index("# closepin-v1")]
+                       source.index("# scout-ledger-v1")]
     assert 'snapshot.get("canonicalPredictionLedger")' in canonical
     assert 'canonical.get("schemaVersion") != "argus-prediction-ledger-v2"' in canonical
     assert 'canonical.get("mode") != "forward_live"' in canonical
@@ -97,28 +97,28 @@ def test_v4_latest_price_scorers_and_main_downloads_are_absent():
         assert forbidden not in source
 
 
-def test_closepin_and_scout_are_explicit_shadow_derived_only():
+def test_scout_remains_explicit_shadow_derived_only():
     source = _source()
-    derived = source[source.index("# closepin-v1"):
+    derived = source[source.index("# scout-ledger-v1"):
                      source.index("Commit to ledger branch")]
-    assert derived.count("SHADOW DERIVED") == 2
-    assert derived.count("'authority': 'SHADOW_DERIVED'") >= 4
-    assert derived.count("'canonicalPredictionLedger': False") >= 4
-    assert derived.count("'calibrationEligible': False") >= 4
+    assert derived.count("SHADOW DERIVED") == 1
+    assert derived.count("'authority': 'SHADOW_DERIVED'") >= 2
+    assert derived.count("'canonicalPredictionLedger': False") >= 2
+    assert derived.count("'calibrationEligible': False") >= 2
     assert "'mode': 'forward_live'" not in derived
     assert "'calibrationEligible': True" not in derived
     assert "entry-scout (calibration)" not in derived
 
 
-def test_closepin_pin_writer_is_serialized_and_shadow_classified():
+def test_retired_pin_has_no_schedule_acquisition_score_or_notification():
     source = CLOSEPIN_WORKFLOW.read_text(encoding="utf-8")
-    assert source.count("concurrency:") == 1
-    assert "group: ledger-branch-writer" in source
-    assert "cancel-in-progress: false" in source
-    assert '"mode": "shadow"' in source
-    assert '"authority": "SHADOW_DERIVED"' in source
-    assert '"canonicalPredictionLedger": False' in source
-    assert '"calibrationEligible": False' in source
+    assert "schedule:" not in source
+    assert "curl " not in source and "requests." not in source
+    assert "contents: write" not in source and "ntfy.sh" not in source
+    assert "ledger/closepin" not in _source()
+    bridge = (ROOT / "bridge" / "trigger_closepin.sh").read_text()
+    assert "curl " not in bridge and "source " not in bridge
+    assert "exit 0" in bridge
 
 
 def test_event_ledger_plain_push_shares_the_writer_queue():

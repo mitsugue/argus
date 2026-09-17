@@ -842,17 +842,6 @@ def v_ai_judgment_evidence_refs_safe():
     n_refs = sum(1 for l in (d.get("labels") or []) if (l.get("decisionRefs") or {}).get("evidencePackId"))
     return True, f"freshness={d.get('freshness')} labelsWithRefs={n_refs}"
 
-def v_closepin_phase():
-    c, d = _get("/api/argus/closepin-snapshot")
-    if d.get("engineVersion") != "closepin-v1":
-        return False, f"engine={d.get('engineVersion')}"
-    if not d.get("intradayPhase"):
-        return False, "no intradayPhase"
-    lims = " ".join(d.get("dataLimitations") or [])
-    if "オークション" not in lims:
-        return False, "missing closing-auction disclaimer"
-    return True, f"phase={d.get('intradayPhase')}"
-
 def v_cause_attribution():
     c, d = _get("/api/argus/cause-attribution?symbol=285A&market=JP")
     if d.get("schemaVersion") != "cause-attribution-v1":
@@ -920,7 +909,6 @@ CHECKS = [
     ("crypto-scan admin", _crypto_scan_gated),
     ("watchlist-sync owner-gated", v_watchlist_sync_gated),
     ("no order routes (safety)", v_no_order_routes),
-    ("closepin phase (full-day)", v_closepin_phase),
     ("cause-attribution (integrity)", v_cause_attribution),
     ("downside-incidents (cause+override)", v_downside_incidents),
     ("legacy routes admin-gated", v_legacy_routes_gated),

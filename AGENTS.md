@@ -45,3 +45,13 @@ consistent. Do not keep a patch number fixed solely because 13.6 acceptance is
 unfinished. A patch increment is not a declaration that all 13.5 or 13.6 work
 is complete. Preserve the executing build identifier and the existing update,
 cache, holdings, and history protection mechanisms.
+
+## Current scope override (2026-09-17)
+
+Read `docs/V13_7_SHAPEUP_REQUIREMENTS.md` before new changes. It supersedes
+conflicting earlier requirements to retain dialogue, portfolio management,
+individual realtime monitoring, FIRE, user trade entry, external AI consultation
+and closing-window prediction. Preserve archived records and shared auth,
+recovery and integrated explanations while retiring dedicated execution paths.
+Prioritize reusable long-term research and index-defined valuation inputs;
+retain actual same-session sector data and quantity-free watchlist analysis.

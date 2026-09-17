@@ -410,7 +410,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       { key: 'SHORT' as const, state: shortState?.latest?.previousDayDifference == null ? '—' as const
         : shortState.latest.previousDayDifference < 0 ? '↓' as const : '↑' as const,
       source: 'jquants-daily-short-ratio' },
-      { key: 'CLOSE' as const, state: '—' as const, source: 'closing-window' },
     ];
     const usBars = headlineEntry('SPY')?.bars ?? [];
     const usLatest = usBars.at(-1);
@@ -424,7 +423,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
         : '—' as const,
       source: 'spy-qqq-relative' },
       { key: 'FLOW' as const, state: '—' as const, source: 'us-volume-proxy' },
-      { key: 'CLOSE' as const, state: '—' as const, source: 'closing-window' },
     ];
     // v13.5.54: an event whose announcement TIME is not published (Treasury
     // auctions, BOJ meeting days) still has a published DATE. Mapping those to

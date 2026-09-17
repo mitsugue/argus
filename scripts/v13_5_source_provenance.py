@@ -35,6 +35,11 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'docs/V13_7_SHAPEUP_REQUIREMENTS.md': '9756717ff26e5cf159dcf5d20cb578d99ab225ed',
+    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': 'd7894734d3537279d8092de5ea28445f91544ae6',
+    'test_rules.py': '99fad6a22f968ddc518a8b7b359d4adfdf8fd9e0',
+    'bridge/trigger_closepin.sh': '83ee01384660bb8799a863e080021a7fa35c1e3d',
+    '.github/workflows/closepin-pin.yml': 'ea693b3ca6140d4cf6fa66c48d91c6a03f603baa',
     'scripts/run_breadth_freshness.py': '93922a3409750a1562fb928eb34933f5feb22a68',
     'test_breadth_freshness_workflow.py': '4a7926a32e990576327d14db059504e57f7cc2a8',
     'argus_tick_durability.py': 'fd2f2a97652cf1f3bb18084fd1aa5f54a19247da',
@@ -79,7 +84,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_macro_schedule.py': 'a49e0d008eca24af791b080848df063e625bb0df',
     'test_macro_readiness.py': 'd1348cbcc814fb28857bd42095007f355728cd5a',
     'scripts/macro_readiness.py': 'd9d736333960d220a5ce3fc55951abc901ea47f0',
-    'docs/V13_7_REQUIREMENTS.md': 'fca63832338e6e1c7d022b5474f0d526a10bdcd3',
+    'docs/V13_7_REQUIREMENTS.md': '6ae5091a2167249af1a5c8e1bfc75c5f8ed3d928',
     'web/src/hooks/useOsintInvestigation.ts': 'ada26a80e0f0f439f97cb75858407647dc7c5d8d',
     'web/src/components/guide/Layer2BSyncCard.tsx': '20dae8bccafee961a17aad41b39f738fd5f60b76',
     'web/src/components/dashboard/ProHandoffButton.tsx': 'ff35d429cd6c8b615fbeb355edf475edacc992a5',
@@ -93,7 +98,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/common/TriangleStepLoader.css': '189ca3825669144c1ecec4248f9cc72376d77387',
     'web/src/i18n/index.ts': '933221ee4ca1f3adccdb8ebf5c950419fe7ce019',
     # Owner-authorized v13.6.1 prediction-ledger continuity regression proof.
-    'test_prediction_ledger_workflow.py': 'd6306218d6d3545fedf43950fb866f98cda2d006',
+    'test_prediction_ledger_workflow.py': 'c56ab18cdedbf04fd37c7362209172fe92e409cf',
     'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
     'web/src/hooks/useAssets.ts': 'ee6addd411bbf71c253e74a7f76165063189254b',
     'web/src/components/dialogue/OwnerOverview.tsx': '31f6dfb6e33b737052b63dcc7b31f6c159fdbe42',
