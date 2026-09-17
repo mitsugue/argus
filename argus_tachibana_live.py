@@ -1,22 +1,11 @@
-"""ARGUS v13.5.38 — Tachibana LIVE product boundary (the one adapter seam).
+"""Retired individual live adapter and preserved research helpers.
 
-Tachibana v4r10 sensor -> normalized current-state -> ARGUS product consumers.
+The product entry point retains shared historical-chart bootstrap only; it never
+starts the archived provider service. Product reads return a disabled envelope
+without accessing credentials or live observations. The service implementation
+and numerical/provenance helpers remain available for historical research tests.
 
-This module is the single place the ARGUS product touches the Tachibana
-provider package.  It owns:
-
-* lifecycle: one lazily-started daemon thread that runs the read-only
-  ``TachibanaLiveRuntime`` inside the JPX cash session window under the host
-  singleton lease (exactly one EVENT session per host), with a bounded
-  reauthentication budget and no retry storm;
-* state: a bounded, transient current-state snapshot (latest observation per
-  configured symbol, at most three symbols, no history, no raw frames);
-* projection: ``current_evidence_safe()`` — the only thing consumers read —
-  a provenance-stamped (``provider = TACHIBANA``), secret-free evidence
-  document with a truthful status.
-
-Authority: SHADOW_NON_AUTHORITATIVE.  Nothing here can influence the single
-decision authority; the evidence is visible, never overriding.
+Authority remains SHADOW_NON_AUTHORITATIVE; no order capability is exposed.
 """
 from __future__ import annotations
 
