@@ -35,8 +35,12 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'web/src/lib/tradeJournal.ts': '149dec98cbf3d17e9860e235c91c28248aa6c2d1',
+    'web/src/components/dashboard/TradeJournalCard.tsx': '9b4e4f073a281cc61cb75e49134266fde9392bce',
+    'web/scripts/polling-singleton.test.mjs': 'de34e0e33bc46871c009f4264d85881a7d2e74ca',
+    'test_argus_institutional_backend_v1160.py': 'd8065d151883cdf13ff7ebfa79358482d40cc8fc',
     'docs/V13_7_SHAPEUP_REQUIREMENTS.md': '9756717ff26e5cf159dcf5d20cb578d99ab225ed',
-    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': '8ee37922ba44db9d2dbc188a7cf104bae705dbd6',
+    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': '61fc9e8e9fee5d883581bc2f669ce157be006462',
     'test_rules.py': '99fad6a22f968ddc518a8b7b359d4adfdf8fd9e0',
     'bridge/trigger_closepin.sh': '83ee01384660bb8799a863e080021a7fa35c1e3d',
     '.github/workflows/closepin-pin.yml': 'ea693b3ca6140d4cf6fa66c48d91c6a03f603baa',
@@ -87,10 +91,10 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/V13_7_REQUIREMENTS.md': '6ae5091a2167249af1a5c8e1bfc75c5f8ed3d928',
     'web/src/hooks/useOsintInvestigation.ts': 'ada26a80e0f0f439f97cb75858407647dc7c5d8d',
     'web/src/components/guide/Layer2BSyncCard.tsx': '20dae8bccafee961a17aad41b39f738fd5f60b76',
-    'web/src/components/dashboard/ProHandoffButton.tsx': 'ff35d429cd6c8b615fbeb355edf475edacc992a5',
+    'web/src/components/dashboard/ProHandoffButton.tsx': 'a7e9d2c235333fa504f306fb6ad743d3a4eda972',
     'web/src/components/dashboard/OsintDeepDive.tsx': '875c23041a7d765379aa834bbfe70ae24abf0f05',
     'web/src/components/dashboard/AddAssetModal.tsx': '56b5df9a55e8238db3538c829f1e29fd157398ce',
-    'web/src/components/assetDesk/AssetResearchPanel.tsx': '9a80e0d55a72085dd54749477144aed43abfe163',
+    'web/src/components/assetDesk/AssetResearchPanel.tsx': '74487e1942385ade5ccef2209a9ca63bf5d3e4e1',
     'test_argus_v12_3_1.py': 'c26d3849a5c7219d537c1cdd8a3484c5087e4da1',
     'web/src/components/dashboard/SystemHealthPopover.tsx': '3893f26c3bef9812d841600832a96193231000ed',
     'web/src/routes/DataQualityPage.tsx': 'c86b933832c2e50f3d694f4ca1ac79428096fe55',
