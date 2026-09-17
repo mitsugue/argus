@@ -14,7 +14,6 @@ function useEventAiScenarioNote(): string {
 import { useDashboardEvents } from '../../hooks/useDashboardEvents';
 import { deriveDashboardEventDisplayState, type DashboardEvent, type DashboardEventReaction } from '../../lib/dashboardEventState';
 import { useLocale, t, pick } from '../../i18n';
-import { OwnerDialogue } from '../dialogue/OwnerDialogue';
 import { EVENT_DESC_JA } from '../../lib/eventLabels';
 import { formatEventWhenJa } from '../../domain/argusTodayView';
 import './ImportantEventsCard.css';
@@ -170,22 +169,9 @@ const EventRow: React.FC<{ e: ImportantEvent; open: boolean; ai?: MacroAnalysis 
         <p className="ie-line"><span className="ie-k">{t('ie.nextReview')}</span>{nextReview}</p>
         {ai && <CaosAnalysisBlock ai={ai} released={released} />}
         <p className="ie-data">{t('ie.forecast')}: {t('ie.unavailable')} · {t('ie.previous')}: {t('ie.unavailable')}{e.source ? ` · ${e.source}` : ''}</p>
-        <AskAIEvent eventId={e.eventId} when={when} titleJa={eventTitleJa(e.eventCode, e.title)} />
       </div>
     </details>
   );
-};
-
-const AskAIEvent: React.FC<{ eventId: string; when: string; titleJa: string }> = ({ eventId, when, titleJa }) => {
-  const [open, setOpen] = React.useState(false);
-  return <div className="ie-dialogue">
-    <button type="button" aria-expanded={open} onClick={()=>setOpen(value=>!value)}
-      style={{minHeight:44,fontSize:14,padding:'10px 14px',borderRadius:10,border:'1px solid var(--line)',background:'transparent',color:'var(--accent)',cursor:'pointer'}}>
-      {open?'ARGUSとの対話を閉じる':'このイベントについてARGUSに聞く'}
-    </button>
-    {open&&<OwnerDialogue key={eventId} symbol="N225" market="JP" horizon={5} focusEventId={eventId}
-      initialQuestion={`${titleJa}（${when}）について、事前予想・公式結果・実際の市場反応を分けて、今の見立てへの影響と次に確認することを教えて。`}/>}
-  </div>;
 };
 
 // v11.4.1 UNIFIED ROW — the single event surface. After release, official result +
@@ -264,7 +250,6 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
         {(c.assetsToWatch || []).length > 0 && (
           <p className="ie-data">注目: {(c.assetsToWatch || []).join(' · ')} ・ AIシナリオはコンセンサスや売買指示ではありません</p>
         )}
-        <AskAIEvent eventId={ev.eventId} when={when} titleJa={eventTitleJa(ev.eventCode, ev.title)} />
       </div>
     </details>
   );

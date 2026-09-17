@@ -1,5 +1,4 @@
 import { revealNewsArticle } from '../../lib/revealNewsArticle';
-import { OwnerDialogue } from '../dialogue/OwnerDialogue';
 import type { Job } from '../dialogue/OwnerDialogue';
 import { OwnerOverview } from '../dialogue/OwnerOverview';
 import { validJapanMarketComparison } from '../../lib/japanMarketComparison';
@@ -938,9 +937,6 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     {view.selectedMarket === 'JP' && selectedSymbol === '1321' && !editorialActive && !hasSavedPeriodChart
       && <JapanMarketComparisonPanel horizon={horizon} />}
 
-    {!editorialActive && <OwnerDialogue key={`${view.selectedMarket}:${scopedSubject}:${horizon}`}
-      symbol={scopedSubject} market={view.selectedMarket} horizon={horizon}
-      previousRequestId={matchingOverview?.requestId}/>}
 
     {view.holdingsReview.length > 0 && <section className="at-priorities card" aria-label="OWNER PRIORITIES">
       <div className="at-head"><b>自分の銘柄への影響</b><span>優先して確認</span></div>

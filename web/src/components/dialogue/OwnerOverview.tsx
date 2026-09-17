@@ -14,7 +14,7 @@ const statusText:Record<string,string>={
   INTERRUPTED:'再起動で更新が中断しました。重複実行を避けるため、同じ処理は自動再送していません。',
   SAVE_FAILED:'回答の保存を確認できませんでした。保存済みの説明を表示します。',
 };
-export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:string;market:'JP'|'US';horizon:number;asset?:AssetItem;onReference:(job:Job|null)=>void}) {
+export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:string;market:'JP'|'US';horizon:number;asset?:AssetItem;onReference?:(job:Job|null)=>void}) {
   const {brief,loading:marketLoading,error:marketError}=useMarketBrief();const [token,setToken]=useState(readToken);
   const [edition,setEdition]=useState<{key:string;job:Job}|null>(null);
   const [error,setError]=useState('');const [fetching,setFetching]=useState(false);const [revision,setRevision]=useState(0);
@@ -72,7 +72,7 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:
   const job=edition?.job;
   const current=edition?.key===requestKey&&job?.status==='SUCCEEDED';
   const saved=job?.status==='SUCCEEDED'?job:validJob(job?.previousOverview)&&job.previousOverview.status==='SUCCEEDED'?job.previousOverview:null;
-  useEffect(()=>{onReference(token?saved??null:null);},[saved,token,onReference]);
+  useEffect(()=>{onReference?.(token?saved??null:null);},[saved,token,onReference]);
   if(!token)return <section className="owner-overview"><h3>この銘柄について</h3><p>所有者の接続設定を保存すると、市場と登録した保有情報から説明を自動更新します。</p></section>;
   return <section className="owner-overview" aria-label="この銘柄へのARGUSの説明">
     <header><p className="owner-overview__eyebrow">{asset?.displayNameJa||asset?.displayName||(symbol==='N225'?'日経平均':symbol)}</p><span>{horizon}営業日の見通し</span></header>

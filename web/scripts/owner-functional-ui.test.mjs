@@ -34,7 +34,7 @@ assert.match(today, /正本データの更新時刻を確認/);
 assert.doesNotMatch(today, /<span>\{view\.canonicalDecision\.nextReviewConditionCodes\[0\]/);
 assert.match(editorial, /required-nikkei-comparison-fallback-v1/);
 assert.match(editorial, /!hasChart && chartReady/);
-assert.match(editorial, /!chartReady && discussion/);
+assert.doesNotMatch(editorial, /OwnerDialogue|discussion/);
 
 assert.match(chart, /buildTodayProjection/);
 assert.match(chart, /方向確率を検証できないため、チャートは表示しません/);
