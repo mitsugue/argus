@@ -52,14 +52,15 @@ def test_cause_attribution_carries_institutional_notes(monkeypatch):
     assert len(sigs) <= 2
 
 
-def test_pro_handoff_includes_summary(monkeypatch):
-    _seed(monkeypatch)
-    monkeypatch.setitem(scanner._PRO_HANDOFF_CACHE, "data", None)
-    monkeypatch.setitem(scanner._PRO_HANDOFF_CACHE, "expires", 0.0)
+def test_pro_handoff_retired_without_building_or_acquiring(monkeypatch):
+    def forbidden():
+        raise AssertionError("retired prompt construction executed")
+    monkeypatch.setattr(scanner, "_build_pro_handoff", forbidden)
     with scanner.app.test_client() as c:
-        d = c.get("/api/argus/pro-handoff").get_json()
-    assert "Institutional Intelligence Summary" in d["promptText"]
-    assert "自動売買の指示ではありません" in d["promptText"]
+        response = c.get("/api/argus/pro-handoff")
+    assert response.status_code == 410
+    assert response.get_json() == {"status": "RETIRED", "reason": "feature_retired",
+                                   "historicalRecordsPreserved": True}
 
 
 def test_bridge_status_unaffected(monkeypatch):

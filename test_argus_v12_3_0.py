@@ -72,12 +72,14 @@ class ArgusV1230IntegrationTests(unittest.TestCase):
         self.assertTrue(second["rebuildSkipped"])
         rebuild.assert_not_called()
 
-    def test_asset_consultation_source_has_no_ai_post(self):
+    def test_retired_consultation_keeps_notes_and_formal_history(self):
         src = pathlib.Path("web/src/components/assetDesk/AssetResearchPanel.tsx").read_text()
-        self.assertIn("clipboard.writeText", src)
+        self.assertNotIn("clipboard.writeText", src)
         self.assertNotIn("method: 'POST'", src)
-        self.assertIn("['ChatGPT', 'Gemini']", src)
-        self.assertIn("${provider}に相談", src)
+        self.assertNotIn("['ChatGPT', 'Gemini']", src)
+        self.assertNotIn("${provider}に相談", src)
+        self.assertIn("saveNote", src)
+        self.assertIn("decisionHistoryFor", src)
 
 
 if __name__ == "__main__":

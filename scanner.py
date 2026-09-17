@@ -46850,15 +46850,9 @@ def _build_pro_handoff():
 
 @app.route("/api/argus/pro-handoff")
 def api_argus_pro_handoff():
-    # Frontend-safe: aggregates cached snapshots into a copy-paste prompt. No
-    # admin token, no secrets, no OpenAI/Gemini call. Short cache (3 min).
-    now = time.time()
-    if _PRO_HANDOFF_CACHE["data"] and now < _PRO_HANDOFF_CACHE["expires"]:
-        return jsonify(_PRO_HANDOFF_CACHE["data"])
-    payload = _build_pro_handoff()
-    _PRO_HANDOFF_CACHE["data"] = payload
-    _PRO_HANDOFF_CACHE["expires"] = now + _PRO_HANDOFF_TTL
-    return jsonify(payload)
+    # Old clients must not trigger dedicated acquisition or prompt construction.
+    return jsonify({"status": "RETIRED", "reason": "feature_retired",
+                    "historicalRecordsPreserved": True}), 410
 
 
 # ━━━ Corporate Catalyst Layer v1 ━━━

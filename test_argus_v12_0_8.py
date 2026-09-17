@@ -300,7 +300,9 @@ def test_addendum_single_event_clock():
     assert "x.at >= nowMs" in vm
     assert "future.slice(1)" in vm and "slice(0, 3)" in vm
     cc = _read("routes", "CommandCenter.tsx")
-    assert "argusToday.nextEvent" in cc
+    assert "<ArgusTodayPanel view={argusToday}" in cc
+    panel = _read("components", "today", "ArgusTodayPanel.tsx")
+    assert "view.nextEvent" in panel
     notifications = _read("routes", "NotificationsPage.tsx")
     assert "ImportantEventsCard" in notifications
     assert not os.path.exists(os.path.join(WEB, "lib", "eventClock.ts"))
