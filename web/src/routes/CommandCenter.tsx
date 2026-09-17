@@ -5,7 +5,6 @@ import { useAssetIntel } from '../hooks/useAssetIntel';
 import { latestActionPriorities, latestSessionBrief, latestFireCore, publishEventsJa, publishDataQuality, latestDataQuality } from '../lib/positionExposureShare';
 import { maybeDailySnapshot } from '../lib/portfolioSync';
 import { maybeUpdateOutcomes } from '../lib/decisionQuality';
-import { ProHandoffButton } from '../components/dashboard/ProHandoffButton';
 import { MobileStickyCommand } from '../components/dashboard/MobileStickyCommand';
 import { runNotificationEngine } from '../lib/notifications';
 import { assessBackupSafety } from '../lib/backupSafety';
@@ -653,7 +652,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
           events: newsIntel.view?.events ?? [] }}
         onNavigate={onNavigate} onNavigateToAsset={onNavigateToAsset}
         onNavigateToSettings={onNavigateToSettings}
-        aiButton={<ProHandoffButton nextEvent={argusToday.nextEvent} />} />
+        aiButton={null} />
       <MobileStickyCommand text={argusToday.footerText} />
     </PageShell>
   );
