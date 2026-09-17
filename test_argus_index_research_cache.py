@@ -142,3 +142,16 @@ def test_feature_history_restart_reuses_exact_inputs_without_replay(monkeypatch,
     scanner._jp_market_feature_history_warm()
     assert calculate.call_count == 2
     assert scanner._JP_MARKET_FEATURE_HISTORY['inputIdentity'] != original['inputIdentity']
+    # Persistence may recover on the next collection without replaying years.
+    writer = scanner.argus_persistent_storage.atomic_write_json
+    def fail_write(*a, **kw):
+        raise OSError('temporary_disk_failure')
+    monkeypatch.setattr(scanner.argus_persistent_storage, 'atomic_write_json', fail_write)
+    scanner._N225_ANALOG_HISTORY['data'][0]['value'] += 1
+    scanner._jp_market_feature_history_warm()
+    assert calculate.call_count == 3
+    assert scanner._JP_MARKET_FEATURE_CACHE_STATUS['persistenceStatus'] == 'FAILED'
+    monkeypatch.setattr(scanner.argus_persistent_storage, 'atomic_write_json', writer)
+    scanner._jp_market_feature_history_warm()
+    assert calculate.call_count == 3
+    assert scanner._JP_MARKET_FEATURE_CACHE_STATUS['persistenceStatus'] == 'VERIFIED'
