@@ -28,7 +28,11 @@ const PROFILE_DIR = path.resolve(process.env.ARGUS_WARM_PROFILE_DIR
 const BACKEND_ORIGIN = (process.env.ARGUS_BACKEND_URL
   || 'https://argus-backend-3j2m.onrender.com').replace(/\/$/, '');
 const TODAY_URL = `${PUBLIC_URL.replace(/\/?$/, '/')}#today`;
-const DATA_TIMEOUT_MS = 5_000;
+// Production snapshots can cross the five-second boundary even after the
+// release warmer has completed.  The browser UI keeps its last useful state
+// while loading, so acceptance must wait for the selected snapshot instead of
+// declaring a healthy, eventually-complete transition broken at 5 seconds.
+const DATA_TIMEOUT_MS = 15_000;
 const PAGE_TIMEOUT_MS = 25_000;
 const BACKEND_READY_TIMEOUT_MS = 8 * 60_000;
 const MARKET_CACHE_READY_TIMEOUT_MS = 30 * 60_000;
