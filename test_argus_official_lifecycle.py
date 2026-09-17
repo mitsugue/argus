@@ -231,11 +231,13 @@ def test_price_history_deadline_preserves_cache_without_partial_pagination(monke
     assert request.call_args.kwargs["timeout"] == 10
 
 
-def test_independent_refresh_steps_continue_after_an_unrelated_failure():
+def test_independent_refresh_steps_do_not_duplicate_resident_ai_judgment():
     from pathlib import Path
     source = Path(".github/workflows/ai-rejudge.yml").read_text()
     steps = source.split("      - name: ")[1:]
-    assert len(steps) == 7
+    assert len(steps) == 6
     assert all("        if: ${{ !cancelled() }}" in step for step in steps)
     assert all("continue-on-error" not in step for step in steps)
     assert all(step.count("scripts/workflow_http.py") == 1 for step in steps)
+    assert "/api/argus/ai-judgment/run" not in source
+    assert "resident backend" in source
