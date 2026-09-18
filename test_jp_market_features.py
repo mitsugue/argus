@@ -1,8 +1,12 @@
 import copy
 import unittest
+import json
+import tempfile
+from pathlib import Path
 from datetime import date,timedelta
 
-from jp_market_features import build_market_features
+from jp_market_features import (build_market_features, build_feature_history,
+    history_cache_envelope, load_history_cache, history_method_identity)
 
 
 def prices(instrument, count=60, start=100, change=.1, **extra):
@@ -12,6 +16,34 @@ def prices(instrument, count=60, start=100, change=.1, **extra):
 
 
 class MarketFeaturesTest(unittest.TestCase):
+    def test_cache_roundtrip_preserves_all_values_provenance_and_limits(self):
+        at = '2026-08-01T00:00:00Z'
+        history = {**build_feature_history(cutoffs=[at], price_series={'vix': prices('VIX')}),
+                   'status': 'AVAILABLE', 'inputIdentity': 'a' * 64,
+                   'lastSuccessfulCalculationAt': at}
+        method = history_method_identity()
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / 'cache.json'
+            doc = history_cache_envelope(history, method=method)
+            path.write_text(json.dumps(doc))
+            self.assertEqual(history, load_history_cache(path, method=method, now=at))
+            self.assertIsNone(load_history_cache(path, method='b' * 64, now=at))
+            with self.assertRaisesRegex(ValueError, 'future'):
+                load_history_cache(path, method=method, now='2026-07-31T00:00:00Z')
+            doc['history']['features'][0]['value'] += 10
+            path.write_text(json.dumps(doc))
+            with self.assertRaisesRegex(ValueError, 'integrity'):
+                load_history_cache(path, method=method, now=at)
+
+    def test_cache_cannot_promote_vintage_or_action_authority(self):
+        at = '2026-08-01T00:00:00Z'
+        history = {**build_feature_history(cutoffs=[at], price_series={}),
+                   'status': 'AVAILABLE', 'inputIdentity': 'a' * 64,
+                   'lastSuccessfulCalculationAt': at}
+        for field in ('historicalVintageVerified', 'actionAuthority'):
+            with self.assertRaisesRegex(ValueError, 'identity'):
+                history_cache_envelope({**history, field: True}, method='b' * 64)
+
     def test_future_corrections_and_other_instruments_do_not_change_values(self):
         raw={'vix':prices('VIX',start=20), 'nikkei':prices('NIKKEI_225_INDEX')}
         cutoff='2026-08-01T00:00:00Z'
