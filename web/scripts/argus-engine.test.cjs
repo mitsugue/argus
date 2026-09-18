@@ -257,11 +257,8 @@ check('Today never claims an empty calendar it could not read',
     nextEvent < otherMarkets && otherMarkets < context && context < evidence);
   check('the market view and news axis left the hero article',
     !/<MarketBriefCard \/>\s*<MarketViewStrip \/>/.test(panel));
-  // v13.5.60 (owner): Today's Tachibana line names the company, never the code,
-  // and the per-symbol rows moved to Holdings.
-  check('Tachibana line names the company and never renders a code list',
-    panel.includes("jpNames?.[mover.symbol] ?? '保有銘柄'") && !panel.includes('jpDisplay(')
-    && !panel.includes('mv-tachibana__rows'));
+  check('retired individual live band is absent from Today',
+    !panel.includes('mv-tachibana') && !panel.includes('tachibanaLive'));
   check('tapping an event jumps to the events summary',
     panel.includes("document.getElementById('important-events')"));
   const css = fs.readFileSync(path.join(root, 'src/components/today/ArgusToday.css'), 'utf8');

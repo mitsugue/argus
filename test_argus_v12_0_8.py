@@ -223,7 +223,7 @@ def test_fe_unified_stance_chip_everywhere():
     # Round 2: Asset DeskはSDA v2正本をdecision-first viewへ正規化して表示する。
     # 旧Primary Stanceは選択権を持たず、互換表示もSDA結果からのみ派生する。
     details = _read("components", "assetDesk", "AssetDecisionDetails.tsx")
-    assert "d.decisionFirst" in details and "view.ownerActionJa" in details
+    assert "d.decisionFirst" in details and "view.currentActionJa" in details
     intel = _read("hooks", "useAssetIntel.ts")
     assert "evaluateSingleDecisionAuthority" in intel and "sdaBySymbol" in intel
     assert "resolvePrimaryStance" not in intel
@@ -260,8 +260,9 @@ def test_addendum_risk_chips_split_in_fe():
     assert not os.path.exists(os.path.join(
         WEB, "components", "action", "CommandSummaryCard.tsx"))
     intel = _read("hooks", "useAssetIntel.ts")
-    assert "保有銘柄に要確認あり" in intel
-    assert "保有数量未入力" in intel
+    assert "登録銘柄に要確認あり" in intel
+    assert "保有数量未入力" not in intel
+    assert "登録銘柄の重要な変化を確認中" in intel
     cc = _read("routes", "CommandCenter.tsx")
     # Todayへ渡す保有文脈は端末内で粗い区分へ落とし、数量・平均単価・P/Lを
     # 市場証拠やバックエンドへ混ぜない。未計算のリスク帯はUNKNOWNで閉じる。

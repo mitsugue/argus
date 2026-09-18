@@ -149,7 +149,7 @@ try {
   const brand = await page.locator('.shell__brand').innerText();
   assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro/);
   assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro\s+v13\.7\.26/);
-  for (const label of ['Today', 'Holdings / Watchlist', 'Notifications', 'Settings']) {
+  for (const label of ['Today', 'Watchlist', 'Notifications', 'Settings']) {
     assert.ok(await page.getByText(label, { exact: true }).count() > 0, label);
   }
   // v13.5.39: the owner's top command block renders MARKET SIGNALS x / 7 from
@@ -165,7 +165,7 @@ try {
   assert.ok((await page.locator('.at-seven summary small').first().innerText()).includes('セブンサイン'),
     'top block carries the owner-facing name');
   evidence.publicProductAcceptance = { status: 'pass', brand, topSignals: topSignalsText,
-    surfaces: ['Today', 'Holdings / Watchlist', 'Notifications', 'Settings'] };
+    surfaces: ['Today', 'Watchlist', 'Notifications', 'Settings'] };
   await context.close(); context = null;
 
   // THE isomorphism gate: the exact production acceptance engine runs against
