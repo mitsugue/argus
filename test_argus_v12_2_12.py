@@ -65,9 +65,11 @@ def test_ai_honesty_vocabulary():
 
 def test_publish_side_effects_gated_to_active_pipeline():
     intel = _read("hooks", "useAssetIntel.ts")
-    for fn in ("publishExposure", "publishActionPriorities", "publishSessionBrief",
-               "publishScenarios", "publishPlans", "publishStrategy", "publishFireCore"):
+    for fn in ("publishActionPriorities", "publishSessionBrief",
+               "publishScenarios", "publishPlans"):
         assert f"if (publish) {fn}(" in intel, fn
+    for retired in ("publishExposure(", "publishStrategy(", "publishFireCore("):
+        assert retired not in intel
     # routeから直接publishせず、共有hook内だけで制御する。
     cc = _read("routes", "CommandCenter.tsx")
     for fn in ("publishExposure(", "publishScenarios(", "publishPlans(", "publishStrategy("):
@@ -94,7 +96,7 @@ def test_nav_order_and_route_keys():
     for key in ("'command'", "'watchlist'", "'notifications'", "'settings'"):
         assert key in navigation
     assert "'regime'" not in navigation
-    assert "desktopLabel: 'Holdings / Watchlist'" in navigation
+    assert "desktopLabel: 'Watchlist'" in navigation
     assert "'#positions'" not in navigation
     assert "'#market'" not in navigation
     primary_block = navigation.split("export const NAVIGATION", 1)[1].split("] as const", 1)[0]
@@ -143,16 +145,17 @@ def test_migration_matrix_doc_exists():
 
 def test_desk_sections_fixed_order():
     card = _read("components", "assetDesk", "AssetDecisionCard.tsx")
-    order = ["'decision'", "'chart'", "'evidence'", "'position'"]
+    order = ["'decision'", "'chart'", "'evidence'"]
     idx = [card.index(f"id: {tab}") for tab in order]
     assert idx == sorted(idx), "決定優先タブは固定順"
-    assert card.count("id: '") == 4
+    assert card.count("id: '") == 3
     # Owner surfaceには判断に必要な詳細だけを残す。AIレビュー長文は
     # 正本判断を増やさず視認性を落とすため、カードからは外す。
     for panel in ("AssetDecisionDetails", "ChartIntelligencePanel", "AssetWhyPanel",
-                  "AssetFlowPanel", "AssetPositionPanel", "AssetScenarioPanel",
+                  "AssetFlowPanel", "AssetScenarioPanel",
                   "AssetResearchPanel", "AssetDataQuality"):
         assert f"<{panel}" in card
+    assert "<AssetPositionPanel" not in card
     assert "<AssetAIReview" not in card
 
 
@@ -184,10 +187,10 @@ def test_migrated_features_present():
 def test_portfolio_wide_features_moved_to_core():
     wl = _read("routes", "Watchlist.tsx")
     assert "WhatIfPanel" not in wl and "ExposureCard" not in wl
-    assert "HOLDINGS / WATCHLIST" in wl
+    assert "WATCHLIST" in wl
     assert "日本株・米国株・投資信託・仮想通貨ごとに整理します。" in wl
     assert "区分内は長押しで並べ替えられます。" in wl
-    assert "portfolioOpen && <CorePortfolio assetsApi={assetsApi}" in wl
+    assert "<CorePortfolio" not in wl
     cp = _read("routes", "CorePortfolio.tsx")
     assert "PortfolioExposureCard" in cp and "WhatIfPanel" not in cp
     # Owner editing remains contextual; no replacement global framework is added.

@@ -1,11 +1,9 @@
-import type { HoldingUpdate } from '../../types/assetItem';
 import React, { useEffect, useState } from 'react';
 import type { DeskCardData, DeskTab } from './types';
 import { sectionAnchorId, tabForDeskSection } from './types';
 import { AssetDecisionSummary } from './AssetDecisionSummary';
 import { AssetDecisionDetails } from './AssetDecisionDetails';
 import { AssetMarketContext } from './AssetMarketContext';
-import { AssetPositionPanel } from './AssetPositionPanel';
 import { AssetWhyPanel } from './AssetWhyPanel';
 import { AssetFlowPanel } from './AssetFlowPanel';
 import { AssetEventsPanel } from './AssetEventsPanel';
@@ -23,7 +21,6 @@ interface Props {
   open: boolean;
   onToggle: () => void;
   onRemove: (id: string) => void;
-  onUpdateHolding: (id: string, h: HoldingUpdate) => void;
   nowMs: number;
   dragHandle?: React.ReactNode;
   focusSection?: string;
@@ -34,7 +31,6 @@ const TABS: Array<{ id: DeskTab; label: string }> = [
   { id: 'decision', label: '判断' },
   { id: 'chart', label: '見通し' },
   { id: 'evidence', label: '根拠' },
-  { id: 'position', label: '保有' },
 ];
 
 const Section: React.FC<{
@@ -47,7 +43,7 @@ const Section: React.FC<{
 );
 
 export const AssetDecisionCard: React.FC<Props> = ({
-  d, open, onToggle, onRemove, onUpdateHolding, nowMs, dragHandle, focusSection,
+  d, open, onToggle, onRemove, nowMs, dragHandle, focusSection,
   collapsible = true,
 }) => {
   const [tab, setTab] = useState<DeskTab>('decision');
@@ -138,11 +134,6 @@ export const AssetDecisionCard: React.FC<Props> = ({
                   </Section>
                 </details>
               </>
-            )}
-            {tab === 'position' && (
-              <Section symbol={sym} id="owner-position">
-                <AssetPositionPanel d={d} onUpdateHolding={onUpdateHolding} />
-              </Section>
             )}
           </div>
           <details className="ad-research-drawer" open={supportOpen}

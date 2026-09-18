@@ -1,5 +1,4 @@
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
-import type { HoldingUpdate } from '../../types/assetItem';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors,
@@ -44,7 +43,6 @@ interface Props {
   intel: AssetIntel;
   onReorder: (orderedIds: string[]) => void;
   onRemove: (id: string) => void;
-  onUpdateHolding: (id: string, h: HoldingUpdate) => void;
   focus?: AssetFocusIntent | null;
   toolbar?: React.ReactNode;
   /** Lean v13 contextual detail: render only this asset, fully expanded. */
@@ -69,7 +67,7 @@ const SortableCardRow: React.FC<{
 };
 
 export const AssetDeskList: React.FC<Props> = ({
-  assets, intel, onReorder, onRemove, onUpdateHolding, focus, toolbar, detailSymbol, onOpenAsset,
+  assets, intel, onReorder, onRemove, focus, toolbar, detailSymbol, onOpenAsset,
 }) => {
   const cat = useCatalysts();
   const navFunds = intel.fundNav.funds;
@@ -78,7 +76,7 @@ export const AssetDeskList: React.FC<Props> = ({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [localFocus, setLocalFocus] = useState<AssetFocusIntent | null>(null);
   const [filter, setFilter] = useState<
-    'all' | 'risk' | 'held' | 'exit-watch' | 'inspect' | 'hold' | 'new-stop'
+    'all' | 'risk' | 'exit-watch' | 'inspect' | 'hold' | 'new-stop'
   >('all');
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { delay: 450, tolerance: 8 } }),
@@ -167,7 +165,6 @@ export const AssetDeskList: React.FC<Props> = ({
     const apBySym = new Map(intel.apItems.map((it) => [it.symbol, it]));
     const scBySym = new Map(intel.scenarioSets.map((s) => [s.symbol, s]));
     const plBySym = new Map(intel.positionPlans.map((p) => [p.symbol, p]));
-    const riskBySym = new Map(intel.positionExposure.risks.map((r) => [r.symbol, r.riskLevel]));
     return assets.map((a) => {
       const sym = a.symbol.toUpperCase();
       const genre = genreOf(a) as DeskGenre;
@@ -178,17 +175,13 @@ export const AssetDeskList: React.FC<Props> = ({
       const decision = intel.decisionBySym.get(sym);
       const sda = intel.sdaBySymbol.get(sym);
       const apx = apBySym.get(sym);
-      const pn = intel.positionExposure.notes[sym];
-      const themeConcentrationPct = pn
-        ? intel.positionExposure.byTheme.find((theme) => theme.ja === pn.themeJa)?.pct ?? null
-        : null;
       const eventTags = eventTagsBySym.get(sym) ?? [];
-      const held = !!pn?.held || (a.quantity ?? 0) > 0;
+      const held = false;
       const rankInput: DeskRankInput = {
         symbol: sym, genre, held,
         signalCode: card?.signalCode ?? null,
         apRank: apx?.priorityRank ?? null,
-        positionRiskLevel: riskBySym.get(sym) ?? null,
+        positionRiskLevel: null,
         hasIncident: !!incident,
         aiRuleDisagree: !!decision?.rule.disagreementJa,
         eventSoon: eventTags.some((e) => e.countdown === 'D' || e.countdown === 'D-1'),
@@ -209,7 +202,7 @@ export const AssetDeskList: React.FC<Props> = ({
         invalidation: sda?.invalidation ?? null,
         freshness: sda?.freshness ?? 'UNKNOWN',
         priceText: fmtPrice(a.market, priceShown),
-        changePct, pnlPct: pn?.pnlPct ?? null,
+        changePct, pnlPct: null,
         priority: apx?.priorityRank && apx.priorityRank !== 'Ignore'
           ? apx.priorityRank : rank <= 0 ? 'P0' : rank <= 2 ? 'P1'
           : rank <= 5 ? 'P2' : 'WATCH',
@@ -237,7 +230,6 @@ export const AssetDeskList: React.FC<Props> = ({
         card, decision, strat, quote,
         liveName: quote?.name ?? null,
         incident,
-        pn,
         sdg: sdBySym.get(sym),
         apx,
         scn: scBySym.get(sym),
@@ -248,18 +240,16 @@ export const AssetDeskList: React.FC<Props> = ({
         eventTags,
         eventsAuthorityUnknown: intel.importantEventsUnknown,
         decisionFirst,
-        themeConcentrationPct,
       };
       return { d, rankInput };
     });
   }, [assets, maps, intel.cardBySym, intel.decisionBySym, intel.sdaBySymbol, intel.aiJ.data, intel.sdSignals,
-      intel.apItems, intel.scenarioSets, intel.positionPlans, intel.positionExposure,
+      intel.apItems, intel.scenarioSets, intel.positionPlans,
       intel.aiMeta, eventTagsBySym, mountTs]);
 
   const riskCount = useMemo(() => rows.filter((r) => !!r.d.incident).length, [rows]);
   const keep = (r: { d: DeskCardData }) => filter === 'all' ? true
     : filter === 'risk' ? !!r.d.incident
-    : filter === 'held' ? (r.d.asset.quantity ?? 0) > 0 || !!r.d.pn?.held
     : r.d.decisionFirst.bucket === filter;
 
   // 優先順(デフォルト・決定論): rank昇順→symbol昇順。
@@ -336,7 +326,6 @@ export const AssetDeskList: React.FC<Props> = ({
         setExpandedId((cur) => (cur === r.d.asset.id ? null : r.d.asset.id));
       }}
       onRemove={(id) => { setExpandedId((cur) => (cur === id ? null : cur)); onRemove(id); }}
-      onUpdateHolding={onUpdateHolding}
       nowMs={nowMs}
       dragHandle={handle}
       focusSection={activeFocus?.symbol.toUpperCase() === r.d.asset.symbol.toUpperCase()
@@ -381,8 +370,6 @@ export const AssetDeskList: React.FC<Props> = ({
                 aria-pressed={filter === 'risk'} onClick={() => setFilter('risk')}>
           {t('wl.filterDanger')}{riskCount > 0 ? ` (${riskCount})` : ''}
         </button>
-        <button className={`asset-filter__chip${filter === 'held' ? ' is-active' : ''}`}
-                aria-pressed={filter === 'held'} onClick={() => setFilter('held')}>{t('wl.filterHeld')}</button>
         {filter !== 'all' && <span className="asset-filter__note">全件表示で並べ替えできます</span>}
       </div>
 

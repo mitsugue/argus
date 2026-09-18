@@ -91,7 +91,25 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         out.headers['Cache-Control'] = 'private, no-store'
         return out
 
-    overview_question = '今の市場とこの銘柄をどう捉え、前回から何が変わり、登録した保有・監視情報にどう影響するか。次の確認と見方を変える条件まで説明してください。'
+    overview_question = '今の市場とこの銘柄をどう捉え、前回から何が変わり、登録銘柄にどう関係するか。次の確認と見方を変える条件まで説明してください。'
+
+    def watchlist_owner(value, *, symbol, market):
+        checked = dialogue.owner_snapshot(value, symbol=symbol, market=market, received_at=now())
+        return {'symbol':symbol, 'market':market, 'state':'WATCHING'} if checked else None
+
+    def attach_previous_view(context, previous):
+        if not previous: return
+        prior = previous['context']
+        reference = {'requestId':previous['requestId'], 'contextId':prior['contextId'],
+                     'completedAt':previous['result'].get('completedAt')}
+        context['previousRecord'] = reference
+        if prior.get('ownerInputPolicy') == 'WATCHLIST_ONLY_V1':
+            context['previousView'] = {**reference,
+                'sections':deepcopy(previous['result']['answer']['sections'])}
+        else:
+            # The original answer can contain retired personal-position facts.
+            # Keep its immutable identity for audit; do not re-feed the prose.
+            context['previousViewUnavailableReason'] = 'LEGACY_PORTFOLIO_CONTEXT_EXCLUDED'
 
     def prepare_overview(current, subject, horizon, owner, previous):
         received_at = now()
@@ -100,19 +118,16 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
             cutoff=received_at) if subject_comparison else None
         materials = subject_materials(**subject, cutoff=received_at) if subject_materials else None
         prior = previous['context'] if previous else None
-        context = dialogue.build_context(brief=current, **subject, horizon=horizon,
+        context = dialogue.build_context(brief=current, **subject, horizon=horizon, watchlist_only=True,
             question=overview_question, received_at=received_at, owner=owner, previous=prior,
             index_quote=dialogue.index_quote(current,horizon), subject_comparison=comparison,
             material_facts=materials)
         context['intent'] = 'SUBJECT_OVERVIEW'
         context['historyStatus'] = 'LOCAL_DURABLE'
-        if previous:
-            context['previousView'] = {'requestId':previous['requestId'],
-                'contextId':prior['contextId'], 'completedAt':previous['result'].get('completedAt'),
-                'sections':deepcopy(previous['result']['answer']['sections'])}
+        attach_previous_view(context, previous)
         context['contextId'] = dialogue.digest({k:v for k,v in context.items() if k!='contextId'})
         key = dialogue.overview_input_digest(context, policy)
-        context['overviewInputs'] = {'schemaVersion':'argus-overview-inputs-v1',
+        context['overviewInputs'] = {'schemaVersion':'argus-overview-inputs-v2',
             'digest':key, 'generationPolicyDigest':dialogue.digest(policy)}
         context['contextId'] = dialogue.digest({k:v for k,v in context.items() if k!='contextId'})
         if len(json.dumps(context,ensure_ascii=False).encode()) > 65536:
@@ -175,6 +190,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
             owner=({k:saved_owner[k] for k in ('symbol','market','state','quantity','averageCost',
                     'purchaseReason','holdingPeriod','reportedAt') if k in saved_owner}
                    if saved_owner else None)
+            owner = watchlist_owner(owner, symbol=symbol, market=market)
             if generation_policy is not None:
                 try:
                     with lock:
@@ -199,14 +215,12 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                 comparison=subject_comparison(brief=current,symbol=symbol,market=market,
                     horizon=horizon,cutoff=received_at) if subject_comparison else None
                 materials=subject_materials(symbol=symbol,market=market,cutoff=received_at) if subject_materials else None
-                context=dialogue.build_context(brief=current,symbol=symbol,market=market,horizon=horizon,
+                context=dialogue.build_context(brief=current,symbol=symbol,market=market,horizon=horizon,watchlist_only=True,
                     question=overview_question,received_at=received_at,owner=owner,previous=prior,
                     index_quote=dialogue.index_quote(current,horizon),subject_comparison=comparison,
                     material_facts=materials)
                 context['intent']='SUBJECT_OVERVIEW'
-                context['previousView']={'requestId':previous['requestId'],'contextId':prior['contextId'],
-                    'completedAt':previous['result'].get('completedAt'),
-                    'sections':deepcopy(previous['result']['answer']['sections'])}
+                attach_previous_view(context, previous)
                 context['historyStatus']='LOCAL_DURABLE'
                 context['contextId']=dialogue.digest({k:v for k,v in context.items() if k!='contextId'})
                 created=store.submit(path,identity=identity,input_hash=dialogue.digest(stable),
@@ -278,6 +292,9 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
             if overview:
                 fields = {'action', 'ownerToken', 'baseContextId', 'symbol', 'market', 'horizon', 'owner'}
                 if set(body) - fields: return response({'error': 'unsupported_request_fields'}, 400)
+                if 'owner' in body:
+                    body = {**body, 'owner':watchlist_owner(body['owner'],
+                        symbol=body.get('symbol'), market=body.get('market'))}
                 if generation_policy is not None:
                     with lock:
                         previous = store.latest_subject_overview(path,boot_id,symbol=body.get('symbol'),
@@ -338,21 +355,13 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                 comparison=subject_comparison(brief=current,symbol=body.get('symbol'),market=body.get('market'),
                     horizon=body.get('horizon'),cutoff=received_at) if subject_comparison else None
                 materials=subject_materials(symbol=body.get('symbol'),market=body.get('market'),cutoff=received_at) if subject_materials else None
-                context=dialogue.build_context(brief=current,symbol=body.get('symbol'),market=body.get('market'),
+                context=dialogue.build_context(brief=current,symbol=body.get('symbol'),market=body.get('market'),watchlist_only=True,
                     horizon=body.get('horizon'),question=body.get('question'),received_at=received_at,
                     owner=body.get('owner'),previous=previous['context'] if previous else None,
                     index_quote=dialogue.index_quote(current,body.get('horizon')),
                     subject_comparison=comparison,material_facts=materials)
                 context['intent'] = 'SUBJECT_OVERVIEW'
-                if (previous and (previous.get('result') or {}).get('answer')
-                        and previous['context'].get('subject') == context['subject']
-                        and previous['context'].get('horizonSessions') == context['horizonSessions']
-                        and not previous['context'].get('isHypotheticalConversation')
-                        and (previous['context'].get('eventFocus') or {}).get('eventId') == (context.get('eventFocus') or {}).get('eventId')):
-                    context['previousView'] = {'requestId': previous['requestId'],
-                        'contextId': previous['context']['contextId'],
-                        'completedAt': previous['result'].get('completedAt'),
-                        'sections': deepcopy(previous['result']['answer']['sections'])}
+                attach_previous_view(context, previous)
                 context['historyStatus']='LOCAL_DURABLE'
                 context['retrievalRecord']=dialogue.retrieval_record(context)
                 if len(json.dumps(context, ensure_ascii=False).encode()) > 65536:

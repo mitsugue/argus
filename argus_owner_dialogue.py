@@ -331,7 +331,7 @@ def event_focus(value, event_id, cutoff, *, market=None, symbol=None):
 
 
 def build_context(*, brief, symbol, market, horizon, question, received_at, owner=None,
-                  previous=None, hypothesis=None, index_quote=None, eps_input=None, subject_comparison=None, material_facts=None, focus_event_id=None, event_snapshot=None):
+                  previous=None, hypothesis=None, index_quote=None, eps_input=None, subject_comparison=None, material_facts=None, focus_event_id=None, event_snapshot=None, watchlist_only=False):
     """Copy server facts; private inputs cannot replace the market or official history."""
     if market not in ('JP','US') or not isinstance(symbol,str) or not re.fullmatch(r'[A-Z0-9.^-]{1,16}',symbol):
         raise ValueError('subject_invalid')
@@ -359,6 +359,11 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
     facts.extend(event_facts)
     facts.append(fact(f'質問の対象は{market}:{symbol}、比較・見通しの期間は{horizon}営業日です。','requested_subject',kind='REQUEST_SCOPE'))
     private=owner_snapshot(owner,symbol=symbol,market=market,received_at=received_at)
+    if watchlist_only and private:
+        # Validate an older client's subject first, then use registration only.
+        # Never mutate the encrypted historical record or infer NOT_HELD.
+        private = {'symbol':symbol, 'market':market, 'state':'WATCHING',
+                   'source':'OWNER_REPORTED', 'receivedAt':received_at}
     if private:
         label={'HELD':'保有中','WATCHING':'監視中','NOT_HELD':'保有なし'}[private['state']]
         fields=[f'本人申告: {market}:{symbol}は{label}。']
@@ -383,12 +388,16 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
     if matching_previous and previous.get('contextId')!=digest({k:v for k,v in previous.items() if k!='contextId'}):raise ValueError('previous_context_integrity')
     if matching_previous and instant(previous['receivedAt'])>instant(received_at):raise ValueError('previous_context_from_future')
     prior=deepcopy(previous.get('facts') or []) if matching_previous else []
+    if watchlist_only:
+        prior = [row for row in prior if row.get('source') != 'owner_report'
+                 and row.get('evidenceKind') != 'OWNER_REPORTED']
     context={'schemaVersion':SCHEMA,'scope':'OWNER_PRIVATE','subject':{'symbol':symbol,'market':market},
         'horizonSessions':horizon,'question':question,'receivedAt':received_at,'baseMarketContextId':public['contextId'],
         'facts':facts,'previousFacts':prior,'owner':private,'ownerContextAvailable':private is not None,
         'changes':{'comparisonAvailable':bool(prior)},'historyStatus':'PROCESS_MEMORY_ONLY',
         'calculatedHypothesis':calculated,'isHypotheticalConversation':hypothesis is not None,'actionAuthority':False,
         'officialMarketStateMutation':False,'officialPositionMutation':False,'officialPredictionMutation':False}
+    if watchlist_only: context['ownerInputPolicy'] = 'WATCHLIST_ONLY_V1'
     if market == 'JP' and isinstance(public.get('researchPackages'), list):
         context['researchPackages'] = [
             {**deepcopy(row), 'horizons': {str(horizon): deepcopy(row['horizons'][str(horizon)])},
@@ -578,7 +587,8 @@ def overview_input_digest(context, generation_policy):
     The caller supplies effective generation settings and a prompt/rule revision.
     Only request bookkeeping and the prior edition are excluded. The saved
     explanation remains an immutable prior edition, never a new AI assessment.
-    Hourly expiry bounds reuse when event proximity changes without a new row.
+    Time alone does not regenerate prose. Event state/freshness must be explicit
+    input facts; an unchanged saved explanation retains its original timestamp.
     """
     if (context.get('intent') != 'SUBJECT_OVERVIEW'
             or context.get('isHypotheticalConversation') is not False
@@ -587,14 +597,15 @@ def overview_input_digest(context, generation_policy):
             or any(not isinstance(generation_policy.get(k), str) or not generation_policy[k].strip()
                    for k in ('model', 'ruleVersion'))):
         raise ValueError('overview_reuse_inputs_invalid')
-    at = instant(context['receivedAt'])
+    instant(context['receivedAt'])
     inputs = deepcopy(context)
     if 'retrievalRecord' in inputs:
         if inputs['retrievalRecord'] != retrieval_record(context):
             raise ValueError('retrieval_record_integrity')
         inputs['retrievalPolicyVersion'] = inputs.pop('retrievalRecord')['policyVersion']
     for key in ('contextId', 'baseMarketContextId', 'receivedAt', 'previousFacts',
-                'previousView', 'changes', 'historyStatus', 'overviewInputs'):
+                'previousView', 'previousRecord', 'previousViewUnavailableReason',
+                'changes', 'historyStatus', 'overviewInputs'):
         inputs.pop(key, None)
     if isinstance(inputs.get('owner'), dict):
         inputs['owner'].pop('receivedAt', None)
@@ -615,9 +626,8 @@ def overview_input_digest(context, generation_policy):
                 market_input.pop(key)
     # Do not strip observedAt/acquiredAt/reportedAt or source timestamps.
 
-    return digest({'schemaVersion':'argus-overview-inputs-v1', 'inputs':inputs,
-                   'generationPolicy':dict(generation_policy),
-                   'evaluationHour':int(at.timestamp()) // 3600})
+    return digest({'schemaVersion':'argus-overview-inputs-v2', 'inputs':inputs,
+                   'generationPolicy':dict(generation_policy)})
 
 
 def generation_prompt(context):

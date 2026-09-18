@@ -86,9 +86,8 @@ assert.doesNotMatch(app, /useActionLabels/);
 assert.match(app, /#settings\/\$\{settingsSection\}/);
 
 // Expensive detail/support trees mount only after the owner opens them.
-assert.match(watchlist, /\{portfolioOpen && <CorePortfolio assetsApi=\{assetsApi\}/);
+assert.doesNotMatch(watchlist, /CorePortfolio|setPortfolioOpen/);
 assert.equal((watchlist.match(/useAssetIntel\(/g) ?? []).length, 1);
-assert.match(watchlist, /setPortfolioOpen\(initialPortfolioOpen\)/);
 assert.doesNotMatch(watchlist, /if \(initialPortfolioOpen\) setPortfolioOpen/);
 assert.match(watchlist, /\{supportOpen && <div className="ad-support__body">/);
 assert.match(

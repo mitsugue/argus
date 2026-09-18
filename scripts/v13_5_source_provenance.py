@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.25"
+PRODUCT_VERSION = "v13.7.26"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,12 +35,15 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'web/src/domain/watchlistProjection.ts': '36b5e0c3eba3a67ce9fec128f422ce3af89498cc',
+    'web/scripts/watchlist-retirement.test.cjs': '55e0d87e492fba0322787e821c1b5e0f21c36d88',
+    'web/scripts/positions-risk.test.cjs': '24378a48ec140668b53aa6442cb87356ede43790',
     'web/src/lib/tradeJournal.ts': '149dec98cbf3d17e9860e235c91c28248aa6c2d1',
     'web/src/components/dashboard/TradeJournalCard.tsx': '9b4e4f073a281cc61cb75e49134266fde9392bce',
     'web/scripts/polling-singleton.test.mjs': 'de34e0e33bc46871c009f4264d85881a7d2e74ca',
     'test_argus_institutional_backend_v1160.py': 'd8065d151883cdf13ff7ebfa79358482d40cc8fc',
     'docs/V13_7_SHAPEUP_REQUIREMENTS.md': '9756717ff26e5cf159dcf5d20cb578d99ab225ed',
-    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': '4d64efa63e3d3c9c20310c7dc29aa3de2cfd47fd',
+    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': '734ab6646169b953df12ca37bca856240dfda431',
     'test_rules.py': '99fad6a22f968ddc518a8b7b359d4adfdf8fd9e0',
     'bridge/trigger_closepin.sh': '83ee01384660bb8799a863e080021a7fa35c1e3d',
     '.github/workflows/closepin-pin.yml': 'ea693b3ca6140d4cf6fa66c48d91c6a03f603baa',
@@ -104,8 +107,8 @@ REVIEWED_EXTENSION_BLOBS = {
     # Owner-authorized v13.6.1 prediction-ledger continuity regression proof.
     'test_prediction_ledger_workflow.py': 'c56ab18cdedbf04fd37c7362209172fe92e409cf',
     'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
-    'web/src/hooks/useAssets.ts': 'ee6addd411bbf71c253e74a7f76165063189254b',
-    'web/src/components/dialogue/OwnerOverview.tsx': 'bf2f8f423d82a2e5df88fcd0f361d6bcc62f0977',
+    'web/src/hooks/useAssets.ts': '7378e41e1b7fdf6ff6b14f29e5271639054f370b',
+    'web/src/components/dialogue/OwnerOverview.tsx': 'b569afe902da97c3a43b47e63f64c8e87b894807',
     'web/src/components/dialogue/OwnerOverview.css': 'e608b1f63bbbf8596454a9e0100cea6ee8a41a0f',
     'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',
     'web/src/lib/presentationIntent.ts': '77c0c79423a2291fc3e28a58e1b0397b11a83828',
@@ -117,8 +120,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_persistent_storage.py': '822f60d3ce54a7f5dfbf16638ff79727cb7e4e64',
     'web/src/components/today/ReadingHierarchy.css': 'f031a35a7ec9cb1aac772bbae8c0ab1de44c4a85',
     'web/src/components/AppShell.tsx': 'fa34bd3703246744c9eeec4411783b6234777a77',
-    'web/src/routes/BackupPage.tsx': '76ef9bb18e9e440afafaad5f9e290c925fc7ac61',
-    'web/src/navigation.ts': 'af45a759ac501412f35904890c355f8e71e8736b',
+    'web/src/routes/BackupPage.tsx': '7d082a20c08964bb00dc4de227827f7bcfc19abb',
+    'web/src/navigation.ts': '8958bfa6d817b0d4be7b99dacda41b2bde70f8cb',
     'web/src/lib/webPush.ts': '87c83b0bf874ecbf453d2af786dde6f502006b6f',
     'web/src/lib/ownerVaultReceipt.ts': 'bdfeb6b79dd52052ae051638869609d6cf74bf4a',
     'web/src/lib/ownerVaultAutoSave.ts': 'd5c382797e024265beb70baba4a9f1aa0df7d97c',
@@ -132,14 +135,14 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/settings/OwnerVaultPanel.tsx': '981ca9ecbbcc6af8068297d384ef786d874f6846',
     'web/src/components/settings/AiUsagePanel.tsx': 'b17e0d0a666b2c00ec5e5d7098086e54b1eb0615',
     'web/src/components/settings/AiUsagePanel.css': 'eb215c910039c200f8b5fb01287672f3f4eb6376',
-    'web/src/components/dashboard/PortfolioSyncCard.tsx': '0129397cbfc2d8686057bb9fd98290b9511e8250',
+    'web/src/components/dashboard/PortfolioSyncCard.tsx': 'd960fa95c19fb63fc8a8784be7bea1879fb6969a',
     'web/scripts/web-push.test.mjs': '220bdd38d81b8cf506d9559a01787076d56b113b',
     'web/scripts/owner-vault.test.cjs': '2458ab4b91f044bdc69fb6894705cd949af8ffbb',
     'web/scripts/owner-vault-legacy-isolation.test.cjs': 'b58bd43566481f8ebb60dc2272dd95ab3b5e2fac',
     'web/scripts/owner-vault-auto-save.test.cjs': '7181233ba2be7d1cd5111b8c11386b545e511c29',
     'web/scripts/owner-restore-guard.test.cjs': 'a6711358fc81ad10afaab52af2b118f79133d7ce',
     'web/scripts/owner-protection-consistency.test.cjs': 'f6365d9edfda291084bc17ee05e8d2499bc2774b',
-    'web/scripts/lean-surface.test.mjs': '0e1505d01ede363880a93a47f321aecd9f812d82',
+    'web/scripts/lean-surface.test.mjs': '117dc9b3576f59665d81bea626fcb35ec973243c',
     'web/scripts/ai-usage-view.test.cjs': '558e8ef36130e5a59e26f8973176ee2ce741db8a',
     'web/public/push-worker.js': '3934f69c999ae680856bf3e6b23a3ba8f97e514d',
     'test_argus_web_push.py': '69118b280db79fae69bcd3d76db20521714056a2',
@@ -154,8 +157,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_ai_usage_runtime.py': 'f65f5bd3196c162ad1152a1468a5d2be531f778b',
     'argus_analysis_history_backup.py': 'ae9013e5b81e9bf743821cd6ef0ea17c1b829ceb',
     "argus_explanation_contract.py": "f51cbb07276b486327c405e71a36645e99731a61",
-    'argus_owner_dialogue.py': '1a69ea5771619efbab39b2fadc58526034add110',
-    'argus_owner_dialogue_api.py': 'a18032e7c1509d6387992baf99dea95a7b65cbae',
+    'argus_owner_dialogue.py': '1d89a5ae5edadba3e02bcac45217b0785c22ac8d',
+    'argus_owner_dialogue_api.py': '81712098bb3c9435c2d4c8e84b836ac1c53404a7',
     'argus_owner_dialogue_backup.py': '4560f85996da2d78a68ff0cb4e28a1cdb8bf50bc',
     'argus_owner_dialogue_recovery.py': 'bfc92ba9d12514167c622df5bcf04f87e945d721',
     'argus_owner_dialogue_store.py': '72422e35451def9da106bb200acd49e880a9a2f1',
@@ -168,7 +171,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_analysis_history_backup.py': 'd0b721fe82d01f830727a98ef29a70f51a73df2f',
     'test_argus_owner_cached_inputs.py': '444cb79f894d9a756d42d0ad47ce646a3f1b36ea',
     'test_argus_owner_dialogue.py': 'bff782b47a6fa2290aec53909d0c63ddf4478cca',
-    'test_argus_owner_dialogue_api.py': 'e281d0542c1dc47533fb6c1e44a08c00add038c5',
+    'test_argus_owner_dialogue_api.py': '9312928ff4a8417db892455cbc2ce597c9745326',
     'test_argus_owner_dialogue_backup.py': '6fe13fa23a90a3a90930fbf96257a117ebee88b0',
     'test_argus_owner_dialogue_recovery.py': 'acf706ac87e3ea5a686768bb22d9239e4576c126',
     'test_argus_subject_materials.py': '321b8881f911e5ce356e1684a471c68413498a3d',
@@ -179,7 +182,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dialogue/OwnerDialogue.css': '99f542e0fc1391a58a1cb60ac1c5bec249fe9a28',
     'web/src/components/dialogue/OwnerDialogue.tsx': '5e8f6f1e4f9ae850f804d55069dcdd3b412199e6',
     'web/src/components/today/MarketBriefCard.tsx': '7b8f0305a0346a43cea572f8954bae9f87cc8359',
-    'web/src/components/today/MarketInternalsCard.tsx': 'f51d80a4bae476e9e20842d52a18cd92d68caaec',
+    'web/src/components/today/MarketInternalsCard.tsx': '0ff16f3dca77ff41bbab3d4101dc8a5e594bd23f',
     'web/src/components/today/SharedMarketContext.tsx': '0d126ec6d92e76957a4b58ef532e9b99b85b6f13',
     'web/src/lib/marketInternals.ts': 'cf96a5b15512e7f20ef9bcf211d6295307ccec9a',
     'web/src/lib/pwaRecovery.ts': '038fe1dc3e55433a0f72e8a06ca1701176155438',

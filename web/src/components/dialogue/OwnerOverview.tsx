@@ -20,10 +20,7 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:
   const [error,setError]=useState('');const [fetching,setFetching]=useState(false);const [revision,setRevision]=useState(0);
   const base=(import.meta.env.VITE_ARGUS_BACKEND_URL as string|undefined)?.replace(/\/$/,'');
   const contextId=brief?.unifiedContext?.contextId;
-  const owner=asset?{symbol,market,state:(asset.quantity??0)>0?'HELD':'WATCHING',
-    ...((asset.quantity??0)>0?{quantity:asset.quantity,averageCost:asset.avgCost}:{}),
-    ...(asset.purchaseReason?.trim()?{purchaseReason:asset.purchaseReason.trim()}:{}),
-    ...(asset.holdingPeriod?.trim()?{holdingPeriod:asset.holdingPeriod.trim()}:{}),
+  const owner=asset?{symbol,market,state:'WATCHING',
     ...(Number.isFinite(asset.updatedAt)?{reportedAt:new Date(asset.updatedAt).toISOString()}:{}),
   }:undefined;
   const requestKey=JSON.stringify({action:'overview',baseContextId:contextId,symbol,market,horizon,owner});
@@ -73,14 +70,14 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:
   const current=edition?.key===requestKey&&job?.status==='SUCCEEDED';
   const saved=job?.status==='SUCCEEDED'?job:validJob(job?.previousOverview)&&job.previousOverview.status==='SUCCEEDED'?job.previousOverview:null;
   useEffect(()=>{onReference?.(token?saved??null:null);},[saved,token,onReference]);
-  if(!token)return <section className="owner-overview"><h3>この銘柄について</h3><p>所有者の接続設定を保存すると、市場と登録した保有情報から説明を自動更新します。</p></section>;
+  if(!token)return <section className="owner-overview"><h3>この銘柄について</h3><p>所有者の接続設定を保存すると、市場と登録銘柄の情報から説明を自動更新します。</p></section>;
   return <section className="owner-overview" aria-label="この銘柄へのARGUSの説明">
     <header><p className="owner-overview__eyebrow">{asset?.displayNameJa||asset?.displayName||(symbol==='N225'?'日経平均':symbol)}</p><span>{horizon}営業日の見通し</span></header>
     {!contextId&&<p role="status">{marketLoading?<TriangleStepLoader label="市場の根拠を読み込んでいます"/>:marketError?"市場の根拠を取得できません。":"市場の根拠はまだありません。"}</p>}
     {error&&<p role="status">{error}</p>}
     {!error&&contextId&&!current&&<p role="status">{fetching||job?.status==='RUNNING'?<TriangleStepLoader label={saved?'前回の説明を表示しながら更新しています':'この銘柄の説明を確認しています'}/>:job&&edition?.key===requestKey?statusText[job.status]||'説明の更新を確認しています。':'説明の更新待ちです。'}</p>}
     {saved&&<>{!current&&<p className="owner-overview__retained">前回の説明 · {saved.result?.provider?.completedAt||'時刻未確認'}。現在の分析とは区別して表示しています。</p>}
-      {current&&job?.overviewReuse&&<p className="owner-overview__retained">この銘柄・期間の根拠と保有条件に変更がないため、{new Date(job.overviewReuse.originalCompletedAt).toLocaleString('ja-JP')}の説明を引き続き表示しています。新しいAI解析は行っていません。</p>}
+      {current&&job?.overviewReuse&&<p className="owner-overview__retained">この銘柄・期間の根拠に重要な変更がないため、{new Date(job.overviewReuse.originalCompletedAt).toLocaleString('ja-JP')}の説明を引き続き表示しています。新しいAI解析は行っていません。</p>}
       <OwnerAnswerBody job={saved}/>
       <details><summary>使った根拠・時点・保存状態</summary>
         {saved.context.facts.map(f=><p key={f.evidenceId}>{f.text}{f.provenance?.url?.startsWith('https://')&&<> <a href={f.provenance.url} target="_blank" rel="noopener noreferrer">出典</a></>}</p>)}

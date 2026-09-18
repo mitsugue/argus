@@ -2,14 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { PageShell } from './PageShell';
 import { useLocale, tEn } from '../i18n';
 import { useAssetIntel } from '../hooks/useAssetIntel';
-import { latestActionPriorities, latestSessionBrief, latestFireCore, publishEventsJa, publishDataQuality, latestDataQuality } from '../lib/positionExposureShare';
-import { maybeDailySnapshot } from '../lib/portfolioSync';
+import { publishEventsJa, publishDataQuality } from '../lib/positionExposureShare';
 import { maybeUpdateOutcomes } from '../lib/decisionQuality';
 import { MobileStickyCommand } from '../components/dashboard/MobileStickyCommand';
 import { runNotificationEngine } from '../lib/notifications';
 import { assessBackupSafety } from '../lib/backupSafety';
 import {ownerVaultProtection} from '../lib/ownerVault';
-import { listSnapshots } from '../lib/portfolioSync';
 import type { RouteKey } from '../components/NavRail';
 import type { SettingsSection } from '../navigation';
 import '../components/dashboard/Dashboard.css';
@@ -148,12 +146,11 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
   useLocale();   // re-render Today on locale switch
   const assetsApi = useAssets();
   // V12.2.12: 個別銘柄系のデータ組み立ては useAssetIntel(Today/Asset Desk共有の
-  // 正本)へ移設。Todayは publish:true — 共有ストアへのpublish副作用(Exposure/AP/
-  // Brief/Scenarios/Plans/Strategy/FireCore)は従来どおりTodayだけが実行する。
+  // 正本)へ移設。市場の優先確認・概要・シナリオを共有し、旧保有計算は行わない。
   const {
     assets, regime, impEvents, rates, events247,
-    flowRecords, sdSignals, positionExposure,
-    apItems, sessionBrief, scenarioSets, portfolioStrategy, positionPlans,
+    flowRecords, sdSignals,
+    apItems, sessionBrief, scenarioSets, positionPlans,
     judgment, isPartial, partialReasonCodes, dataQualityNotes, visLimited,
     overlay, sdaBySymbol, importantEventsUnknown, jpQuotes,
   } = useAssetIntel({ publish: true, assets: assetsApi.assets });
@@ -210,42 +207,6 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
   const headline = useTodayHeadline();
   const marketShock = useMarketShock();
   const newsIntel = useNewsIntelligence();
-  // v11.9.0/v11.17.0: one automatic LOCAL snapshot per JST day once holdings
-  // price — scenarioSummary込みで「あの日ARGUSが何を言っていたか」を残す(送信なし)。
-  useEffect(() => {
-    try {
-      const flowBySymbol: Record<string, string> = {};
-      for (const r of flowRecords) flowBySymbol[r.symbol.toUpperCase()] = r.flowClass;
-      const tops = latestActionPriorities().slice(0, 7).map((x) => ({
-        symbol: x.symbol, rank: x.priorityRank, actionLabel: x.actionLabel, blockingReason: x.blockingReason }));
-      maybeDailySnapshot(positionExposure, __APP_VERSION__, flowBySymbol,
-        sdSignals.map((s) => ({ symbol: s.symbol, rank: s.supplyDemandRank, condition: s.condition,
-          level: (s as { supplyDemandLevel?: string }).supplyDemandLevel } as never)), tops,
-        (() => { const b = latestSessionBrief(); return b ? { headlineJa: b.headlineJa, ownerMode: b.ownerMode,
-          sessionType: b.sessionType, nextChecksJa: b.nextChecksJa, whatNotToDoJa: b.whatNotToDoJa } : null; })(),
-        scenarioSets.map((s) => ({ symbol: s.symbol, dominant: s.dominant, evidenceQuality: s.evidenceQuality })),
-        positionPlans.map((p) => ({ symbol: p.symbol, planType: p.planType, currentStance: p.currentStance,
-          blockingReasons: p.blockingReasons, evidenceQuality: p.evidenceQuality })),
-        portfolioStrategy.noHoldings ? undefined : {
-          strategyMode: portfolioStrategy.strategyMode, fireStatus: portfolioStrategy.fireStatus,
-          corePct: portfolioStrategy.corePct, satellitePct: portfolioStrategy.satellitePct,
-          tacticalPct: portfolioStrategy.tacticalPct, hedgePct: portfolioStrategy.hedgePct,
-          tacticalBudget: portfolioStrategy.tacticalBudget,
-          themeRisk: portfolioStrategy.themeRisk, singleNameRisk: portfolioStrategy.singleNameRisk,
-          roles: portfolioStrategy.roles.filter((r) => r.weightPct != null)
-            .map((r) => ({ symbol: r.symbol, role: r.role, addPolicy: r.addPolicy })) },
-        (() => { const f = latestFireCore(); return f && f.positions.length ? {
-          mutualFundTotal: f.mutualFundTotal, fireCoreTotal: f.fireCoreTotal,
-          monthlyContributionTotal: f.monthlyContributionTotal,
-          tacticalToCoreRatio: f.tacticalToCoreRatio, tacticalToCoreBand: f.tacticalToCoreBand,
-          contributionDataStatus: f.contributionDataStatus,
-          valuationDataStatus: f.valuationDataStatus, staleCount: f.staleCount } : undefined; })(),
-        (() => { const d = latestDataQuality(); return d ? {
-          overallStatus: d.overallStatus, topIssues: d.topIssuesJa.slice(0, 4),
-          expectedDisabled: d.expectedDisabledJa.slice(0, 3) } : undefined; })());
-    } catch { /* quota */ }
-  }, [positionExposure, scenarioSets, positionPlans, portfolioStrategy, sdSignals, flowRecords]);
-
   // v11.14.0: 通知エンジン — 変化検知のみ(60sスロットル+dedupe+静音時間内蔵)。
   useEffect(() => {
     const t = setTimeout(async () => {
@@ -255,16 +216,13 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
           sdBySymbol[s.symbol.toUpperCase()] = {
             rank: s.supplyDemandRank, condition: s.condition,
             level: (s as { supplyDemandLevel?: string }).supplyDemandLevel,
-            name: s.name, isHeld: !!positionExposure.notes[s.symbol.toUpperCase()]?.held };
+            name: s.name, isHeld: false };
         }
         const flowBySymbol: Record<string, { flowClass: string; name?: string; isHeld?: boolean }> = {};
         for (const r of flowRecords) {
           flowBySymbol[r.symbol.toUpperCase()] = { flowClass: r.flowClass, name: r.name,
-            isHeld: !!positionExposure.notes[r.symbol.toUpperCase()]?.held };
+            isHeld: false };
         }
-        const snaps = listSnapshots();
-        const age = snaps.length
-          ? Math.floor((Date.now() - Date.parse(snaps[0].createdAt)) / 86_400_000) : null;
         const scenarioBySymbol: Record<string, { dominant: string; name?: string;
           isHeld?: boolean; summaryJa?: string }> = {};
         for (const s of scenarioSets) {
@@ -300,16 +258,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
             translationStatus: event.translationStatus,
           })),
           sdBySymbol, flowBySymbol, scenarioBySymbol, planBySymbol,
-          strategyState: portfolioStrategy.noHoldings ? null : {
-            tactical: portfolioStrategy.tacticalBudget, single: portfolioStrategy.singleNameRisk,
-            theme: portfolioStrategy.themeRisk, fire: portfolioStrategy.fireStatus,
-            summaryJa: portfolioStrategy.summaryJa },
-          fireCoreState: (() => { const f = latestFireCore(); return f && f.positions.length ? {
-            valuation: f.valuationDataStatus, contribution: f.contributionDataStatus,
-            ratio: f.tacticalToCoreBand } : null; })(),
+          strategyState: null, fireCoreState: null,
           briefSession: sessionBrief.sessionType,
-          hasHoldings: !positionExposure.noHoldings,
-          snapshotAgeDays: age,
+          hasHoldings: false, watchlistOnly: true,
+          snapshotAgeDays: null,
           vaultConfigured: backupSafety.vaultConfigured,
           localExportAgeDays: backupSafety.exportAgeDays,
           restoreVerified: backupSafety.restoreVerified,
@@ -319,8 +271,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       } catch { /* never break Today */ }
     }, 12_000);
     return () => clearTimeout(t);
-  }, [apItems, sdSignals, flowRecords, sessionBrief, impEvents, positionExposure,
-    scenarioSets, positionPlans, portfolioStrategy, assets, sdaBySymbol,
+  }, [apItems, sdSignals, flowRecords, sessionBrief, impEvents,
+    scenarioSets, positionPlans, assets, sdaBySymbol,
     marketShock.view, newsIntel.view]);
 
   // Recovery Phase A: publish the one shared, fixed public diagnostics

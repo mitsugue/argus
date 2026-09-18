@@ -17,7 +17,7 @@ export const BackupSettingsPanel: React.FC<{ initiallyOpen?: boolean }> = ({ ini
 
   return (
     <section id="settings-recovery" aria-label="Backup and recovery">
-      <BackupStatusOverview assets={assetsApi.assets} />
+      <BackupStatusOverview assets={assetsApi.archivedAssets} />
       <OwnerVaultPanel />
       <details className="backup-actions" open={actionsOpen}
         onToggle={(event) => setActionsOpen(event.currentTarget.open)}>

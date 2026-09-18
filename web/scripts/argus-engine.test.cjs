@@ -257,11 +257,8 @@ check('Today never claims an empty calendar it could not read',
     nextEvent < otherMarkets && otherMarkets < context && context < evidence);
   check('the market view and news axis left the hero article',
     !/<MarketBriefCard \/>\s*<MarketViewStrip \/>/.test(panel));
-  // v13.5.60 (owner): Today's Tachibana line names the company, never the code,
-  // and the per-symbol rows moved to Holdings.
-  check('Tachibana line names the company and never renders a code list',
-    panel.includes("jpNames?.[mover.symbol] ?? '保有銘柄'") && !panel.includes('jpDisplay(')
-    && !panel.includes('mv-tachibana__rows'));
+  check('retired individual live band is absent from Today',
+    !panel.includes('mv-tachibana') && !panel.includes('tachibanaLive'));
   check('tapping an event jumps to the events summary',
     panel.includes("document.getElementById('important-events')"));
   const css = fs.readFileSync(path.join(root, 'src/components/today/ArgusToday.css'), 'utf8');
@@ -395,7 +392,7 @@ console.log('argus-engine.test: all checks passed');
     && isDigestHeadline('日経ニュースメール 9/7 夕版 ━ ◆x') === true && isDigestHeadline('普通の見出し') === false);
   const ai = fs.readFileSync(path.join(root, 'src/hooks/useAssetIntel.ts'), 'utf8');
   check('crypto quotes try the memo id and the symbol default id',
-    ai.includes('SYMBOL_TO_COINGECKO[a.symbol.toUpperCase()]') && ai.includes("positionRiskTypes: riskTypesBySym.get(sym) ?? []"));
+    ai.includes('SYMBOL_TO_COINGECKO[a.symbol.toUpperCase()]') && ai.includes('candidates.map((id) => cw.byId?.[id]).find((row) => row)'));
 }
 
 // v13.5.62 (GPT review 2026-09-07). Every registered symbol gets decision
@@ -457,9 +454,9 @@ console.log('argus-engine.test: all checks passed');
     { symbol: '5803', riskLevel: 'medium', riskType: 'event_risk', whyJa: '', checkNextJa: '' }]);
   check('the most severe risk per symbol wins', worst.get('5803') === 'high');
   const ai = fs.readFileSync(path.join(root, 'src/hooks/useAssetIntel.ts'), 'utf8');
-  check('every risk map in the intel hook uses the most severe entry',
-    (ai.match(/mostSevereRiskBySymbol\(positionExposure\.risks\)/g) || []).length === 3
-    && !ai.includes('new Map(positionExposure.risks.map((r) => [r.symbol, r.riskLevel]))'));
+  check('portfolio risk calculations are retired from active watchlist analysis',
+    !ai.includes('positionExposure.risks') && !ai.includes('buildPositionExposure(')
+    && ai.includes('positionRiskTypes: []'));
   // ── v13.5.63 (GPT additional items 1/3/4) ──
   const richNote = eventAiScenarioNote({ eventOptIn: true, mode: 'SCHEDULED_AI', lastExecutionPurpose: 'headline_translation',
     lastExecutionAt: '2026-09-07T03:00:00Z', openaiKeyConfigured: true,

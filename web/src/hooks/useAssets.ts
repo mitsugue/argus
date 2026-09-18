@@ -1,9 +1,10 @@
 import {
-  createContext, createElement, useCallback, useContext, useEffect, useRef, useState,
+  createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState,
   type ReactNode,
 } from 'react';
 import type { AssetItem, AssetMarket, AssetType, AssetSource, HoldingUpdate } from '../types/assetItem';
 import { markLocalEdit } from '../lib/vault';
+import { watchlistProjection } from '../domain/watchlistProjection';
 import { recordTombstone } from '../lib/assetMerge';
 
 const STORAGE_KEY = 'argus.assets.v1';
@@ -78,12 +79,14 @@ function persist(items: AssetItem[]) {
 
 export interface UseAssets {
   assets: AssetItem[];
+  /** Recovery-only raw records; never feed active analysis or AI. */
+  archivedAssets: AssetItem[];
   add: (a: { market: AssetMarket; assetType: AssetType; source: AssetSource; symbol: string; displayName: string; displayNameJa?: string; memo?: string }) => string | null;
   remove: (id: string) => void;
   reorderGenre: (orderedIds: string[]) => void;
   toggle: (id: string) => void;
-  /** Set/clear one asset's holding (quantity & average cost). Pass
-      null/undefined to clear a field. Included in the existing encrypted backup. */
+  /** Compatibility for explicit restoration of legacy portfolio backups only.
+      Product screens must not use this to enter new holdings. */
   updateHolding: (id: string, h: HoldingUpdate) => void;
   reset: () => void;
 }
@@ -177,7 +180,8 @@ function useAssetsStore(): UseAssets {
     return defaults();
   }), []);
 
-  return { assets, add, remove, reorderGenre, toggle, updateHolding, reset };
+  const watchlist = useMemo(() => watchlistProjection(assets), [assets]);
+  return { assets: watchlist, archivedAssets: assets, add, remove, reorderGenre, toggle, updateHolding, reset };
 }
 
 /**

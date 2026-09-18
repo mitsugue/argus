@@ -9,13 +9,9 @@ import { useAssetIntel } from '../hooks/useAssetIntel';
 import { useDecisionEvidence, requestedDecisionEvidenceSymbols } from '../hooks/useDecisionEvidence';
 import { deskCoverage, deskCoverageJa, deskCoverageDetailJa } from '../domain/deskCoverage';
 import { useLocale, t } from '../i18n';
-import { CorePortfolio } from './CorePortfolio';
 import '../components/dashboard/Dashboard.css';
 
-// V12.2.12 — ASSET DESK(route key `watchlist` 不変): 個別銘柄情報の唯一の正本。
-// 判断はHoldings所有の共有Asset Intel(publish:true)経由でTodayと同一。
-// 追加・削除、急落証拠、owner profile、売買記録、FIRE/portfolio evidenceは
-// Asset DetailまたはHoldings内のcontextual disclosureとして残す。
+// Registration and shared market intelligence; archived portfolios stay in recovery.
 
 function ageLabel(ts: number, nowMs: number): string {
   const m = Math.max(0, Math.round((nowMs - ts) / 60000));
@@ -32,12 +28,12 @@ interface Props {
 }
 
 export const Watchlist: React.FC<Props> = ({
-  assetFocus, assetDetail = false, initialPortfolioOpen = false,
+  assetFocus, assetDetail = false,
   onNavigateToAsset, onBackToHoldings,
 }) => {
   useLocale();   // re-render on locale switch
   const assetsApi = useAssets();
-  const { assets, add, remove, reorderGenre, updateHolding } = assetsApi;
+  const { assets, add, remove, reorderGenre } = assetsApi;
   // Holdings owns one canonical acquisition/intelligence lifecycle. Every
   // contextual child below receives this exact snapshot.
   const intel = useAssetIntel({ publish: true, assets });
@@ -56,12 +52,6 @@ export const Watchlist: React.FC<Props> = ({
   const [updatedAt, setUpdatedAt] = useState(() => Date.now());
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [supportOpen, setSupportOpen] = useState(false);
-  const [portfolioOpen, setPortfolioOpen] = useState(initialPortfolioOpen);
-
-  useEffect(() => {
-    setPortfolioOpen(initialPortfolioOpen);
-  }, [initialPortfolioOpen]);
-
   useEffect(() => {
     const t = window.setInterval(() => setNowMs(Date.now()), 30_000);
     return () => window.clearInterval(t);
@@ -75,13 +65,13 @@ export const Watchlist: React.FC<Props> = ({
 
   return (
     <PageShell
-      title={assetDetail ? 'ASSET DETAIL' : 'HOLDINGS / WATCHLIST'}
+      title={assetDetail ? 'ASSET DETAIL' : 'WATCHLIST'}
       subtitle={assetDetail
-        ? `${assetFocus?.symbol ?? '銘柄'} · 判断 / 見通し / 根拠 / 保有`
+        ? `${assetFocus?.symbol ?? '銘柄'} · 判断 / 見通し / 根拠`
         : '日本株・米国株・投資信託・仮想通貨ごとに整理します。区分内は長押しで並べ替えられます。'}
     >
       {assetDetail && <button type="button" className="asset-btn" onClick={onBackToHoldings}>
-        ← Holdings / Watchlist
+        ← Watchlist
       </button>}
       <AssetDeskList
         key={nonce}
@@ -89,7 +79,6 @@ export const Watchlist: React.FC<Props> = ({
         intel={intel}
         onReorder={reorderGenre}
         onRemove={remove}
-        onUpdateHolding={updateHolding}
         focus={assetFocus}
         detailSymbol={assetDetail ? assetFocus?.symbol : undefined}
         onOpenAsset={onNavigateToAsset}
@@ -108,13 +97,6 @@ export const Watchlist: React.FC<Props> = ({
           </div>
         )}
       />
-
-      {!assetDetail && <details className="card cp-workspace" open={portfolioOpen}
-        onToggle={(event) => setPortfolioOpen(event.currentTarget.open)}>
-        <summary>Advanced portfolio / allocation / risk</summary>
-        {portfolioOpen && <CorePortfolio assetsApi={assetsApi}
-          portfolioIntel={intel} />}
-      </details>}
 
       {!assetDetail && <details className="card ad-support" open={supportOpen}
         onToggle={(event) => setSupportOpen(event.currentTarget.open)}>

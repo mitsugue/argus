@@ -66,6 +66,78 @@
 - 残件: 保有数量・FIRE・ライブ取得等の撤去、配信証明、後続の版更新、本番画面。
   本変更だけでウォッチリスト整理完了や料金削減実績とはしない。
 
+
+## Quantity-free watchlist candidate (2026-09-18, not deployed)
+
+- Product-facing asset reads use a whitelist of registration fields; quantity,
+  cost basis, allocation, contributions and purchase/horizon records remain in
+  the original protected store. Mounting, toggling registration and restoring
+  a backup do not erase those archived fields or reactivate portfolio analysis.
+- Holdings entry, allocation/FIRE route and portfolio daily snapshot generation
+  are disconnected. Exposure, FIRE and portfolio strategy calculators remain
+  preserved for archival research, but active Asset Intel does not call them.
+  Shared market scenarios, evidence, data quality and formal SDA history remain.
+- Existing full encrypted/export recovery remains. The old partial-portfolio
+  import/export is recovery compatibility, labelled as archived records; it
+  does not create new valuation snapshots. Remove this compatibility entry only
+  after full archive export/restore is verified on the owner's iPhone and any
+  remaining legacy partial backups have a verified migration path.
+- Registered symbols can receive P1 and worsening-scenario notifications
+  without quantities; existing throttle, preferences and deduplication remain.
+  The private integrated-overview request sends WATCHING context without old
+  quantity, cost, purchase-reason or holding-period inputs.
+- Local checks: actual asset-store mount/edit/restore preservation, notification
+  execution/deduplication, all frontend lint steps (resumed after updating
+  obsolete portfolio/label expectations), production build, source/artifact
+  naming guards passed. Existing archived numerical tests were retained.
+- This is a local frontend candidate, not production acceptance or measured
+  monetary savings. Pending: integration with the separately prepared live-feed
+  retirement, exact provenance registration, version bump and release checks,
+  actual desktop/mobile/iPhone acceptance, backend handling of legacy private
+  context, view-triggered generation retirement, bridge/job/provider contracts.
+  A quantity-free warning is not a validated prediction or a BUY permission.
+
+
+### Backend registration-only context candidate
+
+All active subject-overview construction paths (request and background refresh)
+now use quantity-free registration context. Old-client quantities/costs and
+purchase/horizon notes are not generation inputs or cache-invalidation reasons.
+Legacy previous records retain their original digest/content; their personal
+facts and old generated prose are excluded from a new watchlist explanation,
+with the original record ID and exclusion reason retained. New market facts and
+previous market facts remain bound to the same subject and horizon.
+
+116 focused backend tests passed, including the actual constructed provider
+prompt, immutable original archive, no repeat generation after migration, and
+changed materials/rules still causing a new edition. This is local validation;
+production prompt, saved-answer read-only operation and cost reduction remain
+unconfirmed. No hosted provider call or paid recalculation was made for tests.
+
+
+### Unchanged-hour generation removal candidate
+
+The subject-overview reuse key no longer includes a wall-clock hour. The prior
+implementation could regenerate the same explanation each hour even if source
+facts, event status, model and rules were unchanged. Input-key version v2 retains
+source vintages, missingness, event facts and calculation/model/rule changes.
+The saved answer's completion time is never refreshed merely because it was read.
+
+117 focused backend tests passed. A background-tick test crosses multiple hours
+and the next day with unchanged facts and observes no extra generation, then
+changes an event-state fact and observes one new generation with the previous
+record linked. Provider calls were stubs: production call counts and dollar
+savings are not yet measured. This does not complete cached-only page reads;
+first-visit generation and durable watchlist registration remain pending.
+### 個別ライブ取得の廃止（実装候補）
+
+個別ライブサービスの製品起動口を停止し、旧設定が有効でも認証・接続・専用スレッドを開始しない。
+共用のチャート履歴準備は同じ起動口から維持する。旧クライアント向けの読取りはDISABLEDと
+feature_retiredを返し、保存済み研究コード・既存履歴は削除しない。Todayのライブ帯、
+銘柄詳細の板・VWAP、チャートの現在値重ね描き、遅延価格へのライブ上書きを外す。
+当日の業種取得、既存の遅延価格、判断根拠と履歴は別経路として維持する。
+本項目はローカル実装・検証段階。配信、専用スレッド停止の本番確認、他のライブ取得経路の
+廃止、契約縮小は未完了であり、個別ライブ全体の停止済みとはしない。
 ## 長期特徴量の再起動時再利用 — 未配信候補
 
 既存の特徴量計算結果を、入力ハッシュ・計算コード4ファイルの版・内容ハッシュと

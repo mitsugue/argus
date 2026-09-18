@@ -27,7 +27,7 @@ export interface ParsedLocation {
 export const NAVIGATION: readonly NavigationDefinition[] = [
   { route: 'command', desktopLabel: 'Today', mobileLabel: 'Today',
     hash: '#today', swipeOrder: 0 },
-  { route: 'watchlist', desktopLabel: 'Holdings / Watchlist', mobileLabel: 'Holdings',
+  { route: 'watchlist', desktopLabel: 'Watchlist', mobileLabel: 'Watchlist',
     hash: '#holdings', swipeOrder: 1 },
   { route: 'notifications', desktopLabel: 'Notifications', mobileLabel: 'Alerts',
     hash: '#notifications', swipeOrder: 2 },
