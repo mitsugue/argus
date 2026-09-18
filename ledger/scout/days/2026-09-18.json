@@ -1,5 +1,5 @@
 {
- "asOf": "2026-09-18T07:07:37Z",
+ "asOf": "2026-09-18T12:13:46Z",
  "dateJst": "2026-09-18",
  "engineVersion": "scout-ledger-v1",
  "records": [
@@ -41,10 +41,10 @@
   },
   {
    "bucket": "avoid",
-   "flowClass": "UNCONFIRMED",
+   "flowClass": "SHORT_COVERING",
    "lastClose": 779.0,
    "lastDate": "2026-09-18",
-   "score": -2.5,
+   "score": -2.2,
    "stance": "見送り",
    "symbol": "6584"
   },
@@ -62,7 +62,7 @@
    "flowClass": "UNCONFIRMED",
    "lastClose": 549.7,
    "lastDate": "2026-09-18",
-   "score": -2.9,
+   "score": -3.2,
    "stance": "見送り",
    "symbol": "9501"
   }
