@@ -182,7 +182,7 @@ const warmBlock = acceptance.slice(
 );
 assert.doesNotMatch(warmBlock, /waitForTimeout|warmLoader|warmSkeleton/,
   'warm acceptance must use semantic state without sleeps or visual-loader authority');
-assert.match(acceptance, /\['Today', '#today'\], \['Holdings', '#holdings'\]/);
+assert.match(acceptance, /\['Today', '#today'\], \['Watchlist', '#holdings'\]/);
 assert.match(acceptance, /\['Alerts', '#notifications'\], \['Settings', '#settings'\]/);
 assert.doesNotMatch(acceptance, /nav__mobile-system|\['Assets', '#assets'\]|\['Review', '#positions'\]/);
 
