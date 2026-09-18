@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_jp_market_feature_delta.py': '371a5637d610df883cfb50efe59db031530b4863',
     'web/src/domain/watchlistProjection.ts': '36b5e0c3eba3a67ce9fec128f422ce3af89498cc',
     'web/scripts/watchlist-retirement.test.cjs': '55e0d87e492fba0322787e821c1b5e0f21c36d88',
     'web/scripts/positions-risk.test.cjs': '24378a48ec140668b53aa6442cb87356ede43790',
@@ -43,7 +44,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/polling-singleton.test.mjs': 'de34e0e33bc46871c009f4264d85881a7d2e74ca',
     'test_argus_institutional_backend_v1160.py': 'd8065d151883cdf13ff7ebfa79358482d40cc8fc',
     'docs/V13_7_SHAPEUP_REQUIREMENTS.md': '9756717ff26e5cf159dcf5d20cb578d99ab225ed',
-    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': '734ab6646169b953df12ca37bca856240dfda431',
+    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': 'bbf02c8e4c36fe15bda58a377fc23c041616a6e8',
     'test_rules.py': '99fad6a22f968ddc518a8b7b359d4adfdf8fd9e0',
     'bridge/trigger_closepin.sh': '83ee01384660bb8799a863e080021a7fa35c1e3d',
     '.github/workflows/closepin-pin.yml': 'ea693b3ca6140d4cf6fa66c48d91c6a03f603baa',
@@ -204,7 +205,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'jp_market_analogs.py': 'a4783914d10baae18ff0a473e4624da293c4bd27',
     'jp_market_dynamics.py': '6949bb8b2cc4a1526f09016fb0c0e10369ce488d',
     'jp_market_events.py': '08adce36b4bc2dfdb7ade550ba15b8937e8e16a0',
-    'jp_market_features.py': '7fe544965a4e642e0123371b76a416a3b1473b70',
+    'jp_market_features.py': '72e4422aa03e4f2ba2d8f6993b24d36e05e5c3ad',
     'jp_market_price_paths.py': '3f27f4c238490f7dd1c2423ca3aa439b4c15af49',
     'jp_market_source_adapters.py': '8057ddbda08e676b7877e7abae8bab121f623026',
     'ops/calendar/jp_index_sq_2026.json': 'd55cbf1e1362d4d86b21fe413cc2de35b035bd62',
