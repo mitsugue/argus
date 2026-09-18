@@ -38287,6 +38287,7 @@ _JP_MARKET_ENGINE_PIT_INPUT_MEMO = {"ts": 0.0, "data": None}
 _JP_MARKET_ENGINE_MARKET_VIEW_MEMO = {"ts": 0.0, "view": None}
 _JP_MARKET_FEATURE_HISTORY = {"status": "NOT_RUN", "features": [], "conditions": []}
 _JP_MARKET_FEATURE_HISTORY_LOCK = threading.Lock()
+_JP_MARKET_FEATURE_CACHE_STATUS = {"restoreAttempted": False}
 
 
 def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
@@ -38575,6 +38576,7 @@ def _jp_market_comparison_calculate(horizon):
             condition_rows=_JP_MARKET_FEATURE_HISTORY.get("conditions", ()))
         result["marketFeatureAcquisition"] = {k: _JP_MARKET_FEATURE_HISTORY.get(k)
             for k in ("status", "lastSuccessfulCalculationAt", "errorClass", "firstCutoff", "lastCutoff")}
+        result["marketFeatureAcquisition"]["derivedCache"] = dict(_JP_MARKET_FEATURE_CACHE_STATUS)
         if horizon == 5:
             result["marketFeatureSnapshot"] = _JP_MARKET_FEATURE_HISTORY.get("latest")
         result["valuationAcquisition"] = dict(_JP_INDEX_VALUATION.status)
@@ -39228,6 +39230,22 @@ def _jp_market_engine_earnings_bars(symbol):
     return out
 
 
+def _jp_market_feature_history_persist(cache_path, method, now):
+    if not cache_path:
+        return
+    try:
+        doc = jp_market_features.history_cache_envelope(_JP_MARKET_FEATURE_HISTORY, method=method)
+        argus_product_naming.require_allowed(doc)
+        argus_persistent_storage.atomic_write_json(cache_path, doc,
+            maximum_bytes=jp_market_features.HISTORY_CACHE_MAX_BYTES, file_mode=0o600)
+        if jp_market_features.load_history_cache(cache_path, method=method, now=now) != _JP_MARKET_FEATURE_HISTORY:
+            raise ValueError("feature_cache_readback_mismatch")
+        _JP_MARKET_FEATURE_CACHE_STATUS["persistenceStatus"] = "VERIFIED"
+        _JP_MARKET_FEATURE_CACHE_STATUS.pop("persistenceError", None)
+    except Exception as exc:
+        _JP_MARKET_FEATURE_CACHE_STATUS.update(persistenceStatus="FAILED", persistenceError=type(exc).__name__)
+
+
 def _jp_market_feature_history_warm():
     """Calculate on the collection lane; public chart reads only this cache."""
     global _JP_MARKET_FEATURE_HISTORY
@@ -39235,6 +39253,23 @@ def _jp_market_feature_history_warm():
         return
     try:
         now = _ai_now_iso()
+        method = jp_market_features.history_method_identity()
+        cache_path = (os.path.join(_DURABILITY_PATHS["root"], "jp_market_feature_cache.json")
+                      if _cost_policy_durable_enabled() else None)
+        if cache_path and not _JP_MARKET_FEATURE_CACHE_STATUS["restoreAttempted"]:
+            _JP_MARKET_FEATURE_CACHE_STATUS["restoreAttempted"] = True
+            try:
+                restored = jp_market_features.load_history_cache(cache_path, method=method, now=now)
+                if restored:
+                    argus_product_naming.require_allowed(restored)
+                    _JP_MARKET_FEATURE_HISTORY = restored
+                    _JP_MARKET_FEATURE_CACHE_STATUS["restoreStatus"] = "VERIFIED"
+                else:
+                    _JP_MARKET_FEATURE_CACHE_STATUS["restoreStatus"] = "METHOD_CHANGED"
+            except FileNotFoundError:
+                _JP_MARKET_FEATURE_CACHE_STATUS["restoreStatus"] = "MISSING"
+            except Exception as exc:
+                _JP_MARKET_FEATURE_CACHE_STATUS.update(restoreStatus="REJECTED", restoreError=type(exc).__name__)
         price_series = {}
         for name, symbols in (("nikkei", ("^N225",)), ("sp500", ("^GSPC",)),
                               ("vix", ("^VIX",)), ("topix", ("^TPX", "998405.T"))):
@@ -39275,12 +39310,15 @@ def _jp_market_feature_history_warm():
             separators=(",", ":")).encode()).hexdigest()
         if identity == _JP_MARKET_FEATURE_HISTORY.get("inputIdentity") and \
                 now[:10] == str(_JP_MARKET_FEATURE_HISTORY.get("lastSuccessfulCalculationAt", ""))[:10]:
+            if _JP_MARKET_FEATURE_CACHE_STATUS.get("persistenceStatus") == "FAILED":
+                _jp_market_feature_history_persist(cache_path, method, now)
             return
         cutoffs = sorted({r["date"] + "T23:59:59Z" for r in bars if r["date"] < now[:10]})
         history = jp_market_features.build_feature_history(cutoffs=[*cutoffs, now], **inputs)
         _JP_MARKET_FEATURE_HISTORY = {**history, "status": "AVAILABLE", "inputIdentity": identity,
                                      "lastSuccessfulCalculationAt": now}
         _JP_MARKET_ENGINE_MARKET_VIEW_MEMO["ts"] = 0
+        _jp_market_feature_history_persist(cache_path, method, now)
     except Exception as exc:
         _JP_MARKET_FEATURE_HISTORY = {**_JP_MARKET_FEATURE_HISTORY, "status": "FAILED",
                                      "errorClass": type(exc).__name__}
