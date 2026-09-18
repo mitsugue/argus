@@ -84,7 +84,50 @@ def load_history_cache(path, *, method: str, now: str):
     return doc["history"] if doc["methodIdentity"] == method else None
 
 
-def build_feature_history(*, cutoffs: Sequence[str], **inputs) -> dict[str, Any]:
+def _source_lists(inputs):
+    """Exact source prefixes; no prices, revisions or publication times discarded."""
+    lists = {"price_series:" + key: list(rows)
+             for key, rows in inputs.get("price_series", {}).items()}
+    for key, rows in inputs.items():
+        if key != "price_series":
+            lists[key] = list(rows)
+    return lists
+
+
+def _reusable_cutoffs(history, ordered, sources):
+    from jp_market_engine import _instant
+    if not isinstance(history, dict) or history.get("status") != "AVAILABLE":
+        return []
+    old = history.get("evaluatedCutoffs")
+    manifest = history.get("sourceManifest")
+    if not isinstance(old, list) or not isinstance(manifest, dict):
+        return []
+    # A prior intraday endpoint is not part of today's close-based replay.
+    requested = set(ordered)
+    shared = [at for at in old if at in requested]
+    if not shared or shared != ordered[:len(shared)] or shared != sorted(set(shared), key=_instant):
+        return []
+    boundary = _instant(shared[-1])
+    if set(manifest) != set(sources):
+        return []
+    for key, rows in sources.items():
+        source = manifest[key]
+        count = source.get("count") if isinstance(source, dict) else None
+        if type(count) is not int or count < 0 or count > len(rows):
+            return []
+        if _history_digest(rows[:count]) != source.get("sha256"):
+            return []
+        for row in rows[count:]:
+            # Conservative append-only admission. A backfill/correction or
+            # changed event schedule must take the full replay path.
+            known = _knowledge_time(row)
+            period = _instant(str(row.get("periodEnd") or row.get("date") or "")[:10] + "T00:00:00Z")
+            if key == "sq_events" or known is None or known <= boundary or period is None or period <= boundary:
+                return []
+    return shared
+
+
+def build_feature_history(*, cutoffs: Sequence[str], previous_history=None, **inputs) -> dict[str, Any]:
     """Replay descriptive features without selecting on subsequent outcomes.
 
     A historical source download is not an archived historical vintage. Keep
@@ -96,11 +139,30 @@ def build_feature_history(*, cutoffs: Sequence[str], **inputs) -> dict[str, Any]
     if not cutoffs or len(cutoffs) > 3001 or any(_instant(at) is None for at in cutoffs):
         raise ValueError("bounded_valid_feature_cutoffs_required")
     ordered = sorted(set(cutoffs), key=_instant)
+    sources = _source_lists(inputs)
+    reused = _reusable_cutoffs(previous_history, ordered, sources)
     groups = {"features": [], "conditions": []}
+    if reused:
+        from copy import deepcopy
+        retained = set(reused)
+        for group in groups:
+            groups[group] = deepcopy([row for row in previous_history[group]
+                                     if row.get("knownAt") in retained])
     previous = {}
     revisions = {}
+    for group, rows in groups.items():
+        for row in rows:
+            key = (group, row["instrumentId"], row["seriesId"], row["date"])
+            body = {k:v for k,v in row.items() if k not in ("revision", "knownAt")}
+            previous[key] = _history_digest(body)
+            revisions[key] = row["revision"]
+    # Always evaluate the requested endpoint to expose current freshness and
+    # missingness, even if no new publication arrived.
+    pending = ordered[len(reused):]
+    if not pending:
+        return build_feature_history(cutoffs=ordered, **inputs)
     latest = None
-    for at in ordered:
+    for at in pending:
         latest = build_market_features(cutoff=at, **inputs)
         for group in groups:
             for row in latest[group]:
@@ -117,7 +179,11 @@ def build_feature_history(*, cutoffs: Sequence[str], **inputs) -> dict[str, Any]
             raise ValueError("market_evidence_history_bound_exceeded")
     return {"schemaVersion": "jp-market-feature-history-v1", **groups,
             "latest": latest, "firstCutoff": ordered[0], "lastCutoff": ordered[-1],
-            "cutoffCount": len(ordered), "historicalVintageVerified": False,
+            "cutoffCount": len(ordered), "evaluatedCutoffs": ordered,
+            "sourceManifest": {key: {"count": len(rows), "sha256": _history_digest(rows)}
+                               for key, rows in sources.items()},
+            "calculationWork": {"reusedCutoffs": len(reused), "evaluatedCutoffs": len(pending)},
+            "historicalVintageVerified": False,
             "actionAuthority": False, "automaticAiCalls": 0}
 
 

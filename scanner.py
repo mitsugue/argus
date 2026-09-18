@@ -39314,7 +39314,8 @@ def _jp_market_feature_history_warm():
                 _jp_market_feature_history_persist(cache_path, method, now)
             return
         cutoffs = sorted({r["date"] + "T23:59:59Z" for r in bars if r["date"] < now[:10]})
-        history = jp_market_features.build_feature_history(cutoffs=[*cutoffs, now], **inputs)
+        history = jp_market_features.build_feature_history(cutoffs=[*cutoffs, now],
+            previous_history=_JP_MARKET_FEATURE_HISTORY, **inputs)
         _JP_MARKET_FEATURE_HISTORY = {**history, "status": "AVAILABLE", "inputIdentity": identity,
                                      "lastSuccessfulCalculationAt": now}
         _JP_MARKET_ENGINE_MARKET_VIEW_MEMO["ts"] = 0
