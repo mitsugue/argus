@@ -372,7 +372,7 @@ async function geometry(page, viewport) {
 
 async function navigationAudit(page, evidence) {
   const sequence = [
-    ['Today', '#today'], ['Holdings', '#holdings'],
+    ['Today', '#today'], ['Watchlist', '#holdings'],
     ['Alerts', '#notifications'], ['Settings', '#settings'],
   ];
   const records = [];
