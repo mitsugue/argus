@@ -136,7 +136,10 @@ def test_frontend_no_execution_wording():
 def test_mobile_nav_reaches_backup_and_data_quality():
     src = open(os.path.join(WEB, "components", "NavRail.tsx"), encoding="utf-8").read()
     navigation = open(os.path.join(WEB, "navigation.ts"), encoding="utf-8").read()
-    assert "mobileLabel: 'Holdings'" in navigation
+    watchlist_nav = re.search(r"\{ route: 'watchlist',[^}]+\}", navigation)
+    assert watchlist_nav is not None
+    assert "mobileLabel:" in watchlist_nav.group(0)
+    assert "hash: '#holdings'" in watchlist_nav.group(0)
     assert "mobileLabel: 'Alerts'" in navigation
     assert "mobileLabel: 'Settings'" in navigation
     assert "SYSTEM_NAVIGATION" not in src
