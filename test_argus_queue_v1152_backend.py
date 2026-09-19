@@ -186,6 +186,8 @@ def test_translate_visible_drains_queue_first(monkeypatch):
     monkeypatch.setattr(scanner, "_translate_headlines_ja",
                         lambda pending: {i: "翻訳:" + t[:12] for i, t in enumerate(pending)})
     title = "IonQ stock jumps on quantum deal"
+    monkeypatch.setattr(scanner, "_NEWS_INTEL", {"events": {"important": {
+        "titleOriginal": title, "severity": "HIGH", "sourceReceivedAt": scanner._ai_now_iso()}}})
     NI.visible_queue_add(scanner._NEWS_JA_VQUEUE, [{"titleOriginal": title, "source": "ChartMill"}],
                          scanner._NEWS_JA_CACHE, now_iso=scanner._ai_now_iso())
     with scanner.app.test_client() as c:
@@ -216,6 +218,10 @@ def test_cause_attribution_ionq_pending_then_translated(monkeypatch):
     assert n["translationStatus"] == "pending"
     assert n.get("translationQueueEligible") is True
     assert _EN.search(n["displayTitleJa"]) is None or _JP.search(n["displayTitleJa"])   # JP fallback, not raw EN
+    # Server-observed importance, not browser visibility, authorizes paid translation.
+    monkeypatch.setattr(scanner, "_NEWS_INTEL", {"events": {"important": {
+        "titleOriginal": n["titleOriginal"], "severity": "HIGH",
+        "sourceReceivedAt": scanner._ai_now_iso()}}})
     # now the admin translate-visible fills the cache with a real Japanese title
     monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "tok")
     monkeypatch.setattr(scanner, "_translate_headlines_ja",

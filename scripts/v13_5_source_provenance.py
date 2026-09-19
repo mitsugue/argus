@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_queue_v1152_backend.py': 'ec3d8c65c5b48755539e0dfdc0f93ccf6362cfb1',
     'test_argus_shared_bridge.py': 'f3c7e5d24806d9263a72795ba715c08b103bd10b',
     'bridge/README.md': '9bcd2afec193b966d963ad7382c43136ed283e7c',
     'bridge/bridge.env.example': 'dffbcc62907f9dd05594495bd6ffada6e43d1fa5',
