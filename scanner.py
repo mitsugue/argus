@@ -3164,9 +3164,6 @@ def api_argus_watchlist_sync():
         if configured:
             try:
                 _layer2b_persist_private(snap)
-                with _OWNER_OVERVIEW_MEMBERSHIP_LOCK:
-                    _OWNER_OVERVIEW_MEMBERSHIP.update(checkedAt=time.monotonic(),
-                        members=snap.get("members"))
                 # Successful owner intent becomes authoritative immediately;
                 # removals must not remain Push-eligible for another cache TTL.
                 _OWNER_SYMS_CACHE.update({
@@ -18182,21 +18179,6 @@ def _owner_overview_generation_policy():
                 ("OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID")})}
 
 
-_OWNER_OVERVIEW_MEMBERSHIP = {"checkedAt": 0.0, "members": None}
-_OWNER_OVERVIEW_MEMBERSHIP_LOCK = threading.Lock()
-
-
-def _owner_overview_registered_subjects():
-    # Reuse private durable membership; avoid a remote read every scheduler tick.
-    with _OWNER_OVERVIEW_MEMBERSHIP_LOCK:
-        now_mono = time.monotonic()
-        if not _OWNER_OVERVIEW_MEMBERSHIP["checkedAt"] or now_mono - _OWNER_OVERVIEW_MEMBERSHIP["checkedAt"] >= 300:
-            snap = _layer2b_read_latest()
-            _OWNER_OVERVIEW_MEMBERSHIP.update(checkedAt=now_mono,
-                members=(snap.get("members") if isinstance(snap, dict) else None))
-        return _OWNER_OVERVIEW_MEMBERSHIP["members"]
-
-
 _OWNER_DIALOGUE_API = argus_owner_dialogue_api.register(app, authorize=_require_owner_sync,
     storage_path=_owner_dialogue_path, market_brief=lambda: _MARKET_BRIEF.get("data"),
     generate=_openai_prose, now=lambda: datetime.now(pytz.utc).isoformat(),
@@ -18205,8 +18187,7 @@ _OWNER_DIALOGUE_API = argus_owner_dialogue_api.register(app, authorize=_require_
     usage_snapshot=_ai_usage_snapshot, push_service=_WEB_PUSH, vault_service=_OWNER_VAULT,
     event_snapshot=_owner_dialogue_event_snapshot, event_history=_owner_dialogue_event_history,
     market_reference=_owner_dialogue_market_reference,
-    generation_policy=_owner_overview_generation_policy,
-    registered_subjects=_owner_overview_registered_subjects)
+    generation_policy=_owner_overview_generation_policy)
 
 
 def _owner_overview_tick():
