@@ -18162,12 +18162,14 @@ _OWNER_VAULT = argus_owner_vault.VaultService(
         headers=_gh_private_headers(), http=requests.request))
 
 def _owner_overview_generation_policy():
-    """Bind recovered explanations to this executable and its effective GPT lane."""
+    """Bind recovered explanations to generation code and the effective GPT lane."""
     from argus_owner_dialogue import digest
-    revision = _backend_exact_sha()
-    if revision is None:
+    from argus_overview_policy import generation_revision
+    if _backend_exact_sha() is None:
         raise ValueError("overview_executable_identity_unavailable")
+    revision = generation_revision(os.path.dirname(os.path.abspath(__file__)))
     return {"model": _OPENAI_MODEL, "ruleVersion": revision,
+            "ruleVersionKind": "generation-source-sha256-v1",
             "provider": "openai", "endpoint": "responses",
             "maxOutputTokens": 3000, "maxValidationAttempts": 2,
             "providerSettingsDigest": digest({

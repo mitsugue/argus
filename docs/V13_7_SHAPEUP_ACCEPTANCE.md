@@ -162,3 +162,18 @@ feature_retiredを返し、保存済み研究コード・既存履歴は削除�
 数値・条件・出典・改訂履歴・最新状態が一致することを確認した。
 これはテストデータでの計算量削減であり、本番実行回数・費用削減は未確認。
 不足系列の10年被覆や予測力を検証済みへ昇格しない。新たな取得・LLM呼出しは追加しない。
+
+### Explanation reuse across display-only releases (candidate)
+
+Saved subject explanations now bind to the exact generation implementation and
+validators, provider/model/settings, and the existing material input digest.
+An unrelated frontend or patch-identity update no longer changes the generation
+rule identity. Missing generation sources fail closed; the original saved
+context, completion, and execution provenance remain immutable. Changes to the
+provider implementation, prompt, validators, facts, or model still invalidate
+reuse. This is independent of the remaining saved-only viewing work.
+
+Validation: 57 focused tests passed, including all generation-source changes,
+release-only stability, missing-source rejection, effective rule/model/input
+invalidation, pending public editions, and immutable saved completions.
+Production use and measured invoice savings for this candidate are not yet verified.
