@@ -229,3 +229,9 @@ Deployment and runtime proof require the existing owner's EC2 access path.
 - Existing content-hash reuse, failed-attempt bounds, provider accounting and important-headline fallback remain in force. This change does not claim that all news analysis or Deep Dive costs are resolved.
 - 60 related checks PASS using mocked providers: repeated cache refills make no translation call; a browser-only priority claim cannot purchase translation; an important headline is translated once; unrelated/old items remain metadata without translation.
 - Not deployed. Exact source registration and admission proofs must complete before release; actual billing reduction remains unmeasured.
+
+## Sector heatmap candidate (not production accepted)
+
+Display-only 8 TOPIX-sector ETF proxies plus TOPIX-linked 1306, not official33 sector indices. Cached public GET makes no provider/LLM calls; scheduler performs bounded20-minute session collection and one closing fill. Existing durable volume atomic writer/readback restores original timestamps. Offsite backup inclusion remains unverified.
+
+Eight focused calculation/runtime/API/durable-restore checks pass. Real source probe recovered all9 instruments with source time2026-09-18 15:30JST; Saturday is labeled closed/previous session. Actual browser checks changed1 to20 sessions and return tobenchmark-relative, openedbank detail (+3.61% versus +3.09 percentage points relative), and verified390px mobile width. No live-session latency claim. Frontend build and source/built naming checks pass. Registered-sector association uses existing confirmed classifications only; unknown mappings remain unknown.
