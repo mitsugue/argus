@@ -283,12 +283,57 @@ class SourceCache:
             self.lock.release()
 
 
-def merge_feature_sources(existing, official):
+def merge_feature_sources(existing, official, *, path=None, received_at=None):
     """Fill absent sessions without replacing existing provider vintages.
 
     One provider per date avoids representing different providers as revisions
     of the same observation. Raw official rows remain in their separate store.
     """
     dates = {r.get('date') for r in existing}
-    return sorted([{**row, 'seriesId': 'close'} for row in existing] +
-                  [row for row in official if row['date'] not in dates], key=lambda r: r['date'])[-3000:]
+    candidates = sorted([{**row, 'seriesId': 'close'} for row in existing] +
+                        [row for row in official if row['date'] not in dates], key=lambda r: r['date'])[-3000:]
+    if not path:
+        return candidates
+    _time(received_at)
+    db = connect(path)
+    try:
+        # Persist provider selection: a date falling out of Yahoo's rolling
+        # response must not switch provider and invalidate the historical prefix.
+        db.execute("""CREATE TABLE IF NOT EXISTS selected_vix_inputs(
+            seq INTEGER PRIMARY KEY, session TEXT NOT NULL, body TEXT NOT NULL,
+            sha256 TEXT NOT NULL, received_at TEXT NOT NULL)""")
+        saved = {}
+        for session, body, digest in db.execute("""SELECT session,body,sha256 FROM selected_vix_inputs
+                WHERE seq IN (SELECT max(seq) FROM selected_vix_inputs GROUP BY session)"""):
+            if hashlib.sha256(body.encode()).hexdigest() != digest:
+                raise ValueError('selected_source_integrity')
+            row = json.loads(body)
+            if row.get('date') != session:
+                raise ValueError('selected_source_date')
+            saved[session] = row
+        changes = []
+        for row in candidates:
+            old = saved.get(row['date'])
+            if old:
+                if old.get('sourceRef') != row.get('sourceRef'):
+                    continue  # Keep the originally selected provider for this date.
+                fields = ('open', 'high', 'low', 'close', 'value', 'volume', 'unit')
+                if all(old.get(k) == row.get(k) for k in fields):
+                    continue
+                if _time(received_at) <= _time(old.get('knownAt') or old['availableFrom']):
+                    raise ValueError('selected_source_revision_time_order')
+                row = {**row, 'knownAt': received_at, 'availableFrom': received_at,
+                       'publishedAt': None, 'historicalVintageVerified': False,
+                       'availabilityBasis': 'RECEIVED_CORRECTION'}
+            saved[row['date']] = row
+            changes.append(row)
+        if len(saved) > 3000:
+            raise ValueError('selected_source_retention_maintenance_required')
+        with db:
+            for row in changes:
+                encoded = _json(row)
+                db.execute('INSERT INTO selected_vix_inputs(session,body,sha256,received_at) VALUES(?,?,?,?)',
+                           (row['date'], encoded, hashlib.sha256(encoded.encode()).hexdigest(), received_at))
+        return [saved[day] for day in sorted(saved)]
+    finally:
+        db.close()

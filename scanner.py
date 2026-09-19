@@ -39346,7 +39346,9 @@ def _jp_market_feature_history_warm():
         if _N225_ANALOG_HISTORY.get("data"):
             price_series["nikkei"] = list(_N225_ANALOG_HISTORY["data"])
         price_series['vix'] = jp_market_acquisition.merge_feature_sources(
-            price_series.get('vix', []), _JP_OFFICIAL_SOURCE_CACHE.rows.get('vix_ohlc', []))
+            price_series.get('vix', []), _JP_OFFICIAL_SOURCE_CACHE.rows.get('vix_ohlc', []),
+            path=(os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3')
+                  if _cost_policy_durable_enabled() else None), received_at=now)
         price_series['jp10y'] = list(_JP_OFFICIAL_SOURCE_CACHE.rows.get('jp_yield_curve', []))
         bars = price_series["nikkei"]
         if not bars:
