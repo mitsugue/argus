@@ -166,3 +166,23 @@ def test_background_runtime_passes_saved_sources_into_existing_feature_calculati
     assert captured['price_series']['jp10y'][0]['value'] == 2.993
     assert captured['price_series']['vix'][0]['value'] == 14.81
     assert scanner._JP_MARKET_FEATURE_HISTORY['status'] == 'AVAILABLE'
+
+
+def test_rolling_provider_cache_retains_selected_prefix_and_revisions(tmp_path):
+    path = tmp_path/'sources.sqlite3'
+    def row(day, value, source):
+        return {'date':day, 'close':value, 'availableFrom':AT, 'sourceRef':source}
+    official = [row('2026-09-17', 16, 'official'), row('2026-09-18', 15, 'official')]
+    yahoo = [row('2026-09-18', 15.1, 'yahoo')]
+    initial = m.merge_feature_sources(yahoo, official, path=path, received_at=AT)
+    new = row('2026-09-21', 14, 'yahoo')
+    appended = m.merge_feature_sources([new], official, path=path, received_at=LATER)
+    assert appended[:-1] == initial  # Dropped Yahoo date retains exact provider and vintage.
+    assert m.merge_feature_sources([], official, path=path, received_at=LATER) == appended
+    corrected = m.merge_feature_sources([row('2026-09-18', 15.2, 'yahoo')], official,
+                                         path=path, received_at=LATER)
+    assert corrected[1]['availableFrom'] == LATER and corrected[1]['close'] == 15.2
+    with m.connect(path) as db:
+        assert db.execute('SELECT count(*) FROM selected_vix_inputs').fetchone()[0] == 4
+        original = json.loads(db.execute("SELECT body FROM selected_vix_inputs WHERE session='2026-09-18' ORDER BY seq LIMIT 1").fetchone()[0])
+        assert original == initial[1]
