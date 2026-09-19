@@ -214,9 +214,9 @@ def test_route_catalog_matches_every_flask_rule_and_is_fail_closed():
     )
     assert catalog.ROUTE_CATALOG_VALIDATION_ERRORS == ()
     assert catalog.route_contract_keys() == actual
-    assert len(catalog.ROUTE_CATALOG) == len(actual) == 177
+    assert len(catalog.ROUTE_CATALOG) == len(actual) == 178
     assert Counter(row.trustDomain for row in catalog.ROUTE_CATALOG) == {
-        "PUBLIC": 73,
+        "PUBLIC": 74,
         "AUTH_OPERATIONAL": 94,
         "OWNER_SYNC": 7,
         "RECOVERY_PROOF": 3,
@@ -312,6 +312,7 @@ def test_smoke_literal_routes_are_catalogued_or_explicit_safety_negatives():
 def test_public_cache_only_consumer_manifest_is_exact_and_pinned():
     assert catalog.PUBLIC_CACHE_ONLY_VALIDATION_ERRORS == ()
     expected = {
+        "/api/argus/sector-heatmap",
         "/api/argus/action-labels",
         "/api/argus/ai-judgment",
         "/api/argus/data-quality/status",

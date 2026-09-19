@@ -68,6 +68,11 @@ PUBLIC_CACHE_ONLY_CONSUMERS = (
         "owner-synced Layer-2B membership and background market acquisition",
     ),
     CacheOnlyConsumerContract(
+        "/api/argus/sector-heatmap",
+        ("web/src/components/today/SectorHeatmap.tsx",),
+        "scheduled bounded sector acquisition; browser reads never refresh providers",
+    ),
+    CacheOnlyConsumerContract(
         "/api/argus/us-watchlist",
         ("web/src/hooks/useUSWatchlist.ts",),
         "background judgment, prediction-ledger, or the authenticated provider path",
@@ -81,6 +86,7 @@ PUBLIC_CACHE_ONLY_CONSUMERS = (
 
 
 ROUTE_CATALOG = (
+    RouteCatalogEntry("/api/argus/sector-heatmap", ("GET",), "api_argus_sector_heatmap", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/", ("GET",), "index", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/action-labels", ("GET",), "api_argus_action_labels", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/admin/ai/capability-probe", ("POST",), "api_argus_admin_ai_capability_probe", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
