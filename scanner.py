@@ -8037,25 +8037,20 @@ _INTEL_STORE_FILE = "/tmp/argus_intel_store.json"   # §27 persistence (survives
 
 
 def _intel_translate_titles(cap=40):
-    """Attach a Japanese title (titleJa) to institutional items so the C.A.O.S. UI
-    shows translated headlines. Runs ONLY at collection time (admin/cron) so the
-    public GET never triggers a model call. JP-language items keep their own title;
-    English ones are translated once (cheap Gemini flash) and never re-translated.
-    Bounded per run; best-effort (falls back to the English title)."""
-    pending_items, pending_titles = [], []
+    """Reuse translations during collection; this lane never buys translations.
+
+    Important headlines are selected on the scheduled translation lane. Original
+    metadata remains intact, including items outside that selected set.
+    """
+    _news_ja_restore_once()
     for it in _INTEL_STORE:
         if not it.get("institutionId") or it.get("titleJa"):
             continue
-        if it.get("language") == "ja":
-            it["titleJa"] = it.get("title")
-            continue
-        if len(pending_titles) < cap:
-            pending_items.append(it)
-            pending_titles.append(it.get("title", ""))
-    if pending_titles:
-        tr = _translate_headlines_ja(pending_titles)
-        for i, it in enumerate(pending_items):
-            it["titleJa"] = tr.get(i) or it.get("title")
+        title = str(it.get("title") or "")
+        if it.get("language") == "ja" or not argus_news_i18n.looks_translatable(title):
+            it["titleJa"] = title
+        elif argus_news_i18n.is_translated(title, _NEWS_JA_CACHE):
+            it["titleJa"] = argus_news_i18n.pick_ja(title, _NEWS_JA_CACHE)
 
 
 def _intel_persist():
@@ -15710,9 +15705,9 @@ def api_argus_admin_macro_refresh_market_reaction():
 
 @app.route("/api/argus/admin/news/translate", methods=["POST"])
 def api_argus_admin_news_translate():
-    """Admin/cron: translate queued English news headlines to Japanese, VISIBLE-FIRST,
-    and cache them (the LLM call lives here, never on a public GET). Owner rule: news is
-    always shown translated. Never returns prompts or article bodies."""
+    """Admin/cron: translate selected important headlines and cache the result.
+    Unselected metadata remains available; never returns prompts/article bodies.
+    """
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
@@ -15732,9 +15727,9 @@ def api_argus_admin_news_translate():
 
 @app.route("/api/argus/news/translation-request", methods=["POST"])
 def api_argus_news_translation_request():
-    """PUBLIC, enqueue-only. The UI posts on-screen English news titles so they are
-    guaranteed to enter the visible-first translation queue. NEVER calls an LLM or a
-    provider. Ignores Japanese titles + already-translated titles; dedupes by title
+    """PUBLIC, enqueue-only. Visible titles are hints, not paid-work authorization.
+    The scheduled lane independently selects important server-observed headlines.
+    NEVER calls an LLM or a provider. Ignores Japanese titles + already-translated titles; dedupes by title
     hash; throttled per IP+context. Stores only titleOriginal/source/publishedAt."""
     _news_ja_restore_once()
     body = request.get_json(silent=True) or {}
@@ -15753,7 +15748,7 @@ def api_argus_news_translation_request():
         return jsonify({**base, "ok": True, "queued": 0, "alreadyTranslated": 0,
                         "alreadyQueued": 0, "rateLimited": True,
                         "queueRemaining": st["queuedCount"],
-                        "nextRunHintJa": "次回の翻訳処理で反映されます。"}), 200
+                        "nextRunHintJa": "重要ニュースを優先して定期翻訳します。表示しただけでは翻訳対象は増えません。"}), 200
     _NEWS_JA_VQUEUE_RL[rlk] = nowt
     if len(_NEWS_JA_VQUEUE_RL) > 2000:
         _NEWS_JA_VQUEUE_RL.clear()
@@ -15767,12 +15762,12 @@ def api_argus_news_translation_request():
                     "alreadyTranslated": stats["alreadyTranslated"],
                     "alreadyQueued": stats["alreadyQueued"], "ignored": stats["ignored"],
                     "rateLimited": False, "queueRemaining": st["queuedCount"],
-                    "nextRunHintJa": "次回の翻訳処理で反映されます。"}), 200
+                    "nextRunHintJa": "重要ニュースを優先して定期翻訳します。表示しただけでは翻訳対象は増えません。"}), 200
 
 
 @app.route("/api/argus/admin/news/translate-visible", methods=["POST"])
 def api_argus_admin_news_translate_visible():
-    """Admin/cron: translate the VISIBLE queue first, then the inferred visible pool.
+    """Admin/cron: prioritize queued titles within the server-selected important set.
     The LLM call lives here — never on a public GET/POST. No prompts/bodies stored."""
     ok, err, code = _require_admin()
     if not ok:
@@ -17130,59 +17125,42 @@ def _news_decorate(text, source=""):
 
 
 def _news_visible_pool():
-    """Ordered (priority-first) English titles currently visible in the UI, so the
-    admin translate run drains what the owner actually sees first. Cached-only."""
-    pool = []
-    # Mail-intelligence headlines are part of Today/Alerts too.  Queue their
-    # authenticated originals even before a browser opens the page.
-    try:
-        for event in list(_NEWS_INTEL.get("events", {}).values()):
-            original = event.get("titleOriginal") or event.get("headlineJa")
-            if original:
-                pool.append(str(original))
-    except Exception:
-        pass
-    # 1) mover-cause bestLead / top candidates (top card + downside/mover cards)
-    try:
-        for r in list(_MOVER_CAUSES.values()):
-            for cnd in (r.get("causeCandidates") or [])[:3]:
-                if cnd.get("titleJa"):
-                    pool.append(str(cnd["titleJa"]))
-    except Exception:
-        pass
-    # 2) the recently-queued headlines seen by _news_decorate on public reads
-    pool += list(_NEWS_JA_SEEN)
-    # 3) market news + Finnhub company news caches
-    try:
-        for it in ((_MARKET_NEWS_CACHE.get("data") or {}).get("items") or []):
-            if it.get("headline"):
-                pool.append(it["headline"])
-    except Exception:
-        pass
-    try:
-        for ent in list(_FINN_CACHE.values()):
-            for n in ((ent.get("data") or {}).get("news") or []):
-                if n.get("headline"):
-                    pool.append(n["headline"])
-    except Exception:
-        pass
-    return pool
+    """Select important server-observed headlines; viewing alone adds no work.
+
+    Reuse the existing severity and market-relevance policies. Client-supplied
+    priority, previously viewed titles and all-company caches cannot authorize
+    a paid translation. This selection does not change news severity or history.
+    """
+    now = time.time()
+    events = list(_NEWS_INTEL.get("events", {}).values())
+    events.sort(key=lambda row: argus_news_intelligence.material_news_priority(row, now), reverse=True)
+    pool = [str(event.get("titleOriginal") or event.get("headlineJa") or "")
+            for event in events
+            if argus_news_intelligence.material_news_priority(event, now)[0]]
+    for item in ((_MARKET_NEWS_CACHE.get("data") or {}).get("items") or []):
+        row = _decision_news_row(item, now_epoch=now)
+        if row and row.get("major") is True and row.get("relevant") is True:
+            pool.append(str(row.get("headline") or ""))
+    return list(dict.fromkeys(title for title in pool if title))
 
 
 def _translate_pending_headlines(cap=60, queue_first=False):
-    """Admin/cron: translate queued/visible English headlines to JP, VISIBLE-FIRST.
-    Uses the existing Gemini helper (LLM allowed on admin path). No article bodies.
-    queue_first=True drains the explicit visible-translation request queue before the
-    inferred visible pool, then prunes any queue entries that got translated."""
+    """Translate only important server-observed titles using the existing cache.
+    queue_first prioritizes eligible viewed titles; it cannot expand paid scope.
+    Existing failed-attempt bounds and provider cost records remain in force.
+    """
     _news_ja_restore_once()
     now_iso = _ai_now_iso()
+    eligible = _news_visible_pool()
+    allowed = set(eligible)
     ordered = []
     queued_n = 0
     if queue_first:
         q_titles = argus_news_i18n.visible_queue_drain(_NEWS_JA_VQUEUE, _NEWS_JA_CACHE, max_items=cap)
-        ordered.extend(q_titles)
-        queued_n = len(q_titles)
-    ordered.extend(_news_visible_pool())          # inferred on-screen titles (priority-first)
+        selected = [title for title in q_titles if title in allowed]
+        ordered.extend(selected)
+        queued_n = len(selected)
+    ordered.extend(eligible)
     pending = argus_news_i18n.collect_visible_pending(
         ordered, _NEWS_JA_CACHE, cap=cap, failed=_NEWS_JA_FAILED)
     if not pending:
@@ -17274,11 +17252,11 @@ def get_market_news():
             items.append(projected)
             if len(items) >= 14:
                 break
-        # Japanese headlines (news-v2.1): one flash call per 10-min refill.
-        tr = _translate_headlines_ja([i["headline"] for i in items])
-        for idx, item in enumerate(items):
-            if idx in tr:
-                item["headlineJa"] = tr[idx]
+        # Collection and public reads reuse saved translations, never call an LLM.
+        _news_ja_restore_once()
+        for item in items:
+            if argus_news_i18n.is_translated(item["headline"], _NEWS_JA_CACHE):
+                item["headlineJa"] = argus_news_i18n.pick_ja(item["headline"], _NEWS_JA_CACHE)
             else:
                 summary_ja = argus_news_i18n.deterministic_market_summary_ja(
                     item["headline"])
@@ -17349,7 +17327,7 @@ def get_market_news():
                "asOf": _ai_now_iso(), "items": items,
                "fetchedCount": len(items), "stale": False, "failureClass": None,
                "lastSuccessfulPollAt": _MARKET_NEWS_CACHE["lastSuccessfulPollAt"],
-               "noteJa": "Finnhub市場ニュース(見出しは自動翻訳・参考情報)。⚡=重要キーワード。AIには「未検証の見出し(本文と異なりうる)」として、相場関連のみ・裏取り(公式>複数系統>単一)で重み付けして参考投入。単一ソースは判断を動かさない。"}
+               "noteJa": "Finnhub市場ニュース(保存済み翻訳・定型要約を利用。重要見出しは定期翻訳・参考情報)。⚡=重要キーワード。AIには「未検証の見出し(本文と異なりうる)」として、相場関連のみ・裏取り(公式>複数系統>単一)で重み付けして参考投入。単一ソースは判断を動かさない。"}
         out = _market_news_snapshot_reaged(out, now_epoch=now) or out
         _MARKET_NEWS_CACHE["data"] = out
         _MARKET_NEWS_CACHE["expires"] = now + _MARKET_NEWS_TTL
