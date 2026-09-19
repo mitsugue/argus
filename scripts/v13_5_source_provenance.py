@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.30"
+PRODUCT_VERSION = "v13.7.31"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_material_translation.py': '80f68a5abad282c920926dbb8b9541d97da016ae',
     'test_argus_queue_v1152_backend.py': 'ec3d8c65c5b48755539e0dfdc0f93ccf6362cfb1',
     'test_argus_shared_bridge.py': 'f3c7e5d24806d9263a72795ba715c08b103bd10b',
     'bridge/README.md': '9bcd2afec193b966d963ad7382c43136ed283e7c',
@@ -52,7 +53,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/polling-singleton.test.mjs': 'de34e0e33bc46871c009f4264d85881a7d2e74ca',
     'test_argus_institutional_backend_v1160.py': 'd8065d151883cdf13ff7ebfa79358482d40cc8fc',
     'docs/V13_7_SHAPEUP_REQUIREMENTS.md': '9756717ff26e5cf159dcf5d20cb578d99ab225ed',
-    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': '82b58f846345531ee7a7ab00191b8c2947b4856f',
+    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': '97290770236f836d6fd2f650a6513a5f8e1b2fbe',
     'test_rules.py': '99fad6a22f968ddc518a8b7b359d4adfdf8fd9e0',
     'bridge/trigger_closepin.sh': '83ee01384660bb8799a863e080021a7fa35c1e3d',
     '.github/workflows/closepin-pin.yml': 'ea693b3ca6140d4cf6fa66c48d91c6a03f603baa',

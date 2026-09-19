@@ -221,3 +221,11 @@ These are implementation checks, not EC2 deployment or actual invoice savings.
 The documented existing EC2 host rejected this Mac's existing public-key auth.
 No credentials, accounts, firewall rules, service state or contracts were changed.
 Deployment and runtime proof require the existing owner's EC2 access path.
+
+## 13.7.31 candidate — selected news translation
+
+- Market-news cache refill and institutional collection reuse saved translations and do not call an LLM. Existing original metadata, provenance, severity, and histories remain intact.
+- Scheduled translation selects server-observed fresh HIGH/CRITICAL intake headlines and fresh market headlines meeting the existing major/relevance rules. Browser visibility, arbitrary public queue entries, and all-company caches do not expand paid work.
+- Existing content-hash reuse, failed-attempt bounds, provider accounting and important-headline fallback remain in force. This change does not claim that all news analysis or Deep Dive costs are resolved.
+- 60 related checks PASS using mocked providers: repeated cache refills make no translation call; a browser-only priority claim cannot purchase translation; an important headline is translated once; unrelated/old items remain metadata without translation.
+- Not deployed. Exact source registration and admission proofs must complete before release; actual billing reduction remains unmeasured.
