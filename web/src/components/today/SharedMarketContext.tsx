@@ -4,6 +4,7 @@ import { useMarketBrief } from '../../hooks/useMarketBrief';
 import { selectMarketInternals } from '../../lib/marketInternals';
 import { MarketInternalsCard } from './MarketInternalsCard';
 import './ArgusToday.css';
+import { SectorHeatmap } from './SectorHeatmap';
 
 /** Display only. Both pages share the existing pollers and exact frozen inputs. */
 export function SharedMarketContext({horizon,focusSymbol}:{horizon:number;focusSymbol?:string}) {
@@ -11,6 +12,7 @@ export function SharedMarketContext({horizon,focusSymbol}:{horizon:number;focusS
   const {brief}=useMarketBrief();
   const frame=selectMarketInternals(brief,evidence.marketView?.internals,horizon);
   return <div className="at-shared-context" data-analysis-binding={frame.binding}>
+    {!focusSymbol&&<SectorHeatmap internals={evidence.marketView?.internals}/>}
     <p className="at-shared-context__status">{frame.binding==='AI_SNAPSHOT'
       ? 'この比較は、表示中の統合AIが説明に使った時点の根拠です。'
       : frame.binding==='LATEST_SEPARATE'

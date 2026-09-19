@@ -38594,6 +38594,60 @@ _JP_INTERNALS_ACQUISITION = {"status": "NOT_RUN", "lastAttemptAt": None, "lastSu
 _JP_INTERNALS_REFRESH_LOCK = threading.Lock()
 
 
+_JP_SECTOR_HEATMAP = None
+_JP_SECTOR_HEATMAP_INIT_LOCK = threading.Lock()
+
+
+def _jp_sector_heatmap_runtime():
+    global _JP_SECTOR_HEATMAP
+    with _JP_SECTOR_HEATMAP_INIT_LOCK:
+        if _JP_SECTOR_HEATMAP is not None:
+            return _JP_SECTOR_HEATMAP
+        import jp_sector_heatmap_runtime
+        path = (os.path.join(_DURABILITY_PATHS["root"], "jp_sector_heatmap_cache.json")
+                if _cost_policy_durable_enabled() else None)
+        def load():
+            if not path: return {}
+            try:
+                if os.path.islink(path): raise ValueError("heatmap_cache_symlink")
+                with open(path, "rb") as handle: raw = handle.read(512 * 1024 + 1)
+                if len(raw) > 512 * 1024: raise ValueError("heatmap_cache_size")
+                document = json.loads(raw)
+                body = document["body"]
+                if document.get("schemaVersion") != "jp-sector-cache-v1" or document.get("sha256") != jp_market_internals._hash(body):
+                    raise ValueError("heatmap_cache_integrity")
+                argus_product_naming.require_allowed(body)
+                return body
+            except FileNotFoundError: return {}
+            except Exception as exc:
+                add_log(f"sector heatmap restore: {type(exc).__name__}")
+                return {}
+        def save(body):
+            if not path: return
+            argus_product_naming.require_allowed(body)
+            document = {"schemaVersion": "jp-sector-cache-v1", "body": body,
+                        "sha256": jp_market_internals._hash(body)}
+            argus_persistent_storage.atomic_write_json(path, document,
+                maximum_bytes=512 * 1024, file_mode=0o600)
+            with open(path, "rb") as handle: stored = json.load(handle)
+            if stored != document: raise ValueError("heatmap_cache_readback")
+        _JP_SECTOR_HEATMAP = jp_sector_heatmap_runtime.Runtime(requests.get, load=load, save=save)
+        return _JP_SECTOR_HEATMAP
+
+
+@app.route("/api/argus/sector-heatmap", methods=["GET"])
+def api_argus_sector_heatmap():
+    # Cached display data only. No acquisition or AI on the public route.
+    return jsonify(_jp_sector_heatmap_runtime().read())
+
+
+def _jp_sector_heatmap_tick():
+    try:
+        _jp_sector_heatmap_runtime().tick()
+    except Exception as exc:
+        add_log(f"sector heatmap collection: {type(exc).__name__}")
+
+
 def _jp_internals_path():
     return (os.path.join(_DURABILITY_PATHS["root"], "jp_market_internals_cache.json")
             if _cost_policy_durable_enabled() else None)
@@ -47561,6 +47615,8 @@ def run_scheduler():
         threading.Thread(target=_owner_overview_tick, daemon=True,
                          name="owner-overview-refresh").start()
         threading.Thread(target=_web_push_tick, daemon=True, name="web-push").start()
+        threading.Thread(target=_jp_sector_heatmap_tick, daemon=True,
+                         name="sector-heatmap").start()
         # v13.5.54: Twelve Data Basic-plan warm tick — bounded by the policy core
         # (8-credit batch per eligible minute, daily cap, market-aware cadence).
         try:

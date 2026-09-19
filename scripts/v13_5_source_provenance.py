@@ -35,6 +35,13 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'web/src/components/today/SectorHeatmap.css': '0bdc3b1e84dcbc03f447ac34fa1754b4d8941f8b',
+    'web/src/components/today/SectorHeatmap.tsx': 'b621436144d448055255243e2304c1287fced869',
+    'test_jp_sector_heatmap_api.py': '4b93b1bd5fa1eed37baff43912b3a86cbd9f00e9',
+    'test_jp_sector_heatmap_runtime.py': '3bb33a56d1305e1f5daac3e804f62ddb93099de7',
+    'test_jp_sector_heatmap.py': '1f6abcd332dba7406db0d1d998437d647b76967e',
+    'jp_sector_heatmap_runtime.py': 'f31cb749d4bc365db5b235fdb3bf8350b9e37686',
+    'jp_sector_heatmap.py': 'e7f762925f14e36463419f38ef68d3c3b44c8700',
     'test_argus_material_translation.py': '80f68a5abad282c920926dbb8b9541d97da016ae',
     'test_argus_queue_v1152_backend.py': 'ec3d8c65c5b48755539e0dfdc0f93ccf6362cfb1',
     'test_argus_shared_bridge.py': 'f3c7e5d24806d9263a72795ba715c08b103bd10b',
@@ -53,7 +60,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/polling-singleton.test.mjs': 'de34e0e33bc46871c009f4264d85881a7d2e74ca',
     'test_argus_institutional_backend_v1160.py': 'd8065d151883cdf13ff7ebfa79358482d40cc8fc',
     'docs/V13_7_SHAPEUP_REQUIREMENTS.md': '9756717ff26e5cf159dcf5d20cb578d99ab225ed',
-    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': '97290770236f836d6fd2f650a6513a5f8e1b2fbe',
+    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': 'c86aa8bb3da05f49b0a14b848439cb5ea2a26b94',
     'test_rules.py': '99fad6a22f968ddc518a8b7b359d4adfdf8fd9e0',
     'bridge/trigger_closepin.sh': '83ee01384660bb8799a863e080021a7fa35c1e3d',
     '.github/workflows/closepin-pin.yml': 'ea693b3ca6140d4cf6fa66c48d91c6a03f603baa',
@@ -193,7 +200,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dialogue/OwnerDialogue.tsx': '5e8f6f1e4f9ae850f804d55069dcdd3b412199e6',
     'web/src/components/today/MarketBriefCard.tsx': '7b8f0305a0346a43cea572f8954bae9f87cc8359',
     'web/src/components/today/MarketInternalsCard.tsx': '0ff16f3dca77ff41bbab3d4101dc8a5e594bd23f',
-    'web/src/components/today/SharedMarketContext.tsx': '0d126ec6d92e76957a4b58ef532e9b99b85b6f13',
+    'web/src/components/today/SharedMarketContext.tsx': 'dde94d5b6d12989bd4ea8a3c0dded9c9462892f5',
     'web/src/lib/marketInternals.ts': 'cf96a5b15512e7f20ef9bcf211d6295307ccec9a',
     'web/src/lib/pwaRecovery.ts': '038fe1dc3e55433a0f72e8a06ca1701176155438',
     'web/src/components/today/MarketAnalysisHistory.tsx': '7a986421fdd00c28c53e563a09287dbbc314694e',
