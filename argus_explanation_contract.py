@@ -82,7 +82,7 @@ def validate_unified_ai(value: Any, context: Mapping[str, Any], *, diagnostic=No
                 diagnostic["unsupportedNumericTokens"] = sorted(unsupported)[:20]
             return result
         if key == "impact" and not context.get("ownerContextAvailable"):
-            text = "この市場全体の説明には保有情報を含めていません。銘柄ごとの保有状況と合わせた影響は未確認です。"
+            text = "市場全体の見通しです。登録銘柄ごとの影響は、銘柄別の根拠を確認する必要があります。"
         if key == "changes" and not context.get("changes", {}).get("comparisonAvailable"):
             text = "比較できる前回の見立てをまだ取得していません。"
         sections[key] = {"textJa": text.strip(), "evidenceIds": list(refs), "kind": kind}

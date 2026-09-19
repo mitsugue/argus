@@ -1,3 +1,25 @@
+# Current bridge scope (v13.7.30 candidate)
+
+The production entry point collects only SPY, QQQ, IWM, XLK, XLU, GLD, TLT and
+HYG for shared market analysis. Individual watchlist quotes, capital-distribution
+calls, dynamic watchlist expansion, capability sweeps and movers sweeps are no
+longer executed, even when legacy environment flags remain enabled.
+
+Shared quotes are collected no faster than every five minutes during the US
+regular session, using the repository calendar (including early closes). Original
+provider timestamps and HMAC authentication remain. The health heartbeat continues
+outside trading hours without fetching prices. This is separate from the existing
+Japan/US sector heatmap acquisition; no sector source is disabled here.
+
+Deploy the reviewed repository revision, including `argus_market_clock.py`, to the
+existing bridge installation before restarting that service. Do not delete its
+credentials or OpenD configuration. Verify the heartbeat version and accepted ETF
+set after deployment; a merged code change alone does not prove the EC2 process
+has changed. Existing samples below describe archived versions and must not be
+used to reenable individual or closing-window feeds.
+
+---
+
 # ARGUS moomoo ブリッジ (v9.11)
 
 OpenD が動いているマシン(AWS)の**中**で動かす小さな常駐スクリプト。

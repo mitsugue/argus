@@ -167,7 +167,8 @@ def test_missing_owner_and_wrong_period_history_are_explicit():
     current=context(previous=prior)
     assert current['previousFacts']==[] and not current['changes']['comparisonAvailable']
     valid=dialogue.validate_answer(answer(),current)
-    assert '保有情報を含めていません' in valid['sections']['impact']['textJa']
+    assert '登録銘柄ごとの影響' in valid['sections']['impact']['textJa']
+    assert valid['sections']['impact']['kind']=='UNKNOWN'
 
 
 def test_prior_same_scope_requires_integrity_and_preserves_changes():
