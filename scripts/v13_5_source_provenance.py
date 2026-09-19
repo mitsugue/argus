@@ -35,6 +35,8 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_overview_policy.py': '3051e457321f71c6e7a4ba1e9ce34179e42a0877',
+    'argus_overview_policy.py': '15a4a5cea4eb079ca2589484bd94c4cf54c102ca',
     'test_jp_market_feature_delta.py': '371a5637d610df883cfb50efe59db031530b4863',
     'web/src/domain/watchlistProjection.ts': '36b5e0c3eba3a67ce9fec128f422ce3af89498cc',
     'web/scripts/watchlist-retirement.test.cjs': '55e0d87e492fba0322787e821c1b5e0f21c36d88',
@@ -44,7 +46,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/polling-singleton.test.mjs': 'de34e0e33bc46871c009f4264d85881a7d2e74ca',
     'test_argus_institutional_backend_v1160.py': 'd8065d151883cdf13ff7ebfa79358482d40cc8fc',
     'docs/V13_7_SHAPEUP_REQUIREMENTS.md': '9756717ff26e5cf159dcf5d20cb578d99ab225ed',
-    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': 'bbf02c8e4c36fe15bda58a377fc23c041616a6e8',
+    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': 'f56a80734fb284892fce065403bfe4f83ed7f4ea',
     'test_rules.py': '99fad6a22f968ddc518a8b7b359d4adfdf8fd9e0',
     'bridge/trigger_closepin.sh': '83ee01384660bb8799a863e080021a7fa35c1e3d',
     '.github/workflows/closepin-pin.yml': 'ea693b3ca6140d4cf6fa66c48d91c6a03f603baa',
