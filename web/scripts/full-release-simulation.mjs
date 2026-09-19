@@ -148,7 +148,7 @@ try {
 
   const brand = await page.locator('.shell__brand').innerText();
   assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro/);
-  assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro\s+v13\.7\.31/);
+  assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro\s+v13\.7\.32/);
   for (const label of ['Today', 'Watchlist', 'Notifications', 'Settings']) {
     assert.ok(await page.getByText(label, { exact: true }).count() > 0, label);
   }
