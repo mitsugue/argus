@@ -28,7 +28,7 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
   async function restoreFromLayer2B() {
     if (busy) return;
     if (!backend || !token.trim()) { setResult('復元には合言葉を入力してください'); return; }
-    if (!confirm('Layer 2Bに同期済みの銘柄でこの端末のウォッチリストを置き換えます(保有数量・取得単価は対象外)。よろしいですか?')) return;
+    if (!confirm('Layer 2Bに同期済みの銘柄でこの端末のウォッチリストを置き換えます(過去の資産記録はこの操作の対象外)。よろしいですか?')) return;
     setBusy(true); setBusyLabel('保存済みの銘柄情報を確認しています');
     try {
       const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/calibration/watchlist-membership', {
@@ -53,7 +53,7 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
       });
       localStorage.setItem('argus.assets.v1', JSON.stringify(restored));
       window.dispatchEvent(new Event('argus:data-synced'));
-      setResult(`✅ ${restored.length}銘柄を復元しました(JP/US/暗号資産)。投信(CORE)と保有数量はバックアップから復元してください。`);
+      setResult(`✅ ${restored.length}銘柄を復元しました(JP/US/暗号資産)。投信と過去の資産記録には通常のバックアップを使用してください。`);
     } catch (e) {
       setResult('復元エラー: ' + String(e).slice(0, 80));
     } finally { setBusy(false); }
@@ -74,22 +74,13 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
     } catch { setResult('成績の取得に失敗'); } finally { setBusy(false); }
   }
 
-  // Send ONLY non-monetary flags. `held` is derived from local holdings but the
-  // quantity/cost are NEVER included — just the boolean state (v10.100).
-  const items = assets
-    .filter((a) => SYNC_MARKETS.has(a.market))
-    .map((a) => {
-      const held = (a.quantity ?? 0) > 0;
-      return {
-        symbol: a.symbol, market: a.market, enabled: a.enabled,
-        ownerState: held ? 'held' : 'watch',
-        downsideStrictness: held ? 'strict' : 'normal',
-      };
-    });
-  const heldLocal = items.filter((i) => i.ownerState === 'held').map((i) => i.symbol);
+  // Registration metadata only; archived position fields never affect sync.
+  const items = assets.filter(a => SYNC_MARKETS.has(a.market)).map(a => ({
+    symbol:a.symbol, market:a.market, enabled:a.enabled,
+    ownerState:'watch', downsideStrictness:'normal',
+  }));
+  const registeredLocal = items.filter(i => i.enabled).map(i => `${i.market}:${i.symbol}`);
 
-  // #7 — confirm the server (private store) actually treats this device's held /
-  // priority names as held/active. If a held name is missing, warn explicitly.
   async function checkSyncStatus() {
     if (busy) return;
     if (!backend || !token.trim()) { setResult('同期状態の確認には合言葉を入力してください'); return; }
@@ -101,12 +92,10 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
       });
       const d = await r.json().catch(() => null);
       const members: any[] = d?.membership?.members || [];
-      const serverHeld = new Set(
-        members.filter((m) => ['held', 'active', 'protected'].includes(m.ownerState))
-          .map((m) => String(m.symbol)),
-      );
-      const synced = heldLocal.filter((s) => serverHeld.has(s));
-      const missing = heldLocal.filter((s) => !serverHeld.has(s));
+      const registeredServer = new Set(members.filter(m => m.enabled !== false)
+        .map(m => `${m.market}:${m.symbol}`));
+      const synced = registeredLocal.filter(s => registeredServer.has(s));
+      const missing = registeredLocal.filter(s => !registeredServer.has(s));
       setSyncStatus({ synced, missing });
     } catch { setResult('同期状態の確認に失敗(合言葉/通信を確認)'); } finally { setBusy(false); }
   }
@@ -166,7 +155,7 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
           <span className="guide-term__ja">
             あなたのウォッチリストの<b>銘柄と「保有/監視」フラグだけ</b>(保有数量・取得単価・損益は一切送りません)を
             private ストアへ同期し、ARGUS があなたの銘柄を採点・急落時に一段厳しく扱えるようにします。
-            対象 {items.length} 銘柄(うち保有 {heldLocal.length})。
+            対象 {items.length} 銘柄(うち保有 {registeredLocal.length})。
           </span>
         </div>
         <div className="guide-term">
@@ -214,15 +203,15 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
           {busy && <p><TriangleStepLoader label={busyLabel} /></p>}
           {syncStatus && (
             <div style={{ fontSize: '0.85em', marginTop: 10, lineHeight: 1.6 }}>
-              {heldLocal.length === 0 ? (
-                <div style={{ opacity: 0.7 }}>この端末に「保有(数量&gt;0)」の銘柄はありません(監視のみ)。</div>
+              {registeredLocal.length === 0 ? (
+                <div style={{ opacity: 0.7 }}>この端末に有効な登録銘柄はありません。</div>
               ) : syncStatus.missing.length === 0 ? (
                 <div style={{ color: 'var(--green, #34D399)' }}>
-                  ✅ 保有{heldLocal.length}銘柄すべてサーバー側で「保有/重点監視」として同期済み。
+                  ✅ 登録した{registeredLocal.length}銘柄をサーバーと同期済み。
                 </div>
               ) : (
                 <div style={{ color: 'var(--amber, #FBBF24)' }}>
-                  ⚠️ 未同期: {syncStatus.missing.join(', ')} — これらは<b>サーバー側では保有/重点監視として扱われていません</b>。
+                  ⚠️ 未同期: {syncStatus.missing.join(', ')} — これらは<b>サーバー側の定期分析へ未登録です</b>。
                   「今すぐ同期」を押すと反映されます(同期後はダウンサイド判定が一段厳しくなります)。
                 </div>
               )}

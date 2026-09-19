@@ -1,6 +1,7 @@
 """Integrated subject explanations and protected saved records; conversation retired."""
 from copy import deepcopy
 import json
+import re
 import threading
 import uuid
 from flask import jsonify, request
@@ -45,10 +46,11 @@ def generate_answer(context, generate):
         'answer': answer, 'provider': provider, 'validation': validation}
 
 
-def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None, push_service=None, vault_service=None, event_snapshot=None, market_reference=None, generation_policy=None, event_history=None, prediction_result_source=None):
+def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None, push_service=None, vault_service=None, event_snapshot=None, market_reference=None, generation_policy=None, event_history=None, prediction_result_source=None, registered_subjects=None):
     boot_id = str(uuid.uuid4())
     lock = threading.Lock()
     save_failures = {}
+    registered_cursor = 0
 
     def remote_status():
         return recovery_status() if recovery_status else {'configured':False,'generationReady':True,'remoteRecoveryVerified':False}
@@ -164,6 +166,54 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                     'completedAt':now(),'errorClass':'WorkerStartFailed'})
         return decorate(store.read(path,identity,boot_id)), created
 
+    def refresh_registered_overviews(path, current, limit):
+        """Only durable registration, never viewing, admits new generation."""
+        nonlocal registered_cursor
+        members = registered_subjects()
+        if not isinstance(members, list):
+            return {'status':'WAITING','started':0,'reason':'membership_unavailable'}
+        subjects = {(m.get('market'), m.get('symbol')) for m in members
+            if isinstance(m, dict) and m.get('market') in ('JP','US')
+            and isinstance(m.get('symbol'), str)
+            and re.fullmatch(r'[A-Z0-9.^-]{1,16}', m['symbol'])
+            and m.get('enabled', True)}
+        # Market explanations with a saved period remain supported independently
+        # of company registration. No new four-period fan-out is introduced.
+        saved = store.latest_subject_overviews(path, boot_id, limit=50)
+        candidates = {}
+        for item in saved:
+            subject = item['context'].get('subject') or {}
+            key = (subject.get('market'), subject.get('symbol'))
+            if key in subjects or key == ('JP','N225'):
+                candidates[(*key, item['context']['horizonSessions'])] = item
+        for market, symbol in subjects:
+            candidates.setdefault((market, symbol, 5), None)
+        # Oldest successful editions and first registration progress fairly;
+        # a failed subject must not starve every later registered subject.
+        ordered = sorted(candidates.items(), key=lambda row:
+            ((row[1] or {}).get('result', {}).get('completedAt', ''), row[0]))
+        unavailable = 0
+        if ordered:
+            start = registered_cursor % len(ordered)
+            ordered = ordered[start:] + ordered[:start]
+            registered_cursor = (start + min(limit, len(ordered))) % len(ordered)
+        for (market, symbol, horizon), previous in ordered[:limit]:
+            try:
+                with lock:
+                    previous = store.latest_subject_overview(path, boot_id,
+                        symbol=symbol, market=market, horizon=horizon)
+                    owner = {'symbol':symbol,'market':market,'state':'WATCHING'} if (market,symbol) in subjects else None
+                    item, created = current_or_start_overview(path, current,
+                        {'symbol':symbol,'market':market}, horizon, owner, previous)
+                if created: return {'status':'STARTED','started':1}
+                if item['status']=='RUNNING': return {'status':'BUSY','started':0}
+                if item['status']!='SUCCEEDED': unavailable += 1
+            except ValueError as exc:
+                if str(exc)=='dialogue_busy': return {'status':'BUSY','started':0}
+                unavailable += 1
+        return {'status':'UNAVAILABLE' if unavailable else 'CURRENT','started':0,
+                'unavailableSubjects':unavailable}
+
     def refresh_subject_overviews(limit=20):
         """Advance one saved subject overview without requiring an open browser."""
         path=storage_path();state=remote_status()
@@ -181,6 +231,8 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
             current = deepcopy(retained)
         context_id=(current.get('unifiedContext') or {}).get('contextId')
         if not context_id:return {'status':'WAITING','started':0}
+        if registered_subjects is not None:
+            return refresh_registered_overviews(path, current, limit)
         for previous in store.latest_subject_overviews(path,boot_id,limit=limit):
             prior=previous['context']
             if generation_policy is None and prior.get('baseMarketContextId')==context_id:continue
@@ -295,6 +347,23 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                 if 'owner' in body:
                     body = {**body, 'owner':watchlist_owner(body['owner'],
                         symbol=body.get('symbol'), market=body.get('market'))}
+                if registered_subjects is not None:
+                    # Reading a saved explanation must neither acquire materials
+                    # nor submit AI work, even with new market inputs or a restart.
+                    symbol=body.get('symbol'); market=body.get('market'); horizon=body.get('horizon')
+                    if (market not in ('JP','US') or not isinstance(symbol,str)
+                            or not re.fullmatch(r'[A-Z0-9.^-]{1,16}',symbol)):
+                        raise ValueError('subject_invalid')
+                    if type(horizon) is not int or horizon not in dialogue.HORIZONS:
+                        raise ValueError('horizon_invalid')
+                    previous=store.latest_subject_overview(path,boot_id,
+                        symbol=symbol,market=market,horizon=horizon)
+                    if previous and previous['context'].get('ownerInputPolicy') == 'WATCHLIST_ONLY_V1':
+                        return response({**decorate(previous),'overviewRead':{
+                            'mode':'SAVED_ONLY','readAt':now()}})
+                    return response({'status':'WAITING','overviewRead':{
+                        'mode':'SAVED_ONLY','readAt':now()},'remoteBackup':remote_status(),
+                        'reason':'saved_overview_pending'})
                 if generation_policy is not None:
                     with lock:
                         previous = store.latest_subject_overview(path,boot_id,symbol=body.get('symbol'),
