@@ -89,7 +89,10 @@ def test_six_parts_are_linked_and_no_private_holdings_claim_is_generated():
     assert answer["actionAuthority"] is False
     assert answer["historyStatus"] == "PROCESS_MEMORY_ONLY"
     assert answer["sections"]["impact"]["kind"] == "UNKNOWN"
-    assert "未確認" in answer["sections"]["impact"]["textJa"]
+    impact = answer["sections"]["impact"]["textJa"]
+    assert "登録銘柄ごとの影響" in impact
+    assert "根拠を確認する必要" in impact
+    assert "保有" not in impact
 
 
 def test_existing_numeric_value_allows_grouping_but_not_changed_digits():

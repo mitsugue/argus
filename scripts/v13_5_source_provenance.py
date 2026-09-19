@@ -220,7 +220,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_ai_usage_store.py': '03dce630d6b901cc3e4277c78a7a241b2fac724a',
     'test_argus_macro_result_revisions.py': '0745614163ed8614560868201a64d117b0e77e22',
     'test_argus_macro_results.py': '647520e693f5f87f902033bb1e2a0c0762bfc407',
-    'test_argus_unified_brief.py': 'f0ebcf75d9ab36653c5b4346d0c6c7ecca1bb710',
+    'test_argus_unified_brief.py': 'e87b3a64a815188ff7388658fb89164159ae3a99',
     'test_jp_market_analogs.py': 'b9d34aea24c17ed03513620f33c607b2c5487854',
     'test_jp_market_comparison_runtime.py': '588b4441415d9e22856835f23bbcf2ad20dfebf3',
     'test_jp_market_dynamics.py': 'dab9901948bb7c6ab339ee5d4b7a8244eeb79cf6',
