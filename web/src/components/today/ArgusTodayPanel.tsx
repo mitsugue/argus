@@ -599,7 +599,9 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   const sqCalendar = useJapanSqCalendar();
   const sqCalendarCurrent = sqCalendarIsCurrent(sqCalendar.data, sqCalendar.checkedAt);
   const editorialScope = view.selectedMarket === 'JP' && selectedSymbol === '1321' && horizon === 5;
-  const editorialActive = editorialScope && !!editorialEdition(editorialBrief);
+  const savedEditorial = editorialScope ? editorialEdition(editorialBrief) : null;
+  const editorialChartAvailable = validJapanMarketComparison(
+    savedEditorial?.calculationSnapshots?.['5']?.comparison, 5);
   const [periodOverview,setPeriodOverview] = React.useState<Job|null>(null);
   const [otherMarketsOpen, setOtherMarketsOpen] = React.useState(false);
   const scopedSubject = view.selectedMarket === 'JP' && selectedSymbol === '1321' ? 'N225' : selectedSymbol;
@@ -752,6 +754,11 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         重大なニュース・市場変化 {criticalNewsCount}件を確認する ↓
       </button>}
     </section>
+    {view.selectedMarket === 'JP' && selectedSymbol === '1321' && !editorialChartAvailable && !hasSavedPeriodChart
+      && <section aria-label="日経平均の過去比較">
+        {savedEditorial && <p className="at-stored-note">この見立てには当時の比較チャートが保存されていません。以下は最新データによる比較で、上の説明と同じ時点の根拠とは限りません。</p>}
+        <JapanMarketComparisonPanel horizon={horizon} />
+      </section>}
     {!chartLoad.snapshotId && <div className="at-canonical-load-status" role="status">
       {chartLoad.loaderVisible && <TriangleStepLoader label={chartLoad.slowInitial
         ? '日経平均の根拠を確認しています。前回の説明は引き続き読めます'
@@ -899,8 +906,6 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       </details>
     </article>
 
-    {view.selectedMarket === 'JP' && selectedSymbol === '1321' && !editorialActive && !hasSavedPeriodChart
-      && <JapanMarketComparisonPanel horizon={horizon} />}
 
 
     {view.holdingsReview.length > 0 && <section className="at-priorities card" aria-label="OWNER PRIORITIES">
