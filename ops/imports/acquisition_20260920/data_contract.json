@@ -1,0 +1,40 @@
+{
+  "schema_version": "argus-market-observation-v1",
+  "notes": [
+    "long format; native observation frequency; revisions are append-only",
+    "This is a proposed contract. Bind to current repository conventions, do not create duplicate authority."
+  ],
+  "required_fields": {
+    "series_id": "canonical registry ID",
+    "entity_id": "e.g. NIKKEI225 or normalized security ID; never mix index/ETF",
+    "observation_date": "YYYY-MM-DD in the declared source calendar",
+    "period_start": "YYYY-MM-DD or null",
+    "period_end": "YYYY-MM-DD or null",
+    "observation_frequency": "DAILY|WEEKLY|EVENT",
+    "value": "finite number or null with status",
+    "unit": "JPY|shares|index_points|percent|multiple...",
+    "definition_id": "basis+population+method version",
+    "observation_status": "OBSERVED|DERIVED|MISSING|NOT_PUBLISHED|NOT_APPLICABLE|SOURCE_GAP|VINTAGE_GAP",
+    "is_imputed": "boolean; imputed rows cannot prove raw coverage",
+    "published_at": "ISO8601 offset datetime or null; proven release only",
+    "availability_basis": "ORIGINAL_RELEASE|PROVIDER_DATE_ONLY|CONSERVATIVE_LAG|UNKNOWN",
+    "available_at_estimate": "ISO8601 offset datetime or null; not claimed as observed release time",
+    "ingested_at": "ISO8601 UTC",
+    "revision_id": "source revision key",
+    "supersedes_revision_id": "old revision or null",
+    "source_url": "canonical publicly safe source/reference",
+    "raw_sha256": "64 lowercase hex digits",
+    "rights_reference": "existing entitlement reference, not credential",
+    "precision_note": "raw precision / rounded ratio / EPS derived estimate",
+    "source_record_id": "stable provider identity, if supplied",
+    "dependencies": "IDs+hashes of parents for derived data"
+  },
+  "feature_rules": {
+    "asof": "only available evidence <= explicit information_cutoff; unknown must not silently become known",
+    "weekly_to_daily": "as-of carry only after publication; retain original observation age",
+    "vintage": "select latest revision known as-of, not final revision known now",
+    "close_vs_ohlc": "close-only data does not satisfy OHLC features",
+    "future_outcomes": "labels kept separate; never part of search features",
+    "no_guarantees": "complete original PIT must be proved separately from current revised-history coverage"
+  }
+}

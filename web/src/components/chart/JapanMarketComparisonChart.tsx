@@ -138,6 +138,18 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
         公表EPSそのものではありません。取得：{new Date(document.valuationEvidence.knownAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST。
         公表時刻は未確認です。<a href={document.valuationEvidence.sourceRef} target="_blank" rel="noreferrer">日経公式の算出資料</a>
       </p>}
+      {document.sourceAcquisition && <section aria-label="公式データの収録範囲">
+        <h3>公式データの収録範囲</h3>
+        {Object.entries(document.sourceAcquisition.sources).map(([key, source]) => <p key={key}>
+          {key === 'jp_yield_curve' ? '日本国債金利（財務省）' : 'VIX（Cboe）'}：
+          {source.firstDate ?? '未取得'}{source.lastDate && `〜${source.lastDate}`}、
+          {source.observations.toLocaleString('ja-JP')}観測日。
+        </p>)}
+        {!Object.keys(document.sourceAcquisition.sources).length && <p>原データの取込確認待ちです。</p>}
+        <p>収録期間は予測力の検証結果ではありません。当時の公表時刻・訂正前の値と、全営業日の充足は未検証です。
+          新たに取得した履歴を、過去の判断時点で既知だったデータとして使いません。
+          VIXの新しい値は既存の価格取得経路から補います。</p>
+      </section>}
       <p>情報締切：{new Date(document.informationCutoff).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST</p>
       {candidates.map(candidate => <article key={candidate.snapshotId}>
         <h3>{candidate.anchorDate}を基準とする{candidate.comparisonKind === 'MARKET_ANALOG' ? '市場比較' : '部分比較'}</h3>

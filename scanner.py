@@ -142,6 +142,7 @@ import jp_market_valuation
 import jp_market_source_adapters
 import jp_market_dynamics
 import jp_market_features
+import jp_market_acquisition
 import jp_market_events
 import jp_market_engine                    # v13.5.13: JP_MARKET_ENGINE evidence engine (pure; evidence, never action)
 import argus_single_decision        # v13.5.13: canonical artifact references for device SDA
@@ -38437,6 +38438,13 @@ def _n225_analog_history_warm(current_rows):
 
 
 _JP_INDEX_VALUATION = jp_market_valuation.ValuationCache()
+_JP_OFFICIAL_SOURCE_CACHE = jp_market_acquisition.SourceCache()
+
+
+def _jp_official_sources_warm():
+    path = (os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3')
+            if _cost_policy_durable_enabled() else None)
+    _JP_OFFICIAL_SOURCE_CACHE.warm(path, get=requests.get)
 
 
 def _jp_index_valuation_warm():
@@ -38578,6 +38586,11 @@ def _jp_market_comparison_calculate(horizon):
         result["marketFeatureAcquisition"] = {k: _JP_MARKET_FEATURE_HISTORY.get(k)
             for k in ("status", "lastSuccessfulCalculationAt", "errorClass", "firstCutoff", "lastCutoff")}
         result["marketFeatureAcquisition"]["derivedCache"] = dict(_JP_MARKET_FEATURE_CACHE_STATUS)
+        result["marketFeatureAcquisition"]["officialSources"] = _JP_OFFICIAL_SOURCE_CACHE.snapshot()
+        if result.get('comparison'):
+            result['comparison']['sourceAcquisition'] = {
+                'sources': _JP_OFFICIAL_SOURCE_CACHE.snapshot().get('sources', {}),
+                'historicalVintageVerified': False, 'full10yAllIndicatorsComplete': False}
         if horizon == 5:
             result["marketFeatureSnapshot"] = _JP_MARKET_FEATURE_HISTORY.get("latest")
         result["valuationAcquisition"] = dict(_JP_INDEX_VALUATION.status)
@@ -39332,6 +39345,11 @@ def _jp_market_feature_history_warm():
                 for symbol in symbols if (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get(symbol) or {}).get("data")), [])
         if _N225_ANALOG_HISTORY.get("data"):
             price_series["nikkei"] = list(_N225_ANALOG_HISTORY["data"])
+        price_series['vix'] = jp_market_acquisition.merge_feature_sources(
+            price_series.get('vix', []), _JP_OFFICIAL_SOURCE_CACHE.rows.get('vix_ohlc', []),
+            path=(os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3')
+                  if _cost_policy_durable_enabled() else None), received_at=now)
+        price_series['jp10y'] = list(_JP_OFFICIAL_SOURCE_CACHE.rows.get('jp_yield_curve', []))
         bars = price_series["nikkei"]
         if not bars:
             _JP_MARKET_FEATURE_HISTORY = {**_JP_MARKET_FEATURE_HISTORY, "status": "INDEX_CACHE_COLD"}
@@ -39416,6 +39434,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     if warm:
         _fred_vix_history_dated()
         _n225_analog_history_warm(nikkei_rows)
+        _jp_official_sources_warm()
         _jp_market_feature_history_warm()
     data = {
         "creditRows": credit_rows, "margin1570Rows": margin_rows,

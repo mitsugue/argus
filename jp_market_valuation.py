@@ -6,8 +6,10 @@ derived from the same-session close/PER, never a separately published EPS.
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+import csv
 from html.parser import HTMLParser
 import hashlib
+import io
 import json
 import math
 import os
@@ -96,6 +98,49 @@ def _validate(row):
            for k in ('indexClose', 'per')):
         raise ValueError('valuation_stored_values')
     return row
+
+
+def parse_export(raw: bytes, *, received_at: str):
+    """Reviewable local export path into the SAME valuation vintage store.
+
+    The file hash proves what was imported, not the supplier's original page.
+    Claimed publication timestamps do not grant historical-vintage authority.
+    """
+    if not isinstance(raw, bytes) or not 0 < len(raw) <= 2 * 1024 * 1024:
+        raise ValueError('valuation_export_bound')
+    _instant(received_at)
+    reader = csv.DictReader(io.StringIO(raw.decode('utf-8-sig')))
+    required = {'date', 'nikkei_close', 'index_per', 'per_basis', 'source_url', 'source_sha256'}
+    if not required <= set(reader.fieldnames or ()):
+        raise ValueError('valuation_export_columns')
+    rows = []; dates = set(); digest = hashlib.sha256(raw).hexdigest()
+    for item in reader:
+        day = date.fromisoformat(item['date']).isoformat()
+        if day in dates or len(rows) >= 4000:
+            raise ValueError('valuation_export_duplicate_or_bound')
+        dates.add(day)
+        if item['per_basis'] != 'INDEX_WEIGHT_BASIS':
+            raise ValueError('valuation_export_wrong_per_basis')
+        url = item['source_url']
+        if url != SOURCE and not re.fullmatch(
+                r'https://indexes\.nikkei\.co\.jp/nkave/archives/summary/?\?dt=' + day.replace('-', ''), url):
+            raise ValueError('valuation_export_source_identity')
+        if not re.fullmatch('[a-f0-9]{64}', item['source_sha256']):
+            raise ValueError('valuation_export_claimed_hash')
+        row = {'instrumentId': 'NIKKEI_225_INDEX', 'basis': VALUATION_BASIS,
+               'currency': 'JPY', 'date': day, 'indexClose': float(item['nikkei_close']),
+               'per': float(item['index_per']), 'knownAt': received_at, 'availableFrom': received_at,
+               'publishedAt': None, 'publicationStatus': 'UNKNOWN', 'sourceRef': SOURCE,
+               'sourceResponseSha256': digest, 'sourceExportSha256': digest,
+               'claimedOriginalSha256': item['source_sha256'], 'originalHashVerified': False,
+               'inputKind': 'REVIEWED_LOCAL_EXPORT', 'originalSourceUrl': url,
+               'precisionNote': 'EPS_DERIVED_FROM_ROUNDED_INDEX_PER',
+               'epsKind': 'DERIVED_FROM_INDEX_CLOSE_AND_INDEX_BASED_PER',
+               'historicalVintageVerified': False}
+        rows.append(_validate(row))
+    if not rows:
+        raise ValueError('valuation_export_empty')
+    return sorted(rows, key=lambda r: r['date'])
 
 
 def _connect(path, *, readonly=False):
@@ -190,11 +235,11 @@ class ValuationCache:
             self.status = {**self.status, 'status': 'ACQUIRING', 'lastAttemptAt': now()}
             if path:
                 initialize(path)
-                if self.row is None:
-                    self.row = latest(path, now())
-                    if self.row:
-                        self.status = {**self.status, 'lastSuccessfulAcquisitionAt': self.row['knownAt'],
-                                       'persistenceStatus': 'LOCAL_DURABLE'}
+                restored = latest(path, now())
+                if restored:
+                    self.row = restored
+                    self.status = {**self.status, 'lastSuccessfulAcquisitionAt': self.row['knownAt'],
+                                   'persistenceStatus': 'LOCAL_DURABLE'}
             deadline = time.monotonic() + 25
             with get(SOURCE, headers={'User-Agent': 'Mozilla/5.0 (ARGUS index research)'},
                      timeout=(5, 15), stream=True, allow_redirects=False) as response:

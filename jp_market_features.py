@@ -242,7 +242,10 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
                                  "date": _day(row), "availableFrom": row.get("availableFrom"),
                                  "knownAt": row.get("knownAt"), "observedAt": row.get("observedAt"),
                                  "value": row.get("numericValue", row.get("value", row.get("close"))),
-                                 "sourceRef": row.get("sourceRef", row.get("source"))}
+                                 "sourceRef": row.get("sourceRef", row.get("source")),
+                                 "sourceResponseSha256": row.get("sourceResponseSha256"),
+                                 "rawId": row.get("rawId"),
+                                 "availabilityBasis": row.get("availabilityBasis")}
                                 for row in inputs],
             "historicalVintageVerified": False,
         })

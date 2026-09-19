@@ -11,6 +11,12 @@ export interface ComparisonBandPoint {
 export interface JapanMarketComparison {
   schemaVersion: 'jp-market-comparison-v1';
   informationCutoff: string;
+  sourceAcquisition?: {
+    sources: Record<string, { observations: number; firstDate: string | null; lastDate: string | null;
+      nativeFrequency: 'DAILY'; originalVintageVerified: false; latestRawId: string | null;
+      lastKnownAt: string | null; expectedCalendarCoverageVerified: false }>;
+    historicalVintageVerified: false; full10yAllIndicatorsComplete: false;
+  };
   historyCoverage?: {
     sourceBars: number; sourceStart: string | null; sourceEnd: string | null;
     candidateCount: number; candidateStart: string | null; candidateEnd: string | null;
