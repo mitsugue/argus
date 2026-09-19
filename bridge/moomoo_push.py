@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """ARGUS moomoo bridge — runs NEXT TO OpenD (same machine, e.g. your AWS box).
 
-Reads JP/US quote snapshots from the LOCAL OpenD gateway and pushes them to
-the ARGUS backend (/api/argus/quote-push, admin-token gated). While pushes are
-fresh (≤10 min) they override J-Quants(T-1)/Twelve Data in the app; when this
-bridge stops, ARGUS falls back automatically. Account credentials and OpenD
-never need to be reachable from the internet — keep port 11111 CLOSED in the
-AWS security group (this script talks to 127.0.0.1).
+Collects only the eight shared US market-regime ETFs during regular sessions.
+Individual watchlist quotes, money-flow calls and universe sweeps are retired.
+Existing tokens, HMAC signing and provider observation timestamps are retained.
+OpenD remains local; never expose port 11111 to the internet.
 
 Setup:
   pip3 install moomoo-api requests
@@ -36,7 +34,7 @@ except ImportError:
     OpenQuoteContext = None
     RET_OK = 0
 
-BRIDGE_VERSION = "11.5.8"
+BRIDGE_VERSION = "13.7.30"
 
 BACKEND  = os.environ.get("ARGUS_BACKEND", "https://argus-backend-3j2m.onrender.com").rstrip("/")
 TOKEN    = os.environ.get("ARGUS_ADMIN_TOKEN", "")
@@ -54,26 +52,12 @@ PORT     = int(os.environ.get("OPEND_PORT", "11111"))
 DISABLE_JP = os.environ.get("ARGUS_DISABLE_JP_QUOTES", "0") not in ("0", "false", "")
 JP_ENTITLEMENT_BACKOFF_SEC = max(3600, int(os.environ.get("JP_ENTITLEMENT_BACKOFF_SEC", "604800")))
 HEARTBEAT_INTERVAL = max(30, int(os.environ.get("BRIDGE_HEARTBEAT_SEC", "60")))
-# v10.10.1: 15s quote cadence (get_market_snapshot is 1 request per cycle —
-# 2/30s, far inside moomoo's ~10/30s quota). Big-money flow stays on its own
-# slower cadence below (up to 1 request per code per flow cycle).
-INTERVAL = max(10, int(os.environ.get("PUSH_INTERVAL_SEC", "15")))
-FLOW_INTERVAL = max(INTERVAL, int(os.environ.get("FLOW_INTERVAL_SEC", "60")))
-# moomoo codes: "<MARKET>.<SYMBOL>", e.g. JP.7203 / US.NVDA. Edit to match the
-# assets you watch in ARGUS (and your account's quote permissions).
-# v10.11: the JP Layer-1 sensors (1306/1321/8306/7203/9432) ride along so the
-# Close Pin ledger can pin them with realtime prices (16 codes, still 1
-# snapshot request per cycle).
-CODES = [c.strip() for c in os.environ.get(
-    "PUSH_SYMBOLS",
-    "JP.8058,JP.9984,JP.5801,JP.5803,JP.6584,JP.285A,JP.9501,"
-    "JP.1306,JP.1321,JP.8306,JP.7203,JP.9432,"
-    "US.NVDA,US.AAPL,US.TSLA,US.META").split(",") if c.strip()]
-# Always push the 8 regime ETFs realtime (v10.146) so the backend regime engine
-# reads moomoo prices instead of rate-limited Twelve Data — independent of the
-# user's PUSH_SYMBOLS. Deduped, order-preserving.
+# Shared regime inputs retain a five-minute cadence inside the backend's
+# ten-minute freshness window. Legacy fast/individual settings cannot reenable
+# retired execution paths. No flow or owner-watchlist acquisition is scheduled.
+INTERVAL = max(300, int(os.environ.get("PUSH_INTERVAL_SEC", "300")))
 _REGIME_ETF_CODES = ["US.SPY", "US.QQQ", "US.IWM", "US.XLK", "US.XLU", "US.GLD", "US.TLT", "US.HYG"]
-CODES = list(dict.fromkeys(CODES + _REGIME_ETF_CODES))
+CODES = list(_REGIME_ETF_CODES)
 
 
 # ── v11.5.7 market isolation + entitlement state (testable, no moomoo import) ──
@@ -251,12 +235,12 @@ def _post_signed(path, payload, timeout=20):
     return requests.post(f"{BACKEND}{path}", data=raw, headers=headers, timeout=timeout)
 
 
-def send_heartbeat(state=None):
+def send_heartbeat(state=None, disable_jp=None):
     """POST the heartbeat — runs even when every market is closed, so the backend
     can tell 'bridge alive, waiting' from 'bridge dead'. Never raises."""
     try:
         resp = _post_signed("/api/argus/bridge/heartbeat",
-                            {"heartbeat": build_heartbeat(state), "source": "moomoo-bridge"})
+                            {"heartbeat": build_heartbeat(state, disable_jp), "source": "moomoo-bridge"})
         return resp.status_code
     except Exception:
         return None
@@ -774,6 +758,33 @@ def sweep_us_movers(qc):
 _us_mover_sweep_at = 0.0
 
 
+def shared_session_open(now=None):
+    """Reuse the repository calendar, including holidays and early closes."""
+    from pathlib import Path
+    root = str(Path(__file__).resolve().parents[1])
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from argus_market_clock import market_session, US_EQUITY
+    return market_session(US_EQUITY, now)['session'] == 'REGULAR'
+
+
+def shared_quote_cycle(qc):
+    """The sole production acquisition path; no individual or money-flow calls."""
+    if not shared_session_open():
+        return 0
+    stocks, _ = fetch_market_quotes(qc, {'JP':[], 'US':list(_REGIME_ETF_CODES)}, disable_jp=True)
+    allowed = set(_REGIME_ETF_CODES)
+    stocks = [s for s in stocks if s.get('market', '') + '.' + s.get('symbol', '') in allowed]
+    if not stocks:
+        return 0
+    resp = _push_quotes(stocks)
+    if not resp.ok:
+        return 0
+    accepted = resp.json().get('accepted')
+    record_push_result(stocks, accepted)
+    return accepted or 0
+
+
 def main():
     if OpenQuoteContext is None:
         print("moomoo-api is not installed: pip3 install moomoo-api", file=sys.stderr)
@@ -781,114 +792,27 @@ def main():
     if not TOKEN:
         print("ARGUS_ADMIN_TOKEN is not set", file=sys.stderr)
         sys.exit(1)
-    print("argus-bridge: HMAC signing " + ("ON" if HMAC_SECRET else "OFF (no secret set)"))
-    print(f"argus-bridge v{BRIDGE_VERSION}: OpenD {HOST}:{PORT} -> {BACKEND} every {INTERVAL}s "
-          f"(flow every {FLOW_INTERVAL}s), {len(CODES)} codes"
-          + (" [US-ONLY MODE: ARGUS_DISABLE_JP_QUOTES=1]" if DISABLE_JP else ""))
+    print(f"argus-bridge v{BRIDGE_VERSION}: shared market ETFs only; interval={INTERVAL}s")
     qc = OpenQuoteContext(host=HOST, port=PORT)
-    flow_cache = {}   # code -> last known flow dict (carried between flow cycles)
-    last_flow_at = 0.0
-    last_hb_at = 0.0
-    # Dynamic push set = static CODES ∪ the owner's watchlist (refreshed from the
-    # backend every ~3 min) so a newly-added JP name goes realtime automatically.
-    # v11.5.7: JP codes are dropped entirely in US-only mode.
-    base_codes = [c for c in CODES if not (DISABLE_JP and c.upper().startswith("JP."))]
-    push_codes = list(base_codes)
-    last_wl_at = 0.0
+    last_quote_at = last_hb_at = float('-inf')
     try:
         while True:
-            try:
-                # JP watchlist merge — skipped in US-only mode AND while JP is
-                # entitlement-blocked (it would only add codes we can't fetch).
-                if jp_push_active() and time.time() - last_wl_at >= 180:
-                    last_wl_at = time.time()
-                    wl = _fetch_jp_watchlist_codes()
-                    if wl:
-                        push_codes = list(dict.fromkeys(base_codes + wl))
-                elif not jp_push_active():
-                    push_codes = [c for c in push_codes if not c.upper().startswith("JP.")]
-                # v11.5.7: US and JP fetched SEPARATELY — one market's permission
-                # failure never stops the other (Jul-3: JP lost, US fine).
-                stocks, _jp_tried = fetch_market_quotes(
-                    qc, split_codes_by_market(push_codes))
-                if stocks:
-                    # Big-money flow on its own slower cadence (quota: the
-                    # capital-distribution calls are 1/code). Between flow
-                    # cycles the LAST KNOWN value rides along so the backend
-                    # row never flickers flow-less.
-                    do_flow = time.time() - last_flow_at >= FLOW_INTERVAL
-                    if do_flow:
-                        last_flow_at = time.time()
-                    by_sym = {s["market"] + "." + s["symbol"]: s for s in stocks}
-                    for code in push_codes:
-                        s = by_sym.get(code.upper())
-                        if s is None:
-                            continue
-                        if do_flow:
-                            flow = fetch_flow(qc, code)
-                            if flow:
-                                flow_cache[code] = flow
-                            time.sleep(0.25)
-                        if flow_cache.get(code):
-                            s["flow"] = flow_cache[code]
-                    resp = _push_quotes(stocks)
-                    body = resp.json() if resp.ok else {}
-                    if resp.ok:
-                        record_push_result(stocks, body.get("accepted"))
-                    print(time.strftime("%H:%M:%S"),
-                          f"pushed http={resp.status_code} accepted={body.get('accepted')} "
-                          f"mode={bridge_mode()}")
-                else:
-                    print(time.strftime("%H:%M:%S"), "no valid rows this cycle "
-                          f"(mode={bridge_mode()} jp={jp_realtime_status()})")
-            except Exception as e:
-                print(time.strftime("%H:%M:%S"), "loop error:", type(e).__name__, str(e)[:120])
-
-            # v11.5.7 heartbeat — ALWAYS sent (market open or closed) so the
-            # backend can distinguish "alive & waiting" from "dead". No secrets.
-            if time.time() - last_hb_at >= HEARTBEAT_INTERVAL:
-                last_hb_at = time.time()
-                send_heartbeat()
-
-            # JP all-market capability test: auto-run ONCE per JP trading day, at
-            # the first loop where the market is open. Separate from (and after)
-            # the watchlist push so it never degrades the 16-symbol bridge.
-            # v11.5.7: skipped entirely while JP realtime is disabled/blocked.
-            if CAP_TEST_ENABLED and jp_push_active():
-                global _cap_done_date
-                today = _now_jst().strftime("%Y-%m-%d")
-                # Active continuous window + warm-up only — avoids the open/lunch
-                # edges and cold-reconnect snapshots that misread as delayed (v10.114).
-                warm = (time.time() - _bridge_start) >= CAP_WARMUP_SEC
-                if _cap_active_window() and warm and _cap_done_date != today:
-                    _cap_done_date = today
-                    try:
-                        run_capability_test(qc)
-                    except Exception as e:
-                        print(_now_jst().strftime("%H:%M:%S"), "cap-test error:", str(e)[:120])
-
-            # Realtime mover sweep — periodic during the JP session (v10.135).
-            # v11.5.7: skipped while JP realtime is disabled/blocked.
-            if MOVER_SWEEP_ENABLED and jp_push_active() and _jp_open_jst():
-                global _mover_sweep_at
-                if time.time() - _mover_sweep_at >= MOVER_SWEEP_INTERVAL:
-                    _mover_sweep_at = time.time()
-                    try:
-                        sweep_jp_movers(qc)
-                    except Exception as e:
-                        print(_now_jst().strftime("%H:%M:%S"), "mover-sweep error:", str(e)[:120])
-
-            # US realtime mover sweep — curated S&P500 ∪ watchlist ∪ ETFs (v10.146).
-            if MOVER_SWEEP_ENABLED and _us_open():
-                global _us_mover_sweep_at
-                if time.time() - _us_mover_sweep_at >= MOVER_SWEEP_INTERVAL:
-                    _us_mover_sweep_at = time.time()
-                    try:
-                        sweep_us_movers(qc)
-                    except Exception as e:
-                        print(_now_jst().strftime("%H:%M:%S"), "us-mover-sweep error:", str(e)[:120])
-
-            time.sleep(INTERVAL)
+            clock = time.monotonic()
+            if clock - last_quote_at >= INTERVAL:
+                last_quote_at = clock
+                try:
+                    shared_quote_cycle(qc)
+                except Exception as exc:
+                    print('shared market quote unavailable:', type(exc).__name__)
+            if clock - last_hb_at >= HEARTBEAT_INTERVAL:
+                last_hb_at = clock
+                # Health remains observable outside market hours. No price is
+                # fetched or relabelled merely to send a heartbeat.
+                try:
+                    send_heartbeat(disable_jp=True)
+                except Exception as exc:
+                    print('bridge heartbeat unavailable:', type(exc).__name__)
+            time.sleep(min(30, HEARTBEAT_INTERVAL))
     finally:
         qc.close()
 

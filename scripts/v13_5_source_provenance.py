@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.29"
+PRODUCT_VERSION = "v13.7.30"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,6 +35,10 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_shared_bridge.py': 'f3c7e5d24806d9263a72795ba715c08b103bd10b',
+    'bridge/README.md': '9bcd2afec193b966d963ad7382c43136ed283e7c',
+    'bridge/bridge.env.example': 'dffbcc62907f9dd05594495bd6ffada6e43d1fa5',
+    'bridge/moomoo_push.py': '322e9581128f22fec86e5abe746196e96eeff8c0',
     'test_argus_saved_overview.py': 'a0a24d21fa9d37ee44d3e69a9e2991b3dbbe910a',
     'test_argus_overview_policy.py': '3051e457321f71c6e7a4ba1e9ce34179e42a0877',
     'argus_overview_policy.py': '15a4a5cea4eb079ca2589484bd94c4cf54c102ca',
@@ -47,7 +51,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/polling-singleton.test.mjs': 'de34e0e33bc46871c009f4264d85881a7d2e74ca',
     'test_argus_institutional_backend_v1160.py': 'd8065d151883cdf13ff7ebfa79358482d40cc8fc',
     'docs/V13_7_SHAPEUP_REQUIREMENTS.md': '9756717ff26e5cf159dcf5d20cb578d99ab225ed',
-    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': '37c10c6b82d332ff38e95c983d53d6968064b069',
+    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': '82b58f846345531ee7a7ab00191b8c2947b4856f',
     'test_rules.py': '99fad6a22f968ddc518a8b7b359d4adfdf8fd9e0',
     'bridge/trigger_closepin.sh': '83ee01384660bb8799a863e080021a7fa35c1e3d',
     '.github/workflows/closepin-pin.yml': 'ea693b3ca6140d4cf6fa66c48d91c6a03f603baa',
@@ -160,7 +164,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_ai_usage_view.py': 'cd86138feaaa5f61a305b2eaa4e74f2b8de3b163',
     'argus_ai_usage_runtime.py': 'f65f5bd3196c162ad1152a1468a5d2be531f778b',
     'argus_analysis_history_backup.py': 'ae9013e5b81e9bf743821cd6ef0ea17c1b829ceb',
-    "argus_explanation_contract.py": "f51cbb07276b486327c405e71a36645e99731a61",
+    'argus_explanation_contract.py': 'a7d4d8055fcab18efb4f167257919748396805c7',
     'argus_owner_dialogue.py': '1d89a5ae5edadba3e02bcac45217b0785c22ac8d',
     'argus_owner_dialogue_api.py': 'e8733b755e1c47c5677e56fe42112a8ca5a22359',
     'argus_owner_dialogue_backup.py': '4560f85996da2d78a68ff0cb4e28a1cdb8bf50bc',
@@ -174,7 +178,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_ai_usage_runtime.py': 'f5f0e0fedc3caf85136684fa9d241b2e6e0d1975',
     'test_argus_analysis_history_backup.py': 'd0b721fe82d01f830727a98ef29a70f51a73df2f',
     'test_argus_owner_cached_inputs.py': '444cb79f894d9a756d42d0ad47ce646a3f1b36ea',
-    'test_argus_owner_dialogue.py': 'bff782b47a6fa2290aec53909d0c63ddf4478cca',
+    'test_argus_owner_dialogue.py': 'bb51131cb51b1c0670050b0c0594b7113c1a0aec',
     'test_argus_owner_dialogue_api.py': '9312928ff4a8417db892455cbc2ce597c9745326',
     'test_argus_owner_dialogue_backup.py': '6fe13fa23a90a3a90930fbf96257a117ebee88b0',
     'test_argus_owner_dialogue_recovery.py': 'acf706ac87e3ea5a686768bb22d9239e4576c126',
@@ -216,7 +220,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_ai_usage_store.py': '03dce630d6b901cc3e4277c78a7a241b2fac724a',
     'test_argus_macro_result_revisions.py': '0745614163ed8614560868201a64d117b0e77e22',
     'test_argus_macro_results.py': '647520e693f5f87f902033bb1e2a0c0762bfc407',
-    'test_argus_unified_brief.py': 'f0ebcf75d9ab36653c5b4346d0c6c7ecca1bb710',
+    'test_argus_unified_brief.py': 'e87b3a64a815188ff7388658fb89164159ae3a99',
     'test_jp_market_analogs.py': 'b9d34aea24c17ed03513620f33c607b2c5487854',
     'test_jp_market_comparison_runtime.py': '588b4441415d9e22856835f23bbcf2ad20dfebf3',
     'test_jp_market_dynamics.py': 'dab9901948bb7c6ab339ee5d4b7a8244eeb79cf6',

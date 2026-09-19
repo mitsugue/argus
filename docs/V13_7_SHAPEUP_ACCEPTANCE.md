@@ -203,3 +203,21 @@ these tests. This candidate is not yet production accepted or measured bill savi
 Remaining: automatic propagation of registration edits (existing explicit sync is
 still required), crypto/fund explanation coverage, production generation/read receipts,
 and full requirement acceptance. No claim of all watchlist work being complete.
+
+
+## Shared bridge retirement (13.7.30 candidate)
+
+The production bridge entry point now acquires only the fixed eight shared US
+market ETFs, no faster than five-minute intervals during the existing calendar's
+regular session. Old individual-symbol lists, flow settings, mover and capability
+flags do not reenable dedicated acquisition. Health heartbeats, original quote
+timestamps and HMAC signing remain. Historical helper code is retained but has no
+production entry path. Existing sector heatmap acquisition is not modified.
+
+59 related bridge, calendar, production-entry and explanation checks passed with
+stub I/O. A public explanation validator's old holdings fallback was also changed
+to quantity-free registration language; missing subject evidence remains UNKNOWN.
+These are implementation checks, not EC2 deployment or actual invoice savings.
+The documented existing EC2 host rejected this Mac's existing public-key auth.
+No credentials, accounts, firewall rules, service state or contracts were changed.
+Deployment and runtime proof require the existing owner's EC2 access path.
