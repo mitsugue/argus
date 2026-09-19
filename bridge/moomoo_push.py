@@ -22,6 +22,7 @@ import secrets
 import shutil
 import sys
 import time
+from threading import Thread
 
 import requests
 
@@ -34,7 +35,7 @@ except ImportError:
     OpenQuoteContext = None
     RET_OK = 0
 
-BRIDGE_VERSION = "13.7.30"
+BRIDGE_VERSION = "13.7.33"
 
 BACKEND  = os.environ.get("ARGUS_BACKEND", "https://argus-backend-3j2m.onrender.com").rstrip("/")
 TOKEN    = os.environ.get("ARGUS_ADMIN_TOKEN", "")
@@ -793,28 +794,36 @@ def main():
         print("ARGUS_ADMIN_TOKEN is not set", file=sys.stderr)
         sys.exit(1)
     print(f"argus-bridge v{BRIDGE_VERSION}: shared market ETFs only; interval={INTERVAL}s")
-    qc = OpenQuoteContext(host=HOST, port=PORT)
+    # OpenD initialization can wait indefinitely in the SDK. Only one bounded-
+    # cadence worker may own that wait; health reporting never waits for it.
+    worker = None
     last_quote_at = last_hb_at = float('-inf')
+    while True:
+        clock = time.monotonic()
+        if clock - last_hb_at >= HEARTBEAT_INTERVAL:
+            last_hb_at = clock
+            status = send_heartbeat(disable_jp=True)
+            if status != 200:
+                print('bridge heartbeat unavailable:', status, flush=True)
+        if (clock - last_quote_at >= INTERVAL and shared_session_open()
+                and (worker is None or not worker.is_alive())):
+            last_quote_at = clock
+            worker = Thread(target=_shared_quote_worker, daemon=True,
+                            name='shared-market-quotes')
+            worker.start()
+        time.sleep(min(30, HEARTBEAT_INTERVAL))
+
+
+def _shared_quote_worker():
+    qc = None
     try:
-        while True:
-            clock = time.monotonic()
-            if clock - last_quote_at >= INTERVAL:
-                last_quote_at = clock
-                try:
-                    shared_quote_cycle(qc)
-                except Exception as exc:
-                    print('shared market quote unavailable:', type(exc).__name__)
-            if clock - last_hb_at >= HEARTBEAT_INTERVAL:
-                last_hb_at = clock
-                # Health remains observable outside market hours. No price is
-                # fetched or relabelled merely to send a heartbeat.
-                try:
-                    send_heartbeat(disable_jp=True)
-                except Exception as exc:
-                    print('bridge heartbeat unavailable:', type(exc).__name__)
-            time.sleep(min(30, HEARTBEAT_INTERVAL))
+        qc = OpenQuoteContext(host=HOST, port=PORT)
+        shared_quote_cycle(qc)
+    except Exception as exc:
+        print('shared market quote unavailable:', type(exc).__name__, flush=True)
     finally:
-        qc.close()
+        if qc is not None:
+            qc.close()
 
 
 if __name__ == "__main__":

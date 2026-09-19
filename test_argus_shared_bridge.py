@@ -44,18 +44,43 @@ def test_shared_session_uses_dst_holidays_and_early_close(monkeypatch):
     assert open_at('2026-12-01T15:00:00')
 
 
-def test_production_entry_point_uses_only_shared_cycle_and_health(monkeypatch):
+def test_health_continues_when_opend_worker_is_stuck(monkeypatch):
     import pytest
+    m=load(monkeypatch);events=[];ticks=iter([0,301,602])
+    class StuckWorker:
+        def __init__(self, **kw): pass
+        def start(self): events.append('worker')
+        def is_alive(self): return True
+    monkeypatch.setattr(m,'TOKEN','test-only')
+    monkeypatch.setattr(m,'OpenQuoteContext',object)
+    monkeypatch.setattr(m,'shared_session_open',lambda:True)
+    monkeypatch.setattr(m,'Thread',StuckWorker)
+    monkeypatch.setattr(m.time,'monotonic',lambda:next(ticks))
+    monkeypatch.setattr(m,'send_heartbeat',lambda **kw:events.append('health') or 200)
+    def stop(_):
+        if events.count('health')==3: raise KeyboardInterrupt()
+    monkeypatch.setattr(m.time,'sleep',stop)
+    with pytest.raises(KeyboardInterrupt):m.main()
+    assert events==['health','worker','health','health']
+
+
+def test_closed_session_never_initializes_opend(monkeypatch):
+    import pytest
+    m=load(monkeypatch);events=[]
+    monkeypatch.setattr(m,'TOKEN','test-only')
+    monkeypatch.setattr(m,'OpenQuoteContext',lambda **kw:events.append('unexpected'))
+    monkeypatch.setattr(m,'shared_session_open',lambda:False)
+    monkeypatch.setattr(m,'send_heartbeat',lambda **kw:events.append('health') or 200)
+    monkeypatch.setattr(m.time,'sleep',lambda _:(_ for _ in ()).throw(KeyboardInterrupt()))
+    with pytest.raises(KeyboardInterrupt):m.main()
+    assert events==['health']
+
+
+def test_quote_worker_releases_context_on_failure(monkeypatch):
     m=load(monkeypatch);events=[]
     class Context:
         def close(self):events.append('closed')
-    monkeypatch.setattr(m,'TOKEN','test-only')
     monkeypatch.setattr(m,'OpenQuoteContext',lambda **kw:Context())
-    monkeypatch.setattr(m,'shared_quote_cycle',lambda qc:events.append('shared'))
-    monkeypatch.setattr(m,'send_heartbeat',lambda **kw:events.append(('health',kw)))
-    def stop(_):raise KeyboardInterrupt()
-    monkeypatch.setattr(m.time,'sleep',stop)
-    for name in ('fetch_flow','_fetch_jp_watchlist_codes','run_capability_test','sweep_jp_movers','sweep_us_movers'):
-        monkeypatch.setattr(m,name,lambda *a,**kw:(_ for _ in ()).throw(AssertionError('retired call')))
-    with pytest.raises(KeyboardInterrupt):m.main()
-    assert events==['shared',('health',{'disable_jp':True}),'closed']
+    monkeypatch.setattr(m,'shared_quote_cycle',lambda qc:(_ for _ in ()).throw(RuntimeError()))
+    m._shared_quote_worker()
+    assert events==['closed']
