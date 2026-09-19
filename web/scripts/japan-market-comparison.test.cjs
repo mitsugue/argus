@@ -58,3 +58,14 @@ for (const patch of [{ sourceBars: NaN }, { candidateCount: -1 },
     historyCoverage: { ...withCoverage.historyCoverage, ...patch } }, 5));
 }
 console.log('Historical comparison coverage validation PASS');
+const withSources = { ...document, sourceAcquisition: {
+  sources: { jp_yield_curve: { observations: 2698, firstDate: '2015-09-01', lastDate: '2026-09-17',
+    nativeFrequency: 'DAILY', originalVintageVerified: false, latestRawId: 'a'.repeat(64),
+    lastKnownAt: '2026-09-20T02:00:00Z', expectedCalendarCoverageVerified: false } },
+  historicalVintageVerified: false, full10yAllIndicatorsComplete: false,
+} };
+assert(validJapanMarketComparison(withSources, 5));
+for (const patch of [{ historicalVintageVerified: true }, { full10yAllIndicatorsComplete: true },
+  { sources: { unknown: {} } }]) {
+  assert(!validJapanMarketComparison({ ...withSources, sourceAcquisition: { ...withSources.sourceAcquisition, ...patch } }, 5));
+}

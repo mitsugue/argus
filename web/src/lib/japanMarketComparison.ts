@@ -33,6 +33,20 @@ export function validJapanMarketComparison(v: unknown, horizon: number): v is Ja
       || typeof h.allMarketFeaturesTenYearsVerified !== 'boolean') return false;
   }
   const ids = new Set<string>();
+  if (v.sourceAcquisition !== undefined) {
+    const s = v.sourceAcquisition;
+    if (!object(s) || s.historicalVintageVerified !== false || s.full10yAllIndicatorsComplete !== false
+      || !object(s.sources) || Object.keys(s.sources).length > 2) return false;
+    for (const [key, r] of Object.entries(s.sources)) {
+      const day = (d: unknown) => d === null || (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d));
+      if (!['jp_yield_curve', 'vix_ohlc'].includes(key) || !object(r)
+        || !finite(r.observations) || !Number.isInteger(r.observations) || r.observations < 0
+        || !day(r.firstDate) || !day(r.lastDate) || r.nativeFrequency !== 'DAILY'
+        || r.originalVintageVerified !== false || r.expectedCalendarCoverageVerified !== false
+        || !(r.latestRawId === null || (typeof r.latestRawId === 'string' && /^[a-f0-9]{64}$/.test(r.latestRawId)))
+        || !(r.lastKnownAt === null || (typeof r.lastKnownAt === 'string' && Number.isFinite(Date.parse(r.lastKnownAt))))) return false;
+    }
+  }
   if (v.valuationEvidence !== undefined) {
     const e = v.valuationEvidence;
     if (!object(e) || e.date !== v.anchorDate || !finite(e.eps) || e.eps <= 0

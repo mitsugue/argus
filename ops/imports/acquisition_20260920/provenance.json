@@ -1,0 +1,14 @@
+{
+  "artifactKind": "ACQUISITION_SPEC_NOT_OBSERVATIONS",
+  "manifestSha256": "b22a4a50965a045ac3e1385b75857732adb017dd0e993b56658d0b157c870bbd",
+  "workbookSha256": "b09ba8d43ecf2d5b66193e6a29262ad06dc447ef20b75bcd3d30cf4f262c957a",
+  "importedFiles": {
+    "source_registry.json": "b4208aeea5d8d7ff2d4f2193884f90032846787ea12b1a74fa22e59626ece647",
+    "data_contract.json": "a5beff9050caa6f6bf03d0d3c979d2277858b967b5411e5d01550a705aad902a",
+    "ACCEPTANCE_CRITERIA.md": "e46595dbb8455986e3815f408b194d5e6399bc583458e1bed0cb6d52a864c0d2"
+  },
+  "requiredGroups": 43,
+  "acceptanceConditions": 24,
+  "allIndicators10yComplete": false,
+  "predictivePowerVerified": false
+}
