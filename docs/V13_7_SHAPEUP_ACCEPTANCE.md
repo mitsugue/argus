@@ -177,3 +177,29 @@ Validation: 57 focused tests passed, including all generation-source changes,
 release-only stability, missing-source rejection, effective rule/model/input
 invalidation, pending public editions, and immutable saved completions.
 Production use and measured invoice savings for this candidate are not yet verified.
+
+
+## Saved-only subject viewing and durable registration (13.7.29 candidate)
+
+Production overview reads return the existing successful edition without acquiring
+company materials, creating a request, or invoking GPT. The saved completion and
+input context remain unchanged, including after restart and public context changes.
+When no edition exists, the screen states that it is waiting for the scheduled
+analysis of a privately synced registration. Existing numerical period views remain;
+a missing narrative for another period is not fabricated or generated on selection.
+
+The existing background worker now includes privately synced JP/US registrations
+without a prior edition (default five-session horizon), retains existing supported
+periods, and stops refreshing removed registrations while preserving their history.
+One new job per tick, existing deduplication/provider limits, and bounded rotation
+remain. Failed subjects do not indefinitely block later registered subjects.
+Private membership reads are cached for five minutes; a successful explicit sync
+updates that cache immediately. Missing membership is a waiting state, not an empty
+watchlist or permission to generate from old archived subjects.
+
+Validation: 48 focused backend checks, frontend build, owner UI/retirement and
+backup protection checks passed using stub providers. No hosted AI was invoked for
+these tests. This candidate is not yet production accepted or measured bill savings.
+Remaining: automatic propagation of registration edits (existing explicit sync is
+still required), crypto/fund explanation coverage, production generation/read receipts,
+and full requirement acceptance. No claim of all watchlist work being complete.

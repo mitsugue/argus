@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.28"
+PRODUCT_VERSION = "v13.7.29"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_saved_overview.py': 'a0a24d21fa9d37ee44d3e69a9e2991b3dbbe910a',
     'test_argus_overview_policy.py': '3051e457321f71c6e7a4ba1e9ce34179e42a0877',
     'argus_overview_policy.py': '15a4a5cea4eb079ca2589484bd94c4cf54c102ca',
     'test_jp_market_feature_delta.py': '371a5637d610df883cfb50efe59db031530b4863',
@@ -46,7 +47,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/polling-singleton.test.mjs': 'de34e0e33bc46871c009f4264d85881a7d2e74ca',
     'test_argus_institutional_backend_v1160.py': 'd8065d151883cdf13ff7ebfa79358482d40cc8fc',
     'docs/V13_7_SHAPEUP_REQUIREMENTS.md': '9756717ff26e5cf159dcf5d20cb578d99ab225ed',
-    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': 'f56a80734fb284892fce065403bfe4f83ed7f4ea',
+    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': '37c10c6b82d332ff38e95c983d53d6968064b069',
     'test_rules.py': '99fad6a22f968ddc518a8b7b359d4adfdf8fd9e0',
     'bridge/trigger_closepin.sh': '83ee01384660bb8799a863e080021a7fa35c1e3d',
     '.github/workflows/closepin-pin.yml': 'ea693b3ca6140d4cf6fa66c48d91c6a03f603baa',
@@ -96,7 +97,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'scripts/macro_readiness.py': 'd9d736333960d220a5ce3fc55951abc901ea47f0',
     'docs/V13_7_REQUIREMENTS.md': '6ae5091a2167249af1a5c8e1bfc75c5f8ed3d928',
     'web/src/hooks/useOsintInvestigation.ts': 'ada26a80e0f0f439f97cb75858407647dc7c5d8d',
-    'web/src/components/guide/Layer2BSyncCard.tsx': '20dae8bccafee961a17aad41b39f738fd5f60b76',
+    'web/src/components/guide/Layer2BSyncCard.tsx': 'b54f946a7a4176390d086dfc302588fe7e45a26f',
     'web/src/components/dashboard/ProHandoffButton.tsx': 'a7e9d2c235333fa504f306fb6ad743d3a4eda972',
     'web/src/components/dashboard/OsintDeepDive.tsx': '875c23041a7d765379aa834bbfe70ae24abf0f05',
     'web/src/components/dashboard/AddAssetModal.tsx': '56b5df9a55e8238db3538c829f1e29fd157398ce',
@@ -111,7 +112,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_prediction_ledger_workflow.py': 'c56ab18cdedbf04fd37c7362209172fe92e409cf',
     'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
     'web/src/hooks/useAssets.ts': '7378e41e1b7fdf6ff6b14f29e5271639054f370b',
-    'web/src/components/dialogue/OwnerOverview.tsx': 'b569afe902da97c3a43b47e63f64c8e87b894807',
+    'web/src/components/dialogue/OwnerOverview.tsx': '237fac885c233c84baf128924f0b4cc92aa7e334',
     'web/src/components/dialogue/OwnerOverview.css': 'e608b1f63bbbf8596454a9e0100cea6ee8a41a0f',
     'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',
     'web/src/lib/presentationIntent.ts': '77c0c79423a2291fc3e28a58e1b0397b11a83828',
@@ -161,7 +162,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_analysis_history_backup.py': 'ae9013e5b81e9bf743821cd6ef0ea17c1b829ceb',
     "argus_explanation_contract.py": "f51cbb07276b486327c405e71a36645e99731a61",
     'argus_owner_dialogue.py': '1d89a5ae5edadba3e02bcac45217b0785c22ac8d',
-    'argus_owner_dialogue_api.py': '81712098bb3c9435c2d4c8e84b836ac1c53404a7',
+    'argus_owner_dialogue_api.py': 'e8733b755e1c47c5677e56fe42112a8ca5a22359',
     'argus_owner_dialogue_backup.py': '4560f85996da2d78a68ff0cb4e28a1cdb8bf50bc',
     'argus_owner_dialogue_recovery.py': 'bfc92ba9d12514167c622df5bcf04f87e945d721',
     'argus_owner_dialogue_store.py': '72422e35451def9da106bb200acd49e880a9a2f1',

@@ -31,7 +31,7 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:
     return()=>{window.removeEventListener('storage',changed);window.removeEventListener('argus-owner-connection',changed);};
   },[]);
   useEffect(()=>{
-    if(!token||!contextId||!base){setFetching(false);return;}
+    if(!token||!base){setFetching(false);return;}
     let stopped=false;let timer:number|undefined;let requestId:string|undefined;
     let active:AbortController|undefined;
     setError('');
@@ -49,6 +49,11 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:
             if(value.error==='dialogue_busy'||value.error==='dialogue_recovery_pending')timer=window.setTimeout(()=>void load(),10000);}
           return;
         }
+        const savedOnly=value.overviewRead?.mode==='SAVED_ONLY';
+        if(savedOnly&&value.status==='WAITING'){
+          if(!stopped)setError('保存済みの説明はまだありません。同期済みの登録銘柄は定期処理で更新します。閲覧によるAI生成は行いません。');
+          return;
+        }
         const evaluation=value.overviewEvaluation;
         const checkedEvaluation=evaluation?.baseMarketContextId===contextId
           &&typeof evaluation.inputsDigest==='string'&&/^[a-f0-9]{64}$/.test(evaluation.inputsDigest)
@@ -57,10 +62,10 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:
         const checkedReuse=value.status==='SUCCEEDED'&&reused?.baseMarketContextId===contextId
           &&typeof reused.inputsDigest==='string'&&/^[a-f0-9]{64}$/.test(reused.inputsDigest)
           &&Number.isFinite(Date.parse(reused.checkedAt))&&Number.isFinite(Date.parse(reused.originalCompletedAt));
-        if(!validJob(value)||value.context.intent!=='SUBJECT_OVERVIEW'||value.context.subject.symbol!==symbol||value.context.subject.market!==market||value.context.horizonSessions!==horizon||(value.context.baseMarketContextId!==contextId&&!checkedReuse&&!checkedEvaluation&&value.requestId!==requestId))throw new Error('invalid_overview');
-        if(!stopped){setEdition({key:requestKey,job:value});setError('');requestId=value.requestId;
+        if(!validJob(value)||value.context.intent!=='SUBJECT_OVERVIEW'||value.context.subject.symbol!==symbol||value.context.subject.market!==market||value.context.horizonSessions!==horizon||(value.context.baseMarketContextId!==contextId&&!checkedReuse&&!checkedEvaluation&&!savedOnly&&value.requestId!==requestId))throw new Error('invalid_overview');
+        if(!stopped){setEdition({key:savedOnly&&value.context.baseMarketContextId!==contextId?'retained:'+requestKey:requestKey,job:value});setError('');requestId=value.requestId;
           if(value.status==='RUNNING')timer=window.setTimeout(()=>void load(),3000);}
-      }catch{if(!stopped)setError('接続を確認できませんでした。再取得でも同じ生成IDを使います。');}
+      }catch{if(!stopped)setError('接続を確認できませんでした。保存した説明の再取得でAI生成は行いません。');}
       finally{window.clearTimeout(timeout);if(!stopped)setFetching(false);}
     };
     void load();
