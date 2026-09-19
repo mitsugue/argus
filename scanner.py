@@ -17790,7 +17790,9 @@ def _market_brief_ai_polish(brief):
         "CORROBORATED・UNCONFIRMEDの根拠を含む説明はINFERENCEにする。"
         "入力数値を勝手に丸めたり、日数や比率を新たに計算しない。確率に関する文章は書かない。"
         "changes以外でpreviousFactsを現在の事実として引用しない。以前の観測がない場合はchangesをUNKNOWNにする。"
-        "保有情報はこの公開文脈に含まれないのでimpactはUNKNOWNとし、保有銘柄を推測しない。"
+        "登録銘柄の一覧はこの公開文脈には含まれないのでimpactはUNKNOWNとし、"
+        "銘柄別の影響は登録銘柄の説明で確認する旨を短く伝える。"
+        "銘柄の登録を保有とみなさず、保有状況や数量の入力を求めない。"
         "view、next、invalidationは推論または不明。警戒と回復を点灯数で強気度へ合算しない。"
         "STRICT JSONで6項目とpresentationを返してください。"
         + argus_presentation_intent.generation_instruction(prompt_catalog).replace("\n", " ")
