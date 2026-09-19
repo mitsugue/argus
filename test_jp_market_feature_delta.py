@@ -73,3 +73,70 @@ def test_legacy_cache_without_manifest_is_preserved_and_recomputed():
                                       price_series={'vix':prices(61)})
     assert new['calculationWork']['reusedCutoffs']==0
     assert old==original
+
+
+def test_identical_repeat_reuses_endpoint_without_any_calculation():
+    rows, at = prices(60), cutoffs(60)
+    old = saved(rows, at); archived = deepcopy(old)
+    with patch.object(features, 'build_market_features', side_effect=AssertionError('duplicate replay')):
+        new = features.build_feature_history(cutoffs=at, previous_history=old,
+            price_series={'vix': rows})
+    assert new['calculationWork'] == {'reusedCutoffs': 60, 'evaluatedCutoffs': 0}
+    assert_parity(new, old)
+    new['latest']['missingFeatures'].clear()
+    assert old == archived
+
+
+def test_late_correction_preserves_past_and_recalculates_only_after_receipt():
+    rows = prices(60); at = cutoffs(60)
+    old = saved(rows, at); archived = deepcopy(old)
+    correction = {**rows[3], 'value': 45, 'revision': 1,
+                  'knownAt': '2026-03-03T07:00:00Z'}
+    changed = rows + [correction]
+    with patch.object(features, 'build_market_features', wraps=features.build_market_features) as compute:
+        new = features.build_feature_history(cutoffs=cutoffs(65), previous_history=old,
+            price_series={'vix': changed})
+        assert compute.call_count == 5
+    assert new['calculationWork'] == {'reusedCutoffs': 60, 'evaluatedCutoffs': 5}
+    assert_parity(new, saved(changed, cutoffs(65)))
+    assert old == archived
+    # The original observation remains present; the correction is only knowable in March.
+    assert changed[3]['value'] != correction['value']
+    assert all(r['knownAt'] >= correction['knownAt'] for r in new['features']
+        if r.get('availableFrom') == '2026-03-03T07:00:00+00:00')
+
+
+def test_future_backfill_at_same_cutoff_does_not_trigger_replay():
+    rows = prices(60); at = cutoffs(60); old = saved(rows, at)
+    new_rows = rows + [{**rows[3], 'value': 45, 'revision': 1,
+                       'knownAt': '2026-03-03T07:00:00Z'}]
+    with patch.object(features, 'build_market_features', side_effect=AssertionError('future-only input')):
+        new = features.build_feature_history(cutoffs=at, previous_history=old,
+            price_series={'vix': new_rows})
+    assert new['calculationWork']['evaluatedCutoffs'] == 0
+    assert_parity(new, saved(new_rows, at))
+
+
+def test_shortened_cutoff_request_computes_its_own_endpoint_once():
+    old = saved(prices(60), cutoffs(60))
+    with patch.object(features, 'build_market_features', wraps=features.build_market_features) as compute:
+        new = features.build_feature_history(cutoffs=cutoffs(50), previous_history=old,
+            price_series={'vix': prices(60)})
+        assert compute.call_count == 1
+    assert new['calculationWork'] == {'reusedCutoffs': 49, 'evaluatedCutoffs': 1}
+    assert_parity(new, saved(prices(60), cutoffs(50)))
+
+
+def test_backdated_correction_and_changed_prefix_still_replay_and_explain_why():
+    old = saved(prices(60), cutoffs(60))
+    changed = prices(60) + [{**prices(60)[3], 'value': 45, 'revision': 1,
+        'knownAt': '2026-02-01T07:00:00Z'}]
+    result = features.build_feature_history(cutoffs=cutoffs(65), previous_history=old,
+        price_series={'vix': changed})
+    assert result['calculationWork']['reusedCutoffs'] == 0
+    assert result['reuseDecision'] == {'reason': 'append_can_affect_prior_cutoff', 'source': 'price_series:vix'}
+    changed = prices(65); changed[2]['value'] += 1
+    result = features.build_feature_history(cutoffs=cutoffs(65), previous_history=old,
+        price_series={'vix': changed})
+    assert result['reuseDecision'] == {'reason': 'source_prefix_changed', 'source': 'price_series:vix'}
+    assert_parity(result, saved(changed, cutoffs(65)))
