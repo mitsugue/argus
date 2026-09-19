@@ -94,36 +94,47 @@ def _source_lists(inputs):
     return lists
 
 
-def _reusable_cutoffs(history, ordered, sources):
+def _reusable_cutoffs(history, ordered, sources, *, diagnostic=None):
     from jp_market_engine import _instant
-    if not isinstance(history, dict) or history.get("status") != "AVAILABLE":
+
+    def reject(reason, source=None):
+        if diagnostic is not None:
+            diagnostic.update(reason=reason, source=source)
         return []
+
+    if not isinstance(history, dict) or history.get("status") != "AVAILABLE":
+        return reject("history_unavailable")
     old = history.get("evaluatedCutoffs")
     manifest = history.get("sourceManifest")
     if not isinstance(old, list) or not isinstance(manifest, dict):
-        return []
-    # A prior intraday endpoint is not part of today's close-based replay.
+        return reject("legacy_manifest_missing")
     requested = set(ordered)
     shared = [at for at in old if at in requested]
     if not shared or shared != ordered[:len(shared)] or shared != sorted(set(shared), key=_instant):
-        return []
+        return reject("cutoff_prefix_changed")
     boundary = _instant(shared[-1])
     if set(manifest) != set(sources):
-        return []
+        return reject("source_set_changed")
     for key, rows in sources.items():
         source = manifest[key]
         count = source.get("count") if isinstance(source, dict) else None
         if type(count) is not int or count < 0 or count > len(rows):
-            return []
+            return reject("source_prefix_shortened", key)
         if _history_digest(rows[:count]) != source.get("sha256"):
-            return []
+            return reject("source_prefix_changed", key)
         for row in rows[count:]:
-            # Conservative append-only admission. A backfill/correction or
-            # changed event schedule must take the full replay path.
+            if not isinstance(row, Mapping):
+                return reject("appended_row_invalid", key)
             known = _knowledge_time(row)
             period = _instant(str(row.get("periodEnd") or row.get("date") or "")[:10] + "T00:00:00Z")
-            if key == "sq_events" or known is None or known <= boundary or period is None or period <= boundary:
-                return []
+            # The observation date can be old. New knowledge cannot affect an
+            # earlier cutoff: point_in_time_rows excludes it before selecting
+            # revisions. Require the correction's own receipt, never backdate it.
+            if (key == "sq_events" or known is None or known <= boundary or period is None
+                    or (row.get("revision", 0) != 0 and _instant(row.get("knownAt")) is None)):
+                return reject("append_can_affect_prior_cutoff", key)
+    if diagnostic is not None:
+        diagnostic.update(reason="unchanged_source_prefix", source=None)
     return shared
 
 
@@ -140,7 +151,12 @@ def build_feature_history(*, cutoffs: Sequence[str], previous_history=None, **in
         raise ValueError("bounded_valid_feature_cutoffs_required")
     ordered = sorted(set(cutoffs), key=_instant)
     sources = _source_lists(inputs)
-    reused = _reusable_cutoffs(previous_history, ordered, sources)
+    reuse_decision = {}
+    reused = _reusable_cutoffs(previous_history, ordered, sources, diagnostic=reuse_decision)
+    if len(reused) == len(ordered) and (previous_history.get("latest") or {}).get("informationCutoff") != ordered[-1]:
+        # A shortened request can reuse its history but needs its own endpoint.
+        reused = reused[:-1]
+        reuse_decision["reason"] = "endpoint_not_cached"
     groups = {"features": [], "conditions": []}
     if reused:
         from copy import deepcopy
@@ -156,12 +172,10 @@ def build_feature_history(*, cutoffs: Sequence[str], previous_history=None, **in
             body = {k:v for k,v in row.items() if k not in ("revision", "knownAt")}
             previous[key] = _history_digest(body)
             revisions[key] = row["revision"]
-    # Always evaluate the requested endpoint to expose current freshness and
-    # missingness, even if no new publication arrived.
+    # A changed cutoff must refresh missingness. The exact same cutoff and
+    # unchanged eligible inputs can reuse the saved endpoint without recursion.
     pending = ordered[len(reused):]
-    if not pending:
-        return build_feature_history(cutoffs=ordered, **inputs)
-    latest = None
+    latest = None if pending else deepcopy(previous_history["latest"])
     for at in pending:
         latest = build_market_features(cutoff=at, **inputs)
         for group in groups:
@@ -183,6 +197,7 @@ def build_feature_history(*, cutoffs: Sequence[str], previous_history=None, **in
             "sourceManifest": {key: {"count": len(rows), "sha256": _history_digest(rows)}
                                for key, rows in sources.items()},
             "calculationWork": {"reusedCutoffs": len(reused), "evaluatedCutoffs": len(pending)},
+            "reuseDecision": reuse_decision,
             "historicalVintageVerified": False,
             "actionAuthority": False, "automaticAiCalls": 0}
 
