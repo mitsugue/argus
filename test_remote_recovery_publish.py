@@ -2315,12 +2315,18 @@ def test_recovered_overview_generation_policy_tracks_executable_model_and_provid
             mock.patch.dict(os.environ, {"RENDER_GIT_COMMIT": "a"*40,
                 "OPENAI_BASE_URL": "https://api.example/v1", "OPENAI_PROJECT_ID": "test-project"}):
         initial = scanner._owner_overview_generation_policy()
-        assert initial["model"] == "test-primary" and initial["ruleVersion"] == "a"*40
+        assert initial["model"] == "test-primary"
+        assert initial["ruleVersionKind"] == "generation-source-sha256-v1"
+        from argus_overview_policy import generation_revision
+        assert initial["ruleVersion"] == generation_revision(str(Path(scanner.__file__).parent))
         assert initial["maxOutputTokens"] == 3000 and initial["maxValidationAttempts"] == 2
         assert "test-project" not in str(initial) and "https://api.example" not in str(initial)
         with mock.patch.object(scanner, "_OPENAI_MODEL", "test-next"):
             assert scanner._owner_overview_generation_policy()["model"] == "test-next"
         with mock.patch.dict(os.environ, {"RENDER_GIT_COMMIT": "b"*40}):
+            assert scanner._owner_overview_generation_policy()["ruleVersion"] == initial["ruleVersion"]
+        with mock.patch("argus_overview_policy.generation_revision", return_value="c"*64):
+            assert scanner._owner_overview_generation_policy()["ruleVersion"] == "c"*64
             assert scanner._owner_overview_generation_policy()["ruleVersion"] != initial["ruleVersion"]
         with mock.patch.dict(os.environ, {"OPENAI_PROJECT_ID": "test-next-project"}):
             assert scanner._owner_overview_generation_policy()["providerSettingsDigest"] != initial["providerSettingsDigest"]
