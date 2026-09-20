@@ -312,3 +312,42 @@ def test_failed_repair_stays_invalid_and_never_overwrites_last_accepted_view(mon
     assert len(calls)==2 and result['unifiedStatus']=='INVALID_RESPONSE'
     assert state['lastSuccessful']==prior
     assert result['lastSuccessfulAiAt']=='2026-09-12T00:00:00Z'
+
+
+def test_ready_chart_replaces_cold_edition_once_with_frozen_calculations(monkeypatch):
+    from datetime import datetime, timezone
+    from argus_index_research_cache import record
+    at = datetime.now(timezone.utc).isoformat()
+    current = brief()
+    cold = {str(h): {'status':'unavailable','comparison':None,'reason':'index_research_preparing'} for h in (1,5,10,20)}
+    old = {**copy.deepcopy(current), 'unifiedStatus':'GENERATED','presentationStatus':'GENERATED',
+           'unifiedSummary':{'view':'cold'}, 'calculationSnapshots':cold,
+           'aiDiagnostics':{'completedAt':at}}
+    state = {'lastSuccessful':copy.deepcopy(old), 'generationInputDigest':'same'}
+    monkeypatch.setattr(scanner,'_MARKET_BRIEF',state)
+    monkeypatch.setattr(scanner,'_compose_market_brief',lambda:copy.deepcopy(current))
+    monkeypatch.setattr(scanner,'_jp_market_internals_cached',lambda:{})
+    monkeypatch.setattr(scanner,'_market_brief_generation_input_digest',lambda *a:'same')
+    payloads = {str(h):{'status':'available','comparison':{'horizonSessions':h}} for h in (1,5,10,20)}
+    records={f'comparison:N225:{h}':record(f'comparison:N225:{h}',payloads[str(h)],method=scanner._INDEX_RESEARCH_METHOD,at=at) for h in (1,5,10,20)}
+    monkeypatch.setattr(scanner,'_INDEX_RESEARCH_REPORTS',records)
+    monkeypatch.setattr(scanner,'_ai_now_iso',lambda:at)
+    calls=[]; saved=[]
+    def polish(result):
+        calls.append(copy.deepcopy(result['calculationSnapshots']))
+        return {**result,'unifiedStatus':'GENERATED','presentationStatus':'GENERATED',
+                'unifiedSummary':{'view':'with chart'},'aiDiagnostics':{'completedAt':at}}
+    monkeypatch.setattr(scanner,'_market_brief_ai_polish',polish)
+    monkeypatch.setattr(scanner,'_market_brief_history_save',lambda result:saved.append(copy.deepcopy(result)))
+    # Both the exact-input fast path and the one-hour coalescing must yield to readiness.
+    result=scanner._market_brief_refresh(allow_ai=True)
+    assert len(calls)==len(saved)==1
+    assert all(v['comparison'] for v in saved[0]['calculationSnapshots'].values())
+    assert saved[0]['calculationSnapshots']==result['calculationSnapshots']
+    assert old['calculationSnapshots']==cold
+    def forbidden(*args,**kwargs):raise AssertionError('unchanged ready edition must not reread charts or call AI')
+    monkeypatch.setattr(scanner,'_jp_market_comparison_cached',forbidden)
+    monkeypatch.setattr(scanner,'_market_brief_ai_polish',forbidden)
+    reused=scanner._market_brief_refresh(allow_ai=True)
+    assert reused['generationReuse']['newAiCalls']==0
+    assert reused['calculationSnapshots']==saved[0]['calculationSnapshots']

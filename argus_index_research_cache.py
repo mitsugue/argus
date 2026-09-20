@@ -78,3 +78,26 @@ def load(path, *, method, now):
         if admitted:
             restored[key] = admitted
     return restored
+
+
+def comparison_availability_improved(records, previous, *, method, now):
+    """Cheap readiness check on already admitted memory records; no copying/replay.
+
+    Ordinary price updates remain subject to normal edition coalescing. Only
+    an absent comparison becoming usable warrants completing an earlier edition.
+    """
+    for horizon in (1, 5, 10, 20):
+        old = (previous or {}).get(str(horizon)) or {}
+        if isinstance(old.get('comparison'), dict):
+            continue
+        row = records.get(f'comparison:N225:{horizon}') or {}
+        if row.get('methodVersion') != method:
+            continue
+        try:
+            if stamp(row['calculatedAt']) > stamp(now):
+                continue
+        except (KeyError, ValueError, TypeError):
+            continue
+        if isinstance((row.get('payload') or {}).get('comparison'), dict):
+            return True
+    return False

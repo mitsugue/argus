@@ -155,3 +155,13 @@ def test_feature_history_restart_reuses_exact_inputs_without_replay(monkeypatch,
     scanner._jp_market_feature_history_warm()
     assert calculate.call_count == 3
     assert scanner._JP_MARKET_FEATURE_CACHE_STATUS['persistenceStatus'] == 'VERIFIED'
+
+
+def test_new_comparison_readiness_is_material_but_revisions_and_future_records_are_not():
+    payload={'status':'available','comparison':{'horizonSessions':5}}
+    records={'comparison:N225:5':cache.record('comparison:N225:5',payload,method=METHOD,at=AT)}
+    previous={'5':{'status':'unavailable','comparison':None}}
+    assert cache.comparison_availability_improved(records,previous,method=METHOD,now=LATER)
+    assert not cache.comparison_availability_improved(records,{'5':payload},method=METHOD,now=LATER)
+    assert not cache.comparison_availability_improved(records,previous,method='other',now=LATER)
+    assert not cache.comparison_availability_improved(records,previous,method=METHOD,now='2026-09-14T00:00:00Z')

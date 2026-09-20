@@ -100,3 +100,127 @@ def normalize_jquants_margin_snapshot(payload: Mapping[str, Any], *, instrument_
             "rejectedRows": rejected, "paginationRemaining": incomplete,
             "status": "PARTIAL" if rejected or incomplete else "AVAILABLE" if rows else "UNAVAILABLE",
             "historicalVintageVerified": False, "actionAuthority": False}
+
+
+_MARGIN_RECEIPT_FIELDS = {"observedAt", "knownAt", "availableFrom", "sourceResponseSha256", "revision"}
+_MARGIN_MAX_ROWS = 12000
+
+
+def _margin_json(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _margin_key(row):
+    return (row["instrumentId"], row["seriesId"], row["periodEnd"])
+
+
+def _margin_merge_rows(previous, incoming):
+    """Keep original receipts; append true revisions without changing the prefix."""
+    from copy import deepcopy
+    result = deepcopy(previous)
+    latest = {_margin_key(row): row for row in result}
+    for row in incoming:
+        old = latest.get(_margin_key(row))
+        if old:
+            identity = lambda value: {k: v for k, v in value.items() if k not in _MARGIN_RECEIPT_FIELDS}
+            if identity(old) == identity(row):
+                continue
+            if _instant(row["knownAt"]) <= _instant(old["knownAt"]):
+                raise ValueError("margin_revision_receipt_order")
+            row = {**row, "revision": int(old.get("revision", 0)) + 1}
+        result.append(deepcopy(row))
+        latest[_margin_key(row)] = row
+    if len(result) > _MARGIN_MAX_ROWS:
+        raise ValueError("margin_retention_maintenance_required")
+    return result
+
+
+def _margin_read(db, instrument_id):
+    exists = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='margin_input_history'").fetchone()
+    if not exists:
+        return None
+    rows = []
+    for body, digest in db.execute("SELECT body,sha256 FROM margin_input_history WHERE instrument=? ORDER BY seq", (instrument_id,)):
+        if len(rows) >= _MARGIN_MAX_ROWS or hashlib.sha256(body.encode()).hexdigest() != digest:
+            raise ValueError("margin_history_integrity_or_bound")
+        row = json.loads(body)
+        if row.get("instrumentId") != instrument_id or _instant(row.get("knownAt")) is None:
+            raise ValueError("margin_history_identity")
+        rows.append(row)
+    meta = db.execute("SELECT value FROM metadata WHERE key=?", ("margin_snapshot:" + instrument_id,)).fetchone()
+    if not meta:
+        if rows:
+            raise ValueError("margin_history_metadata_missing")
+        return None
+    envelope = json.loads(meta[0]); document = envelope["document"]
+    if hashlib.sha256(_margin_json(document).encode()).hexdigest() != envelope["sha256"]:
+        raise ValueError("margin_metadata_integrity")
+    if document.get("instrumentId") != instrument_id or document.get("rowCount") != len(rows):
+        raise ValueError("margin_metadata_identity")
+    return {**document, "rows": rows, "historyStatus": "LOCAL_DURABLE"}
+
+
+def restore_margin_snapshot(path, instrument_id="1570"):
+    """Background-only restore; absent storage never creates a file."""
+    from pathlib import Path
+    import sqlite3
+    target = Path(path)
+    if target.is_symlink():
+        raise ValueError("margin_store_symlink")
+    if not target.exists():
+        return None
+    db = sqlite3.connect(target.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)
+    try:
+        return _margin_read(db, instrument_id)
+    finally:
+        db.close()
+
+
+def retain_margin_snapshot(candidate, *, previous=None, path=None, raw=None):
+    """Use the existing source store for append-only observations and raw receipts.
+
+    A rolling provider response may omit old periods. Omission does not erase
+    them. Corrections carry their own actual receipt and monotonically increasing
+    revision. A successful identical recheck advances only snapshot freshness.
+    """
+    from copy import deepcopy
+    if not candidate.get("rows"):
+        raise ValueError("margin_nonempty_candidate_required")
+    instrument = candidate["instrumentId"]
+    if previous and previous.get("instrumentId") != instrument:
+        raise ValueError("margin_previous_instrument")
+    db = None
+    try:
+        if path:
+            from jp_market_acquisition import connect
+            db = connect(path)
+            db.execute("CREATE TABLE IF NOT EXISTS margin_input_history(seq INTEGER PRIMARY KEY,instrument TEXT NOT NULL,body TEXT NOT NULL,sha256 TEXT NOT NULL)")
+            db.execute("BEGIN IMMEDIATE")
+            stored = _margin_read(db, instrument)
+        else:
+            stored = None
+        original = (stored or {}).get("rows", [])
+        seed = original if stored else (previous or {}).get("rows", [])
+        rows = _margin_merge_rows(seed, candidate["rows"])
+        result = {**deepcopy(candidate), "rows": rows,
+                  "historyStatus": "LOCAL_DURABLE" if path else "PROCESS_CACHE_ONLY"}
+        if db:
+            if raw is not None:
+                raw_hash = hashlib.sha256(raw).hexdigest()
+                if len(raw) > 2 * 1024 * 1024 or any(row["sourceResponseSha256"] != raw_hash for row in candidate["rows"]):
+                    raise ValueError("margin_raw_receipt_mismatch")
+                raw_id = hashlib.sha256((JQUANTS_MARGIN_SOURCE + ':' + raw_hash).encode()).hexdigest()
+                db.execute("INSERT OR IGNORE INTO raw_sources VALUES(?,?,?,?,?)", (raw_id, JQUANTS_MARGIN_SOURCE, raw_hash, candidate["observedAt"], raw))
+            for row in rows[len(original):]:
+                body = _margin_json(row)
+                db.execute("INSERT INTO margin_input_history(instrument,body,sha256) VALUES(?,?,?)",
+                           (instrument, body, hashlib.sha256(body.encode()).hexdigest()))
+            document = {k: v for k, v in result.items() if k != "rows"}
+            document["rowCount"] = len(rows)
+            envelope = {"document": document, "sha256": hashlib.sha256(_margin_json(document).encode()).hexdigest()}
+            db.execute("INSERT OR REPLACE INTO metadata VALUES(?,?)", ("margin_snapshot:" + instrument, _margin_json(envelope)))
+            db.commit()
+        return result
+    finally:
+        if db:
+            db.close()

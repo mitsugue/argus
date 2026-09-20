@@ -17923,7 +17923,10 @@ def _market_brief_refresh(allow_ai=True):
     previous = _MARKET_BRIEF.get("lastSuccessful") or {}
     internals = _jp_market_internals_cached() if allow_ai else None
     input_digest = _market_brief_generation_input_digest(brief, internals) if allow_ai else None
-    if (allow_ai and input_digest and input_digest == _MARKET_BRIEF.get("generationInputDigest")
+    comparison_completed = allow_ai and argus_index_research_cache.comparison_availability_improved(
+        _INDEX_RESEARCH_REPORTS, previous.get("calculationSnapshots"),
+        method=_INDEX_RESEARCH_METHOD, now=_ai_now_iso())
+    if (allow_ai and not comparison_completed and input_digest and input_digest == _MARKET_BRIEF.get("generationInputDigest")
             and previous.get("unifiedStatus") == "GENERATED"
             and previous.get("presentationStatus") == "GENERATED"
             and previous.get("unifiedSummary")):
@@ -17937,7 +17940,7 @@ def _market_brief_refresh(allow_ai=True):
     # never combine its prose with newer calculations. Material news, shock,
     # event, posture, news-direction or fiscal-warning changes bypass this
     # coalescing immediately. Owner questions use their independent lane.
-    if (allow_ai and input_digest and previous.get("unifiedStatus") == "GENERATED"
+    if (allow_ai and not comparison_completed and input_digest and previous.get("unifiedStatus") == "GENERATED"
             and previous.get("presentationStatus") == "GENERATED"
             and previous.get("unifiedSummary")
             and _market_brief_urgent_signature(brief) ==
@@ -38972,7 +38975,7 @@ def _jp_market_margin_1570_dynamics(*, cutoff=None):
                    "paginationRemaining": snapshot.get("paginationRemaining", False),
                    "rejectedRows": snapshot.get("rejectedRows", []),
                    "sourceRows": snapshot.get("rows", []),
-                   "historyStatus": "PROCESS_CACHE_ONLY"})
+                   "historyStatus": snapshot.get("historyStatus", "PROCESS_CACHE_ONLY")})
     return result
 
 
@@ -44504,6 +44507,13 @@ def _jq_weekly_margin(code):
         return c["data"]
     data = None
     source_snapshot = (c or {}).get("sourceSnapshot")
+    margin_path = (os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3")
+                   if str(code) == "1570" and _cost_policy_durable_enabled() else None)
+    if not source_snapshot and margin_path:
+        try:
+            source_snapshot = jp_market_source_adapters.restore_margin_snapshot(margin_path)
+        except Exception as exc:
+            add_log(f"[scout] margin restore failed: {type(exc).__name__}")
     source_status = "KEY_NOT_CONFIGURED" if not _JQUANTS_API_KEY else "FETCH_FAILED"
     attempted_at = _ai_now_iso()
     if _JQUANTS_API_KEY:
@@ -44522,7 +44532,8 @@ def _jq_weekly_margin(code):
                         payload, instrument_id="1570", observed_at=_ai_now_iso(),
                         response_sha256=hashlib.sha256(r.content).hexdigest(), volume_unit="UNITS")
                     if candidate["rows"]:
-                        source_snapshot = candidate
+                        source_snapshot = jp_market_source_adapters.retain_margin_snapshot(
+                            candidate, previous=source_snapshot, path=margin_path, raw=r.content)
                         source_status = candidate["status"]
                     else:
                         source_status = "INVALID_OR_EMPTY_RESPONSE"
