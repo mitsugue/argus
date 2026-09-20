@@ -29154,9 +29154,35 @@ def _proven_local_checkpoint_corruption(exc, path):
 def _serialized_restore(function):
     @wraps(function)
     def restore(*args, **kwargs):
+        global _RESTORE_ALLOCATOR_RECLAIM_PENDING_BYTES
         with _OSINT_RESTORE_LOCK:
-            return function(*args, **kwargs)
+            result = function(*args, **kwargs)
+            source_bytes = int(
+                _RESTORE_ALLOCATOR_RECLAIM_PENDING_BYTES or 0)
+            _RESTORE_ALLOCATOR_RECLAIM_PENDING_BYTES = 0
+            if source_bytes > 0:
+                # The wrapped restore has returned, so its generation-sized
+                # parsed checkpoint and normalization temporaries no longer
+                # have Python owners.  Reclaim only those now-unused allocator
+                # arenas; the authoritative runtime state and every durable
+                # checkpoint/recovery file remain intact.
+                _DURABLE_STATE["restoreAllocatorReclaim"] = \
+                    argus_checkpoint_v2._release_unused_allocator_memory(
+                        source_bytes)
+            return result
     return restore
+
+
+_RESTORE_ALLOCATOR_RECLAIM_PENDING_BYTES = 0
+
+
+def _restore_checkpoint_source_bytes(path):
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        # Size is telemetry/reclaim scope only; losing that observation must
+        # never turn a verified checkpoint into a failed restore.
+        return 0
 
 
 @_serialized_restore
@@ -29180,11 +29206,14 @@ def _osint_restore_once():
     restore_token = object()
     local_validity = "NOT_EVALUATED"
     restore_stage = "LOCAL_CHECKPOINT_LOAD"
+    restore_source_bytes = 0
     try:
         if _DURABILITY_PRODUCTION:
             blob = argus_persistent_storage.load_checkpoint(
                 _OSINT_PERSIST_FILE, require_seal=True,
                 allow_legacy_file_seal=True)
+            restore_source_bytes = _restore_checkpoint_source_bytes(
+                _OSINT_PERSIST_FILE)
             local_validity = "VALID"
             restore_stage = "REMOTE_NONCE_BOOT"
             nonce_keys = argus_remote_recovery.configured_keys()
@@ -29297,6 +29326,8 @@ def _osint_restore_once():
         else:
             with open(_OSINT_PERSIST_FILE, encoding="utf-8") as handle:
                 blob = json.load(handle)
+            restore_source_bytes = _restore_checkpoint_source_bytes(
+                _OSINT_PERSIST_FILE)
             source = "tmp"
     except FileNotFoundError as exc:
         if local_validity == "VALID":
@@ -29429,6 +29460,7 @@ def _osint_restore_once():
                             if received > _DURABLE_RESTORE_MAX_BYTES:
                                 raise ValueError("durable_snapshot_too_large")
                             tmp.write(chunk)
+                    restore_source_bytes = received
                     with open(restore_path, encoding="utf-8") as f:
                         blob = json.load(f)
                     if _DURABILITY_PRODUCTION:
@@ -29473,6 +29505,8 @@ def _osint_restore_once():
                                 if remote_nonce_floor_handoff else None))
                         blob = argus_persistent_storage.load_checkpoint(
                             _OSINT_PERSIST_FILE, require_seal=True)
+                        restore_source_bytes = _restore_checkpoint_source_bytes(
+                            _OSINT_PERSIST_FILE)
                         if isinstance(
                                 blob.get("remoteRecoveryRequired"), dict):
                             blob = _verify_local_recovery_sidecar(
@@ -29943,6 +29977,10 @@ def _osint_restore_once():
         _DURABLE_STATE["lastRestoreAt"] = _ai_now_iso()
         _DURABLE_STATE["restoreSource"] = source
         _OSINT_PERSIST_STATE["restored"] = True
+        # The decorator performs the reclaim only after this frame (and all
+        # large restore-local references) has been released.
+        global _RESTORE_ALLOCATOR_RECLAIM_PENDING_BYTES
+        _RESTORE_ALLOCATOR_RECLAIM_PENDING_BYTES = restore_source_bytes
         return source
     except Exception as exc:
         if isinstance(_wal_floor_change, dict) and \
