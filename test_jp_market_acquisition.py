@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -86,6 +87,24 @@ def test_corrupt_normalized_data_detected_from_raw(tmp_path):
     db.execute("UPDATE observations SET body=replace(body,'-0.1','1.0')")
     db.commit()
     with pytest.raises(ValueError, match='normalized_integrity'): m.verify_raw(db)
+
+
+def test_raw_verifier_accepts_integrity_checked_record_owned_by_shared_adapter(tmp_path):
+    db = m.connect(tmp_path/'source.sqlite3')
+    m.ingest(db, mof(), url=m.MOF_CURRENT, received_at=AT)
+    url = 'https://api.jquants.com/v2/markets/margin-interest'
+    raw = b'{"data":[]}'
+    digest = hashlib.sha256(raw).hexdigest()
+    raw_id = hashlib.sha256((url + ':' + digest).encode()).hexdigest()
+    db.execute('INSERT INTO raw_sources VALUES(?,?,?,?,?)',
+               (raw_id, url, digest, AT, raw))
+    db.commit()
+
+    m.verify_raw(db)
+    db.execute('UPDATE raw_sources SET sha256=? WHERE id=?', ('0' * 64, raw_id))
+    db.commit()
+    with pytest.raises(ValueError, match='source_raw_integrity'):
+        m.verify_raw(db)
 
 
 class Response:
