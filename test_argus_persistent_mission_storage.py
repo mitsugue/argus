@@ -507,6 +507,35 @@ class BootstrapAndReadinessTests(unittest.TestCase):
             self.assertEqual(source, "persistent_local")
             request_get.assert_not_called()
 
+    def test_successful_restore_reclaims_only_consumed_checkpoint_arenas(self):
+        with tempfile.TemporaryDirectory() as root, scanner_storage(root) as value:
+            storage.write_checkpoint(
+                value["checkpoint"], remote_snapshot(),
+                temp_directory=value["tempDirectory"])
+            source_bytes = pathlib.Path(value["checkpoint"]).stat().st_size
+            report = {
+                "attempted": True,
+                "supported": True,
+                "sourceBytes": source_bytes,
+                "rssBeforeBytes": 100,
+                "rssAfterBytes": 60,
+                "rssReleasedBytes": 40,
+                "reportedReleasedBytes": None,
+            }
+            with mock.patch.object(scanner.requests, "get") as request_get, \
+                    mock.patch.object(
+                        scanner.argus_checkpoint_v2,
+                        "_release_unused_allocator_memory",
+                        return_value=report) as reclaim:
+                source = scanner._osint_restore_once()
+            self.assertEqual(source, "persistent_local")
+            reclaim.assert_called_once_with(source_bytes)
+            self.assertEqual(
+                scanner._DURABLE_STATE["restoreAllocatorReclaim"], report)
+            self.assertEqual(
+                scanner._RESTORE_ALLOCATOR_RECLAIM_PENDING_BYTES, 0)
+            request_get.assert_not_called()
+
     def test_legacy_checkpoint_with_matching_file_seal_is_restored_once(self):
         with tempfile.TemporaryDirectory() as root, scanner_storage(root) as value:
             checkpoint = pathlib.Path(value["checkpoint"])
