@@ -85,7 +85,7 @@ RECOVERY_PAYLOAD_PATHS = (
     "test_remote_recovery_restore.py",
 )
 EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256 = (
-    "e0622ec0aa08ecb154737b02bba71d8c77b31cc529fb2f415314e8b482f9e5b7"
+    "99c99770ae488386aa02805e4c35298e53f68992a5709ef8f02f0504351d8744"
 )
 
 # This owner-authorized staged analysis delivery pins BOTH implementation diffs. A paired
