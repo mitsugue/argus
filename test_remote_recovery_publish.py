@@ -2432,6 +2432,8 @@ def test_market_brief_generation_completes_while_remote_history_is_slow(monkeypa
 
 
 def _reuse_inputs(monkeypatch):
+    # Each reuse scenario owns its cache; another test warming charts is not an input change.
+    monkeypatch.setattr(scanner, "_INDEX_RESEARCH_REPORTS", {})
     monkeypatch.setattr(scanner, '_backend_exact_sha', lambda: 'a' * 40)
     monkeypatch.setattr(scanner, '_owner_overview_generation_policy', lambda: {'model': 'test-primary', 'ruleVersion': 'a' * 40})
     monkeypatch.setattr(scanner, '_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE', {'^N225': {
