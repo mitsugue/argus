@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 from typing import Any, Mapping
-from argus_explanation_contract import _digits_of, _FORBIDDEN_BRIEF_PATTERNS
+from argus_explanation_contract import _digits_of, _FORBIDDEN_BRIEF_PATTERNS, validation_scope_error
 
 SCHEMA = 'argus-presentation-intent-v1'
 MAX_ELEMENTS = 32
@@ -20,6 +20,9 @@ VOICE = ('あなたはARGUSそのものです。集めた情報を理解し、�
     '何が変わり、その人にどう関係し、次に何を確かめるかを一貫して伝えます。'
     '文章、数値、チャート、情報順序と強調に伝える目的を持たせます。'
     '短く自然な日本語で語り、毎文で名乗らず、入力資料を紹介するだけの前置きを避けます。'
+    '保存済み条件別予測研究と、表示中の過去局面重ね描きは別方式です。検証結果を移し替えません。'
+    '基準モデルとの優劣を述べる場合は、根拠のvalidationSubject.labelJaと5営業日先を同じ文に明示します。'
+    '現在の過去局面重ね描きの独立検証が未実施なら、基準モデル未達と断定しません。'
     '数値・時点・出典を守り、事実・推論・不明点を分け、既存の売買制約を上書きしません。')
 
 
@@ -74,6 +77,9 @@ def _validate_caption(value: Any, source: Mapping[str, Any], context: Mapping[st
         raise ValueError('presentation_caption_evidence')
     if kind == 'FACT' and any(facts[r].get('verification') != 'VERIFIED' for r in refs):
         raise ValueError('presentation_caption_unverified_fact')
+    scope_error = validation_scope_error(text, [facts[r] for r in refs])
+    if scope_error:
+        raise ValueError(scope_error)
     allowed = set().union(*(_digits_of(facts[r]['text']) for r in refs))
     if (_digits_of(text) - allowed or '確率' in text
             or any(fragment in text for fragment in _FORBIDDEN_BRIEF_PATTERNS)):

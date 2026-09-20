@@ -117,12 +117,16 @@ def explanation_facts(result):
         validation = ('基準モデル未達' if status == 'poor_calibration' else
                       '標本不足' if status in {'insufficient_sample', 'insufficient_history'} else
                       '独立期間の予測力受入は未完了')
-        text = (f"{package['labelJa']}の保存済み研究: "
+        subject = {'labelJa': f"保存済み条件別予測研究（{package['labelJa']}）",
+            'methodVersion': package['methodVersion'], 'instrumentId': package['instrumentId'],
+            'horizonSessions': 5, 'calibrationStatus': status}
+        text = (f"{subject['labelJa']}: "
             f"{calculation.get('historyStart')}〜{calculation.get('historyEnd')}、"
             f"{calculation.get('historyCount')}営業日。5営業日先の有効標本"
-            f"{row.get('effectiveSampleCount', 0)}件。{validation}。売買根拠への自動昇格なし。")
+            f"{row.get('effectiveSampleCount', 0)}件。{validation}。売買根拠への自動昇格なし。"
+            "この検証は別方式の過去局面重ね描きや、その参考経路の検証結果ではありません。")
         facts.append({'text': text, 'source': 'jp_market_research', 'priority': 'P2',
-            'verification': 'UNCONFIRMED', 'provenance': {
+            'verification': 'UNCONFIRMED', 'validationSubject': subject, 'provenance': {
                 'scope': 'published_metadata_snapshot', 'eventId': package['packageId'] + '-horizon-5',
                 'revision': None, 'publishedAt': None, 'receivedAt': None,
                 'observedAt': calculation.get('historyEnd'), 'url': None,
@@ -139,7 +143,9 @@ def context_references(result):
         refs.append({k: deepcopy(package[k]) for k in (
             'packageId', 'packageVersion', 'instrumentId', 'labelJa', 'methodVersion',
             'actionAuthority', 'predictiveProbabilityValidated', 'validationScope')})
-        refs[-1].update({'coverage': {k: c.get(k) for k in ('historyStart', 'historyEnd', 'historyCount')},
+        refs[-1].update({'appliesTo': 'stored_conditional_forecast',
+            'doesNotValidate': ['current_analog_selection', 'historical_reference_paths'],
+            'coverage': {k: c.get(k) for k in ('historyStart', 'historyEnd', 'historyCount')},
             'conditioning': deepcopy(c.get('marketConditioning')),
             'horizons': {h: {k: deepcopy(v.get(k)) for k in (
                 'horizon', 'effectiveSampleCount', 'calibrationStatus', 'modelBrier',

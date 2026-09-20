@@ -17800,7 +17800,8 @@ def _market_brief_ai_polish(brief):
     attempts = [{"provider": copy.deepcopy(diag), "validation": copy.deepcopy(validation)}]
     if raw and validation.get("reason") in {
             "unsupported_numeric_tokens", "fact_requires_verified_references",
-            "unknown_evidence_reference", "evidence_reference_required", "presentation_invalid"}:
+            "unknown_evidence_reference", "evidence_reference_required", "presentation_invalid",
+            "validation_method_scope_mismatch"}:
         # One bounded correction, still subject to every original constraint.
         # Provider usage from both calls remains in the existing cost ledger.
         correction = (user + "\n前の回答は検証で却下されました。理由: "
