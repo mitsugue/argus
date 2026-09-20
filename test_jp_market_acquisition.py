@@ -49,7 +49,35 @@ def test_vintages_restart_idempotence_and_original_retained(tmp_path):
     assert row['supersedesRawId'] == first['rawId']
     assert row['knownAt'] == LATER and row['publishedAt'] is None
     assert not row['historicalVintageVerified']
+    history = m.history_rows(db, 'jp_yield_curve')
+    assert [item['revision'] for item in history] == [0, 1]
+    features = m.feature_rows(history, 'jp_yield_curve')
+    assert [item['value'] for item in features] == [-.1, .2]
+    assert [item['knownAt'] for item in features] == [AT, LATER]
     assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_source_cache_keeps_revision_as_an_appended_feature_input(tmp_path):
+    path = tmp_path/'source.sqlite3'; current = {'rate': '-0.1'}
+    def get(url, **kwargs):
+        raw = vix() if url == m.VIX_HISTORY else mof(current['rate'])
+        return Response(raw)
+    first = m.SourceCache(); first.warm(path, get=get, now=lambda: AT)
+    original = list(first.rows['jp_yield_curve'])
+    current['rate'] = '.2'
+    revised = m.SourceCache(); revised.warm(path, get=get, now=lambda: LATER)
+    assert revised.rows['jp_yield_curve'][:len(original)] == original
+    assert revised.rows['jp_yield_curve'][-1]['revision'] == 1
+    assert revised.rows['jp_yield_curve'][-1]['knownAt'] == LATER
+    before = features.build_feature_history(
+        cutoffs=[AT], price_series={'jp10y': original})
+    before['status'] = 'AVAILABLE'
+    after = features.build_feature_history(
+        cutoffs=[AT, LATER], previous_history=before,
+        price_series={'jp10y': revised.rows['jp_yield_curve']})
+    assert after['calculationWork'] == {'reusedCutoffs': 1, 'evaluatedCutoffs': 1}
+    assert after['reuseDecision'] == {
+        'reason': 'unchanged_source_prefix', 'source': None}
 
 
 def test_corrupt_normalized_data_detected_from_raw(tmp_path):

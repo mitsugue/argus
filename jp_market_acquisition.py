@@ -169,6 +169,16 @@ def latest_rows(db, source_id):
     return [json.loads(value[0]) for value in values]
 
 
+def history_rows(db, source_id):
+    """Return the append-only observation stream used by PIT calculations."""
+    values = db.execute(
+        'SELECT body FROM observations WHERE source_id=? ORDER BY seq',
+        (source_id,)).fetchall()
+    if len(values) > 3000:
+        raise ValueError('source_feature_history_maintenance_required')
+    return [json.loads(value[0]) for value in values]
+
+
 def verify_raw(db):
     for raw_id, url, digest, received_at, raw in db.execute('SELECT * FROM raw_sources'):
         if (url not in SOURCES or len(raw) > MAX_BYTES or hashlib.sha256(raw).hexdigest() != digest
@@ -191,7 +201,9 @@ def verify_raw(db):
 
 def feature_rows(rows, source_id):
     result = []
-    for item in rows[-3000:]:
+    if len(rows) > 3000:
+        raise ValueError('source_feature_history_maintenance_required')
+    for item in rows:
         value = item['values'].get('close' if source_id == 'vix_ohlc' else '10')
         if value is None:
             continue
@@ -260,7 +272,8 @@ class SourceCache:
                 except Exception as exc:
                     errors[url] = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
             groups = {key: latest_rows(db, key) for key in sorted(set(SOURCES.values()))}
-            self.rows = {key: feature_rows(rows, key) for key, rows in groups.items()}
+            histories = {key: history_rows(db, key) for key in groups}
+            self.rows = {key: feature_rows(histories[key], key) for key in groups}
             coverage = {key: {'observations': len(rows), 'firstDate': rows[0]['date'] if rows else None,
                              'lastDate': rows[-1]['date'] if rows else None,
                              'nativeFrequency': 'DAILY', 'originalVintageVerified': False,

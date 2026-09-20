@@ -25,7 +25,8 @@ def history_method_identity() -> str:
     """Bind restored calculations to all four numerical implementations."""
     root = Path(__file__).resolve().parent
     files = ("jp_market_features.py", "jp_market_engine.py",
-             "jp_market_dynamics.py", "jp_market_analogs.py")
+             "jp_market_dynamics.py", "jp_market_analogs.py",
+             "jp_market_acquisition.py")
     material = {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
                 for name in files}
     return _history_digest(material)

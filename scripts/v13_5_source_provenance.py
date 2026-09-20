@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.36"
+PRODUCT_VERSION = "v13.7.37"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -41,8 +41,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'ops/imports/acquisition_20260920/provenance.json': 'd720c7898b1fcfb23eae4959c1fb8403d574e665',
     'docs/V13_7_ACQUISITION_PACK_ACCEPTANCE.md': '6857081ce69e53bca54d900562800b54e4384897',
     'scripts/import_index_valuation.py': 'bd9278e7a166855aff8777cb41aa1628bcd07420',
-    'test_jp_market_acquisition.py': '31402a4eb1ed75c8e24a63ff14c82ad739288c42',
-    'jp_market_acquisition.py': 'f3b96732a3f365f8f251695a492b8ee05bddfe36',
+    'test_jp_market_acquisition.py': '430f0ebba56ac9e33615ef8e7c5960ddce3109b3',
+    'jp_market_acquisition.py': 'eb894238bdb6ae77365d58c356fe40e032a913ae',
     'ops/imports/README.md': '0c3a8010eebfa90f6c20be3d46e0d59fd3039404',
     'web/src/components/today/SectorHeatmap.css': '0bdc3b1e84dcbc03f447ac34fa1754b4d8941f8b',
     'web/src/components/today/SectorHeatmap.tsx': 'b621436144d448055255243e2304c1287fced869',
@@ -230,7 +230,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'jp_market_analogs.py': 'a4783914d10baae18ff0a473e4624da293c4bd27',
     'jp_market_dynamics.py': '6949bb8b2cc4a1526f09016fb0c0e10369ce488d',
     'jp_market_events.py': '08adce36b4bc2dfdb7ade550ba15b8937e8e16a0',
-    'jp_market_features.py': '68733fb374cf60b4f35072d5de018e43b9dcaff4',
+    'jp_market_features.py': 'f1099ffc61fd96816c41ac3228de09186d72779c',
     'jp_market_price_paths.py': '3f27f4c238490f7dd1c2423ca3aa439b4c15af49',
     'jp_market_source_adapters.py': 'a89b745791fe493522388766ef88611ebcbc6aeb',
     'ops/calendar/jp_index_sq_2026.json': 'd55cbf1e1362d4d86b21fe413cc2de35b035bd62',
