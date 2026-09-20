@@ -155,3 +155,22 @@ def test_failed_margin_fetch_is_not_a_new_confirmed_ai_fact(feed):
     raw = next(r for r in result["facts"] if r["source"] == "licensed_market_data")
     assert raw["verification"] == "UNCONFIRMED"
     assert "更新失敗・前回取得" in raw["text"]
+
+
+def test_runtime_restart_and_failed_fetch_restore_durable_original_receipts(feed, monkeypatch, tmp_path):
+    monkeypatch.setattr(scanner, '_cost_policy_durable_enabled', lambda: True)
+    monkeypatch.setattr(scanner, '_DURABILITY_PATHS', {'root': str(tmp_path)})
+    scanner._jq_weekly_margin('1570')
+    original = copy.deepcopy(scanner._JQ_MARGIN_CACHE['1570']['sourceSnapshot']['rows'])
+    monkeypatch.setattr(scanner, '_ai_now_iso', lambda: '2026-09-13T03:00:00Z')
+    scanner._JQ_MARGIN_CACHE.clear()
+    scanner._jq_weekly_margin('1570')
+    assert scanner._JQ_MARGIN_CACHE['1570']['sourceSnapshot']['rows'] == original
+    assert scanner._jp_market_margin_1570_dynamics()['historyStatus'] == 'LOCAL_DURABLE'
+    scanner._JQ_MARGIN_CACHE.clear()
+    feed[0].status_code = 503
+    scanner._jq_weekly_margin('1570')
+    result = scanner._jp_market_margin_1570_dynamics()
+    assert result['sourceRows'] == original
+    assert result['acquisitionStatus'] == 'HTTP_503'
+    assert len(feed[1]) == 3
