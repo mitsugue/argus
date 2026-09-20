@@ -260,10 +260,6 @@ def _warm_index_charts(host: Any, warm: Dict[str, Any], sleeper: Callable[[float
                 break
             sleeper(1.0)
     warm["indexCharts"] = result
-    feature_refresh = getattr(host, "_jp_market_feature_history_warm", None)
-    if callable(feature_refresh):
-        feature_refresh()
-        warm["marketFeatures"] = dict(getattr(host, "_JP_MARKET_FEATURE_HISTORY", {})).get("status")
 
 
 def _drain_translations(host: Any, warm: Dict[str, Any], environ: Dict[str, str]) -> None:
@@ -357,6 +353,7 @@ def _warm_cycle(host: Any, *, sleeper: Callable[[float], None], now: Callable[[]
             inputs = host._jp_market_engine_pit_inputs(warm=True) or {}
             warm["jpMarketEngineWarmedAt"] = stamp
             warm["jpMarketEngineSourceStatus"] = dict(inputs.get("sourceStatus") or {})
+            warm["marketFeatures"] = dict(getattr(host, "_JP_MARKET_FEATURE_HISTORY", {})).get("status")
         except Exception as exc:
             warm["errorClass"] = f"jp_market_engine_warm:{type(exc).__name__}"
     statements = getattr(host, "_JP_MARKET_ENGINE_STATEMENTS_CACHE", None)
@@ -566,11 +563,15 @@ def _warm_loop(host: Any, *, sleeper: Callable[[float], None], now: Callable[[],
     try:
         while True:
             force = last_jp_market_engine is None or now() - last_jp_market_engine >= JP_MARKET_ENGINE_WARM_SECONDS
+            if force:
+                # Collect the shared index inputs before the engine freezes its
+                # feature history. A late S&P 500 load otherwise causes a second
+                # full replay and leaves the first comparison cache incomplete.
+                _warm_index_charts(host, warm, sleeper)
             _warm_cycle(host, sleeper=sleeper, now=now, force_jp_market_engine=force)
             warm["chartRefresh"] = _refresh_warm_charts(host, clock=now)
             if force:
                 last_jp_market_engine = now()
-                _warm_index_charts(host, warm, sleeper)
             if last_translate is None or now() - last_translate >= TRANSLATE_SECONDS:
                 _drain_translations(host, warm, env)
                 last_translate = now()

@@ -610,3 +610,48 @@ def test_warm_retry_is_bounded_and_does_not_spin_on_permanent_failures(monkeypat
     assert len(attempts) == expected_attempts
     assert attempts[0] == 0.0 and attempts[-1] == 600.0
     assert all(b - a >= 60.0 for a, b in zip(attempts, attempts[1:]))
+
+
+@pytest.mark.parametrize('sp500_fails', [False, True])
+def test_shared_index_inputs_precede_single_feature_replay(monkeypatch, sp500_fails):
+    """Cold startup must not calculate an empty S&P500 prefix then replay it."""
+    from datetime import date, timedelta
+    import jp_market_features as features
+    host = types.SimpleNamespace(_JP_WATCHLIST=[], _JP_MARKET_FEATURE_HISTORY={})
+    source_cache, computed, calls = {}, [], []
+    days = [str(date(2026, 1, 1) + timedelta(days=i)) for i in range(45)]
+    def fetch(symbol, instrument_id, **kwargs):
+        calls.append(symbol)
+        if symbol == '^GSPC' and sp500_fails:
+            raise RuntimeError('provider unavailable')
+        rows = [{'instrumentId': instrument_id, 'date': day, 'field': 'close',
+                 'close': 100 + i, 'availableFrom': day + 'T07:00:00Z'}
+                for i, day in enumerate(days)]
+        source_cache[symbol] = rows
+        return rows
+    host._yahoo_index_ohlcv = fetch
+    def calculate():
+        history = features.build_feature_history(
+            cutoffs=[day + 'T23:59:59Z' for day in days],
+            price_series={'nikkei': source_cache.get('^N225', []),
+                          'sp500': source_cache.get('^GSPC', [])})
+        host._JP_MARKET_FEATURE_HISTORY = dict(history, status='AVAILABLE')
+        computed.append(history)
+    host._jp_market_feature_history_warm = calculate
+    def inputs(warm=False):
+        assert warm
+        # The collection pass was attempted even when an upstream feed failed.
+        assert '^GSPC' in calls
+        calculate()
+        return {'sourceStatus': {'sp500': 'missing' if sp500_fails else 'available'}}
+    host._jp_market_engine_pit_inputs = inputs
+    monkeypatch.setattr(boot, '_refresh_warm_charts', lambda *a, **k: {'status': 'unchanged'})
+    monkeypatch.setattr(boot, '_drain_translations', lambda *a: None)
+    boot._warm_loop(host, sleeper=lambda _: None, now=lambda: 0, max_cycles=1, environ={})
+    assert boot.warm_status()['status'] == 'DONE'
+    assert len(computed) == 1
+    assert calls.count('^GSPC') == 1
+    assert computed[0]['calculationWork']['evaluatedCutoffs'] == 45
+    actual = {row['seriesId']: row for row in computed[0]['latest']['features']}
+    assert ('relative_jp_us.return20' in actual) is (not sp500_fails)
+    assert boot.warm_status()['marketFeatures'] == 'AVAILABLE'
