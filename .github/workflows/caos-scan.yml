@@ -533,5 +533,19 @@ jobs:
           [ "${{ needs.mission-backup.result }}" = "success" ] || exit 1
           [ "${{ needs.caos-collection.result }}" = "success" ] || exit 1
           [ "${{ needs.durability-flush.result }}" = "success" ] || exit 1
-          [ "${{ needs.durability-flush.outputs.durabilityResult }}" = "verified" ] || exit 1
-          echo "overallResult=verified"
+          DURABILITY_RESULT="${{ needs.durability-flush.outputs.durabilityResult }}"
+          case "$DURABILITY_RESULT" in
+            verified)
+              echo "overallResult=verified"
+              ;;
+            expected_skip_encrypted_recovery_owned_by_watchtower)
+              # The keyed recovery publication has one writer.  Once the
+              # backend proves that mode is configured, caos-scan must retire
+              # its legacy writer and leave durability to Watchtower instead
+              # of turning that intentional ownership boundary into a red run.
+              echo "overallResult=verified_collection_durability_owned_by_watchtower"
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
