@@ -29166,7 +29166,6 @@ def _serialized_restore(function):
                 # have Python owners.  Reclaim only those now-unused allocator
                 # arenas; the authoritative runtime state and every durable
                 # checkpoint/recovery file remain intact.
-                gc.collect()
                 _DURABLE_STATE["restoreAllocatorReclaim"] = \
                     argus_checkpoint_v2._release_unused_allocator_memory(
                         source_bytes)
