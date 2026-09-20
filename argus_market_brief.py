@@ -465,6 +465,8 @@ def unified_context(brief: Mapping[str, Any], previous: Optional[Mapping[str, An
             if isinstance(fact.get("provenance"), Mapping):
                 # Composer already selected a bounded public metadata snapshot.
                 material["provenance"] = dict(fact["provenance"])
+            if isinstance(fact.get("validationSubject"), Mapping):
+                material["validationSubject"] = dict(fact["validationSubject"])
             if material["source"] in {"market_view", "policy"} or material["priority"] == "P2":
                 material["verification"] = "UNCONFIRMED"
             identity = hashlib.sha256(json.dumps(material, ensure_ascii=False,

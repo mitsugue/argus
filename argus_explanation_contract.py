@@ -25,6 +25,33 @@ def _digits_of(text: str) -> set:
 UNIFIED_SECTIONS = ("view", "reasons", "changes", "impact", "next", "invalidation")
 
 
+def validation_scope_error(text, facts):
+    """Bound explicit benchmark claims to the cited method, instrument and horizon.
+
+    This catches a known cross-method attribution error, not all semantic errors.
+    It does not change stored calibration results or accept predictive authority.
+    """
+    claim = r"(?:基準モデル|ベースライン|単純トレンド)[^。\n]{0,16}(?:未達|届か|下回|上回|劣|優れ|勝|負)"
+    for sentence in re.split(r"[。\n]", text):
+        if not re.search(claim, sentence):
+            continue
+        matched = False
+        for fact in facts:
+            subject = fact.get('validationSubject') or {}
+            label = subject.get('labelJa')
+            if (fact.get('source') == 'jp_market_research'
+                    and isinstance(label, str) and label and label in sentence
+                    and subject.get('methodVersion') and subject.get('instrumentId')
+                    and subject.get('horizonSessions') == 5 and '5営業日' in sentence
+                    and subject.get('calibrationStatus') == 'poor_calibration'
+                    and re.search(r'(?:基準モデル|ベースライン|単純トレンド)[^。\n]{0,16}(?:未達|届か|下回|劣|負)', sentence)
+                    and not re.search(r'(?:上回|優れ|勝)', sentence)):
+                matched = True
+        if not matched:
+            return 'validation_method_scope_mismatch'
+    return None
+
+
 def validate_unified_ai(value: Any, context: Mapping[str, Any], *, diagnostic=None) -> Optional[Dict[str, Any]]:
     """Reject unsupported numbers, references and claims of observed inference.
 
@@ -74,6 +101,9 @@ def validate_unified_ai(value: Any, context: Mapping[str, Any], *, diagnostic=No
             return rejected("fact_requires_verified_references", key)
         if any(p in text for p in _FORBIDDEN_BRIEF_PATTERNS) or "確率" in text:
             return rejected("unsupported_authority_or_probability", key)
+        scope_error = validation_scope_error(text, [allowed[ref] for ref in refs])
+        if scope_error:
+            return rejected(scope_error, key)
         allowed_digits = set().union(*(_digits_of(allowed[ref]["text"]) for ref in refs)) if refs else set()
         unsupported = _digits_of(text) - allowed_digits
         if unsupported:

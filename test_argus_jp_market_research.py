@@ -119,3 +119,72 @@ def test_same_research_version_survives_existing_history_and_private_context(sna
     assert not any(f['source'] == 'jp_market_research' for f in context['facts'])
     assert context['researchPackages'][0]['packageVersion'] == lookup['packages'][0]['packageVersion']
     assert context['actionAuthority'] is False
+
+
+def test_validation_scope_survives_fact_hash_and_keeps_original_package(snapshot):
+    original = copy.deepcopy(snapshot)
+    result = research.lookup({'snapshots': [snapshot]}, cutoff='2026-09-15T11:00:00Z')
+    before = copy.deepcopy(result)
+    facts = research.explanation_facts(result)
+    context = composer.unified_context({'facts': facts, 'numericalResearch': result})
+    subject = context['facts'][0]['validationSubject']
+    assert subject['methodVersion'] == engine.METHOD_VERSION
+    assert subject['instrumentId'] == 'JP:N225:INDEX'
+    assert subject['horizonSessions'] == 5
+    assert context['researchPackages'][0]['doesNotValidate'] == [
+        'current_analog_selection', 'historical_reference_paths']
+    assert result == before and snapshot == original
+    changed = copy.deepcopy(facts)
+    changed[0]['validationSubject']['instrumentId'] = 'JP:1321:ETF'
+    assert composer.unified_context({'facts': changed})['facts'][0]['evidenceId'] != context['facts'][0]['evidenceId']
+
+
+def _poor_research_context():
+    package = {'labelJa': '日経平均', 'methodVersion': engine.METHOD_VERSION,
+        'instrumentId': 'JP:N225:INDEX', 'packageId': 'example', 'packageVersion': 'a' * 64,
+        'calculation': {'historyStart': '2024-09-18', 'historyEnd': '2026-09-18',
+            'historyCount': 490, 'horizons': {'5': {'calibrationStatus': 'poor_calibration',
+                'effectiveSampleCount': 40}}}}
+    return composer.unified_context({'facts': research.explanation_facts({'packages': [package]})})
+
+
+@pytest.mark.parametrize('text,accepted', [
+    ('短期の類似相場分析は基準モデルに届かず、反発の持続を判断する根拠としては不十分です。', False),
+    ('日経平均の過去局面重ね描きは基準モデル未達です。', False),
+    ('保存済み条件別予測研究（日経平均）の5営業日先は基準モデル未達です。', True),
+    ('保存済み条件別予測研究（日経平均）の5営業日先は基準モデルを上回ります。', False),
+    ('保存済み条件別予測研究（日経平均連動ETF（1321））の5営業日先は基準モデル未達です。', False),
+    ('現在の過去局面重ね描きは、単純トレンドに対する独立期間の追加効果が未検証です。', True),
+])
+def test_unified_prose_cannot_transfer_validation_between_methods(text, accepted):
+    context = _poor_research_context()
+    ref = context['facts'][0]['evidenceId']
+    answer = {key: {'textJa': '取得済みの根拠を確認します。', 'evidenceIds': [ref], 'kind': 'INFERENCE'}
+        for key in composer.UNIFIED_SECTIONS}
+    for key in ('impact', 'changes'):
+        answer[key] = {'textJa': '未確認です。', 'evidenceIds': [], 'kind': 'UNKNOWN'}
+    answer['reasons']['textJa'] = text
+    diagnostic = {}
+    result = composer.validate_unified_ai(answer, context, diagnostic=diagnostic)
+    assert bool(result) is accepted
+    if '1321' not in text and not accepted:
+        assert diagnostic['reason'] == 'validation_method_scope_mismatch'
+
+
+def test_editorial_caption_has_same_validation_boundary():
+    import argus_presentation_intent as presentation
+    context = _poor_research_context()
+    facts = context['facts']; ref = facts[0]['evidenceId']
+    catalog = presentation.inventory(context_id=context['contextId'], surface='today',
+        subject='N225', horizon=5, elements=[{'id': 'evidence-research', 'kind': 'status',
+            'payloadId': presentation._digest(facts), 'evidenceIds': [ref],
+            'mandatory': True, 'urgent': False}])
+    caption = {'textJa': '短期の類似相場分析は基準モデルに届かず、根拠として不十分です。',
+        'evidenceIds': [ref], 'kind': 'INFERENCE'}
+    plan = {'inventoryId': catalog['inventoryId'], 'intentJa': '検証範囲を伝える',
+        'elements': [{'id': 'evidence-research', 'purposeJa': '検証範囲を示す',
+            'placement': 'lead', 'emphasis': 'primary', 'caption': caption}]}
+    with pytest.raises(ValueError, match='validation_method_scope_mismatch'):
+        presentation.validate_plan(plan, catalog, context)
+    caption['textJa'] = '保存済み条件別予測研究（日経平均）の5営業日先は基準モデル未達です。'
+    assert presentation.validate_plan(plan, catalog, context)['actionAuthority'] is False
