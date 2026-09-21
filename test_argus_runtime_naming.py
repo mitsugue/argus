@@ -125,7 +125,9 @@ def test_research_rejects_response_without_fallback_and_keeps_usage(monkeypatch)
     assert result["failureReasonRedacted"] == "naming_content_rejected:N001"
     assert result["usage"]["inputTokens"] == 120
     assert result["usage"]["outputTokens"] == 30
-    assert len(billed) == len(policy_rows) == 1
+    # The reservation is settled by the shared lane; writing a second policy
+    # row here would double-count the same provider receipt.
+    assert len(billed) == 1 and not policy_rows
     assert billed[0][0][1:3] == (120, 30)
     assert billed[0][0][3] == result["estimatedCost"]
     assert len(calls) == 1
@@ -139,12 +141,11 @@ def test_gemini_rejects_new_content_before_cache_admission_and_counts_spend(monk
     import scanner
     monkeypatch.setenv("PRODUCT_NAMING_POLICY", json.dumps(POLICY))
     monkeypatch.setattr(scanner, "GEMINI_API_KEY", "synthetic")
-    monkeypatch.setattr(scanner, "_cost_policy_authorize", lambda *a, **k: {"allowed": True})
-    charges, calls = [], []
-    monkeypatch.setattr(scanner, "_cost_policy_record", lambda *a, **k: charges.append(k))
-    monkeypatch.setattr(scanner, "_cost_policy_reserve", lambda *a, **k: ({"allowed": True}, "synthetic"))
-    monkeypatch.setattr(scanner, "_cost_policy_settle", lambda rid, **k:
-                        charges.append({"estimated_cost_usd": k["actual_cost_usd"]}) if k["ok"] else None)
+    settlements, calls = [], []
+    monkeypatch.setattr(scanner, "_cost_policy_reserve",
+                        lambda *a, **k: ({"allowed": True}, "naming-rsv"))
+    monkeypatch.setattr(scanner, "_cost_policy_settle",
+                        lambda *a, **k: settlements.append((a, k)))
     text = json.dumps({"claims": [], "summary": "retired_person"} if lane == "research"
                       else {"translations": ["retired_person"]})
     def respond(**kw):
@@ -157,15 +158,16 @@ def test_gemini_rejects_new_content_before_cache_admission_and_counts_spend(monk
     monkeypatch.setitem(sys.modules, "google.genai", fake)
     if lane == "research":
         diagnostic = {}
-        assert scanner._gemini_osint("observations", diagnostic_context=diagnostic) == (None, "rejected")
+        assert scanner._gemini_osint("observations", benchmark=True,
+                                     diagnostic_context=diagnostic) == (None, "rejected")
         assert diagnostic["errorClass"] == "naming_content_rejected:N001"
         assert "retired_person" not in json.dumps(diagnostic).lower()
         assert scanner._gemini_osint("retired_person")[0] is None
     else:
         assert scanner._translate_headlines_ja(["observations"]) == {}
         assert scanner._translate_headlines_ja(["retired_person"]) == {}
-    assert len(calls) == 1 and len(charges) == 1
-    assert charges[0]["estimated_cost_usd"] > 0
+    assert len(calls) == 1 and len(settlements) == 1
+    assert settlements[0][1]["actual_cost_usd"] > 0
 
 
 @pytest.mark.parametrize("provider", ["openai", "gemini"])
@@ -175,6 +177,8 @@ def test_rejected_judge_content_cannot_influence_labels_but_retains_billed_token
     monkeypatch.setattr(scanner, "_OPENAI_API_KEY", "synthetic")
     monkeypatch.setattr(scanner, "GEMINI_API_KEY", "synthetic")
     monkeypatch.setattr(scanner, "_cost_policy_authorize", lambda *a, **k: {"allowed": True})
+    monkeypatch.setattr(scanner, "_cost_policy_reserve", lambda *a, **k: ({"allowed": True}, "judge-rsv"))
+    monkeypatch.setattr(scanner, "_cost_policy_settle", lambda *a, **k: None)
     monkeypatch.setattr(scanner, "_AI_LAST_RUN", copy.deepcopy(scanner._AI_LAST_RUN))
     monkeypatch.setattr(scanner, "_AI_COST_STATE", copy.deepcopy(scanner._AI_COST_STATE))
     monkeypatch.setattr(scanner, "_ai_cost_roll", lambda *a: None)

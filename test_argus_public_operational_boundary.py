@@ -2438,7 +2438,7 @@ def _scheduled_state(monkeypatch):
     monkeypatch.setattr(scanner, "_osint_persist", lambda: None, raising=False)
 
 
-def test_prose_call_falls_back_only_when_the_model_is_unusable_and_bills_its_own_tokens(monkeypatch, _ai_state_restore):
+def test_prose_rejects_unapproved_premium_model_without_a_provider_call(monkeypatch, _ai_state_restore):
     import sys as _sys
     _scheduled_state(monkeypatch)
     monkeypatch.setattr(scanner, "_OPENAI_API_KEY", "k")
@@ -2447,34 +2447,26 @@ def test_prose_call_falls_back_only_when_the_model_is_unusable_and_bills_its_own
     diag = {}
     out = scanner._openai_prose("p", purpose="event_analysis", event_id="FOMC", event_phase="pre",
                                 model="gpt-6-astra", fallback_model="gpt-5.6-terra", diagnostic=diag)
-    assert out == {"summaryJa": "概要", "argusScenarioJa": "予想"}
-    assert calls == ["gpt-6-astra", "gpt-5.6-terra"]
+    assert out is None
+    assert calls == []
     assert diag["requestedModel"] == "gpt-6-astra"
-    assert diag["fallbackModel"] == "gpt-5.6-terra"
-    assert diag["returnedModel"] == "gpt-5.6-terra-2026-08-01"
-    assert diag["inputTokens"] == 1180 and diag["outputTokens"] == 640
-    # priced at the ANSWERING model's list price: 1180/1M×$2 + 640/1M×$12
-    assert abs(diag["estUsd"] - (1180 * 2.0 + 640 * 12.0) / 1_000_000) < 1e-9
-    last = scanner._AI_COST_STATE["lastRun"]
-    assert last["rows"][0]["model"] == "gpt-5.6-terra-2026-08-01" and last["rows"][0]["fallbackUsed"] is True
-    assert last["rows"][0]["inputTokens"] == 1180
-    usage = scanner._COST_POLICY["usage"][-1]
-    assert usage["purpose"] == "event_analysis" and abs(usage["estimatedCostUsd"] - diag["estUsd"]) < 1e-9
-    assert scanner._OPENAI_PROSE_LAST["outcome"] == "ok"
+    assert diag["returnedModel"] is None
+    assert diag["reason"] == "production_model_not_allowed"
+    assert scanner._OPENAI_PROSE_LAST["outcome"] == "skipped"
 
 
-def test_prose_call_uses_gpt6_when_the_project_can_and_records_the_served_model(monkeypatch, _ai_state_restore):
+def test_prose_call_uses_terra_without_a_premium_fallback(monkeypatch, _ai_state_restore):
     import sys as _sys
     _scheduled_state(monkeypatch)
     monkeypatch.setattr(scanner, "_OPENAI_API_KEY", "k")
-    fake, calls = _fake_openai({"gpt-6-astra"})
+    fake, calls = _fake_openai({"gpt-5.6-terra"})
     monkeypatch.setitem(_sys.modules, "openai", fake)
     diag = {}
     assert scanner._openai_prose("p", purpose="event_analysis", event_id="CPI", event_phase="pre",
-                                 model="gpt-6-astra", fallback_model="gpt-5.6-terra", diagnostic=diag)
-    assert calls == ["gpt-6-astra"] and diag["fallbackModel"] is None
-    assert diag["returnedModel"] == "gpt-6-astra-2026-08-01"
-    assert abs(diag["estUsd"] - (1180 * 10.0 + 640 * 50.0) / 1_000_000) < 1e-9
+                                 model="gpt-5.6-terra", diagnostic=diag)
+    assert calls == ["gpt-5.6-terra"] and diag["fallbackModel"] is None
+    assert diag["returnedModel"] == "gpt-5.6-terra-2026-08-01"
+    assert abs(diag["estUsd"] - (1180 * 2.0 + 640 * 12.0) / 1_000_000) < 1e-9
 
 
 def test_prose_call_records_why_it_did_not_run(monkeypatch, _ai_state_restore):
@@ -2505,7 +2497,7 @@ def test_public_cost_policy_states_key_budget_permission_and_refusal_without_sec
     assert body["openaiKeyConfigured"] is True
     assert body["scheduledLane"]["dailyBudgetUsd"] == scanner._SCHEDULED_AI_DAILY_USD
     assert body["lastSkip"]["reason"] == "deterministic_mode"
-    assert body["eventModel"] == "gpt-6-astra"
+    assert body["eventModel"] == "gpt-5.6-terra"
     assert body["lastProseCall"]["outcome"] == "skipped"
     raw = json.dumps(body)
     assert "sk-should-never-appear" not in raw and "apiKey" not in raw
@@ -2525,14 +2517,14 @@ def test_macro_generation_records_the_outcome_per_event(monkeypatch, _ai_state_r
     monkeypatch.setitem(scanner._MACRO_ANALYSIS, "ev-fomc", None)
     scanner._MACRO_ANALYSIS.pop("ev-fomc", None)
     result = scanner._generate_macro_event_analysis()
-    assert result["pre"] == 0 and result["eventModel"] == "gpt-6-astra"
+    assert result["pre"] == 0 and result["eventModel"] == "gpt-5.6-terra"
     outcome = result["events"]["ev-fomc"]
     assert outcome["outcome"] == "skipped" and outcome["reason"] == "deterministic_mode"
-    assert outcome["requestedModel"] == "gpt-6-astra"
+    assert outcome["requestedModel"] == "gpt-5.6-terra"
     client = scanner.app.test_client()
     body = client.get("/api/argus/macro-event-analysis?limit=5").get_json()
     assert body["lastGenerate"]["events"]["ev-fomc"]["reason"] == "deterministic_mode"
-    assert body["eventModel"] == "gpt-6-astra"
+    assert body["eventModel"] == "gpt-5.6-terra"
 
 
 @_pytest.mark.skipif(not _HAS_63_MACRO, reason="needs the v13.5.63 macro module")
@@ -2540,7 +2532,7 @@ def test_macro_generation_saves_the_served_model_on_the_pre_record(monkeypatch, 
     import sys as _sys
     _scheduled_state(monkeypatch)
     monkeypatch.setattr(scanner, "_OPENAI_API_KEY", "k")
-    fake, calls = _fake_openai({"gpt-6-astra"})
+    fake, calls = _fake_openai({"gpt-5.6-terra"})
     monkeypatch.setitem(_sys.modules, "openai", fake)
     monkeypatch.setattr(scanner, "_macro_analysis_restore_once", lambda: None)
     monkeypatch.setattr(scanner, "_macro_analysis_persist", lambda: None)
@@ -2551,11 +2543,11 @@ def test_macro_generation_saves_the_served_model_on_the_pre_record(monkeypatch, 
                                           "daysUntil": 4, "displayImpact": "critical", "linkedAssets": ["SPY"]}])
     scanner._MACRO_ANALYSIS.pop("ev-cpi", None)
     result = scanner._generate_macro_event_analysis()
-    assert result["pre"] == 1 and calls == ["gpt-6-astra"]
+    assert result["pre"] == 1 and calls == ["gpt-5.6-terra"]
     pre = scanner._MACRO_ANALYSIS["ev-cpi"]["pre"]
     assert pre["summaryJa"] == "概要"
-    assert pre["ai"]["requestedModel"] == "gpt-6-astra"
-    assert pre["ai"]["returnedModel"] == "gpt-6-astra-2026-08-01"
+    assert pre["ai"]["requestedModel"] == "gpt-5.6-terra"
+    assert pre["ai"]["returnedModel"] == "gpt-5.6-terra-2026-08-01"
     assert pre["ai"]["estUsd"] > 0 and pre["ai"]["completedAt"]
     assert result["events"]["ev-cpi"]["outcome"] == "generated"
 
@@ -2900,7 +2892,7 @@ def test_prose_diagnosis_is_local_when_another_lane_is_refused(monkeypatch, _ai_
     monkeypatch.setattr(scanner, "_OPENAI_API_KEY", "test")
     monkeypatch.setattr(scanner, "_cost_policy_persist_durable", lambda: None)
     monkeypatch.setattr(scanner, "_SCHEDULED_AI_DAILY_USD", 0.5)
-    fake, _ = _fake_openai({"gpt-6-astra"})
+    fake, _ = _fake_openai({"gpt-5.6-terra"})
     monkeypatch.setitem(_sys.modules, "openai", fake)
     entered, release = _threading.Event(), _threading.Event()
 
@@ -2914,7 +2906,7 @@ def test_prose_diagnosis_is_local_when_another_lane_is_refused(monkeypatch, _ai_
     event_diag, news_diag, results = {}, {}, {}
     worker = _threading.Thread(target=lambda: results.setdefault("out", scanner._openai_prose(
         "event", purpose="event_analysis", event_id="X", event_phase="pre",
-        model="gpt-6-astra", diagnostic=event_diag)), daemon=True)
+        model="gpt-5.6-terra", diagnostic=event_diag)), daemon=True)
     worker.start()
     try:
         assert entered.wait(5)
@@ -2944,7 +2936,7 @@ def test_macro_outcome_uses_call_diagnosis_not_a_later_global_status(monkeypatch
 
     def prose(*args, diagnostic, **kwargs):
         diagnostic.update(outcome="ok", reason=None, errorClass=None,
-                          requestedModel="gpt-6-astra", returnedModel="gpt-6-astra")
+                          requestedModel="gpt-5.6-terra", returnedModel="gpt-5.6-terra")
         scanner._OPENAI_PROSE_LAST.update(outcome="skipped", purpose="market_brief",
                                          reason="scheduled_daily_budget_exhausted")
         return {"summaryJa": "概要", "argusScenarioJa": "条件付き見通し"}
@@ -2953,7 +2945,7 @@ def test_macro_outcome_uses_call_diagnosis_not_a_later_global_status(monkeypatch
     outcome = scanner._generate_macro_event_analysis()["events"]["local-diagnosis"]
     assert outcome["outcome"] == "generated"
     assert outcome["reason"] is None and outcome["errorClass"] is None
-    assert outcome["requestedModel"] == outcome["returnedModel"] == "gpt-6-astra"
+    assert outcome["requestedModel"] == outcome["returnedModel"] == "gpt-5.6-terra"
 
 
 def test_cold_intel_collect_tracks_full_warm_and_deduplicates_retries(monkeypatch):

@@ -181,8 +181,11 @@ except Exception:
 
 # ━━━ Environment Variables ━━━
 FINNHUB_API_KEY   = os.environ.get("FINNHUB_API_KEY", "")
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-GEMINI_API_KEY    = os.environ.get("GEMINI_API_KEY", "")
+# Production AI is GPT-only.  Historical Gemini/Anthropic research records
+# remain readable, but no deployed process may make a new call to either
+# provider, even if a retired Dashboard secret has not been removed yet.
+ANTHROPIC_API_KEY = ""
+GEMINI_API_KEY    = ""
 NEWS_API_KEY      = os.environ.get("NEWS_API_KEY", "")
 NTFY_CHANNEL      = os.environ.get("NTFY_CHANNEL", "mitsugu-stock-scanner")
 MOOMOO_HOST       = os.environ.get("MOOMOO_HOST", "127.0.0.1")
@@ -198,17 +201,32 @@ PORT              = int(os.environ.get("PORT", 8080))
 _COST_POLICY = argus_cost_policy.default_state(
     os.environ.get("ARGUS_COST_POLICY_MODE", "SCHEDULED_AI").strip().upper(),
     os.environ.get("ARGUS_EVENT_AI_OPT_IN", "0") == "1")
-try:
-    _SCHEDULED_AI_DAILY_USD = max(0.0, float(
-        os.environ.get("ARGUS_SCHEDULED_AI_DAILY_USD", "2.0") or 2.0))
-except (TypeError, ValueError):
-    _SCHEDULED_AI_DAILY_USD = 2.0
+def _bounded_usd_env(name, default, ceiling):
+    """Read an operator value without allowing production ceilings to rise.
+
+    A zero remains a valid emergency stop.  Development fixtures can exercise
+    alternative limits in the pure policy module, but a deployed environment
+    cannot disable the owner-approved production cap through an env override.
+    """
+    try:
+        value = float(os.environ.get(name, str(default)) or default)
+    except (TypeError, ValueError):
+        value = float(default)
+    return min(max(0.0, value), float(ceiling))
+
+
+# Owner directive 2026-09-21: production AI (including retries and pending
+# reservations) is limited before provider calls.  These are ceilings, not a
+# target, and data collection/rule notifications continue after a refusal.
+_SCHEDULED_AI_DAILY_USD = _bounded_usd_env("ARGUS_SCHEDULED_AI_DAILY_USD", 0.50, 0.50)
+_SCHEDULED_AI_MONTHLY_USD = _bounded_usd_env("ARGUS_SCHEDULED_AI_MONTHLY_USD", 10.0, 10.0)
 # Benchmark/preflight runs temporarily switch the policy to RESEARCH_BENCHMARK
 # and afterwards restore the configured idle mode — NOT hardcoded DETERMINISTIC,
 # which would silently disable the scheduled news AI after every run (v13.5.36).
-# The owner explicitly authorized removing monetary stops for acceptance.
-# Configuration is independent of model roles, authentication and token bounds.
-_AI_BUDGET_ENFORCED = os.environ.get("ARGUS_AI_BUDGET_ENFORCEMENT", "1") != "0"
+# Production may not turn the budget gate off through environment configuration.
+# Offline policy tests exercise an explicit non-production flag in the pure
+# module instead.  Configuration is independent of model roles/authentication.
+_AI_BUDGET_ENFORCED = True
 _AI_FULL_ANALYSIS_ENABLED = os.environ.get("ARGUS_AI_FULL_ANALYSIS", "0") == "1"
 _COST_POLICY_IDLE_MODES = ("DETERMINISTIC", "SCHEDULED_AI")
 _COST_POLICY_BASELINE_MODE = (
@@ -483,6 +501,7 @@ def _cost_policy_authorize(provider, purpose, *, automatic=True,
             estimated_tokens=estimated_tokens,
             provider_enabled=True,
             scheduled_daily_budget_usd=_SCHEDULED_AI_DAILY_USD,
+            scheduled_monthly_budget_usd=_SCHEDULED_AI_MONTHLY_USD,
             budget_enforced=_AI_BUDGET_ENFORCED,
             full_analysis_enabled=_AI_FULL_ANALYSIS_ENABLED)
         # v13.5.63 (GPT additional item 4): a refusal is state — the public status
@@ -501,13 +520,14 @@ def _cost_policy_authorize(provider, purpose, *, automatic=True,
 
 
 def _cost_policy_reserve(provider, purpose, *, event_id="", event_phase="",
-                         estimated_cost_usd=0.0, estimated_tokens=0):
+                         estimated_cost_usd=0.0, estimated_tokens=0,
+                         automatic=True, confirmation=False):
     """Authorise AND reserve in one critical section. The reservation is a
     pending usage row that the budget sums count immediately; settle() turns
     it into the real record or removes it."""
     with _COST_POLICY_LOCK:
         decision = _cost_policy_authorize(
-            provider, purpose, automatic=True, event_id=event_id,
+            provider, purpose, automatic=automatic, confirmation=confirmation, event_id=event_id,
             event_phase=event_phase, estimated_cost_usd=estimated_cost_usd,
             estimated_tokens=estimated_tokens)
         if not decision.get("allowed"):
@@ -521,7 +541,7 @@ def _cost_policy_reserve(provider, purpose, *, event_id="", event_phase="",
                "eventId": event_id or None, "eventPhase": event_phase or None,
                "pending": True, "reservationId": reservation_id}
         _COST_POLICY.setdefault("usage", []).append(row)
-        _COST_POLICY["usage"] = _COST_POLICY["usage"][-500:]
+        _COST_POLICY["usage"] = _COST_POLICY["usage"][-2000:]
     _cost_policy_persist_durable()
     return decision, reservation_id
 
@@ -13514,19 +13534,32 @@ def api_argus_action_labels():
 # gated by the API keys + the AI run gate + the daily/monthly budget hard-stop. The separate
 # GPT-5.5 Pro Handoff export further below stays manual (copy-paste, no API call).
 _OPENAI_API_KEY        = os.environ.get("OPENAI_API_KEY", "")
-# Owner directive 2026-09-11: current GPT handles primary analysis/explanation.
-# Extraction and the calibrated benchmark referee retain their separate roles.
-_OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "") or "gpt-6-astra"
-_OPENAI_SOL_MODEL = os.environ.get("ARGUS_OPENAI_SOL_MODEL", "") or "gpt-6-astra"
-# Freeze the historical comparison epoch independently of production upgrades.
-_OPENAI_BENCHMARK_MODEL = os.environ.get("ARGUS_OPENAI_MODEL_BENCHMARK", "") or "gpt-5.6-sol"
-# v13.5.63 (GPT additional item 6: 「公式APIモデルID gpt-6-astra を確認し、本番
-# プロジェクトでの利用可否を調べてください」): the macro event-analysis lane asks
-# GPT-6 Astra (official id per developers.openai.com/api/docs/models, read
-# 2026-09-07) and falls back to Terra ONLY when the project cannot use the
-# model (not-found / unsupported), recording both names on the saved record.
-_OPENAI_EVENT_MODEL    = os.environ.get("ARGUS_OPENAI_MODEL_EVENT", "") or "gpt-6-astra"
-_OPENAI_EVENT_FALLBACK_MODEL = os.environ.get("ARGUS_OPENAI_MODEL_EVENT_FALLBACK", "") or "gpt-5.6-terra"
+# v13.7 cost-first policy (owner directive 2026-09-21): routine production
+# generation is Terra only until Luna passes representative-output review.
+# A legacy Astra/Sol environment value is ignored rather than becoming an
+# automatic escalation path.  A failed Terra call remains a visible failure;
+# it does not retry on a higher priced model.
+_ROUTINE_OPENAI_MODELS = frozenset(("gpt-5.6-terra", "gpt-5.6-luna"))
+_LUNA_REVIEW_APPROVED = os.environ.get("ARGUS_LUNA_REVIEW_APPROVED", "0") == "1"
+
+
+def _routine_openai_model(value, fallback="gpt-5.6-terra", *, allow_luna=False):
+    requested = str(value or "").strip()
+    if requested == "gpt-5.6-terra":
+        return requested
+    if requested == "gpt-5.6-luna" and allow_luna and _LUNA_REVIEW_APPROVED:
+        return requested
+    return fallback
+
+
+_OPENAI_MODEL = "gpt-5.6-terra"
+_OPENAI_SOL_MODEL = _OPENAI_MODEL
+# The frozen comparative benchmark remains a manually confirmed research lane.
+# It never routes a scheduled product request and its exact model stays visible
+# in the versioned research receipt so prior results remain comparable.
+_OPENAI_BENCHMARK_MODEL = "gpt-5.6-sol"
+_OPENAI_EVENT_MODEL = _OPENAI_MODEL
+_OPENAI_EVENT_FALLBACK_MODEL = _OPENAI_EVENT_MODEL
 # Last prose-call outcome (no prompts, no keys): what happened, when, why.
 _OPENAI_PROSE_LAST = {"at": None, "purpose": None, "outcome": None, "reason": None,
                       "errorClass": None, "requestedModel": None, "returnedModel": None}
@@ -13627,9 +13660,9 @@ _AI_RESTORE_STATE = {"lastTry": 0.0}
 def _float_env(name, default):
     try: return float(os.environ.get(name, str(default)) or default)
     except Exception: return default
-_AI_DAILY_BUDGET_USD    = _float_env("AI_DAILY_BUDGET_USD", 5.0)
-_AI_MONTHLY_BUDGET_USD  = _float_env("AI_MONTHLY_BUDGET_USD", 80.0)
-_AI_EMERGENCY_RESERVE_USD = _float_env("AI_EMERGENCY_RESERVE_USD", 2.0)
+_AI_DAILY_BUDGET_USD = _bounded_usd_env("AI_DAILY_BUDGET_USD", 0.50, 0.50)
+_AI_MONTHLY_BUDGET_USD = _bounded_usd_env("AI_MONTHLY_BUDGET_USD", 10.0, 10.0)
+_AI_EMERGENCY_RESERVE_USD = _bounded_usd_env("AI_EMERGENCY_RESERVE_USD", 0.0, 0.50)
 _AI_PRICING = {
     _OPENAI_MODEL:        {"in": _float_env("OPENAI_PRICE_INPUT_PER_1M", 1.25),
                            "out": _float_env("OPENAI_PRICE_OUTPUT_PER_1M", 10.0)},
@@ -13637,6 +13670,13 @@ _AI_PRICING = {
                            "out": _float_env("GEMINI_PRICE_OUTPUT_PER_1M", 10.0)},
     _GEMINI_FALLBACK_MODEL: {"in": _float_env("GEMINI_FLASH_PRICE_INPUT_PER_1M", 0.30),
                              "out": _float_env("GEMINI_FLASH_PRICE_OUTPUT_PER_1M", 2.50)},
+    # The translation lane is kept as a separately priced, bounded support
+    # tool until the representative-output review permits a Luna replacement.
+    # Its name is distinct from the historical judge aliases above, so keeping
+    # this explicit prevents an unpriced model ID from silently being charged
+    # at the fixed reservation estimate.
+    "gemini-2.5-flash": {"in": _float_env("GEMINI_FLASH_PRICE_INPUT_PER_1M", 0.30),
+                          "out": _float_env("GEMINI_FLASH_PRICE_OUTPUT_PER_1M", 2.50)},
     # Prior-generation judge hop (graceful degradation path) keeps a priced
     # key so the fallback never bypasses the unknown-price gate.
     _GEMINI_PRIOR_MODEL: {"in": _float_env("GEMINI_PRICE_INPUT_PER_1M", 1.25),
@@ -13646,6 +13686,7 @@ _AI_PRICING = {
     # The v12 benchmark keeps its own frozen catalog below.
     "gpt-5.6-sol": {"in": 4.0, "out": 20.0, "cachedIn": 0.40},
     "gpt-5.6-terra": {"in": 2.0, "out": 12.0, "cachedIn": 0.20},
+    "gpt-5.6-luna": {"in": 0.20, "out": 1.20, "cachedIn": 0.02},
     # v13.5.63: GPT-6 Astra list price (official pricing page, read 2026-09-07).
     "gpt-6-astra": {"in": 10.0, "out": 50.0, "cachedIn": 1.00},
     "gemini-3.1-pro-preview": {"in": 2.0, "out": 12.0},
@@ -13782,6 +13823,11 @@ def _ai_record_cost(run_id, oai_status, gem_status, grounding_enabled):
     with _AI_LOCK:
         _ai_cost_roll(datetime.now(TZ_JST))
     for row in rows:
+        # _openai_judge settles its pre-call reservation itself.  Do not add a
+        # second scheduled-lane row for the same provider receipt.
+        if (row["provider"] == "openai"
+                and _AI_LAST_RUN.get("oaiPolicyRecorded")):
+            continue
         _cost_policy_record(row["provider"], "ai_judgment" if row["provider"] == "openai"
                             else "ai_double_check", estimated_cost_usd=row["estUsd"])
     add_log(f"[AI] cost +${total:.4f} day=${_AI_COST_STATE['daySpentUsd']:.2f} "
@@ -14298,51 +14344,76 @@ def _usage_tokens(resp):
 def _openai_judge(snapshot):
     _AI_LAST_RUN["oaiUsage"] = None
     _AI_LAST_RUN["oaiModel"] = None
+    _AI_LAST_RUN["oaiPolicyRecorded"] = False
     _AI_LAST_RUN["oaiDiagnostic"] = {"requestedModel": _OPENAI_MODEL, "returnedModel": None}
     try:
         argus_product_naming.require_allowed(snapshot)
     except argus_product_naming.NamingPolicyError:
         return None, "content_rejected"
-    if not _cost_policy_authorize(
-            "openai", "ai_judgment", automatic=True,
-            estimated_cost_usd=0.10, estimated_tokens=8000)["allowed"]:
-        return None, "deterministic_mode"
-    if not _OPENAI_API_KEY:
-        return None, "unavailable"
     user = ("Review these rule-based ARGUS labels and return STRICT JSON with keys: status, model, "
             "asOf, summaryJa, marketRiskJa, modelPosture (RISK_ON|CAUTIOUS|RISK_OFF|EVENT_WAIT), and "
             "labels[] each with symbol, aiView (confirm|caution|disagree), suggestedAction "
             "(EXIT|TRIM|WAIT|WAIT FOR PULLBACK|BUY DIP|ADD|HOLD), confidence (0..1), risk "
             "(low|medium|high), reasonJa, whatCouldChangeJa, redFlags[], dataLimitations[]. "
             "Snapshot:\n" + json.dumps(snapshot, ensure_ascii=False))
+    # Every scheduled provider call reserves the conservative maximum first.
+    # This includes reasoning tokens and prevents a concurrent judgment from
+    # spending the same daily/monthly allowance.  The response size is bounded
+    # explicitly below; no SDK retry or premium-model fallback is allowed.
+    input_bound = max(1200, (len(user) + len(_OPENAI_SYSTEM) + 2) // 3)
+    output_bound = 4800
+    reserved_cost = argus_ai_cost.estimate_cost(
+        _OPENAI_MODEL, input_bound, output_bound, _AI_PRICING)
+    if reserved_cost is None:
+        return None, "price_unknown"
+    decision, reservation = _cost_policy_reserve(
+        "openai", "ai_judgment", estimated_cost_usd=reserved_cost,
+        estimated_tokens=input_bound + output_bound)
+    if not decision.get("allowed"):
+        return None, decision.get("reason") or "deterministic_mode"
+    if not _OPENAI_API_KEY:
+        _cost_policy_settle(reservation, ok=False)
+        return None, "unavailable"
+    request_started = False
     try:
         import openai
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
-        text = None
-        try:
-            # Current best practice for gpt-5.x: the Responses API.
-            resp = _ai_usage_provider_call('openai', 'ai_judgment', _OPENAI_MODEL, lambda: client.responses.create(model=_OPENAI_MODEL, instructions=_OPENAI_SYSTEM,
-                                            input=user, timeout=60, store=False), attempt=1, source_ref='_openai_judge')
-            text = getattr(resp, "output_text", None)
-        except Exception:
-            # Fallback for SDKs/models without the Responses API.
-            resp = _ai_usage_provider_call('openai', 'ai_judgment', _OPENAI_MODEL, lambda: client.chat.completions.create(
-                model=_OPENAI_MODEL,
-                messages=[{"role": "system", "content": _OPENAI_SYSTEM}, {"role": "user", "content": user}],
-                response_format={"type": "json_object"}, timeout=60), attempt=2, source_ref='_openai_judge')
-            text = resp.choices[0].message.content
+        # Responses is the only routine endpoint.  Falling back to a second
+        # request made daily cost indeterminate and could silently alter output.
+        request_started = True
+        resp = _ai_usage_provider_call('openai', 'ai_judgment', _OPENAI_MODEL, lambda: client.responses.create(
+            model=_OPENAI_MODEL, instructions=_OPENAI_SYSTEM, input=user,
+            max_output_tokens=output_bound, timeout=60, store=False),
+            attempt=1, source_ref='_openai_judge')
+        text = getattr(resp, "output_text", None)
         _AI_LAST_RUN["oaiUsage"] = _usage_tokens(resp)
         _AI_LAST_RUN["oaiModel"] = str(getattr(resp, "model", None) or "")[:60] or None
         _AI_LAST_RUN["oaiDiagnostic"] = {"requestedModel": _OPENAI_MODEL,
             "returnedModel": _AI_LAST_RUN["oaiModel"], "completedAt": _ai_now_iso(),
             "inputTokens": _AI_LAST_RUN["oaiUsage"][0], "outputTokens": _AI_LAST_RUN["oaiUsage"][1]}
+        actual_cost = argus_ai_cost.estimate_cost(
+            _OPENAI_MODEL, _AI_LAST_RUN["oaiUsage"][0], _AI_LAST_RUN["oaiUsage"][1], _AI_PRICING)
+        _cost_policy_settle(reservation, ok=True,
+                            actual_cost_usd=(actual_cost if actual_cost is not None
+                                             and any(_AI_LAST_RUN["oaiUsage"])
+                                             else reserved_cost))
+        _AI_LAST_RUN["oaiPolicyRecorded"] = True
         out = _checked_ai_json(text or "")
         if not isinstance(out, dict) or not isinstance(out.get("labels"), list):
             return None, "partial"
         return out, "live"
     except argus_product_naming.NamingPolicyError:
+        _cost_policy_settle(reservation, ok=request_started,
+                            actual_cost_usd=(reserved_cost if request_started else None))
+        _AI_LAST_RUN["oaiPolicyRecorded"] = bool(request_started)
         return None, "content_rejected"
     except Exception as e:
+        # A transport failure can still follow provider-side execution.  Keep
+        # the conservative reservation when a request was sent; import/setup
+        # failures release it.
+        _cost_policy_settle(reservation, ok=request_started,
+                            actual_cost_usd=(reserved_cost if request_started else None))
+        _AI_LAST_RUN["oaiPolicyRecorded"] = bool(request_started)
         add_log(f"[AI] openai judge failed: {type(e).__name__}")
         return None, "unavailable"
 
@@ -14765,8 +14836,12 @@ _CAOS_EVENT_SYSTEM = (
 
 
 def _openai_prose_call(client, model, sys_prompt, user, *, purpose="prose"):
-    """One model call: Responses API first, chat completions second. Returns
-    (response, text). Raises the LAST error when both fail."""
+    """Perform exactly one Responses API request and return its text.
+
+    A second endpoint attempt can duplicate an accepted request after a
+    transport failure, consuming budget twice.  Endpoint compatibility is a
+    deployment check, never an automatic production fallback.
+    """
     # The scheduler owns retries; hidden SDK retries can duplicate an accepted
     # generation after its response is lost and escape per-attempt receipts.
     if hasattr(client, "with_options"):
@@ -14777,25 +14852,10 @@ def _openai_prose_call(client, model, sys_prompt, user, *, purpose="prose"):
             model=model, instructions=sys_prompt, input=user, max_output_tokens=3000,
             timeout=60, store=False), attempt=1, source_ref='_openai_prose_call')
         return resp, getattr(resp, "output_text", None)
-    try:
-        resp = _ai_usage_provider_call('openai', purpose, model, lambda: client.responses.create(model=model, instructions=sys_prompt,
-                                        input=user, timeout=60, store=False), attempt=1, source_ref='_openai_prose_call')
-        return resp, getattr(resp, "output_text", None)
-    except Exception as exc:
-        # A timeout or connection loss may follow an already accepted request.
-        # Do not submit that work again through another endpoint. Likewise,
-        # auth, capacity and server failures are not endpoint incompatibility.
-        status = getattr(exc, "status_code", None)
-        if (isinstance(exc, (TimeoutError, ConnectionError))
-                or type(exc).__name__ in {"APITimeoutError", "APIConnectionError"}
-                or status in {401, 403, 408, 409, 429}
-                or (isinstance(status, int) and status >= 500 and status != 501)):
-            raise
-        resp = _ai_usage_provider_call('openai', purpose, model, lambda: client.chat.completions.create(
-            model=model,
-            messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": user}],
-            response_format={"type": "json_object"}, timeout=60), attempt=2, source_ref='_openai_prose_call')
-        return resp, resp.choices[0].message.content
+    resp = _ai_usage_provider_call('openai', purpose, model, lambda: client.responses.create(
+        model=model, instructions=sys_prompt, input=user, timeout=60,
+        store=False), attempt=1, source_ref='_openai_prose_call')
+    return resp, getattr(resp, "output_text", None)
 
 
 def _openai_failure_code(exc):
@@ -14868,10 +14928,26 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
     except argus_product_naming.NamingPolicyError as exc:
         publish(outcome="skipped", reason=str(exc))
         return None
+    sys_prompt = system or _CAOS_EVENT_SYSTEM
+    mdl = model or _OPENAI_MODEL
+    if (mdl not in _ROUTINE_OPENAI_MODELS
+            or (mdl == "gpt-5.6-luna" and not _LUNA_REVIEW_APPROVED)):
+        # Never turn an unavailable cheap/standard model into a premium retry.
+        publish(outcome="skipped", reason="production_model_not_allowed")
+        return None
+    # Reserve a conservative upper bound before any provider request.  Reasoning
+    # tokens are billed as output, so the output allowance is deliberately
+    # tripled; the reservation is released/settled from the actual receipt.
+    input_bound = max(1200, (len(str(user)) + len(str(sys_prompt)) + 2) // 3)
+    output_bound = max(1200, int(max_out) * 3)
+    reserved_cost = argus_ai_cost.estimate_cost(mdl, input_bound, output_bound, _AI_PRICING)
+    if reserved_cost is None:
+        publish(outcome="skipped", reason="price_unknown")
+        return None
     decision, reservation = _cost_policy_reserve(
         "openai", purpose, event_id=event_id,
-        event_phase=event_phase, estimated_cost_usd=0.08,
-        estimated_tokens=max(1200, max_out * 3))
+        event_phase=event_phase, estimated_cost_usd=reserved_cost,
+        estimated_tokens=input_bound + output_bound)
     if not decision["allowed"]:
         publish(outcome="skipped", reason=decision.get("reason"))
         return None
@@ -14879,8 +14955,6 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
         _cost_policy_settle(reservation, ok=False)
         publish(outcome="no_key", reason="openai_key_not_configured")
         return None
-    sys_prompt = system or _CAOS_EVENT_SYSTEM
-    mdl = model or _OPENAI_MODEL
     try:
         import openai
         client = openai.OpenAI(api_key=_OPENAI_API_KEY, **({"max_retries": 0} if purpose == "owner_dialogue" else {}))
@@ -14888,25 +14962,24 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
         try:
             resp, text = _openai_prose_call(client, mdl, sys_prompt, user, purpose=purpose)
         except Exception as first:
-            if fallback_model and fallback_model != mdl and _openai_model_unavailable(first):
-                add_log(f"[caos] model {mdl} unavailable ({type(first).__name__}); "
-                        f"falling back to {fallback_model}")
-                resp, text = _openai_prose_call(client, fallback_model, sys_prompt, user, purpose=purpose)
-                used_model, fallback_used = fallback_model, fallback_model
-            else:
-                raise
+            # Fallback is intentionally disabled in routine production.  It
+            # would create an unreserved extra call and could silently change
+            # model quality/cost.  Preserve the parameter for old callers but
+            # return the saved explanation and the concrete failure reason.
+            raise first
         returned = str(getattr(resp, "model", None) or "")[:60] or None
         inp, out_t = _usage_tokens(resp)
         price_key = used_model if used_model in _AI_PRICING else (returned or used_model)
         est = argus_ai_cost.estimate_cost(price_key, inp, out_t, _AI_PRICING)
+        billed_cost = est if est is not None and (inp or out_t) else reserved_cost
         completed = _ai_now_iso()
         if isinstance(diagnostic, dict):
             # Model-currency proof (v13.5.36 → v13.5.63): requested vs served.
             diagnostic.update({"requestedModel": mdl, "returnedModel": returned,
                                "fallbackModel": fallback_used, "completedAt": completed,
-                               "inputTokens": inp, "outputTokens": out_t, "estUsd": est})
+                               "inputTokens": inp, "outputTokens": out_t, "estUsd": billed_cost})
         try:
-            _ai_record_prose_cost(returned or used_model, inp, out_t, est,
+            _ai_record_prose_cost(returned or used_model, inp, out_t, billed_cost,
                                   purpose=purpose, fallback_used=bool(fallback_used))
         except Exception:
             pass
@@ -14918,16 +14991,16 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
             argus_product_naming.require_allowed([text or "", out])
         except argus_product_naming.NamingPolicyError as exc:
             _cost_policy_settle(reservation, ok=True,
-                                actual_cost_usd=(est if est > 0 else 0.08))
+                                actual_cost_usd=billed_cost)
             publish(outcome="rejected", reason=str(exc))
             return None
         if isinstance(out, dict) and out:
             _cost_policy_settle(reservation, ok=True,
-                                actual_cost_usd=(est if est > 0 else 0.08))
+                                actual_cost_usd=billed_cost)
             publish(outcome="ok")
             return out
         # tokens were spent even though no usable JSON came back: keep the row
-        _cost_policy_settle(reservation, ok=True, actual_cost_usd=(est if est > 0 else 0.08))
+        _cost_policy_settle(reservation, ok=True, actual_cost_usd=billed_cost)
         publish(outcome="empty_output", reason="model_returned_no_json")
         return None
     except Exception as e:
@@ -16967,9 +17040,12 @@ def _annotate_news_corroboration(news_items):
     return news_items
 
 def _translate_headlines_ja(headlines):
-    """Batch translation with an atomic reservation of the existing USD0.02
-    estimate. Failure returns {}; received replies count even if validation
-    rejects them. Callers own the background schedule and cached fallback."""
+    """Translate one bounded batch behind a durable pre-call reservation.
+
+    This support lane remains optional. A public read never calls it, and a
+    cached Japanese headline remains usable when its small scheduled budget is
+    exhausted. A received response is charged even if the JSON is rejected.
+    """
     try:
         argus_product_naming.require_allowed(headlines)
     except argus_product_naming.NamingPolicyError:
@@ -16984,10 +17060,17 @@ def _translate_headlines_ja(headlines):
                   "誇張や意訳はしない。STRICT JSONのみで返す: {\"translations\": [\"...\"]} 順序は入力どおり、件数も同じ。\n"
                   + json.dumps(headlines, ensure_ascii=False))
         from google.genai import types as _gt
-        cfg = _gt.GenerateContentConfig(response_mime_type="application/json")
+        output_bound = 1200
+        cfg = _gt.GenerateContentConfig(response_mime_type="application/json",
+                                        max_output_tokens=output_bound)
+        input_bound = max(1200, (len(prompt) + 2) // 3)
+        estimated_cost = argus_ai_cost.estimate_cost(
+            _GEMINI_FALLBACK_MODEL, input_bound, output_bound, _AI_PRICING)
+        if estimated_cost is None:
+            return {}
         decision, reservation_id = _cost_policy_reserve(
-            "gemini", "headline_translation", estimated_cost_usd=0.02,
-            estimated_tokens=3000)
+            "gemini", "headline_translation", estimated_cost_usd=estimated_cost,
+            estimated_tokens=input_bound + output_bound)
         if not decision.get("allowed"):
             return {}
         resp = _ai_usage_provider_call('gemini', 'headline_translation', _GEMINI_FALLBACK_MODEL, lambda: client.models.generate_content(model=_GEMINI_FALLBACK_MODEL, contents=prompt, config=cfg), attempt=None, source_ref='_translate_headlines_ja')
@@ -16995,7 +17078,12 @@ def _translate_headlines_ja(headlines):
         # The API call is spent at this point — record it BEFORE validation so
         # the SCHEDULED_AI daily budget counts every real request (v13.5.36:
         # discarded batches must not become free unlimited retries).
-        _cost_policy_settle(reservation_id, ok=True, actual_cost_usd=0.02)
+        usage = _gemini_usage_tokens(resp) or (0, 0)
+        actual_cost = argus_ai_cost.estimate_cost(
+            _GEMINI_FALLBACK_MODEL, usage[0], usage[1], _AI_PRICING)
+        _cost_policy_settle(reservation_id, ok=True,
+                            actual_cost_usd=(actual_cost if actual_cost is not None
+                                             and any(usage) else estimated_cost))
         reservation_id = None
         out = safe_json(getattr(resp, "text", "") or "")
         argus_product_naming.require_allowed([getattr(resp, "text", "") or "", out])
@@ -17011,7 +17099,7 @@ def _translate_headlines_ja(headlines):
     finally:
         if reservation_id:
             _cost_policy_settle(reservation_id, ok=response_received,
-                                actual_cost_usd=0.02 if response_received else None)
+                                actual_cost_usd=(estimated_cost if response_received else None))
     return {}
 
 
@@ -17856,8 +17944,11 @@ def _market_brief_generation_input_digest(brief, internals):
     """Bind reuse to cached source inputs before request-time chart IDs exist.
 
     Receipt times and raw response hashes stay in the inputs. Only the local
-    composition/check time and cache expiry timer are separated. Unknown fields
-    remain significant. No source record or saved forecast is rewritten.
+    composition/check time and cache expiry timer are separated. Generation
+    source and model policy are bound by generationPolicy, so the wall-clock
+    hour and unrelated release identity do not force another paid completion.
+    Unknown fields remain significant. No source record or saved forecast is
+    rewritten.
     """
     revision = _backend_exact_sha()
     if not revision:
@@ -17879,7 +17970,7 @@ def _market_brief_generation_input_digest(brief, internals):
         "valuationStatus": copy.deepcopy(_JP_INDEX_VALUATION.status),
         "generationPolicy": {**_owner_overview_generation_policy(),
             "purpose": "market_brief", "maxOutputRequest": 5200},
-        "ruleVersion": revision, "hour": now.strftime("%Y-%m-%dT%H"),
+        "digestSchemaVersion": "market-brief-generation-input-v2",
     }
     # Future-dated cached records can become eligible without a cache write.
     # Crossing any input timestamp invalidates reuse, even inside the same hour.
@@ -21680,11 +21771,14 @@ def api_argus_downside_incidents():
 # catalysts, TDnet, flow, and the contagion theme groups. Decision-support only.
 # ── v12.2.0 Phase 2: モデルrole設定(GPT-5.6系は能力プローブ確認まで使わない) ──
 _OPENAI_MODEL_ROLES = {
-    "extract":  os.environ.get("ARGUS_OPENAI_MODEL_EXTRACT")  or "gpt-5.6-terra",
-    "standard": os.environ.get("ARGUS_OPENAI_MODEL_STANDARD") or _OPENAI_MODEL,
-    "war_room": os.environ.get("ARGUS_OPENAI_MODEL_WAR_ROOM") or _OPENAI_MODEL,
-    "referee":  os.environ.get("ARGUS_OPENAI_MODEL_REFEREE")  or "gpt-5.6-terra",
-    "rollback": os.environ.get("ARGUS_OPENAI_MODEL_ROLLBACK") or "gpt-5.6-terra",
+    # Luna remains opt-in by explicit configuration until representative-output
+    # review is recorded.  All unapproved/premium role settings resolve to
+    # Terra rather than creating a hidden automatic model upgrade.
+    "extract": _routine_openai_model(os.environ.get("ARGUS_OPENAI_MODEL_EXTRACT", "")),
+    "standard": _routine_openai_model(os.environ.get("ARGUS_OPENAI_MODEL_STANDARD", "")),
+    "war_room": _routine_openai_model(os.environ.get("ARGUS_OPENAI_MODEL_WAR_ROOM", "")),
+    "referee": _routine_openai_model(os.environ.get("ARGUS_OPENAI_MODEL_REFEREE", "")),
+    "rollback": _routine_openai_model(os.environ.get("ARGUS_OPENAI_MODEL_ROLLBACK", "")),
 }
 # Role-specific models share the configured primary-model price ceiling unless
 # an explicit price is added to _AI_PRICING.  This is deliberately conservative:
@@ -21707,7 +21801,7 @@ _AI_INTEGRITY = {"modelOnlyCount": 0, "searchFailedCount": 0,
 
 
 def _openai_model_for(role):
-    return _OPENAI_MODEL_ROLES.get(role) or _OPENAI_MODEL
+    return _routine_openai_model(_OPENAI_MODEL_ROLES.get(role) or _OPENAI_MODEL)
 
 
 def _openai_research_ex(user, role="standard", benchmark=False):
@@ -21725,48 +21819,40 @@ def _openai_research_ex(user, role="standard", benchmark=False):
             provider="openai", model=model, role=role, mode="research",
             status="unavailable", started_at=started, completed_at=started,
             failure_reason_redacted=str(exc))
-    if not _cost_policy_authorize(
-            "openai", "research_benchmark" if benchmark else "osint_research",
-            automatic=not benchmark, confirmation=benchmark,
-            estimated_cost_usd=0.15, estimated_tokens=8000)["allowed"]:
+    purpose = "research_benchmark" if benchmark else "osint_research"
+    if not benchmark and (model not in _ROUTINE_OPENAI_MODELS
+                          or (model == "gpt-5.6-luna" and not _LUNA_REVIEW_APPROVED)):
         return None, argus_ai_gate.ai_execution_result(
             provider="openai", model=model, role=role, mode="research",
-            status="deterministic_mode", started_at=started,
-            completed_at=started, failure_reason_redacted="deterministic_mode")
-    if not _OPENAI_API_KEY:
-        return None, argus_ai_gate.ai_execution_result(
-            provider="openai", model=model, role=role, mode="research",
-            status="disabled", started_at=started, completed_at=started)
-    gate = argus_ai_gate.can_execute_external(
-        model, _AI_PRICING,
-        allow_unknown_price=os.environ.get("ARGUS_ALLOW_UNKNOWN_PRICE") == "1")
-    if not gate["allowed"]:
+            status="unavailable", started_at=started, completed_at=started,
+            failure_reason_redacted="production_model_not_allowed")
+    input_bound, output_bound = 6000, (_BENCHMARK_MAX_OUTPUT_TOKENS if benchmark else 2000)
+    est = argus_ai_cost.estimate_cost(model, input_bound, output_bound, _AI_PRICING)
+    if est is None:
         _AI_INTEGRITY["unknownPriceBlockCount"] += 1
-        add_log(f"[ai-gate] unknown price blocked: {model}")
         return None, argus_ai_gate.ai_execution_result(
             provider="openai", model=model, role=role, mode="research",
             status="unavailable", started_at=started, completed_at=_ai_now_iso(),
             cost_status="unknown", failure_reason_redacted="price_unknown")
-    # 予算予約(worst-case見積り・超過なら外部を呼ばず決定論継続)
-    try:
-        _ai_cost_roll(datetime.now(TZ_JST))
-        est = argus_ai_cost.estimate_cost(model, 6000, 2000, _AI_PRICING)
-        rsv = argus_ai_gate.reserve_budget(
-            day_spent=_AI_COST_STATE["daySpentUsd"],
-            day_budget=_AI_DAILY_BUDGET_USD,
-            estimated_max_cost=(est or 0.05), enforced=_AI_BUDGET_ENFORCED)
-        if not rsv["allowed"]:
-            _AI_INTEGRITY["budgetLimitedCount"] += 1
-            return None, argus_ai_gate.ai_execution_result(
-                provider="openai", model=model, role=role, mode="research",
-                status="budget_limited", started_at=started,
-                completed_at=_ai_now_iso(), cost_status="estimated",
-                estimated_cost=est, failure_reason_redacted="budget_reserved")
-    except Exception:
-        pass
+    decision, reservation = _cost_policy_reserve(
+        "openai", purpose, automatic=not benchmark, confirmation=benchmark,
+        estimated_cost_usd=est, estimated_tokens=input_bound + output_bound)
+    if not decision.get("allowed"):
+        _AI_INTEGRITY["budgetLimitedCount"] += 1
+        return None, argus_ai_gate.ai_execution_result(
+            provider="openai", model=model, role=role, mode="research",
+            status="budget_limited", started_at=started,
+            completed_at=started, cost_status="estimated", estimated_cost=est,
+            failure_reason_redacted=decision.get("reason") or "authorization_blocked")
+    if not _OPENAI_API_KEY:
+        _cost_policy_settle(reservation, ok=False)
+        return None, argus_ai_gate.ai_execution_result(
+            provider="openai", model=model, role=role, mode="research",
+            status="disabled", started_at=started, completed_at=started)
     try:
         import openai
     except Exception:
+        _cost_policy_settle(reservation, ok=False)
         return None, argus_ai_gate.ai_execution_result(
             provider="openai", model=model, role=role, mode="research",
             status="unavailable", started_at=started, completed_at=_ai_now_iso())
@@ -21774,74 +21860,59 @@ def _openai_research_ex(user, role="standard", benchmark=False):
     sysmsg = (argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n"
               "あなたはARGUSのリサーチデスク。最新のニュース・事実を調べ、値動きの理由を簡潔に説明する。"
               "出所のない断定はせず、不明なら正直に不明と言う。投資助言・利益保証はしない。")
-    tool_modes = (([{"type": "web_search"}], "ok"),) if benchmark else (
-        ([{"type": "web_search"}], "ok"),
-        ([{"type": "web_search_preview"}], "ok"),
-        (None, "model_only"))
-    last_error_class = None
-    last_response_status = None
-    for tools, st_ok in tool_modes:
-        try:
-            kw = {"model": model, "instructions": sysmsg, "input": user,
-                  "timeout": 90, "store": False}
-            if tools:
-                kw["tools"] = tools
-            if benchmark:
-                # GPT-5.6 defaults to medium reasoning.  Search-backed formal
-                # cases need a bounded but explicit effort so hidden reasoning
-                # cannot consume the entire answer allowance.
-                kw["reasoning"] = {"effort": _BENCHMARK_REASONING_EFFORT}
-                kw["max_output_tokens"] = _BENCHMARK_MAX_OUTPUT_TOKENS
-            resp = _ai_usage_provider_call('openai', ('research_benchmark' if benchmark else 'osint_research'), kw['model'], lambda: client.responses.create(**kw), attempt=None, source_ref='_openai_research_ex')
-            txt = getattr(resp, "output_text", None)
-            u = _usage_tokens(resp) or (0, 0)
-            usage = {"inputTokens": u[0], "outputTokens": u[1]}
-            cost = None
-            try:
-                cost = argus_ai_cost.estimate_cost(model, u[0], u[1], _AI_PRICING)
-                purpose = "research_benchmark" if benchmark else "osint_research"
-                _ai_record_prose_cost(getattr(resp, "model", None) or model,
-                                      u[0], u[1], cost, purpose=purpose)
-                _cost_policy_record("openai", purpose, estimated_cost_usd=cost)
-            except Exception:
-                pass
-            if not txt:
-                last_error_class = "empty_output"
-                last_response_status = str(
-                    getattr(resp, "status", None) or "unknown")[:40]
-                continue
-            if st_ok == "model_only":
-                _AI_INTEGRITY["modelOnlyCount"] += 1
-            naming_rejection = None
-            try:
-                argus_product_naming.require_allowed([txt, safe_json(txt)])
-            except argus_product_naming.NamingPolicyError as exc:
-                naming_rejection = str(exc)
-            res = argus_ai_gate.ai_execution_result(
+    # A single search-backed request is the entire attempt.  Reissuing it with
+    # alternate tool schemas or a model-only answer would evade the reserved
+    # amount and turn an important-change limit into a hidden retry loop.
+    request_started = False
+    try:
+        kw = {"model": model, "instructions": sysmsg, "input": user,
+              "timeout": 90, "store": False, "tools": [{"type": "web_search"}],
+              "max_output_tokens": output_bound}
+        if benchmark:
+            kw["reasoning"] = {"effort": _BENCHMARK_REASONING_EFFORT}
+        request_started = True
+        resp = _ai_usage_provider_call('openai', purpose, model,
+            lambda: client.responses.create(**kw), attempt=1, source_ref='_openai_research_ex')
+        txt = getattr(resp, "output_text", None)
+        u = _usage_tokens(resp) or (0, 0)
+        usage = {"inputTokens": u[0], "outputTokens": u[1]}
+        cost = argus_ai_cost.estimate_cost(model, u[0], u[1], _AI_PRICING)
+        billed_cost = cost if cost is not None and any(u) else est
+        _ai_record_prose_cost(getattr(resp, "model", None) or model,
+                              u[0], u[1], billed_cost, purpose=purpose)
+        _cost_policy_settle(reservation, ok=True,
+                            actual_cost_usd=billed_cost)
+        if not txt:
+            _AI_INTEGRITY["searchFailedCount"] += 1
+            return None, argus_ai_gate.ai_execution_result(
                 provider="openai", model=model, role=role, mode="research",
-                status="unavailable" if naming_rejection else st_ok,
-                started_at=started, completed_at=_ai_now_iso(),
-                failure_reason_redacted=naming_rejection,
-                prompt_version="research-v1", privacy_mode="redacted",
-                store_disabled=True,
-                tool_calls=[t["type"] for t in (tools or [])],
-                usage=usage, estimated_cost=cost,
-                cost_status="estimated" if cost is not None else "unknown",
-                response_id=getattr(resp, "id", None),
-                response_model=getattr(resp, "model", None))
-            _AI_INTEGRITY["lastExec"] = {
-                "model": model, "status": res["status"], "at": res["completedAt"]}
-            return (None if naming_rejection else txt), res
-        except Exception as exc:
-            last_error_class = type(exc).__name__[:80]
-            continue
-    _AI_INTEGRITY["searchFailedCount"] += 1
-    return None, argus_ai_gate.ai_execution_result(
-        provider="openai", model=model, role=role, mode="research",
-        status="search_failed", started_at=started, completed_at=_ai_now_iso(),
-        failure_reason_redacted=(
-            (last_error_class or "provider_error")
-            + (f":{last_response_status}" if last_response_status else "")))
+                status="search_failed", started_at=started, completed_at=_ai_now_iso(),
+                failure_reason_redacted="empty_output")
+        naming_rejection = None
+        try:
+            argus_product_naming.require_allowed([txt, safe_json(txt)])
+        except argus_product_naming.NamingPolicyError as exc:
+            naming_rejection = str(exc)
+        res = argus_ai_gate.ai_execution_result(
+            provider="openai", model=model, role=role, mode="research",
+            status="unavailable" if naming_rejection else "ok",
+            started_at=started, completed_at=_ai_now_iso(),
+            failure_reason_redacted=naming_rejection,
+            prompt_version="research-v1", privacy_mode="redacted",
+            store_disabled=True, tool_calls=["web_search"], usage=usage,
+            estimated_cost=cost, cost_status="estimated" if cost is not None else "unknown",
+            response_id=getattr(resp, "id", None), response_model=getattr(resp, "model", None))
+        _AI_INTEGRITY["lastExec"] = {
+            "model": model, "status": res["status"], "at": res["completedAt"]}
+        return (None if naming_rejection else txt), res
+    except Exception as exc:
+        _cost_policy_settle(reservation, ok=request_started,
+                            actual_cost_usd=(est if request_started else None))
+        _AI_INTEGRITY["searchFailedCount"] += 1
+        return None, argus_ai_gate.ai_execution_result(
+            provider="openai", model=model, role=role, mode="research",
+            status="search_failed", started_at=started, completed_at=_ai_now_iso(),
+            failure_reason_redacted=type(exc).__name__[:80])
 
 
 def _openai_research(user, benchmark=False):
@@ -30171,7 +30242,13 @@ _OSINT_SCOUT_SYS = ("あなたはOSINT調査員。出力は必ず指定JSONの�
 
 def _gemini_osint(prompt, benchmark=False, model_override=None,
                   diagnostic_context=None):
-    """Gemini scout(検索グラウンディング付き・admin経路のみから呼ばれる)。"""
+    """Gemini scout for a manually confirmed benchmark only.
+
+    Routine production research is Terra-owned. Gemini remains available only
+    to reproduce the frozen comparative benchmark, with its own pre-call
+    reservation including search grounding. This keeps a historical research
+    comparison without creating an automatic paid fallback.
+    """
     prompt = argus_evidence_pack.ANALYSIS_EXPLANATION_POLICY_JA + "\n" + prompt
     try:
         argus_product_naming.require_allowed(prompt)
@@ -30179,19 +30256,38 @@ def _gemini_osint(prompt, benchmark=False, model_override=None,
         if isinstance(diagnostic_context, dict):
             diagnostic_context.update({"status": "unavailable", "errorClass": str(exc)})
         return None, "unavailable"
-    if not _cost_policy_authorize(
-            "gemini", "research_benchmark" if benchmark else "osint_research",
-            automatic=not benchmark, confirmation=benchmark,
-            estimated_cost_usd=0.10, estimated_tokens=8000)["allowed"]:
+    if not benchmark:
         if isinstance(diagnostic_context, dict):
             diagnostic_context.update({"status": "deterministic_mode",
-                                       "errorClass": "authorization_blocked"})
+                                       "errorClass": "not_enabled_by_role_policy"})
         return None, "deterministic_mode"
     if not google_genai or not GEMINI_API_KEY:
         if isinstance(diagnostic_context, dict):
             diagnostic_context.update({"status": "disabled",
                                        "errorClass": "provider_not_configured"})
         return None, "disabled"
+    selected_model = model_override or _GEMINI_JUDGE_MODEL
+    input_bound = max(1600, (len(prompt) + 2) // 3)
+    output_bound = _BENCHMARK_MAX_OUTPUT_TOKENS
+    estimated_cost = argus_ai_cost.estimate_cost(
+        selected_model, input_bound, output_bound, _AI_PRICING)
+    if estimated_cost is None:
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({"status": "deterministic_mode",
+                                       "errorClass": "price_unknown"})
+        return None, "deterministic_mode"
+    # Grounding is a paid adjunct even when the model returns no source.
+    estimated_cost += max(0.0, float(_AI_GROUNDING_USD))
+    decision, reservation_id = _cost_policy_reserve(
+        "gemini", "research_benchmark", automatic=False, confirmation=True,
+        estimated_cost_usd=estimated_cost,
+        estimated_tokens=input_bound + output_bound)
+    if not decision.get("allowed"):
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({"status": "deterministic_mode",
+                                       "errorClass": "authorization_blocked"})
+        return None, "deterministic_mode"
+    request_started = False
     try:
         client = google_genai.Client(api_key=GEMINI_API_KEY)
         cfg = None
@@ -30211,22 +30307,27 @@ def _gemini_osint(prompt, benchmark=False, model_override=None,
                     tools=[_gt.Tool(google_search=_gt.GoogleSearch())]))
         except Exception:
             cfg = None
-        selected_model = model_override or _GEMINI_JUDGE_MODEL
+        request_started = True
         resp = (_ai_usage_provider_call('gemini', ('research_benchmark' if benchmark else 'osint_research'), selected_model, lambda: client.models.generate_content(model=selected_model,
                                                contents=prompt, config=cfg), attempt=None, source_ref='_gemini_osint')
                 if cfg else _ai_usage_provider_call('gemini', ('research_benchmark' if benchmark else 'osint_research'), selected_model, lambda: client.models.generate_content(model=selected_model,
                                                            contents=prompt), attempt=None, source_ref='_gemini_osint'))
+        usage = _gemini_usage_tokens(resp) or (0, 0)
+        actual_cost = argus_ai_cost.estimate_cost(
+            selected_model, usage[0], usage[1], _AI_PRICING)
+        _cost_policy_settle(
+            reservation_id, ok=True,
+            actual_cost_usd=((actual_cost + max(0.0, float(_AI_GROUNDING_USD)))
+                             if actual_cost is not None and any(usage)
+                             else estimated_cost))
+        reservation_id = None
         txt = getattr(resp, "text", None) or ""
         out, warns = argus_osint_engine.parse_scout_output(txt)   # v12.1.1 頑健パーサ
         out["parserWarnings"] = warns
         try:
             argus_product_naming.require_allowed([txt, out])
         except argus_product_naming.NamingPolicyError as exc:
-            _cost_policy_record("gemini",
-                "research_benchmark" if benchmark else "osint_research",
-                estimated_cost_usd=0.10)
             if isinstance(diagnostic_context, dict):
-                usage = _gemini_usage_tokens(resp) or (0, 0)
                 diagnostic_context.update({"status": "rejected", "errorClass": str(exc),
                     "requestedModel": selected_model,
                     "usage": {"inputTokens": usage[0], "outputTokens": usage[1]}})
@@ -30252,6 +30353,8 @@ def _gemini_osint(prompt, benchmark=False, model_override=None,
                 "usage": ((out.get("_providerMeta") or {}).get("usage"))})
         return out, "ok"
     except Exception as e:
+        _cost_policy_settle(reservation_id, ok=request_started,
+                            actual_cost_usd=(estimated_cost if request_started else None))
         add_log(f"[osint] gemini scout failed: {type(e).__name__}")
         if isinstance(diagnostic_context, dict):
             diagnostic_context.update({"status": "failed",

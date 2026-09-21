@@ -5,6 +5,7 @@ prompts, and the Gemini challenge record. No network, no LLM calls.
 """
 import json
 from types import SimpleNamespace
+import pytest
 import scanner
 import argus_evidence_pack as EP
 
@@ -87,7 +88,7 @@ def test_gemini_prompt_includes_missing_data_and_visibility():
     assert "unverifiedAssumptions" in p and "mainWeaknessJa" in p
 
 
-def test_prose_custom_system_and_transport_fallback_preserve_analysis_policy():
+def test_prose_custom_system_preserves_analysis_policy_without_fallback():
     requests = []
 
     def unavailable(**kwargs):
@@ -95,22 +96,18 @@ def test_prose_custom_system_and_transport_fallback_preserve_analysis_policy():
         raise RuntimeError("synthetic transport failure")
 
     def fallback(**kwargs):
-        requests.append(kwargs)
-        return SimpleNamespace(choices=[SimpleNamespace(
-            message=SimpleNamespace(content='{"summaryJa":"test"}'))])
+        raise AssertionError('a second endpoint must never be used')
 
     client = SimpleNamespace(
         responses=SimpleNamespace(create=unavailable),
         chat=SimpleNamespace(completions=SimpleNamespace(create=fallback)))
-    _, text = scanner._openai_prose_call(
-        client, "synthetic-model", "CUSTOM SYSTEM", "observations")
-    assert json.loads(text)["summaryJa"] == "test"
-    assert len(requests) == 2
+    with pytest.raises(RuntimeError, match='synthetic transport failure'):
+        scanner._openai_prose_call(
+            client, "synthetic-model", "CUSTOM SYSTEM", "observations")
+    assert len(requests) == 1
     system = requests[0]["instructions"]
     assert EP.ANALYSIS_EXPLANATION_POLICY_JA in system
     assert "CUSTOM SYSTEM" in system
-    assert requests[1]["messages"][0]["content"] == system
-    assert requests[1]["messages"][1]["content"] == "observations"
 
 
 def test_gemini_research_transport_receives_analysis_policy(monkeypatch):
@@ -120,15 +117,19 @@ def test_gemini_research_transport_receives_analysis_policy(monkeypatch):
         requests.append(kwargs)
         return SimpleNamespace(text='{"claims":[]}')
 
-    monkeypatch.setattr(scanner, "_cost_policy_authorize",
-                        lambda *args, **kwargs: {"allowed": True})
+    settlements = []
+    monkeypatch.setattr(scanner, "_cost_policy_reserve",
+                        lambda *args, **kwargs: ({"allowed": True}, "benchmark-rsv"))
+    monkeypatch.setattr(scanner, "_cost_policy_settle",
+                        lambda *args, **kwargs: settlements.append((args, kwargs)))
     monkeypatch.setattr(scanner, "GEMINI_API_KEY", "synthetic-test-key")
     monkeypatch.setattr(scanner, "google_genai", SimpleNamespace(
         Client=lambda **kwargs: SimpleNamespace(
             models=SimpleNamespace(generate_content=respond))))
-    _, status = scanner._gemini_osint("observations")
+    _, status = scanner._gemini_osint("observations", benchmark=True)
     assert status == "ok"
     assert len(requests) == 1
+    assert settlements and settlements[0][1]["ok"] is True
     assert EP.ANALYSIS_EXPLANATION_POLICY_JA in requests[0]["contents"]
     assert requests[0]["contents"].endswith("observations")
 
@@ -189,10 +190,13 @@ def test_primary_judge_records_provider_response_model(monkeypatch):
         SimpleNamespace(responses=SimpleNamespace(create=lambda **kw: response))))
     monkeypatch.setattr(scanner, "_OPENAI_API_KEY", "synthetic")
     monkeypatch.setattr(scanner, "_AI_LAST_RUN", {})
-    monkeypatch.setattr(scanner, "_cost_policy_authorize", lambda *a, **k: {"allowed": True})
+    settlements = []
+    monkeypatch.setattr(scanner, "_cost_policy_reserve", lambda *a, **k: ({"allowed": True}, "judge-rsv"))
+    monkeypatch.setattr(scanner, "_cost_policy_settle", lambda *a, **k: settlements.append((a, k)))
     _, status = scanner._openai_judge({"labels": []})
     assert status == "live"
     diag = scanner._AI_LAST_RUN["oaiDiagnostic"]
     assert diag["requestedModel"] == scanner._OPENAI_MODEL
     assert diag["returnedModel"] == "gpt-6-astra-served"
     assert (diag["inputTokens"], diag["outputTokens"]) == (120, 30)
+    assert len(settlements) == 1 and settlements[0][1]["ok"] is True
