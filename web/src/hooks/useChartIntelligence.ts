@@ -22,6 +22,7 @@ const legacyInflight = new Map<string, Promise<ChartIntelligencePayload>>();
 const inflight = new Map<string, Promise<SnapshotNetworkResult>>();
 const failedUntil = new Map<string, number>();
 const assetFailureCount = new Map<string, number>();
+const verifiedFailure = new Map<string, { retryAt: number; retryable: boolean }>();
 const REQUEST_TIMEOUT_MS = 15_000;
 // Verified market snapshots are multi-megabyte, content-addressed payloads.
 // Their timeout covers headers, body streaming, JSON parsing, and canonical
@@ -29,6 +30,8 @@ const REQUEST_TIMEOUT_MS = 15_000;
 // CANONICAL_RESULT_TIMEOUT_MS so acceptance never stops before the product can
 // publish its verified response ID on a constrained runner/network.
 const VERIFIED_REQUEST_TIMEOUT_MS = 75_000;
+const VERIFIED_TRANSIENT_RETRY_LIMIT = 1;
+const VERIFIED_TRANSIENT_RETRY_DELAY_MS = 750;
 
 export interface ChartIntelligenceOptions {
   scope: 'market' | 'asset'; symbol?: string; market?: string;
@@ -45,6 +48,26 @@ interface SnapshotView {
   snapshot: VerifiedSnapshot<ChartIntelligencePayload> | null;
   state: SnapshotViewState;
   error: string | null;
+}
+
+class VerifiedSnapshotRequestError extends Error {
+  retryable: boolean;
+
+  constructor(message: string, retryable: boolean) {
+    super(message);
+    this.name = 'VerifiedSnapshotRequestError';
+    this.retryable = retryable;
+  }
+}
+
+function verifiedFailureIsRetryable(reason: unknown): boolean {
+  const message = typeof reason === 'string'
+    ? reason : reason instanceof Error ? reason.message : '';
+  if (/^snapshot_|^HTTP 4\d\d/.test(message)) return false;
+  return reason instanceof TypeError
+    || (reason instanceof DOMException && reason.name === 'AbortError')
+    || message === 'timeout'
+    || /HTTP 5\d\d|failed to fetch|load failed|network/i.test(message);
 }
 
 class AssetChartRequestError extends Error {
@@ -197,8 +220,10 @@ function fetchVerifiedSnapshot(
 ) {
   const existing = inflight.get(url);
   if (existing) return existing;
-  if ((failedUntil.get(url) ?? 0) > Date.now()) {
-    return Promise.reject(new Error('再試行待機中'));
+  const blocked = verifiedFailure.get(url);
+  if (blocked && blocked.retryAt > Date.now()) {
+    return Promise.reject(new VerifiedSnapshotRequestError(
+      '再試行待機中', blocked.retryable));
   }
   performanceMark('network-revalidation-start');
   const headers: Record<string, string> = { Accept: 'application/json' };
@@ -221,16 +246,53 @@ function fetchVerifiedSnapshot(
       const validation = await verifySnapshotText(rawText, expectation);
       performanceMark('snapshot-validation-complete');
       if (!validation.ok) throw new Error(`snapshot_${validation.reason}`);
+      verifiedFailure.delete(url);
       return { snapshot: validation.snapshot, notModified: false };
     } catch (error: unknown) {
-      failedUntil.set(url, Date.now() + 30_000);
-      throw error;
+      const retryable = verifiedFailureIsRetryable(error);
+      verifiedFailure.set(url, { retryAt: Date.now() + 30_000, retryable });
+      const message = typeof error === 'string'
+        ? error : error instanceof Error ? error.message : '取得失敗';
+      throw new VerifiedSnapshotRequestError(message, retryable);
     } finally {
       window.clearTimeout(timer);
     }
   }).finally(() => inflight.delete(url));
   inflight.set(url, request);
   return request;
+}
+
+function waitForVerifiedRetry(signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const abort = () => {
+      window.clearTimeout(timer);
+      reject(new DOMException('Request superseded', 'AbortError'));
+    };
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener('abort', abort);
+      resolve();
+    }, VERIFIED_TRANSIENT_RETRY_DELAY_MS);
+    if (signal.aborted) { abort(); return; }
+    signal.addEventListener('abort', abort, { once: true });
+  });
+}
+
+async function fetchVerifiedSnapshotWithRecovery(
+  url: string, expectation: SnapshotExpectation,
+  current: VerifiedSnapshot<ChartIntelligencePayload> | null,
+  signal: AbortSignal,
+) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await withAbort(fetchVerifiedSnapshot(url, expectation, current), signal);
+    } catch (reason) {
+      if (signal.aborted || attempt >= VERIFIED_TRANSIENT_RETRY_LIMIT
+        || !(reason instanceof VerifiedSnapshotRequestError)
+        || !reason.retryable) throw reason;
+      verifiedFailure.delete(url);
+      await waitForVerifiedRetry(signal);
+    }
+  }
 }
 
 function withAbort<T>(promise: Promise<T>, signal: AbortSignal) {
@@ -319,9 +381,8 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
       // snapshot supplies its If-None-Match validator: an unchanged snapshot
       // then costs one 304 round-trip instead of a multi-megabyte re-download
       // and re-verification on every reload.
-      const networkOutcomePromise = withAbort(
-        fetchVerifiedSnapshot(verifiedUrl, expectation, memoryCached ?? cached),
-        controller.signal,
+      const networkOutcomePromise = fetchVerifiedSnapshotWithRecovery(
+        verifiedUrl, expectation, memoryCached ?? cached, controller.signal,
       ).then(
         (value) => ({ ok: true as const, value }),
         (reason: unknown) => ({ ok: false as const, reason }),
@@ -544,7 +605,7 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
     snapshotId: matching?.snapshotId ?? null,
     responseSnapshotId: verifiedResponseSnapshotId,
     retry: () => {
-      if (verifiedUrl) failedUntil.delete(verifiedUrl);
+      if (verifiedUrl) verifiedFailure.delete(verifiedUrl);
       setRefreshToken((value) => value + 1);
     },
   };
