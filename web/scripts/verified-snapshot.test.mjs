@@ -177,7 +177,7 @@ assert.ok(hook.indexOf('readVerifiedSnapshot(expectation)') <
   hook.indexOf('await networkOutcomePromise'),
   'cache lookup must precede network publication');
 assert.ok(hook.indexOf('await cachePromise') <
-  hook.indexOf('fetchVerifiedSnapshot(verifiedUrl'),
+  hook.indexOf('fetchVerifiedSnapshotWithRecovery(\n        verifiedUrl'),
   'revalidation must start after the cache read so If-None-Match is supplied');
 assert.match(hook, /memoryCached \?\? cached/,
   'the cached snapshot must supply the revalidation validator (ETag/304)');
@@ -187,6 +187,12 @@ assert.match(hook, /requestSequence !== sequence\.current/,
   'request sequence must reject an old instrument response');
 assert.match(hook, /verifiedChartRequestGate\.enqueue/,
   'verified market requests must be serialized to avoid a concurrent 429 burst');
+assert.match(hook, /VERIFIED_TRANSIENT_RETRY_LIMIT = 1/,
+  'verified market recovery must remain bounded to one automatic retry');
+assert.match(hook, /\^snapshot_\|\^HTTP 4\\d\\d/,
+  'snapshot integrity and client failures must never auto-retry');
+assert.match(hook, /verifiedFailure\.delete\(url\);[\s\S]*waitForVerifiedRetry/,
+  'a transient cooldown must be cleared before the bounded recovery request');
 assert.match(hook, /key,\s*snapshot: cached,[\s\S]*ERROR_WITHOUT_CACHE/,
   'a cold network error must retain its requested key and expose retry state');
 assert.match(hook, /new AbortController\(\)/);
