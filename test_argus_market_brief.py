@@ -125,6 +125,48 @@ def test_market_brief_route_is_cached_only_and_public_safe(monkeypatch):
         scanner._MARKET_BRIEF["composedAt"] = 0.0
 
 
+def test_brief_reuse_ignores_hour_and_release_but_not_future_input_eligibility(monkeypatch):
+    """A stable saved brief is reused until newly eligible evidence changes it."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    current = [datetime(2026, 1, 2, 10, 5, tzinfo=timezone.utc)]
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return current[0]
+
+    monkeypatch.setattr(scanner, "_INDEX_RESEARCH_REPORTS", {})
+    monkeypatch.setattr(scanner, "_backend_exact_sha", lambda: "a" * 40)
+    monkeypatch.setattr(scanner, "_owner_overview_generation_policy",
+                        lambda: {"model": "test-primary", "ruleVersion": "a" * 40})
+    monkeypatch.setattr(scanner, "_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE", {"^N225": {
+        "data": [{"close": 100, "availableFrom": "2026-01-01T00:00:00Z"}],
+        "acquiredAt": "2026-01-02T00:00:00Z", "sourceResponseSha256": "original",
+        "expires": 123}})
+    monkeypatch.setattr(scanner, "_JP_MARKET_FEATURE_HISTORY", {
+        "status": "AVAILABLE", "features": [{"knownAt": "2026-01-02T10:15:00Z"}]})
+    monkeypatch.setattr(scanner, "_JP_INDEX_VALUATION", SimpleNamespace(
+        snapshot=lambda cutoff: None, status={"status": "NOT_ACQUIRED"}))
+    monkeypatch.setattr(scanner, "datetime", Clock)
+    brief = {"generatedAt": "2026-01-02T00:00:00Z",
+             "facts": [{"text": "Observation", "revision": 1}]}
+    internals = {"informationCutoff": "2026-01-02T00:00:00Z", "status": "AVAILABLE",
+                 "receivedAt": "2026-01-01T00:00:00Z"}
+
+    before = scanner._market_brief_generation_input_digest(brief, internals)
+    current[0] = datetime(2026, 1, 2, 10, 10, tzinfo=timezone.utc)
+    assert scanner._market_brief_generation_input_digest(brief, internals) == before
+    current[0] = datetime(2026, 1, 2, 10, 15, tzinfo=timezone.utc)
+    eligible = scanner._market_brief_generation_input_digest(brief, internals)
+    assert eligible != before
+    current[0] = datetime(2026, 1, 2, 11, 0, tzinfo=timezone.utc)
+    assert scanner._market_brief_generation_input_digest(brief, internals) == eligible
+    monkeypatch.setattr(scanner, "_backend_exact_sha", lambda: "b" * 40)
+    assert scanner._market_brief_generation_input_digest(brief, internals) == eligible
+
+
 def test_market_brief_retains_legacy_text_but_retries_missing_six_part_analysis(monkeypatch):
     monkeypatch.setattr(scanner, "_important_events_data",
                         lambda: {"events": [], "imminent": []})

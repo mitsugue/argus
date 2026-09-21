@@ -2555,27 +2555,6 @@ def test_saved_fiscal_report_keeps_verified_restore_truth_before_worker_runs(mon
         'restoredAt': '2026-09-16T13:33:00Z'}
 
 
-def test_brief_reuse_ignores_hour_and_release_but_not_future_input_eligibility(monkeypatch):
-    from datetime import datetime, timezone
-    current = [datetime(2026, 1, 2, 10, 5, tzinfo=timezone.utc)]
-    class Clock(datetime):
-        @classmethod
-        def now(cls, tz=None): return current[0]
-    brief, internals = _reuse_inputs(monkeypatch)
-    monkeypatch.setattr(scanner, 'datetime', Clock)
-    scanner._JP_MARKET_FEATURE_HISTORY['features'] = [{'knownAt': '2026-01-02T10:15:00Z'}]
-    before = scanner._market_brief_generation_input_digest(brief, internals)
-    current[0] = datetime(2026, 1, 2, 10, 10, tzinfo=timezone.utc)
-    assert scanner._market_brief_generation_input_digest(brief, internals) == before
-    current[0] = datetime(2026, 1, 2, 10, 15, tzinfo=timezone.utc)
-    eligible = scanner._market_brief_generation_input_digest(brief, internals)
-    assert eligible != before
-    current[0] = datetime(2026, 1, 2, 11, 0, tzinfo=timezone.utc)
-    assert scanner._market_brief_generation_input_digest(brief, internals) == eligible
-    monkeypatch.setattr(scanner, '_backend_exact_sha', lambda: 'b' * 40)
-    assert scanner._market_brief_generation_input_digest(brief, internals) == eligible
-
-
 def test_brief_input_change_during_generation_cannot_authorize_reuse(monkeypatch):
     brief, internals = _reuse_inputs(monkeypatch)
     state = {}
