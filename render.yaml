@@ -90,14 +90,12 @@ services:
       - key: OPENAI_MODEL
         sync: false
       - key: ARGUS_OPENAI_MODEL_STANDARD
-        value: gpt-6-astra
+        value: gpt-5.6-terra
       # Formal research benchmark blind evaluator.  This model is intentionally
       # distinct from the ARGUS answer generator; its availability is verified
       # through the admin capability probe before benchmark execution.
       - key: ARGUS_OPENAI_MODEL_REFEREE
         value: gpt-5.6-terra
-      - key: GEMINI_JUDGE_MODEL
-        value: gemini-3.1-pro-preview
       - key: AI_JUDGE_ENABLED
         sync: false
       - key: AI_JUDGE_MAX_RUNS_PER_DAY
@@ -123,10 +121,6 @@ services:
       - key: SEC_USER_AGENT
         sync: false
       - key: JQUANTS_TDNET_ENABLED
-        sync: false
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: ANTHROPIC_API_KEY
         sync: false
       - key: FINNHUB_API_KEY
         sync: false

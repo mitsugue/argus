@@ -26,7 +26,12 @@ SCHEDULED_MAIN_PURPOSES = ("ai_judgment", "entity_profiles", "candidate_research
                            "mover_explanation", "osint_research", "owner_dialogue")
 SCHEDULED_EVENT_PURPOSE = "event_analysis"
 SCHEDULED_EVENT_RUNS_PER_DAY = 6
-SCHEDULED_DAILY_BUDGET_USD = 2.0
+# v13.7 cost-first policy (owner directive 2026-09-21).  These are production
+# ceilings, not a usage target: cached explanations and deterministic market
+# data continue when either ceiling is reached.
+SCHEDULED_DAILY_BUDGET_USD = 0.50
+SCHEDULED_MONTHLY_BUDGET_USD = 10.0
+SCHEDULED_PURPOSE_RUN_LIMITS = {"market_brief": 4}
 # v13.5.63 (GPT review item 4, production 2026-09-07): the news lanes spent the
 # whole daily budget on headline translations (101 Gemini runs, $2.02) and the
 # opted-in event lane could never run — "予算" and "実行許可" looked fine while
@@ -55,7 +60,9 @@ def normalize_state(state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     out = default_state(str(src.get("mode") or "DETERMINISTIC"),
                         bool(src.get("eventOptIn")))
     out["events"] = dict(src.get("events") or {})
-    out["usage"] = [x for x in (src.get("usage") or []) if isinstance(x, dict)][-500:]
+    # A monthly $10 ceiling must survive more than a busy day's short
+    # translations.  Keep enough durable rows to account for the full month.
+    out["usage"] = [x for x in (src.get("usage") or []) if isinstance(x, dict)][-2000:]
     out["lastExecution"] = src.get("lastExecution") if isinstance(
         src.get("lastExecution"), dict) else None
     # v13.5.63: the last refusal is state too — "no run" must have a reason.
@@ -113,6 +120,12 @@ def _scheduled_budget_usage(day_rows, budget):
     return spent, event_spent, len(events), reserve
 
 
+def _scheduled_monthly_usage(month_rows):
+    rows = [row for row in month_rows if row.get("purpose") in SCHEDULED_PURPOSES + SCHEDULED_MAIN_PURPOSES
+            or row.get("purpose") == SCHEDULED_EVENT_PURPOSE]
+    return round(sum(float(row.get("estimatedCostUsd") or 0.0) for row in rows), 6)
+
+
 def authorize(state: Dict[str, Any], *, provider: str, purpose: str,
               automatic: bool, now_iso: str = "", event_id: str = "",
               event_phase: str = "", confirmation: bool = False,
@@ -122,6 +135,7 @@ def authorize(state: Dict[str, Any], *, provider: str, purpose: str,
               event_budget_usd: float = 1.0,
               event_token_limit: int = 12000,
               scheduled_daily_budget_usd: float = SCHEDULED_DAILY_BUDGET_USD,
+              scheduled_monthly_budget_usd: float = SCHEDULED_MONTHLY_BUDGET_USD,
               budget_enforced: bool = True, full_analysis_enabled: bool = False
               ) -> Dict[str, Any]:
     """Return an authorization without performing I/O or mutating state."""
@@ -171,11 +185,27 @@ def authorize(state: Dict[str, Any], *, provider: str, purpose: str,
             budget = max(0.0, float(scheduled_daily_budget_usd))
             spent, _, _, reserve = _scheduled_budget_usage(
                 [x for x in st["usage"] if _day(x.get("at")) == today], budget)
+            # Hold event funds only after the owner has opted into the event
+            # lane.  Otherwise a $0.50 daily ceiling would reserve the whole
+            # amount and prevent every ordinary translation.
+            if not bool(st.get("eventOptIn")):
+                reserve = 0.0
             # Both purposes share the hard cap; only still-needed event funds
             # are held back from news. Never count event spend twice.
             lane_cap = budget if scheduled_event else max(0.0, budget - reserve)
             if budget_enforced and spent + est > lane_cap:
                 return _skip(mode, "scheduled_daily_budget_exhausted", purpose)
+            monthly_budget = max(0.0, float(scheduled_monthly_budget_usd))
+            monthly_spent = _scheduled_monthly_usage(
+                [x for x in st["usage"] if _month(x.get("at")) == _month(now_iso)])
+            if budget_enforced and monthly_spent + est > monthly_budget:
+                return _skip(mode, "scheduled_monthly_budget_exhausted", purpose)
+            run_limit = SCHEDULED_PURPOSE_RUN_LIMITS.get(purpose)
+            if budget_enforced and run_limit is not None:
+                runs = sum(1 for x in st["usage"]
+                           if _day(x.get("at")) == today and x.get("purpose") == purpose)
+                if runs >= run_limit:
+                    return _skip(mode, "scheduled_purpose_runs_exhausted", purpose)
         else:
             if automatic:
                 return _skip(mode, "scheduled_scope_required", purpose)
@@ -237,7 +267,7 @@ def record_execution(state: Dict[str, Any], *, provider: str, purpose: str,
            "estimatedCostUsd": round(max(0.0, float(estimated_cost_usd)), 6),
            "eventId": event_id or None, "eventPhase": event_phase or None}
     st["usage"].append(row)
-    st["usage"] = st["usage"][-500:]
+    st["usage"] = st["usage"][-2000:]
     st["lastExecution"] = row
     if event_id and event_phase in EVENT_PHASES:
         ev = dict(st["events"].get(event_id) or {})
@@ -258,6 +288,7 @@ def _month(s: str) -> str:
 
 def public_status(state: Dict[str, Any], now_iso: str,
                   scheduled_daily_budget_usd: float = SCHEDULED_DAILY_BUDGET_USD,
+                  scheduled_monthly_budget_usd: float = SCHEDULED_MONTHLY_BUDGET_USD,
                   *, openai_key_configured: Optional[bool] = None,
                   budget_enforced: bool = True, full_analysis_enabled: bool = False) -> Dict[str, Any]:
     st = normalize_state(state)
@@ -270,13 +301,20 @@ def public_status(state: Dict[str, Any], now_iso: str,
     # v13.5.63 (GPT review item 4): key / budget / permission / last refusal
     # are separate facts. The key is reported as configured-or-not only.
     budget = max(0.0, float(scheduled_daily_budget_usd))
+    monthly_budget = max(0.0, float(scheduled_monthly_budget_usd))
     lane_spent, event_spent, event_runs, reserve_remaining = _scheduled_budget_usage(day_rows, budget)
+    if not bool(st.get("eventOptIn")):
+        reserve_remaining = 0.0
+    monthly_spent = _scheduled_monthly_usage(month_rows)
     last = st.get("lastExecution") or {}
     scheduled_lane = {
         "budgetEnforced": bool(budget_enforced),
         "dailyBudgetUsd": budget, "spentTodayUsd": lane_spent,
         "remainingUsd": round(max(0.0, budget - lane_spent), 6),
-        "eventReserveUsd": min(budget, SCHEDULED_EVENT_RESERVE_USD),
+        "monthlyBudgetUsd": monthly_budget, "spentThisMonthUsd": monthly_spent,
+        "monthlyRemainingUsd": round(max(0.0, monthly_budget - monthly_spent), 6),
+        "eventReserveUsd": (min(budget, SCHEDULED_EVENT_RESERVE_USD)
+                            if bool(st.get("eventOptIn")) else 0.0),
         "eventSpentTodayUsd": event_spent,
         "eventReserveRemainingUsd": round(reserve_remaining, 6),
         "eventRemainingUsd": round(max(0.0, budget - lane_spent), 6),
@@ -298,8 +336,8 @@ def public_status(state: Dict[str, Any], now_iso: str,
         "budgetEnforced": bool(budget_enforced),
         "fullAnalysisEnabled": bool(full_analysis_enabled),
         "enabledScheduledPurposes": list(SCHEDULED_PURPOSES) + (list(SCHEDULED_MAIN_PURPOSES) if full_analysis_enabled else []),
-        "budgetNoteJa": ("設定上限を適用中" if budget_enforced else
-                         "オーナー指示により費用による停止を解除中。使用量・費用は記録します。"),
+        "budgetNoteJa": ("日額・月額の設定上限を適用中" if budget_enforced else
+                         "検証用に費用停止を解除中。使用量・費用は記録します。"),
         "eventOptIn": bool(st.get("eventOptIn")),
         "automaticAiEnabled": (mode == "SCHEDULED_AI"
                                or (mode == "EVENT_OPT_IN"

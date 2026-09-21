@@ -667,7 +667,9 @@ def test_model_pricing_registry_holds_current_official_prices():
     assert scanner._AI_PRICING["gpt-5.6-terra"]["out"] == 12.0
     assert scanner._AI_MODEL_PRICING_POLICY["revalidateBy"] == "2026-11-21"
     assert "プロモーション" in scanner._AI_MODEL_PRICING_POLICY["noteJa"]
-    assert scanner._OPENAI_SOL_MODEL == "gpt-6-astra"
+    # Routine production work is Terra-only. Sol remains a manual research
+    # benchmark and Astra must never become an automatic fallback.
+    assert scanner._OPENAI_SOL_MODEL == "gpt-5.6-terra"
     assert scanner._AI_PRICING["gpt-6-astra"] == {"in": 10.0, "out": 50.0, "cachedIn": 1.0}
 
 
@@ -942,59 +944,12 @@ def test_public_news_projection_excludes_internal_mailbox_reference():
 
 
 
-@pytest.mark.parametrize("fail_provider", [False, True])
-def test_translation_reserves_shared_money_before_another_call_can_start(monkeypatch, fail_provider):
-    import threading
-    import sys
-    from types import SimpleNamespace
+def test_headline_translation_is_disabled_without_a_gemini_key(monkeypatch):
+    """GPT-only production never starts a Gemini translation request."""
     import scanner
-    cp = scanner.argus_cost_policy
-    now = scanner.datetime.now(scanner.pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    policy = cp.default_state("SCHEDULED_AI", event_opt_in=True)
-    for cost in [0.08] * 5 + [0.07]:
-        policy = cp.record_execution(policy, provider="openai", purpose="event_analysis",
-                                     at=now, estimated_cost_usd=cost)
-    policy = cp.record_execution(policy, provider="openai", purpose="news_intel",
-                                 at=now, estimated_cost_usd=1.5)
-    monkeypatch.setattr(scanner, "_COST_POLICY", policy)
-    monkeypatch.setattr(scanner, "_SCHEDULED_AI_DAILY_USD", 2.0)
-    monkeypatch.setattr(scanner, "_DURABILITY_PRODUCTION", False)
-    monkeypatch.setattr(scanner, "_cost_policy_persist_durable", lambda: True)
-    monkeypatch.setattr(scanner, "_cost_policy_checkpoint_after_write", lambda durable: None)
-    monkeypatch.setattr(scanner, "_osint_persist", lambda: None)
-    monkeypatch.setattr(scanner, "GEMINI_API_KEY", "synthetic")
-    entered, release = threading.Event(), threading.Event()
-    calls = []
-    def respond(**kwargs):
-        calls.append(kwargs)
-        if len(calls) == 1:
-            entered.set()
-            assert release.wait(5)
-        if fail_provider:
-            raise RuntimeError("provider unavailable")
-        return SimpleNamespace(text='{"translations":["日本語の見出し"]}')
-    fake = SimpleNamespace(Client=lambda **kwargs: SimpleNamespace(
-        models=SimpleNamespace(generate_content=respond)),
-        types=SimpleNamespace(GenerateContentConfig=lambda **kwargs: kwargs))
-    monkeypatch.setattr(scanner, "google_genai", fake)
-    monkeypatch.setitem(sys.modules, "google.genai", fake)
-    results = []
-    thread = threading.Thread(target=lambda: results.append(scanner._translate_headlines_ja(["First headline"])))
-    thread.start()
-    try:
-        assert entered.wait(2)
-        second = scanner._translate_headlines_ja(["Second headline"])
-    finally:
-        release.set()
-        thread.join(5)
-    assert not thread.is_alive()
-    assert second == {} and len(calls) == 1
-    assert results and bool(results[0]) is (not fail_provider)
-    usage = scanner._COST_POLICY["usage"]
-    assert not any(row.get("pending") for row in usage)
-    assert sum(row.get("estimatedCostUsd", 0) for row in usage) <= 2.0
-    assert sum(row.get("purpose") == "headline_translation" for row in usage) == (0 if fail_provider else 1)
-
+    monkeypatch.setattr(scanner, "google_genai", object())
+    assert scanner.GEMINI_API_KEY == ""
+    assert scanner._translate_headlines_ja(["First headline"]) == {}
 
 def test_saved_rate_plan_review_preserves_evidence_and_never_calls_ai(tmp_path, monkeypatch):
     import copy

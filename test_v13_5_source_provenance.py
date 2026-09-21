@@ -42,6 +42,9 @@ def test_restoration_allowlist_is_exact_and_core_semantics_stay_closed():
         assert closed not in source.AUTHORIZED_EXTENSION_PATHS
     assert "web/src/domain/singleDecisionAuthority.ts" \
         in source.AUTHORIZED_EXTENSION_PATHS
+    assert source.REVIEWED_EXTENSION_BLOBS[
+        "test_argus_ai_usage_runtime.py"] == \
+        "4b765dd3c8dde089634331897eb9d7010404feec"
 
 
 def test_tachibana_shadow_provider_is_authorized_as_isolated_package_only():
