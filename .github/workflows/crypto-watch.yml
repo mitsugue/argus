@@ -1,17 +1,10 @@
-# ARGUS 24/7 crypto shock watch (v10.43).
-# Crypto trades around the clock, so this is the piece that makes the "24時間監視"
-# honest off-session (nights / weekends). Every ~30 min it asks Render to scan
-# the crypto watchlist for shocks (deterministic, no LLM) and record/notify any
-# new ones. Admin-gated endpoint — uses the existing ARGUS_ADMIN_TOKEN secret;
-# skipped gracefully when the secret is absent. NO new secret needed.
-
+# Retired 24/7 individual crypto monitoring. Historical records and the
+# admin repair endpoint remain available, but no scheduled scan or provider
+# request runs in ordinary operation.
 name: crypto-watch
 
 on:
-  schedule:
-    - cron: '*/30 * * * *'   # every 30 min, every day (crypto is 24/7)
   workflow_dispatch: {}
-
 permissions:
   contents: read
 
