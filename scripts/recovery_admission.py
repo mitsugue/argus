@@ -106,7 +106,7 @@ EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_PAYLOAD_DIFF_SHA256: str | None = (
     "9badd5f960bd9586068cacfce6b1abaec89d20a33caebad595b7b5805dbbb08e"
 )
 EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_DIFF_SHA256: str | None = (
-    "ede4be61275a5ea0c75cee5e1fdfcdedaf23e114efedf9aa1f2f343bb317adf9"
+    "549269c58ce93714a281517cd4c2c1e4d6680ab7c009770ece93033b8ed8ff04"
 )
 
 # Admission-plane files may route and prove Recovery, but are not production
