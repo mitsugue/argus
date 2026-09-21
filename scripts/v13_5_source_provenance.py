@@ -193,7 +193,9 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/V13_6_MARKET_INTERNALS.md': 'f57f78cac4a3d6398f6bb68430dca549661a9003',
     'docs/V13_6_OWNER_DIALOGUE.md': '6363817a4c2378931c8ba2fb9f30dc3fd691ac21',
     'jp_market_internals.py': '289cf25368b32e1a53aa3d23528c72543e9a6c77',
-    'test_argus_ai_usage_runtime.py': 'f5f0e0fedc3caf85136684fa9d241b2e6e0d1975',
+    # PR #459 owner-approved GPT-only cost-cap regression coverage.  Keep the
+    # exact reviewed blob pin; future test edits require separate review.
+    'test_argus_ai_usage_runtime.py': '4b765dd3c8dde089634331897eb9d7010404feec',
     'test_argus_analysis_history_backup.py': 'd0b721fe82d01f830727a98ef29a70f51a73df2f',
     'test_argus_owner_cached_inputs.py': '444cb79f894d9a756d42d0ad47ce646a3f1b36ea',
     'test_argus_owner_dialogue.py': 'bb51131cb51b1c0670050b0c0594b7113c1a0aec',
