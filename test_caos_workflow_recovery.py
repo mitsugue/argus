@@ -508,6 +508,17 @@ def test_receipt_drain_is_bounded_and_pending_can_never_be_green():
     assert "overallResult=verified" in text
 
 
+def test_result_accepts_only_verified_or_the_retired_writer_boundary():
+    text = _text()
+    result = text.split("\n  result:\n", 1)[1]
+    assert 'DURABILITY_RESULT="${{ needs.durability-flush.outputs.durabilityResult }}"' in result
+    assert "expected_skip_encrypted_recovery_owned_by_watchtower)" in result
+    assert "overallResult=verified_collection_durability_owned_by_watchtower" in result
+    assert "expected_skip_missing_auth)" not in result
+    assert "expected_skip_stale_snapshot)" not in result
+    assert result.count("exit 1") >= 5
+
+
 def test_identity_and_durability_recheck_use_safe_http_summary_contract():
     text = _text()
     identity = text.split("- name: Read live backend identity", 1)[1].split(
