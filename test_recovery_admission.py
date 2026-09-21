@@ -160,6 +160,68 @@ def test_mixed_product_and_recovery_change_is_explicitly_denied(tmp_path):
     assert result["status"] == "REJECTED"
 
 
+def test_exact_owner_approved_shared_product_routes_only_the_pinned_diff_to_product(
+        tmp_path, monkeypatch):
+    repo, base = _repository(tmp_path)
+    _write(repo, "scanner.py", "PRODUCT_COST_POLICY = True\n")
+    _write(repo, "README.md", "owner-approved product delivery\n")
+    head = _commit(repo)
+    payload = recovery._digest_bytes(
+        recovery._patch_bytes(repo, base, head, ["scanner.py"]))
+    product = recovery._digest_bytes(
+        recovery._patch_bytes(repo, base, head, ["README.md"]))
+    monkeypatch.setattr(
+        recovery, "EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_PAYLOAD_DIFF_SHA256",
+        payload)
+    monkeypatch.setattr(
+        recovery, "EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_DIFF_SHA256", product)
+
+    scope = recovery.classify_repository(repo, base, head)
+
+    assert scope["classification"] == "PRODUCT"
+    assert scope["status"] == "PASS"
+    assert scope["ownerApprovedSharedProductException"] == {
+        "policy": recovery.OWNER_APPROVED_SHARED_PRODUCT_POLICY,
+        "productDiffSha256": product,
+        "recoveryPayloadDiffSha256": payload,
+    }
+    recovery.validate_classification(scope)
+
+    _write(repo, "README.md", "unreviewed product expansion\n")
+    expanded = _commit(repo, "expanded")
+    rejected = recovery.classify_repository(repo, base, expanded)
+    assert rejected["classification"] == "MIXED"
+    assert rejected["status"] == "REJECTED"
+
+
+def test_owner_approved_shared_product_contract_rejects_tampering(
+        tmp_path, monkeypatch):
+    repo, base = _repository(tmp_path)
+    _write(repo, "scanner.py", "PRODUCT_COST_POLICY = True\n")
+    _write(repo, "README.md", "owner-approved product delivery\n")
+    head = _commit(repo)
+    payload = recovery._digest_bytes(
+        recovery._patch_bytes(repo, base, head, ["scanner.py"]))
+    product = recovery._digest_bytes(
+        recovery._patch_bytes(repo, base, head, ["README.md"]))
+    monkeypatch.setattr(
+        recovery, "EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_PAYLOAD_DIFF_SHA256",
+        payload)
+    monkeypatch.setattr(
+        recovery, "EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_DIFF_SHA256", product)
+    scope = recovery.classify_repository(repo, base, head)
+    scope["ownerApprovedSharedProductException"] = None
+    scope["classificationDigest"] = recovery._digest({
+        key: value for key, value in scope.items()
+        if key != "classificationDigest"
+    })
+
+    with pytest.raises(
+            recovery.AdmissionError,
+            match="owner_approved_shared_product_contract_invalid"):
+        recovery.validate_classification(scope)
+
+
 def _paired_scope(tmp_path, monkeypatch):
     repo, base = _repository(tmp_path)
     _write(repo, "scanner.py", "RECOVERY = True\n")
@@ -493,7 +555,13 @@ def test_policy_has_disjoint_explicit_paths_and_pinned_payload():
         "ops/systemd/argus-watchtower-writer.timer",
     }.issubset(recovery.RECOVERY_PAYLOAD_PATHS)
     assert len(recovery.RECOVERY_ADMISSION_PATHS) == 4
-    assert recovery.scope_policy_document()["mixedPolicy"] == "DENY"
+    policy = recovery.scope_policy_document()
+    assert policy["mixedPolicy"] == \
+        "DENY_EXCEPT_EXACT_OWNER_APPROVED_SHARED_PRODUCT"
+    assert policy["ownerApprovedSharedProductPolicy"] == \
+        recovery.OWNER_APPROVED_SHARED_PRODUCT_POLICY
+    assert len(policy["expectedOwnerApprovedSharedProductPayloadDiffSha256"]) == 64
+    assert len(policy["expectedOwnerApprovedSharedProductDiffSha256"]) == 64
     assert len(recovery.EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256) == 64
 
 

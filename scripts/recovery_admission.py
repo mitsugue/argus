@@ -94,6 +94,21 @@ EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256 = (
 EXPECTED_PAIRED_PRODUCT_DIFF_SHA256: str | None = "d95b246eabf2cee54fc8e1761f94485c27dd241c166e8f978f49e960f0a28149"
 PAIRED_CLASSIFICATION = "PRODUCT_AND_RECOVERY"
 
+# This is a one-time owner-authorized Product delivery that necessarily touches
+# three paths currently classified as Recovery payload.  It is not a path
+# exception: BOTH base..head patch digests must match exactly, the product
+# version must remain unchanged, and the ordinary Product certificate is still
+# mandatory.  Any added or altered hunk returns to the default MIXED denial.
+OWNER_APPROVED_SHARED_PRODUCT_POLICY = (
+    "BOTH_EXACT_DIFFS_EXISTING_PRODUCT_CERTIFICATE_REQUIRED"
+)
+EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_PAYLOAD_DIFF_SHA256: str | None = (
+    "9badd5f960bd9586068cacfce6b1abaec89d20a33caebad595b7b5805dbbb08e"
+)
+EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_DIFF_SHA256: str | None = (
+    "ede4be61275a5ea0c75cee5e1fdfcdedaf23e114efedf9aa1f2f343bb317adf9"
+)
+
 # Admission-plane files may route and prove Recovery, but are not production
 # Recovery payload.  Without the pinned Recovery payload they stay on the
 # existing product-certificate route; they can never self-select Recovery.
@@ -284,7 +299,13 @@ def scope_policy_document() -> dict[str, Any]:
             "EXISTING_PRODUCT_CERTIFICATE_REQUIRED",
         "expectedRecoveryPayloadDiffSha256":
             EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256,
-        "mixedPolicy": "DENY",
+        "mixedPolicy": "DENY_EXCEPT_EXACT_OWNER_APPROVED_SHARED_PRODUCT",
+        "ownerApprovedSharedProductPolicy":
+            OWNER_APPROVED_SHARED_PRODUCT_POLICY,
+        "expectedOwnerApprovedSharedProductPayloadDiffSha256":
+            EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_PAYLOAD_DIFF_SHA256,
+        "expectedOwnerApprovedSharedProductDiffSha256":
+            EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_DIFF_SHA256,
         "pairedPolicy": "BOTH_EXACT_CERTIFICATES_REQUIRED",
         "expectedPairedProductDiffSha256": EXPECTED_PAIRED_PRODUCT_DIFF_SHA256,
         "productPolicy": "EXISTING_PRODUCT_CERTIFICATE_REQUIRED",
@@ -334,10 +355,29 @@ def classify_repository(
     base_version = _product_version(repo, base)
     head_version = _product_version(repo, head)
 
+    owner_approved_shared_product_exception: dict[str, str] | None = None
     if other and payload:
         classification = "MIXED"
         classification_status = "REJECTED"
-        if EXPECTED_PAIRED_PRODUCT_DIFF_SHA256 is not None \
+        if EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_PAYLOAD_DIFF_SHA256 is not None \
+                and EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_DIFF_SHA256 is not None \
+                and payload_digest == \
+                EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_PAYLOAD_DIFF_SHA256 \
+                and product_digest == \
+                EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_DIFF_SHA256 \
+                and base_version == head_version:
+            # Owner-approved PR #459: retain the Recovery path boundary, but
+            # route this immutable Product change through the Product proof.
+            classification = "PRODUCT"
+            classification_status = "PASS"
+            owner_approved_shared_product_exception = {
+                "policy": OWNER_APPROVED_SHARED_PRODUCT_POLICY,
+                "productDiffSha256":
+                    EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_DIFF_SHA256,
+                "recoveryPayloadDiffSha256":
+                    EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_PAYLOAD_DIFF_SHA256,
+            }
+        elif EXPECTED_PAIRED_PRODUCT_DIFF_SHA256 is not None \
                 and product_digest == EXPECTED_PAIRED_PRODUCT_DIFF_SHA256 \
                 and payload_digest == expected_payload_digest \
                 and base_version == head_version:
@@ -369,6 +409,8 @@ def classify_repository(
         "recoveryPayloadDiffSha256": payload_digest,
         "recoveryAdmissionDiffSha256": admission_digest,
         "productDiffSha256": product_digest,
+        "ownerApprovedSharedProductException":
+            owner_approved_shared_product_exception,
         "scopePolicySha256": _digest(policy),
         "productVersion": {
             "base": base_version,
@@ -424,8 +466,29 @@ def validate_classification(value: Mapping[str, Any]) -> dict[str, Any]:
             raise AdmissionError("recovery_classification_contract_invalid")
     elif classification == "MIXED" and value.get("status") != "REJECTED":
         raise AdmissionError("mixed_classification_not_rejected")
-    elif classification == "PRODUCT" and value.get("status") != "PASS":
-        raise AdmissionError("product_classification_invalid")
+    elif classification == "PRODUCT":
+        shared_exception = value.get("ownerApprovedSharedProductException")
+        if value.get("status") != "PASS":
+            raise AdmissionError("product_classification_invalid")
+        if value.get("recoveryPayloadPaths"):
+            expected_shared_exception = {
+                "policy": OWNER_APPROVED_SHARED_PRODUCT_POLICY,
+                "productDiffSha256":
+                    EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_DIFF_SHA256,
+                "recoveryPayloadDiffSha256":
+                    EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_PAYLOAD_DIFF_SHA256,
+            }
+            if shared_exception != expected_shared_exception or \
+                    not value.get("productOrUnknownPaths") or \
+                    value.get("productDiffSha256") != \
+                    EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_DIFF_SHA256 or \
+                    value.get("recoveryPayloadDiffSha256") != \
+                    EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_PAYLOAD_DIFF_SHA256 or \
+                    value.get("productVersion", {}).get("unchanged") is not True:
+                raise AdmissionError(
+                    "owner_approved_shared_product_contract_invalid")
+        elif shared_exception is not None:
+            raise AdmissionError("owner_approved_shared_product_unexpected")
     return dict(value)
 
 
