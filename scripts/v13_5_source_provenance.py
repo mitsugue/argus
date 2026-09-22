@@ -114,7 +114,10 @@ REVIEWED_EXTENSION_BLOBS = {
     'scripts/export_event_prediction_results.py': '179bde75c50c32f426a42fffc117f2584c6e45a7',
     'argus_event_result_source.py': '5d19291205687f62f00f77c43c2cd50225ebe363',
     'test_argus_event_result_source.py': 'cf0a4dca842fd1763341002dcc9a82b2ef49b6ad',
-    'test_macro_schedule.py': 'a49e0d008eca24af791b080848df063e625bb0df',
+    # Cost-first cadence: bounded material-event windows retain the official
+    # result and reaction path while removing unchanged two-hour reruns.
+    '.github/workflows/macro-event-analysis.yml': '4b77fff3c377df98c4baae6bb64963f0fe9ab9c5',
+    'test_macro_schedule.py': '0a33bb9b772f9ef1ee036fa2f5e4e49cad21661d',
     'test_macro_readiness.py': 'd1348cbcc814fb28857bd42095007f355728cd5a',
     'scripts/macro_readiness.py': 'd9d736333960d220a5ce3fc55951abc901ea47f0',
     'docs/V13_7_REQUIREMENTS.md': '6ae5091a2167249af1a5c8e1bfc75c5f8ed3d928',
