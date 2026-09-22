@@ -1,14 +1,7 @@
-# Mover Cause ledger (v11.3.3) — refresh the mover-cause ladder, optionally
-# generate AI explanations for TOP unresolved movers (admin-gated, max 3/run),
-# then persist a public-safe metadata snapshot to the ledger branch:
-#   ledger/mover-causes/YYYY-MM-DD.json  (append-only per day)
-#   ledger/mover-causes/latest.json     (overwritten)
-# Every-2h cadence during JP+US sessions; the 15-min freshness refresh lives in
-# ai-rejudge.yml (no LLM there). Secrets are never logged.
+# Retired scheduled mover-cause explanation and ledger projection. Existing
+# history is retained; manual dispatch remains for an audited recovery only.
 name: mover-causes
 on:
-  schedule:
-    - cron: '50 0,2,4,6,14,16,18,20 * * 1-5'
   workflow_dispatch: {}
 permissions:
   contents: write

@@ -1,12 +1,9 @@
-# Refresh independent supporting lanes during market hours. The resident backend
-# scheduler owns integrated AI judgment and applies its interval/cost gate before
-# each run. Keeping a second remote trigger here duplicated model work and made
-# this workflow fail when an accepted generation outlived the HTTP observation.
+# Manual-only operational repair. The resident backend owns retained
+# market-brief refreshes under the production AI budget; scheduled remote
+# rejudge calls are retired to avoid duplicate external work. Manual dispatch
+# remains for a reviewed recovery operation.
 name: ai-rejudge
 on:
-  schedule:
-    - cron: '*/15 0-6 * * 1-5'
-    - cron: '*/15 13-20 * * 1-5'
   workflow_dispatch: {}
 permissions:
   contents: read
