@@ -293,6 +293,7 @@ check('Today never claims an empty calendar it could not read',
     && panel.includes("openNewsDetails(`news-${id}`)") && panel.includes("onOpen(row.id)")
     && panel.includes("document.getElementById('news-intel')")
     && panel.includes('notificationNewsIdFromHash') && panel.includes('notificationOnlyRow')
+    && panel.includes('newsIntel.events.filter((event) => event.eventId === notificationNewsId)')
     && panel.includes('通知から開いた重要ニュースを追加表示しています。'));
   check('the old single-item risk and news cards are gone',
     !panel.includes('title="市場リスク"') && !panel.includes('title="重大ニュース"'));

@@ -690,8 +690,11 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     ...unexplainedMailEvents.map(newsRowFrom),
   ]);
   const NEWS_ROWS_CAP = 5;
+  // Push can refer to an earlier delivery in a folded episode. Look up the
+  // receipt itself, not only the current headline group's lead.
   const notificationNewsRow = notificationNewsId
-    ? materialMailEvents.find((event) => event.eventId === notificationNewsId) : undefined;
+    ? newsIntel.events.filter((event) => event.eventId === notificationNewsId)
+      .sort((left, right) => (right.revision ?? 0) - (left.revision ?? 0))[0] : undefined;
   const visibleNewsRows = newsRows.slice(0, NEWS_ROWS_CAP);
   const notificationOnlyRow = notificationNewsRow
     && !visibleNewsRows.some((row) => row.id === notificationNewsRow.eventId)
