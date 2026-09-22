@@ -50,9 +50,6 @@ assert.deepEqual(
 assert.deepEqual(navigation.parseLocationHash('#asset/5803/evidence'), {
   route: 'watchlist', asset: { symbol: '5803', section: 'evidence' },
 });
-assert.deepEqual(navigation.parseLocationHash('#notifications/news/event-123'), { route: 'command' });
-assert.deepEqual(navigation.parseLocationHash('#today/news/event-123'), { route: 'command' });
-assert.deepEqual(navigation.parseLocationHash('#notifications/sq/jp-monthly-sq-2026-10'), { route: 'command' });
 for (const retired of ['#assets', '#positions', '#quality', '#backup', '#guide',
   '#guide:market', '#review', '#market']) {
   assert.equal(navigation.parseLocationHash(retired), undefined);

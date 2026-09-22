@@ -41,6 +41,9 @@ assert.deepEqual(
   ['command', 'watchlist', 'notifications', 'settings'],
 );
 assert.equal(navigation.HASH_ROUTES['#today'], 'command');
+assert.deepEqual(navigation.parseLocationHash('#notifications/news/event-123'), { route: 'command' });
+assert.deepEqual(navigation.parseLocationHash('#today/news/event-123'), { route: 'command' });
+assert.deepEqual(navigation.parseLocationHash('#notifications/sq/jp-monthly-sq-2026-10'), { route: 'command' });
 assert.equal(navigation.HASH_ROUTES['#notifications'], 'notifications');
 assert.equal(navigation.HASH_ROUTES['#settings'], 'settings');
 for (const retired of ['#assets', '#positions', '#quality', '#backup', '#guide',
