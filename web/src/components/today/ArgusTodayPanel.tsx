@@ -12,6 +12,7 @@ import { MarginDynamicsCard } from './MarginDynamicsCard';
 import { SharedMarketContext } from './SharedMarketContext';
 import { JpyPositionCard } from './JpyPositionCard';
 import { ImportantEventsCard } from '../dashboard/ImportantEventsCard';
+import { JapanSqCalendarCard } from '../dashboard/JapanSqCalendarCard';
 import { useJapanSqCalendar } from '../../hooks/useJapanSqCalendar';
 import { sqCalendarIsCurrent } from '../../lib/japanSqCalendar';
 import { JapanMarketComparisonPanel } from '../chart/JapanMarketComparisonPanel';
@@ -623,24 +624,20 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   }[view.finalAction];
   const target = view.canonicalDecision.targets[0];
   const invalidation = view.canonicalDecision.invalidation;
-  // v13.5.59 (owner): tapping an event jumps to the events summary itself,
-  // not merely to the Alerts tab.
+  // The complete macro-event review lives on Today. Keep this interaction on
+  // the same surface while the former Alerts route is retired in stages.
   const openEventDetails = () => {
-    onNavigate('notifications');
-    const jump = () => document.getElementById('important-events')
+    const jump = () => document.getElementById('today-event-details')
       ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    window.setTimeout(jump, 350);
-    window.setTimeout(jump, 1000);
+    jump();
   };
   const openSqDetails = (eventId: string) => {
-    onNavigate('notifications');
     const jump = () => {
       const item = document.getElementById(eventId);
       if (item instanceof HTMLDetailsElement) item.open = true;
       item?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
-    window.setTimeout(jump, 350);
-    window.setTimeout(jump, 1000);
+    jump();
   };
   // v13.5.60 (owner iPhone review 2026-09-07): 重大ニュース and 市場リスク are
   // one block, directly under the decision (they qualify it), listing up to
@@ -993,6 +990,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         on Today before retiring the separate Alerts surface.  A distinct ID
         prevents an anchor collision during this measured migration. */}
     <ImportantEventsCard sectionId="today-event-details" />
+    <JapanSqCalendarCard />
 
     <details className="at-other-markets card" data-argus-contract="other-markets-actuals-v1"
       onToggle={(event) => setOtherMarketsOpen(event.currentTarget.open)}>
