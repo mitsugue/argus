@@ -150,7 +150,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/today/ReadingHierarchy.css': 'f031a35a7ec9cb1aac772bbae8c0ab1de44c4a85',
     'web/src/components/AppShell.tsx': 'fa34bd3703246744c9eeec4411783b6234777a77',
     'web/src/routes/BackupPage.tsx': '7d082a20c08964bb00dc4de227827f7bcfc19abb',
-    'web/src/navigation.ts': '8958bfa6d817b0d4be7b99dacda41b2bde70f8cb',
+    'web/src/navigation.ts': '7bbea49bee28dd07ead0273ea84f1092255a3ca3',
     'web/src/lib/webPush.ts': '87c83b0bf874ecbf453d2af786dde6f502006b6f',
     'web/src/lib/ownerVaultReceipt.ts': 'bdfeb6b79dd52052ae051638869609d6cf74bf4a',
     'web/src/lib/ownerVaultAutoSave.ts': 'd5c382797e024265beb70baba4a9f1aa0df7d97c',

@@ -291,7 +291,9 @@ check('Today never claims an empty calendar it could not read',
       && !panel.includes('TodayNewsCards rows={urgentNews}')
       && panel.includes('id="today-material-news"')
     && panel.includes("openNewsDetails(`news-${id}`)") && panel.includes("onOpen(row.id)")
-    && panel.includes("document.getElementById('news-intel')"));
+    && panel.includes("document.getElementById('news-intel')")
+    && panel.includes('notificationNewsIdFromHash') && panel.includes('notificationOnlyRow')
+    && panel.includes('通知から開いた重要ニュースを追加表示しています。'));
   check('the old single-item risk and news cards are gone',
     !panel.includes('title="市場リスク"') && !panel.includes('title="重大ニュース"'));
   check('DATA reasons open on tap instead of occupying the decision area',

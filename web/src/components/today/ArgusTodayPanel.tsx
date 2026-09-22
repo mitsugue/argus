@@ -82,7 +82,7 @@ interface Props {
       confirmationState: 'MARKET_CONFIRMED' | 'MARKET_CONFIRMATION_PENDING';
       marketReadings: Array<{ key: string; labelJa: string;
         value: number | null; change: number | null; unit: string }>;
-      source: string; sourceReceivedAt: string | null; backfill: boolean;
+      source: string; sourceReceivedAt: string | null; backfill: boolean; sourceUrl: string | null;
       eventMemory: {
         status: string; firstSeenAt: string; openedDaysAgo: number | null;
         episodeId: string; flagRecovery: boolean;
@@ -368,12 +368,15 @@ type NewsRowMemory = Props['newsIntel']['events'][number]['eventMemory'];
 export type TodayNewsRow = { id: string; eventId: string; severity: string; kind: '市場データ' | 'ニュース';
     sourceReceivedAt: string | null; headlineJa: string; whyJa: string; metaJa: string;
     eventMemory: NewsRowMemory; newsEvent?: Props['newsIntel']['events'][number];
-    previousDeliveries?: Props['newsIntel']['events'] };
+    previousDeliveries?: Props['newsIntel']['events']; sourceUrl?: string | null };
+
+const notificationNewsIdFromHash = (hash: string): string | null =>
+  /^#(?:today|notifications)\/news\/([A-Za-z0-9:_-]{1,150})$/.exec(hash)?.[1] ?? null;
 
 
 export const TodayNewsCards: React.FC<{ rows: readonly TodayNewsRow[]; onOpen: (id: string) => void }> = ({ rows, onOpen }) => (
 <div className="at-news-rows">
-        {rows.map((row) => <article key={row.id}
+        {rows.map((row) => <article key={row.id} id={`news-${row.id}`}
           className="at-news-row" data-shock-severity={row.severity} data-news-event-id={row.id}>
           <button type="button" className="at-news-row__open" onClick={() => onOpen(row.id)}>
           <span className="at-news-row__head"><mark data-severity={row.severity}>{NEWS_IMPORTANCE_JA[row.severity] ?? row.severity}</mark>
@@ -407,6 +410,8 @@ export const TodayNewsCards: React.FC<{ rows: readonly TodayNewsRow[]; onOpen: (
                 ? ' · 根拠不足' : ` · ${row.eventMemory.analogEvidence.confidence}`)}
             {' · 校正 SHADOW · 判断権限なし'}
           </span></details>}
+          {row.sourceUrl && /^https?:\/\//i.test(row.sourceUrl)
+            && <a href={row.sourceUrl} target="_blank" rel="noopener noreferrer">配信元の記事を開く</a>}
         </article>)}
       </div>
 );
@@ -606,6 +611,13 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     savedEditorial?.calculationSnapshots?.['5']?.comparison, 5);
   const [periodOverview,setPeriodOverview] = React.useState<Job|null>(null);
   const [otherMarketsOpen, setOtherMarketsOpen] = React.useState(false);
+  const [notificationNewsId, setNotificationNewsId] = React.useState(() =>
+    notificationNewsIdFromHash(window.location.hash));
+  React.useEffect(() => {
+    const refresh = () => setNotificationNewsId(notificationNewsIdFromHash(window.location.hash));
+    window.addEventListener('hashchange', refresh);
+    return () => window.removeEventListener('hashchange', refresh);
+  }, []);
   const scopedSubject = view.selectedMarket === 'JP' && selectedSymbol === '1321' ? 'N225' : selectedSymbol;
   const matchingOverview = periodOverview?.context.subject.symbol === scopedSubject
     && periodOverview.context.subject.market === view.selectedMarket
@@ -656,6 +668,18 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   const materialMailEvents = orderMaterialNews(deliveryGroups.map(group => group.lead));
   const unexplainedMailEvents = materialMailEvents.filter(event =>
     !editorialScope || !editorialCoversNews(editorialBrief, event));
+  const newsRowFrom = (event: Props['newsIntel']['events'][number]): TodayNewsRow => ({
+    id: event.eventId, eventId: event.eventId, severity: event.severity, kind: 'ニュース',
+    sourceReceivedAt: event.sourceReceivedAt, newsEvent: event,
+    previousDeliveries: previousDeliveries.get(event.eventId),
+    headlineJa: displayNewsHeadline(event.headlineJa), whyJa: event.whyJa, eventMemory: event.eventMemory,
+    metaJa: `${event.source} · ${event.sourceReceivedAt
+      ? new Date(event.sourceReceivedAt).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '受信時刻不明'}`
+      + `${newsAgeJa(event) ? ` · ${newsAgeJa(event)}` : ''}`
+      + ` · ${event.confirmationState === 'MARKET_CONFIRMED' ? '市場反応を確認済み' : '市場反応は確認待ち'}`
+      + ` · ${newsAnalysisStatusJa(event.analysisState, event.analysisInputScope)}`,
+    sourceUrl: event.sourceUrl,
+  });
   const newsRows = orderMaterialNews<TodayNewsRow>([
     ...shock.events.map((event) => ({
       id: event.eventId, eventId: event.eventId, severity: event.severity, kind: '市場データ' as const,
@@ -663,19 +687,24 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       headlineJa: event.headlineJa, whyJa: event.whyJa, eventMemory: null,
       metaJa: `${event.sources.map((source) => source.name).join(' · ')}${event.asOf ? ` · ${event.asOf}` : ''}`,
     })),
-    ...unexplainedMailEvents.map((event) => ({
-      id: event.eventId, eventId: event.eventId, severity: event.severity, kind: 'ニュース' as const,
-      sourceReceivedAt: event.sourceReceivedAt, newsEvent: event,
-      previousDeliveries: previousDeliveries.get(event.eventId),
-      headlineJa: displayNewsHeadline(event.headlineJa), whyJa: event.whyJa, eventMemory: event.eventMemory,
-      metaJa: `${event.source} · ${event.sourceReceivedAt
-        ? new Date(event.sourceReceivedAt).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '受信時刻不明'}`
-        + `${newsAgeJa(event) ? ` · ${newsAgeJa(event)}` : ''}`
-        + ` · ${event.confirmationState === 'MARKET_CONFIRMED' ? '市場反応を確認済み' : '市場反応は確認待ち'}`
-        + ` · ${newsAnalysisStatusJa(event.analysisState, event.analysisInputScope)}`,
-    })),
+    ...unexplainedMailEvents.map(newsRowFrom),
   ]);
   const NEWS_ROWS_CAP = 5;
+  const notificationNewsRow = notificationNewsId
+    ? materialMailEvents.find((event) => event.eventId === notificationNewsId) : undefined;
+  const visibleNewsRows = newsRows.slice(0, NEWS_ROWS_CAP);
+  const notificationOnlyRow = notificationNewsRow
+    && !visibleNewsRows.some((row) => row.id === notificationNewsRow.eventId)
+    ? newsRowFrom(notificationNewsRow) : null;
+  const displayedNewsRows = notificationOnlyRow ? [...visibleNewsRows, notificationOnlyRow] : visibleNewsRows;
+  React.useEffect(() => {
+    if (!notificationNewsId || !notificationNewsRow) return;
+    const timer = window.setTimeout(() => {
+      const target = document.getElementById(`news-${notificationNewsId}`);
+      if (target) revealNewsArticle(target, 'smooth');
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [notificationNewsId, notificationNewsRow?.eventId]);
   const criticalNewsCount = newsRows.filter(row => row.severity === 'CRITICAL').length;
   const scheduledEvents = [
     ...(view.nextEvent ? [{ kind: 'macro' as const, id: view.nextEvent.id,
@@ -933,7 +962,9 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       {newsIntel.status === 'error' && <p className="at-shock-clear" role="status">
         {newsIntel.events.length ? 'ニュース更新失敗・前回取得分を表示しています。' : 'ニュースを取得できていません。'}</p>}
       {newsIntel.status === 'loading' && <p className="at-shock-clear"><TriangleStepLoader label="ニュースを更新しています。取得済みの記事は引き続き読めます" /></p>}
-      {newsRows.length > 0 && <TodayNewsCards rows={newsRows.slice(0, NEWS_ROWS_CAP)}
+      {notificationOnlyRow && <p className="at-shock-clear" role="status">通知から開いた重要ニュースを追加表示しています。</p>}
+      {notificationNewsId && !notificationNewsRow && <p className="at-shock-clear" role="status">通知の記事を現在の保存済み一覧で確認できません。記事が存在しなかったという意味ではありません。</p>}
+      {newsRows.length > 0 && <TodayNewsCards rows={displayedNewsRows}
         onOpen={(id) => openNewsDetails(`news-${id}`)} />}
       {shock.status === 'data' && newsIntel.status === 'data'
         && shock.events.length === 0 && materialMailEvents.length === 0
