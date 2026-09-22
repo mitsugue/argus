@@ -296,6 +296,12 @@ REVIEWED_EXTENSION_BLOBS = {
     # outlook without relaxing the underlying research/truth contracts.
     "test_argus_v12_0_6.py": "14c660ebc25f8f0fe50743da58d2c50eb6e26256",
     "test_argus_v13_1_1.py": "0dcfbd099dd00f4e84b89df51da6a03fa96c2e4f",
+    # Owner-authorized v13.7 operating-cost reduction: retire redundant
+    # scheduled workflows while retaining manual recovery and product tests.
+    ".github/workflows/ai-rejudge.yml": "9674c680ad54973f71bbc03a2dc335eb299c373b",
+    ".github/workflows/crypto-watch.yml": "1c996e5db84e8211ea09daa762c5f7d5d5554f7d",
+    ".github/workflows/mover-causes.yml": "d78d91aac76c377b68c67638bbea93176a7c7f89",
+    "test_retired_background_workflows.py": "bbfe02c081353b142cde8e106ac619f67cec6dd0",
 }
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
