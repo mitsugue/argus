@@ -13,6 +13,7 @@ import { SharedMarketContext } from './SharedMarketContext';
 import { JpyPositionCard } from './JpyPositionCard';
 import { ImportantEventsCard } from '../dashboard/ImportantEventsCard';
 import { JapanSqCalendarCard } from '../dashboard/JapanSqCalendarCard';
+import { NewsAlertsPanel } from '../notifications/NewsAlertsPanel';
 import { useJapanSqCalendar } from '../../hooks/useJapanSqCalendar';
 import { sqCalendarIsCurrent } from '../../lib/japanSqCalendar';
 import { JapanMarketComparisonPanel } from '../chart/JapanMarketComparisonPanel';
@@ -611,6 +612,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     savedEditorial?.calculationSnapshots?.['5']?.comparison, 5);
   const [periodOverview,setPeriodOverview] = React.useState<Job|null>(null);
   const [otherMarketsOpen, setOtherMarketsOpen] = React.useState(false);
+  const [allNewsOpen, setAllNewsOpen] = React.useState(false);
+  const [newsDetailTargetId, setNewsDetailTargetId] = React.useState<string | null>(null);
   const [notificationNewsId, setNotificationNewsId] = React.useState(() =>
     notificationNewsIdFromHash(window.location.hash));
   React.useEffect(() => {
@@ -652,17 +655,31 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     jump();
   };
   // v13.5.60 (owner iPhone review 2026-09-07): 重大ニュース and 市場リスク are
-  // one block, directly under the decision (they qualify it), listing up to
-  // five items instead of one; a tap lands on the matching Alerts section.
+  // Keep the first five headlines compact. Full current and historical news
+  // is mounted only when the owner asks to read it on Today.
   const openNewsDetails = (anchorId?: string) => {
-    onNavigate('notifications');
-    const jump = () => {
-      const element = document.getElementById(anchorId ?? '') ?? document.getElementById('news-intel');
-      if (element) revealNewsArticle(element, 'smooth');
-    };
-    window.setTimeout(jump, 350);
-    window.setTimeout(jump, 1000);
+    setNewsDetailTargetId(anchorId ?? null);
+    setAllNewsOpen(true);
   };
+  React.useEffect(() => {
+    if (!allNewsOpen) return;
+    const container = document.getElementById('today-news-details');
+    if (!container) return;
+    const focus = () => {
+      const target = newsDetailTargetId
+        ? Array.from(container.querySelectorAll<HTMLElement>('[id]')).find(
+          (element) => element.id === newsDetailTargetId)
+        : container;
+      if (!target) return false;
+      revealNewsArticle(target, 'smooth');
+      return true;
+    };
+    if (focus()) return;
+    const observer = new MutationObserver(() => { if (focus()) observer.disconnect(); });
+    observer.observe(container, { childList: true, subtree: true });
+    const timeout = window.setTimeout(() => observer.disconnect(), 10_000);
+    return () => { observer.disconnect(); window.clearTimeout(timeout); };
+  }, [allNewsOpen, newsDetailTargetId]);
   const deliveryGroups = groupRepeatedNewsHeadlines(newsIntel.events);
   const previousDeliveries = new Map(deliveryGroups.map(group => [group.lead.eventId, group.previous]));
   const materialMailEvents = orderMaterialNews(deliveryGroups.map(group => group.lead));
@@ -979,6 +996,11 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       <button type="button" className="at-news-more" onClick={() => openNewsDetails()}>ニュース・続報をすべて見る ↗</button>
 
     </section>
+    <details id="today-news-details" className="at-event card" open={allNewsOpen}
+      onToggle={(event) => setAllNewsOpen(event.currentTarget.open)}>
+      <summary>ニュース・続報の詳細と保存履歴</summary>
+      {allNewsOpen && <NewsAlertsPanel />}
+    </details>
 
     <section className="at-event card" aria-label="重要イベント" data-argus-contract="unified-event-schedule-v1">
       <div className="at-head"><b>重要イベント</b><span>30日先まで</span></div>
