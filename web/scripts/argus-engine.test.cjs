@@ -286,12 +286,14 @@ check('Today never claims an empty calendar it could not read',
   const nextEvent = panel.indexOf('aria-label="重要イベント"');
   check('news and market risk sit between the decision and important events',
     hero > 0 && newsTop > hero && newsTop < nextEvent);
-  check('the news block lists up to five rows and each row jumps to its Alerts anchor',
+  check('the news block lists up to five rows and opens complete details on Today',
     panel.includes('const NEWS_ROWS_CAP = 5;') && panel.includes('newsRows.slice(0, NEWS_ROWS_CAP)')
       && !panel.includes('TodayNewsCards rows={urgentNews}')
       && panel.includes('id="today-material-news"')
     && panel.includes("openNewsDetails(`news-${id}`)") && panel.includes("onOpen(row.id)")
-    && panel.includes("document.getElementById('news-intel')")
+    && panel.includes('setAllNewsOpen(true)')
+    && panel.includes('<NewsAlertsPanel />')
+    && panel.includes("document.getElementById('today-news-details')")
     && panel.includes('notificationNewsIdFromHash') && panel.includes('notificationOnlyRow')
     && panel.includes('newsIntel.events.filter((event) => event.eventId === notificationNewsId)')
     && panel.includes('通知から開いた重要ニュースを追加表示しています。'));
