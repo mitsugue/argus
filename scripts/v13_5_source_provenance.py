@@ -302,6 +302,9 @@ REVIEWED_EXTENSION_BLOBS = {
     ".github/workflows/crypto-watch.yml": "1c996e5db84e8211ea09daa762c5f7d5d5554f7d",
     ".github/workflows/mover-causes.yml": "d78d91aac76c377b68c67638bbea93176a7c7f89",
     "test_retired_background_workflows.py": "bbfe02c081353b142cde8e106ac619f67cec6dd0",
+    # Owner-authorized Gemini retirement regression coverage. This fixes only
+    # the exact Terra-only operational workflow test; later edits fail closed.
+    "test_gpt_only_workflow_operations.py": "b048c5bcdf0d6b73a3e8eb955b9020d896ef1066",
 }
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
