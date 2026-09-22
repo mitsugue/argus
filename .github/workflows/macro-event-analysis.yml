@@ -5,6 +5,7 @@
 # Manual dispatch remains available for an exceptional event. This avoids
 # paying for unchanged analyses every two hours while preserving timely
 # official-result, explanation, and notification updates.
+# This repository-only cadence change does not alter the deployed backend.
 # (admin path = the only LLM caller), and persists the public-safe snapshot to the
 # ledger branch so pre-event views survive redeploys for the post answer-check.
 
