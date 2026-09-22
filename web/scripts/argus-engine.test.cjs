@@ -259,8 +259,9 @@ check('Today never claims an empty calendar it could not read',
     !/<MarketBriefCard \/>\s*<MarketViewStrip \/>/.test(panel));
   check('retired individual live band is absent from Today',
     !panel.includes('mv-tachibana') && !panel.includes('tachibanaLive'));
-  check('tapping an event jumps to the events summary',
-    panel.includes("document.getElementById('important-events')"));
+  check('tapping an event stays on Today and jumps to the complete event review',
+    panel.includes("document.getElementById('today-event-details')")
+    && panel.includes('<JapanSqCalendarCard />'));
   const css = fs.readFileSync(path.join(root, 'src/components/today/ArgusToday.css'), 'utf8');
   check('the signals header never wraps on a phone',
     css.includes('.at-seven summary small, .at-seven summary > b { white-space:nowrap;'));
