@@ -5,6 +5,7 @@ import { BackupSettingsPanel } from './BackupPage';
 import { NewsIntakePanel } from '../components/settings/NewsIntakePanel';
 import { WebPushPanel } from '../components/settings/WebPushPanel';
 import { AiUsagePanel } from '../components/settings/AiUsagePanel';
+import { NotificationPanel } from '../components/NotificationPanel';
 import { PublicDiagnosticsPanel } from './DataQualityPage';
 import { PageShell } from './PageShell';
 import {
@@ -24,6 +25,7 @@ export const Settings: React.FC<Props> = ({ settingsSection = 'status' }) => {
   const locale = useLocale();
   const [notificationPrefs, setNotificationPrefs] = React.useState<NotificationPreferences>(
     () => notificationPreferences());
+  const [notificationHistoryOpen, setNotificationHistoryOpen] = React.useState(false);
   React.useEffect(() => { scrollToSection(settingsSection); }, [settingsSection]);
   const toggleNotification = (key: keyof NotificationPreferences) => {
     const next = { ...notificationPrefs, [key]: !notificationPrefs[key] };
@@ -73,6 +75,11 @@ export const Settings: React.FC<Props> = ({ settingsSection = 'status' }) => {
       </section>
 
       <WebPushPanel />
+      <details className="card" onToggle={(event) =>
+        setNotificationHistoryOpen(event.currentTarget.open)}>
+        <summary>端末内の通知履歴</summary>
+        {notificationHistoryOpen && <NotificationPanel />}
+      </details>
       <NewsIntakePanel />
       <AiUsagePanel />
       <PublicDiagnosticsPanel />
