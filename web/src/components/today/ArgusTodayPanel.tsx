@@ -11,6 +11,7 @@ import React from 'react';
 import { MarginDynamicsCard } from './MarginDynamicsCard';
 import { SharedMarketContext } from './SharedMarketContext';
 import { JpyPositionCard } from './JpyPositionCard';
+import { ImportantEventsCard } from '../dashboard/ImportantEventsCard';
 import { useJapanSqCalendar } from '../../hooks/useJapanSqCalendar';
 import { sqCalendarIsCurrent } from '../../lib/japanSqCalendar';
 import { JapanMarketComparisonPanel } from '../chart/JapanMarketComparisonPanel';
@@ -987,6 +988,11 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       </div>
       <button type="button" className="at-event-more" onClick={openEventDetails}>イベントの結果・出典を見る ↗</button>
     </section>
+
+    {/* Keep the complete pre-release scenario, official result, and answer-check
+        on Today before retiring the separate Alerts surface.  A distinct ID
+        prevents an anchor collision during this measured migration. */}
+    <ImportantEventsCard sectionId="today-event-details" />
 
     <details className="at-other-markets card" data-argus-contract="other-markets-actuals-v1"
       onToggle={(event) => setOtherMarketsOpen(event.currentTarget.open)}>

@@ -35,10 +35,11 @@ check('market score excludes device-local held-card reduction',
 check('market score excludes holder risk overlay',
   !command.includes('ownerRisk: overlay.holderRiskOverlay')
   && !command.includes('ownerPolicyLimit:'));
-check('canonical event review lives once on Notifications',
+check('Today also exposes the canonical event detail during the Alerts migration',
   !command.includes('<ImportantEventsCard')
   && notifications.includes('<ImportantEventsCard />')
-  && today.includes("onNavigate('notifications')")
+  && today.includes('<ImportantEventsCard sectionId="today-event-details" />')
+  && events.includes("sectionId = 'important-events'")
   && events.includes('setShowAll') && events.includes('is-expanded')
   && eventCss.includes('.ie-card:not(.is-expanded)'));
 check('Today market view does not render portfolio-wide commands',

@@ -255,12 +255,16 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
   );
 };
 
-interface Props { embedded?: boolean; }
+interface Props {
+  embedded?: boolean;
+  /** A Today embed must not duplicate the Alerts page anchor while both exist. */
+  sectionId?: string;
+}
 
 // `embedded` = the lower block of the top command card (divider only, no card
 // chrome) per spec §2. Standalone = its own card (used elsewhere).
 
-export const ImportantEventsCard: React.FC<Props> = ({ embedded }) => {
+export const ImportantEventsCard: React.FC<Props> = ({ embedded, sectionId = 'important-events' }) => {
   useLocale();
   const [showAll, setShowAll] = React.useState(false);
   const dash = useDashboardEvents();             // v11.4.1: unified event feed (preferred)
@@ -272,7 +276,7 @@ export const ImportantEventsCard: React.FC<Props> = ({ embedded }) => {
     const shown = showAll ? dash.items : dash.items.slice(0, 5);
     const lastRefresh = (dash.status?.lastHotRefreshAt as string) || undefined;
     return (
-      <section id="important-events"
+      <section id={sectionId}
         className={`${embedded ? 'ie-embed' : 'ie-card'}${showAll ? ' is-expanded' : ''}`}
         aria-label="Important events">
         <div className="ie-head">
@@ -332,7 +336,7 @@ export const ImportantEventsCard: React.FC<Props> = ({ embedded }) => {
   const shown = showAll ? events : events.slice(0, 5);
 
   return (
-    <section id="important-events"
+    <section id={sectionId}
       className={`${embedded ? 'ie-embed' : 'ie-card'}${showAll ? ' is-expanded' : ''}`}
       aria-label="Important events">
       <div className="ie-head">
