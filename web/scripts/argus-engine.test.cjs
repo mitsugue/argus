@@ -262,6 +262,12 @@ check('Today never claims an empty calendar it could not read',
   check('tapping an event stays on Today and jumps to the complete event review',
     panel.includes("document.getElementById('today-event-details')")
     && panel.includes('<JapanSqCalendarCard />'));
+  const eventSection = panel.slice(panel.indexOf('aria-label="重要イベント"'),
+    panel.indexOf('className="at-other-markets card"'));
+  check('SQ details share the Today event section with pre/post event outcomes',
+    eventSection.includes('<ImportantEventsCard embedded sectionId="today-event-details" />')
+    && eventSection.includes('<JapanSqCalendarCard />')
+    && eventSection.indexOf('<JapanSqCalendarCard />') < eventSection.lastIndexOf('</section>'));
   const css = fs.readFileSync(path.join(root, 'src/components/today/ArgusToday.css'), 'utf8');
   check('the signals header never wraps on a phone',
     css.includes('.at-seven summary small, .at-seven summary > b { white-space:nowrap;'));

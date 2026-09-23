@@ -38,7 +38,7 @@ check('market score excludes holder risk overlay',
 check('Today also exposes the canonical event detail during the Alerts migration',
   !command.includes('<ImportantEventsCard')
   && notifications.includes('<ImportantEventsCard />')
-  && today.includes('<ImportantEventsCard sectionId="today-event-details" />')
+  && today.includes('<ImportantEventsCard embedded sectionId="today-event-details" />')
   && events.includes("sectionId = 'important-events'")
   && events.includes('setShowAll') && events.includes('is-expanded')
   && eventCss.includes('.ie-card:not(.is-expanded)'));
