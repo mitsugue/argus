@@ -53,7 +53,9 @@ def test_wrong_key_or_corrupt_chunk_does_not_create_or_change_local_data(tmp_pat
     cold=tmp_path/'cold'
     with pytest.raises(InvalidTag):backup.synchronize(cold,remote,keys(b'b'*32))
     assert not cold.exists()
-    chunk=next(p for p in remote.files if '/chunks/' in p);remote.files[chunk]=remote.files[chunk][:-1]+b'x'
+    chunk=next(p for p in remote.files if '/chunks/' in p)
+    original=remote.files[chunk]
+    remote.files[chunk]=original[:-1]+bytes([original[-1]^1])
     with pytest.raises((ValueError,InvalidTag)):backup.synchronize(cold,remote,keys())
     assert not cold.exists()
 
