@@ -437,6 +437,23 @@ def _cost_policy_restore_durable():
     abandoned_reservations = set()
     with _COST_POLICY_LOCK:
         live = argus_cost_policy.normalize_state(_COST_POLICY)
+        # Previous releases capped the live policy journal at 2,000 rows and
+        # restart reconciliation at 500. A state with 500 or more rows may
+        # have appended calls after an old 500-row restart truncation. Do not
+        # authorize more scheduled AI from
+        # a possibly incomplete month; raw provider receipts are not a safe
+        # substitute for the pre-call reservation ledger.
+        current_month = _ai_now_iso()[:7]
+        legacy_sources = (() if saved.get("budgetWindowVersion") == 2
+                          else (live, saved))
+        if any(source.get("budgetWindowVersion") != 2
+               and len(source["usage"]) >= 500 and any(
+                   str(row.get("at") or "").startswith(current_month)
+                   for row in source["usage"])
+               for source in legacy_sources):
+            live["budgetHistoryIncompleteMonth"] = current_month
+        elif saved.get("budgetHistoryIncompleteMonth"):
+            live["budgetHistoryIncompleteMonth"] = saved["budgetHistoryIncompleteMonth"]
         for row in live["usage"]:
             if row.get("pending"):
                 abandoned_reservations.add(_cost_policy_usage_key(row))
@@ -451,7 +468,9 @@ def _cost_policy_restore_durable():
                 seen.add(_cost_policy_usage_key(row))
                 added += 1
         live["usage"].sort(key=lambda r: str(r.get("at") or ""))
-        live["usage"] = live["usage"][-500:]
+        live["usage"] = argus_cost_policy.retain_budget_window(
+            live["usage"], _ai_now_iso())
+        live["budgetWindowVersion"] = 2
         for key in ("lastExecution", "lastSkip"):
             candidate = saved.get(key)
             current = live.get(key)
@@ -541,7 +560,9 @@ def _cost_policy_reserve(provider, purpose, *, event_id="", event_phase="",
                "eventId": event_id or None, "eventPhase": event_phase or None,
                "pending": True, "reservationId": reservation_id}
         _COST_POLICY.setdefault("usage", []).append(row)
-        _COST_POLICY["usage"] = _COST_POLICY["usage"][-2000:]
+        _COST_POLICY["usage"] = argus_cost_policy.retain_budget_window(
+            _COST_POLICY["usage"], now_iso)
+        _COST_POLICY["budgetWindowVersion"] = 2
     _cost_policy_persist_durable()
     return decision, reservation_id
 
