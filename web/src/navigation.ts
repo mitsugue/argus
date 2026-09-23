@@ -1,7 +1,6 @@
 export type RouteKey =
   | 'command'
   | 'watchlist'
-  | 'notifications'
   | 'settings';
 
 export type PrimaryRouteKey = RouteKey;
@@ -29,11 +28,18 @@ export const NAVIGATION: readonly NavigationDefinition[] = [
     hash: '#today', swipeOrder: 0 },
   { route: 'watchlist', desktopLabel: 'Watchlist', mobileLabel: 'Watchlist',
     hash: '#holdings', swipeOrder: 1 },
-  { route: 'notifications', desktopLabel: 'Notifications', mobileLabel: 'Alerts',
-    hash: '#notifications', swipeOrder: 2 },
   { route: 'settings', desktopLabel: 'Settings', mobileLabel: 'Settings',
-    hash: '#settings', swipeOrder: 3 },
+    hash: '#settings', swipeOrder: 2 },
 ] as const;
+
+// 13M remains an independently deployed, read-only research application.
+// Keep this as a plain navigation link: ARGUS must not fetch its data, start
+// its jobs, or imply that an unverified candidate is a trading instruction.
+export const THIRTEEN_M_NAVIGATION = {
+  desktopLabel: '13M',
+  mobileLabel: '13M',
+  href: 'https://argus-13m-shadow.onrender.com/',
+} as const;
 
 export const PRIMARY_NAVIGATION = [...NAVIGATION]
   .sort((left, right) => left.swipeOrder - right.swipeOrder);
@@ -41,16 +47,15 @@ export const PRIMARY_NAVIGATION = [...NAVIGATION]
 const ROUTE_HASHES: Record<RouteKey, string> = {
   command: '#today',
   watchlist: '#holdings',
-  notifications: '#notifications',
   settings: '#settings',
 };
 
-// Only canonical surface hashes are routable. Retired engine/deep-link aliases
-// deliberately do not redirect.
+// Only canonical surface hashes are routable. Retired Alerts landing links go
+// to Today, where their news and SQ receipts are now presented.
 export const HASH_ROUTES: Readonly<Record<string, RouteKey>> = {
   '#today': 'command',
   '#holdings': 'watchlist',
-  '#notifications': 'notifications',
+  '#notifications': 'command',
   '#settings': 'settings',
 };
 

@@ -364,7 +364,7 @@ async function geometry(page, viewport) {
       orientation: screen.orientation?.type
         ?? (innerWidth > innerHeight ? 'landscape' : 'portrait'),
       devicePixelRatio,
-      navTouchTargets: [...document.querySelectorAll('.nav__mobile > button, .nav__mobile > details > summary')]
+      navTouchTargets: [...document.querySelectorAll('.nav__mobile > button, .nav__mobile > a, .nav__mobile > details > summary')]
         .map((element) => element.getBoundingClientRect().height),
     };
   }, { ...viewport, hostileGeometry });
@@ -372,8 +372,7 @@ async function geometry(page, viewport) {
 
 async function navigationAudit(page, evidence) {
   const sequence = [
-    ['Today', '#today'], ['Watchlist', '#holdings'],
-    ['Alerts', '#notifications'], ['Settings', '#settings'],
+    ['Today', '#today'], ['Watchlist', '#holdings'], ['Settings', '#settings'],
   ];
   const records = [];
   for (const [index, [name, hash]] of sequence.entries()) {
@@ -389,7 +388,15 @@ async function navigationAudit(page, evidence) {
       direction: index === 0 ? null : 'next',
     });
   }
-  await page.goBack(); await page.waitForFunction(() => location.hash === '#notifications');
+  const thirteenM = page.locator('.nav__mobile').getByRole('link', { name: '13Mを開く', exact: true });
+  if (await thirteenM.getAttribute('href') !== 'https://argus-13m-shadow.onrender.com/') {
+    evidence.failures.push('13m-navigation-target');
+  }
+  const mobileOrder = await page.locator('.nav__mobile').locator('button, a').allTextContents();
+  if (mobileOrder.join('|') !== 'Today|Watchlist|13M|Settings') {
+    evidence.failures.push('13m-navigation-position');
+  }
+  await page.goBack(); await page.waitForFunction(() => location.hash === '#holdings');
   await page.waitForFunction(() =>
     document.querySelector('.shell__page')?.classList.contains('shell__page--prev'));
   const back = await page.locator('.nav__mobile-btn.is-active').innerText();
@@ -402,7 +409,7 @@ async function navigationAudit(page, evidence) {
     record.hash !== sequence[index][1] || record.active !== sequence[index][0])) {
     evidence.failures.push('navigation-order-or-active-state');
   }
-  if (back !== 'Alerts' || forward !== 'Settings') {
+  if (back !== 'Watchlist' || forward !== 'Settings') {
     evidence.failures.push('history-navigation-active-state');
   }
   return { records, back, forward, systemVisible: false };

@@ -149,7 +149,7 @@ try {
   const brand = await page.locator('.shell__brand').innerText();
   assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro/);
   assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro\s+v13\.7\.43/);
-  for (const label of ['Today', 'Watchlist', 'Notifications', 'Settings']) {
+  for (const label of ['Today', 'Watchlist', '13M', 'Settings']) {
     assert.ok(await page.getByText(label, { exact: true }).count() > 0, label);
   }
   // v13.5.39: the owner's top command block renders MARKET SIGNALS x / 7 from

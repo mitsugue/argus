@@ -7,7 +7,6 @@ import {
 } from './navigation';
 import { CommandCenter } from './routes/CommandCenter';
 import { Watchlist } from './routes/Watchlist';
-import { NotificationsPage } from './routes/NotificationsPage';
 import { Settings } from './routes/Settings';
 import { startCloudSync } from './lib/vault';
 import { readDeviceLocalSdaLedger } from './lib/sdaDeviceLocal';
@@ -211,7 +210,6 @@ const App: React.FC = () => {
         onBackToHoldings={() => handleNavSelect('watchlist')}
       />
     )}
-    {route === 'notifications' && <NotificationsPage />}
     {route === 'settings'
       && <Settings settingsSection={location.settingsSection} />}
   </>;
