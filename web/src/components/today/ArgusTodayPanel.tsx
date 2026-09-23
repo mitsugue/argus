@@ -1040,13 +1040,13 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         {sqCalendar.failed && !sqCalendar.data?.events.length && <span> SQ日程は更新を確認できません</span>}
       </div>
       <button type="button" className="at-event-more" onClick={openEventDetails}>イベントの結果・出典を見る ↗</button>
+      {/* Event scenarios, official results and SQ source details share this
+          event section. The SQ notice above opens the matching detail here. */}
+      <ImportantEventsCard embedded sectionId="today-event-details" />
+      <div className="at-event-sq-details">
+        <JapanSqCalendarCard />
+      </div>
     </section>
-
-    {/* Keep the complete pre-release scenario, official result, and answer-check
-        on Today before retiring the separate Alerts surface.  A distinct ID
-        prevents an anchor collision during this measured migration. */}
-    <ImportantEventsCard sectionId="today-event-details" />
-    <JapanSqCalendarCard />
 
     <details className="at-other-markets card" data-argus-contract="other-markets-actuals-v1"
       onToggle={(event) => setOtherMarketsOpen(event.currentTarget.open)}>
