@@ -132,6 +132,17 @@ def _scheduled_monthly_usage(month_rows):
     return round(sum(float(row.get("estimatedCostUsd") or 0.0) for row in rows), 6)
 
 
+def _total_production_usage(rows):
+    """All billable production lanes share the owner-set ceiling.
+
+    Manual diagnostics and formal research retain their explicit confirmation
+    requirements, but cannot bypass the production provider budget.  Pending
+    reservations have the same row shape and therefore count here too.
+    """
+    return round(sum(float(row.get("estimatedCostUsd") or 0.0)
+                     for row in rows), 6)
+
+
 def authorize(state: Dict[str, Any], *, provider: str, purpose: str,
               automatic: bool, now_iso: str = "", event_id: str = "",
               event_phase: str = "", confirmation: bool = False,
@@ -246,6 +257,32 @@ def authorize(state: Dict[str, Any], *, provider: str, purpose: str,
         return _skip(mode, "request_token_bound", purpose)
     if budget_enforced and estimated_tokens > event_token_limit:
         return _skip(mode, "event_token_limit", purpose)
+    # The daily/monthly ceiling is a single production-provider ceiling.  It
+    # applies after each mode's permission check so manual confirmation and
+    # research consent remain necessary, while neither may spend outside the
+    # total budget.  The event allocation remains protected from non-event
+    # calls when event analysis is opted in.
+    today = _day(now_iso)
+    month = _month(now_iso)
+    daily_budget = max(0.0, float(scheduled_daily_budget_usd))
+    monthly_budget = max(0.0, float(scheduled_monthly_budget_usd))
+    day_rows = [x for x in st["usage"] if _day(x.get("at")) == today]
+    month_rows = [x for x in st["usage"] if _month(x.get("at")) == month]
+    daily_spent = _total_production_usage(day_rows)
+    monthly_spent = _total_production_usage(month_rows)
+    is_event = purpose == SCHEDULED_EVENT_PURPOSE
+    if bool(st.get("eventOptIn")) and not is_event:
+        _, event_spent, event_runs, reserve = _scheduled_budget_usage(
+            day_rows, daily_budget)
+        if event_runs >= SCHEDULED_EVENT_RUNS_PER_DAY:
+            reserve = 0.0
+        daily_cap = max(0.0, daily_budget - reserve)
+    else:
+        daily_cap = daily_budget
+    if budget_enforced and daily_spent + float(estimated_cost_usd) > daily_cap:
+        return _skip(mode, "total_daily_budget_exhausted", purpose)
+    if budget_enforced and monthly_spent + float(estimated_cost_usd) > monthly_budget:
+        return _skip(mode, "total_monthly_budget_exhausted", purpose)
     return {"allowed": True, "classification": "success", "status": "allowed",
             "reason": None, "mode": mode, "purpose": purpose,
             "provider": p, "eventId": event_id or None,
@@ -342,6 +379,8 @@ def public_status(state: Dict[str, Any], now_iso: str,
     if not bool(st.get("eventOptIn")):
         reserve_remaining = 0.0
     monthly_spent = _scheduled_monthly_usage(month_rows)
+    total_daily_spent = _total_production_usage(day_rows)
+    total_monthly_spent = _total_production_usage(month_rows)
     last = st.get("lastExecution") or {}
     scheduled_lane = {
         "budgetEnforced": bool(budget_enforced),
@@ -360,6 +399,11 @@ def public_status(state: Dict[str, Any], now_iso: str,
         "eventLaneOpen": bool(mode == "SCHEDULED_AI" and st.get("eventOptIn")
                               and (not budget_enforced or (event_runs < SCHEDULED_EVENT_RUNS_PER_DAY
                               and lane_spent < budget))),
+        "totalProductionDailySpentUsd": total_daily_spent,
+        "totalProductionDailyRemainingUsd": round(max(0.0, budget - total_daily_spent), 6),
+        "totalProductionMonthlySpentUsd": total_monthly_spent,
+        "totalProductionMonthlyRemainingUsd": round(
+            max(0.0, monthly_budget - total_monthly_spent), 6),
     }
     next_allowed = ("重要イベントの明示opt-in後" if mode == "EVENT_OPT_IN"
                     else "明示確認付きmanual APIのみ" if mode == "MANUAL"
