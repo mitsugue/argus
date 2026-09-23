@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.40"
+PRODUCT_VERSION = "v13.7.41"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -203,7 +203,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_owner_cached_inputs.py': '444cb79f894d9a756d42d0ad47ce646a3f1b36ea',
     'test_argus_owner_dialogue.py': 'bb51131cb51b1c0670050b0c0594b7113c1a0aec',
     'test_argus_owner_dialogue_api.py': '9312928ff4a8417db892455cbc2ce597c9745326',
-    'test_argus_owner_dialogue_backup.py': '6fe13fa23a90a3a90930fbf96257a117ebee88b0',
+    'test_argus_owner_dialogue_backup.py': 'cf675c0f2f17840c35e762a35feafc090cab8338',
     'test_argus_owner_dialogue_recovery.py': 'acf706ac87e3ea5a686768bb22d9239e4576c126',
     'test_argus_subject_materials.py': '321b8881f911e5ce356e1684a471c68413498a3d',
     'test_jp_market_internals.py': '49eb3f360af263f28847f3fb9fceae31c8a539d5',

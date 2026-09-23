@@ -114,6 +114,25 @@ class CostPolicyTests(unittest.TestCase):
         self.assertFalse(blocked["allowed"])
         self.assertEqual(blocked["reason"], "scheduled_monthly_budget_exhausted")
 
+    def test_monthly_cap_keeps_more_than_two_thousand_small_calls(self):
+        state = cp.default_state("SCHEDULED_AI")
+        state["usage"] = [{"provider": "openai", "purpose": "headline_translation",
+                           "at": f"2026-09-{1 + i // 100:02d}T01:00:00Z",
+                           "estimatedCostUsd": 0.00499}
+                          for i in range(2001)]
+        self.assertEqual(len(cp.normalize_state(state)["usage"]), 2001)
+        denied = cp.authorize(state, provider="openai",
+                              purpose="headline_translation", automatic=True,
+                              now_iso="2026-09-23T01:00:00Z",
+                              estimated_cost_usd=0.017, estimated_tokens=1000)
+        self.assertEqual(denied["reason"], "scheduled_monthly_budget_exhausted")
+
+    def test_budget_window_keeps_full_current_and_previous_month(self):
+        rows = [{"at": "2026-09-30T23:59:59Z"},
+                {"at": "2026-10-01T00:00:00Z", "pending": True},
+                {"at": "2026-11-01T00:00:00Z"}]
+        self.assertEqual(cp.retain_budget_window(rows, "2026-11-01T01:00:00Z"), rows[1:])
+
     def test_market_brief_is_not_forced_beyond_four_material_updates_per_day(self):
         state = cp.default_state("SCHEDULED_AI")
         for hour in range(4):
@@ -324,6 +343,75 @@ class SpentEventReserveTests(unittest.TestCase):
         self.assertFalse(lane["eventLaneOpen"])
         self.assertEqual(lane["dailyBudgetUsd"], 2.0)
         self.assertEqual(cp.normalize_state(st), st)
+
+
+def _runtime_ledger(monkeypatch, tmp_path):
+    import scanner
+    monkeypatch.setattr(scanner, "_COST_POLICY", cp.default_state("SCHEDULED_AI"))
+    monkeypatch.setattr(scanner, "_COST_POLICY_DURABLE", {"enabled": True, "lastError": None})
+    monkeypatch.setattr(scanner, "_cost_policy_durable_path",
+                        lambda: str(tmp_path / "cost-policy.json"))
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: "2026-09-12T07:00:00Z")
+    monkeypatch.setattr(scanner, "_cost_policy_checkpoint_after_write", lambda _: None)
+    return scanner
+
+
+def _six_hundred_monthly_rows():
+    return [{"provider": "openai", "purpose": "headline_translation",
+             "at": f"2026-09-{1 + i // 30:02d}T01:{i % 30:02d}:00Z",
+             "estimatedCostUsd": 0.016} for i in range(600)]
+
+
+def test_legacy_policy_window_fails_closed_after_restart(monkeypatch, tmp_path):
+    import json
+    scanner = _runtime_ledger(monkeypatch, tmp_path)
+    saved = cp.default_state("SCHEDULED_AI")
+    saved["usage"] = _six_hundred_monthly_rows()
+    saved.pop("budgetWindowVersion")  # pre-fix state may already have lost rows
+    (tmp_path / "cost-policy.json").write_text(json.dumps(saved))
+    assert scanner._cost_policy_restore_durable() == 600
+    assert len(scanner._COST_POLICY["usage"]) == 600
+    decision = cp.authorize(scanner._COST_POLICY, provider="openai",
+                            purpose="headline_translation", automatic=True,
+                            now_iso="2026-09-21T01:00:00Z",
+                            estimated_cost_usd=0.41, estimated_tokens=1000)
+    assert decision["reason"] == "scheduled_budget_history_incomplete"
+    assert cp.public_status(scanner._COST_POLICY,
+                            "2026-09-21T01:00:00Z")["scheduledLane"]["historyComplete"] is False
+
+
+def test_complete_policy_window_restores_full_month_without_false_unknown(monkeypatch, tmp_path):
+    import json
+    scanner = _runtime_ledger(monkeypatch, tmp_path)
+    saved = cp.default_state("SCHEDULED_AI")
+    saved["usage"] = _six_hundred_monthly_rows()
+    scanner._COST_POLICY["budgetWindowVersion"] = 1
+    scanner._COST_POLICY["usage"] = saved["usage"][:500]
+    (tmp_path / "cost-policy.json").write_text(json.dumps(saved))
+    assert scanner._cost_policy_restore_durable() == 100
+    assert len(scanner._COST_POLICY["usage"]) == 600
+    assert scanner._COST_POLICY["budgetHistoryIncompleteMonth"] is None
+    decision = cp.authorize(scanner._COST_POLICY, provider="openai",
+                            purpose="headline_translation", automatic=True,
+                            now_iso="2026-09-21T01:00:00Z",
+                            estimated_cost_usd=0.41, estimated_tokens=1000)
+    assert decision["reason"] == "scheduled_monthly_budget_exhausted"
+
+
+def test_runtime_reservation_does_not_drop_earlier_current_month_rows(monkeypatch, tmp_path):
+    scanner = _runtime_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(scanner, "_DURABILITY_PRODUCTION", False)
+    scanner._COST_POLICY["usage"] = [
+        {"provider": "openai", "purpose": "manual_api",
+         "at": "2026-09-01T01:00:00Z", "estimatedCostUsd": 0.0,
+         "reservationId": f"prior-{i}"} for i in range(2001)]
+    decision, reservation = scanner._cost_policy_reserve(
+        "openai", "manual_api", automatic=False, confirmation=True,
+        estimated_cost_usd=0.0, estimated_tokens=100)
+    assert decision["allowed"] and reservation
+    assert len(scanner._COST_POLICY["usage"]) == 2002
+    scanner._cost_policy_settle(reservation, ok=True, actual_cost_usd=0.0)
+    assert len(scanner._COST_POLICY["usage"]) == 2002
 
     def test_shared_cap_next_day_and_purpose_restrictions_remain(self):
         st = self.state(1.7, [0.1] * 3)

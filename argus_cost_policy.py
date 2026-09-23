@@ -11,7 +11,7 @@ news_intel) to run automatically, under a dedicated daily USD budget computed
 from recorded usage.  Every other purpose in this mode behaves exactly like
 MANUAL (explicit confirmation + manual_api only).
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 MODES = ("DETERMINISTIC", "EVENT_OPT_IN", "MANUAL", "RESEARCH_BENCHMARK",
@@ -52,6 +52,8 @@ def default_state(mode: str = "DETERMINISTIC", event_opt_in: bool = False) -> Di
         "events": {},
         "usage": [],
         "lastExecution": None,
+        "budgetWindowVersion": 2,
+        "budgetHistoryIncompleteMonth": None,
     }
 
 
@@ -60,9 +62,13 @@ def normalize_state(state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     out = default_state(str(src.get("mode") or "DETERMINISTIC"),
                         bool(src.get("eventOptIn")))
     out["events"] = dict(src.get("events") or {})
-    # A monthly $10 ceiling must survive more than a busy day's short
-    # translations.  Keep enough durable rows to account for the full month.
-    out["usage"] = [x for x in (src.get("usage") or []) if isinstance(x, dict)][-2000:]
+    # Never discard rows by count: even a tiny estimated charge can occur
+    # thousands of times in one month and still count toward the hard cap.
+    out["usage"] = [x for x in (src.get("usage") or []) if isinstance(x, dict)]
+    out["budgetWindowVersion"] = 2 if src.get("budgetWindowVersion") == 2 else 1
+    incomplete = src.get("budgetHistoryIncompleteMonth")
+    out["budgetHistoryIncompleteMonth"] = (incomplete if isinstance(incomplete, str)
+                                          and _valid_month(incomplete) else None)
     out["lastExecution"] = src.get("lastExecution") if isinstance(
         src.get("lastExecution"), dict) else None
     # v13.5.63: the last refusal is state too — "no run" must have a reason.
@@ -176,6 +182,9 @@ def authorize(state: Dict[str, Any], *, provider: str, purpose: str,
         if full_analysis and p != "openai":
             return _skip(mode, "primary_analysis_requires_openai", purpose)
         if purpose in SCHEDULED_PURPOSES or scheduled_event or full_analysis:
+            if (budget_enforced and st.get("budgetHistoryIncompleteMonth") ==
+                    _month(now_iso)):
+                return _skip(mode, "scheduled_budget_history_incomplete", purpose)
             # Automatic news translation/analysis, bounded by a daily budget
             # summed over the recorded usage rows of the scheduled lane.
             today = _day(now_iso)
@@ -267,7 +276,8 @@ def record_execution(state: Dict[str, Any], *, provider: str, purpose: str,
            "estimatedCostUsd": round(max(0.0, float(estimated_cost_usd)), 6),
            "eventId": event_id or None, "eventPhase": event_phase or None}
     st["usage"].append(row)
-    st["usage"] = st["usage"][-2000:]
+    st["usage"] = retain_budget_window(st["usage"], at)
+    st["budgetWindowVersion"] = 2
     st["lastExecution"] = row
     if event_id and event_phase in EVENT_PHASES:
         ev = dict(st["events"].get(event_id) or {})
@@ -284,6 +294,32 @@ def _day(s: str) -> str:
 
 def _month(s: str) -> str:
     return str(s or "")[:7]
+
+
+def retain_budget_window(rows: list, reference_iso: str) -> list:
+    """Keep every current/prior UTC-month row, including pending reservations.
+
+    The detailed AI receipt store retains older history. This small policy
+    state only needs the current month's full spend and the preceding month
+    for an in-flight call crossing midnight on the first day. Unknown-dated
+    rows are retained rather than silently discarded.
+    """
+    try:
+        first = datetime.strptime(_month(reference_iso), "%Y-%m").replace(day=1)
+    except ValueError:
+        return list(rows)
+    previous = (first - timedelta(days=1)).strftime("%Y-%m")
+    current = first.strftime("%Y-%m")
+    return [row for row in rows if _month(row.get("at")) in (current, previous)
+            or not _valid_month(_month(row.get("at")))]
+
+
+def _valid_month(value: str) -> bool:
+    try:
+        datetime.strptime(value, "%Y-%m")
+        return True
+    except ValueError:
+        return False
 
 
 def public_status(state: Dict[str, Any], now_iso: str,
@@ -309,6 +345,7 @@ def public_status(state: Dict[str, Any], now_iso: str,
     last = st.get("lastExecution") or {}
     scheduled_lane = {
         "budgetEnforced": bool(budget_enforced),
+        "historyComplete": st.get("budgetHistoryIncompleteMonth") != month,
         "dailyBudgetUsd": budget, "spentTodayUsd": lane_spent,
         "remainingUsd": round(max(0.0, budget - lane_spent), 6),
         "monthlyBudgetUsd": monthly_budget, "spentThisMonthUsd": monthly_spent,
