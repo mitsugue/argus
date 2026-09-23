@@ -639,7 +639,14 @@ def _scheduled_ai_skip(provider, purpose):
 
 
 def _cost_policy_record(provider, purpose, *, event_id="", event_phase="",
-                        estimated_cost_usd=0.0):
+                        estimated_cost_usd=0.0, reservation_id=""):
+    # A completed reservation is already the durable execution row.  Retain
+    # the established record() call contract for callers while settling that
+    # exact row instead of appending a duplicate charge.
+    if reservation_id:
+        _cost_policy_settle(reservation_id, ok=True,
+                            actual_cost_usd=estimated_cost_usd)
+        return
     with _COST_POLICY_LOCK:
         updated = argus_cost_policy.record_execution(
             _COST_POLICY, provider=provider, purpose=purpose,
@@ -16830,24 +16837,15 @@ def api_argus_ai_provider_ping():
     body = request.get_json(silent=True) or {}
     provider = str(body.get("provider") or "").strip().lower()
     reason = str(body.get("reason") or "").strip()[:160]
-    if _COST_POLICY.get("mode") != "MANUAL":
-        policy = _cost_policy_authorize(
-            provider if provider in ("openai", "gemini") else "openai",
-            "manual_api", automatic=False,
-            confirmation=body.get("confirm") is True,
-            estimated_cost_usd=0.002, estimated_tokens=100)
-        # v13.5.36: SCHEDULED_AI allows a CONFIRMED manual ping — honor the
-        # policy verdict instead of hard-requiring MANUAL mode.
-        if not policy["allowed"]:
-            return jsonify({**_deterministic_skip_payload("provider_ping"),
-                            "reason": policy.get("reason"),
-                            "status": policy.get("status")}), 200
     if provider not in ("openai", "gemini"):
         return jsonify({"ok": False, "error": "provider_required",
                         "allowedProviders": ["openai", "gemini"]}), 400
     if not reason:
         return jsonify({"ok": False, "error": "execution_reason_required"}), 400
-    policy = _cost_policy_authorize(
+    # Reserve before the provider client is created.  A manual diagnostic is
+    # still explicit-confirmation only, but shares the production ceiling and
+    # cannot race a scheduled call into an unrecorded overspend.
+    policy, reservation_id = _cost_policy_reserve(
         provider, "manual_api", automatic=False,
         confirmation=body.get("confirm") is True,
         estimated_cost_usd=0.002, estimated_tokens=100)
@@ -16867,46 +16865,53 @@ def api_argus_ai_provider_ping():
     try:
         argus_product_naming.require_allowed(out)
     except argus_product_naming.NamingPolicyError as exc:
+        _cost_policy_settle(reservation_id, ok=False)
         return jsonify({"ok": False, "error": str(exc)}), 503
 
+    request_started = False
     if provider == "openai" and not _OPENAI_API_KEY:
+        _cost_policy_settle(reservation_id, ok=False)
+        reservation_id = None
         out["openai"] = {"ok": False, "error": "missing_key"}
     elif provider == "openai":
         try:
             import openai
             client = openai.OpenAI(api_key=_OPENAI_API_KEY)
-            try:
-                r = _ai_usage_provider_call('openai', 'provider_ping', model, lambda: client.responses.create(model=model,
-                                            input="Reply with the single word: pong",
-                                            timeout=30, store=False), attempt=1, source_ref='api_argus_ai_provider_ping')
-                reply = (getattr(r, "output_text", "") or "")[:40]
-            except Exception:
-                r = _ai_usage_provider_call('openai', 'provider_ping', model, lambda: client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": "Reply with the single word: pong"}],
-                    timeout=30), attempt=2, source_ref='api_argus_ai_provider_ping')
-                reply = (r.choices[0].message.content or "")[:40]
+            request_started = True
+            r = _ai_usage_provider_call('openai', 'provider_ping', model, lambda: client.responses.create(model=model,
+                                        input="Reply with the single word: pong",
+                                        timeout=30, store=False), attempt=1, source_ref='api_argus_ai_provider_ping')
+            reply = (getattr(r, "output_text", "") or "")[:40]
             out["openai"] = {"ok": True, "model": model, "reply": reply,
                              "requestedModel": model,
                              "returnedModel": str(getattr(r, "model", None)
                                                   or "")[:60] or None}
-            _cost_policy_record("openai", "manual_api", estimated_cost_usd=0.001)
+            _cost_policy_settle(reservation_id, ok=True, actual_cost_usd=0.001)
+            reservation_id = None
             argus_product_naming.require_allowed(out["openai"])
             _AI_PROVIDER_LAST_PING[f"openai:{model}"] = {
                 "requestedModel": model,
                 "returnedModel": out["openai"]["returnedModel"],
                 "ok": True, "at": _ai_now_iso()}
         except Exception as e:
+            _cost_policy_settle(reservation_id, ok=request_started,
+                                actual_cost_usd=(0.002 if request_started else None))
+            reservation_id = None
             out["openai"] = {"ok": False, "model": model,
                              "error": type(e).__name__, "message": str(e)[:140]}
 
     if provider == "gemini" and not GEMINI_API_KEY:
+        _cost_policy_settle(reservation_id, ok=False)
+        reservation_id = None
         out["gemini"] = {"ok": False, "error": "missing_key"}
     elif provider == "gemini" and not google_genai:
+        _cost_policy_settle(reservation_id, ok=False)
+        reservation_id = None
         out["gemini"] = {"ok": False, "error": "sdk_unavailable"}
     elif provider == "gemini":
         try:
             client = google_genai.Client(api_key=GEMINI_API_KEY)
+            request_started = True
             r = _ai_usage_provider_call('gemini', 'provider_ping', _GEMINI_FALLBACK_MODEL, lambda: client.models.generate_content(model=_GEMINI_FALLBACK_MODEL,
                                                contents="Reply with the single word: pong"), attempt=1, source_ref='api_argus_ai_provider_ping')
             out["gemini"] = {"ok": True, "model": _GEMINI_FALLBACK_MODEL,
@@ -16914,13 +16919,17 @@ def api_argus_ai_provider_ping():
                              "requestedModel": _GEMINI_FALLBACK_MODEL,
                              "returnedModel": str(getattr(
                                  r, "model_version", None) or "")[:60] or None}
-            _cost_policy_record("gemini", "manual_api", estimated_cost_usd=0.001)
+            _cost_policy_settle(reservation_id, ok=True, actual_cost_usd=0.001)
+            reservation_id = None
             argus_product_naming.require_allowed(out["gemini"])
             _AI_PROVIDER_LAST_PING[f"gemini:{_GEMINI_FALLBACK_MODEL}"] = {
                 "requestedModel": _GEMINI_FALLBACK_MODEL,
                 "returnedModel": out["gemini"]["returnedModel"],
                 "ok": True, "at": _ai_now_iso()}
         except Exception as e:
+            _cost_policy_settle(reservation_id, ok=request_started,
+                                actual_cost_usd=(0.002 if request_started else None))
+            reservation_id = None
             out["gemini"] = {"ok": False, "model": _GEMINI_FALLBACK_MODEL,
                              "error": type(e).__name__, "message": str(e)[:140]}
     return jsonify(out)
@@ -34470,21 +34479,32 @@ def _ai_capability_probe(model, *, confirmation=False, expected_text="ok",
            "pricingVersion": _BENCHMARK_PRICING_VERSION,
            "createdAt": _ai_now_iso(), "errorClass": None,
            "matchedExpectedText": False, "responseTextPresent": False}
-    if not _cost_policy_authorize(
+    decision, reservation_id = _cost_policy_reserve(
             "openai", purpose, automatic=False, confirmation=confirmation,
-            estimated_cost_usd=0.001, estimated_tokens=50)["allowed"]:
+            estimated_cost_usd=0.001, estimated_tokens=50)
+    if not decision.get("allowed"):
         out["errorClass"] = "cost_policy_blocked"
         return out
     if not _OPENAI_API_KEY:
+        _cost_policy_settle(reservation_id, ok=False)
         out["errorClass"] = "no_api_key"
         return out
+    request_started = False
     try:
         import openai
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
+        request_started = True
         r = _ai_usage_provider_call('openai', purpose, model, lambda: client.responses.create(
             model=model, input=f"Reply exactly {expected_text}",
             timeout=30, store=False, max_output_tokens=64), attempt=None, source_ref='_ai_capability_probe')
-        _cost_policy_record("openai", purpose, estimated_cost_usd=0.001)
+        usage = _usage_tokens(r) or (0, 0)
+        actual_cost = argus_ai_cost.estimate_cost(model, usage[0], usage[1], _AI_PRICING)
+        _cost_policy_record(
+            "openai", purpose,
+            estimated_cost_usd=(actual_cost if actual_cost is not None
+                                and any(usage) else 0.001),
+            reservation_id=reservation_id)
+        reservation_id = None
         output_text = str(getattr(r, "output_text", None) or "").strip()
         out["matchedExpectedText"] = output_text == expected_text
         # Availability is a transport/response property. Exact instruction
@@ -34499,6 +34519,8 @@ def _ai_capability_probe(model, *, confirmation=False, expected_text="ok",
                         "outputTokens": (u or (0, 0))[1]}
         out["responseModel"] = getattr(r, "model", None)
     except Exception as e:
+        _cost_policy_settle(reservation_id, ok=request_started,
+                            actual_cost_usd=(0.001 if request_started else None))
         out["errorClass"] = type(e).__name__[:40]
     return out
 
@@ -34625,13 +34647,34 @@ def _gemini_capability_probe(model, *, confirmation=False, max_attempts=1,
     client = google_genai.Client(api_key=GEMINI_API_KEY)
     expected = "ARGUS_GEMINI_OK"
     for attempt in range(1, max(1, min(int(max_attempts), 3)) + 1):
+        decision, reservation_id = _cost_policy_reserve(
+            "gemini", purpose, automatic=False, confirmation=confirmation,
+            estimated_cost_usd=0.01, estimated_tokens=1200)
+        if not decision.get("allowed"):
+            row = {**base, "attempts": None,
+                   "errorClass": "cost_policy_blocked"}
+            row["attempt"] = attempt
+            row["classification"] = "malformed_request"
+            base["attempts"].append(row)
+            base.update({k: v for k, v in row.items() if k != "attempts"})
+            break
+        request_started = False
         try:
+            request_started = True
             response = _ai_usage_provider_call('gemini', purpose, model, lambda: client.models.generate_content(
                 model=model, contents="Reply with exactly: ARGUS_GEMINI_OK",
                 config=_gemini_probe_config()), attempt=attempt, source_ref='_gemini_capability_probe')
             row = _gemini_response_metadata(response, model, expected)
-            _cost_policy_record("gemini", purpose, estimated_cost_usd=0.01)
+            usage = _gemini_usage_tokens(response) or (0, 0)
+            actual_cost = argus_ai_cost.estimate_cost(
+                model, usage[0], usage[1], _AI_PRICING)
+            _cost_policy_settle(
+                reservation_id, ok=True,
+                actual_cost_usd=(actual_cost if actual_cost is not None and any(usage)
+                                 else 0.01))
         except Exception as exc:
+            _cost_policy_settle(reservation_id, ok=request_started,
+                                actual_cost_usd=(0.01 if request_started else None))
             row = {**base, "attempts": None,
                    "errorClass": type(exc).__name__[:80]}
         row["attempt"] = attempt
@@ -34810,10 +34853,7 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider,
     """One OpenAI evaluator call, provider names hidden; no retry/fallback."""
     order = argus_research_benchmark.blind_order(benchmark_id, case["caseId"])
     answers = {label: claims_by_provider[provider] for label, provider in order.items()}
-    policy = _cost_policy_authorize(
-        "openai", "research_benchmark", automatic=False, confirmation=True,
-        estimated_cost_usd=0.10, estimated_tokens=8000)
-    if not policy["allowed"] or not _OPENAI_API_KEY:
+    if not _OPENAI_API_KEY:
         if isinstance(diagnostic_context, dict):
             diagnostic_context.update({"status": "provider_blocked",
                                        "errorClass": "authorization_blocked"})
@@ -34838,16 +34878,41 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider,
             diagnostic_context.update({"status": "input_budget_exceeded",
                                        "errorClass": "input_budget_exceeded"})
         return None, "input_budget_exceeded", None
+    evaluator_model = _openai_model_for("referee")
+    reserved_cost = argus_ai_cost.estimate_cost(
+        evaluator_model, 6000, _BENCHMARK_MAX_OUTPUT_TOKENS, _AI_PRICING)
+    if reserved_cost is None:
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({"status": "provider_blocked",
+                                       "errorClass": "price_unknown"})
+        return None, "provider_blocked", None
+    policy, reservation = _cost_policy_reserve(
+        "openai", "research_benchmark", automatic=False, confirmation=True,
+        estimated_cost_usd=reserved_cost,
+        estimated_tokens=6000 + _BENCHMARK_MAX_OUTPUT_TOKENS)
+    if not policy["allowed"]:
+        if isinstance(diagnostic_context, dict):
+            diagnostic_context.update({"status": "provider_blocked",
+                                       "errorClass": "authorization_blocked"})
+        return None, "provider_blocked", None
     meta = None
+    request_started = False
     try:
         import openai
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
-        evaluator_model = _openai_model_for("referee")
+        request_started = True
         response = _ai_usage_provider_call('openai', 'benchmark_evaluation', evaluator_model, lambda: client.responses.create(
             model=evaluator_model, input=prompt, timeout=90, store=False,
             reasoning={"effort": _BENCHMARK_REASONING_EFFORT},
             max_output_tokens=_BENCHMARK_MAX_OUTPUT_TOKENS), attempt=None, source_ref='_formal_blind_evaluate')
         meta = _benchmark_evaluator_usage(response, evaluator_model)
+        usage = meta.get("usage") or {}
+        actual_cost = argus_ai_cost.estimate_cost(
+            evaluator_model, int(usage.get("inputTokens") or 0),
+            int(usage.get("outputTokens") or 0), _AI_PRICING)
+        _cost_policy_settle(reservation, ok=True,
+                            actual_cost_usd=(actual_cost if actual_cost is not None
+                                             and any(usage.values()) else reserved_cost))
         parsed = _checked_ai_json(getattr(response, "output_text", "") or "")
         if not isinstance(parsed, dict) or not all(
                 isinstance(parsed.get(k), dict) for k in ("A", "B")):
@@ -34866,11 +34931,15 @@ def _formal_blind_evaluate(case, benchmark_id, claims_by_provider,
                 "usage": meta.get("usage")})
         return {"A": parsed["A"], "B": parsed["B"]}, "ok", meta
     except argus_product_naming.NamingPolicyError as exc:
+        _cost_policy_settle(reservation, ok=request_started,
+                            actual_cost_usd=(reserved_cost if request_started else None))
         if isinstance(diagnostic_context, dict):
             diagnostic_context.update({"status": "content_rejected", "errorClass": str(exc),
                                        "usage": (meta or {}).get("usage")})
         return None, "content_rejected", meta
     except Exception as exc:
+        _cost_policy_settle(reservation, ok=request_started,
+                            actual_cost_usd=(reserved_cost if request_started else None))
         add_log(f"[formal-benchmark] evaluator failed: {type(exc).__name__}")
         if isinstance(diagnostic_context, dict):
             diagnostic_context.update({"status": "provider_failed",
@@ -35148,10 +35217,7 @@ def _v2_blind_evaluate(case, run_id, claims_by_provider):
     order = argus_research_benchmark_v2.blind_order(run_id, case["caseId"])
     answers = {label: claims_by_provider[provider]
                for label, provider in order.items()}
-    policy = _cost_policy_authorize(
-        "openai", "research_benchmark", automatic=False, confirmation=True,
-        estimated_cost_usd=0.10, estimated_tokens=8000)
-    if not policy["allowed"] or not _OPENAI_API_KEY:
+    if not _OPENAI_API_KEY:
         return None, "provider_blocked", None
     prompt = (
         "A/Bの提供元を推測せず、各品質軸を0-100で独立採点する。"
@@ -35166,24 +35232,47 @@ def _v2_blind_evaluate(case, run_id, claims_by_provider):
         return None, "content_rejected", None
     if len(prompt.encode("utf-8")) > 24_000:
         return None, "input_budget_exceeded", None
+    model = _openai_model_for("referee")
+    reserved_cost = argus_ai_cost.estimate_cost(
+        model, 6000, _BENCHMARK_MAX_OUTPUT_TOKENS, _AI_PRICING)
+    if reserved_cost is None:
+        return None, "provider_blocked", None
+    policy, reservation = _cost_policy_reserve(
+        "openai", "research_benchmark", automatic=False, confirmation=True,
+        estimated_cost_usd=reserved_cost,
+        estimated_tokens=6000 + _BENCHMARK_MAX_OUTPUT_TOKENS)
+    if not policy["allowed"]:
+        return None, "provider_blocked", None
     meta = None
+    request_started = False
     try:
         import openai
         client = openai.OpenAI(api_key=_OPENAI_API_KEY)
-        model = _openai_model_for("referee")
+        request_started = True
         response = _ai_usage_provider_call('openai', 'benchmark_evaluation', model, lambda: client.responses.create(
             model=model, input=prompt, timeout=90, store=False,
             reasoning={"effort": _BENCHMARK_REASONING_EFFORT},
             max_output_tokens=_BENCHMARK_MAX_OUTPUT_TOKENS), attempt=None, source_ref='_v2_blind_evaluate')
         meta = _benchmark_evaluator_usage(response, model)
+        usage = meta.get("usage") or {}
+        actual_cost = argus_ai_cost.estimate_cost(
+            model, int(usage.get("inputTokens") or 0),
+            int(usage.get("outputTokens") or 0), _AI_PRICING)
+        _cost_policy_settle(reservation, ok=True,
+                            actual_cost_usd=(actual_cost if actual_cost is not None
+                                             and any(usage.values()) else reserved_cost))
         parsed = _checked_ai_json(getattr(response, "output_text", "") or "")
         if not isinstance(parsed, dict) or not all(
                 isinstance(parsed.get(label), dict) for label in ("A", "B")):
             return None, "invalid_evaluator_json", meta
         return {"A": parsed["A"], "B": parsed["B"]}, "ok", meta
     except argus_product_naming.NamingPolicyError:
+        _cost_policy_settle(reservation, ok=request_started,
+                            actual_cost_usd=(reserved_cost if request_started else None))
         return None, "content_rejected", meta
     except Exception as exc:
+        _cost_policy_settle(reservation, ok=request_started,
+                            actual_cost_usd=(reserved_cost if request_started else None))
         add_log(f"[formal-benchmark-v2] evaluator failed: {type(exc).__name__}")
         return None, "provider_failed", {"errorClass": type(exc).__name__[:80]}
 
