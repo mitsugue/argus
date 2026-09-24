@@ -82,6 +82,7 @@ const visibilityGuardStore = createSharedPollingStore<State>(
     }
 
     async function load() {
+      if (document.hidden) return;
       const controller = new AbortController();
       controllers.add(controller);
       try {

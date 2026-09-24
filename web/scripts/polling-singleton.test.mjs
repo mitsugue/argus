@@ -56,6 +56,7 @@ const command = read('src/routes/CommandCenter.tsx');
 const diagnostics = read('src/routes/DataQualityPage.tsx');
 const systemHealth = read('src/hooks/useSystemHealth.ts');
 const activeEvents = read('src/hooks/useEventsActive.ts');
+const visibilityGuard = read('src/hooks/useVisibilityGuard.ts');
 const assetsStore = read('src/hooks/useAssets.ts');
 const assetIntel = read('src/hooks/useAssetIntel.ts');
 const fundNav = read('src/hooks/useFundNav.ts');
@@ -111,6 +112,15 @@ assert.match(activeEvents, /useSyncExternalStore/);
 assert.match(activeEvents, /createSharedPollingStore/);
 assert.match(activeEvents, /if \(cancelled \|\| document\.hidden \|\| inFlight\) return/);
 assert.match(activeEvents, /visibilitychange/);
+
+// The visibility authority remains fail-closed, while its shared lifecycle
+// avoids background network requests and refreshes when the app returns.
+assert.match(visibilityGuard, /\/api\/argus\/visibility-guard/);
+assert.match(visibilityGuard, /useSyncExternalStore/);
+assert.match(visibilityGuard, /createSharedPollingStore/);
+assert.match(visibilityGuard, /if \(document\.hidden\) return/);
+assert.match(visibilityGuard, /if \(!document\.hidden\) void acquire\(load\)/);
+assert.match(visibilityGuard, /visibilitychange/);
 
 // The protected asset store has one provider-owned persistence/sync lifecycle.
 assert.match(assetsStore, /function useAssetsStore/);
