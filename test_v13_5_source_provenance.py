@@ -376,3 +376,10 @@ def test_reviewed_extension_accepts_only_exact_blob_and_rejects_future_edits(tmp
     future = commit(repo, "future")
     with pytest.raises(ValueError, match="product_semantic_change_required"):
         source.validate_product_semantic_diff(future, repo=repo)
+
+
+def test_visible_event_polling_review_pins_are_exact():
+    assert source.REVIEWED_EXTENSION_BLOBS["web/src/hooks/useEventsActive.ts"] == (
+        "4c1c42354a44bdf152a3fc1b92af4b5ae750f4c8")
+    assert source.REVIEWED_EXTENSION_BLOBS["web/scripts/polling-singleton.test.mjs"] == (
+        "3833a92b51421fc67b08c14ce1b675f13a771b09")

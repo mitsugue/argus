@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
+import { createSharedPollingStore } from '../lib/sharedPollingStore';
 
 // 24/7 event backbone — active events + status (v10.39). Polls every 15s while
 // the app is open (matches the bridge push cadence) so the list updates live;
@@ -26,31 +27,66 @@ export interface EventBackboneStatus {
   lastEventAt: string | null;
 }
 
-export function useEventsActive() {
-  const [events, setEvents] = useState<ActiveEvent[]>([]);
-  const [status, setStatus] = useState<EventBackboneStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-  const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
+interface EventsActiveState {
+  events: ActiveEvent[];
+  status: EventBackboneStatus | null;
+  loading: boolean;
+}
 
-  useEffect(() => {
-    let alive = true;
+// Asset intelligence is mounted in more than one surface. One shared lifecycle
+// prevents duplicate reads, and pausing while the page is backgrounded avoids
+// paying for a 15-second read that cannot be seen. Returning to the tab fetches
+// immediately, so the event view never waits for the next scheduled interval.
+const eventsActiveStore = createSharedPollingStore<EventsActiveState>(
+  { events: [], status: null, loading: true },
+  (setState) => {
+    const backend = import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined;
     const base = backend?.replace(/\/$/, '');
-    async function load() {
-      if (!base) { setLoading(false); return; }
-      try {
-        const payload = await fetch(`${base}/api/argus/events-active`)
-          .then((response) => response.json());
-        if (!alive) return;
-        setEvents(Array.isArray(payload.events) ? payload.events : []);
-        // Backend merges the event-backbone status DTO at this same top level.
-        setStatus(payload as EventBackboneStatus);
-      } catch { /* keep last */ }
-      finally { if (alive) setLoading(false); }
-    }
-    load();
-    const t = window.setInterval(load, 15_000);
-    return () => { alive = false; window.clearInterval(t); };
-  }, [backend]);
+    let cancelled = false;
+    let inFlight = false;
+    let controller: AbortController | null = null;
 
-  return { events, status, loading };
+    async function load() {
+      if (cancelled || document.hidden || inFlight) return;
+      if (!base) {
+        setState((current) => ({ ...current, loading: false }));
+        return;
+      }
+      inFlight = true;
+      controller = new AbortController();
+      try {
+        const response = await fetch(`${base}/api/argus/events-active`, { signal: controller.signal });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        if (!cancelled) {
+          setState({ events: Array.isArray(payload.events) ? payload.events : [],
+            status: payload as EventBackboneStatus, loading: false });
+        }
+      } catch { /* keep the last successful event view */ }
+      finally {
+        controller = null;
+        inFlight = false;
+        if (!cancelled) setState((current) => ({ ...current, loading: false }));
+      }
+    }
+
+    const onVisible = () => { if (!document.hidden) void load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    void load();
+    const timer = window.setInterval(() => void load(), 15_000);
+    return () => {
+      cancelled = true;
+      controller?.abort();
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  },
+);
+
+export function useEventsActive() {
+  return useSyncExternalStore(
+    eventsActiveStore.subscribe,
+    eventsActiveStore.getSnapshot,
+    eventsActiveStore.getSnapshot,
+  );
 }
