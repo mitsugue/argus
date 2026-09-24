@@ -318,6 +318,11 @@ REVIEWED_EXTENSION_BLOBS = {
     # v13.7.44 regression assertions synchronized with the approved Alerts-to-13M surface.
     "test_argus_v12_2_12.py": "9aef4250a8a68e76dcda4ff8a079d04fed17cf9a",
     "test_argus_v12_rc.py": "d6d462465f7556f748ee0900e3f88820410e284f",
+    # Owner-authorized cost reduction: the active-event reader shares one
+    # lifecycle and pauses while the page is not visible. These pins bind the
+    # later product PR to the reviewed, read-only transport semantics.
+    "web/src/hooks/useEventsActive.ts": "4c1c42354a44bdf152a3fc1b92af4b5ae750f4c8",
+    "web/scripts/polling-singleton.test.mjs": "3833a92b51421fc67b08c14ce1b675f13a771b09",
 }
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
