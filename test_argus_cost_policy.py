@@ -413,6 +413,37 @@ def test_runtime_reservation_does_not_drop_earlier_current_month_rows(monkeypatc
     scanner._cost_policy_settle(reservation, ok=True, actual_cost_usd=0.0)
     assert len(scanner._COST_POLICY["usage"]) == 2002
 
+
+def test_confirmed_manual_and_research_calls_share_production_ceilings():
+    manual = cp.default_state("MANUAL")
+    manual = cp.record_execution(manual, provider="openai", purpose="manual_api",
+                                 at="2026-09-23T01:00:00Z", estimated_cost_usd=0.49)
+    denied_manual = cp.authorize(
+        manual, provider="openai", purpose="manual_api", automatic=False,
+        confirmation=True, now_iso="2026-09-23T02:00:00Z",
+        estimated_cost_usd=0.02, estimated_tokens=100)
+    assert denied_manual["reason"] == "total_daily_budget_exhausted"
+
+    research = cp.default_state("RESEARCH_BENCHMARK")
+    research = cp.record_execution(research, provider="openai", purpose="research_benchmark",
+                                   at="2026-09-01T01:00:00Z", estimated_cost_usd=9.99)
+    denied_research = cp.authorize(
+        research, provider="openai", purpose="research_benchmark", automatic=False,
+        confirmation=True, now_iso="2026-09-23T02:00:00Z",
+        estimated_cost_usd=0.02, estimated_tokens=100)
+    assert denied_research["reason"] == "total_monthly_budget_exhausted"
+
+
+def test_public_status_reports_shared_manual_and_scheduled_spend():
+    state = cp.default_state("SCHEDULED_AI")
+    state = cp.record_execution(state, provider="openai", purpose="market_brief",
+                                at="2026-09-23T01:00:00Z", estimated_cost_usd=0.12)
+    state = cp.record_execution(state, provider="openai", purpose="manual_api",
+                                at="2026-09-23T02:00:00Z", estimated_cost_usd=0.08)
+    lane = cp.public_status(state, "2026-09-23T03:00:00Z")["scheduledLane"]
+    assert lane["totalProductionDailySpentUsd"] == 0.2
+    assert lane["totalProductionMonthlySpentUsd"] == 0.2
+
     def test_shared_cap_next_day_and_purpose_restrictions_remain(self):
         st = self.state(1.7, [0.1] * 3)
         self.assertFalse(self.authorize(st, 0.01)["allowed"])
