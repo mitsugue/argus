@@ -45,6 +45,9 @@ def test_restoration_allowlist_is_exact_and_core_semantics_stay_closed():
     assert source.REVIEWED_EXTENSION_BLOBS[
         "test_argus_ai_usage_runtime.py"] == \
         "4b765dd3c8dde089634331897eb9d7010404feec"
+    assert source.REVIEWED_EXTENSION_BLOBS[
+        "web/src/components/NavRail.tsx"] == \
+        "f1a1fef74709852f39d488aaf370428ce2697fe2"
 
 
 def test_tachibana_shadow_provider_is_authorized_as_isolated_package_only():
@@ -118,7 +121,7 @@ def certificate(path: Path, *, candidate_sha: str, candidate_tree: str,
         "candidate": {"commitSha": candidate_sha, "treeSha": candidate_tree},
         "acceptedV13Source": {
             "commitSha": accepted_sha, "treeSha": accepted_tree},
-        "productVersion": "v13.7.43",
+        "productVersion": "v13.7.44",
     }
     value["certificateDigest"] = hashlib.sha256(
         source.canonical_bytes(value)).hexdigest()
@@ -171,7 +174,7 @@ def shallow_case(tmp_path, monkeypatch):
         write(seed / f"history-{ordinal}.txt", str(ordinal))
         commit(seed, f"history-{ordinal}")
     write(seed / "product-version.json", json.dumps({
-        "schemaVersion": "argus-product-version-v1", "productVersion": "v13.7.43"}))
+        "schemaVersion": "argus-product-version-v1", "productVersion": "v13.7.44"}))
     write(seed / "release/v13-accepted-fix-manifest.json", json.dumps({
         "canonicalSource": {"head": accepted_sha, "tree": accepted_tree},
         "requirements": [],
