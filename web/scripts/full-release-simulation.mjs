@@ -80,7 +80,12 @@ try {
   await page.goto(publicUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForFunction((sha) => globalThis.__ARGUS_BUILD_SHA__ === sha,
     candidateSha, { timeout: 30_000 });
-  assert.equal(await page.evaluate(() => globalThis.__ARGUS_PRODUCT_VERSION__), 'v13.7.43');
+  // A fresh PWA profile can perform its one-time identity-cache repair after
+  // the first shell has rendered. Wait for that bounded repair window before
+  // beginning a stateful release action, so the action cannot race a reload.
+  await page.waitForTimeout(1_000);
+  await page.locator('details.at-evidence').waitFor({ state: 'visible', timeout: 30_000 });
+  assert.equal(await page.evaluate(() => globalThis.__ARGUS_PRODUCT_VERSION__), 'v13.7.44');
   evidence.identitiesConverged = true;
 
   const producerTriggerId = `full-release-simulation-${runNumber}-${candidateSha.slice(0, 12)}`;
@@ -148,7 +153,7 @@ try {
 
   const brand = await page.locator('.shell__brand').innerText();
   assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro/);
-  assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro\s+v13\.7\.43/);
+  assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro\s+v13\.7\.44/);
   for (const label of ['Today', 'Watchlist', '13M', 'Settings']) {
     assert.ok(await page.getByText(label, { exact: true }).count() > 0, label);
   }

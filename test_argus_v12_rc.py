@@ -140,7 +140,8 @@ def test_mobile_nav_reaches_backup_and_data_quality():
     assert watchlist_nav is not None
     assert "mobileLabel:" in watchlist_nav.group(0)
     assert "hash: '#holdings'" in watchlist_nav.group(0)
-    assert "mobileLabel: 'Alerts'" in navigation
+    assert "THIRTEEN_M_NAVIGATION" in navigation
+    assert "href:" in navigation
     assert "mobileLabel: 'Settings'" in navigation
     assert "SYSTEM_NAVIGATION" not in src
     app = open(os.path.join(WEB, "App.tsx"), encoding="utf-8").read()
