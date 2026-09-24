@@ -102,10 +102,15 @@ assert.doesNotMatch(systemHealth, /\/api\/argus\/system-health|setInterval/);
 assert.match(command, /usePublicDiagnostics/);
 assert.match(diagnostics, /usePublicDiagnostics/);
 
-// Event list and status share one 15-second endpoint read.
+// Event list and status share one endpoint read. The lifecycle pauses in the
+// background and refreshes immediately when the app returns to view.
 assert.match(activeEvents, /\/api\/argus\/events-active/);
 assert.doesNotMatch(activeEvents, /event-backbone-status|Promise\.all/);
 assert.equal((activeEvents.match(/fetch\(/g) ?? []).length, 1);
+assert.match(activeEvents, /useSyncExternalStore/);
+assert.match(activeEvents, /createSharedPollingStore/);
+assert.match(activeEvents, /if \(cancelled \|\| document\.hidden \|\| inFlight\) return/);
+assert.match(activeEvents, /visibilitychange/);
 
 // The protected asset store has one provider-owned persistence/sync lifecycle.
 assert.match(assetsStore, /function useAssetsStore/);
