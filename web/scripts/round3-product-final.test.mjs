@@ -32,9 +32,9 @@ const scanner = fs.readFileSync(path.join(repo, 'scanner.py'), 'utf8');
 const routeCatalog = fs.readFileSync(path.join(repo, 'argus_route_catalog.py'), 'utf8');
 
 assert.deepEqual(navigation.PRIMARY_NAVIGATION.map((item) => item.route),
-  ['command', 'watchlist', 'notifications', 'settings']);
+  ['command', 'watchlist', 'settings']);
 assert.deepEqual(navigation.PRIMARY_NAVIGATION.map((item) => item.hash),
-  ['#today', '#holdings', '#notifications', '#settings']);
+  ['#today', '#holdings', '#settings']);
 assert.deepEqual(navigation.parseLocationHash('#asset/1321/decision'), {
   route: 'watchlist', asset: { symbol: '1321', section: 'decision' },
 });
@@ -87,7 +87,7 @@ assert.match(shell, /\{versionLabel\}/);
 assert.equal((shell.match(/shell__brand-version/g) ?? []).length, 1);
 assert.doesNotMatch(shell, /Frontend v|Backend v|backendSha|deploymentId/);
 assert.deepEqual(productVersion, {
-  schemaVersion: 'argus-product-version-v1', productVersion: 'v13.7.43',
+  schemaVersion: 'argus-product-version-v1', productVersion: 'v13.7.44',
 });
 assert.match(versionTruth, /runtimeVersionLabel\(productVersion: string\)/);
 assert.match(versionTruth, /product version unavailable/);

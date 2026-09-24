@@ -186,6 +186,7 @@
     list-style: none;
   }
   .nav__mobile-btn.is-active { color: var(--text-main); }
+  .nav__mobile-btn:visited { color: var(--text-muted); }
   .nav__mobile-dot {
     width: 6px;
     height: 6px;

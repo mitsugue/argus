@@ -86,21 +86,22 @@ def test_nav_order_and_route_keys():
     navigation = _read("navigation.ts")
     i_today = navigation.index("route: 'command'")
     i_desk = navigation.index("route: 'watchlist'")
-    i_notifications = navigation.index("route: 'notifications'")
     i_settings = navigation.index("route: 'settings'")
-    assert i_today < i_desk < i_notifications < i_settings
+    assert i_today < i_desk < i_settings
     app = _read("App.tsx")
     assert "PRIMARY_NAVIGATION" in app     # overscroll順同期
     assert "routeLabel" in app
-    # Lean v13 has exactly four primary owner routes; market remains contextual.
-    for key in ("'command'", "'watchlist'", "'notifications'", "'settings'"):
+    # Alerts detail lives on Today; 13M is an external service link rather
+    # than an internal owner route.
+    for key in ("'command'", "'watchlist'", "'settings'"):
         assert key in navigation
+    assert "THIRTEEN_M_NAVIGATION" in navigation
     assert "'regime'" not in navigation
     assert "desktopLabel: 'Watchlist'" in navigation
     assert "'#positions'" not in navigation
     assert "'#market'" not in navigation
     primary_block = navigation.split("export const NAVIGATION", 1)[1].split("] as const", 1)[0]
-    assert primary_block.count("route: '") == 4
+    assert primary_block.count("route: '") == 3
     assert "PRIMARY_NAVIGATION" in nav
 
 

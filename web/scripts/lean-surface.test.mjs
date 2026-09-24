@@ -43,7 +43,6 @@ assert.deepEqual(
   [
     { route: 'command', hash: '#today' },
     { route: 'watchlist', hash: '#holdings' },
-    { route: 'notifications', hash: '#notifications' },
     { route: 'settings', hash: '#settings' },
   ],
 );
@@ -58,7 +57,9 @@ assert.deepEqual(Object.keys(navigation.HASH_ROUTES).sort(),
   ['#holdings', '#notifications', '#settings', '#today']);
 assert.equal(navigation.assetDetailHash(' nvda ', 'chart'), '#asset/NVDA/chart');
 
-assert.match(app, /<NotificationsPage/);
+assert.equal(navigation.HASH_ROUTES['#notifications'], 'command');
+assert.equal(navigation.THIRTEEN_M_NAVIGATION.href, 'https://argus-13m-shadow.onrender.com/');
+assert.doesNotMatch(app, /NotificationsPage/);
 assert.match(app, /<Settings settingsSection=/);
 assert.match(app, /assetDetailHash\(symbol, section\)/);
 assert.match(app, /window\.addEventListener\('popstate', onLocation\)/);
@@ -74,6 +75,7 @@ assert.match(notifications, /<NotificationPanel \/>/);
 assert.match(notifications, /<ImportantEventsCard/);
 assert.match(settings, /<PublicDiagnosticsPanel \/>/);
 assert.match(settings, /<BackupSettingsPanel/);
+assert.match(settings, /端末内の通知履歴/);
 assert.doesNotMatch(shell, /NotificationPanel|unreadCounts|setInterval/);
 assert.match(notificationPanel, /timeZone: 'Asia\/Tokyo'/);
 assert.doesNotMatch(notificationPanel, /createdAt\.slice\(11, 16\)/);
@@ -141,4 +143,4 @@ assert.doesNotMatch(deferredManifest, /- `web\/src\/components\/guide\/Layer2BSy
 assert.match(deferredManifest, /protected stores and background engines remain/);
 assert.doesNotMatch(locales, /Asset Deskで銘柄カード/);
 
-console.log('lean-surface.test: ok (4-nav, contextual detail, disclosure, recovery boundary)');
+console.log('lean-surface.test: ok (3 internal nav + 13M, contextual detail, disclosure, recovery boundary)');

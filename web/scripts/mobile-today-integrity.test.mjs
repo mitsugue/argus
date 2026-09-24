@@ -34,25 +34,26 @@ const indexHtml = read('index.html');
 
 assert.deepEqual(
   navigation.PRIMARY_NAVIGATION.map((item) => item.mobileLabel),
-  ['Today', 'Watchlist', 'Alerts', 'Settings'],
+  ['Today', 'Watchlist', 'Settings'],
 );
 assert.deepEqual(
   navigation.PRIMARY_NAVIGATION.map((item) => item.route),
-  ['command', 'watchlist', 'notifications', 'settings'],
+  ['command', 'watchlist', 'settings'],
 );
 assert.equal(navigation.HASH_ROUTES['#today'], 'command');
 assert.deepEqual(navigation.parseLocationHash('#notifications/news/event-123'), { route: 'command' });
 assert.deepEqual(navigation.parseLocationHash('#today/news/event-123'), { route: 'command' });
 assert.deepEqual(navigation.parseLocationHash('#notifications/sq/jp-monthly-sq-2026-10'), { route: 'command' });
-assert.equal(navigation.HASH_ROUTES['#notifications'], 'notifications');
+assert.equal(navigation.HASH_ROUTES['#notifications'], 'command');
 assert.equal(navigation.HASH_ROUTES['#settings'], 'settings');
 for (const retired of ['#assets', '#positions', '#quality', '#backup', '#guide',
   '#review', '#market']) assert.equal(navigation.parseLocationHash(retired), undefined);
 assert.equal(navigation.pageDirection('command', 'watchlist'), 1);
-assert.equal(navigation.pageDirection('settings', 'notifications'), -1);
-assert.equal(navigation.primaryRouteIndex('settings'), 3);
+assert.equal(navigation.pageDirection('settings', 'watchlist'), -1);
+assert.equal(navigation.primaryRouteIndex('settings'), 2);
 
-assert.match(nav, /PRIMARY_NAVIGATION\.map/);
+assert.match(nav, /PRIMARY_NAVIGATION\.slice\(0, 2\)\.map/);
+assert.match(nav, /THIRTEEN_M_NAVIGATION\.href/);
 assert.doesNotMatch(nav, /SYSTEM_NAVIGATION/);
 assert.doesNotMatch(nav, /onClick=\{onReviewLink\}[^]*Review<\/button>/);
 assert.match(app, /window\.addEventListener\('popstate', onLocation\)/);
@@ -186,7 +187,8 @@ const warmBlock = acceptance.slice(
 assert.doesNotMatch(warmBlock, /waitForTimeout|warmLoader|warmSkeleton/,
   'warm acceptance must use semantic state without sleeps or visual-loader authority');
 assert.match(acceptance, /\['Today', '#today'\], \['Watchlist', '#holdings'\]/);
-assert.match(acceptance, /\['Alerts', '#notifications'\], \['Settings', '#settings'\]/);
+assert.match(acceptance, /13m-navigation-target/);
+assert.equal(navigation.THIRTEEN_M_NAVIGATION.href, 'https://argus-13m-shadow.onrender.com/');
 assert.doesNotMatch(acceptance, /nav__mobile-system|\['Assets', '#assets'\]|\['Review', '#positions'\]/);
 
 assert.match(vite, /cleanupOutdatedCaches:\s*true/);
