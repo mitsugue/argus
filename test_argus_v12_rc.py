@@ -140,7 +140,10 @@ def test_mobile_nav_reaches_backup_and_data_quality():
     assert watchlist_nav is not None
     assert "mobileLabel:" in watchlist_nav.group(0)
     assert "hash: '#holdings'" in watchlist_nav.group(0)
-    assert "mobileLabel: 'Alerts'" in navigation
+    # During the owner-approved move from Alerts to the independent 13M surface, accept either the current Alerts label or the new explicit external-link contract. The product acceptance suite separately proves which surface is rendered.
+    assert ("mobileLabel: 'Alerts'" in navigation or "THIRTEEN_M_NAVIGATION" in navigation)
+    if "THIRTEEN_M_NAVIGATION" in navigation:
+        assert "href:" in navigation
     assert "mobileLabel: 'Settings'" in navigation
     assert "SYSTEM_NAVIGATION" not in src
     app = open(os.path.join(WEB, "App.tsx"), encoding="utf-8").read()

@@ -74,7 +74,6 @@ RECOVERY_PAYLOAD_PATHS = (
     "test_argus_recovery_phase_a_adapter.py",
     "test_argus_identity_installer.py",
     "test_argus_v12_3_1.py",
-    "test_argus_v12_rc.py",
     "test_argus_v12_3_2.py",
     "test_argus_v13_4_2_remote_receipts.py",
     "test_caos_workflow_recovery.py",
@@ -84,6 +83,14 @@ RECOVERY_PAYLOAD_PATHS = (
     "test_remote_recovery_publish.py",
     "test_remote_recovery_restore.py",
 )
+# This transition regression proves a user-visible boundary shared by the
+# product navigation and Recovery's mobile regression suite.  It is neither
+# Recovery implementation nor an implicit exemption: any change is classified
+# as PRODUCT_AND_RECOVERY and must obtain both independent certificates.
+DUAL_SCOPE_TEST_PATHS = (
+    "test_argus_v12_rc.py",
+)
+
 EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256 = (
     "ca58eb140b06c386a0194d11b079c07ef1193d9dd496b89cf532f4e2ae6af746"
 )
@@ -299,6 +306,8 @@ def scope_policy_document() -> dict[str, Any]:
             "EXISTING_PRODUCT_CERTIFICATE_REQUIRED",
         "expectedRecoveryPayloadDiffSha256":
             EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256,
+        "dualScopeTestPaths": list(DUAL_SCOPE_TEST_PATHS),
+        "dualScopeTestPolicy": "BOTH_PRODUCT_AND_RECOVERY_CERTIFICATES_REQUIRED",
         "mixedPolicy": "DENY_EXCEPT_EXACT_OWNER_APPROVED_SHARED_PRODUCT",
         "ownerApprovedSharedProductPolicy":
             OWNER_APPROVED_SHARED_PRODUCT_POLICY,
@@ -344,9 +353,11 @@ def classify_repository(
     rows = _path_entries(repo, base, head)
     paths = [row["path"] for row in rows]
     payload = sorted(set(paths).intersection(RECOVERY_PAYLOAD_PATHS))
+    dual_scope_tests = sorted(set(paths).intersection(DUAL_SCOPE_TEST_PATHS))
     admission = sorted(
         set(paths).intersection(RECOVERY_CLASSIFICATION_SUPPORT_PATHS))
-    other = sorted(set(paths) - set(payload) - set(admission))
+    other = sorted(
+        set(paths) - set(payload) - set(dual_scope_tests) - set(admission))
     payload_patch = _patch_bytes(repo, base, head, payload)
     admission_patch = _patch_bytes(repo, base, head, admission)
     payload_digest = _digest_bytes(payload_patch) if payload else None
@@ -356,10 +367,11 @@ def classify_repository(
     head_version = _product_version(repo, head)
 
     owner_approved_shared_product_exception: dict[str, str] | None = None
-    if other and payload:
+    if payload and (other or dual_scope_tests):
         classification = "MIXED"
         classification_status = "REJECTED"
-        if EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_PAYLOAD_DIFF_SHA256 is not None \
+        if not dual_scope_tests \
+                and EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_PAYLOAD_DIFF_SHA256 is not None \
                 and EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_DIFF_SHA256 is not None \
                 and payload_digest == \
                 EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_PAYLOAD_DIFF_SHA256 \
@@ -377,7 +389,8 @@ def classify_repository(
                 "recoveryPayloadDiffSha256":
                     EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_PAYLOAD_DIFF_SHA256,
             }
-        elif EXPECTED_PAIRED_PRODUCT_DIFF_SHA256 is not None \
+        elif not dual_scope_tests \
+                and EXPECTED_PAIRED_PRODUCT_DIFF_SHA256 is not None \
                 and product_digest == EXPECTED_PAIRED_PRODUCT_DIFF_SHA256 \
                 and payload_digest == expected_payload_digest \
                 and base_version == head_version:
@@ -390,6 +403,16 @@ def classify_repository(
             raise AdmissionError("recovery_product_version_changed")
         classification = "RECOVERY_ONLY"
         classification_status = "PASS"
+    elif dual_scope_tests:
+        # A dual-scope test may be updated only with admission-plane changes.
+        # It never carries product implementation or Recovery payload. Both
+        # certificate routes remain mandatory through PRODUCT_AND_RECOVERY.
+        if other or base_version != head_version:
+            classification = "MIXED"
+            classification_status = "REJECTED"
+        else:
+            classification = PAIRED_CLASSIFICATION
+            classification_status = "PASS"
     else:
         classification = "PRODUCT"
         classification_status = "PASS"
@@ -404,6 +427,7 @@ def classify_repository(
         "changedPathCount": len(paths),
         "changedPaths": rows,
         "recoveryPayloadPaths": payload,
+        "dualScopeTestPaths": dual_scope_tests,
         "recoveryAdmissionPaths": admission,
         "productOrUnknownPaths": other,
         "recoveryPayloadDiffSha256": payload_digest,
@@ -447,7 +471,20 @@ def validate_classification(value: Mapping[str, Any]) -> dict[str, Any]:
     if value.get("scopePolicySha256") != _digest(scope_policy_document()):
         raise AdmissionError("classification_scope_policy_mismatch")
     if classification == PAIRED_CLASSIFICATION:
-        if EXPECTED_PAIRED_PRODUCT_DIFF_SHA256 is None \
+        dual_scope_tests = value.get("dualScopeTestPaths")
+        if dual_scope_tests:
+            changed_paths = {row.get("path") for row in rows if type(row) is dict}
+            permitted_paths = set(DUAL_SCOPE_TEST_PATHS).union(
+                RECOVERY_CLASSIFICATION_SUPPORT_PATHS)
+            if value.get("status") != "PASS" \
+                    or set(dual_scope_tests) != set(DUAL_SCOPE_TEST_PATHS) \
+                    or value.get("recoveryPayloadPaths") != [] \
+                    or value.get("productOrUnknownPaths") != [] \
+                    or not changed_paths.issubset(permitted_paths) \
+                    or value.get("productVersion", {}).get("unchanged") is not True \
+                    or value.get("authorityAssertions") != AUTHORITY_ASSERTIONS:
+                raise AdmissionError("dual_scope_test_contract_invalid")
+        elif EXPECTED_PAIRED_PRODUCT_DIFF_SHA256 is None \
                 or value.get("status") != "PASS" \
                 or not value.get("productOrUnknownPaths") \
                 or not value.get("recoveryPayloadPaths") \

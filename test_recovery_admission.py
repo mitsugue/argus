@@ -150,6 +150,38 @@ def test_exact_recovery_payload_routes_to_recovery_authority(tmp_path):
     assert result["productVersion"]["unchanged"] is True
 
 
+def test_dual_scope_navigation_test_requires_both_certificate_routes(tmp_path):
+    repo, base = _repository(tmp_path)
+    _write(repo, "test_argus_v12_rc.py", "THIRTEEN_M_NAVIGATION = True\n")
+    head = _commit(repo)
+
+    scope = recovery.classify_repository(repo, base, head)
+
+    assert scope["classification"] == recovery.PAIRED_CLASSIFICATION
+    assert scope["status"] == "PASS"
+    assert scope["dualScopeTestPaths"] == ["test_argus_v12_rc.py"]
+    assert scope["recoveryPayloadPaths"] == []
+    assert scope["productOrUnknownPaths"] == []
+    recovery.validate_classification(scope)
+
+
+@pytest.mark.parametrize("path,value", [
+    ("README.md", "product expansion\n"),
+    ("scanner.py", "RECOVERY = True\n"),
+])
+def test_dual_scope_navigation_test_rejects_product_or_recovery_expansion(
+        tmp_path, path, value):
+    repo, base = _repository(tmp_path)
+    _write(repo, "test_argus_v12_rc.py", "THIRTEEN_M_NAVIGATION = True\n")
+    _write(repo, path, value)
+    head = _commit(repo)
+
+    scope = recovery.classify_repository(repo, base, head)
+
+    assert scope["classification"] == "MIXED"
+    assert scope["status"] == "REJECTED"
+
+
 def test_mixed_product_and_recovery_change_is_explicitly_denied(tmp_path):
     repo, base = _repository(tmp_path)
     _write(repo, "scanner.py", "RECOVERY = True\n")
@@ -545,7 +577,9 @@ def test_wrong_recovery_producer_workflow_fails_closed(tmp_path, monkeypatch):
 def test_policy_has_disjoint_explicit_paths_and_pinned_payload():
     assert not set(recovery.RECOVERY_PAYLOAD_PATHS).intersection(
         recovery.RECOVERY_ADMISSION_PATHS)
-    assert len(recovery.RECOVERY_PAYLOAD_PATHS) == 42
+    assert len(recovery.RECOVERY_PAYLOAD_PATHS) == 41
+    assert set(recovery.DUAL_SCOPE_TEST_PATHS).isdisjoint(
+        recovery.RECOVERY_PAYLOAD_PATHS)
     assert {
         "scripts/remote_journal_publish_policy.py",
         "scripts/argus_watchtower_writer_dispatch.py",
@@ -556,6 +590,8 @@ def test_policy_has_disjoint_explicit_paths_and_pinned_payload():
     }.issubset(recovery.RECOVERY_PAYLOAD_PATHS)
     assert len(recovery.RECOVERY_ADMISSION_PATHS) == 4
     policy = recovery.scope_policy_document()
+    assert policy["dualScopeTestPolicy"] == \
+        "BOTH_PRODUCT_AND_RECOVERY_CERTIFICATES_REQUIRED"
     assert policy["mixedPolicy"] == \
         "DENY_EXCEPT_EXACT_OWNER_APPROVED_SHARED_PRODUCT"
     assert policy["ownerApprovedSharedProductPolicy"] == \
