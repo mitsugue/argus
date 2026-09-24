@@ -165,6 +165,49 @@ def test_dual_scope_navigation_test_requires_both_certificate_routes(tmp_path):
     recovery.validate_classification(scope)
 
 
+def test_dual_scope_recovery_payload_requires_both_certificate_routes(
+        tmp_path, monkeypatch):
+    repo, base = _repository(tmp_path)
+    _write(repo, "scanner.py", "ATOMIC_RESERVATION = True\n")
+    head = _commit(repo)
+    digest = recovery._digest_bytes(recovery._patch_bytes(
+        repo, base, head, ["scanner.py"]))
+    monkeypatch.setattr(
+        recovery, "EXPECTED_DUAL_SCOPE_RECOVERY_PAYLOAD_DIFF_SHA256", digest)
+
+    scope = recovery.classify_repository(repo, base, head)
+
+    assert scope["classification"] == recovery.PAIRED_CLASSIFICATION
+    assert scope["status"] == "PASS"
+    assert scope["dualScopeRecoveryPayloadPaths"] == ["scanner.py"]
+    assert scope["dualScopeRecoveryPayloadDiffSha256"] == digest
+    assert scope["recoveryPayloadPaths"] == []
+    assert scope["productOrUnknownPaths"] == []
+    recovery.validate_classification(scope)
+
+
+@pytest.mark.parametrize("path,value", [
+    ("README.md", "product expansion\n"),
+    ("test_argus_v12_rc.py", "navigation expansion\n"),
+])
+def test_dual_scope_recovery_payload_rejects_expansion(
+        tmp_path, monkeypatch, path, value):
+    repo, base = _repository(tmp_path)
+    _write(repo, "scanner.py", "ATOMIC_RESERVATION = True\n")
+    _write(repo, path, value)
+    head = _commit(repo)
+    scanner_digest = recovery._digest_bytes(recovery._patch_bytes(
+        repo, base, head, ["scanner.py"]))
+    monkeypatch.setattr(
+        recovery, "EXPECTED_DUAL_SCOPE_RECOVERY_PAYLOAD_DIFF_SHA256",
+        scanner_digest)
+
+    scope = recovery.classify_repository(repo, base, head)
+
+    assert scope["classification"] == "MIXED"
+    assert scope["status"] == "REJECTED"
+
+
 @pytest.mark.parametrize("path,value", [
     ("README.md", "product expansion\n"),
     ("scanner.py", "RECOVERY = True\n"),

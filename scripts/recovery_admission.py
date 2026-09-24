@@ -91,6 +91,16 @@ DUAL_SCOPE_TEST_PATHS = (
     "test_argus_v12_rc.py",
 )
 
+# The total production-AI cap changes the shared execution boundary in
+# scanner.py.  It is permitted only as this exact, independently reviewed
+# patch and always requires both Product and Recovery certificates.
+DUAL_SCOPE_RECOVERY_PAYLOAD_PATHS = (
+    "scanner.py",
+)
+EXPECTED_DUAL_SCOPE_RECOVERY_PAYLOAD_DIFF_SHA256 = (
+    "47de074ac038bb822e059bb81ea8a26aad8e028abf7de02ee9285e91f0eda710"
+)
+
 EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256 = (
     "ca58eb140b06c386a0194d11b079c07ef1193d9dd496b89cf532f4e2ae6af746"
 )
@@ -308,6 +318,10 @@ def scope_policy_document() -> dict[str, Any]:
             EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256,
         "dualScopeTestPaths": list(DUAL_SCOPE_TEST_PATHS),
         "dualScopeTestPolicy": "BOTH_PRODUCT_AND_RECOVERY_CERTIFICATES_REQUIRED",
+        "dualScopeRecoveryPayloadPaths": list(DUAL_SCOPE_RECOVERY_PAYLOAD_PATHS),
+        "dualScopeRecoveryPayloadPolicy": "BOTH_EXACT_CERTIFICATES_REQUIRED",
+        "expectedDualScopeRecoveryPayloadDiffSha256":
+            EXPECTED_DUAL_SCOPE_RECOVERY_PAYLOAD_DIFF_SHA256,
         "mixedPolicy": "DENY_EXCEPT_EXACT_OWNER_APPROVED_SHARED_PRODUCT",
         "ownerApprovedSharedProductPolicy":
             OWNER_APPROVED_SHARED_PRODUCT_POLICY,
@@ -352,22 +366,39 @@ def classify_repository(
     head_tree = _resolve(repo, head, "tree")
     rows = _path_entries(repo, base, head)
     paths = [row["path"] for row in rows]
-    payload = sorted(set(paths).intersection(RECOVERY_PAYLOAD_PATHS))
+    all_payload = sorted(set(paths).intersection(RECOVERY_PAYLOAD_PATHS))
+    possible_dual_scope_payloads = sorted(
+        set(paths).intersection(DUAL_SCOPE_RECOVERY_PAYLOAD_PATHS))
+    possible_dual_scope_payload_patch = _patch_bytes(
+        repo, base, head, possible_dual_scope_payloads)
+    possible_dual_scope_payload_digest = (
+        _digest_bytes(possible_dual_scope_payload_patch)
+        if possible_dual_scope_payloads else None)
+    # Keep ordinary scanner.py Recovery changes on the established exact-payload
+    # route. Only the one reviewed cap patch enters the dual-certificate route.
+    dual_scope_payloads = (
+        possible_dual_scope_payloads
+        if possible_dual_scope_payload_digest ==
+        EXPECTED_DUAL_SCOPE_RECOVERY_PAYLOAD_DIFF_SHA256 else [])
+    payload = sorted(set(all_payload) - set(dual_scope_payloads))
     dual_scope_tests = sorted(set(paths).intersection(DUAL_SCOPE_TEST_PATHS))
     admission = sorted(
         set(paths).intersection(RECOVERY_CLASSIFICATION_SUPPORT_PATHS))
     other = sorted(
-        set(paths) - set(payload) - set(dual_scope_tests) - set(admission))
+        set(paths) - set(payload) - set(dual_scope_payloads)
+        - set(dual_scope_tests) - set(admission))
     payload_patch = _patch_bytes(repo, base, head, payload)
     admission_patch = _patch_bytes(repo, base, head, admission)
     payload_digest = _digest_bytes(payload_patch) if payload else None
+    dual_scope_payload_digest = (
+        possible_dual_scope_payload_digest if dual_scope_payloads else None)
     admission_digest = _digest_bytes(admission_patch) if admission else None
     product_digest = _digest_bytes(_patch_bytes(repo, base, head, other)) if other else None
     base_version = _product_version(repo, base)
     head_version = _product_version(repo, head)
 
     owner_approved_shared_product_exception: dict[str, str] | None = None
-    if payload and (other or dual_scope_tests):
+    if payload and (other or dual_scope_payloads or dual_scope_tests):
         classification = "MIXED"
         classification_status = "REJECTED"
         if not dual_scope_tests \
@@ -403,6 +434,18 @@ def classify_repository(
             raise AdmissionError("recovery_product_version_changed")
         classification = "RECOVERY_ONLY"
         classification_status = "PASS"
+    elif dual_scope_payloads:
+        # This is not a generic scanner.py exception.  The candidate must be
+        # exactly the reviewed cap patch with no product, Recovery, or other
+        # dual-scope expansion, and both certificate routes remain mandatory.
+        if other or dual_scope_tests or base_version != head_version or \
+                dual_scope_payload_digest != \
+                EXPECTED_DUAL_SCOPE_RECOVERY_PAYLOAD_DIFF_SHA256:
+            classification = "MIXED"
+            classification_status = "REJECTED"
+        else:
+            classification = PAIRED_CLASSIFICATION
+            classification_status = "PASS"
     elif dual_scope_tests:
         # A dual-scope test may be updated only with admission-plane changes.
         # It never carries product implementation or Recovery payload. Both
@@ -427,6 +470,8 @@ def classify_repository(
         "changedPathCount": len(paths),
         "changedPaths": rows,
         "recoveryPayloadPaths": payload,
+        "dualScopeRecoveryPayloadPaths": dual_scope_payloads,
+        "dualScopeRecoveryPayloadDiffSha256": dual_scope_payload_digest,
         "dualScopeTestPaths": dual_scope_tests,
         "recoveryAdmissionPaths": admission,
         "productOrUnknownPaths": other,
@@ -472,7 +517,24 @@ def validate_classification(value: Mapping[str, Any]) -> dict[str, Any]:
         raise AdmissionError("classification_scope_policy_mismatch")
     if classification == PAIRED_CLASSIFICATION:
         dual_scope_tests = value.get("dualScopeTestPaths")
-        if dual_scope_tests:
+        dual_scope_payloads = value.get("dualScopeRecoveryPayloadPaths")
+        if dual_scope_payloads:
+            changed_paths = {row.get("path") for row in rows if type(row) is dict}
+            permitted_paths = set(DUAL_SCOPE_RECOVERY_PAYLOAD_PATHS).union(
+                RECOVERY_CLASSIFICATION_SUPPORT_PATHS)
+            if value.get("status") != "PASS" \
+                    or set(dual_scope_payloads) != \
+                    set(DUAL_SCOPE_RECOVERY_PAYLOAD_PATHS) \
+                    or value.get("dualScopeRecoveryPayloadDiffSha256") != \
+                    EXPECTED_DUAL_SCOPE_RECOVERY_PAYLOAD_DIFF_SHA256 \
+                    or value.get("recoveryPayloadPaths") != [] \
+                    or value.get("productOrUnknownPaths") != [] \
+                    or value.get("dualScopeTestPaths") != [] \
+                    or not changed_paths.issubset(permitted_paths) \
+                    or value.get("productVersion", {}).get("unchanged") is not True \
+                    or value.get("authorityAssertions") != AUTHORITY_ASSERTIONS:
+                raise AdmissionError("dual_scope_recovery_payload_contract_invalid")
+        elif dual_scope_tests:
             changed_paths = {row.get("path") for row in rows if type(row) is dict}
             permitted_paths = set(DUAL_SCOPE_TEST_PATHS).union(
                 RECOVERY_CLASSIFICATION_SUPPORT_PATHS)
