@@ -1,5 +1,5 @@
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
-import React from 'react';
+import React, { useState } from 'react';
 import { useJapanMarketComparison } from '../../hooks/useJapanMarketComparison';
 import { JapanMarketComparisonChart } from './JapanMarketComparisonChart';
 
@@ -15,4 +15,20 @@ export function JapanMarketComparisonPanel({ horizon }: { horizon: number }) {
       {new Date(state.lastSuccessfulAcquisitionAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST</p>}
     {state.document && <JapanMarketComparisonChart document={state.document} />}
   </div>;
+}
+
+/** Numerical comparisons have their own period; saved explanations keep theirs. */
+export function JapanMarketHorizonComparison() {
+  const [horizon, setHorizon] = useState<5 | 10 | 20>(5);
+  return <section aria-label="最新の日経平均の過去比較">
+    <h3>最新データによる見通し</h3>
+    <p>保存したAI解説とは別に、取得済みの価格と市場条件で計算した参考経路です。</p>
+    <div className="jp-comparison-periods" role="group" aria-label="見通しの期間">
+      {([5, 10, 20] as const).map(period => <button key={period} type="button"
+        aria-pressed={horizon === period} onClick={() => setHorizon(period)}>
+        {period}営業日先
+      </button>)}
+    </div>
+    <JapanMarketComparisonPanel key={horizon} horizon={horizon} />
+  </section>;
 }
