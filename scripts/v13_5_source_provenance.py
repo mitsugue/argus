@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.44"
+PRODUCT_VERSION = "v13.7.45"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -258,9 +258,9 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/macro-result-details.test.cjs': 'b2bcdb290db61a0ef8d8ffcd090a55e5020e10a1',
     'web/scripts/margin-dynamics.test.cjs': '2ab221c47cfeb6afa4d0adcb1dfebd17b862b608',
     'web/scripts/market-brief-response.test.cjs': 'a0b9296048de2038a4f4e647c1583af010d1c3e5',
-    'web/src/components/chart/JapanMarketComparisonChart.css': '7e594bcd28089cdbc154691909ecdc825ff172e4',
+    'web/src/components/chart/JapanMarketComparisonChart.css': '6cf24f6f680e6ee50aba8c8c45645882ab55ca8f',
     'web/src/components/chart/JapanMarketComparisonChart.tsx': '434c5af8691586562cb34ba35a3b4856e39ec4d5',
-    'web/src/components/chart/JapanMarketComparisonPanel.tsx': '46200ccbd95ca54520eb72728ecf3e9a7803808f',
+    'web/src/components/chart/JapanMarketComparisonPanel.tsx': '8f9123239e7f904694640b0b9854bc20b2fee063',
     'web/src/components/dashboard/JapanSqCalendarCard.css': 'a8bfb645823551f415e2d05e8f6721273c09083b',
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': '77f4e4fa1edee0e5f42db6d82597a4ec1ad82083',
     'web/src/components/dashboard/MacroResultDetails.tsx': '1ae4f62354c917002f6b60b1b8e72de1a126a3f6',

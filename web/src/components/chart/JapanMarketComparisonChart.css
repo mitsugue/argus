@@ -32,3 +32,7 @@
 .jp-comparison__details ul { padding-left: 20px; }
 @media (min-width: 720px) { .jp-comparison__legend { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (prefers-reduced-motion: reduce) { .jp-comparison * { transition: none; } }
+.jp-comparison-periods { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.jp-comparison-periods button { padding: 9px 12px; border: 1px solid #5c7484; border-radius: 8px; background: #16232c; color: #e1eaf0; cursor: pointer; }
+.jp-comparison-periods button[aria-pressed="true"] { background: #79d6b0; color: #12242a; font-weight: 700; border-color: #79d6b0; }
+.jp-comparison-periods button:focus-visible { outline: 2px solid #79d6b0; outline-offset: 3px; }

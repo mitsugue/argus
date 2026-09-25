@@ -1,12 +1,10 @@
 import { revealNewsArticle } from '../../lib/revealNewsArticle';
-import type { Job } from '../dialogue/OwnerDialogue';
 import { OwnerOverview } from '../dialogue/OwnerOverview';
-import { validJapanMarketComparison } from '../../lib/japanMarketComparison';
 import { MarketBriefCard } from './MarketBriefCard';
 import { useMarketBrief } from '../../hooks/useMarketBrief';
 import { useDashboardEvents } from '../../hooks/useDashboardEvents';
 import { releasedEventResultLabel } from '../../lib/dashboardEventState';
-import { editorialEdition, editorialCoversNews } from '../../lib/presentationIntent';
+import { editorialCoversNews } from '../../lib/presentationIntent';
 import React from 'react';
 import { MarginDynamicsCard } from './MarginDynamicsCard';
 import { SharedMarketContext } from './SharedMarketContext';
@@ -16,7 +14,7 @@ import { JapanSqCalendarCard } from '../dashboard/JapanSqCalendarCard';
 import { NewsAlertsPanel } from '../notifications/NewsAlertsPanel';
 import { useJapanSqCalendar } from '../../hooks/useJapanSqCalendar';
 import { sqCalendarIsCurrent } from '../../lib/japanSqCalendar';
-import { JapanMarketComparisonPanel } from '../chart/JapanMarketComparisonPanel';
+import { JapanMarketHorizonComparison } from '../chart/JapanMarketComparisonPanel';
 import { useChartIntelligence } from '../../hooks/useChartIntelligence';
 import type { ArgusTodayView, TodayProjection } from '../../domain/argusTodayView';
 import { formatEventTime, quoteDisplayLabel, subjectDisplayName, confidenceBasisJa, waitKindJa } from '../../domain/argusTodayView';
@@ -607,10 +605,6 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   const sqCalendar = useJapanSqCalendar();
   const sqCalendarCurrent = sqCalendarIsCurrent(sqCalendar.data, sqCalendar.checkedAt);
   const editorialScope = view.selectedMarket === 'JP' && selectedSymbol === '1321' && horizon === 5;
-  const savedEditorial = editorialScope ? editorialEdition(editorialBrief) : null;
-  const editorialChartAvailable = validJapanMarketComparison(
-    savedEditorial?.calculationSnapshots?.['5']?.comparison, 5);
-  const [periodOverview,setPeriodOverview] = React.useState<Job|null>(null);
   const [otherMarketsOpen, setOtherMarketsOpen] = React.useState(false);
   const [allNewsOpen, setAllNewsOpen] = React.useState(false);
   const [newsDetailTargetId, setNewsDetailTargetId] = React.useState<string | null>(null);
@@ -622,11 +616,6 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     return () => window.removeEventListener('hashchange', refresh);
   }, []);
   const scopedSubject = view.selectedMarket === 'JP' && selectedSymbol === '1321' ? 'N225' : selectedSymbol;
-  const matchingOverview = periodOverview?.context.subject.symbol === scopedSubject
-    && periodOverview.context.subject.market === view.selectedMarket
-    && periodOverview.context.horizonSessions === horizon ? periodOverview : null;
-  const hasSavedPeriodChart = !editorialScope && matchingOverview?.result?.answer?.presentationStatus === 'GENERATED'
-    && validJapanMarketComparison(matchingOverview.context.indexComparison,horizon);
   const topSignals = marketSignalsView(decisionEvidence.marketView?.projection ?? null);
   // v13.5.63 (GPT review item 1): the seven signals are Japanese inputs.
   const usSelected = view.selectedMarket === 'US';
@@ -792,7 +781,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       {editorialScope ? <MarketBriefCard signals={topSignals && !usSelected ? { activeCount: topSignals.activeCount, total: topSignals.total } : null}
         cutoff={decisionEvidence.marketView?.informationCutoff ?? null} market="JP" editorial />
         : <><OwnerOverview key={`${view.selectedMarket}:${scopedSubject}:${horizon}`}
-          symbol={scopedSubject} market={view.selectedMarket} horizon={horizon} onReference={setPeriodOverview}/>
+          symbol={scopedSubject} market={view.selectedMarket} horizon={horizon}/>
           <details className="at-brief__fallback"><summary>市場全体の説明 · 日経平均・5営業日</summary>
             <MarketBriefCard market="JP"/>
           </details></>}
@@ -801,11 +790,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         重大なニュース・市場変化 {criticalNewsCount}件を確認する ↓
       </button>}
     </section>
-    {view.selectedMarket === 'JP' && selectedSymbol === '1321' && !editorialChartAvailable && !hasSavedPeriodChart
-      && <section aria-label="日経平均の過去比較">
-        {savedEditorial && <p className="at-stored-note">この見立てには当時の比較チャートが保存されていません。以下は最新データによる比較で、上の説明と同じ時点の根拠とは限りません。</p>}
-        <JapanMarketComparisonPanel horizon={horizon} />
-      </section>}
+    {view.selectedMarket === 'JP' && selectedSymbol === '1321'
+      && <JapanMarketHorizonComparison />}
     {!chartLoad.snapshotId && <div className="at-canonical-load-status" role="status">
       {chartLoad.loaderVisible && <TriangleStepLoader label={chartLoad.slowInitial
         ? '日経平均の根拠を確認しています。前回の説明は引き続き読めます'
