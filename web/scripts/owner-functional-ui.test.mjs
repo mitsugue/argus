@@ -32,8 +32,10 @@ assert.doesNotMatch(details, /検証済み目標なし|検証済み無効化条�
 assert.match(today, /NEXT_REVIEW_REASON_JA/);
 assert.match(today, /正本データの更新時刻を確認/);
 assert.doesNotMatch(today, /<span>\{view\.canonicalDecision\.nextReviewConditionCodes\[0\]/);
-assert.match(editorial, /required-nikkei-comparison-fallback-v1/);
-assert.match(editorial, /!hasChart && chartReady/);
+assert.match(editorial, /showArchivedComparison = archived && chartReady/);
+assert.match(editorial, /archived-nikkei-comparison-v1/);
+assert.match(editorial, /archived && !hasChart && chartReady/);
+assert.doesNotMatch(editorial, /required-nikkei-comparison-fallback-v1/);
 assert.doesNotMatch(editorial, /OwnerDialogue|discussion/);
 
 assert.match(chart, /buildTodayProjection/);

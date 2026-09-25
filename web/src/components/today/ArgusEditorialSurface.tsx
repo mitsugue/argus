@@ -20,6 +20,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
   const at = brief.aiDiagnostics?.completedAt ?? brief.generatedAt;
   const hasChart = plan.elements.some(row => row.id === 'nikkei-comparison');
   const chartReady = validJapanMarketComparison(chart, 5);
+  const showArchivedComparison = archived && chartReady;
   return <section className="argus-editorial" aria-label={archived ? '当時のARGUSの説明' : 'ARGUSの今日の見立て'}
     data-argus-contract="presentation-intent-v1" data-presentation-id={plan.planId} data-context-id={plan.contextId}>
     <header className="argus-editorial__edition"><span>{archived ? '保存した説明 / 日本市場' : 'Today / 日本市場'}</span>
@@ -31,13 +32,14 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
       {generationStatus === 'RUNNING' ? <TriangleStepLoader label="新しい説明を作成中" />
         : <span>{['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(generationStatus ?? '')
           ? '新しい説明を取得できませんでした。' : '説明の更新を待っています。'}</span>}
-      <span>前回の説明とチャートを表示中</span>
+      <span>前回の説明を表示中。最新の比較とチャートは下の期間切替をご覧ください。</span>
     </div>}
     {plan.elements.map(choice => {
       const source = brief.presentationCatalog!.elements.find(row => row.id === choice.id)!;
       const className = `argus-editorial__element is-${choice.emphasis} placement-${choice.placement} element-${choice.id}`;
-      if (choice.id === 'nikkei-comparison') return chartReady
-        ? <div className={className} key={choice.id} data-payload-id={source.payloadId}>
+      if (choice.id === 'nikkei-comparison') return showArchivedComparison
+        ? <div className={className} key={choice.id} data-payload-id={source.payloadId}
+          data-argus-contract="archived-nikkei-comparison-v1">
           <JapanMarketComparisonChart document={chart!} />
         </div> : null;
       const evidenceLabel = editorialElementLabel(choice.id);
@@ -66,8 +68,8 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
         : <section className={className} key={key} aria-label={labels[key]} data-payload-id={source.payloadId}>
           <h2>{archived && key === 'view' ? '当時の見立て' : labels[key]}</h2>{content}</section>;
     })}
-    {!hasChart && chartReady && <div className="argus-editorial__element placement-support element-nikkei-comparison"
-      data-argus-contract="required-nikkei-comparison-fallback-v1">
+    {archived && !hasChart && chartReady && <div className="argus-editorial__element placement-support element-nikkei-comparison"
+      data-argus-contract="archived-nikkei-comparison-fallback-v1">
       <JapanMarketComparisonChart document={chart!} />
     </div>}
     <details className="argus-editorial__evidence"><summary>説明の根拠と、今回の構成について</summary>
