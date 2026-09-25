@@ -227,6 +227,11 @@ def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str
     if current["status"] == "AVAILABLE" and current["anchorDate"] not in positions:
         raise ValueError("current_anchor_missing_from_calendar")
     scored = []
+    # Keep a compact, year-level audit trail for the search.  The chart must
+    # be able to explain why a historical period (including 2018) did not
+    # appear without giving that period preferential treatment.  It contains
+    # selection inputs only; later price paths never enter it.
+    audit = []
     if current["status"] == "AVAILABLE":
         current_index = positions[current["anchorDate"]]
         if [row["date"] for row in current["window"]] != list(
@@ -236,17 +241,26 @@ def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str
         for candidate in candidates:
             _verify_episode(candidate, policy)
             anchor = candidate["anchorDate"]
+            year = anchor[:4] if isinstance(anchor, str) and len(anchor) >= 4 else None
             if candidate["status"] != "AVAILABLE" or anchor not in positions:
+                audit.append({"year": year, "anchorDate": anchor,
+                              "status": "INELIGIBLE_SESSION_OR_PRICE", "distance": None})
                 continue
             if positions[current["anchorDate"]] - positions[anchor] < policy.lookback_sessions + 1:
+                audit.append({"year": year, "anchorDate": anchor,
+                              "status": "INELIGIBLE_TOO_NEAR_CURRENT", "distance": None})
                 continue
             candidate_cutoff = _instant(candidate["cutoff"])
             if candidate_cutoff is None or candidate_cutoff.date().isoformat() != anchor \
                     or candidate_cutoff >= _instant(current["cutoff"]):
+                audit.append({"year": year, "anchorDate": anchor,
+                              "status": "INELIGIBLE_POINT_IN_TIME", "distance": None})
                 continue
             anchor_index = positions[anchor]
             if [row["date"] for row in candidate["window"]] != list(
                     session_dates[anchor_index - policy.lookback_sessions:anchor_index + 1]):
+                audit.append({"year": year, "anchorDate": anchor,
+                              "status": "INELIGIBLE_SESSION_WINDOW", "distance": None})
                 continue
             shape = _shape(candidate)
             shape_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(current_shape, shape)) /
@@ -270,6 +284,8 @@ def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str
             missing = sorted(set(FEATURE_DEFINITIONS) - set(common))
             complete = not missing and order_distance is not None and reaction_distance is not None
             if distance > policy.maximum_distance:
+                audit.append({"year": year, "anchorDate": anchor,
+                              "status": "DISTANCE_ABOVE_THRESHOLD", "distance": distance})
                 continue
             differences = [{"feature": key, "scaledAbsoluteDifference": value,
                             "currentValue": current["states"][key]["value"],
@@ -279,7 +295,7 @@ def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str
                            if value > 0]
             if not differences:
                 differences = [{"feature": "marketState", "status": "NOT_COMPARABLE"}]
-            scored.append({
+            row = {
                 "snapshotId": candidate["snapshotId"], "anchorDate": anchor,
                 "distance": distance, "componentDistances": distances,
                 "comparisonKind": "MARKET_ANALOG" if complete else "PARTIAL_COMPARISON",
@@ -291,7 +307,10 @@ def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str
                 "limitations": ["historical_vintage_not_verified",
                                 "measured_feature_similarity_does_not_establish_equal_context"],
                 "historicalVintageVerified": False,
-            })
+            }
+            scored.append(row)
+            audit.append({"year": year, "anchorDate": anchor, "snapshotId": candidate["snapshotId"],
+                          "status": "ADMITTED", "distance": distance})
     selected = []
     for candidate in sorted(scored, key=lambda row: (row["comparisonKind"] != "MARKET_ANALOG",
                                                         row["distance"], row["anchorDate"], row["snapshotId"])):
@@ -301,11 +320,38 @@ def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str
         selected.append(candidate)
         if len(selected) == policy.maximum_candidates:
             break
+    selected_ids = {row["snapshotId"] for row in selected}
+    admitted_rank = {row["snapshotId"]: index + 1 for index, row in enumerate(
+        sorted(scored, key=lambda row: (row["comparisonKind"] != "MARKET_ANALOG",
+                                         row["distance"], row["anchorDate"], row["snapshotId"]))) }
+    years = {}
+    for row in audit:
+        year = row.get("year")
+        if not isinstance(year, str) or not year.isdigit() or len(year) != 4:
+            continue
+        summary = years.setdefault(year, {"candidateCount": 0, "admittedCount": 0,
+                                          "selectedCount": 0, "closest": None})
+        summary["candidateCount"] += 1
+        if row["status"] == "ADMITTED":
+            summary["admittedCount"] += 1
+            if row["snapshotId"] in selected_ids:
+                summary["selectedCount"] += 1
+        distance = row.get("distance")
+        if isinstance(distance, (int, float)) and math.isfinite(distance):
+            closest = summary["closest"]
+            if closest is None or (distance, row["anchorDate"]) < (closest["distance"], closest["anchorDate"]):
+                selected_now = row.get("snapshotId") in selected_ids
+                summary["closest"] = {
+                    "anchorDate": row["anchorDate"], "distance": distance,
+                    "status": "SELECTED" if selected_now else row["status"],
+                    "rank": admitted_rank.get(row.get("snapshotId")),
+                }
     body = {
         "schemaVersion": SCHEMA_VERSION, "policy": asdict(policy),
         "currentSnapshotId": current["snapshotId"], "informationCutoff": current["cutoff"],
         "candidateCount": len(candidates),
         "admittedCount": len(scored), "selected": selected,
+        "yearAudit": years,
         "status": ("MARKET_ANALOGS_AVAILABLE" if any(row["comparisonKind"] == "MARKET_ANALOG" for row in selected)
                    else "PARTIAL_COMPARISONS_ONLY" if selected else "NO_STRONG_ANALOG"),
         "actionAuthority": False, "predictiveProbability": None,

@@ -32,6 +32,25 @@ export function validJapanMarketComparison(v: unknown, horizon: number): v is Ja
       || !object(h.excluded) || !count(h.excluded.missingCalendarOrPriceSession) || !count(h.excluded.incompleteEpisode)
       || typeof h.allMarketFeaturesTenYearsVerified !== 'boolean') return false;
   }
+  if (v.selectionAudit !== undefined) {
+    if (!object(v.selectionAudit) || Object.keys(v.selectionAudit).length > 12
+      || !Object.entries(v.selectionAudit).every(([year, value]) => {
+        if (!/^\d{4}$/.test(year) || !object(value)) return false;
+        const candidateCount = value.candidateCount;
+        const admittedCount = value.admittedCount;
+        const selectedCount = value.selectedCount;
+        if (![candidateCount, admittedCount, selectedCount].every(item => finite(item)
+          && Number.isInteger(item) && item >= 0)
+          || !finite(candidateCount) || !finite(admittedCount) || !finite(selectedCount)
+          || admittedCount > candidateCount || selectedCount > admittedCount) return false;
+        const closest = value.closest;
+        return closest === null || (object(closest)
+          && typeof closest.anchorDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(closest.anchorDate)
+          && finite(closest.distance) && closest.distance >= 0
+          && ['SELECTED', 'ADMITTED', 'DISTANCE_ABOVE_THRESHOLD'].includes(String(closest.status))
+          && (closest.rank === null || (finite(closest.rank) && Number.isInteger(closest.rank) && closest.rank >= 1)));
+      })) return false;
+  }
   const ids = new Set<string>();
   if (v.sourceAcquisition !== undefined) {
     const s = v.sourceAcquisition;

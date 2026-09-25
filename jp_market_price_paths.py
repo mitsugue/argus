@@ -385,6 +385,10 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
         "selectedCount": len(selection["selected"]), "admittedCount": selection["admittedCount"],
         "allMarketFeaturesTenYearsVerified": False}
     document["historyCoverage"] = coverage
+    # This is a descriptive audit of the same fixed-time selection above.  It
+    # answers whether a year was searched and why its closest candidate was or
+    # was not selected; it neither changes the ranking nor uses later returns.
+    document["selectionAudit"] = selection.get("yearAudit", {})
     document["valuationStatus"] = scale["status"]
     if scale["status"] == "AVAILABLE":
         document["valuationEvidence"] = {key: scale.get(key) for key in (

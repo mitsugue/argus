@@ -131,6 +131,21 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
           直近の重複区間を除き、似た条件の候補を最大{document.historyCoverage.maximumSelected}件選びます。
           年ごとの枠や、その後の値動きの良し悪しで選んでいません。</p>
       </>}
+      {document.selectionAudit?.['2018'] && (() => {
+        const audit = document.selectionAudit['2018'];
+        const closest = audit.closest;
+        const result = !closest ? '比較可能な候補を確認できませんでした。'
+          : closest.status === 'SELECTED' ? `${closest.anchorDate}が選ばれました。`
+          : closest.status === 'DISTANCE_ABOVE_THRESHOLD'
+            ? `${closest.anchorDate}が最も近い候補でしたが、距離 ${closest.distance.toFixed(3)} が採用上限を超えました。`
+            : `${closest.anchorDate}は順位 ${closest.rank ?? '未確認'} でしたが、より近い候補または重複区間の除外により表示対象外です。`;
+        return <section aria-label="2018年の比較検索記録">
+          <h3>2018年を検索した結果</h3>
+          <p>同じ情報締切・同じ条件で{audit.candidateCount}局面を検索し、
+            {audit.admittedCount}局面が距離条件を満たし、{audit.selectedCount}局面を表示対象にしました。{result}</p>
+          <p>この記録は2018年を優先するものではなく、採否を後から確認するための検索証跡です。</p>
+        </section>;
+      })()}
 
       {document.valuationEvidence && <p>
         {document.valuationEvidence.date}の指数ベースPER {valuationNumber(document.valuationEvidence.per)}倍、
