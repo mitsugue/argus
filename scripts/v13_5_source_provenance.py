@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.45"
+PRODUCT_VERSION = "v13.7.46"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -141,7 +141,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dialogue/OwnerOverview.css': 'e608b1f63bbbf8596454a9e0100cea6ee8a41a0f',
     'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',
     'web/src/lib/presentationIntent.ts': '77c0c79423a2291fc3e28a58e1b0397b11a83828',
-    'web/src/components/today/ArgusEditorialSurface.tsx': '537ac0673b783fd40f29c72f52cff0ea0b3f7a93',
+    'web/src/components/today/ArgusEditorialSurface.tsx': 'e9b5df8e1944de37961b78d85382f0f055b2bf30',
     'web/src/components/today/ArgusEditorialSurface.css': 'c11ff9b79ce546d415e55cb7e8eb29b928b80fc5',
     'test_argus_presentation_intent.py': 'e79beae902a1382fae9e5ea3359e09301abf9733',
     'docs/V13_6_PRESENTATION_INTENT.md': '88d35d6f5f603628e7e89bae56308e16b7c76ea6',
@@ -308,6 +308,9 @@ REVIEWED_EXTENSION_BLOBS = {
     # Owner-authorized Gemini retirement regression coverage. This fixes only
     # the exact Terra-only operational workflow test; later edits fail closed.
     "test_gpt_only_workflow_operations.py": "b048c5bcdf0d6b73a3e8eb955b9020d896ef1066",
+    # Owner-authorized v13.7.46 Today consolidation: the live editorial surface
+    # no longer duplicates the current five-day chart; archived editions retain it.
+    "web/scripts/owner-functional-ui.test.mjs": "31a1a8f37c99c50b2a8735adbc845a08a68eb740",
     # Owner-authorized v13.7.44 surface consolidation: the standalone Alerts
     # route is retired, its navigation position is the read-only 13M link,
     # and legacy notification hashes resolve to Today. These exact product
