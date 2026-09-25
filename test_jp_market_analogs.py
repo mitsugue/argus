@@ -97,6 +97,27 @@ class AnalogSelectionTest(unittest.TestCase):
         self.assertNotIn(DAYS[12], anchors)
         self.assertIn(DAYS[23], anchors)
 
+    def test_year_audit_explains_search_without_changing_selection(self):
+        result = select_episodes(episode(83), [episode(11), episode(12), episode(23)],
+                                 session_dates=DAYS, policy=POLICY)
+        year = DAYS[11][:4]
+        audit = result["yearAudit"][year]
+        self.assertEqual(audit["candidateCount"], 3)
+        self.assertEqual(audit["admittedCount"], 2)
+        self.assertEqual(audit["selectedCount"], 2)
+        self.assertEqual(audit["closest"]["status"], "SELECTED")
+        self.assertEqual(audit["closest"]["rank"], 1)
+
+    def test_year_audit_records_distance_rejection(self):
+        extreme = bars(0, 12)
+        extreme[-6]["close"] = 10000
+        result = select_episodes(episode(83), [episode(11, price_rows=extreme)],
+                                 session_dates=DAYS, policy=POLICY)
+        audit = result["yearAudit"][DAYS[11][:4]]
+        self.assertEqual(audit["admittedCount"], 0)
+        self.assertEqual(audit["closest"]["status"], "DISTANCE_ABOVE_THRESHOLD")
+        self.assertIsNone(audit["closest"]["rank"])
+
     def test_no_strong_analog_and_stale_snapshot_are_explicit(self):
         extreme = bars(0, 12)
         extreme[-6]["close"] = 10000

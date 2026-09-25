@@ -26,6 +26,14 @@ export interface JapanMarketComparison {
     maximumSelected: number; selectedCount: number; admittedCount: number;
     allMarketFeaturesTenYearsVerified: boolean;
   };
+  /** Fixed-cutoff search receipt.  It explains selection and has no forecast authority. */
+  selectionAudit?: Record<string, {
+    candidateCount: number;
+    admittedCount: number;
+    selectedCount: number;
+    closest: { anchorDate: string; distance: number;
+      status: 'SELECTED' | 'ADMITTED' | 'DISTANCE_ABOVE_THRESHOLD'; rank: number | null } | null;
+  }>;
   anchorDate: string;
   actualAnchorPrice: number;
   unit: 'ANCHOR_100' | 'JPY_INDEX_POINTS';
