@@ -1,5 +1,23 @@
 const DEFAULT_ATTEMPTS = 3;
 
+// A PWA may finish a reload between DOMContentLoaded and the first identity
+// read. Retry only that destroyed context; identity mismatches are still
+// returned to the caller's unchanged exact-candidate checks.
+export async function readAcrossNavigation({ read, waitForDocument }) {
+  for (let attempt = 1; attempt <= DEFAULT_ATTEMPTS; attempt += 1) {
+    try {
+      return await read();
+    } catch (error) {
+      if (attempt === DEFAULT_ATTEMPTS
+          || !String(error?.message).includes(
+            'Execution context was destroyed, most likely because of a navigation')) {
+        throw error;
+      }
+      await waitForDocument(attempt);
+    }
+  }
+}
+
 const cleanError = (error) => String(error?.message || error || 'unknown')
   .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
   .replace(/([?&](?:token|key|authorization|auth)=[^&\s]+)/gi, '?redacted')
