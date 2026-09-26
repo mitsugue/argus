@@ -16,6 +16,7 @@ export interface DashboardEventCaos {
 }
 export interface DashboardEventOfficial {
   schemaVersion?: string; receivedAt?: string | null; referenceMatched?: boolean;
+  availableFrom?: string | null; availabilityBasis?: string; historicalVintageVerified?: boolean;
   metricDefinitions?: Record<string, unknown>; previousMetrics?: Record<string, unknown>;
   previousReferenceMonth?: string; sourceResponseSha256?: string;
   available?: boolean; headlineJa?: string; metrics?: Record<string, unknown>;

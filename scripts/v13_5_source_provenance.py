@@ -44,6 +44,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/OwnerAccess.css': '7712cd812a6d8555765741c98926131c2ff2cde6',
     'web/src/components/OwnerAccess.tsx': 'c4d046ab86ccce9e11c5d87644cf135bedea9703',
     'web/src/lib/ownerSession.ts': '3cf154a2be11b0fa01c9dc53aee1ba0a252eab58',
+    'docs/MACRO_RESULT_RECEIPT_MIGRATION.md': '131e4784bd6be96daf0c9dda4b318735840cdcba',
+    'test_argus_macro_receipt_boundary.py': '4fa5e23ee6392489497483a65ca90e1786b92d1d',
 
     # Exact regression for releasing decoded checkpoints after final verification.
     "test_argus_checkpoint_reference_lifetime.py": "16b316acbfaff5ba9265f38251888a9b331a3a70",
@@ -250,7 +252,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_ai_usage_receipt.py': 'c0795a8d95ff367d79fe2b14abf5323052fba9c2',
     'argus_ai_usage_store.py': 'bc0ccd94eeb2b601da72ecb4a847c8ba3bbf07e1',
     'argus_macro_event_store.py': '0f3bf526a88c83a22576abbf06490bc2861af433',
-    'argus_macro_results.py': '4d6e3c0c88fd8be18595f9a25d9c9465f14ec19e',
+    'argus_macro_results.py': 'd36a074617ef3ba476bc900a376040192b43a02a',
     'docs/V13_6_ANALYSIS_ACCEPTANCE.md': '5f3f34d75eefb1a18abb18c8d2407d6921bcd57a',
     'docs/V13_6_COMPUTE_CONTRACT.md': '4ad0e52d419c261b24be8775d9c635bd310e9417',
     'jp_market_analogs.py': 'b9fe5ea4f538829e617e4f0f2f759238495d9385',
