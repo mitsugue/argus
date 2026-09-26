@@ -13,6 +13,9 @@ import { startFixtureTarget } from './release-fixture-target.mjs';
 import { loadSnapshotContract, validateSnapshotContract, triggerBusinessSnapshots } from './release-state-machine.mjs';
 
 const mode = process.argv[2]; assert.ok(['0', '1'].includes(mode));
+const scenario = process.argv[4] || 'today';
+assert.ok(['today', 'passkey'].includes(scenario));
+assert.ok(scenario !== 'passkey' || mode === '1');
 const out = path.resolve(process.argv[3]); await fs.mkdir(out);
 const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
@@ -23,13 +26,25 @@ const password = crypto.randomBytes(32).toString('base64url');
 const admin = crypto.randomBytes(32).toString('base64url');
 const cert = path.join(root, 'cert.pem'), key = path.join(root, 'key.pem');
 let target, front, proxy, python;
+let activeRoot = root, backupHash;
+const temporaryRoots = [root];
 const tunnels = new Set();
-const report = { schema: 'argus-owner-today-https-v1', mode, sha, tree, clean, status: 'FAIL', syntheticOnly: true };
-async function child(command, args, env, log) {
+const report = { schema: 'argus-owner-today-https-v1', mode, scenario, sha, tree, clean, status: 'FAIL', syntheticOnly: true };
+async function child(command, args, env, log, control) {
   const handle = await fs.open(path.join(out, log), 'wx');
   try {
-    const p = spawn(command, args, { env, stdio: ['ignore', handle.fd, handle.fd] });
+    const p = spawn(command, args, { env, stdio: ['ignore', handle.fd, handle.fd, ...(control ? ['ipc'] : [])] });
+    let controlError;
+    let processing = false;
+    if (control) p.on('message', async message => {
+      if (processing) { controlError = new Error('fixture_control_overlap'); p.kill(); return; }
+      processing = true;
+      try { const result = await control(message); p.send({ ok: true, result }); }
+      catch { controlError = new Error('fixture_control_failed'); p.kill(); }
+      finally { processing = false; }
+    });
     const code = await new Promise((resolve, reject) => { p.once('error', reject); p.once('exit', resolve); });
+    if (controlError) throw controlError;
     assert.equal(code, 0, log);
   } finally { await handle.close(); }
 }
@@ -72,14 +87,17 @@ try {
     socket.on('close', () => upstream.destroy()); upstream.on('close', () => socket.destroy());
   });
   await new Promise((resolve, reject) => { proxy.once('error', reject); proxy.listen(4480, '127.0.0.1', resolve); });
-  const pylog = await fs.open(path.join(out, 'fixture.log'), 'wx');
-  python = spawn(process.env.ARGUS_TEST_PYTHON || 'python3', ['-B', 'scripts/owner-today-fixture.py'], { stdio: ['pipe', 'pipe', pylog.fd] });
-  python.stdin.end(JSON.stringify({ mode, root, password, admin, cert, key, origin: 'https://argus-fixture.test', upstream: target.backendUrl }) + '\n');
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('fixture_start_timeout')), 15000);
-    python.stdout.once('data', data => { clearTimeout(timer); data.toString().includes('READY') ? resolve() : reject(new Error('fixture_start')); });
-    python.once('exit', () => { clearTimeout(timer); reject(new Error('fixture_exit')); });
-  }); await pylog.close();
+  async function startAuth() {
+    const pylog = await fs.open(path.join(out, activeRoot === root ? 'fixture.log' : 'fixture-restored.log'), 'wx');
+    python = spawn(process.env.ARGUS_TEST_PYTHON || 'python3', ['-B', 'scripts/owner-today-fixture.py'], { stdio: ['pipe', 'pipe', pylog.fd] });
+    python.stdin.end(JSON.stringify({ mode, root: activeRoot, password, admin, cert, key, origin: 'https://argus-fixture.test', upstream: target.backendUrl }) + '\n');
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('fixture_start_timeout')), 15000);
+      python.stdout.once('data', data => { clearTimeout(timer); data.toString().includes('READY') ? resolve() : reject(new Error('fixture_start')); });
+      python.once('exit', () => { clearTimeout(timer); reject(new Error('fixture_exit')); });
+    }); await pylog.close();
+  }
+  await startAuth();
   report.anonymousStatus = await new Promise((resolve, reject) => {
     https.get('https://127.0.0.1:4473/api/argus/chart-intelligence?scope=market&symbol=1321&horizon=5D&snapshot=verified', { ca }, res => { res.resume(); resolve(res.statusCode); }).on('error', reject);
   }); assert.equal(report.anonymousStatus, mode === '1' ? 401 : 200);
@@ -89,12 +107,49 @@ try {
     ARGUS_ACCEPTANCE_OWNER_AUTH: mode, ARGUS_ACCEPTANCE_OWNER_ORIGIN: 'https://argus-fixture.test',
     ARGUS_ACCEPTANCE_OWNER_PASSWORD: password, ARGUS_FIXTURE_SPKI: spki, ARGUS_SYNTHETIC_OWNER_TODAY: '1',
     ARGUS_MOBILE_ACCEPTANCE_OUT: path.join(out, 'mobile') };
+  if (scenario === 'passkey') {
+    const backup = path.join(root, 'backup.sqlite3');
+    const databaseCounts = database => JSON.parse(execFileSync(process.env.ARGUS_TEST_PYTHON || 'python3', ['-B', '-c',
+      "import sqlite3,json,sys; c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True); print(json.dumps({t:c.execute('SELECT count(*) FROM '+t).fetchone()[0] for t in ('owner_passkeys','owner_sessions','owner_challenges')}))", database], { encoding: 'utf8' }));
+    const backupCLI = (operation, source, destination) => JSON.parse(execFileSync(process.env.ARGUS_TEST_PYTHON || 'python3',
+      ['-B', '../scripts/owner_auth_backup.py', operation, '--source', source, '--destination', destination], { encoding: 'utf8' }));
+    let checkpointed = false, restored = false;
+    await child(process.execPath, ['--use-env-proxy', '--import', './scripts/owner-today-browser-preload.mjs',
+      'scripts/owner-passkey-recovery-acceptance.mjs'], { ...acceptanceEnv, ARGUS_PASSKEY_OUT: path.join(out, 'passkey.json') }, 'passkey.log', async message => {
+      assert.deepEqual(Object.keys(message), ['operation']);
+      if (message.operation === 'checkpoint' && !checkpointed) {
+        const counts = databaseCounts(path.join(root, 'owner.sqlite3'));
+        assert.equal(counts.owner_passkeys, 1); assert.ok(counts.owner_sessions > 0);
+        assert.equal(backupCLI('backup', path.join(root, 'owner.sqlite3'), backup).passkeys, 1);
+        backupHash = crypto.createHash('sha256').update(await fs.readFile(backup)).digest('hex');
+        checkpointed = true; return { counts, backupHash };
+      }
+      assert.equal(message.operation, 'restore'); assert.ok(checkpointed && !restored);
+      const before = databaseCounts(path.join(root, 'owner.sqlite3'));
+      assert.equal(before.owner_passkeys, 1); assert.ok(before.owner_sessions > 0);
+      python.kill('SIGTERM'); await new Promise(resolve => python.once('exit', resolve));
+      activeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'argus-owner-today-'));
+      temporaryRoots.push(activeRoot);
+      const destination = path.join(activeRoot, 'owner.sqlite3');
+      assert.equal(backupCLI('prepare-restore', backup, destination).passkeys, 0);
+      assert.equal((await fs.stat(destination)).mode & 0o777, 0o600);
+      assert.deepEqual(databaseCounts(destination), { owner_passkeys: 0, owner_sessions: 0, owner_challenges: 0 });
+      assert.deepEqual(databaseCounts(path.join(root, 'owner.sqlite3')), before);
+      assert.equal(crypto.createHash('sha256').update(await fs.readFile(backup)).digest('hex'), backupHash);
+      await startAuth(); restored = true;
+      return { originalPreserved: true, backupHash, restored: true, sessions: 0, challenges: 0, passkeys: 0 };
+    });
+    assert.ok(checkpointed && restored);
+    report.acceptance = JSON.parse(await fs.readFile(path.join(out, 'passkey.json'), 'utf8'));
+    assert.equal(report.acceptance.status, 'PASS');
+  } else {
   await child(process.execPath, ['--use-env-proxy', '--import', './scripts/owner-today-browser-preload.mjs', 'scripts/mobile-today-acceptance.mjs'], acceptanceEnv, 'mobile.log');
   const result = JSON.parse(await fs.readFile(path.join(out, 'mobile', 'acceptance.json'), 'utf8'));
   assert.equal(result.verdict, 'PASS'); assert.equal(result.gateInventory.length, 15);
   assert.equal(result.combinationCount, 12); assert.deepEqual(result.failures, []);
   report.acceptance = { gates: result.gateInventory.map(x => x.id), combinations: result.combinationCount,
     offline: result.offline, frontendSha: result.frontendSha };
+  }
   report.status = 'PASS';
 } finally {
   if (python && python.exitCode === null) { python.kill('SIGTERM'); await new Promise(resolve => python.once('exit', resolve)); }
@@ -103,6 +158,6 @@ try {
   if (front?.listening) await new Promise(resolve => front.close(resolve));
   if (target) await target.close();
   await fs.writeFile(path.join(out, 'result.json'), JSON.stringify(report, null, 2) + '\n');
-  await fs.rm(root, { recursive: true, force: true });
+  for (const directory of temporaryRoots) await fs.rm(directory, { recursive: true, force: true });
 }
-console.log(`owner-today-https: ${report.status}; mode=${mode}; full M01-M15`);
+console.log(`owner-today-https: ${report.status}; mode=${mode}; scenario=${scenario}`);
