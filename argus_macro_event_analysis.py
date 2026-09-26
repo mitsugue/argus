@@ -290,11 +290,14 @@ def build_pre_prompt(event: Dict[str, Any], market_context_ja: str = "") -> str:
 def build_post_prompt(event: Dict[str, Any], pre: Dict[str, Any],
                       actual: Dict[str, Any], market_context_ja: str = "") -> str:
     import json as _json
+    from argus_macro_results import project_series_timing
+    actual = project_series_timing(actual)
     pre_txt = _json.dumps({k: pre.get(k) for k in
                            ("summaryJa", "argusScenarioJa", "marketPricingJa",
                             "whatWouldSurpriseJa")}, ensure_ascii=False)
     actual_txt = (_json.dumps({k: actual.get(k) for k in ("headline", "metrics", "metricDefinitions", "metricInputs", "previousMetrics",
-                                "referenceMatched", "releasedAt", "receivedAt", "source", "sourceUrl", "limitationsJa")},
+                                "referenceMatched", "releasedAt", "receivedAt", "availableFrom", "availabilityBasis",
+                                "historicalVintageVerified", "sourceResponseSha256", "source", "sourceUrl", "limitationsJa")},
                               ensure_ascii=False)
                   if actual.get("available") else "公式結果未取得")
     return (

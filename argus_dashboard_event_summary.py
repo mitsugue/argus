@@ -125,7 +125,8 @@ def build_summary_item(*, important_event: Optional[Dict[str, Any]],
     ie = important_event or {}
     rec = macro_record or {}
     pre = rec.get("pre") or {}
-    actual = rec.get("actual") or {}
+    from argus_macro_results import project_series_timing
+    actual = project_series_timing(rec.get("actual") or {})
     post = rec.get("post") or {}
     mr = rec.get("marketReaction") or {}
 
@@ -205,7 +206,8 @@ def build_summary_item(*, important_event: Optional[Dict[str, Any]],
         "source": actual.get("source"),
         "sourceUrl": actual.get("sourceUrl"),
         "releasedAt": actual.get("releasedAt"),
-        **{key: actual.get(key) for key in ("schemaVersion", "receivedAt", "referenceMatched",
+        **{key: actual.get(key) for key in ("schemaVersion", "receivedAt", "availableFrom", "availabilityBasis",
+             "historicalVintageVerified", "referenceMatched",
              "metricDefinitions", "previousMetrics", "previousReferenceMonth", "sourceResponseSha256") if key in actual},
         "limitationsJa": list(actual.get("limitationsJa") or [])[:5],
     }
