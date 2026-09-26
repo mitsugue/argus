@@ -36,10 +36,10 @@ HISTORICAL_REPLACED_BLOBS = {
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
     # Exact opt-in owner authentication, UI, backup and regression candidate.
-    'argus_owner_auth.py': '8ffc18dee74ca67b921c4e7883a9ad432c7a2fdb',
+    'argus_owner_auth.py': 'af2357e165b817ef64f6288f6ddeae32d9498ff8',
     'docs/ops/owner-server-auth.md': 'd745850b1c9bb742783be9f230261cee5b9d782f',
     'scripts/owner_auth_backup.py': '55b2d8f41918c9ae5880c7ae23a764e5e1506e8a',
-    'test_argus_owner_auth.py': 'accaf43ff4e55802636da6989bc1ffa43d076c52',
+    'test_argus_owner_auth.py': '09abfb764361266e39b60dc67ffdb2ee02678501',
     'web/scripts/owner-session.test.cjs': '75a0ee285d5ec5b53fe63df9a41c78e691cc19b1',
     'web/src/components/OwnerAccess.css': '7712cd812a6d8555765741c98926131c2ff2cde6',
     'web/src/components/OwnerAccess.tsx': 'c4d046ab86ccce9e11c5d87644cf135bedea9703',

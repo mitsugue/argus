@@ -249,3 +249,14 @@ def test_cors_preflight_retains_owner_headers(setup):
     assert response.headers['Access-Control-Allow-Origin'] == ORIGIN
     assert 'X-ARGUS-OWNER-SESSION' in response.headers['Access-Control-Allow-Headers']
     assert 'X-ARGUS-OWNER-NONCE' in response.headers['Access-Control-Allow-Headers']
+
+
+def test_login_does_not_start_later_market_middleware(setup):
+    client, _, _ = setup
+    @client.application.before_request
+    def forbidden_market_bootstrap():
+        raise AssertionError('authentication must not start market work')
+    assert login(client)
+    assert post(client, 'login-options').status_code == 401
+    assert client.options(module.PREFIX + '/password').status_code == 200
+    assert client.get('/api/argus/data').status_code == 401

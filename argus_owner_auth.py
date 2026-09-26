@@ -198,10 +198,14 @@ def install(app, env=None):
 
     @app.before_request
     def owner_boundary():
+        # Authentication must be available without starting market restoration,
+        # news/provider threads, or any other later application middleware.
+        if request.endpoint == 'owner_action':
+            if request.method == 'OPTIONS':
+                return app.make_default_options_response()
+            return owner_action(request.view_args['action'])
         if not auth.enabled:
             return None
-        if request.path.startswith(PREFIX + '/'):
-            return None  # Exact routes below perform their own checks; unknown paths expose no data.
         if request.method == 'OPTIONS' or request.path in ('/healthz', '/readyz'):
             return None
         # Retain existing operational credentials and every downstream check.
