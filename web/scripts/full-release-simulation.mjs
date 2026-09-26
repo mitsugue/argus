@@ -85,7 +85,7 @@ try {
   // beginning a stateful release action, so the action cannot race a reload.
   await page.waitForTimeout(1_000);
   await page.locator('details.at-evidence').waitFor({ state: 'visible', timeout: 30_000 });
-  assert.equal(await page.evaluate(() => globalThis.__ARGUS_PRODUCT_VERSION__), 'v13.7.48');
+  assert.equal(await page.evaluate(() => globalThis.__ARGUS_PRODUCT_VERSION__), 'v13.7.49');
   evidence.identitiesConverged = true;
 
   const producerTriggerId = `full-release-simulation-${runNumber}-${candidateSha.slice(0, 12)}`;
