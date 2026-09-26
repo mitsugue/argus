@@ -35,6 +35,16 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # Exact opt-in owner authentication, UI, backup and regression candidate.
+    'argus_owner_auth.py': '8ffc18dee74ca67b921c4e7883a9ad432c7a2fdb',
+    'docs/ops/owner-server-auth.md': 'd745850b1c9bb742783be9f230261cee5b9d782f',
+    'scripts/owner_auth_backup.py': '55b2d8f41918c9ae5880c7ae23a764e5e1506e8a',
+    'test_argus_owner_auth.py': 'accaf43ff4e55802636da6989bc1ffa43d076c52',
+    'web/scripts/owner-session.test.cjs': '75a0ee285d5ec5b53fe63df9a41c78e691cc19b1',
+    'web/src/components/OwnerAccess.css': '7712cd812a6d8555765741c98926131c2ff2cde6',
+    'web/src/components/OwnerAccess.tsx': 'c4d046ab86ccce9e11c5d87644cf135bedea9703',
+    'web/src/lib/ownerSession.ts': '3cf154a2be11b0fa01c9dc53aee1ba0a252eab58',
+
     # Exact regression for releasing decoded checkpoints after final verification.
     "test_argus_checkpoint_reference_lifetime.py": "16b316acbfaff5ba9265f38251888a9b331a3a70",
     # Exact navigation-read recovery and fail-closed regression coverage.
@@ -188,7 +198,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_web_push.py': '69118b280db79fae69bcd3d76db20521714056a2',
     'test_argus_owner_vault.py': '64c3c8bec19581962309873e1b93fb31cdc2cbe2',
     'test_argus_ai_usage_view.py': '729a3e9155a2106069ad68d8b9efb590ab10f3a9',
-    'requirements.txt': 'acfc928655cc76a36ad7c41e3ced58247d27c81c',
+    'requirements.txt': '1ce78ecf088bcc785d257975ae63123d039d822a',
     'jp_market_valuation.py': '8813012bcab02e9269007a8850870da2ef050565',
     'docs/V13_6_INDEX_VALUATION.md': 'aa7a1a35a12be9657139cb3e9488ea4b136f087b',
     'argus_web_push.py': 'e6ea726935fb8ceb60bc16deaf1a4b50cb9f8355',
