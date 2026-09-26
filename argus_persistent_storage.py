@@ -123,10 +123,31 @@ def _canonical_chunks(value: Any):
             active.add(identity)
             try:
                 yield "["
-                for index, item in enumerate(current):
-                    if index:
+                # Share the traversal budget across adjacent items. This keeps
+                # numeric paths and short records in bounded C-encoder batches
+                # without building a second full list or JSON representation.
+                batch = []
+                remaining = [1024, 32 * 1024]
+                emitted = False
+                for item in current:
+                    if fits(item, remaining):
+                        batch.append(item)
+                        continue
+                    if batch:
+                        if emitted:
+                            yield ","
+                        yield encoder.encode(batch)[1:-1]
+                        emitted = True
+                        batch = []
+                    if emitted:
                         yield ","
                     yield from parts(item)
+                    emitted = True
+                    remaining = [1024, 32 * 1024]
+                if batch:
+                    if emitted:
+                        yield ","
+                    yield encoder.encode(batch)[1:-1]
                 yield "]"
             finally:
                 active.remove(identity)
