@@ -1,4 +1,7 @@
 const assert = require('node:assert/strict'), Module = require('node:module'), path = require('node:path'), esbuild = require('esbuild');
+// Supply browser state explicitly on every Node runtime used by CI.
+const browserNavigator = {onLine: true};
+Object.defineProperty(globalThis, 'navigator', {configurable: true, value: browserNavigator});
 const calls = [], listeners = {}; const serverToken = 'x'.repeat(43); let pending;
 const original = async (request) => {
   calls.push(request);
@@ -30,5 +33,11 @@ const api=mod.exports; api.installOwnerTransport(); global.fetch=window.fetch;
   await assert.rejects(fetch('https://api.example/api/argus/old-cache'), /owner_response_unverified/);
   assert.equal(api.hasOwnerSession(), false);
   await api.passwordLogin('fixture-password'); listeners.pagehide(); assert.equal(api.hasOwnerSession(), false);
+  browserNavigator.onLine = false;
+  await assert.rejects(api.passwordLogin('fixture-password'), /authentication_cancelled/);
+  assert.equal(api.hasOwnerSession(), false);
+  browserNavigator.onLine = true;
+  await api.passwordLogin('fixture-password');
+  listeners.offline(); assert.equal(api.hasOwnerSession(), false);
   console.log('Owner transport: locked requests, exact origin, preserved headers, no-store, no redirects, logout and stale response isolation PASS');
 })().catch(error => {api.clearOwnerSession(); console.error(error);process.exit(1);});
