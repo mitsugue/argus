@@ -15288,8 +15288,10 @@ def _bls_nfp_result(event):
             _MACRO_RESULT_STATE["NFP"].update(status=("rate_limited" if r.status_code == 429 else "error"))
             out["limitationsJa"] = [f"BLS HTTP {r.status_code}"]
             return out
+        raw = r.json()
+        now_iso = _ai_now_iso()
         series = {s.get("seriesID"): s.get("data") or []
-                  for s in (((r.json() or {}).get("Results") or {}).get("series") or [])}
+                  for s in (((raw or {}).get("Results") or {}).get("series") or [])}
         ces = sorted(series.get("CES0000000001") or [],
                      key=lambda d: (d.get("year"), d.get("period")), reverse=True)
         lns = sorted(series.get("LNS14000000") or [],
@@ -15313,11 +15315,11 @@ def _bls_nfp_result(event):
             out["limitationsJa"] = [f"公式結果未反映（BLS最新は{latest_month}・今回の対象月は{ref}）"]
             _MACRO_RESULT_STATE["NFP"].update(status="live", lastSuccessAt=now_iso)
             return out
-        out.update(available=True, releasedAt=now_iso,
+        out.update(available=True, **argus_macro_results.series_receipt(raw, now_iso),
                    headline=f"非農業部門雇用者数 {chg_k:+,}千人 / 失業率 {ur}%",
                    metrics={"nfpChangeK": chg_k, "unemploymentRate": ur,
                             "referenceMonth": latest_month},
-                   limitationsJa=[])
+                   limitationsJa=[argus_macro_results._RECEIPT_LIMITATION])
         out["sourceUrl"] = "https://www.bls.gov/news.release/empsit.nr0.htm"
         _MACRO_RESULT_STATE["NFP"].update(status="live", lastSuccessAt=now_iso,
                                           sampleEventId=event.get("id") or event.get("eventId"))
@@ -15370,32 +15372,32 @@ def _macro_result_fetch(event):
             if raw is None:
                 return MR._empty("rate_limited" if st == 429 else "source_unreachable",
                                  [f"BLS HTTP {st}"], "BLS")
-            return MR.parse_cpi(raw, event, now_iso)
+            return MR.parse_cpi(raw, event, _ai_now_iso())
         if code == "PPI":
             raw, st = _bls_fetch(["WPSFD4", "WPSFD49104"])
             if raw is None:
                 return MR._empty("source_unreachable", [f"BLS HTTP {st}"], "BLS")
-            return MR.parse_ppi(raw, event, now_iso)
+            return MR.parse_ppi(raw, event, _ai_now_iso())
         if code == "JOLTS":
             raw, st = _bls_fetch(["JTS000000000000000JOL"])
             if raw is None:
                 return MR._empty("source_unreachable", [f"BLS HTTP {st}"], "BLS")
-            return MR.parse_jolts(raw, event, now_iso)
+            return MR.parse_jolts(raw, event, _ai_now_iso())
         if code == "PCE":
             h, c = _fred_raw("PCEPI"), _fred_raw("PCEPILFE")
             if h is None and c is None:
                 return MR._empty("source_unreachable", ["FRED未取得（キー未設定または通信失敗）"], "FRED/BEA")
-            return MR.parse_pce(h or {}, c or {}, event, now_iso)
+            return MR.parse_pce(h or {}, c or {}, event, _ai_now_iso())
         if code == "GDP":
             g = _fred_raw("A191RL1Q225SBEA")
             if g is None:
                 return MR._empty("source_unreachable", ["FRED未取得"], "FRED/BEA")
-            return MR.parse_gdp(g, event, now_iso)
+            return MR.parse_gdp(g, event, _ai_now_iso())
         if code == "FOMC":
             up, lo = _fred_raw("DFEDTARU"), _fred_raw("DFEDTARL")
             if up is None and lo is None:
                 return MR._empty("source_unreachable", ["FRED未取得"], "FRED/Fed")
-            return MR.parse_fomc(up or {}, lo or {}, event, now_iso)
+            return MR.parse_fomc(up or {}, lo or {}, event, _ai_now_iso())
         if code == "BOJ":
             return MR.boj_partial(event, now_iso)
         return MR.not_implemented(code or "UNKNOWN", now_iso)

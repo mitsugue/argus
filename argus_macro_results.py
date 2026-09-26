@@ -11,7 +11,7 @@ scenario is never called "consensus"; consensus is never fabricated here either.
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import math
 import re
 import hashlib
@@ -44,6 +44,56 @@ _SOURCE_URL = {
 def _empty(status: str, limitations: List[str], source: Optional[str] = None) -> Dict[str, Any]:
     return {"available": False, "status": status, "source": source, "releasedAt": None,
             "headline": None, "metrics": {}, "limitationsJa": limitations}
+
+
+_RECEIPT_LIMITATION = "公表日時は系列応答から確認できず、取得日時以降のみ利用可能。"
+
+
+def series_receipt(raw: Any, received_at: str) -> Dict[str, Any]:
+    """Receipt of a parsed provider response, never its publication timestamp.
+
+    The caller samples its clock AFTER reading all responses. The digest identifies
+    canonical parsed JSON, not HTTP wire bytes or a historical provider vintage.
+    """
+    if not isinstance(received_at, str) or "T" not in received_at:
+        raise ValueError("macro_receipt_time_invalid")
+    try:
+        instant = datetime.fromisoformat(received_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("macro_receipt_time_invalid") from exc
+    if instant.tzinfo is None or instant.utcoffset() is None:
+        raise ValueError("macro_receipt_time_invalid")
+    return {"releasedAt": None, "receivedAt": received_at, "availableFrom": received_at,
+            "availabilityBasis": "RESPONSE_RECEIPT", "historicalVintageVerified": False,
+            "schemaVersion": "macro-series-receipt-v2",
+            "sourceResponseSha256": hashlib.sha256(json.dumps(raw, ensure_ascii=False,
+                sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()}
+
+
+
+def project_series_timing(actual: Dict[str, Any]) -> Dict[str, Any]:
+    """Honest reader projection; legacy result snapshots are never rewritten.
+
+    These adapters did not verify publication time. Older non-CPI records put the
+    fetch clock in releasedAt; do not promote that field to a known receipt either.
+    """
+    out = dict(actual)
+    if not actual.get("available") or actual.get("source") not in ("BLS", "FRED/BEA", "FRED/Fed"):
+        return out
+    received = actual.get("receivedAt")
+    try:
+        receipt = series_receipt({}, received)
+    except ValueError:
+        receipt = {"receivedAt": None, "availableFrom": None,
+                   "availabilityBasis": "LEGACY_UNVERIFIED"}
+    out.update({key: receipt[key] for key in ("receivedAt", "availableFrom", "availabilityBasis")})
+    out.update(releasedAt=None, historicalVintageVerified=False)
+    out["limitationsJa"] = list(actual.get("limitationsJa") or [])
+    limitation = (_RECEIPT_LIMITATION if receipt.get("receivedAt") else
+        "旧結果の公表日時・取得日時は未確認。過去時点の材料反応には使用できません。")
+    if limitation not in out["limitationsJa"]:
+        out["limitationsJa"].insert(0, limitation)
+    return out
 
 
 # ── BLS index helpers ────────────────────────────────────────────────────────
@@ -147,21 +197,18 @@ def parse_cpi(raw: Any, event: Dict[str, Any], now_iso: str,
         parts.append(f"コア前月比（季節調整済み）{metrics['coreCpiMoM']:+.1f}%")
     missing = [k for k in series if metrics[k] is None]
     limitations = ["公式指数から算出。公表文の丸め済み変化率そのものではありません。",
-                   "公表日時は系列応答から確認できず、取得日時以降のみ利用可能。"]
+                   _RECEIPT_LIMITATION]
     if missing:
         limitations.append("不足系列の変化率は未算出。季節調整済み系列で前年比を代用しません。")
     if not matched:
         limitations.append("対象イベントの月との照合は未確認。")
     return {"available": True, "status": "partial" if missing or not matched else "live",
-            "source": "BLS", "releasedAt": None, "receivedAt": now_iso,
-            "availableFrom": now_iso, "referenceMatched": matched,
+            "source": "BLS", **series_receipt(raw, now_iso), "referenceMatched": matched,
             "schemaVersion": "macro-cpi-result-v2", "headline": "消費者物価指数 " + " / ".join(parts),
             "metrics": metrics, "metricDefinitions": definitions, "metricInputs": inputs,
             "previousReferenceMonth": _month_shift(reference, -1),
             "previousMetrics": {key: _change(values[key], _month_shift(reference, -1), spec[1])[0]
                                 for key, spec in series.items()},
-            "sourceResponseSha256": hashlib.sha256(json.dumps(raw, ensure_ascii=False, sort_keys=True,
-                    separators=(",", ":"), allow_nan=False).encode()).hexdigest(),
             "sourceUrl": _SOURCE_URL["CPI"], "limitationsJa": limitations}
 
 
@@ -181,9 +228,9 @@ def parse_ppi(raw: Any, event: Dict[str, Any], now_iso: str,
     if h_yoy is not None:
         head_txt += f"・前年比{h_yoy:+.1f}%"
     return {"available": True, "status": "live" if h_yoy is not None else "partial",
-            "source": "BLS", "releasedAt": now_iso, "headline": head_txt, "metrics": metrics,
+            "source": "BLS", **series_receipt(raw, now_iso), "headline": head_txt, "metrics": metrics,
             "sourceUrl": _SOURCE_URL["PPI"],
-            "limitationsJa": [] if h_yoy is not None else ["前年比は未算出"]}
+            "limitationsJa": [_RECEIPT_LIMITATION] + ([] if h_yoy is not None else ["前年比は未算出"])}
 
 
 def parse_jolts(raw: Any, event: Dict[str, Any], now_iso: str,
@@ -195,9 +242,9 @@ def parse_jolts(raw: Any, event: Dict[str, Any], now_iso: str,
     if openings is None:
         return _empty("partial", ["求人件数を取得できず"], "BLS")
     ref = f"{rows[0].get('year')}-{str(rows[0].get('period') or '').replace('M', '')}"
-    return {"available": True, "status": "live", "source": "BLS", "releasedAt": now_iso,
+    return {"available": True, "status": "live", "source": "BLS", **series_receipt(raw, now_iso),
             "headline": f"求人件数 {openings:,.0f}千件", "metrics": {"jobOpeningsK": openings,
-            "referenceMonth": ref}, "sourceUrl": _SOURCE_URL["JOLTS"], "limitationsJa": []}
+            "referenceMonth": ref}, "sourceUrl": _SOURCE_URL["JOLTS"], "limitationsJa": [_RECEIPT_LIMITATION]}
 
 
 # ── PCE / GDP (FRED) ─────────────────────────────────────────────────────────
@@ -233,8 +280,8 @@ def parse_pce(raw_headline: Any, raw_core: Any, event: Dict[str, Any], now_iso: 
     if c_mom is not None:
         txt += f"・コア前月比{c_mom:+.1f}%"
     return {"available": True, "status": "live" if h_yoy is not None else "partial",
-            "source": "FRED/BEA", "releasedAt": now_iso, "headline": txt, "metrics": metrics,
-            "sourceUrl": _SOURCE_URL["PCE"], "limitationsJa": [] if h_yoy is not None else ["前年比は未算出"]}
+            "source": "FRED/BEA", **series_receipt({"headline": raw_headline, "core": raw_core}, now_iso), "headline": txt, "metrics": metrics,
+            "sourceUrl": _SOURCE_URL["PCE"], "limitationsJa": [_RECEIPT_LIMITATION] + ([] if h_yoy is not None else ["前年比は未算出"])}
 
 
 def parse_gdp(raw: Any, event: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
@@ -245,10 +292,10 @@ def parse_gdp(raw: Any, event: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
     val = _num(rows[0].get("value"))
     if val is None:
         return _empty("partial", ["実質GDP成長率を取得できず"], "FRED/BEA")
-    return {"available": True, "status": "live", "source": "FRED/BEA", "releasedAt": now_iso,
+    return {"available": True, "status": "live", "source": "FRED/BEA", **series_receipt(raw, now_iso),
             "headline": f"実質GDP 年率換算 前期比{val:+.1f}%",
             "metrics": {"realGdpQoQAnnualized": val, "referenceDate": rows[0].get("date")},
-            "sourceUrl": _SOURCE_URL["GDP"], "limitationsJa": []}
+            "sourceUrl": _SOURCE_URL["GDP"], "limitationsJa": [_RECEIPT_LIMITATION]}
 
 
 def parse_fomc(raw_upper: Any, raw_lower: Any, event: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
@@ -270,11 +317,11 @@ def parse_fomc(raw_upper: Any, raw_lower: Any, event: Dict[str, Any], now_iso: s
         decision = "hike" if u_now > u_prev else ("cut" if u_now < u_prev else "hold")
     dj = {"hike": "利上げ", "cut": "利下げ", "hold": "据え置き", "unknown": "不明"}[decision]
     head = f"FOMC 政策金利 {dj}（目標レンジ {l_now:.2f}〜{u_now:.2f}%）"
-    return {"available": True, "status": "live", "source": "FRED/Fed", "releasedAt": now_iso,
+    return {"available": True, "status": "live", "source": "FRED/Fed", **series_receipt({"upper": raw_upper, "lower": raw_lower}, now_iso),
             "headline": head, "metrics": {"decision": decision, "targetRangeLower": l_now,
             "targetRangeUpper": u_now, "referenceDate": up[0].get("date")},
             "sourceUrl": _SOURCE_URL["FOMC"],
-            "limitationsJa": ["ドットプロット/SEPは本アダプタでは未取得（捏造しない）"]}
+            "limitationsJa": [_RECEIPT_LIMITATION, "ドットプロット/SEPは本アダプタでは未取得（捏造しない）"]}
 
 
 def boj_partial(event: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
