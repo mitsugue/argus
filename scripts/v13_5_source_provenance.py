@@ -35,6 +35,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'argus_memory_attribution.py': '60a694eef14024adb32885c1b0c59e302c9e75a8',
+    'docs/ops/checkpoint-phase-timing.md': '0ebe77c7e8b6af72de3ab2f53f19ae78509b2802',
+    'test_argus_checkpoint_phase_timing.py': '31edce29020fa25091ed78ad4dceaa6719ca0c2a',
     'ops/imports/acquisition_20260920/ACCEPTANCE_CRITERIA.md': '918375dfb7c134b0792b401b90356178635e5f1a',
     'ops/imports/acquisition_20260920/source_registry.json': '9d843748819442f1d8650135f768827df9392f7f',
     'ops/imports/acquisition_20260920/data_contract.json': 'f0a1b3f58a4d25d399d6048a6d1e9e02b63f0354',
