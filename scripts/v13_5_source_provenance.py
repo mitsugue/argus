@@ -35,6 +35,8 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # Exact regression for releasing decoded checkpoints after final verification.
+    "test_argus_checkpoint_reference_lifetime.py": "16b316acbfaff5ba9265f38251888a9b331a3a70",
     # Exact navigation-read recovery and fail-closed regression coverage.
     'web/scripts/warm-profile-runtime.mjs': '7ab7e31ebeb34127d81bd49f13301effc3b62ed6',
     'web/scripts/warm-profile-runtime.test.mjs': '799cec251a6b63386a673e9cf4c06cd7ac3d7552',

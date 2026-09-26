@@ -25719,16 +25719,24 @@ def _verified_checkpoint_preserving_legacy_until_pair(
         if canonical is None or \
                 _validated_recovery_required_marker(canonical) is None:
             use_staging = True
+            del canonical
         else:
             # The authenticated sidecar, not the compatibility checkpoint
             # path, selects the committed generation after genesis.
             ordinary_authority = \
                 _resolve_authoritative_local_recovery_checkpoint(
                     canonical, path, configured)
+            del canonical
             post_genesis_capability = \
                 _mint_post_genesis_checkpoint_capability(
                     ordinary_authority, path, blob, configured,
                     included_sequence)
+            # Later generation installation reloads and verifies the source.
+            # Keep its identity, not the already-checked decoded checkpoint.
+            prior_hash = ordinary_authority["payload"][
+                "sourceCheckpointHash"]
+            prior_path = ordinary_authority["path"]
+            del ordinary_authority
     except Exception:
         _release_recovery_checkpoint_transaction_lock(transaction_lock)
         raise
@@ -25766,14 +25774,13 @@ def _verified_checkpoint_preserving_legacy_until_pair(
             _verify_local_recovery_sidecar(
                 staged, allow_legacy_migration=False,
                 sidecar_value=candidate_sidecar)
+            del staged, candidate_sidecar
             _remote_recovery_crash_boundary(
                 "after_candidate_pair_verification")
 
-            prior_hash = ordinary_authority["payload"][
-                "sourceCheckpointHash"]
             candidate_hash = checkpoint["snapshotHash"]
             _install_recovery_checkpoint_generation(
-                ordinary_authority["path"], path, prior_hash)
+                prior_path, path, prior_hash)
             _install_recovery_checkpoint_generation(
                 staged_checkpoint, path, candidate_hash)
             _remote_recovery_crash_boundary(
@@ -25799,6 +25806,7 @@ def _verified_checkpoint_preserving_legacy_until_pair(
             if resolved["payload"]["sourceCheckpointHash"] != candidate_hash:
                 raise argus_remote_recovery.RecoveryBundleError(
                     "recovery_pair_authority_switch_unverified")
+            del installed, resolved
             _DURABLE_STATE["remoteRecoverySidecar"] = {
                 **checkpoint["postVerify"], "status": "verified"}
             checkpoint["path"] = os.path.abspath(path)
@@ -25853,6 +25861,7 @@ def _verified_checkpoint_preserving_legacy_until_pair(
             staged_checkpoint, require_seal=True)
         _verify_local_recovery_sidecar(
             staged, allow_legacy_migration=False)
+        del staged
         os.replace(staged_checkpoint, path)
         staged_checkpoint = None
         argus_persistent_storage._fsync_directory(
@@ -25861,6 +25870,7 @@ def _verified_checkpoint_preserving_legacy_until_pair(
             path, require_seal=True)
         _verify_local_recovery_sidecar(
             installed, allow_legacy_migration=False)
+        del installed
         checkpoint["path"] = os.path.abspath(path)
         _remote_recovery_crash_boundary("after_complete_pair")
         checkpoint["walCompaction"] = _checkpoint_wal_result(
