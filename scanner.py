@@ -22682,12 +22682,56 @@ def _memory_attribution_record_id():
     return _MISSION_TICK_CONTEXT.get("memoryAttributionRecordId")
 
 
+def _checkpoint_phase_timed(phase):
+    """Observe only fixed phase names; diagnostic failures never affect writes."""
+    def decorate(function):
+        @wraps(function)
+        def measured(*args, **kwargs):
+            record_id = None
+            started = None
+            try:
+                if phase in argus_memory_attribution.CHECKPOINT_TIMING_PHASES:
+                    if _MISSION_TICK_CONTEXT.get("memoryAttributionThreadId") == \
+                            threading.get_ident():
+                        record_id = _memory_attribution_record_id()
+                        if record_id:
+                            started = time.monotonic_ns()
+            except Exception:
+                pass
+            failed = True
+            try:
+                result = function(*args, **kwargs)
+                failed = False
+                return result
+            finally:
+                if record_id and started is not None:
+                    try:
+                        elapsed = max(0, (time.monotonic_ns() - started) // 1000)
+                        _MEMORY_ATTRIBUTION.record_checkpoint_timing(
+                            record_id, phase, elapsed, failed)
+                    except Exception:
+                        pass
+        return measured
+    return decorate
+
+
+@_checkpoint_phase_timed("seal")
+def _timed_checkpoint_seal(blob):
+    return argus_persistent_storage.seal_checkpoint(blob)
+
+
+@_checkpoint_phase_timed("checkpoint_write")
+def _timed_verified_checkpoint(*args, **kwargs):
+    return argus_tick_durability.verified_checkpoint(*args, **kwargs)
+
+
 def _memory_attribution_begin(window, actual_at):
     try:
         record_id = str(_MISSION_TICK_CONTEXT.get("jobId") or
                         window.get("missionWindowId") or
                         f"mission-{time.time_ns()}")
         _MISSION_TICK_CONTEXT["memoryAttributionRecordId"] = record_id
+        _MISSION_TICK_CONTEXT["memoryAttributionThreadId"] = threading.get_ident()
         initial_sample = _MISSION_TICK_CONTEXT.get("memoryAttributionT0")
         try:
             intermission_sample = (initial_sample or
@@ -25239,6 +25283,7 @@ def _post_genesis_cycle_is_exactly_unstarted(checkpoint_blob):
             "walErrorClass", "receiptErrorClass"))
 
 
+@_checkpoint_phase_timed("mint_capability")
 def _mint_post_genesis_checkpoint_capability(
         ordinary_authority, canonical_checkpoint_path, candidate_checkpoint,
         configured, candidate_wal):
@@ -25312,6 +25357,7 @@ def _mint_post_genesis_checkpoint_capability(
         ledger_base=ledger_base)
 
 
+@_checkpoint_phase_timed("consume_capability")
 def _consume_post_genesis_checkpoint_capability(
         capability, checkpoint_blob, compact, configured):
     """Consume an exact ordinary-pair proof before nonce reservation."""
@@ -25527,6 +25573,7 @@ def _persist_remote_recovery_sidecar_once(
     return result
 
 
+@_checkpoint_phase_timed("sidecar_write")
 def _persist_remote_recovery_sidecar(
         checkpoint, *, checkpoint_path=None,
         authenticated_remote_floor=None,
@@ -25631,6 +25678,7 @@ def _checkpoint_wal_result(
     }
 
 
+@_checkpoint_phase_timed("transaction")
 def _verified_checkpoint_preserving_legacy_until_pair(
         path, blob, *, job_id, wal_path, included_sequence,
         allow_wal_compaction, compaction_sequence, build_sha,
@@ -25644,7 +25692,7 @@ def _verified_checkpoint_preserving_legacy_until_pair(
     """
     configured = argus_remote_recovery.configured_keys()
     if configured.get("status") != "configured":
-        return argus_tick_durability.verified_checkpoint(
+        return _timed_verified_checkpoint(
             path, blob, job_id=job_id, wal_path=wal_path,
             included_sequence=included_sequence,
             allow_wal_compaction=allow_wal_compaction,
@@ -25694,7 +25742,7 @@ def _verified_checkpoint_preserving_legacy_until_pair(
                 (f"{os.path.basename(path)}.{os.getpid()}."
                  f"{os.urandom(16).hex()}.recovery-pair-checkpoint"))
             staged_lock = staged_checkpoint + ".writer.lock"
-            checkpoint = argus_tick_durability.verified_checkpoint(
+            checkpoint = _timed_verified_checkpoint(
                 staged_checkpoint, blob, job_id=job_id,
                 included_sequence=included_sequence,
                 allow_wal_compaction=False, build_sha=build_sha,
@@ -25792,7 +25840,7 @@ def _verified_checkpoint_preserving_legacy_until_pair(
             (f"{os.path.basename(path)}.{os.getpid()}."
              f"{os.urandom(16).hex()}.recovery-pair-checkpoint"))
         staged_lock = staged_checkpoint + ".writer.lock"
-        checkpoint = argus_tick_durability.verified_checkpoint(
+        checkpoint = _timed_verified_checkpoint(
             staged_checkpoint, blob, job_id=job_id,
             included_sequence=included_sequence,
             allow_wal_compaction=False, build_sha=build_sha,
@@ -26176,7 +26224,7 @@ def _osint_persist_locked():
                 record_id, {"legacyCheckpointAttempted": True})
         _memory_attribution_capture("T2")
         seal_started_ns = time.monotonic_ns()
-        sealed_blob = argus_persistent_storage.seal_checkpoint(blob)
+        sealed_blob = _timed_checkpoint_seal(blob)
         _recovery_phase_a_prepare_checkpoint(
             sealed_blob,
             seal_duration_micros=_recovery_phase_a_elapsed_micros(
@@ -27047,6 +27095,7 @@ def _verify_recovery_checkpoint_generation(path, expected_hash):
     return checkpoint
 
 
+@_checkpoint_phase_timed("generation_install")
 def _install_recovery_checkpoint_generation(
         source_path, checkpoint_path, expected_hash):
     """Install an immutable-by-name checkpoint generation without overwrite."""
@@ -27267,6 +27316,7 @@ def _migrate_legacy_local_recovery(
     return verified
 
 
+@_checkpoint_phase_timed("sidecar_verify")
 def _verify_local_recovery_sidecar(
         checkpoint_blob, *, allow_legacy_migration=True,
         authenticated_local_handoff=None, pinned_legacy_evidence=None,
@@ -27385,6 +27435,7 @@ def _verify_local_recovery_sidecar(
     return verified
 
 
+@_checkpoint_phase_timed("resolve_authority")
 def _resolve_authoritative_local_recovery_checkpoint(
         canonical_checkpoint, checkpoint_path, configured):
     """Resolve the exact checkpoint selected by the authenticated sidecar.
@@ -31761,6 +31812,7 @@ def _recovery_phase_a_abandon_checkpoint():
         pass
 
 
+@_checkpoint_phase_timed("measurement")
 def _recovery_phase_a_prepare_checkpoint(
         sealed_checkpoint, *, seal_duration_micros,
         wal_bytes, wal_records, wal_high_water):

@@ -39,6 +39,13 @@ DEFAULT_INTERMISSION_LIMIT = 16
 DEFAULT_ACTIVE_OPERATION_LIMIT = 256
 MAXIMUM_ACTIVE_OPERATION_LIMIT = 256
 
+# Inclusive wall time, never authority or a substitute for recovery checks.
+CHECKPOINT_TIMING_PHASES = frozenset({
+    "seal", "measurement", "transaction", "resolve_authority",
+    "mint_capability", "consume_capability", "checkpoint_write",
+    "sidecar_write", "sidecar_verify", "generation_install",
+})
+
 PHASES = (
     "T0", "T1", "T2", "T3", "T4", "T5", "T6",
     "T7", "T8", "T9", "T10", "T11", "T12",
@@ -670,6 +677,25 @@ class MemoryAttributionRecorder:
                 return
             for name, value in dict(values or {}).items():
                 record["metadata"][str(name)[:80]] = _sanitize_scalar(value)
+
+    def record_checkpoint_timing(self, record_id, phase, elapsed_micros, failed):
+        """Keep bounded scalar timing only; a failure is not a saved checkpoint."""
+        if phase not in CHECKPOINT_TIMING_PHASES or type(elapsed_micros) is not int \
+                or elapsed_micros < 0 or type(failed) is not bool:
+            return
+        with self._lock:
+            record = self._active.get(str(record_id))
+            if record is None:
+                return
+            metadata = record["metadata"]
+            prefix = "checkpointTiming_" + phase
+            for suffix, increment in (("Micros", elapsed_micros),
+                                      ("Count", 1), ("Failures", int(failed))):
+                key = prefix + suffix
+                previous = metadata.get(key, 0)
+                if type(previous) is not int or previous < 0:
+                    previous = 0
+                metadata[key] = min(2 ** 53 - 1, previous + increment)
 
     def capture(self, record_id: str, phase: str, *,
                 sample: Optional[Mapping[str, Any]] = None,
