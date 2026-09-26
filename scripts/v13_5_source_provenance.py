@@ -64,7 +64,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/ops/owner-server-auth.md': 'd745850b1c9bb742783be9f230261cee5b9d782f',
     'scripts/owner_auth_backup.py': '55b2d8f41918c9ae5880c7ae23a764e5e1506e8a',
     'test_argus_owner_auth.py': '09abfb764361266e39b60dc67ffdb2ee02678501',
-    'web/scripts/owner-session.test.cjs': '2f77357dc012075633a87cfe1875955a81ae5987',
+    'web/scripts/owner-session.test.cjs': '392aa720d19d625d69915515462b1b09e8f169f6',
     'web/src/components/OwnerAccess.css': '018dfa83542c226c6cc849d3f18385d2c9fd9eba',
     'web/src/components/OwnerAccess.tsx': '734e3174895cf6d5ff54670796878ebcf4b6b415',
     'web/src/lib/ownerSession.ts': '6c1e999b10c60a640593bb1ab9fcedd9a2012b50',
