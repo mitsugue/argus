@@ -382,3 +382,34 @@ def test_observer_absence_constructs_no_diagnostic_metadata(monkeypatch):
     assert verified.state_hash_normalized(
         verified_store) == VERIFIED_BOUNDARY_STATE_HASH
     assert assets.state_hash_normalized(asset_store) == ASSET_BOUNDARY_STATE_HASH
+
+
+@pytest.mark.parametrize("raw", [
+    {}, asset_boundary_store(),
+    _asset_record_value({"unicode": "日本株 🌐", "nested": [False, -0.0, None]}),
+    {"records": {key: {"publishedAt": "2026-08-11T00:00:00Z", "v": key}
+                 for key in ("z", "a", "日本", "quote\"", "slash\\")}},
+])
+def test_asset_record_partition_preserves_exact_canonical_bytes_and_counts(raw):
+    normalized = assets.normalize_store(raw)
+    material = {key: normalized[key]
+                for key in ("schemaVersion", "records", "current")}
+    expected = assets._canonical(material)
+    assert "".join(assets._iter_normalized_hash_text(material)) == expected
+    digest, events = _events(assets, normalized)
+    assert digest == assets.state_hash(raw)
+    by_phase = dict(events)
+    assert by_phase["canonical_string_ready"]["canonicalCharacterCount"] == len(expected)
+    assert by_phase["utf8_bytes_ready"]["canonicalByteCount"] == len(expected.encode("utf-8"))
+
+
+def test_asset_fast_hash_never_serializes_the_full_record_collection(monkeypatch):
+    normalized = assets.normalize_store(asset_boundary_store())
+    expected = assets.state_hash(normalized)
+    encode = assets._canonical
+    def bounded(value):
+        assert value is not normalized["records"]
+        assert not (isinstance(value, dict) and "records" in value and "current" in value)
+        return encode(value)
+    monkeypatch.setattr(assets, "_canonical", bounded)
+    assert assets.state_hash_normalized(normalized) == expected
