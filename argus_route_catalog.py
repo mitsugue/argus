@@ -11,11 +11,11 @@ from typing import Any, Iterable
 
 
 TRUST_DOMAINS = frozenset({
-    "PUBLIC", "AUTH_OPERATIONAL", "OWNER_SYNC", "RECOVERY_PROOF",
+    "PUBLIC", "AUTH_OPERATIONAL", "OWNER_SYNC", "RECOVERY_PROOF", "OWNER_AUTH",
 })
 AUTH_POLICIES = frozenset({
     "NONE", "ADMIN_TOKEN", "OWNER_SYNC_OR_ADMIN",
-    "OPTIONAL_ADMIN_VIEW", "LEGACY_PUBLIC_PROOF",
+    "OPTIONAL_ADMIN_VIEW", "LEGACY_PUBLIC_PROOF", "OWNER_CEREMONY",
 })
 
 
@@ -86,6 +86,7 @@ PUBLIC_CACHE_ONLY_CONSUMERS = (
 
 
 ROUTE_CATALOG = (
+    RouteCatalogEntry("/api/argus/owner-auth/<action>", ("GET", "POST"), "owner_action", "OWNER_AUTH", "OWNER_CEREMONY", True, "OWNER_AUTH_V1", "OWNER_CLIENT"),
     RouteCatalogEntry("/api/argus/sector-heatmap", ("GET",), "api_argus_sector_heatmap", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/", ("GET",), "index", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/action-labels", ("GET",), "api_argus_action_labels", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
@@ -302,6 +303,12 @@ def validate_route_catalog(entries: Any = ROUTE_CATALOG) -> tuple[str, ...]:
             errors.append(f"row_{index}_mutation_method_mismatch")
         if row.trustDomain == "PUBLIC" and row.mutatesState:
             errors.append(f"row_{index}_public_mutation")
+        if row.trustDomain == "OWNER_AUTH" and (
+                row.route != "/api/argus/owner-auth/<action>"
+                or row.methods != ("GET", "POST")
+                or row.endpoint != "owner_action"
+                or row.authenticationPolicy != "OWNER_CEREMONY"):
+            errors.append(f"row_{index}_owner_ceremony_invalid")
         if row.trustDomain == "AUTH_OPERATIONAL" and \
                 row.authenticationPolicy != "ADMIN_TOKEN":
             errors.append(f"row_{index}_operational_auth_invalid")
