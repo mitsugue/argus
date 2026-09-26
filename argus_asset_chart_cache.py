@@ -379,6 +379,22 @@ def state_hash(
     return digest
 
 
+def _iter_normalized_hash_text(material: Dict[str, Any]):
+    """Encode the trusted hash projection in canonical record-sized pieces."""
+    yield '{"current":'
+    yield _canonical(material["current"])
+    yield ',"records":{'
+    for index, key in enumerate(sorted(material["records"])):
+        if index:
+            yield ','
+        yield _canonical(key)
+        yield ':'
+        yield _canonical(material["records"][key])
+    yield '},"schemaVersion":'
+    yield _canonical(material["schemaVersion"])
+    yield '}'
+
+
 def state_hash_normalized(
         store: Any, *,
         diagnostic_observer: Optional[
@@ -414,19 +430,27 @@ def state_hash_normalized(
             "recordCount": len(material["records"]),
             "currentCount": len(material["current"]),
         })
-    canonical = _canonical(material)
+    # Preserve the same sorted JSON bytes, but release each record's text and
+    # UTF-8 representation before encoding the next record. Normalization
+    # already bounds records; a full-store string and byte copy are unnecessary.
+    hasher = hashlib.sha256()
+    characters = 0
+    byte_count = 0
+    for text in _iter_normalized_hash_text(material):
+        characters += len(text)
+        encoded = text.encode("utf-8")
+        byte_count += len(encoded)
+        hasher.update(encoded)
+        del encoded
     if observing:
+        # Retain observer phase/count compatibility without materializing the
+        # full canonical string or full UTF-8 buffer.
         _diagnostic_notify(diagnostic_observer, "canonical_string_ready", {
-            "canonicalCharacterCount": len(canonical),
+            "canonicalCharacterCount": characters,
         })
-    encoded = canonical.encode("utf-8")
-    del canonical
-    if observing:
         _diagnostic_notify(diagnostic_observer, "utf8_bytes_ready", {
-            "canonicalByteCount": len(encoded),
+            "canonicalByteCount": byte_count,
         })
-    hasher = hashlib.sha256(encoded)
-    del encoded
     digest = hasher.hexdigest()[:24]
     if observing:
         _diagnostic_notify(diagnostic_observer, "hash_complete", {

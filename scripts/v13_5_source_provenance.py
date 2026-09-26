@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.49"
+PRODUCT_VERSION = "v13.7.50"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -38,6 +38,8 @@ REVIEWED_EXTENSION_BLOBS = {
     # Exact navigation-read recovery and fail-closed regression coverage.
     'web/scripts/warm-profile-runtime.mjs': '7ab7e31ebeb34127d81bd49f13301effc3b62ed6',
     'web/scripts/warm-profile-runtime.test.mjs': '799cec251a6b63386a673e9cf4c06cd7ac3d7552',
+    # Exact regression coverage for canonical record-sized asset hash encoding.
+    "test_argus_normalized_hash.py": "20dd0d0e9119d8b0357b459cb1eac1bc146c5b11",
     'argus_memory_attribution.py': '60a694eef14024adb32885c1b0c59e302c9e75a8',
     'docs/ops/checkpoint-phase-timing.md': '0ebe77c7e8b6af72de3ab2f53f19ae78509b2802',
     'test_argus_checkpoint_phase_timing.py': '31edce29020fa25091ed78ad4dceaa6719ca0c2a',
