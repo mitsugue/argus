@@ -6,7 +6,7 @@ const original = async (request) => {
   if (request.url.endsWith('/password')) return Response.json({token: serverToken, expiresAt: Date.now() + 1800000});
   if (request.url.endsWith('/logout')) return Response.json({loggedOut: true}, {headers});
   if (request.url.endsWith('/slow')) return new Promise(resolve => { pending = resolve; });
-  return Response.json({ok: true}, request.url.endsWith('/old-cache') ? {} : {headers});
+  return Response.json({ok: true, authenticated: true}, request.url.endsWith('/old-cache') ? {} : {headers});
 };
 global.window = {fetch: original, location: {origin: 'https://owner.example'}, setInterval: () => 1, addEventListener: (n, f) => { listeners[n] = f; }};
 global.document = {hidden: false, addEventListener: (n, f) => { listeners[n] = f; }};

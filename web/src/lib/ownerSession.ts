@@ -5,11 +5,13 @@ const base = String(import.meta.env.VITE_ARGUS_BACKEND_URL ?? '').replace(/\/$/,
 const prefix = '/api/argus/owner-auth/';
 let token = '';
 let expiresAt = 0;
+let ceremonyEpoch = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
 const listeners = new Set<() => void>();
 export const subscribeOwner = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; };
 export const hasOwnerSession = () => !!token && expiresAt > Date.now();
 export function clearOwnerSession() {
+  ceremonyEpoch += 1;
   token = ''; expiresAt = 0; clearTimeout(timer);
   listeners.forEach((fn) => fn());
 }
@@ -77,6 +79,7 @@ export function installOwnerTransport() {
   window.setInterval(() => { void validate(); }, 30_000);
   document.addEventListener('visibilitychange', () => { void validate(); });
   window.addEventListener('pagehide', clearOwnerSession);
+  window.addEventListener('offline', clearOwnerSession);
 }
 
 async function action(name: string, body: unknown = {}) {
@@ -88,7 +91,26 @@ async function action(name: string, body: unknown = {}) {
   if (!response.ok) throw new Error(response.status === 429 ? 'try_later' : 'authentication_failed');
   return response.json();
 }
-export async function passwordLogin(password: string) { setSession(await action('password', { password })); }
+async function verifyAndSetSession(value: { token?: unknown; expiresAt?: unknown }, epoch: number) {
+  if (typeof value.token !== 'string' || !/^[A-Za-z0-9_-]{32,128}$/.test(value.token)
+      || typeof value.expiresAt !== 'number' || value.expiresAt <= Date.now()
+      || value.expiresAt > Date.now() + 1_801_000) throw new Error('authentication_failed');
+  // Do not publish provisional credentials: an old SW may replay a cached login.
+  // Only a fresh server echo can unlock existing device-local results.
+  const nonce = crypto.randomUUID();
+  const response = await fetch(base + prefix + 'session', {
+    headers: { 'X-ARGUS-OWNER-SESSION': value.token, 'X-ARGUS-OWNER-NONCE': nonce },
+    cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok || response.headers.get('X-ARGUS-OWNER-NONCE') !== nonce
+      || (await response.json())?.authenticated !== true) throw new Error('authentication_failed');
+  if (epoch !== ceremonyEpoch || navigator.onLine === false) throw new Error('authentication_cancelled');
+  setSession(value);
+}
+export async function passwordLogin(password: string) {
+  const epoch = ++ceremonyEpoch;
+  await verifyAndSetSession(await action('password', { password }), epoch);
+}
 export async function logoutOwner() {
   // Capture the logout request while credentials are present, then immediately
   // close the UI even if the network is unavailable. Server expiry still applies.
@@ -105,6 +127,7 @@ function encode(value: ArrayBuffer): string {
   return btoa(String.fromCharCode(...new Uint8Array(value))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 export async function useOwnerPasskey(register: boolean) {
+  const epoch = ++ceremonyEpoch;
   const start = await action(register ? 'register-options' : 'login-options');
   const options = start.publicKey;
   options.challenge = decode(options.challenge);
@@ -134,5 +157,5 @@ export async function useOwnerPasskey(register: boolean) {
   const result = await action(register ? 'register-verify' : 'login-verify', {
     challengeId: start.challengeId, credential: { ...common, response },
   });
-  if (!register) setSession(result);
+  if (!register) await verifyAndSetSession(result, epoch);
 }

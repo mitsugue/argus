@@ -443,6 +443,9 @@ jobs:
           expected-runtime-identity: ${{ needs.acceptance-runtime-admission.outputs.runtime_identity_digest }}
       - uses: ./.github/actions/warm-profile-seed
         with:
+          owner-auth: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          owner-origin: https://mitsugue.github.io
+          owner-password: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
           candidate-sha: ${{ github.sha }}
           public-url: https://mitsugue.github.io/argus/
           profile-artifact-name: market-warm-profile-${{ github.sha }}
@@ -522,6 +525,9 @@ jobs:
         id: market_acceptance
         uses: ./.github/actions/warm-profile-consumer
         with:
+          owner-auth: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          owner-origin: https://mitsugue.github.io
+          owner-password: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
           profile-artifact-name: market-warm-profile-${{ github.sha }}
           evidence-artifact-name: market-public-acceptance-${{ github.sha }}
           candidate-sha: ${{ github.sha }}
@@ -537,6 +543,9 @@ jobs:
           ARGUS_PUBLIC_URL: https://mitsugue.github.io/argus/
           ARGUS_EXPECTED_VERSION: ${{ steps.release.outputs.frontend_version }}
           ARGUS_EXPECTED_SHA: ${{ github.sha }}
+          ARGUS_ACCEPTANCE_OWNER_AUTH: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          ARGUS_ACCEPTANCE_OWNER_ORIGIN: https://mitsugue.github.io
+          ARGUS_ACCEPTANCE_OWNER_PASSWORD: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
           ARGUS_MOBILE_ACCEPTANCE_OUT: ../artifacts/market-public-acceptance/mobile-today
         run: node scripts/mobile-today-acceptance.mjs
       - name: Advance the shared engine through public acceptance and V13 live
@@ -565,7 +574,7 @@ jobs:
             echo "Deployment publication and post-deploy acceptance are independent gates."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Publish reproducible public acceptance evidence
-        if: always()
+        if: always() && (vars.ARGUS_ACCEPTANCE_OWNER_AUTH != '1' || hashFiles('artifacts/market-public-acceptance/mobile-today/owner-artifacts-safe.json') != '')
         uses: actions/upload-artifact@v4
         with:
           name: mobile-public-acceptance-${{ github.sha }}

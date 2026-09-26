@@ -1,6 +1,15 @@
 name: Consume canonical ARGUS warm profile
 description: One independent warm-profile verifier for shadow and Pages acceptance
 inputs:
+  owner-auth:
+    required: false
+    default: '0'
+  owner-origin:
+    required: false
+    default: ''
+  owner-password:
+    required: false
+    default: ''
   profile-artifact-name:
     required: true
   evidence-artifact-name:
@@ -49,6 +58,9 @@ runs:
       shell: bash
       working-directory: web
       env:
+        ARGUS_ACCEPTANCE_OWNER_AUTH: ${{ inputs.owner-auth }}
+        ARGUS_ACCEPTANCE_OWNER_ORIGIN: ${{ inputs.owner-origin }}
+        ARGUS_ACCEPTANCE_OWNER_PASSWORD: ${{ inputs.owner-password }}
         ARGUS_ACCEPTANCE_MODE: ${{ inputs.mode }}
         ARGUS_EXPECTED_SHA: ${{ inputs.candidate-sha }}
         ARGUS_EXPECTED_VERSION: ${{ inputs.expected-version }}
@@ -62,7 +74,7 @@ runs:
           "$ARGUS_WARM_PROFILE_DIR" "$ARGUS_EXPECTED_SHA"
         node scripts/public-market-acceptance.mjs
     - name: Publish bounded consumer evidence
-      if: always()
+      if: always() && (inputs.owner-auth != '1' || hashFiles('artifacts/warm-profile-consumer-evidence/owner-artifacts-safe.json') != '')
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.evidence-artifact-name }}
