@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.46"
+PRODUCT_VERSION = "v13.7.47"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -308,7 +308,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # Owner-authorized Gemini retirement regression coverage. This fixes only
     # the exact Terra-only operational workflow test; later edits fail closed.
     "test_gpt_only_workflow_operations.py": "b048c5bcdf0d6b73a3e8eb955b9020d896ef1066",
-    # Owner-authorized v13.7.46 Today consolidation: the live editorial surface
+    # Owner-authorized v13.7.47 Today consolidation: the live editorial surface
     # no longer duplicates the current five-day chart; archived editions retain it.
     "web/scripts/owner-functional-ui.test.mjs": "31a1a8f37c99c50b2a8735adbc845a08a68eb740",
     # Owner-authorized v13.7.44 surface consolidation: the standalone Alerts
