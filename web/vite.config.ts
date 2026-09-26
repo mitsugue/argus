@@ -114,6 +114,11 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
         runtimeCaching: [
           {
+            // Authenticated reads never use an old public/offline API body.
+            urlPattern: ({ request }) => request.headers.has('X-ARGUS-OWNER-SESSION'),
+            handler: 'NetworkOnly',
+          },
+          {
             urlPattern: /^https:\/\/fonts\.(?:googleapis|gstatic)\.com\/.*/i,
             handler: 'CacheFirst',
             options: { cacheName: 'fonts-cache', expiration: { maxEntries: 20 } },

@@ -959,6 +959,10 @@ claude     = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 STATE_FILE = "/tmp/scan_state.json"
 app        = Flask(__name__)
 
+# Install before any data-serving middleware; operational guards remain intact.
+import argus_owner_auth
+argus_owner_auth.install(app)
+
 # CORS for /api/argus/* — lets the React frontend (Vercel, GitHub Pages,
 # and localhost dev) call the ledger / rates endpoints. Other routes
 # stay same-origin.

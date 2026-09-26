@@ -2,6 +2,9 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { registerSW } from 'virtual:pwa-register';
 import App from './App';
+import { OwnerAccess } from './components/OwnerAccess';
+import { installOwnerTransport } from './lib/ownerSession';
+installOwnerTransport();
 import { AssetsProvider } from './hooks/useAssets';
 import { clearVerifiedSnapshotCache } from './lib/verifiedSnapshot';
 import { repairAppCaches } from './lib/pwaRecovery';
@@ -156,8 +159,10 @@ window.setInterval(() => { pollPwaState().catch(() => {}); }, 60_000);
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
+    <OwnerAccess>
     <AssetsProvider>
       <App />
     </AssetsProvider>
+    </OwnerAccess>
   </React.StrictMode>
 );
