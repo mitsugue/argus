@@ -35,6 +35,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # Exact navigation-read recovery and fail-closed regression coverage.
+    'web/scripts/warm-profile-runtime.mjs': '7ab7e31ebeb34127d81bd49f13301effc3b62ed6',
+    'web/scripts/warm-profile-runtime.test.mjs': '799cec251a6b63386a673e9cf4c06cd7ac3d7552',
     'argus_memory_attribution.py': '60a694eef14024adb32885c1b0c59e302c9e75a8',
     'docs/ops/checkpoint-phase-timing.md': '0ebe77c7e8b6af72de3ab2f53f19ae78509b2802',
     'test_argus_checkpoint_phase_timing.py': '31edce29020fa25091ed78ad4dceaa6719ca0c2a',
@@ -289,7 +292,7 @@ REVIEWED_EXTENSION_BLOBS = {
     "web/src/components/system/BackupStatusOverview.tsx": "39488f34de87013943edf08bb3faddce91f7b996",
     "web/src/lib/vault.ts": "9180eba851c0b62a99ac449166f90f2404e18370",
     "web/scripts/news-history.test.mjs": "766b69d112dc01d32631025446007b506d7e55f6",
-    "web/scripts/public-market-acceptance.mjs": "2b2d476948053f06f4db95cb243484f333a4ad3b",
+    "web/scripts/public-market-acceptance.mjs": "36a3dc6eb5c80b37abddf274d4736a32024b0d97",
     "web/scripts/canonical-snapshot-selection.mjs": "85eff19fcf41a5edb651cbec91291cf4625d8182",
     "web/scripts/index-chart-isolation.test.mjs": "470dcf9598714a89b9ebba9dd53cfc2f6315092f",
     "argus_osint_engine.py": "82c928299eed09004067283d72cc4b67b07753c5",
