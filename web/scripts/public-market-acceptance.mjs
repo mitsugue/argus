@@ -460,6 +460,7 @@ async function run() {
           await owner.active(page);
           markPhase('runtime-probe', 'RUNNING', { attempt });
           const canonical = await selectCanonical1321FiveDay(page, {
+        beforeReload: owner.logout, afterReload: owner.login,
             expectedSnapshotId: seeded.snapshotId,
             onTransition: (event) => {
               if (!event.detail?.assumed) {
@@ -544,6 +545,7 @@ async function run() {
     await openCanonicalEvidence(page);
     if (MODE === 'profile') {
       const canonical = await selectCanonical1321FiveDay(page, {
+        beforeReload: owner.logout, afterReload: owner.login,
         expectedSnapshotId: warmProfile.source.seededSnapshotId,
         onTransition: (event) => {
           if (!event.detail?.assumed) evidence.releaseStateLog.push(event);
@@ -570,6 +572,7 @@ async function run() {
       return;
     }
     const acceptanceCanonical = await selectCanonical1321FiveDay(page, {
+        beforeReload: owner.logout, afterReload: owner.login,
       expectedSnapshotId: warmProfile.source.seededSnapshotId,
       onTransition: (event) => {
         if (!event.detail?.assumed) evidence.releaseStateLog.push(event);

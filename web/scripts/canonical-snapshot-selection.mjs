@@ -257,11 +257,16 @@ async function readCanonicalResponseBody(page, timeout) {
   };
 }
 
-async function triggerCanonicalRevalidation(page, timeout) {
+async function triggerCanonicalRevalidation(page, timeout, beforeReload, afterReload) {
+  await beforeReload(page);
   const requestPromise = page.waitForRequest(chartRequestMatches, { timeout });
   const responsePromise = page.waitForResponse((response) =>
     chartRequestMatches(response.request()), { timeout });
+  const observed = Promise.all([requestPromise, responsePromise]);
+  // Keep observer rejections handled if an owner ceremony fails first.
+  observed.catch(() => {});
   await page.reload({ waitUntil: 'domcontentloaded', timeout });
+  await afterReload(page);
   return Promise.all([requestPromise, responsePromise]);
 }
 
@@ -280,6 +285,8 @@ export async function selectCanonical1321FiveDay(page, {
   expectedSnapshotId = null,
   timeout = CANONICAL_RESULT_TIMEOUT_MS,
   onTransition = () => {},
+  beforeReload = async () => {},
+  afterReload = async () => {},
 } = {}) {
   const machine = seedStateMachine(onTransition);
   await openCanonicalEvidence(page, timeout);
@@ -302,7 +309,7 @@ export async function selectCanonical1321FiveDay(page, {
   let response = null;
   const httpStatuses = [];
   for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const [request, observedResponse] = await triggerCanonicalRevalidation(page, timeout);
+    const [request, observedResponse] = await triggerCanonicalRevalidation(page, timeout, beforeReload, afterReload);
     httpStatuses.push(observedResponse.status());
     if (attempt === 1) {
       machine.transition('R14_CANONICAL_REQUEST_OBSERVED', {

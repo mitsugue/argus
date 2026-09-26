@@ -8,7 +8,7 @@ import {
   openCanonicalEvidence,
   readCanonicalProjectionState,
   readCanonicalWarmRevalidationState,
-  selectCanonical1321FiveDay,
+  selectCanonical1321FiveDay as selectCanonicalWithReload,
   validateCanonicalWarmRevalidationTransition,
 } from './canonical-snapshot-selection.mjs';
 
@@ -20,6 +20,9 @@ const OUT_DIR = path.resolve(process.env.ARGUS_MOBILE_ACCEPTANCE_OUT
   || '/tmp/argus-mobile-today-acceptance');
 const BACKEND_ORIGIN = (process.env.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com').replace(/\/$/, '');
 const owner = createBrowserOwner({ baseUrl: BACKEND_ORIGIN, publicUrl: PUBLIC_URL });
+const selectCanonical1321FiveDay = page => selectCanonicalWithReload(page, {
+  beforeReload: owner.logout, afterReload: owner.login,
+});
 const TODAY_URL = `${PUBLIC_URL.replace(/\/?$/, '/')}#today`;
 const SYMBOLS = ['1321', '1306', 'SPY', 'QQQ'];
 const HORIZONS = ['1D', '5D', '20D'];
@@ -435,6 +438,7 @@ async function run() {
     responseTasks: new Set(),
   };
   const browser = await chromium.launch({ headless: true });
+  let primaryFailure = null;
   try {
   const context = await browser.newContext({
     viewport: { width: 430, height: 932 },
@@ -596,7 +600,7 @@ async function run() {
     (route) => fulfillCapturedSnapshot(route, evidence, 4_000));
   const coldPage = await cold.newPage();
   const coldLoaderAppeared = (async () => {
-    if (owner.enabled) await coldPage.getByRole('button', { name: 'ログアウト', exact: true }).waitFor({ state: 'visible', timeout: 30000 });
+    if (owner.enabled) await coldPage.locator('.owner-access-bar > summary').waitFor({ state: 'visible', timeout: 30000 });
     return coldPage.locator(
     '.at-canonical-load-status .triangle-step-loader',
   ).waitFor({ state: 'visible', timeout: 5_000 });
@@ -652,7 +656,7 @@ async function run() {
     (route) => fulfillCapturedSnapshot(route, evidence, 6_000));
   const slowPage = await slow.newPage();
   const slowStateAppeared = (async () => {
-    if (owner.enabled) await slowPage.getByRole('button', { name: 'ログアウト', exact: true }).waitFor({ state: 'visible', timeout: 30000 });
+    if (owner.enabled) await slowPage.locator('.owner-access-bar > summary').waitFor({ state: 'visible', timeout: 30000 });
     return slowPage.waitForFunction(({ selector }) => {
     const nodes = [...document.querySelectorAll(selector)];
     if (nodes.length !== 1) return false;
@@ -1050,10 +1054,20 @@ async function run() {
     throw new Error(`mobile Today acceptance failed: ${result.failures.join(', ')}`);
   }
   console.log(`mobile-today-acceptance: PASS (${evidence.combinations.length} combinations)`);
+  } catch (error) {
+    primaryFailure = error;
+    throw error;
   } finally {
+    const cleanupFailures = [];
     try {
-      for (const remaining of browser.contexts()) for (const tab of remaining.pages()) await owner.logout(tab);
+      for (const remaining of browser.contexts()) for (const tab of remaining.pages()) {
+        try { await owner.logout(tab); } catch { cleanupFailures.push('owner_logout_failed'); }
+      }
     } finally { await browser.close(); }
+    if (cleanupFailures.length) {
+      await writeJson('cleanup-failure.json', { failures: cleanupFailures });
+      if (!primaryFailure) throw new Error('owner_cleanup_failed');
+    }
   }
 }
 

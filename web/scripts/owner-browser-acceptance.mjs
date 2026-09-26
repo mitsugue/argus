@@ -88,32 +88,39 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
       if (typeof body?.token !== 'string' || !/^[A-Za-z0-9_-]{32,128}$/.test(body.token)) fail('login_shape');
       secrets.add(body.token);
       // The product opens this control only after its fresh nonce proof.
-      await page.getByRole('button', { name: 'ログアウト', exact: true }).waitFor({ state: 'visible', timeout: 15000 });
+      await page.locator('.owner-access-bar > summary').waitFor({ state: 'visible', timeout: 15000 });
       boundary(page);
     } catch { fail('login'); }
     finally { if (await input.count().catch(() => 0)) await input.fill('', { timeout: 1000 }).catch(() => {}); }
   }
   async function logout(page) {
     if (!config.enabled || page.isClosed()) return;
+    let stage = 'boundary';
     try {
       boundary(page);
+      const menu = page.locator('details.owner-access-bar');
+      if (await menu.count() && !await menu.evaluate(element => element.open)) await menu.locator('summary').click();
       const control = page.getByRole('button', { name: 'ログアウト', exact: true });
       if (!await control.count()) { await locked(page); return; }
       const pending = page.waitForResponse(response => response.url() === config.backend + '/api/argus/owner-auth/logout'
         && response.request().method() === 'POST', { timeout: 15000 }).catch(() => null);
+      stage = 'click';
       await control.click();
+      stage = 'response';
       const response = await pending;
       if (!response || response.status() !== 200 || (await response.json())?.loggedOut !== true) fail('logout');
+      stage = 'nonce';
       const nonce = response.request().headers()['x-argus-owner-nonce'];
       if (!nonce || response.headers()['x-argus-owner-nonce'] !== nonce) fail('logout');
+      stage = 'locked';
       await locked(page);
-    } catch { fail('logout'); }
+    } catch { fail('logout_' + stage); }
   }
   async function active(page) {
     if (!config.enabled) return;
     try {
       boundary(page);
-      if (!await page.getByRole('button', { name: 'ログアウト', exact: true }).count()) fail('session_lost');
+      if (!await page.locator('.owner-access-bar > summary').count()) fail('session_lost');
     } catch { fail('session_lost'); }
   }
   return { enabled: config.enabled, login, logout, locked, active,

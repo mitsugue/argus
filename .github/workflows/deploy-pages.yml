@@ -187,6 +187,7 @@ jobs:
         name: Execute the exact production read-only path before deployment
         uses: ./.github/actions/v13-5-pre-mutation-rehearsal
         with:
+          owner-auth: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
           candidate-sha: ${{ steps.candidate.outputs.sha }}
           candidate-tree: ${{ steps.candidate.outputs.tree }}
           release-merge-sha: ${{ github.sha }}
