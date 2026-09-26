@@ -5,7 +5,7 @@ import {
   validateWarmProfile,
   writeWarmProfileManifest,
 } from './warm-profile-contract.mjs';
-import { stabilizeWarmProfileRuntime } from './warm-profile-runtime.mjs';
+import { readAcrossNavigation, stabilizeWarmProfileRuntime } from './warm-profile-runtime.mjs';
 import {
   CANONICAL_SNAPSHOT_SELECTOR,
   openCanonicalEvidence,
@@ -413,11 +413,17 @@ async function run() {
         waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS,
       });
       if (REQUIRE_LIVE_CANDIDATE) {
-        const observedFrontend = await page.evaluate(() => ({
-          productVersion: globalThis.__ARGUS_PRODUCT_VERSION__ ?? null,
-          frontendVersion: globalThis.__ARGUS_VERSION__ ?? null,
-          frontendSha: globalThis.__ARGUS_BUILD_SHA__ ?? null,
-        }));
+        const observedFrontend = await readAcrossNavigation({
+          read: () => page.evaluate(() => ({
+            productVersion: globalThis.__ARGUS_PRODUCT_VERSION__ ?? null,
+            frontendVersion: globalThis.__ARGUS_VERSION__ ?? null,
+            frontendSha: globalThis.__ARGUS_BUILD_SHA__ ?? null,
+          })),
+          waitForDocument: async (attempt) => {
+            markPhase('candidate-identity-navigation', 'RETRY', { attempt });
+            await page.waitForLoadState('domcontentloaded', { timeout: PAGE_TIMEOUT_MS });
+          },
+        });
         if (observedFrontend.productVersion !== EXPECTED_PRODUCT_VERSION
             || observedFrontend.frontendVersion !== EXPECTED_VERSION
             || observedFrontend.frontendSha !== EXPECTED_SHA) {
