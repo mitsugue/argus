@@ -382,16 +382,14 @@ jobs:
         # trigger id used to abort at its transport limit and the release
         # went red after a successful deploy. Reading the twelve routes once
         # warms the compute memo so the trigger reconciles in seconds.
-        run: |
-          for symbol in 1321:JP 1306:JP SPY:US QQQ:US; do
-            for horizon in 1D 5D 20D; do
-              code=$(curl -s -o /dev/null -w "%{http_code} %{time_total}s" --max-time 120 \
-                "https://argus-backend-3j2m.onrender.com/api/argus/chart-intelligence?symbol=${symbol%%:*}&market=${symbol##*:}&horizon=${horizon}" || true)
-              echo "warm ${symbol} ${horizon} -> ${code}"
-            done
-          done
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: python3 scripts/warm_protected_reads.py --group charts
       - name: Trigger and durably acknowledge the exact 12 business snapshots
         env:
+          ARGUS_ACCEPTANCE_OWNER_AUTH: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          ARGUS_ACCEPTANCE_OWNER_ORIGIN: https://mitsugue.github.io
+          ARGUS_ACCEPTANCE_OWNER_PASSWORD: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           node web/scripts/release-state-machine.mjs trigger-business \
@@ -471,6 +469,10 @@ jobs:
           name: business-snapshot-trigger-${{ github.sha }}
           path: artifacts/business-snapshot-trigger
       - name: Accept exactly 12 fresh trigger-bound snapshots
+        env:
+          ARGUS_ACCEPTANCE_OWNER_AUTH: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          ARGUS_ACCEPTANCE_OWNER_ORIGIN: https://mitsugue.github.io
+          ARGUS_ACCEPTANCE_OWNER_PASSWORD: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
         run: |
           node web/scripts/release-state-machine.mjs verify-business \
             --contract release/v13-snapshot-readiness-contract.json \

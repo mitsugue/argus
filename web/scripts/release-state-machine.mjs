@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { OwnerReaderError, withOwnerReader } from './owner-auth-reader.mjs';
 
 export const RELEASE_ENGINE_VERSION = 'argus-v13-release-engine-v2';
 export const SNAPSHOT_CONTRACT_SCHEMA = 'argus-v13-snapshot-readiness-contract-v1';
@@ -418,6 +419,8 @@ export async function fetchBusinessSnapshotObservations({
         error: null,
       });
     } catch (error) {
+      // Authentication failure cannot enter the ordinary data-read retry loop.
+      if (error instanceof OwnerReaderError) throw error;
       observations.push({
         expectedIdentity: row.identity,
         status: null,
@@ -534,7 +537,7 @@ const acknowledgementIsExact = (body, expectedBuildSha, producerTriggerId) =>
 
 export async function triggerBusinessSnapshots({
   baseUrl, adminToken, contract, expectedBuildSha, producerTriggerId,
-  fetchImpl = fetch, nowMs = () => Date.now(),
+  fetchImpl = fetch, readbackFetchImpl = fetchImpl, nowMs = () => Date.now(),
   sleepImpl = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   transportTimeoutMs = BUSINESS_TRIGGER_TRANSPORT_TIMEOUT_MS,
   reconciliationDeadlineMs = BUSINESS_RECONCILIATION_DEADLINE_MS,
@@ -631,7 +634,7 @@ export async function triggerBusinessSnapshots({
   }
 
   const reconciliation = await reconcileBusinessSnapshots({
-    baseUrl, contract, expectedBuildSha, producerTriggerId, fetchImpl, nowMs, sleepImpl,
+    baseUrl, contract, expectedBuildSha, producerTriggerId, fetchImpl: readbackFetchImpl, nowMs, sleepImpl,
     startedAtMs, deadlineMs: reconciliationDeadlineMs, pollMs: reconciliationPollMs,
   });
   const diagnosticReconciliation = {
@@ -810,21 +813,38 @@ async function cli(argv) {
   }
   if (command === 'trigger-business') {
     try {
-      const result = await triggerBusinessSnapshots({
-        baseUrl: args['base-url'], adminToken: process.env.ARGUS_ADMIN_TOKEN ?? '',
-        contract, expectedBuildSha: args['expected-sha'],
-        producerTriggerId: args['trigger-id'],
-      });
+      const result = await withOwnerReader({ baseUrl: args['base-url'] }, (reader) =>
+        triggerBusinessSnapshots({
+          baseUrl: args['base-url'], adminToken: process.env.ARGUS_ADMIN_TOKEN ?? '',
+          contract, expectedBuildSha: args['expected-sha'],
+          producerTriggerId: args['trigger-id'], readbackFetchImpl: reader.fetch,
+        }));
       writeJson(args.out, result);
     } catch (error) {
       if (args.out && error?.artifact) writeJson(args.out, error.artifact);
+      else if (args.out && error instanceof OwnerReaderError) writeJson(args.out, {
+        schemaVersion: 'argus-v13-snapshot-trigger-plan-v1', status: 'failed',
+        expectedBuildSha: args['expected-sha'], producerTriggerId: args['trigger-id'],
+        outcome: 'UNKNOWN', reason: error.message,
+      });
       throw error;
     }
     return;
   }
   if (command === 'verify-business') {
     const trigger = JSON.parse(fs.readFileSync(args['trigger-artifact'], 'utf8'));
-    const observed = await fetchBusinessSnapshots({ baseUrl: args['base-url'], contract });
+    let observed;
+    try {
+      observed = await withOwnerReader({ baseUrl: args['base-url'] }, (reader) =>
+        fetchBusinessSnapshots({ baseUrl: args['base-url'], contract, fetchImpl: reader.fetch }));
+    } catch (error) {
+      if (args.out && error instanceof OwnerReaderError) writeJson(args.out, {
+        status: 'failed', engineVersion: RELEASE_ENGINE_VERSION,
+        expectedBuildSha: args['expected-sha'], producerTriggerId: trigger.producerTriggerId,
+        reason: error.message,
+      });
+      throw error;
+    }
     const result = evaluateBusinessSnapshotSet({
       contract, observed, expectedBuildSha: args['expected-sha'],
       producerTriggerId: trigger.producerTriggerId,
