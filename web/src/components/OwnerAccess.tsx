@@ -6,6 +6,10 @@ import './OwnerAccess.css';
 
 export function OwnerAccess({ children }: { children: React.ReactNode }) {
   const authenticated = useSyncExternalStore(subscribeOwner, hasOwnerSession);
+  useEffect(() => {
+    // Executing React bundle truth, independent of the served HTML marker.
+    document.documentElement.dataset.argusOwnerAuthMode = OWNER_AUTH_REQUIRED ? '1' : '0';
+  }, []);
   const [online, setOnline] = useState(navigator.onLine);
   const [header, setHeader] = useState<Element | null>(null);
   useEffect(() => {

@@ -6,9 +6,9 @@ import path from 'node:path';
 import { assertNoSecrets, createBrowserOwner, isOwnerCeremony } from './owner-browser-acceptance.mjs';
 const backend = 'https://api.example', publicUrl = 'https://owner.example/argus/';
 const env = { ARGUS_ACCEPTANCE_OWNER_AUTH: '1', ARGUS_ACCEPTANCE_OWNER_ORIGIN: 'https://owner.example', ARGUS_ACCEPTANCE_OWNER_PASSWORD: 'fixture-"pass\\word' };
-test('disabled mode leaves browser state untouched', async () => {
+test('disabled mode verifies the executing UI without credentials', async () => {
   const owner = createBrowserOwner({ baseUrl: '', publicUrl: '', env: {} });
-  const page = new Proxy({}, { get() { throw new Error('unexpected browser access'); } });
+  const page = { waitForFunction: async () => {}, evaluate: async () => '0' };
   await owner.login(page); await owner.logout(page); await owner.locked(page); await owner.scan('/does-not-exist');
   assert.equal(owner.enabled, false);
 });

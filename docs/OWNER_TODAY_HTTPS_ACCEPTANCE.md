@@ -92,3 +92,22 @@ Today見出しのgeneratedAt/storedAtだけは有効な非後退時刻として�
 これは仮想端末の受入であり、iPhoneのFace ID、実機鍵の同期、旧PWAの更新、
 本番DBの復旧・設定切替を実施済みとはしない。実機では保存結果・保有・描画・設定を
 保全した状態で登録、再起動、失効、password復旧を別途確認する。
+
+## 認証設定の一致と移行順序
+
+buildはOWNER_AUTH_REQUIREDの0/1以外を拒否し、HTMLへ認証modeを固定する。
+実行中Reactは別のDOM属性へ自身のコンパイル済みmodeを設定する。
+受入browserは通常login前に実行modeを照合するので、HTMLだけを更新した状態や
+異なるmodeの古いbundleは受入成功にしない。
+
+Pages配信では既存candidate-identity通過後、business-snapshot-triggerの最初に
+`owner-mode-consistency.mjs`を実行する。HTMLのSHA/mode、reader設定、サーバーの
+匿名session応答が一致しなければ、warmとproducerを呼ばず失敗する。
+0は503/owner_auth_disabled、1は401/owner_auth_requiredの厳密組合せを要求する。
+DB障害等の503をdisabledと推定しない。リダイレクト、欠落marker、JSON障害も停止。
+この確認は秘密を送らず、session proofの代わりにはならない。
+
+これは公開後の業務生成前の停止条件であり、Pages公開そのものを防ぐ検査ではない。
+移行時はserver、repository変数、build、readerの設定を同じ承認済み手順で揃える。
+不一致を検出したときは匿名への降格や再生成を行わず、対象設定を照合してから
+通常の修正・再受入へ進む。旧端末データを消して一致扱いにしない。

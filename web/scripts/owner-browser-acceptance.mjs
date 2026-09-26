@@ -68,8 +68,13 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
     } catch { fail('lock_required'); }
   }
   async function login(page) {
+    if (config.enabled) await locked(page);
+    try {
+      await page.waitForFunction(() => ['0', '1'].includes(document.documentElement.dataset.argusOwnerAuthMode), { }, { timeout: 15000 });
+      const actual = await page.evaluate(() => document.documentElement.dataset.argusOwnerAuthMode);
+      if (actual !== (config.enabled ? '1' : '0')) fail('mode_mismatch');
+    } catch (error) { if (error instanceof OwnerBrowserError) throw error; fail('mode_unavailable'); }
     if (!config.enabled) return;
-    await locked(page);
     // Respect the existing ten/minute owner-wide limiter. No 429 retries.
     await new Promise(resolve => setTimeout(resolve, Math.max(0, 7000 - (Date.now() - lastAttempt))));
     lastAttempt = Date.now();

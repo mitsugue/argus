@@ -9,6 +9,7 @@ import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
 import { spawn, execFileSync } from 'node:child_process';
+import { verifyOwnerModes } from './owner-mode-consistency.mjs';
 import { startFixtureTarget } from './release-fixture-target.mjs';
 import { loadSnapshotContract, validateSnapshotContract, triggerBusinessSnapshots } from './release-state-machine.mjs';
 
@@ -107,6 +108,19 @@ try {
     ARGUS_ACCEPTANCE_OWNER_AUTH: mode, ARGUS_ACCEPTANCE_OWNER_ORIGIN: 'https://argus-fixture.test',
     ARGUS_ACCEPTANCE_OWNER_PASSWORD: password, ARGUS_FIXTURE_SPKI: spki, ARGUS_SYNTHETIC_OWNER_TODAY: '1',
     ARGUS_MOBILE_ACCEPTANCE_OUT: path.join(out, 'mobile') };
+  // The Node process uses its generated CA; resolve only the fixed loopback fixture.
+  const preflightFetch = async raw => {
+    const logical = new URL(raw); assert.equal(logical.origin, 'https://argus-fixture.test');
+    return new Promise((resolve, reject) => {
+      https.get({ hostname: '127.0.0.1', port: 4473, path: logical.pathname + logical.search, ca }, res => {
+        const chunks = []; res.on('data', bytes => chunks.push(bytes)); res.on('end', () => resolve(new Response(Buffer.concat(chunks), { status: res.statusCode })));
+      }).on('error', reject);
+    });
+  };
+  report.modePreflight = await verifyOwnerModes({ publicUrl: acceptanceEnv.ARGUS_PUBLIC_URL,
+    baseUrl: acceptanceEnv.ARGUS_BACKEND_URL, expectedSha: sha, mode, fetchImpl: preflightFetch });
+  await assert.rejects(verifyOwnerModes({ publicUrl: acceptanceEnv.ARGUS_PUBLIC_URL,
+    baseUrl: acceptanceEnv.ARGUS_BACKEND_URL, expectedSha: sha, mode: mode === '1' ? '0' : '1', fetchImpl: preflightFetch }), /owner_mode:mismatch/);
   if (scenario === 'passkey') {
     const backup = path.join(root, 'backup.sqlite3');
     const databaseCounts = database => JSON.parse(execFileSync(process.env.ARGUS_TEST_PYTHON || 'python3', ['-B', '-c',
