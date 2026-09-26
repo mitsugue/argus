@@ -15,8 +15,8 @@ import { loadSnapshotContract, validateSnapshotContract, triggerBusinessSnapshot
 
 const mode = process.argv[2]; assert.ok(['0', '1'].includes(mode));
 const scenario = process.argv[4] || 'today';
-assert.ok(['today', 'passkey'].includes(scenario));
-assert.ok(scenario !== 'passkey' || mode === '1');
+assert.ok(['today', 'passkey', 'migration'].includes(scenario));
+assert.ok(scenario === 'today' || mode === '1');
 const out = path.resolve(process.argv[3]); await fs.mkdir(out);
 const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
@@ -28,13 +28,14 @@ const admin = crypto.randomBytes(32).toString('base64url');
 const cert = path.join(root, 'cert.pem'), key = path.join(root, 'key.pem');
 let target, front, proxy, python;
 let activeRoot = root, backupHash;
+let activeMode = scenario === 'migration' ? '0' : mode, authStarts = 0;
 const temporaryRoots = [root];
 const tunnels = new Set();
 const report = { schema: 'argus-owner-today-https-v1', mode, scenario, sha, tree, clean, status: 'FAIL', syntheticOnly: true };
-async function child(command, args, env, log, control) {
+async function child(command, args, env, log, control, cwd) {
   const handle = await fs.open(path.join(out, log), 'wx');
   try {
-    const p = spawn(command, args, { env, stdio: ['ignore', handle.fd, handle.fd, ...(control ? ['ipc'] : [])] });
+    const p = spawn(command, args, { env, cwd, stdio: ['ignore', handle.fd, handle.fd, ...(control ? ['ipc'] : [])] });
     let controlError;
     let processing = false;
     if (control) p.on('message', async message => {
@@ -60,6 +61,19 @@ try {
   const env = { ...process.env, DEPLOY_BASE: '/argus/', VITE_ARGUS_OWNER_AUTH_REQUIRED: mode,
     VITE_ARGUS_BACKEND_URL: 'https://argus-fixture.test', VITE_ARGUS_BUILD_SHA: sha };
   await child('npm', ['run', 'build', '--', '--outDir', dist], env, 'build.log');
+  let candidateDist;
+  if (scenario === 'migration') {
+    candidateDist = path.join(root, 'candidate-dist');
+    await fs.rename(dist, candidateDist);
+    const legacy = path.join(root, 'legacy'); await fs.mkdir(legacy);
+    const legacySha = '22478dce1c7fa23304d36b0800d1edf54d3440fc';
+    const archive = execFileSync('git', ['archive', legacySha, 'web', 'product-version.json'], { cwd: path.resolve('..'), maxBuffer: 32 * 1024 * 1024 });
+    execFileSync('tar', ['-x', '-C', legacy], { input: archive });
+    await fs.symlink(await fs.realpath('node_modules'), path.join(legacy, 'web/node_modules'));
+    await child('npm', ['run', 'build', '--', '--outDir', dist], { ...env, VITE_ARGUS_OWNER_AUTH_REQUIRED: '0' }, 'legacy-build.log', undefined, path.join(legacy, 'web'));
+    report.legacySourceSha = legacySha;
+    report.sameBuildIdentityFixture = true;
+  }
   const contract = validateSnapshotContract(loadSnapshotContract(new URL('../../release/v13-snapshot-readiness-contract.json', import.meta.url)));
   target = await startFixtureTarget({ distDir: dist, backendPort: 4399, frontendPort: 4373,
     candidateSha: sha, contract, adminToken: admin, seedSalt: 'owner-https-' + mode });
@@ -89,9 +103,9 @@ try {
   });
   await new Promise((resolve, reject) => { proxy.once('error', reject); proxy.listen(4480, '127.0.0.1', resolve); });
   async function startAuth() {
-    const pylog = await fs.open(path.join(out, activeRoot === root ? 'fixture.log' : 'fixture-restored.log'), 'wx');
+    const pylog = await fs.open(path.join(out, `fixture-${authStarts++}.log`), 'wx');
     python = spawn(process.env.ARGUS_TEST_PYTHON || 'python3', ['-B', 'scripts/owner-today-fixture.py'], { stdio: ['pipe', 'pipe', pylog.fd] });
-    python.stdin.end(JSON.stringify({ mode, root: activeRoot, password, admin, cert, key, origin: 'https://argus-fixture.test', upstream: target.backendUrl }) + '\n');
+    python.stdin.end(JSON.stringify({ mode: activeMode, root: activeRoot, password, admin, cert, key, origin: 'https://argus-fixture.test', upstream: target.backendUrl }) + '\n');
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('fixture_start_timeout')), 15000);
       python.stdout.once('data', data => { clearTimeout(timer); data.toString().includes('READY') ? resolve() : reject(new Error('fixture_start')); });
@@ -101,7 +115,7 @@ try {
   await startAuth();
   report.anonymousStatus = await new Promise((resolve, reject) => {
     https.get('https://127.0.0.1:4473/api/argus/chart-intelligence?scope=market&symbol=1321&horizon=5D&snapshot=verified', { ca }, res => { res.resume(); resolve(res.statusCode); }).on('error', reject);
-  }); assert.equal(report.anonymousStatus, mode === '1' ? 401 : 200);
+  }); assert.equal(report.anonymousStatus, activeMode === '1' ? 401 : 200);
   const acceptanceEnv = { ...process.env, NODE_EXTRA_CA_CERTS: cert, HTTPS_PROXY: 'http://127.0.0.1:4480', HTTP_PROXY: 'http://127.0.0.1:4480', NO_PROXY: '', https_proxy: '', http_proxy: '', no_proxy: '',
     ARGUS_PUBLIC_URL: 'https://argus-fixture.test/argus/', ARGUS_BACKEND_URL: 'https://argus-fixture.test',
     ARGUS_EXPECTED_SHA: sha, ARGUS_EXPECTED_VERSION: '13.7.51',
@@ -117,11 +131,27 @@ try {
       }).on('error', reject);
     });
   };
+  if (scenario !== 'migration') {
   report.modePreflight = await verifyOwnerModes({ publicUrl: acceptanceEnv.ARGUS_PUBLIC_URL,
     baseUrl: acceptanceEnv.ARGUS_BACKEND_URL, expectedSha: sha, mode, fetchImpl: preflightFetch });
   await assert.rejects(verifyOwnerModes({ publicUrl: acceptanceEnv.ARGUS_PUBLIC_URL,
     baseUrl: acceptanceEnv.ARGUS_BACKEND_URL, expectedSha: sha, mode: mode === '1' ? '0' : '1', fetchImpl: preflightFetch }), /owner_mode:mismatch/);
-  if (scenario === 'passkey') {
+  }
+  if (scenario === 'migration') {
+    let activated = false;
+    await child(process.execPath, ['--use-env-proxy', '--import', './scripts/owner-today-browser-preload.mjs', 'scripts/owner-pwa-migration-acceptance.mjs'],
+      { ...acceptanceEnv, ARGUS_MIGRATION_OUT: path.join(out, 'migration.json'), ARGUS_MIGRATION_PROFILE: path.join(root, 'profile') }, 'migration.log', async message => {
+        assert.deepEqual(message, { operation: 'activate' }); assert.equal(activated, false);
+        python.kill('SIGTERM'); await new Promise(resolve => python.once('exit', resolve));
+        // Keep old asset URLs available until existing documents finish updating.
+        await fs.cp(candidateDist, dist, { recursive: true });
+        activeMode = '1'; await startAuth(); activated = true;
+        return { mode: '1' };
+      });
+    assert.equal(activated, true);
+    report.acceptance = JSON.parse(await fs.readFile(path.join(out, 'migration.json'), 'utf8'));
+    assert.equal(report.acceptance.status, 'PASS');
+  } else if (scenario === 'passkey') {
     const backup = path.join(root, 'backup.sqlite3');
     const databaseCounts = database => JSON.parse(execFileSync(process.env.ARGUS_TEST_PYTHON || 'python3', ['-B', '-c',
       "import sqlite3,json,sys; c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True); print(json.dumps({t:c.execute('SELECT count(*) FROM '+t).fetchone()[0] for t in ('owner_passkeys','owner_sessions','owner_challenges')}))", database], { encoding: 'utf8' }));

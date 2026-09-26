@@ -47,7 +47,7 @@ const argusVersionInjector = {
         `globalThis.__ARGUS_PRODUCT_VERSION__=${JSON.stringify(bundleProductVersion)};`,
         `globalThis.__ARGUS_BUILD_SHA__=${JSON.stringify(frontendBuildSha)};`,
         `globalThis.__ARGUS_OWNER_AUTH_MODE__=${JSON.stringify(ownerAuthMode)};`,
-        `(function(){try{var wanted=${JSON.stringify(`${bundleVersion}|${bundleProductVersion}|${frontendBuildSha}`)};var stored=localStorage.getItem('argus.bundle.identity');var guard='argus_identity_purge_'+wanted;if(stored!==wanted&&!sessionStorage.getItem(guard)){sessionStorage.setItem(guard,'1');document.documentElement.style.visibility='hidden';(${repairAppCaches.toString()})(${JSON.stringify(base)}).catch(function(){}).finally(function(){location.reload()});}}catch(_){}})();`,
+        `(function(){try{var wanted=${JSON.stringify(`${bundleVersion}|${bundleProductVersion}|${frontendBuildSha}|${ownerAuthMode}`)};var stored=localStorage.getItem('argus.bundle.identity');var guard='argus_identity_purge_'+wanted;if(stored!==wanted&&!sessionStorage.getItem(guard)){sessionStorage.setItem(guard,'1');document.documentElement.style.visibility='hidden';(${repairAppCaches.toString()})(${JSON.stringify(base)}).catch(function(){}).finally(function(){location.reload()});}}catch(_){}})();`,
       ].join(''),
     }];
   },
