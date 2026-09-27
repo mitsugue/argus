@@ -1,6 +1,9 @@
 name: Consume canonical ARGUS warm profile
 description: One independent warm-profile verifier for shadow and Pages acceptance
 inputs:
+  owner-artifact-key:
+    required: false
+    default: ''
   owner-auth:
     required: false
     default: '0'
@@ -38,20 +41,34 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Validate artifact protection before reading owner content
+      shell: bash
+      env:
+        ARGUS_ACCEPTANCE_OWNER_AUTH: ${{ inputs.owner-auth }}
+        ARGUS_OWNER_ARTIFACT_KEY: ${{ inputs.owner-artifact-key }}
+      run: node web/scripts/owner-artifact-envelope.mjs check
     - name: Download profile from the current workflow run
       if: inputs.source-run-id == ''
       uses: actions/download-artifact@v5
       with:
         name: ${{ inputs.profile-artifact-name }}
-        path: artifacts/warm-seed
+        path: ${{ inputs.owner-auth == '1' && 'artifacts/protected-profile' || 'artifacts/warm-seed' }}
     - name: Download profile from an explicit Pages workflow run
       if: inputs.source-run-id != ''
       uses: actions/download-artifact@v5
       with:
         name: ${{ inputs.profile-artifact-name }}
-        path: artifacts/warm-seed
+        path: ${{ inputs.owner-auth == '1' && 'artifacts/protected-profile' || 'artifacts/warm-seed' }}
         run-id: ${{ inputs.source-run-id }}
         github-token: ${{ inputs.github-token }}
+    - name: Authenticate and restore the complete owner profile
+      if: inputs.owner-auth == '1'
+      shell: bash
+      env:
+        ARGUS_OWNER_ARTIFACT_KEY: ${{ inputs.owner-artifact-key }}
+        ARTIFACT_SHA: ${{ inputs.candidate-sha }}
+        ARTIFACT_SOURCE_RUN: ${{ inputs.source-run-id || github.run_id }}
+      run: node web/scripts/owner-artifact-envelope.mjs unseal artifacts/protected-profile artifacts/warm-seed profile "$ARTIFACT_SHA" "$ARTIFACT_SOURCE_RUN"
     - id: consume
       name: Validate, reopen, and exercise the downloaded warm profile
       continue-on-error: true
@@ -73,12 +90,20 @@ runs:
         node scripts/warm-profile-contract.mjs validate \
           "$ARGUS_WARM_PROFILE_DIR" "$ARGUS_EXPECTED_SHA"
         node scripts/public-market-acceptance.mjs
+    - id: protect_evidence
+      name: Seal owner consumer evidence for artifact transport
+      if: always() && inputs.owner-auth == '1' && hashFiles('artifacts/warm-profile-consumer-evidence/owner-artifacts-safe.json') != ''
+      shell: bash
+      env:
+        ARGUS_OWNER_ARTIFACT_KEY: ${{ inputs.owner-artifact-key }}
+        ARTIFACT_SHA: ${{ inputs.candidate-sha }}
+      run: node web/scripts/owner-artifact-envelope.mjs seal artifacts/warm-profile-consumer-evidence artifacts/protected-consumer-evidence consumer-evidence "$ARTIFACT_SHA" "$GITHUB_RUN_ID"
     - name: Publish bounded consumer evidence
-      if: always() && (inputs.owner-auth != '1' || hashFiles('artifacts/warm-profile-consumer-evidence/owner-artifacts-safe.json') != '')
+      if: always() && (inputs.owner-auth == '0' || steps.protect_evidence.outcome == 'success')
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.evidence-artifact-name }}
-        path: artifacts/warm-profile-consumer-evidence
+        path: ${{ inputs.owner-auth == '1' && 'artifacts/protected-consumer-evidence' || 'artifacts/warm-profile-consumer-evidence' }}
         if-no-files-found: error
         retention-days: 30
     - name: Fail closed after publishing diagnostics

@@ -350,6 +350,7 @@ jobs:
           owner-auth: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
           owner-origin: https://mitsugue.github.io
           owner-password: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
+          owner-artifact-key: ${{ secrets.ARGUS_OWNER_ARTIFACT_KEY }}
           profile-artifact-name: market-warm-profile-${{ inputs.frontend_sha }}
           evidence-artifact-name: market-public-acceptance-${{ inputs.frontend_sha }}
           candidate-sha: ${{ inputs.frontend_sha }}

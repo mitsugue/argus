@@ -454,6 +454,7 @@ jobs:
           owner-auth: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
           owner-origin: https://mitsugue.github.io
           owner-password: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
+          owner-artifact-key: ${{ secrets.ARGUS_OWNER_ARTIFACT_KEY }}
           candidate-sha: ${{ github.sha }}
           public-url: https://mitsugue.github.io/argus/
           profile-artifact-name: market-warm-profile-${{ github.sha }}
@@ -536,6 +537,7 @@ jobs:
           owner-auth: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
           owner-origin: https://mitsugue.github.io
           owner-password: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
+          owner-artifact-key: ${{ secrets.ARGUS_OWNER_ARTIFACT_KEY }}
           profile-artifact-name: market-warm-profile-${{ github.sha }}
           evidence-artifact-name: market-public-acceptance-${{ github.sha }}
           candidate-sha: ${{ github.sha }}
@@ -544,6 +546,11 @@ jobs:
           expected-version: ${{ steps.release.outputs.frontend_version }}
           expected-backend-version: ${{ steps.release.outputs.backend_version }}
           expected-backend-sha: ${{ needs.candidate-identity.outputs.backend_sha }}
+      - name: Validate mobile artifact protection before reading owner content
+        env:
+          ARGUS_ACCEPTANCE_OWNER_AUTH: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          ARGUS_OWNER_ARTIFACT_KEY: ${{ secrets.ARGUS_OWNER_ARTIFACT_KEY }}
+        run: node web/scripts/owner-artifact-envelope.mjs check
       - name: Verify mobile Today navigation, geometry, loaders, and 12 snapshots
         id: mobile_acceptance
         working-directory: web
@@ -581,12 +588,18 @@ jobs:
             echo ""
             echo "Deployment publication and post-deploy acceptance are independent gates."
           } >> "$GITHUB_STEP_SUMMARY"
+      - id: protect_mobile
+        name: Seal mobile owner evidence for artifact transport
+        if: always() && vars.ARGUS_ACCEPTANCE_OWNER_AUTH == '1' && hashFiles('artifacts/market-public-acceptance/mobile-today/owner-artifacts-safe.json') != ''
+        env:
+          ARGUS_OWNER_ARTIFACT_KEY: ${{ secrets.ARGUS_OWNER_ARTIFACT_KEY }}
+        run: node web/scripts/owner-artifact-envelope.mjs seal artifacts/market-public-acceptance/mobile-today artifacts/protected-mobile-evidence mobile-evidence "$GITHUB_SHA" "$GITHUB_RUN_ID"
       - name: Publish reproducible public acceptance evidence
-        if: always() && (vars.ARGUS_ACCEPTANCE_OWNER_AUTH != '1' || hashFiles('artifacts/market-public-acceptance/mobile-today/owner-artifacts-safe.json') != '')
+        if: always() && ((vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0') == '0' || steps.protect_mobile.outcome == 'success')
         uses: actions/upload-artifact@v4
         with:
           name: mobile-public-acceptance-${{ github.sha }}
-          path: artifacts/market-public-acceptance/mobile-today
+          path: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH == '1' && 'artifacts/protected-mobile-evidence' || 'artifacts/market-public-acceptance/mobile-today' }}
           if-no-files-found: error
           retention-days: 30
       - name: Publish R19/R20 shared-engine evidence
