@@ -46,4 +46,3 @@ After normal release, use authorized natural-run observations to assess save
 duration, cgroup memory, legacy/readback success, nonce/WAL state, and failures.
 Do not infer constant-resident memory reduction from temporary lifetime alone.
 Do not lower capacity or start the final 72-hour acceptance from these tests.
-

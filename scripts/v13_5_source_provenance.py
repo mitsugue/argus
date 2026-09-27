@@ -35,7 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
-    'docs/RECOVERY_MATERIALIZATION.md': 'a72a60b5fe3cadcd821648171e9e897d809e2cfd',
+    'docs/RECOVERY_MATERIALIZATION.md': 'af222d7a64b801dce147daa9a3b6ddc75def0572',
     'test_argus_recovery_materialization.py': '4c2a2816a485a9137798667f3b659c37b0b7f368',
     'test_argus_recovery_measurement_storage.py': '4d960ba28f662b4b4dfc3e309e54e5e9e2a0b267',
     'docs/ACCEPTANCE_FAILURE_EVIDENCE.md': '2f425f275db6065af5acaa5584d029d9d4771289',
