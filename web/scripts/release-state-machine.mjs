@@ -411,12 +411,30 @@ export async function fetchBusinessSnapshotObservations({
         `${base}/api/argus/chart-intelligence?${query}`,
         { headers: { Accept: 'application/json' }, signal: controller.signal },
       );
-      const body = await response.json().catch(() => null);
+      let body = null;
+      let bodyError = null;
+      try {
+        body = await response.json();
+      } catch (error) {
+        if (error instanceof OwnerReaderError) throw error;
+        const aborted = controller.signal.aborted || error?.name === 'AbortError';
+        bodyError = {
+          name: aborted ? 'AbortError' : 'ResponseBodyError',
+          code: aborted ? 'readback_body_aborted'
+            : error?.name === 'SyntaxError' ? 'readback_json_invalid' : 'readback_body_failed',
+          phase: 'response_body',
+          message: aborted ? 'readback body aborted' : 'readback body unavailable',
+        };
+      }
+      if (response.status === 200 && !body && !bodyError) {
+        bodyError = { name: 'ResponseBodyError', code: 'readback_json_empty',
+          phase: 'response_body', message: 'readback JSON value unavailable' };
+      }
       observations.push({
         expectedIdentity: row.identity,
         status: response.status,
         snapshot: response.status === 200 && body ? body : null,
-        error: null,
+        error: bodyError,
       });
     } catch (error) {
       // Authentication failure cannot enter the ordinary data-read retry loop.
@@ -426,11 +444,11 @@ export async function fetchBusinessSnapshotObservations({
         status: null,
         snapshot: null,
         error: {
-          name: controller.signal.aborted ? 'AbortError'
-            : sanitizeDiagnosticText(error?.name || 'Error'),
-          code: error?.code == null ? null : sanitizeDiagnosticText(error.code),
-          message: controller.signal.aborted ? 'readback request timeout'
-            : sanitizeDiagnosticText(error?.message || String(error)),
+          name: controller.signal.aborted || error?.name === 'AbortError' ? 'AbortError' : 'FetchError',
+          code: controller.signal.aborted || error?.name === 'AbortError'
+            ? 'readback_request_aborted' : 'readback_request_failed',
+          phase: 'request',
+          message: 'readback request unavailable',
         },
       });
     } finally {
@@ -682,12 +700,24 @@ export async function triggerBusinessSnapshots({
   };
 }
 
+class BusinessSnapshotReadError extends Error {}
+
 export async function fetchBusinessSnapshots({ baseUrl, contract, fetchImpl = fetch }) {
   const observations = await fetchBusinessSnapshotObservations({ baseUrl, contract, fetchImpl });
   const failure = observations.find((row) => !row.snapshot);
   if (failure) {
-    throw new Error(`business_snapshot_http:${failure.expectedIdentity}:` +
-      `${failure.status ?? failure.error?.name ?? 'unknown'}`);
+    const error = new BusinessSnapshotReadError(
+      `business_snapshot_http:${failure.expectedIdentity}:` +
+      `${failure.status ?? 'unknown'}:${failure.error?.code ?? 'readback_http_failed'}`);
+    // Only fixed contract identities and fixed error codes leave this function.
+    error.artifact = { status: 'failed', reason: 'snapshot_readback_incomplete',
+      missing: observations.filter((row) => !row.snapshot).map((row) => ({
+        identity: row.expectedIdentity,
+        status: Number.isInteger(row.status) ? row.status : null,
+        phase: row.error?.phase ?? 'response_status',
+        code: row.error?.code ?? 'readback_http_failed',
+      })) };
+    throw error;
   }
   return observations.map((row) => row.snapshot);
 }
@@ -832,29 +862,47 @@ async function cli(argv) {
     return;
   }
   if (command === 'verify-business') {
-    const trigger = JSON.parse(fs.readFileSync(args['trigger-artifact'], 'utf8'));
-    let observed;
+    let trigger, readFailure;
     try {
-      observed = await withOwnerReader({ baseUrl: args['base-url'] }, (reader) =>
-        fetchBusinessSnapshots({ baseUrl: args['base-url'], contract, fetchImpl: reader.fetch }));
-    } catch (error) {
-      if (args.out && error instanceof OwnerReaderError) writeJson(args.out, {
-        status: 'failed', engineVersion: RELEASE_ENGINE_VERSION,
-        expectedBuildSha: args['expected-sha'], producerTriggerId: trigger.producerTriggerId,
-        reason: error.message,
+      trigger = JSON.parse(fs.readFileSync(args['trigger-artifact'], 'utf8'));
+      const observed = await withOwnerReader({ baseUrl: args['base-url'] }, async (reader) => {
+        try {
+          return await fetchBusinessSnapshots({
+            baseUrl: args['base-url'], contract, fetchImpl: reader.fetch });
+        } catch (error) {
+          if (error instanceof BusinessSnapshotReadError) readFailure = error.artifact;
+          throw error;
+        }
       });
-      throw error;
+      const result = evaluateBusinessSnapshotSet({
+        contract, observed, expectedBuildSha: args['expected-sha'],
+        producerTriggerId: trigger.producerTriggerId,
+      });
+      if (!result.pass) {
+        // Observed IDs and malformed response fields must not enter failure logs.
+        const code = result.reason.split(':')[0];
+        const allowed = ['observed_malformed', 'duplicate_snapshot', 'snapshot_set_mismatch',
+          'malformed_snapshot', 'identity_substitution', 'wrong_build', 'wrong_trigger', 'stale_snapshot'];
+        readFailure = { status: 'failed', reason: 'business_snapshot_acceptance_failed',
+          code: allowed.includes(code) ? code : 'acceptance_failed' };
+        throw new BusinessSnapshotReadError(`business_snapshot_acceptance:${readFailure.code}`);
+      }
+      writeJson(args.out, { ...result, status: 'pass', engineVersion: RELEASE_ENGINE_VERSION,
+        producerTriggerId: trigger.producerTriggerId,
+        observed: observed.map((row) => ({ identity: snapshotIdentity(row),
+          snapshotId: row.snapshotId, generatedAt: row.generatedAt,
+          releaseBinding: row.releaseBinding })) });
+    } catch (error) {
+      const reason = error instanceof OwnerReaderError ? error.message
+        : error instanceof BusinessSnapshotReadError ? error.message
+          : 'business_snapshot_verification_failed';
+      if (args.out) writeJson(args.out, {
+        status: 'failed', engineVersion: RELEASE_ENGINE_VERSION,
+        expectedBuildSha: args['expected-sha'], producerTriggerId: trigger?.producerTriggerId ?? null,
+        reason, ...(readFailure ? { readback: readFailure } : {}),
+      });
+      throw new Error(reason);
     }
-    const result = evaluateBusinessSnapshotSet({
-      contract, observed, expectedBuildSha: args['expected-sha'],
-      producerTriggerId: trigger.producerTriggerId,
-    });
-    if (!result.pass) throw new Error(`business_snapshot_acceptance:${result.reason}`);
-    writeJson(args.out, { ...result, status: 'pass', engineVersion: RELEASE_ENGINE_VERSION,
-      producerTriggerId: trigger.producerTriggerId,
-      observed: observed.map((row) => ({ identity: snapshotIdentity(row),
-        snapshotId: row.snapshotId, generatedAt: row.generatedAt,
-        releaseBinding: row.releaseBinding })) });
     return;
   }
   if (command === 'finalize-public') {

@@ -35,6 +35,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_recovery_measurement_storage.py': '4d960ba28f662b4b4dfc3e309e54e5e9e2a0b267',
+    'docs/ACCEPTANCE_FAILURE_EVIDENCE.md': '2f425f275db6065af5acaa5584d029d9d4771289',
+    'web/scripts/business-failure-evidence.test.mjs': '6df1cca2b9d6962b281a8adb6becc2fb0678efae',
     'web/scripts/owner-artifact-workflows.test.mjs': 'e5cbf535944796d649ebd50402c36a567f3cf944',
     'web/scripts/owner-artifact-envelope.test.mjs': '6f7806eaa5efca51c5f12ee9daa6af216203d772',
     'web/scripts/owner-artifact-envelope.mjs': '2a1965f6f9c4a2c83baebda864bd8c704ab9673d',

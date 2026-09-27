@@ -557,10 +557,17 @@ def test_missing_artifact_resets_to_empty_shadow_without_invalidation(tmp_path):
 
 
 def test_benchmark_harness_smoke_is_reproducible_and_buffer_bounded():
-    completed = subprocess.run(
-        [sys.executable, "scripts/recovery_measurement_benchmark.py",
-         "--smoke", "--samples", "1"], check=True,
-        capture_output=True, text=True)
+    try:
+        completed = subprocess.run(
+            [sys.executable, "scripts/recovery_measurement_benchmark.py",
+             "--smoke", "--samples", "1"], check=True,
+            capture_output=True, text=True)
+    except subprocess.CalledProcessError as exc:
+        # This local synthetic benchmark reports the failed resource gates in
+        # stdout. Keep that report in pytest's failure artifact, not just exit 1.
+        pytest.fail(
+            f"measurement benchmark exited {exc.returncode}\n"
+            f"stdout:\n{exc.stdout}\nstderr:\n{exc.stderr}", pytrace=False)
     report = json.loads(completed.stdout)
     assert report["passed"] is True
     assert report["fullSizeBuffers"] == 0
