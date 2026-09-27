@@ -1,6 +1,9 @@
 name: Produce canonical ARGUS warm profile
 description: One production-equivalent seed implementation for shadow and Pages
 inputs:
+  owner-artifact-key:
+    required: false
+    default: ''
   owner-auth:
     required: false
     default: '0'
@@ -36,6 +39,12 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Validate artifact protection before reading owner content
+      shell: bash
+      env:
+        ARGUS_ACCEPTANCE_OWNER_AUTH: ${{ inputs.owner-auth }}
+        ARGUS_OWNER_ARTIFACT_KEY: ${{ inputs.owner-artifact-key }}
+      run: node web/scripts/owner-artifact-envelope.mjs check
     - id: seed
       name: Execute shared production-equivalent warm-profile seed
       continue-on-error: true
@@ -55,23 +64,40 @@ runs:
         ARGUS_WARM_PROFILE_DIR: ../artifacts/market-warm-profile
         ARGUS_ACCEPTANCE_OUT: ../artifacts/warm-profile-seed-evidence
       run: bash scripts/run-warm-profile-seed.sh
+    - id: protect_evidence
+      name: Seal owner seed evidence for artifact transport
+      if: always() && inputs.owner-auth == '1' && hashFiles('artifacts/warm-profile-seed-evidence/owner-artifacts-safe.json') != ''
+      shell: bash
+      env:
+        ARGUS_OWNER_ARTIFACT_KEY: ${{ inputs.owner-artifact-key }}
+        ARTIFACT_SHA: ${{ inputs.candidate-sha }}
+      run: node web/scripts/owner-artifact-envelope.mjs seal artifacts/warm-profile-seed-evidence artifacts/protected-seed-evidence seed-evidence "$ARTIFACT_SHA" "$GITHUB_RUN_ID"
     - name: Publish bounded seed evidence
-      if: always() && (inputs.owner-auth != '1' || hashFiles('artifacts/warm-profile-seed-evidence/owner-artifacts-safe.json') != '')
+      if: always() && (inputs.owner-auth == '0' || steps.protect_evidence.outcome == 'success')
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.evidence-artifact-name }}
-        path: artifacts/warm-profile-seed-evidence
+        path: ${{ inputs.owner-auth == '1' && 'artifacts/protected-seed-evidence' || 'artifacts/warm-profile-seed-evidence' }}
         if-no-files-found: error
         retention-days: 30
     - name: Fail closed after publishing diagnostics
       if: steps.seed.outcome == 'failure'
       shell: bash
       run: exit 1
+    - id: protect_profile
+      name: Seal the complete canonical owner profile
+      if: inputs.owner-auth == '1'
+      shell: bash
+      env:
+        ARGUS_OWNER_ARTIFACT_KEY: ${{ inputs.owner-artifact-key }}
+        ARTIFACT_SHA: ${{ inputs.candidate-sha }}
+      run: node web/scripts/owner-artifact-envelope.mjs seal artifacts/market-warm-profile artifacts/protected-profile profile "$ARTIFACT_SHA" "$GITHUB_RUN_ID"
     - name: Publish canonical warm profile
+      if: success() && (inputs.owner-auth == '0' || steps.protect_profile.outcome == 'success')
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.profile-artifact-name }}
-        path: artifacts/market-warm-profile
+        path: ${{ inputs.owner-auth == '1' && 'artifacts/protected-profile' || 'artifacts/market-warm-profile' }}
         include-hidden-files: true
         if-no-files-found: error
         retention-days: 1
