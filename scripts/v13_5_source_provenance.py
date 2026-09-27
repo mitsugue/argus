@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.51"
+PRODUCT_VERSION = "v13.7.52"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,9 +35,14 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'web/scripts/owner-artifact-workflows.test.mjs': 'e5cbf535944796d649ebd50402c36a567f3cf944',
+    'web/scripts/owner-artifact-envelope.test.mjs': '6f7806eaa5efca51c5f12ee9daa6af216203d772',
+    'web/scripts/owner-artifact-envelope.mjs': '2a1965f6f9c4a2c83baebda864bd8c704ab9673d',
+    'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
+    'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '79fa1e3335f85ff01fd538a40b6b1856eec33d79',
     'web/scripts/pwa-identity.test.mjs': '5131ce9cc2e190bbb760472d9bc4fef3c3bbb504',
-    'web/scripts/owner-today-https.mjs': 'ff1272da6140e4560ad718e6acf7e06944542e09',
+    'web/scripts/owner-today-https.mjs': 'e6f8066ec19383f00c048b2c59c083deb0f2e937',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -57,8 +62,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_TODAY_HTTPS_ACCEPTANCE.md': 'b84ae41e534fb84314e8e4f9279ae300803e0fe9',
     'docs/OWNER_BROWSER_CONTINUITY.md': '3c729f6024df2d90c21601cb59b989e51dcc5364',
     'docs/OWNER_AUTH_READER_MIGRATION.md': 'fb99b3d02f98e06a0f0aeb6919f19ca8e764d48f',
-    '.github/actions/warm-profile-seed/action.yml': '997ec86b39b952b85559de36e54b3a0fe77e1f19',
-    '.github/actions/warm-profile-consumer/action.yml': '40bc791ea3663f9f056c1166df2ad27d7239cbf4',
+    '.github/actions/warm-profile-seed/action.yml': 'eda05275ed6f5f0eb86d866c15022535194cd5bb',
+    '.github/actions/warm-profile-consumer/action.yml': '12934bafbf41522ba487c3b26328f74276dfc732',
     # Exact opt-in owner authentication, UI, backup and regression candidate.
     'argus_owner_auth.py': 'af2357e165b817ef64f6288f6ddeae32d9498ff8',
     'docs/ops/owner-server-auth.md': 'd745850b1c9bb742783be9f230261cee5b9d782f',
