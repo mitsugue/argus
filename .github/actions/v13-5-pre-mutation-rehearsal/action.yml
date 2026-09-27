@@ -1,6 +1,9 @@
 name: Rehearse exact V13.5 release before production mutation
 description: Shared accepted-source, certificate, runtime, build, and Pages-input gate
 inputs:
+  owner-auth:
+    required: false
+    default: '0'
   candidate-sha:
     required: true
   candidate-tree:
@@ -79,8 +82,11 @@ runs:
         DEPLOY_BASE: /argus/
         VITE_ARGUS_BACKEND_URL: https://argus-backend-3j2m.onrender.com
         VITE_ARGUS_BUILD_SHA: ${{ inputs.build-sha }}
+        VITE_ARGUS_OWNER_AUTH_REQUIRED: ${{ inputs.owner-auth }}
         PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
-      run: npm run build
+      run: |
+        case "$VITE_ARGUS_OWNER_AUTH_REQUIRED" in 0|1) ;; *) exit 1 ;; esac
+        npm run build
     - id: receipts
       name: Seal the mutation-free production rehearsal
       shell: bash

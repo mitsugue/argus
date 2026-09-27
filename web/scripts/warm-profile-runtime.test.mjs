@@ -75,3 +75,11 @@ await assert.rejects(readAcrossNavigation({
   waitForDocument: async () => { throw documentTimeout; },
 }), (error) => error === documentTimeout);
 console.log('warm-profile-runtime.test: ok (bounded runtime and navigation reads)');
+
+// Lost owner authority is fatal, not a request for another login/reload.
+{
+  let reloads = 0;
+  const rejected = new Error('owner_browser:session_lost'); rejected.name = 'OwnerBrowserError';
+  await assert.rejects(stabilizeWarmProfileRuntime({ probe: async () => { throw rejected; }, reload: async () => { reloads++; } }), error => error === rejected);
+  assert.equal(reloads, 0);
+}

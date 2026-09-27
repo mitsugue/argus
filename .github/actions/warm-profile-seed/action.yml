@@ -1,6 +1,15 @@
 name: Produce canonical ARGUS warm profile
 description: One production-equivalent seed implementation for shadow and Pages
 inputs:
+  owner-auth:
+    required: false
+    default: '0'
+  owner-origin:
+    required: false
+    default: ''
+  owner-password:
+    required: false
+    default: ''
   candidate-sha:
     required: true
   public-url:
@@ -33,6 +42,9 @@ runs:
       shell: bash
       working-directory: web
       env:
+        ARGUS_ACCEPTANCE_OWNER_AUTH: ${{ inputs.owner-auth }}
+        ARGUS_ACCEPTANCE_OWNER_ORIGIN: ${{ inputs.owner-origin }}
+        ARGUS_ACCEPTANCE_OWNER_PASSWORD: ${{ inputs.owner-password }}
         ARGUS_EXPECTED_SHA: ${{ inputs.candidate-sha }}
         ARGUS_EXPECTED_VERSION: ${{ inputs.expected-frontend-version }}
         ARGUS_EXPECTED_PRODUCT_VERSION: ${{ inputs.expected-product-version }}
@@ -44,7 +56,7 @@ runs:
         ARGUS_ACCEPTANCE_OUT: ../artifacts/warm-profile-seed-evidence
       run: bash scripts/run-warm-profile-seed.sh
     - name: Publish bounded seed evidence
-      if: always()
+      if: always() && (inputs.owner-auth != '1' || hashFiles('artifacts/warm-profile-seed-evidence/owner-artifacts-safe.json') != '')
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.evidence-artifact-name }}

@@ -56,14 +56,11 @@ jobs:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           set -uo pipefail
-          if [ -z "$ARGUS_ADMIN_TOKEN" ]; then echo "::warning::ARGUS_ADMIN_TOKEN missing — public warm only"; else
+          if [ -z "$ARGUS_ADMIN_TOKEN" ]; then echo "::error::ARGUS_ADMIN_TOKEN missing"; exit 1; else
             python3 scripts/workflow_http.py --name warm-market-scan --method POST --timeout 90 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --url "$BE/api/argus/market-scan" | cut -c1-200 || true
             python3 scripts/run_intel_collect.py --base "$BE" --timeout 900 || exit 1
           fi
-          for path in "/api/argus/decision-evidence?symbols=1321,1306,SPY,QQQ" "/api/argus/important-events" "/api/argus/events" "/api/argus/dashboard-events" "/api/argus/market-ledger" "/api/argus/news-intelligence"; do
-            code=$(curl -s -o /dev/null -w "%{http_code} %{time_total}s" --max-time 120 "$BE$path" || true)
-            echo "$path -> $code"
-          done
+          python3 scripts/warm_protected_reads.py --group runtime || exit 1
       - name: Record the warmed identity
         run: |
           echo "## backend-warm-after-deploy" >> "$GITHUB_STEP_SUMMARY"

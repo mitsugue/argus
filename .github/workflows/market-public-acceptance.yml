@@ -347,6 +347,9 @@ jobs:
           python3 -c 'import json; print("backend_version=" + json.load(open("backend-version.json"))["version"])' >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/warm-profile-consumer
         with:
+          owner-auth: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          owner-origin: https://mitsugue.github.io
+          owner-password: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
           profile-artifact-name: market-warm-profile-${{ inputs.frontend_sha }}
           evidence-artifact-name: market-public-acceptance-${{ inputs.frontend_sha }}
           candidate-sha: ${{ inputs.frontend_sha }}

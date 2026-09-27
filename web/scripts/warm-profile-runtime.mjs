@@ -48,6 +48,7 @@ export async function stabilizeWarmProfileRuntime({
       diagnostics.push({ attempt, observed, status: runtimeProofReady(observed)
         ? 'READY' : 'NOT_READY' });
     } catch (error) {
+      if (error?.name === 'OwnerBrowserError') throw error;
       diagnostics.push({ attempt, error: cleanError(error), status: 'ERROR' });
     }
     if (runtimeProofReady(observed)) {

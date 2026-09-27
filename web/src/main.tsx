@@ -2,9 +2,13 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { registerSW } from 'virtual:pwa-register';
 import App from './App';
+import { OwnerAccess } from './components/OwnerAccess';
+import { OWNER_AUTH_REQUIRED, installOwnerTransport } from './lib/ownerSession';
+installOwnerTransport();
 import { AssetsProvider } from './hooks/useAssets';
 import { clearVerifiedSnapshotCache } from './lib/verifiedSnapshot';
 import { repairAppCaches } from './lib/pwaRecovery';
+import { deployedPwaIdentity, authenticationOnlyUpdate } from './lib/pwaIdentity';
 import './styles/theme.css';
 
 // ── PWA update reliability (v10.70) ─────────────────────────────────────────
@@ -21,7 +25,10 @@ import './styles/theme.css';
 const RUNNING = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '';
 const RUNNING_PRODUCT = typeof __PRODUCT_VERSION__ === 'string' ? __PRODUCT_VERSION__ : '';
 const RUNNING_SHA = typeof __FRONTEND_BUILD_SHA__ === 'string' ? __FRONTEND_BUILD_SHA__ : '';
-const RUNNING_IDENTITY = `${RUNNING}|${RUNNING_PRODUCT}|${RUNNING_SHA}`;
+const RUNNING_IDENTITY = `${RUNNING}|${RUNNING_PRODUCT}|${RUNNING_SHA}|${OWNER_AUTH_REQUIRED ? '1' : '0'}`;
+// Record the executing bundle before the first 4s poll: a quick close must not
+// make the next offline launch purge the shell it has just installed.
+try { localStorage.setItem('argus.bundle.identity', RUNNING_IDENTITY); } catch { /* storage unavailable */ }
 const TRIES_KEY = 'argus_update_tries';
 const PWA_STEP_TIMEOUT_MS = 12_000;
 const PWA_RECONCILE_TIMEOUT_MS = 36_000;
@@ -42,10 +49,7 @@ async function fetchDeployedIdentity(): Promise<string | null> {
   try {
     const url = `${import.meta.env.BASE_URL}index.html?cb=${Date.now()}`;
     const html = await fetch(url, { cache: 'no-store', signal: ctrl.signal }).then((r) => r.text());
-    const app = html.match(/__ARGUS_VERSION__\s*=\s*"([^"]+)"/)?.[1];
-    const product = html.match(/__ARGUS_PRODUCT_VERSION__\s*=\s*"([^"]+)"/)?.[1];
-    const sha = html.match(/__ARGUS_BUILD_SHA__\s*=\s*"([^"]+)"/)?.[1];
-    return app && product && sha ? `${app}|${product}|${sha}` : null;
+    return deployedPwaIdentity(html);
   } catch {
     return null;
   } finally {
@@ -53,12 +57,12 @@ async function fetchDeployedIdentity(): Promise<string | null> {
   }
 }
 
-async function selfHeal(): Promise<void> {
+async function selfHeal(preserveSnapshots: boolean): Promise<void> {
   try {
     await repairAppCaches(import.meta.env.BASE_URL);
     // IndexedDB also holds owner-created chart drawings. Refresh only the
     // server-derived views, and bound the wait if another tab blocks storage.
-    await waitAtMost(clearVerifiedSnapshotCache(), PWA_STEP_TIMEOUT_MS);
+    if (!preserveSnapshots) await waitAtMost(clearVerifiedSnapshotCache(), PWA_STEP_TIMEOUT_MS);
   } catch {
     /* ignore — fall through to reload */
   }
@@ -86,7 +90,7 @@ async function reconcileVersion(): Promise<void> {
   if (tries >= 1) {
     // First updateSW didn't take → the SW swapped index.html but kept stale JS
     // chunks. Self-heal aggressively: unregister SWs, clear caches, hard reload.
-    await selfHeal();
+    await selfHeal(authenticationOnlyUpdate(RUNNING_IDENTITY, deployed));
     window.location.reload();
     return;
   }
@@ -156,8 +160,10 @@ window.setInterval(() => { pollPwaState().catch(() => {}); }, 60_000);
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
+    <OwnerAccess>
     <AssetsProvider>
       <App />
     </AssetsProvider>
+    </OwnerAccess>
   </React.StrictMode>
 );

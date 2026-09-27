@@ -187,6 +187,7 @@ jobs:
         name: Execute the exact production read-only path before deployment
         uses: ./.github/actions/v13-5-pre-mutation-rehearsal
         with:
+          owner-auth: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
           candidate-sha: ${{ steps.candidate.outputs.sha }}
           candidate-tree: ${{ steps.candidate.outputs.tree }}
           release-merge-sha: ${{ github.sha }}
@@ -376,22 +377,27 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 20
+      - name: Require matching frontend reader and server authentication modes
+        env:
+          ARGUS_PUBLIC_URL: https://mitsugue.github.io/argus/
+          ARGUS_BACKEND_URL: https://argus-backend-3j2m.onrender.com
+          ARGUS_EXPECTED_SHA: ${{ github.sha }}
+          ARGUS_ACCEPTANCE_OWNER_AUTH: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+        run: node web/scripts/owner-mode-consistency.mjs
       - name: Warm the twelve chart views before the producer trigger
         # v13.5.66 (stabilization item 1): on a cold instance each chart view
         # computes for ~8 s; the tick that produces all twelve under the
         # trigger id used to abort at its transport limit and the release
         # went red after a successful deploy. Reading the twelve routes once
         # warms the compute memo so the trigger reconciles in seconds.
-        run: |
-          for symbol in 1321:JP 1306:JP SPY:US QQQ:US; do
-            for horizon in 1D 5D 20D; do
-              code=$(curl -s -o /dev/null -w "%{http_code} %{time_total}s" --max-time 120 \
-                "https://argus-backend-3j2m.onrender.com/api/argus/chart-intelligence?symbol=${symbol%%:*}&market=${symbol##*:}&horizon=${horizon}" || true)
-              echo "warm ${symbol} ${horizon} -> ${code}"
-            done
-          done
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: python3 scripts/warm_protected_reads.py --group charts
       - name: Trigger and durably acknowledge the exact 12 business snapshots
         env:
+          ARGUS_ACCEPTANCE_OWNER_AUTH: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          ARGUS_ACCEPTANCE_OWNER_ORIGIN: https://mitsugue.github.io
+          ARGUS_ACCEPTANCE_OWNER_PASSWORD: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           node web/scripts/release-state-machine.mjs trigger-business \
@@ -445,6 +451,9 @@ jobs:
           expected-runtime-identity: ${{ needs.acceptance-runtime-admission.outputs.runtime_identity_digest }}
       - uses: ./.github/actions/warm-profile-seed
         with:
+          owner-auth: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          owner-origin: https://mitsugue.github.io
+          owner-password: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
           candidate-sha: ${{ github.sha }}
           public-url: https://mitsugue.github.io/argus/
           profile-artifact-name: market-warm-profile-${{ github.sha }}
@@ -471,6 +480,10 @@ jobs:
           name: business-snapshot-trigger-${{ github.sha }}
           path: artifacts/business-snapshot-trigger
       - name: Accept exactly 12 fresh trigger-bound snapshots
+        env:
+          ARGUS_ACCEPTANCE_OWNER_AUTH: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          ARGUS_ACCEPTANCE_OWNER_ORIGIN: https://mitsugue.github.io
+          ARGUS_ACCEPTANCE_OWNER_PASSWORD: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
         run: |
           node web/scripts/release-state-machine.mjs verify-business \
             --contract release/v13-snapshot-readiness-contract.json \
@@ -520,6 +533,9 @@ jobs:
         id: market_acceptance
         uses: ./.github/actions/warm-profile-consumer
         with:
+          owner-auth: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          owner-origin: https://mitsugue.github.io
+          owner-password: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
           profile-artifact-name: market-warm-profile-${{ github.sha }}
           evidence-artifact-name: market-public-acceptance-${{ github.sha }}
           candidate-sha: ${{ github.sha }}
@@ -535,6 +551,9 @@ jobs:
           ARGUS_PUBLIC_URL: https://mitsugue.github.io/argus/
           ARGUS_EXPECTED_VERSION: ${{ steps.release.outputs.frontend_version }}
           ARGUS_EXPECTED_SHA: ${{ github.sha }}
+          ARGUS_ACCEPTANCE_OWNER_AUTH: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          ARGUS_ACCEPTANCE_OWNER_ORIGIN: https://mitsugue.github.io
+          ARGUS_ACCEPTANCE_OWNER_PASSWORD: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
           ARGUS_MOBILE_ACCEPTANCE_OUT: ../artifacts/market-public-acceptance/mobile-today
         run: node scripts/mobile-today-acceptance.mjs
       - name: Advance the shared engine through public acceptance and V13 live
@@ -563,7 +582,7 @@ jobs:
             echo "Deployment publication and post-deploy acceptance are independent gates."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Publish reproducible public acceptance evidence
-        if: always()
+        if: always() && (vars.ARGUS_ACCEPTANCE_OWNER_AUTH != '1' || hashFiles('artifacts/market-public-acceptance/mobile-today/owner-artifacts-safe.json') != '')
         uses: actions/upload-artifact@v4
         with:
           name: mobile-public-acceptance-${{ github.sha }}

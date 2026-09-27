@@ -1,3 +1,5 @@
+import { createBrowserOwner, isOwnerCeremony } from './owner-browser-acceptance.mjs';
+import { withOwnerReader, OwnerReaderError } from './owner-auth-reader.mjs';
 import { chromium } from 'playwright';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -27,6 +29,7 @@ const PROFILE_DIR = path.resolve(process.env.ARGUS_WARM_PROFILE_DIR
   || '../artifacts/market-warm-profile');
 const BACKEND_ORIGIN = (process.env.ARGUS_BACKEND_URL
   || 'https://argus-backend-3j2m.onrender.com').replace(/\/$/, '');
+const owner = createBrowserOwner({ baseUrl: BACKEND_ORIGIN, publicUrl: PUBLIC_URL });
 const TODAY_URL = `${PUBLIC_URL.replace(/\/?$/, '/')}#today`;
 // Production snapshots can cross the five-second boundary even after the
 // release warmer has completed.  The browser UI keeps its last useful state
@@ -48,7 +51,7 @@ const VIEWPORTS = [
   { width: 390, height: 844 },
 ];
 
-const sanitize = (value) => String(value ?? '')
+const sanitize = (value) => owner.redact(value)
   .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
   .replace(/([?&](?:token|key|authorization|auth)=[^&\s]+)/gi, '?redacted')
   .slice(0, 800);
@@ -63,6 +66,7 @@ async function screenshot(page, name) {
   await fs.mkdir(path.join(OUT_DIR, 'screenshots'), { recursive: true });
   await page.screenshot({
     path: path.join(OUT_DIR, 'screenshots', name),
+    mask: [page.locator('input[type=password]')],
     fullPage: false,
     animations: 'disabled',
     timeout: 10_000,
@@ -96,10 +100,12 @@ async function retryUntil(request, url, timeoutMs, validate, label) {
   while (Date.now() < deadline) {
     try {
       const response = await request.get(url, { timeout: 30_000 });
+      if ([401, 403].includes(response.status())) throw new OwnerReaderError('rejected');
       const body = await response.json().catch(() => null);
       if (response.ok() && validate(body, response.status())) return body;
       last = `${response.status()}:${JSON.stringify(body)?.slice(0, 200)}`;
     } catch (error) {
+      if (error instanceof OwnerReaderError) throw error;
       last = sanitize(error?.message);
     }
     await new Promise((resolve) => setTimeout(resolve, 5_000));
@@ -160,7 +166,8 @@ function observe(page, evidence) {
       snapshot: url.searchParams.get('snapshot'),
     });
     if (request.method() === 'POST'
-      && /argus-backend-.*\.onrender\.com$/.test(url.hostname)) {
+      && /argus-backend-.*\.onrender\.com$/.test(url.hostname)
+      && !(owner.enabled && isOwnerCeremony(url.href, BACKEND_ORIGIN, request.method()))) {
       evidence.aiPostCount += 1;
     }
   });
@@ -405,13 +412,20 @@ async function run() {
       }
     }
     markPhase('market-cache-5D');
-    const seeded = await waitForMarketCache(page.request);
+    const seeded = await withOwnerReader({ baseUrl: BACKEND_ORIGIN }, async reader => {
+      if (!reader.enabled) return waitForMarketCache(page.request);
+      return waitForMarketCache({ get: async (url, { timeout }) => {
+        const response = await reader.fetch(url, { signal: AbortSignal.timeout(timeout) });
+        return { json: () => response.json(), ok: () => response.ok, status: () => response.status };
+      } });
+    });
     if (MODE === 'seed') {
       if (!EXPECTED_SHA) throw new Error('seed candidate SHA is required');
       markPhase('navigate-today');
       await page.goto(TODAY_URL, {
         waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS,
       });
+      await owner.login(page);
       if (REQUIRE_LIVE_CANDIDATE) {
         const observedFrontend = await readAcrossNavigation({
           read: () => page.evaluate(() => ({
@@ -443,8 +457,10 @@ async function run() {
       markPhase('stabilize-today-1321-5D-service-worker-indexeddb');
       const stabilized = await stabilizeWarmProfileRuntime({
         probe: async (attempt) => {
+          await owner.active(page);
           markPhase('runtime-probe', 'RUNNING', { attempt });
           const canonical = await selectCanonical1321FiveDay(page, {
+        beforeReload: owner.logout, afterReload: owner.login,
             expectedSnapshotId: seeded.snapshotId,
             onTransition: (event) => {
               if (!event.detail?.assumed) {
@@ -457,14 +473,17 @@ async function run() {
               || canonical.responseSnapshotId !== canonical.uiSnapshotId) {
             throw new Error('seeded_canonical_5D_snapshot_unavailable');
           }
+          await owner.active(page);
           const runtime = await probeProfileRuntime(page);
           return { ...runtime, canonical };
         },
         reload: async (attempt) => {
           markPhase('runtime-reload', 'RETRY', { attempt });
+          await owner.logout(page);
           await page.reload({
             waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS,
           });
+          await owner.login(page);
         },
       });
       evidence.runtimeAttempts = stabilized.diagnostics;
@@ -474,8 +493,10 @@ async function run() {
         globalThis.__ARGUS_BUILD_SHA__ ?? null);
       await drainResponses(evidence);
       markPhase('close-browser');
+      await owner.logout(page);
       await context.close();
       contextClosed = true;
+      await owner.scan(PROFILE_DIR);
       markPhase('seal-profile');
       const manifest = await writeWarmProfileManifest({
         profileDir: PROFILE_DIR,
@@ -510,6 +531,7 @@ async function run() {
     await page.goto(TODAY_URL, {
       waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS,
     });
+    await owner.login(page);
     if (MODE === 'accept' && EXPECTED_VERSION) {
       await page.waitForFunction((expected) =>
         globalThis.__ARGUS_VERSION__ === expected, EXPECTED_VERSION,
@@ -523,6 +545,7 @@ async function run() {
     await openCanonicalEvidence(page);
     if (MODE === 'profile') {
       const canonical = await selectCanonical1321FiveDay(page, {
+        beforeReload: owner.logout, afterReload: owner.login,
         expectedSnapshotId: warmProfile.source.seededSnapshotId,
         onTransition: (event) => {
           if (!event.detail?.assumed) evidence.releaseStateLog.push(event);
@@ -549,6 +572,7 @@ async function run() {
       return;
     }
     const acceptanceCanonical = await selectCanonical1321FiveDay(page, {
+        beforeReload: owner.logout, afterReload: owner.login,
       expectedSnapshotId: warmProfile.source.seededSnapshotId,
       onTransition: (event) => {
         if (!event.detail?.assumed) evidence.releaseStateLog.push(event);
@@ -654,7 +678,14 @@ async function run() {
     process.exitCode = 1;
   } finally {
     await drainResponses(evidence);
-    if (!contextClosed && context) await context.close().catch(() => {});
+    if (!contextClosed && context) {
+      try { if (page) await owner.logout(page); }
+      catch { process.exitCode = 1; await writeJson('owner-cleanup.json', { verdict: 'FAIL', reason: 'owner_logout_failed' }); }
+      finally { await context.close(); }
+    }
+    await owner.scan(OUT_DIR);
+    if (context) await owner.scan(PROFILE_DIR);
+    if (owner.enabled) await writeJson('owner-artifacts-safe.json', { verified: true });
   }
 }
 

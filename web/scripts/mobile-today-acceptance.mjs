@@ -1,3 +1,4 @@
+import { createBrowserOwner, isOwnerCeremony, verifiedStoreFingerprint } from './owner-browser-acceptance.mjs';
 import { chromium } from 'playwright';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -7,7 +8,7 @@ import {
   openCanonicalEvidence,
   readCanonicalProjectionState,
   readCanonicalWarmRevalidationState,
-  selectCanonical1321FiveDay,
+  selectCanonical1321FiveDay as selectCanonicalWithReload,
   validateCanonicalWarmRevalidationTransition,
 } from './canonical-snapshot-selection.mjs';
 
@@ -17,6 +18,11 @@ const EXPECTED_VERSION = process.env.ARGUS_EXPECTED_VERSION || '';
 const EXPECTED_SHA = process.env.ARGUS_EXPECTED_SHA || '';
 const OUT_DIR = path.resolve(process.env.ARGUS_MOBILE_ACCEPTANCE_OUT
   || '/tmp/argus-mobile-today-acceptance');
+const BACKEND_ORIGIN = (process.env.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com').replace(/\/$/, '');
+const owner = createBrowserOwner({ baseUrl: BACKEND_ORIGIN, publicUrl: PUBLIC_URL });
+const selectCanonical1321FiveDay = page => selectCanonicalWithReload(page, {
+  beforeReload: owner.logout, afterReload: owner.login,
+});
 const TODAY_URL = `${PUBLIC_URL.replace(/\/?$/, '/')}#today`;
 const SYMBOLS = ['1321', '1306', 'SPY', 'QQQ'];
 const HORIZONS = ['1D', '5D', '20D'];
@@ -49,7 +55,7 @@ const GATE_INVENTORY = [
   { id: 'M14', name: 'request-hygiene-console-ai' },
   { id: 'M15', name: 'headline-first-decision-visibility' },
 ];
-const sanitize = (value) => String(value ?? '')
+const sanitize = (value) => owner.redact(value)
   .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
   .replace(/([?&](?:token|key|authorization|auth)=[^&\s]+)/gi, '?redacted')
   .slice(0, 800);
@@ -116,7 +122,7 @@ async function waitForContractState(page, gate, predicate, argument, timeout = 3
 
 async function screenshot(page, name, fullPage = false) {
   await fs.mkdir(path.join(OUT_DIR, 'screenshots'), { recursive: true });
-  await page.screenshot({
+  await page.screenshot({ mask: [page.locator('input[type=password]')],
     path: path.join(OUT_DIR, 'screenshots', name),
     fullPage, animations: 'disabled', timeout: 15_000,
   });
@@ -150,7 +156,8 @@ function observe(page, evidence) {
       snapshot: url.searchParams.get('snapshot'),
       scope: url.searchParams.get('scope'),
     });
-    if (request.method() === 'POST' && url.pathname.startsWith('/api/argus/')) {
+    if (request.method() === 'POST' && url.pathname.startsWith('/api/argus/')
+        && !(owner.enabled && isOwnerCeremony(url.href, BACKEND_ORIGIN, request.method()))) {
       evidence.aiPostCount += 1;
     }
   });
@@ -201,6 +208,7 @@ async function drainResponseTasks(evidence) {
 async function isolateChartReads(context, evidence) {
   await context.route('**/api/argus/**', async (route) => {
     const url = new URL(route.request().url());
+    if (owner.enabled && isOwnerCeremony(url.href, BACKEND_ORIGIN, route.request().method())) return route.continue();
     if (url.pathname === '/api/argus/chart-intelligence') {
       await route.continue(); return;
     }
@@ -209,16 +217,22 @@ async function isolateChartReads(context, evidence) {
   });
 }
 
+function controlledOwnerHeaders(route) {
+  const nonce = route.request().headers()['x-argus-owner-nonce'];
+  return nonce ? { 'X-ARGUS-OWNER-NONCE': nonce } : {};
+}
+
 function fulfillCapturedSnapshot(route, evidence, delayMs) {
   const url = new URL(route.request().url());
   const key = `${url.searchParams.get('symbol')}:${url.searchParams.get('horizon')}`;
   const body = evidence.snapshotBodies.get(key);
   if (!body) return route.abort('failed');
   return new Promise((resolve) => setTimeout(resolve, delayMs))
-    .then(() => route.fulfill({ status: 200, contentType: 'application/json', body }));
+    .then(() => route.fulfill({ status: 200, contentType: 'application/json', headers: controlledOwnerHeaders(route), body }));
 }
 
 async function waitForShell(page) {
+  await owner.login(page);
   await page.waitForSelector('.nav__mobile', { state: 'attached', timeout: 30_000 });
   if (EXPECTED_VERSION) {
     await page.waitForFunction((version) =>
@@ -424,6 +438,8 @@ async function run() {
     responseTasks: new Set(),
   };
   const browser = await chromium.launch({ headless: true });
+  let primaryFailure = null;
+  try {
   const context = await browser.newContext({
     viewport: { width: 430, height: 932 },
     deviceScaleFactor: 3, isMobile: true, hasTouch: true,
@@ -583,9 +599,12 @@ async function run() {
   await cold.route('**/api/argus/chart-intelligence?*',
     (route) => fulfillCapturedSnapshot(route, evidence, 4_000));
   const coldPage = await cold.newPage();
-  const coldLoaderAppeared = coldPage.locator(
+  const coldLoaderAppeared = (async () => {
+    if (owner.enabled) await coldPage.locator('.owner-access-bar > summary').waitFor({ state: 'visible', timeout: 30000 });
+    return coldPage.locator(
     '.at-canonical-load-status .triangle-step-loader',
   ).waitFor({ state: 'visible', timeout: 5_000 });
+  })();
   await coldPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(coldPage);
   await openCanonicalEvidence(coldPage);
@@ -625,6 +644,7 @@ async function run() {
       || !after225 || skeletonHeight < 90) {
     evidence.failures.push('cold-loader-contract');
   }
+  await owner.logout(coldPage);
   await cold.close();
 
   // A six-second cold delay must expose the explicit initial preparation label.
@@ -635,7 +655,9 @@ async function run() {
   await slow.route('**/api/argus/chart-intelligence?*',
     (route) => fulfillCapturedSnapshot(route, evidence, 6_000));
   const slowPage = await slow.newPage();
-  const slowStateAppeared = slowPage.waitForFunction(({ selector }) => {
+  const slowStateAppeared = (async () => {
+    if (owner.enabled) await slowPage.locator('.owner-access-bar > summary').waitFor({ state: 'visible', timeout: 30000 });
+    return slowPage.waitForFunction(({ selector }) => {
     const nodes = [...document.querySelectorAll(selector)];
     if (nodes.length !== 1) return false;
     const node = nodes[0];
@@ -651,6 +673,7 @@ async function run() {
       label: '日経平均の根拠を確認しています',
     };
   }, { selector: CANONICAL_PROJECTION_STATE_SELECTOR }, { timeout: 7_000 });
+  })();
   await slowPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(slowPage);
   await openCanonicalEvidence(slowPage);
@@ -660,6 +683,7 @@ async function run() {
       || slowState?.label !== '日経平均の根拠を確認しています') {
     evidence.failures.push('slow-label');
   }
+  await owner.logout(slowPage);
   await slow.close();
 
   // A failed cold request terminates the loader and leaves an actionable retry.
@@ -668,7 +692,7 @@ async function run() {
   });
   await isolateChartReads(failure, evidence);
   await failure.route('**/api/argus/chart-intelligence?*',
-    (route) => route.fulfill({ status: 500, contentType: 'application/json',
+    (route) => route.fulfill({ status: 500, contentType: 'application/json', headers: controlledOwnerHeaders(route),
       body: '{"error":"controlled"}' }));
   const failurePage = await failure.newPage();
   await failurePage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
@@ -683,6 +707,7 @@ async function run() {
       .getByRole('button', { name: '再取得' }).count(),
   };
   if (failureState.loader || !failureState.retry) evidence.failures.push('failure-loader-contract');
+  await owner.logout(failurePage);
   await failure.close();
 
   // Warm cache is the immediate visible authority while a controlled network
@@ -722,6 +747,7 @@ async function run() {
     await warmResponseRelease;
     return fulfillCapturedSnapshot(route, evidence, 0);
   });
+  await owner.logout(warmPage);
   await warmPage.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(warmPage);
   await waitForTodayChart(warmPage);
@@ -789,7 +815,8 @@ async function run() {
   const before304 = await warmPage.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .getAttribute('data-canonical-snapshot-id');
   await warm.route('**/api/argus/chart-intelligence?*',
-    (route) => route.fulfill({ status: 304, body: '' }));
+    (route) => route.fulfill({ status: 304, headers: controlledOwnerHeaders(route), body: '' }));
+  await owner.logout(warmPage);
   await warmPage.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(warmPage); await waitForTodayChart(warmPage);
   const after304 = await warmPage.locator(CANONICAL_SNAPSHOT_SELECTOR)
@@ -799,6 +826,7 @@ async function run() {
       || after304 !== before304) {
     evidence.failures.push('not-modified-continuity');
   }
+  await owner.logout(warmPage);
   await warm.close();
 
   // A real 429 is an expected HTTP outcome, not a JavaScript/React exception.
@@ -825,10 +853,11 @@ async function run() {
     controlled429Calls += 1;
     return route.fulfill({
       status: 429, contentType: 'application/json',
-      headers: { 'Retry-After': '2' },
+      headers: { ...controlledOwnerHeaders(route), 'Retry-After': '2' },
       body: '{"error":"rate_limited","message":"controlled acceptance limit"}',
     });
   });
+  await owner.logout(rateLimitPage);
   await rateLimitPage.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(rateLimitPage); await waitForTodayChart(rateLimitPage);
   const rateLimitedSnapshotId = await rateLimitPage.locator(CANONICAL_SNAPSHOT_SELECTOR)
@@ -867,17 +896,36 @@ async function run() {
   // readers before closing their context so a valid controlled 429 cannot be
   // misclassified merely because response.json() lost its page mid-read.
   await drainResponseTasks(evidence);
+  await owner.logout(rateLimitPage);
   await rateLimitContext.close();
 
-  // The warmed verified snapshot must survive a fully offline reload.
+  // M13 retains device data in both modes. Owner mode must lock offline,
+  // then prove the same identity only after a fresh online UI ceremony.
+  await drainResponseTasks(evidence);
+  await owner.logout(page);
+  const preservedBefore = owner.enabled ? await verifiedStoreFingerprint(page) : null;
   await context.setOffline(true);
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
-  await waitForShell(page);
-  await waitForTodayChart(page);
-  const offlineSnapshotId = await page.locator(CANONICAL_SNAPSHOT_SELECTOR)
-    .getAttribute('data-canonical-snapshot-id');
-  await screenshot(page, 'today-offline-cached.png');
-  await context.setOffline(false);
+  let offlineSnapshotId;
+  let preservedOffline = null;
+  if (owner.enabled) {
+    await owner.locked(page);
+    preservedOffline = await verifiedStoreFingerprint(page);
+    if (!preservedBefore?.records || JSON.stringify(preservedBefore) !== JSON.stringify(preservedOffline)) {
+      evidence.failures.push('offline-snapshot-continuity');
+    }
+    await screenshot(page, 'today-offline-locked.png');
+    await context.setOffline(false);
+    await waitForShell(page);
+    await waitForTodayChart(page);
+    offlineSnapshotId = await page.locator(CANONICAL_SNAPSHOT_SELECTOR).getAttribute('data-canonical-snapshot-id');
+  } else {
+    await waitForShell(page);
+    await waitForTodayChart(page);
+    offlineSnapshotId = await page.locator(CANONICAL_SNAPSHOT_SELECTOR).getAttribute('data-canonical-snapshot-id');
+    await screenshot(page, 'today-offline-cached.png');
+    await context.setOffline(false);
+  }
   if (!onlineSnapshotId || offlineSnapshotId !== onlineSnapshotId) {
     evidence.failures.push('offline-snapshot-continuity');
   }
@@ -894,6 +942,7 @@ async function run() {
   await headlineContext.route('**/api/argus/**', async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === '/api/argus/today-headline') return route.continue();
+    if (owner.enabled && isOwnerCeremony(url.href, BACKEND_ORIGIN, route.request().method())) return route.continue();
     if (url.pathname === '/api/argus/chart-intelligence') {
       heldHeavyRequests += 1;
       await heavyHold;
@@ -935,6 +984,7 @@ async function run() {
   }
   releaseHeavyHold();
   await drainResponseTasks(evidence);
+  await owner.logout(headlinePage);
   await headlineContext.close();
 
   const verifiedRequests = evidence.network.filter(
@@ -975,7 +1025,7 @@ async function run() {
     },
     warmRevalidation: { warmRevalidating, warmSettled, warmTransition },
     headlineFirst: evidence.headlineFirst,
-    offline: { onlineSnapshotId, offlineSnapshotId, before304, after304 },
+    offline: { onlineSnapshotId, offlineSnapshotId, before304, after304, ownerLocked: owner.enabled, preservedBefore, preservedOffline },
     rateLimit: {
       responses: evidence.rateLimits,
       expectedConsoleErrors: consoleClassification.expected429,
@@ -996,12 +1046,29 @@ async function run() {
     reactWarnings: evidence.reactWarnings,
   });
   await writeJson('combinations.json', evidence.combinations);
+  await owner.logout(page);
   await context.close();
-  await browser.close();
+  await owner.scan(OUT_DIR);
+  if (owner.enabled) await writeJson('owner-artifacts-safe.json', { verified: true });
   if (evidence.failures.length) {
     throw new Error(`mobile Today acceptance failed: ${result.failures.join(', ')}`);
   }
   console.log(`mobile-today-acceptance: PASS (${evidence.combinations.length} combinations)`);
+  } catch (error) {
+    primaryFailure = error;
+    throw error;
+  } finally {
+    const cleanupFailures = [];
+    try {
+      for (const remaining of browser.contexts()) for (const tab of remaining.pages()) {
+        try { await owner.logout(tab); } catch { cleanupFailures.push('owner_logout_failed'); }
+      }
+    } finally { await browser.close(); }
+    if (cleanupFailures.length) {
+      await writeJson('cleanup-failure.json', { failures: cleanupFailures });
+      if (!primaryFailure) throw new Error('owner_cleanup_failed');
+    }
+  }
 }
 
 run().catch(async (error) => {

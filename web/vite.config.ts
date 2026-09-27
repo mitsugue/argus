@@ -23,6 +23,8 @@ const readProductVersion = (): string => {
   }
   return value.productVersion;
 };
+const ownerAuthMode = process.env.VITE_ARGUS_OWNER_AUTH_REQUIRED ?? '0';
+if (!['0', '1'].includes(ownerAuthMode)) throw new Error('invalid owner authentication mode');
 const frontendBuildSha = process.env.VITE_ARGUS_BUILD_SHA ?? 'local';
 const bundleVersion = readVersion();
 const bundleProductVersion = readProductVersion();
@@ -44,7 +46,8 @@ const argusVersionInjector = {
         `globalThis.__ARGUS_VERSION__=${JSON.stringify(bundleVersion)};`,
         `globalThis.__ARGUS_PRODUCT_VERSION__=${JSON.stringify(bundleProductVersion)};`,
         `globalThis.__ARGUS_BUILD_SHA__=${JSON.stringify(frontendBuildSha)};`,
-        `(function(){try{var wanted=${JSON.stringify(`${bundleVersion}|${bundleProductVersion}|${frontendBuildSha}`)};var stored=localStorage.getItem('argus.bundle.identity');var guard='argus_identity_purge_'+wanted;if(stored!==wanted&&!sessionStorage.getItem(guard)){sessionStorage.setItem(guard,'1');document.documentElement.style.visibility='hidden';(${repairAppCaches.toString()})(${JSON.stringify(base)}).catch(function(){}).finally(function(){location.reload()});}}catch(_){}})();`,
+        `globalThis.__ARGUS_OWNER_AUTH_MODE__=${JSON.stringify(ownerAuthMode)};`,
+        `(function(){try{var wanted=${JSON.stringify(`${bundleVersion}|${bundleProductVersion}|${frontendBuildSha}|${ownerAuthMode}`)};var stored=localStorage.getItem('argus.bundle.identity');var guard='argus_identity_purge_'+wanted;if(stored!==wanted&&!sessionStorage.getItem(guard)){sessionStorage.setItem(guard,'1');document.documentElement.style.visibility='hidden';(${repairAppCaches.toString()})(${JSON.stringify(base)}).catch(function(){}).finally(function(){location.reload()});}}catch(_){}})();`,
       ].join(''),
     }];
   },
@@ -113,6 +116,11 @@ export default defineConfig({
         navigateFallback: `${base}index.html`,
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
         runtimeCaching: [
+          {
+            // Authenticated reads never use an old public/offline API body.
+            urlPattern: ({ request }) => request.headers.has('X-ARGUS-OWNER-SESSION'),
+            handler: 'NetworkOnly',
+          },
           {
             urlPattern: /^https:\/\/fonts\.(?:googleapis|gstatic)\.com\/.*/i,
             handler: 'CacheFirst',
