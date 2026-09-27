@@ -25530,9 +25530,11 @@ def _persist_remote_recovery_sidecar_once(
         checkpoint_verified_at=verified_at,
         ledger_base_commit_sha=ledger_base_commit_sha,
         nonce_authority=nonce_authority)
+    del checkpoint_blob, journal
     envelope = argus_remote_recovery.encrypt_payload(
         payload, current["key"], key_identifier=current["keyId"],
         nonce=reservation._nonce)
+    del payload
     sidecar = argus_remote_recovery.build_sidecar(compact, envelope)
 
     def _verify_exact_sidecar(value):

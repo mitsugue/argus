@@ -231,7 +231,7 @@ def _validate_json_tree(value: Any) -> None:
     visit(value, 0)
 
 
-def _validate_targets(targets: Any, target_wal: int) -> Dict[str, Any]:
+def _validate_owned_targets(targets: Any, target_wal: int) -> Dict[str, Any]:
     if not isinstance(targets, Mapping) or set(targets) != set(TARGET_KEYS):
         raise RecoveryBundleError("recovery_target_coverage_invalid")
     for key, limit in LIST_LIMITS.items():
@@ -271,7 +271,11 @@ def _validate_targets(targets: Any, target_wal: int) -> Dict[str, Any]:
             verified < 0 or applied != target_wal or exported != target_wal or \
             verified > target_wal:
         raise RecoveryBundleError("recovery_target_wal_invalid")
-    return copy.deepcopy(dict(targets))
+    return targets
+
+
+def _validate_targets(targets: Any, target_wal: int) -> Dict[str, Any]:
+    return copy.deepcopy(dict(_validate_owned_targets(targets, target_wal)))
 
 
 def validate_nonce_authority(value: Any) -> Dict[str, Any]:
@@ -371,11 +375,11 @@ def build_payload(
     payload["payloadHash"] = _hash(payload)
     if len(_canonical(payload)) > MAX_PLAINTEXT_BYTES:
         raise RecoveryBundleError("recovery_payload_oversized")
-    validate_payload(payload)
+    _validate_owned_payload(payload, owned_targets=True)
     return payload
 
 
-def validate_payload(payload: Any) -> Dict[str, Any]:
+def _validate_owned_payload(payload: Any, *, owned_targets=False) -> Dict[str, Any]:
     if not isinstance(payload, Mapping) or payload.get(
             "schemaVersion") != PAYLOAD_SCHEMA:
         raise RecoveryBundleError("recovery_payload_schema_invalid")
@@ -424,7 +428,8 @@ def validate_payload(payload: Any) -> Dict[str, Any]:
     if (compact.get("missionTickDurability") or {}).get(
             "walAppliedSequence") != target_wal:
         raise RecoveryBundleError("recovery_target_wal_invalid")
-    targets = _validate_targets(payload.get("targets"), target_wal)
+    target_validator = _validate_owned_targets if owned_targets else _validate_targets
+    targets = target_validator(payload.get("targets"), target_wal)
     if not HASH_RE.fullmatch(str(payload.get("targetStateHash") or "")) or \
             _hash(targets) != payload.get("targetStateHash"):
         raise RecoveryBundleError("recovery_target_state_hash_mismatch")
@@ -439,7 +444,11 @@ def validate_payload(payload: Any) -> Dict[str, Any]:
     if section["opsJournal"] != targets["opsJournal"] or \
             section["integrityManifest"] != compact.get("integrityManifest"):
         raise RecoveryBundleError("recovery_journal_manifest_mismatch")
-    return copy.deepcopy(dict(payload))
+    return payload
+
+
+def validate_payload(payload: Any) -> Dict[str, Any]:
+    return copy.deepcopy(dict(_validate_owned_payload(payload)))
 
 
 def _public_header(
@@ -570,7 +579,43 @@ def encrypt_payload(
     return envelope
 
 
-def validate_envelope(envelope: Any) -> Dict[str, Any]:
+def _envelope_metrics(envelope):
+    """Compute exact length and body digest without a full ciphertext JSON copy."""
+    ciphertext = envelope.get("ciphertext")
+    if type(envelope) is not dict or type(ciphertext) is not str or not \
+            re.fullmatch(r"[A-Za-z0-9_+/=\-]*", ciphertext):
+        return (len(_canonical(envelope)), _hash({
+            name: value for name, value in envelope.items()
+            if name != "bundleHash"}))
+    size = 2
+    body_hash = hashlib.sha256()
+    body_hash.update(b"{")
+    body_count = 0
+    for index, name in enumerate(sorted(envelope)):
+        key = _canonical(name) + b":"
+        size += len(key) + int(index > 0)
+        included = name != "bundleHash"
+        if included:
+            if body_count:
+                body_hash.update(b",")
+            body_hash.update(key)
+            body_count += 1
+        if name == "ciphertext":
+            size += len(ciphertext) + 2
+            body_hash.update(b'"')
+            for offset in range(0, len(ciphertext), 65536):
+                body_hash.update(ciphertext[offset:offset + 65536].encode("ascii"))
+            body_hash.update(b'"')
+        else:
+            encoded = _canonical(envelope[name])
+            size += len(encoded)
+            if included:
+                body_hash.update(encoded)
+    body_hash.update(b"}")
+    return size, body_hash.hexdigest()
+
+
+def _validate_envelope_decoded(envelope: Any):
     if not isinstance(envelope, Mapping) or envelope.get(
             "schemaVersion") != SCHEMA:
         raise RecoveryBundleError("recovery_schema_invalid")
@@ -604,13 +649,16 @@ def validate_envelope(envelope: Any) -> Dict[str, Any]:
     if len(str(envelope.get("keyDerivationSalt") or "")) > 64 or len(str(
             envelope.get("nonce") or "")) > 32 or len(str(
             envelope.get("ciphertext") or "")) > \
-            ((MAX_ENCODED_BYTES * 4) // 3 + 8) or \
-            len(_canonical(envelope)) > MAX_ENCODED_BYTES:
+            ((MAX_ENCODED_BYTES * 4) // 3 + 8):
+        raise RecoveryBundleError("recovery_envelope_oversized")
+    encoded_size, canonical_body_hash = _envelope_metrics(envelope)
+    if encoded_size > MAX_ENCODED_BYTES:
         raise RecoveryBundleError("recovery_envelope_oversized")
     _decode_key_derivation_salt(envelope.get("keyDerivationSalt"))
-    nonce = _b64_decode(envelope.get("nonce"), "recovery_nonce_invalid")
-    ciphertext = _b64_decode(
-        envelope.get("ciphertext"), "recovery_ciphertext_invalid")
+    nonce_text = envelope.get("nonce")
+    ciphertext_text = envelope.get("ciphertext")
+    nonce = _b64_decode(nonce_text, "recovery_nonce_invalid")
+    ciphertext = _b64_decode(ciphertext_text, "recovery_ciphertext_invalid")
     if len(nonce) != 12 or len(ciphertext) < 17:
         raise RecoveryBundleError("recovery_envelope_oversized")
     digest = str(envelope.get("ciphertextSha256") or "")
@@ -618,17 +666,21 @@ def validate_envelope(envelope: Any) -> Dict[str, Any]:
             hashlib.sha256(ciphertext).hexdigest() != digest:
         raise RecoveryBundleError("recovery_ciphertext_hash_mismatch")
     bundle_hash = str(envelope.get("bundleHash") or "")
-    if not HASH_RE.fullmatch(bundle_hash) or _hash({
-            key_name: value for key_name, value in envelope.items()
-            if key_name != "bundleHash"}) != bundle_hash:
+    if not HASH_RE.fullmatch(bundle_hash) or \
+            canonical_body_hash != bundle_hash:
         raise RecoveryBundleError("recovery_bundle_hash_mismatch")
-    return copy.deepcopy(dict(envelope))
+    verified = copy.deepcopy(dict(envelope))
+    return verified, nonce, ciphertext, nonce_text, ciphertext_text
+
+
+def validate_envelope(envelope: Any) -> Dict[str, Any]:
+    return _validate_envelope_decoded(envelope)[0]
 
 
 def decrypt_envelope(
         envelope: Mapping[str, Any], key: bytes, *,
         key_identifier: str) -> Dict[str, Any]:
-    verified = validate_envelope(envelope)
+    verified, nonce, ciphertext, nonce_text, ciphertext_text = _validate_envelope_decoded(envelope)
     if not isinstance(key, bytes) or len(key) != 32:
         raise RecoveryBundleError("recovery_key_invalid")
     if verified["keyId"] != validate_key_id(key_identifier):
@@ -638,9 +690,12 @@ def decrypt_envelope(
         "keyDerivationSalt", "generatedAt", "buildIdentity",
         "targetWalSequence", "compactReceiptHash", "checkpointVerifiedAt",
         "checkpointId", "ledgerBaseCommitSha", "keyId", "generationId")}
-    nonce = _b64_decode(verified["nonce"], "recovery_nonce_invalid")
-    ciphertext = _b64_decode(
-        verified["ciphertext"], "recovery_ciphertext_invalid")
+    # Preserve legacy behavior if unusual Mapping/deepcopy changes fields.
+    if verified["nonce"] != nonce_text:
+        nonce = _b64_decode(verified["nonce"], "recovery_nonce_invalid")
+    if verified["ciphertext"] != ciphertext_text:
+        ciphertext = _b64_decode(
+            verified["ciphertext"], "recovery_ciphertext_invalid")
     try:
         data_key = _derive_data_key(key, header)
         plaintext = AESGCM(data_key).decrypt(
@@ -651,7 +706,7 @@ def decrypt_envelope(
         payload = json.loads(_unpadded_plaintext(plaintext).decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise RecoveryBundleError("recovery_payload_unreadable") from exc
-    payload = validate_payload(payload)
+    payload = _validate_owned_payload(payload, owned_targets=True)
     _validate_nonce_authority_binding(payload, key, nonce)
     if _public_header(
             payload, key_identifier=key_identifier,
@@ -677,6 +732,20 @@ def validate_pair(
     return payload
 
 
+def _sidecar_size(sidecar: Any) -> int:
+    # Only the exact built-in ASCII ciphertext string can be counted without
+    # encoding. All other values retain the original canonical encoder.
+    recovery = sidecar.get("recovery") if type(sidecar) is dict else None
+    ciphertext = recovery.get("ciphertext") if type(recovery) is dict else None
+    if type(ciphertext) is str and re.fullmatch(r"[A-Za-z0-9_+/=\-]*", ciphertext):
+        small_recovery = dict(recovery)
+        small_recovery["ciphertext"] = ""
+        small_sidecar = dict(sidecar)
+        small_sidecar["recovery"] = small_recovery
+        return len(_canonical(small_sidecar)) + len(ciphertext)
+    return len(_canonical(sidecar))
+
+
 def build_sidecar(
         readback: Mapping[str, Any], envelope: Mapping[str, Any]) -> Dict[str, Any]:
     """Bind the public compact proof and encrypted recovery as one fsynced file."""
@@ -699,7 +768,7 @@ def build_sidecar(
         "readback": compact,
         "recovery": verified,
     }
-    if len(_canonical(sidecar)) > MAX_SIDECAR_BYTES:
+    if _sidecar_size(sidecar) > MAX_SIDECAR_BYTES:
         raise RecoveryBundleError("recovery_sidecar_oversized")
     return sidecar
 
@@ -710,7 +779,7 @@ def validate_sidecar(sidecar: Any) -> Dict[str, Any]:
             sidecar.get("schemaVersion") != SIDECAR_SCHEMA:
         raise RecoveryBundleError("recovery_sidecar_schema_invalid")
     _validate_outer_json_tree(sidecar)
-    if len(_canonical(sidecar)) > MAX_SIDECAR_BYTES:
+    if _sidecar_size(sidecar) > MAX_SIDECAR_BYTES:
         raise RecoveryBundleError("recovery_sidecar_oversized")
     return build_sidecar(sidecar.get("readback"), sidecar.get("recovery"))
 
