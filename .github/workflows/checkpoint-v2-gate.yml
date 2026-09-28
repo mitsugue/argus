@@ -1,8 +1,13 @@
 name: checkpoint-v2-gate
 
 on:
-  pull_request:
-    branches: [main]
+  # Owner decision 2026-09-28: the 4 GiB checkpoint proofs run after a merge to
+  # main and nightly, not on every pull request.  A pull request is still
+  # judged by the required checks (backend-rules, frontend, gate); this
+  # workflow's jobs keep proving the merged tree against production shape.
+  push:
+    branches: [main, codex/checkpoint-v2-architecture, "codex/recovery-*"]
+    paths:
     # The 4 GiB cgroup, mapping-attribution and isolated-writer closures take
     # 45-60 minutes and prove the BACKEND process. Run them only when a
     # backend-sensitive path changes (the same allowlist Render deploys on,
@@ -10,7 +15,6 @@ on:
     # documentation candidates keep the ordinary ci / release-gate /
     # market-public-acceptance checks; none of those consume this
     # workflow's artifacts.
-    paths:
       - scanner.py
       - wsgi.py
       - "argus_*.py"
@@ -38,8 +42,9 @@ on:
       - test_argus_memory_attribution.py
       - "test_remote_recovery_*.py"
       - .github/workflows/checkpoint-v2-gate.yml
-  push:
-    branches: [codex/checkpoint-v2-architecture, "codex/recovery-*"]
+  schedule:
+    - cron: '30 18 * * *'   # 03:30 JST nightly proof of the current main
+  workflow_dispatch: {}
 
 permissions:
   contents: read
