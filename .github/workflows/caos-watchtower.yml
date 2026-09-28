@@ -152,7 +152,7 @@ jobs:
             exit 1
           }
           for i in 1 2 3 4; do
-            curl -sf --max-time 60 "$BE/api/argus/caos-watchtower/status" \
+            curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/caos-watchtower/status" \
               -o "$RUNNER_TEMP/watchtower-status.json" && break
             echo "retry $i"; sleep 15
           done
@@ -166,12 +166,12 @@ jobs:
           print(f"sources={len(d.get('sources', []))} live={live} alerts={len(d.get('alerts', []))} "
                 f"patrol={ph.get('status')} deep24h={ph.get('deepSweeps24h')}")
           PY
-          curl -sf --max-time 60 "$BE/api/argus/caos/watchtower-plan" \
+          curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/caos/watchtower-plan" \
             -o "$RUNNER_TEMP/watchtower-plan.json" || echo '{}' > "$RUNNER_TEMP/watchtower-plan.json"
           # V11.5.5: patrol-health = the 24h soak proof (public GET, no AI endpoints).
           # Its embedded 24h ledger is what a restarted dyno restores from.
           for i in 1 2 3; do
-            curl -sf --max-time 60 "$BE/api/argus/caos/patrol-health" \
+            curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/caos/patrol-health" \
               -o "$RUNNER_TEMP/patrol-health.json" && break
             echo "retry patrol-health $i"; sleep 10
           done
@@ -191,6 +191,7 @@ jobs:
               --recovery "$RUNNER_TEMP/osint-recovery.json" > /dev/null
             curl --fail --silent --show-error --max-time 60 \
               --max-filesize "$READBACK_MAX_BYTES" \
+              -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
               "$BE/api/argus/osint/remote-readback" \
               -o "$RUNNER_TEMP/osint-readback.json"
             printf '%s' encrypted_recovery_v1 > \
@@ -209,6 +210,7 @@ jobs:
             # The explicit cap bounds even this compatibility download.
             for i in 1 2 3; do
               curl -sf --max-time 60 --max-filesize 268435456 \
+                -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
                 "$BE/api/argus/osint/memory-snapshot" \
                 -o "$RUNNER_TEMP/osint-memory.json" && break
               echo "retry memory $i"; sleep 10

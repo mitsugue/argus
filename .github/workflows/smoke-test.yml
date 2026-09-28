@@ -33,14 +33,18 @@ jobs:
       # the assertions don't fail on a still-WARMING regime etc. (the noisy-email
       # cause). Cheap; the smoke's own 5-retry backoff covers the rest.
       - name: Warm caches before asserting
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
           for ep in rates market-regime japan-watchlist us-watchlist crypto-watchlist market-news events-active action-labels; do
-            curl -s --max-time 40 "$BE/api/argus/$ep" > /dev/null || true
+            curl -s --max-time 40 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/$ep" > /dev/null || true
           done
           sleep 45
 
       - name: Run smoke test
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: python3 smoke_test.py
 
       - name: Notify on failure (skipped without NTFY_TOPIC)
