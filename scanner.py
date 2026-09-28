@@ -757,202 +757,62 @@ def finnhub_rate_limit():
 HTML = """<!DOCTYPE html>
 <html lang="ja"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>A.R.G.U.S. — backend</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
+<meta name="robots" content="noindex">
+<title>ARGUS backend — health</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0d0d0d;color:#c8c8c8;font-family:'JetBrains Mono',monospace;font-size:12px;padding:10px;max-width:600px;margin:0 auto;-webkit-text-size-adjust:100%}
-header{display:flex;align-items:center;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #1e1e1e}
-.logo{font-size:16px;font-weight:700;color:#74fafd;letter-spacing:2px;cursor:pointer}
-.sub{font-size:10px;color:#4a4a4a;margin-top:2px}
-.time{font-size:14px;color:#74fafd;font-weight:700;letter-spacing:1px}
-.lbl{color:#4a4a4a;font-size:10px;margin:8px 0 4px;letter-spacing:2px;text-transform:uppercase}
-.phase-bar{display:flex;gap:3px;margin-bottom:8px}
-.ph{flex:1;height:6px;background:#1a1a1a;border-radius:1px;position:relative;overflow:hidden;transition:background .3s}
-.ph.done{background:#4ec94e}.ph.active{background:#74fafd;animation:pulse .8s infinite alternate}
-@keyframes pulse{from{opacity:1}to{opacity:.4}}
-@keyframes spin{to{transform:rotate(360deg)}}
-@keyframes fadeIn{from{opacity:0}to{opacity:1}}
-.btn-row{display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap}
-.ph-btn{flex:1;min-width:50px;padding:8px 2px;background:#1a1a1a;border:1px solid #2a2a2a;color:#74fafd;font-family:inherit;font-size:10px;text-align:center;cursor:pointer;border-radius:3px;line-height:1.4;transition:all .15s;-webkit-tap-highlight-color:transparent}
-.ph-btn:active{background:#2a2a2a;transform:scale(.96)}
-.ph-btn:disabled{opacity:.3;cursor:default}
-.spinner{display:inline-block;width:10px;height:10px;border:2px solid #333;border-top-color:#74fafd;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:4px}
-.sentinel-box{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:3px;margin-bottom:8px;font-size:10px;overflow:hidden}
-.sentinel-header{display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer}
-.sentinel-body{max-height:0;overflow:hidden;transition:max-height .3s;padding:0 10px;font-size:10px;color:#888}
-.sentinel-body.open{max-height:400px;padding:8px 10px}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-.info-box{background:#1a1a1a;border:1px solid #1e1e1e;border-radius:3px;padding:8px 10px}
-.info-lbl{font-size:10px;color:#4a4a4a;margin-bottom:4px}
-.info-val{font-size:11px;color:#c8c8c8;line-height:1.5;word-break:break-all}
-.log-box{background:#0a0a0a;border:1px solid #1e1e1e;border-radius:3px;padding:8px 10px;max-height:200px;overflow-y:auto;font-size:10px;line-height:1.6;color:#888;-webkit-overflow-scrolling:touch}
-.cursor{display:inline-block;width:6px;height:12px;background:#74fafd;animation:pulse 1s infinite;vertical-align:text-bottom;margin-left:2px}
-.stock-tabs{display:flex;gap:2px;margin-bottom:6px;flex-wrap:wrap}
-.stock-tabs button{padding:5px 10px;background:#1a1a1a;border:1px solid #2a2a2a;color:#888;font-family:inherit;font-size:10px;cursor:pointer;border-radius:3px;transition:all .15s}
-.stock-tabs button.on{background:#2a2a2a;color:#74fafd;border-color:#74fafd}
-.card{background:#1a1a1a;border:1px solid #2a2a2a;border-left:3px solid #3d9ea1;border-radius:3px;padding:10px;margin-bottom:6px;cursor:pointer;transition:all .15s}
-.card.sel{border-color:#74fafd;background:#1e2a2e}
-.card-hd{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.c-code{color:#74fafd;font-weight:700;font-size:12px}
-.c-name{color:#c8c8c8;font-size:11px}
-.c-chg{font-size:11px;font-weight:700;margin-left:auto}
-.c-tgt{color:#4a4a4a;font-size:10px}
-.meta-row{display:flex;align-items:center;gap:8px;margin-top:4px;flex-wrap:wrap}
-.stars{color:#f0a500;font-size:10px}
-.tag{background:#1e2a1e;color:#4ec94e;font-size:9px;padding:1px 6px;border-radius:2px}
-.reason,.stoploss{font-size:10px;margin-top:4px;line-height:1.5;color:#888}
-.stoploss{color:#f44747}
-.reason em,.stoploss em{font-style:normal;color:#4a4a4a}
-.action-banner{margin-top:8px;padding:8px;background:#0d1a1e;border:1px solid #74fafd;border-radius:3px}
-.action-title{color:#74fafd;font-size:11px;font-weight:700;margin-bottom:6px}
-.action-row{display:flex;gap:4px;flex-wrap:wrap}
-.action-btn{padding:6px 12px;border:1px solid #2a2a2a;border-radius:3px;font-family:inherit;font-size:10px;cursor:pointer;transition:all .15s}
-.action-btn.primary{background:#1e3a3e;color:#74fafd;border-color:#74fafd}
-.action-btn.secondary{background:#1a1a1a;color:#c8c8c8}
-.action-btn.cancel{background:#1a1a1a;color:#888;border-color:#444}
-.action-note{font-size:9px;color:#4a4a4a;margin-top:6px}
-.ob-panel{margin-top:6px;padding:6px;background:#0a0a0a;border:1px solid #1e1e1e;border-radius:3px;font-size:9px}
-.ob-title{color:#4a4a4a;font-size:9px;margin-bottom:4px;letter-spacing:1px}
-.ob-row{display:flex;gap:4px;margin:1px 0}
-.ob-bid{color:#4ec94e}.ob-ask{color:#f44747}.ob-vol{color:#4a4a4a;margin-left:auto}
-.margin-alert{background:#2a1a1a;border:1px solid #f44747;border-radius:3px;padding:6px 8px;margin-top:6px;font-size:10px;color:#f44747}
-.ph5-result{margin-bottom:14px;padding:10px 12px;background:#1e2a1e;border:1px solid #2d4a2d;border-radius:3px;animation:fadeIn .3s}
-.ph5-overall{color:#4ec94e;font-size:11px;font-weight:700;margin-bottom:6px}
-.ph5-eval{margin:4px 0;font-size:10px;color:#c8c8c8;line-height:1.5}
-.ph5-eval .ev-code{color:#74fafd;font-weight:700}
-.ph5-eval .ev-advice{color:#3d9ea1;margin-left:8px}
-.price-tag{font-size:11px;color:#74fafd;margin-left:auto;font-weight:700}
-.price-chg-up{color:#4ec94e}.price-chg-dn{color:#f44747}
+body{background:#0b1118;color:#c8d0d8;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Hiragino Sans","Noto Sans JP",sans-serif;font-size:14px;line-height:1.6;padding:16px;max-width:640px;margin:0 auto}
+h1{font-size:18px;letter-spacing:1px;color:#74fafd;margin-bottom:2px}
+.sub{font-size:12px;color:#7a8794;margin-bottom:14px}
+.notice{border:1px solid #2a3a4a;border-radius:8px;padding:10px 12px;margin-bottom:14px;background:#111a24;font-size:13px}
+.notice a{color:#7bd88f;font-weight:600}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.card{background:#111a24;border:1px solid #1e2a36;border-radius:8px;padding:10px 12px}
+.k{font-size:11px;color:#7a8794;letter-spacing:1px;text-transform:uppercase}
+.v{font-size:14px;color:#e6edf3;word-break:break-all;margin-top:2px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.ok{color:#4ec94e}.bad{color:#f44747}.dim{color:#7a8794}
+ul{list-style:none}li{margin:4px 0}li a{color:#74fafd}
+.foot{font-size:11px;color:#56636f;margin-top:16px}
+@media (max-width:420px){.grid{grid-template-columns:1fr}}
 </style></head><body>
-<div style="border:1px solid #3a3a3a;border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:11px;line-height:1.7;background:#141414">
+<h1>ARGUS backend</h1>
+<div class="sub">運用シェル(backend health画面)— アプリ本体ではありません</div>
+<div class="notice">
 これは<b>ARGUS backend health画面</b>(運用シェル)です。アプリ本体(PWA)はこちら →
-<a href="https://mitsugue.github.io/argus/" style="color:#7bd88f">mitsugue.github.io/argus</a><br>
-※この画面の表記・バージョンはbackendシェルのもので、アプリ本体の版とは別です。秘密情報は表示されません。
+<a href="https://mitsugue.github.io/argus/">mitsugue.github.io/argus</a><br>
+※この画面はbackendプロセスの稼働確認専用で、表示する版はbackendのものです。アプリ本体の版とは別に管理されます。秘密情報は表示されません。
+この画面から分析・スキャン・通知を起動することはできません。
 </div>
-<header>
-  <div><div class="logo" id="logoBtn" onclick="location.reload()">A.R.G.U.S.</div><div class="sub">velvet-razor v2.0 — Autonomous Risk and Global Uncertainty Scanner</div></div>
-  <div style="margin-left:auto;text-align:right">
-  <div class="time" id="clk">--:--:-- ET</div>
-  <div id="statusBadge" style="font-size:11px;font-weight:700;color:#4ec94e;margin-top:2px">&#9679; ONLINE</div>
+<div class="grid">
+  <div class="card"><div class="k">liveness /healthz</div><div class="v dim" id="live">確認中…</div></div>
+  <div class="card"><div class="k">readiness /readyz</div><div class="v dim" id="ready">確認中…</div></div>
+  <div class="card"><div class="k">backend version</div><div class="v dim" id="ver">—</div></div>
+  <div class="card"><div class="k">build sha</div><div class="v dim" id="sha">—</div></div>
 </div>
-</header>
-<div style="display:flex;align-items:center;margin-bottom:6px">
-  <span class="lbl" style="margin:0">-- PHASE PROGRESS --</span>
-  <span id="marketSession" style="margin-left:auto;font-size:10px;color:#4a4a4a">Detecting...</span>
+<div class="card">
+  <div class="k">公開エンドポイント</div>
+  <ul>
+    <li><a href="/healthz">/healthz</a> — プロセスliveness(常に200・build識別付き)</li>
+    <li><a href="/readyz">/readyz</a> — 復元完了後に200(未完了は503)</li>
+    <li><a href="/api/argus/data-quality/status">/api/argus/data-quality/status</a> — 公開の稼働品質(秘密なし)</li>
+  </ul>
 </div>
-<div class="phase-bar" id="phBar"></div>
-<div class="lbl">-- MANUAL SCAN --</div>
-<div class="btn-row">
-  <button class="ph-btn" id="b1" data-phase="1">&#128225;<br>Ph.1</button>
-  <button class="ph-btn" id="b2" data-phase="2">&#128300;<br>Ph.2</button>
-  <button class="ph-btn" id="b3" data-phase="3">&#9889;<br>Ph.3</button>
-  <button class="ph-btn" id="b4" data-phase="4">&#127942;<br>Ph.4</button>
-  <button class="ph-btn" id="b5" data-phase="5">&#128200;<br>Ph.5</button>
-  <button class="ph-btn" id="b0" data-phase="0">&#128640;<br>All Ph.</button>
-  <button class="ph-btn" id="bReset" onclick="resetScan()" style="border-color:#666;color:#888">&#8635;<br>Reset</button>
-</div>
-<div class="sentinel-box" id="sentBox">
-  <div class="sentinel-header" id="sentHdr">
-    <span id="sentStatus" style="color:#74fafd;font-weight:700;min-width:150px">&#9632; SENTINEL: HOLD</span>
-    <span id="sentBars" style="color:#ce9178;letter-spacing:3px">&#9617;&#9617;&#9617;&#9617;&#9617;</span>
-    <span id="sentRisk" style="color:#4a4a4a">(0/5)</span>
-    <span id="sentShort" style="color:#3d9ea1;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">-- Loading...</span>
-    <span id="sentArr" style="color:#4a4a4a;font-size:10px">&#9660;</span>
-  </div>
-  <div class="sentinel-body" id="sentBody"></div>
-</div>
-<div class="grid2">
-  <div class="info-box"><div class="info-lbl">&#128202; Market</div><div class="info-val" id="mkt">-</div></div>
-  <div class="info-box"><div class="info-lbl">&#127760; Macro</div><div class="info-val" id="mac">-</div></div>
-</div>
-<div class="grid2" style="margin-top:6px">
-  <div class="info-box"><div class="info-lbl">&#128200; VIX / S&amp;P500</div><div class="info-val" id="finnhubVal">VIX: -- &nbsp; S&P500: --</div></div>
-  <div class="info-box" id="finnhubAlertBox" style="display:none"><div class="info-lbl" style="color:#f44747">&#9888; Macro Alert</div><div class="info-val" id="finnhubAlert" style="color:#f44747;font-size:11px">-</div></div>
-</div>
-<div class="lbl">-- SCAN LOG --</div>
-<div class="log-box" id="log"><span style="color:#3d9ea1">Initializing...<span class="cursor"></span></span></div>
-<div class="lbl" style="margin-top:14px">-- TODAY'S CANDIDATES --</div>
-<div class="stock-tabs" id="stockTabs"></div>
-<div id="stockList"><div style="color:#4a4a4a;font-size:11px;padding:12px">No scan results yet.</div></div>
+<div class="foot" id="at"></div>
 <script>
-var sel=null,busy=false,sentOpen=false,curTab=4,lastState={},userChoseTab=false;
-var scanningPhase=0,scanStartTime=0,progressInterval=null;
-var phaseEstimates={1:45,2:40,3:50,4:30,5:30,0:200};
-var phaseActions={1:['Fetching stocks','Sentinel check','AI analyzing','Narrowing'],2:['Re-scoring','AI analyzing','Ranking'],3:['Cross-checking','Rating check','Gemini grounding'],4:['Order book','Selecting TOP3','Verify'],5:['Prices','Momentum','Order book']};
-var btnLabels={0:'&#128640;<br>All Ph.',1:'&#128225;<br>Ph.1',2:'&#128300;<br>Ph.2',3:'&#9889;<br>Ph.3',4:'&#127942;<br>Ph.4',5:'&#128200;<br>Ph.5'};
-var medals=['&#127941;','&#127942;','&#127943;'];
-
-function startProgressTimer(p){scanningPhase=p;scanStartTime=Date.now();if(progressInterval)clearInterval(progressInterval);progressInterval=setInterval(function(){var e=(Date.now()-scanStartTime)/1000,d=scanningPhase>0?scanningPhase:p,est=phaseEstimates[d]||90,pct=Math.min(100,Math.round(e/est*100));if(window._pcm&&window._pcm[d])pct=100;var b=document.getElementById('statusBadge');if(b&&scanningPhase>0){var a=phaseActions[d]||['Processing'],ai=Math.min(Math.floor(pct/100*a.length),a.length-1);b.innerHTML='<span style="display:inline-block;width:7px;height:7px;border:2px solid #333;border-top-color:#74fafd;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:4px"></span>Ph.'+d+' '+a[ai]+' '+pct+'%';b.style.color='#74fafd';}},500);}
-function stopProgressTimer(){scanningPhase=0;if(progressInterval){clearInterval(progressInterval);progressInterval=null;}}
-
-setInterval(function(){
-  var now=new Date();
-  var etStr=now.toLocaleString('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
-  var jstStr=now.toLocaleString('ja-JP',{timeZone:'Asia/Tokyo',hour:'2-digit',minute:'2-digit',hour12:false});
-  var etDate=new Date(now.toLocaleString('en-US',{timeZone:'America/New_York'}));
-  var days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  document.getElementById('clk').textContent=days[etDate.getDay()]+' '+etStr+' ET ('+jstStr+' JST)';
-  var h=etDate.getHours(),m=etDate.getMinutes(),dow=etDate.getDay();
-  var ms=document.getElementById('marketSession');
-  if(ms){var s,c;if(dow===0||dow===6){s='Closed (Weekend)';c='#4a4a4a';}else if(h<4){s='Closed';c='#4a4a4a';}else if(h<9||(h===9&&m<30)){s='Pre-Market';c='#ce9178';}else if(h<16){s='MARKET LIVE';c='#f44747';}else if(h<20){s='After Hours';c='#3d9ea1';}else{s='Closed';c='#4a4a4a';}ms.textContent=s;ms.style.color=c;}
-},1000);
-
-setInterval(function(){fetchState();},3000);
-
-document.getElementById('sentHdr').addEventListener('click',function(){sentOpen=!sentOpen;document.getElementById('sentBody').classList.toggle('open',sentOpen);document.getElementById('sentArr').innerHTML=sentOpen?'&#9650;':'&#9660;';});
-document.querySelectorAll('[data-phase]').forEach(function(btn){btn.addEventListener('click',function(){run(parseInt(this.dataset.phase));});});
-document.getElementById('stockTabs').addEventListener('click',function(e){var b=e.target;while(b&&b!==this&&!b.dataset.tab)b=b.parentNode;if(!b||!b.dataset.tab)return;curTab=parseInt(b.dataset.tab);userChoseTab=true;render(lastState);});
-
-async function resetScan(){if(busy)return;if(!confirm('Reset scan data?'))return;try{await fetch('/api/reset',{method:'POST'});sel=null;curTab=1;lastState={};userChoseTab=false;await fetchState();}catch(e){}}
-async function fetchState(){try{var r=await fetch('/api/state?t='+Date.now());var d=await r.json();lastState=d;render(d);if(d.scanning&&!busy){busy=true;if(scanningPhase===0)startProgressTimer((d.phase||0)+1);}}catch(e){}}
-
-function render(d){if(!d)return;
-  var pb=document.getElementById('phBar');if(pb){var h='';for(var i=1;i<=5;i++){var c='ph';if(d.phase>=i)c+=' done';else if(d.scanning&&d.phase===i-1)c+=' active';h+='<div class="'+c+'"></div>';}pb.innerHTML=h;}
-  var me=document.getElementById('mkt');if(me)me.textContent=d.market_condition||'-';
-  var ma=document.getElementById('mac');if(ma)ma.textContent=d.macro_summary||'-';
-  var fm=d.finnhub_macro||{},fv=document.getElementById('finnhubVal');
-  if(fv)fv.innerHTML='VIX: '+(fm.vix||'--')+' &nbsp; S&P500: '+(fm.sp500_change!=null?(fm.sp500_change>=0?'+':'')+fm.sp500_change+'%':'--');
-  var fab=document.getElementById('finnhubAlertBox'),fa=document.getElementById('finnhubAlert');
-  if(fm.fear_level&&fm.fear_level!=='NORMAL'&&fm.fear_level!=='CALM'){if(fab)fab.style.display='';if(fa)fa.textContent=fm.fear_level+' (VIX: '+(fm.vix_spike_pct||0).toFixed(1)+'%)';}else{if(fab)fab.style.display='none';}
-  var sent=d.sentinel||{},ss=document.getElementById('sentStatus');
-  if(ss){if(sent.action==='SELL_ALL'){ss.innerHTML='SENTINEL: SELL ALL';ss.style.color='#f44747';}else{ss.innerHTML='SENTINEL: HOLD';ss.style.color='#74fafd';}}
-  var sb=document.getElementById('sentBody');if(sb&&sent.reason)sb.innerHTML='<div style="color:#f44747">'+sent.reason+'</div>';
-  var le=document.getElementById('log');
-  if(le&&d.log&&d.log.length){le.innerHTML=d.log.map(function(l){var c='#888';if(l.indexOf('ERROR')>=0)c='#f44747';else if(l.indexOf('complete')>=0||l.indexOf('HOLD')>=0)c='#4ec94e';else if(l.indexOf('Ph.')>=0)c='#74fafd';return '<div style="color:'+c+'">'+l+'</div>';}).join('');le.scrollTop=le.scrollHeight;}
-  var tabs=document.getElementById('stockTabs');
-  if(tabs){var hd=[d.top20&&d.top20.length?1:0,d.top10&&d.top10.length?2:0,d.top5&&d.top5.length?3:0,d.top3_final&&d.top3_final.length?4:0,d.post_open_result?5:0].filter(function(x){return x>0;});if(hd.length){tabs.innerHTML=hd.map(function(t){var l=['','Ph.1(20)','Ph.2(10)','Ph.3(5)','TOP3','Ph.5'][t];return '<button data-tab="'+t+'" class="'+(curTab===t?'on':'')+'">'+l+'</button>';}).join('');}if(!userChoseTab&&hd.length)curTab=hd[hd.length-1];}
-  var stocks=[];var isFinal=false;
-  if(curTab===1)stocks=d.top20||[];else if(curTab===2)stocks=d.top10||[];else if(curTab===3)stocks=d.top5||[];else if(curTab===4){stocks=d.top3_final||[];isFinal=true;}else if(curTab===5){renderPh5(d);return;}
-  renderStocks(stocks,isFinal,d.realtime_prices||{});
-  if(!d.scanning){var bg=document.getElementById('statusBadge');if(bg&&scanningPhase===0){bg.innerHTML='&#9679; ONLINE';bg.style.color='#4ec94e';}}
-  // Dry Run badge
-  var ms2=document.getElementById('marketSession');
-  if(ms2&&d.dry_run){ms2.textContent='🔬 DRY RUN (Closed Market)';ms2.style.color='#f0a500';}
-}
-
-function renderPh5(d){var el=document.getElementById('stockList');var por=d.post_open_result||{};var evals=por.evaluations||[];var pr=d.realtime_prices||{};var h='';
-  if(por.overall){h+='<div class="ph5-result"><div class="ph5-overall">'+por.overall+'</div>';evals.forEach(function(ev){var ic=ev.status==='HOLD'?'OK':'ALERT';var p=pr[ev.code]||{};var pt=p.change_pct!=null?'<span class="price-tag '+(p.change_pct>=0?'price-chg-up':'price-chg-dn')+'">'+(p.change_pct>=0?'+':'')+p.change_pct+'%</span>':'';h+='<div class="ph5-eval"><span class="ev-code">'+ic+' '+ev.code+'</span>'+pt+'<br>'+ev.message+'<span class="ev-advice"> -> '+ev.action_advice+'</span></div>';});h+='</div>';}
-  if(d.margin_alert)h+='<div class="margin-alert">'+d.margin_alert+'</div>';
-  var obs=d.order_book||{};Object.keys(obs).forEach(function(sym){var ob=obs[sym];h+='<div class="ob-panel"><div class="ob-title">ORDER BOOK: '+sym+'</div>';h+='<div style="color:#4a4a4a">AR:'+(ob.absorption_ratio!=null?ob.absorption_ratio.toFixed(2):'-')+' Vacuum:'+(ob.downside_efficiency!=null?ob.downside_efficiency.toFixed(2):'-')+'</div>';if(ob.bids)ob.bids.slice(0,5).forEach(function(b){h+='<div class="ob-row"><span class="ob-bid">BID $'+b[0]+'</span><span class="ob-vol">x'+b[1]+'</span></div>';});if(ob.asks)ob.asks.slice(0,5).forEach(function(a){h+='<div class="ob-row"><span class="ob-ask">ASK $'+a[0]+'</span><span class="ob-vol">x'+a[1]+'</span></div>';});h+='</div>';});
-  el.innerHTML=h||'<div style="color:#4a4a4a;font-size:11px;padding:12px">Ph.5 not yet executed.</div>';}
-
-function renderStocks(stocks,isFinal,prices){prices=prices||{};
-  var h=stocks.map(function(s,i){var isSel=sel===s.symbol;var conf=s.confidence||0;var stars='\u2605'.repeat(conf)+'\u2606'.repeat(5-conf);var score=s.score||s.final_score||'-';var chg=s.change_pct!=null?(s.change_pct>=0?'+':'')+Number(s.change_pct).toFixed(2)+'%':'';var bl=isFinal?(i===0?'#74fafd':i===1?'#3d9ea1':'#4a4a4a'):'#3d9ea1';var pf=isFinal&&i<3?medals[i]+' ':'#'+(i+1)+' ';
-    var ah='';if(isSel){ah='<div class="action-banner"><div class="action-title">'+s.symbol+' - '+(s.name||'')+'</div><div class="action-row"><button class="action-btn primary" data-action="copy" data-code="'+s.symbol+'">Copy Ticker</button><button class="action-btn secondary" data-action="yahoo" data-code="'+s.symbol+'">Yahoo Finance</button><button class="action-btn secondary" data-action="moomoo" data-code="'+s.symbol+'">moomoo</button><button class="action-btn cancel" data-action="cancel">X</button></div><div class="action-note">Copy ticker and place order on moomoo at 09:30 ET</div></div>';}
-    var mh='';if(s.margin_deadline)mh='<div class="margin-alert">Margin 20%: -'+s.margin_drop_pct+'% ($'+s.margin_deadline+')</div>';
-    return '<div class="card'+(isSel?' sel':'')+'" data-code="'+s.symbol+'" style="border-left-color:'+bl+'"><div class="card-hd"><span style="color:#4a4a4a;font-size:11px;min-width:24px">'+pf+'</span><span class="c-code">'+s.symbol+'</span><span class="c-name">'+(s.name||'')+'</span>'+(chg?'<span class="c-chg '+(s.change_pct>=0?'price-chg-up':'price-chg-dn')+'">'+chg+'</span>':'')+'</div><div class="meta-row">'+(conf?'<span class="stars">'+stars+'</span>':'')+'<span style="color:#74fafd;font-size:10px">Score:'+score+'</span>'+(s.theme?'<span class="tag">'+s.theme+'</span>':'')+(s.grade?'<span class="tag" style="background:#1e1e2a;color:#ce9178">Grade:'+s.grade+'</span>':'')+'</div><div class="reason"><em>根拠: </em>'+(s.reason||s.buy_reason||'')+'</div>'+(s.sell_trigger?'<div class="stoploss"><em>損切り: </em>'+s.sell_trigger+'</div>':'')+(s.whale_signal?'<div style="font-size:10px;color:#f0a500;margin-top:4px">'+s.whale_signal+'</div>':'')+mh+ah+'</div>';}).join('');
-  document.getElementById('stockList').innerHTML=h||'<div style="color:#4a4a4a;font-size:11px;padding:12px">No data.</div>';}
-
-document.addEventListener('click',function(e){var ab=e.target.closest('[data-action]');if(ab){var act=ab.dataset.action;if(act==='copy'){navigator.clipboard.writeText(ab.dataset.code);var m=document.createElement('div');m.style.cssText='position:fixed;top:20px;right:20px;background:#4ec94e;color:#1a1a1a;padding:10px 16px;border-radius:3px;font-family:monospace;font-size:12px;font-weight:700;z-index:9999';m.textContent=ab.dataset.code+' copied';document.body.appendChild(m);setTimeout(function(){m.remove();},2500);}else if(act==='yahoo'){window.open('https://finance.yahoo.com/quote/'+ab.dataset.code,'_blank');}else if(act==='moomoo'){window.open('https://www.moomoo.com/stock/'+ab.dataset.code+'-US','_blank');}else if(act==='cancel'){sel=null;render(lastState);}return;}var card=e.target.closest('[data-code]');if(card){var code=card.dataset.code;sel=sel===code?null:code;render(lastState);}});
-
-async function run(id){if(busy)return;busy=true;var prev=lastState.phase||0;startProgressTimer(id===0?1:id);document.querySelectorAll('[data-phase]').forEach(function(b){b.disabled=true;});var tgt=document.getElementById('b'+id);if(tgt)tgt.innerHTML='<span class="spinner"></span>Run';
-  try{await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phase:id})});var to=0;while(to<300){await new Promise(function(r){setTimeout(r,3000);});to+=3;var resp=await fetch('/api/state?t='+Date.now());var d2=await resp.json();lastState=d2;render(d2);var np=d2.phase||0;var rp=scanningPhase;var ll=d2.log?d2.log.slice(-5).join(' '):'';if(ll.indexOf('Ph.5:')>=0)rp=5;else if(ll.indexOf('Ph.4:')>=0)rp=4;else if(ll.indexOf('Ph.3:')>=0)rp=3;else if(ll.indexOf('Ph.2:')>=0)rp=2;var nx=Math.max(np>=5?5:np+1,rp);if((np>0&&np>=scanningPhase)||nx>scanningPhase){var cp=scanningPhase;if(progressInterval){clearInterval(progressInterval);progressInterval=null;}var b2=document.getElementById('statusBadge');if(b2&&cp>0){if(!window._pcm)window._pcm={};window._pcm[cp]=true;b2.innerHTML='<span style="color:#4ec94e">Ph.'+cp+' DONE</span>';}scanningPhase=nx;setTimeout(function(){scanStartTime=Date.now();if(scanningPhase<5)startProgressTimer(scanningPhase);},3000);}var p5d=(id===5)&&(d2.post_open_result!=null&&d2.post_open_result.overall);var done;if(id===0)done=np>=4;else if(id<prev)done=np===id;else done=p5d||(np>prev||np>=id);if(done)break;}}catch(e){}
-  stopProgressTimer();busy=false;document.querySelectorAll('[data-phase]').forEach(function(b){var pid=parseInt(b.dataset.phase);b.innerHTML=btnLabels[pid];b.disabled=false;});if(id>0&&id<=5){curTab=id;userChoseTab=true;}await fetchState();}
-
-(async function(){try{var r=await fetch('/api/state?t='+Date.now());if(r.ok){var d=await r.json();lastState=d;render(d);}}catch(e){}})();
-</script></body></html>
+(function(){
+  function put(id,text,cls){var el=document.getElementById(id);if(!el)return;el.textContent=text;el.className='v'+(cls?' '+cls:'');}
+  function j(u){return fetch(u,{cache:'no-store'}).then(function(r){return r.json().then(function(b){return {s:r.status,b:b};});});}
+  j('/healthz').then(function(x){
+    var b=x.b||{};put('live',(x.s===200?'200 ':'HTTP '+x.s+' ')+(b.status||''),x.s===200?'ok':'bad');
+    put('ver',b.backendVersion||'unknown');put('sha',b.buildSha||'unknown');
+    var at=document.getElementById('at');if(at)at.textContent='generatedAt: '+(b.generatedAt||'—');
+  }).catch(function(){put('live','取得失敗','bad');});
+  j('/readyz').then(function(x){
+    var b=x.b||{};put('ready',(x.s===200?'200 ':'HTTP '+x.s+' ')+(b.reasonCode||b.status||''),x.s===200?'ok':'bad');
+  }).catch(function(){put('ready','取得失敗','bad');});
+})();
+</script>
+</body></html>
 """
 # ━━━ Flask App & State Management ━━━
 claude     = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
