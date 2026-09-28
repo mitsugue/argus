@@ -233,3 +233,27 @@ def test_rolling_provider_cache_retains_selected_prefix_and_revisions(tmp_path):
         assert db.execute('SELECT count(*) FROM selected_vix_inputs').fetchone()[0] == 4
         original = json.loads(db.execute("SELECT body FROM selected_vix_inputs WHERE session='2026-09-18' ORDER BY seq LIMIT 1").fetchone()[0])
         assert original == initial[1]
+
+
+def test_selection_record_stays_within_the_window_instead_of_raising(tmp_path):
+    """2026-09-28: the store was seeded with a full 3000-session window on
+    2026-09-20, so the first new session made len(saved) 3001 and every
+    feature-history rebuild after it raised. The window is the bound; the
+    record evicts the oldest session rather than refusing all future ones."""
+    from datetime import date, timedelta
+    path = tmp_path / 'selected.sqlite3'
+    day0 = date(2014, 1, 1)
+    def rows(n):
+        return [{'date': (day0 + timedelta(days=i)).isoformat(), 'value': 10 + (i % 7),
+                 'instrumentId': 'VIX', 'availableFrom': AT} for i in range(n)]
+    first = m.merge_feature_sources([], rows(3000), path=path, received_at=AT)
+    assert len(first) == 3000
+    second = m.merge_feature_sources([], rows(3001), path=path, received_at=LATER)
+    assert len(second) == 3000
+    assert second[-1]['date'] == (day0 + timedelta(days=3000)).isoformat()
+    assert second[0]['date'] == (day0 + timedelta(days=1)).isoformat()
+    # Idempotent on the next call, and the evicted session is still on record.
+    third = m.merge_feature_sources([], rows(3001), path=path, received_at=LATER)
+    assert third == second
+    db = m.connect(path)
+    assert db.execute('SELECT count(DISTINCT session) FROM selected_vix_inputs').fetchone()[0] == 3001

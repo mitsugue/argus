@@ -2563,7 +2563,14 @@ def project_today_sda_safe(*, cutoff: str,
             family_projection[family] = {
                 "status": row.get("status"),
                 "conditionMet": row.get("conditionMet"),
-                "lineage": row.get("lineage"),
+                # The owner reads this lineage as "whose rule lit the signal".
+                # D06 evaluates the original claim with the ARGUS 12/26/9
+                # baseline, because the original MACD parameters were never
+                # source-confirmed; the row says so in conditionLineage. The
+                # projection showed the proposition's lineage instead, which
+                # presented an ARGUS candidate as original. The condition's
+                # lineage wins whenever the row declares one.
+                "lineage": row.get("conditionLineage") or row.get("lineage"),
                 "validationStatus": row.get("validationStatus"),
             }
     reversal_projection = None

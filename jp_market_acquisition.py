@@ -347,8 +347,17 @@ def merge_feature_sources(existing, official, *, path=None, received_at=None):
                        'availabilityBasis': 'RECEIVED_CORRECTION'}
             saved[row['date']] = row
             changes.append(row)
+        # The candidate window above is already bounded to the newest 3000
+        # sessions; the selection record must be bounded the same way, or the
+        # day it holds 3000 sessions the next session raises here forever.
+        # That is what happened on 2026-09-28: the store was seeded full on
+        # 2026-09-20, and the feature history reported FAILED from the first
+        # new session on. Sessions older than the window leave the returned
+        # selection; their rows stay in the table as the record of which
+        # provider was chosen, and the raw official rows keep their own store.
         if len(saved) > 3000:
-            raise ValueError('selected_source_retention_maintenance_required')
+            for day in sorted(saved)[:-3000]:
+                del saved[day]
         with db:
             for row in changes:
                 encoded = _json(row)

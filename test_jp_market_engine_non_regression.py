@@ -208,3 +208,20 @@ class JpMarketEngineIndependentFamilyHostileTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProjectionLineageTest(unittest.TestCase):
+    def test_a_condition_lit_by_an_argus_baseline_is_projected_as_argus(self):
+        """D06 evaluates the original claim with the ARGUS 12/26/9 baseline
+        and says so in conditionLineage; the owner-facing projection must not
+        present that as the original rule (owner spec, D06)."""
+        artifact = _evidence_artifact({"D06": "TRIGGERED"})
+        body = {k: v for k, v in artifact.items() if k != "artifactId"}
+        body["families"]["D06"]["lineage"] = "JP_MARKET_ENGINE_ORIGINAL"
+        body["families"]["D06"]["conditionLineage"] = "ARGUS_CANDIDATE"
+        artifact = {**body, "artifactId": "jp-market-engine-evidence-" + jp_market_engine._sha256(body)}
+        projection = jp_market_engine.project_today_sda_safe(cutoff=CUTOFF, evidence=artifact)
+        self.assertEqual(projection["families"]["D06"]["lineage"], "ARGUS_CANDIDATE")
+        # A family that declares no condition lineage keeps the proposition's.
+        self.assertEqual(projection["families"]["D01"]["lineage"],
+                         body["families"]["D01"]["lineage"])
