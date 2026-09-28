@@ -1,7 +1,6 @@
 """ARGUS V12.0.7 — 最終監査P1クローズアウトの恒久ガード。
 
-①missed GET=公開は集計のみ(オーナー自由記述の非公開) ②/api/state=公開redacted
-(ログ本文・sentinel・執行系enumゼロ)+admin full ③runtime-manifestのJP文言
+①missed GET=公開は集計のみ(オーナー自由記述の非公開) ②(旧/api/stateは撤去済み) ③runtime-manifestのJP文言
 (bridge稼働≠JPリアルタイム) ④JSF鮮度スタンプのパース可能化 ⑤日付不明の古い
 機関記事のすり抜け防止 ⑥FE: 安全優先展開effect/二重ボタン抑止/STALE_DAYS同期。
 """
@@ -26,41 +25,6 @@ def _seed_missed(monkeypatch):
          "whyJa": "保有中の銘柄に効くはずの記事を見逃した(オーナー自由記述)",
          "diagnosis": {"likelyCause": "source_not_registered"}},
     ])
-
-
-# ── ② /api/state redact ────────────────────────────────────────────────────
-
-def test_api_state_public_is_redacted(monkeypatch):
-    # 危機日を再現: sentinelとログが載っていても公開応答には出ない
-    monkeypatch.setattr(scanner, "load_state", lambda: {
-        "phase": 3, "log": ["secret-ish log line", "moomoo: 10.0.0.1:11111"],
-        "sentinel": {"action": "SELL_ALL", "reason": "crisis"},
-    })
-    with scanner.app.test_client() as c:
-        r = c.get("/api/state")
-        assert r.status_code == 200
-        d = r.get_json()
-    assert d["publicRedacted"] is True
-    blob = json.dumps(d, ensure_ascii=False)
-    assert "SELL_ALL" not in blob
-    assert "sentinel" not in blob
-    assert "secret-ish log line" not in blob
-    assert "10.0.0.1" not in blob
-    assert d["phase"] == 3                        # ランディングの進捗表示は生きる
-    # 執行語ゼロ(RCと同じ検査)
-    for w in ("今すぐ買", "成行", "全力買い", "place order"):
-        assert w not in blob, w
-
-
-def test_api_state_admin_gets_full(monkeypatch):
-    monkeypatch.setattr(scanner, "load_state", lambda: {
-        "phase": 3, "log": ["line-a"], "sentinel": {"action": "NONE"}})
-    monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "test-admin-token-1234")
-    with scanner.app.test_client() as c:
-        d = c.get("/api/state",
-                  headers={"X-ARGUS-ADMIN-TOKEN": "test-admin-token-1234"}).get_json()
-    assert "sentinel" in d and isinstance(d.get("log"), list)
-    assert d.get("publicRedacted") is not True
 
 
 # ── ③ runtime-manifest JP文言 ───────────────────────────────────────────────

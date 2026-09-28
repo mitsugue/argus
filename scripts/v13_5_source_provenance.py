@@ -35,6 +35,15 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # Legacy scanner-phase removal: tests and probe trimmed to the retained
+    # contracts only (exact reviewed contents).
+    'test_argus_v12_0_7.py': '7adde8c0541300fda75622390c078aed3e3e77de',
+    'test_catalyst_source_authority.py': 'de1c722906e73381dbc70cdd1155978795db25f1',
+    'test_provider_decision_authority_closure.py': 'a97c3d3b9272a3fceca1bd02c9200f59ed3194b7',
+    'test_legacy_provider_source_authority.py': 'a10bedba576ceb32616133c773d2bb3fbbdb4f0f',
+    'scripts/deep_memory_attribution_probe.py': '5dbd30561d196fb11931526feebe0d70e49d9094',
+    'test_round2_macro_authority.py': '445ffe50846f4dd6be3be8b8d870366c8cbacaaa',
+    'test_watch_quote_decision_authority.py': '2835f4173027dd48495d17e17bdba077f56eb83a',
     'docs/RECOVERY_MATERIALIZATION.md': 'af222d7a64b801dce147daa9a3b6ddc75def0572',
     'test_argus_recovery_materialization.py': '4c2a2816a485a9137798667f3b659c37b0b7f368',
     'test_argus_recovery_measurement_storage.py': '4d960ba28f662b4b4dfc3e309e54e5e9e2a0b267',

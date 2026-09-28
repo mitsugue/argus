@@ -39,16 +39,10 @@ def test_holding_and_marked_is_one_eligible_decision(monkeypatch):
     got = _decision("nvda", membership)
     assert got["pushEligible"] is True
     assert got["ownerRelationship"] == "holding_and_marked"
-    sent = []
-    monkeypatch.setenv("NTFY_TOPIC", "test-topic")
-    monkeypatch.setattr(scanner, "SCHEDULED_RUN", True)
-    monkeypatch.setattr(scanner.requests, "post", lambda *a, **k: sent.append((a, k)))
     monkeypatch.setattr(scanner, "_owner_symbols_cached", lambda: membership)
     monkeypatch.setitem(scanner._OWNER_SYMS_CACHE, "status", "fresh")
-    assert scanner.push_notify(
-        "TOP3: NVDA", "+20%", subject_symbol="NVDA",
-        notification_scope="individual_security") is True
-    assert len(sent) == 1
+    assert scanner._push_eligibility(
+        "individual_security", "NVDA")["pushEligible"] is True
 
 
 def test_unmarked_unrelated_plus_20_mover_is_blocked():
@@ -137,20 +131,6 @@ def test_market_mover_remains_recordable_but_direct_push_is_blocked(monkeypatch)
     assert env["eventType"] == "MARKET_MOVER"  # analysis object remains intact
 
 
-def test_marked_transport_sends_once_and_legacy_unmarked_path_is_blocked(monkeypatch):
-    sent = []
-    monkeypatch.setenv("NTFY_TOPIC", "test-topic")
-    monkeypatch.setattr(scanner, "SCHEDULED_RUN", True)
-    monkeypatch.setattr(scanner.requests, "post", lambda *a, **k: sent.append((a, k)))
-    monkeypatch.setattr(scanner, "_owner_symbols_cached", lambda: _membership(NVDA="watch"))
-    monkeypatch.setitem(scanner._OWNER_SYMS_CACHE, "status", "fresh")
-    assert scanner.push_notify("TOP3: ARM", "+20%", subject_symbol="ARM",
-                               notification_scope="individual_security") is False
-    assert scanner.push_notify("TOP3: NVDA", "+20%", subject_symbol="NVDA",
-                               notification_scope="individual_security") is True
-    assert len(sent) == 1
-
-
 def test_marked_market_mover_reaches_event_transport_once(monkeypatch):
     sent = []
     monkeypatch.setenv("NTFY_TOPIC", "test-topic")
@@ -232,12 +212,13 @@ def test_all_backend_ntfy_producers_converge_on_the_firewall():
             self.generic_visit(node)
 
     Audit().visit(tree)
-    assert push_calls
-    assert all(any(kw.arg == "notification_scope" for kw in call.keywords)
-               for call in push_calls)
+    # The legacy phase transport (push_notify) was removed with the old
+    # scanner phases; every remaining ntfy producer is the event transport.
+    assert not push_calls
+    assert event_calls
     assert all(any(kw.arg in {"notification_scope", "eligibility"}
                    for kw in call.keywords) for call in event_calls)
-    assert set(ntfy_post_functions) == {"push_notify", "_event_ntfy"}
+    assert set(ntfy_post_functions) == {"_event_ntfy"}
 
 
 def test_direct_workflow_ntfy_inventory_is_non_security_only():

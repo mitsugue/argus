@@ -229,7 +229,6 @@ def _representative_gets() -> Dict[str, Any]:
     requests = [
         ("/healthz", {}),
         ("/readyz", {}),
-        ("/api/state", {}),
         ("/api/argus/data-quality/status", {}),
         ("/api/argus/admin/memory-attribution",
          {"X-ARGUS-ADMIN-TOKEN": "deep-probe-admin"}),

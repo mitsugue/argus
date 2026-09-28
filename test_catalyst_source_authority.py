@@ -20,28 +20,6 @@ def _latest_us() -> str:
         argus_market_clock.US_EQUITY, NOW_DT).isoformat()
 
 
-def _upgrade(date):
-    return {"gradeDate": date, "company": "Goldman Sachs",
-            "action": "upgrade", "toGrade": "buy"}
-
-
-def test_upgrade_adapter_rejects_future_old_malformed_and_raw_scoring(
-        monkeypatch):
-    monkeypatch.setattr(scanner.time, "time", lambda: NOW)
-    monkeypatch.setattr(scanner, "finnhub_get", lambda *_a, **_k: [
-        _upgrade("9999-12-31"), _upgrade("2020-01-01"),
-        _upgrade("2026-02-30"), _upgrade(_latest_us()),
-    ])
-
-    rows = scanner.get_upgrade_downgrade("AAPL")
-    assert [row["gradeDate"] for row in rows] == [_latest_us()]
-    assert rows[0]["decisionUsable"] is True
-    assert scanner.process_whale_ratings(
-        [_upgrade("9999-12-31")], {"change_pct": 2}) == (0, "")
-    assert scanner.process_whale_ratings(
-        rows, {"change_pct": 2})[0] == 10
-
-
 @pytest.mark.parametrize("timestamp", [None, "bad", NOW + 1, NOW + 86_400,
                                          NOW - 25 * 3600])
 def test_decision_news_row_rejects_invalid_or_overage_time(timestamp):
@@ -117,71 +95,6 @@ def test_market_news_current_item_retains_source_truth(monkeypatch):
     assert len(body["items"]) == 1
     assert body["items"][0]["decisionUsable"] is True
     assert body["items"][0]["sourceAgeSec"] == 60
-
-
-class _LegacyNewsResponse:
-    def __init__(self, *, payload=None, text="", status_code=200):
-        self._payload = payload
-        self.text = text
-        self.status_code = status_code
-
-    def json(self):
-        return self._payload
-
-
-def test_legacy_news_requires_provider_publication_time_before_prompt_or_sentinel(
-        monkeypatch):
-    monkeypatch.setattr(scanner.time, "time", lambda: NOW)
-    monkeypatch.setattr(scanner, "NEWS_API_KEY", "fixture")
-    rss = """<rss><channel><title>fixture</title>
-      <item><title>Current RSS market report</title>
-        <pubDate>Sun, 16 Aug 2026 02:58:00 GMT</pubDate></item>
-      <item><title>Undated nuclear invasion report</title></item>
-      <item><title>Old financial crisis report</title>
-        <pubDate>Wed, 01 Jan 2020 00:00:00 GMT</pubDate></item>
-    </channel></rss>"""
-    api_payload = {"articles": [
-        {"title": "Current market report", "publishedAt":
-         "2026-08-16T02:59:00Z", "source": {"name": "Wire"}},
-        {"title": "Missing bank collapse", "publishedAt": None,
-         "source": {"name": "Wire"}},
-        {"title": "Future market crash", "publishedAt":
-         "2026-08-16T03:00:01Z", "source": {"name": "Wire"}},
-        {"title": "Old nuclear invasion", "publishedAt":
-         "2020-01-01T00:00:00Z", "source": {"name": "Wire"}},
-    ]}
-
-    def fetch(url, **_kwargs):
-        if "newsapi.org" in url:
-            return _LegacyNewsResponse(payload=api_payload)
-        return _LegacyNewsResponse(text=rss)
-
-    monkeypatch.setattr(scanner.requests, "get", fetch)
-    rows = scanner.get_news()
-    assert {row["title"] for row in rows} == {
-        "Current market report", "Current RSS market report"}
-    assert all(row["decisionUsable"] is True for row in rows)
-    assert scanner.sentinel_check(rows)["action"] == "HOLD"
-
-
-def test_sentinel_needs_two_distinct_current_reports_and_never_double_counts(
-        monkeypatch):
-    monkeypatch.setattr(scanner.time, "time", lambda: NOW)
-    one = {"title": "Nuclear invasion and financial crisis",
-           "publishedAt": "2026-08-16T02:59:00Z"}
-    assert scanner.sentinel_check([one]) == {
-        "action": "HOLD", "risk": 2,
-        "reason": "Nuclear invasion and financial crisis"}
-    assert scanner.sentinel_check([one, dict(one)])["action"] == "HOLD"
-    second = {"title": "Bank collapse triggers circuit breaker",
-              "publishedAt": "2026-08-16T02:58:00Z"}
-    assert scanner.sentinel_check([one, second])["action"] == "SELL_ALL"
-    assert scanner.sentinel_check([{
-        "title": "Bank collapse", "publishedAt": None,
-        "firstDetectedAt": "2026-08-16T02:59:00Z"}])["risk"] == 0
-    assert scanner.detect_leaks([{
-        "title": "Breaking: emergency rate cut", "publishedAt": None,
-        "firstDetectedAt": "2026-08-16T02:59:00Z"}]) == []
 
 
 def test_corroboration_ignores_receipt_only_old_and_future_mesh_rows(

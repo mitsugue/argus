@@ -284,17 +284,3 @@ def test_scout_rejection_is_not_retried(monkeypatch):
     monkeypatch.setattr(scanner.time, "sleep", lambda *a: pytest.fail("unexpected retry"))
     assert scanner._v2_call_with_retry(rejected) == (None, "rejected", 1)
     assert len(calls) == 1
-
-
-def test_legacy_crosscheck_rejects_unreviewed_input_before_call(monkeypatch):
-    import scanner
-    monkeypatch.setenv("PRODUCT_NAMING_POLICY", json.dumps(POLICY))
-    monkeypatch.setattr(scanner, "GEMINI_API_KEY", "synthetic")
-    monkeypatch.setattr(scanner, "_cost_policy_authorize", lambda *a, **k: {"allowed": True})
-    calls = []
-    monkeypatch.setattr(scanner, "google_genai", SimpleNamespace(Client=lambda **kw:
-        SimpleNamespace(models=SimpleNamespace(generate_content=lambda **kw: calls.append(kw)))))
-    monkeypatch.setattr(scanner, "add_log", lambda *a: None)
-    result = scanner._gpt_crosscheck_stocks([{"symbol": "TEST", "name": "retired_person"}])
-    assert not calls
-    assert result == {}
