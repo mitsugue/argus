@@ -35,6 +35,10 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # Read-only Render deploy diagnostics (exact reviewed contents; v13.7.55).
+    '.github/workflows/render-deploy-diagnostics.yml': 'd59bd1806c81ee24f67cc545effb86295a428b6d',
+    'scripts/render_deploy_diagnostics.py': '232e235b15057b52754899eace7f847e54fd4344',
+    'test_render_deploy_diagnostics.py': 'ffbcdda6f9c27aabff883e93bf73b03d7be550b4',
     # Allocator policy / bounded reclaim / resident inventory (exact reviewed
     # contents; v13.7.55 candidate).
     'argus_allocator_policy.py': 'a64b963053c7b47bf1c5d1c383df552bd06a926f',
@@ -93,8 +97,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '79fa1e3335f85ff01fd538a40b6b1856eec33d79',
-    'web/scripts/pwa-identity.test.mjs': 'fab96e2bf2fe0fa21346b1b4ce17096b2026ef05',
-    'web/scripts/owner-today-https.mjs': 'c12773b2dd2425992daa2bf5e0ccb7be96efb580',
+    'web/scripts/pwa-identity.test.mjs': '6ed0a49d6b0240e969673bc2d32fe6be3dfbc9b0',
+    'web/scripts/owner-today-https.mjs': 'c515d55dc0d6064ab25d9d64f89dca1e06060c02',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
