@@ -35,6 +35,10 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # the Settings identity card (v13.7.57)
+    'web/src/components/settings/OwnerIdentityPanel.tsx': '2289fa6d7fbdae74e8599cda85d3a1751f1928b2',
+    # the Settings identity card (v13.7.57)
+    'web/src/components/settings/OwnerIdentityPanel.css': '51affd51093aaac1aaa364aebe0d201629db0877',
     # Pinned backend requirements + full Python patch version (v13.7.57).
     # Read-only Render deploy diagnostics (exact reviewed contents; v13.7.57).
     '.github/workflows/render-deploy-diagnostics.yml': 'd59bd1806c81ee24f67cc545effb86295a428b6d',
@@ -98,8 +102,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '79fa1e3335f85ff01fd538a40b6b1856eec33d79',
-    'web/scripts/pwa-identity.test.mjs': '1d8c38456ca6c8d1ed64635c51474a05b5168a87',
-    'web/scripts/owner-today-https.mjs': '693ea869be68ea253078334aece876c06e5cc5e6',
+    'web/scripts/pwa-identity.test.mjs': '4d926ecedc801ff013b8f99a4a6933850d942463',
+    'web/scripts/owner-today-https.mjs': 'a5628ba1586769cb5f42c7fe0710cb62339c626d',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
