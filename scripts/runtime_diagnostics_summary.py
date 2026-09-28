@@ -56,7 +56,44 @@ def summarize(doc: dict[str, Any]) -> str:
     active = doc.get("active") or []
     if active:
         out.append(f"- active phases: {len(active)}")
+    reclaim = doc.get("allocatorReclaim") or {}
+    if reclaim:
+        out.append("")
+        out.append("## Allocator policy and reclaim")
+        out.append("")
+        policy = reclaim.get("startupPolicy") or {}
+        out.append(f"- startup policy: {policy.get('status')} {policy.get('applied') or ''}")
+        out.append(f"- reclaims: {reclaim.get('count')} · last at {reclaim.get('lastAt')} "
+                   f"· reason {reclaim.get('lastReason')}")
+        last = reclaim.get("last") or {}
+        if last:
+            out.append(f"- last reclaim: rss {_mib(last.get('rssBeforeBytes'))} → "
+                       f"{_mib(last.get('rssAfterBytes'))} MiB, free arena "
+                       f"{_mib((last.get('allocatorBefore') or {}).get('freeBytes'))} → "
+                       f"{_mib((last.get('allocatorAfter') or {}).get('freeBytes'))} MiB, "
+                       f"{last.get('durationMs')} ms")
+    inventory = doc.get("residentInventory") or {}
+    rows = inventory.get("rows") or []
+    if rows:
+        out.append("")
+        out.append("## Resident inventory (serialized size, largest first)")
+        out.append("")
+        out.append(f"total {_mib(inventory.get('totalSerializedBytes'))} MiB across "
+                   f"{inventory.get('measuredCount')} containers in {inventory.get('elapsedMs')} ms")
+        out.append("")
+        out.append("| container | type | length | MiB | status |")
+        out.append("|---|---|---:|---:|---|")
+        for row in rows[:24]:
+            out.append(f"| `{row.get('name')}` | {row.get('type')} | {row.get('length')} | "
+                       f"{_mib(row.get('serializedBytes'))} | {row.get('status')} |")
     return "\n".join(out) + "\n"
+
+
+def _mib(value: Any) -> str:
+    try:
+        return f"{int(value) / (1024 * 1024):.1f}"
+    except (TypeError, ValueError):
+        return "?"
 
 
 def main(argv: list[str]) -> int:

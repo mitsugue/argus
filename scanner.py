@@ -152,6 +152,7 @@ import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight
 import argus_foundation_job_checkpoint  # small job-state sidecar; avoids full-checkpoint OOM
 import argus_asset_chart_cache      # bounded durable Asset Desk chart reports
 import argus_market_artifact_store  # derived market artifacts outside the sealed checkpoint
+import argus_allocator_policy       # glibc policy + bounded reclaim + resident inventory
 import argus_index_research_cache
 import argus_diagnostics_contract  # closed public/operational DTO boundary
 import argus_recovery_registry     # accepted shadow registry metadata only
@@ -21425,6 +21426,83 @@ _MEMORY_ATTRIBUTION = argus_memory_attribution.MemoryAttributionRecorder(
 _MEMORY_OPERATIONS = argus_memory_attribution.OperationAttributionRecorder(
     maximum_records=32, threshold_bytes=1024 * 1024)
 
+# v13.7.55: allocator hygiene.  Production diagnostics (run 36279443457)
+# showed 1.85 GB of free-but-unreturned glibc arena between ticks.  The
+# reclaim reuses the checkpoint-v2 helper, is rate limited, never runs while
+# a mission tick owns the process, and publishes before/after scalars only.
+_ALLOCATOR_RECLAIM_STATE = {
+    "schemaVersion": argus_allocator_policy.SCHEMA_VERSION,
+    "startupPolicy": None, "count": 0, "lastAt": None,
+    "lastMonotonic": None, "lastReason": None, "lastDecision": None,
+    "last": None,
+}
+_ALLOCATOR_RECLAIM_LOCK = threading.Lock()
+
+
+def _allocator_reclaim(reason, *, force=False, now_monotonic=None):
+    """Bounded reclaim of free-but-unreturned allocator memory; never raises."""
+    now_monotonic = time.monotonic() if now_monotonic is None else now_monotonic
+    try:
+        before = argus_memory_attribution.allocator_metrics()
+        decision = argus_allocator_policy.reclaim_decision(
+            before, now_monotonic=now_monotonic,
+            last_reclaim_monotonic=_ALLOCATOR_RECLAIM_STATE.get("lastMonotonic"),
+            mission_active=bool(_MISSION_TICK_CONTEXT.get("active")),
+            force=force)
+        _ALLOCATOR_RECLAIM_STATE["lastDecision"] = {
+            "reason": decision.get("reason"), "trigger": reason,
+            "freeBytes": decision.get("freeBytes")}
+        if not decision.get("reclaim"):
+            return {"status": "skipped", **decision}
+        if not _ALLOCATOR_RECLAIM_LOCK.acquire(blocking=False):
+            return {"status": "skipped", "reason": "reclaim_in_progress"}
+        try:
+            started = time.monotonic()
+            report = argus_checkpoint_v2._release_unused_allocator_memory(
+                int(decision.get("freeBytes") or 0))
+            after = argus_memory_attribution.allocator_metrics()
+            record = {
+                "trigger": reason, "at": _ai_now_iso(),
+                "durationMs": int((time.monotonic() - started) * 1000),
+                "supported": bool(report.get("supported")),
+                "rssBeforeBytes": report.get("rssBeforeBytes"),
+                "rssAfterBytes": report.get("rssAfterBytes"),
+                "rssReleasedBytes": report.get("rssReleasedBytes"),
+                "allocatorBefore": before if isinstance(before, dict) else None,
+                "allocatorAfter": after if isinstance(after, dict) else None,
+            }
+            _ALLOCATOR_RECLAIM_STATE.update({
+                "count": int(_ALLOCATOR_RECLAIM_STATE.get("count") or 0) + 1,
+                "lastAt": record["at"], "lastMonotonic": now_monotonic,
+                "lastReason": reason, "last": record})
+            add_log(f"[allocator] reclaim trigger={reason} "
+                    f"released={int(record.get('rssReleasedBytes') or 0) >> 20}MiB "
+                    f"in {record['durationMs']}ms")
+            return {"status": "reclaimed", **record}
+        finally:
+            _ALLOCATOR_RECLAIM_LOCK.release()
+    except Exception as exc:
+        _ALLOCATOR_RECLAIM_STATE["lastDecision"] = {
+            "reason": "error", "trigger": reason,
+            "errorClass": type(exc).__name__}
+        return {"status": "error", "errorClass": type(exc).__name__}
+
+
+def _resident_inventory_candidates():
+    """Module-level container globals (names only; values are never copied)."""
+    out = {}
+    for name, value in list(globals().items()):
+        if not (name.startswith("_") and name[1:2].isupper() and name.isupper()):
+            continue
+        if isinstance(value, (dict, list, tuple, set, frozenset, deque)):
+            out[name] = value
+    return out
+
+
+def _resident_inventory():
+    return argus_allocator_policy.resident_inventory(
+        _resident_inventory_candidates())
+
 _REMOTE_READBACK_PATH = "/osint/readback.json"
 _REMOTE_RECOVERY_PATH = "/osint/recovery.json"
 
@@ -24712,6 +24790,9 @@ def _osint_persist():
     # handoff is finalized only after that outer level releases.
     if not _mission_tick_context_active():
         _recovery_phase_a_finalize_checkpoint(result)
+        # The save has just released its generation-sized temporaries; the
+        # mission tick performs the same reclaim once its context is closed.
+        _allocator_reclaim("checkpoint_persist", force=True)
     return result
 
 
@@ -32297,6 +32378,12 @@ def api_argus_admin_memory_attribution():
     # the route catalog (a Recovery payload) is untouched.
     if str(request.args.get("threads") or "").lower() in ("1", "true", "yes"):
         payload["runtimeThreads"] = _runtime_thread_dump()
+    # v13.7.55: allocator policy/reclaim scalars always; the bounded resident
+    # inventory (container names, types, lengths, serialized byte counts —
+    # never element values) only on request, on this existing owner route.
+    payload["allocatorReclaim"] = copy.deepcopy(_ALLOCATOR_RECLAIM_STATE)
+    if str(request.args.get("inventory") or "").lower() in ("1", "true", "yes"):
+        payload["residentInventory"] = _resident_inventory()
     return jsonify(payload)
 
 
@@ -32462,6 +32549,10 @@ def api_argus_admin_missions_tick():
         lease.release()
         _DURABLE_CHECKPOINT_LOCK.release()
         _recovery_phase_a_finalize_checkpoint(measurement_checkpoint)
+        # The tick's generation-sized temporaries are gone and the context
+        # is closed: return the free arena to the OS now, not five minutes
+        # later.  Bounded, scalar-recorded, never raises.
+        _allocator_reclaim("mission_tick", force=True)
 
 
 def _api_argus_admin_missions_tick_impl():
@@ -46743,6 +46834,11 @@ def run_scheduler():
                 args=("scheduler", "jp_owner_quote_warm",
                       _jp_owner_quote_warm_tick),
                 daemon=True, name="jp-owner-quote-warm").start()
+            # Return free-but-unreturned allocator arena to the OS when a
+            # large idle balance has built up (rate limited, tick-aware).
+            threading.Thread(
+                target=_allocator_reclaim, args=("scheduler",),
+                daemon=True, name="allocator-reclaim").start()
         # The public explanation progresses even when mail intake is slow or
         # no mailbox is configured. No public request starts this AI worker.
         threading.Thread(target=_market_brief_worker_tick, daemon=True).start()
@@ -46761,6 +46857,12 @@ def run_scheduler():
 
 def _run_backend_server():
     add_log(f"🚀 ARGUS backend {_semantic_app_version()}")
+    # Fixed mmap threshold / arena cap before the restore parses the
+    # checkpoint; generation-sized temporaries are then mapped and unmapped
+    # individually instead of fragmenting the brk heap.
+    _policy = argus_allocator_policy.startup_policy()
+    _ALLOCATOR_RECLAIM_STATE["startupPolicy"] = _policy
+    add_log(f"[allocator] startup policy {_policy.get('status')}")
     # v12.2.9: 起動復元をboot時に確定(最初のリクエスト/30分cronを待たない)
     _SERVER_RUNTIME.update({"serverType": "flask_dev",
                             "startupMode": "boot_before_serve"})

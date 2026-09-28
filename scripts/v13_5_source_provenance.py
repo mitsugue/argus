@@ -35,6 +35,11 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # Allocator policy / bounded reclaim / resident inventory (exact reviewed
+    # contents; v13.7.55 candidate).
+    'argus_allocator_policy.py': 'a64b963053c7b47bf1c5d1c383df552bd06a926f',
+    'test_argus_allocator_policy.py': 'cfe02f6f8f6b846acac9dc6dafa6311728ea45c7',
+    'docs/ops/allocator-reclaim.md': 'af6aec98d35d40b50101459d99b1aa84af65b334',
     # Market ledger artifact split + resident JP quote warm (exact reviewed contents).
     'test_argus_jp_owner_quote_warm.py': 'b5a5af3b7b66aa4b3f29f14945a828ac4d614b1a',
     # Derived market artifacts outside the sealed checkpoint (exact reviewed
