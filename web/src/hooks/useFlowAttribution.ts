@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { deauthorizeFlowRecords, liveAuthorityState,
   scheduleLiveAuthorityExpiry, type LiveAuthorityState } from '../domain/liveAuthority';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
+import { FEED_VISIBLE_MS, isPageVisible } from '../lib/pollingPolicy';
 
 // V11.7.0 Big Money / Flow Attribution — evidence-based classification of WHO is
 // likely behind a move (大口買い集め/買い戻し/個人追随/売り抜け/狼狽…), always in
@@ -60,7 +61,7 @@ interface ListState {
 
 interface FlowPayload { asOf?: string; records?: FlowAttribution[]; }
 
-const POLL_MS = 5 * 60_000;
+const POLL_MS = FEED_VISIBLE_MS;  // visible-page cadence (was 5 min)
 const flowAttributionStore = createSharedPollingStore<ListState>(
   { records: [], loading: true, error: null, asOf: null, authority: 'unavailable' },
   (setState, getState) => {
@@ -152,7 +153,10 @@ const flowAttributionStore = createSharedPollingStore<ListState>(
     if (retained.authority === 'fresh') {
       accept({ asOf: retained.asOf ?? undefined, records: retained.records });
     }
-    const interval = window.setInterval(() => void acquire(load), POLL_MS);
+    const interval = window.setInterval(() => {
+      if (!isPageVisible()) return;
+      void acquire(load);
+    }, POLL_MS);
     const onVisible = () => { if (!document.hidden) void acquire(load); };
     document.addEventListener('visibilitychange', onVisible);
     void acquire(load);

@@ -3,6 +3,7 @@ import {
   parseProductionBackendIdentity,
   type BackendRuntimeIdentity,
 } from '../domain/runtimeVersionTruth';
+import { isPageVisible } from '../lib/pollingPolicy';
 
 export const PRODUCTION_BACKEND_MANIFEST_URL =
   'https://raw.githubusercontent.com/mitsugue/argus/production-release/production/argus-backend.json';
@@ -33,7 +34,7 @@ export function useProductionBackendIdentity(): BackendRuntimeIdentity | null {
     const handleOnline = () => { void load(); };
     const handleOffline = () => { if (alive) setIdentity(null); };
     void load();
-    const timer = window.setInterval(() => { void load(); }, IDENTITY_POLL_MS);
+    const timer = window.setInterval(() => { if (isPageVisible()) void load(); }, IDENTITY_POLL_MS);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     return () => {

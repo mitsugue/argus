@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { deauthorizeImportantEvents, liveAuthorityState,
   scheduleLiveAuthorityExpiry, type LiveAuthorityState } from '../domain/liveAuthority';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
+import { FEED_VISIBLE_MS } from '../lib/pollingPolicy';
 
 // Important Events (important-events-v1, v10.138) — the owner-facing "why this
 // macro event matters" feed for the Today command area. Beginner explanation +
@@ -63,7 +64,7 @@ export interface ImportantEventsSnapshot {
   imminent?: ImminentEvent[];
 }
 
-const REFRESH_INTERVAL_MS = 120_000;   // events move slowly; 2-min poll is plenty
+const REFRESH_INTERVAL_MS = FEED_VISIBLE_MS;   // events move slowly; visible-page cadence (was 2 min)
 
 interface State {
   data: ImportantEventsSnapshot | null;

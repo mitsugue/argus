@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { deauthorizeActionSnapshot, liveAuthorityState,
   scheduleLiveAuthorityExpiry, type LiveAuthorityState } from '../domain/liveAuthority';
 import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
+import { WATCHLIST_VISIBLE_MS } from '../lib/pollingPolicy';
 import type { ActionLabelsSnapshot } from '../types/actionLabels';
 
 // connecting | live | partial | mock — same model as the other live hooks.
@@ -34,7 +35,7 @@ const RETRY_DELAYS_MS = [3_000, 6_000];
 // and we settle on mock, a later silent refresh recovers to live as soon as
 // the server is warm — same cadence as the watchlist hooks. Failures keep the
 // last good data instead of flashing back to "connecting"/mock.
-const REFRESH_INTERVAL_MS = 15_000;  // top-page % + signals live (was 60s)
+const REFRESH_INTERVAL_MS = WATCHLIST_VISIBLE_MS;  // top-page % + signals, visible-page cadence (was 15s)
 
 function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));

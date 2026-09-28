@@ -1,9 +1,10 @@
 import { useSyncExternalStore } from 'react';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
+import { WATCHLIST_VISIBLE_MS } from '../lib/pollingPolicy';
 
-// 24/7 event backbone — active events + status (v10.39). Polls every 15s while
-// the app is open (matches the bridge push cadence) so the list updates live;
-// the ntfy push is the off-app path.
+// 24/7 event backbone — active events + status (v10.39). Refreshes when the
+// app becomes visible and on the relaxed visible-page cadence (pollingPolicy);
+// hidden tabs never poll. The ntfy push is the off-app path.
 export interface ActiveEvent {
   eventId: string;
   eventType: string;
@@ -73,7 +74,7 @@ const eventsActiveStore = createSharedPollingStore<EventsActiveState>(
     const onVisible = () => { if (!document.hidden) void load(); };
     document.addEventListener('visibilitychange', onVisible);
     void load();
-    const timer = window.setInterval(() => void load(), 15_000);
+    const timer = window.setInterval(() => void load(), WATCHLIST_VISIBLE_MS);
     return () => {
       cancelled = true;
       controller?.abort();

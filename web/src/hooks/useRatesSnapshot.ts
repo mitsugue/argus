@@ -4,6 +4,7 @@ import {
   deauthorizeRatePoint, ratePointDecisionExpiresAt, ratePointDecisionUsable,
 } from '../domain/rateAuthority';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
+import { CALENDAR_VISIBLE_MS } from '../lib/pollingPolicy';
 
 // Mirrors the shape returned by /api/argus/rates (scanner.py). Kept in
 // sync with the backend by convention — if backend fields change, update
@@ -271,7 +272,7 @@ const ratesStore = createSharedPollingStore<RatesState>(
     if (retained.data && retained.authority === 'fresh') {
       accept(retained.data, retained.attempt);
     }
-    const interval = window.setInterval(() => void acquire(refresh), 60_000);
+    const interval = window.setInterval(() => void acquire(refresh), CALENDAR_VISIBLE_MS);
     const onVisible = () => {
       if (document.hidden) return;
       const current = getState();

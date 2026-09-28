@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { deauthorizeMarketRegime, liveAuthorityState,
   scheduleLiveAuthorityExpiry, type LiveAuthorityState } from '../domain/liveAuthority';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
+import { CALENDAR_VISIBLE_MS } from '../lib/pollingPolicy';
 import type { MarketRegimeSnapshot } from '../types/marketRegime';
 
 export type RegimePhase = 'connecting' | 'live' | 'partial' | 'mock';
@@ -60,7 +61,7 @@ const MOCK_SNAPSHOT: MarketRegimeSnapshot = {
 const MAX_ATTEMPTS = 3;
 const ATTEMPT_TIMEOUT_MS = 9_000;
 const RETRY_DELAYS_MS = [3_000, 6_000];
-const REFRESH_INTERVAL_MS = 60_000;
+const REFRESH_INTERVAL_MS = CALENDAR_VISIBLE_MS;  // visible-page cadence (was 60s)
 
 function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));

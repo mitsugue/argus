@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { deauthorizeDownsideSnapshot, liveAuthorityState,
   scheduleLiveAuthorityExpiry } from '../domain/liveAuthority';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
+import { CALENDAR_VISIBLE_MS } from '../lib/pollingPolicy';
 
 // Downside Incident Response (downside-v1, v10.98) — when a held/watched name
 // drops materially, the backend classifies the incident (cause buckets, action
@@ -96,7 +97,7 @@ export interface DownsideSnapshot {
   noteJa: string;
 }
 
-const REFRESH_INTERVAL_MS = 60_000;    // restored 120→60s (v10.126): Render is on Standard 2GB now — poll the downside layer every 60s for faster drop detection
+const REFRESH_INTERVAL_MS = CALENDAR_VISIBLE_MS;  // visible-page cadence (was 60s); refreshes immediately when the app returns to view
 
 interface State {
   data: DownsideSnapshot | null;

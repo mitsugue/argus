@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { JapanMarketComparison } from '../types/japanMarketComparison';
 import { validJapanMarketComparison } from '../lib/japanMarketComparison';
+import { FEED_VISIBLE_MS } from '../lib/pollingPolicy';
 
 type State = { document: JapanMarketComparison | null; loading: boolean; error: boolean;
   reason: string | null; lastSuccessfulAcquisitionAt: string | null };
@@ -81,7 +82,7 @@ export function useJapanMarketComparison(horizon: number) {
     };
     const visible = () => { if (document.visibilityState === 'visible') void refresh(); };
     void refresh();
-    const timer = window.setInterval(visible, 5 * 60_000);
+    const timer = window.setInterval(visible, FEED_VISIBLE_MS);
     document.addEventListener('visibilitychange', visible);
     return () => { cancelled = true; window.clearTimeout(retryTimer); window.clearInterval(timer);
       document.removeEventListener('visibilitychange', visible); };

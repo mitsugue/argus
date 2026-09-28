@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { deauthorizeAIJudgment, liveAuthorityState,
   scheduleLiveAuthorityExpiry, type LiveAuthorityState } from '../domain/liveAuthority';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
+import { FEED_VISIBLE_MS } from '../lib/pollingPolicy';
 import type { AIJudgment } from '../types/aiJudgment';
 
 // connecting | live | partial | mock | disabled. Reads the CACHED judgment only
@@ -32,7 +33,7 @@ const MOCK_SNAPSHOT: AIJudgment = {
 const MAX_ATTEMPTS = 3;
 const ATTEMPT_TIMEOUT_MS = 8_000;
 const RETRY_DELAYS_MS = [3_000, 6_000];
-const REFRESH_INTERVAL_MS = 5 * 60_000;
+const REFRESH_INTERVAL_MS = FEED_VISIBLE_MS;  // visible-page cadence (was 5 min)
 
 function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));
