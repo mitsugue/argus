@@ -88,3 +88,85 @@ def test_nothing_in_this_module_reaches_the_network_or_the_server():
     source = inspect.getsource(sub)
     for forbidden in ("requests", "urllib", "socket", "import scanner", "JQUANTS_API_KEY"):
         assert forbidden not in source, forbidden
+
+
+# ── The wiring (v13.7.62) ────────────────────────────────────────────────────
+# The pure module above decides; these prove scanner.py actually asks it, and
+# that asking changes exactly two things: no probe, and an honest registry.
+
+def test_a_declared_cancellation_never_reaches_the_provider(monkeypatch):
+    """Probing a subscription the owner ended spends the Standard plan's rate
+    budget to be told 403 every fifteen minutes."""
+    import scanner
+    monkeypatch.setenv(sub.ENV_VAR, "off")
+    monkeypatch.setitem(scanner._TDNET_OFFICIAL_CACHE, "data", None)
+    monkeypatch.setitem(scanner._TDNET_OFFICIAL_CACHE, "expires", 0.0)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("a declared cancellation must not probe")
+
+    monkeypatch.setattr(scanner.requests, "get", forbidden)
+    snapshot, usable = scanner._jquants_tdnet_fetch(5)
+    assert usable is False
+    assert snapshot["status"] == sub.STATUS_NOT_SUBSCRIBED
+    assert snapshot["entitlement"] == sub.ENTITLEMENT_NOT_SUBSCRIBED
+    assert snapshot["items"] == []
+
+
+def test_disclosures_still_arrive_through_the_free_mirror(monkeypatch):
+    """The declaration must cost no disclosure, and must claim no officialness."""
+    import scanner
+    monkeypatch.setenv(sub.ENV_VAR, "off")
+    monkeypatch.setitem(scanner._TDNET_OFFICIAL_CACHE, "data", None)
+    monkeypatch.setitem(scanner._TDNET_OFFICIAL_CACHE, "expires", 0.0)
+    monkeypatch.setitem(scanner._TDNET_FEED_CACHE, "data", None)
+    monkeypatch.setitem(scanner._TDNET_FEED_CACHE, "expires", 0.0)
+
+    class _Mirror:
+        ok = True
+
+        @staticmethod
+        def json():
+            return {"items": [{"Tdnet": {
+                "company_code": "36450", "company_name": "テスト",
+                "title": "配当予想の修正に関するお知らせ",
+                "pubdate": "2026-09-28 19:00:00",
+                "document_url": "https://example.invalid/doc"}}]}
+
+    calls = []
+
+    def only_the_mirror(url, *args, **kwargs):
+        calls.append(url)
+        assert "yanoshin" in url, url
+        return _Mirror()
+
+    monkeypatch.setattr(scanner.requests, "get", only_the_mirror)
+    feed = scanner.get_tdnet_recent(5)
+    assert calls, "the free mirror must still be fetched"
+    assert feed["status"] == "live"
+    assert feed["provider"] == "yanoshin-tdnet"
+    # Cancelling a feed lowers what may be claimed, never raises it.
+    assert feed["official"] is False
+    assert feed["items"] and feed["items"][0]["code"] == "3645"
+    assert feed["officialStatus"] == sub.STATUS_NOT_SUBSCRIBED
+
+
+def test_without_the_declaration_the_official_path_is_still_attempted(
+        monkeypatch):
+    """The default must never become 'off': that would ignore a paid feed."""
+    import scanner
+    monkeypatch.delenv(sub.ENV_VAR, raising=False)
+    monkeypatch.setitem(scanner._TDNET_OFFICIAL_CACHE, "data", None)
+    monkeypatch.setitem(scanner._TDNET_OFFICIAL_CACHE, "expires", 0.0)
+    monkeypatch.setattr(scanner, "_JQUANTS_API_KEY", "present")
+    attempted = []
+
+    def record(url, *args, **kwargs):
+        attempted.append(url)
+        raise RuntimeError("probe stops here")
+
+    monkeypatch.setattr(scanner.requests, "get", record)
+    snapshot, usable = scanner._jquants_tdnet_fetch(5)
+    assert attempted, "the official endpoint must still be probed"
+    assert usable is False
+    assert snapshot["status"] != sub.STATUS_NOT_SUBSCRIBED
