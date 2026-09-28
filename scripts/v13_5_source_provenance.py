@@ -36,7 +36,6 @@ HISTORICAL_REPLACED_BLOBS = {
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
     # Pinned backend requirements + full Python patch version (v13.7.55).
-    '.python-version': 'f36fa5fd8017a085e301126c8c3fc30f1a2550b9',
     # Read-only Render deploy diagnostics (exact reviewed contents; v13.7.55).
     '.github/workflows/render-deploy-diagnostics.yml': 'd59bd1806c81ee24f67cc545effb86295a428b6d',
     'scripts/render_deploy_diagnostics.py': '232e235b15057b52754899eace7f847e54fd4344',
@@ -287,7 +286,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_web_push.py': '69118b280db79fae69bcd3d76db20521714056a2',
     'test_argus_owner_vault.py': '64c3c8bec19581962309873e1b93fb31cdc2cbe2',
     'test_argus_ai_usage_view.py': '729a3e9155a2106069ad68d8b9efb590ab10f3a9',
-    'requirements.txt': '40036760c2be0fb3ae33f2e2246ab8468d11d8e9',
+    'requirements.txt': '65b71f9a15d11e673f90fdc9d1cf46a8b3c9c5c8',
     'jp_market_valuation.py': '8813012bcab02e9269007a8850870da2ef050565',
     'docs/V13_6_INDEX_VALUATION.md': 'aa7a1a35a12be9657139cb3e9488ea4b136f087b',
     'argus_web_push.py': 'e6ea726935fb8ceb60bc16deaf1a4b50cb9f8355',
