@@ -57,13 +57,67 @@ build without this change ignores the artifact directory and would resume
 embedding payloads in the checkpoint; nothing is deleted or migrated in
 place. Rollback is the normal release path.
 
+## Residency (v13.7.58): the two largest stores leave RAM between saves
+
+After the allocator fix the web process held about 1 GB between mission
+ticks, and the sampled resident inventory named the largest containers:
+`verifiedViewSnapshots` (47 MiB of JSON) and `assetChartReports` (23 MiB),
+about a third of the resident Python objects. Both are read by public GETs
+one item at a time, so they need not be resident.
+
+`argus_market_artifact_items.py` writes, next to each whole-artifact file,
+one file per item (`argus_market_artifacts/<name>/<key>.json`) plus an
+`index.json` carrying the artifact state hash and `{key: id}`. The writer is
+hash-gated per item (`snapshotId` / record key) and prunes keys that left the
+store.
+
+`scanner.py` keeps a residency row per store. After a checkpoint whose
+artifact file **and** item index both carry the current state hash, the
+in-memory store is emptied ("detached"). While detached:
+
+- `_verified_market_snapshot`, `today-headline`, `index-chart` closes and the
+  asset-report route read the single item from disk through a small
+  byte-level LRU validated by file size + mtime, then run the unchanged
+  verifiers (`verify_snapshot`, `argus_asset_chart_cache.current`);
+- the checkpoint carries the artifact hash from the residency row and neither
+  normalizes nor rewrites the store (an empty store is never written); the
+  public projection and the Remote Journal read-back compare the same hash;
+- every generator (`_precompute_verified_market_view`,
+  `_publish_verified_market_views`, `_precompute_asset_chart_tick`, the
+  release seed, the mission tick) re-attaches first, i.e. reloads the
+  whole-artifact file into the store, so nothing is ever published on top
+  of an empty store;
+- boot restore leaves the store detached when the item index matches the
+  artifact, and merges as before otherwise (legacy inline checkpoints,
+  missing or stale item files).
+
+The daily public market report cache holds a pointer to the verified 5D
+snapshot instead of a deep copy. Residency scalars ride the owner-only
+`memory-attribution` route (`marketStoreResidency`). A detach that cannot
+prove its item files current (`items_not_current`, `index_invalid`) simply
+keeps the store resident until the next healthy save.
+
+### Second slice: the three intelligence stores
+
+`chartIntelligence`, `todayIntelligence` and `marketReplay` (18 + 16 + 5 MiB
+of JSON) follow the same residency rule without per-item files: their
+readers are whole-store readers — the generators (`_chart_public_report`,
+the mission tick), the market brief (`argus_jp_market_research.lookup`) and
+the short-selling history reader — and each re-attaches (reloads the
+artifact) before reading. Boot restore leaves them detached whenever the
+artifact file restored cleanly. A publish into a detached store without an
+explicit attach is caught by `_market_store_attached`, which merges the
+artifact back in first, so a partial store can never overwrite the file.
+The ledger stays resident (owner-imported observations; 124 readers).
+
 ## Follow-ups
 
 - Hash-gate the `marketLedger` section of the Remote Journal projection as
   well, so the watchtower does not re-commit 34 MB every 30 minutes when the
   ledger has not changed.
-- Run the artifact generators in a scheduled worker process and serve the
-  verified snapshots from the artifact files instead of resident memory.
+- Extend residency to `chartIntelligence`, `todayIntelligence`,
+  `marketReplay` and `marketLedger` (their readers are the generators and a
+  few summary routes), then run the generators in a scheduled worker process.
 - The recovery registry now declares the five artifact states as
   `LOCAL_SIDECAR` / `LOCAL_ONLY` and adds `market.artifact_status` for the
   checkpoint status row. `market.today_source` (short-selling source rows

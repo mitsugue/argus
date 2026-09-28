@@ -18,6 +18,7 @@ import pytest
 
 import argus_asset_chart_cache as asset_cache
 import argus_chart_intelligence as chart_intelligence
+import argus_market_artifact_items as artifact_items
 import argus_market_artifact_store as artifact_store
 import argus_market_replay as market_replay
 import argus_persistent_storage as storage
@@ -32,6 +33,9 @@ ARTIFACTS = artifact_store.ARTIFACTS
 
 
 def _seed_verified(symbol="1321", dataset_hash="split-a"):
+    # Production publishers attach first (a detached store is empty and
+    # served from files); the test seed follows the same rule.
+    scanner._attach_market_store("verifiedViewSnapshots", "test_seed")
     item = candidate(symbol=symbol, dataset_hash=dataset_hash,
                      method=scanner._VERIFIED_VIEW_METHOD_VERSION)
     updated, reason = snapshots.publish_atomic(
@@ -48,10 +52,18 @@ _STORES = ("_VERIFIED_VIEW_SNAPSHOTS", "_ASSET_CHART_REPORTS",
            "_MARKET_ARTIFACT_STATUS")
 
 
+_RESIDENCY_DEFAULT = {
+    "attached": True, "stateHash": None, "counts": {}, "attachedAt": None,
+    "detachedAt": None, "attachCount": 0, "detachCount": 0,
+    "lastAttachReason": None, "lastDetachReason": None,
+    "lastAttachErrorClass": None, "lastDetachOutcome": None}
+
+
 @pytest.fixture(autouse=True)
 def _isolate_market_stores():
     """Leave every shared store exactly as found so test order never matters."""
     saved = {name: copy.deepcopy(getattr(scanner, name)) for name in _STORES}
+    saved_residency = copy.deepcopy(scanner._MARKET_STORE_RESIDENCY)
     try:
         yield
     finally:
@@ -59,11 +71,19 @@ def _isolate_market_stores():
             live = getattr(scanner, name)
             live.clear()
             live.update(saved[name])
+        for name, row in saved_residency.items():
+            scanner._MARKET_STORE_RESIDENCY[name].clear()
+            scanner._MARKET_STORE_RESIDENCY[name].update(row)
+        scanner._MARKET_ITEM_CACHE.clear()
 
 
 def _reset_market_stores():
     for target in (scanner._MARKET_ARTIFACT_STATUS,):
         target.clear()
+    for row in scanner._MARKET_STORE_RESIDENCY.values():
+        row.clear()
+        row.update(copy.deepcopy(_RESIDENCY_DEFAULT))
+    scanner._MARKET_ITEM_CACHE.clear()
     for name, empty in (
             ("_VERIFIED_VIEW_SNAPSHOTS", snapshots.empty_store()),
             ("_ASSET_CHART_REPORTS", asset_cache.empty_store()),
@@ -110,21 +130,44 @@ def test_checkpoint_excludes_payloads_and_files_are_hash_gated():
             "artifacts", {}).get("verifiedViewSnapshots", {})
         path = pathlib.Path(artifact_store.path_for(root, "verifiedViewSnapshots"))
         identity = (path.stat().st_ino, path.stat().st_mtime_ns)
+        # v13.7.58: after the save the two largest stores are detached (empty
+        # in RAM) and single reads come from the per-item files.
+        assert scanner._market_store_attached("verifiedViewSnapshots") is False
+        assert scanner._market_store_attached("assetChartReports") is False
+        assert scanner._VERIFIED_VIEW_SNAPSHOTS["current"] == {}
+        index = artifact_items.index(root, "verifiedViewSnapshots")
+        assert index["stateHash"] == blob["verifiedViewSnapshotsStateHash"]
+        served = scanner._verified_market_snapshot("1321", 5)
+        assert served and served["snapshotId"] == snapshot_id
 
         second = scanner._osint_persist()
         assert second["verified"] is True
         assert (path.stat().st_ino, path.stat().st_mtime_ns) == identity
-        for name in ARTIFACTS:
-            assert scanner._MARKET_ARTIFACT_STATUS[name]["lastStatus"] == \
-                "unchanged", name
+        # A detached store is neither normalized nor rewritten: the sealed
+        # hash is carried from the residency row and the file is untouched.
+        assert _checkpoint_blob(value)["verifiedViewSnapshotsStateHash"] == \
+            blob["verifiedViewSnapshotsStateHash"]
+        assert scanner._market_store_attached("verifiedViewSnapshots") is False
+        # Every derived store is detached after the save; only the ledger is
+        # normalized again and found unchanged.
+        assert scanner._MARKET_ARTIFACT_STATUS["marketLedger"]["lastStatus"] == "unchanged"
+        for name in scanner._MARKET_RESIDENCY_ARTIFACTS:
+            assert scanner._market_store_attached(name) is False, name
 
-        _seed_verified(dataset_hash="split-b")
+        _seed_verified(dataset_hash="split-b")      # attaches, then publishes
+        assert scanner._market_store_attached("verifiedViewSnapshots") is True
+        # Same pointer key, newer dataset: the earlier snapshot moved to history.
+        assert len(scanner._VERIFIED_VIEW_SNAPSHOTS["current"]) == 1
+        assert len(scanner._VERIFIED_VIEW_SNAPSHOTS["history"]) == 1
         third = scanner._osint_persist()
         assert third["verified"] is True
         assert scanner._MARKET_ARTIFACT_STATUS["verifiedViewSnapshots"][
             "lastStatus"] == "written"
-        assert scanner._MARKET_ARTIFACT_STATUS["marketReplay"][
+        assert scanner._MARKET_ARTIFACT_STATUS["marketLedger"][
             "lastStatus"] == "unchanged"
+        assert scanner._market_store_attached("verifiedViewSnapshots") is False
+        assert artifact_items.index(root, "verifiedViewSnapshots")["items"] == {
+            "market-chart:1321:5D": scanner._verified_market_snapshot("1321", 5)["snapshotId"]}
 
 
 def test_restore_merges_artifact_files_after_process_restart():
@@ -139,11 +182,20 @@ def test_restore_merges_artifact_files_after_process_restart():
             source = scanner._osint_restore_once()
         request_get.assert_not_called()
         assert source == "persistent_local"
+        # The per-item files match the artifact, so the two largest stores
+        # stay detached across the restart; reads are served from disk.
+        assert scanner._MARKET_ARTIFACT_STATUS["verifiedViewSnapshots"][
+            "restoreStatus"] == "detached"
+        assert scanner._market_store_attached("verifiedViewSnapshots") is False
+        served = scanner._verified_market_snapshot("1321", 5)
+        assert served and served["snapshotId"] == snapshot_id
+        for name in ARTIFACTS:
+            expected = "restored" if name == "marketLedger" else "detached"
+            assert scanner._MARKET_ARTIFACT_STATUS[name]["restoreStatus"] == \
+                expected, name
+        scanner._attach_market_store("verifiedViewSnapshots", "test")
         current = scanner._VERIFIED_VIEW_SNAPSHOTS["current"]
         assert [s["snapshotId"] for s in current.values()] == [snapshot_id]
-        for name in ARTIFACTS:
-            assert scanner._MARKET_ARTIFACT_STATUS[name]["restoreStatus"] == \
-                "restored", name
 
 
 def test_legacy_inline_checkpoint_still_restores_and_migrates_to_files():
@@ -192,9 +244,9 @@ def test_corrupt_artifact_file_never_blocks_restore():
             "restoreStatus": "invalid",
             "errorClass": "ArtifactError"}
         assert scanner._MARKET_ARTIFACT_STATUS["verifiedViewSnapshots"][
-            "restoreStatus"] == "restored"
-        current = scanner._VERIFIED_VIEW_SNAPSHOTS["current"]
-        assert [s["snapshotId"] for s in current.values()] == [snapshot_id]
+            "restoreStatus"] == "detached"
+        served = scanner._verified_market_snapshot("1321", 5)
+        assert served and served["snapshotId"] == snapshot_id
 
 
 def test_artifact_write_failure_is_recorded_but_checkpoint_still_verifies():

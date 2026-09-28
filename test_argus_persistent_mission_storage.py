@@ -189,8 +189,16 @@ def scanner_storage(root: str, *, production=True):
         "remoteAck": copy.deepcopy(scanner._REMOTE_ACK),
         "agentQueue": copy.deepcopy(scanner._OSINT_AGENT_QUEUE),
         "soak": copy.deepcopy(scanner._SOAK),
+        # v13.7.58: store residency is durable-storage state too — a save in
+        # one test must not leave another test's stores detached.
+        "residency": copy.deepcopy(scanner._MARKET_STORE_RESIDENCY),
+        "artifactStatus": copy.deepcopy(scanner._MARKET_ARTIFACT_STATUS),
     }
     configured = paths(root)
+    for _row in scanner._MARKET_STORE_RESIDENCY.values():
+        _row.update({"attached": True, "stateHash": None, "counts": {}})
+    scanner._MARKET_ARTIFACT_STATUS.clear()
+    scanner._MARKET_ITEM_CACHE.clear()
     scanner._DURABILITY_PRODUCTION = production
     scanner._DURABILITY_PATHS = configured
     scanner._OSINT_PERSIST_FILE = configured["checkpoint"]
@@ -271,6 +279,12 @@ def scanner_storage(root: str, *, production=True):
         scanner._REMOTE_ACK.update(saved["remoteAck"])
         scanner._OSINT_AGENT_QUEUE.clear()
         scanner._OSINT_AGENT_QUEUE.update(saved["agentQueue"])
+        for _name, _row in saved["residency"].items():
+            scanner._MARKET_STORE_RESIDENCY[_name].clear()
+            scanner._MARKET_STORE_RESIDENCY[_name].update(_row)
+        scanner._MARKET_ARTIFACT_STATUS.clear()
+        scanner._MARKET_ARTIFACT_STATUS.update(saved["artifactStatus"])
+        scanner._MARKET_ITEM_CACHE.clear()
         scanner._SOAK.clear()
         scanner._SOAK.update(saved["soak"])
 

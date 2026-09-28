@@ -51,3 +51,38 @@ def _reset_rate_limit_buckets():
     except Exception:
         pass
     yield
+
+
+@pytest.fixture(autouse=True)
+def _isolate_market_store_residency():
+    """v13.7.58: store residency is process state that a save flips.
+
+    A test that persists a checkpoint detaches the derived market stores; an
+    unrelated later test must still see them attached, exactly as a fresh
+    process would.  Snapshot the residency rows before each test and restore
+    them afterwards; clear the per-item read cache so no test reads another
+    test's temporary files.
+    """
+    try:
+        import copy
+        import scanner
+    except Exception:  # pragma: no cover - scanner import is the test's own problem
+        yield
+        return
+    residency = getattr(scanner, "_MARKET_STORE_RESIDENCY", None)
+    cache = getattr(scanner, "_MARKET_ITEM_CACHE", None)
+    saved = copy.deepcopy(residency) if isinstance(residency, dict) else None
+    try:
+        yield
+    finally:
+        if saved is not None:
+            for name, row in saved.items():
+                live = residency.get(name)
+                if isinstance(live, dict):
+                    live.clear()
+                    live.update(row)
+        if cache is not None:
+            try:
+                cache.clear()
+            except Exception:
+                pass
