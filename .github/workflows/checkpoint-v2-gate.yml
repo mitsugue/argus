@@ -51,12 +51,20 @@ jobs:
     steps:
       - name: Fetch one exact public production-shaped state (read-only GET)
         shell: bash
+        env:
+          # Owner authentication is live in production (2026-09-28): every
+          # non-exempt route answers 401 to anonymous callers.  The existing
+          # operational credential admits this read-only GET exactly as the
+          # scheduled machine readers already use it; no owner password or
+          # session is involved and nothing is written.
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p artifacts
           curl --fail --silent --show-error --location \
             --retry 8 --retry-all-errors --retry-delay 10 \
             --retry-max-time 900 --max-time 300 \
+            --header "X-ARGUS-ADMIN-TOKEN: ${ARGUS_ADMIN_TOKEN}" \
             https://argus-backend-3j2m.onrender.com/api/argus/osint/memory-snapshot \
             --output artifacts/checkpoint-v2-exact-source.json
           python3 -B -c 'import json,pathlib; p=pathlib.Path("artifacts/checkpoint-v2-exact-source.json"); v=json.loads(p.read_text()); assert isinstance(v,dict) and v'
