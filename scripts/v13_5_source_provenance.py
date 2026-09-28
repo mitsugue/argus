@@ -35,6 +35,17 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # Derived market artifacts outside the sealed checkpoint (exact reviewed
+    # contents of the store module, its tests, registry and measurement budget).
+    'argus_market_artifact_store.py': 'ec3feb550c5c19aa3c8ba266b5e5aa0e60459f62',
+    'argus_recovery_measurement.py': '541e6ee11ca3637f5ae1889d9ec61b0925224fdc',
+    'argus_recovery_registry.py': 'beb6aa85370b17832dbf157574a1ad272ec35655',
+    'docs/MARKET_ARTIFACT_STORE.md': '6fcb7d8ec9083f5c01aa16fc6cc2d4fec84a57d0',
+    'test_argus_market_artifact_split.py': '7e5843f0c2ee20ec56cc768e154b0381a6b18b21',
+    'test_argus_market_artifact_store.py': 'c0073e3a9b48201ddef4fa9919e753b6ffcd5695',
+    'test_argus_memory_attribution.py': 'ea3fb2d514dea73bef7975f0f8b8a82d126103bd',
+    'test_argus_recovery_measurement.py': 'c359bef830a5b6d341b388c265f27eca09b3f227',
+    'test_argus_recovery_registry.py': 'bb3a0a5c1b89f336c415f5fbcb0857deee36dffb',
     # Legacy scanner-phase removal: tests and probe trimmed to the retained
     # contracts only (exact reviewed contents).
     'test_argus_v12_0_7.py': '7adde8c0541300fda75622390c078aed3e3e77de',
