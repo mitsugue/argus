@@ -35,6 +35,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # Pinned backend requirements + full Python patch version (v13.7.55).
+    '.python-version': 'f36fa5fd8017a085e301126c8c3fc30f1a2550b9',
+    'requirements.txt': '40036760c2be0fb3ae33f2e2246ab8468d11d8e9',
     # Read-only Render deploy diagnostics (exact reviewed contents; v13.7.55).
     '.github/workflows/render-deploy-diagnostics.yml': 'd59bd1806c81ee24f67cc545effb86295a428b6d',
     'scripts/render_deploy_diagnostics.py': '232e235b15057b52754899eace7f847e54fd4344',
