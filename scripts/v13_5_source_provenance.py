@@ -649,6 +649,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_index_valuation_proxy_glue.py",
     "docs/ops/index-valuation-proxy.md",
     "docs/ops/tdnet-addon-cancellation.md",
     # v13.5.54 (production measurement 2026-09-04). The verifier compares
