@@ -23,12 +23,20 @@ export function OwnerAccess({ children }: { children: React.ReactNode }) {
   const [message, setMessage] = useState('');
   const [recovery, setRecovery] = useState(false);
   if (!OWNER_AUTH_REQUIRED) return <>{children}</>;
+  const [code, setCode] = useState('');
   const run = async (fn: () => Promise<unknown>, success = '') => {
-    setBusy(true); setMessage('');
+    setBusy(true); setMessage(''); setCode('');
     try { await fn(); setMessage(success); setRecovery(false); }
-    catch (error) { setMessage(error instanceof Error && error.message === 'try_later'
-      ? 'しばらく待ってから、もう一度お試しください。'
-      : '操作を完了できませんでした。接続と認証情報を確認してください。'); }
+    catch (error) {
+      // The visible text stays generic; the fixed error code (never a
+      // credential or server body) rides a data attribute so the owner-mode
+      // acceptance can name the stage a login failed at.
+      const reason = error instanceof Error ? error.message : 'unknown';
+      setCode(/^[a-z_]{1,40}$/.test(reason) ? reason : 'unknown');
+      setMessage(reason === 'try_later'
+        ? 'しばらく待ってから、もう一度お試しください。'
+        : '操作を完了できませんでした。接続と認証情報を確認してください。');
+    }
     finally { setBusy(false); setPassword(''); }
   };
   const form = <form onSubmit={(e) => { e.preventDefault(); void run(() => recovery
@@ -38,7 +46,7 @@ export function OwnerAccess({ children }: { children: React.ReactNode }) {
     {recovery && <p>すべてのパスキーとログインを解除します。保存データは残ります。</p>}
     <button type="submit" disabled={busy || !online}>{recovery ? 'すべての端末を解除' : 'パスワードで開く'}</button>
   </form>;
-  const status = <p role="status">{busy ? '確認しています…' : message}</p>;
+  const status = <p role="status" data-owner-code={busy ? 'busy' : code || undefined}>{busy ? '確認しています…' : message}</p>;
   // Signed-in mark (owner request 2026-09-28): a compact English badge in the
   // header instead of a text menu. The <summary> stays the authenticated
   // marker the owner-mode acceptance readers wait for and open.
