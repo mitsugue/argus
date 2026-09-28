@@ -191,9 +191,9 @@ jobs:
               --recovery "$RUNNER_TEMP/osint-recovery.json" > /dev/null
             curl --fail --silent --show-error --max-time 60 \
               --max-filesize "$READBACK_MAX_BYTES" \
-              -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
               "$BE/api/argus/osint/remote-readback" \
-              -o "$RUNNER_TEMP/osint-readback.json"
+              -o "$RUNNER_TEMP/osint-readback.json" \
+              -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN"
             printf '%s' encrypted_recovery_v1 > \
               "$RUNNER_TEMP/remote-artifact-mode"
           elif [ "$RECOVERY_STATUS" = "503" ] && python3 -c \
