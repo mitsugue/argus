@@ -88,14 +88,20 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
       await input.fill(config.password);
       await page.getByRole('button', { name: 'パスワードで開く', exact: true }).click();
       const response = await responsePromise;
-      if (!response || response.status() !== 200) fail('login');
+      // Name the stage and HTTP status (never the body) so a production
+      // owner-mode failure is diagnosable from the run log: a 429 means the
+      // owner-wide ten-per-minute limiter, not a wrong password.
+      if (!response) fail('login_no_response');
+      if (response.status() !== 200) fail('login_status_' + response.status());
       const body = await response.json();
       if (typeof body?.token !== 'string' || !/^[A-Za-z0-9_-]{32,128}$/.test(body.token)) fail('login_shape');
       secrets.add(body.token);
       // The product opens this control only after its fresh nonce proof.
-      await page.locator('.owner-access-bar > summary').waitFor({ state: 'visible', timeout: 15000 });
+      try {
+        await page.locator('.owner-access-bar > summary').waitFor({ state: 'visible', timeout: 15000 });
+      } catch { fail('login_marker'); }
       boundary(page);
-    } catch { fail('login'); }
+    } catch (error) { if (error instanceof OwnerBrowserError) throw error; fail('login'); }
     finally { if (await input.count().catch(() => 0)) await input.fill('', { timeout: 1000 }).catch(() => {}); }
   }
   async function logout(page) {
