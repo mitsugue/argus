@@ -46,6 +46,7 @@ import argus_downside  # Downside Incident Response + cause attribution (pure, d
 import argus_tdnet  # TDnet (適時開示) disclosure title classifier (pure, v10.101)
 import argus_jquants_tdnet  # official J-Quants TDnet Add-on classify/map/status (pure, v11.1)
 import argus_tdnet_subscription  # declared state of the TDnet add-on (pure, v13.7.62)
+import argus_index_valuation_proxy  # index-based EPS/PER reconstructed from constituents (pure)
 import argus_evidence_pack  # canonical Evidence Pack — the decision spine's input (pure, v11.2)
 import argus_official_event_lifecycle  # official disclosures as lifecycle-tracked events (pure, v11.3)
 import argus_official_event_store  # durable official-event serialize/merge/restore (pure, v11.3.1)
@@ -38054,6 +38055,220 @@ def _jp_index_valuation_warm():
     _JP_INDEX_VALUATION.warm(path, get=requests.get)
 
 
+# ── Index valuation proxy ────────────────────────────────────────────────────
+# The official index-based PER is Nikkei's; machine use is licensed non-display
+# use and the page answers 403 to anything but a browser. This lane rebuilds the
+# quantity from inputs the product already has a right to (J-Quants per-stock
+# forecast EPS and closes; Nikkei's free month-end weight table, placed on the
+# server by the owner as a secret file). The arithmetic lives in
+# argus_index_valuation_proxy; this is the IO and the memory around it. The
+# weight table never leaves this process: not logged, not served, not committed.
+_NK225_WEIGHT_CSV_ENV = "ARGUS_NK225_WEIGHT_CSV"
+_JP_INDEX_PROXY_LOCK = threading.Lock()
+_JP_INDEX_PROXY = {"status": "NOT_RUN", "restoreAttempted": False, "weightsSha256": None,
+                   "weightsAsOf": None, "factors": None, "history": {},
+                   "recommendedVariant": "FORECAST_SIGNED", "lastAttemptAt": None,
+                   "lastError": None, "lastErrorReason": None, "requestsLastWarm": 0}
+_JP_INDEX_PROXY_BACKFILL_PER_WARM = 5
+_JP_INDEX_PROXY_HISTORY_LIMIT = 60
+
+
+def _nk225_code_key(code):
+    """J-Quants returns five-character codes (a trailing check digit of 0 for
+    ordinary shares); Nikkei's weight table uses the four-character form."""
+    text = str(code or "").strip().upper()
+    return text[:4] if len(text) == 5 and text.endswith("0") else text
+
+
+def _jq_valuation_for_date(date_str, headers, max_pages=40):
+    """All-stocks valuation for one date → {code: {"FwdEPS", "EPS"}}; {} on error."""
+    out, params, pages = {}, {"date": date_str}, 0
+    try:
+        for _ in range(max_pages):
+            r = requests.get(f"{_JQUANTS_BASE}/equities/valuation",
+                             headers=headers, params=params, timeout=20)
+            pages += 1
+            if r.status_code != 200:
+                break
+            body = r.json()
+            for row in body.get("data", []):
+                if not isinstance(row, dict) or str(row.get("Date") or "") != date_str:
+                    continue
+                key = _nk225_code_key(row.get("Code"))
+                if key:
+                    out[key] = {"FwdEPS": row.get("FwdEPS"), "EPS": row.get("EPS")}
+            pk = body.get("pagination_key")
+            if not pk:
+                break
+            params["pagination_key"] = pk
+    except Exception:
+        pass
+    _JP_INDEX_PROXY["requestsLastWarm"] += pages
+    return out
+
+
+def _jp_index_proxy_path():
+    return (os.path.join(_DURABILITY_PATHS["root"], "jp_market_valuation_proxy.json")
+            if _cost_policy_durable_enabled() else None)
+
+
+def _jp_index_proxy_restore():
+    path = _jp_index_proxy_path()
+    _JP_INDEX_PROXY["restoreAttempted"] = True
+    if not path or not os.path.exists(path):
+        return
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            saved = json.load(handle)
+        if isinstance(saved, dict) and saved.get("schemaVersion") == argus_index_valuation_proxy.SCHEMA:
+            for key in ("weightsSha256", "weightsAsOf", "factors", "history", "recommendedVariant"):
+                if key in saved:
+                    _JP_INDEX_PROXY[key] = saved[key]
+    except Exception as exc:
+        _JP_INDEX_PROXY["lastError"] = type(exc).__name__
+        _JP_INDEX_PROXY["lastErrorReason"] = "restore_failed"
+
+
+def _jp_index_proxy_persist():
+    path = _jp_index_proxy_path()
+    if not path:
+        return
+    body = {"schemaVersion": argus_index_valuation_proxy.SCHEMA,
+            "weightsSha256": _JP_INDEX_PROXY["weightsSha256"], "weightsAsOf": _JP_INDEX_PROXY["weightsAsOf"],
+            "factors": _JP_INDEX_PROXY["factors"], "history": _JP_INDEX_PROXY["history"],
+            "recommendedVariant": _JP_INDEX_PROXY["recommendedVariant"], "savedAt": _ai_now_iso()}
+    argus_persistent_storage.atomic_write_json(path, body, maximum_bytes=4 * 1024 * 1024, file_mode=0o600)
+
+
+def _jp_index_proxy_weights():
+    """(table, sha256) from the owner's secret file, or (None, reason)."""
+    path = (os.environ.get(_NK225_WEIGHT_CSV_ENV) or "").strip()
+    if not path:
+        return None, "weight_file_not_configured"
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read(512 * 1024)
+    except OSError:
+        return None, "weight_file_unreadable"
+    try:
+        text = raw.decode("cp932")
+    except UnicodeDecodeError:
+        text = raw.decode("utf-8-sig", errors="strict")
+    table = argus_index_valuation_proxy.parse_weight_table(text)
+    return table, hashlib.sha256(raw).hexdigest()
+
+
+def _jp_index_proxy_compact(proxy):
+    """What the history keeps per session: the numbers, never per-member rows."""
+    coverage = dict(proxy.get("coverage") or {})
+    for key in ("missingPrice", "missingForecastEps"):
+        coverage[key + "Count"] = len(coverage.pop(key, []) or [])
+    return {"date": proxy["date"], "indexClose": proxy["indexClose"],
+            "impliedDivisor": proxy.get("impliedDivisor"), "variants": proxy["variants"],
+            "coverage": coverage, "availableFrom": proxy["availableFrom"], "knownAt": proxy["knownAt"],
+            "sourceRef": proxy["sourceRef"], "factorsAsOf": proxy.get("factorsAsOf")}
+
+
+def _jp_index_proxy_warm(nikkei_rows):
+    """Derive the factors once per weight table, then keep the recent sessions
+    reconstructed. Bounded per warm: at most a few sessions and their pages."""
+    if not _JP_INDEX_PROXY_LOCK.acquire(blocking=False):
+        return
+    try:
+        _JP_INDEX_PROXY["lastAttemptAt"] = _ai_now_iso()
+        _JP_INDEX_PROXY["requestsLastWarm"] = 0
+        if not _JP_INDEX_PROXY["restoreAttempted"]:
+            _jp_index_proxy_restore()
+        table, sha_or_reason = _jp_index_proxy_weights()
+        if table is None:
+            _JP_INDEX_PROXY.update(status="NOT_CONFIGURED", lastErrorReason=sha_or_reason)
+            return
+        if not _JQUANTS_API_KEY:
+            _JP_INDEX_PROXY.update(status="KEY_MISSING", lastErrorReason="jquants_key_missing")
+            return
+        headers = {"x-api-key": _JQUANTS_API_KEY}
+        if _JP_INDEX_PROXY["weightsSha256"] != sha_or_reason:
+            _JP_INDEX_PROXY.update(factors=None, history={}, weightsSha256=sha_or_reason,
+                                   weightsAsOf=table["asOf"])
+        if not _JP_INDEX_PROXY["factors"]:
+            bars = _jq_all_for_date(table["asOf"], headers)
+            _JP_INDEX_PROXY["requestsLastWarm"] += 1
+            closes = {_nk225_code_key(code): _q_close(row) for code, row in bars.items()}
+            _JP_INDEX_PROXY["factors"] = argus_index_valuation_proxy.derive_factors(table, closes)
+        factors = _JP_INDEX_PROXY["factors"]
+        sessions = sorted({str(row.get("date") or "")[:10] for row in (nikkei_rows or [])
+                           if row.get("date") and row.get("close")}, reverse=True)
+        pending = [day for day in sessions if day not in _JP_INDEX_PROXY["history"]
+                   and day >= (table["asOf"])][:_JP_INDEX_PROXY_BACKFILL_PER_WARM]
+        close_by_day = {str(row.get("date"))[:10]: row.get("close") for row in (nikkei_rows or [])}
+        for day in pending:
+            bars = _jq_all_for_date(day, headers)
+            _JP_INDEX_PROXY["requestsLastWarm"] += 1
+            if not bars:
+                continue
+            values = _jq_valuation_for_date(day, headers)
+            if not values:
+                continue
+            closes = {_nk225_code_key(code): _q_close(row) for code, row in bars.items()}
+            proxy = argus_index_valuation_proxy.proxy_valuation(
+                factors=factors, closes=closes,
+                forecast_eps={k: v.get("FwdEPS") for k, v in values.items()},
+                actual_eps={k: v.get("EPS") for k, v in values.items()},
+                index_close=float(close_by_day[day]), date=day,
+                available_from=_ai_now_iso(), known_at=_ai_now_iso(),
+                source_ref="argus:index-valuation-proxy:jquants+nikkei-weights")
+            _JP_INDEX_PROXY["history"][day] = _jp_index_proxy_compact(proxy)
+        if len(_JP_INDEX_PROXY["history"]) > _JP_INDEX_PROXY_HISTORY_LIMIT:
+            for day in sorted(_JP_INDEX_PROXY["history"])[:-_JP_INDEX_PROXY_HISTORY_LIMIT]:
+                del _JP_INDEX_PROXY["history"][day]
+        _JP_INDEX_PROXY.update(status="AVAILABLE" if _JP_INDEX_PROXY["history"] else "NO_SESSIONS",
+                               lastError=None, lastErrorReason=None)
+        _jp_index_proxy_persist()
+    except Exception as exc:
+        _JP_INDEX_PROXY.update(status="FAILED", lastError=type(exc).__name__,
+                               lastErrorReason=str(exc)[:80])
+    finally:
+        _JP_INDEX_PROXY_LOCK.release()
+
+
+def _jp_index_proxy_row(cutoff):
+    """The latest session's proxy in the shape the price scale and D04 consume."""
+    history = _JP_INDEX_PROXY.get("history") or {}
+    if not history:
+        return None
+    latest = history[max(history)]
+    variant = _JP_INDEX_PROXY.get("recommendedVariant") or "FORECAST_SIGNED"
+    row = argus_index_valuation_proxy.select_variant({**latest, "basis": argus_index_valuation_proxy.PROXY_BASIS,
+        "epsKind": "PROXY_FROM_CONSTITUENT_FORECAST_EPS"}, variant)
+    return row
+
+
+def _jp_index_proxy_public():
+    """Counts and numbers only: no weights, no per-member factor, no file path."""
+    history = _JP_INDEX_PROXY.get("history") or {}
+    factors = _JP_INDEX_PROXY.get("factors") or {}
+    latest = history[max(history)] if history else None
+    return {"status": _JP_INDEX_PROXY["status"], "basis": argus_index_valuation_proxy.PROXY_BASIS,
+            "basisLabelJa": argus_index_valuation_proxy.BASIS_LABEL_JA,
+            "weightsAsOf": _JP_INDEX_PROXY.get("weightsAsOf"),
+            "factorCoverage": ({k: v for k, v in (factors.get("coverage") or {}).items()
+                                if k in ("members", "priced", "defaultFactorShare")}
+                               | {"reducedFactorCount": len((factors.get("coverage") or {}).get("reducedFactorMembers") or []),
+                                  "unsnappedCount": len((factors.get("coverage") or {}).get("unsnapped") or [])}
+                               if factors else None),
+            "recommendedVariant": _JP_INDEX_PROXY.get("recommendedVariant"),
+            "latest": latest,
+            "history": [{"date": day, "impliedDivisor": row.get("impliedDivisor"),
+                         **{name: (row["variants"].get(name) or {}).get("per")
+                            for name in argus_index_valuation_proxy.EPS_VARIANTS}}
+                        for day, row in sorted(history.items())],
+            "lastAttemptAt": _JP_INDEX_PROXY.get("lastAttemptAt"),
+            "lastError": _JP_INDEX_PROXY.get("lastError"),
+            "lastErrorReason": _JP_INDEX_PROXY.get("lastErrorReason"),
+            "requestsLastWarm": _JP_INDEX_PROXY.get("requestsLastWarm"),
+            "actionAuthority": False, "validationStatus": "UNVALIDATED"}
+
+
 _INDEX_RESEARCH_REPORTS = {}
 _INDEX_RESEARCH_STATUS = {"status": "NOT_RUN", "restoreAttempted": False}
 _INDEX_RESEARCH_LOCK = threading.Lock()
@@ -38181,7 +38396,10 @@ def _jp_market_comparison_calculate(horizon):
                 missing_calendar = True
         result = jp_market_price_paths.cached_index_comparison(
             rows, cutoff=cutoff, session_dates=sessions, horizon_sessions=horizon,
-            acquired_at=cached.get("acquiredAt"), valuation=_JP_INDEX_VALUATION.snapshot(cutoff),
+            acquired_at=cached.get("acquiredAt"),
+            # The official row when it exists; otherwise the labelled ARGUS proxy,
+            # which the scale keeps distinguishable by basis.
+            valuation=(_JP_INDEX_VALUATION.snapshot(cutoff) or _jp_index_proxy_row(cutoff)),
             state_rows=_JP_MARKET_FEATURE_HISTORY.get("features", ()),
             condition_rows=_JP_MARKET_FEATURE_HISTORY.get("conditions", ()))
         result["marketFeatureAcquisition"] = {k: _JP_MARKET_FEATURE_HISTORY.get(k)
@@ -38195,6 +38413,7 @@ def _jp_market_comparison_calculate(horizon):
         if horizon == 5:
             result["marketFeatureSnapshot"] = _JP_MARKET_FEATURE_HISTORY.get("latest")
         result["valuationAcquisition"] = dict(_JP_INDEX_VALUATION.status)
+        result["proxyValuation"] = _jp_index_proxy_public()
         if missing_calendar and result.get("comparison"):
             result["comparison"]["limitations"].append(
                 "公式営業日表の範囲外の過去局面は、比較候補から除外しています。")
@@ -39024,6 +39243,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     if warm:
         _cftc_jpy_autorefresh()
         _jp_index_valuation_warm()
+        _jp_index_proxy_warm(nikkei_rows)
         _jp_internals_warm()
     margin_rows = _jp_market_engine_margin_1570_rows(fetch=warm)
     rs_proxy = _jp_market_engine_relative_strength_proxy()
@@ -39076,6 +39296,7 @@ def _jp_market_engine_market_view():
         evidence = jp_market_engine.evaluate_d01_d07(
             cutoff=cutoff, two_market_rows=inputs["creditRows"],
             nikkei_valuation=_JP_INDEX_VALUATION.snapshot(cutoff),
+            nikkei_proxy_valuation=_jp_index_proxy_row(cutoff),
             margin_1570_rows=inputs["margin1570Rows"],
             relative_strength_proxy=inputs["rsProxy"],
             foreign_flow_rows=inputs["flowRows"],

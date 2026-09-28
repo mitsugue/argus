@@ -139,3 +139,29 @@ def test_d07_condition_is_reaction_based_and_labelled():
     down = [bar(d, 100 - i * 2) for i, d in enumerate(days)]
     assert jp_market_engine.evaluate_d07(cutoff=cutoff, earnings_event=event, stock_bars=down)["conditionMet"] is False
     assert jp_market_engine.evaluate_d07(cutoff=cutoff, earnings_event=event, stock_bars=down)["supportedBeatMiss"] is None
+
+
+def test_d04_takes_the_argus_proxy_only_as_a_labelled_candidate():
+    """The official row stays LICENSE_BLOCKED; the proxy fills the same quantity
+    under its own basis, lineage and measured error (owner spec, D04)."""
+    from jp_market_price_paths import PROXY_BASIS
+    cutoff = "2026-09-10T09:00:00Z"
+    proxy = {"instrumentId": "NIKKEI_225_INDEX", "basis": PROXY_BASIS, "currency": "JPY",
+             "date": "2026-09-10", "indexClose": 44000.0, "per": 22.0,
+             "sourceRef": "argus:proxy:test", "knownAt": "2026-09-10T08:00:00Z",
+             "officialErrorPct": 0.6, "coverage": {"priced": 225, "members": 225}}
+    row = jp_market_engine.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",
+                                        proxy_valuation=proxy)
+    assert row["status"] == "AVAILABLE"
+    assert row["lineage"] == "ARGUS_CANDIDATE" and row["conditionLineage"] == "ARGUS_CANDIDATE"
+    assert row["officialStatus"] == "LICENSE_BLOCKED"
+    assert row["proxyErrorPct"] == 0.6
+    assert row["per"] == 22.0 and abs(row["eps"] - 2000.0) < 1e-9
+    assert row["valuation"]["isProxy"] is True
+    # A proxy with the wrong basis, or one not known at the cutoff, changes nothing.
+    wrong = jp_market_engine.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",
+                                          proxy_valuation={**proxy, "basis": "CAP_WEIGHTED_PER"})
+    assert wrong["status"] == "LICENSE_BLOCKED"
+    late = jp_market_engine.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",
+                                         proxy_valuation={**proxy, "knownAt": "2026-09-10T10:00:00Z"})
+    assert late["status"] == "LICENSE_BLOCKED" and late["proxyRejected"] == "valuation_not_known_at_cutoff"

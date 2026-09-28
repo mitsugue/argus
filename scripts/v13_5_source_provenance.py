@@ -373,7 +373,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'jp_market_dynamics.py': '6949bb8b2cc4a1526f09016fb0c0e10369ce488d',
     'jp_market_events.py': '08adce36b4bc2dfdb7ade550ba15b8937e8e16a0',
     'jp_market_features.py': 'f1099ffc61fd96816c41ac3228de09186d72779c',
-    'jp_market_price_paths.py': '1ea2873b8bab0dfa245cfb24d4b379f7be654df7',
+    'jp_market_price_paths.py': '28336c748c6d526f2ad6059596da264671ed43bd',
     'jp_market_source_adapters.py': 'a89b745791fe493522388766ef88611ebcbc6aeb',
     'ops/calendar/jp_index_sq_2026.json': 'd55cbf1e1362d4d86b21fe413cc2de35b035bd62',
     'test_argus_ai_usage_receipt.py': '00d50f40807d5eea8e149115e1664272b4e4408a',
@@ -388,7 +388,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_jp_market_events_runtime.py': '76c27382d35b39c8745e5de09450942da852342d',
     'test_jp_market_features.py': '9255e905406bb42aa9138cb06abd0193ac005753',
     'test_jp_market_margin_runtime.py': 'd89cf0d2b0b6cd7d67b9798ab583c23fd6fb11f7',
-    'test_jp_market_price_paths.py': 'c0b334a81292efde995c585836ca81ac1b97ab3b',
+    'test_jp_market_price_paths.py': '06877d4e1c378f9d8d684cc2f7dae75614155cde',
     'test_jp_market_source_adapters.py': 'ea39ec595aa0c5f42726b42beb2f2ca84f41e401',
     'web/scripts/japan-market-comparison.test.cjs': 'c3a76e4193883de463cd2d53cdc412dd7d5a46a5',
     'web/scripts/japan-sq-calendar.test.cjs': '41fc84761bab22b8218bb5c1347767521472a2c6',
@@ -643,6 +643,14 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # officialness: has_official stays false and confirmed_cause unreachable.
     "argus_tdnet_subscription.py",
     "test_argus_tdnet_subscription.py",
+    # v13.7 index valuation proxy: the index-based EPS/PER reconstructed from
+    # J-Quants constituent forecast EPS and Nikkei's free month-end weights,
+    # labelled as an ARGUS candidate with its measured error; the official
+    # row stays LICENSE_BLOCKED and is never impersonated.
+    "argus_index_valuation_proxy.py",
+    "test_argus_index_valuation_proxy.py",
+    "test_argus_index_valuation_proxy_glue.py",
+    "docs/ops/index-valuation-proxy.md",
     "docs/ops/tdnet-addon-cancellation.md",
     # v13.5.54 (production measurement 2026-09-04). The verifier compares
     # methodVersion with strict equality; the frontend pin stopped at three
