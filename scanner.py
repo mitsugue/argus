@@ -21681,6 +21681,51 @@ _ALLOCATOR_RECLAIM_STATE = {
 }
 _ALLOCATOR_RECLAIM_LOCK = threading.Lock()
 
+# v13.7.59: one heavy background tick at a time.
+#
+# 2026-09-28 production attribution: every run of every heavy operation
+# overlapped another (residency_ai_tick 446 MiB, jp_owner_quote_warm 415 MiB,
+# missions/tick 326 MiB, zero exclusive runs, 58 instrumented operations
+# active at the maximum), so the process peak is their sum rather than the
+# largest one.  These ticks are self-throttled and idempotent: skipping a
+# five-minute slot costs nothing, while overlapping them costs the peak.
+_HEAVY_TICK_LOCK = threading.Lock()
+_HEAVY_TICK_STATE = {"running": None, "startedAt": None, "ranCount": 0,
+                     "skippedCount": 0, "lastSkipped": None,
+                     "skippedByName": {}}
+
+
+def _heavy_tick(name, function):
+    """Run one heavy background tick exclusively; skip when another holds it.
+
+    Also skips while a mission tick owns the process: that tick is the
+    largest allocator and the scheduler must not add to its peak.
+    """
+    if _MISSION_TICK_CONTEXT.get("active"):
+        _heavy_tick_skipped(name, "mission_tick_active")
+        return {"status": "skipped", "reason": "mission_tick_active"}
+    if not _HEAVY_TICK_LOCK.acquire(blocking=False):
+        _heavy_tick_skipped(name, "heavy_tick_busy")
+        return {"status": "skipped", "reason": "heavy_tick_busy",
+                "running": _HEAVY_TICK_STATE.get("running")}
+    _HEAVY_TICK_STATE.update({"running": name, "startedAt": _ai_now_iso()})
+    try:
+        return _memory_operation_run("scheduler", name, function)
+    finally:
+        _HEAVY_TICK_STATE.update({
+            "running": None,
+            "ranCount": int(_HEAVY_TICK_STATE.get("ranCount") or 0) + 1})
+        _HEAVY_TICK_LOCK.release()
+
+
+def _heavy_tick_skipped(name, reason):
+    _HEAVY_TICK_STATE["skippedCount"] = int(
+        _HEAVY_TICK_STATE.get("skippedCount") or 0) + 1
+    _HEAVY_TICK_STATE["lastSkipped"] = {"name": name, "reason": reason,
+                                        "at": _ai_now_iso()}
+    counts = _HEAVY_TICK_STATE.setdefault("skippedByName", {})
+    counts[name] = int(counts.get(name) or 0) + 1
+
 
 def _allocator_reclaim(reason, *, force=False, now_monotonic=None):
     """Bounded reclaim of free-but-unreturned allocator memory; never raises."""
@@ -32660,6 +32705,7 @@ def api_argus_admin_memory_attribution():
     # never element values) only on request, on this existing owner route.
     payload["allocatorReclaim"] = copy.deepcopy(_ALLOCATOR_RECLAIM_STATE)
     payload["marketStoreResidency"] = _market_store_residency_projection()
+    payload["heavyTicks"] = copy.deepcopy(_HEAVY_TICK_STATE)
     if str(request.args.get("inventory") or "").lower() in ("1", "true", "yes"):
         payload["residentInventory"] = _resident_inventory()
     return jsonify(payload)
@@ -47145,16 +47191,17 @@ def run_scheduler():
         # cron. Spawn on 5-min boundaries; the tick self-throttles (intel ≤10min,
         # AI via the run gate's 14-min interval), so a double spawn is harmless.
         if now.minute % 5 == 0:
+            # Heavy ticks take the single heavy-tick slot (see _heavy_tick):
+            # one at a time, and never while a mission tick is running.
             threading.Thread(
-                target=_memory_operation_run,
-                args=("scheduler", "residency_ai_tick", _residency_ai_tick),
+                target=_heavy_tick,
+                args=("residency_ai_tick", _residency_ai_tick),
                 daemon=True).start()
             # Owner JP names outside the curated list: the cache-only public
             # route depends on this resident warm, not on the GitHub cron.
             threading.Thread(
-                target=_memory_operation_run,
-                args=("scheduler", "jp_owner_quote_warm",
-                      _jp_owner_quote_warm_tick),
+                target=_heavy_tick,
+                args=("jp_owner_quote_warm", _jp_owner_quote_warm_tick),
                 daemon=True, name="jp-owner-quote-warm").start()
             # Return free-but-unreturned allocator arena to the OS when a
             # large idle balance has built up (rate limited, tick-aware).
@@ -47163,12 +47210,15 @@ def run_scheduler():
                 daemon=True, name="allocator-reclaim").start()
         # The public explanation progresses even when mail intake is slow or
         # no mailbox is configured. No public request starts this AI worker.
-        threading.Thread(target=_market_brief_worker_tick, daemon=True).start()
+        threading.Thread(target=_heavy_tick, daemon=True,
+                         args=("market_brief_worker_tick",
+                               _market_brief_worker_tick)).start()
         threading.Thread(target=_owner_overview_tick, daemon=True,
                          name="owner-overview-refresh").start()
         threading.Thread(target=_web_push_tick, daemon=True, name="web-push").start()
-        threading.Thread(target=_jp_sector_heatmap_tick, daemon=True,
-                         name="sector-heatmap").start()
+        threading.Thread(target=_heavy_tick, daemon=True, name="sector-heatmap",
+                         args=("jp_sector_heatmap_tick",
+                               _jp_sector_heatmap_tick)).start()
         # v13.5.54: Twelve Data Basic-plan warm tick — bounded by the policy core
         # (8-credit batch per eligible minute, daily cap, market-aware cadence).
         try:
