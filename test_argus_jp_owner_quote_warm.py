@@ -61,15 +61,21 @@ def test_tick_warms_owner_codes_once_per_window_and_repeats_after_six_hours(monk
         now_monotonic=1_000.0 + 6 * 3600 + 1)["codes"] == ["7203", "6758"]
 
 
-def test_tick_is_bounded_by_the_dynamic_cap(monkeypatch):
-    codes = [f"{1000 + i}" for i in range(scanner._JP_DYN_MAX + 7)]
+def test_tick_is_bounded_by_the_warm_batch(monkeypatch):
+    # A full daily history is parsed per code, so the batch stays small
+    # (2026-09-28: this tick grew RSS by 415 MiB in one production run).
+    codes = [f"{1000 + i}" for i in range(scanner._JP_OWNER_WARM_BATCH + 7)]
     _ready(monkeypatch, codes)
     core = mock.Mock(return_value={"status": "delayed"})
     monkeypatch.setattr(scanner, "_get_japan_watchlist_core", core)
     monkeypatch.setattr(scanner, "_jq_price_history", lambda code: None)
     result = scanner._jp_owner_quote_warm_tick(now_monotonic=10.0)
-    assert len(result["codes"]) == scanner._JP_DYN_MAX
+    assert len(result["codes"]) == scanner._JP_OWNER_WARM_BATCH
+    assert scanner._JP_OWNER_WARM_BATCH <= 8
     assert result["bars"] == 0
+    # The remainder is not dropped: the next window takes the next codes.
+    rest = scanner._jp_owner_quote_warm_tick(now_monotonic=10.0 + 400)
+    assert rest["codes"] and not set(rest["codes"]) & set(result["codes"])
 
 
 def test_tick_never_runs_before_restore_or_without_codes(monkeypatch):

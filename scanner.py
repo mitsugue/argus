@@ -47156,6 +47156,11 @@ _JP_OWNER_WARM_MIN_INTERVAL_SEC = 300
 _JP_OWNER_WARM_REPEAT_SEC = 6 * 3600
 
 
+# One bounded J-Quants batch per window; see the tick's comment for why it
+# is four and not the dynamic quote cap.
+_JP_OWNER_WARM_BATCH = 4
+
+
 def _jp_owner_quote_warm_tick(*, now_monotonic=None):
     """Resident warm for the owner's JP names outside the curated list.
 
@@ -47180,7 +47185,13 @@ def _jp_owner_quote_warm_tick(*, now_monotonic=None):
                or nowm - warmed_at[code] >= _JP_OWNER_WARM_REPEAT_SEC]
         if not due:
             return {"status": "nothing_due"}
-        due = due[:_JP_DYN_MAX]
+        # 2026-09-28 production attribution: this tick was the second largest
+        # RSS grower in the process (415 MiB in one run) because a full
+        # J-Quants daily history is parsed for every code in the batch.  The
+        # batch is therefore small: four codes per five-minute window still
+        # covers a twenty-name watchlist within half an hour, and the
+        # six-hour repeat is unchanged.
+        due = due[:_JP_OWNER_WARM_BATCH]
         _JP_OWNER_WARM_STATE["lastAttemptMonotonic"] = nowm
         _get_japan_watchlist_core(list(due), allow_provider_fetch=True)
         bars = 0
