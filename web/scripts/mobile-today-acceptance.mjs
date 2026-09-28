@@ -605,6 +605,9 @@ async function run() {
     '.at-canonical-load-status .triangle-step-loader',
   ).waitFor({ state: 'visible', timeout: 5_000 });
   })();
+  // A detached wait must not turn into an unhandled rejection that hides the
+  // primary failure (e.g. an owner login error) behind "page closed".
+  coldLoaderAppeared.catch(() => {});
   await coldPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(coldPage);
   await openCanonicalEvidence(coldPage);
@@ -674,6 +677,7 @@ async function run() {
     };
   }, { selector: CANONICAL_PROJECTION_STATE_SELECTOR }, { timeout: 7_000 });
   })();
+  slowStateAppeared.catch(() => {});
   await slowPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(slowPage);
   await openCanonicalEvidence(slowPage);

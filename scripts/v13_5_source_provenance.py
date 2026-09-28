@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.56"
+PRODUCT_VERSION = "v13.7.57"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,13 +35,17 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
-    # Pinned backend requirements + full Python patch version (v13.7.56).
-    # Read-only Render deploy diagnostics (exact reviewed contents; v13.7.56).
+    # the Settings identity card (v13.7.57)
+    'web/src/components/settings/OwnerIdentityPanel.tsx': '2289fa6d7fbdae74e8599cda85d3a1751f1928b2',
+    # the Settings identity card (v13.7.57)
+    'web/src/components/settings/OwnerIdentityPanel.css': '51affd51093aaac1aaa364aebe0d201629db0877',
+    # Pinned backend requirements + full Python patch version (v13.7.57).
+    # Read-only Render deploy diagnostics (exact reviewed contents; v13.7.57).
     '.github/workflows/render-deploy-diagnostics.yml': 'd59bd1806c81ee24f67cc545effb86295a428b6d',
     'scripts/render_deploy_diagnostics.py': '232e235b15057b52754899eace7f847e54fd4344',
     'test_render_deploy_diagnostics.py': 'ffbcdda6f9c27aabff883e93bf73b03d7be550b4',
     # Allocator policy / bounded reclaim / resident inventory (exact reviewed
-    # contents; v13.7.56 candidate).
+    # contents; v13.7.57 candidate).
     'argus_allocator_policy.py': 'e1340450ff8f45360bf7a6bd49fbf1627495a3b5',
     'test_argus_allocator_policy.py': '99382512b2b9fa6886e630d6d2a1a7a8cc871de5',
     'docs/ops/allocator-reclaim.md': '9e457e39c6b6143a3351064efc1c500be00635b1',
@@ -98,8 +102,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '79fa1e3335f85ff01fd538a40b6b1856eec33d79',
-    'web/scripts/pwa-identity.test.mjs': '1d8c38456ca6c8d1ed64635c51474a05b5168a87',
-    'web/scripts/owner-today-https.mjs': '693ea869be68ea253078334aece876c06e5cc5e6',
+    'web/scripts/pwa-identity.test.mjs': '4d926ecedc801ff013b8f99a4a6933850d942463',
+    'web/scripts/owner-today-https.mjs': 'a5628ba1586769cb5f42c7fe0710cb62339c626d',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -108,7 +112,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-mode-consistency.mjs': '92be2022893323b439ae4e45da2bec8759bd0102',
     'web/scripts/owner-browser-continuity.test.mjs': 'c35f8a640e58a5b241a5d43aa62e518c0d73ce78',
     'web/scripts/owner-browser-acceptance.test.mjs': '5774ac3714425d9e946aa16cca571048475e8353',
-    'web/scripts/owner-browser-acceptance.mjs': '3d194eab842852573254c72972259654596cb98e',
+    'web/scripts/owner-browser-acceptance.mjs': '058a837b007f9557d8929b5019486af6ed782f94',
     'web/scripts/owner-auth-reader.test.mjs': '06ab1e182a314aea0b918219b227d1cdb86ba1e7',
     'web/scripts/owner-auth-reader.mjs': 'c5c28a97e4fc78ed615217897474b4ea1459c81b',
     'web/scripts/owner-auth-reader.integration.test.mjs': 'ab2158287b5fb12d7401fac523e605f4116ecd27',
@@ -127,8 +131,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'scripts/owner_auth_backup.py': '55b2d8f41918c9ae5880c7ae23a764e5e1506e8a',
     'test_argus_owner_auth.py': '09abfb764361266e39b60dc67ffdb2ee02678501',
     'web/scripts/owner-session.test.cjs': '392aa720d19d625d69915515462b1b09e8f169f6',
-    'web/src/components/OwnerAccess.css': '018dfa83542c226c6cc849d3f18385d2c9fd9eba',
-    'web/src/components/OwnerAccess.tsx': '734e3174895cf6d5ff54670796878ebcf4b6b415',
+    'web/src/components/OwnerAccess.css': 'c076884f4e2cafa2b93f625f769873b791153461',
+    'web/src/components/OwnerAccess.tsx': 'fd96f50eb27634c76f52f7c76a98495caf20f7e8',
     'web/src/lib/ownerSession.ts': '6c1e999b10c60a640593bb1ab9fcedd9a2012b50',
     'docs/MACRO_RESULT_RECEIPT_MIGRATION.md': '131e4784bd6be96daf0c9dda4b318735840cdcba',
     'test_argus_macro_receipt_boundary.py': '4fa5e23ee6392489497483a65ca90e1786b92d1d',
