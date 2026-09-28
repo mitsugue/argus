@@ -5,35 +5,57 @@
 }
 .triangle-step-loader svg{display:block;flex-shrink:0;width:24px;height:24px;overflow:visible}
 .triangle-step-loader.is-compact svg{width:20px;height:20px}
-.triangle-step-loader__dot{fill:rgba(255,255,255,.92);transform-box:view-box;
-  animation-duration:5.2s;animation-timing-function:linear;
-  animation-iteration-count:infinite}
-.triangle-step-loader__dot.dot-1{animation-name:argus-triangle-dot-1}
-.triangle-step-loader__dot.dot-2{animation-name:argus-triangle-dot-2}
-.triangle-step-loader__dot.dot-3{animation-name:argus-triangle-dot-3}
-@keyframes argus-triangle-dot-1{
-  0%,19.2308%{transform:translate(0,0)}
-  25%,44.2308%{transform:translate(4.7px,4.7px)}
-  50%,69.2308%{transform:translate(0,9.4px)}
-  75%,94.2308%{transform:translate(-4.7px,4.7px)}
-  100%{transform:translate(0,0)}
+/* Three points flow around one rounded orbit, each a third of a cycle apart.
+   Between the pinned stops the motion eases in and out, so the group
+   quickens and settles like a breath instead of stepping. A soft halo
+   trails each point by a fraction of a beat. No element rotates. */
+.triangle-step-loader__dot,
+.triangle-step-loader__halo{transform-box:view-box;transform-origin:center;
+  animation-duration:5.2s;animation-timing-function:cubic-bezier(.45,.05,.3,1);
+  animation-iteration-count:infinite;will-change:transform,opacity}
+.triangle-step-loader__dot{fill:rgba(255,255,255,.94)}
+.triangle-step-loader__halo{fill:var(--accent,#74fafd);opacity:.32;
+  animation-delay:-.32s;filter:blur(1.3px)}
+.triangle-step-loader__dot.dot-1,.triangle-step-loader__halo.halo-1{animation-name:argus-orbit-1}
+.triangle-step-loader__dot.dot-2,.triangle-step-loader__halo.halo-2{animation-name:argus-orbit-2}
+.triangle-step-loader__dot.dot-3,.triangle-step-loader__halo.halo-3{animation-name:argus-orbit-3}
+@keyframes argus-orbit-1{
+  0%{transform:translate(0px,0px) scale(1.22);opacity:1}
+  19.2308%{transform:translate(4.39px,3.03px) scale(1.15);opacity:0.88}
+  25%{transform:translate(4.7px,4.7px) scale(1.11);opacity:0.81}
+  44.2308%{transform:translate(1.67px,9.09px) scale(1.01);opacity:0.63}
+  50%{transform:translate(0px,9.4px) scale(1);opacity:0.62}
+  69.2308%{transform:translate(-4.39px,6.37px) scale(1.07);opacity:0.74}
+  75%{transform:translate(-4.7px,4.7px) scale(1.11);opacity:0.81}
+  94.2308%{transform:translate(-1.67px,0.31px) scale(1.21);opacity:0.99}
+  100%{transform:translate(0px,0px) scale(1.22);opacity:1}
 }
-@keyframes argus-triangle-dot-2{
-  0%,19.2308%{transform:translate(0,0)}
-  25%,44.2308%{transform:translate(-6.45px,1.75px)}
-  50%,69.2308%{transform:translate(-8.2px,-4.7px)}
-  75%,94.2308%{transform:translate(-1.75px,-6.45px)}
-  100%{transform:translate(0,0)}
+@keyframes argus-orbit-2{
+  0%{transform:translate(0px,0px) scale(1.05);opacity:0.72}
+  19.2308%{transform:translate(-4.82px,2.29px) scale(1);opacity:0.62}
+  25%{transform:translate(-6.42px,1.72px) scale(1.01);opacity:0.65}
+  44.2308%{transform:translate(-8.71px,-3.1px) scale(1.13);opacity:0.84}
+  50%{transform:translate(-8.14px,-4.7px) scale(1.17);opacity:0.91}
+  69.2308%{transform:translate(-3.32px,-6.99px) scale(1.22);opacity:1}
+  75%{transform:translate(-1.72px,-6.42px) scale(1.21);opacity:0.97}
+  94.2308%{transform:translate(0.57px,-1.6px) scale(1.09);opacity:0.78}
+  100%{transform:translate(0px,0px) scale(1.06);opacity:0.72}
 }
-@keyframes argus-triangle-dot-3{
-  0%,19.2308%{transform:translate(0,0)}
-  25%,44.2308%{transform:translate(1.75px,-6.45px)}
-  50%,69.2308%{transform:translate(8.2px,-4.7px)}
-  75%,94.2308%{transform:translate(6.45px,1.75px)}
-  100%{transform:translate(0,0)}
+@keyframes argus-orbit-3{
+  0%{transform:translate(0px,0px) scale(1.05);opacity:0.71}
+  19.2308%{transform:translate(0.43px,-5.32px) scale(1.18);opacity:0.93}
+  25%{transform:translate(1.72px,-6.42px) scale(1.21);opacity:0.97}
+  44.2308%{transform:translate(7.04px,-5.99px) scale(1.2);opacity:0.96}
+  50%{transform:translate(8.14px,-4.7px) scale(1.17);opacity:0.91}
+  69.2308%{transform:translate(7.71px,0.62px) scale(1.04);opacity:0.69}
+  75%{transform:translate(6.42px,1.72px) scale(1.01);opacity:0.65}
+  94.2308%{transform:translate(1.1px,1.29px) scale(1.02);opacity:0.66}
+  100%{transform:translate(0px,0px) scale(1.05);opacity:0.72}
 }
 @media(prefers-reduced-motion:reduce){
-  .triangle-step-loader .triangle-step-loader__dot{animation:none}
+  .triangle-step-loader .triangle-step-loader__dot,
+  .triangle-step-loader .triangle-step-loader__halo{animation:none}
+  .triangle-step-loader .triangle-step-loader__halo{opacity:.18}
   .triangle-step-loader{transition:none}
 }
 
