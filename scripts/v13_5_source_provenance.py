@@ -83,9 +83,9 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_recovery_measurement.py': 'b7beb4b6c1915ddb2cfab0857f31a82cc5c5c832',
     'test_argus_recovery_registry.py': 'd1132e69768b5a9edf9bbf964bd8df476edda4b8',
     # Today boot console (owner 2026-09-28): exact reviewed contents.
-    'web/scripts/boot-console.test.mjs': 'cae037912c0c77a062b47ac8028724216e46c20b',
+    'web/scripts/boot-console.test.mjs': '02d8c3f72b4b1f9f76d75d63bf0bdb48bafaf5cd',
     'web/src/components/today/BootConsole.css': 'b1a9d4e6ef94f7c38418503f62a9b8e857f918da',
-    'web/src/components/today/BootConsole.tsx': '6f5e797d1f643a286954f4a926ca1b07b36a203c',
+    'web/src/components/today/BootConsole.tsx': '13a462fc88814f3919b9f815e0bea009b17e5a7f',
     # Legacy scanner-phase removal: tests and probe trimmed to the retained
     # contracts only (exact reviewed contents).
     'test_argus_v12_0_7.py': '7adde8c0541300fda75622390c078aed3e3e77de',
