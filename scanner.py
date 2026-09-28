@@ -20990,6 +20990,8 @@ def _market_artifact_method_version(name):
             return argus_today_intelligence.METHOD_VERSION
         if name == "marketReplay":
             return argus_market_replay.METHOD_VERSION
+        if name == "marketLedger":
+            return getattr(argus_market_ledger, "METHOD_VERSION", None)
     except Exception:
         return None
     return None
@@ -21050,6 +21052,12 @@ def _merge_restored_market_artifact(name, payload):
     """
     if not isinstance(payload, dict):
         return False
+    if name == "marketLedger":
+        _restored_ml = argus_market_ledger.merge_restored_state(
+            _MARKET_LEDGER, payload)
+        _MARKET_LEDGER.clear()
+        _MARKET_LEDGER.update(_restored_ml)
+        return True
     if name == "chartIntelligence":
         _restored_ci = argus_chart_intelligence.normalize_state(payload)
         # Phase 2 history is append-only.  A restored copy can only add
@@ -24797,12 +24805,15 @@ def _osint_persist_locked():
             "wholeStateRepresentations": 5,
         })
 
-        blob["marketLedger"] = _memory_operation_run(
+        _ml_normalized = _memory_operation_run(
             "internal", "source.market_ledger.normalize",
             argus_market_ledger.normalize_state, _MARKET_LEDGER)
         blob["marketLedgerStateHash"] = _memory_operation_run(
             "internal", "source.market_ledger.hash_with_transient_normalize",
             argus_market_ledger.state_hash, _MARKET_LEDGER)
+        _market_artifact_persist(
+            "marketLedger", _ml_normalized, blob["marketLedgerStateHash"])
+        del _ml_normalized
         _memory_attribution_source_capture("S4", "market_ledger_normalize_hash", {
             "topLevelKeys": len(blob),
             "retainedNormalizedStateCount": 5,
@@ -28764,15 +28775,10 @@ def _osint_restore_once():
             _cost_policy_restore_durable()
         except Exception:
             pass
-        _ml = blob.get("marketLedger")
-        if isinstance(_ml, dict):
-            _restored_ml = argus_market_ledger.merge_restored_state(
-                _MARKET_LEDGER, _ml)
-            _MARKET_LEDGER.clear()
-            _MARKET_LEDGER.update(_restored_ml)
-        # Derived market artifacts: legacy checkpoints still carry them inline;
-        # current checkpoints keep them in hash-gated files.  Both are merged
-        # through the same monotonic/append-only merges.
+        # Market ledger and derived artifacts: legacy checkpoints and the
+        # Remote Journal projection still carry them inline; current
+        # checkpoints keep them in hash-gated files.  Both are merged through
+        # the same monotonic/append-only merges.
         for _artifact_name in argus_market_artifact_store.ARTIFACTS:
             _artifact_blob = blob.get(_artifact_name)
             if isinstance(_artifact_blob, dict):
@@ -46631,6 +46637,61 @@ def _residency_ai_tick():
     except Exception as e:
         add_log(f"[residency] AI tick failed: {type(e).__name__}")
 
+_JP_OWNER_WARM_STATE = {
+    "lastAttemptMonotonic": None, "warmedAtMonotonic": {},
+    "lastCodes": (), "lastResult": None, "lastAt": None,
+}
+_JP_OWNER_WARM_MIN_INTERVAL_SEC = 300
+_JP_OWNER_WARM_REPEAT_SEC = 6 * 3600
+
+
+def _jp_owner_quote_warm_tick(*, now_monotonic=None):
+    """Resident warm for the owner's JP names outside the curated list.
+
+    v13.5.61 warmed them only inside the admin collect, which runs from a
+    GitHub cron that can slip by hours and loses every device-requested code
+    on restart (owner 2026-09-28: 「日本株で全ての銘柄で金額が出ていません」).
+    The public route stays cache-only; this tick is the background
+    acquisition authority for those codes. Bounded: at most one J-Quants EOD
+    batch per five minutes, capped by _JP_DYN_MAX, and a code warmed in the
+    last six hours is not fetched again. Never raises.
+    """
+    try:
+        if _STARTUP.get("state") not in ("ready", "ready_degraded"):
+            return {"status": "not_ready"}
+        nowm = time.monotonic() if now_monotonic is None else float(now_monotonic)
+        last = _JP_OWNER_WARM_STATE.get("lastAttemptMonotonic")
+        if last is not None and nowm - last < _JP_OWNER_WARM_MIN_INTERVAL_SEC:
+            return {"status": "throttled"}
+        warmed_at = _JP_OWNER_WARM_STATE.setdefault("warmedAtMonotonic", {})
+        due = [code for code in _owner_jp_symbols_for_warm()
+               if code not in warmed_at
+               or nowm - warmed_at[code] >= _JP_OWNER_WARM_REPEAT_SEC]
+        if not due:
+            return {"status": "nothing_due"}
+        due = due[:_JP_DYN_MAX]
+        _JP_OWNER_WARM_STATE["lastAttemptMonotonic"] = nowm
+        _get_japan_watchlist_core(list(due), allow_provider_fetch=True)
+        bars = 0
+        for code in due:
+            try:
+                if _jq_price_history(code) is not None:
+                    bars += 1
+            except Exception:
+                continue
+        for code in due:
+            warmed_at[code] = nowm
+        _JP_OWNER_WARM_STATE.update({
+            "lastCodes": tuple(due), "lastResult": "ok",
+            "lastAt": _ai_now_iso(), "lastBars": bars})
+        return {"status": "warmed", "codes": list(due), "bars": bars}
+    except Exception as exc:
+        _JP_OWNER_WARM_STATE.update({
+            "lastResult": type(exc).__name__, "lastAt": _ai_now_iso()})
+        add_log(f"[jp-owner-warm] failed errorClass={type(exc).__name__}")
+        return {"status": "failed", "errorClass": type(exc).__name__}
+
+
 def run_scheduler():
     add_log("⏰ Scheduler started")
     while True:
@@ -46643,6 +46704,13 @@ def run_scheduler():
                 target=_memory_operation_run,
                 args=("scheduler", "residency_ai_tick", _residency_ai_tick),
                 daemon=True).start()
+            # Owner JP names outside the curated list: the cache-only public
+            # route depends on this resident warm, not on the GitHub cron.
+            threading.Thread(
+                target=_memory_operation_run,
+                args=("scheduler", "jp_owner_quote_warm",
+                      _jp_owner_quote_warm_tick),
+                daemon=True, name="jp-owner-quote-warm").start()
         # The public explanation progresses even when mail intake is slow or
         # no mailbox is configured. No public request starts this AI worker.
         threading.Thread(target=_market_brief_worker_tick, daemon=True).start()

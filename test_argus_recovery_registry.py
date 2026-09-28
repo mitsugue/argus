@@ -109,8 +109,8 @@ startup.restore_transition
 """.split()))
 
 EXPECTED_POLICY_SHA256 = \
-    "9c58cb183ae1b26b856674f87bc7cc95c8c1b3a3a3356d579ed7e289e850814b"
-EXPECTED_POLICY_CANONICAL_BYTES = 61273
+    "74b0942688c729bac5759d8f91a79e0d0aeaf35c1244886bda1948ea989b916b"
+EXPECTED_POLICY_CANONICAL_BYTES = 61235
 
 
 def test_registry_is_valid_sorted_unique_and_exact_inventory_equivalent():
@@ -394,7 +394,7 @@ def _checkpoint_literal_keys() -> tuple[str, ...]:
 
 def test_every_literal_checkpoint_top_level_key_is_registered():
     observed = _checkpoint_literal_keys()
-    assert len(observed) == 43  # 47 - 5 derived artifact payloads + marketArtifacts
+    assert len(observed) == 42  # 47 - 6 market artifact payloads + marketArtifacts
     assert registry.unregistered_checkpoint_keys(observed) == ()
     # localCheckpointIntegrity is added by the sealing writer rather than the
     # literal blob assembly, so the registry is intentionally a strict superset.

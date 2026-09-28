@@ -6,12 +6,13 @@ production measurement.
 
 ## What changed
 
-The five derived market artifacts — `chartIntelligence`, `todayIntelligence`,
-`marketReplay`, `verifiedViewSnapshots`, `assetChartReports` — are
-deterministic outputs of the market ledger and provider history. In the
-2026-09-28 production projection they were 112 MB of a 147 MB checkpoint;
-control state (missions, journal, forecasts, outcomes, soak, cost policy) was
-under 1 MB and the owner-imported `marketLedger` was 34 MB.
+The six large market-state sections — `marketLedger` and the derived
+`chartIntelligence`, `todayIntelligence`, `marketReplay`,
+`verifiedViewSnapshots`, `assetChartReports` — were 146 MB of a 147 MB
+checkpoint in the 2026-09-28 production projection; control state (missions,
+journal, forecasts, outcomes, soak, cost policy) was under 1 MB. The derived
+five are deterministic outputs of the ledger and provider history; the ledger
+holds owner-imported observations that cannot be re-fetched.
 
 Each artifact now lives in its own file under
 `<persistent root>/argus_market_artifacts/<name>.json`
@@ -23,10 +24,11 @@ through the existing fsync+rename writer and is read back and compared.
 
 The sealed checkpoint keeps `<name>StateHash` for every artifact plus a
 public-safe `marketArtifacts` status projection (hash, bytes, timestamps,
-outcome). It no longer embeds the payloads. The encrypted recovery sidecar
-and the Remote Journal projection (`/api/argus/osint/memory-snapshot`) carry
-the same hashes and status, not the payloads. `marketLedger` is unchanged:
-it stays inside the checkpoint and the projection.
+outcome). It no longer embeds any of the six payloads. The encrypted
+recovery sidecar carries hashes only, as before. The Remote Journal
+projection (`/api/argus/osint/memory-snapshot`) drops the five derived
+payloads but **keeps `marketLedger`** so owner-imported observations remain
+recoverable off-disk; that is the only artifact in `REMOTE_PROJECTED`.
 
 ## Restore
 
@@ -57,9 +59,9 @@ place. Rollback is the normal release path.
 
 ## Follow-ups
 
-- Move `marketLedger` observations (owner-imported, not regenerable) to a
-  dedicated protected store so the sealed checkpoint carries control state
-  only.
+- Hash-gate the `marketLedger` section of the Remote Journal projection as
+  well, so the watchtower does not re-commit 34 MB every 30 minutes when the
+  ledger has not changed.
 - Run the artifact generators in a scheduled worker process and serve the
   verified snapshots from the artifact files instead of resident memory.
 - The recovery registry now declares the five artifact states as

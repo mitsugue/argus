@@ -103,8 +103,9 @@ def test_checkpoint_excludes_payloads_and_files_are_hash_gated():
         assert verified_doc["methodVersion"] == \
             scanner._VERIFIED_VIEW_METHOD_VERSION
         # The checkpoint itself shrank to control state: no snapshot body,
-        # only the status row keyed by artifact name.
+        # no ledger observations, only the status rows keyed by artifact name.
         assert snapshot_id not in json.dumps(blob)
+        assert "observations" not in blob.get("marketLedger", {})
         assert "current" not in blob.get("marketArtifacts", {}).get(
             "artifacts", {}).get("verifiedViewSnapshots", {})
         path = pathlib.Path(artifact_store.path_for(root, "verifiedViewSnapshots"))
@@ -221,10 +222,16 @@ def test_remote_projection_carries_hashes_and_status_not_payloads():
         body = scanner.app.test_client().get(
             "/api/argus/osint/memory-snapshot").get_json()
         for name in ARTIFACTS:
-            assert name not in body, name
+            if name in artifact_store.REMOTE_PROJECTED:
+                # Owner-imported observations keep travelling to the Remote
+                # Journal for off-disk recovery.
+                assert name in body, name
+            else:
+                assert name not in body, name
             assert body[f"{name}StateHash"] == \
                 scanner._MARKET_ARTIFACT_STATUS[name]["stateHash"]
         assert body["marketArtifacts"]["artifacts"]["verifiedViewSnapshots"][
             "lastStatus"] == "written"
-        # marketLedger (owner-imported observations) stays in the projection.
-        assert "marketLedger" in body
+        assert artifact_store.REMOTE_PROJECTED == {"marketLedger"}
+        assert body["marketArtifacts"]["artifacts"]["marketLedger"][
+            "lastStatus"] == "written"
