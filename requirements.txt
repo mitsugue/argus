@@ -1,8 +1,10 @@
-# Pinned 2026-09-28 (v13.7.55) after the Render build for e2b775e0 failed with
-# pip "ResolutionImpossible" on a fresh virtualenv while the same file resolved
-# on GitHub CI and locally.  Every top-level requirement is now exact, plus the
-# transitive packages pip was backtracking through, so a fresh build resolves
-# to the same set the tests run against.  Bump deliberately, never by drift.
+# Pinned 2026-09-28 (v13.7.55).  The Render builds for e2b775e0 failed with
+# pip "ResolutionImpossible" because pip timed out five times fetching the
+# PyPI index page for python-dateutil (network, not a dependency conflict; the
+# same file resolved on GitHub CI and locally at the same hour).  Exact pins
+# keep every fresh build on the set the tests run against and stop the
+# resolver from backtracking through pandas/numpy candidates when an index
+# page is slow.  Bump deliberately, never by drift.
 anthropic==1.8.0
 openai==3.19.2
 requests==2.34.2
