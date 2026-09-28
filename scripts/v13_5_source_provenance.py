@@ -35,17 +35,19 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # Market ledger artifact split + resident JP quote warm (exact reviewed contents).
+    'test_argus_jp_owner_quote_warm.py': '977bf2600d345ca9b8c5d304174d65a2da6cf96f',
     # Derived market artifacts outside the sealed checkpoint (exact reviewed
     # contents of the store module, its tests, registry and measurement budget).
-    'argus_market_artifact_store.py': 'ec3feb550c5c19aa3c8ba266b5e5aa0e60459f62',
-    'argus_recovery_measurement.py': '541e6ee11ca3637f5ae1889d9ec61b0925224fdc',
-    'argus_recovery_registry.py': 'beb6aa85370b17832dbf157574a1ad272ec35655',
-    'docs/MARKET_ARTIFACT_STORE.md': '6fcb7d8ec9083f5c01aa16fc6cc2d4fec84a57d0',
-    'test_argus_market_artifact_split.py': '7e5843f0c2ee20ec56cc768e154b0381a6b18b21',
-    'test_argus_market_artifact_store.py': 'c0073e3a9b48201ddef4fa9919e753b6ffcd5695',
+    'argus_market_artifact_store.py': 'f40832595d4028ad8f7ac0d844bf1f36eb8ea674',
+    'argus_recovery_measurement.py': '11943e22628b0728e9fcb118c149593a53c48727',
+    'argus_recovery_registry.py': '5c43767361e05b3dea99b02605920c5fc3e9608c',
+    'docs/MARKET_ARTIFACT_STORE.md': 'c4d874be428fbfbf55de2c1e876228f392c4dd6e',
+    'test_argus_market_artifact_split.py': '76973768a395729012f144ef28be892a0dd19976',
+    'test_argus_market_artifact_store.py': '3712644d21fcdf02fb167c4cdbaeaf34d5c0e806',
     'test_argus_memory_attribution.py': 'ea3fb2d514dea73bef7975f0f8b8a82d126103bd',
-    'test_argus_recovery_measurement.py': 'c359bef830a5b6d341b388c265f27eca09b3f227',
-    'test_argus_recovery_registry.py': 'bb3a0a5c1b89f336c415f5fbcb0857deee36dffb',
+    'test_argus_recovery_measurement.py': 'b7beb4b6c1915ddb2cfab0857f31a82cc5c5c832',
+    'test_argus_recovery_registry.py': 'd1132e69768b5a9edf9bbf964bd8df476edda4b8',
     # Legacy scanner-phase removal: tests and probe trimmed to the retained
     # contracts only (exact reviewed contents).
     'test_argus_v12_0_7.py': '7adde8c0541300fda75622390c078aed3e3e77de',
