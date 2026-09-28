@@ -169,10 +169,17 @@ def test_save_releases_temporary_checkpoint_and_payload(tmp_path):
         payloads.append(weakref.ref(value))
         return value
 
+    producers = []
+
     def sidecar(*args, **kwargs):
         if inspect.currentframe().f_back.f_code.co_name == "_persist_remote_recovery_sidecar_once":
             observations.append((sum(r() is not None for r in checkpoints),
                                  sum(r() is not None for r in payloads)))
+            # Name the producer: a third sidecar means a background thread
+            # (never this test) persisted concurrently; report which one.
+            import threading
+            producers.append((threading.current_thread().name, [
+                frame.function for frame in inspect.stack()[2:9]]))
         return real_sidecar(*args, **kwargs)
 
     with scanner_storage(str(tmp_path)) as paths, _key_environment(configured=True), \
@@ -190,5 +197,5 @@ def test_save_releases_temporary_checkpoint_and_payload(tmp_path):
         canonical_checkpoint = storage.load_checkpoint(paths["checkpoint"], require_seal=True)
         scanner._verify_local_recovery_sidecar(
             canonical_checkpoint, allow_legacy_migration=False)
-    assert observations == [(0, 0), (0, 0)]
+    assert observations == [(0, 0), (0, 0)], producers
     assert all(ref() is None for ref in checkpoints + payloads)
