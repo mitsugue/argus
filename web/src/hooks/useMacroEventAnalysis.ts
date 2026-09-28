@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { FEED_VISIBLE_MS, isPageVisible } from '../lib/pollingPolicy';
 
 // C.A.O.S. macro-event pre/post analysis (v11.3.2) — GET /api/argus/macro-event-analysis.
 // Cache-only on the backend; pre views are durable so the post answer-check is real.
@@ -44,8 +45,15 @@ export function useMacroEventAnalysis(): Record<string, MacroAnalysis> {
       })
       .catch(() => { /* keep last */ });
     load();
-    const iv = setInterval(load, 120_000);
-    return () => { alive = false; clearInterval(iv); };
+    // Visible-page cadence (was 2 min); hidden ticks do nothing and the view
+    // refreshes once when the app returns to the foreground.
+    const iv = setInterval(() => { if (isPageVisible()) load(); }, FEED_VISIBLE_MS);
+    const onVisible = () => { if (isPageVisible()) load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      alive = false; clearInterval(iv);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, []);
   return byKey;
 }

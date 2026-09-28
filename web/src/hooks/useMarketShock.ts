@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { FEED_VISIBLE_MS, isPageVisible } from '../lib/pollingPolicy';
 
 // v13.5.1 market-shock view: direct long-end rate sensing plus corroborated
 // shock-theme news, classified server-side by the pure materiality engine.
@@ -82,9 +83,9 @@ export function useMarketShock(): MarketShockState {
       }
     };
     void load();
-    // v13.5.50: refresh on a 5-minute cadence, on visibility resume and on
-    // online transition (was a single fetch per mount).
-    const timer = window.setInterval(() => void load(), 5 * 60_000);
+    // v13.5.50: refresh on visibility resume and on online transition (was a
+    // single fetch per mount); the visible-page cadence replaced the 5-minute poll.
+    const timer = window.setInterval(() => { if (isPageVisible()) void load(); }, FEED_VISIBLE_MS);
     const onVisible = () => { if (!document.hidden) void load(); };
     const onOnline = () => void load();
     document.addEventListener('visibilitychange', onVisible);

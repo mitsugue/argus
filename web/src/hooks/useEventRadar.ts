@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { deauthorizeEventRadar, liveAuthorityState,
   scheduleLiveAuthorityExpiry, type LiveAuthorityState } from '../domain/liveAuthority';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
+import { FEED_VISIBLE_MS } from '../lib/pollingPolicy';
 import type { EventsSnapshot } from '../types/events';
 
 // connecting | live | partial | mock — same model as the other live hooks,
@@ -37,7 +38,7 @@ const MOCK_SNAPSHOT: EventsSnapshot = {
 const MAX_ATTEMPTS = 3;
 const ATTEMPT_TIMEOUT_MS = 8_000;
 const RETRY_DELAYS_MS = [3_000, 6_000];
-const REFRESH_INTERVAL_MS = 2 * 60_000;
+const REFRESH_INTERVAL_MS = FEED_VISIBLE_MS;  // visible-page cadence (was 2 min)
 
 function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));

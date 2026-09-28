@@ -1,5 +1,6 @@
 import React, {useState, useSyncExternalStore} from 'react';
 import {createSharedPollingStore} from '../../lib/sharedPollingStore';
+import {FEED_VISIBLE_MS,isPageVisible} from '../../lib/pollingPolicy';
 import {validMarketInternals} from '../../lib/marketInternals';
 import {useAssets} from '../../hooks/useAssets';
 import {TriangleStepLoader} from '../common/TriangleStepLoader';
@@ -19,8 +20,9 @@ const store=createSharedPollingStore<{data:Document|null;error:boolean;loading:b
       if(alive)set({data,error:false,loading:false});
     }catch{if(alive)set(old=>({...old,error:true,loading:false}));}finally{clearTimeout(timeout);}
   }
-  void read();const timer=setInterval(()=>void read(),120000);
-  return()=>{alive=false;controller?.abort();clearInterval(timer);};
+  void read();const timer=setInterval(()=>{if(isPageVisible())void read();},FEED_VISIBLE_MS);
+  const onVisible=()=>{if(isPageVisible())void read();};document.addEventListener('visibilitychange',onVisible);
+  return()=>{alive=false;controller?.abort();clearInterval(timer);document.removeEventListener('visibilitychange',onVisible);};
 });
 const pct=(value:number|null|undefined,relative=false)=>typeof value==='number'&&Number.isFinite(value)?`${value>0?'+':''}${value.toFixed(2)}${relative?'pt':'%'}`:'未取得';
 const stamp=(value:string|null)=>value?new Date(value).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'}):'時刻未確認';

@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { liveAuthorityState, scheduleLiveAuthorityExpiry } from '../domain/liveAuthority';
 import type { DashboardEventsResponse } from '../lib/dashboardEventState';
 import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
+import { FEED_VISIBLE_MS, isPageVisible } from '../lib/pollingPolicy';
 
 // Unified display feed. Stale or failed data returns null so consumers fall
 // through to the separately bounded important-events source; an old nonempty
@@ -68,7 +69,10 @@ function dashboardEventsStore(pollMs: number): SharedPollingStore<State> {
 
       const retained = getState();
       if (retained.data && retained.authority === 'fresh') accept(retained.data);
-      const interval = window.setInterval(() => void acquire(load), pollMs);
+      const interval = window.setInterval(() => {
+        if (!isPageVisible()) return;
+        void acquire(load);
+      }, pollMs);
       const onVisible = () => { if (!document.hidden) void acquire(load); };
       document.addEventListener('visibilitychange', onVisible);
       void acquire(load);
@@ -86,7 +90,7 @@ function dashboardEventsStore(pollMs: number): SharedPollingStore<State> {
   return store;
 }
 
-export function useDashboardEvents(pollMs = 120_000): DashboardEventsResponse | null {
+export function useDashboardEvents(pollMs = FEED_VISIBLE_MS): DashboardEventsResponse | null {
   const store = dashboardEventsStore(pollMs);
   return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot).data;
 }

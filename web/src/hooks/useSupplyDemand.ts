@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { deauthorizeSupplySignals, liveAuthorityState,
   scheduleLiveAuthorityExpiry, type LiveAuthorityState } from '../domain/liveAuthority';
 import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
+import { FEED_VISIBLE_MS, isPageVisible } from '../lib/pollingPolicy';
 
 // V11.10.0 Supply/Demand Intelligence (JP) — 「需給は良いのか悪いのか」に
 // ランク+状態で答える。数値はエンジンが読み、生数値はevidence(UI折りたたみ)。
@@ -57,7 +58,7 @@ interface State {
 
 interface SupplyPayload { asOf?: string; signals?: SupplyDemandSignal[]; }
 
-const POLL_MS = 5 * 60_000;
+const POLL_MS = FEED_VISIBLE_MS;  // visible-page cadence (was 5 min)
 const supplyStores = new Map<string, SharedPollingStore<State>>();
 
 function supplyStore(extraSymbols: string): SharedPollingStore<State> {
@@ -155,7 +156,10 @@ function supplyStore(extraSymbols: string): SharedPollingStore<State> {
       if (retained.authority === 'fresh') {
         accept({ asOf: retained.asOf ?? undefined, signals: retained.signals });
       }
-      const interval = window.setInterval(() => void acquire(load), POLL_MS);
+      const interval = window.setInterval(() => {
+        if (!isPageVisible()) return;
+        void acquire(load);
+      }, POLL_MS);
       const onVisible = () => { if (!document.hidden) void acquire(load); };
       document.addEventListener('visibilitychange', onVisible);
       void acquire(load);

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { FEED_VISIBLE_MS, isPageVisible } from '../lib/pollingPolicy';
 
 // v13.5.3 Nikkei mail intelligence: normalized NewsRiskEvidence envelopes
 // classified server-side (dedicated read-only mailbox → pure policy engine).
@@ -140,7 +141,7 @@ export function useNewsIntelligence(): NewsIntelState {
       }
     };
     void load();
-    const timer = window.setInterval(() => void load(), 5 * 60_000);
+    const timer = window.setInterval(() => { if (isPageVisible()) void load(); }, FEED_VISIBLE_MS);
     const onVisible = () => { if (!document.hidden) void load(); };
     const onOnline = () => void load();
     document.addEventListener('visibilitychange', onVisible);

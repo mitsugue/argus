@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { cryptoQuoteDecisionUsable, scheduleLiveAuthorityExpiry } from '../domain/liveAuthority';
 import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
+import { GUARD_VISIBLE_MS, isPageVisible } from '../lib/pollingPolicy';
 import type { CryptoQuote, CryptoWatchlistSnapshot } from '../types/crypto';
 
 export type CryptoPhase = 'connecting' | 'live' | 'partial' | 'mock';
@@ -109,7 +110,10 @@ function cryptoStore(key: string): SharedPollingStore<State> {
         status: 'live', asOf: retained.asOf, provider: 'coingecko',
         quotes: Object.values(retained.diagnosticById),
       });
-      const interval = window.setInterval(() => void acquire(fetchOnce), 30_000);
+      const interval = window.setInterval(() => {
+        if (!isPageVisible()) return;
+        void acquire(fetchOnce);
+      }, GUARD_VISIBLE_MS);
       const onVisible = () => { if (!document.hidden) void acquire(fetchOnce); };
       document.addEventListener('visibilitychange', onVisible);
       void acquire(fetchOnce);

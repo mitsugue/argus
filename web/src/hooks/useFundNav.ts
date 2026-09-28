@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { calendarDateExpiresAt, dailyFundNavDecisionUsable } from '../domain/liveQuote';
 import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
+import { FUND_NAV_VISIBLE_MS, isPageVisible } from '../lib/pollingPolicy';
 import type { AssetItem } from '../types/assetItem';
 
 // 投信(基準価額) follow — daily NAV from 投信総合ライブラリー. A transport
@@ -126,7 +127,10 @@ function fundNavStore(codeKey: string): SharedPollingStore<State> {
 
       const retained = getState();
       if (retained.authority === 'fresh') accept({ funds: retained.funds });
-      const interval = window.setInterval(() => void acquire(load), 6 * 60 * 60_000);
+      const interval = window.setInterval(() => {
+        if (!isPageVisible()) return;
+        void acquire(load);
+      }, FUND_NAV_VISIBLE_MS);
       const onVisible = () => { if (!document.hidden) void acquire(load); };
       document.addEventListener('visibilitychange', onVisible);
       void acquire(load);

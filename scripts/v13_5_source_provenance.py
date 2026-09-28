@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.52"
+PRODUCT_VERSION = "v13.7.53"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -48,6 +48,10 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_memory_attribution.py': 'ea3fb2d514dea73bef7975f0f8b8a82d126103bd',
     'test_argus_recovery_measurement.py': 'b7beb4b6c1915ddb2cfab0857f31a82cc5c5c832',
     'test_argus_recovery_registry.py': 'd1132e69768b5a9edf9bbf964bd8df476edda4b8',
+    # Today boot console (owner 2026-09-28): exact reviewed contents.
+    'web/scripts/boot-console.test.mjs': 'cae037912c0c77a062b47ac8028724216e46c20b',
+    'web/src/components/today/BootConsole.css': 'b1a9d4e6ef94f7c38418503f62a9b8e857f918da',
+    'web/src/components/today/BootConsole.tsx': '6f5e797d1f643a286954f4a926ca1b07b36a203c',
     # Legacy scanner-phase removal: tests and probe trimmed to the retained
     # contracts only (exact reviewed contents).
     'test_argus_v12_0_7.py': '7adde8c0541300fda75622390c078aed3e3e77de',
@@ -57,6 +61,22 @@ REVIEWED_EXTENSION_BLOBS = {
     'scripts/deep_memory_attribution_probe.py': '5dbd30561d196fb11931526feebe0d70e49d9094',
     'test_round2_macro_authority.py': '445ffe50846f4dd6be3be8b8d870366c8cbacaaa',
     'test_watch_quote_decision_authority.py': '2835f4173027dd48495d17e17bdba077f56eb83a',
+    # Visible-page polling policy (owner 2026-09-28): exact reviewed hook
+    # contents; cadence constants live in web/src/lib/pollingPolicy.ts.
+    'web/src/hooks/useAIJudgment.ts': 'bd297858e9fcb34d219ff60ae1be04c1b5c004c4',
+    'web/src/hooks/useActionLabels.ts': 'c1a3178fa419591537606ca925c3c14bfa8dddda',
+    'web/src/hooks/useCryptoWatchlist.ts': '1b28c5199185fc6bdf3d793453936c9232b4aff4',
+    'web/src/hooks/useDownsideIncidents.ts': '300b52618c607eaac49fcbc4a081b209029eaba9',
+    'web/src/hooks/useEventRadar.ts': '1ddf8bc4c35cbb6ae65b5081202b46f11d2da6bd',
+    'web/src/hooks/useFlowAttribution.ts': '70955dada9d4b2b120dab5f8fc1061ef877ce62d',
+    'web/src/hooks/useFundNav.ts': 'b8a8689aba391a181fcb4817932f22e2fdfd8382',
+    'web/src/hooks/useMarketLedger.ts': 'bd0baadcca10044cd47a12008cd435ce24da9613',
+    'web/src/hooks/useMarketRegime.ts': '47c5492217c4fa5ecec27ec5ff72b226a538eec0',
+    'web/src/hooks/useProductionBackendIdentity.ts': '738c79e701c8da1e6b823a7d330003513bda9c7f',
+    'web/src/hooks/useRatesSnapshot.ts': '15e79944d93b2bb2e7447785c821ba2f1f115338',
+    'web/src/hooks/useSupplyDemand.ts': '06e81f4d672321106abe4cc1bbc6ce3b4ee42c10',
+    'web/src/hooks/useUSWatchlist.ts': '58714ef64cea5b6168584a5f6bd30784422bc486',
+    'web/src/lib/pollingPolicy.ts': '40bfa352aaf060fde8d54ec57125ce8ca4096b53',
     'docs/RECOVERY_MATERIALIZATION.md': 'af222d7a64b801dce147daa9a3b6ddc75def0572',
     'test_argus_recovery_materialization.py': '4c2a2816a485a9137798667f3b659c37b0b7f368',
     'test_argus_recovery_measurement_storage.py': '4d960ba28f662b4b4dfc3e309e54e5e9e2a0b267',
@@ -68,8 +88,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '79fa1e3335f85ff01fd538a40b6b1856eec33d79',
-    'web/scripts/pwa-identity.test.mjs': '5131ce9cc2e190bbb760472d9bc4fef3c3bbb504',
-    'web/scripts/owner-today-https.mjs': 'e6f8066ec19383f00c048b2c59c083deb0f2e937',
+    'web/scripts/pwa-identity.test.mjs': 'e5541f04d17a83623bc237428a80b865ece38358',
+    'web/scripts/owner-today-https.mjs': '2e01679103225682ecf861f8d6fe49798b943d85',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -123,7 +143,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'jp_market_acquisition.py': 'b0964e2d2d1a78769b717ef7928898ab7dd7ae9a',
     'ops/imports/README.md': '0c3a8010eebfa90f6c20be3d46e0d59fd3039404',
     'web/src/components/today/SectorHeatmap.css': '0bdc3b1e84dcbc03f447ac34fa1754b4d8941f8b',
-    'web/src/components/today/SectorHeatmap.tsx': 'b621436144d448055255243e2304c1287fced869',
+    'web/src/components/today/SectorHeatmap.tsx': '613735f6c108a44d13a4e57352f94d23b77c21c7',
     'test_jp_sector_heatmap_api.py': '4b93b1bd5fa1eed37baff43912b3a86cbd9f00e9',
     'test_jp_sector_heatmap_runtime.py': '3bb33a56d1305e1f5daac3e804f62ddb93099de7',
     'test_jp_sector_heatmap.py': '1f6abcd332dba7406db0d1d998437d647b76967e',
@@ -208,8 +228,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_v12_3_1.py': 'c26d3849a5c7219d537c1cdd8a3484c5087e4da1',
     'web/src/components/dashboard/SystemHealthPopover.tsx': '3893f26c3bef9812d841600832a96193231000ed',
     'web/src/routes/DataQualityPage.tsx': 'c86b933832c2e50f3d694f4ca1ac79428096fe55',
-    'web/src/components/common/TriangleStepLoader.tsx': '218b53b03160f619d00d3e6c3b2eec90fe7922c6',
-    'web/src/components/common/TriangleStepLoader.css': '189ca3825669144c1ecec4248f9cc72376d77387',
+    'web/src/components/common/TriangleStepLoader.tsx': '3408e291f4bf3cd0e357515ce89388da58352e9b',
+    'web/src/components/common/TriangleStepLoader.css': '055ab6673461550f1cc0f38577da9e261a4bc647',
     'web/src/i18n/index.ts': '933221ee4ca1f3adccdb8ebf5c950419fe7ce019',
     # Owner-authorized v13.6.1 prediction-ledger continuity regression proof.
     'test_prediction_ledger_workflow.py': 'c56ab18cdedbf04fd37c7362209172fe92e409cf',
@@ -344,8 +364,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': '77f4e4fa1edee0e5f42db6d82597a4ec1ad82083',
     'web/src/components/dashboard/MacroResultDetails.tsx': '1ae4f62354c917002f6b60b1b8e72de1a126a3f6',
     'web/src/components/today/MarginDynamicsCard.tsx': '916091e12c4362a7340ad5cb5dff373b1d36300e',
-    'web/src/hooks/useJapanMarketComparison.ts': '23226d5fa95e4acdcefe2f156bc7ac6de95df61a',
-    'web/src/hooks/useJapanSqCalendar.ts': '3bd95e491810c395faf23203356d85eb7d0d385e',
+    'web/src/hooks/useJapanMarketComparison.ts': '2c195f97e396a08a540521204aa4ce0f2edadb5d',
+    'web/src/hooks/useJapanSqCalendar.ts': '24751f5205496b8263c9712ae71103a42b4ba8c8',
     'web/src/lib/japanMarketComparison.ts': 'c3958e252e93031fa1ad0dac7a63512b7f8530b2',
     'web/src/lib/japanSqCalendar.ts': '947b1c9121f7b6f8a5e7b501211b8b43449b329b',
     'web/src/lib/marketBrief.ts': 'c28f0bb61c21b8e347ef81343a6671a670608a65',
@@ -403,11 +423,11 @@ REVIEWED_EXTENSION_BLOBS = {
     # Owner-authorized cost reduction: the active-event reader shares one
     # lifecycle and pauses while the page is not visible. These pins bind the
     # later product PR to the reviewed, read-only transport semantics.
-    "web/src/hooks/useEventsActive.ts": "4c1c42354a44bdf152a3fc1b92af4b5ae750f4c8",
+    "web/src/hooks/useEventsActive.ts": "fba000a3eb23ab625df6eb155c2be5874aa460a4",
     "web/scripts/polling-singleton.test.mjs": "3833a92b51421fc67b08c14ce1b675f13a771b09",
     # Owner-authorized cost reduction: the fail-closed visibility authority
     # has one visible-page lifecycle and does not poll while hidden.
-    "web/src/hooks/useVisibilityGuard.ts": "0396f6d2f3fa94351887432b02eeb0e7620f80f3",
+    "web/src/hooks/useVisibilityGuard.ts": "c849fc6e33d6c1e6ab8f258d5000fb852e398af4",
     "web/scripts/polling-singleton.test.mjs": "726accbaf256fc7e3fa8141c3c9f31ade7efbb24",
 }
 

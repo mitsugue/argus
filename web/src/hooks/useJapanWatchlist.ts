@@ -3,6 +3,7 @@ import {
   dynamicSnapshotIsEmpty, mergeHistoryRows, resolveFromCurated, rowFromPriceHistory,
 } from '../domain/jpWatchFallback';
 import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
+import { WATCHLIST_VISIBLE_MS } from '../lib/pollingPolicy';
 import type { JapanWatchlistSnapshot, JapanStockQuote } from '../types/watch';
 import {
   normalizeJapanWatchSnapshot,
@@ -51,12 +52,12 @@ const MAX_ATTEMPTS = 3;
 const ATTEMPT_TIMEOUT_MS = 8_000;
 const RETRY_DELAYS_MS = [3_000, 6_000];
 
-// Auto-refresh: the moomoo bridge pushes quotes every ~15s (v10.10.1), so
-// re-fetch on the same cadence while the tab is visible. Silent — keeps
-// showing the last good data on a failed refresh instead of flashing back to
-// "connecting"/mock. 15s × 2 endpoints ≈ 8 req/min — well inside the per-IP
-// heavy-endpoint limit (30/min).
-const REFRESH_INTERVAL_MS = 15_000;
+// Auto-refresh: refetch once when the tab becomes visible, then on the relaxed
+// visible-page cadence (pollingPolicy, owner-approved 2026-09-28); hidden tabs
+// never poll. Silent — keeps showing the last good data on a failed refresh
+// instead of flashing back to "connecting"/mock. 2 endpoints per cycle stay far
+// inside the per-IP heavy-endpoint limit (30/min).
+const REFRESH_INTERVAL_MS = WATCHLIST_VISIBLE_MS;  // visible-page cadence (was 15s)
 
 function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));

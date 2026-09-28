@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
+import { LEDGER_STALE_MS } from '../lib/pollingPolicy';
 import type { CostPolicyPayload, MarketLedgerPayload } from '../types/marketLedger';
 
 export type MarketLedgerSnapshot = {
@@ -12,7 +13,7 @@ let cache: MarketLedgerSnapshot = {
   fetchedAtMs: null, sessionExpired: true,
 };
 let inFlight: Promise<MarketLedgerSnapshot> | null = null;
-const STALE_MS = 15 * 60 * 1000;
+const STALE_MS = LEDGER_STALE_MS;
 const SESSION_SNAPSHOT_MAX_AGE_MS = 20 * 60 * 1000;
 let sessionExpiryTimer: number | null = null;
 const apiUrl = (path: string) => `${String(import.meta.env.VITE_ARGUS_BACKEND_URL ?? '').replace(/\/$/, '')}${path}`;

@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
+import { FEED_VISIBLE_MS } from '../lib/pollingPolicy';
 import { decisionEvidenceBatches } from '../lib/decisionEvidenceBatches';
 import {
   getTachibanaLiveDocument, setTachibanaLiveDocument, subscribeTachibanaLive,
@@ -12,7 +13,7 @@ import type { TachibanaLiveDocument } from '../domain/tachibanaLive';
 // canonicalDecisionEvidence resolver validates and registers them before any
 // SDA input may use them. This hook only transports the document.
 
-const REFRESH_INTERVAL_MS = 120_000;   // matches the backend evidence TTL
+const REFRESH_INTERVAL_MS = FEED_VISIBLE_MS;   // visible-page cadence (was 120s = backend evidence TTL)
 const HEADLINE_SYMBOLS = ['1321', '1306', 'SPY', 'QQQ'] as const;
 
 // v13.5.61 (owner iPhone review 2026-09-07: MARKET SIGNALS read 「— / 7」 and the

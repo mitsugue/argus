@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { MARKET_NEWS_CLOSED_INTERVAL_MS, MARKET_NEWS_OPEN_INTERVAL_MS } from '../lib/pollingPolicy';
 
 // Market News feed (news-v2, v10.12) — Finnhub general headlines with
 // market-moving keywords flagged.  This is the broad-headline lane, distinct
@@ -41,8 +42,7 @@ export interface MarketNews {
   nextPollAt?: string | null;
 }
 
-export const MARKET_NEWS_OPEN_INTERVAL_MS = 60 * 60_000;
-export const MARKET_NEWS_CLOSED_INTERVAL_MS = 120 * 60_000;
+export { MARKET_NEWS_OPEN_INTERVAL_MS, MARKET_NEWS_CLOSED_INTERVAL_MS } from '../lib/pollingPolicy';
 
 export function marketNewsRefreshInterval(now = new Date()): number {
   const clock = (timeZone: string) => {
