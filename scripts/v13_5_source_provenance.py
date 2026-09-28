@@ -35,6 +35,8 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # the heavy tick serialization
+    'test_argus_heavy_tick_serialization.py': '99355f4f3e5648df3487b4b26d3300dc3a11c92c',
     # the acceptance evidence churn diagnostic
     # the second store-residency slice
     'conftest.py': 'ce281bfb9b5914756ff4aa38f2257107bbcd491d',
@@ -50,7 +52,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # the owner-mode machine readers and the post-merge 4 GiB gate
     '.github/workflows/smoke-test.yml': '98cf30aabc06648f15c4147199322f2db55b31a6',
     # the market store residency (v13.7.58 candidate)
-    'test_argus_market_store_residency.py': 'a670ece1ab99c60e20ed13ebbbd16842e744a129',
+    'test_argus_market_store_residency.py': '0461ce83cd33c82ea5e6cfd2fdfa49c55e3bbe3d',
     # the market store residency (v13.7.58 candidate)
     'test_argus_market_artifact_items.py': 'ebd38f5292c62b3c9533703f4c4b53c7667c9e68',
     # the market store residency (v13.7.58 candidate)
@@ -74,16 +76,16 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_market_artifact_store.py': 'f40832595d4028ad8f7ac0d844bf1f36eb8ea674',
     'argus_recovery_measurement.py': '11943e22628b0728e9fcb118c149593a53c48727',
     'argus_recovery_registry.py': '5c43767361e05b3dea99b02605920c5fc3e9608c',
-    'docs/MARKET_ARTIFACT_STORE.md': '56b6867b5118800a2001ba2f08d4a372764790f0',
-    'test_argus_market_artifact_split.py': 'ed45615526f57f365e7fffa3f81756389c3d030a',
+    'docs/MARKET_ARTIFACT_STORE.md': 'e2e994da953b12c42a95d67b4eaf9ab1a8c0b6aa',
+    'test_argus_market_artifact_split.py': '9331909fab52e479dc63f869aba531ba26825668',
     'test_argus_market_artifact_store.py': '3712644d21fcdf02fb167c4cdbaeaf34d5c0e806',
     'test_argus_memory_attribution.py': 'ea3fb2d514dea73bef7975f0f8b8a82d126103bd',
     'test_argus_recovery_measurement.py': 'b7beb4b6c1915ddb2cfab0857f31a82cc5c5c832',
     'test_argus_recovery_registry.py': 'd1132e69768b5a9edf9bbf964bd8df476edda4b8',
     # Today boot console (owner 2026-09-28): exact reviewed contents.
-    'web/scripts/boot-console.test.mjs': 'cae037912c0c77a062b47ac8028724216e46c20b',
+    'web/scripts/boot-console.test.mjs': '02d8c3f72b4b1f9f76d75d63bf0bdb48bafaf5cd',
     'web/src/components/today/BootConsole.css': 'b1a9d4e6ef94f7c38418503f62a9b8e857f918da',
-    'web/src/components/today/BootConsole.tsx': '6f5e797d1f643a286954f4a926ca1b07b36a203c',
+    'web/src/components/today/BootConsole.tsx': '13a462fc88814f3919b9f815e0bea009b17e5a7f',
     # Legacy scanner-phase removal: tests and probe trimmed to the retained
     # contracts only (exact reviewed contents).
     'test_argus_v12_0_7.py': '7adde8c0541300fda75622390c078aed3e3e77de',

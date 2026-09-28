@@ -59,6 +59,14 @@ def test_static_import_boundary_no_module_imports_the_brief():
             "(brief→authority direction is forbidden)")
 
 
+def _is_thread_call(node):
+    """True for a threading.Thread(...) call node."""
+    import ast as _ast
+    return (isinstance(node, _ast.Call) and isinstance(node.func, _ast.Attribute)
+            and isinstance(node.func.value, _ast.Name)
+            and node.func.value.id == "threading" and node.func.attr == "Thread")
+
+
 def test_scanner_brief_references_stay_in_display_scope():
     """Inside scanner, brief symbols may only appear in the brief's own
     functions, its route and the explanation worker — never inside evidence
@@ -83,14 +91,27 @@ def test_scanner_brief_references_stay_in_display_scope():
                 scope = stack[-1] if stack else "<module>"
                 # Scheduler may launch the isolated explanation thread only;
                 # it cannot read the generated explanation or use its result.
+                # Two shapes carry that guarantee: the tick as the thread
+                # target, and (v13.7.59) the tick handed to _heavy_tick as a
+                # thread argument so one heavy tick runs at a time.  In both
+                # the value stays inside the thread and is unreachable here.
                 parent = parents.get(node)
                 call = parents.get(parent)
                 if (scope == "run_scheduler" and name == "_market_brief_worker_tick"
                         and isinstance(parent, ast.keyword) and parent.arg == "target"
-                        and isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
-                        and isinstance(call.func.value, ast.Name)
-                        and call.func.value.id == "threading" and call.func.attr == "Thread"):
+                        and _is_thread_call(call)):
                     return
+                if (scope == "run_scheduler" and name == "_market_brief_worker_tick"
+                        and isinstance(parent, ast.Tuple)):
+                    keyword = parents.get(parent)
+                    thread = parents.get(keyword)
+                    if (isinstance(keyword, ast.keyword) and keyword.arg == "args"
+                            and _is_thread_call(thread)
+                            and any(other.arg == "target"
+                                    and isinstance(other.value, ast.Name)
+                                    and other.value.id == "_heavy_tick"
+                                    for other in thread.keywords)):
+                        return
                 # module level = the import + the state literal, allowed.
                 if scope != "<module>" and scope not in _ALLOWED_SCANNER_SCOPES:
                     offenders.append((scope, name))

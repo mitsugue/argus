@@ -16474,7 +16474,6 @@ def _compose_market_brief():
         news_events=_brief_news_events(),
         imminent_events=imminent,
         next_events=upcoming)
-    _attach_market_store("todayIntelligence", "market_brief")
     research = argus_jp_market_research.lookup(
         _TODAY_INTELLIGENCE, cutoff=brief["generatedAt"])
     brief["numericalResearch"] = research
@@ -21014,13 +21013,17 @@ _MARKET_ARTIFACT_LOCK = threading.Lock()
 # checkpoint keeps the artifact's state hash from the residency row, so the
 # recovery contract is unchanged: nothing is generated, hashed or written from
 # a detached store.
-# The five derived artifacts (the ledger holds owner-imported observations
-# and stays resident).  Whole-store readers of the three intelligence stores
-# are the generators themselves plus the market brief and the short-selling
-# reader; all re-attach before reading.
-_MARKET_RESIDENCY_ARTIFACTS = (
-    "verifiedViewSnapshots", "assetChartReports",
-    "chartIntelligence", "todayIntelligence", "marketReplay")
+# Only the two stores whose readers take a single item leave RAM.
+#
+# 2026-09-28 production measurement: chartIntelligence, todayIntelligence and
+# marketReplay were detached by every save and then re-attached within
+# minutes by the public chart read, which runs the deterministic analysis and
+# merges into them.  Residency therefore bought no resident memory for those
+# three and added an artifact reload to a public request, so they stay
+# resident until their readers can take a slice (per-symbol item files, the
+# same shape verified views and asset reports already use).  The ledger holds
+# owner-imported observations and stays resident as before.
+_MARKET_RESIDENCY_ARTIFACTS = ("verifiedViewSnapshots", "assetChartReports")
 _MARKET_STORE_RESIDENCY = {
     name: {"attached": True, "stateHash": None, "counts": {}, "attachedAt": None,
            "detachedAt": None, "attachCount": 0, "detachCount": 0,
@@ -21677,6 +21680,71 @@ _ALLOCATOR_RECLAIM_STATE = {
     "last": None,
 }
 _ALLOCATOR_RECLAIM_LOCK = threading.Lock()
+
+# v13.7.59: one heavy background tick at a time.
+#
+# 2026-09-28 production attribution: every run of every heavy operation
+# overlapped another (residency_ai_tick 446 MiB, jp_owner_quote_warm 415 MiB,
+# missions/tick 326 MiB, zero exclusive runs, 58 instrumented operations
+# active at the maximum), so the process peak is their sum rather than the
+# largest one.  These ticks are self-throttled and idempotent: skipping a
+# five-minute slot costs nothing, while overlapping them costs the peak.
+_HEAVY_TICK_LOCK = threading.Lock()
+_HEAVY_TICK_STATE = {"running": None, "startedAt": None, "ranCount": 0,
+                     "skippedCount": 0, "lastSkipped": None,
+                     "skippedByName": {}}
+
+
+# A tick spawned every five minutes must not lose the slot race to the tick
+# spawned beside it and then wait another five minutes: the JP owner warm is
+# what keeps the owner's Watchlist prices current.  Those ticks wait for the
+# slot; the ones spawned every thirty seconds skip, because another chance
+# arrives immediately.
+_HEAVY_TICK_WAIT_SECONDS = {
+    "residency_ai_tick": 120.0,
+    "jp_owner_quote_warm": 120.0,
+}
+
+
+def _heavy_tick(name, function):
+    """Run one heavy background tick exclusively.
+
+    A five-minute tick waits its turn; a thirty-second tick skips.  Nothing
+    runs while a mission tick owns the process: that tick is the largest
+    allocator and the scheduler must not add to its peak.
+    """
+    if _MISSION_TICK_CONTEXT.get("active"):
+        _heavy_tick_skipped(name, "mission_tick_active")
+        return {"status": "skipped", "reason": "mission_tick_active"}
+    wait = float(_HEAVY_TICK_WAIT_SECONDS.get(name) or 0.0)
+    acquired = (_HEAVY_TICK_LOCK.acquire(timeout=wait) if wait > 0
+                else _HEAVY_TICK_LOCK.acquire(blocking=False))
+    if not acquired:
+        _heavy_tick_skipped(name, "heavy_tick_busy")
+        return {"status": "skipped", "reason": "heavy_tick_busy",
+                "running": _HEAVY_TICK_STATE.get("running")}
+    if _MISSION_TICK_CONTEXT.get("active"):
+        # A mission tick started while this one waited for the slot.
+        _HEAVY_TICK_LOCK.release()
+        _heavy_tick_skipped(name, "mission_tick_active")
+        return {"status": "skipped", "reason": "mission_tick_active"}
+    _HEAVY_TICK_STATE.update({"running": name, "startedAt": _ai_now_iso()})
+    try:
+        return _memory_operation_run("scheduler", name, function)
+    finally:
+        _HEAVY_TICK_STATE.update({
+            "running": None,
+            "ranCount": int(_HEAVY_TICK_STATE.get("ranCount") or 0) + 1})
+        _HEAVY_TICK_LOCK.release()
+
+
+def _heavy_tick_skipped(name, reason):
+    _HEAVY_TICK_STATE["skippedCount"] = int(
+        _HEAVY_TICK_STATE.get("skippedCount") or 0) + 1
+    _HEAVY_TICK_STATE["lastSkipped"] = {"name": name, "reason": reason,
+                                        "at": _ai_now_iso()}
+    counts = _HEAVY_TICK_STATE.setdefault("skippedByName", {})
+    counts[name] = int(counts.get(name) or 0) + 1
 
 
 def _allocator_reclaim(reason, *, force=False, now_monotonic=None):
@@ -32657,6 +32725,7 @@ def api_argus_admin_memory_attribution():
     # never element values) only on request, on this existing owner route.
     payload["allocatorReclaim"] = copy.deepcopy(_ALLOCATOR_RECLAIM_STATE)
     payload["marketStoreResidency"] = _market_store_residency_projection()
+    payload["heavyTicks"] = copy.deepcopy(_HEAVY_TICK_STATE)
     if str(request.args.get("inventory") or "").lower() in ("1", "true", "yes"):
         payload["residentInventory"] = _resident_inventory()
     return jsonify(payload)
@@ -36765,7 +36834,6 @@ def _jp_daily_short_history(cached_only=False):
     if isinstance(_JP_DAILY_SHORT_CACHE.get("rows"), list) and \
             now < float(_JP_DAILY_SHORT_CACHE.get("expires") or 0):
         return list(_JP_DAILY_SHORT_CACHE["rows"])
-    _attach_market_store("todayIntelligence", "daily_short_history")
     durable_rows = list(_TODAY_INTELLIGENCE.get("shortSellingHistory") or [])
     if cached_only or not _JQUANTS_API_KEY:
         return durable_rows
@@ -36859,8 +36927,6 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                          cached_only=False, precompute_replay=False,
                          daily_rows_override=None):
     now_iso = _ai_now_iso()
-    _attach_market_stores("chart_public_report", names=(
-        "chartIntelligence", "todayIntelligence", "marketReplay"))
     history = _chart_history_cached if cached_only else _chart_history
     daily_rows = (list(daily_rows_override)
                   if isinstance(daily_rows_override, list)
@@ -47145,16 +47211,17 @@ def run_scheduler():
         # cron. Spawn on 5-min boundaries; the tick self-throttles (intel ≤10min,
         # AI via the run gate's 14-min interval), so a double spawn is harmless.
         if now.minute % 5 == 0:
+            # Heavy ticks take the single heavy-tick slot (see _heavy_tick):
+            # one at a time, and never while a mission tick is running.
             threading.Thread(
-                target=_memory_operation_run,
-                args=("scheduler", "residency_ai_tick", _residency_ai_tick),
+                target=_heavy_tick,
+                args=("residency_ai_tick", _residency_ai_tick),
                 daemon=True).start()
             # Owner JP names outside the curated list: the cache-only public
             # route depends on this resident warm, not on the GitHub cron.
             threading.Thread(
-                target=_memory_operation_run,
-                args=("scheduler", "jp_owner_quote_warm",
-                      _jp_owner_quote_warm_tick),
+                target=_heavy_tick,
+                args=("jp_owner_quote_warm", _jp_owner_quote_warm_tick),
                 daemon=True, name="jp-owner-quote-warm").start()
             # Return free-but-unreturned allocator arena to the OS when a
             # large idle balance has built up (rate limited, tick-aware).
@@ -47163,12 +47230,15 @@ def run_scheduler():
                 daemon=True, name="allocator-reclaim").start()
         # The public explanation progresses even when mail intake is slow or
         # no mailbox is configured. No public request starts this AI worker.
-        threading.Thread(target=_market_brief_worker_tick, daemon=True).start()
+        threading.Thread(target=_heavy_tick, daemon=True,
+                         args=("market_brief_worker_tick",
+                               _market_brief_worker_tick)).start()
         threading.Thread(target=_owner_overview_tick, daemon=True,
                          name="owner-overview-refresh").start()
         threading.Thread(target=_web_push_tick, daemon=True, name="web-push").start()
-        threading.Thread(target=_jp_sector_heatmap_tick, daemon=True,
-                         name="sector-heatmap").start()
+        threading.Thread(target=_heavy_tick, daemon=True, name="sector-heatmap",
+                         args=("jp_sector_heatmap_tick",
+                               _jp_sector_heatmap_tick)).start()
         # v13.5.54: Twelve Data Basic-plan warm tick — bounded by the policy core
         # (8-credit batch per eligible minute, daily cap, market-aware cadence).
         try:

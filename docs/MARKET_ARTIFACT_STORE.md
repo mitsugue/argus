@@ -97,7 +97,24 @@ snapshot instead of a deep copy. Residency scalars ride the owner-only
 prove its item files current (`items_not_current`, `index_invalid`) simply
 keeps the store resident until the next healthy save.
 
-### Second slice: the three intelligence stores
+### Scope: only the two item-read stores leave RAM
+
+The first production measurement after residency shipped (2026-09-28, run
+36446823277) showed `chartIntelligence`, `todayIntelligence` and
+`marketReplay` detached by every save and re-attached within minutes by the
+public chart read, which runs the deterministic analysis and merges into
+them. Residency bought no resident memory for those three and added an
+artifact reload to a public request, so they stay resident. They keep their
+artifact files, their hashes and their restore path; only the detach is
+withdrawn. They can join residency once their readers take a slice
+(per-symbol item files, the shape verified views and asset reports use).
+
+The same run also showed where the peak actually comes from: the resident
+AI tick (446 MiB in one run), the mission tick (326 MiB) and the JP owner
+warm tick (415 MiB), against 45 MiB for the checkpoint save. Resident state
+is no longer the constraint; per-tick transient allocation is.
+
+### Withdrawn: the three intelligence stores
 
 `chartIntelligence`, `todayIntelligence` and `marketReplay` (18 + 16 + 5 MiB
 of JSON) follow the same residency rule without per-item files: their

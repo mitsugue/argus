@@ -76,8 +76,15 @@ export function useBootLanes(inputs: BootConsoleInputs): BootLane[] {
       : inputs.newsIntel.status === 'data' ? 'ready' : 'unavailable';
     const briefStatus: BootLaneStatus = brief.loading && !brief.brief ? 'loading'
       : brief.brief ? 'ready' : 'unavailable';
+    // The integrated outlook is a stored judgment by design: the product does
+    // not run the AI on every page load. Reserving 'ready' for a live run
+    // therefore left this lane reading 'cached' on every first load, as if
+    // something had failed (owner, 2026-09-29). A judgment that is current
+    // for the latest scheduled run is ready; only a missed run is 'cached'.
     const judgmentStatus: BootLaneStatus = judgment.loading ? 'loading'
-      : judgment.data ? (judgment.phase === 'live' ? 'ready' : 'cached') : 'unavailable';
+      : !judgment.data ? 'unavailable'
+        : judgment.phase === 'disabled' || judgment.phase === 'mock' ? 'unavailable'
+          : judgment.data.freshness === 'stale' ? 'cached' : 'ready';
     const decision: BootLaneStatus = inputs.decision.loading ? 'loading'
       : inputs.decision.subjects ? 'ready' : 'unavailable';
     return [
