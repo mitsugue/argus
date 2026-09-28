@@ -70,7 +70,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_allocator_policy.py': '99382512b2b9fa6886e630d6d2a1a7a8cc871de5',
     'docs/ops/allocator-reclaim.md': '9e457e39c6b6143a3351064efc1c500be00635b1',
     # Market ledger artifact split + resident JP quote warm (exact reviewed contents).
-    'test_argus_jp_owner_quote_warm.py': 'b5a5af3b7b66aa4b3f29f14945a828ac4d614b1a',
+    'test_argus_jp_owner_quote_warm.py': 'eb998f6e67dbfeb8bc65598521189618efd0de04',
     # Derived market artifacts outside the sealed checkpoint (exact reviewed
     # contents of the store module, its tests, registry and measurement budget).
     'argus_market_artifact_store.py': 'f40832595d4028ad8f7ac0d844bf1f36eb8ea674',
