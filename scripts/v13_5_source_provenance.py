@@ -41,6 +41,12 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/settings/OwnerIdentityPanel.css': '51affd51093aaac1aaa364aebe0d201629db0877',
     # Pinned backend requirements + full Python patch version (v13.7.57).
     # Read-only Render deploy diagnostics (exact reviewed contents; v13.7.57).
+    # the owner-mode machine readers and the post-merge 4 GiB gate
+    'docs/ARGUS_CHECKPOINT_V2_RSS_RETENTION_REPORT.md': 'de1dcfe52957ef040bc7a12e22a076e6819843ff',
+    # the owner-mode machine readers and the post-merge 4 GiB gate
+    '.github/workflows/smoke-test.yml': '98cf30aabc06648f15c4147199322f2db55b31a6',
+    # Pinned backend requirements + full Python patch version (v13.7.56).
+    # Read-only Render deploy diagnostics (exact reviewed contents; v13.7.56).
     '.github/workflows/render-deploy-diagnostics.yml': 'd59bd1806c81ee24f67cc545effb86295a428b6d',
     'scripts/render_deploy_diagnostics.py': '232e235b15057b52754899eace7f847e54fd4344',
     'test_render_deploy_diagnostics.py': 'ffbcdda6f9c27aabff883e93bf73b03d7be550b4',
