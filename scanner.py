@@ -16474,7 +16474,6 @@ def _compose_market_brief():
         news_events=_brief_news_events(),
         imminent_events=imminent,
         next_events=upcoming)
-    _attach_market_store("todayIntelligence", "market_brief")
     research = argus_jp_market_research.lookup(
         _TODAY_INTELLIGENCE, cutoff=brief["generatedAt"])
     brief["numericalResearch"] = research
@@ -21014,13 +21013,17 @@ _MARKET_ARTIFACT_LOCK = threading.Lock()
 # checkpoint keeps the artifact's state hash from the residency row, so the
 # recovery contract is unchanged: nothing is generated, hashed or written from
 # a detached store.
-# The five derived artifacts (the ledger holds owner-imported observations
-# and stays resident).  Whole-store readers of the three intelligence stores
-# are the generators themselves plus the market brief and the short-selling
-# reader; all re-attach before reading.
-_MARKET_RESIDENCY_ARTIFACTS = (
-    "verifiedViewSnapshots", "assetChartReports",
-    "chartIntelligence", "todayIntelligence", "marketReplay")
+# Only the two stores whose readers take a single item leave RAM.
+#
+# 2026-09-28 production measurement: chartIntelligence, todayIntelligence and
+# marketReplay were detached by every save and then re-attached within
+# minutes by the public chart read, which runs the deterministic analysis and
+# merges into them.  Residency therefore bought no resident memory for those
+# three and added an artifact reload to a public request, so they stay
+# resident until their readers can take a slice (per-symbol item files, the
+# same shape verified views and asset reports already use).  The ledger holds
+# owner-imported observations and stays resident as before.
+_MARKET_RESIDENCY_ARTIFACTS = ("verifiedViewSnapshots", "assetChartReports")
 _MARKET_STORE_RESIDENCY = {
     name: {"attached": True, "stateHash": None, "counts": {}, "attachedAt": None,
            "detachedAt": None, "attachCount": 0, "detachCount": 0,
@@ -36765,7 +36768,6 @@ def _jp_daily_short_history(cached_only=False):
     if isinstance(_JP_DAILY_SHORT_CACHE.get("rows"), list) and \
             now < float(_JP_DAILY_SHORT_CACHE.get("expires") or 0):
         return list(_JP_DAILY_SHORT_CACHE["rows"])
-    _attach_market_store("todayIntelligence", "daily_short_history")
     durable_rows = list(_TODAY_INTELLIGENCE.get("shortSellingHistory") or [])
     if cached_only or not _JQUANTS_API_KEY:
         return durable_rows
@@ -36859,8 +36861,6 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                          cached_only=False, precompute_replay=False,
                          daily_rows_override=None):
     now_iso = _ai_now_iso()
-    _attach_market_stores("chart_public_report", names=(
-        "chartIntelligence", "todayIntelligence", "marketReplay"))
     history = _chart_history_cached if cached_only else _chart_history
     daily_rows = (list(daily_rows_override)
                   if isinstance(daily_rows_override, list)
