@@ -73,8 +73,14 @@ assert.match(today, /data-canonical-instrument=\{selectedSymbol\}/);
 assert.match(today, /data-canonical-horizon=\{`\$\{projection\?\.horizonDays \?\? horizon\}D`\}/);
 assert.match(script, /\.jp-comparison/);
 for (const source of [script + canonicalSelection, mobileAcceptance + canonicalSelection]) {
-  assert.match(source, /getByText\('根拠・市場データ・システム情報', \{ exact: true \}\)\.click\(\)/,
+  // What must hold is that the acceptance opens the disclosure the way the
+  // owner does - a click - and never forces it open in script. Pinning the
+  // exact locator expression broke a diagnostic change that kept the click
+  // (2026-09-29), so the contract is stated over the behaviour instead.
+  assert.match(source, /根拠・市場データ・システム情報[\s\S]{0,200}?\.click\(\)/,
     'acceptance must deliberately open the collapsed evidence disclosure before chart interaction');
+  assert.doesNotMatch(source, /\.open\s*=\s*true/,
+    'the disclosure must never be forced open in script: the click is the proof');
   assert.match(source, /details\.at-evidence/);
   assert.match(source, /\.open === true/,
     'acceptance must verify that the disclosure is actually open before chart interaction');

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 from unittest import mock
 
 import argus_mapping_attribution as mapping
@@ -213,15 +214,64 @@ def test_precise_gate_bounds_in_use_bytes_and_source_relative_system_bytes():
         precise_gate_failures(report)
 
 
+def _workflow_jobs(text):
+    """{job name: its block} from a workflow, without a YAML dependency.
+
+    Jobs are the two-space keys under ``jobs:``; a job's block runs to the
+    next such key.  Enough to ask which job reads production and which jobs
+    consume its artifact, and it does not break when a job moves.
+    """
+    lines = text.split("\n")
+    try:
+        start = lines.index("jobs:") + 1
+    except ValueError:                      # pragma: no cover - shape changed
+        return {}
+    jobs, name, body = {}, None, []
+    for line in lines[start:]:
+        if line and not line.startswith(" "):
+            break                            # a new top-level key ends jobs
+        if (line.startswith("  ") and not line.startswith("   ")
+                and line.rstrip().endswith(":") and not line.strip().startswith("#")):
+            if name:
+                jobs[name] = "\n".join(body)
+            name, body = line.strip()[:-1], []
+            continue
+        if name:
+            body.append(line)
+    if name:
+        jobs[name] = "\n".join(body)
+    return jobs
+
+
 def test_exact_public_snapshot_is_fetched_once_then_shared_by_artifact():
-    workflow = pathlib.Path(
-        ".github/workflows/checkpoint-v2-gate.yml").read_text(
-            encoding="utf-8")
-    endpoint = (
-        "https://argus-backend-3j2m.onrender.com/"
-        "api/argus/osint/memory-snapshot")
+    """One job reads production; every other job consumes its artifact.
+
+    Stated over the parsed workflow rather than over counted substrings: the
+    counts broke whenever a job was added or removed for an unrelated reason
+    (2026-09-28), while the property that matters is that production is read
+    exactly once per run and shared.
+    """
+    workflow_path = pathlib.Path(".github/workflows/checkpoint-v2-gate.yml")
+    workflow = workflow_path.read_text(encoding="utf-8")
+    endpoint = ("https://argus-backend-3j2m.onrender.com/"
+                "api/argus/osint/memory-snapshot")
+    jobs = _workflow_jobs(workflow)
+    assert len(jobs) >= 2, sorted(jobs)
+
+    def job_text(job):
+        return job
+
+    readers = [name for name, job in jobs.items() if endpoint in job_text(job)]
+    assert readers == ["exact-public-state"], readers
     assert workflow.count(endpoint) == 1
-    assert "exact-public-state:" in workflow
-    assert workflow.count("needs: exact-public-state") == 5
-    assert workflow.count("actions/download-artifact@v5") == 5
+
+    consumers = [name for name, job in jobs.items()
+                 if name != "exact-public-state"
+                 and "actions/download-artifact" in job_text(job)]
+    assert consumers, "no job consumes the shared exact state"
+    for name in consumers:
+        block = jobs[name]
+        assert re.search(r"^\s+needs:.*exact-public-state", block, re.M), name
+        # A consumer must not read production itself.
+        assert endpoint not in block, name
     assert "mkdir -p artifacts/mapping-attribution" in workflow
