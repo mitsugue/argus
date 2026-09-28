@@ -55,6 +55,45 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
   }
   const secrets = new Set(config.enabled ? [config.password] : []);
   let lastAttempt = 0;
+  // 2026-09-28: every push-triggered acceptance races the redeploy of the same
+  // commit, and the host answers 502/503 during that cutover. Four runs in a
+  // row failed at login_status_503 while authentication itself was healthy (a
+  // wrong-password probe answered 401 in the same minute). So the reader first
+  // waits for the backend to report ready, and for the expected build when one
+  // is named, then treats a 5xx on the ceremony as the cutover it is: a few
+  // bounded retries. A wrong password stays a hard stop, and 429 stays unretried.
+  const readyTimeoutMs = Number(env.ARGUS_ACCEPTANCE_READY_TIMEOUT_MS || 12 * 60 * 1000);
+  const readyIntervalMs = Number(env.ARGUS_ACCEPTANCE_READY_INTERVAL_MS || 15000);
+  const expectedSha = String(env.ARGUS_EXPECTED_SHA || '').trim().toLowerCase();
+  const probe = async (route) => {
+    const response = await fetch(config.backend + route, { signal: AbortSignal.timeout(20000) });
+    if (!response.ok) return { status: response.status, body: null };
+    return { status: response.status, body: await response.json().catch(() => null) };
+  };
+  let cutoverRetries = 0;
+  async function waitForBackend() {
+    // Only a run that names the build it expects has a cutover to wait out.
+    // Unit tests and PR checks name none and must never probe a host.
+    if (!config.enabled || !expectedSha) return { waited: false };
+    const started = Date.now();
+    let last = 'not_checked';
+    for (;;) {
+      try {
+        const ready = await probe('/readyz');
+        if (ready.body?.ready === true) {
+          if (!expectedSha) return { waited: true, elapsedMs: Date.now() - started };
+          const health = await probe('/healthz');
+          const sha = String(health.body?.buildSha || '').toLowerCase();
+          if (sha && (sha.startsWith(expectedSha.slice(0, 8)) || expectedSha.startsWith(sha.slice(0, 8)))) {
+            return { waited: true, elapsedMs: Date.now() - started, buildSha: sha.slice(0, 8) };
+          }
+          last = 'build_' + (sha.slice(0, 8) || 'unknown');
+        } else last = 'ready_' + ready.status;
+      } catch { last = 'unreachable'; }
+      if (Date.now() - started >= readyTimeoutMs) fail('backend_not_ready_' + last);
+      await new Promise(resolve => setTimeout(resolve, readyIntervalMs));
+    }
+  }
   const boundary = page => {
     if (new URL(page.url()).origin !== config.browserOrigin) fail('page_origin');
   };
@@ -68,6 +107,7 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
     } catch { fail('lock_required'); }
   }
   async function login(page, attempt = 0) {
+    if (attempt === 0 && cutoverRetries === 0) await waitForBackend();
     if (config.enabled) await locked(page);
     try {
       await page.waitForFunction(() => ['0', '1'].includes(document.documentElement.dataset.argusOwnerAuthMode), { }, { timeout: 15000 });
@@ -92,6 +132,12 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
       // owner-mode failure is diagnosable from the run log: a 429 means the
       // owner-wide ten-per-minute limiter, not a wrong password.
       if (!response) fail('login_no_response');
+      if ([502, 503, 504].includes(response.status()) && cutoverRetries < 3) {
+        cutoverRetries += 1;
+        await new Promise(resolve => setTimeout(resolve, 20000));
+        await waitForBackend();
+        return login(page, attempt);
+      }
       if (response.status() !== 200) fail('login_status_' + response.status());
       const body = await response.json();
       if (typeof body?.token !== 'string' || !/^[A-Za-z0-9_-]{32,128}$/.test(body.token)) fail('login_shape');
@@ -155,7 +201,7 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
       if (!await page.locator('.owner-access-bar > summary').count()) fail('session_lost');
     } catch { fail('session_lost'); }
   }
-  return { enabled: config.enabled, login, logout, locked, active,
+  return { enabled: config.enabled, login, logout, locked, active, waitForBackend,
     redact: value => [...secrets].reduce((text, secret) => text.split(secret).join('[redacted]'), String(value ?? '')),
     scan: root => config.enabled ? assertNoSecrets(root, secrets) : Promise.resolve() };
 }

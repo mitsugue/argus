@@ -95,7 +95,7 @@ jobs:
           echo "token present (length ${#ARGUS_ADMIN_TOKEN})"
           # Warm the dyno, then surface the gate state on the run page (the
           # security-status payload is booleans/limits only — no secrets).
-          curl -s --max-time 90 "$BE/api/argus/rates" > /dev/null || true
+          curl -s --max-time 90 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/rates" > /dev/null || true
           GATE=$(python3 scripts/workflow_http.py --name security-status --timeout 60 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --url "$BE/api/argus/security-status")
@@ -184,9 +184,11 @@ jobs:
       # view instead of showing "not run yet" all day.
       - name: Persist AI judgment for dyno-restart restore
         if: github.event.inputs.mode != 'ai-only'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
-          curl -s --max-time 60 "$BE/api/argus/ai-judgment" -o ai.json || echo '{}' > ai.json
+          curl -s --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/ai-judgment" -o ai.json || echo '{}' > ai.json
           python3 - <<'PY'
           import json, os
           try:
@@ -208,10 +210,12 @@ jobs:
       # append-only (never overwritten); latest.json updates every run.
       - name: Persist official event lifecycle records
         if: github.event.inputs.mode != 'ai-only'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
           TODAY=$(TZ=Asia/Tokyo date +%F)
-          curl -s --max-time 60 "$BE/api/argus/official-events/snapshot" -o oe.json || echo '{}' > oe.json
+          curl -s --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/official-events/snapshot" -o oe.json || echo '{}' > oe.json
           python3 - "$TODAY" <<'PY'
           import json, os, sys
           today = sys.argv[1]
@@ -237,10 +241,12 @@ jobs:
       # later layer — this is the durable record it will read.
       - name: Persist downside incidents (replay history)
         if: github.event.inputs.mode != 'ai-only'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
           TODAY=$(TZ=Asia/Tokyo date +%F)
-          curl -s --max-time 60 "$BE/api/argus/downside-incidents" -o ds.json || echo '{}' > ds.json
+          curl -s --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/downside-incidents" -o ds.json || echo '{}' > ds.json
           python3 - "$TODAY" <<'PY'
           import json, os, sys
           today = sys.argv[1]
@@ -273,10 +279,12 @@ jobs:
       # when the regime read is live/partial (a mock/empty read is skipped).
       - name: Persist capital-rotation reading (history)
         if: github.event.inputs.mode != 'ai-only'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
           TODAY=$(TZ=Asia/Tokyo date +%F)
-          curl -s --max-time 60 "$BE/api/argus/market-regime" -o reg.json || echo '{}' > reg.json
+          curl -s --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/market-regime" -o reg.json || echo '{}' > reg.json
           python3 - "$TODAY" <<'PY'
           import json, os, sys
           today = sys.argv[1]
@@ -307,10 +315,12 @@ jobs:
       # the realized 1/3/5D outcome. Append-only per date; only when incidents exist.
       - name: Persist cause attributions (ledger)
         if: github.event.inputs.mode != 'ai-only'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
           TODAY=$(TZ=Asia/Tokyo date +%F)
-          curl -s --max-time 90 "$BE/api/argus/cause-attribution-batch" -o attrib.json || echo '{}' > attrib.json
+          curl -s --max-time 90 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/cause-attribution-batch" -o attrib.json || echo '{}' > attrib.json
           python3 - "$TODAY" <<'PY'
           import json, os, sys
           today = sys.argv[1]
@@ -367,10 +377,14 @@ jobs:
 
       - name: Append canonical Prediction Ledger v2 records
         if: github.event.inputs.mode != 'ai-only'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
+          # 2026-09-28: owner authentication gates every read of this host.
+          # The existing operational token passes the gate; it is never logged.
           for attempt in 1 2 3 4 5 6; do
-            curl -sf --max-time 60 "$BE/api/argus/prediction-snapshot" -o snap.json && break
+            curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/prediction-snapshot" -o snap.json && break
             echo "prediction snapshot retry $attempt"
             sleep 20
           done
@@ -402,10 +416,12 @@ jobs:
       # canonical Prediction Ledger or forward-live calibration.
       - name: SHADOW DERIVED — record + evaluate entry-scout compatibility artifacts
         if: github.event.inputs.mode != 'ai-only'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
-          curl -sf --max-time 90 "$BE/api/argus/scout-batch" -o scout.json || echo '{}' > scout.json
-          curl -sf --max-time 60 "$BE/api/argus/japan-watchlist" -o sjp.json || echo '{}' > sjp.json
+          curl -sf --max-time 90 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/scout-batch" -o scout.json || echo '{}' > scout.json
+          curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/japan-watchlist" -o sjp.json || echo '{}' > sjp.json
           python3 - <<'PY'
           import json, os, glob, datetime
           try:

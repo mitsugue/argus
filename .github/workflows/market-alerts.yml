@@ -51,10 +51,14 @@ jobs:
 
       - name: Fetch digest and diff
         id: diff
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
+          # 2026-09-28: owner authentication gates every read of this host.
+          # The existing operational token passes the gate; it is never logged.
           for i in 1 2 3 4 5 6; do
-            curl -sf --max-time 60 "$BE/api/argus/daily-digest" -o digest.json && break
+            curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/daily-digest" -o digest.json && break
             echo "attempt $i failed — retrying in 20s"; sleep 20
           done
           test -s digest.json
@@ -166,10 +170,14 @@ jobs:
     steps:
       - name: Fetch digest (retry through Render cold start)
         id: digest
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
+          # 2026-09-28: owner authentication gates every read of this host.
+          # The existing operational token passes the gate; it is never logged.
           for i in 1 2 3 4 5 6; do
-            if curl -sf --max-time 60 "$BE/api/argus/daily-digest" -o digest.json; then
+            if curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/daily-digest" -o digest.json; then
               break
             fi
             echo "attempt $i failed (cold start?) — retrying in 20s"

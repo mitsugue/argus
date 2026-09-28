@@ -50,3 +50,34 @@ test('missing artifact and link cannot silently pass', async () => {
     await assert.rejects(assertNoSecrets(dir,new Set(['secret'])),/artifact_link/);
   } finally { await fs.rm(dir,{recursive:true,force:true}); }
 });
+
+test('the reader waits for a ready backend at the expected build before any ceremony', async () => {
+  const calls = []; const original = globalThis.fetch; let readyCalls = 0;
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    if (String(url).endsWith('/readyz')) { readyCalls += 1; return readyCalls < 3 ? { ok: false, status: 503 } : { ok: true, status: 200, json: async () => ({ ready: true }) }; }
+    if (String(url).endsWith('/healthz')) return { ok: true, status: 200, json: async () => ({ buildSha: 'abcdef1234567890' }) };
+    throw new Error('unexpected ' + url);
+  };
+  try {
+    const owner = createBrowserOwner({ baseUrl: backend, publicUrl, env: { ...env, ARGUS_EXPECTED_SHA: 'abcdef12', ARGUS_ACCEPTANCE_READY_INTERVAL_MS: '1', ARGUS_ACCEPTANCE_READY_TIMEOUT_MS: '5000' } });
+    const result = await owner.waitForBackend();
+    assert.equal(result.waited, true); assert.equal(result.buildSha, 'abcdef12');
+    assert.equal(calls.filter(u => u.endsWith('/readyz')).length, 3);
+    assert.ok(calls.every(u => u.startsWith(backend + '/')));
+  } finally { globalThis.fetch = original; }
+});
+test('a backend that never becomes ready is a named failure, not a login attempt', async () => {
+  const original = globalThis.fetch; globalThis.fetch = async () => ({ ok: false, status: 503 });
+  try {
+    const owner = createBrowserOwner({ baseUrl: backend, publicUrl, env: { ...env, ARGUS_EXPECTED_SHA: 'abcdef12', ARGUS_ACCEPTANCE_READY_INTERVAL_MS: '1', ARGUS_ACCEPTANCE_READY_TIMEOUT_MS: '20' } });
+    await assert.rejects(owner.waitForBackend(), /backend_not_ready_ready_503/);
+  } finally { globalThis.fetch = original; }
+});
+test('without an expected build, and in disabled mode, the reader never probes a host', async () => {
+  const original = globalThis.fetch; globalThis.fetch = async () => { throw new Error('must not probe'); };
+  try {
+    assert.deepEqual(await createBrowserOwner({ baseUrl: '', publicUrl: '', env: {} }).waitForBackend(), { waited: false });
+    assert.deepEqual(await createBrowserOwner({ baseUrl: backend, publicUrl, env }).waitForBackend(), { waited: false });
+  } finally { globalThis.fetch = original; }
+});
