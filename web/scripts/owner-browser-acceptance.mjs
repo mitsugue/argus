@@ -67,7 +67,7 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
       if (await page.locator('.nav__mobile, [data-argus-contract="canonical-market-snapshot-v1"]').count()) fail('unlocked_content');
     } catch { fail('lock_required'); }
   }
-  async function login(page) {
+  async function login(page, attempt = 0) {
     if (config.enabled) await locked(page);
     try {
       await page.waitForFunction(() => ['0', '1'].includes(document.documentElement.dataset.argusOwnerAuthMode), { }, { timeout: 15000 });
@@ -103,12 +103,22 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
         // Name the page state (fixed codes only, never text the owner typed):
         // the product's own error code, whether the shell header exists,
         // whether the lock screen is still up, and the owner-mode marker.
+        //
+        // 2026-09-29, first owner-mode runs: the state was
+        // none:noheader:locked:mode1 — no product error, yet the lock screen
+        // again.  That is the bundle self-heal: right after a Pages release
+        // the app reloads itself into the new bundle, and the session lives
+        // in memory only, so it is gone.  The owner logs in again once; so
+        // does this reader, exactly once, and only for that state.
         const state = await page.evaluate(() => ({
           code: document.querySelector('[role="status"][data-owner-code]')?.getAttribute('data-owner-code') || 'none',
           header: document.querySelector('.shell__header') ? 'header' : 'noheader',
           locked: document.querySelector('.owner-access-screen') ? 'locked' : 'unlocked',
           mode: document.documentElement.dataset.argusOwnerAuthMode || '?',
         })).catch(() => ({ code: 'unreadable', header: '?', locked: '?', mode: '?' }));
+        const selfHealed = attempt === 0 && state.code === 'none'
+          && state.header === 'noheader' && state.locked === 'locked';
+        if (selfHealed) return login(page, attempt + 1);
         fail(`login_marker:${state.code}:${state.header}:${state.locked}:mode${state.mode}`);
       }
       boundary(page);
