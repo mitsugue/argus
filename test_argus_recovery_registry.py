@@ -50,6 +50,7 @@ client.vault_ciphertext
 external.ec2_build_identity
 external.private_git_objects
 external.public_ledger_originals
+market.artifact_status
 market.asset_reports
 market.chart_intelligence
 market.ledger_derived
@@ -108,8 +109,8 @@ startup.restore_transition
 """.split()))
 
 EXPECTED_POLICY_SHA256 = \
-    "c98c2d8995bdbf7b256d997f6987e8b898cb0e542a23fe7f7817959543752304"
-EXPECTED_POLICY_CANONICAL_BYTES = 60653
+    "9c58cb183ae1b26b856674f87bc7cc95c8c1b3a3a3356d579ed7e289e850814b"
+EXPECTED_POLICY_CANONICAL_BYTES = 61273
 
 
 def test_registry_is_valid_sorted_unique_and_exact_inventory_equivalent():
@@ -117,23 +118,23 @@ def test_registry_is_valid_sorted_unique_and_exact_inventory_equivalent():
     assert tuple(row.stateId for row in registry.states()) == EXPECTED_STATE_IDS
     assert tuple(row.mutationId for row in registry.mutations()) == \
         EXPECTED_MUTATION_IDS
-    assert len(EXPECTED_STATE_IDS) == 61
+    assert len(EXPECTED_STATE_IDS) == 62
     assert len(EXPECTED_MUTATION_IDS) == 27
 
     summary = registry.registry_summary()
-    assert summary["stateCount"] == 61
+    assert summary["stateCount"] == 62
     assert summary["mutationClassCount"] == 27
     assert summary["classificationCounts"] == {
         "A_AUTHORITATIVE_NON_REACQUIRABLE": 30,
         "B_AUTHORITATIVE_SOURCE_FACTS": 13,
         "C_DETERMINISTIC_RECOMPUTABLE": 5,
         "D_REACQUIRABLE_WITH_CONTRACT": 1,
-        "E_CACHE_EPHEMERAL": 2,
+        "E_CACHE_EPHEMERAL": 3,
         "F_UNKNOWN_OWNER_SEMANTICS_REQUIRED": 10,
     }
     assert summary["mustPreserveCount"] == 59
     assert summary["privacyCounts"] == {
-        "PUBLIC_METADATA": 11,
+        "PUBLIC_METADATA": 12,
         "INTERNAL": 22,
         "OWNER_PRIVATE": 9,
         "SECURITY_SENSITIVE": 11,
@@ -160,6 +161,7 @@ def test_public_telemetry_inventory_is_explicit_and_rfc_strict():
         "backend.learned_memory",
         "backend.schema_identity",
         "external.public_ledger_originals",
+        "market.artifact_status",
         "market.asset_reports",
         "market.chart_intelligence",
         "market.replay_contexts",
@@ -392,7 +394,7 @@ def _checkpoint_literal_keys() -> tuple[str, ...]:
 
 def test_every_literal_checkpoint_top_level_key_is_registered():
     observed = _checkpoint_literal_keys()
-    assert len(observed) == 47
+    assert len(observed) == 43  # 47 - 5 derived artifact payloads + marketArtifacts
     assert registry.unregistered_checkpoint_keys(observed) == ()
     # localCheckpointIntegrity is added by the sealing writer rather than the
     # literal blob assembly, so the registry is intentionally a strict superset.
