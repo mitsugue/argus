@@ -274,7 +274,30 @@ export async function openCanonicalEvidence(page, timeout = 30_000) {
   const disclosure = page.locator('details.at-evidence');
   await disclosure.waitFor({ state: 'visible', timeout });
   if (!await disclosure.evaluate((element) => element.open)) {
-    await page.getByText('根拠・市場データ・システム情報', { exact: true }).click();
+    // The disclosure is opened the way the owner opens it. When that click
+    // cannot land because the node keeps being replaced (owner-mode
+    // acceptance of 13.7.58, forced canonical failure), report how often the
+    // node identity changes in one second instead of a generic timeout: a
+    // settled page reports 0, a re-render loop reports its rate. The click is
+    // never replaced by a scripted open, so the interaction stays proven.
+    try {
+      await page.getByText('根拠・市場データ・システム情報', { exact: true }).click();
+    } catch (error) {
+      const churn = await page.evaluate(() => new Promise((resolve) => {
+        if (!document.body) return resolve(-1);
+        let replacements = 0;
+        let current = document.querySelector('details.at-evidence');
+        const observer = new MutationObserver(() => {
+          const next = document.querySelector('details.at-evidence');
+          if (next !== current) { replacements += 1; current = next; }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+        setTimeout(() => { observer.disconnect(); resolve(replacements); }, 1_000);
+      })).catch(() => -1);
+      const stage = String(error?.message || '').includes('detached')
+        ? 'detached' : 'blocked';
+      throw new Error(`canonical_evidence_click_failed:${stage}:churn${churn}`);
+    }
   }
   await page.waitForFunction(() =>
     document.querySelector('details.at-evidence')?.open === true,
