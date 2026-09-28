@@ -82,3 +82,25 @@ class ChartContractTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProxyScaleTest(unittest.TestCase):
+    def test_the_proxy_basis_is_accepted_and_never_relabelled_as_official(self):
+        from jp_market_price_paths import PROXY_BASIS
+        proxy = scale(basis=PROXY_BASIS, officialErrorPct=-0.8,
+                      coverage={"priced": 224, "members": 225})
+        self.assertEqual(proxy["status"], "AVAILABLE")
+        self.assertEqual(proxy["basis"], PROXY_BASIS)
+        self.assertTrue(proxy["isProxy"])
+        self.assertEqual(proxy["proxyErrorPct"], -0.8)
+        self.assertIn("代理値", proxy["basisLabelJa"])
+        official = scale()
+        self.assertFalse(official["isProxy"])
+        self.assertIsNone(official["proxyErrorPct"])
+        converted = convert_shape_to_yen([{"offsetSessions": 0, "value": 100}], scale=proxy)
+        self.assertEqual(converted[0]["scaleBasis"], PROXY_BASIS)
+        self.assertEqual(converted[0]["value"], 40000)
+
+    def test_any_other_basis_is_still_refused(self):
+        self.assertEqual(scale(basis="CAP_WEIGHTED_PER")["reason"],
+                         "incompatible_index_valuation_definition")

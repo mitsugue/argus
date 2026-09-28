@@ -814,8 +814,16 @@ def evaluate_d04(*, cutoff: str, analysis_instrument: str,
                  index_evidence: Optional[Mapping[str, Any]] = None,
                  license_status: str = "LICENSE_BLOCKED",
                  derived_valuation: Optional[Mapping[str, Any]] = None,
-                 index_valuation: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
-    """D04 is same-session index-based valuation, never an equity-universe proxy."""
+                 index_valuation: Optional[Mapping[str, Any]] = None,
+                 proxy_valuation: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """D04 is same-session index-based valuation, never an equity-universe proxy.
+
+    ``proxy_valuation`` is the ARGUS reconstruction of that same quantity from
+    constituent forecast EPS and factors (argus_index_valuation_proxy). It is
+    definition-aligned, unlike a universe median, so it may stand in for the
+    official row when that row is unavailable — as an ARGUS candidate, with
+    the official status and the measured error kept on the result.
+    """
     if license_status not in {"AVAILABLE", "LICENSE_BLOCKED", "MISSING"}:
         raise ValueError("invalid_nikkei_valuation_license_status")
     result = {
@@ -844,6 +852,22 @@ def evaluate_d04(*, cutoff: str, analysis_instrument: str,
         result["missing"] = [scale.get("reason") or "same_session_index_based_valuation"]
     else:
         result["status"] = "LICENSE_BLOCKED" if license_status == "LICENSE_BLOCKED" else "MISSING"
+    if result["status"] != "AVAILABLE" and isinstance(proxy_valuation, Mapping):
+        from jp_market_price_paths import PROXY_BASIS, index_valuation_scale
+        if proxy_valuation.get("basis") == PROXY_BASIS:
+            scale = index_valuation_scale(proxy_valuation, cutoff=cutoff,
+                anchor_date=proxy_valuation.get("date"), anchor_price=proxy_valuation.get("indexClose"))
+            if scale.get("status") == "AVAILABLE":
+                return {**result, "status": "AVAILABLE", "missing": [],
+                    "propositionId": "ARGUS-D04-PROXY-CONSTITUENT-EPS",
+                    "lineage": "ARGUS_CANDIDATE", "conditionLineage": "ARGUS_CANDIDATE",
+                    "officialStatus": result["status"],
+                    "eps": scale["eps"], "indexLevel": scale["anchorPrice"], "per": scale["per"],
+                    "valuation": scale, "epsKind": scale["epsKind"],
+                    "epsLabelJa": "ARGUS代理値のEPS（構成銘柄の予想EPSから再構成）",
+                    "proxyErrorPct": scale.get("proxyErrorPct"),
+                    "conditionRule": "descriptive_same_session_proxy_valuation_no_validated_signal"}
+            result["proxyRejected"] = scale.get("reason")
     # Keep the independent universe statistic available as evidence, without
     # promoting its thresholds or median PER to D04 or a Nikkei EPS series.
     alternate = _derived_valuation_evidence(derived_valuation, cutoff)
@@ -1137,6 +1161,7 @@ def evaluate_d01_d07(*, cutoff: str,
                      nikkei_index: Optional[Mapping[str, Any]] = None,
                      nikkei_license_status: str = "LICENSE_BLOCKED",
                      nikkei_valuation: Optional[Mapping[str, Any]] = None,
+                     nikkei_proxy_valuation: Optional[Mapping[str, Any]] = None,
                      foreign_flow_rows: Iterable[Mapping[str, Any]] = (),
                      vix_rows: Iterable[Mapping[str, Any]] = (),
                      earnings_event: Optional[Mapping[str, Any]] = None,
@@ -1153,7 +1178,8 @@ def evaluate_d01_d07(*, cutoff: str,
         "D04": evaluate_d04(
             cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",
             eps_evidence=nikkei_eps, index_evidence=nikkei_index,
-            license_status=nikkei_license_status, index_valuation=nikkei_valuation),
+            license_status=nikkei_license_status, index_valuation=nikkei_valuation,
+            proxy_valuation=nikkei_proxy_valuation),
         "D05": evaluate_d05(foreign_flow_rows, cutoff=cutoff),
         "D06": evaluate_d06(vix_rows, cutoff=cutoff),
         "D07": evaluate_d07(
