@@ -3106,6 +3106,11 @@ def api_argus_japan_watchlist():
     snapshot = get_japan_watchlist_snapshot(
         symbols, allow_provider_fetch=False,
         record_requested_symbols=False)
+    # A device asking for a code is the only signal the backend has for names
+    # outside the curated list when Layer-2B membership is not synced. Record
+    # it as a bounded EOD warm hint only: it never joins the realtime push
+    # target set and never makes this GET fetch anything itself.
+    _note_jp_warm_hints(symbols)
     return jsonify(_with_cap_truth(snapshot, symbols, _JP_SYM_RE, _JP_DYN_MAX))
 
 
@@ -3115,6 +3120,32 @@ def api_argus_japan_watchlist():
 _JP_SEEN_SYMBOLS = {}      # symbol(upper) -> last_seen_epoch
 _JP_SEEN_MAX = 200
 _JP_SEEN_TTL = 7 * 24 * 3600   # forget a symbol unseen for a week
+# Device-requested JP codes that only feed the bounded background EOD warm
+# (owner 2026-09-28: Watchlist names outside the curated list showed no price
+# because nothing warmed them). Separate from _JP_SEEN_SYMBOLS so the realtime
+# push target set is unchanged; bounded, validated, forgotten after a week.
+_JP_WARM_HINTS = {}        # code(4, upper) -> last_seen_epoch
+_JP_WARM_HINT_MAX = 200
+_JP_WARM_HINT_TTL = 7 * 24 * 3600
+
+
+def _note_jp_warm_hints(symbols):
+    """Remember well-formed JP codes a device asked for; never raises."""
+    try:
+        now = time.time()
+        for s in symbols or ():
+            code = str(s).strip().upper()[:4]
+            if code and _JP_SYM_RE.match(code):
+                _JP_WARM_HINTS[code] = now
+        for k in [k for k, ts in _JP_WARM_HINTS.items()
+                  if now - ts > _JP_WARM_HINT_TTL]:
+            _JP_WARM_HINTS.pop(k, None)
+        if len(_JP_WARM_HINTS) > _JP_WARM_HINT_MAX:
+            for k in sorted(_JP_WARM_HINTS,
+                            key=_JP_WARM_HINTS.get)[:-_JP_WARM_HINT_MAX]:
+                _JP_WARM_HINTS.pop(k, None)
+    except Exception:
+        pass
 
 
 def _remember_jp_symbols(symbols):
@@ -3153,6 +3184,7 @@ def _owner_jp_symbols_for_warm(limit=None):
     except Exception:
         pass
     codes.extend(str(code).upper()[:4] for code in list(_JP_SEEN_SYMBOLS))
+    codes.extend(str(code).upper()[:4] for code in list(_JP_WARM_HINTS))
     out = []
     for code in codes:
         if code and _JP_SYM_RE.match(code) and code not in curated and code not in out:

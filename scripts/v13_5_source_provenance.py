@@ -36,7 +36,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
     # Market ledger artifact split + resident JP quote warm (exact reviewed contents).
-    'test_argus_jp_owner_quote_warm.py': '977bf2600d345ca9b8c5d304174d65a2da6cf96f',
+    'test_argus_jp_owner_quote_warm.py': 'b5a5af3b7b66aa4b3f29f14945a828ac4d614b1a',
     # Derived market artifacts outside the sealed checkpoint (exact reviewed
     # contents of the store module, its tests, registry and measurement budget).
     'argus_market_artifact_store.py': 'f40832595d4028ad8f7ac0d844bf1f36eb8ea674',

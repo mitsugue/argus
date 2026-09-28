@@ -2288,6 +2288,7 @@ def test_owner_jp_symbols_for_warm_come_from_layer2b_and_device_requests(monkeyp
         {"market": "JP", "symbol": "7011"}, {"market": "JP", "symbol": "314A"},
         {"market": "US", "symbol": "MU"}, {"market": "JP", "symbol": "8058"}]})
     monkeypatch.setattr(scanner, "_JP_SEEN_SYMBOLS", {"6330": 1.0, "7794": 2.0, "ZZ": 3.0, "8058": 4.0})
+    monkeypatch.setattr(scanner, "_JP_WARM_HINTS", {})
     codes = scanner._owner_jp_symbols_for_warm()
     assert codes == ("314A", "6330", "7011", "7794")   # curated 8058 and non-codes excluded
     assert scanner._owner_jp_symbols_for_warm(limit=2) == ("314A", "6330")
@@ -2296,6 +2297,7 @@ def test_owner_jp_symbols_for_warm_come_from_layer2b_and_device_requests(monkeyp
 def test_owner_jp_symbols_for_warm_never_raises(monkeypatch):
     monkeypatch.setattr(scanner, "_layer2b_read_latest", lambda: (_ for _ in ()).throw(RuntimeError("no ledger")))
     monkeypatch.setattr(scanner, "_JP_SEEN_SYMBOLS", {})
+    monkeypatch.setattr(scanner, "_JP_WARM_HINTS", {})
     assert scanner._owner_jp_symbols_for_warm() == ()
 
 
