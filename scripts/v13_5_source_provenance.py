@@ -35,6 +35,8 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # the owner runbook
+    'docs/ops/OWNER_RUNBOOK_JA.md': 'bc995fa70fec17d3c565533edc0c4bdda973622a',
     # the heavy tick serialization
     'test_argus_heavy_tick_serialization.py': '99355f4f3e5648df3487b4b26d3300dc3a11c92c',
     # the acceptance evidence churn diagnostic
