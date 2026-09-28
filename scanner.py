@@ -16474,6 +16474,7 @@ def _compose_market_brief():
         news_events=_brief_news_events(),
         imminent_events=imminent,
         next_events=upcoming)
+    _attach_market_store("todayIntelligence", "market_brief")
     research = argus_jp_market_research.lookup(
         _TODAY_INTELLIGENCE, cutoff=brief["generatedAt"])
     brief["numericalResearch"] = research
@@ -21013,30 +21014,64 @@ _MARKET_ARTIFACT_LOCK = threading.Lock()
 # checkpoint keeps the artifact's state hash from the residency row, so the
 # recovery contract is unchanged: nothing is generated, hashed or written from
 # a detached store.
+# The five derived artifacts (the ledger holds owner-imported observations
+# and stays resident).  Whole-store readers of the three intelligence stores
+# are the generators themselves plus the market brief and the short-selling
+# reader; all re-attach before reading.
+_MARKET_RESIDENCY_ARTIFACTS = (
+    "verifiedViewSnapshots", "assetChartReports",
+    "chartIntelligence", "todayIntelligence", "marketReplay")
 _MARKET_STORE_RESIDENCY = {
     name: {"attached": True, "stateHash": None, "counts": {}, "attachedAt": None,
            "detachedAt": None, "attachCount": 0, "detachCount": 0,
            "lastAttachReason": None, "lastDetachReason": None,
            "lastAttachErrorClass": None, "lastDetachOutcome": None}
-    for name in argus_market_artifact_items.ITEM_ARTIFACTS}
+    for name in _MARKET_RESIDENCY_ARTIFACTS}
 _MARKET_STORE_RESIDENCY_LOCK = threading.RLock()
 _MARKET_ITEM_CACHE = argus_market_artifact_items.ItemCache()
 _MARKET_ITEM_READ_FAILURES = {}
 
 
 def _market_store_global(name):
-    return (_VERIFIED_VIEW_SNAPSHOTS if name == "verifiedViewSnapshots"
-            else _ASSET_CHART_REPORTS)
+    return {"verifiedViewSnapshots": _VERIFIED_VIEW_SNAPSHOTS,
+            "assetChartReports": _ASSET_CHART_REPORTS,
+            "chartIntelligence": _CHART_INTELLIGENCE,
+            "todayIntelligence": _TODAY_INTELLIGENCE,
+            "marketReplay": _MARKET_REPLAY}[name]
 
 
 def _market_store_module(name):
-    return (argus_verified_snapshot if name == "verifiedViewSnapshots"
-            else argus_asset_chart_cache)
+    return {"verifiedViewSnapshots": argus_verified_snapshot,
+            "assetChartReports": argus_asset_chart_cache,
+            "chartIntelligence": argus_chart_intelligence,
+            "todayIntelligence": argus_today_intelligence,
+            "marketReplay": argus_market_replay}[name]
+
+
+def _market_store_empty(name):
+    module = _market_store_module(name)
+    factory = getattr(module, "empty_store", None) or module.empty_state
+    return factory()
+
+
+def _market_store_is_empty(name):
+    """True when nothing was merged into the store yet (cheap structural check)."""
+    store_obj = _market_store_global(name)
+    return all(not value for value in store_obj.values()
+               if isinstance(value, (list, dict)))
 
 
 def _market_store_attached(name):
     row = _MARKET_STORE_RESIDENCY.get(name)
-    return True if row is None else bool(row.get("attached"))
+    if row is None or row.get("attached"):
+        return True
+    if not _market_store_is_empty(name):
+        # Something published into a detached store without attaching
+        # first: merge the artifact back in before anyone normalizes or
+        # persists, so a partial store can never overwrite the file.
+        _attach_market_store(name, "implicit_mutation")
+        return True
+    return False
 
 
 def _market_store_resident_hash(name):
@@ -21106,9 +21141,9 @@ def _attach_market_store(name, reason="generation"):
         return {"status": "reattached", "errorClass": error}
 
 
-def _attach_market_stores(reason="generation"):
+def _attach_market_stores(reason="generation", names=None):
     return {name: _attach_market_store(name, reason)
-            for name in argus_market_artifact_items.ITEM_ARTIFACTS}
+            for name in (names or _MARKET_RESIDENCY_ARTIFACTS)}
 
 
 def _detach_market_stores(reason="checkpoint"):
@@ -21119,7 +21154,7 @@ def _detach_market_stores(reason="checkpoint"):
         return {"status": "disabled"}
     out = {}
     with _MARKET_STORE_RESIDENCY_LOCK:
-        for name in argus_market_artifact_items.ITEM_ARTIFACTS:
+        for name in _MARKET_RESIDENCY_ARTIFACTS:
             row = _MARKET_STORE_RESIDENCY[name]
             if not row["attached"]:
                 out[name] = "already_detached"
@@ -21130,19 +21165,24 @@ def _detach_market_stores(reason="checkpoint"):
                     or not state_hash:
                 out[name] = "artifact_not_current"
                 continue
-            try:
-                index_doc = argus_market_artifact_items.index(root, name)
-            except Exception as exc:
-                out[name] = f"index_invalid:{type(exc).__name__}"
-                continue
-            if not index_doc or index_doc.get("stateHash") != state_hash:
-                out[name] = "items_not_current"
-                continue
+            index_doc = None
+            if name in argus_market_artifact_items.ITEM_ARTIFACTS:
+                # Single reads need the per-item files; whole-store readers
+                # (the three intelligence stores) re-attach from the artifact.
+                try:
+                    index_doc = argus_market_artifact_items.index(root, name)
+                except Exception as exc:
+                    out[name] = f"index_invalid:{type(exc).__name__}"
+                    continue
+                if not index_doc or index_doc.get("stateHash") != state_hash:
+                    out[name] = "items_not_current"
+                    continue
             store_obj = _market_store_global(name)
             store_obj.clear()
-            store_obj.update(_market_store_module(name).empty_store())
+            store_obj.update(_market_store_empty(name))
             row.update({"attached": False, "stateHash": state_hash,
-                        "counts": argus_market_artifact_items.counts(name, index_doc),
+                        "counts": (argus_market_artifact_items.counts(name, index_doc)
+                                   if index_doc is not None else {}),
                         "detachedAt": _ai_now_iso(),
                         "detachCount": int(row.get("detachCount") or 0) + 1,
                         "lastDetachReason": reason})
@@ -21337,20 +21377,24 @@ def _market_artifacts_restore():
         if doc is None:
             row["restoreStatus"] = "absent"
             continue
-        if name in argus_market_artifact_items.ITEM_ARTIFACTS \
-                and not (_market_store_global(name).get("current") or {}):
+        if name in _MARKET_RESIDENCY_ARTIFACTS and _market_store_is_empty(name):
             # Nothing was merged inline before us: when the per-item files
             # match this artifact, the store starts detached and reads are
             # served from disk; the first generator re-attaches it.
-            try:
-                index_doc = argus_market_artifact_items.index(root, name)
-            except Exception:
-                index_doc = None
-            if index_doc and index_doc.get("stateHash") == doc.get("stateHash"):
+            index_doc = None
+            item_backed = name in argus_market_artifact_items.ITEM_ARTIFACTS
+            if item_backed:
+                try:
+                    index_doc = argus_market_artifact_items.index(root, name)
+                except Exception:
+                    index_doc = None
+            if (not item_backed) or (
+                    index_doc and index_doc.get("stateHash") == doc.get("stateHash")):
                 with _MARKET_STORE_RESIDENCY_LOCK:
                     _MARKET_STORE_RESIDENCY[name].update({
                         "attached": False, "stateHash": doc.get("stateHash"),
-                        "counts": argus_market_artifact_items.counts(name, index_doc),
+                        "counts": (argus_market_artifact_items.counts(name, index_doc)
+                                   if index_doc is not None else {}),
                         "detachedAt": _ai_now_iso(),
                         "lastDetachReason": "restore"})
                 row.update({"restoreStatus": "detached",
@@ -25131,16 +25175,19 @@ def _osint_persist_locked():
             "peakSimultaneousRepresentations": 3,
         })
 
-        _ci_normalized = _memory_operation_run(
-            "internal", "source.chart_intelligence.normalize",
-            argus_chart_intelligence.normalize_state, _CHART_INTELLIGENCE)
-        blob["chartIntelligenceStateHash"] = _memory_operation_run(
-            "internal", "source.chart_intelligence.hash_with_transient_normalize",
-            argus_chart_intelligence.state_hash, _CHART_INTELLIGENCE)
-        _market_artifact_persist(
-            "chartIntelligence", _ci_normalized,
-            blob["chartIntelligenceStateHash"])
-        del _ci_normalized
+        if not _market_store_attached("chartIntelligence"):
+            blob["chartIntelligenceStateHash"] = _market_store_resident_hash("chartIntelligence")
+        else:
+            _ci_normalized = _memory_operation_run(
+                "internal", "source.chart_intelligence.normalize",
+                argus_chart_intelligence.normalize_state, _CHART_INTELLIGENCE)
+            blob["chartIntelligenceStateHash"] = _memory_operation_run(
+                "internal", "source.chart_intelligence.hash_with_transient_normalize",
+                argus_chart_intelligence.state_hash, _CHART_INTELLIGENCE)
+            _market_artifact_persist(
+                "chartIntelligence", _ci_normalized,
+                blob["chartIntelligenceStateHash"])
+            del _ci_normalized
         _memory_attribution_source_capture("S5", "chart_state_normalize_hash", {
             "topLevelKeys": len(blob),
             "retainedNormalizedStateCount": 6,
@@ -25148,25 +25195,31 @@ def _osint_persist_locked():
             "peakSimultaneousRepresentations": 3,
         })
 
-        _ti_normalized = _memory_operation_run(
-            "internal", "source.today_intelligence.normalize",
-            argus_today_intelligence.normalize_state, _TODAY_INTELLIGENCE)
-        blob["todayIntelligenceStateHash"] = _memory_operation_run(
-            "internal", "source.today_intelligence.hash_with_transient_normalize",
-            argus_today_intelligence.state_hash, _TODAY_INTELLIGENCE)
-        _market_artifact_persist(
-            "todayIntelligence", _ti_normalized,
-            blob["todayIntelligenceStateHash"])
-        del _ti_normalized
-        _mr_normalized = _memory_operation_run(
-            "internal", "source.market_replay.normalize",
-            argus_market_replay.normalize_state, _MARKET_REPLAY)
-        blob["marketReplayStateHash"] = _memory_operation_run(
-            "internal", "source.market_replay.hash_with_transient_normalize",
-            argus_market_replay.state_hash, _MARKET_REPLAY)
-        _market_artifact_persist(
-            "marketReplay", _mr_normalized, blob["marketReplayStateHash"])
-        del _mr_normalized
+        if not _market_store_attached("todayIntelligence"):
+            blob["todayIntelligenceStateHash"] = _market_store_resident_hash("todayIntelligence")
+        else:
+            _ti_normalized = _memory_operation_run(
+                "internal", "source.today_intelligence.normalize",
+                argus_today_intelligence.normalize_state, _TODAY_INTELLIGENCE)
+            blob["todayIntelligenceStateHash"] = _memory_operation_run(
+                "internal", "source.today_intelligence.hash_with_transient_normalize",
+                argus_today_intelligence.state_hash, _TODAY_INTELLIGENCE)
+            _market_artifact_persist(
+                "todayIntelligence", _ti_normalized,
+                blob["todayIntelligenceStateHash"])
+            del _ti_normalized
+        if not _market_store_attached("marketReplay"):
+            blob["marketReplayStateHash"] = _market_store_resident_hash("marketReplay")
+        else:
+            _mr_normalized = _memory_operation_run(
+                "internal", "source.market_replay.normalize",
+                argus_market_replay.normalize_state, _MARKET_REPLAY)
+            blob["marketReplayStateHash"] = _memory_operation_run(
+                "internal", "source.market_replay.hash_with_transient_normalize",
+                argus_market_replay.state_hash, _MARKET_REPLAY)
+            _market_artifact_persist(
+                "marketReplay", _mr_normalized, blob["marketReplayStateHash"])
+            del _mr_normalized
         _memory_attribution_source_capture("S6", "decision_states_normalize_hash", {
             "topLevelKeys": len(blob),
             "retainedNormalizedStateCount": 8,
@@ -31569,8 +31622,9 @@ def _remote_readback_ack(now_iso=None, blob=None):
         _CHART_INTELLIGENCE_REMOTE.update({
             "lastVerifiedReadBackAt": now_iso,
             "verificationStatus": "verified"})
-    elif remote_chart_hash and remote_chart_hash == \
-            argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE):
+    elif remote_chart_hash and remote_chart_hash == (
+            _market_store_resident_hash("chartIntelligence")
+            or argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)):
         _CHART_INTELLIGENCE_REMOTE.update({
             "lastVerifiedReadBackAt": now_iso,
             "verificationStatus": "verified"})
@@ -31586,8 +31640,9 @@ def _remote_readback_ack(now_iso=None, blob=None):
         _TODAY_INTELLIGENCE_REMOTE.update({
             "lastVerifiedReadBackAt": now_iso,
             "verificationStatus": "verified"})
-    elif remote_today_hash and remote_today_hash == \
-            argus_today_intelligence.state_hash(_TODAY_INTELLIGENCE):
+    elif remote_today_hash and remote_today_hash == (
+            _market_store_resident_hash("todayIntelligence")
+            or argus_today_intelligence.state_hash(_TODAY_INTELLIGENCE)):
         _TODAY_INTELLIGENCE_REMOTE.update({
             "lastVerifiedReadBackAt": now_iso,
             "verificationStatus": "verified"})
@@ -31603,8 +31658,9 @@ def _remote_readback_ack(now_iso=None, blob=None):
         _MARKET_REPLAY_REMOTE.update({
             "lastVerifiedReadBackAt": now_iso,
             "verificationStatus": "verified"})
-    elif remote_replay_hash and remote_replay_hash == \
-            argus_market_replay.state_hash(_MARKET_REPLAY):
+    elif remote_replay_hash and remote_replay_hash == (
+            _market_store_resident_hash("marketReplay")
+            or argus_market_replay.state_hash(_MARKET_REPLAY)):
         _MARKET_REPLAY_REMOTE.update({
             "lastVerifiedReadBackAt": now_iso,
             "verificationStatus": "verified"})
@@ -32865,6 +32921,7 @@ def _api_argus_admin_missions_tick_impl():
     _memory_attribution_path_capture("M2", "calendar_complete")
     ledger_tick = _market_ledger_tick(now_iso)
     _memory_attribution_path_capture("M3", "market_ledger_complete")
+    _attach_market_stores("mission_tick")
     daily_short_tick = {"status": "expected_skip", "reason": "outside_publication_window",
                         "rowCount": len(_TODAY_INTELLIGENCE.get("shortSellingHistory") or [])}
     # J-Quants publishes this close-based aggregate after the JP session.  The
@@ -32895,7 +32952,6 @@ def _api_argus_admin_missions_tick_impl():
         {"dailyShortRowCount": daily_short_tick.get("rowCount")})
     _chart_before_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
     _replay_before_hash = argus_market_replay.state_hash(_MARKET_REPLAY)
-    _attach_market_stores("mission_tick")
     _view_before_hash = argus_verified_snapshot.state_hash(
         _VERIFIED_VIEW_SNAPSHOTS)
     _memory_attribution_path_capture("M5", "pre_view_hashes_complete")
@@ -35399,9 +35455,15 @@ def api_argus_osint_memory_snapshot():
                     # projection any more: they are rebuildable presentation
                     # state kept in hash-gated files.  Only their hashes and
                     # file status travel here.
-                    "chartIntelligenceStateHash": argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE),
-                    "todayIntelligenceStateHash": argus_today_intelligence.state_hash(_TODAY_INTELLIGENCE),
-                    "marketReplayStateHash": argus_market_replay.state_hash(_MARKET_REPLAY),
+                    "chartIntelligenceStateHash": (
+                        _market_store_resident_hash("chartIntelligence")
+                        or argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)),
+                    "todayIntelligenceStateHash": (
+                        _market_store_resident_hash("todayIntelligence")
+                        or argus_today_intelligence.state_hash(_TODAY_INTELLIGENCE)),
+                    "marketReplayStateHash": (
+                        _market_store_resident_hash("marketReplay")
+                        or argus_market_replay.state_hash(_MARKET_REPLAY)),
                     "verifiedViewSnapshotsStateHash": _verified_hash,
                     "assetChartReportsStateHash": _asset_hash,
                     "marketArtifacts": argus_market_artifact_store.status_projection(
@@ -36703,6 +36765,7 @@ def _jp_daily_short_history(cached_only=False):
     if isinstance(_JP_DAILY_SHORT_CACHE.get("rows"), list) and \
             now < float(_JP_DAILY_SHORT_CACHE.get("expires") or 0):
         return list(_JP_DAILY_SHORT_CACHE["rows"])
+    _attach_market_store("todayIntelligence", "daily_short_history")
     durable_rows = list(_TODAY_INTELLIGENCE.get("shortSellingHistory") or [])
     if cached_only or not _JQUANTS_API_KEY:
         return durable_rows
@@ -36796,6 +36859,8 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                          cached_only=False, precompute_replay=False,
                          daily_rows_override=None):
     now_iso = _ai_now_iso()
+    _attach_market_stores("chart_public_report", names=(
+        "chartIntelligence", "todayIntelligence", "marketReplay"))
     history = _chart_history_cached if cached_only else _chart_history
     daily_rows = (list(daily_rows_override)
                   if isinstance(daily_rows_override, list)

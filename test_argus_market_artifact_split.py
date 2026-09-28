@@ -148,10 +148,11 @@ def test_checkpoint_excludes_payloads_and_files_are_hash_gated():
         assert _checkpoint_blob(value)["verifiedViewSnapshotsStateHash"] == \
             blob["verifiedViewSnapshotsStateHash"]
         assert scanner._market_store_attached("verifiedViewSnapshots") is False
-        for name in ARTIFACTS:
-            if name not in artifact_items.ITEM_ARTIFACTS:
-                assert scanner._MARKET_ARTIFACT_STATUS[name]["lastStatus"] == \
-                    "unchanged", name
+        # Every derived store is detached after the save; only the ledger is
+        # normalized again and found unchanged.
+        assert scanner._MARKET_ARTIFACT_STATUS["marketLedger"]["lastStatus"] == "unchanged"
+        for name in scanner._MARKET_RESIDENCY_ARTIFACTS:
+            assert scanner._market_store_attached(name) is False, name
 
         _seed_verified(dataset_hash="split-b")      # attaches, then publishes
         assert scanner._market_store_attached("verifiedViewSnapshots") is True
@@ -162,7 +163,7 @@ def test_checkpoint_excludes_payloads_and_files_are_hash_gated():
         assert third["verified"] is True
         assert scanner._MARKET_ARTIFACT_STATUS["verifiedViewSnapshots"][
             "lastStatus"] == "written"
-        assert scanner._MARKET_ARTIFACT_STATUS["marketReplay"][
+        assert scanner._MARKET_ARTIFACT_STATUS["marketLedger"][
             "lastStatus"] == "unchanged"
         assert scanner._market_store_attached("verifiedViewSnapshots") is False
         assert artifact_items.index(root, "verifiedViewSnapshots")["items"] == {
@@ -189,9 +190,9 @@ def test_restore_merges_artifact_files_after_process_restart():
         served = scanner._verified_market_snapshot("1321", 5)
         assert served and served["snapshotId"] == snapshot_id
         for name in ARTIFACTS:
-            if name not in artifact_items.ITEM_ARTIFACTS:
-                assert scanner._MARKET_ARTIFACT_STATUS[name]["restoreStatus"] == \
-                    "restored", name
+            expected = "restored" if name == "marketLedger" else "detached"
+            assert scanner._MARKET_ARTIFACT_STATUS[name]["restoreStatus"] == \
+                expected, name
         scanner._attach_market_store("verifiedViewSnapshots", "test")
         current = scanner._VERIFIED_VIEW_SNAPSHOTS["current"]
         assert [s["snapshotId"] for s in current.values()] == [snapshot_id]

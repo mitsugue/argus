@@ -97,6 +97,19 @@ snapshot instead of a deep copy. Residency scalars ride the owner-only
 prove its item files current (`items_not_current`, `index_invalid`) simply
 keeps the store resident until the next healthy save.
 
+### Second slice: the three intelligence stores
+
+`chartIntelligence`, `todayIntelligence` and `marketReplay` (18 + 16 + 5 MiB
+of JSON) follow the same residency rule without per-item files: their
+readers are whole-store readers — the generators (`_chart_public_report`,
+the mission tick), the market brief (`argus_jp_market_research.lookup`) and
+the short-selling history reader — and each re-attaches (reloads the
+artifact) before reading. Boot restore leaves them detached whenever the
+artifact file restored cleanly. A publish into a detached store without an
+explicit attach is caught by `_market_store_attached`, which merges the
+artifact back in first, so a partial store can never overwrite the file.
+The ledger stays resident (owner-imported observations; 124 readers).
+
 ## Follow-ups
 
 - Hash-gate the `marketLedger` section of the Remote Journal projection as

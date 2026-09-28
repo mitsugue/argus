@@ -184,3 +184,38 @@ def test_reader_tolerates_missing_root_and_corrupt_item_files():
     # Without a durability root the reader degrades to "absent", never raises.
     with mock.patch.object(scanner, "_market_artifact_root", lambda: None):
         assert scanner._market_store_item("verifiedViewSnapshots", "x") is None
+
+
+def test_intelligence_stores_detach_and_reattach_for_whole_store_readers():
+    with tempfile.TemporaryDirectory() as tmp, scanner_storage(tmp) as value:
+        _reset_market_stores()
+        _seed_verified()
+        rows = [{"date": "2026-09-26", "ratio": 0.41}]
+        scanner._TODAY_INTELLIGENCE["shortSellingHistory"] = list(rows)
+        assert scanner._osint_persist()["verified"] is True
+        for name in ("chartIntelligence", "todayIntelligence", "marketReplay"):
+            assert scanner._market_store_attached(name) is False, name
+            assert scanner._MARKET_STORE_RESIDENCY[name]["stateHash"]
+        assert scanner._TODAY_INTELLIGENCE.get("shortSellingHistory") in (None, [])
+        # A whole-store reader re-attaches and sees the durable rows again.
+        with mock.patch.object(scanner, "_JQUANTS_API_KEY", ""):
+            assert scanner._jp_daily_short_history(cached_only=True) == rows
+        assert scanner._market_store_attached("todayIntelligence") is True
+        # A save while chartIntelligence is detached carries its hash forward.
+        hash_before = scanner._MARKET_STORE_RESIDENCY["chartIntelligence"]["stateHash"]
+        with mock.patch.object(scanner.argus_chart_intelligence, "normalize_state",
+                               side_effect=AssertionError("detached store must not be normalized")):
+            assert scanner._osint_persist()["verified"] is True
+        blob = scanner.argus_persistent_storage.load_checkpoint(value["checkpoint"], require_seal=True)
+        assert blob["chartIntelligenceStateHash"] == hash_before
+        # After the save everything is detached again, including today.
+        assert scanner._market_store_attached("todayIntelligence") is False
+        # Restart: the three stay detached, the ledger is merged.
+        _reset_market_stores()
+        scanner._OSINT_PERSIST_STATE.update({"restored": False})
+        with mock.patch.object(scanner.requests, "get"):
+            assert scanner._osint_restore_once() == "persistent_local"
+        assert scanner._MARKET_ARTIFACT_STATUS["todayIntelligence"]["restoreStatus"] == "detached"
+        assert scanner._MARKET_ARTIFACT_STATUS["marketLedger"]["restoreStatus"] == "restored"
+        with mock.patch.object(scanner, "_JQUANTS_API_KEY", ""):
+            assert scanner._jp_daily_short_history(cached_only=True) == rows
