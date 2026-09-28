@@ -105,10 +105,14 @@ jobs:
           fi
 
       - name: Fetch the public-safe analysis snapshot
+        env:
+          # Owner authentication is live (2026-09-28): machine reads carry the
+          # operational credential; nothing is written and no owner session is used.
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
           for i in 1 2 3 4; do
-            curl -sf --max-time 60 "$BE/api/argus/macro-event-analysis?limit=50" \
+            curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/macro-event-analysis?limit=50" \
               -o "$RUNNER_TEMP/macro.json" && break
             echo "retry $i"; sleep 15
           done

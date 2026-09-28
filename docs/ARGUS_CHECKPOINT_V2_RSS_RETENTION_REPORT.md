@@ -131,7 +131,7 @@ byte cycles-3-through-8 RSS increase. Raw samples included an equal pair, so
 steady-state RSS was not strictly monotonic. Peak RSS was 326,467,584 bytes;
 final/peak traced Python allocations were 759,960 / 145,168,015 bytes.
 Darwin's allocator reported zero bytes from pressure relief; the authoritative
-`malloc_trim` plateau evidence remains the required Linux 4 GiB PR check.
+`malloc_trim` plateau evidence remains the required Linux 4 GiB check; since 2026-09-28 (owner decision) it runs on every merge to main and nightly instead of on every pull request, whose merge is judged by backend-rules, frontend and gate.
 
 The first natural Linux check exposed an observer effect in the probe itself:
 the raw cycles-3-through-8 RSS samples rose by only 708,608 bytes while a live

@@ -314,6 +314,7 @@ jobs:
           # full-snapshot writer and its existing publication behavior.
           curl --fail --silent --show-error --max-time 60 \
             --max-filesize 268435456 \
+            -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
             "$BE/api/argus/osint/memory-snapshot" \
             -o "$RUNNER_TEMP/osint-memory.json"
           python3 -c \

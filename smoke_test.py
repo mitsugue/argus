@@ -10,6 +10,7 @@ e.g. a moved scoring function that stops producing callJa/assessment.
 Run:  python3 smoke_test.py [BASE_URL]
 Exit: 0 = all passed, 1 = one or more failed. Used by .github/workflows/smoke-test.yml
 """
+import os
 import sys
 import json
 import time
@@ -17,6 +18,13 @@ import urllib.request
 import urllib.error
 
 BASE = (sys.argv[1] if len(sys.argv) > 1 else "https://argus-backend-3j2m.onrender.com").rstrip("/")
+# Owner authentication is live in production (2026-09-28): every non-exempt
+# route answers 401 to anonymous callers.  The smoke carries the existing
+# operational credential when the workflow provides it; the value is never
+# printed and no owner password or session is involved.
+_SMOKE_HEADERS = {"User-Agent": "argus-smoke"}
+if os.environ.get("ARGUS_ADMIN_TOKEN"):
+    _SMOKE_HEADERS["X-ARGUS-ADMIN-TOKEN"] = os.environ["ARGUS_ADMIN_TOKEN"]
 KNOWN_REGIME = {"RISK_ON", "RISK_OFF", "CAUTIOUS", "EVENT_WAIT", "MIXED"}
 KNOWN_FRESH = {"fresh", "persisted", "stale", "not_run_yet"}
 KNOWN_AI = {"live", "partial", "disabled", "missing_keys", "not_run_yet", "no_cached_result"}
@@ -34,7 +42,7 @@ EXPLICIT_NEGATIVE_PATHS = (
 )
 
 def _get(path, timeout=45):
-    req = urllib.request.Request(BASE + path, headers={"User-Agent": "argus-smoke"})
+    req = urllib.request.Request(BASE + path, headers=dict(_SMOKE_HEADERS))
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.getcode(), json.loads(r.read().decode("utf-8"))
 
@@ -43,7 +51,7 @@ def _post_json(path, body, timeout=30):
     import urllib.error
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(BASE + path, data=data, method="POST",
-                                 headers={"User-Agent": "argus-smoke", "Content-Type": "application/json"})
+                                 headers={**_SMOKE_HEADERS, "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.getcode(), json.loads(r.read().decode("utf-8"))
@@ -160,7 +168,7 @@ def v_event_snapshot():
 
 def _crypto_scan_gated():
     import urllib.request, urllib.error
-    req = urllib.request.Request(BASE + "/api/argus/crypto-scan", method="POST", headers={"User-Agent": "argus-smoke"})
+    req = urllib.request.Request(BASE + "/api/argus/crypto-scan", method="POST", headers=dict(_SMOKE_HEADERS))
     try:
         urllib.request.urlopen(req, timeout=30)
         return False, "expected 401/503 (admin), got 200 — UNPROTECTED!"
@@ -172,7 +180,7 @@ def _crypto_scan_gated():
 def v_watchlist_sync_gated():
     import urllib.request, urllib.error
     req = urllib.request.Request(BASE + "/api/argus/calibration/watchlist-sync", method="POST",
-                                 headers={"User-Agent": "argus-smoke", "Content-Type": "application/json"},
+                                 headers={**_SMOKE_HEADERS, "Content-Type": "application/json"},
                                  data=b'{"items":[]}')
     try:
         urllib.request.urlopen(req, timeout=30)
@@ -277,7 +285,7 @@ def v_official_admin_gated():
     for path in ("/api/argus/admin/official-events/snapshot",
                  "/api/argus/admin/official-events/restore"):
         req = urllib.request.Request(BASE + path, method="POST",
-                                     headers={"User-Agent": "argus-smoke"})
+                                     headers=dict(_SMOKE_HEADERS))
         try:
             with urllib.request.urlopen(req, timeout=30):
                 return False, f"{path} returned 200 without token!"
@@ -327,7 +335,7 @@ def v_queue_admin_gated():
     import urllib.error
     for path in ("/api/argus/admin/news/translate-visible",
                  "/api/argus/admin/mover-causes/explain/run"):
-        req = urllib.request.Request(BASE + path, method="POST", headers={"User-Agent": "argus-smoke"})
+        req = urllib.request.Request(BASE + path, method="POST", headers=dict(_SMOKE_HEADERS))
         try:
             with urllib.request.urlopen(req, timeout=30):
                 return False, f"{path} returned 200 without token!"
@@ -521,7 +529,7 @@ def v_bridge_status_segmented():
 def v_bridge_heartbeat_gated():
     import urllib.error
     req = urllib.request.Request(BASE + "/api/argus/bridge/heartbeat",
-                                 method="POST", headers={"User-Agent": "argus-smoke"})
+                                 method="POST", headers=dict(_SMOKE_HEADERS))
     try:
         with urllib.request.urlopen(req, timeout=30):
             return False, "returned 200 without token!"
@@ -564,7 +572,7 @@ def v_watchtower_status_patrol_ref():
 def v_patrol_self_check_gated():
     import urllib.error
     req = urllib.request.Request(BASE + "/api/argus/admin/caos/patrol-self-check",
-                                 method="POST", headers={"User-Agent": "argus-smoke"})
+                                 method="POST", headers=dict(_SMOKE_HEADERS))
     try:
         with urllib.request.urlopen(req, timeout=30):
             return False, "returned 200 without token!"
@@ -576,7 +584,7 @@ def v_patrol_self_check_gated():
 def v_watchtower_admin_gated():
     import urllib.error
     req = urllib.request.Request(BASE + "/api/argus/admin/caos-watchtower/refresh",
-                                 method="POST", headers={"User-Agent": "argus-smoke"})
+                                 method="POST", headers=dict(_SMOKE_HEADERS))
     try:
         with urllib.request.urlopen(req, timeout=30):
             return False, "returned 200 without token!"
@@ -588,7 +596,7 @@ def v_watchtower_admin_gated():
 def v_macro_reaction_admin_gated():
     import urllib.error
     req = urllib.request.Request(BASE + "/api/argus/admin/macro-event-analysis/refresh-market-reaction",
-                                 method="POST", headers={"User-Agent": "argus-smoke"})
+                                 method="POST", headers=dict(_SMOKE_HEADERS))
     try:
         with urllib.request.urlopen(req, timeout=30):
             return False, "returned 200 without token!"
@@ -683,7 +691,7 @@ def v_dashboard_events_nfp():
 def v_macro_repair_admin_gated():
     import urllib.error
     req = urllib.request.Request(BASE + "/api/argus/admin/macro-event-analysis/repair-post-release",
-                                 method="POST", headers={"User-Agent": "argus-smoke"})
+                                 method="POST", headers=dict(_SMOKE_HEADERS))
     try:
         with urllib.request.urlopen(req, timeout=30):
             return False, "repair returned 200 without token!"
@@ -720,7 +728,7 @@ def v_macro_admin_gated():
     for path in ("/api/argus/admin/macro-event-analysis/generate",
                  "/api/argus/admin/macro-event-analysis/refresh-results"):
         req = urllib.request.Request(BASE + path, method="POST",
-                                     headers={"User-Agent": "argus-smoke"})
+                                     headers=dict(_SMOKE_HEADERS))
         try:
             with urllib.request.urlopen(req, timeout=30):
                 return False, f"{path} returned 200 without token!"
@@ -762,7 +770,7 @@ def v_learning_memory_admin_gated():
     for path in ("/api/argus/admin/learning-memory/build",
                  "/api/argus/admin/learning-memory/restore"):
         req = urllib.request.Request(BASE + path, method="POST",
-                                     headers={"User-Agent": "argus-smoke"})
+                                     headers=dict(_SMOKE_HEADERS))
         try:
             with urllib.request.urlopen(req, timeout=30):
                 return False, f"{path} returned 200 without token!"
