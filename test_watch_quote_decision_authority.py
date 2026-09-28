@@ -323,18 +323,6 @@ def test_regime_cache_expires_at_jp_watch_source_deadline(monkeypatch):
                    for item in second["supportingEvidence"])
 
 
-def test_legacy_scheduler_uses_canonical_us_holiday_calendar():
-    assert scanner.is_us_trading_day(datetime(
-        2026, 6, 18, 16, tzinfo=timezone.utc)) is True
-    assert scanner.is_us_trading_day(datetime(
-        2026, 6, 19, 16, tzinfo=timezone.utc)) is False  # Juneteenth
-    assert scanner.is_us_trading_day(datetime(
-        2026, 7, 3, 16, tzinfo=timezone.utc)) is False  # observed July 4
-    assert scanner.is_us_trading_day(datetime(
-        2026, 8, 16, 16, tzinfo=timezone.utc)) is False  # Sunday
-    assert scanner.is_us_trading_day(datetime(2026, 6, 18)) is False
-
-
 def _stub_evidence_pack_dependencies(monkeypatch):
     monkeypatch.setattr(scanner.time, "time", lambda: NOW)
     monkeypatch.setattr(scanner, "_visibility_guard_cached_only", lambda: {

@@ -1,6 +1,5 @@
-# A.R.G.U.S. — Autonomous Risk and Global Uncertainty Scanner (backend, velvet-razor)
-# US Market High-Resolution AI Scanner
-import os, time, requests, anthropic, json, threading, re, math, statistics, concurrent.futures, copy, shutil, errno
+# A.R.G.U.S. — Autonomous Risk and Global Uncertainty Scanner (backend)
+import os, time, requests, json, threading, re, math, statistics, concurrent.futures, copy, shutil, errno
 import fcntl, gc, multiprocessing, resource, signal, stat, struct, sys, tempfile
 try:
     from google import genai as google_genai
@@ -8,11 +7,6 @@ try:
 except Exception:
     google_genai = None
     genai_types  = None
-try:
-    from moomoo import OpenQuoteContext, OpenSecTradeContext, RET_OK
-    MOOMOO_AVAILABLE = True
-except ImportError:
-    MOOMOO_AVAILABLE = False
 import pytz
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -187,9 +181,6 @@ FINNHUB_API_KEY   = os.environ.get("FINNHUB_API_KEY", "")
 ANTHROPIC_API_KEY = ""
 GEMINI_API_KEY    = ""
 NEWS_API_KEY      = os.environ.get("NEWS_API_KEY", "")
-NTFY_CHANNEL      = os.environ.get("NTFY_CHANNEL", "mitsugu-stock-scanner")
-MOOMOO_HOST       = os.environ.get("MOOMOO_HOST", "127.0.0.1")
-MOOMOO_PORT       = int(os.environ.get("MOOMOO_PORT", 11111))
 PORT              = int(os.environ.get("PORT", 8080))
 
 # v12.3.0: generated-AI is fail-closed by default.  Market-data adapters are
@@ -664,23 +655,6 @@ def _cost_policy_record(provider, purpose, *, event_id="", event_phase="",
 TZ_ET  = pytz.timezone("US/Eastern")
 TZ_JST = pytz.timezone("Asia/Tokyo")
 
-def is_dst_now():
-    return bool(datetime.now(TZ_ET).dst())
-
-def get_jst_schedule():
-    dst = is_dst_now()
-    offset = 13 if dst else 14
-    return {
-        "ph1":   f"{8+offset:02d}:30",
-        "ph2":   f"{8+offset:02d}:50",
-        "ph3":   f"{9+offset:02d}:10",
-        "ph4":   f"{9+offset:02d}:20",
-        "ph5_1": f"{9+offset:02d}:30",
-        "ph5_2": f"{10+offset:02d}:00",
-    }
-
-MARKET_OPEN_ET  = (9, 30)
-MARKET_CLOSE_ET = (16, 0)
 
 def _market_calendar_states(now=None):
     current = now or datetime.now(pytz.utc)
@@ -699,49 +673,8 @@ def _market_calendar_states(now=None):
     }
 
 
-def is_market_open():
-    """Check if US market is currently open (regular + pre-market)"""
-    state = _market_calendar_states()["US"]
-    label = {
-        "PRE_MARKET": "premarket",
-        "REGULAR": "regular",
-        "AFTER_HOURS": "afterhours",
-        "WEEKEND_CLOSED": "closed_weekend",
-        "HOLIDAY_CLOSED": "closed_holiday",
-        "EMERGENCY_CLOSED": "closed_emergency",
-    }.get(state["session"], "closed")
-    return state["session"] in (
-        "PRE_MARKET", "REGULAR", "AFTER_HOURS"), label
-
-DRY_RUN_MODE = False  # Set True when manual scan during closed market
-
-# ━━━ Exit State Machine Constants ━━━
-EXIT_STATE_OPEN_DISCOVERY  = "S0"
-EXIT_STATE_SHAKEOUT        = "S1"
-EXIT_STATE_HEALTHY_UPTREND = "S2"
-EXIT_STATE_DISTRIBUTION    = "S3"
-EXIT_STATE_THESIS_BROKEN   = "S4"
-EXIT_STATE_PARABOLIC       = "S5"
-
-GRADE_KEYWORDS = {
-    "A": ["earnings beat","raised guidance","buyback","record revenue","dividend increase"],
-    "B": ["AI","semiconductor","defense","cloud","data center","EV","GLP-1"],
-    "C": ["theme","momentum","trending","sector rotation"],
-    "D": ["meme","short squeeze","penny","speculative"],
-}
-WHALE_FIRMS = ["Goldman Sachs","JP Morgan","Morgan Stanley","Bank of America",
-               "Citigroup","Wells Fargo","UBS","Deutsche Bank","Barclays"]
-
 # ━━━ Global State ━━━
 LOG_BUFFER = deque(maxlen=200)
-PRICE_HISTORY = {}
-CHART_CACHE = {}
-SYMBOL_CACHE = None
-SYMBOL_CACHE_TIME = 0
-SCHEDULED_RUN = False
-BACKGROUND_TASK_RUNNING = False
-MOOMOO_QUOTE_CTX = None
-MOOMOO_TRADE_CTX = None
 _finnhub_calls = deque(maxlen=60)
 
 def finnhub_rate_limit():
@@ -814,9 +747,6 @@ ul{list-style:none}li{margin:4px 0}li a{color:#74fafd}
 </script>
 </body></html>
 """
-# ━━━ Flask App & State Management ━━━
-claude     = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-STATE_FILE = "/tmp/scan_state.json"
 app        = Flask(__name__)
 
 # Install before any data-serving middleware; operational guards remain intact.
@@ -867,7 +797,7 @@ def add_no_cache(response):
 
 
 _MEMORY_HTTP_KNOWN_ROUTES = {
-    "/healthz", "/readyz", "/api/state",
+    "/healthz", "/readyz",
     "/api/argus/data-quality/status",
     "/api/argus/admin/memory-attribution",
     "/api/argus/admin/missions/tick",
@@ -985,65 +915,12 @@ def _checked_ai_json(text):
     argus_product_naming.require_allowed([text, value])
     return value
 
-# Reentrant lock guarding STATE_FILE: serializes reads/writes across the scan
-# worker, scheduler, and request threads. Reentrant so a load→modify→save done
-# while already holding the lock (see add_log) doesn't deadlock.
-_STATE_LOCK = threading.RLock()
-
-def load_state():
-    with _STATE_LOCK:
-        try:
-            with open(STATE_FILE, "r") as f: return json.load(f)
-        except Exception: return {"phase": 0, "log": []}
-
-def save_state(state):
-    # Atomic write: dump to a temp file then os.replace, so a concurrent reader
-    # never sees a half-written (truncated) file — which previously surfaced as
-    # load_state() falling back to {"phase": 0} and momentarily resetting phase.
-    with _STATE_LOCK:
-        try:
-            tmp = f"{STATE_FILE}.{os.getpid()}.tmp"
-            with open(tmp, "w") as f: json.dump(state, f, ensure_ascii=False, default=str)
-            os.replace(tmp, STATE_FILE)
-        except Exception: pass
-
-def clear_state():
-    save_state({"phase": 0, "log": []})
 
 def add_log(msg):
+    """In-process operational log ring (bounded, never written to disk)."""
     now = datetime.now(TZ_JST)
-    entry = f"[{now.strftime('%H:%M:%S')}] {msg}"
-    LOG_BUFFER.append(entry)
-    # Hold the lock across the whole read-modify-write so concurrent add_log
-    # calls can't clobber each other's appended lines.
-    with _STATE_LOCK:
-        state = load_state()
-        logs = state.get("log", [])
-        logs.append(entry)
-        state["log"] = logs[-50:]
-        save_state(state)
+    LOG_BUFFER.append(f"[{now.strftime('%H:%M:%S')}] {msg}")
 
-def push_notify(title, msg, priority="default", *, subject_symbol=None,
-                notification_scope=None):
-    """Legacy ntfy transport with the same owner-universe firewall as events.
-
-    Phase/digest/system messages remain available.  Any call whose primary
-    subject is an individual security must name ``subject_symbol`` and is denied
-    unless the private Layer-2B membership resolves it as held or marked.
-    """
-    if not SCHEDULED_RUN:
-        return False
-    decision = _push_eligibility(notification_scope, subject_symbol)
-    if not decision["pushEligible"]:
-        return False
-    try:
-        requests.post(f"https://ntfy.sh/{NTFY_CHANNEL}", data=msg.encode("utf-8"),
-            headers={"Title": title, "Priority": priority,
-                     "Tags": "chart_with_upwards_trend" if "📈" in title else "warning"}, timeout=10)
-        return True
-    except Exception as e:
-        add_log(f"[WARN] ntfy failed: {e}")
-        return False
 
 # ━━━ Finnhub API Functions ━━━
 def finnhub_get(endpoint, params=None):
@@ -1158,28 +1035,6 @@ def _decision_official_disclosure(row, market, *, now_epoch=None):
     return {**row, **truth, "decisionUsable": True}
 
 
-def _finnhub_quote_for_decision(data, *, required_fields=("c",),
-                                 now_epoch=None):
-    """Validate one Finnhub quote before any legacy decision consumer.
-
-    Finnhub transport success is not market-time truth.  The quote's provider
-    timestamp is mandatory, cannot be in the future, and must satisfy the same
-    bounded source-age contract as every other decision-relevant quote.
-    """
-    if not isinstance(data, dict):
-        return None
-    timestamp = data.get("t")
-    if _legacy_provider_number(timestamp) is None:
-        return None
-    truth = _canonical_quote_source_age(timestamp, now_epoch=now_epoch)
-    if truth.get("realtimeEvidence") is not True:
-        return None
-    for field in required_fields:
-        if _legacy_provider_number(data.get(field)) is None:
-            return None
-    return data
-
-
 def _finnhub_latest_daily_source_date(timestamp, *, now_epoch=None):
     """Return the exact latest completed US session for a Finnhub daily row."""
     source_epoch = _legacy_provider_number(timestamp)
@@ -1200,47 +1055,6 @@ def _finnhub_latest_daily_source_date(timestamp, *, now_epoch=None):
         return None
     return source_date.isoformat()
 
-def get_us_symbols():
-    global SYMBOL_CACHE, SYMBOL_CACHE_TIME
-    now = time.time()
-    if SYMBOL_CACHE and now - SYMBOL_CACHE_TIME < 86400: return SYMBOL_CACHE
-    data = finnhub_get("stock/symbol", {"exchange": "US"})
-    if data:
-        symbols = [s for s in data if s.get("type") in ("Common Stock", "EQS")
-                   and s.get("symbol") and "." not in s["symbol"] and len(s["symbol"]) <= 5]
-        SYMBOL_CACHE = symbols
-        SYMBOL_CACHE_TIME = now
-        return symbols
-    return []
-
-def get_quote(symbol):
-    data = finnhub_get("quote", {"symbol": symbol})
-    data = _finnhub_quote_for_decision(
-        data, required_fields=("c", "o", "h", "l", "pc"))
-    if data:
-        current = _legacy_provider_number(data["c"])
-        opened = _legacy_provider_number(data["o"])
-        high = _legacy_provider_number(data["h"])
-        low = _legacy_provider_number(data["l"])
-        previous = _legacy_provider_number(data["pc"])
-        if current is None or current <= 0 or previous is None or previous <= 0 \
-                or any(value is None or value < 0
-                       for value in (opened, high, low)):
-            return None
-        return {"current": current, "open": opened, "high": high, "low": low,
-                "prev_close": previous,
-                "change_pct": round((current - previous) / previous * 100, 2),
-                # Finnhub /quote exposes no volume.  Its ``t`` field is the
-                # source timestamp and must never be relabelled as volume.
-                "volume": 0}
-    return None
-
-def get_quotes_batch(symbols):
-    results = {}
-    for sym in symbols:
-        q = get_quote(sym)
-        if q: results[sym] = q
-    return results
 
 WATCHLIST = [
     "AAPL","MSFT","GOOGL","AMZN","NVDA","META","TSLA","AMD","AVGO","CRM",
@@ -1258,45 +1072,6 @@ WATCHLIST = [
     "DELL","HPE","ANET","TSM","ASML","LRCX","KLAC","AMAT",
 ]
 
-def get_premarket_movers():
-    global DRY_RUN_MODE
-    market_open, session = is_market_open()
-
-    if not market_open:
-        # ━━━ DRY RUN MODE: Market closed → use Last Close data ━━━
-        DRY_RUN_MODE = True
-        add_log("🔍 [DRY RUN] Market closed — scanning with Last Close data...")
-        movers = []
-        for sym in WATCHLIST:
-            q = get_quote(sym)
-            if q and q.get("prev_close", 0) > 0:
-                # Use last close as current price; change_pct may be 0 or stale
-                chg = q.get("change_pct", 0)
-                movers.append({
-                    "symbol": sym, "name": sym,
-                    "current": q.get("current", q["prev_close"]),
-                    "change_pct": chg if chg != 0 else round((q.get("current",0) - q["prev_close"]) / q["prev_close"] * 100, 2),
-                    "prev_close": q["prev_close"],
-                })
-        # Sort by absolute daily change (even if small / 0)
-        movers.sort(key=lambda x: abs(x["change_pct"]), reverse=True)
-        add_log(f"  [DRY RUN] Loaded {len(movers)} stocks (Last Close basis, no min threshold)")
-        return movers[:50]
-    else:
-        # ━━━ LIVE MODE: Market open → filter by movement ━━━
-        DRY_RUN_MODE = False
-        add_log(f"🔍 Scanning movers ({session})...")
-        movers = []
-        for sym in WATCHLIST:
-            q = get_quote(sym)
-            if q and q["prev_close"] > 0:
-                chg = q["change_pct"]
-                if abs(chg) >= 1.0:
-                    movers.append({"symbol": sym, "name": sym, "current": q["current"],
-                                   "change_pct": chg, "prev_close": q["prev_close"]})
-        movers.sort(key=lambda x: abs(x["change_pct"]), reverse=True)
-        add_log(f"  Found {len(movers)} movers (>1% change)")
-        return movers[:50]
 
 def get_stock_candles(symbol, resolution="D", days=30):
     now = int(time.time())
@@ -1347,26 +1122,6 @@ def get_stock_candles(symbol, resolution="D", days=30):
         return []
     return rows
 
-def get_upgrade_downgrade(symbol):
-    data = finnhub_get("stock/upgrade-downgrade", {"symbol": symbol})
-    if not isinstance(data, list):
-        return []
-    now_epoch = time.time()
-    out = []
-    for row in data[:80]:
-        if not isinstance(row, dict):
-            continue
-        parsed, _reason = _bounded_market_session_date(
-            row.get("gradeDate"), "US", 30,
-            accepted_formats=("%Y-%m-%d",), now_epoch=now_epoch)
-        if parsed is None:
-            continue
-        out.append({**row, "gradeDate": parsed.isoformat(),
-                    "status": "delayed", "decisionUsable": True,
-                    "sourceTimeStatus": "BOUNDED_DAILY_FACT"})
-        if len(out) >= 10:
-            break
-    return out
 
 def get_company_news(symbol, days=3):
     today = datetime.now().strftime("%Y-%m-%d")
@@ -1379,942 +1134,6 @@ def get_company_news(symbol, days=3):
         for item in ((data or [])[:40] if isinstance(data, list) else []))
         if row is not None][:10]
 
-def get_insider_transactions(symbol):
-    data = finnhub_get("stock/insider-transactions", {"symbol": symbol})
-    if data and data.get("data"): return data["data"][:10]
-    return []
-
-def get_finnhub_macro():
-    result = {"vix": None, "vix_20d_avg": None, "vix_spike_pct": 0,
-              "fear_level": "NORMAL", "sp500_change": None, "alerts": []}
-    decision_now = time.time()
-    for vix_sym in ["^VIX", "VIX", "VIXY"]:
-        try:
-            finnhub_rate_limit()
-            r = requests.get("https://finnhub.io/api/v1/quote",
-                params={"symbol": vix_sym, "token": FINNHUB_API_KEY}, timeout=6)
-            if r.status_code == 200:
-                d = _finnhub_quote_for_decision(
-                    r.json(), required_fields=("c",), now_epoch=decision_now)
-                current = (_legacy_provider_number(d.get("c"))
-                           if d else None)
-                if current is not None and current > 0:
-                    result["vix"] = round(current, 2); break
-        except Exception: continue
-    if result["vix"]:
-        try:
-            finnhub_rate_limit()
-            now_ts = int(decision_now)
-            r = requests.get("https://finnhub.io/api/v1/indicator",
-                params={"symbol": "^VIX", "resolution": "D", "from": now_ts - 30*86400,
-                        "to": now_ts, "indicator": "sma", "timeperiod": 20,
-                        "token": FINNHUB_API_KEY}, timeout=8)
-            if r.status_code == 200:
-                d = r.json()
-                sma_rows = d.get("sma") if isinstance(d, dict) else None
-                timestamps = d.get("t") if isinstance(d, dict) else None
-                pairs = []
-                if isinstance(sma_rows, list) and isinstance(timestamps, list) \
-                        and len(sma_rows) == len(timestamps) \
-                        and 0 < len(sma_rows) <= 512:
-                    for source_timestamp, raw_sma in zip(timestamps, sma_rows):
-                        sma = _legacy_provider_number(raw_sma)
-                        source_epoch = _legacy_provider_number(source_timestamp)
-                        if sma is not None and sma > 0 and source_epoch is not None:
-                            pairs.append((source_epoch, sma))
-                pairs.sort(key=lambda pair: pair[0])
-                if pairs and _finnhub_latest_daily_source_date(
-                        pairs[-1][0], now_epoch=decision_now) is not None:
-                    result["vix_20d_avg"] = round(pairs[-1][1], 2)
-                    spike = (result["vix"] - result["vix_20d_avg"]) / result["vix_20d_avg"] * 100
-                    result["vix_spike_pct"] = round(spike, 1)
-                    if spike >= 30:
-                        result["fear_level"] = "SPIKE"
-                        result["alerts"].append(f"🚨 VIX SPIKE: +{spike:.1f}%")
-                    elif spike >= 15:
-                        result["fear_level"] = "ELEVATED"
-                        result["alerts"].append(f"⚠️ VIX ELEVATED: +{spike:.1f}%")
-                    elif spike <= -15:
-                        result["fear_level"] = "CALM"
-        except Exception: pass
-    try:
-        finnhub_rate_limit()
-        r = requests.get("https://finnhub.io/api/v1/quote",
-            params={"symbol": "SPY", "token": FINNHUB_API_KEY}, timeout=6)
-        if r.status_code == 200:
-            d = _finnhub_quote_for_decision(
-                r.json(), required_fields=("c", "pc"),
-                now_epoch=decision_now)
-            current = (_legacy_provider_number(d.get("c")) if d else None)
-            previous = (_legacy_provider_number(d.get("pc")) if d else None)
-            if current is not None and current > 0 \
-                    and previous is not None and previous > 0:
-                chg = round((current - previous) / previous * 100, 2)
-                result["sp500_change"] = chg
-                if chg <= -2.0:
-                    result["alerts"].append(f"🚨 S&P500 Risk-off: {chg}%")
-    except Exception: pass
-    return result
-# ━━━ moomoo OpenAPI Functions ━━━
-# A failed connect (often a transient OpenD hiccup / connect timeout) used to
-# latch moomoo off for the whole process lifetime. Instead, back off for a
-# bounded window and retry automatically, so a single boot-time blip doesn't
-# permanently disable order book / margin features.
-_MOOMOO_RETRY_AFTER = 0.0   # epoch seconds; skip moomoo attempts until this time
-_MOOMOO_BACKOFF_SEC = 600   # 10 min cool-down after a failure
-
-def _moomoo_blocked():
-    return time.time() < _MOOMOO_RETRY_AFTER
-
-def _moomoo_mark_failed():
-    global _MOOMOO_RETRY_AFTER
-    _MOOMOO_RETRY_AFTER = time.time() + _MOOMOO_BACKOFF_SEC
-
-def moomoo_connect_quote():
-    global MOOMOO_QUOTE_CTX
-    if not MOOMOO_AVAILABLE or _moomoo_blocked(): return None
-    try:
-        if MOOMOO_QUOTE_CTX is None:
-            import socket
-            # Quick connectivity test (3s timeout) before expensive OpenQuoteContext
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(3)
-            sock.connect((MOOMOO_HOST, MOOMOO_PORT))
-            sock.close()
-            MOOMOO_QUOTE_CTX = OpenQuoteContext(host=MOOMOO_HOST, port=MOOMOO_PORT)
-        return MOOMOO_QUOTE_CTX
-    except Exception as e:
-        add_log(f"[WARN] moomoo unavailable ({e}) — order book disabled for {_MOOMOO_BACKOFF_SEC // 60} min")
-        MOOMOO_QUOTE_CTX = None
-        _moomoo_mark_failed()
-        return None
-
-def moomoo_connect_trade():
-    global MOOMOO_TRADE_CTX
-    if not MOOMOO_AVAILABLE or _moomoo_blocked(): return None
-    try:
-        if MOOMOO_TRADE_CTX is None:
-            import socket
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(3)
-            sock.connect((MOOMOO_HOST, MOOMOO_PORT))
-            sock.close()
-            MOOMOO_TRADE_CTX = OpenSecTradeContext(filter_trdmarket=None, host=MOOMOO_HOST, port=MOOMOO_PORT, security_firm=None)
-        return MOOMOO_TRADE_CTX
-    except Exception as e:
-        add_log(f"[WARN] moomoo unavailable ({e}) — margin features disabled for {_MOOMOO_BACKOFF_SEC // 60} min")
-        MOOMOO_TRADE_CTX = None
-        _moomoo_mark_failed()
-        return None
-
-def get_order_book(symbol, num=10):
-    ctx = moomoo_connect_quote()
-    if not ctx: return None
-    try:
-        ret, data = ctx.get_order_book(f"US.{symbol}", num=num)
-        if ret == RET_OK:
-            bids = [(row["Bid"], row["BidVol"]) for _, row in data.iterrows() if row.get("Bid")]
-            asks = [(row["Ask"], row["AskVol"]) for _, row in data.iterrows() if row.get("Ask")]
-            # The current OpenD response seam has no validated provider/venue
-            # timestamp, entitlement, or session identity.  Preserve the book
-            # for diagnostics, but never let a synchronous transport receipt
-            # masquerade as current decision evidence.
-            return {
-                "bids": bids, "asks": asks,
-                "authority": "diagnostic_only",
-                "decisionUsable": False,
-                "sourceTimestamp": None,
-                "sourceTimeStatus": "UNVALIDATED_CAPABILITY",
-            }
-    except Exception as e:
-        add_log(f"[WARN] Order book failed {symbol}: {e}")
-    return None
-
-def calc_absorption_ratio(snapshots):
-    if not snapshots or len(snapshots) < 2: return 1.0
-    total_bid_r, total_ask_c = 0, 0
-    for i in range(1, len(snapshots)):
-        prev, curr = snapshots[i-1], snapshots[i]
-        pb = sum(b[1] for b in prev.get("bids", []))
-        cb = sum(b[1] for b in curr.get("bids", []))
-        if cb > pb: total_bid_r += (cb - pb)
-        pa = sum(a[1] for a in prev.get("asks", []))
-        ca = sum(a[1] for a in curr.get("asks", []))
-        if ca < pa: total_ask_c += (pa - ca)
-    return round(total_bid_r / total_ask_c, 3) if total_ask_c else 1.0
-
-def calc_downside_efficiency(ob):
-    if not ob: return 0.0
-    bids = ob.get("bids", [])
-    if len(bids) < 2: return 0.0
-    prices = [b[0] for b in bids if b[0] > 0]
-    if len(prices) < 2: return 0.0
-    gaps, total = 0, len(prices) - 1
-    avg_spread = (prices[0] - prices[-1]) / total if total > 0 else 0
-    for i in range(1, len(prices)):
-        if prices[i-1] - prices[i] > avg_spread * 2: gaps += 1
-    return round(gaps / max(total, 1), 3)
-
-def calc_whale_threshold_ewma(order_sizes, span=20):
-    if not order_sizes or len(order_sizes) < 5: return 1000
-    alpha = 2 / (span + 1)
-    ewma = order_sizes[0]
-    for size in order_sizes[1:]: ewma = alpha * size + (1 - alpha) * ewma
-    sorted_s = sorted(order_sizes)
-    p95 = sorted_s[min(int(len(sorted_s) * 0.95), len(sorted_s)-1)]
-    return int(max(p95, ewma * 2))
-
-def analyze_order_book(symbol):
-    ob = get_order_book(symbol)
-    if not ob:
-        return {"available": False, "decisionUsable": False,
-                "authority": "diagnostic_only",
-                "sourceTimeStatus": "UNAVAILABLE",
-                "absorption_ratio": 1.0, "downside_efficiency": 0.0,
-                "whale_threshold": 1000, "bids": [], "asks": [],
-                "whale_detected": False}
-    de = calc_downside_efficiency(ob)
-    all_sizes = [b[1] for b in ob.get("bids", [])] + [a[1] for a in ob.get("asks", [])]
-    whale_th = calc_whale_threshold_ewma(all_sizes)
-    whale_bids = [b for b in ob.get("bids", []) if b[1] >= whale_th]
-    return {"available": True, "decisionUsable": False,
-            "authority": "diagnostic_only",
-            "sourceTimeStatus": "UNVALIDATED_CAPABILITY",
-            "absorption_ratio": 1.0, "downside_efficiency": de,
-            "whale_threshold": whale_th, "bids": ob["bids"][:5], "asks": ob["asks"][:5],
-            "whale_detected": len(whale_bids) > len([a for a in ob.get("asks", []) if a[1] >= whale_th]),
-            "whale_bid_vol": sum(b[1] for b in whale_bids)}
-
-def get_account_info():
-    ctx = moomoo_connect_trade()
-    if not ctx: return None
-    try:
-        ret, data = ctx.accinfo_query()
-        if ret == RET_OK and not data.empty:
-            row = data.iloc[0]
-            return {"total_assets": row.get("total_assets", 0), "cash": row.get("cash", 0),
-                    "market_val": row.get("market_val", 0)}
-    except Exception as e:
-        add_log(f"[WARN] Account info failed: {e}")
-    return None
-
-def get_positions():
-    ctx = moomoo_connect_trade()
-    if not ctx: return []
-    try:
-        ret, data = ctx.position_list_query()
-        if ret == RET_OK and not data.empty:
-            return [{"symbol": row.get("code", "").replace("US.", ""),
-                     "qty": row.get("qty", 0), "cost_price": row.get("cost_price", 0),
-                     "market_val": row.get("market_val", 0)}
-                    for _, row in data.iterrows()]
-    except Exception as e:
-        add_log(f"[WARN] Position query failed: {e}")
-    return []
-
-def _calc_margin_deadzone(account_info, positions, current_prices):
-    if not account_info or not positions: return None
-    total_assets = account_info.get("total_assets", 0)
-    market_val = account_info.get("market_val", 0)
-    cash = account_info.get("cash", 0)
-    if market_val <= 0: return None
-    borrowed = max(0, market_val - cash)
-    if borrowed <= 0:
-        return {"margin_pct": 100.0, "allowed_drop_pct": 100.0, "deadlines": {}, "alert_level": "SAFE"}
-    equity = total_assets - borrowed
-    margin_pct = (equity / market_val) * 100 if market_val > 0 else 100
-    allowed_drop_pct = max(0, round(((equity - 0.20 * market_val) / (market_val * 0.80)) * 100, 2))
-    deadlines = {}
-    for pos in positions:
-        sym = pos["symbol"]
-        price = current_prices.get(sym, {}).get("current", pos.get("cost_price", 0))
-        if price > 0 and allowed_drop_pct < 100:
-            deadlines[sym] = {"current_price": price,
-                              "deadline_price": round(price * (1 - allowed_drop_pct / 100), 2),
-                              "drop_pct": allowed_drop_pct, "qty": pos.get("qty", 0)}
-    alert_level = "URGENT" if margin_pct <= 25 else "HIGH" if margin_pct <= 30 else "WARNING" if margin_pct <= 40 else "SAFE"
-    return {"margin_pct": round(margin_pct, 2), "allowed_drop_pct": allowed_drop_pct,
-            "deadlines": deadlines, "alert_level": alert_level}
-
-# ━━━ News & OSINT ━━━
-def get_news():
-    articles = []
-    now = time.time()
-    if NEWS_API_KEY:
-        try:
-            r = requests.get("https://newsapi.org/v2/everything",
-                params={"q": "stock market OR Wall Street OR Federal Reserve OR earnings",
-                        "language": "en", "sortBy": "publishedAt", "pageSize": 20,
-                        "apiKey": NEWS_API_KEY}, timeout=10)
-            if r.status_code == 200:
-                for a in r.json().get("articles", []):
-                    projected = _decision_news_row({
-                        "title": a.get("title", ""),
-                        "source": a.get("source", {}).get("name", ""),
-                        "publishedAt": a.get("publishedAt"),
-                    }, now_epoch=now, timestamp_keys=("publishedAt",))
-                    if projected is not None and projected.get("title"):
-                        articles.append(projected)
-        except Exception: pass
-    for feed_url in ["https://rsshub.app/telegram/channel/warmonitor3",
-                     "https://rsshub.app/telegram/channel/intelslava"]:
-        try:
-            r = requests.get(feed_url, timeout=8)
-            if r.status_code == 200:
-                # Transport receipt is not publication truth.  An RSS item needs
-                # an exact bounded provider timestamp before it may enter prompts
-                # or the emergency sentinel.
-                for raw in _parse_rss(
-                        r.text, "osint_public", _ai_now_iso())[:5]:
-                    projected = _decision_news_row({
-                        "title": raw.get("title"), "source": "OSINT",
-                        "publishedAt": raw.get("publishedAt"),
-                    }, now_epoch=now, timestamp_keys=("publishedAt",))
-                    if projected is not None:
-                        articles.append(projected)
-        except Exception: pass
-    return articles
-
-LEAK_KEYWORDS = ["sources say","according to sources","is considering","emergency rate",
-    "circuit breaker","breaking:","unexpected","fed pivot","rate cut","tariff","sanctions"]
-
-def detect_leaks(articles):
-    leaks = []
-    for raw in articles:
-        a = _decision_news_row(
-            raw, timestamp_keys=("publishedAt", "sourceTimestamp",
-                                 "datetime", "time"))
-        if a is None:
-            continue
-        tl = a.get("title", "").lower()
-        if any(kw in tl for kw in LEAK_KEYWORDS):
-            leaks.append(a)
-    return leaks
-
-def sentinel_check(news, extra=""):
-    if not news: return {"action": "HOLD", "risk": 0, "reason": ""}
-    crisis = ["nuclear","invasion","war declared","financial crisis","bank collapse",
-              "emergency fed","market crash","circuit breaker triggered","debt default"]
-    reasons, seen = [], set()
-    for raw in news:
-        a = _decision_news_row(
-            raw, timestamp_keys=("publishedAt", "sourceTimestamp",
-                                 "datetime", "time"))
-        if a is None:
-            continue
-        tl = a.get("title", "").lower()
-        fingerprint = re.sub(r"[^a-z0-9]+", " ", tl).strip()
-        if fingerprint and fingerprint not in seen and any(
-                kw in tl for kw in crisis):
-            # One headline is one item of evidence even if several crisis
-            # keywords occur in it. SELL_ALL requires two distinct current rows.
-            seen.add(fingerprint)
-            reasons.append(a["title"][:60])
-    risk = len(reasons) * 2
-    if risk >= 4:
-        return {"action": "SELL_ALL", "risk": min(risk, 5), "reason": " | ".join(reasons[:3])}
-    return {"action": "HOLD", "risk": min(risk, 5), "reason": " | ".join(reasons[:3]) if reasons else ""}
-
-def process_whale_ratings(upgrades, quote):
-    if not upgrades: return 0, ""
-    score_adj, signals = 0, []
-    for u in upgrades:
-        if not isinstance(u, dict) or u.get("decisionUsable") is not True:
-            continue
-        company = u.get("company", "")
-        is_whale = any(f.lower() in company.lower() for f in WHALE_FIRMS)
-        if not is_whale: continue
-        action = u.get("action", "").lower()
-        to_grade = u.get("toGrade", "").lower()
-        is_upgrade = action in ("upgrade", "init") and to_grade in ("buy", "overweight", "outperform")
-        is_downgrade = action in ("downgrade",) and to_grade in ("sell", "underweight", "underperform")
-        if is_upgrade:
-            if quote and abs(quote.get("change_pct", 0)) < 0.5:
-                score_adj -= 10
-                signals.append(f"⚠️ {company}: Buy but low momentum (Distribution?)")
-            else:
-                score_adj += 10
-                signals.append(f"✅ {company}: Upgrade to {to_grade}")
-        elif is_downgrade:
-            score_adj -= 15
-            signals.append(f"🚨 {company}: Downgrade to {to_grade}")
-    return score_adj, " | ".join(signals)
-# ━━━ Material Grade & Gemini Scoring ━━━
-def classify_catalyst_grade(reason_text):
-    text_lower = (reason_text or "").lower()
-    for grade, keywords in GRADE_KEYWORDS.items():
-        for kw in keywords:
-            if kw.lower() in text_lower: return grade
-    return "C"
-
-def _gpt_crosscheck_stocks(stocks, context=""):
-    """Existing stock cross-check contract, researched by the primary GPT."""
-    results = {}
-    for stock in stocks:
-        symbol = stock.get("symbol", "")
-        prompt = (
-            f"Evaluate US stock {symbol} ({stock.get('name', symbol)}) using current public sources.\n"
-            f"Claim to check: {stock.get('reason', '')}\nContext: {context}\n"
-            "Check the claim, negative news or SEC disclosures, market reaction and upcoming events. "
-            'Return JSON only: {"score": 0-100, "red_flag": true/false, "reason": "1-2 sentences"}. '
-            "Score: 80+=Strong, 60-79=Moderate, 40-59=Weak, <40=Red flag. "
-            "The score is not a prediction probability. Do not invent missing evidence.")
-        text, execution = _openai_research_ex(prompt)
-        if execution.get("status") != "ok" or not text:
-            continue
-        data = _checked_ai_json(text)
-        if not isinstance(data, dict):
-            continue
-        score = data.get("score")
-        if not isinstance(score, (int, float)) or isinstance(score, bool) or not 0 <= score <= 100:
-            continue
-        results[symbol] = {"score": score, "red_flag": data.get("red_flag") is True,
-            "reason": str(data.get("reason") or "")[:500]}
-    return results
-
-# ━━━ Exit State Machine ━━━
-def calc_hold_score(ctx):
-    score = 50
-    grade = ctx.get("catalyst_grade", "C")
-    if grade == "A": score += 25
-    elif grade == "B": score += 15
-    elif grade == "D": score -= 20
-    if ctx.get("vwap_reclaimed"): score += 15
-    if ctx.get("recovered_to_positive"): score += 20
-    fear = ctx.get("vix_fear_level", "NORMAL")
-    if fear == "SPIKE": score -= 30
-    elif fear == "ELEVATED": score -= 15
-    if ctx.get("whale_detected"): score += 10
-    ar = ctx.get("absorption_ratio", 1.0)
-    if ar > 1.2: score += 10
-    elif ar < 0.5: score -= 10
-    return max(0, min(100, score))
-
-def calc_exit_score(ctx):
-    score = 0
-    if ctx.get("thesis_broken"): return 100
-    score += ctx.get("vwap_failed_count", 0) * 15
-    fear = ctx.get("vix_fear_level", "NORMAL")
-    if fear == "SPIKE": score += 35
-    elif fear == "ELEVATED": score += 15
-    grade = ctx.get("catalyst_grade", "C")
-    pnl = ctx.get("pnl_pct", 0)
-    if grade in ("C", "D") and pnl <= -3: score += 20
-    if ctx.get("volume_increasing_on_drop"): score += 20
-    if ctx.get("downside_efficiency", 0) > 0.3: score += 15
-    if ctx.get("absorption_ratio", 1.0) < 0.5: score += 10
-    return min(100, score)
-
-def determine_exit_state(ctx):
-    hold_sc = calc_hold_score(ctx)
-    exit_sc = calc_exit_score(ctx)
-    pnl = ctx.get("pnl_pct", 0)
-    grade = ctx.get("catalyst_grade", "C")
-    elapsed = ctx.get("elapsed_min", 0)
-    if ctx.get("thesis_broken") or exit_sc >= 80:
-        return EXIT_STATE_THESIS_BROKEN, hold_sc, exit_sc, "EXIT_ALL"
-    if pnl >= 10 and ctx.get("momentum_decaying"):
-        return EXIT_STATE_PARABOLIC, hold_sc, exit_sc, "TAKE_PROFIT"
-    if pnl >= 12:
-        return EXIT_STATE_PARABOLIC, hold_sc, exit_sc, "TAKE_PROFIT"
-    if exit_sc >= 50 and pnl < 0:
-        return EXIT_STATE_DISTRIBUTION, hold_sc, exit_sc, "EXIT_ALL"
-    if exit_sc >= 40:
-        return EXIT_STATE_DISTRIBUTION, hold_sc, exit_sc, "WARN"
-    if pnl >= 2 and hold_sc >= 60:
-        return EXIT_STATE_HEALTHY_UPTREND, hold_sc, exit_sc, "HOLD"
-    if pnl < -2 and hold_sc >= 50:
-        return EXIT_STATE_SHAKEOUT, hold_sc, exit_sc, "HOLD"
-    if elapsed >= 30:
-        if grade == "D": return EXIT_STATE_THESIS_BROKEN, hold_sc, exit_sc, "EXIT_ALL"
-        if grade == "C" and pnl < 1: return EXIT_STATE_DISTRIBUTION, hold_sc, exit_sc, "EXIT_ALL"
-    if elapsed < 5: return EXIT_STATE_OPEN_DISCOVERY, hold_sc, exit_sc, "HOLD"
-    if pnl >= 0: return EXIT_STATE_HEALTHY_UPTREND, hold_sc, exit_sc, "HOLD"
-    return EXIT_STATE_SHAKEOUT, hold_sc, exit_sc, "HOLD"
-
-def evaluate_vwap_reclaim(symbol, open_price, current_price, history):
-    if not history: return current_price >= open_price, open_price
-    total_pv, total_v = 0, 0
-    for h in history:
-        p, v = h.get("price", 0), h.get("volume", 1)
-        total_pv += p * v; total_v += v
-    vwap = total_pv / total_v if total_v > 0 else open_price
-    return current_price >= vwap, round(vwap, 2)
-
-
-def _moomoo_opend_source_timestamp(value, market, *, now_epoch=None):
-    """Normalize one OpenD ``update_time`` and prove current source time.
-
-    OpenD documents the snapshot timestamp as market-local wall time.  The
-    direct legacy path therefore must apply the market timezone explicitly;
-    treating that wall clock as UTC or substituting receipt time would invent
-    freshness.  Missing, malformed, ambiguous, future, and stale values fail
-    closed.
-    """
-    if not isinstance(value, str):
-        return None
-    raw = value.strip()
-    if not raw or raw.lower() in ("nan", "nat", "none", "n/a"):
-        return None
-    try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-    if parsed.tzinfo is None:
-        if parsed.strftime("%Y-%m-%d %H:%M:%S") != raw:
-            return None
-        market_name = str(market).upper()
-        if market_name == "US":
-            zone = TZ_ET
-        elif market_name == "JP":
-            zone = TZ_JST
-        else:
-            return None
-        try:
-            parsed = zone.localize(parsed, is_dst=None)
-        except (pytz.AmbiguousTimeError, pytz.NonExistentTimeError):
-            return None
-    source_iso = parsed.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    truth = _canonical_moomoo_quote_truth(
-        source_iso, "unknown", now_epoch=now_epoch)
-    return source_iso if truth.get("realtimeEvidence") is True else None
-
-
-def _moomoo_opend_number(value):
-    """Finite OpenD dataframe scalar without accepting bool/string payloads."""
-    if isinstance(value, bool) or isinstance(value, (str, bytes)):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return number if math.isfinite(number) else None
-
-
-def get_realtime_prices(symbols):
-    prices = {}
-    ctx = moomoo_connect_quote()
-    if ctx:
-        try:
-            moomoo_syms = [f"US.{s}" for s in symbols]
-            ret, data = ctx.get_market_snapshot(moomoo_syms)
-            if ret == RET_OK:
-                for _, row in data.iterrows():
-                    code = row.get("code")
-                    if not isinstance(code, str) or not code.startswith("US."):
-                        continue
-                    sym = code[3:].strip().upper()
-                    if not sym or sym not in {str(item).upper() for item in symbols}:
-                        continue
-                    source_timestamp = _moomoo_opend_source_timestamp(
-                        row.get("update_time"), "US")
-                    if source_timestamp is None:
-                        continue
-                    current = _moomoo_opend_number(row.get("last_price"))
-                    opened = _moomoo_opend_number(row.get("open_price"))
-                    high = _moomoo_opend_number(row.get("high_price"))
-                    low = _moomoo_opend_number(row.get("low_price"))
-                    volume = _moomoo_opend_number(row.get("volume"))
-                    change = _moomoo_opend_number(row.get("price_change_rate"))
-                    if current is None or current <= 0 or any(
-                            value is None or value < 0
-                            for value in (opened, high, low, volume)) \
-                            or change is None \
-                            or high < max(opened, current, low) \
-                            or low > min(opened, current, high):
-                        continue
-                    prices[sym] = {
-                        "current": current, "open": opened,
-                        "high": high, "low": low, "volume": int(volume),
-                        "change_pct": round(change, 2),
-                    }
-                    source_epoch = _coerce_epoch(source_timestamp)
-                    source_time = datetime.fromtimestamp(
-                        source_epoch, TZ_ET).strftime("%H:%M")
-                    if sym not in PRICE_HISTORY:
-                        PRICE_HISTORY[sym] = []
-                    PRICE_HISTORY[sym].append({
-                        "time": source_time, "price": current,
-                        "volume": int(volume),
-                        "sourceTimestamp": source_timestamp,
-                    })
-                    if len(PRICE_HISTORY[sym]) > 200:
-                        PRICE_HISTORY[sym] = PRICE_HISTORY[sym][-200:]
-                return prices
-        except Exception as e:
-            add_log(f"[WARN] moomoo snapshot failed: {e}")
-    for sym in symbols:
-        q = get_quote(sym)
-        if q: prices[sym] = q
-    return prices
-# ━━━ Phase 1: Broad Scan ━━━
-def phase1_broad_scan():
-    add_log("📡 Ph.1: Broad Scan starting...")
-    state = load_state(); state["phase"] = 0; save_state(state)
-    movers = get_premarket_movers()
-    if not movers:
-        add_log("[ERROR] No movers found"); state["phase"] = 1; state["top20"] = []; save_state(state); return
-    finnhub = get_finnhub_macro(); state["finnhub_macro"] = finnhub
-    for alert in finnhub.get("alerts", []): add_log(f"  {alert}")
-    news = get_news(); sentinel = sentinel_check(news)
-    state["sentinel"] = sentinel; state["news"] = [{"title": n.get("title","")} for n in news[:15]]
-    if sentinel.get("action") == "SELL_ALL":
-        # Legacy emergency keywords remain risk evidence.  They no longer emit
-        # a portfolio action, halt the evidence scan, or notify SELL_ALL; only
-        # the canonical SDA may turn verified risk into REDUCE/EXIT for a
-        # device-local HELD position.
-        add_log("⚠️ SENTINEL risk evidence detected (EVIDENCE_ONLY)")
-        state["legacyAuthorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE
-    leaks = detect_leaks(news)
-    if leaks: add_log(f"  🔍 {len(leaks)} leak signals")
-    movers_text = "\n".join([f"{m['symbol']}: {m.get('change_pct',0):+.2f}% (${m.get('current',0):.2f})" for m in movers[:50]])
-    news_text = "\n".join([f"- {n.get('title','')}" for n in news[:10]])
-    leak_text = "\n".join([f"⚡ {l.get('title','')}" for l in leaks[:5]])
-    macro_text = f"VIX: {finnhub.get('vix','N/A')} ({finnhub.get('fear_level','N/A')}, {finnhub.get('vix_spike_pct',0):+.1f}%)\nS&P500: {finnhub.get('sp500_change','N/A')}%"
-    # Dry Run context injection
-    dry_run_ctx = ""
-    if DRY_RUN_MODE:
-        dry_run_ctx = ("\n\n⚠️ IMPORTANT CONTEXT: The US market is currently CLOSED. "
-                       "This is a DRY RUN / SIMULATION analysis based on the most recent closing data. "
-                       "Analyze using last confirmed close prices and recent news. "
-                       "Identify stocks with the strongest setup for the NEXT trading session. "
-                       "All change_pct values reflect the last trading day's movement.")
-    prompt = f"""You are a US stock AI predator. Find stocks that will SURGE {'at the next market open' if DRY_RUN_MODE else 'today'}.
-PHILOSOPHY: All or Nothing. Whale tracking. Risk visualization.{dry_run_ctx}
-{'LAST CLOSE DATA' if DRY_RUN_MODE else 'PRE-MARKET MOVERS'}:\n{movers_text}\nMACRO:\n{macro_text}\nNEWS:\n{news_text or 'None'}\nLEAKS:\n{leak_text or 'None'}
-Select TOP 20 most likely to surge {'at next open' if DRY_RUN_MODE else 'after 09:30 ET open'}.
-IMPORTANT: "reason" and "sell_trigger" fields MUST be written in JAPANESE (日本語で記述せよ).
-Return ONLY JSON array: [{{"symbol":"TICKER","name":"Company Name","change_pct":X.XX,"reason":"日本語で買い根拠を1行で","confidence":1-5,"theme":"sector","sell_trigger":"日本語で損切り条件"}}]"""
-    if not _cost_policy_authorize(
-            "anthropic", "legacy_broad_scan", automatic=True,
-            estimated_cost_usd=0.25, estimated_tokens=9000)["allowed"]:
-        # Preserve the market-data scan without fabricating an AI ranking.
-        top20 = []
-        state["phase"] = 1; state["top20"] = top20
-        state["aiStatus"] = "deterministic_mode"; save_state(state)
-        add_log("[cost-policy] Claude broad scan skipped: deterministic_mode")
-        return
-    add_log(f"🤖 Claude analyzing{' (DRY RUN)' if DRY_RUN_MODE else ''}...")
-    try:
-        argus_product_naming.require_allowed(prompt)
-        res = claude.messages.create(model="claude-opus-4-6", max_tokens=3000, messages=[{"role":"user","content":prompt}])
-        top20 = _checked_ai_json(res.content[0].text if res.content else "[]")
-        if isinstance(top20, dict): top20 = top20.get("stocks", top20.get("top20", []))
-        if not isinstance(top20, list): top20 = []
-        top20 = top20[:20]
-    except Exception as e:
-        add_log(f"[ERROR] Claude Ph.1: {e}"); top20 = []
-    mode_label = "🔬 DRY RUN" if DRY_RUN_MODE else "Pre-market"
-    add_log(f"✅ Ph.1 complete: {len(top20)} candidates ({mode_label})")
-    for i, s in enumerate(top20[:5]): add_log(f"  #{i+1} {s.get('symbol','')} {s.get('change_pct',0):+.2f}%")
-    state["phase"] = 1; state["top20"] = top20
-    state["dry_run"] = DRY_RUN_MODE
-    state["market_condition"] = f"{'🔬 DRY RUN (Closed Market)' if DRY_RUN_MODE else mode_label}: {len(movers)} stocks"
-    state["macro_summary"] = macro_text; save_state(state)
-    push_notify(f"📡 Ph.1 Complete{' [DRY RUN]' if DRY_RUN_MODE else ''}",
-                f"TOP20 from {len(movers)}\nVIX: {finnhub.get('vix','?')}",
-                notification_scope="digest")
-
-# ━━━ Phase 2: Re-Scoring ━━━
-def phase2_rescore():
-    add_log("🔬 Ph.2: Re-scoring...")
-    state = load_state(); top20 = state.get("top20", [])
-    if not top20: add_log("[WARN] No TOP20"); state["phase"] = 2; save_state(state); return
-    symbols = [s.get("symbol","") for s in top20 if s.get("symbol")]
-    fresh = get_quotes_batch(symbols[:20])
-    vol_data = {}
-    for sym in symbols[:10]:
-        candles = get_stock_candles(sym, days=30)
-        if candles and len(candles) >= 5:
-            closes = [c["close"] for c in candles]
-            rets = [(closes[i]-closes[i-1])/closes[i-1] for i in range(1,len(closes))]
-            vol_data[sym] = round(statistics.stdev(rets) * (252**0.5) * 100, 1) if len(rets) >= 2 else 0
-    refresh_text = "\n".join([f"{sym}: ${q.get('current',0):.2f} ({q.get('change_pct',0):+.2f}%) Vol:{vol_data.get(sym,'N/A')}%" for sym, q in fresh.items()])
-    top20_text = "\n".join([f"{s.get('symbol','')}: {s.get('reason','')} (Conf:{s.get('confidence',0)}/5)" for s in top20])
-    dry_ctx = ("\n⚠️ DRY RUN: Market is CLOSED. Use last close data for simulation analysis. "
-               "Evaluate based on confirmed closing prices and technical setup for next session." if DRY_RUN_MODE else "")
-    prompt = f"""Re-score TOP20→TOP10 for US stocks.{dry_ctx}\nTOP20:\n{top20_text}\nUPDATED QUOTES:\n{refresh_text}\nConsider: {'technical setup and catalyst strength for next open' if DRY_RUN_MODE else 'momentum change, volatility, priced-in moves'}.\nIMPORTANT: "reason" and "sell_trigger" MUST be in JAPANESE (日本語).
-Return ONLY JSON array of TOP 10: [{{"symbol":"TICKER","name":"Name","score":0-100,"change_pct":X.XX,"reason":"日本語で根拠","confidence":1-5,"theme":"theme","sell_trigger":"日本語で損切り条件","volatility":"high/med/low"}}]"""
-    if not _cost_policy_authorize(
-            "anthropic", "legacy_rescore", automatic=True,
-            estimated_cost_usd=0.20, estimated_tokens=7000)["allowed"]:
-        state["phase"] = 2; state["top10"] = top20[:10]
-        state["aiStatus"] = "deterministic_mode"; save_state(state)
-        add_log("[cost-policy] Claude rescore skipped: deterministic_mode")
-        return
-    add_log(f"🤖 Claude re-scoring{' (DRY RUN)' if DRY_RUN_MODE else ''}...")
-    try:
-        argus_product_naming.require_allowed(prompt)
-        res = claude.messages.create(model="claude-opus-4-6", max_tokens=2000, messages=[{"role":"user","content":prompt}])
-        top10 = _checked_ai_json(res.content[0].text if res.content else "[]")
-        if isinstance(top10, dict): top10 = top10.get("stocks", top10.get("top10", []))
-        if not isinstance(top10, list): top10 = []
-        top10 = top10[:10]
-    except Exception as e:
-        add_log(f"[ERROR] Claude Ph.2: {e}"); top10 = top20[:10]
-    add_log(f"✅ Ph.2 complete: {len(top10)} candidates")
-    state["phase"] = 2; state["top10"] = top10; save_state(state)
-    push_notify("🔬 Ph.2 Complete", f"TOP10 from {len(top20)}",
-                notification_scope="digest")
-
-# ━━━ Phase 3: Cross-Check ━━━
-def phase3_crosscheck():
-    add_log("⚡ Ph.3: Cross-check...")
-    state = load_state(); top10 = state.get("top10", [])
-    if not top10: add_log("[WARN] No TOP10"); state["phase"] = 3; save_state(state); return
-    whale_signals = {}
-    for s in top10[:10]:
-        sym = s.get("symbol", "")
-        if not sym: continue
-        upgrades = get_upgrade_downgrade(sym); quote = get_quote(sym)
-        adj, sig = process_whale_ratings(upgrades, quote)
-        if sig: whale_signals[sym] = {"score_adj": adj, "signal": sig}; add_log(f"  🐳 {sym}: {sig}")
-    company_news = {}
-    for s in top10[:5]:
-        sym = s.get("symbol", "")
-        if sym:
-            cn = get_company_news(sym)
-            if cn: company_news[sym] = [n.get("headline", n.get("summary", ""))[:80] for n in cn[:3]]
-    add_log("GPT public-source cross-check...")
-    gemini_scores = _gpt_crosscheck_stocks(top10[:10], context=f"VIX: {state.get('finnhub_macro',{}).get('fear_level','NORMAL')}")
-    state["gemini_scores"] = gemini_scores
-    state["crosscheckProvider"] = "openai"  # retained storage key, explicit current producer
-    whale_text = "\n".join([f"{s}: {w['signal']} ({w['score_adj']:+d})" for s, w in whale_signals.items()]) or "None"
-    gemini_text = "\n".join([f"{s}: {g.get('score',0)}/100 {'🚩RED' if g.get('red_flag') else ''} - {g.get('reason','')}" for s, g in gemini_scores.items()]) or "N/A"
-    top10_text = "\n".join([f"{s.get('symbol','')}: Score:{s.get('score',0)} - {s.get('reason','')}" for s in top10])
-    dry_ctx3 = ("\n⚠️ DRY RUN: Market is CLOSED. This is a simulation using confirmed close data. "
-                "Evaluate catalyst quality and institutional signals for the next trading session." if DRY_RUN_MODE else "")
-    prompt = f"""Cross-check TOP10→TOP5.{dry_ctx3}\nCRITICAL: "Buy without volume"=TRAP(penalize). "Price target raise+vol>300%"=REAL(boost).\nTOP10:\n{top10_text}\nWHALE RATINGS:\n{whale_text}\nGPT CROSS-CHECK:\n{gemini_text}\nRules: red_flag→EXCLUDE, score<40→EXCLUDE, 40-59→warn, Combined=primary70%+crosscheck30%\nIMPORTANT: "reason" and "sell_trigger" MUST be in JAPANESE (日本語).
-Return ONLY JSON array TOP5: [{{"symbol":"TICKER","name":"Name","score":0-100,"combined_score":0-100,"reason":"日本語で買い根拠","confidence":1-5,"theme":"theme","sell_trigger":"日本語で損切り条件","grade":"A/B/C/D","whale_signal":"","gemini_score":0-100}}]"""
-    if not _cost_policy_authorize(
-            "anthropic", "legacy_crosscheck", automatic=True,
-            estimated_cost_usd=0.20, estimated_tokens=7000)["allowed"]:
-        state["phase"] = 3; state["top5"] = top10[:5]
-        state["whale_signals"] = whale_signals
-        state["aiStatus"] = "deterministic_mode"; save_state(state)
-        add_log("[cost-policy] Claude cross-check skipped: deterministic_mode")
-        return
-    add_log(f"🤖 Claude cross-checking{' (DRY RUN)' if DRY_RUN_MODE else ''}...")
-    try:
-        argus_product_naming.require_allowed(prompt)
-        res = claude.messages.create(model="claude-opus-4-6", max_tokens=2000, messages=[{"role":"user","content":prompt}])
-        top5 = _checked_ai_json(res.content[0].text if res.content else "[]")
-        if isinstance(top5, dict): top5 = top5.get("stocks", top5.get("top5", []))
-        if not isinstance(top5, list): top5 = []
-        top5 = top5[:5]
-    except Exception as e:
-        add_log(f"[ERROR] Claude Ph.3: {e}"); top5 = top10[:5]
-    filtered = []
-    for s in top5:
-        sym = s.get("symbol", ""); gs = gemini_scores.get(sym, {})
-        if gs.get("red_flag"): add_log(f"  🚩 {sym} KILLED (red flag)"); continue
-        if gs.get("score", 50) < 40: add_log(f"  ❌ {sym} KILLED (score {gs.get('score',0)})"); continue
-        filtered.append(s)
-    top5 = filtered[:5]
-    add_log(f"✅ Ph.3 complete: {len(top5)} after Gemini filter")
-    state["phase"] = 3; state["top5"] = top5; state["whale_signals"] = whale_signals; save_state(state)
-    push_notify("⚡ Ph.3 Complete",
-                "\n".join([f"{s.get('symbol','')} ({s.get('combined_score','?')})" for s in top5]),
-                notification_scope="digest")
-
-# ━━━ Phase 4: Final TOP3 ━━━
-def phase4_final_top3():
-    add_log("🏆 Ph.4: Final TOP3...")
-    state = load_state(); top5 = state.get("top5", [])
-    if not top5: add_log("[WARN] No TOP5"); state["phase"] = 4; save_state(state); return
-    ob_results = {}
-    for s in top5:
-        sym = s.get("symbol", "")
-        if sym:
-            add_log(f"  📊 Order book: {sym}")
-            ob = analyze_order_book(sym); ob_results[sym] = ob
-            if ob.get("decisionUsable") is True:
-                add_log(f"    AR:{ob.get('absorption_ratio','-')} Vacuum:{ob.get('downside_efficiency','-')} {'🐳WHALE' if ob.get('whale_detected') else ''}")
-    # Owner account/position state is deliberately excluded.  The legacy rank
-    # is public evidence only; owner exposure joins later on the device.
-    margin_info = None
-    scored = []
-    for s in top5:
-        sym = s.get("symbol", ""); ob = ob_results.get(sym, {})
-        combined = s.get("combined_score", s.get("score", 50))
-        if ob.get("decisionUsable") is True:
-            if ob.get("whale_detected"): combined += 10
-            if ob.get("downside_efficiency", 0) > 0.3: combined -= 15
-        s["final_score"] = min(100, max(0, combined)); s["order_book"] = ob
-        if margin_info and margin_info.get("deadlines", {}).get(sym):
-            dl = margin_info["deadlines"][sym]; s["margin_deadline"] = dl["deadline_price"]; s["margin_drop_pct"] = dl["drop_pct"]
-        scored.append(s)
-    scored.sort(key=lambda x: x.get("final_score", 0), reverse=True)
-    top3 = scored[:3]
-    if not top3:
-        add_log("⏭️ All killed. Skip today.")
-        state["phase"] = 4; state["top3_final"] = []
-        state["legacyAuthorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE
-        save_state(state); return
-    medal = ["🥇","🥈","🥉"]
-    for i, s in enumerate(top3):
-        sym = s.get("symbol",""); grade = s.get("grade", classify_catalyst_grade(s.get("reason",""))); s["grade"] = grade
-        margin_str = f"\n⚠️ Margin 20%: -${s.get('margin_drop_pct',0):.1f}% (${s.get('margin_deadline','')})" if s.get("margin_deadline") else ""
-        msg = f"{medal[i]} {sym}\nScore:{s.get('final_score',0)} Grade:{grade}\n{s.get('reason','')}\nStop: {s.get('sell_trigger','')}{margin_str}"
-        add_log(f"  {medal[i]} {sym} Score:{s.get('final_score',0)} Grade:{grade}")
-        s["authorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE
-        s["finalDecisionAuthorityActive"] = False
-    state["phase"] = 4; state["top3_final"] = top3; state["dry_run"] = DRY_RUN_MODE
-    state["legacyAuthorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE
-    state["order_book"] = {s.get("symbol",""): ob_results.get(s.get("symbol",""),{}) for s in top3}
-    if margin_info: state["margin_alert"] = f"Margin:{margin_info['margin_pct']:.1f}% Drop:{margin_info['allowed_drop_pct']:.1f}% {margin_info['alert_level']}"
-    if DRY_RUN_MODE: state["market_condition"] = "🔬 DRY RUN (Closed Market) — Simulation complete"
-    # Legacy ranks never enter forward-live calibration as predictions.
-    save_state(state); add_log(f"✅ Ph.4 evidence ranking complete{' [DRY RUN]' if DRY_RUN_MODE else ''} (EVIDENCE_ONLY)")
-# ━━━ Phase 5: Dynamic Exit Engine ━━━
-def phase5_post_open():
-    add_log("📈 Ph.5: Dynamic Exit Engine...")
-    state = load_state(); top3 = state.get("top3_final", [])
-    if not top3: add_log("[WARN] No TOP3"); return
-    # The old dynamic exit state machine is retained below as bounded research
-    # evidence, but it is no longer an action/notification authority and never
-    # reads owner positions.  Round 2's canonical owner-aware SDA replaces it.
-    state["phase"] = 5
-    state["post_open_result"] = {
-        "status": "evidence_only",
-        "authorityRole": LEGACY_DECISION_AUTHORITY_ROLE,
-        "finalDecisionAuthorityActive": False,
-        "evaluations": [],
-        "overall": "Legacy dynamic-exit action authority is retired.",
-    }
-    save_state(state)
-    add_log("⏭️ Ph.5 action authority retired; canonical SDA required")
-    return
-    finnhub = state.get("finnhub_macro", {}); codes = [s.get("symbol","") for s in top3 if s.get("symbol")]
-    contexts, ob_history = {}, {}
-    for s in top3:
-        sym = s.get("symbol","")
-        if not sym: continue
-        grade = s.get("grade", classify_catalyst_grade(s.get("reason","")))
-        contexts[sym] = {"catalyst_grade": grade, "vix_fear_level": finnhub.get("fear_level","NORMAL"),
-            "vix_spike_pct": finnhub.get("vix_spike_pct",0), "open_price": 0, "current_price": 0,
-            "pnl_pct": 0, "drawdown_pct": 0, "vwap_reclaimed": False, "vwap_failed_count": 0,
-            "volume_increasing_on_drop": False, "volume_decreasing_on_drop": False,
-            "recovered_to_positive": False, "momentum_decaying": False, "thesis_broken": False,
-            "elapsed_min": 0, "prev_volume": 0, "state": EXIT_STATE_OPEN_DISCOVERY,
-            "whale_detected": False, "absorption_ratio": 1.0, "downside_efficiency": 0.0}
-        ob_history[sym] = []
-    state["post_open_result"] = {"evaluations": [], "overall": "⏳ Tracking..."}; save_state(state)
-    add_log("📊 Fetching opening prices...")
-    prices_open = get_realtime_prices(codes)
-    # A.R.G.U.S. — resolve any pending ledger entries against today's open.
-    try:
-        resolved_n = argus_ledger.resolve_outcomes(
-            lambda sym, _ts: (prices_open.get(sym, {}) or {}).get("current"),
-        )
-        if resolved_n:
-            add_log(f"📒 ledger: resolved {resolved_n} pending predictions")
-    except Exception as _e:
-        add_log("⚠️ ledger.resolve_outcomes failed: " + str(_e)[:120])
-    for s in top3:
-        sym = s.get("symbol","")
-        if sym in prices_open:
-            p = prices_open[sym]; contexts[sym]["open_price"] = p.get("open", p.get("current",0))
-            contexts[sym]["current_price"] = p.get("current",0); contexts[sym]["pnl_pct"] = p.get("change_pct",0)
-            contexts[sym]["prev_volume"] = p.get("volume",0)
-            add_log(f"  {'📈' if p.get('change_pct',0)>=0 else '📉'} {sym} {'+' if p.get('change_pct',0)>=0 else ''}{p.get('change_pct',0)}% Grade:{contexts[sym]['catalyst_grade']}")
-    news = get_news(); sentinel_now = sentinel_check(news)
-    if sentinel_now.get("action") == "SELL_ALL":
-        push_notify("🚨 SELL ALL", sentinel_now.get("reason", ""),
-                    priority="urgent", notification_scope="portfolio")
-        add_log("🚨 SELL_ALL!"); return
-    decided = {}
-    for i in range(3):
-        time.sleep(600); elapsed = (i+1)*10; prices_now = get_realtime_prices(codes)
-        for s in top3:
-            sym = s.get("symbol","")
-            if sym in decided or sym not in prices_now: continue
-            p = prices_now[sym]; ctx = contexts[sym]
-            op = ctx["open_price"] if ctx["open_price"] > 0 else p.get("open",0)
-            ctx["current_price"] = p.get("current",0); ctx["elapsed_min"] = elapsed
-            ctx["pnl_pct"] = p.get("change_pct",0); ctx["drawdown_pct"] = p.get("change_pct",0)
-            hist = PRICE_HISTORY.get(sym, [])
-            vwap_ok, vwap_val = evaluate_vwap_reclaim(sym, op, p.get("current",0), hist)
-            if not vwap_ok: ctx["vwap_failed_count"] += 1
-            ctx["vwap_reclaimed"] = vwap_ok
-            vol_now = p.get("volume",0); vol_prev = ctx["prev_volume"]
-            if p.get("change_pct",0) < 0:
-                ctx["volume_increasing_on_drop"] = vol_now > vol_prev * 1.1
-                ctx["volume_decreasing_on_drop"] = vol_now < vol_prev * 0.9
-            if p.get("change_pct",0) >= 0: ctx["recovered_to_positive"] = True
-            ctx["prev_volume"] = vol_now
-            ob = get_order_book(sym)
-            if ob and ob.get("decisionUsable") is True:
-                ob_history[sym].append(ob); ctx["downside_efficiency"] = calc_downside_efficiency(ob)
-                if len(ob_history[sym]) >= 2: ctx["absorption_ratio"] = calc_absorption_ratio(ob_history[sym])
-                all_sz = [b[1] for b in ob.get("bids",[])] + [a[1] for a in ob.get("asks",[])]
-                ctx["whale_detected"] = any(b[1] >= calc_whale_threshold_ewma(all_sz) for b in ob.get("bids",[]))
-            new_state, hold_sc, exit_sc, action = determine_exit_state(ctx); ctx["state"] = new_state
-            sign = "+" if p.get("change_pct",0) >= 0 else ""
-            st_em = {"S0":"⏳","S1":"🔍","S2":"✅","S3":"⚠️","S4":"🚨","S5":"💰"}.get(new_state,"?")
-            add_log(f"  {sym} {elapsed}min {sign}{p.get('change_pct',0)}% | {st_em}{new_state} H:{hold_sc} E:{exit_sc}")
-            state["realtime_prices"] = prices_now
-            if ob and ob.get("decisionUsable") is True:
-                if "order_book" not in state: state["order_book"] = {}
-                state["order_book"][sym] = {"bids": ob.get("bids",[])[:5], "asks": ob.get("asks",[])[:5],
-                    "absorption_ratio": ctx["absorption_ratio"], "downside_efficiency": ctx["downside_efficiency"],
-                    "whale_threshold": calc_whale_threshold_ewma(all_sz) if ob else 0}
-            save_state(state)
-            if action == "EXIT_ALL":
-                reason = "Thesis broken" if ctx.get("thesis_broken") else f"ExitScore:{exit_sc}"
-                add_log(f"  🚨 {sym} EXIT → {reason}")
-                push_notify(f"🚨 STOP: {sym}", f"{elapsed}min: {sign}{p.get('change_pct',0)}%\n{reason}",
-                            priority="urgent", subject_symbol=sym,
-                            notification_scope="individual_security")
-                decided[sym] = {"action": action, "reason": reason, "pnl": p.get("change_pct",0)}
-            elif action == "TAKE_PROFIT":
-                add_log(f"  💰 {sym} PROFIT → +{p.get('change_pct',0)}%")
-                push_notify(f"💰 PROFIT: {sym}", f"{elapsed}min: +{p.get('change_pct',0)}%",
-                            priority="high", subject_symbol=sym,
-                            notification_scope="individual_security")
-                decided[sym] = {"action": action, "reason": "Parabolic", "pnl": p.get("change_pct",0)}
-            elif action == "HOLD" and ctx.get("recovered_to_positive") and i > 0:
-                push_notify(f"✅ HOLD: {sym}", f"{elapsed}min: {sign}{p.get('change_pct',0)}% Grade:{ctx['catalyst_grade']}",
-                            subject_symbol=sym, notification_scope="individual_security")
-    # Final Claude eval
-    prices_final = get_realtime_prices(codes)
-    top3_text = "\n".join([f"{s.get('symbol','')} Grade:{contexts.get(s.get('symbol',''),{}).get('catalyst_grade','?')} State:{contexts.get(s.get('symbol',''),{}).get('state','?')} "
-        + (f"Price:{prices_final[s.get('symbol','')].get('change_pct',0)}%" if s.get('symbol','') in prices_final else "") for s in top3])
-    if not _cost_policy_authorize(
-            "anthropic", "legacy_final_tracking", automatic=True,
-            estimated_cost_usd=0.05, estimated_tokens=2500)["allowed"]:
-        state["phase"] = 5
-        state["post_open_result"] = {"status": "deterministic_mode",
-                                     "evaluations": [],
-                                     "overall": "自動AI評価は停止中"}
-        state["realtime_prices"] = prices_final
-        save_state(state)
-        add_log("[cost-policy] Claude final tracking skipped: deterministic_mode")
-        return
-    try:
-        prompt = f"Final 30min US stock tracking eval.\n[TOP3]\n{top3_text}\nReturn JSON:{{\"evaluations\":[{{\"code\":\"TICKER\",\"status\":\"HOLD/SELL\",\"message\":\"summary\",\"action_advice\":\"advice\"}}],\"overall\":\"assessment\"}}"
-        res = claude.messages.create(model="claude-haiku-4-5-20251001", max_tokens=800, messages=[{"role":"user","content":prompt}])
-        result = _checked_ai_json(res.content[0].text if res.content else "{}")
-        msg = "📈 30min Complete\n" + result.get("overall","") + "\n"
-        for e in result.get("evaluations",[]):
-            msg += f"{'✅' if e.get('status')=='HOLD' else '⚠️'} {e.get('code','')} {e.get('message','')}\n→ {e.get('action_advice','')}\n"
-        margin_str = ""
-        account = get_account_info(); positions = get_positions()
-        if account and positions:
-            mi = _calc_margin_deadzone(account, positions, prices_final)
-            if mi:
-                margin_str = f"\n💰 Margin:{mi['margin_pct']:.1f}% Drop:{mi['allowed_drop_pct']:.1f}%"
-                for ds, dl in mi.get("deadlines",{}).items():
-                    margin_str += f"\n  ⚠️ {ds}: ${ dl['deadline_price']} (-{dl['drop_pct']:.1f}%)"
-                msg += margin_str
-                state["margin_alert"] = f"Margin:{mi['margin_pct']:.1f}% Drop:{mi['allowed_drop_pct']:.1f}% {mi['alert_level']}"
-        state["phase"] = 5; state["post_open_result"] = result; state["realtime_prices"] = prices_final
-        state["exit_contexts"] = {k: {kk: vv for kk, vv in v.items() if isinstance(vv, (str,int,float,bool))} for k, v in contexts.items()}
-        save_state(state)
-        push_notify("📈 30min Complete", msg, notification_scope="digest")
-        add_log(f"✅ Ph.5 complete: {result.get('overall','')}")
-    except Exception as e:
-        add_log(f"[ERROR] Ph.5 final: {e}")
 
 # ━━━ Flask Routes ━━━
 @app.route("/")
@@ -2341,87 +1160,6 @@ def healthz():
         }
     return jsonify(payload)
 
-@app.route("/api/state")
-def api_state():
-    """v12.0.7 (監査P1): レガシー状態のフルボディ(ログ末尾・sentinel等)は
-    v10.88で施錠した /api/logs と同じ情報を含むため、admin限定に。公開は
-    ランディングページの進捗表示が動く最小のredacted応答のみ(ログ本文・
-    sentinel・スキャン結果は含めない — 執行系enumを公開面に出さない)。"""
-    global BACKGROUND_TASK_RUNNING
-    if not _admin_token_ok():
-        _ph = load_state().get("phase")
-        return jsonify({
-            "ok": True, "schemaVersion": "legacy-state-public-v1",
-            "publicRedacted": True, "server_ready": True,
-            "scanning": BACKGROUND_TASK_RUNNING,
-            "phase": _ph if isinstance(_ph, int) else 0,
-            "dst_active": is_dst_now(), "schedule": get_jst_schedule(),
-            "log": ["(logs are admin-only — 詳細ログ/スキャン結果はadminトークンが必要です)"],
-            "messageJa": "レガシー状態の詳細はadmin限定です。アプリ本体はGitHub Pages側を利用してください。",
-        })
-    state = load_state(); saved = state.get("log",[]); live = list(LOG_BUFFER)[-50:]
-    seen = set(saved); merged = list(saved)
-    for l in live:
-        if l not in seen: merged.append(l); seen.add(l)
-    state["log"] = merged[-50:]; state["server_ready"] = True; state["scanning"] = BACKGROUND_TASK_RUNNING
-    state["dst_active"] = is_dst_now(); state["schedule"] = get_jst_schedule()
-    return jsonify(state)
-
-@app.route("/api/run", methods=["POST"])
-def api_run():
-    data = request.get_json(force=True, silent=True) or {}; phase = data.get("phase", 0)
-    def run_bg():
-        global BACKGROUND_TASK_RUNNING
-        BACKGROUND_TASK_RUNNING = True
-        try:
-            if phase == 0: phase1_broad_scan(); phase2_rescore(); phase3_crosscheck(); phase4_final_top3()
-            elif phase == 1: phase1_broad_scan()
-            elif phase == 2: phase2_rescore()
-            elif phase == 3: phase3_crosscheck()
-            elif phase == 4: phase4_final_top3()
-            elif phase == 5: phase5_post_open()
-        finally: BACKGROUND_TASK_RUNNING = False
-    threading.Thread(
-        target=_memory_operation_run,
-        args=("background", "legacy_scan_phase", run_bg),
-        daemon=True).start()
-    return jsonify({"status": "started", "phase": phase})
-
-@app.route("/api/reset", methods=["POST"])
-def api_reset():
-    clear_state(); LOG_BUFFER.clear(); PRICE_HISTORY.clear()
-    return jsonify({"status": "reset"})
-
-@app.route("/api/logs")
-def api_logs(): return jsonify({"logs": list(LOG_BUFFER)[-100:]})
-
-@app.route("/api/chart/<symbol>")
-def api_chart(symbol):
-    cached = CHART_CACHE.get(symbol)
-    if cached and time.time() < cached["expires"]: return jsonify(cached["data"])
-    candles = get_stock_candles(symbol, days=30)
-    rows = [{"date": datetime.fromtimestamp(c["timestamp"], TZ_ET).strftime("%m/%d"),
-             "open": c["open"], "high": c["high"], "low": c["low"], "close": c["close"],
-             "volume": c.get("volume",0)} for c in candles]
-    result = {"code": symbol, "daily": rows}
-    if rows: CHART_CACHE[symbol] = {"data": result, "expires": time.time() + 600}
-    return jsonify(result)
-
-@app.route("/api/price_history/<symbol>")
-def api_price_history(symbol): return jsonify({"code": symbol, "history": PRICE_HISTORY.get(symbol, [])})
-
-@app.route("/api/price_now/<symbol>")
-def api_price_now(symbol): return jsonify(get_realtime_prices([symbol]).get(symbol, {}))
-
-@app.route("/api/order_book/<symbol>")
-def api_order_book(symbol): return jsonify(analyze_order_book(symbol))
-
-@app.route("/api/margin")
-def api_margin():
-    account = get_account_info(); positions = get_positions()
-    if not account: return jsonify({"error": "moomoo not connected"})
-    syms = [p["symbol"] for p in positions]; cp = get_quotes_batch(syms) if syms else {}
-    return jsonify(_calc_margin_deadzone(account, positions, cp) or {"error": "No data"})
 
 # ━━━ A.R.G.U.S. — calibration ledger API (React frontend) ━━━
 # ── Decision Value shadow operations (Phase 1 START, v10.195) ────────────────
@@ -16039,14 +14777,6 @@ def _require_admin():
         return False, {"error": "unauthorized"}, 401
     return True, None, 200
 
-# ── Legacy /api/* lockdown (v10.88, GPT P0 #1) ──────────────────────────────
-# The pre-ARGUS scanner left these UNAUTHENTICATED: /api/run starts a background
-# scan, /api/reset wipes state, plus /api/logs|chart|price_*|order_book|margin
-# expose data. The ARGUS frontend uses /api/argus/* only, so admin-gate the bare
-# legacy routes (CORS is a browser rule, not auth — curl bypasses it).
-_LEGACY_API_PREFIXES = ("/api/run", "/api/reset", "/api/logs", "/api/chart",
-                        "/api/price_history", "/api/price_now", "/api/order_book",
-                        "/api/margin")
 
 # Recovery Phase A PR B: these routes mutate owner/operational state and are no
 # longer callable from an unauthenticated browser.  Reuse the existing admin
@@ -16066,18 +14796,6 @@ _AUTH_OPERATIONAL_MUTATION_ROUTES = frozenset({
 def _operational_auth_failure(code):
     return ({"error": "admin_unavailable"}, 503) if code == 503 else \
         ({"error": "unauthorized"}, 401)
-
-@app.before_request
-def _gate_legacy_api():
-    if request.method == "OPTIONS":
-        return None  # let CORS preflight through
-    p = request.path or ""
-    if any(p.startswith(x) for x in _LEGACY_API_PREFIXES):
-        ok, err, code = _require_admin()
-        if not ok:
-            safe, safe_code = _operational_auth_failure(code)
-            return jsonify(safe), safe_code
-    return None
 
 
 @app.before_request
@@ -17599,7 +16317,6 @@ def _market_brief_worker_tick():
         _MARKET_BRIEF_WORKER_LOCK.release()
 
 
-
 def _brief_market_view_summary():
     try:
         view = _jp_market_engine_market_view()
@@ -17733,7 +16450,6 @@ def _compose_market_brief():
     return brief
 
 
-
 def _market_brief_ai_polish(brief):
     """The configured primary GPT explains the same bounded public facts.
     Model output remains display evidence with no decision authority."""
@@ -17838,7 +16554,6 @@ def _market_brief_ai_polish(brief):
     if brief.get("aiText"):
         brief["aiModel"] = diag.get("returnedModel") or diag.get("requestedModel")
     return brief
-
 
 
 def _market_brief_generation_input_digest(brief, internals):
@@ -18073,7 +16788,6 @@ def _owner_dialogue_event_snapshot(event_id):
         return None
     except Exception:
         return None
-
 
 
 def _owner_dialogue_event_history(event, *, cutoff):
@@ -44750,7 +43464,6 @@ def _jq_weekly_margin(code):
     return data
 
 
-
 def _jsf_balance_table():
     """{code: {loan, short, net, loanNew, loanRepay, shortNew, shortRepay}} from
     the JSF daily 貸借取引残高 CSV. 6h cache; never raises. Column indices are
@@ -45069,10 +43782,6 @@ def _entry_history_source_usable(history, market, *, now_epoch=None):
     if age_days > _ENTRY_HISTORY_MAX_CALENDAR_DAYS:
         return False, "stale_latest_session_date"
     return True, "current_session_date"
-
-
-
-
 
 
 # v3 (2026-06-20, user: 「もっとARGUS中心に」): turn the score/flow/credit/
@@ -47686,31 +46395,6 @@ def api_argus_symbol_search():
     return jsonify(payload)
 
 
-# ━━━ Scheduler ━━━
-def is_us_trading_day(now_utc=None):
-    """Canonical NYSE calendar gate for the legacy scheduled pipeline."""
-    current = now_utc or datetime.now(pytz.utc)
-    if not isinstance(current, datetime) or current.tzinfo is None or \
-            current.utcoffset() is None:
-        return False
-    local_date = current.astimezone(TZ_ET).date()
-    return argus_market_clock.is_trading_day(
-        argus_market_clock.US_EQUITY, local_date)
-
-def scheduled_run_all():
-    global SCHEDULED_RUN
-    if not is_us_trading_day(): add_log("⏭️ US market calendar closed"); return
-    SCHEDULED_RUN = True
-    try: phase1_broad_scan(); phase2_rescore(); phase3_crosscheck(); phase4_final_top3()
-    finally: SCHEDULED_RUN = False
-
-def scheduled_ph5():
-    global SCHEDULED_RUN
-    if not is_us_trading_day(): return
-    SCHEDULED_RUN = True
-    try: phase5_post_open()
-    finally: SCHEDULED_RUN = False
-
 _LAST_INTEL_REFRESH = [0.0]
 _MISSION_STORE = {}        # eventId -> latest deterministic mission result
 _MISSION_DEBOUNCE = {}     # eventId -> last-run epoch (re-mission at most every TTL)
@@ -47791,33 +46475,9 @@ def _residency_ai_tick():
         add_log(f"[residency] AI tick failed: {type(e).__name__}")
 
 def run_scheduler():
-    add_log("⏰ Scheduler started (DST auto-detect)")
-    sched = get_jst_schedule()
-    add_log(f"  DST:{'Summer' if is_dst_now() else 'Winter'} Ph.1:{sched['ph1']} Ph.5:{sched['ph5_1']} JST")
-    ran_today = set()
+    add_log("⏰ Scheduler started")
     while True:
-        now = datetime.now(TZ_JST); today_str = now.strftime("%Y-%m-%d"); hhmm = now.strftime("%H:%M")
-        sched = get_jst_schedule()
-        if not any(k.startswith(today_str) for k in ran_today): ran_today = set()
-        key = f"{today_str}_{hhmm}"
-        if hhmm == sched["ph1"] and key not in ran_today:
-            ran_today.add(key); add_log(f"🚀 Scheduled Ph.1-4 ({hhmm} JST)")
-            threading.Thread(
-                target=_memory_operation_run,
-                args=("scheduler", "scheduled_run_all", scheduled_run_all),
-                daemon=True).start()
-        elif hhmm == sched["ph5_1"] and key not in ran_today:
-            ran_today.add(key); add_log(f"🚀 Scheduled Ph.5 ({hhmm} JST)")
-            threading.Thread(
-                target=_memory_operation_run,
-                args=("scheduler", "scheduled_phase5", scheduled_ph5),
-                daemon=True).start()
-        elif hhmm == sched["ph5_2"] and key not in ran_today:
-            ran_today.add(key); add_log(f"🚀 Scheduled Ph.5 re-run ({hhmm} JST)")
-            threading.Thread(
-                target=_memory_operation_run,
-                args=("scheduler", "scheduled_phase5_rerun", scheduled_ph5),
-                daemon=True).start()
+        now = datetime.now(TZ_JST)
         # Resident AI + intel tick (v10.191) — replaces the unreliable GitHub */15
         # cron. Spawn on 5-min boundaries; the tick self-throttles (intel ≤10min,
         # AI via the run gate's 14-min interval), so a double spawn is harmless.
@@ -47843,11 +46503,7 @@ def run_scheduler():
         time.sleep(30)
 
 def _run_backend_server():
-    sched = get_jst_schedule()
-    add_log(f"🚀 A.R.G.U.S. backend v2.0 ({'Summer DST' if is_dst_now() else 'Winter'})")
-    add_log(f"  Ph.1:{sched['ph1']} Ph.5:{sched['ph5_1']} JST")
-    if MOOMOO_AVAILABLE: add_log(f"  moomoo: {MOOMOO_HOST}:{MOOMOO_PORT}")
-    else: add_log("  ⚠️ moomoo-api not installed")
+    add_log(f"🚀 ARGUS backend {_semantic_app_version()}")
     # v12.2.9: 起動復元をboot時に確定(最初のリクエスト/30分cronを待たない)
     _SERVER_RUNTIME.update({"serverType": "flask_dev",
                             "startupMode": "boot_before_serve"})
@@ -47860,7 +46516,6 @@ def _run_backend_server():
         add_log("🟢 Boot complete — IDLING")
     else:
         add_log("Startup restoration incomplete — scheduler stopped")
-    add_log("💡 Ph.1 to start / Auto: daily per schedule")
     app.run(host="0.0.0.0", port=PORT, debug=False, threaded=True)
 
 

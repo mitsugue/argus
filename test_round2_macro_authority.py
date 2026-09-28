@@ -103,21 +103,6 @@ def test_legacy_scanner_authority_is_sealed_evidence_only():
     assert 'out["finalDecisionAuthorityActive"] = False' in scout
 
 
-def test_legacy_top3_and_dynamic_exit_cannot_emit_final_actions():
-    phase4 = _function_source(SCANNER, "phase4_final_top3")
-    assert 's["authorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE' in phase4
-    assert 's["finalDecisionAuthorityActive"] = False' in phase4
-    assert "log_prediction(" not in phase4
-    assert "push_notify(" not in phase4
-
-    phase5 = _function_source(SCANNER, "phase5_post_open")
-    retired_prefix = phase5.split("\n    return", 1)[0]
-    assert '"status": "evidence_only"' in retired_prefix
-    assert '"authorityRole": LEGACY_DECISION_AUTHORITY_ROLE' in retired_prefix
-    assert '"finalDecisionAuthorityActive": False' in retired_prefix
-    assert "push_notify(" not in retired_prefix
-
-
 def test_scheduled_ai_candidate_route_is_non_persistent_evidence_only():
     tree = _tree(SCANNER)
     prompt = _assigned_literal(tree, "_BUY_CANDIDATE_SYSTEM")

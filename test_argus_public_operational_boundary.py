@@ -214,10 +214,10 @@ def test_route_catalog_matches_every_flask_rule_and_is_fail_closed():
     )
     assert catalog.ROUTE_CATALOG_VALIDATION_ERRORS == ()
     assert catalog.route_contract_keys() == actual
-    assert len(catalog.ROUTE_CATALOG) == len(actual) == 179
+    assert len(catalog.ROUTE_CATALOG) == len(actual) == 170
     assert Counter(row.trustDomain for row in catalog.ROUTE_CATALOG) == {
-        "PUBLIC": 74,
-        "AUTH_OPERATIONAL": 94,
+        "PUBLIC": 73,
+        "AUTH_OPERATIONAL": 86,
         "OWNER_SYNC": 7,
         "RECOVERY_PROOF": 3,
         "OWNER_AUTH": 1,
@@ -260,6 +260,10 @@ def test_smoke_literal_routes_are_catalogued_or_explicit_safety_negatives():
         "/api/argus/decision-value/execute",
         "/api/argus/downside/order",
         "/api/argus/downside/execute",
+        "/api/run",
+        "/api/reset",
+        "/api/logs",
+        "/api/state",
     }
 
     endpoints = set()

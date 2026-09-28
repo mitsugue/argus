@@ -25,6 +25,12 @@ EXPLICIT_NEGATIVE_PATHS = (
     "/api/argus/decision-value/execute",
     "/api/argus/downside/order",
     "/api/argus/downside/execute",
+    # Pre-ARGUS scanner routes removed with the legacy phases; they must not
+    # resolve to any handler again.
+    "/api/run",
+    "/api/reset",
+    "/api/logs",
+    "/api/state",
 )
 
 def _get(path, timeout=45):
@@ -173,19 +179,6 @@ def v_watchlist_sync_gated():
         return False, "expected 401/503 (owner-gated), got 200 — UNPROTECTED!"
     except urllib.error.HTTPError as e:
         return e.code in (401, 503, 429), f"HTTP {e.code} (owner-gated)"
-
-def v_legacy_routes_gated():
-    # Security (v10.88): legacy /api/run, /api/reset must NOT be open.
-    import urllib.error
-    for path, method in (("/api/run", "POST"), ("/api/reset", "POST"), ("/api/logs", "GET")):
-        try:
-            req = urllib.request.Request(BASE + path, method=method, headers={"User-Agent": "argus-smoke"})
-            urllib.request.urlopen(req, timeout=20)
-            return False, f"{path} is OPEN — must be admin-gated!"
-        except urllib.error.HTTPError as e:
-            if e.code not in (401, 503, 429):
-                return False, f"{path} returned {e.code}, expected 401/503"
-    return True, "legacy /api/run|reset|logs admin-gated"
 
 def v_no_order_routes():
     # Safety: there must be NO order/execute route (research-only, no auto-trading).
@@ -911,7 +904,6 @@ CHECKS = [
     ("no order routes (safety)", v_no_order_routes),
     ("cause-attribution (integrity)", v_cause_attribution),
     ("downside-incidents (cause+override)", v_downside_incidents),
-    ("legacy routes admin-gated", v_legacy_routes_gated),
     ("security-status 401", v_admin_gated_401("/api/argus/security-status")),
     ("ai-provider-status 401", v_admin_gated_401("/api/argus/ai-provider-status")),
     ("ai-cost 401", v_admin_gated_401("/api/argus/ai-cost")),

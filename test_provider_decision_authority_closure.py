@@ -96,54 +96,6 @@ def test_fund_nav_route_aggregate_is_delayed_and_provider_dated(monkeypatch):
     assert body["funds"] == [valid]
 
 
-@pytest.mark.parametrize(
-    "attempted_timestamp",
-    [None, "not-a-time", NOW + 3_600, NOW - 3_600],
-)
-def test_order_book_without_settled_venue_time_remains_diagnostic(
-        monkeypatch, attempted_timestamp):
-    monkeypatch.setattr(scanner, "get_order_book", lambda _symbol: {
-        "bids": [(100.0, 10_000), (99.0, 1)],
-        "asks": [(101.0, 1), (102.0, 1)],
-        "decisionUsable": True,
-        "sourceTimestamp": attempted_timestamp,
-    })
-
-    result = scanner.analyze_order_book("AAPL")
-
-    assert result["available"] is True
-    assert result["authority"] == "diagnostic_only"
-    assert result["decisionUsable"] is False
-    assert result["sourceTimeStatus"] == "UNVALIDATED_CAPABILITY"
-
-
-def test_diagnostic_order_book_cannot_change_phase4_score(monkeypatch):
-    state = {"top5": [
-        {"symbol": "AAPL", "combined_score": 60, "reason": "test"},
-        {"symbol": "MSFT", "combined_score": 59, "reason": "test"},
-    ]}
-    saved = []
-    monkeypatch.setattr(scanner, "load_state", lambda: state)
-    monkeypatch.setattr(scanner, "save_state", lambda value: saved.append(value))
-    monkeypatch.setattr(scanner, "analyze_order_book", lambda _symbol: {
-        "available": True,
-        "decisionUsable": False,
-        "whale_detected": True,
-        "downside_efficiency": 1.0,
-    })
-    monkeypatch.setattr(scanner, "get_account_info", lambda: None)
-    monkeypatch.setattr(scanner, "get_positions", lambda: None)
-    monkeypatch.setattr(scanner, "push_notify", lambda *_a, **_k: None)
-    monkeypatch.setattr(scanner, "add_log", lambda *_a, **_k: None)
-    monkeypatch.setattr(scanner, "DRY_RUN_MODE", True)
-
-    scanner.phase4_final_top3()
-
-    assert [row["final_score"] for row in state["top3_final"]] == [60, 59]
-    assert all(row["order_book"]["decisionUsable"] is False
-               for row in state["top3_final"])
-
-
 def test_public_session_brief_uses_canonical_holiday_and_suppresses_add(
         monkeypatch):
     holiday = datetime(2026, 8, 11, 1, 0, tzinfo=timezone.utc)
