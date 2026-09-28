@@ -159,7 +159,10 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
         finally:
             scanner._OSINT_PERSIST_STATE["restored"] = old_restored
         self.assertEqual(body["todayIntelligenceStateHash"], ti.state_hash(state))
-        self.assertTrue(ti.read_back_verified(state, body["todayIntelligence"]))
+        # The payload is kept in its artifact file; the projection carries the
+        # live hash the Remote Journal read-back compares against.
+        self.assertNotIn("todayIntelligence", body)
+        self.assertIn("todayIntelligence", body["marketArtifacts"]["artifacts"])
         self.assertNotIn("holdings", json.dumps(body).lower())
 
     def test_turning_point_page_distinguishes_total_and_return_limit(self):

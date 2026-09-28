@@ -222,10 +222,13 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
         finally:
             scanner._OSINT_PERSIST_STATE["restored"] = old_restored
         self.assertEqual(body["schemaVersion"], "argus-durable-v3")
-        self.assertIn("chartIntelligence", body)
+        # Derived artifacts travel as hashes plus file status; the payloads
+        # live in hash-gated artifact files, not in the projection.
+        self.assertNotIn("chartIntelligence", body)
         self.assertIn("chartIntelligenceStateHash", body)
-        self.assertIn("marketReplay", body)
+        self.assertNotIn("marketReplay", body)
         self.assertIn("marketReplayStateHash", body)
+        self.assertIn("chartIntelligence", body["marketArtifacts"]["artifacts"])
         self.assertNotIn("holdings", str(body).lower())
 
     def test_market_endpoint_supports_four_isolated_instruments(self):

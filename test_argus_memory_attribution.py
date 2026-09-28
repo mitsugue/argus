@@ -749,11 +749,17 @@ def test_normalized_hash_producer_sites_are_exact_ast_whitelist():
     ]
 
     persist = inspect.getsource(scanner._osint_persist_locked)
-    assert 'blob["verifiedViewSnapshots"] = _verified_normalized' in persist
-    assert 'blob["assetChartReports"] = _asset_normalized' in persist
+    # The normalized objects are hashed once and handed to the hash-gated
+    # artifact writer; the sealed checkpoint no longer embeds them.
+    assert 'blob["verifiedViewSnapshots"]' not in persist
+    assert 'blob["assetChartReports"]' not in persist
+    assert '"verifiedViewSnapshots", _verified_normalized' in persist
+    assert '"assetChartReports", _asset_normalized' in persist
     public = inspect.getsource(scanner.api_argus_osint_memory_snapshot)
-    assert "_verified_snapshot_normalized :=" in public
-    assert "_asset_chart_reports_normalized :=" in public
+    assert "_verified_snapshot_normalized = " in public
+    assert "_asset_chart_reports_normalized = " in public
+    assert '"verifiedViewSnapshots":' not in public
+    assert '"assetChartReports":' not in public
 
 
 def test_raw_hash_deny_list_callers_remain_unchanged():
@@ -792,6 +798,7 @@ def test_public_memory_snapshot_reuses_normalized_objects_and_reports_scalar_cou
     observer_secret = "must-not-escape-normalized-hash-observer"
 
     monkeypatch.setattr(scanner, "_osint_restore_once", lambda: None)
+    monkeypatch.setattr(scanner, "_MARKET_ARTIFACT_STATUS", {})
     monkeypatch.setattr(
         scanner.argus_verified_snapshot, "normalize_store",
         lambda _store: verified_normalized)
@@ -826,9 +833,10 @@ def test_public_memory_snapshot_reuses_normalized_objects_and_reports_scalar_cou
         "/api/argus/osint/memory-snapshot")
     assert response.status_code == 200
     body = response.get_json()
-    assert body["verifiedViewSnapshots"] is not verified_normalized
-    assert body["verifiedViewSnapshots"] == verified_normalized
-    assert body["assetChartReports"] == asset_normalized
+    # Payloads no longer travel in the projection; only hashes and status.
+    assert "verifiedViewSnapshots" not in body
+    assert "assetChartReports" not in body
+    assert body["marketArtifacts"]["schemaVersion"] == "argus-market-artifact-v1"
     assert body["verifiedViewSnapshotsStateHash"] == "verified-fast-path"
     assert body["assetChartReportsStateHash"] == "asset-fast-path"
     assert body["normalizedHashFastPathCount"] == 2

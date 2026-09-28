@@ -77,7 +77,7 @@ def test_schema_identity_budget_and_non_authoritative_contract_are_explicit():
     assert measurement.MAX_DAILY_DISTRIBUTIONS == 32
     assert measurement.MAX_MUTATION_CLASSES == len(registry.mutations()) == 27
     assert measurement.MAX_CHECKPOINT_SECTION_KEYS == \
-        len(registry.registered_checkpoint_keys()) == 48
+        len(registry.registered_checkpoint_keys()) == 44
 
 
 def test_recording_api_is_metadata_only_and_never_accepts_payload_or_error():

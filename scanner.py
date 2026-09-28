@@ -151,6 +151,7 @@ import argus_memory_attribution     # bounded parent-process phase telemetry
 import argus_foundation_jobs        # v12.6.3: bounded formal pipeline preflight/recovery
 import argus_foundation_job_checkpoint  # small job-state sidecar; avoids full-checkpoint OOM
 import argus_asset_chart_cache      # bounded durable Asset Desk chart reports
+import argus_market_artifact_store  # derived market artifacts outside the sealed checkpoint
 import argus_index_research_cache
 import argus_diagnostics_contract  # closed public/operational DTO boundary
 import argus_recovery_registry     # accepted shadow registry metadata only
@@ -20961,6 +20962,182 @@ _DURABILITY_PATHS = argus_persistent_storage.configured_paths(
 _OSINT_PERSIST_FILE = _DURABILITY_PATHS["checkpoint"]
 _CHECKPOINT_V2_ROOT = os.path.join(
     _DURABILITY_PATHS["root"], "argus_checkpoint_v2")
+# Derived market artifacts (chart/today intelligence, replay, verified views,
+# asset chart reports) live in their own hash-gated files under the persistent
+# root.  They are rebuildable from the market ledger and provider history, so
+# they no longer ride inside the sealed checkpoint, the encrypted recovery
+# sidecar or the Remote Journal projection.  Status rows hold hashes, byte
+# counts and timestamps only.
+_MARKET_ARTIFACT_STATUS = {}
+_MARKET_ARTIFACT_LOCK = threading.Lock()
+
+
+def _market_artifact_root():
+    root = _DURABILITY_PATHS.get("root") if isinstance(
+        _DURABILITY_PATHS, dict) else None
+    return root or None
+
+
+def _market_artifact_method_version(name):
+    try:
+        if name == "verifiedViewSnapshots":
+            return _VERIFIED_VIEW_METHOD_VERSION
+        if name == "assetChartReports":
+            return _ASSET_CHART_METHOD_VERSION
+        if name == "chartIntelligence":
+            return argus_chart_intelligence.METHOD_VERSION
+        if name == "todayIntelligence":
+            return argus_today_intelligence.METHOD_VERSION
+        if name == "marketReplay":
+            return argus_market_replay.METHOD_VERSION
+    except Exception:
+        return None
+    return None
+
+
+def _market_artifact_persist(name, normalized, state_hash):
+    """Write one derived artifact file when its state hash moved.
+
+    A failure is recorded and logged but never fails the checkpoint: the
+    artifact regenerates from authoritative state on the next tick.
+    """
+    root = _market_artifact_root()
+    with _MARKET_ARTIFACT_LOCK:
+        row = _MARKET_ARTIFACT_STATUS.setdefault(name, {})
+        if not root:
+            row["lastStatus"] = "disabled"
+            return {"artifact": name, "status": "disabled"}
+        try:
+            result = argus_market_artifact_store.write_if_changed(
+                root, name, normalized, state_hash=state_hash,
+                now_iso=_ai_now_iso(), last_state_hash=row.get("stateHash"),
+                atomic_write_json=argus_persistent_storage.atomic_write_json,
+                method_version=_market_artifact_method_version(name),
+                build_sha=_backend_exact_sha() or None)
+        except Exception as exc:
+            row.update({"lastStatus": "write_failed",
+                        "errorClass": type(exc).__name__,
+                        "lastFailureAt": _ai_now_iso()})
+            add_log(f"[market-artifact] {name} write failed "
+                    f"errorClass={type(exc).__name__}")
+            return {"artifact": name, "status": "write_failed",
+                    "errorClass": type(exc).__name__}
+        row.update({"stateHash": state_hash, "lastStatus": result["status"],
+                    "errorClass": None})
+        if result["status"] == "written":
+            row.update({"bytes": result.get("bytes"),
+                        "writtenAt": result.get("writtenAt")})
+        return result
+
+
+def _market_artifact_migrate(name, payload):
+    """Apply the same analysis-name migration the checkpoint restore applies."""
+    mapping_text = os.environ.get("PRODUCT_ANALYSIS_MIGRATION_MAP")
+    if mapping_text:
+        converted, _receipt = analysis_migration_restore.migrate(
+            {name: payload}, json.loads(mapping_text))
+        payload = converted.get(name, payload)
+    analysis_migration_restore.naming.require_allowed(payload)
+    return payload
+
+
+def _merge_restored_market_artifact(name, payload):
+    """Merge one restored derived artifact into its live store.
+
+    Every merge is monotonic or append-only, so a file, a legacy checkpoint
+    blob and a remote projection may all be applied in any order without
+    rolling back newer local state.
+    """
+    if not isinstance(payload, dict):
+        return False
+    if name == "chartIntelligence":
+        _restored_ci = argus_chart_intelligence.normalize_state(payload)
+        # Phase 2 history is append-only.  A restored copy can only add
+        # deterministic records; it cannot remove newer local detections.
+        for _key in ("snapshots", "zones", "turningPoints",
+                     "reactionAnomalies", "relationshipBreaks", "invalidations"):
+            def _ci_restore_key(_record):
+                if _key == "snapshots":
+                    return _record.get("id")
+                if _key == "invalidations":
+                    return (_record.get("symbol"), _record.get("market"),
+                            _record.get("turningPointId"))
+                return (_record.get("symbol"), _record.get("market"),
+                        _record.get("id"))
+            _seen = {_ci_restore_key(x)
+                     for x in _CHART_INTELLIGENCE.get(_key, [])}
+            _CHART_INTELLIGENCE.setdefault(_key, []).extend(
+                x for x in _restored_ci.get(_key, [])
+                if _ci_restore_key(x) not in _seen)
+        _CHART_INTELLIGENCE["lastUpdatedAt"] = max(
+            str(_CHART_INTELLIGENCE.get("lastUpdatedAt") or ""),
+            str(_restored_ci.get("lastUpdatedAt") or "")) or None
+        return True
+    if name == "todayIntelligence":
+        _restored_ti = argus_today_intelligence.merge_state(
+            _TODAY_INTELLIGENCE, payload)
+        _TODAY_INTELLIGENCE.clear()
+        _TODAY_INTELLIGENCE.update(_restored_ti)
+        return True
+    if name == "marketReplay":
+        _restored_mr = argus_market_replay.merge_state(_MARKET_REPLAY, payload)
+        _MARKET_REPLAY.clear()
+        _MARKET_REPLAY.update(_restored_mr)
+        return True
+    if name == "verifiedViewSnapshots":
+        # Restore is monotonic per pointer: an older copy can add a missing
+        # key but cannot roll back a newer local view.
+        for _snapshot in argus_verified_snapshot.normalize_store(
+                payload).get("current", {}).values():
+            _restored_vvs, _ = argus_verified_snapshot.publish_atomic(
+                _VERIFIED_VIEW_SNAPSHOTS, _snapshot, now_iso=_ai_now_iso())
+            _VERIFIED_VIEW_SNAPSHOTS.clear()
+            _VERIFIED_VIEW_SNAPSHOTS.update(_restored_vvs)
+        return True
+    if name == "assetChartReports":
+        _restored_asset_reports = argus_asset_chart_cache.merge_restored(
+            _ASSET_CHART_REPORTS, payload)
+        _ASSET_CHART_REPORTS.clear()
+        _ASSET_CHART_REPORTS.update(_restored_asset_reports)
+        return True
+    return False
+
+
+def _market_artifacts_restore():
+    """Merge every readable derived artifact file; a bad file never blocks boot."""
+    root = _market_artifact_root()
+    restored = []
+    if not root:
+        return restored
+    for name in argus_market_artifact_store.ARTIFACTS:
+        with _MARKET_ARTIFACT_LOCK:
+            row = _MARKET_ARTIFACT_STATUS.setdefault(name, {})
+        try:
+            doc = argus_market_artifact_store.load(root, name)
+        except Exception as exc:
+            row.update({"restoreStatus": "invalid",
+                        "errorClass": type(exc).__name__})
+            add_log(f"[market-artifact] {name} restore rejected "
+                    f"errorClass={type(exc).__name__}")
+            continue
+        if doc is None:
+            row["restoreStatus"] = "absent"
+            continue
+        try:
+            payload = _market_artifact_migrate(name, doc["payload"])
+            _merge_restored_market_artifact(name, payload)
+        except Exception as exc:
+            row.update({"restoreStatus": "merge_failed",
+                        "errorClass": type(exc).__name__})
+            add_log(f"[market-artifact] {name} merge failed "
+                    f"errorClass={type(exc).__name__}")
+            continue
+        row.update({"restoreStatus": "restored",
+                    "stateHash": doc.get("stateHash"),
+                    "writtenAt": doc.get("writtenAt"),
+                    "bytes": row.get("bytes")})
+        restored.append(name)
+    return restored
 _CHECKPOINT_V2_STAGE1_ENABLED = str(os.environ.get(
     "ARGUS_CHECKPOINT_V2_STAGE1", "0")).strip().lower() in (
         "1", "true", "yes")
@@ -24633,12 +24810,16 @@ def _osint_persist_locked():
             "peakSimultaneousRepresentations": 3,
         })
 
-        blob["chartIntelligence"] = _memory_operation_run(
+        _ci_normalized = _memory_operation_run(
             "internal", "source.chart_intelligence.normalize",
             argus_chart_intelligence.normalize_state, _CHART_INTELLIGENCE)
         blob["chartIntelligenceStateHash"] = _memory_operation_run(
             "internal", "source.chart_intelligence.hash_with_transient_normalize",
             argus_chart_intelligence.state_hash, _CHART_INTELLIGENCE)
+        _market_artifact_persist(
+            "chartIntelligence", _ci_normalized,
+            blob["chartIntelligenceStateHash"])
+        del _ci_normalized
         _memory_attribution_source_capture("S5", "chart_state_normalize_hash", {
             "topLevelKeys": len(blob),
             "retainedNormalizedStateCount": 6,
@@ -24646,18 +24827,25 @@ def _osint_persist_locked():
             "peakSimultaneousRepresentations": 3,
         })
 
-        blob["todayIntelligence"] = _memory_operation_run(
+        _ti_normalized = _memory_operation_run(
             "internal", "source.today_intelligence.normalize",
             argus_today_intelligence.normalize_state, _TODAY_INTELLIGENCE)
         blob["todayIntelligenceStateHash"] = _memory_operation_run(
             "internal", "source.today_intelligence.hash_with_transient_normalize",
             argus_today_intelligence.state_hash, _TODAY_INTELLIGENCE)
-        blob["marketReplay"] = _memory_operation_run(
+        _market_artifact_persist(
+            "todayIntelligence", _ti_normalized,
+            blob["todayIntelligenceStateHash"])
+        del _ti_normalized
+        _mr_normalized = _memory_operation_run(
             "internal", "source.market_replay.normalize",
             argus_market_replay.normalize_state, _MARKET_REPLAY)
         blob["marketReplayStateHash"] = _memory_operation_run(
             "internal", "source.market_replay.hash_with_transient_normalize",
             argus_market_replay.state_hash, _MARKET_REPLAY)
+        _market_artifact_persist(
+            "marketReplay", _mr_normalized, blob["marketReplayStateHash"])
+        del _mr_normalized
         _memory_attribution_source_capture("S6", "decision_states_normalize_hash", {
             "topLevelKeys": len(blob),
             "retainedNormalizedStateCount": 8,
@@ -24686,7 +24874,6 @@ def _osint_persist_locked():
             "internal", "source.verified_snapshots.normalize",
             argus_verified_snapshot.normalize_store, _VERIFIED_VIEW_SNAPSHOTS,
             _attribution_after_callback=_verified_normalize_complete)
-        blob["verifiedViewSnapshots"] = _verified_normalized
         _verified_normalized_hash_counts = {
             "normalizedHashFastPathCount": 0,
             "normalizedHashFallbackCount": 0,
@@ -24712,6 +24899,10 @@ def _osint_persist_locked():
             diagnostic_observer=_memory_state_hash_observer(
                 "verified", _verified_normalized_hash_counts),
             _attribution_after_callback=_verified_hash_complete)
+        _market_artifact_persist(
+            "verifiedViewSnapshots", _verified_normalized,
+            blob["verifiedViewSnapshotsStateHash"])
+        del _verified_normalized
         _memory_attribution_source_capture(
             "S7A0", "asset_chart_reports_normalize_start", {
                 "authoritativeAlive": True,
@@ -24733,7 +24924,6 @@ def _osint_persist_locked():
             "internal", "source.asset_chart_reports.normalize",
             argus_asset_chart_cache.normalize_store, _ASSET_CHART_REPORTS,
             _attribution_after_callback=_asset_normalize_complete)
-        blob["assetChartReports"] = _asset_normalized
         _asset_normalized_hash_counts = {
             "normalizedHashFastPathCount": 0,
             "normalizedHashFallbackCount": 0,
@@ -24759,6 +24949,12 @@ def _osint_persist_locked():
             diagnostic_observer=_memory_state_hash_observer(
                 "asset", _asset_normalized_hash_counts),
             _attribution_after_callback=_asset_hash_complete)
+        _market_artifact_persist(
+            "assetChartReports", _asset_normalized,
+            blob["assetChartReportsStateHash"])
+        del _asset_normalized
+        blob["marketArtifacts"] = argus_market_artifact_store.status_projection(
+            _MARKET_ARTIFACT_STATUS)
         _normalized_hash_fast_path_count = (
             _verified_normalized_hash_counts["normalizedHashFastPathCount"]
             + _asset_normalized_hash_counts["normalizedHashFastPathCount"])
@@ -28574,57 +28770,14 @@ def _osint_restore_once():
                 _MARKET_LEDGER, _ml)
             _MARKET_LEDGER.clear()
             _MARKET_LEDGER.update(_restored_ml)
-        _ci = blob.get("chartIntelligence")
-        if isinstance(_ci, dict):
-            _restored_ci = argus_chart_intelligence.normalize_state(_ci)
-            # Phase 2 history is append-only.  A remote snapshot can only add
-            # deterministic records; it cannot remove newer local detections.
-            for _key in ("snapshots", "zones", "turningPoints",
-                         "reactionAnomalies", "relationshipBreaks", "invalidations"):
-                def _ci_restore_key(_record):
-                    if _key == "snapshots":
-                        return _record.get("id")
-                    if _key == "invalidations":
-                        return (_record.get("symbol"), _record.get("market"),
-                                _record.get("turningPointId"))
-                    return (_record.get("symbol"), _record.get("market"),
-                            _record.get("id"))
-                _seen = {_ci_restore_key(x)
-                         for x in _CHART_INTELLIGENCE.get(_key, [])}
-                _CHART_INTELLIGENCE.setdefault(_key, []).extend(
-                    x for x in _restored_ci.get(_key, [])
-                    if _ci_restore_key(x) not in _seen)
-            _CHART_INTELLIGENCE["lastUpdatedAt"] = max(
-                str(_CHART_INTELLIGENCE.get("lastUpdatedAt") or ""),
-                str(_restored_ci.get("lastUpdatedAt") or "")) or None
-        _ti = blob.get("todayIntelligence")
-        if isinstance(_ti, dict):
-            _restored_ti = argus_today_intelligence.merge_state(
-                _TODAY_INTELLIGENCE, _ti)
-            _TODAY_INTELLIGENCE.clear()
-            _TODAY_INTELLIGENCE.update(_restored_ti)
-        _mr = blob.get("marketReplay")
-        if isinstance(_mr, dict):
-            _restored_mr = argus_market_replay.merge_state(_MARKET_REPLAY, _mr)
-            _MARKET_REPLAY.clear()
-            _MARKET_REPLAY.update(_restored_mr)
-        _vvs = blob.get("verifiedViewSnapshots")
-        if isinstance(_vvs, dict):
-            # Restore is monotonic per pointer: a remote/ephemeral older view
-            # can add a missing key but cannot roll back a newer local view.
-            for _snapshot in argus_verified_snapshot.normalize_store(
-                    _vvs).get("current", {}).values():
-                _restored_vvs, _ = argus_verified_snapshot.publish_atomic(
-                    _VERIFIED_VIEW_SNAPSHOTS, _snapshot, now_iso=_ai_now_iso())
-                _VERIFIED_VIEW_SNAPSHOTS.clear()
-                _VERIFIED_VIEW_SNAPSHOTS.update(_restored_vvs)
-        _asset_reports = blob.get("assetChartReports")
-        if isinstance(_asset_reports, dict):
-            _restored_asset_reports = \
-                argus_asset_chart_cache.merge_restored(
-                    _ASSET_CHART_REPORTS, _asset_reports)
-            _ASSET_CHART_REPORTS.clear()
-            _ASSET_CHART_REPORTS.update(_restored_asset_reports)
+        # Derived market artifacts: legacy checkpoints still carry them inline;
+        # current checkpoints keep them in hash-gated files.  Both are merged
+        # through the same monotonic/append-only merges.
+        for _artifact_name in argus_market_artifact_store.ARTIFACTS:
+            _artifact_blob = blob.get(_artifact_name)
+            if isinstance(_artifact_blob, dict):
+                _merge_restored_market_artifact(_artifact_name, _artifact_blob)
+        _market_artifacts_restore()
         _jr = argus_state_journal.load_valid(blob.get("opsJournal") or [])
         for h in _jr["events"]:
             argus_state_journal.append(_OPS_JOURNAL, h)
@@ -34834,6 +34987,21 @@ def api_argus_osint_memory_snapshot():
     }
     _normalized_hash_observer = _normalized_hash_counter_observer(
         _normalized_hash_counts)
+    # Live hashes, as before: the Remote Journal read-back compares them with
+    # the live stores.  The normalized object is built once and hashed once;
+    # the payloads themselves no longer travel in this projection.
+    _verified_snapshot_normalized = argus_verified_snapshot.normalize_store(
+        _VERIFIED_VIEW_SNAPSHOTS)
+    _verified_hash = argus_verified_snapshot.state_hash_normalized(
+        _verified_snapshot_normalized,
+        diagnostic_observer=_normalized_hash_observer)
+    del _verified_snapshot_normalized
+    _asset_chart_reports_normalized = argus_asset_chart_cache.normalize_store(
+        _ASSET_CHART_REPORTS)
+    _asset_hash = argus_asset_chart_cache.state_hash_normalized(
+        _asset_chart_reports_normalized,
+        diagnostic_observer=_normalized_hash_observer)
+    del _asset_chart_reports_normalized
     return jsonify({"schemaVersion": argus_remote_journal.SCHEMA_V3,
                     "generatedAt": _now, "asOf": _now,
                     "buildIdentity": {"appVersion": _semantic_app_version(),
@@ -34873,28 +35041,17 @@ def api_argus_osint_memory_snapshot():
                     "costPolicy": argus_cost_policy.normalize_state(_COST_POLICY),
                     "marketLedger": argus_market_ledger.normalize_state(_MARKET_LEDGER),
                     "marketLedgerStateHash": argus_market_ledger.state_hash(_MARKET_LEDGER),
-                    "chartIntelligence": argus_chart_intelligence.normalize_state(_CHART_INTELLIGENCE),
+                    # Derived market artifacts are not part of the remote
+                    # projection any more: they are rebuildable presentation
+                    # state kept in hash-gated files.  Only their hashes and
+                    # file status travel here.
                     "chartIntelligenceStateHash": argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE),
-                    "todayIntelligence": argus_today_intelligence.normalize_state(_TODAY_INTELLIGENCE),
                     "todayIntelligenceStateHash": argus_today_intelligence.state_hash(_TODAY_INTELLIGENCE),
-                    "marketReplay": argus_market_replay.normalize_state(_MARKET_REPLAY),
                     "marketReplayStateHash": argus_market_replay.state_hash(_MARKET_REPLAY),
-                    "verifiedViewSnapshots": (
-                        _verified_snapshot_normalized :=
-                        argus_verified_snapshot.normalize_store(
-                            _VERIFIED_VIEW_SNAPSHOTS)),
-                    "verifiedViewSnapshotsStateHash":
-                    argus_verified_snapshot.state_hash_normalized(
-                        _verified_snapshot_normalized,
-                        diagnostic_observer=_normalized_hash_observer),
-                    "assetChartReports": (
-                        _asset_chart_reports_normalized :=
-                        argus_asset_chart_cache.normalize_store(
-                            _ASSET_CHART_REPORTS)),
-                    "assetChartReportsStateHash":
-                    argus_asset_chart_cache.state_hash_normalized(
-                        _asset_chart_reports_normalized,
-                        diagnostic_observer=_normalized_hash_observer),
+                    "verifiedViewSnapshotsStateHash": _verified_hash,
+                    "assetChartReportsStateHash": _asset_hash,
+                    "marketArtifacts": argus_market_artifact_store.status_projection(
+                        _MARKET_ARTIFACT_STATUS),
                     **_normalized_hash_counts,
                     "missionTickDurability":
                         _mission_tick_durability_snapshot(
