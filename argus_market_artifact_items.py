@@ -168,8 +168,14 @@ def sync(root: str, name: str, normalized: Mapping[str, Any], *,
 class ItemCache:
     """Byte-level LRU keyed by (name, key) and validated by file identity."""
 
-    def __init__(self, *, max_entries: int = 8,
-                 max_total_bytes: int = 32 * 1024 * 1024) -> None:
+    # The cache holds raw bytes and every read re-parses them, so it only
+    # saves an open()+read() that the operating system's page cache already
+    # serves.  In production it grew to 33 MB of anonymous memory for that
+    # (2026-09-28 diagnostics), which is the opposite of the point: keep it
+    # small enough to help the tiny artifacts and let the page cache serve
+    # the multi-megabyte ones.
+    def __init__(self, *, max_entries: int = 4,
+                 max_total_bytes: int = 4 * 1024 * 1024) -> None:
         self._entries: "OrderedDict[Tuple[str, str], Tuple[Tuple[int, int], bytes]]" = OrderedDict()
         self._max_entries = max(1, int(max_entries))
         self._max_total = max(1, int(max_total_bytes))
