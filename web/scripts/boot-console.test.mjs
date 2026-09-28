@@ -29,6 +29,13 @@ for (const label of ['Nikkei 225 forecast', 'Event calendar', 'News intelligence
 assert.match(component, /'unavailable'/);
 assert.match(component, /STATUS_WORD/);
 
+// The integrated outlook is a stored judgment by design (the product does not
+// run the AI on every page load), so a judgment that is current for the latest
+// scheduled run reads 'ready'; only a missed run reads 'cached'.
+assert.match(component, /judgment\.data\.freshness === 'stale' \? 'cached' : 'ready'/);
+assert.doesNotMatch(component, /judgment\.phase === 'live' \? 'ready'/,
+  'a live AI run must not be the only path to a ready outlook');
+
 // Stays until every lane settles, then closes after a short hold; the user
 // can dismiss it, and nothing re-opens it during the session.
 assert.match(component, /const complete = done === total/);
