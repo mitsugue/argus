@@ -78,7 +78,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/hooks/useUSWatchlist.ts': '58714ef64cea5b6168584a5f6bd30784422bc486',
     'web/src/lib/pollingPolicy.ts': '40bfa352aaf060fde8d54ec57125ce8ca4096b53',
     'docs/RECOVERY_MATERIALIZATION.md': 'af222d7a64b801dce147daa9a3b6ddc75def0572',
-    'test_argus_recovery_materialization.py': '4c2a2816a485a9137798667f3b659c37b0b7f368',
+    'test_argus_recovery_materialization.py': '87fc8de5a051024375af5fcde0b50867aaf2dddb',
     'test_argus_recovery_measurement_storage.py': '4d960ba28f662b4b4dfc3e309e54e5e9e2a0b267',
     'docs/ACCEPTANCE_FAILURE_EVIDENCE.md': '2f425f275db6065af5acaa5584d029d9d4771289',
     'web/scripts/business-failure-evidence.test.mjs': '6df1cca2b9d6962b281a8adb6becc2fb0678efae',
