@@ -12,6 +12,7 @@ import type { RouteKey } from '../components/NavRail';
 import type { SettingsSection } from '../navigation';
 import '../components/dashboard/Dashboard.css';
 import { ArgusTodayPanel } from '../components/today/ArgusTodayPanel';
+import { BootConsole } from '../components/today/BootConsole';
 import { buildArgusTodayView, selectTodayNews,
   importantEventDisplayLabel,
   type MarketSelectionMode, type TodayMoveInput,
@@ -593,6 +594,17 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       subtitle={<span>{formatDate(judgment.date)}</span>}
       className="page--today"
     >
+      <BootConsole inputs={{
+        chart: { snapshotState: selectedChart.snapshotState,
+          snapshotId: selectedChart.snapshotId, error: selectedChart.error },
+        index: { data: headlineIndex.data, loading: headlineIndex.loading,
+          error: headlineIndex.error, expectedSkip: headlineIndex.expectedSkip },
+        news: { loading: marketNews.loading, data: marketNews.data,
+          failureClass: marketNews.failureClass },
+        newsIntel: { status: newsIntel.status },
+        decision: { loading: decisionEvidence.loading,
+          error: decisionEvidence.error, subjects: decisionEvidence.subjects },
+      }} />
       <ArgusTodayPanel view={argusToday}
         selectedSymbol={selectedSymbol} horizon={chartHorizon}
         chartLoad={selectedChart}
