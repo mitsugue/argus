@@ -244,12 +244,33 @@ def test_direct_workflow_ntfy_inventory_is_non_security_only():
 def test_notification_workflow_consolidation_preserves_schedule_semantics():
     workflows = Path(".github/workflows")
     files = sorted(workflows.glob("*.yml"))
-    # 31 = the consolidated notification-era workflows plus the v13.5.3
-    # news-intake-ops manual dispatch (owner-only reprocess/health), the
-    # v13.5.61 runtime-diagnostics manual dispatch (owner-only thread/memory
-    # snapshot) and the v13.7.55 render-deploy-diagnostics manual dispatch
-    # (read-only deploy list + failed build log; no schedule, no notification).
-    assert len(files) == 31
+    # What this guards is the schedule and notification surface, not the
+    # number of files: a counted total broke on every unrelated workflow
+    # (2026-09-28, twice).  Every workflow that fires on a schedule or can
+    # notify must be one of these, and each is named with its reason.
+    scheduled_or_notifying = {
+        name for name, text in
+        ((path.name, path.read_text(encoding="utf-8")) for path in files)
+        if "- cron:" in text or "ntfy.sh" in text}
+    assert scheduled_or_notifying == {
+        "breadth-freshness.yml",      # JP breadth freshness sweep
+        "caos-scan.yml",              # mission tick backup (:07/:37)
+        "checkpoint-v2-gate.yml",     # nightly 4 GiB proof (2026-09-28)
+        "event-ledger.yml",           # event ledger close
+        "jpx-credit-weekly.yml",      # weekly JPX credit
+        "learning-memory.yml",        # learning memory roll-up
+        "macro-event-analysis.yml",   # macro result/generation slots
+        "market-alerts.yml",          # the owner-facing alert cadence below
+        "prediction-ledger.yml",      # daily ledger close
+        "smoke-test.yml",             # six-hourly production smoke
+        "vault-sync.yml",             # owner vault sync
+    }, sorted(scheduled_or_notifying)
+    # Only these three may reach the owner's phone.
+    notifying = {name for name, text in
+                 ((path.name, path.read_text(encoding="utf-8")) for path in files)
+                 if "ntfy.sh" in text}
+    assert notifying == {"market-alerts.yml", "prediction-ledger.yml",
+                         "smoke-test.yml"}, sorted(notifying)
     render = (workflows / "render-deploy-diagnostics.yml").read_text(encoding="utf-8")
     assert "- cron:" not in render and "ntfy.sh" not in render
     assert "workflow_dispatch" in render and "render_deploy_diagnostics.py" in render
