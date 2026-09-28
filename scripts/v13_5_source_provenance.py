@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.59"
+PRODUCT_VERSION = "v13.7.61"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -852,6 +852,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "scripts/recovery_admission.py",
     "scripts/remote_journal_publish_policy.py",
     "scripts/remote_receipt_drain.py",
+    "scripts/repin_recovery_admission.py",
     "test_argus_checkpoint_v2_isolated.py",
     "test_argus_identity_installer.py",
     "test_argus_persistent_mission_storage.py",
@@ -863,6 +864,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "test_remote_recovery_nonce_bootstrap.py",
     "test_remote_recovery_publish.py",
     "test_remote_recovery_restore.py",
+    "test_repin_recovery_admission.py",
     # Tachibana e-Branch v4r10 READ-ONLY SHADOW market-data provider, disabled
     # by default (candidate a6648da1, tree ec101b16).  A new isolated package
     # with no scanner import, no public route, no order/amend/cancel surface,
