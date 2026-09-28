@@ -43,7 +43,7 @@ jobs:
           # 2026-09-29: deciding whether Twelve Data can drop to the free plan
           # needs the measured split between the moomoo bridge and Twelve Data,
           # not an assumption. Counts and ages only; no symbol list, no secret.
-          for name in bridge-status bridge-diagnostic twelvedata-budget provider-diagnostics operational security-status; do
+          for name in bridge-status bridge-diagnostic twelvedata-budget provider-diagnostics operational security-status today-headline decision-evidence-a decision-evidence-b; do
             case "$name" in
               bridge-status) path="/api/argus/bridge/status" ;;
               bridge-diagnostic) path="/api/argus/admin/bridge/diagnostic" ;;
@@ -51,13 +51,16 @@ jobs:
               provider-diagnostics) path="/api/argus/admin/provider-diagnostics" ;;
               operational) path="/api/argus/admin/diagnostics/operational" ;;
               security-status) path="/api/argus/security-status" ;;
+              today-headline) path="/api/argus/today-headline" ;;
+              decision-evidence-a) path="/api/argus/decision-evidence?symbols=1321" ;;
+              decision-evidence-b) path="/api/argus/decision-evidence?symbol=1321&market=JP&horizon=5D" ;;
             esac
             code=$(curl -sS -o "artifacts/runtime-diagnostics/$name.json" -w "%{http_code}" \
               --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
               "https://argus-backend-3j2m.onrender.com$path")
             echo "$name http=$code"
           done
-          for name in bridge-status bridge-diagnostic twelvedata-budget provider-diagnostics operational security-status; do
+          for name in bridge-status bridge-diagnostic twelvedata-budget provider-diagnostics operational security-status today-headline decision-evidence-a decision-evidence-b; do
             echo "--- $name ---"
             head -c 4000 "artifacts/runtime-diagnostics/$name.json"; echo
           done
