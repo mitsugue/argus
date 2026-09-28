@@ -919,10 +919,21 @@ def _checked_ai_json(text):
     return value
 
 
-def add_log(msg):
-    """In-process operational log ring (bounded, never written to disk)."""
+def add_log(msg, *, echo=False):
+    """In-process operational log ring (bounded, never written to disk).
+
+    ``echo=True`` also writes the line to the container log, with the process
+    id.  Only the startup lines do this.  The ring itself carries operational
+    detail that must not leave the process (security events name the request
+    IP, AI lines name spend and models), while an owner looking at the
+    hosting dashboard needs to answer two questions without any tooling:
+    did the application start, and is exactly one process running.
+    """
     now = datetime.now(TZ_JST)
-    LOG_BUFFER.append(f"[{now.strftime('%H:%M:%S')}] {msg}")
+    line = f"[{now.strftime('%H:%M:%S')}] {msg}"
+    LOG_BUFFER.append(line)
+    if echo:
+        print(f"[argus pid={os.getpid()}] {line}", flush=True)
 
 
 # ━━━ Finnhub API Functions ━━━
@@ -47215,7 +47226,7 @@ def _jp_owner_quote_warm_tick(*, now_monotonic=None):
 
 
 def run_scheduler():
-    add_log("⏰ Scheduler started")
+    add_log("⏰ Scheduler started", echo=True)
     while True:
         now = datetime.now(TZ_JST)
         # Resident AI + intel tick (v10.191) — replaces the unreliable GitHub */15
@@ -47259,7 +47270,8 @@ def run_scheduler():
         time.sleep(30)
 
 def _run_backend_server():
-    add_log(f"🚀 ARGUS backend {_semantic_app_version()}")
+    add_log(f"🚀 ARGUS backend {_semantic_app_version()} "
+            f"build={(_backend_exact_sha() or '')[:8] or 'unknown'}", echo=True)
     # Fixed mmap threshold / arena cap before the restore parses the
     # checkpoint; generation-sized temporaries are then mapped and unmapped
     # individually instead of fragmenting the brk heap.
@@ -47275,9 +47287,10 @@ def _run_backend_server():
             target=_memory_operation_run,
             args=("scheduler", "scheduler_loop", run_scheduler),
             daemon=True).start()
-        add_log("🟢 Boot complete — IDLING")
+        add_log(f"🟢 Boot complete — state={_STARTUP.get('state')}", echo=True)
     else:
-        add_log("Startup restoration incomplete — scheduler stopped")
+        add_log(f"Startup restoration incomplete — scheduler stopped "
+                f"(state={_STARTUP.get('state')})", echo=True)
     app.run(host="0.0.0.0", port=PORT, debug=False, threaded=True)
 
 
