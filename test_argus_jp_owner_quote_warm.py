@@ -101,3 +101,30 @@ def test_scheduler_dispatches_the_warm_next_to_the_residency_tick():
     assert '"jp_owner_quote_warm"' in source
     assert "_jp_owner_quote_warm_tick" in source
     assert source.index("residency_ai_tick") < source.index("jp_owner_quote_warm")
+
+
+def test_public_watchlist_get_records_bounded_warm_hints_only(monkeypatch):
+    monkeypatch.setattr(scanner, "_JP_WARM_HINTS", {})
+    monkeypatch.setattr(scanner, "_JP_SEEN_SYMBOLS", {})
+    monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot",
+                        lambda symbols=None, **kw: {"status": "mock", "stocks": []})
+    with scanner.app.test_client() as client:
+        response = client.get("/api/argus/japan-watchlist?symbols=7203,6758,zz,285A,not-a-code")
+    assert response.status_code == 200
+    assert set(scanner._JP_WARM_HINTS) == {"7203", "6758", "285A"}
+    # The realtime push target set is untouched by public reads.
+    assert scanner._JP_SEEN_SYMBOLS == {}
+    assert scanner._recent_jp_watchlist_codes() == []
+    monkeypatch.setattr(scanner, "_layer2b_read_latest", lambda: None)
+    # 285A is curated (already warmed by collect) and is filtered out here.
+    assert scanner._owner_jp_symbols_for_warm() == ("6758", "7203")
+
+
+def test_warm_hints_are_capped_and_expire(monkeypatch):
+    monkeypatch.setattr(scanner, "_JP_WARM_HINTS", {})
+    scanner._note_jp_warm_hints([f"{1000 + i}" for i in range(scanner._JP_WARM_HINT_MAX + 25)])
+    assert len(scanner._JP_WARM_HINTS) == scanner._JP_WARM_HINT_MAX
+    scanner._JP_WARM_HINTS["1000"] = 1.0   # ancient
+    scanner._note_jp_warm_hints(["9432"])
+    assert "1000" not in scanner._JP_WARM_HINTS and "9432" in scanner._JP_WARM_HINTS
+    scanner._note_jp_warm_hints(None)      # never raises
