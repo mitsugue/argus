@@ -37,6 +37,8 @@ HISTORICAL_REPLACED_BLOBS = {
 REVIEWED_EXTENSION_BLOBS = {
     # the owner runbook
     'docs/ops/OWNER_RUNBOOK_JA.md': 'bc995fa70fec17d3c565533edc0c4bdda973622a',
+    # the startup log visibility
+    'test_argus_startup_visibility.py': '2f5ebb2e7909ff01b252280dddf56f089a8bc129',
     # the heavy tick serialization
     'test_argus_heavy_tick_serialization.py': '99355f4f3e5648df3487b4b26d3300dc3a11c92c',
     # the acceptance evidence churn diagnostic
