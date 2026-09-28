@@ -36,6 +36,25 @@ jobs:
             "https://argus-backend-3j2m.onrender.com/api/argus/admin/memory-attribution?threads=1&inventory=1")
           echo "http=$code"
           test "$code" = "200"
+      - name: Read the bridge coverage and the Twelve Data budget
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          # 2026-09-29: deciding whether Twelve Data can drop to the free plan
+          # needs the measured split between the moomoo bridge and Twelve Data,
+          # not an assumption. Counts and ages only; no symbol list, no secret.
+          for name in bridge-status twelvedata-budget; do
+            case "$name" in
+              bridge-status) path="/api/argus/bridge/status" ;;
+              twelvedata-budget) path="/api/argus/twelvedata-budget" ;;
+            esac
+            code=$(curl -sS -o "artifacts/runtime-diagnostics/$name.json" -w "%{http_code}" \
+              --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              "https://argus-backend-3j2m.onrender.com$path")
+            echo "$name http=$code"
+          done
+          echo "--- bridge status ---"; head -c 3000 artifacts/runtime-diagnostics/bridge-status.json; echo
+          echo "--- twelve data budget ---"; head -c 3000 artifacts/runtime-diagnostics/twelvedata-budget.json; echo
       - name: Summarise for the run page
         run: |
           python3 -B scripts/runtime_diagnostics_summary.py \
