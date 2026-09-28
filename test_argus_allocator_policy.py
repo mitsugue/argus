@@ -7,7 +7,9 @@ the scanner wiring — without touching a real allocator.
 """
 import inspect
 import json
+import time
 from collections import deque
+from typing import Any
 
 import pytest
 
@@ -131,14 +133,15 @@ def test_resident_inventory_reports_sizes_largest_first_without_values():
     }
     report = policy.resident_inventory(named)
     assert report["schemaVersion"] == policy.INVENTORY_SCHEMA_VERSION
-    assert [row["name"] for row in report["rows"]][:2] == ["_BIG", "_OBJ"] or \
-        [row["name"] for row in report["rows"]][0] == "_BIG"
+    assert [row["name"] for row in report["rows"]][0] == "_BIG"
     by_name = {row["name"]: row for row in report["rows"]}
     assert by_name["_BIG"]["length"] == 1 and by_name["_BIG"]["status"] == "MEASURED"
-    assert by_name["_BIG"]["serializedBytes"] == len(
-        json.dumps(named["_BIG"], ensure_ascii=False, separators=(",", ":")))
+    # Every element visited: the estimate tracks the real serialized size
+    # (JSON-byte units, within a few percent for string-heavy rows).
+    real = len(json.dumps(named["_BIG"], ensure_ascii=False, separators=(",", ":")))
+    assert abs(by_name["_BIG"]["serializedBytes"] - real) / real < 0.15
     assert by_name["_DEQUE"]["type"] == "deque"
-    assert by_name["_OBJ"]["status"] == "MEASURED"          # default() placeholder
+    assert by_name["_OBJ"]["status"] == "MEASURED"          # opaque leaf counted, never copied
     assert by_name["_MUTATING"]["status"] == "CONCURRENT_MUTATION"
     for row in report["rows"]:
         assert set(row) == {"name", "type", "length", "serializedBytes", "status"}
@@ -146,19 +149,35 @@ def test_resident_inventory_reports_sizes_largest_first_without_values():
     assert report["totalSerializedBytes"] >= by_name["_BIG"]["serializedBytes"]
 
 
-def test_resident_inventory_is_bounded_by_bytes_and_time():
-    huge = {"_HUGE": {"rows": list(range(50_000))}, "_TINY": [1]}
-    limited = policy.resident_inventory(huge, per_object_byte_budget=1024)
-    row = {r["name"]: r for r in limited["rows"]}["_HUGE"]
-    assert row["status"] == "TRUNCATED_BYTES" and 1024 < row["serializedBytes"] < 8192
-    # start, item A check, item B check (over budget), final elapsed.
+def test_resident_inventory_samples_long_containers_and_stays_fast():
+    rows = [{"id": i, "close": 100.0 + i, "date": "2026-09-28", "note": "x" * 40}
+            for i in range(50_000)]
+    huge = {"_LEDGER": {"observations": rows, "imports": list(range(3_000))},
+            "_TINY": [1]}
+    started = time.monotonic()
+    report = policy.resident_inventory(huge, sample=256)
+    elapsed = time.monotonic() - started
+    ledger = {r["name"]: r for r in report["rows"]}["_LEDGER"]
+    real = len(json.dumps(huge["_LEDGER"], separators=(",", ":")))
+    assert ledger["status"] == "ESTIMATED"
+    assert abs(ledger["serializedBytes"] - real) / real < 0.10
+    assert elapsed < 1.0, elapsed                     # sampling, not a full walk
+    # Time budget still guards the whole walk.
     clock = iter([0.0, 0.0, 100.0, 100.0, 100.0])
     timed = policy.resident_inventory(
         {"_A": [1], "_B": [2]}, total_time_budget_seconds=1.0,
         now=lambda: next(clock))
-    statuses = sorted(r["status"] for r in timed["rows"])
-    assert "SKIPPED_TIME" in statuses
+    assert "SKIPPED_TIME" in [r["status"] for r in timed["rows"]]
     assert policy.resident_inventory({}, limit=5)["rows"] == []
+
+
+def test_resident_inventory_depth_is_bounded():
+    nested: Any = "leaf"
+    for _ in range(40):
+        nested = [nested]
+    report = policy.resident_inventory({"_DEEP": nested})
+    assert report["rows"][0]["status"] == "MEASURED"
+    assert 0 < report["rows"][0]["serializedBytes"] < 2_000
 
 
 # ── scanner wiring ───────────────────────────────────────────────────────────

@@ -29,14 +29,16 @@ caller.
 """
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import sys
 import time
+from collections import deque
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
 
 SCHEMA_VERSION = "argus-allocator-policy-v1"
-INVENTORY_SCHEMA_VERSION = "argus-resident-inventory-v1"
+INVENTORY_SCHEMA_VERSION = "argus-resident-inventory-v2"
 
 # glibc mallopt parameter numbers (malloc.h).
 M_TRIM_THRESHOLD = -1
@@ -51,8 +53,7 @@ RECLAIM_MINIMUM_FREE_BYTES = 256 * 1024 * 1024
 RECLAIM_MINIMUM_INTERVAL_SECONDS = 300.0
 
 INVENTORY_DEFAULT_LIMIT = 48
-INVENTORY_PER_OBJECT_BYTE_BUDGET = 192 * 1024 * 1024
-INVENTORY_TOTAL_TIME_BUDGET_SECONDS = 8.0
+INVENTORY_TOTAL_TIME_BUDGET_SECONDS = 20.0
 
 
 def _int_env(env: Mapping[str, str], key: str, default: int,
@@ -176,37 +177,94 @@ class _Budget(Exception):
     pass
 
 
-def _serialized_size(value: Any, *, byte_budget: int, deadline: float
-                     ) -> Tuple[int, str]:
-    """Stream-encode ``value`` counting bytes; never materialize the text."""
-    encoder = json.JSONEncoder(
-        ensure_ascii=False, separators=(",", ":"), check_circular=True,
-        default=lambda other: f"<{type(other).__name__}>")
-    total = 0
-    checks = 0
-    for chunk in encoder.iterencode(value):
-        total += len(chunk)
-        checks += 1
-        if total > byte_budget:
-            return total, "TRUNCATED_BYTES"
-        if checks % 4096 == 0 and time.monotonic() > deadline:
-            return total, "TRUNCATED_TIME"
-    return total, "MEASURED"
+INVENTORY_SAMPLE = 256
+INVENTORY_MAX_DEPTH = 14
+_SCALAR_BYTES = {bool: 5, type(None): 4}
+
+
+def _estimate(value: Any, *, sample: int, depth: int, state: Dict[str, Any]
+              ) -> int:
+    """Serialized-size estimate in JSON-byte units without materializing text.
+
+    Containers longer than ``sample`` are sampled (first ``sample`` items for
+    mappings and unordered collections, evenly spaced items for sequences)
+    and scaled by their length; ``state["sampled"]`` records that the result
+    is an estimate.  Element values are only inspected for their type and
+    length, never copied.
+    """
+    if depth > INVENTORY_MAX_DEPTH:
+        state["truncatedDepth"] = True
+        return 64
+    if isinstance(value, str):
+        return len(value) + 2
+    if isinstance(value, (bool, type(None))):
+        return _SCALAR_BYTES[type(value)]
+    if isinstance(value, (int, float)):
+        return 8
+    if isinstance(value, (bytes, bytearray)):
+        return len(value) + 2
+    if isinstance(value, Mapping):
+        n = len(value)
+        if n == 0:
+            return 2
+        items = value.items()
+        if n > sample:
+            state["sampled"] = True
+            items = itertools.islice(items, sample)
+        total = 0
+        counted = 0
+        for key, item in items:
+            total += len(str(key)) + 4 + _estimate(
+                item, sample=sample, depth=depth + 1, state=state)
+            counted += 1
+        return int(total * (n / counted)) + 2 if counted else 2
+    if isinstance(value, (list, tuple)):
+        n = len(value)
+        if n == 0:
+            return 2
+        if n > sample:
+            state["sampled"] = True
+            step = n / sample
+            picked = (value[int(i * step)] for i in range(sample))
+            counted = sample
+        else:
+            picked = value
+            counted = n
+        total = sum(_estimate(item, sample=sample, depth=depth + 1, state=state)
+                    + 1 for item in picked)
+        return int(total * (n / counted)) + 2
+    if isinstance(value, (set, frozenset, deque)):
+        n = len(value)
+        if n == 0:
+            return 2
+        picked = value
+        counted = n
+        if n > sample:
+            state["sampled"] = True
+            picked = itertools.islice(value, sample)
+            counted = sample
+        total = sum(_estimate(item, sample=sample, depth=depth + 1, state=state)
+                    + 1 for item in picked)
+        return int(total * (n / counted)) + 2
+    state["opaque"] = True
+    return 16 + len(type(value).__name__)
 
 
 def resident_inventory(named: Mapping[str, Any], *,
                        limit: int = INVENTORY_DEFAULT_LIMIT,
-                       per_object_byte_budget: int =
-                       INVENTORY_PER_OBJECT_BYTE_BUDGET,
+                       sample: int = INVENTORY_SAMPLE,
                        total_time_budget_seconds: float =
                        INVENTORY_TOTAL_TIME_BUDGET_SECONDS,
                        now: Callable[[], float] = time.monotonic
                        ) -> Dict[str, Any]:
     """Serialized-size estimate per named container, largest first.
 
-    Rows carry ``name``, ``type``, ``length`` and ``serializedBytes`` only.
-    A container mutated concurrently is reported as ``CONCURRENT_MUTATION``
-    with whatever was counted before the mutation; the walk never retries.
+    Rows carry ``name``, ``type``, ``length``, ``serializedBytes`` and
+    ``status`` (``MEASURED`` when every element was visited, ``ESTIMATED``
+    when sampling scaled a long container, ``CONCURRENT_MUTATION`` when the
+    container changed underneath the walk, ``SKIPPED_TIME`` past the total
+    budget).  Sampling keeps each container to milliseconds, so a full
+    process inventory stays well under one second.
     """
     started = now()
     deadline = started + float(total_time_budget_seconds)
@@ -223,11 +281,11 @@ def resident_inventory(named: Mapping[str, Any], *,
             row["status"] = "SKIPPED_TIME"
             rows.append(row)
             continue
+        state: Dict[str, Any] = {}
         try:
-            size, status = _serialized_size(
-                value, byte_budget=per_object_byte_budget, deadline=deadline)
-            row["serializedBytes"] = size
-            row["status"] = status
+            row["serializedBytes"] = _estimate(
+                value, sample=max(8, int(sample)), depth=0, state=state)
+            row["status"] = "ESTIMATED" if state.get("sampled") else "MEASURED"
         except RuntimeError:
             row["status"] = "CONCURRENT_MUTATION"
         except (TypeError, ValueError, RecursionError) as exc:

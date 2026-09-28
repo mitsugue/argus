@@ -43,10 +43,14 @@ Flask threaded server each request thread may also acquire its own arena.
   report at least 256 MiB free-but-unreturned, at most once per five
   minutes, never while a mission tick owns the process. After a checkpoint
   save outside the tick the interval is skipped and the floor is 128 MiB.
-- `resident_inventory()` — streaming serialized-size estimate per
-  module-level container: name, type, length, byte count, status. Element
-  values are never copied into the result. Per-object and total time budgets
-  bound the walk; a concurrently mutated container is reported, not retried.
+- `resident_inventory()` — sampled serialized-size estimate per
+  module-level container: name, type, length, byte count, status. Containers
+  longer than 256 items are sampled and scaled (`ESTIMATED`), shorter ones
+  are fully visited (`MEASURED`), so a whole-process inventory of ~340
+  containers takes well under a second instead of the 8 s the first
+  streaming version needed for three (v13.7.56). Element values are never
+  copied into the result; a concurrently mutated container is reported, not
+  retried.
 
 `scanner.py` wires these in: `_allocator_reclaim(reason)` calls the existing
 `argus_checkpoint_v2._release_unused_allocator_memory` (the same
@@ -68,10 +72,13 @@ reset or downgraded.
 
 ## How to read the effect
 
-After deploy, dispatch `runtime-diagnostics`. Expect `allocatorReclaim.last`
-to show `rssReleasedBytes` in the hundreds of MiB to about 1.8 GiB on the
-first reclaim, `allocatorAfter.freeBytes` far below `allocatorBefore`, and
-the resident inventory to name the remaining largest containers. The next
+After deploy, dispatch `runtime-diagnostics`. First observation (v13.7.55,
+run 36417719767, 8 minutes after boot, before the first mission tick): the
+policy reported `APPLIED`, the free arena was 50 MB, so no reclaim was
+due — the fixed mmap threshold keeps generation-sized temporaries out of
+the arena in the first place. The meaningful reading is the one taken after
+a mission tick: `allocatorReclaim.last` (`rssReleasedBytes`,
+`allocatorBefore/After.freeBytes`) plus the tick's own RSS record. The next
 reduction step (moving generation out of the web process and serving
 verified snapshots from files) is sized from that inventory, not from
 estimates.
