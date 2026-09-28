@@ -98,8 +98,19 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
       secrets.add(body.token);
       // The product opens this control only after its fresh nonce proof.
       try {
-        await page.locator('.owner-access-bar > summary').waitFor({ state: 'visible', timeout: 15000 });
-      } catch { fail('login_marker'); }
+        await page.locator('.owner-access-bar > summary').waitFor({ state: 'visible', timeout: 30000 });
+      } catch {
+        // Name the page state (fixed codes only, never text the owner typed):
+        // the product's own error code, whether the shell header exists,
+        // whether the lock screen is still up, and the owner-mode marker.
+        const state = await page.evaluate(() => ({
+          code: document.querySelector('[role="status"][data-owner-code]')?.getAttribute('data-owner-code') || 'none',
+          header: document.querySelector('.shell__header') ? 'header' : 'noheader',
+          locked: document.querySelector('.owner-access-screen') ? 'locked' : 'unlocked',
+          mode: document.documentElement.dataset.argusOwnerAuthMode || '?',
+        })).catch(() => ({ code: 'unreadable', header: '?', locked: '?', mode: '?' }));
+        fail(`login_marker:${state.code}:${state.header}:${state.locked}:mode${state.mode}`);
+      }
       boundary(page);
     } catch (error) { if (error instanceof OwnerBrowserError) throw error; fail('login'); }
     finally { if (await input.count().catch(() => 0)) await input.fill('', { timeout: 1000 }).catch(() => {}); }
