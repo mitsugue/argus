@@ -39,8 +39,20 @@ export function OwnerAccess({ children }: { children: React.ReactNode }) {
     <button type="submit" disabled={busy || !online}>{recovery ? 'すべての端末を解除' : 'パスワードで開く'}</button>
   </form>;
   const status = <p role="status">{busy ? '確認しています…' : message}</p>;
+  // Signed-in mark (owner request 2026-09-28): a compact English badge in the
+  // header instead of a text menu. The <summary> stays the authenticated
+  // marker the owner-mode acceptance readers wait for and open.
   const controls = <details className={`owner-access-bar${header ? '' : ' owner-access-bar--standalone'}`}>
-    <summary>本人設定</summary>
+    <summary aria-label="Owner session" title={online ? 'Signed in · owner session' : 'Signed in · offline'}>
+      <span className="owner-mark" data-online={online ? '1' : '0'}>
+        <svg className="owner-mark__shield" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M8 1.5 3 3.4v3.9c0 3 2.1 5.6 5 6.7 2.9-1.1 5-3.7 5-6.7V3.4L8 1.5Z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+          <path d="m5.6 8 1.7 1.7 3.2-3.4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className="owner-mark__text">VERIFIED</span>
+        <span className="owner-mark__dot" aria-hidden="true" />
+      </span>
+    </summary>
     <section aria-label="本人確認" className="owner-access-panel">
       <button disabled={busy || !online} onClick={() => void run(() => useOwnerPasskey(true), 'この端末のパスキーを登録しました。')}>パスキーを登録</button>
       <button disabled={busy || !online} onClick={() => { setRecovery(!recovery); setPassword(''); }}>端末紛失・復旧</button>
