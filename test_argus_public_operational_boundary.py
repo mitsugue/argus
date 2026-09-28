@@ -3271,7 +3271,7 @@ def test_backend_restores_before_starting_scheduler(monkeypatch, restored_state,
     order = []
     monkeypatch.setattr(scanner, "_STARTUP", {"state": "bootstrapping"})
     monkeypatch.setattr(scanner, "_SERVER_RUNTIME", {})
-    monkeypatch.setattr(scanner, "add_log", lambda message: None)
+    monkeypatch.setattr(scanner, "add_log", lambda message, **options: None)
     def restore():
         order.append("restore")
         scanner._STARTUP["state"] = restored_state
