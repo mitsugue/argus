@@ -50,7 +50,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # the owner-mode machine readers and the post-merge 4 GiB gate
     '.github/workflows/smoke-test.yml': '98cf30aabc06648f15c4147199322f2db55b31a6',
     # the market store residency (v13.7.58 candidate)
-    'test_argus_market_store_residency.py': 'a670ece1ab99c60e20ed13ebbbd16842e744a129',
+    'test_argus_market_store_residency.py': '0461ce83cd33c82ea5e6cfd2fdfa49c55e3bbe3d',
     # the market store residency (v13.7.58 candidate)
     'test_argus_market_artifact_items.py': 'ebd38f5292c62b3c9533703f4c4b53c7667c9e68',
     # the market store residency (v13.7.58 candidate)
@@ -74,8 +74,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_market_artifact_store.py': 'f40832595d4028ad8f7ac0d844bf1f36eb8ea674',
     'argus_recovery_measurement.py': '11943e22628b0728e9fcb118c149593a53c48727',
     'argus_recovery_registry.py': '5c43767361e05b3dea99b02605920c5fc3e9608c',
-    'docs/MARKET_ARTIFACT_STORE.md': '56b6867b5118800a2001ba2f08d4a372764790f0',
-    'test_argus_market_artifact_split.py': 'ed45615526f57f365e7fffa3f81756389c3d030a',
+    'docs/MARKET_ARTIFACT_STORE.md': 'e2e994da953b12c42a95d67b4eaf9ab1a8c0b6aa',
+    'test_argus_market_artifact_split.py': '9331909fab52e479dc63f869aba531ba26825668',
     'test_argus_market_artifact_store.py': '3712644d21fcdf02fb167c4cdbaeaf34d5c0e806',
     'test_argus_memory_attribution.py': 'ea3fb2d514dea73bef7975f0f8b8a82d126103bd',
     'test_argus_recovery_measurement.py': 'b7beb4b6c1915ddb2cfab0857f31a82cc5c5c832',
