@@ -127,8 +127,36 @@ def _ledger_ref_response(sha="a" * 40):
     })
 
 
+_BACKGROUND_CHECKPOINT_THREADS = ("argus-cost-checkpoint", "argus-intel-collect",
+                                  "jp-owner-quote-warm")
+
+
+def drain_background_checkpoints(timeout_seconds: float = 30.0) -> None:
+    """Let any checkpoint-producing background thread from an earlier test finish.
+
+    A collect worker or the coalescing cost checkpoint thread started by a
+    previous test may still be running when the next persistence test takes
+    over the durable paths; its late ``_osint_persist()`` would then write a
+    second sidecar into the new root and break the exact reference-lifetime
+    and pair-verification contracts. Waiting is bounded and never raises.
+    """
+    import time as _time
+    deadline = _time.monotonic() + timeout_seconds
+    while _time.monotonic() < deadline:
+        busy = [t for t in threading.enumerate()
+                if t is not threading.current_thread() and t.is_alive()
+                and t.name in _BACKGROUND_CHECKPOINT_THREADS]
+        state = getattr(scanner, "_COST_CHECKPOINT_STATE", {}) or {}
+        if not busy and not state.get("running"):
+            return
+        for t in busy:
+            t.join(timeout=0.2)
+        _time.sleep(0.05)
+
+
 @contextlib.contextmanager
 def scanner_storage(root: str, *, production=True):
+    drain_background_checkpoints()
     saved = {
         "production": scanner._DURABILITY_PRODUCTION,
         "paths": scanner._DURABILITY_PATHS,
