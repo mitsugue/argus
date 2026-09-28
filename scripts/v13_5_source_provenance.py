@@ -36,7 +36,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
     # the heavy tick serialization
-    'test_argus_heavy_tick_serialization.py': '523d7dead05bc625a9f501b26eb0ae1e2be65305',
+    'test_argus_heavy_tick_serialization.py': '99355f4f3e5648df3487b4b26d3300dc3a11c92c',
     # the acceptance evidence churn diagnostic
     # the second store-residency slice
     'conftest.py': 'ce281bfb9b5914756ff4aa38f2257107bbcd491d',
