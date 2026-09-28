@@ -36,8 +36,6 @@ HISTORICAL_REPLACED_BLOBS = {
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
     # Today boot console (owner 2026-09-28): exact reviewed contents.
-    'web/dev-dist/sw.js': '2ab200e44d6d365e2896b2eaf6c9e78ba17bff7f',
-    'web/dev-dist/workbox-a6c00840.js': '0943c634ad16b674b025a44e247ecde827925e62',
     'web/scripts/boot-console.test.mjs': 'cae037912c0c77a062b47ac8028724216e46c20b',
     'web/src/components/today/BootConsole.css': 'b1a9d4e6ef94f7c38418503f62a9b8e857f918da',
     'web/src/components/today/BootConsole.tsx': '6f5e797d1f643a286954f4a926ca1b07b36a203c',
