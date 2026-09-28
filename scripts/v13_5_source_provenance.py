@@ -42,9 +42,9 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_render_deploy_diagnostics.py': 'ffbcdda6f9c27aabff883e93bf73b03d7be550b4',
     # Allocator policy / bounded reclaim / resident inventory (exact reviewed
     # contents; v13.7.56 candidate).
-    'argus_allocator_policy.py': 'a64b963053c7b47bf1c5d1c383df552bd06a926f',
-    'test_argus_allocator_policy.py': 'cfe02f6f8f6b846acac9dc6dafa6311728ea45c7',
-    'docs/ops/allocator-reclaim.md': 'af6aec98d35d40b50101459d99b1aa84af65b334',
+    'argus_allocator_policy.py': 'e1340450ff8f45360bf7a6bd49fbf1627495a3b5',
+    'test_argus_allocator_policy.py': '99382512b2b9fa6886e630d6d2a1a7a8cc871de5',
+    'docs/ops/allocator-reclaim.md': '9e457e39c6b6143a3351064efc1c500be00635b1',
     # Market ledger artifact split + resident JP quote warm (exact reviewed contents).
     'test_argus_jp_owner_quote_warm.py': 'b5a5af3b7b66aa4b3f29f14945a828ac4d614b1a',
     # Derived market artifacts outside the sealed checkpoint (exact reviewed
@@ -98,8 +98,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '79fa1e3335f85ff01fd538a40b6b1856eec33d79',
-    'web/scripts/pwa-identity.test.mjs': '6ed0a49d6b0240e969673bc2d32fe6be3dfbc9b0',
-    'web/scripts/owner-today-https.mjs': 'c515d55dc0d6064ab25d9d64f89dca1e06060c02',
+    'web/scripts/pwa-identity.test.mjs': '1d8c38456ca6c8d1ed64635c51474a05b5168a87',
+    'web/scripts/owner-today-https.mjs': '693ea869be68ea253078334aece876c06e5cc5e6',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
