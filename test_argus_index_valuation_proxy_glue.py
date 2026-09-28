@@ -141,3 +141,32 @@ def test_code_keys_fold_the_check_digit_and_keep_alphanumerics():
     assert scanner._nk225_code_key("285A0") == "285A"
     assert scanner._nk225_code_key("7203") == "7203"
     assert scanner._nk225_code_key(" 543a ") == "543A"
+
+
+def test_the_weight_file_is_found_by_path_by_name_or_by_default(lane, tmp_path, monkeypatch):
+    """A dashboard value may be a name rather than a mounted path; the lane
+    looks under the secret directory too, and with no variable tries Nikkei's
+    own download name there. The status says which form was found."""
+    secret_dir = tmp_path / "secrets"; secret_dir.mkdir()
+    monkeypatch.setattr(scanner, "_NK225_SECRET_DIR", str(secret_dir))
+    weight_path = os.environ[scanner._NK225_WEIGHT_CSV_ENV]
+    # bare name → secret dir
+    (secret_dir / "weights.csv").write_bytes(open(weight_path, "rb").read())
+    monkeypatch.setenv(scanner._NK225_WEIGHT_CSV_ENV, "weights.csv")
+    scanner._jp_index_proxy_warm(lane["rows"])
+    assert lane["state"]["status"] == "AVAILABLE"
+    assert lane["state"]["weightFileFound"] == "configured_name_in_secret_dir"
+    # no variable → default name in secret dir
+    (secret_dir / scanner._NK225_WEIGHT_DEFAULT_NAME).write_bytes(open(weight_path, "rb").read())
+    monkeypatch.delenv(scanner._NK225_WEIGHT_CSV_ENV)
+    lane["state"]["history"].clear()
+    scanner._jp_index_proxy_warm(lane["rows"])
+    assert lane["state"]["weightFileFound"] == "default_name_in_secret_dir"
+    # a variable pointing nowhere, with no default, is still unreadable, not silent
+    monkeypatch.setenv(scanner._NK225_WEIGHT_CSV_ENV, str(tmp_path / "missing.csv"))
+    (secret_dir / scanner._NK225_WEIGHT_DEFAULT_NAME).unlink()
+    scanner._jp_index_proxy_warm(lane["rows"])
+    assert lane["state"]["status"] == "NOT_CONFIGURED"
+    assert lane["state"]["lastErrorReason"] == "weight_file_unreadable"
+    public = scanner._jp_index_proxy_public()
+    assert "secrets" not in json.dumps(public) and "missing.csv" not in json.dumps(public)
