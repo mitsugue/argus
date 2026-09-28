@@ -13,6 +13,15 @@ from typing import Any, Mapping, Sequence
 from jp_market_engine import _instant
 
 VALUATION_BASIS = "NIKKEI_225_INDEX_BASED_PER"
+#: The ARGUS reconstruction from constituent forecast EPS (argus_index_valuation_proxy).
+#: It is accepted by the same scale so the chart can be translated into yen, and
+#: it keeps its own basis so nothing downstream can present it as the official figure.
+PROXY_BASIS = "ARGUS_PROXY_INDEX_BASED_PER"
+ACCEPTED_BASES = (VALUATION_BASIS, PROXY_BASIS)
+BASIS_LABEL_JA = {
+    VALUATION_BASIS: "公式の指数ベースPER（日経平均プロフィル日次サマリー）",
+    PROXY_BASIS: "ARGUS代理値（構成銘柄の予想EPSから再構成。公式の指数ベースPERではありません）",
+}
 METHOD = "jp-index-analog-median-research-v2-history-coverage"
 
 
@@ -41,8 +50,9 @@ def index_valuation_scale(valuation: Mapping[str, Any] | None, *, cutoff: str,
               "eps": None, "per": None, "anchorPrice": None}
     if not valuation:
         return result
-    if valuation.get("instrumentId") != "NIKKEI_225_INDEX" or valuation.get("basis") != VALUATION_BASIS:
+    if valuation.get("instrumentId") != "NIKKEI_225_INDEX" or valuation.get("basis") not in ACCEPTED_BASES:
         return {**result, "reason": "incompatible_index_valuation_definition"}
+    basis = valuation["basis"]
     if valuation.get("currency") != "JPY" or valuation.get("date") != anchor_date:
         return {**result, "reason": "incompatible_valuation_currency_or_session"}
     limit = _instant(cutoff)
@@ -63,7 +73,11 @@ def index_valuation_scale(valuation: Mapping[str, Any] | None, *, cutoff: str,
         return {**result, "reason": "invalid_derived_index_eps"}
     return {**result, "status": "AVAILABLE", "reason": None,
             "eps": eps, "per": per, "anchorPrice": anchor, "date": anchor_date,
-            "basis": VALUATION_BASIS, "sourceRef": valuation["sourceRef"],
+            "basis": basis, "basisLabelJa": BASIS_LABEL_JA[basis],
+            "isProxy": basis == PROXY_BASIS,
+            "proxyErrorPct": valuation.get("officialErrorPct") if basis == PROXY_BASIS else None,
+            "proxyCoverage": valuation.get("coverage") if basis == PROXY_BASIS else None,
+            "sourceRef": valuation["sourceRef"],
             "epsKind": valuation.get("epsKind", "DERIVED_FROM_INDEX_CLOSE_AND_INDEX_BASED_PER"),
             "publishedAt": valuation.get("publishedAt"),
             "sourceResponseSha256": valuation.get("sourceResponseSha256"),
@@ -77,7 +91,7 @@ def index_valuation_scale(valuation: Mapping[str, Any] | None, *, cutoff: str,
 
 
 def convert_shape_to_yen(points: Sequence[Mapping[str, Any]], *, scale: Mapping[str, Any]) -> list[dict[str, Any]]:
-    if scale.get("status") != "AVAILABLE" or scale.get("basis") != VALUATION_BASIS:
+    if scale.get("status") != "AVAILABLE" or scale.get("basis") not in ACCEPTED_BASES:
         return []
     eps, per = _finite(scale.get("eps")), _finite(scale.get("per"))
     if eps is None or per is None or min(eps, per) <= 0:
@@ -91,7 +105,7 @@ def convert_shape_to_yen(points: Sequence[Mapping[str, Any]], *, scale: Mapping[
         if not math.isfinite(price):
             raise ValueError("price_conversion_overflow")
         converted.append({**dict(row), "shapeValue": value, "value": price,
-                          "unit": "JPY_INDEX_POINTS"})
+                          "unit": "JPY_INDEX_POINTS", "scaleBasis": scale.get("basis")})
     return converted
 
 
