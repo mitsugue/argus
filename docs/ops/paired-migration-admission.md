@@ -43,3 +43,34 @@ Recoveryの証明にはProduct証明も必要であることを明記する。
 候補の新規・改訂拡張ファイルは取得元検証の個別blobに固定する。未指定の差分や別ツリーは拒否する。
 13.5.66の識別を維持する今回の段階配信は、13.6完成の宣言や13.6への版上げを承認するものではない。
 版上げ時はその候補の仕様・検証・証明を別に更新する。名称・保存・売買権限の要件は維持する。
+
+## Re-pinning after a rebase (v13.7.61)
+
+A Recovery pin digests `git diff base..head` patch bytes, so it moves when mainline
+edits a file inside the pinned scope. A rebase onto a moved main then needs a new
+pin, and that is correct: the candidate really is a different change, so the proof
+has to be re-established rather than assumed.
+
+Measured, a rebase onto mainline commits that touch nothing in the pinned scope
+leaves the digest byte-identical. Only same-scope movement moves it, and in that
+case the resulting file content differs too — so a content-addressed pin would
+have to be re-established just the same. There is no representation of the change
+that is both rebase-stable and as strict, short of pinning only added and removed
+lines without their positions, which is strictly weaker. The pin stays as it is.
+
+What changed is who does the arithmetic:
+
+```bash
+python3 scripts/repin_recovery_admission.py --expect RECOVERY_ONLY
+python3 scripts/repin_recovery_admission.py --expect PRODUCT_AND_RECOVERY --apply
+```
+
+Without `--apply` it reports; with `--apply` it rewrites only the named constants,
+re-loads the file it just wrote, re-runs the classifier against it, and rolls the
+edit back unless the result is exactly the classification given in `--expect`.
+
+The declaration is mandatory on purpose. A candidate that has quietly grown a
+product path, lost its payload path, or turned into the one-time dual-scope route
+is refused rather than pinned, because deciding what a change IS remains a human
+act. For the same reason the script never commits and appears in no workflow: a
+proof that re-pins itself on the way in proves nothing.
