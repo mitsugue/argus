@@ -244,11 +244,15 @@ def test_direct_workflow_ntfy_inventory_is_non_security_only():
 def test_notification_workflow_consolidation_preserves_schedule_semantics():
     workflows = Path(".github/workflows")
     files = sorted(workflows.glob("*.yml"))
-    # 27 = the 25 consolidated notification-era workflows plus the v13.5.3
-    # news-intake-ops manual dispatch (owner-only reprocess/health) plus the
+    # 31 = the consolidated notification-era workflows plus the v13.5.3
+    # news-intake-ops manual dispatch (owner-only reprocess/health), the
     # v13.5.61 runtime-diagnostics manual dispatch (owner-only thread/memory
-    # snapshot; no schedule, no notification).
-    assert len(files) == 30
+    # snapshot) and the v13.7.55 render-deploy-diagnostics manual dispatch
+    # (read-only deploy list + failed build log; no schedule, no notification).
+    assert len(files) == 31
+    render = (workflows / "render-deploy-diagnostics.yml").read_text(encoding="utf-8")
+    assert "- cron:" not in render and "ntfy.sh" not in render
+    assert "workflow_dispatch" in render and "render_deploy_diagnostics.py" in render
     naming = (workflows / "product-naming.yml").read_text(encoding="utf-8")
     assert "- cron:" not in naming and "ntfy.sh" not in naming
     assert "product_naming_guard.py" in naming

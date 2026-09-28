@@ -1,16 +1,28 @@
-anthropic
-openai
-requests
-python-dotenv
-pytz
-flask
-flask-cors
-json-repair
-google-genai
+# Pinned 2026-09-28 (v13.7.55).  The Render builds for e2b775e0 failed with
+# pip "ResolutionImpossible" because pip timed out five times fetching the
+# PyPI index page for python-dateutil (network, not a dependency conflict; the
+# same file resolved on GitHub CI and locally at the same hour).  Exact pins
+# keep every fresh build on the set the tests run against and stop the
+# resolver from backtracking through pandas/numpy candidates when an index
+# page is slow.  Bump deliberately, never by drift.
+anthropic==1.8.0
+openai==3.19.2
+requests==2.34.2
+python-dotenv==1.2.3
+pytz==2026.4
+flask==3.1.3
+flask-cors==6.0.5
+json-repair==0.63.5
+google-genai==2.25.0
 jquants-api-client==2.3.0
-moomoo-api
-xlrd
+moomoo-api==10.11.7108
+xlrd==2.0.2
 gunicorn==23.0.0
 cryptography==49.0.0
 pywebpush==2.3.0
 webauthn==2.7.1
+# transitive guards (resolver anchors)
+pandas==2.3.3
+numpy==2.5.3
+python-dateutil==2.9.0.post0
+tenacity==8.5.0
