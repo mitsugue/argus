@@ -3,6 +3,41 @@ name: checkpoint-v2-gate
 on:
   pull_request:
     branches: [main]
+    # The 4 GiB cgroup, mapping-attribution and isolated-writer closures take
+    # 45-60 minutes and prove the BACKEND process. Run them only when a
+    # backend-sensitive path changes (the same allowlist Render deploys on,
+    # plus the checkpoint-v2 probes and this workflow). Frontend-only and
+    # documentation candidates keep the ordinary ci / release-gate /
+    # market-public-acceptance checks; none of those consume this
+    # workflow's artifacts.
+    paths:
+      - scanner.py
+      - wsgi.py
+      - "argus_*.py"
+      - "jp_market_*.py"
+      - "ops/calendar/jp_index_sq_*.json"
+      - scripts/analysis_migration_restore.py
+      - scripts/migrate_analysis_names.py
+      - "bridge/**"
+      - scripts/argus_mission_tick.py
+      - scripts/caos_watchtower_worker.py
+      - scripts/run_foundation_job.py
+      - "scripts/checkpoint_v2_*.py"
+      - scripts/normalized_hash_resource_probe.py
+      - scripts/deep_memory_attribution_probe.py
+      - requirements.txt
+      - Procfile
+      - gunicorn.conf.py
+      - backend-version.json
+      - product-version.json
+      - entity_profiles_seed.json
+      - "web/src/types/**"
+      - "test_argus_checkpoint_*.py"
+      - test_argus_persistent_mission_storage.py
+      - test_argus_mapping_attribution.py
+      - test_argus_memory_attribution.py
+      - "test_remote_recovery_*.py"
+      - .github/workflows/checkpoint-v2-gate.yml
   push:
     branches: [codex/checkpoint-v2-architecture, "codex/recovery-*"]
 
