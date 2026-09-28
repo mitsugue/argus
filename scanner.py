@@ -20990,6 +20990,8 @@ def _market_artifact_method_version(name):
             return argus_today_intelligence.METHOD_VERSION
         if name == "marketReplay":
             return argus_market_replay.METHOD_VERSION
+        if name == "marketLedger":
+            return getattr(argus_market_ledger, "METHOD_VERSION", None)
     except Exception:
         return None
     return None
@@ -21050,6 +21052,12 @@ def _merge_restored_market_artifact(name, payload):
     """
     if not isinstance(payload, dict):
         return False
+    if name == "marketLedger":
+        _restored_ml = argus_market_ledger.merge_restored_state(
+            _MARKET_LEDGER, payload)
+        _MARKET_LEDGER.clear()
+        _MARKET_LEDGER.update(_restored_ml)
+        return True
     if name == "chartIntelligence":
         _restored_ci = argus_chart_intelligence.normalize_state(payload)
         # Phase 2 history is append-only.  A restored copy can only add
@@ -24797,12 +24805,15 @@ def _osint_persist_locked():
             "wholeStateRepresentations": 5,
         })
 
-        blob["marketLedger"] = _memory_operation_run(
+        _ml_normalized = _memory_operation_run(
             "internal", "source.market_ledger.normalize",
             argus_market_ledger.normalize_state, _MARKET_LEDGER)
         blob["marketLedgerStateHash"] = _memory_operation_run(
             "internal", "source.market_ledger.hash_with_transient_normalize",
             argus_market_ledger.state_hash, _MARKET_LEDGER)
+        _market_artifact_persist(
+            "marketLedger", _ml_normalized, blob["marketLedgerStateHash"])
+        del _ml_normalized
         _memory_attribution_source_capture("S4", "market_ledger_normalize_hash", {
             "topLevelKeys": len(blob),
             "retainedNormalizedStateCount": 5,
@@ -28764,15 +28775,10 @@ def _osint_restore_once():
             _cost_policy_restore_durable()
         except Exception:
             pass
-        _ml = blob.get("marketLedger")
-        if isinstance(_ml, dict):
-            _restored_ml = argus_market_ledger.merge_restored_state(
-                _MARKET_LEDGER, _ml)
-            _MARKET_LEDGER.clear()
-            _MARKET_LEDGER.update(_restored_ml)
-        # Derived market artifacts: legacy checkpoints still carry them inline;
-        # current checkpoints keep them in hash-gated files.  Both are merged
-        # through the same monotonic/append-only merges.
+        # Market ledger and derived artifacts: legacy checkpoints and the
+        # Remote Journal projection still carry them inline; current
+        # checkpoints keep them in hash-gated files.  Both are merged through
+        # the same monotonic/append-only merges.
         for _artifact_name in argus_market_artifact_store.ARTIFACTS:
             _artifact_blob = blob.get(_artifact_name)
             if isinstance(_artifact_blob, dict):

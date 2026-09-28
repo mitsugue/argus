@@ -1,8 +1,9 @@
 """Durable per-artifact files for rebuildable market state.
 
-The derived market artifacts (chart intelligence, today intelligence, market
-replay, verified view snapshots, asset chart reports) are deterministic
-outputs of the market ledger and provider history.  They used to travel
+The market ledger and the derived market artifacts (chart intelligence, today
+intelligence, market replay, verified view snapshots, asset chart reports)
+are the large market-state sections of the operational checkpoint; the
+derived ones are deterministic outputs of the ledger and provider history.  They used to travel
 inside the sealed operational checkpoint, which made every 30-minute save
 re-serialize, re-hash, encrypt-verify and re-install roughly 110 MB of
 presentation cache that had usually not changed.
@@ -25,16 +26,23 @@ from typing import Any, Callable, Dict, Mapping, Optional
 SCHEMA = "argus-market-artifact-v1"
 DIRECTORY = "argus_market_artifacts"
 ARTIFACTS = (
+    "marketLedger",
     "chartIntelligence",
     "todayIntelligence",
     "marketReplay",
     "verifiedViewSnapshots",
     "assetChartReports",
 )
+# marketLedger holds owner-imported observations (not regenerable from a
+# provider), so it stays in the Remote Journal projection for off-disk
+# recovery even though it no longer rides in the sealed local checkpoint.
+REMOTE_PROJECTED = frozenset({"marketLedger"})
 # Generous per-file ceilings sized from the 2026-09-28 production projection
-# (verifiedViewSnapshots 48.5 MB, assetChartReports 23.8 MB, chartIntelligence
-# 18.9 MB, todayIntelligence 15.1 MB, marketReplay 5.3 MB) plus headroom.
+# (verifiedViewSnapshots 48.5 MB, marketLedger 34.3 MB, assetChartReports
+# 23.8 MB, chartIntelligence 18.9 MB, todayIntelligence 15.1 MB, marketReplay
+# 5.3 MB) plus headroom.
 MAX_BYTES = {
+    "marketLedger": 128 * 1024 * 1024,
     "chartIntelligence": 48 * 1024 * 1024,
     "todayIntelligence": 48 * 1024 * 1024,
     "marketReplay": 24 * 1024 * 1024,

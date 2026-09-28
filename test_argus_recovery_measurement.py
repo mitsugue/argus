@@ -43,7 +43,7 @@ def _populated():
         "checkpoint-sample-0001", observed_at=START, success=True,
         detailed=True, detail_reason="JP_SESSION_BOUNDARY",
         checkpoint_serialized_bytes=10_000,
-        section_serialized_bytes={"marketLedger": 2000, "missions": 500},
+        section_serialized_bytes={"opsJournal": 2000, "missions": 500},
         serialization_duration_micros=1000,
         section_accounting_duration_micros=1200,
         write_seal_duration_micros=1400,
@@ -77,7 +77,7 @@ def test_schema_identity_budget_and_non_authoritative_contract_are_explicit():
     assert measurement.MAX_DAILY_DISTRIBUTIONS == 32
     assert measurement.MAX_MUTATION_CLASSES == len(registry.mutations()) == 27
     assert measurement.MAX_CHECKPOINT_SECTION_KEYS == \
-        len(registry.registered_checkpoint_keys()) == 44
+        len(registry.registered_checkpoint_keys()) == 43
 
 
 def test_recording_api_is_metadata_only_and_never_accepts_payload_or_error():
@@ -131,7 +131,7 @@ def test_recording_api_is_metadata_only_and_never_accepts_payload_or_error():
     ("aggregate_relationship", lambda value: value[
         "aggregateCounters"].__setitem__("retainedMutationCount", 99)),
     ("checkpoint_sections", lambda value: value["checkpointSamples"][0][
-        "sectionSerializedBytes"].__setitem__("marketLedger", 20_000)),
+        "sectionSerializedBytes"].__setitem__("opsJournal", 20_000)),
     ("false_remote_authority", lambda value: value["checkpointSamples"][0].
         __setitem__("legacyRemoteAckIsExactWalDurability", True)),
     ("sequence_scalar", lambda value: value["recentMutations"][0].__setitem__(
@@ -301,7 +301,7 @@ def test_checkpoint_sampling_policy_is_pure_bounded_and_not_a_cadence_choice():
 def test_streaming_size_accounting_is_exact_bounded_and_source_unchanged():
     checkpoint = {
         "schemaVersion": "argus-durable-v3",
-        "marketLedger": [{"id": index, "value": f"unique-{index}-日本語"}
+        "opsJournal": [{"id": index, "value": f"unique-{index}-日本語"}
                          for index in range(100)],
         "missions": {"open": [1, 2, 3], "closed": []},
         "termOverlay": {"private": "counted-not-returned"},
@@ -316,8 +316,8 @@ def test_streaming_size_accounting_is_exact_bounded_and_source_unchanged():
     assert max(map(len, chunks)) <= 97
     accounting = measurement.streaming_checkpoint_accounting(checkpoint)
     assert accounting.total_serialized_bytes == len(canonical)
-    assert accounting.registered_section_bytes["marketLedger"] == len(
-        json.dumps(checkpoint["marketLedger"], ensure_ascii=False,
+    assert accounting.registered_section_bytes["opsJournal"] == len(
+        json.dumps(checkpoint["opsJournal"], ensure_ascii=False,
                    sort_keys=True, separators=(",", ":")).encode("utf-8"))
     assert accounting.full_size_buffers == 0
     assert accounting.output_chunk_limit_bytes <= 1024 * 1024
@@ -387,7 +387,7 @@ import argus_recovery_measurement as m
 a=m.new_artifact(measurement_generation_id='measurement-generation-0001',producer_build_sha='a'*40,instrumentation_coverage_sha256='b'*64,created_at=dt.datetime(2026,8,15,tzinfo=dt.timezone.utc))
 x=m.MeasurementAccumulator(a)
 x.record_mutation('core.batch_cursor',estimated_plaintext_bytes=42,record_count=2,latency_micros=750,success=True,coverage_classification='OBSERVED_UNDURABLE',observed_at=dt.datetime(2026,8,15,tzinfo=dt.timezone.utc),local_sequence=7)
-x.record_checkpoint('checkpoint-sample-0001',observed_at=dt.datetime(2026,8,15,tzinfo=dt.timezone.utc),success=True,detailed=True,detail_reason='JP_SESSION_BOUNDARY',checkpoint_serialized_bytes=10000,section_serialized_bytes={'marketLedger':2000,'missions':500},serialization_duration_micros=1000,section_accounting_duration_micros=1200,write_seal_duration_micros=1400,fsync_readback_duration_micros=1600,peak_rss_bytes=20000000,local_wal_bytes=123,local_wal_records=4,local_wal_high_water=7,legacy_remote_ack_sequence=6,legacy_remote_ack_at=dt.datetime(2026,8,15,tzinfo=dt.timezone.utc))
+x.record_checkpoint('checkpoint-sample-0001',observed_at=dt.datetime(2026,8,15,tzinfo=dt.timezone.utc),success=True,detailed=True,detail_reason='JP_SESSION_BOUNDARY',checkpoint_serialized_bytes=10000,section_serialized_bytes={'opsJournal':2000,'missions':500},serialization_duration_micros=1000,section_accounting_duration_micros=1200,write_seal_duration_micros=1400,fsync_readback_duration_micros=1600,peak_rss_bytes=20000000,local_wal_bytes=123,local_wal_records=4,local_wal_high_water=7,legacy_remote_ack_sequence=6,legacy_remote_ack_at=dt.datetime(2026,8,15,tzinfo=dt.timezone.utc))
 print(hashlib.sha256(m.canonical_artifact_bytes(a)).hexdigest())
 """
     for seed in ("0", "1", "42", "random"):

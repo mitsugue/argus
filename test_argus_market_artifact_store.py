@@ -44,7 +44,7 @@ def test_envelope_is_exact_and_payload_hash_bound():
 
 @pytest.mark.parametrize("mutate,code", [
     (lambda d: d.update(schemaVersion="x"), "market_artifact_schema_mismatch"),
-    (lambda d: d.update(artifact="marketLedger"), "market_artifact_name_mismatch"),
+    (lambda d: d.update(artifact="opsJournal"), "market_artifact_name_mismatch"),
     (lambda d: d.update(stateHash="zz"), "market_artifact_state_hash_invalid"),
     (lambda d: d.update(writtenAt="yesterday"), "market_artifact_written_at_invalid"),
     (lambda d: d.update(payload=[]), "market_artifact_payload_invalid"),
@@ -60,7 +60,7 @@ def test_verify_rejects_every_tampered_field(mutate, code):
 
 def test_unknown_artifact_name_is_rejected():
     with pytest.raises(store.ArtifactError, match="^market_artifact_unknown$"):
-        store.path_for("/tmp", "marketLedger")
+        store.path_for("/tmp", "opsJournal")
     with pytest.raises(store.ArtifactError, match="^market_artifact_unknown$"):
         store.envelope("secrets", {}, state_hash=HASH_A, written_at=AT)
 
