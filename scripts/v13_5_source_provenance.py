@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.58"
+PRODUCT_VERSION = "v13.7.59"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -41,9 +41,9 @@ REVIEWED_EXTENSION_BLOBS = {
     # the second store-residency slice
     'conftest.py': 'ce281bfb9b5914756ff4aa38f2257107bbcd491d',
     # the Settings identity card (v13.7.57)
-    # the Settings identity card (v13.7.58)
+    # the Settings identity card (v13.7.59)
     'web/src/components/settings/OwnerIdentityPanel.tsx': '2289fa6d7fbdae74e8599cda85d3a1751f1928b2',
-    # the Settings identity card (v13.7.58)
+    # the Settings identity card (v13.7.59)
     'web/src/components/settings/OwnerIdentityPanel.css': '51affd51093aaac1aaa364aebe0d201629db0877',
     # Pinned backend requirements + full Python patch version (v13.7.57).
     # Read-only Render deploy diagnostics (exact reviewed contents; v13.7.57).
@@ -51,21 +51,21 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/ARGUS_CHECKPOINT_V2_RSS_RETENTION_REPORT.md': 'de1dcfe52957ef040bc7a12e22a076e6819843ff',
     # the owner-mode machine readers and the post-merge 4 GiB gate
     '.github/workflows/smoke-test.yml': '98cf30aabc06648f15c4147199322f2db55b31a6',
-    # the market store residency (v13.7.58 candidate)
+    # the market store residency (v13.7.59 candidate)
     'test_argus_market_store_residency.py': '0461ce83cd33c82ea5e6cfd2fdfa49c55e3bbe3d',
-    # the market store residency (v13.7.58 candidate)
+    # the market store residency (v13.7.59 candidate)
     'test_argus_market_artifact_items.py': 'ebd38f5292c62b3c9533703f4c4b53c7667c9e68',
-    # the market store residency (v13.7.58 candidate)
+    # the market store residency (v13.7.59 candidate)
     'argus_market_artifact_items.py': 'e51801f916baec559ddfdd50b2d43bd9fca44247',
     # Pinned backend requirements + full Python patch version (v13.7.56).
     # Read-only Render deploy diagnostics (exact reviewed contents; v13.7.56).
-    # Pinned backend requirements + full Python patch version (v13.7.58).
-    # Read-only Render deploy diagnostics (exact reviewed contents; v13.7.58).
+    # Pinned backend requirements + full Python patch version (v13.7.59).
+    # Read-only Render deploy diagnostics (exact reviewed contents; v13.7.59).
     '.github/workflows/render-deploy-diagnostics.yml': 'd59bd1806c81ee24f67cc545effb86295a428b6d',
     'scripts/render_deploy_diagnostics.py': '232e235b15057b52754899eace7f847e54fd4344',
     'test_render_deploy_diagnostics.py': 'ffbcdda6f9c27aabff883e93bf73b03d7be550b4',
     # Allocator policy / bounded reclaim / resident inventory (exact reviewed
-    # contents; v13.7.58 candidate).
+    # contents; v13.7.59 candidate).
     'argus_allocator_policy.py': 'e1340450ff8f45360bf7a6bd49fbf1627495a3b5',
     'test_argus_allocator_policy.py': '99382512b2b9fa6886e630d6d2a1a7a8cc871de5',
     'docs/ops/allocator-reclaim.md': '9e457e39c6b6143a3351064efc1c500be00635b1',
