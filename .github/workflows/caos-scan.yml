@@ -278,7 +278,10 @@ jobs:
           cp scripts/workflow_http.py "$RUNNER_TEMP/workflow_http.py"
           cp scripts/remote_receipt_drain.py \
             "$RUNNER_TEMP/remote_receipt_drain.py"
+          # 2026-09-28: owner authentication gates this read; the step's
+          # operational token passes the gate and is never logged.
           curl --fail --silent --show-error --max-time 60 \
+            -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
             "$BE/api/argus/news/ja-cache-snapshot" \
             -o "$RUNNER_TEMP/news-ja.json"
           NEWS_JA_COUNT=$(python3 -c \
