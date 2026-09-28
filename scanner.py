@@ -47269,9 +47269,29 @@ def run_scheduler():
             add_log(f"td-warm tick error: {type(e).__name__}")
         time.sleep(30)
 
+def _startup_rss_mib():
+    """Resident MiB now, or None where the kernel does not report it.
+
+    Used only for the two startup lines below. A measurement that cannot be
+    taken is reported as unknown rather than guessed.
+    """
+    try:
+        value = argus_memory_attribution.process_metrics().get("vmRssBytes")
+        return int(value) // (1024 * 1024) if isinstance(value, int) else None
+    except Exception:                          # pragma: no cover - defensive
+        return None
+
+
 def _run_backend_server():
+    # 2026-09-29: deciding whether this service fits a 2 GiB plan needs the
+    # split between what the interpreter and its libraries cost before any
+    # ARGUS data exists, and what restoring that data adds. Both numbers are
+    # taken here, around the one call that does the restore, because no later
+    # sample can separate them again.
+    _rss_before_restore = _startup_rss_mib()
     add_log(f"🚀 ARGUS backend {_semantic_app_version()} "
-            f"build={(_backend_exact_sha() or '')[:8] or 'unknown'}", echo=True)
+            f"build={(_backend_exact_sha() or '')[:8] or 'unknown'} "
+            f"rss={_rss_before_restore}MiB", echo=True)
     # Fixed mmap threshold / arena cap before the restore parses the
     # checkpoint; generation-sized temporaries are then mapped and unmapped
     # individually instead of fragmenting the brk heap.
@@ -47287,7 +47307,13 @@ def _run_backend_server():
             target=_memory_operation_run,
             args=("scheduler", "scheduler_loop", run_scheduler),
             daemon=True).start()
-        add_log(f"🟢 Boot complete — state={_STARTUP.get('state')}", echo=True)
+        _rss_after_restore = _startup_rss_mib()
+        _restore_delta = (None if _rss_after_restore is None
+                         or _rss_before_restore is None
+                         else _rss_after_restore - _rss_before_restore)
+        add_log(f"🟢 Boot complete — state={_STARTUP.get('state')} "
+                f"rss={_rss_after_restore}MiB restore={_restore_delta}MiB",
+                echo=True)
     else:
         add_log(f"Startup restoration incomplete — scheduler stopped "
                 f"(state={_STARTUP.get('state')})", echo=True)
