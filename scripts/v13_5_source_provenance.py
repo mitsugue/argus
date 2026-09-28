@@ -195,8 +195,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_v12_3_1.py': 'c26d3849a5c7219d537c1cdd8a3484c5087e4da1',
     'web/src/components/dashboard/SystemHealthPopover.tsx': '3893f26c3bef9812d841600832a96193231000ed',
     'web/src/routes/DataQualityPage.tsx': 'c86b933832c2e50f3d694f4ca1ac79428096fe55',
-    'web/src/components/common/TriangleStepLoader.tsx': '218b53b03160f619d00d3e6c3b2eec90fe7922c6',
-    'web/src/components/common/TriangleStepLoader.css': '189ca3825669144c1ecec4248f9cc72376d77387',
+    'web/src/components/common/TriangleStepLoader.tsx': '3408e291f4bf3cd0e357515ce89388da58352e9b',
+    'web/src/components/common/TriangleStepLoader.css': '055ab6673461550f1cc0f38577da9e261a4bc647',
     'web/src/i18n/index.ts': '933221ee4ca1f3adccdb8ebf5c950419fe7ce019',
     # Owner-authorized v13.6.1 prediction-ledger continuity regression proof.
     'test_prediction_ledger_workflow.py': 'c56ab18cdedbf04fd37c7362209172fe92e409cf',
