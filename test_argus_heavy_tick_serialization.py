@@ -32,7 +32,56 @@ def _reset_heavy_tick_state():
             scanner._HEAVY_TICK_LOCK.release()
 
 
-def test_a_second_heavy_tick_is_skipped_while_one_runs(monkeypatch):
+def test_a_five_minute_tick_waits_for_the_slot_instead_of_starving(monkeypatch):
+    """The JP owner warm is spawned beside the AI tick every five minutes.
+
+    Losing that race must not cost it the whole window: it keeps the owner's
+    Watchlist prices current, so it waits for the slot.
+    """
+    monkeypatch.setitem(scanner._MISSION_TICK_CONTEXT, "active", False)
+    monkeypatch.setitem(scanner._HEAVY_TICK_WAIT_SECONDS, "jp_owner_quote_warm", 5.0)
+    order = []
+    entered = threading.Event()
+
+    def first():
+        entered.set()
+        time.sleep(0.3)
+        order.append("ai")
+
+    thread = threading.Thread(
+        target=scanner._heavy_tick, args=("residency_ai_tick", first))
+    thread.start()
+    assert entered.wait(5)
+    scanner._heavy_tick("jp_owner_quote_warm", lambda: order.append("warm"))
+    thread.join(5)
+    assert order == ["ai", "warm"]
+    assert scanner._HEAVY_TICK_STATE["ranCount"] == 2
+    assert scanner._HEAVY_TICK_STATE["skippedCount"] == 0
+
+
+def test_a_waiting_tick_yields_to_a_mission_tick_that_started_meanwhile(monkeypatch):
+    monkeypatch.setitem(scanner._MISSION_TICK_CONTEXT, "active", False)
+    monkeypatch.setitem(scanner._HEAVY_TICK_WAIT_SECONDS, "jp_owner_quote_warm", 5.0)
+    entered = threading.Event()
+    ran = []
+
+    def first():
+        entered.set()
+        time.sleep(0.3)
+        scanner._MISSION_TICK_CONTEXT["active"] = True
+
+    thread = threading.Thread(
+        target=scanner._heavy_tick, args=("residency_ai_tick", first))
+    thread.start()
+    assert entered.wait(5)
+    result = scanner._heavy_tick("jp_owner_quote_warm", lambda: ran.append("warm"))
+    thread.join(5)
+    assert result == {"status": "skipped", "reason": "mission_tick_active"}
+    assert ran == []
+    assert scanner._HEAVY_TICK_LOCK.locked() is False
+
+
+def test_a_thirty_second_tick_is_skipped_while_one_runs(monkeypatch):
     monkeypatch.setitem(scanner._MISSION_TICK_CONTEXT, "active", False)
     entered = threading.Event()
     release = threading.Event()
@@ -50,7 +99,7 @@ def test_a_second_heavy_tick_is_skipped_while_one_runs(monkeypatch):
     assert entered.wait(5)
     # The lock is held: the second tick reports the holder and does no work.
     second = scanner._heavy_tick(
-        "jp_owner_quote_warm",
+        "market_brief_worker_tick",
         lambda: ran.append("second") or {"status": "ok"})
     assert second == {"status": "skipped", "reason": "heavy_tick_busy",
                       "running": "residency_ai_tick"}
@@ -59,7 +108,7 @@ def test_a_second_heavy_tick_is_skipped_while_one_runs(monkeypatch):
     assert ran == ["slow"]
     assert scanner._HEAVY_TICK_STATE["ranCount"] == 1
     assert scanner._HEAVY_TICK_STATE["skippedCount"] == 1
-    assert scanner._HEAVY_TICK_STATE["skippedByName"] == {"jp_owner_quote_warm": 1}
+    assert scanner._HEAVY_TICK_STATE["skippedByName"] == {"market_brief_worker_tick": 1}
     assert scanner._HEAVY_TICK_STATE["running"] is None
     assert scanner._HEAVY_TICK_LOCK.locked() is False
 
@@ -85,7 +134,7 @@ def test_the_slot_is_released_when_a_tick_raises(monkeypatch):
     assert scanner._HEAVY_TICK_LOCK.locked() is False
     assert scanner._HEAVY_TICK_STATE["running"] is None
     # The next tick still gets the slot.
-    assert scanner._heavy_tick("jp_owner_quote_warm", lambda: "ok") == "ok"
+    assert scanner._heavy_tick("market_brief_worker_tick", lambda: "ok") == "ok"
 
 
 def test_heavy_ticks_are_measured_exactly_as_before(monkeypatch):
@@ -95,6 +144,12 @@ def test_heavy_ticks_are_measured_exactly_as_before(monkeypatch):
                         lambda kind, name, fn, *a, **k: seen.append((kind, name)) or fn())
     scanner._heavy_tick("residency_ai_tick", lambda: "ok")
     assert seen == [("scheduler", "residency_ai_tick")]
+
+
+def test_only_the_five_minute_ticks_wait_for_the_slot():
+    assert set(scanner._HEAVY_TICK_WAIT_SECONDS) == {
+        "residency_ai_tick", "jp_owner_quote_warm"}
+    assert all(0 < value <= 300 for value in scanner._HEAVY_TICK_WAIT_SECONDS.values())
 
 
 def test_scheduler_routes_every_heavy_tick_through_the_slot():

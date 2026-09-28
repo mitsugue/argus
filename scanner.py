@@ -21695,19 +21695,39 @@ _HEAVY_TICK_STATE = {"running": None, "startedAt": None, "ranCount": 0,
                      "skippedByName": {}}
 
 
-def _heavy_tick(name, function):
-    """Run one heavy background tick exclusively; skip when another holds it.
+# A tick spawned every five minutes must not lose the slot race to the tick
+# spawned beside it and then wait another five minutes: the JP owner warm is
+# what keeps the owner's Watchlist prices current.  Those ticks wait for the
+# slot; the ones spawned every thirty seconds skip, because another chance
+# arrives immediately.
+_HEAVY_TICK_WAIT_SECONDS = {
+    "residency_ai_tick": 120.0,
+    "jp_owner_quote_warm": 120.0,
+}
 
-    Also skips while a mission tick owns the process: that tick is the
-    largest allocator and the scheduler must not add to its peak.
+
+def _heavy_tick(name, function):
+    """Run one heavy background tick exclusively.
+
+    A five-minute tick waits its turn; a thirty-second tick skips.  Nothing
+    runs while a mission tick owns the process: that tick is the largest
+    allocator and the scheduler must not add to its peak.
     """
     if _MISSION_TICK_CONTEXT.get("active"):
         _heavy_tick_skipped(name, "mission_tick_active")
         return {"status": "skipped", "reason": "mission_tick_active"}
-    if not _HEAVY_TICK_LOCK.acquire(blocking=False):
+    wait = float(_HEAVY_TICK_WAIT_SECONDS.get(name) or 0.0)
+    acquired = (_HEAVY_TICK_LOCK.acquire(timeout=wait) if wait > 0
+                else _HEAVY_TICK_LOCK.acquire(blocking=False))
+    if not acquired:
         _heavy_tick_skipped(name, "heavy_tick_busy")
         return {"status": "skipped", "reason": "heavy_tick_busy",
                 "running": _HEAVY_TICK_STATE.get("running")}
+    if _MISSION_TICK_CONTEXT.get("active"):
+        # A mission tick started while this one waited for the slot.
+        _HEAVY_TICK_LOCK.release()
+        _heavy_tick_skipped(name, "mission_tick_active")
+        return {"status": "skipped", "reason": "mission_tick_active"}
     _HEAVY_TICK_STATE.update({"running": name, "startedAt": _ai_now_iso()})
     try:
         return _memory_operation_run("scheduler", name, function)
