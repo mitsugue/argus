@@ -5,6 +5,7 @@ import { BackupSettingsPanel } from './BackupPage';
 import { NewsIntakePanel } from '../components/settings/NewsIntakePanel';
 import { WebPushPanel } from '../components/settings/WebPushPanel';
 import { AiUsagePanel } from '../components/settings/AiUsagePanel';
+import { OwnerIdentityPanel } from '../components/settings/OwnerIdentityPanel';
 import { NotificationPanel } from '../components/NotificationPanel';
 import { PublicDiagnosticsPanel } from './DataQualityPage';
 import { PageShell } from './PageShell';
@@ -36,8 +37,9 @@ export const Settings: React.FC<Props> = ({ settingsSection = 'status' }) => {
   return (
     <PageShell
       title="Settings"
-      subtitle="言語、公開ステータス、バックアップと復元を管理します。"
+      subtitle="本人確認、言語、公開ステータス、バックアップと復元を管理します。"
     >
+      <OwnerIdentityPanel />
       <section className="card" aria-label="Language settings">
         <div className="section-head">
           <span className="section-head__title">LANGUAGE</span>
