@@ -54,7 +54,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # the market store residency (v13.7.58 candidate)
     'test_argus_market_artifact_items.py': 'ebd38f5292c62b3c9533703f4c4b53c7667c9e68',
     # the market store residency (v13.7.58 candidate)
-    'argus_market_artifact_items.py': '9c3b8341bd42e8b6e27ea8475c5e937794fa64b2',
+    'argus_market_artifact_items.py': 'e51801f916baec559ddfdd50b2d43bd9fca44247',
     # Pinned backend requirements + full Python patch version (v13.7.56).
     # Read-only Render deploy diagnostics (exact reviewed contents; v13.7.56).
     # Pinned backend requirements + full Python patch version (v13.7.58).
