@@ -132,7 +132,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-mode-consistency.mjs': '92be2022893323b439ae4e45da2bec8759bd0102',
     'web/scripts/owner-browser-continuity.test.mjs': 'c35f8a640e58a5b241a5d43aa62e518c0d73ce78',
     'web/scripts/owner-browser-acceptance.test.mjs': '5774ac3714425d9e946aa16cca571048475e8353',
-    'web/scripts/owner-browser-acceptance.mjs': '95c3633a602fb07d9f341706bc17a3dca131ec92',
+    'web/scripts/owner-browser-acceptance.mjs': '05f7934d2c798541448022e45c56345dc1723568',
     'web/scripts/owner-auth-reader.test.mjs': '06ab1e182a314aea0b918219b227d1cdb86ba1e7',
     'web/scripts/owner-auth-reader.mjs': 'c5c28a97e4fc78ed615217897474b4ea1459c81b',
     'web/scripts/owner-auth-reader.integration.test.mjs': 'ab2158287b5fb12d7401fac523e605f4116ecd27',
