@@ -32735,6 +32735,7 @@ def api_argus_admin_memory_attribution():
     # inventory (container names, types, lengths, serialized byte counts —
     # never element values) only on request, on this existing owner route.
     payload["allocatorReclaim"] = copy.deepcopy(_ALLOCATOR_RECLAIM_STATE)
+    payload["startupRss"] = dict(_STARTUP_RSS)
     payload["marketStoreResidency"] = _market_store_residency_projection()
     payload["heavyTicks"] = copy.deepcopy(_HEAVY_TICK_STATE)
     if str(request.args.get("inventory") or "").lower() in ("1", "true", "yes"):
@@ -47269,6 +47270,14 @@ def run_scheduler():
             add_log(f"td-warm tick error: {type(e).__name__}")
         time.sleep(30)
 
+#: Resident MiB around the startup restore, filled once by the server entry.
+#: The startup lines carry the same numbers, but the hosting log is not
+#: readable from the diagnostics workflow, so the measurement is also kept
+#: here where the existing owner-only route can report it.
+_STARTUP_RSS = {"beforeRestoreMib": None, "afterRestoreMib": None,
+                "restoreDeltaMib": None}
+
+
 def _startup_rss_mib():
     """Resident MiB now, or None where the kernel does not report it.
 
@@ -47289,6 +47298,7 @@ def _run_backend_server():
     # taken here, around the one call that does the restore, because no later
     # sample can separate them again.
     _rss_before_restore = _startup_rss_mib()
+    _STARTUP_RSS["beforeRestoreMib"] = _rss_before_restore
     add_log(f"🚀 ARGUS backend {_semantic_app_version()} "
             f"build={(_backend_exact_sha() or '')[:8] or 'unknown'} "
             f"rss={_rss_before_restore}MiB", echo=True)
@@ -47309,8 +47319,10 @@ def _run_backend_server():
             daemon=True).start()
         _rss_after_restore = _startup_rss_mib()
         _restore_delta = (None if _rss_after_restore is None
-                         or _rss_before_restore is None
-                         else _rss_after_restore - _rss_before_restore)
+                          or _rss_before_restore is None
+                          else _rss_after_restore - _rss_before_restore)
+        _STARTUP_RSS.update({"afterRestoreMib": _rss_after_restore,
+                             "restoreDeltaMib": _restore_delta})
         add_log(f"🟢 Boot complete — state={_STARTUP.get('state')} "
                 f"rss={_rss_after_restore}MiB restore={_restore_delta}MiB",
                 echo=True)
