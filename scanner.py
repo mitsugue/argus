@@ -45,6 +45,7 @@ import argus_watchlist_sync  # Calibration Ledger v4 Layer 2B: owner watchlist s
 import argus_downside  # Downside Incident Response + cause attribution (pure, decision-support only, v10.98)
 import argus_tdnet  # TDnet (適時開示) disclosure title classifier (pure, v10.101)
 import argus_jquants_tdnet  # official J-Quants TDnet Add-on classify/map/status (pure, v11.1)
+import argus_tdnet_subscription  # declared state of the TDnet add-on (pure, v13.7.62)
 import argus_evidence_pack  # canonical Evidence Pack — the decision spine's input (pure, v11.2)
 import argus_official_event_lifecycle  # official disclosures as lifecycle-tracked events (pure, v11.3)
 import argus_official_event_store  # durable official-event serialize/merge/restore (pure, v11.3.1)
@@ -19538,6 +19539,16 @@ _TDNET_OFFICIAL_CACHE = {"data": None, "expires": 0.0}
 
 def _jquants_tdnet_fetch(limit=150):
     """Official J-Quants TDnet Add-on snapshot + a bool 'usable'. Never exposes the key."""
+    if argus_tdnet_subscription.is_declared_off():
+        # The owner ended this subscription. Probing it would spend the
+        # Standard plan's rate budget to be told 403 every fifteen minutes,
+        # and the honest reading of a 403 is "entitlement missing", which the
+        # registry then reports as a fault. A decision is not a fault. The
+        # snapshot is unusable either way, so the caller still falls through
+        # to the free mirror and no disclosure is lost.
+        return argus_jquants_tdnet.build_snapshot(
+            [], as_of=_ai_now_iso(),
+            **argus_tdnet_subscription.snapshot_fields()), False
     if not _JQUANTS_API_KEY:
         return argus_jquants_tdnet.build_snapshot(
             [], status="not_configured", official=True, provider="jquants-tdnet",
@@ -42964,7 +42975,12 @@ def _source_registry(*, allow_provider_fetch=True):
         _td_usable = bool(_td_off.get("status") == "official_tdnet_live" and
                           _td_off.get("items"))
     _td_off_status = _td_off.get("status")
-    if not _JQUANTS_API_KEY:
+    if argus_tdnet_subscription.is_declared_off():
+        _td_declared = argus_tdnet_subscription.registry_row()
+        _td_reg_status = _td_declared["status"]
+        _td_ent = _td_declared["entitlement"]
+        _td_note = _td_declared["noteJa"]
+    elif not _JQUANTS_API_KEY:
         _td_reg_status, _td_ent, _td_note = "missing", "APIキー未設定", "JQUANTS_API_KEY未設定。"
     elif _td_off_status == "official_tdnet_live":
         _td_reg_status, _td_ent, _td_note = "confirmed_live", "tdnet_addon", "公式J-Quants TDnet Add-onがライブ(official confirmation)。"
