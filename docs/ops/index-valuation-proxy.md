@@ -77,3 +77,16 @@ schema v2 では保存済みの v1 履歴は捨てられ、次のwarmから再�
 **推奨方式は FORECAST_COVERED_ONLY に固定**（`argus_index_valuation_proxy.RECOMMENDED_VARIANT`）。
 推奨はコード上の決定であり、保存状態から復元しない。残る +0.8% は、予想の無い22社について日経が自社予想を使っているのに対し、代理値はその22社を両辺から外していることによる系統差。
 公式値が改めて読める日が来たら `compare_with_official` で再評価し、定数を更新する。
+
+## D04（EPS基準・バリュエーション）の点灯規則（2026-09-29 オーナー決定）
+
+原典は「日経平均の理論値 = EPS × 17/18/19/20/21倍のラダー」を定義しているが、点灯する倍率は定めていない。
+オーナーが「決めていない・提案でよい」としたため、ARGUS候補規則として **指数ベースPERが 19倍（高評価帯）以上で点灯** する（`jp_market_engine.D04_ACTIVATION_RULE`、系統 ARGUS_CANDIDATE）。
+ラダーは参考水準であり支持線・抵抗線ではない。公式値が読める日は公式のPER、読めない日は代理値（FORECAST_COVERED_ONLY）で判定する。
+
+## 月初のウエートCSV差し替え（オーナー操作）
+
+1. 日経の「日経平均株価 構成銘柄ウエート」の月末CSV（Shift_JIS）を取得する（配信URLは `scanner.py` の `_NK225_WEIGHT_*` 付近と本書冒頭を参照）。
+2. Render → 本番サービス `argus-backend-3j2m` → Environment → Secret Files で `nikkei_stock_average_weight_jp.csv` を開き、Contents を新しいCSVの中身で置き換えて保存する（ファイル名は変えない）。
+3. 保存で自動再デプロイが走り、直後の warm で係数が再導出される（`proxyValuation.weightsAsOf` が新しい月末日になる）。
+4. 古いままでも動作は続くが、構成銘柄の入替・株式分割があると誤差が広がるため、毎月初に更新するのが望ましい。
