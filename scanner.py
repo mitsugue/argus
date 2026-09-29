@@ -38205,17 +38205,65 @@ def _jp_index_proxy_weights():
         except OSError:
             continue
     if raw is None:
-        configured = bool((os.environ.get(_NK225_WEIGHT_CSV_ENV) or "").strip())
-        _JP_INDEX_PROXY["weightFileDiagnostics"] = _jp_index_proxy_weight_diagnostics()
-        return None, ("weight_file_unreadable" if configured else "weight_file_not_configured")
+        # A table saved under another file name is still the table: every
+        # file in the secret directory is judged by content, never by name.
+        raw, found, scan = _jp_index_proxy_weight_content_scan()
+        if raw is None:
+            configured = bool((os.environ.get(_NK225_WEIGHT_CSV_ENV) or "").strip())
+            _JP_INDEX_PROXY["weightFileDiagnostics"] = {**_jp_index_proxy_weight_diagnostics(),
+                                                        "secretDirContentScan": scan}
+            return None, ("weight_file_unreadable" if configured else "weight_file_not_configured")
     _JP_INDEX_PROXY["weightFileFound"] = found
     _JP_INDEX_PROXY["weightFileDiagnostics"] = None
-    try:
-        text = raw.decode("cp932")
-    except UnicodeDecodeError:
-        text = raw.decode("utf-8-sig", errors="strict")
-    table = argus_index_valuation_proxy.parse_weight_table(text)
+    table = argus_index_valuation_proxy.parse_weight_table(_jp_index_proxy_decode_weights(raw))
     return table, hashlib.sha256(raw).hexdigest()
+
+
+def _jp_index_proxy_decode_weights(raw):
+    try:
+        return raw.decode("cp932")
+    except UnicodeDecodeError:
+        return raw.decode("utf-8-sig", errors="strict")
+
+
+def _jp_index_proxy_weight_content_scan():
+    """Try every regular file in the secret directory as the weight table.
+
+    Returns (raw, kind, scan). ``scan`` holds one record per file with a size
+    bucket and the parse outcome token only: no name, no bytes, no path. A
+    file that is not the table (a key, a token) fails the column check at
+    once and nothing of it is kept."""
+    try:
+        names = sorted(os.listdir(_NK225_SECRET_DIR))
+    except OSError:
+        return None, None, []
+    scan = []
+    hit = None
+    for name in names:
+        path = os.path.join(_NK225_SECRET_DIR, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, "rb") as handle:
+                raw = handle.read(512 * 1024)
+        except OSError:
+            scan.append({"sizeBucket": None, "outcome": "unreadable"})
+            continue
+        size = len(raw)
+        bucket = "lt1k" if size < 1024 else "lt10k" if size < 10240 else "lt100k" if size < 102400 else "ge100k"
+        try:
+            argus_index_valuation_proxy.parse_weight_table(_jp_index_proxy_decode_weights(raw))
+            outcome = "weight_table"
+        except UnicodeDecodeError:
+            outcome = "not_text"
+        except argus_index_valuation_proxy.ProxyError as exc:
+            outcome = str(exc)[:40]
+        except Exception as exc:
+            outcome = type(exc).__name__
+        scan.append({"sizeBucket": bucket, "outcome": outcome})
+        if outcome == "weight_table" and hit is None:
+            hit = raw
+    return hit, ("secret_dir_content_scan" if hit is not None else None), scan
 
 
 def _jp_index_proxy_compact(proxy):
