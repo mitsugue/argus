@@ -17036,6 +17036,10 @@ def api_argus_market_brief():
             page = argus_analysis_history.read_page(path,
                 before_sequence=int(cursor) if cursor is not None else None)
             page["remoteBackup"] = _market_brief_history_remote_status()
+            try:
+                page["localSummary"] = argus_analysis_history.summary(path)
+            except Exception as exc:
+                page["localSummary"] = {"errorClass": type(exc).__name__}
             return jsonify(page)
         except FileNotFoundError:
             return jsonify({"status": "UNAVAILABLE", "reason": "history_not_recorded"}), 503

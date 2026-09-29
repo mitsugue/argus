@@ -207,6 +207,19 @@ def synchronize(path, connection, *, last_verified_head=None):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.analysis-compact-', dir=Path(path).parent) as directory:
         manifest, version = _head(remote); restored = None; migrated = False
+        old, old_version = legacy._head(connection)
+        if (manifest is not None and version is not None and version == last_verified_head
+                and manifest.get('legacyHeadVersion') == old_version
+                and _local_holds_manifest(path, manifest)):
+            # This process (or its durable sidecar) already verified this exact
+            # head, and the local file has not gained or lost a record since:
+            # nothing to restore, nothing to publish, no snapshot to rebuild.
+            return {'status': 'VERIFIED', 'headVersion': version, 'formatVersion': 2,
+                'archiveSha256': legacy.digest(legacy.encode(manifest)), 'counts': manifest['counts'],
+                'latestRecordId': manifest['latestRecordId'], 'restoredCounts': None,
+                'storedBytes': manifest.get('storedBytes'), 'originalBytes': manifest.get('rawBytes'),
+                'migratedFromV1': False, 'storage': 'EXISTING_PRIVATE_REPOSITORY',
+                'unchangedSinceVerifiedHead': True, 'actionAuthority': False}
         if manifest is not None and (version != last_verified_head or not Path(path).exists()):
             # A restart forgets last_verified_head, and a full restore of the
             # remote archive costs hundreds of MiB and most of the deadline.
@@ -217,7 +230,6 @@ def synchronize(path, connection, *, last_verified_head=None):
                 restored = _restore(path, manifest, remote, directory)
         # During compatibility, a late v1 writer remains visible. No v1 files or
         # pointer are replaced, and new v2 records are never lost on re-import.
-        old, old_version = legacy._head(connection)
         if old and (manifest is None or manifest.get('legacyHeadVersion') != old_version):
             old_counts = legacy._restore(path, old, connection, directory)
             restored = restored or old_counts

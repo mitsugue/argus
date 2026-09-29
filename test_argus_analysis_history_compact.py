@@ -182,3 +182,23 @@ def test_restart_with_a_complete_local_file_skips_the_remote_restore(tmp_path, m
     restored = backup.synchronize(cold, remote)
     assert restored['restoredCounts'] is not None
     assert history.summary(cold) == history.summary(source)
+
+
+def test_verified_head_with_unchanged_local_file_returns_without_a_snapshot(tmp_path, monkeypatch):
+    remote = original.Remote(); remote.history_format_version = 2
+    source = tmp_path/'source.sqlite'
+    from datetime import datetime, timedelta, timezone
+    base = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    for n in range(4): original.add(source, (base+timedelta(days=n)).isoformat(), 3000+n)
+    first = backup.synchronize(source, remote)
+    def forbidden(*args, **kwargs): raise AssertionError('snapshot must not be rebuilt')
+    monkeypatch.setattr(compact, '_snapshot', forbidden)
+    monkeypatch.setattr(compact, '_restore', forbidden)
+    same = backup.synchronize(source, remote, last_verified_head=first['headVersion'])
+    assert same['status'] == 'VERIFIED' and same['unchangedSinceVerifiedHead'] is True
+    assert same['counts'] == first['counts'] and same['latestRecordId'] == first['latestRecordId']
+    monkeypatch.undo()
+    # A new local record leaves the fast path and publishes as before.
+    original.add(source, (base+timedelta(days=4)).isoformat(), 3004)
+    grown = backup.synchronize(source, remote, last_verified_head=first['headVersion'])
+    assert grown['counts']['views'] == 5 and 'unchangedSinceVerifiedHead' not in grown
