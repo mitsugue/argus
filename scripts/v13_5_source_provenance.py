@@ -155,7 +155,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'scripts/owner_auth_backup.py': '55b2d8f41918c9ae5880c7ae23a764e5e1506e8a',
     'test_argus_owner_auth.py': '09abfb764361266e39b60dc67ffdb2ee02678501',
     'web/scripts/owner-session.test.cjs': '392aa720d19d625d69915515462b1b09e8f169f6',
-    'web/src/components/OwnerAccess.css': '6ef4842ecf743a9dc2a0b86d84f80fe8e94113d9',
+    'web/src/components/OwnerAccess.css': 'e3fb3716ea6ddbd4dace27e09b6fe5e72d7d90db',
     'web/src/components/OwnerAccess.tsx': 'b6e9e570500536c29fa4b7d5dc9d2bc00db951a3',
     'web/src/lib/ownerSession.ts': '6c1e999b10c60a640593bb1ab9fcedd9a2012b50',
     'docs/MACRO_RESULT_RECEIPT_MIGRATION.md': '131e4784bd6be96daf0c9dda4b318735840cdcba',
