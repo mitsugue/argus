@@ -38,10 +38,12 @@ jobs:
           fi
 
       - name: Fetch public-safe snapshot
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
           for i in 1 2 3 4; do
-            curl -sf --max-time 60 "$BE/api/argus/learning-memory/snapshot" \
+            curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/learning-memory/snapshot" \
               -o "$RUNNER_TEMP/learning-memory.json" && break
             echo "retry $i"; sleep 15
           done
