@@ -2732,6 +2732,7 @@ def test_a_refetched_mail_is_the_same_event_and_never_analysed_twice(monkeypatch
 
 
 def test_reservations_count_against_the_budget_before_the_call_returns(monkeypatch):
+    monkeypatch.setattr(scanner, "_AI_BUDGET_ENFORCED", True)  # this test exercises the armed gate
     saved = json.loads(json.dumps(scanner._COST_POLICY))
     scanner._COST_POLICY.clear()
     scanner._COST_POLICY.update(scanner.argus_cost_policy.default_state("SCHEDULED_AI", event_opt_in=True))
@@ -2895,6 +2896,7 @@ def test_generation_run_is_single_flight_and_tracked_through_failure(monkeypatch
 
 def test_prose_diagnosis_is_local_when_another_lane_is_refused(monkeypatch, _ai_state_restore):
     """A real interleaving: event request waits while the news lane is refused."""
+    monkeypatch.setattr(scanner, "_AI_BUDGET_ENFORCED", True)  # this test exercises the armed gate
     import sys as _sys
     _scheduled_state(monkeypatch)
     monkeypatch.setattr(scanner, "_OPENAI_API_KEY", "test")
@@ -3236,6 +3238,7 @@ def test_production_ai_cannot_reserve_before_complete_restore(monkeypatch, state
 
 
 def test_restored_production_budget_is_enforced_before_first_call(monkeypatch, tmp_path):
+    monkeypatch.setattr(scanner, "_AI_BUDGET_ENFORCED", True)  # this test exercises the armed gate
     policy = scanner.argus_cost_policy.default_state("SCHEDULED_AI")
     saved = scanner.argus_cost_policy.default_state("SCHEDULED_AI")
     saved["usage"] = [{"provider": "gemini", "purpose": "headline_translation",
