@@ -165,6 +165,7 @@ def test_the_weight_file_is_found_by_path_by_name_or_by_default(lane, tmp_path, 
     # a variable pointing nowhere, with no default, is still unreadable, not silent
     monkeypatch.setenv(scanner._NK225_WEIGHT_CSV_ENV, str(tmp_path / "missing.csv"))
     (secret_dir / scanner._NK225_WEIGHT_DEFAULT_NAME).unlink()
+    (secret_dir / "weights.csv").unlink()  # otherwise the content scan adopts it
     scanner._jp_index_proxy_warm(lane["rows"])
     assert lane["state"]["status"] == "NOT_CONFIGURED"
     assert lane["state"]["lastErrorReason"] == "weight_file_unreadable"
@@ -184,7 +185,10 @@ def test_an_unreadable_table_yields_diagnostics_without_a_name(lane, tmp_path, m
     scanner._jp_index_proxy_warm(lane["rows"])
     state = lane["state"]
     assert state["status"] == "NOT_CONFIGURED" and state["lastErrorReason"] == "weight_file_unreadable"
-    diag = state["weightFileDiagnostics"]
+    diag = dict(state["weightFileDiagnostics"])
+    assert diag.pop("secretDirContentScan") == [
+        {"sizeBucket": "lt1k", "outcome": "weight_table_columns"},
+        {"sizeBucket": "lt1k", "outcome": "weight_table_columns"}]
     assert diag == {"configured": True, "configuredIsAbsolute": False, "configuredContainsSeparator": False,
                     "configuredBasenameIsDefault": False, "configuredEndsWithCsv": True,
                     "secretDirExists": True, "secretDirFileCount": 2, "defaultNameInSecretDir": False,
@@ -197,3 +201,37 @@ def test_an_unreadable_table_yields_diagnostics_without_a_name(lane, tmp_path, m
     scanner._jp_index_proxy_warm(lane["rows"])
     assert state["weightFileFound"] in ("configured_path", "configured_name_in_project_root")
     assert state["weightFileDiagnostics"] is None
+
+
+def test_a_table_under_another_name_is_found_by_content(lane, tmp_path, monkeypatch):
+    """The owner saved the table under a different file name: the secret
+    directory scan adopts it by content, and the scan record carries no name."""
+    secret_dir = tmp_path / "secrets"; secret_dir.mkdir()
+    (secret_dir / "e_api_private_key.pem").write_bytes(b"-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n")
+    (secret_dir / "weights_2026_08").write_bytes(_weights_csv())
+    monkeypatch.setattr(scanner, "_NK225_SECRET_DIR", str(secret_dir))
+    monkeypatch.setenv(scanner._NK225_WEIGHT_CSV_ENV, str(secret_dir / "nikkei_stock_average_weight_jp.csv"))
+    monkeypatch.chdir(tmp_path)
+    scanner._jp_index_proxy_warm(lane["rows"])
+    state = lane["state"]
+    assert state["weightFileFound"] == "secret_dir_content_scan"
+    assert state["status"] == "AVAILABLE", state["lastErrorReason"]
+    text = json.dumps(scanner._jp_index_proxy_public(), ensure_ascii=False)
+    for forbidden in ("e_api_private_key", "weights_2026_08", "BEGIN PRIVATE", str(secret_dir)):
+        assert forbidden not in text, forbidden
+
+
+def test_the_content_scan_reports_outcomes_without_names(lane, tmp_path, monkeypatch):
+    secret_dir = tmp_path / "secrets"; secret_dir.mkdir()
+    (secret_dir / "key.pem").write_bytes(b"-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n")
+    (secret_dir / "blob.bin").write_bytes(bytes(range(256)) * 8)
+    monkeypatch.setattr(scanner, "_NK225_SECRET_DIR", str(secret_dir))
+    monkeypatch.setenv(scanner._NK225_WEIGHT_CSV_ENV, "/nowhere/nikkei_stock_average_weight_jp.csv")
+    monkeypatch.chdir(tmp_path)
+    scanner._jp_index_proxy_warm(lane["rows"])
+    diag = lane["state"]["weightFileDiagnostics"]
+    assert diag["secretDirContentScan"] == [
+        {"sizeBucket": "lt10k", "outcome": "not_text"},
+        {"sizeBucket": "lt1k", "outcome": "weight_table_columns"}]
+    text = json.dumps(scanner._jp_index_proxy_public(), ensure_ascii=False)
+    assert "key.pem" not in text and "blob.bin" not in text and "BEGIN PRIVATE" not in text
