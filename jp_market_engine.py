@@ -809,6 +809,43 @@ def _derived_valuation_evidence(value: Any, cutoff: str) -> Optional[Dict[str, A
     return dict(candidate)
 
 
+# D04 original: the Nikkei 225 theoretical value is EPS times the 17x..21x
+# PER ladder (sealed registry, JP_MARKET_ENGINE-D04-ORIGINAL).  The original
+# names the ladder, not an activation threshold, so the ladder is projected as
+# reference levels and the family reports that no activation rule exists;
+# it is never presented as support or resistance and never lights a signal.
+D04_PER_LADDER = (17, 18, 19, 20, 21)
+D04_LADDER_LABELS_JA = {17: "低評価帯", 18: "基準評価帯", 19: "高評価帯",
+                        20: "高評価帯", 21: "高評価帯（上端）"}
+D04_ACTIVATION_RULE = None  # no source-confirmed threshold; see D04_RULE_JA
+D04_RULE_JA = "原典は EPS×17〜21倍の理論値ラダーを定義し、点灯する倍率は定めていない（参考水準のみ・支持線/抵抗線ではない）"
+
+
+def d04_reference_levels(eps: Any, per: Any) -> Dict[str, Any]:
+    """The ladder and where the current PER sits on it; descriptive only."""
+    eps_value = _finite(eps)
+    per_value = _finite(per)
+    if eps_value is None or eps_value <= 0:
+        return {"levels": [], "band": None}
+    levels = [{"multiple": multiple, "value": round(eps_value * multiple, 2),
+               "labelJa": D04_LADDER_LABELS_JA[multiple],
+               "classification": "reference_level",
+               "supportOrResistance": False} for multiple in D04_PER_LADDER]
+    band = None
+    if per_value is not None and per_value > 0:
+        below = [m for m in D04_PER_LADDER if per_value < m]
+        above = [m for m in D04_PER_LADDER if per_value >= m]
+        band = {"per": per_value,
+                "position": ("below_ladder" if not above else
+                             "above_ladder" if not below else "within_ladder"),
+                "lowerMultiple": above[-1] if above else None,
+                "upperMultiple": below[0] if below else None,
+                "labelJa": ("ラダー下限未満" if not above else
+                            "ラダー上端超" if not below else
+                            f"{above[-1]}倍〜{below[0]}倍の帯")}
+    return {"levels": levels, "band": band}
+
+
 def evaluate_d04(*, cutoff: str, analysis_instrument: str,
                  eps_evidence: Optional[Mapping[str, Any]] = None,
                  index_evidence: Optional[Mapping[str, Any]] = None,
@@ -848,6 +885,8 @@ def evaluate_d04(*, cutoff: str, analysis_instrument: str,
             return {**result, "status": "AVAILABLE", "missing": [],
                 "eps": scale["eps"], "indexLevel": scale["anchorPrice"], "per": scale["per"],
                 "valuation": scale, "epsKind": scale["epsKind"],
+                **d04_reference_levels(scale["eps"], scale["per"]),
+                "activationRule": D04_ACTIVATION_RULE, "conditionRuleJa": D04_RULE_JA,
                 "conditionRule": "descriptive_same_session_index_valuation_no_validated_signal"}
         result["missing"] = [scale.get("reason") or "same_session_index_based_valuation"]
     else:
@@ -866,6 +905,8 @@ def evaluate_d04(*, cutoff: str, analysis_instrument: str,
                     "valuation": scale, "epsKind": scale["epsKind"],
                     "epsLabelJa": "ARGUS代理値のEPS（構成銘柄の予想EPSから再構成）",
                     "proxyErrorPct": scale.get("proxyErrorPct"),
+                    **d04_reference_levels(scale["eps"], scale["per"]),
+                    "activationRule": D04_ACTIVATION_RULE, "conditionRuleJa": D04_RULE_JA,
                     "conditionRule": "descriptive_same_session_proxy_valuation_no_validated_signal"}
             result["proxyRejected"] = scale.get("reason")
     # Keep the independent universe statistic available as evidence, without

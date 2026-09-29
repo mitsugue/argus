@@ -119,3 +119,20 @@ def test_not_applicable_is_distinct_from_unavailable_and_never_counts():
     assert by_id["SIG-02"]["state"] == "UNAVAILABLE"
     assert projected["activeCount"] == 1 and projected["stateCounts"]["NOT_APPLICABLE"] == 1
     assert "NOT_APPLICABLE" in projected["countRule"]
+
+
+def test_data_gated_note_separates_missing_rule_from_missing_data():
+    import argus_market_signals as signals
+    families = {
+        "D04": {"status": "AVAILABLE", "conditionMet": None,
+                "conditionRule": "descriptive_same_session_proxy_valuation_no_validated_signal"},
+        "D05": {"status": "PARTIAL", "conditionMet": None},
+        "D06": {"status": "AVAILABLE", "conditionMet": True},
+    }
+    rows = {row["family"]: row for row in signals.project_market_signals(families)["signals"]}
+    assert rows["D04"]["state"] == "DATA_GATED"
+    assert rows["D04"]["gateNoteJa"] == "評価値あり・点灯規則が原典に未定義（参考水準のみ）"
+    assert rows["D05"]["state"] == "DATA_GATED"
+    assert rows["D05"]["gateNoteJa"] == "判定に必要なデータが未取得または不完全"
+    assert rows["D06"]["state"] == "ACTIVE" and rows["D06"]["gateNoteJa"] is None
+    assert rows["D01"]["gateNoteJa"] is None

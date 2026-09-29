@@ -707,16 +707,40 @@ def conditional_scenarios(report: Dict[str, Any]) -> List[Dict[str, str]]:
     ]
 
 
-def valuation_levels(market_ledger: Optional[Dict[str, Any]], as_of: str) -> List[Dict[str, Any]]:
-    if not isinstance(market_ledger, dict):
-        return []
-    history = [x for x in (market_ledger.get("valuationHistory") or [])
-               if x.get("value") is not None and
-               str(x.get("availableFrom") or x.get("asOf") or "") <= as_of[:10]]
-    if not history:
-        metrics = market_ledger.get("derivedMetrics") or []
-        history = [x for x in metrics if x.get("metricId") == "valuation.eps"
-                   and str(x.get("asOf") or "") <= as_of[:10] and x.get("value") is not None]
+def valuation_levels(market_ledger: Optional[Dict[str, Any]], as_of: str,
+                     index_valuation_history: Optional[Iterable[Dict[str, Any]]] = None
+                     ) -> List[Dict[str, Any]]:
+    """EPS x PER ladder per available date.
+
+    The ledger's official EPS history wins.  When it holds nothing, a caller
+    may pass an index valuation history (rows with ``date``/``asOf``,
+    ``availableFrom``, ``eps`` and ``basis``): the ARGUS proxy reconstructed
+    from constituent EPS.  Levels built from it carry the proxy basis and the
+    ``argus_proxy`` classification so no display can mistake them for the
+    official figure.
+    """
+    history: List[Dict[str, Any]] = []
+    source_basis = None
+    if isinstance(market_ledger, dict):
+        history = [x for x in (market_ledger.get("valuationHistory") or [])
+                   if x.get("value") is not None and
+                   str(x.get("availableFrom") or x.get("asOf") or "") <= as_of[:10]]
+        if not history:
+            metrics = market_ledger.get("derivedMetrics") or []
+            history = [x for x in metrics if x.get("metricId") == "valuation.eps"
+                       and str(x.get("asOf") or "") <= as_of[:10] and x.get("value") is not None]
+    if not history and index_valuation_history:
+        for row in index_valuation_history:
+            if not isinstance(row, dict) or row.get("eps") is None:
+                continue
+            available = str(row.get("availableFrom") or row.get("knownAt") or "")
+            day = str(row.get("date") or row.get("asOf") or "")[:10]
+            if not day or (available and available[:10] > as_of[:10]) or day > as_of[:10]:
+                continue
+            history.append({"asOf": day, "availableFrom": available or day,
+                            "value": row["eps"], "inputIds": [str(row.get("sourceRef") or "")],
+                            "basis": row.get("basis")})
+        source_basis = next((x.get("basis") for x in history if x.get("basis")), None)
     history.sort(key=lambda x: str(x.get("asOf") or ""))
     if not history:
         return []
@@ -727,20 +751,27 @@ def valuation_levels(market_ledger: Optional[Dict[str, Any]], as_of: str) -> Lis
                    "inputIds": x.get("inputObservationIds") or x.get("inputIds") or []}
                   for x in history]
         latest = points[-1]
-        out.append({"multiple": multiple, "value": latest["value"],
-                    "asOf": latest["date"], "availableFrom": latest["availableFrom"],
-                    "inputIds": latest["inputIds"], "history": points[-1300:],
-                    "labelJa": ("低評価帯" if multiple == 17 else "基準評価帯" if multiple == 18
-                                else "高評価帯" if multiple in (19, 20)
-                                else "A.R.G.U.S.参考帯／高評価帯" if multiple == 21 else "評価水準"),
-                    "classification": "argus_heuristic" if multiple == 21 else "derived"})
+        label = ("低評価帯" if multiple == 17 else "基準評価帯" if multiple == 18
+                 else "高評価帯" if multiple in (19, 20)
+                 else "A.R.G.U.S.参考帯／高評価帯" if multiple == 21 else "評価水準")
+        row = {"multiple": multiple, "value": latest["value"],
+               "asOf": latest["date"], "availableFrom": latest["availableFrom"],
+               "inputIds": latest["inputIds"], "history": points[-1300:],
+               "labelJa": label + ("（ARGUS代理EPS）" if source_basis else ""),
+               "classification": ("argus_proxy" if source_basis else
+                                  "argus_heuristic" if multiple == 21 else "derived")}
+        if source_basis:
+            row["epsBasis"] = source_basis
+        out.append(row)
     return out
 
 
 def analyze(symbol: str, market: str, rows: Iterable[Dict[str, Any]], *,
             now_iso: str, market_ledger: Optional[Dict[str, Any]] = None,
             events: Optional[Iterable[Dict[str, Any]]] = None,
-            sector_rows: Optional[Iterable[Dict[str, Any]]] = None) -> Dict[str, Any]:
+            sector_rows: Optional[Iterable[Dict[str, Any]]] = None,
+            index_valuation_history: Optional[Iterable[Dict[str, Any]]] = None
+            ) -> Dict[str, Any]:
     pit_rows, pit_proof = argus_market_data_truth.point_in_time_rows(
         list(rows or []), now_iso)
     pit_ok, pit_reason = argus_market_data_truth.verify_point_in_time_proof(
@@ -791,7 +822,8 @@ def analyze(symbol: str, market: str, rows: Iterable[Dict[str, Any]], *,
         "missingReasons": indicators.get("missingReasons") or [],
         "indicators": indicators, "zones": zones, "turningPoints": turns,
         "reactionAnomalies": reactions,
-        "valuationLevels": valuation_levels(market_ledger, now_iso),
+        "valuationLevels": valuation_levels(market_ledger, now_iso,
+                                            index_valuation_history=index_valuation_history),
         "relationshipBreaks": [],
         "pointInTime": {
             "policyId": argus_market_data_truth.PIT_POLICY_ID,
