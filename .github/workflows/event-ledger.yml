@@ -28,10 +28,14 @@ jobs:
     timeout-minutes: 6
     steps:
       - name: Fetch the live event snapshot
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
+          # 2026-09-28: owner authentication gates every read of this host.
+          # The existing operational token passes the gate; it is never logged.
           for i in 1 2 3 4; do
-            curl -sf --max-time 60 "$BE/api/argus/event-snapshot" -o "$RUNNER_TEMP/snap.json" && break
+            curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/event-snapshot" -o "$RUNNER_TEMP/snap.json" && break
             echo "retry $i"; sleep 15
           done
           test -s "$RUNNER_TEMP/snap.json"

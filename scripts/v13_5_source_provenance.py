@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.63"
+PRODUCT_VERSION = "v13.7.64"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '79fa1e3335f85ff01fd538a40b6b1856eec33d79',
-    'web/scripts/pwa-identity.test.mjs': '84d3e543689d2c1fab805a77cd868e64f79819c6',
-    'web/scripts/owner-today-https.mjs': 'fa0700f92fbcbe5fcd1d59c1461e17ffccdfc121',
+    'web/scripts/pwa-identity.test.mjs': 'bbbe8c65d01ff5dd2f1ec7d76749eac104324aa0',
+    'web/scripts/owner-today-https.mjs': '07e2fe000f8f132c3fde098b818cda83ea78e962',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -135,8 +135,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-mode-consistency.test.mjs': 'f83f34df8df77e71c02e7692a85be3d0499210d5',
     'web/scripts/owner-mode-consistency.mjs': '92be2022893323b439ae4e45da2bec8759bd0102',
     'web/scripts/owner-browser-continuity.test.mjs': 'c35f8a640e58a5b241a5d43aa62e518c0d73ce78',
-    'web/scripts/owner-browser-acceptance.test.mjs': '5774ac3714425d9e946aa16cca571048475e8353',
-    'web/scripts/owner-browser-acceptance.mjs': '05f7934d2c798541448022e45c56345dc1723568',
+    'web/scripts/owner-browser-acceptance.test.mjs': '940fc249a131683b46f516c2b391b46c1d3e58bf',
+    'web/scripts/owner-browser-acceptance.mjs': 'ba2759838992345f36d11fe32e2c68502ae53c8c',
     'web/scripts/owner-auth-reader.test.mjs': '06ab1e182a314aea0b918219b227d1cdb86ba1e7',
     'web/scripts/owner-auth-reader.mjs': 'c5c28a97e4fc78ed615217897474b4ea1459c81b',
     'web/scripts/owner-auth-reader.integration.test.mjs': 'ab2158287b5fb12d7401fac523e605f4116ecd27',
@@ -440,7 +440,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # scheduled workflows while retaining manual recovery and product tests.
     ".github/workflows/ai-rejudge.yml": "9674c680ad54973f71bbc03a2dc335eb299c373b",
     ".github/workflows/crypto-watch.yml": "1c996e5db84e8211ea09daa762c5f7d5d5554f7d",
-    ".github/workflows/mover-causes.yml": "d78d91aac76c377b68c67638bbea93176a7c7f89",
+    ".github/workflows/mover-causes.yml": "82a1e2740585a4e11b398e8e1054202dfcad82ea",
     "test_retired_background_workflows.py": "bbfe02c081353b142cde8e106ac619f67cec6dd0",
     # Owner-authorized Gemini retirement regression coverage. This fixes only
     # the exact Terra-only operational workflow test; later edits fail closed.
@@ -643,6 +643,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # officialness: has_official stays false and confirmed_cause unreachable.
     "argus_tdnet_subscription.py",
     "test_argus_tdnet_subscription.py",
+    "test_argus_workflow_owner_auth.py",
     # v13.7 index valuation proxy: the index-based EPS/PER reconstructed from
     # J-Quants constituent forecast EPS and Nikkei's free month-end weights,
     # labelled as an ARGUS candidate with its measured error; the official
@@ -694,6 +695,9 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     ".github/workflows/market-public-acceptance.yml",
     ".github/workflows/news-intake-ops.yml",
     ".github/workflows/prediction-ledger.yml",
+    ".github/workflows/market-alerts.yml",
+    ".github/workflows/event-ledger.yml",
+    ".github/workflows/learning-memory.yml",
     ".github/workflows/release-gate.yml",
     "argus_breadth_worker.py",
     "argus_causal_event_memory.py",

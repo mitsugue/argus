@@ -11,6 +11,10 @@ on:
   schedule:
     - cron: '30 10 * * 3'   # Wednesday 19:30 JST (JPX publishes Tue/Wed)
     - cron: '30 10 * * 4'   # Thursday retry
+    # 2026-09-28: a Tuesday holiday pushed the 2026-09-18 week's workbook past
+    # both attempts, the ledger sat at 09-11 and nothing said so. A Friday
+    # attempt covers a holiday week; the summary below now warns on a gap.
+    - cron: '30 10 * * 5'   # Friday retry (holiday-shifted publication)
   workflow_dispatch:
     inputs:
       since:
@@ -35,11 +39,15 @@ jobs:
       - run: pip install --quiet xlrd
       - name: Resolve the newest credit period the ledger already holds
         id: since
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           set -euo pipefail
           since='${{ github.event.inputs.since }}'
           if [ -z "$since" ]; then
-            since=$(curl -sf --max-time 120 "$BE/api/argus/market-ledger" | python3 -c '
+            # 2026-09-28: owner authentication gates every read of this host.
+            # The existing operational token passes the gate; it is never logged.
+            since=$(curl -sf --max-time 120 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/market-ledger" | python3 -c '
           import json, sys
           doc = json.load(sys.stdin)
           periods = [str(r.get("periodEnd") or "") for r in doc.get("table") or []
@@ -68,6 +76,10 @@ jobs:
               print("- no summary:", e); raise SystemExit(0)
           for key in ("since", "fetched", "gaps", "import", "ledger"):
               print(f"- {key}: {json.dumps(s.get(key), ensure_ascii=False)}")
+          # A run that imported nothing is not a success worth staying quiet about:
+          # the conditioning window is 45 days and the ledger ages one week per gap.
+          if s.get("gaps") or not s.get("fetched"):
+              print(f"::warning title=jpx-credit-weekly::no week imported; gaps={json.dumps(s.get('gaps'), ensure_ascii=False)} since={s.get('since')}")
           PY
       - uses: actions/upload-artifact@v4
         if: always()
