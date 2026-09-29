@@ -142,6 +142,33 @@ def read_record(path, record_id=None, *, presentation_only=False):
     finally: conn.close()
 
 
+def summary(path):
+    """Row counts and the latest view id without reading any record body."""
+    conn = _connect(path, True)
+    try:
+        views = conn.execute('SELECT COUNT(*) FROM views').fetchone()[0]
+        outcomes = conn.execute('SELECT COUNT(*) FROM outcomes').fetchone()[0]
+        latest = conn.execute('SELECT record_id FROM views ORDER BY julianday(recorded_at) DESC,sequence DESC LIMIT 1').fetchone()
+        return {'counts': {'views': int(views), 'outcomes': int(outcomes)},
+                'latestRecordId': latest[0] if latest else None}
+    finally: conn.close()
+
+
+def read_page_index(path, *, before_sequence=None, limit=20):
+    """Sequence and record id only, newest first; no body leaves the database."""
+    if type(limit) is not int or not 1 <= limit <= 100 or (before_sequence is not None and
+            (type(before_sequence) is not int or before_sequence < 1)):
+        raise ValueError('invalid_analysis_history_cursor')
+    conn = _connect(path, True)
+    try:
+        rows = conn.execute('SELECT sequence,record_id FROM views WHERE sequence<? ORDER BY sequence DESC LIMIT ?',
+                            (before_sequence if before_sequence is not None else 9223372036854775807, limit + 1)).fetchall()
+        entries = [{'sequence': seq, 'recordId': identity} for seq, identity in rows[:limit]]
+        return {'rows': entries, 'hasMore': len(rows) > limit,
+                'nextBeforeSequence': entries[-1]['sequence'] if entries else None}
+    finally: conn.close()
+
+
 def read_page(path, *, before_sequence=None, limit=20):
     if type(limit) is not int or not 1 <= limit <= 100 or (before_sequence is not None and
             (type(before_sequence) is not int or before_sequence < 1)):

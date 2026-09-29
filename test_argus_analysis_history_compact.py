@@ -158,3 +158,27 @@ def test_shared_deadline_stops_compression_before_any_publication(tmp_path):
     remote._check_deadline = expired
     with pytest.raises(TimeoutError): backup.synchronize(source, remote)
     assert remote.files == {}
+
+
+def test_restart_with_a_complete_local_file_skips_the_remote_restore(tmp_path, monkeypatch):
+    """After a restart last_verified_head is unknown; when the local file already
+    holds every remote record the archive is not restored again."""
+    remote = original.Remote(); remote.history_format_version = 2
+    source = tmp_path/'source.sqlite'
+    from datetime import datetime, timedelta, timezone
+    base = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    for n in range(5): original.add(source, (base+timedelta(days=n)).isoformat(), 3000+n)
+    first = backup.synchronize(source, remote)
+    assert first['status'] == 'VERIFIED'
+    def forbidden(*args, **kwargs): raise AssertionError('restore must not run')
+    monkeypatch.setattr(compact, '_restore', forbidden)
+    again = backup.synchronize(source, remote)          # restart: no last_verified_head
+    assert again['status'] == 'VERIFIED' and again['restoredCounts'] is None
+    assert again['headVersion'] == first['headVersion']
+    # A local file behind the remote still restores.
+    monkeypatch.undo()
+    cold = tmp_path/'cold.sqlite'
+    for n in range(3): original.add(cold, (base+timedelta(days=n)).isoformat(), 3000+n)
+    restored = backup.synchronize(cold, remote)
+    assert restored['restoredCounts'] is not None
+    assert history.summary(cold) == history.summary(source)

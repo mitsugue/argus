@@ -16366,8 +16366,10 @@ def _market_brief_history_outcomes():
     if not path or not cached.get("acquiredAt"):
         return
     try:
-        page = argus_analysis_history.read_page(path,
-            before_sequence=_MARKET_BRIEF.get("outcomeBeforeSequence"), limit=50)
+        # Ids only: the page used to parse fifty full records (measured
+        # +220 MiB) before each was read again one at a time below.
+        page = argus_analysis_history.read_page_index(path,
+            before_sequence=_MARKET_BRIEF.get("outcomeBeforeSequence"), limit=20)
         for item in page["rows"]:
             record = argus_analysis_history.read_record(path, item["recordId"])
             values = argus_analysis_history.outcome_candidates(record, cached.get("data") or [],
