@@ -1,4 +1,6 @@
 import copy
+import hashlib
+import json
 import sys
 import threading
 import time
@@ -351,74 +353,62 @@ def test_state_hash_normalized_untrusted_copy_falls_back_to_raw_contract(
     assert untrusted == original
 
 
-def test_state_hash_releases_serialization_temporaries_without_observer(
+def test_state_hash_streams_per_snapshot_and_never_materializes_the_store(
         monkeypatch):
+    """The digest is the legacy digest, but no call ever sees the whole store:
+    each ``current`` snapshot and history item is made stable, dumped and
+    encoded on its own, so the peak holds one snapshot, not three copies of
+    the store."""
     store = boundary_store()
-    released = []
-    original_dumps = snapshots.json.dumps
-    original_sha256 = snapshots.hashlib.sha256
+    normalized = snapshots.normalize_store(store)
+    expected_text = json.dumps(
+        snapshots._stable_json_value(normalized), ensure_ascii=False,
+        sort_keys=True, separators=(",", ":"), allow_nan=False)
+    assert "".join(snapshots._iter_normalized_hash_text(normalized)) == expected_text
+    seen = []
+    original_canonical = snapshots._canonical
 
-    class TrackedStable(dict):
-        def __del__(self):
-            released.append("stable")
-
-    class TrackedBytes(bytes):
-        def __del__(self):
-            released.append("bytes")
-
-    class TrackedCanonical(str):
-        def encode(self, *args, **kwargs):
-            return TrackedBytes(super().encode(*args, **kwargs))
-
-        def __del__(self):
-            released.append("canonical")
-
-    class TrackedHasher:
-        def __init__(self, delegate):
-            self.delegate = delegate
-
-        def hexdigest(self):
-            assert "stable" in released
-            assert "canonical" in released
-            assert "bytes" in released
-            return self.delegate.hexdigest()
-
-    def stable_clone(value):
-        if isinstance(value, float) and snapshots.math.isfinite(value) and \
-                value.is_integer():
-            return int(value)
-        if isinstance(value, list):
-            return [stable_clone(item) for item in value]
+    def bounded_canonical(value):
         if isinstance(value, dict):
-            return {key: stable_clone(item) for key, item in value.items()}
-        return value
+            assert "current" not in value or "history" not in value, \
+                "whole store handed to the encoder"
+        seen.append(len(original_canonical(value)))
+        return original_canonical(value)
 
-    def tracked_stable(value):
-        cloned = stable_clone(value)
-        if isinstance(value, dict) and \
-                value.get("schemaVersion") == snapshots.STORE_SCHEMA_VERSION:
-            return TrackedStable(cloned)
-        return cloned
+    original_dumps = snapshots.json.dumps
 
-    def tracked_dumps(*args, **kwargs):
-        encoded = original_dumps(*args, **kwargs)
-        return (TrackedCanonical(encoded)
-                if args and isinstance(args[0], TrackedStable) else encoded)
+    def guarded_dumps(value, *args, **kwargs):
+        if isinstance(value, dict) and value.get("schemaVersion") == \
+                snapshots.STORE_SCHEMA_VERSION:
+            raise AssertionError("whole store dumped at once")
+        return original_dumps(value, *args, **kwargs)
 
-    def tracked_sha256(value):
-        delegate = original_sha256(value)
-        if not isinstance(value, TrackedBytes):
-            return delegate
-        assert "stable" in released
-        assert "canonical" in released
-        assert "bytes" not in released
-        return TrackedHasher(delegate)
-
-    monkeypatch.setattr(snapshots, "_stable_json_value", tracked_stable)
-    monkeypatch.setattr(snapshots.json, "dumps", tracked_dumps)
-    monkeypatch.setattr(snapshots.hashlib, "sha256", tracked_sha256)
+    monkeypatch.setattr(snapshots, "_canonical", bounded_canonical)
+    monkeypatch.setattr(snapshots.json, "dumps", guarded_dumps)
     assert snapshots.state_hash(store) == VERIFIED_BOUNDARY_STATE_HASH
-    assert released == ["stable", "canonical", "bytes"]
+    assert snapshots.state_hash_normalized(normalized) == VERIFIED_BOUNDARY_STATE_HASH
+    assert seen and max(seen) < len(expected_text)
+    assert store == boundary_store()
+
+
+def test_streamed_canonical_text_matches_json_dumps_for_unicode_and_floats():
+    raw = boundary_store()
+    first = next(iter(raw["current"].values()))
+    first["payload"]["note"] = "日本株 🌐 quote\" slash\\"
+    first["payload"]["values"] = [100.0, -0.0, 1.5, None, False, {"z": 1, "a": 2.0}]
+    normalized = snapshots.normalize_store(raw)
+    expected = json.dumps(
+        snapshots._stable_json_value(normalized), ensure_ascii=False,
+        sort_keys=True, separators=(",", ":"), allow_nan=False)
+    assert "".join(snapshots._iter_normalized_hash_text(normalized)) == expected
+    events = []
+    digest = snapshots.state_hash_normalized(
+        normalized, diagnostic_observer=lambda phase, metadata: events.append(
+            (phase, metadata)))
+    by_phase = dict(events)
+    assert by_phase["canonical_string_ready"]["canonicalCharacterCount"] == len(expected)
+    assert by_phase["utf8_bytes_ready"]["canonicalByteCount"] == len(expected.encode("utf-8"))
+    assert digest == hashlib.sha256(expected.encode("utf-8")).hexdigest()
 
 
 def _scanner():

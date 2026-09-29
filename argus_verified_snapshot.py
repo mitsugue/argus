@@ -14,7 +14,7 @@ import math
 import re
 import threading
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 
 SCHEMA_VERSION = "argus-verified-view-snapshot-v1"
@@ -447,6 +447,77 @@ def normalize_store(value: Any) -> Dict[str, Any]:
     return _NormalizedStore(result)
 
 
+def _iter_normalized_hash_text(store: Mapping[str, Any]):
+    """Encode a normalized store in canonical snapshot-sized pieces.
+
+    The concatenation is byte-for-byte the ``json.dumps(sort_keys=True,
+    separators=(",", ":"), ensure_ascii=False)`` of the stable tree, so the
+    digest is unchanged; only the peak memory changes.  Each ``current``
+    snapshot and each history item is made stable, encoded and released
+    before the next one, instead of holding the whole stable tree, the whole
+    canonical string and the whole UTF-8 encoding at once.
+    """
+    yield '{"current":{'
+    current = store.get("current") or {}
+    for index, key in enumerate(sorted(current)):
+        if index:
+            yield ","
+        yield _canonical(key)
+        yield ":"
+        yield _canonical(current[key])
+    yield '},"history":['
+    for index, item in enumerate(store.get("history") or []):
+        if index:
+            yield ","
+        yield _canonical(item)
+    yield '],"lastPublishedAt":'
+    yield _canonical(store.get("lastPublishedAt"))
+    yield ',"schemaVersion":'
+    yield _canonical(store.get("schemaVersion"))
+    yield "}"
+
+
+def _digest_normalized_store(
+        store: Mapping[str, Any],
+        diagnostic_observer: Optional[
+            Callable[[str, Dict[str, Any]], None]]) -> str:
+    """Stream the canonical text into SHA-256; keep the observer boundaries.
+
+    ``stable_tree_ready`` now marks the start of streaming (no whole stable
+    tree exists), and the character and byte counts are accumulated totals.
+    """
+    observing = diagnostic_observer is not None
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "stable_tree_ready", {
+            "currentCount": len(store.get("current") or {}),
+            "historyCount": len(store.get("history") or []),
+            "stableTreeAlive": False,
+            "streamed": True,
+        })
+    hasher = hashlib.sha256()
+    characters = 0
+    byte_count = 0
+    for text in _iter_normalized_hash_text(store):
+        characters += len(text)
+        encoded = text.encode("utf-8")
+        byte_count += len(encoded)
+        hasher.update(encoded)
+        del encoded
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "canonical_string_ready", {
+            "canonicalCharacterCount": characters,
+        })
+        _diagnostic_notify(diagnostic_observer, "utf8_bytes_ready", {
+            "canonicalByteCount": byte_count,
+        })
+    digest = hasher.hexdigest()
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "hash_complete", {
+            "digestCharacterCount": len(digest),
+        })
+    return digest
+
+
 def state_hash(
         store: Dict[str, Any], *,
         diagnostic_observer: Optional[
@@ -461,35 +532,7 @@ def state_hash(
             "historyCount": len(normalized["history"]),
             "hashNormalizedAlive": True,
         })
-    stable = _stable_json_value(normalized)
-    if observing:
-        _diagnostic_notify(diagnostic_observer, "stable_tree_ready", {
-            "currentCount": len(normalized["current"]),
-            "historyCount": len(normalized["history"]),
-            "stableTreeAlive": True,
-        })
-    canonical = json.dumps(
-        stable, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
-        allow_nan=False)
-    del stable
-    if observing:
-        _diagnostic_notify(diagnostic_observer, "canonical_string_ready", {
-            "canonicalCharacterCount": len(canonical),
-        })
-    encoded = canonical.encode("utf-8")
-    del canonical
-    if observing:
-        _diagnostic_notify(diagnostic_observer, "utf8_bytes_ready", {
-            "canonicalByteCount": len(encoded),
-        })
-    hasher = hashlib.sha256(encoded)
-    del encoded
-    digest = hasher.hexdigest()
-    if observing:
-        _diagnostic_notify(diagnostic_observer, "hash_complete", {
-            "digestCharacterCount": len(digest),
-        })
-    return digest
+    return _digest_normalized_store(normalized, diagnostic_observer)
 
 
 def state_hash_normalized(
@@ -517,35 +560,7 @@ def state_hash_normalized(
             "historyCount": len(store["history"]),
             "hashNormalizedAlive": True,
         })
-    stable = _stable_json_value(store)
-    if observing:
-        _diagnostic_notify(diagnostic_observer, "stable_tree_ready", {
-            "currentCount": len(store["current"]),
-            "historyCount": len(store["history"]),
-            "stableTreeAlive": True,
-        })
-    canonical = json.dumps(
-        stable, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
-        allow_nan=False)
-    del stable
-    if observing:
-        _diagnostic_notify(diagnostic_observer, "canonical_string_ready", {
-            "canonicalCharacterCount": len(canonical),
-        })
-    encoded = canonical.encode("utf-8")
-    del canonical
-    if observing:
-        _diagnostic_notify(diagnostic_observer, "utf8_bytes_ready", {
-            "canonicalByteCount": len(encoded),
-        })
-    hasher = hashlib.sha256(encoded)
-    del encoded
-    digest = hasher.hexdigest()
-    if observing:
-        _diagnostic_notify(diagnostic_observer, "hash_complete", {
-            "digestCharacterCount": len(digest),
-        })
-    return digest
+    return _digest_normalized_store(store, diagnostic_observer)
 
 
 def read_back_verified(local: Dict[str, Any], remote: Dict[str, Any]) -> bool:

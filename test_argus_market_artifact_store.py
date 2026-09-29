@@ -150,3 +150,38 @@ def test_status_projection_is_public_safe_and_complete():
     assert "path" not in json.dumps(projection)
     assert "secret" not in json.dumps(projection)
     assert projection["artifacts"]["chartIntelligence"]["bytes"] == 0
+
+
+def test_payload_sha256_streams_identical_bytes_to_the_whole_dump():
+    import json as _json
+    payloads = [
+        _payload(),
+        {"current": {"b": {"x": [1, 2.0, -0.0, None, True]}, "a": {"日本": "🌐 quote\" slash\\"}},
+         "history": [{"at": "2026-08-11T00:00:00Z"}, [1, [2, [3]]], "s", 4, None],
+         "mixed": {1: "int key", 2: "still int"}, "empty": {}, "emptyList": [],
+         "lastPublishedAt": None},
+        {"records": {str(i): {"v": i * 1.5, "name": f"銘柄{i}"} for i in range(50)}},
+    ]
+    for payload in payloads:
+        expected = _json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=False, allow_nan=False).encode("utf-8")
+        assert b"".join(store._iter_canonical(payload)) == expected
+        assert store.payload_sha256(payload) == hashlib.sha256(expected).hexdigest()
+
+
+def test_read_back_is_byte_exact_against_the_writer_digest(monkeypatch):
+    with tempfile.TemporaryDirectory() as root:
+        first = _write(root)
+        assert first["readBackVerified"] is True
+        real = storage.atomic_write_json
+
+        def tampering_writer(path, value, **kwargs):
+            result = real(path, value, **kwargs)
+            with open(path, "ab") as handle:
+                handle.write(b"\n")
+            return result
+
+        with pytest.raises(store.ArtifactError, match="readback_mismatch"):
+            store.write_if_changed(
+                root, "verifiedViewSnapshots", _payload("two"), state_hash=HASH_B,
+                now_iso=AT, last_state_hash=HASH_A, atomic_write_json=tampering_writer)
