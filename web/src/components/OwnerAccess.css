@@ -4,8 +4,8 @@
 .owner-access-brand__halo { position: absolute; top: -10px; width: 200px; height: 200px; border-radius: 50%; background: radial-gradient(circle, rgba(34, 211, 238, .26), rgba(34, 211, 238, .06) 52%, transparent 70%); filter: blur(3px); pointer-events: none; animation: owner-brand-halo 6s ease-in-out infinite; }
 .owner-access-brand__mark { position: relative; color: #dbe7f3; filter: drop-shadow(0 0 10px rgba(34, 211, 238, .35)); }
 .owner-access-brand__name { position: relative; margin: 6px 0 0; font: 300 30px/1 "Avenir Next", "Helvetica Neue", "Hiragino Sans", system-ui, sans-serif; letter-spacing: .32em; text-indent: .32em; color: #f2f7fb; text-shadow: 0 0 18px rgba(34, 211, 238, .18); }
-.owner-access-brand__pro { display: inline-block; margin-left: .55em; padding: 2px 8px 1px; font: 600 11px/1.4 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .22em; text-indent: .22em; vertical-align: middle; color: #7dd3fc; border: 1px solid rgba(125, 211, 252, .45); border-radius: 999px; }
-.owner-access-brand__tag { margin: 0; font: 500 9.5px/1.6 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .1em; white-space: nowrap; color: rgba(191, 210, 228, .6); }
+.owner-access-brand__pro { display: block; width: fit-content; margin: 10px auto 0; padding: 2px 10px 1px; font: 600 10px/1.5 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .26em; text-indent: .26em; color: #7dd3fc; border: 1px solid rgba(125, 211, 252, .45); border-radius: 999px; }
+.owner-access-brand__tag { margin: 2px 0 0; max-width: 100%; font: 500 8.5px/1.6 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .06em; white-space: nowrap; overflow: hidden; text-overflow: clip; color: rgba(191, 210, 228, .6); }
 .owner-access-screen > button { display: block; width: auto; min-width: 240px; margin: 14px auto 0; }
 .owner-access-screen form { justify-items: stretch; }
 .owner-access-brand__rule { width: 120px; height: 1px; margin-top: 6px; background: linear-gradient(90deg, transparent, rgba(34, 211, 238, .6), transparent); }
