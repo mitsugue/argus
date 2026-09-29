@@ -165,6 +165,7 @@ def test_snapshot_labels_carry_evidence_pack_id(monkeypatch):
 
 
 def test_gemini_support_checks_supplied_data_without_search(monkeypatch):
+    monkeypatch.setattr(scanner, '_AI_FULL_ANALYSIS_ENABLED', False)  # legacy two-provider mode under test
     requests = []
     def respond(**kwargs):
         requests.append(kwargs)

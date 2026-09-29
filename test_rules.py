@@ -125,6 +125,7 @@ def test_ai_truth_no_cached_result(monkeypatch):
 
 
 def test_ai_truth_one_key_is_partial(monkeypatch):
+    monkeypatch.setattr(scanner, '_AI_FULL_ANALYSIS_ENABLED', False)  # legacy two-provider mode under test
     monkeypatch.setattr(scanner, "_AI_JUDGE_ENABLED", True)
     monkeypatch.setattr(scanner, "_OPENAI_API_KEY", "x")
     monkeypatch.setattr(scanner, "GEMINI_API_KEY", "")

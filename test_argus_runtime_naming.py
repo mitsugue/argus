@@ -173,6 +173,7 @@ def test_gemini_rejects_new_content_before_cache_admission_and_counts_spend(monk
 @pytest.mark.parametrize("provider", ["openai", "gemini"])
 def test_rejected_judge_content_cannot_influence_labels_but_retains_billed_tokens(monkeypatch, provider):
     import scanner
+    monkeypatch.setattr(scanner, '_AI_FULL_ANALYSIS_ENABLED', False)  # legacy two-provider mode under test
     monkeypatch.setenv("PRODUCT_NAMING_POLICY", json.dumps(POLICY))
     monkeypatch.setattr(scanner, "_OPENAI_API_KEY", "synthetic")
     monkeypatch.setattr(scanner, "GEMINI_API_KEY", "synthetic")
