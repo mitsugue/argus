@@ -238,7 +238,7 @@ REVIEWED_EXTENSION_BLOBS = {
 
     "test_jp_market_engine.py": "142cc381d94e879def14ee46bf107ae411ddbbd9",
     "test_argus_japan_valuation.py": "e7daf10f9e931db0492155b424ffd0d4745cfa2f",
-    "test_argus_valuation_addendum.py": "f5d413b959fba23f0103ec9c131fba8a94f30c0d",
+    "test_argus_valuation_addendum.py": "b25341ca93e351ddab23ed2a9ecd5bbf0cad7980",
     "scripts/verify_index_valuation_anchors.py": "b6520b17bcf79cb8376b12c975dc6f8d8010ba7e",
     'argus_jp_market_research.py': '643a18e14be0387234172f934c473077825f2fe0',
     'test_argus_owner_dialogue_compression.py': '2cb55fe8e96b350d9d951401acf5cde43785b6c2',
@@ -650,6 +650,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_chart_intelligence.py",
     "test_argus_verified_snapshot.py",
     "test_argus_index_valuation_proxy_glue.py",
     "docs/ops/index-valuation-proxy.md",
