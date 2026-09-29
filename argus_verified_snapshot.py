@@ -402,7 +402,11 @@ def publish_atomic(
         return copy.deepcopy(store), reason
     key = snapshot_key(
         read_back["kind"], read_back["instrument"], read_back["horizon"])
-    result = normalize_store(store)
+    # Replace one pointer without deep-copying every other snapshot: the
+    # caller installs the returned store wholesale, so unchanged snapshots
+    # may be shared with the store it replaces.  A 12-snapshot store is about
+    # 150 MiB of objects; three horizons used to copy it three times.
+    result = _normalize_store_shared(store)
     current = result["current"].get(key)
     if isinstance(current, dict):
         if current.get("snapshotId") == read_back.get("snapshotId"):
@@ -425,6 +429,31 @@ def publish_atomic(
     result["history"] = result["history"][-MAX_HISTORY:]
     result["lastPublishedAt"] = read_back.get("verifiedAt")
     return result, "published"
+
+
+def _normalize_store_shared(value: Any) -> Dict[str, Any]:
+    """``normalize_store`` without the deep copies and without provenance.
+
+    Verified snapshots are referenced, not copied; the containers are new so
+    the input store is never mutated.  Only ``publish_atomic`` uses this,
+    and its result is never handed to the trusted fast hash path.
+    """
+    result = empty_store()
+    if not isinstance(value, dict):
+        return result
+    for key, snapshot in (value.get("current") or {}).items():
+        ok, _ = verify_snapshot(snapshot)
+        expected = snapshot_key(
+            snapshot.get("kind"), snapshot.get("instrument"),
+            snapshot.get("horizon")) if isinstance(snapshot, dict) else ""
+        if ok and key == expected:
+            result["current"][key] = snapshot
+    history = value.get("history")
+    if isinstance(history, list):
+        result["history"] = [
+            item for item in history[-MAX_HISTORY:] if isinstance(item, dict)]
+    result["lastPublishedAt"] = value.get("lastPublishedAt")
+    return result
 
 
 def normalize_store(value: Any) -> Dict[str, Any]:

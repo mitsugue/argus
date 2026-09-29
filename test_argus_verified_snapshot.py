@@ -527,3 +527,26 @@ def test_natural_tick_skips_unchanged_and_regenerates_only_changed_target(
     assert changed_meta["status"] == "published"
     assert [row[0] for row in calls] == ["1321"]
     assert changed_meta["datasetHash"] == changed_hash
+
+
+def test_publish_atomic_shares_unchanged_snapshots_instead_of_copying_the_store():
+    """Replacing one pointer must not deep-copy the other snapshots: the
+    caller installs the result wholesale, so sharing is safe, and the input
+    store is left untouched."""
+    store, _ = snapshots.publish_atomic(
+        snapshots.empty_store(), candidate("1321"), now_iso="2026-07-23T06:02:00Z")
+    store, _ = snapshots.publish_atomic(
+        store, candidate("1306"), now_iso="2026-07-23T06:02:00Z")
+    original = copy.deepcopy(store)
+    keep = snapshots.snapshot_key("market-chart", "1306", "5D")
+    replaced = snapshots.snapshot_key("market-chart", "1321", "5D")
+    newer = candidate("1321", dataset_hash="data-b",
+                      generated_at="2026-07-23T07:01:00Z")
+    result, status = snapshots.publish_atomic(store, newer, now_iso="2026-07-23T07:02:00Z")
+    assert status == "published"
+    assert result["current"][keep] is store["current"][keep]
+    assert result["current"][replaced] is not store["current"][replaced]
+    assert result["current"] is not store["current"]
+    assert result["history"] is not store["history"]
+    assert store == original
+    assert snapshots.state_hash(result) == snapshots.state_hash(copy.deepcopy(result))
