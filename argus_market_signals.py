@@ -79,8 +79,11 @@ def signal_state(row: Optional[Mapping[str, Any]]) -> str:
 def _gate_note_ja(row: Any, state: str) -> Optional[str]:
     if state != "DATA_GATED" or not isinstance(row, Mapping):
         return None
-    if row.get("status") == "AVAILABLE" and row.get("conditionMet") is None \
-            and str(row.get("conditionRule") or "").startswith("descriptive"):
+    # The families reach this projection reduced to status/conditionMet, so
+    # the distinction rests on status alone: AVAILABLE means the evidence was
+    # read and evaluated and only the activation rule is missing (D04's
+    # original defines a ladder, not a multiple); anything else is data.
+    if row.get("status") == "AVAILABLE" and row.get("conditionMet") is None:
         return "評価値あり・点灯規則が原典に未定義（参考水準のみ）"
     return "判定に必要なデータが未取得または不完全"
 
