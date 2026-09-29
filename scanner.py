@@ -38064,11 +38064,15 @@ def _jp_index_valuation_warm():
 # argus_index_valuation_proxy; this is the IO and the memory around it. The
 # weight table never leaves this process: not logged, not served, not committed.
 _NK225_WEIGHT_CSV_ENV = "ARGUS_NK225_WEIGHT_CSV"
+#: Render mounts secret files here; Nikkei's own download name is the default.
+_NK225_SECRET_DIR = "/etc/secrets"
+_NK225_WEIGHT_DEFAULT_NAME = "nikkei_stock_average_weight_jp.csv"
 _JP_INDEX_PROXY_LOCK = threading.Lock()
 _JP_INDEX_PROXY = {"status": "NOT_RUN", "restoreAttempted": False, "weightsSha256": None,
                    "weightsAsOf": None, "factors": None, "history": {},
                    "recommendedVariant": "FORECAST_SIGNED", "lastAttemptAt": None,
-                   "lastError": None, "lastErrorReason": None, "requestsLastWarm": 0}
+                   "lastError": None, "lastErrorReason": None, "requestsLastWarm": 0,
+                   "weightFileFound": None}
 _JP_INDEX_PROXY_BACKFILL_PER_WARM = 5
 _JP_INDEX_PROXY_HISTORY_LIMIT = 60
 
@@ -38140,16 +38144,43 @@ def _jp_index_proxy_persist():
     argus_persistent_storage.atomic_write_json(path, body, maximum_bytes=4 * 1024 * 1024, file_mode=0o600)
 
 
+def _jp_index_proxy_weight_candidates():
+    """Where the weight table may be, in the order tried.
+
+    2026-09-29: the first production attempt reported weight_file_unreadable
+    with the variable set. The value a person types into a dashboard is as
+    likely to be the file's name as its mounted path, so a bare name is also
+    looked for under the platform's secret directory, and with no variable at
+    all Nikkei's own download name is tried there. The status names which
+    form was found, never the path itself.
+    """
+    configured = (os.environ.get(_NK225_WEIGHT_CSV_ENV) or "").strip()
+    candidates = []
+    if configured:
+        candidates.append(("configured_path", configured))
+        if os.sep not in configured:
+            candidates.append(("configured_name_in_secret_dir",
+                               os.path.join(_NK225_SECRET_DIR, configured)))
+    candidates.append(("default_name_in_secret_dir",
+                       os.path.join(_NK225_SECRET_DIR, _NK225_WEIGHT_DEFAULT_NAME)))
+    return candidates
+
+
 def _jp_index_proxy_weights():
     """(table, sha256) from the owner's secret file, or (None, reason)."""
-    path = (os.environ.get(_NK225_WEIGHT_CSV_ENV) or "").strip()
-    if not path:
-        return None, "weight_file_not_configured"
-    try:
-        with open(path, "rb") as handle:
-            raw = handle.read(512 * 1024)
-    except OSError:
-        return None, "weight_file_unreadable"
+    raw, found = None, None
+    for kind, path in _jp_index_proxy_weight_candidates():
+        try:
+            with open(path, "rb") as handle:
+                raw = handle.read(512 * 1024)
+            found = kind
+            break
+        except OSError:
+            continue
+    if raw is None:
+        configured = bool((os.environ.get(_NK225_WEIGHT_CSV_ENV) or "").strip())
+        return None, ("weight_file_unreadable" if configured else "weight_file_not_configured")
+    _JP_INDEX_PROXY["weightFileFound"] = found
     try:
         text = raw.decode("cp932")
     except UnicodeDecodeError:
@@ -38265,6 +38296,7 @@ def _jp_index_proxy_public():
             "lastAttemptAt": _JP_INDEX_PROXY.get("lastAttemptAt"),
             "lastError": _JP_INDEX_PROXY.get("lastError"),
             "lastErrorReason": _JP_INDEX_PROXY.get("lastErrorReason"),
+            "weightFileFound": _JP_INDEX_PROXY.get("weightFileFound"),
             "requestsLastWarm": _JP_INDEX_PROXY.get("requestsLastWarm"),
             "actionAuthority": False, "validationStatus": "UNVALIDATED"}
 
@@ -38403,7 +38435,8 @@ def _jp_market_comparison_calculate(horizon):
             state_rows=_JP_MARKET_FEATURE_HISTORY.get("features", ()),
             condition_rows=_JP_MARKET_FEATURE_HISTORY.get("conditions", ()))
         result["marketFeatureAcquisition"] = {k: _JP_MARKET_FEATURE_HISTORY.get(k)
-            for k in ("status", "lastSuccessfulCalculationAt", "errorClass", "firstCutoff", "lastCutoff")}
+            for k in ("status", "lastSuccessfulCalculationAt", "errorClass", "errorReason",
+                      "firstCutoff", "lastCutoff")}
         result["marketFeatureAcquisition"]["derivedCache"] = dict(_JP_MARKET_FEATURE_CACHE_STATUS)
         result["marketFeatureAcquisition"]["officialSources"] = _JP_OFFICIAL_SOURCE_CACHE.snapshot()
         if result.get('comparison'):
@@ -39214,8 +39247,11 @@ def _jp_market_feature_history_warm():
         _JP_MARKET_ENGINE_MARKET_VIEW_MEMO["ts"] = 0
         _jp_market_feature_history_persist(cache_path, method, now)
     except Exception as exc:
+        # The raise sites in this path carry fixed reason tokens; the first
+        # eighty characters are enough to tell them apart and carry no data.
         _JP_MARKET_FEATURE_HISTORY = {**_JP_MARKET_FEATURE_HISTORY, "status": "FAILED",
-                                     "errorClass": type(exc).__name__}
+                                     "errorClass": type(exc).__name__,
+                                     "errorReason": str(exc)[:80]}
     finally:
         _JP_MARKET_FEATURE_HISTORY_LOCK.release()
 
