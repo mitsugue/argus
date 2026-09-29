@@ -249,3 +249,17 @@ def test_the_recommended_variant_is_the_measured_one_and_is_not_restored(lane, t
     latest = lane["state"]["history"][max(lane["state"]["history"])]
     assert row["per"] == latest["variants"]["FORECAST_COVERED_ONLY"]["per"]
     assert row["epsVariant"] == "FORECAST_COVERED_ONLY"
+
+
+def test_the_index_chart_ladder_reads_the_recommended_variant_eps(lane):
+    import argus_index_valuation_proxy as proxy
+    lane["state"]["recommendedVariant"] = proxy.RECOMMENDED_VARIANT
+    scanner._jp_index_proxy_warm(lane["rows"])
+    assert lane["state"]["status"] == "AVAILABLE"
+    rows = scanner._jp_index_proxy_eps_history()
+    assert rows and all(set(r) >= {"date", "availableFrom", "eps", "per", "epsVariant", "basis"} for r in rows)
+    assert all(r["basis"] == "ARGUS_PROXY_INDEX_BASED_PER" and r["epsVariant"] == "FORECAST_COVERED_ONLY" for r in rows)
+    latest = lane["state"]["history"][max(lane["state"]["history"])]
+    assert rows[-1]["eps"] == latest["variants"]["FORECAST_COVERED_ONLY"]["indexEps"]
+    text = json.dumps(rows, ensure_ascii=False)
+    assert "factor" not in text.lower() and "ウエート" not in text

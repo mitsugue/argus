@@ -76,6 +76,15 @@ def signal_state(row: Optional[Mapping[str, Any]]) -> str:
     return _ABSENT
 
 
+def _gate_note_ja(row: Any, state: str) -> Optional[str]:
+    if state != "DATA_GATED" or not isinstance(row, Mapping):
+        return None
+    if row.get("status") == "AVAILABLE" and row.get("conditionMet") is None \
+            and str(row.get("conditionRule") or "").startswith("descriptive"):
+        return "評価値あり・点灯規則が原典に未定義（参考水準のみ）"
+    return "判定に必要なデータが未取得または不完全"
+
+
 def project_market_signals(
         families: Optional[Mapping[str, Mapping[str, Any]]]) -> Dict[str, Any]:
     """Project family evidence into the owner-facing seven-signal surface."""
@@ -98,6 +107,9 @@ def project_market_signals(
                              if isinstance(row, Mapping) else None),
             "validationStatus": (row.get("validationStatus")
                                  if isinstance(row, Mapping) else None),
+            # DATA_GATED covers two different situations; the note tells the
+            # owner which one this is, without changing the counting rule.
+            "gateNoteJa": _gate_note_ja(row, state),
         })
     active = counts["ACTIVE"]
     return {

@@ -858,7 +858,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
               ? topSignals.signals.map((row) => <i key={row.id}
                 className={row.state === 'ACTIVE' ? 'is-current' : ''}
                 data-signal-id={row.id} data-signal-state={row.state}
-                title={`${row.id} ${row.nameJa} ${row.stateJa}`}>{row.id.slice(-1)}</i>)
+                title={`${row.id} ${row.nameJa} ${row.stateJa}${row.gateNoteJa ? ` · ${row.gateNoteJa}` : ''}`}>{row.id.slice(-1)}</i>)
               : [1, 2, 3, 4, 5, 6, 7].map((level) => <i key={level}
                 className={level === view.actionScore ? 'is-current' : ''}
                 data-seven-sign-level={level}>{level}</i>)}
@@ -868,7 +868,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           {topSignals && <div className="at-seven-signals" data-argus-contract="market-signals-top-detail-v1">
             {topSignals.signals.map((row) => <GlossaryTip key={row.id} glossaryKey={row.glossaryKey}>
               <i data-signal-id={row.id} data-signal-state={row.state}>
-                {row.id} {row.nameJa} <b>{row.stateJa}</b></i>
+                {row.id} {row.nameJa} <b>{row.stateJa}</b>
+                {row.gateNoteJa ? <small className="at-seven-gate-note"> {row.gateNoteJa}</small> : null}</i>
             </GlossaryTip>)}
             <small>点灯 = 条件成立のみ数える（判定不能・欠測・古い・要ライセンスは数えない）</small>
           </div>}

@@ -37036,9 +37036,14 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                                    "kind": _kind, "classification": "unconfirmed"})
     sector_rows = (reference_history("1306", "JP")
                    if market == "JP" and symbol != "1306" else [])
+    # The cash index chart draws its EPS x PER ladder from the official
+    # ledger history when one exists, otherwise from the ARGUS proxy lane
+    # (labelled as such by the analyzer); ETF proxies never receive it.
     report = argus_chart_intelligence.analyze(
         symbol, market, rows, now_iso=now_iso, market_ledger=ledger,
-        events=events, sector_rows=sector_rows)
+        events=events, sector_rows=sector_rows,
+        index_valuation_history=(_jp_index_proxy_eps_history()
+                                 if str(symbol).upper() == "N225" else None))
     # Canonical instrument metadata comes from the existing calibrated universe.
     # The UI must never relabel an ETF proxy as the cash index it follows.
     report["displayNameJa"] = argus_calibration.DISPLAY_NAMES.get(
@@ -38350,6 +38355,25 @@ def _jp_index_proxy_row(cutoff):
     row = argus_index_valuation_proxy.select_variant({**latest, "basis": argus_index_valuation_proxy.PROXY_BASIS,
         "epsKind": "PROXY_FROM_CONSTITUENT_FORECAST_EPS"}, variant)
     return row
+
+
+def _jp_index_proxy_eps_history():
+    """Per-session index EPS from the proxy lane, for the index chart's
+    reference ladder: date, availability, EPS of the recommended variant and
+    the proxy basis. Numbers only; nothing per member leaves the lane."""
+    history = _JP_INDEX_PROXY.get("history") or {}
+    variant = _JP_INDEX_PROXY.get("recommendedVariant") or argus_index_valuation_proxy.RECOMMENDED_VARIANT
+    out = []
+    for day, row in sorted(history.items()):
+        body = ((row.get("variants") or {}).get(variant) or {})
+        eps = body.get("indexEps")
+        if eps is None:
+            continue
+        out.append({"date": day, "availableFrom": row.get("availableFrom") or row.get("knownAt"),
+                    "eps": eps, "per": body.get("per"), "epsVariant": variant,
+                    "basis": argus_index_valuation_proxy.PROXY_BASIS,
+                    "sourceRef": row.get("sourceRef")})
+    return out
 
 
 def _jp_index_proxy_public():

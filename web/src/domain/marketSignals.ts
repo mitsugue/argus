@@ -18,6 +18,8 @@ export interface MarketSignalRow {
   state: MarketSignalState;
   status?: string | null;
   conditionMet?: boolean | null;
+  /** Why a DATA_GATED row is gated: no source rule vs. missing data (server-provided). */
+  gateNoteJa?: string | null;
 }
 
 export interface MarketSignalsProjection {
@@ -29,6 +31,7 @@ export interface MarketSignalsProjection {
   signals?: Array<{
     id?: string; family?: string; nameEn?: string; nameJa?: string;
     state?: string; status?: string | null; conditionMet?: boolean | null;
+    gateNoteJa?: string | null;
   }>;
 }
 
@@ -104,6 +107,7 @@ export function marketSignalsView(
       return {
         id: def.id, family: def.family, nameEn: def.nameEn, nameJa: def.nameJa,
         state, status: raw?.status ?? null, conditionMet: raw?.conditionMet ?? null,
+        gateNoteJa: typeof raw?.gateNoteJa === 'string' && raw.gateNoteJa ? raw.gateNoteJa : null,
       };
     });
     // The numerator is always recounted from the per-signal states so a

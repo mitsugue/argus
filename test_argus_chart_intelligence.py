@@ -158,6 +158,33 @@ class RelativeReactionAndCritiqueTests(unittest.TestCase):
         self.assertEqual(current[-1]["history"][0]["value"], 2100)
         self.assertEqual(current[-1]["history"][1]["value"], 4200)
 
+    def test_valuation_levels_fall_back_to_the_index_proxy_history(self):
+        proxy = [
+            {"date": "2026-09-25", "availableFrom": "2026-09-26T04:00:00Z", "eps": 3000.0,
+             "basis": "ARGUS_PROXY_INDEX_BASED_PER", "sourceRef": "argus:index-valuation-proxy"},
+            {"date": "2026-09-28", "availableFrom": "2026-09-29T04:00:00Z", "eps": 2990.0,
+             "basis": "ARGUS_PROXY_INDEX_BASED_PER", "sourceRef": "argus:index-valuation-proxy"},
+            {"date": "2026-09-29", "availableFrom": "2026-09-30T04:00:00Z", "eps": 2980.0,
+             "basis": "ARGUS_PROXY_INDEX_BASED_PER", "sourceRef": "argus:index-valuation-proxy"},
+        ]
+        levels = ci.valuation_levels({}, "2026-09-29T12:00:00Z", index_valuation_history=proxy)
+        self.assertEqual([lv["multiple"] for lv in levels], [16, 17, 18, 19, 20, 21])
+        by_multiple = {lv["multiple"]: lv for lv in levels}
+        self.assertEqual(by_multiple[17]["value"], round(2990.0 * 17, 2))   # 09-29 row not yet available
+        self.assertEqual(by_multiple[17]["asOf"], "2026-09-28")
+        self.assertEqual(by_multiple[17]["classification"], "argus_proxy")
+        self.assertEqual(by_multiple[17]["epsBasis"], "ARGUS_PROXY_INDEX_BASED_PER")
+        self.assertTrue(by_multiple[17]["labelJa"].endswith("（ARGUS代理EPS）"))
+        self.assertEqual(len(by_multiple[17]["history"]), 2)
+        # The ledger's official history always wins over the proxy.
+        ledger = {"valuationHistory": [{"asOf": "2026-09-28", "availableFrom": "2026-09-28",
+                                        "value": 3100, "inputObservationIds": ["official"]}]}
+        official = ci.valuation_levels(ledger, "2026-09-29T12:00:00Z", index_valuation_history=proxy)
+        self.assertEqual(official[1]["value"], 3100 * 17)
+        self.assertEqual(official[1]["classification"], "derived")
+        self.assertNotIn("epsBasis", official[1])
+        self.assertEqual(ci.valuation_levels(None, "2026-09-29T12:00:00Z"), [])
+
     def test_relative_strength_ns_turn_and_zero_guard(self):
         left, right = bars(80, step=0.5), bars(80, step=0.15)
         result = ci.relative_strength("nikkei_sp500", left, right,
