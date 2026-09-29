@@ -1,11 +1,12 @@
 .owner-access-screen { position: relative; max-width: 420px; margin: 10vh auto; padding: 28px 24px 24px; color: #e5edf6; border-radius: 18px; border: 1px solid rgba(148, 178, 204, .14); background: radial-gradient(120% 90% at 50% -10%, rgba(34, 211, 238, .10), transparent 60%), linear-gradient(180deg, #131f2d, #0e1722); box-shadow: 0 24px 60px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .04); overflow: hidden; }
 /* Brand lockup on the sign-in screen (owner request 2026-09-30). */
 .owner-access-brand { position: relative; display: grid; justify-items: center; gap: 10px; padding: 8px 0 18px; text-align: center; }
-.owner-access-brand__halo { position: absolute; top: 4px; width: 160px; height: 160px; border-radius: 50%; background: radial-gradient(circle, rgba(34, 211, 238, .18), rgba(34, 211, 238, .04) 55%, transparent 70%); filter: blur(2px); pointer-events: none; animation: owner-brand-halo 6s ease-in-out infinite; }
+.owner-access-brand__halo { position: absolute; top: -10px; width: 200px; height: 200px; border-radius: 50%; background: radial-gradient(circle, rgba(34, 211, 238, .26), rgba(34, 211, 238, .06) 52%, transparent 70%); filter: blur(3px); pointer-events: none; animation: owner-brand-halo 6s ease-in-out infinite; }
 .owner-access-brand__mark { position: relative; color: #dbe7f3; filter: drop-shadow(0 0 10px rgba(34, 211, 238, .35)); }
 .owner-access-brand__name { position: relative; margin: 6px 0 0; font: 300 30px/1 "Avenir Next", "Helvetica Neue", "Hiragino Sans", system-ui, sans-serif; letter-spacing: .32em; text-indent: .32em; color: #f2f7fb; text-shadow: 0 0 18px rgba(34, 211, 238, .18); }
 .owner-access-brand__pro { display: inline-block; margin-left: .55em; padding: 2px 8px 1px; font: 600 11px/1.4 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .22em; text-indent: .22em; vertical-align: middle; color: #7dd3fc; border: 1px solid rgba(125, 211, 252, .45); border-radius: 999px; }
-.owner-access-brand__tag { margin: 0; font: 500 10px/1.6 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .18em; color: rgba(191, 210, 228, .6); }
+.owner-access-brand__tag { margin: 0; font: 500 9.5px/1.6 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .1em; white-space: nowrap; color: rgba(191, 210, 228, .6); }
+.owner-access-screen > button { display: block; width: 100%; margin-top: 14px; }
 .owner-access-brand__rule { width: 120px; height: 1px; margin-top: 6px; background: linear-gradient(90deg, transparent, rgba(34, 211, 238, .6), transparent); }
 .owner-access-screen__lead { margin: 6px 0 0; text-align: center; color: rgba(229, 237, 246, .82); }
 @keyframes owner-brand-halo { 0%, 100% { opacity: .75; transform: scale(1); } 50% { opacity: 1; transform: scale(1.06); } }
