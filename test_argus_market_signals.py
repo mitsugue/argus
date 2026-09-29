@@ -124,8 +124,7 @@ def test_not_applicable_is_distinct_from_unavailable_and_never_counts():
 def test_data_gated_note_separates_missing_rule_from_missing_data():
     import argus_market_signals as signals
     families = {
-        "D04": {"status": "AVAILABLE", "conditionMet": None,
-                "conditionRule": "descriptive_same_session_proxy_valuation_no_validated_signal"},
+        "D04": {"status": "AVAILABLE", "conditionMet": None},  # projected rows carry no rule text
         "D05": {"status": "PARTIAL", "conditionMet": None},
         "D06": {"status": "AVAILABLE", "conditionMet": True},
     }
