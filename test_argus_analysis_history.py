@@ -182,3 +182,22 @@ def test_verified_remote_head_survives_a_restart_and_skips_the_full_restore(tmp_
     assert seen[-1] is None
     status = scanner._market_brief_history_remote_status()
     assert 'headVersion' not in status and 'test-only-token' not in json.dumps(status)
+
+
+def test_outcome_walk_reads_the_index_without_parsing_page_bodies(tmp_path, monkeypatch):
+    path = tmp_path/'history.sqlite'
+    monkeypatch.setattr(scanner, '_market_brief_history_path', lambda: str(path))
+    for n in range(3):
+        saved = brief(); saved['generatedAt'] = f'2026-09-1{n}T00:00:00Z'
+        saved['calculationSnapshots'] = {'5': {'epsInput': 3000 + n}}
+        scanner._market_brief_history_save(saved)
+    page = history.read_page_index(str(path), limit=2)
+    assert [set(r) for r in page['rows']] == [{'sequence', 'recordId'}] * 2 and page['hasMore'] is True
+    calls = []
+    real = history.read_record
+    monkeypatch.setattr(history, 'read_record', lambda *a, **k: (calls.append(a), real(*a, **k))[1])
+    monkeypatch.setattr(history, 'read_page', lambda *a, **k: (_ for _ in ()).throw(AssertionError('full page must not be read')))
+    monkeypatch.setattr(scanner, '_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE', {'^N225': {'acquiredAt': '2026-09-20T00:00:00Z', 'data': []}})
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF', {'outcomeBeforeSequence': None})
+    scanner._market_brief_history_outcomes()
+    assert len(calls) == 3 and scanner._MARKET_BRIEF.get('outcomeError') is None
