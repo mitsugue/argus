@@ -206,7 +206,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_institutional_backend_v1160.py': 'd8065d151883cdf13ff7ebfa79358482d40cc8fc',
     'docs/V13_7_SHAPEUP_REQUIREMENTS.md': '9756717ff26e5cf159dcf5d20cb578d99ab225ed',
     'docs/V13_7_SHAPEUP_ACCEPTANCE.md': 'c86aa8bb3da05f49b0a14b848439cb5ea2a26b94',
-    'test_rules.py': '99fad6a22f968ddc518a8b7b359d4adfdf8fd9e0',
+    'test_rules.py': '36c1d8b92e9a68f606586c00607d1e9c400c1b2c',
     'bridge/trigger_closepin.sh': '83ee01384660bb8799a863e080021a7fa35c1e3d',
     '.github/workflows/closepin-pin.yml': 'ea693b3ca6140d4cf6fa66c48d91c6a03f603baa',
     'scripts/run_breadth_freshness.py': '93922a3409750a1562fb928eb34933f5feb22a68',
