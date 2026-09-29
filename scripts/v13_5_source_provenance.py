@@ -355,7 +355,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/lib/marketInternals.ts': 'cf96a5b15512e7f20ef9bcf211d6295307ccec9a',
     'web/src/lib/pwaRecovery.ts': '038fe1dc3e55433a0f72e8a06ca1701176155438',
     'web/src/components/today/MarketAnalysisHistory.tsx': '7a986421fdd00c28c53e563a09287dbbc314694e',
-    'test_argus_analysis_history.py': '4a9c705d81507ebf9f6cecafea1f583572b13fc0',
+    'test_argus_analysis_history.py': 'c622874f8acc70919f453ca7e08e0d006c226f59',
     'argus_analysis_history.py': '5bb5fc8be9cec151eb61634f3cded2d9ef6d541a',
     'argus_market_ledger.py': '562841f6de02f9e778591c82eb6f9642756199d9',
     'jp_market_positioning.py': '37661655f15f27baf2beec9e08fb2b5977cfbe9f',
