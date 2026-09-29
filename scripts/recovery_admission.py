@@ -102,7 +102,7 @@ EXPECTED_DUAL_SCOPE_RECOVERY_PAYLOAD_DIFF_SHA256 = (
 )
 
 EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256 = (
-    "8f0f2436abdd7b007fe4c9b80b78e1ea70c7b14cdd6b1371e81d65a8f0520f62"
+    "dc690da9d98bf203bdd2075bf0599d6665639761a55d542250feba2d48e3d5f6"
 )
 
 # This owner-authorized staged analysis delivery pins BOTH implementation diffs. A paired
