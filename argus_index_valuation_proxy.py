@@ -74,6 +74,12 @@ MINIMUM_PRICED_MEMBERS = 200
 # or drop the member from the price sum as well.
 EPS_VARIANTS = ("FORECAST_SIGNED", "FORECAST_NON_NEGATIVE", "ACTUAL_SIGNED",
                 "FORECAST_WITH_ACTUAL_FALLBACK", "FORECAST_COVERED_ONLY")
+# Measured against the official September 2026 index-based PER series on
+# 2026-09-29 (sessions 09-18, 09-24, 09-25, 09-28): COVERED_ONLY +0.76%
+# (spread 0.04pt), ACTUAL_SIGNED -2.36%, WITH_ACTUAL_FALLBACK -9.69%,
+# FORECAST_SIGNED/NON_NEGATIVE +29.88%. The recommendation is a code
+# decision bound to that measurement, not a persisted state.
+RECOMMENDED_VARIANT = "FORECAST_COVERED_ONLY"
 
 
 class ProxyError(ValueError):

@@ -235,3 +235,17 @@ def test_the_content_scan_reports_outcomes_without_names(lane, tmp_path, monkeyp
         {"sizeBucket": "lt1k", "outcome": "weight_table_columns"}]
     text = json.dumps(scanner._jp_index_proxy_public(), ensure_ascii=False)
     assert "key.pem" not in text and "blob.bin" not in text and "BEGIN PRIVATE" not in text
+
+
+def test_the_recommended_variant_is_the_measured_one_and_is_not_restored(lane, tmp_path, monkeypatch):
+    """The scale row carries the variant the measurement chose, and a saved
+    state naming another variant does not override that code decision."""
+    import argus_index_valuation_proxy as proxy
+    assert proxy.RECOMMENDED_VARIANT == "FORECAST_COVERED_ONLY"
+    lane["state"]["recommendedVariant"] = proxy.RECOMMENDED_VARIANT
+    scanner._jp_index_proxy_warm(lane["rows"])
+    assert lane["state"]["status"] == "AVAILABLE"
+    row = scanner._jp_index_proxy_row("2026-09-10T23:59:59Z")
+    latest = lane["state"]["history"][max(lane["state"]["history"])]
+    assert row["per"] == latest["variants"]["FORECAST_COVERED_ONLY"]["per"]
+    assert row["epsVariant"] == "FORECAST_COVERED_ONLY"
