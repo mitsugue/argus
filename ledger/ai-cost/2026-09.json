@@ -1494,10 +1494,10 @@
   "legacyBaselinePresent": true,
   "recordedMonthCalls": 1666
  },
- "asOf": "2026-09-25T12:43:45Z",
+ "asOf": "2026-09-29T07:05:31Z",
  "budgetEnforced": true,
  "dailyBudgetUsd": 0.5,
- "day": "2026-09-25",
+ "day": "2026-09-29",
  "dayRemainingUsd": 0.5,
  "daySpentUsd": 0.0,
  "emergencyReserveUsd": 0.0,
