@@ -413,7 +413,7 @@ REVIEWED_EXTENSION_BLOBS = {
     "test_argus_prediction_read_latency.py": "731d0705813a323169ba286315811cac5b06e0f7",
     "web/scripts/news-presentation.test.mjs": "163019b4aa4c6a454a5351b7ad8c68ff5024712a",
     "web/src/domain/newsPresentation.ts": "88361ceaf9b7da66ff5b6344e118d4707a8d6dea",
-    "test_argus_ai_execution_settings.py": "91724952d7a992ea4d0c58a8f9bfaaf567f70a64",
+    "test_argus_ai_execution_settings.py": "5f0596eb8d2444bd545351d10dff9959df5760eb",
     "argus_research_benchmark.py": "0afebef7261abeb95da017f4b5aa327da55874a1",
     "argus_ai_gate.py": "d0e19fb4d25527e6f0ca70d73c8b21a41bc2a866",
     'test_smoke_cached_cause.py': '547735d7be278e5650341bd067b50c1fa87dd855',
@@ -650,6 +650,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "docs/ops/ai-execution-settings.md",
     "test_argus_chart_intelligence.py",
     "test_argus_verified_snapshot.py",
     "test_argus_index_valuation_proxy_glue.py",
