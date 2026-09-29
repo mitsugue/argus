@@ -6,7 +6,8 @@
 .owner-access-brand__name { position: relative; margin: 6px 0 0; font: 300 30px/1 "Avenir Next", "Helvetica Neue", "Hiragino Sans", system-ui, sans-serif; letter-spacing: .32em; text-indent: .32em; color: #f2f7fb; text-shadow: 0 0 18px rgba(34, 211, 238, .18); }
 .owner-access-brand__pro { display: inline-block; margin-left: .55em; padding: 2px 8px 1px; font: 600 11px/1.4 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .22em; text-indent: .22em; vertical-align: middle; color: #7dd3fc; border: 1px solid rgba(125, 211, 252, .45); border-radius: 999px; }
 .owner-access-brand__tag { margin: 0; font: 500 9.5px/1.6 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .1em; white-space: nowrap; color: rgba(191, 210, 228, .6); }
-.owner-access-screen > button { display: block; width: 100%; margin-top: 14px; }
+.owner-access-screen > button { display: block; width: auto; min-width: 240px; margin: 14px auto 0; }
+.owner-access-screen form { justify-items: stretch; }
 .owner-access-brand__rule { width: 120px; height: 1px; margin-top: 6px; background: linear-gradient(90deg, transparent, rgba(34, 211, 238, .6), transparent); }
 .owner-access-screen__lead { margin: 6px 0 0; text-align: center; color: rgba(229, 237, 246, .82); }
 @keyframes owner-brand-halo { 0%, 100% { opacity: .75; transform: scale(1); } 50% { opacity: 1; transform: scale(1.06); } }
