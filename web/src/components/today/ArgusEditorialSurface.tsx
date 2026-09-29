@@ -13,7 +13,7 @@ const labels = { view: 'ARGUSの今日の見立て', reasons: 'そう考える�
   impact: '自分の銘柄への影響', next: '次に確かめたいこと', invalidation: '見方を変える条件' };
 type Section = keyof typeof labels;
 
-export function ArgusEditorialSurface({ brief, updateState, retained = false, archived = false, generationStatus }: { brief: MarketBrief; updateState?: React.ReactNode; retained?: boolean; archived?: boolean; generationStatus?: string }) {
+export function ArgusEditorialSurface({ brief, updateState, retained = false, archived = false, generationStatus, retainedNote }: { brief: MarketBrief; updateState?: React.ReactNode; retained?: boolean; archived?: boolean; generationStatus?: string; retainedNote?: string | null }) {
   if (!hasEditorialIntent(brief)) return null;
   const plan = brief.presentationPlan!; const summary = brief.unifiedSummary!;
   const chart = brief.calculationSnapshots?.['5']?.comparison;
@@ -30,9 +30,9 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
     {archived && <p className="argus-editorial__retained">当時の説明・構成・比較線です。現在の見立てとしては扱いません。</p>}
     {retained && !archived && <div role="status" className="argus-editorial__retained argus-editorial__retained--update">
       {generationStatus === 'RUNNING' ? <TriangleStepLoader label="新しい説明を作成中" />
-        : <span>{['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(generationStatus ?? '')
-          ? '新しい説明を取得できませんでした。' : '説明の更新を待っています。'}</span>}
-      <span>前回の説明を表示中。最新の比較とチャートは下の期間切替をご覧ください。</span>
+        : <span>{retainedNote ?? (['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(generationStatus ?? '')
+          ? '新しい説明を取得できませんでした。' : '説明の更新を待っています。')}</span>}
+      <span>{retainedNote ? '表示中の説明は最後に生成できた版です。' : '前回の説明を表示中。'}最新の比較とチャートは下の期間切替をご覧ください。</span>
     </div>}
     {plan.elements.map(choice => {
       const source = brief.presentationCatalog!.elements.find(row => row.id === choice.id)!;

@@ -1,3 +1,4 @@
+import json
 """v13.5.36 — MARKET SITUATION BRIEF (NOW/WHY/NEXT) tests."""
 import argus_market_brief as mb
 
@@ -347,3 +348,24 @@ def test_distinct_headlines_are_still_both_carried():
     p0_texts = [f["text"] for f in brief["facts"] if f["priority"] == "P0"]
     assert len(p0_texts) == 2, p0_texts
     assert "米30年金利が急騰" in brief["now"] and "対イラン制裁を追加指定" in brief["now"]
+
+
+def test_generation_gate_names_the_budget_refusal_and_when_it_resumes(monkeypatch):
+    import scanner
+    monkeypatch.setattr(scanner, "_OPENAI_PROSE_LAST", {
+        "at": "2026-09-29T14:31:37Z", "purpose": "market_brief", "outcome": "skipped",
+        "reason": "scheduled_monthly_budget_exhausted", "errorClass": None,
+        "requestedModel": None, "returnedModel": None})
+    monkeypatch.setattr(scanner, "_ai_cost_snapshot", lambda: {
+        "dailyBudgetUsd": 0.5, "daySpentUsd": 0.0, "monthlyBudgetUsd": 10.0, "monthSpentUsd": 44.19})
+    gate = scanner._market_brief_generation_gate()
+    assert gate["reason"] == "scheduled_monthly_budget_exhausted"
+    assert gate["reasonJa"].startswith("月次AI予算の上限")
+    assert gate["resumesAt"].endswith("-01T00:00:00+09:00") and gate["monthSpentUsd"] == 44.19
+    assert gate["actionAuthority"] is False
+    text = json.dumps(gate, ensure_ascii=False).lower()
+    assert "sk-" not in text and "key" not in text.replace("openai_key_not_configured", "")
+    # A refusal for another purpose is not reported as this explanation's gate.
+    monkeypatch.setattr(scanner, "_OPENAI_PROSE_LAST", {"purpose": "news_intel", "outcome": "skipped",
+                                                        "reason": "scheduled_daily_budget_exhausted", "at": None})
+    assert scanner._market_brief_generation_gate()["reason"] is None

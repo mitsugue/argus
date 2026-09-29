@@ -16290,6 +16290,46 @@ def _market_brief_history_head_save(path, result):
         _MARKET_BRIEF_HISTORY_REMOTE["headPersistErrorClass"] = type(exc).__name__
 
 
+_BRIEF_GATE_REASON_JA = {
+    "scheduled_monthly_budget_exhausted": "月次AI予算の上限に達したため新規生成を停止中",
+    "total_monthly_budget_exhausted": "月次AI予算の上限に達したため新規生成を停止中",
+    "scheduled_daily_budget_exhausted": "本日のAI予算の上限に達したため新規生成を停止中",
+    "total_daily_budget_exhausted": "本日のAI予算の上限に達したため新規生成を停止中",
+    "deterministic_mode": "AI生成が無効（決定論モード）",
+    "openai_key_not_configured": "AIの鍵が未設定",
+}
+
+
+def _market_brief_generation_gate():
+    """Why the explanation is not being regenerated, in owner terms.
+
+    Reads the last provider decision for this purpose and the budget
+    snapshot; carries no prompt, key or secret. ``resumesAt`` is the next
+    budget boundary in JST for a budget refusal, else None."""
+    last = dict(_OPENAI_PROSE_LAST)
+    reason = last.get("reason") if last.get("purpose") == "market_brief" else None
+    outcome = last.get("outcome") if last.get("purpose") == "market_brief" else None
+    try:
+        cost = _ai_cost_snapshot()
+        budget = {key: cost.get(key) for key in (
+            "dailyBudgetUsd", "daySpentUsd", "monthlyBudgetUsd", "monthSpentUsd")}
+    except Exception:
+        budget = {}
+    resumes = None
+    now_jst = datetime.now(TZ_JST)
+    if reason and reason.endswith("monthly_budget_exhausted"):
+        year, month = (now_jst.year + (now_jst.month == 12), now_jst.month % 12 + 1)
+        resumes = TZ_JST.localize(datetime(year, month, 1)).isoformat()
+    elif reason and reason.endswith("daily_budget_exhausted"):
+        resumes = (now_jst.replace(hour=0, minute=0, second=0, microsecond=0)
+                   + timedelta(days=1)).isoformat()
+    return {"outcome": outcome, "reason": reason, "at": last.get("at"),
+            "reasonJa": _BRIEF_GATE_REASON_JA.get(reason or "") or (
+                None if not reason else "AI生成が拒否されました（%s）" % reason),
+            "resumesAt": resumes, "mode": _COST_POLICY.get("mode"), **budget,
+            "actionAuthority": False}
+
+
 def _market_brief_history_remote_status():
     # Read-back of remote bytes is separate from production cold-start acceptance.
     return {key: value for key, value in _MARKET_BRIEF_HISTORY_REMOTE.items()
@@ -17053,7 +17093,8 @@ def api_argus_market_brief():
             _market_brief_refresh(allow_ai=False)
         return jsonify({**_MARKET_BRIEF["data"], "generationWorker": {
             key: value for key, value in _MARKET_BRIEF_WORKER.items()
-            if key != "lastAttemptMonotonic"}})
+            if key != "lastAttemptMonotonic"},
+            "generationGate": _market_brief_generation_gate()})
     except Exception as exc:
         return jsonify({"schemaVersion": argus_market_brief.BRIEF_SCHEMA,
                         "status": "unavailable",

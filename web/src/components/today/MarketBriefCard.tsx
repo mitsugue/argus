@@ -6,11 +6,26 @@ import { MarketAnalysisHistory } from './MarketAnalysisHistory';
 import { useMarketBrief } from '../../hooks/useMarketBrief';
 import './ArgusToday.css';
 import { editorialEdition } from '../../lib/presentationIntent';
+import type { MarketBrief } from '../../lib/marketBrief';
 import { ArgusEditorialSurface } from './ArgusEditorialSurface';
 
 // v13.5.36 MARKET SITUATION BRIEF (owner 2026-08-26): NOW/WHY/NEXT — the
 // deterministic composer selects verified facts; AI only compresses them
 // (numbers/probabilities can never be invented — server-side validator).
+/** Owner wording for a gated regeneration: the reason and when it resumes. */
+export function gateNoteJa(brief: MarketBrief): string | null {
+  const gate = brief.generationGate;
+  if (!gate?.reason || !gate.reasonJa) return null;
+  const resumes = gate.resumesAt ? new Date(gate.resumesAt) : null;
+  const when = resumes && !Number.isNaN(resumes.getTime())
+    ? `${resumes.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' })}に自動再開` : null;
+  const budget = gate.monthlyBudgetUsd != null && gate.monthSpentUsd != null && /monthly/.test(gate.reason)
+    ? `（今月 $${gate.monthSpentUsd.toFixed(2)} / 上限 $${gate.monthlyBudgetUsd.toFixed(2)}）`
+    : gate.dailyBudgetUsd != null && gate.daySpentUsd != null && /daily/.test(gate.reason)
+      ? `（本日 $${gate.daySpentUsd.toFixed(2)} / 上限 $${gate.dailyBudgetUsd.toFixed(2)}）` : '';
+  return `${gate.reasonJa}${budget}。${when ? `${when}。` : ''}`;
+}
+
 export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total: number } | null;
   cutoff?: string | null; market?: string; editorial?: boolean }> = ({ signals, cutoff, market, editorial = false }) => {
   const { brief, error, loading, retry } = useMarketBrief();
@@ -28,7 +43,9 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
   if (!brief) return <div className="at-brief" aria-label="ARGUSの今日の見立て">
     {updateState ?? <p role="status">見立てはまだありません。</p>}<MarketAnalysisHistory key="saved-history" /></div>;
   const edition = editorial ? editorialEdition(brief) : null;
-  if (edition) return <ArgusEditorialSurface brief={edition} updateState={updateState} retained={edition !== brief} generationStatus={brief.generationWorker?.status} />;
+  const gateNote = gateNoteJa(brief);
+  if (edition) return <ArgusEditorialSurface brief={edition} updateState={updateState} retained={edition !== brief}
+    generationStatus={brief.generationWorker?.status} retainedNote={gateNote} />;
   const unified = brief.unifiedSummary;
   const hasSixSections = unified && ['view', 'reasons', 'changes', 'impact', 'next', 'invalidation'].every(key => {
     const row = unified.sections?.[key as keyof typeof unified.sections];
@@ -94,7 +111,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
     <p className="at-brief__unavailable-title">{brief.generationWorker?.status === 'RUNNING' ? <TriangleStepLoader label="新しい見立てを作成しています" /> : '見立ての更新が止まっています。'}</p>
     {updateState}
     {brief.unifiedStatus && brief.unifiedStatus !== 'GENERATED' && <p role="status">
-      {providerMessage ?? (brief.generationWorker?.status === 'RUNNING' ? '統合AIが見立てを更新しています。'
+      {providerMessage ?? gateNote ?? (brief.generationWorker?.status === 'RUNNING' ? '統合AIが見立てを更新しています。'
         : ['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(brief.generationWorker?.status ?? '')
           ? '統合AIの更新を完了できませんでした。次の定期処理で再試行します。'
           : '統合AIの説明は更新待ちです。')}取得済み情報の要約を表示しています。

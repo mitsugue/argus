@@ -943,11 +943,14 @@ export const ArgusTodayPanel: React.FC<Props> = ({
 
 
     {view.holdingsReview.length > 0 && <section className="at-priorities card" aria-label="OWNER PRIORITIES">
-      <div className="at-head"><b>自分の銘柄への影響</b><span>優先して確認</span></div>
+      <div className="at-head"><b>自分の銘柄への影響</b>
+        <span>{view.holdingsReview.some((item) => /最優先|今日の優先/.test(item.statusJa ?? ''))
+          ? '優先して確認' : '注意配分の上位（急ぎではない）'}</span></div>
       {view.holdingsReview.map((item) => {
         const content = <>
           <span className="at-priority-title">
             <b>{item.name?.trim() || item.symbol}</b><em>{item.isHeld ? '保有' : 'WATCH'}</em>
+            {item.statusJa && <em className="at-priority-rank">{item.statusJa}</em>}
             <mark className={`is-${(item.impact ?? 'Neutral').toLowerCase()}`}>{item.impact ?? 'Neutral'}</mark>
             <strong>{item.actionJa ?? item.statusJa}</strong>
           </span>
