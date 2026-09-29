@@ -52,7 +52,7 @@ import math
 import statistics
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
-SCHEMA = "argus-index-valuation-proxy-v1"
+SCHEMA = "argus-index-valuation-proxy-v2"
 PROXY_BASIS = "ARGUS_PROXY_INDEX_BASED_PER"
 OFFICIAL_BASIS = "NIKKEI_225_INDEX_BASED_PER"
 INSTRUMENT = "NIKKEI_225_INDEX"
@@ -66,7 +66,14 @@ FACTOR_SNAP_TOLERANCE = 0.03          # relative distance accepted for a snap
 #: Fewer priced members than this and no factor set is derived at all.
 MINIMUM_PRICED_MEMBERS = 200
 
-EPS_VARIANTS = ("FORECAST_SIGNED", "FORECAST_NON_NEGATIVE", "ACTUAL_SIGNED")
+# FORECAST_*: constituent forecast EPS where J-Quants carries one; members
+# without a forecast contribute price but no earnings, which biases the PER
+# upward (measured +30% against the official series on 2026-09-18..28 with
+# 22 of 225 members lacking a forecast). The two further variants close
+# that gap in the two defensible ways: substitute the member's actual EPS,
+# or drop the member from the price sum as well.
+EPS_VARIANTS = ("FORECAST_SIGNED", "FORECAST_NON_NEGATIVE", "ACTUAL_SIGNED",
+                "FORECAST_WITH_ACTUAL_FALLBACK", "FORECAST_COVERED_ONLY")
 
 
 class ProxyError(ValueError):
@@ -221,8 +228,9 @@ def proxy_valuation(*, factors: Mapping[str, Any], closes: Mapping[str, Any],
     if index is None or index <= 0:
         raise ProxyError("index_close_required")
     price_sum = 0.0
-    sums = {"FORECAST_SIGNED": 0.0, "FORECAST_NON_NEGATIVE": 0.0, "ACTUAL_SIGNED": 0.0}
-    priced = with_forecast = with_actual = negative_forecast = 0
+    sums = {name: 0.0 for name in EPS_VARIANTS}
+    covered_price_sum = 0.0
+    priced = with_forecast = with_actual = negative_forecast = fallback_used = 0
     missing_price: List[str] = []
     missing_forecast: List[str] = []
     for code, factor in table.items():
@@ -234,15 +242,21 @@ def proxy_valuation(*, factors: Mapping[str, Any], closes: Mapping[str, Any],
         priced += 1
         price_sum += close * f
         fwd = _finite(forecast_eps.get(code))
+        act = _finite(actual_eps.get(code))
         if fwd is None:
             missing_forecast.append(code)
+            if act is not None:
+                fallback_used += 1
+                sums["FORECAST_WITH_ACTUAL_FALLBACK"] += act * f
         else:
             with_forecast += 1
             sums["FORECAST_SIGNED"] += fwd * f
             sums["FORECAST_NON_NEGATIVE"] += max(fwd, 0.0) * f
+            sums["FORECAST_WITH_ACTUAL_FALLBACK"] += fwd * f
+            sums["FORECAST_COVERED_ONLY"] += fwd * f
+            covered_price_sum += close * f
             if fwd < 0:
                 negative_forecast += 1
-        act = _finite(actual_eps.get(code))
         if act is not None:
             with_actual += 1
             sums["ACTUAL_SIGNED"] += act * f
@@ -252,7 +266,8 @@ def proxy_valuation(*, factors: Mapping[str, Any], closes: Mapping[str, Any],
         if priced == 0 or denominator <= 0:
             variants[name] = {"per": None, "indexEps": None, "reason": "non_positive_eps_sum"}
             continue
-        per = price_sum / denominator
+        numerator = covered_price_sum if name == "FORECAST_COVERED_ONLY" else price_sum
+        per = numerator / denominator
         # Full precision travels; rounding is a display decision, and the
         # index EPS is derived from this PER downstream.
         variants[name] = {"per": per, "indexEps": index / per}
@@ -261,7 +276,7 @@ def proxy_valuation(*, factors: Mapping[str, Any], closes: Mapping[str, Any],
             variants[name]["errorPct"] = round((per - official_per) / official_per * 100.0, 4)
     coverage = {"members": len(table), "priced": priced, "withForecastEps": with_forecast,
                 "withActualEps": with_actual, "negativeForecastEps": negative_forecast,
-                "missingPrice": sorted(missing_price), "missingForecastEps": sorted(missing_forecast),
+                "actualEpsFallbackUsed": fallback_used, "missingPrice": sorted(missing_price), "missingForecastEps": sorted(missing_forecast),
                 "pricedShare": round(priced / len(table), 4) if table else 0.0}
     return {"schemaVersion": SCHEMA, "instrumentId": INSTRUMENT, "basis": PROXY_BASIS,
             "basisLabelJa": BASIS_LABEL_JA, "currency": "JPY", "date": date,

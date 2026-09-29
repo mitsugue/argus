@@ -154,3 +154,36 @@ def test_the_module_touches_no_network_clock_or_file():
     source = inspect.getsource(proxy)
     for forbidden in ("import requests", "urllib", "datetime.now", "open(", "import scanner", "time.time"):
         assert forbidden not in source, forbidden
+
+
+def test_members_without_a_forecast_are_handled_by_the_two_fallback_variants():
+    """A member with no forecast EPS must not inflate the PER silently: the
+    fallback variant uses its actual EPS, the covered-only variant drops its
+    price from the numerator as well, and the plain forecast variants keep
+    the bias so the comparison against the official series can show it."""
+    table = proxy.parse_weight_table(_weights_text())
+    derived = proxy.derive_factors(table, CLOSES_T0)
+    closes_t = {"1001": 1100.0, "1002": 2400.0, "1003": 820.0, "1004": 61000.0, "1005": 8800.0}
+    fwd = {"1001": 50.0, "1002": 125.0, "1003": 40.0, "1005": 450.0}      # 1004 has no forecast
+    act = {"1001": 45.0, "1002": 120.0, "1003": 5.0, "1004": 2800.0, "1005": 400.0}
+    index = sum(closes_t[c] * FACTORS[c] for c in CODES) / DIVISOR
+    row = proxy.proxy_valuation(factors=derived, closes=closes_t, forecast_eps=fwd, actual_eps=act,
+                                index_close=index, date="2026-09-10",
+                                available_from="2026-09-10T15:30:00+09:00",
+                                known_at="2026-09-10T15:40:00+09:00", source_ref="test:proxy")
+    price_sum = sum(closes_t[c] * FACTORS[c] for c in CODES)
+    covered = [c for c in CODES if c != "1004"]
+    plain = sum(fwd[c] * FACTORS[c] for c in covered)
+    with_fallback = plain + act["1004"] * FACTORS["1004"]
+    covered_price = sum(closes_t[c] * FACTORS[c] for c in covered)
+    v = row["variants"]
+    assert math.isclose(v["FORECAST_SIGNED"]["per"], price_sum / plain, rel_tol=1e-9)
+    assert math.isclose(v["FORECAST_WITH_ACTUAL_FALLBACK"]["per"], price_sum / with_fallback, rel_tol=1e-9)
+    assert math.isclose(v["FORECAST_COVERED_ONLY"]["per"], covered_price / plain, rel_tol=1e-9)
+    assert v["FORECAST_SIGNED"]["per"] > v["FORECAST_WITH_ACTUAL_FALLBACK"]["per"]
+    assert v["FORECAST_SIGNED"]["per"] > v["FORECAST_COVERED_ONLY"]["per"]
+    assert row["coverage"]["missingForecastEps"] == ["1004"]
+    assert row["coverage"]["actualEpsFallbackUsed"] == 1
+    assert set(v) == set(proxy.EPS_VARIANTS)
+    for name in proxy.EPS_VARIANTS:
+        assert math.isclose(v[name]["indexEps"], index / v[name]["per"], rel_tol=1e-9)
