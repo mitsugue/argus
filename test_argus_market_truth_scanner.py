@@ -1041,3 +1041,28 @@ def test_duplicate_source_candidates_are_deterministically_bounded():
     assert len(projection["issuedDecisions"]) == 192
     assert projection["omittedCandidateCount"] == 36
     assert len(projection["omittedCandidateIds"]) == 36
+
+
+def test_expired_dynamic_jp_snapshot_still_yields_the_last_known_quote(monkeypatch):
+    """An owner-added JP name is warmed every six hours but its snapshot
+    expired after ten minutes; the cached-only read now serves the freshest
+    expired row, re-aged from its own source time, instead of nothing."""
+    import time as _time
+    import scanner
+    now = _time.time()
+    row = {"symbol": "5803", "name": "フジクラ", "price": 12345.0, "status": "delayed",
+           "asOf": "2026-09-29T06:00:00Z", "market": "JP"}
+    older = {**row, "price": 12000.0}
+    monkeypatch.setattr(scanner, "_PUSHED_QUOTES", {})
+    monkeypatch.setattr(scanner, "_JP_CACHE", {"data": None, "expires": 0.0})
+    monkeypatch.setattr(scanner, "_JP_DYN_CACHE", {
+        ("5803", "7203"): {"data": {"stocks": [older]}, "expires": now - 7200},
+        ("5803",): {"data": {"stocks": [row]}, "expires": now - 600},
+    })
+    got = scanner._quote_cached_only("5803", "JP")
+    assert got is not None and got["price"] == 12345.0
+    assert got.get("status") in ("delayed", "stale", "live")
+    # An unexpired row still wins over any expired one.
+    scanner._JP_DYN_CACHE[("5803", "1321")] = {"data": {"stocks": [{**row, "price": 12500.0}]}, "expires": now + 300}
+    assert scanner._quote_cached_only("5803", "JP")["price"] == 12500.0
+    assert scanner._quote_cached_only("9999", "JP") is None
