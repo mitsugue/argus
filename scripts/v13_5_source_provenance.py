@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.68"
+PRODUCT_VERSION = "v13.7.69"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -77,12 +77,12 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_jp_owner_quote_warm.py': 'eb998f6e67dbfeb8bc65598521189618efd0de04',
     # Derived market artifacts outside the sealed checkpoint (exact reviewed
     # contents of the store module, its tests, registry and measurement budget).
-    'argus_market_artifact_store.py': 'f40832595d4028ad8f7ac0d844bf1f36eb8ea674',
+    'argus_market_artifact_store.py': '165ddd480ff87d2f08de1dcaef8cdaad6de0e96a',
     'argus_recovery_measurement.py': '11943e22628b0728e9fcb118c149593a53c48727',
     'argus_recovery_registry.py': '5c43767361e05b3dea99b02605920c5fc3e9608c',
     'docs/MARKET_ARTIFACT_STORE.md': 'e2e994da953b12c42a95d67b4eaf9ab1a8c0b6aa',
     'test_argus_market_artifact_split.py': '9331909fab52e479dc63f869aba531ba26825668',
-    'test_argus_market_artifact_store.py': '3712644d21fcdf02fb167c4cdbaeaf34d5c0e806',
+    'test_argus_market_artifact_store.py': 'f6c2d1c330b814666328b34d8939efea934d8146',
     'test_argus_memory_attribution.py': 'ea3fb2d514dea73bef7975f0f8b8a82d126103bd',
     'test_argus_recovery_measurement.py': 'b7beb4b6c1915ddb2cfab0857f31a82cc5c5c832',
     'test_argus_recovery_registry.py': 'd1132e69768b5a9edf9bbf964bd8df476edda4b8',
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '79fa1e3335f85ff01fd538a40b6b1856eec33d79',
-    'web/scripts/pwa-identity.test.mjs': '690b93880c417780332e0c71e46640b5fb9471c6',
-    'web/scripts/owner-today-https.mjs': '68ba96470f6b72516f6910118aa02a67c69328d6',
+    'web/scripts/pwa-identity.test.mjs': '20af8a804a5fc1b5239a867f9f0e0b513fe6a94d',
+    'web/scripts/owner-today-https.mjs': '8d0ed04d6a70b767624e1e5a7cc01071aec22910',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -169,7 +169,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # Exact regression coverage for canonical record-sized asset hash encoding.
     "test_argus_normalized_hash.py": "20dd0d0e9119d8b0357b459cb1eac1bc146c5b11",
     'argus_memory_attribution.py': '60a694eef14024adb32885c1b0c59e302c9e75a8',
-    'docs/ops/checkpoint-phase-timing.md': '0ebe77c7e8b6af72de3ab2f53f19ae78509b2802',
+    'docs/ops/checkpoint-phase-timing.md': '1d82cb8f29f26a6f351e628a3d97904382b62334',
     'test_argus_checkpoint_phase_timing.py': '31edce29020fa25091ed78ad4dceaa6719ca0c2a',
     'ops/imports/acquisition_20260920/ACCEPTANCE_CRITERIA.md': '918375dfb7c134b0792b401b90356178635e5f1a',
     'ops/imports/acquisition_20260920/source_registry.json': '9d843748819442f1d8650135f768827df9392f7f',
@@ -650,6 +650,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_verified_snapshot.py",
     "test_argus_index_valuation_proxy_glue.py",
     "docs/ops/index-valuation-proxy.md",
     "docs/ops/tdnet-addon-cancellation.md",

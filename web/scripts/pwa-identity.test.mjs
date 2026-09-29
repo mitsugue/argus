@@ -24,7 +24,7 @@ console.log('pwa-identity: setting changes detected, same-code views preserved, 
 
 const recovery = main.slice(main.indexOf('async function selfHeal('), main.indexOf('let registeredServiceWorker'));
 const executable = ts.transpileModule(recovery.replace('import.meta.env.BASE_URL', "'/argus/'"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-for (const [running, deployed, clears] of [[off, on, 0], [on, off, 0], [off, on.replace('13.7.51', '13.7.68'), 1]]) {
+for (const [running, deployed, clears] of [[off, on, 0], [on, off, 0], [off, on.replace('13.7.51', '13.7.69'), 1]]) {
   const calls = [];
   const sandbox = { repairAppCaches: async base => calls.push(['shell', base]),
     clearVerifiedSnapshotCache: async () => calls.push(['views']),

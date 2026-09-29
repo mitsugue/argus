@@ -64,8 +64,50 @@ def _canonical(value: Any) -> bytes:
                       ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
+def _iter_canonical(value: Any, depth: int = 2):
+    """Canonical JSON in pieces, identical to ``_canonical`` byte for byte.
+
+    Containers are streamed to ``depth`` levels (an artifact payload is a
+    dict of dicts or lists of records), then leaves go through the standard
+    encoder.  Only dicts whose keys are all strings are streamed, because the
+    standard encoder's ``sort_keys`` order for other key types must be
+    preserved exactly.
+    """
+    if depth > 0 and type(value) is dict and value and \
+            all(type(key) is str for key in value):
+        yield b"{"
+        for index, key in enumerate(sorted(value)):
+            if index:
+                yield b","
+            yield _canonical(key)
+            yield b":"
+            yield from _iter_canonical(value[key], depth - 1)
+        yield b"}"
+    elif depth > 0 and type(value) is list and value:
+        yield b"["
+        for index, item in enumerate(value):
+            if index:
+                yield b","
+            yield from _iter_canonical(item, depth - 1)
+        yield b"]"
+    else:
+        yield _canonical(value)
+
+
 def payload_sha256(payload: Mapping[str, Any]) -> str:
-    return hashlib.sha256(_canonical(payload)).hexdigest()
+    """SHA-256 of the canonical payload, streamed piece by piece."""
+    hasher = hashlib.sha256()
+    for piece in _iter_canonical(payload):
+        hasher.update(piece)
+    return hasher.hexdigest()
+
+
+def _file_sha256(path: str) -> str:
+    hasher = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 
 def directory_for(root: str) -> str:
@@ -150,9 +192,12 @@ def write_if_changed(
     result = atomic_write_json(
         path, doc, maximum_bytes=MAX_BYTES[name], file_mode=file_mode,
         temp_label=f"market-artifact-{name}")
-    restored = load(root, name)
-    if restored is None or restored["stateHash"] != state_hash or \
-            restored["payloadSha256"] != doc["payloadSha256"]:
+    # Read back the installed file byte for byte against the digest the
+    # writer computed while streaming.  Parsing the whole document back into
+    # objects (the previous read-back) cost a second resident copy of a
+    # large artifact for nothing the byte digest does not already prove.
+    written_hash = str(result.get("snapshotHash") or "")
+    if not written_hash or _file_sha256(path) != written_hash:
         raise ArtifactError("market_artifact_readback_mismatch")
     return {"artifact": name, "status": "written",
             "stateHash": state_hash, "path": path,
