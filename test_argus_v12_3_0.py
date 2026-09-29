@@ -44,7 +44,9 @@ class ArgusV1230IntegrationTests(unittest.TestCase):
 
     def test_scheduled_ai_endpoint_is_expected_skip_without_provider_call(self):
         client = scanner.app.test_client()
-        with mock.patch.object(scanner, "_execute_ai_judgment") as execute:
+        # SCHEDULED_AI without the main analysis lane: the run is out of scope.
+        with mock.patch.object(scanner, "_AI_FULL_ANALYSIS_ENABLED", False), \
+                mock.patch.object(scanner, "_execute_ai_judgment") as execute:
             response = client.post(
                 "/api/argus/ai-judgment/run?checker=flash",
                 headers={"X-ARGUS-ADMIN-TOKEN": "test-admin"})

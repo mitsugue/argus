@@ -194,9 +194,16 @@ PORT              = int(os.environ.get("PORT", 8080))
 # SCHEDULED_AI — ONLY news headline translation + news_intel analysis run
 # automatically, under the scheduled daily budget below.  Everything else
 # stays fail-closed; set ARGUS_COST_POLICY_MODE=DETERMINISTIC to revert.
+# Owner directive 2026-09-30 (「まず上限撤廃して全て動くようにして欲しい」):
+# every automatic lane runs — news, brief, event analysis and the main
+# analysis purposes — and the monetary stops are off. Usage accounting,
+# token bounds, mode permissions and the public spend figures stay exactly
+# as before, so 13.8 can cut from measured cost rather than from a cap.
+# ARGUS_AI_BUDGET_ENFORCED=1 re-arms the stops; ARGUS_EVENT_AI_OPT_IN=0 and
+# ARGUS_AI_FULL_ANALYSIS=0 switch the lanes back off.
 _COST_POLICY = argus_cost_policy.default_state(
     os.environ.get("ARGUS_COST_POLICY_MODE", "SCHEDULED_AI").strip().upper(),
-    os.environ.get("ARGUS_EVENT_AI_OPT_IN", "0") == "1")
+    os.environ.get("ARGUS_EVENT_AI_OPT_IN", "1") == "1")
 def _bounded_usd_env(name, default, ceiling):
     """Read an operator value without allowing production ceilings to rise.
 
@@ -219,11 +226,11 @@ _SCHEDULED_AI_MONTHLY_USD = _bounded_usd_env("ARGUS_SCHEDULED_AI_MONTHLY_USD", 1
 # Benchmark/preflight runs temporarily switch the policy to RESEARCH_BENCHMARK
 # and afterwards restore the configured idle mode — NOT hardcoded DETERMINISTIC,
 # which would silently disable the scheduled news AI after every run (v13.5.36).
-# Production may not turn the budget gate off through environment configuration.
-# Offline policy tests exercise an explicit non-production flag in the pure
-# module instead.  Configuration is independent of model roles/authentication.
-_AI_BUDGET_ENFORCED = True
-_AI_FULL_ANALYSIS_ENABLED = os.environ.get("ARGUS_AI_FULL_ANALYSIS", "0") == "1"
+# Owner directive 2026-09-30 supersedes the 2026-09-21 ceilings: the monetary
+# stops are off by default (accounting continues) and the main analysis lane
+# is on. Both remain explicit switches rather than deleted code.
+_AI_BUDGET_ENFORCED = os.environ.get("ARGUS_AI_BUDGET_ENFORCED", "0") == "1"
+_AI_FULL_ANALYSIS_ENABLED = os.environ.get("ARGUS_AI_FULL_ANALYSIS", "1") == "1"
 _COST_POLICY_IDLE_MODES = ("DETERMINISTIC", "SCHEDULED_AI")
 _COST_POLICY_BASELINE_MODE = (
     _COST_POLICY.get("mode")

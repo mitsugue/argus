@@ -212,3 +212,26 @@ def test_primary_mode_truth_does_not_require_support_key(monkeypatch, primary_ke
     result = scanner._ai_judgment_truth(allow_restore=False)
     assert result['status'] == expected
     assert result['publicGetStatus'] == expected
+
+
+def test_production_defaults_run_every_lane_without_monetary_stops(monkeypatch):
+    """Owner directive 2026-09-30: with no environment override the monetary
+    stops are off, the main analysis lane and the event lane are on, and a
+    call far beyond the old ceilings is authorised while still accounted."""
+    import importlib, os
+    for name in ("ARGUS_AI_BUDGET_ENFORCED", "ARGUS_AI_FULL_ANALYSIS", "ARGUS_EVENT_AI_OPT_IN", "ARGUS_COST_POLICY_MODE"):
+        monkeypatch.delenv(name, raising=False)
+    src = open(os.path.join(os.path.dirname(scanner.__file__), "scanner.py"), encoding="utf-8").read()
+    assert '_AI_BUDGET_ENFORCED = os.environ.get("ARGUS_AI_BUDGET_ENFORCED", "0") == "1"' in src
+    assert '_AI_FULL_ANALYSIS_ENABLED = os.environ.get("ARGUS_AI_FULL_ANALYSIS", "1") == "1"' in src
+    assert 'os.environ.get("ARGUS_EVENT_AI_OPT_IN", "1") == "1"' in src
+    state = cp.default_state('SCHEDULED_AI', event_opt_in=True)
+    state['usage'] = [{'provider': 'openai', 'purpose': 'market_brief',
+                       'at': scanner._ai_now_iso(), 'estimatedCostUsd': 44.19}]
+    for purpose in ('market_brief', 'news_intel', 'headline_translation', 'ai_judgment', 'event_analysis'):
+        decision = cp.authorize(state, provider='openai', purpose=purpose, automatic=True,
+                                now_iso=scanner._ai_now_iso(), event_id='ev-1', event_phase='pre',
+                                estimated_cost_usd=0.5, estimated_tokens=5000,
+                                budget_enforced=False, full_analysis_enabled=True)
+        assert decision['allowed'], (purpose, decision)
+    assert state['usage'][0]['estimatedCostUsd'] == 44.19
