@@ -7,6 +7,7 @@ from pathlib import Path
 import json
 import re
 import tempfile
+import itertools
 import zlib
 
 import argus_analysis_history as history
@@ -106,18 +107,35 @@ def _snapshot(path, directory, *, check_deadline=lambda: None):
         conn.execute('BEGIN')
         for table, validator in (('views', history.validate_record), ('outcomes', legacy._outcome)):
             cursor = conn.execute(f'SELECT body FROM {table} ORDER BY sequence')
-            while rows := cursor.fetchmany(GROUP_RECORDS):
+            # Group boundaries stay at GROUP_RECORDS so completed groups keep
+            # their content addresses; only one record body is alive at a time
+            # (batching a whole group held thirty-two multi-megabyte bodies).
+            def next_group():
+                count = 0
+                while count < GROUP_RECORDS:
+                    row = cursor.fetchone()
+                    if row is None:
+                        return
+                    count += 1
+                    yield row[0]
+            while True:
+                group_rows = next_group()
+                first = next(group_rows, None)
+                if first is None:
+                    break
                 check_deadline()
                 packed_path = Path(directory) / 'group.zlib'
                 compressor = zlib.compressobj(6); checksum = hashlib.sha256(); size = 0
+                group_count = 0
                 with packed_path.open('wb') as output:
-                    for (body,) in rows:
+                    for body in itertools.chain((first,), group_rows):
                         check_deadline()
                         if len(body.encode()) > history.MAX_RECORD_BYTES + 4096:
                             raise ValueError('compact_history_record_bound')
                         raw = legacy.encode(validator(json.loads(body))) + b'\n'
-                        checksum.update(raw); size += len(raw)
+                        checksum.update(raw); size += len(raw); group_count += 1
                         output.write(compressor.compress(raw))
+                        del body, raw
                     output.write(compressor.flush())
                 chunks = []
                 with packed_path.open('rb') as source:
@@ -126,8 +144,8 @@ def _snapshot(path, directory, *, check_deadline=lambda: None):
                         (Path(directory) / identity).write_bytes(raw)
                         chunks.append({'sha256': identity, 'bytes': len(raw)})
                         stored_total += len(raw)
-                raw_total += size; counts[table] += len(rows)
-                groups.append({'kind': table, 'count': len(rows), 'rawBytes': size,
+                raw_total += size; counts[table] += group_count
+                groups.append({'kind': table, 'count': group_count, 'rawBytes': size,
                     'rawSha256': checksum.hexdigest(), 'chunks': chunks})
                 if (len(groups) > MAX_GROUPS or raw_total > MAX_RAW_BYTES
                         or stored_total > legacy.MAX_ARCHIVE_BYTES):
