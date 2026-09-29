@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.73"
+PRODUCT_VERSION = "v13.7.74"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '79fa1e3335f85ff01fd538a40b6b1856eec33d79',
-    'web/scripts/pwa-identity.test.mjs': '0a80daa67d51bb720c260d38edf6b3cbdf9ce455',
-    'web/scripts/owner-today-https.mjs': '98207b6052e943fcdfb52a424df192f2e5b2def3',
+    'web/scripts/pwa-identity.test.mjs': '3e18c5375695616ca2fb95dfcd9a24d9fc87c754',
+    'web/scripts/owner-today-https.mjs': '8fbe79ee3e6145f1b62deca03d4d68f5252b62c5',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -238,7 +238,7 @@ REVIEWED_EXTENSION_BLOBS = {
 
     "test_jp_market_engine.py": "142cc381d94e879def14ee46bf107ae411ddbbd9",
     "test_argus_japan_valuation.py": "e7daf10f9e931db0492155b424ffd0d4745cfa2f",
-    "test_argus_valuation_addendum.py": "b25341ca93e351ddab23ed2a9ecd5bbf0cad7980",
+    "test_argus_valuation_addendum.py": "504b211c101ffb1d987a11904d78fc876665f2e5",
     "scripts/verify_index_valuation_anchors.py": "b6520b17bcf79cb8376b12c975dc6f8d8010ba7e",
     'argus_jp_market_research.py': '643a18e14be0387234172f934c473077825f2fe0',
     'test_argus_owner_dialogue_compression.py': '2cb55fe8e96b350d9d951401acf5cde43785b6c2',

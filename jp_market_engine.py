@@ -817,8 +817,20 @@ def _derived_valuation_evidence(value: Any, cutoff: str) -> Optional[Dict[str, A
 D04_PER_LADDER = (17, 18, 19, 20, 21)
 D04_LADDER_LABELS_JA = {17: "低評価帯", 18: "基準評価帯", 19: "高評価帯",
                         20: "高評価帯", 21: "高評価帯（上端）"}
-D04_ACTIVATION_RULE = None  # no source-confirmed threshold; see D04_RULE_JA
-D04_RULE_JA = "原典は EPS×17〜21倍の理論値ラダーを定義し、点灯する倍率は定めていない（参考水準のみ・支持線/抵抗線ではない）"
+# Owner decision 2026-09-29 (「決めていない・提案でよい」): the source theory
+# names no activation multiple, so the warning lights at the ladder's
+# 高評価帯 (19x and above) as an ARGUS candidate rule, never as the original.
+D04_ACTIVATION_RULE = {"operator": ">=", "multiple": 19, "unit": "PER_X",
+                       "lineage": "ARGUS_CANDIDATE", "decidedAt": "2026-09-29"}
+D04_RULE_JA = ("原典は EPS×17〜21倍の理論値ラダーを定義し点灯倍率は定めていないため、"
+               "ARGUS候補規則として指数PERが19倍（高評価帯）以上で点灯する（参考水準のみ・支持線/抵抗線ではない）")
+
+
+def d04_condition_met(per: Any) -> Optional[bool]:
+    value = _finite(per)
+    if value is None or value <= 0:
+        return None
+    return value >= float(D04_ACTIVATION_RULE["multiple"])
 
 
 def d04_reference_levels(eps: Any, per: Any) -> Dict[str, Any]:
@@ -886,8 +898,10 @@ def evaluate_d04(*, cutoff: str, analysis_instrument: str,
                 "eps": scale["eps"], "indexLevel": scale["anchorPrice"], "per": scale["per"],
                 "valuation": scale, "epsKind": scale["epsKind"],
                 **d04_reference_levels(scale["eps"], scale["per"]),
+                "conditionMet": d04_condition_met(scale["per"]),
+                "conditionLineage": "ARGUS_CANDIDATE",
                 "activationRule": D04_ACTIVATION_RULE, "conditionRuleJa": D04_RULE_JA,
-                "conditionRule": "descriptive_same_session_index_valuation_no_validated_signal"}
+                "conditionRule": "index_based_per >= 19 (ARGUS candidate threshold on the original ladder)"}
         result["missing"] = [scale.get("reason") or "same_session_index_based_valuation"]
     else:
         result["status"] = "LICENSE_BLOCKED" if license_status == "LICENSE_BLOCKED" else "MISSING"
@@ -906,8 +920,9 @@ def evaluate_d04(*, cutoff: str, analysis_instrument: str,
                     "epsLabelJa": "ARGUS代理値のEPS（構成銘柄の予想EPSから再構成）",
                     "proxyErrorPct": scale.get("proxyErrorPct"),
                     **d04_reference_levels(scale["eps"], scale["per"]),
+                    "conditionMet": d04_condition_met(scale["per"]),
                     "activationRule": D04_ACTIVATION_RULE, "conditionRuleJa": D04_RULE_JA,
-                    "conditionRule": "descriptive_same_session_proxy_valuation_no_validated_signal"}
+                    "conditionRule": "proxy index_based_per >= 19 (ARGUS candidate threshold on the original ladder)"}
             result["proxyRejected"] = scale.get("reason")
     # Keep the independent universe statistic available as evidence, without
     # promoting its thresholds or median PER to D04 or a Nikkei EPS series.

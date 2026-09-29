@@ -12,15 +12,16 @@ def valuation():
         'publishedAt':None,'sourceRef':'arithmetic-fixture:D04_20260903'}
 
 
-def test_d04_uses_canonical_index_scale_with_reference_ladder_but_no_signal():
+def test_d04_uses_canonical_index_scale_with_reference_ladder_and_argus_threshold():
     """The original defines the 17x..21x ladder, not an activation multiple:
     the ladder is projected as reference levels (never support/resistance)
     and the family still lights nothing."""
     r=engine.evaluate_d04(cutoff=AT,analysis_instrument='NIKKEI_225_INDEX',index_valuation=valuation())
     assert r['status']=='AVAILABLE' and round(r['eps'],2)==3007.70
     assert r['epsLabelJa']=='終値・指数ベースPERから算出した概算EPS'
-    assert r['conditionMet'] is None and r['probability'] is None
-    assert r['activationRule'] is None and '点灯する倍率は定めていない' in r['conditionRuleJa']
+    assert r['conditionMet'] is True and r['probability'] is None          # 21.35x >= 19x
+    assert r['activationRule']['multiple'] == 19 and r['activationRule']['lineage'] == 'ARGUS_CANDIDATE'
+    assert r['conditionLineage'] == 'ARGUS_CANDIDATE' and '19倍' in r['conditionRuleJa']
     assert [lv['multiple'] for lv in r['levels']] == [17, 18, 19, 20, 21]
     assert all(lv['supportOrResistance'] is False and lv['classification'] == 'reference_level'
                for lv in r['levels'])
@@ -30,7 +31,10 @@ def test_d04_uses_canonical_index_scale_with_reference_ladder_but_no_signal():
                                  index_valuation={**valuation(), 'per': 18.4})
     assert within['band'] == {'per': 18.4, 'position': 'within_ladder', 'lowerMultiple': 18,
                               'upperMultiple': 19, 'labelJa': '18倍〜19倍の帯'}
-    assert within['conditionMet'] is None
+    assert within['conditionMet'] is False                                   # 18.4x < 19x
+    edge = engine.evaluate_d04(cutoff=AT, analysis_instrument='NIKKEI_225_INDEX',
+                               index_valuation={**valuation(), 'per': 19.0})
+    assert edge['conditionMet'] is True
     assert r['actionAuthority'] is False and r['validationStatus']=='UNVALIDATED'
     assert r['valuation']['publishedAt'] is None
 
