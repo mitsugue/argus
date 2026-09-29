@@ -16224,17 +16224,70 @@ def _market_brief_history_sync():
             _MARKET_BRIEF_HISTORY_REMOTE.update(status="NOT_CONFIGURED")
             return
         _MARKET_BRIEF_HISTORY_REMOTE.update(lastAttemptAt=_ai_now_iso(), status="RUNNING")
+        # The verified remote head used to live only in this dict, so every
+        # restart synchronised as if nothing had been verified and restored
+        # the whole remote archive (measured +552 MiB RSS per boot). The head
+        # is kept beside the local file and read back once per process.
+        if _MARKET_BRIEF_HISTORY_REMOTE.get("headVersion") is None:
+            _MARKET_BRIEF_HISTORY_REMOTE["headVersion"] = _market_brief_history_head_load(path)
         remote = argus_analysis_history_backup.GitHubStore(
             repo=repo, headers=_gh_private_headers(), http=requests.request)
         result = argus_analysis_history_backup.synchronize(path, remote,
             last_verified_head=_MARKET_BRIEF_HISTORY_REMOTE.get("headVersion"))
         _MARKET_BRIEF_HISTORY_REMOTE.update(result, lastVerifiedAt=_ai_now_iso(), errorClass=None)
+        _market_brief_history_head_save(path, result)
         if result.get("restoredCounts") is not None:
             _MARKET_BRIEF["historyRestoreAttempted"] = False
     except Exception as exc:
         _MARKET_BRIEF_HISTORY_REMOTE.update(status="FAILED", errorClass=type(exc).__name__)
     finally:
         _MARKET_BRIEF_HISTORY_SYNC_LOCK.release()
+
+
+_MARKET_BRIEF_HISTORY_HEAD_SCHEMA = "argus-market-brief-history-head-v1"
+
+
+def _market_brief_history_head_path(path):
+    return str(path) + ".head.json"
+
+
+def _market_brief_history_head_load(path):
+    """The last verified remote head for this local file, or None.
+
+    Only trusted when the local file it describes still exists; a missing
+    file must restore from the remote as before."""
+    head_path = _market_brief_history_head_path(path)
+    try:
+        if not os.path.isfile(path) or os.path.islink(head_path):
+            return None
+        with open(head_path, "rb") as handle:
+            raw = handle.read(16 * 1024)
+        value = json.loads(raw.decode("utf-8"))
+        if not isinstance(value, dict) or value.get("schemaVersion") != _MARKET_BRIEF_HISTORY_HEAD_SCHEMA:
+            return None
+        head = value.get("headVersion")
+        return head if isinstance(head, str) and head else None
+    except (OSError, ValueError):
+        return None
+
+
+def _market_brief_history_head_save(path, result):
+    """Record the verified head after a successful synchronisation; a failure
+    to record only costs one more full restore on the next boot."""
+    if not isinstance(result, dict) or result.get("status") != "VERIFIED" \
+            or not isinstance(result.get("headVersion"), str):
+        return
+    try:
+        argus_persistent_storage.atomic_write_json(
+            _market_brief_history_head_path(path),
+            {"schemaVersion": _MARKET_BRIEF_HISTORY_HEAD_SCHEMA,
+             "headVersion": result["headVersion"],
+             "latestRecordId": result.get("latestRecordId"),
+             "archiveSha256": result.get("archiveSha256"),
+             "counts": result.get("counts"), "verifiedAt": _ai_now_iso()},
+            temp_label="brief-history-head")
+    except Exception as exc:
+        _MARKET_BRIEF_HISTORY_REMOTE["headPersistErrorClass"] = type(exc).__name__
 
 
 def _market_brief_history_remote_status():
