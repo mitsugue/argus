@@ -32864,6 +32864,10 @@ def api_argus_admin_memory_attribution():
     # never element values) only on request, on this existing owner route.
     payload["allocatorReclaim"] = copy.deepcopy(_ALLOCATOR_RECLAIM_STATE)
     payload["startupRss"] = dict(_STARTUP_RSS)
+    # Lifetime high-water mark of this web process (VmHWM): the number a
+    # memory plan must clear, next to the per-operation deltas above.
+    payload["peakRssMib"] = _process_peak_memory_mb()
+    payload["currentRssMib"] = _startup_rss_mib()
     payload["marketStoreResidency"] = _market_store_residency_projection()
     payload["heavyTicks"] = copy.deepcopy(_HEAVY_TICK_STATE)
     if str(request.args.get("inventory") or "").lower() in ("1", "true", "yes"):
