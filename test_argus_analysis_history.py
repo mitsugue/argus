@@ -142,3 +142,43 @@ def test_recovered_history_invalidates_startup_cache_without_ai_or_data_fetch(tm
     assert received['lastSuccessfulAiAt']==saved['aiDiagnostics']['completedAt']
     assert state['composedAt']>0 and state['data'] is not cached
     assert history.read_record(path,saved['analysisHistory']['recordId'])['calculations']['5']['epsInput']==3000
+
+
+def test_verified_remote_head_survives_a_restart_and_skips_the_full_restore(tmp_path, monkeypatch):
+    """The first synchronisation of a process used to pass last_verified_head=None
+    and restore the whole remote archive; the head is now read back from a
+    sidecar beside the local file."""
+    import argus_analysis_history_backup as backup
+    path = tmp_path / 'history.sqlite'
+    history.initialize(str(path))
+    monkeypatch.setattr(scanner, '_market_brief_history_path', lambda: str(path))
+    monkeypatch.setenv('ARGUS_LAYER2B_PRIVATE_REPO', 'owner/private-history')
+    monkeypatch.setenv('ARGUS_LAYER2B_PRIVATE_TOKEN', 'test-only-token')
+    monkeypatch.setattr(scanner, '_gh_private_headers', lambda: {})
+    monkeypatch.setattr(backup, 'GitHubStore', lambda **kwargs: object())
+    seen = []
+
+    def fake_sync(local_path, remote, *, last_verified_head=None):
+        seen.append(last_verified_head)
+        return {'status': 'VERIFIED', 'headVersion': 'sha-v1', 'latestRecordId': 'a' * 64,
+                'archiveSha256': 'b' * 64, 'counts': {'views': 3, 'outcomes': 0},
+                'restoredCounts': None if last_verified_head == 'sha-v1' else {'views': 3, 'outcomes': 0}}
+    monkeypatch.setattr(backup, 'synchronize', fake_sync)
+    fresh = lambda: {"status": "NOT_RUN", "lastVerifiedAt": None, "lastAttemptAt": None, "headVersion": None}
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF_HISTORY_REMOTE', fresh())
+    scanner._market_brief_history_sync()
+    assert seen == [None]
+    assert scanner._MARKET_BRIEF_HISTORY_REMOTE['status'] == 'VERIFIED'
+    assert (tmp_path / 'history.sqlite.head.json').is_file()
+    # A restart: the in-memory state is gone, the files are not.
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF_HISTORY_REMOTE', fresh())
+    scanner._market_brief_history_sync()
+    assert seen == [None, 'sha-v1']
+    assert scanner._MARKET_BRIEF_HISTORY_REMOTE['restoredCounts'] is None
+    # Without the local file the sidecar is not trusted and a restore happens.
+    path.unlink()
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF_HISTORY_REMOTE', fresh())
+    scanner._market_brief_history_sync()
+    assert seen[-1] is None
+    status = scanner._market_brief_history_remote_status()
+    assert 'headVersion' not in status and 'test-only-token' not in json.dumps(status)
