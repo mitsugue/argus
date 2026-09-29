@@ -16342,10 +16342,16 @@ def _market_brief_worker_tick():
         _MARKET_BRIEF_WORKER.update(lastAttemptMonotonic=time.monotonic(),
             lastAttemptAt=_ai_now_iso(), status="RUNNING", errorClass=None)
         try:
+            # Each stage is measured on its own: the worker was the largest
+            # remaining transient (+170..205 MiB per tick) and the whole-tick
+            # figure could not say which stage allocates it.
             if not _MARKET_BRIEF.get("historyRestoreAttempted"):
-                _market_brief_history_restore()
-            _market_brief_history_outcomes()
-            result = _market_brief_refresh(allow_ai=True)
+                _memory_operation_run("internal", "brief.history_restore",
+                                      _market_brief_history_restore)
+            _memory_operation_run("internal", "brief.history_outcomes",
+                                  _market_brief_history_outcomes)
+            result = _memory_operation_run("internal", "brief.refresh",
+                                           _market_brief_refresh, allow_ai=True)
             _MARKET_BRIEF_WORKER.update(status=result.get("unifiedStatus", "UNAVAILABLE"),
                 lastCompletedAt=_ai_now_iso())
         except Exception as exc:
@@ -16354,8 +16360,10 @@ def _market_brief_worker_tick():
         # Remote recovery may take minutes or fail; neither delays a saved
         # explanation nor converts a successful AI result into a worker error.
         try:
-            threading.Thread(target=_market_brief_history_sync, daemon=True,
-                             name="market-brief-history-sync").start()
+            threading.Thread(
+                target=lambda: _memory_operation_run(
+                    "internal", "brief.history_sync", _market_brief_history_sync),
+                daemon=True, name="market-brief-history-sync").start()
         except RuntimeError as exc:
             _MARKET_BRIEF_HISTORY_REMOTE.update(status="FAILED", errorClass=type(exc).__name__)
         _MARKET_BRIEF_WORKER["consecutiveFailures"] = (
@@ -16675,9 +16683,10 @@ def _market_brief_urgent_signature(brief):
 
 
 def _market_brief_refresh(allow_ai=True):
-    brief = _compose_market_brief()
+    brief = _memory_operation_run("internal", "brief.compose", _compose_market_brief)
     previous = _MARKET_BRIEF.get("lastSuccessful") or {}
-    internals = _jp_market_internals_cached() if allow_ai else None
+    internals = (_memory_operation_run("internal", "brief.internals", _jp_market_internals_cached)
+                 if allow_ai else None)
     input_digest = _market_brief_generation_input_digest(brief, internals) if allow_ai else None
     comparison_completed = allow_ai and argus_index_research_cache.comparison_availability_improved(
         _INDEX_RESEARCH_REPORTS, previous.get("calculationSnapshots"),
@@ -16745,7 +16754,7 @@ def _market_brief_refresh(allow_ai=True):
     elif allow_ai:
         # Freeze the engine output before asking the model. Later input updates
         # create another record; the original calculation is never recomputed.
-        brief = _market_brief_ai_polish(brief)
+        brief = _memory_operation_run("internal", "brief.ai_polish", _market_brief_ai_polish, brief)
         if brief.get("unifiedStatus") == "GENERATED":
             brief["lastSuccessfulAiAt"] = (brief.get("aiDiagnostics") or {}).get("completedAt")
             _MARKET_BRIEF["aiFactsHash"] = facts_hash
