@@ -38070,7 +38070,7 @@ _NK225_WEIGHT_DEFAULT_NAME = "nikkei_stock_average_weight_jp.csv"
 _JP_INDEX_PROXY_LOCK = threading.Lock()
 _JP_INDEX_PROXY = {"status": "NOT_RUN", "restoreAttempted": False, "weightsSha256": None,
                    "weightsAsOf": None, "factors": None, "history": {},
-                   "recommendedVariant": "FORECAST_SIGNED", "lastAttemptAt": None,
+                   "recommendedVariant": argus_index_valuation_proxy.RECOMMENDED_VARIANT, "lastAttemptAt": None,
                    "lastError": None, "lastErrorReason": None, "requestsLastWarm": 0,
                    "weightFileFound": None, "weightFileDiagnostics": None}
 _JP_INDEX_PROXY_BACKFILL_PER_WARM = 5
@@ -38125,7 +38125,8 @@ def _jp_index_proxy_restore():
         with open(path, "r", encoding="utf-8") as handle:
             saved = json.load(handle)
         if isinstance(saved, dict) and saved.get("schemaVersion") == argus_index_valuation_proxy.SCHEMA:
-            for key in ("weightsSha256", "weightsAsOf", "factors", "history", "recommendedVariant"):
+            # The recommended variant is a code decision (see the module), never restored.
+            for key in ("weightsSha256", "weightsAsOf", "factors", "history"):
                 if key in saved:
                     _JP_INDEX_PROXY[key] = saved[key]
     except Exception as exc:
@@ -38345,7 +38346,7 @@ def _jp_index_proxy_row(cutoff):
     if not history:
         return None
     latest = history[max(history)]
-    variant = _JP_INDEX_PROXY.get("recommendedVariant") or "FORECAST_SIGNED"
+    variant = _JP_INDEX_PROXY.get("recommendedVariant") or argus_index_valuation_proxy.RECOMMENDED_VARIANT
     row = argus_index_valuation_proxy.select_variant({**latest, "basis": argus_index_valuation_proxy.PROXY_BASIS,
         "epsKind": "PROXY_FROM_CONSTITUENT_FORECAST_EPS"}, variant)
     return row

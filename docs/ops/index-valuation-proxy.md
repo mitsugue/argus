@@ -64,3 +64,16 @@
 推奨方式は、この2方式の誤差が本番で数営業日ぶん揃ってから、`compare_with_official` の平均絶対誤差が最小のものに固定する。
 それまで `recommendedVariant` は既定のままで、画面の代理値表示は「公式ではない」の但し書きを保つ。
 schema v2 では保存済みの v1 履歴は捨てられ、次のwarmから再構成される（1 warm あたり 5 営業日）。
+
+### v2 の実測（2026-09-29 05:15Z、同じ4営業日）
+
+| 方式 | 平均誤差 | 最大 | ばらつき |
+|---|---|---|---|
+| FORECAST_COVERED_ONLY | +0.76% | 0.81% | 0.04pt |
+| ACTUAL_SIGNED | −2.36% | 2.38% | 0.02pt |
+| FORECAST_WITH_ACTUAL_FALLBACK | −9.69% | 9.70% | 0.01pt |
+| FORECAST_SIGNED / NON_NEGATIVE | +29.88% | 29.90% | 0.02pt |
+
+**推奨方式は FORECAST_COVERED_ONLY に固定**（`argus_index_valuation_proxy.RECOMMENDED_VARIANT`）。
+推奨はコード上の決定であり、保存状態から復元しない。残る +0.8% は、予想の無い22社について日経が自社予想を使っているのに対し、代理値はその22社を両辺から外していることによる系統差。
+公式値が改めて読める日が来たら `compare_with_official` で再評価し、定数を更新する。
