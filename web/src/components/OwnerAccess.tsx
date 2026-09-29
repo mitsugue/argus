@@ -1,3 +1,4 @@
+import { ArgusMark } from './ArgusMark';
 import React, { useState, useEffect, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { OWNER_AUTH_REQUIRED, subscribeOwner, hasOwnerSession, passwordLogin,
@@ -70,7 +71,16 @@ export function OwnerAccess({ children }: { children: React.ReactNode }) {
   </details>;
   return <>
     {!authenticated && <section className="owner-access-screen" aria-label="本人確認">
-      <h1>ARGUS</h1><p>内容を見るには本人確認が必要です。</p>
+      {/* Owner request 2026-09-30: the sign-in screen opens on the brand itself —
+          the eye-in-triangle mark and the A.R.G.U.S. Pro wordmark, quiet and precise. */}
+      <div className="owner-access-brand" aria-hidden="false">
+        <div className="owner-access-brand__halo" aria-hidden="true" />
+        <ArgusMark size={72} className="owner-access-brand__mark" />
+        <h1 className="owner-access-brand__name">A.R.G.U.S.<span className="owner-access-brand__pro">Pro</span></h1>
+        <p className="owner-access-brand__tag">Advanced Research · Guarded · Unified · Signals</p>
+        <span className="owner-access-brand__rule" aria-hidden="true" />
+      </div>
+      <p className="owner-access-screen__lead">内容を見るには本人確認が必要です。</p>
       {!online && <p>オフラインです。保存データは残っています。接続後に本人確認をしてください。</p>}
       <button disabled={busy || !online} onClick={() => void run(() => useOwnerPasskey(false))}>パスキーで開く</button>
       {form}{status}

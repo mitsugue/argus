@@ -41,7 +41,17 @@ for (const patch of [{ eps: NaN }, { per: 0 }, { knownAt: '2026-09-12T00:00:00Z'
   { publishedAt: '2026-09-11T07:30:00Z' }, { sourceResponseSha256: null }]) {
   assert(!validJapanMarketComparison({ ...withScale, valuationEvidence: { ...withScale.valuationEvidence, ...patch } }, 5));
 }
-console.log('Index valuation evidence validation PASS');
+const withProxy = { ...withScale, valuationEvidence: {
+  date: document.anchorDate, eps: 3006.25, per: 21.78,
+  epsKind: 'PROXY_FROM_CONSTITUENT_FORECAST_EPS', knownAt: '2026-09-11T07:30:00Z',
+  publishedAt: null, sourceRef: 'argus:index-valuation-proxy:jquants+nikkei-weights', sourceResponseSha256: null,
+} };
+assert(validJapanMarketComparison(withProxy, 5));
+for (const patch of [{ sourceResponseSha256: 'a'.repeat(64) }, { sourceRef: 'https://indexes.nikkei.co.jp/nkave/archives/summary/' },
+  { sourceRef: 'argus:index-valuation-proxy:javascript:alert(1)' }, { epsKind: 'DERIVED_FROM_INDEX_CLOSE_AND_INDEX_BASED_PER' }]) {
+  assert(!validJapanMarketComparison({ ...withProxy, valuationEvidence: { ...withProxy.valuationEvidence, ...patch } }, 5));
+}
+console.log('Index valuation evidence validation PASS (official and ARGUS proxy shapes)');
 const withCoverage = { ...document, historyCoverage: {
   sourceBars: 2450, sourceStart: '2016-09-16', sourceEnd: '2026-09-11',
   candidateCount: 2300, candidateStart: '2016-10-20', candidateEnd: '2026-08-10',

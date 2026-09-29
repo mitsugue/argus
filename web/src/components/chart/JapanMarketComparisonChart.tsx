@@ -147,12 +147,18 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
         </section>;
       })()}
 
-      {document.valuationEvidence && <p>
-        {document.valuationEvidence.date}の指数ベースPER {valuationNumber(document.valuationEvidence.per)}倍、
-        終値・指数ベースPERから算出した概算EPS {valuationNumber(document.valuationEvidence.eps)}円。
-        公表EPSそのものではありません。取得：{new Date(document.valuationEvidence.knownAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST。
-        公表時刻は未確認です。<a href={document.valuationEvidence.sourceRef} target="_blank" rel="noreferrer">日経公式の算出資料</a>
-      </p>}
+      {document.valuationEvidence && (document.valuationEvidence.epsKind === 'PROXY_FROM_CONSTITUENT_FORECAST_EPS'
+        ? <p data-valuation-basis="argus-proxy">
+          {document.valuationEvidence.date}の指数ベースPER {valuationNumber(document.valuationEvidence.per)}倍、
+          指数EPS {valuationNumber(document.valuationEvidence.eps)}円は<b>ARGUS代理値</b>（構成銘柄の予想EPSとウエートから再構成。公式の指数ベースPERではありません）。
+          取得：{new Date(document.valuationEvidence.knownAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST。
+        </p>
+        : <p data-valuation-basis="official">
+          {document.valuationEvidence.date}の指数ベースPER {valuationNumber(document.valuationEvidence.per)}倍、
+          終値・指数ベースPERから算出した概算EPS {valuationNumber(document.valuationEvidence.eps)}円。
+          公表EPSそのものではありません。取得：{new Date(document.valuationEvidence.knownAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST。
+          公表時刻は未確認です。<a href={document.valuationEvidence.sourceRef} target="_blank" rel="noreferrer">日経公式の算出資料</a>
+        </p>)}
       {document.sourceAcquisition && <section aria-label="公式データの収録範囲">
         <h3>公式データの収録範囲</h3>
         {Object.entries(document.sourceAcquisition.sources).map(([key, source]) => <p key={key}>
