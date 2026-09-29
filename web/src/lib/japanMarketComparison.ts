@@ -69,12 +69,20 @@ export function validJapanMarketComparison(v: unknown, horizon: number): v is Ja
   if (v.valuationEvidence !== undefined) {
     const e = v.valuationEvidence;
     if (!object(e) || e.date !== v.anchorDate || !finite(e.eps) || e.eps <= 0
-      || !finite(e.per) || e.per <= 0 || e.epsKind !== 'DERIVED_FROM_INDEX_CLOSE_AND_INDEX_BASED_PER'
+      || !finite(e.per) || e.per <= 0
       || typeof e.knownAt !== 'string' || !Number.isFinite(Date.parse(e.knownAt))
       || Date.parse(e.knownAt) > Date.parse(v.informationCutoff)
-      || e.publishedAt !== null
-      || e.sourceRef !== 'https://indexes.nikkei.co.jp/nkave/archives/summary/'
-      || typeof e.sourceResponseSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(e.sourceResponseSha256)) return false;
+      || e.publishedAt !== null) return false;
+    // Two admitted evidence shapes, never mixed: the official Nikkei row
+    // (exact source URL + response digest) or the ARGUS proxy reconstructed
+    // from constituent EPS (argus: source ref, no response digest).
+    const official = e.epsKind === 'DERIVED_FROM_INDEX_CLOSE_AND_INDEX_BASED_PER'
+      && e.sourceRef === 'https://indexes.nikkei.co.jp/nkave/archives/summary/'
+      && typeof e.sourceResponseSha256 === 'string' && /^[a-f0-9]{64}$/.test(e.sourceResponseSha256);
+    const proxy = e.epsKind === 'PROXY_FROM_CONSTITUENT_FORECAST_EPS'
+      && typeof e.sourceRef === 'string' && /^argus:index-valuation-proxy:[A-Za-z0-9+._-]{1,80}$/.test(e.sourceRef)
+      && e.sourceResponseSha256 === null;
+    if (!official && !proxy) return false;
   }
   for (const c of v.candidates) {
     if (!object(c) || typeof c.snapshotId !== 'string' || ids.has(c.snapshotId)
