@@ -38072,7 +38072,7 @@ _JP_INDEX_PROXY = {"status": "NOT_RUN", "restoreAttempted": False, "weightsSha25
                    "weightsAsOf": None, "factors": None, "history": {},
                    "recommendedVariant": "FORECAST_SIGNED", "lastAttemptAt": None,
                    "lastError": None, "lastErrorReason": None, "requestsLastWarm": 0,
-                   "weightFileFound": None}
+                   "weightFileFound": None, "weightFileDiagnostics": None}
 _JP_INDEX_PROXY_BACKFILL_PER_WARM = 5
 _JP_INDEX_PROXY_HISTORY_LIMIT = 60
 
@@ -38161,9 +38161,36 @@ def _jp_index_proxy_weight_candidates():
         if os.sep not in configured:
             candidates.append(("configured_name_in_secret_dir",
                                os.path.join(_NK225_SECRET_DIR, configured)))
+            # Render also mounts secret files at the project root.
+            candidates.append(("configured_name_in_project_root",
+                               os.path.join(os.getcwd(), configured)))
     candidates.append(("default_name_in_secret_dir",
                        os.path.join(_NK225_SECRET_DIR, _NK225_WEIGHT_DEFAULT_NAME)))
+    candidates.append(("default_name_in_project_root",
+                       os.path.join(os.getcwd(), _NK225_WEIGHT_DEFAULT_NAME)))
     return candidates
+
+
+def _jp_index_proxy_weight_diagnostics():
+    """Booleans and counts that say why a table was not found, without a
+    single file name or path leaving the process: whether a value is set,
+    whether it looks like a path, whether the secret directory exists and
+    how many files it holds, and whether the default name is present."""
+    configured = (os.environ.get(_NK225_WEIGHT_CSV_ENV) or "").strip()
+    try:
+        entries = os.listdir(_NK225_SECRET_DIR)
+        secret_dir_exists, secret_dir_count = True, len(entries)
+    except OSError:
+        entries, secret_dir_exists, secret_dir_count = [], False, 0
+    return {"configured": bool(configured),
+            "configuredIsAbsolute": os.path.isabs(configured) if configured else None,
+            "configuredContainsSeparator": (os.sep in configured) if configured else None,
+            "configuredBasenameIsDefault": (os.path.basename(configured) == _NK225_WEIGHT_DEFAULT_NAME) if configured else None,
+            "configuredEndsWithCsv": configured.lower().endswith(".csv") if configured else None,
+            "secretDirExists": secret_dir_exists, "secretDirFileCount": secret_dir_count,
+            "defaultNameInSecretDir": _NK225_WEIGHT_DEFAULT_NAME in entries,
+            "csvFilesInSecretDir": sum(1 for name in entries if name.lower().endswith(".csv")),
+            "defaultNameInProjectRoot": os.path.exists(os.path.join(os.getcwd(), _NK225_WEIGHT_DEFAULT_NAME))}
 
 
 def _jp_index_proxy_weights():
@@ -38179,8 +38206,10 @@ def _jp_index_proxy_weights():
             continue
     if raw is None:
         configured = bool((os.environ.get(_NK225_WEIGHT_CSV_ENV) or "").strip())
+        _JP_INDEX_PROXY["weightFileDiagnostics"] = _jp_index_proxy_weight_diagnostics()
         return None, ("weight_file_unreadable" if configured else "weight_file_not_configured")
     _JP_INDEX_PROXY["weightFileFound"] = found
+    _JP_INDEX_PROXY["weightFileDiagnostics"] = None
     try:
         text = raw.decode("cp932")
     except UnicodeDecodeError:
@@ -38297,6 +38326,7 @@ def _jp_index_proxy_public():
             "lastError": _JP_INDEX_PROXY.get("lastError"),
             "lastErrorReason": _JP_INDEX_PROXY.get("lastErrorReason"),
             "weightFileFound": _JP_INDEX_PROXY.get("weightFileFound"),
+            "weightFileDiagnostics": _JP_INDEX_PROXY.get("weightFileDiagnostics"),
             "requestsLastWarm": _JP_INDEX_PROXY.get("requestsLastWarm"),
             "actionAuthority": False, "validationStatus": "UNVALIDATED"}
 

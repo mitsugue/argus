@@ -170,3 +170,30 @@ def test_the_weight_file_is_found_by_path_by_name_or_by_default(lane, tmp_path, 
     assert lane["state"]["lastErrorReason"] == "weight_file_unreadable"
     public = scanner._jp_index_proxy_public()
     assert "secrets" not in json.dumps(public) and "missing.csv" not in json.dumps(public)
+
+
+def test_an_unreadable_table_yields_diagnostics_without_a_name(lane, tmp_path, monkeypatch):
+    """When no candidate opens, the state says what kind of value was set and
+    what the secret directory holds, in booleans and counts only."""
+    secret_dir = tmp_path / "secrets"; secret_dir.mkdir()
+    (secret_dir / "other-secret.pem").write_bytes(b"x")
+    (secret_dir / "some_table.csv").write_bytes(b"y")
+    monkeypatch.setattr(scanner, "_NK225_SECRET_DIR", str(secret_dir))
+    monkeypatch.setenv(scanner._NK225_WEIGHT_CSV_ENV, "nikkei_weights.csv")
+    monkeypatch.chdir(tmp_path)
+    scanner._jp_index_proxy_warm(lane["rows"])
+    state = lane["state"]
+    assert state["status"] == "NOT_CONFIGURED" and state["lastErrorReason"] == "weight_file_unreadable"
+    diag = state["weightFileDiagnostics"]
+    assert diag == {"configured": True, "configuredIsAbsolute": False, "configuredContainsSeparator": False,
+                    "configuredBasenameIsDefault": False, "configuredEndsWithCsv": True,
+                    "secretDirExists": True, "secretDirFileCount": 2, "defaultNameInSecretDir": False,
+                    "csvFilesInSecretDir": 1, "defaultNameInProjectRoot": False}
+    text = json.dumps(scanner._jp_index_proxy_public(), ensure_ascii=False)
+    for forbidden in ("other-secret", "some_table", "nikkei_weights", str(secret_dir)):
+        assert forbidden not in text, forbidden
+    # A table placed at the project root under the configured name is found.
+    (tmp_path / "nikkei_weights.csv").write_bytes(_weights_csv())
+    scanner._jp_index_proxy_warm(lane["rows"])
+    assert state["weightFileFound"] in ("configured_path", "configured_name_in_project_root")
+    assert state["weightFileDiagnostics"] is None
