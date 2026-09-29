@@ -38,6 +38,10 @@ export interface MarketBrief {
   unifiedStatus?: string;
   generationWorker?: { status: string; lastAttemptAt?: string | null; lastCompletedAt?: string | null; errorClass?: string | null };
   lastSuccessfulAiAt?: string | null;
+  /** Why regeneration is gated (budget/mode), owner wording and resume time; no secrets. */
+  generationGate?: { outcome?: string | null; reason?: string | null; reasonJa?: string | null;
+    resumesAt?: string | null; monthlyBudgetUsd?: number | null; monthSpentUsd?: number | null;
+    dailyBudgetUsd?: number | null; daySpentUsd?: number | null } | null;
   aiDiagnostics?: { errorCode?: string | null; requestedModel: string | null; returnedModel: string | null; completedAt: string | null };
   schemaVersion: string;
   generatedAt: string;
