@@ -202,3 +202,19 @@ def test_verified_head_with_unchanged_local_file_returns_without_a_snapshot(tmp_
     original.add(source, (base+timedelta(days=4)).isoformat(), 3004)
     grown = backup.synchronize(source, remote, last_verified_head=first['headVersion'])
     assert grown['counts']['views'] == 5 and 'unchangedSinceVerifiedHead' not in grown
+
+
+def test_snapshot_holds_one_record_body_at_a_time_with_identical_groups(tmp_path, monkeypatch):
+    remote = original.Remote(); remote.history_format_version = 2
+    source = tmp_path/'source.sqlite'
+    from datetime import datetime, timedelta, timezone
+    base = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    for n in range(70): original.add(source, (base+timedelta(days=n)).isoformat(), 3000+n)
+    import inspect
+    assert 'fetchmany' not in inspect.getsource(compact._snapshot)   # one body alive at a time
+    result = backup.synchronize(source, remote)
+    manifest, _ = compact._head(compact.Remote(remote))
+    views = [g for g in manifest['groups'] if g['kind'] == 'views']
+    assert [g['count'] for g in views] == [32, 32, 6] and result['counts']['views'] == 70
+    cold = tmp_path/'cold.sqlite'; backup.synchronize(cold, remote)
+    assert history.summary(cold) == history.summary(source)
