@@ -30,6 +30,20 @@ for (const mutate of [
   assert(!validJapanMarketComparison(invalid, 5));
 }
 console.log('Japan comparison response validation PASS');
+// 2026-09-30: walk-forward validation metrics travel with the forecast.
+const validation = { method: 'jp-analog-walk-forward-v1', evaluationStart: '2017-10-02', evaluationEnd: '2026-08-28',
+  stepSessions: 5, evaluations: 400, directionalEvaluations: 300, hits: 160, hitRate: 160 / 300,
+  hitRateWilsonLower95: 0.477, naiveMajorityRate: 0.55, bandCoverage: 0.48, meanAbsoluteError: 2.1,
+  naiveNoChangeMeanAbsoluteError: 2.0, validationStatus: 'UNVALIDATED',
+  reasons: ['direction_not_better_than_naive_majority'], scaleRule: 'yearly', predictiveProbabilities: null };
+const withValidation = structuredClone(document); withValidation.forecast.validation = validation;
+assert(validJapanMarketComparison(withValidation, 5));
+for (const patch of [{ predictiveProbabilities: 0.6 }, { hitRate: 1.2 }, { hits: 301 }, { validationStatus: 'VALIDATED' },
+  { reasons: [] }, { evaluations: 10 }]) {
+  const invalid = structuredClone(withValidation); Object.assign(invalid.forecast.validation, patch);
+  assert(!validJapanMarketComparison(invalid, 5), JSON.stringify(patch));
+}
+console.log('Japan comparison walk-forward validation shape PASS');
 const withScale = { ...document, unit: 'JPY_INDEX_POINTS', valuationEvidence: {
   date: document.anchorDate, eps: 2000, per: 20,
   epsKind: 'DERIVED_FROM_INDEX_CLOSE_AND_INDEX_BASED_PER', knownAt: '2026-09-11T07:30:00Z',

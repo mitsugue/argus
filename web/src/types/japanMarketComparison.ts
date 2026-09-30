@@ -70,6 +70,15 @@ export interface JapanMarketComparison {
     sampleCount: number;
     counts: { up: number; flat: number; down: number };
     flatThresholdPct: number;
+    /** Walk-forward check of this forecast rule on the engine's own history (2026-09-30). */
+    validation?: {
+      method: string; evaluationStart: string | null; evaluationEnd: string | null; stepSessions: number;
+      evaluations: number; directionalEvaluations: number; hits: number;
+      hitRate: number | null; hitRateWilsonLower95: number | null; naiveMajorityRate: number | null;
+      bandCoverage: number | null; meanAbsoluteError: number | null; naiveNoChangeMeanAbsoluteError: number | null;
+      validationStatus: 'UNVALIDATED' | 'VALIDATED'; reasons: string[]; scaleRule: string;
+      predictiveProbabilities: null;
+    };
   };
   scaleExplanation: string;
   valuationEvidence?: {

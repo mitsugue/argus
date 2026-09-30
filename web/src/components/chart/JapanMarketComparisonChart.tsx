@@ -140,7 +140,9 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
       <p className="jp-comparison__notice">比較できるのは一部の条件です。市場状態全体が似ていると判断できる根拠は、まだ不足しています。</p>}
     {!document.forecast.line.length && <p className="jp-comparison__notice">計算予測を出すための比較事例が不足しています。</p>}
     {showResearchNote && document.forecast.line.length > 0 && <p className="jp-comparison__notice">
-      計算予測は検証中です。帯は比較事例の中央半分の範囲で、将来の価格が入る確率ではありません。</p>}
+      {document.forecast.validation
+        ? `計算予測は過去検証の基準に届いていません（方向一致率 ${document.forecast.validation.hitRate === null ? '—' : (document.forecast.validation.hitRate * 100).toFixed(0) + '%'}、単純予想 ${document.forecast.validation.naiveMajorityRate === null ? '—' : (document.forecast.validation.naiveMajorityRate * 100).toFixed(0) + '%'}）。参考線として扱ってください。`
+        : '計算予測は検証中です。'}帯は比較事例の中央半分の範囲で、将来の価格が入る確率ではありません。</p>}
     <details className="jp-comparison__details"><summary>比較元・尺度・検証状態を見る</summary>
       <p>{document.scaleExplanation}</p>
       {document.historyCoverage && <>
@@ -214,6 +216,25 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
         上昇{document.forecast.counts.up}件、横ばい{document.forecast.counts.flat}件、下落{document.forecast.counts.down}件。
         横ばいは±{document.forecast.flatThresholdPct}%以内です。事例の頻度であり、予測的中率ではありません。
       </p>}
+      {document.forecast.validation && (() => {
+        const v = document.forecast.validation;
+        const pct = (n: number | null) => n === null ? '—' : `${(n * 100).toFixed(1)}%`;
+        const reasonJa: Record<string, string> = {
+          too_few_independent_evaluations: '独立した検証件数が100件に届いていません',
+          direction_not_better_than_naive_majority: '方向の一致率が「いつも多数派の方向」という単純な予想を統計的に上回っていません',
+          band_coverage_outside_35_65_percent: '帯の中に実際の値が入った割合が目安（35〜65%）から外れています',
+        };
+        return <section aria-label="計算予測の過去検証" data-forecast-validation={v.validationStatus}>
+          <h3>この計算予測の過去検証（{document.forecast.horizonSessions}営業日後）</h3>
+          <p>{v.evaluationStart}〜{v.evaluationEnd}の各時点で、その時点までの情報だけを使って同じ方法で予測を作り、実際の値動きと照合しました。
+            重ならない{v.evaluations}件のうち方向を示した{v.directionalEvaluations}件で、方向の一致率は{pct(v.hitRate)}
+            （95%信頼下限 {pct(v.hitRateWilsonLower95)}）、「いつも多数派の方向」と予想した場合は{pct(v.naiveMajorityRate)}でした。
+            帯（事例の中央半分）の中に実際の値が入った割合は{pct(v.bandCoverage)}（目安50%）です。</p>
+          <p>{v.validationStatus === 'VALIDATED'
+            ? '判定：過去検証の基準を満たしています。ただし過去の一致率であり、将来の確率ではありません。'
+            : `判定：未検証。${v.reasons.map(reason => reasonJa[reason] ?? reason).join('。')}。`}</p>
+        </section>;
+      })()}
       <ul>{document.limitations.map((limitation, index) => <li key={index}>{limitation}</li>)}</ul>
     </details>
   </section>;

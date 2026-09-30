@@ -293,7 +293,7 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                             state_rows: Sequence[Mapping[str, Any]] = (),
                             condition_rows: Sequence[Mapping[str, Any]] = (),
                             reaction_rows: Sequence[Mapping[str, Any]] = (),
-                            policy=None) -> dict[str, Any]:
+                            policy=None, backtest_cache: dict | None = None) -> dict[str, Any]:
     """Connect cached daily observations to the existing four-layer calculation.
 
     Historical bars are the source's currently reported history. Their session
@@ -429,6 +429,27 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     # answers whether a year was searched and why its closest candidate was or
     # was not selected; it neither changes the ranking nor uses later returns.
     document["selectionAudit"] = selection.get("yearAudit", {})
+    if backtest_cache is not None:
+        # Walk-forward validation of this forecast rule on the same sealed
+        # episodes, recomputed when the history or the policy changes (in
+        # practice once a day) and shared by the four horizons.
+        import jp_market_analog_backtest as backtest
+        key = _hash({"method": backtest.METHOD, "last": visible[-1]["date"], "candidates": len(candidates),
+                     "policy": policy.policy_id, "scales": list(policy.state_scales),
+                     "evidence": [len(rows) for rows in evidence]})
+        if backtest_cache.get("key") != key:
+            closes = {row["date"]: float(row["close"]) for row in visible if row.get("close")}
+            result = backtest.walk_forward(candidates, closes, session_dates, policy=policy, state_rows=state_rows)
+            backtest_cache.clear()
+            backtest_cache.update(key=key, result=result)
+        validation = backtest_cache["result"]
+        metrics = validation["horizons"].get(str(horizon_sessions))
+        if metrics:
+            document["forecast"]["validationStatus"] = metrics["validationStatus"]
+            document["forecast"]["validation"] = {
+                **metrics, "method": validation["method"], "evaluationStart": validation["evaluationStart"],
+                "evaluationEnd": validation["evaluationEnd"], "stepSessions": validation["step"],
+                "scaleRule": validation["scaleRule"], "predictiveProbabilities": None}
     document["selectionPolicy"] = {
         "policyId": policy.policy_id, "lookbackSessions": policy.lookback_sessions,
         "maximumCandidates": policy.maximum_candidates, "minimumSeparationSessions": policy.minimum_separation_sessions,

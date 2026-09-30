@@ -273,6 +273,40 @@ def _edit_distance(left: Sequence[Any], right: Sequence[Any]) -> float:
     return previous[-1] / max(len(left), len(right), 1)
 
 
+def component_distances(current: Mapping[str, Any], candidate: Mapping[str, Any], policy: AnalogPolicy, *,
+                        current_shape=None, candidate_shape=None, current_order=None,
+                        candidate_order=None) -> dict[str, Any]:
+    """The four-component distance between two sealed episodes.
+
+    Shared by the selection and by the walk-forward validation so both use
+    the same arithmetic; callers may pass precomputed shapes and orders.
+    """
+    current_shape = current_shape if current_shape is not None else _shape(current)
+    shape = candidate_shape if candidate_shape is not None else _shape(candidate)
+    shape_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(current_shape, shape)) /
+                               len(shape)) / policy.shape_scale_pct
+    common = sorted(set(current["states"]) & set(candidate["states"]))
+    state_deltas = {key: abs(current["states"][key]["value"] -
+                            candidate["states"][key]["value"]) / policy.scale_for(key)
+                    for key in common}
+    state_distance = math.sqrt(sum(v * v for v in state_deltas.values()) / len(common)) if common else None
+    current_order = current_order if current_order is not None else _sequence(current)
+    past_order = candidate_order if candidate_order is not None else _sequence(candidate)
+    order_distance = _edit_distance(current_order, past_order) if current_order and past_order else None
+    common_reactions = sorted(set(current["reactions"]) & set(candidate["reactions"]))
+    reaction_distance = (math.sqrt(sum((current["reactions"][key]["value"] -
+                                       candidate["reactions"][key]["value"]) ** 2
+                                      for key in common_reactions) / len(common_reactions)) / 5
+                         if common_reactions else None)
+    distances = {"priceShape": shape_distance, "marketState": state_distance,
+                 "conditionOrder": order_distance, "materialReaction": reaction_distance}
+    available = [v for v in distances.values() if v is not None]
+    missing = sorted(set(FEATURE_DEFINITIONS) - set(common))
+    return {"distances": distances, "distance": sum(available) / len(available), "stateDeltas": state_deltas,
+            "missing": missing,
+            "complete": not missing and order_distance is not None and reaction_distance is not None}
+
+
 def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str, Any]], *,
                     session_dates: Sequence[str], policy: AnalogPolicy = AnalogPolicy()) -> dict[str, Any]:
     """Rank a sealed past-only set. Forward paths are attached in another call."""
@@ -318,27 +352,10 @@ def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str
                 audit.append({"year": year, "anchorDate": anchor,
                               "status": "INELIGIBLE_SESSION_WINDOW", "distance": None})
                 continue
-            shape = _shape(candidate)
-            shape_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(current_shape, shape)) /
-                                       len(shape)) / policy.shape_scale_pct
-            common = sorted(set(current["states"]) & set(candidate["states"]))
-            state_deltas = {key: abs(current["states"][key]["value"] -
-                                    candidate["states"][key]["value"]) / policy.scale_for(key)
-                            for key in common}
-            state_distance = math.sqrt(sum(v * v for v in state_deltas.values()) / len(common)) if common else None
-            current_order, past_order = _sequence(current), _sequence(candidate)
-            order_distance = _edit_distance(current_order, past_order) if current_order and past_order else None
-            common_reactions = sorted(set(current["reactions"]) & set(candidate["reactions"]))
-            reaction_distance = (math.sqrt(sum((current["reactions"][key]["value"] -
-                                               candidate["reactions"][key]["value"]) ** 2
-                                              for key in common_reactions) / len(common_reactions)) / 5
-                                 if common_reactions else None)
-            distances = {"priceShape": shape_distance, "marketState": state_distance,
-                         "conditionOrder": order_distance, "materialReaction": reaction_distance}
-            available = [v for v in distances.values() if v is not None]
-            distance = sum(available) / len(available)
-            missing = sorted(set(FEATURE_DEFINITIONS) - set(common))
-            complete = not missing and order_distance is not None and reaction_distance is not None
+            scored_parts = component_distances(current, candidate, policy, current_shape=current_shape)
+            distances, distance, state_deltas = (scored_parts["distances"], scored_parts["distance"],
+                                                 scored_parts["stateDeltas"])
+            missing, complete = scored_parts["missing"], scored_parts["complete"]
             if distance > policy.maximum_distance:
                 audit.append({"year": year, "anchorDate": anchor,
                               "status": "DISTANCE_ABOVE_THRESHOLD", "distance": distance})
