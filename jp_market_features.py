@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -284,6 +284,45 @@ def margin_cost_basis_loss_proxy(two_market_credit, nikkei_rows, *, cutoff):
             "weeks": len(weeks) - 1, "inputs": [weeks[0][1], *inputs, latest]}
 
 
+SIGN_CONDITION_LOOKBACK_DAYS = 200
+SIGN_CONDITION_IDS = {
+    "D01": "d01_short_balance_below_threshold",
+    "D02": "d02_margin1570_ratio_at_least_one",
+    "D03": "d03_relative_strength_positive",
+    "D04": "d04_index_per_at_least_19",
+    "D05": "d05_foreign_flow_inflow",
+    "D06": "vix_macd_cross",
+}
+
+
+def _sign_transitions(points, predicate, series_id, cutoff_day):
+    """Condition events when a Seven Sign state flips, oldest first.
+
+    points: (day, value, inputs) ascending. +1 when the condition becomes met,
+    -1 when it stops. Each event is available when all of its inputs were;
+    only flips within the lookback before the cutoff are emitted (the one
+    point before that window supplies the prior state).
+    """
+    horizon = (date.fromisoformat(cutoff_day) - timedelta(days=SIGN_CONDITION_LOOKBACK_DAYS)).isoformat()
+    window = [p for p in points if p[0] >= horizon]
+    earlier = [p for p in points if p[0] < horizon]
+    if earlier:
+        window = [earlier[-1], *window]
+    out, previous = [], None
+    for day, value, inputs in window:
+        state = bool(predicate(value))
+        if previous is not None and state != previous[0]:
+            times = [_knowledge_time(row) for row in [*previous[1], *inputs]]
+            if all(t is not None for t in times):
+                out.append({"instrumentId": INSTRUMENT, "seriesId": series_id, "date": day,
+                            "value": 1 if state else -1, "unit": "DIRECTION",
+                            "availableFrom": max(times).isoformat(),
+                            "sourceRef": "derived:seven-sign-transition:" + series_id,
+                            "validationStatus": "UNVALIDATED"})
+        previous = (state, inputs)
+    return out
+
+
 def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Mapping[str, Any]]],
                           two_market_credit: Sequence[Mapping[str, Any]] = (),
                           margin_1570: Sequence[Mapping[str, Any]] = (),
@@ -441,6 +480,53 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
                 "availableFrom": cutoff, "sourceRef": event.get("sourceRef"),
                 "knownAt": event["knownAt"]}])
             break
+    # Seven Sign state flips as condition events (2026-09-30): the analog
+    # engine's condition order compares these, not only the VIX MACD cross
+    # (D06). D07 has no activation rule in the source and is not emitted.
+    from jp_market_engine import JP_MARKET_ENGINE_D01_THRESHOLD_JPY, point_in_time_rows as _pit
+    cutoff_day = cutoff_time.date().isoformat()
+    # Scan only the lookback plus a margin for the prior state: every cutoff
+    # of the ten-year history repeats this, so a full scan would be quadratic.
+    scan_from = (cutoff_time.date() - timedelta(days=SIGN_CONDITION_LOOKBACK_DAYS + 60)).isoformat()
+    def recent(rows):
+        return [dict(r) for r in rows if isinstance(r, Mapping) and _day(r) >= scan_from]
+    two_market_credit, margin_1570, foreign_flow = recent(two_market_credit), recent(margin_1570), recent(foreign_flow)
+    shorts, _ = _pit([dict(r) for r in two_market_credit if isinstance(r, Mapping)
+                      and (r.get("instrumentId") or "MARKET") == "MARKET"
+                      and (r.get("seriesId") or r.get("field")) == "credit.short_balance"], cutoff)
+    points = sorted(((_day(r), _number(r.get("value")), [r]) for r in shorts if _number(r.get("value")) is not None),
+                    key=lambda p: p[0])
+    conditions.extend(_sign_transitions(points, lambda v: v < JP_MARKET_ENGINE_D01_THRESHOLD_JPY,
+                                        SIGN_CONDITION_IDS["D01"], cutoff_day))
+    ratio_points = []
+    sides, _ = _pit([dict(r) for r in margin_1570 if isinstance(r, Mapping)
+                     and (r.get("seriesId") or r.get("field")) in ("margin.long_balance", "margin.short_balance")], cutoff)
+    by_period = {}
+    for row in sides:
+        by_period.setdefault(_day(row), {})[row.get("seriesId") or row.get("field")] = row
+    for day, pair in sorted(by_period.items()):
+        long_row, short_row = pair.get("margin.long_balance"), pair.get("margin.short_balance")
+        if long_row and short_row and (_number(short_row.get("value")) or 0) > 0 and _number(long_row.get("value")) is not None:
+            ratio_points.append((day, _number(long_row["value"]) / _number(short_row["value"]), [long_row, short_row]))
+    conditions.extend(_sign_transitions(ratio_points, lambda v: v >= 1, SIGN_CONDITION_IDS["D02"], cutoff_day))
+    if len(nikkei) >= 21 and len(sp500) >= 21:
+        us_by_day = {_day(r): r for r in sp500 if _day(r) >= scan_from}
+        aligned = [r for r in nikkei if _day(r) >= scan_from and _day(r) in us_by_day]
+        rs_points = []
+        for index in range(20, len(aligned)):
+            jp_now, jp_then = aligned[index], aligned[index - 20]
+            us_now, us_then = us_by_day[_day(jp_now)], us_by_day[_day(jp_then)]
+            value = (jp_now["numericValue"] / jp_then["numericValue"] - us_now["numericValue"] / us_then["numericValue"]) * 100
+            rs_points.append((_day(jp_now), value, [jp_now, jp_then, us_now, us_then]))
+        conditions.extend(_sign_transitions(rs_points, lambda v: v > 0, SIGN_CONDITION_IDS["D03"], cutoff_day))
+    per_rows = _history([r for r in price_series.get("index_per", ()) if _day(r) >= scan_from], "NIKKEI_225_PER", cutoff)
+    conditions.extend(_sign_transitions([(_day(r), r["numericValue"], [r]) for r in per_rows],
+                                        lambda v: v >= 19, SIGN_CONDITION_IDS["D04"], cutoff_day))
+    flows, _ = _pit([dict(r) for r in foreign_flow if isinstance(r, Mapping)
+                     and (r.get("seriesId") or r.get("field")) == "flow.foreign"], cutoff)
+    flow_points = sorted(((_day(r), _number(r.get("value")), [r]) for r in flows if _number(r.get("value")) is not None),
+                         key=lambda p: p[0])
+    conditions.extend(_sign_transitions(flow_points, lambda v: v > 0, SIGN_CONDITION_IDS["D05"], cutoff_day))
     present = {row["seriesId"] for row in features}
     return {"schemaVersion": "jp-market-feature-snapshot-v1", "informationCutoff": cutoff,
             "features": sorted(features, key=lambda row: row["seriesId"]), "conditions": conditions,

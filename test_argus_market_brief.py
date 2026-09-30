@@ -233,7 +233,7 @@ def test_investor_types_autorefresh_feeds_ledger_idempotently(monkeypatch):
     calls = []
     monkeypatch.setattr(scanner, "_JQUANTS_API_KEY", "test-key")
     monkeypatch.setattr(scanner, "_jquants_paginated",
-                        lambda path, params: calls.append(path) or [
+                        lambda path, params, **kwargs: calls.append(path) or [
                             {"PubDate": "2026-08-21",
                              "StDate": "2026-08-10", "EnDate": "2026-08-14",
                              "Section": "TokyoNagoya",
