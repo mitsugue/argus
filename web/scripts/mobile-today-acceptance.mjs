@@ -218,8 +218,17 @@ async function isolateChartReads(context, evidence) {
 }
 
 function controlledOwnerHeaders(route) {
-  const nonce = route.request().headers()['x-argus-owner-nonce'];
-  return nonce ? { 'X-ARGUS-OWNER-NONCE': nonce } : {};
+  // A controlled response must carry the backend's own CORS contract: the
+  // owner transport reads the echoed nonce, and a cross-origin page can read
+  // that header only when it is exposed (argus_owner_auth adds
+  // Access-Control-Expose-Headers: X-ARGUS-OWNER-NONCE). Without it the product
+  // correctly treated the controlled 500 as an unproven response and locked
+  // itself (2026-10-01, failure context: locked after a correct re-login).
+  const headers = route.request().headers();
+  const nonce = headers['x-argus-owner-nonce'];
+  const cors = headers.origin ? { 'Access-Control-Allow-Origin': headers.origin, Vary: 'Origin',
+    'Access-Control-Expose-Headers': 'X-ARGUS-OWNER-NONCE' } : {};
+  return nonce ? { ...cors, 'X-ARGUS-OWNER-NONCE': nonce } : cors;
 }
 
 function fulfillCapturedSnapshot(route, evidence, delayMs) {
