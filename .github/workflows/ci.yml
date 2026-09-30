@@ -23,14 +23,16 @@ jobs:
       - name: Install minimal deps (only what `import scanner` needs)
         run: >-
           pip install --quiet anthropic flask flask-cors requests pytz
-          python-dotenv json-repair pytest cryptography==49.0.0 pywebpush==2.3.0 webauthn==2.7.1
+          python-dotenv json-repair pytest pytest-xdist==3.8.0 cryptography==49.0.0 pywebpush==2.3.0 webauthn==2.7.1
       - name: Syntax check
         run: |
           python -c 'import importlib.metadata as m; assert m.version("cryptography") == "49.0.0"'
           python -m py_compile scanner.py argus_remote_nonce_anchor.py \
             argus_remote_recovery.py argus_rules.py argus_events.py
       - name: Unit tests (rules + events — whole suite auto-discovered)
-        run: python -m pytest -q
+        # 4 workers, whole files per worker so module-level state never crosses
+        # workers (measured 2026-09-30: 5,986 tests in 2m17s vs ~12m serial).
+        run: python -m pytest -q -n 4 --dist loadfile
 
   frontend:
     runs-on: ubuntu-latest
