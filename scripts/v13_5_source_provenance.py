@@ -423,7 +423,7 @@ REVIEWED_EXTENSION_BLOBS = {
     "web/src/lib/vault.ts": "9180eba851c0b62a99ac449166f90f2404e18370",
     "web/scripts/news-history.test.mjs": "766b69d112dc01d32631025446007b506d7e55f6",
     "web/scripts/public-market-acceptance.mjs": "7ab058fb6a98ad71edda1b44e066db0ad966f1e3",
-    "web/scripts/canonical-snapshot-selection.mjs": "c889ded65a617692a6ff69cbcb0e186b4ad5d292",
+    "web/scripts/canonical-snapshot-selection.mjs": "777fff952877dd993b1fb517dba71453996c4bf2",
     "web/scripts/index-chart-isolation.test.mjs": "470dcf9598714a89b9ebba9dd53cfc2f6315092f",
     "argus_osint_engine.py": "82c928299eed09004067283d72cc4b67b07753c5",
     "test_argus_v12_1_1.py": "fcb2a56c79822f5177ae776dfdaf07972da0a49e",
