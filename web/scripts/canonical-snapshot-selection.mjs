@@ -270,33 +270,64 @@ async function triggerCanonicalRevalidation(page, timeout, beforeReload, afterRe
   return Promise.all([requestPromise, responsePromise]);
 }
 
+/** Resolve once the evidence disclosure has kept the same DOM node for
+ *  `quietMs`, or after `limitMs` in any case; returns the replacements seen. */
+async function waitForSettledEvidence(page, quietMs = 800, limitMs = 10_000) {
+  return page.evaluate(([quiet, limit]) => new Promise((resolve) => {
+    if (!document.body) return resolve(-1);
+    let replacements = 0;
+    let current = document.querySelector('details.at-evidence');
+    let quietTimer = setTimeout(done, quiet);
+    const hardTimer = setTimeout(done, limit);
+    const observer = new MutationObserver(() => {
+      const next = document.querySelector('details.at-evidence');
+      if (next !== current) {
+        replacements += 1; current = next;
+        clearTimeout(quietTimer); quietTimer = setTimeout(done, quiet);
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    function done() { observer.disconnect(); clearTimeout(quietTimer); clearTimeout(hardTimer); resolve(replacements); }
+  }), [quietMs, limitMs]).catch(() => -1);
+}
+
 export async function openCanonicalEvidence(page, timeout = 30_000) {
   const disclosure = page.locator('details.at-evidence');
   await disclosure.waitFor({ state: 'visible', timeout });
   if (!await disclosure.evaluate((element) => element.open)) {
-    // The disclosure is opened the way the owner opens it. When that click
-    // cannot land because the node keeps being replaced (owner-mode
-    // acceptance of 13.7.58, forced canonical failure), report how often the
-    // node identity changes in one second instead of a generic timeout: a
-    // settled page reports 0, a re-render loop reports its rate. The click is
-    // never replaced by a scripted open, so the interaction stays proven.
-    try {
-      await page.getByText('根拠・市場データ・システム情報', { exact: true }).click();
-    } catch (error) {
-      const churn = await page.evaluate(() => new Promise((resolve) => {
-        if (!document.body) return resolve(-1);
-        let replacements = 0;
-        let current = document.querySelector('details.at-evidence');
-        const observer = new MutationObserver(() => {
-          const next = document.querySelector('details.at-evidence');
-          if (next !== current) { replacements += 1; current = next; }
-        });
-        observer.observe(document.body, { childList: true, subtree: true });
-        setTimeout(() => { observer.disconnect(); resolve(replacements); }, 1_000);
-      })).catch(() => -1);
-      const stage = String(error?.message || '').includes('detached')
-        ? 'detached' : 'blocked';
-      throw new Error(`canonical_evidence_click_failed:${stage}:churn${churn}`);
+    // The disclosure is opened the way the owner opens it, by a real click.
+    // Since owner auth (2026-09-28) every Pages acceptance failed here with
+    // churn0: the node was replaced (detached) or briefly covered (blocked)
+    // at the instant of the click while the Today panel finished loading,
+    // and was stable one second later. Wait for the node to settle, then
+    // click; a transient detach/cover is clicked again, at most three times.
+    // The click is never replaced by a scripted open, so the interaction
+    // stays proven, and a persistent failure still reports its churn and
+    // the blocking element.
+    let lastError = null;
+    // (Named clickAttempt: the release-state contract locates the snapshot
+    // selection retry loop by its exact text.)
+    for (let clickAttempt = 1; clickAttempt <= 3; clickAttempt += 1) {
+      await waitForSettledEvidence(page);
+      try {
+        await page.getByText('根拠・市場データ・システム情報', { exact: true }).click();
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (await disclosure.evaluate((element) => element.open).catch(() => false)) {
+          lastError = null;
+          break;
+        }
+      }
+    }
+    if (lastError) {
+      const churn = await waitForSettledEvidence(page, 1_000, 1_000);
+      const message = String(lastError?.message || '');
+      const stage = message.includes('detached') ? 'detached' : 'blocked';
+      const blocker = (message.match(/<([a-z0-9-]+)[^>]*class="([^"]{0,60})/i) || [])
+        .slice(1).join('.').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 60);
+      throw new Error(`canonical_evidence_click_failed:${stage}:churn${churn}${blocker ? `:by:${blocker}` : ''}`);
     }
   }
   await page.waitForFunction(() =>
