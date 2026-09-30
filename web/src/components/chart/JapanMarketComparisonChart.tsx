@@ -58,6 +58,16 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
   // chart, so a changed set of dates is read as a changed basis, not as noise.
   const priceShapeOnly = document.candidates.length > 0
     && document.candidates.every(candidate => candidate.missingGroups.includes('marketState'));
+  // The series every selected candidate was compared on, and the defined
+  // total, so "market conditions" is never left unqualified (2026-09-30:
+  // six of sixteen, and the owner could not tell from the chart).
+  const comparedAll = document.candidates.map(candidate => candidate.comparedFeatures ?? []);
+  const comparedCommon = comparedAll.length
+    ? comparedAll[0].filter(label => comparedAll.every(labels => labels.includes(label))) : [];
+  const definedCount = document.candidates.find(candidate => candidate.stateFeatureDefinitionCount !== undefined)?.stateFeatureDefinitionCount;
+  const marketStateNote = definedCount !== undefined
+    ? `市場条件は${definedCount}系列中${comparedCommon.length}系列で比較${comparedCommon.length ? `（${comparedCommon.join('・')}）` : ''}`
+    : '市場条件（信用残・VIX・為替・金利・NT倍率など、当時に入手できた値）';
 
   return <section className="jp-comparison" aria-labelledby={`${uniqueId}-title`}>
     <div className="jp-comparison__heading">
@@ -69,7 +79,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
     {document.candidates.length > 0 && <p className="jp-comparison__basis" data-comparison-basis={priceShapeOnly ? 'price-shape-only' : 'price-and-market-state'}>
       比較の根拠：{priceShapeOnly
         ? '価格形状のみ（市場条件の履歴を再計算中。完了すると候補と計算予測は市場条件つきの比較に入れ替わります）'
-        : '価格形状＋市場条件（信用残・VIX・為替・金利・NT倍率など、当時に入手できた値）'}
+        : `価格形状＋${marketStateNote}`}
     </p>}
     <div ref={container} className="jp-comparison__canvas">
       <svg viewBox={`0 0 ${width} ${height}`} role="img"

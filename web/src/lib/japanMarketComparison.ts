@@ -89,6 +89,12 @@ export function validJapanMarketComparison(v: unknown, horizon: number): v is Ja
       || typeof c.anchorDate !== 'string' || !['MARKET_ANALOG', 'PARTIAL_COMPARISON'].includes(String(c.comparisonKind))
       || !points(c.comparison) || !points(c.subsequentReference) || !strings(c.missingFeatures)
       || !strings(c.missingGroups) || !strings(c.similarReasons) || !strings(c.differences)) return false;
+    if (c.comparedFeatures !== undefined || c.comparedFeatureCount !== undefined || c.stateFeatureDefinitionCount !== undefined) {
+      if (!strings(c.comparedFeatures) || !finite(c.comparedFeatureCount) || !Number.isInteger(c.comparedFeatureCount)
+        || !finite(c.stateFeatureDefinitionCount) || !Number.isInteger(c.stateFeatureDefinitionCount)
+        || c.comparedFeatureCount !== (c.comparedFeatures as string[]).length
+        || c.comparedFeatureCount > c.stateFeatureDefinitionCount || c.stateFeatureDefinitionCount > 64) return false;
+    }
     ids.add(c.snapshotId);
   }
   const f = v.forecast;
