@@ -732,6 +732,15 @@ async function run() {
   // this gate observes semantic state and exact snapshot identity only.
   // IndexedDB remains intact across seed and reload within this context.
   await page.setViewportSize({ width: 430, height: 932 });
+  // The main page's session was issued first; the isolated contexts above
+  // each sign in again, and the server keeps a bounded number of concurrent
+  // sessions, evicting the earliest. The product then correctly returns to
+  // the lock screen (2026-10-01: locked, route #settings). The owner signs in
+  // again in that case; so does this reader, and says so in the log.
+  if (owner.enabled && await page.locator('.owner-access-screen').count()) {
+    console.log('mobile-today-acceptance: main page session was evicted; signing in again');
+    await owner.login(page);
+  }
   await page.locator('.nav__mobile').getByRole('button', { name: 'Today', exact: true }).click();
   await selectCanonical1321FiveDay(page);
   const onlineSnapshotId = await page.locator(CANONICAL_SNAPSHOT_SELECTOR)
