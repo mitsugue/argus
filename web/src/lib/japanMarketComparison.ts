@@ -32,6 +32,18 @@ export function validJapanMarketComparison(v: unknown, horizon: number): v is Ja
       || !object(h.excluded) || !count(h.excluded.missingCalendarOrPriceSession) || !count(h.excluded.incompleteEpisode)
       || typeof h.allMarketFeaturesTenYearsVerified !== 'boolean') return false;
   }
+  if (v.retainedNoteJa !== undefined && (typeof v.retainedNoteJa !== 'string' || v.retainedNoteJa.length > 400)) return false;
+  if (v.selectionPolicy !== undefined) {
+    const p = v.selectionPolicy;
+    if (!object(p) || typeof p.policyId !== 'string' || typeof p.distanceMeaning !== 'string'
+      || !['lookbackSessions', 'maximumCandidates', 'minimumSeparationSessions'].every(k => finite(p[k]) && Number.isInteger(p[k]) && p[k] >= 1)
+      || !finite(p.maximumDistance) || p.maximumDistance <= 0 || !finite(p.shapeScalePct) || p.shapeScalePct <= 0
+      || !object(p.stateScales) || Object.keys(p.stateScales).length > 64
+      || !Object.values(p.stateScales).every(sc => object(sc) && finite(sc.scale) && sc.scale > 0
+        && ['ROBUST_MAD_HISTORY', 'FIXED_DEFINITION'].includes(String(sc.basis))
+        && finite(sc.observations) && Number.isInteger(sc.observations) && sc.observations >= 0
+        && typeof sc.unit === 'string')) return false;
+  }
   if (v.selectionAudit !== undefined) {
     if (!object(v.selectionAudit) || Object.keys(v.selectionAudit).length > 12
       || !Object.entries(v.selectionAudit).every(([year, value]) => {

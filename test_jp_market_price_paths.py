@@ -116,3 +116,26 @@ class ProxyScaleTest(unittest.TestCase):
     def test_any_other_basis_is_still_refused(self):
         self.assertEqual(scale(basis="CAP_WEIGHTED_PER")["reason"],
                          "incompatible_index_valuation_definition")
+
+
+class SelectionPolicyDocumentTest(unittest.TestCase):
+    def test_robust_scales_and_bounds_are_documented(self):
+        from jp_market_analogs import FEATURE_DEFINITIONS, robust_feature_scales, AnalogPolicy
+        rows = [{"instrumentId": "NIKKEI_225_INDEX", "seriesId": "credit.ratio", "date": f"2025-{m:02d}-{d:02d}",
+                 "value": 4 + (d % 5) * .5, "unit": "RATIO"} for m in range(1, 13) for d in range(1, 29)]
+        scales = robust_feature_scales(rows)
+        self.assertEqual(scales["credit.ratio"]["basis"], "ROBUST_MAD_HISTORY")
+        self.assertGreater(scales["credit.ratio"]["scale"], 0)
+        self.assertEqual(scales["vix.level"]["basis"], "FIXED_DEFINITION")
+        self.assertEqual(scales["vix.level"]["scale"], FEATURE_DEFINITIONS["vix.level"][1])
+        policy = AnalogPolicy.with_scales(scales)
+        self.assertEqual(policy.scale_for("credit.ratio"), scales["credit.ratio"]["scale"])
+        self.assertEqual(policy.scale_for("vix.level"), FEATURE_DEFINITIONS["vix.level"][1])
+        self.assertEqual(policy.maximum_candidates, 10)
+        with self.assertRaisesRegex(ValueError, "invalid_analog_policy_state_scales"):
+            AnalogPolicy(state_scales=(("credit.ratio", 0),))
+        with self.assertRaisesRegex(ValueError, "invalid_analog_policy_state_scales"):
+            AnalogPolicy(state_scales=(("not.a.feature", 1.0),))
+        # A constant series has no spread: the fixed definition stays.
+        flat = robust_feature_scales([{**r, "value": 5.0} for r in rows])
+        self.assertEqual(flat["credit.ratio"]["basis"], "FIXED_DEFINITION")

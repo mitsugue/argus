@@ -9,9 +9,14 @@ const original = async (request) => {
   if (request.url.endsWith('/password')) return Response.json({token: serverToken, expiresAt: Date.now() + 1800000});
   if (request.url.endsWith('/logout')) return Response.json({loggedOut: true}, {headers});
   if (request.url.endsWith('/slow')) return new Promise(resolve => { pending = resolve; });
+  if (request.url.endsWith('/session') && sessionStatus !== 200) {
+    if (sessionStatus === 'network') throw new TypeError('Failed to fetch');
+    return Response.json({error: sessionStatus === 401 ? 'owner_auth_required' : 'try_later'}, {status: sessionStatus, headers});
+  }
   return Response.json({ok: true, authenticated: true}, request.url.endsWith('/old-cache') ? {} : {headers});
 };
-global.window = {fetch: original, location: {origin: 'https://owner.example'}, setInterval: () => 1, addEventListener: (n, f) => { listeners[n] = f; }};
+let validateTick = null; let sessionStatus = 200;
+global.window = {fetch: original, location: {origin: 'https://owner.example'}, setInterval: (f) => { validateTick = f; return 1; }, addEventListener: (n, f) => { listeners[n] = f; }};
 global.document = {hidden: false, addEventListener: (n, f) => { listeners[n] = f; }};
 const entry = path.resolve('src/lib/ownerSession.ts');
 const code = esbuild.buildSync({entryPoints: [entry],bundle: true,write: false,platform: 'node',format: 'cjs', define: {'import.meta.env': JSON.stringify({VITE_ARGUS_OWNER_AUTH_REQUIRED: '1', VITE_ARGUS_BACKEND_URL: 'https://api.example'})},logLevel:'silent'}).outputFiles[0].text;
@@ -39,5 +44,15 @@ const api=mod.exports; api.installOwnerTransport(); global.fetch=window.fetch;
   browserNavigator.onLine = true;
   await api.passwordLogin('fixture-password');
   listeners.offline(); assert.equal(api.hasOwnerSession(), false);
+  // 2026-09-30: the periodic session ping locks only on a definite 401.
+  await api.passwordLogin('fixture-password'); assert.equal(typeof validateTick, 'function');
+  const tick = async () => { validateTick(); await new Promise(resolve => setTimeout(resolve, 20)); };
+  for (const transient of [429, 503, 'network']) {
+    sessionStatus = transient; const before = calls.length; await tick();
+    assert.equal(calls.length, before + 1, `pinged during ${transient}`);
+    assert.equal(api.hasOwnerSession(), true, `kept through ${transient}`);
+  }
+  sessionStatus = 401; await tick(); assert.equal(api.hasOwnerSession(), false);
+  sessionStatus = 200;
   console.log('Owner transport: locked requests, exact origin, preserved headers, no-store, no redirects, logout and stale response isolation PASS');
 })().catch(error => {api.clearOwnerSession(); console.error(error);process.exit(1);});

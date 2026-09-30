@@ -165,3 +165,21 @@ def test_new_comparison_readiness_is_material_but_revisions_and_future_records_a
     assert not cache.comparison_availability_improved(records,{'5':payload},method=METHOD,now=LATER)
     assert not cache.comparison_availability_improved(records,previous,method='other',now=LATER)
     assert not cache.comparison_availability_improved(records,previous,method=METHOD,now='2026-09-14T00:00:00Z')
+
+
+def test_price_only_result_does_not_replace_saved_market_condition_comparison():
+    import argus_index_research_cache as cache
+    now = '2026-09-30T09:30:00Z'
+    market = {'comparison': {'candidates': [{'missingGroups': ['materialReaction']}]}}
+    shape_only = {'comparison': {'candidates': [{'missingGroups': ['marketState', 'conditionOrder', 'materialReaction']}]}}
+    previous = cache.record('comparison:N225:5', market, method='m', at='2026-09-30T06:00:00Z')
+    assert cache.comparison_retention_reason(shape_only, previous, feature_history_available=False, now=now) == 'feature_history_recalculating'
+    # Once the history is available again, or the new result carries market conditions, it replaces.
+    assert cache.comparison_retention_reason(shape_only, previous, feature_history_available=True, now=now) is None
+    assert cache.comparison_retention_reason(market, previous, feature_history_available=False, now=now) is None
+    # Nothing better saved, or the saved document is too old: no retention.
+    older = cache.record('comparison:N225:5', shape_only, method='m', at='2026-09-30T06:00:00Z')
+    assert cache.comparison_retention_reason(shape_only, older, feature_history_available=False, now=now) is None
+    stale = cache.record('comparison:N225:5', market, method='m', at='2026-09-26T06:00:00Z')
+    assert cache.comparison_retention_reason(shape_only, stale, feature_history_available=False, now=now) is None
+    assert cache.comparison_retention_reason(shape_only, None, feature_history_available=False, now=now) is None

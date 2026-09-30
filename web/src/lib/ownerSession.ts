@@ -72,8 +72,15 @@ export function installOwnerTransport() {
       const response = await window.fetch(base + prefix + 'session', {
         cache: 'no-store', signal: AbortSignal.timeout(10_000),
       });
-      if (!response.ok && token === captured) clearOwnerSession();
-    } catch { if (token === captured) clearOwnerSession(); }
+      // Only a definite loss of the session locks the app. A throttled or
+      // unavailable backend (429, 5xx) or a network error is retried at the
+      // next tick; server-side expiry still applies and the offline listener
+      // covers loss of network. 2026-09-30: the shared per-address request
+      // budget answered this ping with 429 during the release acceptance and
+      // every page locked itself mid-flow; an owner behind a congested
+      // connection saw the same lock screen.
+      if (response.status === 401 && token === captured) clearOwnerSession();
+    } catch { /* transient: keep the session until a definite answer */ }
     finally { validating = false; }
   };
   window.setInterval(() => { void validate(); }, 30_000);

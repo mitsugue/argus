@@ -209,6 +209,14 @@ def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any]
         "rate.us10y_change5": "米国10年金利の変化幅", "nt.ratio_change5": "NT倍率の変化率",
         "event.sq_sessions": "SQまでの営業日数",
     }
+    # A proxy-derived state is named as such wherever its label appears; the
+    # official figure and the ARGUS proxy are never shown under one name.
+    proxy_keys = {key for key, state in (current.get("states") or {}).items()
+                  if isinstance(state, Mapping) and state.get("derivationBasis")}
+    def label_for(key, basis=None):
+        base = feature_labels.get(key, "市場指標")
+        return base + "（ARGUS代理計算）" if basis or key in proxy_keys else base
+
     def display_value(value, unit):
         labels = {"RATIO": "倍", "PERCENT": "%", "INDEX_POINTS": "ポイント",
                   "PERCENTAGE_POINTS": "%ポイント", "TRADING_SESSIONS": "営業日", "JPY": "円"}
@@ -230,7 +238,7 @@ def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any]
         differences = []
         for difference in selected.get("importantDifferences", []):
             if "currentValue" in difference:
-                label = feature_labels.get(difference["feature"], "市場指標")
+                label = label_for(difference["feature"], difference.get("derivationBasis"))
                 differences.append(f"{label}：現在条件 {display_value(difference['currentValue'], difference['unit'])}、比較時 {display_value(difference['comparisonValue'], difference['unit'])}")
         if selected["componentDistances"].get("conditionOrder", 0):
             differences.append("条件が発生した順序には違いがあります")
@@ -248,7 +256,7 @@ def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any]
                            "comparison": convert(path["comparison"]),
                            "subsequentReference": convert(path["subsequentReference"]),
                            "missingFeatures": selected["missingFeatures"], "missingGroups": selected["missingGroups"],
-                           "comparedFeatures": [feature_labels[key] for key in compared],
+                           "comparedFeatures": [label_for(key) for key in compared],
                            "comparedFeatureCount": len(compared),
                            "stateFeatureDefinitionCount": len(FEATURE_DEFINITIONS),
                            "similarReasons": [groups[key] for key in selected["similarityReasons"]],
@@ -284,7 +292,8 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                             valuation: Mapping[str, Any] | None = None,
                             state_rows: Sequence[Mapping[str, Any]] = (),
                             condition_rows: Sequence[Mapping[str, Any]] = (),
-                            reaction_rows: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:
+                            reaction_rows: Sequence[Mapping[str, Any]] = (),
+                            policy=None) -> dict[str, Any]:
     """Connect cached daily observations to the existing four-layer calculation.
 
     Historical bars are the source's currently reported history. Their session
@@ -302,7 +311,15 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
         raise ValueError("index_history_bound_exceeded")
     if list(session_dates) != sorted(set(session_dates)):
         raise ValueError("unique_ordered_session_calendar_required")
-    policy = AnalogPolicy()
+    # 2026-09-30: the yardstick per market-condition series comes from the
+    # series' own history (robust MAD); a series without enough history keeps
+    # its fixed definition and the document says which.
+    # Only rows knowable at this cutoff enter the yardstick: a correction
+    # received later must not move the unit a past comparison was measured in.
+    from jp_market_analogs import robust_feature_scales
+    scales = robust_feature_scales(point_in_time_rows(
+        [dict(row) for row in state_rows if isinstance(row, Mapping)], cutoff)[0])
+    policy = policy or AnalogPolicy.with_scales(scales)
     visible, visibility = point_in_time_rows(
         [dict(row) for row in bars if row.get("instrumentId") == INSTRUMENT], cutoff)
     visible.sort(key=lambda row: row.get("date", ""))
@@ -412,6 +429,15 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     # answers whether a year was searched and why its closest candidate was or
     # was not selected; it neither changes the ranking nor uses later returns.
     document["selectionAudit"] = selection.get("yearAudit", {})
+    document["selectionPolicy"] = {
+        "policyId": policy.policy_id, "lookbackSessions": policy.lookback_sessions,
+        "maximumCandidates": policy.maximum_candidates, "minimumSeparationSessions": policy.minimum_separation_sessions,
+        "maximumDistance": policy.maximum_distance, "shapeScalePct": policy.shape_scale_pct,
+        "stateScales": {key: {"scale": value["scale"], "basis": value["basis"],
+                              "observations": value["observations"], "unit": value["unit"]}
+                        for key, value in scales.items()},
+        "distanceMeaning": "各要素の差をその系列の物差しで割った値の平均。1.0は物差し1つ分。",
+    }
     document["valuationStatus"] = scale["status"]
     if scale["status"] == "AVAILABLE":
         document["valuationEvidence"] = {key: scale.get(key) for key in (

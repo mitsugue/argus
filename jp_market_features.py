@@ -232,6 +232,58 @@ def _history(rows, instrument, cutoff, *, unit=None, allow_negative=False):
     return sorted(result, key=_day)
 
 
+LOSS_PROXY_BASIS = "ARGUS_PROXY_MARGIN_COST_BASIS_26W"
+LOSS_PROXY_WEEKS = 26
+LOSS_PROXY_MINIMUM_WEEKS = 8
+
+
+def margin_cost_basis_loss_proxy(two_market_credit, nikkei_rows, *, cutoff):
+    """Estimate the two-market margin buyers' valuation loss in percent.
+
+    Weekly buy balances B_w (JPY) visible at the cutoff; net new buying
+    d_w = max(B_w - B_{w-1}, 0) over the trailing 26 weeks is assumed bought
+    at the last index close on or before each week end; the loss is
+    (cost - latest close) / cost * 100 (positive = loss). None when fewer than
+    eight weeks or no net buying. A descriptive proxy, not the official
+    figure, not validated against it.
+    """
+    from jp_market_engine import point_in_time_rows
+    longs = [dict(row) for row in two_market_credit if isinstance(row, Mapping)
+             and (row.get("instrumentId") or "MARKET") == "MARKET"
+             and (row.get("seriesId") or row.get("field")) == "credit.long_balance"]
+    visible, _ = point_in_time_rows(longs, cutoff)
+    weeks = sorted(((str(row.get("periodEnd") or row.get("date") or "")[:10], row) for row in visible
+                    if _number(row.get("value")) is not None and _number(row.get("value")) > 0),
+                   key=lambda item: item[0])[-(LOSS_PROXY_WEEKS + 1):]
+    closes = [row for row in nikkei_rows if isinstance(row, Mapping) and row.get("numericValue")]
+    if len(weeks) < LOSS_PROXY_MINIMUM_WEEKS + 1 or not closes:
+        return None
+    by_day = sorted(closes, key=_day)
+    def close_on_or_before(day):
+        candidate = None
+        for row in by_day:
+            if _day(row) <= day:
+                candidate = row
+            else:
+                break
+        return candidate if candidate and (date.fromisoformat(day) - date.fromisoformat(_day(candidate))).days <= 7 else None
+    weighted, weight, inputs = 0.0, 0.0, []
+    for (previous_day, previous), (day, current) in zip(weeks, weeks[1:]):
+        delta = _number(current.get("value")) - _number(previous.get("value"))
+        price = close_on_or_before(day)
+        if price is None:
+            return None
+        if delta > 0:
+            weighted += delta * price["numericValue"]; weight += delta
+        inputs.extend([current, price])
+    latest = by_day[-1]
+    if weight <= 0 or not weighted:
+        return None
+    cost = weighted / weight
+    return {"lossPct": (cost - latest["numericValue"]) / cost * 100.0, "costBasis": cost,
+            "weeks": len(weeks) - 1, "inputs": [weeks[0][1], *inputs, latest]}
+
+
 def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Mapping[str, Any]]],
                           two_market_credit: Sequence[Mapping[str, Any]] = (),
                           margin_1570: Sequence[Mapping[str, Any]] = (),
@@ -242,7 +294,7 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
     conditions = []
     stale_features = set()
 
-    def emit(field, value, inputs, *, period=None):
+    def emit(field, value, inputs, *, period=None, basis=None):
         number = _number(value)
         if number is None or not inputs or field not in FEATURE_DEFINITIONS:
             return
@@ -260,6 +312,7 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
             "date": period or max(_day(row) for row in inputs), "value": number,
             "unit": FEATURE_DEFINITIONS[field][0],
             "availableFrom": max(times).isoformat(),
+            **({"derivationBasis": basis} if basis else {}),
             "sourceRef": "derived:jp-market-inputs:" + hashlib.sha256(material.encode()).hexdigest(),
             "inputReferences": [{"instrumentId": row.get("instrumentId", "MARKET"),
                                  "seriesId": row.get("seriesId", row.get("field", "OHLCV_BAR")),
@@ -301,6 +354,18 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
         loss = loss_rows[-1]
         normalized = normalize_valuation_loss(loss.get("value"), sign_convention=loss.get("signConvention"), unit=loss.get("unit"))
         emit("credit.loss_pct", normalized["lossPct"], [loss])
+    else:
+        # No official valuation-loss series is available without a licence
+        # (2026-09-30). The requirement allows a proxy that is kept distinct
+        # from the official figure: the cost basis of the two-market buy
+        # balance is estimated from each week's net new buying at that
+        # week's index close over the trailing 26 weeks (the standard margin
+        # term); the loss is that basis against the latest close. Labelled
+        # ARGUS_PROXY on the feature and in the chart; never an official value.
+        proxy = margin_cost_basis_loss_proxy(
+            two_market_credit, _history(price_series.get("nikkei", ()), INSTRUMENT, cutoff), cutoff=cutoff)
+        if proxy:
+            emit("credit.loss_pct", proxy["lossPct"], proxy["inputs"], basis=LOSS_PROXY_BASIS)
 
     vix = _history(price_series.get("vix", ()), "VIX", cutoff)
     if vix:
