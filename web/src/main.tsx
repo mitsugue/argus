@@ -8,7 +8,8 @@ installOwnerTransport();
 import { AssetsProvider } from './hooks/useAssets';
 import { clearVerifiedSnapshotCache } from './lib/verifiedSnapshot';
 import { repairAppCaches } from './lib/pwaRecovery';
-import { deployedPwaIdentity, authenticationOnlyUpdate } from './lib/pwaIdentity';
+import { deployedPwaIdentity, authenticationOnlyUpdate, deployedEntryScript, deployedIsBehind,
+  identityDiffersOnlyInBuildSha } from './lib/pwaIdentity';
 import './styles/theme.css';
 
 // ── PWA update reliability (v10.70) ─────────────────────────────────────────
@@ -43,18 +44,44 @@ function waitAtMost<T>(promise: Promise<T>, timeoutMs: number): Promise<boolean>
   });
 }
 
-async function fetchDeployedIdentity(): Promise<string | null> {
+// The entry module this code runs from (the built bundle's file name); null
+// outside a production build, where the served-page comparison is skipped.
+const RUNNING_ENTRY_SCRIPT = (() => {
+  try {
+    const name = new URL(import.meta.url).pathname.split('/').pop() ?? '';
+    return /^index-[A-Za-z0-9_-]+\.js$/.test(name) ? name : null;
+  } catch {
+    return null;
+  }
+})();
+
+interface ServedPage { identity: string | null; entryScript: string | null }
+
+async function fetchDeployedPage(): Promise<ServedPage | null> {
   const ctrl = new AbortController();
   const timeout = window.setTimeout(() => ctrl.abort(), PWA_STEP_TIMEOUT_MS);
   try {
     const url = `${import.meta.env.BASE_URL}index.html?cb=${Date.now()}`;
     const html = await fetch(url, { cache: 'no-store', signal: ctrl.signal }).then((r) => r.text());
-    return deployedPwaIdentity(html);
+    return { identity: deployedPwaIdentity(html), entryScript: deployedEntryScript(html) };
   } catch {
     return null;
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+/** A served page that is not an update of the running code: the previous
+ *  release still on an edge, or a page whose entry module is the one already
+ *  running (a release that changed nothing the page loads). Reloading into
+ *  either gains nothing and drops the in-memory owner session. 2026-09-30:
+ *  for minutes after each Pages release the 60s poll met such pages, and the
+ *  owner (and every acceptance click) landed on the lock screen again. */
+function servedPageIsNotAnUpdate(served: ServedPage, running: string): boolean {
+  if (!served.identity || served.identity === running) return false;
+  if (deployedIsBehind(running, served.identity)) return true;
+  return !!RUNNING_ENTRY_SCRIPT && served.entryScript === RUNNING_ENTRY_SCRIPT
+    && identityDiffersOnlyInBuildSha(running, served.identity);
 }
 
 async function selfHeal(preserveSnapshots: boolean): Promise<void> {
@@ -77,8 +104,10 @@ const updateSW = registerSW({
 });
 
 async function reconcileVersion(): Promise<void> {
-  const deployed = await fetchDeployedIdentity();
-  if (!deployed || !RUNNING_IDENTITY || deployed === RUNNING_IDENTITY) {
+  const served = await fetchDeployedPage();
+  const deployed = served?.identity ?? null;
+  if (!deployed || !RUNNING_IDENTITY || deployed === RUNNING_IDENTITY
+      || (served && servedPageIsNotAnUpdate(served, RUNNING_IDENTITY))) {
     localStorage.setItem('argus.bundle.identity', RUNNING_IDENTITY);
     document.documentElement.style.visibility = 'visible';
     sessionStorage.removeItem(TRIES_KEY); // up to date (or can't tell) — reset
