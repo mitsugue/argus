@@ -209,6 +209,14 @@ def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any]
         "rate.us10y_change5": "米国10年金利の変化幅", "nt.ratio_change5": "NT倍率の変化率",
         "event.sq_sessions": "SQまでの営業日数",
     }
+    # A proxy-derived state is named as such wherever its label appears; the
+    # official figure and the ARGUS proxy are never shown under one name.
+    proxy_keys = {key for key, state in (current.get("states") or {}).items()
+                  if isinstance(state, Mapping) and state.get("derivationBasis")}
+    def label_for(key, basis=None):
+        base = feature_labels.get(key, "市場指標")
+        return base + "（ARGUS代理計算）" if basis or key in proxy_keys else base
+
     def display_value(value, unit):
         labels = {"RATIO": "倍", "PERCENT": "%", "INDEX_POINTS": "ポイント",
                   "PERCENTAGE_POINTS": "%ポイント", "TRADING_SESSIONS": "営業日", "JPY": "円"}
@@ -230,7 +238,7 @@ def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any]
         differences = []
         for difference in selected.get("importantDifferences", []):
             if "currentValue" in difference:
-                label = feature_labels.get(difference["feature"], "市場指標")
+                label = label_for(difference["feature"], difference.get("derivationBasis"))
                 differences.append(f"{label}：現在条件 {display_value(difference['currentValue'], difference['unit'])}、比較時 {display_value(difference['comparisonValue'], difference['unit'])}")
         if selected["componentDistances"].get("conditionOrder", 0):
             differences.append("条件が発生した順序には違いがあります")
@@ -248,7 +256,7 @@ def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any]
                            "comparison": convert(path["comparison"]),
                            "subsequentReference": convert(path["subsequentReference"]),
                            "missingFeatures": selected["missingFeatures"], "missingGroups": selected["missingGroups"],
-                           "comparedFeatures": [feature_labels[key] for key in compared],
+                           "comparedFeatures": [label_for(key) for key in compared],
                            "comparedFeatureCount": len(compared),
                            "stateFeatureDefinitionCount": len(FEATURE_DEFINITIONS),
                            "similarReasons": [groups[key] for key in selected["similarityReasons"]],

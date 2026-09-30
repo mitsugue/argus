@@ -100,7 +100,7 @@ def _field(row: Mapping[str, Any]) -> str:
 def _receipt(row: Mapping[str, Any]) -> dict[str, Any]:
     return {key: row[key] for key in ("publishedAt", "availableFrom", "knownAt",
                                      "observedAt", "sourceRef", "source", "revision",
-                                     "availabilityBasis", "vintageStatus") if key in row}
+                                     "availabilityBasis", "vintageStatus", "derivationBasis") if key in row}
 
 
 def _visible(rows: Iterable[Mapping[str, Any]], cutoff: str) -> list[dict[str, Any]]:
@@ -290,7 +290,11 @@ def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str
             differences = [{"feature": key, "scaledAbsoluteDifference": value,
                             "currentValue": current["states"][key]["value"],
                             "comparisonValue": candidate["states"][key]["value"],
-                            "unit": FEATURE_DEFINITIONS[key][0]}
+                            "unit": FEATURE_DEFINITIONS[key][0],
+                            **({"derivationBasis": current["states"][key].get("derivationBasis")
+                                or candidate["states"][key].get("derivationBasis")}
+                               if current["states"][key].get("derivationBasis")
+                               or candidate["states"][key].get("derivationBasis") else {})}
                            for key, value in sorted(state_deltas.items(), key=lambda item: (-item[1], item[0]))[:3]
                            if value > 0]
             if not differences:

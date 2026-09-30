@@ -35,7 +35,7 @@
 | margin1570.ratio / long_change_pct / short_change_pct | J-Quants 信用残(1570) 10年(1日1回の取り寄せで店に追記) | 週末+6日 00:00Z(原観測)・訂正は受信時刻 | B2 で追加 |
 | foreign_flow.net4w | J-Quants 投資部門別(台帳・10年の一回取込) | 公式PubDate 18:00 JST | B2 で過去側を追加 |
 | event.sq_sessions | 現在=JPX公表日程(VERIFIED)・過去=第2金曜/前営業日の規則(RULE_DERIVED) | 計算日の 00:00 JST | B2 で追加。規則導出は VERIFIED と表示しない |
-| credit.loss_pct | 無料の公式10年源なし | — | B3: 代理計算をラベル付きで実装、公式値と区別 |
+| credit.loss_pct | 公式値はライセンスなしで取得不可。ARGUS代理計算=二市場買い残の週次純増を各週末の指数終値で取得したとみなす26週加重コスト vs 最新終値 | 入力(信用残・終値)の入手時刻に従う | B3 で追加。特徴に `derivationBasis=ARGUS_PROXY_MARGIN_COST_BASIS_26W`、画面は「信用評価損失率（ARGUS代理計算）」。公式値がある場合は公式値のみ |
 
 ## 取得の頻度と経路
 
