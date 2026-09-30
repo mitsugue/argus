@@ -340,11 +340,25 @@ def merge_feature_sources(existing, official, *, path=None, received_at=None):
                 fields = ('open', 'high', 'low', 'close', 'value', 'volume', 'unit')
                 if all(old.get(k) == row.get(k) for k in fields):
                     continue
-                if _time(received_at) <= _time(old.get('knownAt') or old['availableFrom']):
+                if old.get('knownAt') and _time(received_at) <= _time(old['knownAt']):
                     raise ValueError('selected_source_revision_time_order')
-                row = {**row, 'knownAt': received_at, 'availableFrom': received_at,
-                       'publishedAt': None, 'historicalVintageVerified': False,
-                       'availabilityBasis': 'RECEIVED_CORRECTION'}
+                if _time(received_at) < _time(old['availableFrom']):
+                    # The session is still inside its conservative availability
+                    # bound (Yahoo bars are dated available from the next day
+                    # 00:00Z), so an intraday value moving is the session being
+                    # formed, not a revision of a published observation. Record
+                    # the receipt and keep the bound: point-in-time cutoffs
+                    # before it never see this row. Until 2026-09-30 this raised
+                    # from the VIX extended session (07:15Z) until midnight, so
+                    # the feature history failed for sixteen hours every US
+                    # trading day.
+                    row = {**row, 'knownAt': received_at, 'availableFrom': old['availableFrom'],
+                           'publishedAt': None, 'historicalVintageVerified': False,
+                           'availabilityBasis': 'PROVISIONAL_SESSION_UPDATE'}
+                else:
+                    row = {**row, 'knownAt': received_at, 'availableFrom': received_at,
+                           'publishedAt': None, 'historicalVintageVerified': False,
+                           'availabilityBasis': 'RECEIVED_CORRECTION'}
             saved[row['date']] = row
             changes.append(row)
         # The candidate window above is already bounded to the newest 3000

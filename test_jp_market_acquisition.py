@@ -257,3 +257,36 @@ def test_selection_record_stays_within_the_window_instead_of_raising(tmp_path):
     assert third == second
     db = m.connect(path)
     assert db.execute('SELECT count(DISTINCT session) FROM selected_vix_inputs').fetchone()[0] == 3001
+
+
+def test_intraday_update_inside_availability_bound_is_not_a_time_order_violation(tmp_path):
+    """2026-09-29: the VIX bar for the current session (Yahoo, dated available
+    from the next day 00:00Z) changes during the extended session. Comparing
+    the receipt time with that conservative bound raised
+    selected_source_revision_time_order from 07:59Z until midnight, and the
+    feature history reported FAILED for the whole evening. A forming session
+    is recorded as a provisional update that keeps its availability bound."""
+    path = tmp_path / 'selected.sqlite3'
+    bound = '2026-09-30T00:00:00Z'
+    first = [{'date': '2026-09-29', 'close': 16.1, 'availableFrom': bound, 'sourceRef': 'yahoo'}]
+    initial = m.merge_feature_sources(first, [], path=path, received_at='2026-09-29T07:20:00Z')
+    assert initial[0]['availableFrom'] == bound
+    moved = [{'date': '2026-09-29', 'close': 16.4, 'availableFrom': bound, 'sourceRef': 'yahoo'}]
+    updated = m.merge_feature_sources(moved, [], path=path, received_at='2026-09-29T07:59:00Z')
+    assert updated[0]['close'] == 16.4
+    assert updated[0]['availableFrom'] == bound  # cutoffs before midnight still never see it
+    assert updated[0]['knownAt'] == '2026-09-29T07:59:00Z'
+    assert updated[0]['availabilityBasis'] == 'PROVISIONAL_SESSION_UPDATE'
+    # A later receipt of the same provisional session is again accepted...
+    again = m.merge_feature_sources([{**moved[0], 'close': 16.2}], [], path=path,
+                                    received_at='2026-09-29T20:30:00Z')
+    assert again[0]['close'] == 16.2 and again[0]['availableFrom'] == bound
+    # ...but a receipt not after the recorded one is still a time-order violation.
+    with pytest.raises(ValueError, match='selected_source_revision_time_order'):
+        m.merge_feature_sources([{**moved[0], 'close': 16.3}], [], path=path,
+                                received_at='2026-09-29T20:30:00Z')
+    # After the bound, a change is a correction of a published observation.
+    corrected = m.merge_feature_sources([{**moved[0], 'close': 16.5}], [], path=path,
+                                        received_at='2026-09-30T01:00:00Z')
+    assert corrected[0]['availabilityBasis'] == 'RECEIVED_CORRECTION'
+    assert corrected[0]['availableFrom'] == '2026-09-30T01:00:00Z'

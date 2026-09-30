@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.79"
+PRODUCT_VERSION = "v13.7.80"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '79fa1e3335f85ff01fd538a40b6b1856eec33d79',
-    'web/scripts/pwa-identity.test.mjs': 'b1b1cff7967b12d94fc3c1e66bc4bb0ca303b5d7',
-    'web/scripts/owner-today-https.mjs': '5775af13283f682468c1219092321bdb04703d39',
+    'web/scripts/pwa-identity.test.mjs': 'a5011c27e73f2fe4d9e6c8df5e7efa4e1d5626f9',
+    'web/scripts/owner-today-https.mjs': '3ecefa2ce443e88762769cf2f83cbc8993ca1136',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -177,8 +177,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'ops/imports/acquisition_20260920/provenance.json': 'd720c7898b1fcfb23eae4959c1fb8403d574e665',
     'docs/V13_7_ACQUISITION_PACK_ACCEPTANCE.md': '6857081ce69e53bca54d900562800b54e4384897',
     'scripts/import_index_valuation.py': 'bd9278e7a166855aff8777cb41aa1628bcd07420',
-    'test_jp_market_acquisition.py': 'e436ac3c1535c6379dc98ead7bec0329c20b1028',
-    'jp_market_acquisition.py': '8a5c8198b9adb86145c97c61275511bfb2e8be13',
+    'test_jp_market_acquisition.py': '5e01b604da39baa40fc38ae038d2a302c0ccd59d',
+    'jp_market_acquisition.py': '634f9aaa822c79809924ab6bfa2af4f0a399edc4',
     'ops/imports/README.md': '0c3a8010eebfa90f6c20be3d46e0d59fd3039404',
     'web/src/components/today/SectorHeatmap.css': '0bdc3b1e84dcbc03f447ac34fa1754b4d8941f8b',
     'web/src/components/today/SectorHeatmap.tsx': '613735f6c108a44d13a4e57352f94d23b77c21c7',
@@ -395,8 +395,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/macro-result-details.test.cjs': 'b2bcdb290db61a0ef8d8ffcd090a55e5020e10a1',
     'web/scripts/margin-dynamics.test.cjs': '2ab221c47cfeb6afa4d0adcb1dfebd17b862b608',
     'web/scripts/market-brief-response.test.cjs': 'a0b9296048de2038a4f4e647c1583af010d1c3e5',
-    'web/src/components/chart/JapanMarketComparisonChart.css': '6cf24f6f680e6ee50aba8c8c45645882ab55ca8f',
-    'web/src/components/chart/JapanMarketComparisonChart.tsx': '90913d6f76d08d3e07522eabb98a2abade47283c',
+    'web/src/components/chart/JapanMarketComparisonChart.css': '5f1bc41ac381d67191cf3fa82ede9cc6f13c06ca',
+    'web/src/components/chart/JapanMarketComparisonChart.tsx': '5999bac886122126b70ed8141fc1a380cf102e4c',
     'web/src/components/chart/JapanMarketComparisonPanel.tsx': '8f9123239e7f904694640b0b9854bc20b2fee063',
     'web/src/components/dashboard/JapanSqCalendarCard.css': 'a8bfb645823551f415e2d05e8f6721273c09083b',
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': '77f4e4fa1edee0e5f42db6d82597a4ec1ad82083',

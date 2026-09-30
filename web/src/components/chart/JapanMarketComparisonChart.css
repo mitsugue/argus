@@ -4,6 +4,7 @@
 .jp-comparison__heading h2 { font-size: 21px; font-weight: 500; margin: 0 0 10px; line-height: 1.5; }
 .jp-comparison__heading p, .jp-comparison__heading > span, .jp-comparison__scale { margin: 0; font-size: 13px; line-height: 1.7; color: #a8bac7; }
 .jp-comparison__scale { margin-top: 22px; }
+.jp-comparison__basis { margin: 4px 0 0; font-size: 12.5px; line-height: 1.7; color: #c6d1d8; }
 .jp-comparison__canvas { width: 100%; min-width: 0; }
 .jp-comparison__canvas svg { display: block; width: 100%; height: auto; overflow: visible; }
 .jp-comparison__canvas text { fill: #a8bac7; font-size: 12px; }

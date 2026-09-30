@@ -51,6 +51,13 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
     + ' ' + [...band].reverse().map(point => `L${x(point.offsetSessions)},${y(point.lower)}`).join(' ') + ' Z' : '';
   const ticks = Array.from({ length: 5 }, (_, index) => yMinimum + (yMaximum - yMinimum) * index / 4);
   const showResearchNote = document.forecast.validationStatus !== 'VALIDATED';
+  // Which evidence the selection used. When the market-condition history is
+  // absent (after a deploy, until the next collection recalculates it) the
+  // engine compares price shape alone, and the candidates and the computed
+  // forecast differ from the market-condition comparison. Say so above the
+  // chart, so a changed set of dates is read as a changed basis, not as noise.
+  const priceShapeOnly = document.candidates.length > 0
+    && document.candidates.every(candidate => candidate.missingGroups.includes('marketState'));
 
   return <section className="jp-comparison" aria-labelledby={`${uniqueId}-title`}>
     <div className="jp-comparison__heading">
@@ -59,6 +66,11 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
       <span>{document.forecast.horizonSessions}営業日先</span>
     </div>
     <p className="jp-comparison__scale">{document.unit === 'ANCHOR_100' ? '形状比較 · 基準日＝100' : '指数価格 · 円換算'}</p>
+    {document.candidates.length > 0 && <p className="jp-comparison__basis" data-comparison-basis={priceShapeOnly ? 'price-shape-only' : 'price-and-market-state'}>
+      比較の根拠：{priceShapeOnly
+        ? '価格形状のみ（市場条件の履歴を再計算中。完了すると候補と計算予測は市場条件つきの比較に入れ替わります）'
+        : '価格形状＋市場条件（信用残・VIX・為替・金利・NT倍率など、当時に入手できた値）'}
+    </p>}
     <div ref={container} className="jp-comparison__canvas">
       <svg viewBox={`0 0 ${width} ${height}`} role="img"
         aria-labelledby={`${uniqueId}-chart-title ${uniqueId}-chart-desc`}>
@@ -172,6 +184,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
           VIXの新しい値は既存の価格取得経路から補います。</p>
       </section>}
       <p>情報締切：{new Date(document.informationCutoff).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST</p>
+      <p>基準日は東証の引け後、次回の集計で1営業日進みます。基準日が進むか市場条件の履歴が更新されると、候補と計算予測は再計算されます。</p>
       {candidates.map(candidate => <article key={candidate.snapshotId}>
         <h3>{candidate.anchorDate}を基準とする{candidate.comparisonKind === 'MARKET_ANALOG' ? '市場比較' : '部分比較'}</h3>
         <p>{candidate.similarReasons.join('。')}</p>
