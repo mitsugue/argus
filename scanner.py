@@ -44281,8 +44281,10 @@ def _jquants_topix_history(fetch=False):
         return _TOPIX_HIST_CACHE["data"] or []
     try:
         today = datetime.now(TZ_JST).date()
+        # 3,640 days: inside the rolling ten-year entitlement. 3,660 overhung
+        # it by a week and J-Quants rejected the whole request (v13.5.36).
         rows = _jquants_paginated("/indices/bars/daily/topix", {
-            "from": (today - timedelta(days=3660)).isoformat(), "to": today.isoformat()},
+            "from": (today - timedelta(days=3640)).isoformat(), "to": today.isoformat()},
             max_pages=20, request_timeout=20)
         payload = {"data": rows}
         digest = hashlib.sha256(json.dumps(rows, sort_keys=True, ensure_ascii=False,
