@@ -312,23 +312,27 @@ async function waitForSettledEvidence(page, quietMs = 800, limitMs = 10_000) {
 
 export async function openCanonicalEvidence(page, timeout = 30_000) {
   const disclosure = page.locator('details.at-evidence');
-  await disclosure.waitFor({ state: 'visible', timeout }).catch(async (error) => {
-    // Name the page instead of only the timeout (2026-10-01: the warm-profile
-    // step waited 90 s for the Today evidence with no hint of why): lock
-    // screen, route, shell header, Today panel, product error code.
-    const state = await page.evaluate(() => [
-      `locked=${document.querySelector('.owner-access-screen') ? 'yes' : 'no'}`,
-      `route=${(location.hash || '#').slice(0, 24)}`,
-      `header=${document.querySelector('.shell__header') ? 'yes' : 'no'}`,
-      `today=${document.querySelector('.argus-today') ? 'yes' : 'no'}`,
-      `evidence=${document.querySelector('details.at-evidence') ? 'present' : 'absent'}`,
-      `code=${document.querySelector('[role="status"][data-owner-code]')?.getAttribute('data-owner-code') || 'none'}`,
-      `visibility=${document.documentElement.style.visibility || 'default'}`,
-    ].join(',').replace(/[^A-Za-z0-9_,=#-]/g, '')).catch(() => 'unreadable');
-    throw new Error(`canonical_evidence_not_visible:${state}:`
+  // Name the page instead of only the timeout (2026-10-01: the Today
+  // evidence either never appeared or appeared and was then removed, with no
+  // hint of why): lock screen, route, shell header, Today panel, product
+  // error code, the canonical snapshot state and the load-status element.
+  const pageState = () => page.evaluate(() => [
+    `locked=${document.querySelector('.owner-access-screen') ? 'yes' : 'no'}`,
+    `route=${(location.hash || '#').slice(0, 24)}`,
+    `header=${document.querySelector('.shell__header') ? 'yes' : 'no'}`,
+    `today=${document.querySelector('.argus-today') ? 'yes' : 'no'}`,
+    `evidence=${document.querySelector('details.at-evidence') ? 'present' : 'absent'}`,
+    `code=${document.querySelector('[role="status"][data-owner-code]')?.getAttribute('data-owner-code') || 'none'}`,
+    `snapshot=${document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')?.getAttribute('data-canonical-snapshot-state') || 'none'}`,
+    `loadStatus=${document.querySelector('.at-canonical-load-status') ? 'present' : 'absent'}`,
+    `visibility=${document.documentElement.style.visibility || 'default'}`,
+  ].join(',').replace(/[^A-Za-z0-9_,=#-]/g, '')).catch(() => 'unreadable');
+  const named = (stage) => async (error) => {
+    throw new Error(`canonical_evidence_${stage}:${await pageState()}:`
       + String(error?.message || '').split('\n')[0].replace(/[^A-Za-z0-9 .]/g, '').slice(0, 60));
-  });
-  if (!await disclosure.evaluate((element) => element.open)) {
+  };
+  await disclosure.waitFor({ state: 'visible', timeout }).catch(named('not_visible'));
+  if (!await disclosure.evaluate((element) => element.open, undefined, { timeout }).catch(named('removed'))) {
     // The disclosure is opened the way the owner opens it, by a real click.
     // Since owner auth (2026-09-28) every Pages acceptance failed here with
     // churn0: the node was replaced (detached) or briefly covered (blocked)
