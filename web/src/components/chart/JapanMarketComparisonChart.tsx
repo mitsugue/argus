@@ -153,6 +153,14 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
           直近の重複区間を除き、似た条件の候補を最大{document.historyCoverage.maximumSelected}件選びます。
           年ごとの枠や、その後の値動きの良し悪しで選んでいません。</p>
       </>}
+      {document.selectionPolicy && (() => {
+        const scales = Object.values(document.selectionPolicy.stateScales);
+        const robust = scales.filter(scale => scale.basis === 'ROBUST_MAD_HISTORY').length;
+        return <p>物差し：市場条件{scales.length}系列のうち{robust}系列は各系列の履歴の頑健な散布度（中央絶対偏差）を1単位とし、
+          残り{scales.length - robust}系列は履歴不足のため定義値を使っています。距離は各要素の差を物差しで割った平均で、
+          採用上限は{document.selectionPolicy.maximumDistance}、候補は重複区間を除いて最大{document.selectionPolicy.maximumCandidates}件です。
+          物差しと上限は再現可能な規則であり、予測力の検証結果ではありません。</p>;
+      })()}
       {document.selectionAudit?.['2018'] && (() => {
         const audit = document.selectionAudit['2018'];
         const closest = audit.closest;

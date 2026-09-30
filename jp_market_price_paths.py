@@ -292,7 +292,8 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                             valuation: Mapping[str, Any] | None = None,
                             state_rows: Sequence[Mapping[str, Any]] = (),
                             condition_rows: Sequence[Mapping[str, Any]] = (),
-                            reaction_rows: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:
+                            reaction_rows: Sequence[Mapping[str, Any]] = (),
+                            policy=None) -> dict[str, Any]:
     """Connect cached daily observations to the existing four-layer calculation.
 
     Historical bars are the source's currently reported history. Their session
@@ -310,7 +311,15 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
         raise ValueError("index_history_bound_exceeded")
     if list(session_dates) != sorted(set(session_dates)):
         raise ValueError("unique_ordered_session_calendar_required")
-    policy = AnalogPolicy()
+    # 2026-09-30: the yardstick per market-condition series comes from the
+    # series' own history (robust MAD); a series without enough history keeps
+    # its fixed definition and the document says which.
+    # Only rows knowable at this cutoff enter the yardstick: a correction
+    # received later must not move the unit a past comparison was measured in.
+    from jp_market_analogs import robust_feature_scales
+    scales = robust_feature_scales(point_in_time_rows(
+        [dict(row) for row in state_rows if isinstance(row, Mapping)], cutoff)[0])
+    policy = policy or AnalogPolicy.with_scales(scales)
     visible, visibility = point_in_time_rows(
         [dict(row) for row in bars if row.get("instrumentId") == INSTRUMENT], cutoff)
     visible.sort(key=lambda row: row.get("date", ""))
@@ -420,6 +429,15 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     # answers whether a year was searched and why its closest candidate was or
     # was not selected; it neither changes the ranking nor uses later returns.
     document["selectionAudit"] = selection.get("yearAudit", {})
+    document["selectionPolicy"] = {
+        "policyId": policy.policy_id, "lookbackSessions": policy.lookback_sessions,
+        "maximumCandidates": policy.maximum_candidates, "minimumSeparationSessions": policy.minimum_separation_sessions,
+        "maximumDistance": policy.maximum_distance, "shapeScalePct": policy.shape_scale_pct,
+        "stateScales": {key: {"scale": value["scale"], "basis": value["basis"],
+                              "observations": value["observations"], "unit": value["unit"]}
+                        for key, value in scales.items()},
+        "distanceMeaning": "各要素の差をその系列の物差しで割った値の平均。1.0は物差し1つ分。",
+    }
     document["valuationStatus"] = scale["status"]
     if scale["status"] == "AVAILABLE":
         document["valuationEvidence"] = {key: scale.get(key) for key in (

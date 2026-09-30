@@ -49,14 +49,57 @@ def _policy_material(policy):
             "maximumFeatureAgeDays": FEATURE_MAX_AGE_DAYS}
 
 
+ROBUST_SCALE_MINIMUM_OBSERVATIONS = 30
+ROBUST_SCALE_BASIS = "ROBUST_MAD_HISTORY"
+DEFAULT_SCALE_BASIS = "FIXED_DEFINITION"
+
+
+def robust_feature_scales(rows: Iterable[Mapping[str, Any]], *,
+                          minimum_observations: int = ROBUST_SCALE_MINIMUM_OBSERVATIONS) -> dict[str, dict[str, Any]]:
+    """One robust unit per market-condition series from its own history.
+
+    scale = 1.4826 * median(|x - median(x)|) over the feature history rows of
+    that series (any cutoff, any date); a series with fewer observations, or a
+    zero spread, keeps the fixed definition scale and says so. 2026-09-30: the
+    fixed scales were hand-set and unvalidated; a unit derived from the ten
+    years the engine compares against is at least a documented, reproducible
+    yardstick. Not a validation of predictive value.
+    """
+    values: dict[str, list[float]] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        field = _field(row)
+        value = _finite(row.get("value"))
+        if field in FEATURE_DEFINITIONS and value is not None and row.get("unit") == FEATURE_DEFINITIONS[field][0]:
+            values.setdefault(field, []).append(value)
+    out = {}
+    for field, (unit, default) in FEATURE_DEFINITIONS.items():
+        series = sorted(values.get(field, []))
+        if len(series) >= minimum_observations:
+            centre = series[len(series) // 2] if len(series) % 2 else (series[len(series) // 2 - 1] + series[len(series) // 2]) / 2
+            deviations = sorted(abs(v - centre) for v in series)
+            mad = deviations[len(deviations) // 2] if len(deviations) % 2 else (deviations[len(deviations) // 2 - 1] + deviations[len(deviations) // 2]) / 2
+            scale = 1.4826 * mad
+            if math.isfinite(scale) and scale > 0:
+                out[field] = {"scale": scale, "basis": ROBUST_SCALE_BASIS, "observations": len(series), "unit": unit}
+                continue
+        out[field] = {"scale": default, "basis": DEFAULT_SCALE_BASIS, "observations": len(series), "unit": unit}
+    return out
+
+
 @dataclass(frozen=True)
 class AnalogPolicy:
-    policy_id: str = "jp-index-shape-state-order-reaction-research-v1"
+    policy_id: str = "jp-index-shape-state-order-reaction-research-v2-robust-scales"
     lookback_sessions: int = 20
-    maximum_candidates: int = 3
+    maximum_candidates: int = 10
     minimum_separation_sessions: int = 20
-    maximum_distance: float = .75
+    # One robust unit per component on average: with history-derived scales a
+    # distance of 1.0 means the candidate differs by about one typical spread.
+    maximum_distance: float = 1.0
     shape_scale_pct: float = 5.0
+    # ((feature, scale), ...) from robust_feature_scales; empty = fixed definitions.
+    state_scales: tuple = ()
 
     def __post_init__(self):
         for value, lower, upper in ((self.lookback_sessions, 5, 120),
@@ -67,6 +110,19 @@ class AnalogPolicy:
         if not self.policy_id or not all(math.isfinite(v) and v > 0 for v in
                                         (self.maximum_distance, self.shape_scale_pct)):
             raise ValueError("invalid_analog_policy_scale")
+        scales = dict(self.state_scales)
+        if len(scales) != len(self.state_scales) or any(
+                key not in FEATURE_DEFINITIONS or isinstance(v, bool) or not isinstance(v, (int, float))
+                or not math.isfinite(v) or v <= 0 for key, v in scales.items()):
+            raise ValueError("invalid_analog_policy_state_scales")
+
+    def scale_for(self, key: str) -> float:
+        return dict(self.state_scales).get(key, FEATURE_DEFINITIONS[key][1])
+
+    @classmethod
+    def with_scales(cls, scales: Mapping[str, Mapping[str, Any]], **overrides) -> "AnalogPolicy":
+        pairs = tuple(sorted((key, float(v["scale"])) for key, v in scales.items() if key in FEATURE_DEFINITIONS))
+        return cls(state_scales=pairs, **overrides)
 
 
 def _hash(value: Any) -> str:
@@ -267,7 +323,7 @@ def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str
                                        len(shape)) / policy.shape_scale_pct
             common = sorted(set(current["states"]) & set(candidate["states"]))
             state_deltas = {key: abs(current["states"][key]["value"] -
-                                    candidate["states"][key]["value"]) / FEATURE_DEFINITIONS[key][1]
+                                    candidate["states"][key]["value"]) / policy.scale_for(key)
                             for key in common}
             state_distance = math.sqrt(sum(v * v for v in state_deltas.values()) / len(common)) if common else None
             current_order, past_order = _sequence(current), _sequence(candidate)
