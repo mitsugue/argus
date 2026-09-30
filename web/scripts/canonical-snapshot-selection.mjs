@@ -309,6 +309,13 @@ export async function openCanonicalEvidence(page, timeout = 30_000) {
     // selection retry loop by its exact text.)
     for (let clickAttempt = 1; clickAttempt <= 3; clickAttempt += 1) {
       await waitForSettledEvidence(page);
+      // On a phone viewport the fixed bottom bar and navigation cover the
+      // lower edge; Playwright's own scroll leaves the summary right under
+      // them (blocked:churn0 on every attempt, 2026-09-30). Bring it to the
+      // middle of the screen first, as the owner does by scrolling.
+      await page.getByText('根拠・市場データ・システム情報', { exact: true })
+        .evaluate((element) => element.scrollIntoView({ block: 'center', inline: 'nearest' }))
+        .catch(() => {});
       try {
         await page.getByText('根拠・市場データ・システム情報', { exact: true }).click();
         lastError = null;
@@ -325,8 +332,11 @@ export async function openCanonicalEvidence(page, timeout = 30_000) {
       const churn = await waitForSettledEvidence(page, 1_000, 1_000);
       const message = String(lastError?.message || '');
       const stage = message.includes('detached') ? 'detached' : 'blocked';
-      const blocker = (message.match(/<([a-z0-9-]+)[^>]*class="([^"]{0,60})/i) || [])
-        .slice(1).join('.').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 60);
+      const covering = message.match(/<([a-z0-9-]+)([^>]*)>[^\n]*intercepts pointer events/i);
+      const coveringClass = covering ? ((covering[2].match(/class="([^" ]+)/) || [])[1] || '') : '';
+      const blocker = (covering ? [covering[1], coveringClass].filter(Boolean) : [])
+        .join('.').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 60)
+        || (message.match(/strict mode violation/i) ? 'strict-mode' : '');
       throw new Error(`canonical_evidence_click_failed:${stage}:churn${churn}${blocker ? `:by:${blocker}` : ''}`);
     }
   }
