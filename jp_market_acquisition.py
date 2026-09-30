@@ -6,7 +6,7 @@ is never evidence that a revised historical value was known in the past.
 from __future__ import annotations
 
 import csv
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import io
 import json
@@ -24,7 +24,16 @@ VIX_HISTORY = 'https://cdn-api.cboe.com/api/global/us_indices/daily_prices/VIX_H
 SOURCES = {MOF_HISTORY: 'jp_yield_curve', MOF_CURRENT: 'jp_yield_curve', VIX_HISTORY: 'vix_ohlc'}
 START = '2015-09-01'
 MAX_BYTES = 2 * 1024 * 1024
-METHOD = 'official-market-acquisition-v1'
+METHOD = 'official-market-acquisition-v2-scheduled-availability'
+# Conservative availability of an ORIGINAL observation (revision 0) from its
+# publisher's schedule: the calendar day after the observation date, 00:00Z
+# (09:00 JST). MoF posts the day's JGB curve that evening; Cboe posts the VIX
+# close after the US session. Until 2026-09-30 every imported history row
+# was dated available from its download, so no past comparison cutoff could
+# see it and ten years of official history contributed nothing to the
+# analog selection. Corrections keep their actual receipt time. This is the
+# same rule the two-market credit CSV already uses; it is not vintage proof.
+SCHEDULED_AVAILABILITY_DAYS = {'vix_ohlc': 1, 'jp_yield_curve': 1}
 ACQUISITION_SPEC = 'acquisition-map-20260920:b22a4a50965a045ac3e1385b75857732adb017dd0e993b56658d0b157c870bbd'
 
 
@@ -206,7 +215,20 @@ def verify_raw(db):
                 raise ValueError('source_normalized_integrity')
 
 
+def scheduled_availability(source_id, day):
+    """00:00Z of the scheduled calendar day after the observation date."""
+    lag = SCHEDULED_AVAILABILITY_DAYS[source_id]
+    return (date.fromisoformat(day) + timedelta(days=lag)).isoformat() + 'T00:00:00Z'
+
+
 def feature_rows(rows, source_id):
+    """Feature inputs from the append-only stream.
+
+    An original observation (revision 0) is dated available from its
+    publisher's schedule, never later than its receipt; the receipt stays on
+    the row as receivedAt. A correction is available from its receipt only.
+    The raw store is not rewritten: this is a read-side rule.
+    """
     result = []
     if len(rows) > 3000:
         raise ValueError('source_feature_history_maintenance_required')
@@ -214,10 +236,16 @@ def feature_rows(rows, source_id):
         value = item['values'].get('close' if source_id == 'vix_ohlc' else '10')
         if value is None:
             continue
-        result.append({k: v for k, v in item.items() if k != 'values'} | {
+        row = {k: v for k, v in item.items() if k != 'values'} | {
             'instrumentId': 'VIX' if source_id == 'vix_ohlc' else 'JP10Y',
             'seriesId': 'close' if source_id == 'vix_ohlc' else 'yield_pct', 'value': value,
-            'close': value})
+            'close': value, 'receivedAt': item['knownAt']}
+        if item.get('revision', 0) == 0:
+            scheduled = scheduled_availability(source_id, item['date'])
+            if _time(scheduled) < _time(item['knownAt']):
+                row.update(knownAt=scheduled, availableFrom=scheduled,
+                           availabilityBasis='SCHEDULED_PUBLICATION')
+        result.append(row)
     return result
 
 
@@ -340,7 +368,10 @@ def merge_feature_sources(existing, official, *, path=None, received_at=None):
                 fields = ('open', 'high', 'low', 'close', 'value', 'volume', 'unit')
                 if all(old.get(k) == row.get(k) for k in fields):
                     continue
-                if old.get('knownAt') and _time(received_at) <= _time(old['knownAt']):
+                previous_receipt = old.get('receivedAt') or (
+                    old.get('knownAt') if old.get('availabilityBasis') in
+                    ('RECEIVED_CORRECTION', 'PROVISIONAL_SESSION_UPDATE') else None)
+                if previous_receipt and _time(received_at) <= _time(previous_receipt):
                     raise ValueError('selected_source_revision_time_order')
                 if _time(received_at) < _time(old['availableFrom']):
                     # The session is still inside its conservative availability
@@ -353,10 +384,12 @@ def merge_feature_sources(existing, official, *, path=None, received_at=None):
                     # the feature history failed for sixteen hours every US
                     # trading day.
                     row = {**row, 'knownAt': received_at, 'availableFrom': old['availableFrom'],
+                           'receivedAt': received_at,
                            'publishedAt': None, 'historicalVintageVerified': False,
                            'availabilityBasis': 'PROVISIONAL_SESSION_UPDATE'}
                 else:
                     row = {**row, 'knownAt': received_at, 'availableFrom': received_at,
+                           'receivedAt': received_at,
                            'publishedAt': None, 'historicalVintageVerified': False,
                            'availabilityBasis': 'RECEIVED_CORRECTION'}
             saved[row['date']] = row

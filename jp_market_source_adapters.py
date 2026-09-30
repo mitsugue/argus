@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from datetime import date, timedelta, timezone
 from typing import Any, Mapping
@@ -224,3 +225,61 @@ def retain_margin_snapshot(candidate, *, previous=None, path=None, raw=None):
     finally:
         if db:
             db.close()
+
+
+def normalize_jquants_topix_bars(payload: Mapping[str, Any], *, received_at: str,
+                                 response_sha256: str) -> dict[str, Any]:
+    """TOPIX daily bars from the J-Quants V2 index endpoint as feature inputs.
+
+    Columns are Date/O/H/L/C (long names accepted). Each bar is available from
+    00:00Z of the next calendar day (the close is published the same evening
+    JST); the receipt stays on the row. Only complete, ordered, positive bars
+    are kept; nothing is filled. Used for the NT ratio feature, never shown
+    as an index level of its own.
+    """
+    observed = _instant(received_at)
+    if observed is None or len(str(received_at)) <= 10:
+        raise ValueError("actual_observation_time_required")
+    if not re.fullmatch(r"[0-9a-f]{64}", response_sha256):
+        raise ValueError("response_digest_required")
+    raw_rows = payload.get("data") if isinstance(payload, Mapping) else None
+    if not isinstance(raw_rows, list) or len(raw_rows) > 4000:
+        raise ValueError("bounded_provider_rows_required")
+    observed_day = observed.astimezone(timezone(timedelta(hours=9))).date()
+    rows, rejected, seen = [], [], set()
+    for index, raw in enumerate(raw_rows):
+        if not isinstance(raw, Mapping):
+            rejected.append({"rowIndex": index, "reason": "invalid_row"}); continue
+        day = str(raw.get("Date", ""))
+        try:
+            parsed = date.fromisoformat(day)
+            if parsed.isoformat() != day or parsed > observed_day:
+                rejected.append({"rowIndex": index, "reason": "invalid_or_future_date"}); continue
+        except ValueError:
+            rejected.append({"rowIndex": index, "reason": "invalid_date"}); continue
+        values = {}
+        for key, names in (("open", ("O", "Open")), ("high", ("H", "High")),
+                           ("low", ("L", "Low")), ("close", ("C", "Close"))):
+            value = next((raw[name] for name in names if raw.get(name) is not None), None)
+            try:
+                values[key] = float(value) if value is not None and not isinstance(value, bool) else None
+            except (TypeError, ValueError):
+                values[key] = None
+        if any(v is None or not math.isfinite(v) or v <= 0 for v in values.values()) \
+                or values["low"] > min(values["open"], values["close"]) \
+                or values["high"] < max(values["open"], values["close"]):
+            rejected.append({"rowIndex": index, "reason": "incomplete_or_unordered_bar"}); continue
+        if day in seen:
+            rejected.append({"rowIndex": index, "reason": "duplicate_date"}); continue
+        seen.add(day)
+        rows.append({"instrumentId": "TOPIX_INDEX", "seriesId": "close", "date": day, **values,
+                     "unit": "INDEX_POINTS",
+                     "availableFrom": (parsed + timedelta(days=1)).isoformat() + "T00:00:00Z",
+                     "availabilityBasis": "SCHEDULED_PUBLICATION", "receivedAt": observed.isoformat(),
+                     "publishedAt": None, "historicalVintageVerified": False,
+                     "sourceRef": "jquants:v2:indices/bars/daily/topix",
+                     "sourceResponseSha256": response_sha256})
+    rows.sort(key=lambda row: row["date"])
+    return {"status": "AVAILABLE" if rows else "INVALID_OR_EMPTY_RESPONSE", "rows": rows,
+            "rejectedRows": rejected[:50], "rejectedCount": len(rejected),
+            "actionAuthority": False, "automaticAiCalls": 0}

@@ -38038,7 +38038,7 @@ _JP_MARKET_FEATURE_CACHE_STATUS = {"restoreAttempted": False}
 
 
 def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
-                       available_hour_utc=None, next_day_available=False):
+                       available_hour_utc=None, next_day_available=False, range_="2y"):
     """Complete OHLCV rows for one index from the public Yahoo v8 chart API.
 
     Rows are shaped for jp_market_engine.normalize_complete_ohlcv with an explicit
@@ -38060,7 +38060,7 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
             params={"interval": "1d", "range": ("5d" if yahoo_symbol == "^N225"
                 and cached and len(cached.get("data") or []) > 21
                 and cached["data"][-1]["date"] >= (datetime.now(TZ_JST).date() - timedelta(days=4)).isoformat()
-                else "2y")},
+                else range_)},
             headers={"User-Agent": "Mozilla/5.0 (argus)"}, timeout=15)
         response = r
         if getattr(r, "status_code", 200) != 200: raise ValueError("index_history_http_failure")
@@ -39434,9 +39434,15 @@ def _jp_market_feature_history_warm():
                 _JP_MARKET_FEATURE_CACHE_STATUS.update(restoreStatus="REJECTED", restoreError=type(exc).__name__)
         price_series = {}
         for name, symbols in (("nikkei", ("^N225",)), ("sp500", ("^GSPC",)),
-                              ("vix", ("^VIX",)), ("topix", ("^TPX", "998405.T"))):
+                              ("vix", ("^VIX",)), ("topix", ("^TPX", "998405.T")),
+                              ("usdjpy", ("JPY=X",))):
             price_series[name] = next((list((_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get(symbol) or {}).get("data") or [])
                 for symbol in symbols if (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get(symbol) or {}).get("data")), [])
+        # 2026-09-30: the official ten-year histories replace the empty
+        # Yahoo TOPIX slot; US 10y comes from FRED. Both are cached-only here.
+        if _TOPIX_HIST_CACHE["data"]:
+            price_series["topix"] = list(_TOPIX_HIST_CACHE["data"])
+        price_series["us10y"] = _fred_us10y_history_dated(fetch=False)
         if _N225_ANALOG_HISTORY.get("data"):
             price_series["nikkei"] = list(_N225_ANALOG_HISTORY["data"])
         price_series['vix'] = jp_market_acquisition.merge_feature_sources(
@@ -39513,6 +39519,13 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     vix_rows, vix_source = _jp_market_engine_vix_rows(fetch=warm)
     nikkei_rows = _yahoo_index_ohlcv(
         "^N225", "NIKKEI_225_INDEX", fetch=warm, available_hour_utc=7)
+    # Market-condition histories for the analog engine (2026-09-30): ten years
+    # of USD/JPY, US 10y and TOPIX so the defined series exist on the
+    # historical side as well. Cached-only on the public path.
+    _yahoo_index_ohlcv("JPY=X", "USDJPY", fetch=warm, next_day_available=True, range_="10y")
+    if warm:
+        _fred_us10y_history_dated()
+        _jquants_topix_history(fetch=True)
     try:
         credit_rows = _jpx_credit_rows_effective()
     except Exception:
@@ -44183,20 +44196,20 @@ def _jpx_credit_rows_effective():
     return base
 
 
-def _fred_vix_history_dated(n=2600):
-    """Dated VIX closes (ascending [{date, value, availableFrom}]) for the
-    ten-year JP_MARKET_ENGINE conditioning corpus. availableFrom is the day AFTER the
-    close date (a VIX close is published after that US session), so generic
-    PIT filters stay conservative; [] on no key / failure."""
+def _fred_history_dated(series_id, cache, *, available_days=1, n=2600):
+    """Dated FRED closes (ascending [{date, value, availableFrom}]) for the
+    ten-year market-condition corpus. availableFrom is `available_days` after
+    the observation date at 00:00Z so generic PIT filters stay conservative
+    (a VIX close is posted after that US session; H.15 yields the next
+    business day). [] on no key / failure; cached six hours."""
     now = time.time()
-    cached = _VIX_HIST_DATED_CACHE
-    if cached["data"] is not None and now < cached["expires"]:
-        return cached["data"]
+    if cache["data"] is not None and now < cache["expires"]:
+        return cache["data"]
     if not _FRED_API_KEY:
         return []
     try:
         r = requests.get(_FRED_BASE, params={
-            "series_id": "VIXCLS", "api_key": _FRED_API_KEY,
+            "series_id": series_id, "api_key": _FRED_API_KEY,
             "file_type": "json", "sort_order": "desc", "limit": n,
         }, timeout=15)
         r.raise_for_status()
@@ -44211,17 +44224,83 @@ def _fred_vix_history_dated(n=2600):
             except (TypeError, ValueError):
                 continue
             available = (argus_fastdate.strptime(date, "%Y-%m-%d")
-                         + timedelta(days=1)).strftime("%Y-%m-%d")
+                         + timedelta(days=available_days)).strftime("%Y-%m-%d")
+            # The VIX rows keep their historical date-only stamp for the
+            # existing D06 consumers; new series carry an explicit instant.
             rows.append({"date": date, "value": value,
-                         "availableFrom": available})
+                         "availableFrom": available if series_id == "VIXCLS" else available + "T00:00:00Z"})
         rows.sort(key=lambda row: row["date"])
         if len(rows) >= 100:
-            _VIX_HIST_DATED_CACHE["data"] = rows
-            _VIX_HIST_DATED_CACHE["expires"] = now + 6 * 3600
+            cache["data"] = rows
+            cache["expires"] = now + 6 * 3600
             return rows
         return rows
     except Exception:
         return []
+
+
+def _fred_vix_history_dated(n=2600):
+    """Dated VIX closes for D06 and the reversal axis (see _fred_history_dated)."""
+    return _fred_history_dated("VIXCLS", _VIX_HIST_DATED_CACHE, available_days=1, n=n)
+
+
+_US10Y_HIST_DATED_CACHE = {"data": None, "expires": 0.0}
+
+
+def _fred_us10y_history_dated(n=2600, *, fetch=True):
+    """US 10y constant-maturity yield (DGS10, percent) as feature inputs for
+    rate.us10y_change5: instrument US10Y, seriesId yield, unit PERCENT, dated
+    available two calendar days after the observation (H.15 posts the next
+    business day). Rows carry the FRED source reference; nothing is filled.
+    fetch=False reads the cache only (the feature warm never requests)."""
+    rows = (_fred_history_dated("DGS10", _US10Y_HIST_DATED_CACHE, available_days=2, n=n)
+            if fetch else (_US10Y_HIST_DATED_CACHE["data"] or []))
+    return [{"instrumentId": "US10Y", "seriesId": "yield", "unit": "PERCENT",
+             "date": row["date"], "value": row["value"], "availableFrom": row["availableFrom"],
+             "availabilityBasis": "SCHEDULED_PUBLICATION", "historicalVintageVerified": False,
+             "sourceRef": "fred:DGS10"} for row in rows]
+
+
+_TOPIX_HIST_CACHE = {"data": None, "expires": 0.0, "status": "NOT_RUN", "lastAttemptAt": None}
+
+
+def _jquants_topix_history(fetch=False):
+    """Ten years of TOPIX daily bars from J-Quants V2 for the NT ratio feature.
+
+    Cached-only unless fetch=True (collect warm); one bounded paginated read
+    per six hours. Rows are normalized by the pure adapter with next-day
+    availability and the response digest. Never displayed as an index level."""
+    now = time.time()
+    if _TOPIX_HIST_CACHE["data"] is not None and (not fetch or now < _TOPIX_HIST_CACHE["expires"]):
+        return _TOPIX_HIST_CACHE["data"]
+    if not fetch:
+        return _TOPIX_HIST_CACHE["data"] or []
+    _TOPIX_HIST_CACHE["lastAttemptAt"] = _ai_now_iso()
+    if not _JQUANTS_API_KEY:
+        _TOPIX_HIST_CACHE["status"] = "KEY_NOT_CONFIGURED"
+        return _TOPIX_HIST_CACHE["data"] or []
+    try:
+        today = datetime.now(TZ_JST).date()
+        # 3,640 days: inside the rolling ten-year entitlement. 3,660 overhung
+        # it by a week and J-Quants rejected the whole request (v13.5.36).
+        rows = _jquants_paginated("/indices/bars/daily/topix", {
+            "from": (today - timedelta(days=3640)).isoformat(), "to": today.isoformat()},
+            max_pages=20, request_timeout=20)
+        payload = {"data": rows}
+        digest = hashlib.sha256(json.dumps(rows, sort_keys=True, ensure_ascii=False,
+                                           separators=(",", ":"), default=str).encode()).hexdigest()
+        normalized = jp_market_source_adapters.normalize_jquants_topix_bars(
+            payload, received_at=_ai_now_iso(), response_sha256=digest)
+        if normalized["rows"]:
+            _TOPIX_HIST_CACHE.update(data=normalized["rows"][-argus_index_history.MAX_BARS:],
+                                     expires=now + 6 * 3600, status="AVAILABLE")
+        else:
+            _TOPIX_HIST_CACHE.update(status="INVALID_OR_EMPTY_RESPONSE", expires=now + 1800)
+    except Exception as exc:
+        _TOPIX_HIST_CACHE.update(status="FETCH_FAILED:" + type(exc).__name__, expires=now + 1800)
+    return _TOPIX_HIST_CACHE["data"] or []
+
+
 _VIX_HIST_TTL   = 3600  # 1h — daily series, no need to hammer FRED
 
 def _fred_vix_history(n=70):
