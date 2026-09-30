@@ -217,10 +217,16 @@ def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any]
         return f"{value:,.3f}".rstrip("0").rstrip(".") + labels.get(unit, "")
 
     candidates = []
+    from jp_market_analogs import FEATURE_DEFINITIONS
     for selected in selection.get("selected", []):
         path = by_id.get(selected["snapshotId"])
         if not path:
             continue
+        # The market-condition series this candidate was actually compared on
+        # (defined series minus the ones missing on either side), so the chart
+        # can say "6 of 16" instead of leaving "market conditions" unqualified.
+        compared = [key for key in FEATURE_DEFINITIONS if key not in set(selected["missingFeatures"])
+                    and "marketState" not in selected["missingGroups"]]
         differences = []
         for difference in selected.get("importantDifferences", []):
             if "currentValue" in difference:
@@ -242,6 +248,9 @@ def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any]
                            "comparison": convert(path["comparison"]),
                            "subsequentReference": convert(path["subsequentReference"]),
                            "missingFeatures": selected["missingFeatures"], "missingGroups": selected["missingGroups"],
+                           "comparedFeatures": [feature_labels[key] for key in compared],
+                           "comparedFeatureCount": len(compared),
+                           "stateFeatureDefinitionCount": len(FEATURE_DEFINITIONS),
                            "similarReasons": [groups[key] for key in selected["similarityReasons"]],
                            "differences": differences})
     converted_band = []

@@ -76,6 +76,18 @@ class ChartContractTest(unittest.TestCase):
         self.assertEqual(len(document["candidates"]), 2)
         self.assertEqual(document["unit"], "ANCHOR_100")
         self.assertEqual(document["forecast"]["validationStatus"], "UNVALIDATED")
+        # 2026-09-30: the chart says how many market-condition series were
+        # actually compared; a price-shape-only candidate reports zero.
+        from jp_market_analogs import FEATURE_DEFINITIONS
+        for candidate in document["candidates"]:
+            self.assertEqual(candidate["stateFeatureDefinitionCount"], len(FEATURE_DEFINITIONS))
+            self.assertEqual(candidate["comparedFeatureCount"], len(candidate["comparedFeatures"]))
+            self.assertLessEqual(candidate["comparedFeatureCount"], len(FEATURE_DEFINITIONS))
+            if "marketState" in candidate["missingGroups"]:
+                self.assertEqual(candidate["comparedFeatures"], [])
+            else:
+                self.assertEqual(candidate["comparedFeatureCount"],
+                                 len(FEATURE_DEFINITIONS) - len(candidate["missingFeatures"]))
         with self.assertRaisesRegex(ValueError, "chart_calculation_identity_mismatch"):
             comparison_document(current, dict(selected, currentSnapshotId="other"), paths, ensemble)
 

@@ -47,6 +47,10 @@ export interface JapanMarketComparison {
     missingFeatures: string[];
     missingGroups: string[];
     similarReasons: string[];
+    /** Market-condition series actually compared (labels), and the defined total. Absent on older documents. */
+    comparedFeatures?: string[];
+    comparedFeatureCount?: number;
+    stateFeatureDefinitionCount?: number;
     differences: string[];
   }>;
   forecast: {
