@@ -39632,6 +39632,12 @@ def _jp_market_feature_history_warm():
         _JP_MARKET_FEATURE_HISTORY = {**history, "status": "AVAILABLE", "inputIdentity": identity,
                                      "lastSuccessfulCalculationAt": now}
         _JP_MARKET_ENGINE_MARKET_VIEW_MEMO["ts"] = 0
+        # The comparison documents were calculated without this history (or
+        # with an older one). Lift the thirty-minute throttle so the research
+        # warm that follows in the same collection recalculates them now;
+        # otherwise the chart kept the price-shape-only comparison until the
+        # next scheduled collection, hours later (2026-10-01).
+        _INDEX_RESEARCH_STATUS["lastAttemptMonotonic"] = None
         _jp_market_feature_history_persist(cache_path, method, now)
     except Exception as exc:
         # The raise sites in this path carry fixed reason tokens; the first
