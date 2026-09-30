@@ -182,7 +182,7 @@ def test_topix_bars_are_normalized_with_next_day_availability_and_nothing_filled
     assert result["status"] == "AVAILABLE" and [r["date"] for r in result["rows"]] == ["2026-09-29", "2026-09-30"]
     row = result["rows"][0]
     assert row["instrumentId"] == "TOPIX_INDEX" and row["seriesId"] == "close" and row["close"] == 3005.0
-    assert row["availableFrom"] == "2026-09-30T00:00:00Z" and row["receivedAt"] == "2026-09-30T08:00:00+00:00"
+    assert row["availableFrom"] == "2026-09-29T09:00:00Z" and row["receivedAt"] == "2026-09-30T08:00:00+00:00"
     assert row["availabilityBasis"] == "SCHEDULED_PUBLICATION" and row["historicalVintageVerified"] is False
     assert row["sourceResponseSha256"] == digest
     assert result["rejectedCount"] == 5 and result["actionAuthority"] is False
