@@ -56,9 +56,24 @@ test('401 boundary, login, nonce proof, data, confirmed logout, then closed', as
   assert.equal(new Set(nonces).size, nonces.length);
   await assert.rejects(reader.fetch(baseUrl + '/api/argus/chart-intelligence'), /closed/);
 });
-for (const status of [200,403,429,500,503]) test(`unexpected unauthenticated boundary ${status} is fatal`, async () => {
+for (const status of [200,403,429,500]) test(`unexpected unauthenticated boundary ${status} is fatal`, async () => {
   const f = fixture((call,n) => n===1 && new Response('{}', { status }));
   await assert.rejects(createOwnerReader(f.options), /boundary/); assert.equal(f.calls.length,1);
+});
+for (const status of [502,503,504]) test(`a deploy cutover (${status}) is waited out at most three times, never credentials`, async () => {
+  const waits = [];
+  const f = fixture((call) => call.url.pathname.endsWith('/session') && !call.headers.has('X-ARGUS-OWNER-SESSION')
+    && new Response('{}', { status }));
+  await assert.rejects(createOwnerReader({ ...f.options, sleep: async (ms) => { waits.push(ms); } }), /boundary/);
+  assert.deepEqual(waits, [20000, 20000, 20000]); assert.equal(f.calls.length, 4);
+  assert.ok(f.calls.every(c => !c.url.pathname.endsWith('/password')));
+});
+test('a cutover that ends proceeds to the exact boundary and login', async () => {
+  let unauthenticatedCalls = 0;
+  const f = fixture((call) => call.url.pathname.endsWith('/session') && !call.headers.has('X-ARGUS-OWNER-SESSION')
+    && (++unauthenticatedCalls === 1 ? new Response('{}', { status: 503 }) : null));
+  const reader = await createOwnerReader({ ...f.options, sleep: async () => {} });
+  assert.equal(reader.enabled, true); await reader.close();
 });
 for (const status of [401,403,429,500]) test(`password status ${status} never retries or downgrades`, async () => {
   const f = fixture((call) => call.url.pathname.endsWith('/password') && new Response('{}', { status }));

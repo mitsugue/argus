@@ -26,7 +26,8 @@ export function readerConfiguration(baseUrl, env = process.env) {
 }
 
 export async function createOwnerReader({ baseUrl, env = process.env,
-  fetchImpl = fetch, now = () => Date.now(), nonce = randomUUID } = {}) {
+  fetchImpl = fetch, now = () => Date.now(), nonce = randomUUID,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
   const config = readerConfiguration(baseUrl, env);
   if (!config.enabled) return { enabled: false, fetch: fetchImpl, close: async () => {} };
   let token = '', expiresAt = 0, closed = false;
@@ -89,7 +90,16 @@ export async function createOwnerReader({ baseUrl, env = process.env,
     try { await logout(); } finally { config.password = ''; }
   }
   try {
-    const unauthenticated = await send(config.backend + PREFIX + 'session');
+    // A 502/503/504 here is the backend being swapped by a later merge's
+    // deploy (2026-09-30: 13.7.84's acceptance met #575's restart and failed
+    // owner_reader:boundary). The browser reader already waits out a cutover;
+    // this reader waits the same way, at most three times, and still requires
+    // the exact 401 owner_auth_required boundary before any credential is sent.
+    let unauthenticated = await send(config.backend + PREFIX + 'session');
+    for (let cutover = 0; [502, 503, 504].includes(unauthenticated.status) && cutover < 3; cutover += 1) {
+      await sleep(20_000);
+      unauthenticated = await send(config.backend + PREFIX + 'session');
+    }
     if (unauthenticated.status !== 401
         || (await json(unauthenticated))?.error !== 'owner_auth_required') fail('boundary');
     await login();
