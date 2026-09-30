@@ -1073,6 +1073,26 @@ async function run() {
   console.log(`mobile-today-acceptance: PASS (${evidence.combinations.length} combinations)`);
   } catch (error) {
     primaryFailure = error;
+    // One line per open page with fixed tokens, so a release failure names
+    // the page state (lock screen, route, shell, Today, snapshot state)
+    // instead of needing another diagnostic release per failing step.
+    const states = [];
+    for (const [contextIndex, remaining] of browser.contexts().entries()) {
+      for (const [pageIndex, tab] of remaining.pages().entries()) {
+        const state = await tab.evaluate(() => [
+          `locked=${document.querySelector('.owner-access-screen') ? 'yes' : 'no'}`,
+          `route=${(location.hash || '#').slice(0, 24)}`,
+          `header=${document.querySelector('.shell__header') ? 'yes' : 'no'}`,
+          `nav=${document.querySelector('.nav__mobile') ? 'yes' : 'no'}`,
+          `today=${document.querySelector('.argus-today') ? 'yes' : 'no'}`,
+          `snapshot=${document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]')?.getAttribute('data-canonical-snapshot-state') || 'none'}`,
+          `code=${document.querySelector('[role="status"][data-owner-code]')?.getAttribute('data-owner-code') || 'none'}`,
+          `hidden=${document.hidden ? 'yes' : 'no'}`,
+        ].join(',').replace(/[^A-Za-z0-9_,=#-]/g, '')).catch(() => 'unreadable');
+        states.push(`c${contextIndex}p${pageIndex}:${state}`);
+      }
+    }
+    if (states.length && error instanceof Error) error.message += ` | pages ${states.join(' ; ')}`;
     throw error;
   } finally {
     const cleanupFailures = [];
