@@ -3058,7 +3058,9 @@ def _get_japan_watchlist_core(symbols=None, allow_provider_fetch=True):
                     "delayedSymbols": [q.get("symbol") for q in stocks if q.get("status") == "delayed"]}
         if stocks:
             if len(_JP_DYN_CACHE) >= _DYN_CACHE_MAX:
-                _JP_DYN_CACHE.clear()
+                # Evict the oldest snapshot only; clearing everything hid every other name.
+                _oldest = min(_JP_DYN_CACHE, key=lambda k: float((_JP_DYN_CACHE[k] or {}).get('expires') or 0))
+                _JP_DYN_CACHE.pop(_oldest, None)
             _JP_DYN_CACHE[syms] = {"data": snapshot, "expires": now + _JP_CACHE_TTL}
             if "_JP_FALLBACK_LAST" in globals():
                 _JP_FALLBACK_LAST["ts"] = now
@@ -3678,7 +3680,9 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
             snapshot = {"status": overall, "asOf": as_of, "provider": "twelvedata", "stocks": rows}
             if rows:
                 if len(_US_DYN_CACHE) >= _DYN_CACHE_MAX:
-                    _US_DYN_CACHE.clear()
+                    # Evict the oldest snapshot only; clearing everything hid every other name.
+                    _oldest = min(_US_DYN_CACHE, key=lambda k: float((_US_DYN_CACHE[k] or {}).get('expires') or 0))
+                    _US_DYN_CACHE.pop(_oldest, None)
                 _US_DYN_CACHE[syms] = {"data": snapshot, "expires": now + _US_CACHE_TTL}
             return snapshot
         except Exception:
@@ -5044,13 +5048,27 @@ def _quote_cached_only(sym, market):
             return _canonical_cached_quote_row_age(warm, now_epoch=now)
     dyn = _JP_DYN_CACHE if market == "JP" else _US_DYN_CACHE
     try:
+        # The dynamic TTL describes storage lifetime, not source truth: the
+        # resident warm refreshes an owner-added JP name every six hours while
+        # the snapshot expired after ten minutes, so the price vanished for
+        # most of the day (owner 2026-09-30). Prefer an unexpired row; failing
+        # that, serve the freshest expired row and let the re-ageing below
+        # mark it delayed by its own source time. Nothing is fetched.
+        fresh = None
+        stale = None
         for ent in list(dyn.values()):
-            if now >= float(ent.get("expires") or 0):
-                continue
+            expires = float(ent.get("expires") or 0)
             for s in ((ent.get("data") or {}).get("stocks") or []):
-                if str(s.get("symbol")).upper() == sym:
-                    return _canonical_cached_quote_row_age(
-                        s, now_epoch=now)
+                if str(s.get("symbol")).upper() != sym:
+                    continue
+                if now < expires:
+                    if fresh is None or expires > fresh[0]:
+                        fresh = (expires, s)
+                elif stale is None or expires > stale[0]:
+                    stale = (expires, s)
+        chosen = fresh or stale
+        if chosen is not None:
+            return _canonical_cached_quote_row_age(chosen[1], now_epoch=now)
     except Exception:
         pass
     curated = _JP_CACHE if market == "JP" else _US_CACHE
