@@ -116,5 +116,21 @@ export function validJapanMarketComparison(v: unknown, horizon: number): v is Ja
     && f.band.every(p => object(p) && finite(p.offsetSessions) && finite(p.lower) && finite(p.upper)
       && p.lower > 0 && p.lower <= p.upper)
     && finite(f.sampleCount) && Number.isInteger(f.sampleCount) && f.sampleCount >= 0
-    && finite(f.flatThresholdPct) && f.flatThresholdPct >= 0 && validCounts(f.counts, f.sampleCount);
+    && finite(f.flatThresholdPct) && f.flatThresholdPct >= 0 && validCounts(f.counts, f.sampleCount)
+    && (f.validation === undefined || validForecastValidation(f.validation, f.validationStatus));
+}
+
+function validForecastValidation(v: unknown, status: unknown): boolean {
+  if (!object(v)) return false;
+  const rate = (n: unknown) => n === null || (finite(n) && n >= 0 && n <= 1);
+  const count = (n: unknown) => finite(n) && Number.isInteger(n) && n >= 0;
+  const nonNegative = (n: unknown) => n === null || (finite(n) && n >= 0);
+  return typeof v.method === 'string' && v.predictiveProbabilities === null
+    && ['evaluations', 'directionalEvaluations', 'hits', 'stepSessions'].every(k => count(v[k]))
+    && (v.hits as number) <= (v.directionalEvaluations as number)
+    && (v.directionalEvaluations as number) <= (v.evaluations as number)
+    && ['hitRate', 'hitRateWilsonLower95', 'naiveMajorityRate', 'bandCoverage'].every(k => rate(v[k]))
+    && nonNegative(v.meanAbsoluteError) && nonNegative(v.naiveNoChangeMeanAbsoluteError)
+    && v.validationStatus === status && strings(v.reasons)
+    && (v.validationStatus === 'VALIDATED') === ((v.reasons as string[]).length === 0);
 }
