@@ -305,7 +305,9 @@ export async function openCanonicalEvidence(page, timeout = 30_000) {
     // stays proven, and a persistent failure still reports its churn and
     // the blocking element.
     let lastError = null;
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+    // (Named clickAttempt: the release-state contract locates the snapshot
+    // selection retry loop by its exact text.)
+    for (let clickAttempt = 1; clickAttempt <= 3; clickAttempt += 1) {
       await waitForSettledEvidence(page);
       try {
         await page.getByText('根拠・市場データ・システム情報', { exact: true })
