@@ -134,6 +134,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
       <label><input type="checkbox" checked={showReferences} onChange={event => setShowReferences(event.target.checked)} />その後の参考経路</label>
       <label><input type="checkbox" checked={showForecast} onChange={event => setShowForecast(event.target.checked)} />計算予測と帯</label>
     </div>
+    {document.retainedNoteJa && <p className="jp-comparison__notice" data-comparison-retained="true">{document.retainedNoteJa}</p>}
     {!document.candidates.length && <p className="jp-comparison__notice">十分に似た過去局面は見つかっていません。</p>}
     {document.candidates.length > 0 && document.candidates.every(candidate => candidate.comparisonKind === 'PARTIAL_COMPARISON') &&
       <p className="jp-comparison__notice">比較できるのは一部の条件です。市場状態全体が似ていると判断できる根拠は、まだ不足しています。</p>}

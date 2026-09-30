@@ -32,6 +32,7 @@ export function validJapanMarketComparison(v: unknown, horizon: number): v is Ja
       || !object(h.excluded) || !count(h.excluded.missingCalendarOrPriceSession) || !count(h.excluded.incompleteEpisode)
       || typeof h.allMarketFeaturesTenYearsVerified !== 'boolean') return false;
   }
+  if (v.retainedNoteJa !== undefined && (typeof v.retainedNoteJa !== 'string' || v.retainedNoteJa.length > 400)) return false;
   if (v.selectionPolicy !== undefined) {
     const p = v.selectionPolicy;
     if (!object(p) || typeof p.policyId !== 'string' || typeof p.distanceMeaning !== 'string'

@@ -101,3 +101,36 @@ def comparison_availability_improved(records, previous, *, method, now):
         if isinstance((row.get('payload') or {}).get('comparison'), dict):
             return True
     return False
+
+
+RETENTION_MAX_AGE_HOURS = 72
+
+
+def comparison_retention_reason(payload, previous, *, feature_history_available, now,
+                                max_age_hours=RETENTION_MAX_AGE_HOURS):
+    """Why a freshly calculated comparison must NOT replace the saved one.
+
+    While the market-condition history is being recalculated (after a deploy
+    that changed its method, or while its collection fails) the engine can
+    only compare price shape, and its candidates and computed forecast differ
+    from the market-condition comparison. Replacing a saved market-condition
+    document with that would make the chart swap candidates twice for no new
+    information (2026-09-30). Keep the saved document, bounded in age, until
+    the history is available again. Returns a fixed reason token or None.
+    """
+    if feature_history_available:
+        return None
+    new_candidates = ((payload or {}).get('comparison') or {}).get('candidates') or []
+    if any('marketState' not in (c.get('missingGroups') or []) for c in new_candidates if isinstance(c, dict)):
+        return None  # the new document does carry market conditions
+    old_payload = (previous or {}).get('payload') or {}
+    old_candidates = (old_payload.get('comparison') or {}).get('candidates') or []
+    if not any('marketState' not in (c.get('missingGroups') or []) for c in old_candidates if isinstance(c, dict)):
+        return None  # nothing better saved
+    try:
+        age = stamp(now) - stamp(previous['calculatedAt'])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if age.total_seconds() < 0 or age.total_seconds() > max_age_hours * 3600:
+        return None
+    return 'feature_history_recalculating'

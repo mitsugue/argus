@@ -27,6 +27,8 @@ export interface JapanMarketComparison {
     allMarketFeaturesTenYearsVerified: boolean;
   };
   /** Fixed-cutoff search receipt.  It explains selection and has no forecast authority. */
+  /** Set while a saved market-condition comparison is shown because the history is recalculating. */
+  retainedNoteJa?: string;
   /** How candidates were admitted: the yardstick per series and the bounds (2026-09-30). */
   selectionPolicy?: {
     policyId: string; lookbackSessions: number; maximumCandidates: number; minimumSeparationSessions: number;
