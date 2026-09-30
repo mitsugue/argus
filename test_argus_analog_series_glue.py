@@ -267,3 +267,15 @@ class TopixClientPathTest(unittest.TestCase):
         self.assertEqual(status["topix"]["first"], "2026-09-29")
         self.assertEqual(set(status), {"topix", "usdjpy", "us10y", "margin1570", "foreignFlow"})
         scanner._TOPIX_HIST_CACHE.update(data=None, expires=0.0, status="NOT_RUN", path=None)
+
+
+class BacktestWiringTest(unittest.TestCase):
+    def test_comparison_passes_the_shared_backtest_cache(self):
+        captured = {}
+        def fake(rows, **kwargs):
+            captured.update(kwargs); return {"status": "unavailable", "comparison": None}
+        with mock.patch.dict(scanner._N225_ANALOG_HISTORY, {"data": [{"date": "2026-09-29", "close": 1.0},
+                                                                     {"date": "2026-09-30", "close": 1.0}]}), \
+                mock.patch.object(scanner.jp_market_price_paths, "cached_index_comparison", side_effect=fake):
+            scanner._jp_market_comparison_calculate(5)
+        self.assertIs(captured["backtest_cache"], scanner._JP_ANALOG_BACKTEST_CACHE)

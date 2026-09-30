@@ -372,7 +372,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'jp_market_analogs.py': '35ba9a10653b4d78ae63f1597e84aba6166eefe7',
     'jp_market_dynamics.py': '6949bb8b2cc4a1526f09016fb0c0e10369ce488d',
     'jp_market_events.py': 'ef42f6dc1458e07f16f69dcac7c6953e9ddd4a3c',
-    'jp_market_features.py': '9e38be7c2fe2e90bd9853ed884ff3082afc6c184',
+    'jp_market_features.py': 'caaea1c578666cfd1bd8cb91c591dd3a67a2282d',
     'jp_market_price_paths.py': '9df225febd40f5c7231f49489770ae0e4ed9ac03',
     'jp_market_source_adapters.py': 'a02e8c87f1796774af522e2202a5aaa617244938',
     'ops/calendar/jp_index_sq_2026.json': 'd55cbf1e1362d4d86b21fe413cc2de35b035bd62',
@@ -650,6 +650,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_jp_market_sign_conditions.py",
     "test_jp_market_analog_backtest.py",
     "jp_market_analog_backtest.py",
     "test_jp_market_loss_proxy.py",

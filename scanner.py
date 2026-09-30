@@ -38716,6 +38716,9 @@ def _jp_exchange_sessions(first, last, historical_calendar_rows=()):
     return sessions, missing_calendar
 
 
+_JP_ANALOG_BACKTEST_CACHE = {}
+
+
 def _jp_market_comparison_calculate(horizon):
     """Bounded cached-only chart calculation; no fetch, AI or persistence."""
     cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}
@@ -38741,7 +38744,10 @@ def _jp_market_comparison_calculate(horizon):
             # which the scale keeps distinguishable by basis.
             valuation=(_JP_INDEX_VALUATION.snapshot(cutoff) or _jp_index_proxy_row(cutoff)),
             state_rows=_JP_MARKET_FEATURE_HISTORY.get("features", ()),
-            condition_rows=_JP_MARKET_FEATURE_HISTORY.get("conditions", ()))
+            condition_rows=_JP_MARKET_FEATURE_HISTORY.get("conditions", ()),
+            # Walk-forward validation, computed when the history or the
+            # policy changes and shared by the four horizons (2026-09-30).
+            backtest_cache=_JP_ANALOG_BACKTEST_CACHE)
         result["marketFeatureAcquisition"] = {k: _JP_MARKET_FEATURE_HISTORY.get(k)
             for k in ("status", "lastSuccessfulCalculationAt", "errorClass", "errorReason",
                       "firstCutoff", "lastCutoff")}
