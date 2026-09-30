@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.78"
+PRODUCT_VERSION = "v13.7.79"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '79fa1e3335f85ff01fd538a40b6b1856eec33d79',
-    'web/scripts/pwa-identity.test.mjs': '1076292af94db879bc817b834b259cc4f4f0b34c',
-    'web/scripts/owner-today-https.mjs': '728ae5437a322a1d33cc2589a9a3f3fffd53e75b',
+    'web/scripts/pwa-identity.test.mjs': 'b1b1cff7967b12d94fc3c1e66bc4bb0ca303b5d7',
+    'web/scripts/owner-today-https.mjs': '5775af13283f682468c1219092321bdb04703d39',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -156,7 +156,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_owner_auth.py': '09abfb764361266e39b60dc67ffdb2ee02678501',
     'web/scripts/owner-session.test.cjs': '392aa720d19d625d69915515462b1b09e8f169f6',
     'web/src/components/OwnerAccess.css': '57b5edd0184ebe095325ea3a293e5182d823a6ab',
-    'web/src/components/OwnerAccess.tsx': 'a1150b8d623aeb97936885fe4f145b02a54cd90e',
+    'web/src/components/OwnerAccess.tsx': '74449480f87e23e8cc6baa0ead03f1f0d876b92b',
     'web/src/lib/ownerSession.ts': '6c1e999b10c60a640593bb1ab9fcedd9a2012b50',
     'docs/MACRO_RESULT_RECEIPT_MIGRATION.md': '131e4784bd6be96daf0c9dda4b318735840cdcba',
     'test_argus_macro_receipt_boundary.py': '4fa5e23ee6392489497483a65ca90e1786b92d1d',
