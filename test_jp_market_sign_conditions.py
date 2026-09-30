@@ -77,3 +77,16 @@ class SignConditionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InputWindowTest(unittest.TestCase):
+    def test_price_rows_older_than_the_window_do_not_change_any_value(self):
+        n = daily("NIKKEI_225_INDEX", "2026-06-01", [100 + (i % 7) for i in range(80)])
+        s = daily("SP500_INDEX", "2026-06-01", [50 + (i % 5) for i in range(80)])
+        old = daily("NIKKEI_225_INDEX", "2024-01-01", [999.0] * 30)
+        cutoff = "2026-09-18T23:00:00Z"
+        base = features.build_market_features(cutoff=cutoff, price_series={"nikkei": n, "sp500": s})
+        padded = features.build_market_features(cutoff=cutoff, price_series={"nikkei": old + n, "sp500": s})
+        self.assertEqual(base["features"], padded["features"])
+        self.assertEqual(base["conditions"], padded["conditions"])
+        self.assertGreaterEqual(features.FEATURE_INPUT_WINDOW_DAYS, 26 * 7 + features.SIGN_CONDITION_LOOKBACK_DAYS // 2)
