@@ -64,7 +64,13 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
   // bounded retries. A wrong password stays a hard stop, and 429 stays unretried.
   const readyTimeoutMs = Number(env.ARGUS_ACCEPTANCE_READY_TIMEOUT_MS || 12 * 60 * 1000);
   const readyIntervalMs = Number(env.ARGUS_ACCEPTANCE_READY_INTERVAL_MS || 15000);
-  const expectedSha = String(env.ARGUS_EXPECTED_SHA || '').trim().toLowerCase();
+  // The build to wait for is the BACKEND build. ARGUS_EXPECTED_SHA is the
+  // Pages commit, which a frontend-only ([skip render]) release never deploys
+  // to the backend, so waiting for it hung every such release for the whole
+  // 12-minute seed budget (2026-09-30). Exact backend identity is proven by
+  // the candidate-identity job; this reader only waits out a cutover.
+  const expectedSha = String(env.ARGUS_EXPECTED_BACKEND_SHA || '').trim().toLowerCase();
+  const waitEnabled = Boolean(expectedSha || String(env.ARGUS_EXPECTED_SHA || '').trim());
   const probe = async (route) => {
     const response = await fetch(config.backend + route, { signal: AbortSignal.timeout(20000) });
     if (!response.ok) return { status: response.status, body: null };
@@ -74,7 +80,7 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
   async function waitForBackend() {
     // Only a run that names the build it expects has a cutover to wait out.
     // Unit tests and PR checks name none and must never probe a host.
-    if (!config.enabled || !expectedSha) return { waited: false };
+    if (!config.enabled || !waitEnabled) return { waited: false };
     const started = Date.now();
     let last = 'not_checked';
     for (;;) {

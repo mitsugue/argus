@@ -60,7 +60,7 @@ test('the reader waits for a ready backend at the expected build before any cere
     throw new Error('unexpected ' + url);
   };
   try {
-    const owner = createBrowserOwner({ baseUrl: backend, publicUrl, env: { ...env, ARGUS_EXPECTED_SHA: 'abcdef12', ARGUS_ACCEPTANCE_READY_INTERVAL_MS: '1', ARGUS_ACCEPTANCE_READY_TIMEOUT_MS: '5000' } });
+    const owner = createBrowserOwner({ baseUrl: backend, publicUrl, env: { ...env, ARGUS_EXPECTED_SHA: 'pagesha0', ARGUS_EXPECTED_BACKEND_SHA: 'abcdef12', ARGUS_ACCEPTANCE_READY_INTERVAL_MS: '1', ARGUS_ACCEPTANCE_READY_TIMEOUT_MS: '5000' } });
     const result = await owner.waitForBackend();
     assert.equal(result.waited, true); assert.equal(result.buildSha, 'abcdef12');
     assert.equal(calls.filter(u => u.endsWith('/readyz')).length, 3);
@@ -79,5 +79,23 @@ test('without an expected build, and in disabled mode, the reader never probes a
   try {
     assert.deepEqual(await createBrowserOwner({ baseUrl: '', publicUrl: '', env: {} }).waitForBackend(), { waited: false });
     assert.deepEqual(await createBrowserOwner({ baseUrl: backend, publicUrl, env }).waitForBackend(), { waited: false });
+  } finally { globalThis.fetch = original; }
+});
+
+test('a frontend-only release waits for readiness only, never for its own Pages commit on the backend', async () => {
+  // 2026-09-30: ARGUS_EXPECTED_SHA is the Pages commit; a [skip render]
+  // release never deploys it to the backend, and waiting for it hung the seed.
+  const original = globalThis.fetch; const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    if (String(url).endsWith('/readyz')) return { ok: true, status: 200, json: async () => ({ ready: true }) };
+    if (String(url).endsWith('/healthz')) return { ok: true, status: 200, json: async () => ({ buildSha: 'older0000backend' }) };
+    throw new Error('unexpected ' + url);
+  };
+  try {
+    const owner = createBrowserOwner({ baseUrl: backend, publicUrl, env: { ...env, ARGUS_EXPECTED_SHA: 'pagesha0', ARGUS_ACCEPTANCE_READY_INTERVAL_MS: '1', ARGUS_ACCEPTANCE_READY_TIMEOUT_MS: '50' } });
+    const result = await owner.waitForBackend();
+    assert.equal(result.waited, true);
+    assert.equal(calls.filter(u => u.endsWith('/healthz')).length, 0);
   } finally { globalThis.fetch = original; }
 });
