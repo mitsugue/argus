@@ -279,3 +279,18 @@ class BacktestWiringTest(unittest.TestCase):
                 mock.patch.object(scanner.jp_market_price_paths, "cached_index_comparison", side_effect=fake):
             scanner._jp_market_comparison_calculate(5)
         self.assertIs(captured["backtest_cache"], scanner._JP_ANALOG_BACKTEST_CACHE)
+
+
+class ResearchAfterFeaturesTest(unittest.TestCase):
+    def test_a_new_feature_history_lifts_the_research_throttle(self):
+        status = {"status": "AVAILABLE", "restoreAttempted": True, "lastAttemptMonotonic": time.monotonic()}
+        history = {"status": "AVAILABLE", "features": [], "conditions": [], "latest": {}}
+        with mock.patch.object(scanner, "_INDEX_RESEARCH_STATUS", status), \
+                mock.patch.object(scanner.jp_market_features, "build_feature_history", return_value=history), \
+                mock.patch.object(scanner, "_jp_market_feature_history_persist", lambda *a, **k: None), \
+                mock.patch.dict(scanner._N225_ANALOG_HISTORY, {"data": [{"date": "2026-09-29", "close": 1.0}]}), \
+                mock.patch.object(scanner, "_JP_MARKET_FEATURE_HISTORY", {"status": "NOT_RUN", "features": [], "conditions": []}), \
+                mock.patch.object(scanner, "_cost_policy_durable_enabled", return_value=False):
+            scanner._jp_market_feature_history_warm()
+            self.assertEqual(scanner._JP_MARKET_FEATURE_HISTORY["status"], "AVAILABLE")
+        self.assertIsNone(status["lastAttemptMonotonic"])
