@@ -2303,6 +2303,12 @@ def test_owner_jp_symbols_for_warm_never_raises(monkeypatch):
 
 def test_collect_warms_the_owner_jp_names_with_a_provider_fetch(monkeypatch):
     monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "tok")
+    # This test is about the owner JP warm. The collect also rebuilds the
+    # JP market engine inputs (ten-year feature history over live index
+    # data), which made this one test take 79-220 s and set the pace of the
+    # whole parallel suite; that path has its own tests.
+    monkeypatch.setattr(scanner, "_jp_market_engine_pit_inputs",
+                        lambda warm=False: {"sourceStatus": {}})
     monkeypatch.setattr(scanner, "_owner_jp_symbols_for_warm", lambda limit=None: ("314A", "7011"))
     calls = []
     monkeypatch.setattr(scanner, "_get_japan_watchlist_core",
