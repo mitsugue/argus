@@ -337,7 +337,15 @@ export async function openCanonicalEvidence(page, timeout = 30_000) {
       const blocker = (covering ? [covering[1], coveringClass].filter(Boolean) : [])
         .join('.').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 60)
         || (message.match(/strict mode violation/i) ? 'strict-mode' : '');
-      throw new Error(`canonical_evidence_click_failed:${stage}:churn${churn}${blocker ? `:by:${blocker}` : ''}`);
+      // Playwright's own last waiting states (e.g. "element is not visible",
+      // "element is not stable"), reduced to ASCII words: the page text is
+      // never copied, only the action log's reason.
+      const reason = message.split('\n')
+        .filter((line) => /^\s*-\s/.test(line) && !/<|getByText|locator\(/.test(line))
+        .slice(-2).join('|')
+        .replace(/[^A-Za-z0-9 |_-]/g, '').replace(/\s+/g, '_').slice(0, 120);
+      throw new Error(`canonical_evidence_click_failed:${stage}:churn${churn}`
+        + `${blocker ? `:by:${blocker}` : ''}${reason ? `:why:${reason}` : ''}`);
     }
   }
   await page.waitForFunction(() =>
