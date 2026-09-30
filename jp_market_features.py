@@ -131,7 +131,15 @@ def _reusable_cutoffs(history, ordered, sources, *, diagnostic=None):
             # The observation date can be old. New knowledge cannot affect an
             # earlier cutoff: point_in_time_rows excludes it before selecting
             # revisions. Require the correction's own receipt, never backdate it.
-            if (key == "sq_events" or known is None or known <= boundary or period is None
+            if key == "sq_events":
+                # A schedule row only matches the cutoff whose JST date it was
+                # calculated on; one calculated after the boundary cannot
+                # change an earlier cutoff.
+                calculated = _instant(row.get("calculatedAt"))
+                if calculated is None or calculated <= boundary:
+                    return reject("append_can_affect_prior_cutoff", key)
+                continue
+            if (known is None or known <= boundary or period is None
                     or (row.get("revision", 0) != 0 and _instant(row.get("knownAt")) is None)):
                 return reject("append_can_affect_prior_cutoff", key)
     if diagnostic is not None:
@@ -350,17 +358,21 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
     from jp_market_events import JST
     cutoff_time = _instant(cutoff)
     cutoff_jp_date = cutoff_time.astimezone(JST).date().isoformat()
-    for event in sorted(sq_events, key=lambda event: event.get("sqDate", "")):
+    # The published schedule (VERIFIED) governs whenever it covers the date;
+    # the exchange-calendar rule (RULE_DERIVED, 2026-09-30) supplies history
+    # only, and its basis travels with the feature's input reference.
+    for event in sorted(sq_events, key=lambda event: (event.get("calendarStatus") != "VERIFIED",
+                                                     event.get("sqDate", ""))):
         known = _instant(event.get("knownAt"))
         calculated = _instant(event.get("calculatedAt"))
-        if event.get("calendarStatus") == "VERIFIED" and known and known <= cutoff_time and \
+        if event.get("calendarStatus") in ("VERIFIED", "RULE_DERIVED") and known and known <= cutoff_time and \
                 calculated and calculated <= cutoff_time and calculated.astimezone(JST).date().isoformat() == cutoff_jp_date and \
                 event.get("tradingSessionsUntil") is not None and event.get("sqDate", "") >= cutoff_jp_date:
             # The scheduled date may be in the future, while this distance is
             # an observation calculated at the explicit information cutoff.
             emit("event.sq_sessions", event["tradingSessionsUntil"], [{
                 "instrumentId": INSTRUMENT, "seriesId": "sq_schedule", "date": cutoff_time.date().isoformat(),
-                "calculationDateJst": cutoff_jp_date,
+                "calculationDateJst": cutoff_jp_date, "calendarStatus": event.get("calendarStatus"),
                 "availableFrom": cutoff, "sourceRef": event.get("sourceRef"),
                 "knownAt": event["knownAt"]}])
             break

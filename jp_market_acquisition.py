@@ -413,3 +413,36 @@ def merge_feature_sources(existing, official, *, path=None, received_at=None):
         return [saved[day] for day in sorted(saved)]
     finally:
         db.close()
+
+
+def apply_scheduled_availability(rows, *, lag_days, source_label):
+    """Read-side rule for provider rows whose only stamp is their receipt.
+
+    An original observation (revision 0 or none) becomes available `lag_days`
+    after its period end at 00:00Z when that is earlier than its receipt; the
+    receipt stays as receivedAt and the raw rows are untouched. Corrections
+    (revision >= 1) keep their receipt. Used for the weekly JPX margin
+    balances of 1570 (published on the second business day after the Friday;
+    six days is conservative). Not vintage proof.
+    """
+    if isinstance(lag_days, bool) or not isinstance(lag_days, int) or not 0 <= lag_days <= 14:
+        raise ValueError('scheduled_lag_bound')
+    result = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        period = str(row.get('periodEnd') or row.get('date') or '')[:10]
+        known = row.get('knownAt') or row.get('availableFrom')
+        if len(period) != 10 or not known or int(row.get('revision', 0) or 0) != 0:
+            result.append(row); continue
+        try:
+            scheduled = (date.fromisoformat(period) + timedelta(days=lag_days)).isoformat() + 'T00:00:00Z'
+            if _time(scheduled) < _time(str(known)):
+                row = {**row, 'knownAt': scheduled, 'availableFrom': scheduled,
+                       'receivedAt': row.get('receivedAt') or known,
+                       'availabilityBasis': 'SCHEDULED_PUBLICATION',
+                       'availabilityRule': source_label}
+        except ValueError:
+            pass
+        result.append(row)
+    return result

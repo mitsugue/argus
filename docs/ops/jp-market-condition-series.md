@@ -32,9 +32,9 @@
 | fx.usdjpy_change5 | Yahoo JPY=X 10年 | 翌日 00:00Z | B1 で追加 |
 | rate.us10y_change5 | FRED DGS10 | 翌々日 00:00Z | B1 で追加 |
 | nt.ratio_change5 | J-Quants `/indices/bars/daily/topix` 10年 | 翌日 00:00Z | B1 で追加(TOPIX水準は表示しない) |
-| margin1570.ratio / long_change_pct / short_change_pct | J-Quants 信用残(1570) | 受信時刻(現状) | B2: 10年へ拡大、入手時刻規則の検討 |
-| foreign_flow.net4w | J-Quants 投資部門別 | 未定 | B2 |
-| event.sq_sessions | JPX 公表日程 | 過去分は規則導出をラベル | B2 |
+| margin1570.ratio / long_change_pct / short_change_pct | J-Quants 信用残(1570) 10年(1日1回の取り寄せで店に追記) | 週末+6日 00:00Z(原観測)・訂正は受信時刻 | B2 で追加 |
+| foreign_flow.net4w | J-Quants 投資部門別(台帳・10年の一回取込) | 公式PubDate 18:00 JST | B2 で過去側を追加 |
+| event.sq_sessions | 現在=JPX公表日程(VERIFIED)・過去=第2金曜/前営業日の規則(RULE_DERIVED) | 計算日の 00:00 JST | B2 で追加。規則導出は VERIFIED と表示しない |
 | credit.loss_pct | 無料の公式10年源なし | — | B3: 代理計算をラベル付きで実装、公式値と区別 |
 
 ## 取得の頻度と経路

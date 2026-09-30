@@ -102,3 +102,82 @@ class YahooRangeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BackfillWindowTest(unittest.TestCase):
+    def test_margin_and_investor_windows_depend_on_store_depth(self):
+        from datetime import date
+        today = date(2026, 9, 30)
+        recent = [{"periodEnd": "2026-07-03"}, {"periodEnd": "2026-09-25"}]
+        deep = recent + [{"periodEnd": "2017-01-06"}]
+        self.assertEqual(scanner._jq_margin_backfill_window_days(recent, today), 3640)
+        self.assertEqual(scanner._jq_margin_backfill_window_days([], today), 3640)
+        self.assertIsNone(scanner._jq_margin_backfill_window_days(deep, today))
+        self.assertEqual(scanner._investor_types_window_days(recent, today), 3640)
+        self.assertEqual(scanner._investor_types_window_days(deep, today), 45)
+        self.assertEqual(scanner._investor_types_window_days([{"periodEnd": None}, "x"], today), 3640)
+
+
+class SqEventInputsTest(unittest.TestCase):
+    def test_rule_rows_for_history_and_published_rows_for_today(self):
+        from datetime import date, timedelta
+        bars = [{"date": (date(2026, 8, 3) + timedelta(days=n)).isoformat()} for n in range(0, 40)
+                if (date(2026, 8, 3) + timedelta(days=n)).weekday() < 5]
+        calendar = [{"Date": (date(2026, 8, 1) + timedelta(days=n)).isoformat(),
+                     "HolDiv": "1" if (date(2026, 8, 1) + timedelta(days=n)).weekday() < 5 else "0"} for n in range(0, 120)]
+        published = {"events": [{"eventId": "jp-monthly-sq-2026-10", "sqDate": "2026-10-09", "calendarStatus": "VERIFIED",
+                                 "calculatedAt": "2026-09-30T08:00:00+00:00", "knownAt": "2026-09-11T11:17:56+00:00",
+                                 "tradingSessionsUntil": 7, "sourceRef": "https://www.jpx.co.jp/x"},
+                                {"eventId": "conflict", "calendarStatus": "UNAVAILABLE_OR_CONFLICT"}]}
+        with mock.patch.dict(scanner._N225_ANALOG_HISTORY, {"calendar": calendar}), \
+                mock.patch.object(scanner.jp_market_events, "published_sq_calendar", return_value=published):
+            rows = scanner._jp_market_feature_sq_events(bars, "2026-09-30T08:00:00Z")
+        rule = [r for r in rows if r["calendarStatus"] == "RULE_DERIVED"]
+        verified = [r for r in rows if r["calendarStatus"] == "VERIFIED"]
+        self.assertEqual(len(verified), 1)
+        self.assertTrue(rule and all(r["sourceRef"] == scanner.jp_market_events.SQ_RULE_SOURCE for r in rule))
+        # History rows are keyed by the JST date after each bar; today's JST date is present too.
+        dates = {r["date"] for r in rule}
+        self.assertIn("2026-08-04", dates)
+        self.assertIn("2026-09-30", dates)
+        self.assertEqual(next(r for r in rule if r["date"] == "2026-08-04")["sqDate"], "2026-08-14")
+        # A calendar failure leaves only the published rows, never an exception.
+        with mock.patch.object(scanner, "_jp_exchange_sessions", side_effect=ValueError("calendar")), \
+                mock.patch.object(scanner.jp_market_events, "published_sq_calendar", return_value=published):
+            self.assertEqual(len(scanner._jp_market_feature_sq_events(bars, "2026-09-30T08:00:00Z")), 1)
+        with mock.patch.object(scanner.jp_market_events, "published_sq_calendar", side_effect=OSError("missing")):
+            self.assertEqual(scanner._jp_market_feature_sq_events([], "2026-09-30T08:00:00Z"), [])
+
+
+class MarginBackfillTest(unittest.TestCase):
+    def test_backfill_appends_once_a_day_and_names_failures(self):
+        scanner._JQ_MARGIN_BACKFILL.update(lastAttemptDay=None, status="NOT_RUN")
+        saved = scanner._JQ_MARGIN_CACHE.pop("1570", None)
+        rows = [{"Code": "15700", "Date": "2017-01-06", "LongVol": 1000, "ShrtVol": 500},
+                {"Code": "15700", "Date": "2026-09-25", "LongVol": 2000, "ShrtVol": 800}]
+        calls = []
+        try:
+            with mock.patch.object(scanner, "_JQUANTS_API_KEY", "k"), \
+                    mock.patch.object(scanner, "_cost_policy_durable_enabled", return_value=False), \
+                    mock.patch.object(scanner, "_jquants_paginated", side_effect=lambda p, q: calls.append((p, q)) or rows), \
+                    mock.patch.object(scanner, "_ai_now_iso", return_value="2026-09-30T09:00:00Z"):
+                self.assertEqual(scanner._jq_margin_history_backfill(), "APPENDED:4")
+                self.assertEqual(calls[0][0], "/markets/margin-interest")
+                self.assertEqual(calls[0][1]["code"], "1570")
+                stored = scanner._JQ_MARGIN_CACHE["1570"]["sourceSnapshot"]["rows"]
+                self.assertEqual(sorted({r["periodEnd"] for r in stored}), ["2017-01-06", "2026-09-25"])
+                # Same day: no second request. Store now reaches nine years back: no window either.
+                self.assertEqual(scanner._jq_margin_history_backfill(), "APPENDED:4")
+                self.assertEqual(len(calls), 1)
+            scanner._JQ_MARGIN_BACKFILL.update(lastAttemptDay=None)
+            scanner._JQ_MARGIN_CACHE.pop("1570", None)
+            with mock.patch.object(scanner, "_JQUANTS_API_KEY", "k"), \
+                    mock.patch.object(scanner, "_cost_policy_durable_enabled", return_value=False), \
+                    mock.patch.object(scanner, "_jquants_paginated", side_effect=RuntimeError("jquants_http_403")), \
+                    mock.patch.object(scanner, "_ai_now_iso", return_value="2026-10-01T09:00:00Z"):
+                self.assertEqual(scanner._jq_margin_history_backfill(), "FAILED:RuntimeError")
+        finally:
+            scanner._JQ_MARGIN_CACHE.pop("1570", None)
+            if saved is not None:
+                scanner._JQ_MARGIN_CACHE["1570"] = saved
+            scanner._JQ_MARGIN_BACKFILL.update(lastAttemptDay=None, status="NOT_RUN")
