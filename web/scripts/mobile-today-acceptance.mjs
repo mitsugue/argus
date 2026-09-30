@@ -1092,7 +1092,9 @@ async function run() {
         states.push(`c${contextIndex}p${pageIndex}:${state}`);
       }
     }
-    if (states.length && error instanceof Error) error.message += ` | pages ${states.join(' ; ')}`;
+    // Printed directly: the fatal handler prints error.stack, which V8 fixes
+    // at construction, so an appended message would never reach the log.
+    if (states.length) console.error(`mobile-today-acceptance pages: ${states.join(' ; ')}`);
     throw error;
   } finally {
     const cleanupFailures = [];
