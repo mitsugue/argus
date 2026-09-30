@@ -261,6 +261,7 @@ def test_notification_workflow_consolidation_preserves_schedule_semantics():
         "learning-memory.yml",        # learning memory roll-up
         "macro-event-analysis.yml",   # macro result/generation slots
         "market-alerts.yml",          # the owner-facing alert cadence below
+        "pages-deploy-watchdog.yml",  # cancels a Pages release stuck unassigned (2026-09-30)
         "prediction-ledger.yml",      # daily ledger close
         "smoke-test.yml",             # six-hourly production smoke
         "vault-sync.yml",             # owner vault sync

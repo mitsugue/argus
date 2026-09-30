@@ -650,6 +650,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    ".github/workflows/pages-deploy-watchdog.yml",
     "docs/ops/ai-execution-settings.md",
     "test_argus_chart_intelligence.py",
     "test_argus_verified_snapshot.py",
