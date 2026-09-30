@@ -9467,7 +9467,7 @@ def _investor_types_autorefresh():
     try:
         raw = _jquants_paginated(
             "/equities/investor-types",
-            {"section": "TokyoNagoya", "from": frm, "to": to})
+            {"section": "TokyoNagoya", "from": frm, "to": to}, request_timeout=30)
         candidates = argus_market_intelligence.normalize_jquants_investor_rows(
             raw, now_iso, "TokyoNagoya")
         existing = {(x.get("seriesId"), x.get("periodEnd"),
@@ -9479,6 +9479,7 @@ def _investor_types_autorefresh():
                           x.get("availableFrom"), x.get("value"))
                       not in existing]
         if not candidates:
+            _INVESTOR_TYPES_REFRESH["outcome"] = f"NO_NEW_ROWS:{len(raw)}:window{window_days}"
             return
         measurement_started = \
             _recovery_phase_a_begin_market_ledger_observation()
@@ -9496,8 +9497,12 @@ def _investor_types_autorefresh():
                 measurement_started, result, checkpoint)
             add_log(f"[d05] investor-types autorefresh "
                     f"+{len(result.get('preview') or [])} rows")
+            _INVESTOR_TYPES_REFRESH["outcome"] = f"IMPORTED:{len(result.get('preview') or [])}:window{window_days}"
+        else:
+            _INVESTOR_TYPES_REFRESH["outcome"] = f"IMPORT_REFUSED:window{window_days}"
     except Exception as exc:
         add_log(f"[d05] investor-types autorefresh failed: {type(exc).__name__}")
+        _INVESTOR_TYPES_REFRESH["outcome"] = "FAILED:" + type(exc).__name__
 
 
 _INTEL_COLLECT_LOCK = threading.Lock()
@@ -38664,6 +38669,31 @@ def _index_research_warm():
         _INDEX_RESEARCH_LOCK.release()
 
 
+def _jp_market_series_acquisition_status():
+    """Counts, first dates and fixed status tokens for the market-condition
+    history sources (no values, no rows): enough to name why a series is
+    missing on the historical side."""
+    def span(rows, key="date"):
+        days = sorted(str(r.get(key) or r.get("periodEnd") or "")[:10] for r in rows or () if isinstance(r, dict))
+        days = [d for d in days if len(d) == 10]
+        return {"rows": len(days), "first": days[0] if days else None, "last": days[-1] if days else None}
+    usdjpy = (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("JPY=X") or {})
+    margin_rows = ((_JQ_MARGIN_CACHE.get("1570") or {}).get("sourceSnapshot") or {}).get("rows") or []
+    try:
+        flows = argus_market_ledger.latest_by_series(_MARKET_LEDGER, _ai_now_iso()).get("flow.foreign", [])
+    except Exception:
+        flows = []
+    return {
+        "topix": {**span(_TOPIX_HIST_CACHE.get("data")), "status": _TOPIX_HIST_CACHE.get("status"),
+                  "path": _TOPIX_HIST_CACHE.get("path"), "clientError": _TOPIX_HIST_CACHE.get("clientError")},
+        "usdjpy": {**span(usdjpy.get("data")), "status": usdjpy.get("lastFetchStatus")},
+        "us10y": span(_US10Y_HIST_DATED_CACHE.get("data")),
+        "margin1570": {**span([r for r in margin_rows if r.get("seriesId") == "margin.long_balance"], "periodEnd"),
+                       "backfill": _JQ_MARGIN_BACKFILL.get("status")},
+        "foreignFlow": {**span(flows, "periodEnd"), "refresh": _INVESTOR_TYPES_REFRESH.get("outcome")},
+    }
+
+
 def _jp_exchange_sessions(first, last, historical_calendar_rows=()):
     """Tokyo exchange session dates in [first, last]: the stored historical
     HolDiv table where it covers a day, the market clock otherwise. Returns
@@ -38716,6 +38746,7 @@ def _jp_market_comparison_calculate(horizon):
             for k in ("status", "lastSuccessfulCalculationAt", "errorClass", "errorReason",
                       "firstCutoff", "lastCutoff")}
         result["marketFeatureAcquisition"]["derivedCache"] = dict(_JP_MARKET_FEATURE_CACHE_STATUS)
+        result["marketFeatureAcquisition"]["seriesAcquisition"] = _jp_market_series_acquisition_status()
         result["marketFeatureAcquisition"]["officialSources"] = _JP_OFFICIAL_SOURCE_CACHE.snapshot()
         if result.get('comparison'):
             result['comparison']['sourceAcquisition'] = {
@@ -44388,9 +44419,22 @@ def _jquants_topix_history(fetch=False):
         today = datetime.now(TZ_JST).date()
         # 3,640 days: inside the rolling ten-year entitlement. 3,660 overhung
         # it by a week and J-Quants rejected the whole request (v13.5.36).
-        rows = _jquants_paginated("/indices/bars/daily/topix", {
-            "from": (today - timedelta(days=3640)).isoformat(), "to": today.isoformat()},
-            max_pages=20, request_timeout=20)
+        start = today - timedelta(days=3640)
+        try:
+            # The official client is the path proven in production by the
+            # index audit (Date/O/H/L/C). The raw endpoint is the fallback.
+            import jquantsapi
+            frame = jquantsapi.ClientV2(api_key=_JQUANTS_API_KEY).get_idx_bars_daily_topix(
+                from_yyyymmdd=start.strftime("%Y%m%d"), to_yyyymmdd=today.strftime("%Y%m%d"))
+            rows = [{key: (str(value)[:10] if key == "Date" else value) for key, value in record.items()}
+                    for record in frame.to_dict("records")]
+            _TOPIX_HIST_CACHE["path"] = "jquantsapi_client"
+        except Exception as client_exc:
+            _TOPIX_HIST_CACHE["clientError"] = type(client_exc).__name__
+            rows = _jquants_paginated("/indices/bars/daily/topix", {
+                "from": start.strftime("%Y%m%d"), "to": today.strftime("%Y%m%d")},
+                max_pages=20, request_timeout=20)
+            _TOPIX_HIST_CACHE["path"] = "raw_endpoint"
         payload = {"data": rows}
         digest = hashlib.sha256(json.dumps(rows, sort_keys=True, ensure_ascii=False,
                                            separators=(",", ":"), default=str).encode()).hexdigest()

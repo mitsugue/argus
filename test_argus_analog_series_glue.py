@@ -56,7 +56,15 @@ class Us10yTest(unittest.TestCase):
 
 class TopixTest(unittest.TestCase):
     def setUp(self):
+        import sys
         scanner._TOPIX_HIST_CACHE.update(data=None, expires=0.0, status="NOT_RUN")
+        # The official client path is tried first; make it unavailable here so
+        # the raw-endpoint fallback is exercised without any network access.
+        self._client = mock.patch.dict(sys.modules, {"jquantsapi": None})
+        self._client.start()
+
+    def tearDown(self):
+        self._client.stop()
 
     def test_public_path_is_cached_only_and_warm_normalizes_with_next_day_availability(self):
         with mock.patch.object(scanner, "_jquants_paginated", side_effect=AssertionError("no request")):
@@ -232,3 +240,30 @@ class IndexPerInputTest(unittest.TestCase):
         self.assertEqual([(r["date"], r["value"]) for r in rows], [("2026-09-28", 19.2)])
         self.assertEqual(rows[0]["instrumentId"], "NIKKEI_225_PER")
         self.assertEqual(rows[0]["derivationBasis"], "ARGUS_PROXY_INDEX_BASED_PER")
+
+
+class TopixClientPathTest(unittest.TestCase):
+    def test_official_client_rows_are_normalized_and_path_recorded(self):
+        import sys, types
+        scanner._TOPIX_HIST_CACHE.update(data=None, expires=0.0, status="NOT_RUN")
+        class Frame:
+            def to_dict(self, orient):
+                return [{"Date": "2026-09-29 00:00:00", "O": 3000.0, "H": 3010.0, "L": 2990.0, "C": 3005.0}]
+        seen = {}
+        class Client:
+            def __init__(self, api_key): seen["key"] = api_key
+            def get_idx_bars_daily_topix(self, from_yyyymmdd, to_yyyymmdd):
+                seen["range"] = (from_yyyymmdd, to_yyyymmdd); return Frame()
+        module = types.SimpleNamespace(ClientV2=Client)
+        with mock.patch.dict(sys.modules, {"jquantsapi": module}), \
+                mock.patch.object(scanner, "_JQUANTS_API_KEY", "k"), \
+                mock.patch.object(scanner, "_jquants_paginated", side_effect=AssertionError("fallback not needed")):
+            rows = scanner._jquants_topix_history(fetch=True)
+        self.assertEqual([r["date"] for r in rows], ["2026-09-29"])
+        self.assertEqual(scanner._TOPIX_HIST_CACHE["path"], "jquantsapi_client")
+        self.assertEqual(len(seen["range"][0]), 8)
+        status = scanner._jp_market_series_acquisition_status()
+        self.assertEqual(status["topix"]["rows"], 1)
+        self.assertEqual(status["topix"]["first"], "2026-09-29")
+        self.assertEqual(set(status), {"topix", "usdjpy", "us10y", "margin1570", "foreignFlow"})
+        scanner._TOPIX_HIST_CACHE.update(data=None, expires=0.0, status="NOT_RUN", path=None)
