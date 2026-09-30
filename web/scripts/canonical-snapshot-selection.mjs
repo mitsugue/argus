@@ -243,7 +243,26 @@ async function readCanonicalResponseBody(page, timeout) {
     const contract = document.querySelector(selector);
     return /^vs-[0-9a-f]{32}$/.test(
       contract?.getAttribute('data-canonical-response-snapshot-id') ?? '');
-  }, { selector: CANONICAL_RESPONSE_SELECTOR }, { timeout });
+  }, { selector: CANONICAL_RESPONSE_SELECTOR }, { timeout }).catch(async (error) => {
+    // The app publishes the response id only when the rendered snapshot has
+    // moved to that exact identity. Name which side did not arrive (fixed
+    // tokens: snapshot state, whether each id is present and equal, lock).
+    const state = await page.evaluate((selector) => {
+      const contract = document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]');
+      const response = document.querySelector(selector);
+      const shown = contract?.getAttribute('data-canonical-snapshot-id') || '';
+      const answered = response?.getAttribute('data-canonical-response-snapshot-id') || '';
+      return [
+        `state=${contract?.getAttribute('data-canonical-snapshot-state') || 'none'}`,
+        `shown=${shown ? 'yes' : 'no'}`, `response=${answered ? 'yes' : 'no'}`,
+        `equal=${shown && answered && shown === answered ? 'yes' : 'no'}`,
+        `verification=${response?.getAttribute('data-canonical-response-verification') || 'none'}`,
+        `locked=${document.querySelector('.owner-access-screen') ? 'yes' : 'no'}`,
+      ].join(',').replace(/[^A-Za-z0-9_,=-]/g, '');
+    }, CANONICAL_RESPONSE_SELECTOR).catch(() => 'unreadable');
+    throw new Error(`canonical_1321_5d_response_not_published:${state}:`
+      + String(error?.message || '').split('\n')[0].replace(/[^A-Za-z0-9 .]/g, '').slice(0, 60));
+  });
   const snapshotId = await page.locator(CANONICAL_RESPONSE_SELECTOR)
     .getAttribute('data-canonical-response-snapshot-id');
   if (!snapshotId) throw new Error('canonical_1321_5d_response_body_missing');
