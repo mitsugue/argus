@@ -285,6 +285,7 @@ def margin_cost_basis_loss_proxy(two_market_credit, nikkei_rows, *, cutoff):
 
 
 SIGN_CONDITION_LOOKBACK_DAYS = 200
+FEATURE_INPUT_WINDOW_DAYS = 400
 SIGN_CONDITION_IDS = {
     "D01": "d01_short_balance_below_threshold",
     "D02": "d02_margin1570_ratio_at_least_one",
@@ -329,6 +330,24 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
                           foreign_flow: Sequence[Mapping[str, Any]] = (),
                           valuation_loss: Sequence[Mapping[str, Any]] = (),
                           sq_events: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:
+    # Each cutoff needs only recent observations of every price series except
+    # VIX (its MACD runs over the whole history). Rows dated after the cutoff are
+    # never visible (every source's availability is on or after its date), and
+    # the longest look-back below is 26 weeks, so passing the last
+    # FEATURE_INPUT_WINDOW_DAYS leaves every value unchanged while the ten-year
+    # history no longer re-verifies ten years of rows at each of 2,400 cutoffs
+    # (2026-10-01: a full recalculation ran for most of an hour in production).
+    from jp_market_engine import _instant as _cutoff_instant
+    cutoff_date = _cutoff_instant(cutoff).date()
+    recent_from = (cutoff_date - timedelta(days=FEATURE_INPUT_WINDOW_DAYS)).isoformat()
+    through = (cutoff_date + timedelta(days=1)).isoformat()
+
+    def window(rows, *, whole_history=False):
+        return [row for row in rows if isinstance(row, Mapping) and _day(row) <= through
+                and (whole_history or _day(row) >= recent_from)]
+    # Price series only: the weekly balances also feed the snapshot's audit
+    # counts (credit dynamics' point-in-time proof), which must not change.
+    price_series = {key: window(rows, whole_history=(key == "vix")) for key, rows in price_series.items()}
     features = []
     conditions = []
     stale_features = set()
