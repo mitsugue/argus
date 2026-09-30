@@ -310,8 +310,7 @@ export async function openCanonicalEvidence(page, timeout = 30_000) {
     for (let clickAttempt = 1; clickAttempt <= 3; clickAttempt += 1) {
       await waitForSettledEvidence(page);
       try {
-        await page.getByText('根拠・市場データ・システム情報', { exact: true })
-          .click({ timeout: Math.min(timeout, 10_000) });
+        await page.getByText('根拠・市場データ・システム情報', { exact: true }).click();
         lastError = null;
         break;
       } catch (error) {
