@@ -174,3 +174,58 @@ def published_sq_calendar(*, now: datetime, schedule_path: Path | None = None) -
                 "events": [], "notificationProposals": [], "dependsOnAi": False,
                 "actionAuthority": False, "automaticAiCalls": 0,
                 "lastSuccessfulAcquisitionAt": None}
+
+
+SQ_RULE_SOURCE = "rule:jpx-index-sq-second-friday-prior-session"
+
+
+def rule_derived_sq_rows(session_dates: Sequence[str], *, calculation_dates: Sequence[str]) -> list[dict[str, Any]]:
+    """Historical monthly SQ distance from the exchange calendar rule.
+
+    The index SQ falls on the second Friday of the month, or the preceding
+    session when that Friday is not one. No published schedule archive exists
+    for past years, so history is labelled RULE_DERIVED (never VERIFIED) and
+    the published schedule still governs the present. One row per JST
+    calculation date: the number of sessions after that date up to and
+    including the next SQ date. Rows are known at their own calculation
+    instant (00:00 JST of that date) and cannot affect an earlier cutoff.
+    """
+    sessions = sorted(set(str(day) for day in session_dates))
+    if not sessions or len(sessions) > 4000 or any(len(day) != 10 for day in sessions):
+        raise ValueError("bounded_session_calendar_required")
+    session_set = set(sessions)
+    ordered = [date.fromisoformat(day) for day in sessions]
+    last_session = ordered[-1]
+
+    def sq_day_for(year: int, month: int):
+        first = date(year, month, 1)
+        friday = first + timedelta(days=(4 - first.weekday()) % 7) + timedelta(days=7)
+        candidate = friday
+        while candidate >= first and candidate.isoformat() not in session_set:
+            candidate -= timedelta(days=1)
+        return candidate if candidate >= first else None
+
+    rows = []
+    for calc in sorted(set(str(day)[:10] for day in calculation_dates)):
+        today = date.fromisoformat(calc)
+        year, month = today.year, today.month
+        sq_day = None
+        for _ in range(3):
+            candidate = sq_day_for(year, month)
+            if candidate and candidate >= today:
+                sq_day = candidate; break
+            month += 1
+            if month == 13:
+                year, month = year + 1, 1
+        if sq_day is None or sq_day > last_session:
+            continue  # the calendar does not reach the next SQ: no distance
+        distance = sum(1 for day in ordered if today < day <= sq_day)
+        known = f"{calc}T00:00:00+09:00"
+        rows.append({"eventId": f"jp-monthly-sq-{sq_day.strftime('%Y-%m')}", "eventType": "DERIVATIVES_SQ",
+                     "market": "JP", "kind": "MAJOR_SQ" if sq_day.month in (3, 6, 9, 12) else "MONTHLY_SQ",
+                     "contractMonth": sq_day.strftime("%Y-%m"), "sqDate": sq_day.isoformat(),
+                     "calculatedAt": known, "knownAt": known, "date": calc,
+                     "tradingSessionsUntil": distance, "calendarDaysUntil": (sq_day - today).days,
+                     "calendarStatus": "RULE_DERIVED", "sourceRef": SQ_RULE_SOURCE,
+                     "historicalVintageVerified": False, "actionAuthority": False})
+    return rows

@@ -350,3 +350,20 @@ def test_scheduled_official_rows_do_not_trip_the_selection_time_order(tmp_path):
     corrected = m.merge_feature_sources([], [{**official[0], 'close': 15.3}], path=path,
                                         received_at='2026-09-23T00:00:00Z')
     assert corrected[0]['availabilityBasis'] == 'RECEIVED_CORRECTION'
+
+
+def test_generic_scheduled_availability_applies_to_originals_only():
+    receipt = '2026-09-22T08:00:00Z'
+    rows = [
+        {'periodEnd': '2026-09-11', 'knownAt': receipt, 'availableFrom': receipt, 'value': 1},   # history: scheduled
+        {'periodEnd': '2026-09-18', 'knownAt': receipt, 'availableFrom': receipt, 'value': 2},   # schedule 09-24 > receipt: keep
+        {'periodEnd': '2026-09-04', 'knownAt': receipt, 'availableFrom': receipt, 'value': 3, 'revision': 1},  # correction: keep
+        'not-a-row',
+    ]
+    out = m.apply_scheduled_availability(rows, lag_days=6, source_label='jpx-weekly-margin')
+    assert [r.get('knownAt') for r in out] == ['2026-09-17T00:00:00Z', receipt, receipt]
+    assert out[0]['availableFrom'] == '2026-09-17T00:00:00Z' and out[0]['receivedAt'] == receipt
+    assert out[0]['availabilityBasis'] == 'SCHEDULED_PUBLICATION' and out[0]['availabilityRule'] == 'jpx-weekly-margin'
+    assert 'availabilityBasis' not in out[1] and 'availabilityBasis' not in out[2]
+    with pytest.raises(ValueError, match='scheduled_lag_bound'):
+        m.apply_scheduled_availability(rows, lag_days=30, source_label='x')

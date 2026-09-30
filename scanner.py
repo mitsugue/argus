@@ -9454,7 +9454,15 @@ def _investor_types_autorefresh():
         return
     _INVESTOR_TYPES_REFRESH["lastAt"] = now
     now_iso = _ai_now_iso()
-    frm = (datetime.now(TZ_JST) - timedelta(days=45)).strftime("%Y-%m-%d")
+    # 2026-09-30: a one-time ten-year window (inside the entitlement) until
+    # the ledger reaches nine years back, so foreign_flow.net4w exists on the
+    # historical side of the analog comparison; then the 45-day refresh.
+    try:
+        flow_rows = argus_market_ledger.latest_by_series(_MARKET_LEDGER, now_iso).get("flow.foreign", [])
+    except Exception:
+        flow_rows = []
+    window_days = _investor_types_window_days(flow_rows, datetime.now(TZ_JST).date())
+    frm = (datetime.now(TZ_JST) - timedelta(days=window_days)).strftime("%Y-%m-%d")
     to = datetime.now(TZ_JST).strftime("%Y-%m-%d")
     try:
         raw = _jquants_paginated(
@@ -38637,6 +38645,28 @@ def _index_research_warm():
         _INDEX_RESEARCH_LOCK.release()
 
 
+def _jp_exchange_sessions(first, last, historical_calendar_rows=()):
+    """Tokyo exchange session dates in [first, last]: the stored historical
+    HolDiv table where it covers a day, the market clock otherwise. Returns
+    (sessions, missing_calendar); a day the calendar cannot answer is skipped
+    and flagged, never assumed open."""
+    from datetime import date as calendar_date
+    sessions, missing_calendar = [], False
+    historical_calendar = {row["Date"]: row["HolDiv"] for row in historical_calendar_rows or ()}
+    for offset in range((last - first).days + 1):
+        day = first + timedelta(days=offset)
+        try:
+            if day.isoformat() in historical_calendar:
+                is_open = historical_calendar[day.isoformat()] == "1"
+            else:
+                is_open = argus_market_clock.canonical_trading_day(argus_market_clock.JP_EQUITY, day)
+            if is_open:
+                sessions.append(day.isoformat())
+        except argus_market_clock.CalendarUnavailableError:
+            missing_calendar = True
+    return sessions, missing_calendar
+
+
 def _jp_market_comparison_calculate(horizon):
     """Bounded cached-only chart calculation; no fetch, AI or persistence."""
     cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}
@@ -38654,19 +38684,7 @@ def _jp_market_comparison_calculate(horizon):
         first, last = (calendar_date.fromisoformat(ordered[i]["date"]) for i in (0, -1))
         if len(rows) > argus_index_history.MAX_BARS or (last - first).days > argus_index_history.MAX_DAYS:
             return {**failure, "reason": "index_history_bound_exceeded"}
-        sessions, missing_calendar = [], False
-        historical_calendar = {row["Date"]: row["HolDiv"] for row in stored_history.get("calendar", [])}
-        for offset in range((last - first).days + 1):
-            day = first + timedelta(days=offset)
-            try:
-                if day.isoformat() in historical_calendar:
-                    is_open = historical_calendar[day.isoformat()] == "1"
-                else:
-                    is_open = argus_market_clock.canonical_trading_day(argus_market_clock.JP_EQUITY, day)
-                if is_open:
-                    sessions.append(day.isoformat())
-            except argus_market_clock.CalendarUnavailableError:
-                missing_calendar = True
+        sessions, missing_calendar = _jp_exchange_sessions(first, last, stored_history.get("calendar", []))
         result = jp_market_price_paths.cached_index_comparison(
             rows, cutoff=cutoff, session_dates=sessions, horizon_sessions=horizon,
             acquired_at=cached.get("acquiredAt"),
@@ -39408,6 +39426,55 @@ def _jp_market_feature_history_persist(cache_path, method, now):
         _JP_MARKET_FEATURE_CACHE_STATUS.update(persistenceStatus="FAILED", persistenceError=type(exc).__name__)
 
 
+def _jp_market_feature_sq_events(bars, now):
+    """SQ-distance inputs for every feature cutoff: the published schedule
+    (VERIFIED) for the present, the exchange-calendar rule (RULE_DERIVED) for
+    the history it does not cover. Calendar or schedule failures leave the
+    feature missing; they never raise into the feature warm."""
+    from datetime import date as calendar_date
+    rows = []
+    try:
+        dates = sorted({r["date"] for r in bars if isinstance(r.get("date"), str)})
+        if dates:
+            first = calendar_date.fromisoformat(dates[0])
+            last = calendar_date.fromisoformat(dates[-1]) + timedelta(days=60)
+            sessions, _missing = _jp_exchange_sessions(first, last, _N225_ANALOG_HISTORY.get("calendar", []))
+            now_instant = datetime.fromisoformat(now.replace("Z", "+00:00"))
+            calculation_dates = {(calendar_date.fromisoformat(day) + timedelta(days=1)).isoformat()
+                                 for day in dates if day < now[:10]}
+            calculation_dates.add(now_instant.astimezone(TZ_JST).date().isoformat())
+            rows.extend(jp_market_events.rule_derived_sq_rows(sessions, calculation_dates=sorted(calculation_dates)))
+    except (ValueError, TypeError, KeyError):
+        rows = []
+    try:
+        published = jp_market_events.published_sq_calendar(
+            now=datetime.fromisoformat(now.replace("Z", "+00:00")))
+        rows.extend(e for e in published.get("events", []) if e.get("calendarStatus") == "VERIFIED")
+    except (ValueError, TypeError, KeyError, OSError):
+        pass
+    return rows
+
+
+def _jq_margin_backfill_window_days(snapshot_rows, today):
+    """3,640 days (inside the rolling ten-year entitlement) when the durable
+    weekly-margin store starts less than nine years before today, else None."""
+    periods = [str(r.get("periodEnd") or "")[:10] for r in snapshot_rows or () if isinstance(r, dict)]
+    earliest = min((p for p in periods if len(p) == 10), default=None)
+    if earliest and earliest <= (today - timedelta(days=9 * 365)).isoformat():
+        return None
+    return 3640
+
+
+def _investor_types_window_days(flow_rows, today):
+    """3,640 days for the one-time ten-year backfill of the investor-type
+    series, 45 days once the ledger already reaches nine years back."""
+    periods = [str(r.get("periodEnd") or "")[:10] for r in flow_rows or () if isinstance(r, dict)]
+    earliest = min((p for p in periods if len(p) == 10), default=None)
+    if earliest and earliest <= (today - timedelta(days=9 * 365)).isoformat():
+        return 45
+    return 3640
+
+
 def _jp_market_feature_history_warm():
     """Calculate on the collection lane; public chart reads only this cache."""
     global _JP_MARKET_FEATURE_HISTORY
@@ -39473,12 +39540,19 @@ def _jp_market_feature_history_warm():
         last_csv = max((r["periodEnd"] for r in credit), default="")
         credit += [r for r in ledger if r.get("seriesId") in ("credit.long_balance", "credit.short_balance")
                    and r.get("periodEnd", "") > last_csv]
-        margin = ((_JQ_MARGIN_CACHE.get("1570") or {}).get("sourceSnapshot") or {}).get("rows") or []
+        # Weekly 1570 balances: originals follow the JPX publication schedule
+        # (second business day after the Friday; six days is conservative),
+        # corrections their receipt. Read-side rule, raw store untouched.
+        margin = jp_market_acquisition.apply_scheduled_availability(
+            ((_JQ_MARGIN_CACHE.get("1570") or {}).get("sourceSnapshot") or {}).get("rows") or [],
+            lag_days=6, source_label="jpx-weekly-margin-second-business-day")
         loss = [{**r, "unit": "PERCENT" if r.get("unit") == "percent" else r.get("unit"),
                  "signConvention": (r.get("metadata") or {}).get("signConvention")}
                 for r in ledger if r.get("seriesId") == "credit.valuation_loss_pct"]
+        sq_events = _jp_market_feature_sq_events(bars, now)
         inputs = {"price_series": price_series, "two_market_credit": credit, "margin_1570": margin,
-                  "foreign_flow": [r for r in ledger if r.get("seriesId") == "flow.foreign"], "valuation_loss": loss}
+                  "foreign_flow": [r for r in ledger if r.get("seriesId") == "flow.foreign"], "valuation_loss": loss,
+                  "sq_events": sq_events}
         identity = hashlib.sha256(json.dumps(inputs, sort_keys=True, ensure_ascii=False, allow_nan=False,
             separators=(",", ":")).encode()).hexdigest()
         if identity == _JP_MARKET_FEATURE_HISTORY.get("inputIdentity") and \
@@ -39536,6 +39610,8 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         _jp_index_proxy_warm(nikkei_rows)
         _jp_internals_warm()
     margin_rows = _jp_market_engine_margin_1570_rows(fetch=warm)
+    if warm:
+        _jq_margin_history_backfill()
     rs_proxy = _jp_market_engine_relative_strength_proxy()
     flow_rows = _jp_market_engine_foreign_flow_rows()
     _jp_market_engine_statements_rows(warm=warm)
@@ -44671,6 +44747,51 @@ def _jq_price_history(code, *, deadline=None):
         "sessionRecheckAt": now + _JQ_HISTORY_SESSION_RECHECK_SEC,
     }
     return data
+
+_JQ_MARGIN_BACKFILL = {"lastAttemptDay": None, "status": "NOT_RUN"}
+
+
+def _jq_margin_history_backfill():
+    """Ten-year 1570 weekly-margin history for the analog engine (2026-09-30).
+
+    One bounded paginated read a day, appended to the same durable store the
+    rolling 90-day read uses, until the store reaches nine years back. Runs
+    on the collection warm only; the freshness path (_jq_weekly_margin) is
+    unchanged and keeps its one request. Failures are named, never raised."""
+    cache = _JQ_MARGIN_CACHE.get("1570") or {}
+    snapshot = cache.get("sourceSnapshot") or {}
+    today = datetime.now(TZ_JST).date()
+    window = _jq_margin_backfill_window_days(snapshot.get("rows"), today)
+    if not window or _JQ_MARGIN_BACKFILL["lastAttemptDay"] == _ai_now_iso()[:10]:
+        return _JQ_MARGIN_BACKFILL["status"]
+    _JQ_MARGIN_BACKFILL["lastAttemptDay"] = _ai_now_iso()[:10]
+    if not _JQUANTS_API_KEY:
+        _JQ_MARGIN_BACKFILL["status"] = "KEY_NOT_CONFIGURED"
+        return _JQ_MARGIN_BACKFILL["status"]
+    margin_path = (os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3")
+                   if _cost_policy_durable_enabled() else None)
+    try:
+        rows = _jquants_paginated("/markets/margin-interest", {
+            "code": "1570", "from": (today - timedelta(days=window)).isoformat()})
+        digest = hashlib.sha256(json.dumps(rows, sort_keys=True, ensure_ascii=False,
+                                           separators=(",", ":"), default=str).encode()).hexdigest()
+        candidate = jp_market_source_adapters.normalize_jquants_margin_snapshot(
+            {"data": rows}, instrument_id="1570", observed_at=_ai_now_iso(),
+            response_sha256=digest, volume_unit="UNITS")
+        if not candidate["rows"]:
+            _JQ_MARGIN_BACKFILL["status"] = "EMPTY"
+            return _JQ_MARGIN_BACKFILL["status"]
+        merged = jp_market_source_adapters.retain_margin_snapshot(
+            candidate, previous=snapshot or None, path=margin_path, raw=None)
+        if cache:
+            cache["sourceSnapshot"] = merged
+        else:
+            _JQ_MARGIN_CACHE["1570"] = {"data": None, "expires": 0, "sourceSnapshot": merged}
+        _JQ_MARGIN_BACKFILL["status"] = "APPENDED:" + str(len(candidate["rows"]))
+    except Exception as exc:
+        _JQ_MARGIN_BACKFILL["status"] = "FAILED:" + type(exc).__name__
+    return _JQ_MARGIN_BACKFILL["status"]
+
 
 def _jq_weekly_margin(code):
     """Latest two weekly margin-interest rows for one TSE code, newest-first.
