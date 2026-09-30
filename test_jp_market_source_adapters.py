@@ -164,3 +164,32 @@ def test_margin_durable_corruption_and_bad_raw_do_not_overwrite(tmp_path):
         restore_margin_snapshot(path)
     with pytest.raises(ValueError, match='integrity'):
         retain_margin_snapshot(candidate, path=path, raw=raw)
+
+
+def test_topix_bars_are_normalized_with_next_day_availability_and_nothing_filled():
+    from jp_market_source_adapters import normalize_jquants_topix_bars
+    digest = "a" * 64
+    payload = {"data": [
+        {"Date": "2026-09-29", "O": 3000.5, "H": 3010.0, "L": 2990.0, "C": 3005.0},
+        {"Date": "2026-09-30", "Open": 3005.0, "High": 3020.0, "Low": 3001.0, "Close": 3015.0},
+        {"Date": "2026-09-28", "O": 2990.0, "H": 2995.0, "L": 2999.0, "C": 2992.0},  # low above open: unordered
+        {"Date": "2026-09-27", "O": 2990.0, "H": 2995.0, "L": None, "C": 2992.0},    # incomplete
+        {"Date": "2026-10-02", "O": 1.0, "H": 1.0, "L": 1.0, "C": 1.0},              # future
+        {"Date": "2026-09-29", "O": 3000.5, "H": 3010.0, "L": 2990.0, "C": 3005.0},  # duplicate
+        "bad",
+    ]}
+    result = normalize_jquants_topix_bars(payload, received_at="2026-09-30T08:00:00Z", response_sha256=digest)
+    assert result["status"] == "AVAILABLE" and [r["date"] for r in result["rows"]] == ["2026-09-29", "2026-09-30"]
+    row = result["rows"][0]
+    assert row["instrumentId"] == "TOPIX_INDEX" and row["seriesId"] == "close" and row["close"] == 3005.0
+    assert row["availableFrom"] == "2026-09-30T00:00:00Z" and row["receivedAt"] == "2026-09-30T08:00:00+00:00"
+    assert row["availabilityBasis"] == "SCHEDULED_PUBLICATION" and row["historicalVintageVerified"] is False
+    assert row["sourceResponseSha256"] == digest
+    assert result["rejectedCount"] == 5 and result["actionAuthority"] is False
+    assert sorted(r["reason"] for r in result["rejectedRows"]) == sorted([
+        "incomplete_or_unordered_bar", "incomplete_or_unordered_bar", "invalid_or_future_date", "duplicate_date", "invalid_row"])
+    import pytest
+    with pytest.raises(ValueError, match="actual_observation_time_required"):
+        normalize_jquants_topix_bars(payload, received_at="2026-09-30", response_sha256=digest)
+    with pytest.raises(ValueError, match="bounded_provider_rows_required"):
+        normalize_jquants_topix_bars({"data": None}, received_at="2026-09-30T08:00:00Z", response_sha256=digest)

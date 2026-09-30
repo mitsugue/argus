@@ -54,7 +54,14 @@ def test_vintages_restart_idempotence_and_original_retained(tmp_path):
     assert [item['revision'] for item in history] == [0, 1]
     features = m.feature_rows(history, 'jp_yield_curve')
     assert [item['value'] for item in features] == [-.1, .2]
-    assert [item['knownAt'] for item in features] == [AT, LATER]
+    # 2026-09-30: the original observation is dated from the publisher's
+    # schedule (the next calendar day), the correction from its receipt; the
+    # receipt stays on both rows and the raw store is untouched.
+    assert [item['knownAt'] for item in features] == ['2026-09-18T00:00:00Z', LATER]
+    assert [item['availableFrom'] for item in features] == ['2026-09-18T00:00:00Z', LATER]
+    assert [item['receivedAt'] for item in features] == [AT, LATER]
+    assert [item['availabilityBasis'] for item in features] == ['SCHEDULED_PUBLICATION', 'UNKNOWN']
+    assert [item['knownAt'] for item in history] == [AT, LATER]
     assert path.stat().st_mode & 0o777 == 0o600
 
 
@@ -142,16 +149,28 @@ def test_denied_no_retry_on_same_day_even_restart(tmp_path):
 
 
 def test_download_does_not_rewrite_historical_features(tmp_path):
+    """Originals follow the publisher's schedule (2026-09-30), so a cutoff
+    after the scheduled day sees them; a correction downloaded later is
+    available from its receipt only and never rewrites what an earlier
+    cutoff saw."""
     db = m.connect(tmp_path/'source.sqlite3')
     for day in range(10, 18):
         m.ingest(db, mof(str(day/100), 'R8.9.'+str(day)), url=m.MOF_CURRENT, received_at=AT)
     rates = m.feature_rows(m.latest_rows(db, 'jp_yield_curve'), 'jp_yield_curve')
+    # At 09-15 00:00Z only 09-10..09-14 are scheduled available: five rows, no five-day change yet.
+    before_schedule = features.build_market_features(cutoff='2026-09-15T00:00:00Z', price_series={'jp10y': rates})
+    assert 'rate.jp10y_change5' in before_schedule['missingFeatures']
     early = features.build_market_features(cutoff='2026-09-18T00:00:00Z', price_series={'jp10y': rates})
-    current = features.build_market_features(cutoff=AT, price_series={'jp10y': rates})
-    assert 'rate.jp10y_change5' in early['missingFeatures']
-    row = next(r for r in current['features'] if r['seriesId'] == 'rate.jp10y_change5')
+    row = next(r for r in early['features'] if r['seriesId'] == 'rate.jp10y_change5')
     assert row['value'] == pytest.approx(.05)
-    assert row['unit'] == 'PERCENTAGE_POINTS' and not current['actionAuthority']
+    assert row['unit'] == 'PERCENTAGE_POINTS' and not early['actionAuthority']
+    # A correction of 09-17 received at LATER: the 09-18 cutoff keeps .17.
+    m.ingest(db, mof('0.99', 'R8.9.17'), url=m.MOF_CURRENT, received_at=LATER)
+    revised = m.feature_rows(m.history_rows(db, 'jp_yield_curve'), 'jp_yield_curve')
+    early_again = features.build_market_features(cutoff='2026-09-18T00:00:00Z', price_series={'jp10y': revised})
+    assert next(r for r in early_again['features'] if r['seriesId'] == 'rate.jp10y_change5')['value'] == pytest.approx(.05)
+    after = features.build_market_features(cutoff=LATER, price_series={'jp10y': revised})
+    assert next(r for r in after['features'] if r['seriesId'] == 'rate.jp10y_change5')['value'] == pytest.approx(.99 - .12)
 
 
 def test_overlap_does_not_invent_cross_provider_revision():
@@ -290,3 +309,44 @@ def test_intraday_update_inside_availability_bound_is_not_a_time_order_violation
                                         received_at='2026-09-30T01:00:00Z')
     assert corrected[0]['availabilityBasis'] == 'RECEIVED_CORRECTION'
     assert corrected[0]['availableFrom'] == '2026-09-30T01:00:00Z'
+
+
+def test_scheduled_availability_makes_official_history_visible_to_past_cutoffs(tmp_path):
+    """Before 2026-09-30 an imported ten-year history was dated available
+    from its download, so no past comparison cutoff could use it (the JGB
+    yield feature existed for the current day only). The original row is
+    now available from the day after its observation; a receipt earlier than
+    that schedule is never moved later than the receipt."""
+    from jp_market_engine import point_in_time_rows
+    db = m.connect(tmp_path / 'source.sqlite3')
+    m.ingest(db, mof(day='R8.9.17'), url=m.MOF_CURRENT, received_at=AT)
+    rows = m.feature_rows(m.history_rows(db, 'jp_yield_curve'), 'jp_yield_curve')
+    visible, _ = point_in_time_rows(rows, '2026-09-18T00:00:00Z')
+    assert [r['value'] for r in visible] == [-.1]
+    visible_before, _ = point_in_time_rows(rows, '2026-09-17T23:59:59Z')
+    assert visible_before == []
+    assert m.scheduled_availability('vix_ohlc', '2026-09-18') == '2026-09-19T00:00:00Z'
+    # Received before the schedule (same-day receipt): the receipt stands.
+    early = m.connect(tmp_path / 'early.sqlite3')
+    m.ingest(early, mof(day='R8.9.20'), url=m.MOF_CURRENT, received_at=AT)
+    row = m.feature_rows(m.history_rows(early, 'jp_yield_curve'), 'jp_yield_curve')[0]
+    assert row['knownAt'] == AT and row['availabilityBasis'] == 'UNKNOWN'
+
+
+def test_scheduled_official_rows_do_not_trip_the_selection_time_order(tmp_path):
+    path = tmp_path / 'selected.sqlite3'
+    receipt = '2026-09-21T10:00:00Z'
+    official = [{'date': '2026-09-21', 'close': 15.0, 'availableFrom': '2026-09-22T00:00:00Z',
+                 'knownAt': '2026-09-22T00:00:00Z', 'receivedAt': receipt,
+                 'availabilityBasis': 'SCHEDULED_PUBLICATION', 'sourceRef': 'official'}]
+    first = m.merge_feature_sources([], official, path=path, received_at=receipt)
+    assert first[0]['knownAt'] == '2026-09-22T00:00:00Z'
+    # The scheduled knowledge time lies ahead of the receipt; a change received
+    # after the first receipt is compared with the receipt, not the schedule.
+    updated = m.merge_feature_sources([], [{**official[0], 'close': 15.2}], path=path,
+                                      received_at='2026-09-21T12:00:00Z')
+    assert updated[0]['close'] == 15.2 and updated[0]['availabilityBasis'] == 'PROVISIONAL_SESSION_UPDATE'
+    assert updated[0]['availableFrom'] == '2026-09-22T00:00:00Z'
+    corrected = m.merge_feature_sources([], [{**official[0], 'close': 15.3}], path=path,
+                                        received_at='2026-09-23T00:00:00Z')
+    assert corrected[0]['availabilityBasis'] == 'RECEIVED_CORRECTION'
