@@ -24,7 +24,11 @@ PRODUCT_VERSION=$(python3 -c "import argus_release_identity as i; v=i.product_ve
 # release-output location.
 DIRTY_BEFORE=$(git status --porcelain | wc -l | tr -d ' ')
 PY=fail; TS=fail; BUILD=fail
-python3 -m pytest -q -p no:cacheprovider >"$PY_LOG" 2>&1 && PY=pass
+# Parallel when pytest-xdist is installed (CI), whole files per worker so
+# module-level state never crosses workers; serial otherwise (local).
+PYTEST_PARALLEL=""
+python3 -c "import xdist" 2>/dev/null && PYTEST_PARALLEL="-n 4 --dist loadfile"
+python3 -m pytest -q -p no:cacheprovider $PYTEST_PARALLEL >"$PY_LOG" 2>&1 && PY=pass
 TESTCOUNT=$(grep -aoE '[0-9]+ passed' "$PY_LOG" | tail -1)
 # v13.5.18: self-describing failure. A CI-only test failure with no visible
 # pytest output cost a full gate round-trip to even name the failing test —

@@ -157,9 +157,13 @@ def test_exact_commit_receipt_reaches_verified_state():
             "expectedHash": manifest_hash,
             "verifiedWalSequence": 0,
         })
+        # The remote snapshot carries an empty journal, so the local journal
+        # must be empty too; other test files leave events in the
+        # process-wide _OPS_JOURNAL, which made this test order-dependent.
         with mock.patch.object(
                 scanner, "_persist_remote_wal_receipt",
-                return_value={"verified": True}):
+                return_value={"verified": True}), \
+                mock.patch.object(scanner, "_OPS_JOURNAL", []):
             receipt = scanner._remote_readback_ack(
                 now_iso=OBSERVED, blob=compact)
         assert receipt["verificationStatus"] == "verified"
