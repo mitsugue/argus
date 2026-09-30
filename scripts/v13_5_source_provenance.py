@@ -422,7 +422,7 @@ REVIEWED_EXTENSION_BLOBS = {
     "web/src/components/system/BackupStatusOverview.tsx": "39488f34de87013943edf08bb3faddce91f7b996",
     "web/src/lib/vault.ts": "9180eba851c0b62a99ac449166f90f2404e18370",
     "web/scripts/news-history.test.mjs": "766b69d112dc01d32631025446007b506d7e55f6",
-    "web/scripts/public-market-acceptance.mjs": "c88e64b2c78f3bf5714a4170cd1571a41fcf25de",
+    "web/scripts/public-market-acceptance.mjs": "d52e448759dca2ef07e69815b5ccd80ac7d38297",
     "web/scripts/canonical-snapshot-selection.mjs": "a714e6beca86fc4c7bc22221f1ff635e040e3940",
     "web/scripts/index-chart-isolation.test.mjs": "470dcf9598714a89b9ebba9dd53cfc2f6315092f",
     "argus_osint_engine.py": "82c928299eed09004067283d72cc4b67b07753c5",

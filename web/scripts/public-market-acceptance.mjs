@@ -36,6 +36,11 @@ const TODAY_URL = `${PUBLIC_URL.replace(/\/?$/, '/')}#today`;
 // while loading, so acceptance must wait for the selected snapshot instead of
 // declaring a healthy, eventually-complete transition broken at 5 seconds.
 const DATA_TIMEOUT_MS = 15_000;
+// A combination's chart is computed on demand when its cache is cold; right
+// after a release that took longer than 15 s for 1321/1D while everything
+// else was verified (2026-10-01: selectedChart=no, canonical verified). The
+// check is that the chart arrives and matches, not that it arrives in 15 s.
+const COMBINATION_TIMEOUT_MS = 45_000;
 const PAGE_TIMEOUT_MS = 25_000;
 const BACKEND_READY_TIMEOUT_MS = 8 * 60_000;
 const MARKET_CACHE_READY_TIMEOUT_MS = 30 * 60_000;
@@ -246,7 +251,7 @@ async function selectCombination(page, symbol, horizon) {
       && contract?.getAttribute('data-canonical-horizon') === '5D'
       && Boolean(contract?.getAttribute('data-canonical-snapshot-id'));
   }, { expectedSymbol: symbol, expectedHorizon: horizon },
-  { timeout: DATA_TIMEOUT_MS }).catch(async (error) => {
+  { timeout: COMBINATION_TIMEOUT_MS }).catch(async (error) => {
     // Name which combination and which of the awaited attributes were not
     // reached (fixed tokens and attribute values only, never page text), so
     // a release failure says what to fix instead of "Timeout 15000ms".
