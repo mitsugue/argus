@@ -76,8 +76,9 @@ export function OwnerAccess({ children }: { children: React.ReactNode }) {
       <div className="owner-access-brand" aria-hidden="false">
         <div className="owner-access-brand__halo" aria-hidden="true" />
         <ArgusMark size={72} className="owner-access-brand__mark" />
-        <h1 className="owner-access-brand__name">A.R.G.U.S.<span className="owner-access-brand__pro">Pro</span></h1>
+        <h1 className="owner-access-brand__name">A.R.G.U.S.</h1>
         <p className="owner-access-brand__tag">Advanced Research · Guarded · Unified · Signals</p>
+        <span className="owner-access-brand__pro" aria-label="Pro">Pro</span>
         <span className="owner-access-brand__rule" aria-hidden="true" />
       </div>
       <p className="owner-access-screen__lead">内容を見るには本人確認が必要です。</p>
