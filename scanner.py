@@ -890,11 +890,18 @@ def _rate_limit():
     # longer eat the search budget — and the heavy budget is raised for the
     # v11.7/11.8 polling growth (all cached reads on Render Standard 2GB).
     search = "symbol-search" in p
-    heavy = (not search) and any(k in request.args
+    # 2026-10-01: owner authentication shares nothing with data polling. A
+    # busy client (the release acceptance, several owner devices on one home
+    # address) exhausted the shared bucket and the session check after a
+    # correct password was answered 429, so the app stayed on the lock
+    # screen. Its own bucket, like search; the password/passkey actions keep
+    # their owner-wide limiter.
+    owner_auth = p.startswith("/api/argus/owner-auth/")
+    heavy = (not search) and (not owner_auth) and any(k in request.args
                                  for k in ("symbols", "jp", "us", "ids", "q", "symbol"))
-    limit = _RL_MAX_SEARCH if search else (_RL_MAX_HEAVY if heavy else _RL_MAX)
+    limit = _RL_MAX_SEARCH if search else (_RL_MAX if owner_auth else (_RL_MAX_HEAVY if heavy else _RL_MAX))
     now = time.time()
-    ip = _rl_client_ip() + (":search" if search else "")
+    ip = _rl_client_ip() + (":search" if search else ":owner-auth" if owner_auth else "")
     with _RL_LOCK:
         if len(_RL_BUCKETS) > _RL_MAX_IPS:
             _RL_BUCKETS.clear()

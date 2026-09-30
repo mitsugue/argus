@@ -131,6 +131,11 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
       const controller = page.waitForResponse(response => response.url() === config.backend + '/api/argus/owner-auth/password'
         && response.request().method() === 'POST', { timeout: 15000 });
       responsePromise = controller.catch(() => null);
+      // The product proves a fresh session with an authenticated GET before it
+      // unlocks; its status names a lock screen after a correct password.
+      const verification = page.waitForResponse(response => response.url() === config.backend + '/api/argus/owner-auth/session'
+        && response.request().method() === 'GET' && Boolean(response.request().headers()['x-argus-owner-session']),
+        { timeout: 20000 }).then(response => response.status()).catch(() => 'none');
       await input.fill(config.password);
       await page.getByRole('button', { name: 'パスワードで開く', exact: true }).click();
       const response = await responsePromise;
@@ -171,7 +176,7 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
         const selfHealed = attempt === 0 && state.code === 'none'
           && state.header === 'noheader' && state.locked === 'locked';
         if (selfHealed) return login(page, attempt + 1);
-        fail(`login_marker:${state.code}:${state.header}:${state.locked}:mode${state.mode}`);
+        fail(`login_marker:${state.code}:${state.header}:${state.locked}:mode${state.mode}:verify${await verification}`);
       }
       boundary(page);
     } catch (error) { if (error instanceof OwnerBrowserError) throw error; fail('login'); }

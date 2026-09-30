@@ -80,7 +80,7 @@ class TopixTest(unittest.TestCase):
         self.assertEqual(calls[0][0], "/indices/bars/daily/topix")
         self.assertEqual([r["date"] for r in rows], ["2026-09-29", "2026-09-30"])
         self.assertEqual(rows[0]["instrumentId"], "TOPIX_INDEX")
-        self.assertEqual(rows[0]["availableFrom"], "2026-09-30T00:00:00Z")
+        self.assertEqual(rows[0]["availableFrom"], "2026-09-29T09:00:00Z")
         self.assertEqual(scanner._TOPIX_HIST_CACHE["status"], "AVAILABLE")
         # Within the six-hour window the warm does not request again.
         with mock.patch.object(scanner, "_jquants_paginated", side_effect=AssertionError("no request")):
@@ -294,3 +294,16 @@ class ResearchAfterFeaturesTest(unittest.TestCase):
             scanner._jp_market_feature_history_warm()
             self.assertEqual(scanner._JP_MARKET_FEATURE_HISTORY["status"], "AVAILABLE")
         self.assertIsNone(status["lastAttemptMonotonic"])
+
+
+class OwnerAuthBucketTest(unittest.TestCase):
+    def test_owner_auth_has_its_own_rate_bucket(self):
+        scanner._RL_BUCKETS.clear()
+        client = scanner.app.test_client()
+        with mock.patch.object(scanner, "_RL_MAX", 3), mock.patch.object(scanner, "_RL_MAX_HEAVY", 3):
+            for _ in range(3):
+                client.get("/api/argus/operational")
+            self.assertEqual(client.get("/api/argus/operational").status_code, 429)
+            # Data polling exhausted its bucket; the owner session check is unaffected.
+            self.assertNotEqual(client.get("/api/argus/owner-auth/session").status_code, 429)
+        scanner._RL_BUCKETS.clear()

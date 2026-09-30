@@ -232,8 +232,11 @@ def normalize_jquants_topix_bars(payload: Mapping[str, Any], *, received_at: str
     """TOPIX daily bars from the J-Quants V2 index endpoint as feature inputs.
 
     Columns are Date/O/H/L/C (long names accepted). Each bar is available from
-    00:00Z of the next calendar day (the close is published the same evening
-    JST); the receipt stays on the row. Only complete, ordered, positive bars
+    09:00Z (18:00 JST) of its own date: the close is published that evening,
+    and the Nikkei bar it is paired with for the NT ratio is available from
+    07:00Z, so a daily cutoff sees both (until 2026-10-01 the next-day stamp
+    hid every TOPIX bar from its own day's cutoff and the NT ratio never
+    formed). The receipt stays on the row. Only complete, ordered, positive bars
     are kept; nothing is filled. Used for the NT ratio feature, never shown
     as an index level of its own.
     """
@@ -274,7 +277,7 @@ def normalize_jquants_topix_bars(payload: Mapping[str, Any], *, received_at: str
         seen.add(day)
         rows.append({"instrumentId": "TOPIX_INDEX", "seriesId": "close", "date": day, **values,
                      "unit": "INDEX_POINTS",
-                     "availableFrom": (parsed + timedelta(days=1)).isoformat() + "T00:00:00Z",
+                     "availableFrom": parsed.isoformat() + "T09:00:00Z",
                      "availabilityBasis": "SCHEDULED_PUBLICATION", "receivedAt": observed.isoformat(),
                      "publishedAt": None, "historicalVintageVerified": False,
                      "sourceRef": "jquants:v2:indices/bars/daily/topix",
