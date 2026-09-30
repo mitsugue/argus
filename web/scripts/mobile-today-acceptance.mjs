@@ -1072,6 +1072,15 @@ async function run() {
     reactWarnings: evidence.reactWarnings,
   });
   await writeJson('combinations.json', evidence.combinations);
+  // The detailed list is in the sealed artifact; the log names up to ten
+  // unexpected console errors (type, path without query, redacted and
+  // reduced text) so a console-errors failure is actionable from the run.
+  for (const item of consoleClassification.unexpected.slice(0, 10)) {
+    let where = '';
+    try { where = item.location ? new URL(item.location).pathname : ''; } catch { where = 'unparsed'; }
+    const text = owner.redact(String(item.message ?? '')).replace(/[^A-Za-z0-9 :._/()-]/g, '').slice(0, 160);
+    console.error(`mobile-today-acceptance console-error: ${item.type} ${where} ${text}`);
+  }
   await owner.logout(page);
   await context.close();
   await owner.scan(OUT_DIR);
