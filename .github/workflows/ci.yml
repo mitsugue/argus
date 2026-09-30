@@ -30,9 +30,9 @@ jobs:
           python -m py_compile scanner.py argus_remote_nonce_anchor.py \
             argus_remote_recovery.py argus_rules.py argus_events.py
       - name: Unit tests (rules + events — whole suite auto-discovered)
-        # 4 workers, whole files per worker so module-level state never crosses
-        # workers (measured 2026-09-30: 5,986 tests in 2m17s vs ~12m serial).
-        run: python -m pytest -q -n 4 --dist loadfile
+        # 4 workers; conftest keeps each file on one worker except the few
+        # independent long files, whose tests spread (see conftest.py).
+        run: python -m pytest -q -n 4 --dist loadgroup
 
   frontend:
     runs-on: ubuntu-latest

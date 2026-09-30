@@ -27,7 +27,7 @@ PY=fail; TS=fail; BUILD=fail
 # Parallel when pytest-xdist is installed (CI), whole files per worker so
 # module-level state never crosses workers; serial otherwise (local).
 PYTEST_PARALLEL=""
-python3 -c "import xdist" 2>/dev/null && PYTEST_PARALLEL="-n 4 --dist loadfile"
+python3 -c "import xdist" 2>/dev/null && PYTEST_PARALLEL="-n 4 --dist loadgroup"
 python3 -m pytest -q -p no:cacheprovider $PYTEST_PARALLEL >"$PY_LOG" 2>&1 && PY=pass
 TESTCOUNT=$(grep -aoE '[0-9]+ passed' "$PY_LOG" | tail -1)
 # v13.5.18: self-describing failure. A CI-only test failure with no visible

@@ -8,7 +8,19 @@ limiter mid-suite and make an unrelated endpoint return the `rate_limited` JSON
 gives every test a clean budget without weakening the limiter itself (a test that
 intentionally exercises rate limiting still fills its own bucket within the test).
 """
+import os
+import tempfile
+
 import pytest
+
+# Parallel runs (pytest-xdist): scanner derives its default persistent root
+# from the system temp directory at import time, so every worker process used
+# the same checkpoint, recovery sidecar and sqlite files, and a test in one
+# worker could see or erase another worker's state. Give each worker its own
+# root before scanner is imported. Serial runs are unchanged.
+if os.environ.get("PYTEST_XDIST_WORKER") and not os.environ.get("ARGUS_PERSISTENT_ROOT"):
+    os.environ["ARGUS_PERSISTENT_ROOT"] = tempfile.mkdtemp(
+        prefix="argus-test-%s-" % os.environ["PYTEST_XDIST_WORKER"])
 
 
 @pytest.fixture(autouse=True)
@@ -86,3 +98,23 @@ def _isolate_market_store_residency():
                 cache.clear()
             except Exception:
                 pass
+
+
+# CI runs the suite with pytest-xdist in ``loadgroup`` mode. Every test file is
+# kept on one worker (its module-level state never crosses workers), except
+# the files below, whose tests are independent and long enough (dozens of
+# 4-5 s cases) that keeping them together set the pace of the whole suite.
+_PER_TEST_DISTRIBUTED_FILES = frozenset({
+    "test_remote_recovery_publish.py",
+})
+
+
+@pytest.hookimpl(tryfirst=True)  # before xdist reads the group markers
+def pytest_collection_modifyitems(config, items):
+    if not config.pluginmanager.hasplugin("xdist"):
+        return
+    for item in items:
+        name = item.path.name if hasattr(item, "path") else str(item.fspath).rsplit("/", 1)[-1]
+        if name in _PER_TEST_DISTRIBUTED_FILES:
+            continue
+        item.add_marker(pytest.mark.xdist_group(name=name))
