@@ -77,7 +77,7 @@ export function OwnerAccess({ children }: { children: React.ReactNode }) {
         <div className="owner-access-brand__halo" aria-hidden="true" />
         <ArgusMark size={72} className="owner-access-brand__mark" />
         <h1 className="owner-access-brand__name">A.R.G.U.S.</h1>
-        <p className="owner-access-brand__tag">Advanced Research · Guarded · Unified · Signals</p>
+        <p className="owner-access-brand__tag">Autonomous Risk and Global Uncertainty Scanner</p>
         <span className="owner-access-brand__pro" aria-label="Pro">Pro</span>
         <span className="owner-access-brand__rule" aria-hidden="true" />
       </div>
