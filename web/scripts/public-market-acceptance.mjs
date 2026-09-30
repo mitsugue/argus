@@ -217,6 +217,21 @@ async function selectCombination(page, symbol, horizon) {
   await page.locator(`[data-argus-control="canonical-horizon"][data-horizon="${horizon}"]`)
     .click();
   await waitForToday(page);
+  const readState = () => page.evaluate(() => {
+    const actuals = document.querySelector('[data-argus-contract="other-market-actuals-explorer-v1"]');
+    const contract = document.querySelector('[data-argus-contract="canonical-market-snapshot-v1"]');
+    return {
+      symbol: actuals?.getAttribute('data-other-market-symbol') ?? 'none',
+      horizon: actuals?.getAttribute('data-other-market-horizon') ?? 'none',
+      selectedChart: actuals?.querySelector('[data-market-snapshot-id]') ? 'yes' : 'no',
+      verification: contract?.getAttribute('data-canonical-verification') ?? 'none',
+      instrument: contract?.getAttribute('data-canonical-instrument') ?? 'none',
+      canonicalHorizon: contract?.getAttribute('data-canonical-horizon') ?? 'none',
+      canonicalSnapshot: contract?.getAttribute('data-canonical-snapshot-id') ? 'yes' : 'no',
+      locked: document.querySelector('.owner-access-screen') ? 'locked' : 'unlocked',
+    };
+  }).catch(() => null);
+  const started = Date.now();
   await page.waitForFunction(({ expectedSymbol, expectedHorizon }) => {
     const actuals = document.querySelector(
       '[data-argus-contract="other-market-actuals-explorer-v1"]');
@@ -231,7 +246,16 @@ async function selectCombination(page, symbol, horizon) {
       && contract?.getAttribute('data-canonical-horizon') === '5D'
       && Boolean(contract?.getAttribute('data-canonical-snapshot-id'));
   }, { expectedSymbol: symbol, expectedHorizon: horizon },
-  { timeout: DATA_TIMEOUT_MS });
+  { timeout: DATA_TIMEOUT_MS }).catch(async (error) => {
+    // Name which combination and which of the awaited attributes were not
+    // reached (fixed tokens and attribute values only, never page text), so
+    // a release failure says what to fix instead of "Timeout 15000ms".
+    const state = await readState();
+    const detail = state ? Object.entries(state).map(([key, value]) =>
+      `${key}=${String(value).replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 24)}`).join(',') : 'unreadable';
+    throw new Error(`combination_not_ready:${symbol}:${horizon}:after${Date.now() - started}ms:${detail}`
+      + `:${String(error?.message || '').split('\n')[0].replace(/[^A-Za-z0-9 .]/g, '').slice(0, 60)}`);
+  });
   return page.evaluate(() => ({
     displayedSymbol: document.querySelector('[data-argus-contract="other-market-actuals-explorer-v1"]')
       ?.getAttribute('data-other-market-symbol') || null,
