@@ -39529,6 +39529,16 @@ def _jp_market_feature_history_warm():
         if _TOPIX_HIST_CACHE["data"]:
             price_series["topix"] = list(_TOPIX_HIST_CACHE["data"])
         price_series["us10y"] = _fred_us10y_history_dated(fetch=False)
+        # Index PER per session from the labelled ARGUS proxy lane, for the
+        # D04 state flip (PER at least 19). The proxy history starts with the
+        # first weight file; earlier sessions simply have no D04 events.
+        price_series["index_per"] = [
+            {"instrumentId": "NIKKEI_225_PER", "seriesId": "close", "date": row["date"], "value": row["per"],
+             "availableFrom": row["availableFrom"], "sourceRef": row.get("sourceRef"),
+             "derivationBasis": row.get("basis")}
+            for row in _jp_index_proxy_eps_history()
+            if isinstance(row.get("per"), (int, float)) and not isinstance(row.get("per"), bool)
+            and row.get("per") > 0 and row.get("availableFrom")]
         if _N225_ANALOG_HISTORY.get("data"):
             price_series["nikkei"] = list(_N225_ANALOG_HISTORY["data"])
         price_series['vix'] = jp_market_acquisition.merge_feature_sources(

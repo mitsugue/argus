@@ -212,3 +212,23 @@ class ComparisonRetentionTest(unittest.TestCase):
                 scanner._index_research_warm()
             self.assertEqual(status["retained"], {})
             self.assertEqual(reports["comparison:N225:5"]["calculatedAt"], "2026-09-30T09:30:00Z")
+
+
+class IndexPerInputTest(unittest.TestCase):
+    def test_proxy_per_rows_reach_the_feature_warm_labelled(self):
+        history = [{"date": "2026-09-28", "availableFrom": "2026-09-28T07:00:00+00:00", "eps": 3000.0, "per": 19.2,
+                    "epsVariant": "FORECAST_COVERED_ONLY", "basis": "ARGUS_PROXY_INDEX_BASED_PER", "sourceRef": "x"},
+                   {"date": "2026-09-29", "availableFrom": None, "eps": 3000.0, "per": 19.4},
+                   {"date": "2026-09-30", "availableFrom": "2026-09-30T07:00:00+00:00", "eps": 3000.0, "per": None}]
+        captured = {}
+        def fake_history(**kwargs):
+            captured.update(kwargs); raise RuntimeError("stop")
+        with mock.patch.object(scanner, "_jp_index_proxy_eps_history", return_value=history), \
+                mock.patch.object(scanner.jp_market_features, "build_feature_history", side_effect=fake_history), \
+                mock.patch.dict(scanner._N225_ANALOG_HISTORY, {"data": [{"date": "2026-09-29", "close": 1.0}]}), \
+                mock.patch.object(scanner, "_cost_policy_durable_enabled", return_value=False):
+            scanner._jp_market_feature_history_warm()
+        rows = captured["price_series"]["index_per"]
+        self.assertEqual([(r["date"], r["value"]) for r in rows], [("2026-09-28", 19.2)])
+        self.assertEqual(rows[0]["instrumentId"], "NIKKEI_225_PER")
+        self.assertEqual(rows[0]["derivationBasis"], "ARGUS_PROXY_INDEX_BASED_PER")
