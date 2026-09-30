@@ -38594,6 +38594,13 @@ def _index_research_read(key):
     if key.startswith("chart:"):
         result["indexDisclosureJa"] = (_INDEX_CHART_DISCLOSURE_JA
             + " 計算時点: " + stored["calculatedAt"] + "。保存済みの比較結果を表示しています。")
+    retention = (_INDEX_RESEARCH_STATUS.get("retained") or {}).get(key)
+    if retention and isinstance(result.get("comparison"), dict):
+        result["researchCache"]["retained"] = dict(retention)
+        note = ("市場条件の履歴を再計算中のため、直前の市場条件つき比較（計算時点 "
+                + str(stored["calculatedAt"])[:16].replace("T", " ") + " UTC）を表示しています。再計算が終わると更新されます。")
+        result["comparison"]["retainedNoteJa"] = note
+        result["comparison"]["limitations"] = [*result["comparison"].get("limitations", []), note]
     return result
 
 
@@ -38612,7 +38619,7 @@ def _index_research_warm():
         if last is not None and time.monotonic() - last < 1800:
             return
         _INDEX_RESEARCH_STATUS.update(status="RUNNING", lastAttemptMonotonic=time.monotonic())
-        failures = []; updated = []
+        failures = []; updated = []; retained = {}
         # Fixed existing index universe; no provider requests or LLM calls here.
         for key in sorted(argus_index_research_cache.KEYS):
             try:
@@ -38622,6 +38629,18 @@ def _index_research_warm():
                 if result.get("status") in ("unavailable", "expected_skip"):
                     failures.append(key); continue
                 at = _ai_now_iso()
+                if kind == "comparison":
+                    # A price-shape-only result while the market-condition
+                    # history is recalculating does not replace a saved
+                    # market-condition comparison (bounded in age).
+                    reason = argus_index_research_cache.comparison_retention_reason(
+                        result, _INDEX_RESEARCH_REPORTS.get(key),
+                        feature_history_available=_JP_MARKET_FEATURE_HISTORY.get("status") == "AVAILABLE",
+                        now=at)
+                    if reason:
+                        retained[key] = {"reason": reason,
+                                         "previousCalculatedAt": _INDEX_RESEARCH_REPORTS[key]["calculatedAt"]}
+                        continue
                 value = argus_index_research_cache.record(key, result, method=_INDEX_RESEARCH_METHOD, at=at)
                 argus_product_naming.require_allowed(value)
                 _INDEX_RESEARCH_REPORTS[key] = value
@@ -38629,7 +38648,7 @@ def _index_research_warm():
             except Exception:
                 failures.append(key)
         _INDEX_RESEARCH_STATUS.update(status="PARTIAL" if failures else "AVAILABLE",
-            updated=updated, unavailable=failures, lastCompletedAt=_ai_now_iso())
+            updated=updated, unavailable=failures, retained=retained, lastCompletedAt=_ai_now_iso())
         path = _index_research_path()
         if path and updated:
             doc = argus_index_research_cache.envelope(_INDEX_RESEARCH_REPORTS)

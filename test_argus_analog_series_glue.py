@@ -181,3 +181,34 @@ class MarginBackfillTest(unittest.TestCase):
             if saved is not None:
                 scanner._JQ_MARGIN_CACHE["1570"] = saved
             scanner._JQ_MARGIN_BACKFILL.update(lastAttemptDay=None, status="NOT_RUN")
+
+
+class ComparisonRetentionTest(unittest.TestCase):
+    def test_warm_keeps_saved_market_condition_comparison_while_history_recalculates(self):
+        import argus_index_research_cache as cache
+        market = {"status": "available", "comparison": {"candidates": [{"missingGroups": ["materialReaction"]}], "limitations": []}}
+        shape_only = {"status": "available", "comparison": {"candidates": [{"missingGroups": ["marketState", "conditionOrder", "materialReaction"]}], "limitations": []}}
+        saved = {f"comparison:N225:{h}": cache.record(f"comparison:N225:{h}", market, method=scanner._INDEX_RESEARCH_METHOD,
+                                                       at="2026-09-30T06:00:00Z") for h in (1, 5, 10, 20)}
+        status = {"status": "NOT_RUN", "restoreAttempted": True}
+        with mock.patch.object(scanner, "_INDEX_RESEARCH_REPORTS", dict(saved)) as reports, \
+                mock.patch.object(scanner, "_INDEX_RESEARCH_STATUS", status), \
+                mock.patch.object(scanner, "_JP_MARKET_FEATURE_HISTORY", {"status": "NOT_RUN", "features": []}), \
+                mock.patch.object(scanner, "_index_research_path", return_value=None), \
+                mock.patch.object(scanner, "_index_chart_calculate", return_value={"status": "unavailable"}), \
+                mock.patch.object(scanner, "_jp_market_comparison_calculate", return_value=shape_only), \
+                mock.patch.object(scanner, "_ai_now_iso", return_value="2026-09-30T09:30:00Z"):
+            scanner._index_research_warm()
+            self.assertEqual(set(status["retained"]), set(saved))
+            self.assertEqual(status["retained"]["comparison:N225:5"]["reason"], "feature_history_recalculating")
+            self.assertEqual(reports["comparison:N225:5"], saved["comparison:N225:5"])
+            served = scanner._index_research_read("comparison:N225:5")
+            self.assertIn("再計算中", served["comparison"]["retainedNoteJa"])
+            self.assertEqual(served["researchCache"]["retained"]["reason"], "feature_history_recalculating")
+            # History back: the fresh market-condition result replaces the saved one.
+            status["lastAttemptMonotonic"] = None
+            with mock.patch.object(scanner, "_JP_MARKET_FEATURE_HISTORY", {"status": "AVAILABLE", "features": [1]}), \
+                    mock.patch.object(scanner, "_jp_market_comparison_calculate", return_value=market):
+                scanner._index_research_warm()
+            self.assertEqual(status["retained"], {})
+            self.assertEqual(reports["comparison:N225:5"]["calculatedAt"], "2026-09-30T09:30:00Z")
