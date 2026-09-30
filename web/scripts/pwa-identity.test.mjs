@@ -4,7 +4,7 @@ import ts from 'typescript';
 import vm from 'node:vm';
 const source = fs.readFileSync(new URL('../src/lib/pwaIdentity.ts', import.meta.url), 'utf8');
 const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
-const { deployedPwaIdentity, authenticationOnlyUpdate } = await import(`data:text/javascript;base64,${Buffer.from(output).toString('base64')}`);
+const { deployedPwaIdentity, authenticationOnlyUpdate, deployedEntryScript, deployedIsBehind, identityDiffersOnlyInBuildSha } = await import(`data:text/javascript;base64,${Buffer.from(output).toString('base64')}`);
 const html = mode => `__ARGUS_VERSION__="13.7.51";__ARGUS_PRODUCT_VERSION__="v13.7.51";__ARGUS_BUILD_SHA__="${'a'.repeat(40)}";__ARGUS_OWNER_AUTH_MODE__="${mode}";`;
 const off = deployedPwaIdentity(html('0')), on = deployedPwaIdentity(html('1'));
 assert.ok(off && on && off !== on);
@@ -24,7 +24,7 @@ console.log('pwa-identity: setting changes detected, same-code views preserved, 
 
 const recovery = main.slice(main.indexOf('async function selfHeal('), main.indexOf('let registeredServiceWorker'));
 const executable = ts.transpileModule(recovery.replace('import.meta.env.BASE_URL', "'/argus/'"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-for (const [running, deployed, clears] of [[off, on, 0], [on, off, 0], [off, on.replace('13.7.51', '13.7.80'), 1]]) {
+for (const [running, deployed, clears] of [[off, on, 0], [on, off, 0], [off, on.replace('13.7.51', '13.7.81'), 1]]) {
   const calls = [];
   const sandbox = { repairAppCaches: async base => calls.push(['shell', base]),
     clearVerifiedSnapshotCache: async () => calls.push(['views']),
@@ -50,3 +50,26 @@ for (const required of [false, true]) {
   vm.runInNewContext(ts.transpileModule(startup, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, { ...sandbox });
 }
 console.log('pwa-identity: compiled identity recorded before timers, HTML mismatch and unavailable storage cannot forge it');
+
+// 2026-09-30: a served page that is the previous release (an edge not yet
+// updated) or the same entry module is not an update; reloading into it only
+// dropped the in-memory owner session, for minutes after every release.
+const newer = on.replace('13.7.51', '13.7.81'), older = on.replace('13.7.51', '13.7.50'), otherSha = on.replace('a'.repeat(40), 'b'.repeat(40));
+assert.equal(deployedIsBehind(on, older), true);
+assert.equal(deployedIsBehind(on, newer), false);
+assert.equal(deployedIsBehind(on, on.replace('13.7.51', '13.8.0')), false);
+assert.equal(deployedIsBehind(on, on.replace('13.7.51', '12.9.99')), true);
+assert.equal(deployedIsBehind(on, otherSha), false);
+for (const invalid of ['', 'x|y|z|1', on.replace('13.7.51', '13.7'), on.replace('13.7.51', '13.7.5a')]) assert.equal(deployedIsBehind(on, invalid), false);
+assert.equal(identityDiffersOnlyInBuildSha(on, otherSha), true);
+assert.equal(identityDiffersOnlyInBuildSha(on, on), false);
+assert.equal(identityDiffersOnlyInBuildSha(on, off), false); // mode change must reload
+assert.equal(identityDiffersOnlyInBuildSha(on, newer), false);
+const page = entry => `<!doctype html><script type="module" crossorigin src="/argus/assets/${entry}"></script><link rel="modulepreload" href="/argus/assets/vendor-abc.js">`;
+assert.equal(deployedEntryScript(page('index-BNV-iSdr.js')), 'index-BNV-iSdr.js');
+assert.equal(deployedEntryScript(page('index-BNV-iSdr.js') + page('index-other.js')), null);
+assert.equal(deployedEntryScript('<script src="/argus/assets/vendor-abc.js"></script>'), null);
+assert.match(main, /servedPageIsNotAnUpdate\(served, RUNNING_IDENTITY\)/);
+assert.match(main, /deployedIsBehind\(running, served\.identity\)/);
+assert.match(main, /identityDiffersOnlyInBuildSha\(running, served\.identity\)/);
+console.log('pwa-identity: a previous-release edge or the running entry module is not an update');

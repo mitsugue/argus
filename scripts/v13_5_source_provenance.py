@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.80"
+PRODUCT_VERSION = "v13.7.81"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -125,9 +125,9 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-envelope.mjs': '2a1965f6f9c4a2c83baebda864bd8c704ab9673d',
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
-    'web/src/lib/pwaIdentity.ts': '79fa1e3335f85ff01fd538a40b6b1856eec33d79',
-    'web/scripts/pwa-identity.test.mjs': 'a5011c27e73f2fe4d9e6c8df5e7efa4e1d5626f9',
-    'web/scripts/owner-today-https.mjs': '3ecefa2ce443e88762769cf2f83cbc8993ca1136',
+    'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
+    'web/scripts/pwa-identity.test.mjs': 'b0b81faf25a455e2b33d591c3d3a2fd6b5698cd2',
+    'web/scripts/owner-today-https.mjs': '0b63060722e222076cfccd1ba38b5d10fb8cff5f',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -423,7 +423,7 @@ REVIEWED_EXTENSION_BLOBS = {
     "web/src/lib/vault.ts": "9180eba851c0b62a99ac449166f90f2404e18370",
     "web/scripts/news-history.test.mjs": "766b69d112dc01d32631025446007b506d7e55f6",
     "web/scripts/public-market-acceptance.mjs": "7ab058fb6a98ad71edda1b44e066db0ad966f1e3",
-    "web/scripts/canonical-snapshot-selection.mjs": "222a245786bdfb74c0116df57d5ff65ad94cf292",
+    "web/scripts/canonical-snapshot-selection.mjs": "22e5497e43259f8ed89fed2d1ffc331c4b7721e4",
     "web/scripts/index-chart-isolation.test.mjs": "470dcf9598714a89b9ebba9dd53cfc2f6315092f",
     "argus_osint_engine.py": "82c928299eed09004067283d72cc4b67b07753c5",
     "test_argus_v12_1_1.py": "fcb2a56c79822f5177ae776dfdaf07972da0a49e",

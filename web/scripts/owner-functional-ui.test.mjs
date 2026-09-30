@@ -53,6 +53,7 @@ assert.match(vite, /argus\.bundle\.identity/);
 assert.match(vite, /repairAppCaches\.toString\(\)/);
 assert.match(read('src/lib/pwaRecovery.ts'), /navigator\.serviceWorker\?\.getRegistrations/);
 assert.match(main, /RUNNING_IDENTITY/);
-assert.match(main, /fetchDeployedIdentity/);
+assert.match(main, /fetchDeployedPage/);
+assert.match(main, /servedPageIsNotAnUpdate/);
 
 console.log('owner-functional-ui.test: ok');

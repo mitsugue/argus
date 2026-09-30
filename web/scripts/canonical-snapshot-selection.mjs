@@ -305,6 +305,12 @@ export async function openCanonicalEvidence(page, timeout = 30_000) {
     // stays proven, and a persistent failure still reports its churn and
     // the blocking element.
     let lastError = null;
+    // Main-frame navigations during the attempts: the product reloads itself
+    // when it believes a newer page is served, and the in-memory owner session
+    // does not survive that. Counted only for the failure message.
+    let navigations = 0;
+    const onNavigated = (frame) => { if (frame === page.mainFrame()) navigations += 1; };
+    page.on('framenavigated', onNavigated);
     // (Named clickAttempt: the release-state contract locates the snapshot
     // selection retry loop by its exact text.)
     for (let clickAttempt = 1; clickAttempt <= 3; clickAttempt += 1) {
@@ -328,9 +334,19 @@ export async function openCanonicalEvidence(page, timeout = 30_000) {
         }
       }
     }
+    page.off('framenavigated', onNavigated);
     if (lastError) {
       const churn = await waitForSettledEvidence(page, 1_000, 1_000);
       const message = String(lastError?.message || '');
+      // Fixed tokens about the page, never its text: whether the lock screen
+      // is up (the session was lost) and the product's own update-try count.
+      const state = await page.evaluate(() => ({
+        locked: !!document.querySelector('.owner-access-screen'),
+        tries: Number(sessionStorage.getItem('argus_update_tries') || '0'),
+      })).catch(() => null);
+      const pageState = state ? `${state.locked ? 'locked' : 'unlocked'}:tries${state.tries}` : 'unreadable';
+      const firstLine = (message.split('\n')[0] || '').replace(/[^A-Za-z0-9 ._-]/g, '')
+        .replace(/\s+/g, '_').slice(0, 80);
       const stage = message.includes('detached') ? 'detached' : 'blocked';
       const covering = message.match(/<([a-z0-9-]+)([^>]*)>[^\n]*intercepts pointer events/i);
       const coveringClass = covering ? ((covering[2].match(/class="([^" ]+)/) || [])[1] || '') : '';
@@ -344,8 +360,9 @@ export async function openCanonicalEvidence(page, timeout = 30_000) {
         .filter((line) => /^\s*-\s/.test(line) && !/<|getByText|locator\(/.test(line))
         .slice(-2).join('|')
         .replace(/[^A-Za-z0-9 |_-]/g, '').replace(/\s+/g, '_').slice(0, 120);
-      throw new Error(`canonical_evidence_click_failed:${stage}:churn${churn}`
-        + `${blocker ? `:by:${blocker}` : ''}${reason ? `:why:${reason}` : ''}`);
+      throw new Error(`canonical_evidence_click_failed:${stage}:churn${churn}:nav${navigations}:${pageState}`
+        + `${blocker ? `:by:${blocker}` : ''}${reason ? `:why:${reason}` : ''}`
+        + `${firstLine ? `:msg:${firstLine}` : ''}`);
     }
   }
   await page.waitForFunction(() =>

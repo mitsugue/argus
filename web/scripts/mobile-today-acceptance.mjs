@@ -600,7 +600,11 @@ async function run() {
     (route) => fulfillCapturedSnapshot(route, evidence, 4_000));
   const coldPage = await cold.newPage();
   const coldLoaderAppeared = (async () => {
-    if (owner.enabled) await coldPage.locator('.owner-access-bar > summary').waitFor({ state: 'visible', timeout: 30000 });
+    // This wait starts before the page even navigates; the owner login it
+    // waits behind includes the seven-second owner-wide throttle and, right
+    // after a release, one self-healed second login (2026-09-30 release of
+    // 13.7.80 failed here at 30s). Bound it by the login's own budget.
+    if (owner.enabled) await coldPage.locator('.owner-access-bar > summary').waitFor({ state: 'visible', timeout: 90_000 });
     return coldPage.locator(
     '.at-canonical-load-status .triangle-step-loader',
   ).waitFor({ state: 'visible', timeout: 5_000 });
@@ -659,7 +663,7 @@ async function run() {
     (route) => fulfillCapturedSnapshot(route, evidence, 6_000));
   const slowPage = await slow.newPage();
   const slowStateAppeared = (async () => {
-    if (owner.enabled) await slowPage.locator('.owner-access-bar > summary').waitFor({ state: 'visible', timeout: 30000 });
+    if (owner.enabled) await slowPage.locator('.owner-access-bar > summary').waitFor({ state: 'visible', timeout: 90_000 });
     return slowPage.waitForFunction(({ selector }) => {
     const nodes = [...document.querySelectorAll(selector)];
     if (nodes.length !== 1) return false;
