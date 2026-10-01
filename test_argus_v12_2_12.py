@@ -152,10 +152,14 @@ def test_desk_sections_fixed_order():
     assert card.count("id: '") == 3
     # Owner surfaceには判断に必要な詳細だけを残す。AIレビュー長文は
     # 正本判断を増やさず視認性を落とすため、カードからは外す。
-    for panel in ("AssetDecisionDetails", "ChartIntelligencePanel", "AssetWhyPanel",
+    for panel in ("AssetDecisionDetails", "AssetWhyPanel",
                   "AssetFlowPanel", "AssetScenarioPanel",
                   "AssetResearchPanel", "AssetDataQuality"):
         assert f"<{panel}" in card
+    # 2026-10-01 (owner): individual-stock charts are retired; the chart tab
+    # states so instead of mounting the asset-scope chart.
+    assert "<ChartIntelligencePanel" not in card
+    assert 'data-asset-chart="retired"' in card
     assert "<AssetPositionPanel" not in card
     assert "<AssetAIReview" not in card
 

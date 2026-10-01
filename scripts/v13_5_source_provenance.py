@@ -43,7 +43,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_heavy_tick_serialization.py': '99355f4f3e5648df3487b4b26d3300dc3a11c92c',
     # the acceptance evidence churn diagnostic
     # the second store-residency slice
-    'conftest.py': '1042499817b98477295453bde45773e534becc6b',
+    'conftest.py': '530183b592bfaff8c21e8ad8b317b9e158785b08',
     # the Settings identity card (v13.7.57)
     # the Settings identity card (v13.7.59)
     'web/src/components/settings/OwnerIdentityPanel.tsx': '2289fa6d7fbdae74e8599cda85d3a1751f1928b2',
@@ -650,6 +650,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_asset_chart_retired.py",
     "test_jp_market_sign_conditions.py",
     "test_jp_market_analog_backtest.py",
     "jp_market_analog_backtest.py",

@@ -18,6 +18,11 @@ import pytest
 # the same checkpoint, recovery sidecar and sqlite files, and a test in one
 # worker could see or erase another worker's state. Give each worker its own
 # root before scanner is imported. Serial runs are unchanged.
+# Individual-stock chart generation is retired in production (2026-10-01);
+# the existing tests exercise that legacy path, so they keep it on. The
+# retired behaviour has its own tests, which switch it off explicitly.
+os.environ.setdefault("ARGUS_ASSET_CHART_GENERATION", "1")
+
 if os.environ.get("PYTEST_XDIST_WORKER") and not os.environ.get("ARGUS_PERSISTENT_ROOT"):
     os.environ["ARGUS_PERSISTENT_ROOT"] = tempfile.mkdtemp(
         prefix="argus-test-%s-" % os.environ["PYTEST_XDIST_WORKER"])

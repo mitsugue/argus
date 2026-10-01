@@ -11,7 +11,6 @@ import { AssetScenarioPanel } from './AssetScenarioPanel';
 import { AssetResearchPanel } from './AssetResearchPanel';
 import { AssetDataQuality } from './AssetDataQuality';
 import { AssetEvidenceSummary } from './AssetEvidenceSummary';
-import { ChartIntelligencePanel } from '../chart/ChartIntelligencePanel';
 import '../dashboard/UnifiedAssetCard.css';
 import '../dashboard/Dashboard.css';
 import './AssetDesk.css';
@@ -112,8 +111,11 @@ export const AssetDecisionCard: React.FC<Props> = ({
             )}
             {tab === 'chart' && (
               <Section symbol={sym} id="technical">
-                <ChartIntelligencePanel scope="asset" symbol={sym}
-                  market={d.asset.market} enabled />
+                {/* 2026-10-01 (owner): individual-stock charts are not generated;
+                    the owner checks individual stocks in another application. */}
+                <p className="ad-chart-retired" data-asset-chart="retired">
+                  個別銘柄のチャートは表示していません。値動きは他のアプリで確認してください。
+                </p>
               </Section>
             )}
             {tab === 'evidence' && (
