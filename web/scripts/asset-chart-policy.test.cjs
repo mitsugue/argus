@@ -152,8 +152,10 @@ async function main() {
   const cardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
     'assetDesk', 'AssetDecisionCard.tsx'), 'utf8');
 
-  check('C9 closed and Overview states do not mount the chart',
-    cardSource.indexOf('<ChartIntelligencePanel') > cardSource.indexOf("tab === 'chart'"));
+  // 2026-10-01: individual-stock charts are retired; the stock page never
+  // mounts the asset-scope chart and says so instead.
+  check('C9 the stock page does not mount an individual-stock chart',
+    !cardSource.includes('<ChartIntelligencePanel') && cardSource.includes('data-asset-chart="retired"'));
   check('C10 inflight dedupe and race sequence guards remain active',
     hookSource.includes('legacyInflight.get(url)')
       && hookSource.includes('requestSequence !== sequence.current'));

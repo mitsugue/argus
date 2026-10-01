@@ -36855,6 +36855,16 @@ def _asset_chart_current(market, symbol, timeframe):
         market, symbol, timeframe)
 
 
+# 2026-10-01 (owner): individual-stock charts are not needed; the owner checks
+# individual stocks in another application, and the stock page is reworked in
+# 13.8. Generation was the largest memory transient left (+205..367 MB inside
+# missions/tick, one instrument per tick). It is off by default; the saved
+# reports and their store are left untouched. ARGUS_ASSET_CHART_GENERATION=1
+# restores the previous behaviour (tests of the legacy path set it).
+_ASSET_CHART_GENERATION = os.environ.get("ARGUS_ASSET_CHART_GENERATION", "0") == "1"
+_ASSET_CHART_RETIRED_JA = "個別銘柄のチャートは表示していません。個別株の値動きは他のアプリで確認してください。"
+
+
 def _precompute_asset_chart_tick(deadline_monotonic=None, *, defer_journal=False):
     """Publish one changed public-watchlist instrument from warm provider data.
 
@@ -36865,6 +36875,9 @@ def _precompute_asset_chart_tick(deadline_monotonic=None, *, defer_journal=False
     Internal warm batches defer the journal until their outer authority lock
     has been released; normal scheduler calls keep immediate journaling.
     """
+    if not _ASSET_CHART_GENERATION:
+        return {"status": "retired", "reason": "asset_chart_generation_retired",
+                "generated": False, "targetCount": 0}
     targets = _asset_chart_targets()
     if not targets:
         return {"status": "expected_skip", "reason": "empty_target_universe",
@@ -37567,6 +37580,11 @@ def api_argus_chart_intelligence():
         return jsonify({"error": "bad_symbol"}), 400
     if market == "US" and not _US_SYM_RE.match(symbol):
         return jsonify({"error": "bad_symbol"}), 400
+    if not _ASSET_CHART_GENERATION:
+        # No calculation and no store attachment for individual stocks.
+        return jsonify({"reportId": None, "status": "retired", "reason": "asset_chart_generation_retired",
+                        "messageJa": _ASSET_CHART_RETIRED_JA, "instrument": symbol, "market": market,
+                        "automaticAiCalls": 0})
     cached_asset = _asset_chart_current(market, symbol, timeframe)
     if cached_asset:
         report = copy.deepcopy(cached_asset["payload"])
