@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { JapanMarketComparison } from '../types/japanMarketComparison';
-import { validJapanMarketComparison } from '../lib/japanMarketComparison';
+import type { ForecastTrackRecord, JapanMarketComparison } from '../types/japanMarketComparison';
+import { validForecastTrackRecord, validJapanMarketComparison } from '../lib/japanMarketComparison';
 import { FEED_VISIBLE_MS } from '../lib/pollingPolicy';
 
 type State = { document: JapanMarketComparison | null; loading: boolean; error: boolean;
@@ -89,4 +89,36 @@ export function useJapanMarketComparison(horizon: number) {
   }, [base, key, horizon, retry]);
   return { ...(snapshot.key === key ? snapshot.state : { ...empty(), ...memory.get(key) }),
     retry: () => setRetry(value => value + 1) };
+}
+
+// Record of the forecasts actually issued (shared by every chart on the page).
+// Until the backend serves it the line simply stays absent.
+const TRACK_RECORD_TTL_MS = 10 * 60_000;
+let trackRecord: { value: ForecastTrackRecord | null; at: number } | null = null;
+let trackRecordFlight: Promise<ForecastTrackRecord | null> | null = null;
+
+async function loadTrackRecord(base: string): Promise<ForecastTrackRecord | null> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(`${base}/api/argus/market-brief?trackRecord=1`, { cache: 'no-store', signal: controller.signal });
+    if (!response.ok) return null;
+    const body = await response.json();
+    return validForecastTrackRecord(body?.trackRecord) ? body.trackRecord : null;
+  } catch { return null; } finally { window.clearTimeout(timer); }
+}
+
+export function useForecastTrackRecord(): ForecastTrackRecord | null {
+  const base = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '') ?? '';
+  const [value, setValue] = useState<ForecastTrackRecord | null>(trackRecord?.value ?? null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!base || (trackRecord && Date.now() - trackRecord.at < TRACK_RECORD_TTL_MS)) return;
+    trackRecordFlight ??= loadTrackRecord(base).then(result => {
+      trackRecord = { value: result, at: Date.now() }; return result;
+    }).finally(() => { trackRecordFlight = null; });
+    void trackRecordFlight.then(result => { if (!cancelled) setValue(result); });
+    return () => { cancelled = true; };
+  }, [base]);
+  return value;
 }

@@ -201,3 +201,48 @@ def test_outcome_walk_reads_the_index_without_parsing_page_bodies(tmp_path, monk
     monkeypatch.setattr(scanner, '_MARKET_BRIEF', {'outcomeBeforeSequence': None})
     scanner._market_brief_history_outcomes()
     assert len(calls) == 3 and scanner._MARKET_BRIEF.get('outcomeError') is None
+
+
+def _one_day(anchor, value):
+    return {'1': {'comparison': {'schemaVersion': 'jp-market-comparison-v1', 'anchorDate': anchor,
+        'actualAnchorPrice': 100, 'unit': 'ANCHOR_100', 'forecast': {'horizonSessions': 1,
+        'line': [{'offsetSessions': 1, 'value': value}], 'flatThresholdPct': 0.5, 'validationStatus': 'UNVALIDATED'}}}}
+
+
+def _issue(path, at, anchor, value, closes, received):
+    record = history.make_record(brief(at), _one_day(anchor, value))
+    history.append(path, record)
+    history.append_outcomes(path, history.outcome_candidates(record, closes, received_at=received))
+    return record
+
+
+def test_track_record_counts_the_first_forecast_issued_before_the_session_it_is_scored_on(tmp_path):
+    path = tmp_path/'history.sqlite'; history.initialize(path)
+    # Anchor Fri 9/11, scored on Mon 9/14: the weekend view counts, the later rewrite of the same anchor does not.
+    _issue(path, '2026-09-13T00:00:00Z', '2026-09-11', 102, [{'date':'2026-09-14','close':98}], '2026-09-14T07:00:00Z')
+    _issue(path, '2026-09-13T05:00:00Z', '2026-09-11', 97, [{'date':'2026-09-14','close':98}], '2026-09-14T07:00:00Z')
+    # Issued at 10:00 JST on Tue 9/15 after the session it is scored on had opened: never counted.
+    _issue(path, '2026-09-15T01:00:00Z', '2026-09-14', 103, [{'date':'2026-09-15','close':104}], '2026-09-15T07:00:00Z')
+    result = history.track_record(path)
+    one = result['horizons']['1']
+    assert one['scoredForecasts'] == 1 and one['directionalForecasts'] == 1 and one['hits'] == 0
+    assert one['status'] == 'INSUFFICIENT_SAMPLE' and one['naiveMajorityRate'] == 1.0
+    assert result['predictiveProbabilities'] is None and result['actionAuthority'] is False
+    assert result['horizons']['5']['directionalForecasts'] == 0 and result['horizons']['5']['hitRate'] is None
+
+
+def test_track_record_uses_the_corrected_close_and_needs_the_lower_bound_above_the_naive_rate(tmp_path, monkeypatch):
+    path = tmp_path/'history.sqlite'; history.initialize(path)
+    record = _issue(path, '2026-09-13T00:00:00Z', '2026-09-11', 102, [{'date':'2026-09-14','close':98}], '2026-09-14T07:00:00Z')
+    history.append_outcomes(path, history.outcome_candidates(record, [{'date':'2026-09-14','close':103}], received_at='2026-09-16T07:00:00Z'))
+    monkeypatch.setattr(history, 'TRACK_RECORD_MINIMUM', 1)
+    one = history.track_record(path)['horizons']['1']
+    assert one['hits'] == 1 and one['hitRate'] == 1.0
+    assert one['hitRateWilsonLower95'] < one['naiveMajorityRate'] and one['status'] == 'NOT_ABOVE_BASELINE'
+
+
+def test_flat_forecasts_are_scored_but_not_counted_as_direction_calls(tmp_path):
+    path = tmp_path/'history.sqlite'; history.initialize(path)
+    _issue(path, '2026-09-13T00:00:00Z', '2026-09-11', 100.2, [{'date':'2026-09-14','close':103}], '2026-09-14T07:00:00Z')
+    one = history.track_record(path)['horizons']['1']
+    assert one['scoredForecasts'] == 1 and one['directionalForecasts'] == 0 and one['status'] == 'INSUFFICIENT_SAMPLE'

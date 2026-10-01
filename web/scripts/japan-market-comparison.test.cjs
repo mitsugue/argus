@@ -5,7 +5,7 @@ const ts = require('typescript');
 require.extensions['.ts'] = (mod, filename) => mod._compile(ts.transpileModule(
   fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS,
     target: ts.ScriptTarget.ES2022 }, fileName: filename }).outputText, filename);
-const { validJapanMarketComparison } = require('../src/lib/japanMarketComparison.ts');
+const { validForecastTrackRecord, validJapanMarketComparison } = require('../src/lib/japanMarketComparison.ts');
 const document = {
   schemaVersion: 'jp-market-comparison-v1', informationCutoff: '2026-09-11T08:00:00Z',
   anchorDate: '2026-09-11', actualAnchorPrice: 40000, unit: 'ANCHOR_100',
@@ -104,3 +104,27 @@ for (const patch of [{ historicalVintageVerified: true }, { full10yAllIndicators
   { sources: { unknown: {} } }]) {
   assert(!validJapanMarketComparison({ ...withSources, sourceAcquisition: { ...withSources.sourceAcquisition, ...patch } }, 5));
 }
+
+// 2026-10-02: record of the forecasts actually issued, judged against the majority direction.
+const horizon = (h, patch = {}) => ({ horizonSessions: h, scoredForecasts: 30, directionalForecasts: 25, hits: 14,
+  hitRate: 0.56, hitRateWilsonLower95: 0.37, naiveMajorityRate: 0.6, status: 'NOT_ABOVE_BASELINE',
+  firstTargetDate: '2026-09-14', lastTargetDate: '2026-10-30', ...patch });
+const record = { schemaVersion: 'argus-forecast-track-record-v1', instrumentId: 'NIKKEI_225_INDEX',
+  minimumDirectionalForecasts: 20, predictiveProbabilities: null, actionAuthority: false,
+  horizons: { 1: horizon(1), 5: horizon(5, { scoredForecasts: 3, directionalForecasts: 2, hits: 1, hitRate: 0.5,
+    hitRateWilsonLower95: 0.09, naiveMajorityRate: 0.5, status: 'INSUFFICIENT_SAMPLE' }) } };
+assert(validForecastTrackRecord(record));
+for (const mutate of [
+  r => { r.predictiveProbabilities = 0.56; },
+  r => { r.actionAuthority = true; },
+  r => { r.horizons[1].hits = 26; },
+  r => { r.horizons[1].hitRate = 1.4; },
+  r => { r.horizons[1].status = 'INSUFFICIENT_SAMPLE'; },
+  r => { r.horizons[5].status = 'ABOVE_BASELINE'; },
+  r => { r.horizons[5].horizonSessions = 10; },
+  r => { r.horizons[1].directionalForecasts = 0; r.horizons[1].hits = 0; },
+]) {
+  const invalid = structuredClone(record); mutate(invalid);
+  assert(!validForecastTrackRecord(invalid));
+}
+console.log('Issued forecast track record shape PASS');

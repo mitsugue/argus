@@ -1,4 +1,4 @@
-import type { JapanMarketComparison } from '../types/japanMarketComparison';
+import type { ForecastTrackRecord, JapanMarketComparison } from '../types/japanMarketComparison';
 
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -147,4 +147,21 @@ function validForecastValidation(v: unknown, status: unknown): boolean {
     && nonNegative(v.meanAbsoluteError) && nonNegative(v.naiveNoChangeMeanAbsoluteError)
     && v.validationStatus === status && strings(v.reasons)
     && (v.validationStatus === 'VALIDATED') === ((v.reasons as string[]).length === 0);
+}
+
+const rate = (v: unknown) => v === null || (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1);
+const count = (v: unknown) => Number.isInteger(v) && (v as number) >= 0;
+
+export function validForecastTrackRecord(v: unknown): v is ForecastTrackRecord {
+  const value = v as ForecastTrackRecord;
+  if (!value || value.schemaVersion !== 'argus-forecast-track-record-v1' || value.instrumentId !== 'NIKKEI_225_INDEX'
+    || value.predictiveProbabilities !== null || value.actionAuthority !== false
+    || !count(value.minimumDirectionalForecasts) || !value.horizons || typeof value.horizons !== 'object') return false;
+  return Object.entries(value.horizons).every(([key, h]) => h && String(h.horizonSessions) === key
+    && count(h.scoredForecasts) && count(h.directionalForecasts) && count(h.hits)
+    && h.hits <= h.directionalForecasts && h.directionalForecasts <= h.scoredForecasts
+    && rate(h.hitRate) && rate(h.hitRateWilsonLower95) && rate(h.naiveMajorityRate)
+    && (h.directionalForecasts > 0 || h.hitRate === null)
+    && ['INSUFFICIENT_SAMPLE', 'ABOVE_BASELINE', 'NOT_ABOVE_BASELINE'].includes(h.status)
+    && (h.status === 'INSUFFICIENT_SAMPLE') === (h.directionalForecasts < value.minimumDirectionalForecasts));
 }

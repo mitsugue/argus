@@ -284,3 +284,77 @@ def read_outcomes(path, record_id):
             values.append(row)
         return values
     finally:conn.close()
+
+
+TRACK_RECORD_MINIMUM = 20
+
+
+def _wilson_lower(hits, total, z=1.959963984540054):
+    import math
+    if total <= 0: return None
+    p = hits / total; centre = p + z * z / (2 * total)
+    margin = z * math.sqrt(p * (1 - p) / total + z * z / (4 * total * total))
+    return (centre - margin) / (1 + z * z / total)
+
+
+def track_record(path):
+    """Direction record of the Nikkei paths this product actually issued.
+
+    One forecast per (horizon, anchor session): the earliest view issued before
+    the first session of its horizon opened, so no counted forecast saw any of
+    the move it is scored on. The latest appended result for that view is used
+    (a corrected close replaces the first reading). Frequencies of past issued
+    forecasts, never a probability for the next one.
+    """
+    from datetime import date, timedelta
+    import argus_market_clock as clock
+    conn = _connect(path, True)
+    try:
+        rows = conn.execute('SELECT o.body, v.recorded_at FROM outcomes o JOIN views v ON o.record_id=v.record_id '
+                            'ORDER BY julianday(v.recorded_at), v.sequence, o.sequence').fetchall()
+    finally: conn.close()
+    chosen = {}
+    for body, recorded_at in rows:
+        row = json.loads(body)
+        horizon, target = row.get('horizonSessions'), row.get('targetDate')
+        if horizon not in (1, 5, 10, 20) or not isinstance(target, str): continue
+        key = (horizon, target)
+        if key in chosen and chosen[key]['recordId'] != row['recordId']: continue
+        first = date.fromisoformat(target); remaining = horizon - 1
+        try:
+            while remaining:
+                first -= timedelta(days=1)
+                if clock.canonical_trading_day(clock.JP_EQUITY, first): remaining -= 1
+            opened = clock.market_session_bounds(clock.JP_EQUITY, first)['regularOpenUtc']
+        except clock.CalendarUnavailableError:
+            continue
+        if not opened or _instant(recorded_at) >= _instant(opened): continue
+        chosen[key] = row
+    horizons = {}
+    for horizon in (1, 5, 10, 20):
+        hits = up = down = directional = 0; dates = []
+        for (h, target), row in sorted(chosen.items()):
+            if h != horizon: continue
+            threshold, value = row['flatThresholdPct'], row['forecastValue']
+            if row['comparisonUnit'] == 'ANCHOR_100':
+                predicted_change = value - 100
+            else:
+                anchor = row['actualClose'] / (1 + row['actualChangePct'] / 100)
+                predicted_change = (value / anchor - 1) * 100
+            predicted = 'up' if predicted_change > threshold else 'down' if predicted_change < -threshold else 'flat'
+            dates.append(target)
+            if predicted == 'flat': continue
+            directional += 1; hits += row['actualClass'] == predicted
+            up += row['actualClass'] == 'up'; down += row['actualClass'] == 'down'
+        rate = hits / directional if directional else None
+        naive = max(up, down) / directional if directional else None
+        lower = _wilson_lower(hits, directional)
+        status = ('INSUFFICIENT_SAMPLE' if directional < TRACK_RECORD_MINIMUM
+                  else 'ABOVE_BASELINE' if lower is not None and lower > naive else 'NOT_ABOVE_BASELINE')
+        horizons[str(horizon)] = {'horizonSessions': horizon, 'scoredForecasts': len(dates),
+            'directionalForecasts': directional, 'hits': hits, 'hitRate': rate,
+            'hitRateWilsonLower95': lower, 'naiveMajorityRate': naive, 'status': status,
+            'firstTargetDate': dates[0] if dates else None, 'lastTargetDate': dates[-1] if dates else None}
+    return {'schemaVersion': 'argus-forecast-track-record-v1', 'instrumentId': 'NIKKEI_225_INDEX',
+            'minimumDirectionalForecasts': TRACK_RECORD_MINIMUM, 'horizons': horizons,
+            'predictiveProbabilities': None, 'actionAuthority': False}
