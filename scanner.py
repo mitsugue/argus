@@ -17102,10 +17102,34 @@ def _owner_overview_tick():
         add_log(f"owner-overview tick unavailable: {type(exc).__name__}")
 
 
+_MARKET_BRIEF_TRACK_RECORD = {"value": None, "at": 0.0}
+_MARKET_BRIEF_TRACK_RECORD_TTL_SEC = 600
+
+
+def _market_brief_track_record_response():
+    """Tally of the issued Nikkei paths (read-only, cached; no provider or AI call)."""
+    path = _market_brief_history_path()
+    if not path:
+        return jsonify({"status": "UNAVAILABLE", "reason": "history_storage_not_configured"}), 503
+    cached = _MARKET_BRIEF_TRACK_RECORD
+    if cached["value"] is None or time.time() - cached["at"] > _MARKET_BRIEF_TRACK_RECORD_TTL_SEC:
+        try:
+            cached["value"] = argus_analysis_history.track_record(path)
+            cached["at"] = time.time()
+        except FileNotFoundError:
+            return jsonify({"status": "UNAVAILABLE", "reason": "history_not_recorded"}), 503
+        except Exception as exc:
+            return jsonify({"status": "UNAVAILABLE", "reason": type(exc).__name__}), 503
+    return jsonify({"status": "AVAILABLE", "trackRecord": cached["value"], "scope": "PUBLIC_MARKET",
+                    "readOnly": True, "actionAuthority": False})
+
+
 @app.route("/api/argus/market-brief")
 def api_argus_market_brief():
     """Public NOW/WHY/NEXT situation brief. Cached-only: a public GET never
     triggers an LLM call — AI polish happens on its independent scheduler worker."""
+    if request.args.get("trackRecord") == "1":
+        return _market_brief_track_record_response()
     if request.args.get("history") == "1" or request.args.get("historyId"):
         path = _market_brief_history_path()
         if not path:
