@@ -384,7 +384,28 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
             excluded["missingCalendarOrPriceSession"] += 1
         else:
             candidates.append(episode)
-    selection = select_episodes(current, candidates, session_dates=session_dates, policy=policy)
+    validation, search = None, None
+    selection_policy = policy
+    if backtest_cache is not None:
+        # Walk-forward validation of this forecast rule on the same sealed
+        # episodes, and the component-weight search (chosen on the first half
+        # of the evaluation dates, judged on the second), recomputed when the
+        # history or the policy changes and shared by the four horizons.
+        import jp_market_analog_backtest as backtest
+        key = _hash({"method": backtest.METHOD, "last": visible[-1]["date"], "candidates": len(candidates),
+                     "policy": policy.policy_id, "scales": list(policy.state_scales),
+                     "grid": list(backtest.WEIGHT_GRID), "evidence": [len(rows) for rows in evidence]})
+        if backtest_cache.get("key") != key:
+            closes = {row["date"]: float(row["close"]) for row in visible if row.get("close")}
+            result = backtest.walk_forward(candidates, closes, session_dates, policy=policy, state_rows=state_rows)
+            searched = backtest.weight_search(candidates, closes, session_dates, policy=policy, state_rows=state_rows)
+            backtest_cache.clear()
+            backtest_cache.update(key=key, result=result, search=searched)
+        validation, search = backtest_cache["result"], backtest_cache.get("search")
+        if search and search.get("adopted"):
+            from dataclasses import replace
+            selection_policy = replace(policy, component_weights=tuple(sorted(search["chosenWeights"].items())))
+    selection = select_episodes(current, candidates, session_dates=session_dates, policy=selection_policy)
     selected = {row["snapshotId"] for row in selection["selected"]}
     paths = [reference_path(episode, later_bars=visible, display_cutoff=cutoff,
                             session_dates=session_dates, horizon_sessions=horizon_sessions, policy=policy)
@@ -393,6 +414,32 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     scale = index_valuation_scale(valuation, cutoff=cutoff, anchor_date=current["anchorDate"],
                                   anchor_price=current["window"][-1]["close"])
     document = comparison_document(current, selection, paths, ensemble, scale=scale)
+    if validation is not None:
+        adopted = bool(search and search.get("adopted"))
+        # With adopted weights the reported figures are the held-out half's,
+        # which the choice never saw; otherwise the full walk-forward.
+        metrics = (search["test"].get(str(horizon_sessions)) if adopted
+                   else validation["horizons"].get(str(horizon_sessions)))
+        if metrics:
+            document["forecast"]["validationStatus"] = metrics["validationStatus"]
+            document["forecast"]["validation"] = {
+                **metrics, "method": search["method"] if adopted else validation["method"],
+                "evaluationStart": search["testStart"] if adopted else validation["evaluationStart"],
+                "evaluationEnd": search["testEnd"] if adopted else validation["evaluationEnd"],
+                "stepSessions": validation["step"], "scaleRule": validation["scaleRule"],
+                "predictiveProbabilities": None}
+        if search and search.get("status") == "AVAILABLE":
+            document["forecast"]["weightSearch"] = {
+                "gridSize": search["gridSize"], "chosenWeights": search["chosenWeights"],
+                "choiceHorizon": search["choiceHorizon"], "adopted": adopted,
+                "trainStart": search["trainStart"], "trainEnd": search["trainEnd"],
+                "testStart": search["testStart"], "testEnd": search["testEnd"],
+                "trainHitRate": search["train"]["hitRate"], "trainNaiveRate": search["train"]["naiveMajorityRate"],
+                "testHitRate": search["test"][str(search["choiceHorizon"])]["hitRate"],
+                "testNaiveRate": search["test"][str(search["choiceHorizon"])]["naiveMajorityRate"],
+                "testWilsonLower95": search["test"][str(search["choiceHorizon"])]["hitRateWilsonLower95"],
+                "equalWeightsTestHitRate": (search["equalWeightsTest"] or {}).get("hitRate"),
+                "predictiveProbabilities": None}
     document["limitations"].append("過去比較には取得元が現在報告する履歴を使用しています。改訂前の履歴の再現は未検証です。")
     groups = {key: len(current[key]) for key in ("states", "conditions", "reactions")}
     document["marketEvidence"] = {
@@ -429,31 +476,11 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     # answers whether a year was searched and why its closest candidate was or
     # was not selected; it neither changes the ranking nor uses later returns.
     document["selectionAudit"] = selection.get("yearAudit", {})
-    if backtest_cache is not None:
-        # Walk-forward validation of this forecast rule on the same sealed
-        # episodes, recomputed when the history or the policy changes (in
-        # practice once a day) and shared by the four horizons.
-        import jp_market_analog_backtest as backtest
-        key = _hash({"method": backtest.METHOD, "last": visible[-1]["date"], "candidates": len(candidates),
-                     "policy": policy.policy_id, "scales": list(policy.state_scales),
-                     "evidence": [len(rows) for rows in evidence]})
-        if backtest_cache.get("key") != key:
-            closes = {row["date"]: float(row["close"]) for row in visible if row.get("close")}
-            result = backtest.walk_forward(candidates, closes, session_dates, policy=policy, state_rows=state_rows)
-            backtest_cache.clear()
-            backtest_cache.update(key=key, result=result)
-        validation = backtest_cache["result"]
-        metrics = validation["horizons"].get(str(horizon_sessions))
-        if metrics:
-            document["forecast"]["validationStatus"] = metrics["validationStatus"]
-            document["forecast"]["validation"] = {
-                **metrics, "method": validation["method"], "evaluationStart": validation["evaluationStart"],
-                "evaluationEnd": validation["evaluationEnd"], "stepSessions": validation["step"],
-                "scaleRule": validation["scaleRule"], "predictiveProbabilities": None}
     document["selectionPolicy"] = {
         "policyId": policy.policy_id, "lookbackSessions": policy.lookback_sessions,
         "maximumCandidates": policy.maximum_candidates, "minimumSeparationSessions": policy.minimum_separation_sessions,
         "maximumDistance": policy.maximum_distance, "shapeScalePct": policy.shape_scale_pct,
+        "componentWeights": dict(selection_policy.component_weights) or None,
         "stateScales": {key: {"scale": value["scale"], "basis": value["basis"],
                               "observations": value["observations"], "unit": value["unit"]}
                         for key, value in scales.items()},

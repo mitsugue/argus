@@ -44,8 +44,14 @@ FEATURE_MAX_AGE_DAYS = {key: (35 if key.startswith(("credit.", "margin1570.")) e
                         for key in FEATURE_DEFINITIONS}
 
 
+COMPONENTS = ("priceShape", "marketState", "conditionOrder", "materialReaction")
+
+
 def _policy_material(policy):
-    return {**asdict(policy), "features": FEATURE_DEFINITIONS,
+    # Component weights change only how sealed episodes are ranked, not what
+    # an episode contains, so they stay out of the episode's policy identity.
+    material = {key: value for key, value in asdict(policy).items() if key != "component_weights"}
+    return {**material, "features": FEATURE_DEFINITIONS,
             "maximumFeatureAgeDays": FEATURE_MAX_AGE_DAYS}
 
 
@@ -100,6 +106,9 @@ class AnalogPolicy:
     shape_scale_pct: float = 5.0
     # ((feature, scale), ...) from robust_feature_scales; empty = fixed definitions.
     state_scales: tuple = ()
+    # ((component, weight), ...); empty = the plain mean of the available
+    # components (the original rule). Chosen only by out-of-sample validation.
+    component_weights: tuple = ()
 
     def __post_init__(self):
         for value, lower, upper in ((self.lookback_sessions, 5, 120),
@@ -115,6 +124,15 @@ class AnalogPolicy:
                 key not in FEATURE_DEFINITIONS or isinstance(v, bool) or not isinstance(v, (int, float))
                 or not math.isfinite(v) or v <= 0 for key, v in scales.items()):
             raise ValueError("invalid_analog_policy_state_scales")
+        weights = dict(self.component_weights)
+        if len(weights) != len(self.component_weights) or any(
+                key not in COMPONENTS or isinstance(v, bool) or not isinstance(v, (int, float))
+                or not math.isfinite(v) or v < 0 for key, v in weights.items()) \
+                or (weights and weights.get("priceShape", 1) <= 0):
+            raise ValueError("invalid_analog_policy_component_weights")
+
+    def weight_for(self, component: str) -> float:
+        return dict(self.component_weights).get(component, 1.0)
 
     def scale_for(self, key: str) -> float:
         return dict(self.state_scales).get(key, FEATURE_DEFINITIONS[key][1])
@@ -273,6 +291,17 @@ def _edit_distance(left: Sequence[Any], right: Sequence[Any]) -> float:
     return previous[-1] / max(len(left), len(right), 1)
 
 
+def weighted_distance(distances: Mapping[str, float | None], policy: AnalogPolicy) -> float:
+    """Weighted mean of the available components; equal weights reproduce
+    the original plain mean exactly."""
+    if not policy.component_weights:
+        available = [v for v in distances.values() if v is not None]
+        return sum(available) / len(available)
+    pairs = [(policy.weight_for(key), value) for key, value in distances.items() if value is not None]
+    total = sum(weight for weight, _ in pairs)
+    return sum(weight * value for weight, value in pairs) / total
+
+
 def component_distances(current: Mapping[str, Any], candidate: Mapping[str, Any], policy: AnalogPolicy, *,
                         current_shape=None, candidate_shape=None, current_order=None,
                         candidate_order=None) -> dict[str, Any]:
@@ -300,9 +329,8 @@ def component_distances(current: Mapping[str, Any], candidate: Mapping[str, Any]
                          if common_reactions else None)
     distances = {"priceShape": shape_distance, "marketState": state_distance,
                  "conditionOrder": order_distance, "materialReaction": reaction_distance}
-    available = [v for v in distances.values() if v is not None]
     missing = sorted(set(FEATURE_DEFINITIONS) - set(common))
-    return {"distances": distances, "distance": sum(available) / len(available), "stateDeltas": state_deltas,
+    return {"distances": distances, "distance": weighted_distance(distances, policy), "stateDeltas": state_deltas,
             "missing": missing,
             "complete": not missing and order_distance is not None and reaction_distance is not None}
 

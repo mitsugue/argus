@@ -33,6 +33,7 @@ export interface JapanMarketComparison {
   selectionPolicy?: {
     policyId: string; lookbackSessions: number; maximumCandidates: number; minimumSeparationSessions: number;
     maximumDistance: number; shapeScalePct: number; distanceMeaning: string;
+    componentWeights?: Record<string, number> | null;
     stateScales: Record<string, { scale: number; basis: 'ROBUST_MAD_HISTORY' | 'FIXED_DEFINITION'; observations: number; unit: string }>;
   };
   selectionAudit?: Record<string, {
@@ -78,6 +79,14 @@ export interface JapanMarketComparison {
       bandCoverage: number | null; meanAbsoluteError: number | null; naiveNoChangeMeanAbsoluteError: number | null;
       validationStatus: 'UNVALIDATED' | 'VALIDATED'; reasons: string[]; scaleRule: string;
       predictiveProbabilities: null;
+    };
+    /** Component-weight search: chosen on the first half, judged on the held-out second half. */
+    weightSearch?: {
+      gridSize: number; chosenWeights: Record<string, number>; choiceHorizon: number; adopted: boolean;
+      trainStart: string; trainEnd: string; testStart: string; testEnd: string;
+      trainHitRate: number | null; trainNaiveRate: number | null;
+      testHitRate: number | null; testNaiveRate: number | null; testWilsonLower95: number | null;
+      equalWeightsTestHitRate: number | null; predictiveProbabilities: null;
     };
   };
   scaleExplanation: string;

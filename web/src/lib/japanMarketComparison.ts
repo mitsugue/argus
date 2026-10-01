@@ -117,7 +117,21 @@ export function validJapanMarketComparison(v: unknown, horizon: number): v is Ja
       && p.lower > 0 && p.lower <= p.upper)
     && finite(f.sampleCount) && Number.isInteger(f.sampleCount) && f.sampleCount >= 0
     && finite(f.flatThresholdPct) && f.flatThresholdPct >= 0 && validCounts(f.counts, f.sampleCount)
-    && (f.validation === undefined || validForecastValidation(f.validation, f.validationStatus));
+    && (f.validation === undefined || validForecastValidation(f.validation, f.validationStatus))
+    && (f.weightSearch === undefined || validWeightSearch(f.weightSearch));
+}
+
+function validWeightSearch(w: unknown): boolean {
+  if (!object(w)) return false;
+  const rate = (n: unknown) => n === null || (finite(n) && n >= 0 && n <= 1);
+  const day = (d: unknown) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d);
+  return finite(w.gridSize) && Number.isInteger(w.gridSize) && w.gridSize >= 1 && w.gridSize <= 64
+    && object(w.chosenWeights) && Object.values(w.chosenWeights).every(v => finite(v) && v >= 0)
+    && finite(w.choiceHorizon) && typeof w.adopted === 'boolean' && w.predictiveProbabilities === null
+    && ['trainStart', 'trainEnd', 'testStart', 'testEnd'].every(k => day(w[k]))
+    && String(w.trainEnd) < String(w.testStart)
+    && ['trainHitRate', 'trainNaiveRate', 'testHitRate', 'testNaiveRate', 'testWilsonLower95', 'equalWeightsTestHitRate']
+      .every(k => rate(w[k]));
 }
 
 function validForecastValidation(v: unknown, status: unknown): boolean {

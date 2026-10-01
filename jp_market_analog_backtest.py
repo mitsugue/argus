@@ -74,6 +74,148 @@ def yearly_policies(state_rows: Sequence[Mapping[str, Any]], years: Sequence[str
     return out
 
 
+
+def horizon_metrics(records, h, *, step=EVALUATION_STEP_SESSIONS, flat_threshold_pct=.5):
+    """Non-overlapping metrics for one horizon over evaluation records."""
+    stride = max(1, math.ceil(h / step))
+    rows = [r["horizons"][h] for r in records[::stride] if h in r["horizons"]]
+    directional = [r for r in rows if _classify(r["forecast"] - 100, flat_threshold_pct) != "flat"]
+    hits = sum(_classify(r["forecast"] - 100, flat_threshold_pct) == _classify(r["realized"] - 100, flat_threshold_pct)
+               for r in directional)
+    realized_classes = [_classify(r["realized"] - 100, flat_threshold_pct) for r in directional]
+    naive = (max(realized_classes.count(k) for k in ("up", "down", "flat")) / len(realized_classes)
+             if realized_classes else None)
+    covered = sum(r["lower"] <= r["realized"] <= r["upper"] for r in rows)
+    hit_rate = hits / len(directional) if directional else None
+    lower = wilson_lower_bound(hits, len(directional))
+    coverage = covered / len(rows) if rows else None
+    mae = statistics.fmean(abs(r["forecast"] - r["realized"]) for r in rows) if rows else None
+    naive_mae = statistics.fmean(abs(100 - r["realized"]) for r in rows) if rows else None
+    reasons = []
+    if len(directional) < MINIMUM_DIRECTIONAL_EVALUATIONS:
+        reasons.append("too_few_independent_evaluations")
+    if lower is None or naive is None or lower <= naive:
+        reasons.append("direction_not_better_than_naive_majority")
+    if coverage is None or not BAND_COVERAGE_RANGE[0] <= coverage <= BAND_COVERAGE_RANGE[1]:
+        reasons.append("band_coverage_outside_35_65_percent")
+    return {
+        "evaluations": len(rows), "directionalEvaluations": len(directional), "hits": hits,
+        "hitRate": hit_rate, "hitRateWilsonLower95": lower, "naiveMajorityRate": naive,
+        "bandCoverage": coverage, "meanAbsoluteError": mae, "naiveNoChangeMeanAbsoluteError": naive_mae,
+        "validationStatus": "VALIDATED" if not reasons else "UNVALIDATED", "reasons": reasons,
+    }
+
+
+# Relative component weights tried by the search (price shape fixed at 1 as
+# the reference; material reactions are absent from the history today).
+WEIGHT_GRID = tuple((("priceShape", 1.0), ("marketState", m), ("conditionOrder", c))
+                    for m in (0.5, 1.0, 2.0) for c in (0.0, 0.5, 1.0, 2.0))
+
+
+def _select(scored, policy):
+    scored.sort()
+    chosen = []
+    for _, _, _, cpos in scored:
+        if any(abs(cpos - other) < policy.minimum_separation_sessions for other in chosen):
+            continue
+        chosen.append(cpos)
+        if len(chosen) == policy.maximum_candidates:
+            break
+    return chosen
+
+
+def _forecast_rows(chosen, pos, closes, session_dates, last_position):
+    base_close = closes[session_dates[pos]]
+    out = {}
+    for h in HORIZONS:
+        outcomes = []
+        for cpos in chosen:
+            if cpos + h <= last_position and cpos + h < pos:
+                start, end = closes.get(session_dates[cpos]), closes.get(session_dates[cpos + h])
+                if start and end:
+                    outcomes.append(end / start * 100)
+        if len(outcomes) < 2:
+            continue
+        out[h] = {"forecast": statistics.median(outcomes), "lower": _quantile(outcomes, .25),
+                  "upper": _quantile(outcomes, .75),
+                  "realized": closes[session_dates[pos + h]] / base_close * 100}
+    return out
+
+
+def weight_search(candidates, closes, session_dates, *, policy: AnalogPolicy, state_rows=(),
+                  grid=WEIGHT_GRID, choice_horizon: int = 5, flat_threshold_pct: float = .5,
+                  step: int = EVALUATION_STEP_SESSIONS, minimum_prior: int = MINIMUM_PRIOR_CANDIDATES,
+                  maximum_evaluations: int = MAXIMUM_EVALUATIONS) -> dict[str, Any]:
+    """Choose component weights on the first half of the evaluation dates and
+    report them on the second half, which the choice never saw.
+
+    The weights are adopted only when the held-out half meets the same
+    validation rule as walk_forward for the choice horizon; otherwise the
+    original equal weights stay and the result says why. Component distances
+    are computed once per (evaluation, candidate) and only re-weighted.
+    """
+    from jp_market_analogs import weighted_distance
+    positions = {day: index for index, day in enumerate(session_dates)}
+    ordered = sorted((c for c in candidates if c.get("status") == "AVAILABLE" and c["anchorDate"] in positions),
+                     key=lambda c: positions[c["anchorDate"]])
+    prepared = [(positions[c["anchorDate"]], c, _shape(c), _sequence(c)) for c in ordered]
+    last_position = len(session_dates) - 1
+    max_h = max(HORIZONS)
+    policies = yearly_policies(state_rows, [c["anchorDate"][:4] for c in ordered], policy) if state_rows else {}
+    eligible = [i for i, (pos, c, _, _) in enumerate(prepared)
+                if i >= minimum_prior and pos + max_h <= last_position
+                and all(session_dates[pos + k] in closes for k in range(0, max_h + 1))]
+    evaluation_indices = eligible[::step][-maximum_evaluations:]
+    weight_policies = [AnalogPolicy(**{**{k: getattr(policy, k) for k in ("policy_id", "lookback_sessions",
+                       "maximum_candidates", "minimum_separation_sessions", "maximum_distance", "shape_scale_pct",
+                       "state_scales")}, "component_weights": weights}) for weights in grid]
+    records = {index: [] for index in range(len(grid))}
+    for i in evaluation_indices:
+        pos, current, shape, order = prepared[i]
+        year_policy = policies.get(current["anchorDate"][:4], policy)
+        parts = []
+        for j in range(i):
+            cpos, candidate, cshape, corder = prepared[j]
+            if pos - cpos < year_policy.lookback_sessions + 1:
+                continue
+            item = component_distances(current, candidate, year_policy, current_shape=shape,
+                                       candidate_shape=cshape, current_order=order, candidate_order=corder)
+            parts.append((item["distances"], item["complete"], candidate["anchorDate"], cpos))
+        for index, weighted_policy in enumerate(weight_policies):
+            scored = []
+            for distances, complete, anchor, cpos in parts:
+                distance = weighted_distance(distances, weighted_policy)
+                if distance <= year_policy.maximum_distance:
+                    scored.append((not complete, distance, anchor, cpos))
+            chosen = _select(scored, year_policy)
+            records[index].append({"anchorDate": current["anchorDate"],
+                                   "horizons": _forecast_rows(chosen, pos, closes, session_dates, last_position)})
+    if not evaluation_indices:
+        return {"method": METHOD + "-weight-search", "status": "INSUFFICIENT_HISTORY", "adopted": False}
+    split = len(evaluation_indices) // 2
+    def score(index):
+        metrics = horizon_metrics(records[index][:split], choice_horizon, step=step, flat_threshold_pct=flat_threshold_pct)
+        if metrics["hitRateWilsonLower95"] is None or metrics["naiveMajorityRate"] is None:
+            return (-1.0, index)
+        return (metrics["hitRateWilsonLower95"] - metrics["naiveMajorityRate"], -index)
+    best = max(range(len(grid)), key=score)
+    equal = next((index for index, weights in enumerate(grid) if all(v == 1.0 for _, v in weights)), None)
+    held_out = {str(h): horizon_metrics(records[best][split:], h, step=step, flat_threshold_pct=flat_threshold_pct)
+                for h in HORIZONS}
+    return {
+        "method": METHOD + "-weight-search", "status": "AVAILABLE", "gridSize": len(grid),
+        "chosenWeights": dict(grid[best]), "choiceHorizon": choice_horizon,
+        "trainStart": records[best][0]["anchorDate"], "trainEnd": records[best][split - 1]["anchorDate"],
+        "testStart": records[best][split]["anchorDate"], "testEnd": records[best][-1]["anchorDate"],
+        "train": horizon_metrics(records[best][:split], choice_horizon, step=step, flat_threshold_pct=flat_threshold_pct),
+        "test": held_out,
+        "equalWeightsTest": (horizon_metrics(records[equal][split:], choice_horizon, step=step,
+                                             flat_threshold_pct=flat_threshold_pct) if equal is not None else None),
+        "adopted": held_out[str(choice_horizon)]["validationStatus"] == "VALIDATED",
+        "predictiveProbabilities": None,
+    }
+
+
 def walk_forward(candidates: Sequence[Mapping[str, Any]], closes: Mapping[str, float],
                  session_dates: Sequence[str], *, policy: AnalogPolicy,
                  state_rows: Sequence[Mapping[str, Any]] = (), flat_threshold_pct: float = .5,
@@ -149,31 +291,5 @@ def walk_forward(candidates: Sequence[Mapping[str, Any]], closes: Mapping[str, f
               "records": [{"anchorDate": r["anchorDate"], "selected": r["selected"],
                            "horizons": {str(h): v for h, v in r["horizons"].items()}} for r in records]}
     for h in HORIZONS:
-        stride = max(1, math.ceil(h / step))
-        rows = [r["horizons"][h] for r in records[::stride] if h in r["horizons"]]
-        directional = [r for r in rows if _classify(r["forecast"] - 100, flat_threshold_pct) != "flat"]
-        hits = sum(_classify(r["forecast"] - 100, flat_threshold_pct) == _classify(r["realized"] - 100, flat_threshold_pct)
-                   for r in directional)
-        realized_classes = [_classify(r["realized"] - 100, flat_threshold_pct) for r in directional]
-        naive = (max(realized_classes.count(k) for k in ("up", "down", "flat")) / len(realized_classes)
-                 if realized_classes else None)
-        covered = sum(r["lower"] <= r["realized"] <= r["upper"] for r in rows)
-        hit_rate = hits / len(directional) if directional else None
-        lower = wilson_lower_bound(hits, len(directional))
-        coverage = covered / len(rows) if rows else None
-        mae = statistics.fmean(abs(r["forecast"] - r["realized"]) for r in rows) if rows else None
-        naive_mae = statistics.fmean(abs(100 - r["realized"]) for r in rows) if rows else None
-        reasons = []
-        if len(directional) < MINIMUM_DIRECTIONAL_EVALUATIONS:
-            reasons.append("too_few_independent_evaluations")
-        if lower is None or naive is None or lower <= naive:
-            reasons.append("direction_not_better_than_naive_majority")
-        if coverage is None or not BAND_COVERAGE_RANGE[0] <= coverage <= BAND_COVERAGE_RANGE[1]:
-            reasons.append("band_coverage_outside_35_65_percent")
-        result["horizons"][str(h)] = {
-            "evaluations": len(rows), "directionalEvaluations": len(directional), "hits": hits,
-            "hitRate": hit_rate, "hitRateWilsonLower95": lower, "naiveMajorityRate": naive,
-            "bandCoverage": coverage, "meanAbsoluteError": mae, "naiveNoChangeMeanAbsoluteError": naive_mae,
-            "validationStatus": "VALIDATED" if not reasons else "UNVALIDATED", "reasons": reasons,
-        }
+        result["horizons"][str(h)] = horizon_metrics(records, h, step=step, flat_threshold_pct=flat_threshold_pct)
     return result

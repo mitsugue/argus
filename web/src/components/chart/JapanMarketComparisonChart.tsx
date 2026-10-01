@@ -10,7 +10,13 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
   const container = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(340);
   const [selectedId, setSelectedId] = useState('all');
-  const [showForecast, setShowForecast] = useState(true);
+  // Until the forecast rule passes its out-of-sample check it is a reference
+  // path (median of past outcomes), not an outlook: hidden by default and
+  // named as such (owner decision 2026-10-01, option A).
+  const validated = document.forecast.validationStatus === 'VALIDATED';
+  const [forecastChoice, setShowForecast] = useState<boolean | null>(null);
+  const showForecast = forecastChoice ?? validated;
+  const forecastName = validated ? '計算予測' : '参考経路（過去事例の中央値・未検証）';
   const [showReferences, setShowReferences] = useState(true);
   const uniqueId = useId().replace(/:/g, '');
   useEffect(() => {
@@ -71,7 +77,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
 
   return <section className="jp-comparison" aria-labelledby={`${uniqueId}-title`}>
     <div className="jp-comparison__heading">
-      <div><h2 id={`${uniqueId}-title`}>日経平均の見通し</h2>
+      <div><h2 id={`${uniqueId}-title`}>{validated ? '日経平均の見通し' : '日経平均と過去の類似局面'}</h2>
         <p>実績 {document.anchorDate}まで · {number(document.actualAnchorPrice)}円</p></div>
       <span>{document.forecast.horizonSessions}営業日先</span>
     </div>
@@ -84,9 +90,9 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
     <div ref={container} className="jp-comparison__canvas">
       <svg viewBox={`0 0 ${width} ${height}`} role="img"
         aria-labelledby={`${uniqueId}-chart-title ${uniqueId}-chart-desc`}>
-        <title id={`${uniqueId}-chart-title`}>日経平均の実績・過去の比較・その後の参考経路・計算予測</title>
+        <title id={`${uniqueId}-chart-title`}>日経平均の実績・過去の比較・その後の参考経路{validated ? '・計算予測' : ''}</title>
         <desc id={`${uniqueId}-chart-desc`}>白い実線が現在の実績。細い色線が過去局面の比較、同色の点線がその後の参考経路。
-          緑の太い破線が現在条件による計算予測です。過去の経路は将来の確定的な値動きではありません。</desc>
+          {validated ? '緑の太い破線が現在条件による計算予測です。' : '緑の太い破線は選んだ過去事例のその後の中央値で、方向の見通しではありません。'}過去の経路は将来の確定的な値動きではありません。</desc>
         <defs><clipPath id={`${uniqueId}-clip`}><rect x={left} y={top} width={right - left} height={bottom - top} /></clipPath></defs>
         {ticks.map((value, index) => <g key={index}>
           <line x1={left} x2={right} y1={y(value)} y2={y(value)} className="jp-comparison__grid" />
@@ -117,7 +123,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
       <li><i className="jp-comparison__sample jp-comparison__sample--actual" />現在の実績</li>
       <li><i className="jp-comparison__sample jp-comparison__sample--past" />過去の比較</li>
       <li><i className="jp-comparison__sample jp-comparison__sample--reference" />過去のその後</li>
-      <li><i className="jp-comparison__sample jp-comparison__sample--forecast" />現在の計算予測</li>
+      {showForecast && <li><i className="jp-comparison__sample jp-comparison__sample--forecast" />{validated ? '現在の計算予測' : '参考経路（中央値）'}</li>}
     </ul>
     {document.historyCoverage && <p className="jp-comparison__scale">
       候補を探した期間：{document.historyCoverage.candidateStart ?? '確認できていません'}
@@ -132,17 +138,17 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
         {document.candidates.map(candidate => <option key={candidate.snapshotId} value={candidate.snapshotId}>{candidate.anchorDate}</option>)}
       </select></label>
       <label><input type="checkbox" checked={showReferences} onChange={event => setShowReferences(event.target.checked)} />その後の参考経路</label>
-      <label><input type="checkbox" checked={showForecast} onChange={event => setShowForecast(event.target.checked)} />計算予測と帯</label>
+      <label><input type="checkbox" checked={showForecast} onChange={event => setShowForecast(event.target.checked)} />{validated ? '計算予測と帯' : '参考経路と帯（未検証）'}</label>
     </div>
     {document.retainedNoteJa && <p className="jp-comparison__notice" data-comparison-retained="true">{document.retainedNoteJa}</p>}
     {!document.candidates.length && <p className="jp-comparison__notice">十分に似た過去局面は見つかっていません。</p>}
     {document.candidates.length > 0 && document.candidates.every(candidate => candidate.comparisonKind === 'PARTIAL_COMPARISON') &&
       <p className="jp-comparison__notice">比較できるのは一部の条件です。市場状態全体が似ていると判断できる根拠は、まだ不足しています。</p>}
-    {!document.forecast.line.length && <p className="jp-comparison__notice">計算予測を出すための比較事例が不足しています。</p>}
-    {showResearchNote && document.forecast.line.length > 0 && <p className="jp-comparison__notice">
+    {!document.forecast.line.length && <p className="jp-comparison__notice">{forecastName}を出すための比較事例が不足しています。</p>}
+    {showResearchNote && document.forecast.line.length > 0 && <p className="jp-comparison__notice" data-forecast-role="reference-path">
       {document.forecast.validation
-        ? `計算予測は過去検証の基準に届いていません（方向一致率 ${document.forecast.validation.hitRate === null ? '—' : (document.forecast.validation.hitRate * 100).toFixed(0) + '%'}、単純予想 ${document.forecast.validation.naiveMajorityRate === null ? '—' : (document.forecast.validation.naiveMajorityRate * 100).toFixed(0) + '%'}）。参考線として扱ってください。`
-        : '計算予測は検証中です。'}帯は比較事例の中央半分の範囲で、将来の価格が入る確率ではありません。</p>}
+        ? `この比較からは日経平均の方向を見通せていません。過去10年で同じ方法の方向一致率は${document.forecast.validation.hitRate === null ? '—' : (document.forecast.validation.hitRate * 100).toFixed(0) + '%'}で、「いつも多数派の方向」と予想した場合の${document.forecast.validation.naiveMajorityRate === null ? '—' : (document.forecast.validation.naiveMajorityRate * 100).toFixed(0) + '%'}を上回っていないため、予測線は参考経路として初期表示では隠しています。`
+        : '計算予測は検証中のため、参考経路として扱います。'}帯は比較事例の中央半分の範囲で、将来の価格が入る確率ではありません。</p>}
     <details className="jp-comparison__details"><summary>比較元・尺度・検証状態を見る</summary>
       <p>{document.scaleExplanation}</p>
       {document.historyCoverage && <>
@@ -233,6 +239,21 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
           <p>{v.validationStatus === 'VALIDATED'
             ? '判定：過去検証の基準を満たしています。ただし過去の一致率であり、将来の確率ではありません。'
             : `判定：未検証。${v.reasons.map(reason => reasonJa[reason] ?? reason).join('。')}。`}</p>
+        </section>;
+      })()}
+      {document.forecast.weightSearch && (() => {
+        const w = document.forecast.weightSearch;
+        const pct = (n: number | null) => n === null ? '—' : `${(n * 100).toFixed(1)}%`;
+        const weights = Object.entries(w.chosenWeights).map(([key, value]) =>
+          `${({ priceShape: '価格形状', marketState: '市場条件', conditionOrder: '七サインの順序', materialReaction: '材料反応' } as Record<string, string>)[key] ?? key}×${value}`).join('・');
+        return <section aria-label="重み付けの再検証" data-weight-search={w.adopted ? 'adopted' : 'not-adopted'}>
+          <h3>比較の重み付けの再検証</h3>
+          <p>{w.gridSize}通りの重み付けを{w.trainStart}〜{w.trainEnd}で比べ、最も良かった「{weights}」を、
+            選ぶときに使っていない{w.testStart}〜{w.testEnd}で検証しました。
+            {w.choiceHorizon}営業日後の方向一致率は{pct(w.testHitRate)}（95%信頼下限 {pct(w.testWilsonLower95)}）、
+            単純予想は{pct(w.testNaiveRate)}、等しい重みでは{pct(w.equalWeightsTestHitRate)}でした。</p>
+          <p>{w.adopted ? '判定：検証期間でも基準を満たしたため、この重み付けで候補を選んでいます。'
+            : '判定：検証期間で基準を満たさなかったため、重み付けは変えていません。'}</p>
         </section>;
       })()}
       <ul>{document.limitations.map((limitation, index) => <li key={index}>{limitation}</li>)}</ul>
