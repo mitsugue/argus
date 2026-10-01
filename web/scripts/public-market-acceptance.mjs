@@ -204,6 +204,21 @@ function observe(page, evidence) {
   });
 }
 
+// The verdict's reasons are in the sealed artifact; the log names the failure
+// tokens and up to ten console errors (path and redacted, reduced text) so a
+// failed release says what failed (2026-10-01: a silent exit code 1).
+function printFailureSummary(evidence) {
+  if (evidence.failures.length) {
+    console.error(`[argus-warm-profile] failures: ${[...new Set(evidence.failures)].sort().join(', ')}`);
+  }
+  for (const item of (evidence.console || []).slice(0, 10)) {
+    let where = '';
+    try { where = item.location ? new URL(item.location).pathname : ''; } catch { where = 'unparsed'; }
+    const text = owner.redact(String(item.message ?? item.text ?? '')).replace(/[^A-Za-z0-9 :._/()-]/g, '').slice(0, 160);
+    console.error(`[argus-warm-profile] console-error: ${item.type ?? 'error'} ${where} ${text}`);
+  }
+}
+
 async function drainResponses(evidence) {
   while (evidence.responseTasks.size) {
     await Promise.allSettled([...evidence.responseTasks]);
@@ -597,7 +612,7 @@ async function run() {
       await writeJson('acceptance.json', result);
       markPhase('complete');
       await writeJson('diagnostics.json', await diagnostics(result.verdict));
-      if (result.verdict !== 'PASS') process.exitCode = 1;
+      if (result.verdict !== 'PASS') { printFailureSummary(evidence); process.exitCode = 1; }
       return;
     }
     const acceptanceCanonical = await selectCanonical1321FiveDay(page, {
@@ -690,7 +705,7 @@ async function run() {
     });
     markPhase('complete', result.verdict);
     await writeJson('diagnostics.json', await diagnostics(result.verdict));
-    if (evidence.failures.length) process.exitCode = 1;
+    if (evidence.failures.length) { printFailureSummary(evidence); process.exitCode = 1; }
   } catch (error) {
     markPhase('failure', 'FAIL', sanitize(error?.message || error));
     const failure = {
