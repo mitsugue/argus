@@ -1,5 +1,5 @@
 {
- "asOf": "2026-10-01T07:08:01Z",
+ "asOf": "2026-10-01T14:25:24Z",
  "dateJst": "2026-10-01",
  "engineVersion": "scout-ledger-v1",
  "records": [
@@ -17,7 +17,7 @@
    "flowClass": "UNCONFIRMED",
    "lastClose": 6701.0,
    "lastDate": "2026-10-01",
-   "score": -2.2,
+   "score": -1.7,
    "stance": "見送り",
    "symbol": "9984"
   },
@@ -26,16 +26,16 @@
    "flowClass": "UNCONFIRMED",
    "lastClose": 4113.0,
    "lastDate": "2026-10-01",
-   "score": -1.2,
-   "stance": "見送り",
+   "score": -0.7,
+   "stance": "中立(急がない)",
    "symbol": "5801"
   },
   {
-   "bucket": "avoid",
+   "bucket": "neutral",
    "flowClass": "UNCONFIRMED",
    "lastClose": 5368.0,
    "lastDate": "2026-10-01",
-   "score": -0.9,
+   "score": -0.4,
    "stance": "中立(急がない)",
    "symbol": "5803"
   },
@@ -50,7 +50,7 @@
   },
   {
    "bucket": "avoid",
-   "flowClass": "SHORT_COVERING",
+   "flowClass": "UNCONFIRMED",
    "lastClose": 19100.0,
    "lastDate": "2026-10-01",
    "score": -1.5,
@@ -59,10 +59,10 @@
   },
   {
    "bucket": "avoid",
-   "flowClass": "DISTRIBUTION",
+   "flowClass": "UNCONFIRMED",
    "lastClose": 518.5,
    "lastDate": "2026-10-01",
-   "score": -1.4,
+   "score": -1.2,
    "stance": "見送り",
    "symbol": "9501"
   }
