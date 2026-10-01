@@ -1,10 +1,25 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
-import type { ComparisonPoint, JapanMarketComparison } from '../../types/japanMarketComparison';
+import type { ComparisonPoint, ForecastTrackRecordHorizon, JapanMarketComparison } from '../../types/japanMarketComparison';
+import { useForecastTrackRecord } from '../../hooks/useJapanMarketComparison';
 import './JapanMarketComparisonChart.css';
 
 const COLOURS = ['#94c5de', '#c7b6ed', '#dfbc83'];
 const number = (value: number) => value.toLocaleString('ja-JP', { maximumFractionDigits: 1 });
 const valuationNumber = (value: number) => value.toLocaleString('ja-JP', { maximumFractionDigits: 2 });
+const percent = (value: number | null) => value === null ? '—' : `${(value * 100).toFixed(0)}%`;
+
+/** Scorecard of the paths ARGUS actually issued, judged against "always the majority direction". */
+function IssuedForecastRecord({ record, minimum }: { record: ForecastTrackRecordHorizon; minimum: number }) {
+  const head = `実際に出した${record.horizonSessions}営業日後の見通しの成績：`;
+  return <p className="jp-comparison__notice" data-forecast-track-record={record.status}>
+    {record.status === 'INSUFFICIENT_SAMPLE'
+      ? `${head}方向を示した${record.directionalForecasts}件を採点済み。一致率は${minimum}件たまってから表示します。`
+      : `${head}方向を示した${record.directionalForecasts}件中${record.hits}件が一致（${percent(record.hitRate)}、95%信頼下限 ${percent(record.hitRateWilsonLower95)}）。`
+        + `「いつも多数派の方向」と予想した場合は${percent(record.naiveMajorityRate)}で、`
+        + (record.status === 'ABOVE_BASELINE' ? 'これを統計的に上回っています。過去の成績であり、次の確率ではありません。'
+          : 'これを統計的に上回っていません。')}
+  </p>;
+}
 
 export function JapanMarketComparisonChart({ document }: { document: JapanMarketComparison }) {
   const container = useRef<HTMLDivElement>(null);
@@ -18,6 +33,8 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
   const showForecast = forecastChoice ?? validated;
   const forecastName = validated ? '計算予測' : '参考経路（過去事例の中央値・未検証）';
   const [showReferences, setShowReferences] = useState(true);
+  const trackRecord = useForecastTrackRecord();
+  const issued = trackRecord?.horizons[String(document.forecast.horizonSessions)];
   const uniqueId = useId().replace(/:/g, '');
   useEffect(() => {
     const node = container.current;
@@ -149,6 +166,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
       {document.forecast.validation
         ? `この比較からは日経平均の方向を見通せていません。過去10年で同じ方法の方向一致率は${document.forecast.validation.hitRate === null ? '—' : (document.forecast.validation.hitRate * 100).toFixed(0) + '%'}で、「いつも多数派の方向」と予想した場合の${document.forecast.validation.naiveMajorityRate === null ? '—' : (document.forecast.validation.naiveMajorityRate * 100).toFixed(0) + '%'}を上回っていないため、予測線は参考経路として初期表示では隠しています。`
         : '計算予測は検証中のため、参考経路として扱います。'}帯は比較事例の中央半分の範囲で、将来の価格が入る確率ではありません。</p>}
+    {issued && trackRecord && <IssuedForecastRecord record={issued} minimum={trackRecord.minimumDirectionalForecasts} />}
     <details className="jp-comparison__details"><summary>比較元・尺度・検証状態を見る</summary>
       <p>{document.scaleExplanation}</p>
       {document.historyCoverage && <>

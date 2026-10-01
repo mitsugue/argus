@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.7.86"
+PRODUCT_VERSION = "v13.8.0"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
-    'web/scripts/pwa-identity.test.mjs': '5cca1e73c23a6d08869db96b241a08edeed5dd69',
-    'web/scripts/owner-today-https.mjs': 'd3c7e8c58ba68c237b1ff1e05da18fdd3ff87f58',
+    'web/scripts/pwa-identity.test.mjs': '1c2fee5922fa42f93acda7677a2ce99e9c25d3cb',
+    'web/scripts/owner-today-https.mjs': 'fd7adaae541f2bd2c12ac08204f148b00523daa8',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -355,8 +355,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/lib/marketInternals.ts': 'cf96a5b15512e7f20ef9bcf211d6295307ccec9a',
     'web/src/lib/pwaRecovery.ts': '038fe1dc3e55433a0f72e8a06ca1701176155438',
     'web/src/components/today/MarketAnalysisHistory.tsx': '7a986421fdd00c28c53e563a09287dbbc314694e',
-    'test_argus_analysis_history.py': '61121c0584ada6a900a6336b6e3ff52944cd1e74',
-    'argus_analysis_history.py': '56f9d9910a9ec9c30e50ba19321fddac98f4d4c2',
+    'test_argus_analysis_history.py': 'e60a14420055c58ec921126fc5a923bcf3e9dacd',
+    'argus_analysis_history.py': '04ccb58327758433e67fcba96627f2d232d84e35',
     'argus_market_ledger.py': '562841f6de02f9e778591c82eb6f9642756199d9',
     'jp_market_positioning.py': '37661655f15f27baf2beec9e08fb2b5977cfbe9f',
     'test_jp_market_positioning.py': 'f6134d86859e836ca26ab54b0c707ed7b7c8aa14',
@@ -390,24 +390,24 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_jp_market_margin_runtime.py': 'd89cf0d2b0b6cd7d67b9798ab583c23fd6fb11f7',
     'test_jp_market_price_paths.py': '8e9a10fb678062c29c533827561565f3b73c88a5',
     'test_jp_market_source_adapters.py': '5fe08e835fdd13a769f44a32613c6b699540bb62',
-    'web/scripts/japan-market-comparison.test.cjs': '6d799ca14897ca29e097efc61c65e62b6c573e93',
+    'web/scripts/japan-market-comparison.test.cjs': '96d27c0ada403e7666026c60967a3a200408ea16',
     'web/scripts/japan-sq-calendar.test.cjs': '41fc84761bab22b8218bb5c1347767521472a2c6',
     'web/scripts/macro-result-details.test.cjs': 'b2bcdb290db61a0ef8d8ffcd090a55e5020e10a1',
     'web/scripts/margin-dynamics.test.cjs': '2ab221c47cfeb6afa4d0adcb1dfebd17b862b608',
     'web/scripts/market-brief-response.test.cjs': 'a0b9296048de2038a4f4e647c1583af010d1c3e5',
     'web/src/components/chart/JapanMarketComparisonChart.css': '5f1bc41ac381d67191cf3fa82ede9cc6f13c06ca',
-    'web/src/components/chart/JapanMarketComparisonChart.tsx': 'ec9972ddb3fda01da05cb97b62042588811b0923',
+    'web/src/components/chart/JapanMarketComparisonChart.tsx': '17ad0ab536267bc08e599791579959b1fc3b63a1',
     'web/src/components/chart/JapanMarketComparisonPanel.tsx': '8f9123239e7f904694640b0b9854bc20b2fee063',
     'web/src/components/dashboard/JapanSqCalendarCard.css': 'a8bfb645823551f415e2d05e8f6721273c09083b',
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': '77f4e4fa1edee0e5f42db6d82597a4ec1ad82083',
     'web/src/components/dashboard/MacroResultDetails.tsx': '1ae4f62354c917002f6b60b1b8e72de1a126a3f6',
     'web/src/components/today/MarginDynamicsCard.tsx': '916091e12c4362a7340ad5cb5dff373b1d36300e',
-    'web/src/hooks/useJapanMarketComparison.ts': '2c195f97e396a08a540521204aa4ce0f2edadb5d',
+    'web/src/hooks/useJapanMarketComparison.ts': '19ed5d63cc796be371e33a26077a437aefb877fb',
     'web/src/hooks/useJapanSqCalendar.ts': '24751f5205496b8263c9712ae71103a42b4ba8c8',
-    'web/src/lib/japanMarketComparison.ts': '9795d3907e54a000a2c9a0804c42136c4ad63080',
+    'web/src/lib/japanMarketComparison.ts': '0954ac565cc504c8fdd1527e8b7fb16ee4b2d182',
     'web/src/lib/japanSqCalendar.ts': '947b1c9121f7b6f8a5e7b501211b8b43449b329b',
     'web/src/lib/marketBrief.ts': '0920b3f4c76ab1f201bc130e987d118a220aed0f',
-    'web/src/types/japanMarketComparison.ts': 'e5c2e2aa583b6741daa0b5d49fda3448d054ced8',
+    'web/src/types/japanMarketComparison.ts': 'de37ef0394999a77078c5379505e69ee7e49f410',
     "test_ai_cost.py": "e2e1a3094c0fe315993d027592de6e1db9a5b784",
     'web/scripts/news-polling-recovery.test.mjs': 'a5675fb01973b14712491809f7eb30c5814851f0',
     "test_argus_prediction_read_latency.py": "731d0705813a323169ba286315811cac5b06e0f7",

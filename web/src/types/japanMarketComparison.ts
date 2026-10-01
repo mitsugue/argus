@@ -97,3 +97,16 @@ export interface JapanMarketComparison {
   };
   limitations: string[];
 }
+
+/** Direction record of the Nikkei paths ARGUS actually issued (one per anchor, scored after the horizon). */
+export interface ForecastTrackRecordHorizon {
+  horizonSessions: number; scoredForecasts: number; directionalForecasts: number; hits: number;
+  hitRate: number | null; hitRateWilsonLower95: number | null; naiveMajorityRate: number | null;
+  status: 'INSUFFICIENT_SAMPLE' | 'ABOVE_BASELINE' | 'NOT_ABOVE_BASELINE';
+  firstTargetDate: string | null; lastTargetDate: string | null;
+}
+export interface ForecastTrackRecord {
+  schemaVersion: 'argus-forecast-track-record-v1'; instrumentId: 'NIKKEI_225_INDEX';
+  minimumDirectionalForecasts: number; horizons: Record<string, ForecastTrackRecordHorizon>;
+  predictiveProbabilities: null; actionAuthority: false;
+}
