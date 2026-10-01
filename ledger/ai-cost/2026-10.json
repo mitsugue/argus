@@ -1,0 +1,4886 @@
+{
+ "accounting": {
+  "legacyDays": {
+   "2026-09-12": {
+    "asOf": "2026-09-12T08:06:04Z",
+    "micros": 313780,
+    "snapshotDigest": "05a0724b3359b6c3c3c2e0b57058448e94545f43267c94747630784c9837975e"
+   }
+  },
+  "legacyMonths": {
+   "2026-09": {
+    "asOf": "2026-09-12T08:06:04Z",
+    "micros": 520780,
+    "snapshotDigest": "05a0724b3359b6c3c3c2e0b57058448e94545f43267c94747630784c9837975e"
+   }
+  },
+  "recent": {
+   "39b2d7f3125602910936bc5fd0743c54:2026-10-01:00000000000000000026": {
+    "at": "2026-09-30T21:48:21Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.004198,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 569,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 255,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-news_intel",
+    "totalUsd": 0.004198
+   },
+   "39b2d7f3125602910936bc5fd0743c54:2026-10-01:00000000000000000027": {
+    "at": "2026-09-30T21:48:28Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.0052,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 584,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 336,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-news_intel",
+    "totalUsd": 0.0052
+   },
+   "39b2d7f3125602910936bc5fd0743c54:2026-10-01:00000000000000000028": {
+    "at": "2026-09-30T21:48:34Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.004564,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 578,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 284,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-news_intel",
+    "totalUsd": 0.004564
+   },
+   "39b2d7f3125602910936bc5fd0743c54:2026-10-01:00000000000000000029": {
+    "at": "2026-09-30T21:48:39Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.004916,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 586,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 312,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-news_intel",
+    "totalUsd": 0.004916
+   },
+   "39b2d7f3125602910936bc5fd0743c54:2026-10-01:00000000000000000030": {
+    "at": "2026-09-30T22:12:35Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.080454,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 22503,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 2954,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.080454
+   },
+   "39b2d7f3125602910936bc5fd0743c54:2026-10-01:00000000000000000031": {
+    "at": "2026-09-30T22:29:17Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.136904,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 56452,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 2000,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-osint_research",
+    "totalUsd": 0.136904
+   },
+   "39b2d7f3125602910936bc5fd0743c54:2026-10-01:00000000000000000032": {
+    "at": "2026-09-30T22:30:24Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.166528,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 71264,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 2000,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-osint_research",
+    "totalUsd": 0.166528
+   },
+   "39b2d7f3125602910936bc5fd0743c54:2026-10-01:00000000000000000033": {
+    "at": "2026-09-30T23:23:03Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.084586,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 22511,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3297,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.084586
+   },
+   "39b2d7f3125602910936bc5fd0743c54:2026-10-01:00000000000000000034": {
+    "at": "2026-09-30T23:23:23Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.075046,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 24365,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 2193,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.075046
+   },
+   "39b2d7f3125602910936bc5fd0743c54:2026-10-01:00000000000000000035": {
+    "at": "2026-10-01T00:05:05Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.00488,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 850,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 265,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-news_intel",
+    "totalUsd": 0.00488
+   },
+   "39b2d7f3125602910936bc5fd0743c54:2026-10-01:00000000000000000036": {
+    "at": "2026-10-01T00:07:51Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.011556,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 708,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 845,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-event_analysis",
+    "totalUsd": 0.011556
+   },
+   "39b2d7f3125602910936bc5fd0743c54:2026-10-01:00000000000000000037": {
+    "at": "2026-10-01T00:32:39Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.075116,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 22480,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 2513,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.075116
+   },
+   "39b2d7f3125602910936bc5fd0743c54:2026-10-01:00000000000000000038": {
+    "at": "2026-10-01T00:33:00Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.07151,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 24211,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 1924,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.07151
+   },
+   "39b2d7f3125602910936bc5fd0743c54:2026-10-01:00000000000000000039": {
+    "at": "2026-10-01T00:42:59Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.080524,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 22322,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 2990,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.080524
+   },
+   "39b2d7f3125602910936bc5fd0743c54:2026-10-01:00000000000000000040": {
+    "at": "2026-10-01T00:43:23Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.080552,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 24166,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 2685,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.080552
+   },
+   "39b2d7f3125602910936bc5fd0743c54:2026-10-01:00000000000000000041": {
+    "at": "2026-10-01T00:52:45Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.079276,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 22322,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 2886,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.079276
+   },
+   "61f8f9bf0c18fc64e7b770cc8b8abffe:2026-10-01:00000000000000000001": {
+    "at": "2026-10-01T05:44:10Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.051264,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 11988,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 2274,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.051264
+   },
+   "61f8f9bf0c18fc64e7b770cc8b8abffe:2026-10-01:00000000000000000002": {
+    "at": "2026-10-01T05:44:37Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.04797,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 13257,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 1788,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.04797
+   },
+   "61f8f9bf0c18fc64e7b770cc8b8abffe:2026-10-01:00000000000000000003": {
+    "at": "2026-10-01T05:54:16Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.001186,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 263,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 55,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-headline_translation",
+    "totalUsd": 0.001186
+   },
+   "61f8f9bf0c18fc64e7b770cc8b8abffe:2026-10-01:00000000000000000004": {
+    "at": "2026-10-01T05:54:19Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.001196,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 268,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 55,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-headline_translation",
+    "totalUsd": 0.001196
+   },
+   "61f8f9bf0c18fc64e7b770cc8b8abffe:2026-10-01:00000000000000000005": {
+    "at": "2026-10-01T05:54:32Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.071132,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 17152,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3069,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.071132
+   },
+   "61f8f9bf0c18fc64e7b770cc8b8abffe:2026-10-01:00000000000000000006": {
+    "at": "2026-10-01T05:55:00Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.072546,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 19083,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 2865,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.072546
+   },
+   "61f8f9bf0c18fc64e7b770cc8b8abffe:2026-10-01:00000000000000000007": {
+    "at": "2026-10-01T05:58:20Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.001126,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 263,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 50,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-headline_translation",
+    "totalUsd": 0.001126
+   },
+   "61f8f9bf0c18fc64e7b770cc8b8abffe:2026-10-01:00000000000000000008": {
+    "at": "2026-10-01T06:04:14Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.081444,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 21612,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3185,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.081444
+   },
+   "61f8f9bf0c18fc64e7b770cc8b8abffe:2026-10-01:00000000000000000009": {
+    "at": "2026-10-01T06:28:38Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.010692,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 714,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 772,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-event_analysis",
+    "totalUsd": 0.010692
+   },
+   "61f8f9bf0c18fc64e7b770cc8b8abffe:2026-10-01:00000000000000000010": {
+    "at": "2026-10-01T06:28:50Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.010356,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 708,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 745,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-event_analysis",
+    "totalUsd": 0.010356
+   },
+   "61f8f9bf0c18fc64e7b770cc8b8abffe:2026-10-01:00000000000000000011": {
+    "at": "2026-10-01T06:29:02Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.01122,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 708,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 817,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-event_analysis",
+    "totalUsd": 0.01122
+   },
+   "61f8f9bf0c18fc64e7b770cc8b8abffe:2026-10-01:00000000000000000012": {
+    "at": "2026-10-01T07:06:00Z",
+    "estimated": true,
+    "gemStatus": "not_enabled_by_role_policy",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.059188,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 10460,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3189,
+      "provider": "openai"
+     }
+    ],
+    "runId": "2026-10-01T07:06:00Z",
+    "totalUsd": 0.059188
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000001": {
+    "at": "2026-10-01T01:52:08Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.063314,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 14515,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 2857,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.063314
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000002": {
+    "at": "2026-10-01T01:52:36Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.059764,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 15944,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 2323,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.059764
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000003": {
+    "at": "2026-10-01T02:01:42Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.00115,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 263,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 52,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-headline_translation",
+    "totalUsd": 0.00115
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000004": {
+    "at": "2026-10-01T02:01:45Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.001196,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 268,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 55,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-headline_translation",
+    "totalUsd": 0.001196
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000005": {
+    "at": "2026-10-01T02:01:57Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.063616,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 17120,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 2448,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.063616
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000006": {
+    "at": "2026-10-01T02:05:42Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.001114,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 263,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 49,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-headline_translation",
+    "totalUsd": 0.001114
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000007": {
+    "at": "2026-10-01T03:12:09Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.081024,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 21828,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3114,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.081024
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000008": {
+    "at": "2026-10-01T03:46:13Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.006502,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 755,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 416,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-news_intel",
+    "totalUsd": 0.006502
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000009": {
+    "at": "2026-10-01T03:46:18Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.004492,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 578,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 278,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-news_intel",
+    "totalUsd": 0.004492
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000010": {
+    "at": "2026-10-01T03:46:23Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.005378,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 583,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 351,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-news_intel",
+    "totalUsd": 0.005378
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000011": {
+    "at": "2026-10-01T03:46:28Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.00468,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 564,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 296,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-news_intel",
+    "totalUsd": 0.00468
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000012": {
+    "at": "2026-10-01T03:46:34Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.004904,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 574,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 313,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-news_intel",
+    "totalUsd": 0.004904
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000013": {
+    "at": "2026-10-01T03:46:38Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.004384,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 584,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 268,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-news_intel",
+    "totalUsd": 0.004384
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000014": {
+    "at": "2026-10-01T03:46:43Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.004972,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 578,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 318,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-news_intel",
+    "totalUsd": 0.004972
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000015": {
+    "at": "2026-10-01T03:46:47Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.004504,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 584,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 278,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-news_intel",
+    "totalUsd": 0.004504
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000016": {
+    "at": "2026-10-01T03:46:53Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.004548,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 582,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 282,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-news_intel",
+    "totalUsd": 0.004548
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000017": {
+    "at": "2026-10-01T03:46:57Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.004492,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 578,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 278,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-news_intel",
+    "totalUsd": 0.004492
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000018": {
+    "at": "2026-10-01T03:47:02Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.003978,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 573,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 236,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-news_intel",
+    "totalUsd": 0.003978
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000019": {
+    "at": "2026-10-01T03:47:07Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.00454,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 578,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 282,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-news_intel",
+    "totalUsd": 0.00454
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000020": {
+    "at": "2026-10-01T04:21:59Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.071792,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 21676,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 2370,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.071792
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000021": {
+    "at": "2026-10-01T04:22:20Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.071092,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 23462,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 2014,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.071092
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01:00000000000000000022": {
+    "at": "2026-10-01T05:15:57Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.005282,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 859,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 297,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-news_intel",
+    "totalUsd": 0.005282
+   }
+  },
+  "schemaVersion": "argus-ai-cost-accounting-v1",
+  "writers": {
+   "0487be19eea0f0982bc76edaadf743b9:2026-09-14": {
+    "count": 22,
+    "day": "2026-09-14",
+    "micros": 2885300
+   },
+   "0615030a7bc293616da298fb764f58f2:2026-09-15": {
+    "count": 15,
+    "day": "2026-09-15",
+    "micros": 3634030
+   },
+   "0d4e5e6b82044eace590946e2c92947f:2026-09-30": {
+    "count": 8,
+    "day": "2026-09-30",
+    "micros": 200660
+   },
+   "1059b75c3a89cd2e50a50cf29588d4f0:2026-09-19": {
+    "count": 17,
+    "day": "2026-09-19",
+    "micros": 1549160
+   },
+   "13a0aca6088015fb3da35f19009d5363:2026-09-14": {
+    "count": 14,
+    "day": "2026-09-14",
+    "micros": 2940570
+   },
+   "149ecdba0c392a9a6a91909feaf847c9:2026-09-17": {
+    "count": 3,
+    "day": "2026-09-17",
+    "micros": 676940
+   },
+   "15c96c6b1b649c675712d21890d86e81:2026-09-16": {
+    "count": 7,
+    "day": "2026-09-16",
+    "micros": 1521170
+   },
+   "1706968676d1e0700ad475da8697cffc:2026-09-14": {
+    "count": 8,
+    "day": "2026-09-14",
+    "micros": 1954190
+   },
+   "170e9ff6c33399fcbaa169f988590fda:2026-09-14": {
+    "count": 4,
+    "day": "2026-09-14",
+    "micros": 1712810
+   },
+   "198c6ebe2043b8de569299b2085761d3:2026-09-15": {
+    "count": 9,
+    "day": "2026-09-15",
+    "micros": 3448780
+   },
+   "1b1864a380805a0b41205360edc632e9:2026-09-16": {
+    "count": 7,
+    "day": "2026-09-16",
+    "micros": 1427490
+   },
+   "1b92677cadc7755518469ce1552bf28a:2026-09-18": {
+    "count": 22,
+    "day": "2026-09-18",
+    "micros": 2170200
+   },
+   "1d16ced391f44fd0646ab77bec54a0ed:2026-09-15": {
+    "count": 23,
+    "day": "2026-09-15",
+    "micros": 3356760
+   },
+   "1d1ab2ca479f4f04c692bc635ed3d734:2026-09-14": {
+    "count": 28,
+    "day": "2026-09-14",
+    "micros": 8852860
+   },
+   "1d1ab2ca479f4f04c692bc635ed3d734:2026-09-15": {
+    "count": 5,
+    "day": "2026-09-15",
+    "micros": 1754370
+   },
+   "1f18f7ec1d60038837df04b66439d021:2026-09-15": {
+    "count": 16,
+    "day": "2026-09-15",
+    "micros": 6129810
+   },
+   "20af5146eda473a979a00ed27f921782:2026-09-16": {
+    "count": 26,
+    "day": "2026-09-16",
+    "micros": 2982490
+   },
+   "20f3ac942e338e9c95e796e0df60dc1b:2026-09-19": {
+    "count": 1,
+    "day": "2026-09-19",
+    "micros": 335550
+   },
+   "219da9a51cd40cfd1eb533c30b71297b:2026-09-20": {
+    "count": 5,
+    "day": "2026-09-20",
+    "micros": 1285210
+   },
+   "2464446d1ca58ccedd82cd7e472f0987:2026-09-30": {
+    "count": 8,
+    "day": "2026-09-30",
+    "micros": 186794
+   },
+   "2517538cd58e94634df99bcd84a18a1a:2026-09-15": {
+    "count": 72,
+    "day": "2026-09-15",
+    "micros": 20733200
+   },
+   "25729204665ec0ac48420f96b50fcc99:2026-09-14": {
+    "count": 14,
+    "day": "2026-09-14",
+    "micros": 5213130
+   },
+   "28ffe7f2c7f336cd036037b50ff43676:2026-09-17": {
+    "count": 3,
+    "day": "2026-09-17",
+    "micros": 665090
+   },
+   "2aeb4f5f126715c27b1059ea9bb0f84e:2026-09-18": {
+    "count": 2,
+    "day": "2026-09-18",
+    "micros": 540540
+   },
+   "2c4b380e794a889d5c026b213cb3b1dd:2026-09-15": {
+    "count": 8,
+    "day": "2026-09-15",
+    "micros": 1551300
+   },
+   "2c66d7e1df04867901421fdd28897133:2026-09-30": {
+    "count": 31,
+    "day": "2026-09-30",
+    "micros": 690416
+   },
+   "2f02998aec6a17565acab5bc0771a9e9:2026-09-15": {
+    "count": 8,
+    "day": "2026-09-15",
+    "micros": 2612530
+   },
+   "2f173bc998efd3992018e72fb92889fa:2026-09-21": {
+    "count": 31,
+    "day": "2026-09-21",
+    "micros": 6372650
+   },
+   "305687f111c121d937020bc0cf3e92c2:2026-09-20": {
+    "count": 4,
+    "day": "2026-09-20",
+    "micros": 1357040
+   },
+   "3257ec56cce3b8dcc0a1fe8952a608a8:2026-09-30": {
+    "count": 9,
+    "day": "2026-09-30",
+    "micros": 239198
+   },
+   "351e71e5a3df198b9bb90c0ff75fc53a:2026-09-15": {
+    "count": 8,
+    "day": "2026-09-15",
+    "micros": 1593490
+   },
+   "39648750615cb967eb712a6b233806e1:2026-09-30": {
+    "count": 9,
+    "day": "2026-09-30",
+    "micros": 197158
+   },
+   "39b2d7f3125602910936bc5fd0743c54:2026-10-01": {
+    "count": 41,
+    "day": "2026-10-01",
+    "micros": 1517966
+   },
+   "3bae53118a495008907d36027a464405:2026-09-20": {
+    "count": 2,
+    "day": "2026-09-20",
+    "micros": 670680
+   },
+   "3cfc52dda9e4fe71e630e4d0318cbe42:2026-09-20": {
+    "count": 14,
+    "day": "2026-09-20",
+    "micros": 947990
+   },
+   "3d7ea2fbe2b30409822b4e70b6e1fae7:2026-09-15": {
+    "count": 7,
+    "day": "2026-09-15",
+    "micros": 1055370
+   },
+   "3d7ea2fbe2b30409822b4e70b6e1fae7:2026-09-16": {
+    "count": 3,
+    "day": "2026-09-16",
+    "micros": 567730
+   },
+   "3edcea00bb84bcb0d3a345c216cb9b40:2026-09-17": {
+    "count": 7,
+    "day": "2026-09-17",
+    "micros": 1371860
+   },
+   "4171ea1d9e1d2163d22a1d0ad76ebe23:2026-09-14": {
+    "count": 6,
+    "day": "2026-09-14",
+    "micros": 1533560
+   },
+   "46fec656c0b7cdb35ecabe0c70651498:2026-10-01": {
+    "count": 7,
+    "day": "2026-10-01",
+    "micros": 178720
+   },
+   "48114f70c894c5c4e30b6037d79e110a:2026-09-15": {
+    "count": 9,
+    "day": "2026-09-15",
+    "micros": 1861520
+   },
+   "4ad8abc1fd6d1150c72e355493b2de6c:2026-09-30": {
+    "count": 4,
+    "day": "2026-09-30",
+    "micros": 114752
+   },
+   "4b915ded3c2453019f39302d98b9d8f6:2026-09-13": {
+    "count": 38,
+    "day": "2026-09-13",
+    "micros": 5822150
+   },
+   "4c85bc222855203fd312f29241392174:2026-09-17": {
+    "count": 16,
+    "day": "2026-09-17",
+    "micros": 1409740
+   },
+   "4d80aa073965e87ccb87538960cde9f2:2026-09-15": {
+    "count": 19,
+    "day": "2026-09-15",
+    "micros": 5092920
+   },
+   "521d46efe1e83b99e96a2f0f958caebe:2026-09-19": {
+    "count": 7,
+    "day": "2026-09-19",
+    "micros": 1948660
+   },
+   "5531c3df360b7ce84263af8d01f327d1:2026-09-12": {
+    "count": 2,
+    "day": "2026-09-12",
+    "micros": 51230
+   },
+   "5a5135cdba0d8697b89837030cb97f5b:2026-09-20": {
+    "count": 19,
+    "day": "2026-09-20",
+    "micros": 2655140
+   },
+   "5b418db8c3576a7c78dd1db27fd957ab:2026-09-14": {
+    "count": 6,
+    "day": "2026-09-14",
+    "micros": 2479170
+   },
+   "5b965628b018d21913ba6bec270e10e8:2026-10-01": {
+    "count": 9,
+    "day": "2026-10-01",
+    "micros": 322104
+   },
+   "5e9022b28343724ccd0a871e09278d80:2026-09-14": {
+    "count": 6,
+    "day": "2026-09-14",
+    "micros": 2628600
+   },
+   "6137bba5647c3c6f0351346c0df57a73:2026-09-15": {
+    "count": 15,
+    "day": "2026-09-15",
+    "micros": 3892700
+   },
+   "61f8f9bf0c18fc64e7b770cc8b8abffe:2026-10-01": {
+    "count": 12,
+    "day": "2026-10-01",
+    "micros": 419320
+   },
+   "62024e2eb9f03bd8da41aa82dd157d97:2026-09-15": {
+    "count": 10,
+    "day": "2026-09-15",
+    "micros": 1648710
+   },
+   "66ef67c5cb8eb5e21ed509dd27a111c0:2026-09-15": {
+    "count": 12,
+    "day": "2026-09-15",
+    "micros": 2439650
+   },
+   "67e8b162ff32b44684fc54d12df85162:2026-09-16": {
+    "count": 37,
+    "day": "2026-09-16",
+    "micros": 5092870
+   },
+   "6b01e1acd043b0f09e35876f07cdd5d4:2026-09-17": {
+    "count": 2,
+    "day": "2026-09-17",
+    "micros": 343490
+   },
+   "6c8a6c8f762639595f658985ba79af39:2026-09-13": {
+    "count": 209,
+    "day": "2026-09-13",
+    "micros": 18872910
+   },
+   "6dd52db0301b0ac3ff0cfdddd9375ab4:2026-10-01": {
+    "count": 12,
+    "day": "2026-10-01",
+    "micros": 189502
+   },
+   "6f0796821dc5f1b94ce90c7bc7f0f0e4:2026-09-17": {
+    "count": 67,
+    "day": "2026-09-17",
+    "micros": 6636570
+   },
+   "6f0796821dc5f1b94ce90c7bc7f0f0e4:2026-09-18": {
+    "count": 1,
+    "day": "2026-09-18",
+    "micros": 308770
+   },
+   "73c5be1e2ad4fa3e463d5bb611eb7902:2026-09-15": {
+    "count": 12,
+    "day": "2026-09-15",
+    "micros": 2553120
+   },
+   "7873c8792ca7b39b74ad14cbb9d47463:2026-09-18": {
+    "count": 69,
+    "day": "2026-09-18",
+    "micros": 8558090
+   },
+   "7873c8792ca7b39b74ad14cbb9d47463:2026-09-19": {
+    "count": 13,
+    "day": "2026-09-19",
+    "micros": 2511840
+   },
+   "7a97504b93acbe39ffb657f81789efc8:2026-09-16": {
+    "count": 8,
+    "day": "2026-09-16",
+    "micros": 1801690
+   },
+   "7b04d8ab07e4033383999626f7294964:2026-09-16": {
+    "count": 3,
+    "day": "2026-09-16",
+    "micros": 695960
+   },
+   "7b04d8ab07e4033383999626f7294964:2026-09-17": {
+    "count": 2,
+    "day": "2026-09-17",
+    "micros": 639450
+   },
+   "7ec2ea0523565aef7c56c2a25a58c38f:2026-09-17": {
+    "count": 13,
+    "day": "2026-09-17",
+    "micros": 1592560
+   },
+   "80c75abc613e6e7700b41df35df349e8:2026-09-16": {
+    "count": 9,
+    "day": "2026-09-16",
+    "micros": 1712440
+   },
+   "83160f70b098a19b9c715dc08ac995d1:2026-09-30": {
+    "count": 7,
+    "day": "2026-09-30",
+    "micros": 198134
+   },
+   "83766282337f51545c5ccd160ece3f17:2026-09-16": {
+    "count": 17,
+    "day": "2026-09-16",
+    "micros": 3516000
+   },
+   "885cce21f2fde6d539d6911e8e496aef:2026-09-16": {
+    "count": 89,
+    "day": "2026-09-16",
+    "micros": 13507870
+   },
+   "88fb473a69bb25b98a3ce39dc99f466d:2026-09-17": {
+    "count": 7,
+    "day": "2026-09-17",
+    "micros": 1157100
+   },
+   "8b06cb3e7d0a93664d9c8a5a778c384b:2026-09-15": {
+    "count": 18,
+    "day": "2026-09-15",
+    "micros": 1325920
+   },
+   "8c72b3e3f6f627fb691c5715ae39cbef:2026-09-19": {
+    "count": 3,
+    "day": "2026-09-19",
+    "micros": 760970
+   },
+   "929dfbae261d59ccd6375561232202c1:2026-09-30": {
+    "count": 86,
+    "day": "2026-09-30",
+    "micros": 1788514
+   },
+   "931ff2fe61b8c79f7c2385a6c5cb31fa:2026-09-18": {
+    "count": 32,
+    "day": "2026-09-18",
+    "micros": 2406310
+   },
+   "95cbfbc8a0659190e0c8b2a04f3d5778:2026-09-20": {
+    "count": 2,
+    "day": "2026-09-20",
+    "micros": 677880
+   },
+   "97293ee815a40d785ea96e91f9836fe6:2026-09-12": {
+    "count": 1,
+    "day": "2026-09-12",
+    "micros": 26990
+   },
+   "9c967643eb2d44871ececf43cd97b96f:2026-09-14": {
+    "count": 14,
+    "day": "2026-09-14",
+    "micros": 4075120
+   },
+   "9d117c86ea4f6dd090f6374a63417432:2026-09-15": {
+    "count": 9,
+    "day": "2026-09-15",
+    "micros": 1615400
+   },
+   "a0cb261505c4baa23036d30416c427ee:2026-09-16": {
+    "count": 14,
+    "day": "2026-09-16",
+    "micros": 2948220
+   },
+   "a1365827fbc91db01ba96fe2a4cfc030:2026-09-30": {
+    "count": 32,
+    "day": "2026-09-30",
+    "micros": 1121904
+   },
+   "a1365827fbc91db01ba96fe2a4cfc030:2026-10-01": {
+    "count": 1,
+    "day": "2026-10-01",
+    "micros": 80502
+   },
+   "a1dcae455f2ebf7401e1e393f8a2a132:2026-09-19": {
+    "count": 4,
+    "day": "2026-09-19",
+    "micros": 1080760
+   },
+   "a9c7a534e0bb63bf4be0626ea87df05c:2026-09-14": {
+    "count": 13,
+    "day": "2026-09-14",
+    "micros": 3523740
+   },
+   "ab8f51eb5b298ad085652baa60e1c900:2026-09-30": {
+    "count": 20,
+    "day": "2026-09-30",
+    "micros": 293508
+   },
+   "ac4665ae348f8419270bda3565913081:2026-09-15": {
+    "count": 10,
+    "day": "2026-09-15",
+    "micros": 1925940
+   },
+   "ae2cb6db941c09f3ae8635068a785095:2026-09-15": {
+    "count": 13,
+    "day": "2026-09-15",
+    "micros": 2202020
+   },
+   "afe1a8f4cf589a0f56e08f5df3459362:2026-09-19": {
+    "count": 5,
+    "day": "2026-09-19",
+    "micros": 392620
+   },
+   "b0d7b9d4ef5cc43a54db6eebed4eaf11:2026-09-14": {
+    "count": 10,
+    "day": "2026-09-14",
+    "micros": 4049320
+   },
+   "b4f666cfbacd53442fe3e96756e862cd:2026-09-14": {
+    "count": 2,
+    "day": "2026-09-14",
+    "micros": 511110
+   },
+   "bc75d2ac89d694bf42313cad76ed1fc1:2026-09-19": {
+    "count": 7,
+    "day": "2026-09-19",
+    "micros": 2263980
+   },
+   "bde0c688a781a791a74e7a30175c52e0:2026-09-15": {
+    "count": 26,
+    "day": "2026-09-15",
+    "micros": 9574150
+   },
+   "be7384538ac52634cb2c828327531000:2026-09-17": {
+    "count": 17,
+    "day": "2026-09-17",
+    "micros": 1269990
+   },
+   "be949abd346bb10b4491d079f261b065:2026-09-15": {
+    "count": 8,
+    "day": "2026-09-15",
+    "micros": 1462980
+   },
+   "bf895aa3c4600251ee8a86cc40f6174a:2026-09-30": {
+    "count": 10,
+    "day": "2026-09-30",
+    "micros": 312540
+   },
+   "c2dcac6bc803365652be658866eb88a4:2026-09-16": {
+    "count": 13,
+    "day": "2026-09-16",
+    "micros": 2555780
+   },
+   "ca4256d1664608057cd5d6ee9a013037:2026-09-19": {
+    "count": 42,
+    "day": "2026-09-19",
+    "micros": 4393690
+   },
+   "cadfece4d343c561aaebbd54269a3425:2026-09-30": {
+    "count": 11,
+    "day": "2026-09-30",
+    "micros": 558540
+   },
+   "cb633222cd906eb7caf10e213b87c1a4:2026-09-20": {
+    "count": 4,
+    "day": "2026-09-20",
+    "micros": 1349110
+   },
+   "cb633222cd906eb7caf10e213b87c1a4:2026-09-21": {
+    "count": 4,
+    "day": "2026-09-21",
+    "micros": 1371510
+   },
+   "cc22a7279ba0dfbfc5dea0ee5e3aad1c:2026-09-16": {
+    "count": 19,
+    "day": "2026-09-16",
+    "micros": 2946600
+   },
+   "cd664d5f4596904861cd0f14628d7982:2026-09-30": {
+    "count": 14,
+    "day": "2026-09-30",
+    "micros": 297560
+   },
+   "cd9f313e94ce6782c70a6a05597cd1a2:2026-09-15": {
+    "count": 14,
+    "day": "2026-09-15",
+    "micros": 2363030
+   },
+   "cedd3085ebac57c9fa76af133e0b6383:2026-09-14": {
+    "count": 23,
+    "day": "2026-09-14",
+    "micros": 529800
+   },
+   "d274b16f0ac384b5eec6bbd839f36d35:2026-09-19": {
+    "count": 3,
+    "day": "2026-09-19",
+    "micros": 893860
+   },
+   "d5dc1037707f0be2daf5b0b9ab8cb6f9:2026-09-12": {
+    "count": 8,
+    "day": "2026-09-12",
+    "micros": 473870
+   },
+   "d5dc1037707f0be2daf5b0b9ab8cb6f9:2026-09-13": {
+    "count": 4,
+    "day": "2026-09-13",
+    "micros": 334240
+   },
+   "db07086dc254e645a70931445f65e829:2026-09-15": {
+    "count": 14,
+    "day": "2026-09-15",
+    "micros": 2328600
+   },
+   "e2876556219c9e0a2c12db640eb3ff16:2026-09-15": {
+    "count": 5,
+    "day": "2026-09-15",
+    "micros": 1623170
+   },
+   "e493c976e22ab80154d26bd0d23f9abe:2026-09-21": {
+    "count": 22,
+    "day": "2026-09-21",
+    "micros": 2629700
+   },
+   "e493c976e22ab80154d26bd0d23f9abe:2026-09-22": {
+    "count": 3,
+    "day": "2026-09-22",
+    "micros": 204840
+   },
+   "e62c6120f9745dc3aced89953952f607:2026-09-14": {
+    "count": 7,
+    "day": "2026-09-14",
+    "micros": 2628650
+   },
+   "e83675938cfe5ad477c91ac2c395ea46:2026-09-18": {
+    "count": 3,
+    "day": "2026-09-18",
+    "micros": 363520
+   },
+   "e85d958b6bdad42254fc13ed7550c777:2026-09-15": {
+    "count": 9,
+    "day": "2026-09-15",
+    "micros": 3202090
+   },
+   "e8dae3763c166dc6370f14f6abcd176c:2026-10-01": {
+    "count": 10,
+    "day": "2026-10-01",
+    "micros": 156170
+   },
+   "ea934d52a9bee00724d45f5c5025073f:2026-10-01": {
+    "count": 22,
+    "day": "2026-10-01",
+    "micros": 476718
+   },
+   "eb0d93ce18d59a04369e25c3df1d0eb2:2026-09-17": {
+    "count": 14,
+    "day": "2026-09-17",
+    "micros": 2081380
+   },
+   "eb975048a920437b42e5deb54e8da828:2026-09-21": {
+    "count": 1,
+    "day": "2026-09-21",
+    "micros": 315360
+   },
+   "efc5477260adb4e8d5ae0ac6825824c0:2026-09-15": {
+    "count": 24,
+    "day": "2026-09-15",
+    "micros": 8490300
+   },
+   "f15d540c279ac9c9d2637c8738015a78:2026-09-20": {
+    "count": 2,
+    "day": "2026-09-20",
+    "micros": 654800
+   },
+   "f5f766f2c7a9bff774bb44632a9501aa:2026-09-16": {
+    "count": 5,
+    "day": "2026-09-16",
+    "micros": 1138870
+   },
+   "f7c5f57e476576ff75bf14658f90a985:2026-09-20": {
+    "count": 7,
+    "day": "2026-09-20",
+    "micros": 2277320
+   },
+   "fa244aefa1337b7aea95a7ae3e50bd26:2026-09-20": {
+    "count": 3,
+    "day": "2026-09-20",
+    "micros": 843670
+   },
+   "faaeed2703e37fe5d28bb7b3b65eaefa:2026-09-14": {
+    "count": 57,
+    "day": "2026-09-14",
+    "micros": 19209650
+   },
+   "fe1c6357e0ca5cbf22d27e73c854bff0:2026-09-19": {
+    "count": 10,
+    "day": "2026-09-19",
+    "micros": 1673480
+   }
+  }
+ },
+ "accountingDurability": {
+  "checkpointLastError": null,
+  "lastError": null,
+  "lastPersistAt": "2026-10-01T07:06:00Z",
+  "migrationError": null,
+  "writeThroughEnabled": true
+ },
+ "accountingStatus": {
+  "displayWindowAffectsTotals": false,
+  "historicalCallsReconstructed": false,
+  "historyCoverage": "legacy_reported_amount_plus_recorded_calls",
+  "legacyBaselinePresent": false,
+  "recordedMonthCalls": 114
+ },
+ "asOf": "2026-10-01T07:06:22Z",
+ "budgetEnforced": false,
+ "dailyBudgetUsd": 0.5,
+ "day": "2026-10-01",
+ "dayRemainingUsd": 0.0,
+ "daySpentUsd": 3.341,
+ "emergencyReserveUsd": 0.0,
+ "estimated": true,
+ "featureUsage": {
+  "coverage": "sdk_invocations_since_connection_only",
+  "noteJa": "SDK呼出し単位の記録です。応答成功はAI内容の検証・保存成功とは別です。SDK内部の再試行回数は未確認です。費用は既存設定の通常トークン単価による参考推定で、キャッシュ割引・キャッシュ書込・検索ツール・処理階層等の追加料金を含めた請求総額ではありません。既存の費用総額へ加算しないでください。接続前・処理中断時の詳細は再構成していません。",
+  "readStatus": "AVAILABLE",
+  "remoteRecoveryVerified": false,
+  "state": {
+   "lastErrorClass": null,
+   "lastSavedAt": "2026-10-01T07:06:00Z",
+   "pendingReceipts": 0,
+   "status": "LOCAL_DURABLE"
+  },
+  "summary": {
+   "budgetAuthorizationChanged": false,
+   "coverage": "all_committed_receipts_in_this_store",
+   "displayWindowLimitApplied": false,
+   "durableReceiptCount": 5542,
+   "firstRecordedAt": "2026-09-13T05:29:19.864165+00:00",
+   "groups": [
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-13",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "headline_translation",
+     "inputTokens": 56032,
+     "knownDurationMs": 2171398,
+     "knownEstimatedCostUsd": 1.064293,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 261
+     },
+     "outputTokens": 418995,
+     "provider": "gemini",
+     "providerCalls": 261,
+     "records": 261,
+     "requestedModel": "gemini-2.5-flash",
+     "retryRecords": 0,
+     "returnedModel": "gemini-2.5-flash",
+     "unknownAttemptRecords": 261,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 261,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-13",
+     "errorClasses": {
+      "RateLimitError": 782
+     },
+     "estimatedCostComplete": false,
+     "feature": "market_brief",
+     "inputTokens": 0,
+     "knownDurationMs": 3171258,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 782
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 782,
+     "records": 782,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 236,
+     "returnedModel": null,
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 782,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 782,
+      "inputTokens": 782,
+      "outputTokens": 782
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-13",
+     "errorClasses": {
+      "RateLimitError": 153
+     },
+     "estimatedCostComplete": false,
+     "feature": "news_intel",
+     "inputTokens": 0,
+     "knownDurationMs": 501206,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 153
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 153,
+     "records": 153,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 51,
+     "returnedModel": null,
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 153,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 153,
+      "inputTokens": 153,
+      "outputTokens": 153
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-13",
+     "errorClasses": {
+      "RateLimitError": 1
+     },
+     "estimatedCostComplete": false,
+     "feature": "provider_health_probe",
+     "inputTokens": 0,
+     "knownDurationMs": 1201,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 1
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 1,
+     "records": 1,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": null,
+     "unknownAttemptRecords": 1,
+     "unknownCostRecords": 1,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 1,
+      "inputTokens": 1,
+      "outputTokens": 1
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-14",
+     "errorClasses": {
+      "APITimeoutError": 7
+     },
+     "estimatedCostComplete": false,
+     "feature": "ai_judgment",
+     "inputTokens": 0,
+     "knownDurationMs": 1296429,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 7
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 7,
+     "records": 7,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 1,
+     "returnedModel": null,
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 7,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 7,
+      "inputTokens": 7,
+      "outputTokens": 7
+     }
+    },
+    {
+     "cachedInputTokens": 1329,
+     "dayUtc": "2026-09-14",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "ai_judgment",
+     "inputTokens": 57755,
+     "knownDurationMs": 353048,
+     "knownEstimatedCostUsd": 1.5633,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 6
+     },
+     "outputTokens": 19715,
+     "provider": "openai",
+     "providerCalls": 6,
+     "records": 6,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 5,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-14",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "candidate_research",
+     "inputTokens": 3155,
+     "knownDurationMs": 12733,
+     "knownEstimatedCostUsd": 0.041,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 4
+     },
+     "outputTokens": 189,
+     "provider": "openai",
+     "providerCalls": 4,
+     "records": 4,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-14",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "event_analysis",
+     "inputTokens": 11352,
+     "knownDurationMs": 308864,
+     "knownEstimatedCostUsd": 0.73447,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 16
+     },
+     "outputTokens": 12419,
+     "provider": "openai",
+     "providerCalls": 16,
+     "records": 16,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-14",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "headline_translation",
+     "inputTokens": 134456,
+     "knownDurationMs": 5015204,
+     "knownEstimatedCostUsd": 2.46216,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 522
+     },
+     "outputTokens": 968734,
+     "provider": "gemini",
+     "providerCalls": 522,
+     "records": 522,
+     "requestedModel": "gemini-2.5-flash",
+     "retryRecords": 0,
+     "returnedModel": "gemini-2.5-flash",
+     "unknownAttemptRecords": 522,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 522,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-14",
+     "errorClasses": {
+      "APITimeoutError": 43,
+      "RateLimitError": 33
+     },
+     "estimatedCostComplete": false,
+     "feature": "market_brief",
+     "inputTokens": 0,
+     "knownDurationMs": 8035993,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 76
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 76,
+     "records": 76,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 11,
+     "returnedModel": null,
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 76,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 76,
+      "inputTokens": 76,
+      "outputTokens": 76
+     }
+    },
+    {
+     "cachedInputTokens": 964691,
+     "dayUtc": "2026-09-14",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "market_brief",
+     "inputTokens": 5461783,
+     "knownDurationMs": 14585326,
+     "knownEstimatedCostUsd": 89.61383,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 218
+     },
+     "outputTokens": 699920,
+     "provider": "openai",
+     "providerCalls": 218,
+     "records": 218,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 21,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-14",
+     "errorClasses": {
+      "RateLimitError": 47
+     },
+     "estimatedCostComplete": false,
+     "feature": "news_intel",
+     "inputTokens": 0,
+     "knownDurationMs": 189708,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 47
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 47,
+     "records": 47,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": null,
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 47,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 47,
+      "inputTokens": 47,
+      "outputTokens": 47
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-14",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "news_intel",
+     "inputTokens": 47237,
+     "knownDurationMs": 587052,
+     "knownEstimatedCostUsd": 1.65337,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 73
+     },
+     "outputTokens": 23620,
+     "provider": "openai",
+     "providerCalls": 73,
+     "records": 73,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-14",
+     "errorClasses": {
+      "APITimeoutError": 4
+     },
+     "estimatedCostComplete": false,
+     "feature": "osint_research",
+     "inputTokens": 0,
+     "knownDurationMs": 1087857,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 4
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 4,
+     "records": 4,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": null,
+     "unknownAttemptRecords": 4,
+     "unknownCostRecords": 4,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 4,
+      "inputTokens": 4,
+      "outputTokens": 4
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-14",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "osint_research",
+     "inputTokens": 1713,
+     "knownDurationMs": 86985,
+     "knownEstimatedCostUsd": 0.20808,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 2
+     },
+     "outputTokens": 3819,
+     "provider": "openai",
+     "providerCalls": 2,
+     "records": 2,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 2,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-14",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "owner_dialogue",
+     "inputTokens": 1587685,
+     "knownDurationMs": 3227594,
+     "knownEstimatedCostUsd": 23.69235,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 80
+     },
+     "outputTokens": 156310,
+     "provider": "openai",
+     "providerCalls": 80,
+     "records": 80,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 19946,
+     "dayUtc": "2026-09-15",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "ai_judgment",
+     "inputTokens": 71730,
+     "knownDurationMs": 531575,
+     "knownEstimatedCostUsd": 1.8599,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 7
+     },
+     "outputTokens": 22852,
+     "provider": "openai",
+     "providerCalls": 7,
+     "records": 7,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-15",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "candidate_research",
+     "inputTokens": 3956,
+     "knownDurationMs": 17480,
+     "knownEstimatedCostUsd": 0.04691,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 5
+     },
+     "outputTokens": 147,
+     "provider": "openai",
+     "providerCalls": 5,
+     "records": 5,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-15",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "event_analysis",
+     "inputTokens": 11328,
+     "knownDurationMs": 375412,
+     "knownEstimatedCostUsd": 0.72348,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 16
+     },
+     "outputTokens": 12204,
+     "provider": "openai",
+     "providerCalls": 16,
+     "records": 16,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-15",
+     "errorClasses": {
+      "ServerError": 1
+     },
+     "estimatedCostComplete": false,
+     "feature": "headline_translation",
+     "inputTokens": 0,
+     "knownDurationMs": 207,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 1
+     },
+     "outputTokens": 0,
+     "provider": "gemini",
+     "providerCalls": 1,
+     "records": 1,
+     "requestedModel": "gemini-2.5-flash",
+     "retryRecords": 0,
+     "returnedModel": null,
+     "unknownAttemptRecords": 1,
+     "unknownCostRecords": 1,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 1,
+      "inputTokens": 1,
+      "outputTokens": 1
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-15",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "headline_translation",
+     "inputTokens": 129902,
+     "knownDurationMs": 4930287,
+     "knownEstimatedCostUsd": 2.376724,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 477
+     },
+     "outputTokens": 935098,
+     "provider": "gemini",
+     "providerCalls": 477,
+     "records": 477,
+     "requestedModel": "gemini-2.5-flash",
+     "retryRecords": 0,
+     "returnedModel": "gemini-2.5-flash",
+     "unknownAttemptRecords": 477,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 477,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-15",
+     "errorClasses": {
+      "APITimeoutError": 10
+     },
+     "estimatedCostComplete": false,
+     "feature": "market_brief",
+     "inputTokens": 0,
+     "knownDurationMs": 604178,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 10
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 10,
+     "records": 10,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": null,
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 10,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 10,
+      "inputTokens": 10,
+      "outputTokens": 10
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-15",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "market_brief",
+     "inputTokens": 1548896,
+     "knownDurationMs": 5067982,
+     "knownEstimatedCostUsd": 29.19476,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 99
+     },
+     "outputTokens": 274116,
+     "provider": "openai",
+     "providerCalls": 99,
+     "records": 99,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-15",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "news_intel",
+     "inputTokens": 30666,
+     "knownDurationMs": 450053,
+     "knownEstimatedCostUsd": 1.06221,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 47
+     },
+     "outputTokens": 15111,
+     "provider": "openai",
+     "providerCalls": 47,
+     "records": 47,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-15",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "osint_research",
+     "inputTokens": 37771,
+     "knownDurationMs": 36914,
+     "knownEstimatedCostUsd": 0.42591,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 1
+     },
+     "outputTokens": 964,
+     "provider": "openai",
+     "providerCalls": 1,
+     "records": 1,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 1,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-15",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "owner_dialogue",
+     "inputTokens": 1769390,
+     "knownDurationMs": 4312115,
+     "knownEstimatedCostUsd": 28.33,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 149
+     },
+     "outputTokens": 212722,
+     "provider": "openai",
+     "providerCalls": 149,
+     "records": 149,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-16",
+     "errorClasses": {
+      "APITimeoutError": 2
+     },
+     "estimatedCostComplete": false,
+     "feature": "ai_judgment",
+     "inputTokens": 0,
+     "knownDurationMs": 365715,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 2
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 2,
+     "records": 2,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 1,
+     "returnedModel": null,
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 2,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 2,
+      "inputTokens": 2,
+      "outputTokens": 2
+     }
+    },
+    {
+     "cachedInputTokens": 10200,
+     "dayUtc": "2026-09-16",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "ai_judgment",
+     "inputTokens": 41437,
+     "knownDurationMs": 283115,
+     "knownEstimatedCostUsd": 1.05082,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 4
+     },
+     "outputTokens": 12729,
+     "provider": "openai",
+     "providerCalls": 4,
+     "records": 4,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-16",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "candidate_research",
+     "inputTokens": 2541,
+     "knownDurationMs": 7001,
+     "knownEstimatedCostUsd": 0.03036,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 3
+     },
+     "outputTokens": 99,
+     "provider": "openai",
+     "providerCalls": 3,
+     "records": 3,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 2749,
+     "dayUtc": "2026-09-16",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "event_analysis",
+     "inputTokens": 18781,
+     "knownDurationMs": 321325,
+     "knownEstimatedCostUsd": 0.82721,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 18
+     },
+     "outputTokens": 12788,
+     "provider": "openai",
+     "providerCalls": 18,
+     "records": 18,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-16",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "headline_translation",
+     "inputTokens": 121623,
+     "knownDurationMs": 4543630,
+     "knownEstimatedCostUsd": 2.17864,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 467
+     },
+     "outputTokens": 856860,
+     "provider": "gemini",
+     "providerCalls": 467,
+     "records": 467,
+     "requestedModel": "gemini-2.5-flash",
+     "retryRecords": 0,
+     "returnedModel": "gemini-2.5-flash",
+     "unknownAttemptRecords": 467,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 467,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-16",
+     "errorClasses": {
+      "APITimeoutError": 1
+     },
+     "estimatedCostComplete": false,
+     "feature": "market_brief",
+     "inputTokens": 0,
+     "knownDurationMs": 60067,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 1
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 1,
+     "records": 1,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": null,
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 1,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 1,
+      "inputTokens": 1,
+      "outputTokens": 1
+     }
+    },
+    {
+     "cachedInputTokens": 19538,
+     "dayUtc": "2026-09-16",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "market_brief",
+     "inputTokens": 1129205,
+     "knownDurationMs": 4227868,
+     "knownEstimatedCostUsd": 20.61675,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 70
+     },
+     "outputTokens": 186494,
+     "provider": "openai",
+     "providerCalls": 70,
+     "records": 70,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-16",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "news_intel",
+     "inputTokens": 51471,
+     "knownDurationMs": 606016,
+     "knownEstimatedCostUsd": 1.58036,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 71
+     },
+     "outputTokens": 21313,
+     "provider": "openai",
+     "providerCalls": 71,
+     "records": 71,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-16",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "osint_research",
+     "inputTokens": 54409,
+     "knownDurationMs": 36449,
+     "knownEstimatedCostUsd": 0.59719,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 1
+     },
+     "outputTokens": 1062,
+     "provider": "openai",
+     "providerCalls": 1,
+     "records": 1,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 1,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-16",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "owner_dialogue",
+     "inputTokens": 681479,
+     "knownDurationMs": 1979848,
+     "knownEstimatedCostUsd": 11.03369,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 64
+     },
+     "outputTokens": 84378,
+     "provider": "openai",
+     "providerCalls": 64,
+     "records": 64,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-17",
+     "errorClasses": {
+      "APITimeoutError": 2
+     },
+     "estimatedCostComplete": false,
+     "feature": "ai_judgment",
+     "inputTokens": 0,
+     "knownDurationMs": 363950,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 2
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 2,
+     "records": 2,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": null,
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 2,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 2,
+      "inputTokens": 2,
+      "outputTokens": 2
+     }
+    },
+    {
+     "cachedInputTokens": 8557,
+     "dayUtc": "2026-09-17",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "ai_judgment",
+     "inputTokens": 39650,
+     "knownDurationMs": 282189,
+     "knownEstimatedCostUsd": 1.0765,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 4
+     },
+     "outputTokens": 13600,
+     "provider": "openai",
+     "providerCalls": 4,
+     "records": 4,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 2,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-17",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "candidate_research",
+     "inputTokens": 4099,
+     "knownDurationMs": 15667,
+     "knownEstimatedCostUsd": 0.05229,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 5
+     },
+     "outputTokens": 226,
+     "provider": "openai",
+     "providerCalls": 5,
+     "records": 5,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 12373,
+     "dayUtc": "2026-09-17",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "event_analysis",
+     "inputTokens": 35227,
+     "knownDurationMs": 503560,
+     "knownEstimatedCostUsd": 1.34272,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 28
+     },
+     "outputTokens": 19809,
+     "provider": "openai",
+     "providerCalls": 28,
+     "records": 28,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-17",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "headline_translation",
+     "inputTokens": 84412,
+     "knownDurationMs": 3452383,
+     "knownEstimatedCostUsd": 1.612184,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 380
+     },
+     "outputTokens": 634745,
+     "provider": "gemini",
+     "providerCalls": 380,
+     "records": 380,
+     "requestedModel": "gemini-2.5-flash",
+     "retryRecords": 0,
+     "returnedModel": "gemini-2.5-flash",
+     "unknownAttemptRecords": 380,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 380,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-17",
+     "errorClasses": {
+      "APITimeoutError": 7,
+      "InternalServerError": 1
+     },
+     "estimatedCostComplete": false,
+     "feature": "market_brief",
+     "inputTokens": 0,
+     "knownDurationMs": 426390,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 8
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 8,
+     "records": 8,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": null,
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 8,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 8,
+      "inputTokens": 8,
+      "outputTokens": 8
+     }
+    },
+    {
+     "cachedInputTokens": 77261,
+     "dayUtc": "2026-09-17",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "market_brief",
+     "inputTokens": 573941,
+     "knownDurationMs": 1627342,
+     "knownEstimatedCostUsd": 9.74976,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 30
+     },
+     "outputTokens": 80207,
+     "provider": "openai",
+     "providerCalls": 30,
+     "records": 30,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-17",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "news_intel",
+     "inputTokens": 49052,
+     "knownDurationMs": 632446,
+     "knownEstimatedCostUsd": 1.52282,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 69
+     },
+     "outputTokens": 20646,
+     "provider": "openai",
+     "providerCalls": 69,
+     "records": 69,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-17",
+     "errorClasses": {
+      "InternalServerError": 1
+     },
+     "estimatedCostComplete": false,
+     "feature": "owner_dialogue",
+     "inputTokens": 0,
+     "knownDurationMs": 1452,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 1
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 1,
+     "records": 1,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": null,
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 1,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 1,
+      "inputTokens": 1,
+      "outputTokens": 1
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-17",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "owner_dialogue",
+     "inputTokens": 109779,
+     "knownDurationMs": 293748,
+     "knownEstimatedCostUsd": 1.61809,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 8
+     },
+     "outputTokens": 10406,
+     "provider": "openai",
+     "providerCalls": 8,
+     "records": 8,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-18",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "ai_judgment",
+     "inputTokens": 19383,
+     "knownDurationMs": 108112,
+     "knownEstimatedCostUsd": 0.53068,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 2
+     },
+     "outputTokens": 6737,
+     "provider": "openai",
+     "providerCalls": 2,
+     "records": 2,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-18",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "candidate_research",
+     "inputTokens": 4016,
+     "knownDurationMs": 12974,
+     "knownEstimatedCostUsd": 0.04906,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 5
+     },
+     "outputTokens": 178,
+     "provider": "openai",
+     "providerCalls": 5,
+     "records": 5,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 12380,
+     "dayUtc": "2026-09-18",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "event_analysis",
+     "inputTokens": 34534,
+     "knownDurationMs": 402445,
+     "knownEstimatedCostUsd": 1.29079,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 27
+     },
+     "outputTokens": 18909,
+     "provider": "openai",
+     "providerCalls": 27,
+     "records": 27,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-18",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "headline_translation",
+     "inputTokens": 72173,
+     "knownDurationMs": 2923644,
+     "knownEstimatedCostUsd": 1.357095,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 330
+     },
+     "outputTokens": 534179,
+     "provider": "gemini",
+     "providerCalls": 330,
+     "records": 330,
+     "requestedModel": "gemini-2.5-flash",
+     "retryRecords": 0,
+     "returnedModel": "gemini-2.5-flash",
+     "unknownAttemptRecords": 330,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 330,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 19159,
+     "dayUtc": "2026-09-18",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "market_brief",
+     "inputTokens": 620862,
+     "knownDurationMs": 1443271,
+     "knownEstimatedCostUsd": 10.60217,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 32
+     },
+     "outputTokens": 87871,
+     "provider": "openai",
+     "providerCalls": 32,
+     "records": 32,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-18",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "news_intel",
+     "inputTokens": 35937,
+     "knownDurationMs": 405620,
+     "knownEstimatedCostUsd": 1.19532,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 52
+     },
+     "outputTokens": 16719,
+     "provider": "openai",
+     "providerCalls": 52,
+     "records": 52,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-18",
+     "errorClasses": {
+      "APITimeoutError": 4
+     },
+     "estimatedCostComplete": false,
+     "feature": "osint_research",
+     "inputTokens": 0,
+     "knownDurationMs": 1089410,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 4
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 4,
+     "records": 4,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": null,
+     "unknownAttemptRecords": 4,
+     "unknownCostRecords": 4,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 4,
+      "inputTokens": 4,
+      "outputTokens": 4
+     }
+    },
+    {
+     "cachedInputTokens": 4610,
+     "dayUtc": "2026-09-18",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "osint_research",
+     "inputTokens": 76889,
+     "knownDurationMs": 123642,
+     "knownEstimatedCostUsd": 1.04469,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 4
+     },
+     "outputTokens": 5516,
+     "provider": "openai",
+     "providerCalls": 4,
+     "records": 4,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 4,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-18",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "owner_dialogue",
+     "inputTokens": 70896,
+     "knownDurationMs": 153281,
+     "knownEstimatedCostUsd": 1.04986,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 5
+     },
+     "outputTokens": 6818,
+     "provider": "openai",
+     "providerCalls": 5,
+     "records": 5,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 1378,
+     "dayUtc": "2026-09-19",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "event_analysis",
+     "inputTokens": 2762,
+     "knownDurationMs": 25712,
+     "knownEstimatedCostUsd": 0.09367,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 2
+     },
+     "outputTokens": 1321,
+     "provider": "openai",
+     "providerCalls": 2,
+     "records": 2,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-19",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "headline_translation",
+     "inputTokens": 40676,
+     "knownDurationMs": 1540608,
+     "knownEstimatedCostUsd": 0.752132,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 170
+     },
+     "outputTokens": 295972,
+     "provider": "gemini",
+     "providerCalls": 170,
+     "records": 170,
+     "requestedModel": "gemini-2.5-flash",
+     "retryRecords": 0,
+     "returnedModel": "gemini-2.5-flash",
+     "unknownAttemptRecords": 170,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 170,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-19",
+     "errorClasses": {
+      "APITimeoutError": 1
+     },
+     "estimatedCostComplete": false,
+     "feature": "market_brief",
+     "inputTokens": 0,
+     "knownDurationMs": 60175,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 1
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 1,
+     "records": 1,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": null,
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 1,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 1,
+      "inputTokens": 1,
+      "outputTokens": 1
+     }
+    },
+    {
+     "cachedInputTokens": 19562,
+     "dayUtc": "2026-09-19",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "market_brief",
+     "inputTokens": 684610,
+     "knownDurationMs": 1507704,
+     "knownEstimatedCostUsd": 11.92555,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 37
+     },
+     "outputTokens": 101589,
+     "provider": "openai",
+     "providerCalls": 37,
+     "records": 37,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-19",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "news_intel",
+     "inputTokens": 13977,
+     "knownDurationMs": 188958,
+     "knownEstimatedCostUsd": 0.53892,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 24
+     },
+     "outputTokens": 7983,
+     "provider": "openai",
+     "providerCalls": 24,
+     "records": 24,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-19",
+     "errorClasses": {
+      "APITimeoutError": 4
+     },
+     "estimatedCostComplete": false,
+     "feature": "osint_research",
+     "inputTokens": 0,
+     "knownDurationMs": 1089631,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 4
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 4,
+     "records": 4,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": null,
+     "unknownAttemptRecords": 4,
+     "unknownCostRecords": 4,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 4,
+      "inputTokens": 4,
+      "outputTokens": 4
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-19",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "osint_research",
+     "inputTokens": 1713,
+     "knownDurationMs": 61907,
+     "knownEstimatedCostUsd": 0.19188,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 2
+     },
+     "outputTokens": 3495,
+     "provider": "openai",
+     "providerCalls": 2,
+     "records": 2,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 2,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-19",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "owner_dialogue",
+     "inputTokens": 199683,
+     "knownDurationMs": 386189,
+     "knownEstimatedCostUsd": 3.13898,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 17
+     },
+     "outputTokens": 22843,
+     "provider": "openai",
+     "providerCalls": 17,
+     "records": 17,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-20",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "headline_translation",
+     "inputTokens": 1209,
+     "knownDurationMs": 68801,
+     "knownEstimatedCostUsd": 0.025523,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 15
+     },
+     "outputTokens": 10064,
+     "provider": "gemini",
+     "providerCalls": 15,
+     "records": 15,
+     "requestedModel": "gemini-2.5-flash",
+     "retryRecords": 0,
+     "returnedModel": "gemini-2.5-flash",
+     "unknownAttemptRecords": 15,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 15,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-20",
+     "errorClasses": {
+      "APITimeoutError": 4
+     },
+     "estimatedCostComplete": false,
+     "feature": "market_brief",
+     "inputTokens": 0,
+     "knownDurationMs": 250489,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 4
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 4,
+     "records": 4,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": null,
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 4,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 4,
+      "inputTokens": 4,
+      "outputTokens": 4
+     }
+    },
+    {
+     "cachedInputTokens": 59924,
+     "dayUtc": "2026-09-20",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "market_brief",
+     "inputTokens": 755436,
+     "knownDurationMs": 1766099,
+     "knownEstimatedCostUsd": 12.60171,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 38
+     },
+     "outputTokens": 100947,
+     "provider": "openai",
+     "providerCalls": 38,
+     "records": 38,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-20",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "news_intel",
+     "inputTokens": 14465,
+     "knownDurationMs": 195729,
+     "knownEstimatedCostUsd": 0.5371,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 24
+     },
+     "outputTokens": 7849,
+     "provider": "openai",
+     "providerCalls": 24,
+     "records": 24,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-21",
+     "errorClasses": {
+      "APITimeoutError": 4
+     },
+     "estimatedCostComplete": false,
+     "feature": "ai_judgment",
+     "inputTokens": 0,
+     "knownDurationMs": 727086,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 4
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 4,
+     "records": 4,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 2,
+     "returnedModel": null,
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 4,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 4,
+      "inputTokens": 4,
+      "outputTokens": 4
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-21",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "candidate_research",
+     "inputTokens": 2403,
+     "knownDurationMs": 11079,
+     "knownEstimatedCostUsd": 0.02913,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 3
+     },
+     "outputTokens": 102,
+     "provider": "openai",
+     "providerCalls": 3,
+     "records": 3,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-21",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "headline_translation",
+     "inputTokens": 663,
+     "knownDurationMs": 48145,
+     "knownEstimatedCostUsd": 0.021736,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 7
+     },
+     "outputTokens": 8615,
+     "provider": "gemini",
+     "providerCalls": 7,
+     "records": 7,
+     "requestedModel": "gemini-2.5-flash",
+     "retryRecords": 0,
+     "returnedModel": "gemini-2.5-flash",
+     "unknownAttemptRecords": 7,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 7,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-21",
+     "errorClasses": {
+      "APITimeoutError": 34
+     },
+     "estimatedCostComplete": false,
+     "feature": "market_brief",
+     "inputTokens": 0,
+     "knownDurationMs": 2046299,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 34
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 34,
+     "records": 34,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": null,
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 34,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 34,
+      "inputTokens": 34,
+      "outputTokens": 34
+     }
+    },
+    {
+     "cachedInputTokens": 40842,
+     "dayUtc": "2026-09-21",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "market_brief",
+     "inputTokens": 287858,
+     "knownDurationMs": 723001,
+     "knownEstimatedCostUsd": 4.70768,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 14
+     },
+     "outputTokens": 36582,
+     "provider": "openai",
+     "providerCalls": 14,
+     "records": 14,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-21",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "news_intel",
+     "inputTokens": 7119,
+     "knownDurationMs": 99603,
+     "knownEstimatedCostUsd": 0.25309,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 12
+     },
+     "outputTokens": 3638,
+     "provider": "openai",
+     "providerCalls": 12,
+     "records": 12,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-21",
+     "errorClasses": {
+      "APITimeoutError": 4
+     },
+     "estimatedCostComplete": false,
+     "feature": "osint_research",
+     "inputTokens": 0,
+     "knownDurationMs": 1092950,
+     "knownEstimatedCostUsd": 0.0,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "provider_error": 4
+     },
+     "outputTokens": 0,
+     "provider": "openai",
+     "providerCalls": 4,
+     "records": 4,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": null,
+     "unknownAttemptRecords": 4,
+     "unknownCostRecords": 4,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 4,
+      "inputTokens": 4,
+      "outputTokens": 4
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-21",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "osint_research",
+     "inputTokens": 1713,
+     "knownDurationMs": 89672,
+     "knownEstimatedCostUsd": 0.19528,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 2
+     },
+     "outputTokens": 3563,
+     "provider": "openai",
+     "providerCalls": 2,
+     "records": 2,
+     "requestedModel": "gpt-6-astra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-6-astra",
+     "unknownAttemptRecords": 2,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-29",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "event_analysis",
+     "inputTokens": 2834,
+     "knownDurationMs": 46318,
+     "knownEstimatedCostUsd": 0.040492,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 4
+     },
+     "outputTokens": 2902,
+     "provider": "openai",
+     "providerCalls": 4,
+     "records": 4,
+     "requestedModel": "gpt-5.6-terra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-5.6-terra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-29",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "headline_translation",
+     "inputTokens": 4322,
+     "knownDurationMs": 35604,
+     "knownEstimatedCostUsd": 0.016348,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 17
+     },
+     "outputTokens": 642,
+     "provider": "openai",
+     "providerCalls": 17,
+     "records": 17,
+     "requestedModel": "gpt-5.6-terra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-5.6-terra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-29",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "market_brief",
+     "inputTokens": 491715,
+     "knownDurationMs": 894044,
+     "knownEstimatedCostUsd": 1.891602,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 29
+     },
+     "outputTokens": 75681,
+     "provider": "openai",
+     "providerCalls": 29,
+     "records": 29,
+     "requestedModel": "gpt-5.6-terra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-5.6-terra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-29",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "news_intel",
+     "inputTokens": 44382,
+     "knownDurationMs": 370868,
+     "knownEstimatedCostUsd": 0.335064,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 65
+     },
+     "outputTokens": 20525,
+     "provider": "openai",
+     "providerCalls": 65,
+     "records": 65,
+     "requestedModel": "gpt-5.6-terra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-5.6-terra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 4610,
+     "dayUtc": "2026-09-29",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "osint_research",
+     "inputTokens": 107007,
+     "knownDurationMs": 85563,
+     "knownEstimatedCostUsd": 0.262014,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 2
+     },
+     "outputTokens": 4000,
+     "provider": "openai",
+     "providerCalls": 2,
+     "records": 2,
+     "requestedModel": "gpt-5.6-terra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-5.6-terra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-30",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "ai_judgment",
+     "inputTokens": 20608,
+     "knownDurationMs": 76319,
+     "knownEstimatedCostUsd": 0.12074,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 2
+     },
+     "outputTokens": 6627,
+     "provider": "openai",
+     "providerCalls": 2,
+     "records": 2,
+     "requestedModel": "gpt-5.6-terra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-5.6-terra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 1458,
+     "dayUtc": "2026-09-30",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "event_analysis",
+     "inputTokens": 10864,
+     "knownDurationMs": 130446,
+     "knownEstimatedCostUsd": 0.129944,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 12
+     },
+     "outputTokens": 9018,
+     "provider": "openai",
+     "providerCalls": 12,
+     "records": 12,
+     "requestedModel": "gpt-5.6-terra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-5.6-terra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-30",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "headline_translation",
+     "inputTokens": 18535,
+     "knownDurationMs": 178460,
+     "knownEstimatedCostUsd": 0.07343,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 72
+     },
+     "outputTokens": 3030,
+     "provider": "openai",
+     "providerCalls": 72,
+     "records": 72,
+     "requestedModel": "gpt-5.6-terra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-5.6-terra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-30",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "market_brief",
+     "inputTokens": 1216070,
+     "knownDurationMs": 2064003,
+     "knownEstimatedCostUsd": 4.539748,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 66
+     },
+     "outputTokens": 175634,
+     "provider": "openai",
+     "providerCalls": 66,
+     "records": 66,
+     "requestedModel": "gpt-5.6-terra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-5.6-terra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-09-30",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "news_intel",
+     "inputTokens": 32829,
+     "knownDurationMs": 262725,
+     "knownEstimatedCostUsd": 0.242526,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 49
+     },
+     "outputTokens": 14739,
+     "provider": "openai",
+     "providerCalls": 49,
+     "records": 49,
+     "requestedModel": "gpt-5.6-terra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-5.6-terra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 9220,
+     "dayUtc": "2026-09-30",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "osint_research",
+     "inputTokens": 246660,
+     "knownDurationMs": 175634,
+     "knownEstimatedCostUsd": 0.58932,
+     "monthUtc": "2026-09",
+     "outcomes": {
+      "success": 4
+     },
+     "outputTokens": 8000,
+     "provider": "openai",
+     "providerCalls": 4,
+     "records": 4,
+     "requestedModel": "gpt-5.6-terra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-5.6-terra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-10-01",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "ai_judgment",
+     "inputTokens": 10460,
+     "knownDurationMs": 38019,
+     "knownEstimatedCostUsd": 0.059188,
+     "monthUtc": "2026-10",
+     "outcomes": {
+      "success": 1
+     },
+     "outputTokens": 3189,
+     "provider": "openai",
+     "providerCalls": 1,
+     "records": 1,
+     "requestedModel": "gpt-5.6-terra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-5.6-terra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-10-01",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "event_analysis",
+     "inputTokens": 2838,
+     "knownDurationMs": 50095,
+     "knownEstimatedCostUsd": 0.043824,
+     "monthUtc": "2026-10",
+     "outcomes": {
+      "success": 4
+     },
+     "outputTokens": 3179,
+     "provider": "openai",
+     "providerCalls": 4,
+     "records": 4,
+     "requestedModel": "gpt-5.6-terra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-5.6-terra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-10-01",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "headline_translation",
+     "inputTokens": 1588,
+     "knownDurationMs": 14348,
+     "knownEstimatedCostUsd": 0.006968,
+     "monthUtc": "2026-10",
+     "outcomes": {
+      "success": 6
+     },
+     "outputTokens": 316,
+     "provider": "openai",
+     "providerCalls": 6,
+     "records": 6,
+     "requestedModel": "gpt-5.6-terra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-5.6-terra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-10-01",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "market_brief",
+     "inputTokens": 313138,
+     "knownDurationMs": 454287,
+     "knownEstimatedCostUsd": 1.121936,
+     "monthUtc": "2026-10",
+     "outcomes": {
+      "success": 16
+     },
+     "outputTokens": 41305,
+     "provider": "openai",
+     "providerCalls": 16,
+     "records": 16,
+     "requestedModel": "gpt-5.6-terra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-5.6-terra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 0,
+     "dayUtc": "2026-10-01",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "news_intel",
+     "inputTokens": 8820,
+     "knownDurationMs": 67961,
+     "knownEstimatedCostUsd": 0.067536,
+     "monthUtc": "2026-10",
+     "outcomes": {
+      "success": 14
+     },
+     "outputTokens": 4158,
+     "provider": "openai",
+     "providerCalls": 14,
+     "records": 14,
+     "requestedModel": "gpt-5.6-terra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-5.6-terra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    }
+   ],
+   "historyBeforeFirstReceiptReconstructed": false,
+   "lastRecordedAt": "2026-10-01T07:05:22.330574+00:00",
+   "readOnly": true,
+   "schemaVersion": "argus-ai-usage-summary-v1",
+   "throughSequence": 5542,
+   "timeBasis": "UTC",
+   "uniqueReceipts": 5542
+  }
+ },
+ "groundingUsdPerCall": 0.035,
+ "lastRun": {
+  "at": "2026-10-01T07:06:00Z",
+  "estimated": true,
+  "gemStatus": "not_enabled_by_role_policy",
+  "oaiStatus": "live",
+  "rows": [
+   {
+    "estUsd": 0.059188,
+    "fallbackUsed": false,
+    "grounding": false,
+    "inputTokens": 10460,
+    "model": "gpt-5.6-terra",
+    "outputTokens": 3189,
+    "provider": "openai"
+   }
+  ],
+  "runId": "2026-10-01T07:06:00Z",
+  "totalUsd": 0.059188
+ },
+ "lastRunCostUsd": 0.059188,
+ "month": "2026-10",
+ "monthRemainingUsd": 6.659,
+ "monthSpentUsd": 3.341,
+ "monthlyBudgetUsd": 10.0,
+ "noteJa": "コストはトークン使用量と設定単価による推定値です。過去分は保存済み報告値で、移行前の全履歴を再構成した総額ではありません。オーナー指示により費用による停止を解除中です。",
+ "pricing": {
+  "gemini-2.5-flash": {
+   "in": 0.3,
+   "out": 2.5
+  },
+  "gemini-2.5-pro": {
+   "in": 1.25,
+   "out": 10.0
+  },
+  "gemini-3.1-pro-preview": {
+   "in": 2.0,
+   "out": 12.0
+  },
+  "gemini-3.7-flash": {
+   "in": 1.25,
+   "out": 10.0
+  },
+  "gpt-5.6-luna": {
+   "cachedIn": 0.02,
+   "in": 0.2,
+   "out": 1.2
+  },
+  "gpt-5.6-sol": {
+   "cachedIn": 0.4,
+   "in": 4.0,
+   "out": 20.0
+  },
+  "gpt-5.6-terra": {
+   "cachedIn": 0.2,
+   "in": 2.0,
+   "out": 12.0
+  },
+  "gpt-6-astra": {
+   "cachedIn": 1.0,
+   "in": 10.0,
+   "out": 50.0
+  }
+ },
+ "pricingPolicy": {
+  "effectiveDate": "2026-08-25",
+  "noteJa": "GPT-5.6 Sol=$4/$20(cached入力$0.40)はプロモーション価格(公式保証は2026-11-21まで)。Terra=$2/$12。期日までに公式ページで再検証する。恒久扱いにしない。",
+  "revalidateBy": "2026-11-21",
+  "solPromotionalThrough": "2026-11-21",
+  "sourceUrl": "https://developers.openai.com/api/docs/pricing"
+ },
+ "recentRuns": [
+  {
+   "at": "2026-10-01T07:06:00Z",
+   "estimated": true,
+   "gemStatus": "not_enabled_by_role_policy",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.059188,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 10460,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 3189,
+     "provider": "openai"
+    }
+   ],
+   "runId": "2026-10-01T07:06:00Z",
+   "totalUsd": 0.059188
+  },
+  {
+   "at": "2026-10-01T06:29:02Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.01122,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 708,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 817,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-event_analysis",
+   "totalUsd": 0.01122
+  },
+  {
+   "at": "2026-10-01T06:28:50Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.010356,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 708,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 745,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-event_analysis",
+   "totalUsd": 0.010356
+  },
+  {
+   "at": "2026-10-01T06:28:38Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.010692,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 714,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 772,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-event_analysis",
+   "totalUsd": 0.010692
+  },
+  {
+   "at": "2026-10-01T06:04:14Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.081444,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 21612,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 3185,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-market_brief",
+   "totalUsd": 0.081444
+  },
+  {
+   "at": "2026-10-01T05:58:20Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.001126,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 263,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 50,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-headline_translation",
+   "totalUsd": 0.001126
+  },
+  {
+   "at": "2026-10-01T05:55:00Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.072546,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 19083,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 2865,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-market_brief",
+   "totalUsd": 0.072546
+  },
+  {
+   "at": "2026-10-01T05:54:32Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.071132,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 17152,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 3069,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-market_brief",
+   "totalUsd": 0.071132
+  },
+  {
+   "at": "2026-10-01T05:54:19Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.001196,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 268,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 55,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-headline_translation",
+   "totalUsd": 0.001196
+  },
+  {
+   "at": "2026-10-01T05:54:16Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.001186,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 263,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 55,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-headline_translation",
+   "totalUsd": 0.001186
+  },
+  {
+   "at": "2026-10-01T05:44:37Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.04797,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 13257,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 1788,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-market_brief",
+   "totalUsd": 0.04797
+  },
+  {
+   "at": "2026-10-01T05:44:10Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.051264,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 11988,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 2274,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-market_brief",
+   "totalUsd": 0.051264
+  },
+  {
+   "at": "2026-10-01T05:15:57Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.005282,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 859,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 297,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-news_intel",
+   "totalUsd": 0.005282
+  },
+  {
+   "at": "2026-10-01T04:22:20Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.071092,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 23462,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 2014,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-market_brief",
+   "totalUsd": 0.071092
+  },
+  {
+   "at": "2026-10-01T04:21:59Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.071792,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 21676,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 2370,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-market_brief",
+   "totalUsd": 0.071792
+  },
+  {
+   "at": "2026-10-01T03:47:07Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.00454,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 578,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 282,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-news_intel",
+   "totalUsd": 0.00454
+  },
+  {
+   "at": "2026-10-01T03:47:02Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.003978,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 573,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 236,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-news_intel",
+   "totalUsd": 0.003978
+  },
+  {
+   "at": "2026-10-01T03:46:57Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.004492,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 578,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 278,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-news_intel",
+   "totalUsd": 0.004492
+  },
+  {
+   "at": "2026-10-01T03:46:53Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.004548,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 582,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 282,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-news_intel",
+   "totalUsd": 0.004548
+  },
+  {
+   "at": "2026-10-01T03:46:47Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.004504,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 584,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 278,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-news_intel",
+   "totalUsd": 0.004504
+  }
+ ],
+ "restoreError": "HTTPError"
+}
