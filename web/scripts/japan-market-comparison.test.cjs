@@ -44,6 +44,17 @@ for (const patch of [{ predictiveProbabilities: 0.6 }, { hitRate: 1.2 }, { hits:
   assert(!validJapanMarketComparison(invalid, 5), JSON.stringify(patch));
 }
 console.log('Japan comparison walk-forward validation shape PASS');
+const weightSearch = { gridSize: 12, chosenWeights: { priceShape: 1, marketState: 2, conditionOrder: 0.5 },
+  choiceHorizon: 5, adopted: false, trainStart: '2017-11-06', trainEnd: '2022-02-01', testStart: '2022-02-08',
+  testEnd: '2026-08-24', trainHitRate: 0.55, trainNaiveRate: 0.5, testHitRate: 0.46, testNaiveRate: 0.49,
+  testWilsonLower95: 0.37, equalWeightsTestHitRate: 0.45, predictiveProbabilities: null };
+const withSearch = structuredClone(withValidation); withSearch.forecast.weightSearch = weightSearch;
+assert(validJapanMarketComparison(withSearch, 5));
+for (const patch of [{ predictiveProbabilities: 0.5 }, { testHitRate: 2 }, { trainEnd: '2023-01-01' }, { adopted: 'yes' }]) {
+  const invalid = structuredClone(withSearch); Object.assign(invalid.forecast.weightSearch, patch);
+  assert(!validJapanMarketComparison(invalid, 5), JSON.stringify(patch));
+}
+console.log('Japan comparison weight search shape PASS');
 const withScale = { ...document, unit: 'JPY_INDEX_POINTS', valuationEvidence: {
   date: document.anchorDate, eps: 2000, per: 20,
   epsKind: 'DERIVED_FROM_INDEX_CLOSE_AND_INDEX_BASED_PER', knownAt: '2026-09-11T07:30:00Z',

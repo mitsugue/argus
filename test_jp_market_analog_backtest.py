@@ -89,3 +89,39 @@ class WalkForwardTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WeightSearchTest(unittest.TestCase):
+    def test_noise_keeps_equal_weights_and_halves_do_not_overlap(self):
+        days = sessions(900)
+        closes, value, seed = [], 30000.0, 11
+        for _ in days:
+            seed = (seed * 1103515245 + 12345) % 2**31
+            value *= 1 + ((seed / 2**31) - 0.5) * 0.02
+            closes.append(round(value, 2))
+        cache = {}
+        doc = cached_index_comparison(bars(days, closes), cutoff=days[-1] + "T08:00:00Z", session_dates=days,
+                                      backtest_cache=cache)
+        search = cache["search"]
+        self.assertEqual(search["status"], "AVAILABLE")
+        self.assertEqual(search["gridSize"], len(backtest.WEIGHT_GRID))
+        self.assertLess(search["trainEnd"], search["testStart"])
+        self.assertFalse(search["adopted"])
+        ws = doc["comparison"]["forecast"]["weightSearch"]
+        self.assertFalse(ws["adopted"])
+        self.assertIsNone(ws["predictiveProbabilities"])
+        self.assertIsNone(doc["comparison"]["selectionPolicy"]["componentWeights"])
+
+    def test_equal_weights_reproduce_the_plain_mean(self):
+        from jp_market_analogs import AnalogPolicy, weighted_distance
+        parts = {"priceShape": 0.4, "marketState": 0.8, "conditionOrder": None, "materialReaction": None}
+        plain = weighted_distance(parts, AnalogPolicy())
+        equal = weighted_distance(parts, AnalogPolicy(component_weights=(("priceShape", 1.0), ("marketState", 1.0))))
+        self.assertAlmostEqual(plain, 0.6)
+        self.assertAlmostEqual(equal, 0.6)
+        heavy = weighted_distance(parts, AnalogPolicy(component_weights=(("priceShape", 1.0), ("marketState", 2.0))))
+        self.assertAlmostEqual(heavy, (0.4 + 1.6) / 3)
+        with self.assertRaises(ValueError):
+            AnalogPolicy(component_weights=(("priceShape", 0.0),))
+        with self.assertRaises(ValueError):
+            AnalogPolicy(component_weights=(("unknown", 1.0),))
