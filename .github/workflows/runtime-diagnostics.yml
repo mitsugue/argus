@@ -46,6 +46,14 @@ jobs:
             --max-time 40 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
             "https://argus-backend-3j2m.onrender.com/api/argus/admin/jquants/index-audit" || echo timeout)
           echo "jquants-index-audit http=$code"
+      - name: Read the issued-forecast record (best effort)
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          code=$(curl -sS -o artifacts/runtime-diagnostics/forecast-track-record.json -w "%{http_code}" \
+            --max-time 40 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "https://argus-backend-3j2m.onrender.com/api/argus/market-brief?trackRecord=1" || echo timeout)
+          echo "forecast-track-record http=$code"
       - name: Read the bridge coverage and the Twelve Data budget
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
