@@ -54,8 +54,8 @@ const api=mod.exports; api.installOwnerTransport(); global.fetch=window.fetch;
   fresh.exports.clearOwnerSession(); // releases its expiry timer
   stored.set('argus.owner.session.v1', JSON.stringify({...saved, build: 'older-build'}));
   const updated = new Module(entry, module); updated.filename = entry; updated.paths = module.paths; updated._compile(code, entry);
-  assert.equal(await updated.exports.restoreOwnerSession(), false, 'an app update requires a new login');
-  assert.equal(stored.has('argus.owner.session.v1'), false);
+  assert.equal(await updated.exports.restoreOwnerSession(), true, 'an app update keeps the login (server still verifies)');
+  updated.exports.clearOwnerSession();
   stored.set('argus.owner.session.v1', JSON.stringify(saved)); sessionStatus = 401;
   const revoked = new Module(entry, module); revoked.filename = entry; revoked.paths = module.paths; revoked._compile(code, entry);
   assert.equal(await revoked.exports.restoreOwnerSession(), false, 'a revoked session is not resumed');

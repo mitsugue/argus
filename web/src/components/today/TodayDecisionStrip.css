@@ -15,7 +15,7 @@
 .today-strip__verdict.is-head { border-color: rgba(248, 113, 113, .35); }
 .today-strip__verdict.is-head .today-strip__badge { color: var(--red); background: var(--action-exit-bg); }
 .today-strip__tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.today-strip__tile { display: grid; gap: 2px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.today-strip__tile { display: grid; gap: 2px; text-align: left; font: inherit; color: inherit; cursor: pointer; width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
 .today-strip__tile small { color: var(--text-sub); font-size: 11px; }
 .today-strip__tile b { color: var(--text-main); font-size: 18px; font-weight: 600; }
 .today-strip__tile span { color: var(--text-sub); font-size: 11px; }
@@ -40,3 +40,5 @@
 .today-strip__row dd { margin: 0; color: var(--text-main); line-height: 1.55; }
 .today-strip__note { margin: 0; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
 .today-strip__close small { margin-left: auto; color: var(--text-muted); font-size: 11px; }
+.today-strip__tile:active { background: var(--surface-soft); }
+.today-strip__tile:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }

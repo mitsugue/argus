@@ -992,7 +992,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       {allNewsOpen && <NewsAlertsPanel />}
     </details>
 
-    <section className="at-event card" aria-label="重要イベント" data-argus-contract="unified-event-schedule-v1">
+    <section id="today-events" className="at-event card" aria-label="重要イベント" data-argus-contract="unified-event-schedule-v1">
       <div className="at-head"><b>重要イベント</b><span>30日先まで</span></div>
       {nextScheduledEvent ? <button type="button"
         onClick={() => nextScheduledEvent.kind === 'sq'

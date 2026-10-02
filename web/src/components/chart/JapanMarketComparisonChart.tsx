@@ -26,11 +26,9 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
   const [width, setWidth] = useState(340);
   const [selectedId, setSelectedId] = useState('all');
   // Until the forecast rule passes its out-of-sample check it is a reference
-  // path (median of past outcomes), not an outlook: hidden by default and
-  // named as such (owner decision 2026-10-01, option A).
+  // path (median of past outcomes), not an outlook, and is named as such.
+  // Owner instruction 2026-10-02: always draw it; the on/off switch is gone.
   const validated = document.forecast.validationStatus === 'VALIDATED';
-  const [forecastChoice, setShowForecast] = useState<boolean | null>(null);
-  const showForecast = forecastChoice ?? validated;
   const forecastName = validated ? '計算予測' : '参考経路（過去事例の中央値・未検証）';
   const [showReferences, setShowReferences] = useState(true);
   const trackRecord = useForecastTrackRecord();
@@ -46,8 +44,8 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
 
   const candidates = document.candidates.filter(candidate => selectedId === 'all'
     || candidate.snapshotId === selectedId || !document.candidates.some(item => item.snapshotId === selectedId));
-  const forecast = showForecast ? document.forecast.line : [];
-  const band = showForecast ? document.forecast.band : [];
+  const forecast = document.forecast.line;
+  const band = document.forecast.band;
   const references = candidates.flatMap(candidate => [...candidate.comparison,
     ...(showReferences ? candidate.subsequentReference : [])]);
   const points = [...document.actual, ...references, ...forecast];
@@ -140,7 +138,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
       <li><i className="jp-comparison__sample jp-comparison__sample--actual" />現在の実績</li>
       <li><i className="jp-comparison__sample jp-comparison__sample--past" />過去の比較</li>
       <li><i className="jp-comparison__sample jp-comparison__sample--reference" />過去のその後</li>
-      {showForecast && <li><i className="jp-comparison__sample jp-comparison__sample--forecast" />{validated ? '現在の計算予測' : '参考経路（中央値）'}</li>}
+      <li><i className="jp-comparison__sample jp-comparison__sample--forecast" />{validated ? '現在の計算予測' : '参考経路（中央値）'}</li>
     </ul>
     {document.historyCoverage && <p className="jp-comparison__scale">
       候補を探した期間：{document.historyCoverage.candidateStart ?? '確認できていません'}
@@ -155,7 +153,6 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
         {document.candidates.map(candidate => <option key={candidate.snapshotId} value={candidate.snapshotId}>{candidate.anchorDate}</option>)}
       </select></label>
       <label><input type="checkbox" checked={showReferences} onChange={event => setShowReferences(event.target.checked)} />その後の参考経路</label>
-      <label><input type="checkbox" checked={showForecast} onChange={event => setShowForecast(event.target.checked)} />{validated ? '計算予測と帯' : '参考経路と帯（未検証）'}</label>
     </div>
     {document.retainedNoteJa && <p className="jp-comparison__notice" data-comparison-retained="true">{document.retainedNoteJa}</p>}
     {!document.candidates.length && <p className="jp-comparison__notice">十分に似た過去局面は見つかっていません。</p>}
