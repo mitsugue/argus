@@ -119,7 +119,7 @@ class TachibanaConfig:
             max_symbols=_integer(env.get("ARGUS_TACHIBANA_MAX_SYMBOLS"), 32,
                                  minimum=1, maximum=64),
             max_requests_per_minute=_integer(
-                env.get("ARGUS_TACHIBANA_REQUESTS_PER_MINUTE"), 30,
+                env.get("ARGUS_TACHIBANA_REQUESTS_PER_MINUTE"), 12,
                 minimum=1, maximum=60,
             ),
             request_timeout_seconds=_integer(
@@ -154,7 +154,7 @@ class TachibanaConfig:
                 env.get("ARGUS_TACHIBANA_WEBSOCKET_ENABLED"), False
             ),
             max_event_reconnects_per_day=_integer(
-                env.get("ARGUS_TACHIBANA_EVENT_RECONNECTS_PER_DAY"), 10,
+                env.get("ARGUS_TACHIBANA_EVENT_RECONNECTS_PER_DAY"), 3,
                 minimum=1, maximum=10,
             ),
         )
