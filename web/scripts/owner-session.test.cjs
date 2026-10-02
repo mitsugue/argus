@@ -20,7 +20,7 @@ const stored = new Map();
 global.sessionStorage = {getItem: k => stored.get(k) ?? null, setItem: (k, v) => stored.set(k, String(v)), removeItem: k => stored.delete(k)};
 let standalone = true;
 global.window = {matchMedia: () => ({matches: standalone}), fetch: original, location: {origin: 'https://owner.example'}, setInterval: (f) => { validateTick = f; return 1; }, addEventListener: (n, f) => { listeners[n] = f; }};
-global.document = {hidden: false, addEventListener: (n, f) => { listeners[n] = f; }};
+global.document = {hidden: false, documentElement: {dataset: {}}, addEventListener: (n, f) => { listeners[n] = f; }};
 const entry = path.resolve('src/lib/ownerSession.ts');
 const code = esbuild.buildSync({entryPoints: [entry],bundle: true,write: false,platform: 'node',format: 'cjs', define: {'import.meta.env': JSON.stringify({VITE_ARGUS_OWNER_AUTH_REQUIRED: '1', VITE_ARGUS_BACKEND_URL: 'https://api.example'})},logLevel:'silent'}).outputFiles[0].text;
 const mod = new Module(entry,module); mod.filename=entry;mod.paths=module.paths;mod._compile(code,entry);
@@ -87,5 +87,13 @@ const api=mod.exports; api.installOwnerTransport(); global.fetch=window.fetch;
   }
   sessionStatus = 401; await tick(); assert.equal(api.hasOwnerSession(), false);
   sessionStatus = 200;
+  // The lock screen records why the session ended: a fixed code and the API path, never a credential.
+  const lock = () => document.documentElement.dataset.argusOwnerLock;
+  assert.equal(lock(), 'session_check_401');
+  await api.passwordLogin('fixture-password'); await api.logoutOwner(); assert.equal(lock(), 'logout');
+  await api.passwordLogin('fixture-password');
+  await assert.rejects(fetch('https://api.example/api/argus/old-cache'), /owner_response_unverified/);
+  assert.equal(lock(), 'response_unverified:/api/argus/old-cache');
+  assert(!JSON.stringify(document.documentElement.dataset).includes(serverToken));
   console.log('Owner transport: locked requests, exact origin, preserved headers, no-store, no redirects, logout and stale response isolation PASS');
 })().catch(error => {api.clearOwnerSession(); console.error(error);process.exit(1);});

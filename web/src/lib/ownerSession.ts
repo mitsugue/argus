@@ -34,7 +34,15 @@ const store = () => installedApp() ? anyStore() : null;
 const listeners = new Set<() => void>();
 export const subscribeOwner = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; };
 export const hasOwnerSession = () => !!token && expiresAt > Date.now();
-export function clearOwnerSession() {
+// Why an active session ended, as a fixed code plus at most an API path, so a
+// release acceptance that finds the lock screen can say what caused it. Never
+// a credential, a query string or a response body.
+const lockPath = (url: URL) => url.pathname.replace(/[^A-Za-z0-9/_-]/g, '').slice(0, 80);
+function recordLock(reason: string) {
+  try { document.documentElement.dataset.argusOwnerLock = reason; } catch { /* no document */ }
+}
+export function clearOwnerSession(reason: unknown = 'cleared') {
+  if (token) recordLock(typeof reason === 'string' ? reason : 'cleared');
   ceremonyEpoch += 1;
   token = ''; expiresAt = 0; clearTimeout(timer);
   try { anyStore()?.removeItem(STORE_KEY); } catch { /* storage unavailable */ }
@@ -50,7 +58,7 @@ function setSession(value: { token?: unknown; expiresAt?: unknown }) {
     if (kept) kept.setItem(STORE_KEY, JSON.stringify({ token, expiresAt, build: buildId() }));
     else anyStore()?.removeItem(STORE_KEY);
   } catch { /* memory only */ }
-  clearTimeout(timer); timer = setTimeout(clearOwnerSession, expiresAt - Date.now());
+  clearTimeout(timer); timer = setTimeout(() => clearOwnerSession('expired'), expiresAt - Date.now());
   listeners.forEach((fn) => fn());
 }
 
@@ -68,7 +76,7 @@ export function installOwnerTransport() {
     const authRoute = url.pathname.startsWith(prefix);
     const capturedToken = token;
     if (!authRoute && !hasOwnerSession()) {
-      clearOwnerSession();
+      clearOwnerSession('expired');
       throw new Error('owner_auth_required');
     }
     const headers = new Headers(req.headers);
@@ -89,16 +97,16 @@ export function installOwnerTransport() {
     // A prior Service Worker can ignore request cache policy. A unique server
     // echo proves that this response passed the session boundary for this read.
     if (nonce && response.headers.get('X-ARGUS-OWNER-NONCE') !== nonce) {
-      if (token === capturedToken) clearOwnerSession();
+      if (token === capturedToken) clearOwnerSession('response_unverified:' + lockPath(url));
       throw new Error('owner_response_unverified');
     }
-    if (!authRoute && response.status === 401) clearOwnerSession();
+    if (!authRoute && response.status === 401) clearOwnerSession('response_401:' + lockPath(url));
     return response;
   };
   let validating = false;
   const validate = async () => {
     if (document.hidden || !token || validating) return;
-    if (!hasOwnerSession()) { clearOwnerSession(); return; }
+    if (!hasOwnerSession()) { clearOwnerSession('expired'); return; }
     validating = true;
     const captured = token;
     try {
@@ -112,7 +120,7 @@ export function installOwnerTransport() {
       // budget answered this ping with 429 during the release acceptance and
       // every page locked itself mid-flow; an owner behind a congested
       // connection saw the same lock screen.
-      if (response.status === 401 && token === captured) clearOwnerSession();
+      if (response.status === 401 && token === captured) clearOwnerSession('session_check_401');
     } catch { /* transient: keep the session until a definite answer */ }
     finally { validating = false; }
   };
@@ -167,10 +175,10 @@ export async function passwordLogin(password: string) {
 export async function logoutOwner() {
   // Capture the logout request while credentials are present, then immediately
   // close the UI even if the network is unavailable. Server expiry still applies.
-  const pending = action('logout'); clearOwnerSession(); await pending;
+  const pending = action('logout'); clearOwnerSession('logout'); await pending;
 }
 export async function revokeOwnerDevices(password: string) {
-  await action('revoke-all', { password }); clearOwnerSession();
+  await action('revoke-all', { password }); clearOwnerSession('revoked');
 }
 function decode(value: string): ArrayBuffer {
   const binary = atob(value.replace(/-/g, '+').replace(/_/g, '/'));

@@ -249,6 +249,7 @@ async function selectCombination(page, symbol, horizon) {
       canonicalHorizon: contract?.getAttribute('data-canonical-horizon') ?? 'none',
       canonicalSnapshot: contract?.getAttribute('data-canonical-snapshot-id') ? 'yes' : 'no',
       locked: document.querySelector('.owner-access-screen') ? 'locked' : 'unlocked',
+      lock: (document.documentElement.dataset.argusOwnerLock || 'none').replace(/[/]/g, '_').replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 90),
     };
   }).catch(() => null);
   const started = Date.now();

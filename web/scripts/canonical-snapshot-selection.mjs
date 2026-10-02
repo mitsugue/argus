@@ -258,6 +258,7 @@ async function readCanonicalResponseBody(page, timeout) {
         `equal=${shown && answered && shown === answered ? 'yes' : 'no'}`,
         `verification=${response?.getAttribute('data-canonical-response-verification') || 'none'}`,
         `locked=${document.querySelector('.owner-access-screen') ? 'yes' : 'no'}`,
+        `lock=${(document.documentElement.dataset.argusOwnerLock || 'none').replace(/[/]/g, '_').replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 90)}`,
       ].join(',').replace(/[^A-Za-z0-9_,=-]/g, '');
     }, CANONICAL_RESPONSE_SELECTOR).catch(() => 'unreadable');
     throw new Error(`canonical_1321_5d_response_not_published:${state}:`
@@ -318,6 +319,7 @@ export async function openCanonicalEvidence(page, timeout = 30_000) {
   // error code, the canonical snapshot state and the load-status element.
   const pageState = () => page.evaluate(() => [
     `locked=${document.querySelector('.owner-access-screen') ? 'yes' : 'no'}`,
+    `lock=${(document.documentElement.dataset.argusOwnerLock || 'none').replace(/[/]/g, '_').replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 90)}`,
     `route=${(location.hash || '#').slice(0, 24)}`,
     `header=${document.querySelector('.shell__header') ? 'yes' : 'no'}`,
     `today=${document.querySelector('.argus-today') ? 'yes' : 'no'}`,
@@ -380,9 +382,10 @@ export async function openCanonicalEvidence(page, timeout = 30_000) {
       // is up (the session was lost) and the product's own update-try count.
       const state = await page.evaluate(() => ({
         locked: !!document.querySelector('.owner-access-screen'),
+        lock: (document.documentElement.dataset.argusOwnerLock || 'none').replace(/[/]/g, '_').replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 90),
         tries: Number(sessionStorage.getItem('argus_update_tries') || '0'),
       })).catch(() => null);
-      const pageState = state ? `${state.locked ? 'locked' : 'unlocked'}:tries${state.tries}` : 'unreadable';
+      const pageState = state ? `${state.locked ? 'locked' : 'unlocked'}:lock-${state.lock}:tries${state.tries}` : 'unreadable';
       const firstLine = (message.split('\n')[0] || '').replace(/[^A-Za-z0-9 ._-]/g, '')
         .replace(/\s+/g, '_').slice(0, 80);
       const stage = message.includes('detached') ? 'detached' : 'blocked';
