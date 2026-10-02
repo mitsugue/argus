@@ -121,6 +121,7 @@ import argus_ai_usage_runtime
 import jp_market_internals
 import jp_market_positioning
 import argus_analysis_history
+import argus_index_live
 import argus_owner_dialogue_api
 import argus_web_push
 import argus_owner_vault
@@ -18758,6 +18759,10 @@ def _tachibana_live_autostart():
 def _news_intake_autostart():
     _news_intake_ensure_thread()
     _tachibana_live_autostart()
+    try:
+        argus_index_live.ensure_started()      # delayed intraday Nikkei, display only
+    except Exception as exc:
+        add_log(f"index-live autostart unavailable: {type(exc).__name__}")
     return None
 
 
@@ -37668,6 +37673,10 @@ def api_argus_index_chart():
     if spec is None:
         return jsonify({"error": "unsupported_index",
                         "supported": sorted(_INDEX_CHART_SOURCES)}), 400
+    if request.args.get("live") == "1":
+        if index != "N225":
+            return jsonify({"error": "live_requires_n225"}), 400
+        return jsonify(argus_index_live.current_quote_safe())
     timeframe = (request.args.get("timeframe") or "daily").strip().lower()
     if timeframe not in ("daily", "weekly"):
         return jsonify({"error": "invalid_timeframe"}), 400
