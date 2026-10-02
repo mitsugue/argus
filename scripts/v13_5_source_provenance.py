@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.9"
+PRODUCT_VERSION = "v13.8.10"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
-    'web/scripts/pwa-identity.test.mjs': 'e69ef27328790efbd9b7b44f0a70c3bf59cb0820',
-    'web/scripts/owner-today-https.mjs': '7626ac0f5fabab937362c591a7cd8cffd23a1fec',
+    'web/scripts/pwa-identity.test.mjs': '768bcc03da805bc903437a15b22a87864bc5c9b6',
+    'web/scripts/owner-today-https.mjs': '73db01f9accf3f4fdf7b8012a2675dad7874dfdf',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -209,8 +209,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_rules.py': '36c1d8b92e9a68f606586c00607d1e9c400c1b2c',
     'bridge/trigger_closepin.sh': '83ee01384660bb8799a863e080021a7fa35c1e3d',
     '.github/workflows/closepin-pin.yml': 'ea693b3ca6140d4cf6fa66c48d91c6a03f603baa',
-    'scripts/run_breadth_freshness.py': '93922a3409750a1562fb928eb34933f5feb22a68',
-    'test_breadth_freshness_workflow.py': '4a7926a32e990576327d14db059504e57f7cc2a8',
+    'scripts/run_breadth_freshness.py': '6655818fd1c4d32c2db7407b37010735ceb0da91',
+    'test_breadth_freshness_workflow.py': 'e8ed1942175b75416caec8711363cfc771b90e3d',
     'argus_tick_durability.py': 'fd2f2a97652cf1f3bb18084fd1aa5f54a19247da',
     'argus_jp_fiscal_monitor.py': '3584e845b3c66c2ebdbb41aae6e8b3bfd9866117',
     'argus_jp_fiscal_runtime.py': '5ba1577db358b3fe270b81e8f4685efb0f20d87e',

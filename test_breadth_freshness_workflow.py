@@ -85,6 +85,8 @@ def test_already_published_run_is_get_only_and_verifies_identity():
 
     def fake_request(url, **kwargs):
         calls.append((url, kwargs.get("payload")))
+        # Owner auth: every /api/ read carries the operational credential.
+        assert (kwargs.get("token") == "redacted") == ("/api/" in url), url
         if url.endswith("/healthz"):
             return {
                 "backendVersion": "13.3.2", "buildSha": "e" * 40,
