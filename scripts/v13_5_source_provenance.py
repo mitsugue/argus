@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.11"
+PRODUCT_VERSION = "v13.8.12"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
-    'web/scripts/pwa-identity.test.mjs': '93df8093927c89efbb8fb44a004c8a8c458d7f17',
-    'web/scripts/owner-today-https.mjs': '9b36b015694e02f46791f73221ed8d09484424cd',
+    'web/scripts/pwa-identity.test.mjs': 'f56a23c5703cc6efdacd673026f0444f9bc379fa',
+    'web/scripts/owner-today-https.mjs': '662210c5931204ea0269b4b1c119c3b78a04c781',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -150,10 +150,10 @@ REVIEWED_EXTENSION_BLOBS = {
     '.github/actions/warm-profile-seed/action.yml': 'eda05275ed6f5f0eb86d866c15022535194cd5bb',
     '.github/actions/warm-profile-consumer/action.yml': '12934bafbf41522ba487c3b26328f74276dfc732',
     # Exact opt-in owner authentication, UI, backup and regression candidate.
-    'argus_owner_auth.py': '576c3821175c484b45c49e3c75252df1618ffc53',
+    'argus_owner_auth.py': 'c91f079f9d802851bda2807ffdc9581b71d13712',
     'docs/ops/owner-server-auth.md': 'd745850b1c9bb742783be9f230261cee5b9d782f',
     'scripts/owner_auth_backup.py': '55b2d8f41918c9ae5880c7ae23a764e5e1506e8a',
-    'test_argus_owner_auth.py': '7330d9e7a836da9631fd3b128fa5c86455e5b8ee',
+    'test_argus_owner_auth.py': '84d1e84a918fac58eb6a6ea0dc7533e1dd215778',
     'web/scripts/owner-session.test.cjs': '378e67082131994e382056b6629baead4dc50509',
     'web/src/components/OwnerAccess.css': '57b5edd0184ebe095325ea3a293e5182d823a6ab',
     'web/src/components/OwnerAccess.tsx': 'fdf31fe129235b0e76dda772a1fb8411446c4905',
