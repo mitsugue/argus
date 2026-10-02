@@ -23,6 +23,75 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
   const hasChart = plan.elements.some(row => row.id === 'nikkei-comparison');
   const chartReady = validJapanMarketComparison(chart, 5);
   const showArchivedComparison = archived && chartReady;
+  const factList = (ids: string[]) => {
+    const facts = (brief.unifiedContext?.facts ?? []).filter(f => ids.includes(f.evidenceId));
+    return <>{facts.some(f => f.source === 'market_feature_calculation') && <p className="argus-editorial__fact-note">
+      下の市場条件は取得した値からの計算で、どれも単独では予測力を確かめていません。</p>}
+      {facts.map(f => <div key={f.evidenceId} data-evidence-id={f.evidenceId}>
+        <p>{friendlyFactText(f.text)}</p><small>{f.provenance?.sourceLabel ?? f.source}
+          {f.provenance?.observedAt && ` · 観測 ${f.provenance.observedAt}`}
+          {f.provenance?.publishedAt && ` · 公表 ${f.provenance.publishedAt}`}
+          {f.provenance?.receivedAt && ` · 取得 ${f.provenance.receivedAt}`}</small>
+        {f.provenance?.url && <a href={f.provenance.url} target="_blank" rel="noopener noreferrer">出典を開く</a>}
+      </div>)}</>;
+  };
+  if (!archived) {
+    // Owner review 2026-10-02: one short "ARGUS's reading" card after the strip,
+    // and every evidence list, calculation and record behind a single toggle.
+    // Only what the strip does not already say: why, what changed, what would
+    // change the view, and the news. Market numbers and the next event live
+    // in the strip; everything else stays one tap away in the vault.
+    const digestOrder = ['reasons', 'changes', 'invalidation'];
+    const readable = [...plan.elements.filter(choice => digestOrder.includes(choice.id))
+      .sort((a, b) => digestOrder.indexOf(a.id) - digestOrder.indexOf(b.id)),
+      ...plan.elements.filter(choice => /^evidence-news-/.test(choice.id) && choice.placement !== 'detail').slice(0, 1)];
+    return <section className="argus-editorial argus-editorial--live" aria-label="ARGUSの今日の見立て"
+      data-argus-contract="presentation-intent-v1" data-presentation-id={plan.planId} data-context-id={plan.contextId}>
+      <header className="argus-editorial__edition"><span>Today / 日本市場 · 日経平均 5営業日先まで</span>
+        <time dateTime={at}>{new Date(at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 更新</time></header>
+      {updateState}
+      {retained && <p role="status" className="argus-editorial__retained argus-editorial__retained--update">
+        {generationStatus === 'RUNNING' ? <TriangleStepLoader label="新しい説明を作成中" />
+          : (retainedNote ?? '前回の説明を表示中です。数字とチャートは最新です。')}</p>}
+      <TodayDecisionStrip brief={brief} />
+      {readable.length > 0 && <section className="argus-editorial__digest" aria-label="ARGUSの読み">
+        <h2>ARGUSの読み</h2>
+        {readable.map(choice => {
+          const source = brief.presentationCatalog!.elements.find(row => row.id === choice.id)!;
+          const evidenceLabel = editorialElementLabel(choice.id);
+          const label = evidenceLabel ?? labels[choice.id as Section];
+          const text = evidenceLabel ? choice.caption?.textJa : summary.sections[choice.id as Section]?.textJa;
+          return text ? <div key={choice.id} className="argus-editorial__digest-row" data-payload-id={source.payloadId}>
+            <small>{label}</small><p>{text}</p></div> : null;
+        })}
+      </section>}
+      <details className="argus-editorial__vault">
+        <summary>根拠・データ・過去の記録を見る</summary>
+        {plan.elements.map(choice => {
+          if (choice.id === 'view' || choice.id === 'nikkei-comparison') return null;
+          const source = brief.presentationCatalog!.elements.find(row => row.id === choice.id)!;
+          const evidenceLabel = editorialElementLabel(choice.id);
+          if (evidenceLabel) return <details key={choice.id} className="argus-editorial__fact-list" data-payload-id={source.payloadId}>
+            <summary>{evidenceLabel}</summary>{choice.caption && <p className="argus-editorial__text">{choice.caption.textJa}</p>}
+            {factList(source.evidenceIds)}</details>;
+          if (readable.includes(choice) || choice.id === 'impact') return null;
+          const row = summary.sections[choice.id as Section];
+          return <details key={choice.id} data-payload-id={source.payloadId}><summary>{labels[choice.id as Section]}</summary>
+            <p className="argus-editorial__text">{row.textJa}</p></details>;
+        })}
+        <details className="argus-editorial__evidence"><summary>説明の根拠と、今回の構成について</summary>
+          <p>{plan.intentJa}</p>
+          {Object.entries(summary.sections).map(([key, row]) => <section key={key}><h3>{labels[key as Section]}</h3>
+            <p>{row.kind === 'FACT' ? '確認した事実' : row.kind === 'INFERENCE' ? '根拠に基づく推論' : '未確認'}</p>
+            {factList(row.evidenceIds)}</section>)}
+          <p>応答モデル {brief.aiDiagnostics?.returnedModel ?? '未確認'} · 保存 {brief.analysisHistory?.status === 'LOCAL_DURABLE' ? 'サーバー保存済み' : '確認中'}</p>
+        </details>
+        <NumericalResearchDetails brief={brief} />
+        <FiscalEnvironmentDetails brief={brief} />
+        <MarketAnalysisHistory key="saved-history" />
+      </details>
+    </section>;
+  }
   return <section className="argus-editorial" aria-label={archived ? '当時のARGUSの説明' : 'ARGUSの今日の見立て'}
     data-argus-contract="presentation-intent-v1" data-presentation-id={plan.planId} data-context-id={plan.contextId}>
     <header className="argus-editorial__edition"><span>{archived ? '保存した説明 / 日本市場' : 'Today / 日本市場'}</span>

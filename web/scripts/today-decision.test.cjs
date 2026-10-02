@@ -53,3 +53,9 @@ assert.equal(d.friendlyFactText('2026-09-25時点、海外投資家の4週純売
 assert.equal(d.friendlyFactText('2026-09-30時点、VIX終値: 16.3400。観測値からの記述計算であり、予測力は未検証。'),
   '2026-09-30時点、VIX終値: 16.34。');
 console.log('Today decision strip PASS');
+const at = new Date('2026-10-02T01:00:00Z'); // 10:00 JST
+assert.equal(d.friendlyEventText('US Employment Situation（2026-10-02 21:30（日本時間））・D', at), '米雇用統計 今夜21:30');
+assert.equal(d.friendlyEventText('US Treasury 10-Year Auction（2026/10/07・時刻未公表・D-7）', at), '米国債入札 10/7');
+assert.equal(d.friendlyEventText('FOMC（2026-10-03 03:00（日本時間））', at), 'FOMC 明日03:00');
+assert.equal(d.friendlyEventText('日銀会合', at), '日銀会合');
+console.log('Next-event wording PASS');
