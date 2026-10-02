@@ -39236,10 +39236,14 @@ def _jp_market_engine_relative_strength_proxy():
 
     One PIT row for JP_MARKET_ENGINE D03's explicit ETF-proxy lane (ARGUS_CANDIDATE
     lineage is assigned by the evaluator itself). availableFrom is after the
-    15:30 JST close of the row's session; cached-only, None when cold."""
+    15:30 JST close of the row's session; cached-only, None when cold.
+    SPY uses only US sessions dated before the JP session: those closed at
+    06:00 JST at the latest, while a same-date US close arrives after the
+    stamp (look-ahead audit 2026-10-02)."""
     try:
-        def twenty_day_return(rows):
-            ordered = sorted((rows or []),
+        def twenty_day_return(rows, before=None):
+            ordered = sorted((row for row in (rows or [])
+                              if before is None or str(row.get("date") or "")[:10] < before),
                              key=lambda row: str(row.get("date") or ""))
             closes = [float(row["close"]) for row in ordered
                       if isinstance(row.get("close"), (int, float))
@@ -39250,9 +39254,11 @@ def _jp_market_engine_relative_strength_proxy():
             return closes[-1] / closes[-21] - 1, date
         jp_return, jp_date = twenty_day_return(
             _chart_history_cached("1321", "JP"))
+        if jp_return is None or len(jp_date or "") != 10:
+            return None
         us_return, _us_date = twenty_day_return(
-            _chart_history_cached("SPY", "US"))
-        if jp_return is None or us_return is None or len(jp_date or "") != 10:
+            _chart_history_cached("SPY", "US"), before=jp_date)
+        if us_return is None:
             return None
         return {"instrumentId": "1321",
                 "seriesId": "relative_strength_20d", "date": jp_date,
@@ -39670,6 +39676,16 @@ def _jp_market_feature_history_warm():
         margin = jp_market_acquisition.apply_scheduled_availability(
             ((_JQ_MARGIN_CACHE.get("1570") or {}).get("sourceSnapshot") or {}).get("rows") or [],
             lag_days=6, source_label="jpx-weekly-margin-second-business-day")
+        # Holidays move both weekly publications later; count real sessions
+        # (look-ahead audit 2026-10-02). 1570: before the 4th session's open;
+        # two-market totals: 15:00 JST on the 3rd session.
+        sessions = [r.get("date") for r in bars if r.get("date")]
+        margin = jp_market_acquisition.enforce_session_publication(
+            margin, sessions=sessions, sessions_after=4, utc_time="00:00:00",
+            source_label="jpx-weekly-margin-fourth-session-open")
+        credit = jp_market_acquisition.enforce_session_publication(
+            credit, sessions=sessions, sessions_after=3, utc_time="06:00:00",
+            source_label="jpx-two-market-third-session")
         loss = [{**r, "unit": "PERCENT" if r.get("unit") == "percent" else r.get("unit"),
                  "signConvention": (r.get("metadata") or {}).get("signConvention")}
                 for r in ledger if r.get("seriesId") == "credit.valuation_loss_pct"]
