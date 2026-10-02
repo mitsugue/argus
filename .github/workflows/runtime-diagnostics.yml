@@ -69,7 +69,7 @@ jobs:
           # 2026-09-29: deciding whether Twelve Data can drop to the free plan
           # needs the measured split between the moomoo bridge and Twelve Data,
           # not an assumption. Counts and ages only; no symbol list, no secret.
-          for name in bridge-status bridge-diagnostic twelvedata-budget provider-diagnostics operational security-status today-headline decision-evidence-a decision-evidence-b index-comparison index-chart market-brief market-brief-history ai-cost cost-policy data-quality; do
+          for name in bridge-status bridge-diagnostic twelvedata-budget provider-diagnostics operational security-status today-headline decision-evidence-a decision-evidence-b index-comparison index-chart market-brief market-brief-history ai-cost cost-policy data-quality sector-heatmap closepin-snapshot; do
             case "$name" in
               bridge-status) path="/api/argus/bridge/status" ;;
               bridge-diagnostic) path="/api/argus/admin/bridge/diagnostic" ;;
@@ -85,6 +85,8 @@ jobs:
               market-brief-history) path="/api/argus/market-brief?history=1" ;;
               ai-cost) path="/api/argus/ai-cost" ;;
               cost-policy) path="/api/argus/cost-policy" ;;
+              sector-heatmap) path="/api/argus/sector-heatmap" ;;
+              closepin-snapshot) path="/api/argus/closepin-snapshot" ;;
               data-quality) path="/api/argus/data-quality/status" ;;
               index-chart) path="/api/argus/index-chart?index=N225" ;;
             esac
