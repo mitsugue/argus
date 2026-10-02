@@ -38,3 +38,4 @@
 .today-strip__row dt { color: var(--cyan); font-weight: 600; }
 .today-strip__row dd { margin: 0; color: var(--text-main); line-height: 1.55; }
 .today-strip__note { margin: 0; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+.today-strip__close small { margin-left: auto; color: var(--text-muted); font-size: 11px; }

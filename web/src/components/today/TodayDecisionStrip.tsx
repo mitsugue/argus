@@ -2,6 +2,7 @@ import React from 'react';
 import type { MarketBrief } from '../../lib/marketBrief';
 import type { ComparisonPoint } from '../../types/japanMarketComparison';
 import { ALERT_HISTORY, decisionStrip, friendlyEventText, type FeatureRow, type Lean } from '../../lib/todayDecision';
+import { useNikkeiLive } from '../../hooks/useJapanMarketComparison';
 import './TodayDecisionStrip.css';
 
 const toneLabel = { tail: '追い風', head: '逆風', wait: '様子見' } as const;
@@ -21,14 +22,24 @@ function features(brief: MarketBrief): FeatureRow[] {
 
 /** Conclusion, four numbers and the inputs with their direction, before the detailed explanation. */
 export function TodayDecisionStrip({ brief }: { brief: MarketBrief }) {
-  const comparison = brief.calculationSnapshots?.['5']?.comparison as { actual?: ComparisonPoint[] } | undefined;
+  const comparison = brief.calculationSnapshots?.['5']?.comparison as { actual?: ComparisonPoint[]; anchorDate?: string } | undefined;
   const strip = decisionStrip(Array.isArray(comparison?.actual) ? comparison!.actual : null, features(brief));
   const headline = brief.unifiedSummary?.sections.view.textJa;
+  const live = useNikkeiLive();
+  // The delayed intraday value replaces the last close once it is from a later session.
+  const lastActual = typeof comparison?.anchorDate === 'string' ? Date.parse(comparison.anchorDate) : NaN;
+  const liveCurrent = live && (!Number.isFinite(lastActual) || Date.parse(live.tradedAt) > lastActual + 9 * 3600_000);
+  const shownPrice = liveCurrent ? live!.price : strip.close;
+  const shownChange = liveCurrent ? live!.changePct : strip.dayChangePct;
+  const liveLabel = liveCurrent ? (live!.sessionOpen
+    ? `${new Date(live!.tradedAt).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })}時点・約${Math.max(1, Math.round(live!.delaySeconds / 60))}分遅れ`
+    : `${new Date(live!.tradedAt).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' })} 大引け`) : '前日終値';
   if (strip.close === null && !strip.rows.length) return null;
   return <section className="today-strip" aria-label="今日の結論と数字" data-argus-contract="today-decision-strip-v1">
-    {strip.close !== null && <p className="today-strip__close">
-      <span>日経平均</span><b>{yen(strip.close)}</b>
-      {strip.dayChangePct !== null && <em className={strip.dayChangePct >= 0 ? 'is-up' : 'is-down'}>{signed(strip.dayChangePct)}</em>}
+    {shownPrice !== null && <p className="today-strip__close" data-live={liveCurrent ? 'delayed' : 'close'}>
+      <span>日経平均</span><b>{yen(shownPrice)}</b>
+      {shownChange !== null && <em className={shownChange >= 0 ? 'is-up' : 'is-down'}>{signed(shownChange)}</em>}
+      <small>{liveLabel}</small>
     </p>}
     <div className={`today-strip__verdict is-${strip.tone}`} data-tone={strip.tone}>
       <span className="today-strip__badge">{toneLabel[strip.tone]}</span>
@@ -43,7 +54,7 @@ export function TodayDecisionStrip({ brief }: { brief: MarketBrief }) {
         <span>{strip.fiveDayChangePct !== null ? `5日で${signed(strip.fiveDayChangePct)}` : '直近20営業日との比較'}</span></div>}
       {strip.band && <div className="today-strip__tile">
         <small>5日間の予想値幅(8割)</small><b>{signed(strip.band.lower)}〜{signed(strip.band.upper)}</b>
-        <span>{strip.close !== null ? `${yen(strip.close * (1 + strip.band.lower / 100))}〜${yen(strip.close * (1 + strip.band.upper / 100))}円` : ''}</span></div>}
+        <span>{shownPrice !== null ? `${yen(shownPrice * (1 + strip.band.lower / 100))}〜${yen(shownPrice * (1 + strip.band.upper / 100))}円` : ''}</span></div>}
       {brief.chips?.nextEvent && <div className="today-strip__tile">
         <small>次の山場</small><b className="today-strip__event">{friendlyEventText(brief.chips.nextEvent)}</b></div>}
     </div>

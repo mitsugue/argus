@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.3"
+PRODUCT_VERSION = "v13.8.4"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
-    'web/scripts/pwa-identity.test.mjs': '83cdfe1089e38eaece299dad12d8f25e45978731',
-    'web/scripts/owner-today-https.mjs': 'e188dc9b1463065d0deba9410df64914bd8fa3f9',
+    'web/scripts/pwa-identity.test.mjs': 'b2ce5d9c929f48ff65e1cc778dee86f1f1d9a9ec',
+    'web/scripts/owner-today-https.mjs': '4698f8d209d0700d3df1b7c10b01f31f191399db',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -402,7 +402,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': '77f4e4fa1edee0e5f42db6d82597a4ec1ad82083',
     'web/src/components/dashboard/MacroResultDetails.tsx': '1ae4f62354c917002f6b60b1b8e72de1a126a3f6',
     'web/src/components/today/MarginDynamicsCard.tsx': '916091e12c4362a7340ad5cb5dff373b1d36300e',
-    'web/src/hooks/useJapanMarketComparison.ts': '19ed5d63cc796be371e33a26077a437aefb877fb',
+    'web/src/hooks/useJapanMarketComparison.ts': '20696992ac7134da90fa4840ec52a319d140e3ac',
     'web/src/hooks/useJapanSqCalendar.ts': '24751f5205496b8263c9712ae71103a42b4ba8c8',
     'web/src/lib/japanMarketComparison.ts': '0954ac565cc504c8fdd1527e8b7fb16ee4b2d182',
     'web/src/lib/japanSqCalendar.ts': '947b1c9121f7b6f8a5e7b501211b8b43449b329b',
@@ -650,6 +650,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_index_live.py",
+    "argus_index_live.py",
     "web/src/lib/todayDecision.ts",
     "web/src/components/today/TodayDecisionStrip.tsx",
     "web/src/components/today/TodayDecisionStrip.css",
