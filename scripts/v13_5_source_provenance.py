@@ -650,6 +650,11 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    # v13.7 point-in-time backfill of the same proxy: factor sets in force on
+    # each past date and statements disclosed before it, labelled per point;
+    # pure, no IO, and no weight table content.
+    "argus_index_valuation_backfill.py",
+    "test_argus_index_valuation_backfill.py",
     "test_argus_holiday_calendar.py",
     "test_argus_today_intelligence.py",
     "test_argus_relative_strength_pit.py",
