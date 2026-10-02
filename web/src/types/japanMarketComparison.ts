@@ -89,6 +89,8 @@ export interface JapanMarketComparison {
       testHitRate: number | null; testNaiveRate: number | null; testWilsonLower95: number | null;
       equalWeightsTestHitRate: number | null; predictiveProbabilities: null;
     };
+    /** What followed each of the seven warning conditions in the same history (2026-10-02). */
+    signEventStudy?: SignEventStudy;
   };
   scaleExplanation: string;
   valuationEvidence?: {
@@ -109,5 +111,30 @@ export interface ForecastTrackRecordHorizon {
 export interface ForecastTrackRecord {
   schemaVersion: 'argus-forecast-track-record-v1'; instrumentId: 'NIKKEI_225_INDEX';
   minimumDirectionalForecasts: number; horizons: Record<string, ForecastTrackRecordHorizon>;
+  predictiveProbabilities: null; actionAuthority: false;
+}
+
+/** Outcome shares after activations, against every session of the same span. */
+export interface SignEventStudyMetrics {
+  evaluated: number; falls: number; fallShare: number | null; fallShareWilsonLower95: number | null;
+  riseShare: number | null; meanReturnPct: number | null; baselineSessions: number;
+  baselineFallShare: number | null; baselineMeanReturnPct: number | null;
+}
+export type SignEventStudyStatus = 'INSUFFICIENT_SAMPLE' | 'NOT_ABOVE_BASELINE' | 'ABOVE_BASELINE' | 'NOT_EVALUABLE';
+export interface SignEventStudyCondition {
+  family: 'D01' | 'D02' | 'D03' | 'D04' | 'D05' | 'D06' | 'D07';
+  seriesId: string | null; activationValue: number | null; status: SignEventStudyStatus; reason: string | null;
+  rawActivations: number; activations: number; overlappingMerged: number;
+  firstActivation: string | null; lastActivation: string | null; coverageStart: string | null; coverageEnd: string | null;
+  horizons: Record<string, SignEventStudyMetrics>; falseAlarms: number; falseAlarmShare: number | null;
+  periods: Array<{ name: 'design' | 'confirm' | 'report'; start: string | null; end: string | null; activations: number;
+    horizons: Record<string, SignEventStudyMetrics> }>;
+  predictiveProbabilities: null; actionAuthority: false;
+}
+export interface SignEventStudy {
+  schemaVersion: 'jp-sign-event-study-v1'; method: string; informationCutoff: string;
+  status: 'AVAILABLE' | 'UNAVAILABLE'; cooldownSessions: number; horizons: number[]; primaryHorizon: number;
+  minimumActivations: number; conditions: Record<string, SignEventStudyCondition>;
+  historicalVintageVerified: false; validationStatus: 'UNVALIDATED';
   predictiveProbabilities: null; actionAuthority: false;
 }
