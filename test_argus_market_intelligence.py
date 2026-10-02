@@ -54,6 +54,18 @@ class ArgusMarketIntelligenceTests(unittest.TestCase):
         self.assertEqual(report["classification"], "insufficient_data")
         self.assertTrue(report["noFutureLeakage"])
 
+    def test_walk_forward_returns_start_at_the_next_close_after_detection(self):
+        bars = [{"date": f"2026-01-{day:02d}", "availableFrom": f"2026-01-{day:02d}T07:00:00Z",
+                 "close": 100.0 * (2 if day == 2 else 1) + day} for day in range(1, 25)]
+        signal = {"id": "s1", "effectiveFrom": "2026-01-02",
+                  "availableFrom": "2026-01-02T07:30:00Z", "detectedAt": "2026-01-02T07:30:00Z"}
+        row = intelligence.walk_forward_backtest([signal], bars)["samples"][0]
+        # The spike on the triggering bar itself must not count as a tradable move.
+        self.assertEqual(row["entryDate"], "2026-01-03")
+        self.assertAlmostEqual(row["return1dPct"], (104 / 103 - 1) * 100)
+        self.assertAlmostEqual(row["return5dPct"], (108 / 103 - 1) * 100)
+        self.assertGreater(row["maxDrawdownPct"], 0)
+
     def test_small_sample_is_never_validated(self):
         bars = [{"date": f"2026-01-{day:02d}", "availableFrom": f"2026-01-{day:02d}",
                  "close": 100 + day} for day in range(1, 25)]

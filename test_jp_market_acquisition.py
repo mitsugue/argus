@@ -367,3 +367,22 @@ def test_generic_scheduled_availability_applies_to_originals_only():
     assert 'availabilityBasis' not in out[1] and 'availabilityBasis' not in out[2]
     with pytest.raises(ValueError, match='scheduled_lag_bound'):
         m.apply_scheduled_availability(rows, lag_days=30, source_label='x')
+
+
+def test_session_publication_floor_follows_real_sessions_and_holidays():
+    sessions = ['2026-09-17', '2026-09-18', '2026-09-24', '2026-09-25', '2026-09-28', '2026-09-29']
+    rows = [
+        {'periodEnd': '2026-09-18', 'publishedAt': '2026-09-23T15:00:00+09:00',
+         'availableFrom': '2026-09-23T15:00:00+09:00', 'value': 1},          # silver week: raised
+        {'periodEnd': '2026-09-11', 'availableFrom': '2026-09-30T00:00:00Z', 'value': 2},   # later receipt: kept
+        {'periodEnd': '2026-09-25', 'availableFrom': '2026-09-29T06:00:00Z', 'value': 3},   # past the sessions: weekdays
+        'not-a-row',
+    ]
+    out = m.enforce_session_publication(rows, sessions=sessions, sessions_after=3,
+                                        utc_time='06:00:00', source_label='jpx-two-market-third-session')
+    assert out[0]['publishedAt'] == out[0]['availableFrom'] == '2026-09-28T06:00:00Z'
+    assert out[0]['availabilityFloor'] == 'jpx-two-market-third-session'
+    assert out[1] == rows[1]
+    assert out[2]['availableFrom'] == '2026-09-30T06:00:00Z'
+    with pytest.raises(ValueError, match='session_publication_bound'):
+        m.enforce_session_publication(rows, sessions=sessions, sessions_after=0, utc_time='00:00:00', source_label='x')

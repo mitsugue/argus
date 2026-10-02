@@ -266,12 +266,12 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
           `${({ priceShape: '価格形状', marketState: '市場条件', conditionOrder: '七サインの順序', materialReaction: '材料反応' } as Record<string, string>)[key] ?? key}×${value}`).join('・');
         return <section aria-label="重み付けの再検証" data-weight-search={w.adopted ? 'adopted' : 'not-adopted'}>
           <h3>比較の重み付けの再検証</h3>
-          <p>{w.gridSize}通りの重み付けを{w.trainStart}〜{w.trainEnd}で比べ、最も良かった「{weights}」を、
-            選ぶときに使っていない{w.testStart}〜{w.testEnd}で検証しました。
+          <p>{w.gridSize}通りの重み付けを{w.trainStart}〜{w.trainEnd}で比べ、最も良かった「{weights}」を
+            {w.confirmStart ? `${w.confirmStart}〜${w.confirmEnd}で採用するか判断し、どちらにも使っていない` : '選ぶときに使っていない'}{w.testStart}〜{w.testEnd}で成績を測りました。
             {w.choiceHorizon}営業日後の方向一致率は{pct(w.testHitRate)}（95%信頼下限 {pct(w.testWilsonLower95)}）、
             単純予想は{pct(w.testNaiveRate)}、等しい重みでは{pct(w.equalWeightsTestHitRate)}でした。</p>
-          <p>{w.adopted ? '判定：検証期間でも基準を満たしたため、この重み付けで候補を選んでいます。'
-            : '判定：検証期間で基準を満たさなかったため、重み付けは変えていません。'}</p>
+          <p>{w.adopted ? '判定：採用判断の期間で基準を満たしたため、この重み付けで候補を選んでいます。上の成績は採用判断に使っていない期間のものです。'
+            : '判定：採用判断の期間で基準を満たさなかったため、重み付けは変えていません。'}</p>
         </section>;
       })()}
       <ul>{document.limitations.map((limitation, index) => <li key={index}>{limitation}</li>)}</ul>

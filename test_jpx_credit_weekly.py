@@ -35,6 +35,13 @@ def test_rows_follow_the_ledger_csv_contract_with_wednesday_availability():
     assert list(parsed[0].keys()) == list(jw.CSV_COLUMNS)
 
 
+def test_availability_waits_for_holidays_and_falls_back_late_outside_the_calendar():
+    assert jw.available_day(date(2026, 8, 28)) == date(2026, 9, 2)     # ordinary week: Wednesday
+    assert jw.available_day(date(2026, 9, 18)) == date(2026, 9, 28)    # 9/21-23 closed
+    assert jw.available_day(date(2026, 7, 17)) == date(2026, 7, 23)    # Monday holiday: Thursday
+    assert jw.available_day(date(2027, 3, 5)) == date(2027, 3, 11)     # no coverage: Thursday
+
+
 def test_fridays_after_and_gaps_are_reported_not_filled():
     assert jw.fridays_after("2026-07-10", today=date(2026, 7, 31)) == ["2026-07-17", "2026-07-24", "2026-07-31"]
     served = {"2026-07-31"}

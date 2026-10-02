@@ -130,6 +130,9 @@ function validWeightSearch(w: unknown): boolean {
     && finite(w.choiceHorizon) && typeof w.adopted === 'boolean' && w.predictiveProbabilities === null
     && ['trainStart', 'trainEnd', 'testStart', 'testEnd'].every(k => day(w[k]))
     && String(w.trainEnd) < String(w.testStart)
+    && (w.confirmStart === undefined
+      || (day(w.confirmStart) && day(w.confirmEnd) && String(w.trainEnd) < String(w.confirmStart)
+        && String(w.confirmEnd) < String(w.testStart)))
     && ['trainHitRate', 'trainNaiveRate', 'testHitRate', 'testNaiveRate', 'testWilsonLower95', 'equalWeightsTestHitRate']
       .every(k => rate(w[k]));
 }

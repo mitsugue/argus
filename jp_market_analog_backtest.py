@@ -146,13 +146,17 @@ def weight_search(candidates, closes, session_dates, *, policy: AnalogPolicy, st
                   grid=WEIGHT_GRID, choice_horizon: int = 5, flat_threshold_pct: float = .5,
                   step: int = EVALUATION_STEP_SESSIONS, minimum_prior: int = MINIMUM_PRIOR_CANDIDATES,
                   maximum_evaluations: int = MAXIMUM_EVALUATIONS) -> dict[str, Any]:
-    """Choose component weights on the first half of the evaluation dates and
-    report them on the second half, which the choice never saw.
+    """Choose component weights on the first half of the evaluation dates,
+    decide adoption on the third quarter and report on the last quarter.
 
-    The weights are adopted only when the held-out half meets the same
+    The weights are adopted only when the confirmation quarter meets the same
     validation rule as walk_forward for the choice horizon; otherwise the
-    original equal weights stay and the result says why. Component distances
-    are computed once per (evaluation, candidate) and only re-weighted.
+    original equal weights stay and the result says why. The reported figures
+    come from the final quarter, which neither the choice nor the adoption
+    saw, so an adopted rule can still show UNVALIDATED there (look-ahead
+    audit 2026-10-02: judging and reporting on one split always showed a pass).
+    Component distances are computed once per (evaluation, candidate) and only
+    re-weighted.
     """
     from jp_market_analogs import weighted_distance
     positions = {day: index for index, day in enumerate(session_dates)}
@@ -193,6 +197,9 @@ def weight_search(candidates, closes, session_dates, *, policy: AnalogPolicy, st
     if not evaluation_indices:
         return {"method": METHOD + "-weight-search", "status": "INSUFFICIENT_HISTORY", "adopted": False}
     split = len(evaluation_indices) // 2
+    confirm_end = (len(evaluation_indices) * 3) // 4
+    if split < 1 or confirm_end <= split or confirm_end >= len(evaluation_indices):
+        return {"method": METHOD + "-weight-search", "status": "INSUFFICIENT_HISTORY", "adopted": False}
     def score(index):
         metrics = horizon_metrics(records[index][:split], choice_horizon, step=step, flat_threshold_pct=flat_threshold_pct)
         if metrics["hitRateWilsonLower95"] is None or metrics["naiveMajorityRate"] is None:
@@ -200,18 +207,22 @@ def weight_search(candidates, closes, session_dates, *, policy: AnalogPolicy, st
         return (metrics["hitRateWilsonLower95"] - metrics["naiveMajorityRate"], -index)
     best = max(range(len(grid)), key=score)
     equal = next((index for index, weights in enumerate(grid) if all(v == 1.0 for _, v in weights)), None)
-    held_out = {str(h): horizon_metrics(records[best][split:], h, step=step, flat_threshold_pct=flat_threshold_pct)
+    confirm = horizon_metrics(records[best][split:confirm_end], choice_horizon, step=step,
+                              flat_threshold_pct=flat_threshold_pct)
+    held_out = {str(h): horizon_metrics(records[best][confirm_end:], h, step=step, flat_threshold_pct=flat_threshold_pct)
                 for h in HORIZONS}
     return {
         "method": METHOD + "-weight-search", "status": "AVAILABLE", "gridSize": len(grid),
         "chosenWeights": dict(grid[best]), "choiceHorizon": choice_horizon,
         "trainStart": records[best][0]["anchorDate"], "trainEnd": records[best][split - 1]["anchorDate"],
-        "testStart": records[best][split]["anchorDate"], "testEnd": records[best][-1]["anchorDate"],
+        "confirmStart": records[best][split]["anchorDate"], "confirmEnd": records[best][confirm_end - 1]["anchorDate"],
+        "testStart": records[best][confirm_end]["anchorDate"], "testEnd": records[best][-1]["anchorDate"],
         "train": horizon_metrics(records[best][:split], choice_horizon, step=step, flat_threshold_pct=flat_threshold_pct),
+        "confirm": confirm,
         "test": held_out,
-        "equalWeightsTest": (horizon_metrics(records[equal][split:], choice_horizon, step=step,
+        "equalWeightsTest": (horizon_metrics(records[equal][confirm_end:], choice_horizon, step=step,
                                              flat_threshold_pct=flat_threshold_pct) if equal is not None else None),
-        "adopted": held_out[str(choice_horizon)]["validationStatus"] == "VALIDATED",
+        "adopted": confirm["validationStatus"] == "VALIDATED",
         "predictiveProbabilities": None,
     }
 
