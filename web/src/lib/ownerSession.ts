@@ -1,8 +1,11 @@
-// The bearer lives in memory and, so a pull-to-refresh or relaunch inside the
-// same app session does not lock the owner out (owner request 2026-10-02), in
-// sessionStorage bound to this exact build: an app update or a full quit
-// ends it. Never attach it to another origin, redirects, logs, URLs,
-// localStorage, IndexedDB or the legacy owner vault.
+// The bearer lives in memory and, in the home-screen app only, so a
+// pull-to-refresh or relaunch inside the same app session does not lock the
+// owner out (owner request 2026-10-02), in sessionStorage bound to this exact
+// build: an app update or a full quit ends it. An ordinary browser tab keeps
+// it in memory only, so a browser profile on disk never holds a credential
+// (the release acceptance scans its profile for it and stopped every Pages
+// acceptance from 13.8.2 on). Never attach it to another origin, redirects,
+// logs, URLs, localStorage, IndexedDB or the legacy owner vault.
 export const OWNER_AUTH_REQUIRED = import.meta.env.VITE_ARGUS_OWNER_AUTH_REQUIRED === '1';
 const base = String(import.meta.env.VITE_ARGUS_BACKEND_URL ?? '').replace(/\/$/, '');
 const prefix = '/api/argus/owner-auth/';
@@ -17,14 +20,24 @@ const buildId = () => {
   try { return typeof __FRONTEND_BUILD_SHA__ === 'string' && __FRONTEND_BUILD_SHA__ ? __FRONTEND_BUILD_SHA__
     : typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'unknown'; } catch { return 'unknown'; }
 };
-const store = () => { try { return typeof sessionStorage === 'undefined' ? null : sessionStorage; } catch { return null; } };
+const anyStore = () => { try { return typeof sessionStorage === 'undefined' ? null : sessionStorage; } catch { return null; } };
+const installedApp = () => {
+  try {
+    // The manifest asks for fullscreen first and standalone as the fallback;
+    // iOS home-screen apps also report navigator.standalone.
+    return ['standalone', 'fullscreen'].some((mode) => window.matchMedia?.(`(display-mode: ${mode})`).matches === true)
+      || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  } catch { return false; }
+};
+/** Where a login may be kept across a reload: the home-screen app's session storage, nowhere else. */
+const store = () => installedApp() ? anyStore() : null;
 const listeners = new Set<() => void>();
 export const subscribeOwner = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; };
 export const hasOwnerSession = () => !!token && expiresAt > Date.now();
 export function clearOwnerSession() {
   ceremonyEpoch += 1;
   token = ''; expiresAt = 0; clearTimeout(timer);
-  try { store()?.removeItem(STORE_KEY); } catch { /* storage unavailable */ }
+  try { anyStore()?.removeItem(STORE_KEY); } catch { /* storage unavailable */ }
   listeners.forEach((fn) => fn());
 }
 function setSession(value: { token?: unknown; expiresAt?: unknown }) {
@@ -32,7 +45,11 @@ function setSession(value: { token?: unknown; expiresAt?: unknown }) {
       || typeof value.expiresAt !== 'number' || value.expiresAt <= Date.now()
       || value.expiresAt > Date.now() + MAX_SESSION_MS) throw new Error('authentication_failed');
   token = value.token; expiresAt = value.expiresAt;
-  try { store()?.setItem(STORE_KEY, JSON.stringify({ token, expiresAt, build: buildId() })); } catch { /* memory only */ }
+  try {
+    const kept = store();
+    if (kept) kept.setItem(STORE_KEY, JSON.stringify({ token, expiresAt, build: buildId() }));
+    else anyStore()?.removeItem(STORE_KEY);
+  } catch { /* memory only */ }
   clearTimeout(timer); timer = setTimeout(clearOwnerSession, expiresAt - Date.now());
   listeners.forEach((fn) => fn());
 }
@@ -111,11 +128,11 @@ export async function restoreOwnerSession(): Promise<boolean> {
   let saved: { token?: unknown; expiresAt?: unknown; build?: unknown } | null = null;
   try { saved = JSON.parse(store()?.getItem(STORE_KEY) ?? 'null'); } catch { saved = null; }
   if (!saved || saved.build !== buildId() || typeof saved.expiresAt !== 'number' || saved.expiresAt <= Date.now()) {
-    try { store()?.removeItem(STORE_KEY); } catch { /* storage unavailable */ }
+    try { anyStore()?.removeItem(STORE_KEY); } catch { /* storage unavailable */ }
     return false;
   }
   try { await verifyAndSetSession(saved, ++ceremonyEpoch); return true; }
-  catch { try { store()?.removeItem(STORE_KEY); } catch { /* storage unavailable */ } return false; }
+  catch { try { anyStore()?.removeItem(STORE_KEY); } catch { /* storage unavailable */ } return false; }
 }
 
 async function action(name: string, body: unknown = {}) {
