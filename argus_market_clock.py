@@ -55,76 +55,153 @@ def asset_market(symbol: str) -> str:
     return US_EQUITY  # fallback: treat unknown as US-session
 
 
-# ── Holiday tables (best-effort 2026; verify against official calendars) ──────
-# JPX (TSE) full-day closures 2026, incl. year-end/start 12/31–1/3.
-_JP_HOLIDAYS_2026 = {
-    "2026-01-01", "2026-01-02", "2026-01-03", "2026-01-12",
-    "2026-02-11", "2026-02-23", "2026-03-20", "2026-04-29",
-    "2026-05-03", "2026-05-04", "2026-05-05", "2026-05-06",
-    "2026-07-20", "2026-08-11", "2026-09-21", "2026-09-22", "2026-09-23",
-    "2026-10-12", "2026-11-03", "2026-11-23", "2026-12-31",
-}
-_JP_HOLIDAY_NAMES_2026 = {
-    "2026-01-01": "New Year's Day / 元日",
-    "2026-01-02": "Market Holiday / 年始休業",
-    "2026-01-03": "Market Holiday / 年始休業",
-    "2026-01-12": "Coming of Age Day / 成人の日",
-    "2026-02-11": "National Foundation Day / 建国記念の日",
-    "2026-02-23": "Emperor's Birthday / 天皇誕生日",
-    "2026-03-20": "Vernal Equinox Day / 春分の日",
-    "2026-04-29": "Showa Day / 昭和の日",
-    "2026-05-03": "Constitution Memorial Day / 憲法記念日",
-    "2026-05-04": "Greenery Day / みどりの日",
-    "2026-05-05": "Children's Day / こどもの日",
-    "2026-05-06": "Substitute Holiday / 振替休日",
-    "2026-07-20": "Marine Day / 海の日",
-    "2026-08-11": "Mountain Day / 山の日",
-    "2026-09-21": "Respect for the Aged Day / 敬老の日",
-    "2026-09-22": "National Holiday / 国民の休日",
-    "2026-09-23": "Autumnal Equinox Day / 秋分の日",
-    "2026-10-12": "Sports Day / スポーツの日",
-    "2026-11-03": "Culture Day / 文化の日",
-    "2026-11-23": "Labor Thanksgiving Day / 勤労感謝の日",
-    "2026-12-31": "Market Holiday / 年末休業",
-}
-# NYSE full-day closures 2026.
-_US_HOLIDAYS_2026 = {
-    "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03",
-    "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07",
-    "2026-11-26", "2026-12-25",
-}
-_US_HOLIDAY_NAMES_2026 = {
-    "2026-01-01": "New Year's Day",
-    "2026-01-19": "Martin Luther King Jr. Day",
-    "2026-02-16": "Washington's Birthday",
-    "2026-04-03": "Good Friday",
-    "2026-05-25": "Memorial Day",
-    "2026-06-19": "Juneteenth National Independence Day",
-    "2026-07-03": "Independence Day (Observed)",
-    "2026-09-07": "Labor Day",
-    "2026-11-26": "Thanksgiving Day",
-    "2026-12-25": "Christmas Day",
-}
-_US_EARLY_CLOSES_2026 = {
-    "2026-11-27": "Day after Thanksgiving",
-    "2026-12-24": "Christmas Eve",
-}
+# ── Holiday tables ──────────────────────────────────────────────────────────
+# Generated from the rules that define them (owner request 2026-10-02) and
+# asserted equal to the official 2026 JPX/NYSE snapshot by the tests.
+# Japan (TSE): the National Holiday Act as in force since 2020 (fixed days,
+# Happy Monday days, equinox days, substitute holidays, citizens' holidays)
+# plus the exchange's 12/31, 1/2 and 1/3 closure. United States (NYSE): its
+# holiday rules (weekend observance, Good Friday, Juneteenth) and 13:00 early
+# closes. Equinox days are fixed by the government each February for the
+# next year; until then the standard approximation (valid 1980-2099) is used.
+# A law change, an Imperial event or an emergency closure is not foreseeable
+# here: a registered canonical calendar always wins, and the years must be
+# re-checked against the published calendars as they appear.
+HOLIDAY_FIRST_YEAR = 2026
+HOLIDAY_LAST_YEAR = 2041
+
+
+def _hol_nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
+    first = date(year, month, 1)
+    return first + timedelta(days=(weekday - first.weekday()) % 7 + 7 * (n - 1))
+
+
+def _hol_last_weekday(year: int, month: int, weekday: int) -> date:
+    last = (date(year, month + 1, 1) if month < 12 else date(year + 1, 1, 1)) - timedelta(days=1)
+    return last - timedelta(days=(last.weekday() - weekday) % 7)
+
+
+def _hol_equinox_day(year: int, base: float) -> int:
+    return int(base + 0.242194 * (year - 1980) - int((year - 1980) / 4))
+
+
+def _hol_jp_holidays(year: int) -> Dict[str, str]:
+    """TSE full-day closures for one year, weekends included, with names."""
+    holidays = {
+        date(year, 1, 1): "New Year's Day / 元日",
+        _hol_nth_weekday(year, 1, 0, 2): "Coming of Age Day / 成人の日",
+        date(year, 2, 11): "National Foundation Day / 建国記念の日",
+        date(year, 2, 23): "Emperor's Birthday / 天皇誕生日",
+        date(year, 3, _hol_equinox_day(year, 20.8431)): "Vernal Equinox Day / 春分の日",
+        date(year, 4, 29): "Showa Day / 昭和の日",
+        date(year, 5, 3): "Constitution Memorial Day / 憲法記念日",
+        date(year, 5, 4): "Greenery Day / みどりの日",
+        date(year, 5, 5): "Children's Day / こどもの日",
+        _hol_nth_weekday(year, 7, 0, 3): "Marine Day / 海の日",
+        date(year, 8, 11): "Mountain Day / 山の日",
+        _hol_nth_weekday(year, 9, 0, 3): "Respect for the Aged Day / 敬老の日",
+        date(year, 9, _hol_equinox_day(year, 23.2488)): "Autumnal Equinox Day / 秋分の日",
+        _hol_nth_weekday(year, 10, 0, 2): "Sports Day / スポーツの日",
+        date(year, 11, 3): "Culture Day / 文化の日",
+        date(year, 11, 23): "Labor Thanksgiving Day / 勤労感謝の日",
+    }
+    national = dict(holidays)
+    # A day between two national holidays is itself a holiday.
+    for day in sorted(national):
+        between = day + timedelta(days=1)
+        if between not in national and between + timedelta(days=1) in national and between.weekday() != 6:
+            holidays[between] = "National Holiday / 国民の休日"
+    # A national holiday on a Sunday moves to the next day that is not a holiday.
+    for day in sorted(national):
+        if day.weekday() == 6:
+            substitute = day + timedelta(days=1)
+            while substitute in holidays:
+                substitute += timedelta(days=1)
+            holidays[substitute] = "Substitute Holiday / 振替休日"
+    holidays[date(year, 1, 2)] = "Market Holiday / 年始休業"
+    holidays[date(year, 1, 3)] = "Market Holiday / 年始休業"
+    holidays[date(year, 12, 31)] = "Market Holiday / 年末休業"
+    return {day.isoformat(): name for day, name in sorted(holidays.items())}
+
+
+def _hol_easter(year: int) -> date:
+    """Gregorian Easter Sunday (anonymous Gregorian algorithm)."""
+    a, b, c = year % 19, year // 100, year % 100
+    d, e = b // 4, b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = c // 4, c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = (h + l - 7 * m + 114) % 31 + 1
+    return date(year, month, day)
+
+
+def _hol_observed(day: date) -> date:
+    return day - timedelta(days=1) if day.weekday() == 5 else day + timedelta(days=1) if day.weekday() == 6 else day
+
+
+def _hol_us_holidays(year: int) -> Dict[str, str]:
+    """NYSE full-day closures for one year, with names."""
+    holidays: Dict[date, str] = {}
+    new_year = date(year, 1, 1)
+    # NYSE does not close on Friday 12/31 for a Saturday New Year's Day.
+    if new_year.weekday() != 5:
+        holidays[_hol_observed(new_year)] = "New Year's Day" + (" (Observed)" if new_year.weekday() == 6 else "")
+    holidays[_hol_nth_weekday(year, 1, 0, 3)] = "Martin Luther King Jr. Day"
+    holidays[_hol_nth_weekday(year, 2, 0, 3)] = "Washington's Birthday"
+    holidays[_hol_easter(year) - timedelta(days=2)] = "Good Friday"
+    holidays[_hol_last_weekday(year, 5, 0)] = "Memorial Day"
+    for month, day, name in ((6, 19, "Juneteenth National Independence Day"), (7, 4, "Independence Day"),
+                             (12, 25, "Christmas Day")):
+        actual = date(year, month, day)
+        holidays[_hol_observed(actual)] = name + (" (Observed)" if actual.weekday() >= 5 else "")
+    holidays[_hol_nth_weekday(year, 9, 0, 1)] = "Labor Day"
+    holidays[_hol_nth_weekday(year, 11, 3, 4)] = "Thanksgiving Day"
+    return {day.isoformat(): name for day, name in sorted(holidays.items())}
+
+
+def _hol_us_early_closes(year: int) -> Dict[str, str]:
+    """NYSE 13:00 ET closes: July 3, the day after Thanksgiving, Christmas Eve, when they trade."""
+    closed = _hol_us_holidays(year)
+    candidates = {date(year, 7, 3): "Independence Day Eve",
+                  _hol_nth_weekday(year, 11, 3, 4) + timedelta(days=1): "Day after Thanksgiving",
+                  date(year, 12, 24): "Christmas Eve"}
+    return {day.isoformat(): name for day, name in sorted(candidates.items())
+            if day.weekday() < 5 and day.isoformat() not in closed}
+
+
+def _hol_table(generator, first: int = HOLIDAY_FIRST_YEAR, last: int = HOLIDAY_LAST_YEAR) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for year in range(first, last + 1):
+        out.update(generator(year))
+    return out
+
+
+_JP_HOLIDAY_NAMES_TABLE = _hol_table(_hol_jp_holidays)
+_US_HOLIDAY_NAMES_TABLE = _hol_table(_hol_us_holidays)
+_JP_HOLIDAYS = set(_JP_HOLIDAY_NAMES_TABLE)
+_US_HOLIDAYS = set(_US_HOLIDAY_NAMES_TABLE)
+_US_EARLY_CLOSES = _hol_table(_hol_us_early_closes)
 
 _HOLIDAYS = {
-    JP_EQUITY: _JP_HOLIDAYS_2026,
-    US_EQUITY: _US_HOLIDAYS_2026,
-    VIX_MKT: _US_HOLIDAYS_2026,   # Cboe follows the US holiday calendar
+    JP_EQUITY: _JP_HOLIDAYS,
+    US_EQUITY: _US_HOLIDAYS,
+    VIX_MKT: _US_HOLIDAYS,        # Cboe follows the US holiday calendar
     FX: set(),                    # FX is independent 24/5
 }
 
-# The static tables above are OFFICIAL-CALENDAR SNAPSHOTS (JPX/NYSE), not
-# weekday arithmetic — but they only cover this range. DAILY decision
+# The static tables above are exchange calendars (an official snapshot for
+# 2026, rule-generated after it), not weekday arithmetic — but they only
+# cover this range. DAILY decision
 # authority must never silently degrade to weekday inference beyond it
 # (owner directive 2026-08-26).
 _STATIC_TABLE_COVERAGE = {
-    JP_EQUITY: ("2026-01-01", "2026-12-31"),
-    US_EQUITY: ("2026-01-01", "2026-12-31"),
-    VIX_MKT: ("2026-01-01", "2026-12-31"),
+    JP_EQUITY: (f"{HOLIDAY_FIRST_YEAR}-01-01", f"{HOLIDAY_LAST_YEAR}-12-31"),
+    US_EQUITY: (f"{HOLIDAY_FIRST_YEAR}-01-01", f"{HOLIDAY_LAST_YEAR}-12-31"),
+    VIX_MKT: (f"{HOLIDAY_FIRST_YEAR}-01-01", f"{HOLIDAY_LAST_YEAR}-12-31"),
 }
 
 
@@ -196,9 +273,9 @@ def canonical_trading_day(market: str, d: date,
         f"no canonical trading-calendar coverage for {market} on {key}")
 
 _HOLIDAY_NAMES = {
-    JP_EQUITY: _JP_HOLIDAY_NAMES_2026,
-    US_EQUITY: _US_HOLIDAY_NAMES_2026,
-    VIX_MKT: _US_HOLIDAY_NAMES_2026,
+    JP_EQUITY: _JP_HOLIDAY_NAMES_TABLE,
+    US_EQUITY: _US_HOLIDAY_NAMES_TABLE,
+    VIX_MKT: _US_HOLIDAY_NAMES_TABLE,
 }
 
 
@@ -274,7 +351,7 @@ def _local_close(market: str, d: date, now_utc: datetime) -> datetime:
     if market in (US_EQUITY, VIX_MKT, FX):
         # US regular close 16:00 ET; FX NY close 17:00 ET (use 16:00 for equities/VIX)
         hour = (17 if market == FX else
-                13 if d.isoformat() in _US_EARLY_CLOSES_2026 else 16)
+                13 if d.isoformat() in _US_EARLY_CLOSES else 16)
         return datetime(d.year, d.month, d.day, hour, 0,
                         tzinfo=_ET).astimezone(timezone.utc)
     raise ValueError(market)
@@ -365,7 +442,7 @@ def market_session_bounds(market: str, session_date: date) -> Dict[str, Any]:
         "regularOpenJst": opened.astimezone(_JST).isoformat(),
         "regularCloseJst": closed.astimezone(_JST).isoformat(),
         "earlyClose": (market in (US_EQUITY, VIX_MKT)
-                       and session_date.isoformat() in _US_EARLY_CLOSES_2026),
+                       and session_date.isoformat() in _US_EARLY_CLOSES),
         "calendarVersion": CALENDAR_VERSION,
     }
 
@@ -402,7 +479,7 @@ def _session_valid_until(market: str, local_now: datetime, *,
         return next_midnight.astimezone(timezone.utc)
     if market in (US_EQUITY, VIX_MKT):
         close_hour = (13 if local_now.date().isoformat()
-                      in _US_EARLY_CLOSES_2026 else 16)
+                      in _US_EARLY_CLOSES else 16)
         transition = {
             "PRE_MARKET": dt_time(9, 30),
             "REGULAR": dt_time(close_hour, 0),
@@ -468,7 +545,7 @@ def market_session(market: str, now_utc: Optional[datetime] = None, *,
                    "POST_MARKET")
     elif market in (US_EQUITY, VIX_MKT):
         hm = local_now.hour * 60 + local_now.minute
-        close_minute = (13 if key in _US_EARLY_CLOSES_2026 else 16) * 60
+        close_minute = (13 if key in _US_EARLY_CLOSES else 16) * 60
         session = ("OVERNIGHT_CLOSED" if hm < 4 * 60 else
                    "PRE_MARKET" if hm < 9 * 60 + 30 else
                    "REGULAR" if hm < close_minute else
@@ -502,7 +579,7 @@ def market_session(market: str, now_utc: Optional[datetime] = None, *,
         "regularOpenJst": open_local.astimezone(_JST).isoformat(),
         "regularCloseJst": close_local.astimezone(_JST).isoformat(),
         "earlyClose": (market in (US_EQUITY, VIX_MKT)
-                       and key in _US_EARLY_CLOSES_2026),
+                       and key in _US_EARLY_CLOSES),
         "calendarVersion": CALENDAR_VERSION,
         "officialCalendar": (
             "JPX_TSE" if market == JP_EQUITY
