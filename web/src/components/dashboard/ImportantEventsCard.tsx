@@ -211,41 +211,80 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
         {EVENT_DESC_JA[ev.eventCode] && (
           <p className="ie-summary">{EVENT_DESC_JA[ev.eventCode]}</p>
         )}
-        <div className="ie-phase-grid">
-          <section className="ie-phase">
-            <b>発表前</b>
-            <p>{preScenario || (ds.released ? '事前予測未保存' : aiNote)}</p>
-            {c.marketPricingJa && <small>織り込み：{c.marketPricingJa}</small>}
-            {c.whatWouldSurpriseJa && <small>サプライズ：{c.whatWouldSurpriseJa}</small>}
-          </section>
-          <section className="ie-phase">
-            <b>公式結果</b>
-            {ds.showActualFirst
-              ? <p><strong>{ev.officialResult.headlineJa || '取得済み'}</strong></p>
-              : ds.showPendingResult
-                ? <p>発表時刻通過・取得待ち</p>
-                : <p>発表待ち</p>}
-            {ev.officialResult.source && <small>source：{ev.officialResult.source}</small>}
-            <MacroResultDetails result={ev.officialResult} />
-            {ds.showPendingResult && <small>定期更新待ち{lastRefresh
-              ? ` · 最終確認 ${String(lastRefresh).slice(11, 16)}Z` : ''}</small>}
-          </section>
-          <section className="ie-phase">
-            <b>発表後</b>
-            {ds.showActualFirst ? (
-              <>
-                {reactionValues.length > 0
-                  ? <p>{reactionValues.join(' · ')}{reactionTone ? ` · ${reactionTone}` : ''}</p>
-                  : <p>市場反応データ未取得</p>}
-                {(c.impactCommentJa || c.marketReactionJa) &&
-                  <small>{c.impactCommentJa || c.marketReactionJa}</small>}
-                {ds.showAnswerCheck
-                  ? <small>答え合わせ：<strong style={{ color: vColor }}>{c.verdictJa || '採点不可'}</strong>
-                    {c.answerCheckJa ? ` — ${c.answerCheckJa}` : ''}</small>
-                  : <small>答え合わせ生成待ち</small>}
-              </>
-            ) : <p>公式結果取得後に更新</p>}
-          </section>
+        {/* Owner report 2026-10-02: once the result is out, the result and the
+            reaction lead; the pre-release view folds away as a reference. */}
+        <div className="ie-phase-grid" data-result-first={ds.showActualFirst ? 'true' : 'false'}>
+          {ds.showActualFirst ? <>
+            <section className="ie-phase">
+              <b>公式結果</b>
+              {ds.showActualFirst
+                ? <p><strong>{ev.officialResult.headlineJa || '取得済み'}</strong></p>
+                : ds.showPendingResult
+                  ? <p>発表時刻通過・取得待ち</p>
+                  : <p>発表待ち</p>}
+              {ev.officialResult.source && <small>source：{ev.officialResult.source}</small>}
+              <MacroResultDetails result={ev.officialResult} />
+              {ds.showPendingResult && <small>定期更新待ち{lastRefresh
+                ? ` · 最終確認 ${String(lastRefresh).slice(11, 16)}Z` : ''}</small>}
+            </section>
+            <section className="ie-phase">
+              <b>発表後</b>
+              {ds.showActualFirst ? (
+                <>
+                  {reactionValues.length > 0
+                    ? <p>{reactionValues.join(' · ')}{reactionTone ? ` · ${reactionTone}` : ''}</p>
+                    : <p>市場反応データ未取得</p>}
+                  {(c.impactCommentJa || c.marketReactionJa) &&
+                    <small>{c.impactCommentJa || c.marketReactionJa}</small>}
+                  {ds.showAnswerCheck
+                    ? <small>答え合わせ：<strong style={{ color: vColor }}>{c.verdictJa || '採点不可'}</strong>
+                      {c.answerCheckJa ? ` — ${c.answerCheckJa}` : ''}</small>
+                    : <small>答え合わせ生成待ち</small>}
+                </>
+              ) : <p>公式結果取得後に更新</p>}
+            </section>
+            <details className="ie-phase ie-phase--pre-folded">
+              <summary><b>発表前の見立て(参考)</b></summary>
+              <p>{preScenario || (ds.released ? '事前予測未保存' : aiNote)}</p>
+              {c.marketPricingJa && <small>織り込み：{c.marketPricingJa}</small>}
+              {c.whatWouldSurpriseJa && <small>サプライズ：{c.whatWouldSurpriseJa}</small>}
+            </details>
+          </> : <>
+            <section className="ie-phase">
+              <b>発表前</b>
+              <p>{preScenario || (ds.released ? '事前予測未保存' : aiNote)}</p>
+              {c.marketPricingJa && <small>織り込み：{c.marketPricingJa}</small>}
+              {c.whatWouldSurpriseJa && <small>サプライズ：{c.whatWouldSurpriseJa}</small>}
+            </section>
+            <section className="ie-phase">
+              <b>公式結果</b>
+              {ds.showActualFirst
+                ? <p><strong>{ev.officialResult.headlineJa || '取得済み'}</strong></p>
+                : ds.showPendingResult
+                  ? <p>発表時刻通過・取得待ち</p>
+                  : <p>発表待ち</p>}
+              {ev.officialResult.source && <small>source：{ev.officialResult.source}</small>}
+              <MacroResultDetails result={ev.officialResult} />
+              {ds.showPendingResult && <small>定期更新待ち{lastRefresh
+                ? ` · 最終確認 ${String(lastRefresh).slice(11, 16)}Z` : ''}</small>}
+            </section>
+            <section className="ie-phase">
+              <b>発表後</b>
+              {ds.showActualFirst ? (
+                <>
+                  {reactionValues.length > 0
+                    ? <p>{reactionValues.join(' · ')}{reactionTone ? ` · ${reactionTone}` : ''}</p>
+                    : <p>市場反応データ未取得</p>}
+                  {(c.impactCommentJa || c.marketReactionJa) &&
+                    <small>{c.impactCommentJa || c.marketReactionJa}</small>}
+                  {ds.showAnswerCheck
+                    ? <small>答え合わせ：<strong style={{ color: vColor }}>{c.verdictJa || '採点不可'}</strong>
+                      {c.answerCheckJa ? ` — ${c.answerCheckJa}` : ''}</small>
+                    : <small>答え合わせ生成待ち</small>}
+                </>
+              ) : <p>公式結果取得後に更新</p>}
+            </section>
+          </>}
         </div>
         {(c.assetsToWatch || []).length > 0 && (
           <p className="ie-data">注目: {(c.assetsToWatch || []).join(' · ')} ・ AIシナリオはコンセンサスや売買指示ではありません</p>
