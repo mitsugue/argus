@@ -267,3 +267,39 @@ def test_owner_session_lasts_one_app_session_of_up_to_twelve_hours():
     # frontend bounds it to the same build and rejects anything longer.
     import argus_owner_auth
     assert argus_owner_auth.TTL == 86400
+
+
+def test_storage_bound_evicts_abandoned_sessions_before_the_one_in_use(setup):
+    # 2026-10-02: with 24-hour sessions, evicting by earliest expiry removed the
+    # owner's own login whenever a few dozen newer logins were issued.
+    import time as clock
+    client, auth, _ = setup
+    owner = login(client)
+    now = clock.time()
+    with auth.db() as conn:
+        conn.execute('UPDATE owner_sessions SET last_seen=?', (now - 7200,))
+        for index in range(40):   # newer logins that were never used again
+            conn.execute('INSERT INTO owner_sessions (digest, expires, epoch, last_seen) VALUES (?,?,?,?)',
+                         (f'abandoned-{index}', now + module.TTL + index, auth.epoch, now - 3600 - index))
+    assert client.get('/api/argus/data', headers={'X-ARGUS-OWNER-SESSION': owner}).status_code == 200
+    login(client)
+    assert client.get('/api/argus/data', headers={'X-ARGUS-OWNER-SESSION': owner}).status_code == 200
+    with auth.db() as conn:
+        assert conn.execute('SELECT count(*) FROM owner_sessions').fetchone()[0] == module.MAX_SESSIONS
+
+
+def test_existing_sessions_survive_the_last_use_migration(tmp_path):
+    import sqlite3
+    path = tmp_path / 'legacy.db'
+    env = {'ARGUS_OWNER_AUTH_REQUIRED': '1', 'ARGUS_OWNER_AUTH_DB': str(path), 'ARGUS_OWNER_AUTH_ORIGIN': ORIGIN,
+           'ARGUS_OWNER_PASSWORD_HASH': generate_password_hash(PASSWORD, method='pbkdf2:sha256:1000')}
+    token = 'x' * 43
+    epoch = module.digest(ORIGIN + '\n' + env['ARGUS_OWNER_PASSWORD_HASH'])
+    with sqlite3.connect(path) as conn:
+        conn.execute('CREATE TABLE owner_sessions (digest TEXT PRIMARY KEY, expires REAL NOT NULL, epoch TEXT NOT NULL)')
+        conn.execute('INSERT INTO owner_sessions VALUES (?,?,?)', (module.digest(token), 4e9, epoch))
+    auth = module.OwnerAuth(env)
+    with Flask(__name__).test_request_context(headers={'X-ARGUS-OWNER-SESSION': token}):
+        assert auth.session()
+    with auth.db() as conn:
+        assert conn.execute('SELECT last_seen FROM owner_sessions').fetchone()[0] > 0
