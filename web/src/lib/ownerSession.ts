@@ -1,7 +1,7 @@
 // The bearer lives in memory and, in the home-screen app only, so a
 // pull-to-refresh or relaunch inside the same app session does not lock the
-// owner out (owner request 2026-10-02), in sessionStorage bound to this exact
-// build: an app update or a full quit ends it. An ordinary browser tab keeps
+// owner out (owner request 2026-10-02), in sessionStorage: a full quit ends
+// it, an app update does not. An ordinary browser tab keeps
 // it in memory only, so a browser profile on disk never holds a credential
 // (the release acceptance scans its profile for it and stopped every Pages
 // acceptance from 13.8.2 on). Never attach it to another origin, redirects,
@@ -130,12 +130,15 @@ export function installOwnerTransport() {
   // app); a definite 401, logout, revoke or expiry still locks immediately.
 }
 
-/** Resume this app session's login after a reload, only for the same build and only after a fresh server echo. */
+/** Resume this app session's login after a reload or an app update, only after a fresh server echo. */
 export async function restoreOwnerSession(): Promise<boolean> {
   if (!OWNER_AUTH_REQUIRED || hasOwnerSession()) return hasOwnerSession();
   let saved: { token?: unknown; expiresAt?: unknown; build?: unknown } | null = null;
   try { saved = JSON.parse(store()?.getItem(STORE_KEY) ?? 'null'); } catch { saved = null; }
-  if (!saved || saved.build !== buildId() || typeof saved.expiresAt !== 'number' || saved.expiresAt <= Date.now()) {
+  // 2026-10-02: an app update no longer ends the login; frequent releases
+  // returned the owner to the lock screen every time. The server still
+  // verifies the session (nonce echo) and its 24-hour expiry applies.
+  if (!saved || typeof saved.expiresAt !== 'number' || saved.expiresAt <= Date.now()) {
     try { anyStore()?.removeItem(STORE_KEY); } catch { /* storage unavailable */ }
     return false;
   }
