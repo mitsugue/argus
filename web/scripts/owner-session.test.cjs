@@ -9,6 +9,7 @@ const original = async (request) => {
   if (request.url.endsWith('/password')) return Response.json({token: serverToken, expiresAt: Date.now() + 86400000});
   if (request.url.endsWith('/logout')) return Response.json({loggedOut: true}, {headers});
   if (request.url.endsWith('/slow')) return new Promise(resolve => { pending = resolve; });
+  if (request.url.endsWith('/proxy-503')) return new Response('busy', {status: 503});
   if (request.url.endsWith('/session') && sessionStatus !== 200) {
     if (sessionStatus === 'network') throw new TypeError('Failed to fetch');
     return Response.json({error: sessionStatus === 401 ? 'owner_auth_required' : 'try_later'}, {status: sessionStatus, headers});
@@ -94,6 +95,11 @@ const api=mod.exports; api.installOwnerTransport(); global.fetch=window.fetch;
   await api.passwordLogin('fixture-password');
   await assert.rejects(fetch('https://api.example/api/argus/old-cache'), /owner_response_unverified/);
   assert.equal(lock(), 'response_unverified:/api/argus/old-cache');
+  // A proxy or busy-store error without the echo fails the read but keeps the login.
+  await api.passwordLogin('fixture-password');
+  await assert.rejects(fetch('https://api.example/api/argus/proxy-503'), /owner_backend_unavailable/);
+  assert.equal(api.hasOwnerSession(), true, 'a 503 without the echo does not lock the owner out');
   assert(!JSON.stringify(document.documentElement.dataset).includes(serverToken));
+  api.clearOwnerSession(); // releases the 24-hour expiry timer
   console.log('Owner transport: locked requests, exact origin, preserved headers, no-store, no redirects, logout and stale response isolation PASS');
 })().catch(error => {api.clearOwnerSession(); console.error(error);process.exit(1);});

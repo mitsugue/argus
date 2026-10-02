@@ -42,3 +42,4 @@
 .owner-access-bar[open] .owner-mark { color: #c8f5df; }
 @keyframes owner-mark-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) { .owner-mark__dot { animation: none; } }
+.owner-access-screen__version { margin: 18px 0 0; width: 100%; text-align: center; color: rgba(148, 178, 204, .6); font: 400 11px/1.4 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .08em; }
