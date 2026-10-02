@@ -13,6 +13,9 @@ let token = '';
 let expiresAt = 0;
 let ceremonyEpoch = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
+// Owner reads still on the wire. Logout cancels them first so none reaches the
+// server after its session is gone (a stray 401 after logout, 2026-10-02).
+const inflight = new Set<AbortController>();
 // Server sessions last 24 hours (argus_owner_auth.TTL); anything longer is rejected.
 const MAX_SESSION_MS = 86_401_000;
 const STORE_KEY = 'argus.owner.session.v1';
@@ -90,7 +93,17 @@ export function installOwnerTransport() {
       headers.set('X-ARGUS-OWNER-NONCE', nonce);
     }
     // Errors on redirects prevent disclosure of the custom credential header.
-    const response = await original(new Request(req, { headers, cache: 'no-store', redirect: 'error' }));
+    const cancel = new AbortController();
+    const onAbort = () => cancel.abort();
+    if (req.signal.aborted) cancel.abort(); else req.signal.addEventListener('abort', onAbort, { once: true });
+    if (!authRoute) inflight.add(cancel);
+    let response: Response;
+    try {
+      response = await original(new Request(req, { headers, cache: 'no-store', redirect: 'error', signal: cancel.signal }));
+    } finally {
+      inflight.delete(cancel);
+      req.signal.removeEventListener('abort', onAbort);
+    }
     if (!authRoute && (capturedToken !== token || !hasOwnerSession())) {
       throw new Error('owner_session_changed');
     }
@@ -182,6 +195,7 @@ export async function passwordLogin(password: string) {
 export async function logoutOwner() {
   // Capture the logout request while credentials are present, then immediately
   // close the UI even if the network is unavailable. Server expiry still applies.
+  inflight.forEach((controller) => controller.abort()); inflight.clear();
   const pending = action('logout'); clearOwnerSession('logout'); await pending;
 }
 export async function revokeOwnerDevices(password: string) {

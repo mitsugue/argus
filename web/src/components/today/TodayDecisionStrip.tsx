@@ -29,10 +29,35 @@ function features(brief: MarketBrief): FeatureRow[] {
     && typeof row.date === 'string' && typeof row.value === 'number' && Number.isFinite(row.value));
 }
 
+// The last complete inputs on this device. Right after a server restart the
+// index research is rebuilt for several minutes and the brief carries no
+// numbers; the strip then shows these, labelled, instead of vanishing
+// (owner report 2026-10-02: the top of Today disappeared after releases).
+const LAST_INPUTS_KEY = 'argus.todayStrip.lastInputs.v1';
+type StripInputs = { actual: ComparisonPoint[]; anchorDate?: string; features: FeatureRow[]; savedAt: string };
+function readLastInputs(): StripInputs | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(LAST_INPUTS_KEY) ?? 'null') as StripInputs | null;
+    return value && Array.isArray(value.actual) && Array.isArray(value.features) && typeof value.savedAt === 'string' ? value : null;
+  } catch { return null; }
+}
+
 /** Conclusion, four numbers and the inputs with their direction, before the detailed explanation. */
 export function TodayDecisionStrip({ brief }: { brief: MarketBrief }) {
-  const comparison = brief.calculationSnapshots?.['5']?.comparison as { actual?: ComparisonPoint[]; anchorDate?: string } | undefined;
-  const strip = decisionStrip(Array.isArray(comparison?.actual) ? comparison!.actual : null, features(brief));
+  const current = brief.calculationSnapshots?.['5']?.comparison as { actual?: ComparisonPoint[]; anchorDate?: string } | undefined;
+  const currentFeatures = features(brief);
+  const fresh = Array.isArray(current?.actual) && current!.actual.length >= 21;
+  React.useEffect(() => {
+    if (!fresh) return;
+    try {
+      localStorage.setItem(LAST_INPUTS_KEY, JSON.stringify({ actual: current!.actual, anchorDate: current!.anchorDate,
+        features: currentFeatures, savedAt: new Date().toISOString() }));
+    } catch { /* storage unavailable */ }
+  }, [fresh, current?.anchorDate, current?.actual?.length]);  // eslint-disable-line react-hooks/exhaustive-deps
+  const stored = fresh ? null : readLastInputs();
+  const comparison = fresh ? current : stored ? { actual: stored.actual, anchorDate: stored.anchorDate } : undefined;
+  const strip = decisionStrip(Array.isArray(comparison?.actual) ? comparison!.actual : null,
+    fresh ? currentFeatures : stored?.features ?? []);
   const headline = brief.unifiedSummary?.sections.view.textJa;
   const live = useNikkeiLive();
   // The delayed intraday value replaces the last close once it is from a later session.
@@ -43,13 +68,16 @@ export function TodayDecisionStrip({ brief }: { brief: MarketBrief }) {
   const liveLabel = liveCurrent ? (live!.sessionOpen
     ? `${new Date(live!.tradedAt).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })}時点・約${Math.max(1, Math.round(live!.delaySeconds / 60))}分遅れ`
     : `${new Date(live!.tradedAt).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' })} 大引け`) : '前日終値';
-  if (strip.close === null && !strip.rows.length) return null;
+  const preparing = !fresh;
   return <section className="today-strip" aria-label="今日の結論と数字" data-argus-contract="today-decision-strip-v1">
     {shownPrice !== null && <p className="today-strip__close" data-live={liveCurrent ? 'delayed' : 'close'}>
       <span>日経平均</span><b>{yen(shownPrice)}</b>
       {shownChange !== null && <em className={shownChange >= 0 ? 'is-up' : 'is-down'}>{signed(shownChange)}</em>}
       <small>{liveLabel}</small>
     </p>}
+    {preparing && <p className="today-strip__preparing" role="status">{stored
+      ? `サーバーが過去データを準備中のため、${new Date(stored.savedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}時点の数字を表示しています。数分〜20分ほどで最新に戻ります。`
+      : 'サーバーが過去データを準備中です。数分〜20分ほどで数字が表示されます。'}</p>}
     <div className={`today-strip__verdict is-${strip.tone}`} data-tone={strip.tone}>
       <span className="today-strip__badge">{toneLabel[strip.tone]}</span>
       {headline && <p>{headline}</p>}
