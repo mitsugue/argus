@@ -389,7 +389,8 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     if backtest_cache is not None:
         # Walk-forward validation of this forecast rule on the same sealed
         # episodes, and the component-weight search (chosen on the first half
-        # of the evaluation dates, judged on the second), recomputed when the
+        # of the evaluation dates, adopted on the third quarter, reported on
+        # the last), recomputed when the
         # history or the policy changes and shared by the four horizons.
         import jp_market_analog_backtest as backtest
         key = _hash({"method": backtest.METHOD, "last": visible[-1]["date"], "candidates": len(candidates),
@@ -416,8 +417,9 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     document = comparison_document(current, selection, paths, ensemble, scale=scale)
     if validation is not None:
         adopted = bool(search and search.get("adopted"))
-        # With adopted weights the reported figures are the held-out half's,
-        # which the choice never saw; otherwise the full walk-forward.
+        # With adopted weights the reported figures are the final quarter's,
+        # which neither the choice nor the adoption saw; otherwise the full
+        # walk-forward.
         metrics = (search["test"].get(str(horizon_sessions)) if adopted
                    else validation["horizons"].get(str(horizon_sessions)))
         if metrics:
@@ -433,6 +435,7 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                 "gridSize": search["gridSize"], "chosenWeights": search["chosenWeights"],
                 "choiceHorizon": search["choiceHorizon"], "adopted": adopted,
                 "trainStart": search["trainStart"], "trainEnd": search["trainEnd"],
+                "confirmStart": search["confirmStart"], "confirmEnd": search["confirmEnd"],
                 "testStart": search["testStart"], "testEnd": search["testEnd"],
                 "trainHitRate": search["train"]["hitRate"], "trainNaiveRate": search["train"]["naiveMajorityRate"],
                 "testHitRate": search["test"][str(search["choiceHorizon"])]["hitRate"],

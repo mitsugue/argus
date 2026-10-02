@@ -80,10 +80,11 @@ export interface JapanMarketComparison {
       validationStatus: 'UNVALIDATED' | 'VALIDATED'; reasons: string[]; scaleRule: string;
       predictiveProbabilities: null;
     };
-    /** Component-weight search: chosen on the first half, judged on the held-out second half. */
+    /** Component-weight search: chosen on the first half, adopted on the third quarter, reported on the last. */
     weightSearch?: {
       gridSize: number; chosenWeights: Record<string, number>; choiceHorizon: number; adopted: boolean;
-      trainStart: string; trainEnd: string; testStart: string; testEnd: string;
+      trainStart: string; trainEnd: string; confirmStart?: string; confirmEnd?: string;
+      testStart: string; testEnd: string;
       trainHitRate: number | null; trainNaiveRate: number | null;
       testHitRate: number | null; testNaiveRate: number | null; testWilsonLower95: number | null;
       equalWeightsTestHitRate: number | null; predictiveProbabilities: null;

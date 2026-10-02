@@ -15,8 +15,12 @@ ledger's CSV contract. With `--import` it posts them to the admin import route
 (dry run, then commit) and reads the ledger back. Weeks whose workbook is not
 published (404) are reported as gaps, never filled.
 
-Availability is conservative: a week ending Friday is stamped as available on
-the following Wednesday 15:00 JST (JPX publishes Tuesday/Wednesday).
+Availability is conservative: a week ending Friday is stamped as available at
+15:00 JST on the third TSE business day after it (normally Wednesday; JPX
+publishes on the second). Holidays push it later, e.g. the week ending
+2026-09-18 becomes available on Monday 2026-09-28, not Wednesday 09-23. Outside
+the official calendar's coverage the stamp falls back to the following
+Thursday, which is never earlier than the publication.
 """
 from __future__ import annotations
 
@@ -119,11 +123,25 @@ def load_workbook_grid(payload: bytes) -> List[List[Any]]:
             for r in range(sheet.nrows)]
 
 
+def available_day(period: date) -> date:
+    """Third TSE business day after the week end (look-ahead audit 2026-10-02)."""
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import argus_market_clock as clock
+
+    day, remaining = period, 3
+    try:
+        while remaining:
+            day += timedelta(days=1)
+            if clock.canonical_trading_day(clock.JP_EQUITY, day):
+                remaining -= 1
+        return day
+    except clock.CalendarUnavailableError:
+        return period + timedelta(days=(3 - period.weekday()) % 7 or 7)   # next Thursday
+
+
 def build_rows(parsed: Dict[str, Any], *, url: str, sha256: str,
                observed_at: str) -> List[Dict[str, Any]]:
-    period = date.fromisoformat(parsed["periodEnd"])
-    published = period + timedelta(days=(2 - period.weekday()) % 7 or 7)   # next Wednesday
-    stamp = published.isoformat() + "T15:00:00+09:00"
+    stamp = available_day(date.fromisoformat(parsed["periodEnd"])).isoformat() + "T15:00:00+09:00"
     source = (f"JPX official | {url} | sha256={sha256} | "
               "publication=weekly_final")
     return [{

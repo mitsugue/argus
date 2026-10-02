@@ -105,7 +105,8 @@ class WeightSearchTest(unittest.TestCase):
         search = cache["search"]
         self.assertEqual(search["status"], "AVAILABLE")
         self.assertEqual(search["gridSize"], len(backtest.WEIGHT_GRID))
-        self.assertLess(search["trainEnd"], search["testStart"])
+        self.assertLess(search["trainEnd"], search["confirmStart"])
+        self.assertLess(search["confirmEnd"], search["testStart"])
         self.assertFalse(search["adopted"])
         ws = doc["comparison"]["forecast"]["weightSearch"]
         self.assertFalse(ws["adopted"])

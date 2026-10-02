@@ -136,11 +136,16 @@ def walk_forward_backtest(signals: Iterable[Dict[str, Any]], prices: Iterable[Di
         # The bar used to trigger a signal must have been available by detection.
         if str(bars[i].get("availableFrom") or bars[i].get("date") or "") > detected:
             continue
-        row = {"signalId": signal.get("id"), "effectiveFrom": effective}
+        # A signal known only after bar i's close can first be acted on at the
+        # next close, so every return is measured from bar i+1, never from the
+        # triggering bar itself (look-ahead audit 2026-10-02).
+        entry = i + 1
+        row = {"signalId": signal.get("id"), "effectiveFrom": effective,
+               "entryDate": (str(bars[entry].get("date") or "")[:10] if entry < len(bars) else None)}
         for horizon in (1, 5, 20):
-            row[f"return{horizon}dPct"] = _returns(bars, i, horizon)
-        future = bars[i + 1:min(len(bars), i + 21)]
-        start = bars[i].get("close")
+            row[f"return{horizon}dPct"] = _returns(bars, entry, horizon)
+        future = bars[entry + 1:min(len(bars), entry + 21)]
+        start = bars[entry].get("close") if entry < len(bars) else None
         if isinstance(start, (int, float)) and start > 0 and future:
             changes = [(float(x["close"]) / float(start) - 1.0) * 100.0 for x in future
                        if isinstance(x.get("close"), (int, float))]
@@ -171,6 +176,7 @@ def walk_forward_backtest(signals: Iterable[Dict[str, Any]], prices: Iterable[Di
             "maxRisePct": _max_value(samples, "maxRisePct"),
             "maxDrawdownPct": _min_value(samples, "maxDrawdownPct"),
             "regimeBreakdown": {}, "samples": samples,
+            "entryRule": "NEXT_CLOSE_AFTER_DETECTION",
             "noFutureLeakage": True}
 
 

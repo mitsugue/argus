@@ -5,6 +5,7 @@ is never evidence that a revised historical value was known in the past.
 """
 from __future__ import annotations
 
+import bisect
 import csv
 from datetime import date, datetime, timedelta, timezone
 import hashlib
@@ -444,5 +445,51 @@ def apply_scheduled_availability(rows, *, lag_days, source_label):
                        'availabilityRule': source_label}
         except ValueError:
             pass
+        result.append(row)
+    return result
+
+
+def enforce_session_publication(rows, *, sessions, sessions_after, utc_time, source_label):
+    """Never let a weekly row be known before its publication session.
+
+    The publication day of a weekly JPX series is counted in actual TSE
+    sessions after the period end, so holidays push it later (the week ending
+    2026-09-18 could not be read before Monday 09-28). `sessions` are the dates
+    of real trading sessions; past their end the count continues on weekdays.
+    Any publishedAt/availableFrom/knownAt earlier than that instant is raised
+    to it; later ones are untouched. Read-side only (look-ahead audit
+    2026-10-02).
+    """
+    if isinstance(sessions_after, bool) or not isinstance(sessions_after, int) or not 1 <= sessions_after <= 10:
+        raise ValueError('session_publication_bound')
+    days = sorted({str(day)[:10] for day in sessions if len(str(day)) >= 10})
+    result = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        period = str(row.get('periodEnd') or row.get('date') or '')[:10]
+        try:
+            end = date.fromisoformat(period)
+        except ValueError:
+            result.append(row); continue
+        later = days[bisect.bisect_right(days, period):]
+        if len(later) >= sessions_after:
+            floor_day = date.fromisoformat(later[sessions_after - 1])
+        else:
+            floor_day = date.fromisoformat(later[-1]) if later else end
+            for _ in range(sessions_after - len(later)):
+                floor_day += timedelta(days=1)
+                while floor_day.weekday() >= 5:
+                    floor_day += timedelta(days=1)
+        floor = floor_day.isoformat() + 'T' + utc_time + 'Z'
+        raised = {}
+        for key in ('publishedAt', 'availableFrom', 'knownAt'):
+            try:
+                if row.get(key) and _time(str(row[key])) < _time(floor):
+                    raised[key] = floor
+            except ValueError:
+                pass   # malformed stamps stay as they are; the reader rejects them
+        if raised:
+            row = {**row, **raised, 'availabilityFloor': source_label}
         result.append(row)
     return result
