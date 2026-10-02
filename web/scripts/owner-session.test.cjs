@@ -18,7 +18,8 @@ const original = async (request) => {
 let validateTick = null; let sessionStatus = 200;
 const stored = new Map();
 global.sessionStorage = {getItem: k => stored.get(k) ?? null, setItem: (k, v) => stored.set(k, String(v)), removeItem: k => stored.delete(k)};
-global.window = {fetch: original, location: {origin: 'https://owner.example'}, setInterval: (f) => { validateTick = f; return 1; }, addEventListener: (n, f) => { listeners[n] = f; }};
+let standalone = true;
+global.window = {matchMedia: () => ({matches: standalone}), fetch: original, location: {origin: 'https://owner.example'}, setInterval: (f) => { validateTick = f; return 1; }, addEventListener: (n, f) => { listeners[n] = f; }};
 global.document = {hidden: false, addEventListener: (n, f) => { listeners[n] = f; }};
 const entry = path.resolve('src/lib/ownerSession.ts');
 const code = esbuild.buildSync({entryPoints: [entry],bundle: true,write: false,platform: 'node',format: 'cjs', define: {'import.meta.env': JSON.stringify({VITE_ARGUS_OWNER_AUTH_REQUIRED: '1', VITE_ARGUS_BACKEND_URL: 'https://api.example'})},logLevel:'silent'}).outputFiles[0].text;
@@ -61,6 +62,15 @@ const api=mod.exports; api.installOwnerTransport(); global.fetch=window.fetch;
   sessionStatus = 200;
   await api.passwordLogin('fixture-password'); assert.equal(stored.has('argus.owner.session.v1'), true);
   await api.logoutOwner(); assert.equal(stored.has('argus.owner.session.v1'), false, 'logout clears the saved login');
+  // An ordinary browser tab never writes the credential to storage (its profile is on disk).
+  standalone = false;
+  await api.passwordLogin('fixture-password'); assert.equal(api.hasOwnerSession(), true);
+  assert.equal(stored.has('argus.owner.session.v1'), false, 'a browser tab keeps the login in memory only');
+  stored.set('argus.owner.session.v1', JSON.stringify(saved));
+  const tab = new Module(entry, module); tab.filename = entry; tab.paths = module.paths; tab._compile(code, entry);
+  assert.equal(await tab.exports.restoreOwnerSession(), false, 'a browser tab does not resume from storage');
+  assert.equal(stored.has('argus.owner.session.v1'), false);
+  await api.logoutOwner(); standalone = true;
   browserNavigator.onLine = false;
   await assert.rejects(api.passwordLogin('fixture-password'), /authentication_cancelled/);
   assert.equal(api.hasOwnerSession(), false);
