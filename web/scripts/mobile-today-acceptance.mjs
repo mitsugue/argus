@@ -1099,6 +1099,7 @@ async function run() {
       for (const [pageIndex, tab] of remaining.pages().entries()) {
         const state = await tab.evaluate(() => [
           `locked=${document.querySelector('.owner-access-screen') ? 'yes' : 'no'}`,
+          `lock=${(document.documentElement.dataset.argusOwnerLock || 'none').replace(/[/]/g, '_').replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 90)}`,
           `route=${(location.hash || '#').slice(0, 24)}`,
           `header=${document.querySelector('.shell__header') ? 'yes' : 'no'}`,
           `nav=${document.querySelector('.nav__mobile') ? 'yes' : 'no'}`,

@@ -171,12 +171,13 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
           code: document.querySelector('[role="status"][data-owner-code]')?.getAttribute('data-owner-code') || 'none',
           header: document.querySelector('.shell__header') ? 'header' : 'noheader',
           locked: document.querySelector('.owner-access-screen') ? 'locked' : 'unlocked',
+          lock: (document.documentElement.dataset.argusOwnerLock || 'none').replace(/[/]/g, '_').replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 90),
           mode: document.documentElement.dataset.argusOwnerAuthMode || '?',
-        })).catch(() => ({ code: 'unreadable', header: '?', locked: '?', mode: '?' }));
+        })).catch(() => ({ code: 'unreadable', header: '?', locked: '?', lock: '?', mode: '?' }));
         const selfHealed = attempt === 0 && state.code === 'none'
           && state.header === 'noheader' && state.locked === 'locked';
         if (selfHealed) return login(page, attempt + 1);
-        fail(`login_marker:${state.code}:${state.header}:${state.locked}:mode${state.mode}:verify${await verification}`);
+        fail(`login_marker:${state.code}:${state.header}:${state.locked}:lock-${state.lock}:mode${state.mode}:verify${await verification}`);
       }
       boundary(page);
     } catch (error) { if (error instanceof OwnerBrowserError) throw error; fail('login'); }
@@ -197,7 +198,10 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
       await control.click();
       stage = 'response';
       const response = await pending;
+      // The answer's status (or none) names why a logout failed; never its body.
+      stage = `response_${response ? response.status() : 'none'}`;
       if (!response || response.status() !== 200 || (await response.json())?.loggedOut !== true) fail('logout');
+      stage = 'response';
       stage = 'nonce';
       const nonce = response.request().headers()['x-argus-owner-nonce'];
       if (!nonce || response.headers()['x-argus-owner-nonce'] !== nonce) fail('logout');

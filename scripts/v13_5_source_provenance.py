@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.10"
+PRODUCT_VERSION = "v13.8.11"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
-    'web/scripts/pwa-identity.test.mjs': '768bcc03da805bc903437a15b22a87864bc5c9b6',
-    'web/scripts/owner-today-https.mjs': '73db01f9accf3f4fdf7b8012a2675dad7874dfdf',
+    'web/scripts/pwa-identity.test.mjs': '93df8093927c89efbb8fb44a004c8a8c458d7f17',
+    'web/scripts/owner-today-https.mjs': '9b36b015694e02f46791f73221ed8d09484424cd',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -136,7 +136,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-mode-consistency.mjs': '92be2022893323b439ae4e45da2bec8759bd0102',
     'web/scripts/owner-browser-continuity.test.mjs': 'c35f8a640e58a5b241a5d43aa62e518c0d73ce78',
     'web/scripts/owner-browser-acceptance.test.mjs': '813636f661b40f24726de258a3ddab8ff6daf73d',
-    'web/scripts/owner-browser-acceptance.mjs': '112cbe04a0f03ffc53b91ab19ffe960ff8ae42dd',
+    'web/scripts/owner-browser-acceptance.mjs': '2624eb2dc792d5c4e433b412de8ca97f6b0da150',
     'web/scripts/owner-auth-reader.test.mjs': '2a3d9e19c3f7fe2ad315bf4372fd6d617e25b828',
     'web/scripts/owner-auth-reader.mjs': 'ba065d9e5b7a336b27e49d0ee965abcb4bde3f81',
     'web/scripts/owner-auth-reader.integration.test.mjs': 'ab2158287b5fb12d7401fac523e605f4116ecd27',
@@ -154,10 +154,10 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/ops/owner-server-auth.md': 'd745850b1c9bb742783be9f230261cee5b9d782f',
     'scripts/owner_auth_backup.py': '55b2d8f41918c9ae5880c7ae23a764e5e1506e8a',
     'test_argus_owner_auth.py': '7330d9e7a836da9631fd3b128fa5c86455e5b8ee',
-    'web/scripts/owner-session.test.cjs': '81d0454509ebeac64c989e241561e65462cb97a0',
+    'web/scripts/owner-session.test.cjs': '378e67082131994e382056b6629baead4dc50509',
     'web/src/components/OwnerAccess.css': '57b5edd0184ebe095325ea3a293e5182d823a6ab',
     'web/src/components/OwnerAccess.tsx': 'fdf31fe129235b0e76dda772a1fb8411446c4905',
-    'web/src/lib/ownerSession.ts': '4cf6a9f8b2c9d7da4ef401b3fcbc6768067ed6a7',
+    'web/src/lib/ownerSession.ts': '9a3eb4b4272ecbd8c3a1d55388cec9d526511f62',
     'docs/MACRO_RESULT_RECEIPT_MIGRATION.md': '131e4784bd6be96daf0c9dda4b318735840cdcba',
     'test_argus_macro_receipt_boundary.py': '4fa5e23ee6392489497483a65ca90e1786b92d1d',
 
@@ -422,8 +422,8 @@ REVIEWED_EXTENSION_BLOBS = {
     "web/src/components/system/BackupStatusOverview.tsx": "39488f34de87013943edf08bb3faddce91f7b996",
     "web/src/lib/vault.ts": "9180eba851c0b62a99ac449166f90f2404e18370",
     "web/scripts/news-history.test.mjs": "766b69d112dc01d32631025446007b506d7e55f6",
-    "web/scripts/public-market-acceptance.mjs": "0687cf20ca47314ce4e839163eb6f60df0dd8b06",
-    "web/scripts/canonical-snapshot-selection.mjs": "a714e6beca86fc4c7bc22221f1ff635e040e3940",
+    "web/scripts/public-market-acceptance.mjs": "f3e54f6b82d50db054519637e63bd1e4dcb62f1c",
+    "web/scripts/canonical-snapshot-selection.mjs": "97b7e601e60a0c8f1e06e249d714e7e12ad76c5b",
     "web/scripts/index-chart-isolation.test.mjs": "470dcf9598714a89b9ebba9dd53cfc2f6315092f",
     "argus_osint_engine.py": "82c928299eed09004067283d72cc4b67b07753c5",
     "test_argus_v12_1_1.py": "fcb2a56c79822f5177ae776dfdaf07972da0a49e",
