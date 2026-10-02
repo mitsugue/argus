@@ -23,7 +23,7 @@ function fixture(override = () => undefined) {
     if (url.pathname === prefix + 'password') {
       assert.equal(headers.get('Origin'), env.ARGUS_ACCEPTANCE_OWNER_ORIGIN);
       assert.equal(JSON.parse(init.body).password, env.ARGUS_ACCEPTANCE_OWNER_PASSWORD);
-      value = { token, expiresAt: time + 1800000 };
+      value = { token, expiresAt: time + 86400000 };
     } else if (url.pathname === prefix + 'session') {
       status = authenticated ? 200 : 401;
       value = authenticated ? { authenticated: true } : { error: 'owner_auth_required' };
@@ -120,7 +120,7 @@ test('failed logout cannot produce success', async () => {
   await assert.rejects(withOwnerReader(f.options,async()=> 'pass'), /owner_reader:logout/);
 });
 test('proactive renewal revokes previous session, no retry after rejected read', async () => {
-  const f=fixture(); const reader=await createOwnerReader(f.options); f.advance(1780000);
+  const f=fixture(); const reader=await createOwnerReader(f.options); f.advance(86380000);
   await reader.fetch(baseUrl+'/api/argus/x'); await reader.close();
   assert.equal(f.calls.filter(c=>c.url.pathname.endsWith('/password')).length,2);
   assert.equal(f.calls.filter(c=>c.url.pathname.endsWith('/logout')).length,2);

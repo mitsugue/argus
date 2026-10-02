@@ -17,7 +17,9 @@ from flask import g, jsonify, request
 from werkzeug.security import check_password_hash
 
 PREFIX = '/api/argus/owner-auth'
-TTL = 1800
+# 24 hours: a reload or relaunch inside one app session keeps the owner signed in
+# (owner request 2026-10-02); logout and revoke-all still end it at once.
+TTL = 86400
 MAX_BODY = 32768
 
 

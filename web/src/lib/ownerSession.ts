@@ -1,5 +1,8 @@
-// Short-lived bearer state is memory-only. Never attach it to another origin,
-// redirects, logs, URLs, localStorage, IndexedDB or the legacy owner vault.
+// The bearer lives in memory and, so a pull-to-refresh or relaunch inside the
+// same app session does not lock the owner out (owner request 2026-10-02), in
+// sessionStorage bound to this exact build: an app update or a full quit
+// ends it. Never attach it to another origin, redirects, logs, URLs,
+// localStorage, IndexedDB or the legacy owner vault.
 export const OWNER_AUTH_REQUIRED = import.meta.env.VITE_ARGUS_OWNER_AUTH_REQUIRED === '1';
 const base = String(import.meta.env.VITE_ARGUS_BACKEND_URL ?? '').replace(/\/$/, '');
 const prefix = '/api/argus/owner-auth/';
@@ -7,19 +10,29 @@ let token = '';
 let expiresAt = 0;
 let ceremonyEpoch = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
+// Server sessions last 24 hours (argus_owner_auth.TTL); anything longer is rejected.
+const MAX_SESSION_MS = 86_401_000;
+const STORE_KEY = 'argus.owner.session.v1';
+const buildId = () => {
+  try { return typeof __FRONTEND_BUILD_SHA__ === 'string' && __FRONTEND_BUILD_SHA__ ? __FRONTEND_BUILD_SHA__
+    : typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'unknown'; } catch { return 'unknown'; }
+};
+const store = () => { try { return typeof sessionStorage === 'undefined' ? null : sessionStorage; } catch { return null; } };
 const listeners = new Set<() => void>();
 export const subscribeOwner = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; };
 export const hasOwnerSession = () => !!token && expiresAt > Date.now();
 export function clearOwnerSession() {
   ceremonyEpoch += 1;
   token = ''; expiresAt = 0; clearTimeout(timer);
+  try { store()?.removeItem(STORE_KEY); } catch { /* storage unavailable */ }
   listeners.forEach((fn) => fn());
 }
 function setSession(value: { token?: unknown; expiresAt?: unknown }) {
   if (typeof value.token !== 'string' || value.token.length < 32
       || typeof value.expiresAt !== 'number' || value.expiresAt <= Date.now()
-      || value.expiresAt > Date.now() + 1_801_000) throw new Error('authentication_failed');
+      || value.expiresAt > Date.now() + MAX_SESSION_MS) throw new Error('authentication_failed');
   token = value.token; expiresAt = value.expiresAt;
+  try { store()?.setItem(STORE_KEY, JSON.stringify({ token, expiresAt, build: buildId() })); } catch { /* memory only */ }
   clearTimeout(timer); timer = setTimeout(clearOwnerSession, expiresAt - Date.now());
   listeners.forEach((fn) => fn());
 }
@@ -43,7 +56,10 @@ export function installOwnerTransport() {
     }
     const headers = new Headers(req.headers);
     const loginRoute = ['password', 'login-options', 'login-verify'].some((name) => url.pathname === prefix + name);
-    const nonce = hasOwnerSession() && !loginRoute ? crypto.randomUUID() : '';
+    // A verification request that already names its own session (a new login
+    // while one is still active) keeps its credential and nonce.
+    const explicit = authRoute && req.headers.has('X-ARGUS-OWNER-SESSION');
+    const nonce = hasOwnerSession() && !loginRoute && !explicit ? crypto.randomUUID() : '';
     if (nonce) {
       headers.set('X-ARGUS-OWNER-SESSION', token);
       headers.set('X-ARGUS-OWNER-NONCE', nonce);
@@ -85,8 +101,21 @@ export function installOwnerTransport() {
   };
   window.setInterval(() => { void validate(); }, 30_000);
   document.addEventListener('visibilitychange', () => { void validate(); });
-  window.addEventListener('pagehide', clearOwnerSession);
-  window.addEventListener('offline', clearOwnerSession);
+  // A reload or an app switch keeps the session (sessionStorage ends with the
+  // app); a definite 401, logout, revoke or expiry still locks immediately.
+}
+
+/** Resume this app session's login after a reload, only for the same build and only after a fresh server echo. */
+export async function restoreOwnerSession(): Promise<boolean> {
+  if (!OWNER_AUTH_REQUIRED || hasOwnerSession()) return hasOwnerSession();
+  let saved: { token?: unknown; expiresAt?: unknown; build?: unknown } | null = null;
+  try { saved = JSON.parse(store()?.getItem(STORE_KEY) ?? 'null'); } catch { saved = null; }
+  if (!saved || saved.build !== buildId() || typeof saved.expiresAt !== 'number' || saved.expiresAt <= Date.now()) {
+    try { store()?.removeItem(STORE_KEY); } catch { /* storage unavailable */ }
+    return false;
+  }
+  try { await verifyAndSetSession(saved, ++ceremonyEpoch); return true; }
+  catch { try { store()?.removeItem(STORE_KEY); } catch { /* storage unavailable */ } return false; }
 }
 
 async function action(name: string, body: unknown = {}) {
@@ -101,7 +130,7 @@ async function action(name: string, body: unknown = {}) {
 async function verifyAndSetSession(value: { token?: unknown; expiresAt?: unknown }, epoch: number) {
   if (typeof value.token !== 'string' || !/^[A-Za-z0-9_-]{32,128}$/.test(value.token)
       || typeof value.expiresAt !== 'number' || value.expiresAt <= Date.now()
-      || value.expiresAt > Date.now() + 1_801_000) throw new Error('authentication_failed');
+      || value.expiresAt > Date.now() + MAX_SESSION_MS) throw new Error('authentication_failed');
   // Do not publish provisional credentials: an old SW may replay a cached login.
   // Only a fresh server echo can unlock existing device-local results.
   const nonce = crypto.randomUUID();
