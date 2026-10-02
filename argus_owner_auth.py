@@ -21,6 +21,9 @@ PREFIX = '/api/argus/owner-auth'
 # (owner request 2026-10-02); logout and revoke-all still end it at once.
 TTL = 86400
 MAX_BODY = 32768
+# Stored sessions are bounded; the least recently used go first.
+MAX_SESSIONS = 32
+SEEN_RESOLUTION = 60
 
 
 def digest(value):
@@ -67,6 +70,16 @@ class OwnerAuth:
                 CREATE TABLE IF NOT EXISTS owner_rate (
                     id TEXT PRIMARY KEY, window REAL NOT NULL, count INTEGER NOT NULL);
             ''')
+            # 2026-10-02: sessions carry their last use so the storage bound
+            # evicts abandoned sessions first. With 24-hour sessions, evicting
+            # by earliest expiry removed the owner's own long-lived login (and
+            # pages still in use) whenever another device or the release
+            # acceptance signed in a few dozen times. Existing rows are kept;
+            # they count as used at migration time.
+            columns = {row['name'] for row in conn.execute('PRAGMA table_info(owner_sessions)')}
+            if 'last_seen' not in columns:
+                conn.execute('ALTER TABLE owner_sessions ADD COLUMN last_seen REAL NOT NULL DEFAULT 0')
+                conn.execute('UPDATE owner_sessions SET last_seen=?', (time.time(),))
 
     @contextmanager
     def db(self):
@@ -88,10 +101,14 @@ class OwnerAuth:
         return digest(token) if 32 <= len(token) <= 128 else ''
 
     def session(self):
+        now = time.time()
         with self.db() as conn:
-            row = conn.execute('SELECT expires FROM owner_sessions WHERE digest=? AND epoch=?',
+            row = conn.execute('SELECT expires, last_seen FROM owner_sessions WHERE digest=? AND epoch=?',
                                (self.token_digest(), self.epoch)).fetchone()
-        valid = bool(row and row['expires'] > time.time())
+            valid = bool(row and row['expires'] > now)
+            # Record use at most once a minute; it only orders eviction.
+            if valid and now - row['last_seen'] >= SEEN_RESOLUTION:
+                conn.execute('UPDATE owner_sessions SET last_seen=? WHERE digest=?', (now, self.token_digest()))
         if valid:
             g.owner_session_verified = True
         return valid
@@ -101,9 +118,11 @@ class OwnerAuth:
         conn.execute('DELETE FROM owner_sessions WHERE expires<=? OR epoch<>?', (now, self.epoch))
         # Bound storage, including repeated successful logins.
         conn.execute('DELETE FROM owner_sessions WHERE digest IN '
-                     '(SELECT digest FROM owner_sessions ORDER BY expires DESC LIMIT -1 OFFSET 31)')
+                     '(SELECT digest FROM owner_sessions ORDER BY last_seen DESC, expires DESC '
+                     'LIMIT -1 OFFSET ?)', (MAX_SESSIONS - 1,))
         token = secrets.token_urlsafe(32)
-        conn.execute('INSERT INTO owner_sessions VALUES (?,?,?)', (digest(token), now + TTL, self.epoch))
+        conn.execute('INSERT INTO owner_sessions (digest, expires, epoch, last_seen) VALUES (?,?,?,?)',
+                     (digest(token), now + TTL, self.epoch, now))
         return {'token': token, 'expiresAt': int((now + TTL) * 1000)}
 
     def rate(self, purpose):
