@@ -28,6 +28,14 @@ export interface DecisionStrip {
 export const ALERT_LOW_BELOW = 0.1473;
 export const ALERT_HIGH_FROM = 0.2608;
 export const ALERT_HISTORY = { low: 2.9, normal: 9.1, high: 16.7 } as const;
+/**
+ * Measured record of the tone rule itself, 2012-2026 (n=2597 sessions,
+ * point-in-time inputs, 1570 ratio taken as above 1): the share of 5-session
+ * moves that went up after each tone, against 56.7% on all days. Neither tone
+ * beats that base rate, so the badge describes the inputs and is never a
+ * direction call (owner check 2026-10-02).
+ */
+export const TONE_HISTORY = { since: 2012, baseUpPct: 57, upAfter: { tail: 55, head: 58, wait: 57 } } as const;
 const BAND_LOWER = 1.278; const BAND_UPPER = 1.371;
 
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);

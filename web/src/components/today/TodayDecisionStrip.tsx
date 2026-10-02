@@ -1,11 +1,11 @@
 import React from 'react';
 import type { MarketBrief } from '../../lib/marketBrief';
 import type { ComparisonPoint } from '../../types/japanMarketComparison';
-import { ALERT_HISTORY, decisionStrip, friendlyEventText, type FeatureRow, type Lean } from '../../lib/todayDecision';
+import { ALERT_HISTORY, TONE_HISTORY, decisionStrip, friendlyEventText, type FeatureRow, type Lean } from '../../lib/todayDecision';
 import { useNikkeiLive } from '../../hooks/useJapanMarketComparison';
 import './TodayDecisionStrip.css';
 
-const toneLabel = { tail: '追い風', head: '逆風', wait: '様子見' } as const;
+const toneLabel = { tail: '材料は追い風寄り', head: '材料は逆風寄り', wait: '材料はまちまち' } as const;
 const leanLabel: Record<Lean, string> = { tail: '追い風', head: '逆風', 'soft-head': 'やや逆風', neutral: '中立' };
 const alertLabel = { low: '低', normal: '通常', high: '高' } as const;
 const momentumLabel = { strong: '強い(過熱気味)', normal: '普通', weak: '弱い(売られすぎ気味)' } as const;
@@ -44,6 +44,9 @@ export function TodayDecisionStrip({ brief }: { brief: MarketBrief }) {
     <div className={`today-strip__verdict is-${strip.tone}`} data-tone={strip.tone}>
       <span className="today-strip__badge">{toneLabel[strip.tone]}</span>
       {headline && <p>{headline}</p>}
+      <small className="today-strip__record" data-tone-record={strip.tone}>
+        過去の成績({TONE_HISTORY.since}年〜):この判定の5日後に上がったのは{TONE_HISTORY.upAfter[strip.tone]}%。
+        どの日でも{TONE_HISTORY.baseUpPct}%なので、方向の予想には使えません。</small>
     </div>
     <div className="today-strip__tiles">
       {strip.alert && <div className={`today-strip__tile alert-${strip.alert}`}>
@@ -66,6 +69,6 @@ export function TodayDecisionStrip({ brief }: { brief: MarketBrief }) {
         <dl><dt>これは何?</dt><dd>{row.what}</dd><dt>今どう?</dt><dd>{row.now}</dd><dt>だから?</dt><dd>{row.soWhat}</dd></dl>
       </details>)}
     </div>}
-    <p className="today-strip__note">追い風・逆風は各材料の一般的な読み方で、当たり外れは検証していません。急落警戒と値幅は2015〜2026年の実績で確かめた頻度で、将来の確率ではありません。</p>
+    <p className="today-strip__note">追い風・逆風は各材料の一般的な読み方で、まとめた判定は過去に5日後の方向を当てていません(上の成績)。急落警戒と値幅は2015〜2026年の実績で確かめた頻度で、将来の確率ではありません。</p>
   </section>;
 }

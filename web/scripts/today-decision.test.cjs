@@ -6,6 +6,10 @@ require.extensions['.ts'] = (mod, filename) => mod._compile(ts.transpileModule(
     target: ts.ScriptTarget.ES2022 }, fileName: filename }).outputText, filename);
 const d = require('../src/lib/todayDecision.ts');
 
+// The tone's own record: no tone beats the all-days base rate, so it is never a direction call.
+assert(Math.abs(d.TONE_HISTORY.upAfter.tail - d.TONE_HISTORY.baseUpPct) <= 3);
+assert(d.TONE_HISTORY.upAfter.head >= 50, 'after a headwind tone the index still rose more often than not');
+
 // Alert cut points and the 80% band come from the 2003-2014 fit.
 assert.equal(d.alertLevel(0.10), 'low');
 assert.equal(d.alertLevel(0.20), 'normal');

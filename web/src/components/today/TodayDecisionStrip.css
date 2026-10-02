@@ -6,6 +6,7 @@
 .today-strip__close em.is-down { color: var(--red); }
 .today-strip__verdict { border-radius: 12px; padding: 12px 14px; border: 1px solid var(--line-strong); background: var(--surface-soft); }
 .today-strip__verdict p { margin: 6px 0 0; color: var(--text-main); font-size: 17px; font-weight: 600; line-height: 1.5; }
+.today-strip__record { display: block; margin-top: 6px; color: var(--text-sub); font-size: 11px; line-height: 1.5; }
 .today-strip__badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; }
 .today-strip__verdict.is-wait { border-color: rgba(251, 191, 36, .35); }
 .today-strip__verdict.is-wait .today-strip__badge { color: var(--amber); background: var(--action-trim-bg); }
