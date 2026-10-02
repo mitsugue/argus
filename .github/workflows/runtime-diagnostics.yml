@@ -75,7 +75,7 @@ jobs:
               "https://argus-backend-3j2m.onrender.com/api/argus/chart-intelligence?scope=market&symbol=$sym&horizon=$hz&snapshot=verified" || echo timeout)
             echo "verified-snapshot $sym $hz $code"
           done; done
-          for name in bridge-status bridge-diagnostic twelvedata-budget provider-diagnostics operational security-status today-headline decision-evidence-a decision-evidence-b index-comparison index-chart market-brief market-brief-history ai-cost cost-policy data-quality sector-heatmap closepin-snapshot; do
+          for name in bridge-status bridge-diagnostic twelvedata-budget provider-diagnostics operational security-status today-headline decision-evidence-a decision-evidence-b index-comparison index-chart market-brief market-brief-history ai-cost cost-policy data-quality sector-heatmap closepin-snapshot memory-snapshot; do
             case "$name" in
               bridge-status) path="/api/argus/bridge/status" ;;
               bridge-diagnostic) path="/api/argus/admin/bridge/diagnostic" ;;
@@ -93,6 +93,7 @@ jobs:
               cost-policy) path="/api/argus/cost-policy" ;;
               sector-heatmap) path="/api/argus/sector-heatmap" ;;
               closepin-snapshot) path="/api/argus/closepin-snapshot" ;;
+              memory-snapshot) path="/api/argus/osint/memory-snapshot" ;;
               data-quality) path="/api/argus/data-quality/status" ;;
               index-chart) path="/api/argus/index-chart?index=N225" ;;
             esac
