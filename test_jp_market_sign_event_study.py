@@ -121,9 +121,20 @@ class SignEventStudyTest(unittest.TestCase):
         self.assertEqual(d01["status"], "ABOVE_BASELINE")
         report = d01["periods"][-1]["horizons"]["5"]
         self.assertGreater(report["fallShareWilsonLower95"], report["baselineFallShare"])
-        # D06's activation is the move into a negative histogram (value -1).
+        # D06's activation is the move into a negative histogram (value -1), and
+        # its claim points to recovery: falls after it are not a pass for D06.
         d06_rows = [{**r, "seriesId": "vix_macd_cross", "value": -r["value"]} for r in rows]
-        self.assertEqual(run(d06_rows, closes, days)["conditions"]["D06"]["status"], "ABOVE_BASELINE")
+        d06 = run(d06_rows, closes, days)["conditions"]["D06"]
+        self.assertEqual(d06["expects"], "RISE")
+        self.assertEqual(d06["status"], "NOT_ABOVE_BASELINE")
+        rising, value = {}, 100.0
+        for i, d in enumerate(days):
+            value *= 1.01 if i in drops else 0.998
+            rising[d] = value
+        d06 = run(d06_rows, rising, days)["conditions"]["D06"]
+        self.assertEqual(d06["status"], "ABOVE_BASELINE")
+        self.assertGreater(d06["periods"][-1]["horizons"]["5"]["hitShareWilsonLower95"],
+                           d06["periods"][-1]["horizons"]["5"]["baselineHitShare"])
 
     def test_malformed_inputs(self):
         days = sessions(30)

@@ -51,13 +51,18 @@ JST = timezone(timedelta(hours=9))
 # (conditionMet true in jp_market_engine). For D06 that state is a negative
 # VIX MACD histogram, which the feature history records as -1 on the
 # ``vix_macd_cross`` series.
+# ``expects`` is the direction each condition's registered claim points to:
+# a thin short balance, a long-heavy 1570 and a PER of 19 or more warn of a
+# fall; relative strength (short-cover evidence), foreign inflow
+# (confirmation) and a VIX MACD dead cross (recovery) point to a rise. Each
+# condition is judged in its own direction, never all as warnings.
 ACTIVATION_RULES = {
-    "D01": {"seriesId": "d01_short_balance_below_threshold", "value": 1},
-    "D02": {"seriesId": "d02_margin1570_ratio_at_least_one", "value": 1},
-    "D03": {"seriesId": "d03_relative_strength_positive", "value": 1},
-    "D04": {"seriesId": "d04_index_per_at_least_19", "value": 1},
-    "D05": {"seriesId": "d05_foreign_flow_inflow", "value": 1},
-    "D06": {"seriesId": "vix_macd_cross", "value": -1},
+    "D01": {"seriesId": "d01_short_balance_below_threshold", "value": 1, "expects": "FALL"},
+    "D02": {"seriesId": "d02_margin1570_ratio_at_least_one", "value": 1, "expects": "FALL"},
+    "D03": {"seriesId": "d03_relative_strength_positive", "value": 1, "expects": "RISE"},
+    "D04": {"seriesId": "d04_index_per_at_least_19", "value": 1, "expects": "FALL"},
+    "D05": {"seriesId": "d05_foreign_flow_inflow", "value": 1, "expects": "RISE"},
+    "D06": {"seriesId": "vix_macd_cross", "value": -1, "expects": "RISE"},
 }
 # D07 is a per-stock earnings reaction without a market-level activation rule
 # in the source, so the feature history emits no events for it.
@@ -101,12 +106,14 @@ def _forward(closes, sessions, index, horizon):
     return end / start - 1.0
 
 
-def _metrics(event_indices, baseline_indices, closes, sessions, horizon):
+def _metrics(event_indices, baseline_indices, closes, sessions, horizon, expects="FALL"):
     outcomes = [r for r in (_forward(closes, sessions, i, horizon) for i in event_indices) if r is not None]
     base = [r for r in (_forward(closes, sessions, i, horizon) for i in baseline_indices) if r is not None]
     falls = sum(r < 0 for r in outcomes)
     rises = sum(r > 0 for r in outcomes)
     base_falls = sum(r < 0 for r in base)
+    base_rises = sum(r > 0 for r in base)
+    hits, base_hits = (falls, base_falls) if expects == "FALL" else (rises, base_rises)
     return {
         "evaluated": len(outcomes), "falls": falls,
         "fallShare": _round(falls / len(outcomes)) if outcomes else None,
@@ -116,12 +123,18 @@ def _metrics(event_indices, baseline_indices, closes, sessions, horizon):
         "baselineSessions": len(base),
         "baselineFallShare": _round(base_falls / len(base)) if base else None,
         "baselineMeanReturnPct": _round(statistics.fmean(base) * 100) if base else None,
+        # In the condition's own direction (``expects``).
+        "hits": hits,
+        "hitShare": _round(hits / len(outcomes)) if outcomes else None,
+        "hitShareWilsonLower95": _round(wilson_lower_bound(hits, len(outcomes))),
+        "baselineHitShare": _round(base_hits / len(base)) if base else None,
     }
 
 
 def _empty_condition(family, status, reason):
     return {"family": family, "seriesId": (ACTIVATION_RULES.get(family) or {}).get("seriesId"),
             "activationValue": (ACTIVATION_RULES.get(family) or {}).get("value"),
+            "expects": (ACTIVATION_RULES.get(family) or {}).get("expects"),
             "status": status, "reason": reason, "rawActivations": 0, "activations": 0,
             "overlappingMerged": 0, "firstActivation": None, "lastActivation": None,
             "coverageStart": None, "coverageEnd": None, "horizons": {}, "falseAlarms": 0,
@@ -157,10 +170,12 @@ def _condition(family, rule, events, closes, sessions):
             continue
         counted.append(index)
     baseline = range(coverage_start, last_evaluable + 1)
-    horizons = {str(h): _metrics(counted, baseline, closes, sessions, h) for h in HORIZONS}
+    expects = rule.get("expects", "FALL")
+    horizons = {str(h): _metrics(counted, baseline, closes, sessions, h, expects) for h in HORIZONS}
     both = [(a, b) for a, b in ((_forward(closes, sessions, i, 5), _forward(closes, sessions, i, 20)) for i in counted)
             if a is not None and b is not None]
-    false_alarms = sum(a >= 0 and b >= 0 for a, b in both)
+    # A false alarm: the expected move showed at neither horizon.
+    false_alarms = sum((a >= 0 and b >= 0) if expects == "FALL" else (a <= 0 and b <= 0) for a, b in both)
     span = last_evaluable + 1 - coverage_start
     periods = []
     for number, name in enumerate(PERIOD_NAMES):
@@ -169,13 +184,14 @@ def _condition(family, rule, events, closes, sessions):
         inside = [i for i in counted if lo <= i < hi]
         periods.append({"name": name, "start": sessions[lo] if hi > lo else None,
                         "end": sessions[hi - 1] if hi > lo else None, "activations": len(inside),
-                        "horizons": {str(h): _metrics(inside, range(lo, hi), closes, sessions, h) for h in HORIZONS}})
+                        "horizons": {str(h): _metrics(inside, range(lo, hi), closes, sessions, h, expects)
+                                     for h in HORIZONS}})
     primary = horizons[str(PRIMARY_HORIZON)]
     report = periods[-1]["horizons"][str(PRIMARY_HORIZON)]
     if primary["evaluated"] < MINIMUM_ACTIVATIONS:
         status, reason = "INSUFFICIENT_SAMPLE", "fewer_than_20_non_overlapping_activations"
-    elif (report["fallShareWilsonLower95"] is not None and report["baselineFallShare"] is not None
-          and report["fallShareWilsonLower95"] > report["baselineFallShare"]):
+    elif (report["hitShareWilsonLower95"] is not None and report["baselineHitShare"] is not None
+          and report["hitShareWilsonLower95"] > report["baselineHitShare"]):
         status, reason = "ABOVE_BASELINE", None
     else:
         status, reason = "NOT_ABOVE_BASELINE", "report_period_wilson_lower_not_above_baseline"
@@ -216,7 +232,8 @@ def sign_event_study(condition_rows: Sequence[Mapping[str, Any]], closes: Mappin
         "entryRule": "close_of_first_session_after_known_japan_date",
         "activationRule": "transition_into_condition_met",
         "fallDefinition": "forward_close_return_below_zero",
-        "falseAlarmDefinition": "neither_5_nor_20_session_forward_return_below_zero",
+        "hitDefinition": "forward_close_return_in_the_condition_expected_direction",
+        "falseAlarmDefinition": "expected_direction_at_neither_5_nor_20_sessions",
         "cooldownSessions": COOLDOWN_SESSIONS, "horizons": list(HORIZONS),
         "primaryHorizon": PRIMARY_HORIZON, "minimumActivations": MINIMUM_ACTIVATIONS,
         "periodRule": "chronological_thirds_of_each_condition_coverage",
