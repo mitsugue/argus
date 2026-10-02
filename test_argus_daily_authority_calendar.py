@@ -112,26 +112,26 @@ def test_new_year_closure_across_snapshot_boundary_needs_canonical():
 
 def test_calendar_unavailable_beyond_all_coverage_raises():
     with pytest.raises(clock.CalendarUnavailableError):
-        clock.latest_completed_session_date(JP, _utc("2027-03-03T11:00:00Z"))
+        clock.latest_completed_session_date(JP, _utc("2042-03-05T11:00:00Z"))
 
 
 def test_canonical_trading_day_never_weekday_infers_outside_coverage():
     with pytest.raises(clock.CalendarUnavailableError):
-        clock.canonical_trading_day(JP, date(2027, 3, 3))   # a Wednesday
+        clock.canonical_trading_day(JP, date(2042, 3, 5))   # a Wednesday
 
 
 def test_hatch_is_conservative_when_calendar_unavailable():
     # The SDA daily-authority hatch must data-gate, not guess.
-    observation = {"observedAt": "2027-03-02T06:30:00Z"}
+    observation = {"observedAt": "2042-03-04T06:30:00Z"}
     subject = {"market": "JP", "instrumentId": "1321"}
     assert sd._latest_session_daily_authority(
-        observation, subject, "2027-03-03T11:00:00Z") is False
+        observation, subject, "2042-03-05T11:00:00Z") is False
 
 
 def test_quote_eligibility_calendar_unavailable_is_ineligible():
     verdict = clock.quote_eligibility(
-        "1321", _utc("2027-03-01T06:30:00Z"),
-        now_utc=_utc("2027-03-03T11:00:00Z"))    # >36h → origin path
+        "1321", _utc("2042-03-03T06:30:00Z"),
+        now_utc=_utc("2042-03-05T11:00:00Z"))    # >36h → origin path
     assert verdict["eligible"] is False
     assert verdict["quoteStatus"] == "calendar_unavailable"
 

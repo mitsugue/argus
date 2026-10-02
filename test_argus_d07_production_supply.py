@@ -102,7 +102,7 @@ def test_duplicate_disclosure_rows_collapse(monkeypatch):
 
 def test_calendar_unavailable_yields_no_event(monkeypatch):
     clock.clear_canonical_calendar()
-    _seed([_stmt(d="2027-03-02", t="16:00:00")], monkeypatch)
+    _seed([_stmt(d="2042-03-04", t="16:00:00")], monkeypatch)
     event, source = scanner._jp_market_engine_earnings_event()
     assert event is None
     assert source == "first_session_calendar_unavailable"

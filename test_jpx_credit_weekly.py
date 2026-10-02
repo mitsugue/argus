@@ -39,7 +39,7 @@ def test_availability_waits_for_holidays_and_falls_back_late_outside_the_calenda
     assert jw.available_day(date(2026, 8, 28)) == date(2026, 9, 2)     # ordinary week: Wednesday
     assert jw.available_day(date(2026, 9, 18)) == date(2026, 9, 28)    # 9/21-23 closed
     assert jw.available_day(date(2026, 7, 17)) == date(2026, 7, 23)    # Monday holiday: Thursday
-    assert jw.available_day(date(2027, 3, 5)) == date(2027, 3, 11)     # no coverage: Thursday
+    assert jw.available_day(date(2042, 3, 7)) == date(2042, 3, 13)     # no coverage: Thursday
 
 
 def test_fridays_after_and_gaps_are_reported_not_filled():
