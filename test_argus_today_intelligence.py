@@ -246,3 +246,20 @@ def test_restore_keeps_highest_short_revision_without_duplicates():
     merged = ti.merge_state(base, remote)
     assert len(merged["shortSellingHistory"]) == 1
     assert merged["shortSellingHistory"][0]["revision"] == 2
+
+
+def test_credit_published_after_the_close_waits_for_the_next_session():
+    import argus_today_intelligence as ti
+    bars = [{"date": f"2026-09-{day:02d}", "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1}
+            for day in (1, 2, 3, 4, 7)]
+    context = {"creditRows": [
+        {"seriesId": "credit.short_balance", "periodEnd": "2026-08-28", "value": 1e12,
+         "availableFrom": "2026-09-03T07:30:00Z"},                       # 16:30 JST, after the 09-03 close
+        {"seriesId": "credit.long_balance", "periodEnd": "2026-08-28", "value": 4e12,
+         "availableFrom": "2026-09-03T15:00:00+09:00"}]}
+    features = ti._jp_market_engine_daily_features(bars, context, "JP")
+    assert [bool(row and "creditRatio" in row) for row in features] == [False, False, False, True, True]
+    assert ti._usable_session_day("2026-09-03T06:00:00Z", "JP") == "2026-09-03"
+    assert ti._usable_session_day("2026-09-03T23:00:00Z", "JP") == "2026-09-04"
+    assert ti._usable_session_day("2026-09-03", "JP") == "2026-09-03"
+    assert ti._usable_session_day("not-a-time", "JP") == ""

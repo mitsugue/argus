@@ -12,7 +12,7 @@ from copy import deepcopy
 import json
 import bisect
 import math
-from datetime import date as dtdate, datetime
+from datetime import date as dtdate, datetime, timedelta, timezone
 import random
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -262,7 +262,8 @@ def _jp_market_engine_daily_features(bars: Sequence[Dict[str, Any]],
     that calendar day's US session, so JP analogs may only use VIX / S&P
     values from strictly EARLIER dates; US symbols close together with those
     prints and may use same-date values. Credit balances use their published
-    availableFrom. A day missing a value simply lacks that key.
+    availableFrom, counted from the first session close at or after it. A day
+    missing a value simply lacks that key.
     """
     if not jp_market_engine_context or not bars:
         return [None] * len(bars)
@@ -275,7 +276,7 @@ def _jp_market_engine_daily_features(bars: Sequence[Dict[str, Any]],
             continue
         series = str(row.get("seriesId") or "")
         value = _number(row.get("value"))
-        available = str(row.get("availableFrom") or "")[:10]
+        available = _usable_session_day(row.get("availableFrom"), market)
         period = str(row.get("periodEnd") or "")[:10]
         if value is None or len(available) != 10 or len(period) != 10:
             continue
@@ -345,6 +346,34 @@ def _jp_market_engine_daily_features(bars: Sequence[Dict[str, Any]],
             features["rs20"] = own_return - us_return
         out.append(features or None)
     return out
+
+
+_SESSION_CLOSE_UTC = {"JP": (6, 30), "US": (20, 0)}
+
+
+def _usable_session_day(stamp: Any, market: Optional[str]) -> str:
+    """First calendar date whose session close comes at or after `stamp`.
+
+    A row published after a session's close cannot inform that session's
+    close (look-ahead audit 2026-10-02): 2026-09-03T07:30:00Z (16:30 JST) is
+    first usable on the 09-04 close, not on 09-03. Date-only stamps keep their
+    date; unparseable stamps return "" and are skipped.
+    """
+    text = str(stamp or "")
+    try:
+        if len(text) == 10:
+            return dtdate.fromisoformat(text).isoformat()
+        instant = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    if instant.tzinfo is None:
+        return ""
+    instant = instant.astimezone(timezone.utc)
+    hour, minute = _SESSION_CLOSE_UTC.get(market or "JP", _SESSION_CLOSE_UTC["JP"])
+    day = instant.date()
+    if (instant.hour, instant.minute, instant.second) > (hour, minute, 0):
+        day += timedelta(days=1)
+    return day.isoformat()
 
 
 def _direction(return_pct: float, atr_pct: float, horizon: int) -> str:
