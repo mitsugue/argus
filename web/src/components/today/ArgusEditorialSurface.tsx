@@ -7,6 +7,8 @@ import { hasEditorialIntent, editorialElementLabel } from '../../lib/presentatio
 import { validJapanMarketComparison } from '../../lib/japanMarketComparison';
 import { JapanMarketComparisonChart } from '../chart/JapanMarketComparisonChart';
 import { MarketAnalysisHistory } from './MarketAnalysisHistory';
+import { TodayDecisionStrip } from './TodayDecisionStrip';
+import { friendlyFactText } from '../../lib/todayDecision';
 import './ArgusEditorialSurface.css';
 
 const labels = { view: 'ARGUSの今日の見立て', reasons: 'そう考える理由', changes: '前回から変わったこと',
@@ -34,7 +36,10 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
           ? '新しい説明を取得できませんでした。' : '説明の更新を待っています。')}</span>}
       <span>{retainedNote ? '表示中の説明は最後に生成できた版です。' : '前回の説明を表示中。'}最新の比較とチャートは下の期間切替をご覧ください。</span>
     </div>}
+    {!archived && <TodayDecisionStrip brief={brief} />}
     {plan.elements.map(choice => {
+      // The strip above already leads with this sentence on the live page.
+      if (!archived && choice.id === 'view') return null;
       const source = brief.presentationCatalog!.elements.find(row => row.id === choice.id)!;
       const className = `argus-editorial__element is-${choice.emphasis} placement-${choice.placement} element-${choice.id}`;
       if (choice.id === 'nikkei-comparison') return showArchivedComparison
@@ -48,8 +53,10 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
         const content = <><p className="argus-editorial__text">{choice.caption.textJa}</p>
           {choice.caption.kind === 'UNKNOWN' && <small className="argus-editorial__uncertain">確認できていない範囲を含みます</small>}
           <details className="argus-editorial__fact-list"><summary>使った情報・数値・時点を見る</summary>
+            {facts.some(f => f.source === 'market_feature_calculation') && <p className="argus-editorial__fact-note">
+              下の市場条件は取得した値からの計算で、どれも単独では予測力を確かめていません。</p>}
             {facts.map(f => <div key={f.evidenceId} data-evidence-id={f.evidenceId}>
-              <p>{f.text}</p><small>{f.provenance?.sourceLabel ?? f.source}
+              <p>{friendlyFactText(f.text)}</p><small>{f.provenance?.sourceLabel ?? f.source}
                 {f.provenance?.observedAt && ` · 観測 ${f.provenance.observedAt}`}
                 {f.provenance?.publishedAt && ` · 公表 ${f.provenance.publishedAt}`}
                 {f.provenance?.receivedAt && ` · 取得 ${f.provenance.receivedAt}`}</small>

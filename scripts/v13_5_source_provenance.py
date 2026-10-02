@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.0"
+PRODUCT_VERSION = "v13.8.1"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
-    'web/scripts/pwa-identity.test.mjs': '1c2fee5922fa42f93acda7677a2ce99e9c25d3cb',
-    'web/scripts/owner-today-https.mjs': 'fd7adaae541f2bd2c12ac08204f148b00523daa8',
+    'web/scripts/pwa-identity.test.mjs': '212fd9f70f80813374a13673466500c1ef536a42',
+    'web/scripts/owner-today-https.mjs': '957a466de43b4611dd6d2464ae3995b3defb187c',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -277,8 +277,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dialogue/OwnerOverview.css': 'e608b1f63bbbf8596454a9e0100cea6ee8a41a0f',
     'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',
     'web/src/lib/presentationIntent.ts': '77c0c79423a2291fc3e28a58e1b0397b11a83828',
-    'web/src/components/today/ArgusEditorialSurface.tsx': '708ed3fc08fda77e4e3b70ee7c6ad90b7d9c6cb4',
-    'web/src/components/today/ArgusEditorialSurface.css': 'c11ff9b79ce546d415e55cb7e8eb29b928b80fc5',
+    'web/src/components/today/ArgusEditorialSurface.tsx': 'd877968f87af403b2d26262c977a79f40cd28319',
+    'web/src/components/today/ArgusEditorialSurface.css': 'f6e038f91e09ef0e5aae7e381efac486b317be3d',
     'test_argus_presentation_intent.py': 'e79beae902a1382fae9e5ea3359e09301abf9733',
     'docs/V13_6_PRESENTATION_INTENT.md': '88d35d6f5f603628e7e89bae56308e16b7c76ea6',
     'argus_presentation_intent.py': 'd2e9404d0fa2b51a21870970232996b8ce0b8624',
@@ -650,6 +650,10 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/src/lib/todayDecision.ts",
+    "web/src/components/today/TodayDecisionStrip.tsx",
+    "web/src/components/today/TodayDecisionStrip.css",
+    "web/scripts/today-decision.test.cjs",
     "test_argus_forecast_track_record_route.py",
     "test_argus_asset_chart_retired.py",
     "test_jp_market_sign_conditions.py",

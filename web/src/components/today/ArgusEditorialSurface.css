@@ -26,3 +26,5 @@
 .argus-editorial__fact-list small{display:block;color:#8e9ba5;font-size:11px;overflow-wrap:anywhere}
 .argus-editorial__fact-list a{color:#93c6df;display:inline-block;min-height:36px;align-content:center}
 @media(max-width:480px){.argus-editorial__edition{font-size:12px}.argus-editorial__period{margin-bottom:24px}.argus-editorial__text{font-size:14px;line-height:1.85}.argus-editorial__element{margin-bottom:22px}.argus-editorial__element.is-primary>.argus-editorial__text{font-size:24px;line-height:1.7}.argus-editorial__element.element-changes{padding-left:14px}}
+
+.argus-editorial__fact-note { color: var(--text-muted); font-size: 11px; margin: 0 0 6px; }
