@@ -1,7 +1,7 @@
 import React from 'react';
 import type { MarketBrief } from '../../lib/marketBrief';
 import type { ComparisonPoint } from '../../types/japanMarketComparison';
-import { ALERT_HISTORY, decisionStrip, type FeatureRow, type Lean } from '../../lib/todayDecision';
+import { ALERT_HISTORY, decisionStrip, friendlyEventText, type FeatureRow, type Lean } from '../../lib/todayDecision';
 import './TodayDecisionStrip.css';
 
 const toneLabel = { tail: '追い風', head: '逆風', wait: '様子見' } as const;
@@ -45,7 +45,7 @@ export function TodayDecisionStrip({ brief }: { brief: MarketBrief }) {
         <small>5日間の予想値幅(8割)</small><b>{signed(strip.band.lower)}〜{signed(strip.band.upper)}</b>
         <span>{strip.close !== null ? `${yen(strip.close * (1 + strip.band.lower / 100))}〜${yen(strip.close * (1 + strip.band.upper / 100))}円` : ''}</span></div>}
       {brief.chips?.nextEvent && <div className="today-strip__tile">
-        <small>次の山場</small><b className="today-strip__event">{brief.chips.nextEvent}</b></div>}
+        <small>次の山場</small><b className="today-strip__event">{friendlyEventText(brief.chips.nextEvent)}</b></div>}
     </div>
     {strip.rows.length > 0 && <div className="today-strip__rows" aria-label="材料ごとの向き">
       <h2>材料ごとの向き</h2>
