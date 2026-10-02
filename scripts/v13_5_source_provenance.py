@@ -650,6 +650,12 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_jp_equity_event_calendar.py",
+    "test_jp_equity_calendar_route.py",
+    "test_argus_macro_release_watch.py",
+    "ops/calendar/jp_macro_2026.json",
+    "jp_equity_event_calendar.py",
+    "argus_macro_release_watch.py",
     "test_argus_holiday_calendar.py",
     "test_argus_today_intelligence.py",
     "test_argus_relative_strength_pit.py",
