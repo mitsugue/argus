@@ -336,9 +336,13 @@ def run(
 
     def read(path: str, *, timeout: int) -> Dict[str, Any]:
         url = f"{base}{path}"
+        # Since owner auth (2026-09-28) every /api/ read needs the operational
+        # credential; without it the ledger read answered 401 and this job
+        # failed daily. Health probes stay anonymous.
+        credential = token if path.startswith("/api/") else None
         for read_attempt in range(1, read_attempts + 1):
             try:
-                return request(url, timeout=timeout)
+                return request(url, token=credential, timeout=timeout)
             except RequestFailure as exc:
                 if read_attempt >= read_attempts or not _transient_read_failure(exc):
                     raise
