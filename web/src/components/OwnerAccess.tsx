@@ -88,11 +88,13 @@ export function OwnerAccess({ children }: { children: React.ReactNode }) {
         <span className="owner-access-brand__pro" aria-label="Pro">Pro</span>
         <span className="owner-access-brand__rule" aria-hidden="true" />
       </div>
-      {restoring ? <p className="owner-access-screen__lead" role="status">前回のログインを確認しています…</p> : <>
-      <p className="owner-access-screen__lead">内容を見るには本人確認が必要です。</p>
+      {/* The sign-in controls show at once; resuming the previous login runs
+          beside them (owner report 2026-10-02: waiting for it hid the passkey
+          button for up to ten seconds). A new sign-in cancels the resume. */}
+      <p className="owner-access-screen__lead">{restoring ? '前回のログインを確認しています…' : '内容を見るには本人確認が必要です。'}</p>
       {!online && <p>オフラインです。保存データは残っています。接続後に本人確認をしてください。</p>}
       <button disabled={busy || !online} onClick={() => void run(() => useOwnerPasskey(false))}>パスキーで開く</button>
-      {form}{status}</>}
+      {form}{status}
     </section>}
     {authenticated && <>{children}{header ? createPortal(controls, header) : controls}</>}
   </>;

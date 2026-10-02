@@ -278,7 +278,7 @@ def test_storage_bound_evicts_abandoned_sessions_before_the_one_in_use(setup):
     now = clock.time()
     with auth.db() as conn:
         conn.execute('UPDATE owner_sessions SET last_seen=?', (now - 7200,))
-        for index in range(40):   # newer logins that were never used again
+        for index in range(module.MAX_SESSIONS + 8):   # newer logins that were never used again
             conn.execute('INSERT INTO owner_sessions (digest, expires, epoch, last_seen) VALUES (?,?,?,?)',
                          (f'abandoned-{index}', now + module.TTL + index, auth.epoch, now - 3600 - index))
     assert client.get('/api/argus/data', headers={'X-ARGUS-OWNER-SESSION': owner}).status_code == 200

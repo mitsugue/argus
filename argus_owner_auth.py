@@ -22,7 +22,7 @@ PREFIX = '/api/argus/owner-auth'
 TTL = 86400
 MAX_BODY = 32768
 # Stored sessions are bounded; the least recently used go first.
-MAX_SESSIONS = 32
+MAX_SESSIONS = 64
 SEEN_RESOLUTION = 60
 
 
