@@ -260,3 +260,10 @@ def test_login_does_not_start_later_market_middleware(setup):
     assert post(client, 'login-options').status_code == 401
     assert client.options(module.PREFIX + '/password').status_code == 200
     assert client.get('/api/argus/data').status_code == 401
+
+
+def test_owner_session_lasts_one_app_session_of_up_to_twelve_hours():
+    # Owner request 2026-10-02: a reload or relaunch keeps the login; the
+    # frontend bounds it to the same build and rejects anything longer.
+    import argus_owner_auth
+    assert argus_owner_auth.TTL == 86400

@@ -6,7 +6,7 @@ const calls = [], listeners = {}; const serverToken = 'x'.repeat(43); let pendin
 const original = async (request) => {
   calls.push(request);
   const headers = {'X-ARGUS-OWNER-NONCE': request.headers.get('X-ARGUS-OWNER-NONCE') ?? ''};
-  if (request.url.endsWith('/password')) return Response.json({token: serverToken, expiresAt: Date.now() + 1800000});
+  if (request.url.endsWith('/password')) return Response.json({token: serverToken, expiresAt: Date.now() + 86400000});
   if (request.url.endsWith('/logout')) return Response.json({loggedOut: true}, {headers});
   if (request.url.endsWith('/slow')) return new Promise(resolve => { pending = resolve; });
   if (request.url.endsWith('/session') && sessionStatus !== 200) {
@@ -16,6 +16,8 @@ const original = async (request) => {
   return Response.json({ok: true, authenticated: true}, request.url.endsWith('/old-cache') ? {} : {headers});
 };
 let validateTick = null; let sessionStatus = 200;
+const stored = new Map();
+global.sessionStorage = {getItem: k => stored.get(k) ?? null, setItem: (k, v) => stored.set(k, String(v)), removeItem: k => stored.delete(k)};
 global.window = {fetch: original, location: {origin: 'https://owner.example'}, setInterval: (f) => { validateTick = f; return 1; }, addEventListener: (n, f) => { listeners[n] = f; }};
 global.document = {hidden: false, addEventListener: (n, f) => { listeners[n] = f; }};
 const entry = path.resolve('src/lib/ownerSession.ts');
@@ -37,13 +39,34 @@ const api=mod.exports; api.installOwnerTransport(); global.fetch=window.fetch;
   await api.passwordLogin('fixture-password');
   await assert.rejects(fetch('https://api.example/api/argus/old-cache'), /owner_response_unverified/);
   assert.equal(api.hasOwnerSession(), false);
-  await api.passwordLogin('fixture-password'); listeners.pagehide(); assert.equal(api.hasOwnerSession(), false);
+  // 2026-10-02: a reload keeps this app session's login (same build, server echo).
+  await api.passwordLogin('fixture-password');
+  assert.equal(listeners.pagehide, undefined, 'a reload or app switch does not lock');
+  const saved = JSON.parse(stored.get('argus.owner.session.v1'));
+  assert.equal(saved.token, serverToken); assert.equal(saved.build, 'unknown');
+  // Simulate the reload: the page memory is gone, the app session's storage is not.
+  api.clearOwnerSession(); stored.set('argus.owner.session.v1', JSON.stringify(saved));
+  const fresh = new Module(entry, module); fresh.filename = entry; fresh.paths = module.paths; fresh._compile(code, entry);
+  assert.equal(fresh.exports.hasOwnerSession(), false);
+  assert.equal(await fresh.exports.restoreOwnerSession(), true, 'restored after a fresh server echo');
+  assert.equal(fresh.exports.hasOwnerSession(), true);
+  fresh.exports.clearOwnerSession(); // releases its expiry timer
+  stored.set('argus.owner.session.v1', JSON.stringify({...saved, build: 'older-build'}));
+  const updated = new Module(entry, module); updated.filename = entry; updated.paths = module.paths; updated._compile(code, entry);
+  assert.equal(await updated.exports.restoreOwnerSession(), false, 'an app update requires a new login');
+  assert.equal(stored.has('argus.owner.session.v1'), false);
+  stored.set('argus.owner.session.v1', JSON.stringify(saved)); sessionStatus = 401;
+  const revoked = new Module(entry, module); revoked.filename = entry; revoked.paths = module.paths; revoked._compile(code, entry);
+  assert.equal(await revoked.exports.restoreOwnerSession(), false, 'a revoked session is not resumed');
+  sessionStatus = 200;
+  await api.passwordLogin('fixture-password'); assert.equal(stored.has('argus.owner.session.v1'), true);
+  await api.logoutOwner(); assert.equal(stored.has('argus.owner.session.v1'), false, 'logout clears the saved login');
   browserNavigator.onLine = false;
   await assert.rejects(api.passwordLogin('fixture-password'), /authentication_cancelled/);
   assert.equal(api.hasOwnerSession(), false);
   browserNavigator.onLine = true;
   await api.passwordLogin('fixture-password');
-  listeners.offline(); assert.equal(api.hasOwnerSession(), false);
+  assert.equal(listeners.offline, undefined, 'a network blip does not lock; the server still decides');
   // 2026-09-30: the periodic session ping locks only on a definite 401.
   await api.passwordLogin('fixture-password'); assert.equal(typeof validateTick, 'function');
   const tick = async () => { validateTick(); await new Promise(resolve => setTimeout(resolve, 20)); };

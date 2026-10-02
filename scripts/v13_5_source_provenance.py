@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.1"
+PRODUCT_VERSION = "v13.8.2"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
-    'web/scripts/pwa-identity.test.mjs': '212fd9f70f80813374a13673466500c1ef536a42',
-    'web/scripts/owner-today-https.mjs': '957a466de43b4611dd6d2464ae3995b3defb187c',
+    'web/scripts/pwa-identity.test.mjs': 'fbfec19842b1b6ec468505d99d53e21b6bebbfa1',
+    'web/scripts/owner-today-https.mjs': '03eb64d1a999a4291ec00b53c6363072404abc13',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -137,8 +137,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-browser-continuity.test.mjs': 'c35f8a640e58a5b241a5d43aa62e518c0d73ce78',
     'web/scripts/owner-browser-acceptance.test.mjs': '813636f661b40f24726de258a3ddab8ff6daf73d',
     'web/scripts/owner-browser-acceptance.mjs': '112cbe04a0f03ffc53b91ab19ffe960ff8ae42dd',
-    'web/scripts/owner-auth-reader.test.mjs': '63902348f57c7c75def7a362ad7f22579f5354f7',
-    'web/scripts/owner-auth-reader.mjs': 'c0cb469a9d5d0b75df02950ffda35aaf7fd1cfa2',
+    'web/scripts/owner-auth-reader.test.mjs': '2a3d9e19c3f7fe2ad315bf4372fd6d617e25b828',
+    'web/scripts/owner-auth-reader.mjs': 'ba065d9e5b7a336b27e49d0ee965abcb4bde3f81',
     'web/scripts/owner-auth-reader.integration.test.mjs': 'ab2158287b5fb12d7401fac523e605f4116ecd27',
     'web/scripts/owner-auth-reader-fixture.py': '5372f2d10d28e627546a31adabc22c18afa87547',
     'test_warm_protected_reads.py': '5df90e2134982741705423e720c4fb57458c10f2',
@@ -150,14 +150,14 @@ REVIEWED_EXTENSION_BLOBS = {
     '.github/actions/warm-profile-seed/action.yml': 'eda05275ed6f5f0eb86d866c15022535194cd5bb',
     '.github/actions/warm-profile-consumer/action.yml': '12934bafbf41522ba487c3b26328f74276dfc732',
     # Exact opt-in owner authentication, UI, backup and regression candidate.
-    'argus_owner_auth.py': 'af2357e165b817ef64f6288f6ddeae32d9498ff8',
+    'argus_owner_auth.py': '576c3821175c484b45c49e3c75252df1618ffc53',
     'docs/ops/owner-server-auth.md': 'd745850b1c9bb742783be9f230261cee5b9d782f',
     'scripts/owner_auth_backup.py': '55b2d8f41918c9ae5880c7ae23a764e5e1506e8a',
-    'test_argus_owner_auth.py': '09abfb764361266e39b60dc67ffdb2ee02678501',
-    'web/scripts/owner-session.test.cjs': 'ab121383e764c26172aa183c00ee043c730f9960',
+    'test_argus_owner_auth.py': '7330d9e7a836da9631fd3b128fa5c86455e5b8ee',
+    'web/scripts/owner-session.test.cjs': '6689f0254381b9a925fec755a279c6896d3b095e',
     'web/src/components/OwnerAccess.css': '57b5edd0184ebe095325ea3a293e5182d823a6ab',
-    'web/src/components/OwnerAccess.tsx': '74449480f87e23e8cc6baa0ead03f1f0d876b92b',
-    'web/src/lib/ownerSession.ts': 'f219482a11ae86d89757334fabde3d9a55d3346e',
+    'web/src/components/OwnerAccess.tsx': 'fdf31fe129235b0e76dda772a1fb8411446c4905',
+    'web/src/lib/ownerSession.ts': '63c52e69d01554fb0320f3f8727d219fed7d7efb',
     'docs/MACRO_RESULT_RECEIPT_MIGRATION.md': '131e4784bd6be96daf0c9dda4b318735840cdcba',
     'test_argus_macro_receipt_boundary.py': '4fa5e23ee6392489497483a65ca90e1786b92d1d',
 

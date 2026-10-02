@@ -80,7 +80,7 @@ export async function createOwnerReader({ baseUrl, env = process.env,
     const body = await json(response);
     if (typeof body?.token !== 'string' || !/^[A-Za-z0-9_-]{32,128}$/.test(body.token)
         || !Number.isSafeInteger(body.expiresAt) || body.expiresAt <= now()
-        || body.expiresAt > now() + 1_801_000) fail('session_shape');
+        || body.expiresAt > now() + 86_401_000) fail('session_shape');
     token = body.token; expiresAt = body.expiresAt;
     const proof = await authenticated(config.backend + PREFIX + 'session');
     if (proof.status !== 200 || (await json(proof))?.authenticated !== true) fail('session_proof');

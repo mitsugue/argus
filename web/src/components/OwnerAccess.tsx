@@ -2,7 +2,7 @@ import { ArgusMark } from './ArgusMark';
 import React, { useState, useEffect, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { OWNER_AUTH_REQUIRED, subscribeOwner, hasOwnerSession, passwordLogin,
-  logoutOwner, revokeOwnerDevices, useOwnerPasskey } from '../lib/ownerSession';
+  logoutOwner, revokeOwnerDevices, useOwnerPasskey, restoreOwnerSession } from '../lib/ownerSession';
 import './OwnerAccess.css';
 
 export function OwnerAccess({ children }: { children: React.ReactNode }) {
@@ -23,6 +23,13 @@ export function OwnerAccess({ children }: { children: React.ReactNode }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [recovery, setRecovery] = useState(false);
+  // A reload inside the same app session resumes the login before offering a new one.
+  const [restoring, setRestoring] = useState(OWNER_AUTH_REQUIRED);
+  useEffect(() => {
+    let live = true;
+    void restoreOwnerSession().finally(() => { if (live) setRestoring(false); });
+    return () => { live = false; };
+  }, []);
   if (!OWNER_AUTH_REQUIRED) return <>{children}</>;
   const [code, setCode] = useState('');
   const run = async (fn: () => Promise<unknown>, success = '') => {
@@ -81,10 +88,11 @@ export function OwnerAccess({ children }: { children: React.ReactNode }) {
         <span className="owner-access-brand__pro" aria-label="Pro">Pro</span>
         <span className="owner-access-brand__rule" aria-hidden="true" />
       </div>
+      {restoring ? <p className="owner-access-screen__lead" role="status">前回のログインを確認しています…</p> : <>
       <p className="owner-access-screen__lead">内容を見るには本人確認が必要です。</p>
       {!online && <p>オフラインです。保存データは残っています。接続後に本人確認をしてください。</p>}
       <button disabled={busy || !online} onClick={() => void run(() => useOwnerPasskey(false))}>パスキーで開く</button>
-      {form}{status}
+      {form}{status}</>}
     </section>}
     {authenticated && <>{children}{header ? createPortal(controls, header) : controls}</>}
   </>;
