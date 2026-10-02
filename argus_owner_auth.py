@@ -100,15 +100,34 @@ class OwnerAuth:
         token = request.headers.get('X-ARGUS-OWNER-SESSION', '')
         return digest(token) if 32 <= len(token) <= 128 else ''
 
+    @contextmanager
+    def reader(self):
+        """A plain read: no write lock, so concurrent page requests never queue
+        behind each other (2026-10-02: every request took BEGIN IMMEDIATE and
+        a burst of Today reads could wait past the 5 s timeout, answer 503 and
+        drop the owner to the lock screen)."""
+        conn = sqlite3.connect(self.path, timeout=5, isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def session(self):
         now = time.time()
-        with self.db() as conn:
+        with self.reader() as conn:
             row = conn.execute('SELECT expires, last_seen FROM owner_sessions WHERE digest=? AND epoch=?',
                                (self.token_digest(), self.epoch)).fetchone()
-            valid = bool(row and row['expires'] > now)
-            # Record use at most once a minute; it only orders eviction.
-            if valid and now - row['last_seen'] >= SEEN_RESOLUTION:
-                conn.execute('UPDATE owner_sessions SET last_seen=? WHERE digest=?', (now, self.token_digest()))
+        valid = bool(row and row['expires'] > now)
+        # Record use at most once a minute; it only orders eviction, so a busy
+        # database skips it instead of failing the request.
+        if valid and now - row['last_seen'] >= SEEN_RESOLUTION:
+            try:
+                with self.reader() as conn:
+                    conn.execute('PRAGMA busy_timeout=200')
+                    conn.execute('UPDATE owner_sessions SET last_seen=? WHERE digest=?', (now, self.token_digest()))
+            except sqlite3.Error:
+                pass
         if valid:
             g.owner_session_verified = True
         return valid

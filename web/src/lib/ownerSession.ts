@@ -96,9 +96,13 @@ export function installOwnerTransport() {
     }
     // A prior Service Worker can ignore request cache policy. A unique server
     // echo proves that this response passed the session boundary for this read.
+    // Only a successful body needs that proof: an error without the echo (a
+    // proxy 502/503 during a restart, a busy auth store) says nothing about
+    // the session, so it fails this request without locking the owner out
+    // (2026-10-02: such errors kept returning the owner to the lock screen).
     if (nonce && response.headers.get('X-ARGUS-OWNER-NONCE') !== nonce) {
-      if (token === capturedToken) clearOwnerSession('response_unverified:' + lockPath(url));
-      throw new Error('owner_response_unverified');
+      if (response.ok && token === capturedToken) clearOwnerSession('response_unverified:' + lockPath(url));
+      throw new Error(response.ok ? 'owner_response_unverified' : 'owner_backend_unavailable');
     }
     if (!authRoute && response.status === 401) clearOwnerSession('response_401:' + lockPath(url));
     return response;

@@ -95,6 +95,8 @@ export function OwnerAccess({ children }: { children: React.ReactNode }) {
       {!online && <p>オフラインです。保存データは残っています。接続後に本人確認をしてください。</p>}
       <button disabled={busy || !online} onClick={() => void run(() => useOwnerPasskey(false))}>パスキーで開く</button>
       {form}{status}
+      {/* Owner request 2026-10-02: the running version, small and centred. */}
+      <p className="owner-access-screen__version" data-argus-version={__APP_VERSION__}>v{__APP_VERSION__}</p>
     </section>}
     {authenticated && <>{children}{header ? createPortal(controls, header) : controls}</>}
   </>;
