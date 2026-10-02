@@ -122,3 +122,36 @@ export function useForecastTrackRecord(): ForecastTrackRecord | null {
   }, [base]);
   return value;
 }
+
+// Delayed intraday Nikkei quote (owner request 2026-10-02). Display only.
+export interface NikkeiLiveQuote { price: number; previousClose: number | null; changePct: number | null;
+  tradedAt: string; delaySeconds: number; sessionOpen: boolean; realtime: false }
+const liveValid = (q: unknown): q is NikkeiLiveQuote => {
+  const v = q as NikkeiLiveQuote;
+  return !!v && typeof v.price === 'number' && Number.isFinite(v.price) && v.price > 0
+    && typeof v.tradedAt === 'string' && Number.isFinite(Date.parse(v.tradedAt))
+    && typeof v.delaySeconds === 'number' && v.delaySeconds >= 0 && typeof v.sessionOpen === 'boolean'
+    && v.realtime === false && (v.changePct === null || Number.isFinite(v.changePct));
+};
+export function useNikkeiLive(): NikkeiLiveQuote | null {
+  const base = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '') ?? '';
+  const [quote, setQuote] = useState<NikkeiLiveQuote | null>(null);
+  useEffect(() => {
+    if (!base) return;
+    let cancelled = false;
+    const load = async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const response = await fetch(`${base}/api/argus/index-chart?index=N225&live=1`, { cache: 'no-store' });
+        if (!response.ok) return;
+        const body = await response.json();
+        if (!cancelled && body?.actionAuthority === false && liveValid(body?.quote)) setQuote(body.quote);
+      } catch { /* keep the last value; the close remains the fallback */ }
+    };
+    void load();
+    const timer = window.setInterval(load, 60_000);
+    document.addEventListener('visibilitychange', load);
+    return () => { cancelled = true; window.clearInterval(timer); document.removeEventListener('visibilitychange', load); };
+  }, [base]);
+  return quote;
+}
