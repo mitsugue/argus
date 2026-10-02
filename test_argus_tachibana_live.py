@@ -385,7 +385,8 @@ def test_closed_session_probe_proves_auth_date_price_and_reports_closed():
     assert row["price"] == 3500.0 and row["marketStatus"] == "CLOSED"
     # not due again for 4h on success; the idle path keeps the closed rows
     assert service._probe_due(CLOSED_NOW + timedelta(hours=1)) is False
-    assert service._probe_due(CLOSED_NOW + timedelta(hours=5)) is True
+    assert service._probe_due(CLOSED_NOW + timedelta(hours=5)) is False          # once per Tokyo day
+    assert service._probe_due(CLOSED_NOW + timedelta(days=1)) is True            # next trading day
     service._set_idle(keep_rows=True)
     assert service.current_evidence_safe(CLOSED_NOW)["status"] == "CLOSED"
     service._set_idle()
@@ -403,8 +404,8 @@ def test_closed_session_probe_failure_is_truthful_and_bounded():
     evidence = service.current_evidence_safe(CLOSED_NOW)
     assert evidence["status"] == "AUTH_FAILED" and evidence["lastAuthResult"] == "FAIL"
     assert evidence["closedSessionProbe"]["result"] == "FAIL"
-    assert service._probe_due(CLOSED_NOW + timedelta(minutes=10)) is False   # 30 min retry hold
-    assert service._probe_due(CLOSED_NOW + timedelta(minutes=31)) is True
+    assert service._probe_due(CLOSED_NOW + timedelta(minutes=10)) is False
+    assert service._probe_due(CLOSED_NOW + timedelta(minutes=31)) is False   # never retried the same day
     assert _FakeRuntime.instances[-1].stopped == 1
 
 
@@ -456,3 +457,60 @@ def test_retired_product_boundary_preserves_shared_bootstrap(monkeypatch):
     assert evidence["symbols"] == {} and evidence["authAttempts"] == 0
     assert evidence["enabled"] is False
     assert evidence["historicalRecordsPreserved"] is True
+
+
+# ── 2026-10-02: provider usage rules (Tachibana notice 2026-09-16) ─────────
+def test_no_provider_contact_during_the_closure_or_late_at_night():
+    quiet = datetime(2026, 9, 4, 4, 0, tzinfo=TOKYO).astimezone(timezone.utc)
+    assert live.provider_quiet(quiet) is True
+    assert live.provider_quiet(TRADING_NOW) is False
+    service = live.TachibanaLiveService(config_loader=lambda env=None: None, lease_factory=_FakeLease,
+                                        clock=lambda: quiet, sleeper=lambda s: None, symbols=("8058",))
+    assert service._may_contact(quiet) is False
+    assert service._probe_due(datetime(2026, 9, 3, 23, 30, tzinfo=TOKYO).astimezone(timezone.utc)) is False
+    assert service._probe_due(datetime(2026, 9, 5, 17, 0, tzinfo=TOKYO).astimezone(timezone.utc)) is False  # Saturday
+
+
+def test_withheld_login_stops_contact_until_the_next_day():
+    config = TachibanaConfig.from_env({"ARGUS_TACHIBANA_ENABLED": "true"})
+    sleeps = []
+    service = live.TachibanaLiveService(
+        config_loader=lambda env=None: config,
+        runtime_factory=lambda cfg, *, symbols: _FakeRuntime(cfg, symbols=symbols,
+            fail=ErrorClass.AUTH_SUCCESS_VIRTUAL_URLS_WITHHELD),
+        lease_factory=_FakeLease, clock=lambda: TRADING_NOW,
+        sleeper=lambda seconds: sleeps.append(seconds), symbols=("8058",))
+    assert service._run_session(config, ("8058",)) is True
+    assert service._may_contact(TRADING_NOW) is False
+    policy = service.current_evidence_safe(TRADING_NOW)["usagePolicy"]
+    assert policy["stoppedForToday"] is True and policy["stopReason"] == "AUTH_SUCCESS_VIRTUAL_URLS_WITHHELD"
+    assert service._may_contact(TRADING_NOW + timedelta(days=1)) is True
+
+
+def test_daily_login_budget_caps_reconnects():
+    config = TachibanaConfig.from_env({"ARGUS_TACHIBANA_ENABLED": "true"})
+    service = live.TachibanaLiveService(
+        config_loader=lambda env=None: config,
+        runtime_factory=lambda cfg, *, symbols: _FakeRuntime(cfg, symbols=symbols, fail=ErrorClass.NETWORK),
+        lease_factory=_FakeLease, clock=lambda: TRADING_NOW, sleeper=lambda s: None, symbols=("8058",))
+    for _ in range(live._MAX_AUTH_PER_DAY):
+        assert service._may_contact(TRADING_NOW) is True
+        service._run_session(config, ("8058",))
+    assert service._may_contact(TRADING_NOW) is False
+    assert service.current_evidence_safe(TRADING_NOW)["usagePolicy"]["stopReason"] == "DAILY_AUTH_BUDGET_EXHAUSTED"
+
+
+def test_a_provider_error_inside_a_session_ends_contact_for_the_day():
+    class _Failing(_FakeRuntime):
+        def __init__(self, config, *, symbols, fail=None):
+            super().__init__(config, symbols=symbols, fail=fail)
+            self.terminal_error = ErrorClass.PROVIDER
+    config = TachibanaConfig.from_env({"ARGUS_TACHIBANA_ENABLED": "true"})
+    service = live.TachibanaLiveService(
+        config_loader=lambda env=None: config,
+        runtime_factory=lambda cfg, *, symbols: _Failing(cfg, symbols=symbols),
+        lease_factory=_FakeLease, clock=lambda: TRADING_NOW, sleeper=lambda s: None, symbols=("8058",))
+    assert service._run_session(config, ("8058",)) is True
+    assert service._may_contact(TRADING_NOW) is False
+    assert service.current_evidence_safe(TRADING_NOW)["usagePolicy"]["stopReason"].startswith("PROVIDER_ERROR_")
+    assert service._may_contact(TRADING_NOW + timedelta(days=1)) is True

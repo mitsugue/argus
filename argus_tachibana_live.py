@@ -32,14 +32,23 @@ STATUSES = ("LIVE", "DEGRADED", "STALE", "UNAVAILABLE", "AUTH_FAILED",
 _TOKYO = ZoneInfo("Asia/Tokyo")
 _LIVE_START = wall_time(7, 55)
 _LIVE_END = wall_time(15, 31)
-_POLL_SECONDS = 5.0
+# Tachibana usage rules (provider notice 2026-09-16): no requests during the
+# 03:30-05:30 closure (we keep 03:00-06:00 quiet), stop on errors instead of
+# retrying, never reuse a previous day's virtual URL, and keep load low.
+_POLL_SECONDS = 10.0
+_QUIET_START = wall_time(3, 0)
+_QUIET_END = wall_time(6, 0)
+_PROBE_START = wall_time(16, 0)
+_PROBE_END = wall_time(22, 0)
+_MAX_AUTH_PER_DAY = 6
+_TRANSIENT_HOLD_SECONDS = 600.0
 _HOLD_SECONDS = 300.0
 # v13.5.61 (production 2026-09-07 memory climb): a live session that ended on
 # a terminal error returned to the loop with NO wait, so a provider that
 # failed right after start was re-authenticated in a tight loop for the whole
 # live window — one core busy and allocations accumulating. Hold before the
 # next attempt; the closed-window hold stays _HOLD_SECONDS.
-_TERMINAL_HOLD_SECONDS = 60.0
+_TERMINAL_HOLD_SECONDS = 600.0
 _REAUTH_WINDOW_SECONDS = 15 * 60
 _MAX_REAUTH_PER_WINDOW = 2
 _DEPTH_LEVELS = 5
@@ -61,8 +70,8 @@ _FIELD_MAP = (
 
 # v13.5.42: closed-session probe (outside the JPX window) — one bounded
 # AUTH → DATE → PRICE → logout so the owner sees a truthful CLOSED state
-# instead of UNAVAILABLE after hours.  Re-run at most every 4 h on success
-# and every 30 min after a failure (no retry storm; auth budget bounded).
+# instead of UNAVAILABLE after hours.  2026-10-02: at most once per Tokyo day,
+# only 16:00-22:00 on trading days, never retried after a failure.
 _PROBE_INTERVAL_SECONDS = 4 * 3600
 _PROBE_RETRY_SECONDS = 1800
 _PROBE_SETTLE_SECONDS = 3.0
@@ -164,6 +173,11 @@ def _number(value: Any) -> Optional[float]:
     if not math.isfinite(value):
         return None
     return float(value)
+
+
+def provider_quiet(now: datetime) -> bool:
+    """03:00-06:00 JST: the provider is closed; send nothing (covers 03:30-05:30)."""
+    return _QUIET_START <= now.astimezone(_TOKYO).time() < _QUIET_END
 
 
 def in_live_window(now: datetime) -> bool:
@@ -273,6 +287,10 @@ class TachibanaLiveService:
         self._last_auth_at: Optional[datetime] = None
         self._probe_at: Optional[datetime] = None
         self._probe_result: Optional[str] = None
+        self._policy_day = None
+        self._day_auth = 0
+        self._blocked_day = None
+        self._blocked_reason: Optional[str] = None
         self._probe_stages: Optional[Dict[str, Any]] = None
 
     # ── configuration ────────────────────────────────────────────────────
@@ -333,11 +351,38 @@ class TachibanaLiveService:
         self._reauth_times.append(now_monotonic)
         return True
 
+    # ── provider usage policy ────────────────────────────────────────────
+    def _roll_day(self, now: datetime) -> None:
+        day = now.astimezone(_TOKYO).date()
+        if day != self._policy_day:
+            self._policy_day, self._day_auth = day, 0
+            if self._blocked_day != day:
+                self._blocked_day, self._blocked_reason = None, None
+
+    def _may_contact(self, now: datetime) -> bool:
+        self._roll_day(now)
+        return (not provider_quiet(now) and self._blocked_day is None
+                and self._day_auth < _MAX_AUTH_PER_DAY)
+
+    def _spend_auth(self, now: datetime) -> None:
+        self._roll_day(now)
+        self._day_auth += 1
+        if self._day_auth >= _MAX_AUTH_PER_DAY:
+            self._block_today(now, "DAILY_AUTH_BUDGET_EXHAUSTED")
+
+    def _block_today(self, now: datetime, reason: str) -> None:
+        self._blocked_day = now.astimezone(_TOKYO).date()
+        self._blocked_reason = reason
+
     def _loop(self, config: TachibanaConfig, symbols: tuple, lock_path: Path) -> None:
         try:
             with self._lease_factory(lock_path):
                 while not self._stop.is_set():
                     now = self._clock()
+                    if not self._may_contact(now):
+                        self._set_idle(keep_rows=self._probe_result == "PASS")
+                        self._sleeper(_HOLD_SECONDS)
+                        continue
                     if not in_live_window(now):
                         if self._probe_due(now):
                             self._run_closed_probe(config, symbols)
@@ -358,6 +403,7 @@ class TachibanaLiveService:
         self._start_calls += 1
         self._auth_attempts += 1
         self._last_auth_at = self._clock()
+        self._spend_auth(self._last_auth_at)
         try:
             runtime.start()
         except TachibanaError as exc:
@@ -369,7 +415,12 @@ class TachibanaLiveService:
                 self._sleeper(30.0)
                 return True
             self._set_idle()
-            self._sleeper(_HOLD_SECONDS)
+            if exc.classification.value in _AUTH_CLASSES and exc.classification.value != "AUTH_HTTP_FAILED":
+                # A refused or withheld login will not fix itself today: stop until tomorrow.
+                self._block_today(self._clock(), exc.classification.value)
+                self._sleeper(_HOLD_SECONDS)
+            else:
+                self._sleeper(_TRANSIENT_HOLD_SECONDS)
             return exc.classification not in {ErrorClass.CONFIGURATION, ErrorClass.DISABLED}
         except Exception:
             self._last_error_class = "UNCLASSIFIED_SAFE_FAILURE"
@@ -395,15 +446,19 @@ class TachibanaLiveService:
             self._running = False
             self._runtime = None
         if terminal and not self._stop.is_set():
+            # Provider notice 2026-09-16, remedy 1: when a response reports an
+            # error (p_errno/p_err), end the program for the day; authenticate
+            # afresh only after the next opening. No reconnect loop.
+            self._block_today(self._clock(), "PROVIDER_ERROR_" + str(self._last_error_class))
             self._sleeper(_TERMINAL_HOLD_SECONDS)
         return True
 
     def _probe_due(self, now: datetime) -> bool:
-        if self._probe_at is None:
-            return True
-        elapsed = (now - self._probe_at).total_seconds()
-        interval = _PROBE_INTERVAL_SECONDS if self._probe_result == "PASS" else _PROBE_RETRY_SECONDS
-        return elapsed >= interval
+        local = now.astimezone(_TOKYO)
+        state = argus_market_clock.market_session(argus_market_clock.JP_EQUITY, local)
+        if state.get("isTradingDay") is not True or not (_PROBE_START <= local.time() < _PROBE_END):
+            return False
+        return self._probe_at is None or self._probe_at.astimezone(_TOKYO).date() != local.date()
 
     def _run_closed_probe(self, config: TachibanaConfig, symbols: tuple) -> None:
         """One bounded AUTH → DATE → PRICE → logout outside the live window.
@@ -418,6 +473,7 @@ class TachibanaLiveService:
         self._auth_attempts += 1
         self._last_auth_at = now
         self._probe_at = now
+        self._spend_auth(now)
         stages: Dict[str, Any] = {}
         try:
             runtime.start()
@@ -546,6 +602,10 @@ class TachibanaLiveService:
             "marketPhase": phase,
             "lastErrorClass": last_error,
             "authAttempts": auth_attempts,
+            "usagePolicy": {"quietHoursJst": "03:00-06:00", "pollSeconds": _POLL_SECONDS,
+                            "maxAuthPerDay": _MAX_AUTH_PER_DAY, "authAttemptsToday": self._day_auth,
+                            "stoppedForToday": self._blocked_day is not None,
+                            "stopReason": self._blocked_reason},
             "lastAuthAt": _iso(last_auth_at),
             "authBoundary": auth_boundary(last_error, auth_diagnostic),
             "lastAuthResult": ("PASS" if (running or probe_result == "PASS") and last_error is None
