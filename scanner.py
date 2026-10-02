@@ -122,6 +122,8 @@ import jp_market_internals
 import jp_market_positioning
 import argus_analysis_history
 import argus_index_live
+import argus_macro_release_watch
+import jp_equity_event_calendar
 import argus_owner_dialogue_api
 import argus_web_push
 import argus_owner_vault
@@ -6626,6 +6628,13 @@ def _events_mock_snapshot():
 def api_argus_events():
     # v13.5.60: one TreasuryDirect-backed build at a time (single-flight).
     return _single_flight_json("events", get_events_snapshot)
+
+@app.route("/api/argus/jp-equity-calendar")
+def api_argus_jp_equity_calendar():
+    """Events an index ETF holder needs, each with what it means; no fetch or AI."""
+    return jsonify(jp_equity_event_calendar.equity_event_calendar(
+        now=datetime.fromisoformat(_ai_now_iso().replace("Z", "+00:00"))))
+
 
 @app.route("/api/argus/jp-sq-calendar")
 def api_argus_jp_sq_calendar():
@@ -14114,6 +14123,16 @@ def _macro_important_events(limit=8):
     return sel[:limit]
 
 
+_MACRO_REFRESH_LOCK = threading.Lock()
+
+
+def _refresh_macro_results_serialized():
+    """One result refresh at a time: the admin route and the in-process
+    release watcher (2026-10-02) share it."""
+    with _MACRO_REFRESH_LOCK:
+        return _refresh_macro_results()
+
+
 def _refresh_macro_results():
     """Admin/cron: fetch official results for events past their release time."""
     from copy import deepcopy
@@ -14492,7 +14511,7 @@ def api_argus_admin_macro_refresh_results():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
-    return jsonify(_refresh_macro_results())
+    return jsonify(_refresh_macro_results_serialized())
 
 
 @app.route("/api/argus/admin/macro-event-analysis/refresh-market-reaction", methods=["POST"])
@@ -18763,6 +18782,14 @@ def _news_intake_autostart():
         argus_index_live.ensure_started()      # delayed intraday Nikkei, display only
     except Exception as exc:
         add_log(f"index-live autostart unavailable: {type(exc).__name__}")
+    try:
+        # Results arrive minutes after a scheduled release instead of waiting
+        # for a delayed GitHub schedule (owner report 2026-10-02, US jobs).
+        argus_macro_release_watch.ensure_started(
+            lambda: (get_events_snapshot(allow_provider_fetch=False) or {}).get("events") or [],
+            _refresh_macro_results_serialized)
+    except Exception as exc:
+        add_log(f"macro release watch unavailable: {type(exc).__name__}")
     return None
 
 
