@@ -132,7 +132,9 @@ function validSignMetrics(m: unknown): boolean {
   const pctOrNull = (n: unknown) => n === null || finite(n);
   return whole(m.evaluated) && whole(m.falls) && whole(m.baselineSessions)
     && (m.falls as number) <= (m.evaluated as number)
-    && ['fallShare', 'fallShareWilsonLower95', 'riseShare', 'baselineFallShare'].every(k => share(m[k]))
+    && ['fallShare', 'fallShareWilsonLower95', 'riseShare', 'baselineFallShare',
+      'hitShare', 'hitShareWilsonLower95', 'baselineHitShare'].every(k => share(m[k]))
+    && whole(m.hits) && (m.hits as number) <= (m.evaluated as number)
     && pctOrNull(m.meanReturnPct) && pctOrNull(m.baselineMeanReturnPct)
     && ((m.evaluated as number) > 0) === (m.fallShare !== null)
     && ((m.baselineSessions as number) > 0) === (m.baselineFallShare !== null);
@@ -154,6 +156,7 @@ export function validSignEventStudy(v: unknown): boolean {
   const minimum = v.minimumActivations as number;
   return Object.entries(v.conditions).every(([family, c]) => {
     if (!object(c) || c.family !== family || !SIGN_STATUSES.includes(String(c.status))
+      || !(c.expects === null || c.expects === 'FALL' || c.expects === 'RISE')
       || c.predictiveProbabilities !== null || c.actionAuthority !== false
       || !['rawActivations', 'activations', 'overlappingMerged', 'falseAlarms'].every(k => whole(c[k]))
       || (c.activations as number) > (c.rawActivations as number)

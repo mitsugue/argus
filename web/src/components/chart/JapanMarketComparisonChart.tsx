@@ -293,12 +293,12 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
             return <li key={c.family} data-sign-status={c.status}>
               {c.family} {names[c.family] ?? c.family}：
               {c.status === 'NOT_EVALUABLE' ? '市場全体の点灯規則がないため測れません'
-                : `発生${c.activations}回・その後${h}日で下落 ${pct(m?.fallShare ?? null)}（どの日でも ${pct(m?.baselineFallShare ?? null)}）`}
+                : `発生${c.activations}回・その後${h}日で${c.expects === 'RISE' ? '上昇' : '下落'} ${pct(m?.hitShare ?? null)}（どの日でも ${pct(m?.baselineHitShare ?? null)}）`}
               ・判定：{verdict[c.status] ?? c.status}
             </li>;
           })}</ul>
           <p>条件が成立したと分かった次の営業日の終値から測っています。{s.cooldownSessions}営業日以内の再発生は1回に数えます。
-            判定は期間を3つに分けた最後の期間で、下落した割合の95%信頼下限が「どの日でも下落した割合」を上回るかで決めます。
+            各条件はその主張する向き（下落の警戒か、上昇・回復の確認か）で測ります。判定は期間を3つに分けた最後の期間で、その向きに動いた割合の95%信頼下限が「どの日でも同じ向きに動いた割合」を上回るかで決めます。
             {s.minimumActivations}回未満は件数不足です。過去の割合であり、将来の確率ではありません。</p>
         </section>;
       })()}

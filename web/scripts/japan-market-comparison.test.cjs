@@ -59,9 +59,11 @@ console.log('Japan comparison weight search shape PASS');
 const signMetrics = (evaluated, falls, baseline) => ({ evaluated, falls,
   fallShare: evaluated ? falls / evaluated : null, fallShareWilsonLower95: evaluated ? 0.3 : null,
   riseShare: evaluated ? (evaluated - falls) / evaluated : null, meanReturnPct: evaluated ? -0.4 : null,
-  baselineSessions: 900, baselineFallShare: baseline, baselineMeanReturnPct: 0.1 });
+  baselineSessions: 900, baselineFallShare: baseline, baselineMeanReturnPct: 0.1,
+  hits: falls, hitShare: evaluated ? falls / evaluated : null, hitShareWilsonLower95: evaluated ? 0.3 : null,
+  baselineHitShare: baseline });
 const signCondition = (family, status, activations) => ({ family, seriesId: family === 'D07' ? null : 'series',
-  activationValue: family === 'D07' ? null : 1, status, reason: null, rawActivations: activations + 2,
+  activationValue: family === 'D07' ? null : 1, expects: family === 'D07' ? null : 'FALL', status, reason: null, rawActivations: activations + 2,
   activations, overlappingMerged: 2, firstActivation: activations ? '2017-01-05' : null,
   lastActivation: activations ? '2026-08-03' : null, coverageStart: '2016-10-04', coverageEnd: '2026-09-03',
   horizons: status === 'NOT_EVALUABLE' ? {} : { 5: signMetrics(activations, Math.floor(activations / 2), 0.45),
