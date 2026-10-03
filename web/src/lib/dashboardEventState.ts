@@ -12,7 +12,14 @@ export interface DashboardEventCaos {
   whatWouldSurpriseJa?: string; assetsToWatch?: string[];
   answerCheckJa?: string; verdict?: string; verdictJa?: string;
   marketReactionJa?: string; impactCommentJa?: string; whatChangedJa?: string;
+  /** 2026-10-03: the market's reading, what it means for the Nikkei, what would change it. */
+  marketReadingJa?: string; nikkeiImplicationJa?: string; changeConditionJa?: string;
   limitationsJa?: string[];
+}
+/** Measured from a pre-release baseline on one provider (argus_macro_release_reaction). */
+export interface DashboardReleaseReaction {
+  basis?: string | null; latestWindow?: string | null; readingJa?: string | null; summaryJa?: string | null;
+  moves?: Record<string, number | null> | null; limitationsJa?: string[] | null;
 }
 export interface DashboardEventOfficial {
   schemaVersion?: string; receivedAt?: string | null; referenceMatched?: boolean;
@@ -43,6 +50,7 @@ export interface DashboardEvent {
   officialResult: DashboardEventOfficial;
   caos: DashboardEventCaos;
   marketReaction?: DashboardEventReaction;
+  releaseReaction?: DashboardReleaseReaction | null;
   display: {
     primaryLineJa: string; secondaryLineJa: string;
     showActualFirst: boolean; showPreProminently: boolean; showPreAsHistorical: boolean;

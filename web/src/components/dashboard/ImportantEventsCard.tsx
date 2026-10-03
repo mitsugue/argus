@@ -178,6 +178,34 @@ const EventRow: React.FC<{ e: ImportantEvent; open: boolean; ai?: MacroAnalysis 
 // impact lead; the pre view drops to a collapsed "事前シナリオ（当時）". Released-pending
 // shows "発表済み・公式結果取得中" (never a countdown). The pre scenario is ARGUS's own
 // read — never called "consensus".
+// Owner direction 2026-10-03: a released event answers "so what" in three
+// lines — the market's reading (conclusion), the measured reaction, and what
+// would change the reading — before the answer-check and the raw numbers.
+const ReleaseSoWhat: React.FC<{ ev: DashboardEvent; reactionValues: string[]; reactionTone: string | null;
+  vColor: string; showAnswerCheck: boolean }> = ({ ev, reactionValues, reactionTone, vColor, showAnswerCheck }) => {
+  const c = ev.caos || {};
+  const rr = ev.releaseReaction || null;
+  const reading = c.marketReadingJa || rr?.readingJa || '';
+  const measured = rr?.summaryJa || '';
+  return <div className="ie-sowhat" data-argus-contract="event-so-what-v1" data-reaction-window={rr?.latestWindow ?? ''}>
+    {reading
+      ? <p><span className="ie-k">市場の読み</span><strong>{reading}</strong>{c.nikkeiImplicationJa ? ` — ${c.nikkeiImplicationJa}` : ''}</p>
+      : <p><span className="ie-k">市場の読み</span>反応を測れていないか、分析の生成待ち</p>}
+    {measured
+      ? <p><span className="ie-k">反応</span>{measured}{rr?.basis === 'PRE_RELEASE_BASELINE' ? '（発表直前の値が基準）' : ''}</p>
+      : reactionValues.length > 0
+        ? <p><span className="ie-k">反応</span>{reactionValues.join(' · ')}{reactionTone ? ` · ${reactionTone}` : ''}（発表後の初回観測が基準）</p>
+        : <p><span className="ie-k">反応</span>市場反応データ未取得</p>}
+    {c.changeConditionJa && <p><span className="ie-k">読みが変わる条件</span>{c.changeConditionJa}</p>}
+    {(c.impactCommentJa || (!measured && c.marketReactionJa)) &&
+      <small>{c.impactCommentJa || c.marketReactionJa}</small>}
+    {showAnswerCheck
+      ? <small>答え合わせ：<strong style={{ color: vColor }}>{c.verdictJa || '採点不可'}</strong>
+        {c.answerCheckJa ? ` — ${c.answerCheckJa}` : ''}</small>
+      : <small>答え合わせ生成待ち</small>}
+  </div>;
+};
+
 const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh?: string }>
   = ({ ev, open, lastRefresh }) => {
   const aiNote = useEventAiScenarioNote();
@@ -229,19 +257,8 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
             </section>
             <section className="ie-phase">
               <b>発表後</b>
-              {ds.showActualFirst ? (
-                <>
-                  {reactionValues.length > 0
-                    ? <p>{reactionValues.join(' · ')}{reactionTone ? ` · ${reactionTone}` : ''}</p>
-                    : <p>市場反応データ未取得</p>}
-                  {(c.impactCommentJa || c.marketReactionJa) &&
-                    <small>{c.impactCommentJa || c.marketReactionJa}</small>}
-                  {ds.showAnswerCheck
-                    ? <small>答え合わせ：<strong style={{ color: vColor }}>{c.verdictJa || '採点不可'}</strong>
-                      {c.answerCheckJa ? ` — ${c.answerCheckJa}` : ''}</small>
-                    : <small>答え合わせ生成待ち</small>}
-                </>
-              ) : <p>公式結果取得後に更新</p>}
+              {ds.showActualFirst ? <ReleaseSoWhat ev={ev} reactionValues={reactionValues} reactionTone={reactionTone}
+                vColor={vColor} showAnswerCheck={ds.showAnswerCheck} /> : <p>公式結果取得後に更新</p>}
             </section>
             <details className="ie-phase ie-phase--pre-folded">
               <summary><b>発表前の見立て(参考)</b></summary>
@@ -270,19 +287,8 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
             </section>
             <section className="ie-phase">
               <b>発表後</b>
-              {ds.showActualFirst ? (
-                <>
-                  {reactionValues.length > 0
-                    ? <p>{reactionValues.join(' · ')}{reactionTone ? ` · ${reactionTone}` : ''}</p>
-                    : <p>市場反応データ未取得</p>}
-                  {(c.impactCommentJa || c.marketReactionJa) &&
-                    <small>{c.impactCommentJa || c.marketReactionJa}</small>}
-                  {ds.showAnswerCheck
-                    ? <small>答え合わせ：<strong style={{ color: vColor }}>{c.verdictJa || '採点不可'}</strong>
-                      {c.answerCheckJa ? ` — ${c.answerCheckJa}` : ''}</small>
-                    : <small>答え合わせ生成待ち</small>}
-                </>
-              ) : <p>公式結果取得後に更新</p>}
+              {ds.showActualFirst ? <ReleaseSoWhat ev={ev} reactionValues={reactionValues} reactionTone={reactionTone}
+                vColor={vColor} showAnswerCheck={ds.showAnswerCheck} /> : <p>公式結果取得後に更新</p>}
             </section>
           </>}
         </div>

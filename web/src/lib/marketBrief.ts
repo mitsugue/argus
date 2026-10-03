@@ -12,8 +12,24 @@ export interface MarketBriefFact {
   verification: 'VERIFIED' | 'CORROBORATED' | 'UNCONFIRMED';
 }
 
+export interface MarketPositionTheme {
+  themeId: string; labelJa: string; status: 'ACTIVE' | 'QUIET' | 'EMPTY'; entryCount: number;
+  lastUpdatedAt: string | null;
+  recent: Array<{ entryId: string; kind: string; at: string; textJa: string; severity: string; ref?: Record<string, unknown> }>;
+  pricing: { ffImpliedRatePct?: number | null } | null;
+  lastReaction: { at: string; textJa: string; readingCode?: string | null; ffImpliedRateMoveBp?: number | null } | null;
+  nextEvent: { title: string; eventTimeUtc: string; eventCode?: string | null } | null;
+  /** The integrated AI's reading of the theme (inference, checked against the evidence). */
+  view?: { expectationJa?: string; fearJa?: string; triggerJa?: string; at?: string; kind?: string } | null;
+}
+export interface MarketPosition {
+  schemaVersion: string; asOf: string; themes: MarketPositionTheme[]; entryCount: number;
+  actionAuthority: false; automaticAiCalls: 0; persistence?: Record<string, unknown>;
+}
 export interface MarketBrief {
   retainedPresentation?: MarketBrief;
+  /** 13.8 §3-1: the market's position memory (themes, pricing, last reading, next check). */
+  marketPosition?: MarketPosition | { status: string; errorClass?: string };
   calculationSnapshots?: Record<string, { marketInternals?: unknown; comparison?: unknown }>;
   presentationStatus?: string;
   presentationCatalog?: { contextId: string; inventoryId: string; surface: string; subject: string; horizonSessions: number;

@@ -8,6 +8,7 @@ import { validJapanMarketComparison } from '../../lib/japanMarketComparison';
 import { JapanMarketComparisonChart } from '../chart/JapanMarketComparisonChart';
 import { MarketAnalysisHistory } from './MarketAnalysisHistory';
 import { TodayDecisionStrip } from './TodayDecisionStrip';
+import { MarketPositionCard } from './MarketPositionCard';
 import { friendlyFactText } from '../../lib/todayDecision';
 import './ArgusEditorialSurface.css';
 
@@ -54,6 +55,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
         {generationStatus === 'RUNNING' ? <TriangleStepLoader label="新しい説明を作成中" />
           : (retainedNote ?? '前回の説明を表示中です。数字とチャートは最新です。')}</p>}
       <TodayDecisionStrip brief={brief} />
+      <MarketPositionCard brief={brief} />
       {readable.length > 0 && <section className="argus-editorial__digest" aria-label="ARGUSの読み">
         <h2>ARGUSの読み</h2>
         {readable.map(choice => {
@@ -106,6 +108,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
       <span>{retainedNote ? '表示中の説明は最後に生成できた版です。' : '前回の説明を表示中。'}最新の比較とチャートは下の期間切替をご覧ください。</span>
     </div>}
     {!archived && <TodayDecisionStrip brief={brief} />}
+    {!archived && <MarketPositionCard brief={brief} />}
     {plan.elements.map(choice => {
       // The strip above already leads with this sentence on the live page.
       if (!archived && choice.id === 'view') return null;
