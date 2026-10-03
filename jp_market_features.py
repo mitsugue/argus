@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from jp_market_engine import ARGUS_MACD_BASELINE, _knowledge_time, _macd, point_in_time_rows
-from jp_market_dynamics import _number, credit_dynamics, normalize_valuation_loss
+from jp_market_dynamics import _number, credit_dynamics, normalize_valuation_loss, week_final_rows
 from jp_market_analogs import FEATURE_DEFINITIONS, FEATURE_MAX_AGE_DAYS, INSTRUMENT
 
 
@@ -32,7 +32,8 @@ HISTORY_CACHE_MAX_BYTES = 32 * 1024 * 1024
 # history already rejects changed inputs.
 # v3 (2026-10-03): investor-type rows are known from their official PubDate,
 # not from the later import that stamped knownAt (see
-# _flow_publication_availability).
+# _flow_publication_availability), and the 1570 balances, daily from the
+# 2026-09-25 application date, are read as week-final rows.
 FEATURE_HISTORY_METHOD_VERSION = "jp-market-feature-method-v3"
 
 
@@ -94,6 +95,12 @@ def _canonical_fixture_inputs() -> dict[str, Any]:
                       "availableFrom": weekly(day),
                       # A one-time backfill stamps its import as knownAt.
                       "knownAt": "2026-09-30T00:00:00Z"})
+    # A daily balance inside a completed week (the 2026-09-25 format change)
+    # must not become a one-day "weekly" change.
+    middle = fridays[len(fridays) // 2] - timedelta(days=2)
+    margin += [{"instrumentId": "1570", "seriesId": field, "periodEnd": middle.isoformat(), "unit": "SHARES",
+                "value": 5.0e6, "availableFrom": weekly(middle)}
+               for field in ("margin.long_balance", "margin.short_balance")]
     return {
         "price_series": {
             "nikkei": series(INSTRUMENT, 38000, 2500, 9, step=3.0),
@@ -623,6 +630,9 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
     # Price series only: the weekly balances also feed the snapshot's audit
     # counts (credit dynamics' point-in-time proof), which must not change.
     price_series = {key: window(rows, whole_history=(key == "vix")) for key, rows in price_series.items()}
+    # 1570 balances became daily from the 2026-09-25 application date; every
+    # consumer below is weekly (2026-10-03).
+    margin_1570 = week_final_rows(margin_1570)
     features = []
     conditions = []
     stale_features = set()

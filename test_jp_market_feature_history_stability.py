@@ -437,3 +437,23 @@ def test_backfilled_foreign_flow_is_known_from_its_official_publication():
                                               price_series={}, foreign_flow=weeks)
     d05 = [c for c in snapshot["conditions"] if c["seriesId"] == features.SIGN_CONDITION_IDS["D05"]]
     assert d05, "past cutoffs must see the published weeks"
+
+
+def test_daily_1570_balances_are_read_as_week_final_rows():
+    """J-Quants margin-interest became daily from the 2026-09-25 application
+    date. Weekly consumers keep each week's last date; the open week waits
+    for its Friday; a holiday Friday's Thursday counts once a later week exists."""
+    from jp_market_dynamics import week_final_rows
+    def rows(*days):
+        return [{"seriesId": "margin.long_balance", "periodEnd": d, "value": 1.0} for d in days]
+    daily = rows("2026-09-18", "2026-09-25", "2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01")
+    assert [r["periodEnd"] for r in week_final_rows(daily)] == ["2026-09-18", "2026-09-25"]
+    closed = week_final_rows(daily + rows("2026-10-02"))
+    assert [r["periodEnd"] for r in closed] == ["2026-09-18", "2026-09-25", "2026-10-02"]
+    holiday = week_final_rows(rows("2026-11-19", "2026-11-26", "2026-11-30"))   # Thursday then next week
+    assert [r["periodEnd"] for r in holiday] == ["2026-11-19", "2026-11-26"]
+    weekly_era = rows("2016-10-14", "2016-10-21", "2016-10-28")
+    assert week_final_rows(weekly_era) == weekly_era
+    source = rows("2026-09-25")
+    week_final_rows(source)[0]["value"] = 9.0
+    assert source[0]["value"] == 1.0                                             # not mutated
