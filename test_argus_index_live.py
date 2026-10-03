@@ -46,3 +46,83 @@ def test_refresh_keeps_the_last_good_quote_and_reports_failures(monkeypatch):
     state = live.current_quote_safe()
     assert state["status"] == "AVAILABLE" and state["quote"]["price"] == 69123.4
     assert state["lastError"] == "ValueError"
+
+
+def test_overnight_futures_are_read_outside_the_session_and_reported(monkeypatch):
+    monkeypatch.setattr(live, "_state", {"quote": None, "error": None, "thread": None,
+                                         "futures": None, "futuresError": None})
+    calls = []
+
+    class Response:
+        status_code = 200
+        def __init__(self, symbol): self.symbol = symbol
+        def json(self):
+            if self.symbol == live.FUTURES_SYMBOL:
+                return _payload(price=69785.0, traded=1790971140, previous=68555.0, start=1790950000, end=1790990000)
+            return _payload()
+    def get(url, **kwargs):
+        calls.append(url)
+        return Response(live.FUTURES_SYMBOL if live.FUTURES_SYMBOL in url else live.SYMBOL)
+    quote = live.refresh_futures_once(get, now_epoch=1790972000)
+    assert quote["symbol"] == "NKD=F" and quote["price"] == 69785.0
+    assert quote["instrumentId"] == "NIKKEI_225_CME_FUTURES_USD"
+    assert quote["realtime"] is False and quote["actionAuthority"] is False
+    state = live.current_quote_safe()
+    assert state["status"] == "UNAVAILABLE" and state["overnightFutures"]["price"] == 69785.0
+
+    class Broken:
+        status_code = 500
+        def json(self): return {}
+    assert live.refresh_futures_once(lambda *a, **k: Broken(), now_epoch=1790972900) is None
+    state = live.current_quote_safe()
+    assert state["overnightFutures"]["price"] == 69785.0
+    assert state["overnightFuturesError"] == "ValueError"
+
+
+def test_loop_reads_futures_every_fifteen_minutes_only_outside_the_session(monkeypatch):
+    monkeypatch.setattr(live, "_state", {"quote": None, "error": None, "thread": None,
+                                         "futures": None, "futuresError": None})
+    clock = [0.0]; urls = []; stop = 6
+    class Done(Exception): pass
+
+    class Response:
+        status_code = 200
+        def json(self): return _payload()
+    def get(url, **kwargs):
+        urls.append(url); return Response()
+    def sleep(seconds):
+        clock[0] += seconds
+        if clock[0] >= stop * 300: raise Done()
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None): return datetime(2026, 10, 3, 1, 0, tzinfo=timezone.utc)   # Sat 10:00 JST
+    monkeypatch.setattr(live, "datetime", Clock)
+    monkeypatch.setattr(live, "POLL_SECONDS", 300)
+    try:
+        live._loop(get, sleep, clock=lambda: clock[0])
+    except Done:
+        pass
+    futures = [u for u in urls if live.FUTURES_SYMBOL in u]
+    assert len(futures) == 2                       # at 0 s and 900 s within 1,800 s
+    assert len([u for u in urls if live.FUTURES_SYMBOL not in u]) == 1
+
+
+def test_session_hours_do_not_read_futures(monkeypatch):
+    monkeypatch.setattr(live, "_state", {"quote": None, "error": None, "thread": None,
+                                         "futures": None, "futuresError": None})
+    urls = []
+    class Done(Exception): pass
+    class Response:
+        status_code = 200
+        def json(self): return _payload()
+    def sleep(seconds):
+        if len(urls) >= 3: raise Done()
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None): return datetime(2026, 10, 2, 1, 0, tzinfo=timezone.utc)   # Fri 10:00 JST
+    monkeypatch.setattr(live, "datetime", Clock)
+    try:
+        live._loop(lambda url, **k: (urls.append(url), Response())[1], sleep, clock=lambda: 0.0)
+    except Done:
+        pass
+    assert urls and all(live.FUTURES_SYMBOL not in u for u in urls)

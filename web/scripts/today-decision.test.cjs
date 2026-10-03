@@ -44,12 +44,34 @@ assert.deepEqual(ids, ['foreign', 'us10y', 'm1570', 'vix', 'trend', 'sq'], 'smal
 assert(s.rows.find(r => r.id === 'foreign').title.includes('約3,499億円の売り越し'));
 assert.equal(s.rows.find(r => r.id === 'm1570').lean, 'soft-head');
 assert(s.rows.every(r => r.what && r.now && r.soWhat), 'every row explains what, now and so what');
-assert.equal(s.tone, 'head', 'two headwinds and a soft headwind outweigh one tailwind');
+assert.equal(s.rows.find(r => r.id === 'us10y').lean, 'neutral', 'the 10-year yield has no measured direction');
+assert(s.rows.find(r => r.id === 'us10y').soWhat.includes('61%'));
+assert.equal(s.tone, 'wait', 'one headwind and a soft headwind against one tailwind');
+assert.equal(s.overnightGapPct, null);
+
+// Overnight future (owner check 2026-10-03): its own record, double weight, band shifted by the gap.
+const night = d.decisionStrip(path, features, 2.2);
+assert.equal(night.rows[0].id, 'futures');
+assert.equal(night.rows[0].lean, 'tail');
+assert(night.rows[0].meaning.includes('86%') && night.rows[0].soWhat.includes('+4.1%'));
+assert.equal(night.tone, 'tail', 'a +2.2% night outweighs the mixed inputs');
+assert(Math.abs(night.band.lower - (s.band.lower + 2.2)) < 1e-9 && Math.abs(night.band.upper - (s.band.upper + 2.2)) < 1e-9);
+assert.equal(d.overnightRecord(-2.5).upPct, 17);
+assert.equal(d.overnightRecord(0.3).upPct, 57);
+assert.equal(d.decisionStrip(path, features, 0.4).rows[0].lean, 'neutral');
+const closeAt = Date.parse('2026-10-02T06:30:00Z');
+const fut = { price: 69785, tradedAt: '2026-10-02T20:59:00Z' };
+assert(Math.abs(d.overnightGap(fut, 68309.46, closeAt, false) - (69785 / 68309.46 - 1) * 100) < 1e-9);
+assert.equal(d.overnightGap(fut, 68309.46, closeAt, true), null, 'ignored while Tokyo trades');
+assert.equal(d.overnightGap({ ...fut, tradedAt: '2026-10-02T05:00:00Z' }, 68309.46, closeAt, false), null, 'before the close');
+assert.equal(d.overnightGap({ ...fut, tradedAt: '2026-10-07T05:00:00Z' }, 68309.46, closeAt, false), null, 'stale');
+assert.equal(d.overnightGap(null, 68309.46, closeAt, false), null);
 
 // Missing inputs never invent values.
 const empty = d.decisionStrip(null, []);
 assert.equal(empty.close, null); assert.equal(empty.alert, null); assert.equal(empty.band, null);
 assert.deepEqual(empty.rows, []); assert.equal(empty.tone, 'wait');
+assert.equal(d.decisionStrip(null, [], 2).band, null, 'no band without volatility, even with a future');
 
 // Machine sentences become readable numbers, without the repeated disclaimer.
 assert.equal(d.friendlyFactText('2026-09-25時点、海外投資家の4週純売買合計（円）: -349857010000.0000。観測値からの記述計算であり、予測力は未検証。'),

@@ -1,7 +1,7 @@
 import React from 'react';
 import type { MarketBrief } from '../../lib/marketBrief';
 import type { ComparisonPoint } from '../../types/japanMarketComparison';
-import { ALERT_HISTORY, TONE_HISTORY, decisionStrip, friendlyEventText, type FeatureRow, type Lean } from '../../lib/todayDecision';
+import { ALERT_HISTORY, OVERNIGHT_HISTORY, TONE_HISTORY, decisionStrip, friendlyEventText, overnightGap, overnightRecord, type FeatureRow, type Lean } from '../../lib/todayDecision';
 import { useNikkeiLive } from '../../hooks/useJapanMarketComparison';
 import './TodayDecisionStrip.css';
 
@@ -56,13 +56,19 @@ export function TodayDecisionStrip({ brief }: { brief: MarketBrief }) {
   }, [fresh, current?.anchorDate, current?.actual?.length]);  // eslint-disable-line react-hooks/exhaustive-deps
   const stored = fresh ? null : readLastInputs();
   const comparison = fresh ? current : stored ? { actual: stored.actual, anchorDate: stored.anchorDate } : undefined;
-  const strip = decisionStrip(Array.isArray(comparison?.actual) ? comparison!.actual : null,
-    fresh ? currentFeatures : stored?.features ?? []);
+  const stripActual = Array.isArray(comparison?.actual) ? comparison!.actual : null;
+  const stripFeatures = fresh ? currentFeatures : stored?.features ?? [];
+  const closeStrip = decisionStrip(stripActual, stripFeatures);
   const headline = brief.unifiedSummary?.sections.view.textJa;
-  const live = useNikkeiLive();
+  const { quote: live, futures } = useNikkeiLive();
   // The delayed intraday value replaces the last close once it is from a later session.
   const lastActual = typeof comparison?.anchorDate === 'string' ? Date.parse(comparison.anchorDate) : NaN;
   const liveCurrent = live && (!Number.isFinite(lastActual) || Date.parse(live.tradedAt) > lastActual + 9 * 3600_000);
+  // Owner check 2026-10-03: the overnight future against the close it followed.
+  const gap = overnightGap(futures, liveCurrent && !live!.sessionOpen ? live!.price : closeStrip.close,
+    liveCurrent ? Date.parse(live!.tradedAt) : lastActual + 6.5 * 3600_000, !!live?.sessionOpen);
+  const strip = gap === null ? closeStrip : decisionStrip(stripActual, stripFeatures, gap);
+  const gapRecord = strip.overnightGapPct !== null ? overnightRecord(strip.overnightGapPct) : null;
   const shownPrice = liveCurrent ? live!.price : strip.close;
   const shownChange = liveCurrent ? live!.changePct : strip.dayChangePct;
   const liveLabel = liveCurrent ? (live!.sessionOpen
@@ -84,6 +90,10 @@ export function TodayDecisionStrip({ brief }: { brief: MarketBrief }) {
       <small className="today-strip__record" data-tone-record={strip.tone}>
         過去の成績({TONE_HISTORY.since}年〜):この判定の5日後に上がったのは{TONE_HISTORY.upAfter[strip.tone]}%。
         どの日でも{TONE_HISTORY.baseUpPct}%なので、方向の予想には使えません。</small>
+      {gapRecord && Math.abs(strip.overnightGapPct!) >= 1 && <p className="today-strip__overnight" data-overnight-gap={strip.overnightGapPct!.toFixed(2)}
+        onClick={() => jumpTo('today-nikkei-chart', 'futures')}>
+        昨夜の日経先物は終値比<b>{signed(strip.overnightGapPct!)}</b>。{OVERNIGHT_HISTORY.since}年以降、同じ程度の夜のあと5日後に上がっていたのは
+        <b>{gapRecord.upPct}%</b>(普段{OVERNIGHT_HISTORY.baseUpPct}%)、5日間の値動きの中央値は{signed(gapRecord.medianPct)}({gapRecord.n}回)。</p>}
     </div>
     <div className="today-strip__tiles">
       {strip.alert && <button type="button" className={`today-strip__tile alert-${strip.alert}`} onClick={() => jumpTo('today-nikkei-chart')}>
@@ -93,7 +103,7 @@ export function TodayDecisionStrip({ brief }: { brief: MarketBrief }) {
         <small>日経の勢い</small><b>{momentumLabel[strip.momentum]}</b>
         <span>{strip.fiveDayChangePct !== null ? `5日で${signed(strip.fiveDayChangePct)}` : '直近20営業日との比較'}</span></button>}
       {strip.band && <button type="button" className="today-strip__tile" onClick={() => jumpTo('today-nikkei-chart')}>
-        <small>5日間の予想値幅(8割)</small><b>{signed(strip.band.lower)}〜{signed(strip.band.upper)}</b>
+        <small>5日間の予想値幅(8割{strip.overnightGapPct !== null ? '・昨夜の先物を反映' : ''})</small><b>{signed(strip.band.lower)}〜{signed(strip.band.upper)}</b>
         <span>{shownPrice !== null ? `${yen(shownPrice * (1 + strip.band.lower / 100))}〜${yen(shownPrice * (1 + strip.band.upper / 100))}円` : ''}</span></button>}
       {brief.chips?.nextEvent && <button type="button" className="today-strip__tile" onClick={() => jumpTo('today-events')}>
         <small>次の山場</small><b className="today-strip__event">{friendlyEventText(brief.chips.nextEvent)}</b></button>}
@@ -106,6 +116,6 @@ export function TodayDecisionStrip({ brief }: { brief: MarketBrief }) {
         <dl><dt>これは何?</dt><dd>{row.what}</dd><dt>今どう?</dt><dd>{row.now}</dd><dt>だから?</dt><dd>{row.soWhat}</dd></dl>
       </details>)}
     </div>}
-    <p className="today-strip__note">追い風・逆風は各材料の一般的な読み方で、まとめた判定は過去に5日後の方向を当てていません(上の成績)。急落警戒と値幅は2015〜2026年の実績で確かめた頻度で、将来の確率ではありません。</p>
+    <p className="today-strip__note">追い風・逆風は各材料の一般的な読み方で、まとめた判定は過去に5日後の方向を当てていません(上の成績)。夜間の日経先物は、2012年以降の実績で5日後の方向と結び付いていたことを確かめた材料です。急落警戒・値幅・先物の成績は過去の実績の頻度で、将来の確率ではありません。</p>
   </section>;
 }

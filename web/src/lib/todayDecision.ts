@@ -20,6 +20,7 @@ export interface DecisionStrip {
   band: { lower: number; upper: number } | null;
   momentum: 'strong' | 'normal' | 'weak' | null;
   rows: MaterialRow[]; tone: 'tail' | 'head' | 'wait';
+  overnightGapPct: number | null;
 }
 
 /** Drop-alert cut points and the 80% band multipliers fitted on 2003-2014 only.
@@ -35,7 +36,28 @@ export const ALERT_HISTORY = { low: 2.9, normal: 9.1, high: 16.7 } as const;
  * beats that base rate, so the badge describes the inputs and is never a
  * direction call (owner check 2026-10-02).
  */
-export const TONE_HISTORY = { since: 2012, baseUpPct: 57, upAfter: { tail: 55, head: 58, wait: 57 } } as const;
+export const TONE_HISTORY = { since: 2012, baseUpPct: 57, upAfter: { tail: 59, head: 55, wait: 57 } } as const;
+/**
+ * Overnight CME Nikkei future against the Tokyo close, 2012-2026 (owner check
+ * 2026-10-03, n=3475 nights): share of 5-session moves from that close that
+ * went up, and the median move. Both halves (2012-2019, 2020-2026) agree.
+ * The next session reflects about 0.9x the gap; shifting the 80% band by the
+ * gap kept 84% of outcomes inside after +2% nights (65% without the shift).
+ * The tone record above was re-measured with this row (weight 2) and the US
+ * 10-year row read as neutral; it still does not beat the base rate.
+ */
+export const OVERNIGHT_HISTORY = { since: 2012, baseUpPct: 57, buckets: [
+  { from: 2, to: Infinity, upPct: 86, medianPct: 4.1, n: 92 },
+  { from: 1, to: 2, upPct: 72, medianPct: 1.7, n: 396 },
+  { from: -1, to: 1, upPct: 57, medianPct: 0.4, n: 2678 },
+  { from: -2, to: -1, upPct: 34, medianPct: -1.3, n: 234 },
+  { from: -Infinity, to: -2, upPct: 17, medianPct: -1.9, n: 75 },
+] } as const;
+/** US 10-year 5-session change of +0.15 points or more, 2012-2026 (n=293): up 61% five sessions later. */
+export const US10Y_RISE_HISTORY = { upPct: 61, n: 293, baseUpPct: 57 } as const;
+export function overnightRecord(gapPct: number) {
+  return OVERNIGHT_HISTORY.buckets.find(b => gapPct >= b.from && gapPct < b.to) ?? OVERNIGHT_HISTORY.buckets[2];
+}
 const BAND_LOWER = 1.278; const BAND_UPPER = 1.371;
 
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -65,9 +87,21 @@ const oku = (yen: number) => `${Math.round(Math.abs(yen) / 1e8).toLocaleString('
 const pct = (v: number, digits = 1) => `${v > 0 ? '+' : ''}${v.toFixed(digits)}%`;
 
 /** One row per input the owner can act on; absent inputs are simply left out. */
-export function materialRows(features: FeatureRow[], fiveDayChangePct: number | null): MaterialRow[] {
+export function materialRows(features: FeatureRow[], fiveDayChangePct: number | null,
+                             overnightGapPct: number | null = null): MaterialRow[] {
   const f = (id: string) => features.find(row => row.seriesId === id && finite(row.value))?.value;
   const rows: MaterialRow[] = [];
+  if (overnightGapPct !== null) {
+    const record = overnightRecord(overnightGapPct);
+    rows.push({ id: 'futures', lean: overnightGapPct >= 1 ? 'tail' : overnightGapPct <= -1 ? 'head' : 'neutral',
+      title: `夜間の日経先物 終値比${pct(overnightGapPct)}`,
+      meaning: `過去に同じ程度の夜のあと、5日後に上がっていたのは${record.upPct}%(普段${OVERNIGHT_HISTORY.baseUpPct}%)。`,
+      what: '東京の取引が終わった後、米国の時間帯に取引される日経平均先物(CME)です。翌営業日の日経平均は、この差のおよそ9割をそのまま反映してきました。',
+      now: `前回の終値より${pct(overnightGapPct)}の水準です。`,
+      soWhat: Math.abs(overnightGapPct) >= 1
+        ? `${OVERNIGHT_HISTORY.since}年以降、同じ程度の夜のあとの5営業日の値動きは中央値で${pct(record.medianPct)}(${record.n}回)。動きの大半は次の寄り付きで出ており、寄り付き後の上乗せは普段並みです。`
+        : '夜間の動きは小さく、次の寄り付きへの影響も小さい状態です。' });
+  }
   const foreign = f('foreign_flow.net4w');
   if (foreign !== undefined) rows.push({ id: 'foreign', lean: foreign < 0 ? 'head' : 'tail',
     title: `海外投資家 4週で約${oku(foreign)}の${foreign < 0 ? '売り越し' : '買い越し'}`,
@@ -76,12 +110,14 @@ export function materialRows(features: FeatureRow[], fiveDayChangePct: number | 
     now: `${foreign < 0 ? '売り' : '買い'}が約${oku(foreign)}上回っています。`,
     soWhat: foreign < 0 ? '大きく買い上がる力は出にくい状態です。' : '押し目で買いが入りやすい状態です。' });
   const us10 = f('rate.us10y_change5');
-  if (us10 !== undefined && Math.abs(us10) >= 0.1) rows.push({ id: 'us10y', lean: us10 > 0 ? 'head' : 'tail',
+  // Owner check 2026-10-03: neither a rise nor a fall of the 10-year yield told
+  // the Nikkei's 5-session direction, so it is shown without a direction.
+  if (us10 !== undefined && Math.abs(us10) >= 0.1) rows.push({ id: 'us10y', lean: 'neutral',
     title: `米国10年金利 5日で${us10 > 0 ? '+' : ''}${us10.toFixed(2)}ポイント`,
-    meaning: us10 > 0 ? '金利が上がると株は割高に見えやすい。' : '金利が下がると株の割高感は和らぐ。',
-    what: '世界のお金の値段の基準になる米国の長期金利です。',
+    meaning: '過去の成績では、日経の方向の材料になっていません。',
+    what: '世界のお金の値段の基準になる米国の長期金利です。利上げの見通しは、より短い期間の金利に表れます。',
     now: `直近5営業日で${us10 > 0 ? '上昇' : '低下'}しています。`,
-    soWhat: us10 > 0 ? 'ハイテク・半導体株を中心に重しになりやすい状態です。' : '株にとっては追い風になりやすい状態です。' });
+    soWhat: `5日で+0.15ポイント以上上がった後も、日経が5日後に上がっていたのは${US10Y_RISE_HISTORY.upPct}%(普段${US10Y_RISE_HISTORY.baseUpPct}%)で、逆風とはみなしません。` });
   const m1570 = f('margin1570.ratio');
   if (m1570 !== undefined) rows.push({ id: 'm1570', lean: m1570 >= 1 ? 'soft-head' : 'tail',
     title: `日経レバの信用倍率 ${m1570.toFixed(1)}倍(${m1570 >= 1 ? '買いが多い' : '売りが多い'})`,
@@ -116,7 +152,8 @@ export function materialRows(features: FeatureRow[], fiveDayChangePct: number | 
   return rows;
 }
 
-export function decisionStrip(actual: ComparisonPoint[] | null, features: FeatureRow[]): DecisionStrip {
+export function decisionStrip(actual: ComparisonPoint[] | null, features: FeatureRow[],
+                              overnightGapPct: number | null = null): DecisionStrip {
   const sorted = (actual ?? []).filter(p => finite(p.value) && p.offsetSessions <= 0)
     .sort((a, b) => a.offsetSessions - b.offsetSessions);
   const at = (o: number) => sorted.find(p => p.offsetSessions === o)?.value;
@@ -134,11 +171,27 @@ export function decisionStrip(actual: ComparisonPoint[] | null, features: Featur
     const z = sd > 0 ? (last - mean) / sd : 0;
     momentum = z >= 1.8 ? 'strong' : z <= -1.8 ? 'weak' : 'normal';
   }
-  const rows = materialRows(features, fiveDayChangePct);
-  const score = rows.reduce((s, r) => s + (r.lean === 'tail' ? 1 : r.lean === 'head' ? -1 : r.lean === 'soft-head' ? -0.5 : 0), 0);
+  const gap = overnightGapPct !== null && finite(overnightGapPct) ? overnightGapPct : null;
+  const rows = materialRows(features, fiveDayChangePct, gap);
+  const score = rows.reduce((s, r) => s + (r.id === 'futures' ? 2 : 1)
+    * (r.lean === 'tail' ? 1 : r.lean === 'head' ? -1 : r.lean === 'soft-head' ? -0.5 : 0), 0);
+  const base = sigma === null ? null : fiveDayBand(sigma);
   return { close: last ?? null, dayChangePct, fiveDayChangePct, sigma,
-    alert: sigma === null ? null : alertLevel(sigma), band: sigma === null ? null : fiveDayBand(sigma), momentum,
-    rows, tone: score >= 1.5 ? 'tail' : score <= -1.5 ? 'head' : 'wait' };
+    alert: sigma === null ? null : alertLevel(sigma),
+    band: base && gap !== null ? { lower: base.lower + gap, upper: base.upper + gap } : base, momentum,
+    rows, tone: score >= 1.5 ? 'tail' : score <= -1.5 ? 'head' : 'wait', overnightGapPct: gap };
+}
+
+/**
+ * The overnight future applies to the latest Tokyo close it followed: after
+ * that close, before the next session opens, and within four days.
+ */
+export function overnightGap(futures: { price: number; tradedAt: string } | null, close: number | null,
+                             closeAt: number, tokyoSessionOpen: boolean): number | null {
+  if (!futures || close === null || !(close > 0) || tokyoSessionOpen || !Number.isFinite(closeAt)) return null;
+  const traded = Date.parse(futures.tradedAt);
+  if (!Number.isFinite(traded) || traded <= closeAt || traded - closeAt > 4 * 86400_000) return null;
+  return (futures.price / close - 1) * 100;
 }
 
 /** Feature facts arrive as long machine sentences; show the number the way a person reads it. */
