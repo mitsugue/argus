@@ -40799,6 +40799,44 @@ def _jquants_index_audit():
     return result
 
 
+def _jquants_dividend_audit(day):
+    """One day of /fins/summary, shape only: which dividend fields exist and
+    how often they are filled (13.8 §4-1, ex-dividend yen estimate). No row
+    values leave here; counts and field names only."""
+    result = {"schemaVersion": "jquants-dividend-audit-v1", "status": "failed", "day": day,
+              "automaticAiCalls": 0, "actionAuthority": False}
+    if not _JQUANTS_API_KEY:
+        result["errorClass"] = "jquants_key_missing"
+        return result
+    fields = ("FDiv1Q", "FDiv2Q", "FDiv3Q", "FDivFY", "FDivAnn", "DiscDate", "DocType", "Code", "CurPerType")
+    try:
+        rows = _jquants_paginated("/fins/summary", {"date": day}, max_pages=6, request_timeout=20)
+        keys = sorted({key for row in rows for key in row})
+        result.update(rowCount=len(rows), columns=keys[:80],
+                      docTypes=sorted({str(row.get("DocType")) for row in rows})[:20],
+                      filled={f: sum(1 for row in rows if row.get(f) not in (None, "", "-")) for f in fields},
+                      sample=[{f: row.get(f) for f in fields if f != "Code"} for row in rows
+                              if row.get("FDiv2Q") not in (None, "", "-") or row.get("FDivFY") not in (None, "", "-")][:3],
+                      status="success")
+    except Exception as exc:
+        result["errorClass"] = type(exc).__name__[:80]
+        result["detail"] = str(exc)[:80]
+    return result
+
+
+@app.route("/api/argus/admin/jquants/dividend-audit", methods=["POST"])
+def api_argus_admin_jquants_dividend_audit():
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    body = request.get_json(silent=True) or {}
+    day = str(body.get("date") or "")[:10]
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+        return jsonify({"error": "date_required"}), 400
+    result = _jquants_dividend_audit(day)
+    return jsonify(result), (200 if result.get("status") == "success" else 503)
+
+
 @app.route("/api/argus/admin/jquants/index-audit", methods=["POST"])
 def api_argus_admin_jquants_index_audit():
     ok, err, code = _require_admin()

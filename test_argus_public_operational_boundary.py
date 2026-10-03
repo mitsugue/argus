@@ -214,10 +214,10 @@ def test_route_catalog_matches_every_flask_rule_and_is_fail_closed():
     )
     assert catalog.ROUTE_CATALOG_VALIDATION_ERRORS == ()
     assert catalog.route_contract_keys() == actual
-    assert len(catalog.ROUTE_CATALOG) == len(actual) == 171
+    assert len(catalog.ROUTE_CATALOG) == len(actual) == 172
     assert Counter(row.trustDomain for row in catalog.ROUTE_CATALOG) == {
         "PUBLIC": 74,
-        "AUTH_OPERATIONAL": 86,
+        "AUTH_OPERATIONAL": 87,
         "OWNER_SYNC": 7,
         "RECOVERY_PROOF": 3,
         "OWNER_AUTH": 1,
@@ -3380,3 +3380,24 @@ def test_news_history_recovery_load_persists_and_rejects_corruption(monkeypatch,
     assert store["historyRestore"]["status"] == "rejected"
     assert store["events"][identity] == saved["events"][identity]
     assert json.loads(state_path.read_text()) == saved
+
+
+def test_dividend_audit_is_admin_only_and_returns_shape_not_values(monkeypatch):
+    """13.8 §4-1: the ex-dividend estimate starts from the real J-Quants field shape."""
+    import scanner
+    client = scanner.app.test_client()
+    assert client.post("/api/argus/admin/jquants/dividend-audit", json={"date": "2026-10-02"}).status_code in (401, 403, 503)
+    monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "t")
+    headers = {"X-ARGUS-ADMIN-TOKEN": "t"}
+    assert client.post("/api/argus/admin/jquants/dividend-audit", headers=headers, json={"date": "x"}).status_code == 400
+    rows = [{"Code": "72030", "FDiv2Q": "40.0", "FDivFY": "45.0", "FDivAnn": "85.0", "DocType": "FYFinancialStatements_Consolidated_JP",
+             "DiscDate": "2026-10-02", "CurPerType": "FY"},
+            {"Code": "99840", "FDiv2Q": "-", "FDivFY": "", "DocType": "1QFinancialStatements_Consolidated_JP"}]
+    monkeypatch.setattr(scanner, "_JQUANTS_API_KEY", "k")
+    monkeypatch.setattr(scanner, "_jquants_paginated", lambda path, params, **kw: rows)
+    body = client.post("/api/argus/admin/jquants/dividend-audit", headers=headers, json={"date": "2026-10-02"}).get_json()
+    assert body["status"] == "success" and body["rowCount"] == 2
+    assert body["filled"]["FDiv2Q"] == 1 and body["filled"]["FDivFY"] == 1
+    assert body["sample"] == [{"FDiv1Q": None, "FDiv2Q": "40.0", "FDiv3Q": None, "FDivFY": "45.0", "FDivAnn": "85.0",
+                               "DiscDate": "2026-10-02", "DocType": "FYFinancialStatements_Consolidated_JP", "CurPerType": "FY"}]
+    assert "72030" not in str(body) and body["automaticAiCalls"] == 0
