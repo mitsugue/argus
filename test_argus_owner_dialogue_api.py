@@ -572,3 +572,128 @@ def test_elapsed_days_reuse_saved_prose_but_event_state_change_refreshes(tmp_pat
     changed=finish();assert changed['status']=='SUCCEEDED' and len(calls)==2
     assert changed['context']['previousRecord']['requestId']==saved['requestId']
     assert controls['refreshSubjectOverviews']()['status']=='CURRENT'
+
+
+def test_overview_focus_selects_nearby_cpi_and_fixes_lookup_to_event_times():
+    cpi={'eventId':'cpi-1','eventCode':'CPI','eventTimeUtc':'2026-09-14T12:30:00Z',
+         'officialResult':{'available':False}}
+    other={'eventId':'nfp-1','eventCode':'NFP','eventTimeUtc':'2026-09-13T12:30:00Z'}
+    selected, cutoff = api.overview_focus([other, cpi], '2026-09-13T00:00:00Z')
+    assert selected == cpi and selected is not cpi
+    assert cutoff == '2026-09-12T12:30:00+00:00'
+    # Outside the window there is no focus; the clock alone never invents one.
+    assert api.overview_focus([cpi], '2026-09-12T12:29:59Z') == (None, None)
+    assert api.overview_focus([cpi], '2026-09-17T12:30:01Z') == (None, None)
+    released={**cpi, 'officialResult':{'available':True,'receivedAt':'2026-09-14T12:31:00Z'}}
+    assert api.overview_focus([released], '2026-09-14T12:30:30Z')[1] == '2026-09-12T12:30:00+00:00'
+    assert api.overview_focus([released], '2026-09-15T00:00:00Z')[1] == '2026-09-14T12:31:00+00:00'
+    assert api.overview_focus([{**cpi, 'eventTimeUtc':None}, 'bad'], '2026-09-13T00:00:00Z') == (None, None)
+
+
+def test_market_overview_reconnects_bounded_cpi_history_without_clock_regeneration(tmp_path):
+    import argus_owner_dialogue as dialogue
+    import argus_causal_event_memory as cem
+    from test_argus_causal_event_memory import build_event, news, ledger_state
+    _, state = ledger_state(tmp_path, build_event(news(event_type='INFLATION')))
+    path=tmp_path/'owner.sqlite3';clock=[AT];calls=[];lookups=[]
+    event={'eventId':'cpi-1','displayEventId':'de-cpi-1','eventCode':'CPI','title':'米CPI',
+           'eventTimeUtc':'2026-09-14T12:30:00Z','eventDate':'2026-09-14','state':'pre',
+           'officialResult':{'available':False}}
+    events=[[event]]
+    def lookup(selected, *, cutoff):
+        lookups.append(cutoff)
+        return cem.reasoning_retrieval(state, family='INFLATION_RATES', as_of=cutoff)
+    controls=api.register(Flask(__name__),authorize=lambda token:(True,None,200),
+        storage_path=lambda:str(path),market_brief=market_brief,now=lambda:clock[0],
+        generate=lambda user,**kwargs:(calls.append(user),answer())[1],
+        generation_policy=lambda:{'model':'test-primary','ruleVersion':'watchlist-v1'},
+        event_history=lookup, overview_events=lambda:copy.deepcopy(events[0]))
+    store.initialize(path)
+    for symbol in ('N225','5803'):
+        c=dialogue.build_context(brief=market_brief(),symbol=symbol,market='JP',horizon=5,
+            question='以前の見立て',received_at='2026-09-12T00:00:00Z',watchlist_only=True)
+        c['intent']='SUBJECT_OVERVIEW';c['contextId']=dialogue.digest({k:v for k,v in c.items() if k!='contextId'})
+        rid=identity()
+        store.submit(path,identity=rid,input_hash='seed-'+symbol,boot_id=controls['bootId'],context=c)
+        store.complete(path,rid,{'status':'SUCCEEDED','completedAt':'2026-09-12T00:00:00Z','answer':{'sections':{}}})
+    def finish():
+        for _ in range(200):
+            newest=store.history(path,controls['bootId'])['items'][0]
+            if newest['status']!='RUNNING':return newest
+            time.sleep(.01)
+        pytest.fail('background worker did not finish')
+    def refresh_all():
+        started=[]
+        while True:
+            status=controls['refreshSubjectOverviews']()['status']
+            if status!='STARTED':return started
+            started.append(finish())
+    first=refresh_all()
+    by_symbol={row['context']['subject']['symbol']:row for row in first}
+    market, company = by_symbol['N225']['context'], by_symbol['5803']['context']
+    # Only the market explanation carries the event history, fixed to its own window.
+    assert 'eventFocus' not in company
+    assert market['eventFocus']['eventId']=='cpi-1'
+    assert market['eventFocus']['capturedAt']=='2026-09-12T12:30:00+00:00'
+    # Lookups repeat for the reuse check (no AI); every one uses the fixed time.
+    assert set(lookups)=={'2026-09-12T12:30:00+00:00'}
+    memory=market['eventFocus']['snapshot']['relatedMemory']
+    assert memory['status']=='AVAILABLE' and memory['records']
+    assert any(f['source']=='related_event_memory' for f in market['facts'])
+    assert market['retrievalRecord']['archiveSearchStatus']=='BOUNDED_EVENT_MEMORY'
+    assert market['retrievalRecord']['counterevidenceSearchStatus']=='HISTORICAL_ORIGINAL_HYPOTHESES_ONLY'
+    # The change comparison with the previous market edition is kept.
+    assert market['previousFacts'] and market['previousRecord']
+    assert market['actionAuthority'] is False
+    count=len(calls)
+    for moment in ('2026-09-13T06:00:00Z','2026-09-14T00:00:00Z','2026-09-14T12:29:00Z'):
+        clock[0]=moment
+        assert refresh_all()==[] and len(calls)==count
+    # The official result is a real change: one new market edition, fixed to its receipt.
+    clock[0]='2026-09-14T13:00:00Z'
+    events[0]=[{**event,'officialResult':{'available':True,'receivedAt':'2026-09-14T12:31:00Z',
+        'releasedAt':'2026-09-14T12:30:00Z','headlineJa':'前年比+2.9%'}}]
+    changed=refresh_all()
+    assert [row['context']['subject']['symbol'] for row in changed]==['N225']
+    assert changed[0]['context']['eventFocus']['capturedAt']=='2026-09-14T12:31:00+00:00'
+    assert lookups[-1]=='2026-09-14T12:31:00+00:00'
+    count=len(calls)
+    clock[0]='2026-09-16T00:00:00Z'
+    assert refresh_all()==[] and len(calls)==count
+    # Leaving the window is one change; afterwards the clock alone changes nothing.
+    clock[0]='2026-09-18T00:00:00Z'
+    ended=refresh_all()
+    assert [row['context']['subject']['symbol'] for row in ended]==['N225']
+    assert 'eventFocus' not in ended[0]['context']
+    clock[0]='2026-09-19T00:00:00Z'
+    assert refresh_all()==[]
+
+
+def test_market_overview_drops_oversized_event_history_but_keeps_explanation(tmp_path, monkeypatch):
+    import argus_owner_dialogue as dialogue
+    path=tmp_path/'owner.sqlite3';calls=[]
+    event={'eventId':'cpi-1','eventCode':'CPI','eventTimeUtc':'2026-09-14T12:30:00Z','officialResult':{'available':False}}
+    original=dialogue.build_context
+    def bounded(**kwargs):
+        if kwargs.get('event_snapshot'):raise ValueError('private_context_size_bound')
+        return original(**kwargs)
+    monkeypatch.setattr(dialogue,'build_context',bounded)
+    controls=api.register(Flask(__name__),authorize=lambda token:(True,None,200),
+        storage_path=lambda:str(path),market_brief=market_brief,now=lambda:AT,
+        generate=lambda user,**kwargs:(calls.append(user),answer())[1],
+        generation_policy=lambda:{'model':'test-primary','ruleVersion':'watchlist-v1'},
+        overview_events=lambda:[event])
+    c=original(brief=market_brief(),symbol='N225',market='JP',horizon=5,
+        question='以前の見立て',received_at='2026-09-12T00:00:00Z',watchlist_only=True)
+    c['intent']='SUBJECT_OVERVIEW';c['contextId']=dialogue.digest({k:v for k,v in c.items() if k!='contextId'})
+    store.initialize(path);rid=identity()
+    store.submit(path,identity=rid,input_hash='seed',boot_id=controls['bootId'],context=c)
+    store.complete(path,rid,{'status':'SUCCEEDED','completedAt':'2026-09-12T00:00:00Z','answer':{'sections':{}}})
+    assert controls['refreshSubjectOverviews']()['status']=='STARTED'
+    for _ in range(200):
+        newest=store.history(path,controls['bootId'])['items'][0]
+        if newest['status']!='RUNNING':break
+        time.sleep(.01)
+    assert newest['status']=='SUCCEEDED' and len(calls)==1
+    assert 'eventFocus' not in newest['context']
+    assert newest['context']['eventFocusOmitted']=={'eventId':'cpi-1','reason':'CONTEXT_BYTE_BOUND'}

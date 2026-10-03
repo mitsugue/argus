@@ -17216,6 +17216,12 @@ def _owner_dialogue_event_history(event, *, cutoff):
             _CAUSAL_MEMORY['state'], family='INFLATION_RATES', as_of=cutoff)
 
 
+def _owner_overview_events():
+    # Cache-only rows; the API selects one event and fixes its lookup time.
+    _, items, _ = _build_dashboard_events(limit=20)
+    return copy.deepcopy(items)
+
+
 def _owner_dialogue_subject_materials(*, symbol, market, cutoff):
     if market not in ("JP", "US") or not isinstance(symbol, str) or symbol == "N225": return None
     return argus_subject_materials.news_facts(list(_INTEL_STORE), symbol=symbol, cutoff=cutoff)
@@ -17311,7 +17317,8 @@ _OWNER_DIALOGUE_API = argus_owner_dialogue_api.register(app, authorize=_require_
     event_snapshot=_owner_dialogue_event_snapshot, event_history=_owner_dialogue_event_history,
     market_reference=_owner_dialogue_market_reference,
     generation_policy=_owner_overview_generation_policy,
-    registered_subjects=_owner_overview_registered_subjects)
+    registered_subjects=_owner_overview_registered_subjects,
+    overview_events=_owner_overview_events)
 
 
 def _owner_overview_tick():
