@@ -43,10 +43,18 @@ def test_missing_and_corrupt_calendar_are_visible_and_not_created(tmp_path):
 
 
 def test_uncovered_next_year_is_partial_and_never_synthesized():
-    result = jp_market_events.published_sq_calendar(now=datetime.fromisoformat("2026-12-20T10:00:00+09:00"))
+    # Since 2026-10-03 the 2027 official file is shipped; the rule still holds for
+    # the first year it does not cover: no date is extrapolated past the file.
+    result = jp_market_events.published_sq_calendar(now=datetime.fromisoformat("2027-12-20T10:00:00+09:00"))
     assert result["status"] == "PARTIAL"
     assert result["events"] == []
     assert "official_schedule_does_not_cover_full_horizon" in result["gaps"]
+
+
+def test_the_2027_official_schedule_is_listed_from_the_end_of_2026():
+    result = jp_market_events.published_sq_calendar(now=datetime.fromisoformat("2026-12-20T10:00:00+09:00"))
+    assert [e["sqDate"] for e in result["events"]] == ["2027-01-08"]
+    assert result["status"] == "AVAILABLE" and result["gaps"] == []
 
 
 def test_previous_session_and_sq_date_do_not_become_economic_result_wait(monkeypatch):
