@@ -135,3 +135,15 @@ TTL。`jp_market_acquisition.py` の変更は特徴履歴の手法識別子を�
 `reuseDecision=unchanged_known_inputs`(再起動後も再計算 1 時点・再利用 2,441 時点)。
 系列ごとの期待件数と実件数の照合は、この文書の表と `seriesAcquisition` の状態で代替しており、
 件数の自動照合は未実装(13.8 の残作業)。
+
+## 系列の網羅の自動照合 (2026-10-03)
+
+`comparison.marketEvidence.seriesCoverageCheck` に、期待と実際の網羅を毎回出す。
+
+- 16系列それぞれ: 現在側にあるか、過去の候補の何割にあるか。現在にない=`CURRENT_MISSING`、
+  現在にあるのに候補の5割未満=`PAST_SIDE_SPARSE`。
+- 七つの警戒条件(点灯規則のあるもの): 最初の記録が最初の候補から1年以上遅い=`HISTORY_SHORT`、
+  記録なし=`NO_HISTORY`。
+- 1つでも外れれば `status=GAPS_FOUND` と `gaps` に名前を出す。選択には影響しない(診断のみ)。
+- きっかけ: 海外投資家の10年分が過去の基準日から見えていなかったのに、他の件数はすべて正常に
+  見えていた。
