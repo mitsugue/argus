@@ -218,3 +218,63 @@ def test_snapshot_holds_one_record_body_at_a_time_with_identical_groups(tmp_path
     assert [g['count'] for g in views] == [32, 32, 6] and result['counts']['views'] == 70
     cold = tmp_path/'cold.sqlite'; backup.synchronize(cold, remote)
     assert history.summary(cold) == history.summary(source)
+
+
+def _dated(base, n):
+    from datetime import timedelta
+    return (base + timedelta(days=n)).isoformat()
+
+
+@pytest.mark.parametrize('extra', [2, 40])
+def test_restart_after_local_appends_proves_containment_without_a_restore(tmp_path, monkeypatch, extra):
+    """2026-10-03: the local file had two records newer than the remote at a
+    restart; the full restore timed out at every such boot and the backup never
+    caught up. Appended-only local history is proven from the local file."""
+    from datetime import datetime, timezone
+    remote = original.Remote(); remote.history_format_version = 2
+    source = tmp_path/'source.sqlite'; base = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    for n in range(37): original.add(source, _dated(base, n), 3000+n)   # one full group + 5
+    first = backup.synchronize(source, remote)
+    for n in range(37, 37 + extra): original.add(source, _dated(base, n), 3000+n)
+    def forbidden(*args, **kwargs): raise AssertionError('restore must not run')
+    monkeypatch.setattr(compact, '_restore', forbidden)
+    again = backup.synchronize(source, remote)          # restart: no last_verified_head
+    assert again['status'] == 'VERIFIED' and again['restoredCounts'] is None
+    assert again['counts']['views'] == 37 + extra and again['headVersion'] != first['headVersion']
+    monkeypatch.undo()
+    cold = tmp_path/'cold.sqlite'; backup.synchronize(cold, remote)
+    assert history.summary(cold) == history.summary(source)
+    # The next restart is the unchanged case again.
+    monkeypatch.setattr(compact, '_restore', forbidden)
+    assert backup.synchronize(source, remote)['restoredCounts'] is None
+
+
+def test_restart_with_a_missing_or_changed_remote_record_still_restores(tmp_path):
+    from datetime import datetime, timezone
+    remote = original.Remote(); remote.history_format_version = 2
+    base = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    source = tmp_path/'source.sqlite'
+    for n in range(6): original.add(source, _dated(base, n), 3000+n)
+    backup.synchronize(source, remote)
+    # A different file with more records but not the remote's: never proven.
+    other = tmp_path/'other.sqlite'
+    for n in range(10, 18): original.add(other, _dated(base, n), 4000+n)
+    result = backup.synchronize(other, remote)
+    assert result['restoredCounts'] is not None
+    assert result['counts']['views'] == 14, 'the remote records were restored into the other file'
+
+
+def test_containment_rejects_reordered_or_shorter_groups():
+    remote = {'groups': [{'kind': 'views', 'count': 32, 'rawBytes': 10, 'rawSha256': 'a'},
+                         {'kind': 'views', 'count': 3, 'rawBytes': 5, 'rawSha256': 'b'}]}
+    grown = {'groups': [{'kind': 'views', 'count': 32, 'rawBytes': 10, 'rawSha256': 'a'},
+                        {'kind': 'views', 'count': 5, 'rawBytes': 9, 'rawSha256': 'c'}],
+             '_prefixProofs': {('views', 1): 'b'}}
+    assert compact._local_extends_manifest(grown, remote)
+    assert not compact._local_extends_manifest({**grown, '_prefixProofs': {('views', 1): None}}, remote)
+    changed = {**grown, 'groups': [{**grown['groups'][0], 'rawSha256': 'x'}, grown['groups'][1]]}
+    assert not compact._local_extends_manifest(changed, remote)
+    assert not compact._local_extends_manifest({'groups': grown['groups'][:1], '_prefixProofs': {}}, remote)
+    full_last = {'groups': [{'kind': 'views', 'count': 32, 'rawBytes': 10, 'rawSha256': 'a'}]}
+    assert not compact._local_extends_manifest(
+        {'groups': [{'kind': 'views', 'count': 33, 'rawBytes': 12, 'rawSha256': 'z'}], '_prefixProofs': {}}, full_last)
