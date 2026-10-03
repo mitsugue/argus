@@ -155,8 +155,12 @@ def build_summary_item(*, important_event: Optional[Dict[str, Any]],
         impact = (_nfp_impact_fallback(actual.get("metrics") or {}) if event_code == "NFP"
                   else _RX.impact_fallback(event_code, actual.get("metrics") or {}, mr))
 
-    # market reaction text: AI post, else the deterministic quantitative summary
-    reaction_ja = str(post.get("marketReactionJa") or mr.get("summaryJa") or "")
+    # market reaction text: the measured pre-release-baseline reaction (2026-10-03)
+    # when the AI has not yet read it, else the AI post, else the old summary
+    release = rec.get("releaseReaction") or {}
+    measured = str(release.get("summaryJa") or "") if release.get("windows") else ""
+    reaction_ja = str((post.get("marketReactionJa") if post.get("reactionWindow") else "")
+                      or measured or post.get("marketReactionJa") or mr.get("summaryJa") or "")
     # whatChanged: name the variable that moved (from the reaction) if AI didn't
     what_changed = str(post.get("whatChangedJa") or "")
     if not what_changed and mr.get("riskTone") and mr.get("riskTone") != "unknown":
@@ -192,6 +196,9 @@ def build_summary_item(*, important_event: Optional[Dict[str, Any]],
         "marketReactionJa": reaction_ja,
         "impactCommentJa": impact,
         "whatChangedJa": what_changed,
+        "marketReadingJa": str(post.get("marketReadingJa") or release.get("readingJa") or "") if released else "",
+        "nikkeiImplicationJa": str(post.get("nikkeiImplicationJa") or ""),
+        "changeConditionJa": str(post.get("changeConditionJa") or ""),
         "limitationsJa": list(post.get("limitationsJa") or pre.get("limitationsJa") or [])[:5],
     }
     # honest: released with an official result but NO quantitative reaction yet
@@ -253,6 +260,11 @@ def build_summary_item(*, important_event: Optional[Dict[str, Any]],
                             "iwmMovePct", "vixMovePct", "goldMovePct", "btcMovePct",
                             "window", "riskTone", "marketConfirmed", "summaryJa",
                             "limitationsJa")},
+        "releaseReaction": ({"basis": release.get("basis"), "latestWindow": release.get("latestWindow"),
+                             "readingJa": release.get("readingJa"), "summaryJa": release.get("summaryJa"),
+                             "moves": ((release.get("windows") or {}).get(release.get("latestWindow")) or {}).get("moves"),
+                             "limitationsJa": release.get("limitationsJa")}
+                            if release.get("windows") else None),
         "dedupeKey": _dedupe_key(event_code, event_date, title, event_time),
         "recordRefs": {
             "macroAnalysisId": rec.get("analysisId"),
