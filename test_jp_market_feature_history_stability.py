@@ -22,8 +22,8 @@ import pytest
 import jp_market_features as features
 
 ROOT = Path(__file__).resolve().parent
-PINNED_VERSION = "jp-market-feature-method-v2"
-PINNED_FIXTURE_RESULT = "f588ff33c48a8e84d0ec1f6ec5d96b153cb1b590b66fd5316ec448a661eaf94e"
+PINNED_VERSION = "jp-market-feature-method-v3"
+PINNED_FIXTURE_RESULT = "a0dfe9fa971d69d55a262b858c7b4a41770a08646d7db866842c9d94564f33c5"
 MODULES = ("jp_market_features.py", "jp_market_engine.py", "jp_market_dynamics.py",
            "jp_market_analogs.py", "jp_market_acquisition.py")
 
@@ -161,7 +161,7 @@ def test_changed_formula_or_parameter_changes_identity(edit):
 
 def test_version_advance_changes_identity():
     before = features.history_method_identity()
-    with patch.object(features, 'FEATURE_HISTORY_METHOD_VERSION', 'jp-market-feature-method-v3'):
+    with patch.object(features, 'FEATURE_HISTORY_METHOD_VERSION', 'jp-market-feature-method-v4'):
         assert features.history_method_identity() != before
 
 
@@ -408,3 +408,32 @@ def test_topix_refetch_and_restart_reuse_the_feature_history():
         new = features.build_feature_history(cutoffs=cutoffs(57, NOW2), previous_history=first, **series)
         assert new['calculationWork'] == {'reusedCutoffs': 57, 'evaluatedCutoffs': 1}
         same_values(new, features.build_feature_history(cutoffs=cutoffs(57, NOW2), **series))
+
+
+def test_backfilled_foreign_flow_is_known_from_its_official_publication():
+    """2026-10-03: the ten-year investor-type backfill was stamped knownAt = its
+    import (2026-09-30), so no past cutoff could see any past week and D05 had
+    one event in ten years. An original row is known from its PubDate; the
+    import stays as receivedAt; a correction keeps its own receipt."""
+    original = {"instrumentId": "MARKET", "seriesId": "flow.foreign", "periodEnd": "2018-03-02",
+                "value": 1.0e11, "unit": "JPY", "availableFrom": "2018-03-08T18:00:00+09:00",
+                "publishedAt": "2018-03-08T18:00:00+09:00", "knownAt": "2026-09-30T05:00:00Z"}
+    correction = {**original, "revision": 1, "value": 2.0e11, "knownAt": "2026-09-30T05:00:00Z"}
+    other = {**original, "seriesId": "credit.short_balance"}
+    out = features._flow_publication_availability([original, correction, other])
+    assert out[0]["knownAt"] == "2018-03-08T18:00:00+09:00"
+    assert out[0]["receivedAt"] == "2026-09-30T05:00:00Z"
+    assert out[0]["availabilityBasis"] == "OFFICIAL_PUBLICATION_DATE"
+    assert out[1] == correction and out[2] == other
+    assert original["knownAt"] == "2026-09-30T05:00:00Z"          # not mutated
+    assert features._flow_publication_availability(out) == out      # idempotent
+
+    weeks = [{**original, "periodEnd": f"2018-0{m}-{d:02d}",
+              "availableFrom": f"2018-0{m}-{d + 6:02d}T18:00:00+09:00",
+              "publishedAt": f"2018-0{m}-{d + 6:02d}T18:00:00+09:00",
+              "value": (1 if i % 2 else -1) * 1.0e11}
+             for i, (m, d) in enumerate([(3, 2), (3, 9), (3, 16), (4, 6), (4, 13), (4, 20)])]
+    snapshot = features.build_market_features(cutoff="2018-05-01T00:00:00Z",
+                                              price_series={}, foreign_flow=weeks)
+    d05 = [c for c in snapshot["conditions"] if c["seriesId"] == features.SIGN_CONDITION_IDS["D05"]]
+    assert d05, "past cutoffs must see the published weeks"
