@@ -39585,8 +39585,10 @@ def _jp_market_margin_1570_dynamics(*, cutoff=None):
     """Cached received balances, separate from daily securities finance."""
     cached = _JQ_MARGIN_CACHE.get("1570") or {}
     snapshot = cached.get("sourceSnapshot") or {}
+    # Weekly change on week-final rows; the balances are daily from the
+    # 2026-09-25 application date (2026-10-03). sourceRows stay complete.
     result = jp_market_dynamics.credit_dynamics(
-        snapshot.get("rows") or [], cutoff=cutoff or _ai_now_iso(),
+        jp_market_dynamics.week_final_rows(snapshot.get("rows") or []), cutoff=cutoff or _ai_now_iso(),
         instrument_id="1570", balance_kind="WEEKLY_MARGIN",
         long_series="margin.long_balance", short_series="margin.short_balance")
     result.update({"acquisitionStatus": cached.get("sourceStatus", "NOT_ACQUIRED"),
@@ -45459,6 +45461,9 @@ def _jq_weekly_margin(code):
                     if lv is None or sv is None:
                         continue
                     norm.append({"date": q.get("Date"), "longVol": float(lv), "shortVol": float(sv)})
+                # Daily rows from the 2026-09-25 application date on; the
+                # week-over-week reads below stay weekly (2026-10-03).
+                norm = jp_market_dynamics.week_final_rows(norm)
                 norm.sort(key=lambda x: x["date"] or "", reverse=True)
                 if norm:
                     data = norm[:4]

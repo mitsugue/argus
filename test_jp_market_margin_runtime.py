@@ -174,3 +174,25 @@ def test_runtime_restart_and_failed_fetch_restore_durable_original_receipts(feed
     assert result['sourceRows'] == original
     assert result['acquisitionStatus'] == 'HTTP_503'
     assert len(feed[1]) == 3
+
+
+def test_daily_balances_from_2026_09_25_keep_week_over_week_reads(feed, monkeypatch):
+    """J-Quants margin-interest is daily from the 2026-09-25 application date.
+    Watchlist margin reads and the 1570 change compare Friday with Friday, not
+    one day with the next; the open week waits for its Friday."""
+    response, _ = feed
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: "2026-10-03T01:00:00Z")
+    response.payload = {"data": [
+        {"Date": day, "Code": "15700", "LongVol": long_, "ShrtVol": short}
+        for day, long_, short in (("2026-09-18", 100, 50), ("2026-09-25", 110, 40),
+                                  ("2026-09-28", 111, 30), ("2026-09-29", 112, 30),
+                                  ("2026-10-01", 113, 20))]}
+    result = scanner._jq_weekly_margin("1570")
+    assert [r["date"] for r in result] == ["2026-09-25", "2026-09-18"]
+    signal = scanner._margin_signal(result)
+    assert signal["date"] == "2026-09-25" and signal["shortWoWPct"] == -20.0
+    snapshot = scanner._JQ_MARGIN_CACHE["1570"]["sourceSnapshot"]
+    assert {r["periodEnd"] for r in snapshot["rows"]} >= {"2026-09-28", "2026-10-01"}   # stored as received
+    dynamics = scanner._jp_market_margin_1570_dynamics(cutoff="2026-10-03T02:00:00Z")
+    assert dynamics["current"]["periodEnd"] == "2026-09-25"
+    assert dynamics["change"]["isOneWeekChange"] is True
