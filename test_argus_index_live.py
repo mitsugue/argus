@@ -104,7 +104,8 @@ def test_loop_reads_futures_every_fifteen_minutes_only_outside_the_session(monke
         pass
     futures = [u for u in urls if live.FUTURES_SYMBOL in u]
     assert len(futures) == 2                       # at 0 s and 900 s within 1,800 s
-    assert len([u for u in urls if live.FUTURES_SYMBOL not in u]) == 1
+    assert len([u for u in urls if live.POLICY_RATE_SYMBOL in u]) == 2      # read alongside the future
+    assert len([u for u in urls if live.SYMBOL in u]) == 1
 
 
 def test_session_hours_do_not_read_futures(monkeypatch):
@@ -126,3 +127,18 @@ def test_session_hours_do_not_read_futures(monkeypatch):
     except Done:
         pass
     assert urls and all(live.FUTURES_SYMBOL not in u for u in urls)
+
+
+def test_policy_rate_future_is_read_with_the_overnight_future_and_bounded(monkeypatch):
+    monkeypatch.setattr(live, "_state", {"quote": None, "error": None, "thread": None,
+                                         "futures": None, "futuresError": None, "policyRate": None, "policyRateError": None})
+    class Response:
+        status_code = 200
+        def __init__(self, price): self.price = price
+        def json(self): return _payload(price=self.price, traded=1790971140, previous=96.05)
+    quote = live.refresh_policy_rate_once(lambda url, **k: Response(96.07), now_epoch=1790972000)
+    assert quote["symbol"] == "ZQ=F" and quote["impliedRatePct"] == 3.93
+    assert live.current_quote_safe()["policyRateFutures"]["impliedRatePct"] == 3.93
+    assert live.refresh_policy_rate_once(lambda url, **k: Response(5.0), now_epoch=1790972900) is None
+    assert live.current_quote_safe()["policyRateFuturesError"] == "ValueError"
+    assert live.current_quote_safe()["policyRateFutures"]["impliedRatePct"] == 3.93

@@ -124,6 +124,64 @@ def validate_unified_ai(value: Any, context: Mapping[str, Any], *, diagnostic=No
             "historyStatus": context["historyStatus"]}
 
 
+def validate_theme_views(value: Any, context: Mapping[str, Any], *, theme_ids, active_theme_ids,
+                         fields=("expectationJa", "fearJa", "triggerJa"), text_limit: int = 160,
+                         diagnostic=None):
+    """The AI's per-theme market-position views, under the six-section rules.
+
+    Evidence ids must exist in the context, numbers must come from the cited
+    evidence, and a view is never an observed FACT (13.8 §3-1 stage two).
+    """
+    THEMES = set(theme_ids); VIEW_FIELDS = tuple(fields); VIEW_TEXT_LIMIT = text_limit
+    def rejected(reason, theme_id=None):
+        if isinstance(diagnostic, dict):
+            diagnostic.update(status="REJECTED", reason=reason, themeId=theme_id)
+        return None
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > len(THEMES):
+        return rejected("position_schema_invalid")
+    current = {r["evidenceId"]: r for r in context.get("facts", [])}
+    active = set(active_theme_ids)
+    out = []; seen = set()
+    for row in value:
+        if not isinstance(row, Mapping) or set(row) != {"themeId", *VIEW_FIELDS, "evidenceIds", "kind"}:
+            return rejected("position_row_schema_invalid")
+        theme_id = row["themeId"]
+        if theme_id not in THEMES or theme_id in seen:
+            return rejected("position_theme_invalid", theme_id)
+        if theme_id not in active:
+            continue                      # a view on a quiet theme is dropped, not an error
+        seen.add(theme_id)
+        refs, kind = row["evidenceIds"], row["kind"]
+        texts = [row[field] for field in VIEW_FIELDS]
+        if (kind not in {"FACT", "INFERENCE", "UNKNOWN"} or not isinstance(refs, list) or len(refs) > 6
+                or any(not isinstance(ref, str) for ref in refs) or len(set(refs)) != len(refs)
+                or any(not isinstance(t, str) or len(t) > VIEW_TEXT_LIMIT for t in texts)
+                or not any(t.strip() for t in texts)):
+            return rejected("position_field_invalid", theme_id)
+        if any(ref not in current for ref in refs):
+            return rejected("unknown_evidence_reference", theme_id)
+        if kind != "UNKNOWN" and not refs:
+            return rejected("evidence_reference_required", theme_id)
+        if kind == "FACT":
+            return rejected("position_view_is_inference", theme_id)   # expectations are never observed facts
+        joined = "。".join(t for t in texts if t)
+        if any(p in joined for p in _FORBIDDEN_BRIEF_PATTERNS) or "確率" in joined:
+            return rejected("unsupported_authority_or_probability", theme_id)
+        allowed_digits = set().union(*(_digits_of(current[ref]["text"]) for ref in refs)) if refs else set()
+        unsupported = _digits_of(joined) - allowed_digits
+        if unsupported:
+            if isinstance(diagnostic, dict):
+                diagnostic["unsupportedNumericTokens"] = sorted(unsupported)[:20]
+            return rejected("unsupported_numeric_tokens", theme_id)
+        out.append({"themeId": theme_id, **{f: row[f].strip() for f in VIEW_FIELDS},
+                    "evidenceIds": list(refs), "kind": kind})
+    if isinstance(diagnostic, dict):
+        diagnostic.update(status="ACCEPTED", reason=None, themeId=None)
+    return out
+
+
 def calculation_identity(calculations):
     """Ignore read timestamps, retaining price/input/definition changes."""
     def stable(value):
