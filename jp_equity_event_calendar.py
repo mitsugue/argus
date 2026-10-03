@@ -288,7 +288,7 @@ SQ_SCHEDULE = Path(__file__).parent / "ops/calendar/jp_index_sq_2026.json"
 
 
 def sq_events(now: datetime, horizon_days: int) -> tuple[list[dict[str, Any]], list[str]]:
-    schedule = json.loads(SQ_SCHEDULE.read_text())
+    schedule = jp_market_events.load_published_sq_schedule(now)
     calendar = jp_market_events.sq_calendar(now=now, schedule=schedule, horizon_days=horizon_days)
     today = _now(now).date()
     out = []
