@@ -117,3 +117,37 @@ def test_policy_rate_quote_becomes_one_pricing_entry_per_day():
     view = mpm.snapshot(memory, now_iso="2026-10-05T13:00:00Z")
     us = next(t for t in view["themes"] if t["themeId"] == "US_POLICY_RATE")
     assert us["pricing"] == {"ffImpliedRatePct": 3.93} and us["status"] == "ACTIVE"
+
+
+def test_ai_views_are_validated_like_sections_and_appended_once():
+    memory = mpm.empty(); mpm.ingest_news(memory, NEWS); mpm.ingest_release_reaction(memory, RECORD)
+    view = mpm.snapshot(memory, now_iso="2026-10-03T02:00:00Z", scheduled_events=CALENDAR)
+    facts = mpm.explanation_facts(view)
+    context = {"contextId": "ctx-1", "facts": [{"evidenceId": "brief-fact-" + f["provenance"]["eventId"], **f} for f in facts]}
+    ids = [r["evidenceId"] for r in context["facts"]]
+    good = [{"themeId": "US_POLICY_RATE", "expectationJa": "弱い雇用で追加利上げは見送られるとの見方",
+             "fearJa": "次のCPIが強ければ利上げ観測が戻る", "triggerJa": "次のCPIと次回FOMCの示唆",
+             "evidenceIds": [ids[0]], "kind": "INFERENCE"},
+            {"themeId": "JPY", "expectationJa": "x", "fearJa": "y", "triggerJa": "z", "evidenceIds": [], "kind": "UNKNOWN"}]
+    diag = {}
+    out = mpm.validate_views(good, context, ["US_POLICY_RATE", "MIDDLE_EAST"], diagnostic=diag)
+    assert diag["status"] == "ACCEPTED" and [v["themeId"] for v in out] == ["US_POLICY_RATE"]   # quiet JPY dropped
+    assert mpm.validate_views(None, context, []) == []
+    bad = lambda **patch: mpm.validate_views([{**good[0], **patch}], context, ["US_POLICY_RATE"], diagnostic=(d := {})) is None and d["reason"]
+    assert bad(kind="FACT") == "position_view_is_inference"
+    assert bad(evidenceIds=["brief-fact-nope"]) == "unknown_evidence_reference"
+    assert bad(evidenceIds=[]) == "evidence_reference_required"
+    assert bad(expectationJa="上がる確率は高い") == "unsupported_authority_or_probability"
+    assert bad(fearJa="政策金利は4.50%に上がる") == "unsupported_numeric_tokens"
+    assert bad(expectationJa="x" * 161) == "position_field_invalid"
+    assert mpm.validate_views([{**good[0], "extra": 1}], context, ["US_POLICY_RATE"]) is None
+    assert mpm.validate_views(good + [good[0]], context, ["US_POLICY_RATE"]) is None
+    assert mpm.ingest_views(memory, out, context_id="ctx-1", generated_at="2026-10-03T02:10:00Z") == 1
+    assert mpm.ingest_views(memory, out, context_id="ctx-2", generated_at="2026-10-03T03:10:00Z") == 0   # unchanged view
+    changed = [{**out[0], "fearJa": "中東情勢の急変"}]
+    assert mpm.ingest_views(memory, changed, context_id="ctx-3", generated_at="2026-10-03T04:10:00Z") == 1
+    later = mpm.snapshot(memory, now_iso="2026-10-03T05:00:00Z")
+    us = next(t for t in later["themes"] if t["themeId"] == "US_POLICY_RATE")
+    assert us["view"]["fearJa"] == "中東情勢の急変" and us["view"]["contextId"] == "ctx-3" and us["view"]["kind"] == "INFERENCE"
+    # The AI view is context for display, never evidence text the AI could cite back.
+    assert all("期待:" not in f["text"] for f in mpm.explanation_facts(later))

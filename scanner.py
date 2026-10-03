@@ -16865,7 +16865,11 @@ def _market_brief_ai_polish(brief):
         "銘柄別の影響は登録銘柄の説明で確認する旨を短く伝える。"
         "銘柄の登録を保有とみなさず、保有状況や数量の入力を求めない。"
         "view、next、invalidationは推論または不明。警戒と回復を点灯数で強気度へ合算しない。"
-        "STRICT JSONで6項目とpresentationを返してください。"
+        "さらに position として、source=market_position の根拠があるテーマごとに "
+        "{themeId:根拠のeventIdの『market-position-』以降の名前,expectationJa:市場が期待している展開,fearJa:市場が警戒している展開,"
+        "triggerJa:読みが変わる引き金・次に確かめること,evidenceIds:根拠IDの配列,kind:INFERENCEまたはUNKNOWN} の配列を返す"
+        "(各160字以内・根拠にない数値は書かない・予測や売買の助言ではなく市場の見方の整理)。"
+        "STRICT JSONで6項目とpresentationとpositionを返してください。"
         + argus_presentation_intent.generation_instruction(prompt_catalog).replace("\n", " ")
         + "\n" + json.dumps(prompt_context, ensure_ascii=False, separators=(",", ":")))
     diag = {}
@@ -16875,7 +16879,7 @@ def _market_brief_ai_polish(brief):
     raw = restore_references(raw)
     validation = {}
     unified = argus_market_brief.validate_unified_ai(
-        {key: value for key, value in raw.items() if key != "presentation"}, context, diagnostic=validation) if isinstance(raw, dict) else None
+        {key: value for key, value in raw.items() if key not in ("presentation", "position")}, context, diagnostic=validation) if isinstance(raw, dict) else None
     def checked_presentation(value, summary, diagnostic):
         if not summary or not isinstance(value, dict):
             return None
@@ -16905,7 +16909,7 @@ def _market_brief_ai_polish(brief):
         raw = restore_references(raw)
         validation = {}
         unified = argus_market_brief.validate_unified_ai(
-            {key: value for key, value in raw.items() if key != "presentation"}, context, diagnostic=validation) if isinstance(raw, dict) else None
+            {key: value for key, value in raw.items() if key not in ("presentation", "position")}, context, diagnostic=validation) if isinstance(raw, dict) else None
         presentation = checked_presentation(raw, unified, validation)
         attempts.append({"provider": copy.deepcopy(diag), "validation": copy.deepcopy(validation)})
     brief["presentationPlan"] = presentation
@@ -16918,6 +16922,30 @@ def _market_brief_ai_polish(brief):
             brief["presentationError"] = validation.get("detail")
     brief["unifiedValidation"] = validation or {"status": "NO_RESPONSE", "reason": diag.get("reason"), "section": None}
     if unified:
+        # 13.8 §3-1 stage two: the AI's per-theme views are checked like the
+        # six sections and appended to the position memory; an invalid
+        # position never rejects the accepted six sections.
+        try:
+            position = brief.get("marketPosition") or {}
+            active = [t["themeId"] for t in (position.get("themes") or []) if t.get("status") == "ACTIVE"]
+            view_diag = {}
+            views = argus_market_position_memory.validate_views(raw.get("position"), context, active, diagnostic=view_diag)
+            brief["positionViews"] = {"status": view_diag.get("status") or "ACCEPTED", "reason": view_diag.get("reason"),
+                                      "themeId": view_diag.get("themeId"), "count": len(views or [])}
+            if views:
+                with _MARKET_POSITION_LOCK:
+                    memory = _market_position_memory_locked()
+                    added = argus_market_position_memory.ingest_views(memory, views, context_id=context["contextId"],
+                                                                      generated_at=_ai_now_iso())
+                    if added and _market_position_path():
+                        argus_persistent_storage.atomic_write_json(_market_position_path(), memory, file_mode=0o600)
+                    for theme in position.get("themes") or []:
+                        row = next((v for v in views if v["themeId"] == theme["themeId"]), None)
+                        if row:
+                            theme["view"] = {**{f: row[f] for f in argus_market_position_memory.VIEW_FIELDS},
+                                             "at": _ai_now_iso(), "contextId": context["contextId"], "kind": row["kind"]}
+        except Exception as exc:
+            brief["positionViews"] = {"status": "FAILED", "errorClass": type(exc).__name__}
         sections = unified["sections"]
         brief["unifiedSummary"] = unified
         brief["aiText"] = {"nowJa": sections["view"]["textJa"],
