@@ -90,3 +90,19 @@ def test_the_calendar_lists_the_review_events_inside_the_horizon():
     assert "NIKKEI_PERIODIC_REVIEW" not in kinds            # 2027-04-01 is beyond 90 days
     for row in result["events"]:
         assert row["whatJa"] and row["soWhatJa"] and row["watchJa"] and row["actionAuthority"] is False
+
+
+def test_us_election_day_is_the_tuesday_after_the_first_monday_of_november():
+    """Confirmed for 2026-11-03 (midterms; all 435 House seats and 35 Senate seats)."""
+    rows = cal.us_election_events(date(2026, 10, 3), date(2026, 12, 31))
+    assert [(row["date"], row["kind"]) for row in rows] == [("2026-11-03", "US_ELECTION_DAY")]
+    row = rows[0]
+    assert "中間選挙" in row["titleJa"] and row["importance"] == "high"
+    assert "435議席" in row["whatJa"] and "休場" in row["whatJa"]            # 11/3 is the Japanese Culture Day
+    assert "標本が少なく" in row["soWhatJa"] and row["actionAuthority"] is False
+    assert [r["date"] for r in cal.us_election_events(date(2027, 1, 1), date(2028, 12, 31))] == ["2028-11-07"]
+    assert "大統領選" in cal.us_election_events(date(2028, 10, 1), date(2028, 12, 31))[0]["titleJa"]
+    assert cal.us_election_events(date(2026, 11, 4), date(2027, 10, 31)) == []      # odd year, none
+    # Inside the 90-day calendar it appears among the events, sorted by date.
+    events = cal.equity_event_calendar(now=NOW, horizon_days=90)["events"]
+    assert any(e["eventId"] == "us-election-day-2026-11-03" for e in events)
