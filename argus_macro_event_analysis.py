@@ -288,7 +288,10 @@ def build_pre_prompt(event: Dict[str, Any], market_context_ja: str = "") -> str:
 
 
 def build_post_prompt(event: Dict[str, Any], pre: Dict[str, Any],
-                      actual: Dict[str, Any], market_context_ja: str = "") -> str:
+                      actual: Dict[str, Any], market_context_ja: str = "",
+                      reaction_ja: str = "") -> str:
+    """reaction_ja: the measured pre-release-baseline reaction (2026-10-03). When
+    present, the market reaction and the reading are taken from it alone."""
     import json as _json
     from argus_macro_results import project_series_timing
     actual = project_series_timing(actual)
@@ -311,12 +314,17 @@ def build_post_prompt(event: Dict[str, Any], pre: Dict[str, Any],
         "\nキー: verdict(hit|partial|miss|not_scoreable), "
         "answerCheckJa(事前予想と結果の照合・当たり外れの理由・1-2文), "
         "marketReactionJa(実測文脈から読める市場の反応・1文・数値の捏造禁止), "
+        "marketReadingJa(市場がこの結果をどう受け止めたか: 利上げ/利下げ観測の変化と株の反応の組み合わせから1文。"
+        "数字の強弱だけで景気の良し悪しを断定しない), "
+        "nikkeiImplicationJa(日経平均にとって何を意味するか・1文・売買指示ではない), "
+        "changeConditionJa(この読みが変わる条件と次に確認するもの・1文), "
         "portfolioImpactJa(ウォッチリスト/ポートフォリオ視点の影響コメント・1文・売買指示ではない), "
         "whatChangedJa(この結果で何の見方が変わるか・1文), limitationsJa(配列)。"
         f"\nイベント: {event.get('title')} ({event.get('eventCode')})"
         f"\n事前予想(保存済み): {pre_txt}"
         f"\n公式結果: {actual_txt}"
-        + (f"\n実測の市場文脈: {market_context_ja}" if market_context_ja else ""))
+        + (f"\n実測の市場文脈: {market_context_ja}" if market_context_ja else "")
+        + (f"\n{reaction_ja}" if reaction_ja else "\n実測の反応: 未取得(marketReadingJaは『反応を測れていない』とする)"))
 
 
 def ai_meta_record(meta: Any) -> Optional[Dict[str, Any]]:
@@ -383,6 +391,9 @@ def parse_post(out: Any, *, now_iso: str, pre_exists: bool, ai_meta: Any = None,
         # postJa = legacy-shape salvage (see parse_pre)
         "answerCheckJa": str(o.get("answerCheckJa") or o.get("postJa") or "")[:300],
         "marketReactionJa": str(o.get("marketReactionJa") or "")[:300],
+        "marketReadingJa": str(o.get("marketReadingJa") or "")[:300],
+        "nikkeiImplicationJa": str(o.get("nikkeiImplicationJa") or "")[:300],
+        "changeConditionJa": str(o.get("changeConditionJa") or "")[:300],
         "portfolioImpactJa": str(o.get("portfolioImpactJa") or "")[:300],
         "whatChangedJa": str(o.get("whatChangedJa") or "")[:300],
         "limitationsJa": sorted(set(lims)),

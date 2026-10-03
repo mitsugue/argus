@@ -55,3 +55,14 @@ and closing-window prediction. Preserve archived records and shared auth,
 recovery and integrated explanations while retiring dedicated execution paths.
 Prioritize reusable long-term research and index-defined valuation inputs;
 retain actual same-session sector data and quantity-free watchlist analysis.
+
+## 13.8 design (2026-10-03)
+
+Read `docs/V13_8_REQUIREMENTS.md` before changing the integrated explanation,
+news, events, Today or the event card. The owner's 13.8 goal is a product that
+is usable for decisions. The integrated AI sits on top: it keeps a persistent
+market-position memory (what investors expect, fear and watch, built from
+accumulated news on the existing event memory and history stores), reads every
+function's data in that context, and publishes the conclusion first. Missing,
+late or stale inputs are fixed in the functions below it. Measure a new signal
+on past data before showing it, and show its record next to it.

@@ -123,6 +123,7 @@ import jp_market_positioning
 import argus_analysis_history
 import argus_index_live
 import argus_macro_release_watch
+import argus_macro_release_reaction
 import jp_equity_event_calendar
 import argus_owner_dialogue_api
 import argus_web_push
@@ -14133,6 +14134,75 @@ def _refresh_macro_results_serialized():
         return _refresh_macro_results()
 
 
+def _macro_release_record(event):
+    eid = str(event.get("id") or event.get("eventId") or "")
+    _macro_analysis_restore_once()
+    with _MACRO_RECORD_LOCK:
+        rec = copy.deepcopy(_MACRO_ANALYSIS.get(eid))
+    if rec is None:
+        rec = argus_macro_event_analysis.new_record({**event, "id": eid}, now_iso=_ai_now_iso())
+    return eid, rec
+
+
+def _macro_release_windows(record):
+    """The stored windows as captures, so the record can be rebuilt after one more."""
+    out = {}
+    for name, window in ((record or {}).get("windows") or {}).items():
+        out[name] = {"capturedAt": window.get("observedAt"), "values": window.get("values") or {},
+                     "missing": window.get("missing") or []}
+    return out
+
+
+def _macro_release_store(eid, rec, baseline, windows):
+    now_iso = _ai_now_iso()
+    rec["releaseReaction"] = argus_macro_release_reaction.build(
+        eid, rec.get("eventTimeUtc"), baseline, windows)
+    rec["updatedAt"] = now_iso
+    _macro_merge_record(eid, rec, now_iso)
+    _macro_analysis_persist()
+    return rec["releaseReaction"]
+
+
+def _macro_release_baseline(event):
+    """Pre-release values from one provider; the last capture before the release wins (2026-10-03)."""
+    eid, rec = _macro_release_record(event)
+    current = rec.get("releaseReaction") or {}
+    base = argus_macro_release_reaction.capture(requests.get, received_epoch=time.time())
+    if not base["values"]:
+        raise ValueError("release_baseline_unavailable")
+    return _macro_release_store(eid, rec, base, _macro_release_windows(current))
+
+
+def _macro_release_window(event, name):
+    """One post-release window from the same provider as the baseline."""
+    eid, rec = _macro_release_record(event)
+    current = rec.get("releaseReaction") or {}
+    after = argus_macro_release_reaction.capture(requests.get, received_epoch=time.time())
+    if not after["values"]:
+        raise ValueError("release_window_unavailable")
+    windows = _macro_release_windows(current)
+    windows[name] = after
+    return _macro_release_store(eid, rec, current.get("baseline"), windows)
+
+
+def _macro_release_post(event, window):
+    """Run the post-release analysis once the official result exists. False: not yet."""
+    eid, rec = _macro_release_record(event)
+    if not (rec.get("actual") or {}).get("available"):
+        return False
+    if not ((rec.get("releaseReaction") or {}).get("windows") or {}).get(window):
+        return False
+    result = _generate_macro_event_analysis(limit=8)
+    return result.get("status") != "already_running"
+
+
+def _next_fomc_after(date_iso):
+    try:
+        return next(d for d in _FOMC_2026 if d >= str(date_iso or "")[:10])
+    except StopIteration:
+        return None
+
+
 def _refresh_macro_results():
     """Admin/cron: fetch official results for events past their release time."""
     from copy import deepcopy
@@ -14421,11 +14491,23 @@ def _generate_macro_event_analysis_locked(limit=8):
                              "reason": "pre_still_fresh_or_not_due"}
         if phase == "post_result":
             post = rec.get("post") or {}
-            if post.get("verdict") in (None, "", "not_available", "not_scoreable") or not post.get("generatedAt"):
+            # 2026-10-03: the measured reaction (pre-release baseline) is read at
+            # +5m, at +60m and once more after the US close (+8h); a post
+            # written before a later window is replaced, never the reverse.
+            reaction = rec.get("releaseReaction") or {}
+            order = ("+5m", "+60m", "+8h")
+            latest = reaction.get("latestWindow")
+            wanted = latest if latest in order else None
+            if wanted and post.get("reactionWindow") in order and order.index(post["reactionWindow"]) >= order.index(wanted):
+                wanted = None
+            if (post.get("verdict") in (None, "", "not_available", "not_scoreable") or not post.get("generatedAt")
+                    or (wanted and post.get("reactionWindow") != wanted)):
                 pre_exists = bool((rec.get("pre") or {}).get("argusScenarioJa")
                                   or (rec.get("pre") or {}).get("summaryJa"))
+                reaction_ja = argus_macro_release_reaction.prompt_text_ja(
+                    reaction, next_fomc=_next_fomc_after(rec.get("eventDate") or now_iso))
                 out, diag = _prose(argus_macro_event_analysis.build_post_prompt(
-                    ev, rec.get("pre") or {}, rec.get("actual") or {}, ctx), eid, phase)
+                    ev, rec.get("pre") or {}, rec.get("actual") or {}, ctx, reaction_ja=reaction_ja), eid, phase)
                 try:
                     rec["post"] = argus_macro_event_analysis.parse_post(
                         out or {}, now_iso=now_iso, pre_exists=pre_exists,
@@ -14436,6 +14518,7 @@ def _generate_macro_event_analysis_locked(limit=8):
                         out or {}, now_iso=now_iso, pre_exists=pre_exists,
                         actual_available=bool((rec.get("actual") or {}).get("available")))
                 rec["post"]["actualRevisionId"] = argus_macro_event_store.actual_revision_id(rec.get("actual"))
+                rec["post"]["reactionWindow"] = wanted if reaction_ja else None
                 made_post += 1
         rec["updatedAt"] = now_iso
         _macro_merge_record(eid, rec, now_iso)
@@ -18787,7 +18870,8 @@ def _news_intake_autostart():
         # for a delayed GitHub schedule (owner report 2026-10-02, US jobs).
         argus_macro_release_watch.ensure_started(
             lambda: (get_events_snapshot(allow_provider_fetch=False) or {}).get("events") or [],
-            _refresh_macro_results_serialized)
+            _refresh_macro_results_serialized,
+            baseline=_macro_release_baseline, window=_macro_release_window, post=_macro_release_post)
     except Exception as exc:
         add_log(f"macro release watch unavailable: {type(exc).__name__}")
     return None
