@@ -13,6 +13,7 @@ Sources, all without external calls or AI at request time:
   calendar (``argus_market_clock``), for the March, June, September and
   December month ends when most Japanese companies set dividend rights;
 - Japanese and US market holidays from the same calendar;
+- the US federal Election Day (Tuesday after the first Monday of November);
 - the Nikkei 225 periodic review (first trading day of April and October,
   from Nikkei's published selection rule) and MSCI's published review dates
   (announcement, and the close before the effective day when index funds trade).
@@ -234,6 +235,38 @@ MSCI_TEXT = {
 }
 
 
+US_ELECTION_TEXT = {
+    "whatJa": "米国の連邦議会選挙の投票日です。中間選挙の年は下院435議席すべてと上院の3分の1が改選され、与党と野党のどちらが議会の多数を握るかが決まります(大統領選の年は大統領も選ばれます)。投票は米国時間の火曜日で、開票結果は日本時間の翌朝から順に判明します。",
+    "soWhatJa": "議会の勢力図は、財政・減税・関税・規制といった政策が実際に通るかを左右するため、米国株・米金利・ドル円を通じて日本株に波及します。上院・下院で多数党が分かれる(ねじれ)と大型の政策は通りにくくなり、結果が事前の予想と大きく違えば、金利とドル円が動きやすくなります。ただし過去の選挙と値動きの関係は標本が少なく、方向を決める材料としては扱いません。",
+    "watchJa": "開票の途中経過と、米国株先物・米10年金利・ドル円・日経平均先物の反応。日本が休場の日に投票・開票が進むと、休み明けの寄付きでまとめて織り込まれます。",
+}
+
+
+def us_election_events(today: date, end: date) -> list[dict[str, Any]]:
+    """US federal Election Day: the Tuesday after the first Monday of November, in even years."""
+    out = []
+    for year in (today.year, today.year + 1, today.year + 2):
+        if year % 2 or year > 2100:
+            continue
+        first = date(year, 11, 1)
+        monday = first + timedelta(days=(7 - first.weekday()) % 7)
+        day = monday + timedelta(days=1)
+        if not today <= day <= end:
+            continue
+        midterm = year % 4 == 2
+        label = "中間選挙" if midterm else "大統領選・連邦議会選挙"
+        closed = not _trading(day)
+        out.append(_event(
+            event_id=f"us-election-day-{day.isoformat()}", kind="US_ELECTION_DAY",
+            at=day.isoformat(), date_only=True,
+            title_ja=f"米国 {label}の投票日({year}年)", importance="high",
+            what_ja=US_ELECTION_TEXT["whatJa"]
+                + ("この日は東京市場が休場のため、結果は翌営業日の寄付きで初めて織り込まれます。" if closed else ""),
+            so_what_ja=US_ELECTION_TEXT["soWhatJa"], watch_ja=US_ELECTION_TEXT["watchJa"],
+            source="rule:us-federal-election-day-tuesday-after-first-monday-of-november", today=today))
+    return out
+
+
 def nikkei_review_events(today: date, end: date) -> list[dict[str, Any]]:
     """The effective day of the Nikkei 225 periodic review: first trading day of April and October."""
     out = []
@@ -335,6 +368,7 @@ def equity_event_calendar(*, now: datetime, horizon_days: int = DEFAULT_HORIZON_
     except (OSError, ValueError, TypeError, KeyError):
         gaps.append("msci_schedule_unavailable")
     try:
+        events += us_election_events(today, end)
         events += nikkei_review_events(today, end)
         events += dividend_events(today, end, ex_dividend)
         events += holiday_events(today, end)
