@@ -81,3 +81,8 @@
 .ie-result-details .ie-data, .ie-result-details small { font-size: 13px; line-height: 1.6; }
 
 .ie-dialogue .owner-dialogue article h4 { font-size: 15px; line-height: 1.65; font-weight: 500; }
+/* 2026-10-03: "so what" lines after a release — reading, measured reaction, change condition. */
+.ie-sowhat p { margin: 0 0 4px; color: var(--text-main); font-size: 12px; line-height: 1.5; }
+.ie-sowhat p strong { font-weight: 700; }
+.ie-sowhat .ie-k { display: inline-block; min-width: 6.5em; color: var(--text-sub); font-weight: 600; }
+.ie-sowhat small { display: block; margin-top: 2px; color: var(--text-sub); }
