@@ -14576,6 +14576,8 @@ def api_argus_macro_event_analysis():
                     "lastGenerate": _MACRO_ANALYSIS_STATE.get("lastGenerate"),
                     "generateRun": _MACRO_ANALYSIS_STATE.get("generateRun"),
                     "localPersistence": _MACRO_ANALYSIS_STATE.get("localPersistence"),
+                    # 2026-10-03: the in-server release watcher (baseline, windows, posts).
+                    "releaseWatch": argus_macro_release_watch.status(),
                     "eventModel": _OPENAI_EVENT_MODEL})
 
 
@@ -16725,6 +16727,18 @@ def _market_position_update(news_events, scheduled_events):
             records = [copy.deepcopy(r) for r in _MACRO_ANALYSIS.values() if r.get("releaseReaction")]
         for record in records:
             added += argus_market_position_memory.ingest_release_reaction(memory, record)
+        # Public headlines and the GDELT radar widen the memory beyond trusted
+        # mail (13.8 §4-6); both are already-cached documents, read only.
+        try:
+            added += argus_market_position_memory.ingest_public_headlines(
+                memory, list(reversed(list(_INTEL_STORE)))[:120],
+                argus_news_intelligence.classify_event, now_iso=_ai_now_iso())
+        except Exception:
+            pass
+        try:
+            added += argus_market_position_memory.ingest_radar(memory, _NEWS_CACHE.get("data"))
+        except Exception:
+            pass
         if added:
             path = _market_position_path()
             if path:

@@ -18,7 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 SCHEMA = "argus-market-position-memory-v1"
 MAX_ENTRIES = 2000
@@ -143,6 +143,67 @@ def ingest_release_reaction(memory: Dict[str, Any], record: Mapping[str, Any]) -
                        f"発表前の織り込み: FF金利先物の示す政策金利の予想 {100 - float(base['price']):.3f}%",
                        ref={"eventId": str(record.get("eventId") or ""), "source": "release_baseline", "symbol": "ZQ=F"},
                        measured={"ffImpliedRatePct": round(100 - float(base["price"]), 3)})
+        added += append(memory, entry)
+    return added
+
+
+RADAR_THEMES = {"geopolitics": "MIDDLE_EAST", "energy_geopolitics": "MIDDLE_EAST",
+                "rates_shock": "US_LONG_RATES", "fx_policy": "JPY"}
+PUBLIC_HEADLINE_DAYS = 3
+PUBLIC_HEADLINE_LIMIT = 30
+
+
+def ingest_public_headlines(memory: Dict[str, Any], items: Iterable[Mapping[str, Any]],
+                            classify: Callable[[str], Mapping[str, Any]], *, now_iso: str) -> int:
+    """Public RSS headlines (metadata only) become WATCH entries on a theme.
+
+    They are weaker than trusted mail: severity stays WATCH, and only headlines
+    the deterministic taxonomy puts on a theme are kept. Bounded per update.
+    """
+    now = _instant(now_iso)
+    added = 0; considered = 0
+    for item in items:
+        if considered >= PUBLIC_HEADLINE_LIMIT:
+            break
+        title = str(item.get("title") or "").strip()
+        at = _instant(item.get("publishedAt") or item.get("firstDetectedAt"))
+        if not title or at is None or (now and now - at > timedelta(days=PUBLIC_HEADLINE_DAYS)):
+            continue
+        try:
+            taxonomy = classify(title)
+        except Exception:
+            continue
+        theme_id = theme_for_family((taxonomy or {}).get("eventType"))
+        if theme_id is None:
+            continue
+        considered += 1
+        entry = _entry(theme_id, "PUBLIC_HEADLINE", at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                       f"{item.get('sourceId') or '公開ニュース'}: {title}",
+                       ref={"source": "public_rss", "sourceId": item.get("sourceId"),
+                            "url": item.get("canonicalUrl") if str(item.get("canonicalUrl") or "").startswith("https://") else None,
+                            "eventType": (taxonomy or {}).get("eventType")}, severity="WATCH")
+        added += append(memory, entry)
+    return added
+
+
+def ingest_radar(memory: Dict[str, Any], radar: Optional[Mapping[str, Any]]) -> int:
+    """GDELT headline counts per radar theme (cached document, never fetched here)."""
+    if not isinstance(radar, Mapping) or radar.get("status") != "live":
+        return 0
+    at = _instant(radar.get("asOf") or radar.get("generatedAt"))
+    if at is None:
+        return 0
+    bucket = at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:00Z")   # one entry per theme per hour
+    added = 0
+    for theme in radar.get("themes") or []:
+        theme_id = RADAR_THEMES.get(str(theme.get("key") or ""))
+        count = theme.get("count")
+        if theme_id is None or not isinstance(count, int) or count <= 0 or str(theme.get("level") or "") in ("", "none", "low"):
+            continue
+        entry = _entry(theme_id, "RADAR", bucket,
+                       f"公開ニュースの件数: {theme.get('labelJa') or theme.get('key')} {count}件(6時間・{theme.get('level')})",
+                       ref={"source": "news_radar", "key": theme.get("key"), "bucket": bucket},
+                       severity="WATCH", measured={"count": count, "level": theme.get("level")})
         added += append(memory, entry)
     return added
 

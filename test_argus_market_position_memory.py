@@ -80,3 +80,28 @@ def test_load_accepts_only_this_schema_and_bounds_entries():
     for n in range(mpm.MAX_ENTRIES + 5):
         mpm.append(big, mpm._entry("JPY", "NEWS", f"2026-01-01T00:{n % 60:02d}:00Z", f"n{n}", ref={"i": n}))
     assert len(big["entries"]) == mpm.MAX_ENTRIES
+
+
+def test_public_headlines_and_radar_widen_the_memory_as_watch_entries():
+    import argus_news_intelligence as ni
+    memory = mpm.empty()
+    items = [{"sourceId": "reuters_jp", "title": "イラン革命防衛隊、ホルムズ海峡で艦船を拿捕", "publishedAt": "2026-10-02T20:00:00Z", "canonicalUrl": "https://example.com/a"},
+             {"sourceId": "nikkei", "title": "今週の読まれた記事ランキング", "publishedAt": "2026-10-02T20:00:00Z"},
+             {"sourceId": "old", "title": "イラン、制裁に反発", "publishedAt": "2026-09-20T00:00:00Z"},
+             {"sourceId": "bloomberg", "title": "FRB高官、追加利上げに慎重", "publishedAt": "2026-10-03T00:30:00Z", "canonicalUrl": "http://insecure"}]
+    assert mpm.ingest_public_headlines(memory, items, ni.classify_event, now_iso="2026-10-03T02:00:00Z") == 2
+    assert mpm.ingest_public_headlines(memory, items, ni.classify_event, now_iso="2026-10-03T02:00:00Z") == 0
+    kinds = {(r["themeId"], r["kind"], r["severity"]) for r in memory["entries"]}
+    assert kinds == {("MIDDLE_EAST", "PUBLIC_HEADLINE", "WATCH"), ("US_POLICY_RATE", "PUBLIC_HEADLINE", "WATCH")}
+    assert next(r for r in memory["entries"] if r["themeId"] == "US_POLICY_RATE")["ref"]["url"] is None
+    radar = {"status": "live", "asOf": "2026-10-03T01:40:00Z", "themes": [
+        {"key": "energy_geopolitics", "labelJa": "エネルギー・地政学", "count": 7, "level": "elevated"},
+        {"key": "rates_shock", "labelJa": "米長期金利ショック", "count": 0, "level": "none"},
+        {"key": "disaster", "labelJa": "災害", "count": 3, "level": "elevated"}]}
+    assert mpm.ingest_radar(memory, radar) == 1
+    assert mpm.ingest_radar(memory, radar) == 0
+    assert mpm.ingest_radar(memory, {**radar, "asOf": "2026-10-03T01:55:00Z"}) == 0     # same hour
+    assert mpm.ingest_radar(memory, {**radar, "asOf": "2026-10-03T02:05:00Z"}) == 1
+    assert mpm.ingest_radar(memory, {**radar, "status": "stale"}) == 0
+    row = next(r for r in memory["entries"] if r["kind"] == "RADAR")
+    assert row["measured"] == {"count": 7, "level": "elevated"} and row["at"] == "2026-10-03T01:00Z"
