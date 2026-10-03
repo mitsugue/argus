@@ -1,7 +1,7 @@
 """ARGUS V11.5.3 — Investment Universe (pure, deterministic, stdlib-only).
 
 Core Portfolio is the source of truth for WHAT ARGUS watches. This module encodes
-those asset classes (verified against web/src/routes/CorePortfolio.tsx and the
+those asset classes (originally verified against the retired Core Portfolio route and the
 core-action-alerts backend: JP/US individual stocks, GLD, TLT, XLRE, BTC/ETH,
 USD/JPY, cash, and the accumulation funds) so C.A.O.S. source coverage and the
 Watchtower plan are derived from the portfolio, not from an ad-hoc feed list.

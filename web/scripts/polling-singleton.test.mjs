@@ -62,8 +62,6 @@ const assetIntel = read('src/hooks/useAssetIntel.ts');
 const fundNav = read('src/hooks/useFundNav.ts');
 const holdings = read('src/routes/Watchlist.tsx');
 const assetDesk = read('src/components/assetDesk/AssetDeskList.tsx');
-const portfolio = read('src/routes/CorePortfolio.tsx');
-const trades = read('src/components/dashboard/TradeJournalCard.tsx');
 
 for (const source of [important, ledger, actions, japan, us]) {
   assert.match(source, /useSyncExternalStore/);
@@ -133,11 +131,9 @@ assert.equal((holdings.match(/useAssetIntel\(/g) ?? []).length, 1);
 assert.doesNotMatch(assetIntel, /useAssets\(/);
 assert.equal((assetIntel.match(/useFundNav\(/g) ?? []).length, 1);
 assert.equal((fundNav.match(/\/api\/argus\/fund-nav/g) ?? []).length, 1);
-for (const source of [assetDesk, portfolio]) {
+for (const source of [assetDesk]) {
   assert.doesNotMatch(source, /useAssetIntel\(|useFundNav\(/);
 }
-assert.doesNotMatch(trades, /useJapanWatchlist|useUSWatchlist|setInterval/);
-assert.doesNotMatch(trades, /readTrades|addTrade|tradePnlPct/);
 assert.doesNotMatch(holdings, /TradeJournalCard|ProHandoffButton/);
 
 console.log('polling-singleton.test: ok (assets/intel/NAV 1, Trade loops 0, event read 1, health timer 0)');

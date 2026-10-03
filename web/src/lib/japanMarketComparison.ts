@@ -118,7 +118,63 @@ export function validJapanMarketComparison(v: unknown, horizon: number): v is Ja
     && finite(f.sampleCount) && Number.isInteger(f.sampleCount) && f.sampleCount >= 0
     && finite(f.flatThresholdPct) && f.flatThresholdPct >= 0 && validCounts(f.counts, f.sampleCount)
     && (f.validation === undefined || validForecastValidation(f.validation, f.validationStatus))
-    && (f.weightSearch === undefined || validWeightSearch(f.weightSearch));
+    && (f.weightSearch === undefined || validWeightSearch(f.weightSearch))
+    && (f.signEventStudy === undefined || validSignEventStudy(f.signEventStudy));
+}
+
+const SIGN_FAMILIES = ['D01', 'D02', 'D03', 'D04', 'D05', 'D06', 'D07'];
+const SIGN_STATUSES = ['INSUFFICIENT_SAMPLE', 'NOT_ABOVE_BASELINE', 'ABOVE_BASELINE', 'NOT_EVALUABLE'];
+
+function validSignMetrics(m: unknown): boolean {
+  if (!object(m)) return false;
+  const share = (n: unknown) => n === null || (finite(n) && n >= 0 && n <= 1);
+  const whole = (n: unknown) => finite(n) && Number.isInteger(n) && n >= 0;
+  const pctOrNull = (n: unknown) => n === null || finite(n);
+  return whole(m.evaluated) && whole(m.falls) && whole(m.baselineSessions)
+    && (m.falls as number) <= (m.evaluated as number)
+    && ['fallShare', 'fallShareWilsonLower95', 'riseShare', 'baselineFallShare',
+      'hitShare', 'hitShareWilsonLower95', 'baselineHitShare'].every(k => share(m[k]))
+    && whole(m.hits) && (m.hits as number) <= (m.evaluated as number)
+    && pctOrNull(m.meanReturnPct) && pctOrNull(m.baselineMeanReturnPct)
+    && ((m.evaluated as number) > 0) === (m.fallShare !== null)
+    && ((m.baselineSessions as number) > 0) === (m.baselineFallShare !== null);
+}
+
+/** The seven warning conditions' event study: descriptive shares, never probabilities. */
+export function validSignEventStudy(v: unknown): boolean {
+  if (!object(v) || v.schemaVersion !== 'jp-sign-event-study-v1' || typeof v.method !== 'string'
+    || !['AVAILABLE', 'UNAVAILABLE'].includes(String(v.status))
+    || v.predictiveProbabilities !== null || v.actionAuthority !== false
+    || v.validationStatus !== 'UNVALIDATED' || v.historicalVintageVerified !== false
+    || !finite(v.primaryHorizon) || !finite(v.minimumActivations) || !Number.isInteger(v.minimumActivations)
+    || !object(v.conditions)) return false;
+  const keys = Object.keys(v.conditions);
+  if (keys.length !== SIGN_FAMILIES.length || !SIGN_FAMILIES.every(k => keys.includes(k))) return false;
+  const whole = (n: unknown) => finite(n) && Number.isInteger(n) && n >= 0;
+  const day = (d: unknown) => d === null || (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d));
+  const primary = String(v.primaryHorizon);
+  const minimum = v.minimumActivations as number;
+  return Object.entries(v.conditions).every(([family, c]) => {
+    if (!object(c) || c.family !== family || !SIGN_STATUSES.includes(String(c.status))
+      || !(c.expects === null || c.expects === 'FALL' || c.expects === 'RISE')
+      || c.predictiveProbabilities !== null || c.actionAuthority !== false
+      || !['rawActivations', 'activations', 'overlappingMerged', 'falseAlarms'].every(k => whole(c[k]))
+      || (c.activations as number) > (c.rawActivations as number)
+      || !['firstActivation', 'lastActivation', 'coverageStart', 'coverageEnd'].every(k => day(c[k]))
+      || !(c.falseAlarmShare === null || (finite(c.falseAlarmShare) && c.falseAlarmShare >= 0 && c.falseAlarmShare <= 1))
+      || !object(c.horizons) || !Object.values(c.horizons).every(validSignMetrics)
+      || !Array.isArray(c.periods)) return false;
+    if (c.status === 'NOT_EVALUABLE') return c.activations === 0;
+    const h = c.horizons[primary] as Record<string, number> | undefined;
+    const evaluated = h ? h.evaluated : 0;
+    if (evaluated > (c.activations as number)) return false;
+    if ((c.status === 'INSUFFICIENT_SAMPLE') !== (evaluated < minimum)) return false;
+    if (c.periods.length === 0) return evaluated === 0;
+    const names = ['design', 'confirm', 'report'];
+    return c.periods.length === 3 && c.periods.every((p, i) => object(p) && p.name === names[i]
+      && day(p.start) && day(p.end) && whole(p.activations) && object(p.horizons)
+      && Object.values(p.horizons).every(validSignMetrics));
+  });
 }
 
 function validWeightSearch(w: unknown): boolean {

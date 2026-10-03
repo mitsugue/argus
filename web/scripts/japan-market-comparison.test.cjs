@@ -55,6 +55,54 @@ for (const patch of [{ predictiveProbabilities: 0.5 }, { testHitRate: 2 }, { tra
   assert(!validJapanMarketComparison(invalid, 5), JSON.stringify(patch));
 }
 console.log('Japan comparison weight search shape PASS');
+// 2026-10-02: the seven warning conditions' event study rides the forecast.
+const signMetrics = (evaluated, falls, baseline) => ({ evaluated, falls,
+  fallShare: evaluated ? falls / evaluated : null, fallShareWilsonLower95: evaluated ? 0.3 : null,
+  riseShare: evaluated ? (evaluated - falls) / evaluated : null, meanReturnPct: evaluated ? -0.4 : null,
+  baselineSessions: 900, baselineFallShare: baseline, baselineMeanReturnPct: 0.1,
+  hits: falls, hitShare: evaluated ? falls / evaluated : null, hitShareWilsonLower95: evaluated ? 0.3 : null,
+  baselineHitShare: baseline });
+const signCondition = (family, status, activations) => ({ family, seriesId: family === 'D07' ? null : 'series',
+  activationValue: family === 'D07' ? null : 1, expects: family === 'D07' ? null : 'FALL', status, reason: null, rawActivations: activations + 2,
+  activations, overlappingMerged: 2, firstActivation: activations ? '2017-01-05' : null,
+  lastActivation: activations ? '2026-08-03' : null, coverageStart: '2016-10-04', coverageEnd: '2026-09-03',
+  horizons: status === 'NOT_EVALUABLE' ? {} : { 5: signMetrics(activations, Math.floor(activations / 2), 0.45),
+    20: signMetrics(activations, Math.floor(activations / 3), 0.4) },
+  falseAlarms: 1, falseAlarmShare: activations ? 1 / activations : null,
+  periods: status === 'NOT_EVALUABLE' ? [] : ['design', 'confirm', 'report'].map(name => ({ name, start: '2017-01-04',
+    end: '2019-12-30', activations: Math.floor(activations / 3), horizons: { 5: signMetrics(Math.floor(activations / 3), Math.min(1, Math.floor(activations / 3)), 0.45) } })),
+  predictiveProbabilities: null, actionAuthority: false });
+const signEventStudy = { schemaVersion: 'jp-sign-event-study-v1', method: 'jp-sign-event-study-v1',
+  informationCutoff: '2026-09-11T08:00:00Z', status: 'AVAILABLE', cooldownSessions: 20, horizons: [5, 20],
+  primaryHorizon: 5, minimumActivations: 20, historicalVintageVerified: false, validationStatus: 'UNVALIDATED',
+  predictiveProbabilities: null, actionAuthority: false, conditions: {
+    D01: signCondition('D01', 'NOT_ABOVE_BASELINE', 31), D02: signCondition('D02', 'INSUFFICIENT_SAMPLE', 4),
+    D03: signCondition('D03', 'ABOVE_BASELINE', 40), D04: signCondition('D04', 'INSUFFICIENT_SAMPLE', 0),
+    D05: signCondition('D05', 'INSUFFICIENT_SAMPLE', 12), D06: signCondition('D06', 'NOT_ABOVE_BASELINE', 25),
+    D07: signCondition('D07', 'NOT_EVALUABLE', 0) } };
+const withSigns = structuredClone(withSearch); withSigns.forecast.signEventStudy = signEventStudy;
+assert(validJapanMarketComparison(withSigns, 5));
+for (const mutate of [
+  s => { s.predictiveProbabilities = 0.6; },
+  s => { s.actionAuthority = true; },
+  s => { s.conditions.D01.predictiveProbabilities = 0.55; },
+  s => { s.conditions.D01.horizons[5].fallShare = 1.4; },
+  s => { s.conditions.D01.horizons[5].falls = 99; },
+  s => { s.conditions.D02.status = 'ABOVE_BASELINE'; },            // 4 activations cannot beat the baseline
+  s => { s.conditions.D01.status = 'INSUFFICIENT_SAMPLE'; },       // 31 is not insufficient
+  s => { s.conditions.D01.status = 'PROBABLE'; },
+  s => { delete s.conditions.D07; },
+  s => { s.conditions.D08 = s.conditions.D01; },
+  s => { s.conditions.D03.family = 'D04'; },
+  s => { s.conditions.D03.periods = s.conditions.D03.periods.slice(1); },
+  s => { s.conditions.D01.firstActivation = 'yesterday'; },
+  s => { s.conditions.D01.activations = 40; },                       // more than raw activations
+  s => { s.schemaVersion = 'other'; },
+]) {
+  const invalid = structuredClone(withSigns); mutate(invalid.forecast.signEventStudy);
+  assert(!validJapanMarketComparison(invalid, 5), mutate.toString());
+}
+console.log('Japan comparison seven warning conditions event study shape PASS');
 const withScale = { ...document, unit: 'JPY_INDEX_POINTS', valuationEvidence: {
   date: document.anchorDate, eps: 2000, per: 20,
   epsKind: 'DERIVED_FROM_INDEX_CLOSE_AND_INDEX_BASED_PER', knownAt: '2026-09-11T07:30:00Z',

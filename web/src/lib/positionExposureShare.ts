@@ -1,5 +1,5 @@
 // V11.8.0 — device-local hand-off of the computed PortfolioExposure between
-// components (Today/Watchlist compute it; ProHandoffButton / AI Review Sheet
+// components (Today/Watchlist compute it; the AI Review Sheet
 // read it at copy time). Module-singleton on purpose: the data never leaves
 // the page, is never persisted, and is never sent to the backend.
 
