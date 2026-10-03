@@ -38835,7 +38835,7 @@ def _jp_market_comparison_calculate(horizon):
             backtest_cache=_JP_ANALOG_BACKTEST_CACHE)
         result["marketFeatureAcquisition"] = {k: _JP_MARKET_FEATURE_HISTORY.get(k)
             for k in ("status", "lastSuccessfulCalculationAt", "errorClass", "errorReason",
-                      "firstCutoff", "lastCutoff")}
+                      "firstCutoff", "lastCutoff", "sourceWarming", "reuseDecision", "calculationWork")}
         result["marketFeatureAcquisition"]["derivedCache"] = dict(_JP_MARKET_FEATURE_CACHE_STATUS)
         result["marketFeatureAcquisition"]["seriesAcquisition"] = _jp_market_series_acquisition_status()
         result["marketFeatureAcquisition"]["officialSources"] = _JP_OFFICIAL_SOURCE_CACHE.snapshot()
@@ -39674,6 +39674,15 @@ def _jp_market_feature_history_warm():
             path=(os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3')
                   if _cost_policy_durable_enabled() else None), received_at=now)
         price_series['jp10y'] = list(_JP_OFFICIAL_SOURCE_CACHE.rows.get('jp_yield_curve', []))
+        # 2026-10-03: a re-sent identical row keeps its first receipt and
+        # sessions that left a provider's rolling window stay selected, so a
+        # refetch or a restart no longer changes these inputs and replays ten
+        # years of features (jp_market_acquisition.retain_first_receipts).
+        source_history_path = (os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3')
+                               if _cost_policy_durable_enabled() else None)
+        for name in ("topix", "us10y", "usdjpy"):
+            price_series[name] = jp_market_acquisition.retain_first_receipts(
+                price_series.get(name, []), path=source_history_path, source_id=name, received_at=now)
         bars = price_series["nikkei"]
         if not bars:
             _JP_MARKET_FEATURE_HISTORY = {**_JP_MARKET_FEATURE_HISTORY, "status": "INDEX_CACHE_COLD"}
@@ -39730,6 +39739,11 @@ def _jp_market_feature_history_warm():
         cutoffs = sorted({r["date"] + "T23:59:59Z" for r in bars if r["date"] < now[:10]})
         history = jp_market_features.build_feature_history(cutoffs=[*cutoffs, now],
             previous_history=_JP_MARKET_FEATURE_HISTORY, **inputs)
+        if history.get("sourceWarming"):
+            # A source came back short after a restart: the verified history
+            # is kept as it was, not restamped as a new calculation.
+            _JP_MARKET_FEATURE_HISTORY = {**_JP_MARKET_FEATURE_HISTORY, "sourceWarming": history["sourceWarming"]}
+            return
         _JP_MARKET_FEATURE_HISTORY = {**history, "status": "AVAILABLE", "inputIdentity": identity,
                                      "lastSuccessfulCalculationAt": now}
         _JP_MARKET_ENGINE_MARKET_VIEW_MEMO["ts"] = 0
