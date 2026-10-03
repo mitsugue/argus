@@ -106,9 +106,13 @@ def test_post_prompt_reads_the_measured_reaction_and_is_replaced_once_at_sixty(m
     assert len(prompts) == 2 and scanner._MACRO_ANALYSIS[EVENT["id"]]["post"]["reactionWindow"] == "+60m"
     scanner._generate_macro_event_analysis(limit=8)
     assert len(prompts) == 2
+    scanner._macro_release_window(EVENT, "+8h"); scanner._generate_macro_event_analysis(limit=8)
+    assert len(prompts) == 3 and scanner._MACRO_ANALYSIS[EVENT["id"]]["post"]["reactionWindow"] == "+8h"
+    scanner._generate_macro_event_analysis(limit=8)
+    assert len(prompts) == 3
     # The event card prefers the measured reaction and exposes the reading.
     import argus_dashboard_event_summary as DS
     item = DS.build_summary_item(important_event={**EVENT, "eventId": EVENT["id"]},
                                  macro_record=scanner._MACRO_ANALYSIS[EVENT["id"]], now_iso="2026-10-02T14:00:00Z")
-    assert item["releaseReaction"]["latestWindow"] == "+60m" and item["caos"]["marketReadingJa"].startswith("利上げ観測の後退")
+    assert item["releaseReaction"]["latestWindow"] == "+8h" and item["caos"]["marketReadingJa"].startswith("利上げ観測の後退")
     assert item["caos"]["changeConditionJa"].startswith("FOMC")

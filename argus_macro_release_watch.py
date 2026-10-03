@@ -10,8 +10,8 @@ reads.
 
 2026-10-03: the same watcher now drives the measured reaction. Between fifteen
 and one minutes before the release it captures a baseline; at +5, +30 and +60
-minutes it captures the same symbols again; once the official result and the
-+5 minute window exist it asks the scanner to run the post-release analysis,
+minutes and eight hours it captures the same symbols again; once the official
+result and the +5 minute window exist it asks the scanner to run the post-release analysis,
 which is single-flight and reads the measured reaction instead of a baseline
 taken after the release.
 """
@@ -62,7 +62,7 @@ def reaction_tick(events: Iterable[Mapping[str, Any]], now: datetime, *,
     for event in events:
         at = reaction._instant(event.get("eventTimeUtc"))
         event_id = str(event.get("id") or event.get("eventId") or "")
-        if at is None or not event_id or now < at - reaction.BASELINE_FROM or now > at + timedelta(hours=2):
+        if at is None or not event_id or now < at - reaction.BASELINE_FROM or now > at + reaction.WATCH_UNTIL:
             continue
         with _lock:
             captured = dict(_state["windows"].get(event_id) or {})
@@ -80,7 +80,7 @@ def reaction_tick(events: Iterable[Mapping[str, Any]], now: datetime, *,
                     _state["windows"].setdefault(event_id, {})[name] = now
                 done.append((event_id, name))
             have = captured if not name else {**captured, name: now}
-            for ask in ("+5m", "+60m"):     # first reading, then the settled one
+            for ask in ("+5m", "+60m", "+8h"):   # first reading, the hour, the settled day
                 if post and ask in have and ask not in (posted or {}):
                     if post(event, ask):    # False: result not there yet, ask again next tick
                         with _lock:

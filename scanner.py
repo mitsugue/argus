@@ -14492,11 +14492,13 @@ def _generate_macro_event_analysis_locked(limit=8):
         if phase == "post_result":
             post = rec.get("post") or {}
             # 2026-10-03: the measured reaction (pre-release baseline) is read at
-            # +5m and once more when the +60m window settles; a post written
-            # before either is replaced, never a post written after it.
+            # +5m, at +60m and once more after the US close (+8h); a post
+            # written before a later window is replaced, never the reverse.
             reaction = rec.get("releaseReaction") or {}
-            wanted = reaction.get("latestWindow") if reaction.get("latestWindow") in ("+5m", "+60m") else None
-            if wanted == "+5m" and post.get("reactionWindow") == "+60m":
+            order = ("+5m", "+60m", "+8h")
+            latest = reaction.get("latestWindow")
+            wanted = latest if latest in order else None
+            if wanted and post.get("reactionWindow") in order and order.index(post["reactionWindow"]) >= order.index(wanted):
                 wanted = None
             if (post.get("verdict") in (None, "", "not_available", "not_scoreable") or not post.get("generatedAt")
                     or (wanted and post.get("reactionWindow") != wanted)):

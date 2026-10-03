@@ -41,17 +41,17 @@ def test_reaction_baseline_windows_and_post_run_once_each_in_order(monkeypatch):
     cb = dict(baseline=lambda e: log.append(("baseline", e["id"])),
               window=lambda e, n: log.append((n, e["id"])),
               post=lambda e, ask: (log.append(("post" + ask, e["id"])), result_ready[0])[1])
-    minutes = [-20, -14, -8, -2, 0, 3, 5, 6, 12, 30, 35, 60, 61, 90]
+    minutes = [-20, -14, -8, -2, 0, 3, 5, 6, 12, 30, 35, 60, 61, 90, 480, 490, 540]
     for m in minutes:
         if m == 35:
             result_ready[0] = True
         watch.tick(lambda: [NFP], lambda: None, now=AT + timedelta(minutes=m), **cb)
     assert [x for x in log if x[0] == "baseline"] == [("baseline", NFP["id"])] * 3   # -14, -8, -2
-    assert [x[0] for x in log if x[0].startswith("+")] == ["+5m", "+30m", "+60m"]
-    # asked at +5, +6, +12, +30 (result missing), succeeded at +35; asked again once at +60
-    assert [x[0] for x in log if x[0].startswith("post")] == ["post+5m"] * 5 + ["post+60m"]
+    assert [x[0] for x in log if x[0].startswith("+")] == ["+5m", "+30m", "+60m", "+8h"]
+    # asked at +5, +6, +12, +30 (result missing), succeeded at +35; again once at +60 and once at +8h
+    assert [x[0] for x in log if x[0].startswith("post")] == ["post+5m"] * 5 + ["post+60m", "post+8h"]
     st = watch.status()["reaction"]
-    assert st["windows"] == {NFP["id"]: ["+30m", "+5m", "+60m"]} and st["posted"] == {NFP["id"]: ["+5m", "+60m"]}
+    assert st["windows"] == {NFP["id"]: ["+30m", "+5m", "+60m", "+8h"]} and st["posted"] == {NFP["id"]: ["+5m", "+60m", "+8h"]}
     assert st["lastError"] is None
 
 

@@ -51,6 +51,8 @@ def test_windows_open_only_at_their_minute_and_once():
     assert rr.window_due(T, T + timedelta(minutes=31), {"+5m": 1}) == "+30m"
     assert rr.window_due(T, T + timedelta(minutes=31), {"+5m": 1, "+30m": 1}) is None
     assert rr.window_due(T, T + timedelta(minutes=62), {"+30m": 1}) == "+60m"
+    assert rr.window_due(T, T + timedelta(hours=8, minutes=20), {"+5m": 1, "+30m": 1, "+60m": 1}) == "+8h"
+    assert rr.window_due(T, T + timedelta(hours=8, minutes=31), {}) is None
 
 
 def test_moves_and_reading_follow_the_jobs_report_night():
@@ -70,6 +72,8 @@ def test_reading_distinguishes_growth_scare_and_hawkish_cases():
     assert rr.reading({"ffImpliedRateMoveBp": 4.0, "nasdaqFuturesMovePct": -0.8})["code"] == "HAWKISH_RISK_OFF"
     assert rr.reading({"ffImpliedRateMoveBp": 2.0, "spFuturesMovePct": 0.5})["code"] == "HAWKISH_RISK_ON"
     assert rr.reading({"ffImpliedRateMoveBp": 0.5, "nasdaqFuturesMovePct": 0.1})["code"] == "FLAT"
+    assert rr.reading({"ffImpliedRateMoveBp": 4.0, "nasdaqFuturesMovePct": 0.27})["code"] == "HAWKISH_FLAT"   # CPI 2026-09-11
+    assert rr.reading({"ffImpliedRateMoveBp": -4.0, "nasdaqFuturesMovePct": -0.19})["code"] == "DOVISH_FLAT"
     assert rr.reading({"ffImpliedRateMoveBp": None, "nasdaqFuturesMovePct": 0.6})["code"] == "RISK_ON"
     assert rr.reading({})["code"] == "UNMEASURED"
 

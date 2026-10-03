@@ -20,8 +20,13 @@ from typing import Any, Callable, Dict, Mapping, Optional
 SCHEMA = "macro-release-reaction-v1"
 BASELINE_FROM = timedelta(minutes=15)
 BASELINE_UNTIL = timedelta(minutes=1)
-WINDOWS = (("+5m", timedelta(minutes=5)), ("+30m", timedelta(minutes=30)), ("+60m", timedelta(minutes=60)))
-WINDOW_GRACE = timedelta(minutes=4)      # a window is still captured this long after its minute
+# +8h is the settled reading after the US cash close for a 12:30 UTC release:
+# on 2026-09-04 the first hour read "growth scare" and the day closed risk-on.
+WINDOWS = (("+5m", timedelta(minutes=5)), ("+30m", timedelta(minutes=30)),
+           ("+60m", timedelta(minutes=60)), ("+8h", timedelta(hours=8)))
+WINDOW_GRACE = {"+5m": timedelta(minutes=4), "+30m": timedelta(minutes=4),
+                "+60m": timedelta(minutes=4), "+8h": timedelta(minutes=30)}
+WATCH_UNTIL = timedelta(hours=8, minutes=30)   # the watcher forgets an event after this
 PROVIDER = "Yahoo Finance (delayed)"
 
 # One provider for every symbol so before and after are comparable.
@@ -102,7 +107,7 @@ def window_due(event_time: datetime, now: datetime, captured: Mapping[str, Any])
         if name in captured:
             continue
         at = event_time + offset
-        if at <= now <= at + WINDOW_GRACE:
+        if at <= now <= at + WINDOW_GRACE[name]:
             return name
     return None
 
@@ -136,6 +141,8 @@ READINGS = {
     "HAWKISH_RISK_ON": ("利上げ観測は強まったが株高", "強い数字を景気の強さとして好感した形。"),
     "RISK_ON": ("利上げ観測は動かず株高", "政策金利の予想は変わらず、株だけが買われた形。"),
     "RISK_OFF": ("利上げ観測は動かず株安", "政策金利の予想は変わらず、株だけが売られた形。"),
+    "HAWKISH_FLAT": ("利上げ観測が強まったが株は動かず", "金利の予想だけが動き、株はまだ反応していない形。"),
+    "DOVISH_FLAT": ("利上げ観測が後退したが株は動かず", "金利の予想だけが動き、株はまだ反応していない形。"),
     "FLAT": ("方向感なし", "政策金利の予想も株も、はっきり動いていない。"),
     "UNMEASURED": ("反応を測れていない", "基準値か発表後の値が取れていない。"),
 }
@@ -156,7 +163,8 @@ def reading(move: Mapping[str, Optional[float]]) -> Dict[str, str]:
         e = "up" if equity is not None and equity >= EQUITY_PCT else "down" if equity is not None and equity <= -EQUITY_PCT else "flat"
         code = {("down", "up"): "RATE_RELIEF_RISK_ON", ("down", "down"): "GROWTH_SCARE",
                 ("up", "down"): "HAWKISH_RISK_OFF", ("up", "up"): "HAWKISH_RISK_ON",
-                ("flat", "up"): "RISK_ON", ("flat", "down"): "RISK_OFF"}.get((p, e), "FLAT")
+                ("flat", "up"): "RISK_ON", ("flat", "down"): "RISK_OFF",
+                ("up", "flat"): "HAWKISH_FLAT", ("down", "flat"): "DOVISH_FLAT"}.get((p, e), "FLAT")
     label, meaning = READINGS[code]
     return {"code": code, "labelJa": label, "meaningJa": meaning}
 
