@@ -103,6 +103,7 @@ ROUTE_CATALOG = (
     RouteCatalogEntry("/api/argus/admin/event-memory/review", ("POST",), "api_argus_admin_event_memory_review", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "EVENT_MEMORY_V1", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/admin/foundation-jobs", ("POST",), "api_argus_admin_foundation_jobs_start", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/admin/foundation-jobs/<job_id>/cancel", ("POST",), "api_argus_admin_foundation_jobs_cancel", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
+    RouteCatalogEntry("/api/argus/admin/jquants/dividend-audit", ("POST",), "api_argus_admin_jquants_dividend_audit", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/admin/jquants/index-audit", ("POST",), "api_argus_admin_jquants_index_audit", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/admin/learning-memory/build", ("POST",), "api_argus_admin_learning_memory_build", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/admin/learning-memory/restore", ("POST",), "api_argus_admin_learning_memory_restore", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
