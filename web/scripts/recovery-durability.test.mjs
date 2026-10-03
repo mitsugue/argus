@@ -47,12 +47,11 @@ assert.equal(cold.localExportRequired, true);
 const vault = read('src/lib/vault.ts');
 const backupCard = read('src/components/guide/BackupCard.tsx');
 const portfolio = read('src/components/dashboard/PortfolioSyncCard.tsx');
-const decision = read('src/components/dashboard/DecisionQualityCard.tsx');
-const fire = read('src/components/dashboard/FireCoreCard.tsx');
-const trades = read('src/components/dashboard/TradeJournalCard.tsx');
 const research = read('src/components/assetDesk/AssetResearchPanel.tsx');
 const status = read('src/lib/portfolioSync.ts');
-const visibleRecoveryCopy = [backupCard, portfolio, decision, fire, trades, research, status].join('\n');
+// The decision-quality, FIRE and trade-journal cards were retired (2026-10-02);
+// their stored records stay in the backup and restore paths checked here.
+const visibleRecoveryCopy = [backupCard, portfolio, research, status].join('\n');
 
 // The read-only envelope can still be fetched, decrypted and restored.
 const restore = vault.slice(vault.indexOf('export async function cloudRestore'));

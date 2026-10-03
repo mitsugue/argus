@@ -67,42 +67,23 @@ check('P8 action queue has at most one command per asset',
 check('P9 stress conditions are explicit, deduplicated and bounded',
   populated.stressConditions.join('|') === 'AI調整局面|円高局面');
 
-const routeSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'CorePortfolio.tsx'), 'utf8');
+// The portfolio route and its cards were retired (scope override 2026-09-17,
+// removed 2026-10-02). The pure overview logic above stays tested; the
+// archived FIRE helpers must remain and no active calculation may return.
 const holdingsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'Watchlist.tsx'), 'utf8');
-const overviewSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
-  'dashboard', 'PortfolioDecisionOverview.tsx'), 'utf8');
-const fireCoreCardSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
-  'dashboard', 'FireCoreCard.tsx'), 'utf8');
 const fireCoreSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib',
   'fireCore.ts'), 'utf8');
 const assetIntelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'hooks',
   'useAssetIntel.ts'), 'utf8');
-check('P10 first viewport starts with the portfolio overview',
-  routeSource.indexOf('<PortfolioDecisionOverview') < routeSource.indexOf('<details className="cp-workspace"'));
-check('P11 detailed features remain secondary',
-  routeSource.includes('Allocation / Risk / Plan / History')
-  && routeSource.includes('PortfolioExposureCard')
-  && routeSource.includes('DecisionQualityCard'));
-check('P12 overview exposes the required contracts',
-  ['PORTFOLIO COMMAND', 'TOTAL EXPOSURE', 'TOP RISKS', 'ACTION QUEUE',
-    'STRESS', 'NEXT PORTFOLIO CHECK'].every((label) => overviewSource.includes(label)));
-check('P13 no Today-open dependency remains',
-  holdingsSource.includes('useAssetIntel({ publish: true, assets })')
-  && routeSource.includes('portfolioIntel: AssetIntel')
-  && !routeSource.includes('useAssetIntel(')
-  && !routeSource.includes('latestScenarios')
-  && !routeSource.includes('latestPlans')
-  && !routeSource.includes('latestStrategy')
-  && !routeSource.includes('Todayを開いた'));
-check('P14 asset-level scenario paragraph is not duplicated here',
-  !routeSource.includes('{ps.detailJa}'));
+check('P10 the retired portfolio route and cards are gone',
+  ['routes/CorePortfolio.tsx', 'components/dashboard/FireCoreCard.tsx',
+    'components/dashboard/PortfolioDecisionOverview.tsx', 'components/dashboard/DecisionQualityCard.tsx']
+    .every((file) => !fs.existsSync(path.join(__dirname, '..', 'src', file))));
+check('P13 holdings publish the shared intel without a Today-open dependency',
+  holdingsSource.includes('useAssetIntel({ publish: true, assets })'));
 check('P15 queue is bounded in implementation',
   fs.readFileSync(path.join(__dirname, '..', 'src', 'domain',
     'portfolioDecisionView.ts'), 'utf8').includes('actionQueue.length === 5'));
-check('P16 FIRE Core renders the live hook result instead of a stale singleton',
-  routeSource.includes('fireCore={portfolioIntel.fireCore}')
-  && fireCoreCardSource.includes('fireCore: LocalFireCore')
-  && !fireCoreCardSource.includes('latestFireCore'));
 check('P17 archived FIRE helpers remain but active calculation is retired',
   fireCoreSource.includes('argus:fire-core-change')
   && fireCoreSource.includes("window.addEventListener('storage'")

@@ -172,14 +172,6 @@ def test_fe_collapse_persistence_local_only():
     assert "setDetail" not in panel
 
 
-def test_fe_fire_core_manual_update_wording():
-    src = _read("components", "dashboard", "FireCoreCard.tsx")
-    assert "リアルタイムでなくてOK" in src
-    assert "週1程度の評価額更新" in src
-    assert "lastValueDate" in src                    # staleは日付+次の一歩を出す
-    assert "評価額を更新" in src
-
-
 def test_fe_investigate_button_outside_details():
     # v12.2.12: 銘柄カードはAsset Desk(AssetWhyPanel)へ移設 — ガード意図は不変。
     src = _read("components", "assetDesk", "AssetWhyPanel.tsx")

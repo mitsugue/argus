@@ -74,9 +74,8 @@ def test_publish_side_effects_gated_to_active_pipeline():
     cc = _read("routes", "CommandCenter.tsx")
     for fn in ("publishExposure(", "publishScenarios(", "publishPlans(", "publishStrategy("):
         assert fn not in cc, fn
-    for parts in (("components", "assetDesk", "AssetDeskList.tsx"),
-                  ("routes", "CorePortfolio.tsx")):
-        assert "useAssetIntel(" not in _read(*parts)
+    # The portfolio route was retired (2026-10-02); the asset desk keeps the rule.
+    assert "useAssetIntel(" not in _read("components", "assetDesk", "AssetDeskList.tsx")
 
 
 # ── ② ナビ順(route key不変) ────────────────────────────────────────────────
@@ -172,8 +171,8 @@ def test_migrated_features_present():
     assert "saveNote" in research and "getNote" in research
     assert "buildReviewPackMarkdown" not in research
     assert "OsintDeepDive" in research and "decisionHistoryFor" in research
-    pos = _read("components", "assetDesk", "AssetPositionPanel.tsx")
-    assert "onUpdateHolding" in pos and "端末内のみ" in pos
+    # Quantity entry was retired with holdings management (2026-10-02).
+    assert not os.path.exists(os.path.join(WEB, "components", "assetDesk", "AssetPositionPanel.tsx"))
     # 旧Todayカードのセクション
     why = _read("components", "assetDesk", "AssetWhyPanel.tsx")
     assert "TIMELINE" in why and why.count("<AiExplanationBlock") == 1
@@ -196,10 +195,9 @@ def test_portfolio_wide_features_moved_to_core():
     assert "日本株・米国株・投資信託・仮想通貨ごとに整理します。" in wl
     assert "区分内は長押しで並べ替えられます。" in wl
     assert "<CorePortfolio" not in wl
-    cp = _read("routes", "CorePortfolio.tsx")
-    assert "PortfolioExposureCard" in cp and "WhatIfPanel" not in cp
-    # Owner editing remains contextual; no replacement global framework is added.
-    assert "FireCoreCard" in cp
+    # The portfolio route and its cards were retired (2026-10-02); stored
+    # records stay readable through the archived helpers below.
+    assert not os.path.exists(os.path.join(WEB, "routes", "CorePortfolio.tsx"))
     assert "TradeJournalCard" not in wl
     journal = _read("lib", "tradeJournal.ts")
     assert "argus.trades.v1" in journal and "readTrades" in journal

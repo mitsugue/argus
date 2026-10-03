@@ -6,6 +6,7 @@ index valuation; ETF or capitalization-weighted PER is not a substitute.
 """
 from __future__ import annotations
 
+import copy
 import math
 import statistics
 from typing import Any, Mapping, Sequence
@@ -443,8 +444,26 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                 "testWilsonLower95": search["test"][str(search["choiceHorizon"])]["hitRateWilsonLower95"],
                 "equalWeightsTestHitRate": (search["equalWeightsTest"] or {}).get("hitRate"),
                 "predictiveProbabilities": None}
+    # Seven warning conditions: what followed each activation in the same
+    # history, against any session (2026-10-02). Recomputed when the closes,
+    # the cutoff date or the condition events change; shared by the horizons.
+    import jp_market_sign_event_study as sign_study
+    condition_list = [row for row in condition_rows if isinstance(row, Mapping)]
+    study_key = _hash({"method": sign_study.METHOD, "last": visible[-1]["date"], "cutoffDate": cutoff[:10],
+                       "sessions": len(session_dates), "bars": len(visible),
+                       "conditions": [[str(row.get(k)) for k in ("seriesId", "date", "value", "availableFrom",
+                                                                  "knownAt", "revision")] for row in condition_list]})
+    cached_study = (backtest_cache or {}).get("signEventStudy")
+    if cached_study and cached_study.get("key") == study_key:
+        study = cached_study["result"]
+    else:
+        closes = {row["date"]: float(row["close"]) for row in visible if row.get("close")}
+        study = sign_study.sign_event_study(condition_list, closes, session_dates, cutoff=cutoff)
+        if backtest_cache is not None:
+            backtest_cache["signEventStudy"] = {"key": study_key, "result": study}
+    document["forecast"]["signEventStudy"] = copy.deepcopy(study)
     document["limitations"].append("過去比較には取得元が現在報告する履歴を使用しています。改訂前の履歴の再現は未検証です。")
-    groups = {key: len(current[key]) for key in ("states", "conditions", "reactions")}
+    groups ={key: len(current[key]) for key in ("states", "conditions", "reactions")}
     document["marketEvidence"] = {
         "informationCutoff": current["cutoff"], "current": {key: current[key] for key in groups},
         "currentCounts": groups,

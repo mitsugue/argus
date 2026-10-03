@@ -178,6 +178,15 @@ function observe(page, evidence) {
         if (!contractValid) evidence.failures.push('rate-limit-response-contract');
         return;
       }
+      if (response.status() >= 500) {
+        // Which verified snapshot was not ready, so a console-errors failure
+        // names it (instrument, horizon, status and the fixed reason only).
+        let reason = 'unreadable';
+        try { reason = String((await response.json())?.reason ?? 'none'); } catch { /* keep */ }
+        evidence.notReady.push([url.searchParams.get('symbol'), url.searchParams.get('horizon'),
+          response.status(), reason].map((part) => String(part ?? 'none').replace(/[^A-Za-z0-9_]/g, '')).join(':'));
+        return;
+      }
       if (response.status() !== 200) return;
       try {
         const body = await response.json();
@@ -443,7 +452,7 @@ async function run() {
   const evidence = {
     failures: [], consoleErrors: [], reactWarnings: [], network: [],
     aiPostCount: 0, geometry: [], combinations: [],
-    snapshotBodies: new Map(), suppressedNonChartGets: 0, rateLimits: [],
+    snapshotBodies: new Map(), suppressedNonChartGets: 0, rateLimits: [], notReady: [],
     responseTasks: new Set(),
   };
   const browser = await chromium.launch({ headless: true });
@@ -1080,6 +1089,9 @@ async function run() {
     try { where = item.location ? new URL(item.location).pathname : ''; } catch { where = 'unparsed'; }
     const text = owner.redact(String(item.message ?? '')).replace(/[^A-Za-z0-9 :._/()-]/g, '').slice(0, 160);
     console.error(`mobile-today-acceptance console-error: ${item.type} ${where} ${text}`);
+  }
+  for (const item of evidence.notReady.slice(0, 12)) {
+    console.error(`mobile-today-acceptance snapshot-not-ready: ${item}`);
   }
   await owner.logout(page);
   await context.close();

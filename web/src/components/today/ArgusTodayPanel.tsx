@@ -13,6 +13,7 @@ import { ImportantEventsCard } from '../dashboard/ImportantEventsCard';
 import { JapanSqCalendarCard } from '../dashboard/JapanSqCalendarCard';
 import { NewsAlertsPanel } from '../notifications/NewsAlertsPanel';
 import { useJapanSqCalendar } from '../../hooks/useJapanSqCalendar';
+import { EquityEventList } from './EquityEventList';
 import { sqCalendarIsCurrent } from '../../lib/japanSqCalendar';
 import { JapanMarketHorizonComparison } from '../chart/JapanMarketComparisonPanel';
 import { useChartIntelligence } from '../../hooks/useChartIntelligence';
@@ -1016,6 +1017,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         <time>（{formatEventTime(view.releasedEvent.at, view.releasedEvent.dateOnly)}）</time>
         <span>{releasedEventResultLabel(view.releasedEvent, dashboardEvents)}</span>
       </p>}
+      <EquityEventList />
       <div className="at-coming"><b>この先の予定</b>
         {scheduledEvents.length > 1
           ? scheduledEvents.slice(1).map((row) => row.kind === 'sq'
