@@ -128,3 +128,18 @@ def test_next_fomc_continues_into_2027_with_the_published_dates():
     assert all(__import__("datetime").date.fromisoformat(d).weekday() == 2 for d in scanner._FOMC_2027)   # Wednesdays
     spec = next(row for row in scanner._EVENT_SPECS if row[2] == "fomc")
     assert spec[0] == scanner._FOMC_2026 + scanner._FOMC_2027
+
+
+def test_boj_meetings_continue_into_2027_with_the_published_dates():
+    """Bank of Japan notice of 2026-07-31: 2027 decision days and Outlook Report meetings."""
+    assert scanner._BOJ_2027 == ["2027-01-22", "2027-03-18", "2027-04-28", "2027-06-11", "2027-07-22",
+                                  "2027-09-22", "2027-10-29", "2027-12-17"]
+    assert {"2027-01-22", "2027-04-28", "2027-07-22", "2027-10-29"} <= scanner._BOJ_OUTLOOK
+    assert not {"2027-03-18", "2027-06-11", "2027-09-22", "2027-12-17"} & scanner._BOJ_OUTLOOK
+    assert all(__import__("datetime").date.fromisoformat(d).weekday() < 5 for d in scanner._BOJ_2027)
+    spec = next(row for row in scanner._EVENT_SPECS if row[2] == "boj")
+    assert spec[0] == scanner._BOJ_2026 + scanner._BOJ_2027
+    events = scanner._build_curated_events(__import__("datetime").date(2026, 12, 1))
+    boj = [e for e in events if e["kind"] == "boj"]
+    assert [e["eventDate"] for e in boj] == ["2026-12-18", "2027-01-22"]
+    assert boj[1]["title"].endswith("(Outlook Report)")

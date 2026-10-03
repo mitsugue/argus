@@ -6431,7 +6431,15 @@ _FOMC_2026 = ["2026-06-17", "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-0
 _FOMC_2027 = ["2027-01-27", "2027-03-17", "2027-04-28", "2027-06-09", "2027-07-28",
               "2027-09-15", "2027-10-27", "2027-12-08"]
 _BOJ_2026  = ["2026-06-16", "2026-07-31", "2026-09-18", "2026-10-30", "2026-12-18"]
-_BOJ_OUTLOOK = {"2026-07-31", "2026-10-30"}
+# Second (decision) days of the 2027 meetings, from the Bank of Japan notice
+# "2027年の金融政策決定会合等の日程" dated 2026-07-31
+# (boj.or.jp/mopo/mpmsche_minu/m_ref/mref260731a.pdf, sha256 6d49eaa1...a8d2992,
+# checked 2026-10-03). The Outlook Report is released after the Jan, Apr, Jul
+# and Oct meetings.
+_BOJ_2027  = ["2027-01-22", "2027-03-18", "2027-04-28", "2027-06-11", "2027-07-22",
+              "2027-09-22", "2027-10-29", "2027-12-17"]
+_BOJ_OUTLOOK = {"2026-07-31", "2026-10-30",
+                "2027-01-22", "2027-04-28", "2027-07-22", "2027-10-29"}
 _CPI_2026  = ["2026-06-10", "2026-07-14", "2026-08-12", "2026-09-11", "2026-10-14", "2026-11-10", "2026-12-10"]
 _PPI_2026  = ["2026-06-11", "2026-07-15", "2026-08-13", "2026-09-10", "2026-10-15", "2026-11-13", "2026-12-15"]
 _NFP_2026  = ["2026-06-05", "2026-07-02", "2026-08-07", "2026-09-04", "2026-10-02", "2026-11-06", "2026-12-04"]
@@ -6460,7 +6468,7 @@ _EVENT_SPECS = [
     (_PPI_2026,  "08:30", "ppi",  "US PPI (Producer Price Index)",     "inflation",    "US", "Bureau of Labor Statistics",  "medium", ["US10Y", "QQQ"]),
     (_PCE_2026,  "08:30", "pce",  "US PCE / Personal Income & Outlays", "inflation",   "US", "Bureau of Economic Analysis", "high",   ["US10Y", "USDJPY", "QQQ"]),
     (_GDP_2026,  "08:30", "gdp",  "US GDP",                            "growth",       "US", "Bureau of Economic Analysis", "high",   ["US10Y", "SPY", "USDJPY"]),
-    (_BOJ_2026,  None,    "boj",  "BOJ Monetary Policy Meeting",       "central_bank", "JP", "Bank of Japan",               "high",   ["USDJPY", "JP10Y", "9984", "8058"]),
+    (_BOJ_2026 + _BOJ_2027, None, "boj",  "BOJ Monetary Policy Meeting",       "central_bank", "JP", "Bank of Japan",               "high",   ["USDJPY", "JP10Y", "9984", "8058"]),
 ]
 
 # Each source maps to its curated lastUpdated marker; TreasuryDirect is dynamic.
