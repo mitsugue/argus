@@ -16711,6 +16711,12 @@ def _market_position_memory_locked():
                 _MARKET_POSITION["persistence"] = {"status": "load_failed", "errorClass": type(exc).__name__}
         _MARKET_POSITION["memory"] = argus_market_position_memory.load(raw)
         _MARKET_POSITION["loadedAt"] = _ai_now_iso()
+        if raw is not None and _MARKET_POSITION["memory"]["entries"]:
+            # 2026-10-03: "memory_only" was shown until the first new entry
+            # even though the saved file had been read back after a restart.
+            _MARKET_POSITION["persistence"] = {
+                "status": "restored", "at": _MARKET_POSITION["loadedAt"],
+                "entries": len(_MARKET_POSITION["memory"]["entries"])}
     return _MARKET_POSITION["memory"]
 
 
@@ -16754,7 +16760,9 @@ def _market_position_update(news_events, scheduled_events):
                     _MARKET_POSITION["persistence"] = {"status": "save_failed", "errorClass": type(exc).__name__}
         view = argus_market_position_memory.snapshot(memory, now_iso=_ai_now_iso(),
                                                      scheduled_events=scheduled_events)
-        view["persistence"] = dict(_MARKET_POSITION["persistence"] or {"status": "memory_only"})
+        path_ready = bool(_market_position_path())
+        view["persistence"] = dict(_MARKET_POSITION["persistence"] or {
+            "status": "saved_file_ready" if path_ready else "memory_only"})
         return view
 
 
