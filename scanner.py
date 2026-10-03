@@ -125,6 +125,7 @@ import argus_index_live
 import argus_macro_release_watch
 import argus_macro_release_reaction
 import argus_market_position_memory
+import argus_ex_dividend
 import jp_equity_event_calendar
 import argus_owner_dialogue_api
 import argus_web_push
@@ -6641,8 +6642,12 @@ def api_argus_events():
 @app.route("/api/argus/jp-equity-calendar")
 def api_argus_jp_equity_calendar():
     """Events an index ETF holder needs, each with what it means; no fetch or AI."""
-    return jsonify(jp_equity_event_calendar.equity_event_calendar(
-        now=datetime.fromisoformat(_ai_now_iso().replace("Z", "+00:00"))))
+    now = datetime.fromisoformat(_ai_now_iso().replace("Z", "+00:00"))
+    try:
+        estimates = _jp_ex_dividend_estimates(now.astimezone(TZ_JST).date())
+    except Exception:
+        estimates = {}
+    return jsonify(jp_equity_event_calendar.equity_event_calendar(now=now, ex_dividend=estimates))
 
 
 @app.route("/api/argus/jp-sq-calendar")
@@ -38768,6 +38773,107 @@ def _jp_index_proxy_compact(proxy):
             "sourceRef": proxy["sourceRef"], "factorsAsOf": proxy.get("factorsAsOf")}
 
 
+# 13.8 §4-1 (owner 2026-10-03): the ex-dividend drop of the Nikkei in yen. Each
+# member's latest financial summary is read one company at a time, a few per
+# warm, and kept on the durable disk; the estimate itself is arithmetic.
+_JP_DIVIDEND_STORE = {"rows": {}, "fetchedAt": {}, "closes": None, "restoreAttempted": False,
+                      "lastError": None, "requestsLastWarm": 0}
+_JP_DIVIDEND_PER_WARM = 20
+_JP_DIVIDEND_REFRESH_SECONDS = 7 * 86400
+_JP_DIVIDEND_KEEP = ("Code", "DiscDate", "DiscTime", "DocType", "CurPerType", "CurFYEn",
+                     "FDiv1Q", "FDiv2Q", "FDiv3Q", "FDivFY", "FDivAnn",
+                     "NxFDiv1Q", "NxFDiv2Q", "NxFDiv3Q", "NxFDivFY", "NxFDivAnn")
+
+
+def _jp_dividend_path():
+    return (os.path.join(_DURABILITY_PATHS["root"], "jp_dividend_forecasts.json")
+            if _cost_policy_durable_enabled() else None)
+
+
+def _jp_dividend_restore():
+    store = _JP_DIVIDEND_STORE
+    store["restoreAttempted"] = True
+    path = _jp_dividend_path()
+    if not path:
+        return
+    try:
+        with open(path, "r") as handle:
+            body = json.load(handle)
+        if isinstance(body, dict) and body.get("schemaVersion") == "argus-jp-dividend-forecasts-v1":
+            store["rows"] = {k: v for k, v in (body.get("rows") or {}).items() if isinstance(v, dict)}
+            store["fetchedAt"] = {k: float(v) for k, v in (body.get("fetchedAt") or {}).items()
+                                  if isinstance(v, (int, float))}
+            store["closes"] = body.get("closes") if isinstance(body.get("closes"), dict) else None
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        store["lastError"] = "restore_" + type(exc).__name__
+
+
+def _jp_dividend_persist():
+    path = _jp_dividend_path()
+    if not path:
+        return
+    store = _JP_DIVIDEND_STORE
+    argus_persistent_storage.atomic_write_json(path, {
+        "schemaVersion": "argus-jp-dividend-forecasts-v1", "rows": store["rows"],
+        "fetchedAt": store["fetchedAt"], "closes": store["closes"], "savedAt": _ai_now_iso()},
+        maximum_bytes=2 * 1024 * 1024, file_mode=0o600)
+
+
+def _jp_dividend_warm(member_codes):
+    """A bounded batch of per-company /fins/summary reads; newest disclosure kept."""
+    store = _JP_DIVIDEND_STORE
+    if not store["restoreAttempted"]:
+        _jp_dividend_restore()
+    store["requestsLastWarm"] = 0
+    if not _JQUANTS_API_KEY or not member_codes:
+        return
+    now = time.time()
+    due = sorted((code for code in member_codes
+                  if now - store["fetchedAt"].get(code, 0.0) >= _JP_DIVIDEND_REFRESH_SECONDS),
+                 key=lambda code: store["fetchedAt"].get(code, 0.0))[:_JP_DIVIDEND_PER_WARM]
+    for code in due:
+        try:
+            rows = _jquants_paginated("/fins/summary", {"code": code}, max_pages=3, request_timeout=15)
+            store["requestsLastWarm"] += 1
+        except Exception as exc:
+            store["lastError"] = type(exc).__name__
+            store["requestsLastWarm"] += 1
+            continue
+        latest = argus_ex_dividend.latest_disclosures(rows).get(code)
+        store["fetchedAt"][code] = now
+        if latest:
+            store["rows"][code] = {k: latest.get(k) for k in _JP_DIVIDEND_KEEP if latest.get(k) not in (None,)}
+    if due:
+        try:
+            _jp_dividend_persist()
+        except Exception as exc:
+            store["lastError"] = "persist_" + type(exc).__name__
+
+
+def _jp_ex_dividend_estimates(now_date):
+    """{ 'YYYY-MM': estimate } for the coming quarter-end record dates, from stored inputs only."""
+    store = _JP_DIVIDEND_STORE
+    if not store["restoreAttempted"]:
+        _jp_dividend_restore()
+    factors = ((_JP_INDEX_PROXY.get("factors") or {}).get("factors")) or {}
+    closes = (store.get("closes") or {}).get("values") or {}
+    nikkei = (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}).get("data") or []
+    index_close = float(nikkei[-1]["close"]) if nikkei and nikkei[-1].get("close") else None
+    if not factors or not closes or not store["rows"] or not index_close:
+        return {}
+    out = {}
+    for record_day in argus_ex_dividend.next_record_days(now_date):
+        result = argus_ex_dividend.estimate(
+            record_day=record_day, factors=factors, closes=closes,
+            disclosures=store["rows"], index_close=index_close)
+        result["closesAsOf"] = (store.get("closes") or {}).get("date")
+        result["disclosuresStored"] = len(store["rows"])
+        out[record_day.strftime("%Y-%m")] = result
+    return out
+
+
 def _jp_index_proxy_warm(nikkei_rows):
     """Derive the factors once per weight table, then keep the recent sessions
     reconstructed. Bounded per warm: at most a few sessions and their pages."""
@@ -38809,6 +38915,10 @@ def _jp_index_proxy_warm(nikkei_rows):
             if not values:
                 continue
             closes = {_nk225_code_key(code): _q_close(row) for code, row in bars.items()}
+            if not _JP_DIVIDEND_STORE.get("closes") or day >= str(_JP_DIVIDEND_STORE["closes"].get("date") or ""):
+                _JP_DIVIDEND_STORE["closes"] = {"date": day, "values": {
+                    code: closes[code] for code in (factors.get("factors") or {})
+                    if isinstance(closes.get(code), (int, float))}}
             proxy = argus_index_valuation_proxy.proxy_valuation(
                 factors=factors, closes=closes,
                 forecast_eps={k: v.get("FwdEPS") for k, v in values.items()},
@@ -38823,6 +38933,10 @@ def _jp_index_proxy_warm(nikkei_rows):
         _JP_INDEX_PROXY.update(status="AVAILABLE" if _JP_INDEX_PROXY["history"] else "NO_SESSIONS",
                                lastError=None, lastErrorReason=None)
         _jp_index_proxy_persist()
+        try:
+            _jp_dividend_warm(sorted((factors.get("factors") or {})))
+        except Exception as exc:
+            _JP_DIVIDEND_STORE["lastError"] = "warm_" + type(exc).__name__
     except Exception as exc:
         _JP_INDEX_PROXY.update(status="FAILED", lastError=type(exc).__name__,
                                lastErrorReason=str(exc)[:80])

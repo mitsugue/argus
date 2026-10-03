@@ -109,7 +109,15 @@ def _previous_trading_day(day: date, count: int = 1) -> date:
     return day
 
 
-def dividend_events(today: date, end: date) -> list[dict[str, Any]]:
+def _ex_dividend_note(estimate: Mapping[str, Any] | None) -> str:
+    if not estimate or estimate.get("dropYen") is None:
+        return ""
+    return (f"配当落ちで日経平均が機械的に下がる分の目安は約{estimate['dropYen']:,.0f}円"
+            f"(日経平均の約{estimate['dropPct']:.2f}%)。各社の最新の配当予想から計算した概算で、"
+            f"構成銘柄のうち{estimate['membersCovered']}社(株価ウエートの{estimate['coveredPriceWeightShare'] * 100:.0f}%)分です。")
+
+
+def dividend_events(today: date, end: date, ex_dividend: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
     """Last cum-dividend and ex-dividend sessions for the quarter-end record dates."""
     out = []
     for year in (today.year, today.year + 1):
@@ -121,6 +129,7 @@ def dividend_events(today: date, end: date) -> list[dict[str, Any]]:
             size_ja = ("3月・9月は多くの企業の配当の基準日で、配当落ちが大きい月です。" if major else
                        "6月・12月は基準日の企業が少なく、配当落ちは小さめです。")
             stamp = f"{year}-{month:02d}"
+            note = _ex_dividend_note((ex_dividend or {}).get(stamp))
             if today <= last_cum <= end:
                 out.append(_event(
                     event_id=f"jp-last-cum-{stamp}", kind="LAST_CUM_DIVIDEND",
@@ -135,7 +144,7 @@ def dividend_events(today: date, end: date) -> list[dict[str, Any]]:
                     event_id=f"jp-ex-dividend-{stamp}", kind="EX_DIVIDEND",
                     at=ex_day.isoformat(), date_only=True,
                     title_ja=f"権利落ち日({month}月末の配当)", importance="high" if major else "medium",
-                    what_ja="配当の権利がなくなった分だけ、多くの株価が朝から安く始まります。" + size_ja,
+                    what_ja="配当の権利がなくなった分だけ、多くの株価が朝から安く始まります。" + size_ja + note,
                     so_what_ja="日経平均は配当の分だけ機械的に下がります(配当落ち)。日経ブルETFは配当を受け取らないので見かけ上その分下がり、ベアETFは上がります。相場の悪化と取り違えないことが大事です。",
                     watch_ja="当日の日経の下げ幅が配当落ち分より大きいか小さいか(小さければ実質は上昇)。",
                     source="rule:jp-record-date-last-session-t-plus-2", today=today))
@@ -296,7 +305,8 @@ def sq_events(now: datetime, horizon_days: int) -> tuple[list[dict[str, Any]], l
 
 
 def equity_event_calendar(*, now: datetime, horizon_days: int = DEFAULT_HORIZON_DAYS,
-                          macro_schedule: Mapping[str, Any] | None = None) -> dict[str, Any]:
+                          macro_schedule: Mapping[str, Any] | None = None,
+                          ex_dividend: Mapping[str, Any] | None = None) -> dict[str, Any]:
     current = _now(now)
     today = current.date()
     if isinstance(horizon_days, bool) or not isinstance(horizon_days, int) or not 1 <= horizon_days <= 90:
@@ -326,7 +336,7 @@ def equity_event_calendar(*, now: datetime, horizon_days: int = DEFAULT_HORIZON_
         gaps.append("msci_schedule_unavailable")
     try:
         events += nikkei_review_events(today, end)
-        events += dividend_events(today, end)
+        events += dividend_events(today, end, ex_dividend)
         events += holiday_events(today, end)
     except clock.CalendarUnavailableError:
         gaps.append("exchange_calendar_unavailable")

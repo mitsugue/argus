@@ -71,6 +71,9 @@ def lane(tmp_path, monkeypatch):
              "factors": None, "history": {}, "recommendedVariant": "FORECAST_SIGNED",
              "lastAttemptAt": None, "lastError": None, "lastErrorReason": None, "requestsLastWarm": 0}
     monkeypatch.setattr(scanner, "_JP_INDEX_PROXY", state)
+    # The per-company dividend reads that follow a warm have their own tests
+    # (test_argus_ex_dividend_glue); this lane counts only bars and valuation.
+    monkeypatch.setattr(scanner, "_jp_dividend_warm", lambda codes: None)
     calls = []
     monkeypatch.setattr(scanner.requests, "get", _fake_get(calls))
     rows = [{"instrumentId": "NIKKEI_225_INDEX", "date": day, "close": _index_close(day)}
