@@ -10,8 +10,11 @@ policy-rate pricing, the event calendar) and are appended with their source
 reference, never rewritten. The explanation facts it emits are evidence for
 the integrated AI, not conclusions of their own.
 
-Stage one keeps measured and reported facts per theme. The AI-written
-expectation/fear prose per theme is stage two (a validated output change).
+Stage one keeps measured and reported facts per theme. Stage two (below,
+validate_views / ingest_views) lets the integrated AI write, per active
+theme, what the market expects, fears and would change its mind on — bound
+to the same evidence ids and checked by the same rules as the six sections,
+then appended to the memory as its own kind of entry.
 """
 from __future__ import annotations
 
@@ -227,6 +230,81 @@ def ingest_policy_rate_quote(memory: Dict[str, Any], quote: Optional[Mapping[str
     return append(memory, entry)
 
 
+VIEW_FIELDS = ("expectationJa", "fearJa", "triggerJa")
+VIEW_TEXT_LIMIT = 160
+
+
+def validate_views(value: Any, context: Mapping[str, Any], active_theme_ids: Iterable[str],
+                   *, diagnostic: Optional[Dict[str, Any]] = None) -> Optional[List[Dict[str, Any]]]:
+    """The AI's per-theme views, under the six-section rules (evidence ids, kinds, digits)."""
+    from argus_explanation_contract import _digits_of, _FORBIDDEN_BRIEF_PATTERNS
+    def rejected(reason, theme_id=None):
+        if isinstance(diagnostic, dict):
+            diagnostic.update(status="REJECTED", reason=reason, themeId=theme_id)
+        return None
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > len(THEMES):
+        return rejected("position_schema_invalid")
+    current = {r["evidenceId"]: r for r in context.get("facts", [])}
+    active = set(active_theme_ids)
+    out = []; seen = set()
+    for row in value:
+        if not isinstance(row, Mapping) or set(row) != {"themeId", *VIEW_FIELDS, "evidenceIds", "kind"}:
+            return rejected("position_row_schema_invalid")
+        theme_id = row["themeId"]
+        if theme_id not in THEMES or theme_id in seen:
+            return rejected("position_theme_invalid", theme_id)
+        if theme_id not in active:
+            continue                      # a view on a quiet theme is dropped, not an error
+        seen.add(theme_id)
+        refs, kind = row["evidenceIds"], row["kind"]
+        texts = [row[field] for field in VIEW_FIELDS]
+        if (kind not in {"FACT", "INFERENCE", "UNKNOWN"} or not isinstance(refs, list) or len(refs) > 6
+                or any(not isinstance(ref, str) for ref in refs) or len(set(refs)) != len(refs)
+                or any(not isinstance(t, str) or len(t) > VIEW_TEXT_LIMIT for t in texts)
+                or not any(t.strip() for t in texts)):
+            return rejected("position_field_invalid", theme_id)
+        if any(ref not in current for ref in refs):
+            return rejected("unknown_evidence_reference", theme_id)
+        if kind != "UNKNOWN" and not refs:
+            return rejected("evidence_reference_required", theme_id)
+        if kind == "FACT":
+            return rejected("position_view_is_inference", theme_id)   # expectations are never observed facts
+        joined = "。".join(t for t in texts if t)
+        if any(p in joined for p in _FORBIDDEN_BRIEF_PATTERNS) or "確率" in joined:
+            return rejected("unsupported_authority_or_probability", theme_id)
+        allowed_digits = set().union(*(_digits_of(current[ref]["text"]) for ref in refs)) if refs else set()
+        unsupported = _digits_of(joined) - allowed_digits
+        if unsupported:
+            if isinstance(diagnostic, dict):
+                diagnostic["unsupportedNumericTokens"] = sorted(unsupported)[:20]
+            return rejected("unsupported_numeric_tokens", theme_id)
+        out.append({"themeId": theme_id, **{f: row[f].strip() for f in VIEW_FIELDS},
+                    "evidenceIds": list(refs), "kind": kind})
+    if isinstance(diagnostic, dict):
+        diagnostic.update(status="ACCEPTED", reason=None, themeId=None)
+    return out
+
+
+def ingest_views(memory: Dict[str, Any], views: Iterable[Mapping[str, Any]], *, context_id: str,
+                 generated_at: str) -> int:
+    """Validated AI views become AI_VIEW entries; an unchanged view is not re-appended."""
+    added = 0
+    for view in views or []:
+        body = {f: view.get(f) for f in VIEW_FIELDS}
+        last = next((r for r in reversed(memory["entries"]) if r.get("themeId") == view["themeId"]
+                     and r.get("kind") == "AI_VIEW"), None)
+        if last and (last.get("measured") or {}).get("view") == body:
+            continue
+        text = "期待: " + (body["expectationJa"] or "—") + " / 警戒: " + (body["fearJa"] or "—") + " / 引き金: " + (body["triggerJa"] or "—")
+        entry = _entry(view["themeId"], "AI_VIEW", generated_at, text,
+                       ref={"source": "integrated_ai", "contextId": context_id, "evidenceIds": list(view.get("evidenceIds") or []),
+                            "kind": view.get("kind")}, measured={"view": body})
+        added += append(memory, entry)
+    return added
+
+
 def _theme_entries(memory: Mapping[str, Any], theme_id: str) -> List[Dict[str, Any]]:
     rows = [row for row in memory.get("entries") or [] if row.get("themeId") == theme_id]
     rows.sort(key=lambda row: str(row.get("at") or ""))
@@ -262,6 +340,7 @@ def snapshot(memory: Mapping[str, Any], *, now_iso: str,
         status = "EMPTY" if not rows else ("ACTIVE" if last_at and now - last_at <= timedelta(days=ACTIVE_DAYS) else "QUIET")
         pricing = next((r for r in reversed(rows) if r.get("kind") == "PRICING"), None)
         reaction = next((r for r in reversed(rows) if r.get("kind") == "RELEASE_REACTION"), None)
+        ai_view = next((r for r in reversed(rows) if r.get("kind") == "AI_VIEW"), None)
         themes.append({
             "themeId": theme_id, "labelJa": spec["labelJa"], "status": status,
             "entryCount": len(rows), "lastUpdatedAt": last["at"] if last else None,
@@ -271,6 +350,9 @@ def snapshot(memory: Mapping[str, Any], *, now_iso: str,
             "lastReaction": {"at": reaction["at"], "textJa": reaction["textJa"], **(reaction.get("measured") or {})}
                             if reaction else None,
             "nextEvent": _next_event(theme_id, scheduled_events, now),
+            "view": ({**((ai_view.get("measured") or {}).get("view") or {}), "at": ai_view["at"],
+                      "contextId": (ai_view.get("ref") or {}).get("contextId"), "kind": (ai_view.get("ref") or {}).get("kind")}
+                     if ai_view else None),
         })
     return {"schemaVersion": SCHEMA, "asOf": now_iso, "themes": themes,
             "entryCount": len(memory.get("entries") or []), "actionAuthority": False, "automaticAiCalls": 0}
