@@ -114,8 +114,9 @@ def sq_calendar(*, now: datetime, schedule: Mapping[str, Any], horizon_days: int
             "calculationTiming": "OPENING_PRICES_ON_SQ_DATE",
             "fixedPublicationTime": None, "requiresAiResult": False,
             "directionalSignal": None, "priceReaction": "NOT_OBSERVED_BY_CALENDAR",
-            "sourceRef": schedule["sourceRef"], "sourceSha256": schedule["sourceSha256"],
-            "knownAt": schedule["knownAt"], "sourceCells": row.get("sourceCells"),
+            "sourceRef": row.get("sourceRef") or schedule["sourceRef"],
+            "sourceSha256": row.get("sourceSha256") or schedule["sourceSha256"],
+            "knownAt": row.get("knownAt") or schedule["knownAt"], "sourceCells": row.get("sourceCells"),
             "detailKey": identifier,
             "summary": "先物・オプションの清算に関係する日程です。SQだけで相場の下落や回復は判断しません。",
         }
@@ -148,21 +149,67 @@ def sq_calendar(*, now: datetime, schedule: Mapping[str, Any], horizon_days: int
     return result
 
 
+SQ_SCHEDULE_DIR = Path(__file__).parent / "ops/calendar"
+SQ_SCHEDULE_SCHEMA = "jp-official-monthly-sq-schedule-v1"
+
+
+def load_published_sq_schedule(now: datetime, directory: Path | None = None) -> dict[str, Any]:
+    """Merge the yearly official schedules (jp_index_sq_<year>.json) into one.
+
+    Each file keeps its own source, hash and receipt time; a year whose receipt
+    is after `now` is not yet known. Years must be contiguous: a missing year is
+    reported as a gap by the calendar, never filled. Rows carry their own source
+    so an event names the file it came from.
+    """
+    current = _now(now)
+    merged: dict[str, Any] | None = None
+    previous_end: date | None = None
+    for path in sorted((directory or SQ_SCHEDULE_DIR).glob("jp_index_sq_*.json")):
+        with path.open("rb") as handle:
+            raw = handle.read(65537)
+        if len(raw) > 65536:
+            raise ValueError("schedule_size_limit")
+        schedule = json.loads(raw)
+        if schedule.get("schemaVersion") != SQ_SCHEDULE_SCHEMA:
+            raise ValueError("schedule_schema_invalid")
+        if not schedule.get("sourceRef") or not schedule.get("sourceSha256"):
+            raise ValueError("official_schedule_provenance_required")
+        if _instant(schedule.get("knownAt")) > current:
+            continue
+        start, end = _date(schedule.get("coverageStart")), _date(schedule.get("coverageEnd"))
+        rows = [{**row, "sourceRef": schedule["sourceRef"], "sourceSha256": schedule["sourceSha256"],
+                 "knownAt": schedule["knownAt"]} for row in schedule.get("rows", [])]
+        if merged is None:
+            merged = {**schedule, "rows": rows}
+        elif previous_end is not None and start == previous_end + timedelta(days=1):
+            merged["rows"] = merged["rows"] + rows
+            merged["coverageEnd"] = schedule["coverageEnd"]
+            merged["knownAt"] = max(str(merged["knownAt"]), str(schedule["knownAt"]))
+        else:
+            break                          # a missing year ends the covered range
+        previous_end = end
+    if merged is None:
+        raise ValueError("schedule_unavailable")
+    return merged
+
+
 def published_sq_calendar(*, now: datetime, schedule_path: Path | None = None) -> dict[str, Any]:
     """Read the shipped official schedule without external acquisition or AI.
 
     The bounded file is reread so a calendar deployment takes effect directly.
     Missing coverage remains explicit; next year's dates are never extrapolated.
     """
-    path = schedule_path or Path(__file__).parent / "ops/calendar/jp_index_sq_2026.json"
     try:
-        with path.open("rb") as handle:
-            raw = handle.read(65537)
-        if len(raw) > 65536:
-            raise ValueError("schedule_size_limit")
-        schedule = json.loads(raw)
-        if schedule.get("schemaVersion") != "jp-official-monthly-sq-schedule-v1":
-            raise ValueError("schedule_schema_invalid")
+        if schedule_path is not None:
+            with schedule_path.open("rb") as handle:
+                raw = handle.read(65537)
+            if len(raw) > 65536:
+                raise ValueError("schedule_size_limit")
+            schedule = json.loads(raw)
+            if schedule.get("schemaVersion") != SQ_SCHEDULE_SCHEMA:
+                raise ValueError("schedule_schema_invalid")
+        else:
+            schedule = load_published_sq_schedule(now)
         result = sq_calendar(now=now, schedule=schedule)
         return {**result, "automaticAiCalls": 0, "lastSuccessfulAcquisitionAt": schedule["knownAt"]}
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
