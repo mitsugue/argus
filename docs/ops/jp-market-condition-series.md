@@ -119,3 +119,13 @@ TTL。`jp_market_acquisition.py` の変更は特徴履歴の手法識別子を�
   95% Wilson 下限が基準を上回れば `ABOVE_BASELINE`。成立20回未満は `INSUFFICIENT_SAMPLE`。
 - D07 は市場全体の点灯規則がなく、イベントもないため `NOT_EVALUABLE`。
 - 過去の割合であり、確率ではない(`predictiveProbabilities: null`, `actionAuthority: false`)。
+
+## 本番の充足状況 (2026-10-03 診断 run 37087538499、backend 13.8.17)
+
+`index-comparison.json` の `marketFeatureSnapshot` で、16系列のうち14系列に当日値があった。
+欠けていたのは `margin1570.long_change_pct` / `margin1570.short_change_pct` の2系列
+(1570の信用残は週次で、最新週 2026-09-28 の次の週がまだ公表されていないため変化率が作れない。
+`margin1570.ratio` は 2026-09-28 の値で存在)。特徴履歴は 2016-10-03〜2026-10-03 の 2,442 時点、
+`reuseDecision=unchanged_known_inputs`(再起動後も再計算 1 時点・再利用 2,441 時点)。
+系列ごとの期待件数と実件数の照合は、この文書の表と `seriesAcquisition` の状態で代替しており、
+件数の自動照合は未実装(13.8 の残作業)。
