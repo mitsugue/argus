@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.17"
+PRODUCT_VERSION = "v13.8.18"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
-    'web/scripts/pwa-identity.test.mjs': '1de42b5f78d4b7923e1efc5f0ea22cc819305f22',
-    'web/scripts/owner-today-https.mjs': '578212951b3a2f509e0f68a0a00033e7722ba357',
+    'web/scripts/pwa-identity.test.mjs': '34a5f4196c27d7e3292041ba4725ac595d3bf1b3',
+    'web/scripts/owner-today-https.mjs': '1dbf31394000d37c5ab34bc03261c72e140ff15b',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -242,8 +242,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_jp_market_research.py': '643a18e14be0387234172f934c473077825f2fe0',
     'test_argus_owner_dialogue_compression.py': '2cb55fe8e96b350d9d951401acf5cde43785b6c2',
     'test_argus_owner_overview_pending.py': '3bbebf3d717ad4d4f30e175d14fd2402e64396cf',
-    'test_argus_analysis_history_compact.py': '4d9fed63fd73e72aa6ea2e478848183a1924b408',
-    'argus_analysis_history_compact.py': '215c48bb49f65fa381a45e0334efb6c3b7dcb537',
+    'test_argus_analysis_history_compact.py': 'c275947ac6f4aeba15a6c2c9f3555b44b983bdf6',
+    'argus_analysis_history_compact.py': 'b2eaa623d8caa51dd7fb8e68b8263edca66bc248',
     'argus_event_prediction_results.py': 'dc3475083bfbed3df6ae49885667d0a5308385e4',
     'test_argus_event_prediction_results.py': '030f5233dd2e3fc0b31cc1b5d68a3ca2ddb75fd8',
     'scripts/export_event_prediction_results.py': '179bde75c50c32f426a42fffc117f2584c6e45a7',
