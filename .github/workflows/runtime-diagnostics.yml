@@ -46,6 +46,19 @@ jobs:
             --max-time 40 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
             "https://argus-backend-3j2m.onrender.com/api/argus/admin/jquants/index-audit" || echo timeout)
           echo "jquants-index-audit http=$code"
+      - name: Read the J-Quants dividend fields (13.8 ex-dividend estimate; shape and counts only)
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          # Fiscal-year results peak mid-May and first-quarter results early
+          # August; one day of each shows which dividend fields are filled.
+          for day in 2026-05-13 2026-08-07 2026-10-02; do
+            code=$(curl -sS -o "artifacts/runtime-diagnostics/jquants-dividend-audit-$day.json" -w "%{http_code}" \
+              --max-time 60 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              -H 'Content-Type: application/json' --data "{\"date\":\"$day\"}" \
+              "https://argus-backend-3j2m.onrender.com/api/argus/admin/jquants/dividend-audit" || echo timeout)
+            echo "jquants-dividend-audit $day http=$code"
+          done
       - name: Read the issued-forecast record (best effort)
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
