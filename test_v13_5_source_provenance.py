@@ -382,7 +382,7 @@ def test_visible_event_polling_review_pins_are_exact():
     assert source.REVIEWED_EXTENSION_BLOBS["web/src/hooks/useEventsActive.ts"] == (
         "fba000a3eb23ab625df6eb155c2be5874aa460a4")
     assert source.REVIEWED_EXTENSION_BLOBS["web/scripts/polling-singleton.test.mjs"] == (
-        "726accbaf256fc7e3fa8141c3c9f31ade7efbb24")
+        "d06ffc82f0267da3884629d80a0bc5be0ec20468")
 
 
 def test_visibility_guard_visible_polling_review_pin_is_exact():
