@@ -98,9 +98,17 @@ def _head(remote):
     return _manifest(raw), version
 
 
-def _snapshot(path, directory, *, check_deadline=lambda: None):
-    """Stable groups per table keep completed groups unchanged on append."""
+def _snapshot(path, directory, *, check_deadline=lambda: None, prefixes=None):
+    """Stable groups per table keep completed groups unchanged on append.
+
+    prefixes maps (table, group index) to a byte length; the digest of exactly
+    that many leading raw bytes of the group is returned under '_prefixProofs'
+    (None when the length does not fall on a record boundary). It proves that
+    a shorter remote group is the unchanged beginning of the local group.
+    """
     import hashlib
+    prefixes = prefixes or {}
+    proofs = {}
     groups = []; counts = {'views': 0, 'outcomes': 0}; raw_total = stored_total = 0
     conn = history._connect(path, True)
     try:
@@ -127,6 +135,9 @@ def _snapshot(path, directory, *, check_deadline=lambda: None):
                 packed_path = Path(directory) / 'group.zlib'
                 compressor = zlib.compressobj(6); checksum = hashlib.sha256(); size = 0
                 group_count = 0
+                index = sum(1 for g in groups if g['kind'] == table)
+                prefix_length = prefixes.get((table, index))
+                prefix_digest = None
                 with packed_path.open('wb') as output:
                     for body in itertools.chain((first,), group_rows):
                         check_deadline()
@@ -134,6 +145,8 @@ def _snapshot(path, directory, *, check_deadline=lambda: None):
                             raise ValueError('compact_history_record_bound')
                         raw = legacy.encode(validator(json.loads(body))) + b'\n'
                         checksum.update(raw); size += len(raw); group_count += 1
+                        if prefix_length is not None and size == prefix_length:
+                            prefix_digest = checksum.copy().hexdigest()
                         output.write(compressor.compress(raw))
                         del body, raw
                     output.write(compressor.flush())
@@ -147,6 +160,8 @@ def _snapshot(path, directory, *, check_deadline=lambda: None):
                 raw_total += size; counts[table] += group_count
                 groups.append({'kind': table, 'count': group_count, 'rawBytes': size,
                     'rawSha256': checksum.hexdigest(), 'chunks': chunks})
+                if prefix_length is not None:
+                    proofs[(table, index)] = prefix_digest
                 if (len(groups) > MAX_GROUPS or raw_total > MAX_RAW_BYTES
                         or stored_total > legacy.MAX_ARCHIVE_BYTES):
                     raise ValueError('compact_history_total_bound')
@@ -157,7 +172,10 @@ def _snapshot(path, directory, *, check_deadline=lambda: None):
         'codec': 'zlib', 'groupRecords': GROUP_RECORDS, 'groups': groups,
         'rawBytes': raw_total, 'storedBytes': stored_total, 'counts': counts,
         'latestRecordId': row[0] if row else None, 'legacyHeadVersion': None}
-    return _manifest(legacy.encode(body))
+    result = _manifest(legacy.encode(body))
+    if prefixes:
+        result = {**result, '_prefixProofs': proofs}
+    return result
 
 
 def _restore(path, manifest, remote, directory):
@@ -220,11 +238,49 @@ def _local_holds_manifest(path, manifest):
             and local['counts'].get('views', 0) > 0)
 
 
+def _remote_prefixes(manifest):
+    """The last remote group of each table, which local appends may have extended."""
+    prefixes = {}
+    for table in ('views', 'outcomes'):
+        own = [g for g in manifest['groups'] if g['kind'] == table]
+        if own and own[-1]['count'] < GROUP_RECORDS:
+            prefixes[(table, len(own) - 1)] = own[-1]['rawBytes']
+    return prefixes
+
+
+def _local_extends_manifest(local, manifest):
+    """True only when every remote record is present, unchanged and in order.
+
+    Records are grouped in insertion order, so a local file that only gained
+    newer records keeps every completed remote group byte-identical and the
+    remote's partial last group as the exact beginning of the local group.
+    Anything else (a missing, changed or reordered record) returns False and
+    the caller restores from the remote as before.
+    """
+    proofs = local.get('_prefixProofs') or {}
+    for table in ('views', 'outcomes'):
+        remote = [g for g in manifest['groups'] if g['kind'] == table]
+        mine = [g for g in local['groups'] if g['kind'] == table]
+        if len(mine) < len(remote):
+            return False
+        for index, group in enumerate(remote):
+            same = (mine[index]['rawSha256'] == group['rawSha256']
+                    and mine[index]['count'] == group['count']
+                    and mine[index]['rawBytes'] == group['rawBytes'])
+            if same:
+                continue
+            if (index != len(remote) - 1 or group['count'] >= GROUP_RECORDS
+                    or mine[index]['count'] <= group['count']
+                    or proofs.get((table, index)) != group['rawSha256']):
+                return False
+    return True
+
+
 def synchronize(path, connection, *, last_verified_head=None):
     remote = Remote(connection)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.analysis-compact-', dir=Path(path).parent) as directory:
-        manifest, version = _head(remote); restored = None; migrated = False
+        manifest, version = _head(remote); restored = None; migrated = False; local = None
         old, old_version = legacy._head(connection)
         if (manifest is not None and version is not None and version == last_verified_head
                 and manifest.get('legacyHeadVersion') == old_version
@@ -245,7 +301,22 @@ def synchronize(path, connection, *, last_verified_head=None):
             # counts and same latest id) there is nothing to restore; the
             # snapshot below still proves byte-level agreement before publish.
             if not _local_holds_manifest(path, manifest):
-                restored = _restore(path, manifest, remote, directory)
+                # A restart after new local records were written: prove from
+                # the local file alone that it already contains the remote
+                # archive (2026-10-03: the full restore needed ~500 MiB and
+                # timed out at every such boot, so the backup never caught up).
+                extended = None
+                if Path(path).exists():
+                    try:
+                        history.initialize(path)
+                        extended = _snapshot(path, directory, check_deadline=remote._check_deadline,
+                                             prefixes=_remote_prefixes(manifest))
+                    except (ValueError, OSError):
+                        extended = None
+                if extended is None or not _local_extends_manifest(extended, manifest):
+                    restored = _restore(path, manifest, remote, directory)
+                else:
+                    local = {k: v for k, v in extended.items() if k != '_prefixProofs'}
         # During compatibility, a late v1 writer remains visible. No v1 files or
         # pointer are replaced, and new v2 records are never lost on re-import.
         if old and (manifest is None or manifest.get('legacyHeadVersion') != old_version):
@@ -253,7 +324,8 @@ def synchronize(path, connection, *, last_verified_head=None):
             restored = restored or old_counts
             migrated = True
         history.initialize(path)
-        local = _snapshot(path, directory, check_deadline=remote._check_deadline)
+        if local is None or migrated:
+            local = _snapshot(path, directory, check_deadline=remote._check_deadline)
         local['legacyHeadVersion'] = old_version
         if local != manifest:
             chunks = [chunk for group in local['groups'] for chunk in group['chunks']]
