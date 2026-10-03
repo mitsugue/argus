@@ -43,3 +43,50 @@ def test_unpublished_macro_dates_are_a_gap_not_an_empty_calendar():
     assert result["status"] == "PARTIAL"
     broken = cal.equity_event_calendar(now=NOW, macro_schedule={"schemaVersion": "x"})
     assert "jp_macro_schedule_unavailable" in broken["gaps"]
+
+
+def test_nikkei_periodic_review_is_the_first_trading_day_of_april_and_october():
+    """Nikkei's selection rule: April and October, first trading day (confirmed against the 2023-2026 history)."""
+    rows = cal.nikkei_review_events(date(2026, 10, 2), date(2027, 4, 30))
+    assert [(row["date"], row["kind"]) for row in rows] == [("2027-04-01", "NIKKEI_PERIODIC_REVIEW")]
+    # October 2026's first trading day (Thursday 10/1) is already past; before it, it is listed.
+    before = cal.nikkei_review_events(date(2026, 9, 20), date(2026, 10, 31))
+    assert [row["date"] for row in before] == ["2026-10-01"]
+    # A first business day behind a holiday moves forward (2023-10-02 and 2023-04-03 in the history).
+    assert [row["date"] for row in cal.nikkei_review_events(date(2023, 3, 20), date(2023, 4, 30))] == ["2023-04-03"]
+    assert [row["date"] for row in cal.nikkei_review_events(date(2023, 9, 20), date(2023, 10, 31))] == ["2023-10-02"]
+    row = rows[0]
+    assert "最大3銘柄" in row["whatJa"] and "約1か月前" in row["whatJa"] and "未確認" in row["whatJa"]
+    assert "除数" in row["soWhatJa"] and "20260709J_3.pdf" in row["source"]
+
+
+def test_msci_review_dates_come_from_the_published_schedule_with_the_close_before_the_effective_day():
+    import json
+    schedule = json.loads(cal.MSCI_SCHEDULE.read_text())
+    assert schedule["sourceRef"].endswith("/ir_dates.pdf") and len(schedule["sourceCsvSha256"]) == 64
+    rows, gaps = cal.msci_events(date(2026, 10, 3), date(2026, 12, 15), schedule)
+    assert [(row["date"], row["kind"]) for row in rows] == [
+        ("2026-11-11", "MSCI_REVIEW_ANNOUNCEMENT"), ("2026-11-30", "MSCI_REVIEW_REBALANCE")]   # effective 12/01
+    assert gaps == []
+    assert "2026-12-01" in rows[1]["whatJa"] and "大引け" in rows[1]["soWhatJa"]
+    # The effective day after a weekend moves the rebalance to the previous trading day (2027-05-28 is a Friday).
+    may = cal.msci_events(date(2027, 5, 1), date(2027, 5, 31), schedule)[0]
+    assert [(row["date"], row["kind"]) for row in may] == [
+        ("2027-05-10", "MSCI_REVIEW_ANNOUNCEMENT"), ("2027-05-27", "MSCI_REVIEW_REBALANCE")]
+    # Beyond the published schedule it is a gap, never an extrapolation.
+    far = cal.msci_events(date(2028, 8, 1), date(2028, 11, 1), schedule)
+    assert "msci_schedule_not_published_beyond_2028-09-01" in far[1]
+    try:
+        cal.msci_events(date(2026, 10, 3), date(2026, 12, 15), {"schemaVersion": "x"})
+        raise AssertionError("an unknown schema must not be accepted")
+    except ValueError as exc:
+        assert str(exc) == "msci_schedule_invalid"
+
+
+def test_the_calendar_lists_the_review_events_inside_the_horizon():
+    result = cal.equity_event_calendar(now=NOW, horizon_days=90)
+    kinds = {row["kind"] for row in result["events"]}
+    assert {"MSCI_REVIEW_ANNOUNCEMENT", "MSCI_REVIEW_REBALANCE"} <= kinds
+    assert "NIKKEI_PERIODIC_REVIEW" not in kinds            # 2027-04-01 is beyond 90 days
+    for row in result["events"]:
+        assert row["whatJa"] and row["soWhatJa"] and row["watchJa"] and row["actionAuthority"] is False
