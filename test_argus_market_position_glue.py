@@ -16,6 +16,7 @@ def _fresh(monkeypatch, tmp_path, durable=True):
     # Public headline and radar stores are read-only inputs; keep them empty here.
     monkeypatch.setattr(scanner, "_INTEL_STORE", [])
     monkeypatch.setattr(scanner, "_NEWS_CACHE", {"data": None, "expires": 0.0})
+    monkeypatch.setattr(scanner.argus_index_live, "current_quote_safe", lambda: {"status": "UNAVAILABLE"})
     return path
 
 
@@ -60,3 +61,47 @@ def test_brief_puts_the_position_facts_into_the_shared_evidence(monkeypatch, tmp
     # The integrated explanation is told to read the position first.
     import inspect
     assert "source=market_position" in inspect.getsource(scanner._market_brief_ai_polish)
+
+
+def test_ai_theme_views_are_checked_stored_and_never_reject_the_six_sections(monkeypatch, tmp_path):
+    """Stage two: the integrated AI's per-theme views go through the shared rules into the memory."""
+    import argus_market_brief as mb
+    from test_argus_unified_brief import brief as base_brief, model_response
+    path = _fresh(monkeypatch, tmp_path)
+    position = scanner._market_position_update(NEWS, CALENDAR)
+    def build():
+        b = base_brief()
+        b["marketPosition"] = json.loads(json.dumps(position))
+        b["facts"].extend(mpm.explanation_facts(position))
+        b["unifiedContext"] = mb.unified_context(b)
+        return b
+    def provider_with(position_value):
+        def provider(user, **kwargs):
+            context, raw = model_response(user)
+            us = next(r for r in context["facts"] if r["source"] == "market_position"
+                      and r["provenance"]["eventId"] == "market-position-US_POLICY_RATE")
+            raw["position"] = position_value(us["evidenceId"])
+            kwargs["diagnostic"].update(outcome="ok", completedAt="2026-10-03T02:05:00Z", returnedModel="gpt-6-astra", estUsd=.01)
+            return raw
+        return provider
+    good = lambda ref: [{"themeId": "US_POLICY_RATE", "expectationJa": "弱い雇用で追加利上げは見送られるとの見方",
+                         "fearJa": "次の物価指標が強ければ利上げ観測が戻る", "triggerJa": "次の物価指標と次回会合の示唆",
+                         "evidenceIds": [ref], "kind": "INFERENCE"}]
+    monkeypatch.setattr(scanner, "_openai_prose", provider_with(good))
+    result = scanner._market_brief_ai_polish(build())
+    assert result["unifiedStatus"] == "GENERATED"
+    assert result["positionViews"] == {"status": "ACCEPTED", "reason": None, "themeId": None, "count": 1}
+    us = next(t for t in result["marketPosition"]["themes"] if t["themeId"] == "US_POLICY_RATE")
+    assert us["view"]["fearJa"].startswith("次の物価指標") and us["view"]["kind"] == "INFERENCE"
+    saved = json.load(open(path))
+    assert [r["kind"] for r in saved["entries"]].count("AI_VIEW") == 1
+    # The same view again is not appended.
+    scanner._market_brief_ai_polish(build())
+    assert [r["kind"] for r in json.load(open(path))["entries"]].count("AI_VIEW") == 1
+    # An invalid position is reported and dropped; the six sections stay accepted.
+    bad = lambda ref: [{**good(ref)[0], "expectationJa": "上がる確率は高い"}]
+    monkeypatch.setattr(scanner, "_openai_prose", provider_with(bad))
+    rejected = scanner._market_brief_ai_polish(build())
+    assert rejected["unifiedStatus"] == "GENERATED"
+    assert rejected["positionViews"]["status"] == "REJECTED" and rejected["positionViews"]["count"] == 0
+    assert [r["kind"] for r in json.load(open(path))["entries"]].count("AI_VIEW") == 1

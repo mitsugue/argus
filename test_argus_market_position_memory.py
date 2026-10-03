@@ -130,18 +130,22 @@ def test_ai_views_are_validated_like_sections_and_appended_once():
              "evidenceIds": [ids[0]], "kind": "INFERENCE"},
             {"themeId": "JPY", "expectationJa": "x", "fearJa": "y", "triggerJa": "z", "evidenceIds": [], "kind": "UNKNOWN"}]
     diag = {}
-    out = mpm.validate_views(good, context, ["US_POLICY_RATE", "MIDDLE_EAST"], diagnostic=diag)
+    import argus_market_brief
+    check = lambda value, active, **kw: argus_market_brief.validate_theme_views(
+        value, context, theme_ids=mpm.THEMES, active_theme_ids=active, fields=mpm.VIEW_FIELDS,
+        text_limit=mpm.VIEW_TEXT_LIMIT, **kw)
+    out = check(good, ["US_POLICY_RATE", "MIDDLE_EAST"], diagnostic=diag)
     assert diag["status"] == "ACCEPTED" and [v["themeId"] for v in out] == ["US_POLICY_RATE"]   # quiet JPY dropped
-    assert mpm.validate_views(None, context, []) == []
-    bad = lambda **patch: mpm.validate_views([{**good[0], **patch}], context, ["US_POLICY_RATE"], diagnostic=(d := {})) is None and d["reason"]
+    assert check(None, []) == []
+    bad = lambda **patch: check([{**good[0], **patch}], ["US_POLICY_RATE"], diagnostic=(d := {})) is None and d["reason"]
     assert bad(kind="FACT") == "position_view_is_inference"
     assert bad(evidenceIds=["brief-fact-nope"]) == "unknown_evidence_reference"
     assert bad(evidenceIds=[]) == "evidence_reference_required"
     assert bad(expectationJa="上がる確率は高い") == "unsupported_authority_or_probability"
     assert bad(fearJa="政策金利は4.50%に上がる") == "unsupported_numeric_tokens"
     assert bad(expectationJa="x" * 161) == "position_field_invalid"
-    assert mpm.validate_views([{**good[0], "extra": 1}], context, ["US_POLICY_RATE"]) is None
-    assert mpm.validate_views(good + [good[0]], context, ["US_POLICY_RATE"]) is None
+    assert check([{**good[0], "extra": 1}], ["US_POLICY_RATE"]) is None
+    assert check(good + [good[0]], ["US_POLICY_RATE"]) is None
     assert mpm.ingest_views(memory, out, context_id="ctx-1", generated_at="2026-10-03T02:10:00Z") == 1
     assert mpm.ingest_views(memory, out, context_id="ctx-2", generated_at="2026-10-03T03:10:00Z") == 0   # unchanged view
     changed = [{**out[0], "fearJa": "中東情勢の急変"}]

@@ -16929,7 +16929,10 @@ def _market_brief_ai_polish(brief):
             position = brief.get("marketPosition") or {}
             active = [t["themeId"] for t in (position.get("themes") or []) if t.get("status") == "ACTIVE"]
             view_diag = {}
-            views = argus_market_position_memory.validate_views(raw.get("position"), context, active, diagnostic=view_diag)
+            views = argus_market_brief.validate_theme_views(
+                raw.get("position"), context, theme_ids=argus_market_position_memory.THEMES,
+                active_theme_ids=active, fields=argus_market_position_memory.VIEW_FIELDS,
+                text_limit=argus_market_position_memory.VIEW_TEXT_LIMIT, diagnostic=view_diag)
             brief["positionViews"] = {"status": view_diag.get("status") or "ACCEPTED", "reason": view_diag.get("reason"),
                                       "themeId": view_diag.get("themeId"), "count": len(views or [])}
             if views:
