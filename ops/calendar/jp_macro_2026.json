@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "jp-official-macro-release-schedule-v1",
+  "coverageStart": "2026-10-01",
+  "coverageEnd": "2026-12-31",
+  "sourceRef": "https://www.jil.go.jp/kokunai/statistics/kohyobi/index.html",
+  "sourceNoteJa": "労働政策研究・研修機構「労働統計公表日一覧」(各府省・日本銀行の公表予定を集約)",
+  "sourceSha256": "c073ed44494ed720c035325fa58cc833c7479018ab24ec6a95a733e9ac391781",
+  "knownAt": "2026-10-02T13:08:43Z",
+  "rows": [
+    {"code": "JP_TANKAN", "date": "2026-10-01", "time": "08:50", "referenceJa": "2026年9月調査"},
+    {"code": "JP_TOKYO_CPI", "date": "2026-10-02", "time": "08:30", "referenceJa": "2026年9月分(中旬速報値)"},
+    {"code": "JP_WAGES", "date": "2026-10-07", "time": "08:30", "referenceJa": "2026年8月分速報"},
+    {"code": "JP_CPI", "date": "2026-10-23", "time": "08:30", "referenceJa": "2026年9月分"},
+    {"code": "JP_TOKYO_CPI", "date": "2026-10-30", "time": "08:30", "referenceJa": "2026年10月分(中旬速報値)"},
+    {"code": "JP_WAGES", "date": "2026-11-06", "time": "08:30", "referenceJa": "2026年9月分速報"},
+    {"code": "JP_GDP", "date": "2026-11-16", "time": "08:50", "referenceJa": "2026年7〜9月期 1次速報"},
+    {"code": "JP_CPI", "date": "2026-11-20", "time": "08:30", "referenceJa": "2026年10月分"},
+    {"code": "JP_TOKYO_CPI", "date": "2026-11-27", "time": "08:30", "referenceJa": "2026年11月分(中旬速報値)"},
+    {"code": "JP_GDP", "date": "2026-12-08", "time": "08:50", "referenceJa": "2026年7〜9月期 2次速報"},
+    {"code": "JP_WAGES", "date": "2026-12-08", "time": "08:30", "referenceJa": "2026年10月分速報"},
+    {"code": "JP_TANKAN", "date": "2026-12-14", "time": "08:50", "referenceJa": "2026年12月調査"},
+    {"code": "JP_CPI", "date": "2026-12-18", "time": "08:30", "referenceJa": "2026年11月分"},
+    {"code": "JP_TOKYO_CPI", "date": "2026-12-25", "time": "08:30", "referenceJa": "2026年12月分(中旬速報値)"}
+  ]
+}

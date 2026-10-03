@@ -416,6 +416,79 @@ def merge_feature_sources(existing, official, *, path=None, received_at=None):
         db.close()
 
 
+# Feature series whose provider re-sends unchanged observations with a new
+# receipt and drops its oldest session every day (2026-10-02): the J-Quants
+# TOPIX window (receivedAt and the whole-response digest on every row), FRED
+# US 10y (the newest 2,600 observations) and Yahoo USD/JPY (a ten-year range).
+STABLE_FEATURE_SOURCES = frozenset({'topix', 'us10y', 'usdjpy'})
+# Fields that record a receipt, not the observation. Every other field is
+# compared, so a changed value, availability or source is still a change.
+RECEIPT_FIELDS = frozenset({'receivedAt', 'sourceResponseSha256', 'rawId'})
+STABLE_FEATURE_MAX_SESSIONS = 3000
+
+
+def retain_first_receipts(rows, *, path, source_id, received_at,
+                          maximum=STABLE_FEATURE_MAX_SESSIONS):
+    """Keep each session's first receipt and the series' fixed origin.
+
+    A re-sent identical observation keeps the row first selected (its own
+    receipt and response digest), so the feature history does not see a
+    changed input. Sessions that left the provider's rolling window stay in
+    the selection, so its origin does not move every day; the newest
+    `maximum` sessions are returned. A row whose observation fields changed
+    replaces the selection as before; one not yet available at this receipt
+    (a session still forming) is returned but not recorded. A cold provider
+    cache returns the recorded selection. Raw provider rows are not stored.
+    Returns the rows unchanged when there is no durable path.
+    """
+    if source_id not in STABLE_FEATURE_SOURCES:
+        raise ValueError('stable_feature_source_unknown')
+    rows = list(rows or [])
+    if not path:
+        return rows
+    receipt = _time(received_at)
+    observation = lambda row: {k: v for k, v in row.items() if k not in RECEIPT_FIELDS}
+    db = connect(path)
+    try:
+        db.execute("""CREATE TABLE IF NOT EXISTS selected_feature_inputs(
+            seq INTEGER PRIMARY KEY, source_id TEXT NOT NULL, session TEXT NOT NULL,
+            body TEXT NOT NULL, sha256 TEXT NOT NULL, received_at TEXT NOT NULL)""")
+        saved = {}
+        for session, body, digest in db.execute("""SELECT session,body,sha256 FROM selected_feature_inputs
+                WHERE seq IN (SELECT max(seq) FROM selected_feature_inputs WHERE source_id=?
+                              GROUP BY session)""", (source_id,)):
+            if hashlib.sha256(body.encode()).hexdigest() != digest:
+                raise ValueError('selected_source_integrity')
+            row = json.loads(body)
+            if row.get('date') != session:
+                raise ValueError('selected_source_date')
+            saved[session] = row
+        changes, forming = [], {}
+        for row in rows:
+            session = row.get('date') if isinstance(row, dict) else None
+            if not isinstance(session, str) or len(session) != 10:
+                raise ValueError('stable_feature_row_date')
+            old = saved.get(session)
+            if old is not None and observation(old) == observation(row):
+                continue  # the same observation re-sent: keep its first receipt
+            available = row.get('availableFrom')
+            if not available or _time(available) > receipt:
+                forming[session] = row
+                continue
+            saved[session] = row
+            changes.append(row)
+        with db:
+            for row in changes:
+                encoded = _json(row)
+                db.execute('INSERT INTO selected_feature_inputs(source_id,session,body,sha256,received_at) '
+                           'VALUES(?,?,?,?,?)', (source_id, row['date'], encoded,
+                                                 hashlib.sha256(encoded.encode()).hexdigest(), received_at))
+        merged = {**saved, **forming}
+        return [merged[day] for day in sorted(merged)][-maximum:]
+    finally:
+        db.close()
+
+
 def apply_scheduled_availability(rows, *, lag_days, source_label):
     """Read-side rule for provider rows whose only stamp is their receipt.
 
