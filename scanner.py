@@ -6422,6 +6422,13 @@ _EVENT_HORIZON_DAYS  = 60   # only surface events within ~2 months (calm radar)
 _EVENT_RELEASED_KEEP_DAYS = 3
 
 _FOMC_2026 = ["2026-06-17", "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-09"]
+# Decision days (second day) of the 2027 meetings as published by the Federal
+# Reserve (federalreserve.gov/monetarypolicy/fomccalendars.htm, checked
+# 2026-10-03): Jan 26-27, Mar 16-17, Apr 27-28, Jun 8-9, Jul 27-28, Sep 14-15,
+# Oct 26-27, Dec 7-8. The Fed marks each date tentative until confirmed at the
+# meeting before it. The 2027 BLS/BEA releases are not yet published.
+_FOMC_2027 = ["2027-01-27", "2027-03-17", "2027-04-28", "2027-06-09", "2027-07-28",
+              "2027-09-15", "2027-10-27", "2027-12-08"]
 _BOJ_2026  = ["2026-06-16", "2026-07-31", "2026-09-18", "2026-10-30", "2026-12-18"]
 _BOJ_OUTLOOK = {"2026-07-31", "2026-10-30"}
 _CPI_2026  = ["2026-06-10", "2026-07-14", "2026-08-12", "2026-09-11", "2026-10-14", "2026-11-10", "2026-12-10"]
@@ -6445,7 +6452,7 @@ _EVENT_RATIONALE = {
 
 # (dates, et_time, kind, title, category, country, source, impact, linkedAssets)
 _EVENT_SPECS = [
-    (_FOMC_2026, "14:00", "fomc", "FOMC Rate Decision",                "central_bank", "US", "Federal Reserve",             "high",   ["USDJPY", "US10Y", "US2Y", "QQQ", "NVDA"]),
+    (_FOMC_2026 + _FOMC_2027, "14:00", "fomc", "FOMC Rate Decision",                "central_bank", "US", "Federal Reserve",             "high",   ["USDJPY", "US10Y", "US2Y", "QQQ", "NVDA"]),
     (_CPI_2026,  "08:30", "cpi",  "US CPI (Consumer Price Index)",     "inflation",    "US", "Bureau of Labor Statistics",  "high",   ["US10Y", "USDJPY", "QQQ", "SPY"]),
     (_NFP_2026,  "08:30", "nfp",  "US Employment Situation",           "jobs",         "US", "Bureau of Labor Statistics",  "high",   ["US10Y", "USDJPY", "SPY", "QQQ"]),
     (_JOLTS_2026, "10:00", "jolts", "US JOLTS Job Openings",           "jobs",         "US", "Bureau of Labor Statistics",  "medium", ["US10Y", "USDJPY", "SPY", "QQQ"]),
@@ -14199,7 +14206,7 @@ def _macro_release_post(event, window):
 
 def _next_fomc_after(date_iso):
     try:
-        return next(d for d in _FOMC_2026 if d >= str(date_iso or "")[:10])
+        return next(d for d in _FOMC_2026 + _FOMC_2027 if d >= str(date_iso or "")[:10])
     except StopIteration:
         return None
 
