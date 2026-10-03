@@ -116,3 +116,15 @@ def test_post_prompt_reads_the_measured_reaction_and_is_replaced_once_at_sixty(m
                                  macro_record=scanner._MACRO_ANALYSIS[EVENT["id"]], now_iso="2026-10-02T14:00:00Z")
     assert item["releaseReaction"]["latestWindow"] == "+8h" and item["caos"]["marketReadingJa"].startswith("利上げ観測の後退")
     assert item["caos"]["changeConditionJa"].startswith("FOMC")
+
+
+def test_next_fomc_continues_into_2027_with_the_published_dates():
+    """Federal Reserve calendar (checked 2026-10-03): 2027 decision days, tentative until confirmed."""
+    assert scanner._FOMC_2027 == ["2027-01-27", "2027-03-17", "2027-04-28", "2027-06-09", "2027-07-28",
+                                   "2027-09-15", "2027-10-27", "2027-12-08"]
+    assert scanner._next_fomc_after("2026-12-10") == "2027-01-27"
+    assert scanner._next_fomc_after("2026-10-03") == "2026-10-28"
+    assert scanner._next_fomc_after("2027-12-09") is None
+    assert all(__import__("datetime").date.fromisoformat(d).weekday() == 2 for d in scanner._FOMC_2027)   # Wednesdays
+    spec = next(row for row in scanner._EVENT_SPECS if row[2] == "fomc")
+    assert spec[0] == scanner._FOMC_2026 + scanner._FOMC_2027

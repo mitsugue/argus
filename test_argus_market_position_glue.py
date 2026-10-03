@@ -105,3 +105,20 @@ def test_ai_theme_views_are_checked_stored_and_never_reject_the_six_sections(mon
     assert rejected["unifiedStatus"] == "GENERATED"
     assert rejected["positionViews"]["status"] == "REJECTED" and rejected["positionViews"]["count"] == 0
     assert [r["kind"] for r in json.load(open(path))["entries"]].count("AI_VIEW") == 1
+
+
+def test_persistence_status_says_restored_after_a_restart_even_before_a_new_entry(monkeypatch, tmp_path):
+    """2026-10-03: production showed memory_only although the file had been read back."""
+    path = _fresh(monkeypatch, tmp_path)
+    scanner._market_position_update(NEWS, CALENDAR)
+    scanner._MARKET_POSITION.update(memory=None, loadedAt=None, persistence=None)
+    view = scanner._market_position_update([], CALENDAR)          # nothing new to append
+    assert view["persistence"]["status"] == "restored" and view["persistence"]["entries"] == 4
+    # With nothing to append and no file yet, a configured path reads "saved_file_ready".
+    scanner._MACRO_ANALYSIS.clear()
+    scanner._MARKET_POSITION.update(memory=None, loadedAt=None, persistence=None)
+    monkeypatch.setattr(scanner, "_market_position_path", lambda: str(tmp_path / "missing.json"))
+    assert scanner._market_position_update([], CALENDAR)["persistence"]["status"] == "saved_file_ready"
+    scanner._MARKET_POSITION.update(memory=None, loadedAt=None, persistence=None)
+    monkeypatch.setattr(scanner, "_market_position_path", lambda: None)
+    assert scanner._market_position_update([], CALENDAR)["persistence"]["status"] == "memory_only"

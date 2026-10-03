@@ -331,8 +331,15 @@ def event_focus(value, event_id, cutoff, *, market=None, symbol=None):
 
 
 def build_context(*, brief, symbol, market, horizon, question, received_at, owner=None,
-                  previous=None, hypothesis=None, index_quote=None, eps_input=None, subject_comparison=None, material_facts=None, focus_event_id=None, event_snapshot=None, watchlist_only=False):
-    """Copy server facts; private inputs cannot replace the market or official history."""
+                  previous=None, hypothesis=None, index_quote=None, eps_input=None, subject_comparison=None, material_facts=None, focus_event_id=None, event_snapshot=None, watchlist_only=False,
+                  event_cutoff=None, previous_across_event_focus=False):
+    """Copy server facts; private inputs cannot replace the market or official history.
+
+    A scheduled explanation fixes its event lookup to the event's own times
+    (event_cutoff, never later than received_at), so an unchanged event does
+    not become a new input on every tick. Its change comparison stays bound to
+    the same subject and period even when the focused event starts or ends.
+    """
     if market not in ('JP','US') or not isinstance(symbol,str) or not re.fullmatch(r'[A-Z0-9.^-]{1,16}',symbol):
         raise ValueError('subject_invalid')
     if type(horizon) is not int or horizon not in HORIZONS:raise ValueError('horizon_invalid')
@@ -355,7 +362,11 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
     if material_facts:
         if not isinstance(material_facts,list) or len(material_facts)>5:raise ValueError('subject_material_bound')
         facts.extend(deepcopy(material_facts))
-    selected_event, event_facts = event_focus(event_snapshot, focus_event_id, received_at, market=market, symbol=symbol)
+    if event_cutoff is None:
+        event_cutoff = received_at
+    elif instant(event_cutoff) > instant(received_at):
+        raise ValueError('event_cutoff_after_request')
+    selected_event, event_facts = event_focus(event_snapshot, focus_event_id, event_cutoff, market=market, symbol=symbol)
     facts.extend(event_facts)
     facts.append(fact(f'質問の対象は{market}:{symbol}、比較・見通しの期間は{horizon}営業日です。','requested_subject',kind='REQUEST_SCOPE'))
     private=owner_snapshot(owner,symbol=symbol,market=market,received_at=received_at)
@@ -384,7 +395,7 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
                 f"{before}{calculated['value']:g} {calculated['unit']}。{calculated['noteJa']}")
             facts.append(fact(description,'conversation_hypothesis',kind='HYPOTHESIS'))
         else:facts.append(fact('仮定の数値計算に必要な原典を確認できていません。','conversation_hypothesis',kind='UNKNOWN'))
-    matching_previous=isinstance(previous,Mapping) and previous.get('scope')=='OWNER_PRIVATE' and previous.get('subject')=={'symbol':symbol,'market':market} and previous.get('horizonSessions')==horizon and previous.get('schemaVersion')==SCHEMA and (previous.get('eventFocus') or {}).get('eventId')==(selected_event or {}).get('eventId')
+    matching_previous=isinstance(previous,Mapping) and previous.get('scope')=='OWNER_PRIVATE' and previous.get('subject')=={'symbol':symbol,'market':market} and previous.get('horizonSessions')==horizon and previous.get('schemaVersion')==SCHEMA and (previous_across_event_focus or (previous.get('eventFocus') or {}).get('eventId')==(selected_event or {}).get('eventId'))
     if matching_previous and previous.get('contextId')!=digest({k:v for k,v in previous.items() if k!='contextId'}):raise ValueError('previous_context_integrity')
     if matching_previous and instant(previous['receivedAt'])>instant(received_at):raise ValueError('previous_context_from_future')
     prior=deepcopy(previous.get('facts') or []) if matching_previous else []
