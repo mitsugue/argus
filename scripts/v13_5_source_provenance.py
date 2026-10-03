@@ -404,7 +404,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/hooks/useJapanSqCalendar.ts': '24751f5205496b8263c9712ae71103a42b4ba8c8',
     'web/src/lib/japanMarketComparison.ts': 'a46f452a6b880d6b0f8233884ad00c22590a8b51',
     'web/src/lib/japanSqCalendar.ts': '947b1c9121f7b6f8a5e7b501211b8b43449b329b',
-    'web/src/lib/marketBrief.ts': '21d9efc29c611b15cfd40f901e37dc7e166355ac',
+    'web/src/lib/marketBrief.ts': 'b92a5777d9694905dd21b9e175b24bd323ed5e9f',
     'web/src/types/japanMarketComparison.ts': '268df54c99aba95d8d02ac3e41ce6781ead81fcf',
     "test_ai_cost.py": "e2e1a3094c0fe315993d027592de6e1db9a5b784",
     'web/scripts/news-polling-recovery.test.mjs': 'a5675fb01973b14712491809f7eb30c5814851f0',
