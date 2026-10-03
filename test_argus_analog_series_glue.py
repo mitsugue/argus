@@ -307,3 +307,50 @@ class OwnerAuthBucketTest(unittest.TestCase):
             # Data polling exhausted its bucket; the owner session check is unaffected.
             self.assertNotEqual(client.get("/api/argus/owner-auth/session").status_code, 429)
         scanner._RL_BUCKETS.clear()
+
+
+class TenYearIndexHistoryTest(unittest.TestCase):
+    """2026-10-03: D03 (Japan/US relative strength) and D06 (VIX MACD) had a
+    record only from late 2024 because the S&P 500 and VIX histories were two years."""
+    def setUp(self):
+        self.saved = dict(scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE)
+        scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.clear()
+
+    def tearDown(self):
+        scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.clear()
+        scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.update(self.saved)
+
+    @staticmethod
+    def _chart(days):
+        import calendar, datetime as dt
+        stamps = [calendar.timegm(dt.datetime.strptime(d, "%Y-%m-%d").timetuple()) + 20 * 3600 for d in days]
+        n = len(days)
+        return {"chart": {"result": [{"meta": {"gmtoffset": 0}, "timestamp": stamps,
+                "indicators": {"quote": [{"open": [1.0] * n, "high": [2.0] * n, "low": [0.5] * n,
+                                           "close": [1.5] * n, "volume": [0] * n}]}}]}}
+
+    def test_vix_and_sp500_are_requested_for_ten_years(self):
+        seen = []
+        def get(url, params=None, **kwargs):
+            seen.append((url.rsplit("/", 1)[1], params["range"]))
+            return _Resp(self._chart(["2026-10-01", "2026-10-02"]))
+        with mock.patch.object(scanner.requests, "get", side_effect=get):
+            rows, source = scanner._jp_market_engine_vix_rows(fetch=True)
+            scanner._yahoo_index_ohlcv("^GSPC", "SP500_INDEX", fetch=True, next_day_available=True, range_="10y")
+        self.assertEqual(source, "yahoo_ohlcv")
+        self.assertEqual(seen, [("^VIX", "10y"), ("^GSPC", "10y")])
+        self.assertEqual(rows[-1]["availableFrom"], "2026-10-03T00:00:00Z")
+        import inspect
+        self.assertIn('_yahoo_index_ohlcv("^GSPC", "SP500_INDEX", fetch=warm, next_day_available=True, range_="10y")',
+                      inspect.getsource(scanner._jp_market_engine_pit_inputs))
+
+    def test_a_shorter_refetch_keeps_the_longer_history(self):
+        with mock.patch.object(scanner.requests, "get",
+                               return_value=_Resp(self._chart(["2017-01-03", "2020-06-01", "2026-09-30"]))):
+            first = scanner._yahoo_index_ohlcv("^GSPC", "SP500_INDEX", fetch=True, next_day_available=True, range_="10y")
+        self.assertEqual([r["date"] for r in first], ["2017-01-03", "2020-06-01", "2026-09-30"])
+        scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE["^GSPC"]["expires"] = 0.0
+        with mock.patch.object(scanner.requests, "get",
+                               return_value=_Resp(self._chart(["2026-09-30", "2026-10-01"]))):
+            again = scanner._yahoo_index_ohlcv("^GSPC", "SP500_INDEX", fetch=True, next_day_available=True)
+        self.assertEqual([r["date"] for r in again], ["2017-01-03", "2020-06-01", "2026-09-30", "2026-10-01"])
