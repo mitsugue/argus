@@ -33340,6 +33340,9 @@ def api_argus_admin_missions_tick():
         _detach_market_stores("mission_tick")
 
 
+_MISSION_LOOP_MIN_SECONDS = 20
+
+
 def _api_argus_admin_missions_tick_impl():
     """Admin/cron: セッション対応ミッションの冪等生成+lease実行+見逃し回収。
     公開ルートからは不可。重複実行しても予測/成果は重複しない。"""
@@ -33440,6 +33443,16 @@ def _api_argus_admin_missions_tick_impl():
             jp_session.get("isTradingDay") and (now.hour, now.minute) >= (16, 30)):
         try:
             _daily_short_rows = _jp_daily_short_history(cached_only=False)
+            # 2026-10-03: the provider rows were never written to the durable
+            # state (only a retired chart analysis did), so every restart and
+            # every cache expiry fetched five years again (27 s of the tick's
+            # 45 s budget, measured). Keep the fetched rows durable.
+            if (_daily_short_rows and _JP_DAILY_SHORT_CACHE.get("status") == "live"
+                    and len(_daily_short_rows) != len(
+                        _TODAY_INTELLIGENCE.get("shortSellingHistory") or [])):
+                _seeded_ti = argus_today_intelligence.merge_state(
+                    _TODAY_INTELLIGENCE, {"shortSellingHistory": _daily_short_rows})
+                _TODAY_INTELLIGENCE["shortSellingHistory"] = _seeded_ti["shortSellingHistory"]
             daily_short_tick = {
                 "status": _JP_DAILY_SHORT_CACHE.get("status") or
                 ("live" if _daily_short_rows else "missing"),
@@ -33668,13 +33681,21 @@ def _api_argus_admin_missions_tick_impl():
         "monthly_model_review": "mission.execute.monthly_model_review",
         "benchmark_calibration": "mission.execute.benchmark_calibration",
     }
+    # 2026-10-03: the stages above share the batch deadline and run first;
+    # when they used it up (measured: 40 s of 45 s), no mission was ever
+    # claimed and the queue stayed at "processed 0, remaining 7". The mission
+    # loop keeps a guaranteed minimum of its own.
+    mission_loop_started = time.monotonic()
+    mission_budget_seconds = max(
+        _MISSION_LOOP_MIN_SECONDS,
+        time_budget_seconds - (mission_loop_started - batch_started))
     for m in _MISSIONS:
         if _SHUTDOWN.get("requested"):
             break
         if argus_scheduler.batch_limit_reached(
                 processed=processed_missions, max_events=max_missions,
-                elapsed_seconds=time.monotonic() - batch_started,
-                max_seconds=time_budget_seconds):
+                elapsed_seconds=time.monotonic() - mission_loop_started,
+                max_seconds=mission_budget_seconds):
             break
         if m.get("status") not in ("scheduled", "retry_wait", "missed"):
             continue
