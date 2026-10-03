@@ -204,7 +204,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/polling-singleton.test.mjs': 'd06ffc82f0267da3884629d80a0bc5be0ec20468',
     'test_argus_institutional_backend_v1160.py': 'd8065d151883cdf13ff7ebfa79358482d40cc8fc',
     'docs/V13_7_SHAPEUP_REQUIREMENTS.md': '9756717ff26e5cf159dcf5d20cb578d99ab225ed',
-    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': 'c86aa8bb3da05f49b0a14b848439cb5ea2a26b94',
+    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': '35605becb048cbc03bbf5030c986328f54e710d5',
     'test_rules.py': '36c1d8b92e9a68f606586c00607d1e9c400c1b2c',
     'bridge/trigger_closepin.sh': '83ee01384660bb8799a863e080021a7fa35c1e3d',
     '.github/workflows/closepin-pin.yml': 'ea693b3ca6140d4cf6fa66c48d91c6a03f603baa',

@@ -235,3 +235,70 @@ Deployment and runtime proof require the existing owner's EC2 access path.
 Display-only 8 TOPIX-sector ETF proxies plus TOPIX-linked 1306, not official33 sector indices. Cached public GET makes no provider/LLM calls; scheduler performs bounded20-minute session collection and one closing fill. Existing durable volume atomic writer/readback restores original timestamps. Offsite backup inclusion remains unverified.
 
 Eight focused calculation/runtime/API/durable-restore checks pass. Real source probe recovered all9 instruments with source time2026-09-18 15:30JST; Saturday is labeled closed/previous session. Actual browser checks changed1 to20 sessions and return tobenchmark-relative, openedbank detail (+3.61% versus +3.09 percentage points relative), and verified390px mobile width. No live-session latency claim. Frontend build and source/built naming checks pass. Registered-sector association uses existing confirmed classifications only; unknown mappings remain unknown.
+
+
+## 13.7 最終報告(要件書 10 章の 8 項目・2026-10-03 作成)
+
+「実装済み」「テスト済み」「本番で確認済み」「完了」を分けて書く。本報告は 13.7 の全体完成宣言ではない。
+13.8 の設計書(`V13_8_REQUIREMENTS.md`)が、残る改善と統合AIの位置づけを引き継ぐ。
+
+### 1. 残した機能・削除した機能
+
+| 区分 | 機能 | 状態 |
+|---|---|---|
+| 残した | 統合AIの見立て(市況ブリーフ・銘柄別説明)、日本株分析エンジン(長期研究・類似局面・条件付き計算)、七つの警戒条件、重要イベント(予定→事前→結果→反応→答え合わせ)、重要ニュース、登録銘柄の現在地と危険信号、日米需給、当日の業種ヒートマップ、企業プロフィール、通知、判断履歴と予測の検証、バックアップ、データ品質・費用の確認 | 本番稼働 |
+| 削除した | 対話(action=ask は 410)、個別銘柄のリアルタイム表示と専用取得、保有・ポートフォリオ管理、FIRE・積立、売買記録、外部AI相談(pro-handoff は 410)、引けピン(API は RETIRED)、立花証券API(feature_retired)、個別銘柄チャート生成 | 本番で確認済み(13.8.16 で画面部品も削除) |
+| 保全 | 保存済みの会話・保有・売買・引けピン・立花の記録は削除していない。読み出しだけ残る | 確認済み |
+
+### 2. 停止したジョブ・API呼び出し・常駐処理
+
+- GitHub workflow `closepin-pin` は `disabled_manually`(2026-09-17 以降継続。2026-10-03 の一覧で確認)。
+- 引けピンの取得・予測・採点・通知、対話用のLLM呼び出し、外部相談用のデータ組み立て、個別ライブの認証・接続・専用スレッド、個別銘柄チャートの事前生成(missions/tick 内)は停止。
+- 共有ブリッジは固定8本の米国ETFのみ・5分間隔以上(bridge-status は heartbeat null = EC2 側は停止中。EC2 の状態は SSH 不可のため AWS の画面での確認が未了)。
+- ニュースの翻訳は重要見出しだけ(選択翻訳)。Deep Dive は重要な変化時のみ。
+- 残っている定期ジョブ(2026-10-03): caos-scan, caos-watchtower, market-watch, market-alerts, macro-event-analysis, news-intake-ops, prediction-ledger, event-ledger, learning-memory, jpx-credit-weekly, breadth-freshness, mover-causes, crypto-watch, osint-check, smoke-test, vault-sync ほか。caos-scan は 3 回に 1 回「劣化」で終わる(13.8 の残作業)。
+
+### 3. 長期研究データの系列別完成状況と残る不足
+
+- `docs/ops/jp-market-condition-series.md` に 16 系列の出所・入手時刻の規則・状態を記録。2026-10-03 の本番で 14/16 系列に当日値があり、欠けは 1570 信用残の週次変化率 2 系列(次の公表待ち)。
+- 価格: 日経平均 2,442 営業日(2016-10-03〜2026-10-03)。特徴履歴は同じ 2,442 時点で、再起動・再取得で作り直さない(13.8.16 配信後に `unchanged_known_inputs` を本番で確認)。
+- 指数 EPS/PER: 公式値は 403 で取得不可のため、月末ウエート CSV と J-Quants 予想 EPS から再構成した代理値(`FORECAST_COVERED_ONLY`、実測誤差 +0.76%)が本番稼働(2026-09-29)。過去の月末ウエート表がないため、過去データの延長は未完(データ待ち)。
+- 不足: 信用評価損益率の公式値(ARGUS 代理計算で代替)、1570 信用残の過去 10 年(週次取り寄せで追記中)、系列ごとの期待件数と実件数の自動照合(未実装)。
+- 予測力: 類似局面の方向一致率 44.0% は単純予想 48.4% を上回らず `UNVALIDATED`(2026-10-01)。画面では「参考経路(未検証)」と表示し、初期表示では隠す。未検証の頻度を確率として出していない。
+
+### 4. 研究パックが本番で使われた証拠
+
+- 2026-10-03 診断(run 37087538499): `marketFeatureAcquisition.status=AVAILABLE`、`lastSuccessfulCalculationAt=2026-10-03T01:09:22Z`、`calculationWork={evaluatedCutoffs:1, reusedCutoffs:2442}`、`reuseDecision.reason=unchanged_known_inputs`。
+- 日経比較の応答に `historicalFetches=0`、`fullRecalculations=0`、`automaticAiCalls=0`(2026-09-17 以降の観測と同じ)。
+- 画面の Today(判定欄・類似局面・七つの警戒条件の成績)は、この同じ計算結果を読む(13.8.16 で成績表示を配信、Pages 受入合格)。
+
+### 5. EPS/PER と 7 警戒条件の実装・検証状況
+
+- EPS/PER: 代理値を本番で計算・表示(上記 3)。公式値がある場合は公式値を優先する作り。17倍・18倍を恒久の支持線としては扱っていない。
+- 七つの警戒条件(D01〜D07): 原典の定義で判定し、7 段階の総合評価とは別物として表示。条件イベントの過去成績(`jp_market_sign_event_study`)は 13.8.16 で配信。D07 は原典に点灯規則がなく `NOT_EVALUABLE`。本番の成績の数字をオーナーに報告する作業は未了(13.8 の残作業)。
+- 個人名由来の旧名称: コード・画面・配信物から除去し、命名ガードが毎 PR で検査(PASS)。
+
+### 6. ヒートマップの更新間隔・実際の遅延・取得元
+
+- 取得元: Yahoo Finance の業種 ETF 8 本(代替指標)+ TOPIX 連動 1306 を基準。正式な 33 業種指数ではないことを画面に明記。
+- 更新間隔: 場中 20 分(`refreshIntervalSeconds=1200`)+引け後 1 回。休場日は前営業日と明記(2026-10-03 土曜の診断: `session=WEEKEND_CLOSED`, `targetDate=2026-10-02`, `isToday=false`)。
+- 実際の遅延: 元価格の時刻 15:30 JST の行が引け後に取得されることは確認済み。**場中の遅延の実測は東証が開いている時間にしかできず未了**(次の取引日 2026-10-05 に計測)。
+
+### 7. 変更前後の固定費と変動費
+
+| 項目 | 変更前 | 変更後 | 根拠 |
+|---|---|---|---|
+| Render | 2026年9月 $214.17(8GB プラン中心) | 2GB(1CPU)に切替済み。10月見込み $65〜75 | 請求書・プラン画面(オーナー確認) |
+| AI(OpenAI 等) | 9月 約$300(9/14〜16 に $222 の山) | 10月 1〜3日の実測 $12.62(418 呼び出し、1日 $2.3〜6)。月換算 約$120〜150 の見込み | 本番 `ai-cost.json`(SDK 呼び出し単位の参考推定) |
+| J-Quants | Standard + TDnet アドオン ¥11,000/月 | Standard のみ(アドオン解約) | 2026-09-29 |
+| Twelve Data | Grow | 変更なし(ブリッジ停止中は米国個別の唯一の経路) | |
+| EC2 | 稼働 | 状態未確認(SSH 不可) | AWS 画面での確認が必要 |
+
+月数百円には到達していない。到達していない金額を約束しない。
+
+### 8. 本番反映されたバージョンと確認結果
+
+- 2026-10-03 時点の本番: backend/frontend 13.8.17(13.8.18 = 予測記録の遠隔バックアップ修正を取り込み中)。
+- Pages 受入検査: 13.8.15 で全合格に回復、13.8.16・13.8.17 も全合格。
+- 本番で確認済み: 退役 API の 410/RETIRED、長期特徴量の再利用、夜間先物の取得、EPS/PER 代理値、ヒートマップの休場表示。
+- 未確認: EC2 の状態、場中のヒートマップ遅延(10/5)、iPhone の通知到達(オーナー確認)、発表直前基準の反応(次の指標 10/14 CPI)。
