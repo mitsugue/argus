@@ -13,6 +13,9 @@ def _fresh(monkeypatch, tmp_path, durable=True):
     scanner._MACRO_ANALYSIS.clear(); scanner._MACRO_ANALYSIS_STATE["restored"] = True
     scanner._MACRO_ANALYSIS[RECORD["eventId"]] = json.loads(json.dumps(RECORD))
     monkeypatch.setattr(scanner, "_ai_now_iso", lambda: "2026-10-03T02:00:00Z")
+    # Public headline and radar stores are read-only inputs; keep them empty here.
+    monkeypatch.setattr(scanner, "_INTEL_STORE", [])
+    monkeypatch.setattr(scanner, "_NEWS_CACHE", {"data": None, "expires": 0.0})
     return path
 
 
