@@ -105,3 +105,15 @@ def test_public_headlines_and_radar_widen_the_memory_as_watch_entries():
     assert mpm.ingest_radar(memory, {**radar, "status": "stale"}) == 0
     row = next(r for r in memory["entries"] if r["kind"] == "RADAR")
     assert row["measured"] == {"count": 7, "level": "elevated"} and row["at"] == "2026-10-03T01:00Z"
+
+
+def test_policy_rate_quote_becomes_one_pricing_entry_per_day():
+    memory = mpm.empty()
+    quote = {"symbol": "ZQ=F", "price": 96.07, "impliedRatePct": 3.93, "tradedAt": "2026-10-02T20:59:00Z"}
+    assert mpm.ingest_policy_rate_quote(memory, quote) == 1
+    assert mpm.ingest_policy_rate_quote(memory, {**quote, "price": 96.08, "impliedRatePct": 3.92, "tradedAt": "2026-10-02T22:00:00Z"}) == 0
+    assert mpm.ingest_policy_rate_quote(memory, {**quote, "tradedAt": "2026-10-05T12:00:00Z"}) == 1
+    assert mpm.ingest_policy_rate_quote(memory, None) == 0 and mpm.ingest_policy_rate_quote(memory, {"impliedRatePct": "x", "tradedAt": "2026-10-05T12:00:00Z"}) == 0
+    view = mpm.snapshot(memory, now_iso="2026-10-05T13:00:00Z")
+    us = next(t for t in view["themes"] if t["themeId"] == "US_POLICY_RATE")
+    assert us["pricing"] == {"ffImpliedRatePct": 3.93} and us["status"] == "ACTIVE"

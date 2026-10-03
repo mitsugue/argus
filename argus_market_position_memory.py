@@ -208,6 +208,25 @@ def ingest_radar(memory: Dict[str, Any], radar: Optional[Mapping[str, Any]]) -> 
     return added
 
 
+def ingest_policy_rate_quote(memory: Dict[str, Any], quote: Optional[Mapping[str, Any]]) -> int:
+    """The fed funds future read between releases: one PRICING entry per UTC day."""
+    if not isinstance(quote, Mapping):
+        return 0
+    at = _instant(quote.get("tradedAt"))
+    rate = quote.get("impliedRatePct")
+    if at is None or isinstance(rate, bool) or not isinstance(rate, (int, float)):
+        return 0
+    day = at.astimezone(timezone.utc).strftime("%Y-%m-%d")
+    if any(row.get("kind") == "PRICING" and (row.get("ref") or {}).get("source") == "policy_rate_futures"
+           and (row.get("ref") or {}).get("day") == day for row in memory["entries"]):
+        return 0
+    entry = _entry("US_POLICY_RATE", "PRICING", day + "T00:00:00Z",
+                   f"FF金利先物の示す政策金利の予想 {float(rate):.3f}%({day}の取引)",
+                   ref={"source": "policy_rate_futures", "symbol": quote.get("symbol"), "day": day},
+                   measured={"ffImpliedRatePct": round(float(rate), 3)})
+    return append(memory, entry)
+
+
 def _theme_entries(memory: Mapping[str, Any], theme_id: str) -> List[Dict[str, Any]]:
     rows = [row for row in memory.get("entries") or [] if row.get("themeId") == theme_id]
     rows.sort(key=lambda row: str(row.get("at") or ""))

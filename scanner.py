@@ -16739,6 +16739,11 @@ def _market_position_update(news_events, scheduled_events):
             added += argus_market_position_memory.ingest_radar(memory, _NEWS_CACHE.get("data"))
         except Exception:
             pass
+        try:
+            added += argus_market_position_memory.ingest_policy_rate_quote(
+                memory, argus_index_live.current_quote_safe().get("policyRateFutures"))
+        except Exception:
+            pass
         if added:
             path = _market_position_path()
             if path:

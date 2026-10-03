@@ -23,12 +23,14 @@ SCHEMA = "argus-index-live-v1"
 SYMBOL = "^N225"
 POLL_SECONDS = 60
 FUTURES_SYMBOL = "NKD=F"          # CME Nikkei 225 (USD), quoted in index points
+POLICY_RATE_SYMBOL = "ZQ=F"       # 30-day fed funds future: 100 - price = expected policy rate
 FUTURES_POLL_SECONDS = 900
 _JST = timezone(timedelta(hours=9))
 
 _lock = threading.Lock()
 _state: Dict[str, Any] = {"quote": None, "error": None, "thread": None,
-                          "futures": None, "futuresError": None}
+                          "futures": None, "futuresError": None,
+                          "policyRate": None, "policyRateError": None}
 
 
 def _finite(value: Any) -> Optional[float]:
@@ -119,6 +121,29 @@ def refresh_futures_once(get: Callable[..., Any], now_epoch: Optional[float] = N
     return quote
 
 
+def refresh_policy_rate_once(get: Callable[..., Any], now_epoch: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """The fed funds future, so the market's policy-rate pricing exists between releases (13.8 §4-3)."""
+    received = time.time() if now_epoch is None else now_epoch
+    try:
+        response = get(f"https://query1.finance.yahoo.com/v8/finance/chart/{POLICY_RATE_SYMBOL}",
+                       params={"interval": "15m", "range": "1d"},
+                       headers={"User-Agent": "Mozilla/5.0 (argus)"}, timeout=10)
+        if getattr(response, "status_code", 200) != 200:
+            raise ValueError("policy_rate_http_failure")
+        quote = parse_quote(response.json(), received_epoch=received, symbol=POLICY_RATE_SYMBOL,
+                            instrument_id="FED_FUNDS_FUTURES_FRONT", source="Yahoo Finance (CBOT, delayed)")
+        if quote is None or not 90 <= quote["price"] <= 100:
+            raise ValueError("policy_rate_shape_invalid")
+        quote["impliedRatePct"] = round(100 - quote["price"], 3)
+    except Exception as exc:
+        with _lock:
+            _state["policyRateError"] = type(exc).__name__
+        return None
+    with _lock:
+        _state["policyRate"], _state["policyRateError"] = quote, None
+    return quote
+
+
 def _loop(get: Callable[..., Any], sleep: Callable[[float], None],
           clock: Callable[[], float] = time.monotonic) -> None:
     after_close_done = None
@@ -135,6 +160,7 @@ def _loop(get: Callable[..., Any], sleep: Callable[[float], None],
                 after_close_done = local_day
             if futures_read_at is None or clock() - futures_read_at >= FUTURES_POLL_SECONDS:
                 refresh_futures_once(get)
+                refresh_policy_rate_once(get)
                 futures_read_at = clock()
         sleep(POLL_SECONDS)
 
@@ -157,8 +183,11 @@ def current_quote_safe() -> Dict[str, Any]:
     with _lock:
         quote, error = _state["quote"], _state["error"]
         futures, futures_error = _state.get("futures"), _state.get("futuresError")
+        policy, policy_error = _state.get("policyRate"), _state.get("policyRateError")
     overnight = {"overnightFutures": dict(futures) if futures else None,
-                 "overnightFuturesError": futures_error}
+                 "overnightFuturesError": futures_error,
+                 "policyRateFutures": dict(policy) if policy else None,
+                 "policyRateFuturesError": policy_error}
     if quote is None:
         return {"status": "UNAVAILABLE", "reason": error or "not_yet_fetched", "quote": None,
                 "actionAuthority": False, **overnight}
