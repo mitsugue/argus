@@ -38421,6 +38421,12 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
             earliest = (datetime.now(TZ_JST).date() - timedelta(days=732)).isoformat()
             rows = argus_index_history.merge_bars(
                 [row for row in cached["data"] if row["date"] >= earliest], rows)
+        elif rows and yahoo_symbol != "^N225" and cached and cached.get("data") \
+                and cached["data"][0]["date"] < rows[0]["date"]:
+            # A shorter refetch (another caller's default range) never drops
+            # the longer history already held; the fresh window replaces the
+            # overlapping dates.
+            rows = [row for row in cached["data"] if row["date"] < rows[0]["date"]] + rows
     except Exception as exc:
         rows = []; fetch_error = type(exc).__name__
     finally:
@@ -39544,8 +39550,10 @@ def _jp_market_engine_vix_rows(*, fetch=False):
     close-only series is the fallback (D06 still evaluates; the reversal VIX
     axis stays honestly data-gated on close-only rows). The FRED-key-missing
     state is REPORTED, closing the silent-dropout the external review found."""
+    # 2026-10-03: ten years, like USD/JPY. With the default two years the VIX
+    # MACD condition (D06) had a record only from late 2024.
     yahoo = _yahoo_index_ohlcv("^VIX", "VIX", fetch=fetch,
-                               next_day_available=True)
+                               next_day_available=True, range_="10y")
     if yahoo:
         return yahoo, "yahoo_ohlcv"
     try:
@@ -40005,6 +40013,9 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     # of USD/JPY, US 10y and TOPIX so the defined series exist on the
     # historical side as well. Cached-only on the public path.
     _yahoo_index_ohlcv("JPY=X", "USDJPY", fetch=warm, next_day_available=True, range_="10y")
+    # 2026-10-03: the S&P 500 history behind the Japan/US relative strength
+    # (D03) was two years, so its record started in December 2024.
+    _yahoo_index_ohlcv("^GSPC", "SP500_INDEX", fetch=warm, next_day_available=True, range_="10y")
     if warm:
         _fred_us10y_history_dated()
         _jquants_topix_history(fetch=True)
