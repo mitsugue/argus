@@ -12,7 +12,10 @@ Sources, all without external calls or AI at request time:
 - dividend record, last-cum and ex-dividend dates derived from the exchange
   calendar (``argus_market_clock``), for the March, June, September and
   December month ends when most Japanese companies set dividend rights;
-- Japanese and US market holidays from the same calendar.
+- Japanese and US market holidays from the same calendar;
+- the Nikkei 225 periodic review (first trading day of April and October,
+  from Nikkei's published selection rule) and MSCI's published review dates
+  (announcement, and the close before the effective day when index funds trade).
 Missing coverage is reported as a gap, never filled by extrapolation.
 """
 from __future__ import annotations
@@ -200,6 +203,78 @@ def macro_events(today: date, end: date, schedule: Mapping[str, Any]) -> tuple[l
     return out, gaps
 
 
+MSCI_SCHEDULE = Path(__file__).parent / "ops/calendar/msci_index_review.json"
+NIKKEI_REVIEW_RULE_REF = "https://indexes.nikkei.co.jp/nkave/archives/news/20260709J_3.pdf"
+
+NIKKEI_REVIEW_TEXT = {
+    "whatJa": "日経平均の構成銘柄を年2回(4月と10月の第1営業日)見直し、最大3銘柄を入れ替える日です。除外と採用は同じ日に同数で行われます。",
+    "soWhatJa": "採用される銘柄は発表後に買われ、除外される銘柄は売られやすく、実施日の前営業日の大引けに指数連動の売買が集中します。入れ替え時は除数で調整されるため、日経平均の水準そのものは連続し、指数全体の方向を決める材料ではありません。日経平均連動のETFでは、組み入れの入れ替えによる売買が大引けに出る日です。",
+    "watchJa": "入れ替え対象の銘柄の前営業日の値動きと出来高、大引けの売買代金。日経平均の寄付きの水準が前日終値から連続しているか。",
+}
+MSCI_TEXT = {
+    "announcement": {
+        "whatJa": "MSCIが四半期の指数見直しの結果(採用・除外銘柄、ウエートの変更)を発表する日です。日本時間では発表の翌朝に情報が出ます。",
+        "soWhatJa": "日本株では、採用・除外が決まった銘柄に翌営業日から先回りの売買が入りやすくなります。日経平均全体の方向を決める材料ではなく、個別銘柄の需給の材料です。",
+        "watchJa": "日本株の採用・除外銘柄と、ウエートが大きく変わる銘柄。",
+    },
+    "rebalance": {
+        "whatJa": "MSCIの見直しが効く前営業日の大引けで、MSCI連動の資金が一斉にリバランスの売買をする日です(MSCIの実施日の前営業日の引け)。",
+        "soWhatJa": "大引けに売買代金が膨らみ、除外銘柄は売り、採用銘柄は買いが集中しやすくなります。指数全体への影響は限られますが、大引けの値動きが荒くなることがあります。",
+        "watchJa": "大引けの売買代金と、日経平均の終値の動き(14:50以降)。",
+    },
+}
+
+
+def nikkei_review_events(today: date, end: date) -> list[dict[str, Any]]:
+    """The effective day of the Nikkei 225 periodic review: first trading day of April and October."""
+    out = []
+    for year in (today.year, today.year + 1):
+        for month in (4, 10):
+            day = date(year, month, 1)
+            while not _trading(day):
+                day += timedelta(days=1)
+            if not today <= day <= end:
+                continue
+            out.append(_event(
+                event_id=f"nikkei-periodic-review-{day.isoformat()}", kind="NIKKEI_PERIODIC_REVIEW",
+                at=day.isoformat(), date_only=True,
+                title_ja=f"日経平均 定期見直しの実施日({month}月・構成銘柄の入れ替え)", importance="medium",
+                what_ja=NIKKEI_REVIEW_TEXT["whatJa"] + "発表は実施の約1か月前に日経が告知します(日付はここでは未確認)。",
+                so_what_ja=NIKKEI_REVIEW_TEXT["soWhatJa"], watch_ja=NIKKEI_REVIEW_TEXT["watchJa"],
+                source="rule:nikkei-first-trading-day-of-april-and-october " + NIKKEI_REVIEW_RULE_REF, today=today))
+    return out
+
+
+def msci_events(today: date, end: date, schedule: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+    if schedule.get("schemaVersion") != "msci-index-review-schedule-v1" or not schedule.get("sourceRef"):
+        raise ValueError("msci_schedule_invalid")
+    gaps = []
+    if end.isoformat() > str(schedule.get("coverageEnd")):
+        gaps.append("msci_schedule_not_published_beyond_" + str(schedule.get("coverageEnd")))
+    out = []
+    for row in schedule.get("rows", []):
+        review = str(row["review"])
+        announce = date.fromisoformat(str(row["announcement"]))
+        effective = date.fromisoformat(str(row["effective"]))
+        rebalance = _previous_trading_day(effective, 1)
+        if today <= announce <= end:
+            out.append(_event(
+                event_id=f"msci-review-announcement-{review}", kind="MSCI_REVIEW_ANNOUNCEMENT",
+                at=announce.isoformat(), date_only=True,
+                title_ja=f"MSCI 指数見直しの発表({review[:4]}年{int(review[5:])}月)", importance="medium",
+                what_ja=MSCI_TEXT["announcement"]["whatJa"], so_what_ja=MSCI_TEXT["announcement"]["soWhatJa"],
+                watch_ja=MSCI_TEXT["announcement"]["watchJa"], source=str(schedule["sourceRef"]), today=today))
+        if today <= rebalance <= end:
+            out.append(_event(
+                event_id=f"msci-review-rebalance-{review}", kind="MSCI_REVIEW_REBALANCE",
+                at=rebalance.isoformat(), date_only=True,
+                title_ja=f"MSCI リバランスの大引け売買({review[:4]}年{int(review[5:])}月の見直し)", importance="medium",
+                what_ja=MSCI_TEXT["rebalance"]["whatJa"] + f"MSCIの実施日は{effective.isoformat()}です。",
+                so_what_ja=MSCI_TEXT["rebalance"]["soWhatJa"], watch_ja=MSCI_TEXT["rebalance"]["watchJa"],
+                source=str(schedule["sourceRef"]), today=today))
+    return out, gaps
+
+
 SQ_SCHEDULE = Path(__file__).parent / "ops/calendar/jp_index_sq_2026.json"
 
 
@@ -243,6 +318,14 @@ def equity_event_calendar(*, now: datetime, horizon_days: int = DEFAULT_HORIZON_
     except (OSError, ValueError, TypeError, KeyError):
         gaps.append("sq_schedule_unavailable")
     try:
+        msci_schedule = json.loads(MSCI_SCHEDULE.read_text())
+        msci, msci_gaps = msci_events(today, end, msci_schedule)
+        events += msci
+        gaps += msci_gaps
+    except (OSError, ValueError, TypeError, KeyError):
+        gaps.append("msci_schedule_unavailable")
+    try:
+        events += nikkei_review_events(today, end)
         events += dividend_events(today, end)
         events += holiday_events(today, end)
     except clock.CalendarUnavailableError:

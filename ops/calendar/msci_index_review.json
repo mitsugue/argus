@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "msci-index-review-schedule-v1",
+  "sourceRef": "https://www.msci.com/eqb/pressreleases/archive/ir_dates.pdf",
+  "sourceCsvRef": "https://www.msci.com/eqb/pressreleases/archive/ir_dates.csv",
+  "sourceNoteJa": "MSCI公式プレスリリース「MSCI Announces the Next Eight Index Review Dates」(London, 2026-08-12)。日付は米国時間の表記。MSCIは日程を変更することがあり、変更は各見直しで次の8回分が改めて示される。",
+  "publishedOn": "2026-08-12",
+  "coverageStart": "2026-11-11",
+  "coverageEnd": "2028-09-01",
+  "rows": [
+    {
+      "review": "2026-11",
+      "announcement": "2026-11-11",
+      "effective": "2026-12-01"
+    },
+    {
+      "review": "2027-02",
+      "announcement": "2027-02-09",
+      "effective": "2027-03-01"
+    },
+    {
+      "review": "2027-05",
+      "announcement": "2027-05-10",
+      "effective": "2027-05-28"
+    },
+    {
+      "review": "2027-08",
+      "announcement": "2027-08-12",
+      "effective": "2027-09-01"
+    },
+    {
+      "review": "2027-11",
+      "announcement": "2027-11-11",
+      "effective": "2027-12-01"
+    },
+    {
+      "review": "2028-02",
+      "announcement": "2028-02-10",
+      "effective": "2028-03-01"
+    },
+    {
+      "review": "2028-05",
+      "announcement": "2028-05-11",
+      "effective": "2028-06-01"
+    },
+    {
+      "review": "2028-08",
+      "announcement": "2028-08-14",
+      "effective": "2028-09-01"
+    }
+  ],
+  "sourceCsvSha256": "4a471e12b53587f86d80d02ecc00bdc2a9991c4039bc79e9f965b75f4f3c45e7"
+}
