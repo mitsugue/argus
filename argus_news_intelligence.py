@@ -140,6 +140,13 @@ _FAMILY_RULES = (
     ("WAR_ESCALATION", ("攻撃", "空爆", "ミサイル", "侵攻", "戦闘", "報復",
                         "airstrike", "missile", "escalation", "封鎖",
                         "武力衝突")),
+    # 2026-10-03 (owner): troop movements, threats and leaders' statements
+    # move the market before any strike; they were falling into OTHER.
+    ("GEOPOLITICS", ("米軍", "派遣", "増派", "部隊", "空母", "国防総省", "pentagon",
+                     "中東", "イスラエル", "israel", "ガザ", "レバノン", "フーシ",
+                     "台湾有事", "台湾海峡", "北朝鮮", "地政学", "軍事", "戦争",
+                     "トランプ大統領", "trump", "ホワイトハウス", "white house",
+                     "troops", "deployment", "military", "geopolit")),
     ("BOJ", ("日銀", "日本銀行", "boj", "植田", "金融政策決定会合")),
     ("FED", ("frb", "fomc", "連邦準備", "パウエル", "米連銀", "fed ")),
     ("CENTRAL_BANK", ("中央銀行", "利上げ", "利下げ", "金融政策", "政策金利",
@@ -207,6 +214,8 @@ _JAPAN_TRANSMISSION_JA = {
             "波及し得ます。影響の方向は措置の内容と市場反応の確認が必要です。",
     "WAR_ESCALATION": "軍事衝突の激化はリスクオフ(VIX上昇・円買い)を通じて"
                       "日本株全体の下押し要因になり得ます。",
+    "GEOPOLITICS": "軍の展開・威嚇・首脳の発言は、衝突前でも原油・VIX・円を通じて"
+                   "日本株の地合いを変え得ます。実際の市場反応の確認が必要です。",
     "BOJ": "日銀の政策変更は円金利・為替を直接動かし、銀行・輸出・"
            "高配当株の相対評価を変えます。",
     "FED": "FRBの政策とガイダンスは米金利・ドル円経由で日本株の"
@@ -227,6 +236,7 @@ CORROBORATION_PLAN = {
     "IRAN": ("oil", "vix", "usdJpy"),
     "HORMUZ": ("oil", "vix", "usdJpy"),
     "WAR_ESCALATION": ("oil", "vix", "usdJpy"),
+    "GEOPOLITICS": ("oil", "vix", "usdJpy"),
     "CEASEFIRE": ("oil", "vix"),
     "OIL": ("oil", "vix"),
     "SEMICONDUCTORS": ("vix", "usdJpy"),
@@ -484,7 +494,7 @@ def validate_ai_analysis(payload: Any) -> Optional[Dict[str, Any]]:
 _HIGH_IMPACT_FAMILIES = {
     "RATES", "US_FISCAL", "BOJ", "FED", "IRAN", "HORMUZ", "WAR_ESCALATION",
     "CEASEFIRE", "SEMICONDUCTORS", "AI_DATACENTER", "CENTRAL_BANK",
-    "INFLATION", "EMPLOYMENT",
+    "INFLATION", "EMPLOYMENT", "GEOPOLITICS",
 }
 
 # ── Sol escalation routing (v13.5.36, external review 2026-08-25) ───────────
