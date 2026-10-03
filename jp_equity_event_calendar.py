@@ -242,6 +242,36 @@ US_ELECTION_TEXT = {
 }
 
 
+US_POLICY_DATES = Path(__file__).parent / "ops/calendar/us_policy_dates.json"
+US_POLICY_TEXT = {
+    "US_FUNDING_DEADLINE": {
+        "whatJa": "米国のつなぎ予算(2027会計年度)が切れる日です。この日までに本予算かつなぎ予算の延長が成立しないと、翌日から政府機関の一部が閉鎖されます。",
+        "soWhatJa": "閉鎖が現実味を帯びると、米国の議会運営の不透明さからリスク回避が出やすくなります。閉鎖が起きると、雇用統計やCPIなどの政府統計の公表が遅れたり、欠けたりして(2025年秋の閉鎖でも一部の公表が遅れました)、市場が金利の手がかりを失い、値動きが荒くなりやすくなります。成立すれば不安は後退します。",
+        "watchJa": "期限の1〜2週間前からの議会の合意の報道、米国株先物・VIX・米10年金利の反応。閉鎖が起きた場合は、次の雇用統計・CPIの発表予定の変更。",
+    },
+}
+
+
+def us_policy_events(today: date, end: date, document: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Dated US policy deadlines, each backed by a public source quoted in the data file."""
+    if document.get("schemaVersion") != "us-policy-dates-v1":
+        raise ValueError("us_policy_dates_invalid")
+    out = []
+    for row in document.get("rows", []):
+        text = US_POLICY_TEXT.get(row.get("kind"))
+        if text is None or not row.get("sourceRef") or not row.get("sourceQuote"):
+            continue                      # no text or no quoted source: not shown
+        day = date.fromisoformat(str(row["date"]))
+        if not today <= day <= end:
+            continue
+        out.append(_event(
+            event_id=str(row["id"]), kind=row["kind"], at=day.isoformat(), date_only=True,
+            title_ja=str(row["titleJa"]), importance=str(row.get("importance") or "medium"),
+            what_ja=text["whatJa"], so_what_ja=text["soWhatJa"], watch_ja=text["watchJa"],
+            source=str(row["sourceRef"]), today=today))
+    return out
+
+
 def us_election_events(today: date, end: date) -> list[dict[str, Any]]:
     """US federal Election Day: the Tuesday after the first Monday of November, in even years."""
     out = []
@@ -368,6 +398,10 @@ def equity_event_calendar(*, now: datetime, horizon_days: int = DEFAULT_HORIZON_
     except (OSError, ValueError, TypeError, KeyError):
         gaps.append("msci_schedule_unavailable")
     try:
+        try:
+            events += us_policy_events(today, end, json.loads(US_POLICY_DATES.read_text()))
+        except (OSError, ValueError, TypeError, KeyError):
+            gaps.append("us_policy_dates_unavailable")
         events += us_election_events(today, end)
         events += nikkei_review_events(today, end)
         events += dividend_events(today, end, ex_dividend)

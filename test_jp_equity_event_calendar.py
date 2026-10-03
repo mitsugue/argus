@@ -106,3 +106,26 @@ def test_us_election_day_is_the_tuesday_after_the_first_monday_of_november():
     # Inside the 90-day calendar it appears among the events, sorted by date.
     events = cal.equity_event_calendar(now=NOW, horizon_days=90)["events"]
     assert any(e["eventId"] == "us-election-day-2026-11-03" for e in events)
+
+
+def test_us_funding_deadline_comes_from_a_quoted_public_source():
+    """CRS R49353: the FY2027 continuing appropriations run through 2026-12-11."""
+    import json
+    document = json.loads(cal.US_POLICY_DATES.read_text())
+    row = document["rows"][0]
+    assert row["date"] == "2026-12-11" and "through December 11, 2026" in row["sourceQuote"]
+    events = cal.us_policy_events(date(2026, 10, 3), date(2026, 12, 31), document)
+    assert [(e["date"], e["kind"]) for e in events] == [("2026-12-11", "US_FUNDING_DEADLINE")]
+    assert "翌日から政府機関の一部が閉鎖" in events[0]["whatJa"] and "雇用統計" in events[0]["soWhatJa"]
+    assert events[0]["importance"] == "high" and events[0]["source"].endswith("R49353")
+    # A row without a quoted source or a known kind is never shown.
+    bare = {"schemaVersion": "us-policy-dates-v1", "rows": [{**row, "sourceQuote": ""}, {**row, "kind": "UNKNOWN"}]}
+    assert cal.us_policy_events(date(2026, 10, 3), date(2026, 12, 31), bare) == []
+    assert cal.us_policy_events(date(2026, 12, 12), date(2027, 1, 31), document) == []
+    try:
+        cal.us_policy_events(date(2026, 10, 3), date(2026, 12, 31), {"schemaVersion": "x"})
+        raise AssertionError("an unknown schema must not be accepted")
+    except ValueError as exc:
+        assert str(exc) == "us_policy_dates_invalid"
+    listed = {e["eventId"] for e in cal.equity_event_calendar(now=NOW, horizon_days=90)["events"]}
+    assert "us-funding-deadline-2026-12-11" in listed
