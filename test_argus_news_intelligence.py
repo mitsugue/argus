@@ -801,3 +801,14 @@ def test_saved_news_copy_reprojection_preserves_analysis_and_risk():
     for key in ('facts', 'severity', 'alertEligible', 'whyJa', 'analysisState', 'eventId'):
         assert projected[key] == original[key]
     assert original['headlineJa'].startswith('メールの見出しは')
+
+
+def test_troop_movements_and_leader_statements_classify_as_geopolitics():
+    """2026-10-03 (owner): 「米軍が中東へ数千人を追加派遣」 was OTHER_MARKET_RELEVANT."""
+    tx = ni.classify_event("米軍、中東へ数千人を追加派遣 緊張高まる")
+    assert tx["eventType"] == "GEOPOLITICS" and "GEOPOLITICS" in tx["families"]
+    assert ni.classify_event("トランプ大統領、週末にもイラン攻撃を示唆")["eventType"] in ("IRAN", "WAR_ESCALATION")
+    assert ni.classify_event("Pentagon orders additional troops to the Middle East")["eventType"] == "GEOPOLITICS"
+    assert ni.classify_event("今週の読まれた記事ランキング")["eventType"] == "LOW_RELEVANCE"
+    assert "GEOPOLITICS" in ni._HIGH_IMPACT_FAMILIES and ni.CORROBORATION_PLAN["GEOPOLITICS"] == ("oil", "vix", "usdJpy")
+    assert "GEOPOLITICS" in ni._JAPAN_TRANSMISSION_JA
