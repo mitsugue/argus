@@ -84,6 +84,39 @@ def decompose_margin_ratio(previous: Mapping[str, Any],
             "isOneWeekChange": gap == 7}
 
 
+def week_final_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the rows of each week's last balance date (2026-10-03).
+
+    J-Quants /markets/margin-interest carried one row a week (the Friday
+    application date) until 2026-09-24 and one row per business day from the
+    2026-09-25 application date on. Every weekly consumer (one-week change,
+    D02, the 1570 features) would otherwise compare one day with the next.
+    A week's latest date is final when it is a Friday or a later week has a
+    row (a Friday holiday is known from the calendar in advance); the latest
+    week before its Friday is left out until it completes. Rows of the weekly
+    era are unchanged. Rows are copied, never mutated.
+    """
+    latest: dict[tuple[int, int], date] = {}
+    parsed: dict[str, date | None] = {}
+    kept = [row for row in rows if isinstance(row, Mapping)]
+    for row in kept:
+        text = _period(row)
+        if text not in parsed:
+            try:
+                parsed[text] = date.fromisoformat(text)
+            except ValueError:
+                parsed[text] = None
+        day = parsed[text]
+        if day is not None:
+            week = tuple(day.isocalendar())[:2]
+            if week not in latest or day > latest[week]:
+                latest[week] = day
+    weeks = sorted(latest)
+    final = {latest[week].isoformat() for index, week in enumerate(weeks)
+             if latest[week].weekday() == 4 or index < len(weeks) - 1}
+    return [dict(row) for row in kept if _period(row) in final]
+
+
 def credit_dynamics(rows: Iterable[Mapping[str, Any]], *, cutoff: str,
                     instrument_id: str, balance_kind: str,
                     long_series: str, short_series: str) -> dict[str, Any]:

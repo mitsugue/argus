@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from jp_market_engine import ARGUS_MACD_BASELINE, _knowledge_time, _macd, point_in_time_rows
-from jp_market_dynamics import _number, credit_dynamics, normalize_valuation_loss
+from jp_market_dynamics import _number, credit_dynamics, normalize_valuation_loss, week_final_rows
 from jp_market_analogs import FEATURE_DEFINITIONS, FEATURE_MAX_AGE_DAYS, INSTRUMENT
 
 
@@ -30,7 +30,11 @@ HISTORY_CACHE_MAX_BYTES = 32 * 1024 * 1024
 # acquisition module) discarded the verified history and replayed ten years.
 # Input changes are not method changes: the per-source manifest of each saved
 # history already rejects changed inputs.
-FEATURE_HISTORY_METHOD_VERSION = "jp-market-feature-method-v2"
+# v3 (2026-10-03): investor-type rows are known from their official PubDate,
+# not from the later import that stamped knownAt (see
+# _flow_publication_availability), and the 1570 balances, daily from the
+# 2026-09-25 application date, are read as week-final rows.
+FEATURE_HISTORY_METHOD_VERSION = "jp-market-feature-method-v3"
 
 
 def history_method_parameters() -> dict[str, Any]:
@@ -88,7 +92,15 @@ def _canonical_fixture_inputs() -> dict[str, Any]:
                     "value": 1.0e6 + 3e5 * wave(index + 4, 16), "availableFrom": weekly(day)}]
         flows.append({"instrumentId": "MARKET", "seriesId": "flow.foreign", "unit": "JPY",
                       "periodEnd": day.isoformat(), "value": 2e11 * wave(index, 11),
-                      "availableFrom": weekly(day)})
+                      "availableFrom": weekly(day),
+                      # A one-time backfill stamps its import as knownAt.
+                      "knownAt": "2026-09-30T00:00:00Z"})
+    # A daily balance inside a completed week (the 2026-09-25 format change)
+    # must not become a one-day "weekly" change.
+    middle = fridays[len(fridays) // 2] - timedelta(days=2)
+    margin += [{"instrumentId": "1570", "seriesId": field, "periodEnd": middle.isoformat(), "unit": "SHARES",
+                "value": 5.0e6, "availableFrom": weekly(middle)}
+               for field in ("margin.long_balance", "margin.short_balance")]
     return {
         "price_series": {
             "nikkei": series(INSTRUMENT, 38000, 2500, 9, step=3.0),
@@ -371,6 +383,39 @@ def _retained_history(history, warming):
             "historicalVintageVerified": False, "actionAuthority": False, "automaticAiCalls": 0}
 
 
+FOREIGN_FLOW_AVAILABILITY_RULE = "jquants-investor-types-official-pubdate"
+
+
+def _flow_publication_availability(rows):
+    """Read-side rule for the investor-type rows (2026-10-03).
+
+    J-Quants gives every week its official PubDate, stored as availableFrom
+    (18:00 JST). The ledger copy also carries knownAt = the import time, and
+    the one-time ten-year backfill of 2026-09-30 therefore made every past
+    week invisible to every past cutoff (D05 and foreign_flow.net4w had
+    history only from September 2026). An original observation (revision 0)
+    is known from its publication; the import stays as receivedAt.
+    Corrections keep their own receipt. Rows are copied, never mutated.
+    Not vintage proof.
+    """
+    from jp_market_engine import _instant
+    result = []
+    for row in rows or ():
+        if not isinstance(row, Mapping):
+            continue
+        published = row.get("availableFrom") or row.get("publishedAt")
+        known = row.get("knownAt")
+        if ((row.get("seriesId") or row.get("field")) == "flow.foreign"
+                and int(row.get("revision", 0) or 0) == 0 and published and known
+                and _instant(published) is not None and _instant(known) is not None
+                and _instant(published) < _instant(known)):
+            row = {**row, "knownAt": published, "receivedAt": row.get("receivedAt") or known,
+                   "availabilityBasis": "OFFICIAL_PUBLICATION_DATE",
+                   "availabilityRule": FOREIGN_FLOW_AVAILABILITY_RULE}
+        result.append(row)
+    return result
+
+
 def build_feature_history(*, cutoffs: Sequence[str], previous_history=None, **inputs) -> dict[str, Any]:
     """Replay descriptive features without selecting on subsequent outcomes.
 
@@ -383,6 +428,8 @@ def build_feature_history(*, cutoffs: Sequence[str], previous_history=None, **in
     if not cutoffs or len(cutoffs) > 3001 or any(_instant(at) is None for at in cutoffs):
         raise ValueError("bounded_valid_feature_cutoffs_required")
     ordered = sorted(set(cutoffs), key=_instant)
+    if "foreign_flow" in inputs:
+        inputs = {**inputs, "foreign_flow": _flow_publication_availability(inputs["foreign_flow"])}
     sources = _source_lists(inputs)
     warming = _warming_sources(previous_history, ordered, sources)
     if warming:
@@ -583,6 +630,9 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
     # Price series only: the weekly balances also feed the snapshot's audit
     # counts (credit dynamics' point-in-time proof), which must not change.
     price_series = {key: window(rows, whole_history=(key == "vix")) for key, rows in price_series.items()}
+    # 1570 balances became daily from the 2026-09-25 application date; every
+    # consumer below is weekly (2026-10-03).
+    margin_1570 = week_final_rows(margin_1570)
     features = []
     conditions = []
     stale_features = set()
@@ -702,6 +752,7 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
         last = jp_rows[-1]["numericValue"] / topix_rows[-1]["numericValue"]
         emit("nt.ratio_change5", (last / first - 1) * 100, jp_rows + topix_rows)
 
+    foreign_flow = _flow_publication_availability(foreign_flow)
     flows = [{**dict(row), "instrumentId": row.get("instrumentId") or "MARKET"} for row in foreign_flow if isinstance(row, Mapping) and
              (row.get("seriesId") or row.get("field")) == "flow.foreign"]
     flows = _history(flows, "MARKET", cutoff, unit="JPY", allow_negative=True)

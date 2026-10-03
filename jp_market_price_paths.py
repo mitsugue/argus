@@ -26,6 +26,62 @@ BASIS_LABEL_JA = {
 METHOD = "jp-index-analog-median-research-v2-history-coverage"
 
 
+SERIES_COVERAGE_MINIMUM_SHARE = 0.5
+CONDITION_HISTORY_TOLERANCE_DAYS = 365
+
+
+def series_coverage_check(current_states, candidates, study):
+    """Expected against actual coverage of every market-condition series (2026-10-03).
+
+    Expected: each of the sixteen series exists now and in most historical
+    candidates, and each warning condition has events from near the start of
+    the history. A series present now but in fewer than half of the
+    candidates, or a condition whose first event is more than a year after
+    the first candidate, is named as a gap. Found because the ten-year
+    investor-type backfill was invisible to every past cutoff while every
+    count above it looked normal. Diagnostic only: it changes no selection.
+    """
+    from datetime import date as _date, timedelta as _timedelta
+    from jp_market_analogs import FEATURE_DEFINITIONS
+    total = len(candidates)
+    starts = sorted(str(e.get("anchorDate") or "")[:10] for e in candidates if e.get("anchorDate"))
+    series, gaps = {}, []
+    for key in FEATURE_DEFINITIONS:
+        present = sum(1 for e in candidates if key in (e.get("states") or {}))
+        share = round(present / total, 4) if total else None
+        if key not in current_states:
+            status = "CURRENT_MISSING"
+        elif share is None or share < SERIES_COVERAGE_MINIMUM_SHARE:
+            status = "PAST_SIDE_SPARSE"
+        else:
+            status = "OK"
+        series[key] = {"candidates": present, "share": share, "status": status}
+        if status != "OK":
+            gaps.append(key)
+    conditions = {}
+    limit = None
+    if starts:
+        limit = (_date.fromisoformat(starts[0]) + _timedelta(days=CONDITION_HISTORY_TOLERANCE_DAYS)).isoformat()
+    for family, row in sorted(((study or {}).get("conditions") or {}).items()):
+        if not isinstance(row, Mapping) or not row.get("seriesId"):
+            continue                       # no activation rule (D07)
+        first = row.get("coverageStart")
+        if first is None:
+            status = "NO_HISTORY"
+        elif limit and first > limit:
+            status = "HISTORY_SHORT"
+        else:
+            status = "OK"
+        conditions[family] = {"coverageStart": first, "status": status}
+        if status != "OK":
+            gaps.append(family)
+    return {"candidateCount": total, "candidateStart": starts[0] if starts else None,
+            "minimumShare": SERIES_COVERAGE_MINIMUM_SHARE,
+            "conditionToleranceDays": CONDITION_HISTORY_TOLERANCE_DAYS,
+            "series": series, "conditions": conditions, "gaps": gaps,
+            "status": "GAPS_FOUND" if gaps else "OK", "actionAuthority": False}
+
+
 def _finite(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
@@ -468,6 +524,7 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
         "informationCutoff": current["cutoff"], "current": {key: current[key] for key in groups},
         "currentCounts": groups,
         "candidateCoverage": {key: sum(bool(episode[key]) for episode in candidates) for key in groups},
+        "seriesCoverageCheck": series_coverage_check(current.get("states") or {}, candidates, study),
         "historicalVintageVerified": False, "actionAuthority": False,
     }
     if not any(groups.values()):

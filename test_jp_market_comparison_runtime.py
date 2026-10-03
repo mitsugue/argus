@@ -120,6 +120,10 @@ def test_runtime_compares_available_market_state_order_and_reaction_without_auth
     evidence = result["comparison"]["marketEvidence"]
     assert evidence["currentCounts"]["states"] == 1
     assert evidence["candidateCoverage"]["states"] > 0
+    check = evidence["seriesCoverageCheck"]
+    assert check["series"]["vix.level"]["status"] == "OK"
+    assert check["series"]["foreign_flow.net4w"]["status"] == "CURRENT_MISSING"
+    assert check["status"] == "GAPS_FOUND" and check["actionAuthority"] is False
     assert all(value > 0 for value in evidence["currentCounts"].values())
     assert any("marketState" in candidate["similarityReasons"] for candidate in result["selection"]["selected"])
     assert result["selection"]["status"] == "PARTIAL_COMPARISONS_ONLY"
@@ -164,3 +168,29 @@ def test_ten_year_candidate_search_includes_past_years_and_exposes_its_scope():
     assert result['selection']['outcomesUsedForSelection'] is False
     assert coverage['allMarketFeaturesTenYearsVerified'] is False
     assert coverage==result['historyCoverage']
+
+
+def test_series_coverage_check_names_a_series_missing_on_the_past_side():
+    """2026-10-03: the investor-type backfill was invisible to past cutoffs, so
+    foreign_flow.net4w was current but in no historical candidate and D05 had
+    one event in ten years. The check names both instead of passing silently."""
+    from jp_market_price_paths import series_coverage_check
+    from jp_market_analogs import FEATURE_DEFINITIONS
+    every = {key: {"value": 1} for key in FEATURE_DEFINITIONS}
+    past = {key: {"value": 1} for key in FEATURE_DEFINITIONS if key != "foreign_flow.net4w"}
+    candidates = [{"anchorDate": f"20{16 + i // 12}-{i % 12 + 1:02d}-01", "states": past} for i in range(100)]
+    study = {"conditions": {
+        "D01": {"seriesId": "d01", "coverageStart": "2016-11-07"},
+        "D05": {"seriesId": "d05", "coverageStart": "2026-09-10"},
+        "D04": {"seriesId": "d04", "coverageStart": None},
+        "D07": {"seriesId": None, "coverageStart": None}}}
+    check = series_coverage_check(every, candidates, study)
+    assert check["series"]["foreign_flow.net4w"] == {"candidates": 0, "share": 0.0, "status": "PAST_SIDE_SPARSE"}
+    assert check["series"]["vix.level"]["status"] == "OK"
+    assert check["conditions"] == {"D01": {"coverageStart": "2016-11-07", "status": "OK"},
+                                   "D04": {"coverageStart": None, "status": "NO_HISTORY"},
+                                   "D05": {"coverageStart": "2026-09-10", "status": "HISTORY_SHORT"}}
+    assert check["gaps"] == ["foreign_flow.net4w", "D04", "D05"] and check["status"] == "GAPS_FOUND"
+    healthy = series_coverage_check(every, [{"anchorDate": "2016-11-01", "states": every}],
+                                    {"conditions": {"D01": {"seriesId": "d01", "coverageStart": "2016-12-01"}}})
+    assert healthy["status"] == "OK" and healthy["gaps"] == []
