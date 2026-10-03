@@ -133,9 +133,14 @@ const liveValid = (q: unknown): q is NikkeiLiveQuote => {
     && typeof v.delaySeconds === 'number' && v.delaySeconds >= 0 && typeof v.sessionOpen === 'boolean'
     && v.realtime === false && (v.changePct === null || Number.isFinite(v.changePct));
 };
-export function useNikkeiLive(): NikkeiLiveQuote | null {
+export interface NikkeiLive { quote: NikkeiLiveQuote | null; futures: NikkeiLiveQuote | null }
+// The CME future read outside the Tokyo session (owner check 2026-10-03).
+const futuresValid = (q: unknown): q is NikkeiLiveQuote =>
+  liveValid(q) && (q as { symbol?: unknown }).symbol === 'NKD=F';
+export function useNikkeiLive(): NikkeiLive {
   const base = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '') ?? '';
   const [quote, setQuote] = useState<NikkeiLiveQuote | null>(null);
+  const [futures, setFutures] = useState<NikkeiLiveQuote | null>(null);
   useEffect(() => {
     if (!base) return;
     let cancelled = false;
@@ -145,7 +150,9 @@ export function useNikkeiLive(): NikkeiLiveQuote | null {
         const response = await fetch(`${base}/api/argus/index-chart?index=N225&live=1`, { cache: 'no-store' });
         if (!response.ok) return;
         const body = await response.json();
-        if (!cancelled && body?.actionAuthority === false && liveValid(body?.quote)) setQuote(body.quote);
+        if (cancelled || body?.actionAuthority !== false) return;
+        if (liveValid(body?.quote)) setQuote(body.quote);
+        if (futuresValid(body?.overnightFutures)) setFutures(body.overnightFutures);
       } catch { /* keep the last value; the close remains the fallback */ }
     };
     void load();
@@ -153,5 +160,5 @@ export function useNikkeiLive(): NikkeiLiveQuote | null {
     document.addEventListener('visibilitychange', load);
     return () => { cancelled = true; window.clearInterval(timer); document.removeEventListener('visibilitychange', load); };
   }, [base]);
-  return quote;
+  return { quote, futures };
 }
