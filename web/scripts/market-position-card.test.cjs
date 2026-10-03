@@ -34,6 +34,6 @@ const withView={...position,themes:[theme({view:{expectationJa:'弱い雇用で�
 const viewHtml=render({...base,marketPosition:withView});
 assert.ok(viewHtml.includes('市場の期待')&&viewHtml.includes('市場の警戒')&&viewHtml.includes('読みが変わる引き金'));
 assert.ok(viewHtml.includes('警戒: 次の物価指標が強ければ')&&viewHtml.includes('ARGUSの整理(推論)'));
-assert.ok(viewHtml.indexOf('市場の期待')<viewHtml.indexOf('発表の反応'),'the view comes before the records');
+assert.ok(viewHtml.indexOf('mp-view')<viewHtml.indexOf('mp-entries'),'the view comes before the records');
 assert.ok(!html.includes('市場の期待'),'no view block without a view');
 console.log('Market position card PASS');
