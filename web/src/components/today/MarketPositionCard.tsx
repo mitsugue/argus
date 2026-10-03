@@ -19,9 +19,16 @@ function ThemeRow({ theme }: { theme: MarketPositionTheme }) {
       <span><b>{theme.labelJa}</b>
         {lead && <small>{lead}</small>}
         {theme.pricing?.ffImpliedRatePct != null && <small>政策金利の予想(FF先物) {theme.pricing.ffImpliedRatePct.toFixed(3)}%</small>}
+        {theme.view?.fearJa && <small className="mp-fear">警戒: {theme.view.fearJa}</small>}
         {theme.nextEvent && <small>次: {theme.nextEvent.title} {jst(theme.nextEvent.eventTimeUtc)}</small>}
       </span>
     </summary>
+    {theme.view && (theme.view.expectationJa || theme.view.fearJa || theme.view.triggerJa) && <dl className="mp-view" data-view-kind={theme.view.kind ?? ''}>
+      {theme.view.expectationJa && <><dt>市場の期待</dt><dd>{theme.view.expectationJa}</dd></>}
+      {theme.view.fearJa && <><dt>市場の警戒</dt><dd>{theme.view.fearJa}</dd></>}
+      {theme.view.triggerJa && <><dt>読みが変わる引き金</dt><dd>{theme.view.triggerJa}</dd></>}
+      <dd className="mp-view-note">ARGUSの整理(推論){theme.view.at ? `・${jst(theme.view.at)}` : ''}。根拠は下の記録です。</dd>
+    </dl>}
     {theme.recent.length > 0 ? <ol className="mp-entries">
       {theme.recent.map(row => <li key={row.entryId} data-kind={row.kind} data-severity={row.severity}>
         <span>{jst(row.at)}</span><em>{kindLabel[row.kind] ?? row.kind}</em>{row.textJa}</li>)}

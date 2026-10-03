@@ -19,6 +19,8 @@ export interface MarketPositionTheme {
   pricing: { ffImpliedRatePct?: number | null } | null;
   lastReaction: { at: string; textJa: string; readingCode?: string | null; ffImpliedRateMoveBp?: number | null } | null;
   nextEvent: { title: string; eventTimeUtc: string; eventCode?: string | null } | null;
+  /** The integrated AI's reading of the theme (inference, checked against the evidence). */
+  view?: { expectationJa?: string; fearJa?: string; triggerJa?: string; at?: string; kind?: string } | null;
 }
 export interface MarketPosition {
   schemaVersion: string; asOf: string; themes: MarketPositionTheme[]; entryCount: number;

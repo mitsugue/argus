@@ -28,4 +28,12 @@ assert.ok(html.indexOf('米国の利上げ・利下げ観測')<html.indexOf('円
 assert.ok(html.includes('予測ではありません'));
 assert.ok(html.includes('data-entry-count="3"'));
 for(const banned of ['確率','買い','売り','BUY']) assert.ok(!html.includes(banned),banned);
+// The integrated AI's view (expectation / fear / trigger) is shown as an inference, above the records.
+const withView={...position,themes:[theme({view:{expectationJa:'弱い雇用で追加利上げは見送られるとの見方',fearJa:'次の物価指標が強ければ利上げ観測が戻る',
+ triggerJa:'次の物価指標と次回会合の示唆',at:'2026-10-03T02:10:00Z',kind:'INFERENCE'}})]};
+const viewHtml=render({...base,marketPosition:withView});
+assert.ok(viewHtml.includes('市場の期待')&&viewHtml.includes('市場の警戒')&&viewHtml.includes('読みが変わる引き金'));
+assert.ok(viewHtml.includes('警戒: 次の物価指標が強ければ')&&viewHtml.includes('ARGUSの整理(推論)'));
+assert.ok(viewHtml.indexOf('市場の期待')<viewHtml.indexOf('発表の反応'),'the view comes before the records');
+assert.ok(!html.includes('市場の期待'),'no view block without a view');
 console.log('Market position card PASS');

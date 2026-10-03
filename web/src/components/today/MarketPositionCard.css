@@ -16,3 +16,8 @@
 .mp-entries li > em { font-style: normal; color: var(--text-sub); margin-right: 6px; }
 .mp-entries li[data-severity="CRITICAL"] { color: var(--value-negative, #ff7b7b); }
 .mp-empty { margin: 6px 0 0; color: var(--text-faint); font-size: 12px; }
+.mp-view { margin: 8px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; font-size: 12px; line-height: 1.5; }
+.mp-view dt { color: var(--text-sub); font-weight: 600; }
+.mp-view dd { margin: 0; color: var(--text-main); }
+.mp-view .mp-view-note { grid-column: 1 / -1; color: var(--text-faint); font-size: 11px; }
+.mp-theme > summary small.mp-fear { color: var(--text-main); }
