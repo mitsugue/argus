@@ -385,7 +385,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_jp_market_events.py': '7b1fa0c860980bf5a493cfb3d25c13191e04b8ab',
     'test_jp_market_events_runtime.py': '7c48758326ab15df5c35790e68a3016dfa887d79',
     'test_jp_market_features.py': '9255e905406bb42aa9138cb06abd0193ac005753',
-    'test_jp_market_margin_runtime.py': 'd89cf0d2b0b6cd7d67b9798ab583c23fd6fb11f7',
+    'test_jp_market_margin_runtime.py': 'be482e64ef36d8cd4232f4e1b64bf941ba65b5d8',
     'test_jp_market_price_paths.py': '8e9a10fb678062c29c533827561565f3b73c88a5',
     'test_jp_market_source_adapters.py': '5fe08e835fdd13a769f44a32613c6b699540bb62',
     'web/scripts/japan-market-comparison.test.cjs': '5fca666dc8ec8b389467d296633ffda3dc5f9661',
@@ -648,6 +648,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_response_compression.py",
     "ops/calendar/us_policy_dates.json",
     "ops/calendar/jp_index_sq_2027.json",
     "test_argus_ex_dividend_glue.py",
