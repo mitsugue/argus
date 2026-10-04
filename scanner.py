@@ -44731,6 +44731,28 @@ def _provider_diagnostics():
         j = r.json() if r.status_code == 200 else {}
         return r.status_code, (1 if isinstance(j, dict) and j.get("c") else 0)
 
+    # 2026-10-04: whether the existing contracts carry analyst target prices
+    # (Twelve Data answers 200 with an error body when a plan lacks an
+    # endpoint, so only a body with the field counts).
+    def _td_analysis(endpoint, field, params):
+        def probe():
+            r = requests.get(f"https://api.twelvedata.com/{endpoint}",
+                             params={**params, "apikey": _TWELVEDATA_API_KEY}, timeout=_DIAG_TIMEOUT)
+            j = r.json() if r.status_code == 200 else {}
+            if isinstance(j, dict) and j.get("status") == "error":
+                return int(j.get("code") or 403), 0
+            return r.status_code, (1 if isinstance(j, dict) and j.get(field) else 0)
+        return probe
+
+    def _fh_analysis(path, params):
+        def probe():
+            r = requests.get(f"https://finnhub.io/api/v1/{path}", params={**params, "token": FINNHUB_API_KEY},
+                             timeout=_DIAG_TIMEOUT)
+            j = r.json() if r.status_code == 200 else {}
+            filled = (bool(j.get("targetMean")) if isinstance(j, dict) else len(j) > 0 if isinstance(j, list) else False)
+            return r.status_code, (1 if filled else 0)
+        return probe
+
     def _av():
         r = requests.get("https://www.alphavantage.co/query",
                          params={"function": "TOP_GAINERS_LOSERS", "apikey": _ALPHAVANTAGE_KEY},
@@ -44790,6 +44812,21 @@ def _provider_diagnostics():
                     limitations="時間外liveは実証時のみ。"),
         _diag_probe("fred", bool(_FRED_API_KEY), _fred, caps=["macro"], limitations="金利/VIX/HY OAS。"),
         _diag_probe("finnhub", bool(FINNHUB_API_KEY), _finnhub, caps=["quote", "news"], limitations="二次媒体/相場。"),
+        _diag_probe("twelvedata-price-target", bool(_TWELVEDATA_API_KEY),
+                    _td_analysis("price_target", "price_target", {"symbol": "AAPL"}), caps=["price_target"],
+                    limitations="目標株価(米国)。契約で使えるかの確認用。"),
+        _diag_probe("twelvedata-price-target-jp", bool(_TWELVEDATA_API_KEY),
+                    _td_analysis("price_target", "price_target", {"symbol": "7203", "exchange": "JPX"}),
+                    caps=["price_target_jp"], limitations="目標株価(日本株)。契約で使えるかの確認用。"),
+        _diag_probe("twelvedata-recommendations", bool(_TWELVEDATA_API_KEY),
+                    _td_analysis("recommendations", "trends", {"symbol": "AAPL"}), caps=["recommendations"],
+                    limitations="アナリストの評価の内訳。契約で使えるかの確認用。"),
+        _diag_probe("finnhub-price-target", bool(FINNHUB_API_KEY),
+                    _fh_analysis("stock/price-target", {"symbol": "AAPL"}), caps=["price_target"],
+                    limitations="Finnhubの目標株価(公式にはPremium)。確認用。"),
+        _diag_probe("finnhub-recommendation", bool(FINNHUB_API_KEY),
+                    _fh_analysis("stock/recommendation", {"symbol": "AAPL"}), caps=["recommendation_trends"],
+                    limitations="Finnhubの評価の推移。確認用。"),
         _diag_probe("alphavantage", bool(_ALPHAVANTAGE_KEY), _av, caps=["us_movers"], limitations="米国ムーバー。"),
         _diag_probe("coingecko", True, _coingecko, caps=["crypto_price"],
                     limitations="キー任意。DC IPブロック時はCoinbaseフォールバック(価格側)。"),
