@@ -136,6 +136,22 @@ jobs:
             echo "--- $name ---"
             head -c 4000 "artifacts/runtime-diagnostics/$name.json"; echo
           done
+      - name: Check the brief against the page's validator (best effort)
+        run: |
+          # 2026-10-04: the server built valid briefs while the page rejected every one
+          # (a fact's provenance shape). Run the page's own validator from main.
+          mkdir -p /tmp/pagecheck && cd /tmp/pagecheck
+          curl -sS -o marketBrief.ts "https://raw.githubusercontent.com/mitsugue/argus/main/web/src/lib/marketBrief.ts" || true
+          npm install --silent --no-audit --no-fund typescript@5 >/dev/null 2>&1 || true
+          cat > check.cjs <<'JS'
+          const ts=require('typescript'),fs=require('fs'),Module=require('module');
+          let src=fs.readFileSync('marketBrief.ts','utf8').split('\n').map((l,i)=>l.replace(/return false;/g,`return (console.log('page check fails at marketBrief.ts line ${i+1}'), false);`)).join('\n');
+          const out=ts.transpileModule(src,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+          const m=new Module('mb');m.paths=module.paths;m._compile(out,'marketBrief.ts');
+          const d=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          console.log('PAGE_ACCEPTS_BRIEF', m.exports.validMarketBrief(d));
+          JS
+          node check.cjs "$GITHUB_WORKSPACE/artifacts/runtime-diagnostics/market-brief.json" | tee "$GITHUB_WORKSPACE/artifacts/runtime-diagnostics/page-check.txt" || true
       - name: Summarise for the run page
         run: |
           python3 -B scripts/runtime_diagnostics_summary.py \
