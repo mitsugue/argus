@@ -8,6 +8,7 @@ import './ArgusToday.css';
 import { editorialEdition } from '../../lib/presentationIntent';
 import type { MarketBrief } from '../../lib/marketBrief';
 import { ArgusEditorialSurface } from './ArgusEditorialSurface';
+import type { CriticalTodayNews } from './TodayDecisionStrip';
 
 // v13.5.36 MARKET SITUATION BRIEF (owner 2026-08-26): NOW/WHY/NEXT — the
 // deterministic composer selects verified facts; AI only compresses them
@@ -27,7 +28,7 @@ export function gateNoteJa(brief: MarketBrief): string | null {
 }
 
 export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total: number } | null;
-  cutoff?: string | null; market?: string; editorial?: boolean }> = ({ signals, cutoff, market, editorial = false }) => {
+  cutoff?: string | null; market?: string; editorial?: boolean; criticalNews?: CriticalTodayNews[] }> = ({ signals, cutoff, market, editorial = false, criticalNews }) => {
   const { brief, error, loading, retry } = useMarketBrief();
   // v13.5.62 (GPT review item 4): the brief's 成立x/7 chip is rendered from the
   // SAME market-view document as the MARKET SIGNALS header, stamped with its
@@ -45,7 +46,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
   const edition = editorial ? editorialEdition(brief) : null;
   const gateNote = gateNoteJa(brief);
   if (edition) return <ArgusEditorialSurface brief={edition} updateState={updateState} retained={edition !== brief}
-    generationStatus={brief.generationWorker?.status} retainedNote={gateNote} />;
+    generationStatus={brief.generationWorker?.status} retainedNote={gateNote} criticalNews={criticalNews} />;
   const unified = brief.unifiedSummary;
   const hasSixSections = unified && ['view', 'reasons', 'changes', 'impact', 'next', 'invalidation'].every(key => {
     const row = unified.sections?.[key as keyof typeof unified.sections];

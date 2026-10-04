@@ -7,18 +7,18 @@ import { hasEditorialIntent, editorialElementLabel } from '../../lib/presentatio
 import { validJapanMarketComparison } from '../../lib/japanMarketComparison';
 import { JapanMarketComparisonChart } from '../chart/JapanMarketComparisonChart';
 import { MarketAnalysisHistory } from './MarketAnalysisHistory';
-import { TodayDecisionStrip } from './TodayDecisionStrip';
+import { TodayDecisionStrip, type CriticalTodayNews } from './TodayDecisionStrip';
 import { MarketPositionCard } from './MarketPositionCard';
 import { LevelMapCard } from './LevelMapCard';
 import { friendlyFactText } from '../../lib/todayDecision';
-import { marketWording } from '../../lib/marketWording';
+import { marketChanges, marketWording } from '../../lib/marketWording';
 import './ArgusEditorialSurface.css';
 
-const labels = { view: 'ARGUSの今日の見立て', reasons: '見立ての理由', changes: '前回から変わったこと',
+const labels = { view: 'ARGUSの今日の見立て', reasons: '見立ての理由', changes: '前回から確認できた変化',
   impact: '自分の銘柄への影響', next: '次に確かめたいこと', invalidation: '見方を変える条件' };
 type Section = keyof typeof labels;
 
-export function ArgusEditorialSurface({ brief, updateState, retained = false, archived = false, generationStatus, retainedNote }: { brief: MarketBrief; updateState?: React.ReactNode; retained?: boolean; archived?: boolean; generationStatus?: string; retainedNote?: string | null }) {
+export function ArgusEditorialSurface({ brief, updateState, retained = false, archived = false, generationStatus, retainedNote, criticalNews }: { brief: MarketBrief; updateState?: React.ReactNode; retained?: boolean; archived?: boolean; generationStatus?: string; retainedNote?: string | null; criticalNews?: CriticalTodayNews[] }) {
   if (!hasEditorialIntent(brief)) return null;
   const plan = brief.presentationPlan!; const summary = brief.unifiedSummary!;
   const chart = brief.calculationSnapshots?.['5']?.comparison;
@@ -56,7 +56,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
       {retained && <p role="status" className="argus-editorial__retained argus-editorial__retained--update">
         {generationStatus === 'RUNNING' ? <TriangleStepLoader label="新しい説明を作成中" />
           : (retainedNote ?? '前回の説明を表示中です。数字とチャートは最新です。')}</p>}
-      <TodayDecisionStrip brief={brief} />
+      <TodayDecisionStrip brief={brief} criticalNews={criticalNews} />
       <MarketPositionCard brief={brief} />
       {/* 2026-10-04: saving failed for 15 hours with no sign on the screen. */}
       {brief.analysisHistory?.status === 'SAVE_FAILED' && <p role="status" className="argus-editorial__retained"
@@ -70,7 +70,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
           const label = evidenceLabel ?? labels[choice.id as Section];
           const text = evidenceLabel ? choice.caption?.textJa : summary.sections[choice.id as Section]?.textJa;
           return text ? <div key={choice.id} className="argus-editorial__digest-row" data-payload-id={source.payloadId}>
-            <small>{label}</small><p>{marketWording(text)}</p></div> : null;
+            <small>{label}</small><p>{choice.id === 'changes' ? marketChanges(text) : marketWording(text)}</p></div> : null;
         })}
       </section>}
       <LevelMapCard />

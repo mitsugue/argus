@@ -50,7 +50,7 @@ export function rowLabelJa(row: LevelMapRow): string {
 }
 
 export function evidenceJa(row: LevelMapRow): string {
-  if (row.kinds.includes('SAME_MULTIPLE') && !row.kinds.includes('PER_LINE')) return '保留・弱い';
-  if (row.kinds.includes('PER_LINE')) return '保留（2010〜2023年は偶然並み）';
+  if (row.kinds.includes('SAME_MULTIPLE') && !row.kinds.includes('PER_LINE')) return '山・谷の予測力は未確認';
+  if (row.kinds.includes('PER_LINE')) return '山・谷の予測力は偶然並み（2010〜2023年）';
   return '参考';
 }

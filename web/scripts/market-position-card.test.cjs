@@ -58,5 +58,16 @@ assert.ok(wording.marketWording('米消費者物価（2026-10-14・12:30Z）').i
 assert.ok(wording.marketWording('次回（2026-10-14T23:30:00Z）').includes('10/15 08:30'));
 assert.equal(wording.marketWording('金利3.930%'), '金利3.930%');
 assert.equal(wording.hasSubstantiveView('現在の根拠では確認できません'),false);
+// 前の見出しが観察だけでも、同じ説明の理由から影響を選ぶ。未確認を断定へ変えない。
+const vague = {textJa:'私は、長期金利の高止まりを見極める局面と見ています。',kind:'INFERENCE'};
+const reasons = {textJa:'市場は金利据え置きを期待しています。長期金利が高い状態が続き、株価が上がりにくくなることを警戒しています。',kind:'INFERENCE'};
+assert.equal(wording.marketHeadline(vague,reasons),'長期金利が高い状態が続き、株価が上がりにくくなることを警戒しています。');
+assert.equal(wording.marketHeadline(vague,{...reasons,kind:'UNKNOWN'}),vague.textJa);
+assert.equal(wording.marketHeadline({...vague,kind:'UNKNOWN'},reasons),vague.textJa);
+assert.equal(wording.marketHeadline(vague,{textJa:'金利の記録はありません。',kind:'INFERENCE'}),vague.textJa);
+assert.equal(wording.marketHeadline({textJa:'株価の上昇を抑える金利を見極める局面です。',kind:'INFERENCE'},reasons),'株価の上昇を抑える金利を見極める局面です。');
+assert.equal(wording.marketChanges('前回からの市場の変化を示す、確認済みの観測はありません。'),'なし');
+assert.equal(wording.marketChanges('比較できる前回の見立てをまだ取得していません。'),'比較データなし');
+assert.equal(wording.marketChanges('前回から米国の金利が下がりました。'),'前回から米国の金利が下がりました。');
 const quiet=render({...base,marketPosition:{...position,themes:[theme({status:'QUIET'})]}});
 assert.ok(quiet.includes('14日間、新しい記録なし')&&quiet.includes('更新待ち'));

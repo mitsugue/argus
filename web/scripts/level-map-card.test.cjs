@@ -28,8 +28,11 @@ const state = { schemaVersion: 'jp-market-level-map-state-v1', status: 'AVAILABL
   missedMornings: [], score: score(true, 1), retrospective: score(false, 84), actionAuthority: false };
 const html = renderToStaticMarkup(React.createElement(LevelMapView, { state }));
 assert.ok(html.includes('PER水準の地図') && html.includes('2026-10-05 朝') && html.includes('寄付前に固定保存'));
+assert.ok(html.includes('企業の利益に対して、日経平均が何倍の値段になっているか'));
+assert.ok(html.includes('約17.37倍') && html.includes('70,787円まで上がると18倍、66,854円まで下がると17倍'));
 assert.ok(html.includes('PER18倍線（毎朝動く）') && html.includes('直前の天井と同じ倍率 17.884倍'));
-assert.ok(html.indexOf('70,787') < html.indexOf('前日終値</td>') && html.indexOf('前日終値</td>') < html.indexOf('66,854'),
+const table = html.split('<tbody>')[1];
+assert.ok(table.indexOf('70,787') < table.indexOf('前日終値</td>') && table.indexOf('前日終値</td>') < table.indexOf('66,854'),
   'upper rows above the close, lower rows below');
 assert.ok(html.includes('公式値ではありません') && html.includes('実績で補った社 22') && html.includes('2026-08-31 時点'));
 assert.ok(html.includes('確率ではありません') && html.includes('±2ATR'));
@@ -38,4 +41,7 @@ assert.ok(html.includes('件数が少ないうちは'));
 for (const banned of ['BUY', 'SELL', '買い', '売り', '必ず', '止まる水準', '反発する']) assert.ok(!html.includes(banned), banned);
 assert.equal(renderToStaticMarkup(React.createElement(LevelMapView, { state: null })), '');
 assert.equal(renderToStaticMarkup(React.createElement(LevelMapView, { state: { ...state, latest: null } })), '');
+const singleSide = renderToStaticMarkup(React.createElement(LevelMapView, { state: { ...state,
+  latest: { ...latest, rows: latest.rows.filter(r => r.side === 'DOWN') } } }));
+assert.ok(singleSide.includes('日経平均が66,854円まで下がると17倍になります。'));
 console.log('Level map card PASS');

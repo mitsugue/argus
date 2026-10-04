@@ -1,4 +1,7 @@
 .lm-card { padding: 12px 16px; }
+.lm-reading { margin:10px 0; padding:10px 12px; border-left:2px solid var(--cyan); background:var(--surface-soft); font-size:13px; line-height:1.6; }
+.lm-reading p { margin:4px 0; color:var(--text-main); }
+.lm-reading small { display:block; margin-top:8px; color:var(--text-sub); font-size:11px; }
 .lm-note { margin: 4px 0; color: var(--text-sub); font-size: 12px; line-height: 1.5; }
 .lm-eps { color: var(--text-faint); font-size: 11px; }
 .lm-jump { color: var(--text-main); }

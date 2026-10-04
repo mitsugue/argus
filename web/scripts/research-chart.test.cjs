@@ -12,6 +12,12 @@ const chart = {schemaVersion:'jp-market-chart-layers-v1',today:'2026-10-05',star
  current:{morningOf:'2026-10-05',eps:3932.61,epsDate:'2026-10-02',previousClose:68309,previousSession:'2026-10-02',atr14:1235},
  pivots:[],pending:{date:'2026-10-01',kind:'TOP',price:68957,confirmPrice:66198.72},candidates:[],nearest:[],actionAuthority:false,automaticAiCalls:0};
 assert.equal(lib.validResearchChart(chart),true);
+const recentWindow=lib.chartWindow(chart,true);
+assert.equal(recentWindow.start,Date.parse('2026-09-05T00:00:00Z'));
+assert.equal(recentWindow.end,Date.parse('2026-12-04T00:00:00Z'));
+assert.equal(lib.chartWindow(chart,true,9999).end,lib.dayNumber(chart.end));
+assert.equal(lib.chartWindow(chart,true,-9999).start,lib.dayNumber(chart.start));
+assert.equal(lib.chartWindow(chart,false).start,lib.dayNumber(chart.start));
 assert.equal(lib.validResearchChart({...chart,actionAuthority:true}),false);
 assert.equal(lib.validResearchChart({...chart,points:[{...chart.points[0],epsDate:'2026-10-01'}]}),false);
 assert.equal(lib.validResearchChart({...chart,candidates:[{id:'c',label:'R1',start:'2026-10-05',end:'2026-10-01',target:100,stop:200}]}),false);
@@ -36,6 +42,9 @@ assert.ok(html.includes('外部の見立て（未検証）'));
 assert.ok(html.includes('ARGUS推計（公式値ではない）'));
 assert.ok(html.includes('1 谷')&&html.includes('2 底'));
 assert.ok(html.includes('EPSがない日はPER線を途切れさせています'));
+assert.ok(html.includes('直近を拡大')&&html.includes('縦に拡大'));
+assert.ok(html.includes('前日終値より下')&&html.includes('10/30〜10/30'));
+assert.ok(html.includes('明日の予測ではありません'));
 assert.ok(!html.includes('NaN')&&!html.includes('Infinity'));
 assert.ok(html.includes('aria-pressed="false"'),'候補と山谷は初期状態で折りたたむ');
 console.log('研究チャートの日付・水準・欠測・未検証表示 PASS');

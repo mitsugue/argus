@@ -28,3 +28,16 @@
 .nr-key-price { color: var(--blue); }.nr-key-per { color: var(--cyan); }.nr-key-external { color: var(--text-main); }
 .nr-nearest { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 8px 0; margin: 10px 0; }
 .nr-nearest p { margin: 5px 0; font-size: 12px; }.nr-nearest small { color: var(--text-sub); font-size: 11px; }
+.nr-zoom { margin-bottom:10px; }
+.nr-controls button:disabled { opacity:.4; cursor:default; }
+.nr-guide { margin:10px 0; font-size:12px; color:var(--text-sub); line-height:1.6; }
+.nr-guide summary { cursor:pointer; color:var(--cyan); min-height:36px; align-content:center; }
+.nr-guide p { margin:6px 0; }
+.nr-selection { margin:10px 0; padding:10px 12px; border-left:2px solid var(--text-main); background:var(--surface-soft); border-radius:6px; font-size:13px; line-height:1.6; }
+.nr-selection p { margin:3px 0; color:var(--text-main); font-size:14px; }
+.nr-selection small { color:var(--text-sub); font-size:11px; }
+.nr-close { stroke:var(--text-main); stroke-dasharray:5 3; opacity:.6; }
+.nr-chart .nr-close-label { fill:var(--text-main); font-size:10px; }
+.nr-point-hit { fill:transparent; cursor:pointer; }
+.nr-chart g[role="button"] { cursor:pointer; }
+.nr-chart g[role="button"]:focus .nr-point { stroke:var(--cyan); stroke-width:3; }

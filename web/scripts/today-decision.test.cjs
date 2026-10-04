@@ -85,7 +85,34 @@ assert.equal(d.friendlyEventText('US Treasury 10-Year Auction（2026/10/07・時
 assert.equal(d.friendlyEventText('FOMC（2026-10-03 03:00（日本時間））', at), 'FOMC 明日03:00');
 assert.equal(d.friendlyEventText('日銀会合', at), '日銀会合');
 console.log('Next-event wording PASS');
+
+// 重大ニュースは数字３枚と並べ、元の見出し・理由・確認状態を保つ。
+const vm = require('node:vm'), React = require('react'), {renderToStaticMarkup} = require('react-dom/server');
+const wordingCode = ts.transpileModule(fs.readFileSync('src/lib/marketWording.ts','utf8'),
+  {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+const wordingContext = {exports:{},require,Date}; vm.runInNewContext(wordingCode,wordingContext);
+const stripContext = {exports:{},localStorage:{getItem:()=>null},require(name){
+  if(name.endsWith('.css')) return {};
+  if(name.includes('/todayDecision')) return d;
+  if(name.includes('/marketWording')) return wordingContext.exports;
+  if(name.includes('/hooks/')) return {useNikkeiLive:()=>({quote:null,futures:null})};
+  return require(name);
+}};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/components/today/TodayDecisionStrip.tsx','utf8'),
+  {compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText,stripContext);
+const brief={calculationSnapshots:{'5':{comparison:{actual:path,anchorDate:'2026-10-02'},
+  marketFeatureSnapshot:{features:[{seriesId:'vix.level',date:'2026-10-02',value:15.3}]}}},chips:{nextEvent:'SQ 10/9'}};
+const renderStrip=criticalNews=>renderToStaticMarkup(React.createElement(stripContext.exports.TodayDecisionStrip,{brief,criticalNews}));
+const normalStrip=renderStrip([]);
+assert.ok(normalStrip.includes('次の山場')&&normalStrip.includes('前後に株価が大きく上下することも'));
+const urgent=renderStrip([{id:'test',title:'検査用：重要な政策発表',why:'価格への影響は未確認です。',meta:'10/5 01:30 · 確認待ち'}]);
+assert.equal((urgent.split('today-strip__tiles')[1].split('</div>')[0].match(/<button /g)||[]).length,4);
+assert.ok(urgent.includes('重大ニュース・市場変化 1件')&&urgent.includes('検査用：重要な政策発表'));
+assert.ok(urgent.includes('価格への影響は未確認です。')&&urgent.includes('10/5 01:30 · 確認待ち'));
+assert.ok(!urgent.includes('次の山場'),'重大ニュースがある時は４枚目に優先表示');
+console.log('重大ニュースのトップカード PASS');
 assert.equal(d.friendlyEventText('US Treasury 10-Year Auctio 10/7', at), '米国債入札 10/7');
 assert.equal(d.friendlyEventText('US CPI (Consumer Price Index) 10/14 21:30', at), '米消費者物価 10/14 21:30');
 assert.equal(s.rows.find(r=>r.id==='sq').lean,'neutral');
-assert.ok(s.rows.find(r=>r.id==='sq').soWhat.includes('毎回乱高下するわけでもありません'));
+assert.ok(s.rows.find(r=>r.id==='sq').meaning.includes('上下へ大きく振れることがあります'));
+assert.ok(s.rows.find(r=>r.id==='sq').soWhat.includes('寄付後も続くかを確認'));

@@ -3,6 +3,7 @@ import type { MarketBrief } from '../../lib/marketBrief';
 import type { ComparisonPoint } from '../../types/japanMarketComparison';
 import { ALERT_HISTORY, OVERNIGHT_HISTORY, TONE_HISTORY, decisionStrip, friendlyEventText, overnightGap, overnightRecord, type FeatureRow, type Lean } from '../../lib/todayDecision';
 import { useNikkeiLive } from '../../hooks/useJapanMarketComparison';
+import { marketHeadline } from '../../lib/marketWording';
 import './TodayDecisionStrip.css';
 
 const toneLabel = { tail: '材料は追い風寄り', head: '材料は逆風寄り', wait: '材料はまちまち' } as const;
@@ -10,6 +11,7 @@ const leanLabel: Record<Lean, string> = { tail: '追い風', head: '逆風', 'so
 const alertLabel = { low: '低', normal: '通常', high: '高' } as const;
 const momentumLabel = { strong: '上昇・過熱に注意', normal: '通常の範囲', weak: '下落・売られすぎに注意' } as const;
 const yen = (v: number) => Math.round(v).toLocaleString('ja-JP');
+export type CriticalTodayNews = { id: string; title: string; why: string; meta: string };
 // Owner request 2026-10-02: each tile opens the part of Today it summarises.
 function jumpTo(id: string, openRow?: string) {
   const target = document.getElementById(id);
@@ -43,7 +45,7 @@ function readLastInputs(): StripInputs | null {
 }
 
 /** Conclusion, four numbers and the inputs with their direction, before the detailed explanation. */
-export function TodayDecisionStrip({ brief }: { brief: MarketBrief }) {
+export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: MarketBrief; criticalNews?: CriticalTodayNews[] }) {
   const current = brief.calculationSnapshots?.['5']?.comparison as { actual?: ComparisonPoint[]; anchorDate?: string } | undefined;
   const currentFeatures = features(brief);
   const fresh = Array.isArray(current?.actual) && current!.actual.length >= 21;
@@ -59,7 +61,7 @@ export function TodayDecisionStrip({ brief }: { brief: MarketBrief }) {
   const stripActual = Array.isArray(comparison?.actual) ? comparison!.actual : null;
   const stripFeatures = fresh ? currentFeatures : stored?.features ?? [];
   const closeStrip = decisionStrip(stripActual, stripFeatures);
-  const headline = brief.unifiedSummary?.sections.view.textJa;
+  const headline = marketHeadline(brief.unifiedSummary?.sections.view, brief.unifiedSummary?.sections.reasons);
   const { quote: live, futures } = useNikkeiLive();
   // The delayed intraday value replaces the last close once it is from a later session.
   const lastActual = typeof comparison?.anchorDate === 'string' ? Date.parse(comparison.anchorDate) : NaN;
@@ -105,8 +107,13 @@ export function TodayDecisionStrip({ brief }: { brief: MarketBrief }) {
       {strip.band && <button type="button" className="today-strip__tile tile-range" onClick={() => jumpTo('today-nikkei-chart')}>
         <small>5日間の予想値幅(8割{strip.overnightGapPct !== null ? '・昨夜の先物を反映' : ''})</small><b>{signed(strip.band.lower)}〜{signed(strip.band.upper)}</b>
         <span>{shownPrice !== null ? `${yen(shownPrice * (1 + strip.band.lower / 100))}〜${yen(shownPrice * (1 + strip.band.upper / 100))}円` : ''}</span></button>}
-      {brief.chips?.nextEvent && <button type="button" className="today-strip__tile tile-event" onClick={() => jumpTo('today-events')}>
-        <small>次の山場</small><b className="today-strip__event">{friendlyEventText(brief.chips.nextEvent)}</b></button>}
+      {criticalNews.length > 0 ? <button type="button" className="today-strip__tile tile-event" onClick={() => jumpTo('today-material-news')}>
+        <small>重大ニュース・市場変化 {criticalNews.length}件</small><b className="today-strip__event">{criticalNews[0].title}</b>
+        <span>{criticalNews[0].why}</span><span className="today-strip__news-meta">{criticalNews[0].meta}</span>
+        <span>詳しく確認する ↓</span>
+      </button> : brief.chips?.nextEvent && <button type="button" className="today-strip__tile tile-event" onClick={() => jumpTo('today-events')}>
+        <small>次の山場</small><b className="today-strip__event">{friendlyEventText(brief.chips.nextEvent)}</b>
+        {/SQ/i.test(brief.chips.nextEvent) && <span>SQ＝先物・オプションの清算<br />前後に株価が大きく上下することも</span>}</button>}
     </div>
     {strip.rows.length > 0 && <div className="today-strip__rows" aria-label="材料ごとの向き">
       <h2>材料ごとの向き</h2>
