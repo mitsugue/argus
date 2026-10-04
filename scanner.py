@@ -842,6 +842,38 @@ def _memory_attribution_request_begin():
         g.argus_memory_operation = None
 
 
+# 2026-10-04: the market brief reached 4.9 MB uncompressed and the phone's
+# 12 s read timed out ("見立てを取得できません"). Large successful JSON bodies
+# are gzipped when the client accepts it. Streamed bodies, conditional
+# responses carrying an ETag and already-encoded bodies are left as they are.
+_GZIP_MIN_BYTES = 32 * 1024
+
+
+@app.after_request
+def _compress_large_json(response):
+    try:
+        if (response.direct_passthrough or response.is_streamed
+                or not 200 <= response.status_code < 300
+                or response.headers.get("Content-Encoding") or response.headers.get("ETag")
+                or response.mimetype != "application/json"
+                or "gzip" not in (request.headers.get("Accept-Encoding") or "").lower()):
+            return response
+        data = response.get_data()
+        if len(data) < _GZIP_MIN_BYTES:
+            return response
+        import gzip
+        body = gzip.compress(data, compresslevel=5)
+        response.set_data(body)
+        response.headers["Content-Encoding"] = "gzip"
+        response.headers["Content-Length"] = str(len(body))
+        vary = [v.strip() for v in (response.headers.get("Vary") or "").split(",") if v.strip()]
+        if "Accept-Encoding" not in vary:
+            response.headers["Vary"] = ", ".join(vary + ["Accept-Encoding"])
+    except Exception:
+        pass
+    return response
+
+
 @app.after_request
 def _memory_attribution_request_complete(response):
     try:
