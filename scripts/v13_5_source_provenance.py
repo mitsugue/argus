@@ -648,6 +648,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "ops/calendar/nikkei225_constituent_changes.json",
+    "argus_level_map_backup.py",
     "web/src/lib/levelMap.ts",
     "web/src/components/today/LevelMapCard.tsx",
     "web/src/components/today/LevelMapCard.css",
