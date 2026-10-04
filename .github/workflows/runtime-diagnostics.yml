@@ -65,7 +65,9 @@ jobs:
                       "earnings-date-7203|/fins/earnings-date|{\"code\":\"72030\"}" \
                       "earnings-date-1002|/fins/earnings-date|{\"date\":\"2026-10-02\"}" \
                       "valuation-0813|/equities/valuation|{\"date\":\"2026-08-13\"}" \
-                      "valuation-7203-2016|/equities/valuation|{\"code\":\"72030\",\"from\":\"2016-01-01\",\"to\":\"2016-01-31\"}"; do
+                      "valuation-20160106|/equities/valuation|{\"date\":\"2016-01-06\"}" \
+                      "valuation-20200106|/equities/valuation|{\"date\":\"2020-01-06\"}" \
+                      "valuation-20240105|/equities/valuation|{\"date\":\"2024-01-05\"}"; do
             name=${spec%%|*}; rest=${spec#*|}; endpoint=${rest%%|*}; params=${rest#*|}
             code=$(curl -sS -o "artifacts/runtime-diagnostics/jquants-shape-$name.json" -w "%{http_code}" \
               --max-time 60 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
