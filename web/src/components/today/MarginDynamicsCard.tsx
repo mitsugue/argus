@@ -36,6 +36,15 @@ export function MarginDynamicsCard({ document, refreshFailed = false }: { docume
   const failed = refreshFailed || !['AVAILABLE','PARTIAL'].includes(document.acquisitionStatus);
   const parts = document.sourceRows.filter(r => r.periodEnd === current.periodEnd && r.unit === 'UNITS');
   const component = (series: string) => { const r = parts.find(row => row.seriesId === series); return r ? units(r.value) : '未取得'; };
+  // Daily balances from the 2026-09-25 application date (owner 2026-10-04):
+  // the latest day and its change since the week end above, as a fact.
+  const daily = (series: string, day: string) => document.sourceRows.find(r => r.periodEnd === day && r.seriesId === series && r.unit === 'UNITS');
+  const latestDay = document.sourceRows.filter(r => r.seriesId === 'margin.long_balance' && r.unit === 'UNITS')
+    .map(r => r.periodEnd).sort().at(-1);
+  const latestLong = latestDay ? daily('margin.long_balance', latestDay) : undefined;
+  const latestShort = latestDay ? daily('margin.short_balance', latestDay) : undefined;
+  const showDaily = !!latestDay && latestDay > current.periodEnd && !!latestLong && !!latestShort && latestShort.value > 0;
+  const diff = (v: number) => `${v >= 0 ? '+' : ''}${v.toLocaleString('ja-JP')}口`;
   return <section className="card at-margin-dynamics" aria-label="日経レバの信用需給">
     <h3>日経レバの信用需給</h3>
     <p>{current.periodEnd}時点 · 信用倍率 <strong>{current.ratio.toFixed(4)}倍</strong></p>
@@ -45,6 +54,7 @@ export function MarginDynamicsCard({ document, refreshFailed = false }: { docume
       <p>買残の差 {change.longBalanceChange! >= 0 ? '+' : ''}{units(change.longBalanceChange!)} ／ 売残の差 {change.shortBalanceChange! >= 0 ? '+' : ''}{units(change.shortBalanceChange!)}</p>
       <p>買残の変化による寄与 {signed(change.longContribution!)}倍<br />売残の変化による寄与 {signed(change.shortContribution!)}倍</p>
     </> : <p>比較に必要な前回の残高が不足しています。</p>}
+    {showDaily && <p data-margin-daily={latestDay}>最新(日次) {latestDay}：買残 {units(latestLong!.value)}（週末から{diff(latestLong!.value - current.longBalance)}）／ 売残 {units(latestShort!.value)}（週末から{diff(latestShort!.value - current.shortBalance)}）· 倍率 {(latestLong!.value / latestShort!.value).toFixed(4)}倍<br /><small>日次の残高は2026年9月25日分から。変化の判断の基準は、日次の記録がたまるまで週次のままです。</small></p>}
     <p>残高の変化です。実際の買い戻し注文を観測したものではなく、買いサインではありません。</p>
     {failed && <p role="status">更新に失敗しています。最後に取得できた残高を表示しています。</p>}
     {document.sourceStatus === 'PARTIAL' && <p role="status">取得は一部です。未取得ページまたは検証できない行があります。</p>}
