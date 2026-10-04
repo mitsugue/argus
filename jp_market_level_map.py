@@ -165,7 +165,19 @@ def weighted_eps(valuation: Mapping[str, Mapping[str, Any]], constituents: Itera
     if income_total <= 0 or cap_total <= 0:
         raise LevelMapError("aggregate_earnings_not_positive")
     per = cap_total / income_total
-    return {"date": date, "eps": close / per, "per": per, "indexClose": close,
+    # The same aggregate over members with a forecast only, kept beside the
+    # chosen estimate so the effect of filling from trailing figures is
+    # measurable against the official series (2026-10-04: +1.4 %).
+    forward_cap = forward_income = 0.0
+    for code in members:
+        row = valuation.get(code) or {}
+        cap, forward_per = _finite(row.get("MktCap")), _finite(row.get("FwdPER"))
+        if cap and cap > 0 and forward_per:
+            forward_cap += cap
+            forward_income += cap / forward_per
+    forward_only = ({"per": forward_cap / forward_income, "eps": close / (forward_cap / forward_income)}
+                    if forward_income > 0 and forward_cap > 0 else None)
+    return {"date": date, "eps": close / per, "per": per, "indexClose": close, "forwardOnly": forward_only,
             "basis": EPS_BASIS, "labelJa": EPS_LABEL_JA, "constituentsAsOf": constituents_as_of,
             "coverage": {**counts, "marketCapShareUsed": round(cap_used / cap_all, 6) if cap_all else None},
             "officialValue": False}

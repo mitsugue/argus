@@ -39160,7 +39160,7 @@ def _level_map_public():
             "latest": mornings[-1] if mornings else None, "morningCount": len(mornings),
             "firstMorning": mornings[0].get("morningOf") if mornings else None,
             "estimateCount": len(eps), "estimateFirst": min(eps) if eps else None,
-            "estimateLatest": ({k: latest_eps.get(k) for k in ("date", "eps", "per", "coverage", "constituentsAsOf",
+            "estimateLatest": ({k: latest_eps.get(k) for k in ("date", "eps", "per", "forwardOnly", "coverage", "constituentsAsOf",
                                                               "basis", "labelJa", "officialValue")}
                                if latest_eps else None),
             "missedMornings": list(_LEVEL_MAP.get("missedMornings") or []),

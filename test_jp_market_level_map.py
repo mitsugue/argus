@@ -31,6 +31,8 @@ def test_weighted_eps_is_market_cap_weighted_signed_and_counts_fills():
     assert (cov["forward"], cov["negativeForecast"], cov["filledFromTrailing"]) == (2, 1, 1)
     assert (cov["missingMarketCap"], cov["missingEarnings"], cov["members"]) == (1, 1, 5)
     assert result["officialValue"] is False and result["basis"] == m.EPS_BASIS
+    # Members with a forecast PER only (1111 and 2222): cap 1500 / income 30.
+    assert result["forwardOnly"]["per"] == pytest.approx(1500.0 / 30.0)
     assert "公式値ではありません" in result["labelJa"]
 
 
