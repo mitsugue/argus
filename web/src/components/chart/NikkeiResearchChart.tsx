@@ -45,7 +45,7 @@ export function NikkeiResearchChartView({ chart, future }: { chart: ResearchChar
   const path = (points: Array<{ date: string; value: number }>) => points.map((p, i) => `${i ? 'L' : 'M'}${x(dayNumber(p.date)).toFixed(2)},${y(p.value).toFixed(2)}`).join(' ');
   const ratio = chart.current ? chart.current.previousClose / chart.current.eps : null;
   const strong = ratio === null ? [] : [...multiples.filter(m => m < ratio).slice(-2), ...multiples.filter(m => m > ratio).slice(0, 2), ...multiples.filter(m => m === ratio)];
-  const selectedPoint = external.find(p => p.id === selected) ?? visibleExternal[0];
+  const selectedPoint = visibleExternal.find(p => p.id === selected) ?? visibleExternal[0];
   const close = chart.current?.previousClose ?? last?.close;
   const position = (value: number) => close ? `${value >= close ? '前日終値より上' : '前日終値より下'} ${value >= close ? '+' : ''}${((value / close - 1) * 100).toFixed(1)}%` : '';
   const dateAt = (at: number) => md(new Date(at).toISOString().slice(0, 10));
