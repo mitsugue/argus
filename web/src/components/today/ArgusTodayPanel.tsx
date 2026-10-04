@@ -16,6 +16,7 @@ import { useJapanSqCalendar } from '../../hooks/useJapanSqCalendar';
 import { EquityEventList } from './EquityEventList';
 import { sqCalendarIsCurrent } from '../../lib/japanSqCalendar';
 import { JapanMarketHorizonComparison } from '../chart/JapanMarketComparisonPanel';
+import { FutureMapCard } from './FutureMapCard';
 import { useChartIntelligence } from '../../hooks/useChartIntelligence';
 import type { ArgusTodayView, TodayProjection } from '../../domain/argusTodayView';
 import { formatEventTime, quoteDisplayLabel, subjectDisplayName, confidenceBasisJa, waitKindJa } from '../../domain/argusTodayView';
@@ -791,6 +792,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         重大なニュース・市場変化 {criticalNewsCount}件を確認する ↓
       </button>}
     </section>
+    {/* 2026-10-04: external views of the coming weeks, directly above the chart. */}
+    {view.selectedMarket === 'JP' && selectedSymbol === '1321' && <FutureMapCard />}
     {view.selectedMarket === 'JP' && selectedSymbol === '1321'
       && <JapanMarketHorizonComparison />}
     {!chartLoad.snapshotId && <div className="at-canonical-load-status" role="status">

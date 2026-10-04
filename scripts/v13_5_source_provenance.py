@@ -648,6 +648,12 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/src/hooks/useFutureMap.ts",
+    "web/src/components/today/FutureMapCard.tsx",
+    "web/src/components/today/FutureMapCard.css",
+    "web/scripts/future-map-card.test.cjs",
+    "test_argus_future_map.py",
+    "argus_future_map.py",
     "test_argus_brief_fact_provenance_contract.py",
     "web/src/hooks/useAnalystTargets.ts",
     "test_argus_target_price_probe.py",
