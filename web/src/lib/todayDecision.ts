@@ -146,9 +146,9 @@ export function materialRows(features: FeatureRow[], fiveDayChangePct: number | 
   const sq = f('event.sq_sessions');
   if (sq !== undefined && sq <= 5) rows.push({ id: 'sq', lean: 'neutral',
     title: `SQ(先物・オプションの清算日)まであと${Math.round(sq)}営業日`,
-    meaning: '清算に伴う売買に注目。SQだけでは上昇・下落の方向は決まりません。',
+    meaning: '清算に向けた売買が重なり、前後に株価が上下へ大きく振れることがあります。',
     what: 'SQは満期を迎える先物・オプションの決済に使う価格です。日経平均の構成銘柄の寄付の値段から計算します。通常の月次SQは第2金曜日（休業日は前倒し）。3・6・9・12月は主要な先物とオプションの期限が重なります。',
-    now: `あと${Math.round(sq)}営業日です。`, soWhat: '期限前の持ち高の調整や当日の寄付の売買で、上下に大きく動くことがあります。「荒れる」は下落の予告ではなく、毎回乱高下するわけでもありません。寄付の動きがその後も続くかを見ます。' });
+    now: `あと${Math.round(sq)}営業日です。`, soWhat: '期限が近づくと、先物・オプションの持ち替えや損益を清算する売買が重なります。当日の寄付で大きく動いた場合は、その動きが寄付後も続くかを確認します。' });
   return rows;
 }
 

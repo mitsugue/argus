@@ -38,16 +38,29 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
   const up = map.rows.filter(r => r.side === 'UP').sort((a, b) => b.price - a.price);
   const down = map.rows.filter(r => r.side === 'DOWN').sort((a, b) => b.price - a.price);
   const cov = map.epsCoverage;
+  const perRows = map.rows.filter(r => r.kinds.includes('PER_LINE'));
+  const above = perRows.filter(r => r.side === 'UP').sort((a, b) => a.price - b.price)[0];
+  const below = perRows.filter(r => r.side === 'DOWN').sort((a, b) => b.price - a.price)[0];
+  const examples = [above && `${yen(above.price)}円まで上がると${above.multiple}倍`,
+    below && `${yen(below.price)}円まで下がると${below.multiple}倍`].filter(Boolean);
+  const distances = [above && `上の目印までは${signed(above.distancePct)}%`,
+    below && `下の目印までは${signed(below.distancePct)}%`].filter(Boolean);
   return <section className="lm-card card" aria-label="PER水準の地図" data-argus-contract="level-map-v1"
     data-morning={map.morningOf}>
     <div className="at-head"><b>日経平均 PER水準の地図</b><span>{map.morningOf} 朝 · 寄付前に固定保存（{jst(map.createdAt)}）</span></div>
+    <div className="lm-reading">
+      <p>この表は、<strong>企業の利益に対して、日経平均が何倍の値段になっているか</strong>を示す目盛りです。</p>
+      <p>たとえば、この朝は約{map.per.toFixed(2)}倍。{examples.length > 0 && `日経平均が${examples.join('、')}になります。`}</p>
+      {distances.length > 0 && <p>前日終値 {yen(map.previousClose)}円から、{distances.join('、')}です。</p>}
+      <small>株価が動いた時の位置を確かめる表です。ここで反転するかは未確認のため、売買時期の判断には使えません。</small>
+    </div>
     <p className="lm-note">前日終値 {yen(map.previousClose)}（{map.previousSession}）· ATR14 {yen(map.atr14)} ·
       EPS {map.eps.toFixed(1)}（{map.epsDate}）· PER {map.per.toFixed(2)}倍</p>
     <p className="lm-note lm-eps">{map.epsLabelJa}{cov ? `。予想が無く実績で補った社 ${cov.filledFromTrailing ?? 0}・赤字予想 ${cov.negativeForecast ?? 0}` : ''}
       {map.constituentsAsOf ? `。構成銘柄は ${map.constituentsAsOf} 時点` : ''}</p>
     {map.epsJumped && <p className="lm-note lm-jump">この朝はEPSが前日から3%以上動きました（線が飛んでいます）。</p>}
     <div className="lm-scroll"><table className="lm-table">
-      <thead><tr><th>水準</th><th>今の値から</th><th>中身</th><th>過去の頻度</th><th>10営業日以内に届いた</th><th>届くまで</th></tr></thead>
+      <thead><tr><th>価格（円）</th><th>前日終値との差</th><th>この価格の意味</th><th>山・谷ができた頻度</th><th>10営業日以内に届いた</th><th>到達までの日数</th></tr></thead>
       <tbody>
         {up.map((row, i) => <Row key={`u${i}`} row={row} />)}
         <tr className="lm-now"><td>{yen(map.previousClose)}</td><td colSpan={5}>前日終値</td></tr>

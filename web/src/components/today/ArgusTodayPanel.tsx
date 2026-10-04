@@ -4,7 +4,7 @@ import { MarketBriefCard } from './MarketBriefCard';
 import { useMarketBrief } from '../../hooks/useMarketBrief';
 import { useDashboardEvents } from '../../hooks/useDashboardEvents';
 import { releasedEventResultLabel } from '../../lib/dashboardEventState';
-import { editorialCoversNews } from '../../lib/presentationIntent';
+import { editorialCoversNews, editorialEdition } from '../../lib/presentationIntent';
 import React from 'react';
 import { MarginDynamicsCard } from './MarginDynamicsCard';
 import { SharedMarketContext } from './SharedMarketContext';
@@ -781,13 +781,16 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       data-projection-revalidation-state={revalidationState} />
     <section className="at-view-hero" aria-label="今日の見立て">
       {editorialScope ? <MarketBriefCard signals={topSignals && !usSelected ? { activeCount: topSignals.activeCount, total: topSignals.total } : null}
-        cutoff={decisionEvidence.marketView?.informationCutoff ?? null} market="JP" editorial />
+        cutoff={decisionEvidence.marketView?.informationCutoff ?? null} market="JP" editorial
+        criticalNews={newsRows.filter(row => row.severity === 'CRITICAL').map(row => ({
+          id: row.id, title: row.headlineJa, why: row.whyJa, meta: row.metaJa,
+        }))} />
         : <><OwnerOverview key={`${view.selectedMarket}:${scopedSubject}:${horizon}`}
           symbol={scopedSubject} market={view.selectedMarket} horizon={horizon}/>
           <details className="at-brief__fallback"><summary>市場全体の説明 · 日経平均・5営業日</summary>
             <MarketBriefCard market="JP"/>
           </details></>}
-      {criticalNewsCount > 0 && <button type="button" className="at-critical-jump"
+      {criticalNewsCount > 0 && (!editorialScope || !editorialEdition(editorialBrief)) && <button type="button" className="at-critical-jump"
         onClick={()=>document.getElementById('today-material-news')?.scrollIntoView({behavior:'smooth',block:'start'})}>
         重大なニュース・市場変化 {criticalNewsCount}件を確認する ↓
       </button>}

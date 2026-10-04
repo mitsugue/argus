@@ -11,6 +11,15 @@ export type ResearchChart = {
   actionAuthority: false; automaticAiCalls: 0;
 };
 export const dayNumber = (day: string) => Date.parse(`${day}T00:00:00Z`);
+const DAY = 86400_000;
+/** 拡大しても元の価格・日付を変えない。範囲を端へ移動した時だけ全体の端で止める。 */
+export function chartWindow(chart: ResearchChart, recent: boolean, shiftDays = 0) {
+  if (!recent) return { start: dayNumber(chart.start), end: dayNumber(chart.end) };
+  const size = Math.min(90 * DAY, dayNumber(chart.end) - dayNumber(chart.start));
+  const start = Math.max(dayNumber(chart.start), Math.min(dayNumber(chart.today) - 30 * DAY + shiftDays * DAY,
+    dayNumber(chart.end) - size));
+  return { start, end: start + size };
+}
 const day = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(dayNumber(v));
 const positive = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
 export function validResearchChart(value: unknown): value is ResearchChart {

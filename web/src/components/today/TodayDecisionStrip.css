@@ -25,6 +25,7 @@
 .today-strip__tile.alert-low b { color: var(--green); }
 .today-strip__tile.alert-normal b { color: var(--text-main); }
 .today-strip__tile.alert-high b { color: var(--red); }
+.today-strip__tile .today-strip__news-meta { color:var(--text-muted); font-size:10px; line-height:1.5; }
 .today-strip__tile b.today-strip__event { font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
 .today-strip__rows h2 { margin: 0 0 4px; color: var(--text-sub); font-size: 12px; font-weight: 600; letter-spacing: .04em; }
 .today-strip__row { border-top: 1px solid var(--line); }
