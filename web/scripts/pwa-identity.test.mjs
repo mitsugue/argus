@@ -24,7 +24,7 @@ console.log('pwa-identity: setting changes detected, same-code views preserved, 
 
 const recovery = main.slice(main.indexOf('async function selfHeal('), main.indexOf('let registeredServiceWorker'));
 const executable = ts.transpileModule(recovery.replace('import.meta.env.BASE_URL', "'/argus/'"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-for (const [running, deployed, clears] of [[off, on, 0], [on, off, 0], [off, on.replace('13.7.51', '13.8.29'), 1]]) {
+for (const [running, deployed, clears] of [[off, on, 0], [on, off, 0], [off, on.replace('13.7.51', '13.8.30'), 1]]) {
   const calls = [];
   const sandbox = { repairAppCaches: async base => calls.push(['shell', base]),
     clearVerifiedSnapshotCache: async () => calls.push(['views']),
@@ -54,10 +54,10 @@ console.log('pwa-identity: compiled identity recorded before timers, HTML mismat
 // 2026-09-30: a served page that is the previous release (an edge not yet
 // updated) or the same entry module is not an update; reloading into it only
 // dropped the in-memory owner session, for minutes after every release.
-const newer = on.replace('13.7.51', '13.8.29'), older = on.replace('13.7.51', '13.7.50'), otherSha = on.replace('a'.repeat(40), 'b'.repeat(40));
+const newer = on.replace('13.7.51', '13.8.30'), older = on.replace('13.7.51', '13.7.50'), otherSha = on.replace('a'.repeat(40), 'b'.repeat(40));
 assert.equal(deployedIsBehind(on, older), true);
 assert.equal(deployedIsBehind(on, newer), false);
-assert.equal(deployedIsBehind(on, on.replace('13.7.51', '13.8.29')), false);
+assert.equal(deployedIsBehind(on, on.replace('13.7.51', '13.8.30')), false);
 assert.equal(deployedIsBehind(on, on.replace('13.7.51', '12.9.99')), true);
 assert.equal(deployedIsBehind(on, otherSha), false);
 for (const invalid of ['', 'x|y|z|1', on.replace('13.7.51', '13.7'), on.replace('13.7.51', '13.7.5a')]) assert.equal(deployedIsBehind(on, invalid), false);
