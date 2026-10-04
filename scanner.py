@@ -145,6 +145,7 @@ import jp_market_source_adapters
 import jp_market_dynamics
 import argus_macro_frequency
 import jp_market_level_map
+import argus_analyst_targets
 import argus_level_map_backup
 import jp_market_features
 import jp_market_acquisition
@@ -39198,6 +39199,95 @@ def _level_map_warm(nikkei_rows):
         _LEVEL_MAP_LOCK.release()
 
 
+# ── Analyst consensus target prices (owner decision 2026-10-04) ───────────────
+# Watched and held stocks only, once a JST day, from Yahoo Finance's quote
+# summary; the page shows them with a small source/date/analyst-count note.
+_ANALYST_TARGETS = {"loaded": False, "items": {}, "lastAttemptAt": None, "lastError": None,
+                    "fetchedLastWarm": 0}
+_ANALYST_TARGETS_LOCK = threading.Lock()
+_ANALYST_TARGETS_PER_WARM = 25
+
+
+def _analyst_targets_path():
+    if not _cost_policy_durable_enabled():
+        return None
+    return os.path.join(_DURABILITY_PATHS["root"], "analyst_targets.json")
+
+
+def _analyst_targets_symbols():
+    pairs = {("JP", str(row.get("symbol"))) for row in _JP_WATCHLIST if row.get("symbol")}
+    pairs |= {("US", str(row.get("symbol"))) for row in _US_WATCHLIST if row.get("symbol")}
+    try:
+        latest = _layer2b_read_latest()
+        for member in (latest.get("members") if isinstance(latest, dict) else []) or []:
+            if str(member.get("market")) in ("JP", "US") and member.get("symbol"):
+                pairs.add((str(member["market"]), str(member["symbol"]).upper()))
+    except Exception:
+        pass
+    return sorted(pairs)
+
+
+def _analyst_targets_warm():
+    if not _ANALYST_TARGETS_LOCK.acquire(blocking=False):
+        return
+    try:
+        now = _ai_now_iso()
+        today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+        _ANALYST_TARGETS.update(lastAttemptAt=now, fetchedLastWarm=0)
+        path = _analyst_targets_path()
+        if not _ANALYST_TARGETS["loaded"]:
+            _ANALYST_TARGETS["loaded"] = True
+            if path and os.path.isfile(path):
+                with open(path, encoding="utf-8") as handle:
+                    saved = json.load(handle)
+                if isinstance(saved, dict) and saved.get("schemaVersion") == argus_analyst_targets.SCHEMA:
+                    _ANALYST_TARGETS["items"] = dict(saved.get("items") or {})
+        pending = [(market, symbol) for market, symbol in _analyst_targets_symbols()
+                   if argus_analyst_targets.due(_ANALYST_TARGETS["items"].get(f"{market}:{symbol}"), today)]
+        if not pending:
+            return
+        session = requests.Session()
+        session.headers["User-Agent"] = "Mozilla/5.0 (argus)"
+        session.get("https://fc.yahoo.com", timeout=10, allow_redirects=True)
+        crumb = session.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=10).text.strip()
+        if not crumb or len(crumb) > 64:
+            raise ValueError("yahoo_crumb_unavailable")
+        for market, symbol in pending[:_ANALYST_TARGETS_PER_WARM]:
+            ticker = argus_analyst_targets.yahoo_symbol(market, symbol)
+            key = f"{market}:{symbol}"
+            if not ticker:
+                continue
+            response = session.get(f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}",
+                                   params={"modules": "financialData", "crumb": crumb}, timeout=10)
+            row = (argus_analyst_targets.parse_financial_data(symbol, response.json(), fetched_at=now)
+                   if response.status_code == 200 else None)
+            _ANALYST_TARGETS["items"][key] = ({**row, "market": market, "fetchedDayJst": today} if row else
+                                              {"symbol": symbol, "market": market, "unavailable": True,
+                                               "httpStatus": response.status_code, "fetchedDayJst": today})
+            _ANALYST_TARGETS["fetchedLastWarm"] += 1
+        if path:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as handle:
+                json.dump({"schemaVersion": argus_analyst_targets.SCHEMA, "items": _ANALYST_TARGETS["items"]},
+                          handle, ensure_ascii=False)
+            os.replace(tmp, path)
+        _ANALYST_TARGETS["lastError"] = None
+    except Exception as exc:
+        _ANALYST_TARGETS["lastError"] = type(exc).__name__
+    finally:
+        _ANALYST_TARGETS_LOCK.release()
+
+
+@app.route("/api/argus/analyst-targets")
+def api_argus_analyst_targets():
+    """PUBLIC cached-only: consensus target prices of watched stocks (never fetches)."""
+    items = {key: row for key, row in (_ANALYST_TARGETS.get("items") or {}).items()
+             if isinstance(row, dict) and not row.get("unavailable")}
+    return jsonify({"schemaVersion": argus_analyst_targets.SCHEMA, "items": items,
+                    "sourceLabel": argus_analyst_targets.SOURCE_LABEL, "asOf": _ANALYST_TARGETS.get("lastAttemptAt"),
+                    "lastError": _ANALYST_TARGETS.get("lastError"), "actionAuthority": False})
+
+
 def _level_map_score_summary(score):
     if not score:
         return None
@@ -40486,6 +40576,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         _jp_index_valuation_warm()
         _jp_index_proxy_warm(nikkei_rows)
         _level_map_warm(nikkei_rows)
+        _analyst_targets_warm()
         _jp_internals_warm()
     margin_rows = _jp_market_engine_margin_1570_rows(fetch=warm)
     if warm:
