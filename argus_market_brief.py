@@ -450,6 +450,52 @@ def calculation_facts(calculations):
     return facts
 
 
+_PAGE_INSTANT_KEYS = ("publishedAt", "receivedAt", "observedAt")
+_PAGE_EVENT_ID = re.compile(r"^[a-zA-Z0-9_.:-]{1,160}$")
+_PAGE_SHA256 = re.compile(r"^[a-f0-9]{64}$")
+
+
+def _page_instant(value: Any) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return True
+    except ValueError:
+        return False
+
+
+def page_provenance(value: Mapping[str, Any]) -> Dict[str, Any]:
+    """The provenance shape the page accepts, keeping every valid field as is.
+
+    The page rejects the whole brief when one fact's provenance lacks this
+    shape (2026-10-04: facts carried over from a brief stored before their
+    producers were fixed). Missing or malformed fields become null; nothing
+    is invented.
+    """
+    out = dict(value)
+    out["scope"] = "published_metadata_snapshot"
+    if not (out.get("eventId") is None or (isinstance(out.get("eventId"), str)
+                                           and _PAGE_EVENT_ID.match(out["eventId"]))):
+        out["eventId"] = None
+    out.setdefault("eventId", None)
+    revision = out.get("revision")
+    if not (isinstance(revision, int) and not isinstance(revision, bool) and revision >= 0):
+        out["revision"] = None
+    label = out.get("sourceLabel", out.get("sourceLabelJa"))
+    out["sourceLabel"] = label[:160] if isinstance(label, str) and label else None
+    for key in _PAGE_INSTANT_KEYS:
+        if not _page_instant(out.get(key)):
+            out[key] = None
+    for key in ("sourceResponseSha256", "sourceRowSha256"):
+        if key in out and not (isinstance(out[key], str) and _PAGE_SHA256.match(out[key])):
+            del out[key]
+    url = out.get("url")
+    if not (isinstance(url, str) and url.startswith("https://") and len(url) <= 2048 and "@" not in url.split("/")[2]):
+        out["url"] = None
+    return out
+
+
 def unified_context(brief: Mapping[str, Any], previous: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """Bind explanation references to the exact fact snapshot supplied to GPT.
 
@@ -463,7 +509,7 @@ def unified_context(brief: Mapping[str, Any], previous: Optional[Mapping[str, An
                         ("text", "source", "priority", "verification")}
             if isinstance(fact.get("provenance"), Mapping):
                 # Composer already selected a bounded public metadata snapshot.
-                material["provenance"] = dict(fact["provenance"])
+                material["provenance"] = page_provenance(fact["provenance"])
             if isinstance(fact.get("validationSubject"), Mapping):
                 material["validationSubject"] = dict(fact["validationSubject"])
             if material["source"] in {"market_view", "policy"} or material["priority"] == "P2":
