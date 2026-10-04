@@ -2,7 +2,7 @@ import { ArgusMark } from './ArgusMark';
 import React, { useState, useEffect, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { OWNER_AUTH_REQUIRED, subscribeOwner, hasOwnerSession, passwordLogin,
-  logoutOwner, revokeOwnerDevices, useOwnerPasskey, restoreOwnerSession } from '../lib/ownerSession';
+  logoutOwner, revokeOwnerDevices, useOwnerPasskey, restoreOwnerSession, hasSavedOwnerSession } from '../lib/ownerSession';
 import './OwnerAccess.css';
 
 export function OwnerAccess({ children }: { children: React.ReactNode }) {
@@ -25,10 +25,15 @@ export function OwnerAccess({ children }: { children: React.ReactNode }) {
   const [recovery, setRecovery] = useState(false);
   // A reload inside the same app session resumes the login before offering a new one.
   const [restoring, setRestoring] = useState(OWNER_AUTH_REQUIRED);
+  // 2026-10-04 (owner: the app felt flimsy, a refresh flashed the lock
+  // screen): with a kept login the first moments show only the brand while
+  // it resumes; the sign-in controls appear if that takes longer.
+  const [quiet, setQuiet] = useState(() => OWNER_AUTH_REQUIRED && hasSavedOwnerSession());
   useEffect(() => {
     let live = true;
     void restoreOwnerSession().finally(() => { if (live) setRestoring(false); });
-    return () => { live = false; };
+    const reveal = window.setTimeout(() => { if (live) setQuiet(false); }, 2500);
+    return () => { live = false; window.clearTimeout(reveal); };
   }, []);
   if (!OWNER_AUTH_REQUIRED) return <>{children}</>;
   const [code, setCode] = useState('');
@@ -93,8 +98,9 @@ export function OwnerAccess({ children }: { children: React.ReactNode }) {
           button for up to ten seconds). A new sign-in cancels the resume. */}
       <p className="owner-access-screen__lead">{restoring ? '前回のログインを確認しています…' : '内容を見るには本人確認が必要です。'}</p>
       {!online && <p>オフラインです。保存データは残っています。接続後に本人確認をしてください。</p>}
-      <button disabled={busy || !online} onClick={() => void run(() => useOwnerPasskey(false))}>パスキーで開く</button>
-      {form}{status}
+      {!(restoring && quiet) && <>
+        <button disabled={busy || !online} onClick={() => void run(() => useOwnerPasskey(false))}>パスキーで開く</button>
+        {form}{status}</>}
       {/* Owner request 2026-10-02: the running version, small and centred. */}
       <p className="owner-access-screen__version" data-argus-version={__APP_VERSION__}>v{__APP_VERSION__}</p>
     </section>}

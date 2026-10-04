@@ -147,11 +147,27 @@ export function installOwnerTransport() {
   // app); a definite 401, logout, revoke or expiry still locks immediately.
 }
 
+function savedSession(): { token?: unknown; expiresAt?: unknown; build?: unknown } | null {
+  try { return JSON.parse(store()?.getItem(STORE_KEY) ?? 'null'); } catch { return null; }
+}
+/** A login kept by this app session that a reload can try to resume (no network). */
+export const hasSavedOwnerSession = () => {
+  if (!OWNER_AUTH_REQUIRED) return false;
+  const saved = savedSession();
+  return !!saved && typeof saved.expiresAt === 'number' && saved.expiresAt > Date.now();
+};
+// 2026-10-04 (owner: a pull-to-refresh still sometimes opened the lock
+// screen): any failed check used to delete the saved login, so a timeout or a
+// 503 while the server restarted after a release or was busy recalculating
+// ended the session. Only a definite rejection ends it now; an unreachable or
+// busy server is retried for up to a minute.
+const RESTORE_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 8000, 10000, 10000, 10000];
+const RESTORE_DEADLINE_MS = 60_000;
+
 /** Resume this app session's login after a reload or an app update, only after a fresh server echo. */
 export async function restoreOwnerSession(): Promise<boolean> {
   if (!OWNER_AUTH_REQUIRED || hasOwnerSession()) return hasOwnerSession();
-  let saved: { token?: unknown; expiresAt?: unknown; build?: unknown } | null = null;
-  try { saved = JSON.parse(store()?.getItem(STORE_KEY) ?? 'null'); } catch { saved = null; }
+  const saved = savedSession();
   // 2026-10-02: an app update no longer ends the login; frequent releases
   // returned the owner to the lock screen every time. The server still
   // verifies the session (nonce echo) and its 24-hour expiry applies.
@@ -159,8 +175,25 @@ export async function restoreOwnerSession(): Promise<boolean> {
     try { anyStore()?.removeItem(STORE_KEY); } catch { /* storage unavailable */ }
     return false;
   }
-  try { await verifyAndSetSession(saved, ++ceremonyEpoch); return true; }
-  catch { try { anyStore()?.removeItem(STORE_KEY); } catch { /* storage unavailable */ } return false; }
+  // One epoch for every attempt: a sign-in the owner starts meanwhile cancels
+  // the resume instead of the resume cancelling the sign-in.
+  const epoch = ++ceremonyEpoch;
+  const deadline = Date.now() + RESTORE_DEADLINE_MS;
+  for (let attempt = 0; ; attempt += 1) {
+    try { await verifyAndSetSession(saved, epoch); return true; }
+    catch (error) {
+      const reason = error instanceof Error ? error.message : 'unknown';
+      if (reason === 'authentication_failed') {
+        try { anyStore()?.removeItem(STORE_KEY); } catch { /* storage unavailable */ }
+        return false;
+      }
+      if (reason !== 'session_check_unavailable') return hasOwnerSession();
+      const delay = RESTORE_RETRY_DELAYS_MS[Math.min(attempt, RESTORE_RETRY_DELAYS_MS.length - 1)];
+      if (Date.now() + delay > deadline || (saved.expiresAt as number) <= Date.now() + delay) return false;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      if (epoch !== ceremonyEpoch) return hasOwnerSession();
+    }
+  }
 }
 
 async function action(name: string, body: unknown = {}) {
@@ -179,12 +212,21 @@ async function verifyAndSetSession(value: { token?: unknown; expiresAt?: unknown
   // Do not publish provisional credentials: an old SW may replay a cached login.
   // Only a fresh server echo can unlock existing device-local results.
   const nonce = crypto.randomUUID();
-  const response = await fetch(base + prefix + 'session', {
-    headers: { 'X-ARGUS-OWNER-SESSION': value.token, 'X-ARGUS-OWNER-NONCE': nonce },
-    cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(10_000),
-  });
-  if (!response.ok || response.headers.get('X-ARGUS-OWNER-NONCE') !== nonce
-      || (await response.json())?.authenticated !== true) throw new Error('authentication_failed');
+  let response: Response;
+  try {
+    response = await fetch(base + prefix + 'session', {
+      headers: { 'X-ARGUS-OWNER-SESSION': value.token, 'X-ARGUS-OWNER-NONCE': nonce },
+      cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(10_000),
+    });
+  } catch { throw new Error('session_check_unavailable'); }
+  // Only the server's own 401/403 or its explicit "not authenticated" is a
+  // rejection. A timeout, a 429/5xx or an unechoed body (an old Service
+  // Worker's replay) says nothing about the session.
+  if (response.status === 401 || response.status === 403) throw new Error('authentication_failed');
+  if (!response.ok || response.headers.get('X-ARGUS-OWNER-NONCE') !== nonce) throw new Error('session_check_unavailable');
+  let body: { authenticated?: unknown } | null = null;
+  try { body = await response.json(); } catch { throw new Error('session_check_unavailable'); }
+  if (body?.authenticated !== true) throw new Error('authentication_failed');
   if (epoch !== ceremonyEpoch || navigator.onLine === false) throw new Error('authentication_cancelled');
   setSession(value);
 }
