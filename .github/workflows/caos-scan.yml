@@ -8,13 +8,23 @@ name: caos-scan
 on:
   schedule:
     - cron: '7,37 * * * *'
-  workflow_dispatch: {}  # read-only identity diagnostic; operational jobs skip
+  # Manual dispatch: read-only identity diagnostic; operational jobs skip.
+  # only=future_map (2026-10-04): the FUTURE MAP writer's notification; the
+  # app reads the stored document once and nothing else of the collection runs.
+  workflow_dispatch:
+    inputs:
+      only:
+        description: future_map = FUTURE MAP だけ読む(週次更新の知らせ)
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: caos-scan-scheduled-missions
+  # The notification never waits behind a scheduled collection.
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.only == 'future_map' && 'caos-scan-future-map' || 'caos-scan-scheduled-missions' }}
   cancel-in-progress: false
 
 jobs:
@@ -521,6 +531,30 @@ jobs:
           echo "remoteCommitSha=$REMOTE_COMMIT_SHA" >> "$GITHUB_OUTPUT"
           echo "receiptSequence=$VERIFIED_SEQUENCE" >> "$GITHUB_OUTPUT"
           echo "readBackVerified=$READBACK_VERIFIED" >> "$GITHUB_OUTPUT"
+
+  future-map:
+    if: github.event_name == 'workflow_dispatch' && inputs.only == 'future_map'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: FUTURE MAP だけ読ませる
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          set -u
+          [ -n "$ARGUS_ADMIN_TOKEN" ] || { echo "管理者キーが未設定" >&2; exit 1; }
+          url="https://argus-backend-3j2m.onrender.com/api/argus/institutional-intelligence/collect"
+          for attempt in 1 2 3 4 5; do
+            body=$(curl -sS --max-time 90 -X POST -H "X-ARGUS-ADMIN-TOKEN: ${ARGUS_ADMIN_TOKEN}" \
+              -H 'Content-Type: application/json' --data '{"only":"future_map"}' "$url" || true)
+            echo "future-map attempt=${attempt} ${body}"
+            if printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("only")=="future_map" and d.get("ok") is True else 1)' 2>/dev/null; then
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "FUTURE MAP の読み込みを確かめられませんでした" >&2
+          exit 1
 
   result:
     needs: [backend-identity, mission-backup, caos-collection, durability-flush]

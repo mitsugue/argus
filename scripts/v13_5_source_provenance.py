@@ -261,7 +261,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dashboard/OsintDeepDive.tsx': '875c23041a7d765379aa834bbfe70ae24abf0f05',
     'web/src/components/dashboard/AddAssetModal.tsx': '56b5df9a55e8238db3538c829f1e29fd157398ce',
     'web/src/components/assetDesk/AssetResearchPanel.tsx': '74487e1942385ade5ccef2209a9ca63bf5d3e4e1',
-    'test_argus_v12_3_1.py': 'c26d3849a5c7219d537c1cdd8a3484c5087e4da1',
+    'test_argus_v12_3_1.py': '418ef7c191c389740a453a01b35386ffa3dea26e',
     'web/src/components/dashboard/SystemHealthPopover.tsx': '3893f26c3bef9812d841600832a96193231000ed',
     'web/src/routes/DataQualityPage.tsx': '63984944fb353f687e4741937e7d0e22779612a3',
     'web/src/components/common/TriangleStepLoader.tsx': '3408e291f4bf3cd0e357515ce89388da58352e9b',
@@ -648,6 +648,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/dev-dist/workbox-a6c00840.js",
+    "docs/FUTURE_MAP_DELIVERY.md",
     "web/src/components/today/CandidateBoard.tsx",
     "web/scripts/candidate-board.test.cjs",
     "test_jp_market_candidates.py",

@@ -9627,6 +9627,13 @@ def api_argus_intel_collect():
     if not ok:
         return jsonify(err), code
     body = request.get_json(silent=True) or {}
+    # FUTURE MAP notification (2026-10-04): read the stored document once and
+    # run nothing else of the collection.
+    if (isinstance(body, dict) and body.get("only") == "future_map") or request.args.get("only") == "future_map":
+        _future_map_refresh(wait_seconds=30, trigger="notification")
+        status = _future_map_status()
+        ok_read = status["availability"] == "AVAILABLE" and not status["lastError"]
+        return jsonify({**status, "only": "future_map", "ok": ok_read}), 200 if ok_read else 502
     if isinstance(body, dict) and (body.get("async") is True or body.get("statusOnly") is True):
         request_id = body.get("requestId")
         if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", request_id):
@@ -39299,8 +39306,15 @@ def api_argus_analyst_targets():
 # collection warm reads it, validates it and keeps the public form here and
 # on disk. No release is needed for a weekly update. Not ARGUS's judgment.
 _FUTURE_MAP = {"loaded": False, "public": None, "sha": None, "lastAttemptAt": None, "lastError": None,
-               "lastChangedAt": None}
+               "lastChangedAt": None, "lastReadOkAt": None, "lastTrigger": None}
 _FUTURE_MAP_LOCK = threading.Lock()
+#: The weekly writer notifies the app right after its write (火〜日 00:00 JST):
+#: the caos-scan workflow started with only=future_map calls the existing
+#: admin collection route with {"only": "future_map"}. One fallback read runs once a day at
+#: 06:00 JST, and only when no successful read happened since 00:00 JST that
+#: day. Collection warms no longer read the private store.
+FUTURE_MAP_FALLBACK_HOUR_JST = 6
+_FUTURE_MAP_FALLBACK = {"lastDay": None, "lastDecision": None, "emptyRetryAt": None}
 
 
 def _future_map_path():
@@ -39309,19 +39323,34 @@ def _future_map_path():
     return os.path.join(_DURABILITY_PATHS["root"], "future_map.json")
 
 
-def _future_map_refresh():
-    if not _FUTURE_MAP_LOCK.acquire(blocking=False):
+def _future_map_load_saved():
+    """Disk only, once per process: the last validated version survives restarts."""
+    if _FUTURE_MAP["loaded"]:
+        return
+    _FUTURE_MAP["loaded"] = True
+    path = _future_map_path()
+    try:
+        if path and os.path.isfile(path):
+            with open(path, encoding="utf-8") as handle:
+                saved = json.load(handle)
+            if isinstance(saved, dict) and saved.get("schemaVersion") == argus_future_map.PUBLIC_SCHEMA:
+                _FUTURE_MAP.update(public=saved, sha=saved.get("remoteSha"))
+    except (OSError, ValueError):
+        pass
+
+
+def _future_map_refresh(wait_seconds=0, trigger="unspecified"):
+    if wait_seconds > 0:
+        acquired = _FUTURE_MAP_LOCK.acquire(timeout=wait_seconds)
+    else:
+        acquired = _FUTURE_MAP_LOCK.acquire(blocking=False)
+    if not acquired:
         return
     try:
         _FUTURE_MAP["lastAttemptAt"] = _ai_now_iso()
+        _FUTURE_MAP["lastTrigger"] = trigger
         path = _future_map_path()
-        if not _FUTURE_MAP["loaded"]:
-            _FUTURE_MAP["loaded"] = True
-            if path and os.path.isfile(path):
-                with open(path, encoding="utf-8") as handle:
-                    saved = json.load(handle)
-                if isinstance(saved, dict) and saved.get("schemaVersion") == argus_future_map.PUBLIC_SCHEMA:
-                    _FUTURE_MAP.update(public=saved, sha=saved.get("remoteSha"))
+        _future_map_load_saved()
         remote = _level_map_remote()
         if remote is None:
             _FUTURE_MAP["lastError"] = "remote_not_configured"
@@ -39329,11 +39358,14 @@ def _future_map_refresh():
         raw, sha = remote.get(argus_future_map.REMOTE_PATH)
         if raw is None or sha == _FUTURE_MAP.get("sha"):
             _FUTURE_MAP["lastError"] = None if raw is not None else "remote_document_missing"
+            if raw is not None:
+                _FUTURE_MAP["lastReadOkAt"] = _FUTURE_MAP["lastAttemptAt"]
             return
         public = argus_future_map.validate(json.loads(raw))
         argus_product_naming.require_allowed(public)
         public["remoteSha"] = sha
-        _FUTURE_MAP.update(public=public, sha=sha, lastChangedAt=_ai_now_iso(), lastError=None)
+        _FUTURE_MAP.update(public=public, sha=sha, lastChangedAt=_ai_now_iso(), lastError=None,
+                           lastReadOkAt=_FUTURE_MAP["lastAttemptAt"])
         if path:
             tmp = path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as handle:
@@ -39345,16 +39377,62 @@ def _future_map_refresh():
         _FUTURE_MAP_LOCK.release()
 
 
+def _future_map_fallback_tick(now=None):
+    """Once a day at 06:00 JST, read only if no read succeeded since 00:00 JST.
+
+    Also covers a process that has nothing to show at all (no saved version):
+    then one read per hour until a version exists.
+    """
+    now = now or datetime.now(TZ_JST)
+    _future_map_load_saved()
+    if not _FUTURE_MAP.get("public"):
+        retry_at = _FUTURE_MAP_FALLBACK.get("emptyRetryAt")
+        if retry_at is None or now >= retry_at:
+            _FUTURE_MAP_FALLBACK["emptyRetryAt"] = now + timedelta(hours=1)
+            _future_map_refresh(trigger="fallback_empty")
+            return "read_empty"
+        return None
+    day = now.strftime("%Y-%m-%d")
+    if now.hour < FUTURE_MAP_FALLBACK_HOUR_JST or _FUTURE_MAP_FALLBACK.get("lastDay") == day:
+        return None
+    _FUTURE_MAP_FALLBACK["lastDay"] = day
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    success = _FUTURE_MAP.get("lastReadOkAt")
+    try:
+        fresh = bool(success) and datetime.fromisoformat(str(success).replace("Z", "+00:00")) >= midnight
+    except ValueError:
+        fresh = False
+    decision = "skipped_already_read" if fresh else "read"
+    _FUTURE_MAP_FALLBACK["lastDecision"] = {"day": day, "decision": decision}
+    if not fresh:
+        _future_map_refresh(trigger="fallback_daily")
+    return decision
+
+
+def _future_map_status():
+    public = _FUTURE_MAP.get("public") or {}
+    return {"schemaVersion": "argus-future-map-refresh-v1",
+            "availability": "AVAILABLE" if public else "UNAVAILABLE",
+            "updatedAt": public.get("updatedAt"), "rows": len(public.get("rows") or []),
+            "sha": _FUTURE_MAP.get("sha"), "lastChangedAt": _FUTURE_MAP.get("lastChangedAt"),
+            "checkedAt": _FUTURE_MAP.get("lastAttemptAt"), "lastReadOkAt": _FUTURE_MAP.get("lastReadOkAt"),
+            "lastTrigger": _FUTURE_MAP.get("lastTrigger"), "lastError": _FUTURE_MAP.get("lastError")}
+
+
 @app.route("/api/argus/future-map")
 def api_argus_future_map():
     """PUBLIC cached-only: the validated external views, rows to show today (never fetches)."""
+    _future_map_load_saved()
     public = _FUTURE_MAP.get("public")
     if not public:
         return jsonify({"schemaVersion": argus_future_map.PUBLIC_SCHEMA, "availability": "UNAVAILABLE",
                         "reason": _FUTURE_MAP.get("lastError") or "not_loaded", "actionAuthority": False})
     today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
     body = argus_future_map.for_display({k: v for k, v in public.items() if k != "remoteSha"}, today)
-    return jsonify({**body, "availability": "AVAILABLE", "lastChangedAt": _FUTURE_MAP.get("lastChangedAt")})
+    return jsonify({**body, "availability": "AVAILABLE", "lastChangedAt": _FUTURE_MAP.get("lastChangedAt"),
+                    "checkedAt": _FUTURE_MAP.get("lastAttemptAt"), "lastReadOkAt": _FUTURE_MAP.get("lastReadOkAt"),
+                    "lastTrigger": _FUTURE_MAP.get("lastTrigger"), "lastError": _FUTURE_MAP.get("lastError"),
+                    "fallback": _FUTURE_MAP_FALLBACK.get("lastDecision")})
 
 
 # ── Pre-registered candidate signals (2026-10-04) ─────────────────────────────
@@ -40742,7 +40820,6 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         _jp_index_valuation_warm()
         _jp_index_proxy_warm(nikkei_rows)
         _level_map_warm(nikkei_rows)
-        _future_map_refresh()
         _analyst_targets_warm()
         _jp_internals_warm()
     margin_rows = _jp_market_engine_margin_1570_rows(fetch=warm)
@@ -49236,6 +49313,7 @@ def run_scheduler():
         threading.Thread(target=_owner_overview_tick, daemon=True,
                          name="owner-overview-refresh").start()
         threading.Thread(target=_web_push_tick, daemon=True, name="web-push").start()
+        threading.Thread(target=_future_map_fallback_tick, daemon=True, name="future-map-fallback").start()
         threading.Thread(target=_heavy_tick, daemon=True, name="sector-heatmap",
                          args=("jp_sector_heatmap_tick",
                                _jp_sector_heatmap_tick)).start()
