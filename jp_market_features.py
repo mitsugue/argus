@@ -419,6 +419,34 @@ def _flow_publication_availability(rows):
     return result
 
 
+def input_spans(inputs) -> dict[str, Any]:
+    """Counts, first/last dates and the first date visible near its own date
+    for every input list (2026-10-04). A row known only long after its date
+    (an import time left as knownAt) is invisible to every past cutoff; this
+    names the first row that a cutoff a week after it could see. No values."""
+    lists = {"price_series:" + key: rows for key, rows in (inputs.get("price_series") or {}).items()}
+    lists.update({key: rows for key, rows in inputs.items() if key != "price_series"})
+    result = {}
+    for key, rows in sorted(lists.items()):
+        days, timely = [], []
+        for row in rows or ():
+            if not isinstance(row, Mapping):
+                continue
+            day = _day(row)
+            if len(day) != 10:
+                continue
+            days.append(day)
+            known = _knowledge_time(row)
+            try:
+                if known is not None and (known.date() - date.fromisoformat(day)).days <= 7:
+                    timely.append(day)
+            except ValueError:
+                pass
+        result[key] = {"rows": len(days), "first": min(days, default=None), "last": max(days, default=None),
+                       "firstVisibleWithinWeek": min(timely, default=None)}
+    return result
+
+
 def build_feature_history(*, cutoffs: Sequence[str], previous_history=None, **inputs) -> dict[str, Any]:
     """Replay descriptive features without selecting on subsequent outcomes.
 

@@ -477,3 +477,14 @@ def test_ten_year_vix_macd_lists_bounded_references():
     assert len(json.dumps(snapshot, ensure_ascii=False)) < 200_000
     short = next(r for r in snapshot["features"] if r["seriesId"] == "vix.change5")
     assert len(short["inputReferences"]) == 6 and "inputReferenceCount" not in short
+
+
+def test_input_spans_name_rows_held_but_invisible_to_past_cutoffs():
+    """2026-10-04: VIX 2016-2024 and the foreign flow were held but known only
+    from their import; input_spans shows the first row visible near its date."""
+    late = [{"instrumentId": "VIX", "date": "2018-02-05", "close": 37.3, "availableFrom": "2026-09-19T17:40:46Z"},
+            {"instrumentId": "VIX", "date": "2024-11-25", "close": 15.0, "availableFrom": "2024-11-26T00:00:00Z"}]
+    spans = features.input_spans({"price_series": {"vix": late}, "foreign_flow": []})
+    assert spans["price_series:vix"] == {"rows": 2, "first": "2018-02-05", "last": "2024-11-25",
+                                         "firstVisibleWithinWeek": "2024-11-25"}
+    assert spans["foreign_flow"] == {"rows": 0, "first": None, "last": None, "firstVisibleWithinWeek": None}

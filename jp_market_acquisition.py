@@ -411,9 +411,33 @@ def merge_feature_sources(existing, official, *, path=None, received_at=None):
                 encoded = _json(row)
                 db.execute('INSERT INTO selected_vix_inputs(session,body,sha256,received_at) VALUES(?,?,?,?)',
                            (row['date'], encoded, hashlib.sha256(encoded.encode()).hexdigest(), received_at))
-        return [saved[day] for day in sorted(saved)]
+        return [_scheduled_selection(saved[day]) for day in sorted(saved)]
     finally:
         db.close()
+
+
+def _scheduled_selection(row):
+    """Read-side availability of a stored VIX selection (2026-10-04).
+
+    The selection table was seeded on 2026-09-20, before the scheduled
+    availability rule (2026-09-30), so its official Cboe rows still carry
+    their receipt (2026-09-19) as knownAt. An unchanged stored row is returned
+    as stored, so every session from 2016 to 2024 was invisible to every past
+    cutoff and the VIX features and D06 had history only from late 2024.
+    An original observation is known from the next calendar day 00:00Z (the
+    rule of both providers); the receipt stays as receivedAt. Corrections and
+    in-session updates keep their own times. The table is not rewritten.
+    """
+    if (int(row.get('revision', 0) or 0) != 0
+            or row.get('availabilityBasis') in ('RECEIVED_CORRECTION', 'PROVISIONAL_SESSION_UPDATE')):
+        return row
+    scheduled = scheduled_availability('vix_ohlc', row['date'])
+    stamps = [row[key] for key in ('publishedAt', 'availableFrom', 'knownAt') if row.get(key)]
+    if not stamps or max(_time(stamp) for stamp in stamps) <= _time(scheduled):
+        return row
+    return {**row, 'knownAt': scheduled, 'availableFrom': scheduled, 'publishedAt': None,
+            'receivedAt': row.get('receivedAt') or row.get('knownAt') or row.get('availableFrom'),
+            'availabilityBasis': 'SCHEDULED_PUBLICATION'}
 
 
 # Feature series whose provider re-sends unchanged observations with a new
