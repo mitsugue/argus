@@ -354,7 +354,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/lib/pwaRecovery.ts': '038fe1dc3e55433a0f72e8a06ca1701176155438',
     'web/src/components/today/MarketAnalysisHistory.tsx': '7a986421fdd00c28c53e563a09287dbbc314694e',
     'test_argus_analysis_history.py': 'e60a14420055c58ec921126fc5a923bcf3e9dacd',
-    'argus_analysis_history.py': '04ccb58327758433e67fcba96627f2d232d84e35',
+    'argus_analysis_history.py': 'd17897eb55f8c5b0efe44566a47a3d4766454b87',
     'argus_market_ledger.py': '562841f6de02f9e778591c82eb6f9642756199d9',
     'jp_market_positioning.py': '37661655f15f27baf2beec9e08fb2b5977cfbe9f',
     'test_jp_market_positioning.py': 'f6134d86859e836ca26ab54b0c707ed7b7c8aa14',
@@ -648,6 +648,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_jp_market_level_map.py",
+    "jp_market_level_map.py",
     "test_argus_response_compression.py",
     "ops/calendar/us_policy_dates.json",
     "ops/calendar/jp_index_sq_2027.json",

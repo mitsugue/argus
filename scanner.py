@@ -143,6 +143,7 @@ import argus_index_history
 import jp_market_valuation
 import jp_market_source_adapters
 import jp_market_dynamics
+import jp_market_level_map
 import jp_market_features
 import jp_market_acquisition
 import jp_market_events
@@ -38619,8 +38620,16 @@ def _nk225_code_key(code):
     return text[:4] if len(text) == 5 and text.endswith("0") else text
 
 
+_JQ_VALUATION_FIELDS = ("FwdEPS", "EPS", "MktCap", "FwdPER", "PER", "PBR", "BPS")
+_JQ_VALUATION_DAY_CACHE = {}
+
+
 def _jq_valuation_for_date(date_str, headers, max_pages=40):
-    """All-stocks valuation for one date → {code: {"FwdEPS", "EPS"}}; {} on error."""
+    """All-stocks valuation for one date → {code: {FwdEPS, EPS, MktCap, FwdPER,
+    PER, PBR, BPS}}; {} on error. The level map (2026-10-04) reads the same
+    day; a complete day is kept for the rest of the warm."""
+    if date_str in _JQ_VALUATION_DAY_CACHE:
+        return _JQ_VALUATION_DAY_CACHE[date_str]
     out, params, pages = {}, {"date": date_str}, 0
     try:
         for _ in range(max_pages):
@@ -38635,9 +38644,13 @@ def _jq_valuation_for_date(date_str, headers, max_pages=40):
                     continue
                 key = _nk225_code_key(row.get("Code"))
                 if key:
-                    out[key] = {"FwdEPS": row.get("FwdEPS"), "EPS": row.get("EPS")}
+                    out[key] = {field: row.get(field) for field in _JQ_VALUATION_FIELDS}
             pk = body.get("pagination_key")
             if not pk:
+                if out:
+                    _JQ_VALUATION_DAY_CACHE[date_str] = out
+                    for stale in sorted(_JQ_VALUATION_DAY_CACHE)[:-2]:
+                        del _JQ_VALUATION_DAY_CACHE[stale]
                 break
             params["pagination_key"] = pk
     except Exception:
@@ -38984,6 +38997,146 @@ def _jp_index_proxy_warm(nikkei_rows):
         _JP_INDEX_PROXY_LOCK.release()
 
 
+# ── Nikkei morning level map (2026-10-04) ─────────────────────────────────────
+# Each morning before the open: the PER multiple lines, the same-multiple line
+# of the last confirmed top/bottom and the ATR guides, from sessions and
+# estimates before that morning only, stored once and never rewritten. The
+# EPS is an ARGUS market-cap weighted estimate (never the official figure).
+# Stored in the market analysis history file (append-only tables).
+_LEVEL_MAP = {"status": "NOT_RUN", "loaded": False, "eps": {}, "mornings": [], "lastAttemptAt": None,
+              "lastError": None, "lastErrorReason": None, "estimatesLastWarm": 0, "missedMornings": [],
+              "conflicts": 0, "lastCreatedAt": None}
+_LEVEL_MAP_LOCK = threading.Lock()
+_LEVEL_MAP_EPS_PER_WARM = 6
+_LEVEL_MAP_EPS_SINCE = "2026-06-01"
+
+
+def _level_map_history_path():
+    """The market analysis history file (the existing prediction-record store);
+    resolved here so the level map never calls into the brief's functions."""
+    if not _cost_policy_durable_enabled():
+        return None
+    return os.path.join(_DURABILITY_PATHS["root"], "market_analysis_history.sqlite3")
+
+
+def _level_map_completed_bars(nikkei_rows, now_iso):
+    """Sessions whose close is final by now (an in-progress bar is left out)."""
+    out = []
+    for row in nikkei_rows or ():
+        available = str(row.get("availableFrom") or "")
+        if row.get("date") and row.get("close") and row.get("high") and row.get("low") \
+                and (not available or available <= now_iso):
+            out.append({"date": str(row["date"])[:10], "close": row["close"], "high": row["high"], "low": row["low"]})
+    return sorted(out, key=lambda r: r["date"])
+
+
+def _level_map_next_session(after_day):
+    day = datetime.strptime(after_day, "%Y-%m-%d").date()
+    for _ in range(12):
+        day += timedelta(days=1)
+        if argus_market_clock.is_trading_day(argus_market_clock.JP_EQUITY, day):
+            return day.isoformat()
+    return None
+
+
+def _level_map_warm(nikkei_rows):
+    if not _LEVEL_MAP_LOCK.acquire(blocking=False):
+        return
+    try:
+        now = _ai_now_iso()
+        _LEVEL_MAP.update(lastAttemptAt=now, estimatesLastWarm=0)
+        path = _level_map_history_path()
+        if not path:
+            _LEVEL_MAP.update(status="NOT_CONFIGURED", lastErrorReason="history_storage_not_configured")
+            return
+        argus_analysis_history.initialize(path)
+        if not _LEVEL_MAP["loaded"]:
+            state = argus_analysis_history.read_level_map_state(path)
+            _LEVEL_MAP.update(eps=state["eps"], mornings=state["mornings"], loaded=True)
+        bars = _level_map_completed_bars(nikkei_rows, now)
+        if len(bars) < 30:
+            _LEVEL_MAP.update(status="PRICES_COLD", lastErrorReason="nikkei_history_not_ready")
+            return
+        close_by_day = {bar["date"]: bar["close"] for bar in bars}
+        sessions = [bar["date"] for bar in bars]
+        constituents = sorted(((_JP_INDEX_PROXY.get("factors") or {}).get("factors") or {}))
+        as_of = _JP_INDEX_PROXY.get("weightsAsOf")
+        if constituents and _JQUANTS_API_KEY:
+            wanted = [sessions[-1]]
+            for pivot in jp_market_level_map.zigzag(bars)[-4:]:
+                before = [day for day in sessions if day < pivot["date"]]
+                if before:
+                    wanted.append(before[-1])
+            wanted += [day for day in reversed(sessions) if day >= _LEVEL_MAP_EPS_SINCE]
+            pending, seen = [], set()
+            for day in wanted:
+                if day not in seen and day not in _LEVEL_MAP["eps"]:
+                    seen.add(day); pending.append(day)
+            headers = {"x-api-key": _JQUANTS_API_KEY}
+            for day in pending[:_LEVEL_MAP_EPS_PER_WARM]:
+                values = _jq_valuation_for_date(day, headers)
+                if not values:
+                    continue
+                try:
+                    estimate = jp_market_level_map.weighted_eps(
+                        values, constituents, index_close=float(close_by_day[day]), date=day,
+                        constituents_as_of=as_of or "unknown")
+                except jp_market_level_map.LevelMapError:
+                    continue
+                estimate["recordedAt"] = now
+                stored = argus_analysis_history.append_level_map_eps(path, estimate)
+                if stored["inserted"]:
+                    _LEVEL_MAP["eps"][day] = estimate
+                    _LEVEL_MAP["estimatesLastWarm"] += 1
+        latest = sessions[-1]
+        morning = _level_map_next_session(latest)
+        stored_mornings = {row.get("morningOf") for row in _LEVEL_MAP["mornings"]}
+        eps_series = {day: row["eps"] for day, row in _LEVEL_MAP["eps"].items()
+                      if isinstance(row.get("eps"), (int, float))}
+        if morning and morning not in stored_mornings:
+            opens_at = morning + "T00:00:00Z"            # 09:00 JST
+            if now >= opens_at:
+                if morning not in _LEVEL_MAP["missedMornings"]:
+                    _LEVEL_MAP["missedMornings"] = (_LEVEL_MAP["missedMornings"] + [morning])[-20:]
+            elif latest in eps_series:
+                record = jp_market_level_map.morning_map(
+                    morning, bars, eps_series, eps_records=_LEVEL_MAP["eps"], created_at=now)
+                argus_product_naming.require_allowed(record)
+                result = argus_analysis_history.append_level_map(path, record)
+                if result["inserted"]:
+                    _LEVEL_MAP["mornings"].append(record)
+                    _LEVEL_MAP["lastCreatedAt"] = now
+                elif result["conflict"]:
+                    _LEVEL_MAP["conflicts"] += 1
+        _LEVEL_MAP.update(status="AVAILABLE" if _LEVEL_MAP["mornings"] else "WAITING_FOR_ESTIMATE",
+                          lastError=None, lastErrorReason=None)
+    except Exception as exc:
+        _LEVEL_MAP.update(status="FAILED", lastError=type(exc).__name__, lastErrorReason=str(exc)[:80])
+    finally:
+        _LEVEL_MAP_LOCK.release()
+
+
+def _level_map_public():
+    """The latest stored morning map and the estimate lane's state (no per-member values)."""
+    eps = _LEVEL_MAP.get("eps") or {}
+    latest_eps = eps[max(eps)] if eps else None
+    mornings = _LEVEL_MAP.get("mornings") or []
+    return {"schemaVersion": "jp-market-level-map-state-v1", "status": _LEVEL_MAP.get("status"),
+            "latest": mornings[-1] if mornings else None, "morningCount": len(mornings),
+            "firstMorning": mornings[0].get("morningOf") if mornings else None,
+            "estimateCount": len(eps), "estimateFirst": min(eps) if eps else None,
+            "estimateLatest": ({k: latest_eps.get(k) for k in ("date", "eps", "per", "coverage", "constituentsAsOf",
+                                                              "basis", "labelJa", "officialValue")}
+                               if latest_eps else None),
+            "missedMornings": list(_LEVEL_MAP.get("missedMornings") or []),
+            "conflicts": _LEVEL_MAP.get("conflicts", 0), "lastAttemptAt": _LEVEL_MAP.get("lastAttemptAt"),
+            "lastCreatedAt": _LEVEL_MAP.get("lastCreatedAt"), "lastError": _LEVEL_MAP.get("lastError"),
+            "lastErrorReason": _LEVEL_MAP.get("lastErrorReason"),
+            "estimatesLastWarm": _LEVEL_MAP.get("estimatesLastWarm", 0),
+            "storage": "LOCAL_DURABLE_APPEND_ONLY", "remoteBackup": "NOT_YET_INCLUDED",
+            "actionAuthority": False, "automaticAiCalls": 0}
+
+
 def _jp_index_proxy_row(cutoff):
     """The latest session's proxy in the shape the price scale and D04 consume."""
     history = _JP_INDEX_PROXY.get("history") or {}
@@ -39248,6 +39401,7 @@ def _jp_market_comparison_calculate(horizon):
                 'historicalVintageVerified': False, 'full10yAllIndicatorsComplete': False}
         if horizon == 5:
             result["marketFeatureSnapshot"] = _JP_MARKET_FEATURE_HISTORY.get("latest")
+            result["levelMap"] = _level_map_public()
         result["valuationAcquisition"] = dict(_JP_INDEX_VALUATION.status)
         result["proxyValuation"] = _jp_index_proxy_public()
         if missing_calendar and result.get("comparison"):
@@ -40205,6 +40359,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         _cftc_jpy_autorefresh()
         _jp_index_valuation_warm()
         _jp_index_proxy_warm(nikkei_rows)
+        _level_map_warm(nikkei_rows)
         _jp_internals_warm()
     margin_rows = _jp_market_engine_margin_1570_rows(fetch=warm)
     if warm:
