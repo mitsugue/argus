@@ -194,6 +194,7 @@ ROUTE_CATALOG = (
     RouteCatalogEntry("/api/argus/jp-movers-push", ("POST",), "api_argus_jp_movers_push", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/jp-universe", ("GET",), "api_argus_jp_universe", "AUTH_OPERATIONAL", "ADMIN_TOKEN", False, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/analyst-targets", ("GET",), "api_argus_analyst_targets", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
+    RouteCatalogEntry("/api/argus/future-map", ("GET",), "api_argus_future_map", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/jp-watchlist-codes", ("GET",), "api_argus_jp_watchlist_codes", "AUTH_OPERATIONAL", "ADMIN_TOKEN", False, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/learning-memory/snapshot", ("GET",), "api_argus_learning_memory_snapshot", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/ledger/recent", ("GET",), "api_argus_ledger_recent", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),

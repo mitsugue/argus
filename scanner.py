@@ -145,6 +145,7 @@ import jp_market_source_adapters
 import jp_market_dynamics
 import argus_macro_frequency
 import jp_market_level_map
+import argus_future_map
 import argus_analyst_targets
 import argus_level_map_backup
 import jp_market_features
@@ -39288,6 +39289,69 @@ def api_argus_analyst_targets():
                     "lastError": _ANALYST_TARGETS.get("lastError"), "actionAuthority": False})
 
 
+# ── FUTURE MAP: external views of the coming weeks (2026-10-04) ───────────────
+# The research side writes future_map.v1 to the existing private store; the
+# collection warm reads it, validates it and keeps the public form here and
+# on disk. No release is needed for a weekly update. Not ARGUS's judgment.
+_FUTURE_MAP = {"loaded": False, "public": None, "sha": None, "lastAttemptAt": None, "lastError": None,
+               "lastChangedAt": None}
+_FUTURE_MAP_LOCK = threading.Lock()
+
+
+def _future_map_path():
+    if not _cost_policy_durable_enabled():
+        return None
+    return os.path.join(_DURABILITY_PATHS["root"], "future_map.json")
+
+
+def _future_map_refresh():
+    if not _FUTURE_MAP_LOCK.acquire(blocking=False):
+        return
+    try:
+        _FUTURE_MAP["lastAttemptAt"] = _ai_now_iso()
+        path = _future_map_path()
+        if not _FUTURE_MAP["loaded"]:
+            _FUTURE_MAP["loaded"] = True
+            if path and os.path.isfile(path):
+                with open(path, encoding="utf-8") as handle:
+                    saved = json.load(handle)
+                if isinstance(saved, dict) and saved.get("schemaVersion") == argus_future_map.PUBLIC_SCHEMA:
+                    _FUTURE_MAP.update(public=saved, sha=saved.get("remoteSha"))
+        remote = _level_map_remote()
+        if remote is None:
+            _FUTURE_MAP["lastError"] = "remote_not_configured"
+            return
+        raw, sha = remote.get(argus_future_map.REMOTE_PATH)
+        if raw is None or sha == _FUTURE_MAP.get("sha"):
+            _FUTURE_MAP["lastError"] = None if raw is not None else "remote_document_missing"
+            return
+        public = argus_future_map.validate(json.loads(raw))
+        argus_product_naming.require_allowed(public)
+        public["remoteSha"] = sha
+        _FUTURE_MAP.update(public=public, sha=sha, lastChangedAt=_ai_now_iso(), lastError=None)
+        if path:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as handle:
+                json.dump(public, handle, ensure_ascii=False)
+            os.replace(tmp, path)
+    except Exception as exc:
+        _FUTURE_MAP["lastError"] = type(exc).__name__
+    finally:
+        _FUTURE_MAP_LOCK.release()
+
+
+@app.route("/api/argus/future-map")
+def api_argus_future_map():
+    """PUBLIC cached-only: the validated external views, rows to show today (never fetches)."""
+    public = _FUTURE_MAP.get("public")
+    if not public:
+        return jsonify({"schemaVersion": argus_future_map.PUBLIC_SCHEMA, "availability": "UNAVAILABLE",
+                        "reason": _FUTURE_MAP.get("lastError") or "not_loaded", "actionAuthority": False})
+    today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+    body = argus_future_map.for_display({k: v for k, v in public.items() if k != "remoteSha"}, today)
+    return jsonify({**body, "availability": "AVAILABLE", "lastChangedAt": _FUTURE_MAP.get("lastChangedAt")})
+
+
 def _level_map_score_summary(score):
     if not score:
         return None
@@ -40576,6 +40640,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         _jp_index_valuation_warm()
         _jp_index_proxy_warm(nikkei_rows)
         _level_map_warm(nikkei_rows)
+        _future_map_refresh()
         _analyst_targets_warm()
         _jp_internals_warm()
     margin_rows = _jp_market_engine_margin_1570_rows(fetch=warm)
