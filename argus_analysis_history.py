@@ -358,3 +358,68 @@ def track_record(path):
     return {'schemaVersion': 'argus-forecast-track-record-v1', 'instrumentId': 'NIKKEI_225_INDEX',
             'minimumDirectionalForecasts': TRACK_RECORD_MINIMUM, 'horizons': horizons,
             'predictiveProbabilities': None, 'actionAuthority': False}
+
+
+# --- Nikkei morning level map (2026-10-04) ---------------------------------------
+# Two append-only tables in the same file: the daily ARGUS EPS estimate and the
+# map fixed before each open. The first body stored for a date is kept; a later
+# different body for the same date is refused and reported, never written. The
+# views/outcomes tables and their remote backup are not changed: these tables
+# are local-durable only until the backup carries them (documented).
+_LEVEL_MAP_TABLES = '''CREATE TABLE IF NOT EXISTS level_map_eps(session TEXT PRIMARY KEY,
+      recorded_at TEXT NOT NULL, body TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS level_map_mornings(morning_of TEXT PRIMARY KEY, record_id TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL, body TEXT NOT NULL);'''
+
+
+def _append_once(path, table, key_column, key, values):
+    conn = _connect(path)
+    try:
+        conn.executescript(_LEVEL_MAP_TABLES)
+        conn.execute('BEGIN IMMEDIATE')
+        existing = conn.execute(f'SELECT body FROM {table} WHERE {key_column}=?', (key,)).fetchone()
+        body = values[-1]
+        if existing:
+            conn.execute('COMMIT')
+            return {'inserted': False, 'conflict': existing[0] != body}
+        marks = ','.join('?' * len(values))
+        conn.execute(f'INSERT INTO {table} VALUES({marks})', values)
+        conn.execute('COMMIT')
+        return {'inserted': True, 'conflict': False}
+    except Exception:
+        if conn.in_transaction: conn.execute('ROLLBACK')
+        raise
+    finally: conn.close()
+
+
+def append_level_map_eps(path, record):
+    session = str(record.get('date') or '')
+    datetime.fromisoformat(session)
+    return _append_once(path, 'level_map_eps', 'session', session,
+                        (session, str(record.get('recordedAt') or ''), _json(record)))
+
+
+def append_level_map(path, record):
+    morning = str(record.get('morningOf') or '')
+    datetime.fromisoformat(morning)
+    if not str(record.get('recordId') or '').startswith('lm-'):
+        raise ValueError('level_map_record_id_required')
+    return _append_once(path, 'level_map_mornings', 'morning_of', morning,
+                        (morning, record['recordId'], str(record.get('createdAt') or ''), _json(record)))
+
+
+def read_level_map_state(path):
+    """Every stored estimate (by session) and every stored morning map, oldest first."""
+    conn = _connect(path, True)
+    try:
+        names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        eps = {}
+        if 'level_map_eps' in names:
+            eps = {row[0]: json.loads(row[1]) for row in conn.execute(
+                'SELECT session, body FROM level_map_eps ORDER BY session')}
+        mornings = []
+        if 'level_map_mornings' in names:
+            mornings = [json.loads(row[0]) for row in conn.execute(
+                'SELECT body FROM level_map_mornings ORDER BY morning_of')]
+        return {'eps': eps, 'mornings': mornings}
+    finally: conn.close()
