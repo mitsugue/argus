@@ -39108,12 +39108,37 @@ def _level_map_warm(nikkei_rows):
                     _LEVEL_MAP["lastCreatedAt"] = now
                 elif result["conflict"]:
                     _LEVEL_MAP["conflicts"] += 1
+        # Scores: the stored (pre-registered) mornings only; the mornings from
+        # June to the first stored one are rebuilt from the stored estimates and
+        # kept apart as counted afterwards (never mixed into the record).
+        try:
+            _LEVEL_MAP["score"] = jp_market_level_map.score_records(_LEVEL_MAP["mornings"], bars, eps_series)
+            first = _LEVEL_MAP["mornings"][0]["morningOf"] if _LEVEL_MAP["mornings"] else None
+            later = [day for day in sessions if day >= _LEVEL_MAP_EPS_SINCE and (not first or day < first)]
+            rebuilt = []
+            for day in later:
+                try:
+                    rebuilt.append(jp_market_level_map.morning_map(day, bars, eps_series, created_at=now))
+                except jp_market_level_map.LevelMapError:
+                    continue
+            _LEVEL_MAP["retrospective"] = jp_market_level_map.score_records(rebuilt, bars, eps_series)
+            _LEVEL_MAP["retrospective"]["preRegisteredOnly"] = False
+        except Exception as exc:
+            _LEVEL_MAP["scoreError"] = type(exc).__name__
         _LEVEL_MAP.update(status="AVAILABLE" if _LEVEL_MAP["mornings"] else "WAITING_FOR_ESTIMATE",
                           lastError=None, lastErrorReason=None)
     except Exception as exc:
         _LEVEL_MAP.update(status="FAILED", lastError=type(exc).__name__, lastErrorReason=str(exc)[:80])
     finally:
         _LEVEL_MAP_LOCK.release()
+
+
+def _level_map_score_summary(score):
+    if not score:
+        return None
+    return {k: score.get(k) for k in ("firstMorning", "mornings", "phases", "phaseOutcomes", "fakeLineOutcomes",
+                                       "turningPoints", "preRegisteredOnly", "ruleVersion")} | {
+        "latestMorning": (score.get("perMorning") or [None])[-1]}
 
 
 def _level_map_public():
@@ -39133,6 +39158,9 @@ def _level_map_public():
             "lastCreatedAt": _LEVEL_MAP.get("lastCreatedAt"), "lastError": _LEVEL_MAP.get("lastError"),
             "lastErrorReason": _LEVEL_MAP.get("lastErrorReason"),
             "estimatesLastWarm": _LEVEL_MAP.get("estimatesLastWarm", 0),
+            "score": _level_map_score_summary(_LEVEL_MAP.get("score")),
+            "retrospective": _level_map_score_summary(_LEVEL_MAP.get("retrospective")),
+            "scoreError": _LEVEL_MAP.get("scoreError"),
             "storage": "LOCAL_DURABLE_APPEND_ONLY", "remoteBackup": "NOT_YET_INCLUDED",
             "actionAuthority": False, "automaticAiCalls": 0}
 

@@ -371,3 +371,152 @@ def morning_map(day: str, price_rows: Sequence[Mapping[str, Any]], eps_series: M
     }
     record["recordId"] = "lm-" + _digest({k: v for k, v in record.items() if k != "createdAt"})[:32]
     return record
+
+
+# --- scoring (after the close; the morning record itself never changes) ---------------
+
+REACH_TOLERANCE = 0.005        # reached: within 0.5 % of the line
+REACH_SESSIONS = 10            # the morning is session 0
+DECISION_BAND = 0.02           # stopped / broke: 2 % back or 2 % through
+DECISION_SESSIONS = 20
+PHASE_SESSIONS = 10            # touches of the same line within 10 sessions are one phase
+TURN_TOLERANCE = 0.01
+FAKE_MULTIPLE_SHIFTS = (-0.5, -0.25, 0.25, 0.5)
+
+
+def _line_value(row: Mapping[str, Any], day: str, eps_series: Mapping[str, float]) -> Optional[float]:
+    """A PER line moves with the EPS known before each day; other rows are fixed."""
+    if row.get("moving") and _finite(row.get("multiple")):
+        known = eps_before(eps_series, day)
+        return known[1] * float(row["multiple"]) if known else None
+    return _finite(row.get("price"))
+
+
+def touch_outcome(row: Mapping[str, Any], sessions: Sequence[Mapping[str, Any]],
+                  eps_series: Mapping[str, float]) -> Dict[str, Any]:
+    """Reached within ten sessions, then stopped (2 % back first) or broke (2 %
+    through first). On the touching session only a close 2 % back counts as
+    stopped; a session with both is decided by its close."""
+    side = row["side"]
+    reached = None
+    for index, bar in enumerate(sessions[:REACH_SESSIONS]):
+        line = _line_value(row, bar["date"], eps_series)
+        if line is None:
+            continue
+        if (side == "UP" and bar["high"] >= line * (1 - REACH_TOLERANCE)) or \
+                (side == "DOWN" and bar["low"] <= line * (1 + REACH_TOLERANCE)):
+            reached = (index, line)
+            break
+    if reached is None:
+        state = "NOT_REACHED" if len(sessions) >= REACH_SESSIONS else "PENDING"
+        return {"state": state, "reachedSession": None, "reachedOn": None, "lineAtReach": None}
+    index, value = reached
+    upper, lower = value * (1 + DECISION_BAND), value * (1 - DECISION_BAND)
+    for k in range(index, min(index + DECISION_SESSIONS + 1, len(sessions))):
+        bar = sessions[k]
+        if side == "DOWN":                       # support
+            stop = bar["close"] >= upper if k == index else bar["high"] >= upper
+            broke = bar["low"] <= lower
+            if stop and broke:
+                state = "STOPPED" if bar["close"] >= value else "BROKE"
+            else:
+                state = "STOPPED" if stop else "BROKE" if broke else None
+        else:                                    # wall
+            stop = bar["close"] <= lower if k == index else bar["low"] <= lower
+            broke = bar["high"] >= upper
+            if stop and broke:
+                state = "STOPPED" if bar["close"] <= value else "BROKE"
+            else:
+                state = "STOPPED" if stop else "BROKE" if broke else None
+        if state:
+            return {"state": state, "reachedSession": index, "reachedOn": sessions[index]["date"],
+                    "lineAtReach": round(value, 2), "decidedOn": bar["date"]}
+    state = "UNDECIDED" if len(sessions) > index + DECISION_SESSIONS else "OPEN"
+    return {"state": state, "reachedSession": index, "reachedOn": sessions[index]["date"],
+            "lineAtReach": round(value, 2)}
+
+
+def _fakes(row: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    if row.get("moving") and _finite(row.get("multiple")):
+        return [{**row, "multiple": float(row["multiple"]) + shift, "fakeShift": shift}
+                for shift in FAKE_MULTIPLE_SHIFTS]
+    price = _finite(row.get("price"))
+    return [{**row, "price": price * (1 + shift), "fakeShift": shift}
+            for shift in (-0.03, -0.015, 0.015, 0.03)] if price else []
+
+
+def score_records(mornings: Sequence[Mapping[str, Any]], price_rows: Sequence[Mapping[str, Any]],
+                  eps_series: Mapping[str, float]) -> Dict[str, Any]:
+    """Pre-registered record, scored with the moving lines.
+
+    Counts are per phase: the same side and line (kind and multiple) touched
+    again within ten sessions of its previous touch is the same phase and is
+    counted once, by its first touch. Turning points (close 4 % zigzag,
+    intraday extreme) are compared with each morning's rows at the answer
+    date; +/-1 % is a hit. The +/-2 ATR guide and shifted fake lines are the
+    baselines. Nothing here is a probability.
+    """
+    bars = _bars(price_rows)
+    index_of = {bar["date"]: i for i, bar in enumerate(bars)}
+    pivots = zigzag(bars)
+    phases: Dict[tuple, Dict[str, Any]] = {}
+    per_morning = []
+    turning = {"evaluated": 0, "perLineHits": 0, "atr2Hits": 0, "chanceExpected": 0.0, "answers": []}
+    seen_answers = set()
+    for record in sorted(mornings, key=lambda r: r.get("morningOf") or ""):
+        day = record.get("morningOf")
+        start = next((i for i, bar in enumerate(bars) if bar["date"] >= day), None)
+        sessions = bars[start:] if start is not None else []
+        rows = [r for r in record.get("rows") or [] if r.get("tier") == "MAP"]
+        guides = [{"side": side, "kinds": ["ATR_GUIDE"], "price": price, "moving": False, "atrMultiple": n}
+                  for side in ("UP", "DOWN") for n, price in zip((1, 2, 3), (record.get("atrGuides") or {}).get(side, []))]
+        scored = []
+        for row in rows + guides:
+            outcome = touch_outcome(row, sessions, eps_series)
+            fakes = [touch_outcome(fake, sessions, eps_series)["state"] for fake in _fakes(row)]
+            scored.append({"side": row["side"], "kinds": row["kinds"], "multiple": row.get("multiple"),
+                           "atrMultiple": row.get("atrMultiple"), "price": row.get("price"),
+                           **outcome, "fakeStates": fakes})
+            if outcome["reachedOn"] and "ATR_GUIDE" not in row["kinds"]:
+                key = (row["side"], tuple(row["kinds"]), round(float(row.get("multiple") or row.get("price")), 4))
+                reach_index = index_of[outcome["reachedOn"]]
+                previous = phases.get(key)
+                if previous is None or reach_index - previous["lastReachIndex"] > PHASE_SESSIONS:
+                    phases[key] = {"lastReachIndex": reach_index, "count": True,
+                                   "phases": (previous or {}).get("phases", []) + [
+                                       {"morningOf": day, "state": outcome["state"], "fakeStates": fakes}]}
+                else:
+                    previous["lastReachIndex"] = reach_index
+        # Turning points: the first top and bottom whose extreme is on or after the morning.
+        for kind, side in (("TOP", "UP"), ("BOTTOM", "DOWN")):
+            answer = next((p for p in pivots if p["kind"] == kind and p["date"] >= day), None)
+            if not answer:
+                continue
+            known = eps_before(eps_series, answer["date"])
+            multiple = answer["price"] / known[1] if known else None
+            # Any whole-number line on the answer date (the line moves with the EPS).
+            hit = bool(multiple) and abs(multiple / round(multiple) - 1) <= TURN_TOLERANCE
+            atr2 = ((record.get("atrGuides") or {}).get(side) or [None, None])[1]
+            if (kind, answer["date"]) not in seen_answers:
+                seen_answers.add((kind, answer["date"]))
+                turning["evaluated"] += 1
+                turning["perLineHits"] += int(hit)
+                turning["atr2Hits"] += int(bool(atr2) and abs(answer["price"] / atr2 - 1) <= TURN_TOLERANCE)
+                turning["chanceExpected"] += 0.02 * multiple if multiple else 0.0
+                turning["answers"].append({"kind": kind, "date": answer["date"], "price": answer["price"],
+                                           "confirmedOn": answer["confirmedOn"], "firstMorning": day,
+                                           "perLineHit": hit})
+        per_morning.append({"morningOf": day, "recordId": record.get("recordId"), "rows": scored})
+    counted = [phase for value in phases.values() for phase in value["phases"]]
+    def tally(states):
+        return {state: sum(1 for s in states if s == state)
+                for state in ("STOPPED", "BROKE", "UNDECIDED", "OPEN")}
+    fake_states = [s for phase in counted for s in phase["fakeStates"] if s not in ("NOT_REACHED", "PENDING")]
+    turning["chanceExpected"] = round(turning["chanceExpected"], 3)
+    return {"schemaVersion": "jp-market-level-map-score-v1", "ruleVersion": RULE_VERSION,
+            "firstMorning": per_morning[0]["morningOf"] if per_morning else None,
+            "mornings": len(per_morning), "phases": len(counted),
+            "phaseOutcomes": tally([phase["state"] for phase in counted]),
+            "fakeLineOutcomes": tally(fake_states), "turningPoints": turning,
+            "perMorning": per_morning[-20:], "preRegisteredOnly": True,
+            "pastFrequencyIsNotProbability": True, "actionAuthority": False}

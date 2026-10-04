@@ -180,6 +180,9 @@ def test_glue_stores_the_estimate_and_one_morning_map_before_the_open(monkeypatc
     assert history.read_level_map_state(path)["mornings"] == [record]
     public = scanner._level_map_public()
     assert public["latest"]["morningOf"] == "2026-10-05" and public["remoteBackup"] == "NOT_YET_INCLUDED"
+    assert public["score"]["preRegisteredOnly"] is True and public["score"]["mornings"] == 1
+    assert public["retrospective"]["preRegisteredOnly"] is False
+    assert public["retrospective"]["firstMorning"] >= "2026-06-01"
 
 
 def test_glue_never_backdates_a_missed_morning_or_uses_an_open_session(monkeypatch, tmp_path):
@@ -189,3 +192,44 @@ def test_glue_never_backdates_a_missed_morning_or_uses_an_open_session(monkeypat
     scanner._level_map_warm(rows)                  # Monday's bar is not final: latest = Friday
     assert history.read_level_map_state(path)["mornings"] == []
     assert scanner._LEVEL_MAP["missedMornings"] == ["2026-10-05"]
+
+
+def _session(day, close, high=None, low=None):
+    return {"date": day, "close": close, "high": high or close, "low": low or close}
+
+
+def test_touch_outcome_moving_line_stop_break_and_touch_day_close_rule():
+    eps = {"2026-10-02": 100.0, "2026-10-05": 102.0}
+    row = {"side": "UP", "kinds": ["PER_LINE"], "multiple": 10, "moving": True, "price": 1000.0}
+    # Day 0 line 1000 (EPS of 10/2); day 1 line 1020 (EPS of 10/5): moving.
+    sessions = [_session("2026-10-05", 985, high=990), _session("2026-10-06", 1010, high=1016, low=1005),
+                _session("2026-10-07", 995, high=1000, low=995)]
+    out = m.touch_outcome(row, sessions, eps)
+    assert out["reachedOn"] == "2026-10-06" and out["lineAtReach"] == 1020.0
+    assert out["state"] == "STOPPED"              # 2 % below 1020 = 999.6 reached on the next session
+    # Touching session: an intraday dip 2 % back does not count, only the close.
+    touch_day = [_session("2026-10-05", 1001, high=1002, low=975)]
+    assert m.touch_outcome({**row, "moving": False}, touch_day, eps)["state"] == "OPEN"
+    broke = [_session("2026-10-05", 1015, high=1025)]
+    assert m.touch_outcome({**row, "moving": False}, broke, eps)["state"] == "BROKE"
+    assert m.touch_outcome({**row, "moving": False}, [_session("2026-10-05", 900)], eps)["state"] == "PENDING"
+
+
+def test_scores_count_phases_once_and_turning_points_against_any_whole_line():
+    days = [f"2026-10-{d:02d}" for d in (5, 6, 7, 8, 9, 13, 14, 15, 16, 19, 20, 21, 22, 23, 26)]
+    eps = {"2026-10-02": 100.0, **{d: 100.0 for d in days}}
+    closes = [1700, 1750, 1790, 1798, 1760, 1720, 1690, 1650, 1700, 1720, 1700, 1690, 1680, 1690, 1700]
+    prices = [_session("2026-10-02", 1700)] + [_session(d, c, high=c + 5, low=c - 5) for d, c in zip(days, closes)]
+    record = lambda day: {"morningOf": day, "recordId": "lm-" + day, "rows": [
+        {"side": "UP", "kinds": ["PER_LINE"], "multiple": 18, "moving": True, "price": 1800.0, "tier": "MAP"}],
+        "atrGuides": {"UP": [1730, 1760, 1790], "DOWN": [1670, 1640, 1610]}}
+    score = m.score_records([record("2026-10-05"), record("2026-10-06")], prices, eps)
+    assert score["phases"] == 1                     # the same line touched from two mornings = one phase
+    assert score["phaseOutcomes"]["STOPPED"] == 1
+    turning = score["turningPoints"]
+    top = next(a for a in turning["answers"] if a["kind"] == "TOP")
+    assert top["date"] == "2026-10-08" and top["perLineHit"] is True     # 1803 vs 18 x 100
+    assert turning["evaluated"] == len(turning["answers"])                # each turning point once
+    assert turning["chanceExpected"] == pytest.approx(
+        sum(0.02 * a["price"] / 100.0 for a in turning["answers"]), abs=1e-3)
+    assert score["preRegisteredOnly"] is True and score["actionAuthority"] is False
