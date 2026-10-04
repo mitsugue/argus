@@ -145,6 +145,7 @@ import jp_market_source_adapters
 import jp_market_dynamics
 import argus_macro_frequency
 import jp_market_level_map
+import jp_market_chart_layers
 import argus_future_map
 import jp_market_candidates
 import argus_analyst_targets
@@ -39541,7 +39542,19 @@ def _level_map_public():
     eps = _LEVEL_MAP.get("eps") or {}
     latest_eps = eps[max(eps)] if eps else None
     mornings = _LEVEL_MAP.get("mornings") or []
+    chart_rows = (_N225_ANALOG_HISTORY.get("data") or
+                  (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}).get("data") or [])
+    chart, chart_error = None, None
+    try:
+        chart_now = _ai_now_iso()
+        chart_day = datetime.fromisoformat(chart_now.replace("Z", "+00:00")).astimezone(pytz.timezone("Asia/Tokyo")).date().isoformat()
+        chart_morning = next((m for m in reversed(mornings) if m.get("morningOf", "") <= chart_day), None)
+        chart = jp_market_chart_layers.snapshot(chart_rows, eps, chart_morning,
+                                                _CANDIDATES.get("views", []), now_iso=chart_now)
+    except (ValueError, TypeError, KeyError, OverflowError) as exc:
+        chart_error = type(exc).__name__
     return {"schemaVersion": "jp-market-level-map-state-v1", "status": _LEVEL_MAP.get("status"),
+            "chart": chart, "chartError": chart_error,
             "latest": mornings[-1] if mornings else None, "morningCount": len(mornings),
             "firstMorning": mornings[0].get("morningOf") if mornings else None,
             "estimateCount": len(eps), "estimateFirst": min(eps) if eps else None,

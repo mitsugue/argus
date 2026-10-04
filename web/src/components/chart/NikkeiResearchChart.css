@@ -1,0 +1,30 @@
+.nr-chart { min-width: 0; color: var(--text-main); }
+.nr-controls, .nr-legend, .nr-external-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.nr-controls button, .nr-external-list button { font: inherit; font-size: 12px; border: 1px solid var(--line-strong); color: var(--text-sub); background: var(--surface); border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+.nr-controls button[aria-pressed="true"], .nr-external-list button[aria-pressed="true"] { border-color: var(--cyan); color: var(--text-main); background: var(--surface-soft); }
+.nr-chart button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.nr-note, .nr-notes, .nr-external-list p { font-size: 12px; color: var(--text-sub); line-height: 1.6; }
+.nr-chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.nr-chart svg text { font: 10px -apple-system, sans-serif; fill: var(--text-sub); }
+.nr-grid line { stroke: var(--line); }
+.nr-grid text { font-size: 9px; }
+.nr-today { stroke: var(--text-muted); stroke-dasharray: 3 4; }
+.nr-chart .nr-today-label { fill: var(--text-main); }
+.nr-per path { stroke: var(--cyan); opacity: .2; fill: none; stroke-width: 1; }
+.nr-per.is-near path { opacity: .65; }
+.nr-price { stroke: var(--blue); stroke-width: 2; fill: none; }
+.nr-external { stroke: var(--text-main); stroke-width: 1.5; stroke-dasharray: 4 4; fill: none; }
+.nr-band { fill: var(--text-main); opacity: .12; }
+.nr-point { fill: var(--text-main); stroke: var(--bg); }
+.nr-chart .nr-point-label { fill: var(--text-main); font-weight: 700; }
+.nr-per-label text { fill: var(--text-sub); font-size: 9px; }
+.nr-per-label line { stroke: var(--cyan); opacity: .15; stroke-dasharray: 1 4; }
+.nr-per-label.is-near text { fill: var(--cyan); }
+.nr-target { stroke: var(--amber); stroke-width: 1.5; }
+.nr-stop { stroke: var(--red); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.nr-pivot { fill: var(--green); stroke: var(--bg); }.nr-pivot.is-top { fill: var(--amber); }
+.nr-pending { fill: none; stroke: var(--amber); stroke-dasharray: 2 2; }
+.nr-legend { font-size: 10px; color: var(--text-sub); line-height: 1.7; margin: 10px 0; }
+.nr-key-price { color: var(--blue); }.nr-key-per { color: var(--cyan); }.nr-key-external { color: var(--text-main); }
+.nr-nearest { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 8px 0; margin: 10px 0; }
+.nr-nearest p { margin: 5px 0; font-size: 12px; }.nr-nearest small { color: var(--text-sub); font-size: 11px; }
