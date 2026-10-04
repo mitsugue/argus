@@ -104,7 +104,7 @@ jobs:
               "https://argus-backend-3j2m.onrender.com/api/argus/chart-intelligence?scope=market&symbol=$sym&horizon=$hz&snapshot=verified" || echo timeout)
             echo "verified-snapshot $sym $hz $code"
           done; done
-          for name in bridge-status bridge-diagnostic twelvedata-budget provider-diagnostics operational security-status today-headline decision-evidence-a decision-evidence-b index-comparison index-chart market-brief market-brief-history ai-cost cost-policy data-quality sector-heatmap closepin-snapshot memory-snapshot dashboard-events; do
+          for name in bridge-status bridge-diagnostic twelvedata-budget provider-diagnostics operational security-status today-headline decision-evidence-a decision-evidence-b index-comparison index-chart market-brief market-brief-history ai-cost cost-policy data-quality sector-heatmap closepin-snapshot memory-snapshot dashboard-events future-map; do
             case "$name" in
               bridge-status) path="/api/argus/bridge/status" ;;
               bridge-diagnostic) path="/api/argus/admin/bridge/diagnostic" ;;
@@ -126,13 +126,14 @@ jobs:
               dashboard-events) path="/api/argus/dashboard-events" ;;
               data-quality) path="/api/argus/data-quality/status" ;;
               index-chart) path="/api/argus/index-chart?index=N225" ;;
+              future-map) path="/api/argus/future-map" ;;
             esac
             code=$(curl -sS -o "artifacts/runtime-diagnostics/$name.json" -w "%{http_code}" \
               --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
               "https://argus-backend-3j2m.onrender.com$path")
             echo "$name http=$code"
           done
-          for name in bridge-status bridge-diagnostic twelvedata-budget provider-diagnostics operational security-status today-headline decision-evidence-a decision-evidence-b index-comparison index-chart market-brief market-brief-history ai-cost data-quality; do
+          for name in bridge-status bridge-diagnostic twelvedata-budget provider-diagnostics operational security-status today-headline decision-evidence-a decision-evidence-b index-comparison index-chart market-brief market-brief-history ai-cost data-quality future-map; do
             echo "--- $name ---"
             head -c 4000 "artifacts/runtime-diagnostics/$name.json"; echo
           done
