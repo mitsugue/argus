@@ -82,13 +82,25 @@ def _now(now: datetime) -> datetime:
     return now.astimezone(JST)
 
 
+# 2026-10-04: one line of what the past shows for calendar effects that are
+# often said to move the market. Measured by ARGUS on Nikkei 225 history; a
+# past frequency, never a direction for the coming event. Effects that looked
+# real were not written here unless they survived the re-check.
+PAST_TENDENCY_JA = {
+    "SQ": "SQの前日は下がりやすいと言われますが、2005年以降の実績では、ほかの日との差はありません(ARGUSの検証)。",
+    "EX_DIVIDEND": "配当落ちの分(日経平均で約0.4〜0.6%)下がるのは機械的です。それを除くと、ほかの日との差はありません(ARGUSの検証)。",
+    "HOLIDAY": "連休前の最終営業日に下がりやすいという傾向は、実績では見られません(ARGUSの検証)。",
+    "NIKKEI_PERIODIC_REVIEW": "新規採用の銘柄は、発表翌朝の寄付で平均+2.7%織り込まれ、その後に追っても上乗せはありませんでした(2017〜2026年の14回、ARGUSの検証)。",
+}
+
+
 def _event(*, event_id, kind, at, date_only, title_ja, importance, what_ja, so_what_ja, watch_ja,
-           source, today) -> dict[str, Any]:
+           source, today, past_tendency_ja=None) -> dict[str, Any]:
     day = date.fromisoformat(at[:10])
     return {"eventId": event_id, "kind": kind, "at": at, "dateOnly": date_only, "date": at[:10],
             "daysUntil": (day - today).days, "titleJa": title_ja, "importance": importance,
             "whatJa": what_ja, "soWhatJa": so_what_ja, "watchJa": watch_ja, "source": source,
-            "actionAuthority": False}
+            "pastTendencyJa": past_tendency_ja, "actionAuthority": False}
 
 
 def _trading(day: date) -> bool:
@@ -137,7 +149,7 @@ def dividend_events(today: date, end: date, ex_dividend: Mapping[str, Any] | Non
                     at=last_cum.isoformat(), date_only=True,
                     title_ja=f"権利付き最終日({month}月末の配当・優待)", importance="high" if major else "medium",
                     what_ja=f"この日の大引けまでに買うと{month}月末の配当・株主優待の権利が得られます。" + size_ja,
-                    so_what_ja="配当狙いの買いが入りやすく、日経は底堅くなりやすい日です。翌日の権利落ちで指数が配当分だけ下がることは先物価格に織り込まれています。",
+                    so_what_ja="配当狙いの買いが入ると言われますが、実績で確かめた傾向ではありません。翌日の権利落ちで指数が配当分だけ下がることは先物価格に織り込まれています。",
                     watch_ja="翌営業日(権利落ち日)の下げのうち、配当落ち分を除いた実質の値動き。",
                     source="rule:jp-record-date-last-session-t-plus-2", today=today))
             if today <= ex_day <= end:
@@ -148,7 +160,8 @@ def dividend_events(today: date, end: date, ex_dividend: Mapping[str, Any] | Non
                     what_ja="配当の権利がなくなった分だけ、多くの株価が朝から安く始まります。" + size_ja + note,
                     so_what_ja="日経平均は配当の分だけ機械的に下がります(配当落ち)。日経ブルETFは配当を受け取らないので見かけ上その分下がり、ベアETFは上がります。相場の悪化と取り違えないことが大事です。",
                     watch_ja="当日の日経の下げ幅が配当落ち分より大きいか小さいか(小さければ実質は上昇)。",
-                    source="rule:jp-record-date-last-session-t-plus-2", today=today))
+                    source="rule:jp-record-date-last-session-t-plus-2", today=today,
+                    past_tendency_ja=PAST_TENDENCY_JA["EX_DIVIDEND"]))
     return out
 
 
@@ -177,9 +190,9 @@ def holiday_events(today: date, end: date) -> list[dict[str, Any]]:
                     event_id=f"jp-market-closed-{day.isoformat()}", kind="JP_MARKET_CLOSED",
                     at=day.isoformat(), date_only=True, title_ja=f"東京市場 休場({name_jp.split(' / ')[-1]})",
                     importance="medium", what_ja="東京証券取引所が休みで、日本株・ETFは売買できません。",
-                    so_what_ja="休みの間に起きた海外の値動きや材料を、休み明けの寄付きでまとめて織り込みます。休み前に持ち高を調整する動きも出やすい。",
+                    so_what_ja="休みの間に起きた海外の値動きや材料を、休み明けの寄付きでまとめて織り込みます。",
                     watch_ja="休み中の米国株・ドル円・日経先物(海外市場)の動き。",
-                    source="exchange-calendar", today=today))
+                    source="exchange-calendar", today=today, past_tendency_ja=PAST_TENDENCY_JA["HOLIDAY"]))
             if name_us:
                 out.append(_event(
                     event_id=f"us-market-closed-{day.isoformat()}", kind="US_MARKET_CLOSED",
@@ -313,7 +326,8 @@ def nikkei_review_events(today: date, end: date) -> list[dict[str, Any]]:
                 title_ja=f"日経平均 定期見直しの実施日({month}月・構成銘柄の入れ替え)", importance="medium",
                 what_ja=NIKKEI_REVIEW_TEXT["whatJa"] + "発表は実施の約1か月前に日経が告知します(日付はここでは未確認)。",
                 so_what_ja=NIKKEI_REVIEW_TEXT["soWhatJa"], watch_ja=NIKKEI_REVIEW_TEXT["watchJa"],
-                source="rule:nikkei-first-trading-day-of-april-and-october " + NIKKEI_REVIEW_RULE_REF, today=today))
+                source="rule:nikkei-first-trading-day-of-april-and-october " + NIKKEI_REVIEW_RULE_REF, today=today,
+                past_tendency_ja=PAST_TENDENCY_JA["NIKKEI_PERIODIC_REVIEW"]))
     return out
 
 
@@ -363,7 +377,7 @@ def sq_events(now: datetime, horizon_days: int) -> tuple[list[dict[str, Any]], l
             title_ja=("メジャーSQ" if major else "SQ") + "(日経225先物・オプションの清算)",
             importance="high" if major else "medium", what_ja=SQ_TEXT["whatJa"],
             so_what_ja=SQ_TEXT["soWhatJa"] + (SQ_TEXT["majorJa"] if major else ""),
-            watch_ja=SQ_TEXT["watchJa"], source="JPX", today=today))
+            watch_ja=SQ_TEXT["watchJa"], source="JPX", today=today, past_tendency_ja=PAST_TENDENCY_JA["SQ"]))
     return out, list(calendar.get("gaps") or [])
 
 

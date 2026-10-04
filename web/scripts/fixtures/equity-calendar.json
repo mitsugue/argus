@@ -50,7 +50,8 @@
    "soWhatJa": "前日から当日朝にかけて先物主導で値が振れやすく、寄付きに大口の売買が集中します。決まったSQ値はその後数日の上値・下値の目安として意識されます。",
    "watchJa": "前日の夜間先物の動きと、当日寄付きのSQ値が日経の終値より上か下か。",
    "source": "JPX",
-   "actionAuthority": false
+   "actionAuthority": false,
+   "pastTendencyJa": "SQの前日は下がりやすいと言われますが、2005年以降の実績では、ほかの日との差はありません(ARGUSの検証)。"
   },
   {
    "eventId": "jp-market-closed-2026-10-12",
@@ -62,10 +63,11 @@
    "titleJa": "東京市場 休場(スポーツの日)",
    "importance": "medium",
    "whatJa": "東京証券取引所が休みで、日本株・ETFは売買できません。",
-   "soWhatJa": "休みの間に起きた海外の値動きや材料を、休み明けの寄付きでまとめて織り込みます。休み前に持ち高を調整する動きも出やすい。",
+   "soWhatJa": "休みの間に起きた海外の値動きや材料を、休み明けの寄付きでまとめて織り込みます。",
    "watchJa": "休み中の米国株・ドル円・日経先物(海外市場)の動き。",
    "source": "exchange-calendar",
-   "actionAuthority": false
+   "actionAuthority": false,
+   "pastTendencyJa": "連休前の最終営業日に下がりやすいという傾向は、実績では見られません(ARGUSの検証)。"
   },
   {
    "eventId": "jp-jp-cpi-2026-10-23",
@@ -107,10 +109,11 @@
    "titleJa": "東京市場 休場(文化の日)",
    "importance": "medium",
    "whatJa": "東京証券取引所が休みで、日本株・ETFは売買できません。",
-   "soWhatJa": "休みの間に起きた海外の値動きや材料を、休み明けの寄付きでまとめて織り込みます。休み前に持ち高を調整する動きも出やすい。",
+   "soWhatJa": "休みの間に起きた海外の値動きや材料を、休み明けの寄付きでまとめて織り込みます。",
    "watchJa": "休み中の米国株・ドル円・日経先物(海外市場)の動き。",
    "source": "exchange-calendar",
-   "actionAuthority": false
+   "actionAuthority": false,
+   "pastTendencyJa": "連休前の最終営業日に下がりやすいという傾向は、実績では見られません(ARGUSの検証)。"
   },
   {
    "eventId": "jp-jp-wages-2026-11-06",
@@ -140,7 +143,8 @@
    "soWhatJa": "前日から当日朝にかけて先物主導で値が振れやすく、寄付きに大口の売買が集中します。決まったSQ値はその後数日の上値・下値の目安として意識されます。",
    "watchJa": "前日の夜間先物の動きと、当日寄付きのSQ値が日経の終値より上か下か。",
    "source": "JPX",
-   "actionAuthority": false
+   "actionAuthority": false,
+   "pastTendencyJa": "SQの前日は下がりやすいと言われますが、2005年以降の実績では、ほかの日との差はありません(ARGUSの検証)。"
   },
   {
    "eventId": "jp-jp-gdp-2026-11-16",
@@ -182,10 +186,11 @@
    "titleJa": "東京市場 休場(勤労感謝の日)",
    "importance": "medium",
    "whatJa": "東京証券取引所が休みで、日本株・ETFは売買できません。",
-   "soWhatJa": "休みの間に起きた海外の値動きや材料を、休み明けの寄付きでまとめて織り込みます。休み前に持ち高を調整する動きも出やすい。",
+   "soWhatJa": "休みの間に起きた海外の値動きや材料を、休み明けの寄付きでまとめて織り込みます。",
    "watchJa": "休み中の米国株・ドル円・日経先物(海外市場)の動き。",
    "source": "exchange-calendar",
-   "actionAuthority": false
+   "actionAuthority": false,
+   "pastTendencyJa": "連休前の最終営業日に下がりやすいという傾向は、実績では見られません(ARGUSの検証)。"
   },
   {
    "eventId": "us-market-closed-2026-11-26",
@@ -260,7 +265,8 @@
    "soWhatJa": "前日から当日朝にかけて先物主導で値が振れやすく、寄付きに大口の売買が集中します。決まったSQ値はその後数日の上値・下値の目安として意識されます。3・6・9・12月はメジャーSQで、先物とオプションが同時に清算されるため振れが特に大きくなりやすい日です。",
    "watchJa": "前日の夜間先物の動きと、当日寄付きのSQ値が日経の終値より上か下か。",
    "source": "JPX",
-   "actionAuthority": false
+   "actionAuthority": false,
+   "pastTendencyJa": "SQの前日は下がりやすいと言われますが、2005年以降の実績では、ほかの日との差はありません(ARGUSの検証)。"
   },
   {
    "eventId": "jp-jp-tankan-2026-12-14",
@@ -332,7 +338,7 @@
    "titleJa": "権利付き最終日(12月末の配当・優待)",
    "importance": "medium",
    "whatJa": "この日の大引けまでに買うと12月末の配当・株主優待の権利が得られます。6月・12月は基準日の企業が少なく、配当落ちは小さめです。",
-   "soWhatJa": "配当狙いの買いが入りやすく、日経は底堅くなりやすい日です。翌日の権利落ちで指数が配当分だけ下がることは先物価格に織り込まれています。",
+   "soWhatJa": "配当狙いの買いが入ると言われますが、実績で確かめた傾向ではありません。翌日の権利落ちで指数が配当分だけ下がることは先物価格に織り込まれています。",
    "watchJa": "翌営業日(権利落ち日)の下げのうち、配当落ち分を除いた実質の値動き。",
    "source": "rule:jp-record-date-last-session-t-plus-2",
    "actionAuthority": false
@@ -350,7 +356,8 @@
    "soWhatJa": "日経平均は配当の分だけ機械的に下がります(配当落ち)。日経ブルETFは配当を受け取らないので見かけ上その分下がり、ベアETFは上がります。相場の悪化と取り違えないことが大事です。",
    "watchJa": "当日の日経の下げ幅が配当落ち分より大きいか小さいか(小さければ実質は上昇)。",
    "source": "rule:jp-record-date-last-session-t-plus-2",
-   "actionAuthority": false
+   "actionAuthority": false,
+   "pastTendencyJa": "配当落ちの分(日経平均で約0.4〜0.6%)下がるのは機械的です。それを除くと、ほかの日との差はありません(ARGUSの検証)。"
   },
   {
    "eventId": "jp-market-closed-2026-12-31",
@@ -362,10 +369,11 @@
    "titleJa": "東京市場 休場(年末休業)",
    "importance": "medium",
    "whatJa": "東京証券取引所が休みで、日本株・ETFは売買できません。",
-   "soWhatJa": "休みの間に起きた海外の値動きや材料を、休み明けの寄付きでまとめて織り込みます。休み前に持ち高を調整する動きも出やすい。",
+   "soWhatJa": "休みの間に起きた海外の値動きや材料を、休み明けの寄付きでまとめて織り込みます。",
    "watchJa": "休み中の米国株・ドル円・日経先物(海外市場)の動き。",
    "source": "exchange-calendar",
-   "actionAuthority": false
+   "actionAuthority": false,
+   "pastTendencyJa": "連休前の最終営業日に下がりやすいという傾向は、実績では見られません(ARGUSの検証)。"
   }
  ],
  "dependsOnAi": false,

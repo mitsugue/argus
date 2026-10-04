@@ -20,6 +20,8 @@ export interface MarketSignalRow {
   conditionMet?: boolean | null;
   /** Why a DATA_GATED row is gated: no source rule vs. missing data (server-provided). */
   gateNoteJa?: string | null;
+  /** The value, its week and when it was published (2026-10-04, a situation summary). */
+  factNoteJa?: string | null;
 }
 
 export interface MarketSignalsProjection {
@@ -31,7 +33,7 @@ export interface MarketSignalsProjection {
   signals?: Array<{
     id?: string; family?: string; nameEn?: string; nameJa?: string;
     state?: string; status?: string | null; conditionMet?: boolean | null;
-    gateNoteJa?: string | null;
+    gateNoteJa?: string | null; factNoteJa?: string | null;
   }>;
 }
 
@@ -48,7 +50,7 @@ export const MARKET_SIGNAL_DEFINITIONS: ReadonlyArray<{
   id: string; family: string; nameEn: string; nameJa: string;
 }> = [
   { id: 'SIG-01', family: 'D01', nameEn: 'Margin / Credit Balance', nameJa: '信用残' },
-  { id: 'SIG-02', family: 'D02', nameEn: '1570 / Supply-Demand', nameJa: '1570倍率・需給' },
+  { id: 'SIG-02', family: 'D02', nameEn: '1570 / Supply-Demand', nameJa: '1570制度信用倍率' },
   { id: 'SIG-03', family: 'D03', nameEn: 'Relative Strength', nameJa: '相対力' },
   { id: 'SIG-04', family: 'D04', nameEn: 'Japan Earnings / Valuation', nameJa: 'EPS基準・バリュエーション' },
   { id: 'SIG-05', family: 'D05', nameEn: 'Foreign Investor Flow', nameJa: '海外フロー' },
@@ -108,6 +110,7 @@ export function marketSignalsView(
         id: def.id, family: def.family, nameEn: def.nameEn, nameJa: def.nameJa,
         state, status: raw?.status ?? null, conditionMet: raw?.conditionMet ?? null,
         gateNoteJa: typeof raw?.gateNoteJa === 'string' && raw.gateNoteJa ? raw.gateNoteJa : null,
+        factNoteJa: typeof raw?.factNoteJa === 'string' && raw.factNoteJa ? raw.factNoteJa : null,
       };
     });
     // The numerator is always recounted from the per-signal states so a

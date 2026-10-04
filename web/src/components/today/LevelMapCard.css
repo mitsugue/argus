@@ -1,0 +1,21 @@
+.lm-card { padding: 12px 16px; }
+.lm-note { margin: 4px 0; color: var(--text-sub); font-size: 12px; line-height: 1.5; }
+.lm-eps { color: var(--text-faint); font-size: 11px; }
+.lm-jump { color: var(--text-main); }
+.lm-scroll { overflow-x: auto; margin: 8px 0; }
+.lm-table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 560px; }
+.lm-table th { text-align: left; color: var(--text-faint); font-weight: 600; font-size: 11px; padding: 4px 6px;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.1)); }
+.lm-table td { padding: 5px 6px; vertical-align: top; border-bottom: 1px solid var(--border, rgba(255,255,255,.06));
+  color: var(--text-main); }
+.lm-table td small { display: block; color: var(--text-faint); font-size: 11px; }
+.lm-table .lm-price { font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
+.lm-table .lm-now td { color: var(--text-sub); font-weight: 700; background: var(--surface-muted, rgba(255,255,255,.04)); }
+.lm-guides { margin: 4px 0; font-size: 12px; color: var(--text-sub); font-variant-numeric: tabular-nums; }
+.lm-small { margin: 4px 0; font-size: 11px; color: var(--text-faint); line-height: 1.5; }
+.lm-fixed { margin: 6px 0; padding-left: 18px; font-size: 11px; color: var(--text-faint); line-height: 1.5; }
+.lm-tally { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border, rgba(255,255,255,.1)); }
+.lm-tally b { font-size: 13px; }
+.lm-tally p { margin: 3px 0; font-size: 12px; color: var(--text-sub); line-height: 1.5; }
+.lm-retro { margin-top: 6px; }
+.lm-retro summary { cursor: pointer; font-size: 12px; color: var(--text-faint); }

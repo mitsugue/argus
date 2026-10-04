@@ -35,7 +35,10 @@ HISTORY_CACHE_MAX_BYTES = 32 * 1024 * 1024
 # _flow_publication_availability), the 1570 balances, daily from the
 # 2026-09-25 application date, are read as week-final rows, and a feature
 # lists at most INPUT_REFERENCE_LIMIT input references.
-FEATURE_HISTORY_METHOD_VERSION = "jp-market-feature-method-v3"
+# v4 (2026-10-04): the D02 condition events use the standardized-margin
+# (制度信用) balances of 1570 instead of the total.
+FEATURE_HISTORY_METHOD_VERSION = "jp-market-feature-method-v4"
+D02_MARGIN_SERIES = ("margin.standardized.long_balance", "margin.standardized.short_balance")
 
 
 def history_method_parameters() -> dict[str, Any]:
@@ -92,6 +95,10 @@ def _canonical_fixture_inputs() -> dict[str, Any]:
                     "value": 1.0e6 + 3e5 * swing, "availableFrom": weekly(day)},
                    {"instrumentId": "1570", "seriesId": "margin.short_balance", "periodEnd": day.isoformat(), "unit": "SHARES",
                     "value": 1.0e6 + 3e5 * wave(index + 4, 16), "availableFrom": weekly(day)}]
+        margin += [{"instrumentId": "1570", "seriesId": "margin.standardized.long_balance", "periodEnd": day.isoformat(),
+                    "unit": "SHARES", "value": 6.4e5 + 2e5 * swing, "availableFrom": weekly(day)},
+                   {"instrumentId": "1570", "seriesId": "margin.standardized.short_balance", "periodEnd": day.isoformat(),
+                    "unit": "SHARES", "value": 7.0e5 + 2e5 * wave(index + 4, 16), "availableFrom": weekly(day)}]
         flows.append({"instrumentId": "MARKET", "seriesId": "flow.foreign", "unit": "JPY",
                       "periodEnd": day.isoformat(), "value": 2e11 * wave(index, 11),
                       "availableFrom": weekly(day),
@@ -416,6 +423,34 @@ def _flow_publication_availability(rows):
                    "availabilityBasis": "OFFICIAL_PUBLICATION_DATE",
                    "availabilityRule": FOREIGN_FLOW_AVAILABILITY_RULE}
         result.append(row)
+    return result
+
+
+def input_spans(inputs) -> dict[str, Any]:
+    """Counts, first/last dates and the first date visible near its own date
+    for every input list (2026-10-04). A row known only long after its date
+    (an import time left as knownAt) is invisible to every past cutoff; this
+    names the first row that a cutoff a week after it could see. No values."""
+    lists = {"price_series:" + key: rows for key, rows in (inputs.get("price_series") or {}).items()}
+    lists.update({key: rows for key, rows in inputs.items() if key != "price_series"})
+    result = {}
+    for key, rows in sorted(lists.items()):
+        days, timely = [], []
+        for row in rows or ():
+            if not isinstance(row, Mapping):
+                continue
+            day = _day(row)
+            if len(day) != 10:
+                continue
+            days.append(day)
+            known = _knowledge_time(row)
+            try:
+                if known is not None and (known.date() - date.fromisoformat(day)).days <= 7:
+                    timely.append(day)
+            except ValueError:
+                pass
+        result[key] = {"rows": len(days), "first": min(days, default=None), "last": max(days, default=None),
+                       "firstVisibleWithinWeek": min(timely, default=None)}
     return result
 
 
@@ -817,13 +852,14 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
     conditions.extend(_sign_transitions(points, lambda v: v < JP_MARKET_ENGINE_D01_THRESHOLD_JPY,
                                         SIGN_CONDITION_IDS["D01"], cutoff_day))
     ratio_points = []
+    # D02 is the standardized-margin (制度信用) ratio of 1570 (2026-10-04).
     sides, _ = _pit([dict(r) for r in margin_1570 if isinstance(r, Mapping)
-                     and (r.get("seriesId") or r.get("field")) in ("margin.long_balance", "margin.short_balance")], cutoff)
+                     and (r.get("seriesId") or r.get("field")) in D02_MARGIN_SERIES], cutoff)
     by_period = {}
     for row in sides:
         by_period.setdefault(_day(row), {})[row.get("seriesId") or row.get("field")] = row
     for day, pair in sorted(by_period.items()):
-        long_row, short_row = pair.get("margin.long_balance"), pair.get("margin.short_balance")
+        long_row, short_row = pair.get(D02_MARGIN_SERIES[0]), pair.get(D02_MARGIN_SERIES[1])
         if long_row and short_row and (_number(short_row.get("value")) or 0) > 0 and _number(long_row.get("value")) is not None:
             ratio_points.append((day, _number(long_row["value"]) / _number(short_row["value"]), [long_row, short_row]))
     conditions.extend(_sign_transitions(ratio_points, lambda v: v >= D02_MARGIN_RATIO_THRESHOLD, SIGN_CONDITION_IDS["D02"], cutoff_day))

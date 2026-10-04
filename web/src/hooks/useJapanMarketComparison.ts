@@ -2,10 +2,13 @@ import { useEffect, useState } from 'react';
 import type { ForecastTrackRecord, JapanMarketComparison } from '../types/japanMarketComparison';
 import { validForecastTrackRecord, validJapanMarketComparison } from '../lib/japanMarketComparison';
 import { FEED_VISIBLE_MS } from '../lib/pollingPolicy';
+import { validLevelMap, type LevelMapState } from '../lib/levelMap';
 
 type State = { document: JapanMarketComparison | null; loading: boolean; error: boolean;
-  reason: string | null; lastSuccessfulAcquisitionAt: string | null };
-type Reply = { document: JapanMarketComparison | null; reason: string | null; lastSuccessfulAcquisitionAt: string | null };
+  reason: string | null; lastSuccessfulAcquisitionAt: string | null; levelMap?: LevelMapState | null };
+// levelMap (2026-10-04): the morning map rides the five-session reply.
+type Reply = { document: JapanMarketComparison | null; reason: string | null; lastSuccessfulAcquisitionAt: string | null;
+  levelMap?: LevelMapState | null };
 const memory = new Map<string, Reply>();
 const flights = new Map<string, Promise<Reply>>();
 const empty = (): State => ({ document: null, loading: true, error: false, reason: null, lastSuccessfulAcquisitionAt: null });
@@ -21,7 +24,8 @@ function previous(key: string, horizon: number): Reply | undefined {
     if (!validJapanMarketComparison(value.document, horizon)) return;
     const result: Reply = { document: value.document, reason: null,
       lastSuccessfulAcquisitionAt: typeof value.lastSuccessfulAcquisitionAt === 'string'
-        && Number.isFinite(Date.parse(value.lastSuccessfulAcquisitionAt)) ? value.lastSuccessfulAcquisitionAt : null };
+        && Number.isFinite(Date.parse(value.lastSuccessfulAcquisitionAt)) ? value.lastSuccessfulAcquisitionAt : null,
+      levelMap: validLevelMap(value.levelMap) ? value.levelMap : null };
     memory.set(key, result); return result;
   } catch { return; }
 }
@@ -47,7 +51,8 @@ async function load(base: string, horizon: number): Promise<Reply> {
       lastSuccessfulAcquisitionAt: body.lastSuccessfulAcquisitionAt ?? null };
     if (body.status !== 'available' || body.actionAuthority !== false || body.automaticAiCalls !== 0
       || !validJapanMarketComparison(body.comparison, horizon)) throw new Error('invalid_comparison_response');
-    return { document: body.comparison, reason: null, lastSuccessfulAcquisitionAt: body.lastSuccessfulAcquisitionAt ?? null };
+    return { document: body.comparison, reason: null, lastSuccessfulAcquisitionAt: body.lastSuccessfulAcquisitionAt ?? null,
+      levelMap: validLevelMap(body.levelMap) ? body.levelMap : null };
   } finally { window.clearTimeout(timer); }
 }
 

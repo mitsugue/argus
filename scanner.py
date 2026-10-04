@@ -143,6 +143,7 @@ import argus_index_history
 import jp_market_valuation
 import jp_market_source_adapters
 import jp_market_dynamics
+import argus_macro_frequency
 import jp_market_level_map
 import jp_market_features
 import jp_market_acquisition
@@ -16890,6 +16891,15 @@ def _compose_market_brief():
     if fiscal.get("id"):
         brief["fiscalEnvironment"] = argus_jp_fiscal_runtime.context_reference(fiscal)
         brief["facts"].extend(argus_jp_fiscal_runtime.explanation_facts(fiscal))
+    try:
+        # Past frequencies of the CPI and VIX conditions (2026-10-04): material
+        # for the explanation, with their base rates; never a direction.
+        vix_rows = (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^VIX") or {}).get("data") or []
+        vix_level = vix_rows[-1].get("close") if vix_rows else None
+        cpi = argus_macro_frequency.cpi_state(_US_CPI_CACHE.get("data") or [], today=brief["generatedAt"][:10])
+        brief["facts"].extend(argus_macro_frequency.explanation_facts(cpi, vix_level))
+    except Exception as exc:
+        add_log(f"[brief] macro frequency facts unavailable: {type(exc).__name__}")
     return brief
 
 
@@ -39108,12 +39118,37 @@ def _level_map_warm(nikkei_rows):
                     _LEVEL_MAP["lastCreatedAt"] = now
                 elif result["conflict"]:
                     _LEVEL_MAP["conflicts"] += 1
+        # Scores: the stored (pre-registered) mornings only; the mornings from
+        # June to the first stored one are rebuilt from the stored estimates and
+        # kept apart as counted afterwards (never mixed into the record).
+        try:
+            _LEVEL_MAP["score"] = jp_market_level_map.score_records(_LEVEL_MAP["mornings"], bars, eps_series)
+            first = _LEVEL_MAP["mornings"][0]["morningOf"] if _LEVEL_MAP["mornings"] else None
+            later = [day for day in sessions if day >= _LEVEL_MAP_EPS_SINCE and (not first or day < first)]
+            rebuilt = []
+            for day in later:
+                try:
+                    rebuilt.append(jp_market_level_map.morning_map(day, bars, eps_series, created_at=now))
+                except jp_market_level_map.LevelMapError:
+                    continue
+            _LEVEL_MAP["retrospective"] = jp_market_level_map.score_records(rebuilt, bars, eps_series)
+            _LEVEL_MAP["retrospective"]["preRegisteredOnly"] = False
+        except Exception as exc:
+            _LEVEL_MAP["scoreError"] = type(exc).__name__
         _LEVEL_MAP.update(status="AVAILABLE" if _LEVEL_MAP["mornings"] else "WAITING_FOR_ESTIMATE",
                           lastError=None, lastErrorReason=None)
     except Exception as exc:
         _LEVEL_MAP.update(status="FAILED", lastError=type(exc).__name__, lastErrorReason=str(exc)[:80])
     finally:
         _LEVEL_MAP_LOCK.release()
+
+
+def _level_map_score_summary(score):
+    if not score:
+        return None
+    return {k: score.get(k) for k in ("firstMorning", "mornings", "phases", "phaseOutcomes", "fakeLineOutcomes",
+                                       "turningPoints", "preRegisteredOnly", "ruleVersion")} | {
+        "latestMorning": (score.get("perMorning") or [None])[-1]}
 
 
 def _level_map_public():
@@ -39133,6 +39168,9 @@ def _level_map_public():
             "lastCreatedAt": _LEVEL_MAP.get("lastCreatedAt"), "lastError": _LEVEL_MAP.get("lastError"),
             "lastErrorReason": _LEVEL_MAP.get("lastErrorReason"),
             "estimatesLastWarm": _LEVEL_MAP.get("estimatesLastWarm", 0),
+            "score": _level_map_score_summary(_LEVEL_MAP.get("score")),
+            "retrospective": _level_map_score_summary(_LEVEL_MAP.get("retrospective")),
+            "scoreError": _LEVEL_MAP.get("scoreError"),
             "storage": "LOCAL_DURABLE_APPEND_ONLY", "remoteBackup": "NOT_YET_INCLUDED",
             "actionAuthority": False, "automaticAiCalls": 0}
 
@@ -39310,6 +39348,22 @@ def _index_research_warm():
         _INDEX_RESEARCH_LOCK.release()
 
 
+_JP_MARKET_FEATURE_INPUT_SPANS = {}
+
+
+def _d02_week_end_ratios(margin_rows, weeks=6):
+    std = [r for r in margin_rows or () if r.get("seriesId") in jp_market_features.D02_MARGIN_SERIES]
+    by_period = {}
+    for row in jp_market_dynamics.week_final_rows(std):
+        by_period.setdefault(str(row.get("periodEnd"))[:10], {})[row.get("seriesId")] = row.get("value")
+    out = []
+    for period in sorted(by_period)[-weeks:]:
+        long_value, short_value = (by_period[period].get(k) for k in jp_market_features.D02_MARGIN_SERIES)
+        if isinstance(long_value, (int, float)) and isinstance(short_value, (int, float)) and short_value > 0:
+            out.append({"weekEnd": period, "ratio": round(long_value / short_value, 3)})
+    return out
+
+
 def _jp_market_series_acquisition_status():
     """Counts, first dates and fixed status tokens for the market-condition
     history sources (no values, no rows): enough to name why a series is
@@ -39330,7 +39384,10 @@ def _jp_market_series_acquisition_status():
         "usdjpy": {**span(usdjpy.get("data")), "status": usdjpy.get("lastFetchStatus")},
         "us10y": span(_US10Y_HIST_DATED_CACHE.get("data")),
         "margin1570": {**span([r for r in margin_rows if r.get("seriesId") == "margin.long_balance"], "periodEnd"),
-                       "backfill": _JQ_MARGIN_BACKFILL.get("status")},
+                       "backfill": _JQ_MARGIN_BACKFILL.get("status"),
+                       # D02 (制度信用) at the last six week ends, to check against
+                       # an independent record (2026-10-04).
+                       "standardizedRatioByWeek": _d02_week_end_ratios(margin_rows)},
         "foreignFlow": {**span(flows, "periodEnd"), "refresh": _INVESTOR_TYPES_REFRESH.get("outcome")},
     }
 
@@ -39394,6 +39451,7 @@ def _jp_market_comparison_calculate(horizon):
                       "firstCutoff", "lastCutoff", "sourceWarming", "reuseDecision", "calculationWork")}
         result["marketFeatureAcquisition"]["derivedCache"] = dict(_JP_MARKET_FEATURE_CACHE_STATUS)
         result["marketFeatureAcquisition"]["seriesAcquisition"] = _jp_market_series_acquisition_status()
+        result["marketFeatureAcquisition"]["inputSpans"] = dict(_JP_MARKET_FEATURE_INPUT_SPANS)
         result["marketFeatureAcquisition"]["officialSources"] = _JP_OFFICIAL_SOURCE_CACHE.snapshot()
         if result.get('comparison'):
             result['comparison']['sourceAcquisition'] = {
@@ -39799,16 +39857,20 @@ def _jp_market_engine_margin_1570_rows(*, fetch=False):
     snapshot = (_JQ_MARGIN_CACHE.get("1570") or {}).get("sourceSnapshot") or {}
     by_period = {}
     for row in snapshot.get("rows") or []:
-        if row.get("seriesId") in ("margin.long_balance", "margin.short_balance"):
+        # 2026-10-04: D02 is the standardized-margin ratio (制度信用), not the
+        # total of standardized and negotiable balances. A period without the
+        # standardized split is skipped, never filled with the total.
+        if row.get("seriesId") in ("margin.standardized.long_balance", "margin.standardized.short_balance"):
             by_period.setdefault(row["periodEnd"], {})[row["seriesId"]] = row
     rows = []
     for period, sides in sorted(by_period.items()):
-        long_row = sides.get("margin.long_balance")
-        short_row = sides.get("margin.short_balance")
+        long_row = sides.get("margin.standardized.long_balance")
+        short_row = sides.get("margin.standardized.short_balance")
         if not long_row or not short_row or short_row["value"] <= 0:
             continue
         rows.append({"instrumentId": "1570", "field": "margin_ratio", "date": period,
                      "value": round(long_row["value"] / short_row["value"], 6),
+                     "ratioBasis": "STANDARDIZED_MARGIN", "periodEnd": period,
                      "availableFrom": long_row["availableFrom"],
                      "observedAt": long_row["observedAt"], "publishedAt": None,
                      "sourceRef": long_row["sourceRef"],
@@ -40290,6 +40352,13 @@ def _jp_market_feature_history_warm():
         inputs = {"price_series": price_series, "two_market_credit": credit, "margin_1570": margin,
                   "foreign_flow": [r for r in ledger if r.get("seriesId") == "flow.foreign"], "valuation_loss": loss,
                   "sq_events": sq_events}
+        # 2026-10-04: what each calculation actually received, so a series that
+        # is held but invisible to past cutoffs is named (VIX, D05).
+        try:
+            _JP_MARKET_FEATURE_INPUT_SPANS.clear()
+            _JP_MARKET_FEATURE_INPUT_SPANS.update(jp_market_features.input_spans(inputs), measuredAt=now)
+        except Exception as exc:
+            _JP_MARKET_FEATURE_INPUT_SPANS.update(errorClass=type(exc).__name__)
         identity = hashlib.sha256(json.dumps(inputs, sort_keys=True, ensure_ascii=False, allow_nan=False,
             separators=(",", ":")).encode()).hexdigest()
         if identity == _JP_MARKET_FEATURE_HISTORY.get("inputIdentity") and \
@@ -40351,6 +40420,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     if warm:
         _fred_us10y_history_dated()
         _jquants_topix_history(fetch=True)
+        _fred_history_dated("CPIAUCSL", _US_CPI_CACHE, available_days=50, n=180)
     try:
         credit_rows = _jpx_credit_rows_effective()
     except Exception:
@@ -45162,6 +45232,8 @@ def _fred_us10y_history_dated(n=2600, *, fetch=True):
 
 
 _TOPIX_HIST_CACHE = {"data": None, "expires": 0.0, "status": "NOT_RUN", "lastAttemptAt": None}
+# US CPI index levels (FRED CPIAUCSL, monthly) for the macro past frequencies (2026-10-04).
+_US_CPI_CACHE = {"data": None, "expires": 0.0}
 
 
 def _jquants_topix_history(fetch=False):

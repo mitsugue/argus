@@ -120,7 +120,7 @@ export function materialRows(features: FeatureRow[], fiveDayChangePct: number | 
     soWhat: `5日で+0.15ポイント以上上がった後も、日経が5日後に上がっていたのは${US10Y_RISE_HISTORY.upPct}%(普段${US10Y_RISE_HISTORY.baseUpPct}%)で、逆風とはみなしません。` });
   const m1570 = f('margin1570.ratio');
   if (m1570 !== undefined) rows.push({ id: 'm1570', lean: m1570 >= 1 ? 'soft-head' : 'tail',
-    title: `日経レバの信用倍率 ${m1570.toFixed(1)}倍(${m1570 >= 1 ? '買いが多い' : '売りが多い'})`,
+    title: `日経レバの信用倍率(制度+一般の合計) ${m1570.toFixed(1)}倍(${m1570 >= 1 ? '買いが多い' : '売りが多い'})`,
     meaning: m1570 >= 1 ? '上がった所で利益確定の売りが出やすい。' : '下がった所で買い戻しが入りやすい。',
     what: '日経平均の2倍型ETF(1570)を、借金で買っている量÷借りて売っている量です。',
     now: `買い残が売り残の${m1570.toFixed(1)}倍です。`,

@@ -9,6 +9,7 @@ import { JapanMarketComparisonChart } from '../chart/JapanMarketComparisonChart'
 import { MarketAnalysisHistory } from './MarketAnalysisHistory';
 import { TodayDecisionStrip } from './TodayDecisionStrip';
 import { MarketPositionCard } from './MarketPositionCard';
+import { LevelMapCard } from './LevelMapCard';
 import { friendlyFactText } from '../../lib/todayDecision';
 import './ArgusEditorialSurface.css';
 
@@ -71,6 +72,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
             <small>{label}</small><p>{text}</p></div> : null;
         })}
       </section>}
+      <LevelMapCard />
       <details className="argus-editorial__vault">
         <summary>根拠・データ・過去の記録を見る</summary>
         {plan.elements.map(choice => {

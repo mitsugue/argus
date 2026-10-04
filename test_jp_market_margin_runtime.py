@@ -51,7 +51,9 @@ def test_collect_preserves_old_totals_and_all_credit_components(feed):
 
 def test_ratio_formula_preserved_with_actual_availability(feed):
     result = scanner._jp_market_engine_margin_1570_rows(fetch=True)
-    assert [r["value"] for r in result] == [6, 10]
+    # D02 is the standardized-margin ratio: LongStdVol / ShrtStdVol (2026-10-04).
+    assert [r["value"] for r in result] == [round(80 / 18, 6), round(100 / 12, 6)]
+    assert all(r["ratioBasis"] == "STANDARDIZED_MARGIN" for r in result)
     assert all(r["availableFrom"] == "2026-09-12T01:12:11+00:00" for r in result)
     assert scanner._jp_market_margin_1570_dynamics(cutoff="2026-09-11T23:00:00Z")["current"] is None
     current = scanner._jp_market_margin_1570_dynamics(cutoff="2026-09-12T02:00:00Z")
@@ -196,3 +198,14 @@ def test_daily_balances_from_2026_09_25_keep_week_over_week_reads(feed, monkeypa
     dynamics = scanner._jp_market_margin_1570_dynamics(cutoff="2026-10-03T02:00:00Z")
     assert dynamics["current"]["periodEnd"] == "2026-09-25"
     assert dynamics["change"]["isOneWeekChange"] is True
+
+
+def test_d02_week_end_ratios_for_an_independent_check():
+    rows = []
+    for day, long_std, short_std in (("2026-09-18", 670.1, 100.0), ("2026-09-24", 600.0, 100.0),
+                                     ("2026-09-25", 511.5, 100.0), ("2026-09-28", 500.0, 100.0)):
+        rows += [{"seriesId": "margin.standardized.long_balance", "periodEnd": day, "value": long_std},
+                 {"seriesId": "margin.standardized.short_balance", "periodEnd": day, "value": short_std},
+                 {"seriesId": "margin.long_balance", "periodEnd": day, "value": 9999.0}]
+    assert scanner._d02_week_end_ratios(rows) == [{"weekEnd": "2026-09-18", "ratio": 6.701},
+                                                   {"weekEnd": "2026-09-25", "ratio": 5.115}]

@@ -50,8 +50,11 @@ class SignConditionTest(unittest.TestCase):
         self.assertEqual([c for c in early_cutoff["conditions"] if c["seriesId"].startswith("d01")], [])
 
     def test_d02_d05_and_d04_from_their_own_series(self):
-        longs = weekly("margin.long_balance", "2026-07-03", [100, 100, 100, 100], instrument="1570")
-        shorts = weekly("margin.short_balance", "2026-07-03", [120, 110, 90, 95], instrument="1570")
+        # D02 reads the standardized-margin (制度信用) balances; the totals are ignored (2026-10-04).
+        longs = weekly("margin.standardized.long_balance", "2026-07-03", [100, 100, 100, 100], instrument="1570")
+        shorts = weekly("margin.standardized.short_balance", "2026-07-03", [120, 110, 90, 95], instrument="1570")
+        longs += weekly("margin.long_balance", "2026-07-03", [500, 500, 500, 500], instrument="1570")
+        longs += weekly("margin.short_balance", "2026-07-03", [100, 100, 100, 100], instrument="1570")
         flows = weekly("flow.foreign", "2026-07-03", [-1e9, 2e9, 3e9, -4e9])
         per = [{**row, "instrumentId": "NIKKEI_225_PER", "seriesId": "close"} for row in
                daily("NIKKEI_225_PER", "2026-09-01", [18.5, 18.9, 19.1, 19.3, 18.8])]

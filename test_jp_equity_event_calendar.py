@@ -129,3 +129,23 @@ def test_us_funding_deadline_comes_from_a_quoted_public_source():
         assert str(exc) == "us_policy_dates_invalid"
     listed = {e["eventId"] for e in cal.equity_event_calendar(now=NOW, horizon_days=90)["events"]}
     assert "us-funding-deadline-2026-12-11" in listed
+
+
+def test_calendar_effects_carry_the_measured_past_without_a_direction():
+    """2026-10-04: SQ, ex-dividend, holidays and the Nikkei review carry one line
+    of what the past shows; claims that did not survive the re-check are gone."""
+    from datetime import datetime
+    out = cal.equity_event_calendar(now=datetime.fromisoformat("2026-09-20T09:00:00+09:00"), horizon_days=90)
+    by_kind = {}
+    for event in out["events"]:
+        by_kind.setdefault(event["kind"], event)
+    assert "差はありません" in by_kind["SQ"]["pastTendencyJa"] or "差はありません" in by_kind["MAJOR_SQ"]["pastTendencyJa"]
+    assert "機械的" in by_kind["EX_DIVIDEND"]["pastTendencyJa"]
+    assert "+2.7%" in by_kind["NIKKEI_PERIODIC_REVIEW"]["pastTendencyJa"]
+    assert "見られません" in by_kind["JP_MARKET_CLOSED"]["pastTendencyJa"]
+    for event in out["events"]:
+        assert "底堅くなりやすい" not in event["soWhatJa"]
+        assert "持ち高を調整する動きも出やすい" not in event["soWhatJa"]
+        text = event.get("pastTendencyJa") or ""
+        for word in ("確率", "買い時", "売り時", "必ず"):
+            assert word not in text

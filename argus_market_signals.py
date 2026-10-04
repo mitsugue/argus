@@ -26,7 +26,7 @@ SIGNAL_DEFINITIONS = (
     {"id": "SIG-01", "family": "D01", "nameEn": "Margin / Credit Balance",
      "nameJa": "信用残", "sourceRole": "JPX two-market credit ledger"},
     {"id": "SIG-02", "family": "D02", "nameEn": "1570 / Supply-Demand",
-     "nameJa": "1570倍率・需給", "sourceRole": "J-Quants weekly margin (1570)"},
+     "nameJa": "1570制度信用倍率", "sourceRole": "J-Quants margin (1570, standardized)"},
     {"id": "SIG-03", "family": "D03", "nameEn": "Relative Strength",
      "nameJa": "相対力", "sourceRole": "verified ETF proxy bars (1321 vs SPY)"},
     {"id": "SIG-04", "family": "D04", "nameEn": "Japan Earnings / Valuation",
@@ -113,6 +113,10 @@ def project_market_signals(
             # DATA_GATED covers two different situations; the note tells the
             # owner which one this is, without changing the counting rule.
             "gateNoteJa": _gate_note_ja(row, state),
+            # 2026-10-04: the value, its week and when it was published, as a
+            # situation summary (never a probability or a trading signal).
+            "factNoteJa": (row.get("factNoteJa") if isinstance(row, Mapping)
+                           and isinstance(row.get("factNoteJa"), str) else None),
         })
     active = counts["ACTIVE"]
     return {

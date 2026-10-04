@@ -22,8 +22,8 @@ import pytest
 import jp_market_features as features
 
 ROOT = Path(__file__).resolve().parent
-PINNED_VERSION = "jp-market-feature-method-v3"
-PINNED_FIXTURE_RESULT = "a73614cc7917d199dd243192a8e2614d541e6b54fd8fa11ae94db164b5e10f13"
+PINNED_VERSION = "jp-market-feature-method-v4"
+PINNED_FIXTURE_RESULT = "2a91785d7f86b8cbc34c177cacfb6e7efdde185e7df4829e9d7596cc6f21573c"
 MODULES = ("jp_market_features.py", "jp_market_engine.py", "jp_market_dynamics.py",
            "jp_market_analogs.py", "jp_market_acquisition.py")
 
@@ -161,7 +161,7 @@ def test_changed_formula_or_parameter_changes_identity(edit):
 
 def test_version_advance_changes_identity():
     before = features.history_method_identity()
-    with patch.object(features, 'FEATURE_HISTORY_METHOD_VERSION', 'jp-market-feature-method-v4'):
+    with patch.object(features, 'FEATURE_HISTORY_METHOD_VERSION', 'jp-market-feature-method-v5'):
         assert features.history_method_identity() != before
 
 
@@ -477,3 +477,14 @@ def test_ten_year_vix_macd_lists_bounded_references():
     assert len(json.dumps(snapshot, ensure_ascii=False)) < 200_000
     short = next(r for r in snapshot["features"] if r["seriesId"] == "vix.change5")
     assert len(short["inputReferences"]) == 6 and "inputReferenceCount" not in short
+
+
+def test_input_spans_name_rows_held_but_invisible_to_past_cutoffs():
+    """2026-10-04: VIX 2016-2024 and the foreign flow were held but known only
+    from their import; input_spans shows the first row visible near its date."""
+    late = [{"instrumentId": "VIX", "date": "2018-02-05", "close": 37.3, "availableFrom": "2026-09-19T17:40:46Z"},
+            {"instrumentId": "VIX", "date": "2024-11-25", "close": 15.0, "availableFrom": "2024-11-26T00:00:00Z"}]
+    spans = features.input_spans({"price_series": {"vix": late}, "foreign_flow": []})
+    assert spans["price_series:vix"] == {"rows": 2, "first": "2018-02-05", "last": "2024-11-25",
+                                         "firstVisibleWithinWeek": "2024-11-25"}
+    assert spans["foreign_flow"] == {"rows": 0, "first": None, "last": None, "firstVisibleWithinWeek": None}

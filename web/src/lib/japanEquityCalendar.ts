@@ -2,6 +2,7 @@
 export interface EquityCalendarEvent {
   eventId: string; kind: string; at: string; dateOnly: boolean; date: string; daysUntil: number;
   titleJa: string; importance: 'high' | 'medium' | 'low'; whatJa: string; soWhatJa: string; watchJa: string;
+  pastTendencyJa?: string | null;
   source: string; actionAuthority: false;
 }
 export interface EquityCalendar {

@@ -543,3 +543,43 @@ class IdentityStockLensAndProjectionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_d01_places_the_short_balance_within_its_last_52_weeks():
+    """2026-10-04: the fixed 800 billion yen line beside the latest week's
+    place among the last 52 weeks, its week and when it was known."""
+    import jp_market_engine as engine
+    from datetime import date, timedelta
+    rows = []
+    start = date(2025, 9, 5)
+    for i in range(60):
+        friday = start + timedelta(weeks=i)
+        value = 7.0e11 + 1e9 * i if i < 59 else 7.2e11
+        rows.append({"seriesId": "credit.short_balance", "instrumentId": "MARKET", "periodEnd": friday.isoformat(),
+                     "value": value, "availableFrom": (friday + timedelta(days=5)).isoformat() + "T06:00:00Z"})
+    result = engine.evaluate_d01(rows, cutoff="2026-11-30T00:00:00Z")
+    f = result["features"]
+    assert f["shortBalancePeriodEnd"] == rows[-1]["periodEnd"]
+    assert f["shortBalanceKnownAt"].startswith((start + timedelta(weeks=59, days=5)).isoformat())
+    # 7.2e11 is above the 20 earliest of the previous 51 weeks in the window.
+    window = [r["value"] for r in rows[-52:-1]]
+    assert f["shortBalanceRank52w"] == round(sum(1 for v in window if v < 7.2e11) / 51, 3)
+    assert result["conditionMet"] is True                       # the fixed line is unchanged
+
+
+def test_fact_notes_name_the_week_and_publication_without_signal_words():
+    import jp_market_engine as engine
+    d01 = engine.fact_note_ja("D01", {"status": "AVAILABLE", "features": {
+        "shortBalance": 1.04e12, "shortBalanceRank52w": 0.885, "shortBalancePeriodEnd": "2026-09-25",
+        "shortBalanceKnownAt": "2026-09-29T06:00:00+00:00"}})
+    assert d01 == "二市場の信用売り残 10,400億円（過去52週の中で低い方から88%の位置）・9/25週の値・9/29公表"
+    d02 = engine.fact_note_ja("D02", {"status": "AVAILABLE", "marginRatio": 5.115, "ratioBasis": "STANDARDIZED_MARGIN",
+                                      "periodEnd": "2026-09-25", "knownAt": "2026-09-30T00:00:00+00:00"})
+    assert d02.startswith("日経レバの制度信用の倍率 5.12倍・9/25の値")
+    d05 = engine.fact_note_ja("D05", {"status": "AVAILABLE", "flowValue": -1.2e11, "periodEnd": "2026-09-25",
+                                      "availableFrom": "2026-10-01T18:00:00+09:00"})
+    assert d05 == "海外投資家（二市場）1,200億円の売り越し・9/25週・10/1公表"
+    assert engine.fact_note_ja("D02", {"status": "MISSING"}) is None
+    for text in (d01, d02, d05):
+        for word in ("確率", "買い", "売り時", "BUY", "SELL", "合図"):
+            assert word not in text
