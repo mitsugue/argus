@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.26"
+PRODUCT_VERSION = "v13.8.27"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
-    'web/scripts/pwa-identity.test.mjs': 'bfb037310a8a954c6e9b75b1f7a7697e1addfbd6',
-    'web/scripts/owner-today-https.mjs': 'e074f1ba5f62980975d5436c6f80abdd8a1eba1d',
+    'web/scripts/pwa-identity.test.mjs': '8a971cd43ab205205b958c9cd83e777fb69fce66',
+    'web/scripts/owner-today-https.mjs': '617895215ac53cbf13c7c3de368a2564212dcec6',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -154,10 +154,10 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/ops/owner-server-auth.md': 'd745850b1c9bb742783be9f230261cee5b9d782f',
     'scripts/owner_auth_backup.py': '55b2d8f41918c9ae5880c7ae23a764e5e1506e8a',
     'test_argus_owner_auth.py': '46048a6639688e01c8d3b89f23b98815fa91ce00',
-    'web/scripts/owner-session.test.cjs': '5ded30cc586b6ae52ea6efec67708d125bc209e2',
+    'web/scripts/owner-session.test.cjs': '92978aaad746d76783eb5fa01cf09efd170d7768',
     'web/src/components/OwnerAccess.css': '711268ba1b8478611e939f7cfecfd822c012ff44',
-    'web/src/components/OwnerAccess.tsx': '3b2c7cb6c5d5a12f483c3794841fd7e506a94ca2',
-    'web/src/lib/ownerSession.ts': '55e9e8423108b1bbd0ef9b7268b526a0fc1e188e',
+    'web/src/components/OwnerAccess.tsx': '247ccb8c05747424a8668a3406e8bae6391c897a',
+    'web/src/lib/ownerSession.ts': 'ca53697a282964517a0a493fc48867deb7860e4d',
     'docs/MACRO_RESULT_RECEIPT_MIGRATION.md': '131e4784bd6be96daf0c9dda4b318735840cdcba',
     'test_argus_macro_receipt_boundary.py': '4fa5e23ee6392489497483a65ca90e1786b92d1d',
 
