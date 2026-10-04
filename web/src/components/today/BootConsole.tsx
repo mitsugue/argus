@@ -5,6 +5,7 @@ import { useTodayHeadline } from '../../hooks/useTodayHeadline';
 import { useImportantEvents } from '../../hooks/useImportantEvents';
 import { useMarketBrief } from '../../hooks/useMarketBrief';
 import { useAIJudgment } from '../../hooks/useAIJudgment';
+import { useFutureMapLoad } from '../../hooks/useFutureMap';
 import './BootConsole.css';
 
 /** One centered console that stays up until every Today lane has settled.
@@ -61,13 +62,20 @@ export function useBootLanes(inputs: BootConsoleInputs): BootLane[] {
   const events = useImportantEvents();
   const brief = useMarketBrief();
   const judgment = useAIJudgment();
+  const futureMap = useFutureMapLoad();
   return useMemo<BootLane[]>(() => {
     const chart = chartLaneStatus(inputs.chart);
     const index: BootLaneStatus = inputs.index.loading ? 'loading'
       : inputs.index.data ? 'ready'
         : (inputs.index.error || inputs.index.expectedSkip) ? 'unavailable' : 'loading';
+    // The stored headline shows at once while it is being re-read
+    // ('revalidating'); that is still loading, not a settled cached view.
+    // Only a failed re-read leaves it 'cached' (2026-10-04: the console
+    // closed while this lane still read 'cached').
     const headlineStatus: BootLaneStatus = headline.status === 'loading' ? 'loading'
-      : headline.status === 'data' ? (headline.stale ? 'cached' : 'ready') : 'unavailable';
+      : headline.status === 'data'
+        ? (headline.stale ? (headline.reason === 'revalidating' ? 'loading' : 'cached') : 'ready')
+        : 'unavailable';
     const eventStatus: BootLaneStatus = events.loading ? 'loading'
       : events.data ? 'ready' : 'unavailable';
     const marketNews: BootLaneStatus = inputs.news.loading ? 'loading'
@@ -87,21 +95,22 @@ export function useBootLanes(inputs: BootConsoleInputs): BootLane[] {
           : judgment.data.freshness === 'stale' ? 'cached' : 'ready';
     const decision: BootLaneStatus = inputs.decision.loading ? 'loading'
       : inputs.decision.subjects ? 'ready' : 'unavailable';
+    // Lanes follow the Today screen from top to bottom (owner, 2026-10-04).
     return [
-      { id: 'nikkei', label: 'Nikkei 225 forecast', detail: 'verified snapshot · index series',
-        status: combine(chart, index) },
-      { id: 'headline', label: 'Market headline', detail: 'four instruments · sessions',
-        status: headlineStatus },
-      { id: 'events', label: 'Event calendar', detail: 'upcoming · countdown',
-        status: eventStatus },
-      { id: 'news', label: 'News intelligence', detail: 'headlines · material events',
-        status: combine(marketNews, intel) },
-      { id: 'outlook', label: 'Integrated outlook', detail: 'market brief · judgment',
+      { id: 'outlook', label: 'Today outlook', detail: 'integrated AI · market position',
         status: combine(briefStatus, judgmentStatus) },
-      { id: 'decision', label: 'Decision evidence', detail: 'canonical artifacts',
+      { id: 'future-map', label: 'FUTURE MAP', detail: 'external views table',
+        status: futureMap },
+      { id: 'nikkei', label: 'Nikkei 225 & analogs', detail: 'verified calc · index · market headline',
+        status: combine(combine(chart, index), headlineStatus) },
+      { id: 'decision', label: 'Decision evidence', detail: 'data · seven signs · call',
         status: decision },
+      { id: 'news', label: 'Material news', detail: 'headlines · market risk',
+        status: combine(marketNews, intel) },
+      { id: 'events', label: 'Event calendar', detail: 'next 30 days · SQ',
+        status: eventStatus },
     ];
-  }, [inputs, headline.status, headline.stale, events.loading, events.data,
+  }, [inputs, headline.status, headline.stale, headline.reason, futureMap, events.loading, events.data,
     brief.loading, brief.brief, judgment.loading, judgment.data, judgment.phase]);
 }
 

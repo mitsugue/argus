@@ -32,6 +32,9 @@ export function futureMapChanged(previous: FutureMapDoc | null, next: FutureMapD
 }
 
 let current: FutureMapDoc | null = null;
+/** For the loading console: 'loading' until the first read settles. */
+export type FutureMapLoad = 'loading' | 'ready' | 'unavailable';
+let load: FutureMapLoad = 'loading';
 let flight: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach(listener => listener());
@@ -39,16 +42,24 @@ const emit = () => listeners.forEach(listener => listener());
 /** Read the table once; keep the last one when the read fails. */
 export function refreshFutureMap(): Promise<void> {
   const base = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '') ?? '';
-  if (!base) return Promise.resolve();
+  if (!base) {                                                 // never leave the console waiting
+    if (load === 'loading') { load = 'unavailable'; emit(); }
+    return Promise.resolve();
+  }
   if (flight) return flight;
   flight = fetch(`${base}/api/argus/future-map`, { cache: 'no-store' })
     .then(r => (r.ok ? r.json() : null))
     .then(body => {
-      if (body && body.availability === 'AVAILABLE' && validFutureMap(body) && futureMapChanged(current, body)) {
-        current = body; emit();
-      }
+      const valid = !!body && body.availability === 'AVAILABLE' && validFutureMap(body);
+      const nextLoad: FutureMapLoad = valid || current ? 'ready' : 'unavailable';
+      const changed = valid && futureMapChanged(current, body);
+      if (changed) current = body;
+      if (changed || nextLoad !== load) { load = nextLoad; emit(); }
     })
-    .catch(() => { /* the last table stays */ })
+    .catch(() => {                                              // the last table stays
+      const nextLoad: FutureMapLoad = current ? 'ready' : 'unavailable';
+      if (nextLoad !== load) { load = nextLoad; emit(); }
+    })
     .finally(() => { flight = null; });
   return flight;
 }
@@ -71,6 +82,12 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
+export function useFutureMapLoad(): FutureMapLoad {
+  const value = useSyncExternalStore(subscribe, () => load, () => load);
+  useEffect(() => { void refreshFutureMap(); }, []);
+  return value;
+}
+
 export function useFutureMap(): FutureMapDoc | null {
   const doc = useSyncExternalStore(subscribe, () => current, () => current);
   useEffect(() => { void refreshFutureMap(); }, []);           // every time Today is shown
@@ -79,7 +96,7 @@ export function useFutureMap(): FutureMapDoc | null {
 
 /** Test seam: forget the table and stop the shared sync. */
 export function resetFutureMapForTest(): void {
-  current = null; flight = null; listeners.clear();
+  current = null; load = 'loading'; flight = null; listeners.clear();
   if (stopSync) { stopSync(); stopSync = null; }
 }
 

@@ -20,11 +20,19 @@ assert.match(component, /Math\.round\(\(done \/ total\) \* 100\)/);
 assert.doesNotMatch(component, /setInterval|Math\.random|fakeProgress|simulated/i,
   'progress must come from lane state, never a timer or a random walk');
 
-// The four owner priorities and the two supporting lanes, in English.
-for (const label of ['Nikkei 225 forecast', 'Event calendar', 'News intelligence',
-  'Integrated outlook', 'Market headline', 'Decision evidence']) {
-  assert.ok(component.includes(`label: '${label}'`), label);
-}
+// Lanes follow the Today screen from top to bottom (owner, 2026-10-04), in English.
+const order = ['Today outlook', 'FUTURE MAP', 'Nikkei 225 & analogs', 'Decision evidence',
+  'Material news', 'Event calendar'];
+const positions = order.map((label) => component.indexOf(`label: '${label}'`));
+assert.ok(positions.every((at) => at > 0), 'every lane is present');
+assert.deepEqual([...positions].sort((a, b) => a - b), positions, 'lanes are in screen order');
+assert.equal((component.match(/\{ id: '/g) ?? []).length, order.length, 'no lane outside the screen');
+// The market headline feeds the Nikkei chart lane. A stored headline shown
+// while it is re-read is still loading; only a failed re-read is 'cached'.
+assert.match(component, /headline\.reason === 'revalidating' \? 'loading' : 'cached'/);
+assert.match(component, /combine\(combine\(chart, index\), headlineStatus\)/);
+assert.match(component, /status: futureMap/);
+
 // Failure is reported, not hidden.
 assert.match(component, /'unavailable'/);
 assert.match(component, /STATUS_WORD/);
@@ -65,4 +73,4 @@ assert.match(command, /snapshotState: selectedChart\.snapshotState/);
 assert.match(command, /loading: decisionEvidence\.loading/);
 assert.equal((command.match(/<BootConsole /g) ?? []).length, 1);
 
-console.log('boot-console.test: ok (real progress, English lanes, portal, non-blocking, reduced motion)');
+console.log('boot-console.test: ok (real progress, screen-order lanes, portal, non-blocking, reduced motion)');
