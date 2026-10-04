@@ -41002,12 +41002,46 @@ def _jquants_dividend_audit(day):
     return result
 
 
+# 2026-10-04: J-Quants added /equities/valuation (2026-09-14, EPS/FwdEPS/
+# PER/PBR/ROE/MktCap daily for every issue) and /fins/earnings-date
+# (2026-08-03, announcement dates for every issue). Their field names and
+# fill rates are read here before anything is built on them.
+_JQUANTS_SHAPE_AUDIT_ENDPOINTS = ("/equities/valuation", "/fins/earnings-date")
+_JQUANTS_SHAPE_AUDIT_PARAMS = ("code", "date", "from", "to")
+
+
+def _jquants_shape_audit(endpoint, params):
+    result = {"schemaVersion": "jquants-shape-audit-v1", "status": "failed", "endpoint": endpoint,
+              "params": params, "automaticAiCalls": 0, "actionAuthority": False}
+    if not _JQUANTS_API_KEY:
+        result["errorClass"] = "jquants_key_missing"
+        return result
+    try:
+        rows = _jquants_paginated(endpoint, params, max_pages=6, request_timeout=20)
+        keys = sorted({key for row in rows for key in row})
+        result.update(rowCount=len(rows), columns=keys[:80],
+                      filled={key: sum(1 for row in rows if row.get(key) not in (None, "", "-")) for key in keys[:80]},
+                      sample=rows[:3], status="success")
+    except Exception as exc:
+        result["errorClass"] = type(exc).__name__[:80]
+        result["detail"] = str(exc)[:80]
+    return result
+
+
 @app.route("/api/argus/admin/jquants/dividend-audit", methods=["POST"])
 def api_argus_admin_jquants_dividend_audit():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
     body = request.get_json(silent=True) or {}
+    endpoint = str(body.get("endpoint") or "")
+    if endpoint:
+        raw = body.get("params") if isinstance(body.get("params"), dict) else {}
+        params = {key: str(raw[key])[:10] for key in _JQUANTS_SHAPE_AUDIT_PARAMS if raw.get(key)}
+        if endpoint not in _JQUANTS_SHAPE_AUDIT_ENDPOINTS or not params:
+            return jsonify({"error": "allowed_endpoint_and_params_required"}), 400
+        result = _jquants_shape_audit(endpoint, params)
+        return jsonify(result), (200 if result.get("status") == "success" else 503)
     day = str(body.get("date") or "")[:10]
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
         return jsonify({"error": "date_required"}), 400
