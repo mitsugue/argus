@@ -39030,6 +39030,20 @@ def _level_map_history_path():
     return os.path.join(_DURABILITY_PATHS["root"], "market_analysis_history.sqlite3")
 
 
+_NIKKEI225_CHANGES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ops", "calendar",
+                                       "nikkei225_constituent_changes.json")
+
+
+def _nikkei225_constituent_changes():
+    """Nikkei's published constituent changes (official history PDF, checked by hand)."""
+    try:
+        with open(_NIKKEI225_CHANGES_PATH, encoding="utf-8") as handle:
+            value = json.load(handle)
+        return value if value.get("schemaVersion") == "nikkei225-constituent-changes-v1" else None
+    except (OSError, ValueError):
+        return None
+
+
 def _level_map_remote():
     """The existing private store connection, or None when it is not configured."""
     repo = os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", "")
@@ -39104,10 +39118,12 @@ def _level_map_warm(nikkei_rows):
                 values = _jq_valuation_for_date(day, headers)
                 if not values:
                     continue
+                members, members_label = jp_market_level_map.constituents_on(
+                    day, constituents, as_of, _nikkei225_constituent_changes())
                 try:
                     estimate = jp_market_level_map.weighted_eps(
-                        values, constituents, index_close=float(close_by_day[day]), date=day,
-                        constituents_as_of=as_of or "unknown")
+                        values, members, index_close=float(close_by_day[day]), date=day,
+                        constituents_as_of=members_label)
                 except jp_market_level_map.LevelMapError:
                     continue
                 estimate["recordedAt"] = now

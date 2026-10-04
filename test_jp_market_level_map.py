@@ -178,7 +178,7 @@ def test_glue_stores_the_estimate_and_one_morning_map_before_the_open(monkeypatc
     assert [m["morningOf"] for m in state["mornings"]] == ["2026-10-05"]
     record = state["mornings"][0]
     assert record["previousSession"] == "2026-10-02" and record["epsDate"] == "2026-10-02"
-    assert record["epsBasis"] == m.EPS_BASIS and record["constituentsAsOf"] == "2026-08-31"
+    assert record["epsBasis"] == m.EPS_BASIS and record["constituentsAsOf"] == "2026-08-31+入れ替え2026-10-01"
     scanner._level_map_warm(rows)                                      # no second map, no rewrite
     assert history.read_level_map_state(path)["mornings"] == [record]
     public = scanner._level_map_public()
@@ -276,3 +276,16 @@ def test_level_map_remote_copy_is_immutable_and_restores_into_empty_tables(tmp_p
     remote.files[key] = remote.files[key].replace(b"9:35:39", b"9:35:40")
     with pytest.raises(ValueError):
         backup.restore(other, remote)
+
+
+def test_constituents_follow_published_changes_after_the_weight_table():
+    import json, pathlib
+    changes = json.loads((pathlib.Path(__file__).parent / "ops/calendar/nikkei225_constituent_changes.json").read_text())
+    base = ["1332", "4902", "543A", "7004", "9984"]
+    before, label_before = m.constituents_on("2026-09-30", base, "2026-08-31", changes)
+    after, label_after = m.constituents_on("2026-10-01", base, "2026-08-31", changes)
+    assert before == sorted(base) and label_before == "2026-08-31"
+    assert after == sorted(["1332", "9984", "5016", "6525", "9697"]) and label_after == "2026-08-31+入れ替え2026-10-01"
+    # A weight table already after the change is not changed again.
+    assert m.constituents_on("2026-11-02", after, "2026-10-30", changes)[0] == after
+    assert changes["sourceRef"].startswith("https://indexes.nikkei.co.jp/") and len(changes["sourceSha256"]) == 64

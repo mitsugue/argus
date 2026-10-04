@@ -1,0 +1,11 @@
+{
+ "schemaVersion": "nikkei225-constituent-changes-v1",
+ "sourceRef": "https://indexes.nikkei.co.jp/nkave/archives/file/history_of_nikkei_stock_average_component_changes_jp.pdf",
+ "sourceTitleJa": "日経平均株価銘柄変更履歴(2026/10/1現在)",
+ "sourceSha256": "d87c46bf97534ebe732fb0cdfb5f6661361446ac5e59a3f2c8596a466421792d",
+ "checkedAt": "2026-10-04",
+ "noteJa": "効力発生日から構成銘柄が入れ替わる。月末のウエート表より後の入れ替えだけを当てる。9/30時点のウエート表は入れ替え前の顔ぶれ(4902・543A・7004を含み、5016・6525・9697を含まない)であることを確認済み。",
+ "rows": [
+  {"effective": "2026-10-01", "removed": ["4902", "543A", "7004"], "added": ["5016", "6525", "9697"]}
+ ]
+}

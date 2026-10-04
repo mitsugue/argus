@@ -183,6 +183,24 @@ def weighted_eps(valuation: Mapping[str, Mapping[str, Any]], constituents: Itera
             "officialValue": False}
 
 
+def constituents_on(day: str, base_codes: Iterable[str], base_as_of: Optional[str],
+                    changes: Optional[Mapping[str, Any]]) -> tuple:
+    """The constituents on `day`: the weight table's members with every
+    published change effective after the table's date and on or before `day`
+    applied (2026-10-04: the 9/30 table predates the 10/1 review). Returns
+    (codes, label of what was applied)."""
+    codes = {str(code) for code in base_codes}
+    applied = []
+    for row in sorted((changes or {}).get("rows") or [], key=lambda r: str(r.get("effective"))):
+        effective = str(row.get("effective") or "")
+        if len(effective) == 10 and (not base_as_of or effective > base_as_of) and effective <= day:
+            codes -= {str(c) for c in row.get("removed") or ()}
+            codes |= {str(c) for c in row.get("added") or ()}
+            applied.append(effective)
+    label = (base_as_of or "unknown") + ("+入れ替え" + ",".join(applied) if applied else "")
+    return sorted(codes), label
+
+
 # --- prices --------------------------------------------------------------------
 
 def _bars(rows: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
