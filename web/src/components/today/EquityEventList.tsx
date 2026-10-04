@@ -24,6 +24,7 @@ export function EquityEventList() {
         <dt>何が起きる?</dt><dd>{event.whatJa}</dd>
         <dt>だから?</dt><dd>{event.soWhatJa}</dd>
         <dt>見るところ</dt><dd>{event.watchJa}</dd>
+        {event.pastTendencyJa && <><dt>過去の傾向</dt><dd>{event.pastTendencyJa}</dd></>}
       </dl>
     </details>)}
     {calendar.data?.gaps.some(gap => gap.startsWith('jp_macro_schedule_not_published')) &&
