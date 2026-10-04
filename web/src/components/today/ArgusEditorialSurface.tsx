@@ -56,6 +56,10 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
           : (retainedNote ?? '前回の説明を表示中です。数字とチャートは最新です。')}</p>}
       <TodayDecisionStrip brief={brief} />
       <MarketPositionCard brief={brief} />
+      {/* 2026-10-04: saving failed for 15 hours with no sign on the screen. */}
+      {brief.analysisHistory?.status === 'SAVE_FAILED' && <p role="status" className="argus-editorial__retained"
+        data-argus-contract="analysis-history-save-failed-v1">
+        この見立ては、あとで振り返るための履歴に保存できませんでした。表示している内容は最新です。</p>}
       {readable.length > 0 && <section className="argus-editorial__digest" aria-label="ARGUSの読み">
         <h2>ARGUSの読み</h2>
         {readable.map(choice => {
