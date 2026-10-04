@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.30"
+PRODUCT_VERSION = "v13.8.31"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -87,9 +87,9 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_recovery_measurement.py': 'b7beb4b6c1915ddb2cfab0857f31a82cc5c5c832',
     'test_argus_recovery_registry.py': 'd1132e69768b5a9edf9bbf964bd8df476edda4b8',
     # Today boot console (owner 2026-09-28): exact reviewed contents.
-    'web/scripts/boot-console.test.mjs': '02d8c3f72b4b1f9f76d75d63bf0bdb48bafaf5cd',
+    'web/scripts/boot-console.test.mjs': '5ebb40d93233f947959b8f6e16bf0559f0da67f8',
     'web/src/components/today/BootConsole.css': 'b1a9d4e6ef94f7c38418503f62a9b8e857f918da',
-    'web/src/components/today/BootConsole.tsx': '13a462fc88814f3919b9f815e0bea009b17e5a7f',
+    'web/src/components/today/BootConsole.tsx': '42e3269f5f0f180b5b08d5e65a534e37bd8bd499',
     # Legacy scanner-phase removal: tests and probe trimmed to the retained
     # contracts only (exact reviewed contents).
     'test_argus_v12_0_7.py': '7adde8c0541300fda75622390c078aed3e3e77de',
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
-    'web/scripts/pwa-identity.test.mjs': '223ea830dc3b583cd86477b07be51967dea52a20',
-    'web/scripts/owner-today-https.mjs': 'e9975f5b6baae481780a624695a69716fb6ca7ef',
+    'web/scripts/pwa-identity.test.mjs': '229c303677e5c6477839cfe7e7f2363ace9247f6',
+    'web/scripts/owner-today-https.mjs': 'f7ae7717d58220143972db04ec797c4e863b1d03',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -156,8 +156,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_owner_auth.py': '46048a6639688e01c8d3b89f23b98815fa91ce00',
     'web/scripts/owner-session.test.cjs': '92978aaad746d76783eb5fa01cf09efd170d7768',
     'web/src/components/OwnerAccess.css': '711268ba1b8478611e939f7cfecfd822c012ff44',
-    'web/src/components/OwnerAccess.tsx': '247ccb8c05747424a8668a3406e8bae6391c897a',
-    'web/src/lib/ownerSession.ts': 'ca53697a282964517a0a493fc48867deb7860e4d',
+    'web/src/components/OwnerAccess.tsx': '49ce7d0db02a646d7997e428f1c8bf204b438809',
+    'web/src/lib/ownerSession.ts': '80dbc388c17b32ef6e1ec13c5d0c18001351e6a9',
     'docs/MACRO_RESULT_RECEIPT_MIGRATION.md': '131e4784bd6be96daf0c9dda4b318735840cdcba',
     'test_argus_macro_receipt_boundary.py': '4fa5e23ee6392489497483a65ca90e1786b92d1d',
 
@@ -648,6 +648,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/scripts/owner-lock-reason.test.cjs",
+    "web/scripts/future-map-refresh.test.cjs",
     "web/dev-dist/workbox-a6c00840.js",
     "docs/FUTURE_MAP_DELIVERY.md",
     "web/src/components/today/CandidateBoard.tsx",
