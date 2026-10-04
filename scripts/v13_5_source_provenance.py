@@ -370,7 +370,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'jp_market_analogs.py': 'c2463a0f306484a55f010fd2db92c9684015efd7',
     'jp_market_dynamics.py': '36624677a01861c4adfa706e4d5b9dfa405212dd',
     'jp_market_events.py': '9798f7172c58c3d94748641d4ca67fd4dde6f4cf',
-    'jp_market_features.py': '12d6366993c2d689bd7e3db88f957779325fbff2',
+    'jp_market_features.py': 'c53ebaa012aa5546fe615eaebb9aa329f4a355ab',
     'jp_market_price_paths.py': '35e78f26bf625e27ed123dbf96ab41a130cdd284',
     'jp_market_source_adapters.py': 'e9212f71d707e1bdedad44ae05f2dbc53573a24a',
     'ops/calendar/jp_index_sq_2026.json': 'd55cbf1e1362d4d86b21fe413cc2de35b035bd62',
