@@ -138,7 +138,10 @@ class MissionWindowTests(unittest.TestCase):
         src = (ROOT / ".github/workflows/caos-scan.yml").read_text()
         self.assertIn("cron: '7,37 * * * *'", src)
         self.assertIn("workflow_dispatch", src)
-        self.assertIn("group: caos-scan-scheduled-missions", src)
+        # Scheduled runs share one group; only the FUTURE MAP notification
+        # (dispatch with only=future_map) uses its own so it never waits.
+        self.assertIn("|| 'caos-scan-scheduled-missions' }}", src)
+        self.assertIn("inputs.only == 'future_map' && 'caos-scan-future-map'", src)
         self.assertIn("cancel-in-progress: false", src)
         durability_job = src.split("  durability-flush:", 1)[1].split("\n  report:", 1)[0]
         self.assertIn("timeout-minutes: 35", durability_job)

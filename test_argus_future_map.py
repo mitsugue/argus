@@ -65,3 +65,92 @@ def test_refresh_reads_the_private_store_once_per_change_and_the_route_never_fet
     assert body["availability"] == "AVAILABLE" and "remoteSha" not in body and len(calls) == before
     assert body["status"]["position"] == "天井圏" and body["status"]["nextAlert"]["label"] == "米CPI"
     assert "src_a" not in json.dumps(body)
+
+
+def _fresh_state(monkeypatch, tmp_path, version):
+    class Remote:
+        def get(self, path):
+            assert path == f.REMOTE_PATH
+            version["reads"] = version.get("reads", 0) + 1
+            return json.dumps(version["doc"]).encode(), version["sha"]
+
+    monkeypatch.setattr(scanner, "_level_map_remote", lambda: Remote())
+    monkeypatch.setattr(scanner, "_future_map_path", lambda: str(tmp_path / "future_map.json"))
+    monkeypatch.setattr(scanner, "_FUTURE_MAP", {"loaded": False, "public": None, "sha": None, "lastAttemptAt": None,
+                                                 "lastError": None, "lastChangedAt": None, "lastReadOkAt": None, "lastTrigger": None})
+    monkeypatch.setattr(scanner, "_FUTURE_MAP_FALLBACK", {"lastDay": None, "lastDecision": None, "emptyRetryAt": None})
+
+
+def test_notification_reads_once_through_the_existing_collection_route(monkeypatch, tmp_path):
+    version = {"sha": "sha-1", "doc": DOC}
+    _fresh_state(monkeypatch, tmp_path, version)
+    monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "tok")
+    heavy = []
+    monkeypatch.setattr(scanner, "_collect_institutional_intel_and_warm", lambda: heavy.append(1) or {})
+    monkeypatch.setattr(scanner, "_intel_collect_tracked", lambda *a, **k: (heavy.append(1) or {}, 200))
+    client = scanner.app.test_client()
+    url = "/api/argus/institutional-intelligence/collect"
+    denied = client.post(url, json={"only": "future_map"})
+    assert denied.status_code in (401, 403) and version.get("reads", 0) == 0
+    response = client.post(url, json={"only": "future_map"}, headers={"X-ARGUS-ADMIN-TOKEN": "tok"})
+    body = response.get_json()
+    assert response.status_code == 200 and body["ok"] is True and body["only"] == "future_map"
+    assert body["availability"] == "AVAILABLE" and body["sha"] == "sha-1" and body["lastError"] is None
+    assert body["lastTrigger"] == "notification" and body["lastReadOkAt"] and body["lastChangedAt"]
+    assert version["reads"] == 1 and body["rows"] == 3 and heavy == []         # nothing else of the collection ran
+    # The writer stores a new version and notifies again (query form): shown at once.
+    version.update(sha="sha-2", doc={**DOC, "status": {**DOC["status"], "position": "下落局面"}})
+    body = client.post(url + "?only=future_map", headers={"X-ARGUS-ADMIN-TOKEN": "tok"}).get_json()
+    assert body["sha"] == "sha-2" and version["reads"] == 2 and heavy == []
+    shown = client.get("/api/argus/future-map").get_json()
+    assert shown["status"]["position"] == "下落局面" and version["reads"] == 2   # the public read never fetches
+    assert "src_a" not in json.dumps(body) + json.dumps(shown)
+
+
+def test_a_failed_notification_read_is_reported_as_a_failure(monkeypatch, tmp_path):
+    version = {"sha": "sha-1", "doc": {**DOC, "schema": "wrong"}}
+    _fresh_state(monkeypatch, tmp_path, version)
+    monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "tok")
+    response = scanner.app.test_client().post("/api/argus/institutional-intelligence/collect",
+                                              json={"only": "future_map"}, headers={"X-ARGUS-ADMIN-TOKEN": "tok"})
+    assert response.status_code == 502 and response.get_json()["ok"] is False
+
+
+def test_fallback_reads_once_at_six_only_when_nothing_was_read_since_midnight(monkeypatch, tmp_path):
+    from datetime import datetime
+    version = {"sha": "sha-1", "doc": DOC}
+    _fresh_state(monkeypatch, tmp_path, version)
+    jst = scanner.TZ_JST
+    scanner._future_map_refresh()                                    # a version exists (read the day before)
+    version["reads"] = 0
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: "2026-10-05T15:01:00Z")   # 10/6 00:01 JST: notified
+    scanner._future_map_refresh()
+    assert version["reads"] == 1
+    assert scanner._future_map_fallback_tick(jst.localize(datetime(2026, 10, 6, 5, 59))) is None
+    assert scanner._future_map_fallback_tick(jst.localize(datetime(2026, 10, 6, 6, 0))) == "skipped_already_read"
+    assert version["reads"] == 1
+    assert scanner._future_map_fallback_tick(jst.localize(datetime(2026, 10, 6, 6, 30))) is None   # once a day
+    # Next day: no notification arrived since 00:00 JST, so the fallback reads once.
+    assert scanner._future_map_fallback_tick(jst.localize(datetime(2026, 10, 7, 6, 0))) == "read"
+    assert version["reads"] == 2
+    assert scanner._future_map_fallback_tick(jst.localize(datetime(2026, 10, 7, 9, 0))) is None and version["reads"] == 2
+
+
+def test_collection_warms_no_longer_read_the_store_and_the_scheduler_runs_the_fallback():
+    import inspect
+    source = inspect.getsource(scanner)
+    warm = source[source.index("        _level_map_warm(nikkei_rows)\n"):][:400]
+    assert "_future_map_refresh" not in warm
+    assert "_future_map_fallback_tick" in inspect.getsource(scanner.run_scheduler)
+    assert "_future_map_refresh" not in inspect.getsource(scanner.run_scheduler)
+
+
+def test_the_existing_collection_workflow_carries_the_notification():
+    src = open(".github/workflows/caos-scan.yml", encoding="utf-8").read()
+    job = src.split("\n  future-map:\n", 1)[1].split("\n  result:\n", 1)[0]
+    assert "if: github.event_name == 'workflow_dispatch' && inputs.only == 'future_map'" in job
+    assert "/api/argus/institutional-intelligence/collect" in job and '{"only":"future_map"}' in job
+    assert 'd.get("ok") is True' in job and "exit 1" in job                  # a failed read fails the run
+    assert "secrets.ARGUS_ADMIN_TOKEN" in job and "echo \"$ARGUS_ADMIN_TOKEN" not in job
+    import os
+    assert not os.path.exists(".github/workflows/future-map-refresh.yml")
