@@ -1,13 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 
 // FUTURE MAP (2026-10-04): external views written by the research side to the
-// private store; the server validates them. Read once per page view.
+// private store; the server validates them. The table changes without a
+// restart: it is read again whenever Today is shown or the app comes to the
+// front, and every five minutes while it stays in front (never in the
+// background). The table is replaced only when its version changed.
 export type FutureMapRow = { id: string; periodLabel: string; start: string; end: string; view: string;
   reason: string | null; alt: string | null; level: { low: number; high: number } | null; tag: string;
   tone: 'red' | 'amber' | 'green' | 'grey'; agree: number; emphasis: boolean; changed: boolean;
   result: 'reached' | 'missed' | null; isNow: boolean; past: boolean };
 export type FutureMapDoc = {
-  schemaVersion: 'argus-future-map-public-v1'; updatedAt: string; today: string; rows: FutureMapRow[];
+  schemaVersion: 'argus-future-map-public-v1'; updatedAt: string; lastChangedAt?: string | null; today: string;
+  rows: FutureMapRow[];
   status: { position: string; nextAlert: { date: string; label: string }; nextBottom: { date: string; label: string } };
   record: { scored: number; reached: number }; argusValidated: false; actionAuthority: false;
 };
@@ -19,23 +23,64 @@ export function validFutureMap(value: unknown): value is FutureMapDoc {
     && v.rows.every(r => typeof r.id === 'string' && typeof r.view === 'string' && typeof r.tag === 'string');
 }
 
-let cache: { at: number; doc: FutureMapDoc | null } | null = null;
-const TTL_MS = 30 * 60_000;
+export const FUTURE_MAP_POLL_MS = 5 * 60_000;
+
+/** A new table only when the server's version (updatedAt or lastChangedAt) or its day changed. */
+export function futureMapChanged(previous: FutureMapDoc | null, next: FutureMapDoc): boolean {
+  return !previous || previous.updatedAt !== next.updatedAt
+    || (previous.lastChangedAt ?? null) !== (next.lastChangedAt ?? null) || previous.today !== next.today;
+}
+
+let current: FutureMapDoc | null = null;
+let flight: Promise<void> | null = null;
+const listeners = new Set<() => void>();
+const emit = () => listeners.forEach(listener => listener());
+
+/** Read the table once; keep the last one when the read fails. */
+export function refreshFutureMap(): Promise<void> {
+  const base = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '') ?? '';
+  if (!base) return Promise.resolve();
+  if (flight) return flight;
+  flight = fetch(`${base}/api/argus/future-map`, { cache: 'no-store' })
+    .then(r => (r.ok ? r.json() : null))
+    .then(body => {
+      if (body && body.availability === 'AVAILABLE' && validFutureMap(body) && futureMapChanged(current, body)) {
+        current = body; emit();
+      }
+    })
+    .catch(() => { /* the last table stays */ })
+    .finally(() => { flight = null; });
+  return flight;
+}
+
+let stopSync: (() => void) | null = null;
+function startSync(): () => void {
+  const visible = () => document.visibilityState === 'visible';
+  const onVisibility = () => { if (visible()) void refreshFutureMap(); };
+  const timer = window.setInterval(() => { if (visible()) void refreshFutureMap(); }, FUTURE_MAP_POLL_MS);
+  document.addEventListener('visibilitychange', onVisibility);
+  return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisibility); };
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  if (!stopSync) stopSync = startSync();
+  return () => {
+    listeners.delete(listener);
+    if (!listeners.size && stopSync) { stopSync(); stopSync = null; }
+  };
+}
 
 export function useFutureMap(): FutureMapDoc | null {
-  const base = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '') ?? '';
-  const [doc, setDoc] = useState<FutureMapDoc | null>(cache?.doc ?? null);
-  useEffect(() => {
-    if (!base || (cache && Date.now() - cache.at < TTL_MS)) return;
-    let live = true;
-    fetch(`${base}/api/argus/future-map`, { cache: 'no-store' })
-      .then(r => (r.ok ? r.json() : null))
-      .then(body => {
-        const found = body && body.availability === 'AVAILABLE' && validFutureMap(body) ? body : null;
-        cache = { at: Date.now(), doc: found };
-        if (live) setDoc(found);
-      }).catch(() => { /* the card stays absent */ });
-    return () => { live = false; };
-  }, [base]);
+  const doc = useSyncExternalStore(subscribe, () => current, () => current);
+  useEffect(() => { void refreshFutureMap(); }, []);           // every time Today is shown
   return doc;
 }
+
+/** Test seam: forget the table and stop the shared sync. */
+export function resetFutureMapForTest(): void {
+  current = null; flight = null; listeners.clear();
+  if (stopSync) { stopSync(); stopSync = null; }
+}
+
+export const futureMapSubscribeForTest = subscribe;
