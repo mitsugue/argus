@@ -190,14 +190,23 @@ def constituents_on(day: str, base_codes: Iterable[str], base_as_of: Optional[st
     applied (2026-10-04: the 9/30 table predates the 10/1 review). Returns
     (codes, label of what was applied)."""
     codes = {str(code) for code in base_codes}
-    applied = []
-    for row in sorted((changes or {}).get("rows") or [], key=lambda r: str(r.get("effective"))):
+    applied, reversed_ = [], []
+    rows = sorted((changes or {}).get("rows") or [], key=lambda r: str(r.get("effective")))
+    for row in rows:
         effective = str(row.get("effective") or "")
         if len(effective) == 10 and (not base_as_of or effective > base_as_of) and effective <= day:
             codes -= {str(c) for c in row.get("removed") or ()}
             codes |= {str(c) for c in row.get("added") or ()}
             applied.append(effective)
-    label = (base_as_of or "unknown") + ("+入れ替え" + ",".join(applied) if applied else "")
+    # Before the table's date: undo the later changes, newest first.
+    for row in reversed(rows):
+        effective = str(row.get("effective") or "")
+        if base_as_of and len(effective) == 10 and day < effective <= base_as_of:
+            codes -= {str(c) for c in row.get("added") or ()}
+            codes |= {str(c) for c in row.get("removed") or ()}
+            reversed_.append(effective)
+    label = (base_as_of or "unknown") + ("+入れ替え" + ",".join(applied) if applied else "") \
+        + ("−逆算" + ",".join(sorted(reversed_)) if reversed_ else "")
     return sorted(codes), label
 
 

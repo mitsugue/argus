@@ -38648,6 +38648,9 @@ def _jq_valuation_for_date(date_str, headers, max_pages=40):
                              headers=headers, params=params, timeout=20)
             pages += 1
             if r.status_code != 200:
+                # A day is all pages or nothing: a partial day would silently
+                # drop members from every aggregate built on it (2026-10-04).
+                out = {}
                 break
             body = r.json()
             for row in body.get("data", []):
@@ -38665,7 +38668,7 @@ def _jq_valuation_for_date(date_str, headers, max_pages=40):
                 break
             params["pagination_key"] = pk
     except Exception:
-        pass
+        out = {}
     _JP_INDEX_PROXY["requestsLastWarm"] += pages
     return out
 
@@ -39018,8 +39021,11 @@ _LEVEL_MAP = {"status": "NOT_RUN", "loaded": False, "eps": {}, "mornings": [], "
               "lastError": None, "lastErrorReason": None, "estimatesLastWarm": 0, "missedMornings": [],
               "conflicts": 0, "lastCreatedAt": None}
 _LEVEL_MAP_LOCK = threading.Lock()
-_LEVEL_MAP_EPS_PER_WARM = 6
-_LEVEL_MAP_EPS_SINCE = "2026-06-01"
+_LEVEL_MAP_EPS_PER_WARM = 20
+# J-Quants valuation reaches back ten years; the constituents of each day are
+# rebuilt from Nikkei's published change history (2026-10-04).
+_LEVEL_MAP_EPS_SINCE = "2016-10-03"
+_LEVEL_MAP_MAP_SINCE = "2026-06-01"
 
 
 def _level_map_history_path():
@@ -39099,6 +39105,13 @@ def _level_map_warm(nikkei_rows):
             _LEVEL_MAP.update(status="PRICES_COLD", lastErrorReason="nikkei_history_not_ready")
             return
         close_by_day = {bar["date"]: bar["close"] for bar in bars}
+        # Ten years of closes for the estimate backfill (the map uses `bars`).
+        for row in _N225_ANALOG_HISTORY.get("data") or ():
+            day, close = str(row.get("date") or "")[:10], row.get("close")
+            if len(day) == 10 and isinstance(close, (int, float)) and day not in close_by_day \
+                    and day < (bars[0]["date"] if bars else day):
+                close_by_day[day] = close
+        estimate_sessions = sorted(close_by_day)
         sessions = [bar["date"] for bar in bars]
         constituents = sorted(((_JP_INDEX_PROXY.get("factors") or {}).get("factors") or {}))
         as_of = _JP_INDEX_PROXY.get("weightsAsOf")
@@ -39108,7 +39121,7 @@ def _level_map_warm(nikkei_rows):
                 before = [day for day in sessions if day < pivot["date"]]
                 if before:
                     wanted.append(before[-1])
-            wanted += [day for day in reversed(sessions) if day >= _LEVEL_MAP_EPS_SINCE]
+            wanted += [day for day in reversed(estimate_sessions) if day >= _LEVEL_MAP_EPS_SINCE]
             pending, seen = [], set()
             for day in wanted:
                 if day not in seen and day not in _LEVEL_MAP["eps"]:
@@ -39157,7 +39170,7 @@ def _level_map_warm(nikkei_rows):
         try:
             _LEVEL_MAP["score"] = jp_market_level_map.score_records(_LEVEL_MAP["mornings"], bars, eps_series)
             first = _LEVEL_MAP["mornings"][0]["morningOf"] if _LEVEL_MAP["mornings"] else None
-            later = [day for day in sessions if day >= _LEVEL_MAP_EPS_SINCE and (not first or day < first)]
+            later = [day for day in sessions if day >= _LEVEL_MAP_MAP_SINCE and (not first or day < first)]
             rebuilt = []
             for day in later:
                 try:

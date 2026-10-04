@@ -289,3 +289,25 @@ def test_constituents_follow_published_changes_after_the_weight_table():
     # A weight table already after the change is not changed again.
     assert m.constituents_on("2026-11-02", after, "2026-10-30", changes)[0] == after
     assert changes["sourceRef"].startswith("https://indexes.nikkei.co.jp/") and len(changes["sourceSha256"]) == 64
+    # Before the table's date the later changes are undone: on 2026-03-31 the
+    # April 2026 additions were not members yet and its removals still were.
+    april = next(r for r in changes["rows"] if r["effective"] == "2026-04-01")
+    march, label_march = m.constituents_on("2026-03-31", list(after) + april["added"], "2026-08-31", changes)
+    assert set(april["removed"]) <= set(march) and not set(april["added"]) & set(march)
+    assert label_march == "2026-08-31−逆算2026-04-01"
+    assert len(changes["rows"]) == 31 and changes["rows"][0]["effective"] == "2016-10-03"
+
+
+def test_a_valuation_day_is_all_pages_or_nothing(monkeypatch):
+    import scanner
+    pages = [
+        (200, {"data": [{"Code": "72030", "Date": "2026-10-02", "MktCap": 1.0, "FwdPER": 10.0}], "pagination_key": "k"}),
+        (429, {"message": "rate limited"}),
+    ]
+    class R:
+        def __init__(self, code, body): self.status_code, self._body = code, body
+        def json(self): return self._body
+    monkeypatch.setattr(scanner.requests, "get", lambda *a, **k: R(*pages.pop(0)))
+    monkeypatch.setattr(scanner, "_JQ_VALUATION_DAY_CACHE", {})
+    assert scanner._jq_valuation_for_date("2026-10-02", {}) == {}
+    assert "2026-10-02" not in scanner._JQ_VALUATION_DAY_CACHE
