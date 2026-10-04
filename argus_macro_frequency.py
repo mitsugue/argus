@@ -66,7 +66,9 @@ def cpi_state(rows: Sequence[Mapping[str, Any]], *, today: str) -> Optional[Dict
 
 def _fact(text: str, key: str, as_of: Optional[str]) -> Dict[str, Any]:
     return {"text": text[:300], "priority": "P2", "source": "macro_frequency", "verification": "CORROBORATED",
-            "provenance": {"eventId": f"macro-frequency-{key}", "asOf": as_of, "sourceLabelJa": SOURCE_LABEL_JA,
+            "provenance": {"scope": "published_metadata_snapshot", "revision": None, "sourceLabel": SOURCE_LABEL_JA,
+                           "publishedAt": None, "receivedAt": as_of, "observedAt": None, "url": None,
+                           "eventId": f"macro-frequency-{key}", "asOf": as_of, "sourceLabelJa": SOURCE_LABEL_JA,
                            "sourceRowSha256": hashlib.sha256(json.dumps(
                                [TABLE_VERSION, key, text], ensure_ascii=False).encode()).hexdigest(),
                            "tableVersion": TABLE_VERSION}}

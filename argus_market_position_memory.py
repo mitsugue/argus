@@ -330,7 +330,12 @@ def explanation_facts(view: Mapping[str, Any]) -> List[Dict[str, Any]]:
         latest = theme["recent"][0] if theme.get("recent") else {}
         facts.append({"text": "。".join(bits)[:160], "priority": "P1", "source": "market_position",
                       "verification": "VERIFIED" if measured else "CORROBORATED",
-                      "provenance": {"eventId": f"market-position-{theme['themeId']}",
+                      # The shape every brief fact's provenance carries (the page
+                      # rejects the whole brief otherwise; 2026-10-04 incident).
+                      "provenance": {"scope": "published_metadata_snapshot", "revision": None,
+                                     "sourceLabel": "ARGUSの市場の現在位置メモ", "publishedAt": None,
+                                     "receivedAt": theme.get("lastUpdatedAt"), "observedAt": None, "url": None,
+                                     "eventId": f"market-position-{theme['themeId']}",
                                      "asOf": theme.get("lastUpdatedAt"),
                                      "sourceLabelJa": "ARGUSの市場の現在位置メモ",
                                      "sourceRowSha256": _digest(theme.get("recent") or []),
