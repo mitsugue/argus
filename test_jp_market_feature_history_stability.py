@@ -23,7 +23,7 @@ import jp_market_features as features
 
 ROOT = Path(__file__).resolve().parent
 PINNED_VERSION = "jp-market-feature-method-v3"
-PINNED_FIXTURE_RESULT = "a0dfe9fa971d69d55a262b858c7b4a41770a08646d7db866842c9d94564f33c5"
+PINNED_FIXTURE_RESULT = "a73614cc7917d199dd243192a8e2614d541e6b54fd8fa11ae94db164b5e10f13"
 MODULES = ("jp_market_features.py", "jp_market_engine.py", "jp_market_dynamics.py",
            "jp_market_analogs.py", "jp_market_acquisition.py")
 
@@ -457,3 +457,23 @@ def test_daily_1570_balances_are_read_as_week_final_rows():
     source = rows("2026-09-25")
     week_final_rows(source)[0]["value"] = 9.0
     assert source[0]["value"] == 1.0                                             # not mutated
+
+
+def test_ten_year_vix_macd_lists_bounded_references():
+    """2026-10-04: the VIX MACD over ten years listed 2,821 input rows (1.3 MB);
+    the market brief reached 4.9 MB and timed out on the phone, and its
+    history record exceeded 2 MB. sourceRef still binds every input."""
+    from datetime import date as _date, timedelta as _timedelta
+    start = _date(2016, 10, 3)
+    vix = [{"instrumentId": "VIX", "seriesId": "close", "value": 15 + (i % 17) * 0.5, "close": 15 + (i % 17) * 0.5,
+            "date": (start + _timedelta(days=i)).isoformat(),
+            "availableFrom": (start + _timedelta(days=i + 1)).isoformat() + "T00:00:00Z", "sourceRef": "test:vix"}
+           for i in range(3650)]
+    snapshot = features.build_market_features(cutoff="2026-10-01T00:00:00Z", price_series={"vix": vix})
+    row = next(r for r in snapshot["features"] if r["seriesId"] == "vix.macd_histogram")
+    assert len(row["inputReferences"]) == features.INPUT_REFERENCE_LIMIT
+    assert row["inputReferenceCount"] == 3650 and row["firstInputDate"] == "2016-10-03"
+    assert row["inputReferences"][-1]["date"] == vix[-1]["date"]
+    assert len(json.dumps(snapshot, ensure_ascii=False)) < 200_000
+    short = next(r for r in snapshot["features"] if r["seriesId"] == "vix.change5")
+    assert len(short["inputReferences"]) == 6 and "inputReferenceCount" not in short

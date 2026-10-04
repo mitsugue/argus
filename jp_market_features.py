@@ -32,8 +32,9 @@ HISTORY_CACHE_MAX_BYTES = 32 * 1024 * 1024
 # history already rejects changed inputs.
 # v3 (2026-10-03): investor-type rows are known from their official PubDate,
 # not from the later import that stamped knownAt (see
-# _flow_publication_availability), and the 1570 balances, daily from the
-# 2026-09-25 application date, are read as week-final rows.
+# _flow_publication_availability), the 1570 balances, daily from the
+# 2026-09-25 application date, are read as week-final rows, and a feature
+# lists at most INPUT_REFERENCE_LIMIT input references.
 FEATURE_HISTORY_METHOD_VERSION = "jp-market-feature-method-v3"
 
 
@@ -50,6 +51,7 @@ def history_method_parameters() -> dict[str, Any]:
                            "D02": D02_MARGIN_RATIO_THRESHOLD, "D04": D04_INDEX_PER_THRESHOLD},
         "featureInputWindowDays": FEATURE_INPUT_WINDOW_DAYS,
         "lossProxy": [LOSS_PROXY_BASIS, LOSS_PROXY_WEEKS, LOSS_PROXY_MINIMUM_WEEKS],
+        "inputReferenceLimit": INPUT_REFERENCE_LIMIT,
     }
 
 
@@ -384,6 +386,7 @@ def _retained_history(history, warming):
 
 
 FOREIGN_FLOW_AVAILABILITY_RULE = "jquants-investor-types-official-pubdate"
+INPUT_REFERENCE_LIMIT = 60
 
 
 def _flow_publication_availability(rows):
@@ -650,6 +653,15 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
             stale_features.add(field)
             return
         material = json.dumps(inputs, sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        # sourceRef binds every input; the listed references are the newest
+        # INPUT_REFERENCE_LIMIT. The VIX MACD runs over the whole ten-year
+        # history: listing all 2,821 rows made one feature 1.3 MB, the market
+        # brief 4.9 MB (the phone's 12 s read timed out) and its history
+        # record exceeded the 2 MB bound (2026-10-04).
+        listed = inputs[-INPUT_REFERENCE_LIMIT:]
+        truncated = ({"inputReferenceCount": len(inputs), "inputReferencesFrom": _day(listed[0]),
+                      "firstInputDate": min(_day(row) for row in inputs)}
+                     if len(inputs) > len(listed) else {})
         features.append({
             "instrumentId": INSTRUMENT, "seriesId": field,
             "date": period or max(_day(row) for row in inputs), "value": number,
@@ -666,7 +678,8 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
                                  "sourceResponseSha256": row.get("sourceResponseSha256"),
                                  "rawId": row.get("rawId"),
                                  "availabilityBasis": row.get("availabilityBasis")}
-                                for row in inputs],
+                                for row in listed],
+            **truncated,
             "historicalVintageVerified": False,
         })
 
