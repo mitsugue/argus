@@ -251,7 +251,29 @@ def test_rolling_provider_cache_retains_selected_prefix_and_revisions(tmp_path):
     with m.connect(path) as db:
         assert db.execute('SELECT count(*) FROM selected_vix_inputs').fetchone()[0] == 4
         original = json.loads(db.execute("SELECT body FROM selected_vix_inputs WHERE session='2026-09-18' ORDER BY seq LIMIT 1").fetchone()[0])
-        assert original == initial[1]
+        # The table keeps the row as received; the returned row is read with
+        # the next-day schedule and the receipt as receivedAt (2026-10-04).
+        assert original == {k: v for k, v in initial[1].items()
+                            if k not in ('knownAt', 'publishedAt', 'receivedAt', 'availabilityBasis')} | {'availableFrom': AT}
+        assert initial[1]['availableFrom'] == '2026-09-19T00:00:00Z' and initial[1]['receivedAt'] == AT
+
+
+def test_stored_official_vix_rows_are_visible_from_their_schedule(tmp_path):
+    """2026-10-04: the selection was seeded on 2026-09-20 with official Cboe
+    rows whose knownAt was their receipt; returned unchanged, 2016-2024 was
+    invisible to every past cutoff (VIX features and D06 from late 2024)."""
+    path = tmp_path / 'sources.sqlite3'
+    seeded = [{'date': '2018-02-05', 'close': 37.32, 'value': 37.32, 'instrumentId': 'VIX', 'unit': 'INDEX_POINTS',
+               'sourceRef': m.VIX_HISTORY, 'knownAt': '2026-09-19T17:40:46Z', 'availableFrom': '2026-09-19T17:40:46Z'}]
+    m.merge_feature_sources([], seeded, path=path, received_at='2026-09-20T00:00:00Z')
+    yahoo = [{'date': '2018-02-05', 'close': 37.32, 'availableFrom': '2018-02-06T00:00:00Z', 'sourceRef': 'yahoo:chart:^VIX'}]
+    rows = m.merge_feature_sources(yahoo, [], path=path, received_at=LATER)
+    assert rows[0]['sourceRef'] == m.VIX_HISTORY                    # the first provider is kept
+    assert rows[0]['knownAt'] == rows[0]['availableFrom'] == '2018-02-06T00:00:00Z'
+    assert rows[0]['receivedAt'] == '2026-09-19T17:40:46Z'
+    assert rows[0]['availabilityBasis'] == 'SCHEDULED_PUBLICATION'
+    correction = {**seeded[0], 'availabilityBasis': 'RECEIVED_CORRECTION'}
+    assert m._scheduled_selection(correction) == correction          # a correction keeps its receipt
 
 
 def test_selection_record_stays_within_the_window_instead_of_raising(tmp_path):

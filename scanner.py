@@ -39157,6 +39157,9 @@ def _index_research_warm():
         _INDEX_RESEARCH_LOCK.release()
 
 
+_JP_MARKET_FEATURE_INPUT_SPANS = {}
+
+
 def _jp_market_series_acquisition_status():
     """Counts, first dates and fixed status tokens for the market-condition
     history sources (no values, no rows): enough to name why a series is
@@ -39241,6 +39244,7 @@ def _jp_market_comparison_calculate(horizon):
                       "firstCutoff", "lastCutoff", "sourceWarming", "reuseDecision", "calculationWork")}
         result["marketFeatureAcquisition"]["derivedCache"] = dict(_JP_MARKET_FEATURE_CACHE_STATUS)
         result["marketFeatureAcquisition"]["seriesAcquisition"] = _jp_market_series_acquisition_status()
+        result["marketFeatureAcquisition"]["inputSpans"] = dict(_JP_MARKET_FEATURE_INPUT_SPANS)
         result["marketFeatureAcquisition"]["officialSources"] = _JP_OFFICIAL_SOURCE_CACHE.snapshot()
         if result.get('comparison'):
             result['comparison']['sourceAcquisition'] = {
@@ -40136,6 +40140,13 @@ def _jp_market_feature_history_warm():
         inputs = {"price_series": price_series, "two_market_credit": credit, "margin_1570": margin,
                   "foreign_flow": [r for r in ledger if r.get("seriesId") == "flow.foreign"], "valuation_loss": loss,
                   "sq_events": sq_events}
+        # 2026-10-04: what each calculation actually received, so a series that
+        # is held but invisible to past cutoffs is named (VIX, D05).
+        try:
+            _JP_MARKET_FEATURE_INPUT_SPANS.clear()
+            _JP_MARKET_FEATURE_INPUT_SPANS.update(jp_market_features.input_spans(inputs), measuredAt=now)
+        except Exception as exc:
+            _JP_MARKET_FEATURE_INPUT_SPANS.update(errorClass=type(exc).__name__)
         identity = hashlib.sha256(json.dumps(inputs, sort_keys=True, ensure_ascii=False, allow_nan=False,
             separators=(",", ":")).encode()).hexdigest()
         if identity == _JP_MARKET_FEATURE_HISTORY.get("inputIdentity") and \
