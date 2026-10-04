@@ -3401,3 +3401,25 @@ def test_dividend_audit_is_admin_only_and_returns_shape_not_values(monkeypatch):
     assert body["sample"] == [{"FDiv1Q": None, "FDiv2Q": "40.0", "FDiv3Q": None, "FDivFY": "45.0", "FDivAnn": "85.0",
                                "DiscDate": "2026-10-02", "DocType": "FYFinancialStatements_Consolidated_JP", "CurPerType": "FY"}]
     assert "72030" not in str(body) and body["automaticAiCalls"] == 0
+
+
+def test_jquants_shape_audit_reads_only_allowed_new_endpoints(monkeypatch):
+    """2026-10-04: /equities/valuation and /fins/earnings-date are read for
+    their real fields before page 2 or the index proxy is built on them."""
+    import scanner
+    client = scanner.app.test_client()
+    monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "t")
+    headers = {"X-ARGUS-ADMIN-TOKEN": "t"}
+    url = "/api/argus/admin/jquants/dividend-audit"
+    assert client.post(url, json={"endpoint": "/equities/valuation", "params": {"date": "2026-10-02"}}).status_code in (401, 403)
+    assert client.post(url, headers=headers, json={"endpoint": "/fins/summary2", "params": {"date": "2026-10-02"}}).status_code == 400
+    assert client.post(url, headers=headers, json={"endpoint": "/equities/valuation", "params": {"token": "x"}}).status_code == 400
+    calls = []
+    monkeypatch.setattr(scanner, "_JQUANTS_API_KEY", "k")
+    monkeypatch.setattr(scanner, "_jquants_paginated",
+                        lambda path, params, **kw: calls.append((path, params)) or [{"Code": "72030", "FwdEPS": "300.1", "PER": ""}])
+    body = client.post(url, headers=headers, json={"endpoint": "/equities/valuation",
+                                                   "params": {"date": "2026-10-02", "evil": "1"}}).get_json()
+    assert calls == [("/equities/valuation", {"date": "2026-10-02"})]
+    assert body["status"] == "success" and body["filled"] == {"Code": 1, "FwdEPS": 1, "PER": 0}
+    assert body["columns"] == ["Code", "FwdEPS", "PER"] and body["automaticAiCalls"] == 0

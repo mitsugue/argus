@@ -842,6 +842,38 @@ def _memory_attribution_request_begin():
         g.argus_memory_operation = None
 
 
+# 2026-10-04: the market brief reached 4.9 MB uncompressed and the phone's
+# 12 s read timed out ("見立てを取得できません"). Large successful JSON bodies
+# are gzipped when the client accepts it. Streamed bodies, conditional
+# responses carrying an ETag and already-encoded bodies are left as they are.
+_GZIP_MIN_BYTES = 32 * 1024
+
+
+@app.after_request
+def _compress_large_json(response):
+    try:
+        if (response.direct_passthrough or response.is_streamed
+                or not 200 <= response.status_code < 300
+                or response.headers.get("Content-Encoding") or response.headers.get("ETag")
+                or response.mimetype != "application/json"
+                or "gzip" not in (request.headers.get("Accept-Encoding") or "").lower()):
+            return response
+        data = response.get_data()
+        if len(data) < _GZIP_MIN_BYTES:
+            return response
+        import gzip
+        body = gzip.compress(data, compresslevel=5)
+        response.set_data(body)
+        response.headers["Content-Encoding"] = "gzip"
+        response.headers["Content-Length"] = str(len(body))
+        vary = [v.strip() for v in (response.headers.get("Vary") or "").split(",") if v.strip()]
+        if "Accept-Encoding" not in vary:
+            response.headers["Vary"] = ", ".join(vary + ["Accept-Encoding"])
+    except Exception:
+        pass
+    return response
+
+
 @app.after_request
 def _memory_attribution_request_complete(response):
     try:
@@ -39585,8 +39617,10 @@ def _jp_market_margin_1570_dynamics(*, cutoff=None):
     """Cached received balances, separate from daily securities finance."""
     cached = _JQ_MARGIN_CACHE.get("1570") or {}
     snapshot = cached.get("sourceSnapshot") or {}
+    # Weekly change on week-final rows; the balances are daily from the
+    # 2026-09-25 application date (2026-10-03). sourceRows stay complete.
     result = jp_market_dynamics.credit_dynamics(
-        snapshot.get("rows") or [], cutoff=cutoff or _ai_now_iso(),
+        jp_market_dynamics.week_final_rows(snapshot.get("rows") or []), cutoff=cutoff or _ai_now_iso(),
         instrument_id="1570", balance_kind="WEEKLY_MARGIN",
         long_series="margin.long_balance", short_series="margin.short_balance")
     result.update({"acquisitionStatus": cached.get("sourceStatus", "NOT_ACQUIRED"),
@@ -40968,12 +41002,46 @@ def _jquants_dividend_audit(day):
     return result
 
 
+# 2026-10-04: J-Quants added /equities/valuation (2026-09-14, EPS/FwdEPS/
+# PER/PBR/ROE/MktCap daily for every issue) and /fins/earnings-date
+# (2026-08-03, announcement dates for every issue). Their field names and
+# fill rates are read here before anything is built on them.
+_JQUANTS_SHAPE_AUDIT_ENDPOINTS = ("/equities/valuation", "/fins/earnings-date")
+_JQUANTS_SHAPE_AUDIT_PARAMS = ("code", "date", "from", "to")
+
+
+def _jquants_shape_audit(endpoint, params):
+    result = {"schemaVersion": "jquants-shape-audit-v1", "status": "failed", "endpoint": endpoint,
+              "params": params, "automaticAiCalls": 0, "actionAuthority": False}
+    if not _JQUANTS_API_KEY:
+        result["errorClass"] = "jquants_key_missing"
+        return result
+    try:
+        rows = _jquants_paginated(endpoint, params, max_pages=6, request_timeout=20)
+        keys = sorted({key for row in rows for key in row})
+        result.update(rowCount=len(rows), columns=keys[:80],
+                      filled={key: sum(1 for row in rows if row.get(key) not in (None, "", "-")) for key in keys[:80]},
+                      sample=rows[:3], status="success")
+    except Exception as exc:
+        result["errorClass"] = type(exc).__name__[:80]
+        result["detail"] = str(exc)[:80]
+    return result
+
+
 @app.route("/api/argus/admin/jquants/dividend-audit", methods=["POST"])
 def api_argus_admin_jquants_dividend_audit():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
     body = request.get_json(silent=True) or {}
+    endpoint = str(body.get("endpoint") or "")
+    if endpoint:
+        raw = body.get("params") if isinstance(body.get("params"), dict) else {}
+        params = {key: str(raw[key])[:10] for key in _JQUANTS_SHAPE_AUDIT_PARAMS if raw.get(key)}
+        if endpoint not in _JQUANTS_SHAPE_AUDIT_ENDPOINTS or not params:
+            return jsonify({"error": "allowed_endpoint_and_params_required"}), 400
+        result = _jquants_shape_audit(endpoint, params)
+        return jsonify(result), (200 if result.get("status") == "success" else 503)
     day = str(body.get("date") or "")[:10]
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
         return jsonify({"error": "date_required"}), 400
@@ -45459,6 +45527,9 @@ def _jq_weekly_margin(code):
                     if lv is None or sv is None:
                         continue
                     norm.append({"date": q.get("Date"), "longVol": float(lv), "shortVol": float(sv)})
+                # Daily rows from the 2026-09-25 application date on; the
+                # week-over-week reads below stay weekly (2026-10-03).
+                norm = jp_market_dynamics.week_final_rows(norm)
                 norm.sort(key=lambda x: x["date"] or "", reverse=True)
                 if norm:
                     data = norm[:4]
