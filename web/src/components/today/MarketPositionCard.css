@@ -21,3 +21,19 @@
 .mp-view dd { margin: 0; color: var(--text-main); }
 .mp-view .mp-view-note { grid-column: 1 / -1; color: var(--text-faint); font-size: 11px; }
 .mp-theme > summary small.mp-fear { color: var(--text-main); }
+.mp-card .at-head { margin-bottom: 10px; }
+.mp-card .at-head > span { font-size: 11px; color: var(--text-sub); }
+.mp-theme { padding: 14px 0; }
+.mp-theme > summary > .mp-content { width: 100%; gap: 7px; }
+.mp-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 5px 10px; }
+.mp-theme > summary b { color: var(--text-main); font-size: 15px; font-weight: 650; }
+.mp-chip { display: inline-flex; align-items: center; gap: 5px; padding: 0; margin: 0; border: 0; font-size: 10px; font-weight: 500; white-space: nowrap; }
+.mp-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); }
+.mp-chip.is-active { color: var(--text-sub); }
+.mp-chip.is-active i { background: var(--green); box-shadow: 0 0 6px color-mix(in srgb, var(--green) 45%, transparent); }
+.mp-theme > summary small { line-height: 1.65; }
+.mp-theme > summary small.mp-fear { border-left: 2px solid var(--amber); padding: 5px 9px; background: linear-gradient(90deg, var(--action-trim-bg), transparent); border-radius: 0 5px 5px 0; }
+.mp-theme > summary small.mp-pending { color: var(--text-sub); }
+.mp-view { grid-template-columns: 1fr; gap: 4px; padding: 12px; background: var(--surface-soft); border-radius: 8px; }
+.mp-view dt:not(:first-child) { margin-top: 8px; }
+.mp-theme > summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }

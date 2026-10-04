@@ -8,7 +8,7 @@ import './TodayDecisionStrip.css';
 const toneLabel = { tail: '材料は追い風寄り', head: '材料は逆風寄り', wait: '材料はまちまち' } as const;
 const leanLabel: Record<Lean, string> = { tail: '追い風', head: '逆風', 'soft-head': 'やや逆風', neutral: '中立' };
 const alertLabel = { low: '低', normal: '通常', high: '高' } as const;
-const momentumLabel = { strong: '強い(過熱気味)', normal: '普通', weak: '弱い(売られすぎ気味)' } as const;
+const momentumLabel = { strong: '上昇・過熱に注意', normal: '通常の範囲', weak: '下落・売られすぎに注意' } as const;
 const yen = (v: number) => Math.round(v).toLocaleString('ja-JP');
 // Owner request 2026-10-02: each tile opens the part of Today it summarises.
 function jumpTo(id: string, openRow?: string) {
@@ -99,13 +99,13 @@ export function TodayDecisionStrip({ brief }: { brief: MarketBrief }) {
       {strip.alert && <button type="button" className={`today-strip__tile alert-${strip.alert}`} onClick={() => jumpTo('today-nikkei-chart')}>
         <small>急落警戒(5日で-5%以上)</small><b>{alertLabel[strip.alert]}</b>
         <span>過去の同じ段階で{ALERT_HISTORY[strip.alert]}%</span></button>}
-      {strip.momentum && <button type="button" className="today-strip__tile" onClick={() => jumpTo('today-nikkei-chart', 'trend')}>
+      {strip.momentum && <button type="button" className={`today-strip__tile momentum-${strip.momentum}`} onClick={() => jumpTo('today-nikkei-chart', 'trend')}>
         <small>日経の勢い</small><b>{momentumLabel[strip.momentum]}</b>
         <span>{strip.fiveDayChangePct !== null ? `5日で${signed(strip.fiveDayChangePct)}` : '直近20営業日との比較'}</span></button>}
-      {strip.band && <button type="button" className="today-strip__tile" onClick={() => jumpTo('today-nikkei-chart')}>
+      {strip.band && <button type="button" className="today-strip__tile tile-range" onClick={() => jumpTo('today-nikkei-chart')}>
         <small>5日間の予想値幅(8割{strip.overnightGapPct !== null ? '・昨夜の先物を反映' : ''})</small><b>{signed(strip.band.lower)}〜{signed(strip.band.upper)}</b>
         <span>{shownPrice !== null ? `${yen(shownPrice * (1 + strip.band.lower / 100))}〜${yen(shownPrice * (1 + strip.band.upper / 100))}円` : ''}</span></button>}
-      {brief.chips?.nextEvent && <button type="button" className="today-strip__tile" onClick={() => jumpTo('today-events')}>
+      {brief.chips?.nextEvent && <button type="button" className="today-strip__tile tile-event" onClick={() => jumpTo('today-events')}>
         <small>次の山場</small><b className="today-strip__event">{friendlyEventText(brief.chips.nextEvent)}</b></button>}
     </div>
     {strip.rows.length > 0 && <div className="today-strip__rows" aria-label="材料ごとの向き">
@@ -113,9 +113,10 @@ export function TodayDecisionStrip({ brief }: { brief: MarketBrief }) {
       {strip.rows.map(row => <details key={row.id} className="today-strip__row" data-lean={row.lean} data-row={row.id}>
         <summary><span className={`today-strip__chip is-${row.lean}`}>{leanLabel[row.lean]}</span>
           <span><b>{row.title}</b><small>{row.meaning}</small></span></summary>
-        <dl><dt>これは何?</dt><dd>{row.what}</dd><dt>今どう?</dt><dd>{row.now}</dd><dt>だから?</dt><dd>{row.soWhat}</dd></dl>
+        {row.id === 'trend' ? <p className="today-strip__detail">{row.soWhat}</p> :
+          <dl><dt>これは何？</dt><dd>{row.what}</dd><dt>今の状態</dt><dd>{row.now}</dd><dt>見るポイント</dt><dd>{row.soWhat}</dd></dl>}
+        {row.id === 'sq' && <a className="today-strip__source" href="https://www.jpx.co.jp/glossary/ta/326.html" target="_blank" rel="noopener noreferrer">SQの仕組みを読む（日本取引所グループ）</a>}
       </details>)}
     </div>}
-    <p className="today-strip__note">追い風・逆風は各材料の一般的な読み方で、まとめた判定は過去に5日後の方向を当てていません(上の成績)。夜間の日経先物は、2012年以降の実績で5日後の方向と結び付いていたことを確かめた材料です。急落警戒・値幅・先物の成績は過去の実績の頻度で、将来の確率ではありません。</p>
   </section>;
 }

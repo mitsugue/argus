@@ -95,6 +95,8 @@ def test_validate_ai_brief_rejects_invented_numbers_and_orders():
 
 
 def test_market_brief_route_is_cached_only_and_public_safe(monkeypatch):
+    # この検査は指定したFOMCを使う。実行日のSQ予定を混ぜない。
+    monkeypatch.setattr(scanner, "_brief_sq_events", lambda: [])
     monkeypatch.setattr(scanner, "_important_events_data", lambda: {
         "events": [{"title": "米CPI", "countdown": "D-7"}],
         "imminent": [{"title": "FOMC", "countdown": "D-1",

@@ -146,9 +146,9 @@ export function materialRows(features: FeatureRow[], fiveDayChangePct: number | 
   const sq = f('event.sq_sessions');
   if (sq !== undefined && sq <= 5) rows.push({ id: 'sq', lean: 'neutral',
     title: `SQ(先物・オプションの清算日)まであと${Math.round(sq)}営業日`,
-    meaning: 'SQの週は先物主導で値動きが荒くなりやすい。',
-    what: '毎月第2金曜日に先物・オプションが清算される日です。3・6・9・12月は特に大きい。',
-    now: `あと${Math.round(sq)}営業日です。`, soWhat: '週半ばから値動きが荒くなる可能性を見込んでおく局面です。' });
+    meaning: '清算に伴う売買に注目。SQだけでは上昇・下落の方向は決まりません。',
+    what: 'SQは満期を迎える先物・オプションの決済に使う価格です。日経平均の構成銘柄の寄付の値段から計算します。通常の月次SQは第2金曜日（休業日は前倒し）。3・6・9・12月は主要な先物とオプションの期限が重なります。',
+    now: `あと${Math.round(sq)}営業日です。`, soWhat: '期限前の持ち高の調整や当日の寄付の売買で、上下に大きく動くことがあります。「荒れる」は下落の予告ではなく、毎回乱高下するわけでもありません。寄付の動きがその後も続くかを見ます。' });
   return rows;
 }
 
@@ -206,7 +206,7 @@ const EVENT_NAMES: Array<[RegExp, string]> = [
   [/Employment Situation|Nonfarm|NFP/i, '米雇用統計'], [/Consumer Price|\bCPI\b/i, '米消費者物価'],
   [/FOMC|Federal Open Market/i, 'FOMC'], [/Producer Price|\bPPI\b/i, '米生産者物価'],
   [/Retail Sales/i, '米小売売上高'], [/\bGDP\b/i, '米GDP'], [/PCE/i, '米PCE物価'],
-  [/Bank of Japan|BOJ|日銀/i, '日銀会合'], [/Treasury (\d+)-Year Auction/i, '米国債入札'], [/ISM/i, '米ISM景況感'],
+  [/Bank of Japan|BOJ|日銀/i, '日銀会合'], [/Treasury (\d+)-Year Auctio(?:n)?/i, '米国債入札'], [/ISM/i, '米ISM景況感'],
 ];
 
 /** "US Employment Situation（2026-10-02 21:30（日本時間））・D" → "米雇用統計 今夜21:30". */
@@ -214,7 +214,10 @@ export function friendlyEventText(text: string, now = new Date()): string {
   const name = EVENT_NAMES.find(([re]) => re.test(text))?.[1]
     ?? text.replace(/[（(].*$/, '').replace(/・D(-\d+)?$/, '').trim();
   const m = /(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:\s+(\d{1,2}:\d{2}))?/.exec(text);
-  if (!m) return name;
+  if (!m) {
+    const shortDate = /\b(\d{1,2}\/\d{1,2})(?:\s+(\d{1,2}:\d{2}))?/.exec(text);
+    return shortDate && !name.includes(shortDate[1]) ? `${name} ${shortDate[0]}` : name;
+  }
   const jst = (d: Date) => new Date(d.getTime() + 9 * 3600_000).toISOString().slice(0, 10);
   const day = `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
   const today = jst(now); const tomorrow = jst(new Date(now.getTime() + 86_400_000));

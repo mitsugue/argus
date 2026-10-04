@@ -1,5 +1,7 @@
 # ARGUS product requirements
 
+毎回の作業と報告では `~/argus-handoff/引き継ぎ_Codex_2026-10-04.md` の §1b「先回りして拾う」を読み、依頼の目的・波及影響・本番確認・期限・判断待ちを点検する。
+
 Read `docs/JP_MARKET_ENGINE_REQUIREMENTS.md` before changing analysis, data,
 UI, AI prompts, persistence, or release behavior. It is an owner requirement.
 

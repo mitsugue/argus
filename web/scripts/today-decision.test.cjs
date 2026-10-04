@@ -85,3 +85,7 @@ assert.equal(d.friendlyEventText('US Treasury 10-Year Auction（2026/10/07・時
 assert.equal(d.friendlyEventText('FOMC（2026-10-03 03:00（日本時間））', at), 'FOMC 明日03:00');
 assert.equal(d.friendlyEventText('日銀会合', at), '日銀会合');
 console.log('Next-event wording PASS');
+assert.equal(d.friendlyEventText('US Treasury 10-Year Auctio 10/7', at), '米国債入札 10/7');
+assert.equal(d.friendlyEventText('US CPI (Consumer Price Index) 10/14 21:30', at), '米消費者物価 10/14 21:30');
+assert.equal(s.rows.find(r=>r.id==='sq').lean,'neutral');
+assert.ok(s.rows.find(r=>r.id==='sq').soWhat.includes('毎回乱高下するわけでもありません'));

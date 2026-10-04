@@ -11,9 +11,10 @@ import { TodayDecisionStrip } from './TodayDecisionStrip';
 import { MarketPositionCard } from './MarketPositionCard';
 import { LevelMapCard } from './LevelMapCard';
 import { friendlyFactText } from '../../lib/todayDecision';
+import { marketWording } from '../../lib/marketWording';
 import './ArgusEditorialSurface.css';
 
-const labels = { view: 'ARGUSの今日の見立て', reasons: 'そう考える理由', changes: '前回から変わったこと',
+const labels = { view: 'ARGUSの今日の見立て', reasons: '見立ての理由', changes: '前回から変わったこと',
   impact: '自分の銘柄への影響', next: '次に確かめたいこと', invalidation: '見方を変える条件' };
 type Section = keyof typeof labels;
 
@@ -49,7 +50,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
       ...plan.elements.filter(choice => /^evidence-news-/.test(choice.id) && choice.placement !== 'detail').slice(0, 1)];
     return <section className="argus-editorial argus-editorial--live" aria-label="ARGUSの今日の見立て"
       data-argus-contract="presentation-intent-v1" data-presentation-id={plan.planId} data-context-id={plan.contextId}>
-      <header className="argus-editorial__edition"><span>Today / 日本市場 · 日経平均 5営業日先まで</span>
+      <header className="argus-editorial__edition"><span>日経平均の見通し · 今後5営業日</span>
         <time dateTime={at}>{new Date(at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 更新</time></header>
       {updateState}
       {retained && <p role="status" className="argus-editorial__retained argus-editorial__retained--update">
@@ -61,15 +62,15 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
       {brief.analysisHistory?.status === 'SAVE_FAILED' && <p role="status" className="argus-editorial__retained"
         data-argus-contract="analysis-history-save-failed-v1">
         この見立ては、あとで振り返るための履歴に保存できませんでした。表示している内容は最新です。</p>}
-      {readable.length > 0 && <section className="argus-editorial__digest" aria-label="ARGUSの読み">
-        <h2>ARGUSの読み</h2>
+      {readable.length > 0 && <section className="argus-editorial__digest" aria-label="見通しを詳しく">
+        <h2>見通しを詳しく</h2>
         {readable.map(choice => {
           const source = brief.presentationCatalog!.elements.find(row => row.id === choice.id)!;
           const evidenceLabel = editorialElementLabel(choice.id);
           const label = evidenceLabel ?? labels[choice.id as Section];
           const text = evidenceLabel ? choice.caption?.textJa : summary.sections[choice.id as Section]?.textJa;
           return text ? <div key={choice.id} className="argus-editorial__digest-row" data-payload-id={source.payloadId}>
-            <small>{label}</small><p>{text}</p></div> : null;
+            <small>{label}</small><p>{marketWording(text)}</p></div> : null;
         })}
       </section>}
       <LevelMapCard />

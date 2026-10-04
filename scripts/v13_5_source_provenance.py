@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.31"
+PRODUCT_VERSION = "v13.8.32"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
-    'web/scripts/pwa-identity.test.mjs': '229c303677e5c6477839cfe7e7f2363ace9247f6',
-    'web/scripts/owner-today-https.mjs': 'f7ae7717d58220143972db04ec797c4e863b1d03',
+    'web/scripts/pwa-identity.test.mjs': '8b3aa4a81f9fdd5cb2d50e655b89690fbd740d2f',
+    'web/scripts/owner-today-https.mjs': '297d427293305d7853b4ac00afd9f948dfef4d66',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -275,11 +275,11 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dialogue/OwnerOverview.css': 'e608b1f63bbbf8596454a9e0100cea6ee8a41a0f',
     'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',
     'web/src/lib/presentationIntent.ts': '77c0c79423a2291fc3e28a58e1b0397b11a83828',
-    'web/src/components/today/ArgusEditorialSurface.tsx': '69fc7b8cf9dc1d258a7481097f4514dc8215ad60',
+    'web/src/components/today/ArgusEditorialSurface.tsx': '8af3dcd1b05040ae4430b84b958d6bc8831a7c10',
     'web/src/components/today/ArgusEditorialSurface.css': 'bb42d3e4b9df8188a9d9f4d55fceb2c44bb72271',
     'test_argus_presentation_intent.py': 'e79beae902a1382fae9e5ea3359e09301abf9733',
     'docs/V13_6_PRESENTATION_INTENT.md': '88d35d6f5f603628e7e89bae56308e16b7c76ea6',
-    'argus_presentation_intent.py': 'd2e9404d0fa2b51a21870970232996b8ce0b8624',
+    'argus_presentation_intent.py': 'c17f3425daa8652393cc193f7c8273caa567df05',
     'argus_persistent_storage.py': '4cb3737d9e865772a42ee238ca246e47158eee4f',
     'test_argus_checkpoint_stream_batches.py': 'a3e03b9cb28f6f62b88096bf651ef4eef02d451f',
     'web/src/components/today/ReadingHierarchy.css': 'f031a35a7ec9cb1aac772bbae8c0ab1de44c4a85',
@@ -648,6 +648,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/src/lib/marketWording.ts",
     "web/scripts/owner-lock-reason.test.cjs",
     "web/scripts/future-map-refresh.test.cjs",
     "web/dev-dist/workbox-a6c00840.js",

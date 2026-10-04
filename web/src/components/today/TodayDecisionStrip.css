@@ -46,3 +46,18 @@
 .today-strip__tile:active { background: var(--surface-soft); }
 .today-strip__tile:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
 .today-strip__preparing { margin: 0; padding: 8px 12px; border-radius: 10px; color: var(--amber); background: var(--action-trim-bg); font-size: 12px; line-height: 1.5; }
+.today-strip__tile { --tile-accent: var(--cyan); background: linear-gradient(135deg, color-mix(in srgb, var(--tile-accent) 16%, var(--surface)), var(--surface) 85%); border-color: color-mix(in srgb, var(--tile-accent) 40%, var(--line)); border-top: 2px solid var(--tile-accent); gap: 5px; }
+.today-strip__tile.alert-low { --tile-accent: var(--green); }
+.today-strip__tile.alert-normal { --tile-accent: var(--cyan); }
+.today-strip__tile.alert-high { --tile-accent: var(--red); }
+.today-strip__tile.momentum-strong { --tile-accent: var(--amber); }
+.today-strip__tile.momentum-normal { --tile-accent: var(--cyan); }
+.today-strip__tile.momentum-weak { --tile-accent: var(--red); }
+.today-strip__tile.tile-event { --tile-accent: var(--amber); }
+.today-strip__tile.momentum-strong b, .today-strip__tile.momentum-weak b { color: var(--tile-accent); font-size: 15px; }
+.today-strip__tile.tile-range b { font-size: 17px; }
+.today-strip__row dl { padding: 12px; margin: 0 0 12px; border-radius: 8px; background: var(--surface); grid-template-columns: 1fr; gap: 3px; }
+.today-strip__row dt:not(:first-child) { margin-top: 8px; }
+.today-strip__detail { padding: 0 12px 10px; color: var(--text-sub); font-size: 12px; line-height: 1.6; }
+.today-strip__source { display: block; margin: 0 12px 12px; color: var(--cyan); font-size: 12px; }
+.today-strip__row > summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
