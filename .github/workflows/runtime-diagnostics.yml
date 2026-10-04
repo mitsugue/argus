@@ -59,6 +59,18 @@ jobs:
               "https://argus-backend-3j2m.onrender.com/api/argus/admin/jquants/dividend-audit" || echo timeout)
             echo "jquants-dividend-audit $day http=$code"
           done
+          # 2026-10-04: the new valuation indicators and earnings dates.
+          for spec in "valuation-1002|/equities/valuation|{\"date\":\"2026-10-02\"}" \
+                      "valuation-7203|/equities/valuation|{\"code\":\"72030\",\"from\":\"2026-09-14\"}" \
+                      "earnings-date-7203|/fins/earnings-date|{\"code\":\"72030\"}" \
+                      "earnings-date-1002|/fins/earnings-date|{\"date\":\"2026-10-02\"}"; do
+            name=${spec%%|*}; rest=${spec#*|}; endpoint=${rest%%|*}; params=${rest#*|}
+            code=$(curl -sS -o "artifacts/runtime-diagnostics/jquants-shape-$name.json" -w "%{http_code}" \
+              --max-time 60 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              -H 'Content-Type: application/json' --data "{\"endpoint\":\"$endpoint\",\"params\":$params}" \
+              "https://argus-backend-3j2m.onrender.com/api/argus/admin/jquants/dividend-audit" || echo timeout)
+            echo "jquants-shape $name http=$code"
+          done
       - name: Read the issued-forecast record (best effort)
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
