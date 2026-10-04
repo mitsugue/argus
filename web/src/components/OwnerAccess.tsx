@@ -2,8 +2,28 @@ import { ArgusMark } from './ArgusMark';
 import React, { useState, useEffect, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { OWNER_AUTH_REQUIRED, subscribeOwner, hasOwnerSession, passwordLogin,
-  logoutOwner, revokeOwnerDevices, useOwnerPasskey, restoreOwnerSession, hasSavedOwnerSession } from '../lib/ownerSession';
+  logoutOwner, revokeOwnerDevices, useOwnerPasskey, restoreOwnerSession, hasSavedOwnerSession,
+  ownerLockReason } from '../lib/ownerSession';
 import './OwnerAccess.css';
+
+/** The lock reason in owner wording, with the fixed code for a screenshot. */
+export function lockNote(code: string): string {
+  if (!code) return '';
+  const head = code.split(':')[0];
+  const words: Record<string, string> = {
+    expired: 'ログインの有効期限(24時間)が切れました',
+    response_401: 'サーバーがログインを認めませんでした',
+    session_check_401: '定期確認でサーバーがログインを認めませんでした',
+    response_unverified: '応答の確認に失敗しました',
+    restore_browser_tab: 'ブラウザのタブではログインを保存しません(ホーム画面のアプリで開くと保たれます)',
+    restore_nothing_saved: '保存されたログインがありませんでした(アプリを終了すると消えます)',
+    restore_expired: '保存されたログインの期限が切れていました',
+    restore_server_rejected: 'サーバーが保存されたログインを認めませんでした',
+    restore_server_unreachable: 'サーバーに1分つながらず、ログインを確かめられませんでした',
+    cleared: 'ログアウトしました',
+  };
+  return `前回: ${words[head] ?? 'ログインが続きませんでした'}(${code})`;
+}
 
 export function OwnerAccess({ children }: { children: React.ReactNode }) {
   const authenticated = useSyncExternalStore(subscribeOwner, hasOwnerSession);
@@ -103,6 +123,10 @@ export function OwnerAccess({ children }: { children: React.ReactNode }) {
         {form}{status}</>}
       {/* Owner request 2026-10-02: the running version, small and centred. */}
       <p className="owner-access-screen__version" data-argus-version={__APP_VERSION__}>v{__APP_VERSION__}</p>
+      {/* 2026-10-04: why the previous login did not continue, small, so a
+          screenshot names the cause (fixed code, never a credential). */}
+      {!restoring && lockNote(ownerLockReason()) && <p className="owner-access-screen__version"
+        data-owner-lock-reason={ownerLockReason()}>{lockNote(ownerLockReason())}</p>}
     </section>}
     {authenticated && <>{children}{header ? createPortal(controls, header) : controls}</>}
   </>;

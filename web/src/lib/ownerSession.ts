@@ -41,8 +41,24 @@ export const hasOwnerSession = () => !!token && expiresAt > Date.now();
 // release acceptance that finds the lock screen can say what caused it. Never
 // a credential, a query string or a response body.
 const lockPath = (url: URL) => url.pathname.replace(/[^A-Za-z0-9/_-]/g, '').slice(0, 80);
+// The last reason, kept for one app session so the lock screen after a reload
+// can show why the login did not continue (owner, 2026-10-04: a pull-to-refresh
+// still opened the lock screen; the cause must be visible, not guessed). A fixed
+// code only: never a credential, a query string or a response body.
+const LOCK_KEY = 'argus.owner.lock.v1';
+let lastLock = '';
 function recordLock(reason: string) {
+  lastLock = reason;
   try { document.documentElement.dataset.argusOwnerLock = reason; } catch { /* no document */ }
+  try { anyStore()?.setItem(LOCK_KEY, JSON.stringify({ reason, at: Date.now() })); } catch { /* storage unavailable */ }
+}
+/** Why the previous login ended or could not be resumed, as a fixed code (or ''). */
+export function ownerLockReason(): string {
+  if (lastLock) return lastLock;
+  try {
+    const kept = JSON.parse(anyStore()?.getItem(LOCK_KEY) ?? 'null');
+    return kept && typeof kept.reason === 'string' && /^[A-Za-z0-9_:/-]{1,120}$/.test(kept.reason) ? kept.reason : '';
+  } catch { return ''; }
 }
 export function clearOwnerSession(reason: unknown = 'cleared') {
   if (token) recordLock(typeof reason === 'string' ? reason : 'cleared');
@@ -56,6 +72,8 @@ function setSession(value: { token?: unknown; expiresAt?: unknown }) {
       || typeof value.expiresAt !== 'number' || value.expiresAt <= Date.now()
       || value.expiresAt > Date.now() + MAX_SESSION_MS) throw new Error('authentication_failed');
   token = value.token; expiresAt = value.expiresAt;
+  lastLock = '';
+  try { anyStore()?.removeItem(LOCK_KEY); } catch { /* storage unavailable */ }
   try {
     const kept = store();
     if (kept) kept.setItem(STORE_KEY, JSON.stringify({ token, expiresAt, build: buildId() }));
@@ -173,6 +191,8 @@ export async function restoreOwnerSession(): Promise<boolean> {
   // verifies the session (nonce echo) and its 24-hour expiry applies.
   if (!saved || typeof saved.expiresAt !== 'number' || saved.expiresAt <= Date.now()) {
     try { anyStore()?.removeItem(STORE_KEY); } catch { /* storage unavailable */ }
+    // Keep an earlier, more specific reason (a 401 before the reload).
+    if (!ownerLockReason()) recordLock(!installedApp() ? 'restore_browser_tab' : saved ? 'restore_expired' : 'restore_nothing_saved');
     return false;
   }
   // One epoch for every attempt: a sign-in the owner starts meanwhile cancels
@@ -185,11 +205,18 @@ export async function restoreOwnerSession(): Promise<boolean> {
       const reason = error instanceof Error ? error.message : 'unknown';
       if (reason === 'authentication_failed') {
         try { anyStore()?.removeItem(STORE_KEY); } catch { /* storage unavailable */ }
+        recordLock('restore_server_rejected');
         return false;
       }
-      if (reason !== 'session_check_unavailable') return hasOwnerSession();
+      if (reason !== 'session_check_unavailable') {
+        if (!hasOwnerSession()) recordLock('restore_' + reason.replace(/[^a-z_]/g, '').slice(0, 40));
+        return hasOwnerSession();
+      }
       const delay = RESTORE_RETRY_DELAYS_MS[Math.min(attempt, RESTORE_RETRY_DELAYS_MS.length - 1)];
-      if (Date.now() + delay > deadline || (saved.expiresAt as number) <= Date.now() + delay) return false;
+      if (Date.now() + delay > deadline || (saved.expiresAt as number) <= Date.now() + delay) {
+        recordLock('restore_server_unreachable');
+        return false;
+      }
       await new Promise((resolve) => setTimeout(resolve, delay));
       if (epoch !== ceremonyEpoch) return hasOwnerSession();
     }
