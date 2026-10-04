@@ -145,6 +145,7 @@ import jp_market_source_adapters
 import jp_market_dynamics
 import argus_macro_frequency
 import jp_market_level_map
+import argus_level_map_backup
 import jp_market_features
 import jp_market_acquisition
 import jp_market_events
@@ -38647,6 +38648,9 @@ def _jq_valuation_for_date(date_str, headers, max_pages=40):
                              headers=headers, params=params, timeout=20)
             pages += 1
             if r.status_code != 200:
+                # A day is all pages or nothing: a partial day would silently
+                # drop members from every aggregate built on it (2026-10-04).
+                out = {}
                 break
             body = r.json()
             for row in body.get("data", []):
@@ -38664,7 +38668,7 @@ def _jq_valuation_for_date(date_str, headers, max_pages=40):
                 break
             params["pagination_key"] = pk
     except Exception:
-        pass
+        out = {}
     _JP_INDEX_PROXY["requestsLastWarm"] += pages
     return out
 
@@ -39017,8 +39021,11 @@ _LEVEL_MAP = {"status": "NOT_RUN", "loaded": False, "eps": {}, "mornings": [], "
               "lastError": None, "lastErrorReason": None, "estimatesLastWarm": 0, "missedMornings": [],
               "conflicts": 0, "lastCreatedAt": None}
 _LEVEL_MAP_LOCK = threading.Lock()
-_LEVEL_MAP_EPS_PER_WARM = 6
-_LEVEL_MAP_EPS_SINCE = "2026-06-01"
+_LEVEL_MAP_EPS_PER_WARM = 20
+# J-Quants valuation reaches back ten years; the constituents of each day are
+# rebuilt from Nikkei's published change history (2026-10-04).
+_LEVEL_MAP_EPS_SINCE = "2016-10-03"
+_LEVEL_MAP_MAP_SINCE = "2026-06-01"
 
 
 def _level_map_history_path():
@@ -39027,6 +39034,28 @@ def _level_map_history_path():
     if not _cost_policy_durable_enabled():
         return None
     return os.path.join(_DURABILITY_PATHS["root"], "market_analysis_history.sqlite3")
+
+
+_NIKKEI225_CHANGES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ops", "calendar",
+                                       "nikkei225_constituent_changes.json")
+
+
+def _nikkei225_constituent_changes():
+    """Nikkei's published constituent changes (official history PDF, checked by hand)."""
+    try:
+        with open(_NIKKEI225_CHANGES_PATH, encoding="utf-8") as handle:
+            value = json.load(handle)
+        return value if value.get("schemaVersion") == "nikkei225-constituent-changes-v1" else None
+    except (OSError, ValueError):
+        return None
+
+
+def _level_map_remote():
+    """The existing private store connection, or None when it is not configured."""
+    repo = os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", "")
+    if not repo or not os.environ.get("ARGUS_LAYER2B_PRIVATE_TOKEN", ""):
+        return None
+    return argus_analysis_history_backup.GitHubStore(repo=repo, headers=_gh_private_headers(), http=requests.request)
 
 
 def _level_map_completed_bars(nikkei_rows, now_iso):
@@ -39062,12 +39091,27 @@ def _level_map_warm(nikkei_rows):
         argus_analysis_history.initialize(path)
         if not _LEVEL_MAP["loaded"]:
             state = argus_analysis_history.read_level_map_state(path)
+            if not state["eps"] and not state["mornings"]:
+                remote = _level_map_remote()
+                if remote is not None:
+                    try:
+                        _LEVEL_MAP["remoteRestore"] = argus_level_map_backup.restore(path, remote)
+                        state = argus_analysis_history.read_level_map_state(path)
+                    except Exception as exc:
+                        _LEVEL_MAP["remoteRestore"] = {"status": "FAILED", "errorClass": type(exc).__name__}
             _LEVEL_MAP.update(eps=state["eps"], mornings=state["mornings"], loaded=True)
         bars = _level_map_completed_bars(nikkei_rows, now)
         if len(bars) < 30:
             _LEVEL_MAP.update(status="PRICES_COLD", lastErrorReason="nikkei_history_not_ready")
             return
         close_by_day = {bar["date"]: bar["close"] for bar in bars}
+        # Ten years of closes for the estimate backfill (the map uses `bars`).
+        for row in _N225_ANALOG_HISTORY.get("data") or ():
+            day, close = str(row.get("date") or "")[:10], row.get("close")
+            if len(day) == 10 and isinstance(close, (int, float)) and day not in close_by_day \
+                    and day < (bars[0]["date"] if bars else day):
+                close_by_day[day] = close
+        estimate_sessions = sorted(close_by_day)
         sessions = [bar["date"] for bar in bars]
         constituents = sorted(((_JP_INDEX_PROXY.get("factors") or {}).get("factors") or {}))
         as_of = _JP_INDEX_PROXY.get("weightsAsOf")
@@ -39077,7 +39121,7 @@ def _level_map_warm(nikkei_rows):
                 before = [day for day in sessions if day < pivot["date"]]
                 if before:
                     wanted.append(before[-1])
-            wanted += [day for day in reversed(sessions) if day >= _LEVEL_MAP_EPS_SINCE]
+            wanted += [day for day in reversed(estimate_sessions) if day >= _LEVEL_MAP_EPS_SINCE]
             pending, seen = [], set()
             for day in wanted:
                 if day not in seen and day not in _LEVEL_MAP["eps"]:
@@ -39087,10 +39131,12 @@ def _level_map_warm(nikkei_rows):
                 values = _jq_valuation_for_date(day, headers)
                 if not values:
                     continue
+                members, members_label = jp_market_level_map.constituents_on(
+                    day, constituents, as_of, _nikkei225_constituent_changes())
                 try:
                     estimate = jp_market_level_map.weighted_eps(
-                        values, constituents, index_close=float(close_by_day[day]), date=day,
-                        constituents_as_of=as_of or "unknown")
+                        values, members, index_close=float(close_by_day[day]), date=day,
+                        constituents_as_of=members_label)
                 except jp_market_level_map.LevelMapError:
                     continue
                 estimate["recordedAt"] = now
@@ -39124,7 +39170,7 @@ def _level_map_warm(nikkei_rows):
         try:
             _LEVEL_MAP["score"] = jp_market_level_map.score_records(_LEVEL_MAP["mornings"], bars, eps_series)
             first = _LEVEL_MAP["mornings"][0]["morningOf"] if _LEVEL_MAP["mornings"] else None
-            later = [day for day in sessions if day >= _LEVEL_MAP_EPS_SINCE and (not first or day < first)]
+            later = [day for day in sessions if day >= _LEVEL_MAP_MAP_SINCE and (not first or day < first)]
             rebuilt = []
             for day in later:
                 try:
@@ -39135,6 +39181,15 @@ def _level_map_warm(nikkei_rows):
             _LEVEL_MAP["retrospective"]["preRegisteredOnly"] = False
         except Exception as exc:
             _LEVEL_MAP["scoreError"] = type(exc).__name__
+        # Remote copy over the existing private store (2026-10-04).
+        remote = _level_map_remote()
+        if remote is None:
+            _LEVEL_MAP["remoteBackup"] = {"status": "NOT_CONFIGURED"}
+        else:
+            try:
+                _LEVEL_MAP["remoteBackup"] = {**argus_level_map_backup.synchronize(path, remote), "at": now}
+            except Exception as exc:
+                _LEVEL_MAP["remoteBackup"] = {"status": "FAILED", "errorClass": type(exc).__name__, "at": now}
         _LEVEL_MAP.update(status="AVAILABLE" if _LEVEL_MAP["mornings"] else "WAITING_FOR_ESTIMATE",
                           lastError=None, lastErrorReason=None)
     except Exception as exc:
@@ -39160,7 +39215,7 @@ def _level_map_public():
             "latest": mornings[-1] if mornings else None, "morningCount": len(mornings),
             "firstMorning": mornings[0].get("morningOf") if mornings else None,
             "estimateCount": len(eps), "estimateFirst": min(eps) if eps else None,
-            "estimateLatest": ({k: latest_eps.get(k) for k in ("date", "eps", "per", "coverage", "constituentsAsOf",
+            "estimateLatest": ({k: latest_eps.get(k) for k in ("date", "eps", "per", "forwardOnly", "coverage", "constituentsAsOf",
                                                               "basis", "labelJa", "officialValue")}
                                if latest_eps else None),
             "missedMornings": list(_LEVEL_MAP.get("missedMornings") or []),
@@ -39171,7 +39226,8 @@ def _level_map_public():
             "score": _level_map_score_summary(_LEVEL_MAP.get("score")),
             "retrospective": _level_map_score_summary(_LEVEL_MAP.get("retrospective")),
             "scoreError": _LEVEL_MAP.get("scoreError"),
-            "storage": "LOCAL_DURABLE_APPEND_ONLY", "remoteBackup": "NOT_YET_INCLUDED",
+            "storage": "LOCAL_DURABLE_APPEND_ONLY", "remoteBackup": _LEVEL_MAP.get("remoteBackup"),
+            "remoteRestore": _LEVEL_MAP.get("remoteRestore"),
             "actionAuthority": False, "automaticAiCalls": 0}
 
 

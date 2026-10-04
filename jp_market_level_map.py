@@ -165,10 +165,49 @@ def weighted_eps(valuation: Mapping[str, Mapping[str, Any]], constituents: Itera
     if income_total <= 0 or cap_total <= 0:
         raise LevelMapError("aggregate_earnings_not_positive")
     per = cap_total / income_total
-    return {"date": date, "eps": close / per, "per": per, "indexClose": close,
+    # The same aggregate over members with a forecast only, kept beside the
+    # chosen estimate so the effect of filling from trailing figures is
+    # measurable against the official series (2026-10-04: +1.4 %).
+    forward_cap = forward_income = 0.0
+    for code in members:
+        row = valuation.get(code) or {}
+        cap, forward_per = _finite(row.get("MktCap")), _finite(row.get("FwdPER"))
+        if cap and cap > 0 and forward_per:
+            forward_cap += cap
+            forward_income += cap / forward_per
+    forward_only = ({"per": forward_cap / forward_income, "eps": close / (forward_cap / forward_income)}
+                    if forward_income > 0 and forward_cap > 0 else None)
+    return {"date": date, "eps": close / per, "per": per, "indexClose": close, "forwardOnly": forward_only,
             "basis": EPS_BASIS, "labelJa": EPS_LABEL_JA, "constituentsAsOf": constituents_as_of,
             "coverage": {**counts, "marketCapShareUsed": round(cap_used / cap_all, 6) if cap_all else None},
             "officialValue": False}
+
+
+def constituents_on(day: str, base_codes: Iterable[str], base_as_of: Optional[str],
+                    changes: Optional[Mapping[str, Any]]) -> tuple:
+    """The constituents on `day`: the weight table's members with every
+    published change effective after the table's date and on or before `day`
+    applied (2026-10-04: the 9/30 table predates the 10/1 review). Returns
+    (codes, label of what was applied)."""
+    codes = {str(code) for code in base_codes}
+    applied, reversed_ = [], []
+    rows = sorted((changes or {}).get("rows") or [], key=lambda r: str(r.get("effective")))
+    for row in rows:
+        effective = str(row.get("effective") or "")
+        if len(effective) == 10 and (not base_as_of or effective > base_as_of) and effective <= day:
+            codes -= {str(c) for c in row.get("removed") or ()}
+            codes |= {str(c) for c in row.get("added") or ()}
+            applied.append(effective)
+    # Before the table's date: undo the later changes, newest first.
+    for row in reversed(rows):
+        effective = str(row.get("effective") or "")
+        if base_as_of and len(effective) == 10 and day < effective <= base_as_of:
+            codes -= {str(c) for c in row.get("added") or ()}
+            codes |= {str(c) for c in row.get("removed") or ()}
+            reversed_.append(effective)
+    label = (base_as_of or "unknown") + ("+入れ替え" + ",".join(applied) if applied else "") \
+        + ("−逆算" + ",".join(sorted(reversed_)) if reversed_ else "")
+    return sorted(codes), label
 
 
 # --- prices --------------------------------------------------------------------

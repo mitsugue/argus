@@ -244,3 +244,11 @@ class DeployScopeTests(unittest.TestCase):
                     if found.group(1) != expected_patch:
                         stale.append(f"{relative}:{number}: {line.strip()}")
         self.assertEqual([], stale, "stale version pins after a bump")
+
+
+def test_every_calendar_table_deploys_the_backend():
+    """2026-10-04: the constituent-change, MSCI, US policy and Japanese macro
+    tables are read by the backend; a table-only edit must reach production."""
+    for path in ("ops/calendar/nikkei225_constituent_changes.json", "ops/calendar/msci_index_review.json",
+                 "ops/calendar/us_policy_dates.json", "ops/calendar/jp_macro_2026.json"):
+        assert deploy_scope.classify([path])["backendDeploy"] is True, path
