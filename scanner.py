@@ -145,6 +145,7 @@ import jp_market_source_adapters
 import jp_market_dynamics
 import argus_macro_frequency
 import jp_market_level_map
+import argus_analyst_targets
 import argus_level_map_backup
 import jp_market_features
 import jp_market_acquisition
@@ -39198,6 +39199,95 @@ def _level_map_warm(nikkei_rows):
         _LEVEL_MAP_LOCK.release()
 
 
+# ── Analyst consensus target prices (owner decision 2026-10-04) ───────────────
+# Watched and held stocks only, once a JST day, from Yahoo Finance's quote
+# summary; the page shows them with a small source/date/analyst-count note.
+_ANALYST_TARGETS = {"loaded": False, "items": {}, "lastAttemptAt": None, "lastError": None,
+                    "fetchedLastWarm": 0}
+_ANALYST_TARGETS_LOCK = threading.Lock()
+_ANALYST_TARGETS_PER_WARM = 25
+
+
+def _analyst_targets_path():
+    if not _cost_policy_durable_enabled():
+        return None
+    return os.path.join(_DURABILITY_PATHS["root"], "analyst_targets.json")
+
+
+def _analyst_targets_symbols():
+    pairs = {("JP", str(row.get("symbol"))) for row in _JP_WATCHLIST if row.get("symbol")}
+    pairs |= {("US", str(row.get("symbol"))) for row in _US_WATCHLIST if row.get("symbol")}
+    try:
+        latest = _layer2b_read_latest()
+        for member in (latest.get("members") if isinstance(latest, dict) else []) or []:
+            if str(member.get("market")) in ("JP", "US") and member.get("symbol"):
+                pairs.add((str(member["market"]), str(member["symbol"]).upper()))
+    except Exception:
+        pass
+    return sorted(pairs)
+
+
+def _analyst_targets_warm():
+    if not _ANALYST_TARGETS_LOCK.acquire(blocking=False):
+        return
+    try:
+        now = _ai_now_iso()
+        today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+        _ANALYST_TARGETS.update(lastAttemptAt=now, fetchedLastWarm=0)
+        path = _analyst_targets_path()
+        if not _ANALYST_TARGETS["loaded"]:
+            _ANALYST_TARGETS["loaded"] = True
+            if path and os.path.isfile(path):
+                with open(path, encoding="utf-8") as handle:
+                    saved = json.load(handle)
+                if isinstance(saved, dict) and saved.get("schemaVersion") == argus_analyst_targets.SCHEMA:
+                    _ANALYST_TARGETS["items"] = dict(saved.get("items") or {})
+        pending = [(market, symbol) for market, symbol in _analyst_targets_symbols()
+                   if argus_analyst_targets.due(_ANALYST_TARGETS["items"].get(f"{market}:{symbol}"), today)]
+        if not pending:
+            return
+        session = requests.Session()
+        session.headers["User-Agent"] = "Mozilla/5.0 (argus)"
+        session.get("https://fc.yahoo.com", timeout=10, allow_redirects=True)
+        crumb = session.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=10).text.strip()
+        if not crumb or len(crumb) > 64:
+            raise ValueError("yahoo_crumb_unavailable")
+        for market, symbol in pending[:_ANALYST_TARGETS_PER_WARM]:
+            ticker = argus_analyst_targets.yahoo_symbol(market, symbol)
+            key = f"{market}:{symbol}"
+            if not ticker:
+                continue
+            response = session.get(f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}",
+                                   params={"modules": "financialData", "crumb": crumb}, timeout=10)
+            row = (argus_analyst_targets.parse_financial_data(symbol, response.json(), fetched_at=now)
+                   if response.status_code == 200 else None)
+            _ANALYST_TARGETS["items"][key] = ({**row, "market": market, "fetchedDayJst": today} if row else
+                                              {"symbol": symbol, "market": market, "unavailable": True,
+                                               "httpStatus": response.status_code, "fetchedDayJst": today})
+            _ANALYST_TARGETS["fetchedLastWarm"] += 1
+        if path:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as handle:
+                json.dump({"schemaVersion": argus_analyst_targets.SCHEMA, "items": _ANALYST_TARGETS["items"]},
+                          handle, ensure_ascii=False)
+            os.replace(tmp, path)
+        _ANALYST_TARGETS["lastError"] = None
+    except Exception as exc:
+        _ANALYST_TARGETS["lastError"] = type(exc).__name__
+    finally:
+        _ANALYST_TARGETS_LOCK.release()
+
+
+@app.route("/api/argus/analyst-targets")
+def api_argus_analyst_targets():
+    """PUBLIC cached-only: consensus target prices of watched stocks (never fetches)."""
+    items = {key: row for key, row in (_ANALYST_TARGETS.get("items") or {}).items()
+             if isinstance(row, dict) and not row.get("unavailable")}
+    return jsonify({"schemaVersion": argus_analyst_targets.SCHEMA, "items": items,
+                    "sourceLabel": argus_analyst_targets.SOURCE_LABEL, "asOf": _ANALYST_TARGETS.get("lastAttemptAt"),
+                    "lastError": _ANALYST_TARGETS.get("lastError"), "actionAuthority": False})
+
+
 def _level_map_score_summary(score):
     if not score:
         return None
@@ -40486,6 +40576,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         _jp_index_valuation_warm()
         _jp_index_proxy_warm(nikkei_rows)
         _level_map_warm(nikkei_rows)
+        _analyst_targets_warm()
         _jp_internals_warm()
     margin_rows = _jp_market_engine_margin_1570_rows(fetch=warm)
     if warm:
@@ -44731,6 +44822,28 @@ def _provider_diagnostics():
         j = r.json() if r.status_code == 200 else {}
         return r.status_code, (1 if isinstance(j, dict) and j.get("c") else 0)
 
+    # 2026-10-04: whether the existing contracts carry analyst target prices
+    # (Twelve Data answers 200 with an error body when a plan lacks an
+    # endpoint, so only a body with the field counts).
+    def _td_analysis(endpoint, field, params):
+        def probe():
+            r = requests.get(f"https://api.twelvedata.com/{endpoint}",
+                             params={**params, "apikey": _TWELVEDATA_API_KEY}, timeout=_DIAG_TIMEOUT)
+            j = r.json() if r.status_code == 200 else {}
+            if isinstance(j, dict) and j.get("status") == "error":
+                return int(j.get("code") or 403), 0
+            return r.status_code, (1 if isinstance(j, dict) and j.get(field) else 0)
+        return probe
+
+    def _fh_analysis(path, params):
+        def probe():
+            r = requests.get(f"https://finnhub.io/api/v1/{path}", params={**params, "token": FINNHUB_API_KEY},
+                             timeout=_DIAG_TIMEOUT)
+            j = r.json() if r.status_code == 200 else {}
+            filled = (bool(j.get("targetMean")) if isinstance(j, dict) else len(j) > 0 if isinstance(j, list) else False)
+            return r.status_code, (1 if filled else 0)
+        return probe
+
     def _av():
         r = requests.get("https://www.alphavantage.co/query",
                          params={"function": "TOP_GAINERS_LOSERS", "apikey": _ALPHAVANTAGE_KEY},
@@ -44790,6 +44903,21 @@ def _provider_diagnostics():
                     limitations="時間外liveは実証時のみ。"),
         _diag_probe("fred", bool(_FRED_API_KEY), _fred, caps=["macro"], limitations="金利/VIX/HY OAS。"),
         _diag_probe("finnhub", bool(FINNHUB_API_KEY), _finnhub, caps=["quote", "news"], limitations="二次媒体/相場。"),
+        _diag_probe("twelvedata-price-target", bool(_TWELVEDATA_API_KEY),
+                    _td_analysis("price_target", "price_target", {"symbol": "AAPL"}), caps=["price_target"],
+                    limitations="目標株価(米国)。契約で使えるかの確認用。"),
+        _diag_probe("twelvedata-price-target-jp", bool(_TWELVEDATA_API_KEY),
+                    _td_analysis("price_target", "price_target", {"symbol": "7203", "exchange": "JPX"}),
+                    caps=["price_target_jp"], limitations="目標株価(日本株)。契約で使えるかの確認用。"),
+        _diag_probe("twelvedata-recommendations", bool(_TWELVEDATA_API_KEY),
+                    _td_analysis("recommendations", "trends", {"symbol": "AAPL"}), caps=["recommendations"],
+                    limitations="アナリストの評価の内訳。契約で使えるかの確認用。"),
+        _diag_probe("finnhub-price-target", bool(FINNHUB_API_KEY),
+                    _fh_analysis("stock/price-target", {"symbol": "AAPL"}), caps=["price_target"],
+                    limitations="Finnhubの目標株価(公式にはPremium)。確認用。"),
+        _diag_probe("finnhub-recommendation", bool(FINNHUB_API_KEY),
+                    _fh_analysis("stock/recommendation", {"symbol": "AAPL"}), caps=["recommendation_trends"],
+                    limitations="Finnhubの評価の推移。確認用。"),
         _diag_probe("alphavantage", bool(_ALPHAVANTAGE_KEY), _av, caps=["us_movers"], limitations="米国ムーバー。"),
         _diag_probe("coingecko", True, _coingecko, caps=["crypto_price"],
                     limitations="キー任意。DC IPブロック時はCoinbaseフォールバック(価格側)。"),
