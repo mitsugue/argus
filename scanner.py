@@ -145,6 +145,7 @@ import jp_market_source_adapters
 import jp_market_dynamics
 import argus_macro_frequency
 import jp_market_level_map
+import argus_level_map_backup
 import jp_market_features
 import jp_market_acquisition
 import jp_market_events
@@ -39029,6 +39030,14 @@ def _level_map_history_path():
     return os.path.join(_DURABILITY_PATHS["root"], "market_analysis_history.sqlite3")
 
 
+def _level_map_remote():
+    """The existing private store connection, or None when it is not configured."""
+    repo = os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", "")
+    if not repo or not os.environ.get("ARGUS_LAYER2B_PRIVATE_TOKEN", ""):
+        return None
+    return argus_analysis_history_backup.GitHubStore(repo=repo, headers=_gh_private_headers(), http=requests.request)
+
+
 def _level_map_completed_bars(nikkei_rows, now_iso):
     """Sessions whose close is final by now (an in-progress bar is left out)."""
     out = []
@@ -39062,6 +39071,14 @@ def _level_map_warm(nikkei_rows):
         argus_analysis_history.initialize(path)
         if not _LEVEL_MAP["loaded"]:
             state = argus_analysis_history.read_level_map_state(path)
+            if not state["eps"] and not state["mornings"]:
+                remote = _level_map_remote()
+                if remote is not None:
+                    try:
+                        _LEVEL_MAP["remoteRestore"] = argus_level_map_backup.restore(path, remote)
+                        state = argus_analysis_history.read_level_map_state(path)
+                    except Exception as exc:
+                        _LEVEL_MAP["remoteRestore"] = {"status": "FAILED", "errorClass": type(exc).__name__}
             _LEVEL_MAP.update(eps=state["eps"], mornings=state["mornings"], loaded=True)
         bars = _level_map_completed_bars(nikkei_rows, now)
         if len(bars) < 30:
@@ -39135,6 +39152,15 @@ def _level_map_warm(nikkei_rows):
             _LEVEL_MAP["retrospective"]["preRegisteredOnly"] = False
         except Exception as exc:
             _LEVEL_MAP["scoreError"] = type(exc).__name__
+        # Remote copy over the existing private store (2026-10-04).
+        remote = _level_map_remote()
+        if remote is None:
+            _LEVEL_MAP["remoteBackup"] = {"status": "NOT_CONFIGURED"}
+        else:
+            try:
+                _LEVEL_MAP["remoteBackup"] = {**argus_level_map_backup.synchronize(path, remote), "at": now}
+            except Exception as exc:
+                _LEVEL_MAP["remoteBackup"] = {"status": "FAILED", "errorClass": type(exc).__name__, "at": now}
         _LEVEL_MAP.update(status="AVAILABLE" if _LEVEL_MAP["mornings"] else "WAITING_FOR_ESTIMATE",
                           lastError=None, lastErrorReason=None)
     except Exception as exc:
@@ -39171,7 +39197,8 @@ def _level_map_public():
             "score": _level_map_score_summary(_LEVEL_MAP.get("score")),
             "retrospective": _level_map_score_summary(_LEVEL_MAP.get("retrospective")),
             "scoreError": _LEVEL_MAP.get("scoreError"),
-            "storage": "LOCAL_DURABLE_APPEND_ONLY", "remoteBackup": "NOT_YET_INCLUDED",
+            "storage": "LOCAL_DURABLE_APPEND_ONLY", "remoteBackup": _LEVEL_MAP.get("remoteBackup"),
+            "remoteRestore": _LEVEL_MAP.get("remoteRestore"),
             "actionAuthority": False, "automaticAiCalls": 0}
 
 

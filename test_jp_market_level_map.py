@@ -156,6 +156,7 @@ def _glue(monkeypatch, tmp_path, now):
                                                      "weightsAsOf": "2026-08-31"})
     monkeypatch.setattr(scanner, "_JQUANTS_API_KEY", "test-only")
     monkeypatch.setattr(scanner, "_ai_now_iso", lambda: now)
+    monkeypatch.setattr(scanner, "_level_map_remote", lambda: None)
     calls = []
     def valuation(day, headers):
         calls.append(day)
@@ -181,7 +182,7 @@ def test_glue_stores_the_estimate_and_one_morning_map_before_the_open(monkeypatc
     scanner._level_map_warm(rows)                                      # no second map, no rewrite
     assert history.read_level_map_state(path)["mornings"] == [record]
     public = scanner._level_map_public()
-    assert public["latest"]["morningOf"] == "2026-10-05" and public["remoteBackup"] == "NOT_YET_INCLUDED"
+    assert public["latest"]["morningOf"] == "2026-10-05" and public["remoteBackup"]["status"] == "NOT_CONFIGURED"
     assert public["score"]["preRegisteredOnly"] is True and public["score"]["mornings"] == 1
     assert public["retrospective"]["preRegisteredOnly"] is False
     assert public["retrospective"]["firstMorning"] >= "2026-06-01"
@@ -235,3 +236,43 @@ def test_scores_count_phases_once_and_turning_points_against_any_whole_line():
     assert turning["chanceExpected"] == pytest.approx(
         sum(0.02 * a["price"] / 100.0 for a in turning["answers"]), abs=1e-3)
     assert score["preRegisteredOnly"] is True and score["actionAuthority"] is False
+
+
+class _FakeRemote:
+    def __init__(self):
+        self.files, self.versions, self.puts = {}, {}, 0
+    def get(self, path):
+        return (self.files.get(path), self.versions.get(path))
+    def put(self, path, raw, *, expected_version):
+        if self.versions.get(path) != expected_version:
+            raise ValueError("conflict")
+        self.files[path] = raw; self.versions[path] = f"v{self.puts}"; self.puts += 1
+
+
+def test_level_map_remote_copy_is_immutable_and_restores_into_empty_tables(tmp_path):
+    import argus_analysis_history as history
+    import argus_level_map_backup as backup
+    path = tmp_path / "h.sqlite3"
+    history.initialize(path)
+    record = {"morningOf": "2026-10-05", "recordId": "lm-" + "a" * 32, "createdAt": "2026-10-04T09:35:39Z", "rows": [1]}
+    history.append_level_map(path, record)
+    history.append_level_map_eps(path, {"date": "2026-10-02", "eps": 3987.78, "recordedAt": "2026-10-04T09:35:00Z"})
+    remote = _FakeRemote()
+    first = backup.synchronize(path, remote)
+    assert first == {"status": "VERIFIED", "remoteCount": 2, "localCount": 2, "written": 2, "pending": 0}
+    puts = remote.puts
+    assert backup.synchronize(path, remote)["written"] == 0 and remote.puts == puts      # nothing rewritten
+    # A disk loss: a new empty file restores every record, digest-checked.
+    fresh = tmp_path / "fresh.sqlite3"
+    history.initialize(fresh)
+    assert backup.synchronize(fresh, remote)["status"] == "RESTORE_REQUIRED"
+    assert backup.restore(fresh, remote) == {"status": "RESTORED", "restored": 2, "remoteCount": 2}
+    assert history.read_level_map_state(fresh) == history.read_level_map_state(path)
+    assert backup.restore(fresh, remote)["status"] == "LOCAL_NOT_EMPTY"
+    # A tampered object is refused.
+    other = tmp_path / "other.sqlite3"
+    history.initialize(other)
+    key = backup.PREFIX + "/mornings/2026-10-05.json"
+    remote.files[key] = remote.files[key].replace(b"9:35:39", b"9:35:40")
+    with pytest.raises(ValueError):
+        backup.restore(other, remote)
