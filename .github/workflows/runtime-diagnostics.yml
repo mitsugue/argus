@@ -137,6 +137,17 @@ jobs:
             echo "--- $name ---"
             head -c 4000 "artifacts/runtime-diagnostics/$name.json"; echo
           done
+      - name: Time the brief the way the page reads it (best effort)
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          # 2026-10-04: the page gives up after 12 s; measure time and bytes with gzip.
+          for i in 1 2 3 4 5 6; do
+            curl -sS -o /dev/null --compressed --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              -w "brief-timing try=$i http=%{http_code} total=%{time_total}s ttfb=%{time_starttransfer}s bytes=%{size_download}\n" \
+              "https://argus-backend-3j2m.onrender.com/api/argus/market-brief" || echo "brief-timing try=$i failed"
+            sleep 5
+          done
       - name: Check the brief against the page's validator (best effort)
         run: |
           # 2026-10-04: the server built valid briefs while the page rejected every one
