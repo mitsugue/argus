@@ -144,7 +144,7 @@ def test_reading_a_history_without_level_tables_is_empty(tmp_path):
 def _glue(monkeypatch, tmp_path, now):
     import scanner
     path = tmp_path / "market_analysis_history.sqlite3"
-    monkeypatch.setattr(scanner, "_market_brief_history_path", lambda: str(path))
+    monkeypatch.setattr(scanner, "_level_map_history_path", lambda: str(path))
     monkeypatch.setattr(scanner, "_LEVEL_MAP", {"status": "NOT_RUN", "loaded": False, "eps": {}, "mornings": [],
                                                 "lastAttemptAt": None, "lastError": None, "lastErrorReason": None,
                                                 "estimatesLastWarm": 0, "missedMornings": [], "conflicts": 0,

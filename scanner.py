@@ -39011,6 +39011,14 @@ _LEVEL_MAP_EPS_PER_WARM = 6
 _LEVEL_MAP_EPS_SINCE = "2026-06-01"
 
 
+def _level_map_history_path():
+    """The market analysis history file (the existing prediction-record store);
+    resolved here so the level map never calls into the brief's functions."""
+    if not _cost_policy_durable_enabled():
+        return None
+    return os.path.join(_DURABILITY_PATHS["root"], "market_analysis_history.sqlite3")
+
+
 def _level_map_completed_bars(nikkei_rows, now_iso):
     """Sessions whose close is final by now (an in-progress bar is left out)."""
     out = []
@@ -39037,7 +39045,7 @@ def _level_map_warm(nikkei_rows):
     try:
         now = _ai_now_iso()
         _LEVEL_MAP.update(lastAttemptAt=now, estimatesLastWarm=0)
-        path = _market_brief_history_path()
+        path = _level_map_history_path()
         if not path:
             _LEVEL_MAP.update(status="NOT_CONFIGURED", lastErrorReason="history_storage_not_configured")
             return
