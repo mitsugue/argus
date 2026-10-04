@@ -143,6 +143,7 @@ import argus_index_history
 import jp_market_valuation
 import jp_market_source_adapters
 import jp_market_dynamics
+import argus_macro_frequency
 import jp_market_level_map
 import jp_market_features
 import jp_market_acquisition
@@ -16890,6 +16891,15 @@ def _compose_market_brief():
     if fiscal.get("id"):
         brief["fiscalEnvironment"] = argus_jp_fiscal_runtime.context_reference(fiscal)
         brief["facts"].extend(argus_jp_fiscal_runtime.explanation_facts(fiscal))
+    try:
+        # Past frequencies of the CPI and VIX conditions (2026-10-04): material
+        # for the explanation, with their base rates; never a direction.
+        vix_rows = (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^VIX") or {}).get("data") or []
+        vix_level = vix_rows[-1].get("close") if vix_rows else None
+        cpi = argus_macro_frequency.cpi_state(_US_CPI_CACHE.get("data") or [], today=brief["generatedAt"][:10])
+        brief["facts"].extend(argus_macro_frequency.explanation_facts(cpi, vix_level))
+    except Exception as exc:
+        add_log(f"[brief] macro frequency facts unavailable: {type(exc).__name__}")
     return brief
 
 
@@ -40410,6 +40420,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     if warm:
         _fred_us10y_history_dated()
         _jquants_topix_history(fetch=True)
+        _fred_history_dated("CPIAUCSL", _US_CPI_CACHE, available_days=50, n=180)
     try:
         credit_rows = _jpx_credit_rows_effective()
     except Exception:
@@ -45221,6 +45232,8 @@ def _fred_us10y_history_dated(n=2600, *, fetch=True):
 
 
 _TOPIX_HIST_CACHE = {"data": None, "expires": 0.0, "status": "NOT_RUN", "lastAttemptAt": None}
+# US CPI index levels (FRED CPIAUCSL, monthly) for the macro past frequencies (2026-10-04).
+_US_CPI_CACHE = {"data": None, "expires": 0.0}
 
 
 def _jquants_topix_history(fetch=False):
