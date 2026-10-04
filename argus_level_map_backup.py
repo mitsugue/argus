@@ -31,7 +31,7 @@ def _encode(value: Any) -> bytes:
 
 
 def _key(kind: str, day: str) -> str:
-    if kind not in ("eps", "mornings") or len(day) != 10:
+    if kind not in ("eps", "mornings", "candidates") or len(day) < 10:
         raise ValueError("level_map_backup_key_invalid")
     return f"{kind}/{day}"
 
@@ -50,6 +50,9 @@ def _local_items(path) -> Dict[str, Any]:
     state = history.read_level_map_state(path)
     items = {_key("eps", day): record for day, record in state["eps"].items()}
     items.update({_key("mornings", record["morningOf"]): record for record in state["mornings"]})
+    # Pre-registered candidate records ride the same copy (2026-10-04).
+    items.update({_key("candidates", f"{record['signalDate']}-{record['candidate']}"): record
+                  for record in history.read_candidate_records(path)})
     return items
 
 
@@ -100,6 +103,7 @@ def restore(path, remote) -> Dict[str, Any]:
         record = json.loads(raw)
         kind = key.split("/", 1)[0]
         result = (history.append_level_map_eps(path, record) if kind == "eps"
+                  else history.append_candidate_record(path, record) if kind == "candidates"
                   else history.append_level_map(path, record))
         restored += int(result["inserted"])
     return {"status": "RESTORED", "restored": restored, "remoteCount": len(manifest["entries"])}

@@ -369,7 +369,9 @@ def track_record(path):
 _LEVEL_MAP_TABLES = '''CREATE TABLE IF NOT EXISTS level_map_eps(session TEXT PRIMARY KEY,
       recorded_at TEXT NOT NULL, body TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS level_map_mornings(morning_of TEXT PRIMARY KEY, record_id TEXT NOT NULL UNIQUE,
-      created_at TEXT NOT NULL, body TEXT NOT NULL);'''
+      created_at TEXT NOT NULL, body TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS candidate_records(record_key TEXT PRIMARY KEY, record_id TEXT NOT NULL UNIQUE,
+      recorded_at TEXT NOT NULL, body TEXT NOT NULL);'''
 
 
 def _append_once(path, table, key_column, key, values):
@@ -422,4 +424,25 @@ def read_level_map_state(path):
             mornings = [json.loads(row[0]) for row in conn.execute(
                 'SELECT body FROM level_map_mornings ORDER BY morning_of')]
         return {'eps': eps, 'mornings': mornings}
+    finally: conn.close()
+
+
+# Pre-registered candidate signals (2026-10-04): one record per candidate and
+# signal day, first body kept, same file and same rules as the level map.
+def append_candidate_record(path, record):
+    candidate, day = str(record.get('candidate') or ''), str(record.get('signalDate') or '')
+    datetime.fromisoformat(day)
+    if not candidate or not str(record.get('recordId') or '').startswith('cr-'):
+        raise ValueError('candidate_record_identity_required')
+    return _append_once(path, 'candidate_records', 'record_key', f'{candidate}:{day}',
+                        (f'{candidate}:{day}', record['recordId'], str(record.get('recordedAt') or ''), _json(record)))
+
+
+def read_candidate_records(path):
+    conn = _connect(path, True)
+    try:
+        names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if 'candidate_records' not in names:
+            return []
+        return [json.loads(row[0]) for row in conn.execute('SELECT body FROM candidate_records ORDER BY record_key')]
     finally: conn.close()

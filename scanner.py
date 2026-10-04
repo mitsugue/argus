@@ -146,6 +146,7 @@ import jp_market_dynamics
 import argus_macro_frequency
 import jp_market_level_map
 import argus_future_map
+import jp_market_candidates
 import argus_analyst_targets
 import argus_level_map_backup
 import jp_market_features
@@ -39183,6 +39184,10 @@ def _level_map_warm(nikkei_rows):
             _LEVEL_MAP["retrospective"]["preRegisteredOnly"] = False
         except Exception as exc:
             _LEVEL_MAP["scoreError"] = type(exc).__name__
+        try:
+            _candidates_warm(path, nikkei_rows, eps_series, now)
+        except Exception as exc:
+            _CANDIDATES["lastError"] = type(exc).__name__
         # Remote copy over the existing private store (2026-10-04).
         remote = _level_map_remote()
         if remote is None:
@@ -39352,6 +39357,99 @@ def api_argus_future_map():
     return jsonify({**body, "availability": "AVAILABLE", "lastChangedAt": _FUTURE_MAP.get("lastChangedAt")})
 
 
+# ── Pre-registered candidate signals (2026-10-04) ─────────────────────────────
+# Recorded from the signal day's close until the entry open, never after;
+# scored after every close by one fixed rule. Not a trading signal.
+_CANDIDATE_START = "2026-10-05"
+_CANDIDATES = {"loaded": False, "records": [], "views": [], "missed": [], "scoreboard": None,
+               "breadthDays": 0, "lastError": None}
+
+
+def _candidate_etf_bars(code):
+    history = _jq_price_history(code) or {}
+    keys = ("dates", "opens", "highs", "lows", "closes")
+    if not all(isinstance(history.get(k), list) for k in keys):
+        return []
+    rows = [{"date": str(d)[:10], "open": o, "high": h, "low": l, "close": c}
+            for d, o, h, l, c in zip(*(history[k] for k in keys))]
+    return jp_market_candidates._bars_with_open(rows)
+
+
+def _candidate_breadth():
+    """Prime advancers/decliners per session from the ledger (latest receipt per day)."""
+    by_day = {}
+    for row in _MARKET_LEDGER.get("observations", []) or []:
+        series = str(row.get("seriesId") or "")
+        if series not in ("breadth.prime.advancers", "breadth.prime.decliners"):
+            continue
+        day, value = str(row.get("periodEnd") or "")[:10], row.get("value")
+        if len(day) != 10 or not isinstance(value, (int, float)):
+            continue
+        slot = by_day.setdefault(day, {})
+        field = series.rsplit(".", 1)[1]
+        seen = slot.get("_at_" + field) or ""
+        at = str(row.get("observedAt") or "")
+        if at >= seen:
+            slot[field], slot["_at_" + field] = int(value), at
+    return {day: {"advancers": v["advancers"], "decliners": v["decliners"]}
+            for day, v in by_day.items() if "advancers" in v and "decliners" in v}
+
+
+def _candidates_warm(path, nikkei_rows, eps_series, now):
+    if not _CANDIDATES["loaded"]:
+        _CANDIDATES.update(records=argus_analysis_history.read_candidate_records(path), loaded=True)
+    bars = jp_market_candidates._bars_with_open(
+        [r for r in nikkei_rows or () if not r.get("availableFrom") or str(r["availableFrom"]) <= now])
+    if len(bars) < 40:
+        return
+    sessions = [bar["date"] for bar in bars]
+    etf = {"1579": _candidate_etf_bars("1579"), "1360": _candidate_etf_bars("1360")}
+    vix = (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^VIX") or {}).get("data") or []
+    breadth = _candidate_breadth()
+    _CANDIDATES["breadthDays"] = len(breadth)
+    drop25 = jp_market_candidates.detect_drop25(bars)
+    signals = list(jp_market_candidates.detect_r1(bars))
+    signals += jp_market_candidates.detect_gap(etf["1579"], sessions)
+    for kind, days in (("S3", jp_market_candidates.detect_vix(vix, sessions)), ("S4", drop25),
+                       ("S5", jp_market_candidates.detect_combo(
+                           jp_market_candidates.detect_breadth80(breadth, sessions), drop25, sessions))):
+        signals += [{"candidate": kind, "signalDate": day} for day in days]
+    stored = {(r["candidate"], r["signalDate"]) for r in _CANDIDATES["records"]}
+    for kind in sorted({s["candidate"] for s in signals}):
+        mine = [s for s in signals if s["candidate"] == kind]
+        firsts = set(jp_market_candidates._episodes([s["signalDate"] for s in mine], sessions))
+        for signal in mine:
+            day = signal["signalDate"]
+            if day < _CANDIDATE_START or day not in firsts or (kind, day) in stored:
+                continue
+            following = _level_map_next_session(day)
+            entry = day if signal.get("sameSessionEntry") else following
+            # Fixed before the entry open; the morning gaps (S1/S2), decided at
+            # their own open, are recorded before the next session's open.
+            closes_at = (following if signal.get("sameSessionEntry") else entry) + "T00:00:00Z"
+            if not entry or now >= closes_at:
+                if (kind, day) not in {(m["candidate"], m["signalDate"]) for m in _CANDIDATES["missed"]}:
+                    _CANDIDATES["missed"] = (_CANDIDATES["missed"] + [{"candidate": kind, "signalDate": day}])[-30:]
+                continue
+            record = jp_market_candidates.pre_record(signal, entry_date=entry, recorded_at=now)
+            argus_product_naming.require_allowed(record)
+            if argus_analysis_history.append_candidate_record(path, record)["inserted"]:
+                _CANDIDATES["records"].append(record)
+                stored.add((kind, day))
+    views, outcomes = [], {}
+    for record in _CANDIDATES["records"]:
+        full = jp_market_candidates.materialize(record, bars=bars, eps_series=eps_series, etf_bars_by_code=etf)
+        outcome = (jp_market_candidates.score(full, bars, eps_series, etf) if full
+                   else {"outcome": "open", "sessionsSeen": 0})
+        outcomes[record["recordId"]] = outcome
+        views.append({**(full or record), "result": outcome})
+    board = jp_market_candidates.summarize(_CANDIDATES["records"], outcomes)
+    for row in board:
+        if row["candidate"] == "S5" and len(breadth) < 25:
+            row["dataStatus"] = "DATA_SHORT"
+    _CANDIDATES.update(views=views, scoreboard=board, lastError=None)
+
+
 def _level_map_score_summary(score):
     if not score:
         return None
@@ -39380,6 +39478,10 @@ def _level_map_public():
             "score": _level_map_score_summary(_LEVEL_MAP.get("score")),
             "retrospective": _level_map_score_summary(_LEVEL_MAP.get("retrospective")),
             "scoreError": _LEVEL_MAP.get("scoreError"),
+            "candidates": {"scoreboard": _CANDIDATES.get("scoreboard"), "records": _CANDIDATES.get("views", [])[-30:],
+                           "missedSignals": _CANDIDATES.get("missed", []), "breadthDays": _CANDIDATES.get("breadthDays"),
+                           "since": _CANDIDATE_START, "lastError": _CANDIDATES.get("lastError"),
+                           "tradingSignal": False, "noteJa": "記録中の候補(未検証)。売買の合図ではありません。"},
             "storage": "LOCAL_DURABLE_APPEND_ONLY", "remoteBackup": _LEVEL_MAP.get("remoteBackup"),
             "remoteRestore": _LEVEL_MAP.get("remoteRestore"),
             "actionAuthority": False, "automaticAiCalls": 0}

@@ -1,4 +1,5 @@
 import { TriangleStepLoader } from '../components/common/TriangleStepLoader';
+import { CandidateBoard } from '../components/today/CandidateBoard';
 import React from 'react';
 import { publishDataQuality } from '../lib/positionExposureShare';
 import {
@@ -111,6 +112,7 @@ export const PublicDiagnosticsPanel: React.FC = () => {
           </section>
         </>
       )}
+      <CandidateBoard />
     </section>
   );
 };
