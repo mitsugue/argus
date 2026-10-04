@@ -22,8 +22,8 @@ import pytest
 import jp_market_features as features
 
 ROOT = Path(__file__).resolve().parent
-PINNED_VERSION = "jp-market-feature-method-v3"
-PINNED_FIXTURE_RESULT = "a73614cc7917d199dd243192a8e2614d541e6b54fd8fa11ae94db164b5e10f13"
+PINNED_VERSION = "jp-market-feature-method-v4"
+PINNED_FIXTURE_RESULT = "2a91785d7f86b8cbc34c177cacfb6e7efdde185e7df4829e9d7596cc6f21573c"
 MODULES = ("jp_market_features.py", "jp_market_engine.py", "jp_market_dynamics.py",
            "jp_market_analogs.py", "jp_market_acquisition.py")
 
@@ -161,7 +161,7 @@ def test_changed_formula_or_parameter_changes_identity(edit):
 
 def test_version_advance_changes_identity():
     before = features.history_method_identity()
-    with patch.object(features, 'FEATURE_HISTORY_METHOD_VERSION', 'jp-market-feature-method-v4'):
+    with patch.object(features, 'FEATURE_HISTORY_METHOD_VERSION', 'jp-market-feature-method-v5'):
         assert features.history_method_identity() != before
 
 

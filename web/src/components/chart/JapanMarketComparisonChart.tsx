@@ -275,7 +275,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
         const s = document.forecast.signEventStudy;
         const pct = (n: number | null) => n === null ? '—' : `${Math.round(n * 100)}%`;
         const names: Record<string, string> = {
-          D01: '二市場の信用売り残', D02: '1570の信用倍率', D03: '日本株の相対的な強さ', D04: '日経平均の評価水準',
+          D01: '二市場の信用売り残', D02: '日経レバの制度信用の倍率', D03: '日本株の相対的な強さ', D04: '日経平均の評価水準',
           D05: '海外投資家の売買', D06: 'VIXのMACD', D07: '好決算でも下がる反応',
         };
         const verdict: Record<string, string> = {

@@ -39313,6 +39313,19 @@ def _index_research_warm():
 _JP_MARKET_FEATURE_INPUT_SPANS = {}
 
 
+def _d02_week_end_ratios(margin_rows, weeks=6):
+    std = [r for r in margin_rows or () if r.get("seriesId") in jp_market_features.D02_MARGIN_SERIES]
+    by_period = {}
+    for row in jp_market_dynamics.week_final_rows(std):
+        by_period.setdefault(str(row.get("periodEnd"))[:10], {})[row.get("seriesId")] = row.get("value")
+    out = []
+    for period in sorted(by_period)[-weeks:]:
+        long_value, short_value = (by_period[period].get(k) for k in jp_market_features.D02_MARGIN_SERIES)
+        if isinstance(long_value, (int, float)) and isinstance(short_value, (int, float)) and short_value > 0:
+            out.append({"weekEnd": period, "ratio": round(long_value / short_value, 3)})
+    return out
+
+
 def _jp_market_series_acquisition_status():
     """Counts, first dates and fixed status tokens for the market-condition
     history sources (no values, no rows): enough to name why a series is
@@ -39333,7 +39346,10 @@ def _jp_market_series_acquisition_status():
         "usdjpy": {**span(usdjpy.get("data")), "status": usdjpy.get("lastFetchStatus")},
         "us10y": span(_US10Y_HIST_DATED_CACHE.get("data")),
         "margin1570": {**span([r for r in margin_rows if r.get("seriesId") == "margin.long_balance"], "periodEnd"),
-                       "backfill": _JQ_MARGIN_BACKFILL.get("status")},
+                       "backfill": _JQ_MARGIN_BACKFILL.get("status"),
+                       # D02 (制度信用) at the last six week ends, to check against
+                       # an independent record (2026-10-04).
+                       "standardizedRatioByWeek": _d02_week_end_ratios(margin_rows)},
         "foreignFlow": {**span(flows, "periodEnd"), "refresh": _INVESTOR_TYPES_REFRESH.get("outcome")},
     }
 
@@ -39803,16 +39819,20 @@ def _jp_market_engine_margin_1570_rows(*, fetch=False):
     snapshot = (_JQ_MARGIN_CACHE.get("1570") or {}).get("sourceSnapshot") or {}
     by_period = {}
     for row in snapshot.get("rows") or []:
-        if row.get("seriesId") in ("margin.long_balance", "margin.short_balance"):
+        # 2026-10-04: D02 is the standardized-margin ratio (制度信用), not the
+        # total of standardized and negotiable balances. A period without the
+        # standardized split is skipped, never filled with the total.
+        if row.get("seriesId") in ("margin.standardized.long_balance", "margin.standardized.short_balance"):
             by_period.setdefault(row["periodEnd"], {})[row["seriesId"]] = row
     rows = []
     for period, sides in sorted(by_period.items()):
-        long_row = sides.get("margin.long_balance")
-        short_row = sides.get("margin.short_balance")
+        long_row = sides.get("margin.standardized.long_balance")
+        short_row = sides.get("margin.standardized.short_balance")
         if not long_row or not short_row or short_row["value"] <= 0:
             continue
         rows.append({"instrumentId": "1570", "field": "margin_ratio", "date": period,
                      "value": round(long_row["value"] / short_row["value"], 6),
+                     "ratioBasis": "STANDARDIZED_MARGIN", "periodEnd": period,
                      "availableFrom": long_row["availableFrom"],
                      "observedAt": long_row["observedAt"], "publishedAt": None,
                      "sourceRef": long_row["sourceRef"],

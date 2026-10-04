@@ -85,7 +85,7 @@ TTL。`jp_market_acquisition.py` の変更は特徴履歴の手法識別子を�
 | サイン | 条件イベント | 判定 |
 |---|---|---|
 | D01 | `d01_short_balance_below_threshold` | 二市場売り残 < 8,000億円 |
-| D02 | `d02_margin1570_ratio_at_least_one` | 1570 買残/売残 ≥ 1 |
+| D02 | `d02_margin1570_ratio_at_least_one` | 1570 制度信用の買残/売残 ≥ 1(2026-10-04 から。以前は制度+一般の合計) |
 | D03 | `d03_relative_strength_positive` | 日経の20営業日騰落率 − S&P500 > 0 |
 | D04 | `d04_index_per_at_least_19` | 指数PER ≥ 19(ARGUS代理PER。代理の履歴開始以前はイベントなし) |
 | D05 | `d05_foreign_flow_inflow` | 海外投資家の週次差引 > 0 |

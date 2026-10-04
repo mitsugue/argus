@@ -278,7 +278,7 @@ const JP_MARKET_ENGINE_STATE_JA: Record<string, string> = {
   CONFIRMED_ADVANCE: '上昇確認', FALSE_RALLY: 'だまし上げ警戒',
 };
 const JP_MARKET_ENGINE_FAMILY_JA: Record<string, string> = {
-  D01: '信用残', D02: '1570倍率', D03: '相対力', D04: 'EPS基準',
+  D01: '信用残', D02: '1570制度倍率', D03: '相対力', D04: 'EPS基準',
   D05: '海外フロー', D06: 'VIX', D07: '決算反応',
 };
 const familyStateJa = (row: { status?: string; conditionMet?: boolean | null }): string => {
@@ -870,9 +870,10 @@ export const ArgusTodayPanel: React.FC<Props> = ({
             {topSignals.signals.map((row) => <GlossaryTip key={row.id} glossaryKey={row.glossaryKey}>
               <i data-signal-id={row.id} data-signal-state={row.state}>
                 {row.id} {row.nameJa} <b>{row.stateJa}</b>
-                {row.gateNoteJa ? <small className="at-seven-gate-note"> {row.gateNoteJa}</small> : null}</i>
+                {row.gateNoteJa ? <small className="at-seven-gate-note"> {row.gateNoteJa}</small> : null}
+                {row.factNoteJa ? <small className="at-seven-gate-note"> {row.factNoteJa}</small> : null}</i>
             </GlossaryTip>)}
-            <small>点灯 = 条件成立のみ数える（判定不能・欠測・古い・要ライセンスは数えない）</small>
+            <small>点灯 = 条件成立のみ数える（判定不能・欠測・古い・要ライセンスは数えない）。成立の数は状況の整理で、上昇・下落の確率や売買の合図ではありません（過去の検証で、同時に成立しても5日後の成績は基準と同じでした）。</small>
           </div>}
           <p className="at-seven-gated">判断レベル（SEVEN SIGN・売買判断側の校正段階）:</p>
           <ul>

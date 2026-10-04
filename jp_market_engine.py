@@ -17,7 +17,7 @@ import hashlib
 import json
 import math
 import statistics
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import argus_market_signals  # v13.5.38: owner-facing SIG-01..07 projection (pure)
@@ -622,6 +622,15 @@ def _change(history: Sequence[Mapping[str, Any]], periods: int) -> Optional[floa
     return float(history[-1]["value"]) - float(history[-1 - periods]["value"])
 
 
+def _rank_within(history: Sequence[Mapping[str, Any]]) -> Optional[float]:
+    """Share of the other values in the window below the latest one."""
+    if len(history) < 2:
+        return None
+    latest = float(history[-1]["value"])
+    others = [float(row["value"]) for row in history[:-1]]
+    return round(sum(1 for value in others if value < latest) / len(others), 3)
+
+
 def _threshold_streak(history: Sequence[Mapping[str, Any]], *, below: bool) -> int:
     count = 0
     for row in reversed(history):
@@ -656,6 +665,14 @@ def evaluate_d01(rows: Iterable[Mapping[str, Any]], *, cutoff: str,
         "below800bStreak": _threshold_streak(shorts, below=True) if shorts else 0,
         "aboveOrEqual800bStreak": _threshold_streak(shorts, below=False) if shorts else 0,
         "distanceFrom800b": short - JP_MARKET_ENGINE_D01_THRESHOLD_JPY if short is not None else None,
+        # 2026-10-04: a fixed amount means different things in different years
+        # (and quarter ends swell it for a while), so the latest week's place
+        # among the last 52 weeks (0 = lowest, 1 = highest) sits beside it,
+        # with the week it describes and when it was known.
+        "shortBalanceRank52w": _rank_within(shorts[-52:]) if shorts else None,
+        "shortBalancePeriodEnd": shorts[-1].get("periodEnd") if shorts else None,
+        "shortBalanceKnownAt": (_knowledge_time(shorts[-1]).isoformat()
+                                if shorts and _knowledge_time(shorts[-1]) else None),
     }
     candidates = [{
         "propositionId": f"ARGUS-D01-SENS-{threshold // 1_000_000_000}B",
@@ -691,6 +708,57 @@ def evaluate_d01(rows: Iterable[Mapping[str, Any]], *, cutoff: str,
     }
 
 
+def _jst_day(value: Any) -> Optional[str]:
+    instant = _instant(value) if value else None
+    if instant is None:
+        return None
+    local = instant.astimezone(timezone(timedelta(hours=9)))
+    return f"{local.month}/{local.day}"
+
+
+def _period_day(value: Any) -> Optional[str]:
+    text = str(value or "")[:10]
+    try:
+        day = datetime.strptime(text, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return f"{day.month}/{day.day}"
+
+
+def fact_note_ja(family: str, row: Mapping[str, Any]) -> Optional[str]:
+    """One line of fact for the owner (2026-10-04): the value, the week it
+    describes and when it was published. A situation summary, not a signal."""
+    if not isinstance(row, Mapping) or row.get("status") != "AVAILABLE":
+        return None
+    if family == "D01":
+        f = row.get("features") or {}
+        short = _finite(f.get("shortBalance"))
+        if short is None:
+            return None
+        text = f"二市場の信用売り残 {short / 1e8:,.0f}億円"
+        rank = _finite(f.get("shortBalanceRank52w"))
+        if rank is not None:
+            text += f"（過去52週の中で低い方から{rank * 100:.0f}%の位置）"
+        week, known = _period_day(f.get("shortBalancePeriodEnd")), _jst_day(f.get("shortBalanceKnownAt"))
+        return text + (f"・{week}週の値" if week else "") + (f"・{known}公表" if known else "")
+    if family == "D02":
+        ratio = _finite(row.get("marginRatio"))
+        if ratio is None:
+            return None
+        basis = "制度信用の倍率" if row.get("ratioBasis") == "STANDARDIZED_MARGIN" else "信用倍率"
+        week, known = _period_day(row.get("periodEnd")), _jst_day(row.get("knownAt"))
+        return f"日経レバの{basis} {ratio:.2f}倍" + (f"・{week}の値" if week else "") + (f"・{known}に入手" if known else "")
+    if family == "D05":
+        value = _finite(row.get("flowValue"))
+        if value is None:
+            return None
+        week, known = _period_day(row.get("periodEnd")), _jst_day(row.get("availableFrom"))
+        side = "買い越し" if value > 0 else "売り越し" if value < 0 else "差し引きゼロ"
+        return (f"海外投資家（二市場）{abs(value) / 1e8:,.0f}億円の{side}" + (f"・{week}週" if week else "")
+                + (f"・{known}公表" if known else ""))
+    return None
+
+
 def evaluate_d02(rows: Iterable[Mapping[str, Any]], *, cutoff: str) -> Dict[str, Any]:
     visible, proof = point_in_time_rows(rows, cutoff)
     candidates: List[Tuple[datetime, float, Dict[str, Any]]] = []
@@ -709,6 +777,9 @@ def evaluate_d02(rows: Iterable[Mapping[str, Any]], *, cutoff: str) -> Dict[str,
     latest = max(candidates, key=lambda item: item[0]) if candidates else None
     ratio = latest[1] if latest else None
     return {
+        "periodEnd": (latest[2].get("periodEnd") or latest[2].get("date")) if latest else None,
+        "knownAt": latest[0].isoformat() if latest else None,
+        "ratioBasis": latest[2].get("ratioBasis") if latest else None,
         "family": "D02",
         "propositionId": "JP_MARKET_ENGINE-D02-ORIGINAL",
         "lineage": "JP_MARKET_ENGINE_ORIGINAL",
@@ -2645,6 +2716,7 @@ def project_today_sda_safe(*, cutoff: str,
             family_projection[family] = {
                 "status": row.get("status"),
                 "conditionMet": row.get("conditionMet"),
+                "factNoteJa": fact_note_ja(family, row),
                 # The owner reads this lineage as "whose rule lit the signal".
                 # D06 evaluates the original claim with the ARGUS 12/26/9
                 # baseline, because the original MACD parameters were never
