@@ -43,8 +43,10 @@ _CRYPTO = frozenset({"bitcoin", "ethereum", "solana"})
 
 
 def _valid_symbol(symbol: str, market: str) -> bool:
-    s = (symbol or "").strip()
-    m = (market or "").upper()
+    if not isinstance(symbol, str) or not isinstance(market, str):
+        return False
+    s = symbol.strip()
+    m = market.upper()
     if m == "JP":
         return bool(_JP_RE.match(s))
     if m == "US":
@@ -154,3 +156,50 @@ def build_membership_snapshot(
         "cohortId": "owner_watchlist_dynamic",
         "immutable": True,
     }
+
+
+CHANGE_SCHEMA_VERSION = "watchlist-changes-v1"
+
+
+def apply_membership_changes(payload, current_members):
+    """Only explicit registration changes may remove a member. Legacy clients
+    remain add-only, so an old complete list cannot delete another device's work.
+    Existing flags and names survive an add of an already registered identity.
+    Validation covers the entire request, including nested forbidden fields.
+    """
+    valid, current, errors = validate_sync_payload({"items": current_members})
+    if not valid:
+        raise ValueError("stored_membership_invalid")
+    key = lambda item: (item["market"], item["symbol"].strip().upper())
+    members = {key(item): item for item in current["items"] if item["enabled"]}
+    conditional = payload.get("syncMode") == CHANGE_SCHEMA_VERSION
+    if conditional:
+        changes = payload.get("changes")
+        if not isinstance(changes, list) or len(changes) > MAX_SYMBOLS:
+            raise ValueError("changes_invalid")
+        # Reuse the deep monetary-field guard on the WHOLE request.
+        valid, _, errors = validate_sync_payload({**payload, "items": []})
+        if not valid:
+            raise ValueError("changes_forbidden_fields")
+        for change in changes:
+            if not isinstance(change, dict) or change.get("action") not in ("add", "remove"):
+                raise ValueError("change_action_invalid")
+            valid, cleaned, errors = validate_sync_payload({"items": [change.get("item")]})
+            if not valid:
+                raise ValueError("change_item_invalid")
+            item = cleaned["items"][0]
+            if change["action"] == "remove":
+                members.pop(key(item), None)
+            else:
+                item["enabled"] = True
+                members.setdefault(key(item), item)
+    else:
+        valid, cleaned, errors = validate_sync_payload(payload)
+        if not valid:
+            raise ValueError("membership_invalid")
+        for item in cleaned["items"]:
+            if item["enabled"]:
+                members.setdefault(key(item), item)
+    if len(members) > MAX_SYMBOLS:
+        raise ValueError("too_many_members")
+    return list(members.values()), conditional

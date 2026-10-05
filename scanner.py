@@ -1549,6 +1549,8 @@ def _calibration_coverage():
             "contextVarsPresent": len(snap.get("contextVariables") or []),
             "rollingPerSensorCoverage": None}   # needs day-history (Phase later)
 
+_LAYER2B_SYNC_LOCK = threading.Lock()
+
 _LAYER2B_STATE = {"lastSyncAt": None, "lastStatus": "never_synced",
                   "lastHash": None, "symbolCount": 0}
 
@@ -1616,33 +1618,15 @@ def _gh_private_put(path, content_str, message, overwrite=True):
     except Exception:
         return False
 
-def _layer2b_persist_private(snapshot):
-    """Write an IMMUTABLE daily membership snapshot to the private repo, plus a
-    mutable latest pointer. Raises with the GitHub HTTP status on failure so the
-    owner can see WHY (e.g. 404 wrong repo path, 403 token scope)."""
-    import json as _json, base64
-    repo = os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", "")
-    blob = _json.dumps(snapshot, ensure_ascii=False, indent=2)
-    eff = snapshot.get("effectiveFrom", "unknown")
-    for path, overwrite in ((f"membership/{eff}.json", False), ("membership/latest.json", True)):
-        url = f"https://api.github.com/repos/{repo}/contents/{path}"
-        sha = None
-        rg = requests.get(url, headers=_gh_private_headers(), timeout=15)
-        if rg.status_code == 200:
-            sha = rg.json().get("sha")
-        elif rg.status_code != 404:
-            raise RuntimeError(f"GitHub GET {rg.status_code} ({repo}/{path}): "
-                               f"{(rg.json().get('message') if rg.headers.get('content-type','').startswith('application/json') else rg.text)[:90]}")
-        if sha and not overwrite:
-            continue  # immutable daily snapshot already exists
-        b = {"message": f"layer2b {path} {eff}",
-             "content": base64.b64encode(blob.encode("utf-8")).decode("ascii")}
-        if sha:
-            b["sha"] = sha
-        rp = requests.put(url, headers=_gh_private_headers(), json=b, timeout=20)
-        if rp.status_code not in (200, 201):
-            msg = rp.json().get("message", "") if rp.headers.get("content-type", "").startswith("application/json") else rp.text
-            raise RuntimeError(f"GitHub PUT {rp.status_code} ({repo}/{path}): {str(msg)[:90]}")
+def _layer2b_private_store():
+    from argus_private_membership import PrivateMembershipStore
+    return PrivateMembershipStore(os.environ.get("ARGUS_LAYER2B_PRIVATE_REPO", ""),
+                                  _gh_private_headers(), requests)
+
+
+def _layer2b_persist_private(snapshot, expected_version, store=None, **kwargs):
+    """Publish daily and latest atomically; verify the saved commit before ack."""
+    return (store or _layer2b_private_store()).save(snapshot, expected_version, **kwargs)
 
 def _layer2b_read_latest():
     """Read the latest membership snapshot from the private repo (owner-gated)."""
@@ -1875,26 +1859,71 @@ def api_argus_watchlist_sync():
     ok, err, code = _require_owner_sync(body_token=token)
     if not ok:
         return jsonify(err), code
+    # One publisher per backend process, including cache publication. Git CAS
+    # still guards independent/private writers; a busy request keeps its batch.
+    if not _LAYER2B_SYNC_LOCK.acquire(blocking=False):
+        return jsonify({"ok": False, "status": "conflict", "error": "membership_sync_busy"}), 409
     # Post-auth work is wrapped so a bug surfaces as a readable error to the
     # AUTHENTICATED owner (safe) instead of a blank HTTP 500. persist_detail
     # captures WHY a private-store write failed (the common real cause).
     persist_detail = None
     try:
         W = argus_watchlist_sync
-        valid, cleaned, errs = W.validate_sync_payload(body)
-        if not valid:
-            return jsonify({"ok": False, "errors": errs,
-                            "note": "Research simulation only. Metadata only — no portfolio data accepted."}), 400
+        from argus_private_membership import MembershipConflict, MembershipStoreError
+        if not isinstance(body, dict):
+            return jsonify({"ok": False, "error": "payload_invalid"}), 400
+        configured = _layer2b_store_configured()
+        current, version = (None, "absent")
+        store = _layer2b_private_store() if configured else None
+        if configured:
+            try:
+                current, version = store.read_latest()
+            except MembershipStoreError as exc:
+                return jsonify({"ok": False, "status": "failed", "error": str(exc)}), 503
+        try:
+            items, conditional = W.apply_membership_changes(body, [])
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        batch_id = body.get("batchId") if conditional else None
+        digest = hashlib.sha256(json.dumps(body.get("changes"), sort_keys=True,
+            ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest() if conditional else None
+        if conditional:
+            try:
+                # A receipt wins over a stale base: uncertain retries never replay
+                # an old removal after another device re-registered that symbol.
+                from argus_private_membership import PrivateMembershipStore
+                PrivateMembershipStore.receipt_path(batch_id)
+                receipt = store.read_receipt(batch_id, digest) if store else None
+                if receipt:
+                    _LAYER2B_STATE.update(lastSyncAt=_ai_now_iso(), lastStatus="synced")
+                    return jsonify({"ok": True, "status": "synced", "alreadyApplied": True,
+                                    "version": receipt["version"], "batchId": batch_id})
+            except MembershipStoreError as exc:
+                return jsonify({"ok": False, "status": "failed", "error": str(exc)}), 400 if str(exc) in (
+                    "membership_batch_invalid", "membership_batch_reused") else 503
+        if conditional and body.get("baseVersion") != version:
+            return jsonify({"ok": False, "status": "conflict", "error": "membership_changed"}), 409
+        try:
+            items, _ = W.apply_membership_changes(body, (current or {}).get("members", []))
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        cleaned = {"items": items}
         eff = datetime.now(TZ_JST).strftime("%Y-%m-%d")
         gen = _ai_now_iso()
         sid = "wl-" + hashlib.sha256((eff + W.content_hash(cleaned["items"])).encode("utf-8")).hexdigest()[:10]
         snap = W.build_membership_snapshot(cleaned["items"], effective_date=eff,
                                            generated_at=gen, snapshot_id=sid)
-        configured = _layer2b_store_configured()
         status = "synced"
+        saved_version = None
         if configured:
             try:
-                _layer2b_persist_private(snap)
+                saved = _layer2b_persist_private(snap, version, store=store,
+                                                batch_id=batch_id, digest=digest)
+                saved_version = saved["version"]
+                if saved["alreadyApplied"]:
+                    _LAYER2B_STATE.update(lastSyncAt=_ai_now_iso(), lastStatus="synced")
+                    return jsonify({"ok": True, "status": "synced", "alreadyApplied": True,
+                                    "version": saved_version, "batchId": batch_id})
                 with _OWNER_OVERVIEW_MEMBERSHIP_LOCK:
                     _OWNER_OVERVIEW_MEMBERSHIP.update(checkedAt=time.monotonic(),
                         members=snap.get("members"))
@@ -1913,15 +1942,22 @@ def api_argus_watchlist_sync():
                     "ts": time.time(),
                     "status": "fresh",
                 })
-            except Exception as pe:
+            except MembershipConflict:
+                return jsonify({"ok": False, "status": "conflict", "error": "membership_changed"}), 409
+            except MembershipStoreError as pe:
                 status = "failed"
-                persist_detail = f"{type(pe).__name__}: {str(pe)[:140]}"
+                persist_detail = str(pe)
+            except Exception:
+                status = "failed"
+                persist_detail = "private_store_unexpected_error"
         else:
             status = "disabled_pending_private_store"
         _LAYER2B_STATE.update({"lastSyncAt": gen, "lastStatus": status,
-                               "lastHash": snap["contentHash"], "symbolCount": snap["symbolCount"]})
+                               **({"lastHash": snap["contentHash"], "symbolCount": snap["symbolCount"]}
+                                  if status == "synced" else {})})
         return jsonify({
-            "ok": True, "status": status, "snapshotId": sid,
+            "ok": status != "failed", "status": status, "snapshotId": sid,
+            "version": saved_version, "batchId": batch_id, "compatibilityMode": "changes" if conditional else "add_only",
             "symbolCount": snap["symbolCount"], "contentHash": snap["contentHash"],
             "effectiveFrom": eff, "privateStoreConfigured": configured,
             "persistDetail": persist_detail,
@@ -1933,7 +1969,9 @@ def api_argus_watchlist_sync():
         })
     except Exception as e:
         return jsonify({"ok": False,
-                        "error": f"server_error: {type(e).__name__}: {str(e)[:160]}"}), 500
+                        "error": "membership_sync_unexpected_error"}), 500
+    finally:
+        _LAYER2B_SYNC_LOCK.release()
 
 @app.route("/api/argus/calibration/watchlist-membership", methods=["GET", "POST"])
 def api_argus_watchlist_membership():
@@ -1945,9 +1983,15 @@ def api_argus_watchlist_membership():
     ok, err, code = _require_owner_sync(body_token=token)
     if not ok:
         return jsonify(err), code
-    snap = _layer2b_read_latest()
-    if not snap:
-        return jsonify({"status": "empty", "privateStoreConfigured": _layer2b_store_configured()})
+    if not _layer2b_store_configured():
+        return jsonify({"status": "disabled_pending_private_store", "privateStoreConfigured": False})
+    from argus_private_membership import MembershipStoreError
+    try:
+        snap, version = _layer2b_private_store().read_latest()
+    except MembershipStoreError as exc:
+        return jsonify({"status": "failed", "error": str(exc), "privateStoreConfigured": True}), 503
+    if snap is None:
+        return jsonify({"status": "empty", "version": version, "privateStoreConfigured": True})
     # v10.204: enrich each member with a resolved company name so a restore shows
     # 会社名, not just the 4-digit code (old syncs stored symbol-only). JP → J-Quants
     # master; never invent — fall back to the symbol if unresolved.
@@ -1964,7 +2008,7 @@ def api_argus_watchlist_membership():
                 m["name"] = nm
     except Exception:
         pass
-    return jsonify({"status": "ok", "membership": snap})
+    return jsonify({"status": "ok", "membership": snap, "version": version})
 
 @app.route("/api/argus/calibration/layer2b-run", methods=["POST"])
 def api_argus_layer2b_run():
