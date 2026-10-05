@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import pytest
 from argus_credit_publication import publication_at, weekly_expectation
 
@@ -25,3 +25,14 @@ def test_schedule_requires_aware_clock_and_preserves_unknown_calendar():
         weekly_expectation(datetime(2026, 10, 6))
     assert publication_at("2015-10-02") is None
     assert weekly_expectation(datetime.fromisoformat("2015-10-06T16:00:00+09:00"))["status"] == "calendar_unavailable"
+
+
+def test_current_consumer_collector_and_monitor_share_the_publication_bound():
+    from jp_market_acquisition import enforce_two_market_publication
+    row = {"periodEnd": "2026-10-09", "availableFrom": "2026-10-13T07:00:00Z",
+           "knownAt": "2026-10-13T07:00:00Z", "publishedAt": None}
+    result = enforce_two_market_publication([row], sessions=[])[0]
+    due = publication_at(row["periodEnd"])
+    assert result["availableFrom"] == due.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert weekly_expectation(due)["latestDuePeriod"] == row["periodEnd"]
+    assert row["availableFrom"] == "2026-10-13T07:00:00Z" and result["publishedAt"] is None
