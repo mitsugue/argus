@@ -6,6 +6,7 @@ import type { AssetItem, AssetMarket, AssetType, AssetSource, HoldingUpdate } fr
 import { markLocalEdit } from '../lib/vault';
 import { watchlistProjection } from '../domain/watchlistProjection';
 import { recordTombstone } from '../lib/assetMerge';
+import { stageRegistrationChanges, commitRegistrationChanges, cancelStagedRegistration, setWatchlistSyncState } from '../lib/watchlistAutoSync';
 
 const STORAGE_KEY = 'argus.assets.v1';
 const MAX_ASSETS = 50;
@@ -61,7 +62,7 @@ function load(): AssetItem[] {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return seedZero(defaults());
     const parsed = JSON.parse(raw) as AssetItem[];
-    if (!Array.isArray(parsed) || parsed.length === 0) return seedZero(defaults());
+    if (!Array.isArray(parsed)) return seedZero(defaults());
     _seq = Math.max(_seq, ...parsed.map((a) => a.sortOrder + 1));
     return parsed;
   } catch {
@@ -69,11 +70,21 @@ function load(): AssetItem[] {
   }
 }
 
-function persist(items: AssetItem[]) {
+function persist(items: AssetItem[], expected: AssetItem[]): boolean {
   try {
+    const existingRaw = localStorage.getItem(STORAGE_KEY);
+    if (existingRaw !== null) {
+      const existing = JSON.parse(existingRaw);
+      if (!Array.isArray(existing) || existing.some(x => !x || typeof x.id !== 'string'
+        || typeof x.symbol !== 'string' || typeof x.market !== 'string')) return false;
+      // A stale tab must not replace a registration or archived field written
+      // by another tab/restore since this view was loaded.
+      if (JSON.stringify(existing) !== JSON.stringify(expected)) return false;
+    }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    return true;
   } catch {
-    /* ignore quota / private-mode errors */
+    return false;
   }
 }
 
@@ -81,7 +92,7 @@ export interface UseAssets {
   assets: AssetItem[];
   /** Recovery-only raw records; never feed active analysis or AI. */
   archivedAssets: AssetItem[];
-  add: (a: { market: AssetMarket; assetType: AssetType; source: AssetSource; symbol: string; displayName: string; displayNameJa?: string; memo?: string }) => string | null;
+  add: (a: { market: AssetMarket; assetType: AssetType; source: AssetSource; symbol: string; displayName: string; displayNameJa?: string; memo?: string }, options?: { restoreOnly?: boolean }) => string | null;
   remove: (id: string) => void;
   reorderGenre: (orderedIds: string[]) => void;
   toggle: (id: string) => void;
@@ -97,28 +108,54 @@ function useAssetsStore(): UseAssets {
   const [assets, setAssets] = useState<AssetItem[]>(() => (typeof window === 'undefined' ? [] : load()));
 
   const firstPersist = useRef(true);
+  const registrationEdit = useRef(false);
+  const restoredKeys = useRef(new Set<string>());
+  const lastPersisted = useRef(assets);
   useEffect(() => {
-    persist(assets);
-    // The mount-time persist is not a user edit — only real changes should
-    // stamp the edit time / trigger the debounced cloud-sync push (sync-v1).
-    if (firstPersist.current) { firstPersist.current = false; return; }
-    markLocalEdit();
+    if (firstPersist.current) {
+      firstPersist.current = false;
+      if (persist(assets, lastPersisted.current)) lastPersisted.current = assets;
+      else setWatchlistSyncState({ kind: 'error', message: '端末への保存を確認できません。元の記録を保持しています' });
+      return;
+    }
+    if (assets === lastPersisted.current) return;
+    let pendingKey: string | null = null;
+    try {
+      if (registrationEdit.current) pendingKey = stageRegistrationChanges(lastPersisted.current, assets, restoredKeys.current);
+      if (!persist(assets, lastPersisted.current)) {
+        cancelStagedRegistration(pendingKey);
+        throw Error('local_save_failed');
+      }
+      lastPersisted.current = assets;
+      registrationEdit.current = false;
+      restoredKeys.current.clear();
+      markLocalEdit();
+      commitRegistrationChanges(pendingKey);
+    } catch {
+      setWatchlistSyncState({ kind: 'error', message: '端末への保存を確認できません。他の画面の変更や空き容量を確認し、再読み込みしてください' });
+    }
   }, [assets]);
 
   // Another device pushed newer data and the sync loop applied it to
   // localStorage → reload our in-memory copy.
   useEffect(() => {
-    const onSynced = () => { firstPersist.current = true; setAssets(load()); };
+    const onSynced = () => {
+      firstPersist.current = true; registrationEdit.current = false; restoredKeys.current.clear();
+      const restored = load(); lastPersisted.current = restored; setAssets(restored);
+    };
     window.addEventListener('argus:data-synced', onSynced);
     return () => window.removeEventListener('argus:data-synced', onSynced);
   }, []);
 
-  const add: UseAssets['add'] = useCallback((a) => {
+  const add: UseAssets['add'] = useCallback((a, options) => {
     const symbol = a.symbol.trim();
     const displayName = a.displayName.trim();
     if (!symbol || !displayName) return null;            // validate non-empty
     const id = mkId(a.market, symbol);
     let created: string | null = id;
+    const identity = `${a.market}:${symbol.toUpperCase()}`;
+    if (options?.restoreOnly) restoredKeys.current.add(identity);
+    else { registrationEdit.current = true; restoredKeys.current.delete(identity); }
     setAssets((cur) => {
       if (cur.length >= MAX_ASSETS) { created = null; return cur; }     // cap
       if (cur.some((x) => x.id === id)) { created = null; return cur; } // dedupe
@@ -132,6 +169,9 @@ function useAssetsStore(): UseAssets {
   }, []);
 
   const remove = useCallback((id: string) => {
+    registrationEdit.current = true;
+    const item = lastPersisted.current.find(x => x.id === id);
+    if (item) restoredKeys.current.delete(`${item.market}:${item.symbol.trim().toUpperCase()}`);
     recordTombstone(id);   // deletion must propagate to other devices (sync-v2)
     setAssets((cur) => cur.filter((x) => x.id !== id));
   }, []);
@@ -148,8 +188,12 @@ function useAssetsStore(): UseAssets {
     });
   }, []);
 
-  const toggle = useCallback((id: string) =>
-    setAssets((cur) => cur.map((x) => (x.id === id ? { ...x, enabled: !x.enabled, updatedAt: now() } : x))), []);
+  const toggle = useCallback((id: string) => {
+    registrationEdit.current = true;
+    const item = lastPersisted.current.find(x => x.id === id);
+    if (item) restoredKeys.current.delete(`${item.market}:${item.symbol.trim().toUpperCase()}`);
+    setAssets((cur) => cur.map((x) => (x.id === id ? { ...x, enabled: !x.enabled, updatedAt: now() } : x)));
+  }, []);
 
   const updateHolding: UseAssets['updateHolding'] = useCallback((id, h) =>
     setAssets((cur) => { const items = cur.map((x) => {
@@ -172,13 +216,15 @@ function useAssetsStore(): UseAssets {
       return unchanged ? x : { ...next, updatedAt: now() };
     }); return items.every((item, index) => item === cur[index]) ? cur : items; }), []);
 
-  const reset = useCallback(() => setAssets((cur) => {
+  const reset = useCallback(() => {
+    registrationEdit.current = true; restoredKeys.current.clear();
+    setAssets((cur) => {
     // reset = deliberate wipe: tombstone everything current so the old items
     // don't resurrect from another device. defaults() are created AFTER the
     // tombstones (newer updatedAt), so the seed list itself survives merges.
     cur.forEach((x) => recordTombstone(x.id));
     return defaults();
-  }), []);
+  }); }, []);
 
   const watchlist = useMemo(() => watchlistProjection(assets), [assets]);
   return { assets: watchlist, archivedAssets: assets, add, remove, reorderGenre, toggle, updateHolding, reset };

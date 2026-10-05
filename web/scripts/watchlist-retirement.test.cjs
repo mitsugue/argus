@@ -24,7 +24,8 @@ const archived = [{ id: 'jp-7203', symbol: '7203', displayName: 'Toyota', market
   futurePrivateExtension: { cash: 9876 } }];
 const original = JSON.stringify(archived);
 const records = new Map([['argus.assets.v1', original]]);
-const localStorage = { getItem: key => records.get(key) ?? null, setItem: (key, value) => records.set(key, value) };
+const localStorage = { get length() { return records.size; }, key: n => [...records.keys()][n] ?? null,
+  getItem: key => records.get(key) ?? null, setItem: (key, value) => records.set(key, value), removeItem: key => records.delete(key) };
 const slots = []; let slot = 0; let effects = []; const listeners = new Map(); let edits = 0;
 const React = {
   createContext: () => ({}), createElement: (_, props) => props.value, useContext: () => null,
@@ -35,10 +36,12 @@ const React = {
   useEffect: (fn, deps) => { const index = slot++; const previous = slots[index]; slots[index] = deps;
     if (!previous || deps.some((x, i) => x !== previous[i])) effects.push(fn); },
 };
+const auto = moduleAt('src/lib/watchlistAutoSync.ts', () => { throw Error('unexpected import'); }, { localStorage, Date, crypto: require('node:crypto').webcrypto });
 const hook = moduleAt('src/hooks/useAssets.ts', name => {
   if (name === 'react') return React;
   if (name.endsWith('/watchlistProjection')) return { watchlistProjection };
   if (name.endsWith('/vault')) return { markLocalEdit: () => edits++ };
+  if (name.endsWith('/watchlistAutoSync')) return auto;
   if (name.endsWith('/assetMerge')) return { recordTombstone: () => {} };
   throw Error(`unexpected hook dependency ${name}`);
 }, { localStorage, window: { addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: () => {} } });
@@ -62,6 +65,33 @@ listeners.get('argus:data-synced')(); api = render();
 assert.equal(api.archivedAssets[0].quantity, 250, 'existing backup restore keeps original quantities');
 assert.equal('quantity' in api.assets[0], false, 'restored archives must not reactivate portfolio analysis');
 assert.equal(edits, 1, 'restoration is not a new owner edit');
+
+// Corrupt source is retained for recovery, never replaced by factory defaults.
+localStorage.setItem('argus.assets.v1', '{broken-original');
+listeners.get('argus:data-synced')(); api = render();
+assert.equal(records.get('argus.assets.v1'), '{broken-original');
+api.add({ market: 'JP', assetType: 'jp_equity', source: 'jquants', symbol: '1234', displayName: '検査用' });
+api = render();
+assert.equal(records.get('argus.assets.v1'), '{broken-original', 'explicit edit cannot overwrite unreadable original history');
+localStorage.setItem('argus.assets.v1', '[]');
+listeners.get('argus:data-synced')(); api = render();
+assert.equal(api.assets.length, 0, 'intentional empty list is preserved across reload');
+
+// A stale view cannot remove another tab's new registration or archived data.
+const latestFromOtherTab = [...archived, { ...archived[0], id: 'jp-5678', symbol: '5678',
+  memo: 'another tab original', futurePrivateExtension: { cash: 1234 } }];
+const latestRaw = JSON.stringify(latestFromOtherTab);
+localStorage.setItem('argus.assets.v1', latestRaw);
+api.add({ market: 'JP', assetType: 'jp_equity', source: 'jquants', symbol: '1234', displayName: '検査用' });
+api = render();
+assert.equal(records.get('argus.assets.v1'), latestRaw, 'stale tab keeps every newer raw field');
+assert.match(auto.watchlistSyncState().message, /他の画面の変更/);
+assert.equal([...records.keys()].some(key => {
+  if (!key.startsWith('argus.watchlist-pending.v1.')) return false;
+  return JSON.parse(records.get(key)).changes.some(change => change.item.symbol === '1234');
+}), false, 'failed local CAS cannot create a sendable registration');
+listeners.get('argus:data-synced')(); api = render();
+assert.equal(api.assets.length, 2, 'reload admits the latest registrations without a sync operation');
 
 // Actual notification execution: a registered symbol with no quantity receives
 // worsening-condition notices once, through the existing throttle and dedupe.

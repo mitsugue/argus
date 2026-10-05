@@ -6,6 +6,7 @@ import { OwnerAccess } from './components/OwnerAccess';
 import { OWNER_AUTH_REQUIRED, installOwnerTransport } from './lib/ownerSession';
 installOwnerTransport();
 import { AssetsProvider } from './hooks/useAssets';
+import { WatchlistSyncLifecycle } from './hooks/useWatchlistSync';
 import { clearVerifiedSnapshotCache } from './lib/verifiedSnapshot';
 import { repairAppCaches } from './lib/pwaRecovery';
 import { deployedPwaIdentity, authenticationOnlyUpdate, deployedEntryScript, deployedIsBehind,
@@ -191,6 +192,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <OwnerAccess>
     <AssetsProvider>
+      <WatchlistSyncLifecycle />
       <App />
     </AssetsProvider>
     </OwnerAccess>
