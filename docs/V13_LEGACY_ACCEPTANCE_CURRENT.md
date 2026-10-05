@@ -22,10 +22,10 @@
 
 - EPSの過去延長は「未着手・データ待ち」のままではない。構成復元と2016年までの取得処理が存在する。ただし全期間の本番充足、D04との定義統一は未完了。
 - 系列被覆診断は実装済み。全系列の開始・終了・期待数・実数を本番値で埋める作業は残る。
-- 七条件のD01/D02/D03/D05は既存の10年検証結果があり、基準を上回らなかった。D06の更新後の結果は未確認。
-- D07は個別銘柄の利益反応の規則があるが、市場全体の成立規則がなく成績を評価できない。「点灯規則が全くない」「原典そのもの」と断定しない。原典本文との照合は未完了。
+- 七条件のD01/D02/D03/D05は既存の10年検証結果があり、基準を上回らなかった。D06の更新後の結果は製品外の確認記録で管理し、全体未検証の扱いを維持する。成績の確認と基準を上回ることは区別する。
+- D07は個別銘柄の利益反応の規則があるが、市場全体の成立規則がなく成績を評価できない。「点灯規則が全くない」「原典そのもの」と断定しない。原典との照合表は製品外で管理し、原典へ合わせるか独自条件へ分けるかの判断と数式変更は未完了。
 - CPIの反証検索は接続済み。FOMC・日銀への拡張はCPIの本番確認後。
-- VIXの3000件窓は取得停止上限ではなくなった。3001日目を採用し、以前の原記録を保存する検査が存在する。信用残12000行の停止上限は別の未対応項目。
+- VIXの3000件窓は取得停止上限ではなくなった。3001日目を採用し、以前の原記録を保存する検査が存在する。信用残の上限は60000行へ拡張し、80%で保守の必要を知らせる。元の履歴を切り捨てない。実際の長期保存量と運用の容量確認は残る。
 
 ## 復元できない履歴と検証上の限界
 
@@ -49,10 +49,10 @@ PR633で再発要因を修復したが、現在の材料から当時の見立て
 | 訂正・遅延到着 | test_argus_analysis_history.py: test_input_update_keeps_original_explanation_and_calculation | 本番の改訂と旧IDの照合 |
 | 反証・相反情報 | test_argus_causal_event_memory.py: test_reasoning_retrieval_retains_contradiction_only_after_it_was_known | CPIの実反応との照合 |
 | 過去判断の再現 | test_argus_analysis_history.py: test_later_result_is_appended_and_wrong_session_or_preissue_data_cannot_score | 原本の当時版の証明は未達 |
-| 前提変更 | 数量なし登録文脈と旧アーカイブ保全の既存検査。保有管理は退役済み | 登録銘柄の自動同期と別端末照合 |
+| 前提変更 | test_argus_private_membership.py と画面の自動保存・旧アーカイブ保全の検査。数量なし登録文脈を受領後に分析へ反映。保有管理は退役済み | 本人の登録操作での保存確認と別端末照合 |
 | 数値とAIの不一致 | test_argus_market_brief.py: test_validate_ai_brief_rejects_invented_numbers_and_orders | BUYは引き続き無効 |
 | 予測満期・結果不足 | test_jp_market_candidates.py: test_per_line_target_moves_with_the_eps_and_same_session_both_is_ambiguous、test_scoreboard_marks_thin_candidates_and_the_two_without_data | 実際の採点追記数 |
-| 取得障害 | test_prediction_ledger_workflow.py、test_smoke_execution.py、test_run_intel_collect.py | 収集停滞箇所の実測。総額上限で止める旧要件は撤廃済み |
+| 取得障害 | test_prediction_ledger_workflow.py、test_smoke_execution.py、test_run_intel_collect.py、test_argus_public_feed_fetch.py | 収集停滞箇所の実測。総額上限で止める旧要件は撤廃済み |
 | 再起動・復旧 | test_argus_analysis_history.py: test_worker_restart_restores_previous_inputs_and_history_read_is_readonly、test_verified_remote_head_survives_a_restart_and_skips_the_full_restore | EC2遠隔記録の滞留解消、実機復元 |
 | iPhone | 13.8.38のPages受入のモバイル・PWA検査 | 実機の通知、ピンチ、復元を未確認のまま保持 |
 | 履歴の増大 | test_argus_analysis_history_backup.py: test_large_snapshot_is_split_and_limits_never_truncate_history、test_argus_causal_event_memory.py: test_analog_retrieval_cost_is_bounded | 本番の長期保存量・請求実測 |
