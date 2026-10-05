@@ -45,7 +45,7 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
     below && `${yen(below.price)}円まで下がると${below.multiple}倍`].filter(Boolean);
   const distances = [above && `上の目印までは${signed(above.distancePct)}%`,
     below && `下の目印までは${signed(below.distancePct)}%`].filter(Boolean);
-  return <section className="lm-card card" aria-label="日経平均の価格の目盛り" data-argus-contract="level-map-v1"
+  return <section id="today-price-scale" className="lm-card card" aria-label="日経平均の価格の目盛り" data-argus-contract="level-map-v1"
     data-morning={map.morningOf}>
     <header className="lm-heading"><b>日経平均の価格の目盛り</b><span>PER · {map.morningOf.slice(5).replace('-', '/')}朝の保存値</span></header>
     <div className="lm-reading">
@@ -56,7 +56,23 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
       <article data-side="NOW"><span>前日終値 · {map.per.toFixed(2)}倍</span><b>{yen(map.previousClose)}<small>円</small></b><small>{map.previousSession.slice(5).replace('-', '/')}の終値</small></article>
       {below && <article data-side="DOWN"><span>{below.multiple}倍まで下がると</span><b>{yen(below.price)}<small>円</small></b><strong>{signed(below.distancePct)}%</strong></article>}
     </div>
-    <p className="lm-use">チャートのPER線と同じ目盛りです。値動きを、企業の利益に対する価格の大きさで比べられます。</p>
+    <div className="lm-use">
+      <b>上の価格まで届きやすいか</b>
+      <p>{above && `上の${above.multiple}倍までは、前日終値から${signed(above.distancePct)}%の上昇が必要です。`}
+        PERの倍率は上値の限界ではありません。超えるか、そこで止まるかは、この目盛りだけでは判断できません。</p>
+      <p>株価が上がった時に、利益も伸びたのか、同じ利益に高い値段を付けているのかを比べるために使います。</p>
+    </div>
+    <div className="lm-reach" aria-label="同じ距離の過去の到達割合">
+      {[above, below].filter((r): r is LevelMapRow => !!r).map(row => <article key={row.side} data-side={row.side}>
+        <b>{row.side === 'UP' ? '上の価格まで' : '下の価格まで'}</b>
+        <strong>{Number.isFinite(row.reachedWithin10SessionsPct) ? `${row.reachedWithin10SessionsPct}%` : '未集計'}</strong>
+        <span>同じくらいの距離で、10営業日以内に届いた過去の割合</span>
+      </article>)}
+      {above&&below&&Number.isFinite(above.reachedWithin10SessionsPct)&&Number.isFinite(below.reachedWithin10SessionsPct)&&<p>{above.reachedWithin10SessionsPct!<below.reachedWithin10SessionsPct!
+        ? '過去の到達割合は、上の価格より下の価格の方が高い位置です。'
+        : above.reachedWithin10SessionsPct!>below.reachedWithin10SessionsPct! ? '過去の到達割合は、下の価格より上の価格の方が高い位置です。' : '上の価格と下の価格への過去の到達割合は同じです。'}今の上昇・下落予測ではありません。</p>}
+      <small>個別のPER線を超える確率ではなく、同じ距離帯の過去の集計です。反発した割合でもありません。</small>
+    </div>
     <details className="lm-explanation"><summary>倍率と価格の読み方</summary>
       <p>たとえば、この朝は約{map.per.toFixed(2)}倍。{examples.length > 0 && `日経平均が${examples.join('、')}になります。`}</p>
       {distances.length > 0 && <p>前日終値 {yen(map.previousClose)}円から、{distances.join('、')}です。</p>}

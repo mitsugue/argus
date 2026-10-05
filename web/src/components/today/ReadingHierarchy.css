@@ -67,3 +67,33 @@
 .at-primary-hero > .at-seven .at-seven-status { display:block; grid-column:1 / -1; font-size:12px; line-height:1.65; color:#aebfcb; }
 .at-primary-hero > .at-seven .at-seven-chips { grid-column:1 / -1; display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:6px; margin:2px 0; }
 .at-primary-hero > .at-seven .at-seven-chips i { width:auto; height:32px; display:grid; place-items:center; font-size:14px; }
+
+/* The facts below explain the reading; each number keeps its own period. */
+.at-primary-hero .at-seven-signals {display:grid;grid-template-columns:1fr;gap:8px}
+.at-primary-hero .at-seven-signals .at-seven-row > i {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:6px 10px;padding:12px;border-radius:10px;font-size:13px;background:var(--surface);color:var(--text-main);border:1px solid var(--line)}
+.at-primary-hero .at-seven-signals i[data-signal-state="ACTIVE"] {border-color:color-mix(in srgb,var(--cyan) 50%,var(--line));background:color-mix(in srgb,var(--cyan) 6%,var(--surface))}
+.at-seven-condition {white-space:normal;font-size:13px;text-align:left;line-height:1.6;font-weight:600}
+.at-primary-hero .at-seven-signals .at-seven-rule,.at-primary-hero .at-seven-signals .at-seven-fact,.at-primary-hero .at-seven-signals .at-seven-gate-note {grid-column:1/-1;font-size:12px;line-height:1.65;color:var(--text-sub)}
+.at-primary-hero .at-seven-signals > small {font-size:12px;line-height:1.7;margin-top:5px}
+.at-seven-calibration summary {font-size:12px;color:var(--text-sub);min-height:44px}
+.at-decision-status {font-size:16px;margin:12px 0 3px}.at-decision-status strong {color:var(--amber);font-size:22px}
+.at-primary-hero .at-seven-status {overflow:visible;text-overflow:clip}
+.argus-today .at-context {display:block}.at-context > summary {font-size:13px;color:var(--text-sub);min-height:44px;cursor:pointer}
+.at-context > summary ~ * {margin-top:16px}
+.at-context-lead,.argus-today .at-context-lead {font-size:19px;line-height:1.6;font-weight:650;color:var(--text-main);margin:10px 0}
+.at-context-date {font-size:12px;color:var(--text-sub)}
+.at-context-metrics {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0}
+.at-context-metrics article {min-width:0;padding:14px 12px;border-radius:12px;background:color-mix(in srgb,var(--cyan) 6%,var(--surface));border:1px solid var(--line)}
+.at-context-metrics span {display:block;font-size:12px;color:var(--text-sub);line-height:1.6}
+.at-context-metrics strong {display:block;font-size:clamp(20px,3vw,30px);color:var(--cyan);line-height:1.6;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.at-context-metrics small,.at-context-latest strong small {font-size:12px;margin-left:3px;color:var(--text-sub)}
+.at-context-use {padding:14px 0;border-top:1px solid var(--line);line-height:1.8;font-size:14px}
+.at-context-use>b {font-size:15px}.at-context-use p {margin:7px 0}.at-context-use>small {font-size:12px;color:var(--text-sub)}
+.at-context-latest {border-left:2px solid var(--cyan);padding:12px 14px;margin:12px 0}.at-context-latest>span {font-size:12px;color:var(--text-sub)}.at-context-latest>strong {display:block;font-size:30px;color:var(--cyan)}
+.at-breadth {border-top:1px solid var(--line);padding-top:16px;margin-top:16px}.at-breadth>b {font-size:15px}
+.at-shared-context__binding {font-size:12px;color:var(--text-sub);margin:14px 0}.at-shared-context__binding>summary {min-height:44px;cursor:pointer;padding:10px 0}.at-shared-context__binding p {margin:0;font-size:12px}
+@media(max-width:420px) {.at-context-metrics {grid-template-columns:1fr}.at-context-metrics article {display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px}.at-context-metrics strong {font-size:23px}.at-context-metrics span{max-width:10em}}
+
+.at-primary-hero .at-seven-signals .at-seven-row > i {white-space:normal;min-width:0}
+.at-seven-row .glossary-tip,.at-seven-row .glossary-tip__term {min-width:0;max-width:100%;white-space:normal;text-align:left}
+.at-primary-hero .at-seven-signals small {white-space:normal;overflow-wrap:anywhere}

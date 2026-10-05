@@ -7,7 +7,7 @@ import './NikkeiResearchChart.css';
 const yen = (v: number) => Math.round(v).toLocaleString('ja-JP');
 const md = (date: string) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
 const multiples = [15, 16, 17, 18, 19, 20, 21];
-export function NikkeiResearchChartView({ chart, future }: { chart: ResearchChart; future: FutureMapDoc | null }) {
+export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: { chart: ResearchChart; future: FutureMapDoc | null; hasPriceScale?:boolean }) {
   const layers = { per: true, external: true, candidates: true, pivots: true };
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(390);
@@ -169,13 +169,7 @@ export function NikkeiResearchChartView({ chart, future }: { chart: ResearchChar
       <p>目標・撤回ライン：事前に記録した条件の答え合わせに使う線です。実線は目標、点線は想定が崩れる価格です。</p>
       <p>高値・安値の印：終値が4%反転して確定した点です。輪だけの点はまだ未確定です。</p>
     </details>
-    {layers.per && <div className="nr-nearest">{chart.nearest.map(n => <article key={n.side} data-side={n.side}>
-      <small>{n.side === 'UP' ? '上がった時の目盛り' : '下がった時の目盛り'} · PER{n.multiple}</small>
-      <b>{yen(n.price)}<span>円</span></b>
-      <p><strong>{n.reachedWithin10SessionsPct}%</strong><span>同じくらいの距離で、10営業日以内に届いた過去の割合</span></p>
-      <p className="nr-days">到達までの中央値 <b>{n.sessionsMedian}営業日</b></p></article>)}
-      {!chart.current && <p>今日のPER水準は未取得です。</p>}
-      <small className="nr-nearest-note">同じ距離帯の過去の集計です。PER線で反発した割合ではありません。日数は到達した事例だけの中央値です。</small></div>}
+    {layers.per && hasPriceScale && <p className="nr-price-scale-link"><a href="#today-price-scale">上・下のPER価格までの距離と、過去の到達割合を見る ↑</a></p>}
     {layers.external && <div className="nr-external-list" aria-label="参考予測の期間と価格">
       {external.map((p, i) => <button key={p.id} type="button" aria-pressed={selectedPoint?.id === p.id} onClick={() => selectPoint(p)}>
         {i + 1} {p.tag} · {md(p.start)}{p.end !== p.start ? `〜${md(p.end)}` : ''} · {yen(p.value)}円</button>)}
@@ -196,6 +190,6 @@ export function NikkeiResearchChart() {
   const raw = map?.chart;
   return <div aria-busy={state.loading}>
     {state.error && <p role="status">チャートの更新を確認できません。取得済みの表示には古い値が含まれます。<button type="button" onClick={state.retry}>再取得</button></p>}
-    {validResearchChart(raw) ? <NikkeiResearchChartView chart={raw} future={future} /> : <p role="status">{map?.chartError ? 'チャートのデータを作成できませんでした。従来の過去比較は切り替えて確認できます。' : 'チャートの価格・PER履歴を準備しています。'}<button type="button" onClick={state.retry}>再取得</button></p>}
+    {validResearchChart(raw) ? <NikkeiResearchChartView chart={raw} future={future} hasPriceScale={!!state.levelMap?.latest} /> : <p role="status">{map?.chartError ? 'チャートのデータを作成できませんでした。従来の過去比較は切り替えて確認できます。' : 'チャートの価格・PER履歴を準備しています。'}<button type="button" onClick={state.retry}>再取得</button></p>}
   </div>;
 }

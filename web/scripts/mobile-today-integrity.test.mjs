@@ -143,7 +143,7 @@ assert.doesNotMatch(app + command + today, /MarketRegime|MarketContextReplay|#ma
 
 assert.match(today, /TriangleStepLoader/);
 assert.match(today, /TriangleStepLoader compact/);
-assert.match(today, /sqCalendar\.loading/);
+assert.match(fs.readFileSync(new URL('../src/components/dashboard/TodayEventSchedule.tsx',import.meta.url),'utf8'), /calendar\.loading/);
 assert.match(hook, /retry/);
 assert.match(hook, /225/);
 assert.match(hook, /5_000/);
