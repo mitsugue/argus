@@ -77,7 +77,7 @@ RECOVERY_KEYS = {
 OPERATIONAL_KEYS = {
     "schemaVersion", "generatedAt", "service", "freshness", "storage",
     "durability", "remoteJournal", "features", "scheduler", "registry",
-    "osint", "costPolicy",
+    "osint", "costPolicy", "collectionHealth",
 }
 
 RETIRED_PUBLIC_GET_PATHS = frozenset(

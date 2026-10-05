@@ -7557,6 +7557,8 @@ def collect_institutional_intel():
                 it["importance"] = max(float(it.get("importance") or 0), 0.6)
     except Exception:
         pass
+    if total_new > 0:
+        _INTEL_LAST["lastDataChangedAt"] = _ai_now_iso()
     _INTEL_LAST.update({"ts": time.time(), "collected": total_new,
                         "perSource": per_source, "perFeed": per_feed,
                         "queryPlan": query_plan[:12]})
@@ -8409,6 +8411,48 @@ def _public_diagnostics_snapshot():
             argus_diagnostics_contract.public_diagnostics_fallback(now_iso))
 
 
+def _collection_health_inputs(now_iso):
+    """Cached metadata only; no restore, provider call, payload, or identifier."""
+    sources = {}
+    by_series = argus_market_ledger.latest_by_series(_MARKET_LEDGER, now_iso)
+    short = by_series.get("credit.short_balance") or []
+    long = by_series.get("credit.long_balance") or []
+    common = sorted({r["periodEnd"] for r in short} & {r["periodEnd"] for r in long})
+    latest_pair = [next(r for r in reversed(rows) if r["periodEnd"] == common[-1])
+                   for rows in (short, long)] if common else []
+    sources["credit_balances"] = {"latestPeriod": common[-1] if common else None,
+        "dataUpdatedAt": max((r.get("observedAt") or "" for r in latest_pair), default=None),
+        "rowCount": len(common), "lastCheckedAt": _MARKET_LEDGER_REMOTE.get("lastVerifiedReadBackAt")}
+    from argus_jpx_credit_valuation import audited_ledger_observation
+    rows = [r for r in (by_series.get("credit.valuation_loss_pct") or []) if audited_ledger_observation(r)]
+    latest = rows[-1] if rows else {}
+    sources["credit_valuation"] = {"latestPeriod": latest.get("periodEnd"),
+        "dataUpdatedAt": latest.get("observedAt"), "rowCount": len(rows),
+        "lastCheckedAt": _MARKET_LEDGER_REMOTE.get("lastVerifiedReadBackAt")}
+    future = _FUTURE_MAP.get("public") or {}
+    sources["future_map"] = {"dataUpdatedAt": future.get("updatedAt"),
+        "lastCheckedAt": _FUTURE_MAP.get("lastReadOkAt"), "failed": bool(_FUTURE_MAP.get("lastError")),
+        "rowCount": len(future.get("rows") or [])}
+    sources["morning_map"] = {"dataUpdatedAt": _LEVEL_MAP.get("lastCreatedAt"),
+        "lastCheckedAt": _LEVEL_MAP.get("lastAttemptAt"), "failed": _LEVEL_MAP.get("status") == "FAILED",
+        "rowCount": len(_LEVEL_MAP.get("mornings") or [])}
+    # A successful recalculation can reuse unchanged inputs. Until a separate
+    # durable data-change clock exists, it is a check, never a data update.
+    sources["feature_history"] = {"dataUpdatedAt": None,
+        "lastCheckedAt": _JP_MARKET_FEATURE_HISTORY.get("lastSuccessfulCalculationAt"),
+        "latestPeriod": (_JP_MARKET_FEATURE_INPUT_SPANS.get("price_series:nikkei") or {}).get("last"),
+        "failed": _JP_MARKET_FEATURE_HISTORY.get("status") == "FAILED",
+        "rowCount": len(_JP_MARKET_FEATURE_HISTORY.get("features") or [])}
+    sources["news_collection"] = {"dataUpdatedAt": _INTEL_LAST.get("lastDataChangedAt"),
+        "lastCheckedAt": _dq_iso(_INTEL_LAST.get("ts")), "rowCount": len(_INTEL_STORE)}
+    try:
+        configured = argus_product_naming.require_allowed({}, required=False)["status"]
+        policy = "not_configured" if configured == "NOT_CONFIGURED" else "configured_valid"
+    except Exception:
+        policy = "invalid"
+    return {"sources": sources, "inputSpans": _JP_MARKET_FEATURE_INPUT_SPANS, "namingPolicy": policy}
+
+
 def _operational_diagnostics_snapshot():
     """Admin-only, fixed-schema scalar diagnostics; no raw dict is returned."""
     now_iso = _ai_now_iso()
@@ -8447,6 +8491,7 @@ def _operational_diagnostics_snapshot():
         startup_state=_STARTUP.get("state"),
         process_booted_at=_RUNTIME.get("processBootedAt"),
         freshness=freshness,
+        collection_health=_collection_health_inputs(now_iso),
         storage={
             "productionMode": _DURABILITY_PRODUCTION,
             "valid": _DURABLE_STORAGE_STATUS.get("valid"),
