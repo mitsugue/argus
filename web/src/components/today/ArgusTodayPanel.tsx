@@ -115,15 +115,15 @@ const MARKET_STANCE = {
 // them says the owner failed to supply anything. Naming them is the whole
 // point; an unmapped code still shows its raw form rather than disappearing.
 const DATA_PARTIAL_REASON_JA: Record<string, string> = {
-  watchlist_polling_partial: '銘柄クォートの一部が未取得',
-  important_events_unread: '重要イベント情報が未取得',
-  downside_unread: '急落インシデント情報が未取得',
-  flow_authority_stale: '資金フロー証拠の鮮度切れ',
-  supply_demand_authority_stale: '需給証拠の鮮度切れ',
-  fx_authority_missing: '為替の正本が未取得',
-  session_authority_missing: '市場セッション正本が未取得',
-  quote_authority_missing: '判断に使えるクォートが未取得',
-  visibility_limited: '可視性ガードにより表示を制限中',
+  watchlist_polling_partial: '一部の銘柄の価格が未取得です',
+  important_events_unread: '重要イベントの情報が未取得です',
+  downside_unread: '急落警戒の情報が未取得です',
+  flow_authority_stale: '資金の動きのデータが古くなっています',
+  supply_demand_authority_stale: '売買の偏りを測るデータが古くなっています',
+  fx_authority_missing: '判断に使う為替データが未取得です',
+  session_authority_missing: '市場の開場・閉場を確認できていません',
+  quote_authority_missing: '判断に使う最新の価格が未取得です',
+  visibility_limited: '確認できる情報が限られています',
 };
 const DATA_NOTE_JA: Record<string, string> = {
   flow_previous_value_closed_session: '資金フローは休場中のため前回値',
