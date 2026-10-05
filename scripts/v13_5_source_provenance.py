@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.38"
+PRODUCT_VERSION = "v13.8.39"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
-    'web/scripts/pwa-identity.test.mjs': '9c2a22a35bb402194ba69cbf97ba8d704cb48a51',
-    'web/scripts/owner-today-https.mjs': '41a685cb342dd45ba5f1e7d0a65c4132d2cb5ac1',
+    'web/scripts/pwa-identity.test.mjs': 'c75c2a04969efcd80b5c9b31f85b9e304e22dda0',
+    'web/scripts/owner-today-https.mjs': '3e03c2f77cf1933368b576d6c4fca8837003d662',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -257,7 +257,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'scripts/macro_readiness.py': 'd9d736333960d220a5ce3fc55951abc901ea47f0',
     'docs/V13_7_REQUIREMENTS.md': '4531b8a7f358a4f14dbb5d3d6e86c481f9c3ac07',
     'web/src/hooks/useOsintInvestigation.ts': 'ada26a80e0f0f439f97cb75858407647dc7c5d8d',
-    'web/src/components/guide/Layer2BSyncCard.tsx': 'b54f946a7a4176390d086dfc302588fe7e45a26f',
+    'web/src/components/guide/Layer2BSyncCard.tsx': '0e62e584a7efb14303c3acfb76d71d68b24bf937',
     'web/src/components/dashboard/OsintDeepDive.tsx': '875c23041a7d765379aa834bbfe70ae24abf0f05',
     'web/src/components/dashboard/AddAssetModal.tsx': '56b5df9a55e8238db3538c829f1e29fd157398ce',
     'web/src/components/assetDesk/AssetResearchPanel.tsx': '74487e1942385ade5ccef2209a9ca63bf5d3e4e1',
@@ -648,6 +648,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/src/lib/watchlistMembershipRestore.ts",
+    "web/scripts/watchlist-membership-restore.test.cjs",
     "test_intel_backend.py",
     "docs/V13_LEGACY_DATA_REPAIR_2026-10-05.md",
     "docs/V13_LEGACY_ACCEPTANCE_CURRENT.md",
