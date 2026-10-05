@@ -19,6 +19,11 @@ on:
         description: last period already held (YYYY-MM-DD, exclusive); default = newest in the ledger
         required: false
         default: ''
+      valuation_monthly_backfill:
+        description: 公式月報から不足する評価損益率の過去週を補完（既存の信用残は変更しない）
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: jpx-credit-weekly
@@ -39,6 +44,9 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install --quiet xlrd==2.0.2 openpyxl==3.1.5
+      - name: Install the pinned monthly reader only for the requested backfill
+        if: github.event_name == 'workflow_dispatch' && inputs.valuation_monthly_backfill
+        run: pip install --quiet pdfplumber==0.11.7
       - name: Resolve the newest credit period the ledger already holds
         id: since
         env:
@@ -68,10 +76,13 @@ jobs:
         env:
           JPX_SINCE_RESOLVED: ${{ steps.since.outputs.since }}
           JPX_VALUATION_SINCE: ${{ steps.since.outputs.valuation_since }}
+          JPX_MONTHLY_BACKFILL: ${{ github.event.inputs.valuation_monthly_backfill }}
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           set -euo pipefail
-          python3 -B scripts/jpx_credit_weekly.py --since "$JPX_SINCE_RESOLVED" --valuation-since "$JPX_VALUATION_SINCE" \
+          extra=()
+          if [ "$JPX_MONTHLY_BACKFILL" = "true" ]; then extra+=(--valuation-monthly-backfill); fi
+          python3 -B scripts/jpx_credit_weekly.py "${extra[@]}" --since "$JPX_SINCE_RESOLVED" --valuation-since "$JPX_VALUATION_SINCE" \
             --import --backend "$BE" --summary "$RUNNER_TEMP/jpx-credit-summary.json"
       # The ledger itself is persisted by the existing import route. Its
       # authenticated readback and workbook rows are not public artifacts.

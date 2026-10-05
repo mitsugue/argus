@@ -437,7 +437,8 @@ def ledger_newest_credit(backend: str, *, token: str) -> Dict[str, Any]:
             out[row["seriesId"]] = {"periodEnd": row.get("periodEnd"),
                                     "latestValue": row.get("latestValue"),
                                     "availableFrom": row.get("availableFrom"),
-                                    "history": row.get("history") or []}
+                                    "history": row.get("history") or [],
+                                    "acquisition": row.get("acquisition"), "sourceKind": row.get("sourceKind")}
     return out
 
 
@@ -467,10 +468,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--token-env", default="ARGUS_ADMIN_TOKEN")
     parser.add_argument("--summary", default=None, help="write a JSON summary here")
     parser.add_argument("--valuation-since", default=None, help="last audited valuation period held (exclusive); independent from credit balances")
+    parser.add_argument("--valuation-monthly-backfill", action="store_true", help="one-time missing audited periods from official monthly reports; balances are not imported")
     args = parser.parse_args(argv)
     try:
-        options = {"valuation_since": args.valuation_since} if args.valuation_since is not None else {}
-        result = collect(args.since, **options)
+        if args.valuation_monthly_backfill:
+            from scripts.jpx_credit_valuation_monthly import collect as monthly_collect
+            held = ledger_newest_credit(args.backend, token=os.environ.get(args.token_env, ""))
+            rows = monthly_collect([dict(row, seriesId=sid) for sid, row in held.items()])
+            result = {"fetched": [r["periodEnd"] for r in rows], "gaps": [], "failures": [],
+                      "rows": rows, "csv": rows_to_csv(rows)}
+        else:
+            options = {"valuation_since": args.valuation_since} if args.valuation_since is not None else {}
+            result = collect(args.since, **options)
     except Exception as error:
         # Do not expose raw responses, URLs or authenticated records in public logs.
         print(json.dumps({'ok': False, 'stage': 'acquisition', 'errorClass': type(error).__name__}))
