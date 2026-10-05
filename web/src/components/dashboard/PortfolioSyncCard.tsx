@@ -46,7 +46,7 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
     setImporting(true);
     try{
     await preserveBeforeOwnerRestore(setApplied);
-    const r = applyImport(preview.file, latestAssets.current, mode, { updateHolding, add: add as never });
+    const r = applyImport(preview.file, latestAssets.current, mode, { updateHolding, add: a => add(a as Parameters<UseAssets['add']>[0], { restoreOnly: true }) });
     setApplied(`${mode === 'merge' ? '統合' : '置換'}完了: 更新${r.updated}件 / 追加${r.added}件 / スナップショット取込${r.snapshotsMerged}件 / 判断記録取込${r.decisionAuditMerged}件`);
     setPreview(null);
     if (fileRef.current) fileRef.current.value = '';

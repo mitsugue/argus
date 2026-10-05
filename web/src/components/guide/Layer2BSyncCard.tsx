@@ -3,13 +3,14 @@ import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import type { AssetItem } from '../../types/assetItem';
 import { mergeWatchlistMembership } from '../../lib/watchlistMembershipRestore';
 import { markLocalEdit } from '../../lib/vault';
+import { flushWatchlistChanges, queueManualRegistrations, OWNER_SYNC_TOKEN_KEY } from '../../lib/watchlistAutoSync';
 
 // Layer 2B — sync the owner's watchlist MEMBERSHIP (symbols only, no holdings) so
 // ARGUS can score the assets you actually care about. The owner-sync token is
 // entered once and kept in localStorage on THIS device. It is a dedicated,
 // owner-scoped token for membership/Layer-2B operations, never general admin or
 // deployment authority.
-const TOKEN_KEY = 'argus.ownerSyncToken.v1';
+const TOKEN_KEY = OWNER_SYNC_TOKEN_KEY;
 const SYNC_MARKETS = new Set(['JP', 'US', 'CRYPTO']); // funds (CORE) excluded — no return-scoring
 
 interface Props {
@@ -38,6 +39,7 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
         body: JSON.stringify({ ownerToken: token.trim() }), signal: AbortSignal.timeout(12000),
       });
       const d = await r.json().catch(() => null);
+      if (!r.ok || !['ok', 'empty'].includes(d?.status)) { setResult('保存済みの銘柄を取得できませんでした。元の記録は保持しています'); return; }
       const members = d?.membership?.members;
       if (!members || !members.length) { setResult(`復元データなし: ${d?.status || r.status}`); return; }
       if (!r.ok || d?.status !== 'ok') { setResult('保存済みの銘柄を取得できませんでした'); return; }
@@ -88,6 +90,7 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
         body: JSON.stringify({ ownerToken: token.trim() }), signal: AbortSignal.timeout(12000),
       });
       const d = await r.json().catch(() => null);
+      if (!r.ok || !['ok', 'empty'].includes(d?.status)) { setResult('同期状態を取得できませんでした。未登録とは判定しません'); return; }
       const members: any[] = d?.membership?.members || [];
       const registeredServer = new Set(members.filter(m => m.enabled !== false)
         .map(m => `${m.market}:${m.symbol}`));
@@ -101,47 +104,21 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
     if (busy) return;
     if (!backend) { setResult('バックエンド未設定'); return; }
     if (!token.trim()) { setResult('オーナー同期トークンを入力してください'); return; }
-    try { localStorage.setItem(TOKEN_KEY, token.trim()); } catch { /* ignore */ }
-    setBusy(true); setBusyLabel('銘柄情報を同期しています'); setResult(null);
-    const base = backend.replace(/\/$/, '');
-    // Render cold-start can return a non-JSON 502/timeout for the first hit, which
-    // made r.json() throw "did not match the expected pattern". Warm the dyno,
-    // then POST with retries and a SAFE json parse (read text, then try parse).
-    try { setResult('接続中(バックエンド起動待ち)…'); await fetch(base + '/healthz', { signal: AbortSignal.timeout(12000) }).catch(() => {}); } catch { /* ignore */ }
-    let lastErr = '';
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const r = await fetch(base + '/api/argus/calibration/watchlist-sync', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items, ownerToken: token.trim() }), signal: AbortSignal.timeout(12000),
-        });
-        const text = await r.text();
-        let d: any = null;
-        try { d = text ? JSON.parse(text) : null; } catch {
-          lastErr = `バックエンド起動中の応答(HTTP ${r.status})`;
-          await new Promise((res) => setTimeout(res, 3000 * (attempt + 1)));
-          setResult(`再試行中…(${attempt + 1}/3)`);
-          continue; // cold-start non-JSON → retry
-        }
-        if (!r.ok || !d) {
-          setResult(`失敗: ${(d && d.error) || r.status}${d && d.errors ? ' — ' + d.errors.join(', ') : ''}`);
-        } else if (d.status === 'synced') {
-          setResult(`✅ 同期完了: ${d.symbolCount}銘柄を private ストアに保存(${d.effectiveFrom})`);
-        } else if (d.status === 'failed') {
-          setResult(`⚠️ private保存に失敗: ${d.persistDetail || d.note || ''}`);
-        } else {
-          setResult(`⚠️ ${d.status}: ${d.note || ''}`);
-        }
-        setBusy(false);
-        return; // got a real response — done
-      } catch (e) {
-        lastErr = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-        await new Promise((res) => setTimeout(res, 3000 * (attempt + 1)));
-        setResult(`再試行中…(${attempt + 1}/3)`);
+    setBusy(true); setBusyLabel('銘柄情報を保存しています'); setResult(null);
+    try {
+      localStorage.setItem(TOKEN_KEY, token.trim());
+      // Explicit setup adds this device's registrations. Deletions come only
+      // from the persisted operation batches, never from a complete old list.
+      const pending = await flushWatchlistChanges(backend, token.trim());
+      if (['error', 'unavailable', 'auth_required'].includes(pending.kind)) {
+        setResult(pending.message); return;
       }
-    }
-    setResult(`通信エラー: ${lastErr}(接続先: ${backend})。少し待って再度お試しください。`);
-    setBusy(false);
+      queueManualRegistrations();
+      const saved = await flushWatchlistChanges(backend, token.trim());
+      setResult(saved.message || '保存待ちの変更はありません');
+    } catch {
+      setResult('保存を確認できません。端末の登録銘柄は保持しています');
+    } finally { setBusy(false); }
   }
 
   return (
@@ -150,7 +127,7 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
         <div className="guide-term">
           <span className="guide-term__en">登録銘柄の同期</span>
           <span className="guide-term__ja">
-            登録銘柄をサーバー側の定期分析へ反映します。変更後は「今すぐ同期」を押してください。
+            合言葉を設定すると、登録銘柄の追加・削除を自動保存し、定期分析へ反映します。
             対象 {items.length} 銘柄（有効 {registeredLocal.length}）。
           </span>
         </div>

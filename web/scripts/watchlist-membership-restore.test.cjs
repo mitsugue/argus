@@ -39,6 +39,7 @@ async function restore({ status = 200, corrupt = false, rejectWrite = false } = 
     useState: init => [typeof init === 'function' ? init() : init, value => results.push(value)] };
   const card = load('src/components/guide/Layer2BSyncCard.tsx', name => {
     if (name === 'react') return React;
+    if (name.endsWith('watchlistAutoSync')) return { OWNER_SYNC_TOKEN_KEY: 'argus.ownerSyncToken.v1' };
     if (name.endsWith('watchlistMembershipRestore')) return helper;
     if (name.endsWith('/vault')) return { markLocalEdit: () => edits++ };
     if (name.endsWith('TriangleStepLoader')) return { TriangleStepLoader: () => null };

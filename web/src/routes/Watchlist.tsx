@@ -5,6 +5,7 @@ import { EntityProfileEditor } from '../components/dashboard/EntityProfileEditor
 import { AddAssetModal } from '../components/dashboard/AddAssetModal';
 import { Layer2BSyncCard } from '../components/guide/Layer2BSyncCard';
 import { useAssets } from '../hooks/useAssets';
+import { useWatchlistSync } from '../hooks/useWatchlistSync';
 import { useAssetIntel } from '../hooks/useAssetIntel';
 import { useDecisionEvidence, requestedDecisionEvidenceSymbols } from '../hooks/useDecisionEvidence';
 import { deskCoverage, deskCoverageJa, deskCoverageDetailJa } from '../domain/deskCoverage';
@@ -32,6 +33,7 @@ export const Watchlist: React.FC<Props> = ({
   onNavigateToAsset, onBackToHoldings,
 }) => {
   useLocale();   // re-render on locale switch
+  const syncState = useWatchlistSync();
   const assetsApi = useAssets();
   const { assets, add, remove, reorderGenre } = assetsApi;
   // Holdings owns one canonical acquisition/intelligence lifecycle. Every
@@ -73,6 +75,10 @@ export const Watchlist: React.FC<Props> = ({
       {assetDetail && <button type="button" className="asset-btn" onClick={onBackToHoldings}>
         ← Watchlist
       </button>}
+      {!assetDetail && syncState.message && <p role="status" className="card"
+        style={{ padding: '12px 16px', color: syncState.kind === 'error' || syncState.kind === 'auth_required' ? 'var(--amber)' : 'var(--muted)' }}>
+        {syncState.message}
+      </p>}
       <AssetDeskList
         key={nonce}
         assets={assets}

@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.42"
+PRODUCT_VERSION = "v13.8.43"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
-    'web/scripts/pwa-identity.test.mjs': '3edb05a377d8a370199960652a64b1e4c6e463fe',
-    'web/scripts/owner-today-https.mjs': '0dc84217ff10ac968355d95a7c728cec19cfb45e',
+    'web/scripts/pwa-identity.test.mjs': 'b6b82f45208b9acf56fdbf668db39b9d25801180',
+    'web/scripts/owner-today-https.mjs': '52652031f2501ca85916fceaa5640128b0e9c195',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -198,7 +198,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_overview_policy.py': '15a4a5cea4eb079ca2589484bd94c4cf54c102ca',
     'test_jp_market_feature_delta.py': '5cf423e0f9514fa1a87841277adc4b50ea0ad035',
     'web/src/domain/watchlistProjection.ts': '36b5e0c3eba3a67ce9fec128f422ce3af89498cc',
-    'web/scripts/watchlist-retirement.test.cjs': '55e0d87e492fba0322787e821c1b5e0f21c36d88',
+    'web/scripts/watchlist-retirement.test.cjs': '77874ff308076b1ab969369b437a23ad87b5e62d',
     'web/scripts/positions-risk.test.cjs': '602f5d856f2e12f4088df04ced74de4ae35f2b32',
     'web/src/lib/tradeJournal.ts': '149dec98cbf3d17e9860e235c91c28248aa6c2d1',
     'web/scripts/polling-singleton.test.mjs': 'd06ffc82f0267da3884629d80a0bc5be0ec20468',
@@ -257,7 +257,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'scripts/macro_readiness.py': 'd9d736333960d220a5ce3fc55951abc901ea47f0',
     'docs/V13_7_REQUIREMENTS.md': '4531b8a7f358a4f14dbb5d3d6e86c481f9c3ac07',
     'web/src/hooks/useOsintInvestigation.ts': 'ada26a80e0f0f439f97cb75858407647dc7c5d8d',
-    'web/src/components/guide/Layer2BSyncCard.tsx': '0e62e584a7efb14303c3acfb76d71d68b24bf937',
+    'web/src/components/guide/Layer2BSyncCard.tsx': '166869ef31d60ee5fad758be23c0726f9ddfbb1e',
     'web/src/components/dashboard/OsintDeepDive.tsx': '875c23041a7d765379aa834bbfe70ae24abf0f05',
     'web/src/components/dashboard/AddAssetModal.tsx': '56b5df9a55e8238db3538c829f1e29fd157398ce',
     'web/src/components/assetDesk/AssetResearchPanel.tsx': '74487e1942385ade5ccef2209a9ca63bf5d3e4e1',
@@ -270,7 +270,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # Owner-authorized v13.6.1 prediction-ledger continuity regression proof.
     'test_prediction_ledger_workflow.py': '7e985330c0b4853aeef39e4635177ddc09f0f63f',
     'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
-    'web/src/hooks/useAssets.ts': '7378e41e1b7fdf6ff6b14f29e5271639054f370b',
+    'web/src/hooks/useAssets.ts': '6e0577a96275f2427e7edf88e7d3c6c6bacfa80b',
     'web/src/components/dialogue/OwnerOverview.tsx': '237fac885c233c84baf128924f0b4cc92aa7e334',
     'web/src/components/dialogue/OwnerOverview.css': 'e608b1f63bbbf8596454a9e0100cea6ee8a41a0f',
     'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',
@@ -299,7 +299,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/settings/OwnerVaultPanel.tsx': '981ca9ecbbcc6af8068297d384ef786d874f6846',
     'web/src/components/settings/AiUsagePanel.tsx': 'b17e0d0a666b2c00ec5e5d7098086e54b1eb0615',
     'web/src/components/settings/AiUsagePanel.css': 'eb215c910039c200f8b5fb01287672f3f4eb6376',
-    'web/src/components/dashboard/PortfolioSyncCard.tsx': 'd960fa95c19fb63fc8a8784be7bea1879fb6969a',
+    'web/src/components/dashboard/PortfolioSyncCard.tsx': '4b66bf9486392fb19bcc2308e77e3ffe7a553db2',
     'web/scripts/web-push.test.mjs': '220bdd38d81b8cf506d9559a01787076d56b113b',
     'web/scripts/owner-vault.test.cjs': '2458ab4b91f044bdc69fb6894705cd949af8ffbb',
     'web/scripts/owner-vault-legacy-isolation.test.cjs': 'b58bd43566481f8ebb60dc2272dd95ab3b5e2fac',
@@ -648,6 +648,9 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/src/lib/watchlistAutoSync.ts",
+    "web/src/hooks/useWatchlistSync.ts",
+    "web/scripts/watchlist-auto-sync.test.cjs",
     "test_argus_private_membership.py",
     "argus_watchlist_sync.py",
     "argus_private_membership.py",
