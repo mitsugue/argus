@@ -1,6 +1,7 @@
 """既存の価格・推計EPS・事前記録から描画用の小さな配列を作る。"""
 from datetime import date, datetime, timedelta, timezone
 import math
+from statistics import median
 
 import argus_market_clock as clock
 import jp_market_level_map as levels
@@ -45,6 +46,45 @@ def _deadline(entry):
             if count == 20: return day.isoformat()
         day += timedelta(days=1)
     return None
+
+
+def valuation_history(eps_records, morning, price_rows):
+    """同じ方式で再計算した過去との位置比較。到達・反転の予測ではない。"""
+    if not morning or not _number(morning.get('eps')) or not _number(morning.get('previousClose')):
+        return None
+    cutoff = morning.get('epsDate')
+    if not isinstance(cutoff, str):
+        return None
+    records = []
+    for day, record in eps_records.items():
+        if (not isinstance(record, dict) or record.get('basis') != levels.EPS_BASIS
+                or record.get('date') != day or day > cutoff or not _number(record.get('per'))):
+            continue
+        try:
+            parsed = date.fromisoformat(day)
+        except (ValueError, TypeError):
+            continue
+        if parsed.weekday() < 5:
+            records.append((day, record['per']))
+    records.sort()
+    if not records:
+        return None
+    start, end = date.fromisoformat(records[0][0]), date.fromisoformat(records[-1][0])
+    # The runtime holiday table covers recent years only. Use actual stored
+    # price sessions so old Japanese holidays are not invented as data gaps.
+    price_dates = {r.get('date') for r in price_rows if isinstance(r, dict) and _number(r.get('close'))
+                   and records[0][0] <= str(r.get('date', '')) <= records[-1][0]}
+    missing = len(price_dates - {day for day, _ in records})
+    expected = len(records) + missing
+    values = [value for _, value in records]
+    multiple = math.floor(morning['previousClose'] / morning['eps']) + 1
+    return {'basis': levels.EPS_BASIS, 'firstDate': start.isoformat(), 'lastDate': end.isoformat(),
+            'count': len(values), 'missingSessions': missing,
+            'sufficient': len(values) >= 60 and len(values) >= expected * .8,
+            'median': round(median(values), 2), 'minimum': round(min(values), 2),
+            'maximum': round(max(values), 2), 'upperMultiple': multiple,
+            'atOrAboveUpper': sum(value >= multiple for value in values),
+            'retrospective': True, 'actionAuthority': False}
 
 
 def snapshot(rows, eps_records, morning, candidates, *, now_iso):
@@ -105,5 +145,6 @@ def snapshot(rows, eps_records, morning, candidates, *, now_iso):
             nearest.append({'side': side, 'multiple': multiple, 'price': round(price, 2), **stats})
     return {'schemaVersion': 'jp-market-chart-layers-v1', 'today': today_s, 'start': start, 'end': end,
             'points': points, 'current': current, 'pivots': turns, 'pending': pending,
+            'valuationHistory': valuation_history(eps_records, morning, bars) if current else None,
             'candidates': open_records[-30:], 'nearest': nearest, 'epsBasis': levels.EPS_BASIS,
             'actionAuthority': False, 'automaticAiCalls': 0}

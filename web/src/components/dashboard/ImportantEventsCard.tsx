@@ -17,6 +17,7 @@ import { useLocale, t, pick } from '../../i18n';
 import { EVENT_DESC_JA } from '../../lib/eventLabels';
 import { formatEventWhenJa } from '../../domain/argusTodayView';
 import { TodayEventSchedule } from './TodayEventSchedule';
+import { EventImpactBadge } from './EventImpactBadge';
 import './ImportantEventsCard.css';
 
 // v11.4.1 tone → color for the unified state badge.
@@ -75,11 +76,6 @@ function reactionChips(mr?: DashboardEventReaction): { chips: string[]; tone: st
 // strongly markets may move (violet/amber/blue/gray tokens), NEVER a direction.
 // No forecast/consensus is fabricated.
 
-const IMPACT_TOKEN: Record<EventImpact, string> = {
-  critical: 'var(--event-critical)', high: 'var(--event-high)',
-  medium: 'var(--event-medium)', low: 'var(--event-low)',
-};
-const IMPACT_ICON: Record<EventImpact, string> = { critical: '◆', high: '▲', medium: '●', low: '·' };
 const IMPACT_KEY: Record<EventImpact, 'ie.impact.critical' | 'ie.impact.high' | 'ie.impact.medium' | 'ie.impact.low'> = {
   critical: 'ie.impact.critical', high: 'ie.impact.high', medium: 'ie.impact.medium', low: 'ie.impact.low',
 };
@@ -140,7 +136,6 @@ const CaosAnalysisBlock: React.FC<{ ai: MacroAnalysis; released: boolean }> = ({
 const EventRow: React.FC<{ e: ImportantEvent; open: boolean; ai?: MacroAnalysis; compact?:boolean }> = ({ e, open, ai,compact }) => {
   const loc = useLocale();
   const impact = e.displayImpact;
-  const color = IMPACT_TOKEN[impact] ?? IMPACT_TOKEN.low;
   const countdown = loc === 'ja' ? (COUNTDOWN_JA[e.countdown] || e.countdown) : e.countdown;
   const novice = pick(e.noviceEn, e.noviceJa);
   const actionUntil = pick(e.actionUntilEn, e.actionUntilJa);
@@ -160,7 +155,7 @@ const EventRow: React.FC<{ e: ImportantEvent; open: boolean; ai?: MacroAnalysis;
         <span className="ie-when">{when}</span>
         {!compact&&<span className="ie-code">{e.eventCode}</span>}
         <span className="ie-title-ja" data-argus-contract="event-title-ja-v1">{eventTitleJa(e.eventCode, e.title)}</span>
-        <span className="ie-impact" style={{ color }} aria-hidden>{compact ? `影響 ${impact==='critical'?'特大':impact==='high'?'大':impact==='medium'?'中':'小'}` : `${IMPACT_ICON[impact]} ${impactLabel}`}</span>
+        <EventImpactBadge impact={impact} />
         {compact&&<span className="ie-peek">{EVENT_DESC_JA[e.eventCode]||e.noviceJa}</span>}
       </summary>
       <div className="ie-body">
@@ -226,7 +221,7 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
         <span className="ie-when">{when}</span>
         {!compact&&<span className="ie-code">{ev.eventCode}{ev.lifecycleTierJa && <small className="ie-tier" data-argus-contract="event-lifecycle-tier-v1" data-tier={ev.lifecycleTier}>{ev.lifecycleTierJa}</small>}</span>}
         <span className="ie-title-ja" data-argus-contract="event-title-ja-v1">{eventTitleJa(ev.eventCode, ev.title)}</span>
-        {compact&&<span className="ie-importance" style={{color:IMPACT_TOKEN[ev.importance]}}>影響 {ev.importance==='critical'?'特大':ev.importance==='high'?'大':ev.importance==='medium'?'中':'小'}</span>}
+        {compact&&<EventImpactBadge impact={ev.importance} />}
         {ds.stampBoxed ? (
           // v11.5: clear boxed "発表済" stamp so it's obvious the event has printed.
           <span className="ie-stamp" style={{

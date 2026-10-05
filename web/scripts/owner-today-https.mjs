@@ -118,7 +118,7 @@ try {
   }); assert.equal(report.anonymousStatus, activeMode === '1' ? 401 : 200);
   const acceptanceEnv = { ...process.env, NODE_EXTRA_CA_CERTS: cert, HTTPS_PROXY: 'http://127.0.0.1:4480', HTTP_PROXY: 'http://127.0.0.1:4480', NO_PROXY: '', https_proxy: '', http_proxy: '', no_proxy: '',
     ARGUS_PUBLIC_URL: 'https://argus-fixture.test/argus/', ARGUS_BACKEND_URL: 'https://argus-fixture.test',
-    ARGUS_EXPECTED_SHA: sha, ARGUS_EXPECTED_VERSION: '13.8.37',
+    ARGUS_EXPECTED_SHA: sha, ARGUS_EXPECTED_VERSION: '13.8.38',
     ARGUS_ACCEPTANCE_OWNER_AUTH: mode, ARGUS_ACCEPTANCE_OWNER_ORIGIN: 'https://argus-fixture.test',
     ARGUS_ACCEPTANCE_OWNER_PASSWORD: password, ARGUS_FIXTURE_SPKI: spki, ARGUS_SYNTHETIC_OWNER_TODAY: '1',
     ARGUS_MOBILE_ACCEPTANCE_OUT: path.join(out, 'mobile') };

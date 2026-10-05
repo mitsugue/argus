@@ -169,7 +169,7 @@ export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: {
       <p>目標・撤回ライン：事前に記録した条件の答え合わせに使う線です。実線は目標、点線は想定が崩れる価格です。</p>
       <p>高値・安値の印：終値が4%反転して確定した点です。輪だけの点はまだ未確定です。</p>
     </details>
-    {layers.per && hasPriceScale && <p className="nr-price-scale-link"><a href="#today-price-scale">上・下のPER価格までの距離と、過去の到達割合を見る ↑</a></p>}
+    {layers.per && hasPriceScale && <p className="nr-price-scale-link"><a href="#today-price-scale">上・下のPER価格までの距離と、過去の到達割合を見る ↓</a></p>}
     {layers.external && <div className="nr-external-list" aria-label="参考予測の期間と価格">
       {external.map((p, i) => <button key={p.id} type="button" aria-pressed={selectedPoint?.id === p.id} onClick={() => selectPoint(p)}>
         {i + 1} {p.tag} · {md(p.start)}{p.end !== p.start ? `〜${md(p.end)}` : ''} · {yen(p.value)}円</button>)}

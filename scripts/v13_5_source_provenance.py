@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.37"
+PRODUCT_VERSION = "v13.8.38"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
-    'web/scripts/pwa-identity.test.mjs': '315b0182c69bbafe491598eadbde968f4df17630',
-    'web/scripts/owner-today-https.mjs': 'dad36a94ef28a1544e51ce131c5aa11fde8f5a45',
+    'web/scripts/pwa-identity.test.mjs': '9c2a22a35bb402194ba69cbf97ba8d704cb48a51',
+    'web/scripts/owner-today-https.mjs': '41a685cb342dd45ba5f1e7d0a65c4132d2cb5ac1',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -181,12 +181,12 @@ REVIEWED_EXTENSION_BLOBS = {
     'jp_market_acquisition.py': '31578aa3a26bf5b5db3149758c0ff48caeab3184',
     'ops/imports/README.md': '0c3a8010eebfa90f6c20be3d46e0d59fd3039404',
     'web/src/components/today/SectorHeatmap.css': 'df03c8879cd667ad4e580a9b4044222ab4940e2e',
-    'web/src/components/today/SectorHeatmap.tsx': '54a1a6132400ed2227a57be1cb3e436b106256ad',
+    'web/src/components/today/SectorHeatmap.tsx': 'e2bfe0c05e4830ed89cd71805d98ba22f0518996',
     'test_jp_sector_heatmap_api.py': '4b93b1bd5fa1eed37baff43912b3a86cbd9f00e9',
     'test_jp_sector_heatmap_runtime.py': '3bb33a56d1305e1f5daac3e804f62ddb93099de7',
-    'test_jp_sector_heatmap.py': '1f6abcd332dba7406db0d1d998437d647b76967e',
+    'test_jp_sector_heatmap.py': 'f8a0773084f02f1629f89a2d5b97284c3eb8e674',
     'jp_sector_heatmap_runtime.py': 'f31cb749d4bc365db5b235fdb3bf8350b9e37686',
-    'jp_sector_heatmap.py': 'e7f762925f14e36463419f38ef68d3c3b44c8700',
+    'jp_sector_heatmap.py': '5a149728db22320a40a0e2d00d7ce3f95dc32035',
     'test_argus_material_translation.py': '80f68a5abad282c920926dbb8b9541d97da016ae',
     'test_argus_queue_v1152_backend.py': 'ec3d8c65c5b48755539e0dfdc0f93ccf6362cfb1',
     'test_argus_shared_bridge.py': '71830cb29c437a727688cabf14aa4e955bf95ffb',
@@ -203,8 +203,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/lib/tradeJournal.ts': '149dec98cbf3d17e9860e235c91c28248aa6c2d1',
     'web/scripts/polling-singleton.test.mjs': 'd06ffc82f0267da3884629d80a0bc5be0ec20468',
     'test_argus_institutional_backend_v1160.py': 'd8065d151883cdf13ff7ebfa79358482d40cc8fc',
-    'docs/V13_7_SHAPEUP_REQUIREMENTS.md': '9756717ff26e5cf159dcf5d20cb578d99ab225ed',
-    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': '35605becb048cbc03bbf5030c986328f54e710d5',
+    'docs/V13_7_SHAPEUP_REQUIREMENTS.md': '131bf7dfca4742c0c9b0d50d9d2de7bffdbeacbe',
+    'docs/V13_7_SHAPEUP_ACCEPTANCE.md': '18a56d88db317a512c47594a78d0eb696c083ed6',
     'test_rules.py': '36c1d8b92e9a68f606586c00607d1e9c400c1b2c',
     'bridge/trigger_closepin.sh': '83ee01384660bb8799a863e080021a7fa35c1e3d',
     '.github/workflows/closepin-pin.yml': 'ea693b3ca6140d4cf6fa66c48d91c6a03f603baa',
@@ -255,7 +255,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_macro_schedule.py': '0a33bb9b772f9ef1ee036fa2f5e4e49cad21661d',
     'test_macro_readiness.py': 'd1348cbcc814fb28857bd42095007f355728cd5a',
     'scripts/macro_readiness.py': 'd9d736333960d220a5ce3fc55951abc901ea47f0',
-    'docs/V13_7_REQUIREMENTS.md': '6ae5091a2167249af1a5c8e1bfc75c5f8ed3d928',
+    'docs/V13_7_REQUIREMENTS.md': '4531b8a7f358a4f14dbb5d3d6e86c481f9c3ac07',
     'web/src/hooks/useOsintInvestigation.ts': 'ada26a80e0f0f439f97cb75858407647dc7c5d8d',
     'web/src/components/guide/Layer2BSyncCard.tsx': 'b54f946a7a4176390d086dfc302588fe7e45a26f',
     'web/src/components/dashboard/OsintDeepDive.tsx': '875c23041a7d765379aa834bbfe70ae24abf0f05',
@@ -365,7 +365,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_ai_usage_store.py': 'bc0ccd94eeb2b601da72ecb4a847c8ba3bbf07e1',
     'argus_macro_event_store.py': '0f3bf526a88c83a22576abbf06490bc2861af433',
     'argus_macro_results.py': 'd36a074617ef3ba476bc900a376040192b43a02a',
-    'docs/V13_6_ANALYSIS_ACCEPTANCE.md': '5f3f34d75eefb1a18abb18c8d2407d6921bcd57a',
+    'docs/V13_6_ANALYSIS_ACCEPTANCE.md': '49b09e1fd16c046b692cddcd84609c81f0d4f453',
     'docs/V13_6_COMPUTE_CONTRACT.md': '4ad0e52d419c261b24be8775d9c635bd310e9417',
     'jp_market_analogs.py': 'c2463a0f306484a55f010fd2db92c9684015efd7',
     'jp_market_dynamics.py': '36624677a01861c4adfa706e4d5b9dfa405212dd',
@@ -648,6 +648,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/src/components/dashboard/EventImpactBadge.tsx",
     "web/src/lib/todayEventSchedule.ts",
     "web/src/components/dashboard/TodayEventSchedule.tsx",
     "web/scripts/today-event-schedule.test.cjs",

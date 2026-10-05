@@ -19,8 +19,24 @@ export type LevelMapScore = {
   fakeLineOutcomes: LevelMapTally; preRegisteredOnly: boolean;
   turningPoints: { evaluated: number; perLineHits: number; atr2Hits: number; chanceExpected: number };
 };
+export type ValuationHistory = {
+  basis: 'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD'; firstDate: string; lastDate: string;
+  count: number; missingSessions: number; sufficient: boolean; median: number; minimum: number; maximum: number;
+  upperMultiple: number; atOrAboveUpper: number; retrospective: true; actionAuthority: false;
+};
+export function validValuationHistory(value: unknown): value is ValuationHistory {
+  const v = value as ValuationHistory | null;
+  return !!v && v.basis === 'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD' && v.retrospective === true
+    && v.actionAuthority === false && /^\d{4}-\d{2}-\d{2}$/.test(v.firstDate) && /^\d{4}-\d{2}-\d{2}$/.test(v.lastDate)
+    && v.firstDate <= v.lastDate && Number.isInteger(v.count) && v.count > 0
+    && Number.isInteger(v.missingSessions) && v.missingSessions >= 0 && typeof v.sufficient === 'boolean'
+    && [v.median, v.minimum, v.maximum, v.upperMultiple].every(n => Number.isFinite(n) && n > 0)
+    && v.minimum <= v.median && v.median <= v.maximum && Number.isInteger(v.atOrAboveUpper)
+    && v.atOrAboveUpper >= 0 && v.atOrAboveUpper <= v.count;
+}
 export type LevelMapState = {
   schemaVersion: 'jp-market-level-map-state-v1'; status: string; latest: LevelMapRecord | null;
+  chart?: { valuationHistory?: unknown };
   morningCount: number; missedMornings: string[]; score: LevelMapScore | null; retrospective: LevelMapScore | null;
   actionAuthority: false;
 };

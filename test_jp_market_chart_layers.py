@@ -77,3 +77,31 @@ def test_missing_price_session_does_not_turn_older_eps_into_previous_session():
     result = chart.snapshot([bar('2026-10-01', 68957), bar('2026-10-05', 69000)],
                             {'2026-10-01': {'eps': 3900}}, None, [], now_iso='2026-10-06T00:00:00Z')
     assert result['points'][-1]['eps'] is None
+
+
+def test_valuation_history_uses_same_basis_and_excludes_future_and_invalid_records():
+    records = {
+        '2026-10-01': {'date': '2026-10-01', 'basis': levels.EPS_BASIS, 'per': 16},
+        '2026-10-02': {'date': '2026-10-02', 'basis': levels.EPS_BASIS, 'per': 20},
+        '2026-10-05': {'date': '2026-10-05', 'basis': levels.EPS_BASIS, 'per': 90},
+        '2026-09-30': {'date': '2026-09-30', 'basis': 'INDEX_WEIGHTED', 'per': 100},
+        '2026-09-29': {'date': '2026-09-29', 'basis': levels.EPS_BASIS, 'per': float('nan')},
+        '2026-09-28': {'date': '2026-09-27', 'basis': levels.EPS_BASIS, 'per': 40},
+    }
+    summary = chart.valuation_history(records, {'epsDate': '2026-10-02', 'eps': 4000, 'previousClose': 68001}, [bar(d, 68000) for d in records if d <= '2026-10-02' and d >= '2026-10-01'])
+    assert summary['count'] == 2 and summary['median'] == 18
+    assert summary['upperMultiple'] == 18 and summary['atOrAboveUpper'] == 1
+    assert summary['minimum'] == 16 and summary['maximum'] == 20
+    assert summary['sufficient'] is False and summary['actionAuthority'] is False
+    assert summary['retrospective'] is True and summary['missingSessions'] == 0
+
+
+def test_valuation_history_reports_gaps_and_never_claims_sparse_history_complete():
+    first = date(2025, 1, 6)
+    dates = [(first + timedelta(days=i)) for i in range(400)]
+    dates = [d.isoformat() for d in dates if chart.clock.is_trading_day(chart.clock.JP_EQUITY, d)]
+    records = {d: {'date': d, 'basis': levels.EPS_BASIS, 'per': 17} for d in dates[::3]}
+    summary = chart.valuation_history(records, {'epsDate': dates[-1], 'eps': 4000, 'previousClose': 68001}, [bar(d, 68000) for d in dates])
+    assert summary['count'] >= 60 and summary['missingSessions'] > summary['count']
+    assert summary['sufficient'] is False
+    assert chart.valuation_history(records, None, []) is None

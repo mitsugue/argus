@@ -1,4 +1,5 @@
 import React from 'react';
+import { EventImpactBadge } from './EventImpactBadge';
 import { useJapanEquityCalendar } from '../../hooks/useJapanEquityCalendar';
 import type { DashboardEventsResponse,DashboardEvent } from '../../lib/dashboardEventState';
 import type { ImportantEvent } from '../../hooks/useImportantEvents';
@@ -15,7 +16,7 @@ export function TodayEventSchedule({dashboard,legacy,sectionId,renderDashboard,r
   const render=(row:typeof rows[number]) => row.kind==='dashboard'?renderDashboard(row.event)
     :row.kind==='legacy'?renderLegacy(row.event):<article className="te-equity" data-impact={row.event.importance}>
       <div className="te-when">{equityEventWhen(row.event)} · {equityEventDistance(row.event)}</div>
-      <div className="te-title"><h4>{row.event.titleJa}</h4><span className="te-importance">{row.event.importance==='high'?'影響 大':row.event.importance==='medium'?'影響 中':'影響 小'}</span></div>
+      <div className="te-title"><h4>{row.event.titleJa}</h4><EventImpactBadge impact={row.event.importance} /></div>
       <p>{row.event.soWhatJa}</p>
       <details><summary>確認すること・出典</summary><p>{row.event.whatJa}</p><p>{row.event.watchJa}</p>
         {row.event.pastTendencyJa&&<p>{row.event.pastTendencyJa}</p>}<small>出典：{row.event.source}</small></details>

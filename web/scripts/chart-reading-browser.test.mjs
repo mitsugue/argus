@@ -72,7 +72,7 @@ try{
   }),true,'the five price labels do not overlap');
   assert.equal(await page.locator('.lm-reach article strong').first().evaluate(el=>parseFloat(getComputedStyle(el).fontSize)),30);
   assert.equal(await page.locator('.nr-nearest').count(),0,'the reach statistic has one reading location');
-  assert.ok((await page.locator('.lm-reach').innerText()).includes('個別のPER線を超える確率ではなく'));
+  assert.ok((await page.locator('.lm-reach').innerText()).includes('今後の確率や、反発した割合ではありません'));
   assert.equal(await page.locator('.lm-heading > b').evaluate(el=>el.getBoundingClientRect().height<=parseFloat(getComputedStyle(el).lineHeight)*1.1),true,'title stays on one line');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false,'no horizontal page overflow');
   assert.deepEqual(errors,[]);

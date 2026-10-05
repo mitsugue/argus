@@ -108,7 +108,7 @@ const SIGNAL_READING_JA: Record<string,{name:string;condition:string}> = {
   'SIG-01':{name:'市場全体の信用売り残',condition:'点灯条件：二市場の信用売り残が8,000億円未満。'},
   'SIG-02':{name:'日経レバの制度信用倍率',condition:'点灯条件：制度信用の買い残÷売り残が1倍以上。'},
   'SIG-03':{name:'日本株と米国株の強さの比較',condition:'点灯条件：20営業日の比較で日本株が米国株より強い。'},
-  'SIG-04':{name:'日経平均の割高・割安（PER）',condition:'点灯条件：日経平均のPERが19倍以上。ARGUSの候補規則。'},
+  'SIG-04':{name:'日経平均の割高・割安（PER）',condition:'点灯条件：指数方式のPERが19倍以上（候補規則）。価格の目盛りとは計算方法が異なります。'},
   'SIG-05':{name:'海外投資家の買い・売り',condition:'点灯条件：最新の公表値で海外投資家が買い越し。'},
   'SIG-06':{name:'米国市場の不安の勢い（VIX）',condition:'点灯条件：VIXの勢いを測るMACD（12・26・9）が低下側。'},
   'SIG-07':{name:'決算発表後の株価の反応',condition:'点灯条件：発表後5営業日、未取得なら1営業日の騰落率がプラス。'},
@@ -771,11 +771,11 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         重大なニュース・市場変化 {criticalNewsCount}件を確認する ↓
       </button>}
     </section>
-    {view.selectedMarket === 'JP' && selectedSymbol === '1321' && <LevelMapCard />}
     {/* 2026-10-04: external views of the coming weeks, directly above the chart. */}
     {view.selectedMarket === 'JP' && selectedSymbol === '1321' && <FutureMapCard />}
     {view.selectedMarket === 'JP' && selectedSymbol === '1321'
       && <JapanMarketHorizonComparison />}
+    {view.selectedMarket === 'JP' && selectedSymbol === '1321' && <LevelMapCard />}
     {!chartLoad.snapshotId && <div className="at-canonical-load-status" role="status">
       {chartLoad.loaderVisible && <TriangleStepLoader label={chartLoad.slowInitial
         ? '日経平均の根拠を確認しています。前回の説明は引き続き読めます'
@@ -980,6 +980,10 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       </details>
     </section>
 
+    {!usSelected && <SharedMarketContext horizon={horizon} />}
+    {!usSelected && <MarginDynamicsCard document={decisionEvidence.marketView?.margin1570Dynamics} refreshFailed={!!decisionEvidence.error} />}
+    {!usSelected && <JpyPositionCard document={decisionEvidence.marketView?.jpyPosition} />}
+
     <details className="at-other-markets card" data-argus-contract="other-markets-actuals-v1"
       onToggle={(event) => setOtherMarketsOpen(event.currentTarget.open)}>
       <summary>他の市場を見る</summary>
@@ -993,10 +997,6 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       {otherMarketsOpen && <OtherMarketsActuals moves={view.indexMoves} />}
       <p className="at-other-markets__note">指数そのもののリアルタイム値ではありません。NASDAQ総合ではなくNASDAQ-100連動ETFを参照しています。</p>
     </details>
-
-    {!usSelected && <SharedMarketContext horizon={horizon} />}
-    {!usSelected && <MarginDynamicsCard document={decisionEvidence.marketView?.margin1570Dynamics} refreshFailed={!!decisionEvidence.error} />}
-    {!usSelected && <JpyPositionCard document={decisionEvidence.marketView?.jpyPosition} />}
 
     {/* v13.5.59: reading order top-down — decision → signals → what is
         coming → the market itself → then the reference market view and the

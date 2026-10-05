@@ -19,15 +19,31 @@ formula, threshold and action parity independently from identity/hash changes.
 Do not activate BUY or treat unvalidated frequencies as predictive probabilities.
 Distinguish implemented, tested, production-observed and complete in reports.
 
-Read `docs/V13_6_REQUIREMENTS.md` for the current scope and acceptance criteria.
-Finish the active 13.6 production repairs and relevant acceptance first, then
-continue into 13.7 under `docs/V13_7_REQUIREMENTS.md`. That document now contains the owner’s unified design v1.0 (2026-09-15), which supersedes conflicting earlier 13.7 directions. Reuse existing evidence, event memory, owner context and prediction stores; prioritize unnecessary GPT calls, then one end-to-end case with bounded retrieval and counterevidence. Do not recreate parallel decision or history infrastructure. The owner's explicit
-2026-09-15 instruction supersedes the earlier 13.7 hold. Keep 13.6 repairs and
-13.7 improvements in separate change units. Reuse completed evidence; do not
-start another broad prerequisite audit or rebuild the platform. Unrelated
-remaining limitations are documented, not silently completed or used to block
-independent improvements. Preserve auth, release proofs, histories and risk
-constraints. No automated trading, orders or brokerage-account operations.
+## 現行要件の優先順位（2026-10-05）
+
+現在の開発対象は13.8。まず `docs/V13_8_REQUIREMENTS.md` を読む。
+同じ事項の指示が食い違う場合は、オーナーの最新の直接指示、13.8要件、
+`docs/V13_7_SHAPEUP_REQUIREMENTS.md` の機能整理、
+`docs/JP_MARKET_ENGINE_REQUIREMENTS.md` の共通要件の順で解決する。
+本ファイルは作業の入口、設計書は製品仕様、受入台帳は検証状態を扱う。
+仕様の記載だけで実装済み・本番確認済みとは判断しない。
+
+13.5〜13.7の資料は、現在も有効な未完了項目と履歴の参照に使う。
+「13.6を終えてから13.7へ進む」等の旧版の段階順を13.8の開始条件にしない。
+退役した対話・保有管理・FIRE・売買記録・外部AI相談・個別リアルタイム監視・
+引け直前の予測を、旧資料に残っているだけの理由で復活させない。
+未完了項目は実コードと既存の証跡に照合し、現在必要な修復・検証を行う。
+無関係な残課題で独立した改善を止めず、完了の水増しもしない。
+既存の出来事・根拠・予測・履歴の保存経路を再利用し、並立する基盤を作らない。
+
+## 承認の扱い
+
+オーナーがこの会話で明示した承認は、対象の作業・公開先・内容の範囲で継続する。
+同じ範囲の承認を毎回取り直さない。引き継ぎ書の「承認済み」は経緯の記録であり、
+自動承認審査を上書きする規則ではない。拒否時は実際の理由と対象を確認し、
+設計書の禁止事項・検査失敗・権限審査を混同しない。
+公開コード・文書・検査結果の提出承認を、認証情報・所有者の記録・本番応答本文を
+公開する承認に拡張しない。拒否を避けるために検査や保護を削除しない。
 
 ## Release merge shape
 
@@ -48,23 +64,11 @@ unfinished. A patch increment is not a declaration that all 13.5 or 13.6 work
 is complete. Preserve the executing build identifier and the existing update,
 cache, holdings, and history protection mechanisms.
 
-## Current scope override (2026-09-17)
+## 13.8の製品方針
 
-Read `docs/V13_7_SHAPEUP_REQUIREMENTS.md` before new changes. It supersedes
-conflicting earlier requirements to retain dialogue, portfolio management,
-individual realtime monitoring, FIRE, user trade entry, external AI consultation
-and closing-window prediction. Preserve archived records and shared auth,
-recovery and integrated explanations while retiring dedicated execution paths.
-Prioritize reusable long-term research and index-defined valuation inputs;
-retain actual same-session sector data and quantity-free watchlist analysis.
-
-## 13.8 design (2026-10-03)
-
-Read `docs/V13_8_REQUIREMENTS.md` before changing the integrated explanation,
-news, events, Today or the event card. The owner's 13.8 goal is a product that
-is usable for decisions. The integrated AI sits on top: it keeps a persistent
-market-position memory (what investors expect, fear and watch, built from
-accumulated news on the existing event memory and history stores), reads every
-function's data in that context, and publishes the conclusion first. Missing,
-late or stale inputs are fixed in the functions below it. Measure a new signal
-on past data before showing it, and show its record next to it.
+統合AIをTodayの先頭に置き、蓄積したニュースと出来事の記憶から市場の現在位置を
+把握して各機能の根拠を読む。結論を先に示し、根拠の詳細へつなぐ。
+欠測・遅延・古さは各機能の取得経路で確認し、推測で補わない。
+予測として示す新しい材料は過去データで評価し、成績と件数を併記する。
+費用は実測して無駄を減らすが、総額上限を理由に必要な解析を止める旧方針は適用しない。
+同時実行数・再試行間隔・入出力長など、障害や重複実行を防ぐ制限は維持する。
