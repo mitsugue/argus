@@ -1,7 +1,7 @@
 """Bounded source adapters; no requests, LLM calls or writes during parsing."""
 from copy import deepcopy
 import csv
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import io
 import json
@@ -12,6 +12,8 @@ from argus_jp_fiscal_monitor import METRICS, calculate, digest, instant, market_
 
 JGB_URL = 'https://www.mof.go.jp/jgbs/reference/interest_rate/jgbcm.csv'
 JGB_DEFINITION_URL = 'https://www.mof.go.jp/faq/jgbs/04ha.htm'
+BOJ_FX_SOURCE = 'https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=json&lang=en&db=FM08&code=FXERD04'
+BOJ_FX_DEFINITION = 'https://www.stat-search.boj.or.jp/ssi/mtshtml/fxerd04_en.html'
 TABLE_PATH = Path(__file__).parent / 'ops/fiscal/cao_20260730.json'
 # Explicit copy avoids implicitly admitting changed table editions.
 TABLE_SOURCE_SHA = '7ed2aac791cb650c7ba975955bc562a84936fa0adf0927bb862baeb575e67cbe'
@@ -121,6 +123,66 @@ def parse_jgb_csv(raw, *, acquired_at):
     return sorted(output, key=lambda row:(row['sessionDate'],row['tenorYears']))
 
 
+def boj_fx_url(now_iso):
+    now = instant(now_iso).astimezone(timezone(timedelta(hours=9)))
+    start = (now.date().replace(day=1) - timedelta(days=40)).replace(day=1)
+    return BOJ_FX_SOURCE + '&startDate=' + start.strftime('%Y%m') + '&endDate=' + now.strftime('%Y%m')
+
+
+def parse_boj_fx(raw, *, acquired_at):
+    """Tokyo 17:00 spot; actual receipt is knowledge time, never LAST_UPDATE."""
+    received = instant(acquired_at)
+    if not isinstance(raw, bytes) or not 1 <= len(raw) <= 256_000:
+        raise ValueError('boj_fx_source_size')
+    payload = json.loads(raw)
+    series = payload.get('RESULTSET')
+    if (payload.get('STATUS') != 200 or payload.get('NEXTPOSITION') is not None
+            or not isinstance(series, list) or len(series) != 1):
+        raise ValueError('boj_fx_complete_single_series_required')
+    item = series[0]
+    if (item.get('SERIES_CODE') != 'FXERD04' or item.get('FREQUENCY') != 'DAILY'
+            or item.get('UNIT') != 'Yen per U.S. Dollar'):
+        raise ValueError('boj_fx_definition_mismatch')
+    data = item.get('VALUES') or {}
+    days, values = data.get('SURVEY_DATES'), data.get('VALUES')
+    if (not isinstance(days, list) or not isinstance(values, list)
+            or len(days) != len(values) or not 1 <= len(days) <= 100):
+        raise ValueError('boj_fx_bounded_values_required')
+    output = []; seen = set(); source_hash = hashlib.sha256(raw).hexdigest()
+    for day, value in zip(days, values):
+        text = str(day)
+        if not re.fullmatch(r'\d{8}', text):
+            raise ValueError('boj_fx_session_date')
+        session = date(int(text[:4]), int(text[4:6]), int(text[6:]))
+        if session in seen:
+            raise ValueError('boj_fx_duplicate_session')
+        seen.add(session)
+        if value is None:
+            continue  # weekends, holidays and unfilled future cells are not observations
+        observed = datetime.combine(session, datetime.min.time()).replace(
+            hour=17, tzinfo=timezone(timedelta(hours=9)))
+        if observed > received:
+            raise ValueError('boj_fx_future_observation')
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not 0 < value < 10000 or abs(value * 100 - round(value * 100)) > 1e-6):
+            raise ValueError('boj_fx_value')
+        row = {'seriesId':'fx.usdjpy', 'sessionDate':session.isoformat(),
+            'value':float(value), 'unit':'JPY_PER_USD', 'instrument':'USDJPY_TOKYO_SPOT_17_JST',
+            'compounding':'NOT_APPLICABLE', 'tenorYears':None, 'rateBasis':'FX_SPOT',
+            'estimateType':'OBSERVED_MARKET', 'sourceUrl':BOJ_FX_SOURCE,
+            'definitionUrl':BOJ_FX_DEFINITION, 'sourceHash':source_hash,
+            'publishedAt':None, 'observedAt':observed.isoformat(),
+            'knownAt':acquired_at, 'acquiredAt':acquired_at,
+            'availabilityBasis':'ACTUAL_RECEIPT', 'historicalVintageVerified':False,
+            'acquisitionStatus':'AVAILABLE', 'roundingHalfWidth':.005}
+        row['id'] = 'fiscal-fx-' + digest({k:row[k] for k in
+            ('seriesId','sessionDate','value','unit','instrument','sourceUrl','rateBasis')})
+        output.append(row)
+    if not output:
+        raise ValueError('boj_fx_empty_source')
+    return sorted(output, key=lambda row:row['sessionDate'])
+
+
 def ledger_series():
     """Dedicated forecast-case series avoid mixing cases into ordinary macro rows."""
     series = {}
@@ -131,6 +193,7 @@ def ledger_series():
             series['jp.fiscal.'+case+'.'+metric] = ('PERCENT', label, 'cao', 'official')
     for tenor in (10,20,30,40):
         series['jp.market.jgb.'+str(tenor)+'y'] = ('PERCENT', str(tenor)+'年国債市場利回り', 'mof', 'official')
+    series['fx.usdjpy'] = ('JPY_PER_USD', '東京市場17時のドル円', 'boj', 'official')
     return series
 
 
@@ -184,15 +247,18 @@ def market_ledger_candidates(rows):
     """Keep official market yields separate from annual fiscal effective interest."""
     result=[]
     for row in rows:
-        if row.get('rateBasis')!='MARKET_YIELD' or row.get('seriesId') not in ledger_series():
+        expected_basis = 'FX_SPOT' if row.get('seriesId') == 'fx.usdjpy' else 'MARKET_YIELD'
+        expected_unit = 'JPY_PER_USD' if expected_basis == 'FX_SPOT' else 'PERCENT'
+        if (row.get('rateBasis') != expected_basis or row.get('seriesId') not in ledger_series()
+                or row.get('unit') != expected_unit):
             raise ValueError('unexpected_market_yield_series')
         result.append({'seriesId':row['seriesId'], 'periodEnd':row['sessionDate'],
-            'availableFrom':row['knownAt'], 'observedAt':row['acquiredAt'],
+            'availableFrom':row['knownAt'], 'observedAt':row.get('observedAt') or row['acquiredAt'],
             'publishedAt':row['publishedAt'], 'source':row['sourceUrl'], 'sourceKind':'official',
-            'value':row['value'], 'unit':'PERCENT',
+            'value':row['value'], 'unit':expected_unit,
             'status':'live' if row['value'] is not None else 'missing',
             'metadata':{'fiscalMarketInput':deepcopy(row), 'excludeFromEffective':True,
-                'reason':'Market yield is not government effective interest'}})
+                'reason':'Market observation is not government effective interest'}})
     return result
 
 

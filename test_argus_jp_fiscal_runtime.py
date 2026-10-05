@@ -35,6 +35,10 @@ def fixture(monkeypatch):
         for i,day in enumerate((8,9,10,11,14,15)))).encode('cp932')
     bodies={runtime.CAO_INDEX:('<a href="'+table['sourceUrl']+'">資料</a>').encode(),
         table['sourceUrl']:pdf,sources.JGB_URL:csv}
+    bodies[sources.boj_fx_url(AT)] = json.dumps({'STATUS':200,'NEXTPOSITION':None,'RESULTSET':[{
+        'SERIES_CODE':'FXERD04','UNIT':'Yen per U.S. Dollar','FREQUENCY':'DAILY',
+        'VALUES':{'SURVEY_DATES':[20260908,20260909,20260910,20260911,20260914,20260915],
+                  'VALUES':[150.0]*6}}]}).encode()
     calls=[]
     def get(url,**kwargs):
         calls.append((url,kwargs)); assert kwargs['allow_redirects'] is False
@@ -55,7 +59,7 @@ def test_real_ledger_registry_roundtrip_daily_reuse_and_revision_gate(monkeypatc
     get,calls,bodies,table=fixture(monkeypatch)
     original=ledger.empty_state(); legacy_hash=ledger.state_hash(original)
     initial=runtime.refresh(original,now_iso=AT,calendar=calendar(),get=get)
-    assert initial['status']=='AVAILABLE' and initial['requests']==len(calls)==3
+    assert initial['status']=='AVAILABLE' and initial['requests']==len(calls)==4
     assert 'fiscalMonitor' not in original and ledger.state_hash(original)==legacy_hash
     saved=ledger.normalize_state(json.loads(json.dumps(initial['state'])))
     monitor=saved['fiscalMonitor']
@@ -64,7 +68,7 @@ def test_real_ledger_registry_roundtrip_daily_reuse_and_revision_gate(monkeypatc
     assert ledger.state_hash(saved)!=legacy_hash
     assert ledger.effective_observations(saved,AT)==[]
     repeat=runtime.refresh(saved,now_iso='2026-09-16T08:00:00Z',calendar=calendar(),get=get)
-    assert repeat['status']=='NOT_DUE' and repeat['requests']==0 and len(calls)==3
+    assert repeat['status']=='NOT_DUE' and repeat['requests']==0 and len(calls)==4
     # Same document URL with changed bytes is a revision, not a trusted new table.
     bodies[table['sourceUrl']]=b'%PDF-unreviewed-change'
     revised=runtime.refresh(saved,now_iso='2026-09-17T07:01:00Z',calendar=calendar(),get=get)
@@ -171,20 +175,20 @@ def test_existing_collector_merges_and_retries_save_without_duplicate_fetch(monk
     assert scanner._jp_fiscal_environment_warm()['status']=='ALREADY_RUNNING'
     assert len(calls)==0
     work.pop()()
-    assert len(calls)==3
+    assert len(calls)==4
     assert any(row['id']=='unrelated-row' for row in scanner._MARKET_LEDGER['observations'])
     assert scanner._JP_FISCAL_REFRESH_STATE['persistenceStatus']=='UNVERIFIED'
     # A failed read-back is retried through the same checkpoint without refetch.
     scanner._jp_fiscal_environment_warm(); work.pop()()
-    assert len(calls)==3
+    assert len(calls)==4
     assert scanner._JP_FISCAL_REFRESH_STATE['persistenceStatus']=='VERIFIED'
     assert not scanner._JP_FISCAL_REFRESH_STATE['pendingPersistence']
     with scanner.app.test_request_context('/api/argus/jp-fiscal-environment'):
         document=scanner.api_argus_jp_fiscal_environment().get_json()
     assert document['id']==scanner._JP_FISCAL_REFRESH_STATE['verifiedReportId']
-    assert document['fetchesDuringRead']==0 and len(calls)==3
+    assert document['fetchesDuringRead']==0 and len(calls)==4
     scanner._jp_fiscal_environment_warm(); work.pop()()
-    assert scanner._JP_FISCAL_REFRESH_STATE['status']=='NOT_DUE' and len(calls)==3
+    assert scanner._JP_FISCAL_REFRESH_STATE['status']=='NOT_DUE' and len(calls)==4
 
 
 def test_unified_context_and_existing_history_hold_same_fiscal_snapshot(monkeypatch,tmp_path):
@@ -277,3 +281,43 @@ def test_fiscal_push_reuses_opt_in_and_durable_unique_delivery(service,monkeypat
     import argus_web_push
     reloaded=argus_web_push.PushService(path=value.path,config=value.config,now=value.now,sender=value.sender)
     reloaded.tick(events);assert len(sent)==1
+
+
+
+def test_fx_connection_survives_checkpoint_and_failed_or_late_update(monkeypatch):
+    get, calls, bodies, _ = fixture(monkeypatch)
+    first = runtime.refresh(ledger.empty_state(), now_iso=AT, calendar=calendar(), get=get)
+    stored = ledger.normalize_state(json.loads(json.dumps(first['state'])))
+    assert stored['fiscalMonitor']['fxAcquisitionStatus'] == 'AVAILABLE'
+    view = stored['fiscalMonitor']['report']['cases']['baseline']['market']['series']['fx.usdjpy']
+    assert view['status'] == 'AVAILABLE' and view['latestValue'] == 150.
+    original = deepcopy(stored['observations'])
+    def broken_fx(url, **kwargs):
+        if url.startswith(sources.BOJ_FX_SOURCE): raise TimeoutError('fixture_fx')
+        return get(url, **kwargs)
+    failure = runtime.refresh(stored, now_iso='2026-09-17T07:00:01Z', calendar=calendar(), get=broken_fx)
+    monitor = failure['state']['fiscalMonitor']
+    assert monitor['fxAcquisitionStatus'] == 'FAILED' and monitor['acquisitionStatus'] == 'INCOMPLETE'
+    assert failure['state']['observations'] == original
+    assert all(case['previousWarningRetained'] for case in monitor['report']['cases'].values())
+    delayed = runtime.refresh(stored, now_iso='2026-09-17T07:00:01Z', calendar=calendar(), get=get)
+    monitor = delayed['state']['fiscalMonitor']
+    assert monitor['fxAcquisitionStatus'] == 'UPDATE_WAIT'
+    assert monitor['fxLatestSession'] == '2026-09-15'
+    assert monitor['report']['cases']['baseline']['market']['groups']['FX']['status'] == 'UPDATE_DUE'
+    assert all(case['previousWarningRetained'] for case in monitor['report']['cases'].values())
+
+
+def test_fx_projection_reports_its_acquisition_and_own_source(monkeypatch):
+    get,_,_,_=fixture(monkeypatch)
+    state=runtime.refresh(ledger.empty_state(),now_iso=AT,calendar=calendar(),get=get)['state']
+    doc=runtime.public_document(state)
+    assert doc['fxAcquisitionStatus']=='AVAILABLE' and doc['lastFxSuccessAt']==AT
+    doc['market']['adverseGroups']=['JGB','FX']
+    facts=runtime.explanation_facts(doc)
+    fx=next(f for f in facts if f['provenance']['eventId'].endswith(':FX'))
+    jgb=next(f for f in facts if f['provenance']['eventId'].endswith(':JGB'))
+    assert fx['provenance']['url']==sources.BOJ_FX_SOURCE
+    assert '17時' in fx['provenance']['sourceLabel']
+    assert jgb['provenance']['url']==sources.JGB_URL
+    assert runtime.context_reference(doc)['fxAcquisitionStatus']=='AVAILABLE'
