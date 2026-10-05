@@ -7,7 +7,7 @@ const code = esbuild.buildSync({ entryPoints: [entry], bundle: true, write: fals
   jsx: 'automatic', external: ['react', 'react-dom', 'react/jsx-runtime'], loader: { '.css': 'empty' },
   define: { 'import.meta.env': JSON.stringify({ VITE_ARGUS_BACKEND_URL: '' }) }, logLevel: 'silent' }).outputFiles[0].text;
 const mod = new Module(entry, module); mod.filename = entry; mod.paths = module.paths; mod._compile(code, entry);
-const { FutureMapView } = mod.exports;
+const { FutureMapView, futureMapUpdateAge } = mod.exports;
 const tone = { '売り時': 'red', '急落': 'red', '下落': 'red', '戻り': 'amber', '注意': 'amber', '底': 'green', '大底': 'green', '―': 'grey' };
 const row = (id, periodLabel, view, tag, extra = {}) => ({ id, periodLabel, start: '2026-10-01', end: '2026-10-10', view,
   reason: null, alt: null, level: null, tag, tone: tone[tag], agree: 1, emphasis: false, changed: false, result: null,
@@ -33,4 +33,21 @@ for (const word of ['src_a', 'src_b', 'BUY', '確率']) assert.ok(!html.includes
 assert.equal(renderToStaticMarkup(React.createElement(FutureMapView, { doc: null })), '');
 const scored = renderToStaticMarkup(React.createElement(FutureMapView, { doc: { ...doc, record: { scored: 3, reached: 2 } } }));
 assert.ok(scored.includes('見立ての成績: 3件中2件到達'));
-console.log('Future map card PASS');
+const at = stamp => Date.parse(stamp);
+assert.deepEqual(futureMapUpdateAge(doc.updatedAt, at('2026-10-05T11:59:59Z')),
+  { days: 0, warning: false, label: '24時間以内の更新' });
+assert.equal(futureMapUpdateAge(doc.updatedAt, at('2026-10-07T11:59:59Z')).warning, false);
+assert.deepEqual(futureMapUpdateAge(doc.updatedAt, at('2026-10-07T12:00:00Z')),
+  { days: 3, warning: true, label: '3日前の更新・古い予測です' });
+for (const stamp of ['', 'not-a-time', '2026-10-04T21:00:00', '2026-10-08T12:00:00Z']) {
+  assert.deepEqual(futureMapUpdateAge(stamp, at('2026-10-07T12:00:00Z')),
+    { days: null, warning: true, label: '更新日時を確認できません' });
+}
+const stale = renderToStaticMarkup(React.createElement(FutureMapView,
+  { doc, nowMs: at('2026-10-07T12:00:00Z') }));
+assert.ok(stale.includes('3日前の更新・古い予測です') && stale.includes('fm-age is-warning'));
+assert.ok(stale.includes('69,700〜72,000') && stale.includes('いまここ'), 'stale warning preserves saved view');
+const fresh = renderToStaticMarkup(React.createElement(FutureMapView,
+  { doc, nowMs: at('2026-10-04T12:01:00Z') }));
+assert.ok(fresh.includes('24時間以内の更新') && !fresh.includes('fm-age is-warning'));
+console.log('Future map card: exact age threshold, unknown clock, saved table preservation PASS');
