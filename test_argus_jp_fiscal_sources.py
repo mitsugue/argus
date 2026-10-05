@@ -145,3 +145,50 @@ def test_saved_ledger_connects_fiscal_cases_and_market_without_network_or_new_ro
         market_acquisition='FAILED')
     assert all(v['previousWarningRetained'] and v['notificationCandidate'] is None
         for v in failed['cases'].values())
+
+
+
+def fx_payload(values=None, **patch):
+    item = {'SERIES_CODE':'FXERD04','UNIT':'Yen per U.S. Dollar','FREQUENCY':'DAILY',
+            'VALUES':{'SURVEY_DATES':[20260908,20260909,20260910,20260911,20260914,20260915,20260916],
+                      'VALUES':values or [150.,150.1,150.2,150.3,150.4,150.5,None]}}
+    item.update(patch)
+    return json.dumps({'STATUS':200,'NEXTPOSITION':None,'RESULTSET':[item]}).encode()
+
+
+def test_boj_fx_preserves_observation_receipt_definition_and_ledger_revisions():
+    rows = sources.parse_boj_fx(fx_payload(), acquired_at=AT)
+    assert len(rows) == 6 and rows[-1]['sessionDate'] == '2026-09-15'
+    assert rows[-1]['observedAt'] == '2026-09-15T17:00:00+09:00'
+    assert rows[-1]['knownAt'] == AT and rows[-1]['publishedAt'] is None
+    assert rows[-1]['unit'] == 'JPY_PER_USD' and not rows[-1]['historicalVintageVerified']
+    candidates = sources.market_ledger_candidates(rows)
+    assert candidates[-1]['observedAt'] == '2026-09-15T17:00:00+09:00'
+    assert candidates[-1]['availableFrom'] == AT
+    initial = ledger.import_rows(ledger.empty_state(), candidates, now_iso=AT,
+                                 dry_run=False, rebuild_after_commit=False)
+    assert initial['ok']
+    restored = ledger.normalize_state(json.loads(json.dumps(initial['state'])))
+    assert ledger.effective_observations(restored, AT) == []
+    assert len(runtime_rows := sources.ledger_market_rows(restored, as_of=AT)) == 6
+    assessment = fiscal.market_assessment(runtime_rows, expected_session='2026-09-15', as_of=AT)
+    assert assessment['groups']['FX']['adverse'] is True
+    repeat = sources.parse_boj_fx(fx_payload(), acquired_at='2026-09-16T06:00:00Z')
+    assert sources.missing_market_candidates(restored, sources.market_ledger_candidates(repeat)) == []
+    corrected = sources.parse_boj_fx(fx_payload([150.,150.1,150.2,150.3,150.4,150.6,None]), acquired_at='2026-09-16T06:00:00Z')
+    changes = sources.missing_market_candidates(restored, sources.market_ledger_candidates(corrected))
+    assert len(changes) == 1
+    updated = ledger.import_rows(restored, changes, now_iso='2026-09-16T06:00:00Z', dry_run=False, rebuild_after_commit=False)
+    assert updated['ok']
+    assert sources.ledger_market_rows(updated['state'], as_of=AT)[-1]['value'] == 150.5
+    assert sources.ledger_market_rows(updated['state'], as_of='2026-09-16T06:00:00Z')[-1]['value'] == 150.6
+
+
+@pytest.mark.parametrize('raw', [fx_payload(FREQUENCY='MONTHLY'), fx_payload(SERIES_CODE='OTHER'),
+    fx_payload(UNIT='Percent'), fx_payload([150.,150.1,150.2,150.3,150.4,150.5,150.6]),
+    fx_payload([150.,150.1,150.2,150.3,True,150.5,None]),
+    fx_payload([150.,150.1,150.2,150.3,float('nan'),150.5,None]),
+    fx_payload(VALUES={'SURVEY_DATES':[20260915,20260915],'VALUES':[150.,150.]}),
+    fx_payload(VALUES={'SURVEY_DATES':[20260915],'VALUES':[]})])
+def test_boj_fx_rejects_future_ambiguous_or_changed_definition(raw):
+    with pytest.raises(ValueError): sources.parse_boj_fx(raw, acquired_at=AT)

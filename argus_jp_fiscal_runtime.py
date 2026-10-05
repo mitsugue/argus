@@ -72,7 +72,7 @@ def _read(get, url, limit, *, headers=None):
 
 
 def refresh(state, *, now_iso, calendar, get, fx_rows=()):
-    """At most three fixed official reads per day; failed acquisition retries hourly.
+    """At most four fixed official reads per day; failed acquisition retries hourly.
 
     Source hash changes wait for a reviewed table edition. Old observations and
     warnings survive failure. The returned ledger uses the caller's existing
@@ -94,7 +94,7 @@ def refresh(state, *, now_iso, calendar, get, fx_rows=()):
     control.update(schemaVersion='jp-fiscal-monitor-state-v1', lastAttemptAt=now_iso,
                    updatedAt=now_iso, sourceUrl=CAO_INDEX, requests=0)
     candidates=[]; table=sources.reviewed_table(); errors={}
-    fiscal_status='FAILED'; market_status='FAILED'
+    fiscal_status='FAILED'; market_status='FAILED'; fx_status='FAILED'
     if calendar_error:
         errors['calendar']=calendar_error
     control['expectedMarketSession']=session
@@ -130,6 +130,16 @@ def refresh(state, *, now_iso, calendar, get, fx_rows=()):
         control['marketLastSuccessAt']=now_iso
     except Exception as exc:
         errors['market']=type(exc).__name__+':'+str(exc)[:120]
+    try:
+        control['requests'] += 1
+        raw,_ = _read(get,sources.boj_fx_url(now_iso),256_000)
+        rates=sources.parse_boj_fx(raw,acquired_at=now_iso)
+        candidates += sources.missing_market_candidates(state,sources.market_ledger_candidates(rates))
+        control['fxLatestSession']=rates[-1]['sessionDate']
+        control['fxLastSuccessAt']=now_iso
+        fx_status='AVAILABLE' if session and rates[-1]['sessionDate'] >= session else 'UPDATE_WAIT'
+    except Exception as exc:
+        errors['fx']=type(exc).__name__+':'+str(exc)[:120]
     updated=state
     if candidates:
         result=ledger.import_rows(state,candidates,now_iso=now_iso,dry_run=False,rebuild_after_commit=False)
@@ -137,13 +147,14 @@ def refresh(state, *, now_iso, calendar, get, fx_rows=()):
             raise ValueError('fiscal_ledger_import_failed')
         updated=result['state']
     control.update(fiscalAcquisitionStatus=fiscal_status,marketAcquisitionStatus=market_status,
-        acquisitionStatus='AVAILABLE' if fiscal_status==market_status=='AVAILABLE' and session else 'INCOMPLETE',
+        fxAcquisitionStatus=fx_status,
+        acquisitionStatus='AVAILABLE' if fiscal_status==market_status==fx_status=='AVAILABLE' and session else 'INCOMPLETE',
         errors=errors, importedRows=len(candidates), automaticAiCalls=0)
     if session:
         year=now.astimezone(JST).year-(now.astimezone(JST).month<4)
         control['report']=sources.ledger_environment_report(updated,fiscal_year=year,
             expected_session=session,as_of=now_iso,fx_rows=fx_rows,
-            previous=previous.get('report'),market_acquisition=market_status,
+            previous=previous.get('report'),market_acquisition=market_status if fx_status != 'FAILED' else 'FAILED',
             fiscal_acquisition=fiscal_status)
     else:
         # A missing official calendar is not a new calculation or an all-clear.
@@ -182,6 +193,8 @@ def public_document(state):
         'acquisitionStatus':stored.get('acquisitionStatus','NOT_RUN'),
         'fiscalAcquisitionStatus':stored.get('fiscalAcquisitionStatus','NOT_RUN'),
         'marketAcquisitionStatus':stored.get('marketAcquisitionStatus','NOT_RUN'),
+        'fxAcquisitionStatus':stored.get('fxAcquisitionStatus','NOT_RUN'),
+        'lastFxSuccessAt':stored.get('fxLastSuccessAt'),
         'calculatedAt':report.get('asOf'),'sourceVerifiedAt':stored.get('sourceVerifiedAt'),
         'lastMarketSuccessAt':stored.get('marketLastSuccessAt'),
         'expectedMarketSession':report.get('expectedMarketSession'),
@@ -217,12 +230,16 @@ def explanation_facts(document):
                 'url':(row['sources'][0] if row['sources'] else {}).get('sourceUrl')}})
     market=document.get('market') or {}
     adverse=market.get('adverseGroups') or []
-    if adverse:
-        facts.append({'text':'日本の市場監視：'+('長期・超長期国債金利' if 'JGB' in adverse else '')+
-            ('・ドル円' if 'FX' in adverse else '')+'に継続的な変化。既存政府債務の実効金利とは別系列。財政不安が原因とは未確認。',
+    for group,label,source_label,url in (
+            ('JGB','長期・超長期国債金利','財務省・国債市場金利',sources.JGB_URL),
+            ('FX','ドル円','日銀・東京市場17時のドル円',sources.BOJ_FX_SOURCE)):
+        if group not in adverse:
+            continue
+        facts.append({'text':'日本の市場監視：'+label+
+            'に継続的な変化。財政不安が原因とは未確認。',
             'priority':'P1','source':'jp_fiscal_environment','verification':'UNCONFIRMED',
-            'provenance':{'eventId':market.get('id'),'asOf':document.get('expectedMarketSession'),
-                'sourceLabelJa':'財務省・国債市場金利','url':sources.JGB_URL}})
+            'provenance':{'eventId':market.get('id')+':'+group,'asOf':document.get('expectedMarketSession'),
+                'sourceLabelJa':source_label,'url':url}})
     # Use the existing browser/brief provenance contract, not a parallel shape.
     for fact in facts:
         original = fact['provenance']
@@ -244,7 +261,7 @@ def context_reference(document):
     if not document.get('id'):
         return None
     reference = {key:deepcopy(document.get(key)) for key in (
-        'id','status','fiscalAcquisitionStatus','marketAcquisitionStatus',
+        'id','status','fiscalAcquisitionStatus','marketAcquisitionStatus','fxAcquisitionStatus',
         'expectedMarketSession','selectedCase','actionAuthority',
         'predictivePerformance')}
     reference['cases'] = {}

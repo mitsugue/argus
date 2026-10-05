@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.40"
+PRODUCT_VERSION = "v13.8.41"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
-    'web/scripts/pwa-identity.test.mjs': '7b4e90f148998e8895a0cfe16e496ac921cb70ed',
-    'web/scripts/owner-today-https.mjs': 'afb399f1e057a2f28e45e70f873cac5835fad95e',
+    'web/scripts/pwa-identity.test.mjs': 'c1260a6283095d047cc6862aba3a603afd5cdd8e',
+    'web/scripts/owner-today-https.mjs': '8d3f3425a94be78469230a34ab69824a7454f3ee',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -212,14 +212,14 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_breadth_freshness_workflow.py': 'e8ed1942175b75416caec8711363cfc771b90e3d',
     'argus_tick_durability.py': 'fd2f2a97652cf1f3bb18084fd1aa5f54a19247da',
     'argus_jp_fiscal_monitor.py': '3584e845b3c66c2ebdbb41aae6e8b3bfd9866117',
-    'argus_jp_fiscal_runtime.py': '5ba1577db358b3fe270b81e8f4685efb0f20d87e',
-    'argus_jp_fiscal_sources.py': 'cf2b63e3062a193eab8b3c990005e5e4033a6150',
+    'argus_jp_fiscal_runtime.py': 'aa3057527ac28c95226afa4962553fd03486ca91',
+    'argus_jp_fiscal_sources.py': '63f14c6cce3f9bb6080cd09fbf823b3f54ab4874',
     'docs/V13_7_JP_FISCAL_MONITOR.md': '58498e9819208825f203c37acff3d5c33c473dff',
     'ops/fiscal/cao_20260730.json': '72b7f9ded706ebf1aa9ae92ebb4396b8bf055ae6',
     'scripts/extract_cao_fiscal_table.py': '7b274ad6a393577802e0c6efb0d09882c244df32',
     'test_argus_jp_fiscal_monitor.py': 'c15814b4a0ca8f0c38e137e882320b0d377315e5',
-    'test_argus_jp_fiscal_runtime.py': '147ff4d092920be0090fdfe56951a817457c2298',
-    'test_argus_jp_fiscal_sources.py': '240b86e2e5df5cde777742bc52d34c47c9f91ea3',
+    'test_argus_jp_fiscal_runtime.py': 'cb232ef6510368c4dd9699e053de5fabfd7a8c02',
+    'test_argus_jp_fiscal_sources.py': 'd0fb62aef16b6a14705ab67ba99c15f924f5d4c8',
     'web/src/components/today/FiscalEnvironmentDetails.css': 'c5830b9d9414c8b7fafb69b5fa4f7d4a0db83700',
     'web/src/components/today/FiscalEnvironmentDetails.tsx': 'd696c18bf0e8e18abbd3ca167e135fe02d581386',
     'web/src/lib/revealNewsArticle.ts': '807735f5bd95556ed64af7019cf0b3f26608a07c',
