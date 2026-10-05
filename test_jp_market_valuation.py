@@ -85,19 +85,41 @@ def test_warm_restores_after_failed_fetch_and_read_path_has_no_io(tmp_path):
     assert restored.snapshot('2026-09-11T09:00:00Z') is None
 
 
-def test_runtime_cached_comparison_uses_scale_without_network(monkeypatch):
+@pytest.mark.parametrize("current_missing", [False, True])
+def test_runtime_cached_comparison_uses_current_scale_without_legacy_fallback_or_network(monkeypatch, current_missing):
     import scanner
+    from jp_market_level_map import weighted_eps, EPS_BASIS
     cache = v.ValuationCache(); cache.row = row()
+    legacy_before = deepcopy(cache.row)
+    current = {**weighted_eps({"A": {"MktCap": 1000, "FwdPER": 40}}, ["A"],
+                index_close=40000, date='2026-09-11', constituents_as_of='2026-08-31'),
+               "recordedAt": LATER}
+    level_map = {'eps': {} if current_missing else {'2026-09-11': current}}
+    current_before = deepcopy(level_map)
+    monkeypatch.setattr(scanner, '_LEVEL_MAP', level_map)
     monkeypatch.setattr(scanner, '_JP_INDEX_VALUATION', cache)
+    monkeypatch.setattr(scanner, '_N225_ANALOG_HISTORY', {'data': [], 'calendar': []})
     monkeypatch.setattr(scanner, '_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE', {'^N225':{
-        'data':[{'date':'2026-09-11'}], 'acquiredAt':AT}})
+        'data':[{'date':'2026-09-11', 'close':40000, 'instrumentId':'NIKKEI_225_INDEX',
+                 'availableFrom':AT}], 'acquiredAt':AT}})
     monkeypatch.setattr(scanner.argus_market_clock,'canonical_trading_day',lambda *a:True)
     def calculate(*args, **kwargs):
-        assert kwargs['valuation'] == cache.row
+        if current_missing:
+            assert kwargs['valuation'] == {'basis': EPS_BASIS}
+        else:
+            assert kwargs['valuation']['basis'] == EPS_BASIS
+            assert kwargs['valuation']['per'] == 40 != cache.row['per']
+            assert kwargs['valuation']['eps'] == 1000
+            assert kwargs['valuation']['recordedAt'] == LATER
         return {'status':'available'}
     monkeypatch.setattr(scanner.jp_market_price_paths,'cached_index_comparison',calculate)
     monkeypatch.setattr(scanner.requests,'get',lambda *a,**kw:pytest.fail('public GET cannot fetch'))
-    assert scanner._jp_market_comparison_calculate(5)['status'] == 'available'
+    result = scanner._jp_market_comparison_calculate(5)
+    assert result['status'] == 'available'
+    assert result['valuationAcquisition']['basis'] == EPS_BASIS
+    assert result['valuationAcquisition']['status'] == ('CURRENT_ESTIMATE_UNAVAILABLE' if current_missing else 'AVAILABLE')
+    assert result['proxyValuation'] is None
+    assert cache.row == legacy_before and scanner._LEVEL_MAP == current_before
 
 
 def test_refresh_status_does_not_regenerate_ai_but_changed_per_does():

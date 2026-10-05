@@ -235,7 +235,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_index_history.py': 'ce4a258925493926854d121d0d43e1f3559597e1',
     'argus_index_history.py': 'f4f50d4bcb69d60e35f831647c4308dc0432b8ad',
     "docs/V13_7_NUMERICAL_RESEARCH_INVENTORY.md": "827158b6cc590cd7aebc60b8539806c50c82ef91",
-    "test_jp_market_valuation.py": "f431c1327159ca980923bfce3dfff7e32786eafe",
+    "test_jp_market_valuation.py": "2aa3093796fa2b75e10525bde18cd19922fb43ef",
     "test_argus_index_research_cache.py": "aa098f2607eb595af4bd346e35ce390be2e1e6b2",
     "argus_index_research_cache.py": "2fa1b1abd01518a1af00b72333dbed60b0c77ead",
     'test_argus_research_calculation_reuse.py': '0aec958de8cffbd8caca9e1e56c9c52dc3227cad',
