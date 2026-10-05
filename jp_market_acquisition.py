@@ -610,7 +610,6 @@ def enforce_two_market_publication(rows, *, sessions):
     not evidence of a historical publication or receipt. Later receipts stay
     later; raw records and publication stamps are never rewritten here.
     """
-    import argus_market_clock as clock
     out = []
     for row in rows:
         if not isinstance(row, dict):
@@ -625,19 +624,14 @@ def enforce_two_market_publication(rows, *, sessions):
                 [row], sessions=sessions, sessions_after=3, utc_time='06:00:00',
                 source_label='jpx-two-market-third-session'))
             continue
-        day, count = end, 0
+        from argus_credit_publication import publication_at
         try:
-            for _ in range(14):
-                day += timedelta(days=1)
-                if clock.canonical_trading_day(clock.JP_EQUITY, day):
-                    count += 1
-                    if count == 2:
-                        break
-        except clock.CalendarUnavailableError:
-            raise ValueError('two_market_publication_calendar_unavailable') from None
-        if count != 2:
-            raise ValueError('two_market_publication_calendar_invalid')
-        floor = day.isoformat() + 'T07:00:00Z'
+            due = publication_at(period)
+        except ValueError:
+            raise ValueError('two_market_publication_calendar_invalid') from None
+        if due is None:
+            raise ValueError('two_market_publication_calendar_unavailable')
+        floor = due.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         raised = {}
         for key in ('availableFrom', 'knownAt'):
             try:

@@ -51,6 +51,8 @@ def build_collection_health(inputs, *, now_iso):
     now = now.astimezone(timezone.utc)
     inputs = inputs if isinstance(inputs, Mapping) else {}
     sources = inputs.get("sources") if isinstance(inputs.get("sources"), Mapping) else {}
+    from argus_credit_publication import weekly_expectation
+    credit_schedule = weekly_expectation(now)
     rows = []
     for key, (label, cadence, stale_after) in SOURCE_SPECS.items():
         raw = sources.get(key) if isinstance(sources.get(key), Mapping) else {}
@@ -69,6 +71,17 @@ def build_collection_health(inputs, *, now_iso):
                      "latestPeriod": period, "rowCount": _count(raw.get("rowCount")),
                      "dataAgeSec": age, "staleAfterSec": stale_after, "status": status,
                      "freshnessBasis": "period_end" if weekly else "data_update"})
+        if weekly:
+            expected = credit_schedule["latestDuePeriod"]
+            rows[-1].update({
+                "expectedLatestPeriod": expected,
+                "scheduledPublicationAt": credit_schedule["latestDueAt"],
+                "nextScheduledPeriod": credit_schedule["nextPeriod"],
+                "nextScheduledPublicationAt": credit_schedule["nextPublicationAt"],
+                "publicationState": "unknown" if expected is None or (period is not None and period_clock is None) else
+                    "overdue" if period is None or period < expected else "current",
+                "publicationBasis": "nominal_schedule_not_actual_receipt",
+            })
     spans = inputs.get("inputSpans") if isinstance(inputs.get("inputSpans"), Mapping) else {}
     windows = []
     for key, label in WINDOW_SOURCES.items():

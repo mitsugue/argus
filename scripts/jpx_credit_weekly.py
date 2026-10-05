@@ -243,20 +243,9 @@ def publication_due(period: str, now: datetime) -> Optional[bool]:
     The nominal publication schedule is not a historical receipt timestamp.
     Outside the authoritative calendar coverage the due state is unknown.
     """
-    import argus_market_clock as clock
-    day = date.fromisoformat(period)
-    sessions = 0
-    try:
-        for _ in range(14):
-            day += timedelta(days=1)
-            if clock.canonical_trading_day(clock.JP_EQUITY, day):
-                sessions += 1
-                if sessions == 2:
-                    due = datetime(day.year, day.month, day.day, 16, tzinfo=timezone(timedelta(hours=9)))
-                    return now >= due
-    except clock.CalendarUnavailableError:
-        return None
-    raise ValueError("jpx_publication_calendar_invalid")
+    from argus_credit_publication import publication_at
+    due = publication_at(period)
+    return None if due is None else now >= due
 
 
 def workbook_links(html: str) -> Dict[str, str]:

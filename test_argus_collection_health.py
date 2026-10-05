@@ -109,3 +109,38 @@ def test_recalculation_success_does_not_claim_inputs_changed(monkeypatch):
     row = source(scanner._collection_health_inputs(NOW), 'feature_history')
     assert row['status'] == 'unknown' and row['dataUpdatedAt'] is None
     assert row['lastCheckedAt'] and row['latestPeriod'] == '2026-10-02'
+
+
+def test_current_by_age_can_still_be_missing_the_newly_due_week():
+    doc = {"sources": {"credit_balances": {"dataUpdatedAt": NOW, "latestPeriod": "2026-09-25"}}}
+    before = build_collection_health(doc, now_iso="2026-10-06T15:59:59+09:00")["sources"][0]
+    after = build_collection_health(doc, now_iso="2026-10-06T16:00:00+09:00")["sources"][0]
+    assert before["publicationState"] == "current"
+    assert before["expectedLatestPeriod"] == "2026-09-25"
+    assert before["nextScheduledPeriod"] == "2026-10-02"
+    assert after["status"] == "current"  # Under the coarse fourteen-day age limit.
+    assert after["publicationState"] == "overdue"
+    assert after["expectedLatestPeriod"] == "2026-10-02"
+    assert after["publicationBasis"] == "nominal_schedule_not_actual_receipt"
+
+
+def test_missing_week_is_visible_after_deadline_even_without_data_clock():
+    row = build_collection_health({}, now_iso="2026-10-06T16:01:00+09:00")["sources"][1]
+    assert row["status"] == "unknown" and row["publicationState"] == "overdue"
+    assert row["dataUpdatedAt"] is None
+
+
+def test_missing_authority_calendar_does_not_guess_publication_deadline(monkeypatch):
+    import argus_market_clock as clock
+    def unavailable(*args, **kwargs):
+        raise clock.CalendarUnavailableError("fixture")
+    monkeypatch.setattr(clock, "canonical_trading_day", unavailable)
+    row = source({}, "credit_balances")
+    assert row["publicationState"] == "unknown"
+    assert row["expectedLatestPeriod"] is None and row["nextScheduledPublicationAt"] is None
+
+
+def test_future_observation_period_cannot_satisfy_the_due_week():
+    row = source({"sources": {"credit_balances": {
+        "dataUpdatedAt": NOW, "latestPeriod": "2027-01-01"}}}, "credit_balances")
+    assert row["status"] == "unknown" and row["publicationState"] == "unknown"

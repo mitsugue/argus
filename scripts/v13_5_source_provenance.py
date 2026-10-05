@@ -178,7 +178,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/V13_7_ACQUISITION_PACK_ACCEPTANCE.md': '6857081ce69e53bca54d900562800b54e4384897',
     'scripts/import_index_valuation.py': 'bd9278e7a166855aff8777cb41aa1628bcd07420',
     'test_jp_market_acquisition.py': 'b02e1559ce0d67fb08e05f7a84c40e7ac65c3df9',
-    'jp_market_acquisition.py': '46a225c9ad0e12d6a0bf3495e328cf7b27d114c6',
+    'jp_market_acquisition.py': '44b2f89a36024d7f7f514a790d1245464098d24e',
     'ops/imports/README.md': '0c3a8010eebfa90f6c20be3d46e0d59fd3039404',
     'web/src/components/today/SectorHeatmap.css': 'df03c8879cd667ad4e580a9b4044222ab4940e2e',
     'web/src/components/today/SectorHeatmap.tsx': 'e2bfe0c05e4830ed89cd71805d98ba22f0518996',
@@ -648,6 +648,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_credit_publication.py",
+    "argus_credit_publication.py",
     "test_argus_collection_health.py",
     "docs/ops/recovery-phase-a-public-operational-boundary.md",
     "argus_diagnostics_contract.py",
