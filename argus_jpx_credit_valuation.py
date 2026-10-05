@@ -172,3 +172,133 @@ def extract_monthly_text(text):
     if [r['periodEnd'] for r in out] != sorted(r['periodEnd'] for r in out):
         raise ValueError('credit_valuation_monthly_date_order')
     return out
+
+
+def ledger_observation(result, *, url, sha256, received_at, retrospective=False):
+    """Same existing series, actual receipt, original six inputs; no PIT guess."""
+    from copy import deepcopy
+    from datetime import date, datetime
+    period = date.fromisoformat(result['periodEnd']).isoformat()
+    received = datetime.fromisoformat(received_at.replace('Z', '+00:00'))
+    if received.tzinfo is None or received.date() < date.fromisoformat(period):
+        raise ValueError('credit_valuation_receipt')
+    calculation = {key: deepcopy(result[key]) for key in
+                   ('methodVersion', 'formulaSource', 'inputs', 'value', 'unit',
+                    'signConvention', 'classification')}
+    if 'missingInputs' in result:
+        calculation['missingInputs'] = list(result['missingInputs'])
+    metadata = {'valuationCalculation': calculation,
+                'sourceDocument': {'url': url, 'sha256': sha256, 'receivedAt': received_at},
+                'availabilityBasis': 'ACTUAL_RECEIPT',
+                'signConvention': 'negative_is_loss',
+                'publicationVerified': False,
+                'historicalVintageVerified': False,
+                'retrospective': bool(retrospective)}
+    row = {'seriesId': 'credit.valuation_loss_pct', 'periodEnd': period,
+           'publishedAt': '', 'availableFrom': received_at, 'observedAt': received_at,
+           'value': result['value'], 'unit': 'percent', 'sourceKind': 'derived',
+           'status': 'live' if result['value'] is not None else 'missing',
+           'source': f'JPX official inputs | {url} | sha256={sha256}',
+           'metadata': metadata}
+    validate_ledger_observation(row)
+    return row
+
+
+def validate_ledger_observation(row):
+    """Only audited official-input calculations may use the display route."""
+    import math
+    import re
+    from datetime import date, datetime
+    from urllib.parse import urlparse
+    if (row.get('seriesId') != 'credit.valuation_loss_pct' or row.get('unit') != 'percent'
+            or row.get('sourceKind') != 'derived'):
+        raise ValueError('credit_valuation_row_kind')
+    metadata = row.get('metadata')
+    if not isinstance(metadata, dict):
+        raise ValueError('credit_valuation_metadata')
+    document = metadata.get('sourceDocument')
+    if not isinstance(document, dict):
+        raise ValueError('credit_valuation_source')
+    url = document.get('url')
+    if not isinstance(url, str):
+        raise ValueError('credit_valuation_source')
+    parsed = urlparse(url)
+    if (parsed.scheme != 'https' or parsed.netloc != 'www.jpx.co.jp'
+            or parsed.query or parsed.fragment or '..' in parsed.path
+            or not ((parsed.path.startswith('/markets/statistics-equities/margin/tvdivq0000001rk9-att/')
+                     and parsed.path.endswith(('.xls', '.xlsx')))
+                    or (parsed.path.startswith('/markets/statistics-equities/monthly/')
+                        and parsed.path.endswith('.pdf')))):
+        raise ValueError('credit_valuation_source')
+    digest = document.get('sha256')
+    if not isinstance(digest, str) or not re.fullmatch('[0-9a-f]{64}', digest):
+        raise ValueError('credit_valuation_source_hash')
+    if row.get('source') != f'JPX official inputs | {url} | sha256={digest}':
+        raise ValueError('credit_valuation_source_identity')
+    try:
+        receipt = datetime.fromisoformat(document['receivedAt'].replace('Z', '+00:00'))
+        available = datetime.fromisoformat(row['availableFrom'].replace('Z', '+00:00'))
+        observed = datetime.fromisoformat(row['observedAt'].replace('Z', '+00:00'))
+        period = date.fromisoformat(row['periodEnd'])
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise ValueError('credit_valuation_receipt') from None
+    if (any(x.tzinfo is None for x in (receipt, available, observed))
+            or receipt != available or receipt != observed or receipt.date() < period
+            or row.get('publishedAt') or metadata.get('publicationVerified') is not False
+            or metadata.get('historicalVintageVerified') is not False
+            or metadata.get('availabilityBasis') != 'ACTUAL_RECEIPT'
+            or metadata.get('signConvention') != 'negative_is_loss'
+            or not isinstance(metadata.get('retrospective'), bool)):
+        raise ValueError('credit_valuation_receipt')
+    calc = metadata.get('valuationCalculation')
+    fields = {'methodVersion', 'formulaSource', 'inputs', 'value', 'unit',
+              'signConvention', 'classification'}
+    if isinstance(calc, dict) and calc.get('classification') == 'official_inputs_not_published':
+        fields.add('missingInputs')
+    if not isinstance(calc, dict) or set(calc) != fields:
+        raise ValueError('credit_valuation_calculation')
+    inputs = calc.get('inputs')
+    if not isinstance(inputs, dict) or set(inputs) != set(INPUTS):
+        raise ValueError('credit_valuation_input_set')
+    missing = [key for key in INPUTS if inputs[key] is None]
+    if missing:
+        expected = {'methodVersion': METHOD_VERSION, 'formulaSource': FORMULA_SOURCE,
+                    'inputs': {key: None if value is None else float(_number(value))
+                               for key, value in inputs.items()}, 'value': None,
+                    'unit': 'percent', 'signConvention': 'loss_negative_profit_positive',
+                    'classification': 'official_inputs_not_published', 'missingInputs': missing}
+    else:
+        expected = calculate(inputs)
+    if calc != expected or isinstance(calc.get('value'), bool):
+        raise ValueError('credit_valuation_calculation')
+    value = row.get('value')
+    if missing:
+        if value is not None or row.get('status') not in ('missing', 'revised'):
+            raise ValueError('credit_valuation_value')
+        return expected
+    if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) \
+            or not math.isclose(value, expected['value'], rel_tol=0, abs_tol=1e-10):
+        raise ValueError('credit_valuation_value')
+    return expected
+
+
+def audited_ledger_observation(row):
+    try:
+        validate_ledger_observation(row)
+        return True
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
+def ledger_observation_digest(row):
+    """Bind saved inputs and receipt without repeating every workbook in the UI."""
+    import hashlib
+    import json
+    validate_ledger_observation(row)
+    content = {key: row.get(key) for key in
+               ('seriesId', 'periodEnd', 'publishedAt', 'availableFrom', 'observedAt',
+                'value', 'unit', 'source', 'sourceKind', 'metadata')}
+    # The ledger normalizes an unknown publication stamp from empty to None.
+    content['publishedAt'] = content['publishedAt'] or None
+    return hashlib.sha256(json.dumps(content, sort_keys=True, ensure_ascii=False,
+                                    allow_nan=False, separators=(',', ':')).encode()).hexdigest()
