@@ -97,3 +97,22 @@ checkpoint write/readback, compaction, recovery authority and encryption,
 Remote Journal promotion/receipt authority, Stage1/V2 authority, Soak, and
 investment decisions. No production environment/configuration change,
 deployment, restart, or key enablement is part of this PR.
+
+## 取得更新と分析窓の管理専用点検（準備）
+
+既存の管理者認証付き診断へ `collectionHealth` を接続する。公開DTOは不変。
+固定した六つの取得経路について、対象期間・データ更新・確認時刻・件数を別々に示す。
+週次系列は保存時刻だけで鮮度を判定せず、対象週も読む。信用残は売残と買残が
+両方そろう最新週、評価損益率は六入力の監査に合格した行だけを対象とする。
+過去月報の補完を最新週の到着に見せない。名称設定は設定の妥当性だけを示し、
+設定本文や検査対象の文字列は返さない。
+
+VIX・TOPIX・米10年金利・ドル円の入力窓は3,000セッションの8割から警告する。
+これは分析に渡す窓の件数であり、取得元の保存済み原表の容量ではない。
+取得元の選択履歴は別に保持されるため、窓から外れたことを原本削除と混同しない。
+ニュースのデータ更新時刻は新規記事が入った時だけ進め、同じ記事の巡回では進めない。
+古い保存形式にこの時刻がない場合は不明とする。分析履歴の再計算成功は確認時刻だけに
+使い、入力の実更新時刻が未計測の間は不明とする。表示・判断・実運用の完了は別に確認する。
+
+この追加は管理用点検の入口である。取得元別の公式公表期限、定期ジョブの実行結果との
+照合、手作業期限、本人認証された画面への表示、原本の容量・遠隔復元は未完了。

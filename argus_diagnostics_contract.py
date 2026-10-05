@@ -243,7 +243,8 @@ def build_operational_diagnostics(
         storage: Mapping[str, Any], durability: Mapping[str, Any],
         remote_journal: Mapping[str, Any], features: Mapping[str, Any],
         scheduler: Mapping[str, Any], registry: Mapping[str, Any],
-        osint: Mapping[str, Any], cost_policy: Mapping[str, Any]) -> dict[str, Any]:
+        osint: Mapping[str, Any], cost_policy: Mapping[str, Any],
+        collection_health: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
     """Build a bounded admin-only diagnostics DTO from reviewed scalars."""
     if type(ready) is not bool:
         raise DiagnosticsContractError("readiness_invalid")
@@ -356,6 +357,8 @@ def build_operational_diagnostics(
             "monthSpentUsd": _number(cost_policy.get("monthSpentUsd", 0.0)),
         },
     }
+    from argus_collection_health import build_collection_health
+    result["collectionHealth"] = build_collection_health(collection_health, now_iso=generated_at)
     if result["remoteJournal"]["localCommittedCount"] != (
             result["remoteJournal"]["pendingCount"] +
             result["remoteJournal"]["committedCount"]):
