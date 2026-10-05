@@ -1,101 +1,43 @@
-# A.R.G.U.S. — backend deploy guide
+# ARGUS 13.8の配信手順
 
-The Python backend (`scanner.py` + `argus_ledger.py`) runs as a Flask web
-service. This guide walks through deploying it on Render and wiring the
-React frontend on Vercel to call it.
+現在の画面はGitHub Pages、Pythonサーバーは既存のRenderサービスで配信する。
+旧版のVercel・Freeプラン・旧AI鍵を追加する手順は、現在の運用に適用しない。
+本書は設定の案内であり、本番での設定や検査の完了を保証するものではない。
 
-## 1. Deploy `scanner.py` to Render
+## 既存サービスの設定
 
-1. Push `main` to GitHub (already done if you got this far).
-2. Open https://dashboard.render.com → **New +** → **Web Service**.
-3. Connect the `mitsugue/argus` repo.
-4. Render will pick up `render.yaml` automatically. Confirm:
-   - **Runtime**: Python
-   - **Build**: `pip install -r requirements.txt`
-   - **Start**: `python scanner.py`
-   - **Plan**: Free
-5. Add environment variables (Render dashboard → Environment):
-   - `JQUANTS_API_KEY`
-   - `GEMINI_API_KEY`
-   - `ANTHROPIC_API_KEY`
-   - `FRED_API_KEY` (powers `/api/argus/rates` — see https://fred.stlouisfed.org/docs/api/api_key.html; missing → endpoint returns mock fallback with `status: "mock"`)
-   - `FINNHUB_API_KEY` (optional)
-   - `NEWS_API_KEY` (optional)
-   - `X_API_BEARER_TOKEN` (optional)
-   - `EDINET_API_KEY` (optional)
-   - `ARGUS_LEDGER_PATH=data/predictions.jsonl` (already in render.yaml)
-6. Click **Create Web Service**. First build ≈ 2–3 min.
+`render.yaml`のビルドは`pip install -r requirements.txt`、起動は`python scanner.py`。
+同ファイルにはStandard・1インスタンス・`/var/data`の永続ディスクを記載している。
+既存サービスは管理画面で運用しているため、記載だけで実際のディスク接続・容量・保存を確認済みとしない。
+Blueprintへの作り替えや新しい有料契約は行わず、既存の設定と保存先を照合する。
 
-Render gives you a URL like `https://argus-backend-3j2m.onrender.com`. Note it.
+認証と取得元の鍵はRenderの環境変数・秘密ファイルとGitHub Secretsで管理する。
+画面側の環境変数、配布JavaScript、Git、実行ログに入れない。
+現在のAI・価格・保存処理が参照する変数は実コードと`render.yaml`で確認し、旧版の鍵一覧を再利用しない。
+本人の保存記録や履歴は、配信のために初期化・切り捨て・再生成しない。
 
-### Persistent ledger (recommended)
+## 変更の検査と取り込み
 
-Free Render disks are ephemeral — predictions reset on each deploy. To
-keep the calibration history:
+1. `AGENTS.md`と13.8・分析エンジンの要件を読み、変更範囲を製品と復旧に分類する。
+2. 変更に対応する自動検査、来歴、外部ポリシーを使う命名検査を実施する。
+3. 公開PRの必須検査と、正確な候補に結び付いた受入証跡の合格を確認する。
+4. `gh pr merge --merge --match-head-commit <確認した候補>`で2親マージする。
+   候補とマージ結果のtreeが一致することを確認する。
+5. 配信後の版・ビルドID、Pages受入、サーバーの起動・保存データの受入を確認する。
+   配信成功と、全検査の完了と、本人の実機操作の確認を分けて記録する。
 
-1. Render dashboard → your service → **Disks** → **Add Disk**
-   - Name: `argus-data`, Mount path: `/var/data`, Size: 1 GB
-2. Add env var `ARGUS_LEDGER_PATH=/var/data/predictions.jsonl` (overrides
-   the one in render.yaml).
+画面だけの変更でも、版番号を進める変更はサーバーのID更新を含む。
+画面だけの変更でRenderを省く扱いは`AGENTS.md`の条件に従い、版変更へ流用しない。
+次の版の取り込みは、前の配信後受入が完了してから行う。
 
-Cost: $1/mo. Without it, calibration is a 30-day rolling sample of
-whatever has run since the last deploy.
+## 本番の読み取りと定期処理
 
-## 2. Point the Vercel frontend at it
+認証なしの稼働確認は`/healthz`の版・ビルドIDを使う。
+本人向けの画面と保護されたAPIは既存の認証で確認し、読めない応答を公開情報として扱わない。
+定期処理は既存の認証された実行経路を使い、鍵の値を出力しない。
+本番の応答本文・本人の記録を公開の診断ログや成果物へ載せない。
 
-1. Vercel dashboard → your `argus` project → **Settings** →
-   **Environment Variables** → add:
-   - **Key**: `VITE_ARGUS_BACKEND_URL`
-   - **Value**: `https://argus-backend-3j2m.onrender.com` (the URL from step 1)
-   - **Environment**: Production + Preview
-2. Trigger a redeploy (Deployments → ... → Redeploy).
-
-The frontend calls `${VITE_ARGUS_BACKEND_URL}/api/argus/data-quality/status`
-for the canonical public diagnostics snapshot. CORS is already configured for
-`*.vercel.app` and `localhost`.
-
-## 3. Smoke test
-
-After Render finishes deploying, hit these from your browser:
-
-```
-https://argus-backend-3j2m.onrender.com/api/argus/data-quality/status
-https://argus-backend-3j2m.onrender.com/api/argus/events-active
-https://argus-backend-3j2m.onrender.com/api/argus/ledger/recent
-```
-
-Expected:
-- `data-quality/status` returns `argus-public-diagnostics-v1`, including the
-  closed `systemHealth` field and conservative recovery claims.
-- `events-active` returns an event list plus product-facing backbone status.
-- `ledger/recent` returns `{ entries: [] }`.
-
-## 4. Trigger the first scan
-
-The scheduler in `scanner.py` runs `phase1..phase4` daily at JST 08:30
-on weekdays. To kick a one-off:
-
-```bash
-curl -X POST https://argus-backend-3j2m.onrender.com/api/run
-```
-
-Wait ~5–10 minutes for phases to complete. Use the canonical diagnostics and
-retained ledger routes above to verify readiness and resulting state; the
-legacy public calibration and daily-picks read models were retired in V13
-Compression Round 1.
-
-## 5. Local dev
-
-```bash
-# Backend (in repo root)
-pip install -r requirements.txt
-export JQUANTS_API_KEY=...
-# ... other env vars from .env if you have one
-python scanner.py        # serves on http://127.0.0.1:8080
-
-# Frontend (in web/)
-echo "VITE_ARGUS_BACKEND_URL=http://localhost:8080" > .env.local
-npm run dev              # serves on http://127.0.0.1:5173
-```
-
-The frontend will hit the local backend; CORS already allows localhost.
+失敗時は、実行履歴と固定の原因コードを確認する。
+失敗した履歴を消したり検査条件を緩めたりせず、修正した候補を再検査する。
+履歴の保存・復旧は既存の正本経路を維持し、画面が表示されたことだけで全履歴の復元完了としない。
+BUY・自動売買・注文は無効のまま。
