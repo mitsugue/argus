@@ -35,6 +35,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # Fixed local archive measurements, admin-only; no raw records.
+    'argus_archive_health.py': 'bfe9b4143f25f74ef116b976d12be0abf4439f65',
+    'test_argus_archive_health.py': '9f883cacfd8d4725dcb1bf2cfb7b80e20a4490f1',
     # the owner runbook
     'docs/ops/OWNER_RUNBOOK_JA.md': 'bc995fa70fec17d3c565533edc0c4bdda973622a',
     # the startup log visibility
