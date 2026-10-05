@@ -275,10 +275,15 @@ def test_receipt_makes_uncertain_retry_idempotent_after_reregistration(monkeypat
     monkeypatch.setenv("ARGUS_OWNER_SYNC_TOKEN", "synthetic")
     monkeypatch.setattr(scanner, "_layer2b_store_configured", lambda: True)
     monkeypatch.setattr(scanner, "_layer2b_private_store", lambda: store(git))
+    monkeypatch.setattr(scanner, "_OWNER_SYMS_CACHE", {"syms": {}, "ts": 0})
+    monkeypatch.setattr(scanner, "_OWNER_OVERVIEW_MEMBERSHIP", {})
+    monkeypatch.setattr(scanner, "_LAYER2B_STATE", {})
     response = scanner.app.test_client().post("/api/argus/calibration/watchlist-sync", json={
         "ownerToken": "synthetic", "syncMode": W.CHANGE_SCHEMA_VERSION,
         "batchId": batch, "baseVersion": "absent", "changes": [{"action": "remove", "item": JP}]})
     assert response.json["alreadyApplied"] is True
+    assert set(scanner._OWNER_SYMS_CACHE["syms"]) == {"1234"}
+    assert scanner._OWNER_SYMS_CACHE["syms"]["1234"]["ownerState"] == "protected"
     assert git.files["membership/latest.json"]["members"][0]["symbol"] == "1234"
     assert all(method == "get" for method, _ in git.calls)
 

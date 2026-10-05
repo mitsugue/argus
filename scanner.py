@@ -1847,6 +1847,22 @@ def _layer2b_run():
             "date": today, "summary": summ}
 
 
+def _layer2b_publish_membership(snapshot):
+    """Publish only the current confirmed membership, including receipt retries."""
+    valid, cleaned, _ = argus_watchlist_sync.validate_sync_payload({"items": snapshot.get("members", [])})
+    if not valid:
+        raise ValueError("stored_membership_invalid")
+    members = cleaned["items"]
+    with _OWNER_OVERVIEW_MEMBERSHIP_LOCK:
+        _OWNER_OVERVIEW_MEMBERSHIP.update(checkedAt=time.monotonic(), members=members)
+        _OWNER_SYMS_CACHE.update({
+            "syms": {str(m["symbol"]).upper(): {
+                "ownerState": m["ownerState"], "downsideStrictness": m["downsideStrictness"],
+                "priority": m["priority"]} for m in members},
+            "ts": time.time(), "status": "fresh"})
+    _LAYER2B_STATE.update(lastHash=argus_watchlist_sync.content_hash(members), symbolCount=len(members))
+
+
 @app.route("/api/argus/calibration/watchlist-sync", methods=["POST"])
 def api_argus_watchlist_sync():
     """Layer 2B — sync the OWNER's watchlist MEMBERSHIP for calibration (owner/
@@ -1895,6 +1911,8 @@ def api_argus_watchlist_sync():
                 PrivateMembershipStore.receipt_path(batch_id)
                 receipt = store.read_receipt(batch_id, digest) if store else None
                 if receipt:
+                    if current is not None:
+                        _layer2b_publish_membership(current)
                     _LAYER2B_STATE.update(lastSyncAt=_ai_now_iso(), lastStatus="synced")
                     return jsonify({"ok": True, "status": "synced", "alreadyApplied": True,
                                     "version": receipt["version"], "batchId": batch_id})
@@ -1921,27 +1939,13 @@ def api_argus_watchlist_sync():
                                                 batch_id=batch_id, digest=digest)
                 saved_version = saved["version"]
                 if saved["alreadyApplied"]:
+                    latest, _ = store.read_latest()
+                    if latest is not None:
+                        _layer2b_publish_membership(latest)
                     _LAYER2B_STATE.update(lastSyncAt=_ai_now_iso(), lastStatus="synced")
                     return jsonify({"ok": True, "status": "synced", "alreadyApplied": True,
                                     "version": saved_version, "batchId": batch_id})
-                with _OWNER_OVERVIEW_MEMBERSHIP_LOCK:
-                    _OWNER_OVERVIEW_MEMBERSHIP.update(checkedAt=time.monotonic(),
-                        members=snap.get("members"))
-                # Successful owner intent becomes authoritative immediately;
-                # removals must not remain Push-eligible for another cache TTL.
-                _OWNER_SYMS_CACHE.update({
-                    "syms": {
-                        str(m.get("symbol") or "").upper(): {
-                            "ownerState": m.get("ownerState") or "watch",
-                            "downsideStrictness": m.get("downsideStrictness") or "normal",
-                            "priority": m.get("priority") or "normal",
-                        }
-                        for m in (snap.get("members") or [])
-                        if str(m.get("symbol") or "").strip()
-                    },
-                    "ts": time.time(),
-                    "status": "fresh",
-                })
+                _layer2b_publish_membership(snap)
             except MembershipConflict:
                 return jsonify({"ok": False, "status": "conflict", "error": "membership_changed"}), 409
             except MembershipStoreError as pe:
