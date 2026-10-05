@@ -148,3 +148,22 @@ def test_boj_meetings_continue_into_2027_with_the_published_dates():
     boj = [e for e in events if e["kind"] == "boj"]
     assert [e["eventDate"] for e in boj] == ["2026-12-18", "2027-01-22"]
     assert boj[1]["title"].endswith("(Outlook Report)")
+
+
+def test_later_capture_preserves_and_rejects_earlier_provider_and_start_evidence(monkeypatch):
+    from copy import deepcopy
+    _seed(monkeypatch)
+    phase = ["before"]; _provider(monkeypatch, phase)
+    scanner._macro_release_baseline(EVENT)
+    phase[:] = ["after",5]; scanner._macro_release_window(EVENT,"+5m")
+    prior = scanner._MACRO_ANALYSIS[EVENT["id"]]["releaseReaction"]["windows"]["+5m"]
+    prior["source"] = "synthetic-other-provider"
+    prior["captureStartedAt"] = "2026-10-02T12:36:00Z"
+    prior_evidence = deepcopy(prior["values"])
+    phase[1] = 30; scanner._macro_release_window(EVENT,"+30m")
+    windows = scanner._MACRO_ANALYSIS[EVENT["id"]]["releaseReaction"]["windows"]
+    assert windows["+5m"]["source"] == "synthetic-other-provider"
+    assert windows["+5m"]["captureStartedAt"] == "2026-10-02T12:36:00Z"
+    assert windows["+5m"]["reading"]["code"] == "UNMEASURED"
+    assert windows["+5m"]["values"] == prior_evidence
+    assert windows["+30m"]["reading"]["code"] == "RATE_RELIEF_RISK_ON"

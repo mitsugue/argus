@@ -14343,11 +14343,7 @@ def _macro_release_record(event):
 
 def _macro_release_windows(record):
     """The stored windows as captures, so the record can be rebuilt after one more."""
-    out = {}
-    for name, window in ((record or {}).get("windows") or {}).items():
-        out[name] = {"capturedAt": window.get("observedAt"), "values": window.get("values") or {},
-                     "missing": window.get("missing") or []}
-    return out
+    return argus_macro_release_reaction.stored_window_captures(record)
 
 
 def _macro_release_store(eid, rec, baseline, windows):

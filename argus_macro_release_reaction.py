@@ -46,7 +46,10 @@ SYMBOLS: Dict[str, Dict[str, str]] = {
 def _finite(value: Any) -> Optional[float]:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    value = float(value)
+    try:
+        value = float(value)
+    except (ValueError, OverflowError):
+        return None
     return value if value == value and value not in (float("inf"), float("-inf")) else None
 
 
@@ -128,9 +131,10 @@ def comparison_quotes(capture: Optional[Mapping[str, Any]], event_time: Optional
         return {}, {"capture": "INVALID_VALUES"}
     observed = _instant(capture.get("capturedAt"))
     started = _instant(capture.get("captureStartedAt"))
-    if event_time is None or observed is None or (started is not None and started > observed):
+    invalid_start = capture.get("captureStartedAt") is not None and started is None
+    if event_time is None or observed is None or invalid_start or (started is not None and started > observed):
         return {}, {symbol: "INVALID_CAPTURE_TIME" for symbol in values}
-    if capture.get("source") not in (None, PROVIDER):
+    if capture.get("source") != PROVIDER:
         return {}, {symbol: "SOURCE_MISMATCH" for symbol in values}
     if window is None:
         lower, upper = event_time - BASELINE_FROM, event_time
@@ -293,7 +297,7 @@ def build(event_id: str, event_time_utc: str, baseline: Optional[Mapping[str, An
             out["limitationsJa"].append(f"発表{name}の価格時刻を確認できない項目あり")
         read = reading(move)
         out["windows"][name] = {"observedAt": after.get("capturedAt"), "values": after.get("values"),
-                                "source": after.get("source"),
+                                "source": after.get("source"), "captureStartedAt": after.get("captureStartedAt"),
                                 "missing": after.get("missing") or [], "moves": move, "reading": read,
                                 "comparisonValues": after_values, "timeRejections": rejected,
                                 "summaryJa": window_summary_ja(name, move, read)}
@@ -306,17 +310,31 @@ def build(event_id: str, event_time_utc: str, baseline: Optional[Mapping[str, An
     return out
 
 
+
+def stored_window_captures(record: Optional[Mapping[str, Any]]) -> dict[str, dict]:
+    """Keep the original provider and collection start when rebuilding windows."""
+    windows = (record or {}).get("windows") or {}
+    if not isinstance(windows, Mapping):
+        return {}
+    return {name: {"capturedAt": row.get("observedAt"), "captureStartedAt": row.get("captureStartedAt"),
+                   "values": row.get("values"), "source": row.get("source"),
+                   "missing": row.get("missing") or []}
+            for name, row in windows.items() if isinstance(row, Mapping)}
+
+
+def revalidate(record: Optional[Mapping[str, Any]]) -> dict[str, Any]:
+    """Recheck original evidence for display and AI without rewriting history."""
+    record = record or {}
+    return build(str(record.get("eventId") or ""), record.get("eventTimeUtc"),
+                 record.get("baseline"), stored_window_captures(record))
+
 def prompt_text_ja(record: Optional[Mapping[str, Any]], *, next_fomc: Optional[str] = None) -> str:
     """What the post-release analysis is allowed to say about the reaction."""
     if not record or not record.get("windows"):
         return ""
     lines = ["実測の反応(発表直前の基準値と同じ取得元で測定。反応の数字はここにあるものだけを使い、他の数字を作らない):"]
     # Older saved records are re-evaluated in memory; their raw inputs remain.
-    record = build(str(record.get("eventId") or ""), record.get("eventTimeUtc"),
-                   record.get("baseline"),
-                   {name: {"capturedAt": row.get("observedAt"), "values": row.get("values"), "source": row.get("source"),
-                           "missing": row.get("missing") or []}
-                    for name, row in record["windows"].items()})
+    record = revalidate(record)
     base = record["baselineComparisonValues"]
     ff = base.get("ZQ=F")
     if ff and _finite(ff.get("price")) is not None:

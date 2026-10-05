@@ -182,7 +182,7 @@ const ReleaseSoWhat: React.FC<{ ev: DashboardEvent; reactionValues: string[]; re
   vColor: string; showAnswerCheck: boolean }> = ({ ev, reactionValues, reactionTone, vColor, showAnswerCheck }) => {
   const c = ev.caos || {};
   const rr = ev.releaseReaction || null;
-  const reading = c.marketReadingJa || rr?.readingJa || '';
+  const reading = rr?.readingJa || c.marketReadingJa || '';
   const measured = rr?.summaryJa || '';
   return <div className="ie-sowhat" data-argus-contract="event-so-what-v1" data-reaction-window={rr?.latestWindow ?? ''}>
     {reading

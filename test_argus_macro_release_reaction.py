@@ -225,3 +225,40 @@ def test_partial_reaction_does_not_describe_missing_measurement_as_flat(policy, 
     assert "測れていない" in actual["meaningJa"]
     assert "株はまだ反応していない" not in actual["meaningJa"]
     assert "政策金利の予想は変わらず" not in actual["meaningJa"]
+
+
+@pytest.mark.parametrize("start", ["not-a-time", "2026-10-02T12:35:00", "2026-10-02T12:36:00Z"])
+def test_saved_window_keeps_invalid_collection_start_through_rebuild_and_prompt(start):
+    base = _capture(BEFORE, E(-2)); after = _capture(AFTER, E(5))
+    after["captureStartedAt"] = start
+    rec = rr.build("cpi-test", T.isoformat(), base, {"+5m": after})
+    original = deepcopy(rec)
+    assert rec["windows"]["+5m"]["captureStartedAt"] == start
+    assert rr.stored_window_captures(rec)["+5m"]["captureStartedAt"] == start
+    rebuilt = rr.revalidate(rec)
+    assert rebuilt["windows"]["+5m"]["reading"]["code"] == "UNMEASURED"
+    assert "政策金利の予想-2.5bp" not in rr.prompt_text_ja(rec)
+    assert rec == original
+
+
+def test_provider_evidence_missing_cannot_be_promoted_from_top_level_constant():
+    base = _capture(BEFORE, E(-2)); after = _capture(AFTER, E(5))
+    rec = rr.build("cpi-test", T.isoformat(), base, {"+5m": after})
+    rec["windows"]["+5m"].pop("source")
+    original = deepcopy(rec)
+    assert rr.revalidate(rec)["windows"]["+5m"]["reading"]["code"] == "UNMEASURED"
+    assert "政策金利の予想-2.5bp" not in rr.prompt_text_ja(rec)
+    assert rec == original
+
+
+def test_revalidated_valid_record_preserves_formula_reading_and_original_evidence():
+    rec = rr.build("cpi-test", T.isoformat(), _capture(BEFORE, E(-2)),
+                   {name: _capture(AFTER, E(minute)) for name, minute in
+                    [("+5m",5),("+30m",30),("+60m",60),("+8h",480)]})
+    original = deepcopy(rec)
+    assert rr.revalidate(rec) == rec
+    assert rec == original
+
+
+def test_large_integer_price_is_invalid_instead_of_overflowing_revalidation():
+    assert rr.parse_quote(_payload(10**1000, E(5)), received_epoch=E(5)) is None

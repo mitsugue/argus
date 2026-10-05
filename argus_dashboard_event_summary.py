@@ -155,15 +155,26 @@ def build_summary_item(*, important_event: Optional[Dict[str, Any]],
         impact = (_nfp_impact_fallback(actual.get("metrics") or {}) if event_code == "NFP"
                   else _RX.impact_fallback(event_code, actual.get("metrics") or {}, mr))
 
-    # market reaction text: the measured pre-release-baseline reaction (2026-10-03)
-    # when the AI has not yet read it, else the AI post, else the old summary
-    release = rec.get("releaseReaction") or {}
+    # Recheck original clocks on read. Saved summaries and AI prose are
+    # not measurement evidence; keep the saved record unchanged.
+    from argus_macro_release_reaction import revalidate
+    saved_release = rec.get("releaseReaction") or {}
+    release = revalidate(saved_release) if saved_release.get("windows") else saved_release
+    invalid_release = bool(release.get("baselineTimeRejections") or any(
+        w.get("timeRejections") for w in (release.get("windows") or {}).values()))
+    if release.get("windows") and not release.get("baselineComparisonValues"):
+        invalid_release = True
     measured = str(release.get("summaryJa") or "") if release.get("windows") else ""
-    reaction_ja = str((post.get("marketReactionJa") if post.get("reactionWindow") else "")
-                      or measured or post.get("marketReactionJa") or mr.get("summaryJa") or "")
+    reaction_ja = measured or str(post.get("marketReactionJa") or mr.get("summaryJa") or "")
+    if invalid_release:
+        impact = ((_nfp_impact_fallback(actual.get("metrics") or {}) if event_code == "NFP"
+                   else _RX.impact_fallback(event_code, actual.get("metrics") or {}, {}))
+                  if actual_avail else "")
     # whatChanged: name the variable that moved (from the reaction) if AI didn't
     what_changed = str(post.get("whatChangedJa") or "")
-    if not what_changed and mr.get("riskTone") and mr.get("riskTone") != "unknown":
+    if invalid_release:
+        what_changed = ""
+    if not invalid_release and not what_changed and mr.get("riskTone") and mr.get("riskTone") != "unknown":
         _tone = {"risk_on": "リスクオン", "risk_off": "リスクオフ", "rates_up": "金利上昇",
                  "rates_down": "金利低下", "mixed": "まちまち"}.get(mr.get("riskTone"), "")
         if _tone:
@@ -176,7 +187,7 @@ def build_summary_item(*, important_event: Optional[Dict[str, Any]],
     # primary / secondary display lines
     if show_actual_first:
         primary = str(actual.get("headline") or "公式結果を取得済み")
-        secondary = impact or (post.get("marketReactionJa") or "")
+        secondary = impact or reaction_ja
     elif show_pending:
         primary = "発表時刻は通過。公式結果の取得待ち。"
         secondary = ("事前シナリオ（当時）: " + (pre.get("argusScenarioJa") or "（保存なし）")) if released else ""
@@ -196,11 +207,15 @@ def build_summary_item(*, important_event: Optional[Dict[str, Any]],
         "marketReactionJa": reaction_ja,
         "impactCommentJa": impact,
         "whatChangedJa": what_changed,
-        "marketReadingJa": str(post.get("marketReadingJa") or release.get("readingJa") or "") if released else "",
-        "nikkeiImplicationJa": str(post.get("nikkeiImplicationJa") or ""),
-        "changeConditionJa": str(post.get("changeConditionJa") or ""),
+        "marketReadingJa": str(release.get("readingJa") or post.get("marketReadingJa") or "") if released else "",
+        "nikkeiImplicationJa": "" if invalid_release else str(post.get("nikkeiImplicationJa") or ""),
+        "changeConditionJa": "" if invalid_release else str(post.get("changeConditionJa") or ""),
         "limitationsJa": list(post.get("limitationsJa") or pre.get("limitationsJa") or [])[:5],
     }
+    if release.get("windows"):
+        caos["limitationsJa"] = list(dict.fromkeys(caos["limitationsJa"] + list(release.get("limitationsJa") or [])))
+        if invalid_release:
+            caos["limitationsJa"].append("保存した価格の時刻・取得元を再確認。旧説明は反応の根拠に使わない")
     # honest: released with an official result but NO quantitative reaction yet
     if actual_avail and not reaction_ja and not any(
             mr.get(k) is not None for k in ("us10yMoveBp", "usdJpyMovePct", "spyMovePct",
