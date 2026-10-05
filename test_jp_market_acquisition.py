@@ -397,7 +397,7 @@ def test_session_publication_floor_follows_real_sessions_and_holidays():
         {'periodEnd': '2026-09-18', 'publishedAt': '2026-09-23T15:00:00+09:00',
          'availableFrom': '2026-09-23T15:00:00+09:00', 'value': 1},          # silver week: raised
         {'periodEnd': '2026-09-11', 'availableFrom': '2026-09-30T00:00:00Z', 'value': 2},   # later receipt: kept
-        {'periodEnd': '2026-09-25', 'availableFrom': '2026-09-29T06:00:00Z', 'value': 3},   # past the sessions: weekdays
+        {'periodEnd': '2026-09-25', 'availableFrom': '2026-09-29T06:00:00Z', 'value': 3},   # the source rule changed: second session, 16 JST
         'not-a-row',
     ]
     out = m.enforce_session_publication(rows, sessions=sessions, sessions_after=3,
@@ -405,6 +405,59 @@ def test_session_publication_floor_follows_real_sessions_and_holidays():
     assert out[0]['publishedAt'] == out[0]['availableFrom'] == '2026-09-28T06:00:00Z'
     assert out[0]['availabilityFloor'] == 'jpx-two-market-third-session'
     assert out[1] == rows[1]
-    assert out[2]['availableFrom'] == '2026-09-30T06:00:00Z'
+    assert out[2]['availableFrom'] == '2026-09-29T07:00:00Z'
     with pytest.raises(ValueError, match='session_publication_bound'):
         m.enforce_session_publication(rows, sessions=sessions, sessions_after=0, utc_time='00:00:00', source_label='x')
+
+
+def test_two_market_rule_cutover_preserves_legacy_and_uses_second_session_16jst():
+    sessions = ['2026-09-24', '2026-09-25', '2026-09-28', '2026-09-29']
+    rows = [
+        {'periodEnd': '2026-09-18', 'availableFrom': '2026-09-23T06:00:00Z', 'value': 1},
+        {'periodEnd': '2026-09-25', 'availableFrom': '2026-09-29T06:00:00Z', 'value': 2},
+        {'periodEnd': '2026-10-02', 'availableFrom': '2026-10-06T07:45:00Z', 'value': 3},
+    ]
+    out = m.enforce_two_market_publication(rows, sessions=sessions)
+    assert out[0]['availableFrom'] == '2026-09-28T06:00:00Z'
+    assert out[1]['availableFrom'] == '2026-09-29T07:00:00Z'
+    assert out[1]['availabilityFloor'] == 'jpx-two-market-second-session-16jst'
+    assert out[2] == rows[2]  # Keep the actual receipt, not the nominal schedule.
+    assert rows[1]['availableFrom'] == '2026-09-29T06:00:00Z'  # No raw mutation.
+
+
+def test_two_market_calendar_accounts_for_holiday_after_price_cache_ends():
+    row = {'periodEnd': '2026-10-09', 'knownAt': '2026-10-13T07:00:00Z',
+           'availableFrom': '2026-10-13T07:00:00Z', 'publishedAt': None, 'receivedAt': '2026-10-13T07:00:00Z'}
+    out = m.enforce_two_market_publication([row], sessions=['2026-10-09'])[0]
+    assert out['knownAt'] == out['availableFrom'] == '2026-10-14T07:00:00Z'
+    assert out['receivedAt'] == row['receivedAt'] and out['publishedAt'] is None
+
+
+def test_two_market_unknown_calendar_fails_instead_of_guessing_weekdays(monkeypatch):
+    import argus_market_clock as clock
+    def unavailable(*args):
+        raise clock.CalendarUnavailableError('no_calendar')
+    monkeypatch.setattr(clock, 'canonical_trading_day', unavailable)
+    with pytest.raises(ValueError, match='calendar_unavailable'):
+        m.enforce_two_market_publication([{'periodEnd': '2026-10-02'}], sessions=[])
+
+
+def test_two_market_invalid_missing_and_late_stamps_are_not_made_known():
+    rows = [
+        {'periodEnd': '2026-10-02', 'availableFrom': 'invalid', 'knownAt': 'invalid'},
+        {'periodEnd': '2026-10-02', 'value': 1},
+        {'periodEnd': '2026-10-02', 'availableFrom': '2026-10-07T08:00:00Z', 'knownAt': '2026-10-07T08:00:00Z'},
+    ]
+    assert m.enforce_two_market_publication(rows, sessions=[]) == rows
+
+
+def test_existing_two_market_consumer_gets_new_rule_without_changing_other_series():
+    rows = [{'periodEnd': '2026-10-09', 'availableFrom': '2026-10-13T07:00:00Z'}]
+    credit = m.enforce_session_publication(
+        iter(rows), sessions=['2026-10-09'], sessions_after=3, utc_time='06:00:00',
+        source_label='jpx-two-market-third-session')
+    assert credit[0]['availableFrom'] == '2026-10-14T07:00:00Z'
+    other = m.enforce_session_publication(
+        rows, sessions=['2026-10-09'], sessions_after=3, utc_time='06:00:00',
+        source_label='jpx-weekly-margin-fourth-session-open')
+    assert other[0]['availableFrom'] == '2026-10-14T06:00:00Z'
