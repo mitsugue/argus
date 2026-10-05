@@ -134,6 +134,7 @@ import argus_owner_dialogue_recovery
 import argus_owner_dialogue_backup
 import argus_subject_materials
 import argus_analysis_history_backup
+import argus_public_feed_fetch
 import argus_presentation_intent
 import argus_jp_market_research
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
@@ -6963,28 +6964,13 @@ def _ssrf_safe_url(url):
         return False
 
 
-def _fetch_public_text(url):
-    """Size/timeout/redirect-limited fetch of public content (data, never trusted as
-    instructions). Returns text or None."""
-    if not _ssrf_safe_url(url):
-        return None
-    try:
-        r = requests.get(url, timeout=12, allow_redirects=True,
-                         headers={"User-Agent": "argus-research/1.0"}, stream=True)
-        if r.status_code != 200:
-            return None
-        # Validate redirect target too + cap size.
-        if not _ssrf_safe_url(r.url):
-            return None
-        chunks, total = [], 0
-        for c in r.iter_content(16384):
-            total += len(c)
-            if total > _INTEL_FETCH_MAX_BYTES:
-                break
-            chunks.append(c)
-        return b"".join(chunks).decode("utf-8", "replace")
-    except Exception:
-        return None
+def _fetch_public_text(url, *, diagnostic=None):
+    """Bounded public content, with optional fixed-code admin diagnostics."""
+    text, status = argus_public_feed_fetch.fetch_text(url, get=requests.get,
+        safe_url=_ssrf_safe_url, max_bytes=_INTEL_FETCH_MAX_BYTES)
+    if diagnostic is not None:
+        diagnostic.update(status)
+    return text
 
 
 def _parse_rss(xml_text, source_id, now_iso):
@@ -7519,7 +7505,8 @@ def collect_institutional_intel():
     per_feed, per_source, total_new = [], {}, 0
     _intel_collect_stage("news_feeds")
     for sid, label, url, kind in _INTEL_FEEDS:
-        txt = _fetch_public_text(url)
+        acquisition = {}
+        txt = _fetch_public_text(url, diagnostic=acquisition)
         if not txt:
             rows = []
         elif kind == "sitemap":
@@ -7540,7 +7527,10 @@ def collect_institutional_intel():
         total_new += new
         per_source[sid] = per_source.get(sid, 0) + len(rows)
         per_feed.append({"feed": label, "source": sid, "fetched": len(rows),
-                         "new": new, "ok": bool(txt) and len(rows) > 0})
+                         "new": new, "ok": bool(txt) and len(rows) > 0,
+                         **acquisition,
+                         "errorClass": acquisition.get("errorClass") or
+                             ("feed_has_no_items" if txt and not rows else None)})
     del _INTEL_STORE[_INTEL_STORE_MAX:]
     _intel_collect_stage("news_translation")
     _intel_translate_titles()                          # attach titleJa (cron-time only)
