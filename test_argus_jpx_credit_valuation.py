@@ -100,3 +100,72 @@ def test_current_labels_accept_the_official_bilingual_line_breaks():
     g[16][1] = '貸借取引残高\n Outstanding loans by JSF'
     g[18][1] = '自己貸株・自己融資\nNon-JSF shares,Non-JSF funds'
     assert valuation.extract(g)['inputs'] == inputs()
+
+
+def monthly_text(rows=None):
+    numbers = [1] * 22
+    for i, value in zip((11, 13, 16, 20, 17, 21), (1000, 100, 200, 100, 300, 100), strict=True):
+        numbers[i] = value
+    row = ' '.join(map(str, numbers))
+    return '信用取引現在高\n委託 Customers 自己 Members 合計 Total 社内対当 貸借取引残高 自己貸株 自己融資\n融資 千株 百万円\n[東京 Tokyo]\n28 (2016)\n9. 2 ' + row + '\n[東京・名古屋 Tokyo & Nagoya]\n28 (2016)\n' + (rows or '9. 2 ' + row + '\n9 ' + row) + '\n注: 説明'
+
+
+def test_monthly_pdf_uses_two_market_total_and_records_retrospective_limit():
+    rows = valuation.extract_monthly_text(monthly_text())
+    assert [r['periodEnd'] for r in rows] == ['2016-09-02', '2016-09-09']
+    assert all(r['inputs'] == inputs() for r in rows)
+    assert all(r['historicalVintageVerified'] is False for r in rows)
+    assert all(r['shortBalanceJpy'] == 1000000 and r['longBalanceJpy'] == 1000000000 for r in rows)
+    assert all('availableFrom' not in r and 'publishedAt' not in r for r in rows)
+
+
+@pytest.mark.parametrize('change', ['column_missing', 'no_units', 'no_market', 'no_year', 'duplicate_date', 'date_reverse'])
+def test_monthly_pdf_malformed_layout_is_not_silently_used(change):
+    text = monthly_text()
+    if change == 'column_missing':
+        lines = text.splitlines(); i = next(i for i, line in enumerate(lines) if line.startswith('9. 2') and i > 7)
+        lines[i] = ' '.join(lines[i].split()[:-1]); text = '\n'.join(lines)
+    elif change == 'no_units': text = text.replace('百万円', '')
+    elif change == 'no_market': text = text.replace('[東京・名古屋 Tokyo & Nagoya]', '[東京 Tokyo]')
+    elif change == 'no_year': text = text.replace('28 (2016)', '')
+    elif change == 'duplicate_date':
+        lines = text.splitlines(); i = next(i for i,line in enumerate(lines) if line.startswith('9. 2') and i > 7)
+        lines.insert(i + 1, lines[i]); text = '\n'.join(lines)
+    else:
+        text = text.replace('\n9. 2 ', '\n9. 16 ').replace('\n9 ', '\n2 ')
+    with pytest.raises(ValueError): valuation.extract_monthly_text(text)
+
+
+def test_monthly_pdf_accepts_explicit_gregorian_year_without_era():
+    rows = valuation.extract_monthly_text(monthly_text().replace("28 (2016)", "2022"))
+    assert [r["periodEnd"] for r in rows] == ["2022-09-02", "2022-09-09"]
+    assert all(r["inputs"] == inputs() for r in rows)
+
+
+def test_monthly_official_unpublished_inputs_remain_missing_not_zero_or_interpolated():
+    text = monthly_text().replace("28 (2016)", "2019")
+    lines = text.splitlines()
+    i = next(i for i, line in enumerate(lines) if line.startswith("9. 2") and i > 7)
+    cells = lines[i].split()
+    for column in (13, 14, 15, 16, 17, 18, 19, 20, 21):
+        cells[column + 2] = "-"
+    lines[i] = " ".join(cells)
+    rows = valuation.extract_monthly_text("\n".join(lines))
+    assert rows[0]["value"] is None
+    assert rows[0]["classification"] == "official_inputs_not_published"
+    assert rows[0]["inputs"]["buyAmountMillionJpy"] == 1000
+    assert len(rows[0]["missingInputs"]) == 5
+    assert rows[1]["value"] == valuation.calculate(inputs())["value"]
+
+
+def test_monthly_pdf_explicit_december_to_january_rollover_increments_year():
+    text = monthly_text().replace("28 (2016)", "27 (2015)")
+    start = text.index("[東京・名古屋")
+    text = text[:start] + text[start:].replace("9. 2 ", "12. 25 ").replace("\n9 ", "\n1. 8 ")
+    assert [r["periodEnd"] for r in valuation.extract_monthly_text(text)] == ["2015-12-25", "2016-01-08"]
+
+
+def test_monthly_pdf_reordered_financing_headers_fail_instead_of_swapping_values():
+    text = monthly_text().replace("自己貸株 自己融資", "自己融資 自己貸株")
+    with pytest.raises(ValueError, match="column_headers"):
+        valuation.extract_monthly_text(text)

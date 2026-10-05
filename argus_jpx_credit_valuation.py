@@ -96,3 +96,79 @@ def extract(grid):
     result = calculate(inputs)
     result['periodEnd'] = balances['periodEnd']
     return result
+
+
+def extract_monthly_text(text):
+    """Read the 22-column two-market block of an official monthly PDF page.
+
+    This yields retrospective observations only. It does not invent historical
+    publication/receipt timestamps from the month printed on the report.
+    Layout changes or missing columns fail rather than shifting the equation.
+    """
+    import re
+    from datetime import date
+    if not isinstance(text, str) or len(text) > 2 * 1024 * 1024:
+        raise ValueError('credit_valuation_monthly_size')
+    if not all(label in text for label in ('信用取引現在高', '社内対当', '融資', '千株', '百万円')):
+        raise ValueError('credit_valuation_monthly_headers')
+    roles = ('委託', '自己 Members', '合計', '社内対当', '貸借取引残高', '自己貸株', '自己融資')
+    headers = [line for line in text.splitlines() if all(role in line for role in roles)]
+    if len(headers) != 1 or [headers[0].index(role) for role in roles] != sorted(
+            headers[0].index(role) for role in roles):
+        raise ValueError('credit_valuation_monthly_column_headers')
+    active = False
+    year = month = None
+    out = []
+    seen = set()
+    for line in text.splitlines():
+        line = line.strip()
+        if '東京' in line and '名古屋' in line:
+            if active:
+                raise ValueError('credit_valuation_monthly_market_ambiguous')
+            active = True
+            continue
+        if not active:
+            continue
+        if line.startswith(('注:', '注：', 'Notes:', '㈱')):
+            break
+        stamp = re.fullmatch(r'(?:\d{1,2}\s*\((20\d{2})\)|(20\d{2}))', line)
+        if stamp:
+            year = int(stamp.group(1) or stamp.group(2)); month = None
+            continue
+        matched = re.match(r'^(?:(\d{1,2})\.\s*)?(\d{1,2})\s+(.+)$', line)
+        if not matched:
+            continue
+        if matched.group(1):
+            next_month = int(matched.group(1))
+            if month == 12 and next_month == 1 and year is not None:
+                year += 1
+            month = next_month
+        values = matched.group(3).split()
+        if year is None or month is None or len(values) != 22:
+            raise ValueError('credit_valuation_monthly_columns')
+        period = date(year, month, int(matched.group(2))).isoformat()
+        if period in seen:
+            raise ValueError('credit_valuation_monthly_duplicate_date')
+        # Validate every numeric column to catch extraction damage, including
+        # unused lending/change fields, before selecting the financing values.
+        numbers = [None if value == '-' else _number(value) for value in values]
+        inputs = dict(zip(INPUTS, [numbers[i] for i in (11, 13, 16, 20, 17, 21)], strict=True))
+        if any(value is None for value in inputs.values()):
+            result = {'methodVersion': METHOD_VERSION, 'formulaSource': FORMULA_SOURCE,
+                      'inputs': {key: None if value is None else float(value)
+                                 for key, value in inputs.items()},
+                      'value': None, 'unit': 'percent',
+                      'signConvention': 'loss_negative_profit_positive',
+                      'classification': 'official_inputs_not_published',
+                      'missingInputs': [key for key, value in inputs.items() if value is None]}
+        else:
+            result = calculate(inputs)
+        result.update(periodEnd=period, historicalVintageVerified=False,
+                      shortBalanceJpy=(None if numbers[9] is None else float(numbers[9] * 1000000)),
+                      longBalanceJpy=(None if numbers[11] is None else float(numbers[11] * 1000000)))
+        out.append(result); seen.add(period)
+    if not active or not out:
+        raise ValueError('credit_valuation_monthly_rows_missing')
+    if [r['periodEnd'] for r in out] != sorted(r['periodEnd'] for r in out):
+        raise ValueError('credit_valuation_monthly_date_order')
+    return out
