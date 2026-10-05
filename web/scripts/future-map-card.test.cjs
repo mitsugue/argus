@@ -39,7 +39,8 @@ assert.deepEqual(futureMapUpdateAge(doc.updatedAt, at('2026-10-05T11:59:59Z')),
 assert.equal(futureMapUpdateAge(doc.updatedAt, at('2026-10-07T11:59:59Z')).warning, false);
 assert.deepEqual(futureMapUpdateAge(doc.updatedAt, at('2026-10-07T12:00:00Z')),
   { days: 3, warning: true, label: '3日前の更新・古い予測です' });
-for (const stamp of ['', 'not-a-time', '2026-10-04T21:00:00', '2026-10-08T12:00:00Z']) {
+for (const stamp of ['', 'not-a-time', '2026-10-04T21:00:00', '2026-10-08T12:00:00Z',
+  '2026-02-30T12:00:00Z', '2026-10-04T24:00:00Z', '2026-10-04T12:00:00+24:00']) {
   assert.deepEqual(futureMapUpdateAge(stamp, at('2026-10-07T12:00:00Z')),
     { days: null, warning: true, label: '更新日時を確認できません' });
 }
@@ -51,3 +52,11 @@ const fresh = renderToStaticMarkup(React.createElement(FutureMapView,
   { doc, nowMs: at('2026-10-04T12:01:00Z') }));
 assert.ok(fresh.includes('24時間以内の更新') && !fresh.includes('fm-age is-warning'));
 console.log('Future map card: exact age threshold, unknown clock, saved table preservation PASS');
+
+const utcMidnight = renderToStaticMarkup(React.createElement(FutureMapView,
+  { doc: { ...doc, updatedAt: '2026-10-04T16:00:00Z' }, nowMs: at('2026-10-05T00:00:00Z') }));
+assert.ok(utcMidnight.includes('10/5更新'), 'source update date uses Japan time');
+const malformed = renderToStaticMarkup(React.createElement(FutureMapView,
+  { doc: { ...doc, updatedAt: '2026-02-30T12:00:00Z' }, nowMs: at('2026-10-05T00:00:00Z') }));
+assert.ok(malformed.includes('更新日時を確認できません') && !malformed.includes('NaN'),
+  'invalid calendar date is unknown, while saved forecasts remain visible');

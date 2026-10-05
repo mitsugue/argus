@@ -10,10 +10,19 @@ const levelText = (row: FutureMapRow) => !row.level ? '―'
   : row.level.low === row.level.high ? yen(row.level.low) : `${yen(row.level.low)}〜${yen(row.level.high)}`;
 const RESULT_JA = { reached: '到達', missed: '外れ' } as const;
 
+function sourceUpdateTimestamp(updatedAt: string) {
+  const parts = typeof updatedAt === 'string'
+    ? /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/.exec(updatedAt) : null;
+  if (!parts || Number(parts[2]) > 23 || Number(parts[3]) > 59 || Number(parts[4]) > 59
+    || Number(parts[6] ?? 0) > 23 || Number(parts[7] ?? 0) > 59) return NaN;
+  const day = Date.parse(`${parts[1]}T00:00:00Z`);
+  if (!Number.isFinite(day) || new Date(day).toISOString().slice(0, 10) !== parts[1]) return NaN;
+  return Date.parse(updatedAt);
+}
+
 /** Source update age, never the time this browser fetched the table. */
 export function futureMapUpdateAge(updatedAt: string, nowMs: number) {
-  const stamp = typeof updatedAt === 'string' && /T.*(?:Z|[+-]\d{2}:\d{2})$/.test(updatedAt)
-    ? Date.parse(updatedAt) : NaN;
+  const stamp = sourceUpdateTimestamp(updatedAt);
   if (!Number.isFinite(stamp) || !Number.isFinite(nowMs) || stamp > nowMs) {
     return { days: null, warning: true, label: '更新日時を確認できません' };
   }
@@ -50,6 +59,9 @@ export function FutureMapView({ doc, nowMs }: { doc: FutureMapDoc | null; nowMs?
   }, []);
   if (!doc || !doc.rows.length) return null;
   const age = futureMapUpdateAge(doc.updatedAt, nowMs ?? clock);
+  const updatedStamp = sourceUpdateTimestamp(doc.updatedAt);
+  const updateDate = Number.isFinite(updatedStamp) ? new Date(updatedStamp).toLocaleDateString('ja-JP',
+    { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' }) : '―';
   const nowIndex = Math.max(0, doc.rows.findIndex(r => r.isNow));
   const lead = doc.rows.slice(nowIndex, nowIndex + 4);
   const shown = open ? doc.rows : lead;
@@ -58,7 +70,7 @@ export function FutureMapView({ doc, nowMs }: { doc: FutureMapDoc | null; nowMs?
   const { position, nextAlert, nextBottom } = doc.status;
   return <section className="fm-card card" aria-label="FUTURE MAP" data-argus-contract="future-map-v1">
     <div className="fm-head"><b>FUTURE MAP</b>
-      <span>外部の見立て ・ {doc.updatedAt ? md(doc.updatedAt.slice(0, 10)) : '―'}更新 ・ ARGUS未検証</span>
+      <span>外部の見立て ・ {updateDate}更新 ・ ARGUS未検証</span>
       <span className={`fm-age${age.warning ? ' is-warning' : ''}`} role={age.warning ? 'status' : undefined}>{age.label}</span></div>
     <div className="fm-boxes">
       <div className="fm-box tone-red"><small>いまの位置</small><b>{position}</b></div>
