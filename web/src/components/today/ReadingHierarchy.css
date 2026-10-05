@@ -104,3 +104,8 @@
 .at-primary-hero .at-seven-signals .at-seven-direction[data-direction="support"] {color:var(--value-positive);border-color:color-mix(in srgb,var(--value-positive) 50%,var(--line))}
 .at-primary-hero .at-seven-signals .at-seven-performance {grid-column:1/-1;font-size:13px;line-height:1.65;color:var(--text-main)}
 .at-primary-hero .at-seven-study-time {display:block;font-size:12px;line-height:1.7;margin-top:8px;color:var(--text-sub)}
+
+.at-primary-hero [data-argus-contract="warning-conditions-v2"] .at-seven-row > i {font-style:normal}
+.at-primary-hero [data-argus-contract="warning-conditions-v2"] .at-seven-row > i > small,
+.at-primary-hero [data-argus-contract="warning-conditions-v2"] .at-seven-distance {grid-column:1/-1;text-align:left;line-height:1.65}
+.at-primary-hero [data-argus-contract="warning-conditions-v2"] .at-seven-distance {font-size:15px;color:var(--amber)}
