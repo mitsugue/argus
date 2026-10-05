@@ -230,7 +230,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
           VIXの新しい値は既存の価格取得経路から補います。</p>
       </section>}
       <p>情報締切：{new Date(document.informationCutoff).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST</p>
-      <p>基準日は東証の引け後、次回の集計で1営業日進みます。基準日が進むか市場条件の履歴が更新されると、候補と計算予測は再計算されます。</p>
+      {!document.reviewConditionsJa && <p>基準日は東証の引け後、次回の集計で1営業日進みます。基準日が進むか市場条件の履歴が更新されると、候補と計算予測は再計算されます。</p>}
       {candidates.map(candidate => <article key={candidate.snapshotId}>
         <h3>{candidate.anchorDate}を基準とする{candidate.comparisonKind === 'MARKET_ANALOG' ? '市場比較' : '部分比較'}</h3>
         <p>{candidate.similarReasons.join('。')}</p>
