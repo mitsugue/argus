@@ -1,5 +1,6 @@
 """ARGUS V11.4.1 — unified dashboard event summary tests (pure, frozen times)."""
 import json
+import pytest
 import argus_dashboard_event_summary as DS
 
 # NFP release: 2026-07-02 08:30 ET = 12:30 UTC (EDT)
@@ -170,3 +171,35 @@ def test_no_forbidden_keys():
     blob = json.dumps(out, ensure_ascii=False).lower()
     for bad in ('"prompt"', '"rawproviderbody"', '"holdings"', "secret"):
         assert bad not in blob, bad
+
+
+@pytest.mark.parametrize("invalid", ["source", "start", "quote_time"])
+def test_event_display_rechecks_raw_evidence_and_does_not_prefer_old_ai_prose(invalid):
+    from copy import deepcopy
+    from datetime import datetime, timezone, timedelta
+    import argus_macro_release_reaction as rr
+    at = datetime(2026,7,2,12,30,tzinfo=timezone.utc)
+    def captured(offset, price):
+        t = (at + timedelta(minutes=offset)).isoformat()
+        return {"capturedAt":t,"captureStartedAt":t,"source":rr.PROVIDER,"missing":[],
+                "values":{"NQ=F":{"price":price,"tradedAt":t,"receivedAt":t}}}
+    reaction = rr.build("synthetic-cpi",NFP_UTC,captured(-2,100),{"+5m":captured(5,101)})
+    w = reaction["windows"]["+5m"]
+    if invalid == "source": w["source"] = "synthetic-other-provider"
+    elif invalid == "start": w["captureStartedAt"] = "2026-07-02T12:36:00Z"
+    else: w["values"]["NQ=F"]["tradedAt"] = "2026-07-01T12:35:00Z"
+    rec = _rec(actual={"available":True,"headline":"official synthetic","metrics":{}},
+               releaseReaction=reaction, post={"generatedAt":JUST_AFTER,"reactionWindow":"+5m",
+                 "marketReactionJa":"synthetic +99.9%", "marketReadingJa":"synthetic risk-on",
+                 "nikkeiImplicationJa":"synthetic implication", "changeConditionJa":"synthetic trigger",
+                 "portfolioImpactJa":"synthetic impact"})
+    original = deepcopy(rec)
+    item = DS.build_summary_item(important_event=_ie(),macro_record=rec,now_iso=JUST_AFTER)
+    assert item["releaseReaction"]["readingJa"] == "反応を測れていない"
+    assert all(value is None for value in item["releaseReaction"]["moves"].values())
+    assert item["caos"]["marketReadingJa"] == "反応を測れていない"
+    assert "99.9" not in item["caos"]["marketReactionJa"]
+    assert item["caos"]["nikkeiImplicationJa"] == item["caos"]["changeConditionJa"] == ""
+    assert "synthetic impact" not in item["caos"]["impactCommentJa"]
+    assert item["caos"]["limitationsJa"]
+    assert rec == original

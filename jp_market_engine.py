@@ -770,7 +770,8 @@ def fact_note_ja(family: str, row: Mapping[str, Any]) -> Optional[str]:
         value = _finite(row.get("per"))
         if value is None or value <= 0:
             return None
-        kind = "ARGUS推計" if row.get("propositionId") == "ARGUS-D04-PROXY-CONSTITUENT-EPS" else "指数ベース"
+        kind = ("最新の時価総額加重推計" if row.get("lineage") == "ARGUS_CURRENT_ESTIMATE" else
+                "旧方式のARGUS代理値" if row.get("propositionId") == "ARGUS-D04-PROXY-CONSTITUENT-EPS" else "指数ベース")
         return f"日経平均のPER {value:.2f}倍（{kind}）"
     if family == "D06":
         level = _finite(row.get("level"))
@@ -977,14 +978,13 @@ def evaluate_d04(*, cutoff: str, analysis_instrument: str,
                  license_status: str = "LICENSE_BLOCKED",
                  derived_valuation: Optional[Mapping[str, Any]] = None,
                  index_valuation: Optional[Mapping[str, Any]] = None,
-                 proxy_valuation: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
-    """D04 is same-session index-based valuation, never an equity-universe proxy.
+                 proxy_valuation: Optional[Mapping[str, Any]] = None,
+                 current_estimate: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """Prefer the current estimate as a neutral reference, without a legacy rule.
 
-    ``proxy_valuation`` is the ARGUS reconstruction of that same quantity from
-    constituent forecast EPS and factors (argus_index_valuation_proxy). It is
-    definition-aligned, unlike a universe median, so it may stand in for the
-    official row when that row is unavailable — as an ARGUS candidate, with
-    the official status and the measured error kept on the result.
+    An explicit current input (including an empty one) never falls back to an
+    older definition. Omitting it preserves the historical index-based API for
+    old records and their separate studies; its 19x rule is not a current rule.
     """
     if license_status not in {"AVAILABLE", "LICENSE_BLOCKED", "MISSING"}:
         raise ValueError("invalid_nikkei_valuation_license_status")
@@ -1002,6 +1002,24 @@ def evaluate_d04(*, cutoff: str, analysis_instrument: str,
     }
     if analysis_instrument != "NIKKEI_225_INDEX":
         return {**result, "missing": ["nikkei_index_identity_required"]}
+    if current_estimate is not None:
+        from jp_market_price_paths import CURRENT_BASIS, current_estimate_scale
+        scale = current_estimate_scale(current_estimate, cutoff=cutoff,
+            anchor_date=current_estimate.get("date"), anchor_price=current_estimate.get("indexClose"))
+        modern = {**result, "lineage": "ARGUS_CURRENT_ESTIMATE",
+                  "propositionId": "ARGUS-D04-CURRENT-PER-REFERENCE",
+                  "valuationBasis": CURRENT_BASIS, "ruleStatus": "RULE_NOT_DEFINED",
+                  "activationRule": None, "conditionRule": None,
+                  "conditionRuleJa": "価格の目盛りと同じ最新PER。警戒の判定基準は未定義。",
+                  "epsLabelJa": "時価総額加重の推計EPS（価格の目盛りと同じ値）"}
+        if scale["status"] != "AVAILABLE":
+            return {**modern, "missing": [scale["reason"]]}
+        return {**modern, "status": "AVAILABLE", "missing": [],
+                "eps": scale["eps"], "indexLevel": scale["anchorPrice"], "per": scale["per"],
+                "valuation": scale, "epsKind": scale["epsKind"],
+                "levels": [{"multiple": multiple, "value": round(scale["eps"] * multiple, 2),
+                            "labelJa": f"PER{multiple}倍の価格", "classification": "reference_level",
+                            "supportOrResistance": False} for multiple in D04_PER_LADDER]}
     if isinstance(index_valuation, Mapping):
         from jp_market_price_paths import index_valuation_scale
         scale = index_valuation_scale(index_valuation, cutoff=cutoff,
@@ -1331,6 +1349,7 @@ def evaluate_d01_d07(*, cutoff: str,
                      nikkei_license_status: str = "LICENSE_BLOCKED",
                      nikkei_valuation: Optional[Mapping[str, Any]] = None,
                      nikkei_proxy_valuation: Optional[Mapping[str, Any]] = None,
+                     nikkei_current_estimate: Optional[Mapping[str, Any]] = None,
                      foreign_flow_rows: Iterable[Mapping[str, Any]] = (),
                      vix_rows: Iterable[Mapping[str, Any]] = (),
                      earnings_event: Optional[Mapping[str, Any]] = None,
@@ -1348,7 +1367,7 @@ def evaluate_d01_d07(*, cutoff: str,
             cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",
             eps_evidence=nikkei_eps, index_evidence=nikkei_index,
             license_status=nikkei_license_status, index_valuation=nikkei_valuation,
-            proxy_valuation=nikkei_proxy_valuation),
+            proxy_valuation=nikkei_proxy_valuation, current_estimate=nikkei_current_estimate),
         "D05": evaluate_d05(foreign_flow_rows, cutoff=cutoff),
         "D06": evaluate_d06(vix_rows, cutoff=cutoff),
         "D07": evaluate_d07(
@@ -2759,6 +2778,9 @@ def project_today_sda_safe(*, cutoff: str,
                 "status": row.get("status"),
                 "conditionMet": row.get("conditionMet"),
                 "factNoteJa": fact_note_ja(family, row),
+                "ruleStatus": row.get("ruleStatus"),
+                "valuationBasis": row.get("valuationBasis"),
+                "conditionRuleJa": row.get("conditionRuleJa"),
                 # The owner reads this lineage as "whose rule lit the signal".
                 # D06 evaluates the original claim with the ARGUS 12/26/9
                 # baseline, because the original MACD parameters were never

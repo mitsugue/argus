@@ -12,13 +12,16 @@ NEWS = [
     {"eventId": "nie-4", "severity": "HIGH", "eventType": "EARNINGS", "headlineJa": "決算", "sourceReceivedAt": "2026-10-01T03:00:00Z"},
     {"eventId": "nie-5", "severity": "HIGH", "eventType": "BOJ", "headlineJa": "翻訳処理中", "sourceReceivedAt": "2026-10-01T03:00:00Z"},
 ]
-RECORD = {"eventId": "ev-nfp-20261002", "eventCode": "NFP", "title": "米雇用統計",
-          "releaseReaction": {"basis": "PRE_RELEASE_BASELINE", "eventTimeUtc": "2026-10-02T12:30:00Z",
-                              "baseline": {"capturedAt": "2026-10-02T12:29:00Z", "values": {"ZQ=F": {"price": 96.05}}},
-                              "windows": {"+5m": {"observedAt": "2026-10-02T12:35:00Z",
-                                                  "moves": {"ffImpliedRateMoveBp": -2.5, "ffImpliedRateAfterPct": 3.925,
-                                                            "nasdaqFuturesMovePct": 0.86, "nikkeiFuturesMovePct": 1.17},
-                                                  "reading": {"code": "RATE_RELIEF_RISK_ON", "labelJa": "利上げ観測の後退を安心材料に株高"}}}}}
+# Raw synthetic quote clocks, rather than an unverified precomputed reading.
+import argus_macro_release_reaction as rr
+def _release_capture(at, prices):
+    return {"capturedAt":at,"captureStartedAt":at,"source":rr.PROVIDER,"missing":[],
+            "values":{symbol:{"price":value,"tradedAt":at,"receivedAt":at} for symbol,value in prices.items()}}
+RECORD = {"eventId":"nfp-test","eventCode":"NFP","title":"米雇用統計",
+          "releaseReaction":rr.build("nfp-test","2026-10-02T12:30:00Z",
+              _release_capture("2026-10-02T12:28:00Z",{"ZQ=F":96.05,"NQ=F":26800,"NKD=F":68500}),
+              {"+5m":_release_capture("2026-10-02T12:35:00Z",{"ZQ=F":96.075,"NQ=F":27030,"NKD=F":69300})})}
+
 CALENDAR = [{"eventCode": "FOMC", "title": "FOMC", "eventTimeUtc": "2026-10-28T18:00:00Z"},
             {"eventCode": "CPI", "title": "米CPI", "eventTimeUtc": "2026-10-14T12:30:00Z"},
             {"eventCode": "BOJ", "title": "日銀会合", "eventTimeUtc": "2026-10-30T03:00:00Z"},
@@ -155,3 +158,46 @@ def test_ai_views_are_validated_like_sections_and_appended_once():
     assert us["view"]["fearJa"] == "中東情勢の急変" and us["view"]["contextId"] == "ctx-3" and us["view"]["kind"] == "INFERENCE"
     # The AI view is context for display, never evidence text the AI could cite back.
     assert all("期待:" not in f["text"] for f in mpm.explanation_facts(later))
+
+
+
+def test_reaction_memory_rechecks_invalid_source_and_never_invents_pricing():
+    from copy import deepcopy
+    record = deepcopy(RECORD)
+    record["releaseReaction"]["baseline"]["source"] = "synthetic-other-provider"
+    original = deepcopy(record)
+    memory = mpm.empty()
+    assert mpm.ingest_release_reaction(memory,record) == 1
+    assert not any(r["kind"] == "PRICING" for r in memory["entries"])
+    reaction = memory["entries"][0]
+    assert reaction["measured"]["readingCode"] == "UNMEASURED"
+    assert reaction["measured"]["ffImpliedRateMoveBp"] is None
+    assert reaction["ref"]["hasComparableMoves"] is False
+    facts = mpm.explanation_facts(mpm.snapshot(memory,now_iso="2026-10-03T02:00:00Z"))
+    assert facts[0]["verification"] == "CORROBORATED"
+    assert "3.950" not in facts[0]["text"] and "反応を測れていない" in facts[0]["text"]
+    assert record == original
+
+
+def test_old_unverified_derived_memory_is_preserved_but_not_cited_as_current_evidence():
+    from copy import deepcopy
+    memory = mpm.empty();mpm.ingest_release_reaction(memory,RECORD)
+    for entry in memory["entries"]:
+        entry["ref"].pop("sourceTimeValidation")
+        entry["ref"].pop("hasComparableMoves", None)
+        # A real legacy entry's identity was made from its legacy body.
+        entry.update(mpm._entry(entry["themeId"],entry["kind"],entry["at"],entry["textJa"],
+                               ref=entry["ref"],severity=entry["severity"],measured=entry["measured"]))
+    original = deepcopy(memory)
+    view = mpm.snapshot(memory,now_iso="2026-10-03T02:00:00Z")
+    theme = next(t for t in view["themes"] if t["themeId"] == "US_POLICY_RATE")
+    assert theme["lastReaction"] is None and theme["pricing"] is None
+    assert theme["excludedUnverifiedReleaseEntries"] == 2
+    assert mpm.explanation_facts(view) == []
+    assert memory == original
+    assert mpm.ingest_release_reaction(memory,RECORD) == 2
+    assert memory["entries"][:2] == original["entries"]
+    assert mpm.ingest_release_reaction(memory,RECORD) == 0
+    restored = mpm.snapshot(memory,now_iso="2026-10-03T02:00:00Z")
+    facts = mpm.explanation_facts(restored)
+    assert facts[0]["verification"] == "VERIFIED"

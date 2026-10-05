@@ -556,11 +556,11 @@ def test_missing_artifact_resets_to_empty_shadow_without_invalidation(tmp_path):
     assert result.artifact["intervalBuckets"] == []
 
 
-def test_benchmark_harness_smoke_is_reproducible_and_buffer_bounded():
+def test_benchmark_harness_acceptance_is_reproducible_and_buffer_bounded():
     try:
         completed = subprocess.run(
             [sys.executable, "scripts/recovery_measurement_benchmark.py",
-             "--smoke", "--samples", "1"], check=True,
+             "--target-mib", "145", "--samples", "5"], check=True,
             capture_output=True, text=True)
     except subprocess.CalledProcessError as exc:
         # This local synthetic benchmark reports the failed resource gates in
@@ -569,6 +569,9 @@ def test_benchmark_harness_smoke_is_reproducible_and_buffer_bounded():
             f"measurement benchmark exited {exc.returncode}\n"
             f"stdout:\n{exc.stdout}\nstderr:\n{exc.stderr}", pytrace=False)
     report = json.loads(completed.stdout)
+    assert report["mode"] == "acceptance"
+    assert report["samples"] == 5
+    assert 130 <= report["fixtureCanonicalMiB"] <= 160
     assert report["passed"] is True
     assert report["fullSizeBuffers"] == 0
     assert report["outputChunkLimitBytes"] <= 1024 * 1024

@@ -123,3 +123,27 @@ assert.equal(reading.signalPerformanceJa('D07',study), '過去の成績：測定
 assert.equal(reading.signalPerformanceJa('D06',{...study,status:'UNAVAILABLE'}), '過去の成績：未取得');
 study.conditions.D06.horizons[5].hitShare=0;
 assert.match(reading.signalPerformanceJa('D06',study), /上昇 0.0%/);
+
+
+// The current PER definition never borrows the old D04 performance.
+assert.match(reading.signalPerformanceJa('D04', study, 'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD'), /最新PER.*未定義.*旧方式/);
+const currentPerSignal = ms.marketSignalsView({marketSignals:{signals:ms.MARKET_SIGNAL_DEFINITIONS.map(def => ({
+  ...def, state:'DATA_GATED', status:'AVAILABLE', conditionMet:null,
+  ...(def.family === 'D04' ? {ruleStatus:'RULE_NOT_DEFINED', valuationBasis:'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD',
+                            conditionRuleJa:'最新の推計PER。警戒基準は未定義'} : {})
+}))}});
+assert.equal(currentPerSignal.activeCount, 0);
+assert.equal(currentPerSignal.signals[3].ruleStatus, 'RULE_NOT_DEFINED');
+assert.equal(currentPerSignal.signals[3].valuationBasis, 'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD');
+assert.match(currentPerSignal.signals[3].conditionRuleJa, /警戒基準は未定義/);
+
+assert.equal(ms.signalStateFromFamily({status:'AVAILABLE',conditionMet:true,ruleStatus:'RULE_NOT_DEFINED'}), 'DATA_GATED');
+const inconsistentCurrent = ms.marketSignalsView({marketSignals:{signals:ms.MARKET_SIGNAL_DEFINITIONS.map(def => ({
+ ...def, state:def.family === 'D04' ? 'ACTIVE' : 'CLEAR', status:'AVAILABLE', conditionMet:def.family === 'D04',
+ ...(def.family === 'D04' ? {ruleStatus:'RULE_NOT_DEFINED',valuationBasis:'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD'} : {})
+}))}});
+assert.equal(inconsistentCurrent.activeCount, 0);
+const derivedCurrent = ms.marketSignalsView({families:{D04:{status:'AVAILABLE',conditionMet:true,
+ ruleStatus:'RULE_NOT_DEFINED',valuationBasis:'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD',conditionRuleJa:'最新PERの警戒基準は未定義'}}});
+assert.equal(derivedCurrent.activeCount, 0);
+assert.equal(derivedCurrent.signals[3].valuationBasis, 'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD');

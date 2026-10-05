@@ -206,7 +206,8 @@ def _condition(family, rule, events, closes, sessions):
 
 
 def sign_event_study(condition_rows: Sequence[Mapping[str, Any]], closes: Mapping[str, float],
-                     session_dates: Sequence[str], *, cutoff: str) -> dict[str, Any]:
+                     session_dates: Sequence[str], *, cutoff: str,
+                     valuation_basis: str | None = None) -> dict[str, Any]:
     """Per-condition history of activations and what followed them."""
     cutoff_time = _instant(cutoff)
     if cutoff_time is None:
@@ -222,7 +223,10 @@ def sign_event_study(condition_rows: Sequence[Mapping[str, Any]], closes: Mappin
     events = _first_known_events(condition_rows, cutoff_time)
     conditions = {}
     for family in FAMILIES:
-        if family in NOT_EVALUABLE:
+        if family == "D04" and valuation_basis == "ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD":
+            conditions[family] = {**_empty_condition(family, "NOT_EVALUABLE", "current_per_activation_rule_not_defined"),
+                                  "valuationBasis": valuation_basis, "legacy19RuleApplied": False}
+        elif family in NOT_EVALUABLE:
             conditions[family] = _empty_condition(family, "NOT_EVALUABLE", NOT_EVALUABLE[family])
         else:
             conditions[family] = _condition(family, ACTIVATION_RULES[family], events, usable, sessions)
@@ -238,6 +242,7 @@ def sign_event_study(condition_rows: Sequence[Mapping[str, Any]], closes: Mappin
         "primaryHorizon": PRIMARY_HORIZON, "minimumActivations": MINIMUM_ACTIVATIONS,
         "periodRule": "chronological_thirds_of_each_condition_coverage",
         "conditions": conditions,
+        "d04ValuationBasis": valuation_basis or "ARGUS_PROXY_INDEX_BASED_PER",
         "historicalVintageVerified": False, "validationStatus": "UNVALIDATED",
         "predictiveProbabilities": None, "actionAuthority": False, "automaticAiCalls": 0,
     }

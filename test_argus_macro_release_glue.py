@@ -15,12 +15,17 @@ PRICES = {"before": {"ZQ=F": 96.05, "ZT=F": 101.82, "ZN=F": 104.61, "NQ=F": 2680
 
 def _provider(monkeypatch, phase):
     calls = []
+    def clock():
+        from datetime import datetime, timezone
+        minute = -2 if phase[0] == "before" else (phase[1] if len(phase) > 1 else 5)
+        return datetime(2026, 10, 2, 12, 30, tzinfo=timezone.utc).timestamp() + minute * 60
+    monkeypatch.setattr(scanner.time, "time", clock)
     class Response:
         status_code = 200
         def __init__(self, symbol): self.symbol = symbol
         def json(self):
             return {"chart": {"result": [{"meta": {"regularMarketPrice": PRICES[phase[0]][self.symbol],
-                                                   "regularMarketTime": 1790945400}}]}}
+                                                   "regularMarketTime": clock()}}]}}
     def get(url, **kwargs):
         calls.append(url)
         return Response(url.rsplit("/", 1)[1])
@@ -100,13 +105,13 @@ def test_post_prompt_reads_the_measured_reaction_and_is_replaced_once_at_sixty(m
     # Nothing changes until the +60m window exists; then exactly one more generation.
     scanner._generate_macro_event_analysis(limit=8)
     assert len(prompts) == 1
-    scanner._macro_release_window(EVENT, "+30m"); scanner._generate_macro_event_analysis(limit=8)
+    phase.append(30); scanner._macro_release_window(EVENT, "+30m"); scanner._generate_macro_event_analysis(limit=8)
     assert len(prompts) == 1
-    scanner._macro_release_window(EVENT, "+60m"); scanner._generate_macro_event_analysis(limit=8)
+    phase[1] = 60; scanner._macro_release_window(EVENT, "+60m"); scanner._generate_macro_event_analysis(limit=8)
     assert len(prompts) == 2 and scanner._MACRO_ANALYSIS[EVENT["id"]]["post"]["reactionWindow"] == "+60m"
     scanner._generate_macro_event_analysis(limit=8)
     assert len(prompts) == 2
-    scanner._macro_release_window(EVENT, "+8h"); scanner._generate_macro_event_analysis(limit=8)
+    phase[1] = 480; scanner._macro_release_window(EVENT, "+8h"); scanner._generate_macro_event_analysis(limit=8)
     assert len(prompts) == 3 and scanner._MACRO_ANALYSIS[EVENT["id"]]["post"]["reactionWindow"] == "+8h"
     scanner._generate_macro_event_analysis(limit=8)
     assert len(prompts) == 3
@@ -143,3 +148,22 @@ def test_boj_meetings_continue_into_2027_with_the_published_dates():
     boj = [e for e in events if e["kind"] == "boj"]
     assert [e["eventDate"] for e in boj] == ["2026-12-18", "2027-01-22"]
     assert boj[1]["title"].endswith("(Outlook Report)")
+
+
+def test_later_capture_preserves_and_rejects_earlier_provider_and_start_evidence(monkeypatch):
+    from copy import deepcopy
+    _seed(monkeypatch)
+    phase = ["before"]; _provider(monkeypatch, phase)
+    scanner._macro_release_baseline(EVENT)
+    phase[:] = ["after",5]; scanner._macro_release_window(EVENT,"+5m")
+    prior = scanner._MACRO_ANALYSIS[EVENT["id"]]["releaseReaction"]["windows"]["+5m"]
+    prior["source"] = "synthetic-other-provider"
+    prior["captureStartedAt"] = "2026-10-02T12:36:00Z"
+    prior_evidence = deepcopy(prior["values"])
+    phase[1] = 30; scanner._macro_release_window(EVENT,"+30m")
+    windows = scanner._MACRO_ANALYSIS[EVENT["id"]]["releaseReaction"]["windows"]
+    assert windows["+5m"]["source"] == "synthetic-other-provider"
+    assert windows["+5m"]["captureStartedAt"] == "2026-10-02T12:36:00Z"
+    assert windows["+5m"]["reading"]["code"] == "UNMEASURED"
+    assert windows["+5m"]["values"] == prior_evidence
+    assert windows["+30m"]["reading"]["code"] == "RATE_RELIEF_RISK_ON"

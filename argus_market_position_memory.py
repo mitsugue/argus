@@ -121,12 +121,13 @@ def ingest_news(memory: Dict[str, Any], events: Iterable[Mapping[str, Any]]) -> 
 
 def ingest_release_reaction(memory: Dict[str, Any], record: Mapping[str, Any]) -> int:
     """A measured reaction (argus_macro_release_reaction) becomes one entry per window."""
-    reaction = (record or {}).get("releaseReaction") or {}
+    from argus_macro_release_reaction import revalidate
+    reaction = revalidate((record or {}).get("releaseReaction"))
     theme_id = theme_for_event_code(record.get("eventCode"))
     if theme_id is None or not reaction.get("windows"):
         return 0
     added = 0
-    base = ((reaction.get("baseline") or {}).get("values") or {}).get("ZQ=F") or {}
+    base = (reaction.get("baselineComparisonValues") or {}).get("ZQ=F") or {}
     for name, window in reaction["windows"].items():
         move = window.get("moves") or {}
         read = window.get("reading") or {}
@@ -139,12 +140,15 @@ def ingest_release_reaction(memory: Dict[str, Any], record: Mapping[str, Any]) -
             text += f"(政策金利の予想{move['ffImpliedRateMoveBp']:+.1f}bp→{move['ffImpliedRateAfterPct']:.3f}%)"
         entry = _entry(theme_id, "RELEASE_REACTION", str(window.get("observedAt") or reaction.get("eventTimeUtc")),
                        text, ref={"eventId": str(record.get("eventId") or ""), "source": "release_reaction",
-                                  "basis": reaction.get("basis")}, severity="HIGH", measured=measured)
+                                  "basis": reaction.get("basis"), "sourceTimeValidation": "source-time-v2",
+                                  "hasComparableMoves": any(v is not None for k, v in move.items() if "Move" in k)},
+                       severity="HIGH", measured=measured)
         added += append(memory, entry)
     if base.get("price") is not None:
         entry = _entry("US_POLICY_RATE", "PRICING", str((reaction.get("baseline") or {}).get("capturedAt")),
                        f"発表前の織り込み: FF金利先物の示す政策金利の予想 {100 - float(base['price']):.3f}%",
-                       ref={"eventId": str(record.get("eventId") or ""), "source": "release_baseline", "symbol": "ZQ=F"},
+                       ref={"eventId": str(record.get("eventId") or ""), "source": "release_baseline", "symbol": "ZQ=F",
+                            "sourceTimeValidation": "source-time-v2"},
                        measured={"ffImpliedRatePct": round(100 - float(base["price"]), 3)})
         added += append(memory, entry)
     return added
@@ -281,7 +285,13 @@ def snapshot(memory: Mapping[str, Any], *, now_iso: str,
     now = _instant(now_iso) or datetime.now(timezone.utc)
     themes = []
     for theme_id, spec in THEMES.items():
-        rows = _theme_entries(memory, theme_id)
+        original_rows = _theme_entries(memory, theme_id)
+        # Old derived readings do not retain their source clocks. Preserve
+        # them in storage, but do not cite them as current measured evidence.
+        rows = [row for row in original_rows if
+                not (row.get("kind") == "RELEASE_REACTION" or
+                     (row.get("kind") == "PRICING" and (row.get("ref") or {}).get("source") == "release_baseline"))
+                or (row.get("ref") or {}).get("sourceTimeValidation") == "source-time-v2"]
         last = rows[-1] if rows else None
         last_at = _instant(last["at"]) if last else None
         status = "EMPTY" if not rows else ("ACTIVE" if last_at and now - last_at <= timedelta(days=ACTIVE_DAYS) else "QUIET")
@@ -290,11 +300,14 @@ def snapshot(memory: Mapping[str, Any], *, now_iso: str,
         ai_view = next((r for r in reversed(rows) if r.get("kind") == "AI_VIEW"), None)
         themes.append({
             "themeId": theme_id, "labelJa": spec["labelJa"], "status": status,
-            "entryCount": len(rows), "lastUpdatedAt": last["at"] if last else None,
+            "entryCount": len(original_rows), "excludedUnverifiedReleaseEntries": len(original_rows) - len(rows),
+            "lastUpdatedAt": last["at"] if last else None,
             "recent": [{k: r.get(k) for k in ("entryId", "kind", "at", "textJa", "severity", "ref")}
                        for r in rows[-RECENT_ENTRIES:]][::-1],
             "pricing": pricing["measured"] if pricing else None,
-            "lastReaction": {"at": reaction["at"], "textJa": reaction["textJa"], **(reaction.get("measured") or {})}
+            "lastReaction": {"at": reaction["at"], "textJa": reaction["textJa"],
+                             "hasComparableMoves": (reaction.get("ref") or {}).get("hasComparableMoves") is True,
+                             **(reaction.get("measured") or {})}
                             if reaction else None,
             "nextEvent": _next_event(theme_id, scheduled_events, now),
             "view": ({**((ai_view.get("measured") or {}).get("view") or {}), "at": ai_view["at"],
@@ -326,7 +339,7 @@ def explanation_facts(view: Mapping[str, Any]) -> List[Dict[str, Any]]:
             bits.append(f"次: {theme['nextEvent']['title']}（{theme['nextEvent']['eventTimeUtc'][:16].replace('T', ' ')}Z）")
         if theme["status"] == "QUIET":
             bits.append("最近の動きなし")
-        measured = bool(theme.get("lastReaction") or theme.get("pricing"))
+        measured = bool((theme.get("lastReaction") or {}).get("hasComparableMoves") or theme.get("pricing"))
         latest = theme["recent"][0] if theme.get("recent") else {}
         facts.append({"text": "。".join(bits)[:160], "priority": "P1", "source": "market_position",
                       "verification": "VERIFIED" if measured else "CORROBORATED",

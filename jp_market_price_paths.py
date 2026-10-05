@@ -1,8 +1,9 @@
 """Explicit scales and descriptive scenario paths for the Japan index.
 
 The ensemble is a research forecast, not a calibrated probability. A reference
-frequency is not an accuracy claim. The price scale requires definition-aligned
-index valuation; ETF or capitalization-weighted PER is not a substitute.
+frequency is not an accuracy claim. The current price scale uses the stored market-cap weighted estimate. Old
+index valuation remains a separate compatibility path; the definitions are
+never mixed and missing current inputs do not fall back to an old definition.
 """
 from __future__ import annotations
 
@@ -12,13 +13,14 @@ import statistics
 from typing import Any, Mapping, Sequence
 
 from jp_market_engine import _instant
+from jp_market_level_map import EPS_BASIS as CURRENT_BASIS, EPS_LABEL_JA as CURRENT_LABEL_JA
 
 VALUATION_BASIS = "NIKKEI_225_INDEX_BASED_PER"
 #: The ARGUS reconstruction from constituent forecast EPS (argus_index_valuation_proxy).
 #: It is accepted by the same scale so the chart can be translated into yen, and
 #: it keeps its own basis so nothing downstream can present it as the official figure.
 PROXY_BASIS = "ARGUS_PROXY_INDEX_BASED_PER"
-ACCEPTED_BASES = (VALUATION_BASIS, PROXY_BASIS)
+ACCEPTED_BASES = (VALUATION_BASIS, PROXY_BASIS, CURRENT_BASIS)
 BASIS_LABEL_JA = {
     VALUATION_BASIS: "公式の指数ベースPER（日経平均プロフィル日次サマリー）",
     PROXY_BASIS: "ARGUS代理値（構成銘柄の予想EPSから再構成。公式の指数ベースPERではありません）",
@@ -100,8 +102,64 @@ def _quantile(values: Sequence[float], fraction: float) -> float:
     return ordered[left] + (ordered[right] - ordered[left]) * (position - left)
 
 
+def current_estimate_scale(valuation: Mapping[str, Any] | None, *, cutoff: str,
+                           anchor_date: str, anchor_price: float) -> dict[str, Any]:
+    """Read the existing estimate, with its definition and actual receipt.
+
+    This does not calculate a new estimate, manufacture a historical vintage,
+    or substitute another PER when the current definition is unavailable.
+    """
+    result = {"status": "UNAVAILABLE", "reason": "missing_current_per_estimate",
+              "instrumentId": "NIKKEI_225_INDEX", "currency": "JPY", "basis": CURRENT_BASIS,
+              "eps": None, "per": None, "anchorPrice": None}
+    if not isinstance(valuation, Mapping) or not valuation or set(valuation) == {"basis"}:
+        return result
+    if valuation.get("instrumentId") != "NIKKEI_225_INDEX" or valuation.get("basis") != CURRENT_BASIS:
+        return {**result, "reason": "incompatible_current_per_definition"}
+    if valuation.get("currency") != "JPY" or valuation.get("date") != anchor_date:
+        return {**result, "reason": "incompatible_valuation_currency_or_session"}
+    recorded = valuation.get("recordedAt")
+    # Date-only values are not exact acquisition instants.
+    known = _instant(recorded) if isinstance(recorded, str) and "T" in recorded else None
+    limit = _instant(cutoff)
+    if known is None or limit is None or known > limit:
+        return {**result, "reason": "current_per_not_known_at_cutoff"}
+    if not valuation.get("sourceRef") or not valuation.get("constituentsAsOf"):
+        return {**result, "reason": "current_per_source_or_constituents_missing"}
+    if valuation.get("officialValue") is not False:
+        return {**result, "reason": "current_per_estimate_identity_required"}
+    index, per, eps, anchor = (_finite(v) for v in
+        (valuation.get("indexClose"), valuation.get("per"), valuation.get("eps"), anchor_price))
+    if any(v is None or v <= 0 for v in (index, per, eps, anchor)):
+        return {**result, "reason": "invalid_valuation_value"}
+    if not math.isclose(index, anchor, rel_tol=1e-6, abs_tol=.01):
+        return {**result, "reason": "valuation_anchor_price_mismatch"}
+    if not math.isclose(eps * per, index, rel_tol=1e-6, abs_tol=.01):
+        return {**result, "reason": "current_per_eps_identity_mismatch"}
+    coverage = valuation.get("coverage")
+    share = _finite(coverage.get("marketCapShareUsed")) if isinstance(coverage, Mapping) else None
+    if share is None or not 0 < share <= 1:
+        return {**result, "reason": "current_per_coverage_missing"}
+    return {**result, "status": "AVAILABLE", "reason": None, "eps": eps, "per": per,
+            "anchorPrice": anchor, "date": anchor_date, "basisLabelJa": CURRENT_LABEL_JA,
+            "isProxy": True, "officialValue": False, "historicalVintageVerified": False,
+            "proxyCoverage": dict(coverage), "proxyErrorPct": None,
+            "constituentsAsOf": valuation["constituentsAsOf"], "sourceRef": valuation["sourceRef"],
+            "recordedAt": recorded, "knownAt": recorded, "availableFrom": recorded,
+            "epsKind": "MARKET_CAP_WEIGHTED_FORWARD_ESTIMATE",
+            "epsDerivation": "stored same-session market-cap-weighted estimate",
+            "shapeToYenFormula": "current index EPS * current index PER * shape / 100",
+            "assumptions": ["constant_current_index_eps_for_reference_mapping",
+                            "shape_returns_are_not_observed_historical_per_changes"],
+            "revocationConditions": ["new_index_eps_or_definition", "anchor_session_changes"],
+            "perClippingApplied": False}
+
+
 def index_valuation_scale(valuation: Mapping[str, Any] | None, *, cutoff: str,
                           anchor_date: str, anchor_price: float) -> dict[str, Any]:
+    if isinstance(valuation, Mapping) and valuation.get("basis") == CURRENT_BASIS:
+        return current_estimate_scale(valuation, cutoff=cutoff,
+                                      anchor_date=anchor_date, anchor_price=anchor_price)
     result = {"status": "UNAVAILABLE", "reason": "missing_index_valuation",
               "instrumentId": "NIKKEI_225_INDEX", "currency": "JPY",
               "eps": None, "per": None, "anchorPrice": None}
@@ -337,6 +395,10 @@ def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any]
                      "flatThresholdPct": ensemble["classification"]["upAbove"]},
         "scaleExplanation": ("同じ基準日の指数EPS×指数PER×比較値/100で円換算しています。短期間のEPS一定を仮定しています。"
                              if use_yen else "現在と各過去局面の基準日を100に合わせた形状比較です。整合する指数EPS/PERがないため円換算は表示していません。"),
+        "reviewConditionsJa": [
+            "基準日や比較に使う市場条件が更新されたら、候補を選び直します。",
+            *(["EPSの値・計算方法が変わったら、円換算をやり直します。"] if use_yen else []),
+        ],
         "limitations": ["過去の参考経路は確定した未来ではありません。",
                         "単純トレンド等に対する独立期間の追加効果は未検証です。",
                         "取得済みの終値までを表示し、欠測した価格は補間していません。"],
@@ -361,6 +423,13 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     from jp_market_analogs import (AnalogPolicy, INSTRUMENT, FEATURE_MAX_AGE_DAYS, _hash, build_episode,
                                   reference_path, select_episodes)
     from jp_market_engine import point_in_time_rows
+
+    current_per_context = isinstance(valuation, Mapping) and valuation.get("basis") == CURRENT_BASIS
+    if current_per_context:
+        # A legacy 19x event must not influence current-condition selection
+        # or be scored as a warning under a different PER definition.
+        condition_rows = [row for row in condition_rows
+                          if row.get("seriesId") != "d04_index_per_at_least_19"]
 
     if isinstance(horizon_sessions, bool) or horizon_sessions not in (1, 5, 10, 20):
         raise ValueError("unsupported_reference_horizon")
@@ -452,7 +521,8 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
         import jp_market_analog_backtest as backtest
         key = _hash({"method": backtest.METHOD, "last": visible[-1]["date"], "candidates": len(candidates),
                      "policy": policy.policy_id, "scales": list(policy.state_scales),
-                     "grid": list(backtest.WEIGHT_GRID), "evidence": [len(rows) for rows in evidence]})
+                     "grid": list(backtest.WEIGHT_GRID), "evidence": [len(rows) for rows in evidence],
+                     "valuationBasis": (valuation or {}).get("basis")})
         if backtest_cache.get("key") != key:
             closes = {row["date"]: float(row["close"]) for row in visible if row.get("close")}
             result = backtest.walk_forward(candidates, closes, session_dates, policy=policy, state_rows=state_rows)
@@ -506,6 +576,7 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     import jp_market_sign_event_study as sign_study
     condition_list = [row for row in condition_rows if isinstance(row, Mapping)]
     study_key = _hash({"method": sign_study.METHOD, "last": visible[-1]["date"], "cutoffDate": cutoff[:10],
+                       "valuationBasis": (valuation or {}).get("basis"),
                        "sessions": len(session_dates), "bars": len(visible),
                        "conditions": [[str(row.get(k)) for k in ("seriesId", "date", "value", "availableFrom",
                                                                   "knownAt", "revision")] for row in condition_list]})
@@ -514,7 +585,8 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
         study = cached_study["result"]
     else:
         closes = {row["date"]: float(row["close"]) for row in visible if row.get("close")}
-        study = sign_study.sign_event_study(condition_list, closes, session_dates, cutoff=cutoff)
+        study = sign_study.sign_event_study(condition_list, closes, session_dates, cutoff=cutoff,
+                                           valuation_basis=CURRENT_BASIS if current_per_context else None)
         if backtest_cache is not None:
             backtest_cache["signEventStudy"] = {"key": study_key, "result": study}
     document["forecast"]["signEventStudy"] = copy.deepcopy(study)

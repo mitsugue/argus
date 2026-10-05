@@ -69,13 +69,20 @@ def reaction_tick(events: Iterable[Mapping[str, Any]], now: datetime, *,
             posted = _state["posted"].get(event_id)
         try:
             if baseline and reaction.baseline_due(at, now):
-                baseline(event)             # the last capture before the release wins
+                result = baseline(event)   # the last usable capture before release wins
+                if isinstance(result, Mapping) and result.get("schemaVersion") == reaction.SCHEMA:
+                    if not result.get("baselineComparisonValues"):
+                        raise ValueError("release_baseline_source_time_unavailable")
                 with _lock:
                     _state["baselines"][event_id] = now
                 done.append((event_id, "baseline"))
             name = reaction.window_due(at, now, captured) if window else None
             if name:
-                window(event, name)
+                result = window(event, name)
+                if isinstance(result, Mapping) and result.get("schemaVersion") == reaction.SCHEMA:
+                    measured = (result.get("windows") or {}).get(name) or {}
+                    if not measured.get("comparisonValues"):
+                        raise ValueError("release_window_source_time_unavailable")
                 with _lock:
                     _state["windows"].setdefault(event_id, {})[name] = now
                 done.append((event_id, name))

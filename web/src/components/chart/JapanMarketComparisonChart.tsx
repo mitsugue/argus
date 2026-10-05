@@ -166,6 +166,10 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
     {issued && trackRecord && <IssuedForecastRecord record={issued} minimum={trackRecord.minimumDirectionalForecasts} />}
     <details className="jp-comparison__details"><summary>比較元・尺度・検証状態を見る</summary>
       <p>{document.scaleExplanation}</p>
+      {document.reviewConditionsJa && <section aria-label="比較を見直す条件">
+        <h3>比較を見直すとき</h3>
+        {document.reviewConditionsJa.map(line => <p key={line}>{line}</p>)}
+      </section>}
       {document.historyCoverage && <>
         <p>価格の収録：{document.historyCoverage.sourceStart}〜{document.historyCoverage.sourceEnd}
           （{document.historyCoverage.sourceBars.toLocaleString('ja-JP')}営業日）。
@@ -226,7 +230,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
           VIXの新しい値は既存の価格取得経路から補います。</p>
       </section>}
       <p>情報締切：{new Date(document.informationCutoff).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST</p>
-      <p>基準日は東証の引け後、次回の集計で1営業日進みます。基準日が進むか市場条件の履歴が更新されると、候補と計算予測は再計算されます。</p>
+      {!document.reviewConditionsJa && <p>基準日は東証の引け後、次回の集計で1営業日進みます。基準日が進むか市場条件の履歴が更新されると、候補と計算予測は再計算されます。</p>}
       {candidates.map(candidate => <article key={candidate.snapshotId}>
         <h3>{candidate.anchorDate}を基準とする{candidate.comparisonKind === 'MARKET_ANALOG' ? '市場比較' : '部分比較'}</h3>
         <p>{candidate.similarReasons.join('。')}</p>

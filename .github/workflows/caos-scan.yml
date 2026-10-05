@@ -547,7 +547,7 @@ jobs:
           for attempt in 1 2 3 4 5; do
             body=$(curl -sS --max-time 90 -X POST -H "X-ARGUS-ADMIN-TOKEN: ${ARGUS_ADMIN_TOKEN}" \
               -H 'Content-Type: application/json' --data '{"only":"future_map"}' "$url" || true)
-            echo "future-map attempt=${attempt} ${body}"
+            echo "future-map attempt=${attempt}"
             if printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("only")=="future_map" and d.get("ok") is True else 1)' 2>/dev/null; then
               exit 0
             fi

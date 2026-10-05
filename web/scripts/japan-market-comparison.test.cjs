@@ -16,6 +16,13 @@ const document = {
   scaleExplanation: '基準日100の形状比較', limitations: ['未検証'],
 };
 assert(validJapanMarketComparison(document, 5));
+const withReview = structuredClone(document);
+withReview.reviewConditionsJa = ['基準日や市場条件を更新したら比較し直します。'];
+assert(validJapanMarketComparison(withReview, 5));
+for (const review of [null, [], [''], ['  '], [1], ['a'.repeat(201)], ['a', 'b', 'c', 'd']]) {
+  assert(!validJapanMarketComparison({ ...document, reviewConditionsJa: review }, 5));
+}
+assert(!Object.hasOwn(document, 'reviewConditionsJa'), 'the older response remains compatible');
 assert(!validJapanMarketComparison(document, 20), 'a previous horizon must not impersonate the selection');
 for (const mutate of [
   d => { d.actual[0].value = NaN; },

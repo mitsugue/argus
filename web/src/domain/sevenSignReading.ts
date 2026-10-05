@@ -14,7 +14,10 @@ const VERDICT: Record<string, string> = {
   ABOVE_BASELINE: '基準を上回る', NOT_EVALUABLE: '測定規則なし',
 };
 const pct = (value: number | null | undefined) => value == null ? '—' : `${(value * 100).toFixed(1)}%`;
-export function signalPerformanceJa(family: string, study: SignEventStudy | null | undefined): string {
+export function signalPerformanceJa(family: string, study: SignEventStudy | null | undefined, currentBasis?: string | null): string {
+  if (family === 'D04' && currentBasis === 'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD') {
+    return '最新PERの警戒条件は未定義。旧方式の成績とは別です。';
+  }
   if (!study || study.status !== 'AVAILABLE') return '過去の成績：未取得';
   const condition = study.conditions[family];
   if (!condition) return '過去の成績：未取得';

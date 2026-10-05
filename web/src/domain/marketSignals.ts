@@ -18,6 +18,9 @@ export interface MarketSignalRow {
   state: MarketSignalState;
   status?: string | null;
   conditionMet?: boolean | null;
+  ruleStatus?: string | null;
+  valuationBasis?: string | null;
+  conditionRuleJa?: string | null;
   /** Why a DATA_GATED row is gated: no source rule vs. missing data (server-provided). */
   gateNoteJa?: string | null;
   /** The value, its week and when it was published (2026-10-04, a situation summary). */
@@ -34,6 +37,7 @@ export interface MarketSignalsProjection {
     id?: string; family?: string; nameEn?: string; nameJa?: string;
     state?: string; status?: string | null; conditionMet?: boolean | null;
     gateNoteJa?: string | null; factNoteJa?: string | null;
+    ruleStatus?: string | null; valuationBasis?: string | null; conditionRuleJa?: string | null;
   }>;
 }
 
@@ -68,10 +72,11 @@ const STATES: ReadonlySet<string> = new Set(
 
 /** The single counting rule (mirrors argus_market_signals.signal_state). */
 export function signalStateFromFamily(
-  row: { status?: string | null; conditionMet?: boolean | null } | null | undefined,
+  row: { status?: string | null; conditionMet?: boolean | null; ruleStatus?: string | null } | null | undefined,
 ): MarketSignalState {
   if (!row || typeof row !== 'object') return 'UNAVAILABLE';
   if (row.status === 'AVAILABLE') {
+    if (row.ruleStatus === 'RULE_NOT_DEFINED') return 'DATA_GATED';
     if (row.conditionMet === true) return 'ACTIVE';
     if (row.conditionMet === false) return 'CLEAR';
     return 'DATA_GATED';
@@ -96,7 +101,8 @@ function decorate(row: MarketSignalRow): MarketSignalsView['signals'][number] {
 export function marketSignalsView(
   projection: {
     marketSignals?: MarketSignalsProjection | null;
-    families?: Record<string, { status?: string | null; conditionMet?: boolean | null }> | null;
+    families?: Record<string, { status?: string | null; conditionMet?: boolean | null;
+      ruleStatus?: string | null; valuationBasis?: string | null; conditionRuleJa?: string | null }> | null;
   } | null | undefined,
 ): MarketSignalsView | null {
   if (!projection) return null;
@@ -105,10 +111,13 @@ export function marketSignalsView(
   if (serverRows && serverRows.length === MARKET_SIGNAL_DEFINITIONS.length) {
     const rows: MarketSignalRow[] = MARKET_SIGNAL_DEFINITIONS.map((def) => {
       const raw = serverRows.find((r) => r.id === def.id);
-      const state = raw && STATES.has(String(raw.state)) ? raw.state as MarketSignalState : 'UNAVAILABLE';
+      const state = raw?.ruleStatus === 'RULE_NOT_DEFINED' && raw?.status === 'AVAILABLE' ? 'DATA_GATED'
+        : raw && STATES.has(String(raw.state)) ? raw.state as MarketSignalState : 'UNAVAILABLE';
       return {
         id: def.id, family: def.family, nameEn: def.nameEn, nameJa: def.nameJa,
         state, status: raw?.status ?? null, conditionMet: raw?.conditionMet ?? null,
+        ruleStatus: raw?.ruleStatus ?? null, valuationBasis: raw?.valuationBasis ?? null,
+        conditionRuleJa: raw?.conditionRuleJa ?? null,
         gateNoteJa: typeof raw?.gateNoteJa === 'string' && raw.gateNoteJa ? raw.gateNoteJa : null,
         factNoteJa: typeof raw?.factNoteJa === 'string' && raw.factNoteJa ? raw.factNoteJa : null,
       };
@@ -129,6 +138,8 @@ export function marketSignalsView(
       id: def.id, family: def.family, nameEn: def.nameEn, nameJa: def.nameJa,
       state: signalStateFromFamily(fam),
       status: fam?.status ?? null, conditionMet: fam?.conditionMet ?? null,
+      ruleStatus: fam?.ruleStatus ?? null, valuationBasis: fam?.valuationBasis ?? null,
+      conditionRuleJa: fam?.conditionRuleJa ?? null,
     };
   });
   const activeCount = rows.filter((r) => r.state === 'ACTIVE').length;
