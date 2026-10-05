@@ -78,7 +78,7 @@ def build_collection_health(inputs, *, now_iso):
                 "scheduledPublicationAt": credit_schedule["latestDueAt"],
                 "nextScheduledPeriod": credit_schedule["nextPeriod"],
                 "nextScheduledPublicationAt": credit_schedule["nextPublicationAt"],
-                "publicationState": "unknown" if expected is None else
+                "publicationState": "unknown" if expected is None or (period is not None and period_clock is None) else
                     "overdue" if period is None or period < expected else "current",
                 "publicationBasis": "nominal_schedule_not_actual_receipt",
             })

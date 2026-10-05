@@ -138,3 +138,9 @@ def test_missing_authority_calendar_does_not_guess_publication_deadline(monkeypa
     row = source({}, "credit_balances")
     assert row["publicationState"] == "unknown"
     assert row["expectedLatestPeriod"] is None and row["nextScheduledPublicationAt"] is None
+
+
+def test_future_observation_period_cannot_satisfy_the_due_week():
+    row = source({"sources": {"credit_balances": {
+        "dataUpdatedAt": NOW, "latestPeriod": "2027-01-01"}}}, "credit_balances")
+    assert row["status"] == "unknown" and row["publicationState"] == "unknown"
