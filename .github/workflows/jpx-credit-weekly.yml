@@ -19,6 +19,11 @@ on:
         description: last period already held (YYYY-MM-DD, exclusive); default = newest in the ledger
         required: false
         default: ''
+      valuation_monthly_backfill:
+        description: 公式月報から不足する評価損益率の過去週を補完（既存の信用残は変更しない）
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: jpx-credit-weekly
@@ -39,6 +44,9 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install --quiet xlrd==2.0.2 openpyxl==3.1.5
+      - name: Install the pinned monthly reader only for the requested backfill
+        if: github.event_name == 'workflow_dispatch' && inputs.valuation_monthly_backfill
+        run: pip install --quiet pdfplumber==0.11.7
       - name: Resolve the newest credit period the ledger already holds
         id: since
         env:
@@ -46,27 +54,35 @@ jobs:
           JPX_SINCE_INPUT: ${{ github.event.inputs.since }}
         run: |
           set -euo pipefail
-          since="$JPX_SINCE_INPUT"
-          if [ -z "$since" ]; then
-            # 2026-09-28: owner authentication gates every read of this host.
-            # The existing operational token passes the gate; it is never logged.
-            since=$(curl -sf --max-time 120 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/market-ledger" | python3 -c '
-          import json, sys
-          doc = json.load(sys.stdin)
-          periods = [str(r.get("periodEnd") or "") for r in doc.get("table") or []
-                     if r.get("seriesId") in ("credit.short_balance", "credit.long_balance")]
-          best = min(periods) if len(periods) == 2 and all(periods) else "2026-07-10"
-          print(best if best >= "2026-07-10" else "2026-07-10")')
-          fi
-          since=$(JPX_VALIDATE_SINCE="$since" python3 -c 'import os; from datetime import date; print(date.fromisoformat(os.environ["JPX_VALIDATE_SINCE"]).isoformat())')
-          echo "since=$since" >> "$GITHUB_OUTPUT"
+          python3 -B - <<'PYTHON'
+          import os
+          from datetime import date
+          from scripts.jpx_credit_weekly import ledger_newest_credit, valuation_cursor
+          try:
+              held = ledger_newest_credit(os.environ["BE"], token=os.environ["ARGUS_ADMIN_TOKEN"])
+              periods = [str(held.get(sid, {}).get("periodEnd") or "")
+                         for sid in ("credit.short_balance", "credit.long_balance")]
+              best = min(periods) if all(periods) else "2026-07-10"
+              since = os.environ["JPX_SINCE_INPUT"] or max(best, "2026-07-10")
+              since = date.fromisoformat(since).isoformat()
+              valuation_since = valuation_cursor([dict(row, seriesId=sid) for sid, row in held.items()])
+              with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+                  out.write("since=" + since + "\nvaluation_since=" + valuation_since + "\n")
+          except Exception as error:
+              print("::error title=jpx-credit-weekly::保存済みの期間を確認できません（" + type(error).__name__ + "）")
+              raise SystemExit(1)
+          PYTHON
       - name: Fetch, validate and import the published weeks (token never logged)
         env:
           JPX_SINCE_RESOLVED: ${{ steps.since.outputs.since }}
+          JPX_VALUATION_SINCE: ${{ steps.since.outputs.valuation_since }}
+          JPX_MONTHLY_BACKFILL: ${{ github.event.inputs.valuation_monthly_backfill }}
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           set -euo pipefail
-          python3 -B scripts/jpx_credit_weekly.py --since "$JPX_SINCE_RESOLVED" \
+          extra=()
+          if [ "$JPX_MONTHLY_BACKFILL" = "true" ]; then extra+=(--valuation-monthly-backfill); fi
+          python3 -B scripts/jpx_credit_weekly.py "${extra[@]}" --since "$JPX_SINCE_RESOLVED" --valuation-since "$JPX_VALUATION_SINCE" \
             --import --backend "$BE" --summary "$RUNNER_TEMP/jpx-credit-summary.json"
       # The ledger itself is persisted by the existing import route. Its
       # authenticated readback and workbook rows are not public artifacts.

@@ -171,7 +171,7 @@ def test_current_weeks_request_the_official_xlsx_name_and_old_weeks_keep_xls(mon
 
 def test_public_stdout_does_not_contain_authenticated_ledger_or_original_rows(monkeypatch, capsys):
     monkeypatch.setenv("ARGUS_ADMIN_TOKEN", "fixture-secret")
-    monkeypatch.setattr(jw, "collect", lambda _: {"fetched": ["2026-09-25"], "gaps": [], "rows": [{"value": 123}], "csv": "private-csv"})
+    monkeypatch.setattr(jw, "collect", lambda _: {"fetched": ["2026-09-25"], "gaps": [], "rows": [{"value": 123, "seriesId": "credit.short_balance", "periodEnd": "2026-09-25"}], "csv": "private-csv"})
     monkeypatch.setattr(jw, "import_rows", lambda *a, **k: {"ok": True, "ledger": {"private": "protected-payload"}})
     assert jw.main(["--import"]) == 0
     output = capsys.readouterr().out
