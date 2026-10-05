@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { useFutureMap, type FutureMapDoc, type FutureMapRow } from '../../hooks/useFutureMap';
+import React, { useEffect, useState } from 'react';
+import { FUTURE_MAP_POLL_MS, useFutureMap, type FutureMapDoc, type FutureMapRow } from '../../hooks/useFutureMap';
 import './FutureMapCard.css';
 
 // FUTURE MAP (owner-approved 2026-10-04): a table of external views of the
@@ -9,6 +9,28 @@ const yen = (v: number) => Math.round(v).toLocaleString('ja-JP');
 const levelText = (row: FutureMapRow) => !row.level ? '―'
   : row.level.low === row.level.high ? yen(row.level.low) : `${yen(row.level.low)}〜${yen(row.level.high)}`;
 const RESULT_JA = { reached: '到達', missed: '外れ' } as const;
+
+function sourceUpdateTimestamp(updatedAt: string) {
+  const parts = typeof updatedAt === 'string'
+    ? /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/.exec(updatedAt) : null;
+  if (!parts || Number(parts[2]) > 23 || Number(parts[3]) > 59 || Number(parts[4]) > 59
+    || Number(parts[6] ?? 0) > 23 || Number(parts[7] ?? 0) > 59) return NaN;
+  const day = Date.parse(`${parts[1]}T00:00:00Z`);
+  if (!Number.isFinite(day) || new Date(day).toISOString().slice(0, 10) !== parts[1]) return NaN;
+  return Date.parse(updatedAt);
+}
+
+/** Source update age, never the time this browser fetched the table. */
+export function futureMapUpdateAge(updatedAt: string, nowMs: number) {
+  const stamp = sourceUpdateTimestamp(updatedAt);
+  if (!Number.isFinite(stamp) || !Number.isFinite(nowMs) || stamp > nowMs) {
+    return { days: null, warning: true, label: '更新日時を確認できません' };
+  }
+  const days = Math.floor((nowMs - stamp) / 86_400_000);
+  return { days, warning: days >= 3,
+    label: days >= 3 ? `${days}日前の更新・古い予測です`
+      : days === 0 ? '24時間以内の更新' : `${days}日前の更新` };
+}
 
 function Row({ row }: { row: FutureMapRow }) {
   return <tr className={`fm-row${row.isNow ? ' is-now' : ''}${row.emphasis ? ' is-emphasis' : ''}${row.past ? ' is-past' : ''}`}
@@ -26,9 +48,20 @@ function Row({ row }: { row: FutureMapRow }) {
   </tr>;
 }
 
-export function FutureMapView({ doc }: { doc: FutureMapDoc | null }) {
+export function FutureMapView({ doc, nowMs }: { doc: FutureMapDoc | null; nowMs?: number }) {
   const [open, setOpen] = useState(false);
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = () => { if (document.visibilityState === 'visible') setClock(Date.now()); };
+    const timer = window.setInterval(tick, FUTURE_MAP_POLL_MS);
+    document.addEventListener('visibilitychange', tick);
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
+  }, []);
   if (!doc || !doc.rows.length) return null;
+  const age = futureMapUpdateAge(doc.updatedAt, nowMs ?? clock);
+  const updatedStamp = sourceUpdateTimestamp(doc.updatedAt);
+  const updateDate = Number.isFinite(updatedStamp) ? new Date(updatedStamp).toLocaleDateString('ja-JP',
+    { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' }) : '―';
   const nowIndex = Math.max(0, doc.rows.findIndex(r => r.isNow));
   const lead = doc.rows.slice(nowIndex, nowIndex + 4);
   const shown = open ? doc.rows : lead;
@@ -37,7 +70,8 @@ export function FutureMapView({ doc }: { doc: FutureMapDoc | null }) {
   const { position, nextAlert, nextBottom } = doc.status;
   return <section className="fm-card card" aria-label="FUTURE MAP" data-argus-contract="future-map-v1">
     <div className="fm-head"><b>FUTURE MAP</b>
-      <span>外部の見立て ・ {doc.updatedAt ? md(doc.updatedAt.slice(0, 10)) : '―'}更新 ・ ARGUS未検証</span></div>
+      <span>外部の見立て ・ {updateDate}更新 ・ ARGUS未検証</span>
+      <span className={`fm-age${age.warning ? ' is-warning' : ''}`} role={age.warning ? 'status' : undefined}>{age.label}</span></div>
     <div className="fm-boxes">
       <div className="fm-box tone-red"><small>いまの位置</small><b>{position}</b></div>
       <div className="fm-box tone-amber"><small>次の警戒日</small><b>{md(nextAlert.date)} {nextAlert.label}</b></div>

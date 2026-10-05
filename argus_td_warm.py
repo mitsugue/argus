@@ -1,17 +1,19 @@
 """Twelve Data warm scheduler core — pure, provider-free (v13.5.54).
 
-Owner decisions (2026-09-05):
+Configured subscription and unchanged scheduler constraints:
 
-* The real subscription is **Basic**: ~8 API credits per minute, 800 per day.
-  The plan is never impersonated; an unset ``TWELVEDATA_PLAN`` means Basic.
+* Limits follow the configured subscription, never an assumed owner plan.
+  An unset ``TWELVEDATA_PLAN`` still means Basic (8/minute, 800/day).
+  Grow permits 55/minute; the existing 5,000/day value is ARGUS's local
+  scheduling guard, not a provider-imposed daily quota.
 * ``8 credits/minute`` is a REQUEST BATCH cap, not a universe size. A Basic
   plan can carry a universe larger than eight when requests are rotated across
   minutes and stay inside the daily budget. So the ninth symbol is never
   silently dropped: it is fetched on the next eligible minute.
 * Polling is market-aware. Regular session ≈ every 10 minutes; pre/after hours
   at a lower cadence; closed markets are not polled (EOD/cached evidence
-  stands). The design target is comfortably under 800 credits/day with reserve
-  for the other legitimate Twelve Data calls.
+  stands). The scheduler keeps reserve for the other legitimate Twelve Data
+  calls within the configured plan's existing local guard.
 * The universe is the curated set plus the owner-authorized runtime interest
   set (Layer-2B membership, market == US), deduplicated, and bounded by an
   AUTHORIZED universe cap. Private holdings are never hard-coded here.
@@ -34,8 +36,8 @@ METHOD_VERSION = "td-warm-scheduler-v1"
 QUOTE_CREDITS_PER_SYMBOL = 1
 PLAN_LIMITS: Dict[str, Dict[str, int]] = {
     "basic": {"creditsPerMinute": 8, "creditsPerDay": 800},
-    # Grow is listed only so a truthfully configured Grow key is not treated
-    # as Basic; the owner's plan is Basic and nothing here assumes otherwise.
+    # Grow: 55/minute from the provider; 5,000/day is the unchanged local guard.
+    # Select this only through the actual configured subscription.
     "grow": {"creditsPerMinute": 55, "creditsPerDay": 5000},
 }
 PAID_PLANS = ("grow", "pro", "enterprise", "custom")
