@@ -55,3 +55,12 @@ def test_all_failed_feeds_do_not_pass_just_because_the_worker_finished():
                  request=lambda **kw: (200, json.dumps({"status": "done", "runId": "test-run-1",
                     "result": {"feeds": 2, "failedFeeds": ["feed-a", "feed-b"], "stored": 40}})))
     assert result["status"] == "failed" and result["errorClass"] == "all_intel_feeds_unavailable"
+
+
+def test_admin_stage_details_are_not_added_to_workflow_output():
+    result = run(base="https://example.test", token="secret", request_id="test-run-1",
+                 request=lambda **kw: (200, json.dumps({"status": "done", "runId": "test-run-1",
+                    "stage": "market_inputs", "completedStages": [{"stage": "news_feeds", "elapsedSeconds": 20}],
+                    "result": {"collected": 3, "stored": 40}})))
+    assert result["status"] == "done"
+    assert "stage" not in result and "completedStages" not in result

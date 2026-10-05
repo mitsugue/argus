@@ -2972,6 +2972,8 @@ def test_cold_intel_collect_tracks_full_warm_and_deduplicates_retries(monkeypatc
 
     def cold_work():
         calls.append(1)
+        scanner._intel_collect_stage("news_feeds")
+        scanner._intel_collect_stage("market_inputs")
         entered.set()
         assert release.wait(5)
         return {"collected": 3, "supplyDemandWarm": {"margin": 7}}
@@ -2989,7 +2991,14 @@ def test_cold_intel_collect_tracks_full_warm_and_deduplicates_retries(monkeypatc
         assert retry["status"] == joined["status"] == "running"
         assert joined["runId"] == "cold-collect-1" and len(calls) == 1
         poll = client.post(path, json={"statusOnly": True, "requestId": "cold-collect-1"})
-        assert poll.get_json()["status"] == "running"
+        tracked = poll.get_json()
+        assert tracked["status"] == "running"
+        assert tracked["stage"] == "market_inputs" and tracked["stageStartedAt"]
+        assert tracked["completedStages"][0]["stage"] == "news_feeds"
+        assert tracked["completedStages"][0]["elapsedSeconds"] >= 0
+        # A concurrent untracked call cannot overwrite this worker's stage.
+        scanner._intel_collect_stage("owner_watchlist")
+        assert client.post(path, json={"statusOnly": True, "requestId": "cold-collect-1"}).get_json() == tracked
     finally:
         release.set()
     deadline = _time.monotonic() + 3
@@ -3011,6 +3020,8 @@ def test_tracked_intel_collect_failure_is_not_success(monkeypatch):
     monkeypatch.setattr(scanner, "_INTEL_COLLECT_RUN", {})
 
     def fail():
+        scanner._intel_collect_stage("fiscal_inputs")
+        scanner._intel_collect_stage("private provider detail")
         raise RuntimeError("private provider detail")
 
     monkeypatch.setattr(scanner, "_collect_institutional_intel_and_warm", fail)
@@ -3023,6 +3034,7 @@ def test_tracked_intel_collect_failure_is_not_success(monkeypatch):
         _time.sleep(0.01)
     assert result["status"] == "failed" and result["errorClass"] == "RuntimeError"
     assert "private provider detail" not in json.dumps(result)
+    assert result["stage"] == "fiscal_inputs" and result["stageElapsedSeconds"] >= 0
 
 
 def test_first_macro_run_after_restore_keeps_its_new_running_identity(monkeypatch, _ai_state_restore):
