@@ -15,955 +15,955 @@
    }
   },
   "recent": {
-   "3469fc3c2f752a6e78ca96609e6e29d1:2026-10-05:00000000000000000001": {
-    "at": "2026-10-05T06:09:20Z",
+   "400dde2f4a63c4fb22a4f2dbc1b1a388:2026-10-06:00000000000000000001": {
+    "at": "2026-10-05T15:18:34Z",
     "estimated": true,
     "gemStatus": "unavailable",
     "oaiStatus": "live",
     "rows": [
      {
-      "estUsd": 0.01001,
+      "estUsd": 0.086044,
       "fallbackUsed": false,
       "grounding": false,
-      "inputTokens": 709,
+      "inputTokens": 22148,
       "model": "gpt-5.6-terra",
-      "outputTokens": 716,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-event_analysis",
-    "totalUsd": 0.01001
-   },
-   "3469fc3c2f752a6e78ca96609e6e29d1:2026-10-05:00000000000000000002": {
-    "at": "2026-10-05T06:09:30Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.010694,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 709,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 773,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-event_analysis",
-    "totalUsd": 0.010694
-   },
-   "3469fc3c2f752a6e78ca96609e6e29d1:2026-10-05:00000000000000000003": {
-    "at": "2026-10-05T06:32:05Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.104218,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 27887,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 4037,
+      "outputTokens": 3479,
       "provider": "openai"
      }
     ],
     "runId": "prose-market_brief",
-    "totalUsd": 0.104218
+    "totalUsd": 0.086044
    },
-   "3469fc3c2f752a6e78ca96609e6e29d1:2026-10-05:00000000000000000004": {
-    "at": "2026-10-05T06:32:32Z",
+   "400dde2f4a63c4fb22a4f2dbc1b1a388:2026-10-06:00000000000000000002": {
+    "at": "2026-10-05T15:18:56Z",
     "estimated": true,
     "gemStatus": "unavailable",
     "oaiStatus": "live",
     "rows": [
      {
-      "estUsd": 0.105564,
+      "estUsd": 0.080576,
       "fallbackUsed": false,
       "grounding": false,
-      "inputTokens": 30438,
+      "inputTokens": 24280,
       "model": "gpt-5.6-terra",
-      "outputTokens": 3724,
+      "outputTokens": 2668,
       "provider": "openai"
      }
     ],
     "runId": "prose-market_brief",
-    "totalUsd": 0.105564
+    "totalUsd": 0.080576
    },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000001": {
-    "at": "2026-10-05T03:12:59Z",
+   "400dde2f4a63c4fb22a4f2dbc1b1a388:2026-10-06:00000000000000000003": {
+    "at": "2026-10-05T15:28:44Z",
     "estimated": true,
     "gemStatus": "unavailable",
     "oaiStatus": "live",
     "rows": [
      {
-      "estUsd": 0.104354,
+      "estUsd": 0.103358,
       "fallbackUsed": false,
       "grounding": false,
-      "inputTokens": 27421,
+      "inputTokens": 22753,
       "model": "gpt-5.6-terra",
-      "outputTokens": 4126,
+      "outputTokens": 4821,
       "provider": "openai"
      }
     ],
     "runId": "prose-market_brief",
-    "totalUsd": 0.104354
+    "totalUsd": 0.103358
    },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000002": {
-    "at": "2026-10-05T03:13:29Z",
+   "400dde2f4a63c4fb22a4f2dbc1b1a388:2026-10-06:00000000000000000004": {
+    "at": "2026-10-05T15:29:23Z",
     "estimated": true,
     "gemStatus": "unavailable",
     "oaiStatus": "live",
     "rows": [
      {
-      "estUsd": 0.107422,
+      "estUsd": 0.094322,
       "fallbackUsed": false,
       "grounding": false,
-      "inputTokens": 30023,
+      "inputTokens": 25213,
       "model": "gpt-5.6-terra",
-      "outputTokens": 3948,
+      "outputTokens": 3658,
       "provider": "openai"
      }
     ],
     "runId": "prose-market_brief",
-    "totalUsd": 0.107422
+    "totalUsd": 0.094322
    },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000003": {
-    "at": "2026-10-05T03:17:50Z",
+   "400dde2f4a63c4fb22a4f2dbc1b1a388:2026-10-06:00000000000000000005": {
+    "at": "2026-10-05T15:30:32Z",
     "estimated": true,
     "gemStatus": "unavailable",
     "oaiStatus": "live",
     "rows": [
      {
-      "estUsd": 0.00659,
+      "estUsd": 0.089186,
       "fallbackUsed": false,
       "grounding": false,
-      "inputTokens": 751,
+      "inputTokens": 22753,
       "model": "gpt-5.6-terra",
-      "outputTokens": 424,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-news_intel",
-    "totalUsd": 0.00659
-   },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000004": {
-    "at": "2026-10-05T03:17:55Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.004444,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 578,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 274,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-news_intel",
-    "totalUsd": 0.004444
-   },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000005": {
-    "at": "2026-10-05T03:17:59Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.004808,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 574,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 305,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-news_intel",
-    "totalUsd": 0.004808
-   },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000006": {
-    "at": "2026-10-05T03:18:04Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.00476,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 586,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 299,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-news_intel",
-    "totalUsd": 0.00476
-   },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000007": {
-    "at": "2026-10-05T03:18:09Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.005212,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 578,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 338,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-news_intel",
-    "totalUsd": 0.005212
-   },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000008": {
-    "at": "2026-10-05T03:18:14Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.00471,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 573,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 297,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-news_intel",
-    "totalUsd": 0.00471
-   },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000009": {
-    "at": "2026-10-05T03:18:18Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.004284,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 576,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 261,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-news_intel",
-    "totalUsd": 0.004284
-   },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000010": {
-    "at": "2026-10-05T03:18:23Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.004764,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 576,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 301,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-news_intel",
-    "totalUsd": 0.004764
-   },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000011": {
-    "at": "2026-10-05T03:18:27Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.004348,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 584,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 265,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-news_intel",
-    "totalUsd": 0.004348
-   },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000012": {
-    "at": "2026-10-05T03:18:32Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.005184,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 570,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 337,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-news_intel",
-    "totalUsd": 0.005184
-   },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000013": {
-    "at": "2026-10-05T03:18:37Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.004476,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 570,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 278,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-news_intel",
-    "totalUsd": 0.004476
-   },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000014": {
-    "at": "2026-10-05T03:18:41Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.004792,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 590,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 301,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-news_intel",
-    "totalUsd": 0.004792
-   },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000015": {
-    "at": "2026-10-05T03:23:18Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.116302,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 27317,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 5139,
+      "outputTokens": 3640,
       "provider": "openai"
      }
     ],
     "runId": "prose-market_brief",
-    "totalUsd": 0.116302
+    "totalUsd": 0.089186
    },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000016": {
-    "at": "2026-10-05T03:23:44Z",
+   "400dde2f4a63c4fb22a4f2dbc1b1a388:2026-10-06:00000000000000000006": {
+    "at": "2026-10-05T15:31:17Z",
     "estimated": true,
     "gemStatus": "unavailable",
     "oaiStatus": "live",
     "rows": [
      {
-      "estUsd": 0.106052,
+      "estUsd": 0.09805,
       "fallbackUsed": false,
       "grounding": false,
-      "inputTokens": 29926,
+      "inputTokens": 25271,
       "model": "gpt-5.6-terra",
-      "outputTokens": 3850,
+      "outputTokens": 3959,
       "provider": "openai"
      }
     ],
     "runId": "prose-market_brief",
-    "totalUsd": 0.106052
+    "totalUsd": 0.09805
    },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000017": {
-    "at": "2026-10-05T03:32:58Z",
+   "53e2fa0983f22fa3f137be87dca5fa97:2026-10-05:00000000000000000001": {
+    "at": "2026-10-05T13:12:26Z",
     "estimated": true,
     "gemStatus": "unavailable",
     "oaiStatus": "live",
     "rows": [
      {
-      "estUsd": 0.103822,
+      "estUsd": 0.107566,
       "fallbackUsed": false,
       "grounding": false,
-      "inputTokens": 27413,
+      "inputTokens": 27479,
       "model": "gpt-5.6-terra",
-      "outputTokens": 4083,
+      "outputTokens": 4384,
       "provider": "openai"
      }
     ],
     "runId": "prose-market_brief",
-    "totalUsd": 0.103822
+    "totalUsd": 0.107566
    },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000018": {
-    "at": "2026-10-05T03:33:23Z",
+   "53e2fa0983f22fa3f137be87dca5fa97:2026-10-05:00000000000000000002": {
+    "at": "2026-10-05T13:12:57Z",
     "estimated": true,
     "gemStatus": "unavailable",
     "oaiStatus": "live",
     "rows": [
      {
-      "estUsd": 0.105168,
+      "estUsd": 0.102852,
       "fallbackUsed": false,
       "grounding": false,
-      "inputTokens": 29928,
+      "inputTokens": 30204,
       "model": "gpt-5.6-terra",
-      "outputTokens": 3776,
+      "outputTokens": 3537,
       "provider": "openai"
      }
     ],
     "runId": "prose-market_brief",
-    "totalUsd": 0.105168
+    "totalUsd": 0.102852
    },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000019": {
-    "at": "2026-10-05T03:43:06Z",
+   "53e2fa0983f22fa3f137be87dca5fa97:2026-10-05:00000000000000000003": {
+    "at": "2026-10-05T13:14:23Z",
     "estimated": true,
     "gemStatus": "unavailable",
     "oaiStatus": "live",
     "rows": [
      {
-      "estUsd": 0.103052,
+      "estUsd": 0.108152,
       "fallbackUsed": false,
       "grounding": false,
-      "inputTokens": 27490,
+      "inputTokens": 27478,
       "model": "gpt-5.6-terra",
-      "outputTokens": 4006,
+      "outputTokens": 4433,
       "provider": "openai"
      }
     ],
     "runId": "prose-market_brief",
-    "totalUsd": 0.103052
+    "totalUsd": 0.108152
    },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000020": {
-    "at": "2026-10-05T03:43:31Z",
+   "53e2fa0983f22fa3f137be87dca5fa97:2026-10-05:00000000000000000004": {
+    "at": "2026-10-05T13:15:00Z",
     "estimated": true,
     "gemStatus": "unavailable",
     "oaiStatus": "live",
     "rows": [
      {
-      "estUsd": 0.105168,
+      "estUsd": 0.106002,
       "fallbackUsed": false,
       "grounding": false,
-      "inputTokens": 30042,
+      "inputTokens": 30015,
       "model": "gpt-5.6-terra",
-      "outputTokens": 3757,
+      "outputTokens": 3831,
       "provider": "openai"
      }
     ],
     "runId": "prose-market_brief",
-    "totalUsd": 0.105168
+    "totalUsd": 0.106002
    },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000021": {
-    "at": "2026-10-05T03:52:59Z",
+   "53e2fa0983f22fa3f137be87dca5fa97:2026-10-05:00000000000000000005": {
+    "at": "2026-10-05T13:24:17Z",
     "estimated": true,
     "gemStatus": "unavailable",
     "oaiStatus": "live",
     "rows": [
      {
-      "estUsd": 0.108618,
+      "estUsd": 0.10225,
       "fallbackUsed": false,
       "grounding": false,
-      "inputTokens": 27465,
+      "inputTokens": 27533,
       "model": "gpt-5.6-terra",
-      "outputTokens": 4474,
+      "outputTokens": 3932,
       "provider": "openai"
      }
     ],
     "runId": "prose-market_brief",
-    "totalUsd": 0.108618
+    "totalUsd": 0.10225
    },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000022": {
-    "at": "2026-10-05T03:53:24Z",
+   "53e2fa0983f22fa3f137be87dca5fa97:2026-10-05:00000000000000000006": {
+    "at": "2026-10-05T13:24:51Z",
     "estimated": true,
     "gemStatus": "unavailable",
     "oaiStatus": "live",
     "rows": [
      {
-      "estUsd": 0.103676,
+      "estUsd": 0.10285,
       "fallbackUsed": false,
       "grounding": false,
-      "inputTokens": 30178,
+      "inputTokens": 30095,
       "model": "gpt-5.6-terra",
-      "outputTokens": 3610,
+      "outputTokens": 3555,
       "provider": "openai"
      }
     ],
     "runId": "prose-market_brief",
-    "totalUsd": 0.103676
+    "totalUsd": 0.10285
    },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000023": {
-    "at": "2026-10-05T04:02:53Z",
+   "53e2fa0983f22fa3f137be87dca5fa97:2026-10-05:00000000000000000007": {
+    "at": "2026-10-05T13:33:59Z",
     "estimated": true,
     "gemStatus": "unavailable",
     "oaiStatus": "live",
     "rows": [
      {
-      "estUsd": 0.09947,
+      "estUsd": 0.104042,
       "fallbackUsed": false,
       "grounding": false,
-      "inputTokens": 27469,
+      "inputTokens": 27487,
       "model": "gpt-5.6-terra",
-      "outputTokens": 3711,
+      "outputTokens": 4089,
       "provider": "openai"
      }
     ],
     "runId": "prose-market_brief",
-    "totalUsd": 0.09947
+    "totalUsd": 0.104042
    },
-   "5264649e7835df816634e675159b93b1:2026-10-05:00000000000000000024": {
-    "at": "2026-10-05T04:03:21Z",
+   "53e2fa0983f22fa3f137be87dca5fa97:2026-10-05:00000000000000000008": {
+    "at": "2026-10-05T13:34:26Z",
     "estimated": true,
     "gemStatus": "unavailable",
     "oaiStatus": "live",
     "rows": [
      {
-      "estUsd": 0.109588,
+      "estUsd": 0.106844,
       "fallbackUsed": false,
       "grounding": false,
-      "inputTokens": 30074,
+      "inputTokens": 30034,
       "model": "gpt-5.6-terra",
-      "outputTokens": 4120,
+      "outputTokens": 3898,
       "provider": "openai"
      }
     ],
     "runId": "prose-market_brief",
-    "totalUsd": 0.109588
+    "totalUsd": 0.106844
    },
-   "8eecaacf7dbf10cbb6850345a37a6991:2026-10-05:00000000000000000028": {
-    "at": "2026-10-04T22:05:02Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.10909,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 29627,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 4153,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.10909
-   },
-   "8eecaacf7dbf10cbb6850345a37a6991:2026-10-05:00000000000000000029": {
-    "at": "2026-10-04T22:14:18Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.107648,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 26920,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 4484,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.107648
-   },
-   "8eecaacf7dbf10cbb6850345a37a6991:2026-10-05:00000000000000000030": {
-    "at": "2026-10-04T22:14:38Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.099086,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 29545,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 3333,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.099086
-   },
-   "8eecaacf7dbf10cbb6850345a37a6991:2026-10-05:00000000000000000031": {
-    "at": "2026-10-04T23:24:33Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.103824,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 27288,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 4104,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.103824
-   },
-   "8eecaacf7dbf10cbb6850345a37a6991:2026-10-05:00000000000000000032": {
-    "at": "2026-10-04T23:24:57Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.104708,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 29872,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 3747,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.104708
-   },
-   "abcc7180722044f55e81f76e1d08b912:2026-10-05:00000000000000000001": {
-    "at": "2026-10-05T00:35:31Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.082586,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 21691,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 3267,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.082586
-   },
-   "abcc7180722044f55e81f76e1d08b912:2026-10-05:00000000000000000002": {
-    "at": "2026-10-05T00:35:57Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.090218,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 23797,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 3552,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.090218
-   },
-   "abcc7180722044f55e81f76e1d08b912:2026-10-05:00000000000000000003": {
-    "at": "2026-10-05T00:45:31Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.099422,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 22105,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 4601,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.099422
-   },
-   "abcc7180722044f55e81f76e1d08b912:2026-10-05:00000000000000000004": {
-    "at": "2026-10-05T00:46:05Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.108528,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 24822,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 4907,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.108528
-   },
-   "abcc7180722044f55e81f76e1d08b912:2026-10-05:00000000000000000005": {
-    "at": "2026-10-05T00:55:24Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.10521,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 27351,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 4209,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.10521
-   },
-   "abcc7180722044f55e81f76e1d08b912:2026-10-05:00000000000000000006": {
-    "at": "2026-10-05T00:55:50Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.107282,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 29941,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 3950,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.107282
-   },
-   "abcc7180722044f55e81f76e1d08b912:2026-10-05:00000000000000000007": {
-    "at": "2026-10-05T01:47:27Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.004818,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 855,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 259,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-news_intel",
-    "totalUsd": 0.004818
-   },
-   "abcc7180722044f55e81f76e1d08b912:2026-10-05:00000000000000000008": {
-    "at": "2026-10-05T02:05:53Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.110086,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 27707,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 4556,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.110086
-   },
-   "abcc7180722044f55e81f76e1d08b912:2026-10-05:00000000000000000009": {
-    "at": "2026-10-05T02:06:21Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.106358,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 30349,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 3805,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.106358
-   },
-   "b2502d609bc3fb961c6587a7d704cd70:2026-10-05:00000000000000000001": {
-    "at": "2026-10-05T05:10:27Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.109904,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 27304,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 4608,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.109904
-   },
-   "b2502d609bc3fb961c6587a7d704cd70:2026-10-05:00000000000000000002": {
-    "at": "2026-10-05T05:10:58Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.108912,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 29976,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 4080,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.108912
-   },
-   "b2502d609bc3fb961c6587a7d704cd70:2026-10-05:00000000000000000003": {
-    "at": "2026-10-05T05:12:24Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.104168,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 27304,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 4130,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.104168
-   },
-   "b2502d609bc3fb961c6587a7d704cd70:2026-10-05:00000000000000000004": {
-    "at": "2026-10-05T05:12:52Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.106106,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 29863,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 3865,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.106106
-   },
-   "b2502d609bc3fb961c6587a7d704cd70:2026-10-05:00000000000000000005": {
-    "at": "2026-10-05T05:22:20Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.098554,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 27299,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 3663,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.098554
-   },
-   "b2502d609bc3fb961c6587a7d704cd70:2026-10-05:00000000000000000006": {
-    "at": "2026-10-05T05:22:47Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.103182,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 29835,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 3626,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-market_brief",
-    "totalUsd": 0.103182
-   },
-   "cc1ae30bdb706a5bdbcf0a8f8b112919:2026-10-05:00000000000000000001": {
-    "at": "2026-10-05T06:45:59Z",
-    "estimated": true,
-    "gemStatus": "unavailable",
-    "oaiStatus": "live",
-    "rows": [
-     {
-      "estUsd": 0.005684,
-      "fallbackUsed": false,
-      "grounding": false,
-      "inputTokens": 856,
-      "model": "gpt-5.6-terra",
-      "outputTokens": 331,
-      "provider": "openai"
-     }
-    ],
-    "runId": "prose-news_intel",
-    "totalUsd": 0.005684
-   },
-   "cc1ae30bdb706a5bdbcf0a8f8b112919:2026-10-05:00000000000000000002": {
-    "at": "2026-10-05T07:05:49Z",
+   "6a1750ceca7fb1b08b2d6fb66c6313ed:2026-10-06:00000000000000000001": {
+    "at": "2026-10-05T15:51:33Z",
     "estimated": true,
     "gemStatus": "not_enabled_by_role_policy",
     "oaiStatus": "live",
     "rows": [
      {
-      "estUsd": 0.060612,
+      "estUsd": 0.058852,
       "fallbackUsed": false,
       "grounding": false,
-      "inputTokens": 9486,
+      "inputTokens": 9326,
       "model": "gpt-5.6-terra",
-      "outputTokens": 3470,
+      "outputTokens": 3350,
       "provider": "openai"
      }
     ],
-    "runId": "2026-10-05T07:05:49Z",
-    "totalUsd": 0.060612
+    "runId": "2026-10-05T15:51:33Z",
+    "totalUsd": 0.058852
+   },
+   "94aed7655b09238a3ff6ca2e2f6b01d6:2026-10-06:00000000000000000001": {
+    "at": "2026-10-05T15:07:23Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.118714,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 27533,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 5304,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.118714
+   },
+   "94aed7655b09238a3ff6ca2e2f6b01d6:2026-10-06:00000000000000000002": {
+    "at": "2026-10-05T15:08:07Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.11365,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 30143,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 4447,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.11365
+   },
+   "94aed7655b09238a3ff6ca2e2f6b01d6:2026-10-06:00000000000000000003": {
+    "at": "2026-10-05T15:09:08Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.104734,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 27533,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 4139,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.104734
+   },
+   "94aed7655b09238a3ff6ca2e2f6b01d6:2026-10-06:00000000000000000004": {
+    "at": "2026-10-05T15:09:50Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.112244,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 30064,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 4343,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.112244
+   },
+   "94aed7655b09238a3ff6ca2e2f6b01d6:2026-10-06:00000000000000000005": {
+    "at": "2026-10-05T15:13:03Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.009986,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 703,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 715,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-event_analysis",
+    "totalUsd": 0.009986
+   },
+   "94aed7655b09238a3ff6ca2e2f6b01d6:2026-10-06:00000000000000000006": {
+    "at": "2026-10-05T15:13:13Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.00989,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 703,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 707,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-event_analysis",
+    "totalUsd": 0.00989
+   },
+   "b13a84480fa6520a9c04d886bc65eb31:2026-10-05:00000000000000000001": {
+    "at": "2026-10-05T13:45:19Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.087106,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 22043,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3585,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.087106
+   },
+   "b13a84480fa6520a9c04d886bc65eb31:2026-10-05:00000000000000000002": {
+    "at": "2026-10-05T13:45:43Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.08295,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 24135,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 2890,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.08295
+   },
+   "b13a84480fa6520a9c04d886bc65eb31:2026-10-05:00000000000000000003": {
+    "at": "2026-10-05T13:55:13Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.087604,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 22454,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3558,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.087604
+   },
+   "b13a84480fa6520a9c04d886bc65eb31:2026-10-05:00000000000000000004": {
+    "at": "2026-10-05T13:55:37Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.089182,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 25031,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3260,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.089182
+   },
+   "b13a84480fa6520a9c04d886bc65eb31:2026-10-05:00000000000000000005": {
+    "at": "2026-10-05T14:05:26Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.106378,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 27389,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 4300,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.106378
+   },
+   "b13a84480fa6520a9c04d886bc65eb31:2026-10-05:00000000000000000006": {
+    "at": "2026-10-05T14:05:55Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.104812,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 30134,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3712,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.104812
+   },
+   "b13a84480fa6520a9c04d886bc65eb31:2026-10-05:00000000000000000007": {
+    "at": "2026-10-05T14:07:35Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.106606,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 27389,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 4319,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.106606
+   },
+   "b13a84480fa6520a9c04d886bc65eb31:2026-10-05:00000000000000000008": {
+    "at": "2026-10-05T14:08:12Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.113924,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 30076,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 4481,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.113924
+   },
+   "b13a84480fa6520a9c04d886bc65eb31:2026-10-05:00000000000000000009": {
+    "at": "2026-10-05T14:17:16Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.107028,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 27432,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 4347,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.107028
+   },
+   "b13a84480fa6520a9c04d886bc65eb31:2026-10-05:00000000000000000010": {
+    "at": "2026-10-05T14:17:45Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.103568,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 29896,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3648,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.103568
+   },
+   "d4e49732d099c734a005f3ffa1b836c3:2026-10-05:00000000000000000001": {
+    "at": "2026-10-05T13:03:00Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.103894,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 27527,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 4070,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.103894
+   },
+   "d4e49732d099c734a005f3ffa1b836c3:2026-10-05:00000000000000000002": {
+    "at": "2026-10-05T13:03:32Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.096724,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 30002,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3060,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.096724
+   },
+   "dae075db8a8a61c10d8063c27620b701:2026-10-05:00000000000000000004": {
+    "at": "2026-10-05T09:55:39Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.099454,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 25085,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 4107,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.099454
+   },
+   "dae075db8a8a61c10d8063c27620b701:2026-10-05:00000000000000000005": {
+    "at": "2026-10-05T10:04:57Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.09545,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 27559,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3361,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.09545
+   },
+   "dae075db8a8a61c10d8063c27620b701:2026-10-05:00000000000000000006": {
+    "at": "2026-10-05T10:05:23Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.102618,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 30123,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3531,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.102618
+   },
+   "dae075db8a8a61c10d8063c27620b701:2026-10-05:00000000000000000007": {
+    "at": "2026-10-05T10:15:06Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.10605,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 27567,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 4243,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.10605
+   },
+   "dae075db8a8a61c10d8063c27620b701:2026-10-05:00000000000000000008": {
+    "at": "2026-10-05T10:15:34Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.10164,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 30138,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3447,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.10164
+   },
+   "dae075db8a8a61c10d8063c27620b701:2026-10-05:00000000000000000009": {
+    "at": "2026-10-05T10:25:03Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.105088,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 27500,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 4174,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.105088
+   },
+   "dae075db8a8a61c10d8063c27620b701:2026-10-05:00000000000000000010": {
+    "at": "2026-10-05T10:25:27Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.100752,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 30192,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3364,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.100752
+   },
+   "dae075db8a8a61c10d8063c27620b701:2026-10-05:00000000000000000011": {
+    "at": "2026-10-05T10:26:59Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.097336,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 27500,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3528,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.097336
+   },
+   "dae075db8a8a61c10d8063c27620b701:2026-10-05:00000000000000000012": {
+    "at": "2026-10-05T10:27:27Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.106234,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 30167,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3825,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.106234
+   },
+   "dae075db8a8a61c10d8063c27620b701:2026-10-05:00000000000000000013": {
+    "at": "2026-10-05T10:32:36Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.107332,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 27500,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 4361,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.107332
+   },
+   "dae075db8a8a61c10d8063c27620b701:2026-10-05:00000000000000000014": {
+    "at": "2026-10-05T10:33:06Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.105396,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 30162,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3756,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.105396
+   },
+   "dae075db8a8a61c10d8063c27620b701:2026-10-05:00000000000000000015": {
+    "at": "2026-10-05T10:40:05Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.101092,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 27500,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3841,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.101092
+   },
+   "dae075db8a8a61c10d8063c27620b701:2026-10-05:00000000000000000016": {
+    "at": "2026-10-05T10:40:32Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.1049,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 30094,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3726,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.1049
+   },
+   "de64cd14052f65ac609a08cbdd2a7eff:2026-10-05:00000000000000000001": {
+    "at": "2026-10-05T11:47:41Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.101536,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 27326,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3907,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.101536
+   },
+   "de64cd14052f65ac609a08cbdd2a7eff:2026-10-05:00000000000000000002": {
+    "at": "2026-10-05T11:48:13Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.105606,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 30069,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3789,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.105606
+   },
+   "de64cd14052f65ac609a08cbdd2a7eff:2026-10-05:00000000000000000003": {
+    "at": "2026-10-05T11:57:54Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.102446,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 27379,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3974,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.102446
+   },
+   "de64cd14052f65ac609a08cbdd2a7eff:2026-10-05:00000000000000000004": {
+    "at": "2026-10-05T11:58:24Z",
+    "estimated": true,
+    "gemStatus": "unavailable",
+    "oaiStatus": "live",
+    "rows": [
+     {
+      "estUsd": 0.10412,
+      "fallbackUsed": false,
+      "grounding": false,
+      "inputTokens": 29914,
+      "model": "gpt-5.6-terra",
+      "outputTokens": 3691,
+      "provider": "openai"
+     }
+    ],
+    "runId": "prose-market_brief",
+    "totalUsd": 0.10412
    }
   },
   "schemaVersion": "argus-ai-cost-accounting-v1",
@@ -992,6 +992,11 @@
     "count": 26,
     "day": "2026-10-02",
     "micros": 513302
+   },
+   "093c3e5a479d6d69dfd36a019d6b24d2:2026-10-05": {
+    "count": 20,
+    "day": "2026-10-05",
+    "micros": 2140210
    },
    "0d4e5e6b82044eace590946e2c92947f:2026-09-30": {
     "count": 8,
@@ -1258,6 +1263,16 @@
     "day": "2026-10-03",
     "micros": 362632
    },
+   "400dde2f4a63c4fb22a4f2dbc1b1a388:2026-10-06": {
+    "count": 6,
+    "day": "2026-10-06",
+    "micros": 551536
+   },
+   "402275e6489dfe4b4eafa870244b34a0:2026-10-05": {
+    "count": 5,
+    "day": "2026-10-05",
+    "micros": 379744
+   },
    "414b0b8699c0b535ca2e49737f7a06c6:2026-10-03": {
     "count": 5,
     "day": "2026-10-03",
@@ -1323,6 +1338,11 @@
     "day": "2026-10-05",
     "micros": 1331064
    },
+   "53e2fa0983f22fa3f137be87dca5fa97:2026-10-05": {
+    "count": 8,
+    "day": "2026-10-05",
+    "micros": 840558
+   },
    "5531c3df360b7ce84263af8d01f327d1:2026-09-12": {
     "count": 2,
     "day": "2026-09-12",
@@ -1332,6 +1352,11 @@
     "count": 6,
     "day": "2026-10-03",
     "micros": 224550
+   },
+   "594dfa96952dac2508aa156c6d91b688:2026-10-05": {
+    "count": 10,
+    "day": "2026-10-05",
+    "micros": 1008360
    },
    "59c60f956af9e7a6cb9b051e50c2e90d:2026-10-02": {
     "count": 23,
@@ -1387,6 +1412,11 @@
     "count": 7,
     "day": "2026-10-03",
     "micros": 299228
+   },
+   "6a1750ceca7fb1b08b2d6fb66c6313ed:2026-10-06": {
+    "count": 1,
+    "day": "2026-10-06",
+    "micros": 58852
    },
    "6b01e1acd043b0f09e35876f07cdd5d4:2026-09-17": {
     "count": 2,
@@ -1548,6 +1578,11 @@
     "day": "2026-09-18",
     "micros": 2406310
    },
+   "94aed7655b09238a3ff6ca2e2f6b01d6:2026-10-06": {
+    "count": 6,
+    "day": "2026-10-06",
+    "micros": 469218
+   },
    "95cbfbc8a0659190e0c8b2a04f3d5778:2026-09-20": {
     "count": 2,
     "day": "2026-09-20",
@@ -1643,6 +1678,11 @@
     "day": "2026-09-14",
     "micros": 4049320
    },
+   "b13a84480fa6520a9c04d886bc65eb31:2026-10-05": {
+    "count": 10,
+    "day": "2026-10-05",
+    "micros": 989158
+   },
    "b2502d609bc3fb961c6587a7d704cd70:2026-10-05": {
     "count": 6,
     "day": "2026-10-05",
@@ -1667,6 +1707,11 @@
     "count": 6,
     "day": "2026-10-03",
     "micros": 257586
+   },
+   "b5d14432b65fd63baf2894490b329e5f:2026-10-05": {
+    "count": 14,
+    "day": "2026-10-05",
+    "micros": 245386
    },
    "bc75d2ac89d694bf42313cad76ed1fc1:2026-09-19": {
     "count": 7,
@@ -1763,6 +1808,11 @@
     "day": "2026-09-19",
     "micros": 893860
    },
+   "d4e49732d099c734a005f3ffa1b836c3:2026-10-05": {
+    "count": 2,
+    "day": "2026-10-05",
+    "micros": 200618
+   },
    "d5dc1037707f0be2daf5b0b9ab8cb6f9:2026-09-12": {
     "count": 8,
     "day": "2026-09-12",
@@ -1778,10 +1828,20 @@
     "day": "2026-10-03",
     "micros": 239740
    },
+   "dae075db8a8a61c10d8063c27620b701:2026-10-05": {
+    "count": 16,
+    "day": "2026-10-05",
+    "micros": 1588116
+   },
    "db07086dc254e645a70931445f65e829:2026-09-15": {
     "count": 14,
     "day": "2026-09-15",
     "micros": 2328600
+   },
+   "de64cd14052f65ac609a08cbdd2a7eff:2026-10-05": {
+    "count": 4,
+    "day": "2026-10-05",
+    "micros": 413708
    },
    "de857f5408ebecc6f1ef884c86e6c468:2026-10-04": {
     "count": 2,
@@ -1893,7 +1953,7 @@
  "accountingDurability": {
   "checkpointLastError": null,
   "lastError": null,
-  "lastPersistAt": "2026-10-05T07:05:49Z",
+  "lastPersistAt": "2026-10-05T15:51:33Z",
   "migrationError": null,
   "writeThroughEnabled": true
  },
@@ -1902,14 +1962,14 @@
   "historicalCallsReconstructed": false,
   "historyCoverage": "legacy_reported_amount_plus_recorded_calls",
   "legacyBaselinePresent": false,
-  "recordedMonthCalls": 689
+  "recordedMonthCalls": 791
  },
- "asOf": "2026-10-05T07:07:50Z",
+ "asOf": "2026-10-05T15:53:31Z",
  "budgetEnforced": false,
  "dailyBudgetUsd": 0.5,
- "day": "2026-10-05",
+ "day": "2026-10-06",
  "dayRemainingUsd": 0.0,
- "daySpentUsd": 6.693,
+ "daySpentUsd": 1.0796,
  "emergencyReserveUsd": 0.0,
  "estimated": true,
  "featureUsage": {
@@ -1919,7 +1979,7 @@
   "remoteRecoveryVerified": false,
   "state": {
    "lastErrorClass": null,
-   "lastSavedAt": "2026-10-05T07:05:49Z",
+   "lastSavedAt": "2026-10-05T15:51:33Z",
    "pendingReceipts": 0,
    "status": "LOCAL_DURABLE"
   },
@@ -1927,7 +1987,7 @@
    "budgetAuthorizationChanged": false,
    "coverage": "all_committed_receipts_in_this_store",
    "displayWindowLimitApplied": false,
-   "durableReceiptCount": 6116,
+   "durableReceiptCount": 6218,
    "firstRecordedAt": "2026-09-13T05:29:19.864165+00:00",
    "groups": [
     {
@@ -5070,17 +5130,17 @@
      "errorClasses": {},
      "estimatedCostComplete": true,
      "feature": "ai_judgment",
-     "inputTokens": 9486,
-     "knownDurationMs": 33931,
-     "knownEstimatedCostUsd": 0.060612,
+     "inputTokens": 18812,
+     "knownDurationMs": 71700,
+     "knownEstimatedCostUsd": 0.119464,
      "monthUtc": "2026-10",
      "outcomes": {
-      "success": 1
+      "success": 2
      },
-     "outputTokens": 3470,
+     "outputTokens": 6820,
      "provider": "openai",
-     "providerCalls": 1,
-     "records": 1,
+     "providerCalls": 2,
+     "records": 2,
      "requestedModel": "gpt-5.6-terra",
      "retryRecords": 0,
      "returnedModel": "gpt-5.6-terra",
@@ -5100,17 +5160,17 @@
      "errorClasses": {},
      "estimatedCostComplete": true,
      "feature": "event_analysis",
-     "inputTokens": 1418,
-     "knownDurationMs": 20194,
-     "knownEstimatedCostUsd": 0.020704,
+     "inputTokens": 2824,
+     "knownDurationMs": 40983,
+     "knownEstimatedCostUsd": 0.04058,
      "monthUtc": "2026-10",
      "outcomes": {
-      "success": 2
+      "success": 4
      },
-     "outputTokens": 1489,
+     "outputTokens": 2911,
      "provider": "openai",
-     "providerCalls": 2,
-     "records": 2,
+     "providerCalls": 4,
+     "records": 4,
      "requestedModel": "gpt-5.6-terra",
      "retryRecords": 0,
      "returnedModel": "gpt-5.6-terra",
@@ -5125,22 +5185,22 @@
      }
     },
     {
-     "cachedInputTokens": 27301,
+     "cachedInputTokens": 325027,
      "dayUtc": "2026-10-05",
      "errorClasses": {},
      "estimatedCostComplete": true,
      "feature": "market_brief",
-     "inputTokens": 782415,
-     "knownDurationMs": 824440,
-     "knownEstimatedCostUsd": 2.92299,
+     "inputTokens": 3063001,
+     "knownDurationMs": 3665751,
+     "knownEstimatedCostUsd": 11.375222,
      "monthUtc": "2026-10",
      "outcomes": {
-      "success": 28
+      "success": 112
      },
-     "outputTokens": 113180,
+     "outputTokens": 437435,
      "provider": "openai",
-     "providerCalls": 28,
-     "records": 28,
+     "providerCalls": 112,
+     "records": 112,
      "requestedModel": "gpt-5.6-terra",
      "retryRecords": 0,
      "returnedModel": "gpt-5.6-terra",
@@ -5160,17 +5220,47 @@
      "errorClasses": {},
      "estimatedCostComplete": true,
      "feature": "news_intel",
-     "inputTokens": 8817,
-     "knownDurationMs": 64676,
-     "knownEstimatedCostUsd": 0.068874,
+     "inputTokens": 16856,
+     "knownDurationMs": 129834,
+     "knownEstimatedCostUsd": 0.13336,
      "monthUtc": "2026-10",
      "outcomes": {
-      "success": 14
+      "success": 27
      },
-     "outputTokens": 4270,
+     "outputTokens": 8304,
      "provider": "openai",
-     "providerCalls": 14,
-     "records": 14,
+     "providerCalls": 27,
+     "records": 27,
+     "requestedModel": "gpt-5.6-terra",
+     "retryRecords": 0,
+     "returnedModel": "gpt-5.6-terra",
+     "unknownAttemptRecords": 0,
+     "unknownCostRecords": 0,
+     "unknownDurationRecords": 0,
+     "unknownProviderCallCount": 0,
+     "unknownTokenRecords": {
+      "cachedInputTokens": 0,
+      "inputTokens": 0,
+      "outputTokens": 0
+     }
+    },
+    {
+     "cachedInputTokens": 4610,
+     "dayUtc": "2026-10-05",
+     "errorClasses": {},
+     "estimatedCostComplete": true,
+     "feature": "osint_research",
+     "inputTokens": 121009,
+     "knownDurationMs": 65785,
+     "knownEstimatedCostUsd": 0.290018,
+     "monthUtc": "2026-10",
+     "outcomes": {
+      "success": 2
+     },
+     "outputTokens": 4000,
+     "provider": "openai",
+     "providerCalls": 2,
+     "records": 2,
      "requestedModel": "gpt-5.6-terra",
      "retryRecords": 0,
      "returnedModel": "gpt-5.6-terra",
@@ -5186,38 +5276,38 @@
     }
    ],
    "historyBeforeFirstReceiptReconstructed": false,
-   "lastRecordedAt": "2026-10-05T07:05:15.141649+00:00",
+   "lastRecordedAt": "2026-10-05T15:50:55.681159+00:00",
    "readOnly": true,
    "schemaVersion": "argus-ai-usage-summary-v1",
-   "throughSequence": 6116,
+   "throughSequence": 6218,
    "timeBasis": "UTC",
-   "uniqueReceipts": 6116
+   "uniqueReceipts": 6218
   }
  },
  "groundingUsdPerCall": 0.035,
  "lastRun": {
-  "at": "2026-10-05T07:05:49Z",
+  "at": "2026-10-05T15:51:33Z",
   "estimated": true,
   "gemStatus": "not_enabled_by_role_policy",
   "oaiStatus": "live",
   "rows": [
    {
-    "estUsd": 0.060612,
+    "estUsd": 0.058852,
     "fallbackUsed": false,
     "grounding": false,
-    "inputTokens": 9486,
+    "inputTokens": 9326,
     "model": "gpt-5.6-terra",
-    "outputTokens": 3470,
+    "outputTokens": 3350,
     "provider": "openai"
    }
   ],
-  "runId": "2026-10-05T07:05:49Z",
-  "totalUsd": 0.060612
+  "runId": "2026-10-05T15:51:33Z",
+  "totalUsd": 0.058852
  },
- "lastRunCostUsd": 0.060612,
+ "lastRunCostUsd": 0.058852,
  "month": "2026-10",
  "monthRemainingUsd": 0.0,
- "monthSpentUsd": 29.1364,
+ "monthSpentUsd": 38.0218,
  "monthlyBudgetUsd": 10.0,
  "noteJa": "コストはトークン使用量と設定単価による推定値です。過去分は保存済み報告値で、移行前の全履歴を再構成した総額ではありません。オーナー指示により費用による停止を解除中です。",
  "pricing": {
@@ -5267,384 +5357,384 @@
  },
  "recentRuns": [
   {
-   "at": "2026-10-05T07:05:49Z",
+   "at": "2026-10-05T15:51:33Z",
    "estimated": true,
    "gemStatus": "not_enabled_by_role_policy",
    "oaiStatus": "live",
    "rows": [
     {
-     "estUsd": 0.060612,
+     "estUsd": 0.058852,
      "fallbackUsed": false,
      "grounding": false,
-     "inputTokens": 9486,
+     "inputTokens": 9326,
      "model": "gpt-5.6-terra",
-     "outputTokens": 3470,
+     "outputTokens": 3350,
      "provider": "openai"
     }
    ],
-   "runId": "2026-10-05T07:05:49Z",
-   "totalUsd": 0.060612
+   "runId": "2026-10-05T15:51:33Z",
+   "totalUsd": 0.058852
   },
   {
-   "at": "2026-10-05T06:45:59Z",
+   "at": "2026-10-05T15:31:17Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [
     {
-     "estUsd": 0.005684,
+     "estUsd": 0.09805,
      "fallbackUsed": false,
      "grounding": false,
-     "inputTokens": 856,
+     "inputTokens": 25271,
      "model": "gpt-5.6-terra",
-     "outputTokens": 331,
-     "provider": "openai"
-    }
-   ],
-   "runId": "prose-news_intel",
-   "totalUsd": 0.005684
-  },
-  {
-   "at": "2026-10-05T06:32:32Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [
-    {
-     "estUsd": 0.105564,
-     "fallbackUsed": false,
-     "grounding": false,
-     "inputTokens": 30438,
-     "model": "gpt-5.6-terra",
-     "outputTokens": 3724,
+     "outputTokens": 3959,
      "provider": "openai"
     }
    ],
    "runId": "prose-market_brief",
-   "totalUsd": 0.105564
+   "totalUsd": 0.09805
   },
   {
-   "at": "2026-10-05T06:32:05Z",
+   "at": "2026-10-05T15:30:32Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [
     {
-     "estUsd": 0.104218,
+     "estUsd": 0.089186,
      "fallbackUsed": false,
      "grounding": false,
-     "inputTokens": 27887,
+     "inputTokens": 22753,
      "model": "gpt-5.6-terra",
-     "outputTokens": 4037,
+     "outputTokens": 3640,
      "provider": "openai"
     }
    ],
    "runId": "prose-market_brief",
-   "totalUsd": 0.104218
+   "totalUsd": 0.089186
   },
   {
-   "at": "2026-10-05T06:09:30Z",
+   "at": "2026-10-05T15:29:23Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [
     {
-     "estUsd": 0.010694,
+     "estUsd": 0.094322,
      "fallbackUsed": false,
      "grounding": false,
-     "inputTokens": 709,
+     "inputTokens": 25213,
      "model": "gpt-5.6-terra",
-     "outputTokens": 773,
+     "outputTokens": 3658,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-market_brief",
+   "totalUsd": 0.094322
+  },
+  {
+   "at": "2026-10-05T15:28:44Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.103358,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 22753,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 4821,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-market_brief",
+   "totalUsd": 0.103358
+  },
+  {
+   "at": "2026-10-05T15:18:56Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.080576,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 24280,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 2668,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-market_brief",
+   "totalUsd": 0.080576
+  },
+  {
+   "at": "2026-10-05T15:18:34Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.086044,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 22148,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 3479,
+     "provider": "openai"
+    }
+   ],
+   "runId": "prose-market_brief",
+   "totalUsd": 0.086044
+  },
+  {
+   "at": "2026-10-05T15:13:13Z",
+   "estimated": true,
+   "gemStatus": "unavailable",
+   "oaiStatus": "live",
+   "rows": [
+    {
+     "estUsd": 0.00989,
+     "fallbackUsed": false,
+     "grounding": false,
+     "inputTokens": 703,
+     "model": "gpt-5.6-terra",
+     "outputTokens": 707,
      "provider": "openai"
     }
    ],
    "runId": "prose-event_analysis",
-   "totalUsd": 0.010694
+   "totalUsd": 0.00989
   },
   {
-   "at": "2026-10-05T06:09:20Z",
+   "at": "2026-10-05T15:13:03Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [
     {
-     "estUsd": 0.01001,
+     "estUsd": 0.009986,
      "fallbackUsed": false,
      "grounding": false,
-     "inputTokens": 709,
+     "inputTokens": 703,
      "model": "gpt-5.6-terra",
-     "outputTokens": 716,
+     "outputTokens": 715,
      "provider": "openai"
     }
    ],
    "runId": "prose-event_analysis",
-   "totalUsd": 0.01001
+   "totalUsd": 0.009986
   },
   {
-   "at": "2026-10-05T05:22:47Z",
+   "at": "2026-10-05T15:09:50Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [
     {
-     "estUsd": 0.103182,
+     "estUsd": 0.112244,
      "fallbackUsed": false,
      "grounding": false,
-     "inputTokens": 29835,
+     "inputTokens": 30064,
      "model": "gpt-5.6-terra",
-     "outputTokens": 3626,
+     "outputTokens": 4343,
      "provider": "openai"
     }
    ],
    "runId": "prose-market_brief",
-   "totalUsd": 0.103182
+   "totalUsd": 0.112244
   },
   {
-   "at": "2026-10-05T05:22:20Z",
+   "at": "2026-10-05T15:09:08Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [
     {
-     "estUsd": 0.098554,
+     "estUsd": 0.104734,
      "fallbackUsed": false,
      "grounding": false,
-     "inputTokens": 27299,
+     "inputTokens": 27533,
      "model": "gpt-5.6-terra",
-     "outputTokens": 3663,
+     "outputTokens": 4139,
      "provider": "openai"
     }
    ],
    "runId": "prose-market_brief",
-   "totalUsd": 0.098554
+   "totalUsd": 0.104734
   },
   {
-   "at": "2026-10-05T05:12:52Z",
+   "at": "2026-10-05T15:08:07Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [
     {
-     "estUsd": 0.106106,
+     "estUsd": 0.11365,
      "fallbackUsed": false,
      "grounding": false,
-     "inputTokens": 29863,
+     "inputTokens": 30143,
      "model": "gpt-5.6-terra",
-     "outputTokens": 3865,
+     "outputTokens": 4447,
      "provider": "openai"
     }
    ],
    "runId": "prose-market_brief",
-   "totalUsd": 0.106106
+   "totalUsd": 0.11365
   },
   {
-   "at": "2026-10-05T05:12:24Z",
+   "at": "2026-10-05T15:07:23Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [
     {
-     "estUsd": 0.104168,
+     "estUsd": 0.118714,
      "fallbackUsed": false,
      "grounding": false,
-     "inputTokens": 27304,
+     "inputTokens": 27533,
      "model": "gpt-5.6-terra",
-     "outputTokens": 4130,
+     "outputTokens": 5304,
      "provider": "openai"
     }
    ],
    "runId": "prose-market_brief",
-   "totalUsd": 0.104168
+   "totalUsd": 0.118714
   },
   {
-   "at": "2026-10-05T05:10:58Z",
+   "at": "2026-10-05T14:17:45Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [
     {
-     "estUsd": 0.108912,
+     "estUsd": 0.103568,
      "fallbackUsed": false,
      "grounding": false,
-     "inputTokens": 29976,
+     "inputTokens": 29896,
      "model": "gpt-5.6-terra",
-     "outputTokens": 4080,
+     "outputTokens": 3648,
      "provider": "openai"
     }
    ],
    "runId": "prose-market_brief",
-   "totalUsd": 0.108912
+   "totalUsd": 0.103568
   },
   {
-   "at": "2026-10-05T05:10:27Z",
+   "at": "2026-10-05T14:17:16Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [
     {
-     "estUsd": 0.109904,
+     "estUsd": 0.107028,
      "fallbackUsed": false,
      "grounding": false,
-     "inputTokens": 27304,
+     "inputTokens": 27432,
      "model": "gpt-5.6-terra",
-     "outputTokens": 4608,
+     "outputTokens": 4347,
      "provider": "openai"
     }
    ],
    "runId": "prose-market_brief",
-   "totalUsd": 0.109904
+   "totalUsd": 0.107028
   },
   {
-   "at": "2026-10-05T04:03:21Z",
+   "at": "2026-10-05T14:08:12Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [
     {
-     "estUsd": 0.109588,
+     "estUsd": 0.113924,
      "fallbackUsed": false,
      "grounding": false,
-     "inputTokens": 30074,
+     "inputTokens": 30076,
      "model": "gpt-5.6-terra",
-     "outputTokens": 4120,
+     "outputTokens": 4481,
      "provider": "openai"
     }
    ],
    "runId": "prose-market_brief",
-   "totalUsd": 0.109588
+   "totalUsd": 0.113924
   },
   {
-   "at": "2026-10-05T04:02:53Z",
+   "at": "2026-10-05T14:07:35Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [
     {
-     "estUsd": 0.09947,
+     "estUsd": 0.106606,
      "fallbackUsed": false,
      "grounding": false,
-     "inputTokens": 27469,
+     "inputTokens": 27389,
      "model": "gpt-5.6-terra",
-     "outputTokens": 3711,
+     "outputTokens": 4319,
      "provider": "openai"
     }
    ],
    "runId": "prose-market_brief",
-   "totalUsd": 0.09947
+   "totalUsd": 0.106606
   },
   {
-   "at": "2026-10-05T03:53:24Z",
+   "at": "2026-10-05T14:05:55Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [
     {
-     "estUsd": 0.103676,
+     "estUsd": 0.104812,
      "fallbackUsed": false,
      "grounding": false,
-     "inputTokens": 30178,
+     "inputTokens": 30134,
      "model": "gpt-5.6-terra",
-     "outputTokens": 3610,
+     "outputTokens": 3712,
      "provider": "openai"
     }
    ],
    "runId": "prose-market_brief",
-   "totalUsd": 0.103676
+   "totalUsd": 0.104812
   },
   {
-   "at": "2026-10-05T03:52:59Z",
+   "at": "2026-10-05T14:05:26Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [
     {
-     "estUsd": 0.108618,
+     "estUsd": 0.106378,
      "fallbackUsed": false,
      "grounding": false,
-     "inputTokens": 27465,
+     "inputTokens": 27389,
      "model": "gpt-5.6-terra",
-     "outputTokens": 4474,
+     "outputTokens": 4300,
      "provider": "openai"
     }
    ],
    "runId": "prose-market_brief",
-   "totalUsd": 0.108618
+   "totalUsd": 0.106378
   },
   {
-   "at": "2026-10-05T03:43:31Z",
+   "at": "2026-10-05T13:55:37Z",
    "estimated": true,
    "gemStatus": "unavailable",
    "oaiStatus": "live",
    "rows": [
     {
-     "estUsd": 0.105168,
+     "estUsd": 0.089182,
      "fallbackUsed": false,
      "grounding": false,
-     "inputTokens": 30042,
+     "inputTokens": 25031,
      "model": "gpt-5.6-terra",
-     "outputTokens": 3757,
+     "outputTokens": 3260,
      "provider": "openai"
     }
    ],
    "runId": "prose-market_brief",
-   "totalUsd": 0.105168
-  },
-  {
-   "at": "2026-10-05T03:43:06Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [
-    {
-     "estUsd": 0.103052,
-     "fallbackUsed": false,
-     "grounding": false,
-     "inputTokens": 27490,
-     "model": "gpt-5.6-terra",
-     "outputTokens": 4006,
-     "provider": "openai"
-    }
-   ],
-   "runId": "prose-market_brief",
-   "totalUsd": 0.103052
-  },
-  {
-   "at": "2026-10-05T03:33:23Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [
-    {
-     "estUsd": 0.105168,
-     "fallbackUsed": false,
-     "grounding": false,
-     "inputTokens": 29928,
-     "model": "gpt-5.6-terra",
-     "outputTokens": 3776,
-     "provider": "openai"
-    }
-   ],
-   "runId": "prose-market_brief",
-   "totalUsd": 0.105168
-  },
-  {
-   "at": "2026-10-05T03:32:58Z",
-   "estimated": true,
-   "gemStatus": "unavailable",
-   "oaiStatus": "live",
-   "rows": [
-    {
-     "estUsd": 0.103822,
-     "fallbackUsed": false,
-     "grounding": false,
-     "inputTokens": 27413,
-     "model": "gpt-5.6-terra",
-     "outputTokens": 4083,
-     "provider": "openai"
-    }
-   ],
-   "runId": "prose-market_brief",
-   "totalUsd": 0.103822
+   "totalUsd": 0.089182
   }
  ],
  "restoreError": null
