@@ -104,7 +104,30 @@ def normalize_jquants_margin_snapshot(payload: Mapping[str, Any], *, instrument_
 
 
 _MARGIN_RECEIPT_FIELDS = {"observedAt", "knownAt", "availableFrom", "sourceResponseSha256", "revision"}
-_MARGIN_MAX_ROWS = 12000
+# Six balance fields per daily observation already exceed the old 12,000-row
+# ceiling within a ten-year history. Keep revisions, with independent memory
+# and row budgets instead of truncating old receipts.
+_MARGIN_MAX_ROWS = 60000
+_MARGIN_MAX_BYTES = 64 * 1024 * 1024
+
+
+def _margin_retention(rows, *, serialized_bytes=None):
+    if len(rows) > _MARGIN_MAX_ROWS:
+        raise ValueError("margin_retention_maintenance_required")
+    size = serialized_bytes
+    if size is None:
+        size = 0
+        for row in rows:
+            size += len(_margin_json(row).encode("utf-8"))
+            if size > _MARGIN_MAX_BYTES:
+                raise ValueError("margin_history_byte_budget")
+    if size > _MARGIN_MAX_BYTES:
+        raise ValueError("margin_history_byte_budget")
+    share = max(len(rows) / _MARGIN_MAX_ROWS, size / _MARGIN_MAX_BYTES)
+    return {"status": "MAINTENANCE_DUE" if share >= .8 else "WITHIN_BUDGET",
+            "rowCount": len(rows), "rowLimit": _MARGIN_MAX_ROWS,
+            "serializedBytes": size, "byteLimit": _MARGIN_MAX_BYTES,
+            "maintenanceThresholdShare": .8, "deletionPerformed": False}
 
 
 def _margin_json(value):
@@ -141,7 +164,11 @@ def _margin_read(db, instrument_id):
     if not exists:
         return None
     rows = []
+    serialized_bytes = 0
     for body, digest in db.execute("SELECT body,sha256 FROM margin_input_history WHERE instrument=? ORDER BY seq", (instrument_id,)):
+        serialized_bytes += len(body.encode("utf-8"))
+        if serialized_bytes > _MARGIN_MAX_BYTES:
+            raise ValueError("margin_history_byte_budget")
         if len(rows) >= _MARGIN_MAX_ROWS or hashlib.sha256(body.encode()).hexdigest() != digest:
             raise ValueError("margin_history_integrity_or_bound")
         row = json.loads(body)
@@ -158,7 +185,8 @@ def _margin_read(db, instrument_id):
         raise ValueError("margin_metadata_integrity")
     if document.get("instrumentId") != instrument_id or document.get("rowCount") != len(rows):
         raise ValueError("margin_metadata_identity")
-    return {**document, "rows": rows, "historyStatus": "LOCAL_DURABLE"}
+    return {**document, "rows": rows, "historyStatus": "LOCAL_DURABLE",
+            "retention": _margin_retention(rows, serialized_bytes=serialized_bytes)}
 
 
 def restore_margin_snapshot(path, instrument_id="1570"):
@@ -204,6 +232,7 @@ def retain_margin_snapshot(candidate, *, previous=None, path=None, raw=None):
         seed = original if stored else (previous or {}).get("rows", [])
         rows = _margin_merge_rows(seed, candidate["rows"])
         result = {**deepcopy(candidate), "rows": rows,
+                  "retention": _margin_retention(rows),
                   "historyStatus": "LOCAL_DURABLE" if path else "PROCESS_CACHE_ONLY"}
         if db:
             if raw is not None:

@@ -193,3 +193,78 @@ def test_topix_bars_are_normalized_with_next_day_availability_and_nothing_filled
         normalize_jquants_topix_bars(payload, received_at="2026-09-30", response_sha256=digest)
     with pytest.raises(ValueError, match="bounded_provider_rows_required"):
         normalize_jquants_topix_bars({"data": None}, received_at="2026-09-30T08:00:00Z", response_sha256=digest)
+
+
+def test_daily_margin_crosses_old_limit_and_restores_original_receipts(tmp_path):
+    import hashlib
+    import json
+    from datetime import date, timedelta
+    from jp_market_source_adapters import retain_margin_snapshot, restore_margin_snapshot
+    values = [{"Date": (date(2016, 1, 1) + timedelta(days=i)).isoformat(),
+               "Code": "15700", "LongVol": 120, "ShrtVol": 20,
+               "LongStdVol": 80, "LongNegVol": 40,
+               "ShrtStdVol": 18, "ShrtNegVol": 2} for i in range(2000)]
+    def candidate(rows, at):
+        raw = json.dumps({"data": rows}).encode()
+        return normalize({"data": rows}, instrument_id="1570", observed_at=at,
+                         response_sha256=hashlib.sha256(raw).hexdigest(), volume_unit="UNITS"), raw
+    path = tmp_path / "sources.sqlite3"
+    first, raw = candidate(values, "2026-10-05T01:00:00Z")
+    original = retain_margin_snapshot(first, path=path, raw=raw)
+    assert len(original["rows"]) == 12000
+    # A rolling response adds a day without resending the original history.
+    next_row = dict(values[-1], Date=(date(2016, 1, 1) + timedelta(days=2000)).isoformat())
+    next_snapshot, raw = candidate([next_row], "2026-10-05T02:00:00Z")
+    extended = retain_margin_snapshot(next_snapshot, path=path, raw=raw)
+    assert len(extended["rows"]) == 12006
+    assert extended["rows"][:12000] == original["rows"]
+    restored = restore_margin_snapshot(path)
+    assert restored["rows"] == extended["rows"]
+    # A correction after restart appends six revisions without rewriting receipts.
+    corrected, raw = candidate([dict(next_row, LongVol=130, LongStdVol=90)], "2026-10-05T03:00:00Z")
+    revised = retain_margin_snapshot(corrected, path=path, raw=raw)
+    assert revised["rows"][:12006] == extended["rows"]
+    assert len(revised["rows"]) == 12012
+    assert all(row["revision"] == 1 for row in revised["rows"][12006:])
+    assert restore_margin_snapshot(path)["rows"] == revised["rows"]
+    assert revised["retention"]["status"] == "WITHIN_BUDGET"
+    assert revised["retention"]["rowLimit"] > 6 * 260 * 10
+
+
+def test_margin_capacity_failure_preserves_store_and_old_metadata(tmp_path, monkeypatch):
+    import hashlib
+    import json
+    import sqlite3
+    import pytest
+    import jp_market_source_adapters as adapter
+    path = tmp_path / "sources.sqlite3"
+    def candidate(day, at):
+        raw = json.dumps({"data": [{"Date": day, "Code": "15700", "LongVol": 120, "ShrtVol": 20}]}).encode()
+        return normalize(json.loads(raw), instrument_id="1570", observed_at=at,
+                         response_sha256=hashlib.sha256(raw).hexdigest(), volume_unit="UNITS"), raw
+    first, raw = candidate("2026-10-01", "2026-10-05T01:00:00Z")
+    adapter.retain_margin_snapshot(first, path=path, raw=raw)
+    # A pre-upgrade envelope does not have capacity metadata and still restores.
+    with sqlite3.connect(path) as db:
+        envelope = json.loads(db.execute("SELECT value FROM metadata WHERE key='margin_snapshot:1570'").fetchone()[0])
+        envelope["document"].pop("retention")
+        envelope["sha256"] = hashlib.sha256(adapter._margin_json(envelope["document"]).encode()).hexdigest()
+        db.execute("UPDATE metadata SET value=? WHERE key='margin_snapshot:1570'", (adapter._margin_json(envelope),))
+    assert adapter.restore_margin_snapshot(path)["rows"] == first["rows"]
+    before = path.read_bytes()
+    incoming, raw = candidate("2026-10-02", "2026-10-05T02:00:00Z")
+    monkeypatch.setattr(adapter, "_MARGIN_MAX_ROWS", 2)
+    with pytest.raises(ValueError, match="margin_retention_maintenance_required"):
+        adapter.retain_margin_snapshot(incoming, path=path, raw=raw)
+    assert path.read_bytes() == before
+    assert adapter.restore_margin_snapshot(path)["retention"]["status"] == "MAINTENANCE_DUE"
+    monkeypatch.setattr(adapter, "_MARGIN_MAX_ROWS", 60000)
+    existing_bytes = adapter.restore_margin_snapshot(path)["retention"]["serializedBytes"]
+    monkeypatch.setattr(adapter, "_MARGIN_MAX_BYTES", existing_bytes)
+    with pytest.raises(ValueError, match="margin_history_byte_budget"):
+        adapter.retain_margin_snapshot(incoming, path=path, raw=raw)
+    assert path.read_bytes() == before
+    assert adapter.restore_margin_snapshot(path)["rows"] == first["rows"]
+    monkeypatch.setattr(adapter, "_MARGIN_MAX_BYTES", existing_bytes - 1)
+    with pytest.raises(ValueError, match="margin_history_byte_budget"):
+        adapter.restore_margin_snapshot(path)
