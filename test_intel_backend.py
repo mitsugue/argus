@@ -67,9 +67,39 @@ def test_collect_reports_per_feed(monkeypatch):
     # deterministic: each feed returns one parseable item
     xml = '<rss><channel><item><title>Test market headline {n}</title>' \
           '<link>https://x.test/{n}</link></item></channel></rss>'
-    monkeypatch.setattr(scanner, "_fetch_public_text", lambda u: xml.replace("{n}", str(hash(u) % 999)))
+    monkeypatch.setattr(scanner, "_fetch_public_text", lambda u, **kwargs: xml.replace("{n}", str(hash(u) % 999)))
     res = scanner.collect_institutional_intel()
     assert res["feeds"] == len(scanner._INTEL_FEEDS)
     assert "perFeed" in res and len(res["perFeed"]) == len(scanner._INTEL_FEEDS)
     assert all("feed" in f and "fetched" in f and "new" in f for f in res["perFeed"])
     assert "summary" in res and ":" in res["summary"]
+
+
+def test_collect_keeps_fixed_failure_codes_on_the_existing_admin_record(monkeypatch):
+    monkeypatch.setattr(scanner, "_INTEL_FEEDS", [
+        ("bloomberg_public", "bbg:markets", "https://public.test/blocked", "rss"),
+        ("cnbc_public", "cnbc:markets", "https://public.test/empty", "rss")])
+    monkeypatch.setattr(scanner, "_INTEL_STORE", [])
+    monkeypatch.setattr(scanner, "_INTEL_LAST", {})
+    monkeypatch.setattr(scanner, "_intel_translate_titles", lambda: None)
+    monkeypatch.setattr(scanner, "_intel_persist", lambda: None)
+    monkeypatch.setattr(scanner, "_intel_watchlist_symbols", lambda: [])
+    monkeypatch.setattr(scanner, "get_downside_incidents", lambda: {"incidents": []})
+
+    def fetch(url, *, diagnostic):
+        blocked = url.endswith("blocked")
+        diagnostic.update(httpStatus=403 if blocked else 200,
+                          errorClass="http_unavailable" if blocked else None,
+                          elapsedSeconds=1.25)
+        return None if blocked else "<rss><channel/></rss>"
+
+    monkeypatch.setattr(scanner, "_fetch_public_text", fetch)
+    result = scanner.collect_institutional_intel()
+    assert result["failedFeeds"] == ["bbg:markets", "cnbc:markets"]
+    assert result["perFeed"][0]["errorClass"] == "http_unavailable"
+    assert result["perFeed"][0]["httpStatus"] == 403
+    assert result["perFeed"][1]["errorClass"] == "feed_has_no_items"
+    assert result["perFeed"][1]["httpStatus"] == 200
+    assert result["perFeed"][1]["elapsedSeconds"] == 1.25
+    assert scanner._INTEL_LAST["perFeed"] == result["perFeed"]
+    assert "public.test" not in str(result)
