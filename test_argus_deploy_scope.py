@@ -252,3 +252,39 @@ def test_every_calendar_table_deploys_the_backend():
     for path in ("ops/calendar/nikkei225_constituent_changes.json", "ops/calendar/msci_index_review.json",
                  "ops/calendar/us_policy_dates.json", "ops/calendar/jp_macro_2026.json"):
         assert deploy_scope.classify([path])["backendDeploy"] is True, path
+
+
+def test_cache_warm_never_prints_authenticated_response_or_transport_details(tmp_path):
+    """Exercise the actual deployed shell with a sensitive success/error response."""
+    import os
+    import subprocess
+    import sys
+    import textwrap
+    workflow = (ROOT / '.github/workflows/deploy-pages.yml').read_text()
+    step = workflow.split('      - name: Warm the runtime caches immediately after the swap\n', 1)[1]
+    shell = textwrap.dedent(step.split('        run: |\n', 1)[1].split('      - name:', 1)[0])
+    curl = tmp_path / 'curl'
+    curl.write_text('#!' + sys.executable + '\n' + textwrap.dedent("""
+        import os, sys
+        args = sys.argv[1:]
+        assert 'X-ARGUS-ADMIN-TOKEN: ' + os.environ['ARGUS_ADMIN_TOKEN'] in args
+        assert args[args.index('--max-time') + 1] == '300'
+        if os.environ['FAKE_FAIL'] == '1':
+            print('private-error-response', file=sys.stderr)
+            raise SystemExit(22)
+        body = 'private-owner-response-body'
+        if '--output' in args:
+            with open(args[args.index('--output') + 1], 'w') as out: out.write(body)
+        else: print(body)
+    """))
+    curl.chmod(0o700)
+    for failed in ('0', '1'):
+        env = dict(os.environ, PATH=str(tmp_path) + os.pathsep + os.environ['PATH'],
+                   ARGUS_ADMIN_TOKEN='fixture-private-token', FAKE_FAIL=failed)
+        run = subprocess.run(['/bin/bash', '-e', '-o', 'pipefail', '-c', shell],
+                             env=env, text=True, capture_output=True, timeout=5)
+        assert run.returncode == 0
+        assert ('起動を確認' if failed == '0' else '起動できませんでした') in run.stdout
+        assert run.stderr == ''
+        for private in ('private-owner-response-body', 'private-error-response', 'fixture-private-token'):
+            assert private not in run.stdout
