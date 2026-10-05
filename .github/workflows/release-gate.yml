@@ -75,6 +75,9 @@ jobs:
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
         run: cd web && npm ci --no-audit --no-fund
+      - name: Install browser for chart interaction regression
+        working-directory: web
+        run: npx playwright install --with-deps chromium
       - name: Validate control-plane scripts and workflows
         env:
           # Keep py_compile output outside the checkout so the subsequent
