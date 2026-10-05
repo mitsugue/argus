@@ -650,6 +650,9 @@ def evaluate_d01(rows: Iterable[Mapping[str, Any]], *, cutoff: str,
     shorts = _series_history(visible, "credit.short_balance")
     longs = _series_history(visible, "credit.long_balance")
     losses = _series_history(visible, "credit.valuation_loss_pct")
+    from argus_jpx_credit_valuation import audited_ledger_observation, METHOD_VERSION
+    latest_loss = losses[-1] if losses else None
+    audited_loss = bool(latest_loss and audited_ledger_observation(latest_loss))
     short = shorts[-1]["value"] if shorts else None
     long = longs[-1]["value"] if longs else None
     ratio = (long / short if long is not None and short and short > 0 else None)
@@ -658,6 +661,9 @@ def evaluate_d01(rows: Iterable[Mapping[str, Any]], *, cutoff: str,
         "longBalance": long,
         "marginRatio": round(ratio, 6) if ratio is not None else None,
         "valuationLossPct": losses[-1]["value"] if losses else None,
+        "valuationLossMethod": METHOD_VERSION if audited_loss else None,
+        "valuationLossPeriodEnd": latest_loss.get("periodEnd") if latest_loss else None,
+        "valuationLossKnownAt": (latest_loss.get("availableFrom") if audited_loss else None),
         "shortBalance1wChange": _change(shorts, 1),
         "shortBalance4wChange": _change(shorts, 4),
         "longBalance1wChange": _change(longs, 1),
@@ -727,7 +733,7 @@ def _period_day(value: Any) -> Optional[str]:
 
 def fact_note_ja(family: str, row: Mapping[str, Any]) -> Optional[str]:
     """One line of fact for the owner (2026-10-04): the value, the week it
-    describes and when it was published. A situation summary, not a signal."""
+    describes and its recorded availability. A situation summary, not a signal."""
     if not isinstance(row, Mapping) or row.get("status") != "AVAILABLE":
         return None
     if family == "D01":
@@ -740,7 +746,12 @@ def fact_note_ja(family: str, row: Mapping[str, Any]) -> Optional[str]:
         if rank is not None:
             text += f"（過去52週の中で低い方から{rank * 100:.0f}%の位置）"
         week, known = _period_day(f.get("shortBalancePeriodEnd")), _jst_day(f.get("shortBalanceKnownAt"))
-        return text + (f"・{week}週の値" if week else "") + (f"・{known}公表" if known else "")
+        text += (f"・{week}週の値" if week else "") + (f"・{known}から利用" if known else "")
+        loss = _finite(f.get("valuationLossPct"))
+        if f.get("valuationLossMethod") == "jpx-credit-valuation-v1" and loss is not None:
+            loss_week = _period_day(f.get("valuationLossPeriodEnd"))
+            text += f"。評価損益率 {loss:+.2f}%" + (f"・{loss_week}週" if loss_week else "") + "（JPXの入力から計算）"
+        return text
     if family == "D02":
         ratio = _finite(row.get("marginRatio"))
         if ratio is None:

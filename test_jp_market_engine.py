@@ -572,7 +572,7 @@ def test_fact_notes_name_the_week_and_publication_without_signal_words():
     d01 = engine.fact_note_ja("D01", {"status": "AVAILABLE", "features": {
         "shortBalance": 1.04e12, "shortBalanceRank52w": 0.885, "shortBalancePeriodEnd": "2026-09-25",
         "shortBalanceKnownAt": "2026-09-29T06:00:00+00:00"}})
-    assert d01 == "二市場の信用売り残 10,400億円（過去52週の中で低い方から88%の位置）・9/25週の値・9/29公表"
+    assert d01 == "二市場の信用売り残 10,400億円（過去52週の中で低い方から88%の位置）・9/25週の値・9/29から利用"
     d02 = engine.fact_note_ja("D02", {"status": "AVAILABLE", "marginRatio": 5.115, "ratioBasis": "STANDARDIZED_MARGIN",
                                       "periodEnd": "2026-09-25", "knownAt": "2026-09-30T00:00:00+00:00"})
     assert d02.startswith("日経レバの制度信用の倍率 5.12倍・9/25の値")
