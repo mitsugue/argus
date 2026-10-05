@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import type { AssetItem } from '../../types/assetItem';
+import { mergeWatchlistMembership } from '../../lib/watchlistMembershipRestore';
+import { markLocalEdit } from '../../lib/vault';
 
 // Layer 2B — sync the owner's watchlist MEMBERSHIP (symbols only, no holdings) so
 // ARGUS can score the assets you actually care about. The owner-sync token is
@@ -28,7 +30,7 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
   async function restoreFromLayer2B() {
     if (busy) return;
     if (!backend || !token.trim()) { setResult('復元には合言葉を入力してください'); return; }
-    if (!confirm('Layer 2Bに同期済みの銘柄でこの端末のウォッチリストを置き換えます(過去の資産記録はこの操作の対象外)。よろしいですか?')) return;
+    if (!confirm('サーバーに保存した銘柄のうち、この端末にない銘柄を追加します。登録済みの銘柄・設定・過去の記録はそのまま残します。よろしいですか?')) return;
     setBusy(true); setBusyLabel('保存済みの銘柄情報を確認しています');
     try {
       const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/calibration/watchlist-membership', {
@@ -38,22 +40,17 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
       const d = await r.json().catch(() => null);
       const members = d?.membership?.members;
       if (!members || !members.length) { setResult(`復元データなし: ${d?.status || r.status}`); return; }
-      const now = Date.now();
-      const restored = members.map((m: any, i: number) => {
-        const mk = m.market;
-        const at = mk === 'JP' ? 'jp_equity' : mk === 'US' ? 'us_equity' : 'crypto';
-        const src = mk === 'JP' ? 'jquants' : mk === 'US' ? 'twelvedata' : 'manual';
-        return {
-          id: `${mk.toLowerCase()}-${m.symbol.toLowerCase()}`, symbol: m.symbol,
-          displayName: m.name || m.symbol, displayNameJa: m.name || undefined,
-          market: mk, assetType: at, source: src, enabled: true, sortOrder: i,
-          createdAt: now, updatedAt: now,
-          ...(mk === 'CRYPTO' ? { memo: `coingecko:${m.symbol.toLowerCase() === 'btc' ? 'bitcoin' : m.symbol.toLowerCase() === 'eth' ? 'ethereum' : m.symbol.toLowerCase()}` } : {}),
-        };
-      });
-      localStorage.setItem('argus.assets.v1', JSON.stringify(restored));
-      window.dispatchEvent(new Event('argus:data-synced'));
-      setResult(`✅ ${restored.length}銘柄を復元しました(JP/US/暗号資産)。投信と過去の資産記録には通常のバックアップを使用してください。`);
+      if (!r.ok || d?.status !== 'ok') { setResult('保存済みの銘柄を取得できませんでした'); return; }
+      // Read AFTER the request, so changes made while it was in flight survive.
+      const raw = localStorage.getItem('argus.assets.v1');
+      const current = raw === null ? assets : JSON.parse(raw);
+      const restored = mergeWatchlistMembership(current, members, Date.now());
+      if (restored.added > 0) {
+        localStorage.setItem('argus.assets.v1', JSON.stringify(restored.assets));
+        markLocalEdit();
+        window.dispatchEvent(new Event('argus:data-synced'));
+      }
+      setResult(restored.added ? `${restored.added}銘柄を追加しました。元の記録は保持しています。` : '追加する銘柄はありません。');
     } catch (e) {
       setResult('復元エラー: ' + String(e).slice(0, 80));
     } finally { setBusy(false); }
@@ -110,13 +107,13 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
     // Render cold-start can return a non-JSON 502/timeout for the first hit, which
     // made r.json() throw "did not match the expected pattern". Warm the dyno,
     // then POST with retries and a SAFE json parse (read text, then try parse).
-    try { setResult('接続中(バックエンド起動待ち)…'); await fetch(base + '/healthz').catch(() => {}); } catch { /* ignore */ }
+    try { setResult('接続中(バックエンド起動待ち)…'); await fetch(base + '/healthz', { signal: AbortSignal.timeout(12000) }).catch(() => {}); } catch { /* ignore */ }
     let lastErr = '';
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const r = await fetch(base + '/api/argus/calibration/watchlist-sync', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items, ownerToken: token.trim() }),
+          body: JSON.stringify({ items, ownerToken: token.trim() }), signal: AbortSignal.timeout(12000),
         });
         const text = await r.text();
         let d: any = null;
@@ -151,11 +148,10 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
     <div className="card guide-card">
       <div className="guide-glossary">
         <div className="guide-term">
-          <span className="guide-term__en">Layer 2B 同期</span>
+          <span className="guide-term__en">登録銘柄の同期</span>
           <span className="guide-term__ja">
-            あなたのウォッチリストの<b>銘柄と「保有/監視」フラグだけ</b>(保有数量・取得単価・損益は一切送りません)を
-            private ストアへ同期し、ARGUS があなたの銘柄を採点・急落時に一段厳しく扱えるようにします。
-            対象 {items.length} 銘柄(うち保有 {registeredLocal.length})。
+            登録銘柄をサーバー側の定期分析へ反映します。変更後は「今すぐ同期」を押してください。
+            対象 {items.length} 銘柄（有効 {registeredLocal.length}）。
           </span>
         </div>
         <div className="guide-term">
@@ -212,7 +208,7 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
               ) : (
                 <div style={{ color: 'var(--amber, #FBBF24)' }}>
                   ⚠️ 未同期: {syncStatus.missing.join(', ')} — これらは<b>サーバー側の定期分析へ未登録です</b>。
-                  「今すぐ同期」を押すと反映されます(同期後はダウンサイド判定が一段厳しくなります)。
+                  「今すぐ同期」を押すと反映されます。
                 </div>
               )}
             </div>
