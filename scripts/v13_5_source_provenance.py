@@ -257,7 +257,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'scripts/macro_readiness.py': 'd9d736333960d220a5ce3fc55951abc901ea47f0',
     'docs/V13_7_REQUIREMENTS.md': '4531b8a7f358a4f14dbb5d3d6e86c481f9c3ac07',
     'web/src/hooks/useOsintInvestigation.ts': 'ada26a80e0f0f439f97cb75858407647dc7c5d8d',
-    'web/src/components/guide/Layer2BSyncCard.tsx': 'b54f946a7a4176390d086dfc302588fe7e45a26f',
+    'web/src/components/guide/Layer2BSyncCard.tsx': '0e62e584a7efb14303c3acfb76d71d68b24bf937',
     'web/src/components/dashboard/OsintDeepDive.tsx': '875c23041a7d765379aa834bbfe70ae24abf0f05',
     'web/src/components/dashboard/AddAssetModal.tsx': '56b5df9a55e8238db3538c829f1e29fd157398ce',
     'web/src/components/assetDesk/AssetResearchPanel.tsx': '74487e1942385ade5ccef2209a9ca63bf5d3e4e1',
@@ -648,6 +648,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/src/lib/watchlistMembershipRestore.ts",
+    "web/scripts/watchlist-membership-restore.test.cjs",
     "test_intel_backend.py",
     "docs/V13_LEGACY_DATA_REPAIR_2026-10-05.md",
     "docs/V13_LEGACY_ACCEPTANCE_CURRENT.md",
