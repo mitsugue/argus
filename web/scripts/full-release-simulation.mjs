@@ -157,16 +157,15 @@ try {
   for (const label of ['Today', 'Watchlist', '13M', 'Settings']) {
     assert.ok(await page.getByText(label, { exact: true }).count() > 0, label);
   }
-  // v13.5.39: the owner's top command block renders MARKET SIGNALS x / 7 from
-  // the real projection (a truthful '— / 7' placeholder until evidence loads);
-  // this is the rendered DOM on the production route, not a source string.
+  // The count is neutral and reflects the real projection. Until acquisition
+  // finishes it explicitly stays unknown; this checks the rendered DOM.
   assert.equal(await page.locator('.at-decision-details').getAttribute('open'), null, 'decision details start collapsed');
   const topSignals = page.locator('[data-argus-contract="market-signals-top-v1"]').first();
   assert.ok(await topSignals.count() > 0, 'top MARKET SIGNALS block rendered');
   assert.ok(await topSignals.isVisible(), 'signals remain visible while decision details are collapsed');
   assert.equal(await page.locator('.at-urgent-news').count(), 0, 'news has one list rather than a detached leading article');
   const topSignalsText = (await topSignals.innerText()).trim();
-  assert.match(topSignalsText, /^(\d|—) \/ 7$/, `top MARKET SIGNALS count: ${topSignalsText}`);
+  assert.match(topSignalsText, /^(成立している条件 [0-7]件|成立状況を確認中)$/, `top MARKET SIGNALS count: ${topSignalsText}`);
   assert.ok((await page.locator('.at-seven summary small').first().innerText()).includes('日本株の7条件'),
     'top block carries the owner-facing name');
   evidence.publicProductAcceptance = { status: 'pass', brand, topSignals: topSignalsText,
