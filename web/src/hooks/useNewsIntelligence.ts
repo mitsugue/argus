@@ -82,6 +82,27 @@ export interface NewsIntelView {
 export interface NewsIntelState {
   status: 'loading' | 'data' | 'error';
   view: NewsIntelView | null;
+  intakeHealth?: NewsIntakeHealth | null;
+}
+
+export interface NewsIntakeHealth {
+  status: string; lastSyncAt: string | null; lastMessageAt: string | null;
+  pending: number; configured: boolean; threadAlive: boolean;
+}
+let healthFlight: Promise<NewsIntakeHealth | null> | null = null;
+async function fetchIntakeHealth(): Promise<NewsIntakeHealth | null> {
+  const base = baseUrl();
+  if (!base) return null;
+  try {
+    const response = await fetch(`${base}/api/argus/news-intake/health`, { cache:'no-store', signal:AbortSignal.timeout(5000) });
+    if (!response.ok) return null;
+    const body = await response.json();
+    if (body.schemaVersion !== 'argus-news-intake-health-v1') return null;
+    // Keep only the status fields the screen needs, never mail IDs/domains.
+    return { status:String(body.status), lastSyncAt:typeof body.lastSyncAt === 'string' ? body.lastSyncAt : null,
+      lastMessageAt:typeof body.lastMessageAt === 'string' ? body.lastMessageAt : null,
+      pending:Number.isFinite(body.pending) ? body.pending : 0, configured:body.configured === true, threadAlive:body.threadAlive === true };
+  } catch { return null; }
 }
 
 let memory: NewsIntelView | null = null;
@@ -115,12 +136,15 @@ async function fetchNewsIntel(): Promise<NewsIntelView | null> {
 }
 
 export function useNewsIntelligence(): NewsIntelState {
+  const [intakeHealth, setIntakeHealth] = useState<NewsIntakeHealth | null>(null);
   const [state, setState] = useState<NewsIntelState>(() => (memory
     ? { status: 'data', view: memory }
     : { status: 'loading', view: null }));
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
+      if (!healthFlight) healthFlight = fetchIntakeHealth().finally(() => { healthFlight = null; });
+      void healthFlight.then(health => { if (!cancelled) setIntakeHealth(health); });
       if (!cancelled) setState(current => ({ ...current, status: 'loading' }));
       if (!inflight) {
         inflight = fetchNewsIntel().finally(() => { inflight = null; });
@@ -152,5 +176,5 @@ export function useNewsIntelligence(): NewsIntelState {
       window.removeEventListener('online', onOnline);
     };
   }, []);
-  return state;
+  return { ...state, intakeHealth };
 }

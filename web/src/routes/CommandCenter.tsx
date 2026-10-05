@@ -613,6 +613,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
         shock={{ status: marketShock.status,
           events: marketShock.view?.events ?? [] }}
         newsIntel={{ status: newsIntel.status,
+          generatedAt: newsIntel.view?.generatedAt, intakeStatus: newsIntel.view?.intakeStatus,
+          intakeHealth: newsIntel.intakeHealth,
           events: newsIntel.view?.events ?? [] }}
         onNavigate={onNavigate} onNavigateToAsset={onNavigateToAsset}
         onNavigateToSettings={onNavigateToSettings}

@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.35"
+PRODUCT_VERSION = "v13.8.36"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
-    'web/scripts/pwa-identity.test.mjs': '51a3f36013d396aba9bbaebbf22f276ad5c30d53',
-    'web/scripts/owner-today-https.mjs': '4922dae4603e4dc3dddcc439ea11aeeef23e7880',
+    'web/scripts/pwa-identity.test.mjs': '8ab24d3fcbcc4f79c8b0a674d546f07359f6ddbc',
+    'web/scripts/owner-today-https.mjs': '1cf6ff213f3430f48e51347af3b2c259530fd933',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -223,7 +223,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/today/FiscalEnvironmentDetails.css': 'c5830b9d9414c8b7fafb69b5fa4f7d4a0db83700',
     'web/src/components/today/FiscalEnvironmentDetails.tsx': 'd696c18bf0e8e18abbd3ca167e135fe02d581386',
     'web/src/lib/revealNewsArticle.ts': '807735f5bd95556ed64af7019cf0b3f26608a07c',
-    'web/scripts/news-delivery-grouping.test.cjs': 'f197d0b0a32ce7efbc2192b1ae80a762300017f3',
+    'web/scripts/news-delivery-grouping.test.cjs': 'e646d83148430f802aeec014dfd6f8985f5babc6',
     'docs/V13_7_INDEX_ANALOG_COVERAGE.md': '905dca1b82c5c24ed1e7e11ce6278e8503221564',
     'test_argus_index_history.py': 'ce4a258925493926854d121d0d43e1f3559597e1',
     'argus_index_history.py': 'f4f50d4bcb69d60e35f831647c4308dc0432b8ad',
@@ -275,14 +275,14 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dialogue/OwnerOverview.css': 'e608b1f63bbbf8596454a9e0100cea6ee8a41a0f',
     'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',
     'web/src/lib/presentationIntent.ts': '77c0c79423a2291fc3e28a58e1b0397b11a83828',
-    'web/src/components/today/ArgusEditorialSurface.tsx': '9a90fd722e7b00efe64ed70b4290e36946b2eac7',
+    'web/src/components/today/ArgusEditorialSurface.tsx': '6ce8ea0a8743a7e4b14379b45399814e78e83a28',
     'web/src/components/today/ArgusEditorialSurface.css': '51cb798f369f70ab4d3b20f99b7ae377fca9e542',
     'test_argus_presentation_intent.py': 'e79beae902a1382fae9e5ea3359e09301abf9733',
     'docs/V13_6_PRESENTATION_INTENT.md': '88d35d6f5f603628e7e89bae56308e16b7c76ea6',
     'argus_presentation_intent.py': '9ac401c4ea52103cb0efeedcf5774d25b78cda7d',
     'argus_persistent_storage.py': '4cb3737d9e865772a42ee238ca246e47158eee4f',
     'test_argus_checkpoint_stream_batches.py': 'a3e03b9cb28f6f62b88096bf651ef4eef02d451f',
-    'web/src/components/today/ReadingHierarchy.css': '092e90620cc40b7d3341bc688f9193f50a3923a0',
+    'web/src/components/today/ReadingHierarchy.css': '99fba2c6097ee559e790725d961832e5b91f725d',
     'web/src/components/AppShell.tsx': 'fa34bd3703246744c9eeec4411783b6234777a77',
     'web/src/routes/BackupPage.tsx': '7d082a20c08964bb00dc4de227827f7bcfc19abb',
     'web/src/navigation.ts': '7bbea49bee28dd07ead0273ea84f1092255a3ca3',
@@ -395,7 +395,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/market-brief-response.test.cjs': 'a0b9296048de2038a4f4e647c1583af010d1c3e5',
     'web/src/components/chart/JapanMarketComparisonChart.css': '5f1bc41ac381d67191cf3fa82ede9cc6f13c06ca',
     'web/src/components/chart/JapanMarketComparisonChart.tsx': '82d72b47688dd609384b4133e3537f056726c884',
-    'web/src/components/chart/JapanMarketComparisonPanel.tsx': '0e118ad3072505a3c29cbac4043011cd3135aa45',
+    'web/src/components/chart/JapanMarketComparisonPanel.tsx': 'a210ce56e1826916e66313a0e098c359294b691c',
     'web/src/components/dashboard/JapanSqCalendarCard.css': 'a8bfb645823551f415e2d05e8f6721273c09083b',
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': '77f4e4fa1edee0e5f42db6d82597a4ec1ad82083',
     'web/src/components/dashboard/MacroResultDetails.tsx': '1ae4f62354c917002f6b60b1b8e72de1a126a3f6',
@@ -409,7 +409,7 @@ REVIEWED_EXTENSION_BLOBS = {
     "test_ai_cost.py": "e2e1a3094c0fe315993d027592de6e1db9a5b784",
     'web/scripts/news-polling-recovery.test.mjs': 'a5675fb01973b14712491809f7eb30c5814851f0',
     "test_argus_prediction_read_latency.py": "731d0705813a323169ba286315811cac5b06e0f7",
-    "web/scripts/news-presentation.test.mjs": "163019b4aa4c6a454a5351b7ad8c68ff5024712a",
+    "web/scripts/news-presentation.test.mjs": "aeecd7f09b16f0ad473916e6bad39ba9a8a5fc04",
     "web/src/domain/newsPresentation.ts": "88361ceaf9b7da66ff5b6344e118d4707a8d6dea",
     "test_argus_ai_execution_settings.py": "5f0596eb8d2444bd545351d10dff9959df5760eb",
     "argus_research_benchmark.py": "0afebef7261abeb95da017f4b5aa327da55874a1",
@@ -648,6 +648,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/scripts/chart-reading-browser.test.mjs",
     "web/scripts/owner-login-failure.test.cjs",
     "web/src/lib/researchChart.ts",
     "web/src/components/chart/NikkeiResearchChart.tsx",

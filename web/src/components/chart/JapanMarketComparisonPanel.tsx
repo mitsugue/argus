@@ -25,7 +25,7 @@ export function JapanMarketHorizonComparison() {
   return <section id="today-nikkei-chart" aria-label="最新の日経平均の過去比較">
     <h3>日経平均の水準と見通し</h3>
     <div className="jp-comparison-periods" role="group" aria-label="チャートの表示">
-      <button type="button" aria-pressed={mode === 'research'} onClick={() => setMode('research')}>水準と外部の見立て</button>
+      <button type="button" aria-pressed={mode === 'research'} onClick={() => setMode('research')}>価格の目盛りと参考予測</button>
       <button type="button" aria-pressed={mode === 'comparison'} onClick={() => setMode('comparison')}>従来の過去比較</button>
     </div>
     {mode === 'research' ? <NikkeiResearchChart /> : <>

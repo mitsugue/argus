@@ -55,6 +55,8 @@ jobs:
         run: node web/scripts/index-chart-isolation.test.mjs
       - name: Check news presentation hierarchy
         run: node web/scripts/news-presentation.test.mjs
+      - name: チャートの指操作と価格表示
+        run: node web/scripts/chart-reading-browser.test.mjs
       - name: News polling recovery
         run: node web/scripts/news-polling-recovery.test.mjs
       - name: Check historical news reader

@@ -72,8 +72,8 @@ try {
   assert.equal(await page.getByText(story.headlineJa,{exact:true}).count(),1,'one article has one headline');
   assert.equal(await page.locator('.at-news-row').first().getAttribute('data-news-event-id'),'critical');
   assert.equal(await page.locator('.at-news-row mark').first().innerText(),'重大');
-  assert.equal(await page.getByText('影響の見立て: 弱気').isVisible(),true);
-  assert.equal(await page.getByText('この記事だけでは上下を決めません',{exact:false}).isVisible(),true);
+  assert.equal(await page.getByText('株価の重し').isVisible(),true);
+  assert.equal(await page.getByText('影響を確認中',{exact:true}).isVisible(),true);
   assert.equal(await page.locator('.at-event-memory').isVisible(),false,'internal evidence is initially folded');
   await page.getByText('過去の事例との照合 · 検証中',{exact:true}).click();
   assert.equal(await page.locator('.at-event-memory').isVisible(),true);
