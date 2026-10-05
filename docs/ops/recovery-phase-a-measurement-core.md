@@ -89,3 +89,8 @@ the 130–160 MiB accounting, time, ratio, RSS, and zero-full-buffer gates. The
 second constructs a valid 13–14 MiB adversarial artifact and enforces linear
 pass/encode counts, planning p95, max-state hot-path p95/max, and the 12 MiB
 persisted result.
+
+The automated storage acceptance test uses that same 145 MiB / five-sample
+command, including all unchanged gates. The optional 2 MiB / one-sample smoke
+command remains a quick local probe; a roughly four-millisecond pass is not the
+130–160 MiB performance acceptance workload. It does not replace acceptance.

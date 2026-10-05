@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    "docs/ops/recovery-phase-a-measurement-core.md": "e9ce722983325daf71a9ec1c0c106ec178cd25ba",
     # Bound local forecast read receipts; no new remote storage or authority.
     'argus_future_map_cache.py': '6320d47d3b49d384f3f57522c364ddc2a77e784a',
     'test_argus_future_map_cache.py': 'a58a14490c087fa96d1a1914145f1d2bd1799f21',
@@ -123,7 +124,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/lib/pollingPolicy.ts': '40bfa352aaf060fde8d54ec57125ce8ca4096b53',
     'docs/RECOVERY_MATERIALIZATION.md': 'af222d7a64b801dce147daa9a3b6ddc75def0572',
     'test_argus_recovery_materialization.py': '87fc8de5a051024375af5fcde0b50867aaf2dddb',
-    'test_argus_recovery_measurement_storage.py': '4d960ba28f662b4b4dfc3e309e54e5e9e2a0b267',
+    'test_argus_recovery_measurement_storage.py': 'ed5e5b9a8ab0e4bc42c396b99e5bd239b58965f2',
     'docs/ACCEPTANCE_FAILURE_EVIDENCE.md': '2f425f275db6065af5acaa5584d029d9d4771289',
     'web/scripts/business-failure-evidence.test.mjs': '6df1cca2b9d6962b281a8adb6becc2fb0678efae',
     'web/scripts/owner-artifact-workflows.test.mjs': 'e5cbf535944796d649ebd50402c36a567f3cf944',
