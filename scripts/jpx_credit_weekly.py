@@ -48,7 +48,7 @@ LISTING_URL = "https://www.jpx.co.jp/markets/statistics-equities/margin/04.html"
 MAX_WORKBOOK_BYTES = 4 * 1024 * 1024
 MAX_LISTING_BYTES = 512 * 1024
 CSV_COLUMNS = ("seriesId", "periodEnd", "publishedAt", "availableFrom",
-               "observedAt", "value", "unit", "source", "sourceKind", "status")
+               "observedAt", "value", "unit", "source", "sourceKind", "status", "metadata")
 SERIES = {"short": "credit.short_balance", "long": "credit.long_balance"}
 MILLION = 1_000_000
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -215,7 +215,10 @@ def rows_to_csv(rows: Iterable[Dict[str, Any]]) -> str:
     writer = csv.DictWriter(buffer, fieldnames=list(CSV_COLUMNS), lineterminator="\n")
     writer.writeheader()
     for row in rows:
-        writer.writerow({key: row.get(key, "") for key in CSV_COLUMNS})
+        values = {key: row.get(key, "") for key in CSV_COLUMNS}
+        if isinstance(values.get("metadata"), dict):
+            values["metadata"] = json.dumps(values["metadata"], ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        writer.writerow(values)
     return buffer.getvalue()
 
 
@@ -304,15 +307,19 @@ def fetch_listing() -> Dict[str, str]:
     return workbook_links(body.decode('utf-8'))
 
 def collect(since: str, *, today: Optional[date] = None,
-            fetcher=fetch, now_iso: Optional[str] = None, listing_fetcher=fetch_listing) -> Dict[str, Any]:
+            fetcher=fetch, now_iso: Optional[str] = None, listing_fetcher=fetch_listing,
+            valuation_since: Optional[str] = None) -> Dict[str, Any]:
     observed = now_iso or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     clock_now = datetime.fromisoformat(observed.replace('Z', '+00:00'))
-    links = listing_fetcher() if listing_fetcher is not None else {}
     rows: List[Dict[str, Any]] = []
     gaps: List[str] = []
     failures: List[str] = []
     fetched: List[str] = []
-    for friday in fridays_after(since, today):
+    starts = [since] + ([valuation_since] if valuation_since is not None else [])
+    for start in starts:
+        fridays_after(start, today)  # Validate each independent cursor, not only the minimum.
+    links = listing_fetcher() if listing_fetcher is not None else {}
+    for friday in fridays_after(min(starts), today):
         template = NEW_URL_TEMPLATE if friday >= NEW_FORMAT_FROM else URL_TEMPLATE
         url = links.get(friday) or template.format(ymd=friday.replace("-", ""))
         due = friday in links or publication_due(friday, clock_now) is True
@@ -323,7 +330,8 @@ def collect(since: str, *, today: Optional[date] = None,
                 failures.append(friday + ":published_workbook_unavailable")
             continue
         try:
-            parsed = parse_sheet(load_workbook_grid(payload))
+            grid = load_workbook_grid(payload)
+            parsed = parse_sheet(grid)
         except ValueError as error:
             gaps.append(f"{friday}:{error}")
             failures.append(friday + ":workbook_unreadable")
@@ -333,8 +341,17 @@ def collect(since: str, *, today: Optional[date] = None,
             failures.append(friday + ":period_mismatch")
             continue
         observed = now_iso or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        rows.extend(build_rows(parsed, url=url, sha256=hashlib.sha256(payload).hexdigest(),
-                               observed_at=observed))
+        digest = hashlib.sha256(payload).hexdigest()
+        if friday > since:
+            rows.extend(build_rows(parsed, url=url, sha256=digest, observed_at=observed))
+        if valuation_since is not None and friday > valuation_since:
+            from argus_jpx_credit_valuation import extract, ledger_observation
+            try:
+                calculation = extract(grid)
+                rows.append(ledger_observation(calculation, url=url, sha256=digest,
+                                               received_at=observed))
+            except ValueError:
+                failures.append(friday + ":valuation_inputs_unreadable")
         fetched.append(friday)
     return {"since": since, "fetched": fetched, "gaps": gaps, "failures": failures, "rows": rows,
             "csv": rows_to_csv(rows), "observedAt": observed}
@@ -370,20 +387,38 @@ def import_rows(csv_text: str, *, backend: str, token: str,
     if expected_newest and held < expected_newest:
         return {"ok": False, "stage": "readback", "expectedNewest": expected_newest,
                 "ledger": readback, "transportError": commit.get("transportError")}
-    expected = {r["seriesId"]: r for r in csv.DictReader(io.StringIO(csv_text))
-                if r.get("periodEnd") == expected_newest and r.get("seriesId") in SERIES.values()}
-    if expected_newest:
-        verified = set()
-        for sid, row in expected.items():
+    import argus_market_ledger as market_ledger
+    from argus_jpx_credit_valuation import ledger_observation_digest
+    try:
+        expected = market_ledger.parse_csv(csv_text)
+        required = set(SERIES.values()) if expected_newest else set()
+        required |= {row["seriesId"] for row in expected}
+        if not required.issubset(readback):
+            raise ValueError("jpx_readback_series_missing")
+        for row in expected:
+            sid = row["seriesId"]
+            if sid not in (*SERIES.values(), "credit.valuation_loss_pct"):
+                raise ValueError("jpx_import_series_invalid")
+            row["value"] = None if row["value"] == "" else float(row["value"])
             seen = readback.get(sid, {})
             observations = [{"periodEnd": seen.get("periodEnd"), "value": seen.get("latestValue"),
                              "availableFrom": seen.get("availableFrom")}, *seen.get("history", [])]
-            if any(x.get("periodEnd") == expected_newest and x.get("value") == float(row["value"])
-                   and x.get("availableFrom") == row["availableFrom"] for x in observations):
-                verified.add(sid)
-        if verified != set(SERIES.values()):
-            return {"ok": False, "stage": "readback_content", "ledger": readback}
-    return {"ok": True, "importId": commit.get("importId"),
+            digest = ledger_observation_digest(row) if sid == "credit.valuation_loss_pct" else None
+            matches = [x for x in observations if x.get("periodEnd") == row["periodEnd"]
+                       and x.get("value") == row["value"]
+                       and x.get("availableFrom") == row["availableFrom"]]
+            if digest:
+                matches = [x for x in matches if x.get("unit") == "percent"
+                           and x.get("calculationDigest") == digest]
+                for item in matches:
+                    if item.get("auditedObservation") is not None:
+                        if ledger_observation_digest(item["auditedObservation"]) != digest:
+                            raise ValueError("jpx_readback_calculation_mismatch")
+            if not matches:
+                raise ValueError("jpx_readback_content_mismatch")
+    except (KeyError, TypeError, ValueError):
+        return {"ok": False, "stage": "readback_content", "ledger": readback}
+    return {"ok": True, "stage": "verified_import", "importId": commit.get("importId"),
             "rowCount": len(commit.get("preview") or []),
             "settledByReadback": commit.get("ok") is None,
             "transportError": commit.get("transportError"), "ledger": readback}
@@ -398,12 +433,29 @@ def ledger_newest_credit(backend: str, *, token: str) -> Dict[str, Any]:
         doc = json.loads(response.read().decode("utf-8"))
     out: Dict[str, Any] = {}
     for row in doc.get("table") or []:
-        if row.get("seriesId") in SERIES.values():
+        if row.get("seriesId") in (*SERIES.values(), "credit.valuation_loss_pct"):
             out[row["seriesId"]] = {"periodEnd": row.get("periodEnd"),
                                     "latestValue": row.get("latestValue"),
                                     "availableFrom": row.get("availableFrom"),
                                     "history": row.get("history") or []}
     return out
+
+
+def valuation_cursor(table, fallback="2026-07-10"):
+    from argus_jpx_credit_valuation import audited_ledger_observation, ledger_observation_digest
+    for row in table:
+        if row.get("seriesId") != "credit.valuation_loss_pct":
+            continue
+        valid = []
+        for item in row.get("history") or []:
+            audit = item.get("auditedObservation")
+            if (audit and audited_ledger_observation(audit)
+                    and item.get("calculationDigest") == ledger_observation_digest(audit)
+                    and item.get("periodEnd") == audit.get("periodEnd")):
+                valid.append(audit["periodEnd"])
+        if valid:
+            return max(fallback, max(valid))
+    return fallback
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -414,9 +466,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--backend", default="https://argus-backend-3j2m.onrender.com")
     parser.add_argument("--token-env", default="ARGUS_ADMIN_TOKEN")
     parser.add_argument("--summary", default=None, help="write a JSON summary here")
+    parser.add_argument("--valuation-since", default=None, help="last audited valuation period held (exclusive); independent from credit balances")
     args = parser.parse_args(argv)
     try:
-        result = collect(args.since)
+        options = {"valuation_since": args.valuation_since} if args.valuation_since is not None else {}
+        result = collect(args.since, **options)
     except Exception as error:
         # Do not expose raw responses, URLs or authenticated records in public logs.
         print(json.dumps({'ok': False, 'stage': 'acquisition', 'errorClass': type(error).__name__}))
@@ -432,9 +486,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if not token:
             summary["import"] = {"ok": False, "stage": "token_missing"}
         else:
-            summary["import"] = import_rows(result["csv"], backend=args.backend, token=token,
-                                            expected_newest=(result["fetched"] or [None])[-1])
-            summary["ledger"] = (summary["import"] or {}).get("ledger") or ledger_newest_credit(args.backend, token=token)
+            try:
+                summary["import"] = import_rows(result["csv"], backend=args.backend, token=token,
+                    expected_newest=max((r["periodEnd"] for r in result["rows"]
+                                         if r["seriesId"] in SERIES.values()), default=None))
+                summary["ledger"] = (summary["import"] or {}).get("ledger") or ledger_newest_credit(args.backend, token=token)
+            except Exception as error:
+                summary["import"] = {"ok": False, "stage": "authenticated_import",
+                                     "errorClass": type(error).__name__}
     if result["gaps"]:
         # A fixed warning does not expose rows or protected readback.
         print("::warning title=jpx-credit-weekly::取得待ちまたは書式を確認できない週があります")
@@ -445,7 +504,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(json.dumps({"ok": False, "stage": "published_weeks_incomplete"}))
         return 1
     print(json.dumps({"ok": not args.do_import or not result["rows"] or bool((summary.get("import") or {}).get("ok")),
-                      "stage": (summary.get("import") or {}).get("stage", "complete")}, ensure_ascii=False))
+                      "stage": (summary.get("import") or {}).get("stage", "no_new_rows" if not result["rows"] else "complete")}, ensure_ascii=False))
     if args.do_import and result["rows"] and not (summary.get("import") or {}).get("ok"):
         return 1
     return 0
