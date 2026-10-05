@@ -142,3 +142,29 @@ def test_result_lookup_runs_after_canonical_commit_with_exact_staged_runtime():
     assert 'git add ledger/event-prediction-results/v1/recent.json' in step
     assert '/api/' not in step and 'curl ' not in step
     assert 'scripts/export_event_prediction_results.py' in source[:source.index('Switch to ledger branch')]
+
+
+def test_ai_failure_and_timeout_have_an_independent_canonical_job_budget():
+    source = _source()
+    ai_job = source[source.index('  ai-judgment:'):source.index('  record-and-score:')]
+    writer = source[source.index('  record-and-score:'):]
+    assert 'timeout-minutes: 9' in ai_job
+    assert 'needs: ai-judgment' in writer
+    assert "if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' }}" in writer
+    assert 'timeout-minutes: 15' in writer
+    assert 'continue-on-error' not in source
+    assert "needs.ai-judgment.result != 'success'" in writer
+
+
+def test_canonical_push_precedes_every_auxiliary_persistence_failure():
+    source = _source()
+    capture = source.index('Append canonical Prediction Ledger v2 records')
+    commit = source.index('Commit canonical ledger before auxiliary persistence')
+    vault = source.index('Persist backup vault')
+    assert capture < commit < vault
+    step = source[commit:vault]
+    assert 'git add ledger/prediction/v2/' in step
+    assert 'git push origin HEAD:ledger' in step
+    assert 'id: canonical_commit' in step
+    assert 'snap.pending.json' in source[capture:commit]
+    assert 'mv snap.pending.json snap.json' in source[capture:commit]

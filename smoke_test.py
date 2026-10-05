@@ -14,15 +14,17 @@ import os
 import sys
 import json
 import time
+import signal
 import urllib.request
 import urllib.error
 
-BASE = (sys.argv[1] if len(sys.argv) > 1 else "https://argus-backend-3j2m.onrender.com").rstrip("/")
+BASE = (sys.argv[1] if __name__ == "__main__" and len(sys.argv) > 1 else "https://argus-backend-3j2m.onrender.com").rstrip("/")
 # Owner authentication is live in production (2026-09-28): every non-exempt
 # route answers 401 to anonymous callers.  The smoke carries the existing
 # operational credential when the workflow provides it; the value is never
 # printed and no owner password or session is involved.
-_SMOKE_HEADERS = {"User-Agent": "argus-smoke"}
+_ANONYMOUS_HEADERS = {"User-Agent": "argus-smoke"}
+_SMOKE_HEADERS = dict(_ANONYMOUS_HEADERS)
 if os.environ.get("ARGUS_ADMIN_TOKEN"):
     _SMOKE_HEADERS["X-ARGUS-ADMIN-TOKEN"] = os.environ["ARGUS_ADMIN_TOKEN"]
 KNOWN_REGIME = {"RISK_ON", "RISK_OFF", "CAUTIOUS", "EVENT_WAIT", "MIXED"}
@@ -41,8 +43,9 @@ EXPLICIT_NEGATIVE_PATHS = (
     "/api/state",
 )
 
-def _get(path, timeout=45):
-    req = urllib.request.Request(BASE + path, headers=dict(_SMOKE_HEADERS))
+def _get(path, timeout=45, *, authenticated=True):
+    headers = _SMOKE_HEADERS if authenticated else _ANONYMOUS_HEADERS
+    req = urllib.request.Request(BASE + path, headers=dict(headers))
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.getcode(), json.loads(r.read().decode("utf-8"))
 
@@ -51,7 +54,7 @@ def _post_json(path, body, timeout=30):
     import urllib.error
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(BASE + path, data=data, method="POST",
-                                 headers={**_SMOKE_HEADERS, "Content-Type": "application/json"})
+                                 headers={**_ANONYMOUS_HEADERS, "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.getcode(), json.loads(r.read().decode("utf-8"))
@@ -61,30 +64,47 @@ def _post_json(path, body, timeout=30):
         except Exception:
             return e.code, {}
 
-def check(name, fn):
-    """Run a validator with up to 5 attempts + increasing backoff. fn returns
-    (ok, detail) or raises. A persistent HTTP 429 is an upstream RATE LIMIT
-    (e.g. J-Quants), not a code regression — so it's tolerated as a soft-pass
-    rather than paging a false 'smoke FAILED'. Real regressions surface as
-    500/404/wrong-shape, which still fail."""
-    last = ""
-    rate_limited = False
-    for attempt in range(5):
-        try:
-            ok, detail = fn()
-            if ok:
-                return (name, True, detail)
-            last = detail
-        except urllib.error.HTTPError as e:
-            if e.code == 429:
-                rate_limited = True
-            last = f"HTTP {e.code}: {str(e)[:60]}"
-        except Exception as e:
-            last = f"{type(e).__name__}: {str(e)[:80]}"
-        time.sleep(4 * (attempt + 1))  # 4,8,12,16s — ride out cold-start/rate windows
-    if rate_limited:
-        return (name, True, f"⏳ rate-limited (tolerated, not a regression): {last[:50]}")
-    return (name, False, last)
+class ProbeDeadline(BaseException):
+    """A hard local deadline must escape a validator's broad Exception handler."""
+
+
+def _deadline_expired(signum, frame):
+    raise ProbeDeadline()
+
+
+def check(name, fn, budget_seconds=60):
+    """Bound the complete probe, including nested reads and retries. Never soft-pass."""
+    started = time.monotonic()
+    previous_handler = signal.signal(signal.SIGALRM, _deadline_expired)
+    previous_timer = signal.setitimer(signal.ITIMER_REAL, budget_seconds)
+    last = "未完了"
+    try:
+        for attempt in range(3):
+            print(f"  検査中: {name} ({attempt + 1}/3)", flush=True)
+            try:
+                ok, detail = fn()
+                if ok:
+                    return name, True, detail
+                last = detail
+            except urllib.error.HTTPError as exc:
+                last = f"HTTP {exc.code}"
+                if exc.code in (400, 401, 403, 404, 410):
+                    break
+            except Exception as exc:
+                # Error bodies may contain private data; report the class only.
+                last = type(exc).__name__
+            if attempt < 2:
+                time.sleep(4 * (attempt + 1))
+        return name, False, last
+    except ProbeDeadline:
+        return name, False, f"制限時間 {budget_seconds:.0f} 秒を超過（未確認）"
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if previous_timer[0] > 0:
+            signal.setitimer(signal.ITIMER_REAL,
+                            max(.001, previous_timer[0] - (time.monotonic() - started)),
+                            previous_timer[1])
 
 # ── validators ──────────────────────────────────────────────────────────────
 def v_healthz():
@@ -168,25 +188,23 @@ def v_event_snapshot():
 
 def _crypto_scan_gated():
     import urllib.request, urllib.error
-    req = urllib.request.Request(BASE + "/api/argus/crypto-scan", method="POST", headers=dict(_SMOKE_HEADERS))
+    req = urllib.request.Request(BASE + "/api/argus/crypto-scan", method="POST", headers=dict(_ANONYMOUS_HEADERS))
     try:
         urllib.request.urlopen(req, timeout=30)
         return False, "expected 401/503 (admin), got 200 — UNPROTECTED!"
     except urllib.error.HTTPError as e:
-        # 429 = the IP rate limiter fired BEFORE routing (smoke burst) — it neither
-        # proves nor disproves the admin gate; tolerated like the other checks.
-        return e.code in (401, 503, 429), f"HTTP {e.code} (admin-gated)"
+        return e.code in (401, 503), f"HTTP {e.code} (admin-gated)"
 
 def v_watchlist_sync_gated():
     import urllib.request, urllib.error
     req = urllib.request.Request(BASE + "/api/argus/calibration/watchlist-sync", method="POST",
-                                 headers={**_SMOKE_HEADERS, "Content-Type": "application/json"},
+                                 headers={**_ANONYMOUS_HEADERS, "Content-Type": "application/json"},
                                  data=b'{"items":[]}')
     try:
         urllib.request.urlopen(req, timeout=30)
         return False, "expected 401/503 (owner-gated), got 200 — UNPROTECTED!"
     except urllib.error.HTTPError as e:
-        return e.code in (401, 503, 429), f"HTTP {e.code} (owner-gated)"
+        return e.code in (401, 503), f"HTTP {e.code} (owner-gated)"
 
 def v_no_order_routes():
     # Safety: there must be NO order/execute route (research-only, no auto-trading).
@@ -196,12 +214,9 @@ def v_no_order_routes():
             _get(path)
             return False, f"{path} exists — must NOT (no order routes!)"
         except urllib.error.HTTPError as e:
-            # The safety guarantee is "no 200 order route". A 429 means the per-IP rate
-            # limiter fired BEFORE routing (it runs as a before_request hook), so every
-            # path — including non-existent ones — returns 429; that is NOT evidence of an
-            # order route. Tolerate it (retry/soft-pass); only a non-404/429 is suspicious.
+            # A rate limit does not establish that the route is absent.
             if e.code == 429:
-                continue
+                raise
             if e.code != 404:
                 return False, f"{path} returned {e.code}, expected 404"
     return True, "no order/execute routes (correct)"
@@ -285,12 +300,12 @@ def v_official_admin_gated():
     for path in ("/api/argus/admin/official-events/snapshot",
                  "/api/argus/admin/official-events/restore"):
         req = urllib.request.Request(BASE + path, method="POST",
-                                     headers=dict(_SMOKE_HEADERS))
+                                     headers=dict(_ANONYMOUS_HEADERS))
         try:
             with urllib.request.urlopen(req, timeout=30):
                 return False, f"{path} returned 200 without token!"
         except urllib.error.HTTPError as e:
-            if e.code not in (401, 503, 429):
+            if e.code not in (401, 503):
                 return False, f"{path} returned {e.code}, expected 401/503"
     return True, "snapshot/restore admin-gated"
 
@@ -319,7 +334,7 @@ def v_explain_request_public():
     code, d = _post_json("/api/argus/mover-causes/explain-request",
                          {"symbol": "IONQ", "market": "US", "context": "cause-stack"})
     return code in (401, 503) and d.get("error") in (
-        "unauthorized", "admin_unavailable"), f"status={code}"
+        "unauthorized", "owner_auth_required", "admin_unavailable"), f"status={code}"
 
 def v_translation_request_public():
     # Recovery Phase A: mutation is no longer public.
@@ -328,19 +343,19 @@ def v_translation_request_public():
                           "items": [{"titleOriginal": "IonQ smoke-test headline about markets",
                                      "source": "smoke"}]})
     return code in (401, 503) and d.get("error") in (
-        "unauthorized", "admin_unavailable"), f"status={code}"
+        "unauthorized", "owner_auth_required", "admin_unavailable"), f"status={code}"
 
 def v_queue_admin_gated():
     # v11.5.2: translate-visible + explain/run reject a token-less POST (401/503).
     import urllib.error
     for path in ("/api/argus/admin/news/translate-visible",
                  "/api/argus/admin/mover-causes/explain/run"):
-        req = urllib.request.Request(BASE + path, method="POST", headers=dict(_SMOKE_HEADERS))
+        req = urllib.request.Request(BASE + path, method="POST", headers=dict(_ANONYMOUS_HEADERS))
         try:
             with urllib.request.urlopen(req, timeout=30):
                 return False, f"{path} returned 200 without token!"
         except urllib.error.HTTPError as e:
-            if e.code not in (401, 503, 429):
+            if e.code not in (401, 503):
                 return False, f"{path} returned {e.code}"
     return True, "translate-visible + explain/run admin-gated"
 
@@ -392,7 +407,7 @@ def v_investigate_now_public():
                          {"symbol": "IONQ", "market": "US", "context": "cause-stack"},
                          timeout=40)
     return code in (401, 503) and d.get("error") in (
-        "unauthorized", "admin_unavailable"), f"status={code}"
+        "unauthorized", "owner_auth_required", "admin_unavailable"), f"status={code}"
 
 def v_news_newest_first():
     # v11.5.6 owner rule: every news list is newest-first; undated items at the tail.
@@ -529,12 +544,12 @@ def v_bridge_status_segmented():
 def v_bridge_heartbeat_gated():
     import urllib.error
     req = urllib.request.Request(BASE + "/api/argus/bridge/heartbeat",
-                                 method="POST", headers=dict(_SMOKE_HEADERS))
+                                 method="POST", headers=dict(_ANONYMOUS_HEADERS))
     try:
         with urllib.request.urlopen(req, timeout=30):
             return False, "returned 200 without token!"
     except urllib.error.HTTPError as e:
-        if e.code not in (401, 503, 429):
+        if e.code not in (401, 503):
             return False, f"returned {e.code}"
     return True, "heartbeat admin-gated"
 
@@ -572,36 +587,36 @@ def v_watchtower_status_patrol_ref():
 def v_patrol_self_check_gated():
     import urllib.error
     req = urllib.request.Request(BASE + "/api/argus/admin/caos/patrol-self-check",
-                                 method="POST", headers=dict(_SMOKE_HEADERS))
+                                 method="POST", headers=dict(_ANONYMOUS_HEADERS))
     try:
         with urllib.request.urlopen(req, timeout=30):
             return False, "returned 200 without token!"
     except urllib.error.HTTPError as e:
-        if e.code not in (401, 503, 429):
+        if e.code not in (401, 503):
             return False, f"returned {e.code}"
     return True, "patrol-self-check admin-gated"
 
 def v_watchtower_admin_gated():
     import urllib.error
     req = urllib.request.Request(BASE + "/api/argus/admin/caos-watchtower/refresh",
-                                 method="POST", headers=dict(_SMOKE_HEADERS))
+                                 method="POST", headers=dict(_ANONYMOUS_HEADERS))
     try:
         with urllib.request.urlopen(req, timeout=30):
             return False, "returned 200 without token!"
     except urllib.error.HTTPError as e:
-        if e.code not in (401, 503, 429):
+        if e.code not in (401, 503):
             return False, f"returned {e.code}"
     return True, "watchtower refresh admin-gated"
 
 def v_macro_reaction_admin_gated():
     import urllib.error
     req = urllib.request.Request(BASE + "/api/argus/admin/macro-event-analysis/refresh-market-reaction",
-                                 method="POST", headers=dict(_SMOKE_HEADERS))
+                                 method="POST", headers=dict(_ANONYMOUS_HEADERS))
     try:
         with urllib.request.urlopen(req, timeout=30):
             return False, "returned 200 without token!"
     except urllib.error.HTTPError as e:
-        if e.code not in (401, 503, 429):
+        if e.code not in (401, 503):
             return False, f"returned {e.code}"
     return True, "refresh-market-reaction admin-gated"
 
@@ -691,12 +706,12 @@ def v_dashboard_events_nfp():
 def v_macro_repair_admin_gated():
     import urllib.error
     req = urllib.request.Request(BASE + "/api/argus/admin/macro-event-analysis/repair-post-release",
-                                 method="POST", headers=dict(_SMOKE_HEADERS))
+                                 method="POST", headers=dict(_ANONYMOUS_HEADERS))
     try:
         with urllib.request.urlopen(req, timeout=30):
             return False, "repair returned 200 without token!"
     except urllib.error.HTTPError as e:
-        if e.code not in (401, 503, 429):
+        if e.code not in (401, 503):
             return False, f"repair returned {e.code}"
     return True, "repair-post-release admin-gated"
 
@@ -728,12 +743,12 @@ def v_macro_admin_gated():
     for path in ("/api/argus/admin/macro-event-analysis/generate",
                  "/api/argus/admin/macro-event-analysis/refresh-results"):
         req = urllib.request.Request(BASE + path, method="POST",
-                                     headers=dict(_SMOKE_HEADERS))
+                                     headers=dict(_ANONYMOUS_HEADERS))
         try:
             with urllib.request.urlopen(req, timeout=30):
                 return False, f"{path} returned 200 without token!"
         except urllib.error.HTTPError as e:
-            if e.code not in (401, 503, 429):
+            if e.code not in (401, 503):
                 return False, f"{path} returned {e.code}"
     return True, "generate/refresh-results admin-gated"
 
@@ -744,15 +759,6 @@ def v_downside_carries_mover_cause():
     incs = d.get("incidents") or []
     if not incs:
         return True, "no active incidents (shape n/a)"
-    # v13.5.36: a fresh deploy restarts the process with an empty mover-cause
-    # cache; if a REAL incident exists in that window the ladder can lag one
-    # enrichment cycle. Retry once after 90s — persistent absence still fails.
-    if any(not (inc.get("moverCause") or {}).get("causeStatus") for inc in incs):
-        time.sleep(90)
-        c, d = _get("/api/argus/downside-incidents")
-        incs = d.get("incidents") or []
-        if not incs:
-            return True, "incidents cleared during enrichment retry"
     for inc in incs:
         mc = inc.get("moverCause") or {}
         if not mc.get("causeStatus"):
@@ -770,12 +776,12 @@ def v_learning_memory_admin_gated():
     for path in ("/api/argus/admin/learning-memory/build",
                  "/api/argus/admin/learning-memory/restore"):
         req = urllib.request.Request(BASE + path, method="POST",
-                                     headers=dict(_SMOKE_HEADERS))
+                                     headers=dict(_ANONYMOUS_HEADERS))
         try:
             with urllib.request.urlopen(req, timeout=30):
                 return False, f"{path} returned 200 without token!"
         except urllib.error.HTTPError as e:
-            if e.code not in (401, 503, 429):
+            if e.code not in (401, 503):
                 return False, f"{path} returned {e.code}"
     return True, "build/restore admin-gated"
 
@@ -879,11 +885,10 @@ def v_downside_incidents():
 def v_admin_gated_401(path):
     def fn():
         try:
-            _get(path)
+            _get(path, authenticated=False)
             return False, "expected 401, got 200 (admin endpoint UNPROTECTED!)"
         except urllib.error.HTTPError as e:
-            # 429 = pre-routing IP rate limiter (smoke burst) — tolerated everywhere
-            return e.code in (401, 429), f"HTTP {e.code} (correct: admin-gated)"
+            return e.code in (401,), f"HTTP {e.code} (correct: admin-gated)"
     return fn
 
 # ── ARGUS Pro v11 endpoints — SHAPE-only (never require market-open / non-empty) ──
@@ -981,18 +986,26 @@ CHECKS = [
     ("v11.5 dashboard reaction shape", v_dashboard_events_reaction_shape),
 ]
 
-def main():
-    print(f"ARGUS smoke test → {BASE}\n" + "─" * 64)
-    results = [check(name, fn) for name, fn in CHECKS]
+def main(total_budget=480):
+    print(f"ARGUS 本番検査 → {BASE}", flush=True)
+    deadline = time.monotonic() + total_budget
+    results = []
+    for name, fn in CHECKS:
+        started = time.monotonic()
+        remaining = deadline - started
+        if remaining <= 0:
+            result = name, False, "全体の制限時間を超過（未実施）"
+        else:
+            result = check(name, fn, budget_seconds=min(60, remaining))
+        results.append(result)
+        _, ok, detail = result
+        print(f"  {'合格' if ok else '失敗'} {name}: {detail} "
+              f"({time.monotonic() - started:.1f}秒)", flush=True)
     failed = [r for r in results if not r[1]]
-    for name, ok, detail in results:
-        print(f"  {'✅' if ok else '❌'} {name:30} {detail}")
-    print("─" * 64)
-    print(f"{len(results) - len(failed)}/{len(results)} passed")
+    print(f"{len(results) - len(failed)}/{len(results)} 合格", flush=True)
     if failed:
-        print("FAILED:", ", ".join(r[0] for r in failed))
+        print("失敗・未確認: " + ", ".join(r[0] for r in failed), flush=True)
         return 1
-    print("ALL GREEN")
     return 0
 
 if __name__ == "__main__":

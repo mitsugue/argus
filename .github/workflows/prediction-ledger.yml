@@ -3,9 +3,11 @@
 # Every JP trading day at 16:05 JST:
 #   1. (optional) trigger a fresh AI judgment run so AI views are recorded
 #      (needs the ARGUS_ADMIN_TOKEN repo secret; skipped gracefully without it)
+#      AI failure or timeout is reported, then an independent job continues.
 #   2. fetch a bounded canonicalPredictionLedger snapshot
 #   3. append immutable IssuedDecision / OutcomeResolution segments under
 #      ledger/prediction/v2 using the exact workflow-triggering source SHA
+#      and push it before any auxiliary persistence work
 #
 # Data lives on the `ledger` BRANCH (not main) so daily commits never trigger
 # the Pages/Render deploys. Historical ledger/days, ledger/scores and
@@ -39,49 +41,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  record-and-score:
+  ai-judgment:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 9
     steps:
       - uses: actions/checkout@v5
-      - name: Stage exact triggering-commit canonical ledger runtime
-        if: github.event.inputs.mode != 'ai-only'
-        run: |
-          RUNTIME="$RUNNER_TEMP/argus-prediction-ledger-runtime"
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          install -d "$RUNTIME" "$RUNTIME/scripts"
-          test -f scripts/run_prediction_ledger.py
-          install -m 0644 scripts/run_prediction_ledger.py \
-            "$RUNNER_TEMP/run_prediction_ledger.py"
-          install -m 0644 scripts/run_prediction_ledger.py "$RUNTIME/scripts/run_prediction_ledger.py"
-          install -m 0644 scripts/export_event_prediction_results.py "$RUNTIME/scripts/export_event_prediction_results.py"
-          install -m 0644 argus_event_prediction_results.py "$RUNTIME/argus_event_prediction_results.py"
-          # The Layer 2B / DV shadow steps run after the ledger-branch
-          # checkout, where scripts/ no longer exists in the working tree —
-          # stage the HTTP helper next to the ledger runtime.
-          test -f scripts/workflow_http.py
-          install -m 0644 scripts/workflow_http.py \
-            "$RUNNER_TEMP/workflow_http.py"
-          for path in \
-            argus_calibration.py \
-            argus_decision_ledger.py \
-            argus_market_data_truth.py \
-            argus_market_clock.py
-          do
-            test -f "$path"
-            install -m 0644 "$path" "$RUNTIME/$path"
-          done
-          printf '%s\n' "$GITHUB_SHA" > "$RUNTIME/SOURCE_SHA"
-          sha256sum \
-            "$RUNNER_TEMP/run_prediction_ledger.py" \
-            "$RUNTIME/argus_calibration.py" \
-            "$RUNTIME/argus_decision_ledger.py" \
-            "$RUNTIME/argus_market_data_truth.py" \
-            "$RUNTIME/argus_market_clock.py" \
-            "$RUNTIME/scripts/run_prediction_ledger.py" \
-            "$RUNTIME/scripts/export_event_prediction_results.py" \
-            "$RUNTIME/argus_event_prediction_results.py" \
-            > "$RUNTIME/SHA256SUMS"
       - name: Trigger AI judgment run without blocking the canonical ledger
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
@@ -126,6 +90,51 @@ jobs:
             2>/dev/null || echo '{}')
           echo "🔬 provider diag: \`${DIAG}\`" >> "$GITHUB_STEP_SUMMARY"
 
+  record-and-score:
+    needs: ai-judgment
+    if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Stage exact triggering-commit canonical ledger runtime
+        if: github.event.inputs.mode != 'ai-only'
+        run: |
+          RUNTIME="$RUNNER_TEMP/argus-prediction-ledger-runtime"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          install -d "$RUNTIME" "$RUNTIME/scripts"
+          test -f scripts/run_prediction_ledger.py
+          install -m 0644 scripts/run_prediction_ledger.py \
+            "$RUNNER_TEMP/run_prediction_ledger.py"
+          install -m 0644 scripts/run_prediction_ledger.py "$RUNTIME/scripts/run_prediction_ledger.py"
+          install -m 0644 scripts/export_event_prediction_results.py "$RUNTIME/scripts/export_event_prediction_results.py"
+          install -m 0644 argus_event_prediction_results.py "$RUNTIME/argus_event_prediction_results.py"
+          # The Layer 2B / DV shadow steps run after the ledger-branch
+          # checkout, where scripts/ no longer exists in the working tree —
+          # stage the HTTP helper next to the ledger runtime.
+          test -f scripts/workflow_http.py
+          install -m 0644 scripts/workflow_http.py \
+            "$RUNNER_TEMP/workflow_http.py"
+          for path in \
+            argus_calibration.py \
+            argus_decision_ledger.py \
+            argus_market_data_truth.py \
+            argus_market_clock.py
+          do
+            test -f "$path"
+            install -m 0644 "$path" "$RUNTIME/$path"
+          done
+          printf '%s\n' "$GITHUB_SHA" > "$RUNTIME/SOURCE_SHA"
+          sha256sum \
+            "$RUNNER_TEMP/run_prediction_ledger.py" \
+            "$RUNTIME/argus_calibration.py" \
+            "$RUNTIME/argus_decision_ledger.py" \
+            "$RUNTIME/argus_market_data_truth.py" \
+            "$RUNTIME/argus_market_clock.py" \
+            "$RUNTIME/scripts/run_prediction_ledger.py" \
+            "$RUNTIME/scripts/export_event_prediction_results.py" \
+            "$RUNTIME/argus_event_prediction_results.py" \
+            > "$RUNTIME/SHA256SUMS"
       - name: Switch to ledger branch (create if missing)
         if: github.event.inputs.mode != 'ai-only'
         run: |
@@ -148,6 +157,55 @@ jobs:
             mkdir -p ledger/prediction/v2
           fi
           echo "ledger branch ready; historical compatibility artifacts remain untouched"
+
+      - name: Append canonical Prediction Ledger v2 records
+        if: github.event.inputs.mode != 'ai-only'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          # 2026-09-28: owner authentication gates every read of this host.
+          # The existing operational token passes the gate; it is never logged.
+          rm -f snap.json snap.pending.json
+          for attempt in 1 2 3 4; do
+            curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/prediction-snapshot" -o snap.pending.json && { mv snap.pending.json snap.json; break; }
+            echo "prediction snapshot retry $attempt"
+            if [ "$attempt" -lt 4 ]; then sleep 20; fi
+          done
+          test -s snap.json
+          python3 - <<'PY'
+          import json
+          snapshot = json.load(open("snap.json", encoding="utf-8"))
+          canonical = snapshot.get("canonicalPredictionLedger")
+          if not isinstance(canonical, dict):
+              raise SystemExit("canonicalPredictionLedger is missing")
+          if canonical.get("schemaVersion") != "argus-prediction-ledger-v2":
+              raise SystemExit("unexpected canonical Prediction Ledger schema")
+          if canonical.get("mode") != "forward_live":
+              raise SystemExit("canonical Prediction Ledger mode is not forward_live")
+          PY
+          RUNTIME="$RUNNER_TEMP/argus-prediction-ledger-runtime"
+          test "$(cat "$RUNTIME/SOURCE_SHA")" = "$GITHUB_SHA"
+          sha256sum -c "$RUNTIME/SHA256SUMS"
+          export PYTHONPATH="$RUNTIME${PYTHONPATH:+:$PYTHONPATH}"
+          python3 "$RUNNER_TEMP/run_prediction_ledger.py" \
+            --snapshot snap.json \
+            --ledger-root ledger/prediction/v2 \
+            --expected-mode forward_live \
+            --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --runner-build-sha "$GITHUB_SHA"
+
+      - name: Commit canonical ledger before auxiliary persistence
+        id: canonical_commit
+        run: |
+          git config user.name "argus-ledger[bot]"
+          git config user.email "argus-ledger@users.noreply.github.com"
+          test -z "$(git status --porcelain -- ledger/days ledger/scores ledger/summary.json)"
+          git add ledger/prediction/v2/
+          if ! git diff --cached --quiet; then
+            git commit -m "予測台帳: 正本の追記と採点を保存"
+            git push origin HEAD:ledger
+          fi
 
       - name: Persist backup vault (client-side-encrypted envelopes)
         if: github.event.inputs.mode != 'ai-only'
@@ -375,42 +433,6 @@ jobs:
               print('no AI cost to persist (admin gate / no run)')
           PY
 
-      - name: Append canonical Prediction Ledger v2 records
-        if: github.event.inputs.mode != 'ai-only'
-        env:
-          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
-        run: |
-          BE="https://argus-backend-3j2m.onrender.com"
-          # 2026-09-28: owner authentication gates every read of this host.
-          # The existing operational token passes the gate; it is never logged.
-          for attempt in 1 2 3 4 5 6; do
-            curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/prediction-snapshot" -o snap.json && break
-            echo "prediction snapshot retry $attempt"
-            sleep 20
-          done
-          test -s snap.json
-          python3 - <<'PY'
-          import json
-          snapshot = json.load(open("snap.json", encoding="utf-8"))
-          canonical = snapshot.get("canonicalPredictionLedger")
-          if not isinstance(canonical, dict):
-              raise SystemExit("canonicalPredictionLedger is missing")
-          if canonical.get("schemaVersion") != "argus-prediction-ledger-v2":
-              raise SystemExit("unexpected canonical Prediction Ledger schema")
-          if canonical.get("mode") != "forward_live":
-              raise SystemExit("canonical Prediction Ledger mode is not forward_live")
-          PY
-          RUNTIME="$RUNNER_TEMP/argus-prediction-ledger-runtime"
-          test "$(cat "$RUNTIME/SOURCE_SHA")" = "$GITHUB_SHA"
-          sha256sum -c "$RUNTIME/SHA256SUMS"
-          export PYTHONPATH="$RUNTIME${PYTHONPATH:+:$PYTHONPATH}"
-          python3 "$RUNNER_TEMP/run_prediction_ledger.py" \
-            --snapshot snap.json \
-            --ledger-root ledger/prediction/v2 \
-            --expected-mode forward_live \
-            --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
-            --runner-build-sha "$GITHUB_SHA"
-
       # scout-ledger-v1 is retained only as a SHADOW/DERIVED compatibility
       # diagnostic. Its approximate latest-price evaluation cannot enter the
       # canonical Prediction Ledger or forward-live calibration.
@@ -498,7 +520,6 @@ jobs:
           PY
 
       - name: Commit to ledger branch
-        id: canonical_commit
         if: github.event.inputs.mode != 'ai-only'
         run: |
           git config user.name "argus-ledger[bot]"
@@ -596,7 +617,7 @@ jobs:
       # The ledger is ARGUS's memory — a silent failure would quietly stop the
       # learning loop. Push a phone alert if ANY step above failed (v10.3.1).
       - name: Notify on failure (skipped without NTFY_TOPIC)
-        if: failure()
+        if: ${{ !cancelled() && (failure() || needs.ai-judgment.result != 'success') }}
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: |
