@@ -21,25 +21,19 @@ def test_parse_reads_the_two_market_total_value_columns_in_yen():
                       "longJpy": 6_529_363_000_000}
 
 
-def test_rows_follow_the_ledger_csv_contract_with_wednesday_availability():
+def test_rows_use_actual_fetch_availability_without_guessing_publication():
     rows = jw.build_rows(jw.parse_sheet(GRID), url="https://example.test/x.xls",
                          sha256="ab" * 32, observed_at="2026-09-08T00:00:00Z")
     assert [r["seriesId"] for r in rows] == ["credit.short_balance", "credit.long_balance"]
     assert rows[0]["periodEnd"] == "2026-08-28"
-    assert rows[0]["availableFrom"] == rows[0]["publishedAt"] == "2026-09-02T15:00:00+09:00"
+    assert rows[0]["availableFrom"] == rows[0]["observedAt"] == "2026-09-08T00:00:00Z"
+    assert rows[0]["publishedAt"] == ""
     assert rows[0]["value"] == 825_046_000_000 and rows[1]["value"] == 6_529_363_000_000
     assert rows[0]["unit"] == "JPY" and rows[0]["sourceKind"] == "official" and rows[0]["status"] == "live"
     assert "sha256=" + "ab" * 32 in rows[0]["source"] and "publication=weekly_final" in rows[0]["source"]
     text = jw.rows_to_csv(rows)
     parsed = list(csv.DictReader(io.StringIO(text)))
     assert list(parsed[0].keys()) == list(jw.CSV_COLUMNS)
-
-
-def test_availability_waits_for_holidays_and_falls_back_late_outside_the_calendar():
-    assert jw.available_day(date(2026, 8, 28)) == date(2026, 9, 2)     # ordinary week: Wednesday
-    assert jw.available_day(date(2026, 9, 18)) == date(2026, 9, 28)    # 9/21-23 closed
-    assert jw.available_day(date(2026, 7, 17)) == date(2026, 7, 23)    # Monday holiday: Thursday
-    assert jw.available_day(date(2042, 3, 7)) == date(2042, 3, 13)     # no coverage: Thursday
 
 
 def test_fridays_after_and_gaps_are_reported_not_filled():
@@ -90,14 +84,139 @@ def test_a_transport_error_on_commit_is_settled_by_the_ledger_read_back(monkeypa
         raise TimeoutError("proxy closed the connection")
     monkeypatch.setattr(jw, "post_json", fake_post)
     monkeypatch.setattr(jw, "ledger_newest_credit",
-                        lambda backend: {"credit.short_balance": {"periodEnd": "2026-08-28"},
-                                         "credit.long_balance": {"periodEnd": "2026-08-28"}})
-    result = jw.import_rows("csv", backend="https://x", token="t", expected_newest="2026-08-28")
+                        lambda backend, *, token: confirmed_readback())
+    result = jw.import_rows(credit_csv(), backend="https://x", token="t", expected_newest="2026-08-28")
     assert result["ok"] is True and result["settledByReadback"] is True
     assert "TimeoutError" in result["transportError"]
     # …but not when the ledger does not hold what we sent
     monkeypatch.setattr(jw, "ledger_newest_credit",
-                        lambda backend: {"credit.short_balance": {"periodEnd": "2026-07-10"},
+                        lambda backend, *, token: {"credit.short_balance": {"periodEnd": "2026-07-10"},
                                          "credit.long_balance": {"periodEnd": "2026-07-10"}})
-    result = jw.import_rows("csv", backend="https://x", token="t", expected_newest="2026-08-28")
+    result = jw.import_rows(credit_csv(), backend="https://x", token="t", expected_newest="2026-08-28")
     assert result["ok"] is False and result["stage"] == "readback"
+
+
+def current_grid():
+    rows = [[""] * 12 for _ in range(20)]
+    rows[0][1] = "2026/9/25"
+    rows[4][11] = "(単位：千株、百万円）"
+    rows[5][4] = "二市場 Tokyo&Nagoya"
+    rows[5][8] = "東京 Tokyo"
+    rows[6][4], rows[6][6] = "売残高 Sales", "買残高 Purchases"
+    rows[13][1] = "信用取引残高合計 Total Outstanding Margin Trading"
+    rows[13][3] = "株数Shs."
+    rows[13][4], rows[13][6] = 111, 222
+    rows[14][3] = "金額Val."
+    rows[14][4], rows[14][6] = 1000, 7000
+    rows[14][8], rows[14][10] = 999, 6999
+    return rows
+
+
+def test_new_layout_uses_two_market_amounts_and_never_tokyo_or_shares():
+    import pytest
+    grid = current_grid()
+    assert jw.parse_sheet(grid) == {"periodEnd": "2026-09-25", "shortJpy": 1000000000, "longJpy": 7000000000}
+    for where, value in (((5, 4), "東京 Tokyo"), ((6, 6), "Weekly change"), ((14, 3), "株数Shs."), ((4, 11), "千株"), ((14, 4), float("nan"))):
+        bad = [row[:] for row in grid]
+        bad[where[0]][where[1]] = value
+        with pytest.raises(ValueError):
+            jw.parse_sheet(bad)
+
+
+def test_xlsx_reader_preserves_excel_dates_and_closes_workbook():
+    import openpyxl
+    import datetime
+    book = openpyxl.Workbook()
+    for row in current_grid(): book.active.append(row)
+    book.active["B1"] = datetime.datetime(2026, 9, 25)
+    buffer = io.BytesIO(); book.save(buffer); book.close()
+    parsed = jw.parse_sheet(jw.load_workbook_grid(buffer.getvalue()))
+    assert parsed["periodEnd"] == "2026-09-25"
+    assert parsed["shortJpy"] == 1000000000
+
+
+def test_readback_carries_admin_token_and_rejects_missing_token(monkeypatch):
+    import json
+    import pytest
+    captured = []
+    def open_read(request, timeout):
+        captured.append((request, timeout))
+        return io.BytesIO(json.dumps({"table": [{"seriesId": "credit.short_balance", "periodEnd": "2026-09-25", "latestValue": 1000}]}).encode())
+    monkeypatch.setattr(jw.urllib.request, "urlopen", open_read)
+    out = jw.ledger_newest_credit("https://backend.test", token="fixture-token")
+    assert out["credit.short_balance"]["periodEnd"] == "2026-09-25"
+    assert captured[0][0].get_header("X-argus-admin-token") == "fixture-token"
+    with pytest.raises(ValueError, match="jpx_admin_token_missing"):
+        jw.ledger_newest_credit("https://backend.test", token="")
+    assert len(captured) == 1
+
+
+def test_missing_buy_series_cannot_prove_a_completed_import(monkeypatch):
+    monkeypatch.setattr(jw, "post_json", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(jw, "ledger_newest_credit", lambda backend, *, token: {"credit.short_balance": {"periodEnd": "2026-09-25"}})
+    result = jw.import_rows("csv", backend="https://backend.test", token="t", expected_newest="2026-09-25")
+    assert result["ok"] is False and result["stage"] == "readback"
+
+
+def test_current_weeks_request_the_official_xlsx_name_and_old_weeks_keep_xls(monkeypatch):
+    calls = []
+    def fetcher(url):
+        calls.append(url)
+        return None
+    out = jw.collect("2026-09-11", today=date(2026, 9, 25), fetcher=fetcher)
+    assert calls[0].endswith("mtseisan2026091800.xls")
+    assert calls[1].endswith("20260925_mtcurrent.xlsx")
+    assert out["fetched"] == [] and len(out["gaps"]) == 2
+
+
+def test_public_stdout_does_not_contain_authenticated_ledger_or_original_rows(monkeypatch, capsys):
+    monkeypatch.setenv("ARGUS_ADMIN_TOKEN", "fixture-secret")
+    monkeypatch.setattr(jw, "collect", lambda _: {"fetched": ["2026-09-25"], "gaps": [], "rows": [{"value": 123}], "csv": "private-csv"})
+    monkeypatch.setattr(jw, "import_rows", lambda *a, **k: {"ok": True, "ledger": {"private": "protected-payload"}})
+    assert jw.main(["--import"]) == 0
+    output = capsys.readouterr().out
+    assert "protected-payload" not in output and "fixture-secret" not in output and "private-csv" not in output
+    assert output.strip() == '{"ok": true, "stage": "complete"}'
+
+
+def test_workflow_retries_publication_day_and_does_not_upload_protected_readback():
+    from pathlib import Path
+    text = Path(".github/workflows/jpx-credit-weekly.yml").read_text()
+    assert "cron: '45 7-14 * * 1-5'" in text
+    assert "cancel-in-progress: false" in text
+    assert "actions/upload-artifact" not in text and "$RUNNER_TEMP/jpx-credit-summary.json" in text
+
+
+def credit_csv():
+    return jw.rows_to_csv(jw.build_rows(jw.parse_sheet(GRID), url="https://example.test/workbook.xls", sha256="ab"*32, observed_at="2026-09-08T00:00:00Z"))
+
+
+def confirmed_readback():
+    return {r["seriesId"]: {"periodEnd": r["periodEnd"], "latestValue": r["value"], "availableFrom": r["availableFrom"]}
+            for r in jw.build_rows(jw.parse_sheet(GRID), url="https://example.test/workbook.xls", sha256="ab"*32, observed_at="2026-09-08T00:00:00Z")}
+
+
+def test_import_requires_values_and_actual_availability_to_match(monkeypatch):
+    monkeypatch.setattr(jw, "post_json", lambda *a, **k: {"ok": True})
+    for field, value in (("latestValue", 1), ("availableFrom", "2026-09-07T00:00:00Z")):
+        wrong = confirmed_readback()
+        wrong["credit.long_balance"][field] = value
+        monkeypatch.setattr(jw, "ledger_newest_credit", lambda backend, *, token: wrong)
+        assert jw.import_rows(credit_csv(), backend="https://backend.test", token="t", expected_newest="2026-08-28")["stage"] == "readback_content"
+
+
+def test_week_end_uses_thursday_if_friday_is_closed_and_range_is_bounded():
+    import pytest
+    assert jw.fridays_after("2026-03-13", today=date(2026, 3, 20)) == ["2026-03-19"]
+    assert jw.fridays_after("2026-03-19", today=date(2026, 3, 20)) == []
+    with pytest.raises(ValueError, match="jpx_period_range_invalid"):
+        jw.fridays_after("2000-01-01", today=date(2026, 9, 25))
+
+
+def test_script_resolves_shared_calendar_when_launched_outside_repo(tmp_path):
+    import subprocess
+    import sys
+    from pathlib import Path
+    script = Path(jw.__file__).resolve()
+    code = "import runpy; d=runpy.run_path(" + repr(str(script)) + "); from datetime import date; assert d['fridays_after']('2026-03-13',today=date(2026,3,20))==['2026-03-19']"
+    subprocess.run([sys.executable, "-c", code], cwd=tmp_path, check=True, capture_output=True, text=True)
