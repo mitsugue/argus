@@ -2309,6 +2309,25 @@ def test_collect_warms_the_owner_jp_names_with_a_provider_fetch(monkeypatch):
     # whole parallel suite; that path has its own tests.
     monkeypatch.setattr(scanner, "_jp_market_engine_pit_inputs",
                         lambda warm=False: {"sourceStatus": {}})
+    # Keep unrelated collectors inside this test. A real fiscal worker used to
+    # outlive the request and write into a later test's ledger/journal mocks.
+    # The fiscal worker's acquisition, save and retry contracts have their own
+    # tests in test_argus_jp_fiscal_runtime.py.
+    fiscal_calls = []
+    monkeypatch.setattr(scanner, "_jp_fiscal_environment_warm",
+                        lambda: fiscal_calls.append(1) or {"status": "ACCEPTED", "completed": False})
+    monkeypatch.setattr(scanner, "collect_institutional_intel", lambda: {})
+    monkeypatch.setattr(scanner, "_investor_types_autorefresh", lambda: None)
+    monkeypatch.setattr(scanner, "_jp_canonical_calendar_autoregister", lambda: None)
+    monkeypatch.setattr(scanner, "_jsf_balance_table", lambda: ({}, None))
+    monkeypatch.setattr(scanner, "_JP_WATCHLIST", [])
+    monkeypatch.setattr(scanner, "_US_WATCHLIST", [])
+    monkeypatch.setattr(scanner, "_SD_EXTRA_SYMBOLS", {})
+
+    def no_network(*args, **kwargs):
+        raise AssertionError("collector wiring test must use injected providers")
+
+    monkeypatch.setattr(http_requests.sessions.Session, "request", no_network)
     monkeypatch.setattr(scanner, "_owner_jp_symbols_for_warm", lambda limit=None: ("314A", "7011"))
     calls = []
     monkeypatch.setattr(scanner, "_get_japan_watchlist_core",
@@ -2319,6 +2338,8 @@ def test_collect_warms_the_owner_jp_names_with_a_provider_fetch(monkeypatch):
     assert response.status_code == 200
     assert (("314A", "7011"), True) in calls
     assert response.get_json()["supplyDemandWarm"]["ownerJp"] == 2
+    assert fiscal_calls == [1]
+    assert response.get_json()["jpFiscalEnvironmentWarm"]["completed"] is False
 
 
 def test_macro_event_analysis_runs_in_the_event_analysis_lane(monkeypatch):
