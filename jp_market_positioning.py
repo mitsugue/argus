@@ -111,16 +111,21 @@ def ledger_candidates(report: dict, state: dict) -> list[dict]:
     JPY's economic report identity remains the same in that case. The original
     receipt is preserved; only a changed JPY report appends a new revision.
     """
-    existing = {(row.get('seriesId'), (row.get('metadata') or {}).get('reportId'))
-                for row in state.get('observations', [])
-                if row.get('importId') not in set(state.get('rolledBackImports', []))}
+    # Compare the latest complete vintage for this position date. An official
+    # correction can return to an earlier report; old identity alone must not
+    # suppress that new receipt or keep the superseded correction current.
+    scoped = {**state, 'observations': [row for row in state.get('observations', [])
+        if row.get('periodEnd') == report['positionDate']]}
+    current = latest_from_ledger(scoped, cutoff=report['receivedAt'])
+    if current.get('reportId') == report['reportId'] and current.get('status') in ('AVAILABLE', 'STALE'):
+        return []
     return [{
         'seriesId': series, 'periodEnd': report['positionDate'],
         'publishedAt': report['publishedAt'], 'availableFrom': report['availableFrom'],
         'observedAt': report['receivedAt'], 'value': report['current'][field],
         'unit': 'CONTRACTS', 'source': report['sourceRef'], 'sourceKind': 'official',
         'status': 'live', 'metadata': dict(report),
-    } for series, field in POSITION_SERIES.items() if (series, report['reportId']) not in existing]
+    } for series, field in POSITION_SERIES.items()]
 
 
 def latest_from_ledger(state: dict, *, cutoff: str) -> dict:
