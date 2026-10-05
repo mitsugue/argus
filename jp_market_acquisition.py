@@ -559,6 +559,15 @@ def enforce_session_publication(rows, *, sessions, sessions_after, utc_time, sou
     """
     if isinstance(sessions_after, bool) or not isinstance(sessions_after, int) or not 1 <= sessions_after <= 10:
         raise ValueError('session_publication_bound')
+    # Keep the existing source-specific call contract so every consumer uses
+    # the same cutover, including callers that still supply the older bound.
+    # Other weekly series retain their own publication rule.
+    if source_label == 'jpx-two-market-third-session':
+        rows = list(rows)
+        if any(isinstance(row, dict) and
+               str(row.get('periodEnd') or row.get('date') or '')[:10] >= '2026-09-25'
+               for row in rows):
+            return enforce_two_market_publication(rows, sessions=sessions)
     days = sorted({str(day)[:10] for day in sessions if len(str(day)) >= 10})
     result = []
     for row in rows:
@@ -590,3 +599,53 @@ def enforce_session_publication(rows, *, sessions, sessions_after, utc_time, sou
             row = {**row, **raised, 'availabilityFloor': source_label}
         result.append(row)
     return result
+
+
+def enforce_two_market_publication(rows, *, sessions):
+    """Respect the JPX rule change from the week ending 2026-09-25.
+
+    Earlier inputs keep the existing conservative third-session bound. New
+    weekly workbooks use the second actual TSE session at 16:00 JST, including
+    holidays beyond the cached price window. This is an availability bound,
+    not evidence of a historical publication or receipt. Later receipts stay
+    later; raw records and publication stamps are never rewritten here.
+    """
+    import argus_market_clock as clock
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        period = str(row.get('periodEnd') or row.get('date') or '')[:10]
+        try:
+            end = date.fromisoformat(period)
+        except ValueError:
+            out.append(row); continue
+        if period < '2026-09-25':
+            out.extend(enforce_session_publication(
+                [row], sessions=sessions, sessions_after=3, utc_time='06:00:00',
+                source_label='jpx-two-market-third-session'))
+            continue
+        day, count = end, 0
+        try:
+            for _ in range(14):
+                day += timedelta(days=1)
+                if clock.canonical_trading_day(clock.JP_EQUITY, day):
+                    count += 1
+                    if count == 2:
+                        break
+        except clock.CalendarUnavailableError:
+            raise ValueError('two_market_publication_calendar_unavailable') from None
+        if count != 2:
+            raise ValueError('two_market_publication_calendar_invalid')
+        floor = day.isoformat() + 'T07:00:00Z'
+        raised = {}
+        for key in ('availableFrom', 'knownAt'):
+            try:
+                if row.get(key) and _time(str(row[key])) < _time(floor):
+                    raised[key] = floor
+            except ValueError:
+                pass  # Invalid stamps stay invalid for the existing reader.
+        if raised:
+            row = {**row, **raised, 'availabilityFloor': 'jpx-two-market-second-session-16jst'}
+        out.append(row)
+    return out

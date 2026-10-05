@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.46"
+PRODUCT_VERSION = "v13.8.47"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
-    'web/scripts/pwa-identity.test.mjs': '7f7da2c29a5afdffefa961772a2be38acc918c35',
-    'web/scripts/owner-today-https.mjs': 'b3f3a4721459bc64d73bcb20379f975d647b1da0',
+    'web/scripts/pwa-identity.test.mjs': 'a875fec986196a1f1edc2f827d25725022ac5f63',
+    'web/scripts/owner-today-https.mjs': '7c3c8a524351a7ad49963d0a664d26b080aa4551',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -177,8 +177,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'ops/imports/acquisition_20260920/provenance.json': 'd720c7898b1fcfb23eae4959c1fb8403d574e665',
     'docs/V13_7_ACQUISITION_PACK_ACCEPTANCE.md': '6857081ce69e53bca54d900562800b54e4384897',
     'scripts/import_index_valuation.py': 'bd9278e7a166855aff8777cb41aa1628bcd07420',
-    'test_jp_market_acquisition.py': '0b1376b77a376b16904f70236d35f06448c98d05',
-    'jp_market_acquisition.py': '31578aa3a26bf5b5db3149758c0ff48caeab3184',
+    'test_jp_market_acquisition.py': 'b02e1559ce0d67fb08e05f7a84c40e7ac65c3df9',
+    'jp_market_acquisition.py': '46a225c9ad0e12d6a0bf3495e328cf7b27d114c6',
     'ops/imports/README.md': '0c3a8010eebfa90f6c20be3d46e0d59fd3039404',
     'web/src/components/today/SectorHeatmap.css': 'df03c8879cd667ad4e580a9b4044222ab4940e2e',
     'web/src/components/today/SectorHeatmap.tsx': 'e2bfe0c05e4830ed89cd71805d98ba22f0518996',
